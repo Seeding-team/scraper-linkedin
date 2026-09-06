@@ -238,6 +238,20 @@ export interface Quote {
   publicToken?: string;
   publicUrl?: string;
   publicEnabled?: boolean;
+  /** Chuỗi phiên bản (V1/V2/V3...) — cùng versionChainId là cùng 1 chuỗi báo
+   * giá, versionNumber tăng độc lập theo thứ tự tạo (không suy theo ngày).
+   * parentQuoteId trỏ bản ngay trước nó trong chuỗi (null nếu là V1 gốc). */
+  versionChainId?: string;
+  versionNumber?: number;
+  parentQuoteId?: string;
+}
+
+export interface QuoteVersionResult {
+  quote: Quote;
+  created: boolean;
+  sourceQuoteId?: string;
+  sourceVersionNumber?: number;
+  redirectedFromClickedQuote: boolean;
 }
 
 export interface QuoteReference {

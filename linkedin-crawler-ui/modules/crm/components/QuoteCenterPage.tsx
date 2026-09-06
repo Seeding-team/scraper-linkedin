@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useAppAuth } from '@/contexts/AppAuthContext';
 import { teamsService, type TeamRow } from '@/services/all-platform.service';
 import { seedingQuoteRepository } from '@/modules/quotes';
@@ -107,7 +107,7 @@ export function QuoteCenterPage() {
   const [period, setPeriod] = useState<Period>('all');
   const [teamFilter, setTeamFilter] = useState('');
 
-  const [quoteModal, setQuoteModal] = useState<{ open: boolean; deal: Deal | null; quoteFormId?: string }>({
+  const [quoteModal, setQuoteModal] = useState<{ open: boolean; deal: Deal | null; quoteFormId?: string; editQuote?: Quote | null }>({
     open: false,
     deal: null,
   });
@@ -116,6 +116,7 @@ export function QuoteCenterPage() {
 
   const [listSearch, setListSearch] = useState('');
   const [listStatus, setListStatus] = useState<QuoteStatusFilter>('all');
+  const linkedQuotesSectionRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -256,6 +257,28 @@ export function QuoteCenterPage() {
     setDealPickerOpen(false);
     setDealSearch('');
     setQuoteModal({ open: true, deal });
+  }
+
+  async function createVersion(quote: Quote) {
+    try {
+      const result = await seedingQuoteRepository.createQuoteVersion(quote.id);
+      if (result.redirectedFromClickedQuote) {
+        window.alert(`Chuỗi báo giá đã có bản duyệt mới hơn (V${result.sourceVersionNumber}) — đã tạo phiên bản mới từ bản đó.`);
+      } else if (!result.created) {
+        window.alert('Chuỗi này đã có bản nháp sẵn — mở bản nháp đó.');
+      }
+      const rows = await seedingQuoteRepository.getQuotes();
+      setQuotes(rows);
+      // Bang "Danh sach bao gia" nam khuat ben duoi trang (sau KPI/quick-start/
+      // templates) - bao gia moi tao luon o dong dau bang (sort theo updatedAt
+      // desc) nhung nguoi dung khong thay ngay vi vi tri cuon trang khong doi -
+      // tu cuon xuong dung bang de lo dong moi ra thay vi bat tim thu cong.
+      linkedQuotesSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      const deal = result.quote.dealId ? dealsById.get(result.quote.dealId) : null;
+      setQuoteModal({ open: true, deal: deal || null, editQuote: result.quote });
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : 'Không tạo được phiên bản báo giá mới.');
+    }
   }
 
   const loading = dealsLoading || quotesLoading;
@@ -485,7 +508,7 @@ export function QuoteCenterPage() {
         )}
       </section>
 
-      <section className="qc-section qc-linked-quotes">
+      <section className="qc-section qc-linked-quotes" ref={linkedQuotesSectionRef}>
         <div className="qc-section-head">
           <div>
             <h2>Danh sách báo giá</h2>
@@ -520,6 +543,7 @@ export function QuoteCenterPage() {
                 <th>Giá trị</th>
                 <th>Phụ trách</th>
                 <th>Trạng thái</th>
+                <th>Phiên bản</th>
                 <th>Cập nhật</th>
                 <th></th>
               </tr>
@@ -527,7 +551,7 @@ export function QuoteCenterPage() {
             <tbody>
               {linkedQuoteRows.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="qc-empty">
+                  <td colSpan={9} className="qc-empty">
                     Chưa có báo giá nào trong phạm vi đang chọn.
                   </td>
                 </tr>
@@ -575,11 +599,28 @@ export function QuoteCenterPage() {
                       <td data-label="Trạng thái">
                         <span className={`qc-badge ${status.className}`}>{status.label}</span>
                       </td>
+                      <td data-label="Phiên bản">
+                        <span className="qc-badge qc-badge-version" title={quote.parentQuoteId ? `Từ phiên bản trước (${quote.parentQuoteId})` : 'Phiên bản gốc'}>
+                          V{quote.versionNumber || 1}
+                        </span>
+                      </td>
                       <td data-label="Cập nhật">{relativeTime(quote.updatedAt || quote.createdAt)}</td>
                       <td data-label="">
-                        <Link href={`/all-platform/quotes/${quote.id}`} className="qc-row-action" aria-label="Mở báo giá">
-                          →
-                        </Link>
+                        <div className="qc-row-actions-cell">
+                          <Link href={`/all-platform/quotes/${quote.id}`} className="qc-row-action" aria-label="Mở báo giá">
+                            →
+                          </Link>
+                          {quote.status === 'approved' ? (
+                            <button
+                              type="button"
+                              className="qc-row-version-btn"
+                              title="Tạo phiên bản mới từ báo giá đã duyệt này"
+                              onClick={() => void createVersion(quote)}
+                            >
+                              + Phiên bản mới
+                            </button>
+                          ) : null}
+                        </div>
                       </td>
                     </tr>
                   );
@@ -631,10 +672,15 @@ export function QuoteCenterPage() {
         deals={deals}
         agents={agents}
         initialDeal={quoteModal.deal}
+        editQuote={quoteModal.editQuote}
         initialQuoteFormId={quoteModal.quoteFormId}
         canApproveQuotes={canApproveQuote(user)}
         onClose={() => setQuoteModal({ open: false, deal: null })}
         onCreated={async () => {
+          const rows = await seedingQuoteRepository.getQuotes();
+          setQuotes(rows);
+        }}
+        onUpdated={async () => {
           const rows = await seedingQuoteRepository.getQuotes();
           setQuotes(rows);
         }}

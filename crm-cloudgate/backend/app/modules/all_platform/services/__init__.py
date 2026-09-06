@@ -74,6 +74,8 @@ from app.modules.all_platform.services.supabase_quote_service import (
     delete_quote,
     approve_quote,
     update_and_approve_quote,
+    create_quote_version,
+    list_quote_versions,
     link_quote_to_deal,
     list_issuer_companies,
     create_issuer_company,

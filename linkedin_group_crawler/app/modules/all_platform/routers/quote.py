@@ -23,6 +23,7 @@ from app.modules.all_platform.services import (
     approve_quote,
     create_quote,
     create_quote_form,
+    create_quote_version,
     delete_quote,
     delete_quote_form,
     duplicate_quote_form,
@@ -31,6 +32,7 @@ from app.modules.all_platform.services import (
     get_quote,
     get_quote_form,
     list_quote_forms,
+    list_quote_versions,
     list_quotes,
     share_quote_form,
     update_and_approve_quote,
@@ -301,6 +303,37 @@ def quotes_update_and_approve(quote_id: str, payload: QuoteUpdateRequest, user: 
         return BaseResponse(success=True, message="Đã duyệt báo giá", data=data)
     except ValueError as e:
         return BaseResponse(success=False, message=str(e))
+    except Exception as e:
+        return BaseResponse(success=False, message=str(e))
+
+
+@quotes_router.post("/{quote_id}/create-version")
+def quotes_create_version(quote_id: str, user: dict = Depends(get_current_user)) -> BaseResponse:
+    """Tạo phiên bản mới (V2/V3...) từ bản ĐÃ DUYỆT mới nhất trong chuỗi của
+    quote_id được bấm - có thể redirect (khác source_quote_id) hoặc trả về bản
+    nháp có sẵn thay vì tạo mới (data["created"] = False), xem
+    quote_create_version RPC. Quyền: giống quyền sửa báo giá của deal đó, KHÔNG
+    dùng quyền duyệt (tạo bản nháp mới không phải hành động duyệt)."""
+    try:
+        quote, lead = _load_quote_and_lead(quote_id)
+        if not can_edit_quote(user, quote, lead):
+            return BaseResponse(success=False, message="Không có quyền tạo phiên bản báo giá này")
+        data = create_quote_version(quote_id, user.get("id"))
+        message = "Đã tạo phiên bản mới" if data["created"] else "Chuỗi đã có bản nháp, mở bản nháp đó"
+        return BaseResponse(success=True, message=message, data=data)
+    except ValueError as e:
+        return BaseResponse(success=False, message=str(e))
+    except Exception as e:
+        return BaseResponse(success=False, message=str(e))
+
+
+@quotes_router.get("/{quote_id}/versions")
+def quotes_list_versions(quote_id: str, user: dict = Depends(get_current_user)) -> BaseResponse:
+    try:
+        quote, lead = _load_quote_and_lead(quote_id)
+        if quote["status"] not in ("approved", "confirmed") and not can_edit_quote(user, quote, lead):
+            return BaseResponse(success=False, message="Không có quyền xem báo giá này")
+        return BaseResponse(success=True, data=list_quote_versions(quote["versionChainId"]))
     except Exception as e:
         return BaseResponse(success=False, message=str(e))
 

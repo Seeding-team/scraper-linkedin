@@ -80,6 +80,10 @@ export function CrmShell() {
   const [stageData, setStageData] = useState<{ deal: Deal; toStage: DealStage } | null>(null);
   const [reviewData, setReviewData] = useState<{ deal: Deal; toStage: DealStage } | null>(null);
   const [toast, setToast] = useState('');
+  // Bump sau moi lan tao phien ban moi de DetailDrawer biet fetch lai
+  // "Lich su phien ban" - deal.quote.id (van la ban DA DUYET) khong doi khi
+  // tao ban nhap moi nen khong the dung no lam dependency duy nhat.
+  const [quoteVersionsRefreshKey, setQuoteVersionsRefreshKey] = useState(0);
 
   // Toast tự ẩn sau vài giây — không dùng window.alert() cho việc báo thành công
   // vì alert chặn thao tác tiếp theo, gây khó chịu cho hành động vốn đã ổn.
@@ -311,6 +315,35 @@ export function CrmShell() {
     }
   }
 
+  async function handleOpenQuoteVersion(deal: Deal, quoteId: string) {
+    try {
+      const quote = await seedingQuoteRepository.getQuote(quoteId);
+      setQuoteModal({ open: true, deal, editQuote: quote });
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : 'Không tải được phiên bản báo giá này.');
+    }
+  }
+
+  async function handleCreateQuoteVersion(deal: Deal) {
+    if (!deal.quote?.id) return;
+    try {
+      const result = await seedingQuoteRepository.createQuoteVersion(deal.quote.id);
+      if (result.redirectedFromClickedQuote) {
+        setToast(
+          `Chuỗi báo giá đã có bản duyệt mới hơn (V${result.sourceVersionNumber}) — đã tạo phiên bản mới từ bản đó thay vì bản bạn chọn.`
+        );
+      } else if (!result.created) {
+        setToast('Chuỗi này đã có bản nháp sẵn — mở bản nháp đó.');
+      } else {
+        setToast(`Đã tạo phiên bản mới V${result.quote.versionNumber}.`);
+      }
+      setQuoteVersionsRefreshKey(key => key + 1);
+      setQuoteModal({ open: true, deal, editQuote: result.quote });
+    } catch (err) {
+      window.alert(err instanceof Error ? humanizeCrmError(err.message) : 'Không tạo được phiên bản báo giá mới.');
+    }
+  }
+
   async function handleDeleteQuote(deal: Deal) {
     if (!deal.quote?.id) return;
     if (!window.confirm(`Xoá báo giá ${deal.quote.number || ''} khỏi deal "${deal.customerName}"? Không thể hoàn tác.`)) return;
@@ -482,6 +515,9 @@ export function CrmShell() {
         onCreateQuote={deal => setQuoteModal({ open: true, deal, editQuote: null })}
         onEditQuote={handleEditQuote}
         onDeleteQuote={handleDeleteQuote}
+        onCreateQuoteVersion={handleCreateQuoteVersion}
+        onOpenQuoteVersion={handleOpenQuoteVersion}
+        quoteVersionsRefreshKey={quoteVersionsRefreshKey}
       />
       <StageModal
         open={Boolean(stageData)}

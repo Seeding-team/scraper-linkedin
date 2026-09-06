@@ -60,7 +60,7 @@ BASE_COLUMNS = (
     "position, position_category_id, position_label_snapshot, crm_package, zalo, facebook, telegram, pause_reason, next_step, closed_at, outcome_detail, quote_id, "
     "leaded_by_name_hint, sdr_name_hint, team_id, "
     "created_at, updated_at, leader:leaded_by(name), sdr:sdr_id(name), "
-    "quote:quote_id(quote_number, total_amount, public_token, status), "
+    "quote:quote_id(quote_number, total_amount, public_token, status, version_number, version_chain_id), "
     "team:team_id(name_team, team_type)"
 )
 
@@ -89,6 +89,8 @@ def _normalize_row(row: Dict[str, Any]) -> Dict[str, Any]:
         # cot rieng tren customer_leads) - card CRM dung field nay de hien tag
         # Chua duyet/Da duyet + doi hanh vi nut "Mo bao gia"/"Chinh sua".
         row["quote_status"] = row["quote"].get("status")
+        row["quote_version_number"] = row["quote"].get("version_number") or 1
+        row["quote_version_chain_id"] = row["quote"].get("version_chain_id")
         row.pop("quote", None)
     if row.get("team"):
         row["team_name"] = row["team"].get("name_team")

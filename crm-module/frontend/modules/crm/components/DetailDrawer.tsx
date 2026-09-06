@@ -1,5 +1,8 @@
 'use client';
 
+import { useEffect, useState } from 'react';
+import { seedingQuoteRepository } from '@/modules/quotes';
+import type { Quote } from '@/modules/quotes';
 import {
   AlertCircle,
   ArrowRight,
@@ -50,6 +53,14 @@ type Props = {
   onEditQuote: (deal: Deal) => void;
   /** Xoá hẳn báo giá đang gắn với deal này (chỉ khi chưa duyệt). */
   onDeleteQuote: (deal: Deal) => void;
+  /** Tạo phiên bản mới (V2/V3...) từ báo giá ĐÃ DUYỆT đang gắn với deal này. */
+  onCreateQuoteVersion: (deal: Deal) => void;
+  /** Mở 1 phiên bản CỤ THỂ trong chuỗi (không nhất thiết là deal.quote hiện
+   * tại) để xem/sửa — dùng cho khối "Lịch sử phiên bản" bên dưới. */
+  onOpenQuoteVersion: (deal: Deal, quoteId: string) => void;
+  /** Tăng dần sau mỗi lần tạo phiên bản mới — ép fetch lại "Lịch sử phiên
+   * bản" vì deal.quote.id (vẫn là bản đã duyệt) không đổi khi có bản nháp mới. */
+  quoteVersionsRefreshKey: number;
 };
 
 function tel(value?: string) {
@@ -68,8 +79,29 @@ export function DetailDrawer({
   onCreateQuote,
   onEditQuote,
   onDeleteQuote,
+  onCreateQuoteVersion,
+  onOpenQuoteVersion,
+  quoteVersionsRefreshKey,
 }: Props) {
   const { user } = useAppAuth();
+  const [otherVersions, setOtherVersions] = useState<Quote[]>([]);
+
+  useEffect(() => {
+    setOtherVersions([]);
+    if (!deal?.quote?.id) return;
+    let alive = true;
+    seedingQuoteRepository
+      .getQuoteVersions(deal.quote.id)
+      .then(rows => {
+        if (alive) setOtherVersions(rows.filter(row => row.id !== deal.quote?.id));
+      })
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deal?.quote?.id, quoteVersionsRefreshKey]);
+
   if (!open || !deal) return null;
   // Deal khong phai cua minh/team minh phu trach VA minh khong phai admin/
   // leader/sale -> chi xem, khong duoc chuyen giai doan / sua / xoa.
@@ -233,6 +265,7 @@ export function DetailDrawer({
                   <div className="crm-quote-row-main">
                     <div>
                       <b>{deal.quote.number || deal.quote.id || 'Báo giá tham chiếu'}</b>
+                      <span className="crm-quote-tag crm-quote-tag--version">V{deal.quote.versionNumber || 1}</span>
                       <span className={isApproved ? 'crm-quote-tag crm-quote-tag--approved' : 'crm-quote-tag crm-quote-tag--draft'}>
                         {isApproved ? '🟢 Đã duyệt' : '🟠 Chưa duyệt'}
                       </span>
@@ -279,12 +312,55 @@ export function DetailDrawer({
                         Sao chép link
                       </button>
                     ) : null}
+                    {deal.quote.id && deal.quote.status === 'approved' && canWriteDeal(user, deal) ? (
+                      <button
+                        type="button"
+                        className="crm-quote-btn crm-quote-btn--primary"
+                        title="Tạo phiên bản mới từ báo giá đã duyệt này"
+                        onClick={() => onCreateQuoteVersion(deal)}
+                      >
+                        + Tạo phiên bản mới
+                      </button>
+                    ) : null}
                   </div>
                 </article>
               );
             })() : (
               <p className="crm-empty-log">Chưa có báo giá</p>
             )}
+            {otherVersions.length ? (
+              <div className="crm-quote-version-history">
+                <span className="crm-quote-version-history__title">Lịch sử phiên bản</span>
+                {otherVersions.map(version => {
+                  const versionApproved = version.status === 'approved';
+                  return (
+                    <article className="crm-quote-row" key={version.id}>
+                      <div className="crm-quote-row-main">
+                        <div>
+                          <b>{version.quoteNumber}</b>
+                          <span className="crm-quote-tag crm-quote-tag--version">V{version.versionNumber || 1}</span>
+                          <span className={versionApproved ? 'crm-quote-tag crm-quote-tag--approved' : 'crm-quote-tag crm-quote-tag--draft'}>
+                            {versionApproved ? '🟢 Đã duyệt' : '🟠 Chưa duyệt'}
+                          </span>
+                        </div>
+                        <strong>{formatVND(version.totalAmount || 0) || 'Chưa có giá trị'}</strong>
+                      </div>
+                      <div className="crm-quote-row-actions">
+                        {versionApproved ? (
+                          <a href={`/all-platform/quotes/${version.id}?dealId=${encodeURIComponent(deal.id)}`} className="crm-quote-btn">
+                            Mở báo giá
+                          </a>
+                        ) : (
+                          <button type="button" className="crm-quote-btn" onClick={() => onOpenQuoteVersion(deal, version.id)}>
+                            Chỉnh sửa
+                          </button>
+                        )}
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            ) : null}
           </section>
 
           {deal.note ? (

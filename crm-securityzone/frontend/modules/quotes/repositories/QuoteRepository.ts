@@ -6,6 +6,7 @@ import type {
   Quote,
   QuoteForm,
   QuoteTelegramLog,
+  QuoteVersionResult,
   UpdateIssuerCompanyInput,
   UpdateQuoteFormInput,
   UpdateQuoteInput,
@@ -32,6 +33,12 @@ export interface QuoteRepository {
   approveQuote(id: string): Promise<Quote>;
   /** Lưu thay đổi cuối + duyệt atomic (dùng khi bấm "Duyệt báo giá" trong modal đang sửa). */
   updateAndApproveQuote(id: string, input: UpdateQuoteInput): Promise<Quote>;
+  /** Tạo phiên bản mới (V2/V3...) từ bản ĐÃ DUYỆT mới nhất trong chuỗi của
+   * id được truyền vào — có thể redirect (created=false, trả về bản nháp có
+   * sẵn) hoặc nguồn copy thật khác id được bấm (redirectedFromClickedQuote). */
+  createQuoteVersion(id: string): Promise<QuoteVersionResult>;
+  /** Toàn bộ phiên bản (V1..Vn) cùng chuỗi với id này, mới nhất trước. */
+  getQuoteVersions(id: string): Promise<Quote[]>;
 
   /** Danh mục dịch vụ liên kết với 1 mẫu báo giá (danh sách id nhóm). */
   getFormCatalogLinks(formId: string): Promise<string[]>;

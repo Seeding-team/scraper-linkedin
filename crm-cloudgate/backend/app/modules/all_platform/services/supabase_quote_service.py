@@ -118,6 +118,9 @@ def _row_to_quote(row: dict, items: list[dict] | None = None) -> dict:
         "publicToken": row.get("public_token"),
         "publicUrl": f"/public/quotes/{row['public_token']}" if row.get("public_token") else None,
         "publicEnabled": row.get("public_enabled") if row.get("public_enabled") is not None else True,
+        "versionChainId": row.get("version_chain_id"),
+        "versionNumber": row.get("version_number") or 1,
+        "parentQuoteId": row.get("parent_quote_id"),
     }
 
 
@@ -740,6 +743,53 @@ def update_and_approve_quote(quote_id: str, payload: dict, actor_id: str | None)
             "url": quote["publicUrl"], "totalAmount": quote["totalAmount"],
         })
     return quote
+
+
+_RPC_ERROR_MESSAGES.update({
+    "quote_not_found": "Không tìm thấy báo giá.",
+    "quote_not_approved": "Chuỗi báo giá này chưa có phiên bản nào được duyệt, không thể tạo phiên bản mới.",
+    "quote_is_draft": "Báo giá này đang là bản nháp (chưa duyệt), không thể tạo phiên bản mới từ đây.",
+})
+
+
+def create_quote_version(clicked_quote_id: str, actor_id: str | None) -> dict:
+    """Tạo phiên bản mới trong chuỗi (V1/V2/V3...) từ bản ĐÃ DUYỆT mới nhất -
+    xem chi tiết logic (khoá chuỗi, nguồn copy thật sự, redirect bản nháp có
+    sẵn) trong migration 082_quote_versioning.sql (RPC quote_create_version)."""
+    supabase: Client = get_supabase_client()
+    try:
+        result = supabase.rpc("quote_create_version", {
+            "p_clicked_quote_id": clicked_quote_id,
+            "p_actor_id": actor_id,
+            "p_new_quote_number": _next_quote_number(),
+        }).execute()
+    except Exception as exc:
+        _raise_friendly_rpc_error(exc)
+    row = (result.data or [None])[0]
+    if not row:
+        raise ValueError("Không tạo được phiên bản báo giá mới.")
+    new_quote = get_quote(row["quote"]["id"])
+    return {
+        "quote": new_quote,
+        "created": bool(row.get("created")),
+        "sourceQuoteId": row.get("source_quote_id"),
+        "sourceVersionNumber": row.get("source_version_number"),
+        "redirectedFromClickedQuote": row.get("source_quote_id") != clicked_quote_id,
+    }
+
+
+def list_quote_versions(chain_id: str) -> list[dict]:
+    """Toàn bộ phiên bản (V1..Vn) của 1 chuỗi báo giá, mới nhất trước."""
+    supabase: Client = get_supabase_client()
+    result = (
+        supabase.table(QUOTES_TABLE)
+        .select("*")
+        .eq("version_chain_id", chain_id)
+        .eq("instance", settings.crm_instance)
+        .order("version_number", desc=True)
+        .execute()
+    )
+    return [_row_to_quote(row, []) for row in (result.data or [])]
 
 
 def delete_quote(quote_id: str) -> None:

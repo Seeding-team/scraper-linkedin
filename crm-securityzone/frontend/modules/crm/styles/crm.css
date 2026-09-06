@@ -2831,6 +2831,33 @@
   color: #047857 !important;
 }
 
+.crm-quote-tag--version {
+  background: #eef2ff;
+  color: #4338ca !important;
+}
+
+.crm-quote-btn--primary {
+  border-color: #be1e4b;
+  background: #be1e4b;
+  color: #fff;
+}
+
+.crm-quote-version-history {
+  margin-top: 0.5rem;
+  padding-top: 0.5rem;
+  border-top: 1px dashed #e2e8f0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.crm-quote-version-history__title {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: #64748b;
+  text-transform: uppercase;
+}
+
 .crm-section-head-row {
   display: flex;
   align-items: center;

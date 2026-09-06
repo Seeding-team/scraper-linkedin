@@ -7,6 +7,7 @@ import type {
   Quote,
   QuoteForm,
   QuoteTelegramLog,
+  QuoteVersionResult,
   UpdateIssuerCompanyInput,
   UpdateQuoteFormInput,
   UpdateQuoteInput,
@@ -223,6 +224,16 @@ export class SeedingQuoteRepository implements QuoteRepository {
       method: 'POST',
       body: JSON.stringify(toUpdateQuotePayload(input)),
     });
+  }
+
+  async createQuoteVersion(id: string): Promise<QuoteVersionResult> {
+    return apiFetch<QuoteVersionResult>(`/api/all-platform/quotes/${encodeURIComponent(id)}/create-version`, {
+      method: 'POST',
+    });
+  }
+
+  async getQuoteVersions(id: string): Promise<Quote[]> {
+    return apiFetch<Quote[]>(`/api/all-platform/quotes/${encodeURIComponent(id)}/versions`);
   }
 
   async getFormCatalogLinks(formId: string): Promise<string[]> {

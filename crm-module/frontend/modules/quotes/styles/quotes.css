@@ -214,6 +214,54 @@
   background: transparent;
 }
 
+.quote-version-history {
+  padding: 1rem 0;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.quote-version-history h2 {
+  font-size: 0.9rem;
+  font-weight: 700;
+  margin: 0 0 0.6rem;
+  color: #334155;
+}
+
+.quote-version-history ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.quote-version-history li {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-size: 0.85rem;
+}
+
+.quote-version-history li a {
+  color: #2563eb;
+  text-decoration: none;
+}
+
+.quote-version-history__item--current {
+  font-weight: 700;
+}
+
+.quote-version-history__date {
+  margin-left: auto;
+  color: #94a3b8;
+  font-size: 0.78rem;
+}
+
+.quote-badge--version {
+  background: #eef2ff;
+  color: #4338ca;
+}
+
 /* Card mau bao gia - xep doc 3 vung (tieu de / badge / footer), KHONG dung
  * grid 2 cot hay position:absolute cho cum thao tac nua. Ly do doi han: grid
  * 2 cot (info | actions, align-items:center hoac start) van de cum nut de
