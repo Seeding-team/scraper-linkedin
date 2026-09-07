@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import List
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.modules.all_platform.auth_deps import get_current_user, require_admin, require_admin_or_leader
 from app.modules.all_platform.schemas import BaseResponse
@@ -16,6 +16,9 @@ from app.modules.all_platform.services import (
     update_user_role,
     update_user_active_status,
     update_user_quote_approver,
+    update_user_quote_business_role,
+    list_users_by_quote_business_role,
+    get_member_options,
     get_team_members,
     add_team_member,
     get_all_users,
@@ -106,6 +109,48 @@ def users_update_quote_approver(payload: dict, _admin: dict = Depends(require_ad
         return BaseResponse(success=False, message=str(e))
 
 
+@router.post("/update-quote-business-role")
+def users_update_quote_business_role(payload: dict, _caller: dict = Depends(get_current_user)) -> BaseResponse:
+    """CHI Admin THAT (khong phai Leader) - dung yeu cau moi nhat: "Leader
+    khong duoc gan hoac thay doi business role cua user". KHONG dung
+    Depends(require_admin) o day - ham do (auth_deps.py) that ra cho phep CA
+    Leader (`role not in ("admin", "leader")`), ten gay hieu nham - phai tu
+    kiem tra role == "admin" that su, giong pattern quotes_hard_delete da
+    dung trong quote.py. Leader van dung duoc Presale/Sale/Both NEU duoc
+    Admin gan, va van cau hinh duoc Rule/Mail (2 quyen khac, khong lien
+    quan). Gan vai tro NGHIEP VU bao gia (Presale/Sale/Both/None) cho 1 tai
+    khoan Leader/Member (migration 095) - TACH BIET voi system role
+    (admin/leader/member). Khong tao role he thong moi."""
+    role = str(_caller.get("role") or "").strip().lower()
+    if role != "admin":
+        raise HTTPException(status_code=403, detail="Chỉ Admin mới được gán vai trò nghiệp vụ báo giá")
+    try:
+        email = payload.get("email")
+        quote_business_role = payload.get("quote_business_role")
+        if not email:
+            return BaseResponse(success=False, message="email is required")
+        if quote_business_role is not None and quote_business_role not in ("presale", "sale", "both"):
+            return BaseResponse(success=False, message="quote_business_role phải là presale/sale/both hoặc null")
+        data = update_user_quote_business_role(email, quote_business_role)
+        return BaseResponse(success=True, message="Đã cập nhật vai trò báo giá", data=data)
+    except Exception as e:
+        return BaseResponse(success=False, message=str(e))
+
+
+@router.get("/by-quote-business-role")
+def users_by_quote_business_role(role: str = Query(...), _user: dict = Depends(get_current_user)) -> BaseResponse:
+    """Danh sach nguoi dung du dieu kien lam Presale/Sale phu trach 1 bao
+    gia - dung cho owner-picker trong workspace bao gia (moi nguoi dang
+    nhap goi duoc, khong chi Admin/Leader - day chi la 1 danh sach de chon,
+    khong phai endpoint quan tri)."""
+    try:
+        if role not in ("presale", "sale"):
+            return BaseResponse(success=False, message="role phải là presale hoặc sale")
+        return BaseResponse(success=True, data=list_users_by_quote_business_role(role))
+    except Exception as e:
+        return BaseResponse(success=False, message=str(e))
+
+
 @router.post("/create")
 def users_create(payload: dict, caller: dict = Depends(require_admin_or_leader)) -> BaseResponse:
     """Admin/leader: provision a new login account (app_users row) for someone,
@@ -139,6 +184,27 @@ def users_get_all(user: dict = Depends(get_current_user)) -> BaseResponse:
     try:
         data = get_all_users()
         return BaseResponse(success=True, data=data)
+    except Exception as e:
+        return BaseResponse(success=False, message=str(e))
+
+
+@router.get("/member-options")
+def users_member_options(
+    active: bool = Query(True),
+    include_id: str = Query(""),
+    _user: dict = Depends(get_current_user),
+) -> BaseResponse:
+    """Danh sach nhan su cho cac picker "Người phụ trách" (vi du Nguoi phu
+    trach du an) - CHI tra allowlist DTO (khong email/password/token). Bat ky
+    ai dang nhap cung goi duoc (day la 1 danh sach de chon, khong phai
+    endpoint quan tri). `include_id` (tuy chon, phan cach boi dau phay): ep
+    tra THEM 1 vai id cu the du dang bi vo hieu hoa - dung khi mo form Sua 1
+    project ma nguoi phu trach hien tai da ngung hoat dong, form van phai
+    hien ten nguoi do kem badge "Đã ngưng hoạt động"."""
+    try:
+        include_ids = [i.strip() for i in include_id.split(",") if i.strip()] if include_id else []
+        data = get_member_options(active_only=active, include_ids=include_ids)
+        return BaseResponse(success=True, data={"items": data})
     except Exception as e:
         return BaseResponse(success=False, message=str(e))
 

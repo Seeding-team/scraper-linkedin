@@ -1,18 +1,45 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { MaterialIcon, type MaterialSymbolName } from "@/components/ui";
 import { useAppAuth } from "@/contexts/AppAuthContext";
 import { cn } from "@/lib/utils";
 import { authService } from "@/services/all-platform.service";
 import { pingLiExtension } from "@/lib/li-ext-bridge";
+import { QuoteEmailProviderSettings } from "@/components/all-platform/admin/QuoteEmailProviderSettings";
 
-type Tab = "personal" | "password" | "extensions";
+type Tab = "personal" | "password" | "extensions" | "quote-email";
 type Notice = { type: "success" | "error"; text: string };
+
+const VALID_TABS: Tab[] = ["personal", "password", "extensions", "quote-email"];
 
 export function ProfileContent() {
   const { user, refreshUser, logout } = useAppAuth();
-  const [activeTab, setActiveTab] = useState<Tab>("personal");
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const canManageQuoteEmail = user?.role === "admin" || user?.role === "leader";
+
+  // Tab hien tai dong bo qua query param (?tab=...) - refresh/deep-link van
+  // giu dung tab, KHONG tao route rieng (dung co che tab hien co, khong
+  // dung router thu 2). Member go thang ?tab=quote-email se tu dong ve
+  // 'personal' (khong 404, khong hien config).
+  const requestedTab = searchParams.get("tab");
+  const activeTab: Tab = useMemo(() => {
+    if (requestedTab && (VALID_TABS as string[]).includes(requestedTab)) {
+      if (requestedTab === "quote-email" && !canManageQuoteEmail) return "personal";
+      return requestedTab as Tab;
+    }
+    return "personal";
+  }, [requestedTab, canManageQuoteEmail]);
+
+  function setActiveTab(tab: Tab) {
+    const params = new URLSearchParams(searchParams.toString());
+    if (tab === "personal") params.delete("tab");
+    else params.set("tab", tab);
+    const qs = params.toString();
+    router.replace(`/all-platform/profile${qs ? `?${qs}` : ""}`);
+  }
 
   // Personal state
   const [editName, setEditName] = useState(user?.name || "");
@@ -166,6 +193,7 @@ export function ProfileContent() {
     { key: "personal", label: "Thông tin cá nhân", icon: "person" },
     { key: "password", label: "Đổi mật khẩu", icon: "lock" },
     { key: "extensions", label: "Tiện ích mở rộng", icon: "download" },
+    ...(canManageQuoteEmail ? [{ key: "quote-email" as Tab, label: "Email gửi báo giá", icon: "mail" as MaterialSymbolName }] : []),
   ];
 
   const createdAtLabel = user?.created_at
@@ -600,6 +628,14 @@ export function ProfileContent() {
               </ul>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* TAB: Email gửi báo giá (chỉ Admin/Leader - đã lọc khỏi TABS và
+          activeTab ở trên cho Member, đây là lớp phòng thủ thứ 2) */}
+      {activeTab === "quote-email" && canManageQuoteEmail && (
+        <div className="rounded-xl border border-outline-variant bg-surface p-6 shadow-sm">
+          <QuoteEmailProviderSettings />
         </div>
       )}
     </div>

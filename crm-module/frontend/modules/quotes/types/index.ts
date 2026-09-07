@@ -153,6 +153,16 @@ export interface QuoteItem {
   unitPriceUsd?: number;
   exchangeRate?: number;
   unitPriceVnd?: number;
+  /** Gia von/markup noi bo (migration 086) - null = chua nhap (bao gia cu
+   * hoac chua ai dien), KHONG bia du lieu. costTotal = quantity*costPrice,
+   * tinh o backend, null neu costPrice null. */
+  costPrice?: number | null;
+  markupPercent?: number | null;
+  costTotal?: number | null;
+  /** true = hạng mục này không có giá vốn để nhập (migration 090) - cho phép
+   * bỏ qua yêu cầu "bắt buộc giá vốn" khi bàn giao sang xử lý giá, KHÁC với
+   * costPrice=null mặc định (= "chưa nhập", vẫn bị chặn bàn giao). */
+  costNotApplicable?: boolean;
   [key: string]: unknown;
 }
 
@@ -244,6 +254,94 @@ export interface Quote {
   versionChainId?: string;
   versionNumber?: number;
   parentQuoteId?: string;
+  /** Phase 2 "Workspace xu ly bao gia" (migration 085) - buoc xu ly noi bo,
+   * chi y nghia khi status='draft' (xem QuoteProcessingStage). Nguoi phu
+   * trach ky thuat/bao gia co the khac createdById. */
+  processingStage?: QuoteProcessingStage;
+  technicalOwnerId?: string;
+  quoteOwnerId?: string;
+  /** Gia von/loi nhuan (migration 086) - tinh THAT o backend tu cost_price
+   * tung dong (khong tin so tong tu FE). hasCostData=false khi CHUA co dong
+   * nao nhap cost_price - UI phai hien "Chua co du lieu gia von", KHONG bia
+   * so 0. netRevenue = totalAmount - vatAmount (doanh thu thuan, sau chiet
+   * khau, TRUOC VAT - khac totalAmount da gom VAT). */
+  hasCostData?: boolean;
+  costTotal?: number | null;
+  netRevenue?: number | null;
+  grossProfit?: number | null;
+  grossMarginPercent?: number | null;
+  /** Quyen DOC (khac hoan toan hasCostData - "Không có quyền xem" != "Chưa
+   * có dữ liệu", UI phai phan biet 2 truong hop nay). false = backend da CHU
+   * DONG ha costTotal/hasCostData/item.costPrice ve null/false du gia tri
+   * that co ton tai, vi user hien tai KHONG co quyen xem gia von (khong phai
+   * technical_owner/quote_owner/admin cua quote nay). */
+  costViewAllowed?: boolean;
+  /** Tuong tu costViewAllowed nhung cho markupPercent (tung dong item) - chi
+   * admin/quote_owner (Sale duoc gan) moi co, Presale (chi la technical_owner)
+   * KHONG duoc xem markupPercent du co the xem duoc costPrice. */
+  pricingViewAllowed?: boolean;
+  /** Tuong tu costViewAllowed nhung cho grossProfit/grossMarginPercent -
+   * false = khong co quyen xem loi nhuan (chi admin/quote_owner moi co). */
+  profitabilityViewAllowed?: boolean;
+  /** Phase 1/3 lifecycle that (migration 087) - soft-delete/cancel/publish/
+   * send/request-changes. Tat ca deu co the null (chua xay ra). */
+  deletedAt?: string | null;
+  deletedById?: string | null;
+  cancellationReason?: string | null;
+  cancelledAt?: string | null;
+  cancelledById?: string | null;
+  publishedAt?: string | null;
+  publishedById?: string | null;
+  sentAt?: string | null;
+  sentById?: string | null;
+  requestedChangesTargetStage?: 'technical' | 'pricing' | null;
+  requestedChangesReason?: string | null;
+  requestedChangesAt?: string | null;
+  requestedChangesById?: string | null;
+  /** Du an that (migration 097) - null = bao gia doc lap, khong gan Du an
+   * nao (hop le, tuong thich du lieu cu). */
+  projectId?: string | null;
+  /** SLA XU LY NOI BO that (migration 097) - KHAC HOAN TOAN validUntil
+   * (hieu luc bao gia VOI KHACH HANG). slaStartedAt set 1 lan luc "Gui yeu
+   * cau xu ly" (request->technical), slaDueAt nguoi tao chon, completedAt
+   * CHI set khi gui email thanh cong that. */
+  slaStartedAt?: string | null;
+  slaDueAt?: string | null;
+  completedAt?: string | null;
+  /** Toan bo field duoi day CHI CO tren ket qua tu getQuotesByPhase()
+   * (backend gom theo version_chain_id + join project/owner cung luc, xem
+   * list_quotes_by_phase()) - khong co tren getQuote()/getQuotes() thuong. */
+  phase?: QuotePhase;
+  versionCount?: number;
+  currentVersionNumber?: number;
+  /** Gia khach TRUOC VAT, SAU chiet khau - alias cua netRevenue, dat ten
+   * rieng cho dung wording cot "GIÁ KHÁCH" trong Quote Center. */
+  customerPriceBeforeVat?: number | null;
+  project?: { id: string; code: string | null; name: string | null; status: string | null } | null;
+  technicalOwner?: { id: string; name: string | null } | null;
+  quoteOwner?: { id: string; name: string | null } | null;
+}
+
+/** 5 bucket THAT cua Quote Center (Trung tam bao gia) - suy tu
+ * processing_stage/status/sent_at THAT o backend (_derive_quote_phase),
+ * KHONG phai enum rieng luu trong DB. 'admin_review' la buoc cho Admin duyet
+ * (khong phai "CEO review" - he thong khong co role CEO rieng). */
+export type QuotePhase = 'presale' | 'sale_markup' | 'admin_review' | 'ready_to_send' | 'sent';
+
+export interface QuotePhaseCounts extends Record<QuotePhase, number> {
+  all: number;
+}
+
+export interface QuotesByPhaseResult {
+  items: Quote[];
+  counts: QuotePhaseCounts;
+  /** Section 7 - KPI SLA Quote Center. Dem TREN CA TAP DA LOC (bam theo
+   * Customer/Project/Owner/Team/Mine/Period hien tai) TRUOC pagination -
+   * KHONG phai dem tren `items` (chi 1 trang). */
+  slaCounts: { overdue: number; dueSoon: number };
+  page: number;
+  pageSize: number;
+  total: number;
 }
 
 export interface QuoteVersionResult {
@@ -252,6 +350,44 @@ export interface QuoteVersionResult {
   sourceQuoteId?: string;
   sourceVersionNumber?: number;
   redirectedFromClickedQuote: boolean;
+}
+
+/** 4 buoc that (khong phai Presale/Sale/CEO gia) - xem quote_set_processing_stage
+ * RPC (migration 085): chi tien, khong lui, chi doi duoc khi status='draft'. */
+export type QuoteProcessingStage =
+  | 'request'
+  | 'technical'
+  | 'pricing'
+  | 'review'
+  | 'ready_to_publish'
+  | 'published';
+
+export interface QuoteHandoffChecklist {
+  quoteId: string;
+  scopeConfirmed: boolean;
+  scopeNote?: string | null;
+  costConfirmed: boolean;
+  costNote?: string | null;
+  timelineConfirmed: boolean;
+  timelineNote?: string | null;
+  assumptionConfirmed: boolean;
+  assumptionNote?: string | null;
+  handoffNote?: string | null;
+  handedOffAt?: string | null;
+  handedOffById?: string | null;
+  updatedAt?: string | null;
+  updatedById?: string | null;
+}
+
+export type UpdateQuoteHandoffChecklistInput = Omit<QuoteHandoffChecklist, 'quoteId' | 'handedOffAt' | 'handedOffById' | 'updatedAt' | 'updatedById'>;
+
+export interface QuoteActivityLogEntry {
+  id: string;
+  quoteId: string;
+  actorId?: string;
+  action: string;
+  changes?: Record<string, unknown> | null;
+  createdAt: string;
 }
 
 export interface QuoteReference {
@@ -299,10 +435,14 @@ export interface CreateQuoteInput {
   status?: QuoteStatus;
   data: QuoteData;
   items?: QuoteItem[];
+  projectId?: string | null;
+  slaDueAt?: string | null;
 }
 
 export interface UpdateQuoteInput {
   data?: QuoteData;
   items?: QuoteItem[];
   issuerCompanyId?: string;
+  projectId?: string | null;
+  slaDueAt?: string | null;
 }

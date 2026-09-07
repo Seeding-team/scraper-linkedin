@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import type { ComponentType, SVGProps } from 'react';
 import { createPortal } from 'react-dom';
 import { MoreVertical } from './icons';
 
@@ -10,6 +11,20 @@ export type ActionMenuItem = {
   onSelect: () => void;
   danger?: boolean;
   disabled?: boolean;
+  /** Tooltip khi item bị disabled (vd lý do backend chưa hỗ trợ) — hiện qua
+   * thuộc tính title chuẩn của trình duyệt. */
+  title?: string;
+  /** Icon hệ thống (từ ./icons) hiện bên trái label — không dùng emoji/ký tự. */
+  icon?: ComponentType<SVGProps<SVGSVGElement>>;
+  /** Nhãn nhỏ hiện bên phải item (vd "V2" cho "Tạo phiên bản mới", số lượng
+   * version cho "Lịch sử phiên bản") — không phải hành động, chỉ hiển thị. */
+  trailing?: string;
+  /** Số thứ tự nhóm — item khác `group` với item ngay trước sẽ tự chèn 1
+   * đường phân cách (separator) ở giữa, giống menu tham khảo (HTML) chia
+   * "Mở/Sửa/Duyệt" | "Tạo phiên bản/Preview" | "Copy link/Gửi email" |
+   * "Lịch sử version" thành các cụm riêng. Không cần khai báo separator
+   * riêng — chỉ cần đặt đúng số group. */
+  group?: number;
 };
 
 /**
@@ -127,22 +142,32 @@ export function ActionMenu({ items, label = 'Thao tác khác' }: { items: Action
               role="menu"
               style={{ top: position.top, right: position.right }}
             >
-              {items.map(item => (
-                <button
-                  key={item.key}
-                  type="button"
-                  role="menuitem"
-                  disabled={item.disabled}
-                  className={`crm-action-menu-item ${item.danger ? 'crm-action-menu-item--danger' : ''}`}
-                  onClick={event => {
-                    event.stopPropagation();
-                    setOpen(false);
-                    item.onSelect();
-                  }}
-                >
-                  {item.label}
-                </button>
-              ))}
+              {items.map((item, index) => {
+                const prev = items[index - 1];
+                const needsSeparator = index > 0 && prev?.group !== undefined && item.group !== undefined && prev.group !== item.group;
+                const Icon = item.icon;
+                return (
+                  <div key={item.key}>
+                    {needsSeparator ? <div className="crm-action-menu-separator" role="separator" /> : null}
+                    <button
+                      type="button"
+                      role="menuitem"
+                      disabled={item.disabled}
+                      title={item.title}
+                      className={`crm-action-menu-item ${item.danger ? 'crm-action-menu-item--danger' : ''}`}
+                      onClick={event => {
+                        event.stopPropagation();
+                        setOpen(false);
+                        item.onSelect();
+                      }}
+                    >
+                      {Icon ? <Icon className="crm-action-menu-item-icon" /> : null}
+                      <span className="crm-action-menu-item-label">{item.label}</span>
+                      {item.trailing ? <span className="crm-action-menu-item-trailing">{item.trailing}</span> : null}
+                    </button>
+                  </div>
+                );
+              })}
             </div>,
             document.body,
           )

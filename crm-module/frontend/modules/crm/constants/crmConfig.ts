@@ -16,12 +16,35 @@ export function canWriteDeal(user: AppUser | null | undefined, deal: Deal | null
 
 /** Mirror của crm_permission_service.can_approve_quote (backend) - chỉ dùng để
  * ẩn/hiện nút "Duyệt báo giá" cho gọn UI, backend vẫn là nơi chặn thật.
- * Admin luôn được duyệt. Leader mặc định được duyệt qua cờ can_approve_quotes
- * (tự bật khi thăng role/backfill sẵn cho leader cũ) — admin vẫn tắt được cho
- * từng leader cụ thể qua trang Quản lý thành viên nếu cần. */
+ * Phase 1 "Nâng cấp Trung tâm báo giá" (đã xác nhận rõ ràng): Admin/Leader/
+ * Member đều full quyền thao tác báo giá (tạo, sửa nháp, duyệt, tạo phiên
+ * bản) — không còn giới hạn theo cờ `can_approve_quotes`/role riêng nữa. CHỈ
+ * áp dụng cho quyền BÁO GIÁ — không dùng cho quyền Deal/Pipeline
+ * (`canWriteDeal` giữ nguyên, không liên quan). */
 export function canApproveQuote(user: AppUser | null | undefined): boolean {
+  return Boolean(user);
+}
+
+type QuoteOwnerShape = { technicalOwnerId?: string | null; quoteOwnerId?: string | null } | null | undefined;
+
+/** Mirror cua crm_permission_service.can_edit_technical_quote (backend) - CHI
+ * dung de khoa/mo cell Giá vốn tren FE cho dung UX (bang hang muc thong nhat,
+ * Section 4). Backend van la lop chan THAT (_check_item_field_level_permission),
+ * ham nay khong bao gio la lop bao mat. */
+export function canEditQuoteCost(user: AppUser | null | undefined, quote: QuoteOwnerShape): boolean {
   if (!user) return false;
-  return user.role === 'admin' || Boolean(user.can_approve_quotes);
+  if (user.role === 'admin' || user.role === 'leader' || user.is_sale) return true;
+  if (!quote) return false;
+  return quote.technicalOwnerId === user.id;
+}
+
+/** Mirror cua crm_permission_service.can_edit_quote_pricing (backend) - CHI
+ * dung de khoa/mo cell Markup/Giá khách tren FE. */
+export function canEditQuotePricingFields(user: AppUser | null | undefined, quote: QuoteOwnerShape): boolean {
+  if (!user) return false;
+  if (user.role === 'admin' || user.role === 'leader' || user.is_sale) return true;
+  if (!quote) return false;
+  return quote.quoteOwnerId === user.id;
 }
 
 export const PIPELINE_COLUMNS: DealStage[] = [

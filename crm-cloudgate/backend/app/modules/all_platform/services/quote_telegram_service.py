@@ -92,7 +92,15 @@ def _render_quote_pdf(public_url: str) -> bytes:
             except Exception:
                 pass
             page.wait_for_timeout(500)
-            pdf_bytes = page.pdf(format="A4", print_background=True)
+            # prefer_css_page_size=True: de trang tu chon A4 doc/ngang theo
+            # @page CSS cua chinh no (quotes.css tu doi ngang khi bang nhieu
+            # cot, xem quotes.css) - thieu co nay Playwright LUON ep A4 doc
+            # (tham so format= o duoi) bat ke @page CSS noi gi, PDF gui qua
+            # Telegram se khong bao gio ra ngang du trinh duyet nguoi dung in
+            # tay dung. format="A4" giu lai lam fallback neu trang khong co
+            # @page nao (khong xay ra trong thuc te - quotes.css luon co 1
+            # @page mac dinh).
+            pdf_bytes = page.pdf(format="A4", print_background=True, prefer_css_page_size=True)
             return pdf_bytes
         finally:
             browser.close()

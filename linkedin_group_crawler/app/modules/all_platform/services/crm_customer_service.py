@@ -499,15 +499,23 @@ def create_customer_with_deal(payload: dict[str, Any], user: dict[str, Any]) -> 
             raise DuplicateCustomerError(matches)
 
     supabase = get_supabase_client()
-    res = execute_supabase_query(
-        lambda: supabase.rpc("crm_create_customer_with_deal", {
-            "p_customer": customer,
-            "p_deal": deal,
-            "p_actor_id": actor_id,
-            "p_idempotency_key": idempotency_key,
-            "p_update_customer": update_customer_profile,
-        }).execute()
-    )
+    try:
+        res = execute_supabase_query(
+            lambda: supabase.rpc("crm_create_customer_with_deal", {
+                "p_customer": customer,
+                "p_deal": deal,
+                "p_actor_id": actor_id,
+                "p_idempotency_key": idempotency_key,
+                "p_update_customer": update_customer_profile,
+            }).execute()
+        )
+    except Exception as exc:
+        # migration 101 - RPC tu choi project_id khac Customer bang RAISE
+        # EXCEPTION 'project_customer_mismatch' - dich sang thong bao nguoi
+        # dung thay vi de nguyen loi Postgres tho lo ra ngoai.
+        if "project_customer_mismatch" in str(exc):
+            raise ValueError("Dự án đã chọn không thuộc đúng khách hàng này.") from exc
+        raise
     data = res.data or {}
     data["partial"] = partial
     if partial_message:

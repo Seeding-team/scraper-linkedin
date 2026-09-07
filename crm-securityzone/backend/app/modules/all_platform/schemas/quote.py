@@ -76,6 +76,16 @@ class QuoteItemInput(BaseModel):
     unit_price_usd: Optional[float] = None
     exchange_rate: Optional[float] = None
     unit_price_vnd: Optional[float] = None
+    # Gia von/markup noi bo (migration 086) - None = chua nhap (bao gia cu
+    # hoac chua ai dien), KHONG bia du lieu. RPC tu ep markup_percent=NULL neu
+    # cost_price rong (xem quote_update, migration 086).
+    cost_price: Optional[float] = Field(default=None, ge=0)
+    markup_percent: Optional[float] = None
+    # true = hang muc nay khong co gia von de nhap (vd phi ho tro, dich vu
+    # thu ho) - cho phep bo qua yeu cau "bat buoc gia von" khi ban giao sang
+    # xu ly gia (migration 090), KHAC voi cost_price=None mac dinh (= "chua
+    # nhap", VAN bi chan ban giao).
+    cost_not_applicable: bool = False
 
 
 class QuoteCreateRequest(BaseModel):
@@ -84,6 +94,9 @@ class QuoteCreateRequest(BaseModel):
     issuer_company_id: Optional[str] = None
     data: dict[str, Any] = {}
     items: list[QuoteItemInput] = []
+    # Du an + SLA that (migration 097) - ca 2 deu tuy chon luc tao.
+    project_id: Optional[str] = None
+    sla_due_at: Optional[str] = None
 
 
 class QuoteUpdateRequest(BaseModel):
@@ -94,3 +107,69 @@ class QuoteUpdateRequest(BaseModel):
     data: Optional[dict[str, Any]] = None
     items: Optional[list[QuoteItemInput]] = None
     issuer_company_id: Optional[str] = None
+    project_id: Optional[str] = None
+    sla_due_at: Optional[str] = None
+
+
+class QuoteStageUpdateRequest(BaseModel):
+    """Phase 2 workspace - chuyen buoc xu ly noi bo (chi tien, xem
+    quote_set_processing_stage RPC, migration 085)."""
+
+    stage: str
+
+
+class QuoteOwnersUpdateRequest(BaseModel):
+    """Gan nguoi phu trach ky thuat/bao gia - field khong duoc gui (None +
+    khong nam trong model_fields_set) nghia la "khong doi", con gui null that
+    su nghia la "bo gan" (xem router: dung model_fields_set de phan biet)."""
+
+    technical_owner_id: Optional[str] = None
+    quote_owner_id: Optional[str] = None
+
+
+class QuoteVersionReasonRequest(BaseModel):
+    reason: str
+
+
+class QuoteCancelRequest(BaseModel):
+    reason: str
+
+
+class QuoteSoftDeleteRequest(BaseModel):
+    reason: Optional[str] = None
+
+
+class QuoteHardDeleteRequest(BaseModel):
+    """Xac nhan hard-delete - client PHAI gui lai quote_number that (backend
+    doi chieu voi ban ghi that truoc khi xoa, khong chi tin ID)."""
+
+    quote_number: str
+    reason: str
+    request_id: Optional[str] = None
+
+
+class QuoteRequestChangesRequest(BaseModel):
+    target_stage: str
+    reason: str
+
+
+class QuoteApproveRequest(BaseModel):
+    """Section 5 - Admin duyet ngoai le theo version. `exception_reason` CHI
+    bat buoc (backend tu kiem tra, khong tin FE) khi evaluation ruleset gan
+    nhat cua quote nay result != 'pass' (fail/insufficient_data/chua danh
+    gia). Duyet binh thuong (rule pass, hoac chua cau hinh rule engine) thi
+    field nay bo qua du co gui hay khong."""
+
+    exception_reason: Optional[str] = None
+
+
+class QuoteHandoffChecklistUpdateRequest(BaseModel):
+    scope_confirmed: bool = False
+    scope_note: Optional[str] = None
+    cost_confirmed: bool = False
+    cost_note: Optional[str] = None
+    timeline_confirmed: bool = False
+    timeline_note: Optional[str] = None
+    assumption_confirmed: bool = False
+    assumption_note: Optional[str] = None
+    handoff_note: Optional[str] = None

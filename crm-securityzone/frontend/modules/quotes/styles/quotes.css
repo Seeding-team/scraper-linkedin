@@ -1043,6 +1043,17 @@ select.quote-compact-vat:hover {
   color: #667085;
 }
 
+.quote-print-hint {
+  max-width: 210mm;
+  margin: 0 auto 12px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: #fffbeb;
+  color: #92400e;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
 .quote-snapshot-hint {
   margin: 4px 0 0;
   padding: 8px 12px;
@@ -1904,6 +1915,16 @@ select.quote-compact-vat:hover {
   padding-bottom: 1rem;
 }
 
+/* Bang gia nhieu cot (>=7 cot, xem LANDSCAPE_PRINT_COLUMN_THRESHOLD trong
+ * QuoteDocumentRenderer.tsx) - truoc day CHI ban in/PDF chuyen A4 ngang, man
+ * hinh xem van giu 210mm (portrait) nen cac cot bi ep qua hep, chong chit/de
+ * len nhau khi xem THAT (nguoi dung bao cao qua screenshot). Ap dung DUNG
+ * class .quote-sheet--print-landscape (component da tu gan khi >=7 cot) cho
+ * CA man hinh xem, khong chi luc in. */
+.quote-sheet--print-landscape {
+  width: min(297mm, 100%);
+}
+
 .quote-sheet--standard {
   position: relative;
   overflow: hidden;
@@ -2498,13 +2519,45 @@ select.quote-compact-vat:hover {
   .quote-panel-head,
   .sheet-company,
   .sheet-parties,
-  .sheet-signatures,
   .villa-header,
   .villa-split,
   .villa-footer {
     flex-direction: column;
     align-items: stretch;
   }
+
+  /* .sheet-signatures ("Đại diện công ty" / "Đại diện khách hàng") CO Y giu
+   * lai 2 cot song song ngang KE CA man hinh hep (khong theo chung mobile
+   * stack o tren) - theo yeu cau nguoi dung "mặc định 2 chỗ này song song
+   * ngang", khac voi cac khoi con lai (sheet-company/sheet-parties) van stack
+   * doc khi chat. flex:1 that thap (0 0 auto min 45%) de khong bi bop qua
+   * nho tren man hinh rat hep, van giu 2 cot canh nhau. */
+  .sheet-signatures {
+    flex-direction: row;
+    flex-wrap: nowrap;
+    gap: 1rem;
+  }
+
+  .sheet-signatures > div {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+}
+
+/* CSS Paged Media: trang A4 mac dinh in DOC cho MOI trang khac trong app.
+ * Rieng bao gia: KHONG dung "named page" (thuoc tinh `page` + @page ten
+ * rieng) de doi ngang/doc nua - da test that va xac nhan Chromium bi 1 loi
+ * that: khi mot phan tu doi named page giua tai lieu, cac khoi cuoi cung co
+ * overflow (vd .sheet-total-block/.sheet-note) bi CAT MAT thay vi sang trang
+ * moi, du da bo het overflow:hidden lien quan - loi nay lap lai y het du thu
+ * nhieu huong sua khac nhau, nen ket luan la han che/bug that su cua
+ * Chromium voi named page, khong phai loi CSS cua repo. Doi sang cach khac:
+ * QuoteDocumentRenderer.tsx tu chen 1 <style>@page{size:...}</style> ngay
+ * trong JSX khi can in ngang (xem prop landscape trong component) - CHI 1
+ * @page DUY NHAT hoat dong tai 1 thoi diem, tranh dung named page. */
+@page {
+  size: A4 portrait;
+  margin: 12mm 10mm;
 }
 
 @media print {
@@ -2515,6 +2568,33 @@ select.quote-compact-vat:hover {
     background: #ffffff !important;
     -webkit-print-color-adjust: exact;
     print-color-adjust: exact;
+  }
+
+  /* Luoi an toan (bulletproof "print only this element") - AN TOAN BO cho
+   * MOI link mo bao gia (trang admin /all-platform/quotes/[id] LAN trang
+   * cong khai), khong phu thuoc vao danh sach loai tru theo ten class/
+   * data-slot cu the (vd sidebar) - neu sau nay app-shell doi cau truc/them
+   * element moi ma khong cap nhat danh sach loai tru, ban in van KHONG bao
+   * gio bi lot them noi dung ngoai y muon vao. Dung visibility (KE THUA,
+   * hoat dong bat ke .quote-print-root/.quote-public-page nam sau bao nhieu
+   * lop the layout/sidebar cua app-shell) - KHONG dung display:none (chi an
+   * dung 1 lop con truc tiep cua body, sai neu target nam sau nhieu lop).
+   * Van GIU nguyen cac rule loai tru cu the (sidebar data-slot...) ben duoi,
+   * khong xoa - phong khi 1 trinh duyet khong ho tro dung nhu ky vong. */
+  body * {
+    visibility: hidden;
+  }
+  .quote-print-root,
+  .quote-print-root *,
+  .quote-public-page,
+  .quote-public-page * {
+    visibility: visible;
+  }
+  .quote-print-root {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
   }
 
   /* Sidebar + header sticky cua app-shell (AllPlatformShell.tsx) chua tung
@@ -2543,14 +2623,54 @@ select.quote-compact-vat:hover {
     background: #ffffff !important;
   }
 
+  /* width:100% (KHONG phai "210mm" co dinh) - de .quote-sheet tu dien dung
+   * KHUNG NOI DUNG that su cua trang (@page da tru san margin 12mm/10mm o
+   * dau file), khong quan tam @page dang la portrait hay landscape. Dat
+   * width co dinh bang dung kich thuoc GIAY (vd 210mm) se TRAN ra ngoai vung
+   * in duoc vi @page margin da an bot 2 canh - bug that phat hien qua QA
+   * thuc te: cot cuoi cung (Thanh tien) bi cat mat o mep phai moi lan doi
+   * sang A4 ngang, vi .quote-sheet doi width thanh 297mm (dung bang kho giay)
+   * trong khi vung in that su chi con 297-24=273mm sau khi tru margin. */
   .quote-sheet {
-    width: 210mm !important;
-    min-height: 297mm !important;
+    width: 100% !important;
+    min-height: auto !important;
     max-width: none !important;
     margin: 0 auto !important;
     border: 0 !important;
     box-shadow: none !important;
+    box-sizing: border-box !important;
   }
+
+  /* .quote-sheet--standard co san "overflow:hidden" (dung cho man hinh, che
+   * goc bo tron/pseudo-element trang tri) - nghi ngo va xac nhan qua QA
+   * thuc te la nguyen nhan MAT HAN noi dung cuoi tai lieu khi in nhieu trang
+   * (khoi tong tien/ghi chu bi cat cut giua chung, KHONG chuyen sang trang
+   * moi) thay vi chi la loi ngat trang xau. Bo overflow rieng trong ban in -
+   * khong con pseudo-element/bo tron can che luc in (da bo border/shadow o
+   * rule .quote-sheet ngay tren). */
+  .quote-sheet--standard {
+    overflow: visible !important;
+  }
+
+  /* Thu pham THAT: .sheet-total-block cung co overflow:hidden (bo goc man
+   * hinh). Neu khoi nay bat dau gan sat day 1 trang, phan con lai (Giam gia/
+   * VAT/Tong thanh toan) can trang MOI thi bi CAT HAN thay vi sang trang -
+   * overflow:hidden khien Chromium coi phan tran la "an di", khong con paginate
+   * duoc nua (khac voi ngat trang binh thuong chi day nguyen khoi sang trang
+   * sau). Xac nhan qua QA thuc te: PDF dung dung o dong "TONG CONG CHUA BAO
+   * GOM THUE GTGT", mat het Giam gia/VAT/TONG THANH TOAN/dieu khoan phia sau. */
+  .sheet-total-block,
+  .sheet-note {
+    overflow: visible !important;
+  }
+
+  /* Huong giay (doc/ngang) gio do 1 the <style>@page{size:...}</style> chen
+   * dong ngay trong QuoteDocumentRenderer.tsx quyet dinh (xem prop landscape),
+   * KHONG con dung named page o day nua (xem giai thich o dau file, muc
+   * @page). .quote-sheet--print-landscape/.quote-document-renderer--print-
+   * landscape gio chi con la class DANH DAU (khong co rule CSS nao dung
+   * nua), giu lai trong component de code/test kiem tra "dang in ngang" qua
+   * class name neu can, khong can xoa className. */
 
   /* Ban in/PDF: bo het scroll ngang (khong scroll duoc khi in, chi bi cat
    * mat/hien thanh cuon vo nghia trong ban in that) - table phai TU CO lai
@@ -2645,107 +2765,62 @@ select.quote-compact-vat:hover {
     page-break-inside: avoid;
   }
 
-  /* Bang qua nhieu cot (>=8, xem STACKED_PRINT_COLUMN_THRESHOLD trong
-   * QuoteDocumentRenderer.tsx) khong the nen vua kho A4 du da nong cot Ten
-   * dich vu/Mo ta - cac cot so con lai (DVT/SL/Don gia/Giam gia/VAT/Thanh
-   * tien...) bi ep qua hep, chu chong chit/tran mep (QA thuc te tren mau 9
-   * cot "Bang gia chuan"). Chuyen sang dang THE xep doc moi dong (nhan bên
-   * trai, gia tri ben phai qua data-label + content:attr - cung ky thuat da
-   * dung on cho bang Lich su bao gia o breakpoint mobile, xem
-   * .quote-history-table o tren) - CHI trong ban in, man hinh van la bang
-   * cuon ngang binh thuong. Cac selector ben duoi phai lap lai dung vi tri
-   * nth-child da dat width% o tren va reset ve 100% - vi cung la !important,
-   * selector lap lai (dung specificity, dung sau trong file) moi thang duoc
-   * theo thu tu khai bao, khong the chi dua vao ".sheet-items-table--print-
-   * stacked td" chung chung (specificity thap hon nth-child cu). */
-  .sheet-items-table--print-stacked thead {
-    display: none;
+  /* QA thuc te (bao gia 20 dong, xuat PDF landscape 8 trang): khoi tong tien/
+   * ghi chu/chu ky bi ngat GIUA chung (vd 2 o "Dai dien cong ty"/"Dai dien
+   * khach hang" cua .sheet-signatures nam tach 2 trang khac nhau) khi vua
+   * khop sat cuoi 1 trang - khong mat noi dung (khac han bug overflow:hidden
+   * da fix o tren) nhung nhin roi rac, khong chuyen nghiep. Cac khoi nay deu
+   * ngan, ep khong ngat GIUA khoi la an toan (khong giong nhu bang hang muc
+   * dai, khong the ep "khong ngat" ca bang duoc). */
+  .sheet-total-block,
+  .sheet-note,
+  .sheet-signatures {
+    page-break-inside: avoid;
   }
 
-  .sheet-items-table--print-stacked,
-  .sheet-items-table--print-stacked tbody,
-  .sheet-items-table--print-stacked tr {
-    display: block;
-    width: 100% !important;
+  /* Bang qua nhieu cot (>=7, xem LANDSCAPE_PRINT_COLUMN_THRESHOLD trong
+   * QuoteDocumentRenderer.tsx) da duoc chuyen sang kho A4 NGANG (297mm, xem
+   * .quote-sheet--print-landscape o tren) - chia lai % cot RONG RAI HON cho
+   * cac cot so (SL/Don gia/Giam gia/VAT/Thanh tien) vi day la 5 cot nguoi
+   * dung can doc chinh xac nhat, khong duoc chong chit hay cat. Van la
+   * <table> that (KHONG con dang the xep doc/thu nho nhu truoc - thay theo
+   * yeu cau ro rang "chia lai do rong cot hop ly", khong dung cach nen).
+   * Tong 9 cot: STT 4 + Ten dich vu 12 + Mo ta 20 + 5 cot giua 8 moi cot (40)
+   * + Thanh tien 24 = 100%. Cac selector nay dat SAU va dung THEM 1 class
+   * (".sheet-items-table--print-landscape") nen specificity cao hon nth-child
+   * o tren, ghi de dung du lieu portrait mac dinh.
+   * QUAN TRONG: KHONG ep white-space:nowrap len header/cot - header dai nhu
+   * "GIAM GIA (%)" bi nowrap se TRAN VE PHIA CHU KE BEN (bang van giu dung do
+   * rong cot theo grid, nhung chu khong bi cat/wrap se ve de len o ben canh -
+   * chong chit chu, dung y het bug da gap truoc do voi cot Mo ta). Header van
+   * duoc phep xuong dong (rule chung .sheet-items-table th o tren). */
+  .sheet-items-table--print-landscape th:first-child,
+  .sheet-items-table--print-landscape td:first-child {
+    width: 4% !important;
   }
 
-  .sheet-items-table--print-stacked tr {
-    border: 1px solid #e5e7eb;
-    border-radius: 0.4rem;
-    padding: 0.4rem 0.5rem;
-    margin-bottom: 0.4rem;
-    /* QA thuc te: giu page-break-inside:avoid (rule chung o tren, ap dung
-     * cho ca 2 dang bang) tren <tr> da bi doi thanh display:block lam
-     * Chromium print-to-PDF TU Y CAT MAT toan bo noi dung sau 1 diem nao do
-     * (khong chi la ngat trang xau - mat han du lieu, xac nhan qua DOM van
-     * co du 14 dong nhung PDF xuat ra chi con 13 dong dau, thieu ca khoi
-     * tong tien/ghi chu phia sau). Rieng dang the (khong con la <tr> table
-     * that su nua) phai tra ve auto de tranh bug nay - chap nhan 1 the co
-     * the bi ngat doi giua 2 trang thay vi mat trang hoan toan. */
-    page-break-inside: auto;
+  .sheet-items-table--print-landscape th:nth-child(2),
+  .sheet-items-table--print-landscape td:nth-child(2) {
+    width: 12% !important;
   }
 
-  .sheet-items-table--print-stacked th:nth-child(2),
-  .sheet-items-table--print-stacked td:nth-child(2),
-  .sheet-items-table--print-stacked th:nth-child(3),
-  .sheet-items-table--print-stacked td:nth-child(3),
-  .sheet-items-table--print-stacked th:first-child,
-  .sheet-items-table--print-stacked td:first-child,
-  .sheet-items-table--print-stacked th:last-child,
-  .sheet-items-table--print-stacked td:last-child,
-  .sheet-items-table--print-stacked td {
-    display: flex;
-    width: 100% !important;
-    justify-content: space-between;
-    align-items: baseline;
-    gap: 0.5rem;
-    border-bottom: 0 !important;
-    padding: 0.12rem 0 !important;
-    text-align: right;
+  .sheet-items-table--print-landscape th:nth-child(3),
+  .sheet-items-table--print-landscape td:nth-child(3) {
+    width: 20% !important;
   }
 
-  .sheet-items-table--print-stacked td[data-label]::before {
-    content: attr(data-label);
-    flex-shrink: 0;
-    max-width: 45%;
-    color: #64748b;
-    font-size: 0.6rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    text-align: left;
-    white-space: normal;
+  .sheet-items-table--print-landscape th:last-child,
+  .sheet-items-table--print-landscape td:last-child {
+    width: 24% !important;
   }
 
-  /* Cot 1 (STT) + cot 2 (Ten dich vu) lam tieu de the, KHONG hien nhan phia
-   * truoc (STT/Ten dich vu da qua ro nghia, khong can nhan lap lai). */
-  .sheet-items-table--print-stacked td:first-child,
-  .sheet-items-table--print-stacked td:nth-child(2) {
-    justify-content: flex-start;
-    text-align: left;
-    font-weight: 700;
-  }
-
-  .sheet-items-table--print-stacked td:first-child::before,
-  .sheet-items-table--print-stacked td:nth-child(2)::before {
-    content: none;
-  }
-
-  .sheet-items-table--print-stacked td:first-child {
-    color: #64748b;
-    font-weight: 400;
-  }
-
-  /* "Mo ta" (cot 3) la doan van dai nhat trong the - nhan+gia tri nam chung
-   * 1 dong ngang hang cac cot so khac doc bi gua (van ban bi ep canh phai).
-   * Rieng cot nay: nhan tren, doan van duoi, canh trai nhu van ban thuong. */
-  .sheet-items-table--print-stacked td:nth-child(3) {
-    flex-direction: column;
-    align-items: flex-start;
-    text-align: left;
-    gap: 0.15rem;
-  }
-
-  .sheet-items-table--print-stacked td:nth-child(3)::before {
-    max-width: 100%;
+  /* 5 cot con lai (DVT/SL/Don gia/Giam gia/VAT) chia deu phan con lai
+   * (100-4-12-20-24=40% / 5 = 8% moi cot) qua table-layout:fixed tu nhien
+   * (khong ghi width rieng tung cot vi thu tu/so luong co the khac nhau giua
+   * cac mau bao gia - chi ep 3 cot dau + cot cuoi la du, cot giua tu gian). */
+  .sheet-items-table--print-landscape th:not(:first-child):not(:nth-child(2)):not(:nth-child(3)):not(:last-child),
+  .sheet-items-table--print-landscape td:not(:first-child):not(:nth-child(2)):not(:nth-child(3)):not(:last-child) {
+    width: auto !important;
+    text-align: right !important;
   }
 }

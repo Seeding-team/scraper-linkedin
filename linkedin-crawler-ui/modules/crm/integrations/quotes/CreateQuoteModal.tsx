@@ -543,7 +543,10 @@ export function CreateQuoteModal({
 
   return (
     <div className="crm-modal-backdrop" onClick={resetAndClose}>
-      <div className="crm-modal crm-wizard-modal" onClick={event => event.stopPropagation()}>
+      <div
+        className={`crm-modal crm-wizard-modal${step === 3 ? ' crm-wizard-modal--wide' : ''}`}
+        onClick={event => event.stopPropagation()}
+      >
         <header className="crm-modal-header">
           <div>
             <h2 className="crm-modal-title">

@@ -128,6 +128,8 @@ export interface Deal {
   contactId: string;
   dealId: string;
   customerId?: string;
+  /** Du an that (migration 097) - null/undefined = Co hoi chua gan Du an nao. */
+  projectId?: string | null;
   customerName: string;
   position?: string;
   positionCategoryId?: string;

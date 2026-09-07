@@ -185,6 +185,7 @@ export function CrmShell() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [initialCustomer, setInitialCustomer] = useState<{ id: string; name: string; companyName?: string; phone?: string; email?: string } | null>(null);
+  const [initialProject, setInitialProject] = useState<{ id: string } | null>(null);
   useEffect(() => {
     const openDealId = searchParams.get('openDeal');
     if (!openDealId) return;
@@ -201,6 +202,11 @@ export function CrmShell() {
           phone: searchParams.get('phone') || undefined,
           email: searchParams.get('email') || undefined,
         });
+        // "?openDeal=new&customerId=...&projectId=...": tới từ nút "Tạo cơ hội" trên MỘT
+        // Project card cụ thể (Block 1, mục 3) — Project cũng phải tự điền + khoá, không
+        // chỉ mang query param rồi bỏ qua.
+        const projectId = searchParams.get('projectId');
+        setInitialProject(projectId ? { id: projectId } : null);
         setCreateOpen(true);
       }
     } else {
@@ -346,7 +352,7 @@ export function CrmShell() {
 
   async function handleDeleteQuote(deal: Deal) {
     if (!deal.quote?.id) return;
-    if (!window.confirm(`Xoá báo giá ${deal.quote.number || ''} khỏi deal "${deal.customerName}"? Không thể hoàn tác.`)) return;
+    if (!window.confirm(`Xoá báo giá ${deal.quote.number || ''} khỏi deal "${deal.customerName}"? Báo giá sẽ chuyển sang trạng thái đã xoá (ẩn khỏi danh sách), Admin có thể khôi phục nếu cần.`)) return;
     try {
       await seedingQuoteRepository.deleteQuote(deal.quote.id);
       await refreshDealAfterQuoteChange(deal.id);
@@ -568,12 +574,14 @@ export function CrmShell() {
           setCreateOpen(false);
           setEditingDeal(null);
           setInitialCustomer(null);
+          setInitialProject(null);
         }}
         onCreate={handleCreate}
         onCreateAndContinue={handleCreateAndContinue}
         onUpdate={handleUpdate}
         currentUser={user}
         initialCustomer={initialCustomer}
+        initialProject={initialProject}
       />
       <ContractDetailModal deal={contractDeal} open={Boolean(contractDeal)} onClose={() => setContractDeal(null)} />
     </div>

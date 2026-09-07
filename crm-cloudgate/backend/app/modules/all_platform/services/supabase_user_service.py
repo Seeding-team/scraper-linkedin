@@ -146,6 +146,50 @@ def update_user_quote_approver(email: str, can_approve_quotes: bool) -> dict:
     return result.data[0] if result.data else {}
 
 
+_VALID_QUOTE_BUSINESS_ROLES = ("presale", "sale", "both")
+
+
+def update_user_quote_business_role(email: str, quote_business_role: str | None) -> dict:
+    """Admin/leader: gan vai tro NGHIEP VU bao gia (Presale/Sale/Both) cho 1
+    tai khoan Leader/Member (migration 095) - TACH BIET voi system role. None
+    = bo gan (khong tham gia quy trinh bao gia)."""
+    if quote_business_role is not None and quote_business_role not in _VALID_QUOTE_BUSINESS_ROLES:
+        raise ValueError(f"quote_business_role không hợp lệ: {quote_business_role!r}")
+    supabase: Client = get_supabase_client()
+    result = (
+        supabase.table("app_users")
+        .update({"quote_business_role": quote_business_role, "updated_at": "now()"})
+        .eq("email", email.lower().strip())
+        .execute()
+    )
+    _clear_people_caches()
+    _clear_auth_cache(email=email)
+    return result.data[0] if result.data else {}
+
+
+def list_users_by_quote_business_role(target: str) -> list[dict]:
+    """Danh sach nguoi dung du dieu kien lam Presale hoac Sale phu trach 1
+    bao gia - dung cho owner-picker "Nguoi phu trach ky thuat/Presale" va
+    "Nguoi phu trach bao gia/Sale" trong workspace bao gia. `target` la
+    'presale' hoac 'sale' - nguoi co quote_business_role='both' du dieu
+    kien cho CA HAI, nen luon cong them 'both' vao dieu kien truy van.
+    KHAC voi get_all_sdrs() (chi admin/leader, dung cho gan SDR/quan ly Deal
+    CRM) - o day PHAI gom ca Member neu Member do duoc gan dung business_role
+    (dung yeu cau "Leader va Member deu co the duoc gan Presale/Sale/Both")."""
+    if target not in ("presale", "sale"):
+        raise ValueError(f"target phải là 'presale' hoặc 'sale', nhận được: {target!r}")
+    supabase: Client = get_supabase_client()
+    result = (
+        supabase.table("app_users")
+        .select("id, name, role, quote_business_role")
+        .eq("is_active", True)
+        .in_("quote_business_role", [target, "both"])
+        .order("name")
+        .execute()
+    )
+    return result.data or []
+
+
 def update_user_active_status(email: str, is_active: bool) -> dict:
     """Admin-only: kích hoạt/vô hiệu hóa tài khoản mà không cần biết mật khẩu
     (khác với deactivate_account() ở auth_service.py — cái đó là tự người dùng
@@ -257,6 +301,94 @@ def get_users_by_role(role: str) -> list[dict]:
         .execute()
     )
     return result.data or []
+
+
+def get_member_options(active_only: bool = True, include_ids: list[str] | None = None) -> list[dict]:
+    """Danh sach nhan su cho picker "Nguoi phu trach du an" (va cac picker
+    tuong tu can chon 1 tai khoan dang nhap that su thuoc he thong). KHAC voi
+    `get_all_users()`/`get_all_teams()`: KHONG bao gio tra ve email (tranh lo
+    du lieu cho nguoi khong co quyen quan tri), CHI tra dung allowlist DTO
+    {id, displayName, systemRole, quoteBusinessRole, teamNames, isActive}.
+    Nguon: app_users (KHONG phai bang `members` HR-roster - `members.id`
+    KHONG phai FK hop le cho `projects.manager_id`, xem migration 097).
+
+    `active_only=True` (mac dinh, dung cho picker luc TAO/doi nguoi phu
+    trach): chi tra is_active=true. `include_ids` cho phep ep tra THEM 1 vai
+    id cu the du ho khong active - dung khi Sua 1 project ma nguoi phu trach
+    hien tai da bi vo hieu hoa (van phai hien ten + badge "Da ngung hoat
+    dong", khong duoc bien mat khoi form)."""
+    supabase: Client = get_supabase_client()
+    query = supabase.table("app_users").select(
+        "id, name, email, role, is_active, quote_business_role"
+    )
+    result = execute_supabase_query(lambda: query.execute())
+    all_rows = result.data or []
+
+    include_id_set = {str(i) for i in (include_ids or []) if i}
+    rows = [
+        r for r in all_rows
+        if (not active_only or r.get("is_active", True)) or str(r.get("id")) in include_id_set
+    ]
+
+    # Team names: id_member trong member_of_teams la app_users.id that (xem
+    # _load_all_teams() o tren - user_map duoc build tu bang app_users).
+    team_names_by_user: dict[str, list[str]] = {}
+    try:
+        teams_rows = get_all_teams()
+        mot_result = execute_supabase_query(
+            lambda: supabase.table("member_of_teams").select("id_member, id_teams").execute()
+        )
+        team_name_by_id = {str(t["id"]): t.get("name_team") for t in teams_rows}
+        for mot in (mot_result.data or []):
+            uid = str(mot.get("id_member"))
+            tname = team_name_by_id.get(str(mot.get("id_teams")))
+            if uid and tname:
+                team_names_by_user.setdefault(uid, []).append(tname)
+    except Exception:
+        logger.warning("get_member_options: khong lay duoc team names, tra danh sach khong kem team", exc_info=True)
+
+    options = []
+    for r in rows:
+        uid = str(r.get("id"))
+        name = r.get("name") or (r.get("email") or "").split("@")[0] or "Chưa đặt tên"
+        options.append({
+            "id": uid,
+            "displayName": name,
+            "avatarUrl": None,
+            "systemRole": r.get("role") or "member",
+            "quoteBusinessRole": r.get("quote_business_role"),
+            "teamNames": team_names_by_user.get(uid, []),
+            "isActive": bool(r.get("is_active", True)),
+        })
+    options.sort(key=lambda o: o["displayName"].lower())
+    return options
+
+
+def get_member_option_by_id(user_id: str) -> dict | None:
+    """1 user theo id, dung khong tra email - ho tro fallback khi Sua project
+    co manager_id khong nam trong ket qua get_member_options() (vi du da bi
+    xoa that, khong chi vo hieu hoa)."""
+    supabase: Client = get_supabase_client()
+    result = execute_supabase_query(
+        lambda: supabase.table("app_users")
+        .select("id, name, email, role, is_active, quote_business_role")
+        .eq("id", user_id)
+        .limit(1)
+        .execute()
+    )
+    rows = result.data or []
+    if not rows:
+        return None
+    r = rows[0]
+    return {
+        "id": str(r["id"]),
+        "displayName": r.get("name") or (r.get("email") or "").split("@")[0] or "Chưa đặt tên",
+        "avatarUrl": None,
+        "systemRole": r.get("role") or "member",
+        "quoteBusinessRole": r.get("quote_business_role"),
+        "teamNames": [],
+        "isActive": bool(r.get("is_active", True)),
+    }
 
 
 # ── Teams CRUD ─────────────────────────────────────────────────────────────────

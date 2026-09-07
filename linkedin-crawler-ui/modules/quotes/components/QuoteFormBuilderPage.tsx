@@ -226,7 +226,18 @@ export function QuoteFormBuilderPage({ formId }: Props) {
   useEffect(() => {
     serviceCatalogRepository
       .list()
-      .then(items => setCatalogGroups(items.filter(item => item.itemType === 'group' && item.status === 'active')))
+      .then(items => {
+        const activeGroups = items.filter(item => item.itemType === 'group' && item.status === 'active');
+        setCatalogGroups(activeGroups);
+        // Mau MOI (chua co formId): tu tick san TAT CA nhom dang active -
+        // khong bat nguoi dung phai vao lai sua mau moi dung duoc "Chon tu
+        // danh muc" (theo yeu cau: khong can doi bam ap dung tung buoc).
+        // Mau DA TON TAI van uu tien du lieu that da luu (getFormCatalogLinks
+        // ben duoi), KHONG ghi de lua chon cu cua nguoi dung.
+        if (!formId) {
+          setSelectedGroupIds(activeGroups.map(g => g.id));
+        }
+      })
       .catch(() => setCatalogGroups([]));
     if (formId) {
       seedingQuoteRepository

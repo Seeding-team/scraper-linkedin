@@ -1915,6 +1915,16 @@ select.quote-compact-vat:hover {
   padding-bottom: 1rem;
 }
 
+/* Bang gia nhieu cot (>=7 cot, xem LANDSCAPE_PRINT_COLUMN_THRESHOLD trong
+ * QuoteDocumentRenderer.tsx) - truoc day CHI ban in/PDF chuyen A4 ngang, man
+ * hinh xem van giu 210mm (portrait) nen cac cot bi ep qua hep, chong chit/de
+ * len nhau khi xem THAT (nguoi dung bao cao qua screenshot). Ap dung DUNG
+ * class .quote-sheet--print-landscape (component da tu gan khi >=7 cot) cho
+ * CA man hinh xem, khong chi luc in. */
+.quote-sheet--print-landscape {
+  width: min(297mm, 100%);
+}
+
 .quote-sheet--standard {
   position: relative;
   overflow: hidden;
@@ -2509,12 +2519,28 @@ select.quote-compact-vat:hover {
   .quote-panel-head,
   .sheet-company,
   .sheet-parties,
-  .sheet-signatures,
   .villa-header,
   .villa-split,
   .villa-footer {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  /* .sheet-signatures ("Đại diện công ty" / "Đại diện khách hàng") CO Y giu
+   * lai 2 cot song song ngang KE CA man hinh hep (khong theo chung mobile
+   * stack o tren) - theo yeu cau nguoi dung "mặc định 2 chỗ này song song
+   * ngang", khac voi cac khoi con lai (sheet-company/sheet-parties) van stack
+   * doc khi chat. flex:1 that thap (0 0 auto min 45%) de khong bi bop qua
+   * nho tren man hinh rat hep, van giu 2 cot canh nhau. */
+  .sheet-signatures {
+    flex-direction: row;
+    flex-wrap: nowrap;
+    gap: 1rem;
+  }
+
+  .sheet-signatures > div {
+    flex: 1 1 0;
+    min-width: 0;
   }
 }
 
@@ -2542,6 +2568,33 @@ select.quote-compact-vat:hover {
     background: #ffffff !important;
     -webkit-print-color-adjust: exact;
     print-color-adjust: exact;
+  }
+
+  /* Luoi an toan (bulletproof "print only this element") - AN TOAN BO cho
+   * MOI link mo bao gia (trang admin /all-platform/quotes/[id] LAN trang
+   * cong khai), khong phu thuoc vao danh sach loai tru theo ten class/
+   * data-slot cu the (vd sidebar) - neu sau nay app-shell doi cau truc/them
+   * element moi ma khong cap nhat danh sach loai tru, ban in van KHONG bao
+   * gio bi lot them noi dung ngoai y muon vao. Dung visibility (KE THUA,
+   * hoat dong bat ke .quote-print-root/.quote-public-page nam sau bao nhieu
+   * lop the layout/sidebar cua app-shell) - KHONG dung display:none (chi an
+   * dung 1 lop con truc tiep cua body, sai neu target nam sau nhieu lop).
+   * Van GIU nguyen cac rule loai tru cu the (sidebar data-slot...) ben duoi,
+   * khong xoa - phong khi 1 trinh duyet khong ho tro dung nhu ky vong. */
+  body * {
+    visibility: hidden;
+  }
+  .quote-print-root,
+  .quote-print-root *,
+  .quote-public-page,
+  .quote-public-page * {
+    visibility: visible;
+  }
+  .quote-print-root {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
   }
 
   /* Sidebar + header sticky cua app-shell (AllPlatformShell.tsx) chua tung

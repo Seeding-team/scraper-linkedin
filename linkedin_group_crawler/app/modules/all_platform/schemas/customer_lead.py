@@ -57,6 +57,8 @@ STAGE_REQUIRED_FIELDS: dict[str, dict[str, list[str]]] = {
 class CustomerLeadCreate(BaseModel):
     customer_name: str
     customer_id: Optional[str] = None
+    # Du an that (migration 097) - null = Co hoi chua gan Du an.
+    project_id: Optional[str] = None
 
     company_name: Optional[str] = None
     phone: Optional[str] = None
@@ -139,6 +141,10 @@ class CustomerLeadCreate(BaseModel):
 
 class CustomerLeadUpdate(BaseModel):
     customer_id: Optional[str] = None
+    # Du an that (migration 097) - None/khong gui = giu nguyen; gui project_id=null
+    # RO RANG (khong phai bo qua key) = bo gan Du an that su (xem router
+    # update_customer_lead() - PHAI dung exclude_unset de phan biet 2 truong hop nay).
+    project_id: Optional[str] = None
     company_name: Optional[str] = None
     customer_name: Optional[str] = None
     phone: Optional[str] = None
