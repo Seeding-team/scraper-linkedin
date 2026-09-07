@@ -52,7 +52,7 @@ def _is_transient_supabase_error(exc: Exception) -> bool:
     return any(part in msg for part in ("server disconnected", "remoteprotocolerror", "timed out", "timeout"))
 
 
-_SAFE_USER_COLUMNS = "id, email, name, role, is_active, can_approve_quotes, created_at, updated_at"
+_SAFE_USER_COLUMNS = "id, email, name, role, is_active, can_approve_quotes, quote_business_role, created_at, updated_at"
 
 
 def get_user(email: str) -> dict:

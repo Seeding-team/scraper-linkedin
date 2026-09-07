@@ -186,6 +186,21 @@ export function MemberManagementContent() {
     }
   }
 
+  async function handleRowChangeBusinessRole(account: AppUserProfile, value: string) {
+    if (!isAdmin) return; // /update-quote-business-role: CHI admin (backend cung tu choi 403 that neu goi thang)
+    const nextRole = value === "" ? null : (value as "presale" | "sale" | "both");
+    setSavingUserId(account.id);
+    try {
+      const res = await usersService.updateQuoteBusinessRole(account.email, nextRole);
+      if (!res.success) throw new Error(res.message || "Không cập nhật được vai trò báo giá");
+      await loadAppUsers();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Không cập nhật được vai trò báo giá");
+    } finally {
+      setSavingUserId(null);
+    }
+  }
+
   async function handleRowToggleActive(account: AppUserProfile) {
     const nextActive = !(account.is_active !== false);
     if (!nextActive && !confirm(`Vô hiệu hóa tài khoản "${account.email}"? Người này sẽ bị đăng xuất và không đăng nhập lại được.`)) {
@@ -370,6 +385,86 @@ export function MemberManagementContent() {
         <PlatformStatCard label="Kỹ năng đã khai báo" value={skills.length} accent="primary" />
       </PlatformStatsRow>
 
+      {/* Section 6 (HTML parity round 3) - khoi giai thich THUAN UI, KHONG
+          tao them role/quyen moi, chi mo ta lai dung ma tran da chot (system
+          role Admin/Leader/Member x business role Presale/Sale/Both/Chua
+          gan). Dat ngay tren bang de nguoi gan quote_business_role hieu ro
+          quyen thuc te SE la gi truoc khi gan. */}
+      <details className="rounded-xl border border-outline-variant bg-surface p-6 shadow-sm">
+        <summary className="cursor-pointer text-body-md font-semibold text-on-background">
+          Quyền trong quy trình báo giá — Presale / Sale / Both hoạt động thế nào?
+        </summary>
+        <div className="mt-4 space-y-3 text-body-sm text-on-surface-variant">
+          <p>
+            <strong className="text-on-background">Role hệ thống</strong> (Admin/Leader/Member) và{" "}
+            <strong className="text-on-background">Vai trò nghiệp vụ báo giá</strong> (Presale/Sale/Presale &amp; Sale/Chưa gán) là
+            2 khái niệm TÁCH BIỆT — không có role &quot;CEO&quot; riêng, Admin đóng vai trò duyệt cuối (Admin review). Chỉ{" "}
+            <strong className="text-on-background">Admin</strong> được gán/đổi Vai trò nghiệp vụ báo giá cho Leader/Member; Leader
+            và Member chỉ xem được (không tự đổi).
+          </p>
+          <p>
+            Có Vai trò nghiệp vụ (kể cả &quot;Presale &amp; Sale&quot;) <strong className="text-on-background">chưa tự động</strong>{" "}
+            có quyền trên MỌI báo giá — chỉ khi được phân công cụ thể (Người phụ trách kỹ thuật/Người phụ trách giá bán) trên đúng
+            báo giá đó, quyền dưới đây mới áp dụng.
+          </p>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[640px] border-collapse text-xs">
+              <thead>
+                <tr className="border-b border-outline-variant text-left text-on-surface-variant">
+                  <th className="py-2 pr-4 font-semibold">Ai</th>
+                  <th className="py-2 pr-4 font-semibold">Nhập Giá vốn</th>
+                  <th className="py-2 pr-4 font-semibold">Nhập Giá bán (markup)</th>
+                  <th className="py-2 pr-4 font-semibold">Duyệt báo giá</th>
+                  <th className="py-2 font-semibold">Phát hành / Gửi khách</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr className="border-b border-outline-variant/60">
+                  <td className="py-2 pr-4 font-medium text-on-background">Admin</td>
+                  <td className="py-2 pr-4">Có (mọi báo giá)</td>
+                  <td className="py-2 pr-4">Có (mọi báo giá)</td>
+                  <td className="py-2 pr-4">Có</td>
+                  <td className="py-2">Có</td>
+                </tr>
+                <tr className="border-b border-outline-variant/60">
+                  <td className="py-2 pr-4 font-medium text-on-background">Leader (chưa được phân công)</td>
+                  <td className="py-2 pr-4 text-on-surface-variant">Không</td>
+                  <td className="py-2 pr-4 text-on-surface-variant">Không</td>
+                  <td className="py-2 pr-4">Có (nếu bật &quot;Được duyệt báo giá&quot;)</td>
+                  <td className="py-2 text-on-surface-variant">Không</td>
+                </tr>
+                <tr className="border-b border-outline-variant/60">
+                  <td className="py-2 pr-4 font-medium text-on-background">Presale (được gán làm Người phụ trách kỹ thuật)</td>
+                  <td className="py-2 pr-4">Có (đúng báo giá được gán)</td>
+                  <td className="py-2 pr-4 text-on-surface-variant">Không (chỉ xem, không sửa)</td>
+                  <td className="py-2 pr-4 text-on-surface-variant">Không</td>
+                  <td className="py-2 text-on-surface-variant">Không</td>
+                </tr>
+                <tr className="border-b border-outline-variant/60">
+                  <td className="py-2 pr-4 font-medium text-on-background">Sale (được gán làm Người phụ trách giá bán)</td>
+                  <td className="py-2 pr-4">Xem read-only (Presale đã chốt)</td>
+                  <td className="py-2 pr-4">Có (đúng báo giá được gán)</td>
+                  <td className="py-2 pr-4">Có (nếu bật &quot;Được duyệt báo giá&quot;)</td>
+                  <td className="py-2">Có (đúng báo giá được gán)</td>
+                </tr>
+                <tr>
+                  <td className="py-2 pr-4 font-medium text-on-background">Member chưa được phân công báo giá nào</td>
+                  <td className="py-2 pr-4 text-on-surface-variant">Không</td>
+                  <td className="py-2 pr-4 text-on-surface-variant">Không</td>
+                  <td className="py-2 pr-4 text-on-surface-variant">Không</td>
+                  <td className="py-2 text-on-surface-variant">Không</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p className="text-[11px] italic">
+            &quot;Presale &amp; Sale&quot; (Both) chỉ nghĩa là 1 người CÓ THỂ được gán cả 2 vai trên các báo giá khác nhau — trên
+            từng báo giá cụ thể, quyền vẫn tính theo đúng field <em>Người phụ trách kỹ thuật</em>/<em>Người phụ trách giá bán</em>{" "}
+            của báo giá đó, không tự động có cả 2 quyền cùng lúc trừ khi được gán cả 2 trên chính báo giá này.
+          </p>
+        </div>
+      </details>
+
       <div className="rounded-xl border border-outline-variant bg-surface p-6 shadow-sm space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex min-w-0 flex-1 flex-col gap-2 sm:flex-row sm:items-center">
@@ -424,6 +519,7 @@ export function MemberManagementContent() {
                 <th className="py-3 px-4">Chức vụ</th>
                 <th className="py-3 px-4">Email đăng nhập</th>
                 <th className="py-3 px-4">Role</th>
+                <th className="py-3 px-4">Vai trò báo giá</th>
                 <th className="py-3 px-4">Trạng thái</th>
                 <th className="py-3 px-4 text-center">Hành động</th>
               </tr>
@@ -497,6 +593,39 @@ export function MemberManagementContent() {
                               Được duyệt báo giá
                             </label>
                           </div>
+                        ) : (
+                          <span className="text-on-surface-variant">—</span>
+                        )}
+                      </td>
+                      <td className="py-3 px-4">
+                        {account ? (
+                          isAdmin ? (
+                            <select
+                              value={account.quote_business_role || ""}
+                              disabled={savingUserId === account.id}
+                              onChange={e => handleRowChangeBusinessRole(account, e.target.value)}
+                              className="px-2 py-1 bg-surface-container-low border border-outline-variant rounded-lg text-xs cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
+                              title="Vai trò nghiệp vụ báo giá (Presale/Sale) — tách biệt với Role hệ thống, chỉ Admin gán được"
+                            >
+                              <option value="">Không tham gia báo giá</option>
+                              <option value="presale">Presale</option>
+                              <option value="sale">Sale</option>
+                              <option value="both">Presale &amp; Sale</option>
+                            </select>
+                          ) : (
+                            // Leader/Member: CHI xem badge, khong sua duoc (dung yeu cau
+                            // "Leader chi xem badge, khong co select editable" - backend
+                            // van tu choi 403 that neu Leader co goi thang API).
+                            <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-surface-container-low text-on-surface-variant border border-outline-variant">
+                              {account.quote_business_role === "presale"
+                                ? "Presale"
+                                : account.quote_business_role === "sale"
+                                  ? "Sale"
+                                  : account.quote_business_role === "both"
+                                    ? "Presale & Sale"
+                                    : "Không tham gia"}
+                            </span>
+                          )
                         ) : (
                           <span className="text-on-surface-variant">—</span>
                         )}
