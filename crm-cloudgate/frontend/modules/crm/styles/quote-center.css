@@ -1746,7 +1746,7 @@
   /* "Gia von/DV"/"Gia von" bi cham/khuat so voi cot ke ben khi so tien co dau
    * cham ngan nghin (vd "1.500.000") - danh rieng width cho 2 cot nay thay vi
    * de table-layout:fixed tu chia deu (qua hep so voi so 7 chu so). */
-  width: 92px;
+  width: 108px;
   white-space: nowrap;
 }
 .qc-workspace-items-table--unified .qc-cell-markup,
@@ -1754,7 +1754,7 @@
   background: #fffaf0;
   /* Cung ly do voi .qc-th-cost o tren - "Giá khách/ĐV" bi cham/khuat khi so
    * tien co dau cham ngan nghin. */
-  width: 92px;
+  width: 108px;
   white-space: nowrap;
 }
 .qc-cell-margin-good { color: #148e61 !important; font-weight: 700; }
