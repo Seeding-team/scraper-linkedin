@@ -1729,6 +1729,11 @@
   display: flex;
   flex-direction: column;
   gap: 2px;
+  /* Gia tri dai khong dau cach (vd Public URL) bi tran de len cot ke ben -
+   * grid item mac dinh min-width:auto (theo noi dung), phai ep ve 0 + cho
+   * phep xuong dong o bat ky diem nao thi moi wrap dung thay vi tran. */
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .qc-summary-grid--2col {
   grid-template-columns: 1fr 1fr;
