@@ -36,7 +36,7 @@ def _serialize_datetimes(payload: Dict[str, Any]) -> Dict[str, Any]:
 # Cột UUID nullable trên customer_leads — frontend (vd wizard "Thêm deal và báo giá"
 # khi chưa chọn Leader/SDR) có thể gửi "" thay vì null, Postgres reject với
 # "invalid input syntax for type uuid" nếu insert/update thẳng chuỗi rỗng.
-_NULLABLE_UUID_COLUMNS = ("leaded_by", "sdr_id", "quote_id", "team_id", "customer_id")
+_NULLABLE_UUID_COLUMNS = ("leaded_by", "sdr_id", "quote_id", "team_id", "customer_id", "project_id")
 
 
 def _normalize_uuid_fields(payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -58,9 +58,9 @@ BASE_COLUMNS = (
     "payment_due_date, payment_status, "
     "tags, has_budget, note, reject_reason, reject_reason_type, review_result, "
     "position, position_category_id, position_label_snapshot, crm_package, zalo, facebook, telegram, pause_reason, next_step, closed_at, outcome_detail, quote_id, "
-    "leaded_by_name_hint, sdr_name_hint, team_id, "
+    "leaded_by_name_hint, sdr_name_hint, team_id, project_id, "
     "created_at, updated_at, leader:leaded_by(name), sdr:sdr_id(name), "
-    "quote:quote_id(quote_number, total_amount, public_token, status), "
+    "quote:quote_id(quote_number, total_amount, public_token, status, version_number, version_chain_id), "
     "team:team_id(name_team, team_type)"
 )
 
@@ -89,6 +89,8 @@ def _normalize_row(row: Dict[str, Any]) -> Dict[str, Any]:
         # cot rieng tren customer_leads) - card CRM dung field nay de hien tag
         # Chua duyet/Da duyet + doi hanh vi nut "Mo bao gia"/"Chinh sua".
         row["quote_status"] = row["quote"].get("status")
+        row["quote_version_number"] = row["quote"].get("version_number") or 1
+        row["quote_version_chain_id"] = row["quote"].get("version_chain_id")
         row.pop("quote", None)
     if row.get("team"):
         row["team_name"] = row["team"].get("name_team")
@@ -240,8 +242,26 @@ def get_customer_lead_by_conv_id(conv_id: str) -> Optional[Dict[str, Any]]:
         return None
 
 
+def validate_project_belongs_to_customer(project_id: Optional[str], customer_id: Optional[str]) -> None:
+    """Chan 'Cross-customer Project' o tang service - Co hoi chi duoc gan 1
+    Project THUOC DUNG Customer cua no (khong chi dua vao dropdown UI da
+    loc dung). Import tre (lazy) de tranh vong lap module voi
+    supabase_project_service.py."""
+    if not project_id:
+        return
+    from app.modules.all_platform.services.supabase_project_service import get_project
+
+    try:
+        project = get_project(project_id)
+    except ValueError:
+        raise ValueError("Dự án đã chọn không tồn tại.")
+    if str(project.get("customerId") or "") != str(customer_id or ""):
+        raise ValueError("Dự án đã chọn không thuộc đúng khách hàng này.")
+
+
 def create_customer_lead(data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     try:
+        validate_project_belongs_to_customer(data.get("project_id"), data.get("customer_id"))
         supabase = get_supabase_client()
         if "tags" not in data or data["tags"] is None:
             data["tags"] = []
@@ -293,6 +313,10 @@ def update_customer_lead(lead_id: str, data: Dict[str, Any]) -> Optional[Dict[st
     try:
         supabase = get_supabase_client()
         safe_data = dict(data)
+        if "project_id" in safe_data and safe_data.get("project_id"):
+            current = get_customer_lead_by_id(lead_id) or {}
+            target_customer_id = safe_data.get("customer_id") or current.get("customer_id")
+            validate_project_belongs_to_customer(safe_data.get("project_id"), target_customer_id)
         if "position_category_id" in safe_data:
             current = get_customer_lead_by_id(lead_id) or {}
             apply_position_category(safe_data, current_position_category_id=current.get("position_category_id"))

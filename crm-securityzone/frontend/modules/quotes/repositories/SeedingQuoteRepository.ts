@@ -5,10 +5,17 @@ import type {
   CreateQuoteInput,
   IssuerCompany,
   Quote,
+  QuoteActivityLogEntry,
   QuoteForm,
+  QuoteHandoffChecklist,
+  QuotePhase,
+  QuoteProcessingStage,
   QuoteTelegramLog,
+  QuoteVersionResult,
+  QuotesByPhaseResult,
   UpdateIssuerCompanyInput,
   UpdateQuoteFormInput,
+  UpdateQuoteHandoffChecklistInput,
   UpdateQuoteInput,
 } from '../types';
 import type { QuoteRepository } from './QuoteRepository';
@@ -19,6 +26,21 @@ type ApiResponse<T> = {
   message?: string;
   data?: T;
 };
+
+/** Section 5 - Admin duyet ngoai le theo version. Backend tra
+ * message === 'quote_requires_exception_reason' (KHONG phai loi chung
+ * chung) khi Rule Engine gan nhat cua quote nay khong dat VA chua co
+ * exception_reason - FE bat throw nay de MO modal "Phê duyệt ngoại lệ" thay
+ * vi hien alert loi. `evaluation` la snapshot ket qua rule (result/details)
+ * de modal hien ro dang chan vi ly do gi. */
+export class QuoteApprovalRequiresExceptionError extends Error {
+  evaluation: { result?: string; details?: unknown } | null;
+  constructor(evaluation: { result?: string; details?: unknown } | null) {
+    super('quote_requires_exception_reason');
+    this.name = 'QuoteApprovalRequiresExceptionError';
+    this.evaluation = evaluation;
+  }
+}
 
 type QuoteItemPayload = {
   description: string;
@@ -35,6 +57,9 @@ type QuoteItemPayload = {
   unit_price_usd?: number | null;
   exchange_rate?: number | null;
   unit_price_vnd?: number | null;
+  cost_price?: number | null;
+  markup_percent?: number | null;
+  cost_not_applicable?: boolean;
 };
 
 function getDefaultHeaders(): Record<string, string> {
@@ -49,11 +74,19 @@ async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
     headers: getDefaultHeaders(),
     ...options,
   });
-  const body = (await res.json()) as ApiResponse<T>;
+  const body = (await res.json()) as ApiResponse<T> & { detail?: string };
   if (!res.ok) {
-    throw new Error(body.message || `Lỗi máy chủ (${res.status})`);
+    // FastAPI HTTPException (403/422 that - vd require_quote_email_manager,
+    // RuleValidationError) tra ve {"detail": "..."} thay vi {"message": "..."}
+    // cua BaseResponse thuong dung trong file nay - doc ca 2 de khong hien
+    // "Lỗi máy chủ (403)" chung chung khi that ra da co ly do ro rang.
+    throw new Error(body.message || body.detail || `Lỗi máy chủ (${res.status})`);
   }
   if (body.success === false) {
+    if (body.message === 'quote_requires_exception_reason') {
+      const evaluation = (body.data as { evaluation?: { result?: string; details?: unknown } } | undefined)?.evaluation;
+      throw new QuoteApprovalRequiresExceptionError(evaluation || null);
+    }
     throw new Error(body.message || 'Không thực hiện được yêu cầu báo giá.');
   }
   return body.data as T;
@@ -108,6 +141,8 @@ function toCreateQuotePayload(input: CreateQuoteInput) {
     issuer_company_id: input.issuerCompanyId ?? null,
     data: input.data,
     items: (input.items || []).map(toQuoteItemPayload),
+    project_id: input.projectId ?? null,
+    sla_due_at: input.slaDueAt ?? null,
   };
 }
 
@@ -116,6 +151,8 @@ function toUpdateQuotePayload(input: UpdateQuoteInput) {
     data: input.data,
     items: input.items?.map(toQuoteItemPayload),
     issuer_company_id: input.issuerCompanyId ?? null,
+    project_id: input.projectId ?? null,
+    sla_due_at: input.slaDueAt ?? null,
   };
 }
 
@@ -135,6 +172,9 @@ function toQuoteItemPayload(item: NonNullable<CreateQuoteInput['items']>[number]
     unit_price_usd: item.unitPriceUsd ?? null,
     exchange_rate: item.exchangeRate ?? null,
     unit_price_vnd: item.unitPriceVnd ?? null,
+    cost_price: item.costPrice ?? null,
+    markup_percent: item.markupPercent ?? null,
+    cost_not_applicable: item.costNotApplicable ?? false,
   };
 }
 
@@ -186,6 +226,42 @@ export class SeedingQuoteRepository implements QuoteRepository {
     return apiFetch<Quote[]>('/api/all-platform/quotes');
   }
 
+  /** Quote Center THAT (backend gom theo version_chain_id + loc/dem/phan
+   * trang/tim kiem TOAN BO o server, xem list_quotes_by_phase()) - KHONG
+   * load het roi loc client-side nua. phase=undefined nghia la tab "Tất cả".
+   * Moi filter (customer/project/owner/team/mine/thoi gian) ap dung TRUOC
+   * pagination o backend - khong con bug "loc tren 1 trang da tra ve". */
+  async getQuotesByPhase(params: {
+    phase?: QuotePhase;
+    search?: string;
+    customerId?: string;
+    projectId?: string;
+    ownerId?: string;
+    mine?: boolean;
+    teamId?: string;
+    dateFrom?: string;
+    dateTo?: string;
+    /** Section 7 - KPI SLA Quote Center, loc TRUOC pagination o backend. */
+    sla?: 'overdue' | 'due_soon';
+    page?: number;
+    pageSize?: number;
+  }): Promise<QuotesByPhaseResult> {
+    const qs = new URLSearchParams();
+    if (params.phase) qs.set('phase', params.phase);
+    if (params.search && params.search.trim()) qs.set('search', params.search.trim());
+    if (params.customerId) qs.set('customer_id', params.customerId);
+    if (params.projectId) qs.set('project_id', params.projectId);
+    if (params.ownerId) qs.set('owner_id', params.ownerId);
+    if (params.mine) qs.set('mine', 'true');
+    if (params.teamId) qs.set('team_id', params.teamId);
+    if (params.dateFrom) qs.set('date_from', params.dateFrom);
+    if (params.dateTo) qs.set('date_to', params.dateTo);
+    if (params.sla) qs.set('sla', params.sla);
+    qs.set('page', String(params.page || 1));
+    qs.set('page_size', String(params.pageSize || 10));
+    return apiFetch<QuotesByPhaseResult>(`/api/all-platform/quotes/by-phase?${qs.toString()}`);
+  }
+
   async getQuote(id: string): Promise<Quote> {
     return apiFetch<Quote>(`/api/all-platform/quotes/${encodeURIComponent(id)}`);
   }
@@ -212,17 +288,29 @@ export class SeedingQuoteRepository implements QuoteRepository {
     await apiFetch<unknown>(`/api/all-platform/quotes/${encodeURIComponent(id)}`, { method: 'DELETE' });
   }
 
-  async approveQuote(id: string): Promise<Quote> {
+  async approveQuote(id: string, exceptionReason?: string): Promise<Quote> {
     return apiFetch<Quote>(`/api/all-platform/quotes/${encodeURIComponent(id)}/approve`, {
+      method: 'POST',
+      body: JSON.stringify({ exception_reason: exceptionReason || null }),
+    });
+  }
+
+  async updateAndApproveQuote(id: string, input: UpdateQuoteInput, exceptionReason?: string): Promise<Quote> {
+    const qs = exceptionReason ? `?exception_reason=${encodeURIComponent(exceptionReason)}` : '';
+    return apiFetch<Quote>(`/api/all-platform/quotes/${encodeURIComponent(id)}/update-and-approve${qs}`, {
+      method: 'POST',
+      body: JSON.stringify(toUpdateQuotePayload(input)),
+    });
+  }
+
+  async createQuoteVersion(id: string): Promise<QuoteVersionResult> {
+    return apiFetch<QuoteVersionResult>(`/api/all-platform/quotes/${encodeURIComponent(id)}/create-version`, {
       method: 'POST',
     });
   }
 
-  async updateAndApproveQuote(id: string, input: UpdateQuoteInput): Promise<Quote> {
-    return apiFetch<Quote>(`/api/all-platform/quotes/${encodeURIComponent(id)}/update-and-approve`, {
-      method: 'POST',
-      body: JSON.stringify(toUpdateQuotePayload(input)),
-    });
+  async getQuoteVersions(id: string): Promise<Quote[]> {
+    return apiFetch<Quote[]>(`/api/all-platform/quotes/${encodeURIComponent(id)}/versions`);
   }
 
   async getFormCatalogLinks(formId: string): Promise<string[]> {
@@ -270,6 +358,176 @@ export class SeedingQuoteRepository implements QuoteRepository {
 
   async getQuoteTelegramLog(quoteId: string): Promise<QuoteTelegramLog[]> {
     return apiFetch<QuoteTelegramLog[]>(`/api/all-platform/quotes/${encodeURIComponent(quoteId)}/telegram-log`);
+  }
+
+  async setQuoteProcessingStage(quoteId: string, stage: QuoteProcessingStage): Promise<Quote> {
+    return apiFetch<Quote>(`/api/all-platform/quotes/${encodeURIComponent(quoteId)}/processing-stage`, {
+      method: 'POST',
+      body: JSON.stringify({ stage }),
+    });
+  }
+
+  async assignQuoteOwners(
+    quoteId: string,
+    input: { technicalOwnerId?: string | null; quoteOwnerId?: string | null }
+  ): Promise<Quote> {
+    const payload: Record<string, string | null> = {};
+    if ('technicalOwnerId' in input) payload.technical_owner_id = input.technicalOwnerId ?? null;
+    if ('quoteOwnerId' in input) payload.quote_owner_id = input.quoteOwnerId ?? null;
+    return apiFetch<Quote>(`/api/all-platform/quotes/${encodeURIComponent(quoteId)}/owners`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async getQuoteHandoffChecklist(quoteId: string): Promise<QuoteHandoffChecklist> {
+    return apiFetch<QuoteHandoffChecklist>(`/api/all-platform/quotes/${encodeURIComponent(quoteId)}/handoff-checklist`);
+  }
+
+  async saveQuoteHandoffChecklist(
+    quoteId: string,
+    input: UpdateQuoteHandoffChecklistInput
+  ): Promise<QuoteHandoffChecklist> {
+    return apiFetch<QuoteHandoffChecklist>(`/api/all-platform/quotes/${encodeURIComponent(quoteId)}/handoff-checklist`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        scope_confirmed: input.scopeConfirmed,
+        scope_note: input.scopeNote ?? null,
+        cost_confirmed: input.costConfirmed,
+        cost_note: input.costNote ?? null,
+        timeline_confirmed: input.timelineConfirmed,
+        timeline_note: input.timelineNote ?? null,
+        assumption_confirmed: input.assumptionConfirmed,
+        assumption_note: input.assumptionNote ?? null,
+        handoff_note: input.handoffNote ?? null,
+      }),
+    });
+  }
+
+  async getQuoteActivityLog(quoteId: string): Promise<QuoteActivityLogEntry[]> {
+    return apiFetch<QuoteActivityLogEntry[]>(`/api/all-platform/quotes/${encodeURIComponent(quoteId)}/activity-log`);
+  }
+
+  async logQuoteVersionReason(quoteId: string, reason: string): Promise<QuoteActivityLogEntry[]> {
+    return apiFetch<QuoteActivityLogEntry[]>(`/api/all-platform/quotes/${encodeURIComponent(quoteId)}/version-reason`, {
+      method: 'POST',
+      body: JSON.stringify({ reason }),
+    });
+  }
+
+  // ── Phase 1/3 lifecycle (migration 087/089) ──────────────────────────────
+
+  async cancelQuote(quoteId: string, reason: string): Promise<Quote> {
+    return apiFetch<Quote>(`/api/all-platform/quotes/${encodeURIComponent(quoteId)}/cancel`, {
+      method: 'POST',
+      body: JSON.stringify({ reason }),
+    });
+  }
+
+  async revokePublicQuote(quoteId: string): Promise<Quote> {
+    return apiFetch<Quote>(`/api/all-platform/quotes/${encodeURIComponent(quoteId)}/revoke-public`, {
+      method: 'POST',
+    });
+  }
+
+  async softDeleteQuote(quoteId: string, reason?: string): Promise<Quote> {
+    return apiFetch<Quote>(`/api/all-platform/quotes/${encodeURIComponent(quoteId)}/soft-delete`, {
+      method: 'POST',
+      body: JSON.stringify({ reason: reason ?? null }),
+    });
+  }
+
+  async restoreQuote(quoteId: string): Promise<Quote> {
+    return apiFetch<Quote>(`/api/all-platform/quotes/${encodeURIComponent(quoteId)}/restore`, {
+      method: 'POST',
+    });
+  }
+
+  async requestQuoteChanges(quoteId: string, targetStage: 'technical' | 'pricing', reason: string): Promise<Quote> {
+    return apiFetch<Quote>(`/api/all-platform/quotes/${encodeURIComponent(quoteId)}/request-changes`, {
+      method: 'POST',
+      body: JSON.stringify({ target_stage: targetStage, reason }),
+    });
+  }
+
+  async publishQuote(quoteId: string): Promise<Quote> {
+    return apiFetch<Quote>(`/api/all-platform/quotes/${encodeURIComponent(quoteId)}/publish`, {
+      method: 'POST',
+    });
+  }
+
+  async getQuoteRecipientSuggestion(quoteId: string) {
+    return apiFetch<{ name: string | null; email: string | null; source: string | null }>(
+      `/api/all-platform/quotes/${encodeURIComponent(quoteId)}/recipient-suggestion`
+    );
+  }
+
+  async getQuoteSendAvailability(quoteId: string) {
+    return apiFetch<{ available: boolean; reason: string | null }>(
+      `/api/all-platform/quotes/${encodeURIComponent(quoteId)}/send-availability`
+    );
+  }
+
+  async getQuoteDeliveryLog(quoteId: string) {
+    return apiFetch<import('./QuoteRepository').QuoteDeliveryLogEntry[]>(
+      `/api/all-platform/quotes/${encodeURIComponent(quoteId)}/delivery-log`
+    );
+  }
+
+  async getActiveQuoteApprovalRuleSet() {
+    return apiFetch<import('./QuoteRepository').QuoteApprovalRuleSet | null>(
+      `/api/all-platform/quote-approval-rules/active`
+    );
+  }
+
+  async saveQuoteApprovalRuleSet(input: import('./QuoteRepository').SaveQuoteApprovalRuleSetInput) {
+    return apiFetch<import('./QuoteRepository').QuoteApprovalRuleSet>(
+      `/api/all-platform/quote-approval-rules/active`,
+      {
+        method: 'PUT',
+        body: JSON.stringify({
+          rules: input.rules.map(r => ({
+            ruleType: r.ruleType,
+            thresholdValue: r.thresholdValue,
+            isRequired: r.isRequired ?? true,
+            isActive: r.isActive ?? true,
+          })),
+          autoApproveEnabled: input.autoApproveEnabled,
+          idempotencyKey: input.idempotencyKey,
+        }),
+      }
+    );
+  }
+
+  async evaluateQuoteRules(quoteId: string) {
+    return apiFetch<import('./QuoteRepository').QuoteRuleEvaluation | null>(
+      `/api/all-platform/quotes/${encodeURIComponent(quoteId)}/evaluate-rules`,
+      { method: 'POST' }
+    );
+  }
+
+  async getQuoteRuleEvaluation(quoteId: string) {
+    return apiFetch<import('./QuoteRepository').QuoteRuleEvaluation | null>(
+      `/api/all-platform/quotes/${encodeURIComponent(quoteId)}/rule-evaluation`
+    );
+  }
+
+  async sendQuoteEmail(quoteId: string, input: import('./QuoteRepository').SendQuoteEmailInput) {
+    return apiFetch<import('./QuoteRepository').QuoteDeliveryLogEntry>(
+      `/api/all-platform/quotes/${encodeURIComponent(quoteId)}/send`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          recipient_name: input.recipientName ?? null,
+          recipient_email: input.recipientEmail,
+          recipient_source: input.recipientSource ?? null,
+          subject: input.subject ?? null,
+          message: input.message ?? '',
+          attach_pdf: Boolean(input.attachPdf),
+          idempotency_key: input.idempotencyKey,
+        }),
+      }
+    );
   }
 }
 

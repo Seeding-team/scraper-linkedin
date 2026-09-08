@@ -35,10 +35,11 @@ from app.modules.all_platform.routers.websocket import router as websocket_route
 from app.modules.all_platform.routers.fb_inbox_accounts import router as fb_inbox_accounts_router
 from app.modules.all_platform.routers.crawl_fb_dashboard import router as crawl_fb_dashboard_router
 from app.modules.all_platform.routers.customer_lead import router as customer_lead_router
+from app.modules.all_platform.routers.project import router as project_router
 from app.modules.all_platform.routers.crm_customer import router as crm_customer_router
 from app.modules.all_platform.routers.crm_lead import router as crm_lead_router
 from app.modules.all_platform.routers.crm_contact import router as crm_contact_router
-from app.modules.all_platform.routers.quote import quote_forms_router, quotes_router
+from app.modules.all_platform.routers.quote import quote_forms_router, quotes_router, quote_email_provider_router, quote_approval_rules_router
 from app.modules.all_platform.routers.contract import contracts_router
 from app.modules.all_platform.routers.contract_template import contract_templates_router
 from app.modules.all_platform.routers.service_catalog import router as service_catalog_router
@@ -307,6 +308,21 @@ all_platform_router.include_router(
     quotes_router,
     prefix="/quotes",
     tags=["All-Platform Quotes"],
+)
+all_platform_router.include_router(
+    project_router,
+    prefix="/projects",
+    tags=["All-Platform Projects"],
+)
+all_platform_router.include_router(
+    quote_email_provider_router,
+    prefix="/quotes-email-provider",
+    tags=["All-Platform Quotes Email Provider"],
+)
+all_platform_router.include_router(
+    quote_approval_rules_router,
+    prefix="/quote-approval-rules",
+    tags=["All-Platform Quote Approval Rules"],
 )
 
 # ── Contracts (AI Contract Copilot) ────────────────────────────────────────────

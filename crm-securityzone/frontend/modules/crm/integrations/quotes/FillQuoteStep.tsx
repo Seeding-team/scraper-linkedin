@@ -2,6 +2,7 @@
 
 import { QuoteFormFiller } from '@/modules/quotes';
 import type { QuoteField, QuoteSchema } from '@/modules/quotes';
+import { CustomBlocksEditor } from './CustomBlocksEditor';
 import type { QuoteDraft } from './types';
 
 // Section da hien o Buoc 1 (SelectCustomerStep)/Buoc 2 (IssuerCompanySection)
@@ -112,6 +113,11 @@ export function FillQuoteStep({
           showTotals={false}
         />
       ) : null}
+
+      <CustomBlocksEditor
+        blocks={value.data.customBlocks || []}
+        onChange={blocks => onChange({ ...value, data: { ...value.data, customBlocks: blocks } })}
+      />
     </div>
   );
 }

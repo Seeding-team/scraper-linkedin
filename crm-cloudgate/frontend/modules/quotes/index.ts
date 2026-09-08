@@ -10,7 +10,17 @@ export { QuoteFormFiller } from './components/QuoteFormFiller';
 export { TelegramSendButton } from './components/TelegramSendButton';
 export { IssuerCompanyAdminPage } from './components/IssuerCompanyAdminPage';
 export type { QuoteFillValue } from './components/QuoteFormFiller';
-export { seedingQuoteRepository } from './repositories/SeedingQuoteRepository';
+export { seedingQuoteRepository, QuoteApprovalRequiresExceptionError } from './repositories/SeedingQuoteRepository';
 export type { QuoteRepository } from './repositories/QuoteRepository';
+export type {
+  SendQuoteEmailInput,
+  QuoteDeliveryLogEntry,
+  QuoteApprovalRuleType,
+  QuoteApprovalRule,
+  QuoteApprovalRuleSet,
+  SaveQuoteApprovalRuleSetInput,
+  QuoteRuleEvaluationDetail,
+  QuoteRuleEvaluation,
+} from './repositories/QuoteRepository';
 export { calculateQuoteTotals, calculateVillaTotals } from './utils/quoteCalculations';
 export type * from './types';

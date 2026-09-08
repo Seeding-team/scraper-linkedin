@@ -80,6 +80,10 @@ export function CrmShell() {
   const [stageData, setStageData] = useState<{ deal: Deal; toStage: DealStage } | null>(null);
   const [reviewData, setReviewData] = useState<{ deal: Deal; toStage: DealStage } | null>(null);
   const [toast, setToast] = useState('');
+  // Bump sau moi lan tao phien ban moi de DetailDrawer biet fetch lai
+  // "Lich su phien ban" - deal.quote.id (van la ban DA DUYET) khong doi khi
+  // tao ban nhap moi nen khong the dung no lam dependency duy nhat.
+  const [quoteVersionsRefreshKey, setQuoteVersionsRefreshKey] = useState(0);
 
   // Toast tự ẩn sau vài giây — không dùng window.alert() cho việc báo thành công
   // vì alert chặn thao tác tiếp theo, gây khó chịu cho hành động vốn đã ổn.
@@ -181,6 +185,7 @@ export function CrmShell() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [initialCustomer, setInitialCustomer] = useState<{ id: string; name: string; companyName?: string; phone?: string; email?: string } | null>(null);
+  const [initialProject, setInitialProject] = useState<{ id: string } | null>(null);
   useEffect(() => {
     const openDealId = searchParams.get('openDeal');
     if (!openDealId) return;
@@ -197,6 +202,11 @@ export function CrmShell() {
           phone: searchParams.get('phone') || undefined,
           email: searchParams.get('email') || undefined,
         });
+        // "?openDeal=new&customerId=...&projectId=...": tới từ nút "Tạo cơ hội" trên MỘT
+        // Project card cụ thể (Block 1, mục 3) — Project cũng phải tự điền + khoá, không
+        // chỉ mang query param rồi bỏ qua.
+        const projectId = searchParams.get('projectId');
+        setInitialProject(projectId ? { id: projectId } : null);
         setCreateOpen(true);
       }
     } else {
@@ -311,9 +321,38 @@ export function CrmShell() {
     }
   }
 
+  async function handleOpenQuoteVersion(deal: Deal, quoteId: string) {
+    try {
+      const quote = await seedingQuoteRepository.getQuote(quoteId);
+      setQuoteModal({ open: true, deal, editQuote: quote });
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : 'Không tải được phiên bản báo giá này.');
+    }
+  }
+
+  async function handleCreateQuoteVersion(deal: Deal) {
+    if (!deal.quote?.id) return;
+    try {
+      const result = await seedingQuoteRepository.createQuoteVersion(deal.quote.id);
+      if (result.redirectedFromClickedQuote) {
+        setToast(
+          `Chuỗi báo giá đã có bản duyệt mới hơn (V${result.sourceVersionNumber}) — đã tạo phiên bản mới từ bản đó thay vì bản bạn chọn.`
+        );
+      } else if (!result.created) {
+        setToast('Chuỗi này đã có bản nháp sẵn — mở bản nháp đó.');
+      } else {
+        setToast(`Đã tạo phiên bản mới V${result.quote.versionNumber}.`);
+      }
+      setQuoteVersionsRefreshKey(key => key + 1);
+      setQuoteModal({ open: true, deal, editQuote: result.quote });
+    } catch (err) {
+      window.alert(err instanceof Error ? humanizeCrmError(err.message) : 'Không tạo được phiên bản báo giá mới.');
+    }
+  }
+
   async function handleDeleteQuote(deal: Deal) {
     if (!deal.quote?.id) return;
-    if (!window.confirm(`Xoá báo giá ${deal.quote.number || ''} khỏi deal "${deal.customerName}"? Không thể hoàn tác.`)) return;
+    if (!window.confirm(`Xoá báo giá ${deal.quote.number || ''} khỏi deal "${deal.customerName}"? Báo giá sẽ chuyển sang trạng thái đã xoá (ẩn khỏi danh sách), Admin có thể khôi phục nếu cần.`)) return;
     try {
       await seedingQuoteRepository.deleteQuote(deal.quote.id);
       await refreshDealAfterQuoteChange(deal.id);
@@ -482,6 +521,9 @@ export function CrmShell() {
         onCreateQuote={deal => setQuoteModal({ open: true, deal, editQuote: null })}
         onEditQuote={handleEditQuote}
         onDeleteQuote={handleDeleteQuote}
+        onCreateQuoteVersion={handleCreateQuoteVersion}
+        onOpenQuoteVersion={handleOpenQuoteVersion}
+        quoteVersionsRefreshKey={quoteVersionsRefreshKey}
       />
       <StageModal
         open={Boolean(stageData)}
@@ -532,12 +574,14 @@ export function CrmShell() {
           setCreateOpen(false);
           setEditingDeal(null);
           setInitialCustomer(null);
+          setInitialProject(null);
         }}
         onCreate={handleCreate}
         onCreateAndContinue={handleCreateAndContinue}
         onUpdate={handleUpdate}
         currentUser={user}
         initialCustomer={initialCustomer}
+        initialProject={initialProject}
       />
       <ContractDetailModal deal={contractDeal} open={Boolean(contractDeal)} onClose={() => setContractDeal(null)} />
     </div>

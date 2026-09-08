@@ -417,8 +417,16 @@ export function CreateQuoteModal({
 
   function buildDraftPayload() {
     const isVilla = selectedForm?.schemaJson.layoutType === 'villa_solution_package';
+    // Loc bo khoi noi dung tu do RONG (tieu de/noi dung deu trim rong) CHI o day
+    // (luc luu that su) - khong loc ngay trong CustomBlocksEditor's onChange, vi
+    // khoi vua bam "+ Them noi dung" chua kip go gi se bi coi la rong va bien mat
+    // truoc khi Sale kip nhap.
+    const customBlocks = (quoteDraft.data.customBlocks || []).filter(
+      block => block.title.trim() || block.content.trim()
+    );
+    const data = { ...quoteDraft.data, customBlocks };
     return {
-      data: isVilla ? { ...quoteDraft.data, solutionItems: quoteDraft.solutionItems } : quoteDraft.data,
+      data: isVilla ? { ...data, solutionItems: quoteDraft.solutionItems } : data,
       items: isVilla ? [] : quoteDraft.items,
     };
   }
@@ -535,7 +543,10 @@ export function CreateQuoteModal({
 
   return (
     <div className="crm-modal-backdrop" onClick={resetAndClose}>
-      <div className="crm-modal crm-wizard-modal" onClick={event => event.stopPropagation()}>
+      <div
+        className={`crm-modal crm-wizard-modal${step === 3 ? ' crm-wizard-modal--wide' : ''}`}
+        onClick={event => event.stopPropagation()}
+      >
         <header className="crm-modal-header">
           <div>
             <h2 className="crm-modal-title">

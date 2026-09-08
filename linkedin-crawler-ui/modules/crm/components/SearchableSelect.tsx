@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 
 type Option = string | { value: string; label: string };
 
@@ -42,16 +43,74 @@ export function SearchableSelect({
   const [isOpen, setIsOpen] = useState(false);
   const [search, setSearch] = useState('');
   const containerRef = useRef<HTMLDivElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const [menuStyle, setMenuStyle] = useState<{ top: number; left: number; width: number } | null>(null);
+
+  /** Menu render qua Portal ra document.body (position:fixed) - KHONG con long
+   * trong container co overflow (vd o loc trong bang bao gia) vi container do
+   * cat mat menu o hang gan mep (bug thuc te da thay tren UI). Toa do tinh tu
+   * getBoundingClientRect() cua trigger, tu lat len tren neu gan day viewport,
+   * giong dung idiom da dung o ActionMenu.tsx. */
+  useLayoutEffect(() => {
+    if (!isOpen) return;
+    const trigger = containerRef.current;
+    const menu = menuRef.current;
+    if (!trigger) return;
+    const rect = trigger.getBoundingClientRect();
+    const width = Math.min(Math.max(rect.width, 260), 320);
+    const margin = 8;
+    let left = rect.left;
+    if (left + width + margin > window.innerWidth) {
+      left = Math.max(margin, window.innerWidth - width - margin);
+    }
+    const menuHeight = menu?.offsetHeight ?? 0;
+    let top = rect.bottom + 4;
+    if (menuHeight && top + menuHeight + margin > window.innerHeight) {
+      const above = rect.top - menuHeight - 4;
+      top = above >= margin ? above : Math.max(margin, window.innerHeight - menuHeight - margin);
+    }
+    setMenuStyle(prev => {
+      if (prev && Math.abs(prev.top - top) < 0.5 && Math.abs(prev.left - left) < 0.5 && Math.abs(prev.width - width) < 0.5) {
+        return prev;
+      }
+      return { top, left, width };
+    });
+  });
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+      const target = event.target as Node;
+      if (containerRef.current?.contains(target)) return;
+      if (menuRef.current?.contains(target)) return;
+      setIsOpen(false);
+      setSearch('');
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
         setIsOpen(false);
         setSearch('');
       }
     };
+    // Chi dong menu khi CUON BEN NGOAI menu (trang/bang chua no) - cuon BEN
+    // TRONG danh sach option (list dai, co overflow-y:auto rieng) KHONG duoc
+    // tinh, vi 'scroll' bat o pha capture tren window se "thay" ca scroll cua
+    // chinh list nay - neu khong loai truong hop nay, cuon chuot trong list
+    // se dong menu ngay lap tuc (bug that da gap: "cuon khong duoc" vi menu
+    // tu dong tat truoc khi nguoi dung kip thay noi dung cuon).
+    const handleReposition = (event: Event) => {
+      if (menuRef.current?.contains(event.target as Node)) return;
+      setIsOpen(false);
+    };
     document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
+    document.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('scroll', handleReposition, true);
+    window.addEventListener('resize', handleReposition);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('scroll', handleReposition, true);
+      window.removeEventListener('resize', handleReposition);
+    };
   }, []);
 
   const filtered = search.trim()
@@ -71,40 +130,47 @@ export function SearchableSelect({
         <span>{selectedLabel ? optionLabel(selectedLabel) : placeholder}</span>
         <span aria-hidden>▾</span>
       </button>
-      {isOpen && !disabled ? (
-        <div className="crm-searchable-select-menu">
-          <input
-            autoFocus
-            type="text"
-            value={search}
-            onChange={event => setSearch(event.target.value)}
-            placeholder="Tìm..."
-            className="crm-searchable-select-input"
-          />
-          <div className="crm-searchable-select-list">
-            <button
-              type="button"
-              className="crm-searchable-select-option"
-              onClick={() => { onChange(''); setIsOpen(false); setSearch(''); }}
+      {isOpen && !disabled && menuStyle
+        ? createPortal(
+            <div
+              ref={menuRef}
+              className="crm-searchable-select-menu crm-searchable-select-menu--portal"
+              style={{ top: menuStyle.top, left: menuStyle.left, width: menuStyle.width }}
             >
-              {placeholder}
-            </button>
-            {filtered.map(option => (
-              <button
-                key={optionValue(option)}
-                type="button"
-                className={`crm-searchable-select-option ${value === optionValue(option) ? 'is-selected' : ''}`}
-                onClick={() => { onChange(optionValue(option)); setIsOpen(false); setSearch(''); }}
-              >
-                {optionLabel(option)}
-              </button>
-            ))}
-            {filtered.length === 0 ? (
-              <div className="crm-searchable-select-empty">Không tìm thấy</div>
-            ) : null}
-          </div>
-        </div>
-      ) : null}
+              <input
+                autoFocus
+                type="text"
+                value={search}
+                onChange={event => setSearch(event.target.value)}
+                placeholder="Tìm..."
+                className="crm-searchable-select-input"
+              />
+              <div className="crm-searchable-select-list">
+                <button
+                  type="button"
+                  className="crm-searchable-select-option"
+                  onClick={() => { onChange(''); setIsOpen(false); setSearch(''); }}
+                >
+                  {placeholder}
+                </button>
+                {filtered.map(option => (
+                  <button
+                    key={optionValue(option)}
+                    type="button"
+                    className={`crm-searchable-select-option ${value === optionValue(option) ? 'is-selected' : ''}`}
+                    onClick={() => { onChange(optionValue(option)); setIsOpen(false); setSearch(''); }}
+                  >
+                    {optionLabel(option)}
+                  </button>
+                ))}
+                {filtered.length === 0 ? (
+                  <div className="crm-searchable-select-empty">Không tìm thấy</div>
+                ) : null}
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
     </div>
   );
 }

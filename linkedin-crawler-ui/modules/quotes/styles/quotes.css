@@ -214,6 +214,54 @@
   background: transparent;
 }
 
+.quote-version-history {
+  padding: 1rem 0;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.quote-version-history h2 {
+  font-size: 0.9rem;
+  font-weight: 700;
+  margin: 0 0 0.6rem;
+  color: #334155;
+}
+
+.quote-version-history ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.quote-version-history li {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-size: 0.85rem;
+}
+
+.quote-version-history li a {
+  color: #2563eb;
+  text-decoration: none;
+}
+
+.quote-version-history__item--current {
+  font-weight: 700;
+}
+
+.quote-version-history__date {
+  margin-left: auto;
+  color: #94a3b8;
+  font-size: 0.78rem;
+}
+
+.quote-badge--version {
+  background: #eef2ff;
+  color: #4338ca;
+}
+
 /* Card mau bao gia - xep doc 3 vung (tieu de / badge / footer), KHONG dung
  * grid 2 cot hay position:absolute cho cum thao tac nua. Ly do doi han: grid
  * 2 cot (info | actions, align-items:center hoac start) van de cum nut de
@@ -1867,6 +1915,16 @@ select.quote-compact-vat:hover {
   padding-bottom: 1rem;
 }
 
+/* Bang gia nhieu cot (>=7 cot, xem LANDSCAPE_PRINT_COLUMN_THRESHOLD trong
+ * QuoteDocumentRenderer.tsx) - truoc day CHI ban in/PDF chuyen A4 ngang, man
+ * hinh xem van giu 210mm (portrait) nen cac cot bi ep qua hep, chong chit/de
+ * len nhau khi xem THAT (nguoi dung bao cao qua screenshot). Ap dung DUNG
+ * class .quote-sheet--print-landscape (component da tu gan khi >=7 cot) cho
+ * CA man hinh xem, khong chi luc in. */
+.quote-sheet--print-landscape {
+  width: min(297mm, 100%);
+}
+
 .quote-sheet--standard {
   position: relative;
   overflow: hidden;
@@ -2311,6 +2369,43 @@ select.quote-compact-vat:hover {
   line-height: 1.45;
 }
 
+/* Khoi noi dung tu do (CustomBlocksEditor) - tai dung .sheet-note nhung khong co
+ * .sheet-note--terms (do khong phai <ul>/<li>, chi <h3>+<p>) nen can style rieng
+ * cho h3/p ngay trong .sheet-note, khop dung gia tri da dung o --terms cho dong bo. */
+.sheet-note h3 {
+  margin: 0 0 0.55rem;
+  color: #111827;
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.sheet-note p {
+  margin: 0.22rem 0;
+  color: #475569;
+  font-size: 0.84rem;
+  line-height: 1.45;
+}
+
+@media print {
+  /* QA thuc te (xem .sheet-items-table--print-stacked tr o tren): dat
+   * page-break-inside:avoid tren 1 khoi DAI HON 1 trang khien Chromium AM THAM
+   * CAT MAT noi dung phia sau thay vi chi ngat trang xau. Vi vay CHI khoi "ngan"
+   * (uoc luong vua 1 trang, xem COMPACT_BLOCK_CHAR_LIMIT/COMPACT_BLOCK_LINE_LIMIT
+   * trong QuoteDocumentRenderer.tsx) moi duoc avoid - khoi dai KHONG gan class nay,
+   * de mac dinh page-break-inside:auto, chap nhan ngat trang xau con hon mat noi dung. */
+  .sheet-note--compact {
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+
+  /* Ap dung cho MOI khoi (ngan lan dai) - chi giu tieu de dinh voi dong dau tien,
+   * khong chan phan con lai cua khoi tu ngat trang binh thuong. */
+  .sheet-note h3 {
+    page-break-after: avoid;
+    break-after: avoid-page;
+  }
+}
+
 .sheet-signatures {
   margin-top: 2.2rem;
 }
@@ -2451,12 +2546,28 @@ select.quote-compact-vat:hover {
   .quote-panel-head,
   .sheet-company,
   .sheet-parties,
-  .sheet-signatures,
   .villa-header,
   .villa-split,
   .villa-footer {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  /* .sheet-signatures ("Đại diện công ty" / "Đại diện khách hàng") CO Y giu
+   * lai 2 cot song song ngang KE CA man hinh hep (khong theo chung mobile
+   * stack o tren) - theo yeu cau nguoi dung "mặc định 2 chỗ này song song
+   * ngang", khac voi cac khoi con lai (sheet-company/sheet-parties) van stack
+   * doc khi chat. flex:1 that thap (0 0 auto min 45%) de khong bi bop qua
+   * nho tren man hinh rat hep, van giu 2 cot canh nhau. */
+  .sheet-signatures {
+    flex-direction: row;
+    flex-wrap: nowrap;
+    gap: 1rem;
+  }
+
+  .sheet-signatures > div {
+    flex: 1 1 0;
+    min-width: 0;
   }
 }
 
@@ -2484,6 +2595,33 @@ select.quote-compact-vat:hover {
     background: #ffffff !important;
     -webkit-print-color-adjust: exact;
     print-color-adjust: exact;
+  }
+
+  /* Luoi an toan (bulletproof "print only this element") - AN TOAN BO cho
+   * MOI link mo bao gia (trang admin /all-platform/quotes/[id] LAN trang
+   * cong khai), khong phu thuoc vao danh sach loai tru theo ten class/
+   * data-slot cu the (vd sidebar) - neu sau nay app-shell doi cau truc/them
+   * element moi ma khong cap nhat danh sach loai tru, ban in van KHONG bao
+   * gio bi lot them noi dung ngoai y muon vao. Dung visibility (KE THUA,
+   * hoat dong bat ke .quote-print-root/.quote-public-page nam sau bao nhieu
+   * lop the layout/sidebar cua app-shell) - KHONG dung display:none (chi an
+   * dung 1 lop con truc tiep cua body, sai neu target nam sau nhieu lop).
+   * Van GIU nguyen cac rule loai tru cu the (sidebar data-slot...) ben duoi,
+   * khong xoa - phong khi 1 trinh duyet khong ho tro dung nhu ky vong. */
+  body * {
+    visibility: hidden;
+  }
+  .quote-print-root,
+  .quote-print-root *,
+  .quote-public-page,
+  .quote-public-page * {
+    visibility: visible;
+  }
+  .quote-print-root {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
   }
 
   /* Sidebar + header sticky cua app-shell (AllPlatformShell.tsx) chua tung

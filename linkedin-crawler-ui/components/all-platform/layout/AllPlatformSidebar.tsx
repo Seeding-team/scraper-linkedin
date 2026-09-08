@@ -431,6 +431,19 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, workspaceTab: 
     items: channelItemsTeam,
   };
 
+  // "Cài đặt kết nối" luôn là 1 mục PHẲNG (không submenu/chevron) mở
+  // "/all-platform/profile" - trang đó tự có tab "Email gửi báo giá" (chỉ
+  // Admin/Leader thấy tab đó) qua query param ?tab=quote-email, KHÔNG dùng
+  // route/submenu sidebar riêng (route riêng trước đó gây 404, đã bỏ).
+  const connectionSettingsEntry: SidebarEntry = {
+    type: "item",
+    id: "settings",
+    href: "/all-platform/profile",
+    icon: "settings",
+    label: "Cài đặt kết nối",
+    matchStartsWith: ["/all-platform/profile"],
+  };
+
   // Ca nhan: chi viec hang ngay cua tung nguoi (dang bai, inbox, acc FB cua minh).
   // Nhom: full bo cong cu quan ly - Teams, thu vien nhom, KPI acc seeding, ha tang VPS.
   if (workspaceTab === "personal") {
@@ -448,14 +461,7 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, workspaceTab: 
         label: "Tài khoản FB",
         matchStartsWith: ["/all-platform/quan-ly-tai-khoan"],
       },
-      {
-        type: "item",
-        id: "settings",
-        href: "/all-platform/profile",
-        icon: "settings",
-        label: "Cài đặt kết nối",
-        matchStartsWith: ["/all-platform/profile"],
-      },
+      connectionSettingsEntry,
     ];
   }
 
@@ -483,14 +489,7 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, workspaceTab: 
           } as SidebarEntry,
         ]
       : []),
-    {
-      type: "item",
-      id: "settings",
-      href: "/all-platform/profile",
-      icon: "settings",
-      label: "Cài đặt kết nối",
-      matchStartsWith: ["/all-platform/profile"],
-    },
+    connectionSettingsEntry,
   ];
 }
 

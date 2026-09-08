@@ -56,6 +56,8 @@ type CustomerLeadRow = {
   team_id?: string | null;
   team_name?: string | null;
   team_type?: string | null;
+  /** Du an that (migration 097) - null = Co hoi chua gan Du an nao. */
+  project_id?: string | null;
   status?: 'pending' | 'closed' | 'rejected' | string | null;
   activity_status?: string | null;
   deal_stage?: DealStage | null;
@@ -104,6 +106,8 @@ type CustomerLeadRow = {
   quote_total_amount?: number | string | null;
   quote_public_url?: string | null;
   quote_status?: string | null;
+  quote_version_number?: number | null;
+  quote_version_chain_id?: string | null;
 };
 
 type CustomerLeadList = {
@@ -392,6 +396,7 @@ function rowToDeal(row: CustomerLeadRow, history: StageHistory[] = []): Deal {
     contactId: row.id,
     dealId: row.id,
     customerId: asText(row.customer_id),
+    projectId: asText(row.project_id),
     position: asText(row.position),
     positionCategoryId: asText(row.position_category_id),
     positionLabelSnapshot: asText(row.position_label_snapshot),
@@ -440,6 +445,8 @@ function rowToDeal(row: CustomerLeadRow, history: StageHistory[] = []): Deal {
           number: asText(row.quote_number) || attachmentName || undefined,
           totalAmount: quoteTotal,
           status: (asText(row.quote_status) || undefined) as QuoteReference['status'],
+          versionNumber: row.quote_version_number || undefined,
+          versionChainId: asText(row.quote_version_chain_id) || undefined,
         }
       : undefined,
     assignment: {
@@ -506,6 +513,11 @@ function toCustomerPayload(input: CreateDealInput | UpdateDealInput): Partial<Cu
   const contractStatus = contractStatusToDb(input.contract?.status);
   const payload: Partial<CustomerLeadRow> = {};
 
+  // Du an that (migration 097) - 'projectId' in input LUON true tu
+  // buildDealPayload() (spread luon co key du gia tri la null), nen dong
+  // nay chay o CA 2 truong hop tao moi VA sua - gui project_id=null RO
+  // RANG khi bo gan (khong duoc IM LANG bo qua project_id nhu bug cu).
+  if ('projectId' in input) payload.project_id = input.projectId || null;
   if ('customerName' in input) payload.customer_name = input.customerName;
   if ('companyName' in input) payload.company_name = input.companyName;
   if ('phone' in input) payload.phone = input.phone;

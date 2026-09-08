@@ -1840,6 +1840,16 @@ export interface AppUserProfile {
   is_active?: boolean;
   created_at?: string;
   can_approve_quotes?: boolean;
+  /** Vai trò NGHIỆP VỤ báo giá (migration 095) — presale/sale/both/null, TÁCH
+   * BIỆT hoàn toàn với `role` (system role admin/leader/member). */
+  quote_business_role?: "presale" | "sale" | "both" | null;
+}
+
+export interface QuoteBusinessRoleUser {
+  id: string;
+  name: string;
+  role?: string;
+  quote_business_role?: "presale" | "sale" | "both" | null;
 }
 
 export interface TeamMember {
@@ -1899,6 +1909,119 @@ export const usersService = {
       method: "POST",
       body: JSON.stringify({ email, can_approve_quotes }),
     });
+  },
+  /** Admin-ONLY (backend trả 403 thật cho Leader/Member — migration 095):
+   * gán vai trò NGHIỆP VỤ báo giá (Presale/Sale/Both/không tham gia). */
+  updateQuoteBusinessRole: (
+    email: string,
+    quote_business_role: "presale" | "sale" | "both" | null
+  ): Promise<ApiResponse<AppUserProfile>> => {
+    return requestJson(`${BASE}/users/update-quote-business-role`, {
+      method: "POST",
+      body: JSON.stringify({ email, quote_business_role }),
+    });
+  },
+  /** Danh sách người đủ điều kiện làm Presale/Sale phụ trách 1 báo giá — ai
+   * đăng nhập cũng gọi được (owner-picker), không phải endpoint quản trị. */
+  getUsersByQuoteBusinessRole: (role: "presale" | "sale"): Promise<ApiResponse<QuoteBusinessRoleUser[]>> => {
+    return requestJson(`${BASE}/users/by-quote-business-role?role=${encodeURIComponent(role)}`);
+  },
+};
+
+export interface MemberOption {
+  id: string;
+  displayName: string;
+  avatarUrl: string | null;
+  systemRole: string;
+  quoteBusinessRole: "presale" | "sale" | "both" | null;
+  teamNames: string[];
+  isActive: boolean;
+}
+
+export const memberOptionsService = {
+  /** Picker "Người phụ trách dự án" (và picker tương tự) - allowlist DTO
+   * DUY NHẤT nguồn từ Quản lý thành viên thật (app_users), KHÔNG bao giờ
+   * trả email/password/token. `includeIds` ép trả thêm 1 vài id cụ thể dù
+   * đang bị vô hiệu hoá - dùng khi Sửa 1 project mà người phụ trách hiện tại
+   * đã ngừng hoạt động (vẫn phải hiện tên + badge, không được biến mất). */
+  getOptions: (opts?: { active?: boolean; includeIds?: string[] }): Promise<ApiResponse<{ items: MemberOption[] }>> => {
+    const params = new URLSearchParams();
+    if (opts?.active === false) params.set("active", "false");
+    if (opts?.includeIds?.length) params.set("include_id", opts.includeIds.join(","));
+    const qs = params.toString();
+    return requestJson(`${BASE}/users/member-options${qs ? `?${qs}` : ""}`);
+  },
+};
+
+// ── Projects (migration 097) ─────────────────────────────────────────────────
+
+export interface Project {
+  id: string;
+  projectCode: string;
+  name: string;
+  customerId: string;
+  description?: string | null;
+  status: "planning" | "active" | "completed" | "cancelled";
+  managerId?: string | null;
+  teamId?: string | null;
+  createdById?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface CreateProjectInput {
+  project_code: string;
+  name: string;
+  customer_id: string;
+  description?: string;
+  status?: Project["status"];
+  manager_id?: string | null;
+  team_id?: string | null;
+}
+
+export const projectsService = {
+  /** Ai dang nhap cung goi duoc (dropdown chon Du an) - DTO da la allowlist
+   * that (khong lo field nhay cam). */
+  list: (customerId?: string): Promise<ApiResponse<Project[]>> => {
+    const qs = customerId ? `?customer_id=${encodeURIComponent(customerId)}` : "";
+    return requestJson(`${BASE}/projects${qs}`);
+  },
+  get: (id: string): Promise<ApiResponse<Project>> => {
+    return requestJson(`${BASE}/projects/${encodeURIComponent(id)}`);
+  },
+  /** Chi Admin/Leader tao duoc (backend tu choi that neu goi sai quyen -
+   * can_manage_project(), xem crm_permission_service.py). */
+  create: (payload: CreateProjectInput): Promise<ApiResponse<Project>> => {
+    return requestJson(`${BASE}/projects`, { method: "POST", body: JSON.stringify(payload) });
+  },
+  update: (id: string, payload: Partial<CreateProjectInput>): Promise<ApiResponse<Project>> => {
+    return requestJson(`${BASE}/projects/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify(payload) });
+  },
+};
+
+export interface ProjectSummaryCard extends Project {
+  opportunityCount: number;
+  quoteCaseCount: number;
+  versionCount: number;
+  processingCount: number;
+  sentCount: number;
+  currentQuoteValue: number;
+}
+
+export interface CustomerProjectsSummary {
+  projectCount: number;
+  activeProjectCount: number;
+  opportunityCount: number;
+  quoteCaseCount: number;
+  currentQuoteValue: number;
+  projects: ProjectSummaryCard[];
+}
+
+export const customerProjectsSummaryService = {
+  /** Tab "Dự án" trong Hồ sơ khách hàng - 1 goi API tong hop (backend gom
+   * san, KHONG N+1 tu client). */
+  get: (customerId: string): Promise<ApiResponse<CustomerProjectsSummary>> => {
+    return requestJson(`${BASE}/crm/customers/${encodeURIComponent(customerId)}/projects-summary`);
   },
 };
 

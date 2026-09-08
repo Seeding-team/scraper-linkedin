@@ -93,13 +93,15 @@ const LOCKED_COLUMN_KEYS_BY_ITEM_FIELD_KEY: Record<string, string[]> = {
 };
 
 /** Cột ẩn hẳn khỏi khối "Cột hiển thị" (không phải khoá bắt buộc, cũng không
- * phải tuỳ chọn — đơn giản không hiện trong picker) - giữ nguyên hành vi cũ:
- * discountPercent của bảng quoteItems luôn hiện trong bảng, không cho
- * toggle/không hiện checkbox, tránh vỡ tương thích ngược với báo giá cũ đã lưu
- * visibleColumns trước khi có field này. */
-const HIDDEN_FROM_PICKER_KEYS_BY_ITEM_FIELD_KEY: Record<string, string[]> = {
-  quoteItems: ['discountPercent'],
-};
+ * phải tuỳ chọn — đơn giản không hiện trong picker).
+ * "discountPercent" (Giảm giá) TRƯỚC ĐÂY bị ẩn ở đây (luôn hiện trong bảng,
+ * không cho toggle) - QA thực tế phát hiện điều này khiến khối "Cột hiển thị"
+ * KHÔNG khớp với các cột thật sự có trên bảng gửi khách (thiếu hẳn 1 dòng
+ * checkbox cho cột đang hiển thị), gây hiểu lầm. Đã bỏ exception này - xem
+ * QuoteDocumentRenderer.tsx (AUTO_INCLUDE_LEGACY_COLUMN_KEYS) để biết cách xử
+ * lý tương thích ngược cho báo giá CŨ đã lưu visibleColumns từ trước khi
+ * 'discountPercent' là toggle option. */
+const HIDDEN_FROM_PICKER_KEYS_BY_ITEM_FIELD_KEY: Record<string, string[]> = {};
 
 /** Key của field bảng hạng mục thật của mẫu này ('quoteItems'/'solutionItems'/
  * ... ) - dùng để tra LOCKED_COLUMN_KEYS_BY_ITEM_FIELD_KEY ở cả quoteColumns.ts

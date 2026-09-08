@@ -104,6 +104,8 @@ type CustomerLeadRow = {
   quote_total_amount?: number | string | null;
   quote_public_url?: string | null;
   quote_status?: string | null;
+  quote_version_number?: number | null;
+  quote_version_chain_id?: string | null;
 };
 
 type CustomerLeadList = {
@@ -440,6 +442,8 @@ function rowToDeal(row: CustomerLeadRow, history: StageHistory[] = []): Deal {
           number: asText(row.quote_number) || attachmentName || undefined,
           totalAmount: quoteTotal,
           status: (asText(row.quote_status) || undefined) as QuoteReference['status'],
+          versionNumber: row.quote_version_number || undefined,
+          versionChainId: asText(row.quote_version_chain_id) || undefined,
         }
       : undefined,
     assignment: {

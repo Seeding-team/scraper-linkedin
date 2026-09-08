@@ -10,9 +10,23 @@ import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from postgrest.exceptions import APIError
 from supabase import Client
 
 from app.core.supabase_client import get_supabase_client
+
+
+class QuoteNotFoundError(ValueError):
+    """Bao gia khong ton tai (hoac da soft-delete va bi loc boi include_deleted=False).
+    Subclass ValueError de moi `except ValueError` cu (khap noi trong
+    routers/quote.py) TU DONG bat duoc va tra ve message than thien nay thay
+    vi loi PGRST116 tho - khong can sua tung endpoint cu. Rieng 5 endpoint
+    moi (cancel/revoke-public/soft-delete/restore/hard-delete) can HTTP 404
+    that su thi router bat rieng exception nay TRUOC ValueError chung."""
+
+
+def _is_zero_rows_error(exc: Exception) -> bool:
+    return isinstance(exc, APIError) and exc.code == "PGRST116"
 
 FORMS_TABLE = "quote_forms"
 QUOTES_TABLE = "quotes"
@@ -86,7 +100,67 @@ def _row_to_item(row: dict) -> dict:
         "unitPriceUsd": row.get("unit_price_usd"),
         "exchangeRate": row.get("exchange_rate"),
         "unitPriceVnd": row.get("unit_price_vnd"),
+        # Gia von/markup (migration 086) - CHI dung noi bo (authenticated).
+        # _row_to_item() KHONG BAO GIO duoc goi cho duong public (xem
+        # _row_to_public_item() rieng o tren, dung allowlist tu dau, khong ke
+        # thua ham nay) nen an toan them truc tiep o day.
+        "costPrice": (float(row["cost_price"]) if row.get("cost_price") is not None else None),
+        "markupPercent": (float(row["markup_percent"]) if row.get("markup_percent") is not None else None),
+        "costNotApplicable": bool(row.get("cost_not_applicable") or False),
+        "costTotal": (
+            float(row["cost_price"]) * float(row.get("quantity") or 0)
+            if row.get("cost_price") is not None
+            else None
+        ),
         "children": [],
+    }
+
+
+def _quote_cost_summary(row: dict, raw_items: list[dict] | None) -> dict:
+    """Tinh Tong gia von / Doanh thu thuan / Loi nhuan gop / Gross margin THAT
+    su o backend (khong luu DB, luon tinh lai tu cost_price/quantity that cua
+    tung dong + quotes.total_amount/vat_amount that) - CHI dung noi bo,
+    KHONG BAO GIO goi cho duong public. Doanh thu thuan = total_amount -
+    vat_amount (= SUM(amount_after_discount) that su - da xac minh dung cong
+    thuc quote_update, KHONG phai total_amount vi so do DA GOM VAT)."""
+    # hasCostData PHAI la "DA GIAI QUYET DU MOI hang muc" (co cost_price HOAC
+    # duoc danh dau cost_not_applicable=true), KHONG PHAI "co IT NHAT 1 hang
+    # muc co cost_price" - bug that da tim thay: logic cu (any(...)) khien
+    # quote co 1/14 hang muc da nhap cost van bao hasCostData=true va tinh
+    # costTotal/margin CHI tren 1 dong do, AM THAM bo qua 13 dong con lai
+    # (hieu la cost=0 cho chung) - lam SAI LECH margin theo huong lac quan
+    # gia (cost bi hieu thap hon that, margin bi hien cao hon that). Item
+    # cost_not_applicable=true (Presale danh dau "khong ap dung", vd hang muc
+    # mien phi/da bao gom o dong khac) tinh la DA GIAI QUYET, dong gop 0 vao
+    # cost_total - KHONG lam quote bi coi la "thieu cost".
+    raw_items = raw_items or []
+    # netRevenue (Doanh thu thuan = gia KHACH truoc VAT sau chiet khau) chi phu
+    # thuoc total_amount/vat_amount cua CHINH quote nay - KHONG lien quan gi
+    # toi viec Presale da nhap cost_price hay chua. Bug that da tim thay: ban
+    # truoc GOP netRevenue vao chung 1 nhanh voi hasCostData (return None het
+    # neu chua co cost) => "Gia khach" tren UI (alias tu netRevenue) bi hien
+    # rong/"—" trong luc cho Presale nhap gia von, dung ra No PHAI luon hien
+    # ngay khi Sale da nhap gia ban xong (total_amount > 0), khong doi trang
+    # thai Presale. netRevenue tach rieng khoi has_cost_data tu day.
+    net_revenue = float(row.get("total_amount") or 0) - float(row.get("vat_amount") or 0)
+    has_cost_data = bool(raw_items) and all(
+        item.get("cost_price") is not None or bool(item.get("cost_not_applicable")) for item in raw_items
+    )
+    if not has_cost_data:
+        return {"hasCostData": False, "costTotal": None, "netRevenue": net_revenue, "grossProfit": None, "grossMarginPercent": None}
+    cost_total = sum(
+        float(item["cost_price"]) * float(item.get("quantity") or 0)
+        for item in raw_items
+        if item.get("cost_price") is not None
+    )
+    gross_profit = net_revenue - cost_total
+    gross_margin_percent = (gross_profit / net_revenue * 100) if net_revenue > 0 else None
+    return {
+        "hasCostData": True,
+        "costTotal": cost_total,
+        "netRevenue": net_revenue,
+        "grossProfit": gross_profit,
+        "grossMarginPercent": gross_margin_percent,
     }
 
 
@@ -117,6 +191,257 @@ def _row_to_quote(row: dict, items: list[dict] | None = None) -> dict:
         "publicToken": row.get("public_token"),
         "publicUrl": f"/public/quotes/{row['public_token']}" if row.get("public_token") else None,
         "publicEnabled": row.get("public_enabled") if row.get("public_enabled") is not None else True,
+        "versionChainId": row.get("version_chain_id"),
+        "versionNumber": row.get("version_number") or 1,
+        "parentQuoteId": row.get("parent_quote_id"),
+        # Phase 2 "Workspace xu ly bao gia" (migration 085) - buoc xu ly noi bo
+        # (chi y nghia khi status='draft', xem quote_set_processing_stage) +
+        # nguoi phu trach ky thuat/bao gia (co the khac created_by).
+        "processingStage": row.get("processing_stage") or "request",
+        "technicalOwnerId": row.get("technical_owner_id"),
+        "quoteOwnerId": row.get("quote_owner_id"),
+        # Phase 1/3 lifecycle that (migration 087) - noi bo, khong bao gio
+        # loi qua _row_to_public_quote.
+        "deletedAt": row.get("deleted_at"),
+        "cancellationReason": row.get("cancellation_reason"),
+        "cancelledAt": row.get("cancelled_at"),
+        "cancelledById": row.get("cancelled_by"),
+        "publishedAt": row.get("published_at"),
+        "publishedById": row.get("published_by"),
+        "sentAt": row.get("sent_at"),
+        "sentById": row.get("sent_by"),
+        "requestedChangesTargetStage": row.get("requested_changes_target_stage"),
+        "requestedChangesReason": row.get("requested_changes_reason"),
+        "requestedChangesAt": row.get("requested_changes_at"),
+        "requestedChangesById": row.get("requested_changes_by"),
+        # Du an + SLA that (migration 097) - projectId noi bo, KHONG bao gio
+        # loi qua _row_to_public_quote (allowlist rieng, xem duoi). SLA la
+        # han XU LY NOI BO, KHAC HOAN TOAN validUntil (hieu luc bao gia VOI
+        # KHACH HANG, da co tu 028).
+        "projectId": row.get("project_id"),
+        "slaStartedAt": row.get("sla_started_at"),
+        "slaDueAt": row.get("sla_due_at"),
+        "completedAt": row.get("completed_at"),
+        # Gia von/loi nhuan (migration 086) - tinh THAT o backend, khong tin
+        # so tong tu frontend. CHI dung noi bo (_row_to_quote khong bao gio
+        # duoc goi cho duong public - xem _row_to_public_quote rieng o tren).
+        **_quote_cost_summary(row, items),
+    }
+
+
+# 4 NHOM RIENG BIET (sua lai LAN 2 sau khi bi bac bo - lan 1 gop chung 1 ham
+# strip_cost_fields_for_user() xoa lan gia von/gia ban/loi nhuan; lan 2 mo qua
+# rong nhom "gia ban" khien Presale (chi la technical_owner) van xem duoc
+# markupPercent - SAI vi markupPercent la chien luoc noi bo cua Sale):
+#   A. Cost noi bo (costPrice/costTotal(item)/costNotApplicable/quote.costTotal/
+#      quote.hasCostData) - gac boi can_view_quote_cost() (admin/technical_
+#      owner/quote_owner duoc XEM read-only, chi technical_owner duoc SUA).
+#   B. Pricing noi bo (markupPercent - chien luoc markup cua Sale, KHONG phai
+#      so hien thi cho khach) - gac boi can_view_quote_pricing() (CHI admin/
+#      quote_owner, Presale chi la technical_owner KHONG duoc xem).
+#   C. Customer commercial (unitPrice/discountPercent/discountAmount/
+#      amountAfterDiscount/vatRate/totalAmount/netRevenue/
+#      customerPriceBeforeVat/payment terms trong quote.data) - KHONG gac
+#      field-level o day, day la so THAT SU xuat hien tren ban bao gia gui
+#      khach, ai xem duoc quote (da chan o tang endpoint/can_edit_quote) deu
+#      xem duoc nhom nay binh thuong.
+#   D. Profitability (grossProfit/grossMarginPercent) - gac boi
+#      can_view_quote_profitability() (CHI admin/quote_owner).
+_QUOTE_COST_KEYS = ("costTotal", "hasCostData")
+_QUOTE_PRICING_KEYS: tuple[str, ...] = ()  # markupPercent chi o item-level, khong co field quote-level rieng
+_QUOTE_PROFIT_KEYS = ("grossProfit", "grossMarginPercent")
+_ITEM_COST_KEYS = ("costPrice", "costNotApplicable", "costTotal")
+_ITEM_PRICING_KEYS = ("markupPercent",)
+
+
+def _strip_item_fields(item: dict, strip_cost: bool, strip_pricing: bool) -> dict:
+    # Giu nguyen KEY (dat None) thay vi xoa han - FE/TS type dinh nghia san
+    # cac field nay luon co mat tren Quote/QuoteItem, xoa han key se lam FE
+    # doc `item.costPrice` ra `undefined` thay vi `null` (khac hanh vi ky
+    # vong, co the gay loi runtime o cac cho dang assume key ton tai).
+    stripped = dict(item)
+    if strip_cost:
+        for key in _ITEM_COST_KEYS:
+            if key in stripped:
+                stripped[key] = None if key != "costNotApplicable" else False
+    if strip_pricing:
+        for key in _ITEM_PRICING_KEYS:
+            if key in stripped:
+                stripped[key] = None
+    stripped["children"] = [
+        _strip_item_fields(child, strip_cost, strip_pricing) for child in (item.get("children") or [])
+    ]
+    return stripped
+
+
+def apply_quote_field_permissions(quote: dict, user: dict | None) -> dict:
+    """Ap dung 3 lop quyen doc DOC LAP (KHONG dung chung 1 boolean cho nhieu
+    nhom field): can_view_quote_cost (nhom A), can_view_quote_pricing (nhom
+    B - markupPercent), can_view_quote_profitability (nhom D). Nhom C
+    (customer commercial: unitPrice/discount/VAT/totalAmount/netRevenue/
+    customerPriceBeforeVat/payment terms) KHONG bi dong o day - day la so
+    THAT SU tren ban bao gia gui khach, ai xem duoc quote deu xem duoc nhom
+    C binh thuong (quyen SUA nhom C van gac rieng o can_edit_quote_pricing,
+    khong lien quan ham nay).
+
+    3 co the DOC duoc tu response ("Khong co quyen xem" != "Chua co du lieu"
+    - 2 y nghia khac nhau, UI PHAI phan biet):
+      - costViewAllowed: False => FE hien "Không có quyền xem" (khong phai
+        "Chưa có") bat ke hasCostData/costTotal la gi.
+      - pricingViewAllowed: False => FE an markupPercent tung dong, hien
+        "Không có quyền xem" thay vi so that.
+      - profitabilityViewAllowed: False => FE hien "Không có quyền xem" cho
+        Margin, khac voi "Chưa tính" (chua du du lieu de tinh)."""
+    from app.modules.all_platform.services.crm_permission_service import (
+        can_view_quote_cost,
+        can_view_quote_pricing,
+        can_view_quote_profitability,
+    )
+
+    cost_allowed = can_view_quote_cost(user, quote)
+    pricing_allowed = can_view_quote_pricing(user, quote)
+    profit_allowed = can_view_quote_profitability(user, quote)
+    result = dict(quote)
+    result["costViewAllowed"] = cost_allowed
+    result["pricingViewAllowed"] = pricing_allowed
+    result["profitabilityViewAllowed"] = profit_allowed
+    if not cost_allowed:
+        for key in _QUOTE_COST_KEYS:
+            if key in result:
+                result[key] = False if key == "hasCostData" else None
+    if not profit_allowed:
+        for key in _QUOTE_PROFIT_KEYS:
+            if key in result:
+                result[key] = None
+    if (not cost_allowed or not pricing_allowed) and "items" in result:
+        result["items"] = [
+            _strip_item_fields(item, strip_cost=not cost_allowed, strip_pricing=not pricing_allowed)
+            for item in (result.get("items") or [])
+        ]
+    return result
+
+
+# ── Public DTO (get_public_quote - link cong khai + PDF khach hang) ────────
+#
+# ALLOWLIST THAT SU - moi ham duoi day dung tu RAW DB row (khong phai dict da
+# map cho noi bo qua _row_to_quote/_row_to_item), TU DUNG lai tung field bang
+# ten cu the. KHONG bao gio "lay het roi xoa bot" (deny-list) - field DB/noi
+# bo moi trong tuong lai (vd cost_price/markup_percent o migration 086, hay
+# bat ky cot noi bo nao sau nay) MAC DINH KHONG xuat hien tren API cong khai,
+# tru khi co ai do CHU DONG them dung ten vao dict duoi day.
+_PUBLIC_ITEM_KEYS = (
+    "id", "parentItemId", "description", "serviceDescription", "unit", "quantity",
+    "unitPrice", "discountPercent", "discountAmount", "amountAfterDiscount", "vatRate",
+    "subtotalAmount", "vatAmount", "totalAmount", "sortOrder",
+    "catalogItemId", "bundleSnapshot", "listPriceUsd", "unitPriceUsd", "exchangeRate", "unitPriceVnd",
+)
+
+
+def _row_to_public_item(row: dict) -> dict:
+    """Dung RIENG cho public/PDF - doc truc tiep tu RAW quote_items row (KHONG
+    qua _row_to_item noi bo), dung explicit field list o tren. Tuyet doi
+    KHONG co cost_price/markup_percent (migration 086) o day."""
+    return {
+        "id": row.get("id"),
+        "parentItemId": row.get("parent_item_id"),
+        "description": row.get("description") or "",
+        "serviceDescription": row.get("service_description") or "",
+        "unit": row.get("unit"),
+        "quantity": float(row.get("quantity") or 0),
+        "unitPrice": float(row.get("unit_price") or 0),
+        "discountPercent": float(row.get("discount_percent") or 0),
+        "discountAmount": float(row.get("discount_amount") or 0),
+        "amountAfterDiscount": float(row.get("amount_after_discount") or 0),
+        "vatRate": float(row.get("vat_rate") or 0),
+        "subtotalAmount": float(row.get("subtotal_amount") or 0),
+        "vatAmount": float(row.get("vat_amount") or 0),
+        "totalAmount": float(row.get("total_amount") or 0),
+        "sortOrder": row.get("sort_order") or 0,
+        "catalogItemId": row.get("catalog_item_id"),
+        "bundleSnapshot": row.get("bundle_snapshot"),
+        "listPriceUsd": row.get("list_price_usd"),
+        "unitPriceUsd": row.get("unit_price_usd"),
+        "exchangeRate": row.get("exchange_rate"),
+        "unitPriceVnd": row.get("unit_price_vnd"),
+        "children": [],
+    }
+
+
+def _public_item_tree(rows: list[dict]) -> list[dict]:
+    """Ban sao doc lap cua _quote_item_tree() nhung dung _row_to_public_item -
+    co the trung lap logic voi ham noi bo, CHU Y: co tinh, de nhanh public
+    khong bao gio phu thuoc vao nhanh noi bo (sua/them field o _row_to_item
+    khong the vo tinh lam lo field moi qua duong nay)."""
+    mapped = [_row_to_public_item(row) for row in rows]
+    by_id = {item["id"]: item for item in mapped if item.get("id")}
+    roots: list[dict] = []
+    for item in mapped:
+        parent_id = item.get("parentItemId")
+        if parent_id and parent_id in by_id:
+            by_id[parent_id].setdefault("children", []).append(item)
+        else:
+            roots.append(item)
+    for item in mapped:
+        item["children"] = sorted(item.get("children") or [], key=lambda child: child.get("sortOrder") or 0)
+    return sorted(roots, key=lambda item: item.get("sortOrder") or 0)
+
+
+def _public_data_allowlist(data: dict, form_snapshot: dict) -> dict:
+    """`quotes.data` la JSONB schema-less (dung cho ca field khach hang THAT
+    (vd quoteTitle, customerRecipient...) LAN field noi bo them sau nay
+    (internalRequestNote, requestSummary...) - KHONG the liet ke tay het field
+    khach hang vi no phu thuoc SCHEMA CUA TUNG MAU BAO GIA (form_snapshot,
+    khac nhau giua cac mau). Allowlist THAT: chi cho qua nhung key nam trong
+    CHINH form_snapshot.sections[].fields[].key cua mau nay (tuc la field ma
+    NGUOI TAO MAU da khai bao la thuoc ve to bao gia - allowlist tu nguon
+    du lieu, khong phai danh sach tay co the thieu sot) + 'customBlocks' (khoi
+    noi dung Sale chu dong them CHO KHACH xem, da xac nhan khong chua cost/
+    markup/margin). Bat ky key nao KHAC (vd internalRequestNote,
+    secretFutureField...) deu bi loai vi khong nam trong 2 nhom nay."""
+    schema_keys: set[str] = set()
+    for section in (form_snapshot or {}).get("sections") or []:
+        for field in section.get("fields") or []:
+            key = field.get("key")
+            if key:
+                schema_keys.add(key)
+    allowed = schema_keys | {"customBlocks"}
+    return {key: value for key, value in (data or {}).items() if key in allowed}
+
+
+def _row_to_public_quote(row: dict, raw_items: list[dict] | None = None) -> dict:
+    """Dung RIENG cho get_public_quote() (link cong khai/PDF khach hang) - dung
+    TU DAU tu RAW DB row (khong qua _row_to_quote noi bo), chi lay dung cac
+    field da duyet ben duoi. KHONG bao gio goi _row_to_quote() o day - lam
+    vay se vo tinh ke thua moi field noi bo _row_to_quote co the them trong
+    tuong lai (processingStage/technicalOwnerId/quoteOwnerId da la vi du
+    thuc te)."""
+    form_snapshot = row.get("form_snapshot") or {}
+    return {
+        "id": row.get("id"),
+        "dealId": row.get("deal_id"),
+        "quoteFormId": row.get("quote_form_id"),
+        "issuerCompanyId": row.get("issuer_company_id"),
+        "quoteNumber": row.get("quote_number"),
+        "status": row.get("status"),
+        "formSchemaVersion": row.get("form_schema_version"),
+        "formSnapshot": form_snapshot,
+        "data": _public_data_allowlist(row.get("data") or {}, form_snapshot),
+        "items": _public_item_tree(raw_items or []),
+        "subtotalAmount": float(row.get("subtotal_amount") or 0),
+        "vatAmount": float(row.get("vat_amount") or 0),
+        "totalAmount": float(row.get("total_amount") or 0),
+        "currency": row.get("currency") or "VND",
+        "issuedAt": row.get("issued_at"),
+        "validUntil": row.get("valid_until"),
+        "createdAt": row.get("created_at"),
+        "updatedAt": row.get("updated_at"),
+        "approvedAt": row.get("approved_at"),
+        "publicToken": row.get("public_token"),
+        "publicUrl": f"/public/quotes/{row['public_token']}" if row.get("public_token") else None,
+        "publicEnabled": row.get("public_enabled") if row.get("public_enabled") is not None else True,
+        "versionChainId": row.get("version_chain_id"),
+        "versionNumber": row.get("version_number") or 1,
+        "parentQuoteId": row.get("parent_quote_id"),
     }
 
 
@@ -471,19 +796,343 @@ def share_quote_form(form_id: str, enabled: bool = True) -> dict:
 
 # ── Quotes ─────────────────────────────────────────────────────────────────
 
-def list_quotes(deal_id: str | None = None) -> list[dict]:
+def list_quotes(deal_id: str | None = None, include_deleted: bool = False) -> list[dict]:
     supabase: Client = get_supabase_client()
     query = supabase.table(QUOTES_TABLE).select("*")
     if deal_id:
         query = query.eq("deal_id", deal_id)
+    if not include_deleted:
+        query = query.is_("deleted_at", "null")
     result = query.order("created_at", desc=True).execute()
     quotes = result.data or []
     return [_row_to_quote(row, _quote_items(row["id"])) for row in quotes]
 
 
-def get_quote(quote_id: str) -> dict:
+# 5 phase bucket thuc su hien thi tren Quote Center (khong tinh "Tat ca" -
+# do la tong 5 bucket). Suy tu DUNG processing_stage/status/sent_at that,
+# KHONG luu rieng 1 cot "phase" (tranh 2 nguon du lieu lech nhau - dung yeu
+# cau "phase phai la du lieu that, suy tu canonical state, khong hard-code").
+_PHASE_KEYS = ("presale", "sale_markup", "admin_review", "ready_to_send", "sent")
+
+# Section 7 (KPI SLA Quote Center) - mirror CHINH XAC logic thuan
+# computeQuoteSla() o modules/crm/utils/quoteSla.ts (KHONG duoc lech nguong/
+# dieu kien voi FE - cung 1 nguon su that "sap den han"/"qua han"). Nguong
+# "sap den han" <= 4 gio, dung nguong da chot QUOTE_SLA_DUE_SOON_THRESHOLD_MS.
+_QUOTE_SLA_DUE_SOON_THRESHOLD_SECONDS = 4 * 60 * 60
+
+
+def _quote_sla_bucket(row: dict, now: datetime) -> str:
+    """Tra ve 'overdue' | 'due_soon' | 'other' cho 1 dong quote (dung slim
+    row: sla_due_at/completed_at/sent_at) - CHI dung de DEM KPI, khong lam
+    lai toan bo QuoteSlaPresentation (FE van la nguon hien thi badge tung
+    dong). 'other' gom: chua dat SLA, con nhieu hon 4h, DA HOAN THANH (dung
+    khong dung thoi han hay tre - "khong tinh completed la qua han", dung
+    yeu cau)."""
+    sla_due_at = row.get("sla_due_at")
+    if not sla_due_at:
+        return "other"
+    try:
+        due_dt = datetime.fromisoformat(str(sla_due_at).replace("Z", "+00:00"))
+    except ValueError:
+        return "other"
+    completed_at = row.get("completed_at") or row.get("sent_at")
+    if completed_at:
+        return "other"
+    diff_seconds = (due_dt - now).total_seconds()
+    if diff_seconds < 0:
+        return "overdue"
+    if diff_seconds <= _QUOTE_SLA_DUE_SOON_THRESHOLD_SECONDS:
+        return "due_soon"
+    return "other"
+
+
+def _derive_quote_phase(row: dict) -> str | None:
+    """None = khong thuoc bucket nao (da xoa mem/da huy) - loai hoan toan
+    khoi moi dem (ca "Tat ca").
+
+    THU TU UU TIEN CO Y (khong doi thu tu tuy tien - moi buoc la 1 tin hieu
+    "khong the nao sai" manh hon buoc sau, dung yeu cau da chot):
+      1) deleted_at/status='cancelled' -> loai hoan toan (None).
+      2) sent_at co gia tri -> 'sent' - email THAT SU da gui, tin hieu manh
+         nhat, khong gi lat nguoc duoc trang thai nay.
+      3) published_at co gia tri HOAC processing_stage='published' -> tra
+         'ready_to_send' TRU KHI (2) da khop truoc do - da phat hanh nhung
+         chua gui van la "san sang gui".
+      4) status='approved' HOAC approved_at co gia tri (nhung CHUA qua (2)/
+         (3)) -> 'ready_to_send' voi nhan "Đã duyệt · Chờ phát hành" - day
+         la nhanh xu ly du lieu cu (4 quote that: RPC quote_approve() TRUOC
+         migration 089 khong dong bo processing_stage cung luc voi status).
+      5) processing_stage='review' -> 'admin_review'.
+      6) processing_stage='pricing' -> 'sale_markup'.
+      7) request/technical (hoac None, quote cu) -> 'presale'.
+
+    QUAN TRONG: status='approved' KHONG BAO GIO duoc dung de GHI DE (2)/(3)
+    - 1 quote da gui/da phat hanh PHAI giu dung nhanh do du status co la gi
+    (test rieng cho tinh huong nay: approved+sent_at, approved+published_at
+    phai uu tien dung sent/ready_to_send tu tin hieu THAT, khong roi ve
+    nhanh "chi vi approved" o buoc 4)."""
+    if row.get("deleted_at") or row.get("status") == "cancelled":
+        return None
+    if row.get("sent_at"):
+        return "sent"
+    if row.get("published_at") or row.get("processing_stage") == "published":
+        return "ready_to_send"
+    if row.get("status") == "approved" or row.get("approved_at"):
+        return "ready_to_send"
+    stage = row.get("processing_stage") or "request"
+    if stage == "review":
+        return "admin_review"
+    if stage == "pricing":
+        return "sale_markup"
+    if stage == "ready_to_publish":
+        return "ready_to_send"
+    return "presale"
+
+
+def _quote_row_date_key(row: dict) -> str:
+    return row.get("issued_at") or row.get("created_at") or ""
+
+
+def list_quotes_by_phase(
+    phase: str | None = None,
+    search: str | None = None,
+    customer_id: str | None = None,
+    project_id: str | None = None,
+    technical_owner_id: str | None = None,
+    quote_owner_id: str | None = None,
+    owner_id: str | None = None,
+    mine_user_id: str | None = None,
+    team_id: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    sla: str | None = None,
+    page: int = 1,
+    page_size: int = 10,
+) -> dict:
+    """Danh sach bao gia cho Quote Center - GOM THEO version_chain_id (1
+    dong = 1 Quote Case/chuoi version, KHONG phai 1 dong DB tho). TOAN BO
+    filter (customer/project/owner/team/mine/thoi gian/tim kiem) ap dung o
+    BACKEND, TRUOC pagination - khong con filter tren du lieu 1 trang da tra
+    ve (bug thuc te da bi bao: khach hang o trang 2 se "khong tim thay" neu
+    loc tren trang 1).
+
+    `counts` tinh tren tap da ap TOAN BO filter TRU `phase` (dung hanh vi
+    dashboard chuyen nghiep: doi Customer thi 5 badge tab doi theo, khong giu
+    so dem toan he thong) - `phase` chi loc rieng cho `items`/`total` cua
+    LAN GOI NAY.
+
+    Buoc 1 - chi SELECT cot nhe (khong keo items) de gom chuoi + loc + dem
+    cho TOAN BO bang; buoc 2 - chi load full chi tiet (item, cost summary,
+    project, owner...) cho DUNG cac dong cua TRANG dang tra ve (tranh N+1
+    tren toan bang)."""
+    if phase is not None and phase not in _PHASE_KEYS:
+        raise ValueError(f"phase không hợp lệ: {phase!r}")
+    if sla is not None and sla not in ("overdue", "due_soon"):
+        raise ValueError(f"sla không hợp lệ: {sla!r}")
+
     supabase: Client = get_supabase_client()
-    row = supabase.table(QUOTES_TABLE).select("*").eq("id", quote_id).single().execute().data
+    slim_result = (
+        supabase.table(QUOTES_TABLE)
+        .select(
+            "id, deal_id, project_id, technical_owner_id, quote_owner_id, created_by, "
+            "quote_number, version_chain_id, version_number, processing_stage, status, "
+            "sent_at, published_at, approved_at, issued_at, created_at, updated_at, "
+            "sla_due_at, completed_at"
+        )
+        .is_("deleted_at", "null")
+        .execute()
+    )
+    rows = slim_result.data or []
+
+    # Gom theo chuoi - "current" = version_number lon nhat trong chuoi.
+    chains: dict[str, dict] = {}
+    chain_version_counts: dict[str, int] = {}
+    for row in rows:
+        key = row.get("version_chain_id") or row["id"]
+        chain_version_counts[key] = chain_version_counts.get(key, 0) + 1
+        existing = chains.get(key)
+        if existing is None or (row.get("version_number") or 1) > (existing.get("version_number") or 1):
+            chains[key] = row
+    current_rows = list(chains.values())
+
+    # Deal slim (chi field can cho FILTER, khong phai hien thi - hien thi
+    # Khach hang/Co hoi van lay tu du lieu Deal da co san o frontend qua
+    # useCrm(), tranh 2 nguon du lieu Deal lech nhau) - chi fetch khi that su
+    # co filter can toi (customer_id/team_id/mine_user_id), tranh 1 query
+    # thua khi khong loc gi ca. (Da REVERT viec fetch luon de sap xep theo
+    # customerId - xem ghi chu o sort ben duoi.)
+    deals_by_id: dict[str, dict] = {}
+    if customer_id or team_id or mine_user_id:
+        deal_ids = list({r["deal_id"] for r in current_rows if r.get("deal_id")})
+        if deal_ids:
+            deal_result = (
+                supabase.table("customer_leads")
+                .select("id, customer_id, team_id, sdr_id, leaded_by")
+                .in_("id", deal_ids)
+                .execute()
+            )
+            deals_by_id = {d["id"]: d for d in (deal_result.data or [])}
+
+    def _matches_non_phase_filters(row: dict) -> bool:
+        if search and search.strip():
+            needle = search.strip().lower()
+            if needle not in (row.get("quote_number") or "").lower():
+                return False
+        if project_id and row.get("project_id") != project_id:
+            return False
+        if technical_owner_id and row.get("technical_owner_id") != technical_owner_id:
+            return False
+        if quote_owner_id and row.get("quote_owner_id") != quote_owner_id:
+            return False
+        # owner_id = filter chung "Tat ca owner" tren UI (1 dropdown, khong
+        # tach rieng Presale/Sale) - khop NEU nguoi nay dang la technical
+        # HOAC quote owner cua bao gia (OR, khong phai bat buoc ca 2).
+        if owner_id and row.get("technical_owner_id") != owner_id and row.get("quote_owner_id") != owner_id:
+            return False
+        deal = deals_by_id.get(row.get("deal_id")) if row.get("deal_id") else None
+        if customer_id:
+            if not deal or deal.get("customer_id") != customer_id:
+                return False
+        if team_id:
+            if not deal or deal.get("team_id") != team_id:
+                return False
+        if mine_user_id:
+            if deal:
+                if deal.get("sdr_id") != mine_user_id and deal.get("leaded_by") != mine_user_id:
+                    return False
+            elif row.get("created_by") != mine_user_id:
+                return False
+        date_key = _quote_row_date_key(row)
+        if date_from and (not date_key or date_key < date_from):
+            return False
+        if date_to and (not date_key or date_key > date_to):
+            return False
+        return True
+
+    bucketed_all: list[tuple[str, dict]] = []
+    for row in current_rows:
+        row_phase = _derive_quote_phase(row)
+        if row_phase is None:
+            continue
+        bucketed_all.append((row_phase, row))
+
+    # counts: ap TOAN BO filter TRU phase - dung yeu cau "doi Customer thi 5
+    # badge doi theo, KHONG giu so dem toan he thong".
+    filtered_for_counts = [(p, r) for p, r in bucketed_all if _matches_non_phase_filters(r)]
+    counts = {key: 0 for key in _PHASE_KEYS}
+    for p, _r in filtered_for_counts:
+        counts[p] += 1
+
+    # KPI SLA (Section 7) - dem TREN CA TAP DA LOC (giong counts phase o tren:
+    # bam theo Customer/Project/Owner/Team/Mine/Period hien tai) TRUOC
+    # pagination, KHONG dem tren 10 dong cua trang dang tra ve. Da loai
+    # cancelled/deleted qua _derive_quote_phase (row nao co phase=None da bi
+    # loai o bucketed_all roi, khong con trong filtered_for_counts).
+    sla_now = datetime.now(timezone.utc)
+    sla_counts = {"overdue": 0, "dueSoon": 0}
+    for _p, r in filtered_for_counts:
+        bucket = _quote_sla_bucket(r, sla_now)
+        if bucket == "overdue":
+            sla_counts["overdue"] += 1
+        elif bucket == "due_soon":
+            sla_counts["dueSoon"] += 1
+
+    bucketed = [(p, r) for p, r in filtered_for_counts if (phase is None or p == phase)]
+    if sla is not None:
+        # Loc THEO SLA sau khi da tinh sla_counts (giong het cach `phase` bi
+        # loai khoi counts nhung van loc duoc items) - bam KPI "Quá hạn"/"Sắp
+        # đến hạn" phai loc dung tap DA qua moi filter khac, KHONG chi loc
+        # tren 10 dong cua trang hien tai.
+        bucketed = [(p, r) for p, r in bucketed if _quote_sla_bucket(r, sla_now) == sla]
+    # REVERT (yeu cau nguoi dung): KHONG tu y uu tien bao gia co customerId len
+    # dau - day la thay doi quy tac sap xep ma nghiep vu chua chot. Giu DUNG 1
+    # tieu chi updated_at DESC cho TOAN BO danh sach, khong phan biet co/khong
+    # Khach hang. Neu can giup nhan biet du lieu thieu lien ket thi dung
+    # badge/filter rieng ("Chưa gắn khách hàng") o FE, khong doi sort ngam.
+    bucketed.sort(key=lambda pr: pr[1].get("updated_at") or pr[1].get("created_at") or "", reverse=True)
+
+    total = len(bucketed)
+    page = max(1, page)
+    page_size = max(1, min(page_size, 100))
+    start = (page - 1) * page_size
+    page_slice = bucketed[start:start + page_size]
+
+    # Chi load full chi tiet (item, cost summary, project, owner...) cho
+    # DUNG cac id trong TRANG nay (khong phai toan bo tap da loc).
+    page_ids = [r["id"] for _, r in page_slice]
+    items: list[dict] = []
+    if page_ids:
+        full_result = supabase.table(QUOTES_TABLE).select("*").in_("id", page_ids).execute()
+        full_by_id = {r["id"]: r for r in (full_result.data or [])}
+
+        page_project_ids = list({r.get("project_id") for _, r in page_slice if r.get("project_id")})
+        projects_by_id: dict[str, dict] = {}
+        if page_project_ids:
+            proj_result = (
+                supabase.table("projects").select("id, project_code, name, status").in_("id", page_project_ids).execute()
+            )
+            projects_by_id = {p["id"]: p for p in (proj_result.data or [])}
+
+        page_owner_ids = list(
+            {r.get("technical_owner_id") for _, r in page_slice if r.get("technical_owner_id")}
+            | {r.get("quote_owner_id") for _, r in page_slice if r.get("quote_owner_id")}
+        )
+        owners_by_id: dict[str, dict] = {}
+        if page_owner_ids:
+            owner_result = supabase.table("app_users").select("id, name").in_("id", page_owner_ids).execute()
+            owners_by_id = {u["id"]: u for u in (owner_result.data or [])}
+
+        for phase_key, row in page_slice:
+            full_row = full_by_id.get(row["id"])
+            if full_row is None:
+                continue
+            quote = _row_to_quote(full_row, _quote_items(row["id"]))
+            quote["phase"] = phase_key
+            quote["versionCount"] = chain_version_counts.get(row.get("version_chain_id") or row["id"], 1)
+            quote["currentVersionNumber"] = quote["versionNumber"]
+            # Alias ten dung theo spec Checkpoint C - gia khach TRUOC VAT sau
+            # chiet khau, CHINH LA netRevenue da tinh o _quote_cost_summary
+            # (total_amount - vat_amount), khong phai 1 phep tinh moi.
+            quote["customerPriceBeforeVat"] = quote.get("netRevenue")
+            project_row = projects_by_id.get(row.get("project_id")) if row.get("project_id") else None
+            quote["project"] = (
+                {"id": project_row["id"], "code": project_row.get("project_code"), "name": project_row.get("name"), "status": project_row.get("status")}
+                if project_row
+                else None
+            )
+            tech_owner = owners_by_id.get(row.get("technical_owner_id")) if row.get("technical_owner_id") else None
+            quote["technicalOwner"] = {"id": tech_owner["id"], "name": tech_owner.get("name")} if tech_owner else None
+            quote_owner = owners_by_id.get(row.get("quote_owner_id")) if row.get("quote_owner_id") else None
+            quote["quoteOwner"] = {"id": quote_owner["id"], "name": quote_owner.get("name")} if quote_owner else None
+            items.append(quote)
+
+    return {
+        "items": items,
+        "counts": {**counts, "all": sum(counts.values())},
+        "slaCounts": sla_counts,
+        "page": page,
+        "pageSize": page_size,
+        "total": total,
+    }
+
+
+def get_quote(quote_id: str, include_deleted: bool = False) -> dict:
+    """Xoa mem (deleted_at khong NULL) mac dinh KHONG duoc coi la quote dang
+    hoat dong - endpoint thuong (khong truyen include_deleted=True) se nhan
+    QuoteNotFoundError giong het truong hop ID khong ton tai, dung yeu cau
+    "deleted quote khong duoc endpoint thong thuong coi la active quote".
+    CHI loi zero-rows (PGRST116) moi duoc map sang QuoteNotFoundError - loi
+    ket noi/permission/DB khac deu duoc RE-RAISE nguyen ven, khong nuot."""
+    supabase: Client = get_supabase_client()
+    query = supabase.table(QUOTES_TABLE).select("*").eq("id", quote_id)
+    if not include_deleted:
+        query = query.is_("deleted_at", "null")
+    try:
+        row = query.single().execute().data
+    except APIError as exc:
+        if _is_zero_rows_error(exc):
+            raise QuoteNotFoundError("Không tìm thấy báo giá.") from exc
+        raise
     return _row_to_quote(row, _quote_items(quote_id))
 
 
@@ -494,6 +1143,7 @@ def get_public_quote(token: str) -> dict:
         .select("*")
         .eq("public_token", token)
         .eq("public_enabled", True)
+        .is_("deleted_at", "null")
         .single()
         .execute()
     )
@@ -503,7 +1153,7 @@ def get_public_quote(token: str) -> dict:
     # qua approve_quote() truoc.
     if not row or row.get("status") not in ("approved", "confirmed"):
         raise ValueError("Báo giá chưa được phát hành.")
-    return _row_to_quote(row, _quote_items(row["id"]))
+    return _row_to_public_quote(row, _quote_items(row["id"]))
 
 
 def create_quote(payload: dict, created_by: str | None) -> dict:
@@ -541,6 +1191,12 @@ def create_quote(payload: dict, created_by: str | None) -> dict:
         "public_token": None,
         "public_enabled": False,
         "created_by": created_by,
+        # Du an + SLA that (migration 097) - ca 2 deu nullable (tuong thich
+        # bao gia doc lap khong gan Du an, hoac chua dat SLA luc tao - SLA
+        # se duoc bat buoc kiem tra o buoc "Gui yeu cau xu ly"
+        # (set_quote_processing_stage), khong phai luc tao nay).
+        "project_id": payload.get("project_id"),
+        "sla_due_at": payload.get("sla_due_at"),
     }
     quote_row = supabase.table(QUOTES_TABLE).insert(insert_data).execute().data[0]
 
@@ -571,6 +1227,13 @@ def create_quote(payload: dict, created_by: str | None) -> dict:
             "exchange_rate": item.get("exchange_rate"),
             "unit_price_vnd": item.get("unit_price_vnd"),
         }
+        # Chi them cost_price/markup_percent (migration 086) vao payload INSERT
+        # khi THAT SU co gia tri - neu luon them ca key voi gia tri None,
+        # PostgREST se bao loi "column does not exist" tren DB CHUA chay
+        # migration 086 (da phat hien qua test that, khong phai gia dinh).
+        if item.get("cost_price") is not None:
+            row["cost_price"] = item["cost_price"]
+            row["markup_percent"] = item.get("markup_percent")
         inserted = supabase.table(ITEMS_TABLE).insert(row).execute().data[0]
         inserted_items.append(inserted)
         inserted_ids_by_flat_index[index] = inserted["id"]
@@ -594,6 +1257,23 @@ _RPC_ERROR_MESSAGES = {
     "quote_not_in_draft_status": "Báo giá không ở trạng thái chờ duyệt.",
     "quote_missing_required_fields": "Báo giá thiếu thông tin bắt buộc (chưa có hạng mục hoặc tổng tiền = 0).",
     "quote_item_invalid_percent": "Giảm giá/VAT phải nằm trong khoảng 0-100.",
+    "cancellation_reason_required": "Vui lòng nhập lý do huỷ báo giá.",
+    "hard_delete_reason_required": "Vui lòng nhập lý do xoá vĩnh viễn.",
+    "quote_number_mismatch": "Mã báo giá xác nhận không khớp — huỷ thao tác để an toàn.",
+    "request_changes_reason_required": "Vui lòng nhập lý do yêu cầu chỉnh sửa.",
+    "invalid_request_changes_target_stage": "Chỉ được yêu cầu chỉnh sửa về Thông tin kỹ thuật hoặc Giá bán.",
+    "quote_not_in_review_stage": "Chỉ báo giá đang ở bước Chờ duyệt mới yêu cầu chỉnh sửa được.",
+    "quote_must_be_approved_before_publish": "Báo giá phải được duyệt trước khi phát hành.",
+    "quote_missing_scope": "Chưa mô tả phạm vi công việc (scope).",
+    "quote_missing_items": "Cần ít nhất 1 hạng mục hợp lệ.",
+    "quote_item_invalid_quantity": "Có hạng mục với số lượng không hợp lệ (phải > 0).",
+    "quote_item_invalid_cost_price": "Có hạng mục với giá vốn không hợp lệ (không được âm).",
+    "quote_item_missing_cost_price": "Có hạng mục chưa nhập giá vốn — nhập giá vốn hoặc đánh dấu \"Không áp dụng giá vốn\" trước khi bàn giao.",
+    "quote_handoff_checklist_incomplete": "Checklist bàn giao (Scope/Cost/Timeline/Assumption) chưa đủ 4 mục.",
+    "quote_item_invalid_unit_price": "Có hạng mục với giá bán không hợp lệ (phải > 0).",
+    "quote_item_invalid_markup": "Có hạng mục với markup không hợp lệ (thấp hơn -100%).",
+    "quote_missing_payment_terms": "Chưa có điều khoản thanh toán hợp lệ.",
+    "quote_invalid_total_amount": "Tổng tiền tính lại không hợp lệ.",
 }
 
 
@@ -603,6 +1283,28 @@ def _raise_friendly_rpc_error(exc: Exception) -> None:
         if code in message:
             raise ValueError(friendly) from exc
     raise
+
+
+def _validate_project_matches_quote_customer(quote_id: str, project_id: str) -> None:
+    """Chan gan Du an KHAC khach hang voi bao gia nay (dung yeu cau "Khong
+    cho chon Project cheo khach hang"). Bao gia chua gan Co hoi (deal_id
+    NULL), hoac Co hoi chua gan ho so khach hang that (customer_id NULL) ->
+    KHONG the xac dinh khach hang -> BO QUA validate (khong chan, vi khong
+    co gi de so sanh - an toan hon la doan sai)."""
+    supabase = get_supabase_client()
+    quote_row = supabase.table(QUOTES_TABLE).select("deal_id").eq("id", quote_id).maybe_single().execute()
+    deal_id = quote_row.data.get("deal_id") if quote_row else None
+    if not deal_id:
+        return
+    deal_row = supabase.table("customer_leads").select("customer_id").eq("id", deal_id).maybe_single().execute()
+    deal_customer_id = deal_row.data.get("customer_id") if deal_row else None
+    if not deal_customer_id:
+        return
+    project_row = supabase.table("projects").select("customer_id").eq("id", project_id).maybe_single().execute()
+    if not project_row:
+        raise ValueError("Không tìm thấy dự án.")
+    if project_row.data.get("customer_id") != deal_customer_id:
+        raise ValueError("Dự án không thuộc đúng khách hàng của báo giá này.")
 
 
 def update_quote(quote_id: str, payload: dict, actor_id: str | None) -> dict:
@@ -620,16 +1322,69 @@ def update_quote(quote_id: str, payload: dict, actor_id: str | None) -> dict:
         }).execute()
     except Exception as exc:
         _raise_friendly_rpc_error(exc)
+
+    # Du an + SLA due date (migration 097) - CHUA nam trong RPC quote_update
+    # (chi la metadata, khong can recompute gia/VAT nhu cac RPC khac) - update
+    # THANG, rieng, CHI khi client that su gui field nay (key co mat trong
+    # dict - ke ca gia tri None co y "bo gan" - xem router quotes_update() da
+    # dung model_fields_set de phan biet "khong gui" voi "gui null co y").
+    direct_fields: dict[str, Any] = {}
+    if "project_id" in payload:
+        new_project_id = payload.get("project_id")
+        if new_project_id:
+            _validate_project_matches_quote_customer(quote_id, new_project_id)
+        direct_fields["project_id"] = new_project_id
+    if "sla_due_at" in payload:
+        direct_fields["sla_due_at"] = payload.get("sla_due_at")
+    if direct_fields:
+        supabase.table(QUOTES_TABLE).update(direct_fields).eq("id", quote_id).execute()
+
     return get_quote(quote_id)
 
 
+_READY_OR_LATER_STAGES = ("ready_to_publish", "published")
+
+
 def approve_quote(quote_id: str, actor_id: str | None) -> dict:
-    """Duyệt báo giá: khoá chỉnh sửa vĩnh viễn, sinh public_token (nếu chưa có),
-    bật public_enabled, ghi approved_by/approved_at + activity log. Idempotent
-    (gọi lại khi đã approved trả về nguyên trạng, không sinh thêm token/log)."""
+    """Duyệt báo giá: khoá chỉnh sửa vĩnh viễn, ghi approved_by/approved_at,
+    processing_stage -> 'ready_to_publish'. KHÔNG còn tự bật public link nữa
+    (tách riêng khỏi quote_publish() - xem migration 089) - Deal chỉ được
+    link khi PUBLISH thật (có publicUrl thật), không phải lúc duyệt.
+
+    Buoc "dam bao" o duoi (sau RPC) la CO CHU DICH - phat hien that: 1 phien
+    ban RPC quote_approve() TRUOC migration 089 (059/060/085) tung set
+    status='approved' nhung KHONG dong bo processing_stage sang
+    'ready_to_publish' (co ban con set nham lai 'review'), khien du lieu ket
+    dinh sai trang thai vinh vien (list Quote Center hien nham "Cho Admin
+    duyet" cho quote DA duoc duyet roi). Du RPC hien tai (migration 089) da
+    dung, van tu ep processing_stage o Python NGAY SAU RPC de: (1) an toan
+    du DB dang chay ban RPC nao, (2) khong bao gio de 1 quote 'approved' ket
+    dinh o processing_stage cu - CHI set khi processing_stage CHUA o
+    ready_to_publish/published (khong bao gio LUI lai tu 'published')."""
     supabase: Client = get_supabase_client()
     try:
         supabase.rpc("quote_approve", {
+            "p_quote_id": quote_id,
+            "p_actor_id": actor_id,
+            "p_public_token": secrets.token_urlsafe(16),
+        }).execute()
+    except Exception as exc:
+        _raise_friendly_rpc_error(exc)
+
+    quote = get_quote(quote_id)
+    if quote.get("status") == "approved" and quote.get("processingStage") not in _READY_OR_LATER_STAGES:
+        supabase.table(QUOTES_TABLE).update({"processing_stage": "ready_to_publish"}).eq("id", quote_id).execute()
+        quote = get_quote(quote_id)
+    return quote
+
+
+def publish_quote(quote_id: str, actor_id: str | None) -> dict:
+    """Phát hành báo giá đã duyệt: sinh/bật public_token/public_enabled THẬT
+    ở đây (không còn ở approve), processing_stage -> 'published'. Chỉ sau
+    bước này Deal mới được link với public URL thật."""
+    supabase: Client = get_supabase_client()
+    try:
+        supabase.rpc("quote_publish", {
             "p_quote_id": quote_id,
             "p_actor_id": actor_id,
             "p_public_token": secrets.token_urlsafe(16),
@@ -643,6 +1398,80 @@ def approve_quote(quote_id: str, actor_id: str | None) -> dict:
             "url": quote["publicUrl"], "totalAmount": quote["totalAmount"],
         })
     return quote
+
+
+def cancel_quote(quote_id: str, actor_id: str | None, reason: str) -> dict:
+    supabase: Client = get_supabase_client()
+    try:
+        supabase.rpc("quote_cancel", {
+            "p_quote_id": quote_id, "p_actor_id": actor_id, "p_reason": reason,
+        }).execute()
+    except Exception as exc:
+        _raise_friendly_rpc_error(exc)
+    return get_quote(quote_id)
+
+
+def revoke_public_quote(quote_id: str, actor_id: str | None) -> dict:
+    supabase: Client = get_supabase_client()
+    try:
+        supabase.rpc("quote_revoke_public", {
+            "p_quote_id": quote_id, "p_actor_id": actor_id,
+        }).execute()
+    except Exception as exc:
+        _raise_friendly_rpc_error(exc)
+    return get_quote(quote_id)
+
+
+def soft_delete_quote(quote_id: str, actor_id: str | None, reason: str | None) -> dict:
+    supabase: Client = get_supabase_client()
+    try:
+        supabase.rpc("quote_soft_delete", {
+            "p_quote_id": quote_id, "p_actor_id": actor_id, "p_reason": reason,
+        }).execute()
+    except Exception as exc:
+        _raise_friendly_rpc_error(exc)
+    return get_quote(quote_id, include_deleted=True)
+
+
+def restore_quote(quote_id: str, actor_id: str | None) -> dict:
+    supabase: Client = get_supabase_client()
+    try:
+        supabase.rpc("quote_restore", {
+            "p_quote_id": quote_id, "p_actor_id": actor_id,
+        }).execute()
+    except Exception as exc:
+        _raise_friendly_rpc_error(exc)
+    return get_quote(quote_id)
+
+
+def hard_delete_quote(quote_id: str, actor_id: str | None, quote_number_confirm: str, reason: str, request_id: str | None) -> None:
+    """Xoá VĨNH VIỄN - CHỈ gọi sau khi router đã xác nhận actor là
+    admin/superadmin thật. Backend tự đọc lại quote_number và đối chiếu với
+    quote_number_confirm client gửi (double-check) trước khi RPC ghi
+    quote_deletion_audit rồi mới DELETE thật, cùng 1 transaction Postgres."""
+    supabase: Client = get_supabase_client()
+    try:
+        supabase.rpc("quote_hard_delete", {
+            "p_quote_id": quote_id,
+            "p_actor_id": actor_id,
+            "p_quote_number_confirm": quote_number_confirm,
+            "p_reason": reason,
+            "p_request_id": request_id,
+        }).execute()
+    except Exception as exc:
+        _raise_friendly_rpc_error(exc)
+
+
+def request_quote_changes(quote_id: str, actor_id: str | None, target_stage: str, reason: str) -> dict:
+    supabase: Client = get_supabase_client()
+    try:
+        supabase.rpc("quote_request_changes", {
+            "p_quote_id": quote_id, "p_actor_id": actor_id,
+            "p_target_stage": target_stage, "p_reason": reason,
+        }).execute()
+    except Exception as exc:
+        _raise_friendly_rpc_error(exc)
+    return get_quote(quote_id)
 
 
 def update_and_approve_quote(quote_id: str, payload: dict, actor_id: str | None) -> dict:
@@ -671,6 +1500,240 @@ def update_and_approve_quote(quote_id: str, payload: dict, actor_id: str | None)
             "url": quote["publicUrl"], "totalAmount": quote["totalAmount"],
         })
     return quote
+
+
+_RPC_ERROR_MESSAGES.update({
+    "quote_not_found": "Không tìm thấy báo giá.",
+    "quote_not_approved": "Chuỗi báo giá này chưa có phiên bản nào được duyệt, không thể tạo phiên bản mới.",
+    "quote_is_draft": "Báo giá này đang là bản nháp (chưa duyệt), không thể tạo phiên bản mới từ đây.",
+})
+
+
+def create_quote_version(clicked_quote_id: str, actor_id: str | None) -> dict:
+    """Tạo phiên bản mới trong chuỗi (V1/V2/V3...) từ bản ĐÃ DUYỆT mới nhất -
+    xem chi tiết logic (khoá chuỗi, nguồn copy thật sự, redirect bản nháp có
+    sẵn) trong migration 082_quote_versioning.sql (RPC quote_create_version).
+    Trả thêm 'created' (False nếu chỉ redirect tới bản nháp có sẵn, không tạo
+    mới) và thông tin bản nguồn thật sự đã copy (để FE cảnh báo nếu khác
+    clicked_quote_id, vd bấm ở V1 nhưng nguồn thật là V2)."""
+    supabase: Client = get_supabase_client()
+    try:
+        result = supabase.rpc("quote_create_version", {
+            "p_clicked_quote_id": clicked_quote_id,
+            "p_actor_id": actor_id,
+            "p_new_quote_number": _next_quote_number(),
+        }).execute()
+    except Exception as exc:
+        _raise_friendly_rpc_error(exc)
+    row = (result.data or [None])[0]
+    if not row:
+        raise ValueError("Không tạo được phiên bản báo giá mới.")
+    new_quote = get_quote(row["quote"]["id"])
+    return {
+        "quote": new_quote,
+        "created": bool(row.get("created")),
+        "sourceQuoteId": row.get("source_quote_id"),
+        "sourceVersionNumber": row.get("source_version_number"),
+        "redirectedFromClickedQuote": row.get("source_quote_id") != clicked_quote_id,
+    }
+
+
+def list_quote_versions(chain_id: str) -> list[dict]:
+    """Toàn bộ phiên bản (V1..Vn) của 1 chuỗi báo giá, mới nhất trước - dùng cho
+    khối "Lịch sử phiên bản" (QuoteDetailPage) và mini-card Deal drawer."""
+    supabase: Client = get_supabase_client()
+    result = (
+        supabase.table(QUOTES_TABLE)
+        .select("*")
+        .eq("version_chain_id", chain_id)
+        .is_("deleted_at", "null")
+        .order("version_number", desc=True)
+        .execute()
+    )
+    return [_row_to_quote(row, []) for row in (result.data or [])]
+
+
+HANDOFF_TABLE = "quote_handoff_checklist"
+ACTIVITY_LOG_TABLE = "quote_activity_log"
+
+_RPC_ERROR_MESSAGES.update({
+    "invalid_processing_stage": "Bước xử lý không hợp lệ.",
+    "processing_stage_cannot_go_backward": "Không thể lùi về bước xử lý trước đó.",
+})
+
+
+def set_quote_processing_stage(quote_id: str, actor_id: str | None, stage: str) -> dict:
+    """Chuyen buoc xu ly noi bo (Yeu cau bao gia/Thong tin ky thuat/Hoan thien
+    gia ban/Cho duyet) - chi tien, khong lui (xem quote_set_processing_stage,
+    migration 085). Chi ap dung khi bao gia con la draft.
+
+    SLA that (migration 097, KHONG qua RPC - xu ly o Python vi chi lien quan
+    dung 1 canh chuyen request->technical, tranh phai sua them RPC): khi Sale
+    "Gui yeu cau xu ly" (request->technical) LAN DAU, bat buoc da co
+    sla_due_at va phai la thoi diem TUONG LAI, roi set sla_started_at=now()
+    NEU dang NULL (khong ghi de neu da co tu truoc - khong reset khi retry/
+    idempotent hoac neu logic sau nay cho quay lai stage nay)."""
+    supabase: Client = get_supabase_client()
+    current = get_quote(quote_id)
+    is_first_technical_handoff = stage == "technical" and current.get("processingStage") == "request"
+    if is_first_technical_handoff:
+        sla_due_at = current.get("slaDueAt")
+        if not sla_due_at:
+            raise ValueError("Cần đặt SLA / hạn hoàn tất nội bộ trước khi gửi yêu cầu xử lý.")
+        try:
+            due_dt = datetime.fromisoformat(str(sla_due_at).replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise ValueError("SLA / hạn hoàn tất nội bộ không hợp lệ.") from exc
+        if due_dt.tzinfo is None:
+            due_dt = due_dt.replace(tzinfo=timezone.utc)
+        if due_dt <= datetime.now(timezone.utc):
+            raise ValueError("SLA / hạn hoàn tất nội bộ phải là thời điểm trong tương lai.")
+
+    try:
+        supabase.rpc("quote_set_processing_stage", {
+            "p_quote_id": quote_id,
+            "p_actor_id": actor_id,
+            "p_stage": stage,
+        }).execute()
+    except Exception as exc:
+        _raise_friendly_rpc_error(exc)
+
+    if is_first_technical_handoff and not current.get("slaStartedAt"):
+        supabase.table(QUOTES_TABLE).update({"sla_started_at": "now()"}).eq("id", quote_id).is_("sla_started_at", "null").execute()
+
+    return get_quote(quote_id)
+
+
+def assign_quote_owner(
+    quote_id: str, actor_id: str | None,
+    technical_owner_id: str | None = None, quote_owner_id: str | None = None,
+    assign_technical: bool = False, assign_quote_owner_field: bool = False,
+) -> dict:
+    """Gan nguoi phu trach ky thuat / nguoi phu trach bao gia - update truc
+    tiep (khong qua RPC quote_update vi khong dung toi items/gia, khong can
+    atomic voi tinh lai tong tien). `assign_technical`/`assign_quote_owner_field`
+    phan biet "khong gui field nay" voi "gui gia tri None de bo gan" (giong
+    han che cua issuer company nullable field truoc do)."""
+    supabase: Client = get_supabase_client()
+    update_data: dict = {"updated_by": actor_id}
+    if assign_technical:
+        update_data["technical_owner_id"] = technical_owner_id or None
+    if assign_quote_owner_field:
+        update_data["quote_owner_id"] = quote_owner_id or None
+    if len(update_data) > 1:
+        supabase.table(QUOTES_TABLE).update(update_data).eq("id", quote_id).execute()
+        supabase.table(ACTIVITY_LOG_TABLE).insert({
+            "quote_id": quote_id, "actor_id": actor_id, "action": "owner_assigned",
+            "changes": {"technicalOwnerId": technical_owner_id, "quoteOwnerId": quote_owner_id},
+        }).execute()
+    return get_quote(quote_id)
+
+
+def _row_to_handoff(quote_id: str, row: dict | None) -> dict:
+    if not row:
+        return {
+            "quoteId": quote_id,
+            "scopeConfirmed": False, "scopeNote": None,
+            "costConfirmed": False, "costNote": None,
+            "timelineConfirmed": False, "timelineNote": None,
+            "assumptionConfirmed": False, "assumptionNote": None,
+            "handoffNote": None, "handedOffAt": None, "handedOffById": None,
+            "updatedAt": None, "updatedById": None,
+        }
+    return {
+        "quoteId": row.get("quote_id", quote_id),
+        "scopeConfirmed": bool(row.get("scope_confirmed")),
+        "scopeNote": row.get("scope_note"),
+        "costConfirmed": bool(row.get("cost_confirmed")),
+        "costNote": row.get("cost_note"),
+        "timelineConfirmed": bool(row.get("timeline_confirmed")),
+        "timelineNote": row.get("timeline_note"),
+        "assumptionConfirmed": bool(row.get("assumption_confirmed")),
+        "assumptionNote": row.get("assumption_note"),
+        "handoffNote": row.get("handoff_note"),
+        "handedOffAt": row.get("handed_off_at"),
+        "handedOffById": row.get("handed_off_by"),
+        "updatedAt": row.get("updated_at"),
+        "updatedById": row.get("updated_by"),
+    }
+
+
+def get_quote_handoff_checklist(quote_id: str) -> dict:
+    supabase: Client = get_supabase_client()
+    result = supabase.table(HANDOFF_TABLE).select("*").eq("quote_id", quote_id).limit(1).execute()
+    row = (result.data or [None])[0]
+    return _row_to_handoff(quote_id, row)
+
+
+def save_quote_handoff_checklist(quote_id: str, actor_id: str | None, payload: dict) -> dict:
+    """Luu checklist ban giao (Scope/Cost/Timeline/Assumption) - upsert qua RPC
+    (tu tinh handed_off_at/handed_off_by khi ca 4 muc deu da xac nhan, xem
+    quote_save_handoff_checklist migration 085)."""
+    supabase: Client = get_supabase_client()
+    try:
+        result = supabase.rpc("quote_save_handoff_checklist", {
+            "p_quote_id": quote_id,
+            "p_actor_id": actor_id,
+            "p_scope_confirmed": bool(payload.get("scope_confirmed")),
+            "p_scope_note": payload.get("scope_note"),
+            "p_cost_confirmed": bool(payload.get("cost_confirmed")),
+            "p_cost_note": payload.get("cost_note"),
+            "p_timeline_confirmed": bool(payload.get("timeline_confirmed")),
+            "p_timeline_note": payload.get("timeline_note"),
+            "p_assumption_confirmed": bool(payload.get("assumption_confirmed")),
+            "p_assumption_note": payload.get("assumption_note"),
+            "p_handoff_note": payload.get("handoff_note"),
+        }).execute()
+    except Exception as exc:
+        _raise_friendly_rpc_error(exc)
+    data = result.data
+    row = data[0] if isinstance(data, list) else data
+    return _row_to_handoff(quote_id, row)
+
+
+def _row_to_activity(row: dict) -> dict:
+    return {
+        "id": row["id"],
+        "quoteId": row.get("quote_id"),
+        "actorId": row.get("actor_id"),
+        "action": row.get("action"),
+        "changes": row.get("changes"),
+        "createdAt": row.get("created_at"),
+    }
+
+
+def list_quote_activity_log(quote_id: str) -> list[dict]:
+    """Lich su hoat dong THAT cua 1 bao gia (created/updated/approved/
+    cancelled/version_created/stage_changed/handoff_updated/owner_assigned) -
+    dung cho khoi "Activity & handoff" trong workspace. Actor chi tra id, FE tu
+    resolve ten qua danh sach agents da co (khong join ten o backend)."""
+    supabase: Client = get_supabase_client()
+    result = (
+        supabase.table(ACTIVITY_LOG_TABLE)
+        .select("*")
+        .eq("quote_id", quote_id)
+        .order("created_at", desc=True)
+        .execute()
+    )
+    return [_row_to_activity(row) for row in (result.data or [])]
+
+
+_VALID_VERSION_REASONS = {"scope_change", "price_change", "add_items", "other"}
+
+
+def log_quote_version_reason(quote_id: str, actor_id: str | None, reason: str) -> None:
+    """Ghi THAT ly do tao version (chon o popup "Tao phien ban moi") vao
+    quote_activity_log - RPC quote_create_version (migration 082/084) khong
+    nhan tham so ly do nen ghi bang 1 dong INSERT rieng ngay sau khi version
+    moi tao xong thanh cong (khong doi lai RPC versioning da on dinh qua nhieu
+    migration). Chi chap nhan gia tri that trong danh sach ly do co dinh."""
+    if reason not in _VALID_VERSION_REASONS:
+        raise ValueError("Lý do tạo phiên bản không hợp lệ.")
+    supabase: Client = get_supabase_client()
+    supabase.table(ACTIVITY_LOG_TABLE).insert({
+        "quote_id": quote_id, "actor_id": actor_id, "action": "version_reason",
+        "changes": {"reason": reason},
+    }).execute()
 
 
 def delete_quote(quote_id: str) -> None:

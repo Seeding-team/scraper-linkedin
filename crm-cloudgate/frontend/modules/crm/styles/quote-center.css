@@ -1,10 +1,10 @@
 .qc-page {
   max-width: 1560px;
   margin: 0 auto;
-  padding: 30px 36px 60px;
+  padding: 24px 36px 60px;
   display: flex;
   flex-direction: column;
-  gap: 28px;
+  gap: 16px;
   background: var(--color-surface, #fff);
 }
 
@@ -38,6 +38,13 @@
 .qc-icon {
   width: 16px;
   height: 16px;
+}
+
+.qc-inline-icon {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  vertical-align: -2px;
 }
 
 .qc-btn {
@@ -135,6 +142,12 @@
   box-shadow: 0 2px 8px rgba(23, 32, 51, 0.12);
 }
 
+.qc-role-switch--compact button {
+  height: 32px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
 .qc-controls select {
   height: 40px;
   border: 1px solid var(--color-outline, #e5e5e5);
@@ -148,16 +161,16 @@
 .qc-metrics {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: 16px;
-  margin-bottom: 20px;
+  gap: 10px;
+  margin-bottom: 12px;
 }
 
 .qc-metric {
   position: relative;
   background: var(--color-surface, #fff);
   border: 1px solid var(--color-outline, #e5e5e5);
-  border-radius: 16px;
-  padding: 22px 22px 20px;
+  border-radius: 12px;
+  padding: 12px 14px 10px;
   box-shadow: 0 1px 3px rgba(16, 24, 40, 0.04);
 }
 
@@ -202,10 +215,38 @@
   font-size: 21px;
 }
 
+/* 3 card that su (Phễu/Hiệu suất Sale/Hiệu suất Team) nhung truoc day chi
+ * khai bao 2 cot - card thu 3 (Team) bi wrap xuong hang moi CHI o cot 1
+ * (0.8fr), de trong ca 1 cot ben canh (dung "3 box này làm trống khoảng
+ * cách" nguoi dung bao cao) thay vi dung het chieu rong con lai. */
 .qc-insight-grid {
   display: grid;
   grid-template-columns: 0.8fr 1.4fr;
   gap: 16px;
+  align-items: stretch;
+}
+.qc-insight-grid > article:nth-child(3) {
+  grid-column: 1 / -1;
+}
+
+/* Card "Hiệu suất theo Sale"/"Hiệu suất theo Team" cao vo tan theo so dong
+ * (nguoi dung bao cao dai qua so voi card "Phễu chuyển đổi" ben canh) -
+ * co dinh 1 chieu cao chung, bang tu cuon RIENG ben trong thay vi day card
+ * phinh to. */
+.qc-insight-grid > article:nth-child(2),
+.qc-insight-grid > article:nth-child(3) {
+  display: flex;
+  flex-direction: column;
+  height: 420px;
+}
+.qc-insight-grid > article:nth-child(2) .qc-table-wrap,
+.qc-insight-grid > article:nth-child(3) .qc-table-wrap {
+  flex: 1;
+  max-height: none;
+  min-height: 0;
+}
+.qc-insight-grid > article:nth-child(1) {
+  height: 420px;
 }
 
 .qc-insight-card {
@@ -267,6 +308,7 @@
 
 .qc-table-wrap {
   overflow-x: auto;
+  overflow-y: auto;
 }
 
 .qc-team-table {
@@ -303,6 +345,25 @@
   gap: 9px;
 }
 
+/* Cot "Presale -> Sale" (Checkpoint C) - CHI hien ten (khong avatar), tranh
+ * bug thuc te da bao "avatar chiem cho lam khuat ten" tren cot hep. Cho phep
+ * xuong dong (wrap) khi ten dai, khong dung nowrap ep tran 1 dong. */
+.qc-sale-cell--text-only {
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  row-gap: 2px;
+  font-size: 12px;
+}
+.qc-sale-cell--text-only span:not(.qc-owner-arrow) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+.qc-sale-cell--text-only .qc-owner-arrow {
+  flex-shrink: 0;
+  color: #98a2b3;
+}
+
 .qc-avatar {
   width: 28px;
   height: 28px;
@@ -329,16 +390,16 @@
 }
 
 .qc-quick {
-  border-radius: 18px;
-  padding: 32px 34px;
+  border-radius: 14px;
+  padding: 14px 20px;
   display: grid;
   grid-template-columns: 1.15fr 0.85fr;
-  gap: 30px;
+  gap: 16px;
   align-items: center;
   color: #fff;
   background: radial-gradient(circle at 90% 10%, #ec4c75 0, transparent 29%),
     linear-gradient(120deg, #9e123b, var(--color-primary, #ba244a) 66%, #c51d4d);
-  box-shadow: 0 14px 30px rgba(169, 24, 66, 0.25);
+  box-shadow: 0 8px 18px rgba(169, 24, 66, 0.2);
   overflow: hidden;
 }
 
@@ -350,21 +411,21 @@
 }
 
 .qc-quick h2 {
-  font-size: 27px;
+  font-size: 17px;
   font-weight: 800;
-  margin: 8px 0;
+  margin: 2px 0;
 }
 
 .qc-quick p {
-  font-size: 13px;
-  line-height: 1.65;
+  font-size: 12px;
+  line-height: 1.5;
   margin: 0;
   color: #ffeaf0;
   max-width: 480px;
 }
 
 .qc-quick-buttons {
-  margin-top: 20px;
+  margin-top: 10px;
   display: flex;
   gap: 10px;
   flex-wrap: wrap;
@@ -571,9 +632,15 @@
 
 .qc-list-tools {
   display: flex;
-  gap: 9px;
+  gap: 12px;
   align-items: center;
   flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+
+.qc-list-tools .crm-filter-select-wrap {
+  min-width: 172px;
+  flex: 0 0 auto;
 }
 
 .qc-list-tools input {
@@ -595,11 +662,185 @@
   color: #536075;
 }
 
+/* Section 7 - KPI SLA (bam de loc, giong toggle chu khong phai the hien tinh
+ * that don thuan). Mau nhe (khong dam) - dung quy uoc mau THAT nhe da co
+ * (xem .qc-workspace-items-table--unified o tren: nen nhat, chu dam). */
+.qc-sla-kpi-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.qc-sla-kpi {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border-radius: 999px;
+  padding: 6px 14px;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+.qc-sla-kpi:disabled { cursor: default; opacity: 0.7; }
+.qc-sla-kpi strong { font-size: 14px; font-weight: 800; }
+.qc-sla-kpi--danger { background: #fdecec; color: #b3261e; }
+.qc-sla-kpi--danger.active { border-color: #b3261e; }
+.qc-sla-kpi--warning { background: #fff7e6; color: #8a6416; }
+.qc-sla-kpi--warning.active { border-color: #8a6416; }
+.qc-sla-kpi-clear {
+  border: 1px solid var(--color-outline, #e5e5e5);
+  background: #fff;
+  color: #536075;
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.qc-status-tabs {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.qc-status-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid var(--color-outline, #e5e5e5);
+  border-radius: 999px;
+  background: #fff;
+  color: #536075;
+  font-size: 12px;
+  font-weight: 650;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+
+.qc-status-tab span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: #f1f3f5;
+  color: #657184;
+  font-size: 10.5px;
+}
+
+.qc-status-tab.active {
+  background: var(--color-primary, #ba244a);
+  border-color: var(--color-primary, #ba244a);
+  color: #fff;
+}
+
+.qc-status-tab.active span {
+  background: rgba(255, 255, 255, 0.25);
+  color: #fff;
+}
+
+.qc-group-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #536075;
+  cursor: pointer;
+  margin-left: auto;
+  user-select: none;
+}
+
+/* Switch that dung <input type="checkbox"> lam trang thai that (khong dung
+ * div gia) nhung an di, tu ve lai bang track+thumb - toan bo <label> (chu +
+ * switch) bam duoc vi input van nam trong label, khong can id/htmlFor rieng.
+ * PHAI dat sau/specificity cao hon ".qc-list-tools input" (height:38px;
+ * width:230px) - khong thi checkbox bi keo thanh 1 o vuong trang to (bug that
+ * da gap: selector input chung trong .qc-list-tools ap luon vao checkbox
+ * long trong .qc-group-toggle vi no cung nam trong .qc-list-tools). */
+.qc-list-tools .qc-group-toggle input[type='checkbox'] {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 34px;
+  height: 20px;
+  min-width: 34px;
+  border-radius: 999px;
+  background: #d7dbe0;
+  border: none;
+  position: relative;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.15s ease;
+}
+
+.qc-list-tools .qc-group-toggle input[type='checkbox']::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+  transition: left 0.15s ease;
+}
+
+.qc-list-tools .qc-group-toggle input[type='checkbox']:checked {
+  background: var(--color-primary, #ba244a);
+}
+
+.qc-list-tools .qc-group-toggle input[type='checkbox']:checked::after {
+  left: 16px;
+}
+
+.qc-group-header-row td {
+  background: #fafbfc;
+  font-size: 12px;
+  color: #536075;
+  padding: 8px 12px;
+}
+
+.qc-group-header-count {
+  float: right;
+  color: #9099a7;
+  font-weight: 600;
+}
+
 .qc-linked-table {
   width: 100%;
   table-layout: fixed;
   border-collapse: collapse;
 }
+
+/* Bang 10 cot that (mapping da xac nhan - xem renderChainRow): Bao gia/Version
+ * - Khach hang - Co hoi CRM - Trang thai hien tai - Quan ly/Phu trach - Gia
+ * truoc VAT - Tong thanh toan - VAT - Ngay bao gia/Hieu luc - Thao tac. Dung
+ * % (khong px/min-width) de bang LUON fit du trong 1 viewport tu 1280px tro
+ * len - KHONG duoc co horizontal scrollbar o desktop (yeu cau xac nhan lai
+ * sau khi ban px+min-width truoc do gay tran ngang). Cung 1
+ * table-layout:fixed dung cho ca thead+tbody (cung 1 <table>) nen cot luon
+ * thang hang, khong bi lech giua header/noi dung. */
+/* Checkpoint C (10 cot moi: Bao gia/Co hoi/Khach hang/Du an/Phase/Presale->
+ * Sale/Gia noi bo/Gia khach/Margin/SLA/Thao tac) - Phase va Presale->Sale
+ * can nhieu cho hon ban cu (text dai hon 1 badge trang thai/1 ten don, vd
+ * "Đã duyệt · Chờ phát hành") - bug thuc te da gap: 8%/12% qua hep lam
+ * chu bi cat/khuat. */
+.qc-linked-table--10col th:nth-child(1), .qc-linked-table--10col td:nth-child(1) { width: 15%; }
+.qc-linked-table--10col th:nth-child(2), .qc-linked-table--10col td:nth-child(2) { width: 9%; }
+.qc-linked-table--10col th:nth-child(3), .qc-linked-table--10col td:nth-child(3) { width: 9%; }
+.qc-linked-table--10col th:nth-child(4), .qc-linked-table--10col td:nth-child(4) { width: 13%; }
+.qc-linked-table--10col th:nth-child(5), .qc-linked-table--10col td:nth-child(5) { width: 14%; }
+.qc-linked-table--10col th:nth-child(6), .qc-linked-table--10col td:nth-child(6) { width: 9%; }
+.qc-linked-table--10col th:nth-child(7), .qc-linked-table--10col td:nth-child(7) { width: 9%; }
+.qc-linked-table--10col th:nth-child(8), .qc-linked-table--10col td:nth-child(8) { width: 7%; }
+.qc-linked-table--10col th:nth-child(9), .qc-linked-table--10col td:nth-child(9) { width: 9%; }
+.qc-linked-table--10col th:nth-child(10), .qc-linked-table--10col td:nth-child(10) { width: 6%; }
 
 .qc-linked-table th {
   text-align: left;
@@ -608,15 +849,38 @@
   font-size: 10.5px;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  padding: 9px 10px;
+  padding: 8px 10px;
   border-top: 1px solid var(--color-outline, #e5e5e5);
   border-bottom: 1px solid var(--color-outline, #e5e5e5);
-  white-space: nowrap;
+  white-space: normal;
+  line-height: 1.25;
+}
+
+/* Sticky header - nam duoi dropdown portal (z-index 300, xem crm.css) nhung
+ * tren noi dung bang khi cuon doc trong .qc-table-wrap. */
+.qc-table-wrap {
+  max-height: 70vh;
+  /* Bug that (da xac nhan qua Playwright: scrollTop that su doi nhung
+   * pixel hien thi bi "dong bang"/chong lan chu cu - ma chup man hinh
+   * chung minh) - Chromium co loi compositing khi 1 scroll container vua
+   * co sticky TREN (thead top:0) vua co sticky NGANG (cot cuoi right:0)
+   * cung luc. Ep tao GPU layer rieng cho scroll container de buoc trinh
+   * duyet composite/repaint dung, day la workaround chuan cho loi nay. */
+  transform: translateZ(0);
+  will-change: scroll-position;
+}
+.qc-linked-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  /* Ep tung o sticky co layer GPU rieng - tranh bi "dinh" pixel cu khi
+   * cuon nhanh trong cung 1 scroll container co ca sticky ngang lan doc. */
+  transform: translateZ(0);
 }
 
 .qc-linked-table td {
   font-size: 12.5px;
-  padding: 9px 10px;
+  padding: 8px 10px;
   border-bottom: 1px solid #eff1f5;
   color: #5b6576;
   vertical-align: middle;
@@ -625,14 +889,45 @@
   white-space: nowrap;
 }
 
-.qc-linked-table th:nth-child(1), .qc-linked-table td:nth-child(1) { width: 13%; }
-.qc-linked-table th:nth-child(2), .qc-linked-table td:nth-child(2) { width: 17%; }
-.qc-linked-table th:nth-child(3), .qc-linked-table td:nth-child(3) { width: 17%; }
-.qc-linked-table th:nth-child(4), .qc-linked-table td:nth-child(4) { width: 13%; }
-.qc-linked-table th:nth-child(5), .qc-linked-table td:nth-child(5) { width: 15%; }
-.qc-linked-table th:nth-child(6), .qc-linked-table td:nth-child(6) { width: 10%; }
-.qc-linked-table th:nth-child(7), .qc-linked-table td:nth-child(7) { width: 10%; }
-.qc-linked-table th:nth-child(8), .qc-linked-table td:nth-child(8) { width: 5%; text-align: right; }
+.qc-th-money { text-align: right; }
+.qc-th-status { text-align: center; }
+.qc-th-actions { text-align: right; }
+
+.qc-cell-money {
+  text-align: right;
+  font-weight: 700;
+  color: #2b3445;
+}
+
+.qc-cell-status {
+  text-align: center;
+}
+
+.qc-cell-actions {
+  text-align: right;
+}
+
+/* Cot Thao tac sticky ben phai (giong HTML tham khao) de menu 3 cham luon
+ * bam duoc du bang cuon ngang bao xa. */
+.qc-linked-table th:last-child,
+.qc-linked-table td:last-child {
+  position: sticky;
+  right: 0;
+  background: #ffffff;
+  box-shadow: -6px 0 8px -6px rgba(15, 23, 42, 0.08);
+}
+.qc-linked-table thead th:last-child {
+  background: #fafbfc;
+  z-index: 6;
+}
+.qc-group-header-row td:last-child {
+  position: static;
+  box-shadow: none;
+}
+
+.qc-row-compact td {
+  padding: 7px 10px;
+}
 
 .qc-linked-table td:nth-child(2) .qc-row-link,
 .qc-linked-table td:nth-child(2) .qc-row-sub,
@@ -653,6 +948,14 @@
 .qc-row-link:hover {
   color: var(--color-primary, #ba244a);
   text-decoration: underline;
+}
+.qc-row-link-btn {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
 }
 
 .qc-row-sub {
@@ -704,12 +1007,135 @@
   background: #fff0f4;
   color: var(--color-primary, #ba244a);
 }
+.qc-badge-version {
+  background: #eef2ff;
+  color: #4338ca;
+}
+/* Tone rieng cho cot "Phase hien tai" (moi phase 1 mau ro rang, phan biet
+ * duoc ngay khong can doc chu) va cho badge Margin (lo/lai) - truoc day
+ * dung chung 1 class qc-badge (khong ton tai qc-badge-<tone>) nen MOI phase
+ * deu hien CUNG 1 mau, khong phan biet duoc (bug thuc te da bao). */
+.qc-badge-neutral {
+  background: #eef1f5;
+  color: #4b5768;
+}
+.qc-badge-warning {
+  background: #fff7e5;
+  color: #bf7810;
+}
+.qc-badge-success {
+  background: #eaf9f2;
+  color: #12845a;
+}
+.qc-badge-danger {
+  background: #fdeaec;
+  color: #b3261e;
+}
+/* 2 mau THEM cho du 5 mau rieng cho 5 phase tab that (Presale/Sale markup/
+ * Admin review/Sẵn sàng gửi/Đã gửi) - bug thuc te da bao "trùng màu nhãn,
+ * 5 mục 5 màu": qc-badge-neutral dung chung cho CA 'Chờ Presale input' LAN
+ * 'Chờ Sale markup' (trung mau xam), qc-badge-warning trung HEX y het
+ * qc-badge-amber (dung cho CA 'Sẵn sàng gửi' lan 'Chờ Sale markup' cu). */
+.qc-badge-purple {
+  background: #f3eeff;
+  color: #6d3fc0;
+}
+.qc-badge-teal {
+  background: #e6fbf8;
+  color: #0f8b8d;
+}
+
+.qc-cell-quote-line1 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.qc-cell-quote-title {
+  font-size: 11.5px;
+  color: #657184;
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.qc-row-actions-cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.qc-row-version-btn {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid #efabc0;
+  border-radius: 8px;
+  background: #fff0f4;
+  color: var(--color-primary, #ba244a);
+  font-size: 10.5px;
+  font-weight: 700;
+  padding: 5px 8px;
+  white-space: nowrap;
+  cursor: pointer;
+}
 
 .qc-list-footnote {
   margin-top: 12px;
   font-size: 11.5px;
   color: var(--color-on-surface-variant, #666);
   text-align: center;
+}
+
+.qc-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 14px;
+  flex-wrap: wrap;
+}
+
+.qc-pagination-summary {
+  font-size: 11.5px;
+  color: #9099a7;
+}
+
+.qc-pagination-controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.qc-pagination-controls button {
+  min-width: 28px;
+  height: 28px;
+  padding: 0 6px;
+  border: 1px solid var(--color-outline, #e5e5e5);
+  border-radius: 7px;
+  background: #fff;
+  color: #536075;
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.qc-pagination-controls button.active {
+  background: var(--color-primary, #ba244a);
+  border-color: var(--color-primary, #ba244a);
+  color: #fff;
+}
+
+.qc-pagination-controls button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.qc-pagination-gap {
+  color: #9099a7;
+  font-size: 12px;
+  padding: 0 2px;
 }
 
 .qc-modal-backdrop {
@@ -922,4 +1348,719 @@
   .qc-linked-table td .qc-sale-cell {
     justify-content: flex-end;
   }
+}
+
+/* ── Phase 2: Workspace xu ly bao gia (QuoteWorkspaceModal) ────────────── */
+
+/* KHONG dung height co dinh (92vh) - modal se LUON cao bang 92% man hinh du
+ * noi dung it den dau, tao ra dung "mang trang lon" nguoi dung bao cao (phase
+ * request/data thua). Dung max-height + content tu quyet dinh chieu cao that
+ * su (header/footer van "dinh" nho flex-column, body tu co lai khi it noi
+ * dung, tu cuon rieng khi vuot qua max-height). */
+.qc-workspace {
+  display: flex;
+  flex-direction: column;
+  width: min(1500px, 96vw);
+  max-height: 92vh;
+  min-height: 420px;
+  background: #fff;
+  border-radius: 16px;
+  overflow: hidden;
+  box-shadow: 0 24px 60px rgba(15, 23, 42, 0.28);
+}
+
+.qc-workspace--loading {
+  align-items: center;
+  justify-content: center;
+  padding: 40px;
+  color: #5b6576;
+  font-size: 13.5px;
+}
+
+.qc-workspace-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 20px;
+  border-bottom: 1px solid #eef0f3;
+  flex: 0 0 auto;
+}
+
+.qc-workspace-header-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 16px;
+  color: #2b3445;
+}
+
+.qc-workspace-header-sub {
+  color: #7a8494;
+  font-size: 12.5px;
+  margin-top: 4px;
+}
+
+.qc-workspace-header-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+/* Thanh tien trinh PHANG (progress navigation) - KHONG con la 4 card/box
+ * rieng (yeu cau xac nhan lai sau khi xem anh thuc te thay van con dang
+ * card). Moi step la 1 flex item chia deu, noi voi step ke tiep bang 1
+ * duong line mong (::after), khong border/bo goc/nen rieng cho tung step -
+ * chi step "current" co underline ngan mau thuong hieu duoi ten. */
+.qc-workspace-stages {
+  display: flex;
+  align-items: flex-start;
+  padding: 8px 20px;
+  min-height: 48px;
+  max-height: 54px;
+  border-bottom: 1px solid #eef0f3;
+  background: #fff;
+  flex: 0 0 auto;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.qc-stagebar-step {
+  position: relative;
+  flex: 1 1 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding-right: 12px;
+}
+
+.qc-stagebar-circle {
+  flex: 0 0 auto;
+  width: 21px;
+  height: 21px;
+  border-radius: 50%;
+  background: #eef0f4;
+  color: #97a0ae;
+  font-size: 10.5px;
+  font-weight: 800;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.qc-stagebar-step--done .qc-stagebar-circle { background: #e5f8f1; color: #22a06b; }
+.qc-stagebar-step--current .qc-stagebar-circle { background: var(--color-primary, #ba244a); color: #fff; }
+.qc-stagebar-step--upcoming .qc-stagebar-circle { background: #eef0f4; color: #b5bcc7; }
+.qc-stagebar-step--halted .qc-stagebar-circle { background: #fbe4e4; color: #c65f5f; }
+
+.qc-stagebar-text { min-width: 0; display: flex; flex-direction: column; line-height: 1.3; }
+.qc-stagebar-label {
+  font-weight: 600;
+  font-size: 12.5px;
+  color: #2b3445;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.qc-stagebar-step--upcoming .qc-stagebar-label { color: #9099a7; }
+.qc-stagebar-step--current .qc-stagebar-label {
+  font-weight: 700;
+  position: relative;
+  padding-bottom: 3px;
+}
+.qc-stagebar-step--current .qc-stagebar-label::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 18px;
+  height: 2px;
+  background: var(--color-primary, #ba244a);
+  border-radius: 2px;
+}
+.qc-stagebar-meta {
+  font-size: 10.5px;
+  color: #9099a7;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Duong noi giua cac step - 1 line mong nam giua 2 vong tron, khong phai
+ * border bao quanh tung step. */
+.qc-stagebar-connector {
+  flex: 1 1 auto;
+  height: 1px;
+  background: #e5e8ee;
+  margin: 0 4px;
+  align-self: center;
+  min-width: 16px;
+}
+.qc-stagebar-step--done + .qc-stagebar-step .qc-stagebar-connector,
+.qc-stagebar-step--done .qc-stagebar-connector {
+  background: #bfe9d1;
+}
+
+@media (max-width: 480px) {
+  .qc-workspace-stages { overflow-x: auto; }
+  .qc-stagebar-step { flex: 0 0 auto; min-width: 132px; }
+  .qc-stagebar-connector { min-width: 20px; }
+}
+
+/* Header info-row (Khach hang/Du an/Co hoi/Presale/Sale/Quan ly/Team/SLA) -
+ * grid dap ung thay vi flex-wrap don gian, moi o co min-width rieng de
+ * khong bi vo/lech hang khi 1 gia tri dai (vd "Đã duyệt · Chưa phát hành"). */
+.qc-workspace-info-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 14px 16px;
+  padding: 12px 20px;
+  background: #fafbfc;
+  border-bottom: 1px solid #f0f1f5;
+  flex: 0 0 auto;
+}
+.qc-workspace-info-strip > div { min-width: 0; }
+.qc-workspace-info-label {
+  display: block;
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #9099a7;
+  margin-bottom: 2px;
+}
+/* Gia tri chinh KHONG duoc vo dong lam lech hang - cat gon 1 dong, chi tiet
+ * (help text/gia tri phu) nam o dong .qc-row-sub rieng ben duoi thay vi day
+ * lech chieu cao o cung 1 hang. */
+.qc-workspace-info-strip > div > strong {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Empty-state "Chưa có nhân sự phù hợp" (Presale/Sale chua cau hinh) - LUON
+ * gon trong o cua no, KHONG de help text dai day lech grid header. */
+.qc-no-staff { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.qc-no-staff-text { font-size: 12px; color: #9099a7; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.qc-no-staff-cta { font-size: 11px; font-weight: 700; color: #ba244a; text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.qc-no-staff-cta:hover { text-decoration: underline; }
+.qc-no-staff-cta--muted { color: #9099a7; font-weight: 500; cursor: default; }
+.qc-no-staff-cta--muted:hover { text-decoration: none; }
+
+/* 1 vung cuon DUY NHAT (khong con 2 scrollbar doc lap trai/phai) - panel phai
+ * sticky NGAY TRONG cung vung cuon nay (align-self:flex-start + top:0), dung
+ * yeu cau xac nhan: "Chi content body cua modal co mot scrollbar chinh; panel
+ * phai sticky trong cung vung cuon". */
+.qc-workspace-body {
+  flex: 1;
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  padding: 16px 20px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  min-height: 0;
+  /* Nen nhe (khong trang tron) cho vung con lai khi noi dung thua (vd stage
+   * request vua mo, chua du lieu) - khop dung token nen chung cua app. */
+  background: #f8fafc;
+}
+.qc-workspace-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+.qc-workspace-side {
+  width: 300px;
+  flex: 0 0 300px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  position: sticky;
+  top: 0;
+}
+
+.qc-workspace-card {
+  border: 1px solid #eef0f3;
+  border-radius: 12px;
+  padding: 14px 16px;
+  background: #fff;
+}
+.qc-workspace-card h3 { margin: 0 0 10px; font-size: 13.5px; color: #2b3445; }
+.qc-workspace-card-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; gap: 12px; flex-wrap: wrap; }
+.qc-workspace-card-head h3 { margin-bottom: 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Nut "Chỉnh sửa" (va moi nut mini khac trong dau card) KHONG duoc phep bi
+ * co lai/rot chu khi tieu de h3 dai - h3 tu cat bot (ellipsis) o tren,
+ * button LUON giu nguyen kich thuoc that. */
+.qc-workspace-card-head .qc-mini-btn { flex-shrink: 0; }
+
+/* Rule card - compact, khong tao scrollbar rieng (yeu cau "Card phai compact
+ * giong HTML... Khong tao scrollbar rieng"). */
+.qc-rule-card { padding: 12px 14px; }
+.qc-rule-card-subtitle { margin: 2px 0 0; font-size: 11.5px; color: #8a8f98; }
+.qc-rule-settings-btn { display: inline-flex; align-items: center; gap: 4px; color: #b3261e; border-color: #f3d4d0; }
+.qc-rule-settings-btn .qc-icon { width: 13px; height: 13px; }
+.qc-rule-list { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.qc-rule-row { display: flex; align-items: center; gap: 8px; padding: 4px 6px; border-radius: 6px; font-size: 12.5px; }
+.qc-rule-row-icon { width: 16px; text-align: center; font-weight: 700; }
+.qc-rule-row-label { flex: 1; color: #3a4150; }
+.qc-rule-row-value { font-weight: 600; color: #2b3445; }
+.qc-rule-row--pass { background: #f2faf6; }
+.qc-rule-row--pass .qc-rule-row-icon { color: #148e61; }
+.qc-rule-row--fail { background: #fdecec; }
+.qc-rule-row--fail .qc-rule-row-icon { color: #b3261e; }
+.qc-rule-row--pending .qc-rule-row-icon { color: #8a8f98; }
+.qc-rule-summary { margin-top: 8px; padding-top: 8px; border-top: 1px dashed #e5e7eb; font-size: 12.5px; font-weight: 600; color: #2b3445; }
+
+.qc-rule-modal { width: 460px; max-width: 92vw; }
+.qc-rule-modal-row { display: flex; align-items: flex-start; gap: 10px; padding: 8px 0; border-bottom: 1px solid #f0f1f3; }
+.qc-rule-modal-row:last-of-type { border-bottom: none; }
+.qc-rule-modal-row-body { flex: 1; display: flex; flex-direction: column; gap: 2px; }
+.qc-rule-modal-row-input { display: flex; align-items: center; gap: 6px; }
+.qc-rule-modal-row-input input { width: 100px; }
+
+.qc-workspace-note-box--ok { background: #eafaf3; border-color: #bfe9d1; color: #148e61; }
+
+.qc-workspace-toast {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1000;
+  padding: 10px 18px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.15);
+}
+.qc-workspace-toast--ok { background: #148e61; color: #fff; }
+.qc-workspace-toast--error { background: #b3261e; color: #fff; }
+.qc-workspace-autofill-toast {
+  font-size: 12px;
+  font-weight: 600;
+  color: #1a7f4b;
+  background: #eafaf1;
+  border: 1px solid #bfe9d1;
+  border-radius: 999px;
+  padding: 3px 10px;
+  white-space: nowrap;
+}
+.qc-workspace-items-table td, .qc-workspace-items-table th { white-space: normal; }
+
+/* Bang hang muc dung CHUNG class .qc-table-wrap voi bang danh sach bao gia
+ * (co max-height:70vh + overflow-y:auto rieng, hop ly cho 1 trang list) -
+ * nhung trong workspace se tao ra 2 THANH CUON DOC doc lap (vi
+ * .qc-workspace-body da tu cuon roi) - bat buoc huy max-height/overflow-y o
+ * day, chi giu overflow-x cho bang rong o tab Gia ban. */
+.qc-workspace-main .qc-table-wrap { max-height: none; overflow-y: visible; }
+
+/* Bang hang muc THONG NHAT (12 cot, Section 4) rong hon truoc (gop ca Cost va
+ * Pricing tren 1 hang) - man hep PHAI cuon ngang hop ly (khong duoc cat mat
+ * cot), nhung giu cot "Hạng mục" (ten dong) dinh (sticky) de nguoi dung con
+ * biet dang xem dong nao khi da cuon sang cac cot gia von/markup ben phai. */
+/* CHI ep min-width (=> cuon ngang) khi THAT SU co dong hang muc - bang rong
+ * 1180px vo nghia luc dang rong (chi 1 dong "Chưa có hạng mục nào." canh
+ * giua), gay thanh cuon ngang xuat hien oan uc luc chua co gi de xem (bug
+ * that da bi bao: "chỗ này k muốn cuộn"). Rong tu nhien theo container khi
+ * rong, chi rong ep khi co it nhat 1 dong that. */
+.qc-workspace-items-table--unified.qc-workspace-items-table--has-rows {
+  min-width: 1180px;
+}
+.qc-workspace-items-table--unified th:first-child,
+.qc-workspace-items-table--unified td:first-child {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: #fff;
+}
+.qc-workspace-items-table--unified th:nth-child(2),
+.qc-workspace-items-table--unified td:nth-child(2) {
+  position: sticky;
+  left: 32px;
+  z-index: 1;
+  background: #fff;
+  box-shadow: 2px 0 4px -2px rgba(15, 23, 42, 0.12);
+}
+.qc-workspace-items-table--unified thead th:first-child,
+.qc-workspace-items-table--unified thead th:nth-child(2) {
+  z-index: 2;
+}
+
+/* "Ban tom tat bao gia" (view read-only cho quote da khoa - review/approved/
+ * published/sent) - grid gon, khong bao moi field vao 1 box lon rieng, tranh
+ * lap lai kieu "khoang trang" da bi bao loi khi form edit gan nhu rong. */
+.qc-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 12px 16px;
+  margin-top: 10px;
+}
+.qc-summary-grid > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.qc-summary-grid--2col {
+  grid-template-columns: 1fr 1fr;
+}
+.qc-summary-grid--2col > .qc-workspace-card {
+  box-shadow: none;
+  padding: 0;
+  border: none;
+}
+@media (max-width: 900px) {
+  .qc-summary-grid--2col { grid-template-columns: 1fr; }
+}
+
+/* Quy uoc mau THAT nhe (khong dung mau dam): gia von/noi bo = nen xanh la rat
+ * nhat; markup/gia khach = nen vang kem rat nhat; margin dat >=20% = chu
+ * xanh. */
+.qc-workspace-items-table--unified .qc-cell-cost,
+.qc-workspace-items-table--unified .qc-th-cost {
+  background: #f2faf6;
+}
+.qc-workspace-items-table--unified .qc-cell-markup,
+.qc-workspace-items-table--unified .qc-th-markup {
+  background: #fffaf0;
+}
+.qc-cell-margin-good { color: #148e61 !important; font-weight: 700; }
+
+.qc-th-cost-flag, .qc-cell-cost-flag { text-align: center; white-space: nowrap; }
+.qc-cell-cost-missing { background: #fdecec !important; }
+.qc-workspace-warning-banner {
+  margin: 8px 0;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: #fdecec;
+  color: #b3261e;
+  font-size: 13px;
+  font-weight: 500;
+}
+.qc-workspace-card-head-badges { display: flex; align-items: center; gap: 8px; }
+
+.qc-cell-input {
+  width: 100%;
+  border: 1px solid transparent;
+  background: transparent;
+  border-radius: 6px;
+  padding: 4px 6px;
+  font-size: 12.5px;
+  color: #2b3445;
+}
+.qc-cell-input:hover, .qc-cell-input:focus { border-color: #dfe4ec; background: #fff; outline: none; }
+.qc-cell-input-money { text-align: right; }
+.qc-cell-input:disabled { opacity: 0.5; }
+
+.qc-row-remove {
+  border: 0;
+  background: transparent;
+  color: #a7afbd;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px 6px;
+}
+.qc-row-remove:hover { color: #e53966; }
+
+.qc-workspace-items-empty { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 6px 0; }
+.qc-workspace-items-empty-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
+.qc-workspace-add-row { display: flex; gap: 8px; padding: 8px 0 2px; }
+
+.qc-mini-btn {
+  border: 1px solid #dce2ea;
+  background: #fff;
+  color: #3f4b60;
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 11.5px;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.qc-mini-btn:hover { background: #f7f9fb; }
+.qc-mini-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.qc-mini-btn-brand { background: var(--color-primary, #ba244a); border-color: var(--color-primary, #ba244a); color: #fff; }
+/* Bug that: .qc-mini-btn:hover (nen sang) va .qc-mini-btn-brand cung do
+ * specificity, thu tu nap CSS co the khien nut brand bi doi sang nen sang
+ * luc hover trong khi chu van trang -> chu trang tren nen trang (vo hinh khi
+ * hover, da xac nhan qua anh chup thuc te). Ghi de ro rang, specificity cao
+ * hon .qc-mini-btn:hover de luon thang du thu tu import the nao. */
+.qc-mini-btn-brand:hover { background: var(--color-primary, #ba244a); border-color: var(--color-primary, #ba244a); color: #fff; filter: brightness(1.08); }
+
+.qc-workspace-quickbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 8px 0 12px;
+  border-bottom: 1px dashed #eee;
+  margin-bottom: 10px;
+}
+.qc-workspace-quickbar-sep { width: 1px; align-self: stretch; background: #e5e5e5; }
+.qc-workspace-quickbar-field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: #566277;
+}
+.qc-workspace-quickbar-input {
+  height: 30px;
+  width: 72px;
+  border: 1px solid #dce2ea;
+  border-radius: 7px;
+  padding: 0 8px;
+  font-size: 12px;
+}
+
+.qc-workspace-margin-bar { margin-top: 8px; }
+.qc-workspace-margin-bar-track { height: 8px; border-radius: 6px; background: #eef1f5; overflow: hidden; }
+.qc-workspace-margin-bar-fill { height: 100%; background: linear-gradient(90deg, #22a06b, #57c99a); }
+.qc-workspace-margin-bar span { font-size: 11px; color: #5b6576; margin-top: 4px; display: block; }
+
+.qc-workspace-totals {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 20px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px dashed #eee;
+}
+.qc-workspace-totals > div { min-width: 150px; }
+.qc-workspace-muted { color: #9099a7; font-weight: 500; }
+
+/* 4 card ngang (Scope/Cost/Timeline/Gia dinh) - KHONG xep doc (tao khoang
+ * trang lon nhu ban truoc), dung yeu cau xac nhan. */
+.qc-workspace-checklist { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+.qc-workspace-checklist-item {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  border: 1px solid #eef0f3;
+  border-radius: 10px;
+  padding: 10px;
+  background: #fafbfc;
+  min-width: 0;
+}
+.qc-workspace-checklist-item input[type='checkbox'] { margin-top: 4px; flex-shrink: 0; }
+.qc-workspace-checklist-item > div { min-width: 0; flex: 1; }
+.qc-workspace-checklist-item strong { font-size: 12px; }
+/* Card "Chuẩn bị gửi Presale" (stage 'request') - THAY THE hoan toan
+ * checklist Bàn giao kỹ thuật o giai doan nay (chua toi luot Presale). */
+.qc-readiness-list { display: flex; flex-direction: column; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.qc-readiness-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid #eef0f3;
+  border-radius: 10px;
+  padding: 8px 12px;
+  background: #fafbfc;
+}
+.qc-readiness-item.is-done { border-color: #cdeedd; background: #f3fbf6; }
+.qc-readiness-item.is-missing { border-color: #f6dede; background: #fdf6f6; }
+.qc-readiness-status {
+  flex-shrink: 0;
+  min-width: 44px;
+  text-align: center;
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 700;
+}
+.qc-readiness-item.is-done .qc-readiness-status { background: #148e61; color: #fff; }
+.qc-readiness-item.is-missing .qc-readiness-status { background: #b3261e; color: #fff; }
+.qc-readiness-label { flex: 1; min-width: 0; font-size: 13px; }
+
+.qc-workspace-note-input {
+  width: 100%;
+  border: 1px solid #e5e5e5;
+  border-radius: 6px;
+  padding: 5px 8px;
+  font-size: 12.5px;
+  margin-top: 4px;
+}
+.qc-workspace-handoff-note {
+  width: 100%;
+  min-height: 60px;
+  border: 1px solid #e5e5e5;
+  border-radius: 8px;
+  padding: 8px;
+  font-size: 12.5px;
+  margin-top: 4px;
+  resize: vertical;
+}
+
+.qc-workspace-stage-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 14px; flex-wrap: wrap; }
+
+.qc-workspace-summary-row { display: flex; justify-content: space-between; padding: 4px 0; font-size: 12.5px; color: #5b6576; }
+.qc-workspace-summary-row--total { border-top: 1px dashed #eee; margin-top: 4px; padding-top: 8px; font-weight: 700; color: #2b3445; }
+
+.qc-workspace-checks { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: 12.5px; }
+.qc-workspace-checks li { padding-left: 18px; position: relative; color: #5b6576; }
+.qc-workspace-checks li.ok::before { content: '✓'; position: absolute; left: 0; color: #22a06b; }
+.qc-workspace-checks li.pending::before { content: '○'; position: absolute; left: 0; color: #c9932f; }
+.qc-workspace-checks li.na { color: #9099a7; }
+.qc-workspace-checks li.na::before { content: '—'; position: absolute; left: 0; }
+
+.qc-workspace-actions { display: flex; flex-direction: column; gap: 8px; }
+.qc-workspace-actions .qc-btn { justify-content: center; width: 100%; }
+.qc-btn-send {
+  background: #1a9e6a;
+  border-color: #1a9e6a;
+  color: #fff;
+}
+.qc-btn-send:hover { background: #158a5c; border-color: #158a5c; color: #fff; }
+.qc-btn-send:disabled { background: #eef1f5; border-color: #dfe4ec; color: #9099a7; }
+
+.qc-workspace-preview { border: 1px solid #eee; border-radius: 8px; padding: 10px; font-size: 12px; background: #fafbfc; }
+.qc-workspace-preview--clickable {
+  display: block;
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+}
+.qc-workspace-preview--clickable:hover { border-color: #e28ca5; background: #fff8fa; }
+.qc-workspace-preview-title { font-weight: 700; margin-bottom: 6px; color: #2b3445; }
+.qc-workspace-preview-line { padding: 2px 0; color: #5b6576; }
+.qc-workspace-preview-total { margin-top: 6px; font-weight: 700; border-top: 1px dashed #e5e5e5; padding-top: 6px; }
+.qc-workspace-note { font-size: 11.5px; color: #9099a7; margin: 6px 0 0; }
+.qc-workspace-note-box {
+  font-size: 12px;
+  color: #5b6576;
+  background: #fafbfc;
+  border: 1px solid #eee;
+  border-radius: 8px;
+  padding: 10px;
+  margin: 8px 0;
+}
+
+.qc-workspace-activity { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; font-size: 12.5px; color: #5b6576; }
+
+.qc-workspace-modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+
+/* Che do tao moi ("+ Yeu cau ho tro bao gia") - xem QuoteWorkspaceModal */
+.qc-workspace-title-input {
+  flex: 1;
+  min-width: 350px;
+  max-width: 450px;
+  border: 1px solid #e5e5e5;
+  border-radius: 8px;
+  padding: 7px 12px;
+  font-size: 13.5px;
+  color: #2b3445;
+}
+@media (max-width: 760px) {
+  .qc-workspace-title-input { min-width: 0; max-width: none; }
+}
+.qc-workspace-request-form { display: flex; flex-direction: column; gap: 10px; }
+.qc-workspace-request-form label { display: flex; flex-direction: column; gap: 4px; }
+.qc-workspace-request-form-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+@media (max-width: 900px) {
+  .qc-workspace-request-form-cols { grid-template-columns: 1fr; }
+}
+.qc-workspace-request-more { font-size: 12px; }
+.qc-workspace-request-more summary { cursor: pointer; color: #566277; font-weight: 700; margin-bottom: 8px; }
+.qc-workspace-request-more label { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
+
+.qc-workspace-scope-summary { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; font-size: 12.5px; color: #455167; }
+.qc-workspace-scope-summary p { margin: 6px 0 0; white-space: pre-wrap; line-height: 1.5; }
+@media (max-width: 900px) {
+  .qc-workspace-scope-summary { grid-template-columns: 1fr; }
+}
+
+/* Footer co dinh (khong cuon theo noi dung) - chi hien o che do tao moi,
+ * sibling truc tiep cua .qc-workspace-body trong .qc-workspace (flex column),
+ * nen tu nam duoi cung, khong bi noi dung dai che mat nhu truoc (bug thuc te
+ * da thay: nut Luu nhap/Gui yeu cau nam trong the cuon nen co the bi cat). */
+.qc-workspace-footer {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 14px 20px;
+  border-top: 1px solid #eef0f3;
+  background: #fff;
+}
+.qc-workspace-footer-note { font-size: 12px; color: #9099a7; margin-right: auto; }
+
+.qc-workspace-version-badge {
+  font-size: 11px;
+  font-weight: 700;
+  color: #566277;
+  background: #eef1f5;
+  border-radius: 999px;
+  padding: 2px 8px;
+}
+
+.qc-workspace-quickbar-rule { font-size: 11.5px; font-weight: 700; color: #566277; white-space: nowrap; }
+.qc-workspace-quickbar-hint { font-size: 11px; color: #9099a7; margin-left: auto; }
+.qc-workspace-draft-terms { list-style: none; margin: 6px 0 0; padding: 0; font-size: 11.5px; color: #5b6576; display: flex; flex-direction: column; gap: 3px; }
+.qc-cell-margin-warn { color: #c9932f !important; font-weight: 700; }
+
+.qc-modal-backdrop--nested { z-index: 70; }
+
+.qc-workspace-preview-modal {
+  width: min(560px, 92vw);
+  max-height: 86vh;
+  background: #fff;
+  border-radius: 16px;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  box-shadow: 0 28px 80px rgba(11, 18, 35, 0.32);
+  overflow-y: auto;
+}
+.qc-workspace-modal-head { display: flex; align-items: center; justify-content: space-between; }
+.qc-workspace-modal-head h3 { margin: 0; font-size: 15px; }
+.qc-workspace-preview-modal-body { display: flex; flex-direction: column; gap: 10px; font-size: 12.5px; color: #455167; }
+.qc-workspace-preview-modal-row { display: flex; flex-direction: column; gap: 2px; }
+.qc-workspace-preview-modal-row p { margin: 0; white-space: pre-wrap; }
+
+.qc-workspace-note-box--warn { background: #fff8ea; border-color: #f1d9a8; color: #8a6416; }
+
+.qc-workspace-catalog-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; max-height: 50vh; overflow-y: auto; }
+.qc-workspace-catalog-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border: 1px solid #eef0f3;
+  border-radius: 10px;
+  padding: 8px 12px;
+}
+.qc-workspace-catalog-list strong { font-size: 12.5px; color: #2b3445; }
+
+.qc-workspace-header-title--create {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+}
+
+.qc-workspace-preview--empty {
+  color: #9099a7;
+  font-size: 12px;
+  padding: 10px;
+  border: 1px dashed #e5e5e5;
+  border-radius: 8px;
+  text-align: center;
+}
+
+@media (max-width: 1024px) {
+  .qc-workspace-body { flex-direction: column; }
+  .qc-workspace-side { width: 100%; flex: 0 0 auto; position: static; }
+  .qc-workspace-info-strip { gap: 10px; }
+}
+
+@media (max-width: 480px) {
+  .qc-workspace { width: 100vw; height: 100vh; border-radius: 0; }
+  .qc-workspace-header { flex-direction: column; }
+  .qc-workspace-checklist { grid-template-columns: 1fr 1fr; }
 }

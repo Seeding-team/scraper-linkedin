@@ -24,6 +24,8 @@ from app.modules.all_platform.services.crm_customer_service import (
     update_customer,
 )
 from app.modules.all_platform.services.markee_cfo_customer_sync_service import ensure_recent_markee_cfo_sync
+from app.modules.all_platform.services.supabase_project_service import get_customer_projects_summary
+from app.modules.all_platform.services.crm_permission_service import can_view_project
 
 router = APIRouter()
 
@@ -149,5 +151,18 @@ def customers_delete(customer_id: str, user: dict[str, Any] = Depends(get_curren
 def customers_related(customer_id: str, user: dict[str, Any] = Depends(get_current_user)) -> BaseResponse:
     try:
         return BaseResponse(success=True, data=related_records(customer_id, user))
+    except Exception as exc:
+        return _error(exc)
+
+
+@router.get("/{customer_id}/projects-summary")
+def customers_projects_summary(customer_id: str, user: dict[str, Any] = Depends(get_current_user)) -> BaseResponse:
+    """Tab "Dự án" trong Hồ sơ khách hàng - 1 goi API tong hop (khong N+1 tu
+    frontend goi rieng tung Project card). Ai dang nhap cung xem duoc (giong
+    GET /projects that, xem can_view_project())."""
+    if not can_view_project(user):
+        return BaseResponse(success=False, message="Không có quyền xem dự án")
+    try:
+        return BaseResponse(success=True, data=get_customer_projects_summary(customer_id))
     except Exception as exc:
         return _error(exc)

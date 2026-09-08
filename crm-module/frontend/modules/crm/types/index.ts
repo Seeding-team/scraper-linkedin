@@ -36,6 +36,9 @@ export interface QuoteReference {
   totalAmount?: number;
   /** 'draft' = Chưa duyệt, 'approved' = Đã duyệt, 'confirmed' = báo giá cũ (tương thích ngược). */
   status?: 'draft' | 'confirmed' | 'approved' | 'cancelled';
+  /** V1/V2/V3... trong chuỗi phiên bản (mặc định 1 nếu báo giá cũ chưa có chuỗi). */
+  versionNumber?: number;
+  versionChainId?: string;
 }
 
 export interface Contact {
@@ -125,6 +128,8 @@ export interface Deal {
   contactId: string;
   dealId: string;
   customerId?: string;
+  /** Du an that (migration 097) - null/undefined = Co hoi chua gan Du an nao. */
+  projectId?: string | null;
   customerName: string;
   position?: string;
   positionCategoryId?: string;
