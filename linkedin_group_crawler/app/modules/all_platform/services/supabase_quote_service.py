@@ -1509,16 +1509,28 @@ def request_quote_changes(quote_id: str, actor_id: str | None, target_stage: str
 def update_and_approve_quote(quote_id: str, payload: dict, actor_id: str | None) -> dict:
     """Dùng cho nút "Duyệt báo giá" khi đang sửa trong modal - lưu thay đổi cuối
     + duyệt trong CÙNG 1 transaction Postgres (không tách 2 lệnh riêng, tránh
-    nửa vời khi 1 trong 2 bước lỗi)."""
+    nửa vời khi 1 trong 2 bước lỗi).
+
+    CHU Y AN TOAN (cung 1 bug da gay mat du lieu that o update_quote() - xem
+    comment day du o do): RPC quote_update_and_approve() goi thang vao
+    quote_update() ben trong, tuc cung co che XOA+CHEN LAI toan bo quote_items
+    tu p_items. Neu caller khong gui "items" (vd chi doi data/issuer_company_id
+    roi bam Duyet), PHAI truyen lai items HIEN CO thay vi [] - khong thi bam
+    Duyet se xoa sach hang muc."""
     supabase: Client = get_supabase_client()
     items = payload.get("items")
-    changes = {"data_changed": payload.get("data") is not None, "items_changed": items is not None}
+    items_changed = items is not None
+    if items_changed:
+        rpc_items = [item for item in items]
+    else:
+        rpc_items = _raw_items_for_rpc(_quote_items(quote_id))
+    changes = {"data_changed": payload.get("data") is not None, "items_changed": items_changed}
     try:
         supabase.rpc("quote_update_and_approve", {
             "p_quote_id": quote_id,
             "p_actor_id": actor_id,
             "p_data": payload.get("data"),
-            "p_items": [item for item in items] if items is not None else [],
+            "p_items": rpc_items,
             "p_changes": changes,
             "p_public_token": secrets.token_urlsafe(16),
             "p_issuer_company_id": payload.get("issuer_company_id"),

@@ -1307,16 +1307,48 @@ def _validate_project_matches_quote_customer(quote_id: str, project_id: str) -> 
         raise ValueError("Dự án không thuộc đúng khách hàng của báo giá này.")
 
 
+def _raw_items_for_rpc(raw_items: list[dict]) -> list[dict]:
+    """Chuyen flat raw rows (tu _quote_items(), snake_case, dung DUNG ten cot
+    that) thanh JSON dang cay (root + 'children' long nhau) dung dinh dang RPC
+    quote_update can cho p_items - dung khi PHAI GIU NGUYEN items hien co (xem
+    ly do o update_quote())."""
+    by_id: dict[str, dict] = {row["id"]: dict(row) for row in raw_items}
+    for row in by_id.values():
+        row["children"] = []
+    roots: list[dict] = []
+    for row in sorted(raw_items, key=lambda r: r.get("sort_order") or 0):
+        node = by_id[row["id"]]
+        parent_id = row.get("parent_item_id")
+        if parent_id and parent_id in by_id:
+            by_id[parent_id]["children"].append(node)
+        else:
+            roots.append(node)
+    return roots
+
+
 def update_quote(quote_id: str, payload: dict, actor_id: str | None) -> dict:
+    """CHU Y AN TOAN (bug that da gay MAT TOAN BO hang muc + tong tien mot
+    quote that ben app chinh, phat hien qua "GIA KHACH ve 0"): RPC
+    quote_update() LUON XOA+CHEN LAI toan bo quote_items tu p_items (khong co
+    che do "khong dong toi items" o tang RPC - xem migration 090). Truoc day
+    ham nay truyen `p_items=[]` moi khi caller khong gui "items" trong payload
+    (vd chi doi `data`/`issuer_company_id`) - VO TINH xoa sach hang muc that
+    su cua quote. Gio PHAI truy lai items HIEN CO va truyen nguyen ven cho
+    RPC trong truong hop nay, KHONG duoc mac dinh ve []."""
     supabase: Client = get_supabase_client()
     items = payload.get("items")
-    changes = {"data_changed": payload.get("data") is not None, "items_changed": items is not None}
+    items_changed = items is not None
+    if items_changed:
+        rpc_items = [item for item in items]
+    else:
+        rpc_items = _raw_items_for_rpc(_quote_items(quote_id))
+    changes = {"data_changed": payload.get("data") is not None, "items_changed": items_changed}
     try:
         supabase.rpc("quote_update", {
             "p_quote_id": quote_id,
             "p_actor_id": actor_id,
             "p_data": payload.get("data"),
-            "p_items": [item for item in items] if items is not None else [],
+            "p_items": rpc_items,
             "p_changes": changes,
             "p_issuer_company_id": payload.get("issuer_company_id"),
         }).execute()
@@ -1477,16 +1509,28 @@ def request_quote_changes(quote_id: str, actor_id: str | None, target_stage: str
 def update_and_approve_quote(quote_id: str, payload: dict, actor_id: str | None) -> dict:
     """Dùng cho nút "Duyệt báo giá" khi đang sửa trong modal - lưu thay đổi cuối
     + duyệt trong CÙNG 1 transaction Postgres (không tách 2 lệnh riêng, tránh
-    nửa vời khi 1 trong 2 bước lỗi)."""
+    nửa vời khi 1 trong 2 bước lỗi).
+
+    CHU Y AN TOAN (cung 1 bug da gay mat du lieu that o update_quote() - xem
+    comment day du o do): RPC quote_update_and_approve() goi thang vao
+    quote_update() ben trong, tuc cung co che XOA+CHEN LAI toan bo quote_items
+    tu p_items. Neu caller khong gui "items" (vd chi doi data/issuer_company_id
+    roi bam Duyet), PHAI truyen lai items HIEN CO thay vi [] - khong thi bam
+    Duyet se xoa sach hang muc."""
     supabase: Client = get_supabase_client()
     items = payload.get("items")
-    changes = {"data_changed": payload.get("data") is not None, "items_changed": items is not None}
+    items_changed = items is not None
+    if items_changed:
+        rpc_items = [item for item in items]
+    else:
+        rpc_items = _raw_items_for_rpc(_quote_items(quote_id))
+    changes = {"data_changed": payload.get("data") is not None, "items_changed": items_changed}
     try:
         supabase.rpc("quote_update_and_approve", {
             "p_quote_id": quote_id,
             "p_actor_id": actor_id,
             "p_data": payload.get("data"),
-            "p_items": [item for item in items] if items is not None else [],
+            "p_items": rpc_items,
             "p_changes": changes,
             "p_public_token": secrets.token_urlsafe(16),
             "p_issuer_company_id": payload.get("issuer_company_id"),
