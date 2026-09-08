@@ -25,6 +25,7 @@ from fastapi import FastAPI, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
+from app.core.config import settings, reset_current_instance, set_current_instance
 from app.core.logger import get_logger, setup_logging
 from app.modules.all_platform.router import all_platform_router
 from app.modules.all_platform.schemas.common import BaseResponse
@@ -35,8 +36,24 @@ logger = get_logger(__name__)
 app = FastAPI(
     title="CRM Module API",
     version="1.0.0",
-    description="Module CRM độc lập (Leads/Khách hàng/Cơ hội/Báo giá/Hợp đồng/Sản phẩm & dịch vụ) — dùng chung DB self-host với app seeding.",
+    description="Module CRM đa brand (Leads/Khách hàng/Cơ hội/Báo giá/Hợp đồng/Sản phẩm & dịch vụ) — dùng chung DB self-host với app seeding, 1 process phục vụ nhiều domain/brand (xem instance_domain_map trong app/core/config.py).",
 )
+
+
+@app.middleware("http")
+async def resolve_crm_instance_middleware(request: Request, call_next):
+    """Xác định instance (brand) đang phục vụ request này dựa vào domain
+    trình duyệt gọi vào (Host header), không phải theo process nữa — 1
+    process duy nhất giờ trả lời cho cả crm.markee.vn/crm.markeeai.com/
+    crm.getcloudgate.com/crm.securityzone.vn. Domain lạ (gọi thẳng IP,
+    health-check nội bộ...) rơi về `default_crm_instance` thay vì lỗi."""
+    host = (request.headers.get("host") or "").split(":")[0].strip().lower()
+    instance = settings.instance_domain_map.get(host, settings.default_crm_instance)
+    token = set_current_instance(instance)
+    try:
+        return await call_next(request)
+    finally:
+        reset_current_instance(token)
 
 
 @app.middleware("http")

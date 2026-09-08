@@ -4,7 +4,7 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
       args:
-        NEXT_PUBLIC_LINKEDIN_CRAWLER_API_URL: ${CRM_PUBLIC_URL:-http://localhost:18090}
+        NEXT_PUBLIC_LINKEDIN_CRAWLER_API_URL: ${CRM_PUBLIC_URL:-}
         NEXT_PUBLIC_LINKEDIN_CRAWLER_API_KEY: ${NEXT_PUBLIC_LINKEDIN_CRAWLER_API_KEY:-}
         NEXT_PUBLIC_GOOGLE_CLIENT_ID: ${NEXT_PUBLIC_GOOGLE_CLIENT_ID:-}
     image: crm-module-frontend:latest

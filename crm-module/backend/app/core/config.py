@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+import contextvars
+import json
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -24,6 +26,44 @@ def _parse_csv(value: str | None, default: tuple[str, ...]) -> list[str]:
     return [item for item in items if item]
 
 
+def _parse_instance_domain_map(value: str | None) -> dict[str, str]:
+    """`INSTANCE_DOMAIN_MAP` — JSON object domain (khong port) -> instance,
+    vd `{"crm.markee.vn":"markee","crm.markeeai.com":"markee"}`. 1 process
+    duy nhất giờ phục vụ nhiều domain (nhiều brand), tra bang nay theo Host
+    header cua tung request de biet dang phuc vu instance nao — xem
+    `_current_instance` + middleware trong `app/main.py`."""
+    if not value:
+        return {}
+    try:
+        data = json.loads(value)
+    except ValueError:
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return {
+        str(domain).strip().lower(): str(instance).strip()
+        for domain, instance in data.items()
+        if str(domain).strip() and str(instance).strip()
+    }
+
+
+# Instance dang phuc vu request HIEN TAI (set boi middleware theo Host header
+# — xem app/main.py). Contextvar (khong phai bien global thuong) de an toan
+# giua cac request chay dong thoi trong cung 1 process (mỗi request co
+# context rieng, khong bi request khac ghi de).
+_current_instance: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "crm_current_instance", default=None
+)
+
+
+def set_current_instance(value: str) -> contextvars.Token:
+    return _current_instance.set(value)
+
+
+def reset_current_instance(token: contextvars.Token) -> None:
+    _current_instance.reset(token)
+
+
 @dataclass
 class Settings:
     """Typed settings loaded from environment variables."""
@@ -32,11 +72,19 @@ class Settings:
     port: int = int(os.getenv("PORT", "8000"))
     cors_origins: list[str] | None = None
 
-    # Multi-tenant: DB self-host này dùng chung cho nhiều deploy của
-    # crm-module (Markee tại crm.markeeai.com, brand khác sau này) — mỗi
-    # deploy chỉ set instance của riêng mình qua env CRM_INSTANCE, mọi
-    # query CRM đều lọc/gắn theo giá trị này (xem migrations/001_add_instance_scoping.sql).
-    crm_instance: str = (os.getenv("CRM_INSTANCE") or "markee").strip()
+    # Multi-tenant: DB self-host này dùng chung cho nhiều brand (Markee,
+    # CloudGate, SecurityZone...), 1 process backend DUY NHẤT phục vụ cả 3
+    # domain — instance thật sự phục vụ được xác định THEO TỪNG REQUEST dựa
+    # vào Host header (xem `crm_instance` property bên dưới + middleware ở
+    # app/main.py), không còn cố định theo process như trước. `CRM_INSTANCE`
+    # (env) giờ chỉ còn là giá trị FALLBACK khi domain gọi vào không khớp
+    # `instance_domain_map` nào (vd gọi thẳng bằng IP, health-check nội bộ).
+    default_crm_instance: str = (os.getenv("CRM_INSTANCE") or "markee").strip()
+
+    # domain (khong port, chu thuong) -> instance. Xem _parse_instance_domain_map.
+    instance_domain_map: dict[str, str] = field(
+        default_factory=lambda: _parse_instance_domain_map(os.getenv("INSTANCE_DOMAIN_MAP"))
+    )
 
     # One-way customer master sync: Markee CFO -> CRM. Only the Markee CRM
     # instance enables this; other CRM instances remain fully isolated.
@@ -85,6 +133,14 @@ class Settings:
                     "http://127.0.0.1:3000",
                 ),
             )
+
+    @property
+    def crm_instance(self) -> str:
+        """Instance CRM đang phục vụ REQUEST HIỆN TẠI. Đọc contextvar do
+        middleware set theo Host header (app/main.py) — KHÔNG phải giá trị cố
+        định lúc khởi động nữa. Mọi service vẫn gọi `settings.crm_instance`
+        y hệt trước, không cần sửa call site nào ngoài chỗ này."""
+        return _current_instance.get() or self.default_crm_instance
 
 
 settings = Settings()
