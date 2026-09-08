@@ -1720,6 +1720,11 @@
 .qc-workspace-items-table--unified .qc-cell-cost,
 .qc-workspace-items-table--unified .qc-th-cost {
   background: #f2faf6;
+  /* "Giá vốn/ĐV"/"Giá vốn" bi cham/khuat so voi cot ke ben khi so tien co dau
+   * cham ngan nghin (vd "1.500.000") - danh rieng width cho 2 cot nay thay vi
+   * de table-layout:fixed tu chia deu (qua hep so voi so 7 chu so). */
+  width: 92px;
+  white-space: nowrap;
 }
 .qc-workspace-items-table--unified .qc-cell-markup,
 .qc-workspace-items-table--unified .qc-th-markup {

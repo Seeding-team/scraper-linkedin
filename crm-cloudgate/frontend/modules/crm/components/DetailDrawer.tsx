@@ -293,6 +293,15 @@ export function DetailDrawer({
                       <a href={deal.quote.url} className="crm-quote-btn" target="_blank" rel="noopener noreferrer">
                         Mở báo giá
                       </a>
+                    ) : !isApproved && canEditThisQuote ? (
+                      // Bao gia CHUA duyet, nguoi nay sua duoc - "Mo bao gia"
+                      // mo THANG workspace chinh sua (giong "Chinh sua"), KHONG
+                      // dua ve trang /all-platform/quotes/[id] (trang do CHI
+                      // xem/in, khong co form sua - xem comment QuoteDetailPage.tsx)
+                      // vi nhu vay se lam nguoi dung tuong da vao dung cho sua.
+                      <button type="button" className="crm-quote-btn" onClick={() => onEditQuote(deal)}>
+                        Mở báo giá
+                      </button>
                     ) : internalUrl ? (
                       <a href={internalUrl} className="crm-quote-btn">
                         Mở báo giá

@@ -1720,6 +1720,11 @@
 .qc-workspace-items-table--unified .qc-cell-cost,
 .qc-workspace-items-table--unified .qc-th-cost {
   background: #f2faf6;
+  /* "Gia von/DV"/"Gia von" bi cham/khuat so voi cot ke ben khi so tien co dau
+   * cham ngan nghin (vd "1.500.000") - danh rieng width cho 2 cot nay thay vi
+   * de table-layout:fixed tu chia deu (qua hep so voi so 7 chu so). */
+  width: 92px;
+  white-space: nowrap;
 }
 .qc-workspace-items-table--unified .qc-cell-markup,
 .qc-workspace-items-table--unified .qc-th-markup {
@@ -1751,6 +1756,12 @@
 }
 .qc-cell-input:hover, .qc-cell-input:focus { border-color: #dfe4ec; background: #fff; outline: none; }
 .qc-cell-input-money { text-align: right; }
+/* O nhap Gia von/DV can du rong cho so co dau cham ngan nghin (vd
+ * "1.500.000") khong bi cham/tran trong cot hep - table-layout:fixed nen chi
+ * can rong hon o dung cot nay, khong doi cac cot khac. */
+.qc-workspace-items-table--unified .qc-cell-cost .qc-cell-input-money {
+  min-width: 84px;
+}
 .qc-cell-input:disabled { opacity: 0.5; }
 
 .qc-row-remove {

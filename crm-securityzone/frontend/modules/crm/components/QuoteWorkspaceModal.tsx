@@ -6,7 +6,7 @@ import { API_BASE_URL, API_KEY } from '@/lib/env';
 import { seedingQuoteRepository, QuoteApprovalRequiresExceptionError } from '@/modules/quotes';
 import type { Quote, QuoteActivityLogEntry, QuoteHandoffChecklist, QuoteItem, QuoteProcessingStage, QuoteApprovalRuleSet, QuoteApprovalRuleType, QuoteRuleEvaluation, QuoteDeliveryLogEntry } from '@/modules/quotes';
 import type { AppUser } from '@/types/unified.types';
-import { canApproveQuote, canEditQuoteCost, canEditQuotePricingFields, canWriteDeal, getPackageText, getServicePackageText } from '../constants/crmConfig';
+import { canApproveQuote, canEditQuoteCost, canEditQuotePricingFields, canWriteDeal, formatMoneyInput, getPackageText, getServicePackageText } from '../constants/crmConfig';
 import type { CrmUserOption, Deal } from '../types';
 import type { ServiceCatalogItem, ServiceCatalogOptions } from '@/modules/service-catalog/types';
 import {
@@ -470,8 +470,11 @@ export function QuoteWorkspaceModal({
   // NaN) van tra ve NaN - da xac nhan bug that qua test yeu cau, khong phai
   // gia dinh).
   function toSafeNonNegative(raw: string): number | null {
-    if (raw.trim() === '') return null;
-    const parsed = Number(raw);
+    // Strip dau cham ngan nghin (nguoi dung go "1.500.000") truoc khi parse -
+    // Number("1.500.000") se ra NaN neu khong strip.
+    const digitsOnly = raw.replace(/[^\d]/g, '');
+    if (!digitsOnly) return null;
+    const parsed = Number(digitsOnly);
     if (!Number.isFinite(parsed)) return null;
     return Math.max(0, parsed);
   }
@@ -2224,9 +2227,10 @@ export function QuoteWorkspaceModal({
                                 <span className="qc-row-sub">Không có quyền xem</span>
                               ) : editableTechnicalCells ? (
                                 <input
-                                  type="number"
+                                  type="text"
+                                  inputMode="numeric"
                                   className="qc-cell-input qc-cell-input-money"
-                                  value={item.costPrice ?? ''}
+                                  value={item.costPrice != null ? formatMoneyInput(String(item.costPrice)) : ''}
                                   placeholder={item.costNotApplicable ? 'Không áp dụng' : 'Bắt buộc nhập'}
                                   disabled={item.costNotApplicable}
                                   onChange={e => handleCostPriceChange(index, e.target.value)}
@@ -2933,7 +2937,7 @@ export function QuoteWorkspaceModal({
                 <tbody>
                   {itemsDraft.map((item, index) => (
                     <tr key={item.id || index}>
-                      <td>{item.description || '—'}</td>
+                      <td>{item.serviceDescription || '—'}</td>
                       <td className="qc-cell-money">{item.quantity}</td>
                       <td className="qc-cell-money">{formatMoney(item.unitPrice)}</td>
                       <td className="qc-cell-money">{formatMoney(item.totalAmount || item.quantity * item.unitPrice || 0)}</td>
@@ -2966,9 +2970,6 @@ export function QuoteWorkspaceModal({
                   <strong>{formatDate(quote.validUntil)}</strong>
                 </div>
               ) : null}
-            </div>
-            <div className="qc-workspace-modal-actions">
-              <button type="button" className="qc-btn" onClick={() => setPreviewModalOpen(false)}>Đóng</button>
             </div>
           </div>
         </div>
