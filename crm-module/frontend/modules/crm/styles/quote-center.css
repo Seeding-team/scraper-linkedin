@@ -1679,13 +1679,18 @@
   z-index: 1;
   background: #fff;
   box-shadow: 2px 0 4px -2px rgba(15, 23, 42, 0.12);
-  min-width: 220px;
+  min-width: 260px;
 }
 .qc-workspace-items-table--unified thead th:first-child {
   z-index: 2;
 }
-/* Cot "SL" chi can vua khit 1-2 chu so, khong can rong nhu cac cot khac. */
-.qc-th-qty, .qc-cell-qty { width: 52px; white-space: nowrap; }
+/* Cot "SL" chi can vua khit 1-2 chu so + nut tang/giam cua input number, can
+ * giua thay vi can phai nhu cac cot tien khac (qc-cell-money mac dinh
+ * text-align:right - can specificity cao hon o day de thang). 52px qua hep,
+ * bi cham ca so lan nut spinner. */
+.qc-th-qty, .qc-cell-qty { width: 72px; white-space: nowrap; }
+.qc-cell-money.qc-cell-qty { text-align: center; }
+.qc-cell-qty .qc-cell-input-money { text-align: center; }
 
 /* "Ban tom tat bao gia" (view read-only cho quote da khoa - review/approved/
  * published/sent) - grid gon, khong bao moi field vao 1 box lon rieng, tranh
