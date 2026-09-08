@@ -1685,7 +1685,7 @@
   /* "Hạng mục" bi table-layout:fixed chia deu qua hep (nhieu cot tien ben
    * canh), chu ten dich vu bi cat ngan qua nhieu - danh toi thieu 1 khoang
    * rong hop ly, van cho phep wrap 2-3 dong thay vi cat "..." som. */
-  min-width: 160px;
+  min-width: 220px;
 }
 .qc-workspace-items-table--unified thead th:first-child,
 .qc-workspace-items-table--unified thead th:nth-child(2) {

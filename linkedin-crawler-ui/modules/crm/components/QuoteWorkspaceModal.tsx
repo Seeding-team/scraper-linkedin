@@ -2154,7 +2154,6 @@ export function QuoteWorkspaceModal({
                     <tr>
                       <th>#</th>
                       <th>Hạng mục</th>
-                      <th>Đơn vị</th>
                       <th className="qc-th-money">SL</th>
                       <th className="qc-th-money qc-th-cost">Giá vốn/ĐV</th>
                       <th className="qc-th-money qc-th-cost">Giá vốn</th>
@@ -2169,7 +2168,7 @@ export function QuoteWorkspaceModal({
                   <tbody>
                     {itemsDraft.length === 0 ? (
                       <tr>
-                        <td colSpan={11} className="qc-empty">
+                        <td colSpan={10} className="qc-empty">
                           <div className="qc-workspace-items-empty">
                             <span>Chưa có hạng mục nào.</span>
                             {canEdit && isDraft && !isLockedForReview ? (
@@ -2205,11 +2204,6 @@ export function QuoteWorkspaceModal({
                               ) : (
                                 item.serviceDescription || '—'
                               )}
-                            </td>
-                            <td>
-                              {editableTechnicalCells ? (
-                                <input className="qc-cell-input" value={item.unit || ''} onChange={e => updateRow(index, { unit: e.target.value })} onBlur={() => void persistQuote({})} placeholder="Đơn vị" />
-                              ) : (item.unit || '—')}
                             </td>
                             <td className="qc-cell-money">
                               {editableTechnicalCells ? (
