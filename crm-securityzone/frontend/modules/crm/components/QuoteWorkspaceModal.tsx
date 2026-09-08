@@ -2159,7 +2159,7 @@ export function QuoteWorkspaceModal({
                       <th className="qc-th-money qc-th-markup">Markup</th>
                       <th className="qc-th-money qc-th-markup">Giá khách/ĐV</th>
                       <th className="qc-th-money">Thành tiền</th>
-                      <th className="qc-th-money">Margin</th>
+                      <th className="qc-th-money qc-th-margin-col">Margin</th>
                       {canEdit && isDraft && !isLockedForReview ? <th className="qc-th-actions" aria-label="Thao tác" /> : null}
                     </tr>
                   </thead>
@@ -2244,7 +2244,7 @@ export function QuoteWorkspaceModal({
                               ) : formatMoney(item.unitPrice)}
                             </td>
                             <td className="qc-cell-money">{formatMoney(item.totalAmount || item.quantity * item.unitPrice || 0)}</td>
-                            <td className={`qc-cell-money ${margin != null && margin >= 20 ? 'qc-cell-margin-good' : margin != null ? 'qc-cell-margin-warn' : ''}`}>
+                            <td className={`qc-cell-money qc-th-margin-col ${margin != null && margin >= 20 ? 'qc-cell-margin-good' : margin != null ? 'qc-cell-margin-warn' : ''}`}>
                               {!profitabilityViewAllowed ? <span className="qc-row-sub">Không có quyền xem</span> : margin != null ? `${margin.toFixed(2)}%` : '—'}
                             </td>
                             {canEdit && isDraft && !isLockedForReview ? (
