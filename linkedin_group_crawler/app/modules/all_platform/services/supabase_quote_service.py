@@ -1307,16 +1307,48 @@ def _validate_project_matches_quote_customer(quote_id: str, project_id: str) -> 
         raise ValueError("Dự án không thuộc đúng khách hàng của báo giá này.")
 
 
+def _raw_items_for_rpc(raw_items: list[dict]) -> list[dict]:
+    """Chuyen flat raw rows (tu _quote_items(), snake_case, dung DUNG ten cot
+    that) thanh JSON dang cay (root + 'children' long nhau) dung dinh dang RPC
+    quote_update can cho p_items - dung khi PHAI GIU NGUYEN items hien co (xem
+    ly do o update_quote())."""
+    by_id: dict[str, dict] = {row["id"]: dict(row) for row in raw_items}
+    for row in by_id.values():
+        row["children"] = []
+    roots: list[dict] = []
+    for row in sorted(raw_items, key=lambda r: r.get("sort_order") or 0):
+        node = by_id[row["id"]]
+        parent_id = row.get("parent_item_id")
+        if parent_id and parent_id in by_id:
+            by_id[parent_id]["children"].append(node)
+        else:
+            roots.append(node)
+    return roots
+
+
 def update_quote(quote_id: str, payload: dict, actor_id: str | None) -> dict:
+    """CHU Y AN TOAN (bug that da gay MAT TOAN BO hang muc + tong tien mot
+    quote that trong phien nay, phat hien qua "GIA KHACH ve 0"): RPC
+    quote_update() LUON XOA+CHEN LAI toan bo quote_items tu p_items (khong co
+    che do "khong dong toi items" o tang RPC - xem migration 090). Truoc day
+    ham nay truyen `p_items=[]` moi khi caller khong gui "items" trong payload
+    (vd chi doi `data`/`issuer_company_id`) - VO TINH xoa sach hang muc that
+    su cua quote. Gio PHAI truy lai items HIEN CO va truyen nguyen ven cho
+    RPC trong truong hop nay, KHONG duoc mac dinh ve []."""
     supabase: Client = get_supabase_client()
     items = payload.get("items")
-    changes = {"data_changed": payload.get("data") is not None, "items_changed": items is not None}
+    items_changed = items is not None
+    if items_changed:
+        rpc_items = [item for item in items]
+    else:
+        rpc_items = _raw_items_for_rpc(_quote_items(quote_id))
+    changes = {"data_changed": payload.get("data") is not None, "items_changed": items_changed}
     try:
         supabase.rpc("quote_update", {
             "p_quote_id": quote_id,
             "p_actor_id": actor_id,
             "p_data": payload.get("data"),
-            "p_items": [item for item in items] if items is not None else [],
+            "p_items": rpc_items,
             "p_changes": changes,
             "p_issuer_company_id": payload.get("issuer_company_id"),
         }).execute()
@@ -1626,6 +1658,43 @@ def assign_quote_owner(
             "quote_id": quote_id, "actor_id": actor_id, "action": "owner_assigned",
             "changes": {"technicalOwnerId": technical_owner_id, "quoteOwnerId": quote_owner_id},
         }).execute()
+    return get_quote(quote_id)
+
+
+def pin_quote(quote_id: str, actor_id: str | None) -> dict:
+    """"Ghim báo giá lên đầu" (Quote Center) - update TRUC TIEP CHI 3 cot
+    is_pinned/pinned_at/pinned_by (khong dong toi bat ky cot nao khac, dac
+    biet KHONG set updated_by) - trigger DB (migration 103) da duoc sua de
+    KHONG bump updated_at khi UPDATE chi doi dung 3 cot nay, dung yeu cau
+    "không sửa giả updated_at/created_at". Quyen CHI Admin da chan o router
+    (can_pin_quote) - ham nay khong tu kiem tra lai quyen."""
+    supabase: Client = get_supabase_client()
+    supabase.table(QUOTES_TABLE).update({
+        "is_pinned": True,
+        "pinned_at": _now_iso(),
+        "pinned_by": actor_id,
+    }).eq("id", quote_id).execute()
+    supabase.table(ACTIVITY_LOG_TABLE).insert({
+        "quote_id": quote_id, "actor_id": actor_id, "action": "pinned",
+        "changes": {},
+    }).execute()
+    return get_quote(quote_id)
+
+
+def unpin_quote(quote_id: str, actor_id: str | None) -> dict:
+    """Bo ghim - dua ca 3 cot ve trang thai "chua tung ghim" (is_pinned=false,
+    pinned_at/pinned_by=NULL) dung constraint quotes_pin_consistency_check
+    (migration 103) - khong de lai dau vet pinned_at cu."""
+    supabase: Client = get_supabase_client()
+    supabase.table(QUOTES_TABLE).update({
+        "is_pinned": False,
+        "pinned_at": None,
+        "pinned_by": None,
+    }).eq("id", quote_id).execute()
+    supabase.table(ACTIVITY_LOG_TABLE).insert({
+        "quote_id": quote_id, "actor_id": actor_id, "action": "unpinned",
+        "changes": {},
+    }).execute()
     return get_quote(quote_id)
 
 
