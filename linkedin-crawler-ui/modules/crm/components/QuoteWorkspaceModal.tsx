@@ -485,8 +485,14 @@ export function QuoteWorkspaceModal({
       prev.map((row, i) => {
         if (i !== index) return row;
         if (cost === null) return { ...row, costPrice: null, markupPercent: null };
-        const markup = row.markupPercent ?? 0;
-        return { ...row, costPrice: cost, costNotApplicable: false, markupPercent: markup, unitPrice: cost * (1 + markup / 100) };
+        // BUG that da fix: truoc day markup mac dinh ve 0 khi chua dat, khien
+        // Gia khach TU DONG nhay bang dung Gia von moi nhap (Sale chua he
+        // dong vao Gia khach). CHI tinh lai unitPrice khi markup DA duoc dat
+        // ro rang (khac null) - giu nguyen Gia khach neu markup chua xac dinh.
+        if (row.markupPercent == null) {
+          return { ...row, costPrice: cost, costNotApplicable: false };
+        }
+        return { ...row, costPrice: cost, costNotApplicable: false, unitPrice: cost * (1 + row.markupPercent / 100) };
       })
     );
   }
@@ -781,8 +787,13 @@ export function QuoteWorkspaceModal({
     return agentsById.get(id) || 'Không rõ';
   }
 
-  async function load(id: string) {
-    setLoading(true);
+  async function load(id: string, opts?: { silent?: boolean }) {
+    // "silent" - dung cho reload() sau 1 thao tac nho (gan nguoi phu trach,
+    // sua 1 field...) - KHONG duoc bat lai "loading" toan man hinh (truoc day
+    // luon bat, khien ca form bi thay bang "Đang tải báo giá..." roi hien lai
+    // - giat/nhay y het load lai trang, du chi doi 1 truong nho). Chi lan tai
+    // DAU TIEN (mo modal) moi can man hinh loading day du.
+    if (!opts?.silent) setLoading(true);
     try {
       const [q, log, hc] = await Promise.all([
         seedingQuoteRepository.getQuote(id),
@@ -1090,7 +1101,7 @@ export function QuoteWorkspaceModal({
 
   async function reload() {
     if (!quote) return;
-    await load(quote.id);
+    await load(quote.id, { silent: true });
     await onChanged();
   }
 
