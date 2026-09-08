@@ -2199,15 +2199,15 @@ export function QuoteWorkspaceModal({
                             <td>{index + 1}</td>
                             <td>
                               {(editableTechnicalCells || editableCells) ? (
-                                <input className="qc-cell-input" value={item.description || ''} onChange={e => updateRow(index, { description: e.target.value })} onBlur={() => void persistQuote({})} placeholder="Tên hạng mục" />
+                                <input className="qc-cell-input" value={item.serviceDescription || ''} onChange={e => updateRow(index, { serviceDescription: e.target.value })} onBlur={() => void persistQuote({})} placeholder="Tên hạng mục" />
                               ) : (
-                                item.description || '—'
+                                item.serviceDescription || '—'
                               )}
                             </td>
                             <td>
                               {editableTechnicalCells ? (
-                                <input className="qc-cell-input" value={item.serviceDescription || ''} onChange={e => updateRow(index, { serviceDescription: e.target.value })} onBlur={() => void persistQuote({})} placeholder="Mô tả kỹ thuật" />
-                              ) : (item.serviceDescription || '—')}
+                                <input className="qc-cell-input" value={item.description || ''} onChange={e => updateRow(index, { description: e.target.value })} onBlur={() => void persistQuote({})} placeholder="Mô tả kỹ thuật" />
+                              ) : (item.description || '—')}
                             </td>
                             <td>
                               {editableTechnicalCells ? (
