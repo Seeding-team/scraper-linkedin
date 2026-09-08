@@ -26,6 +26,25 @@ def _parse_csv(value: str | None, default: tuple[str, ...]) -> list[str]:
     return [item for item in items if item]
 
 
+def _parse_workspace_domains(value: str | None) -> dict[str, str]:
+    """`WORKSPACE_DOMAINS` — JSON object instance -> base URL public (co scheme,
+    KHONG lowercase key vi instance code phan biet hoa/thuong, vd
+    "SECURITYZONE" khac "securityzone")."""
+    if not value:
+        return {}
+    try:
+        data = json.loads(value)
+    except ValueError:
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return {
+        str(instance).strip(): str(url).strip().rstrip("/")
+        for instance, url in data.items()
+        if str(instance).strip() and str(url).strip()
+    }
+
+
 def _parse_instance_domain_map(value: str | None) -> dict[str, str]:
     """`INSTANCE_DOMAIN_MAP` — JSON object domain (khong port) -> instance,
     vd `{"crm.markee.vn":"markee","crm.markeeai.com":"markee"}`. 1 process
@@ -84,6 +103,15 @@ class Settings:
     # domain (khong port, chu thuong) -> instance. Xem _parse_instance_domain_map.
     instance_domain_map: dict[str, str] = field(
         default_factory=lambda: _parse_instance_domain_map(os.getenv("INSTANCE_DOMAIN_MAP"))
+    )
+
+    # instance -> base URL CANONICAL cong khai cua brand do (co scheme, KHONG
+    # duong dan cuoi), dung de admin switcher redirect sang. VD:
+    # {"markee":"https://crm.markee.vn","cloudgate":"https://crm.getcloudgate.com"}.
+    # Khac INSTANCE_DOMAIN_MAP (domain->instance, dung de RESOLVE request vao) —
+    # cai nay la chieu NGUOC LAI (instance->domain, dung de REDIRECT ra).
+    workspace_domains: dict[str, str] = field(
+        default_factory=lambda: _parse_workspace_domains(os.getenv("WORKSPACE_DOMAINS"))
     )
 
     # One-way customer master sync: Markee CFO -> CRM. Only the Markee CRM

@@ -8,6 +8,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { MaterialIcon, type MaterialSymbolName } from "@/components/ui";
 import { useAppAuth } from "@/contexts/AppAuthContext";
 import { cn } from "@/lib/utils";
+import { WorkspaceSwitcher } from "./WorkspaceSwitcher";
 
 export interface NavLeafItem {
   type: "item";
@@ -562,6 +563,8 @@ export function AllPlatformSidebar({
         </nav>
 
         <div className={cn("relative mt-auto px-2 py-3", isCollapsed && "px-1")}>
+          {isAdmin && !isCollapsed ? <WorkspaceSwitcher /> : null}
+
           {showProfileMenu ? (
             <>
               <div className="fixed inset-0 z-40" onClick={() => setShowProfileMenu(false)} />

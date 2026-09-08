@@ -154,6 +154,64 @@ Python/Node runtime sẵn để khởi động backend — xem mục "Cần làm
   cutover: **mọi người sẽ bị đăng xuất 1 lần** khi cutover dù secret có giống
   nhau hay không (đổi cả domain lẫn hạ tầng).
 
+## Đã làm tiếp (phiên sau, cùng ngày) — Admin workspace switcher
+
+**ĐÃ XONG VÀ TEST THẬT** (không chỉ đọc code) — luồng switcher đầy đủ:
+
+- Backend:
+  - `app/core/config.py`: thêm `workspace_domains` (parse `WORKSPACE_DOMAINS`
+    env, JSON instance -> base URL canonical, KHÔNG lowercase vì instance
+    code phân biệt hoa/thường như `SECURITYZONE`).
+  - `app/modules/all_platform/auth_deps.py`: thêm `require_admin_strict` —
+    CHỈ đúng role `admin` (khác `require_admin`/`require_admin_or_leader` cũ
+    đang gộp chung admin+leader) — dùng riêng cho switcher theo đúng yêu cầu
+    "chỉ admin mới có quyền".
+  - `app/modules/all_platform/services/workspace_handoff_service.py` (file
+    mới): mint/consume mã dùng 1 lần (TTL 30s, lưu in-memory — CHỈ đúng khi
+    có ĐÚNG 1 backend process xử lý cả 3 domain, đã ghi rõ trong docstring).
+  - `app/modules/all_platform/routers/auth.py`: thêm 3 endpoint —
+    `GET /auth/workspaces` (public, danh sách brand + brand hiện tại theo
+    Host header), `POST /auth/workspace-handoff` (chỉ admin, mint mã),
+    `GET /auth/workspace-handoff/consume?code=...` (public — chính mã là
+    bằng chứng quyền, đổi mã lấy cookie `crawlpro_access_token` MỚI cho
+    domain hiện tại).
+- Frontend:
+  - `services/all-platform.service.ts`: thêm `authService.listWorkspaces()` /
+    `mintWorkspaceHandoff()` / `consumeWorkspaceHandoff()`.
+  - `components/all-platform/layout/WorkspaceSwitcher.tsx` (file mới):
+    dropdown chọn workspace, chỉ render khi `role==="admin"` (kiểm tra ở
+    `AllPlatformSidebar.tsx` trước khi mount) và khi có >1 workspace. Chọn
+    brand khác → mint mã → `window.location.href` sang domain đích kèm mã
+    (redirect THẬT, đúng yêu cầu "đổi domain thật, không chỉ đổi UI state").
+  - `app/auth/handoff/page.tsx` (file mới): trang đích của redirect — tự gọi
+    `consume` (không dùng `AppAuthContext.refreshUser()` vì cookie domain này
+    chưa có lúc trang vừa load), thành công thì vào thẳng
+    `getDashboardHrefForRole(role)`, thất bại thì hiện lỗi + link về login.
+  - Gắn `<WorkspaceSwitcher />` vào `AllPlatformSidebar.tsx`, bên trong khối
+    `mt-auto` (cùng nhóm với profile/logout ở đáy sidebar), phía trên dropdown
+    profile.
+
+**Test thật đã chạy** (Docker Compose local, KHÔNG phải prod):
+- Non-admin (role mặc định `member`) gọi `POST /auth/workspace-handoff` →
+  403 đúng như kỳ vọng.
+- Admin mint mã ở domain A (port test 18081=markee) → consume mã ở domain B
+  (port test 18082=cloudgate) **không cần gửi cookie cũ** → nhận
+  `Set-Cookie` mới hợp lệ cho domain B, trả đúng thông tin user.
+- Dùng lại đúng mã đó lần 2 → bị từ chối (xác nhận cơ chế dùng-1-lần hoạt
+  động đúng).
+- `GET /auth/workspaces` trả đúng `current: true/false` theo domain đang gọi.
+- Route `/auth/handoff` (trang Next.js) và `/all-platform/crm/customers` đều
+  trả 200 qua nginx sau khi build lại frontend.
+- **CHƯA test bằng thao tác chuột thật trên trình duyệt** (chỉ mới test bằng
+  curl mô phỏng đúng luồng HTTP) — cần người dùng tự bấm thử switcher trên
+  UI thật để xác nhận trải nghiệm (redirect, loading state, lỗi hiển thị...).
+
+Local test hiện có 3 port giả lập domain (không cần sửa hosts, xem
+`crm-module/docker-compose.override.yml` local — file này KHÔNG commit):
+`localhost:18081`=markee, `18082`=cloudgate, `18083`=securityzone. Tài khoản
+test: `admin.test@example.com` / `Test1234!` (role admin, đã tạo trên DB
+local test).
+
 ## CẦN LÀM TIẾP (chưa động vào, theo đúng thứ tự ưu tiên)
 
 1. Xác minh bảng `quote_delivery_log` đã tồn tại trên DB prod thật chưa
@@ -166,14 +224,12 @@ Python/Node runtime sẵn để khởi động backend — xem mục "Cần làm
 4. Docker: gộp 3 docker-compose stack → 1 stack (1 frontend + 1 backend) —
    CHƯA làm. `.github/workflows/deploy-crm-module.yml` cần đổi thành workflow
    tổng quát.
-5. Admin switcher + `/auth/handoff` (endpoint mint + consume mã dùng 1 lần) —
-   CHƯA làm, phần phức tạp nhất, làm sau cùng khi phần nền (bước 1-4) đã ổn.
+5. ~~Admin switcher + `/auth/handoff`~~ — **ĐÃ XONG** (xem mục ngay trên).
 6. NPM: sửa 4 Proxy Host trỏ sang port của stack mới — làm ở bước cutover,
    sau khi test kỹ trên 1 port/domain tạm (xem mục Rollout trong plan gốc).
 7. Test cách ly dữ liệu bằng curl với `Host:` header khác nhau trên cùng 1
-   backend đã gộp (xem mục Verification trong plan gốc) — BẮT BUỘC làm trước
-   khi cutover thật, chưa làm được ở phiên này vì thiếu Python runtime trên
-   máy dev để khởi động backend thử.
+   backend đã gộp — **ĐÃ LÀM VÀ PASS** (xem mục 4 phía trên, phần "ĐÃ TEST
+   THẬT bằng Docker Compose local").
 
 ## Việc CẦN xác minh (không chặn code, nhưng chặn cutover thật)
 
