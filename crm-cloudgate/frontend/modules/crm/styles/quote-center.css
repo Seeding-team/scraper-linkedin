@@ -1807,6 +1807,9 @@
 .qc-workspace-add-row { display: flex; gap: 8px; padding: 8px 0 2px; }
 
 .qc-mini-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   border: 1px solid #dce2ea;
   background: #fff;
   color: #3f4b60;
