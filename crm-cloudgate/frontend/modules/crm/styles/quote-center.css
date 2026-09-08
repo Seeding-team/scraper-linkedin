@@ -1668,29 +1668,24 @@
 .qc-workspace-items-table--unified.qc-workspace-items-table--has-rows {
   min-width: 1180px;
 }
+/* Da bo cot "#" (STT) - "Hạng mục" gio la cot dau tien, giu nguyen vi tri
+ * sticky (dong bang khi cuon ngang) + rieng them min-width de khong bi
+ * table-layout:fixed chia deu qua hep (nhieu cot tien ben canh) lam cat ngan
+ * ten dich vu qua som. */
 .qc-workspace-items-table--unified th:first-child,
 .qc-workspace-items-table--unified td:first-child {
   position: sticky;
   left: 0;
   z-index: 1;
   background: #fff;
-}
-.qc-workspace-items-table--unified th:nth-child(2),
-.qc-workspace-items-table--unified td:nth-child(2) {
-  position: sticky;
-  left: 32px;
-  z-index: 1;
-  background: #fff;
   box-shadow: 2px 0 4px -2px rgba(15, 23, 42, 0.12);
-  /* "Hạng mục" bi table-layout:fixed chia deu qua hep (nhieu cot tien ben
-   * canh), chu ten dich vu bi cat ngan qua nhieu - danh toi thieu 1 khoang
-   * rong hop ly, van cho phep wrap 2-3 dong thay vi cat "..." som. */
   min-width: 220px;
 }
-.qc-workspace-items-table--unified thead th:first-child,
-.qc-workspace-items-table--unified thead th:nth-child(2) {
+.qc-workspace-items-table--unified thead th:first-child {
   z-index: 2;
 }
+/* Cot "SL" chi can vua khit 1-2 chu so, khong can rong nhu cac cot khac. */
+.qc-th-qty, .qc-cell-qty { width: 52px; white-space: nowrap; }
 
 /* "Ban tom tat bao gia" (view read-only cho quote da khoa - review/approved/
  * published/sent) - grid gon, khong bao moi field vao 1 box lon rieng, tranh

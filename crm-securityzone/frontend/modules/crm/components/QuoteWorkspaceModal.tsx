@@ -2152,9 +2152,8 @@ export function QuoteWorkspaceModal({
                 <table className={`qc-linked-table qc-workspace-items-table qc-workspace-items-table--unified${itemsDraft.length > 0 ? ' qc-workspace-items-table--has-rows' : ''}`}>
                   <thead>
                     <tr>
-                      <th>#</th>
                       <th>Hạng mục</th>
-                      <th className="qc-th-money">SL</th>
+                      <th className="qc-th-money qc-th-qty">SL</th>
                       <th className="qc-th-money qc-th-cost">Giá vốn/ĐV</th>
                       <th className="qc-th-money qc-th-cost">Giá vốn</th>
                       <th className="qc-th-cost-flag">N/A giá vốn</th>
@@ -2168,7 +2167,7 @@ export function QuoteWorkspaceModal({
                   <tbody>
                     {itemsDraft.length === 0 ? (
                       <tr>
-                        <td colSpan={10} className="qc-empty">
+                        <td colSpan={9} className="qc-empty">
                           <div className="qc-workspace-items-empty">
                             <span>Chưa có hạng mục nào.</span>
                             {canEdit && isDraft && !isLockedForReview ? (
@@ -2197,7 +2196,6 @@ export function QuoteWorkspaceModal({
                         const editableCells = canEditPricingCells;
                         return (
                           <tr key={item.id || index}>
-                            <td>{index + 1}</td>
                             <td>
                               {(editableTechnicalCells || editableCells) ? (
                                 <input className="qc-cell-input" value={item.serviceDescription || ''} onChange={e => updateRow(index, { serviceDescription: e.target.value })} onBlur={() => void persistQuote({})} placeholder="Tên hạng mục" />
@@ -2205,7 +2203,7 @@ export function QuoteWorkspaceModal({
                                 item.serviceDescription || '—'
                               )}
                             </td>
-                            <td className="qc-cell-money">
+                            <td className="qc-cell-money qc-cell-qty">
                               {editableTechnicalCells ? (
                                 <input type="number" className="qc-cell-input qc-cell-input-money" value={item.quantity} onChange={e => updateRow(index, { quantity: Math.max(0, Number(e.target.value) || 0) })} onBlur={() => void persistQuote({})} />
                               ) : item.quantity}
