@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
 import "@/modules/crm/styles/crm.css";
@@ -15,6 +15,20 @@ import { QueryProvider } from "@/components/providers/QueryProvider";
 // trang/component nao muon dung Inter thi tu ap dung className={inter.variable} hoac
 // font-[family-name:var(--font-inter)].
 const inter = Inter({ subsets: ["latin", "vietnamese"], variable: "--font-inter" });
+
+// ROOT CAUSE THAT cua bug "mobile van la khung nho giua man hinh" (khong
+// phai CSS specificity/containing-block nhu nghi ban dau): toan bo app CHUA
+// TUNG khai bao viewport meta nao (grep toan bo app/ xac nhan) - dien thoai
+// that mac dinh render trang o "layout viewport" ~980px (theo chuan mobile
+// browser cho trang khong khai bao viewport) roi thu nho lai de vua man
+// hinh, nen MOI @media (max-width:...) khong bao gio duoc kich hoat tren may
+// that (Playwright set thang CSS viewport nen khong bao gio bat duoc loi
+// nay). Fix o dung 1 cho - layout goc - ap dung cho toan bo app, khong rieng
+// gi Quote Center/Workspace.
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+};
 
 export const metadata: Metadata = {
   title: "MarkeeAI - Seeding Tool",

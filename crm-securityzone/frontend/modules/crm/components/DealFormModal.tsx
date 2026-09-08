@@ -51,6 +51,7 @@ export function DealFormModal({
   industryOptions,
   currentUser = null,
   initialCustomer = null,
+  initialProject = null,
 }: {
   open: boolean;
   loading?: boolean;
@@ -71,6 +72,9 @@ export function DealFormModal({
    * mới") — CHỈ áp dụng lúc tạo mới (bỏ qua khi đang sửa deal có sẵn). Không tạo 1 form
    * tạo-deal riêng, chỉ prefill vào đúng form nhanh hiện có. */
   initialCustomer?: { id: string; name: string; companyName?: string; phone?: string; email?: string } | null;
+  /** Prefill + KHOÁ Dự án khi mở "Tạo cơ hội" từ 1 Project card cụ thể
+   * (Block 1, mục 3) — CHỈ áp dụng lúc tạo mới, đi kèm initialCustomer. */
+  initialProject?: { id: string } | null;
 }) {
   const isCreate = !deal;
   const [form, setForm] = useState<DealFormState>(emptyDealForm);
@@ -89,11 +93,14 @@ export function DealFormModal({
       setForm({
         ...emptyDealForm(),
         customerId: initialCustomer.id,
+        customerLocked: true,
         customerProfileCanEdit: false,
         customerName: initialCustomer.name || '',
         companyName: initialCustomer.companyName || '',
         phone: initialCustomer.phone || '',
         email: initialCustomer.email || '',
+        projectId: initialProject?.id || '',
+        projectLocked: Boolean(initialProject?.id),
       });
       return;
     }
@@ -101,7 +108,7 @@ export function DealFormModal({
     // thiếu key — tránh input bị undefined.
     setForm({ ...emptyDealForm(), ...(loadDealDraft() || {}) });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [deal, open, initialCustomer?.id]);
+  }, [deal, open, initialCustomer?.id, initialProject?.id]);
 
   // Chỉ lưu nháp khi đang TẠO MỚI (không phải sửa deal có sẵn) — tránh
   // nháp cũ ghi đè lên dữ liệu deal thật khi mở form sửa.

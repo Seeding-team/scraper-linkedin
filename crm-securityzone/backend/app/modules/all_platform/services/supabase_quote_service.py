@@ -81,8 +81,19 @@ def _row_to_item(row: dict) -> dict:
         "id": row["id"],
         "quoteId": row["quote_id"],
         "parentItemId": row.get("parent_item_id"),
+        # Muc cha (Section, migration 104) / hang muc that (Item, mac dinh) -
+        # section KHONG tinh tien (server da ep qty/gia ve 0/NULL o
+        # quote_update), FE dung field nay de render tieu de nhom + AN het
+        # cac o nhap SL/gia von/markup/gia khach cho dong nay.
+        "rowType": row.get("row_type") or "item",
         "description": row.get("description") or "",
         "serviceDescription": row.get("service_description") or "",
+        # Ghi chu RIENG cho tung hang muc (migration 105, vd "Giảm giá 15%
+        # theo chính sách ưu đãi khách hàng đầu tiên") - khac han
+        # internalRequestNote/customBlocks (ghi chu CHUNG ca bao gia) - CONG
+        # KHAI (co trong _PUBLIC_ITEM_KEYS ben duoi), khong phai du lieu noi
+        # bo nhu cost_price/markup_percent.
+        "note": row.get("note") or "",
         "unit": row.get("unit"),
         "quantity": float(row.get("quantity") or 0),
         "unitPrice": float(row.get("unit_price") or 0),
@@ -330,7 +341,7 @@ def apply_quote_field_permissions(quote: dict, user: dict | None) -> dict:
 # bat ky cot noi bo nao sau nay) MAC DINH KHONG xuat hien tren API cong khai,
 # tru khi co ai do CHU DONG them dung ten vao dict duoi day.
 _PUBLIC_ITEM_KEYS = (
-    "id", "parentItemId", "description", "serviceDescription", "unit", "quantity",
+    "id", "parentItemId", "rowType", "description", "serviceDescription", "note", "unit", "quantity",
     "unitPrice", "discountPercent", "discountAmount", "amountAfterDiscount", "vatRate",
     "subtotalAmount", "vatAmount", "totalAmount", "sortOrder",
     "catalogItemId", "bundleSnapshot", "listPriceUsd", "unitPriceUsd", "exchangeRate", "unitPriceVnd",
@@ -344,8 +355,15 @@ def _row_to_public_item(row: dict) -> dict:
     return {
         "id": row.get("id"),
         "parentItemId": row.get("parent_item_id"),
+        "rowType": row.get("row_type") or "item",
         "description": row.get("description") or "",
         "serviceDescription": row.get("service_description") or "",
+        # Ghi chu RIENG cho tung hang muc (migration 105, vd "Giảm giá 15%
+        # theo chính sách ưu đãi khách hàng đầu tiên") - khac han
+        # internalRequestNote/customBlocks (ghi chu CHUNG ca bao gia) - CONG
+        # KHAI (co trong _PUBLIC_ITEM_KEYS ben duoi), khong phai du lieu noi
+        # bo nhu cost_price/markup_percent.
+        "note": row.get("note") or "",
         "unit": row.get("unit"),
         "quantity": float(row.get("quantity") or 0),
         "unitPrice": float(row.get("unit_price") or 0),
@@ -626,6 +644,16 @@ def _flatten_computed_items(raw_items: list[dict]) -> tuple[list[dict], float, f
 
     def append_item(item: dict, parent_temp_index: int | None, sort_order: int) -> int:
         nonlocal subtotal, vat, total
+        row_type = "section" if item.get("row_type") == "section" else "item"
+        if row_type == "section":
+            # Muc cha (Section) KHONG tinh tien - ep ve 0/NULL o SERVER, giong
+            # het logic da ap dung trong RPC quote_update() (migration 104),
+            # khong tin gia tri client gui len cho dong nay.
+            item = {
+                **item,
+                "quantity": 0, "unit_price": 0, "discount_percent": 0, "vat_rate": 0,
+                "cost_price": None, "markup_percent": None, "cost_not_applicable": False,
+            }
         discount_percent = _validate_percent(item.get("discount_percent"), "discount_percent")
         vat_rate = _validate_percent(item.get("vat_rate"), "vat_rate")
         item_subtotal, item_discount, item_after_discount, item_vat, item_total = _calculate_item(
@@ -636,6 +664,7 @@ def _flatten_computed_items(raw_items: list[dict]) -> tuple[list[dict], float, f
         )
         row = {
             **item,
+            "row_type": row_type,
             "parent_temp_index": parent_temp_index,
             "sort_order": sort_order,
             "discount_percent": discount_percent,
@@ -1162,6 +1191,8 @@ def create_quote(payload: dict, created_by: str | None) -> dict:
     if not form or form["status"] != "active":
         raise ValueError("Mẫu báo giá không còn hoạt động.")
 
+    _validate_deal_project_consistency(payload.get("deal_id"), payload.get("project_id"))
+
     is_villa = form["layout_type"] == "villa_solution_package"
     data = dict(payload.get("data") or {})
     raw_items = payload.get("items") or []
@@ -1213,6 +1244,7 @@ def create_quote(payload: dict, created_by: str | None) -> dict:
         row = {
             "quote_id": quote_row["id"],
             "parent_item_id": inserted_ids_by_flat_index.get(parent_temp_index) if parent_temp_index is not None else None,
+            "row_type": item.get("row_type") or "item",
             "description": item.get("description") or "",
             "service_description": item.get("service_description") or None,
             "unit": item.get("unit"),
@@ -1291,26 +1323,41 @@ def _raise_friendly_rpc_error(exc: Exception) -> None:
     raise
 
 
+def _validate_deal_project_consistency(deal_id: str | None, project_id: str | None) -> None:
+    """Validate quan he THAT trong schema (quotes KHONG co customer_id rieng -
+    khach hang chi suy ra qua quotes.deal_id -> customer_leads.customer_id):
+    (1) Du an (neu co) phai thuoc DUNG khach hang cua Co hoi dang gan; (2) neu
+    Co hoi do da tu thuoc san 1 Du an KHAC (customer_leads.project_id) thi
+    Du an dang chon phai TRUNG voi Du an do, khong duoc chon lech.
+    Bo qua (khong chan) khi thieu du lieu de so sanh - an toan hon doan sai,
+    dung tinh than "_validate_project_matches_quote_customer" cu."""
+    if not deal_id or not project_id:
+        return
+    supabase = get_supabase_client()
+    deal_row = supabase.table("customer_leads").select("customer_id, project_id").eq("id", deal_id).maybe_single().execute()
+    deal_data = deal_row.data if deal_row else None
+    if not deal_data:
+        return
+    deal_customer_id = deal_data.get("customer_id")
+    if deal_customer_id:
+        project_row = supabase.table("projects").select("customer_id").eq("id", project_id).maybe_single().execute()
+        if not project_row or not project_row.data:
+            raise ValueError("Không tìm thấy dự án.")
+        if project_row.data.get("customer_id") != deal_customer_id:
+            raise ValueError("Dự án đã chọn không thuộc khách hàng của cơ hội này.")
+    deal_project_id = deal_data.get("project_id")
+    if deal_project_id and deal_project_id != project_id:
+        raise ValueError("Cơ hội đã chọn không thuộc dự án đã chọn.")
+
+
 def _validate_project_matches_quote_customer(quote_id: str, project_id: str) -> None:
-    """Chan gan Du an KHAC khach hang voi bao gia nay (dung yeu cau "Khong
-    cho chon Project cheo khach hang"). Bao gia chua gan Co hoi (deal_id
-    NULL), hoac Co hoi chua gan ho so khach hang that (customer_id NULL) ->
-    KHONG the xac dinh khach hang -> BO QUA validate (khong chan, vi khong
-    co gi de so sanh - an toan hon la doan sai)."""
+    """Ban update - quote da ton tai, lay deal_id THAT cua quote roi giao lai
+    cho _validate_deal_project_consistency() (dung 1 nguon logic voi
+    create_quote, tranh lech quy tac giua tao moi/cap nhat)."""
     supabase = get_supabase_client()
     quote_row = supabase.table(QUOTES_TABLE).select("deal_id").eq("id", quote_id).maybe_single().execute()
     deal_id = quote_row.data.get("deal_id") if quote_row else None
-    if not deal_id:
-        return
-    deal_row = supabase.table("customer_leads").select("customer_id").eq("id", deal_id).maybe_single().execute()
-    deal_customer_id = deal_row.data.get("customer_id") if deal_row else None
-    if not deal_customer_id:
-        return
-    project_row = supabase.table("projects").select("customer_id").eq("id", project_id).maybe_single().execute()
-    if not project_row:
-        raise ValueError("Không tìm thấy dự án.")
-    if project_row.data.get("customer_id") != deal_customer_id:
-        raise ValueError("Dự án không thuộc đúng khách hàng của báo giá này.")
+    _validate_deal_project_consistency(deal_id, project_id)
 
 
 def _raw_items_for_rpc(raw_items: list[dict]) -> list[dict]:
@@ -1334,7 +1381,7 @@ def _raw_items_for_rpc(raw_items: list[dict]) -> list[dict]:
 
 def update_quote(quote_id: str, payload: dict, actor_id: str | None) -> dict:
     """CHU Y AN TOAN (bug that da gay MAT TOAN BO hang muc + tong tien mot
-    quote that ben app chinh, phat hien qua "GIA KHACH ve 0"): RPC
+    quote that trong phien nay, phat hien qua "GIA KHACH ve 0"): RPC
     quote_update() LUON XOA+CHEN LAI toan bo quote_items tu p_items (khong co
     che do "khong dong toi items" o tang RPC - xem migration 090). Truoc day
     ham nay truyen `p_items=[]` moi khi caller khong gui "items" trong payload
@@ -1687,6 +1734,43 @@ def assign_quote_owner(
             "quote_id": quote_id, "actor_id": actor_id, "action": "owner_assigned",
             "changes": {"technicalOwnerId": technical_owner_id, "quoteOwnerId": quote_owner_id},
         }).execute()
+    return get_quote(quote_id)
+
+
+def pin_quote(quote_id: str, actor_id: str | None) -> dict:
+    """"Ghim báo giá lên đầu" (Quote Center) - update TRUC TIEP CHI 3 cot
+    is_pinned/pinned_at/pinned_by (khong dong toi bat ky cot nao khac, dac
+    biet KHONG set updated_by) - trigger DB (migration 103) da duoc sua de
+    KHONG bump updated_at khi UPDATE chi doi dung 3 cot nay, dung yeu cau
+    "không sửa giả updated_at/created_at". Quyen CHI Admin da chan o router
+    (can_pin_quote) - ham nay khong tu kiem tra lai quyen."""
+    supabase: Client = get_supabase_client()
+    supabase.table(QUOTES_TABLE).update({
+        "is_pinned": True,
+        "pinned_at": _now_iso(),
+        "pinned_by": actor_id,
+    }).eq("id", quote_id).execute()
+    supabase.table(ACTIVITY_LOG_TABLE).insert({
+        "quote_id": quote_id, "actor_id": actor_id, "action": "pinned",
+        "changes": {},
+    }).execute()
+    return get_quote(quote_id)
+
+
+def unpin_quote(quote_id: str, actor_id: str | None) -> dict:
+    """Bo ghim - dua ca 3 cot ve trang thai "chua tung ghim" (is_pinned=false,
+    pinned_at/pinned_by=NULL) dung constraint quotes_pin_consistency_check
+    (migration 103) - khong de lai dau vet pinned_at cu."""
+    supabase: Client = get_supabase_client()
+    supabase.table(QUOTES_TABLE).update({
+        "is_pinned": False,
+        "pinned_at": None,
+        "pinned_by": None,
+    }).eq("id", quote_id).execute()
+    supabase.table(ACTIVITY_LOG_TABLE).insert({
+        "quote_id": quote_id, "actor_id": actor_id, "action": "unpinned",
+        "changes": {},
+    }).execute()
     return get_quote(quote_id)
 
 

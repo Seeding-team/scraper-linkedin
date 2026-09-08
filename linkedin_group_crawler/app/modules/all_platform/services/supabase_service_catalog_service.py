@@ -142,6 +142,18 @@ def get_service_catalog_item(item_id: str) -> dict:
     return item
 
 
+def get_service_catalog_items_by_ids(item_ids: list[str]) -> list[dict]:
+    """Tra cuu nhieu san pham cung luc theo id - dung cho "Ap gia de xuat" o
+    Buoc 2 (tra lai gia/trang thai hien tai cua catalog theo catalogItemId da
+    luu tren dong hang muc, KHONG dua vao state tam cua modal chon danh muc).
+    Khong loc status - can biet ca item da ngung kinh doanh de hien thi dung."""
+    if not item_ids:
+        return []
+    supabase: Client = get_supabase_client()
+    rows = supabase.table(ITEMS_TABLE).select("*").in_("id", item_ids).execute().data or []
+    return [_row_to_item(row) for row in rows]
+
+
 def create_service_catalog_item(payload: dict, created_by: str | None) -> dict:
     supabase: Client = get_supabase_client()
     existing = (

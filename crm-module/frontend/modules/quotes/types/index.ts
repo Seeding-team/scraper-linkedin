@@ -132,6 +132,12 @@ export interface QuoteItem {
   id?: string;
   quoteId?: string;
   parentItemId?: string;
+  /** Muc cha (Section, "I/II/III..." kieu file Excel) khong tinh tien - server
+   * (quote_update RPC, migration 104) tu ep quantity/unitPrice/costPrice ve
+   * 0/null cho dong nay bat ke FE gui gi len. 'item' (mac dinh) = hang muc
+   * that, tinh tien binh thuong. Neu thuoc 1 nhom, parentItemId tro toi id
+   * cua dong section do. */
+  rowType?: 'section' | 'item';
   description?: string;
   serviceDescription?: string;
   unit?: string;

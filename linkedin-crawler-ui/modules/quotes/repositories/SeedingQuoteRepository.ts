@@ -43,6 +43,7 @@ export class QuoteApprovalRequiresExceptionError extends Error {
 }
 
 type QuoteItemPayload = {
+  row_type?: 'section' | 'item';
   description: string;
   service_description: string | null;
   unit?: string;
@@ -170,6 +171,7 @@ function toUpdateQuotePayload(input: UpdateQuoteInput) {
 
 function toQuoteItemPayload(item: NonNullable<CreateQuoteInput['items']>[number]): QuoteItemPayload {
   return {
+    row_type: item.rowType === 'section' ? 'section' : 'item',
     description: item.description ?? '',
     service_description: item.serviceDescription ?? null,
     unit: item.unit,

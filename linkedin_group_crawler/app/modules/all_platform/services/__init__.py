@@ -99,6 +99,7 @@ from app.modules.all_platform.services.supabase_quote_service import (
 from app.modules.all_platform.services.supabase_service_catalog_service import (
     list_service_catalog_items,
     get_service_catalog_item,
+    get_service_catalog_items_by_ids,
     create_service_catalog_item,
     update_service_catalog_item,
     delete_service_catalog_item,

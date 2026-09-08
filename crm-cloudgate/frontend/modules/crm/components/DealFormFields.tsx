@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { useMembers } from '@/hooks/useMembers';
-import { teamsService, type TeamRow } from '@/services/all-platform.service';
+import { teamsService, projectsService, type TeamRow, type Project } from '@/services/all-platform.service';
 import { SearchableSelect } from './SearchableSelect';
 import { PositionSelect } from './PositionSelect';
 import type { MemberProfile } from '@/types/unified.types';
@@ -27,9 +27,18 @@ const DEFAULT_INDUSTRY_OPTIONS = INDUSTRY_OPTIONS.map(value => ({ value, label: 
 
 export type DealFormState = {
   customerId: string;
+  /** Ho so Khach hang bi khoa (khong cho doi sang khach khac) - khi mo tu
+   * nut "Tạo cơ hội" o Ho so khach hang/Project card (Block 1), Customer
+   * PHAI tu dien va khoa, khong duoc doi giua chung. */
+  customerLocked: boolean;
   updateCustomerProfile: boolean;
   customerProfileCanEdit: boolean;
   customerName: string;
+  /** Du an that (migration 097) - '' = Chua thuoc du an. */
+  projectId: string;
+  /** Khoa Du an (khong cho doi) - khi mo tu nut "Tạo cơ hội" tren 1 Project
+   * card cu the (Block 1: "tự điền Project; không cho chọn Project khác"). */
+  projectLocked: boolean;
   positionCategoryId: string;
   positionLabel: string;
   companyName: string;
@@ -79,9 +88,12 @@ export type DealFormState = {
 export function emptyDealForm(): DealFormState {
   return {
     customerId: '',
+    customerLocked: false,
     updateCustomerProfile: false,
     customerProfileCanEdit: false,
     customerName: '',
+    projectId: '',
+    projectLocked: false,
     positionCategoryId: '',
     positionLabel: '',
     companyName: '',
@@ -141,9 +153,12 @@ export function dealFormFromDeal(deal: Deal): DealFormState {
   return {
     ...emptyDealForm(),
     customerId: deal.customerId || '',
+    customerLocked: false,
     updateCustomerProfile: false,
     customerProfileCanEdit: false,
     customerName: deal.customerName,
+    projectId: deal.projectId || '',
+    projectLocked: false,
     positionCategoryId: deal.positionCategoryId || '',
     positionLabel: deal.positionLabelSnapshot || deal.position || '',
     companyName: deal.companyName || '',
@@ -271,6 +286,7 @@ export function buildDealPayload(form: DealFormState, _agents: CrmUserOption[] =
       : undefined;
   return {
     customerId: form.customerId || undefined,
+    projectId: form.projectId || null,
     updateCustomerProfile: form.updateCustomerProfile,
     customerName: form.customerName.trim(),
     positionCategoryId: form.positionCategoryId || undefined,
@@ -330,10 +346,14 @@ export function CustomerProfileCombobox({
   form,
   setValue,
   disabled = false,
+  locked = false,
 }: {
   form: DealFormState;
   setValue: <K extends keyof DealFormState>(key: K, value: DealFormState[K]) => void;
   disabled?: boolean;
+  /** Block 1: mo tu "Tạo cơ hội" o Ho so khach hang/Project card - Customer
+   * PHAI tu dien va khoa, an nut "Đổi" (khong cho doi sang khach khac). */
+  locked?: boolean;
 }) {
   const [query, setQuery] = useState(form.customerName);
   const [open, setOpen] = useState(false);
@@ -400,6 +420,7 @@ export function CustomerProfileCombobox({
     setValue('customerName', value);
     if (form.customerId) {
       setValue('customerId', '');
+      setValue('projectId', ''); // doi Customer -> Project cu (thuoc Customer khac) khong con hop le
       setValue('updateCustomerProfile', false);
       setValue('customerProfileCanEdit', false);
       clearAutofilledContact();
@@ -408,6 +429,7 @@ export function CustomerProfileCombobox({
 
   function pick(customer: CrmCustomerSummary) {
     setValue('customerId', customer.id);
+    setValue('projectId', ''); // Customer moi -> Project cu (neu co) thuoc Customer khac, khong con hop le
     setValue('customerProfileCanEdit', Boolean(customer.canEdit));
     setValue('updateCustomerProfile', false);
     setValue('customerName', customer.customerName || '');
@@ -424,6 +446,7 @@ export function CustomerProfileCombobox({
 
   function clearPickedCustomer() {
     setValue('customerId', '');
+    setValue('projectId', '');
     setValue('updateCustomerProfile', false);
     setValue('customerProfileCanEdit', false);
     setValue('customerName', '');
@@ -464,7 +487,7 @@ export function CustomerProfileCombobox({
           }}
           onChange={event => typeName(event.target.value)}
           onKeyDown={handleKeyDown}
-          disabled={disabled}
+          disabled={disabled || locked}
           placeholder="Nguyễn Văn A"
           autoComplete="off"
           role="combobox"
@@ -472,7 +495,7 @@ export function CustomerProfileCombobox({
           aria-autocomplete="list"
           aria-controls="crm-deal-customer-combobox-menu"
         />
-        {form.customerId ? (
+        {form.customerId && !locked ? (
           <button type="button" className="crm-inline-link-btn" onClick={clearPickedCustomer}>
             Đổi
           </button>
@@ -511,6 +534,64 @@ export function CustomerProfileCombobox({
         </label>
       ) : null}
     </div>
+  );
+}
+
+/** Dropdown "Dự án" cua Co hoi (Block 1) - CHI hien Project THUOC DUNG
+ * Customer dang chon (khong cho chon Project cua Customer khac). Rong khi
+ * chua chon Customer. Luon co option "Chưa thuộc dự án" (project_id=null
+ * that su, khong phai bo qua). */
+function ProjectPicker({
+  form,
+  setValue,
+  locked = false,
+}: {
+  form: DealFormState;
+  setValue: <K extends keyof DealFormState>(key: K, value: DealFormState[K]) => void;
+  locked?: boolean;
+}) {
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!form.customerId) {
+      setProjects([]);
+      return;
+    }
+    let alive = true;
+    setLoading(true);
+    void projectsService.list(form.customerId).then(res => {
+      if (alive && res.success && res.data) setProjects(res.data);
+    }).finally(() => {
+      if (alive) setLoading(false);
+    });
+    return () => { alive = false; };
+  }, [form.customerId]);
+
+  if (!form.customerId) {
+    return <input value="" disabled placeholder="Chọn khách hàng trước" />;
+  }
+
+  const options = [{ value: '', label: 'Chưa thuộc dự án' }, ...projects.map(p => ({ value: p.id, label: `${p.projectCode} · ${p.name}` }))];
+
+  if (locked) {
+    const current = projects.find(p => p.id === form.projectId);
+    return (
+      <input
+        value={form.projectId ? (current ? `${current.projectCode} · ${current.name}` : 'Dự án đã chọn') : 'Chưa thuộc dự án'}
+        disabled
+        readOnly
+      />
+    );
+  }
+
+  return (
+    <SearchableSelect
+      value={form.projectId}
+      onChange={value => setValue('projectId', value)}
+      options={options}
+      placeholder={loading ? 'Đang tải dự án...' : 'Chưa thuộc dự án'}
+    />
   );
 }
 
@@ -721,7 +802,10 @@ export function DealFormFields({
         <h3 className="crm-form-title">1. Khách hàng &amp; Cơ hội</h3>
         <div className="crm-form-grid">
           <Field label="Tên khách hàng" required>
-            <CustomerProfileCombobox form={form} setValue={setValue} />
+            <CustomerProfileCombobox form={form} setValue={setValue} locked={form.customerLocked} />
+          </Field>
+          <Field label="Dự án" hint={form.projectLocked ? undefined : 'tùy chọn'}>
+            <ProjectPicker form={form} setValue={setValue} locked={form.projectLocked} />
           </Field>
           <Field label="Công ty" hint="tùy chọn">
             <input value={form.companyName} onChange={event => setValue('companyName', event.target.value)} placeholder="Công ty TNHH ABC" />

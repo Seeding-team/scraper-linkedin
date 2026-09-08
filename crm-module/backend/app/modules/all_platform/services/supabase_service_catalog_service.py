@@ -11,7 +11,6 @@ from typing import Any
 
 from supabase import Client
 
-from app.core.config import settings
 from app.core.supabase_client import get_supabase_client
 
 ITEMS_TABLE = "service_catalog_items"
@@ -81,7 +80,6 @@ def _bundle_components(bundle_id: str) -> list[dict]:
         supabase.table(BUNDLE_ITEMS_TABLE)
         .select("*")
         .eq("bundle_id", bundle_id)
-        .eq("instance", settings.crm_instance)
         .order("sort_order")
         .execute()
         .data
@@ -91,13 +89,7 @@ def _bundle_components(bundle_id: str) -> list[dict]:
         return []
     component_ids = [row["component_id"] for row in rows]
     components = (
-        supabase.table(ITEMS_TABLE)
-        .select("*")
-        .in_("id", component_ids)
-        .eq("instance", settings.crm_instance)
-        .execute()
-        .data
-        or []
+        supabase.table(ITEMS_TABLE).select("*").in_("id", component_ids).execute().data or []
     )
     components_by_id = {c["id"]: c for c in components}
     lines = []
@@ -124,15 +116,7 @@ def render_bundle_description(bundle_id: str) -> str:
 
 def list_service_catalog_items() -> list[dict]:
     supabase: Client = get_supabase_client()
-    rows = (
-        supabase.table(ITEMS_TABLE)
-        .select("*")
-        .eq("instance", settings.crm_instance)
-        .order("sort_order")
-        .execute()
-        .data
-        or []
-    )
+    rows = supabase.table(ITEMS_TABLE).select("*").order("sort_order").execute().data or []
     mapped = [_row_to_item(row) for row in rows]
     by_id = {item["id"]: item for item in mapped}
     roots: list[dict] = []
@@ -151,19 +135,23 @@ def list_service_catalog_items() -> list[dict]:
 
 def get_service_catalog_item(item_id: str) -> dict:
     supabase: Client = get_supabase_client()
-    row = (
-        supabase.table(ITEMS_TABLE)
-        .select("*")
-        .eq("id", item_id)
-        .eq("instance", settings.crm_instance)
-        .single()
-        .execute()
-        .data
-    )
+    row = supabase.table(ITEMS_TABLE).select("*").eq("id", item_id).single().execute().data
     item = _row_to_item(row)
     if item["itemType"] == "bundle":
         item["components"] = _bundle_components(item_id)
     return item
+
+
+def get_service_catalog_items_by_ids(item_ids: list[str]) -> list[dict]:
+    """Tra cuu nhieu san pham cung luc theo id - dung cho "Ap gia de xuat" o
+    Buoc 2 (tra lai gia/trang thai hien tai cua catalog theo catalogItemId da
+    luu tren dong hang muc, KHONG dua vao state tam cua modal chon danh muc).
+    Khong loc status - can biet ca item da ngung kinh doanh de hien thi dung."""
+    if not item_ids:
+        return []
+    supabase: Client = get_supabase_client()
+    rows = supabase.table(ITEMS_TABLE).select("*").in_("id", item_ids).execute().data or []
+    return [_row_to_item(row) for row in rows]
 
 
 def create_service_catalog_item(payload: dict, created_by: str | None) -> dict:
@@ -175,7 +163,7 @@ def create_service_catalog_item(payload: dict, created_by: str | None) -> dict:
         if payload.get("parent_id")
         else supabase.table(ITEMS_TABLE).select("sort_order").is_("parent_id", "null")
     )
-    existing = existing.eq("instance", settings.crm_instance).order("sort_order", desc=True).limit(1).execute()
+    existing = existing.order("sort_order", desc=True).limit(1).execute()
     next_order = (existing.data[0]["sort_order"] + 1) if existing.data else 0
 
     insert_data = {
@@ -198,7 +186,6 @@ def create_service_catalog_item(payload: dict, created_by: str | None) -> dict:
         "sort_order": next_order,
         "created_by": created_by,
         "updated_by": created_by,
-        "instance": settings.crm_instance,
     }
     result = supabase.table(ITEMS_TABLE).insert(insert_data).execute()
     return _row_to_item(result.data[0])
@@ -209,39 +196,18 @@ def update_service_catalog_item(item_id: str, payload: dict, actor_id: str | Non
     update_data = {k: v for k, v in payload.items() if k != "id" and v is not None}
     update_data["updated_by"] = actor_id
     update_data["updated_at"] = _now_iso()
-    result = (
-        supabase.table(ITEMS_TABLE)
-        .update(update_data)
-        .eq("id", item_id)
-        .eq("instance", settings.crm_instance)
-        .execute()
-    )
+    result = supabase.table(ITEMS_TABLE).update(update_data).eq("id", item_id).execute()
     return _row_to_item(result.data[0])
 
 
 def delete_service_catalog_item(item_id: str) -> dict:
     supabase: Client = get_supabase_client()
-    item = (
-        supabase.table(ITEMS_TABLE)
-        .select("*")
-        .eq("id", item_id)
-        .eq("instance", settings.crm_instance)
-        .single()
-        .execute()
-        .data
-    )
+    item = supabase.table(ITEMS_TABLE).select("*").eq("id", item_id).single().execute().data
     if not item:
         raise ValueError("Không tìm thấy dịch vụ.")
 
     if item["item_type"] == "group":
-        children = (
-            supabase.table(ITEMS_TABLE)
-            .select("id")
-            .eq("parent_id", item_id)
-            .eq("instance", settings.crm_instance)
-            .limit(1)
-            .execute()
-        )
+        children = supabase.table(ITEMS_TABLE).select("id").eq("parent_id", item_id).limit(1).execute()
         if children.data:
             raise ValueError("Nhóm dịch vụ còn dịch vụ con, không thể xoá.")
 
@@ -250,22 +216,13 @@ def delete_service_catalog_item(item_id: str) -> dict:
             supabase.table(BUNDLE_ITEMS_TABLE)
             .select("bundle_id")
             .eq("component_id", item_id)
-            .eq("instance", settings.crm_instance)
             .execute()
             .data
             or []
         )
         if used_in:
             bundle_ids = list({row["bundle_id"] for row in used_in})
-            bundles = (
-                supabase.table(ITEMS_TABLE)
-                .select("name")
-                .in_("id", bundle_ids)
-                .eq("instance", settings.crm_instance)
-                .execute()
-                .data
-                or []
-            )
+            bundles = supabase.table(ITEMS_TABLE).select("name").in_("id", bundle_ids).execute().data or []
             names = ", ".join(b["name"] for b in bundles)
             raise ValueError(f"Dịch vụ đang được dùng trong gói: {names}. Không thể xoá.")
 
@@ -273,38 +230,23 @@ def delete_service_catalog_item(item_id: str) -> dict:
     # quote_items lưu snapshot riêng nên xoá không phá dữ liệu báo giá cũ, nhưng vẫn
     # chặn theo đúng yêu cầu nghiệp vụ: dùng "Ngưng kinh doanh" (đổi status) thay vì xoá.
     used_in_quotes = (
-        supabase.table("quote_items")
-        .select("id")
-        .eq("catalog_item_id", item_id)
-        .eq("instance", settings.crm_instance)
-        .limit(1)
-        .execute()
-        .data
-        or []
+        supabase.table("quote_items").select("id").eq("catalog_item_id", item_id).limit(1).execute().data or []
     )
     if used_in_quotes:
         raise ValueError("Dịch vụ đã được dùng trong báo giá, không thể xoá — chuyển sang Ngưng kinh doanh.")
 
-    supabase.table(ITEMS_TABLE).delete().eq("id", item_id).eq("instance", settings.crm_instance).execute()
+    supabase.table(ITEMS_TABLE).delete().eq("id", item_id).execute()
     return {"deleted": True}
 
 
 def reorder_service_catalog_item(item_id: str, direction: str) -> list[dict]:
     """Swap sort_order giữa dòng target và hàng xóm liền kề, TRONG CÙNG parent_id."""
     supabase: Client = get_supabase_client()
-    current = (
-        supabase.table(ITEMS_TABLE)
-        .select("*")
-        .eq("id", item_id)
-        .eq("instance", settings.crm_instance)
-        .single()
-        .execute()
-        .data
-    )
+    current = supabase.table(ITEMS_TABLE).select("*").eq("id", item_id).single().execute().data
     if not current:
         return list_service_catalog_items()
 
-    query = supabase.table(ITEMS_TABLE).select("*").eq("instance", settings.crm_instance)
+    query = supabase.table(ITEMS_TABLE).select("*")
     if current.get("parent_id"):
         query = query.eq("parent_id", current["parent_id"])
     else:
@@ -320,39 +262,24 @@ def reorder_service_catalog_item(item_id: str, direction: str) -> list[dict]:
         return list_service_catalog_items()
 
     target = siblings[target_index]
-    supabase.table(ITEMS_TABLE).update({"sort_order": target["sort_order"]}).eq("id", current["id"]).eq(
-        "instance", settings.crm_instance
-    ).execute()
-    supabase.table(ITEMS_TABLE).update({"sort_order": current["sort_order"]}).eq("id", target["id"]).eq(
-        "instance", settings.crm_instance
-    ).execute()
+    supabase.table(ITEMS_TABLE).update({"sort_order": target["sort_order"]}).eq("id", current["id"]).execute()
+    supabase.table(ITEMS_TABLE).update({"sort_order": current["sort_order"]}).eq("id", target["id"]).execute()
     return list_service_catalog_items()
 
 
 def set_bundle_components(bundle_id: str, items: list[dict]) -> dict:
     supabase: Client = get_supabase_client()
-    bundle = (
-        supabase.table(ITEMS_TABLE)
-        .select("*")
-        .eq("id", bundle_id)
-        .eq("instance", settings.crm_instance)
-        .single()
-        .execute()
-        .data
-    )
+    bundle = supabase.table(ITEMS_TABLE).select("*").eq("id", bundle_id).single().execute().data
     if not bundle or bundle["item_type"] != "bundle":
         raise ValueError("Không tìm thấy gói dịch vụ.")
 
-    supabase.table(BUNDLE_ITEMS_TABLE).delete().eq("bundle_id", bundle_id).eq(
-        "instance", settings.crm_instance
-    ).execute()
+    supabase.table(BUNDLE_ITEMS_TABLE).delete().eq("bundle_id", bundle_id).execute()
     for index, item in enumerate(items):
         supabase.table(BUNDLE_ITEMS_TABLE).insert({
             "bundle_id": bundle_id,
             "component_id": item["component_id"],
             "quantity": item.get("quantity") or 1,
             "sort_order": item.get("sort_order", index),
-            "instance": settings.crm_instance,
         }).execute()
 
     return get_service_catalog_item(bundle_id)
@@ -366,7 +293,6 @@ def get_quote_form_catalog_links(quote_form_id: str) -> list[str]:
         supabase.table(LINKS_TABLE)
         .select("catalog_item_id")
         .eq("quote_form_id", quote_form_id)
-        .eq("instance", settings.crm_instance)
         .execute()
         .data
         or []
@@ -376,14 +302,11 @@ def get_quote_form_catalog_links(quote_form_id: str) -> list[str]:
 
 def set_quote_form_catalog_links(quote_form_id: str, catalog_item_ids: list[str]) -> list[str]:
     supabase: Client = get_supabase_client()
-    supabase.table(LINKS_TABLE).delete().eq("quote_form_id", quote_form_id).eq(
-        "instance", settings.crm_instance
-    ).execute()
+    supabase.table(LINKS_TABLE).delete().eq("quote_form_id", quote_form_id).execute()
     for catalog_item_id in catalog_item_ids:
         supabase.table(LINKS_TABLE).insert({
             "quote_form_id": quote_form_id,
             "catalog_item_id": catalog_item_id,
-            "instance": settings.crm_instance,
         }).execute()
     return get_quote_form_catalog_links(quote_form_id)
 
@@ -402,21 +325,12 @@ def get_service_catalog_options_for_form(quote_form_id: str) -> dict:
         .select("*")
         .in_("parent_id", group_ids)
         .eq("status", "active")
-        .eq("instance", settings.crm_instance)
         .order("sort_order")
         .execute()
         .data
         or []
     )
-    group_rows = (
-        supabase.table(ITEMS_TABLE)
-        .select("id,name")
-        .in_("id", group_ids)
-        .eq("instance", settings.crm_instance)
-        .execute()
-        .data
-        or []
-    )
+    group_rows = supabase.table(ITEMS_TABLE).select("id,name").in_("id", group_ids).execute().data or []
     group_names = {g["id"]: g["name"] for g in group_rows}
 
     bundles = []

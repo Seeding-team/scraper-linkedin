@@ -182,6 +182,12 @@ export function QuoteCenterPage() {
   // UNG (backend-driven, xem buildByPhaseParams). null = khong loc theo SLA.
   const [slaFilter, setSlaFilter] = useState<'overdue' | 'due_soon' | null>(null);
   const [groupByProject, setGroupByProject] = useState(false);
+  // "Thu gon KPI" - CHI co y nghia tren mobile (nut tu an qua CSS o man
+  // rong hon 767px) - 8 the KPI + bang hieu suat Sale/Team chiem qua nhieu
+  // chieu cao tren man hep, nguoi dung phai cuon rat xa moi thay "Danh sach
+  // bao gia" - mac dinh MO (khong doi hanh vi cu), Sale tu thu gon neu muon
+  // thay danh sach ngay.
+  const [kpiCollapsed, setKpiCollapsed] = useState(false);
   const [page, setPage] = useState(1);
   // Bang "Danh sach bao gia" (Checkpoint C) - du lieu THAT tu backend
   // (/quotes/by-phase, gom theo version_chain_id + dem/phan trang/tim kiem o
@@ -962,6 +968,122 @@ export function QuoteCenterPage() {
     );
   }
 
+  /** Card mobile (duoi 768px) cho 1 dong bao gia - CHU Y: tinh lai cac gia
+   * tri hien thi (phase/sla/margin/permission) DOC LAP voi renderChainRow()
+   * thay vi tach chung 1 ham - giu renderChainRow() (dang chay dung tren
+   * desktop) nguyen ven, khong risk vo tinh lam sai bang desktop khi sua
+   * cho mobile. Field dung DUNG thu tu user yeu cau: so bao gia+version+
+   * trang thai -> Khach hang -> Du an/Co hoi -> Presale->Sale -> Gia khach
+   * -> SLA -> nut mo chi tiet/menu. Gia von/Margin CHI hien neu co quyen,
+   * dat trong <details> "Xem them" (khong can state React rieng). */
+  function renderChainCard(row: QuoteChainRow) {
+    const { current, deal, versionCount } = row;
+    const businessCode = deal ? dealBusinessCode(deal) : null;
+    const opportunityName = deal ? getServicePackageText(deal.servicePackage) || getPackageText(deal.package) : '';
+    const phase = phaseCellLabel(current, deal);
+    const project = current.project;
+    const techName = current.technicalOwner?.name || deal?.assignment.leadName || null;
+    const saleOwnerName = current.quoteOwner?.name || deal?.assignment.sdrName || null;
+    const margin = current.hasCostData ? marginTone(current.grossMarginPercent) : 'neutral';
+    const sla = computeQuoteSla({ slaDueAt: current.slaDueAt, completedAt: current.completedAt, sentAt: current.sentAt });
+    const showExtra = current.costViewAllowed !== false || current.profitabilityViewAllowed !== false;
+    return (
+      <div key={current.id} className="qc-quote-card">
+        <div className="qc-quote-card-head">
+          <div>
+            <button type="button" className="qc-row-link qc-row-link-btn" onClick={() => setWorkspaceQuoteId(current.id)}>
+              {current.quoteNumber}
+            </button>
+            <span className="qc-badge qc-badge-version">V{current.versionNumber || 1} hiện tại</span>
+          </div>
+          <ActionMenu items={rowActionItems(row)} />
+        </div>
+        <span className={`qc-badge qc-badge-${phase.tone}`} style={{ whiteSpace: 'normal' }}>{phase.label}</span>
+        {typeof current.data?.quoteTitle === 'string' && current.data.quoteTitle ? (
+          <div className="qc-cell-quote-title">{current.data.quoteTitle}</div>
+        ) : null}
+
+        <div className="qc-quote-card-row">
+          <span className="qc-quote-card-label">Khách hàng</span>
+          <span className="qc-quote-card-value">
+            {deal ? (
+              deal.customerId ? (
+                <Link href={`/all-platform/crm/customers/${deal.customerId}`} className="qc-row-link">{deal.customerName}</Link>
+              ) : deal.customerName
+            ) : (
+              <span className="qc-row-sub">Chưa gắn cơ hội</span>
+            )}
+          </span>
+        </div>
+        {deal ? (
+          <div className="qc-quote-card-row">
+            <span className="qc-quote-card-label">Cơ hội</span>
+            <span className="qc-quote-card-value">
+              <Link href={`/all-platform/crm?openDeal=${deal.id}`} className="qc-row-link">{businessCode || 'Chưa có mã'}</Link>
+              {opportunityName ? ` · ${opportunityName}` : ''}
+            </span>
+          </div>
+        ) : null}
+        <div className="qc-quote-card-row">
+          <span className="qc-quote-card-label">Dự án</span>
+          <span className="qc-quote-card-value">
+            {project ? (project.code ? `${project.code} · ${project.name}` : project.name) : <span className="qc-row-sub">Chưa thuộc dự án</span>}
+          </span>
+        </div>
+        <div className="qc-quote-card-row">
+          <span className="qc-quote-card-label">Presale → Sale</span>
+          <span className="qc-quote-card-value">{techName || 'Chưa gán'} → {saleOwnerName || 'Chưa gán'}</span>
+        </div>
+        <div className="qc-quote-card-row">
+          <span className="qc-quote-card-label">Giá khách</span>
+          <span className="qc-quote-card-value qc-cell-money">{formatMoney(current.customerPriceBeforeVat ?? 0)}</span>
+        </div>
+        <div className="qc-quote-card-row">
+          <span className="qc-quote-card-label">SLA</span>
+          <span className="qc-quote-card-value">
+            {sla.status === 'not_set' ? (
+              <span className="qc-row-sub">{sla.label}</span>
+            ) : (
+              <span style={{ color: sla.tone === 'danger' ? '#b3261e' : sla.tone === 'warning' ? '#8a6416' : sla.tone === 'success' ? '#148e61' : undefined }}>
+                {sla.label}{sla.relativeText ? ` · ${sla.relativeText}` : ''}
+              </span>
+            )}
+          </span>
+        </div>
+        <div className="qc-quote-card-row">
+          <span className="qc-quote-card-label">Cập nhật</span>
+          <span className="qc-quote-card-value qc-row-sub">{versionCount} phiên bản · {relativeTime(current.updatedAt || current.createdAt)}</span>
+        </div>
+
+        {showExtra ? (
+          <details className="qc-quote-card-more">
+            <summary>Xem thêm</summary>
+            {current.costViewAllowed !== false ? (
+              <div className="qc-quote-card-row">
+                <span className="qc-quote-card-label">Giá nội bộ</span>
+                <span className="qc-quote-card-value qc-cell-money">
+                  {current.hasCostData ? formatMoney(current.costTotal || 0) : <span className="qc-row-sub">Chưa có</span>}
+                </span>
+              </div>
+            ) : null}
+            {current.profitabilityViewAllowed !== false ? (
+              <div className="qc-quote-card-row">
+                <span className="qc-quote-card-label">Margin</span>
+                <span className="qc-quote-card-value">
+                  {current.hasCostData && current.grossMarginPercent !== null && current.grossMarginPercent !== undefined ? (
+                    <span className={`qc-badge qc-badge-${margin}`}>{current.grossMarginPercent.toFixed(1)}%</span>
+                  ) : (
+                    <span className="qc-row-sub">Chưa tính</span>
+                  )}
+                </span>
+              </div>
+            ) : null}
+          </details>
+        ) : null}
+      </div>
+    );
+  }
+
   const loading = dealsLoading || quotesLoading;
 
   return (
@@ -972,11 +1094,15 @@ export function QuoteCenterPage() {
           <p>Tạo, gửi và theo dõi báo giá liên kết trực tiếp với CRM</p>
         </div>
         <div className="qc-header-actions">
-          <button type="button" className="qc-btn" onClick={openRequestWorkspace} title="Mở workspace xử lý báo giá — chọn khách hàng/cơ hội và người phụ trách ngay trong workspace">
-            <Plus className="qc-icon" /> Yêu cầu hỗ trợ báo giá
+          <button type="button" className="qc-btn qc-btn-primary" onClick={openRequestWorkspace} title="Mở workspace xử lý báo giá — chọn khách hàng/cơ hội và người phụ trách ngay trong workspace">
+            <Plus className="qc-icon" />
+            <span className="qc-btn-label-full">Yêu cầu hỗ trợ báo giá</span>
+            <span className="qc-btn-label-short">Yêu cầu hỗ trợ</span>
           </button>
-          <button type="button" className="qc-btn qc-btn-primary" onClick={openFreshModal}>
-            <Plus className="qc-icon" /> Tạo báo giá
+          <button type="button" className="qc-btn" onClick={openFreshModal}>
+            <Plus className="qc-icon" />
+            <span className="qc-btn-label-full">Tạo báo giá</span>
+            <span className="qc-btn-label-short">Tạo nhanh</span>
           </button>
         </div>
       </header>
@@ -987,11 +1113,14 @@ export function QuoteCenterPage() {
             <h2>Hiệu suất báo giá &amp; CRM</h2>
             <p>KPI tính theo đúng phạm vi/bộ lọc đang chọn ở bảng "Danh sách báo giá" bên dưới</p>
           </div>
+          <button type="button" className="qc-kpi-toggle" onClick={() => setKpiCollapsed(prev => !prev)}>
+            {kpiCollapsed ? 'Mở rộng KPI' : 'Thu gọn KPI'}
+          </button>
         </div>
 
         {loading ? (
           <div className="qc-state">Đang tải dữ liệu...</div>
-        ) : (
+        ) : kpiCollapsed ? null : (
           <>
             <div className="qc-metrics">
               <MetricCard tone="rose" label="Tổng khách hàng CRM" value={String(kpis.totalDeals)} />
@@ -1126,8 +1255,11 @@ export function QuoteCenterPage() {
           <h2>Bắt đầu báo giá mới</h2>
           <p>Chọn khách hàng và mẫu có sẵn, hệ thống sẽ tự điền dịch vụ, giá bán, thuế và điều khoản.</p>
           <div className="qc-quick-buttons">
-            <button type="button" className="qc-btn qc-btn-primary" onClick={openFreshModal}>
-              <Plus className="qc-icon" /> Tạo báo giá nhanh
+            <button type="button" className="qc-btn qc-btn-primary" onClick={openRequestWorkspace} title="Mở workspace xử lý báo giá — chọn khách hàng/cơ hội và người phụ trách ngay trong workspace">
+              <Plus className="qc-icon" /> Yêu cầu hỗ trợ báo giá
+            </button>
+            <button type="button" className="qc-btn qc-btn-soft" onClick={openFreshModal}>
+              Tạo báo giá nhanh
             </button>
             <button type="button" className="qc-btn qc-btn-soft" onClick={() => setDealPickerOpen(true)}>
               Tạo từ cơ hội CRM →
@@ -1310,6 +1442,7 @@ export function QuoteCenterPage() {
           </label>
         </div>
 
+        <div className="qc-quote-list-responsive">
         <div className="qc-table-wrap">
           <table className="qc-linked-table qc-linked-table--10col">
             <thead>
@@ -1372,6 +1505,41 @@ export function QuoteCenterPage() {
               )}
             </tbody>
           </table>
+        </div>
+
+        <div className="qc-quote-mobile-cards">
+          {byPhaseError ? (
+            <p className="qc-empty qc-empty-error">Không tải được danh sách báo giá: {byPhaseError}</p>
+          ) : byPhaseLoading && !byPhase ? (
+            <p className="qc-empty">Đang tải danh sách báo giá…</p>
+          ) : chainRows.length === 0 ? (
+            <p className="qc-empty">
+              {slaFilter === 'overdue'
+                ? 'Không có báo giá nào quá hạn trong phạm vi đang chọn.'
+                : slaFilter === 'due_soon'
+                  ? 'Không có báo giá nào sắp đến hạn (≤4 giờ) trong phạm vi đang chọn.'
+                  : 'Chưa có báo giá nào trong phạm vi đang chọn.'}
+            </p>
+          ) : groupByProject ? (
+            groupedByProjectRows.map(group => (
+              <Fragment key={`group-card-${group.projectId}`}>
+                <div className="qc-group-header-row qc-group-header-row--card">
+                  {group.project ? (
+                    <strong>{group.project.code ? `${group.project.code} · ${group.project.name}` : group.project.name}</strong>
+                  ) : (
+                    <strong>Chưa thuộc dự án</strong>
+                  )}
+                  <span className="qc-group-header-count">
+                    {group.rows.length} báo giá · {group.versionTotal} version
+                  </span>
+                </div>
+                {group.rows.map(row => renderChainCard(row))}
+              </Fragment>
+            ))
+          ) : (
+            chainRows.map(row => renderChainCard(row))
+          )}
+        </div>
         </div>
         {!groupByProject && byPhase && byPhase.total > 0 ? (
           <div className="qc-pagination">
@@ -1571,7 +1739,7 @@ export function QuoteCenterPage() {
 
 function MetricCard({ label, value, tone, big }: { label: string; value: string; tone: 'rose' | 'blue' | 'green' | 'amber'; big?: boolean }) {
   return (
-    <div className="qc-metric">
+    <div className={`qc-metric${big ? ' qc-metric--big' : ''}`}>
       <span className={`qc-metric-dot qc-metric-dot-${tone}`} />
       <span className="qc-metric-label">{label}</span>
       <strong className={big ? 'qc-metric-value-lg' : ''}>{value}</strong>
