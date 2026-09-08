@@ -1682,6 +1682,10 @@
   z-index: 1;
   background: #fff;
   box-shadow: 2px 0 4px -2px rgba(15, 23, 42, 0.12);
+  /* "Hạng mục" bi table-layout:fixed chia deu qua hep (nhieu cot tien ben
+   * canh), chu ten dich vu bi cat ngan qua nhieu - danh toi thieu 1 khoang
+   * rong hop ly, van cho phep wrap 2-3 dong thay vi cat "..." som. */
+  min-width: 160px;
 }
 .qc-workspace-items-table--unified thead th:first-child,
 .qc-workspace-items-table--unified thead th:nth-child(2) {
@@ -1729,6 +1733,10 @@
 .qc-workspace-items-table--unified .qc-cell-markup,
 .qc-workspace-items-table--unified .qc-th-markup {
   background: #fffaf0;
+  /* Cung ly do voi .qc-th-cost o tren - "Giá khách/ĐV" bi cham/khuat khi so
+   * tien co dau cham ngan nghin. */
+  width: 92px;
+  white-space: nowrap;
 }
 .qc-cell-margin-good { color: #148e61 !important; font-weight: 700; }
 
