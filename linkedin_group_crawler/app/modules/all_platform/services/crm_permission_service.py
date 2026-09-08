@@ -364,6 +364,17 @@ def can_manage_quote_approval_rules(user: dict[str, Any] | None) -> bool:
     return role in ("admin", "leader")
 
 
+def can_pin_quote(user: dict[str, Any] | None) -> bool:
+    """"Ghim báo giá lên đầu" (Quote Center) - CHI Admin (khong phai Leader,
+    khac voi da so quyen quan tri khac o file nay) theo dung yeu cau nguoi
+    dung: "Chỉ Admin được ghim/bỏ ghim". Khong dung has_full_crm_access
+    (se cho ca Leader/sale-team) - day la 1 trong so it quyen CHI rieng
+    admin, giu tach biet ro rang khoi cac ham *_admin_leader khac."""
+    if not user:
+        return False
+    return str(user.get("role") or "").strip().lower() == "admin"
+
+
 def can_edit_contract(user: dict[str, Any] | None, contract: dict[str, Any] | None, lead: dict[str, Any] | None) -> bool:
     """True neu user duoc xem/sua 1 hop dong: nguoi tao hop dong, nguoi quan
     ly/phu trach deal gan voi hop dong nay (leaded_by/sdr_id), hoac nguoi co

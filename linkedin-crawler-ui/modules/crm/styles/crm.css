@@ -2879,6 +2879,7 @@
   font-size: 0.85rem;
   padding: 0.75rem;
   white-space: pre-line;
+  overflow-wrap: anywhere;
 }
 
 .crm-contract-note {

@@ -1656,18 +1656,18 @@
  * day, chi giu overflow-x cho bang rong o tab Gia ban. */
 .qc-workspace-main .qc-table-wrap { max-height: none; overflow-y: visible; }
 
-/* Bang hang muc THONG NHAT (12 cot, Section 4) rong hon truoc (gop ca Cost va
- * Pricing tren 1 hang) - man hep PHAI cuon ngang hop ly (khong duoc cat mat
- * cot), nhung giu cot "Hạng mục" (ten dong) dinh (sticky) de nguoi dung con
- * biet dang xem dong nao khi da cuon sang cac cot gia von/markup ben phai. */
-/* CHI ep min-width (=> cuon ngang) khi THAT SU co dong hang muc - bang rong
- * 1180px vo nghia luc dang rong (chi 1 dong "Chưa có hạng mục nào." canh
- * giua), gay thanh cuon ngang xuat hien oan uc luc chua co gi de xem (bug
- * that da bi bao: "chỗ này k muốn cuộn"). Rong tu nhien theo container khi
- * rong, chi rong ep khi co it nhat 1 dong that. */
-.qc-workspace-items-table--unified.qc-workspace-items-table--has-rows {
-  min-width: 1180px;
-}
+/* Bang hang muc THONG NHAT (12 cot, Section 4) - bug thuc te da bao 2 lan:
+ * (1) "chỗ này k muốn cuộn" luc dang RONG (da fix o tren, khong lien quan);
+ * (2) "chỗ này cuộn nè" luc CO du lieu that - nguyen nhan that: da tung ep
+ * min-width:1180px BAT KE khung chua bang (.qc-workspace-main, ben canh 1
+ * panel phai 300px co dinh) co rong toi dau, nen HAU NHU LUON phai cuon
+ * ngang (khung thuc te thuong chi ~950-1150px, hep hon 1180px) - trong khi
+ * chu trong cac o van bi CAT NGAN (kieu "Duyệt & xi...") do do rong cot qua
+ * hep so voi 1180px gia dinh, tuc TON CHI PHI RONG MA KHONG DUOC GI. Bo han
+ * min-width - ke thua dung table-layout:fixed + width:100% tu .qc-linked-table
+ * (dinh nghia o tren) nen bang LUON vua khit khung thuc te, khong con cuon
+ * ngang; cell van wrap chu binh thuong (.qc-workspace-items-table td/th da
+ * white-space:normal o duoi) thay vi ep tran/cat chu. */
 .qc-workspace-items-table--unified th:first-child,
 .qc-workspace-items-table--unified td:first-child {
   position: sticky;
