@@ -1701,6 +1701,14 @@
  * bi cham ca so lan nut spinner. */
 .qc-th-qty, .qc-cell-qty { width: 72px; white-space: nowrap; }
 .qc-cell-money.qc-cell-qty { text-align: center; }
+/* "Thao tác" (nut xoa dong "x") chi can vua khit 1 icon, nhuong khong gian
+ * lai cho Hang muc - CHI scope trong bang hang muc gia von, khong doi bang
+ * khac dang dung chung .qc-th-actions/.qc-cell-actions. */
+.qc-workspace-items-table--unified .qc-th-actions,
+.qc-workspace-items-table--unified .qc-cell-actions {
+  width: 44px;
+  white-space: nowrap;
+}
 .qc-cell-qty .qc-cell-input-money { text-align: center; }
 
 /* "Ban tom tat bao gia" (view read-only cho quote da khoa - review/approved/

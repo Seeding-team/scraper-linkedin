@@ -2156,7 +2156,6 @@ export function QuoteWorkspaceModal({
                       <th className="qc-th-money qc-th-qty">SL</th>
                       <th className="qc-th-money qc-th-cost">Giá vốn/ĐV</th>
                       <th className="qc-th-money qc-th-cost">Cost tổng</th>
-                      <th className="qc-th-cost-flag">N/A giá vốn</th>
                       <th className="qc-th-money qc-th-markup">Markup</th>
                       <th className="qc-th-money qc-th-markup">Giá khách/ĐV</th>
                       <th className="qc-th-money">Thành tiền</th>
@@ -2167,7 +2166,7 @@ export function QuoteWorkspaceModal({
                   <tbody>
                     {itemsDraft.length === 0 ? (
                       <tr>
-                        <td colSpan={9} className="qc-empty">
+                        <td colSpan={8} className="qc-empty">
                           <div className="qc-workspace-items-empty">
                             <span>Chưa có hạng mục nào.</span>
                             {canEdit && isDraft && !isLockedForReview ? (
@@ -2231,18 +2230,6 @@ export function QuoteWorkspaceModal({
                             </td>
                             <td className="qc-cell-money qc-cell-cost">
                               {!costViewAllowed ? <span className="qc-row-sub">Không có quyền xem</span> : item.costNotApplicable ? '—' : costTotal != null ? formatMoney(costTotal) : '—'}
-                            </td>
-                            <td className="qc-cell-cost-flag">
-                              {!costViewAllowed ? (
-                                '—'
-                              ) : (
-                                <input
-                                  type="checkbox"
-                                  checked={Boolean(item.costNotApplicable)}
-                                  disabled={!editableTechnicalCells}
-                                  onChange={e => handleCostNotApplicableChange(index, e.target.checked)}
-                                />
-                              )}
                             </td>
                             <td className="qc-cell-money qc-cell-markup">
                               {!pricingViewAllowed ? (
