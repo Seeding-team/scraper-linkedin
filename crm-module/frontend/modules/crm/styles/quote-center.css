@@ -1853,6 +1853,9 @@
   padding: 0 8px;
   font-size: 12px;
 }
+/* "<select> Thanh toan" hien "30 ngay" + mui ten dropdown - 72px (danh cho o
+ * nhap CK tong ngan) qua hep, bi cat chu "30 ng...". */
+.qc-workspace-quickbar-select { width: 92px; }
 
 .qc-workspace-margin-bar { margin-top: 8px; }
 .qc-workspace-margin-bar-track { height: 8px; border-radius: 6px; background: #eef1f5; overflow: hidden; }

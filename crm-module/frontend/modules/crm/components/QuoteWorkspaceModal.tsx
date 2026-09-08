@@ -2120,7 +2120,7 @@ export function QuoteWorkspaceModal({
                   <label className="qc-workspace-quickbar-field">
                     Thanh toán
                     <select
-                      className="qc-workspace-quickbar-input"
+                      className="qc-workspace-quickbar-input qc-workspace-quickbar-select"
                       value={quote ? paymentTermsDays : draftPaymentTermsDays}
                       onChange={event => {
                         if (quote) setPaymentTermsDays(event.target.value);
