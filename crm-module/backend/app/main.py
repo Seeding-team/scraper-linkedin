@@ -105,6 +105,23 @@ def root_health() -> BaseResponse:
     return BaseResponse(success=True, message="CRM module is healthy")
 
 
+@app.get("/debug/instance", response_model=BaseResponse)
+def debug_instance(request: Request) -> BaseResponse:
+    """Soi instance đang được resolve cho domain (Host header) của request này
+    — dùng để kiểm tra NPM/`INSTANCE_DOMAIN_MAP` đã trỏ đúng chưa sau khi
+    deploy/cutover, không trả dữ liệu nhạy cảm nên không cần auth."""
+    host = (request.headers.get("host") or "").split(":")[0].strip().lower()
+    return BaseResponse(
+        success=True,
+        data={
+            "host_header": host,
+            "resolved_instance": settings.crm_instance,
+            "instance_domain_map": settings.instance_domain_map,
+            "default_crm_instance": settings.default_crm_instance,
+        },
+    )
+
+
 @app.exception_handler(RequestValidationError)
 async def request_validation_exception_handler(_, exc: RequestValidationError) -> JSONResponse:
     error_messages: list[str] = []

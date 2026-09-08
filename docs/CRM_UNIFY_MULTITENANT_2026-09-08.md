@@ -90,6 +90,44 @@ Python/Node runtime sẵn để khởi động backend — xem mục "Cần làm
      `window.location.hostname`) để thay cho việc `AllPlatformSidebar`/
      `AuthPage`/logo hiện đang có 3 bản code riêng khác nhau giữa 3 brand.
 
+4. **ĐÃ TEST THẬT bằng Docker Compose local** (không còn chỉ là "verify bằng
+   đọc code" nữa) — dựng Supabase local (`npx supabase start` trong
+   `linkedin_group_crawler/`) + build/chạy `crm-module` bằng
+   `docker compose up -d` (image build sạch, không lỗi):
+   - Thêm endpoint tạm/tiện ích `GET /debug/instance` (không cần auth, không
+     lộ secret) trả về `resolved_instance` + `instance_domain_map` — dùng để
+     soi domain nào đang resolve ra instance nào, hữu ích luôn cho việc kiểm
+     tra NPM/domain map sau khi cutover thật, ĐÃ GIỮ LẠI trong code (không
+     phải xoá).
+   - Test qua `docker exec` thẳng vào backend (bypass nginx path-split vì
+     `/health`/`/debug/instance` không nằm dưới `/api/` nên nginx sẽ route
+     nhầm sang frontend nếu gọi qua port ngoài) với `Host:` header khác nhau —
+     **KẾT QUẢ ĐÚNG 100%**: `crm.markee.vn`→markee, `crm.markeeai.com`→markee
+     (alias), `crm.getcloudgate.com`→cloudgate, `crm.securityzone.vn`→
+     SECURITYZONE, domain lạ→fallback `markee`, Host viết hoa vẫn resolve
+     đúng (lowercase trước khi tra map).
+   - Test 30 request ĐỒNG THỜI xoay vòng 3 Host header khác nhau — **0
+     request nào bị lẫn instance của request khác** (đúng test quan trọng
+     nhất trong plan — xác nhận contextvar an toàn giữa các request song
+     song, không có race condition).
+   - Test end-to-end qua ĐÚNG port thật (`http://localhost:18090/api/all-platform/...`,
+     đi qua nginx path-based routing thật) với 2 Host header khác nhau — cả 2
+     đều trả 401 (thiếu auth, đúng như kỳ vọng vì chưa có JWT hợp lệ) chứ
+     không phải lỗi routing — xác nhận nginx forward Host header đúng
+     end-to-end, không chỉ đúng khi test tắt qua docker network nội bộ.
+   - **CHƯA test được**: các luồng có DB thật (login, list customers...) vì
+     Supabase local mới `start` xong, CHƯA áp migrations 001-081 (schema CRM
+     chưa tồn tại trên DB local này) — chỉ mới verify được cơ chế routing/
+     instance-resolution, chưa verify được data isolation ở tầng query DB
+     thật (`.eq("instance", ...)`). Cần áp migrations rồi seed data 2-3
+     instance khác nhau để test tiếp bước này.
+   - Môi trường local test (Docker Compose crm-module + Supabase local) vẫn
+     đang chạy trên máy dev lúc kết thúc phiên này — `crm-module` tại
+     `http://localhost:18090`, Supabase Studio/API tại `http://localhost:54321`.
+     File `.env`/`backend/.env` cục bộ đã tạo (gitignored, không commit) trỏ
+     `SUPABASE_URL=http://host.docker.internal:54321` (DB local, KHÔNG phải
+     prod).
+
 ## Phát hiện quan trọng (từ khảo sát trước khi code, vẫn còn giá trị)
 
 - **3 bản đã lệch code thật**, không chỉ khác `.env` như README nói:
