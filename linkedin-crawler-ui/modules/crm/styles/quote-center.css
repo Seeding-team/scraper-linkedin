@@ -1668,6 +1668,17 @@
  * (dinh nghia o tren) nen bang LUON vua khit khung thuc te, khong con cuon
  * ngang; cell van wrap chu binh thuong (.qc-workspace-items-table td/th da
  * white-space:normal o duoi) thay vi ep tran/cat chu. */
+/* Toan bo noi dung bang hang muc gia von can giua (yeu cau rieng) - selector
+ * co them type "td"/"th" de tang specificity, thang duoc .qc-cell-money/
+ * .qc-th-money (text-align:right mac dinh o noi khac) ma khong can !important. */
+.qc-workspace-items-table--unified td,
+.qc-workspace-items-table--unified th {
+  text-align: center;
+}
+.qc-workspace-items-table--unified input.qc-cell-input {
+  text-align: center;
+}
+
 /* Da bo cot "#" (STT) - "Hạng mục" gio la cot dau tien, giu nguyen vi tri
  * sticky (dong bang khi cuon ngang) + rieng them min-width de khong bi
  * table-layout:fixed chia deu qua hep (nhieu cot tien ben canh) lam cat ngan
