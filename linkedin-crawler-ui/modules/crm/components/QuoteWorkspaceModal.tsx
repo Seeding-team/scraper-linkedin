@@ -2155,7 +2155,7 @@ export function QuoteWorkspaceModal({
                       <th>Hạng mục</th>
                       <th className="qc-th-money qc-th-qty">SL</th>
                       <th className="qc-th-money qc-th-cost">Giá vốn/ĐV</th>
-                      <th className="qc-th-money qc-th-cost">Giá vốn</th>
+                      <th className="qc-th-money qc-th-cost">Cost tổng</th>
                       <th className="qc-th-cost-flag">N/A giá vốn</th>
                       <th className="qc-th-money qc-th-markup">Markup</th>
                       <th className="qc-th-money qc-th-markup">Giá khách/ĐV</th>
