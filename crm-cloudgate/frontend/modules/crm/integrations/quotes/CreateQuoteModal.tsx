@@ -203,8 +203,17 @@ export function CreateQuoteModal({
   // khac voi du lieu cong ty hien tai neu ai do da sua danh muc sau khi tao bao
   // gia nay) - chi dung ban ghi cong ty de biet dong nao dang chon trong dropdown.
   useEffect(() => {
-    if (!open || !editQuote?.issuerCompanyId || !issuerCompanies.length) return;
-    const match = issuerCompanies.find(c => c.id === editQuote.issuerCompanyId);
+    if (!open || !issuerCompanies.length) return;
+    // BUG THAT DA GAP: bao gia tao qua "Yêu cầu hỗ trợ báo giá" (QuoteWorkspaceModal)
+    // KHONG bao gio dat quote.issuerCompanyId rieng (chi chon mau bao gia,
+    // khong chon cong ty) - neu chi doc dung editQuote.issuerCompanyId thi
+    // wizard Sua se hien "-- Chọn công ty --" trong du mau da chon RO RANG
+    // thuoc 1 cong ty. Fallback sang cong ty so huu MAU dang dung
+    // (selectedForm.issuerCompanyId, mau nao cung thuoc dung 1 cong ty) khi
+    // quote chua tu luu rieng issuerCompanyId.
+    const issuerId = editQuote?.issuerCompanyId || selectedForm?.issuerCompanyId;
+    if (!issuerId) return;
+    const match = issuerCompanies.find(c => c.id === issuerId);
     if (!match) return;
     setSelectedIssuerCompany({
       ...match,
@@ -218,7 +227,7 @@ export function CreateQuoteModal({
       logoUrl: (quoteDraft.data.sellerLogo as string) || match.logoUrl,
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, editQuote?.issuerCompanyId, issuerCompanies]);
+  }, [open, editQuote?.issuerCompanyId, selectedForm?.issuerCompanyId, issuerCompanies]);
   // Theo dõi ĐÚNG nút nào đang chạy (không dùng 1 boolean chung) - trước đây
   // 1 boolean khiến cả 2 nút "Cập nhật báo giá"/"Duyệt báo giá" cùng xoay
   // spinner dù chỉ bấm 1 nút, nhìn rất kỳ.

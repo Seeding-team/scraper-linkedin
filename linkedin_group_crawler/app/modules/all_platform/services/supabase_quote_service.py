@@ -1182,7 +1182,13 @@ def create_quote(payload: dict, created_by: str | None) -> dict:
         "status": "draft",
         "form_schema_version": form["schema_version"],
         "form_snapshot": form["schema_json"],
-        "data": {**data, "quoteNumber": quote_number},
+        # BUG THAT DA GAP: template hien "Ngay bao gia" doc data.quoteDate (field
+        # schema rieng, KHONG phai issued_at cua quote) - luong "Yeu cau ho tro
+        # bao gia" (QuoteWorkspaceModal) khong bao gio dien field nay nen ban
+        # khach hien literal "[Ngày báo giá]" thay vi ngay that. Mac dinh
+        # quoteDate = ngay tao (giong het issued_at) neu caller chua tu dien -
+        # dat TRUOC **data de caller van tu ghi de duoc neu can chinh tay.
+        "data": {"quoteDate": now, **data, "quoteNumber": quote_number},
         "subtotal_amount": subtotal,
         "vat_amount": vat,
         "total_amount": total,
@@ -1429,6 +1435,17 @@ def publish_quote(quote_id: str, actor_id: str | None) -> dict:
             "id": quote["id"], "number": quote["quoteNumber"],
             "url": quote["publicUrl"], "totalAmount": quote["totalAmount"],
         })
+    # BUG THAT DA GAP: bao gia tao truoc khi co fix mac dinh quoteDate luc tao
+    # (hoac bat ky ly do nao khac thieu field nay) van hien literal
+    # "[Ngày báo giá]" tren ban khach du DA PHAT HANH. Phat hanh la moc THAT
+    # su gan nhat voi "ngay bao gia" that (ngay gui cho khach) - luon ghi de
+    # data.quoteDate = ngay phat hanh o day, KHONG doi qua update_quote()
+    # (ham do XOA+CHEN LAI quote_items, khong can va khong nen dung chi de
+    # sua 1 field trong `data`) - update thang cot `data` qua supabase client.
+    quote_data = dict(quote.get("data") or {})
+    quote_data["quoteDate"] = _now_iso()
+    supabase.table(QUOTES_TABLE).update({"data": quote_data}).eq("id", quote_id).execute()
+    quote["data"] = quote_data
     return quote
 
 

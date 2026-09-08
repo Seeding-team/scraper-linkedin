@@ -7,7 +7,7 @@ import { useAppAuth } from '@/contexts/AppAuthContext';
 import { teamsService, type TeamRow, projectsService, type Project, usersService, type QuoteBusinessRoleUser } from '@/services/all-platform.service';
 import { computeQuoteSla } from '../utils/quoteSla';
 import { seedingQuoteRepository } from '@/modules/quotes';
-import type { Quote, QuoteForm, QuotePhase, QuotesByPhaseResult } from '@/modules/quotes';
+import type { IssuerCompany, Quote, QuoteForm, QuotePhase, QuotesByPhaseResult } from '@/modules/quotes';
 import { seedingContractRepository } from '@/modules/contracts';
 import type { Contract } from '@/modules/contracts';
 import { useCrm } from '../hooks/useCrm';
@@ -159,6 +159,7 @@ export function QuoteCenterPage() {
   const { deals, agents, loading: dealsLoading } = useCrm();
   const [quotes, setQuotes] = useState<Quote[]>([]);
   const [forms, setForms] = useState<QuoteForm[]>([]);
+  const [issuerCompanies, setIssuerCompanies] = useState<IssuerCompany[]>([]);
   const [teams, setTeams] = useState<TeamRow[]>([]);
   const [contracts, setContracts] = useState<Contract[]>([]);
   const [quotesLoading, setQuotesLoading] = useState(true);
@@ -225,6 +226,9 @@ export function QuoteCenterPage() {
     void seedingQuoteRepository.getForms().then(rows => {
       if (alive) setForms(rows);
     });
+    void seedingQuoteRepository.getIssuerCompanies().then(rows => {
+      if (alive) setIssuerCompanies(rows);
+    });
     void teamsService.getAll().then(res => {
       if (alive && res.success && res.data) setTeams(res.data);
     });
@@ -242,6 +246,38 @@ export function QuoteCenterPage() {
   }, []);
 
   const dealsById = useMemo(() => new Map(deals.map(deal => [deal.id, deal])), [deals]);
+  // Mau bao gia mac dinh cho "Yeu cau ho tro bao gia" (khong co buoc chon mau
+  // rieng nhu wizard CreateQuoteModal) - BUG that da fix: truoc day dung dai
+  // forms[0] (mau DAU TIEN trong danh sach, khong lien quan gi den dung vi
+  // phat hanh) - da tung lam quote moi tao nham dinh dang "villa_solution_
+  // package" thay vi mau chuan. Gio uu tien dung defaultQuoteFormId cua don
+  // vi phat hanh dau tien (giong quy uoc CreateQuoteModal dang dung), fallback
+  // mau co isDefaultTemplate=true (dung DUNG field DB da thiet ke rieng cho
+  // truong hop nay - "1 mau active duoc set true lam fallback khi cong ty
+  // phat hanh chua gan defaultQuoteFormId rieng"), cuoi cung moi fallback
+  // forms[0].
+  const defaultFormId = useMemo(() => {
+    // Luong "Yeu cau ho tro bao gia" (QuoteWorkspaceModal che do tao moi) chi
+    // dung bang hang muc chuan (quote_items) - mau layout_type=
+    // 'villa_solution_package' dung cau truc rieng (data.solutionItems),
+    // KHONG dung quote_items, nen neu lo mac dinh chon mau nay, moi hang muc
+    // nguoi dung go se bi am tham MAT HET luc tao (create_quote() luon
+    // insert items=[] cho villa, khong bao loi). BUG THAT DA GAP: 3 issuer
+    // company (CG/MK/SZ) deu co sort_order=0 trung nhau nen issuerCompanies[0]
+    // (order theo sort_order) KHONG on dinh giua cac lan fetch - co luc roi
+    // dung vao issuer ma defaultQuoteFormId lai tro toi 1 mau villa. Loai
+    // HOAN TOAN mau villa khoi danh sach ung vien TU DONG chon o day - nguoi
+    // dung van chon THU CONG duoc mau villa qua dropdown "Mẫu báo giá" neu
+    // that su can, chi khong de no am tham thanh mac dinh.
+    const nonVillaForms = forms.filter(f => f.schemaJson?.layoutType !== 'villa_solution_package');
+    const primaryIssuer = issuerCompanies[0];
+    const issuerDefault = primaryIssuer?.defaultQuoteFormId
+      ? nonVillaForms.find(f => f.id === primaryIssuer.defaultQuoteFormId)?.id
+      : undefined;
+    if (issuerDefault) return issuerDefault;
+    const globalDefault = nonVillaForms.find(f => f.isDefaultTemplate)?.id;
+    return globalDefault || nonVillaForms[0]?.id;
+  }, [forms, issuerCompanies]);
   const contractByQuoteId = useMemo(() => new Map(contracts.filter(c => c.quoteId).map(c => [c.quoteId as string, c])), [contracts]);
 
   function dealInRoleScope(deal: Deal | undefined, quote?: Quote): boolean {
@@ -1514,7 +1550,8 @@ export function QuoteCenterPage() {
           dealsById={dealsById}
           agents={agents}
           user={user}
-          defaultFormId={forms[0]?.id}
+          defaultFormId={defaultFormId}
+          quoteForms={forms}
           initialCustomerId={workspacePrefill?.customerId}
           initialProjectId={workspacePrefill?.projectId}
           lockCustomer={Boolean(workspacePrefill?.customerId)}

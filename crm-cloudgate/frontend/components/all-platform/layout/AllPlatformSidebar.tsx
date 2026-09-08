@@ -123,6 +123,26 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, _workspaceTab:
       label: "Cơ hội",
       exactMatch: true,
     },
+    // ===== END Leads/Khách hàng/Cơ hội reorder =====
+    // Thu tu 4 muc Bao gia/Hop dong/Phan tich CRM/Lich su bao gia theo dung
+    // yeu cau moi (2026-09-08): Bao gia -> Hop dong -> Phan tich CRM -> Lich
+    // su bao gia (truoc day Phan tich CRM dung ngay sau "Co hoi").
+    {
+      type: "item",
+      id: "quote-center",
+      href: "/all-platform/quote-center",
+      icon: "request_quote",
+      label: "Báo giá",
+      matchStartsWith: ["/all-platform/quote-center"],
+    },
+    {
+      type: "item",
+      id: "contracts",
+      href: "/all-platform/contracts",
+      icon: "description",
+      label: "Hợp đồng",
+      matchStartsWith: ["/all-platform/contracts"],
+    },
     // Phan tich CRM: theo yeu cau Mylife (22/07) chi leader/admin thay "full"
     // CRM, member chi thay pipeline ban hang (muc "Co hoi" o tren). Mo rong
     // cho Sale (team_type='sale', migration 049) - duoc nang quyen ngang
@@ -139,15 +159,6 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, _workspaceTab:
           },
         ] as NavLeafItem[])
       : []),
-    // ===== END Leads/Khách hàng/Cơ hội reorder =====
-    {
-      type: "item",
-      id: "quote-center",
-      href: "/all-platform/quote-center",
-      icon: "request_quote",
-      label: "Báo giá",
-      matchStartsWith: ["/all-platform/quote-center"],
-    },
     {
       type: "item",
       id: "quote-history",
@@ -155,14 +166,6 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, _workspaceTab:
       icon: "history",
       label: "Lịch sử báo giá",
       matchStartsWith: ["/all-platform/quote-history"],
-    },
-    {
-      type: "item",
-      id: "contracts",
-      href: "/all-platform/contracts",
-      icon: "description",
-      label: "Hợp đồng",
-      matchStartsWith: ["/all-platform/contracts"],
     },
     {
       type: "item",

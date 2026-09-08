@@ -8,7 +8,7 @@ import { CrmKanbanBoard } from './CrmKanbanBoard';
 import { CrmTableView } from './CrmTableView';
 import { DealFormModal, clearDealDraft } from './DealFormModal';
 import { DetailDrawer } from './DetailDrawer';
-import { FileText, LayoutGrid, Loader2, Plus, RotateCcw, TableIcon, Trophy } from './icons';
+import { LayoutGrid, Loader2, Plus, RotateCcw, TableIcon, Trophy } from './icons';
 import { StageModal } from './StageModal';
 import { CreateQuoteModal } from '../integrations/quotes';
 import {
@@ -385,16 +385,8 @@ export function CrmShell() {
                 <TableIcon className="crm-button-icon" /> Bảng
               </button>
             </div>
-            <button
-              type="button"
-              className="crm-secondary-button"
-              disabled={loading || saving}
-              onClick={() => setQuoteModal({ open: true, deal: null, editQuote: null })}
-            >
-              <FileText className="crm-button-icon" /> Tạo báo giá
-            </button>
             <button type="button" className="crm-primary-button" disabled={loading || saving} onClick={() => setCreateOpen(true)}>
-              <Plus className="crm-button-icon" /> Thêm deal
+              <Plus className="crm-button-icon" /> Tạo cơ hội
             </button>
           </div>
         </div>
@@ -482,7 +474,7 @@ export function CrmShell() {
                 <h3>Chưa có khách hàng CRM</h3>
                 <p>Tạo deal mới để bắt đầu quản lý pipeline.</p>
                 <button type="button" className="crm-primary-button crm-empty-action" onClick={() => setCreateOpen(true)}>
-                  <Plus className="crm-button-icon" /> Thêm deal
+                  <Plus className="crm-button-icon" /> Tạo cơ hội
                 </button>
               </div>
             </div>

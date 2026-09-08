@@ -68,6 +68,29 @@
   opacity: 0.55;
 }
 
+.qc-btn[aria-busy="true"] {
+  cursor: progress;
+  opacity: 0.85;
+}
+
+/* Spinner nho trong nut submit/action (Bàn giao, Duyệt, Phát hành...) - luon
+   di kem chu mo ta hanh dong dang chay, khong bao gio chi hien spinner tron
+   mot minh (accessibility). */
+.qc-btn-spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: qc-spin 0.6s linear infinite;
+  flex-shrink: 0;
+}
+
+@keyframes qc-spin {
+  to { transform: rotate(360deg); }
+}
+
 .qc-btn-primary {
   background: var(--color-primary, #ba244a) !important;
   color: #fff !important;
@@ -2049,6 +2072,10 @@
 .qc-workspace-quickbar-rule { font-size: 11.5px; font-weight: 700; color: #566277; white-space: nowrap; }
 .qc-workspace-quickbar-hint { font-size: 11px; color: #9099a7; margin-left: auto; }
 .qc-workspace-draft-terms { list-style: none; margin: 6px 0 0; padding: 0; font-size: 11.5px; color: #5b6576; display: flex; flex-direction: column; gap: 3px; }
+.qc-workspace-draft-terms li { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.qc-workspace-draft-terms li > span:first-child { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.qc-workspace-draft-terms-actions { display: flex; gap: 4px; flex-shrink: 0; }
+.qc-workspace-draft-terms-actions .qc-mini-btn { height: 22px; padding: 0 8px; font-size: 11px; }
 .qc-cell-margin-warn { color: #c9932f !important; font-weight: 700; }
 
 .qc-modal-backdrop--nested { z-index: 70; }
