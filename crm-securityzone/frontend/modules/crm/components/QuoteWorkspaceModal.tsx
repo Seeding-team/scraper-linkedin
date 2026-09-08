@@ -2160,7 +2160,7 @@ export function QuoteWorkspaceModal({
                       <th className="qc-th-money qc-th-markup">Giá khách/ĐV</th>
                       <th className="qc-th-money">Thành tiền</th>
                       <th className="qc-th-money">Margin</th>
-                      {canEdit && isDraft && !isLockedForReview ? <th className="qc-th-actions">Thao tác</th> : null}
+                      {canEdit && isDraft && !isLockedForReview ? <th className="qc-th-actions" aria-label="Thao tác" /> : null}
                     </tr>
                   </thead>
                   <tbody>
