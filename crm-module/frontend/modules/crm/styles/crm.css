@@ -489,11 +489,16 @@
 
 /* Render qua Portal ra document.body (position:fixed, toa do tinh tu JS) -
  * dung cho moi noi SearchableSelect nam trong container co overflow (vd bo
- * loc trong bang Bao gia) de menu khong bi cat mat o hang gan mep. z-index
- * cao hon moi sticky header/toolbar trong app. */
+ * loc trong bang Bao gia) de menu khong bi cat mat o hang gan mep. BUG THAT
+ * DA GAP: z-index 300 THAP HON .crm-modal-backdrop (100000) - dropdown nam
+ * BEN TRONG 1 modal (vd "Tạo cơ hội") van mo dung trong DOM nhung bi modal
+ * ĐÈ LÊN TRÊN, nhin nhu "bấm không chọn được" (menu vo hinh, khong bam
+ * duoc vao option nao). Nang z-index vuot QUA moi backdrop/modal cao nhat
+ * trong app (.crm-wizard-modal--wide dung 100050) de menu luon noi len tren
+ * CA khi SearchableSelect nam trong modal. */
 .crm-searchable-select-menu--portal {
   position: fixed;
-  z-index: 300;
+  z-index: 100100;
   top: auto;
   left: auto;
   right: auto;
@@ -5908,7 +5913,10 @@
  * backdrop dang dung 100000) de khong bao gio bi .crm-table-card cat mat. */
 .crm-action-menu-list--portal {
   position: fixed;
-  z-index: 100010;
+  /* Phai luon o TREN CUNG bat ke dang mo tu component nao (bao gom ca
+   * Workspace bao gia full-screen tren mobile, z-index 100200/100210) - day
+   * la 1 dropdown dung chung, khong duoc phep bi che khuat boi modal cha. */
+  z-index: 100220;
 }
 
 .crm-action-menu-item {

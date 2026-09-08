@@ -148,14 +148,17 @@ def can_edit_technical_quote(user: dict[str, Any] | None, quote: dict[str, Any] 
 
 def can_view_quote_cost(user: dict[str, Any] | None, quote: dict[str, Any] | None) -> bool:
     """Nhom A - TECHNICAL/COST fields (costPrice/costTotal/costNotApplicable):
-    CHI admin, hoac chinh technical_owner (Presale duoc gan quote nay), HOAC
-    chinh quote_owner (Sale duoc gan quote nay - Sale PHAI xem duoc gia von
-    Presale da chot, o che do READ-ONLY, de hoan thanh markup - xem
-    can_edit_quote_cost() rieng cho quyen SUA, khac hoan toan quyen XEM nay)."""
+    admin hoac leader (moi Leader Dev deu la Presale, can xem gia von cua ca
+    team khong chi quote minh dang phu trach - yeu cau rieng, doi lai gioi han
+    truoc do "leader phai la chinh technical_owner/quote_owner cua QUOTE DO"),
+    HOAC chinh technical_owner (Presale duoc gan quote nay), HOAC chinh
+    quote_owner (Sale duoc gan quote nay - Sale PHAI xem duoc gia von Presale
+    da chot, o che do READ-ONLY, de hoan thanh markup - xem can_edit_quote_cost()
+    rieng cho quyen SUA, khac hoan toan quyen XEM nay)."""
     if not user:
         return False
     role = str(user.get("role") or "").strip().lower()
-    if role == "admin":
+    if role in ("admin", "leader"):
         return True
     uid = str(user.get("id") or "")
     if not uid or not quote:

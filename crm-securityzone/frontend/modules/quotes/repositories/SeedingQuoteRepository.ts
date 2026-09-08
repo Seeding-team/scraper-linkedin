@@ -43,6 +43,7 @@ export class QuoteApprovalRequiresExceptionError extends Error {
 }
 
 type QuoteItemPayload = {
+  row_type?: 'section' | 'item';
   description: string;
   service_description: string | null;
   unit?: string;
@@ -147,17 +148,30 @@ function toCreateQuotePayload(input: CreateQuoteInput) {
 }
 
 function toUpdateQuotePayload(input: UpdateQuoteInput) {
-  return {
+  // BUG THAT DA GAP (data loss): backend (quotes_update, routers/quote.py)
+  // dung `model_fields_set` de phan biet "khong gui field nay" (giu nguyen
+  // gia tri cu) voi "gui null CO Y" (xoa gia tri) - CHI cho rieng project_id
+  // va sla_due_at. Truoc day ham nay LUON gui ca 2 key nay (`?? null`) du
+  // caller (vd persistQuote() khi luu hang muc, handoffToPricing() khi bam
+  // "Bàn giao xử lý giá") khong he dinh doi chung - khien MOI LAN luu hang
+  // muc/gia von/markup deu VO TINH xoa sach SLA/Du an da dat truoc do (nguoi
+  // dung bao "truoc do da dat SLA r ma sao lai chua dat" - dung nguyen nhan
+  // nay). CHI dua project_id/sla_due_at vao payload khi caller THAT SU co
+  // truyen field do (dung 'in' de phan biet "khong truyen" voi "truyen null
+  // co y" - vd updateQuoteProject('') truyen projectId='' CO Y de bo gan).
+  const payload: Record<string, unknown> = {
     data: input.data,
     items: input.items?.map(toQuoteItemPayload),
     issuer_company_id: input.issuerCompanyId ?? null,
-    project_id: input.projectId ?? null,
-    sla_due_at: input.slaDueAt ?? null,
   };
+  if ('projectId' in input) payload.project_id = input.projectId ?? null;
+  if ('slaDueAt' in input) payload.sla_due_at = input.slaDueAt ?? null;
+  return payload;
 }
 
 function toQuoteItemPayload(item: NonNullable<CreateQuoteInput['items']>[number]): QuoteItemPayload {
   return {
+    row_type: item.rowType === 'section' ? 'section' : 'item',
     description: item.description ?? '',
     service_description: item.serviceDescription ?? null,
     unit: item.unit,

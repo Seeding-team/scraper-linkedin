@@ -321,6 +321,13 @@ _PRICING_ITEM_FIELD_PAIRS = [
     ("markupPercent", "markup_percent"),
     ("vatRate", "vat_rate"),
 ]
+# cost_price/cost_not_applicable rieng (khac _TECHNICAL_ITEM_FIELD_PAIRS o
+# tren) - CHI 2 field nay bi khoa theo buoc, description/unit/quantity trong
+# nhom _TECHNICAL_ITEM_FIELD_PAIRS van sua duoc tu Buoc 1 (khong doi hanh vi).
+_COST_ONLY_ITEM_FIELD_PAIRS = [
+    ("costPrice", "cost_price"),
+    ("costNotApplicable", "cost_not_applicable"),
+]
 
 
 def _values_differ(old_val, new_val) -> bool:
@@ -344,7 +351,16 @@ def _items_touch_fields(existing_items: list[dict], new_items: list[dict], field
 
 
 def _check_item_field_level_permission(user: dict, quote: dict, new_items: Optional[list]) -> Optional[str]:
-    """Tra ve None neu OK, hoac 1 thong bao loi tieng Viet neu bi tu choi."""
+    """Tra ve None neu OK, hoac 1 thong bao loi tieng Viet neu bi tu choi.
+
+    Ngoai quyen theo VAI TRO (co san tu truoc), them khoa theo BUOC
+    (processingStage) cho dung 2 nhom field hep hon (Gia von / Markup+Gia
+    khach) - yeu cau moi (SUA LAI lan 2, bo han ngoai le Admin/Leader): Buoc 1
+    (request) chi duoc dien Hang muc+SL, CHUA duoc dien Gia von; tu Buoc 2
+    (technical) tro di moi dien duoc Gia von; Markup/Gia khach CHI dien duoc
+    dung o Buoc 3 (pricing). Khoa nay ap dung cho TAT CA, KHONG con ngoai le
+    Admin/Leader (khac han_full_crm_access o cac quyen SUA khac trong file
+    nay - day la khoa THEO BUOC, khong phai khoa theo VAI TRO)."""
     if new_items is None:
         return None
     existing_items = quote.get("items") or []
@@ -352,6 +368,12 @@ def _check_item_field_level_permission(user: dict, quote: dict, new_items: Optio
         return "Không có quyền sửa phần kỹ thuật (mô tả/số lượng/giá vốn) của báo giá này"
     if _items_touch_fields(existing_items, new_items, _PRICING_ITEM_FIELD_PAIRS) and not can_edit_quote_pricing(user, quote):
         return "Không có quyền sửa phần giá bán (markup/chiết khấu/giá khách) của báo giá này"
+
+    stage = quote.get("processingStage") or "request"
+    if _items_touch_fields(existing_items, new_items, _COST_ONLY_ITEM_FIELD_PAIRS) and stage == "request":
+        return "Giá vốn chỉ được nhập từ Bước 2 (Thông tin kỹ thuật) trở đi"
+    if _items_touch_fields(existing_items, new_items, _PRICING_ITEM_FIELD_PAIRS) and stage != "pricing":
+        return "Markup/Giá khách chỉ được nhập ở Bước 3 (Hoàn thiện giá bán)"
     return None
 
 

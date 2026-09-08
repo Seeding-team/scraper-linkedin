@@ -294,6 +294,12 @@ export function DetailDrawer({
                         Mở báo giá
                       </a>
                     ) : internalUrl ? (
+                      // SUA LAI: truoc day bao gia CHUA duyet bam "Mo bao gia"
+                      // se MO POPUP (workspace chinh sua) thay vi link that,
+                      // vi trang /all-platform/quotes/[id] von CHI xem/in
+                      // (khong co form sua). Nguoi dung muon "Mo bao gia" LUON
+                      // la 1 link that du chua duyet - da co nut "Chỉnh sửa"
+                      // rieng (o tren) cho ai can sua, khong mat kha nang sua.
                       <a href={internalUrl} className="crm-quote-btn">
                         Mở báo giá
                       </a>

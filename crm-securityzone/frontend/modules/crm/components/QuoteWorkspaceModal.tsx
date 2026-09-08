@@ -4,11 +4,12 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { API_BASE_URL, API_KEY } from '@/lib/env';
 import { seedingQuoteRepository, QuoteApprovalRequiresExceptionError } from '@/modules/quotes';
-import type { Quote, QuoteActivityLogEntry, QuoteHandoffChecklist, QuoteItem, QuoteProcessingStage, QuoteApprovalRuleSet, QuoteApprovalRuleType, QuoteRuleEvaluation, QuoteDeliveryLogEntry } from '@/modules/quotes';
+import type { Quote, QuoteActivityLogEntry, QuoteHandoffChecklist, QuoteItem, QuoteProcessingStage, QuoteApprovalRuleSet, QuoteApprovalRuleType, QuoteRuleEvaluation, QuoteDeliveryLogEntry, QuoteForm } from '@/modules/quotes';
 import type { AppUser } from '@/types/unified.types';
-import { canApproveQuote, canEditQuoteCost, canEditQuotePricingFields, canWriteDeal, getPackageText, getServicePackageText } from '../constants/crmConfig';
-import type { CrmUserOption, Deal } from '../types';
-import type { ServiceCatalogItem, ServiceCatalogOptions } from '@/modules/service-catalog/types';
+import { canApproveQuote, canEditQuoteCost, canEditQuotePricingFields, canWriteDeal, formatMoneyInput, getPackageText, getServicePackageText, SOURCE_OPTIONS, SERVICE_PACKAGE_OPTIONS, CRM_PACKAGE_OPTIONS, INDUSTRY_OPTIONS } from '../constants/crmConfig';
+import type { CrmUserOption, Deal, CreateDealInput } from '../types';
+import type { ServiceCatalogItem } from '@/modules/service-catalog/types';
+import { serviceCatalogRepository } from '@/modules/service-catalog/repositories/ServiceCatalogRepository';
 import {
   dealBusinessCode,
   formatDate,
@@ -17,10 +18,15 @@ import {
   quoteDisplayStatus,
   relativeTime,
 } from '../utils/quoteDisplay';
-import { CheckCircle2, Eye, GitBranchPlus, History, Link2, Pencil, Plus, Send, Settings, X } from './icons';
+import { CheckCircle2, Eye, GitBranchPlus, History, Link2, Send, Settings, X } from './icons';
 import { usersService, projectsService, type QuoteBusinessRoleUser, type Project } from '@/services/all-platform.service';
 import { computeQuoteSla } from '../utils/quoteSla';
 import { SearchableSelect } from './SearchableSelect';
+import { seedingCrmRepository } from '../repositories/SeedingCrmRepository';
+import { ProjectFormModal } from './ProjectFormModal';
+import { DealFormModal, clearDealDraft } from './DealFormModal';
+import { ConfirmModal } from './ConfirmModal';
+import { ActionMenu } from './ActionMenu';
 
 /** 4 buoc THAT (Yeu cau bao gia/Thong tin ky thuat/Hoan thien gia ban/Cho
  * duyet-Phat hanh) - anh xa dung 1-1 voi `quotes.processing_stage` (migration
@@ -85,9 +91,123 @@ function NoStaffConfigured({ isAdminOrLeader }: { isAdminOrLeader: boolean }) {
   );
 }
 
+/** So La Ma cho Muc cha (I, II, III...) - dung 1 bang tra don gian, du dung
+ * (bang hang muc thuc te chi vai chuc nhom la cung, khong can thuat toan
+ * tong quat cho so lon). */
+function toRomanNumeral(num: number): string {
+  const table: Array<[number, string]> = [
+    [1000, 'M'], [900, 'CM'], [500, 'D'], [400, 'CD'], [100, 'C'], [90, 'XC'],
+    [50, 'L'], [40, 'XL'], [10, 'X'], [9, 'IX'], [5, 'V'], [4, 'IV'], [1, 'I'],
+  ];
+  let n = num;
+  let out = '';
+  for (const [value, symbol] of table) {
+    while (n >= value) {
+      out += symbol;
+      n -= value;
+    }
+  }
+  return out || String(num);
+}
+
 function newBlockId(): string {
   if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return crypto.randomUUID();
   return `block_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+}
+
+/** Muc cha (Section)/hang muc con - xem migration 104. `itemsDraft` (state
+ * edit cua bang hang muc) LUON giu dang PHANG (khong dung cay `children`
+ * long nhau) de moi thao tac (them/xoa/nhan ban/doi thu tu/chuyen nhom) chi
+ * la 1 phep splice mang don gian, khong phai de quy cay. Cay chi ton tai
+ * ngan gon o 2 dau: (1) load() nap `quote.items` (BE tra ve dang cay qua
+ * _quote_item_tree) -> lam PHANG ngay de edit; (2) luc gui len BE, gop lai
+ * thanh cay dung dinh dang API cu da co san (children long nhau) truoc khi
+ * map qua toItemInput(). Section/item lien he nhau qua `parentItemId` (tro
+ * toi `id` cua dong section, ke ca id TAM cho section moi tao chua luu). */
+function flattenItemTree(items: QuoteItem[]): QuoteItem[] {
+  const out: QuoteItem[] = [];
+  for (const item of items) {
+    const { children, ...rest } = item;
+    out.push(rest);
+    if (children && children.length) out.push(...flattenItemTree(children));
+  }
+  return out;
+}
+
+function buildItemTree(flat: QuoteItem[]): QuoteItem[] {
+  const withChildren = flat.map(item => ({ ...item, children: [] as QuoteItem[] }));
+  const byId = new Map<string, QuoteItem & { children: QuoteItem[] }>();
+  for (const item of withChildren) {
+    if (item.id) byId.set(item.id, item);
+  }
+  const roots: QuoteItem[] = [];
+  for (const item of withChildren) {
+    const parent = item.parentItemId ? byId.get(item.parentItemId) : undefined;
+    if (parent) parent.children.push(item);
+    else roots.push(item);
+  }
+  return roots;
+}
+
+/** Sau MOI lan sap xep lai (keo-tha, di chuyen len/xuong, xoa/them dong) -
+ * gan lai `parentItemId` THEO DUNG VI TRI hien tai: 1 hang muc thuoc DUNG
+ * Muc cha (Section) gan lien truoc no gan nhat (cho toi khi gap 1 Section
+ * khac). Cach lam nay bien "thuoc nhom nao" thanh 1 THUOC TINH SUY RA TU VI
+ * TRI, KHONG con phai tu quan ly parentItemId thu cong moi lan di chuyen -
+ * tranh ca 1 lop bug "keo xong quen cap nhat nhom" de xay ra neu lam nguoc
+ * lai (giu parentItemId co dinh, tu tinh vi tri theo no). */
+function recomputeParentIds(items: QuoteItem[]): QuoteItem[] {
+  let currentSectionId: string | undefined;
+  return items.map(item => {
+    if (item.rowType === 'section') {
+      currentSectionId = item.id;
+      return item;
+    }
+    return { ...item, parentItemId: currentSectionId };
+  });
+}
+
+/** [start, end) cua 1 "khoi" bat dau tu `index` - neu la 1 hang muc thuong
+ * (rowType='item') thi khoi chi co dung 1 dong; neu la Muc cha (Section) thi
+ * khoi gom CA dong Section VA toan bo hang muc con lien tiep ngay sau no
+ * (toi khi gap Section tiep theo hoac het mang) - dam bao keo 1 Muc cha se
+ * mang theo CA nhom cua no, khong bao gio lam roi hang muc con lai phia sau. */
+function getRowBlockRange(items: QuoteItem[], index: number): [number, number] {
+  if (items[index]?.rowType !== 'section') return [index, index + 1];
+  let end = index + 1;
+  while (end < items.length && items[end].rowType !== 'section') end += 1;
+  return [index, end];
+}
+
+/** Nguoc voi getRowBlockRange (do CHI tinh xuoi) - dung khi can biet khoi
+ * LIEN KE PHIA TRUOC bat dau tu dau, cho truong hop "di chuyen len": cho
+ * truoc chi so cua DONG CUOI khoi do (`endingAtIndex`), tim dung diem bat
+ * dau. Neu dong do thuoc 1 Section (co parentItemId), phai quet NGUOC tim
+ * dung dong Section chu no - khong the chi lay [index,index+1) nhu 1 hang
+ * muc doc lap, vi nhu vay se "cat doi" 1 Section dang co nhieu hang muc con
+ * (bug that da tim thay khi tu trace tay truoc khi port). */
+function blockStartEndingAt(items: QuoteItem[], endingAtIndex: number): number {
+  const row = items[endingAtIndex];
+  if (!row || row.rowType === 'section' || !row.parentItemId) return endingAtIndex;
+  for (let i = endingAtIndex; i >= 0; i -= 1) {
+    if (items[i].rowType === 'section') return i;
+  }
+  return endingAtIndex;
+}
+
+/** Di chuyen 1 khoi (xem getRowBlockRange) tu vi tri `fromIndex` toi ngay
+ * TRUOC `targetIndex` (theo chi so cua mang GOC, truoc khi cat khoi ra) - tu
+ * dong gan lai parentItemId theo vi tri moi qua recomputeParentIds(), KHONG
+ * can code rieng xu ly tung truong hop "keo hang muc vao 1 nhom"/"keo ca 1
+ * nhom di noi khac" nua, vi nhom gio la thuoc tinh suy ra tu vi tri. */
+function moveRowBlock(items: QuoteItem[], fromIndex: number, targetIndex: number): QuoteItem[] {
+  const [start, end] = getRowBlockRange(items, fromIndex);
+  if (targetIndex >= start && targetIndex < end) return items; // tha vao chinh no/con cua no - khong doi gi
+  const block = items.slice(start, end);
+  const rest = [...items.slice(0, start), ...items.slice(end)];
+  let insertAt = targetIndex > start ? targetIndex - (end - start) : targetIndex;
+  insertAt = Math.max(0, Math.min(insertAt, rest.length));
+  return recomputeParentIds([...rest.slice(0, insertAt), ...block, ...rest.slice(insertAt)]);
 }
 
 const VERSION_REASONS = [
@@ -107,6 +227,7 @@ export function QuoteWorkspaceModal({
   onChanged,
   onEditDraft,
   defaultFormId,
+  quoteForms = [],
   initialCustomerId,
   initialProjectId,
   lockCustomer = false,
@@ -124,10 +245,14 @@ export function QuoteWorkspaceModal({
   onClose: () => void;
   onChanged: () => Promise<void> | void;
   onEditDraft: (quote: Quote) => void;
-  /** Mau bao gia dung khi tao record that luc "Luu nhap"/"Gui yeu cau xu ly" -
-   * he thong chua co khai niem "mau mac dinh" rieng, dung mau active dau tien
-   * (giong hanh vi "Tao bao gia nhanh" hien co). */
+  /** Mau bao gia GOI Y mac dinh khi vua mo (uu tien defaultQuoteFormId cua don
+   * vi phat hanh, fallback mau isDefaultTemplate - xem QuoteCenterPage) - Sale
+   * van doi lai duoc qua dropdown "Mau bao gia" (draftFormId) neu can. */
   defaultFormId?: string;
+  /** Danh sach mau bao gia active de hien dropdown "Mau bao gia" o Buoc 1
+   * (CHI khi tao moi, quoteId=null) - rong thi an han dropdown, dung nguyen
+   * defaultFormId nhu truoc. */
+  quoteForms?: QuoteForm[];
   /** Block 1: mo tu nut "Tạo báo giá" o Ho so khach hang/Project card - PHAI
    * THAT SU doc + ap dung (khong chi mang query param roi bo qua). Khach
    * hang/Du an tu dien vao draftCustomerId/draftProjectId ngay khi mo o CHE
@@ -142,7 +267,25 @@ export function QuoteWorkspaceModal({
   const [loading, setLoading] = useState(Boolean(quoteId));
   const [activity, setActivity] = useState<QuoteActivityLogEntry[]>([]);
   const [checklist, setChecklist] = useState<QuoteHandoffChecklist | null>(null);
-  const [checklistDraft, setChecklistDraft] = useState<QuoteHandoffChecklist | null>(null);
+  // Gop Buoc 1+2: cho tick checklist bang giao NGAY tu luc con o Buoc 1 (truoc
+  // ca khi quote tu tao xong) - khong duoc de null nua (setChecklistDraft(prev
+  // => prev ? {...} : prev) se KHONG lam gi neu prev=null, tick se vo tac
+  // dung im lang). Dung 1 object rong lam gia tri khoi tao thay vi null.
+  function emptyChecklist(): QuoteHandoffChecklist {
+    return {
+      quoteId: '',
+      scopeConfirmed: false,
+      scopeNote: '',
+      costConfirmed: false,
+      costNote: '',
+      timelineConfirmed: false,
+      timelineNote: '',
+      assumptionConfirmed: false,
+      assumptionNote: '',
+      handoffNote: '',
+    };
+  }
+  const [checklistDraft, setChecklistDraft] = useState<QuoteHandoffChecklist>(emptyChecklist());
   const [busy, setBusy] = useState(false);
   const [versionModalOpen, setVersionModalOpen] = useState(false);
   const [versionReason, setVersionReason] = useState(VERSION_REASONS[0].value);
@@ -185,6 +328,65 @@ export function QuoteWorkspaceModal({
   const [draftCustomerId, setDraftCustomerId] = useState(initialCustomerId || '');
   const [customers, setCustomers] = useState<{ id: string; label: string }[]>([]);
   const [draftDealId, setDraftDealId] = useState('');
+  // "+ Tạo cơ hội mới" ngay trong dropdown - BUG THAT DA GAP (gap that su,
+  // khong phai gia dinh): khach hang chua co Cơ hội nao thi dropdown chi
+  // hien "Không tìm thấy", bat nguoi dung THOAT KHOI form dang dien de di
+  // tao Co hoi o cho khac roi quay lai tu dau - mat het du lieu dang go
+  // (Hạng mục/scope...). `deals`/`dealsById` la PROP tu component cha
+  // (QuoteCenterPage/CrmCustomerDetailPage), khong the goi API cha refetch
+  // tu day - luu Co hoi vua tao THEM vao 1 state local, GOP voi prop that
+  // moi noi can doc (xem effectiveDeals/effectiveDealsById ben duoi) de hien
+  // ngay khong can cho cha tai lai.
+  const [locallyCreatedDeals, setLocallyCreatedDeals] = useState<Deal[]>([]);
+  const effectiveDeals = useMemo(
+    () => (locallyCreatedDeals.length ? [...deals, ...locallyCreatedDeals] : deals),
+    [deals, locallyCreatedDeals]
+  );
+  const effectiveDealsById = useMemo(() => {
+    if (!locallyCreatedDeals.length) return dealsById;
+    const map = new Map(dealsById);
+    locallyCreatedDeals.forEach(d => map.set(d.id, d));
+    return map;
+  }, [dealsById, locallyCreatedDeals]);
+  const CREATE_NEW_DEAL_OPTION = '__create_new_deal__';
+  const CREATE_NEW_PROJECT_OPTION = '__create_new_project__';
+  // "Tạo dự án mới"/"Tạo cơ hội mới" nhanh ngay trong workspace - tái dùng
+  // dung 2 component chuan hoa da co cho toan he thong (ProjectFormModal,
+  // DealFormModal) thay vi 1 form rieng tu viet - vua dam bao du field
+  // (nguoi phu trach, gia tri du kien, next step...) vua khong tao code
+  // trung lap. `agents` chi can fetch 1 lan cho ca 2 modal nay dung chung.
+  const [projectModalOpen, setProjectModalOpen] = useState(false);
+  const [dealModalOpen, setDealModalOpen] = useState(false);
+  const [dealCreateBusy, setDealCreateBusy] = useState(false);
+  const [dealCreateError, setDealCreateError] = useState('');
+  const [quickCreateAgents, setQuickCreateAgents] = useState<CrmUserOption[]>([]);
+  useEffect(() => {
+    void seedingCrmRepository.getAgents().then(setQuickCreateAgents).catch(() => setQuickCreateAgents([]));
+  }, []);
+
+  async function handleCreateQuickDeal(input: CreateDealInput) {
+    setDealCreateBusy(true);
+    setDealCreateError('');
+    try {
+      const created = await seedingCrmRepository.createDeal(input);
+      clearDealDraft();
+      setLocallyCreatedDeals(prev => [...prev, created]);
+      setDraftDealId(created.id);
+      if (created.projectId) setDraftProjectId(created.projectId);
+      setDealModalOpen(false);
+    } catch (err) {
+      setDealCreateError(err instanceof Error ? err.message : 'Không tạo được cơ hội.');
+    } finally {
+      setDealCreateBusy(false);
+    }
+  }
+  // "Mau bao gia" - Sale duoc doi lai mau goi y mac dinh (defaultFormId) qua
+  // dropdown rieng, CHI o che do tao moi (quoteId=null). '' = chua co goi y
+  // nao (dang cho fetch defaultFormId) - fallback ve defaultFormId luc gui.
+  const [draftFormId, setDraftFormId] = useState('');
+  useEffect(() => {
+    if (defaultFormId) setDraftFormId(prev => prev || defaultFormId);
+  }, [defaultFormId]);
   // Du an that (migration 097) - lay theo dung khach hang (draftCustomerId),
   // KHONG theo Co hoi (1 Du an co nhieu Co hoi). "" = "Chua thuoc du an".
   const [projects, setProjects] = useState<Project[] | null>(null);
@@ -207,9 +409,27 @@ export function QuoteWorkspaceModal({
   const [draftPaymentTermsDays, setDraftPaymentTermsDays] = useState('30');
   const [draftExtraTerms, setDraftExtraTerms] = useState<{ id: string; title: string; content: string }[]>([]);
   const [recentDealQuote, setRecentDealQuote] = useState<Quote | null>(null);
+  // "Chon tu danh muc" - lay THANG tu CRM -> San pham & dich vu (dung
+  // serviceCatalogRepository.list(), CHINH LA repository ma man "Mau bao
+  // gia" (QuoteFormBuilderPage) dang dung) - KHONG con phu thuoc
+  // quote_form_catalog_links, khong con bao "mau chua lien ket danh muc".
   const [catalogModalOpen, setCatalogModalOpen] = useState(false);
-  const [catalogOptions, setCatalogOptions] = useState<ServiceCatalogOptions | null>(null);
+  const [catalogTree, setCatalogTree] = useState<ServiceCatalogItem[] | null>(null);
   const [catalogLoading, setCatalogLoading] = useState(false);
+  const [catalogSearch, setCatalogSearch] = useState('');
+  const [catalogGroupFilter, setCatalogGroupFilter] = useState('');
+  const [catalogShowInactive, setCatalogShowInactive] = useState(false);
+  const [catalogSelectedIds, setCatalogSelectedIds] = useState<Set<string>>(new Set());
+  const [catalogAdding, setCatalogAdding] = useState(false);
+  const [catalogTargetSectionId, setCatalogTargetSectionId] = useState('');
+  // Xac nhan khi 1 san pham chon them da co san trong bang (cung
+  // catalogItemId) - khong tu quyet thay Sale la "tang SL" hay "them dong
+  // moi". Danh sach cho trong hang doi (moi phan tu = 1 catalogItemId trung).
+  const [catalogDedupQueue, setCatalogDedupQueue] = useState<Array<{ catalogItem: ServiceCatalogItem; existingIndex: number }>>([]);
+  // "Ap gia de xuat" o Buoc 2 - tra LAI tu API theo catalogItemId da luu tren
+  // dong (KHONG dua vao catalogTree cua modal da dong/mat state khi
+  // reload) - key = catalogItemId.
+  const [catalogPriceLookup, setCatalogPriceLookup] = useState<Record<string, ServiceCatalogItem>>({});
   const [previewModalOpen, setPreviewModalOpen] = useState(false);
   const [sendModalOpen, setSendModalOpen] = useState(false);
   const [approveModalOpen, setApproveModalOpen] = useState(false);
@@ -288,6 +508,18 @@ export function QuoteWorkspaceModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [saleUsers, user?.id, quote]);
 
+  // Tuong tu Sale o tren - nguoi tao la Presale/Both -> mac dinh gan CHINH
+  // HO lam technical_owner_id (Presale) o create-mode, khong bat tu chon lai
+  // tu dau (bug/thieu sot that da gap: chi Sale duoc tu gan, Presale luon
+  // "Chua gan" du nguoi dang login chinh la Presale).
+  useEffect(() => {
+    if (quote || draftTechnicalOwnerId || !presaleUsers || !user?.id) return;
+    if (presaleUsers.some(u => u.id === user.id)) {
+      setDraftTechnicalOwnerId(user.id);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [presaleUsers, user?.id, quote]);
+
   function businessRoleLabel(role?: string | null): string {
     if (role === 'presale') return 'Presale';
     if (role === 'sale') return 'Sale';
@@ -325,6 +557,35 @@ export function QuoteWorkspaceModal({
   function showToast(ok: boolean, text: string) {
     setWorkspaceToast({ ok, text });
     window.setTimeout(() => setWorkspaceToast(null), 4000);
+  }
+
+  // Nhan biet CU THE nut nao dang chay (khong dung chung 1 boolean `busy` mo
+  // ho cho MOI nut - bug de gap: nhieu nut cung disable/spinner nhung khong
+  // ro dang cho hanh dong nao, nguoi dung khong biet dang cho gi). Cac ham
+  // async lien quan gan/xoa key nay quanh setBusy(true)/false.
+  type WorkspaceAction = 'draftSave' | 'handoff' | 'reviewPricing' | 'requestChanges' | 'approve' | 'publish' | 'send';
+  const ACTION_LOADING_LABELS: Record<WorkspaceAction, string> = {
+    draftSave: 'Đang lưu…',
+    handoff: 'Đang lưu và bàn giao…',
+    reviewPricing: 'Đang gửi duyệt…',
+    requestChanges: 'Đang gửi yêu cầu…',
+    approve: 'Đang duyệt…',
+    publish: 'Đang phát hành…',
+    send: 'Đang gửi…',
+  };
+  const [activeAction, setActiveAction] = useState<WorkspaceAction | null>(null);
+  /** Noi dung nut khi dang chay: spinner nho + chu mo ta (khong bao gio chi
+   * hien spinner tron - accessibility, nguoi dung phai biet dang cho gi). */
+  function actionButtonContent(key: WorkspaceAction, idleContent: React.ReactNode) {
+    if (busy && activeAction === key) {
+      return (
+        <>
+          <span className="qc-btn-spinner" aria-hidden="true" />
+          {ACTION_LOADING_LABELS[key]}
+        </>
+      );
+    }
+    return idleContent;
   }
 
   // Bo quy tac active - doc 1 lan (khong phu thuoc quote - "Create mode chua
@@ -437,7 +698,7 @@ export function QuoteWorkspaceModal({
   // (bug thuc te phat hien khi doc lai RPC, khong phai gia dinh).
   const [itemsDraft, setItemsDraft] = useState<QuoteItem[]>([]);
   useEffect(() => {
-    setItemsDraft(quote?.items ? quote.items.map(item => ({ ...item })) : []);
+    setItemsDraft(quote?.items ? flattenItemTree(quote.items) : []);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [quote?.id]);
 
@@ -470,8 +731,11 @@ export function QuoteWorkspaceModal({
   // NaN) van tra ve NaN - da xac nhan bug that qua test yeu cau, khong phai
   // gia dinh).
   function toSafeNonNegative(raw: string): number | null {
-    if (raw.trim() === '') return null;
-    const parsed = Number(raw);
+    // Strip dau cham ngan nghin (nguoi dung go "1.500.000") truoc khi parse -
+    // Number("1.500.000") se ra NaN neu khong strip.
+    const digitsOnly = raw.replace(/[^\d]/g, '');
+    if (!digitsOnly) return null;
+    const parsed = Number(digitsOnly);
     if (!Number.isFinite(parsed)) return null;
     return Math.max(0, parsed);
   }
@@ -482,8 +746,14 @@ export function QuoteWorkspaceModal({
       prev.map((row, i) => {
         if (i !== index) return row;
         if (cost === null) return { ...row, costPrice: null, markupPercent: null };
-        const markup = row.markupPercent ?? 0;
-        return { ...row, costPrice: cost, costNotApplicable: false, markupPercent: markup, unitPrice: cost * (1 + markup / 100) };
+        // BUG that da fix: truoc day markup mac dinh ve 0 khi chua dat, khien
+        // Gia khach TU DONG nhay bang dung Gia von moi nhap (Sale chua he
+        // dong vao Gia khach). CHI tinh lai unitPrice khi markup DA duoc dat
+        // ro rang (khac null) - giu nguyen Gia khach neu markup chua xac dinh.
+        if (row.markupPercent == null) {
+          return { ...row, costPrice: cost, costNotApplicable: false };
+        }
+        return { ...row, costPrice: cost, costNotApplicable: false, unitPrice: cost * (1 + row.markupPercent / 100) };
       })
     );
   }
@@ -526,6 +796,7 @@ export function QuoteWorkspaceModal({
 
   function toItemInput(row: QuoteItem): QuoteItem {
     return {
+      rowType: row.rowType === 'section' ? 'section' : 'item',
       description: row.description || '',
       serviceDescription: row.serviceDescription,
       unit: row.unit,
@@ -538,24 +809,53 @@ export function QuoteWorkspaceModal({
       costNotApplicable: row.costNotApplicable ?? false,
       catalogItemId: row.catalogItemId,
       bundleSnapshot: row.bundleSnapshot,
+      // De quy - hang muc thuoc 1 nhom (Section) duoc gui long trong
+      // `children` cua dong section do, dung DINH DANG API cu da co san
+      // (xem buildItemTree() gop itemsDraft PHANG thanh cay truoc khi goi
+      // ham nay o cap goc).
+      children: (row.children || []).map(toItemInput),
     };
   }
 
-  async function persistQuote(overrides: { data?: Quote['data']; items?: QuoteItem[] }) {
+  /** Gop itemsDraft (PHANG) thanh cay + anh xa qua toItemInput - dung DUY
+   * NHAT 1 cho truoc moi lan gui hang muc len BE (thay cho
+   * `itemsDraft.map(toItemInput)` cu, von bo lo cau truc nhom vi map phang
+   * khong biet hang muc nao thuoc section nao). */
+  function buildItemsPayload(flat: QuoteItem[]): QuoteItem[] {
+    return buildItemTree(flat).map(toItemInput);
+  }
+
+  async function persistQuote(overrides: { data?: Quote['data']; items?: QuoteItem[] }, opts?: { silent?: boolean }) {
     if (!quote) return;
-    setBusy(true);
+    // silent=true: dung cho auto-save NGAM khi go/blur tung o (mo ta/SL/gia
+    // von/markup...) - KHONG dung chung co `busy`/`activeAction` voi cac nut
+    // hanh dong chinh (Bàn giao/Gửi duyệt...) nua. BUG THAT DA GAP: truoc day
+    // MOI auto-save nay deu bat `busy=true`, khien nut "Bàn giao" bi disable
+    // (khong the bam) DUNG NGAY luc nguoi dung vua nhap xong hang muc roi bam
+    // lien tay - lan bam dau tien bi "nuot mat" (nut dang disable, trinh
+    // duyet khong phat click), phai bam LAN 2 (luc auto-save da xong,
+    // busy=false) moi thanh cong - nhin nhu phai bam 2 lan Bàn giao moi qua
+    // duoc buoc 2. Auto-save van chay binh thuong ngam, chi khong con chan
+    // cac nut hanh dong khac trong luc no dang luu.
+    if (!opts?.silent) {
+      setActiveAction('draftSave');
+      setBusy(true);
+    }
     try {
       const nextItems = overrides.items ?? itemsDraft;
       const updated = await seedingQuoteRepository.updateQuote(quote.id, {
         data: overrides.data ?? quote.data,
-        items: nextItems.map(toItemInput),
+        items: buildItemsPayload(nextItems),
       });
       setQuote(updated);
       await onChanged();
     } catch (err) {
       window.alert(err instanceof Error ? err.message : 'Không lưu được thay đổi.');
     } finally {
-      setBusy(false);
+      if (!opts?.silent) {
+        setBusy(false);
+        setActiveAction(null);
+      }
     }
   }
 
@@ -566,21 +866,151 @@ export function QuoteWorkspaceModal({
     ]);
   }
 
-  function addItemsFromCatalog(items: QuoteItem[]) {
-    if (items.length === 0) return;
-    const next = [...itemsDraft, ...items];
-    setItemsDraft(next);
-    if (quote) void persistQuote({ items: next });
-    setCatalogModalOpen(false);
+  // Muc cha (Section, migration 104) - dong tieu de nhom THUAN TUY, khong
+  // tinh tien (server tu ep qty/gia ve 0 du client gui gi). `id` TAM (client-
+  // side, chua luu that) de cac hang muc con moi them ngay sau do co the tro
+  // toi qua `parentItemId` TRUOC ca khi bam Luu - buildItemsPayload() gop lai
+  // dung nhom nay luc gui len, BE se tra ve id THAT sau khi luu/tai lai.
+  function addSectionRow() {
+    setItemsDraft(prev => [
+      ...prev,
+      { id: newBlockId(), rowType: 'section', description: 'Mục mới', quantity: 0, unitPrice: 0, vatRate: 0, discountPercent: 0 },
+    ]);
   }
 
+  // Them 1 hang muc NGAY SAU hang muc cuoi cung cua dung nhom do (hoac ngay
+  // sau chinh dong section neu nhom con rong) - giu dung tinh chat "cac hang
+  // muc cua 1 nhom nam LIEN TIEP trong mang" ma phan render dang dua vao
+  // (xem vong lap render ben duoi), tranh phai dung ca 1 buoc gop-cay chi de
+  // hien thi.
+  function addItemUnderSection(sectionId: string) {
+    setItemsDraft(prev => {
+      const sectionIndex = prev.findIndex(row => row.id === sectionId);
+      if (sectionIndex === -1) return prev;
+      let insertAt = sectionIndex + 1;
+      while (insertAt < prev.length && prev[insertAt].parentItemId === sectionId) insertAt += 1;
+      const newRow: QuoteItem = {
+        description: '', quantity: 1, unitPrice: 0, vatRate: 10, discountPercent: 0,
+        costPrice: null, markupPercent: null, parentItemId: sectionId,
+      };
+      return [...prev.slice(0, insertAt), newRow, ...prev.slice(insertAt)];
+    });
+  }
+
+  function duplicateItemRow(index: number) {
+    setItemsDraft(prev => {
+      const source = prev[index];
+      if (!source) return prev;
+      const clone: QuoteItem = { ...source, id: undefined };
+      const next = [...prev.slice(0, index + 1), clone, ...prev.slice(index + 1)];
+      if (quote) void persistQuote({ items: next }, { silent: true });
+      return next;
+    });
+  }
+
+  // Keo-tha sap xep/chuyen nhom bang hang muc - dung API HTML5 Drag and Drop
+  // thuan (khong them thu vien ngoai, bang chi vai chuc dong la nhieu). Chi
+  // luu INDEX dang keo trong 1 ref (khong can state, khong lam re-render moi
+  // khi keo qua tung hang). Tha 1 hang muc VAO 1 Muc cha se tu chuyen no vao
+  // dung nhom do (thanh hang muc DAU TIEN cua nhom) - tha VAO 1 hang muc
+  // khac se xep truoc dong do (thua ke DUNG nhom cua dong do, ke ca "khong
+  // thuoc nhom nao"). Keo ca 1 Muc cha se mang theo CA hang muc con cua no
+  // (xem getRowBlockRange/moveRowBlock).
+  const dragRowIndexRef = useRef<number | null>(null);
+  function handleRowDragStart(index: number) {
+    dragRowIndexRef.current = index;
+  }
+  function handleRowDrop(targetIndex: number, targetIsSection: boolean) {
+    const fromIndex = dragRowIndexRef.current;
+    dragRowIndexRef.current = null;
+    if (fromIndex === null || fromIndex === targetIndex) return;
+    const draggedIsSection = itemsDraft[fromIndex]?.rowType === 'section';
+    // Tha 1 hang muc VAO 1 Section = thanh hang muc DAU TIEN cua nhom do
+    // (chen ngay SAU dong tieu de) - tha VAO 1 hang muc thuong = xep NGAY
+    // TRUOC dong do. RIENG keo 1 Section tha vao 1 Section khac: "chen vao
+    // lam con" khong co y nghia giua 2 Section voi nhau - phai hieu la DOI
+    // CHO 2 nhom (chen truoc nhom dich), khong +1.
+    const insertBeforeIndex = (targetIsSection && !draggedIsSection) ? targetIndex + 1 : targetIndex;
+    setItemsDraft(prev => {
+      const next = moveRowBlock(prev, fromIndex, insertBeforeIndex);
+      if (quote) void persistQuote({ items: next }, { silent: true });
+      return next;
+    });
+  }
+  // Doi cho voi CA khoi lien ke (tren/duoi) - dung getRowBlockRange 2 lan de
+  // biet dung ranh gioi khoi lang gieng (phong khoi do la 1 Section nhieu
+  // hang muc con, khong phai luon dung 1 dong).
+  function moveRowUpDown(index: number, direction: -1 | 1) {
+    setItemsDraft(prev => {
+      const [start, end] = getRowBlockRange(prev, index);
+      let insertBeforeIndex: number;
+      if (direction === -1) {
+        if (start === 0) return prev;
+        insertBeforeIndex = blockStartEndingAt(prev, start - 1);
+      } else {
+        if (end >= prev.length) return prev;
+        insertBeforeIndex = getRowBlockRange(prev, end)[1];
+      }
+      const next = moveRowBlock(prev, index, insertBeforeIndex);
+      if (quote) void persistQuote({ items: next }, { silent: true });
+      return next;
+    });
+  }
+
+  // Danh sach phang cac dong BAN DUOC (bundle/component) tu cay catalog day
+  // du - group chi dung lam ten nhom + loc, khong tu chon duoc. Gan kem
+  // groupName cua group CHA GAN NHAT (catalog hien chi 1 cap group->item,
+  // nhung ham nay van de quy vong sau phong khi mo rong).
+  function flattenCatalogTree(roots: ServiceCatalogItem[]): ServiceCatalogItem[] {
+    const out: ServiceCatalogItem[] = [];
+    function walk(nodes: ServiceCatalogItem[], nearestGroupName?: string) {
+      for (const node of nodes) {
+        if (node.itemType === 'group') {
+          walk(node.children || [], node.name);
+        } else {
+          out.push({ ...node, groupName: nearestGroupName });
+          if (node.children?.length) walk(node.children, nearestGroupName);
+        }
+      }
+    }
+    walk(roots);
+    return out;
+  }
+
+  function addItemsFromCatalog(items: QuoteItem[]) {
+    if (items.length === 0) return;
+    let next = itemsDraft;
+    if (catalogTargetSectionId) {
+      const sectionIndex = next.findIndex(row => row.id === catalogTargetSectionId);
+      if (sectionIndex !== -1) {
+        let insertAt = sectionIndex + 1;
+        while (insertAt < next.length && next[insertAt].parentItemId === catalogTargetSectionId) insertAt += 1;
+        next = [
+          ...next.slice(0, insertAt),
+          ...items.map(item => ({ ...item, parentItemId: catalogTargetSectionId })),
+          ...next.slice(insertAt),
+        ];
+      } else {
+        next = [...next, ...items];
+      }
+    } else {
+      next = [...next, ...items];
+    }
+    setItemsDraft(next);
+    if (quote) void persistQuote({ items: next }, { silent: true });
+  }
+
+  /** Mapping khi them tu danh muc - CHI dien ma/ten, mo ta, don vi, VAT, SL
+   * mac dinh 1. TUYET DOI khong tu dien "Gia khach" (unitPrice) khi con o
+   * Buoc 1 (chua duoc canEditPricingCells) - giu dung hanh vi khoa gia Sale
+   * da co san, tranh lo gia truoc khi sang Buoc 2. */
   function catalogItemToQuoteItem(item: ServiceCatalogItem): QuoteItem {
     return {
       description: item.description || item.name,
-      serviceDescription: item.name,
+      serviceDescription: item.sku ? `${item.sku} - ${item.name}` : item.name,
       unit: item.unit || '',
       quantity: item.specQuantityPerUnit || 1,
-      unitPrice: item.defaultUnitPriceVnd || 0,
+      unitPrice: canEditPricingCells ? (item.defaultUnitPriceVnd || 0) : 0,
       discountPercent: item.defaultDiscountPercent || 0,
       vatRate: item.defaultVatRate ?? 10,
       costPrice: null,
@@ -591,19 +1021,104 @@ export function QuoteWorkspaceModal({
 
   async function openCatalogPicker() {
     setCatalogModalOpen(true);
-    if (catalogOptions) return;
-    const formId = quote?.quoteFormId || defaultFormId;
-    if (!formId) return;
+    setCatalogSearch('');
+    setCatalogGroupFilter('');
+    setCatalogSelectedIds(new Set());
+    setCatalogTargetSectionId('');
+    setCatalogDedupQueue([]);
+    if (catalogTree) return;
     setCatalogLoading(true);
     try {
-      const options = await seedingQuoteRepository.getServiceCatalogOptions(formId);
-      setCatalogOptions(options);
+      const tree = await serviceCatalogRepository.list();
+      setCatalogTree(tree);
     } catch {
-      setCatalogOptions({ bundles: [], components: [] });
+      setCatalogTree([]);
     } finally {
       setCatalogLoading(false);
     }
   }
+
+  const catalogFlatItems = useMemo(() => (catalogTree ? flattenCatalogTree(catalogTree) : []), [catalogTree]);
+  const catalogGroupNames = useMemo(
+    () => Array.from(new Set(catalogFlatItems.map(item => item.groupName).filter((n): n is string => Boolean(n)))),
+    [catalogFlatItems]
+  );
+  const catalogFilteredItems = useMemo(() => {
+    const q = catalogSearch.trim().toLowerCase();
+    return catalogFlatItems.filter(item => {
+      if (!catalogShowInactive && item.status !== 'active') return false;
+      if (catalogGroupFilter && item.groupName !== catalogGroupFilter) return false;
+      if (!q) return true;
+      return (
+        (item.sku || '').toLowerCase().includes(q) ||
+        item.name.toLowerCase().includes(q) ||
+        (item.description || '').toLowerCase().includes(q)
+      );
+    });
+  }, [catalogFlatItems, catalogSearch, catalogGroupFilter, catalogShowInactive]);
+  const catalogSectionOptions = useMemo(
+    () => itemsDraft.filter(row => row.rowType === 'section' && row.id).map(row => ({ id: row.id as string, label: row.description || 'Mục cha' })),
+    [itemsDraft]
+  );
+
+  function toggleCatalogSelected(id: string) {
+    setCatalogSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  /** Them cac san pham dang chon vao bang - kiem tra trung catalogItemId
+   * TRUOC, dong nao trung thi day vao hang doi hoi qua ConfirmModal (khong
+   * tu quyet "tang SL" hay "them dong moi" thay Sale) - dong khong trung
+   * them thang. */
+  function handleAddSelectedCatalogItems() {
+    if (catalogAdding || catalogSelectedIds.size === 0) return;
+    setCatalogAdding(true);
+    try {
+      const selectedItems = catalogFlatItems.filter(item => catalogSelectedIds.has(item.id));
+      const dedup: Array<{ catalogItem: ServiceCatalogItem; existingIndex: number }> = [];
+      const freshItems: QuoteItem[] = [];
+      for (const item of selectedItems) {
+        const existingIndex = itemsDraft.findIndex(row => row.rowType !== 'section' && row.catalogItemId === item.id);
+        if (existingIndex !== -1) dedup.push({ catalogItem: item, existingIndex });
+        else freshItems.push(catalogItemToQuoteItem(item));
+      }
+      if (freshItems.length) addItemsFromCatalog(freshItems);
+      if (dedup.length) {
+        setCatalogDedupQueue(dedup);
+      } else {
+        setCatalogModalOpen(false);
+      }
+      setCatalogSelectedIds(new Set());
+    } finally {
+      setCatalogAdding(false);
+    }
+  }
+
+  function resolveCatalogDedup(action: 'increase' | 'addNew') {
+    const current = catalogDedupQueue[0];
+    if (!current) return;
+    if (action === 'increase') {
+      setItemsDraft(prev => {
+        const next = prev.map((row, index) =>
+          index === current.existingIndex ? { ...row, quantity: (row.quantity || 0) + (current.catalogItem.specQuantityPerUnit || 1) } : row
+        );
+        if (quote) void persistQuote({ items: next }, { silent: true });
+        return next;
+      });
+    } else {
+      addItemsFromCatalog([catalogItemToQuoteItem(current.catalogItem)]);
+    }
+    setCatalogDedupQueue(prev => {
+      const rest = prev.slice(1);
+      if (rest.length === 0) setCatalogModalOpen(false);
+      return rest;
+    });
+  }
+
 
   // "Nap tu bao gia gan nhat" - CHI hien CTA khi thuc su tim thay 1 bao gia
   // KHAC (cung deal) co hang muc that qua API that (getQuotes() + loc client
@@ -648,13 +1163,20 @@ export function QuoteWorkspaceModal({
     }));
     const next = [...itemsDraft, ...cloned];
     setItemsDraft(next);
-    if (quote) void persistQuote({ items: next });
+    if (quote) void persistQuote({ items: next }, { silent: true });
   }
 
   function removeItemRow(index: number) {
-    const next = itemsDraft.filter((_, i) => i !== index);
+    const target = itemsDraft[index];
+    // Xoa 1 Muc cha (Section) thi xoa LUON toan bo hang muc con thuoc nhom do
+    // (khop hanh vi ON DELETE CASCADE tren parent_item_id da co san o DB tu
+    // migration 063 - khong de lai hang muc "mo coi" khong thuoc nhom nao ma
+    // nguoi dung khong co y dinh giu lai rieng).
+    const next = target?.rowType === 'section' && target.id
+      ? itemsDraft.filter((row, i) => i !== index && row.parentItemId !== target.id)
+      : itemsDraft.filter((_, i) => i !== index);
     setItemsDraft(next);
-    if (quote) void persistQuote({ items: next });
+    if (quote) void persistQuote({ items: next }, { silent: true });
   }
 
   function applyQuickMarkup(percent: number) {
@@ -662,7 +1184,7 @@ export function QuoteWorkspaceModal({
       row.costPrice != null ? { ...row, markupPercent: percent, unitPrice: row.costPrice * (1 + percent / 100) } : row
     );
     setItemsDraft(next);
-    if (quote) void persistQuote({ items: next });
+    if (quote) void persistQuote({ items: next }, { silent: true });
   }
 
   // "Target margin X%" - khac quick markup (khong dua truc tiep tren %) : suy
@@ -677,7 +1199,7 @@ export function QuoteWorkspaceModal({
       return { ...row, unitPrice, markupPercent };
     });
     setItemsDraft(next);
-    if (quote) void persistQuote({ items: next });
+    if (quote) void persistQuote({ items: next }, { silent: true });
   }
 
   const [globalDiscount, setGlobalDiscount] = useState('0');
@@ -690,7 +1212,7 @@ export function QuoteWorkspaceModal({
     const pct = Math.max(0, Math.min(100, Number(globalDiscount) || 0));
     const next = itemsDraft.map(row => ({ ...row, discountPercent: pct }));
     setItemsDraft(next);
-    if (quote) void persistQuote({ items: next });
+    if (quote) void persistQuote({ items: next }, { silent: true });
   }
 
   const paymentTermsBlockDraft = quote?.data?.customBlocks?.find(b => b.kind === 'payment_terms');
@@ -718,7 +1240,7 @@ export function QuoteWorkspaceModal({
     };
     if (idx >= 0) blocks[idx] = newBlock;
     else blocks.push(newBlock);
-    void persistQuote({ data: { ...quote.data, customBlocks: blocks } });
+    void persistQuote({ data: { ...quote.data, customBlocks: blocks } }, { silent: true });
   }
 
   function addTermNote() {
@@ -729,7 +1251,38 @@ export function QuoteWorkspaceModal({
       return;
     }
     const blocks = [...(quote.data?.customBlocks || []), { id: newBlockId(), kind: 'custom_field' as const, title: 'Điều khoản bổ sung', content: text.trim() }];
-    void persistQuote({ data: { ...quote.data, customBlocks: blocks } });
+    void persistQuote({ data: { ...quote.data, customBlocks: blocks } }, { silent: true });
+  }
+
+  // Danh sach dieu khoan bo sung da them (nut "+ Điều khoản") - hien NGAY
+  // duoi quickbar kem Sửa/Xóa, ca 2 che do: che do tao moi doc draftExtraTerms
+  // (chua ghi DB that), quote da ton tai doc thang tu quote.data.customBlocks
+  // (kind='custom_field' - KHONG lay payment_terms/scope_of_work, 2 kind do
+  // co UI rieng o cho khac).
+  const extraTermsList = quote
+    ? (quote.data?.customBlocks || []).filter(b => b.kind === 'custom_field').map(b => ({ id: b.id, title: b.title, content: b.content }))
+    : draftExtraTerms;
+
+  function editTermNote(id: string) {
+    const current = extraTermsList.find(t => t.id === id);
+    if (!current) return;
+    const text = window.prompt('Sửa điều khoản:', current.content);
+    if (text === null || !text.trim()) return;
+    if (!quote) {
+      setDraftExtraTerms(prev => prev.map(t => (t.id === id ? { ...t, content: text.trim() } : t)));
+      return;
+    }
+    const blocks = (quote.data?.customBlocks || []).map(b => (b.id === id ? { ...b, content: text.trim() } : b));
+    void persistQuote({ data: { ...quote.data, customBlocks: blocks } }, { silent: true });
+  }
+
+  function removeTermNote(id: string) {
+    if (!quote) {
+      setDraftExtraTerms(prev => prev.filter(t => t.id !== id));
+      return;
+    }
+    const blocks = (quote.data?.customBlocks || []).filter(b => b.id !== id);
+    void persistQuote({ data: { ...quote.data, customBlocks: blocks } }, { silent: true });
   }
 
   // The gon "Yeu cau & pham vi cong viec" cho bao gia DA TON TAI - hien tom
@@ -767,7 +1320,7 @@ export function QuoteWorkspaceModal({
     }
     await persistQuote({
       data: { ...quote.data, customBlocks: blocks, requestSummary: editSummary.trim() || undefined, expectedProducts: editExpectedProducts.trim() || undefined },
-    });
+    }, { silent: true });
     setScopeEditing(false);
   }
 
@@ -778,8 +1331,13 @@ export function QuoteWorkspaceModal({
     return agentsById.get(id) || 'Không rõ';
   }
 
-  async function load(id: string) {
-    setLoading(true);
+  async function load(id: string, opts?: { silent?: boolean }) {
+    // "silent" - dung cho reload() sau 1 thao tac nho (gan nguoi phu trach,
+    // sua 1 field...) - KHONG duoc bat lai "loading" toan man hinh (truoc day
+    // luon bat, khien ca form bi thay bang "Đang tải báo giá..." roi hien lai
+    // - giat/nhay y het load lai trang, du chi doi 1 truong nho). Chi lan tai
+    // DAU TIEN (mo modal) moi can man hinh loading day du.
+    if (!opts?.silent) setLoading(true);
     try {
       const [q, log, hc] = await Promise.all([
         seedingQuoteRepository.getQuote(id),
@@ -789,7 +1347,7 @@ export function QuoteWorkspaceModal({
       setQuote(q);
       setActivity(log);
       setChecklist(hc);
-      setChecklistDraft(hc);
+      setChecklistDraft(hc || emptyChecklist());
     } catch (err) {
       window.alert(err instanceof Error ? err.message : 'Không tải được báo giá.');
       onClose();
@@ -827,7 +1385,7 @@ export function QuoteWorkspaceModal({
       setQuote(null);
       setActivity([]);
       setChecklist(null);
-      setChecklistDraft(null);
+      setChecklistDraft(emptyChecklist());
       setLoading(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -878,7 +1436,7 @@ export function QuoteWorkspaceModal({
   // nhung render co dieu kien do dung (vd loading=true giua luc load(id) sau
   // khi tao bao gia), gay loi that "change in the order of Hooks" (bug that
   // da xay ra khi bam Luu nhap/Gui yeu cau xu ly trong che do tao moi).
-  const deal = quote?.dealId ? dealsById.get(quote.dealId) : draftDealId ? dealsById.get(draftDealId) : undefined;
+  const deal = quote?.dealId ? effectiveDealsById.get(quote.dealId) : draftDealId ? effectiveDealsById.get(draftDealId) : undefined;
 
   // Du an cascade THEO KHACH HANG that (Khach hang -> Du an -> Co hoi) - chua
   // biet khach hang (create-mode chua chon, hoac quote da ton tai khong gan
@@ -898,6 +1456,41 @@ export function QuoteWorkspaceModal({
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [effectiveCustomerIdForProjects]);
+
+  /** "Ap gia de xuat" o Buoc 2 - tra LAI tu API theo catalogItemId da luu tren
+   * dong (KHONG dung state catalogTree cua modal picker - modal do co the da
+   * dong tu lau/mat state khi reload trang). PHAI dat TRUOC "if (loading)
+   * return" ben duoi (dung quy uoc Rules of Hooks da ghi chu o effect
+   * "deal"/effectiveCustomerIdForProjects ngay tren) - nen KHONG dung duoc
+   * hang so canEditPricingCells (khai bao SAU early return) ma phai tu tinh
+   * lai dieu kien tuong duong ngay tai day tu quote/user/deal da co san. */
+  useEffect(() => {
+    const localStage = quote?.processingStage || 'request';
+    const localIsDraft = quote ? quote.status === 'draft' : true;
+    const localCanEdit = quote ? canWriteDeal(user, deal) || canApproveQuote(user) : true;
+    const canEditPricingCellsNow = localCanEdit && localIsDraft && localStage === 'pricing' && canEditQuotePricingFields(user, quote);
+    if (!canEditPricingCellsNow) return;
+    const idsNeeded = Array.from(
+      new Set(
+        itemsDraft
+          .filter(row => row.rowType !== 'section' && (row.unitPrice == null || row.unitPrice === 0) && row.catalogItemId)
+          .map(row => row.catalogItemId as string)
+      )
+    ).filter(id => !(id in catalogPriceLookup));
+    if (idsNeeded.length === 0) return;
+    let alive = true;
+    void serviceCatalogRepository.lookupByIds(idsNeeded).then(results => {
+      if (!alive) return;
+      setCatalogPriceLookup(prev => {
+        const next = { ...prev };
+        for (const item of results) next[item.id] = item;
+        for (const id of idsNeeded) if (!(id in next)) next[id] = undefined as unknown as ServiceCatalogItem;
+        return next;
+      });
+    }).catch(() => {});
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [quote, user, deal, itemsDraft]);
 
   if (loading) {
     return (
@@ -931,8 +1524,22 @@ export function QuoteWorkspaceModal({
   // tra ve (dung yeu cau "Review/Admin: hien thi Cost+Pricing+Profitability
   // dang read-only"). Sau 'review' (approved) da tu khoa qua isDraft roi.
   const isLockedForReview = stage === 'review';
-  const canEditCostCells = canEdit && isDraft && !isLockedForReview && canEditQuoteCost(user, quote);
-  const canEditPricingCells = canEdit && isDraft && !isLockedForReview && canEditQuotePricingFields(user, quote);
+  // Khoa theo BUOC (moi, SUA LAI lan 2: bo han ngoai le Admin/Leader - khoa
+  // that cho TAT CA, khong con bypass): Buoc 1 (request) chi dien Hang
+  // muc+SL, CHUA duoc dien Gia von (tu Buoc 2 - technical - tro di moi
+  // duoc); Markup/Gia khach CHI dien duoc dung o Buoc 3 (pricing). Backend
+  // enforce lai y het qua _check_item_field_level_permission - day chi la
+  // UX, khong phai lop chan that.
+  // Che do TAO MOI (!quote) gio la man hinh GOP Buoc 1+2 - Gia von phai dien
+  // duoc ngay tai day (khong con man "Thong tin ky thuat" rieng nua), du
+  // `stage` fallback ve 'request' khi chua co quote that. Quote CU da ton
+  // tai nhung con ket o 'request' (truoc khi co thay doi nay) van GIU khoa
+  // cho toi khi tu chuyen qua nut "Gửi yêu cầu xử lý" (duong lui cu, xem
+  // footer) - tranh mo khoa nham cho du lieu cu chua qua luong moi.
+  const costStageOk = !quote || stage !== 'request';
+  const pricingStageOk = stage === 'pricing';
+  const canEditCostCells = canEdit && isDraft && !isLockedForReview && canEditQuoteCost(user, quote) && costStageOk;
+  const canEditPricingCells = canEdit && isDraft && !isLockedForReview && canEditQuotePricingFields(user, quote) && pricingStageOk;
   // "Chưa có/Chưa tính" (khong du du lieu) khac "Không có quyền xem" (bi
   // chan boi apply_quote_field_permissions o backend) - quote moi (chua co
   // quote.id, dang tao) mac dinh coi la duoc xem/sua (draft cua chinh minh).
@@ -940,14 +1547,29 @@ export function QuoteWorkspaceModal({
   const pricingViewAllowed = quote ? quote.pricingViewAllowed !== false : true;
   const profitabilityViewAllowed = quote ? quote.profitabilityViewAllowed !== false : true;
 
+  function applySuggestedPrice(index: number, catalogItemId: string) {
+    const found = catalogPriceLookup[catalogItemId];
+    if (!found) return;
+    setItemsDraft(prev => {
+      const next = prev.map((row, i) => (i === index ? { ...row, unitPrice: found.defaultUnitPriceVnd || 0 } : row));
+      if (quote) void persistQuote({ items: next }, { silent: true });
+      return next;
+    });
+  }
+
   // Sau khi chon Co hoi CRM (che do tao moi), tu dien cac field nghiep vu tu
   // CHINH Deal that (khong bia noi dung) - CHI dien field dang TRONG, hoi xac
   // nhan truoc khi ghi de field da co du lieu nguoi dung tu nhap. Deal khong
   // co du lieu cho field nao thi bao ro that (khong de trang im lang khien
   // tuong nut khong hoat dong - dung phan hoi UI da xac nhan can sua).
   function handleSelectDeal(dealId: string) {
+    if (dealId === CREATE_NEW_DEAL_OPTION) {
+      setDealCreateError('');
+      setDealModalOpen(true);
+      return;
+    }
     setDraftDealId(dealId);
-    const selected = dealId ? dealsById.get(dealId) : undefined;
+    const selected = dealId ? effectiveDealsById.get(dealId) : undefined;
     // Co hoi da co san Du an -> tu chon dung Du an do (dung yeu cau "Chon
     // Opportunity co project_id: tu chon dung Project").
     if (selected?.projectId) setDraftProjectId(selected.projectId);
@@ -981,37 +1603,26 @@ export function QuoteWorkspaceModal({
   }
 
   async function createRequest(submitFully: boolean) {
-    if (!draftDealId) {
-      window.alert('Vui lòng chọn khách hàng / cơ hội CRM.');
-      return;
-    }
-    const content = draftScope.trim() || draftSummary.trim();
+    // Gop Buoc 1 (Yeu cau bao gia) + Buoc 2 (Thong tin ky thuat) lam MOT -
+    // cung 1 nguoi (thuong la Presale) dien hang muc VA gia von ngay tai day.
+    // 2 nut goi ham nay: header "Lưu / Chỉnh sửa" (submitFully=false, CHI luu
+    // ban nhap, giu nguyen o 'request', KHONG bat SLA) va footer "Bàn giao"
+    // (submitFully=true, luu VA tu chuyen sang 'technical' ngay, bat dau SLA).
+    if (!draftDealId || (!draftFormId && !defaultFormId)) return;
+    // Bam "Bàn giao" (submitFully=true) la muon chuyen sang buoc 2 ngay -
+    // backend (set_quote_processing_stage) bat buoc phai co sla_due_at hop
+    // le (da dat + con trong tuong lai) moi cho chuyen buoc, neu khong se
+    // chan luon o day thay vi tao xong quote roi lang le "ket" o buoc 1 (bug
+    // that da gap: Sale bam Bàn giao nhung khong thay gi doi, phai tu bam
+    // nut du phong "Gửi yêu cầu xử lý" moi hieu ra vi sao).
     if (submitFully) {
-      if (!content) {
-        window.alert('Vui lòng nhập tóm tắt nhu cầu hoặc mô tả scope cần estimate.');
-        return;
-      }
-      if (!draftTechnicalOwnerId && !draftQuoteOwnerId) {
-        window.alert('Vui lòng chọn ít nhất 1 người phụ trách (kỹ thuật hoặc báo giá).');
-        return;
-      }
-      // Mirror dung dieu kien backend (set_quote_processing_stage,
-      // request->technical) - chan SOM o FE, khong de nguoi dung tao xong
-      // roi bi loi am tham khi chuyen buoc.
       const slaIso = datetimeLocalValueToIso(draftSlaDueAt);
-      if (!slaIso) {
-        window.alert('Vui lòng đặt SLA / hạn hoàn tất nội bộ trước khi gửi yêu cầu xử lý.');
-        return;
-      }
-      if (new Date(slaIso).getTime() <= Date.now()) {
-        window.alert('SLA / hạn hoàn tất nội bộ phải là thời điểm trong tương lai.');
+      if (!slaIso || new Date(slaIso).getTime() <= Date.now()) {
+        window.alert('Vui lòng đặt SLA / Hạn hoàn tất nội bộ (một thời điểm trong tương lai) trước khi Bàn giao.');
         return;
       }
     }
-    if (!defaultFormId) {
-      window.alert('Chưa có mẫu báo giá nào khả dụng để tạo yêu cầu.');
-      return;
-    }
+    setActiveAction(submitFully ? 'handoff' : 'draftSave');
     setBusy(true);
     try {
       const customBlocks = [
@@ -1031,7 +1642,9 @@ export function QuoteWorkspaceModal({
       ];
       const created = await seedingQuoteRepository.createQuote({
         dealId: draftDealId,
-        quoteFormId: defaultFormId,
+        // Da validate o tren (!draftFormId && !defaultFormId -> return som) -
+        // toi day chac chan co 1 trong 2 gia tri, an toan non-null assert.
+        quoteFormId: (draftFormId || defaultFormId)!,
         projectId: draftProjectId || null,
         slaDueAt: datetimeLocalValueToIso(draftSlaDueAt),
         data: {
@@ -1044,50 +1657,163 @@ export function QuoteWorkspaceModal({
           requestSummary: draftSummary.trim() || undefined,
           expectedProducts: draftExpectedProducts.trim() || undefined,
           internalRequestNote: draftInternalNote.trim() || undefined,
+          // BUG that da fix: khoi "THONG TIN KHACH HANG" tren ban khach truoc
+          // day luon rong ([Kinh gui]/[Khach hang]...) du da chon dung Khach
+          // hang/Co hoi o tren, vi day la field text tu do rieng cua tung
+          // quote (data.customerRecipient...), KHONG tu dong lay tu ho so CRM
+          // - copy san tu `deal` da chon luc tao, Sale van sua lai duoc binh
+          // thuong neu can khac di.
+          ...(deal
+            ? {
+                customerRecipient: deal.customerName || undefined,
+                customerCompanyName: deal.companyName || undefined,
+                customerContactName: deal.customerName || undefined,
+                customerAddress: deal.address || undefined,
+                customerPhone: deal.phone || undefined,
+                customerEmail: deal.email || undefined,
+                customerTaxCode: deal.taxCode || undefined,
+              }
+            : {}),
         },
         // Hang muc da nhap truoc khi quote that ton tai (che do tao moi) -
         // gui luon cung luc tao, KHONG bat nguoi dung phai luu roi moi duoc
         // nhap hang muc (yeu cau da xac nhan).
-        items: itemsDraft.map(toItemInput),
+        items: buildItemsPayload(itemsDraft),
       });
-      if (draftTechnicalOwnerId || draftQuoteOwnerId) {
+      // BUG that da fix: createRequest() gio tu chay ngam ngay khi co hang
+      // muc dau tien - rat co the Sale/Presale CHUA KIP chon dropdown Presale/
+      // Sale luc do. Neu bo trong ca 2, khong ai la technicalOwnerId/
+      // quoteOwnerId cua quote moi tao -> chinh nguoi vua tao lai KHONG sua
+      // duoc hang muc cua chinh minh (canEditQuoteCost/PricingFields deu
+      // false neu ho khong phai admin/leader/sale-team). Mac dinh gan CHINH
+      // nguoi dang tao vao ca 2 vai tro neu chua chon ai - ho tu doi lai binh
+      // thuong qua dropdown sau, khong bi khoa ngay chinh du lieu minh vua go.
+      const resolvedTechnicalOwnerId = draftTechnicalOwnerId || user?.id;
+      const resolvedQuoteOwnerId = draftQuoteOwnerId || user?.id;
+      if (resolvedTechnicalOwnerId || resolvedQuoteOwnerId) {
         await seedingQuoteRepository.assignQuoteOwners(created.id, {
-          technicalOwnerId: draftTechnicalOwnerId || undefined,
-          quoteOwnerId: draftQuoteOwnerId || undefined,
+          technicalOwnerId: resolvedTechnicalOwnerId || undefined,
+          quoteOwnerId: resolvedQuoteOwnerId || undefined,
         });
       }
-      // "Gui yeu cau xu ly" (submitFully) THAT SU gui yeu cau sang buoc ky
-      // thuat - chuyen processing_stage tu 'request' -> 'technical' ngay,
-      // khac voi "Luu nhap" (chi tao record o buoc 'request', chua gui di
-      // dau). Day la diem khac biet DUY NHAT giua 2 nut, khong chi la
-      // validation chat hon.
+      // submitFully=true (nut "Bàn giao"): tu dong chuyen processing_stage tu
+      // 'request' -> 'technical' ngay sau khi tao - day chinh la moc SLA bat
+      // dau tinh (sla_started_at chi set o lan dau request->technical, xem
+      // set_quote_processing_stage). SLA da duoc validate hop le O TREN
+      // (truoc khi tao quote) khi submitFully=true, nen toi day chac chan
+      // chuyen buoc duoc - khong con nhanh "im lang bo qua" nua. submitFully
+      // =false (nut header "Lưu / Chỉnh sửa"): CHI luu ban nhap, KHONG chuyen
+      // buoc - giu nguyen o 'request' de Sale con sua thoai mai.
+      let advancedToTechnical = false;
       if (submitFully) {
         try {
           await seedingQuoteRepository.setQuoteProcessingStage(created.id, 'technical');
+          advancedToTechnical = true;
         } catch (stageErr) {
-          // Da FE-validate SLA truoc do nen it khi roi vao day, nhung neu
-          // backend van tu choi vi ly do khac thi PHAI bao cho nguoi dung
-          // biet ro (khong am tham nuot loi nua) - record van da tao dung
-          // that, nguoi dung van co the tu bam "Gui yeu cau ky thuat" trong
-          // workspace sau khi sua.
           window.alert(
-            (stageErr instanceof Error ? stageErr.message : 'Không gửi được yêu cầu xử lý.') +
-              ' Báo giá đã được lưu — bạn có thể tự bấm "Gửi yêu cầu xử lý" trong workspace sau khi sửa.'
+            (stageErr instanceof Error ? stageErr.message : 'Không chuyển được sang bước Thông tin kỹ thuật.') +
+              ' Báo giá đã được lưu — bạn có thể tự bấm "Bàn giao" trong workspace sau khi sửa.'
           );
         }
       }
       await onChanged();
-      await load(created.id);
+      // Sale co the da tick san checklist ban giao (Scope/Cost/Timeline/
+      // Assumption) NGAY tu luc con o Buoc 1, TRUOC khi quote tu tao xong -
+      // luu lai truoc khi load() ben duoi lam mat (load() luon nap checklist
+      // THAT tu server, luc nay chi la record rong vua tao, se de mat trang
+      // tick cuc bo neu khong luu lai truoc).
+      const pendingChecklist = checklistDraft;
+      const hasChecklistInput = Boolean(
+        pendingChecklist.scopeConfirmed || pendingChecklist.costConfirmed ||
+        pendingChecklist.timelineConfirmed || pendingChecklist.assumptionConfirmed ||
+        pendingChecklist.scopeNote?.trim() || pendingChecklist.costNote?.trim() ||
+        pendingChecklist.timelineNote?.trim() || pendingChecklist.assumptionNote?.trim() ||
+        pendingChecklist.handoffNote?.trim()
+      );
+      // silent:true - tranh giat/nhay y het reload() (xem comment o load()) -
+      // vua tao xong quote, form dang hien day du du lieu, khong can che het
+      // bang man hinh "Đang tải báo giá..." roi hien lai.
+      await load(created.id, { silent: true });
+      if (hasChecklistInput) {
+        try {
+          const saved = await seedingQuoteRepository.saveQuoteHandoffChecklist(created.id, {
+            scopeConfirmed: pendingChecklist.scopeConfirmed,
+            scopeNote: pendingChecklist.scopeNote,
+            costConfirmed: pendingChecklist.costConfirmed,
+            costNote: pendingChecklist.costNote,
+            timelineConfirmed: pendingChecklist.timelineConfirmed,
+            timelineNote: pendingChecklist.timelineNote,
+            assumptionConfirmed: pendingChecklist.assumptionConfirmed,
+            assumptionNote: pendingChecklist.assumptionNote,
+            handoffNote: pendingChecklist.handoffNote,
+          });
+          setChecklist(saved);
+          setChecklistDraft(saved);
+        } catch {
+          // Khong critical - Sale van tu tick lai binh thuong o Buoc 2/3 duoc.
+        }
+      }
+      // Bam "Bàn giao" tuc la Presale coi nhu DA XONG ca hang muc lan gia
+      // von NGAY tai buoc gop (bubble "Yêu cầu & Kỹ thuật") - neu moi thu da
+      // du dieu kien (dung DUNG dieu kien RPC quote_set_processing_stage,
+      // migration 090, se kiem tra that: co scope, co hang muc, SL>0, da
+      // nhap gia von hoac tick "khong ap dung", checklist 4/4) thi chuyen
+      // luon tiep sang 'pricing' TRONG CUNG 1 lan bam - tranh nguoi dung
+      // tuong "bam bàn giao xong roi" ma van con ket o bubble buoc 1 (bug
+      // that da gap: du da chuyen 'technical' that su duoi DB, bubble van
+      // hien "current" vi bubble nay gop chung request+technical). Neu con
+      // thieu dieu kien nao, IM LANG dung lai o 'technical' - nut "Bàn giao
+      // xử lý giá" rieng trong workspace van con do de Sale/Presale tu bam
+      // tiep sau khi bo sung du.
+      if (submitFully && advancedToTechnical) {
+        const realDraftItems = itemsDraft.filter(item => item.rowType !== 'section');
+        const hasScope = Boolean(draftSummary.trim() || draftScope.trim());
+        const stillMissingCost = realDraftItems.some(item => !item.costNotApplicable && item.costPrice == null);
+        const stillMissingQty = realDraftItems.some(item => !(item.quantity > 0));
+        const finalChecklist = hasChecklistInput ? pendingChecklist : checklistDraft;
+        const checklistReady = Boolean(
+          finalChecklist.scopeConfirmed && finalChecklist.costConfirmed &&
+          finalChecklist.timelineConfirmed && finalChecklist.assumptionConfirmed
+        );
+        // Ly do CU THE khien chua chuyen tiep duoc sang 'pricing' - hien ro
+        // cho nguoi dung (KHONG im lang nua, bug that da gap: nguoi dung
+        // khong hieu vi sao bam "Bàn giao" xong van con nut "Bàn giao xử lý
+        // giá" o Buoc 1, tuong he thong bi loi).
+        const blockingReasons = [
+          realDraftItems.length === 0 ? 'chưa có hạng mục nào' : null,
+          !hasScope ? 'chưa mô tả tóm tắt/scope' : null,
+          stillMissingQty ? 'còn hạng mục chưa nhập số lượng' : null,
+          stillMissingCost ? 'còn hạng mục chưa nhập giá vốn (hoặc chưa tick "Không áp dụng")' : null,
+          !checklistReady ? 'checklist bàn giao chưa tick đủ 4 mục' : null,
+        ].filter((reason): reason is string => Boolean(reason));
+        if (blockingReasons.length === 0) {
+          try {
+            await seedingQuoteRepository.setQuoteProcessingStage(created.id, 'pricing');
+            await load(created.id, { silent: true });
+          } catch (pricingErr) {
+            showToast(false, `Đã lưu, nhưng chưa chuyển được sang "Hoàn thiện giá bán": ${pricingErr instanceof Error ? pricingErr.message : 'lỗi không xác định'}. Bổ sung rồi bấm "Bàn giao" lại.`);
+          }
+        } else {
+          showToast(false, `Đã lưu, nhưng CHƯA sang được "Hoàn thiện giá bán" vì: ${blockingReasons.join(', ')}. Bổ sung rồi bấm "Bàn giao" lại.`);
+        }
+      }
     } catch (err) {
       window.alert(err instanceof Error ? err.message : 'Không lưu được yêu cầu hỗ trợ báo giá.');
     } finally {
       setBusy(false);
+      setActiveAction(null);
     }
   }
 
+  // SUA LAI lan 2 (bo tu dong): Sale phan hoi la tu dong tao ngam ngay khi co
+  // hang muc dau tien lam form GIAT/RELOAD giua luc dang go du da them dieu
+  // kien "phai co noi dung" - van con dinh do khong on. Quay lai bam nut ro
+  // rang ("Tạo báo giá") thay vi tu chay ngam - Sale tu quyet dinh luc nao
+  // xong de bam, khong bi ngat ngang khi dang nhap lieu nua.
+
   async function reload() {
     if (!quote) return;
-    await load(quote.id);
+    await load(quote.id, { silent: true });
     await onChanged();
   }
 
@@ -1208,6 +1934,10 @@ export function QuoteWorkspaceModal({
   }
 
   async function advanceStage(target: QuoteProcessingStage) {
+    // Chi con dung cho 'review' (Hoan tat phan gia ban) - hop request-
+    // >technical->pricing gio di qua handoffStep1ToPricing() rieng (nut
+    // "Bàn giao" hop nhat Buoc 1), khong con goi ham nay voi 'technical' nua.
+    setActiveAction('reviewPricing');
     setBusy(true);
     try {
       await seedingQuoteRepository.setQuoteProcessingStage(quote!.id, target);
@@ -1216,11 +1946,13 @@ export function QuoteWorkspaceModal({
       window.alert(err instanceof Error ? err.message : 'Không chuyển được bước xử lý.');
     } finally {
       setBusy(false);
+      setActiveAction(null);
     }
   }
 
   async function saveChecklist() {
     if (!checklistDraft) return;
+    setActiveAction('draftSave');
     setBusy(true);
     try {
       const saved = await seedingQuoteRepository.saveQuoteHandoffChecklist(quote!.id, {
@@ -1241,26 +1973,39 @@ export function QuoteWorkspaceModal({
       window.alert(err instanceof Error ? err.message : 'Không lưu được checklist bàn giao.');
     } finally {
       setBusy(false);
+      setActiveAction(null);
     }
   }
 
-  // "Ban giao xu ly gia" gop lam 1 hanh dong duy nhat (khong con buoc "Luu"
-  // rieng bat buoc truoc do): tu luu item/gia von dang sua (phong khi nguoi
-  // dung go xong bam thang nut ma chua blur khoi o input) + tu luu checklist
-  // neu dang co thay doi CHUA luu, roi MOI goi chuyen buoc - that bai o buoc
-  // nao dung lai dung buoc do (khong chuyen buoc neu luu that bai), giu nguyen
-  // stage 'technical' de nguoi dung sua va thu lai.
-  async function handoffToPricing() {
+  // BUG THAT DA GAP (phan anh tu nguoi dung): quote da luu (khong phai vua
+  // tao) dang o Buoc 1 gop ("Yêu cầu & Kỹ thuật") nhung UI van bat bam HAI
+  // nut lien tiep - "Gửi yêu cầu xử lý" (request->technical, UI KHONG doi vi
+  // van con Buoc 1) roi moi hien "Bàn giao xử lý giá" (technical->pricing,
+  // luc nay UI moi qua Buoc 2) - nhin nhu Buoc 1 bi lap lai 2 lan. Gop lam
+  // MOT hanh dong "Bàn giao" duy nhat cho ca 2 truong hop (stage='request'
+  // HOAC 'technical'): luu toan bo du lieu dang sua truoc, chuyen
+  // request->technical NEU con o request (khong hien rieng buoc nay ra UI -
+  // bubble 1 van gop chung ca 2), roi chuyen tiep technical->pricing luon -
+  // CHI 1 lan bam la xong, giong dung hanh vi cua nut "Bàn giao" luc tao moi
+  // (createRequest). That bai o buoc nao (vd thieu scope/checklist chua du)
+  // thi dung lai dung do, KHONG mat du lieu, bam lai se tu bo qua buoc da
+  // xong (processingStage da doc lai tu response, khong goi lai buoc thua).
+  async function handoffStep1ToPricing() {
     if (busy || !quote) return;
+    if (quote.processingStage === 'request' && !quote.slaDueAt) {
+      window.alert('Cần đặt SLA / hạn hoàn tất nội bộ trước khi Bàn giao.');
+      return;
+    }
     if (itemsMissingCost.length > 0) {
       window.alert(`Còn ${itemsMissingCost.length} hạng mục chưa nhập giá vốn hoặc chưa đánh dấu "Không áp dụng giá vốn". Vui lòng bổ sung trước khi bàn giao.`);
       return;
     }
+    setActiveAction('handoff');
     setBusy(true);
     try {
       const savedQuote = await seedingQuoteRepository.updateQuote(quote.id, {
         data: quote.data,
-        items: itemsDraft.map(toItemInput),
+        items: buildItemsPayload(itemsDraft),
       });
       setQuote(savedQuote);
 
@@ -1280,17 +2025,35 @@ export function QuoteWorkspaceModal({
         setChecklistDraft(savedChecklist);
       }
 
-      await seedingQuoteRepository.setQuoteProcessingStage(quote.id, 'pricing');
+      // Neu van con o 'request' (chua tung Gui yeu cau xu ly lan nao), tu
+      // chuyen sang 'technical' TRUOC (day chinh la moc bat SLA that -
+      // set_quote_processing_stage chi set sla_started_at o LAN DAU tien
+      // request->technical, Admin tra ve 'technical' sau nay se KHONG bi bat
+      // lai SLA lan 2 vi da co sla_started_at tu truoc). KHONG reload/doi UI
+      // giua chung - bubble 1 van gop ca 2 stage nay, nguoi dung khong can
+      // thay buoc trung gian.
+      if (savedQuote.processingStage === 'request') {
+        await seedingQuoteRepository.setQuoteProcessingStage(quote.id, 'technical');
+      }
+      const finalQuote = await seedingQuoteRepository.setQuoteProcessingStage(quote.id, 'pricing');
+      if (finalQuote.processingStage !== 'pricing') {
+        throw new Error('Chưa thể hoàn tất bàn giao. Vui lòng thử lại.');
+      }
       await reload();
     } catch (err) {
-      window.alert(err instanceof Error ? err.message : 'Không bàn giao được sang xử lý giá.');
+      window.alert(err instanceof Error ? err.message : 'Chưa thể hoàn tất bàn giao. Vui lòng thử lại.');
+      // Du that bai o buoc nao, tai lai du lieu THAT tu server (co the da
+      // qua duoc request->technical) - khong de UI dung sai lech voi DB that.
+      await reload();
     } finally {
       setBusy(false);
+      setActiveAction(null);
     }
   }
 
   async function approveNow() {
     if (busy) return; // chong double-click
+    setActiveAction('approve');
     setBusy(true);
     try {
       // Duyet KHONG con tu bat public link nua (tach rieng khoi publish, xem
@@ -1310,6 +2073,7 @@ export function QuoteWorkspaceModal({
       window.alert(err instanceof Error ? err.message : 'Không duyệt được báo giá.');
     } finally {
       setBusy(false);
+      setActiveAction(null);
     }
   }
 
@@ -1320,6 +2084,7 @@ export function QuoteWorkspaceModal({
       window.alert('Vui lòng nhập lý do phê duyệt ngoại lệ.');
       return;
     }
+    setActiveAction('approve');
     setBusy(true);
     try {
       await seedingQuoteRepository.approveQuote(quote!.id, reason);
@@ -1329,11 +2094,13 @@ export function QuoteWorkspaceModal({
       window.alert(err instanceof Error ? err.message : 'Không duyệt ngoại lệ được báo giá.');
     } finally {
       setBusy(false);
+      setActiveAction(null);
     }
   }
 
   async function publishNow() {
     if (busy) return;
+    setActiveAction('publish');
     setBusy(true);
     try {
       await seedingQuoteRepository.publishQuote(quote!.id);
@@ -1343,6 +2110,7 @@ export function QuoteWorkspaceModal({
       window.alert(err instanceof Error ? err.message : 'Không phát hành được báo giá.');
     } finally {
       setBusy(false);
+      setActiveAction(null);
     }
   }
 
@@ -1352,6 +2120,7 @@ export function QuoteWorkspaceModal({
       window.alert('Vui lòng nhập lý do yêu cầu chỉnh sửa.');
       return;
     }
+    setActiveAction('requestChanges');
     setBusy(true);
     try {
       await seedingQuoteRepository.requestQuoteChanges(quote!.id, requestChangesSection, requestChangesReason.trim());
@@ -1362,12 +2131,14 @@ export function QuoteWorkspaceModal({
       window.alert(err instanceof Error ? err.message : 'Không gửi được yêu cầu chỉnh sửa.');
     } finally {
       setBusy(false);
+      setActiveAction(null);
     }
   }
 
   async function copyPublicLink() {
     if (!quote!.publicUrl) return;
     await navigator.clipboard.writeText(`${window.location.origin}${quote!.publicUrl}`);
+    showToast(true, 'Đã sao chép link báo giá.');
   }
 
   function newSendIdempotencyKey(quoteId: string): string {
@@ -1497,11 +2268,16 @@ export function QuoteWorkspaceModal({
   const checklistAllConfirmed = Boolean(
     checklistDraft?.scopeConfirmed && checklistDraft?.costConfirmed && checklistDraft?.timelineConfirmed && checklistDraft?.assumptionConfirmed
   );
+  // Muc cha (Section, migration 104) KHONG tinh tien, khong bat nhap SL/gia
+  // von/markup - loai hoan toan khoi moi kiem tra nghiep vu (thieu gia von,
+  // dem so hang muc...) giong dung cach RPC backend loai no qua `row_type =
+  // 'item'`, tranh dem nham 1 dong tieu de la "hang muc thieu du lieu".
+  const realItemsDraft = itemsDraft.filter(item => item.rowType !== 'section');
   // Hang muc "thieu gia von" = chua nhap costPrice VA chua tick "khong ap
   // dung" - dung DUNG dieu kien RPC quote_set_processing_stage (migration
   // 090) validate ('quote_item_missing_cost_price') de nut FE disable/thong
   // bao KHOP voi that su backend se chan hay khong (khong doan mo ho).
-  const itemsMissingCost = itemsDraft.filter(item => !item.costNotApplicable && item.costPrice == null);
+  const itemsMissingCost = realItemsDraft.filter(item => !item.costNotApplicable && item.costPrice == null);
   // "Co thay doi chua luu" - so sanh dung 9 field thuc su gui len
   // saveQuoteHandoffChecklist(), KHONG so sanh nguyen object (co the lech field
   // metadata nhu updatedAt lam sai lech ket qua so sanh).
@@ -1575,6 +2351,38 @@ export function QuoteWorkspaceModal({
     <div className="qc-modal-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) onClose(); }}>
       <div className="qc-workspace">
         <header className="qc-workspace-header">
+          {/* Dong rieng CHI hien tren mobile (≤767px, CSS an tren desktop) -
+           * trang thai + nut dong o TREN CUNG, dung yeu cau "Dòng 1: trạng
+           * thái + nút đóng". Cac nut phu (version/quay lai danh sach) don
+           * vao 1 menu "⋯" dung chung ActionMenu (khong viet dropdown rieng)
+           * de khong con 4 nut chen nhau xuong dong nhu truoc. */}
+          <div className="qc-workspace-header-mobile-row">
+            <span className={`qc-badge ${status.className}`}>{status.label}</span>
+            <div className="qc-workspace-header-mobile-actions">
+              <ActionMenu
+                label="Thao tác khác"
+                items={[
+                  {
+                    key: 'version',
+                    label: versionButtonState.label,
+                    disabled: versionButtonState.disabled || busy,
+                    title: versionButtonState.tooltip,
+                    onSelect: () => {
+                      if (existingDraftVersion) {
+                        void load(existingDraftVersion.id);
+                      } else {
+                        setVersionModalOpen(true);
+                      }
+                    },
+                  },
+                  { key: 'back', label: '← Danh sách', disabled: busy, onSelect: onClose },
+                ]}
+              />
+              <button type="button" className="crm-icon-action" aria-label="Đóng" disabled={busy} onClick={onClose}>
+                <X className="qc-inline-icon" />
+              </button>
+            </div>
+          </div>
           <div className="qc-workspace-header-main">
             {quote ? (
               <>
@@ -1604,7 +2412,7 @@ export function QuoteWorkspaceModal({
           <div className="qc-workspace-header-actions">
             <button
               type="button"
-              className="qc-btn"
+              className="qc-btn qc-workspace-header-btn-desktop-only"
               disabled={versionButtonState.disabled || busy}
               title={versionButtonState.tooltip}
               onClick={() => {
@@ -1618,45 +2426,91 @@ export function QuoteWorkspaceModal({
               <GitBranchPlus className="qc-icon" /> {versionButtonState.label}
             </button>
             {quote && isDraft && canEdit ? (
-              <button
-                type="button"
-                className="qc-btn"
-                onClick={() => {
-                  onEditDraft(quote);
-                  onClose();
-                }}
-              >
-                Chỉnh sửa / Lưu nháp
+              // SUA LAI: truoc day bam nut nay MO WIZARD "Sửa báo giá" rieng
+              // (CreateQuoteModal 4 buoc) thay vi luu - gay hieu nham vi nhan
+              // nut co chu "Lưu nháp" nhung lai dieu huong sang 1 modal khac,
+              // dong luon workspace dang xem (nguoi dung bao "bấm lưu là lưu
+              // yêu cầu, k cần mở cái [wizard] lên"). Cac truong trong
+              // workspace nay da tu luu ngam qua onBlur (persistQuote/
+              // saveScopeSummary...) roi - nut nay gio chi la luu tuong minh/
+              // xac nhan lai, KHONG dieu huong di dau, KHONG dong workspace.
+              <button type="button" className="qc-btn" disabled={busy} aria-busy={busy && activeAction === 'draftSave'} onClick={() => void persistQuote({}).then(() => showToast(true, 'Đã lưu báo giá.'))}>
+                {actionButtonContent('draftSave', 'Lưu')}
               </button>
             ) : null}
             {!quote ? (
-              <button type="button" className="qc-btn" disabled={busy} onClick={() => void createRequest(false)}>
-                Lưu nháp
+              <button type="button" className="qc-btn qc-btn-primary" disabled={busy} aria-busy={busy && activeAction === 'draftSave'} onClick={() => void createRequest(false)}>
+                {actionButtonContent('draftSave', 'Lưu / Chỉnh sửa')}
               </button>
             ) : null}
-            <button type="button" className="qc-btn" onClick={onClose}>
+            <button type="button" className="qc-btn qc-workspace-header-btn-desktop-only" disabled={busy} onClick={onClose}>
               ← Danh sách
             </button>
-            <button type="button" className="crm-icon-action" aria-label="Đóng" onClick={onClose}>
+            <button type="button" className="crm-icon-action qc-workspace-header-btn-desktop-only" aria-label="Đóng" disabled={busy} onClick={onClose}>
               <X className="qc-inline-icon" />
             </button>
           </div>
         </header>
 
+        {/* Tom tat progress GON cho mobile (≤767px, CSS an tren desktop) -
+         * "Bước X/3 — {label}" 1 dong duy nhat thay vi ep ca 3 buoc + connector
+         * + meta nguoi phu trach vao 1 hang chat chu nho. Tinh truc tiep bang
+         * JSX (khong doan qua CSS an/hien tung buoc) de chac chan dung noi
+         * dung buoc hien tai. */}
+        <div className="qc-stagebar-mobile-summary">
+          {(() => {
+            const mobileSteps = [
+              { key: 'request_technical' as const, label: 'Yêu cầu & Kỹ thuật', repr: (stage === 'technical' ? 'technical' : 'request') as QuoteProcessingStage },
+              { key: 'pricing' as const, label: stageLabel('pricing'), repr: 'pricing' as QuoteProcessingStage },
+              { key: 'review' as const, label: stageLabel('review'), repr: 'review' as QuoteProcessingStage },
+            ];
+            const currentIdx = STAGE_ORDER.indexOf(stage);
+            const states = mobileSteps.map(s =>
+              isCancelled
+                ? 'halted'
+                : !isDraft
+                  ? 'done'
+                  : s.key === 'request_technical'
+                    ? (currentIdx > STAGE_ORDER.indexOf('technical') ? 'done' : 'current')
+                    : stageState(s.repr)
+            );
+            let activeIndex = states.findIndex(s => s === 'current');
+            if (activeIndex === -1) activeIndex = states.lastIndexOf('done');
+            if (activeIndex === -1) activeIndex = 0;
+            return `Bước ${activeIndex + 1}/${mobileSteps.length} — ${mobileSteps[activeIndex].label}`;
+          })()}
+        </div>
+
         <div className="qc-workspace-stages">
-          {STAGE_ORDER.map((s, index) => {
-            const state = stageState(s);
-            const owner = stageOwnerName(s);
-            const time = stageTimeLabel(s);
+          {/* Gop Buoc 1 (request) + Buoc 2 (technical) lam MOT bubble hien
+           * thi ("Yêu cầu & Kỹ thuật") - dung 1 nguoi dien hang muc+gia von
+           * cung luc, khong con hanh dong rieng giua 2 buoc DB nay nua (xem
+           * createRequest). STAGE_ORDER/stage van giu nguyen 4 gia tri DB o
+           * moi noi khac (permission/SLA...), CHI gop rieng phan hien thi. */}
+          {([
+            { key: 'request_technical' as const, label: 'Yêu cầu & Kỹ thuật', repr: (stage === 'technical' ? 'technical' : 'request') as QuoteProcessingStage },
+            { key: 'pricing' as const, label: stageLabel('pricing'), repr: 'pricing' as QuoteProcessingStage },
+            { key: 'review' as const, label: stageLabel('review'), repr: 'review' as QuoteProcessingStage },
+          ]).map((s, index, arr) => {
+            const currentIdx = STAGE_ORDER.indexOf(stage);
+            const state: 'done' | 'current' | 'upcoming' | 'halted' = isCancelled
+              ? 'halted'
+              : !isDraft
+                ? 'done'
+                : s.key === 'request_technical'
+                  ? (currentIdx > STAGE_ORDER.indexOf('technical') ? 'done' : 'current')
+                  : stageState(s.repr);
+            const owner = stageOwnerName(s.repr);
+            const time = stageTimeLabel(s.repr);
             const meta = [owner, time].filter(Boolean).join(' · ');
             return (
-              <div className={`qc-stagebar-step qc-stagebar-step--${state}`} key={s}>
+              <div className={`qc-stagebar-step qc-stagebar-step--${state}`} key={s.key}>
                 <span className="qc-stagebar-circle">{state === 'done' ? '✓' : index + 1}</span>
                 <span className="qc-stagebar-text">
-                  <span className="qc-stagebar-label">{stageLabel(s)}</span>
+                  <span className="qc-stagebar-label">{s.label}</span>
                   {meta ? <span className="qc-stagebar-meta">{meta}</span> : null}
                 </span>
-                {index < STAGE_ORDER.length - 1 ? <span className="qc-stagebar-connector" aria-hidden="true" /> : null}
+                {index < arr.length - 1 ? <span className="qc-stagebar-connector" aria-hidden="true" /> : null}
               </div>
             );
           })}
@@ -1674,7 +2528,7 @@ export function QuoteWorkspaceModal({
                   setDraftCustomerId(value);
                   // Doi khach hang -> co hoi da chon (neu co) co the khong con
                   // thuoc khach hang moi - bo chon de tranh luu sai lech.
-                  if (draftDealId && dealsById.get(draftDealId)?.customerId !== value) setDraftDealId('');
+                  if (draftDealId && effectiveDealsById.get(draftDealId)?.customerId !== value) setDraftDealId('');
                   // Du an cung thuoc DUNG 1 khach hang - doi khach hang thi bo
                   // chon Du an cu (se nap lai danh sach Du an moi qua effect).
                   setDraftProjectId('');
@@ -1683,7 +2537,18 @@ export function QuoteWorkspaceModal({
                 placeholder="Chọn khách hàng..."
               />
             ) : (
-              <strong>{deal?.customerName || 'Chưa gắn cơ hội'}</strong>
+              // Quote da tao xong: KHONG con doi Khach hang duoc that su
+              // (backend chua co API doi deal_id tren quote da ton tai) -
+              // nhung van hien dang o box giong Du an/Presale/Sale (khong
+              // hien nhu 1 nhan chu thuong bi khoa cung) de giao dien nhat
+              // quan - dung SearchableSelect disabled voi 1 option duy nhat
+              // la gia tri hien tai.
+              <SearchableSelect
+                value="current"
+                onChange={() => {}}
+                options={[{ value: 'current', label: deal?.customerName || 'Chưa gắn cơ hội' }]}
+                disabled
+              />
             )}
           </div>
           <div>
@@ -1705,9 +2570,17 @@ export function QuoteWorkspaceModal({
               ) : (
                 <SearchableSelect
                   value={quote ? quote.projectId || '' : draftProjectId}
-                  onChange={value => (quote ? void updateQuoteProject(value) : setDraftProjectId(value))}
+                  onChange={value => {
+                    if (value === CREATE_NEW_PROJECT_OPTION) {
+                      setProjectModalOpen(true);
+                      return;
+                    }
+                    if (quote) void updateQuoteProject(value);
+                    else setDraftProjectId(value);
+                  }}
                   options={[
                     { value: '', label: 'Chưa thuộc dự án' },
+                    { value: CREATE_NEW_PROJECT_OPTION, label: '+ Tạo dự án mới…' },
                     ...projects.map(p => ({ value: p.id, label: `${p.projectCode} · ${p.name}` })),
                   ]}
                   placeholder="Chưa thuộc dự án"
@@ -1728,12 +2601,15 @@ export function QuoteWorkspaceModal({
               <SearchableSelect
                 value={draftDealId}
                 onChange={handleSelectDeal}
-                options={deals
-                  .filter(d => !draftCustomerId || d.customerId === draftCustomerId)
-                  // Toi tu 1 Project card cu the (lockProject) - Co hoi CHI
-                  // hien dung cua Project do, khong phai moi Co hoi cua Khach hang.
-                  .filter(d => !lockProject || !draftProjectId || d.projectId === draftProjectId)
-                  .map(d => ({ value: d.id, label: `${d.customerName}${d.companyName ? ' · ' + d.companyName : ''}` }))}
+                options={[
+                  { value: CREATE_NEW_DEAL_OPTION, label: '+ Tạo cơ hội mới…' },
+                  ...effectiveDeals
+                    .filter(d => !draftCustomerId || d.customerId === draftCustomerId)
+                    // Toi tu 1 Project card cu the (lockProject) - Co hoi CHI
+                    // hien dung cua Project do, khong phai moi Co hoi cua Khach hang.
+                    .filter(d => !lockProject || !draftProjectId || d.projectId === draftProjectId)
+                    .map(d => ({ value: d.id, label: `${d.customerName}${d.companyName ? ' · ' + d.companyName : ''}` })),
+                ]}
                 placeholder="Chọn cơ hội..."
               />
             ) : null}
@@ -1745,7 +2621,16 @@ export function QuoteWorkspaceModal({
             ) : null}
             {quote ? (
               <>
-                <strong>{businessCode || (deal ? 'Cơ hội chưa có mã' : 'Chưa gắn cơ hội')}</strong>
+                {/* Tuong tu Khach hang o tren - khong con doi Co hoi duoc
+                 * that su sau khi quote da tao, nhung van hien dang box
+                 * SearchableSelect disabled cho nhat quan giao dien, khong
+                 * hien nhu nhan chu bi khoa cung. */}
+                <SearchableSelect
+                  value="current"
+                  onChange={() => {}}
+                  options={[{ value: 'current', label: businessCode || (deal ? 'Cơ hội chưa có mã' : 'Chưa gắn cơ hội') }]}
+                  disabled
+                />
                 <div className="qc-row-sub">
                   {/* opportunityName muon tu ten goi dich vu, KHONG phai "ten
                    * co hoi" that (Deal khong co field nay) - ghi nhan ro
@@ -1756,8 +2641,19 @@ export function QuoteWorkspaceModal({
               </>
             ) : null}
           </div>
+          {!quote && quoteForms.length > 0 ? (
+            <div>
+              <span className="qc-workspace-info-label">Mẫu báo giá</span>
+              <SearchableSelect
+                value={draftFormId}
+                onChange={setDraftFormId}
+                options={quoteForms.map(f => ({ value: f.id, label: f.name }))}
+                placeholder="Chọn mẫu báo giá..."
+              />
+            </div>
+          ) : null}
           <div>
-            <span className="qc-workspace-info-label">Người phụ trách kỹ thuật</span>
+            <span className="qc-workspace-info-label">Presale</span>
             {!quote || (isDraft && canEdit) ? (
               presaleUsers === null ? (
                 <span className="qc-workspace-muted" style={{ fontSize: 12 }}>Đang tải danh sách Presale…</span>
@@ -1776,7 +2672,7 @@ export function QuoteWorkspaceModal({
             )}
           </div>
           <div>
-            <span className="qc-workspace-info-label">Người phụ trách báo giá</span>
+            <span className="qc-workspace-info-label">Sale</span>
             {!quote || (isDraft && canEdit) ? (
               saleUsers === null ? (
                 <span className="qc-workspace-muted" style={{ fontSize: 12 }}>Đang tải danh sách Sale…</span>
@@ -1795,26 +2691,26 @@ export function QuoteWorkspaceModal({
             )}
           </div>
           <div>
-            <span className="qc-workspace-info-label">Quản lý</span>
-            <strong>{deal?.assignment.leadName || 'Chưa gán'}</strong>
-          </div>
-          <div>
-            <span className="qc-workspace-info-label">Team</span>
-            <strong>{deal?.teamName || (deal ? 'Chưa gán' : 'Chưa chọn khách hàng')}</strong>
-          </div>
-          <div>
             <span className="qc-workspace-info-label" title="Hạn xử lý NỘI BỘ - khác hoàn toàn 'Hiệu lực đến' (hiệu lực báo giá với khách hàng)">
               SLA / Hạn hoàn tất nội bộ
             </span>
             {!quote ? (
               <input
+                key="sla-draft"
                 type="datetime-local"
                 className="qc-cell-input"
                 value={draftSlaDueAt}
                 onChange={e => setDraftSlaDueAt(e.target.value)}
               />
             ) : stage === 'request' && canEdit ? (
+              // key rieng voi input tren - tranh React tuong "cung 1 input"
+              // roi bao "controlled -> uncontrolled" khi quote tu dong duoc
+              // tao xong (tu !quote sang co quote NGAY TRONG 1 phien, khong
+              // qua remount) vi input tren dung value (controlled) con input
+              // nay dung defaultValue (uncontrolled) - key khac buoc React
+              // unmount/mount lai thay vi doi props tren cung 1 DOM node.
               <input
+                key="sla-existing"
                 type="datetime-local"
                 className="qc-cell-input"
                 defaultValue={isoToDatetimeLocalValue(quote.slaDueAt)}
@@ -1852,7 +2748,16 @@ export function QuoteWorkspaceModal({
 
         <div className="qc-workspace-body" ref={workspaceBodyRef}>
           <div className="qc-workspace-main">
-            {!quote ? (
+            {!quote || isDraft ? (
+              // Gop Buoc 1+2: quote co the da duoc tu dong tao ngam (xem
+              // createRequest()) ngay khi dang go - KHONG duoc chuyen sang
+              // dang "xem tom tat + bam Chinh sua" chi vi da co quote, Sale
+              // van dang cam nhan "con o Buoc 1" nen phai giu dung 1 kieu
+              // giao dien go truc tiep (khong toggle) xuyen suot. Khi quote
+              // da ton tai, doi sang doc/ghi tu editSummary/editScope/
+              // editExpectedProducts (da co san co che dong bo + luu qua
+              // saveScopeSummary() - xem effect [quote?.id] o tren) thay vi
+              // draftSummary/draftScope (chi la buffer cuc bo truoc khi tao).
               <div className="qc-workspace-card" data-qc-anchor="scope" data-testid="qc-scope-card">
                 <div className="qc-workspace-card-head">
                   <h3 data-testid="qc-scope-card-title">Yêu cầu &amp; phạm vi công việc</h3>
@@ -1865,14 +2770,24 @@ export function QuoteWorkspaceModal({
                       <textarea
                         className="qc-workspace-handoff-note"
                         rows={3}
-                        value={draftSummary}
-                        onChange={event => setDraftSummary(event.target.value)}
+                        disabled={quote ? !canEdit : false}
+                        value={quote ? editSummary : draftSummary}
+                        onChange={event => (quote ? setEditSummary : setDraftSummary)(event.target.value)}
+                        onBlur={quote ? () => void saveScopeSummary() : undefined}
                         placeholder={draftDealId ? 'Cơ hội chưa có mô tả nhu cầu — tự nhập tại đây.' : 'Khách cần gì, bối cảnh yêu cầu...'}
                       />
                     </label>
                     <label>
                       <span className="qc-workspace-info-label">Mô tả scope / yêu cầu cần estimate</span>
-                      <textarea className="qc-workspace-handoff-note" rows={3} value={draftScope} onChange={event => setDraftScope(event.target.value)} placeholder="Phạm vi công việc cần kỹ thuật estimate..." />
+                      <textarea
+                        className="qc-workspace-handoff-note"
+                        rows={3}
+                        disabled={quote ? !canEdit : false}
+                        value={quote ? editScope : draftScope}
+                        onChange={event => (quote ? setEditScope : setDraftScope)(event.target.value)}
+                        onBlur={quote ? () => void saveScopeSummary() : undefined}
+                        placeholder="Phạm vi công việc cần kỹ thuật estimate..."
+                      />
                     </label>
                   </div>
                   <details className="qc-workspace-request-more">
@@ -1882,15 +2797,19 @@ export function QuoteWorkspaceModal({
                       <input
                         type="text"
                         className="crm-input"
-                        value={draftExpectedProducts}
-                        onChange={event => setDraftExpectedProducts(event.target.value)}
+                        disabled={quote ? !canEdit : false}
+                        value={quote ? editExpectedProducts : draftExpectedProducts}
+                        onChange={event => (quote ? setEditExpectedProducts : setDraftExpectedProducts)(event.target.value)}
+                        onBlur={quote ? () => void saveScopeSummary() : undefined}
                         placeholder={draftDealId ? 'Chưa có sản phẩm/dịch vụ — tự nhập tại đây.' : 'Ví dụ: Gói VPS Cloud, dịch vụ tư vấn...'}
                       />
                     </label>
-                    <label>
-                      <span className="qc-workspace-info-label">Ghi chú nội bộ (không hiện cho khách)</span>
-                      <textarea className="qc-workspace-handoff-note" rows={2} value={draftInternalNote} onChange={event => setDraftInternalNote(event.target.value)} placeholder="Ghi chú riêng cho đội xử lý..." />
-                    </label>
+                    {!quote ? (
+                      <label>
+                        <span className="qc-workspace-info-label">Ghi chú nội bộ (không hiện cho khách)</span>
+                        <textarea className="qc-workspace-handoff-note" rows={2} value={draftInternalNote} onChange={event => setDraftInternalNote(event.target.value)} placeholder="Ghi chú riêng cho đội xử lý..." />
+                      </label>
+                    ) : null}
                     <p className="qc-workspace-note">Chưa hỗ trợ tệp đính kèm.</p>
                   </details>
                 </div>
@@ -2013,61 +2932,7 @@ export function QuoteWorkspaceModal({
                   );
                 })()}
               </>
-            ) : (
-              <div className="qc-workspace-card" data-qc-anchor="scope" data-testid="qc-scope-card">
-                <div className="qc-workspace-card-head">
-                  <h3 data-testid="qc-scope-card-title">{scopeCardLabel(stage)}</h3>
-                  {canEdit && isDraft ? (
-                    <button type="button" className="qc-mini-btn" onClick={() => setScopeEditing(v => !v)}>
-                      {scopeEditing ? 'Đóng' : <><Pencil className="qc-inline-icon" /> Chỉnh sửa</>}
-                    </button>
-                  ) : null}
-                </div>
-                {scopeEditing ? (
-                  <>
-                    <div className="qc-workspace-request-form-cols">
-                      <label>
-                        <span className="qc-workspace-info-label">Tóm tắt nhu cầu của khách hàng</span>
-                        <textarea className="qc-workspace-handoff-note" rows={3} value={editSummary} onChange={event => setEditSummary(event.target.value)} />
-                      </label>
-                      <label>
-                        <span className="qc-workspace-info-label">Phạm vi công việc (scope)</span>
-                        <textarea className="qc-workspace-handoff-note" rows={3} value={editScope} onChange={event => setEditScope(event.target.value)} />
-                      </label>
-                    </div>
-                    <label>
-                      <span className="qc-workspace-info-label">Sản phẩm/dịch vụ dự kiến</span>
-                      <input type="text" className="crm-input" value={editExpectedProducts} onChange={event => setEditExpectedProducts(event.target.value)} placeholder="Chưa có sản phẩm/dịch vụ..." />
-                    </label>
-                    <div className="qc-workspace-modal-actions">
-                      <button type="button" className="qc-btn" onClick={() => setScopeEditing(false)}>Huỷ</button>
-                      <button type="button" className="qc-btn qc-btn-primary" disabled={busy} onClick={() => void saveScopeSummary()}>Lưu</button>
-                    </div>
-                  </>
-                ) : (
-                  <div className="qc-workspace-scope-summary">
-                    <div>
-                      <span className="qc-workspace-info-label">Tóm tắt nhu cầu của khách hàng</span>
-                      <p>{requestSummaryText || 'Chưa có tóm tắt.'}</p>
-                    </div>
-                    <div>
-                      <span className="qc-workspace-info-label">Phạm vi công việc (scope)</span>
-                      <p>{scopeBlock?.content || 'Chưa mô tả scope.'}</p>
-                    </div>
-                    <div>
-                      <span className="qc-workspace-info-label">Sản phẩm/dịch vụ dự kiến</span>
-                      <p>{expectedProductsText || 'Chưa có sản phẩm/dịch vụ.'}</p>
-                    </div>
-                    {deal?.estimatedBudget ? (
-                      <div>
-                        <span className="qc-workspace-info-label">Giá trị dự kiến</span>
-                        <p>{formatMoney(deal.estimatedBudget)}</p>
-                      </div>
-                    ) : null}
-                  </div>
-                )}
-              </div>
-            )}
+            ) : null}
             <div className="qc-workspace-card" data-qc-anchor="items">
               <div className="qc-workspace-card-head">
                 <h3>Hạng mục &amp; cấu trúc giá</h3>
@@ -2117,7 +2982,7 @@ export function QuoteWorkspaceModal({
                   <label className="qc-workspace-quickbar-field">
                     Thanh toán
                     <select
-                      className="qc-workspace-quickbar-input"
+                      className="qc-workspace-quickbar-input qc-workspace-quickbar-select"
                       value={quote ? paymentTermsDays : draftPaymentTermsDays}
                       onChange={event => {
                         if (quote) setPaymentTermsDays(event.target.value);
@@ -2133,10 +2998,16 @@ export function QuoteWorkspaceModal({
                   {!quote ? <span className="qc-workspace-quickbar-hint">Lưu tạm — sẽ ghi thật khi tạo yêu cầu</span> : null}
                 </div>
               ) : null}
-              {!quote && draftExtraTerms.length > 0 ? (
+              {extraTermsList.length > 0 ? (
                 <ul className="qc-workspace-draft-terms">
-                  {draftExtraTerms.map(t => (
-                    <li key={t.id}>{t.title}: {t.content}</li>
+                  {extraTermsList.map(t => (
+                    <li key={t.id}>
+                      <span>{t.title}: {t.content}</span>
+                      <span className="qc-workspace-draft-terms-actions">
+                        <button type="button" className="qc-mini-btn" onClick={() => editTermNote(t.id)}>Sửa</button>
+                        <button type="button" className="qc-mini-btn" onClick={() => removeTermNote(t.id)}>Xóa</button>
+                      </span>
+                    </li>
                   ))}
                 </ul>
               ) : null}
@@ -2145,38 +3016,37 @@ export function QuoteWorkspaceModal({
                   dong, khong con tab rieng - dung yeu cau "Sale phai doi chieu
                   duoc cost va markup cung dong". overflow-x rieng cho bang
                   (khong lam vo trang) - xem .qc-table-wrap trong quote-center.css. */}
-              <div className="qc-table-wrap">
+              <div className="qc-table-wrap qc-workspace-items-scroll">
                 <table className={`qc-linked-table qc-workspace-items-table qc-workspace-items-table--unified${itemsDraft.length > 0 ? ' qc-workspace-items-table--has-rows' : ''}`}>
                   <thead>
                     <tr>
-                      <th>#</th>
                       <th>Hạng mục</th>
-                      <th>Mô tả kỹ thuật</th>
-                      <th>Đơn vị</th>
-                      <th className="qc-th-money">SL</th>
+                      <th className="qc-th-money qc-th-qty">SL</th>
                       <th className="qc-th-money qc-th-cost">Giá vốn/ĐV</th>
-                      <th className="qc-th-money qc-th-cost">Giá vốn</th>
-                      <th className="qc-th-cost-flag">N/A giá vốn</th>
+                      <th className="qc-th-money qc-th-cost">Cost tổng</th>
                       <th className="qc-th-money qc-th-markup">Markup</th>
                       <th className="qc-th-money qc-th-markup">Giá khách/ĐV</th>
                       <th className="qc-th-money">Thành tiền</th>
-                      <th className="qc-th-money">Margin</th>
-                      {canEdit && isDraft && !isLockedForReview ? <th className="qc-th-actions">Thao tác</th> : null}
+                      <th className="qc-th-money qc-th-margin-col">Margin</th>
+                      {canEdit && isDraft && !isLockedForReview ? <th className="qc-th-actions" aria-label="Thao tác" /> : null}
                     </tr>
                   </thead>
                   <tbody>
                     {itemsDraft.length === 0 ? (
                       <tr>
-                        <td colSpan={12} className="qc-empty">
+                        <td colSpan={8} className="qc-empty">
                           <div className="qc-workspace-items-empty">
                             <span>Chưa có hạng mục nào.</span>
                             {canEdit && isDraft && !isLockedForReview ? (
                               <div className="qc-workspace-items-empty-actions">
-                                <button type="button" className="qc-mini-btn qc-mini-btn-brand" onClick={addItemRow}>
+                                <button type="button" className="qc-mini-btn qc-mini-btn-brand" onClick={() => void openCatalogPicker()}>
+                                  Chọn từ danh mục
+                                </button>
+                                <button type="button" className="qc-mini-btn" onClick={addItemRow}>
                                   Thêm hạng mục
                                 </button>
-                                <button type="button" className="qc-mini-btn" onClick={() => void openCatalogPicker()}>
-                                  Chọn từ danh mục
+                                <button type="button" className="qc-mini-btn" onClick={addSectionRow}>
+                                  + Mục cha
                                 </button>
                                 {recentDealQuote ? (
                                   <button type="button" className="qc-mini-btn" onClick={loadFromRecentQuote}>
@@ -2189,34 +3059,89 @@ export function QuoteWorkspaceModal({
                         </td>
                       </tr>
                     ) : (
-                      itemsDraft.map((item, index) => {
+                      (() => {
+                        // Muc cha (Section)/hang muc con - migration 104. So
+                        // La Ma dem RIENG cho section (theo thu tu xuat hien),
+                        // so 01/02/03 dem LIEN TUC cho hang muc that xuyen
+                        // suot ca bang (KHONG reset lai moi nhom - dung khop
+                        // cach danh so 01-21 lien tuc qua ca 3 "GIAI DOAN"
+                        // trong file Excel mau).
+                        let sectionCounter = 0;
+                        let itemCounter = 0;
+                        const actionColSpan = canEdit && isDraft && !isLockedForReview ? 8 : 7;
+                        const canDragRows = canEdit && isDraft && !isLockedForReview;
+                        return itemsDraft.map((item, index) => {
+                          if (item.rowType === 'section') {
+                            sectionCounter += 1;
+                            const roman = toRomanNumeral(sectionCounter);
+                            return (
+                              <tr
+                                key={item.id || index}
+                                className="qc-workspace-section-row"
+                                draggable={canDragRows}
+                                onDragStart={() => handleRowDragStart(index)}
+                                onDragOver={canDragRows ? event => event.preventDefault() : undefined}
+                                onDrop={canDragRows ? () => handleRowDrop(index, true) : undefined}
+                              >
+                                <td colSpan={actionColSpan}>
+                                  {canDragRows ? <span className="qc-workspace-drag-handle" title="Kéo để sắp xếp">⠿</span> : null}
+                                  {canEdit && isDraft && !isLockedForReview ? (
+                                    <input
+                                      className="qc-cell-input qc-workspace-section-input"
+                                      value={item.description || ''}
+                                      onChange={e => updateRow(index, { description: e.target.value })}
+                                      onBlur={() => void persistQuote({}, { silent: true })}
+                                      placeholder="Tên mục cha"
+                                    />
+                                  ) : (
+                                    <strong>{item.description || 'Mục mới'}</strong>
+                                  )}
+                                  <span className="qc-workspace-section-roman">{roman}</span>
+                                  {canEdit && isDraft && !isLockedForReview && item.id ? (
+                                    <button type="button" className="qc-mini-btn qc-workspace-section-add-item" onClick={() => addItemUnderSection(item.id!)}>
+                                      + Hạng mục trong mục này
+                                    </button>
+                                  ) : null}
+                                </td>
+                                {canEdit && isDraft && !isLockedForReview ? (
+                                  <td className="qc-cell-actions">
+                                    <button type="button" className="qc-mini-btn qc-mini-btn-icon" title="Di chuyển lên" onClick={() => moveRowUpDown(index, -1)}>↑</button>
+                                    <button type="button" className="qc-mini-btn qc-mini-btn-icon" title="Di chuyển xuống" onClick={() => moveRowUpDown(index, 1)}>↓</button>
+                                    <button type="button" className="qc-row-remove" title="Xoá mục cha (và toàn bộ hạng mục con)" onClick={() => removeItemRow(index)}>×</button>
+                                  </td>
+                                ) : null}
+                              </tr>
+                            );
+                          }
+                        itemCounter += 1;
+                        const displayNo = String(itemCounter).padStart(2, '0');
                         const margin = item.costPrice != null && item.unitPrice > 0 ? ((item.unitPrice - item.costPrice) / item.unitPrice) * 100 : null;
                         const costTotal = item.costPrice != null ? item.costPrice * item.quantity : null;
                         const editableTechnicalCells = canEditCostCells;
                         const editableCells = canEditPricingCells;
                         return (
-                          <tr key={item.id || index}>
-                            <td>{index + 1}</td>
+                          <tr
+                            key={item.id || index}
+                            className={item.parentItemId ? 'qc-workspace-item-row--nested' : undefined}
+                            draggable={canDragRows}
+                            onDragStart={() => handleRowDragStart(index)}
+                            onDragOver={canDragRows ? event => event.preventDefault() : undefined}
+                            onDrop={canDragRows ? () => handleRowDrop(index, false) : undefined}
+                          >
                             <td>
-                              {(editableTechnicalCells || editableCells) ? (
-                                <input className="qc-cell-input" value={item.description || ''} onChange={e => updateRow(index, { description: e.target.value })} onBlur={() => void persistQuote({})} placeholder="Tên hạng mục" />
-                              ) : (
-                                item.description || '—'
-                              )}
+                              <span className="qc-workspace-item-name-cell">
+                                {canDragRows ? <span className="qc-workspace-drag-handle" title="Kéo để sắp xếp">⠿</span> : null}
+                                <span className="qc-workspace-item-no">{displayNo}</span>
+                                {(editableTechnicalCells || editableCells) ? (
+                                  <input className="qc-cell-input" value={item.serviceDescription || ''} onChange={e => updateRow(index, { serviceDescription: e.target.value })} onBlur={() => void persistQuote({}, { silent: true })} placeholder="Tên hạng mục" />
+                                ) : (
+                                  item.serviceDescription || '—'
+                                )}
+                              </span>
                             </td>
-                            <td>
+                            <td className="qc-cell-money qc-cell-qty">
                               {editableTechnicalCells ? (
-                                <input className="qc-cell-input" value={item.serviceDescription || ''} onChange={e => updateRow(index, { serviceDescription: e.target.value })} onBlur={() => void persistQuote({})} placeholder="Mô tả kỹ thuật" />
-                              ) : (item.serviceDescription || '—')}
-                            </td>
-                            <td>
-                              {editableTechnicalCells ? (
-                                <input className="qc-cell-input" value={item.unit || ''} onChange={e => updateRow(index, { unit: e.target.value })} onBlur={() => void persistQuote({})} placeholder="Đơn vị" />
-                              ) : (item.unit || '—')}
-                            </td>
-                            <td className="qc-cell-money">
-                              {editableTechnicalCells ? (
-                                <input type="number" className="qc-cell-input qc-cell-input-money" value={item.quantity} onChange={e => updateRow(index, { quantity: Math.max(0, Number(e.target.value) || 0) })} onBlur={() => void persistQuote({})} />
+                                <input type="number" className="qc-cell-input qc-cell-input-money" value={item.quantity} onChange={e => updateRow(index, { quantity: Math.max(0, Number(e.target.value) || 0) })} onBlur={() => void persistQuote({}, { silent: true })} />
                               ) : item.quantity}
                             </td>
                             <td className={`qc-cell-money qc-cell-cost ${!item.costNotApplicable && item.costPrice == null ? 'qc-cell-cost-missing' : ''}`} title={!editableTechnicalCells && costViewAllowed ? 'Presale đã chốt — chỉ đọc' : undefined}>
@@ -2224,13 +3149,14 @@ export function QuoteWorkspaceModal({
                                 <span className="qc-row-sub">Không có quyền xem</span>
                               ) : editableTechnicalCells ? (
                                 <input
-                                  type="number"
+                                  type="text"
+                                  inputMode="numeric"
                                   className="qc-cell-input qc-cell-input-money"
-                                  value={item.costPrice ?? ''}
+                                  value={item.costPrice != null ? formatMoneyInput(String(item.costPrice)) : ''}
                                   placeholder={item.costNotApplicable ? 'Không áp dụng' : 'Bắt buộc nhập'}
                                   disabled={item.costNotApplicable}
                                   onChange={e => handleCostPriceChange(index, e.target.value)}
-                                  onBlur={() => void persistQuote({})}
+                                  onBlur={() => void persistQuote({}, { silent: true })}
                                 />
                               ) : (
                                 <>
@@ -2242,52 +3168,58 @@ export function QuoteWorkspaceModal({
                             <td className="qc-cell-money qc-cell-cost">
                               {!costViewAllowed ? <span className="qc-row-sub">Không có quyền xem</span> : item.costNotApplicable ? '—' : costTotal != null ? formatMoney(costTotal) : '—'}
                             </td>
-                            <td className="qc-cell-cost-flag">
-                              {!costViewAllowed ? (
-                                '—'
-                              ) : (
-                                <input
-                                  type="checkbox"
-                                  checked={Boolean(item.costNotApplicable)}
-                                  disabled={!editableTechnicalCells}
-                                  onChange={e => handleCostNotApplicableChange(index, e.target.checked)}
-                                />
-                              )}
-                            </td>
                             <td className="qc-cell-money qc-cell-markup">
                               {!pricingViewAllowed ? (
                                 <span className="qc-row-sub">Không có quyền xem</span>
                               ) : editableCells ? (
-                                <input type="number" className="qc-cell-input qc-cell-input-money" value={item.markupPercent ?? ''} placeholder="—" disabled={item.costPrice == null} onChange={e => handleMarkupChange(index, e.target.value)} onBlur={() => void persistQuote({})} />
+                                <input type="number" className="qc-cell-input qc-cell-input-money" value={item.markupPercent ?? ''} placeholder="—" disabled={item.costPrice == null} onChange={e => handleMarkupChange(index, e.target.value)} onBlur={() => void persistQuote({}, { silent: true })} />
                               ) : (item.markupPercent != null ? `${item.markupPercent.toFixed(1)}%` : '—')}
                             </td>
                             <td className="qc-cell-money qc-cell-markup">
                               {editableCells ? (
-                                <input type="number" className="qc-cell-input qc-cell-input-money" value={item.unitPrice} onChange={e => handleUnitPriceChange(index, e.target.value)} onBlur={() => void persistQuote({})} />
+                                <>
+                                  <input type="number" className="qc-cell-input qc-cell-input-money" value={item.unitPrice} onChange={e => handleUnitPriceChange(index, e.target.value)} onBlur={() => void persistQuote({}, { silent: true })} />
+                                  {!item.unitPrice && item.catalogItemId && catalogPriceLookup[item.catalogItemId] ? (
+                                    <button
+                                      type="button"
+                                      className="qc-mini-btn qc-suggest-price-btn"
+                                      title={catalogPriceLookup[item.catalogItemId].status !== 'active' ? 'Sản phẩm này đã ngừng kinh doanh' : undefined}
+                                      onClick={() => applySuggestedPrice(index, item.catalogItemId as string)}
+                                    >
+                                      Áp giá đề xuất: {formatMoney(catalogPriceLookup[item.catalogItemId].defaultUnitPriceVnd || 0)}
+                                      {catalogPriceLookup[item.catalogItemId].status !== 'active' ? ' · Đã ngừng kinh doanh' : ''}
+                                    </button>
+                                  ) : null}
+                                </>
                               ) : formatMoney(item.unitPrice)}
                             </td>
                             <td className="qc-cell-money">{formatMoney(item.totalAmount || item.quantity * item.unitPrice || 0)}</td>
-                            <td className={`qc-cell-money ${margin != null && margin >= 20 ? 'qc-cell-margin-good' : margin != null ? 'qc-cell-margin-warn' : ''}`}>
+                            <td className={`qc-cell-money qc-th-margin-col ${margin != null && margin >= 20 ? 'qc-cell-margin-good' : margin != null ? 'qc-cell-margin-warn' : ''}`}>
                               {!profitabilityViewAllowed ? <span className="qc-row-sub">Không có quyền xem</span> : margin != null ? `${margin.toFixed(2)}%` : '—'}
                             </td>
                             {canEdit && isDraft && !isLockedForReview ? (
                               <td className="qc-cell-actions">
+                                <button type="button" className="qc-mini-btn qc-mini-btn-icon" title="Di chuyển lên" onClick={() => moveRowUpDown(index, -1)}>↑</button>
+                                <button type="button" className="qc-mini-btn qc-mini-btn-icon" title="Di chuyển xuống" onClick={() => moveRowUpDown(index, 1)}>↓</button>
+                                <button type="button" className="qc-mini-btn qc-mini-btn-icon" title="Nhân bản hạng mục" onClick={() => duplicateItemRow(index)}>⧉</button>
                                 <button type="button" className="qc-row-remove" title="Xoá hạng mục" onClick={() => removeItemRow(index)}>×</button>
                               </td>
                             ) : null}
                           </tr>
                         );
-                      })
+                        });
+                      })()
                     )}
                   </tbody>
                 </table>
               </div>
               {canEdit && isDraft && !isLockedForReview && itemsDraft.length > 0 ? (
                 <div className="qc-workspace-add-row">
+                  <button type="button" className="qc-mini-btn" onClick={() => void openCatalogPicker()}>Chọn từ danh mục</button>
                   <button type="button" className="qc-mini-btn" onClick={addItemRow}>
                     Thêm hạng mục
                   </button>
-                  <button type="button" className="qc-mini-btn" onClick={() => void openCatalogPicker()}>Chọn từ danh mục</button>
+                  <button type="button" className="qc-mini-btn" onClick={addSectionRow}>+ Mục cha</button>
                 </div>
               ) : null}
 
@@ -2315,7 +3247,11 @@ export function QuoteWorkspaceModal({
               </div>
             </div>
 
-            {stage === 'technical' ? (
+            {stage === 'technical' || stage === 'request' ? (
+              // Gop Buoc 1+2: hien san khoi ban giao ngay tu luc con o
+              // 'request' (truoc khi Sale kip them hang muc/quote tu tao
+              // xong) - dung tinh than "man hinh gop" thay vi doi dung
+              // stage==='technical' (chi co that sau khi auto-create xong).
               <div className="qc-workspace-card">
                 <div className="qc-workspace-card-head">
                   <h3>Bàn giao kỹ thuật → người phụ trách báo giá</h3>
@@ -2337,7 +3273,7 @@ export function QuoteWorkspaceModal({
                       <input
                         type="checkbox"
                         checked={Boolean(checklistDraft?.[confirmedKey])}
-                        disabled={!quote || !canEdit || !isDraft}
+                        disabled={!canEdit || !isDraft}
                         onChange={event =>
                           setChecklistDraft(prev => (prev ? { ...prev, [confirmedKey]: event.target.checked } : prev))
                         }
@@ -2349,7 +3285,7 @@ export function QuoteWorkspaceModal({
                           className="qc-workspace-note-input"
                           placeholder="Ghi chú..."
                           value={checklistDraft?.[noteKey] || ''}
-                          disabled={!quote || !canEdit || !isDraft}
+                          disabled={!canEdit || !isDraft}
                           onChange={event =>
                             setChecklistDraft(prev => (prev ? { ...prev, [noteKey]: event.target.value } : prev))
                           }
@@ -2361,36 +3297,10 @@ export function QuoteWorkspaceModal({
                     className="qc-workspace-handoff-note"
                     placeholder="Ghi chú bàn giao..."
                     value={checklistDraft?.handoffNote || ''}
-                    disabled={!quote || !canEdit || !isDraft}
+                    disabled={!canEdit || !isDraft}
                     onChange={event => setChecklistDraft(prev => (prev ? { ...prev, handoffNote: event.target.value } : prev))}
                   />
                 </div>
-              </div>
-            ) : stage === 'request' ? (
-              <div className="qc-workspace-card qc-readiness-card">
-                <div className="qc-workspace-card-head">
-                  <h3>Chuẩn bị gửi Presale</h3>
-                </div>
-                <ul className="qc-readiness-list">
-                  {([
-                    ['Khách hàng đã chọn', Boolean(deal?.customerId || draftCustomerId), 'top'],
-                    ['Dự án đã chọn hoặc xác nhận không có', true, 'top'],
-                    ['Cơ hội đã chọn hoặc xác nhận không có', Boolean(quote?.dealId || draftDealId), 'top'],
-                    ['Presale đã gán', Boolean(quote?.technicalOwnerId || draftTechnicalOwnerId), 'top'],
-                    ['Sale đã gán', Boolean(quote?.quoteOwnerId || draftQuoteOwnerId), 'top'],
-                    ['SLA đã nhập', Boolean(quote?.slaDueAt || draftSlaDueAt), 'top'],
-                    ['Tóm tắt yêu cầu/phạm vi đã nhập', Boolean(requestSummaryText || scopeBlock?.content || draftSummary || draftScope), 'scope'],
-                    ['Có ít nhất 1 hạng mục dự kiến', itemsDraft.length > 0, 'items'],
-                  ] as const).map(([label, done, anchor]) => (
-                    <li key={label} className={`qc-readiness-item ${done ? 'is-done' : 'is-missing'}`}>
-                      <span className="qc-readiness-status">{done ? 'Có' : 'Chưa'}</span>
-                      <span className="qc-readiness-label">{label}</span>
-                      {!done ? (
-                        <button type="button" className="qc-mini-btn" onClick={() => jumpToAnchor(anchor)}>Bổ sung</button>
-                      ) : null}
-                    </li>
-                  ))}
-                </ul>
               </div>
             ) : null}
 
@@ -2671,8 +3581,15 @@ export function QuoteWorkspaceModal({
               <h3>Kiểm tra dữ liệu</h3>
               <ul className="qc-workspace-checks">
                 <li className={deal ? 'ok' : 'pending'}>Đã có thông tin khách hàng</li>
-                <li className={rootItems.length > 0 ? 'ok' : 'pending'}>Đã có hạng mục và chi phí</li>
-                <li className={hasCostData ? 'ok' : 'pending'}>Đã nhập giá bán/markup</li>
+                {/* BUG THAT DA GAP: rootItems = quote?.items (chi co gia tri
+                 * SAU KHI quote da tao that) - o che do tao moi (!quote),
+                 * rootItems LUON RONG du go bao nhieu hang muc di nua, khien
+                 * o nay khong bao gio hien "da xong" cho toi khi bam Bàn
+                 * giao xong. Doc tu itemsDraft (ban nhap dang go) khi chua
+                 * co quote that, giong dung idiom da dung o dong "Đã mô tả
+                 * phạm vi công việc" ben duoi. */}
+                <li className={(quote ? rootItems.length > 0 : itemsDraft.length > 0) ? 'ok' : 'pending'}>Đã có hạng mục và chi phí</li>
+                <li className={(quote ? hasCostData : itemsDraft.some(item => item.markupPercent != null || item.unitPrice > 0)) ? 'ok' : 'pending'}>Đã nhập giá bán/markup</li>
                 <li className={paymentTermsBlock ? 'ok' : 'pending'}>Đã có điều khoản thanh toán</li>
                 <li className={draftScope.trim() || quote?.data?.customBlocks?.some(b => b.kind === 'scope_of_work' && b.content.trim()) ? 'ok' : 'pending'}>Đã mô tả phạm vi công việc</li>
                 <li className={checklistAllConfirmed ? 'ok' : 'pending'}>Checklist bàn giao đầy đủ</li>
@@ -2729,23 +3646,14 @@ export function QuoteWorkspaceModal({
         <div className="qc-workspace-footer">
           {!quote ? (
             <>
-              <button type="button" className="qc-btn" onClick={onClose}>Huỷ</button>
-              <button type="button" className="qc-btn" disabled={busy} onClick={() => void createRequest(false)}>
-                Lưu nháp
-              </button>
-              <button
-                type="button"
-                className="qc-btn qc-btn-primary"
-                disabled={busy || !draftSlaDueAt}
-                title={!draftSlaDueAt ? 'Cần đặt SLA / hạn hoàn tất nội bộ trước khi gửi yêu cầu xử lý' : undefined}
-                onClick={() => void createRequest(true)}
-              >
-                Gửi yêu cầu xử lý
+              <button type="button" className="qc-btn" disabled={busy} onClick={onClose}>Huỷ</button>
+              <button type="button" className="qc-btn qc-btn-primary" disabled={busy} aria-busy={busy && activeAction === 'handoff'} onClick={() => void createRequest(true)}>
+                {actionButtonContent('handoff', 'Bàn giao')}
               </button>
             </>
           ) : !isDraft ? (
             <>
-              <button type="button" className="qc-btn" onClick={onClose}>← Danh sách</button>
+              <button type="button" className="qc-btn" disabled={busy} onClick={onClose}>← Danh sách</button>
               {quote.status === 'approved' ? (
                 <>
                   <button type="button" className="qc-btn" disabled={!canPreview} title={previewDisabledReason} onClick={() => setPreviewModalOpen(true)}>
@@ -2801,49 +3709,48 @@ export function QuoteWorkspaceModal({
             </>
           ) : (
             <>
-              <button type="button" className="qc-btn" onClick={onClose}>← Danh sách</button>
-              {stage === 'request' && canEdit ? (
-                <button
-                  type="button"
-                  className="qc-btn qc-btn-primary"
-                  disabled={busy || !quote?.slaDueAt}
-                  title={!quote?.slaDueAt ? 'Cần đặt SLA / hạn hoàn tất nội bộ trước khi gửi yêu cầu xử lý' : undefined}
-                  onClick={() => void advanceStage('technical')}
-                >
-                  Gửi yêu cầu xử lý
-                </button>
-              ) : null}
-              {stage === 'technical' && canEdit ? (
+              <button type="button" className="qc-btn" disabled={busy} onClick={onClose}>← Danh sách</button>
+              {(stage === 'request' || stage === 'technical') && canEdit ? (
+                // MOT nut duy nhat cho ca Buoc 1 gop (request VA technical la
+                // CUNG 1 buoc UI "Yêu cầu & Kỹ thuật") - khong con tach thanh
+                // "Gửi yêu cầu xử lý" roi "Bàn giao xử lý giá" nhu 2 luot bam
+                // lien tiep (bug that da gap: nhin nhu Buoc 1 chay 2 lan).
+                // handoffStep1ToPricing() tu xu ly ca 2 hop (request-
+                // >technical NEU can, roi ->pricing) trong CUNG 1 lan bam.
                 <>
                   <button type="button" className="qc-btn" disabled={busy || !checklistDirty} title="Lưu checklist ngay (không bắt buộc — bấm Bàn giao cũng tự lưu)" onClick={saveChecklist}>Lưu</button>
                   <button
                     type="button"
                     className="qc-btn qc-btn-primary"
-                    disabled={busy || !checklistAllConfirmed || itemsMissingCost.length > 0}
+                    disabled={busy || !checklistAllConfirmed || itemsMissingCost.length > 0 || (stage === 'request' && !quote?.slaDueAt)}
+                    aria-busy={busy && activeAction === 'handoff'}
                     title={
-                      itemsMissingCost.length > 0
+                      stage === 'request' && !quote?.slaDueAt
+                        ? 'Cần đặt SLA / hạn hoàn tất nội bộ trước khi Bàn giao'
+                        : itemsMissingCost.length > 0
                         ? `Còn ${itemsMissingCost.length} hạng mục chưa nhập giá vốn hoặc chưa đánh dấu "Không áp dụng"`
                         : !checklistAllConfirmed
                         ? 'Cần xác nhận đủ 4 mục Scope/Cost/Timeline/Assumption trước khi bàn giao'
                         : undefined
                     }
-                    onClick={() => void handoffToPricing()}
+                    onClick={() => void handoffStep1ToPricing()}
                   >
-                    Bàn giao xử lý giá
+                    {actionButtonContent('handoff', 'Bàn giao')}
                   </button>
                 </>
               ) : null}
               {stage === 'pricing' && canEdit ? (
                 <>
-                  <button type="button" className="qc-btn" disabled={busy} onClick={() => void persistQuote({})}>Lưu</button>
+                  <button type="button" className="qc-btn" disabled={busy} aria-busy={busy && activeAction === 'draftSave'} onClick={() => void persistQuote({})}>{actionButtonContent('draftSave', 'Lưu')}</button>
                   <button
                     type="button"
                     className="qc-btn qc-btn-primary"
                     disabled={busy || !canReadyForApproval}
+                    aria-busy={busy && activeAction === 'reviewPricing'}
                     title={!canReadyForApproval ? 'Cần ít nhất 1 hạng mục và tổng tiền > 0 trước khi gửi duyệt' : undefined}
                     onClick={() => void advanceStage('review')}
                   >
-                    Hoàn tất phần giá bán
+                    {actionButtonContent('reviewPricing', 'Hoàn tất phần giá bán')}
                   </button>
                 </>
               ) : null}
@@ -2895,6 +3802,51 @@ export function QuoteWorkspaceModal({
         </div>
       ) : null}
 
+      <ProjectFormModal
+        open={projectModalOpen}
+        customerId={effectiveCustomerIdForProjects || ''}
+        customerName={quote ? deal?.customerName || 'Khách hàng hiện tại' : customers.find(c => c.id === draftCustomerId)?.label || 'Khách hàng hiện tại'}
+        onClose={() => setProjectModalOpen(false)}
+        onSaved={created => {
+          setProjectModalOpen(false);
+          if (!created) return;
+          setProjects(prev => [...(prev || []), created]);
+          if (quote) void updateQuoteProject(created.id);
+          else setDraftProjectId(created.id);
+        }}
+      />
+
+      <DealFormModal
+        open={dealModalOpen}
+        loading={dealCreateBusy}
+        onClose={() => { if (!dealCreateBusy) setDealModalOpen(false); }}
+        onCreate={input => void handleCreateQuickDeal(input)}
+        onUpdate={() => {}}
+        agents={quickCreateAgents}
+        sourceOptions={SOURCE_OPTIONS}
+        servicePackageOptions={SERVICE_PACKAGE_OPTIONS}
+        packageOptions={CRM_PACKAGE_OPTIONS}
+        industryOptions={INDUSTRY_OPTIONS.map(value => ({ value, label: value }))}
+        currentUser={user ?? null}
+        initialCustomer={
+          draftCustomerId
+            ? { id: draftCustomerId, name: customers.find(c => c.id === draftCustomerId)?.label || '' }
+            : null
+        }
+        initialProject={draftProjectId ? { id: draftProjectId } : null}
+      />
+      {dealCreateError ? (
+        <div className="qc-modal-backdrop qc-modal-backdrop--nested" onMouseDown={() => setDealCreateError('')}>
+          <div className="qc-deal-picker" onMouseDown={event => event.stopPropagation()}>
+            <h3>Không tạo được cơ hội</h3>
+            <div className="qc-workspace-note-box qc-workspace-note-box--warn">{dealCreateError}</div>
+            <div className="qc-workspace-modal-actions">
+              <button type="button" className="qc-btn qc-btn-primary" onClick={() => setDealCreateError('')}>Đóng</button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       {previewModalOpen ? (
         <div className="qc-modal-backdrop qc-modal-backdrop--nested" onMouseDown={event => { if (event.target === event.currentTarget) setPreviewModalOpen(false); }}>
           <div className="qc-workspace-preview-modal">
@@ -2933,7 +3885,7 @@ export function QuoteWorkspaceModal({
                 <tbody>
                   {itemsDraft.map((item, index) => (
                     <tr key={item.id || index}>
-                      <td>{item.description || '—'}</td>
+                      <td>{item.serviceDescription || '—'}</td>
                       <td className="qc-cell-money">{item.quantity}</td>
                       <td className="qc-cell-money">{formatMoney(item.unitPrice)}</td>
                       <td className="qc-cell-money">{formatMoney(item.totalAmount || item.quantity * item.unitPrice || 0)}</td>
@@ -2966,9 +3918,6 @@ export function QuoteWorkspaceModal({
                   <strong>{formatDate(quote.validUntil)}</strong>
                 </div>
               ) : null}
-            </div>
-            <div className="qc-workspace-modal-actions">
-              <button type="button" className="qc-btn" onClick={() => setPreviewModalOpen(false)}>Đóng</button>
             </div>
           </div>
         </div>
@@ -3042,7 +3991,7 @@ export function QuoteWorkspaceModal({
             )}
 
             <div className="qc-workspace-modal-actions">
-              <button type="button" className="qc-btn" onClick={() => setSendModalOpen(false)}>
+              <button type="button" className="qc-btn" disabled={sendBusy} onClick={() => setSendModalOpen(false)}>
                 {sendSuccess ? 'Đóng' : 'Huỷ'}
               </button>
               {!sendSuccess ? (
@@ -3050,9 +3999,10 @@ export function QuoteWorkspaceModal({
                   type="button"
                   className="qc-btn qc-btn-primary"
                   disabled={sendBusy || !sendRecipientEmail.trim()}
+                  aria-busy={sendBusy}
                   onClick={() => void submitSendQuote()}
                 >
-                  {sendBusy ? 'Đang gửi…' : sendError ? 'Thử lại' : 'Gửi báo giá'}
+                  {sendBusy ? (<><span className="qc-btn-spinner" aria-hidden="true" /> Đang gửi…</>) : sendError ? 'Thử lại' : 'Gửi báo giá'}
                 </button>
               ) : null}
             </div>
@@ -3154,9 +4104,9 @@ export function QuoteWorkspaceModal({
               Sau khi duyệt, version {quote.versionNumber || 1} sẽ bị khoá — không sửa được nữa, chỉ tạo được phiên bản mới.
             </div>
             <div className="qc-workspace-modal-actions">
-              <button type="button" className="qc-btn" onClick={() => setApproveModalOpen(false)}>Huỷ</button>
-              <button type="button" className="qc-btn qc-btn-primary" disabled={busy} onClick={() => void approveNow()}>
-                Duyệt báo giá
+              <button type="button" className="qc-btn" disabled={busy} onClick={() => setApproveModalOpen(false)}>Huỷ</button>
+              <button type="button" className="qc-btn qc-btn-primary" disabled={busy} aria-busy={busy && activeAction === 'approve'} onClick={() => void approveNow()}>
+                {actionButtonContent('approve', 'Duyệt báo giá')}
               </button>
             </div>
           </div>
@@ -3192,14 +4142,15 @@ export function QuoteWorkspaceModal({
               />
             </label>
             <div className="qc-workspace-modal-actions">
-              <button type="button" className="qc-btn" onClick={() => setExceptionApprovalModal({ open: false, reason: '', evaluation: null })}>Huỷ</button>
+              <button type="button" className="qc-btn" disabled={busy} onClick={() => setExceptionApprovalModal({ open: false, reason: '', evaluation: null })}>Huỷ</button>
               <button
                 type="button"
                 className="qc-btn qc-btn-primary"
                 disabled={busy || !exceptionApprovalModal.reason.trim()}
+                aria-busy={busy && activeAction === 'approve'}
                 onClick={() => void approveWithExceptionNow()}
               >
-                Duyệt ngoại lệ
+                {actionButtonContent('approve', 'Duyệt ngoại lệ')}
               </button>
             </div>
           </div>
@@ -3235,9 +4186,9 @@ export function QuoteWorkspaceModal({
               Sau khi phát hành, version {quote.versionNumber || 1} sẽ được khoá, public link sẽ được bật thật.
             </div>
             <div className="qc-workspace-modal-actions">
-              <button type="button" className="qc-btn" onClick={() => setPublishModalOpen(false)}>Huỷ</button>
-              <button type="button" className="qc-btn qc-btn-primary" disabled={busy} onClick={() => void publishNow()}>
-                Xác nhận phát hành
+              <button type="button" className="qc-btn" disabled={busy} onClick={() => setPublishModalOpen(false)}>Huỷ</button>
+              <button type="button" className="qc-btn qc-btn-primary" disabled={busy} aria-busy={busy && activeAction === 'publish'} onClick={() => void publishNow()}>
+                {actionButtonContent('publish', 'Xác nhận phát hành')}
               </button>
             </div>
           </div>
@@ -3316,14 +4267,15 @@ export function QuoteWorkspaceModal({
               Báo giá sẽ chuyển lùi về đúng bước đã chọn để chỉnh sửa lại — chỉ áp dụng khi đang ở "Chờ duyệt", chưa duyệt.
             </div>
             <div className="qc-workspace-modal-actions">
-              <button type="button" className="qc-btn" onClick={() => setRequestChangesModalOpen(false)}>Huỷ</button>
+              <button type="button" className="qc-btn" disabled={busy} onClick={() => setRequestChangesModalOpen(false)}>Huỷ</button>
               <button
                 type="button"
                 className="qc-btn qc-btn-primary"
                 disabled={busy || !requestChangesReason.trim()}
+                aria-busy={busy && activeAction === 'requestChanges'}
                 onClick={() => void requestChangesNow()}
               >
-                Gửi yêu cầu chỉnh sửa
+                {actionButtonContent('requestChanges', 'Gửi yêu cầu chỉnh sửa')}
               </button>
             </div>
           </div>
@@ -3332,7 +4284,7 @@ export function QuoteWorkspaceModal({
 
       {catalogModalOpen ? (
         <div className="qc-modal-backdrop qc-modal-backdrop--nested" onMouseDown={event => { if (event.target === event.currentTarget) setCatalogModalOpen(false); }}>
-          <div className="qc-workspace-preview-modal">
+          <div className="qc-workspace-preview-modal qc-catalog-picker-modal">
             <div className="qc-workspace-modal-head">
               <h3>Chọn từ danh mục dịch vụ</h3>
               <button type="button" className="crm-icon-action" aria-label="Đóng" onClick={() => setCatalogModalOpen(false)}>
@@ -3342,30 +4294,104 @@ export function QuoteWorkspaceModal({
             <div className="qc-workspace-preview-modal-body">
               {catalogLoading ? (
                 <p className="qc-workspace-note">Đang tải danh mục...</p>
-              ) : !catalogOptions || (catalogOptions.bundles.length === 0 && catalogOptions.components.length === 0) ? (
-                <p className="qc-workspace-note">Mẫu báo giá này chưa liên kết danh mục dịch vụ nào — dùng "+ Thêm hạng mục" để nhập tay.</p>
+              ) : catalogFlatItems.length === 0 ? (
+                <p className="qc-workspace-note">Chưa có sản phẩm/dịch vụ nào trong CRM → Sản phẩm &amp; dịch vụ — dùng "Thêm hạng mục" để nhập tay.</p>
               ) : (
-                <ul className="qc-workspace-catalog-list">
-                  {[...catalogOptions.bundles, ...catalogOptions.components].map(item => (
-                    <li key={item.id}>
-                      <div>
-                        <strong>{item.name}</strong>
-                        <div className="qc-row-sub">{item.unit || '—'} · {formatMoney(item.defaultUnitPriceVnd || 0)}</div>
-                      </div>
-                      <button type="button" className="qc-mini-btn qc-mini-btn-brand" onClick={() => addItemsFromCatalog([catalogItemToQuoteItem(item)])}>
-                        <Plus className="qc-inline-icon" /> Thêm
-                      </button>
-                    </li>
-                  ))}
-                </ul>
+                <>
+                  <div className="qc-catalog-picker-toolbar">
+                    <input
+                      className="crm-input"
+                      value={catalogSearch}
+                      onChange={e => setCatalogSearch(e.target.value)}
+                      placeholder="Tìm theo mã, tên, mô tả..."
+                    />
+                    <select className="crm-input" value={catalogGroupFilter} onChange={e => setCatalogGroupFilter(e.target.value)}>
+                      <option value="">Tất cả nhóm</option>
+                      {catalogGroupNames.map(name => <option key={name} value={name}>{name}</option>)}
+                    </select>
+                    <label className="qc-catalog-picker-checkbox">
+                      <input type="checkbox" checked={catalogShowInactive} onChange={e => setCatalogShowInactive(e.target.checked)} />
+                      Hiện cả ngừng kinh doanh
+                    </label>
+                    {catalogSectionOptions.length > 0 ? (
+                      <select className="crm-input" value={catalogTargetSectionId} onChange={e => setCatalogTargetSectionId(e.target.value)}>
+                        <option value="">Thêm vào: Cuối bảng</option>
+                        {catalogSectionOptions.map(s => <option key={s.id} value={s.id}>Thêm vào mục: {s.label}</option>)}
+                      </select>
+                    ) : null}
+                  </div>
+                  <div className="qc-catalog-picker-table-wrap">
+                    <table className="qc-catalog-picker-table">
+                      <thead>
+                        <tr>
+                          <th></th>
+                          <th>Mã/Tên sản phẩm</th>
+                          <th>Nhóm</th>
+                          <th>Mô tả chuẩn</th>
+                          <th>ĐVT</th>
+                          <th>Đơn giá Sale</th>
+                          <th>VAT</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {catalogFilteredItems.length === 0 ? (
+                          <tr><td colSpan={7} className="qc-empty">Không tìm thấy sản phẩm phù hợp.</td></tr>
+                        ) : catalogFilteredItems.map(item => (
+                          <tr
+                            key={item.id}
+                            className={`qc-catalog-picker-row${item.status !== 'active' ? ' qc-catalog-row-inactive' : ''}`}
+                            onClick={() => toggleCatalogSelected(item.id)}
+                          >
+                            <td onClick={e => e.stopPropagation()}>
+                              <input type="checkbox" checked={catalogSelectedIds.has(item.id)} onChange={() => toggleCatalogSelected(item.id)} />
+                            </td>
+                            <td>{item.sku ? `${item.sku} — ` : ''}{item.name}{item.status !== 'active' ? <span className="qc-row-sub"> (ngừng kinh doanh)</span> : null}</td>
+                            <td>{item.groupName || '—'}</td>
+                            <td>{item.description || '—'}</td>
+                            <td>{item.unit || '—'}</td>
+                            <td>{formatMoney(item.defaultUnitPriceVnd || 0)} <span className="qc-row-sub">(tham khảo, chỉ dùng ở Bước 2)</span></td>
+                            <td>{item.defaultVatRate ?? 0}%</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
               )}
             </div>
             <div className="qc-workspace-modal-actions">
               <button type="button" className="qc-btn" onClick={() => setCatalogModalOpen(false)}>Đóng</button>
+              <button
+                type="button"
+                className="qc-btn qc-btn-primary"
+                disabled={catalogSelectedIds.size === 0 || catalogAdding}
+                onClick={handleAddSelectedCatalogItems}
+              >
+                {catalogAdding ? 'Đang thêm…' : `Thêm vào báo giá (${catalogSelectedIds.size})`}
+              </button>
             </div>
           </div>
         </div>
       ) : null}
+
+      <ConfirmModal
+        open={catalogDedupQueue.length > 0}
+        title="Sản phẩm đã có trong bảng"
+        message={
+          catalogDedupQueue[0]
+            ? `"${catalogDedupQueue[0].catalogItem.name}" đã có sẵn 1 dòng trong bảng hạng mục. Bạn muốn tăng số lượng dòng có sẵn hay vẫn thêm thành dòng mới?`
+            : ''
+        }
+        onClose={() => setCatalogDedupQueue(prev => {
+          const rest = prev.slice(1);
+          if (rest.length === 0) setCatalogModalOpen(false);
+          return rest;
+        })}
+        actions={[
+          { label: 'Tăng số lượng dòng có sẵn', variant: 'primary', onClick: () => resolveCatalogDedup('increase') },
+          { label: 'Vẫn thêm dòng mới', onClick: () => resolveCatalogDedup('addNew') },
+        ]}
+      />
     </div>
   );
 }

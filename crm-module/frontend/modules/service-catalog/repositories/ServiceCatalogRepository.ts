@@ -55,6 +55,15 @@ export class ServiceCatalogRepository {
     return apiFetch<ServiceCatalogItem[]>('/api/all-platform/service-catalog');
   }
 
+  /** Tra cuu nhieu san pham theo id cung luc (vd de "Ap gia de xuat" o Buoc 2
+   * dua tren catalogItemId da luu tren dong hang muc) - luon goi lai server,
+   * khong dua vao state cua modal chon danh muc da dong. */
+  async lookupByIds(ids: string[]): Promise<ServiceCatalogItem[]> {
+    if (ids.length === 0) return [];
+    const unique = Array.from(new Set(ids));
+    return apiFetch<ServiceCatalogItem[]>(`/api/all-platform/service-catalog/lookup?ids=${encodeURIComponent(unique.join(','))}`);
+  }
+
   async create(input: ServiceCatalogItemInput): Promise<ServiceCatalogItem> {
     return apiFetch<ServiceCatalogItem>('/api/all-platform/service-catalog/add', {
       method: 'POST',

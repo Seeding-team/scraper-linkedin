@@ -20,6 +20,7 @@ from app.modules.all_platform.services import (
     delete_service_catalog_item,
     reorder_service_catalog_item,
     set_bundle_components,
+    get_service_catalog_items_by_ids,
 )
 
 router = APIRouter()
@@ -29,6 +30,17 @@ router = APIRouter()
 def service_catalog_get_all(_user: dict = Depends(get_current_user)) -> BaseResponse:
     try:
         return BaseResponse(success=True, data=list_service_catalog_items())
+    except Exception as e:
+        return BaseResponse(success=False, message=str(e))
+
+
+@router.get("/lookup")
+def service_catalog_lookup(ids: str = Query(..., description="Danh sach id, phan cach boi dau phay"), _user: dict = Depends(get_current_user)) -> BaseResponse:
+    """Tra cuu nhieu san pham theo id, dung cho "Ap gia de xuat" o Buoc 2 -
+    luon tra lai tu DB (khong cache), de biet dung gia/trang thai hien tai."""
+    try:
+        item_ids = [i for i in (x.strip() for x in ids.split(",")) if i]
+        return BaseResponse(success=True, data=get_service_catalog_items_by_ids(item_ids))
     except Exception as e:
         return BaseResponse(success=False, message=str(e))
 
