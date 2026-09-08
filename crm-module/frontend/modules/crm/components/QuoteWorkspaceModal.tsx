@@ -945,8 +945,17 @@ export function QuoteWorkspaceModal({
   // tra ve (dung yeu cau "Review/Admin: hien thi Cost+Pricing+Profitability
   // dang read-only"). Sau 'review' (approved) da tu khoa qua isDraft roi.
   const isLockedForReview = stage === 'review';
-  const canEditCostCells = canEdit && isDraft && !isLockedForReview && canEditQuoteCost(user, quote);
-  const canEditPricingCells = canEdit && isDraft && !isLockedForReview && canEditQuotePricingFields(user, quote);
+  // Khoa theo BUOC (moi): Buoc 1 (request) chi dien Hang muc+SL, CHUA duoc
+  // dien Gia von (tu Buoc 2 - technical - tro di moi duoc); Markup/Gia khach
+  // CHI dien duoc dung o Buoc 3 (pricing). Admin/Leader KHONG bi khoa theo
+  // buoc (dung nguyen tac full CRM access da ap dung xuyen suot he thong).
+  // Backend enforce lai y het qua _check_item_field_level_permission - day
+  // chi la UX, khong phai lop chan that.
+  const isAdminOrLeader = user?.role === 'admin' || user?.role === 'leader';
+  const costStageOk = isAdminOrLeader || stage !== 'request';
+  const pricingStageOk = isAdminOrLeader || stage === 'pricing';
+  const canEditCostCells = canEdit && isDraft && !isLockedForReview && canEditQuoteCost(user, quote) && costStageOk;
+  const canEditPricingCells = canEdit && isDraft && !isLockedForReview && canEditQuotePricingFields(user, quote) && pricingStageOk;
   // "Chưa có/Chưa tính" (khong du du lieu) khac "Không có quyền xem" (bi
   // chan boi apply_quote_field_permissions o backend) - quote moi (chua co
   // quote.id, dang tao) mac dinh coi la duoc xem/sua (draft cua chinh minh).
