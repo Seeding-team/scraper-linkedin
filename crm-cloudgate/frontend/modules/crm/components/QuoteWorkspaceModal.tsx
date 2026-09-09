@@ -937,8 +937,26 @@ export function QuoteWorkspaceModal({
     return buildItemTree(flat).map(toItemInput);
   }
 
+  // Xem giai thich day du trong persistQuote() ben duoi - danh dau "sap dong,
+  // dung autosave nua" tren onMouseDown cua nut Dong/Huy (chay TRUOC blur).
+  const skipNextAutoSaveRef = useRef(false);
+  function markClosingIntent() {
+    skipNextAutoSaveRef.current = true;
+  }
+
   async function persistQuote(overrides: { data?: Quote['data']; items?: QuoteItem[]; overallDiscountPercent?: number | null }, opts?: { silent?: boolean }) {
     if (!quote) return;
+    // BUG THAT DA GAP ("sua nham 1 o roi bam X dong luon van bi luu"): moi o
+    // sua trong bang hang muc (Markup/Gia von/Gia khach/Mo ta/SL...) deu
+    // auto-save NGAM qua onBlur - khi bam nut Dong (X)/Huy/"← Danh sách", trinh
+    // duyet BLUR o dang go TRUOC KHI chay onClick cua nut do, nen gia tri vua
+    // go (co the go NHAM) van bi luu xuong DB truoc khi modal kip dong, du
+    // nguoi dung chua he bam nut "Lưu thay đổi" chinh. Cac nut dong/huy nay
+    // gio deu co onMouseDown={markClosingIntent} (mousedown chay TRUOC blur)
+    // de bao truoc "sap dong, dung luu autosave nua" - CHI chan cuoc goi
+    // SILENT (autosave ngam), KHONG anh huong nut "Lưu thay đổi" chinh (luon
+    // goi khong co silent, van luu binh thuong khi nguoi dung chu dong bam).
+    if (opts?.silent && skipNextAutoSaveRef.current) return;
     // silent=true: dung cho auto-save NGAM khi go/blur tung o (mo ta/SL/gia
     // von/markup...) - KHONG dung chung co `busy`/`activeAction` voi cac nut
     // hanh dong chinh (Bàn giao/Gửi duyệt...) nua. BUG THAT DA GAP: truoc day
@@ -2670,7 +2688,7 @@ export function QuoteWorkspaceModal({
   }
 
   return (
-    <div className="qc-modal-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) onClose(); }}>
+    <div className="qc-modal-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) { markClosingIntent(); onClose(); } }}>
       <div className="qc-workspace">
         <header className="qc-workspace-header">
           {/* Dong rieng CHI hien tren mobile (≤767px, CSS an tren desktop) -
@@ -2700,7 +2718,7 @@ export function QuoteWorkspaceModal({
                   { key: 'back', label: '← Danh sách', disabled: busy, onSelect: onClose },
                 ]}
               />
-              <button type="button" className="crm-icon-action" aria-label="Đóng" disabled={busy} onClick={onClose}>
+              <button type="button" className="crm-icon-action" aria-label="Đóng" disabled={busy} onMouseDown={markClosingIntent} onClick={onClose}>
                 <X className="qc-inline-icon" />
               </button>
             </div>
@@ -2765,10 +2783,10 @@ export function QuoteWorkspaceModal({
                 {actionButtonContent('draftSave', 'Lưu / Chỉnh sửa')}
               </button>
             ) : null}
-            <button type="button" className="qc-btn qc-workspace-header-btn-desktop-only" disabled={busy} onClick={onClose}>
+            <button type="button" className="qc-btn qc-workspace-header-btn-desktop-only" disabled={busy} onMouseDown={markClosingIntent} onClick={onClose}>
               ← Danh sách
             </button>
-            <button type="button" className="crm-icon-action qc-workspace-header-btn-desktop-only" aria-label="Đóng" disabled={busy} onClick={onClose}>
+            <button type="button" className="crm-icon-action qc-workspace-header-btn-desktop-only" aria-label="Đóng" disabled={busy} onMouseDown={markClosingIntent} onClick={onClose}>
               <X className="qc-inline-icon" />
             </button>
           </div>
@@ -4219,14 +4237,14 @@ export function QuoteWorkspaceModal({
         <div className="qc-workspace-footer">
           {!quote ? (
             <>
-              <button type="button" className="qc-btn" disabled={busy} onClick={onClose}>Huỷ</button>
+              <button type="button" className="qc-btn" disabled={busy} onMouseDown={markClosingIntent} onClick={onClose}>Huỷ</button>
               <button type="button" className="qc-btn qc-btn-primary" disabled={busy} aria-busy={busy && activeAction === 'handoff'} onClick={() => void createRequest(true)}>
                 {actionButtonContent('handoff', 'Bàn giao')}
               </button>
             </>
           ) : !isDraft ? (
             <>
-              <button type="button" className="qc-btn" disabled={busy} onClick={onClose}>← Danh sách</button>
+              <button type="button" className="qc-btn" disabled={busy} onMouseDown={markClosingIntent} onClick={onClose}>← Danh sách</button>
               {quote.status === 'approved' ? (
                 <>
                   <button type="button" className="qc-btn" disabled={!canPreview} title={previewDisabledReason} onClick={() => setPreviewModalOpen(true)}>
@@ -4282,7 +4300,7 @@ export function QuoteWorkspaceModal({
             </>
           ) : (
             <>
-              <button type="button" className="qc-btn" disabled={busy} onClick={onClose}>← Danh sách</button>
+              <button type="button" className="qc-btn" disabled={busy} onMouseDown={markClosingIntent} onClick={onClose}>← Danh sách</button>
               {(stage === 'request' || stage === 'technical') && canEdit ? (
                 // MOT nut duy nhat cho ca Buoc 1 gop (request VA technical la
                 // CUNG 1 buoc UI "Yêu cầu & Kỹ thuật") - khong con tach thanh
