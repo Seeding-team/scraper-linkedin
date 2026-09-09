@@ -66,9 +66,21 @@ docker compose up --build
 ```
 Mở `http://localhost:18090` (hoặc port đặt trong `CRM_ROUTER_PORT`).
 
-### Test đa brand (switcher + khoá site) trên local — giả lập 3 domain thật
+### Test đa brand (switcher + khoá site) trên local
 
-Không cần sửa file `hosts` / không cần domain thật — mở thêm 3 port giả lập
+**Cách khớp thật với production (3 deploy tách rời)**: dựng thêm 1 stack
+`crm-cloudgate/` (hoặc `crm-securityzone/`) như 1 container HOÀN TOÀN riêng
+(`docker compose up --build -d` trong chính thư mục đó, `backend/.env` trỏ
+CÙNG `SUPABASE_URL` với `crm-module` nhưng `JWT_SECRET_KEY` và `CRM_INSTANCE`
+khác), rồi test mint mã ở stack này, consume ở stack kia (và ngược lại) qua
+đúng port thật của từng stack (`18090` cho `crm-module`, `18091` cho
+`crm-cloudgate`) — đây là cách ĐÃ verify thật (xem mục "Đăng nhập đa brand" ở
+trên).
+
+**Cách khác (giả lập 3 domain qua 1 process)** — không còn bắt buộc cho
+switcher/redirect nữa (đã bỏ yêu cầu 1 process), nhưng vẫn hữu ích để demo
+riêng phần cách ly dữ liệu theo `instance`/Host header: không cần sửa file
+`hosts` / không cần domain thật — mở thêm 3 port giả lập
 bằng cách ép cứng `Host` header, dùng file có sẵn `nginx/nginx.local-test.conf`
 (`8081`→`crm.markee.vn`, `8082`→`crm.getcloudgate.com`,
 `8083`→`crm.securityzone.vn`). Tạo `docker-compose.override.yml` (không
@@ -138,10 +150,11 @@ riêng) — mỗi deploy chỉ được thấy/ghi đúng dữ liệu của mìn
 dữ liệu CRM có thêm cột `instance` (text), và biến env `CRM_INSTANCE` (trong
 `backend/.env`) quyết định deploy này lọc/ghi theo giá trị nào.
 
-**BẮT BUỘC — chạy 1 lần trước khi dùng thật** (đã viết sẵn, CHƯA tự chạy
-được vì DB `seeding.db.markeeai.com` không có kênh SSH/DDL nào từ máy dev này
-— xem "Cách áp migration" bên dưới). Cả 3 file đều an toàn chạy lại nhiều lần
-(idempotent, dùng `IF NOT EXISTS`), chạy đúng thứ tự:
+**BẮT BUỘC — chạy 1 lần trên DB DÙNG CHUNG trước khi dùng thật** (đã viết sẵn,
+CHƯA tự chạy được vì DB `seeding.db.markeeai.com` không có kênh SSH/DDL nào từ
+máy dev này — xem "Cách áp migration" bên dưới). Cả 4 file đều an toàn chạy
+lại nhiều lần (idempotent, dùng `IF NOT EXISTS`), **chỉ cần chạy 1 LẦN DUY
+NHẤT** dù có 3 deploy (vì cả 3 cùng đọc/ghi 1 DB), chạy đúng thứ tự:
 
 1. `backend/migrations/001_add_instance_scoping.sql` — thêm cột `instance TEXT
    NOT NULL DEFAULT 'markee'` vào toàn bộ bảng CRM + đổi 4 unique constraint
@@ -157,9 +170,14 @@ dữ liệu CRM có thêm cột `instance` (text), và biến env `CRM_INSTANCE`
 3. `backend/migrations/003_app_users_home_instance.sql` — thêm cột
    `home_instance` (site đã đăng ký) vào `app_users`, phục vụ tính năng "khoá
    tài khoản theo site" ở mục ngay dưới đây.
+4. `backend/migrations/004_workspace_handoff_codes.sql` — bảng
+   `workspace_handoff_codes` (mã dùng-1-lần cho switcher + redirect, lưu DB
+   thay vì RAM để chạy đúng với 3 deploy tách rời — xem mục "Đăng nhập đa
+   brand" ở trên).
 
-**Checklist đầy đủ để đưa lên production (migration + gộp hạ tầng + đổi NPM
-+ test)**: xem `../docs/CRM_UNIFY_PROD_ROLLOUT_CHECKLIST_2026-09-09.md`.
+**Checklist đầy đủ để đưa lên production (migration + `.env` + test)**: xem
+`../docs/CRM_UNIFY_PROD_ROLLOUT_CHECKLIST_2026-09-09.md` — **KHÔNG còn bước
+gộp hạ tầng / đổi NPM** như bản trước, giữ nguyên 3 deploy tách rời.
 
 **Cách áp migration lên `seeding.db.markeeai.com`**: chưa xác định được kênh
 chạy DDL cho DB này (không có SSH tới host DB, PostgREST không chạy được
@@ -192,13 +210,23 @@ INSERT/SELECT/UPDATE nội bộ) trước khi instance thứ 2 đi vào hoạt �
 
 ## Đăng nhập đa brand: admin switcher + khoá tài khoản theo site
 
-**Yêu cầu bắt buộc**: cả 2 tính năng dưới đây CHỈ hoạt động đúng khi **1
-process backend DUY NHẤT phục vụ cả 4 domain thật** (`crm.markee.vn`,
-`crm.markeeai.com`, `crm.getcloudgate.com`, `crm.securityzone.vn`) — mã
-dùng-1-lần của cả 2 luồng lưu trong RAM của process
-(`workspace_handoff_service.py`), mint ở process này mà consume ở process
-khác (vd nếu vẫn còn chạy `crm-cloudgate`/`crm-securityzone` như 2 deploy
-tách rời) sẽ luôn thất bại.
+**Chạy đúng với mô hình 3 deploy TÁCH RIÊNG hiện tại** (`crm-module`/
+`crm-cloudgate`/`crm-securityzone`, mỗi cái 1 host/container/CRM_INSTANCE cố
+định) — KHÔNG cần gộp thành 1 process, KHÔNG cần đổi NPM. Mã dùng-1-lần của
+cả 2 luồng dưới đây lưu trong bảng `workspace_handoff_codes` của **DB self-host
+DÙNG CHUNG** (migration `004_workspace_handoff_codes.sql`, cả 3 deploy vốn đã
+share 1 DB từ trước) thay vì RAM của process — mint ở deploy A, consume ở
+deploy B (2 container/2 JWT secret hoàn toàn khác nhau) vẫn hoạt động đúng vì
+cả 2 cùng đọc/ghi 1 bảng trong DB chung. **Đã verify thật** bằng 2 stack Docker
+Compose độc lập (`crm-module` port 18090 + `crm-cloudgate` port 18091, JWT
+secret khác nhau) — cả 2 chiều mint/consume qua lại đều thành công, dùng lại
+mã lần 2 bị từ chối đúng, log sạch không lỗi.
+
+**Điều kiện bắt buộc duy nhất**: cả 3 deploy phải trỏ **cùng 1 DB self-host**
+(vốn đã đúng từ trước) và biến `WORKSPACE_DOMAINS` trong `backend/.env` của
+**cả 3 deploy phải giống hệt nhau** (liệt kê đủ cả 3 brand, xem
+`.env.example`) — sai/thiếu 1 chỗ thì switcher/redirect sang đúng brand đó sẽ
+báo lỗi "chưa cấu hình được domain" (không crash, không mất dữ liệu).
 
 - **Admin workspace switcher**: admin (role `admin`, không tính `leader`)
   thấy dropdown đổi brand ở sidebar (`WorkspaceSwitcherShadcn.tsx`) — chọn

@@ -429,8 +429,13 @@ export interface AppUser {
 }
 
 export interface AuthLoginResponse {
-  user: AppUser;
-  access_token: string;
+  user?: AppUser;
+  access_token?: string;
+  /** Tài khoản non-admin đăng nhập nhầm site khác site đã đăng ký
+   * (home_instance) — backend không set cookie, trả về redirect_url để FE tự
+   * chuyển sang đúng site (trang /auth/handoff ở site đó tự đăng nhập tiếp). */
+  redirect_required?: boolean;
+  redirect_url?: string;
 }
 
 export interface SocialAccount {

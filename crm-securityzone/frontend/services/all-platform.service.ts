@@ -1617,6 +1617,18 @@ export const authService = {
     return requestJson(`${BASE}/auth/me`);
   },
 
+  listWorkspaces: (): Promise<ApiResponse<{ items: Array<{ instance: string; url: string; current: boolean }>; current_instance: string }>> => {
+    return requestJson(`${BASE}/auth/workspaces`);
+  },
+
+  mintWorkspaceHandoff: (): Promise<ApiResponse<{ code: string }>> => {
+    return requestJson(`${BASE}/auth/workspace-handoff`, { method: "POST" });
+  },
+
+  consumeWorkspaceHandoff: (code: string): Promise<ApiResponse<{ user: AppUser }>> => {
+    return requestJson(`${BASE}/auth/workspace-handoff/consume?code=${encodeURIComponent(code)}`);
+  },
+
   updateProfile: (payload: { name?: string }): Promise<ApiResponse<AppUser>> => {
     return requestJson(`${BASE}/auth/me/profile`, {
       method: "PUT",
