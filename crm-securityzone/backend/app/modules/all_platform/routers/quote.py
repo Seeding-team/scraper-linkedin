@@ -1149,7 +1149,7 @@ def quotes_get_rule_evaluation(quote_id: str, user: dict = Depends(get_current_u
 # Rule engine duyet bao gia (migration 091, DA APPLY - bang dang rong, chua
 # co rule-set nao, xem readonly_check_migration_090_092.py). GET active mo
 # cho MOI nguoi dang nhap (Member xem ket qua/nguong nhung khong sua duoc).
-# PUT active CHI Admin/Leader (can_manage_quote_approval_rules, 403 that).
+# PUT active CHI Admin (can_manage_quote_approval_rules, 403 that).
 # ─────────────────────────────────────────────────────────────────────────
 quote_approval_rules_router = APIRouter()
 
