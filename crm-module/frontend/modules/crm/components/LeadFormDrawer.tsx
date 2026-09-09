@@ -2,9 +2,11 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { API_BASE_URL, API_KEY } from '@/lib/env';
+import { allPlatformCategoriesService } from '@/services/all-platform.service';
 import { useMembers } from '@/hooks/useMembers';
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
 import { SOURCE_OPTIONS } from '../constants/crmConfig';
+import { mergeCategoryOptions } from '../hooks/useCrm';
 import { PositionSelect } from './PositionSelect';
 import { mapLead, LEAD_STATUS_LABEL } from './LeadsDirectory';
 import { ChevronDown, ChevronUp, Loader2, X } from './icons';
@@ -62,6 +64,25 @@ function isAdminOrLeader(user: AppUser | null) {
 // ban rule-based dau tien (khong goi AI/backend), theo dung yeu cau spec.
 const PHONE_RE = /(?:\+?84|0)(?:\d[\s.-]?){9,10}\b/;
 const EMAIL_RE = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/;
+
+/** Nhan dien "Nguon" tu noi dung dan vao (yeu cau rieng - "chỗ nguồn lead vẫn
+ * chưa feed") - TRUOC DAY handleParsePaste() chi doan duoc SDT/Email/Ten,
+ * hoan toan khong dung toi form.source, nen Nguon luon giu nguyen mac dinh
+ * 'Manual' du noi dung dan vao ro rang tu 1 kenh khac (vd link Zalo/Facebook
+ * Messenger). Chi doan theo tu khoa/duong dan RO RANG - KHONG doan mo ho de
+ * tranh gan nham nguon (vd 1 website bat ky KHONG tu dong quy ve 'Website'
+ * neu khong co dau hieu ro nhu http(s)://). Tra ve null neu khong nhan dien
+ * duoc gi - giu nguyen 'Manual' nhu cu, khong ep bang bat ky gia tri nao. */
+function detectSourceFromPaste(text: string): string | null {
+  const lower = text.toLowerCase();
+  if (/zalo\.me|chat\.zalo|\bzalo\b/.test(lower)) return 'Zalo';
+  if (/markee/.test(lower)) return 'MarkeeChat';
+  if (/m\.me\/|messenger\.com|facebook\.com\/messages|\bfb inbox\b|\binbox\b/.test(lower)) return 'FB_Inbox';
+  if (/facebook\.com\/groups|\bfb group\b|\bgroup\b/.test(lower)) return 'FB_Group';
+  if (/gi[ớo]i thi[eệ]u|referral/.test(lower)) return 'Referral';
+  if (/https?:\/\/|www\./.test(lower)) return 'Website';
+  return null;
+}
 
 // Heuristic "du dieu kien de auto-check" - CHI dung de quyet dinh co nen tu
 // dong goi API duplicate-check hay khong (UX), khong thay the chuan hoa that
@@ -140,6 +161,33 @@ export function LeadFormDrawer({
   const { members } = useMembers();
   const leadNameRef = useRef<HTMLInputElement>(null);
   useBodyScrollLock(open);
+
+  // BUG THAT DA GAP ("chỗ nguồn lead vẫn chưa feed"): dropdown "Nguồn" truoc
+  // day dung THANG `SOURCE_OPTIONS` tinh (hardcode trong crmConfig.ts), trong
+  // khi trang "Danh mục CRM" cho phep them/sua "Nguồn" dong qua bang
+  // categories (category_type='crm_source') - them "Nguồn" moi o Danh muc thi
+  // dropdown nay KHONG BAO GIO thay vi khong he goi API. `useCrm()` (hook
+  // dung o trang Leads/Pipeline chinh) da co san dung logic merge nay
+  // (`loadCrmCategoryOptions`) nhung LeadFormDrawer la drawer doc lap, KHONG
+  // dung chung hook nang do (se keo theo load ca deals/agents khong can) - chi
+  // tai su dung ham `mergeCategoryOptions()` da export tu useCrm.ts, tu fetch
+  // rieng 1 lan khi mo drawer.
+  const [sourceOptions, setSourceOptions] = useState(SOURCE_OPTIONS);
+  useEffect(() => {
+    if (!open) return;
+    let alive = true;
+    allPlatformCategoriesService
+      .getAll('crm_source')
+      .then(res => {
+        if (alive) setSourceOptions(mergeCategoryOptions(SOURCE_OPTIONS, res.data));
+      })
+      .catch(() => {
+        // Giu nguyen danh sach mac dinh neu tai danh muc mo rong that bai.
+      });
+    return () => {
+      alive = false;
+    };
+  }, [open]);
 
   // Bo dem chan-doi-thi (generation counter) - moi lan len lich goi
   // duplicate-check tang seq; khi response ve chi ap dung neu no van la lan
@@ -297,6 +345,13 @@ export function LeadFormDrawer({
       if (namePart && !PHONE_RE.test(namePart) && !EMAIL_RE.test(namePart) && namePart.length < 60) {
         setValue('leadName', namePart);
       }
+    }
+    // Nguon: CHI tu dien khi dang la mac dinh 'Manual' (nguoi dung CHUA tu
+    // chon nguon nao) - tranh ghi de lua chon thu cong neu ho da doi truoc
+    // khi dan noi dung.
+    if (form.source === 'Manual') {
+      const detected = detectSourceFromPaste(text);
+      if (detected) setValue('source', detected);
     }
   }
 
@@ -664,7 +719,7 @@ export function LeadFormDrawer({
                   </Field>
                   <Field label="Nguồn" required>
                     <select value={form.source} onChange={e => setValue('source', e.target.value)}>
-                      {SOURCE_OPTIONS.map(option => (
+                      {sourceOptions.map(option => (
                         <option key={option.value} value={option.value}>{option.label}</option>
                       ))}
                     </select>
