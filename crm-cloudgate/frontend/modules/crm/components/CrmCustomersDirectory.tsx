@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { API_BASE_URL, API_KEY } from '@/lib/env';
 import { useAppAuth } from '@/contexts/AppAuthContext';
 import { useMembers } from '@/hooks/useMembers';
+import { usersService, type QuoteBusinessRoleUser } from '@/services/all-platform.service';
 import { formatVND } from '../constants/crmConfig';
 import { CustomerFormModal } from './CustomerFormModal';
 import { CustomerAddDrawer } from './CustomerAddDrawer';
@@ -133,6 +134,22 @@ export function CrmCustomersDirectory() {
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState('');
   const [ownerId, setOwnerId] = useState('');
+  const [saleManagerId, setSaleManagerId] = useState('');
+  const [saleManagerOptions, setSaleManagerOptions] = useState<QuoteBusinessRoleUser[]>([]);
+  useEffect(() => {
+    let alive = true;
+    usersService
+      .getUsersByQuoteBusinessRole('sale')
+      .then(res => {
+        if (alive) setSaleManagerOptions(res.success ? res.data || [] : []);
+      })
+      .catch(() => {
+        if (alive) setSaleManagerOptions([]);
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [reloadTick, setReloadTick] = useState(0);
@@ -153,7 +170,7 @@ export function CrmCustomersDirectory() {
     return () => window.clearTimeout(timer);
   }, [searchInput]);
 
-  useEffect(() => { setPage(1); }, [status, ownerId]);
+  useEffect(() => { setPage(1); }, [status, ownerId, saleManagerId]);
 
   const load = useCallback(() => {
     let alive = true;
@@ -161,6 +178,7 @@ export function CrmCustomersDirectory() {
     if (search) params.set('search', search);
     if (status) params.set('status', status);
     if (ownerId) params.set('owner_id', ownerId);
+    if (saleManagerId) params.set('sale_manager_id', saleManagerId);
     setLoading(true);
     fetch(`${API_BASE_URL}/api/all-platform/crm/customers?${params.toString()}`, {
       credentials: 'include',
@@ -193,7 +211,7 @@ export function CrmCustomersDirectory() {
         if (alive) setLoading(false);
       });
     return () => { alive = false; };
-  }, [page, search, status, ownerId]);
+  }, [page, search, status, ownerId, saleManagerId]);
 
   useEffect(() => {
     const cleanup = load();
@@ -220,12 +238,13 @@ export function CrmCustomersDirectory() {
   }, [members]);
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
-  const hasFilters = Boolean(search || ownerId);
+  const hasFilters = Boolean(search || ownerId || saleManagerId);
 
   function resetFilters() {
     setSearchInput('');
     setSearch('');
     setOwnerId('');
+    setSaleManagerId('');
     setPage(1);
   }
 
@@ -355,6 +374,14 @@ export function CrmCustomersDirectory() {
               placeholder="Tìm tên doanh nghiệp, MST, người liên hệ, SĐT, email..."
               autoComplete="off"
             />
+            <div className="crm-filter-select-wrap">
+              <SearchableSelect
+                value={saleManagerId}
+                onChange={setSaleManagerId}
+                placeholder="Tất cả Sale manager"
+                options={saleManagerOptions.map(u => ({ value: u.id, label: u.name }))}
+              />
+            </div>
             <div className="crm-filter-select-wrap">
               <SearchableSelect
                 value={ownerId}

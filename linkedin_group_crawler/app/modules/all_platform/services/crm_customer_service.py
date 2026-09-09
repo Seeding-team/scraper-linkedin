@@ -14,8 +14,8 @@ CUSTOMER_COLUMNS = (
     "id, customer_name, company_name, position, position_category_id, "
     "position_label_snapshot, phone, phone_normalized, "
     "email, email_normalized, zalo, facebook, telegram, website, tax_code, "
-    "address, city, industry, source, status, owner_id, created_by, note, "
-    "created_at, updated_at"
+    "address, city, industry, source, status, owner_id, sale_manager_id, "
+    "created_by, note, created_at, updated_at"
 )
 
 
@@ -225,6 +225,7 @@ def list_customers(
     status: str | None = None,
     source: str | None = None,
     owner_id: str | None = None,
+    sale_manager_id: str | None = None,
     page: int = 1,
     page_size: int = 50,
 ) -> dict[str, Any]:
@@ -238,6 +239,8 @@ def list_customers(
             query = query.eq("source", source)
         if owner_id:
             query = query.eq("owner_id", owner_id)
+        if sale_manager_id:
+            query = query.eq("sale_manager_id", sale_manager_id)
         return query
 
     query = base_query()
