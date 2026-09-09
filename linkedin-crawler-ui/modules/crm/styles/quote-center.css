@@ -387,6 +387,46 @@
   color: #98a2b3;
 }
 
+/* Cot "Phu trach" (Presale/Sale tach 2 dong, thay "A -> B" 1 dong cu) -
+ * desktop dung 2 dong trong 1 cot de khong lam bang rong ra. */
+.qc-sale-cell--stacked {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  font-size: 12px;
+}
+.qc-owner-row {
+  display: flex;
+  gap: 4px;
+  max-width: 100%;
+  overflow: hidden;
+}
+.qc-owner-row span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.qc-owner-role {
+  flex-shrink: 0;
+  color: #98a2b3;
+}
+
+/* Mobile card - 2 chip gon thay vi 1 dong "A -> B". */
+.qc-owner-chips {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}
+.qc-owner-chip {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #f2f4f7;
+  font-size: 11.5px;
+  color: #344054;
+  white-space: nowrap;
+}
+
 .qc-avatar {
   width: 28px;
   height: 28px;
@@ -839,6 +879,16 @@
   width: 100%;
   table-layout: fixed;
   border-collapse: collapse;
+}
+
+/* Dong Muc cha (Section) trong bang "Bản xem trước cho khách hàng" - truoc
+ * day render nhu 1 hang muc gia 0 ("—" | 0 | 0đ | 0đ), gio la tieu de nhom
+ * noi bat, khong tinh tien - dung nen nhat giong .qc-workspace-section-row
+ * o bang chinh Workspace. */
+.qc-linked-table-section-row td {
+  background: #fdf1f4;
+  padding-top: 8px;
+  padding-bottom: 8px;
 }
 
 /* Bang 10 cot that (mapping da xac nhan - xem renderChainRow): Bao gia/Version
@@ -1554,7 +1604,11 @@
 .qc-workspace {
   display: flex;
   flex-direction: column;
-  width: min(1500px, 96vw);
+  /* Rong them tu 1500px/96vw len 1700px/98vw ("cho popup to ra nữa để bảng
+   * nó to ra ngang luôn") - bang hang muc co nhieu cot (Gia von/Markup/Gia
+   * khach/Margin/Thao tac...) can nhieu khong gian ngang hon de bot phai
+   * cuon, ket hop min-width moi o .qc-workspace-items-table--unified. */
+  width: min(1700px, 98vw);
   max-height: 92vh;
   min-height: 420px;
   background: #fff;
@@ -1930,7 +1984,9 @@
 }
 .qc-workspace-section-roman {
   display: inline-block;
-  margin-left: 10px;
+  /* Dat TRUOC ten muc cha (ben trai) nen dung margin-right thay margin-left -
+   * truoc day dat SAU ten nen dung margin-left, da doi vi tri trong JSX. */
+  margin-right: 10px;
   padding: 1px 8px;
   border-radius: 999px;
   background: var(--color-primary, #ba244a);
@@ -1975,6 +2031,37 @@
   flex: 1;
   min-width: 0;
 }
+/* BUG THAT DA GAP ("hạng mục bị khuất"): cot "Hạng mục" la cot DUY NHAT
+ * khong co width co dinh (moi cot con lai: ĐVT/SL/Giá vốn/Markup/Giá khách/
+ * Margin/Thao tac deu co width rieng) - tren man hinh hep (laptop nho, hoac
+ * modal Workspace bi thu nho), trinh duyet ep het cot nay ve gan 0 de nhuong
+ * cho cac cot co width co dinh, khien input Ten hang muc bien mat (chi con
+ * thay STT + nut "⋯"). .qc-workspace-items-scroll da co overflow-x:auto san
+ * nhung KHONG co tac dung neu ban than <table> khong co min-width vuot qua
+ * container - them min-width cho ca bang lan rieng cot dau, de trinh duyet
+ * CUON NGANG thay vi ep cot Hang muc bien mat. */
+.qc-workspace-items-table--unified th:first-child,
+.qc-workspace-items-table--unified td:first-child {
+  min-width: 220px;
+}
+.qc-workspace-items-table--unified {
+  min-width: 920px;
+}
+/* Ten hang muc dai bi cat trong bang nhieu cot - line-clamp 2 dong + tooltip
+ * (title= tren chinh the) thay vi 1 dong bi an ellipsis mat het noi dung, nut
+ * "..." canh ben mo Drawer chi tiet (xem itemDetailDrawerIndex) de xem/sua
+ * day du khong can nong bang. */
+.qc-workspace-item-name-clamp {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  flex: 1;
+  min-width: 0;
+}
+.qc-workspace-item-detail-btn { flex-shrink: 0; }
+.qc-workspace-drawer-field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: #5b6576; }
+.qc-workspace-drawer-field p { margin: 0; font-size: 13px; color: #1f2530; }
 .qc-mini-btn-icon {
   width: 26px;
   height: 26px;
@@ -2021,6 +2108,54 @@
  * giua thay vi can phai nhu cac cot tien khac (qc-cell-money mac dinh
  * text-align:right - can specificity cao hon o day de thang). 52px qua hep,
  * bi cham ca so lan nut spinner. */
+/* Cot checkbox chon dong de ap Margin muc tieu hang loat (yeu cau chung,
+ * khong rieng VPS Zone) - vua du 1 checkbox, khong lay khong gian dang ke. */
+.qc-th-select, .qc-cell-select { width: 28px; text-align: center; padding-left: 8px !important; padding-right: 0 !important; }
+
+/* Cot "DVT" (yeu cau chung, khong rieng VPS Zone) - vua du hien "Goi"/"Thang"/
+ * "License"/"User/tháng" khong tran, khong lay qua nhieu khong gian cua
+ * "Hạng mục". */
+.qc-th-unit, .qc-cell-unit { width: 96px; white-space: nowrap; }
+.qc-cell-unit .qc-cell-input { width: 100%; box-sizing: border-box; }
+
+/* Popover mini "Ap Margin cho rieng dong nay" - noi trong o Margin cua dung
+ * 1 dong, khong che cac dong khac (z-index cao hon noi dung bang binh
+ * thuong, nhung van nam trong pham vi wrapper cuon ngang .qc-table-wrap nen
+ * khong tran ra ngoai trang). */
+.qc-row-margin-popover {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  z-index: 20;
+  background: #fff;
+  border: 1px solid #e4e7ec;
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(16, 24, 40, 0.12);
+  padding: 10px;
+  width: 200px;
+  text-align: left;
+  white-space: normal;
+}
+.qc-row-margin-popover-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 6px;
+}
+.qc-row-margin-popover-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+  justify-content: flex-end;
+}
+
+/* Popup nho "+ Điều khoản" (thay window.prompt() cu) - neo canh nut, dung
+ * lai dung khung .qc-row-margin-popover nhung rong hon (textarea nhieu
+ * dong). */
+.qc-term-note-anchor { position: relative; display: inline-block; }
+.qc-term-note-popover { width: 260px; }
+.qc-term-note-popover textarea { width: 100%; box-sizing: border-box; resize: vertical; }
+
 .qc-th-qty, .qc-cell-qty { width: 72px; white-space: nowrap; }
 .qc-cell-money.qc-cell-qty { text-align: center; }
 /* "Thao tác" (nut xoa dong "x") chi can vua khit 1 icon, nhuong khong gian
@@ -2032,6 +2167,12 @@
   white-space: nowrap;
   overflow: visible;
   text-overflow: clip;
+}
+/* Cot Thao tac gio chi con 1 nut menu "..." (ActionMenu) thay 4 nut roi rac
+ * - thu hep lai de nhuong khong gian cho cot Hang muc, khong con can 128px. */
+.qc-workspace-items-table--unified .qc-cell-actions--menu {
+  width: 44px;
+  text-align: center;
 }
 .qc-cell-qty .qc-cell-input-money { text-align: center; }
 
@@ -2073,17 +2214,22 @@
 .qc-workspace-items-table--unified .qc-th-cost {
   background: #f2faf6;
   /* "Giá vốn/ĐV"/"Giá vốn" bi cham/khuat so voi cot ke ben khi so tien co dau
-   * cham ngan nghin (vd "1.500.000") - danh rieng width cho 2 cot nay thay vi
-   * de table-layout:fixed tu chia deu (qua hep so voi so 7 chu so). */
-  width: 108px;
+   * cham ngan nghin - 108px chi vua 7 chu so, KHONG du cho 9-10 chu so (vd
+   * "1.234.567.890" = 10 chu so + 3 dau cham) nhu yeu cau "ô giá vốn cho
+   * nhìn thấy rõ 9-10 con số" - rong ra 148px (nut fill-down ↓ da bi bo o
+   * cot Markup nhung van con o cot nay nen van can chua ca nut). */
+  width: 148px;
   white-space: nowrap;
 }
 .qc-workspace-items-table--unified .qc-cell-markup,
 .qc-workspace-items-table--unified .qc-th-markup {
   background: #fffaf0;
-  /* Cung ly do voi .qc-th-cost o tren - "Giá khách/ĐV" bi cham/khuat khi so
-   * tien co dau cham ngan nghin. */
-  width: 108px;
+  /* Class nay dung CHUNG cho ca cot "Markup %" LAN "Giá khách/ĐV" (2 <td>
+   * khac nhau cung dung .qc-cell-markup) - rong len 148px giong .qc-cell-cost
+   * de "Giá khách/ĐV" cung hien du 9-10 chu so nhu "Giá vốn/ĐV" ("chỗ giá
+   * khách hàng hiển thị đủ 9-10 con số như giá vốn á"), khong tach rieng class
+   * moi vi ca 2 cot deu la kieu tien/% ngan gon, rong hon 1 chut khong sao. */
+  width: 148px;
   white-space: nowrap;
 }
 .qc-cell-margin-good { color: #148e61 !important; font-weight: 700; }
@@ -2174,6 +2320,25 @@
   padding: 8px 0 12px;
   border-bottom: 1px dashed #eee;
   margin-bottom: 10px;
+}
+/* Ban gon lai: 4 nhom (Markup nhanh/Margin muc tieu/Ap dung/Thanh toan) moi
+ * nhom nam RIENG 1 dong thay vi don chung 1 dong dai tran ngang. */
+.qc-workspace-quickbar--compact {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+}
+.qc-workspace-quickbar-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.qc-workspace-quickbar-rule-inline {
+  margin-left: auto;
+  font-weight: 400;
+  color: #98a2b3;
+  cursor: help;
 }
 .qc-workspace-quickbar-sep { width: 1px; align-self: stretch; background: #e5e5e5; }
 .qc-workspace-quickbar-field {
@@ -2306,7 +2471,19 @@
 }
 .qc-workspace-preview--clickable:hover { border-color: #e28ca5; background: #fff8fa; }
 .qc-workspace-preview-title { font-weight: 700; margin-bottom: 6px; color: #2b3445; }
-.qc-workspace-preview-line { padding: 2px 0; color: #5b6576; }
+.qc-workspace-preview-line {
+  padding: 2px 0;
+  color: #5b6576;
+  /* Chi hien 1 dong, cat gon bang "..." - truoc day mo ta dai wrap nhieu
+   * dong lam the preview qua dai ("Preview khách hàng NGẮN GỌN LẠI"). */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.qc-workspace-preview-more {
+  color: #9099a7;
+  font-style: italic;
+}
 .qc-workspace-preview-total { margin-top: 6px; font-weight: 700; border-top: 1px dashed #e5e5e5; padding-top: 6px; }
 .qc-workspace-note { font-size: 11.5px; color: #9099a7; margin: 6px 0 0; }
 .qc-workspace-note-box {
@@ -2320,6 +2497,53 @@
 }
 
 .qc-workspace-activity { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; font-size: 12.5px; color: #5b6576; }
+.qc-workspace-activity--scroll { max-height: 280px; overflow-y: auto; padding-right: 4px; }
+
+/* Nut "Dien xuong" canh o Gia von/Markup tung dong - hien duoi input, khong
+ * chiem them chieu rong cot (bang hang muc da nhieu cot, tranh tran Thao
+ * tac). Ghi de kich thuoc vuong 26x26 cua .qc-mini-btn-icon (dung chung class
+ * do de thua ke padding/border, nhung nut nay co chu nen can rong hon). */
+.qc-cell-input-row {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+.qc-cell-input-row .qc-cell-input {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Highlight nut preset Markup nhanh/Margin muc tieu vua duoc ap dung - de
+ * biet dang o muc nao (truoc day bam xong khong co dau hieu gi, "bấm chọn
+ * markup/margin nó k có màu thì s bíc chọn cái nào"). */
+.qc-mini-btn-active {
+  background: var(--color-primary, #ba244a);
+  border-color: var(--color-primary, #ba244a);
+  color: #fff;
+}
+.qc-mini-btn-active:hover {
+  background: var(--color-primary, #ba244a);
+  border-color: var(--color-primary, #ba244a);
+  color: #fff;
+  filter: brightness(1.08);
+}
+
+/* Chi con 1 ky tu mui ten "↓" (bo chu thich dai "Điền xuống (hạng mục con)"
+ * theo yeu cau don gian - da co title= lam tooltip giai thich khi hover) -
+ * nut vuong nho, nam CANH input (khong con chiem rieng 1 dong duoi input
+ * nhu truoc). */
+.qc-fill-down-btn {
+  width: 22px;
+  height: 22px;
+  min-width: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 4px;
+  padding: 0;
+  font-size: 13px;
+  flex-shrink: 0;
+}
 
 .qc-workspace-modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
 
@@ -2400,7 +2624,15 @@
   gap: 12px;
   box-shadow: 0 28px 80px rgba(11, 18, 35, 0.32);
   overflow-y: auto;
+  /* "bản xem trc k để thanh cuộn nhìn xấu" - thanh cuon mac dinh cua trinh
+   * duyet (day, mau xam dam) nhin tho - lam mong/nhat giong pattern da dung
+   * cho .sc-drawer-body. */
+  scrollbar-width: thin;
+  scrollbar-color: #d0d5dd transparent;
 }
+.qc-workspace-preview-modal::-webkit-scrollbar { width: 6px; }
+.qc-workspace-preview-modal::-webkit-scrollbar-track { background: transparent; }
+.qc-workspace-preview-modal::-webkit-scrollbar-thumb { background: #d0d5dd; border-radius: 999px; }
 .qc-workspace-modal-head { display: flex; align-items: center; justify-content: space-between; }
 .qc-workspace-modal-head h3 { margin: 0; font-size: 15px; }
 .qc-workspace-preview-modal-body { display: flex; flex-direction: column; gap: 10px; font-size: 12.5px; color: #455167; }

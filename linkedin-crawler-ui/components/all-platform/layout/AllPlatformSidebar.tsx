@@ -265,9 +265,12 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, workspaceTab: 
       exactMatch: true,
     },
     // ===== END Leads/Khách hàng/Cơ hội reorder =====
-    // Thu tu 4 muc Bao gia/Hop dong/Phan tich CRM/Lich su bao gia theo dung
-    // yeu cau moi (2026-09-08): Bao gia -> Hop dong -> Phan tich CRM -> Lich
-    // su bao gia (truoc day Phan tich CRM dung ngay sau "Co hoi").
+    // Thu tu day du sau "Co hoi" theo dung yeu cau moi nhat (2026-09-09):
+    // Bao gia -> Phan tich CRM -> Lich su bao gia -> Hop dong -> Tai lieu ban
+    // hang -> San pham & dich vu -> Danh muc CRM -> Mau bao gia -> Don vi
+    // phat hanh -> Cai dat bao gia (truoc day: Bao gia -> Hop dong -> Phan
+    // tich CRM -> Lich su bao gia -> ... -> San pham & dich vu -> Mau bao
+    // gia -> Don vi phat hanh -> Danh muc CRM -> Cai dat bao gia).
     {
       type: "item",
       id: "quote-center",
@@ -275,14 +278,6 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, workspaceTab: 
       icon: "request_quote",
       label: "Báo giá",
       matchStartsWith: ["/all-platform/quote-center"],
-    },
-    {
-      type: "item",
-      id: "contracts",
-      href: "/all-platform/contracts",
-      icon: "description",
-      label: "Hợp đồng",
-      matchStartsWith: ["/all-platform/contracts"],
     },
     // Phan tich CRM: theo yeu cau Mylife (22/07) chi leader/admin thay "full"
     // CRM, member chi thay pipeline ban hang (muc "Co hoi" o tren). Mo rong
@@ -310,6 +305,14 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, workspaceTab: 
     },
     {
       type: "item",
+      id: "contracts",
+      href: "/all-platform/contracts",
+      icon: "description",
+      label: "Hợp đồng",
+      matchStartsWith: ["/all-platform/contracts"],
+    },
+    {
+      type: "item",
       id: "sales-assets",
       href: "/all-platform/sales-assets",
       icon: "campaign",
@@ -326,6 +329,19 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, workspaceTab: 
     },
     {
       type: "item",
+      id: "crm-categories",
+      href: "/all-platform/crm/categories",
+      // "category" da dung cho "San pham & dich vu" ngay ben tren - truoc day
+      // trung icon voi muc nay khien 2 muc lien tiep nhau nhin y het nhau
+      // ("sp với danh mục trùng icon"). Doi sang "list_alt" (da co san trong
+      // MaterialSymbolName, dai dien dung "danh muc/danh sach" thay vi "san
+      // pham").
+      icon: "list_alt",
+      label: "Danh mục CRM",
+      matchStartsWith: ["/all-platform/crm/categories"],
+    },
+    {
+      type: "item",
       id: "quotes",
       href: "/all-platform/quotes",
       icon: "star",
@@ -339,14 +355,6 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, workspaceTab: 
       icon: "domain",
       label: "Đơn vị phát hành",
       matchStartsWith: ["/all-platform/issuer-companies"],
-    },
-    {
-      type: "item",
-      id: "crm-categories",
-      href: "/all-platform/crm/categories",
-      icon: "category",
-      label: "Danh mục CRM",
-      matchStartsWith: ["/all-platform/crm/categories"],
     },
     // Gom "Email gửi báo giá" (truoc o Trang ca nhan) + "Quy tắc phê duyệt"
     // (truoc la modal trong Workspace bao gia Buoc 2) ve 1 trang cai dat rieng

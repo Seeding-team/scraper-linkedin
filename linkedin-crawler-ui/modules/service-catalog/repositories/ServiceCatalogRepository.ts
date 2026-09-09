@@ -1,5 +1,11 @@
 import { API_BASE_URL, API_KEY } from '@/lib/env';
-import type { ServiceCatalogItem, ServiceCatalogItemInput, BundleComponentInput } from '../types';
+import type {
+  ServiceCatalogItem,
+  ServiceCatalogItemInput,
+  BundleComponentInput,
+  ServiceCatalogItemPricingRow,
+  ServiceCatalogItemPricingUpsertInput,
+} from '../types';
 
 type ApiResponse<T> = {
   success?: boolean;
@@ -50,9 +56,44 @@ function toItemPayload(input: ServiceCatalogItemInput) {
   };
 }
 
+export interface ServiceCatalogListOptions {
+  /** 'quote_picker' = dang goi tu Catalog Picker trong 1 quote - anh huong
+   * quyen xem Gia von/Markup mac dinh (Gia khach LUON tra, khong qua cong
+   * quyen nay). BAT BUOC kem `quoteId` THAT (1 row `quotes` da ton tai) de
+   * duoc cap cost - KHONG con nhan `issuerCompanyId` rieng: thieu quoteId
+   * se LUON bi an cost, khong co ngoai le nao cho "dang tao moi" (da sua lo
+   * hong bao mat o backend, xem routers/service_catalog.py). Mac dinh
+   * 'admin' (trang quan tri danh muc). */
+  context?: 'admin' | 'quote_picker';
+  quoteId?: string | null;
+}
+
 export class ServiceCatalogRepository {
-  async list(): Promise<ServiceCatalogItem[]> {
-    return apiFetch<ServiceCatalogItem[]>('/api/all-platform/service-catalog');
+  async list(options?: ServiceCatalogListOptions): Promise<ServiceCatalogItem[]> {
+    const params = new URLSearchParams();
+    if (options?.context) params.set('context', options.context);
+    if (options?.quoteId) params.set('quote_id', options.quoteId);
+    const qs = params.toString();
+    return apiFetch<ServiceCatalogItem[]>(`/api/all-platform/service-catalog${qs ? `?${qs}` : ''}`);
+  }
+
+  /** Danh sách đầy đủ bộ giá (mọi issuer_company_id) của 1 sản phẩm — CHỈ
+   * dùng cho form quản trị (Admin), không dùng cho picker chọn danh mục. */
+  async listPricing(itemId: string): Promise<ServiceCatalogItemPricingRow[]> {
+    return apiFetch(`/api/all-platform/service-catalog/${encodeURIComponent(itemId)}/pricing`);
+  }
+
+  async upsertPricing(itemId: string, input: ServiceCatalogItemPricingUpsertInput): Promise<ServiceCatalogItemPricingRow> {
+    return apiFetch(`/api/all-platform/service-catalog/${encodeURIComponent(itemId)}/pricing`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        issuer_company_id: input.issuerCompanyId ?? null,
+        default_cost_price_vnd: input.defaultCostPriceVnd ?? null,
+        default_markup_percent: input.defaultMarkupPercent ?? null,
+        default_customer_price_vnd: input.defaultCustomerPriceVnd ?? null,
+        pricing_input_mode: input.pricingInputMode,
+      }),
+    });
   }
 
   /** Tra cuu nhieu san pham theo id cung luc (vd de "Ap gia de xuat" o Buoc 2

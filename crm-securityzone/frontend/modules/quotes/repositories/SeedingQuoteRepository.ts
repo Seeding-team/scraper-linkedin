@@ -61,6 +61,13 @@ type QuoteItemPayload = {
   cost_price?: number | null;
   markup_percent?: number | null;
   cost_not_applicable?: boolean;
+  price_book_item_id?: string | null;
+  price_book_version_id?: string | null;
+  price_book_snapshot?: unknown | null;
+  cost_override_reason?: string | null;
+  cost_override_by?: string | null;
+  cost_override_at?: string | null;
+  cost_price_original?: number | null;
 };
 
 function getDefaultHeaders(): Record<string, string> {
@@ -165,6 +172,7 @@ function toUpdateQuotePayload(input: UpdateQuoteInput) {
     issuer_company_id: input.issuerCompanyId ?? null,
   };
   if ('projectId' in input) payload.project_id = input.projectId ?? null;
+  if ('overallDiscountPercent' in input) payload.overall_discount_percent = input.overallDiscountPercent ?? null;
   if ('slaDueAt' in input) payload.sla_due_at = input.slaDueAt ?? null;
   return payload;
 }
@@ -189,6 +197,13 @@ function toQuoteItemPayload(item: NonNullable<CreateQuoteInput['items']>[number]
     cost_price: item.costPrice ?? null,
     markup_percent: item.markupPercent ?? null,
     cost_not_applicable: item.costNotApplicable ?? false,
+    price_book_item_id: item.priceBookItemId ?? null,
+    price_book_version_id: item.priceBookVersionId ?? null,
+    price_book_snapshot: item.priceBookSnapshot ?? null,
+    cost_override_reason: item.costOverrideReason ?? null,
+    cost_override_by: item.costOverrideBy ?? null,
+    cost_override_at: item.costOverrideAt ?? null,
+    cost_price_original: item.costPriceOriginal ?? null,
   };
 }
 
@@ -251,6 +266,11 @@ export class SeedingQuoteRepository implements QuoteRepository {
     customerId?: string;
     projectId?: string;
     ownerId?: string;
+    /** Loc rieng theo Presale (technical_owner_id)/Sale (quote_owner_id) -
+     * backend GET /quotes/by-phase da ho tro san 2 tham so nay tach biet
+     * voi `owner_id` gop chung (xem quotes_list_by_phase, supabase_quote_service.py). */
+    technicalOwnerId?: string;
+    quoteOwnerId?: string;
     mine?: boolean;
     teamId?: string;
     dateFrom?: string;
@@ -266,6 +286,8 @@ export class SeedingQuoteRepository implements QuoteRepository {
     if (params.customerId) qs.set('customer_id', params.customerId);
     if (params.projectId) qs.set('project_id', params.projectId);
     if (params.ownerId) qs.set('owner_id', params.ownerId);
+    if (params.technicalOwnerId) qs.set('technical_owner_id', params.technicalOwnerId);
+    if (params.quoteOwnerId) qs.set('quote_owner_id', params.quoteOwnerId);
     if (params.mine) qs.set('mine', 'true');
     if (params.teamId) qs.set('team_id', params.teamId);
     if (params.dateFrom) qs.set('date_from', params.dateFrom);

@@ -451,28 +451,34 @@ export function QuoteCenterPage() {
     };
   }, [customerFilter]);
 
-  // "Tat ca owner" (1 dropdown, khop CA vai tro Presale lan Sale - xem
-  // owner_id o backend) - danh sach nguoi that tu quote_business_role
-  // (presale/sale that), KHONG phai SDR/leader cua Deal (2 khai niem khac
-  // nhau: SDR/leader la nguoi phu trach CO HOI CRM, technicalOwner/quoteOwner
-  // la nguoi phu trach XU LY BAO GIA).
-  const [ownerFilterOptions, setOwnerFilterOptions] = useState<QuoteBusinessRoleUser[]>([]);
+  // Truoc day gop chung 1 dropdown "Tat ca owner" (Presale+Sale lan lon vao
+  // nhau, gay "lay qua nhieu tai khoan khong lien quan" - dung ra nguon da
+  // dung tu dau, chi la GOP 2 danh sach lam 1). Sua theo yeu cau: tach rieng
+  // 2 filter, MOI filter giu dung 1 nguon rieng (khong merge nua) - danh
+  // sach van la nguoi that tu quote_business_role (presale/sale that),
+  // KHONG phai SDR/leader cua Deal (2 khai niem khac nhau: SDR/leader la
+  // nguoi phu trach CO HOI CRM, technicalOwner/quoteOwner la nguoi phu
+  // trach XU LY BAO GIA).
+  const [presaleFilterOptions, setPresaleFilterOptions] = useState<QuoteBusinessRoleUser[]>([]);
+  const [saleFilterOptions, setSaleFilterOptions] = useState<QuoteBusinessRoleUser[]>([]);
   useEffect(() => {
     let alive = true;
-    Promise.all([usersService.getUsersByQuoteBusinessRole('presale'), usersService.getUsersByQuoteBusinessRole('sale')]).then(([presaleRes, saleRes]) => {
-      if (!alive) return;
-      const map = new Map<string, QuoteBusinessRoleUser>();
-      for (const u of presaleRes.success ? presaleRes.data || [] : []) map.set(u.id, u);
-      for (const u of saleRes.success ? saleRes.data || [] : []) map.set(u.id, u);
-      setOwnerFilterOptions(Array.from(map.values()));
+    usersService.getUsersByQuoteBusinessRole('presale').then(res => {
+      if (alive) setPresaleFilterOptions(res.success ? res.data || [] : []);
     }).catch(() => {
-      if (alive) setOwnerFilterOptions([]);
+      if (alive) setPresaleFilterOptions([]);
+    });
+    usersService.getUsersByQuoteBusinessRole('sale').then(res => {
+      if (alive) setSaleFilterOptions(res.success ? res.data || [] : []);
+    }).catch(() => {
+      if (alive) setSaleFilterOptions([]);
     });
     return () => {
       alive = false;
     };
   }, []);
-  const [ownerFilter, setOwnerFilter] = useState('');
+  const [presaleFilter, setPresaleFilter] = useState('');
+  const [saleFilter, setSaleFilter] = useState('');
 
   const PAGE_SIZE = QUOTE_ROW_LIMIT;
 
@@ -494,7 +500,7 @@ export function QuoteCenterPage() {
   // vo ly.
   useEffect(() => {
     setPage(1);
-  }, [phaseTab, listSearch, customerFilter, projectFilter, ownerFilter, teamFilter, roleScope, period, slaFilter]);
+  }, [phaseTab, listSearch, customerFilter, projectFilter, presaleFilter, saleFilter, teamFilter, roleScope, period, slaFilter]);
 
   function buildByPhaseParams(pageArg: number) {
     const { dateFrom, dateTo } = periodToDateRange(period);
@@ -503,7 +509,8 @@ export function QuoteCenterPage() {
       search: listSearch,
       customerId: customerFilter || undefined,
       projectId: projectFilter || undefined,
-      ownerId: ownerFilter || undefined,
+      technicalOwnerId: presaleFilter || undefined,
+      quoteOwnerId: saleFilter || undefined,
       mine: roleScope === 'mine',
       teamId: teamFilter || undefined,
       dateFrom,
@@ -543,7 +550,7 @@ export function QuoteCenterPage() {
       alive = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [phaseTab, listSearch, customerFilter, projectFilter, ownerFilter, teamFilter, roleScope, period, slaFilter, page]);
+  }, [phaseTab, listSearch, customerFilter, projectFilter, presaleFilter, saleFilter, teamFilter, roleScope, period, slaFilter, page]);
 
   async function refreshByPhase() {
     const seq = ++byPhaseSeqRef.current;
@@ -920,11 +927,10 @@ export function QuoteCenterPage() {
         <td data-label="Phase hiện tại">
           <span className={`qc-badge qc-badge-${phase.tone}`} style={{ whiteSpace: 'normal' }}>{phase.label}</span>
         </td>
-        <td data-label="Presale → Sale">
-          <div className="qc-sale-cell qc-sale-cell--text-only">
-            <span title={techName || 'Chưa gán'}>{techName || 'Chưa gán'}</span>
-            <span aria-hidden className="qc-owner-arrow">→</span>
-            <span title={saleOwnerName || 'Chưa gán'}>{saleOwnerName || 'Chưa gán'}</span>
+        <td data-label="Phụ trách">
+          <div className="qc-sale-cell qc-sale-cell--stacked">
+            <div className="qc-owner-row"><span className="qc-owner-role">Presale:</span> <span title={techName || 'Chưa gán'}>{techName || 'Chưa gán'}</span></div>
+            <div className="qc-owner-row"><span className="qc-owner-role">Sale:</span> <span title={saleOwnerName || 'Chưa gán'}>{saleOwnerName || 'Chưa gán'}</span></div>
           </div>
         </td>
         <td data-label="Giá nội bộ" className="qc-cell-money">
@@ -1031,8 +1037,11 @@ export function QuoteCenterPage() {
           </span>
         </div>
         <div className="qc-quote-card-row">
-          <span className="qc-quote-card-label">Presale → Sale</span>
-          <span className="qc-quote-card-value">{techName || 'Chưa gán'} → {saleOwnerName || 'Chưa gán'}</span>
+          <span className="qc-quote-card-label">Phụ trách</span>
+          <span className="qc-quote-card-value qc-owner-chips">
+            <span className="qc-owner-chip">Presale: {techName || 'Chưa gán'}</span>
+            <span className="qc-owner-chip">Sale: {saleOwnerName || 'Chưa gán'}</span>
+          </span>
         </div>
         <div className="qc-quote-card-row">
           <span className="qc-quote-card-label">Giá khách</span>
@@ -1408,10 +1417,18 @@ export function QuoteCenterPage() {
           </div>
           <div className="crm-filter-select-wrap">
             <SearchableSelect
-              value={ownerFilter}
-              onChange={setOwnerFilter}
-              placeholder="Tất cả owner"
-              options={ownerFilterOptions.map(u => ({ value: u.id, label: u.name }))}
+              value={presaleFilter}
+              onChange={setPresaleFilter}
+              placeholder="Tất cả Presale"
+              options={presaleFilterOptions.map(u => ({ value: u.id, label: u.name }))}
+            />
+          </div>
+          <div className="crm-filter-select-wrap">
+            <SearchableSelect
+              value={saleFilter}
+              onChange={setSaleFilter}
+              placeholder="Tất cả Sale"
+              options={saleFilterOptions.map(u => ({ value: u.id, label: u.name }))}
             />
           </div>
           <div className="crm-filter-select-wrap">
@@ -1451,7 +1468,7 @@ export function QuoteCenterPage() {
                 <th>Khách hàng</th>
                 <th>Dự án</th>
                 <th>Phase hiện tại</th>
-                <th>Presale → Sale</th>
+                <th>Phụ trách</th>
                 <th className="qc-th-money">Giá nội bộ</th>
                 <th className="qc-th-money">Giá khách</th>
                 <th>Margin</th>

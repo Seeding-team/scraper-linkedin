@@ -60,6 +60,15 @@ class IssuerCompanyUpdateRequest(BaseModel):
 
 
 class QuoteItemInput(BaseModel):
+    # BUG THAT DA GAP (Muc cha/Section mat rowType sau save): truoc day model
+    # nay KHONG co field row_type - FE (SeedingQuoteRepository.toQuoteItemPayload)
+    # LUON gui dung `row_type: 'section'|'item'` trong JSON, nhung Pydantic
+    # AM THAM bo qua key la (extra field khong khai bao) khi parse request,
+    # nen moi lan luu (PUT /quotes/{id} hoac POST /quotes) deu xoa mat
+    # row_type truoc khi toi RPC quote_update/create_quote - RPC (migration
+    # 104) doc `v_item->>'row_type'` ra NULL, mac dinh coi la 'item' thuong.
+    # Them field nay de model_dump() giu dung gia tri FE da gui.
+    row_type: Optional[str] = None
     description: str = ""
     service_description: Optional[str] = None
     unit: Optional[str] = None
@@ -86,6 +95,19 @@ class QuoteItemInput(BaseModel):
     # xu ly gia (migration 090), KHAC voi cost_price=None mac dinh (= "chua
     # nhap", VAN bi chan ban giao).
     cost_not_applicable: bool = False
+    # BUG THAT DA GAP (phat hien khi test snapshot USD Bang gia VPS Zone,
+    # migration 106): 3 field nay da co san tren DB (quote_items) va da duoc
+    # FE gui dung trong toQuoteItemPayload() (SeedingQuoteRepository.ts) tu
+    # luong tao moi (POST /quotes), nhung model nay (dung CHUNG cho ca POST
+    # LAN PUT/update) chua khai bao - Pydantic AM THAM bo qua (extra field
+    # khong khai bao) moi lan sua bao gia qua Quote Workspace (PUT), khien
+    # MOI hang muc them tu "Bảng giá VPS Zone" mat het lien ket toi
+    # price_book_items goc lan toan bo snapshot audit-trail (costMode/
+    # unitPriceUsd/exchangeRate/costUsd/customerPriceUsd...) ngay khi Luu -
+    # giong het bug row_type da sua o tren.
+    price_book_item_id: Optional[str] = None
+    price_book_version_id: Optional[str] = None
+    price_book_snapshot: Optional[dict[str, Any]] = None
 
 
 class QuoteCreateRequest(BaseModel):
@@ -109,6 +131,11 @@ class QuoteUpdateRequest(BaseModel):
     issuer_company_id: Optional[str] = None
     project_id: Optional[str] = None
     sla_due_at: Optional[str] = None
+    # Giam gia tong cap quote (migration 106, muc 6.9) - None co y nghia THAT
+    # su ("khong ap dung giam gia", khac voi "khong gui gi"), nen phai dung
+    # model_fields_set o router (giong het project_id/sla_due_at) de phan
+    # biet 2 truong hop nay.
+    overall_discount_percent: Optional[float] = None
 
 
 class QuoteStageUpdateRequest(BaseModel):
