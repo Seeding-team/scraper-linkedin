@@ -1,0 +1,54 @@
+name: Deploy CRM Securityzone
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "crm-securityzone/**"
+      - ".github/workflows/deploy-crm-securityzone.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-crm-securityzone-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: [self-hosted, app]
+    defaults:
+      run:
+        working-directory: /opt/apps/seeding_markeeai/scraper-linkedin
+    steps:
+      - name: Pull main
+        run: |
+          git fetch origin main
+          git checkout main
+          git pull --ff-only origin main
+
+      - name: Sync CRM source while preserving runtime secrets
+        run: |
+          rsync -a --delete \
+            --exclude '.env' \
+            --exclude '.env.local' \
+            --exclude 'node_modules/' \
+            --exclude '.next/' \
+            crm-securityzone/ /opt/apps/crm-securityzone/
+
+      - name: Build and apply CRM containers
+        working-directory: /opt/apps/crm-securityzone
+        run: |
+          docker compose build frontend backend
+          docker compose up -d frontend backend
+          docker compose restart router
+
+      - name: Verify CRM production
+        run: |
+          for attempt in $(seq 1 20); do
+            if curl -fsS http://localhost:18092/ >/dev/null; then
+              exit 0
+            fi
+            sleep 3
+          done
+          docker logs --tail 120 crm-securityzone-frontend
+          docker logs --tail 120 crm-securityzone-backend
+          exit 1

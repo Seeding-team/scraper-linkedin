@@ -509,7 +509,7 @@ export function MemberManagementContent() {
           </div>
         </div>
 
-        <div className="overflow-x-auto overflow-hidden rounded-xl border border-outline-variant bg-surface shadow-sm">
+        <div className="overflow-x-auto rounded-xl border border-outline-variant bg-surface shadow-sm">
           <table className="w-full min-w-[1180px] border-collapse text-left text-xs">
             <thead className="bg-surface-container-low border-b border-outline-variant text-[10px] font-bold text-on-surface-variant uppercase">
               <tr>

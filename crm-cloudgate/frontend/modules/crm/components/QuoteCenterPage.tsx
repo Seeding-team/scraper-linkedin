@@ -7,7 +7,7 @@ import { useAppAuth } from '@/contexts/AppAuthContext';
 import { teamsService, type TeamRow, projectsService, type Project, usersService, type QuoteBusinessRoleUser } from '@/services/all-platform.service';
 import { computeQuoteSla } from '../utils/quoteSla';
 import { seedingQuoteRepository } from '@/modules/quotes';
-import type { Quote, QuoteForm, QuotePhase, QuotesByPhaseResult } from '@/modules/quotes';
+import type { IssuerCompany, Quote, QuoteForm, QuotePhase, QuotesByPhaseResult } from '@/modules/quotes';
 import { seedingContractRepository } from '@/modules/contracts';
 import type { Contract } from '@/modules/contracts';
 import { useCrm } from '../hooks/useCrm';
@@ -159,6 +159,7 @@ export function QuoteCenterPage() {
   const { deals, agents, loading: dealsLoading } = useCrm();
   const [quotes, setQuotes] = useState<Quote[]>([]);
   const [forms, setForms] = useState<QuoteForm[]>([]);
+  const [issuerCompanies, setIssuerCompanies] = useState<IssuerCompany[]>([]);
   const [teams, setTeams] = useState<TeamRow[]>([]);
   const [contracts, setContracts] = useState<Contract[]>([]);
   const [quotesLoading, setQuotesLoading] = useState(true);
@@ -181,6 +182,12 @@ export function QuoteCenterPage() {
   // UNG (backend-driven, xem buildByPhaseParams). null = khong loc theo SLA.
   const [slaFilter, setSlaFilter] = useState<'overdue' | 'due_soon' | null>(null);
   const [groupByProject, setGroupByProject] = useState(false);
+  // "Thu gon KPI" - CHI co y nghia tren mobile (nut tu an qua CSS o man
+  // rong hon 767px) - 8 the KPI + bang hieu suat Sale/Team chiem qua nhieu
+  // chieu cao tren man hep, nguoi dung phai cuon rat xa moi thay "Danh sach
+  // bao gia" - mac dinh MO (khong doi hanh vi cu), Sale tu thu gon neu muon
+  // thay danh sach ngay.
+  const [kpiCollapsed, setKpiCollapsed] = useState(false);
   const [page, setPage] = useState(1);
   // Bang "Danh sach bao gia" (Checkpoint C) - du lieu THAT tu backend
   // (/quotes/by-phase, gom theo version_chain_id + dem/phan trang/tim kiem o
@@ -225,6 +232,9 @@ export function QuoteCenterPage() {
     void seedingQuoteRepository.getForms().then(rows => {
       if (alive) setForms(rows);
     });
+    void seedingQuoteRepository.getIssuerCompanies().then(rows => {
+      if (alive) setIssuerCompanies(rows);
+    });
     void teamsService.getAll().then(res => {
       if (alive && res.success && res.data) setTeams(res.data);
     });
@@ -242,6 +252,38 @@ export function QuoteCenterPage() {
   }, []);
 
   const dealsById = useMemo(() => new Map(deals.map(deal => [deal.id, deal])), [deals]);
+  // Mau bao gia mac dinh cho "Yeu cau ho tro bao gia" (khong co buoc chon mau
+  // rieng nhu wizard CreateQuoteModal) - BUG that da fix: truoc day dung dai
+  // forms[0] (mau DAU TIEN trong danh sach, khong lien quan gi den dung vi
+  // phat hanh) - da tung lam quote moi tao nham dinh dang "villa_solution_
+  // package" thay vi mau chuan. Gio uu tien dung defaultQuoteFormId cua don
+  // vi phat hanh dau tien (giong quy uoc CreateQuoteModal dang dung), fallback
+  // mau co isDefaultTemplate=true (dung DUNG field DB da thiet ke rieng cho
+  // truong hop nay - "1 mau active duoc set true lam fallback khi cong ty
+  // phat hanh chua gan defaultQuoteFormId rieng"), cuoi cung moi fallback
+  // forms[0].
+  const defaultFormId = useMemo(() => {
+    // Luong "Yeu cau ho tro bao gia" (QuoteWorkspaceModal che do tao moi) chi
+    // dung bang hang muc chuan (quote_items) - mau layout_type=
+    // 'villa_solution_package' dung cau truc rieng (data.solutionItems),
+    // KHONG dung quote_items, nen neu lo mac dinh chon mau nay, moi hang muc
+    // nguoi dung go se bi am tham MAT HET luc tao (create_quote() luon
+    // insert items=[] cho villa, khong bao loi). BUG THAT DA GAP: 3 issuer
+    // company (CG/MK/SZ) deu co sort_order=0 trung nhau nen issuerCompanies[0]
+    // (order theo sort_order) KHONG on dinh giua cac lan fetch - co luc roi
+    // dung vao issuer ma defaultQuoteFormId lai tro toi 1 mau villa. Loai
+    // HOAN TOAN mau villa khoi danh sach ung vien TU DONG chon o day - nguoi
+    // dung van chon THU CONG duoc mau villa qua dropdown "Mẫu báo giá" neu
+    // that su can, chi khong de no am tham thanh mac dinh.
+    const nonVillaForms = forms.filter(f => f.schemaJson?.layoutType !== 'villa_solution_package');
+    const primaryIssuer = issuerCompanies[0];
+    const issuerDefault = primaryIssuer?.defaultQuoteFormId
+      ? nonVillaForms.find(f => f.id === primaryIssuer.defaultQuoteFormId)?.id
+      : undefined;
+    if (issuerDefault) return issuerDefault;
+    const globalDefault = nonVillaForms.find(f => f.isDefaultTemplate)?.id;
+    return globalDefault || nonVillaForms[0]?.id;
+  }, [forms, issuerCompanies]);
   const contractByQuoteId = useMemo(() => new Map(contracts.filter(c => c.quoteId).map(c => [c.quoteId as string, c])), [contracts]);
 
   function dealInRoleScope(deal: Deal | undefined, quote?: Quote): boolean {
@@ -409,28 +451,34 @@ export function QuoteCenterPage() {
     };
   }, [customerFilter]);
 
-  // "Tat ca owner" (1 dropdown, khop CA vai tro Presale lan Sale - xem
-  // owner_id o backend) - danh sach nguoi that tu quote_business_role
-  // (presale/sale that), KHONG phai SDR/leader cua Deal (2 khai niem khac
-  // nhau: SDR/leader la nguoi phu trach CO HOI CRM, technicalOwner/quoteOwner
-  // la nguoi phu trach XU LY BAO GIA).
-  const [ownerFilterOptions, setOwnerFilterOptions] = useState<QuoteBusinessRoleUser[]>([]);
+  // Truoc day gop chung 1 dropdown "Tat ca owner" (Presale+Sale lan lon vao
+  // nhau, gay "lay qua nhieu tai khoan khong lien quan" - dung ra nguon da
+  // dung tu dau, chi la GOP 2 danh sach lam 1). Sua theo yeu cau: tach rieng
+  // 2 filter, MOI filter giu dung 1 nguon rieng (khong merge nua) - danh
+  // sach van la nguoi that tu quote_business_role (presale/sale that),
+  // KHONG phai SDR/leader cua Deal (2 khai niem khac nhau: SDR/leader la
+  // nguoi phu trach CO HOI CRM, technicalOwner/quoteOwner la nguoi phu
+  // trach XU LY BAO GIA).
+  const [presaleFilterOptions, setPresaleFilterOptions] = useState<QuoteBusinessRoleUser[]>([]);
+  const [saleFilterOptions, setSaleFilterOptions] = useState<QuoteBusinessRoleUser[]>([]);
   useEffect(() => {
     let alive = true;
-    Promise.all([usersService.getUsersByQuoteBusinessRole('presale'), usersService.getUsersByQuoteBusinessRole('sale')]).then(([presaleRes, saleRes]) => {
-      if (!alive) return;
-      const map = new Map<string, QuoteBusinessRoleUser>();
-      for (const u of presaleRes.success ? presaleRes.data || [] : []) map.set(u.id, u);
-      for (const u of saleRes.success ? saleRes.data || [] : []) map.set(u.id, u);
-      setOwnerFilterOptions(Array.from(map.values()));
+    usersService.getUsersByQuoteBusinessRole('presale').then(res => {
+      if (alive) setPresaleFilterOptions(res.success ? res.data || [] : []);
     }).catch(() => {
-      if (alive) setOwnerFilterOptions([]);
+      if (alive) setPresaleFilterOptions([]);
+    });
+    usersService.getUsersByQuoteBusinessRole('sale').then(res => {
+      if (alive) setSaleFilterOptions(res.success ? res.data || [] : []);
+    }).catch(() => {
+      if (alive) setSaleFilterOptions([]);
     });
     return () => {
       alive = false;
     };
   }, []);
-  const [ownerFilter, setOwnerFilter] = useState('');
+  const [presaleFilter, setPresaleFilter] = useState('');
+  const [saleFilter, setSaleFilter] = useState('');
 
   const PAGE_SIZE = QUOTE_ROW_LIMIT;
 
@@ -452,7 +500,7 @@ export function QuoteCenterPage() {
   // vo ly.
   useEffect(() => {
     setPage(1);
-  }, [phaseTab, listSearch, customerFilter, projectFilter, ownerFilter, teamFilter, roleScope, period, slaFilter]);
+  }, [phaseTab, listSearch, customerFilter, projectFilter, presaleFilter, saleFilter, teamFilter, roleScope, period, slaFilter]);
 
   function buildByPhaseParams(pageArg: number) {
     const { dateFrom, dateTo } = periodToDateRange(period);
@@ -461,7 +509,8 @@ export function QuoteCenterPage() {
       search: listSearch,
       customerId: customerFilter || undefined,
       projectId: projectFilter || undefined,
-      ownerId: ownerFilter || undefined,
+      technicalOwnerId: presaleFilter || undefined,
+      quoteOwnerId: saleFilter || undefined,
       mine: roleScope === 'mine',
       teamId: teamFilter || undefined,
       dateFrom,
@@ -501,7 +550,7 @@ export function QuoteCenterPage() {
       alive = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [phaseTab, listSearch, customerFilter, projectFilter, ownerFilter, teamFilter, roleScope, period, slaFilter, page]);
+  }, [phaseTab, listSearch, customerFilter, projectFilter, presaleFilter, saleFilter, teamFilter, roleScope, period, slaFilter, page]);
 
   async function refreshByPhase() {
     const seq = ++byPhaseSeqRef.current;
@@ -878,11 +927,10 @@ export function QuoteCenterPage() {
         <td data-label="Phase hiện tại">
           <span className={`qc-badge qc-badge-${phase.tone}`} style={{ whiteSpace: 'normal' }}>{phase.label}</span>
         </td>
-        <td data-label="Presale → Sale">
-          <div className="qc-sale-cell qc-sale-cell--text-only">
-            <span title={techName || 'Chưa gán'}>{techName || 'Chưa gán'}</span>
-            <span aria-hidden className="qc-owner-arrow">→</span>
-            <span title={saleOwnerName || 'Chưa gán'}>{saleOwnerName || 'Chưa gán'}</span>
+        <td data-label="Phụ trách">
+          <div className="qc-sale-cell qc-sale-cell--stacked">
+            <div className="qc-owner-row"><span className="qc-owner-role">Presale:</span> <span title={techName || 'Chưa gán'}>{techName || 'Chưa gán'}</span></div>
+            <div className="qc-owner-row"><span className="qc-owner-role">Sale:</span> <span title={saleOwnerName || 'Chưa gán'}>{saleOwnerName || 'Chưa gán'}</span></div>
           </div>
         </td>
         <td data-label="Giá nội bộ" className="qc-cell-money">
@@ -926,6 +974,125 @@ export function QuoteCenterPage() {
     );
   }
 
+  /** Card mobile (duoi 768px) cho 1 dong bao gia - CHU Y: tinh lai cac gia
+   * tri hien thi (phase/sla/margin/permission) DOC LAP voi renderChainRow()
+   * thay vi tach chung 1 ham - giu renderChainRow() (dang chay dung tren
+   * desktop) nguyen ven, khong risk vo tinh lam sai bang desktop khi sua
+   * cho mobile. Field dung DUNG thu tu user yeu cau: so bao gia+version+
+   * trang thai -> Khach hang -> Du an/Co hoi -> Presale->Sale -> Gia khach
+   * -> SLA -> nut mo chi tiet/menu. Gia von/Margin CHI hien neu co quyen,
+   * dat trong <details> "Xem them" (khong can state React rieng). */
+  function renderChainCard(row: QuoteChainRow) {
+    const { current, deal, versionCount } = row;
+    const businessCode = deal ? dealBusinessCode(deal) : null;
+    const opportunityName = deal ? getServicePackageText(deal.servicePackage) || getPackageText(deal.package) : '';
+    const phase = phaseCellLabel(current, deal);
+    const project = current.project;
+    const techName = current.technicalOwner?.name || deal?.assignment.leadName || null;
+    const saleOwnerName = current.quoteOwner?.name || deal?.assignment.sdrName || null;
+    const margin = current.hasCostData ? marginTone(current.grossMarginPercent) : 'neutral';
+    const sla = computeQuoteSla({ slaDueAt: current.slaDueAt, completedAt: current.completedAt, sentAt: current.sentAt });
+    const showExtra = current.costViewAllowed !== false || current.profitabilityViewAllowed !== false;
+    return (
+      <div key={current.id} className="qc-quote-card">
+        <div className="qc-quote-card-head">
+          <div>
+            <button type="button" className="qc-row-link qc-row-link-btn" onClick={() => setWorkspaceQuoteId(current.id)}>
+              {current.quoteNumber}
+            </button>
+            <span className="qc-badge qc-badge-version">V{current.versionNumber || 1} hiện tại</span>
+          </div>
+          <ActionMenu items={rowActionItems(row)} />
+        </div>
+        <span className={`qc-badge qc-badge-${phase.tone}`} style={{ whiteSpace: 'normal' }}>{phase.label}</span>
+        {typeof current.data?.quoteTitle === 'string' && current.data.quoteTitle ? (
+          <div className="qc-cell-quote-title">{current.data.quoteTitle}</div>
+        ) : null}
+
+        <div className="qc-quote-card-row">
+          <span className="qc-quote-card-label">Khách hàng</span>
+          <span className="qc-quote-card-value">
+            {deal ? (
+              deal.customerId ? (
+                <Link href={`/all-platform/crm/customers/${deal.customerId}`} className="qc-row-link">{deal.customerName}</Link>
+              ) : deal.customerName
+            ) : (
+              <span className="qc-row-sub">Chưa gắn cơ hội</span>
+            )}
+          </span>
+        </div>
+        {deal ? (
+          <div className="qc-quote-card-row">
+            <span className="qc-quote-card-label">Cơ hội</span>
+            <span className="qc-quote-card-value">
+              <Link href={`/all-platform/crm?openDeal=${deal.id}`} className="qc-row-link">{businessCode || 'Chưa có mã'}</Link>
+              {opportunityName ? ` · ${opportunityName}` : ''}
+            </span>
+          </div>
+        ) : null}
+        <div className="qc-quote-card-row">
+          <span className="qc-quote-card-label">Dự án</span>
+          <span className="qc-quote-card-value">
+            {project ? (project.code ? `${project.code} · ${project.name}` : project.name) : <span className="qc-row-sub">Chưa thuộc dự án</span>}
+          </span>
+        </div>
+        <div className="qc-quote-card-row">
+          <span className="qc-quote-card-label">Phụ trách</span>
+          <span className="qc-quote-card-value qc-owner-chips">
+            <span className="qc-owner-chip">Presale: {techName || 'Chưa gán'}</span>
+            <span className="qc-owner-chip">Sale: {saleOwnerName || 'Chưa gán'}</span>
+          </span>
+        </div>
+        <div className="qc-quote-card-row">
+          <span className="qc-quote-card-label">Giá khách</span>
+          <span className="qc-quote-card-value qc-cell-money">{formatMoney(current.customerPriceBeforeVat ?? 0)}</span>
+        </div>
+        <div className="qc-quote-card-row">
+          <span className="qc-quote-card-label">SLA</span>
+          <span className="qc-quote-card-value">
+            {sla.status === 'not_set' ? (
+              <span className="qc-row-sub">{sla.label}</span>
+            ) : (
+              <span style={{ color: sla.tone === 'danger' ? '#b3261e' : sla.tone === 'warning' ? '#8a6416' : sla.tone === 'success' ? '#148e61' : undefined }}>
+                {sla.label}{sla.relativeText ? ` · ${sla.relativeText}` : ''}
+              </span>
+            )}
+          </span>
+        </div>
+        <div className="qc-quote-card-row">
+          <span className="qc-quote-card-label">Cập nhật</span>
+          <span className="qc-quote-card-value qc-row-sub">{versionCount} phiên bản · {relativeTime(current.updatedAt || current.createdAt)}</span>
+        </div>
+
+        {showExtra ? (
+          <details className="qc-quote-card-more">
+            <summary>Xem thêm</summary>
+            {current.costViewAllowed !== false ? (
+              <div className="qc-quote-card-row">
+                <span className="qc-quote-card-label">Giá nội bộ</span>
+                <span className="qc-quote-card-value qc-cell-money">
+                  {current.hasCostData ? formatMoney(current.costTotal || 0) : <span className="qc-row-sub">Chưa có</span>}
+                </span>
+              </div>
+            ) : null}
+            {current.profitabilityViewAllowed !== false ? (
+              <div className="qc-quote-card-row">
+                <span className="qc-quote-card-label">Margin</span>
+                <span className="qc-quote-card-value">
+                  {current.hasCostData && current.grossMarginPercent !== null && current.grossMarginPercent !== undefined ? (
+                    <span className={`qc-badge qc-badge-${margin}`}>{current.grossMarginPercent.toFixed(1)}%</span>
+                  ) : (
+                    <span className="qc-row-sub">Chưa tính</span>
+                  )}
+                </span>
+              </div>
+            ) : null}
+          </details>
+        ) : null}
+      </div>
+    );
+  }
+
   const loading = dealsLoading || quotesLoading;
 
   return (
@@ -936,11 +1103,15 @@ export function QuoteCenterPage() {
           <p>Tạo, gửi và theo dõi báo giá liên kết trực tiếp với CRM</p>
         </div>
         <div className="qc-header-actions">
-          <button type="button" className="qc-btn" onClick={openRequestWorkspace} title="Mở workspace xử lý báo giá — chọn khách hàng/cơ hội và người phụ trách ngay trong workspace">
-            <Plus className="qc-icon" /> Yêu cầu hỗ trợ báo giá
+          <button type="button" className="qc-btn qc-btn-primary" onClick={openRequestWorkspace} title="Mở workspace xử lý báo giá — chọn khách hàng/cơ hội và người phụ trách ngay trong workspace">
+            <Plus className="qc-icon" />
+            <span className="qc-btn-label-full">Yêu cầu hỗ trợ báo giá</span>
+            <span className="qc-btn-label-short">Yêu cầu hỗ trợ</span>
           </button>
-          <button type="button" className="qc-btn qc-btn-primary" onClick={openFreshModal}>
-            <Plus className="qc-icon" /> Tạo báo giá
+          <button type="button" className="qc-btn" onClick={openFreshModal}>
+            <Plus className="qc-icon" />
+            <span className="qc-btn-label-full">Tạo báo giá</span>
+            <span className="qc-btn-label-short">Tạo nhanh</span>
           </button>
         </div>
       </header>
@@ -951,11 +1122,14 @@ export function QuoteCenterPage() {
             <h2>Hiệu suất báo giá &amp; CRM</h2>
             <p>KPI tính theo đúng phạm vi/bộ lọc đang chọn ở bảng "Danh sách báo giá" bên dưới</p>
           </div>
+          <button type="button" className="qc-kpi-toggle" onClick={() => setKpiCollapsed(prev => !prev)}>
+            {kpiCollapsed ? 'Mở rộng KPI' : 'Thu gọn KPI'}
+          </button>
         </div>
 
         {loading ? (
           <div className="qc-state">Đang tải dữ liệu...</div>
-        ) : (
+        ) : kpiCollapsed ? null : (
           <>
             <div className="qc-metrics">
               <MetricCard tone="rose" label="Tổng khách hàng CRM" value={String(kpis.totalDeals)} />
@@ -1090,8 +1264,11 @@ export function QuoteCenterPage() {
           <h2>Bắt đầu báo giá mới</h2>
           <p>Chọn khách hàng và mẫu có sẵn, hệ thống sẽ tự điền dịch vụ, giá bán, thuế và điều khoản.</p>
           <div className="qc-quick-buttons">
-            <button type="button" className="qc-btn qc-btn-primary" onClick={openFreshModal}>
-              <Plus className="qc-icon" /> Tạo báo giá nhanh
+            <button type="button" className="qc-btn qc-btn-primary" onClick={openRequestWorkspace} title="Mở workspace xử lý báo giá — chọn khách hàng/cơ hội và người phụ trách ngay trong workspace">
+              <Plus className="qc-icon" /> Yêu cầu hỗ trợ báo giá
+            </button>
+            <button type="button" className="qc-btn qc-btn-soft" onClick={openFreshModal}>
+              Tạo báo giá nhanh
             </button>
             <button type="button" className="qc-btn qc-btn-soft" onClick={() => setDealPickerOpen(true)}>
               Tạo từ cơ hội CRM →
@@ -1240,10 +1417,18 @@ export function QuoteCenterPage() {
           </div>
           <div className="crm-filter-select-wrap">
             <SearchableSelect
-              value={ownerFilter}
-              onChange={setOwnerFilter}
-              placeholder="Tất cả owner"
-              options={ownerFilterOptions.map(u => ({ value: u.id, label: u.name }))}
+              value={presaleFilter}
+              onChange={setPresaleFilter}
+              placeholder="Tất cả Presale"
+              options={presaleFilterOptions.map(u => ({ value: u.id, label: u.name }))}
+            />
+          </div>
+          <div className="crm-filter-select-wrap">
+            <SearchableSelect
+              value={saleFilter}
+              onChange={setSaleFilter}
+              placeholder="Tất cả Sale"
+              options={saleFilterOptions.map(u => ({ value: u.id, label: u.name }))}
             />
           </div>
           <div className="crm-filter-select-wrap">
@@ -1274,6 +1459,7 @@ export function QuoteCenterPage() {
           </label>
         </div>
 
+        <div className="qc-quote-list-responsive">
         <div className="qc-table-wrap">
           <table className="qc-linked-table qc-linked-table--10col">
             <thead>
@@ -1282,7 +1468,7 @@ export function QuoteCenterPage() {
                 <th>Khách hàng</th>
                 <th>Dự án</th>
                 <th>Phase hiện tại</th>
-                <th>Presale → Sale</th>
+                <th>Phụ trách</th>
                 <th className="qc-th-money">Giá nội bộ</th>
                 <th className="qc-th-money">Giá khách</th>
                 <th>Margin</th>
@@ -1336,6 +1522,41 @@ export function QuoteCenterPage() {
               )}
             </tbody>
           </table>
+        </div>
+
+        <div className="qc-quote-mobile-cards">
+          {byPhaseError ? (
+            <p className="qc-empty qc-empty-error">Không tải được danh sách báo giá: {byPhaseError}</p>
+          ) : byPhaseLoading && !byPhase ? (
+            <p className="qc-empty">Đang tải danh sách báo giá…</p>
+          ) : chainRows.length === 0 ? (
+            <p className="qc-empty">
+              {slaFilter === 'overdue'
+                ? 'Không có báo giá nào quá hạn trong phạm vi đang chọn.'
+                : slaFilter === 'due_soon'
+                  ? 'Không có báo giá nào sắp đến hạn (≤4 giờ) trong phạm vi đang chọn.'
+                  : 'Chưa có báo giá nào trong phạm vi đang chọn.'}
+            </p>
+          ) : groupByProject ? (
+            groupedByProjectRows.map(group => (
+              <Fragment key={`group-card-${group.projectId}`}>
+                <div className="qc-group-header-row qc-group-header-row--card">
+                  {group.project ? (
+                    <strong>{group.project.code ? `${group.project.code} · ${group.project.name}` : group.project.name}</strong>
+                  ) : (
+                    <strong>Chưa thuộc dự án</strong>
+                  )}
+                  <span className="qc-group-header-count">
+                    {group.rows.length} báo giá · {group.versionTotal} version
+                  </span>
+                </div>
+                {group.rows.map(row => renderChainCard(row))}
+              </Fragment>
+            ))
+          ) : (
+            chainRows.map(row => renderChainCard(row))
+          )}
+        </div>
         </div>
         {!groupByProject && byPhase && byPhase.total > 0 ? (
           <div className="qc-pagination">
@@ -1514,7 +1735,8 @@ export function QuoteCenterPage() {
           dealsById={dealsById}
           agents={agents}
           user={user}
-          defaultFormId={forms[0]?.id}
+          defaultFormId={defaultFormId}
+          quoteForms={forms}
           initialCustomerId={workspacePrefill?.customerId}
           initialProjectId={workspacePrefill?.projectId}
           lockCustomer={Boolean(workspacePrefill?.customerId)}
@@ -1534,7 +1756,7 @@ export function QuoteCenterPage() {
 
 function MetricCard({ label, value, tone, big }: { label: string; value: string; tone: 'rose' | 'blue' | 'green' | 'amber'; big?: boolean }) {
   return (
-    <div className="qc-metric">
+    <div className={`qc-metric${big ? ' qc-metric--big' : ''}`}>
       <span className={`qc-metric-dot qc-metric-dot-${tone}`} />
       <span className="qc-metric-label">{label}</span>
       <strong className={big ? 'qc-metric-value-lg' : ''}>{value}</strong>

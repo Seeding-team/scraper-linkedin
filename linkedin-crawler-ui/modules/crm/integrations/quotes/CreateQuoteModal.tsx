@@ -13,6 +13,12 @@ import type { DealFormState } from '../../components/DealFormFields';
 import { Building2, CheckCircle2, Loader2, Sparkles, User, X } from '../../components/icons';
 import { seedingCrmRepository } from '../../repositories/SeedingCrmRepository';
 import type { CreateDealInput, CrmUserOption, Deal } from '../../types';
+import { ProjectFormModal } from '../../components/ProjectFormModal';
+import { DealFormModal, clearDealDraft } from '../../components/DealFormModal';
+import { ConfirmModal } from '../../components/ConfirmModal';
+import { SOURCE_OPTIONS, SERVICE_PACKAGE_OPTIONS, CRM_PACKAGE_OPTIONS, INDUSTRY_OPTIONS } from '../../constants/crmConfig';
+import { projectsService, type Project } from '@/services/all-platform.service';
+import { useAppAuth } from '@/contexts/AppAuthContext';
 import { FillQuoteStep } from './FillQuoteStep';
 import { IssuerCompanySection } from './IssuerCompanySection';
 import { ReviewQuoteStep } from './ReviewQuoteStep';
@@ -102,6 +108,17 @@ export function CreateQuoteModal({
   // CRM" > "Doi co hoi") cho luong bao gia TU DO (khong bi khoa boi
   // initialDeal) - null = chua chon, se tu tao co hoi moi luc luu (hanh vi cu).
   const [manualLinkedDeal, setManualLinkedDeal] = useState<Deal | null>(null);
+  // Du an (tuy chon) cho bao gia tu do - CUNG logic voi manualLinkedDeal:
+  // gan khi nguoi dung tu chon o Buoc 1, gui thang len createQuote() (da co
+  // san field projectId trong CreateQuoteInput).
+  const [manualProjectId, setManualProjectId] = useState('');
+  const [projects, setProjects] = useState<Project[] | null>(null);
+  const [projectModalOpen, setProjectModalOpen] = useState(false);
+  const [dealModalOpen, setDealModalOpen] = useState(false);
+  const [dealCreateBusy, setDealCreateBusy] = useState(false);
+  const [dealCreateError, setDealCreateError] = useState('');
+  const [resetLinksConfirm, setResetLinksConfirm] = useState<{ open: boolean; nextAction: (() => void) | null }>({ open: false, nextAction: null });
+  const { user: currentUser } = useAppAuth();
   const [selectedForm, setSelectedForm] = useState<QuoteForm | null>(null);
   const [quoteDraft, setQuoteDraft] = useState<QuoteDraft>(emptyQuoteDraft);
   // quoteDraftFromForm() chỉ được gọi 1 LẦN cho mỗi lần tạo mới (khi rời Bước 2
@@ -203,8 +220,17 @@ export function CreateQuoteModal({
   // khac voi du lieu cong ty hien tai neu ai do da sua danh muc sau khi tao bao
   // gia nay) - chi dung ban ghi cong ty de biet dong nao dang chon trong dropdown.
   useEffect(() => {
-    if (!open || !editQuote?.issuerCompanyId || !issuerCompanies.length) return;
-    const match = issuerCompanies.find(c => c.id === editQuote.issuerCompanyId);
+    if (!open || !issuerCompanies.length) return;
+    // BUG THAT DA GAP: bao gia tao qua "Yêu cầu hỗ trợ báo giá" (QuoteWorkspaceModal)
+    // KHONG bao gio dat quote.issuerCompanyId rieng (chi chon mau bao gia,
+    // khong chon cong ty) - neu chi doc dung editQuote.issuerCompanyId thi
+    // wizard Sua se hien "-- Chọn công ty --" trong du mau da chon RO RANG
+    // thuoc 1 cong ty. Fallback sang cong ty so huu MAU dang dung
+    // (selectedForm.issuerCompanyId, mau nao cung thuoc dung 1 cong ty) khi
+    // quote chua tu luu rieng issuerCompanyId.
+    const issuerId = editQuote?.issuerCompanyId || selectedForm?.issuerCompanyId;
+    if (!issuerId) return;
+    const match = issuerCompanies.find(c => c.id === issuerId);
     if (!match) return;
     setSelectedIssuerCompany({
       ...match,
@@ -218,7 +244,7 @@ export function CreateQuoteModal({
       logoUrl: (quoteDraft.data.sellerLogo as string) || match.logoUrl,
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, editQuote?.issuerCompanyId, issuerCompanies]);
+  }, [open, editQuote?.issuerCompanyId, selectedForm?.issuerCompanyId, issuerCompanies]);
   // Theo dõi ĐÚNG nút nào đang chạy (không dùng 1 boolean chung) - trước đây
   // 1 boolean khiến cả 2 nút "Cập nhật báo giá"/"Duyệt báo giá" cùng xoay
   // spinner dù chỉ bấm 1 nút, nhìn rất kỳ.
@@ -318,6 +344,8 @@ export function CreateQuoteModal({
     setStep(1);
     setCustomer(emptyDealForm());
     setManualLinkedDeal(null);
+    setManualProjectId('');
+    setProjects(null);
     setSelectedForm(null);
     setSelectedIssuerCompany(null);
     setQuoteDraft(emptyQuoteDraft());
@@ -330,8 +358,6 @@ export function CreateQuoteModal({
     onClose();
   }
 
-  if (!open) return null;
-
   // Chế độ sửa: khách hàng lấy từ deal đã gắn sẵn với báo giá này (nếu có) -
   // step 1 chỉ để XEM, không có chỗ nào lưu lại thay đổi customer khi bấm Cập
   // nhật/Duyệt (update_quote không có field đổi deal_id), nên khoá luôn giống
@@ -343,6 +369,60 @@ export function CreateQuoteModal({
     lockedDealForStep1 && !customer.customerName.trim()
       ? { ...customer, customerName: lockedDealForStep1.customerName, companyName: lockedDealForStep1.companyName || '', phone: lockedDealForStep1.phone || '', email: lockedDealForStep1.email || '', address: lockedDealForStep1.address || '' }
       : customer;
+
+  // Khach hang THAT (co id) de tai Du an theo dung customer_id - khach hoan
+  // toan moi (chua co id) thi chua co gi de gan Du an, dropdown se khoa.
+  const effectiveCustomerIdForProjects = lockedDealForStep1?.customerId || activeCustomer.customerId || '';
+
+  async function handleCreateQuickDeal(input: CreateDealInput) {
+    setDealCreateBusy(true);
+    setDealCreateError('');
+    try {
+      const created = await seedingCrmRepository.createDeal(input);
+      clearDealDraft();
+      setManualLinkedDeal(created);
+      if (created.projectId) setManualProjectId(created.projectId);
+      setDealModalOpen(false);
+    } catch (err) {
+      setDealCreateError(err instanceof Error ? err.message : 'Không tạo được cơ hội.');
+    } finally {
+      setDealCreateBusy(false);
+    }
+  }
+
+  /** onChangeCustomer that truyen xuong SelectCustomerStep - CHI hoi xac
+   * nhan khi thuc su DOI SANG 1 khach hang khac (customerId thay doi, vd
+   * chon 1 khach co san khac hoac bam "Doi khach khac"), KHONG hoi khi chi
+   * sua field lien he (SDT/email...) cua dung khach dang chon - cac thao tac
+   * do goi onChangeCustomer voi cung customerId. */
+  function handleCustomerChange(next: DealFormState) {
+    if (next.customerId !== customer.customerId && (manualProjectId || manualLinkedDeal)) {
+      setResetLinksConfirm({
+        open: true,
+        nextAction: () => {
+          setManualProjectId('');
+          setManualLinkedDeal(null);
+          setCustomer(next);
+        },
+      });
+      return;
+    }
+    setCustomer(next);
+  }
+  useEffect(() => {
+    if (!effectiveCustomerIdForProjects) {
+      setProjects(null);
+      return;
+    }
+    let alive = true;
+    void projectsService.list(effectiveCustomerIdForProjects).then(res => {
+      if (alive && res.success) setProjects(res.data || []);
+    });
+    return () => { alive = false; };
+  }, [effectiveCustomerIdForProjects]);
+
+  if (!open) return null;
+
   // Gan deal co san khi mo tu "Tao bao gia cho deal nay" (initialDeal co
   // dinh), HOAC khi nguoi dung tu chon 1 co hoi co san qua "Doi co hoi" (Buoc
   // 1) trong luong tu do - khong chon gi thi van tu tao deal moi o buoc submit
@@ -455,6 +535,7 @@ export function CreateQuoteModal({
       const quote = await seedingQuoteRepository.createQuote({
         quoteFormId: selectedForm.id,
         dealId,
+        projectId: manualProjectId || undefined,
         issuerCompanyId: selectedIssuerCompany?.id,
         ...buildDraftPayload(),
       });
@@ -614,12 +695,18 @@ export function CreateQuoteModal({
                     <SelectCustomerStep
                       deals={deals}
                       customer={activeCustomer}
-                      onChangeCustomer={setCustomer}
+                      onChangeCustomer={handleCustomerChange}
                       lockedDeal={lockedDealForStep1}
                       quotes={allQuotes}
                       agents={agents}
                       linkedDeal={manualLinkedDeal}
                       onChangeLinkedDeal={setManualLinkedDeal}
+                      customerIdForProjects={effectiveCustomerIdForProjects}
+                      projects={projects}
+                      projectId={manualProjectId}
+                      onChangeProjectId={setManualProjectId}
+                      onRequestCreateProject={() => setProjectModalOpen(true)}
+                      onRequestCreateDeal={() => { setDealCreateError(''); setDealModalOpen(true); }}
                     />
                   </div>
                 ) : null}
@@ -753,6 +840,63 @@ export function CreateQuoteModal({
           )}
         </footer>
       </div>
+
+      <ProjectFormModal
+        open={projectModalOpen}
+        customerId={effectiveCustomerIdForProjects}
+        customerName={activeCustomer.companyName || activeCustomer.customerName || 'Khách hàng hiện tại'}
+        onClose={() => setProjectModalOpen(false)}
+        onSaved={created => {
+          setProjectModalOpen(false);
+          if (!created) return;
+          setProjects(prev => [...(prev || []), created]);
+          setManualProjectId(created.id);
+        }}
+      />
+
+      <DealFormModal
+        open={dealModalOpen}
+        loading={dealCreateBusy}
+        onClose={() => { if (!dealCreateBusy) setDealModalOpen(false); }}
+        onCreate={input => void handleCreateQuickDeal(input)}
+        onUpdate={() => {}}
+        agents={agents}
+        sourceOptions={SOURCE_OPTIONS}
+        servicePackageOptions={SERVICE_PACKAGE_OPTIONS}
+        packageOptions={CRM_PACKAGE_OPTIONS}
+        industryOptions={INDUSTRY_OPTIONS.map(value => ({ value, label: value }))}
+        currentUser={currentUser ?? null}
+        initialCustomer={
+          effectiveCustomerIdForProjects
+            ? { id: effectiveCustomerIdForProjects, name: activeCustomer.customerName || activeCustomer.companyName || '' }
+            : null
+        }
+        initialProject={manualProjectId ? { id: manualProjectId } : null}
+      />
+      <ConfirmModal
+        open={Boolean(dealCreateError)}
+        title="Không tạo được cơ hội"
+        message={dealCreateError}
+        onClose={() => setDealCreateError('')}
+        actions={[]}
+      />
+
+      <ConfirmModal
+        open={resetLinksConfirm.open}
+        title="Đổi khách hàng"
+        message="Đổi khách hàng sẽ bỏ chọn Dự án và Cơ hội hiện tại (nếu có). Tiếp tục?"
+        onClose={() => setResetLinksConfirm({ open: false, nextAction: null })}
+        actions={[
+          {
+            label: 'Đồng ý, đổi khách hàng',
+            variant: 'primary',
+            onClick: () => {
+              resetLinksConfirm.nextAction?.();
+              setResetLinksConfirm({ open: false, nextAction: null });
+            },
+          },
+        ]}
+      />
     </div>
   );
 }

@@ -132,6 +132,12 @@ export interface QuoteItem {
   id?: string;
   quoteId?: string;
   parentItemId?: string;
+  /** Muc cha (Section, "I/II/III..." kieu file Excel) khong tinh tien - server
+   * (quote_update RPC, migration 104) tu ep quantity/unitPrice/costPrice ve
+   * 0/null cho dong nay bat ke FE gui gi len. 'item' (mac dinh) = hang muc
+   * that, tinh tien binh thuong. Neu thuoc 1 nhom, parentItemId tro toi id
+   * cua dong section do. */
+  rowType?: 'section' | 'item';
   description?: string;
   serviceDescription?: string;
   unit?: string;
@@ -163,6 +169,17 @@ export interface QuoteItem {
    * bỏ qua yêu cầu "bắt buộc giá vốn" khi bàn giao sang xử lý giá, KHÁC với
    * costPrice=null mặc định (= "chưa nhập", vẫn bị chặn bàn giao). */
   costNotApplicable?: boolean;
+  /** Bảng giá VPS Zone (migration 106) - snapshot đông cứng lúc chọn từ danh
+   * mục, KHÔNG BAO GIỜ đọc lại price_book_items sau khi đã chọn. Sửa/override
+   * trong quote chỉ ghi vào các field của CHÍNH dòng này, không gọi ngược lại
+   * Bảng giá VPS Zone chuẩn. */
+  priceBookItemId?: string | null;
+  priceBookVersionId?: string | null;
+  priceBookSnapshot?: Record<string, unknown> | null;
+  costOverrideReason?: string | null;
+  costOverrideBy?: string | null;
+  costOverrideAt?: string | null;
+  costPriceOriginal?: number | null;
   [key: string]: unknown;
 }
 
@@ -308,6 +325,10 @@ export interface Quote {
   slaStartedAt?: string | null;
   slaDueAt?: string | null;
   completedAt?: string | null;
+  /** Giam gia tong cap quote (migration 106, muc 6.9) - null = khong ap dung.
+   * Chi anh huong hien thi Buoc 2 (Gia sau giam/Margin sau giam), KHONG dung
+   * de tinh lai subtotalAmount/vatAmount/totalAmount o tren. */
+  overallDiscountPercent?: number | null;
   /** Toan bo field duoi day CHI CO tren ket qua tu getQuotesByPhase()
    * (backend gom theo version_chain_id + join project/owner cung luc, xem
    * list_quotes_by_phase()) - khong co tren getQuote()/getQuotes() thuong. */
@@ -445,4 +466,5 @@ export interface UpdateQuoteInput {
   issuerCompanyId?: string;
   projectId?: string | null;
   slaDueAt?: string | null;
+  overallDiscountPercent?: number | null;
 }

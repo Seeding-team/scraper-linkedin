@@ -6,6 +6,7 @@ import type { DealFormState } from '../../components/DealFormFields';
 import { seedingCrmRepository } from '../../repositories/SeedingCrmRepository';
 import type { CrmCustomerSummary, CrmUserOption, Deal } from '../../types';
 import type { Quote } from '@/modules/quotes';
+import type { Project } from '@/services/all-platform.service';
 
 /** Chu cai dau (toi da 2 tu) de lam avatar-initials - vd "Nguyen Van An" -> "NA". */
 function initialsOf(name: string): string {
@@ -31,6 +32,12 @@ export function SelectCustomerStep({
    * lockedDeal) — undefined = chưa gắn, sẽ tự tạo cơ hội mới lúc lưu. */
   linkedDeal,
   onChangeLinkedDeal,
+  customerIdForProjects,
+  projects,
+  projectId,
+  onChangeProjectId,
+  onRequestCreateProject,
+  onRequestCreateDeal,
 }: {
   deals: Deal[];
   customer: DealFormState;
@@ -40,6 +47,15 @@ export function SelectCustomerStep({
   agents?: CrmUserOption[];
   linkedDeal?: Deal | null;
   onChangeLinkedDeal?: (deal: Deal | null) => void;
+  /** Khach hang THAT (co id) de tai Du an theo dung customer_id - '' = chua
+   * co khach hang that, dropdown Du an se khoa voi placeholder "Chọn khách
+   * hàng trước". */
+  customerIdForProjects?: string;
+  projects?: Project[] | null;
+  projectId?: string;
+  onChangeProjectId?: (id: string) => void;
+  onRequestCreateProject?: () => void;
+  onRequestCreateDeal?: () => void;
 }) {
   const [search, setSearch] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
@@ -131,11 +147,18 @@ export function SelectCustomerStep({
   // prop san co, fetch 1 lan o CrmShell).
   const dealPickerResults = useMemo(() => {
     const keyword = dealPickerQuery.trim().toLowerCase();
-    const pool = keyword
-      ? deals.filter(d => d.customerName.toLowerCase().includes(keyword) || (d.companyName || '').toLowerCase().includes(keyword))
-      : deals;
+    let pool = deals;
+    // Da co khach hang THAT - chi hien Co hoi cua DUNG khach hang do (va DUNG
+    // Du an neu da chon Du an) - khong goi y lung tung Co hoi cua khach khac.
+    if (customerIdForProjects) {
+      pool = pool.filter(d => d.customerId === customerIdForProjects);
+      if (projectId) pool = pool.filter(d => d.projectId === projectId);
+    }
+    if (keyword) {
+      pool = pool.filter(d => d.customerName.toLowerCase().includes(keyword) || (d.companyName || '').toLowerCase().includes(keyword));
+    }
     return pool.slice(0, 8);
-  }, [deals, dealPickerQuery]);
+  }, [deals, dealPickerQuery, customerIdForProjects, projectId]);
 
   const activeLinkedDeal = lockedDeal || linkedDeal || null;
 
@@ -304,6 +327,34 @@ export function SelectCustomerStep({
         </div>
       ) : null}
 
+      {!lockedDeal ? (
+        <div className="crm-quote-opportunity-card">
+          <div className="crm-quote-opportunity-body">
+            <span className="crm-quote-opportunity-label">Dự án (tuỳ chọn)</span>
+            {!customerIdForProjects ? (
+              <select disabled><option>Chọn khách hàng trước</option></select>
+            ) : (
+              <select
+                value={projectId || ''}
+                onChange={event => {
+                  if (event.target.value === '__create_new_project__') {
+                    onRequestCreateProject?.();
+                    return;
+                  }
+                  onChangeProjectId?.(event.target.value);
+                }}
+              >
+                <option value="">Chưa thuộc dự án</option>
+                <option value="__create_new_project__">+ Tạo dự án mới…</option>
+                {(projects || []).map(p => (
+                  <option key={p.id} value={p.id}>{p.projectCode} · {p.name}</option>
+                ))}
+              </select>
+            )}
+          </div>
+        </div>
+      ) : null}
+
       <div className="crm-quote-opportunity-card">
         <div className="crm-quote-opportunity-body">
           <span className="crm-quote-opportunity-label">Liên kết cơ hội CRM</span>
@@ -328,6 +379,18 @@ export function SelectCustomerStep({
               autoFocus
             />
             <div className="crm-quote-opportunity-picker-list">
+              {onRequestCreateDeal ? (
+                <button
+                  type="button"
+                  className="crm-quote-opportunity-picker-item"
+                  onClick={() => {
+                    onRequestCreateDeal();
+                    setDealPickerOpen(false);
+                  }}
+                >
+                  + Tạo cơ hội mới…
+                </button>
+              ) : null}
               {linkedDeal ? (
                 <button
                   type="button"

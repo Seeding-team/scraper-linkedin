@@ -163,7 +163,9 @@ export function ProjectFormModal({
   customerName: string;
   project?: Project | null;
   onClose: () => void;
-  onSaved: () => void;
+  /** Truyền lại dự án vừa tạo/sửa (nếu API trả về) để nơi gọi tự chọn luôn
+   * bản ghi vừa tạo — tham số optional, các nơi gọi cũ không cần sửa. */
+  onSaved: (savedProject?: Project) => void;
 }) {
   useBodyScrollLock(open);
   const isEdit = Boolean(project);
@@ -246,6 +248,7 @@ export function ProjectFormModal({
           description: description.trim() || undefined,
         });
         if (!res.success) throw new Error(res.message || 'Không lưu được dự án.');
+        onSaved(res.data);
       } else {
         const res = await projectsService.create({
           project_code: projectCode.trim(),
@@ -256,8 +259,8 @@ export function ProjectFormModal({
           description: description.trim() || undefined,
         });
         if (!res.success) throw new Error(res.message || 'Không tạo được dự án.');
+        onSaved(res.data);
       }
-      onSaved();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Đã xảy ra lỗi, vui lòng thử lại.');
     } finally {

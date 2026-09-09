@@ -1,5 +1,6 @@
 'use client';
 
+import { useRef, useState } from 'react';
 import type {
   CustomBlock,
   QuoteData,
@@ -51,6 +52,25 @@ function emptySchema(): QuoteSchema {
  * quen thuộc thay vì để nguyên định dạng máy đọc được. Parse thủ công phần
  * YYYY-MM-DD thay vì qua `Date` để tránh lệch múi giờ (Date coi "YYYY-MM-DD" là UTC
  * midnight, đọc lại bằng getDate() theo giờ local có thể lùi/tới 1 ngày). */
+/** So La Ma cho Muc cha (Section, migration 104) - vd 1 -> I, 4 -> IV. Ban
+ * sao doc lap voi ham cung ten trong QuoteWorkspaceModal.tsx (khac module,
+ * khong chia se import qua lai giua modules/quotes va modules/crm). */
+function toRomanNumeral(num: number): string {
+  const table: Array<[number, string]> = [
+    [1000, 'M'], [900, 'CM'], [500, 'D'], [400, 'CD'], [100, 'C'], [90, 'XC'],
+    [50, 'L'], [40, 'XL'], [10, 'X'], [9, 'IX'], [5, 'V'], [4, 'IV'], [1, 'I'],
+  ];
+  let n = num;
+  let out = '';
+  for (const [value, symbol] of table) {
+    while (n >= value) {
+      out += symbol;
+      n -= value;
+    }
+  }
+  return out || String(num);
+}
+
 function formatDateVN(value: unknown): string {
   const raw = String(value || '').trim();
   if (!raw) return '';
@@ -149,6 +169,51 @@ export function QuoteDocumentRenderer({
   mode = 'preview',
   respectVisibleColumns = false,
 }: Props) {
+  // Resize cot bang hang muc kieu Excel - CHI cho man hinh xem truoc/chi tiet
+  // noi bo (mode 'preview'/'detail', xem allowColumnResize ben duoi), KHONG
+  // anh huong ban in/PDF (@media print da ep width qua !important nen inline
+  // style o day luon bi ghi de luc in, xem quotes.css) va KHONG hien cho
+  // khach (mode 'public'). null = chua ai resize, dung CSS mac dinh (%).
+  const [resizedColumnWidths, setResizedColumnWidths] = useState<Record<string, number> | null>(null);
+  const headerRowRef = useRef<HTMLTableRowElement | null>(null);
+  const resizeDragRef = useRef<{ key: string; startX: number; startWidth: number } | null>(null);
+
+  const beginColumnResize = (columnKey: string, columns: QuoteField[]) => (event: React.MouseEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    let widths = resizedColumnWidths;
+    // Lan resize DAU TIEN: do luon do rong hien tai (tu DOM that, dang chia
+    // theo % mac dinh) cua TAT CA cot lam moc, tranh cac cot chua tung resize
+    // bi nhay layout ve gia tri mac dinh cung (vd 120px) khi 1 cot doi sang px.
+    if (!widths && headerRowRef.current) {
+      const ths = Array.from(headerRowRef.current.querySelectorAll('th'));
+      widths = {};
+      columns.forEach((column, index) => {
+        const th = ths[index] as HTMLElement | undefined;
+        widths![column.key] = th ? Math.round(th.getBoundingClientRect().width) : 120;
+      });
+      setResizedColumnWidths(widths);
+    }
+    resizeDragRef.current = {
+      key: columnKey,
+      startX: event.clientX,
+      startWidth: widths?.[columnKey] ?? 120,
+    };
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      const drag = resizeDragRef.current;
+      if (!drag) return;
+      const nextWidth = Math.max(40, drag.startWidth + (moveEvent.clientX - drag.startX));
+      setResizedColumnWidths(prev => ({ ...(prev || {}), [drag.key]: nextWidth }));
+    };
+    const handleMouseUp = () => {
+      resizeDragRef.current = null;
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+  };
+
   const schema = schemaSnapshot || emptySchema();
   const layoutType = schema.layoutType || 'cloudgate_standard_quote';
   const sections = schema.sections || [];
@@ -315,6 +380,11 @@ export function QuoteDocumentRenderer({
           column => !TOGGLEABLE_COLUMN_KEYS.includes(column.key) || customerVisibleColumns.includes(column.key)
         )
       : standardColumns;
+  // Resize cot kieu Excel chi bat o man hinh noi bo (nguoi TAO/xem chi tiet
+  // bao gia) - khong bat cho 'public' (khach nhan bao gia khong can/khong nen
+  // co UI keo cot) va khong lien quan ban in (ban in doc theo @media print,
+  // khong doc prop mode nay).
+  const allowColumnResize = mode === 'preview' || mode === 'detail';
   // Bang qua nhieu cot (vd mau "chuan" 9 cot: STT/Ten dich vu/Mo ta/DVT/So
   // luong/Don gia/Giam gia/VAT/Thanh tien) khong the nen vua khong gian A4 du
   // da nong cot Mo ta/Ten dich vu - cac cot so con lai bi ep qua hep gay
@@ -328,14 +398,29 @@ export function QuoteDocumentRenderer({
   // xep doc/thu nho.
   const LANDSCAPE_PRINT_COLUMN_THRESHOLD = 7;
   const usesLandscapePrint = finalColumns.length >= LANDSCAPE_PRINT_COLUMN_THRESHOLD;
-  const displayedQuoteRows = quoteItems.flatMap((item, parentIndex) => [
-    { item, number: String(parentIndex + 1), isChild: false },
-    ...(item.children || []).map((child, childIndex) => ({
-      item: child,
-      number: `${parentIndex + 1}.${childIndex + 1}`,
-      isChild: true,
-    })),
-  ]);
+  // Muc cha (Section)/hang muc con - migration 104. 1 dong goc rowType=
+  // 'section' la TIEU DE NHOM thuan tuy (khong tinh tien) - hien rieng 1 hang
+  // noi bat chiem het cac cot, DUNG so La Ma (I, II, III...) rieng, KHONG
+  // dung STT nhu hang muc that. Hang muc that (goc HOAC nam trong 1 nhom qua
+  // `children`) danh so 01/02/03... LIEN TUC xuyen suot ca bang, KHONG reset
+  // lai moi nhom - khop dung cach danh so 01-21 lien tuc qua ca 3 "GIAI
+  // DOAN" trong file Excel mau (khac han quy uoc "1.1/1.2" cu cua tinh nang
+  // bundle cha/con truoc day, gio chi con dung cho section).
+  let sectionCounter = 0;
+  let itemCounter = 0;
+  const displayedQuoteRows = quoteItems.flatMap(item => {
+    if (item.rowType === 'section') {
+      sectionCounter += 1;
+      const sectionRow = { item, number: toRomanNumeral(sectionCounter), isChild: false, isSection: true as const };
+      const childRows = (item.children || []).map(child => {
+        itemCounter += 1;
+        return { item: child, number: String(itemCounter).padStart(2, '0'), isChild: true, isSection: false as const };
+      });
+      return [sectionRow, ...childRows];
+    }
+    itemCounter += 1;
+    return [{ item, number: String(itemCounter).padStart(2, '0'), isChild: false, isSection: false as const }];
+  });
 
   if (layoutType === 'villa_solution_package') {
     const setupTotal = activeSolutionItems.reduce(
@@ -548,13 +633,38 @@ export function QuoteDocumentRenderer({
                 bot cot khac), header duoc phep xuong dong (xem quotes.css) nen
                 khong can cot rong toi thieu lon nhu truoc. */}
             <table
-              className={`sheet-items-table${usesLandscapePrint ? ' sheet-items-table--print-landscape' : ''}`}
-              style={{ minWidth: Math.min(760, Math.max(420, finalColumns.length * 70)) }}
+              className={`sheet-items-table${usesLandscapePrint ? ' sheet-items-table--print-landscape' : ''}${allowColumnResize ? ' sheet-items-table--resizable' : ''}`}
+              style={
+                // Da resize it nhat 1 cot: dat width = TONG cac cot (co the
+                // vuot 100% wrapper) de bang tu gian rong ra that su thay vi
+                // bi table-layout:fixed ep co lai vua khung - .sheet-items-
+                // table-wrap co san overflow-x:auto se tu hien thanh cuon
+                // ngang, dung hanh vi Excel (rong 1 cot khong lam hep cot
+                // khac). Chua resize: giu nguyen minWidth mac dinh nhu cu.
+                allowColumnResize && resizedColumnWidths
+                  ? { width: Object.values(resizedColumnWidths).reduce((sum, w) => sum + w, 0) }
+                  : { minWidth: Math.min(760, Math.max(420, finalColumns.length * 70)) }
+              }
             >
               <thead>
-                <tr>
+                <tr ref={headerRowRef}>
                   {finalColumns.map(column => (
-                    <th key={column.key}>{column.label}</th>
+                    <th
+                      key={column.key}
+                      style={
+                        allowColumnResize && resizedColumnWidths?.[column.key]
+                          ? { width: resizedColumnWidths[column.key], minWidth: resizedColumnWidths[column.key] }
+                          : undefined
+                      }
+                    >
+                      {column.label}
+                      {allowColumnResize ? (
+                        <span
+                          className="quote-col-resize-handle"
+                          onMouseDown={beginColumnResize(column.key, finalColumns)}
+                        />
+                      ) : null}
+                    </th>
                   ))}
                 </tr>
               </thead>
@@ -566,26 +676,34 @@ export function QuoteDocumentRenderer({
                     </td>
                   </tr>
                 ) : (
-                  displayedQuoteRows.map((row, index) => (
-                    <tr key={row.item.id || `${row.number}-${index}`} className={row.isChild ? 'quote-item-row quote-item-row--child' : 'quote-item-row quote-item-row--parent'}>
-                      {finalColumns.map(column => (
-                        <td
-                          key={column.key}
-                          data-label={column.label}
-                          className={
-                            column.type === 'currency' ||
-                            ['unitPrice', 'subtotal', 'vatAmount', 'total'].includes(column.key)
-                              ? 'money-cell'
-                              : undefined
-                          }
-                        >
-                          {column.type === 'auto-number' || column.key === 'order'
-                            ? row.number
-                            : renderCell(row.item, column, index)}
+                  displayedQuoteRows.map((row, index) =>
+                    row.isSection ? (
+                      <tr key={row.item.id || `section-${row.number}-${index}`} className="quote-item-row quote-item-row--section">
+                        <td colSpan={Math.max(finalColumns.length, 1)}>
+                          <strong>{row.number} — {String(row.item.description || row.item.serviceDescription || '')}</strong>
                         </td>
-                      ))}
-                    </tr>
-                  ))
+                      </tr>
+                    ) : (
+                      <tr key={row.item.id || `${row.number}-${index}`} className={row.isChild ? 'quote-item-row quote-item-row--child' : 'quote-item-row quote-item-row--parent'}>
+                        {finalColumns.map(column => (
+                          <td
+                            key={column.key}
+                            data-label={column.label}
+                            className={
+                              column.type === 'currency' ||
+                              ['unitPrice', 'subtotal', 'vatAmount', 'total'].includes(column.key)
+                                ? 'money-cell'
+                                : undefined
+                            }
+                          >
+                            {column.type === 'auto-number' || column.key === 'order'
+                              ? row.number
+                              : renderCell(row.item, column, index)}
+                          </td>
+                        ))}
+                      </tr>
+                    )
+                  )
                 )}
               </tbody>
             </table>

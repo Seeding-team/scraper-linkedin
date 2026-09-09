@@ -123,6 +123,21 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, _workspaceTab:
       label: "Cơ hội",
       exactMatch: true,
     },
+    // ===== END Leads/Khách hàng/Cơ hội reorder =====
+    // Thu tu day du sau "Co hoi" theo dung yeu cau moi nhat (2026-09-09):
+    // Bao gia -> Phan tich CRM -> Lich su bao gia -> Hop dong -> Tai lieu ban
+    // hang -> San pham & dich vu -> Danh muc CRM -> Mau bao gia -> Don vi
+    // phat hanh -> Cai dat bao gia (truoc day: Bao gia -> Hop dong -> Phan
+    // tich CRM -> Lich su bao gia -> ... -> San pham & dich vu -> Mau bao
+    // gia -> Don vi phat hanh -> Danh muc CRM -> Cai dat bao gia).
+    {
+      type: "item",
+      id: "quote-center",
+      href: "/all-platform/quote-center",
+      icon: "request_quote",
+      label: "Báo giá",
+      matchStartsWith: ["/all-platform/quote-center"],
+    },
     // Phan tich CRM: theo yeu cau Mylife (22/07) chi leader/admin thay "full"
     // CRM, member chi thay pipeline ban hang (muc "Co hoi" o tren). Mo rong
     // cho Sale (team_type='sale', migration 049) - duoc nang quyen ngang
@@ -139,15 +154,6 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, _workspaceTab:
           },
         ] as NavLeafItem[])
       : []),
-    // ===== END Leads/Khách hàng/Cơ hội reorder =====
-    {
-      type: "item",
-      id: "quote-center",
-      href: "/all-platform/quote-center",
-      icon: "request_quote",
-      label: "Báo giá",
-      matchStartsWith: ["/all-platform/quote-center"],
-    },
     {
       type: "item",
       id: "quote-history",
@@ -182,6 +188,19 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, _workspaceTab:
     },
     {
       type: "item",
+      id: "crm-categories",
+      href: "/all-platform/crm/categories",
+      // "category" da dung cho "San pham & dich vu" ngay ben tren - truoc day
+      // trung icon voi muc nay khien 2 muc lien tiep nhau nhin y het nhau
+      // ("sp với danh mục trùng icon"). Doi sang "list_alt" (da co san trong
+      // MaterialSymbolName, dai dien dung "danh muc/danh sach" thay vi "san
+      // pham").
+      icon: "list_alt",
+      label: "Danh mục CRM",
+      matchStartsWith: ["/all-platform/crm/categories"],
+    },
+    {
+      type: "item",
       id: "quotes",
       href: "/all-platform/quotes",
       icon: "star",
@@ -196,14 +215,20 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, _workspaceTab:
       label: "Đơn vị phát hành",
       matchStartsWith: ["/all-platform/issuer-companies"],
     },
-    {
-      type: "item",
-      id: "crm-categories",
-      href: "/all-platform/crm/categories",
-      icon: "category",
-      label: "Danh mục CRM",
-      matchStartsWith: ["/all-platform/crm/categories"],
-    },
+    // Gom "Email gửi báo giá" + "Quy tắc phê duyệt" ve 1 trang cai dat rieng -
+    // chi Admin/Leader thay muc nay (giong dieu kien can_manage_quote_email_settings()).
+    ...(isAdmin || isLeader
+      ? ([
+          {
+            type: "item",
+            id: "quote-settings",
+            href: "/all-platform/quote-settings",
+            icon: "tune",
+            label: "Cài đặt báo giá",
+            matchStartsWith: ["/all-platform/quote-settings"],
+          },
+        ] as NavLeafItem[])
+      : []),
   ];
 
   // Module CRM độc lập: không còn "Trang chủ" và không còn bọc trong nhóm

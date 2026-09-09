@@ -2267,6 +2267,17 @@ select.quote-compact-vat:hover {
   padding-left: 1.4rem;
 }
 
+/* Muc cha (Section, migration 104) tren ban khach/PDF - hang tieu de nhom
+ * noi bat het chieu rong bang, KHONG phai 1 hang muc tinh tien - phan biet
+ * ro voi .quote-item-row--parent/--child (hang muc that). */
+.quote-item-row--section td {
+  background: #fbe9ee;
+  text-align: left;
+  font-size: 0.95em;
+  padding-top: 0.6rem;
+  padding-bottom: 0.6rem;
+}
+
 .quote-price-stack {
   display: inline-flex;
   flex-direction: column;

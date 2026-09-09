@@ -13,6 +13,15 @@ export function formatMoney(value: number): string {
   );
 }
 
+/** Markup/Margin: toi da 2 so thap phan, bo so 0 du (vd 42.86%, 30% - khong
+ * phai "30.00%"/"42,8571428571"). `Number(...toFixed(2))` tu dong bo trailing
+ * zero khi chuyen lai thanh number truoc khi String() ra hien thi. */
+export function formatPercentTrim(value: number | null | undefined, maxDecimals = 2): string {
+  if (value == null || !Number.isFinite(value)) return '—';
+  const rounded = Number(value.toFixed(maxDecimals));
+  return `${rounded}%`;
+}
+
 export function initialsOf(name: string): string {
   const parts = name.trim().split(/\s+/).filter(Boolean);
   if (parts.length >= 2) return (parts[parts.length - 2][0] + parts[parts.length - 1][0]).toUpperCase();

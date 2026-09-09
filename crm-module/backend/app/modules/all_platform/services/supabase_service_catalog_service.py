@@ -7,16 +7,17 @@ Description Items từ các thành phần và chỉ sinh ĐÚNG 1 dòng quote_it
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any
+from decimal import Decimal
+from typing import Any, Literal
 
 from supabase import Client
 
-from app.core.config import settings
 from app.core.supabase_client import get_supabase_client
 
 ITEMS_TABLE = "service_catalog_items"
 BUNDLE_ITEMS_TABLE = "service_catalog_bundle_items"
 LINKS_TABLE = "quote_form_catalog_links"
+PRICING_TABLE = "service_catalog_item_pricing"
 
 
 def _now_iso() -> str:
@@ -81,7 +82,6 @@ def _bundle_components(bundle_id: str) -> list[dict]:
         supabase.table(BUNDLE_ITEMS_TABLE)
         .select("*")
         .eq("bundle_id", bundle_id)
-        .eq("instance", settings.crm_instance)
         .order("sort_order")
         .execute()
         .data
@@ -91,13 +91,7 @@ def _bundle_components(bundle_id: str) -> list[dict]:
         return []
     component_ids = [row["component_id"] for row in rows]
     components = (
-        supabase.table(ITEMS_TABLE)
-        .select("*")
-        .in_("id", component_ids)
-        .eq("instance", settings.crm_instance)
-        .execute()
-        .data
-        or []
+        supabase.table(ITEMS_TABLE).select("*").in_("id", component_ids).execute().data or []
     )
     components_by_id = {c["id"]: c for c in components}
     lines = []
@@ -124,15 +118,7 @@ def render_bundle_description(bundle_id: str) -> str:
 
 def list_service_catalog_items() -> list[dict]:
     supabase: Client = get_supabase_client()
-    rows = (
-        supabase.table(ITEMS_TABLE)
-        .select("*")
-        .eq("instance", settings.crm_instance)
-        .order("sort_order")
-        .execute()
-        .data
-        or []
-    )
+    rows = supabase.table(ITEMS_TABLE).select("*").order("sort_order").execute().data or []
     mapped = [_row_to_item(row) for row in rows]
     by_id = {item["id"]: item for item in mapped}
     roots: list[dict] = []
@@ -151,19 +137,23 @@ def list_service_catalog_items() -> list[dict]:
 
 def get_service_catalog_item(item_id: str) -> dict:
     supabase: Client = get_supabase_client()
-    row = (
-        supabase.table(ITEMS_TABLE)
-        .select("*")
-        .eq("id", item_id)
-        .eq("instance", settings.crm_instance)
-        .single()
-        .execute()
-        .data
-    )
+    row = supabase.table(ITEMS_TABLE).select("*").eq("id", item_id).single().execute().data
     item = _row_to_item(row)
     if item["itemType"] == "bundle":
         item["components"] = _bundle_components(item_id)
     return item
+
+
+def get_service_catalog_items_by_ids(item_ids: list[str]) -> list[dict]:
+    """Tra cuu nhieu san pham cung luc theo id - dung cho "Ap gia de xuat" o
+    Buoc 2 (tra lai gia/trang thai hien tai cua catalog theo catalogItemId da
+    luu tren dong hang muc, KHONG dua vao state tam cua modal chon danh muc).
+    Khong loc status - can biet ca item da ngung kinh doanh de hien thi dung."""
+    if not item_ids:
+        return []
+    supabase: Client = get_supabase_client()
+    rows = supabase.table(ITEMS_TABLE).select("*").in_("id", item_ids).execute().data or []
+    return [_row_to_item(row) for row in rows]
 
 
 def create_service_catalog_item(payload: dict, created_by: str | None) -> dict:
@@ -175,7 +165,7 @@ def create_service_catalog_item(payload: dict, created_by: str | None) -> dict:
         if payload.get("parent_id")
         else supabase.table(ITEMS_TABLE).select("sort_order").is_("parent_id", "null")
     )
-    existing = existing.eq("instance", settings.crm_instance).order("sort_order", desc=True).limit(1).execute()
+    existing = existing.order("sort_order", desc=True).limit(1).execute()
     next_order = (existing.data[0]["sort_order"] + 1) if existing.data else 0
 
     insert_data = {
@@ -198,7 +188,6 @@ def create_service_catalog_item(payload: dict, created_by: str | None) -> dict:
         "sort_order": next_order,
         "created_by": created_by,
         "updated_by": created_by,
-        "instance": settings.crm_instance,
     }
     result = supabase.table(ITEMS_TABLE).insert(insert_data).execute()
     return _row_to_item(result.data[0])
@@ -209,39 +198,18 @@ def update_service_catalog_item(item_id: str, payload: dict, actor_id: str | Non
     update_data = {k: v for k, v in payload.items() if k != "id" and v is not None}
     update_data["updated_by"] = actor_id
     update_data["updated_at"] = _now_iso()
-    result = (
-        supabase.table(ITEMS_TABLE)
-        .update(update_data)
-        .eq("id", item_id)
-        .eq("instance", settings.crm_instance)
-        .execute()
-    )
+    result = supabase.table(ITEMS_TABLE).update(update_data).eq("id", item_id).execute()
     return _row_to_item(result.data[0])
 
 
 def delete_service_catalog_item(item_id: str) -> dict:
     supabase: Client = get_supabase_client()
-    item = (
-        supabase.table(ITEMS_TABLE)
-        .select("*")
-        .eq("id", item_id)
-        .eq("instance", settings.crm_instance)
-        .single()
-        .execute()
-        .data
-    )
+    item = supabase.table(ITEMS_TABLE).select("*").eq("id", item_id).single().execute().data
     if not item:
         raise ValueError("Không tìm thấy dịch vụ.")
 
     if item["item_type"] == "group":
-        children = (
-            supabase.table(ITEMS_TABLE)
-            .select("id")
-            .eq("parent_id", item_id)
-            .eq("instance", settings.crm_instance)
-            .limit(1)
-            .execute()
-        )
+        children = supabase.table(ITEMS_TABLE).select("id").eq("parent_id", item_id).limit(1).execute()
         if children.data:
             raise ValueError("Nhóm dịch vụ còn dịch vụ con, không thể xoá.")
 
@@ -250,22 +218,13 @@ def delete_service_catalog_item(item_id: str) -> dict:
             supabase.table(BUNDLE_ITEMS_TABLE)
             .select("bundle_id")
             .eq("component_id", item_id)
-            .eq("instance", settings.crm_instance)
             .execute()
             .data
             or []
         )
         if used_in:
             bundle_ids = list({row["bundle_id"] for row in used_in})
-            bundles = (
-                supabase.table(ITEMS_TABLE)
-                .select("name")
-                .in_("id", bundle_ids)
-                .eq("instance", settings.crm_instance)
-                .execute()
-                .data
-                or []
-            )
+            bundles = supabase.table(ITEMS_TABLE).select("name").in_("id", bundle_ids).execute().data or []
             names = ", ".join(b["name"] for b in bundles)
             raise ValueError(f"Dịch vụ đang được dùng trong gói: {names}. Không thể xoá.")
 
@@ -273,38 +232,23 @@ def delete_service_catalog_item(item_id: str) -> dict:
     # quote_items lưu snapshot riêng nên xoá không phá dữ liệu báo giá cũ, nhưng vẫn
     # chặn theo đúng yêu cầu nghiệp vụ: dùng "Ngưng kinh doanh" (đổi status) thay vì xoá.
     used_in_quotes = (
-        supabase.table("quote_items")
-        .select("id")
-        .eq("catalog_item_id", item_id)
-        .eq("instance", settings.crm_instance)
-        .limit(1)
-        .execute()
-        .data
-        or []
+        supabase.table("quote_items").select("id").eq("catalog_item_id", item_id).limit(1).execute().data or []
     )
     if used_in_quotes:
         raise ValueError("Dịch vụ đã được dùng trong báo giá, không thể xoá — chuyển sang Ngưng kinh doanh.")
 
-    supabase.table(ITEMS_TABLE).delete().eq("id", item_id).eq("instance", settings.crm_instance).execute()
+    supabase.table(ITEMS_TABLE).delete().eq("id", item_id).execute()
     return {"deleted": True}
 
 
 def reorder_service_catalog_item(item_id: str, direction: str) -> list[dict]:
     """Swap sort_order giữa dòng target và hàng xóm liền kề, TRONG CÙNG parent_id."""
     supabase: Client = get_supabase_client()
-    current = (
-        supabase.table(ITEMS_TABLE)
-        .select("*")
-        .eq("id", item_id)
-        .eq("instance", settings.crm_instance)
-        .single()
-        .execute()
-        .data
-    )
+    current = supabase.table(ITEMS_TABLE).select("*").eq("id", item_id).single().execute().data
     if not current:
         return list_service_catalog_items()
 
-    query = supabase.table(ITEMS_TABLE).select("*").eq("instance", settings.crm_instance)
+    query = supabase.table(ITEMS_TABLE).select("*")
     if current.get("parent_id"):
         query = query.eq("parent_id", current["parent_id"])
     else:
@@ -320,39 +264,24 @@ def reorder_service_catalog_item(item_id: str, direction: str) -> list[dict]:
         return list_service_catalog_items()
 
     target = siblings[target_index]
-    supabase.table(ITEMS_TABLE).update({"sort_order": target["sort_order"]}).eq("id", current["id"]).eq(
-        "instance", settings.crm_instance
-    ).execute()
-    supabase.table(ITEMS_TABLE).update({"sort_order": current["sort_order"]}).eq("id", target["id"]).eq(
-        "instance", settings.crm_instance
-    ).execute()
+    supabase.table(ITEMS_TABLE).update({"sort_order": target["sort_order"]}).eq("id", current["id"]).execute()
+    supabase.table(ITEMS_TABLE).update({"sort_order": current["sort_order"]}).eq("id", target["id"]).execute()
     return list_service_catalog_items()
 
 
 def set_bundle_components(bundle_id: str, items: list[dict]) -> dict:
     supabase: Client = get_supabase_client()
-    bundle = (
-        supabase.table(ITEMS_TABLE)
-        .select("*")
-        .eq("id", bundle_id)
-        .eq("instance", settings.crm_instance)
-        .single()
-        .execute()
-        .data
-    )
+    bundle = supabase.table(ITEMS_TABLE).select("*").eq("id", bundle_id).single().execute().data
     if not bundle or bundle["item_type"] != "bundle":
         raise ValueError("Không tìm thấy gói dịch vụ.")
 
-    supabase.table(BUNDLE_ITEMS_TABLE).delete().eq("bundle_id", bundle_id).eq(
-        "instance", settings.crm_instance
-    ).execute()
+    supabase.table(BUNDLE_ITEMS_TABLE).delete().eq("bundle_id", bundle_id).execute()
     for index, item in enumerate(items):
         supabase.table(BUNDLE_ITEMS_TABLE).insert({
             "bundle_id": bundle_id,
             "component_id": item["component_id"],
             "quantity": item.get("quantity") or 1,
             "sort_order": item.get("sort_order", index),
-            "instance": settings.crm_instance,
         }).execute()
 
     return get_service_catalog_item(bundle_id)
@@ -366,7 +295,6 @@ def get_quote_form_catalog_links(quote_form_id: str) -> list[str]:
         supabase.table(LINKS_TABLE)
         .select("catalog_item_id")
         .eq("quote_form_id", quote_form_id)
-        .eq("instance", settings.crm_instance)
         .execute()
         .data
         or []
@@ -376,14 +304,11 @@ def get_quote_form_catalog_links(quote_form_id: str) -> list[str]:
 
 def set_quote_form_catalog_links(quote_form_id: str, catalog_item_ids: list[str]) -> list[str]:
     supabase: Client = get_supabase_client()
-    supabase.table(LINKS_TABLE).delete().eq("quote_form_id", quote_form_id).eq(
-        "instance", settings.crm_instance
-    ).execute()
+    supabase.table(LINKS_TABLE).delete().eq("quote_form_id", quote_form_id).execute()
     for catalog_item_id in catalog_item_ids:
         supabase.table(LINKS_TABLE).insert({
             "quote_form_id": quote_form_id,
             "catalog_item_id": catalog_item_id,
-            "instance": settings.crm_instance,
         }).execute()
     return get_quote_form_catalog_links(quote_form_id)
 
@@ -402,21 +327,12 @@ def get_service_catalog_options_for_form(quote_form_id: str) -> dict:
         .select("*")
         .in_("parent_id", group_ids)
         .eq("status", "active")
-        .eq("instance", settings.crm_instance)
         .order("sort_order")
         .execute()
         .data
         or []
     )
-    group_rows = (
-        supabase.table(ITEMS_TABLE)
-        .select("id,name")
-        .in_("id", group_ids)
-        .eq("instance", settings.crm_instance)
-        .execute()
-        .data
-        or []
-    )
+    group_rows = supabase.table(ITEMS_TABLE).select("id,name").in_("id", group_ids).execute().data or []
     group_names = {g["id"]: g["name"] for g in group_rows}
 
     bundles = []
@@ -431,3 +347,199 @@ def get_service_catalog_options_for_form(quote_form_id: str) -> dict:
         elif item["itemType"] == "component":
             components.append(item)
     return {"bundles": bundles, "components": components}
+
+
+# ── Bo gia MAC DINH rieng cho danh muc chung (migration 107,
+# service_catalog_item_pricing) ───────────────────────────────────────────
+#
+# TACH BIET hoan toan default_unit_price_vnd (gia BAN, tren chinh
+# service_catalog_items - bang do RLS mo, doc truc tiep duoc). Bang pricing
+# nay RLS chi cho service_role, nen chi truy cap duoc qua cac ham duoi day
+# (goi tu backend FastAPI, dung service-role key) - KHONG bao gio tra thang
+# ra API neu nguoi goi khong qua duoc kiem tra quyen o router (xem
+# routers/service_catalog.py, _resolve_catalog_pricing_visibility()).
+
+
+def _to_decimal(value: Any) -> Decimal | None:
+    if value is None or value == "":
+        return None
+    if isinstance(value, Decimal):
+        return value
+    return Decimal(str(value))
+
+
+def _collect_item_ids(tree: list[dict]) -> list[str]:
+    ids: list[str] = []
+    for item in tree:
+        ids.append(item["id"])
+        ids.extend(_collect_item_ids(item.get("children") or []))
+        for component in item.get("components") or []:
+            comp_id = component.get("componentId")
+            if comp_id:
+                ids.append(comp_id)
+    return ids
+
+
+def resolve_pricing_map(item_ids: list[str], issuer_company_id: str | None) -> dict[str, dict[str, Decimal | None]]:
+    """Voi moi item_id, uu tien dong pricing khop dung issuer_company_id dang
+    resolve; neu khong co, dung dong `issuer_company_id IS NULL` (mac dinh
+    dung chung); neu khong co dong nao -> ca 3 gia tri None (chua cau hinh,
+    KHONG bia so 0)."""
+    if not item_ids:
+        return {}
+    supabase: Client = get_supabase_client()
+    rows = (
+        supabase.table(PRICING_TABLE)
+        .select("service_catalog_item_id, issuer_company_id, default_cost_price_vnd, default_markup_percent, default_customer_price_vnd")
+        .in_("service_catalog_item_id", item_ids)
+        .execute()
+        .data
+        or []
+    )
+    specific: dict[str, dict[str, Decimal | None]] = {}
+    default: dict[str, dict[str, Decimal | None]] = {}
+    for row in rows:
+        item_id = row["service_catalog_item_id"]
+        entry = {
+            "cost": _to_decimal(row.get("default_cost_price_vnd")),
+            "markup": _to_decimal(row.get("default_markup_percent")),
+            "customer": _to_decimal(row.get("default_customer_price_vnd")),
+        }
+        if row.get("issuer_company_id") and issuer_company_id and row["issuer_company_id"] == issuer_company_id:
+            specific[item_id] = entry
+        elif not row.get("issuer_company_id"):
+            default[item_id] = entry
+    result: dict[str, dict[str, Decimal | None]] = {}
+    for item_id in item_ids:
+        result[item_id] = specific.get(item_id, default.get(item_id, {"cost": None, "markup": None, "customer": None}))
+    return result
+
+
+def merge_pricing_into_tree(tree: list[dict], pricing_map: dict[str, dict[str, Decimal | None]]) -> None:
+    """Gan defaultCostPriceVnd/defaultMarkupPercent/defaultCustomerPriceVnd vao
+    TUNG item trong cay (mutate in-place) - CHI goi ham nay sau khi router da
+    xac nhan nguoi goi du quyen xem cost/markup; neu khong du quyen, XOA HAN
+    2 field cost/markup (khong tra null gia), CHI giu lai defaultCustomerPriceVnd
+    (Gia khach luon duoc tra cho moi request da auth, khong qua cong quyen
+    nay - xem router)."""
+    for item in tree:
+        entry = pricing_map.get(item["id"], {})
+        item["defaultCostPriceVnd"] = float(entry["cost"]) if entry.get("cost") is not None else None
+        item["defaultMarkupPercent"] = float(entry["markup"]) if entry.get("markup") is not None else None
+        item["defaultCustomerPriceVnd"] = float(entry["customer"]) if entry.get("customer") is not None else None
+        merge_pricing_into_tree(item.get("children") or [], pricing_map)
+        for component in item.get("components") or []:
+            comp_id = component.get("componentId")
+            comp_entry = pricing_map.get(comp_id, {}) if comp_id else {}
+            component["defaultCostPriceVnd"] = float(comp_entry["cost"]) if comp_entry.get("cost") is not None else None
+            component["defaultMarkupPercent"] = float(comp_entry["markup"]) if comp_entry.get("markup") is not None else None
+            component["defaultCustomerPriceVnd"] = float(comp_entry["customer"]) if comp_entry.get("customer") is not None else None
+
+
+def strip_cost_markup_fields(tree: list[dict]) -> None:
+    """Nguoi goi KHONG du quyen xem cost/markup - xoa han 2 key nay khoi moi
+    item/children/components (giu nguyen defaultCustomerPriceVnd neu da gan
+    truoc do). Dung `pop(..., None)` de an toan neu key chua ton tai."""
+    for item in tree:
+        item.pop("defaultCostPriceVnd", None)
+        item.pop("defaultMarkupPercent", None)
+        strip_cost_markup_fields(item.get("children") or [])
+        for component in item.get("components") or []:
+            component.pop("defaultCostPriceVnd", None)
+            component.pop("defaultMarkupPercent", None)
+
+
+def list_service_catalog_item_pricing(item_id: str) -> list[dict]:
+    """Danh sach TAT CA dong gia (ca dong mac dinh chung lan tung dong rieng
+    theo issuer_company_id) cua 1 san pham - dung cho form quan tri (Admin),
+    KHONG dung cho picker chon danh muc trong quote."""
+    supabase: Client = get_supabase_client()
+    rows = (
+        supabase.table(PRICING_TABLE)
+        .select("*")
+        .eq("service_catalog_item_id", item_id)
+        .execute()
+        .data
+        or []
+    )
+    return [
+        {
+            "id": row["id"],
+            "issuerCompanyId": row.get("issuer_company_id"),
+            "defaultCostPriceVnd": float(row["default_cost_price_vnd"]) if row.get("default_cost_price_vnd") is not None else None,
+            "defaultMarkupPercent": float(row["default_markup_percent"]) if row.get("default_markup_percent") is not None else None,
+            "defaultCustomerPriceVnd": float(row["default_customer_price_vnd"]) if row.get("default_customer_price_vnd") is not None else None,
+            "updatedAt": row.get("updated_at"),
+        }
+        for row in rows
+    ]
+
+
+def upsert_service_catalog_item_pricing(
+    item_id: str,
+    issuer_company_id: str | None,
+    cost_price_vnd: Decimal | None,
+    markup_percent: Decimal | None,
+    customer_price_vnd: Decimal | None,
+    pricing_input_mode: Literal["markup", "customer_price"],
+    actor_id: str | None,
+) -> dict:
+    """Backend la nguon THAT DUY NHAT tinh 3 gia tri - KHONG luu nguyen so
+    client gui cho field KHONG phai field dieu khien (dung yeu cau audit:
+    "backend phai dam bao 3 gia tri luon nhat quan"). `cost_price_vnd` LUON
+    duoc tin nguyen (khong co field nao khac dieu khien no); field con lai
+    tuy `pricing_input_mode`:
+      - mode='markup': customer = cost * (1 + markup/100). cost=None ->
+        customer=None (khong tinh duoc).
+      - mode='customer_price': cost=None HOAC cost==0 -> KHONG chia (tranh
+        ZeroDivisionError/suy nguoc vo nghia), markup tra ve None. Nguoc lai
+        markup = customer/cost - 1.
+    Validate: cost/customer khong am (< 0 -> ValueError). Markup kep toi
+    thieu -100% (gia khach toi thieu = 0, giong dung cach da lam cho
+    markup hang muc bao gia - khong co nguong tren nghiep vu nao dung chung
+    cho danh muc mac dinh nen khong bia them gioi han tren)."""
+    if cost_price_vnd is not None and cost_price_vnd < 0:
+        raise ValueError("Giá vốn không được âm.")
+    if customer_price_vnd is not None and customer_price_vnd < 0:
+        raise ValueError("Giá khách không được âm.")
+
+    if pricing_input_mode == "markup":
+        markup = None if markup_percent is None else max(Decimal("-100"), markup_percent)
+        if cost_price_vnd is None or markup is None:
+            customer = None
+        else:
+            customer = cost_price_vnd * (Decimal("1") + markup / Decimal("100"))
+        cost, resolved_markup, resolved_customer = cost_price_vnd, markup, customer
+    else:  # customer_price
+        if cost_price_vnd is None or cost_price_vnd == 0 or customer_price_vnd is None:
+            resolved_markup = None
+        else:
+            resolved_markup = (customer_price_vnd / cost_price_vnd - Decimal("1")) * Decimal("100")
+        cost, resolved_customer = cost_price_vnd, customer_price_vnd
+
+    supabase: Client = get_supabase_client()
+    query = supabase.table(PRICING_TABLE).select("id").eq("service_catalog_item_id", item_id)
+    query = query.is_("issuer_company_id", "null") if not issuer_company_id else query.eq("issuer_company_id", issuer_company_id)
+    existing = query.limit(1).execute().data
+    payload = {
+        "service_catalog_item_id": item_id,
+        "issuer_company_id": issuer_company_id,
+        "default_cost_price_vnd": float(cost) if cost is not None else None,
+        "default_markup_percent": float(resolved_markup) if resolved_markup is not None else None,
+        "default_customer_price_vnd": float(resolved_customer) if resolved_customer is not None else None,
+        "updated_by": actor_id,
+        "updated_at": _now_iso(),
+    }
+    if existing:
+        result = supabase.table(PRICING_TABLE).update(payload).eq("id", existing[0]["id"]).execute()
+    else:
+        result = supabase.table(PRICING_TABLE).insert(payload).execute()
+    row = result.data[0]
+    return {
+        "id": row["id"],
+        "issuerCompanyId": row.get("issuer_company_id"),
+        "defaultCostPriceVnd": float(row["default_cost_price_vnd"]) if row.get("default_cost_price_vnd") is not None else None,
+        "defaultMarkupPercent": float(row["default_markup_percent"]) if row.get("default_markup_percent") is not None else None,
+        "defaultCustomerPriceVnd": float(row["default_customer_price_vnd"]) if row.get("default_customer_price_vnd") is not None else None,
+        "updatedAt": row.get("updated_at"),
+    }
