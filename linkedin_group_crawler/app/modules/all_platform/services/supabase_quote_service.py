@@ -123,6 +123,19 @@ def _row_to_item(row: dict) -> dict:
             if row.get("cost_price") is not None
             else None
         ),
+        # Bang gia VPS Zone (migration 106) - CHI dung noi bo (authenticated),
+        # giong het cost_price/markup_percent o tren. price_book_snapshot la
+        # ban dong cung IN/EU/VAT/gia tham chieu luc chon - KHONG BAO GIO doc
+        # lai price_book_items sau khi da co snapshot nay.
+        "priceBookItemId": row.get("price_book_item_id"),
+        "priceBookVersionId": row.get("price_book_version_id"),
+        "priceBookSnapshot": row.get("price_book_snapshot"),
+        "costOverrideReason": row.get("cost_override_reason"),
+        "costOverrideBy": row.get("cost_override_by"),
+        "costOverrideAt": row.get("cost_override_at"),
+        "costPriceOriginal": (
+            float(row["cost_price_original"]) if row.get("cost_price_original") is not None else None
+        ),
         "children": [],
     }
 
@@ -145,6 +158,16 @@ def _quote_cost_summary(row: dict, raw_items: list[dict] | None) -> dict:
     # mien phi/da bao gom o dong khac) tinh la DA GIAI QUYET, dong gop 0 vao
     # cost_total - KHONG lam quote bi coi la "thieu cost".
     raw_items = raw_items or []
+    # BUG THAT DA GAP: raw_items goi vao day gom CA dong "Muc cha" (Section,
+    # row_type='section') - Section chi la 1 nhom LY THUYET de gom hang muc
+    # con lai gan nhau, KHONG bao gio co cost_price/cost_not_applicable rieng
+    # (server ep 0/NULL cho Section trong append_item() o tren). Truoc day
+    # check has_cost_data goi thang tren raw_items (chua loc) nen CHI CAN co 1
+    # Section la all(...) luon False -> hasCostData/Tong gia von/Loi nhuan gop
+    # bien mat het du MOI hang muc that (row_type='item') da nhap du cost -
+    # "thêm mục cha vô thì k thấy tổng giá vốn nữa" la dung bug nay. Loc chi
+    # con hang muc THAT (row_type='item') truoc khi tinh.
+    real_items = [item for item in raw_items if (item.get("row_type") or "item") == "item"]
     # netRevenue (Doanh thu thuan = gia KHACH truoc VAT sau chiet khau) chi phu
     # thuoc total_amount/vat_amount cua CHINH quote nay - KHONG lien quan gi
     # toi viec Presale da nhap cost_price hay chua. Bug that da tim thay: ban
@@ -154,14 +177,14 @@ def _quote_cost_summary(row: dict, raw_items: list[dict] | None) -> dict:
     # ngay khi Sale da nhap gia ban xong (total_amount > 0), khong doi trang
     # thai Presale. netRevenue tach rieng khoi has_cost_data tu day.
     net_revenue = float(row.get("total_amount") or 0) - float(row.get("vat_amount") or 0)
-    has_cost_data = bool(raw_items) and all(
-        item.get("cost_price") is not None or bool(item.get("cost_not_applicable")) for item in raw_items
+    has_cost_data = bool(real_items) and all(
+        item.get("cost_price") is not None or bool(item.get("cost_not_applicable")) for item in real_items
     )
     if not has_cost_data:
         return {"hasCostData": False, "costTotal": None, "netRevenue": net_revenue, "grossProfit": None, "grossMarginPercent": None}
     cost_total = sum(
         float(item["cost_price"]) * float(item.get("quantity") or 0)
-        for item in raw_items
+        for item in real_items
         if item.get("cost_price") is not None
     )
     gross_profit = net_revenue - cost_total
@@ -233,6 +256,13 @@ def _row_to_quote(row: dict, items: list[dict] | None = None) -> dict:
         "slaStartedAt": row.get("sla_started_at"),
         "slaDueAt": row.get("sla_due_at"),
         "completedAt": row.get("completed_at"),
+        # Giam gia tong cap quote (migration 106, muc 6.9) - None = khong ap
+        # dung. CHI dung noi bo (chua co yeu cau hien thi tren public/PDF -
+        # xem _row_to_public_quote() rieng o tren, KHONG them field nay vao do
+        # tru khi co yeu cau ro rang).
+        "overallDiscountPercent": (
+            float(row["overall_discount_percent"]) if row.get("overall_discount_percent") is not None else None
+        ),
         # Gia von/loi nhuan (migration 086) - tinh THAT o backend, khong tin
         # so tong tu frontend. CHI dung noi bo (_row_to_quote khong bao gio
         # duoc goi cho duong public - xem _row_to_public_quote rieng o tren).
@@ -721,13 +751,34 @@ def _calculate_villa_totals(solution_items: list[dict]) -> tuple[float, float, f
 
 # ── Quote Forms ────────────────────────────────────────────────────────────
 
+# 3 mau "chuan bao gia" duoc chon lam mac dinh cho khu vuc "Mẫu dùng nhanh"
+# (FE lay 3 dong dau tien - TEMPLATE_ROW_LIMIT trong QuoteCenterPage.tsx).
+# Truoc day sap xep thuan tuy theo updated_at desc nen bat on dinh: hom nao
+# admin sua mau nao thi mau do nhay len dau, day 1 trong 3 mau chuan (vd VPS)
+# ra ngoai, lo mau khac (vd "MARKEE V2" cu) vao thay - day chinh la bug that
+# nguoi dung gap ("mẫu dùng nhanh ... để mẫu markee (chuẩn báo giá) thay cho
+# markee v2 đi, 3 mẫu đó mặc định hiển thị nha"). Gan 3 code nay LEN DAU,
+# dung thu tu, KHONG phu thuoc updated_at nua; cac mau con lai van sap theo
+# updated_at desc nhu cu o phia sau.
+FEATURED_FORM_CODES = ["STANDARD_QUOTE_FORM", "MAU_BAO_GIA_VPS", "MARKEE"]
+
+
 def list_quote_forms(status: str | None = None) -> list[dict]:
     supabase: Client = get_supabase_client()
     query = supabase.table(FORMS_TABLE).select("*").neq("status", "archived")
     if status:
         query = query.eq("status", status)
     result = query.order("updated_at", desc=True).execute()
-    return [_row_to_form(row) for row in (result.data or [])]
+    rows = list(result.data or [])
+
+    def sort_key(row: dict) -> tuple[int, int]:
+        code = row.get("code") or ""
+        if code in FEATURED_FORM_CODES:
+            return (0, FEATURED_FORM_CODES.index(code))
+        return (1, 0)
+
+    rows.sort(key=sort_key)
+    return [_row_to_form(row) for row in rows]
 
 
 def get_quote_form(form_id: str) -> dict:
@@ -1310,7 +1361,7 @@ _RPC_ERROR_MESSAGES = {
     "quote_handoff_checklist_incomplete": "Checklist bàn giao (Scope/Cost/Timeline/Assumption) chưa đủ 4 mục.",
     "quote_item_invalid_unit_price": "Có hạng mục với giá bán không hợp lệ (phải > 0).",
     "quote_item_invalid_markup": "Có hạng mục với markup không hợp lệ (thấp hơn -100%).",
-    "quote_missing_payment_terms": "Chưa có điều khoản thanh toán hợp lệ.",
+    "quote_missing_payment_terms": "Chưa chọn Điều khoản thanh toán — vào mục \"Thanh toán\" (dropdown số ngày) để chọn, không phải \"+ Ghi chú bổ sung\".",
     "quote_invalid_total_amount": "Tổng tiền tính lại không hợp lệ.",
 }
 
@@ -1421,6 +1472,8 @@ def update_quote(quote_id: str, payload: dict, actor_id: str | None) -> dict:
         direct_fields["project_id"] = new_project_id
     if "sla_due_at" in payload:
         direct_fields["sla_due_at"] = payload.get("sla_due_at")
+    if "overall_discount_percent" in payload:
+        direct_fields["overall_discount_percent"] = payload.get("overall_discount_percent")
     if direct_fields:
         supabase.table(QUOTES_TABLE).update(direct_fields).eq("id", quote_id).execute()
 

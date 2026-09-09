@@ -18,6 +18,9 @@ import { seedingQuoteRepository } from '../repositories/SeedingQuoteRepository';
 import { serviceCatalogRepository } from '../../service-catalog/repositories/ServiceCatalogRepository';
 import type { ServiceCatalogItem, ServiceCatalogOptions } from '../../service-catalog/types';
 import { SearchableSelect } from '../../crm/components/SearchableSelect';
+import { CatalogPickerModal, type CatalogPickerListItem } from '../../service-catalog/CatalogPickerModal';
+import { useCatalogItemAdd } from '../../service-catalog/useCatalogItemAdd';
+import { ConfirmModal } from '../../crm/components/ConfirmModal';
 
 export interface QuoteFillValue {
   data: QuoteData;
@@ -653,6 +656,120 @@ function CatalogItemPicker<T>({
   );
 }
 
+/** Picker dung CHUNG voi QuoteWorkspaceModal (xem CatalogPickerModal +
+ * useCatalogItemAdd, module service-catalog) cho luong "Tao bao gia nhanh"
+ * (che do co Danh muc dich vu lien ket, KHONG phai Villa) - thay the
+ * CatalogItemPicker<T> noi bo cu von CHI disable dong da co, khong co
+ * ConfirmModal tang SL/them dong moi nhu QuoteWorkspaceModal (da bi audit
+ * bat loi hanh vi khac nhau giua 2 diem goi). CatalogItemPicker<T> van GIU
+ * NGUYEN cho rieng Villa (mapBundle/mapComponent -> VillaSolutionItem, kieu
+ * du lieu khac hoan toan, ngoai pham vi yeu cau nay). */
+function QuoteCatalogPicker({
+  options,
+  items,
+  onAddMany,
+  onIncreaseQuantity,
+}: {
+  options: ServiceCatalogOptions;
+  items: QuoteItem[];
+  onAddMany: (items: QuoteItem[]) => void;
+  /** Tang SL cua 1 dong DA CO trong bang (dedup "Tang so luong") - tach
+   * rieng khoi onAddMany (chi lo them dong MOI), tranh nham lan 2 hanh vi. */
+  onIncreaseQuantity: (existingIndex: number, addQuantity: number) => void;
+}) {
+  const [open, setOpen] = useState(false);
+
+  // Rules of Hooks: useCatalogItemAdd (goi useState ben trong) PHAI nam
+  // TRUOC moi early-return co dieu kien - khong duoc dat sau
+  // `if (!options...) return null` (se lam so luong hook goi thay doi giua
+  // cac lan render neu options rong/co du lieu xen ke).
+  const existingKeys = new Map<string, number>();
+  items.forEach((item, index) => {
+    if (item.catalogItemId) existingKeys.set(item.catalogItemId, index);
+  });
+  const catalogAdd = useCatalogItemAdd<QuoteItem>({ existingKeys, onAdd: newItems => onAddMany(newItems) });
+
+  if (!options.bundles.length && !options.components.length) return null;
+
+  const pickerItems: CatalogPickerListItem[] = [
+    ...options.bundles.map(bundle => ({
+      id: bundle.id,
+      sku: bundle.sku,
+      name: bundle.name,
+      description: bundle.description,
+      groupName: bundle.groupName,
+      unit: bundle.unit,
+      vatRate: bundle.defaultVatRate,
+      customerPriceVnd: bundle.defaultUnitPriceVnd || 0,
+      status: bundle.status,
+      alreadyAdded: existingKeys.has(bundle.id),
+    })),
+    ...options.components.map(component => ({
+      id: component.id,
+      sku: component.sku,
+      name: component.name,
+      description: component.description,
+      groupName: component.groupName,
+      unit: component.unit,
+      vatRate: component.defaultVatRate,
+      customerPriceVnd: component.defaultUnitPriceVnd || 0,
+      status: component.status,
+      alreadyAdded: existingKeys.has(component.id),
+    })),
+  ];
+
+  function handleAddSelected(ids: string[]) {
+    const selectedBundles = options.bundles.filter(b => ids.includes(b.id));
+    const selectedComponents = options.components.filter(c => ids.includes(c.id));
+    const dedupCount = catalogAdd.handleAddSelected([
+      ...selectedBundles.map(b => ({ key: b.id, item: bundleToQuoteItem(b), label: b.name })),
+      ...selectedComponents.map(c => ({ key: c.id, item: componentToQuoteItem(c), label: c.name })),
+    ]);
+    if (dedupCount === 0) setOpen(false);
+  }
+
+  return (
+    <div className="quote-catalog-picker">
+      <button type="button" className="quote-catalog-picker-trigger" onClick={() => setOpen(true)}>
+        + Chọn từ Sản phẩm & dịch vụ
+      </button>
+      <CatalogPickerModal
+        open={open}
+        onClose={() => setOpen(false)}
+        title="Chọn từ Danh mục dịch vụ"
+        subtitle="Tick chọn 1 hoặc nhiều gói/hạng mục rồi bấm &quot;Thêm vào báo giá&quot;."
+        showZoneTab={false}
+        activeSource="internal"
+        onSourceChange={() => {}}
+        loading={false}
+        items={pickerItems}
+        onAddSelected={handleAddSelected}
+      />
+      <ConfirmModal
+        open={catalogAdd.dedupQueue.length > 0}
+        title="Sản phẩm đã có trong báo giá"
+        message={
+          catalogAdd.dedupQueue[0]
+            ? `"${catalogAdd.dedupQueue[0].label}" đã có sẵn 1 dòng trong báo giá. Bạn muốn tăng số lượng dòng có sẵn hay vẫn thêm thành dòng mới?`
+            : ''
+        }
+        onClose={() => catalogAdd.cancelDedup()}
+        actions={[
+          {
+            label: 'Tăng số lượng dòng có sẵn',
+            variant: 'primary',
+            onClick: () => {
+              const entry = catalogAdd.dedupQueue[0];
+              catalogAdd.resolveDedup('increase', existingIndex => onIncreaseQuantity(existingIndex, entry?.candidate.item.quantity || 1));
+            },
+          },
+          { label: 'Vẫn thêm dòng mới', onClick: () => catalogAdd.resolveDedup('addNew', () => {}) },
+        ]}
+      />
+    </div>
+  );
+}
+
 function QuoteItemsEditor({
   items,
   onChange,
@@ -722,12 +839,11 @@ function QuoteItemsEditor({
     return (
       <div className="quote-items-editor">
         {catalogOptions ? (
-          <CatalogItemPicker
+          <QuoteCatalogPicker
             options={catalogOptions}
-            existingCatalogItemIds={new Set(items.map(item => item.catalogItemId).filter((id): id is string => Boolean(id)))}
-            mapBundle={bundleToQuoteItem}
-            mapComponent={componentToQuoteItem}
+            items={items}
             onAddMany={newItems => onChange([...items, ...newItems])}
+            onIncreaseQuantity={(index, addQuantity) => updateParent(index, { quantity: (items[index].quantity || 0) + addQuantity })}
           />
         ) : null}
         {items.length === 0 ? (
