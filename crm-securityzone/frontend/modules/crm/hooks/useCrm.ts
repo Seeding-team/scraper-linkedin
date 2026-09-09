@@ -27,7 +27,7 @@ const INDUSTRY_SELECT_OPTIONS: CrmSelectOption[] = INDUSTRY_OPTIONS.map(value =>
 // (category_type crm_industry/crm_source/crm_service_package/crm_package).
 // Mục nào trùng "code" với default thì lấy tên hiển thị mới nhất từ DB (leader
 // sửa tên là có hiệu lực ngay); mục DB-only (leader tự thêm) được nối thêm vào cuối.
-function mergeCategoryOptions(defaults: CrmSelectOption[], dynamic?: Array<{ code: string; name?: string }>): CrmSelectOption[] {
+export function mergeCategoryOptions(defaults: CrmSelectOption[], dynamic?: Array<{ code: string; name?: string }>): CrmSelectOption[] {
   const dynamicByCode = new Map((dynamic || []).map(item => [item.code, item]));
   const merged = defaults.map(option => {
     const override = dynamicByCode.get(option.value);
