@@ -10,13 +10,12 @@ cookie mới cho chính domain đó — không đi qua URL/log 1 JWT sống, ch�
 1 mã dùng 1 lần rồi bị đốt ngay.
 
 Lưu mã trong bảng `workspace_handoff_codes` của DB self-host DÙNG CHUNG (migration
-004_workspace_handoff_codes.sql) — KHÔNG lưu RAM process nữa. Markee/CloudGate/
-SecurityZone hiện là 3 deploy TÁCH RIÊNG (3 container/host khác nhau, mỗi cái
-1 CRM_INSTANCE cố định) nhưng cùng đọc/ghi 1 DB — mint ở process A (vd
+004_workspace_handoff_codes.sql) — KHÔNG lưu RAM process. Markee/CloudGate/
+SecurityZone là 3 deploy TÁCH RIÊNG (3 container/host khác nhau, mỗi cái 1
+CRM_INSTANCE cố định) nhưng cùng đọc/ghi 1 DB — mint ở process A (vd
 crm-module phục vụ crm.markee.vn), consume ở process B (vd crm-cloudgate phục
 vụ crm.getcloudgate.com) vẫn hoạt động đúng vì cả 2 cùng nhìn thấy bảng này
-trong DB chung. KHÔNG còn yêu cầu "phải gộp 3 stack thành 1 process" như
-thiết kế RAM cũ.
+trong DB chung. KHÔNG yêu cầu "phải gộp 3 stack thành 1 process".
 """
 from __future__ import annotations
 

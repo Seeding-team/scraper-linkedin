@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -24,6 +25,29 @@ def _parse_csv(value: str | None, default: tuple[str, ...]) -> list[str]:
     return [item for item in items if item]
 
 
+def _parse_workspace_domains(value: str | None) -> dict[str, str]:
+    """`WORKSPACE_DOMAINS` — JSON object instance -> base URL public (có scheme,
+    KHÔNG lowercase key vì instance code phân biệt hoa/thường, vd
+    "SECURITYZONE" khác "securityzone"). Dùng cho admin switcher + redirect
+    non-admin nhập nhầm site — xem workspace_handoff_service.py. Giống hệt
+    biến cùng tên trong crm-module (3 deploy TÁCH RIÊNG, không cần
+    INSTANCE_DOMAIN_MAP/contextvar vì mỗi deploy đã có CRM_INSTANCE cố định
+    riêng qua NPM/domain thật)."""
+    if not value:
+        return {}
+    try:
+        data = json.loads(value)
+    except ValueError:
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return {
+        str(instance).strip(): str(url).strip().rstrip("/")
+        for instance, url in data.items()
+        if str(instance).strip() and str(url).strip()
+    }
+
+
 @dataclass
 class Settings:
     """Typed settings loaded from environment variables."""
@@ -37,6 +61,15 @@ class Settings:
     # deploy chỉ set instance của riêng mình qua env CRM_INSTANCE, mọi
     # query CRM đều lọc/gắn theo giá trị này (xem migrations/001_add_instance_scoping.sql).
     crm_instance: str = (os.getenv("CRM_INSTANCE") or "markee").strip()
+
+    # instance -> base URL CANONICAL công khai của brand đó (có scheme, KHÔNG
+    # đường dẫn cuối), dùng để admin switcher / redirect non-admin nhập nhầm
+    # site biết chuyển sang đâu. Giá trị PHẢI GIỐNG HỆT nhau trên cả 3 deploy
+    # (crm-module/crm-cloudgate/crm-securityzone) vì đều dùng chung 1 DB —
+    # xem migrations/004_workspace_handoff_codes.sql.
+    workspace_domains: dict[str, str] = field(
+        default_factory=lambda: _parse_workspace_domains(os.getenv("WORKSPACE_DOMAINS"))
+    )
 
     jwt_secret_key: str = os.getenv("JWT_SECRET_KEY", "crawlpro-default-secret-change-me")
     jwt_algorithm: str = os.getenv("JWT_ALGORITHM", "HS256")

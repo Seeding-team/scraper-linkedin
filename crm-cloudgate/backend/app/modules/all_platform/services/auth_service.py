@@ -125,6 +125,10 @@ def register_user(email: str, password: str, name: Optional[str] = None) -> dict
         "name": name.strip() if name else None,
         "role": "member",
         "is_active": True,
+        # Site (instance) da dang ky, suy tu Host header cua chinh request nay
+        # (xem middleware resolve_crm_instance_middleware trong app/main.py) —
+        # dung de chan/redirect neu sau nay dang nhap nham site khac.
+        "home_instance": settings.crm_instance,
     }
     result = execute_supabase_query(
         lambda: get_supabase_client().table("app_users").insert(user_data).execute()
@@ -149,12 +153,33 @@ def register_user(email: str, password: str, name: Optional[str] = None) -> dict
     }
 
 
+def _check_home_instance_redirect(user: dict) -> Optional[dict]:
+    """Non-admin: neu tai khoan co home_instance (site da dang ky) khac voi
+    instance dang phuc vu request HIEN TAI (settings.crm_instance) -> tra ve
+    tin hieu redirect thay vi dang nhap thang. Admin luon duoc bo qua (dang
+    nhap truc tiep duoc o ca 3 site, dung switcher rieng de chuyen qua lai).
+    home_instance=None (tai khoan tao truoc tinh nang nay) -> khong bi rang
+    buoc."""
+    home_instance = user.get("home_instance")
+    if user.get("role") == "admin" or not home_instance:
+        return None
+    if home_instance == settings.crm_instance:
+        return None
+    return {
+        "redirect_required": True,
+        "user_id": user["id"],
+        "home_instance": home_instance,
+    }
+
+
 def login_user(email: str, password: str) -> dict:
-    """Login an existing app user. Returns user + token or raises ValueError."""
+    """Login an existing app user. Returns user + token, or a redirect signal
+    if this account belongs to a different site (home_instance), or raises
+    ValueError."""
     result = execute_supabase_query(
         lambda: get_supabase_client()
         .table("app_users")
-        .select("id, email, name, role, is_active, can_approve_quotes, password")
+        .select("id, email, name, role, is_active, can_approve_quotes, password, home_instance")
         .eq("email", email.lower().strip())
         .execute()
     )
@@ -167,6 +192,10 @@ def login_user(email: str, password: str) -> dict:
 
     if not _verify_password(password, user["password"]):
         raise ValueError("Sai mật khẩu")
+
+    redirect = _check_home_instance_redirect(user)
+    if redirect:
+        return redirect
 
     cached_user = _cache_user(user)
     access_token = create_access_token(user["id"], user["email"], user["role"])
@@ -279,7 +308,7 @@ def login_with_google(id_token_str: str) -> dict:
     result = execute_supabase_query(
         lambda: get_supabase_client()
         .table("app_users")
-        .select("id, email, name, role, is_active, can_approve_quotes")
+        .select("id, email, name, role, is_active, can_approve_quotes, home_instance")
         .eq("email", email)
         .execute()
     )
@@ -289,6 +318,10 @@ def login_with_google(id_token_str: str) -> dict:
     user = result.data[0]
     if not user.get("is_active", True):
         raise ValueError("Tài khoản đã bị vô hiệu hóa")
+
+    redirect = _check_home_instance_redirect(user)
+    if redirect:
+        return redirect
 
     cached_user = _cache_user(user)
     access_token = create_access_token(user["id"], user["email"], user["role"])
