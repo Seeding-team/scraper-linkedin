@@ -207,6 +207,20 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, _workspaceTab:
       label: "Danh mục CRM",
       matchStartsWith: ["/all-platform/crm/categories"],
     },
+    // Gom "Email gửi báo giá" + "Quy tắc phê duyệt" ve 1 trang cai dat rieng -
+    // chi Admin/Leader thay muc nay (giong dieu kien can_manage_quote_email_settings()).
+    ...(isAdmin || isLeader
+      ? ([
+          {
+            type: "item",
+            id: "quote-settings",
+            href: "/all-platform/quote-settings",
+            icon: "tune",
+            label: "Cài đặt báo giá",
+            matchStartsWith: ["/all-platform/quote-settings"],
+          },
+        ] as NavLeafItem[])
+      : []),
   ];
 
   // Module CRM độc lập: không còn "Trang chủ" và không còn bọc trong nhóm
