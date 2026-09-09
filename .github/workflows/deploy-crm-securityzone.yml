@@ -1,11 +1,11 @@
-name: Deploy CRM Markee
+name: Deploy CRM Securityzone
 
 on:
   push:
     branches: [main]
     paths:
-      - "crm-module/**"
-      - ".github/workflows/deploy-crm-module.yml"
+      - "crm-securityzone/**"
+      - ".github/workflows/deploy-crm-securityzone.yml"
   workflow_dispatch:
 
 concurrency:
@@ -32,23 +32,23 @@ jobs:
             --exclude '.env.local' \
             --exclude 'node_modules/' \
             --exclude '.next/' \
-            crm-module/ /opt/apps/crm-module/
+            crm-securityzone/ /opt/apps/crm-securityzone/
 
       - name: Build and apply CRM containers
-        working-directory: /opt/apps/crm-module
+        working-directory: /opt/apps/crm-securityzone
         run: |
-          docker compose -p crm-markee build frontend backend
-          docker compose -p crm-markee up -d frontend backend
-          docker compose -p crm-markee restart router
+          docker compose build frontend backend
+          docker compose up -d frontend backend
+          docker compose restart router
 
       - name: Verify CRM production
         run: |
           for attempt in $(seq 1 20); do
-            if curl -fsS http://localhost:18090/ >/dev/null; then
+            if curl -fsS http://localhost:18092/ >/dev/null; then
               exit 0
             fi
             sleep 3
           done
-          docker logs --tail 120 crm-module-frontend
-          docker logs --tail 120 crm-module-backend
+          docker logs --tail 120 crm-securityzone-frontend
+          docker logs --tail 120 crm-securityzone-backend
           exit 1
