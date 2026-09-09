@@ -2166,11 +2166,30 @@
 .qc-workspace-items-table--unified th:nth-child(8),
 .qc-workspace-items-table--unified td:nth-child(8) { width: 10%; }
 .qc-workspace-items-table--unified th:nth-child(9),
-.qc-workspace-items-table--unified td:nth-child(9) { width: 6%; }
+.qc-workspace-items-table--unified td:nth-child(9) { width: 4%; }
 .qc-workspace-items-table--unified th:nth-child(10),
-.qc-workspace-items-table--unified td:nth-child(10) { width: 4%; }
+.qc-workspace-items-table--unified td:nth-child(10) { width: 6%; }
 /* Khi KHONG co cot Thao tac (view chi doc, khong render th/td thu 10) - cot
  * Margin (thu 9) tu gian ra chiem phan con lai, khong sao vi van <=100%. */
+/* Cot Thao tac rong hon 1 chut (4% -> 6%, bu lai tu Margin) - yeu cau rieng
+ * them nut "+" (them hang muc tu danh muc ngay sau dong nay) canh nut "⋮",
+ * 4% (~44-50px) chi vua 1 icon, can them cho o thu 2. */
+.qc-workspace-items-table--unified .qc-cell-actions--menu {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding-left: 4px !important;
+  padding-right: 4px !important;
+}
+.qc-workspace-row-add-btn {
+  flex-shrink: 0;
+  color: #cc1541;
+  border-color: #f3c6d2;
+}
+.qc-workspace-row-add-btn:hover {
+  background: #fdf1f4;
+}
 
 .qc-th-select, .qc-cell-select { width: 28px; text-align: center; padding-left: 8px !important; padding-right: 0 !important; }
 
