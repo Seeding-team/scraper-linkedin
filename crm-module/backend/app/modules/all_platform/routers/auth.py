@@ -115,6 +115,8 @@ def auth_login(payload: LoginRequest, response: Response) -> BaseResponse:
     """
     try:
         data = login_user(email=payload.email, password=payload.password)
+        if data.get("redirect_required"):
+            return _redirect_response(data)
         token = (data or {}).get("access_token")
         if token:
             response.set_cookie(
@@ -131,6 +133,25 @@ def auth_login(payload: LoginRequest, response: Response) -> BaseResponse:
         return BaseResponse(success=False, message=str(e))
     except Exception as e:
         return BaseResponse(success=False, message=f"Login failed: {e}")
+
+
+def _redirect_response(data: dict) -> BaseResponse:
+    """Tai khoan non-admin dang nhap nham site khac site da dang ky
+    (home_instance) — mint 1 ma dung-1-lan (giong co che switcher cua admin,
+    xem workspace_handoff_service.py) roi tra ve URL sang dung site, KHONG set
+    cookie cho domain hien tai."""
+    home_instance = data["home_instance"]
+    target_base = settings.workspace_domains.get(home_instance)
+    if not target_base:
+        return BaseResponse(
+            success=False,
+            message="Tài khoản này thuộc site khác nhưng hệ thống chưa cấu hình được domain để chuyển hướng. Liên hệ admin.",
+        )
+    code = mint_handoff_code(data["user_id"])
+    return BaseResponse(
+        success=True,
+        data={"redirect_required": True, "redirect_url": f"{target_base}/auth/handoff?code={code}"},
+    )
 
 
 @router.get("/workspaces")
@@ -203,6 +224,8 @@ def auth_google_login(payload: GoogleLoginRequest, response: Response) -> BaseRe
     """
     try:
         data = login_with_google(payload.credential)
+        if data.get("redirect_required"):
+            return _redirect_response(data)
         token = (data or {}).get("access_token")
         if token:
             response.set_cookie(
