@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import secrets
 from datetime import datetime, timedelta, timezone
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import Any
 
 from postgrest.exceptions import APIError
@@ -652,12 +653,40 @@ def _validate_percent(value: Any, field_name: str) -> float:
     return pct
 
 
+def _to_decimal(value: Any) -> Decimal:
+    try:
+        return Decimal(str(value if value is not None else 0))
+    except (InvalidOperation, ValueError):
+        return Decimal(0)
+
+
+def _round_vnd(value: Decimal) -> float:
+    """VNĐ khong co phan thap phan - lam tron ve DONG NGUYEN (ROUND_HALF_UP)
+    truoc khi tra ra float de luu DB. Sua bug that phat hien qua UI (VD:
+    unitPrice tinh nguoc tu Margin muc tieu ra so co qua nhieu chu so thap
+    phan nhu 1428571.4285714286 - dung Decimal + quantize o day de moi so
+    tien server luu/tra ve LUON la dong nguyen, khong chi lam tron o tang
+    hien thi FE roi van luu so sai xuong DB)."""
+    return float(value.quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+
+
 def _calculate_item(quantity: float, unit_price: float, vat_rate: float, discount_percent: float = 0) -> tuple[float, float, float, float, float]:
-    subtotal = quantity * unit_price
-    discount = subtotal * discount_percent / 100
+    q = _to_decimal(quantity)
+    u = _to_decimal(unit_price)
+    d_pct = _to_decimal(discount_percent)
+    v_pct = _to_decimal(vat_rate)
+    subtotal = q * u
+    discount = subtotal * d_pct / 100
     after_discount = subtotal - discount
-    vat = after_discount * vat_rate / 100
-    return subtotal, discount, after_discount, vat, after_discount + vat
+    vat = after_discount * v_pct / 100
+    total = after_discount + vat
+    return (
+        _round_vnd(subtotal),
+        _round_vnd(discount),
+        _round_vnd(after_discount),
+        _round_vnd(vat),
+        _round_vnd(total),
+    )
 
 
 def _calculate_totals(items: list[dict]) -> tuple[float, float, float]:

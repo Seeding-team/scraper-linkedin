@@ -3,6 +3,7 @@ import { API_BASE_URL, API_KEY } from '@/lib/env';
 type ApiResponse<T> = {
   success?: boolean;
   message?: string;
+  detail?: string;
   data?: T;
 };
 
@@ -20,7 +21,9 @@ async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
   });
   const body = (await res.json()) as ApiResponse<T>;
   if (!res.ok) {
-    throw new Error(body.message || `Lỗi máy chủ (${res.status})`);
+    if (res.status === 403) throw new Error(body.message || body.detail || 'Bạn không có quyền thực hiện thao tác này.');
+    if (res.status === 401) throw new Error(body.message || body.detail || 'Phiên đăng nhập đã hết hạn, vui lòng đăng nhập lại.');
+    throw new Error(body.message || body.detail || `Lỗi máy chủ (${res.status})`);
   }
   if (body.success === false) {
     throw new Error(body.message || 'Không thực hiện được yêu cầu Bảng giá VPS Zone.');
