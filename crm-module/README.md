@@ -66,6 +66,44 @@ docker compose up --build
 ```
 Mở `http://localhost:18090` (hoặc port đặt trong `CRM_ROUTER_PORT`).
 
+### Test đa brand (switcher + khoá site) trên local — giả lập 3 domain thật
+
+Không cần sửa file `hosts` / không cần domain thật — mở thêm 3 port giả lập
+bằng cách ép cứng `Host` header, dùng file có sẵn `nginx/nginx.local-test.conf`
+(`8081`→`crm.markee.vn`, `8082`→`crm.getcloudgate.com`,
+`8083`→`crm.securityzone.vn`). Tạo `docker-compose.override.yml` (không
+commit) với nội dung:
+
+```yaml
+services:
+  router:
+    ports:
+      - "18081:8081"
+      - "18082:8082"
+      - "18083:8083"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/nginx.local-test.conf:/etc/nginx/nginx.local-test.conf:ro
+    entrypoint: ["nginx", "-c", "/etc/nginx/nginx.local-test.conf", "-g", "daemon off;"]
+```
+
+`backend/.env` cần có `INSTANCE_DOMAIN_MAP` + `WORKSPACE_DOMAINS` trỏ đúng 3
+port này (xem `.env.example`, đã điền sẵn ví dụ `localhost:1808{1,2,3}`).
+`docker compose up --build -d` rồi test:
+
+1. Đăng ký 1 tài khoản trên 1 port (vd `18081`) → `home_instance` tự ghi
+   đúng site đó.
+2. Đăng nhập tài khoản đó trên port KHÁC (vd `18082`) → phải nhận
+   `redirect_url` về đúng `18081` (không login thẳng được).
+3. Đăng nhập admin (role `admin`) trên bất kỳ port nào → luôn vào thẳng được
+   + dùng switcher trong sidebar đổi qua lại 3 port, xem data (khách hàng/lead)
+   đổi đúng theo từng site.
+
+**Lưu ý restart router sau khi rebuild backend/frontend**: nginx cache DNS
+nội bộ của Docker lúc khởi động — `docker compose up --build -d backend
+frontend` xong mà không restart `router` sẽ bị `502` (router vẫn trỏ IP cũ),
+chạy thêm `docker compose restart router`.
+
 ## Deploy lên host riêng
 
 1. Copy nguyên thư mục `crm-module/` sang host mới (không cần mang theo phần
@@ -102,13 +140,26 @@ dữ liệu CRM có thêm cột `instance` (text), và biến env `CRM_INSTANCE`
 
 **BẮT BUỘC — chạy 1 lần trước khi dùng thật** (đã viết sẵn, CHƯA tự chạy
 được vì DB `seeding.db.markeeai.com` không có kênh SSH/DDL nào từ máy dev này
-— xem "Cách áp migration" bên dưới):
-`backend/migrations/001_add_instance_scoping.sql` — thêm cột `instance TEXT
-NOT NULL DEFAULT 'markee'` vào toàn bộ bảng CRM + đổi 4 unique constraint
-(`quote_forms.code`, `quote_forms` default-template, `quotes.quote_number`,
-`quote_issuer_companies.code`, `contracts.contract_number`) từ "duy nhất toàn
-hệ thống" thành "duy nhất theo instance". An toàn chạy lại nhiều lần, mặc định
-`'markee'` cho dữ liệu hiện có (đúng thực tế vì tới nay chỉ có Markee).
+— xem "Cách áp migration" bên dưới). Cả 3 file đều an toàn chạy lại nhiều lần
+(idempotent, dùng `IF NOT EXISTS`), chạy đúng thứ tự:
+
+1. `backend/migrations/001_add_instance_scoping.sql` — thêm cột `instance TEXT
+   NOT NULL DEFAULT 'markee'` vào toàn bộ bảng CRM + đổi 4 unique constraint
+   (`quote_forms.code`, `quote_forms` default-template, `quotes.quote_number`,
+   `quote_issuer_companies.code`, `contracts.contract_number`) từ "duy nhất
+   toàn hệ thống" thành "duy nhất theo instance". Mặc định `'markee'` cho dữ
+   liệu hiện có (đúng thực tế vì tới nay chỉ có Markee) — **kiểm tra lại thật
+   trước khi chạy trên prod**, xem Bước 0 trong
+   `../docs/CRM_UNIFY_PROD_ROLLOUT_CHECKLIST_2026-09-09.md`.
+2. `backend/migrations/002_markee_cfo_customer_sync.sql` — thêm cột đồng bộ
+   một chiều từ Markee CFO (`external_system`/`external_id`/`external_payload`/
+   `external_active`/`synced_at`) vào `crm_customers`.
+3. `backend/migrations/003_app_users_home_instance.sql` — thêm cột
+   `home_instance` (site đã đăng ký) vào `app_users`, phục vụ tính năng "khoá
+   tài khoản theo site" ở mục ngay dưới đây.
+
+**Checklist đầy đủ để đưa lên production (migration + gộp hạ tầng + đổi NPM
++ test)**: xem `../docs/CRM_UNIFY_PROD_ROLLOUT_CHECKLIST_2026-09-09.md`.
 
 **Cách áp migration lên `seeding.db.markeeai.com`**: chưa xác định được kênh
 chạy DDL cho DB này (không có SSH tới host DB, PostgREST không chạy được
@@ -139,7 +190,49 @@ Postgres `SECURITY DEFINER` gọi qua RPC (`crm_convert_lead`,
 Phải sửa cả 5 hàm này (thêm `p_instance`, thêm điều kiện instance trong mọi
 INSERT/SELECT/UPDATE nội bộ) trước khi instance thứ 2 đi vào hoạt động thật.
 
-## Deploy thêm 1 instance mới (vd CloudGate)
+## Đăng nhập đa brand: admin switcher + khoá tài khoản theo site
+
+**Yêu cầu bắt buộc**: cả 2 tính năng dưới đây CHỈ hoạt động đúng khi **1
+process backend DUY NHẤT phục vụ cả 4 domain thật** (`crm.markee.vn`,
+`crm.markeeai.com`, `crm.getcloudgate.com`, `crm.securityzone.vn`) — mã
+dùng-1-lần của cả 2 luồng lưu trong RAM của process
+(`workspace_handoff_service.py`), mint ở process này mà consume ở process
+khác (vd nếu vẫn còn chạy `crm-cloudgate`/`crm-securityzone` như 2 deploy
+tách rời) sẽ luôn thất bại.
+
+- **Admin workspace switcher**: admin (role `admin`, không tính `leader`)
+  thấy dropdown đổi brand ở sidebar (`WorkspaceSwitcherShadcn.tsx`) — chọn
+  brand khác sẽ redirect domain THẬT sang brand đó (không chỉ đổi UI state),
+  tự đăng nhập lại qua trang `/auth/handoff`. Endpoint: `GET /auth/workspaces`
+  (public), `POST /auth/workspace-handoff` (chỉ admin, mint mã), `GET
+  /auth/workspace-handoff/consume` (public, đổi mã lấy cookie).
+
+- **Khoá tài khoản non-admin theo site đã đăng ký** (`home_instance`, migration
+  `003_app_users_home_instance.sql`): mỗi tài khoản `app_users` ghi lại
+  `home_instance` = domain lúc `/auth/register` (hoặc lúc admin tạo tài khoản
+  Google — giá trị mặc định NULL, không bị ràng buộc). Khi tài khoản non-admin
+  (`member`/`leader`) đăng nhập (email/password hoặc Google) trên domain
+  KHÁC `home_instance`, backend KHÔNG set cookie cho domain đó — trả về
+  `redirect_url` (dùng lại cơ chế mã dùng-1-lần như switcher), frontend tự
+  `window.location.href` sang đúng domain rồi tự đăng nhập tiếp qua
+  `/auth/handoff`. Admin luôn được bỏ qua ràng buộc này (đăng nhập trực tiếp
+  được ở mọi domain, ngoài switcher). Tài khoản tạo trước migration này có
+  `home_instance = NULL` → không bị ràng buộc (giữ hành vi cũ).
+
+Code: `auth_service.py` (`_check_home_instance_redirect`, `register_user`,
+`login_user`, `login_with_google`) + `routers/auth.py`
+(`_redirect_response`) + frontend `contexts/AppAuthContext.tsx` (`login`,
+`loginWithGoogle`).
+
+## Deploy thêm 1 instance mới (vd CloudGate) — mô hình CŨ, tách rời
+
+**Lưu ý**: mục này mô tả mô hình deploy TÁCH RỜI (mỗi brand 1 host/container
+riêng, `CRM_INSTANCE` cố định theo process) — dùng được cho CRUD CRM bình
+thường, nhưng **admin switcher và tính năng khoá tài khoản theo site ở mục
+trên KHÔNG hoạt động** với mô hình này (cần đúng 1 process chung, xem mục
+"Đăng nhập đa brand" ở trên). `crm-cloudgate`/`crm-securityzone` trong repo
+hiện là ví dụ của mô hình cũ này, đang chờ gộp vào 1 stack chung (xem
+`../docs/CRM_UNIFY_MULTITENANT_2026-09-08.md`, mục TODO số 3).
 
 Không fork code thủ công qua sửa tay — **clone nguyên thư mục
 `crm-module/` thành thư mục mới cùng cấp** (vd `crm-cloudgate/`, đã có sẵn

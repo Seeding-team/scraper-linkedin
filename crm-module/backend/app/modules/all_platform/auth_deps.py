@@ -53,6 +53,17 @@ def require_admin(request: Request, authorization: str | None = Header(default=N
     return resolved
 
 
+def require_admin_strict(request: Request, authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    """403 nếu không phải ĐÚNG role admin (leader KHÔNG được tính, khác
+    `require_admin` ở trên) — dùng riêng cho tính năng switcher workspace: chỉ
+    admin mới được xem/đổi qua các brand khác."""
+    resolved = get_current_user(request, authorization)
+    role = str(resolved.get("role") or "member").strip().lower()
+    if role != "admin":
+        raise HTTPException(status_code=403, detail="Forbidden: Admin role required")
+    return resolved
+
+
 def require_admin_or_leader(request: Request, authorization: str | None = Header(default=None)) -> dict[str, Any]:
     """403 nếu người gọi không phải admin/leader. Dùng cho endpoint quản lý thành
     viên team (sửa hồ sơ, liên kết tài khoản đăng nhập...) mà leader cũng cần làm

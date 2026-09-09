@@ -6,7 +6,12 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
 
-from app.modules.all_platform.auth_deps import require_admin
+from app.core.config import settings
+from app.modules.all_platform.auth_deps import require_admin, require_admin_strict
+from app.modules.all_platform.services.workspace_handoff_service import (
+    consume_handoff_code,
+    mint_handoff_code,
+)
 from app.modules.all_platform.schemas import (
     RegisterRequest,
     LoginRequest,
@@ -27,6 +32,7 @@ from app.modules.all_platform.services import (
     logout_user,
     decode_token,
     get_user_by_id,
+    create_access_token,
     update_user_profile,
     verify_leader_code as verify_code,
     promote_to_leader,
@@ -109,6 +115,8 @@ def auth_login(payload: LoginRequest, response: Response) -> BaseResponse:
     """
     try:
         data = login_user(email=payload.email, password=payload.password)
+        if data.get("redirect_required"):
+            return _redirect_response(data)
         token = (data or {}).get("access_token")
         if token:
             response.set_cookie(
@@ -127,6 +135,85 @@ def auth_login(payload: LoginRequest, response: Response) -> BaseResponse:
         return BaseResponse(success=False, message=f"Login failed: {e}")
 
 
+def _redirect_response(data: dict) -> BaseResponse:
+    """Tai khoan non-admin dang nhap nham site khac site da dang ky
+    (home_instance) — mint 1 ma dung-1-lan (giong co che switcher cua admin,
+    xem workspace_handoff_service.py) roi tra ve URL sang dung site, KHONG set
+    cookie cho domain hien tai."""
+    home_instance = data["home_instance"]
+    target_base = settings.workspace_domains.get(home_instance)
+    if not target_base:
+        return BaseResponse(
+            success=False,
+            message="Tài khoản này thuộc site khác nhưng hệ thống chưa cấu hình được domain để chuyển hướng. Liên hệ admin.",
+        )
+    code = mint_handoff_code(data["user_id"])
+    return BaseResponse(
+        success=True,
+        data={"redirect_required": True, "redirect_url": f"{target_base}/auth/handoff?code={code}"},
+    )
+
+
+@router.get("/workspaces")
+def auth_list_workspaces(request: Request) -> BaseResponse:
+    """Danh sách workspace (brand) đang cấu hình + workspace hiện tại (suy ra
+    từ Host header của chính request này, xem middleware trong app/main.py).
+    Không lộ thông tin nhạy cảm (chỉ tên brand + URL công khai) nên không cần
+    auth — frontend dùng để hiện switcher (chỉ render UI khi role=admin, xem
+    kiểm tra quyền thật ở /workspace-handoff bên dưới)."""
+    current_instance = settings.crm_instance
+    items = [
+        {"instance": instance, "url": url, "current": instance == current_instance}
+        for instance, url in settings.workspace_domains.items()
+    ]
+    return BaseResponse(success=True, data={"items": items, "current_instance": current_instance})
+
+
+@router.post("/workspace-handoff")
+def auth_mint_workspace_handoff(user: dict = Depends(require_admin_strict)) -> BaseResponse:
+    """CHỈ admin (không tính leader) — sinh 1 mã dùng 1 lần (~30s) để mang
+    session sang domain brand khác. Xem workspace_handoff_service.py để hiểu
+    vì sao cần bước trung gian này thay vì redirect kèm thẳng JWT."""
+    code = mint_handoff_code(user["id"])
+    return BaseResponse(success=True, data={"code": code})
+
+
+@router.get("/workspace-handoff/consume")
+def auth_consume_workspace_handoff(code: str, response: Response) -> BaseResponse:
+    """Đổi mã dùng 1 lần lấy cookie đăng nhập MỚI cho domain hiện tại (domain
+    đích của switcher). Không cần auth (chính mã này LÀ bằng chứng quyền truy
+    cập, đã bị đốt ngay sau khi đọc dù thành công hay thất bại)."""
+    user_id = consume_handoff_code(code)
+    if not user_id:
+        raise HTTPException(status_code=400, detail="Mã chuyển workspace đã hết hạn hoặc không hợp lệ, vui lòng thử lại.")
+
+    user = get_user_by_id(user_id)
+    if not user or not user.get("is_active", True):
+        raise HTTPException(status_code=401, detail="Tài khoản không hợp lệ hoặc đã bị vô hiệu hoá.")
+
+    token = create_access_token(user["id"], user["email"], user["role"])
+    response.set_cookie(
+        key="crawlpro_access_token",
+        value=token,
+        httponly=True,
+        secure=False,
+        samesite="lax",
+        max_age=5 * 24 * 60 * 60,
+        path="/",
+    )
+    return BaseResponse(
+        success=True,
+        data={
+            "user": {
+                "id": user["id"],
+                "email": user["email"],
+                "name": user.get("name"),
+                "role": user.get("role", "member"),
+            },
+        },
+    )
+
+
 @router.post("/google")
 def auth_google_login(payload: GoogleLoginRequest, response: Response) -> BaseResponse:
     """Login via Google Sign-In (ID token from Google Identity Services).
@@ -137,6 +224,8 @@ def auth_google_login(payload: GoogleLoginRequest, response: Response) -> BaseRe
     """
     try:
         data = login_with_google(payload.credential)
+        if data.get("redirect_required"):
+            return _redirect_response(data)
         token = (data or {}).get("access_token")
         if token:
             response.set_cookie(
