@@ -115,6 +115,13 @@ export function AppAuthProvider({ children }: { children: ReactNode }) {
       if (!res.success || !res.data) {
         throw new Error(res.message || "Login failed");
       }
+      if (res.data.redirect_required && res.data.redirect_url) {
+        // Tài khoản này thuộc site khác — chuyển hướng trình duyệt thật sang
+        // đúng site (trang /auth/handoff ở đó tự đăng nhập tiếp). Trả về
+        // promise "treo" vì trang sắp điều hướng đi nơi khác.
+        window.location.href = res.data.redirect_url;
+        return new Promise<AppUser>(() => {});
+      }
       // Cookie is set by backend; just take user.
       const data = res.data as { user: AppUser };
       setUser(data.user);
@@ -134,6 +141,10 @@ export function AppAuthProvider({ children }: { children: ReactNode }) {
       const res = await authService.loginWithGoogle(credential);
       if (!res.success || !res.data) {
         throw new Error(res.message || "Login failed");
+      }
+      if (res.data.redirect_required && res.data.redirect_url) {
+        window.location.href = res.data.redirect_url;
+        return new Promise<AppUser>(() => {});
       }
       // Cookie is set by backend; just take user — data.user.role phản ánh
       // đúng role hiện tại trong app_users (backend resolve theo email Google
