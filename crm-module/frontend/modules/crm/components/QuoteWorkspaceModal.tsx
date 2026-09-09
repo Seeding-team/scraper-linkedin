@@ -18,6 +18,7 @@ import {
   dealBusinessCode,
   formatDate,
   formatMoney,
+  formatPercentTrim,
   initialsOf,
   quoteDisplayStatus,
   relativeTime,
@@ -1363,76 +1364,94 @@ export function QuoteWorkspaceModal({
     if (quote) void persistQuote({ items: next }, { silent: true });
   }
 
-  function applyQuickMarkup(percent: number) {
+  // Markup nhanh (preset +15/20/25/30% hoac Tuy chinh) - CHI ap cho hang muc
+  // THAT (row.costPrice != null da tu loai Muc cha, vi Muc cha luon co
+  // costPrice=null). Neu >=1 dong da co markupPercent (da tung nhap gia
+  // truoc do) thi phai xac nhan ghi de qua ConfirmModal (yeu cau rieng - benh
+  // vien nhieu lan ghi de nham markup dang dung khi bam preset khac).
+  function doApplyQuickMarkup(percent: number) {
     const next = itemsDraft.map(row =>
       row.costPrice != null ? { ...row, markupPercent: percent, unitPrice: row.costPrice * (1 + percent / 100) } : row
     );
     setItemsDraft(next);
+    setLastAppliedMarkupPct(percent);
+    setLastAppliedMarginPct(null);
     if (quote) void persistQuote({ items: next }, { silent: true });
   }
-
-  // "Target margin X%" - khac quick markup (khong dua truc tiep tren %) : suy
-  // nguoc gia khach tu margin MUON DAT (margin = loi nhuan/gia khach, KHONG
-  // phai loi nhuan/cost) - unitPrice = cost / (1 - margin/100). Chi ap cho
-  // dong da co gia von, giong quick markup.
-  //
-  // `targetIndices` tuy chon (yeu cau chung, khong rieng VPS Zone) - KHONG
-  // truyen = giu NGUYEN hanh vi cu (ap cho TOAN BO dong co gia von hop le,
-  // khong doi loi goi cu dang co). Co truyen = CHI ap cho dung cac index do
-  // (van doi hoi costPrice != null tung dong, dong thieu gia von bi bo qua +
-  // gom vao 1 canh bao ro rang, khong am tham lam ngo).
-  function applyTargetMargin(marginPercent: number, targetIndices?: number[]) {
-    if (!(marginPercent >= 0 && marginPercent < 100)) {
-      window.alert('Margin phải trong khoảng 0% đến dưới 100%.');
-      return;
-    }
-    const targetSet = targetIndices ? new Set(targetIndices) : null;
-    const skippedNames: string[] = [];
-    const next = itemsDraft.map((row, index) => {
-      if (targetSet && !targetSet.has(index)) return row;
-      if (row.costPrice == null) {
-        if (targetSet) skippedNames.push(row.serviceDescription || row.description || `Dòng ${index + 1}`);
-        return row;
-      }
+  // Margin mục tiêu (KHOI PHUC - yeu cau rieng): suy nguoc gia khach tu
+  // margin MUON DAT (margin = loi nhuan/gia khach, KHONG phai loi nhuan/
+  // cost) - unitPrice = cost / (1 - margin/100), roi tu do suy lai
+  // markupPercent (LUON chi luu markupPercent tren row, margin CHUA BAO GIO
+  // luu rieng - chi tinh lai o render, xem bien `margin` trong vong lap
+  // render ben duoi) - dam bao Markup/Margin khong bao gio mau thuan nhau vi
+  // chi co DUY NHAT markupPercent la nguon that.
+  function doApplyTargetMargin(marginPercent: number) {
+    const next = itemsDraft.map(row => {
+      if (row.costPrice == null) return row;
       const unitPrice = row.costPrice / (1 - marginPercent / 100);
       const markupPercent = row.costPrice > 0 ? ((unitPrice - row.costPrice) / row.costPrice) * 100 : 0;
       return { ...row, unitPrice, markupPercent };
     });
-    if (skippedNames.length) {
-      window.alert(`Đã bỏ qua ${skippedNames.length} dòng chưa có giá vốn: ${skippedNames.join(', ')}`);
-    }
     setItemsDraft(next);
+    setLastAppliedMarginPct(marginPercent);
+    setLastAppliedMarkupPct(null);
     if (quote) void persistQuote({ items: next }, { silent: true });
   }
 
-  // Ap Margin muc tieu (yeu cau chung, khong rieng VPS Zone) - CHI con pham
-  // vi "toan bo hang muc hop le" (da bo cot checkbox chon dong theo yeu cau
-  // don gian hoa - qua chat cho bang tren mobile, it dung).
+  const [markupApplyConfirm, setMarkupApplyConfirm] = useState<{ percent: number } | null>(null);
+  function applyQuickMarkup(percent: number) {
+    if (!Number.isFinite(percent)) return;
+    const hasExisting = itemsDraft.some(row => row.costPrice != null && row.markupPercent != null);
+    if (hasExisting) {
+      setMarkupApplyConfirm({ percent });
+      return;
+    }
+    doApplyQuickMarkup(percent);
+  }
+
+  const [marginApplyConfirm, setMarginApplyConfirm] = useState<{ percent: number } | null>(null);
+  function applyTargetMargin(marginPercent: number) {
+    if (!(marginPercent >= 0 && marginPercent < 100)) {
+      window.alert('Margin phải trong khoảng 0% đến dưới 100%.');
+      return;
+    }
+    const hasExisting = itemsDraft.some(row => row.costPrice != null && row.markupPercent != null);
+    if (hasExisting) {
+      setMarginApplyConfirm({ percent: marginPercent });
+      return;
+    }
+    doApplyTargetMargin(marginPercent);
+  }
+
+  // Markup Tuy chinh (o nhap % rieng, canh cac nut preset - yeu cau rieng,
+  // dung CHUNG applyQuickMarkup/doApplyQuickMarkup nhu preset, khong tach
+  // logic rieng).
+  const [markupCustomInput, setMarkupCustomInput] = useState('');
+  // Margin Tuy chinh - tuong tu Markup Tuy chinh o tren.
   const [marginCustomInput, setMarginCustomInput] = useState('');
-  // Highlight dung nut preset vua ap (Markup nhanh/Margin muc tieu) de biet
-  // dang o muc nao - 2 nhom loai tru nhau (ap Markup thi bo highlight
-  // Margin va nguoc lai, vi 2 cach tinh gia khac nhau).
+  // Highlight dung nut preset Markup/Margin vua ap de biet dang o muc nao - 2
+  // nhom loai tru nhau (ap Markup thi bo highlight Margin va nguoc lai, vi 2
+  // cach nhap khac nhau du cung chi ra 1 markupPercent duy nhat).
   const [lastAppliedMarkupPct, setLastAppliedMarkupPct] = useState<number | null>(null);
   const [lastAppliedMarginPct, setLastAppliedMarginPct] = useState<number | null>(null);
-  // Popover Margin mini cho DUNG 1 dong - index dang mo popover, null = dong.
 
   // Thu gon Activity (yeu cau chung, khong rieng 1 stage) - mac dinh chi hien
   // ACTIVITY_COLLAPSED_LIMIT dong moi nhat, toggle "Xem tat ca (N)"/"Thu gon"
   // dung chung 1 state cho ca 2 panel Activity trong workspace.
   const [activityExpanded, setActivityExpanded] = useState(false);
 
-  const [globalDiscount, setGlobalDiscount] = useState('0');
-  useEffect(() => {
-    setGlobalDiscount(String(itemsDraft[0]?.discountPercent ?? 0));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [quote?.id]);
-
-  function applyGlobalDiscount() {
-    const pct = Math.max(0, Math.min(100, Number(globalDiscount) || 0));
-    const next = itemsDraft.map(row => ({ ...row, discountPercent: pct }));
-    setItemsDraft(next);
-    if (quote) void persistQuote({ items: next }, { silent: true });
-  }
+  // CK tong (yeu cau rieng): TRUOC DAY co 1 o "CK tổng" trong quickbar tu
+  // set `discountPercent` cho TUNG DONG (ap dung o buoc Thanh tien = subtotal
+  // - subtotal*discountPercent/100 - xem lineSubtotal ben duoi) - BUG vi CK
+  // tong lai am tham thay doi so lieu tung dong, trai voi yeu cau "CK tổng
+  // chỉ giảm trên tổng tiền cuối báo giá, không đổi Markup/Giá khách/ĐV từng
+  // dòng". Quote DA CO SAN dung 1 co che nay roi: cot `overall_discount_percent`
+  // tren quotes (KHONG dung tren tung quote_items) - chi tru thang vao
+  // `totalAmount` sau cung (xem "Giá sau giảm" o khoi Loi nhuan ben duoi, cung
+  // dùng chính field nay) - XOA hang "CK tổng" cu (tung set discountPercent
+  // tung dong) va THAY bang o nhap CUNG tro toi `quote.overallDiscountPercent`
+  // ngay trong quickbar (ke Markup nhanh) de de thao tac, khong tao co che
+  // thu 2 nao moi.
 
   const paymentTermsBlockDraft = quote?.data?.customBlocks?.find(b => b.kind === 'payment_terms');
   const paymentTermsDaysMatch = paymentTermsBlockDraft?.content.match(/(\d+)/);
@@ -3252,23 +3271,31 @@ export function QuoteWorkspaceModal({
                         type="button"
                         className={`qc-mini-btn${lastAppliedMarkupPct === pct ? ' qc-mini-btn-active' : ''}`}
                         disabled={busy}
-                        onClick={() => { applyQuickMarkup(pct); setLastAppliedMarkupPct(pct); setLastAppliedMarginPct(null); }}
+                        onClick={() => applyQuickMarkup(pct)}
                       >
                         +{pct}%
                       </button>
                     ))}
-                    <span className="qc-workspace-quickbar-sep" />
                     <label className="qc-workspace-quickbar-field">
-                      CK tổng
+                      Tuỳ chỉnh
                       <input
                         type="number"
                         className="qc-workspace-quickbar-input"
-                        value={globalDiscount}
-                        onChange={event => setGlobalDiscount(event.target.value)}
-                        onBlur={applyGlobalDiscount}
+                        value={markupCustomInput}
+                        onChange={event => setMarkupCustomInput(event.target.value)}
+                        placeholder="vd 40"
                       />
                       %
                     </label>
+                    <button
+                      type="button"
+                      className="qc-mini-btn"
+                      disabled={busy || markupCustomInput.trim() === '' || !Number.isFinite(Number(markupCustomInput))}
+                      title="Áp Markup tuỳ chỉnh cho toàn bộ hạng mục có giá vốn hợp lệ"
+                      onClick={() => applyQuickMarkup(Number(markupCustomInput))}
+                    >
+                      Áp dụng
+                    </button>
                     <label
                       className="qc-workspace-quickbar-field qc-workspace-quickbar-rule-inline"
                       title="Chỉ 1 ngưỡng tĩnh, chưa phải rule engine tự động chặn/tự duyệt thật (thuộc Phase 3)"
@@ -3285,12 +3312,7 @@ export function QuoteWorkspaceModal({
                         className={`qc-mini-btn${lastAppliedMarginPct === pct ? ' qc-mini-btn-active' : ''}`}
                         disabled={busy}
                         title="Áp ngay cho toàn bộ hạng mục có giá vốn hợp lệ"
-                        onClick={() => {
-                          setMarginCustomInput(String(pct));
-                          applyTargetMargin(pct);
-                          setLastAppliedMarginPct(pct);
-                          setLastAppliedMarkupPct(null);
-                        }}
+                        onClick={() => applyTargetMargin(pct)}
                       >
                         {pct}%
                       </button>
@@ -3301,7 +3323,7 @@ export function QuoteWorkspaceModal({
                         type="number"
                         className="qc-workspace-quickbar-input"
                         value={marginCustomInput}
-                        onChange={event => { setMarginCustomInput(event.target.value); setLastAppliedMarginPct(null); }}
+                        onChange={event => setMarginCustomInput(event.target.value)}
                         placeholder="vd 22"
                       />
                       %
@@ -3309,12 +3331,30 @@ export function QuoteWorkspaceModal({
                     <button
                       type="button"
                       className="qc-mini-btn"
-                      disabled={busy || marginCustomInput.trim() === ''}
+                      disabled={busy || marginCustomInput.trim() === '' || !Number.isFinite(Number(marginCustomInput))}
                       title="Áp Margin tuỳ chỉnh cho toàn bộ hạng mục có giá vốn hợp lệ"
                       onClick={() => applyTargetMargin(Number(marginCustomInput))}
                     >
                       Áp dụng
                     </button>
+                  </div>
+                  <div className="qc-workspace-quickbar-row">
+                    <label className="qc-workspace-quickbar-field" title="Chỉ giảm trên tổng tiền cuối báo giá — KHÔNG đổi Markup/Giá khách/ĐV của từng dòng">
+                      Chiết khấu tổng
+                      <input
+                        type="number"
+                        className="qc-workspace-quickbar-input"
+                        value={quote?.overallDiscountPercent ?? ''}
+                        placeholder="Không giảm"
+                        onChange={event => {
+                          const raw = event.target.value;
+                          const value = raw.trim() === '' ? null : Number(raw);
+                          setQuote(prev => (prev ? { ...prev, overallDiscountPercent: value } : prev));
+                        }}
+                        onBlur={() => void persistQuote({ overallDiscountPercent: quote?.overallDiscountPercent ?? null }, { silent: true })}
+                      />
+                      %
+                    </label>
                   </div>
                   <div className="qc-workspace-quickbar-row">
                     <label className="qc-workspace-quickbar-field" title="Bắt buộc để chuyển bước — khác với &quot;+ Điều khoản&quot; bên cạnh">
@@ -3384,14 +3424,14 @@ export function QuoteWorkspaceModal({
                 <table className={`qc-linked-table qc-workspace-items-table qc-workspace-items-table--unified${itemsDraft.length > 0 ? ' qc-workspace-items-table--has-rows' : ''}`}>
                   <thead>
                     <tr>
-                      <th>Hạng mục</th>
+                      <th className="qc-th-name">Hạng mục</th>
                       <th className="qc-th-unit">ĐVT</th>
                       <th className="qc-th-money qc-th-qty">SL</th>
                       <th className="qc-th-money qc-th-cost">Giá vốn/ĐV</th>
                       <th className="qc-th-money qc-th-cost">Cost tổng</th>
                       <th className="qc-th-money qc-th-markup">Markup</th>
                       <th className="qc-th-money qc-th-markup">Giá khách/ĐV</th>
-                      <th className="qc-th-money">Thành tiền</th>
+                      <th className="qc-th-money qc-th-total">Thành tiền</th>
                       <th className="qc-th-money qc-th-margin-col">Margin</th>
                       {canEdit && isDraft && !isLockedForReview ? <th className="qc-th-actions qc-cell-actions--menu" aria-label="Thao tác" /> : null}
                     </tr>
@@ -3502,26 +3542,49 @@ export function QuoteWorkspaceModal({
                             onDragOver={canDragRows ? event => event.preventDefault() : undefined}
                             onDrop={canDragRows ? () => handleRowDrop(index, false) : undefined}
                           >
-                            <td>
+                            <td data-label="Hạng mục">
                               <span className="qc-workspace-item-name-cell">
-                                {canDragRows ? <span className="qc-workspace-drag-handle" title="Kéo để sắp xếp">⠿</span> : null}
-                                <span className="qc-workspace-item-no">{displayNo}</span>
-                                {(editableTechnicalCells || editableCells) ? (
-                                  <input className="qc-cell-input" value={item.serviceDescription || ''} onChange={e => updateRow(index, { serviceDescription: e.target.value })} onBlur={() => void persistQuote({}, { silent: true })} placeholder="Tên hạng mục" title={item.serviceDescription || ''} />
-                                ) : (
-                                  <span className="qc-workspace-item-name-clamp" title={item.serviceDescription || ''}>{item.serviceDescription || '—'}</span>
-                                )}
-                                <button
-                                  type="button"
-                                  className="qc-mini-btn-icon qc-workspace-item-detail-btn"
-                                  title="Xem chi tiết hạng mục"
-                                  onClick={() => { setItemDetailDrawerIndex(index); setItemDetailDrawerSnapshot({ ...item }); }}
-                                >
-                                  ⋯
-                                </button>
+                                <span className="qc-workspace-item-no-col">
+                                  {canDragRows ? <span className="qc-workspace-drag-handle" title="Kéo để sắp xếp">⠿</span> : null}
+                                  <span className="qc-workspace-item-no">{displayNo}</span>
+                                </span>
+                                <span className="qc-workspace-item-name-col">
+                                  {(editableTechnicalCells || editableCells) ? (
+                                    <textarea
+                                      className="qc-cell-input qc-cell-textarea"
+                                      rows={2}
+                                      value={item.serviceDescription || ''}
+                                      onChange={e => updateRow(index, { serviceDescription: e.target.value })}
+                                      onBlur={() => void persistQuote({}, { silent: true })}
+                                      placeholder="Tên hạng mục"
+                                      title={[item.serviceDescription, item.description].filter(Boolean).join(' — ') || ''}
+                                    />
+                                  ) : (
+                                    <span
+                                      className="qc-workspace-item-name-clamp qc-workspace-item-name-clickable"
+                                      title={[item.serviceDescription, item.description].filter(Boolean).join(' — ') || ''}
+                                      role="button"
+                                      tabIndex={0}
+                                      onClick={() => { setItemDetailDrawerIndex(index); setItemDetailDrawerSnapshot({ ...item }); }}
+                                      onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { setItemDetailDrawerIndex(index); setItemDetailDrawerSnapshot({ ...item }); } }}
+                                    >
+                                      {item.serviceDescription || '—'}
+                                    </span>
+                                  )}
+                                  {item.description ? (
+                                    <button
+                                      type="button"
+                                      className="qc-workspace-item-desc-indicator"
+                                      title={item.description}
+                                      onClick={() => { setItemDetailDrawerIndex(index); setItemDetailDrawerSnapshot({ ...item }); }}
+                                    >
+                                      i
+                                    </button>
+                                  ) : null}
+                                </span>
                               </span>
                             </td>
-                            <td className="qc-cell-unit">
+                            <td className="qc-cell-unit" data-label="ĐVT">
                               {editableTechnicalCells ? (
                                 <input
                                   className="qc-cell-input"
@@ -3534,37 +3597,25 @@ export function QuoteWorkspaceModal({
                                 item.unit || '—'
                               )}
                             </td>
-                            <td className="qc-cell-money qc-cell-qty">
+                            <td className="qc-cell-money qc-cell-qty" data-label="SL">
                               {editableTechnicalCells ? (
                                 <input type="number" className="qc-cell-input qc-cell-input-money" value={item.quantity} onChange={e => updateRow(index, { quantity: Math.max(0, Number(e.target.value) || 0) })} onBlur={() => void persistQuote({}, { silent: true })} />
                               ) : item.quantity}
                             </td>
-                            <td className={`qc-cell-money qc-cell-cost ${!item.costNotApplicable && item.costPrice == null ? 'qc-cell-cost-missing' : ''}`} title={!editableTechnicalCells && costViewAllowed ? 'Presale đã chốt — chỉ đọc' : undefined}>
+                            <td className={`qc-cell-money qc-cell-cost ${!item.costNotApplicable && item.costPrice == null ? 'qc-cell-cost-missing' : ''}`} data-label="Giá vốn/ĐV" title={!editableTechnicalCells && costViewAllowed ? 'Presale đã chốt — chỉ đọc' : undefined}>
                               {!costViewAllowed ? (
                                 <span className="qc-row-sub">Không có quyền xem</span>
                               ) : editableTechnicalCells ? (
-                                <div className="qc-cell-input-row">
-                                  <input
-                                    type="text"
-                                    inputMode="numeric"
-                                    className="qc-cell-input qc-cell-input-money"
-                                    value={item.costPrice != null ? formatMoneyInput(String(item.costPrice)) : ''}
-                                    placeholder={item.costNotApplicable ? 'Không áp dụng' : 'Bắt buộc nhập'}
-                                    disabled={item.costNotApplicable}
-                                    onChange={e => handleCostPriceChange(index, e.target.value)}
-                                    onBlur={() => void persistQuote({}, { silent: true })}
-                                  />
-                                  {item.costPrice != null && fillDownTargets(index).length > 0 ? (
-                                    <button
-                                      type="button"
-                                      className="qc-mini-btn-icon qc-fill-down-btn"
-                                      title="Điền giá vốn này xuống các dòng con phía dưới"
-                                      onClick={() => fillDownFrom(index, 'costPrice')}
-                                    >
-                                      ↓
-                                    </button>
-                                  ) : null}
-                                </div>
+                                <input
+                                  type="text"
+                                  inputMode="numeric"
+                                  className="qc-cell-input qc-cell-input-money"
+                                  value={item.costPrice != null ? formatMoneyInput(String(item.costPrice)) : ''}
+                                  placeholder={item.costNotApplicable ? 'Không áp dụng' : 'Bắt buộc nhập'}
+                                  disabled={item.costNotApplicable}
+                                  onChange={e => handleCostPriceChange(index, e.target.value)}
+                                  onBlur={() => void persistQuote({}, { silent: true })}
+                                />
                               ) : (
                                 <>
                                   {item.costNotApplicable ? 'Không áp dụng' : item.costPrice != null ? formatMoney(item.costPrice) : 'Còn thiếu'}
@@ -3572,17 +3623,17 @@ export function QuoteWorkspaceModal({
                                 </>
                               )}
                             </td>
-                            <td className="qc-cell-money qc-cell-cost">
+                            <td className="qc-cell-money qc-cell-cost" data-label="Cost tổng">
                               {!costViewAllowed ? <span className="qc-row-sub">Không có quyền xem</span> : item.costNotApplicable ? '—' : costTotal != null ? formatMoney(costTotal) : '—'}
                             </td>
-                            <td className="qc-cell-money qc-cell-markup">
+                            <td className="qc-cell-money qc-cell-markup" data-label="Markup">
                               {!pricingViewAllowed ? (
                                 <span className="qc-row-sub">Không có quyền xem</span>
                               ) : editableCells ? (
-                                <input type="number" className="qc-cell-input qc-cell-input-money" value={item.markupPercent ?? ''} placeholder="—" disabled={item.costPrice == null} onChange={e => handleMarkupChange(index, e.target.value)} onBlur={() => void persistQuote({}, { silent: true })} />
-                              ) : (item.markupPercent != null ? `${item.markupPercent.toFixed(1)}%` : '—')}
+                                <input type="number" step="0.01" className="qc-cell-input qc-cell-input-money" value={item.markupPercent != null ? Number(item.markupPercent.toFixed(2)) : ''} placeholder="—" disabled={item.costPrice == null} onChange={e => handleMarkupChange(index, e.target.value)} onBlur={() => void persistQuote({}, { silent: true })} />
+                              ) : formatPercentTrim(item.markupPercent)}
                             </td>
-                            <td className="qc-cell-money qc-cell-markup">
+                            <td className="qc-cell-money qc-cell-markup" data-label="Giá khách/ĐV">
                               {editableCells ? (
                                 <>
                                   <input
@@ -3601,23 +3652,26 @@ export function QuoteWorkspaceModal({
                                       onClick={() => applySuggestedPrice(index, item.catalogItemId as string)}
                                     >
                                       Áp giá đề xuất: {formatMoney(catalogPriceLookup[item.catalogItemId].defaultUnitPriceVnd || 0)}
-                                      {catalogPriceLookup[item.catalogItemId].status !== 'active' ? ' · Đã ngừng kinh doanh' : ''}
                                     </button>
                                   ) : null}
                                 </>
                               ) : formatMoney(item.unitPrice)}
                             </td>
-                            <td className="qc-cell-money">{formatMoney(item.totalAmount || item.quantity * item.unitPrice || 0)}</td>
-                            <td className={`qc-cell-money qc-th-margin-col ${margin != null && margin >= 20 ? 'qc-cell-margin-good' : margin != null ? 'qc-cell-margin-warn' : ''}`} style={{ position: 'relative' }}>
-                              {!profitabilityViewAllowed ? <span className="qc-row-sub">Không có quyền xem</span> : margin != null ? `${margin.toFixed(2)}%` : '—'}
+                            <td className="qc-cell-money" data-label="Thành tiền">{formatMoney(item.totalAmount || item.quantity * item.unitPrice || 0)}</td>
+                            <td className={`qc-cell-money qc-th-margin-col ${margin != null && margin >= 20 ? 'qc-cell-margin-good' : margin != null ? 'qc-cell-margin-warn' : ''}`} style={{ position: 'relative' }} data-label="Margin">
+                              {!profitabilityViewAllowed ? <span className="qc-row-sub">Không có quyền xem</span> : formatPercentTrim(margin)}
                             </td>
                             {canEdit && isDraft && !isLockedForReview ? (
-                              <td className="qc-cell-actions qc-cell-actions--menu">
+                              <td className="qc-cell-actions qc-cell-actions--menu" data-label="Thao tác">
                                 <ActionMenu
                                   label="Thao tác hạng mục"
                                   items={[
+                                    { key: 'detail', label: 'Xem chi tiết hạng mục', onSelect: () => { setItemDetailDrawerIndex(index); setItemDetailDrawerSnapshot({ ...item }); } },
                                     ...(item.priceBookItemId
                                       ? [{ key: 'price-detail', label: 'Chi tiết giá vốn/EU/VAT', onSelect: () => setPriceBookDrawerIndex(index) }]
+                                      : []),
+                                    ...(item.costPrice != null && fillDownTargets(index).length > 0
+                                      ? [{ key: 'fill-down', label: 'Điền giá vốn xuống các dòng con', onSelect: () => fillDownFrom(index, 'costPrice') }]
                                       : []),
                                     { key: 'up', label: 'Di chuyển lên', icon: ChevronUp, onSelect: () => moveRowUpDown(index, -1), group: 2 },
                                     { key: 'down', label: 'Di chuyển xuống', icon: ChevronDown, onSelect: () => moveRowUpDown(index, 1), group: 2 },
@@ -3663,33 +3717,21 @@ export function QuoteWorkspaceModal({
                 <div>
                   <span className="qc-workspace-info-label">Gross margin</span>
                   <strong className={hasCostData ? 'qc-cell-margin-good' : 'qc-workspace-muted'}>
-                    {!profitabilityViewAllowed ? 'Không có quyền xem' : hasCostData && quote!.grossMarginPercent != null ? `${quote!.grossMarginPercent.toFixed(2)}%` : 'Chưa có dữ liệu'}
+                    {!profitabilityViewAllowed ? 'Không có quyền xem' : hasCostData && quote!.grossMarginPercent != null ? formatPercentTrim(quote!.grossMarginPercent) : 'Chưa có dữ liệu'}
                   </strong>
                 </div>
                 {profitabilityViewAllowed && hasCostData && quote?.costTotal ? (
                   <div>
                     <span className="qc-workspace-info-label">Rate tổng</span>
-                    <strong>{(((quote!.netRevenue || 0) / quote!.costTotal!) * 100 - 100).toFixed(2)}%</strong>
+                    <strong>{formatPercentTrim(((quote!.netRevenue || 0) / quote!.costTotal!) * 100 - 100)}</strong>
                   </div>
                 ) : null}
                 <div>
+                  {/* Sua o "Chiết khấu tổng" tren quickbar (canh Markup nhanh) -
+                   * day chi con la HIEN THI (khong sua thang o day nua), tranh
+                   * 2 o edit cung 1 field gay hieu nham co 2 co che rieng. */}
                   <span className="qc-workspace-info-label">Giảm giá tổng (%)</span>
-                  {canEditPricingCells ? (
-                    <input
-                      type="number"
-                      className="qc-cell-input qc-cell-input-money"
-                      value={quote?.overallDiscountPercent ?? ''}
-                      placeholder="Không giảm"
-                      onChange={e => {
-                        const raw = e.target.value;
-                        const value = raw.trim() === '' ? null : Number(raw);
-                        setQuote(prev => (prev ? { ...prev, overallDiscountPercent: value } : prev));
-                      }}
-                      onBlur={() => void persistQuote({ overallDiscountPercent: quote?.overallDiscountPercent ?? null }, { silent: true })}
-                    />
-                  ) : (
-                    <strong>{quote?.overallDiscountPercent != null ? `${quote.overallDiscountPercent}%` : 'Không giảm'}</strong>
-                  )}
+                  <strong>{quote?.overallDiscountPercent != null ? `${quote.overallDiscountPercent}%` : 'Không giảm'}</strong>
                 </div>
                 {profitabilityViewAllowed && quote?.overallDiscountPercent != null ? (() => {
                   const amountAfterDiscount = quote.totalAmount * (1 - quote.overallDiscountPercent / 100);
@@ -3985,7 +4027,7 @@ export function QuoteWorkspaceModal({
                   <div className="qc-workspace-margin-bar-track">
                     <div className="qc-workspace-margin-bar-fill" style={{ width: `${Math.max(0, Math.min(100, quote.grossMarginPercent))}%` }} />
                   </div>
-                  <span>Margin {quote.grossMarginPercent.toFixed(2)}%</span>
+                  <span>Margin {formatPercentTrim(quote.grossMarginPercent)}</span>
                 </div>
               ) : null}
             </div>
@@ -4575,7 +4617,7 @@ export function QuoteWorkspaceModal({
             <div className="qc-workspace-preview-modal-row">
               <span className="qc-workspace-info-label">Margin</span>
               <strong className={marginBelowThreshold ? 'qc-cell-margin-warn' : hasCostData ? 'qc-cell-margin-good' : ''}>
-                {hasCostData && quote.grossMarginPercent != null ? `${quote.grossMarginPercent.toFixed(2)}%` : 'Chưa có dữ liệu giá vốn'}
+                {hasCostData && quote.grossMarginPercent != null ? formatPercentTrim(quote.grossMarginPercent) : 'Chưa có dữ liệu giá vốn'}
               </strong>
             </div>
             {marginBelowThreshold ? (
@@ -4811,6 +4853,48 @@ export function QuoteWorkspaceModal({
       />
 
       <ConfirmModal
+        open={markupApplyConfirm != null}
+        title="Ghi đè Markup đã có"
+        message={
+          markupApplyConfirm
+            ? `${itemsDraft.filter(row => row.costPrice != null && row.markupPercent != null).length} hạng mục đã có Markup — áp Markup +${markupApplyConfirm.percent}% sẽ ghi đè giá bán các dòng này. Tiếp tục?`
+            : ''
+        }
+        onClose={() => setMarkupApplyConfirm(null)}
+        actions={[
+          {
+            label: 'Áp dụng, ghi đè',
+            variant: 'primary',
+            onClick: () => {
+              if (markupApplyConfirm) doApplyQuickMarkup(markupApplyConfirm.percent);
+              setMarkupApplyConfirm(null);
+            },
+          },
+        ]}
+      />
+
+      <ConfirmModal
+        open={marginApplyConfirm != null}
+        title="Ghi đè Margin đã có"
+        message={
+          marginApplyConfirm
+            ? `${itemsDraft.filter(row => row.costPrice != null && row.markupPercent != null).length} hạng mục đã có Markup/Giá khách — áp Margin mục tiêu ${marginApplyConfirm.percent}% sẽ ghi đè giá bán các dòng này. Tiếp tục?`
+            : ''
+        }
+        onClose={() => setMarginApplyConfirm(null)}
+        actions={[
+          {
+            label: 'Áp dụng, ghi đè',
+            variant: 'primary',
+            onClick: () => {
+              if (marginApplyConfirm) doApplyTargetMargin(marginApplyConfirm.percent);
+              setMarginApplyConfirm(null);
+            },
+          },
+        ]}
+      />
+
+      <ConfirmModal
         open={catalogAdd.dedupQueue.length > 0}
         title="Sản phẩm đã có trong bảng"
         message={
@@ -5027,7 +5111,7 @@ export function QuoteWorkspaceModal({
                         onChange={e => handleMarkupChange(drawerIndex, e.target.value)}
                       />
                     ) : (
-                      <p>{drawerItem.markupPercent != null ? `${drawerItem.markupPercent.toFixed(1)}%` : '—'}</p>
+                      <p>{formatPercentTrim(drawerItem.markupPercent)}</p>
                     )}
                   </label>
                 ) : (

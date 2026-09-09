@@ -2010,55 +2010,111 @@
 }
 .qc-workspace-item-no {
   display: inline-block;
-  min-width: 22px;
-  margin-right: 6px;
+  min-width: 18px;
   color: #9099a7;
   font-weight: 700;
   font-size: 11px;
 }
-/* BUG THAT DA GAP: tay cam keo + so thu tu la <span> inline, nhung o nhap
- * Ten hang muc ngay sau lai la <input> width:100% - trinh duyet BAT BUOC
- * xuong dong o cho input (khong con cho de chia se tren cung 1 dong), nhin
- * nhu "STT nam TREN" thay vi nam ngang cung hang voi ten hang muc. Bao boc
- * ca 3 (tay cam/so/o nhap) trong 1 flex row DUY NHAT de luon nam ngang. */
+/* Cot "Hạng mục" - LUON la 1 khoi chu nhat ngang rong co dinh (KHONG dung %,
+ * KHONG de bi bop hep) - dung CSS GRID 2 cot ro rang thay vi flex don:
+ * cot 1 (~60px) CHI chua tay cam keo + STT, cot 2 chiem TOAN BO phan con lai
+ * cho ten hang muc - tach biet hoan toan 2 vung, tranh nut/STT chen vao giua
+ * ten nhu bug flex truoc day (STT/ten/nut cung hang ngang nhung khong co
+ * ranh gioi ro, ten bi bop khi STT/nut doi cho). */
 .qc-workspace-item-name-cell {
-  display: flex;
+  display: grid;
+  grid-template-columns: 60px 1fr;
   align-items: center;
   width: 100%;
+  min-height: 56px;
+  gap: 4px;
+}
+.qc-workspace-item-no-col {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   gap: 2px;
+  height: 100%;
+}
+.qc-workspace-item-name-col {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  overflow-wrap: break-word;
 }
 .qc-workspace-item-name-cell .qc-cell-input {
   flex: 1;
   min-width: 0;
 }
-/* BUG THAT DA GAP ("hạng mục bị khuất"): cot "Hạng mục" la cot DUY NHAT
- * khong co width co dinh (moi cot con lai: ĐVT/SL/Giá vốn/Markup/Giá khách/
- * Margin/Thao tac deu co width rieng) - tren man hinh hep (laptop nho, hoac
- * modal Workspace bi thu nho), trinh duyet ep het cot nay ve gan 0 de nhuong
- * cho cac cot co width co dinh, khien input Ten hang muc bien mat (chi con
- * thay STT + nut "⋯"). .qc-workspace-items-scroll da co overflow-x:auto san
- * nhung KHONG co tac dung neu ban than <table> khong co min-width vuot qua
- * container - them min-width cho ca bang lan rieng cot dau, de trinh duyet
- * CUON NGANG thay vi ep cot Hang muc bien mat. */
-.qc-workspace-items-table--unified th:first-child,
-.qc-workspace-items-table--unified td:first-child {
-  min-width: 220px;
+/* YEU CAU CHOT LAI (dinh chinh): KHONG con min-width/px co dinh cho cot dau
+ * hay ca bang nua - "không có thanh cuộn ngang" la bat buoc, width that su
+ * cua tung cot do block nth-child % o duoi quyet dinh (tong <=100%, luon
+ * fit trong 1 khung, khong can trinh duyet cuon ngang). Wrapper
+ * .qc-table-wrap (dung chung nhieu noi) mac dinh co overflow-x:auto - tat
+ * han rieng cho bang hang muc nay (them class .qc-workspace-items-scroll,
+ * source order sau nen thang the). */
+.qc-workspace-items-scroll {
+  overflow-x: hidden;
 }
-.qc-workspace-items-table--unified {
-  min-width: 920px;
-}
-/* Ten hang muc dai bi cat trong bang nhieu cot - line-clamp 2 dong + tooltip
- * (title= tren chinh the) thay vi 1 dong bi an ellipsis mat het noi dung, nut
- * "..." canh ben mo Drawer chi tiet (xem itemDetailDrawerIndex) de xem/sua
- * day du khong can nong bang. */
+/* Ten hang muc: CHI hien ten (serviceDescription), toi da 2 dong roi moi
+ * ellipsis - KHONG con render nguyen doan mo ta dai (item.description) o
+ * duoi nhu 1 phien ban truoc do (lam dong qua cao, bang roi rac) - mo ta
+ * day du CHI hien qua tooltip (title= gop ca ten+mo ta) + click mo Drawer
+ * Chi tiet hang muc. KHONG dung word-break:break-all (cat giua tu xau xi) -
+ * dung overflow-wrap:break-word (chi xuong dong o ranh gioi tu khi tu qua
+ * dai, giu nguyen tu binh thuong). */
 .qc-workspace-item-name-clamp {
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
+  white-space: normal;
+  overflow-wrap: break-word;
+  word-break: normal;
   flex: 1;
   min-width: 0;
 }
+/* Click thang vao ten (khong chi nut "⋯" ben canh) cung mo Chi tiet hang muc -
+ * cursor pointer de bao hieu ro co the bam. */
+.qc-workspace-item-name-clickable { cursor: pointer; }
+.qc-workspace-item-name-clickable:hover { text-decoration: underline; text-decoration-color: #c2c8d1; }
+/* O nhap Ten hang muc: TRUOC DAY la <input> 1 dong, cau/mo ta dai bi cat gan
+ * het (vd "Tích hợp FE-E...") do input khong the xuong dong - doi sang
+ * <textarea> 2 dong (wrap that, giong dung .qc-workspace-item-name-clamp o
+ * che do doc) de doc duoc noi dung day du ngay ca khi dang o che do sua. */
+.qc-workspace-item-name-cell .qc-cell-textarea {
+  flex: 1;
+  min-width: 0;
+  resize: none;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  word-break: normal;
+  line-height: 1.35;
+  font-family: inherit;
+}
+/* Icon "i" nho canh ten - CHI la dau hieu "co mo ta day du, xem o Drawer",
+ * KHONG render nguyen doan mo ta ra bang (yeu cau rieng: bang qua roi khi
+ * hien ca mo ta dai duoi ten). */
+.qc-workspace-item-desc-indicator {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 1px solid #c2c8d1;
+  background: #fff;
+  color: #7c8593;
+  font-size: 10px;
+  font-style: italic;
+  font-weight: 700;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+}
+.qc-workspace-item-desc-indicator:hover { border-color: #cc1541; color: #cc1541; }
 .qc-workspace-item-detail-btn { flex-shrink: 0; }
 .qc-workspace-drawer-field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: #5b6576; }
 .qc-workspace-drawer-field p { margin: 0; font-size: 13px; color: #1f2530; }
@@ -2083,39 +2139,41 @@
   vertical-align: middle;
 }
 
-/* Da bo cot "#" (STT) - "Hạng mục" gio la cot dau tien, giu nguyen vi tri
- * sticky (dong bang khi cuon ngang) + rieng them min-width de khong bi
- * table-layout:fixed chia deu qua hep (nhieu cot tien ben canh) lam cat ngan
- * ten dich vu qua som. */
-.qc-workspace-items-table--unified th:first-child,
-.qc-workspace-items-table--unified td:first-child {
-  position: sticky;
-  left: 0;
-  z-index: 1;
-  background: #fff;
-  box-shadow: 2px 0 4px -2px rgba(15, 23, 42, 0.12);
-  min-width: 320px;
-}
-.qc-workspace-items-table--unified thead th:first-child {
-  z-index: 2;
-}
-/* "Margin" chi hien so % ngan (vd "20.00%"/"—"), khong can rong nhu cac cot
- * khac - nhuong lai khong gian cho Hang muc. */
-.qc-workspace-items-table--unified .qc-th-margin-col {
-  width: 76px;
-}
-/* Cot "SL" chi can vua khit 1-2 chu so + nut tang/giam cua input number, can
- * giua thay vi can phai nhu cac cot tien khac (qc-cell-money mac dinh
- * text-align:right - can specificity cao hon o day de thang). 52px qua hep,
- * bi cham ca so lan nut spinner. */
-/* Cot checkbox chon dong de ap Margin muc tieu hang loat (yeu cau chung,
- * khong rieng VPS Zone) - vua du 1 checkbox, khong lay khong gian dang ke. */
+/* KHONG con cuon ngang cho bang hang muc (yeu cau rieng, dinh chinh lai: GIU
+ * NGUYEN du 10 cot Hạng mục|ĐVT|SL|Giá vốn/ĐV|Cost tổng|Markup|Giá khách/ĐV|
+ * Thành tiền|Margin|Thao tác - KHONG gop/bo cot nao - nhung phai vua het
+ * trong 1 khung desktop, KHONG scroll ngang) - dung nth-child (nhieu cot
+ * dang TAI SU DUNG chung 1 class nhu .qc-cell-cost/.qc-cell-markup cho 2
+ * <td> khac nhau nen khong the gan width rieng qua class) + % CO DINH tong
+ * <=100% (giong dung pattern .qc-linked-table--10col da co san o bang khac
+ * trong file nay), khop table-layout:fixed co san cua .qc-linked-table
+ * (dong 878-882). Header duoc phep xuong toi da 2 dong (.qc-linked-table th
+ * da co san white-space:normal) thay vi ep 1 dong nhu truoc. */
+.qc-workspace-items-table--unified th:nth-child(1),
+.qc-workspace-items-table--unified td:nth-child(1) { width: 27%; }
+.qc-workspace-items-table--unified th:nth-child(2),
+.qc-workspace-items-table--unified td:nth-child(2) { width: 6%; }
+.qc-workspace-items-table--unified th:nth-child(3),
+.qc-workspace-items-table--unified td:nth-child(3) { width: 5%; }
+.qc-workspace-items-table--unified th:nth-child(4),
+.qc-workspace-items-table--unified td:nth-child(4) { width: 10%; }
+.qc-workspace-items-table--unified th:nth-child(5),
+.qc-workspace-items-table--unified td:nth-child(5) { width: 10%; }
+.qc-workspace-items-table--unified th:nth-child(6),
+.qc-workspace-items-table--unified td:nth-child(6) { width: 7%; }
+.qc-workspace-items-table--unified th:nth-child(7),
+.qc-workspace-items-table--unified td:nth-child(7) { width: 10%; }
+.qc-workspace-items-table--unified th:nth-child(8),
+.qc-workspace-items-table--unified td:nth-child(8) { width: 10%; }
+.qc-workspace-items-table--unified th:nth-child(9),
+.qc-workspace-items-table--unified td:nth-child(9) { width: 6%; }
+.qc-workspace-items-table--unified th:nth-child(10),
+.qc-workspace-items-table--unified td:nth-child(10) { width: 4%; }
+/* Khi KHONG co cot Thao tac (view chi doc, khong render th/td thu 10) - cot
+ * Margin (thu 9) tu gian ra chiem phan con lai, khong sao vi van <=100%. */
+
 .qc-th-select, .qc-cell-select { width: 28px; text-align: center; padding-left: 8px !important; padding-right: 0 !important; }
 
-/* Cot "DVT" (yeu cau chung, khong rieng VPS Zone) - vua du hien "Goi"/"Thang"/
- * "License"/"User/tháng" khong tran, khong lay qua nhieu khong gian cua
- * "Hạng mục". */
-.qc-th-unit, .qc-cell-unit { width: 96px; white-space: nowrap; }
 .qc-cell-unit .qc-cell-input { width: 100%; box-sizing: border-box; }
 
 /* Popover mini "Ap Margin cho rieng dong nay" - noi trong o Margin cua dung
@@ -2213,24 +2271,22 @@
 .qc-workspace-items-table--unified .qc-cell-cost,
 .qc-workspace-items-table--unified .qc-th-cost {
   background: #f2faf6;
-  /* "Giá vốn/ĐV"/"Giá vốn" bi cham/khuat so voi cot ke ben khi so tien co dau
-   * cham ngan nghin - 108px chi vua 7 chu so, KHONG du cho 9-10 chu so (vd
-   * "1.234.567.890" = 10 chu so + 3 dau cham) nhu yeu cau "ô giá vốn cho
-   * nhìn thấy rõ 9-10 con số" - rong ra 148px (nut fill-down ↓ da bi bo o
-   * cot Markup nhung van con o cot nay nen van can chua ca nut). */
-  width: 148px;
-  white-space: nowrap;
 }
 .qc-workspace-items-table--unified .qc-cell-markup,
 .qc-workspace-items-table--unified .qc-th-markup {
   background: #fffaf0;
-  /* Class nay dung CHUNG cho ca cot "Markup %" LAN "Giá khách/ĐV" (2 <td>
-   * khac nhau cung dung .qc-cell-markup) - rong len 148px giong .qc-cell-cost
-   * de "Giá khách/ĐV" cung hien du 9-10 chu so nhu "Giá vốn/ĐV" ("chỗ giá
-   * khách hàng hiển thị đủ 9-10 con số như giá vốn á"), khong tach rieng class
-   * moi vi ca 2 cot deu la kieu tien/% ngan gon, rong hon 1 chut khong sao. */
-  width: 148px;
-  white-space: nowrap;
+}
+/* Width THAT SU do nth-child quyet dinh (block phia tren, vi .qc-cell-cost/
+ * .qc-cell-markup dung CHUNG cho 2 <td> khac nhau nen khong gan rieng width
+ * qua class duoc) - o day CHI con mau nen. Bo han white-space:nowrap/148px
+ * cu (yeu cau "không có thanh cuộn ngang" - so tien dai van phai wrap/co
+ * font-size hop ly trong dung % cot da chia, khong ep 1 dong roi tran ra
+ * ngoai cot). */
+.qc-workspace-items-table--unified .qc-cell-cost .qc-cell-input,
+.qc-workspace-items-table--unified .qc-cell-markup .qc-cell-input {
+  width: 100%;
+  box-sizing: border-box;
+  font-size: 12px;
 }
 .qc-cell-margin-good { color: #148e61 !important; font-weight: 700; }
 
@@ -2790,27 +2846,85 @@
   /* .qc-workspace-request-form-cols da ve 1 cot san tu nguong 900px (rule co
    * san o tren), khong can lap lai o day. */
 
-  /* Bang hang muc: cuon NGANG rieng trong khung bang (khong tran ca trang) -
-   * cot Hang muc (dau) + cot Thao tac (cuoi) luon sticky de van thay du lam
-   * gi tren dong nao khi da cuon sang cac cot gia. */
+  /* Bang hang muc tren mobile: KHONG con ep nguyen <table> cuon ngang nua (yeu
+   * cau rieng "Mobile không dùng table này; chuyển sang card") - chuyen sang
+   * KY THUAT THUAN CSS "table -> card" (khong doi JSX/cau truc DOM, chi doi
+   * display): an <thead>, moi <tr> thanh 1 CARD rieng (border/bo goc/cach
+   * nhau), moi <td> thanh 1 hang ngang "nhan: gia tri" dung data-label= (da
+   * them tren tung <td> trong QuoteWorkspaceModal.tsx) lam nhan qua
+   * ::before. Rieng cot dau (Hạng mục, data-label="Hạng mục") AN nhan di (ten
+   * hang muc da du ro rang khong can tien to "Hạng mục:"), va cot Thao tac
+   * cung an nhan (chi la 1 nut menu). Mục cha (.qc-workspace-section-row)
+   * GIU NGUYEN dang 1 thanh full-width, KHONG bien thanh card 2 cot. */
   .qc-workspace-items-scroll {
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
+    overflow-x: visible;
   }
   .qc-workspace-items-table--unified {
-    min-width: 640px;
+    min-width: 0;
+    width: 100%;
+    display: block;
   }
-  .qc-workspace-items-table--unified th:first-child,
-  .qc-workspace-items-table--unified td:first-child {
-    position: sticky;
-    left: 0;
-    background: #fff;
-    z-index: 1;
+  .qc-workspace-items-table--unified thead {
+    display: none;
   }
-  .qc-workspace-items-table--unified .qc-cell-actions {
-    position: sticky;
-    right: 0;
+  .qc-workspace-items-table--unified tbody {
+    display: block;
+  }
+  .qc-workspace-items-table--unified tbody tr {
+    display: block;
+    border: 1px solid #eef0f4;
+    border-radius: 12px;
+    margin-bottom: 10px;
+    padding: 8px 10px;
     background: #fff;
+  }
+  .qc-workspace-items-table--unified tbody tr.qc-workspace-section-row {
+    padding: 10px 12px;
+  }
+  .qc-workspace-items-table--unified tbody td {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    width: 100% !important;
+    min-width: 0 !important;
+    position: static !important;
+    box-shadow: none !important;
+    padding: 6px 0 !important;
+    border-bottom: 1px solid #f4f5f8;
+  }
+  .qc-workspace-items-table--unified tbody tr:last-child td:last-child,
+  .qc-workspace-items-table--unified tbody td:last-child {
+    border-bottom: none;
+  }
+  .qc-workspace-items-table--unified tbody td[data-label]::before {
+    content: attr(data-label);
+    flex-shrink: 0;
+    font-size: 11px;
+    font-weight: 700;
+    color: #9099a7;
+    text-transform: uppercase;
+  }
+  /* Cot Hạng mục + Thao tac: khong can nhan "tien to" (ten hang muc/nut menu
+   * da tu no ro nghia), rieng Hạng mục cung KHONG chia 2 ben trai/phai nua -
+   * cho ca khoi ten chiem full-width dong dau card. */
+  .qc-workspace-items-table--unified tbody td[data-label="Hạng mục"] {
+    justify-content: flex-start;
+    padding-bottom: 8px !important;
+    border-bottom: 1px dashed #eef0f4;
+    margin-bottom: 4px;
+  }
+  .qc-workspace-items-table--unified tbody td[data-label="Hạng mục"]::before,
+  .qc-workspace-items-table--unified tbody td[data-label="Thao tác"]::before {
+    content: none;
+  }
+  .qc-workspace-items-table--unified tbody td[data-label="Thao tác"] {
+    justify-content: flex-end;
+  }
+  .qc-workspace-items-table--unified .qc-workspace-section-row td {
+    display: block !important;
+    padding: 0 !important;
+    border-bottom: none;
   }
   .qc-workspace-add-row,
   .qc-workspace-items-empty-actions {

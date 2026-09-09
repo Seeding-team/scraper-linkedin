@@ -524,9 +524,19 @@ export function parseMoney(value: string | number | undefined) {
 export function formatMoneyInput(value: string): string {
   const raw = String(value ?? '');
   if (!raw.trim()) return '';
-  const digitsOnly = raw.replace(/[^\d]/g, '');
-  if (!digitsOnly) return '';
-  const numeric = parseMoney(digitsOnly);
+  // BUG THAT DA GAP: truoc day ham nay strip TOAN BO ky tu khong phai chu so
+  // (`replace(/[^\d]/g, '')`) TRUOC KHI goi parseMoney() - voi 1 gia tri co
+  // phan thap phan (vd unitPrice = 1428571.428571... sau khi tinh Margin muc
+  // tieu, String() ra "1428571.4285714286"), buoc strip nay xoa luon dau "."
+  // NGAN CACH THAP PHAN, bien "1428571.4285714286" thanh chuoi so nguyen
+  // "14285714285714286" roi group lai thanh "14.285.714.285.714.286" - mot so
+  // tien VNĐ khong lo, sai hoan toan (thay vi 1.428.571 dung). Goi thang
+  // parseMoney() (da co san logic phan biet dau "." la thap phan hay ngan
+  // nghin dua theo so chu so theo sau) roi lam tron ve DONG NGUYEN (VNĐ
+  // khong co phan thap phan) TRUOC khi group - vua sua dung ca 2 truong hop:
+  // (a) gia tri tho tu state (co the co thap phan) (b) chuoi nguoi dung dang
+  // go do co dau cham ngan nghin ("1.500.000"/"50.000.0" dang go do).
+  const numeric = parseMoney(raw);
   if (!Number.isFinite(numeric)) return '';
-  return new Intl.NumberFormat('vi-VN', { maximumFractionDigits: 0 }).format(numeric);
+  return new Intl.NumberFormat('vi-VN', { maximumFractionDigits: 0 }).format(Math.round(numeric));
 }
