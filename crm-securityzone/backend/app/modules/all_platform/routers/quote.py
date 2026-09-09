@@ -439,6 +439,8 @@ def quotes_update(quote_id: str, payload: QuoteUpdateRequest, user: dict = Depen
             dump["project_id"] = payload.project_id
         if "sla_due_at" in fields_set:
             dump["sla_due_at"] = payload.sla_due_at
+        if "overall_discount_percent" in fields_set:
+            dump["overall_discount_percent"] = payload.overall_discount_percent
         denied = _check_item_field_level_permission(user, quote, dump.get("items"))
         if denied:
             return BaseResponse(success=False, message=denied)

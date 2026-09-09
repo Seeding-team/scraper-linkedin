@@ -26,6 +26,7 @@ from app.modules.all_platform.routers.quote import (
     quote_email_provider_router,
     quote_approval_rules_router,
 )
+from app.modules.all_platform.routers.price_book import price_book_router, price_book_admin_router
 from app.modules.all_platform.routers.project import router as project_router
 from app.modules.all_platform.routers.contract import contracts_router
 from app.modules.all_platform.routers.contract_template import contract_templates_router
@@ -69,6 +70,16 @@ all_platform_router.include_router(
     quote_approval_rules_router,
     prefix="/quote-approval-rules",
     tags=["All-Platform Quote Approval Rules"],
+)
+all_platform_router.include_router(
+    price_book_router,
+    prefix="/price-book-items",
+    tags=["All-Platform Price Book (VPS Zone)"],
+)
+all_platform_router.include_router(
+    price_book_admin_router,
+    prefix="/price-book-admin",
+    tags=["All-Platform Price Book Admin (VPS Zone)"],
 )
 
 # ── Dự án (Projects) ────────────────────────────────────────────────────────────

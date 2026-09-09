@@ -3,7 +3,8 @@ cho các Mẫu báo giá, thay thế dữ liệu dịch vụ hard-code trong sch
 
 from __future__ import annotations
 
-from typing import Optional
+from decimal import Decimal
+from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -63,3 +64,22 @@ class BundleComponentsSetRequest(BaseModel):
 
 class QuoteFormCatalogLinksSetRequest(BaseModel):
     catalog_item_ids: list[str] = []
+
+
+class ServiceCatalogItemPricingUpsertRequest(BaseModel):
+    """Bo gia MAC DINH rieng cho danh muc chung (migration 107,
+    service_catalog_item_pricing) - TACH BIET hoan toan default_unit_price_vnd
+    (gia BAN tren service_catalog_items, bang do RLS mo). issuer_company_id=None
+    nghia la gia mac dinh dung chung moi cong ty phat hanh (quy uoc "Trung
+    tinh" da co san o quote_forms.issuer_company_id).
+
+    `pricing_input_mode` bat buoc - cho biet field nao vua duoc nguoi dung sua
+    SAU CUNG, de backend tu TINH LAI field con lai bang Decimal (KHONG luu
+    nguyen 3 so client gui - xem upsert_service_catalog_item_pricing()).
+    Dung Decimal, KHONG dung float cho tien/%."""
+
+    issuer_company_id: Optional[str] = None
+    default_cost_price_vnd: Optional[Decimal] = Field(default=None, ge=0)
+    default_markup_percent: Optional[Decimal] = None
+    default_customer_price_vnd: Optional[Decimal] = Field(default=None, ge=0)
+    pricing_input_mode: Literal["markup", "customer_price"]

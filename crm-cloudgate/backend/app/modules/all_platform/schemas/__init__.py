@@ -66,6 +66,7 @@ from app.modules.all_platform.schemas.quote import (
 from app.modules.all_platform.schemas.service_catalog import (
     ServiceCatalogItemCreateRequest,
     ServiceCatalogItemUpdateRequest,
+    ServiceCatalogItemPricingUpsertRequest,
     ServiceCatalogReorderRequest,
     BundleComponentInput,
     BundleComponentsSetRequest,

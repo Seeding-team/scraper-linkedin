@@ -153,19 +153,15 @@ type ActivityLogRow = {
   created_at: string;
 };
 
-// Ban đầu khớp với CHECK constraint source_platform ở migration
-// 032_expand_source_platform.sql, nhưng migration 056 đã GỠ hẳn constraint đó
-// và giao việc kiểm soát danh mục nguồn hợp lệ cho bảng `categories`
-// (category_type='crm_source') — whitelist cứng dưới đây từ đó đã LỖI THỜI
-// (chặn nhầm mọi nguồn thêm mới qua trang Danh mục hoặc migration data, dù
-// backend/DB đã chấp nhận). Thêm 3 giá trị của "Nguồn cơ hội"
-// (CreateOpportunityDrawer.tsx, migration 080_crm_source_opportunity_values.sql)
-// vào đây — KHÔNG xoá hẳn assertSupportedSource() để giữ nguyên hành vi chặn
-// lỗi gõ tay hiện có, nằm ngoài phạm vi task này.
-const SUPPORTED_SOURCE_PLATFORMS = new Set([
-  'Manual', 'FB_Inbox', 'FB_Group', 'Zalo', 'Website', 'Referral', 'MarkeeChat',
-  'Existing_Customer', 'Lead_Convert', 'Upsell',
-]);
+// BUG THAT DA SUA (yeu cau audit that): migration 056 da GO HAN CHECK
+// constraint source_platform o DB va giao viec kiem soat danh muc nguon hop
+// le cho bang `categories` (category_type='crm_source') - nhung whitelist
+// cung o day (da xoa) van con chan NHAM moi nguon tu them qua trang "Danh
+// mục CRM" (vd "Markee CFO"), nem loi "chua duoc database Seeding ho tro
+// persist" du DB THAT SU da chap nhan gia tri do tu lau. Da bo han
+// assertSupportedSource() - khong con kiem tra whitelist cung o tang FE nay
+// nua, dung DUNG nhu comment migration 056 da neu (kiem soat da chuyen het
+// ve bang categories, khong can dong bo 2 whitelist).
 // Migration 041 mo rong CHECK constraint contract_status ho tro du 7 gia tri
 // cua crm-next (truoc day DB chi nhan 3 gia tri legacy active/completed/
 // maintenance, cac gia tri con lai bi contractStatusToDb() am tham bo qua).
@@ -298,12 +294,6 @@ function paymentStatusToDb(value?: PaymentStatus): 'unpaid' | 'partial' | 'paid'
   if (value === 'thanh_toan_mot_phan') return 'partial';
   if (value === 'da_thanh_toan') return 'paid';
   return undefined;
-}
-
-function assertSupportedSource(value?: string) {
-  if (value && !SUPPORTED_SOURCE_PLATFORMS.has(value)) {
-    throw new Error(`Nguon lead "${value}" chua duoc database Seeding ho tro persist.`);
-  }
 }
 
 function contractStatusToDb(value?: string): string | undefined {
@@ -507,8 +497,6 @@ function toCrmCustomerPayload(input: CreateDealInput): Partial<CrmCustomerRow> {
 }
 
 function toCustomerPayload(input: CreateDealInput | UpdateDealInput): Partial<CustomerLeadRow> {
-  assertSupportedSource(input.sourcePlatform);
-
   const paymentStatus = paymentStatusToDb(input.contract?.paymentStatus);
   const contractStatus = contractStatusToDb(input.contract?.status);
   const payload: Partial<CustomerLeadRow> = {};

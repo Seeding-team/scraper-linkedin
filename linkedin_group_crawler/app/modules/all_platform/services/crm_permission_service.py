@@ -374,6 +374,45 @@ def can_manage_quote_approval_rules(user: dict[str, Any] | None) -> bool:
     return role == "admin"
 
 
+def can_manage_price_book(user: dict[str, Any] | None) -> bool:
+    """Bang gia VPS Zone - CRUD Draft/publish version CHI Admin (mirror
+    can_manage_quote_approval_rules() - khong co "presale"/"sale" role toan
+    cuc trong he thong nay, chi co gan theo tung quote qua technical_owner_id/
+    quote_owner_id, nen quan ly BANG GIA CHUAN (khong gan voi 1 quote cu the
+    nao) chi giao Admin, tranh mo rong pham vi ngoai yeu cau)."""
+    if not user:
+        return False
+    role = str(user.get("role") or "").strip().lower()
+    return role == "admin"
+
+
+def can_manage_service_catalog_pricing(user: dict[str, Any] | None) -> bool:
+    """Bo gia MAC DINH cua danh muc chung (service_catalog_item_pricing,
+    migration 107) - quan ly (them/sua o trang "San pham & dich vu") CHI
+    Admin (mirror can_manage_price_book) - khong lien quan 1 quote cu the
+    nao nen dung kiem tra role toan cuc, khong the dung
+    can_view_quote_cost(user, quote) o day (chua co quote de kiem)."""
+    if not user:
+        return False
+    role = str(user.get("role") or "").strip().lower()
+    return role == "admin"
+
+
+def can_view_price_book_cost(user: dict[str, Any] | None, quote: dict[str, Any] | None) -> bool:
+    """Xem gia von/vendor/ty gia cua san pham Bang gia VPS Zone TRONG BOI CANH
+    1 quote dang mo (Quote Workspace picker luon mo tu 1 quote cu the, nen
+    LUON co `quote` de truyen vao - KHONG bao gio goi ham nay o boi canh
+    ngoai 1 quote nao). Co chu dich TAI SU DUNG y het can_view_quote_cost()
+    (Nhom A - COST fields) thay vi bia them role "presale"/"sale" khong ton
+    tai trong he thong nay - dung nguyen tac: admin/leader luon duoc, hoac
+    chinh technical_owner_id (Presale duoc gan quote nay), hoac chinh
+    quote_owner_id (Sale duoc gan quote nay, xem READ-ONLY). Neu goi khi CHUA
+    co quote (vd trang quan ly Bang gia VPS Zone o "San pham & dich vu", ngoai
+    Quote Workspace) thi `quote=None` -> chi admin/leader duoc xem, khop dung
+    hanh vi can_view_quote_cost() khi thieu quote."""
+    return can_view_quote_cost(user, quote)
+
+
 def can_pin_quote(user: dict[str, Any] | None) -> bool:
     """"Ghim báo giá lên đầu" (Quote Center) - CHI Admin (khong phai Leader,
     khac voi da so quyen quan tri khac o file nay) theo dung yeu cau nguoi
