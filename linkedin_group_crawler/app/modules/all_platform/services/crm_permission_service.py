@@ -180,13 +180,17 @@ def can_edit_quote_cost(user: dict[str, Any] | None, quote: dict[str, Any] | Non
 
 
 def can_view_quote_pricing(user: dict[str, Any] | None, quote: dict[str, Any] | None) -> bool:
-    """SUA LAI (bi bac bo lan 2 vi mo qua rong - da tung cho ca technical_owner
-    xem, sai voi yeu cau "Technical owner Presale/Both KHONG xem Pricing noi
-    bo neu khong dong thoi la Quote owner"). Nhom B THAT SU CHI la PRICING
+    """SUA LAI LAN 3 (theo yeu cau that: "leader thay full, khong han che" -
+    truoc day leader KHONG tu dong xem duoc Markup neu khong dong thoi la
+    chinh quote_owner cua quote do, gay nghich ly: leader co quyen SUA
+    markup/gia ban qua can_edit_quote_pricing() (di qua has_full_crm_access())
+    nhung lai KHONG xem duoc gia tri dang co - da doi lai giong het pattern
+    can_view_quote_cost(): admin/leader luon xem duoc, khong phu thuoc co
+    phai quote_owner cua quote do hay khong. Nhom B THAT SU CHI la PRICING
     NOI BO (hien tai la field `markupPercent` - chien luoc markup cua Sale,
-    KHONG phai so hien thi cho khach) - CHI admin hoac chinh quote_owner
-    (Sale duoc gan quote nay). Presale (chi la technical_owner, khong dong
-    thoi la quote_owner) KHONG duoc xem markupPercent.
+    KHONG phai so hien thi cho khach). Presale thuong (khong phai leader,
+    chi la technical_owner, khong dong thoi la quote_owner) VAN KHONG duoc
+    xem markupPercent - gioi han nay giu nguyen, chi mo rong cho leader.
 
     PHAN BIET RO voi nhom C "Customer commercial" (unitPrice/discountPercent/
     discountAmount/amountAfterDiscount/vatRate/totalAmount/netRevenue/
@@ -197,7 +201,7 @@ def can_view_quote_pricing(user: dict[str, Any] | None, quote: dict[str, Any] | 
     if not user:
         return False
     role = str(user.get("role") or "").strip().lower()
-    if role == "admin":
+    if role in ("admin", "leader"):
         return True
     uid = str(user.get("id") or "")
     if not uid or not quote:
@@ -206,16 +210,18 @@ def can_view_quote_pricing(user: dict[str, Any] | None, quote: dict[str, Any] | 
 
 
 def can_view_quote_profitability(user: dict[str, Any] | None, quote: dict[str, Any] | None) -> bool:
-    """Nhom C - PROFITABILITY fields (grossProfit/grossMarginPercent): CHI
-    admin hoac quote_owner (Sale - nguoi can margin de hoan thien gia, dung
-    yeu cau "Gia von da chot -> Markup -> Gia khach -> Gross profit -> Margin"
-    tren CUNG 1 workspace). Presale (chi la technical_owner, KHONG dong thoi
-    la quote_owner) KHONG nam trong yeu cau xem loi nhuan - neu sau nay can
-    mo rong thi sua CHINH o day, khong suy tu can_view_quote_cost()."""
+    """Nhom C - PROFITABILITY fields (grossProfit/grossMarginPercent): admin
+    HOAC leader (SUA LAI LAN 2, cung ly do voi can_view_quote_pricing() o
+    tren - "leader thay full, khong han che") HOAC chinh quote_owner (Sale -
+    nguoi can margin de hoan thien gia, dung yeu cau "Gia von da chot ->
+    Markup -> Gia khach -> Gross profit -> Margin" tren CUNG 1 workspace).
+    Presale thuong (chi la technical_owner, khong dong thoi la quote_owner/
+    leader) VAN KHONG nam trong yeu cau xem loi nhuan - neu sau nay can mo
+    rong tiep thi sua CHINH o day, khong suy tu can_view_quote_cost()."""
     if not user:
         return False
     role = str(user.get("role") or "").strip().lower()
-    if role == "admin":
+    if role in ("admin", "leader"):
         return True
     uid = str(user.get("id") or "")
     if not uid or not quote:
@@ -356,15 +362,16 @@ def can_manage_project(user: dict[str, Any] | None, project: dict[str, Any] | No
 
 
 def can_manage_quote_approval_rules(user: dict[str, Any] | None) -> bool:
-    """True CHI khi role == admin hoac role == leader - dung tap trung cho
-    toan bo API cau hinh Rule engine duyet bao gia (GET active khong can ham
-    nay - Member van xem duoc ket qua; CHI PUT/sua rule moi can). Tach biet
-    hoan toan voi `can_manage_quote_email_settings` (2 khu vuc cau hinh khac
-    nhau, du cung chi Admin/Leader quan ly)."""
+    """SUA LAI theo yeu cau that: "Quy tắc phê duyệt chỉ được Admin cài đặt
+    thôi" - CHI role == admin (leader KHONG con quan ly duoc nua, khac voi
+    truoc day). Dung tap trung cho toan bo API cau hinh Rule engine duyet bao
+    gia (GET active khong can ham nay - Member/Leader van xem duoc ket qua;
+    CHI PUT/sua rule moi can quyen nay). Tach biet hoan toan voi
+    `can_manage_quote_email_settings` (van la Admin/Leader, khong doi)."""
     if not user:
         return False
     role = str(user.get("role") or "").strip().lower()
-    return role in ("admin", "leader")
+    return role == "admin"
 
 
 def can_pin_quote(user: dict[str, Any] | None) -> bool:

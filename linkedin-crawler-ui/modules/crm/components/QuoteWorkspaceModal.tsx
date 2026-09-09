@@ -18,7 +18,7 @@ import {
   quoteDisplayStatus,
   relativeTime,
 } from '../utils/quoteDisplay';
-import { CheckCircle2, Eye, GitBranchPlus, History, Link2, Send, Settings, X } from './icons';
+import { CheckCircle2, Eye, GitBranchPlus, History, Link2, Send, X } from './icons';
 import { usersService, projectsService, type QuoteBusinessRoleUser, type Project } from '@/services/all-platform.service';
 import { computeQuoteSla } from '../utils/quoteSla';
 import { SearchableSelect } from './SearchableSelect';
@@ -464,21 +464,13 @@ export function QuoteWorkspaceModal({
     open: false, loading: false, entries: [], error: null,
   });
 
-  // ── Rule engine duyet bao gia (migration 091) ────────────────────────────
+  // ── Rule engine duyet bao gia (migration 091) - CHI CON HIEN THI o day (xem
+  // card "Quy tắc phê duyệt" ben duoi); sua that chuyen sang trang rieng
+  // "Cài đặt báo giá" (components/all-platform/admin/QuoteApprovalRuleSettings.tsx,
+  // menu Quan ly CRM) - khong con modal sua ngay trong workspace nay nua. ──
   const [ruleSet, setRuleSet] = useState<QuoteApprovalRuleSet | null>(null);
   const [ruleSetLoaded, setRuleSetLoaded] = useState(false);
   const [ruleEvaluation, setRuleEvaluation] = useState<QuoteRuleEvaluation | null>(null);
-  const [ruleModalOpen, setRuleModalOpen] = useState(false);
-  const [ruleModalDraft, setRuleModalDraft] = useState<Record<QuoteApprovalRuleType, { thresholdValue: string; isRequired: boolean }>>({
-    gross_margin_percent: { thresholdValue: '20', isRequired: true },
-    gross_profit_amount: { thresholdValue: '5000000', isRequired: true },
-    discount_percent: { thresholdValue: '10', isRequired: true },
-    payment_terms_days: { thresholdValue: '45', isRequired: true },
-  });
-  const [ruleModalAutoApprove, setRuleModalAutoApprove] = useState(false);
-  const [ruleModalBusy, setRuleModalBusy] = useState(false);
-  const [ruleModalError, setRuleModalError] = useState<string | null>(null);
-  const [ruleModalIdempotencyKey, setRuleModalIdempotencyKey] = useState('');
 
   // ── Owner-picker Presale/Sale (migration 095) - THAY the "agents" cu (chi
   // admin/leader, dung cho gan SDR/quan ly Deal CRM, KHONG dung cho owner
@@ -622,73 +614,12 @@ export function QuoteWorkspaceModal({
     return () => { cancelled = true; };
   }, [quote?.id, quote?.updatedAt]);
 
-  function openRuleSettingsModal() {
-    if (ruleSet) {
-      const draft: typeof ruleModalDraft = { ...ruleModalDraft };
-      for (const rule of ruleSet.rules) {
-        draft[rule.ruleType] = { thresholdValue: String(rule.thresholdValue), isRequired: rule.isRequired };
-      }
-      setRuleModalDraft(draft);
-      setRuleModalAutoApprove(ruleSet.autoApproveEnabled);
-    } else {
-      setRuleModalAutoApprove(false);
-    }
-    setRuleModalError(null);
-    setRuleModalIdempotencyKey(`rule-set-${Date.now()}-${Math.random().toString(36).slice(2)}`);
-    setRuleModalOpen(true);
-  }
-
   const RULE_LABELS: Record<QuoteApprovalRuleType, { label: string; description: string; unit: string }> = {
     gross_margin_percent: { label: 'Gross margin tối thiểu', description: 'Margin = (Giá sau CK − Cost) / Giá sau CK.', unit: '%' },
     gross_profit_amount: { label: 'Lợi nhuận gộp tối thiểu', description: 'Giá bán sau chiết khấu phải tạo đủ gross profit.', unit: 'đ' },
     discount_percent: { label: 'Chiết khấu thương mại tối đa', description: 'Vượt ngưỡng phải chuyển người có quyền duyệt.', unit: '%' },
     payment_terms_days: { label: 'Thời hạn thanh toán tối đa', description: 'Điều khoản dài hơn ngưỡng được xem là ngoại lệ.', unit: 'ngày' },
   };
-
-  async function saveRuleSettings() {
-    setRuleModalError(null);
-    const rows: { ruleType: QuoteApprovalRuleType; thresholdValue: number; isRequired: boolean }[] = [];
-    for (const ruleType of Object.keys(ruleModalDraft) as QuoteApprovalRuleType[]) {
-      const raw = ruleModalDraft[ruleType].thresholdValue;
-      const value = Number(raw);
-      if (raw.trim() === '' || !Number.isFinite(value)) {
-        setRuleModalError(`Ngưỡng của "${RULE_LABELS[ruleType].label}" phải là số.`);
-        return;
-      }
-      if ((ruleType === 'gross_margin_percent' || ruleType === 'discount_percent') && (value < 0 || value > 100)) {
-        setRuleModalError(`Ngưỡng của "${RULE_LABELS[ruleType].label}" phải trong khoảng 0-100.`);
-        return;
-      }
-      if (ruleType === 'gross_profit_amount' && value < 0) {
-        setRuleModalError(`Ngưỡng của "${RULE_LABELS[ruleType].label}" không được âm.`);
-        return;
-      }
-      if (ruleType === 'payment_terms_days' && value <= 0) {
-        setRuleModalError(`Ngưỡng của "${RULE_LABELS[ruleType].label}" phải lớn hơn 0.`);
-        return;
-      }
-      rows.push({ ruleType, thresholdValue: value, isRequired: ruleModalDraft[ruleType].isRequired });
-    }
-    setRuleModalBusy(true);
-    try {
-      const saved = await seedingQuoteRepository.saveQuoteApprovalRuleSet({ rules: rows, autoApproveEnabled: ruleModalAutoApprove, idempotencyKey: ruleModalIdempotencyKey });
-      setRuleSet(saved);
-      setRuleModalOpen(false);
-      showToast(true, 'Đã lưu quy tắc phê duyệt.');
-      if (quote?.id) {
-        try {
-          const evaluation = await seedingQuoteRepository.evaluateQuoteRules(quote.id);
-          setRuleEvaluation(evaluation);
-        } catch {
-          // Khong chan luong luu neu danh gia lai that bai - card se tu load lai lan sau.
-        }
-      }
-    } catch (err) {
-      setRuleModalError(err instanceof Error ? err.message : 'Không lưu được quy tắc phê duyệt.');
-    } finally {
-      setRuleModalBusy(false);
-    }
-  }
 
   // Bang "Hang muc & cau truc gia" - state edit LOCAL, dong bo lai tu
   // quote.items moi lan quote thay doi (sau khi load/luu). Luu that qua
@@ -1149,16 +1080,21 @@ export function QuoteWorkspaceModal({
 
   function loadFromRecentQuote() {
     if (!recentDealQuote) return;
+    // Yeu cau that: nap tu bao gia gan nhat CHI nap Gia von (costPrice) -
+    // Markup/Gia khach la quyet dinh rieng cua Sale cho TUNG khach/deal,
+    // KHONG duoc tu dong keo theo gia cu cua 1 khach/deal khac - Presale/Sale
+    // luon phai tu dinh gia lai tu dau cho bao gia moi nay, chi do lai duoc
+    // phan uoc luong ky thuat (gia von) da lam truoc do.
     const cloned = recentDealQuote.items.map(item => ({
       description: item.description,
       serviceDescription: item.serviceDescription,
       unit: item.unit,
       quantity: item.quantity,
-      unitPrice: item.unitPrice,
+      unitPrice: 0,
       discountPercent: item.discountPercent ?? 0,
       vatRate: item.vatRate ?? 10,
       costPrice: item.costPrice ?? null,
-      markupPercent: item.markupPercent ?? null,
+      markupPercent: null,
       catalogItemId: item.catalogItemId,
     }));
     const next = [...itemsDraft, ...cloned];
@@ -1503,9 +1439,14 @@ export function QuoteWorkspaceModal({
   const status = quote ? quoteDisplayStatus(quote, deal) : { key: 'draft' as const, label: 'Yêu cầu mới', className: 'qc-badge-amber' };
   const canEdit = quote ? canWriteDeal(user, deal) || canApproveQuote(user) : true;
   const canApprove = canApproveQuote(user);
-  // Mirror can_manage_quote_approval_rules() o backend - CHI dung de an/hien
-  // nut Cai dat, backend van tu chan that (403) neu goi thang API.
-  const canManageApprovalRules = user?.role === 'admin' || user?.role === 'leader';
+  // Admin/leader (dung cho cac cho KHONG lien quan quy tac phe duyet, vd
+  // NoStaffConfigured Presale/Sale ben duoi - tach rieng khoi
+  // canManageApprovalRules de doi rieng gia tri kia khong lam sai cho nay).
+  const isAdminOrLeader = user?.role === 'admin' || user?.role === 'leader';
+  // Mirror can_manage_quote_approval_rules() o backend (SUA LAI: chi Admin,
+  // khong con Leader) - CHI dung de hien goi y trong card "Quy tắc phê
+  // duyệt", sua that da chuyen het sang trang "Cài đặt báo giá" rieng.
+  const canManageApprovalRules = user?.role === 'admin';
   const businessCode = deal ? dealBusinessCode(deal) : null;
   const opportunityName = deal ? getServicePackageText(deal.servicePackage) || getPackageText(deal.package) : '';
   const stage = quote?.processingStage || 'request';
@@ -2658,7 +2599,7 @@ export function QuoteWorkspaceModal({
               presaleUsers === null ? (
                 <span className="qc-workspace-muted" style={{ fontSize: 12 }}>Đang tải danh sách Presale…</span>
               ) : presaleUsers.length === 0 ? (
-                <NoStaffConfigured isAdminOrLeader={canManageApprovalRules} />
+                <NoStaffConfigured isAdminOrLeader={isAdminOrLeader} />
               ) : (
                 <SearchableSelect
                   value={quote ? quote.technicalOwnerId || '' : draftTechnicalOwnerId}
@@ -2677,7 +2618,7 @@ export function QuoteWorkspaceModal({
               saleUsers === null ? (
                 <span className="qc-workspace-muted" style={{ fontSize: 12 }}>Đang tải danh sách Sale…</span>
               ) : saleUsers.length === 0 ? (
-                <NoStaffConfigured isAdminOrLeader={canManageApprovalRules} />
+                <NoStaffConfigured isAdminOrLeader={isAdminOrLeader} />
               ) : (
                 <SearchableSelect
                   value={quote ? quote.quoteOwnerId || '' : draftQuoteOwnerId}
@@ -3506,11 +3447,6 @@ export function QuoteWorkspaceModal({
                     {ruleSet ? `${ruleSet.name} · V${ruleSet.version}` : ruleSetLoaded ? 'Chưa cấu hình quy tắc' : 'Đang tải…'}
                   </p>
                 </div>
-                {canManageApprovalRules ? (
-                  <button type="button" className="qc-mini-btn qc-rule-settings-btn" onClick={openRuleSettingsModal}>
-                    <Settings className="qc-icon" /> Cài đặt
-                  </button>
-                ) : null}
               </div>
 
               {ruleSet ? (
@@ -3542,7 +3478,9 @@ export function QuoteWorkspaceModal({
                 </>
               ) : (
                 <p className="qc-workspace-muted" style={{ fontSize: 13 }}>
-                  {canManageApprovalRules ? 'Bấm "Cài đặt" để thiết lập quy tắc phê duyệt.' : 'Chưa có quy tắc phê duyệt nào được cấu hình.'}
+                  {canManageApprovalRules
+                    ? 'Chưa có quy tắc phê duyệt nào được cấu hình — vào "Cài đặt báo giá" (menu Quản lý CRM) để thiết lập.'
+                    : 'Chưa có quy tắc phê duyệt nào được cấu hình.'}
                 </p>
               )}
             </div>
@@ -4010,62 +3948,6 @@ export function QuoteWorkspaceModal({
         </div>
       ) : null}
 
-      {ruleModalOpen ? (
-        <div className="qc-modal-backdrop qc-modal-backdrop--nested" onMouseDown={event => { if (event.target === event.currentTarget) setRuleModalOpen(false); }}>
-          <div className="qc-deal-picker qc-rule-modal">
-            <h3>Cài đặt quy tắc báo giá</h3>
-            <p className="qc-workspace-note">Các quy tắc được đánh giá khi hoàn tất phần giá bán.</p>
-
-            {(Object.keys(RULE_LABELS) as QuoteApprovalRuleType[]).map(ruleType => {
-              const meta = RULE_LABELS[ruleType];
-              const row = ruleModalDraft[ruleType];
-              return (
-                <label key={ruleType} className="qc-rule-modal-row">
-                  <input
-                    type="checkbox"
-                    checked={row.isRequired}
-                    onChange={e => setRuleModalDraft(prev => ({ ...prev, [ruleType]: { ...prev[ruleType], isRequired: e.target.checked } }))}
-                  />
-                  <div className="qc-rule-modal-row-body">
-                    <strong>{meta.label}</strong>
-                    <span className="qc-workspace-muted" style={{ fontSize: 12 }}>{meta.description}</span>
-                  </div>
-                  <div className="qc-rule-modal-row-input">
-                    <input
-                      type="number"
-                      className="qc-cell-input qc-cell-input-money"
-                      value={row.thresholdValue}
-                      onChange={e => setRuleModalDraft(prev => ({ ...prev, [ruleType]: { ...prev[ruleType], thresholdValue: e.target.value } }))}
-                    />
-                    <span>{meta.unit}</span>
-                  </div>
-                </label>
-              );
-            })}
-
-            <label className="qc-workspace-checklist-item" style={{ marginTop: 12 }}>
-              <input type="checkbox" checked={ruleModalAutoApprove} onChange={e => setRuleModalAutoApprove(e.target.checked)} />
-              <div>
-                <strong>Tự động duyệt khi đạt tất cả quy tắc</strong>
-                <p className="qc-workspace-muted" style={{ fontSize: 12, margin: '2px 0 0' }}>
-                  Tắt: đạt đủ quy tắc → chuyển "Chờ duyệt", người có quyền bấm duyệt.
-                  Bật: đạt đủ quy tắc bắt buộc → hệ thống tự duyệt (không tự phát hành, không tự gửi khách hàng).
-                  Có 1 quy tắc không đạt hoặc thiếu dữ liệu → không tự duyệt.
-                </p>
-              </div>
-            </label>
-
-            {ruleModalError ? <div className="qc-workspace-note-box qc-workspace-note-box--warn">{ruleModalError}</div> : null}
-
-            <div className="qc-workspace-modal-actions">
-              <button type="button" className="qc-btn" onClick={() => setRuleModalOpen(false)}>Hủy</button>
-              <button type="button" className="qc-btn qc-btn-primary" disabled={ruleModalBusy} onClick={() => void saveRuleSettings()}>
-                {ruleModalBusy ? 'Đang lưu…' : 'Lưu quy tắc'}
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
 
       {workspaceToast ? (
         <div className={`qc-workspace-toast ${workspaceToast.ok ? 'qc-workspace-toast--ok' : 'qc-workspace-toast--error'}`}>

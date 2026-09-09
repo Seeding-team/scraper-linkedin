@@ -23,11 +23,21 @@ jobs:
         working-directory: /opt/apps/seeding_markeeai/scraper-linkedin
     steps:
       - name: Pull code theo ref duoc chon
+        # Cung 1 loi da gap va fix trong deploy-app.yml (xem giai thich chi
+        # tiet o do): buoc dong goi extension zip ben duoi de lai public/*.zip
+        # "dirty" tren host sau moi lan deploy -> lan deploy KE TIEP bi
+        # `git pull` tu choi merge vi file dang bi sua tay. Truoc day o file
+        # nay con bi `|| true` nuot loi im lang -> job bao thanh cong dù code
+        # KHONG duoc cap nhat (da xay ra that: pull bi "Aborting" nhung deploy
+        # van xanh, dev.seeding.markeeai.com chay code cu). Fix: xoa rac build
+        # artifact truoc khi pull, va bo `|| true` de loi pull thuc su duoc
+        # bao ro, khong bi nuot.
         run: |
           REF="${{ github.event.inputs.ref || github.ref_name }}"
+          git checkout -- linkedin-crawler-ui/public/*.zip || true
           git fetch origin
           git checkout "$REF"
-          git pull origin "$REF" || true
+          git pull origin "$REF"
 
       # Xem giai thich chi tiet trong deploy-app.yml: build frontend chi thay
       # context ./linkedin-crawler-ui nen khong tu build lai duoc zip tu

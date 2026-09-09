@@ -348,6 +348,22 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, workspaceTab: 
       label: "Danh mục CRM",
       matchStartsWith: ["/all-platform/crm/categories"],
     },
+    // Gom "Email gửi báo giá" (truoc o Trang ca nhan) + "Quy tắc phê duyệt"
+    // (truoc la modal trong Workspace bao gia Buoc 2) ve 1 trang cai dat rieng
+    // - chi Admin/Leader thay muc nay, giong dieu kien can_manage_quote_email_
+    // settings()/can_manage_quote_approval_rules() o backend.
+    ...(isAdmin || isLeader
+      ? ([
+          {
+            type: "item",
+            id: "quote-settings",
+            href: "/all-platform/quote-settings",
+            icon: "tune",
+            label: "Cài đặt báo giá",
+            matchStartsWith: ["/all-platform/quote-settings"],
+          },
+        ] as NavLeafItem[])
+      : []),
   ];
   const crmEntries: SidebarEntry[] = [
     {
