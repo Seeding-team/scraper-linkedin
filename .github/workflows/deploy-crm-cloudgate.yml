@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: deploy-crm-shared-checkout
+  group: deploy-crm-cloudgate-production
   cancel-in-progress: false
 
 jobs:

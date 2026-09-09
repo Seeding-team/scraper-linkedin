@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: deploy-crm-shared-checkout
+  group: deploy-crm-markee-production
   cancel-in-progress: false
 
 jobs:
