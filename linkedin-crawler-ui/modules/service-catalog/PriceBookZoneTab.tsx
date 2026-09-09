@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { useAppAuth } from '@/contexts/AppAuthContext';
 import { ConfirmModal } from '@/modules/crm/components/ConfirmModal';
 import { ActionMenu } from '@/modules/crm/components/ActionMenu';
 import { Eye, Pencil, PauseCircle, Trash2, X } from '@/modules/crm/components/icons';
@@ -74,6 +75,13 @@ interface FlatZoneItem extends PriceBookItem {
 type CurrencyView = 'vnd' | 'usd';
 
 export function PriceBookZoneTab() {
+  // Chi Admin/Leader duoc quan ly Bang gia VPS Zone (mirror
+  // can_manage_price_book() o backend) - CHECK NGAY O FE truoc khi goi API,
+  // hien "Không có quyền truy cập" nhu 1 trang thai binh thuong (giong pattern
+  // QuoteSettingsContent) THAY VI goi API roi hien loi 403 nhu loi may chu that.
+  const { user } = useAppAuth();
+  const canManage = user?.role === 'admin' || user?.role === 'leader';
+
   const [statusView, setStatusView] = useState<'draft' | 'published'>('published');
   const [currencyView, setCurrencyView] = useState<CurrencyView>('vnd');
   const [version, setVersion] = useState<PriceBookVersion | null>(null);

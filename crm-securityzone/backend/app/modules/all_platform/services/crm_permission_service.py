@@ -375,15 +375,14 @@ def can_manage_quote_approval_rules(user: dict[str, Any] | None) -> bool:
 
 
 def can_manage_price_book(user: dict[str, Any] | None) -> bool:
-    """Bang gia VPS Zone - CRUD Draft/publish version CHI Admin (mirror
-    can_manage_quote_approval_rules() - khong co "presale"/"sale" role toan
-    cuc trong he thong nay, chi co gan theo tung quote qua technical_owner_id/
-    quote_owner_id, nen quan ly BANG GIA CHUAN (khong gan voi 1 quote cu the
-    nao) chi giao Admin, tranh mo rong pham vi ngoai yeu cau)."""
+    """Bang gia VPS Zone - CRUD Draft/publish version cho Admin VA Leader
+    (yeu cau rieng, mo rong tu ban dau CHI Admin - Leader cung duoc quan ly
+    bang gia chuan, giong quyen Leader o cac khu vuc CRM khac, khong con
+    gioi han rieng 1 minh Admin nua)."""
     if not user:
         return False
     role = str(user.get("role") or "").strip().lower()
-    return role == "admin"
+    return role in ("admin", "leader")
 
 
 def can_manage_service_catalog_pricing(user: dict[str, Any] | None) -> bool:
