@@ -23,7 +23,7 @@ import {
   quoteDisplayStatus,
   relativeTime,
 } from '../utils/quoteDisplay';
-import { CheckCircle2, ChevronDown, ChevronUp, Eye, GitBranchPlus, History, Link2, Send, Trash2, X } from './icons';
+import { CheckCircle2, ChevronDown, ChevronUp, Eye, GitBranchPlus, History, Link2, Plus, Send, Trash2, X } from './icons';
 import { usersService, projectsService, type QuoteBusinessRoleUser, type Project } from '@/services/all-platform.service';
 import { computeQuoteSla } from '../utils/quoteSla';
 import { SearchableSelect } from './SearchableSelect';
@@ -464,6 +464,11 @@ export function QuoteWorkspaceModal({
   const [catalogTreeQuoteId, setCatalogTreeQuoteId] = useState<string | null>(null);
   const [catalogLoading, setCatalogLoading] = useState(false);
   const [catalogTargetSectionId, setCatalogTargetSectionId] = useState('');
+  // "+" rieng tren TUNG dong hang muc (yeu cau rieng "thao tác thêm hạng
+  // mục") - chen NGAY SAU dung dong do (khac voi catalogTargetSectionId chi
+  // dam bao "cuoi 1 Muc cha"). Uu tien HON catalogTargetSectionId trong
+  // addItemsFromCatalog() khi ca 2 cung duoc set - xem ham do.
+  const [catalogInsertAfterIndex, setCatalogInsertAfterIndex] = useState<number | null>(null);
   const [zoneAdding, setZoneAdding] = useState(false);
   // "Ap gia de xuat" o Buoc 2 - tra LAI tu API theo catalogItemId da luu tren
   // dong (KHONG dua vao catalogTree cua modal da dong/mat state khi
@@ -1111,7 +1116,21 @@ export function QuoteWorkspaceModal({
   function addItemsFromCatalog(items: QuoteItem[]) {
     if (items.length === 0) return;
     let next = itemsDraft;
-    if (catalogTargetSectionId) {
+    if (catalogInsertAfterIndex != null && itemsDraft[catalogInsertAfterIndex]) {
+      // "+" tren 1 dong cu the - chen NGAY SAU dung dong do, ke thua
+      // parentItemId cua chinh dong nguon (dong thuoc Muc cha nao thi hang
+      // muc moi vao dung Muc cha do; dong khong thuoc Muc cha nao - vd nam
+      // ngoai moi Section - thi hang muc moi cung khong co parentItemId,
+      // dung yeu cau "nếu dòng không thuộc Mục cha → chèn ngay sau dòng đó
+      // ở cấp ngoài").
+      const sourceRow = itemsDraft[catalogInsertAfterIndex];
+      const insertAt = catalogInsertAfterIndex + 1;
+      next = [
+        ...next.slice(0, insertAt),
+        ...items.map(item => ({ ...item, parentItemId: sourceRow.parentItemId })),
+        ...next.slice(insertAt),
+      ];
+    } else if (catalogTargetSectionId) {
       const sectionIndex = next.findIndex(row => row.id === catalogTargetSectionId);
       if (sectionIndex !== -1) {
         let insertAt = sectionIndex + 1;
@@ -1225,9 +1244,18 @@ export function QuoteWorkspaceModal({
     }
   }
 
-  async function openCatalogPicker() {
+  // `target` tuy chon (yeu cau rieng "thao tác thêm hạng mục" - bam "+" tai
+  // 1 Muc cha hoac tai 1 dong hang muc, khong chi qua nut "Chọn từ danh mục"
+  // chung o cuoi bang nhu truoc): { sectionId } = luon them vao CUOI dung
+  // Muc cha do; { afterIndex } = chen NGAY SAU dung dong o vi tri do (dong
+  // do co the thuoc 1 Muc cha hay khong, addItemsFromCatalog() tu suy
+  // parentItemId tu chinh dong nguon). Khong truyen gi = giu nguyen hanh vi
+  // cu (them vao cuoi bang, nguoi dung tu chon Muc cha dich qua dropdown
+  // extraToolbar neu muon).
+  async function openCatalogPicker(target?: { sectionId?: string; afterIndex?: number }) {
     setCatalogModalOpen(true);
-    setCatalogTargetSectionId('');
+    setCatalogTargetSectionId(target?.sectionId || '');
+    setCatalogInsertAfterIndex(target?.afterIndex ?? null);
     if (catalogSource === 'zone') {
       void loadPriceBookItems();
     }
@@ -3538,9 +3566,19 @@ export function QuoteWorkspaceModal({
                                     <strong>{stripLeadingRomanPrefix(item.description || '', roman) || 'Mục mới'}</strong>
                                   )}
                                   {canEdit && isDraft && !isLockedForReview && item.id ? (
-                                    <button type="button" className="qc-mini-btn qc-workspace-section-add-item" onClick={() => addItemUnderSection(item.id!)}>
-                                      + Hạng mục trong mục này
-                                    </button>
+                                    <>
+                                      <button type="button" className="qc-mini-btn qc-workspace-section-add-item" onClick={() => addItemUnderSection(item.id!)}>
+                                        + Hạng mục trong mục này
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="qc-mini-btn qc-mini-btn-brand qc-workspace-section-add-item"
+                                        title="Thêm hạng mục từ danh mục/Bảng giá VPS Zone vào cuối mục này"
+                                        onClick={() => void openCatalogPicker({ sectionId: item.id })}
+                                      >
+                                        + Thêm hạng mục
+                                      </button>
+                                    </>
                                   ) : null}
                                 </td>
                                 {canEdit && isDraft && !isLockedForReview ? (
@@ -3694,6 +3732,14 @@ export function QuoteWorkspaceModal({
                             </td>
                             {canEdit && isDraft && !isLockedForReview ? (
                               <td className="qc-cell-actions qc-cell-actions--menu" data-label="Thao tác">
+                                <button
+                                  type="button"
+                                  className="qc-mini-btn-icon qc-workspace-row-add-btn"
+                                  title="Thêm hạng mục từ danh mục/Bảng giá VPS Zone ngay sau dòng này"
+                                  onClick={() => void openCatalogPicker({ afterIndex: index })}
+                                >
+                                  <Plus className="qc-inline-icon" />
+                                </button>
                                 <ActionMenu
                                   label="Thao tác hạng mục"
                                   items={[
