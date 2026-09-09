@@ -119,6 +119,9 @@ class QuoteCreateRequest(BaseModel):
     # Du an + SLA that (migration 097) - ca 2 deu tuy chon luc tao.
     project_id: Optional[str] = None
     sla_due_at: Optional[str] = None
+    # "Loai bao gia" (migration 112) - multi-select code cua
+    # category_type='crm_quote_type', chon duoc tu Buoc 1 luc tao.
+    quote_type_codes: Optional[list[str]] = None
 
 
 class QuoteUpdateRequest(BaseModel):
@@ -136,6 +139,10 @@ class QuoteUpdateRequest(BaseModel):
     # model_fields_set o router (giong het project_id/sla_due_at) de phan
     # biet 2 truong hop nay.
     overall_discount_percent: Optional[float] = None
+    # "Loai bao gia" (migration 112) - multi-select, cung dung model_fields_set
+    # o router (list rong [] la gia tri that su hop le "bo chon het", khac
+    # "khong gui gi").
+    quote_type_codes: Optional[list[str]] = None
 
 
 class QuoteStageUpdateRequest(BaseModel):

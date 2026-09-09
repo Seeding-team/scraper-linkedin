@@ -1775,7 +1775,11 @@
  * khong bi vo/lech hang khi 1 gia tri dai (vd "Đã duyệt · Chưa phát hành"). */
 .qc-workspace-info-strip {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  /* CO DINH 4 cot (yeu cau rieng "Chia các field hiện tại thành 2 hàng":
+   * Hàng 1: Khách hàng|Dự án|Cơ hội CRM|Mẫu báo giá; Hàng 2: Loại báo giá|
+   * Presale|Sale|SLA) - truoc day dung auto-fit(minmax(150px,1fr)) tu dan
+   * het 1 hang neu du rong, khong con dam bao dung 2 hang nhu yeu cau. */
+  grid-template-columns: repeat(4, 1fr);
   gap: 14px 16px;
   padding: 12px 20px;
   background: #fafbfc;
@@ -1783,6 +1787,116 @@
   flex: 0 0 auto;
 }
 .qc-workspace-info-strip > div { min-width: 0; }
+/* "Loại báo giá" (migration 112) - multi-select + chip, dat trong khoi
+ * thong tin chung (qc-workspace-info-strip), KHONG lam modal rong them
+ * (min-width:0 + flex-wrap tren control chinh no, dropdown la absolute
+ * position nen khong day layout xung quanh). */
+.qc-quote-type-control {
+  /* Khop dung chieu cao/kieu voi .crm-searchable-select-trigger (Presale/
+   * Sale/Du an... canh ben deu dung SearchableSelect) - truoc day dung
+   * min-height:30px+padding nho hon rieng, nhin THAP hon han cac o ke ben
+   * ("nó k bằng nhau" - bug UI that da gap). */
+  min-height: 2.8rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 0.65rem;
+  background: #fff;
+  padding: 0.5rem 0.8rem;
+  font-size: 0.86rem;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  box-sizing: border-box;
+}
+.qc-quote-type-control--editable { cursor: pointer; }
+.qc-quote-type-control--editable:hover { border-color: #cc1541; }
+.qc-quote-type-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.qc-quote-type-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: #fdf1f4;
+  color: #a3123f;
+  border-radius: 999px;
+  padding: 2px 6px 2px 10px;
+  font-size: 11.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.qc-quote-type-chip button {
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  padding: 0 2px;
+}
+.qc-quote-type-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 30;
+  margin-top: 4px;
+  width: 260px;
+  max-width: 90vw;
+  background: #fff;
+  border: 1px solid #e4e7ec;
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(16, 24, 40, 0.12);
+  padding: 8px;
+}
+.qc-quote-type-dropdown-list {
+  max-height: 220px;
+  overflow-y: auto;
+  margin-top: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.qc-quote-type-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 4px;
+  border-radius: 6px;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.qc-quote-type-option:hover { background: #fafbfc; }
+/* BUG THAT DA GAP ("UI xấu" - checkbox to bat thuong, khong thay dau tick):
+ * checkbox tho <input type="checkbox"> ke thua kich thuoc theo 1em cua
+ * font-size xung quanh (hoac 1 reset appearance chung cua he thong thiet
+ * ke) - o trang "Danh sách báo giá" (ngoai .qc-workspace) khong co cung 1
+ * boi canh font-size/reset nhu trong Quote Workspace nen bi phong to bat
+ * thuong. Ep KICH THUOC CO DINH ro rang, khong phu thuoc boi canh ngoai. */
+.qc-quote-type-option input[type='checkbox'] {
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+  margin: 0;
+  accent-color: #cc1541;
+}
+/* Filter "Tất cả loại báo giá" tren Danh sach bao gia - trigger gia lam
+ * giong het .crm-searchable-select-trigger (dropdown ben canh) de dong bo
+ * kieu, chi khac la mo panel checkbox multi-select thay vi list 1-chon. */
+.qc-quote-type-filter-trigger { cursor: pointer; }
+/* Badge "Loại báo giá" tren moi dong Danh sach bao gia - nho, mau trung
+ * tinh (khac han mau hong cua badge Phase/Version) de KHONG "canh tranh". */
+.qc-quote-type-badges { display: flex; flex-wrap: wrap; gap: 4px; margin: 2px 0; }
+.qc-quote-type-badge {
+  display: inline-flex;
+  align-items: center;
+  background: #eef0f4;
+  color: #5b6576;
+  border-radius: 6px;
+  padding: 1px 6px;
+  font-size: 10.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.qc-quote-type-badge-more { cursor: default; }
+.qc-quote-type-badges-empty { font-style: italic; }
 .qc-workspace-info-label {
   display: block;
   font-size: 10.5px;
@@ -2047,16 +2161,26 @@
   flex: 1;
   min-width: 0;
 }
-/* YEU CAU CHOT LAI (dinh chinh): KHONG con min-width/px co dinh cho cot dau
- * hay ca bang nua - "không có thanh cuộn ngang" la bat buoc, width that su
- * cua tung cot do block nth-child % o duoi quyet dinh (tong <=100%, luon
- * fit trong 1 khung, khong can trinh duyet cuon ngang). Wrapper
- * .qc-table-wrap (dung chung nhieu noi) mac dinh co overflow-x:auto - tat
- * han rieng cho bang hang muc nay (them class .qc-workspace-items-scroll,
- * source order sau nen thang the). */
+/* BUG THAT DA GAP: overflow-x:hidden o day tung CAT MAT cac cot cuoi (Margin/
+ * Thao tac) moi khi tong do rong THAT SU cua hang (do noi dung ben trong
+ * quyet dinh, xem <colgroup> o QuoteWorkspaceModal.tsx) vuot qua container -
+ * "hidden" khong cho cuon nen phan vuot bien mat luon thay vi cuon duoc.
+ * Doi ve overflow-x:auto (CHI la luoi an toan, khong "che loi" - voi
+ * <colgroup> PX co dinh + Hạng mục tu co gian nhu hien tai, hang KHONG con
+ * vuot qua container o kich thuoc man hinh binh thuong nen se KHONG thay
+ * thanh cuon xuat hien; scrollbar chi hien neu that su qua hep, tot hon la
+ * mat noi dung). */
 .qc-workspace-items-scroll {
-  overflow-x: hidden;
+  overflow-x: auto;
 }
+.qc-workspace-items-table--unified {
+  min-width: 1000px;
+}
+/* BUG THAT DA GAP: tung thu them 2 icon nhanh (Plus/LayoutGrid) canh nut "⋮"
+ * trong 1 cot rong bang flex - gay chong lan/vo layout that tren man hinh
+ * (ket hop voi ActionMenu tu quan ly vi tri trigger cua no). Da bo han 2
+ * icon rieng (xem QuoteWorkspaceModal.tsx), cot Thao tac CHI con dung 1 nut
+ * "⋮" nhu ban goc on dinh truoc do - KHONG can flex/gap rieng nua. */
 /* Ten hang muc: CHI hien ten (serviceDescription), toi da 2 dong roi moi
  * ellipsis - KHONG con render nguyen doan mo ta dai (item.description) o
  * duoi nhu 1 phien ban truoc do (lam dong qua cao, bang roi rac) - mo ta
@@ -2116,6 +2240,38 @@
 }
 .qc-workspace-item-desc-indicator:hover { border-color: #cc1541; color: #cc1541; }
 .qc-workspace-item-detail-btn { flex-shrink: 0; }
+/* 2 nut "+" nhanh (them dong trong / mo Catalog Picker) dat NGAY CANH ten
+ * hang muc (yeu cau rieng, sau khi phat hien dat trong cot Thao tac hep gay
+ * vo layout that su) - o day khong gian rong rai (Hạng mục la cot tu gian),
+ * an toan hon nhieu. flex-shrink:0 de KHONG bao gio bop ten (ten van
+ * flex:1/min-width:0 nhu cu, uu tien chiem het khong gian con lai truoc). */
+.qc-workspace-item-quick-add {
+  display: flex;
+  gap: 3px;
+  flex-shrink: 0;
+  align-self: flex-start;
+  margin-top: 2px;
+}
+.qc-workspace-item-quick-add-btn {
+  width: 20px;
+  height: 20px;
+  color: #7c8593;
+  border-color: #e4e7ec;
+}
+.qc-workspace-item-quick-add-btn:hover {
+  color: #cc1541;
+  border-color: #f3c6d2;
+  background: #fdf1f4;
+}
+/* Tren mobile (dang card) khong gian dong da chat, va khong co hover that su
+ * - 2 hanh dong nay van du dung qua ActionMenu (muc "Thêm hạng mục trống"/
+ * "Chọn từ danh mục" co san, xem QuoteWorkspaceModal.tsx), an icon o day de
+ * khong roi/an nhau voi ten hang muc tren man hinh hep. */
+@media (max-width: 767px) {
+  .qc-workspace-item-quick-add {
+    display: none;
+  }
+}
 .qc-workspace-drawer-field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: #5b6576; }
 .qc-workspace-drawer-field p { margin: 0; font-size: 13px; color: #1f2530; }
 .qc-mini-btn-icon {
@@ -2139,58 +2295,30 @@
   vertical-align: middle;
 }
 
-/* KHONG con cuon ngang cho bang hang muc (yeu cau rieng, dinh chinh lai: GIU
- * NGUYEN du 10 cot Hạng mục|ĐVT|SL|Giá vốn/ĐV|Cost tổng|Markup|Giá khách/ĐV|
- * Thành tiền|Margin|Thao tác - KHONG gop/bo cot nao - nhung phai vua het
- * trong 1 khung desktop, KHONG scroll ngang) - dung nth-child (nhieu cot
- * dang TAI SU DUNG chung 1 class nhu .qc-cell-cost/.qc-cell-markup cho 2
- * <td> khac nhau nen khong the gan width rieng qua class) + % CO DINH tong
- * <=100% (giong dung pattern .qc-linked-table--10col da co san o bang khac
- * trong file nay), khop table-layout:fixed co san cua .qc-linked-table
- * (dong 878-882). Header duoc phep xuong toi da 2 dong (.qc-linked-table th
- * da co san white-space:normal) thay vi ep 1 dong nhu truoc. */
-.qc-workspace-items-table--unified th:nth-child(1),
-.qc-workspace-items-table--unified td:nth-child(1) { width: 27%; }
-.qc-workspace-items-table--unified th:nth-child(2),
-.qc-workspace-items-table--unified td:nth-child(2) { width: 6%; }
-.qc-workspace-items-table--unified th:nth-child(3),
-.qc-workspace-items-table--unified td:nth-child(3) { width: 5%; }
-.qc-workspace-items-table--unified th:nth-child(4),
-.qc-workspace-items-table--unified td:nth-child(4) { width: 10%; }
-.qc-workspace-items-table--unified th:nth-child(5),
-.qc-workspace-items-table--unified td:nth-child(5) { width: 10%; }
-.qc-workspace-items-table--unified th:nth-child(6),
-.qc-workspace-items-table--unified td:nth-child(6) { width: 7%; }
-.qc-workspace-items-table--unified th:nth-child(7),
-.qc-workspace-items-table--unified td:nth-child(7) { width: 10%; }
-.qc-workspace-items-table--unified th:nth-child(8),
-.qc-workspace-items-table--unified td:nth-child(8) { width: 10%; }
-.qc-workspace-items-table--unified th:nth-child(9),
-.qc-workspace-items-table--unified td:nth-child(9) { width: 4%; }
-.qc-workspace-items-table--unified th:nth-child(10),
-.qc-workspace-items-table--unified td:nth-child(10) { width: 6%; }
-/* Khi KHONG co cot Thao tac (view chi doc, khong render th/td thu 10) - cot
- * Margin (thu 9) tu gian ra chiem phan con lai, khong sao vi van <=100%. */
-/* Cot Thao tac rong hon 1 chut (4% -> 6%, bu lai tu Margin) - yeu cau rieng
- * them nut "+" (them hang muc tu danh muc ngay sau dong nay) canh nut "⋮",
- * 4% (~44-50px) chi vua 1 icon, can them cho o thu 2. */
-.qc-workspace-items-table--unified .qc-cell-actions--menu {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 2px;
-  padding-left: 4px !important;
-  padding-right: 4px !important;
-}
-.qc-workspace-row-add-btn {
-  flex-shrink: 0;
-  color: #cc1541;
-  border-color: #f3c6d2;
-}
-.qc-workspace-row-add-btn:hover {
-  background: #fdf1f4;
-}
+/* KHONG con cuon ngang cho bang hang muc (yeu cau rieng: GIU NGUYEN du 10 cot
+ * Hạng mục|ĐVT|SL|Giá vốn/ĐV|Cost tổng|Markup|Giá khách/ĐV|Thành tiền|Margin|
+ * Thao tác - KHONG gop/bo cot nao - nhung phai vua het trong 1 khung
+ * desktop). BUG THAT DA GAP voi cach lam CU (width % qua nth-child): %
+ * KHONG dang tin cay duoi table-layout:fixed khi 1 cell co noi dung voi
+ * kich thuoc PIXEL toi thieu lon hon phan % da gan (vd 2 nut icon +/⋮ trong
+ * Thao tac) - cell do buoc phai rong hon % duoc gan, day ca bang vuot qua
+ * container, va vi wrapper dang overflow-x:hidden nen PHAN VUOT o cac cot
+ * CUOI (Margin/Thao tac) bi CAT MAT thay vi cuon ("23...." + nut troi ra
+ * ngoai bang). Doi sang <colgroup><col style={{width:'Npx'}}/></colgroup>
+ * (xem QuoteWorkspaceModal.tsx) - PX CO DINH cho moi cot hep/co dinh, rieng
+ * "Hạng mục" (cot 1) KHONG khai bao width - dung chuan CSS table-layout:
+ * fixed: cot khong khai bao width se TU CHIA HET phan con lai, khong con
+ * phu thuoc "vua khit %" nua - day la cach duy nhat dang tin cay khi 1 vai
+ * cot co noi dung kich thuoc co dinh (icon/so ngan) con 1 cot can co giãn. */
 
+/* Header duoc phep xuong toi da 2 dong (.qc-linked-table th da co san
+ * white-space:normal) thay vi ep 1 dong. */
+/* Nut "+" (them hang muc tu danh muc ngay sau dong nay) da chuyen sang nam
+ * canh ten hang muc (qc-workspace-item-name-col) - cot Thao tac CHI con
+ * dung 1 nut "⋮" nhu cu, KHONG can flex/padding rieng nua (rule flex+padding
+ * truoc day vo tinh de !important ghi de padding-top/bottom cua chinh
+ * .qc-linked-table-section-row td, tao 1 khung hong bat thuong quanh "⋮" o
+ * dong Muc cha - bug that da gap, xoa han rule nay de tro ve mac dinh). */
 .qc-th-select, .qc-cell-select { width: 28px; text-align: center; padding-left: 8px !important; padding-right: 0 !important; }
 
 .qc-cell-unit .qc-cell-input { width: 100%; box-sizing: border-box; }

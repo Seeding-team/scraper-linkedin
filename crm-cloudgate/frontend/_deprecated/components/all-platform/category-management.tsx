@@ -36,6 +36,7 @@ const CATEGORY_TYPE_COLS: Record<CategoryType, string[]> = {
   crm_industry: ["code", "name", "platform"],
   crm_position: ["code", "name", "platform"],
   crm_next_step: ["code", "name", "platform"],
+  crm_quote_type: ["code", "name", "platform"],
 };
 
 // ── CATEGORY MODAL (Intent, Industry, Tier, ICP) ─────────────────────────────

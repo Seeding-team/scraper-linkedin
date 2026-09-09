@@ -384,12 +384,27 @@ const CRM_SECTIONS: Array<{ key: CategoryType; label: string; description: strin
     placeholderCode: "Vd: Gui_bao_gia",
     placeholderName: "Vd: Gửi báo giá",
   },
+  {
+    // Category type MOI, RIENG (khong dung chung voi crm_industry) - "Loại
+    // báo giá" phan loai GIAI PHAP/DICH VU dang chao trong 1 bao gia (multi-
+    // select tren Quote Workspace), khac hoan toan "Lĩnh vực" (nganh nghe
+    // khach hang). Dung dung 1 co che categories generic da co san, KHONG
+    // tao bang/man quan tri rieng - chi them 1 category_type moi.
+    key: "crm_quote_type",
+    label: "Loại báo giá",
+    description: "Loại giải pháp/dịch vụ đang chào trong báo giá (vd: Thiết kế website, Hạ tầng/VPS/Cloud...) — độc lập với Lĩnh vực (ngành nghề khách hàng).",
+    placeholderCode: "Vd: Thiet_ke_website",
+    placeholderName: "Vd: Thiết kế website",
+  },
 ];
 
-// Chỉ category_type='crm_position' dùng NGỪNG DÙNG (is_active=false) thay vì
-// xóa — 4 mục kia (Lĩnh vực/Nguồn/Danh mục sản phẩm/Gói) giữ nguyên hành vi
-// xóa cứng đã có từ trước (ngoài phạm vi task này, xem migration 079).
-const DEACTIVATABLE_SECTIONS = new Set<CategoryType>(["crm_position"]);
+// Chỉ category_type='crm_position'/'crm_quote_type' dùng NGỪNG DÙNG
+// (is_active=false) thay vì xóa cứng — Loại báo giá đã gắn vào báo giá cũ
+// (quotes.quote_type_codes lưu THEO CODE) không được xóa cứng, khớp yêu cầu
+// "Không xóa cứng loại đã được báo giá sử dụng". 3 mục kia (Lĩnh vực/Nguồn/
+// Danh mục sản phẩm/Gói) giữ nguyên hành vi xóa cứng đã có từ trước (ngoài
+// phạm vi task này, xem migration 079).
+const DEACTIVATABLE_SECTIONS = new Set<CategoryType>(["crm_position", "crm_quote_type"]);
 
 function CrmCategorySections({
   categories,
@@ -803,6 +818,7 @@ export function CategoryManagementContent({
     crm_industry: [],
     crm_position: [],
     crm_next_step: [],
+    crm_quote_type: [],
   });
 
   const [selectedTab, setSelectedTab] = useState<CategoryType>(crmOnly ? CRM_TAB_KEY : "intent");
@@ -877,6 +893,7 @@ export function CategoryManagementContent({
         crm_industry: [],
         crm_position: [],
         crm_next_step: [],
+        crm_quote_type: [],
       };
 
       list.forEach((item) => {

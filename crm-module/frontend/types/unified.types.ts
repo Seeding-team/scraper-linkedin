@@ -5,7 +5,7 @@
    These types mirror the Supabase database schema. */
 
 export type FeedPlatform = "facebook" | "linkedin";
-export type CategoryType = "intent" | "industry" | "tier" | "team" | "icp" | "content_type" | "product_seeding" | "crm_source" | "crm_service_package" | "crm_package" | "crm_industry" | "crm_position" | "crm_next_step";
+export type CategoryType = "intent" | "industry" | "tier" | "team" | "icp" | "content_type" | "product_seeding" | "crm_source" | "crm_service_package" | "crm_package" | "crm_industry" | "crm_position" | "crm_next_step" | "crm_quote_type";
 export type VerifyStatus = "pending" | "yes" | "no";
 export type UserRole = "member" | "leader" | "admin";
 

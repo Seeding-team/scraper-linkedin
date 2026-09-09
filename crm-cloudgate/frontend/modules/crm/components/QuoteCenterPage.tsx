@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { useAppAuth } from '@/contexts/AppAuthContext';
-import { teamsService, type TeamRow, projectsService, type Project, usersService, type QuoteBusinessRoleUser } from '@/services/all-platform.service';
+import { teamsService, type TeamRow, projectsService, type Project, usersService, type QuoteBusinessRoleUser, allPlatformCategoriesService } from '@/services/all-platform.service';
 import { computeQuoteSla } from '../utils/quoteSla';
 import { seedingQuoteRepository } from '@/modules/quotes';
 import type { IssuerCompany, Quote, QuoteForm, QuotePhase, QuotesByPhaseResult } from '@/modules/quotes';
@@ -480,6 +480,30 @@ export function QuoteCenterPage() {
   const [presaleFilter, setPresaleFilter] = useState('');
   const [saleFilter, setSaleFilter] = useState('');
 
+  // "Loai bao gia" (migration 112) - filter multi-select tren "Danh sach
+  // bao gia", dat sau "Tat ca du an" truoc "Tat ca Presale" (yeu cau ro
+  // rang). Option lay dong tu category_type=crm_quote_type, KHONG hardcode.
+  const [quoteTypeFilterOptions, setQuoteTypeFilterOptions] = useState<{ value: string; label: string }[]>([]);
+  useEffect(() => {
+    let alive = true;
+    allPlatformCategoriesService.getAll('crm_quote_type', { activeOnly: true }).then(res => {
+      if (alive) setQuoteTypeFilterOptions((res.data || []).map(c => ({ value: c.code, label: c.name || c.code })));
+    }).catch(() => {
+      if (alive) setQuoteTypeFilterOptions([]);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+  // Loc DON GIA TRI, giong het cach hoat dong cua Presale/Sale/Du an ben canh
+  // (SearchableSelect 1 lua chon) - KHONG phai multi-select tick nhu ban dau,
+  // theo dung yeu cau sua lai ("lọc như mấy tab lọc kế bên", khong tick).
+  const [quoteTypeFilter, setQuoteTypeFilter] = useState('');
+  function quoteTypeFilterLabel(code: string): string {
+    if (code === '__unclassified__') return 'Chưa phân loại';
+    return quoteTypeFilterOptions.find(o => o.value === code)?.label || code;
+  }
+
   const PAGE_SIZE = QUOTE_ROW_LIMIT;
 
   // period (Thang nay/Quy nay/Nam nay) -> khoang ngay THAT gui xuong backend
@@ -500,7 +524,7 @@ export function QuoteCenterPage() {
   // vo ly.
   useEffect(() => {
     setPage(1);
-  }, [phaseTab, listSearch, customerFilter, projectFilter, presaleFilter, saleFilter, teamFilter, roleScope, period, slaFilter]);
+  }, [phaseTab, listSearch, customerFilter, projectFilter, presaleFilter, saleFilter, teamFilter, roleScope, period, slaFilter, quoteTypeFilter]);
 
   function buildByPhaseParams(pageArg: number) {
     const { dateFrom, dateTo } = periodToDateRange(period);
@@ -516,6 +540,7 @@ export function QuoteCenterPage() {
       dateFrom,
       dateTo,
       sla: slaFilter || undefined,
+      quoteTypes: quoteTypeFilter ? [quoteTypeFilter] : undefined,
       page: pageArg,
       pageSize: PAGE_SIZE,
     };
@@ -550,7 +575,7 @@ export function QuoteCenterPage() {
       alive = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [phaseTab, listSearch, customerFilter, projectFilter, presaleFilter, saleFilter, teamFilter, roleScope, period, slaFilter, page]);
+  }, [phaseTab, listSearch, customerFilter, projectFilter, presaleFilter, saleFilter, teamFilter, roleScope, period, slaFilter, quoteTypeFilter, page]);
 
   async function refreshByPhase() {
     const seq = ++byPhaseSeqRef.current;
@@ -853,6 +878,30 @@ export function QuoteCenterPage() {
     return items;
   }
 
+  // Badge "Loại báo giá" tren moi dong (yeu cau rieng: KHONG them cot moi -
+  // dat ngay duoi ten bao gia, TOI DA 2 badge + "+N", hover/click +N xem
+  // day du qua title=). Chua gan = chu phu "Chưa phân loại", khong phai
+  // badge (tranh "canh tranh" voi badge Phase/Version nhu yeu cau).
+  function renderQuoteTypeBadges(codes: string[] | undefined) {
+    const list = codes || [];
+    if (list.length === 0) {
+      return <div className="qc-row-sub qc-quote-type-badges-empty">Chưa phân loại</div>;
+    }
+    const shown = list.slice(0, 2);
+    const restCount = list.length - shown.length;
+    const restLabel = restCount > 0 ? list.slice(2).map(quoteTypeFilterLabel).join(', ') : '';
+    return (
+      <div className="qc-quote-type-badges">
+        {shown.map(code => (
+          <span key={code} className="qc-quote-type-badge">{quoteTypeFilterLabel(code)}</span>
+        ))}
+        {restCount > 0 ? (
+          <span className="qc-quote-type-badge qc-quote-type-badge-more" title={restLabel}>+{restCount}</span>
+        ) : null}
+      </div>
+    );
+  }
+
   function renderChainRow(row: QuoteChainRow) {
     const { current, deal, versionCount } = row;
     const businessCode = deal ? dealBusinessCode(deal) : null;
@@ -880,6 +929,7 @@ export function QuoteCenterPage() {
               {current.data.quoteTitle}
             </div>
           ) : null}
+          {renderQuoteTypeBadges(current.quoteTypeCodes)}
           {deal ? (
             <div className="qc-row-sub">
               <Link href={`/all-platform/crm?openDeal=${deal.id}`} className="qc-row-link">
@@ -1413,6 +1463,14 @@ export function QuoteCenterPage() {
               placeholder="Tất cả dự án"
               options={projectFilterOptions.map(p => ({ value: p.id, label: `${p.projectCode} · ${p.name}` }))}
               disabled={!customerFilter}
+            />
+          </div>
+          <div className="crm-filter-select-wrap">
+            <SearchableSelect
+              value={quoteTypeFilter}
+              onChange={setQuoteTypeFilter}
+              placeholder="Tất cả loại báo giá"
+              options={[{ value: '__unclassified__', label: 'Chưa phân loại' }, ...quoteTypeFilterOptions]}
             />
           </div>
           <div className="crm-filter-select-wrap">

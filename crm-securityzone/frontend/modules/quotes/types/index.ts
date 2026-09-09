@@ -329,6 +329,11 @@ export interface Quote {
    * Chi anh huong hien thi Buoc 2 (Gia sau giam/Margin sau giam), KHONG dung
    * de tinh lai subtotalAmount/vatAmount/totalAmount o tren. */
   overallDiscountPercent?: number | null;
+  /** "Loai bao gia" (migration 112) - multi-select CODE cua
+   * category_type='crm_quote_type' (Danh muc CRM), DOC LAP voi Linh vuc
+   * khach hang. Luon la mang (co the rong []), khong bao gio null/undefined
+   * tu response that (server tra `row.get(...) or []`). */
+  quoteTypeCodes?: string[];
   /** Toan bo field duoi day CHI CO tren ket qua tu getQuotesByPhase()
    * (backend gom theo version_chain_id + join project/owner cung luc, xem
    * list_quotes_by_phase()) - khong co tren getQuote()/getQuotes() thuong. */
@@ -458,6 +463,7 @@ export interface CreateQuoteInput {
   items?: QuoteItem[];
   projectId?: string | null;
   slaDueAt?: string | null;
+  quoteTypeCodes?: string[];
 }
 
 export interface UpdateQuoteInput {
@@ -467,4 +473,5 @@ export interface UpdateQuoteInput {
   projectId?: string | null;
   slaDueAt?: string | null;
   overallDiscountPercent?: number | null;
+  quoteTypeCodes?: string[];
 }

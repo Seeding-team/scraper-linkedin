@@ -15,6 +15,7 @@ from postgrest.exceptions import APIError
 from supabase import Client
 
 from app.core.supabase_client import get_supabase_client
+from app.modules.all_platform.services.supabase_categories_service import get_categories_by_type
 
 
 class QuoteNotFoundError(ValueError):
@@ -264,6 +265,11 @@ def _row_to_quote(row: dict, items: list[dict] | None = None) -> dict:
         "overallDiscountPercent": (
             float(row["overall_discount_percent"]) if row.get("overall_discount_percent") is not None else None
         ),
+        # "Loai bao gia" (migration 112) - multi-select, luu CODE cua
+        # category_type='crm_quote_type'. Doc/sua ngay tren cot phang cua
+        # quotes (khong phai RPC), giong y het pattern overall_discount_percent
+        # o tren - xem update_quote() phia duoi (direct_fields).
+        "quoteTypeCodes": row.get("quote_type_codes") or [],
         # Gia von/loi nhuan (migration 086) - tinh THAT o backend, khong tin
         # so tong tu frontend. CHI dung noi bo (_row_to_quote khong bao gio
         # duoc goi cho duong public - xem _row_to_public_quote rieng o tren).
@@ -1015,6 +1021,7 @@ def list_quotes_by_phase(
     date_from: str | None = None,
     date_to: str | None = None,
     sla: str | None = None,
+    quote_types: list[str] | None = None,
     page: int = 1,
     page_size: int = 10,
 ) -> dict:
@@ -1046,7 +1053,7 @@ def list_quotes_by_phase(
             "id, deal_id, project_id, technical_owner_id, quote_owner_id, created_by, "
             "quote_number, version_chain_id, version_number, processing_stage, status, "
             "sent_at, published_at, approved_at, issued_at, created_at, updated_at, "
-            "sla_due_at, completed_at"
+            "sla_due_at, completed_at, quote_type_codes"
         )
         .is_("deleted_at", "null")
         .execute()
@@ -1082,10 +1089,33 @@ def list_quotes_by_phase(
             )
             deals_by_id = {d["id"]: d for d in (deal_result.data or [])}
 
+    # "Loai bao gia" (migration 112) - can nhan LABEL (khong chi CODE) de
+    # search chung "tim duoc theo ten Loai bao gia" (yeu cau ro rang) - chi
+    # fetch 1 lan cho ca trang khi that su can (co quote_types filter HOAC co
+    # search) de tranh 1 query thua khi khong dung toi.
+    quote_type_label_by_code: dict[str, str] = {}
+    if quote_types or (search and search.strip()):
+        try:
+            quote_type_label_by_code = {
+                c["code"]: (c.get("name") or c["code"]) for c in get_categories_by_type("crm_quote_type")
+            }
+        except Exception:
+            quote_type_label_by_code = {}
+
     def _matches_non_phase_filters(row: dict) -> bool:
+        row_quote_type_codes: list[str] = row.get("quote_type_codes") or []
         if search and search.strip():
             needle = search.strip().lower()
-            if needle not in (row.get("quote_number") or "").lower():
+            haystacks = [row.get("quote_number") or ""] + [
+                quote_type_label_by_code.get(code, code) for code in row_quote_type_codes
+            ]
+            if not any(needle in h.lower() for h in haystacks):
+                return False
+        if quote_types:
+            wants_unclassified = "__unclassified__" in quote_types
+            matches_unclassified = wants_unclassified and not row_quote_type_codes
+            matches_selected = any(code in row_quote_type_codes for code in quote_types if code != "__unclassified__")
+            if not (matches_unclassified or matches_selected):
                 return False
         if project_id and row.get("project_id") != project_id:
             return False
@@ -1314,6 +1344,10 @@ def create_quote(payload: dict, created_by: str | None) -> dict:
         # (set_quote_processing_stage), khong phai luc tao nay).
         "project_id": payload.get("project_id"),
         "sla_due_at": payload.get("sla_due_at"),
+        # "Loai bao gia" (migration 112) - phai chon duoc TU BUOC 1 (yeu cau
+        # ro rang "phải chọn được ngay từ Bước 1"), nen nhan luon o create_quote,
+        # khong doi update_quote() duy nhat.
+        "quote_type_codes": payload.get("quote_type_codes") or [],
     }
     quote_row = supabase.table(QUOTES_TABLE).insert(insert_data).execute().data[0]
 
@@ -1503,8 +1537,29 @@ def update_quote(quote_id: str, payload: dict, actor_id: str | None) -> dict:
         direct_fields["sla_due_at"] = payload.get("sla_due_at")
     if "overall_discount_percent" in payload:
         direct_fields["overall_discount_percent"] = payload.get("overall_discount_percent")
+    quote_type_changed = False
+    old_quote_type_codes: list[str] = []
+    if "quote_type_codes" in payload:
+        new_quote_type_codes = payload.get("quote_type_codes") or []
+        # "Loai bao gia" (migration 112) - yeu cau rieng "Mọi thay đổi phải
+        # ghi Activity/Audit: ai đổi, thời gian, giá trị trước và sau" - phai
+        # doc gia tri CU truoc khi ghi de (update() thang khong qua RPC nen
+        # khong tu dong co "before" nhu cac thay doi hang muc qua quote_update()).
+        current_row = (
+            supabase.table(QUOTES_TABLE).select("quote_type_codes").eq("id", quote_id).maybe_single().execute()
+        )
+        old_quote_type_codes = (current_row.data or {}).get("quote_type_codes") or [] if current_row else []
+        quote_type_changed = sorted(old_quote_type_codes) != sorted(new_quote_type_codes)
+        direct_fields["quote_type_codes"] = new_quote_type_codes
     if direct_fields:
         supabase.table(QUOTES_TABLE).update(direct_fields).eq("id", quote_id).execute()
+    if quote_type_changed:
+        supabase.table("quote_activity_log").insert({
+            "quote_id": quote_id,
+            "actor_id": actor_id,
+            "action": "quote_type_changed",
+            "changes": {"before": old_quote_type_codes, "after": direct_fields["quote_type_codes"]},
+        }).execute()
 
     return get_quote(quote_id)
 

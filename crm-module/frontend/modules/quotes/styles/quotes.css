@@ -2244,7 +2244,7 @@ select.quote-compact-vat:hover {
  * noi bat het chieu rong bang, KHONG phai 1 hang muc tinh tien - phan biet
  * ro voi .quote-item-row--parent/--child (hang muc that). */
 .quote-item-row--section td {
-  background: #fbe9ee;
+  background: #ffffff;
   text-align: left;
   font-size: 0.95em;
   padding-top: 0.6rem;

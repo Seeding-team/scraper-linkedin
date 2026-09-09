@@ -151,6 +151,7 @@ function toCreateQuotePayload(input: CreateQuoteInput) {
     items: (input.items || []).map(toQuoteItemPayload),
     project_id: input.projectId ?? null,
     sla_due_at: input.slaDueAt ?? null,
+    quote_type_codes: input.quoteTypeCodes ?? [],
   };
 }
 
@@ -174,6 +175,7 @@ function toUpdateQuotePayload(input: UpdateQuoteInput) {
   if ('projectId' in input) payload.project_id = input.projectId ?? null;
   if ('overallDiscountPercent' in input) payload.overall_discount_percent = input.overallDiscountPercent ?? null;
   if ('slaDueAt' in input) payload.sla_due_at = input.slaDueAt ?? null;
+  if ('quoteTypeCodes' in input) payload.quote_type_codes = input.quoteTypeCodes ?? [];
   return payload;
 }
 
@@ -277,6 +279,9 @@ export class SeedingQuoteRepository implements QuoteRepository {
     dateTo?: string;
     /** Section 7 - KPI SLA Quote Center, loc TRUOC pagination o backend. */
     sla?: 'overdue' | 'due_soon';
+    /** "Loai bao gia" (migration 112) - code cua crm_quote_type, nhieu gia
+     * tri = OR; '__unclassified__' = chua gan Loai bao gia nao. */
+    quoteTypes?: string[];
     page?: number;
     pageSize?: number;
   }): Promise<QuotesByPhaseResult> {
@@ -293,6 +298,7 @@ export class SeedingQuoteRepository implements QuoteRepository {
     if (params.dateFrom) qs.set('date_from', params.dateFrom);
     if (params.dateTo) qs.set('date_to', params.dateTo);
     if (params.sla) qs.set('sla', params.sla);
+    (params.quoteTypes || []).forEach(code => qs.append('quote_type', code));
     qs.set('page', String(params.page || 1));
     qs.set('page_size', String(params.pageSize || 10));
     return apiFetch<QuotesByPhaseResult>(`/api/all-platform/quotes/by-phase?${qs.toString()}`);

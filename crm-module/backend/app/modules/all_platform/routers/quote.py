@@ -210,6 +210,7 @@ def quotes_list_by_phase(
     date_from: str | None = Query(None),
     date_to: str | None = Query(None),
     sla: str | None = Query(None, description="'overdue' | 'due_soon' - Section 7 KPI SLA, loc TRUOC pagination"),
+    quote_type: list[str] | None = Query(None, description="code cua crm_quote_type, co the truyen nhieu lan (OR); '__unclassified__' = chua gan Loai bao gia nao"),
     page: int = Query(1),
     page_size: int = Query(10),
     _user: dict = Depends(get_current_user),
@@ -233,6 +234,7 @@ def quotes_list_by_phase(
             date_from=date_from,
             date_to=date_to,
             sla=sla,
+            quote_types=quote_type,
             page=page,
             page_size=page_size,
         )
@@ -441,6 +443,8 @@ def quotes_update(quote_id: str, payload: QuoteUpdateRequest, user: dict = Depen
             dump["sla_due_at"] = payload.sla_due_at
         if "overall_discount_percent" in fields_set:
             dump["overall_discount_percent"] = payload.overall_discount_percent
+        if "quote_type_codes" in fields_set:
+            dump["quote_type_codes"] = payload.quote_type_codes
         denied = _check_item_field_level_permission(user, quote, dump.get("items"))
         if denied:
             return BaseResponse(success=False, message=denied)
