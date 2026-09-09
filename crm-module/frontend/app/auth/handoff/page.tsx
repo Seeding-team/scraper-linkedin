@@ -2,6 +2,7 @@
 
 import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { Loader2 } from "lucide-react";
 
 import { getDashboardHrefForRole } from "@/components/all-platform/layout/AllPlatformSidebar";
 import { authService } from "@/services/all-platform.service";
@@ -37,7 +38,7 @@ function HandoffInner() {
   }, []);
 
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center gap-3 text-center">
+    <div className="flex min-h-screen flex-col items-center justify-center gap-3 bg-background text-center animate-in fade-in duration-300">
       {error ? (
         <>
           <p className="text-sm text-red-600">{error}</p>
@@ -46,7 +47,10 @@ function HandoffInner() {
           </a>
         </>
       ) : (
-        <p className="text-sm text-on-surface-variant">Đang chuyển workspace...</p>
+        <>
+          <Loader2 className="size-8 animate-spin text-[var(--color-markee-primary)]" />
+          <p className="text-sm text-on-surface-variant">Đang chuyển workspace...</p>
+        </>
       )}
     </div>
   );

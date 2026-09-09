@@ -12,6 +12,7 @@ import { LogOut, Settings2, ChevronLeft, ChevronRight } from "lucide-react";
 
 import { useAppAuth } from "@/contexts/AppAuthContext";
 import { materialToLucideIcon } from "@/lib/material-to-lucide-icon";
+import { WorkspaceSwitcherShadcn } from "./WorkspaceSwitcherShadcn";
 import {
   buildEntries,
   isLeafActive,
@@ -208,6 +209,7 @@ export function AllPlatformSidebarShadcn() {
       </SidebarContent>
 
       <SidebarFooter>
+        {isAdmin ? <WorkspaceSwitcherShadcn /> : null}
         <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuButton
