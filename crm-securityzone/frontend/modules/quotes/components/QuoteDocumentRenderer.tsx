@@ -71,6 +71,19 @@ function toRomanNumeral(num: number): string {
   return out || String(num);
 }
 
+/** Bug that da gap ("I. I. Phan mem" tren ban xem truoc/PDF khach hang): mot so
+ * Muc cha (Section) co san du lieu da tu go san so La Ma vao dau ten (vd "I.
+ * Phần mềm"), trong khi renderer LUON tu dong ghep them so La Ma tinh theo vi
+ * tri (`toRomanNumeral(sectionCounter)`) truoc ten - ghep 2 cai lai thanh lap.
+ * Ban sao doc lap voi ham cung ten trong QuoteWorkspaceModal.tsx (khac module).
+ * CHI strip dung so La Ma KHOP VOI vi tri hien tai cua chinh no + dau cham
+ * theo sau - KHONG dung regex chung cho moi chuoi bat dau bang chu hoa (se cat
+ * nham ten that su bat dau bang chu "I"/"V"/"X"..., vd "Video call"). */
+function stripLeadingRomanPrefix(text: string, expectedRoman: string): string {
+  const pattern = new RegExp(`^${expectedRoman}\\.\\s*`, 'i');
+  return text.replace(pattern, '');
+}
+
 function formatDateVN(value: unknown): string {
   const raw = String(value || '').trim();
   if (!raw) return '';
@@ -680,7 +693,7 @@ export function QuoteDocumentRenderer({
                     row.isSection ? (
                       <tr key={row.item.id || `section-${row.number}-${index}`} className="quote-item-row quote-item-row--section">
                         <td colSpan={Math.max(finalColumns.length, 1)}>
-                          <strong>{row.number} — {String(row.item.description || row.item.serviceDescription || '')}</strong>
+                          <strong>{row.number} — {stripLeadingRomanPrefix(String(row.item.description || row.item.serviceDescription || ''), row.number)}</strong>
                         </td>
                       </tr>
                     ) : (

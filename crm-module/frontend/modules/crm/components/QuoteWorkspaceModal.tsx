@@ -140,6 +140,19 @@ function toRomanNumeral(num: number): string {
   return out || String(num);
 }
 
+/** Bug that da gap ("I. I. Phan mem"): mot so Muc cha (Section) co san du lieu
+ * da tu go san so La Ma vao dau ten (vd "I. Phần mềm" go tu Excel/thoi quen
+ * cu), trong khi UI moi LUON tu dong ghep them so La Ma tinh theo vi tri
+ * (`toRomanNumeral(sectionCounter)`) truoc ten - ghep 2 cai lai thanh lap
+ * ("I. I. Phần mềm"). CHI strip dung so La Ma KHOP VOI vi tri hien tai cua
+ * chinh no (`expectedRoman`) + dau cham theo sau - KHONG dung regex chung
+ * chung moi chuoi bat dau bang chu hoa (se cat nham ten that su bat dau bang
+ * chu "I"/"V"/"X"... khong phai so thu tu, vd "Video call"). */
+function stripLeadingRomanPrefix(text: string, expectedRoman: string): string {
+  const pattern = new RegExp(`^${expectedRoman}\\.\\s*`, 'i');
+  return text.replace(pattern, '');
+}
+
 function newBlockId(): string {
   if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return crypto.randomUUID();
   return `block_${Date.now()}_${Math.random().toString(36).slice(2)}`;
@@ -3498,13 +3511,13 @@ export function QuoteWorkspaceModal({
                                   {canEdit && isDraft && !isLockedForReview ? (
                                     <input
                                       className="qc-cell-input qc-workspace-section-input"
-                                      value={item.description || ''}
+                                      value={stripLeadingRomanPrefix(item.description || '', roman)}
                                       onChange={e => updateRow(index, { description: e.target.value })}
                                       onBlur={() => void persistQuote({}, { silent: true })}
                                       placeholder="Tên mục cha"
                                     />
                                   ) : (
-                                    <strong>{item.description || 'Mục mới'}</strong>
+                                    <strong>{stripLeadingRomanPrefix(item.description || '', roman) || 'Mục mới'}</strong>
                                   )}
                                   {canEdit && isDraft && !isLockedForReview && item.id ? (
                                     <button type="button" className="qc-mini-btn qc-workspace-section-add-item" onClick={() => addItemUnderSection(item.id!)}>
@@ -4454,10 +4467,11 @@ export function QuoteWorkspaceModal({
                     return itemsDraft.map((item, index) => {
                       if (item.rowType === 'section') {
                         sectionCounter += 1;
+                        const previewRoman = toRomanNumeral(sectionCounter);
                         return (
                           <tr key={item.id || index} className="qc-linked-table-section-row">
                             <td colSpan={4}>
-                              <strong>{toRomanNumeral(sectionCounter)}. {item.description || 'Mục mới'}</strong>
+                              <strong>{previewRoman}. {stripLeadingRomanPrefix(item.description || '', previewRoman) || 'Mục mới'}</strong>
                             </td>
                           </tr>
                         );
