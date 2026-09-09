@@ -6677,7 +6677,13 @@
 }
 
 .crm-filter-grid--customers-v2 {
-  grid-template-columns: minmax(18rem, 1fr) minmax(12rem, 16rem) auto;
+  grid-template-columns: minmax(12rem, 1fr) minmax(9rem, 12rem) minmax(9rem, 12rem) auto;
+}
+
+@media (max-width: 1100px) {
+  .crm-filter-grid--customers-v2 {
+    grid-template-columns: 1fr 1fr 1fr;
+  }
 }
 
 @media (max-width: 900px) {

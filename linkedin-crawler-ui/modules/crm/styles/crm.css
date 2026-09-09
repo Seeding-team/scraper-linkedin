@@ -6676,8 +6676,19 @@
   font-size: 0.72rem;
 }
 
+/* Them filter "Sale manager" (yeu cau rieng) - tu 1 o tim + 1 select + nut
+ * thanh 1 o tim + 2 select + nut, GIU NGUYEN 3 cot cu se thieu 1 cot khien
+ * nut "Thêm khách hàng" bi day xuong dong duoi (yeu cau "thu ngắn tìm kiếm
+ * lại... k xún dòng") - rut ngan minmax cua o tim + 2 select de ca 4 vua
+ * 1 hang ngang tren desktop. */
 .crm-filter-grid--customers-v2 {
-  grid-template-columns: minmax(18rem, 1fr) minmax(12rem, 16rem) auto;
+  grid-template-columns: minmax(12rem, 1fr) minmax(9rem, 12rem) minmax(9rem, 12rem) auto;
+}
+
+@media (max-width: 1100px) {
+  .crm-filter-grid--customers-v2 {
+    grid-template-columns: 1fr 1fr 1fr;
+  }
 }
 
 @media (max-width: 900px) {

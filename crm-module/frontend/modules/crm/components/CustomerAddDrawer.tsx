@@ -6,6 +6,7 @@ import { createPortal } from 'react-dom';
 import { API_BASE_URL, API_KEY } from '@/lib/env';
 import { useMembers } from '@/hooks/useMembers';
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
+import { usersService, type QuoteBusinessRoleUser } from '@/services/all-platform.service';
 import { CITY_OPTIONS, INDUSTRY_OPTIONS, SOURCE_OPTIONS } from '../constants/crmConfig';
 import { SearchableSelect } from './SearchableSelect';
 import { PositionSelect } from './PositionSelect';
@@ -55,6 +56,7 @@ type ContactForm = {
 
 type ManageForm = {
   ownerId: string;
+  saleManagerId: string;
   status: 'new_lead' | 'following' | 'current_customer';
   note: string;
   nextStep: string;
@@ -68,7 +70,7 @@ function emptyContact(): ContactForm {
   return { name: '', positionCategoryId: '', positionLabel: '', phone: '', email: '', zalo: '', facebook: '' };
 }
 function emptyManage(): ManageForm {
-  return { ownerId: '', status: 'new_lead', note: '', nextStep: '', followUpDate: '' };
+  return { ownerId: '', saleManagerId: '', status: 'new_lead', note: '', nextStep: '', followUpDate: '' };
 }
 
 const STATUS_OPTIONS: Array<{ value: ManageForm['status']; label: string; hint: string }> = [
@@ -113,6 +115,28 @@ export function CustomerAddDrawer({
   useBodyScrollLock(open);
   const { members } = useMembers();
   const canPickOwner = isAdminOrLeader(currentUser);
+
+  // "Sale manager" (yeu cau rieng, canh "Nguoi phu trach") - danh sach chon
+  // KHONG phai 1 co che moi, dung LAI "vai tro nghiep vu bao gia" da co san
+  // (app_users.quote_business_role) qua GET /users/by-quote-business-role -
+  // API nay da tu gom ca 'sale' lan 'both' (list_users_by_quote_business_role()),
+  // dung y het cach QuoteWorkspaceModal dung cho picker Presale/Sale.
+  const [saleManagerOptions, setSaleManagerOptions] = useState<QuoteBusinessRoleUser[]>([]);
+  useEffect(() => {
+    if (!open) return;
+    let alive = true;
+    usersService
+      .getUsersByQuoteBusinessRole('sale')
+      .then(res => {
+        if (alive) setSaleManagerOptions(res.success ? res.data || [] : []);
+      })
+      .catch(() => {
+        if (alive) setSaleManagerOptions([]);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [open]);
 
   const [query, setQuery] = useState('');
   const [searching, setSearching] = useState(false);
@@ -283,6 +307,7 @@ export function CustomerAddDrawer({
       note: manage.note.trim() || null,
     };
     if (canPickOwner && manage.ownerId) payload.owner_id = manage.ownerId;
+    if (manage.saleManagerId) payload.sale_manager_id = manage.saleManagerId;
     return payload;
   }
 
@@ -593,6 +618,14 @@ export function CustomerAddDrawer({
                   </select>
                 </Field>
               ) : null}
+              <Field label="Sale manager">
+                <select value={manage.saleManagerId} onChange={e => setManageField('saleManagerId', e.target.value)}>
+                  <option value="">-- Không chọn --</option>
+                  {saleManagerOptions.map(u => (
+                    <option key={u.id} value={u.id}>{u.name}</option>
+                  ))}
+                </select>
+              </Field>
             </div>
 
             <p className="crm-customer-status-label">Trạng thái khách hàng</p>

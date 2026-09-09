@@ -28,6 +28,7 @@ class CrmCustomerBase(BaseModel):
     source: Optional[str] = None
     status: CrmCustomerStatus = "new_lead"
     owner_id: Optional[str] = None
+    sale_manager_id: Optional[str] = None
     note: Optional[str] = None
 
 
@@ -53,6 +54,7 @@ class CrmCustomerUpdate(BaseModel):
     source: Optional[str] = None
     status: Optional[CrmCustomerStatus] = None
     owner_id: Optional[str] = None
+    sale_manager_id: Optional[str] = None
     note: Optional[str] = None
 
 
