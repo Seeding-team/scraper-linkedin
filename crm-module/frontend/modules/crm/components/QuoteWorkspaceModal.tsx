@@ -1225,14 +1225,18 @@ export function QuoteWorkspaceModal({
     const fromIndex = dragRowIndexRef.current;
     dragRowIndexRef.current = null;
     if (fromIndex === null || fromIndex === targetIndex) return;
-    const draggedIsSection = itemsDraft[fromIndex]?.rowType === 'section';
-    // Tha 1 hang muc VAO 1 Section = thanh hang muc DAU TIEN cua nhom do
-    // (chen ngay SAU dong tieu de) - tha VAO 1 hang muc thuong = xep NGAY
-    // TRUOC dong do. RIENG keo 1 Section tha vao 1 Section khac: "chen vao
-    // lam con" khong co y nghia giua 2 Section voi nhau - phai hieu la DOI
-    // CHO 2 nhom (chen truoc nhom dich), khong +1.
-    const insertBeforeIndex = (targetIsSection && !draggedIsSection) ? targetIndex + 1 : targetIndex;
     setItemsDraft(prev => {
+      const draggedIsSection = prev[fromIndex]?.rowType === 'section';
+      let insertBeforeIndex = targetIndex;
+      if (targetIsSection && !draggedIsSection) {
+        // Drop an item on a section: make it the section's first child.
+        insertBeforeIndex = targetIndex + 1;
+      } else if (targetIsSection && draggedIsSection && fromIndex < targetIndex) {
+        // Moving a section downward must place its whole block after the
+        // target block. Inserting before the target collapses back to the
+        // original index once the dragged block is removed.
+        insertBeforeIndex = getRowBlockRange(prev, targetIndex)[1];
+      }
       const next = moveRowBlock(prev, fromIndex, insertBeforeIndex);
       if (quote) void persistQuote({ items: next }, { silent: true });
       return next;
@@ -1859,8 +1863,7 @@ export function QuoteWorkspaceModal({
   // định đóng khi mở popup yêu cầu báo giá... Bàn giao kỹ thuật chỉ là tính
   // năng hỗ trợ, không phải điều kiện bắt buộc"): mac dinh DONG (dao nguoc
   // lai quyet dinh truoc do). Checklist trong card nay KHONG con dung de
-  // chan Luu/Chuyen buoc/Ban giao/Duyet nua (xem checklistAllConfirmed -
-  // chi con hien thi trang thai, khong con o disabled cua bat ky nut nao).
+  // chan Luu/Chuyen buoc/Ban giao/Duyet nua; card chi con la tinh nang ho tro.
   const [handoffCardOpen, setHandoffCardOpen] = useState(false);
   // Card "Hạng mục & giá khách" o ban tom tat quote da khoa (review/
   // approved/published) - yeu cau rieng "cho thu gon" - mac dinh dong,
@@ -3043,9 +3046,6 @@ export function QuoteWorkspaceModal({
   })();
 
   const rootItems = quote?.items || [];
-  const checklistAllConfirmed = Boolean(
-    checklistDraft?.scopeConfirmed && checklistDraft?.costConfirmed && checklistDraft?.timelineConfirmed && checklistDraft?.assumptionConfirmed
-  );
   // Muc cha (Section, migration 104) KHONG tinh tien, khong bat nhap SL/gia
   // von/markup - loai hoan toan khoi moi kiem tra nghiep vu (thieu gia von,
   // dem so hang muc...) giong dung cach RPC backend loai no qua `row_type =
@@ -4016,14 +4016,6 @@ export function QuoteWorkspaceModal({
                         // trong file Excel mau).
                         let sectionCounter = 0;
                         let itemCounter = 0;
-                        // BUG THAT DA GAP ("dòng Mục cha 'abc' bị hồng không hết hàng",
-                        // nen hong ket thuc som, de trang trong Thanh tien/Margin
-                        // ben phai): 9 <th> co dinh (Hang muc/DVT/SL/Gia von/Cost
-                        // tong/Markup/Gia khach/Thanh tien/Margin) + 1 <th> "Thao
-                        // tac" CHI hien khi editable = 10 cot that su khi editable,
-                        // 9 khi khoa (xem <thead> ngay tren) - actionColSpan truoc
-                        // day ghi cung "9 : 8", THIEU DUNG 1 so voi tong that.
-                        const actionColSpan = canEdit && isDraft && !isLockedForReview ? 10 : 9;
                         const canDragRows = canEdit && isDraft && !isLockedForReview;
                         return itemsDraft.map((item, index) => {
                           if (item.rowType === 'section') {
@@ -4038,7 +4030,8 @@ export function QuoteWorkspaceModal({
                                 onDragOver={canDragRows ? event => event.preventDefault() : undefined}
                                 onDrop={canDragRows ? () => handleRowDrop(index, true) : undefined}
                               >
-                                <td colSpan={actionColSpan}>
+                                {/* Nine data columns, plus the separate action cell when editable. */}
+                                <td colSpan={9}>
                                   {canDragRows ? <span className="qc-workspace-drag-handle" title="Kéo để sắp xếp">⠿</span> : null}
                                   {/* Roman numeral (I/II/III...) dat TRUOC ten muc (ben trai) thay vi
                                    * sau nhu cu - o kich thuoc nho, badge "I" dat SAU chu de bi doc
@@ -4946,7 +4939,6 @@ export function QuoteWorkspaceModal({
                  * pricing->review qua "Chuẩn bị hoàn tất giá bán" ben tren,
                  * scope thi khong con bat buoc dau nao ca - xem migration
                  * 108_quote_scope_not_required.sql). */}
-                <li className={checklistAllConfirmed ? 'ok' : 'pending'}>Checklist bàn giao đầy đủ</li>
               </ul>
               {marginBelowThreshold ? (
                 <div className="qc-workspace-note-box qc-workspace-note-box--warn">
