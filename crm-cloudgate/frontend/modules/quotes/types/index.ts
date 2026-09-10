@@ -265,10 +265,12 @@ export interface Quote {
   publicToken?: string;
   publicUrl?: string;
   publicEnabled?: boolean;
-  /** "Giới hạn xem link theo email" (migration 116) - NOI BO, khong bao gio
-   * co mat tren Quote lay tu getPublicQuote() (khach xem link cong khai). */
-  publicEmailGateEnabled?: boolean;
+  /** "Giới hạn xem link báo giá bằng Email hoặc Số điện thoại" (migration 118)
+   * - NOI BO, khong bao gio co mat tren Quote lay tu getPublicQuote() (khach
+   * xem link cong khai). `publicAccessMode`: 'none' | 'email' | 'phone'. */
+  publicAccessMode?: 'none' | 'email' | 'phone';
   publicAllowedEmails?: string[];
+  publicAllowedPhones?: string[];
   /** Chuỗi phiên bản (V1/V2/V3...) — cùng versionChainId là cùng 1 chuỗi báo
    * giá, versionNumber tăng độc lập theo thứ tự tạo (không suy theo ngày).
    * parentQuoteId trỏ bản ngay trước nó trong chuỗi (null nếu là V1 gốc). */

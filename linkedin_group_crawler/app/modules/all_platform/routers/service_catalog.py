@@ -15,8 +15,13 @@ from app.modules.all_platform.schemas import (
     ServiceCatalogItemUpdateRequest,
     ServiceCatalogItemPricingUpsertRequest,
     ServiceCatalogReorderRequest,
+    ServiceCatalogUnitCreateRequest,
+    ServiceCatalogUnitUpdateRequest,
+    ServiceCatalogVatRateCreateRequest,
+    ServiceCatalogVatRateUpdateRequest,
     BundleComponentsSetRequest,
 )
+from app.modules.all_platform.services import service_catalog_config_service as config_service
 from app.modules.all_platform.services import (
     list_service_catalog_items,
     create_service_catalog_item,
@@ -189,6 +194,87 @@ def service_catalog_set_bundle_components(
     try:
         data = set_bundle_components(bundle_id, [item.model_dump() for item in payload.items])
         return BaseResponse(success=True, message="Đã cập nhật thành phần gói", data=data)
+    except ValueError as e:
+        return BaseResponse(success=False, message=str(e))
+    except Exception as e:
+        return BaseResponse(success=False, message=str(e))
+
+
+# ── "Đơn vị tính & VAT" (migration 117) — master-data thật, tách khỏi các
+# endpoint group/component/bundle ở trên. Cùng quyền quản trị với bộ giá mặc
+# định (can_manage_service_catalog_pricing) - đây đều là cấu hình cấp quản
+# trị của Danh mục dịch vụ, không phải thao tác Sale/Presale thường ngày. ──
+
+@router.get("/units")
+def service_catalog_list_units(
+    include_inactive: bool = Query(True), _user: dict = Depends(get_current_user)
+) -> BaseResponse:
+    try:
+        return BaseResponse(success=True, data=config_service.list_service_catalog_units(include_inactive))
+    except Exception as e:
+        return BaseResponse(success=False, message=str(e))
+
+
+@router.post("/units")
+def service_catalog_create_unit(payload: ServiceCatalogUnitCreateRequest, user: dict = Depends(get_current_user)) -> BaseResponse:
+    if not can_manage_service_catalog_pricing(user):
+        raise HTTPException(status_code=403, detail="Chỉ Admin mới được quản lý Đơn vị tính & VAT")
+    try:
+        data = config_service.create_service_catalog_unit(payload.name, payload.status)
+        return BaseResponse(success=True, message="Đã thêm đơn vị tính", data=data)
+    except ValueError as e:
+        return BaseResponse(success=False, message=str(e))
+    except Exception as e:
+        return BaseResponse(success=False, message=str(e))
+
+
+@router.put("/units/{unit_id}")
+def service_catalog_update_unit(
+    unit_id: str, payload: ServiceCatalogUnitUpdateRequest, user: dict = Depends(get_current_user)
+) -> BaseResponse:
+    if not can_manage_service_catalog_pricing(user):
+        raise HTTPException(status_code=403, detail="Chỉ Admin mới được quản lý Đơn vị tính & VAT")
+    try:
+        data = config_service.update_service_catalog_unit(unit_id, payload.model_dump(exclude={"id"}, exclude_none=True))
+        return BaseResponse(success=True, message="Đã cập nhật đơn vị tính", data=data)
+    except ValueError as e:
+        return BaseResponse(success=False, message=str(e))
+    except Exception as e:
+        return BaseResponse(success=False, message=str(e))
+
+
+@router.get("/vat-rates")
+def service_catalog_list_vat_rates(
+    include_inactive: bool = Query(True), _user: dict = Depends(get_current_user)
+) -> BaseResponse:
+    try:
+        return BaseResponse(success=True, data=config_service.list_service_catalog_vat_rates(include_inactive))
+    except Exception as e:
+        return BaseResponse(success=False, message=str(e))
+
+
+@router.post("/vat-rates")
+def service_catalog_create_vat_rate(payload: ServiceCatalogVatRateCreateRequest, user: dict = Depends(get_current_user)) -> BaseResponse:
+    if not can_manage_service_catalog_pricing(user):
+        raise HTTPException(status_code=403, detail="Chỉ Admin mới được quản lý Đơn vị tính & VAT")
+    try:
+        data = config_service.create_service_catalog_vat_rate(payload.rate, payload.status)
+        return BaseResponse(success=True, message="Đã thêm mức VAT", data=data)
+    except ValueError as e:
+        return BaseResponse(success=False, message=str(e))
+    except Exception as e:
+        return BaseResponse(success=False, message=str(e))
+
+
+@router.put("/vat-rates/{vat_rate_id}")
+def service_catalog_update_vat_rate(
+    vat_rate_id: str, payload: ServiceCatalogVatRateUpdateRequest, user: dict = Depends(get_current_user)
+) -> BaseResponse:
+    if not can_manage_service_catalog_pricing(user):
+        raise HTTPException(status_code=403, detail="Chỉ Admin mới được quản lý Đơn vị tính & VAT")
+    try:
+        data = config_service.update_service_catalog_vat_rate(vat_rate_id, payload.model_dump(exclude={"id"}, exclude_none=True))
+        return BaseResponse(success=True, message="Đã cập nhật mức VAT", data=data)
     except ValueError as e:
         return BaseResponse(success=False, message=str(e))
     except Exception as e:

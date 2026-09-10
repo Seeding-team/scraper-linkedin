@@ -18,6 +18,160 @@
   font-weight: 600;
   margin: 0;
 }
+.sc-header-desc {
+  margin: 2px 0 0;
+  font-size: 13px;
+  color: #667085;
+}
+
+/* Danh sach Nhom dang CARD GRID (yeu cau rieng "đổi danh sách nhóm sang
+ * dạng card grid") - 3 cot desktop, 2 cot tablet, 1 cot mobile. Toan bo card
+ * bam duoc qua .sc-group-card-link (Next Link full-size, giu nguyen hanh vi
+ * <a> that) - menu ba cham dat rieng, tuyet doi, stopPropagation de khong
+ * kich hoat Link ben duoi. */
+.sc-groups-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+}
+@media (max-width: 1100px) {
+  .sc-groups-grid { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 640px) {
+  .sc-groups-grid { grid-template-columns: 1fr; }
+}
+.sc-group-card {
+  position: relative;
+  border: 1px solid #e4e7ec;
+  border-radius: 14px;
+  background: #fff;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.sc-group-card:hover {
+  border-color: #cc1541;
+  box-shadow: 0 4px 16px rgba(16, 24, 40, 0.08);
+}
+.sc-group-card-link {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 18px 44px 18px 18px;
+  color: inherit;
+  text-decoration: none;
+}
+.sc-group-card-icon {
+  flex-shrink: 0;
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  background: #fdf1f4;
+  color: #cc1541;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.sc-group-card-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.sc-group-card-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.sc-group-card-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: #1f2530;
+}
+.sc-group-card-desc {
+  margin: 0;
+  font-size: 12.5px;
+  color: #667085;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+.sc-group-card-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 4px;
+}
+.sc-group-card-count {
+  font-size: 12.5px;
+  color: #455167;
+  font-weight: 600;
+}
+/* "Không để badge stretch thành 1 thanh dài" - o day .sc-badge nam trong 1
+ * flex row co align-items:center (khong phai stretch) nen tu nhien da chi
+ * rong vua noi dung, khong can them gi khac ngoai align-self phong ho. */
+.sc-group-card-meta .sc-badge {
+  align-self: center;
+}
+.sc-group-card-updated {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: #98a2b3;
+  margin-top: 2px;
+}
+.sc-group-card-chevron {
+  position: absolute;
+  right: 44px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 20px;
+  color: #98a2b3;
+}
+.sc-group-card-menu {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+}
+.sc-group-card--skeleton {
+  height: 128px;
+  background: linear-gradient(90deg, #f3f4f6 25%, #e9eaed 37%, #f3f4f6 63%);
+  background-size: 400% 100%;
+  animation: sc-skeleton-shimmer 1.4s ease infinite;
+}
+@keyframes sc-skeleton-shimmer {
+  0% { background-position: 100% 50%; }
+  100% { background-position: 0 50%; }
+}
+
+.sc-view-toggle {
+  display: inline-flex;
+  border: 1px solid #d0d5dd;
+  border-radius: 8px;
+  overflow: hidden;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+.sc-view-toggle button {
+  width: 34px;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: #fff;
+  color: #667085;
+  cursor: pointer;
+}
+.sc-view-toggle button + button {
+  border-left: 1px solid #d0d5dd;
+}
+.sc-view-toggle button.active {
+  background: #fdf1f4;
+  color: #cc1541;
+}
 
 .sc-toolbar {
   display: flex;
@@ -147,6 +301,18 @@
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
   gap: 16px;
+}
+/* Trang "Đơn vị tính & VAT" - yeu cau rieng "Không chia hai card 50/50 vì
+ * VAT có ít dữ liệu, tạo khoảng trắng rất lớn": ĐVT ~65-70%, VAT ~30-35%,
+ * VAT card CHI cao theo noi dung (align-items:start de khong bi keo dai
+ * bang chieu cao cot ĐVT ben canh trong 1 hang grid). CHI dung rieng cho
+ * trang nay (chi 1 noi goi .sc-summary-grid trong toan module). */
+.sc-summary-grid--config {
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  align-items: start;
+}
+@media (max-width: 900px) {
+  .sc-summary-grid--config { grid-template-columns: 1fr; }
 }
 
 .sc-summary-card {
@@ -313,6 +479,16 @@
   grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
   gap: 12px;
 }
+/* Modal "Thêm sản phẩm mới" (QuickAddProductModal, rong 720px) - can DUNG 2
+ * cot co dinh de dung cap dung yeu cau ("SKU | Tên", "ĐVT | VAT", "Giá vốn |
+ * Markup"), khac voi .sc-panel-grid mac dinh (auto-fit co the ra 3-4 cot tren
+ * modal rong, lam sai thu tu cap field mong muon). */
+.sc-panel-grid--2col {
+  grid-template-columns: 1fr 1fr;
+}
+@media (max-width: 560px) {
+  .sc-panel-grid--2col { grid-template-columns: 1fr; }
+}
 
 .sc-field {
   display: flex;
@@ -439,6 +615,18 @@
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
+}
+.sc-pb-version-status {
+  font-size: 12px;
+  color: #667085;
+  margin-right: auto;
+}
+.sc-pb-toolbar-row2 {
+  margin-top: 4px;
+}
+.sc-pb-toolbar-row2 .sc-pb-currency-toggle {
+  margin: 0;
+  flex-shrink: 0;
 }
 
 .sc-pb-group {
@@ -718,9 +906,15 @@
   -webkit-box-orient: vertical;
 }
 
+/* BUG THAT DA GAP ("'Chưa nhập' dùng màu trung tính, không làm mờ đến mức
+ * khó đọc"): mau cu #98a2b3 + italic qua nhat, kho doc tren nen trang. Dam
+ * hon 1 chut (van la mau trung tinh, khong phai mau canh bao/loi), bo
+ * italic. */
 .sc-cell-price-missing {
-  color: #98a2b3;
-  font-style: italic;
+  color: #7c8593;
+}
+.sc-cell-price-ok {
+  color: #148e61;
 }
 
 .sc-price-filter-chip {
@@ -763,6 +957,29 @@
   display: flex;
   flex-direction: column;
   overflow: hidden;
+}
+
+/* Modifier RIENG cho 2 popup "tạo nhanh" trong Catalog Picker (+ Sản phẩm
+ * mới/+ Nhóm sản phẩm, QuickAddProductModal/QuickAddGroupModal) - yeu cau
+ * rieng "đổi thành modal giữa màn hình, chiều cao theo nội dung" (BUG THAT DA
+ * GAP: dung nguyen .sc-drawer goc bi cao 100vh/canh phai co dinh du chi vai
+ * field, tao khoang trang thua rat lon ben duoi). KHONG doi .sc-drawer goc
+ * (van dung nguyen cho cac drawer khac trong module - vd sua san pham) -
+ * component dung 2 CLASS cung luc (className="sc-drawer sc-drawer--modal")
+ * de ke thua style field/head/body/footer ben trong, chi ghi de kich thuoc/
+ * vi tri khung ngoai. */
+.sc-drawer--modal {
+  width: min(720px, calc(100vw - 32px));
+  height: auto;
+  max-height: 85vh;
+  border-radius: 16px;
+  box-shadow: 0 24px 60px rgba(15, 23, 42, 0.28);
+}
+.sc-drawer--modal.sc-drawer--modal-sm {
+  width: min(520px, calc(100vw - 32px));
+}
+.sc-drawer--modal .sc-drawer-body {
+  overflow-y: auto;
 }
 
 .sc-drawer-head {
@@ -1302,4 +1519,166 @@
   .sc-drawer {
     width: 100vw;
   }
+}
+
+/* Tai cau truc "Sản phẩm & dịch vụ": danh sach Nhom (trang goc) -> trang
+ * chi tiet 1 nhom rieng, thay cho 4 tab ngang cu. Cac class moi cho
+ * breadcrumb/header nhom/nut dieu huong (Cấu hình, Bảng giá VPS Zone) va
+ * hang co the bam duoc trong bang danh sach nhom. */
+.sc-header-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+a.sc-btn {
+  display: inline-flex;
+  align-items: center;
+  text-decoration: none;
+  color: #344054;
+}
+
+.sc-loading {
+  color: #667085;
+  font-size: 13px;
+  padding: 8px 0;
+}
+
+.sc-mini-link-btn {
+  border: 0;
+  background: none;
+  padding: 0;
+  color: #be1e4b;
+  font-weight: 600;
+  text-decoration: underline;
+  cursor: pointer;
+  font-size: inherit;
+}
+
+.sc-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: #667085;
+}
+
+.sc-breadcrumb a {
+  color: #667085;
+  text-decoration: none;
+}
+
+.sc-breadcrumb a:hover {
+  color: #be1e4b;
+  text-decoration: underline;
+}
+
+.sc-breadcrumb-sep {
+  color: #d0d5dd;
+}
+
+.sc-breadcrumb-current {
+  color: #101828;
+  font-weight: 600;
+}
+
+.sc-group-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+/* Trang chi tiet Nhom - header GON THANH 1 HANG (yeu cau rieng): breadcrumb
+ * + ten + badge + so san pham + Sua nhom + "+ Sản phẩm mới" cung 1 hang tren
+ * desktop, tu xuong hang tren man hep (flex-wrap). Breadcrumb rieng dat o
+ * DAU hang (khong phai 1 dong tren cung nua) - van la <nav> giong cac trang
+ * khac trong module de dong bo, chi doi vi tri lay ngang hang. */
+.sc-group-header-line {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.sc-group-header-line .sc-breadcrumb {
+  flex-basis: 100%;
+  margin-bottom: 2px;
+}
+.sc-group-header-title {
+  font-size: 20px;
+  font-weight: 700;
+  margin: 0;
+  color: #1f2530;
+}
+.sc-group-header-actions {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+  flex-wrap: wrap;
+}
+.sc-group-header-actions .sc-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.sc-group-price-counters {
+  display: flex;
+  gap: 20px;
+  flex-wrap: wrap;
+  font-size: 12.5px;
+  color: #667085;
+}
+
+.sc-group-header h1 {
+  font-size: 20px;
+  font-weight: 600;
+  margin: 0 0 4px;
+}
+
+.sc-group-desc {
+  margin: 0;
+  color: #667085;
+  font-size: 13px;
+  max-width: 60ch;
+}
+
+.sc-group-header-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.sc-group-count {
+  color: #667085;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+/* Ca dong bam duoc trong danh sach Nhom - <td> boc <a> (Next Link) full-size
+ * thay vi onClick tren <tr> (giu nguyen hanh vi ban phim/mo tab moi/chuot
+ * giua chuan cua the <a> that). Cot cuoi (Thao tac, ActionMenu) KHONG boc
+ * Link - khong the long 1 nut trong 1 the <a> khac. */
+.sc-row-clickable td {
+  padding: 0;
+}
+
+.sc-row-clickable td.sc-row-actions {
+  padding: 10px 12px;
+}
+
+.sc-row-link {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+  color: inherit;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.sc-row-clickable:hover {
+  background: #f9fafb;
 }

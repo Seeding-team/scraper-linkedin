@@ -2,28 +2,32 @@
 
 import { useEffect, useState } from 'react';
 import { QUOTE_STATUS_LABELS } from '../constants/quoteConfig';
-import { QuotePublicEmailRequiredError, seedingQuoteRepository } from '../repositories/SeedingQuoteRepository';
+import { QuotePublicVerificationRequiredError, seedingQuoteRepository } from '../repositories/SeedingQuoteRepository';
 import type { Quote } from '../types';
 import { QuoteDocumentRenderer } from './QuoteDocumentRenderer';
 
-/** "Giới hạn xem link theo email" (migration 116) - email đã nhập đúng được
- * nhớ theo TỪNG token (mỗi báo giá 1 link riêng) qua localStorage, khỏi phải
- * nhập lại mỗi lần mở lại đúng link đó trên cùng trình duyệt. Server vẫn là
- * nguồn xác thực thật (mọi lần gọi getPublicQuote đều gửi kèm email lên lại
- * để backend tự đối chiếu, KHÔNG tin tưởng mù client). */
-function emailGateStorageKey(token: string): string {
-  return `quote-public-email:${token}`;
+/** "Giới hạn xem link báo giá bằng Email hoặc Số điện thoại" (migration 118) -
+ * giá trị xác minh đúng được nhớ theo TỪNG token + method (mỗi báo giá 1 link
+ * riêng, và đổi method thì không dùng nhầm cache của method cũ) qua
+ * localStorage, khỏi phải nhập lại mỗi lần mở lại đúng link đó trên cùng
+ * trình duyệt. Server vẫn là nguồn xác thực thật (mọi lần gọi getPublicQuote
+ * đều gửi kèm giá trị lên lại để backend tự đối chiếu, KHÔNG tin tưởng mù
+ * client). BUG THAT DA GAP (da fix): khi doi tu Email sang SDT (hoac tat gioi
+ * han), key cache PHAI phan biet theo method - khong con dung 1 key chung
+ * chung khien gia tri cu cua method truoc con "sot lai". */
+function verificationStorageKey(token: string, method: 'email' | 'phone'): string {
+  return `quote-public-verify:${method}:${token}`;
 }
-function readCachedEmail(token: string): string {
+function readCachedVerification(token: string, method: 'email' | 'phone'): string {
   try {
-    return window.localStorage.getItem(emailGateStorageKey(token)) || '';
+    return window.localStorage.getItem(verificationStorageKey(token, method)) || '';
   } catch {
     return '';
   }
 }
-function writeCachedEmail(token: string, email: string) {
+function writeCachedVerification(token: string, method: 'email' | 'phone', value: string) {
   try {
-    window.localStorage.setItem(emailGateStorageKey(token), email);
+    window.localStorage.setItem(verificationStorageKey(token, method), value);
   } catch {}
 }
 
@@ -57,44 +61,65 @@ export function PublicQuotePage({ token }: Props) {
   const [quote, setQuote] = useState<Quote | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  // "Giới hạn xem link theo email" (migration 116) - null = gate không áp
-  // dụng (link mở bình thường, hành vi cũ) hoặc chưa xác định xong; object =
-  // đang cần nhập/nhập sai email, hiện form thay vì nội dung báo giá.
-  const [emailGate, setEmailGate] = useState<{ invalid: boolean } | null>(null);
-  const [emailInput, setEmailInput] = useState('');
-  const [emailSubmitting, setEmailSubmitting] = useState(false);
+  // "Giới hạn xem link báo giá bằng Email hoặc Số điện thoại" (migration 118)
+  // - null = gate không áp dụng (link mở bình thường, tắt giới hạn hoặc chưa
+  // xác định xong) hoặc gate đã qua; object = đang cần nhập/nhập sai theo
+  // ĐÚNG method backend báo về, hiện form tương ứng (email HOẶC phone, không
+  // bao giờ cả 2 cùng lúc).
+  const [verifyGate, setVerifyGate] = useState<{ method: 'email' | 'phone'; invalid: boolean } | null>(null);
+  const [verifyInput, setVerifyInput] = useState('');
+  const [verifySubmitting, setVerifySubmitting] = useState(false);
+  const [autoRetried, setAutoRetried] = useState(false);
 
   async function downloadPDF() {
     await waitForPrintReady();
     window.print();
   }
 
-  function loadQuote(emailToTry?: string) {
+  // KHONG con doan "doc cache truoc, gui len ngay" nhu ban cu (chi ho tro
+  // email) - vi luc dau trang KHONG biet quote dang bat che do nao (co the
+  // da chuyen tu email sang phone, hoac tat han) nen KHONG the doan dung
+  // tham so nao de gui truoc. Luon goi KHONG kem tham so truoc; neu backend
+  // tra ve "can xac minh theo method X" thi moi thu lai 1 LAN DUY NHAT bang
+  // gia tri da cache DUNG cho method X (khong bao gio dung nham cache cua
+  // method khac) - dung y het nguyen tac "API public phai doc cau hinh moi
+  // nhat, khong dua vao trang thai cache cu tren client".
+  function loadQuote(explicit?: { method: 'email' | 'phone'; value: string }) {
     setLoading(true);
+    const emailArg = explicit?.method === 'email' ? explicit.value : undefined;
+    const phoneArg = explicit?.method === 'phone' ? explicit.value : undefined;
     seedingQuoteRepository
-      .getPublicQuote(token, emailToTry)
+      .getPublicQuote(token, emailArg, phoneArg)
       .then(row => {
         setQuote(row);
-        setEmailGate(null);
+        setVerifyGate(null);
         setError('');
-        if (emailToTry) writeCachedEmail(token, emailToTry);
+        if (explicit) writeCachedVerification(token, explicit.method, explicit.value);
         document.title = row.quoteNumber ? `Bao-gia-${row.quoteNumber}` : 'Báo giá';
       })
       .catch(err => {
-        if (err instanceof QuotePublicEmailRequiredError) {
-          setEmailGate({ invalid: err.invalidEmail });
+        if (err instanceof QuotePublicVerificationRequiredError) {
+          if (!explicit && !autoRetried) {
+            const cached = readCachedVerification(token, err.method);
+            if (cached) {
+              setAutoRetried(true);
+              loadQuote({ method: err.method, value: cached });
+              return;
+            }
+          }
+          setVerifyGate({ method: err.method, invalid: err.invalid });
           return;
         }
         setError(err instanceof Error ? err.message : 'Không tải được báo giá.');
       })
       .finally(() => {
         setLoading(false);
-        setEmailSubmitting(false);
+        setVerifySubmitting(false);
       });
   }
 
   useEffect(() => {
-    loadQuote(readCachedEmail(token) || undefined);
+    loadQuote();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
@@ -106,42 +131,50 @@ export function PublicQuotePage({ token }: Props) {
     return () => window.clearTimeout(timer);
   }, [quote]);
 
-  function submitEmailGate() {
-    const trimmed = emailInput.trim();
+  function submitVerifyGate() {
+    if (!verifyGate) return;
+    const trimmed = verifyInput.trim();
     if (!trimmed) return;
-    setEmailSubmitting(true);
-    loadQuote(trimmed);
+    setVerifySubmitting(true);
+    loadQuote({ method: verifyGate.method, value: trimmed });
   }
 
   if (loading) return <main className="quote-public-page"><section className="quote-state">Đang tải báo giá...</section></main>;
 
-  if (emailGate) {
+  if (verifyGate) {
+    const isEmail = verifyGate.method === 'email';
     return (
       <main className="quote-public-page">
         <section className="quote-state quote-email-gate">
-          <h2>Xác nhận email để xem báo giá</h2>
-          <p>Báo giá này chỉ hiển thị cho email được chỉ định. Vui lòng nhập email của bạn để tiếp tục.</p>
+          <h2>{isEmail ? 'Xác nhận email để xem báo giá' : 'Xác nhận số điện thoại để xem báo giá'}</h2>
+          <p>
+            {isEmail
+              ? 'Báo giá này chỉ hiển thị cho email được chỉ định. Vui lòng nhập email của bạn để tiếp tục.'
+              : 'Báo giá này chỉ hiển thị cho số điện thoại được chỉ định. Vui lòng nhập số điện thoại của bạn để tiếp tục.'}
+          </p>
           <form
             onSubmit={e => {
               e.preventDefault();
-              submitEmailGate();
+              submitVerifyGate();
             }}
           >
             <input
-              type="email"
+              type={isEmail ? 'email' : 'tel'}
               required
               autoFocus
-              placeholder="ban@congty.com"
-              value={emailInput}
-              onChange={e => setEmailInput(e.target.value)}
+              placeholder={isEmail ? 'ban@congty.com' : '0901234567'}
+              value={verifyInput}
+              onChange={e => setVerifyInput(e.target.value)}
               className="quote-input"
             />
-            <button type="submit" className="quote-button quote-button--primary" disabled={emailSubmitting}>
-              {emailSubmitting ? 'Đang kiểm tra...' : 'Xem báo giá'}
+            <button type="submit" className="quote-button quote-button--primary" disabled={verifySubmitting}>
+              {verifySubmitting ? 'Đang kiểm tra...' : 'Xem báo giá'}
             </button>
           </form>
-          {emailGate.invalid ? (
-            <p className="quote-email-gate-error">Email này không có quyền xem báo giá. Vui lòng liên hệ người gửi báo giá.</p>
+          {verifyGate.invalid ? (
+            <p className="quote-email-gate-error">
+              {isEmail ? 'Email này' : 'Số điện thoại này'} không có quyền xem báo giá. Vui lòng liên hệ người gửi báo giá.
+            </p>
           ) : null}
         </section>
       </main>

@@ -70,6 +70,9 @@ export function CatalogPickerModal({
   onAddSelected,
   adding,
   extraToolbar,
+  groupFilterValue,
+  onGroupFilterChange,
+  autoSelectId,
 }: {
   open: boolean;
   onClose: () => void;
@@ -85,9 +88,26 @@ export function CatalogPickerModal({
   /** Slot rieng cho toolbar dac thu tung noi goi (vd chon "Thêm vào mục" cua
    * QuoteWorkspaceModal) - render ngay duoi thanh filter chuan. */
   extraToolbar?: ReactNode;
+  /** Cap dieu khien NHOM DANG LOC ra ben ngoai (tuy chon) - caller (vd
+   * QuoteWorkspaceModal, "+ Sản phẩm mới" trong popup) can biet dung nhom
+   * nao dang duoc xem de tu chon san Nhom do khi tao san pham moi. KHONG
+   * truyen 2 prop nay (nhu QuoteFormFiller dang dung) thi component giu
+   * nguyen hanh vi uncontrolled cu (tu quan ly groupFilter noi bo). */
+  groupFilterValue?: string;
+  onGroupFilterChange?: (value: string) => void;
+  /** BUG THAT DA GAP ("tự động thêm thẳng vào báo giá ngay sau khi lưu sản
+   * phẩm" - hanh vi sai): sau khi tao nhanh 1 san pham moi trong popup nay
+   * ("+ Sản phẩm mới"), dung MODAL PHAI DUNG lai o day (KHONG dong, KHONG tu
+   * them vao bao gia) va CHI tu TICH CHON san pham vua tao de Sale tu kiem
+   * tra roi bam "+ Thêm vào báo giá" nhu binh thuong. Caller set id nay MOI
+   * LAN tao xong (vd sau refreshCatalogTree()) - component tu tick khi id
+   * xuat hien trong `items`. */
+  autoSelectId?: string | null;
 }) {
   const [search, setSearch] = useState('');
-  const [groupFilter, setGroupFilter] = useState('');
+  const [internalGroupFilter, setInternalGroupFilter] = useState('');
+  const groupFilter = groupFilterValue !== undefined ? groupFilterValue : internalGroupFilter;
+  const setGroupFilter = onGroupFilterChange || setInternalGroupFilter;
   const [activeOnly, setActiveOnly] = useState(true);
   const [hasPriceOnly, setHasPriceOnly] = useState(false);
   const [showAddedOnly, setShowAddedOnly] = useState(false);
@@ -108,6 +128,17 @@ export function CatalogPickerModal({
       setCurrencyView('vnd');
     }
   }, [open, activeSource]);
+
+  // "+ Sản phẩm mới" tao xong: KHONG tu them vao bao gia, CHI tu TICH CHON
+  // (yeu cau sua bug "tự động thêm thẳng vào báo giá") - id chi xuat hien
+  // trong `items` SAU KHI caller refreshCatalogTree() xong, nen dung effect
+  // rieng thay vi tick ngay luc nhan prop (item co the chua co trong danh
+  // sach o thoi diem do).
+  useEffect(() => {
+    if (!autoSelectId) return;
+    if (!items.some(item => item.id === autoSelectId && !item.alreadyAdded)) return;
+    setSelected(prev => (prev.has(autoSelectId) ? prev : new Set(prev).add(autoSelectId)));
+  }, [autoSelectId, items]);
 
   const representativeExchangeRate = useMemo(
     () => items.find(item => item.exchangeRate != null)?.exchangeRate ?? null,
@@ -227,7 +258,7 @@ export function CatalogPickerModal({
                     type="button"
                     key={name}
                     className={groupFilter === name ? 'active' : ''}
-                    onClick={() => setGroupFilter(prev => (prev === name ? '' : name))}
+                    onClick={() => setGroupFilter(groupFilter === name ? '' : name)}
                   >
                     {name} <span>{count}</span>
                   </button>

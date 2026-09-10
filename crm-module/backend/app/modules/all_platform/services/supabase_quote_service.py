@@ -6,6 +6,7 @@ QuoteReference phía frontend (modules/quotes) — tránh phải map lại 2 l�
 
 from __future__ import annotations
 
+import re
 import secrets
 from datetime import datetime, timedelta, timezone
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
@@ -230,8 +231,9 @@ def _row_to_quote(row: dict, items: list[dict] | None = None) -> dict:
         # "Giới hạn xem link theo email" (migration 116) - NOI BO, khong bao
         # gio lo qua _row_to_public_quote (danh sach email khong phai du lieu
         # cho khach xem link cong khai thay).
-        "publicEmailGateEnabled": bool(row.get("public_email_gate_enabled")),
+        "publicAccessMode": row.get("public_access_mode") or "none",
         "publicAllowedEmails": row.get("public_allowed_emails") or [],
+        "publicAllowedPhones": row.get("public_allowed_phones") or [],
         "versionChainId": row.get("version_chain_id"),
         "versionNumber": row.get("version_number") or 1,
         "parentQuoteId": row.get("parent_quote_id"),
@@ -1280,18 +1282,39 @@ def get_quote(quote_id: str, include_deleted: bool = False) -> dict:
     return _row_to_quote(row, _quote_items(quote_id))
 
 
-class PublicQuoteEmailRequiredError(Exception):
-    """"Giới hạn xem link báo giá theo email" (migration 116) - nem loi nay
-    (KHONG phai ValueError thuong) de router phan biet duoc voi loi "chua
-    phat hanh"/"khong tim thay" thong thuong, tra ve them co "requiresEmail"
-    cho FE biet ma hien man hinh nhap email thay vi 1 trang loi tinh."""
+class PublicQuoteVerificationRequiredError(Exception):
+    """"Giới hạn xem link báo giá bằng Email hoặc Số điện thoại" (migration
+    118, thay the PublicQuoteEmailRequiredError cu chi ho tro email). Nem loi
+    nay (KHONG phai ValueError thuong) de router phan biet duoc voi loi "chua
+    phat hanh"/"khong tim thay" thong thuong, tra ve them `method` +
+    `invalid` cho FE biet CHINH XAC dang can xac minh gi (dung DUNG 1
+    phuong thuc dang duoc chon, khong bao gio hoi ca 2)."""
 
-    def __init__(self, invalid: bool = False):
+    def __init__(self, method: str, invalid: bool = False):
+        self.method = method
         self.invalid = invalid
-        super().__init__("quote_public_email_required" if not invalid else "quote_public_email_not_allowed")
+        super().__init__(f"quote_public_{method}_required" if not invalid else f"quote_public_{method}_not_allowed")
 
 
-def get_public_quote(token: str, email: str | None = None) -> dict:
+def normalize_public_access_email(raw: str) -> str:
+    return raw.strip().lower()
+
+
+def normalize_public_access_phone(raw: str) -> str:
+    """Chuan hoa SDT truoc khi so sanh/luu: bo khoang trang/dau gach ngang,
+    quy ve dang +84xxxxxxxxx (VN) neu nhap dang 0xxxxxxxxx trong nuoc - KHONG
+    doan quoc gia khac neu da co dau + san (giu nguyen, chi bo ky tu thua)."""
+    digits_and_plus = re.sub(r"[^0-9+]", "", raw.strip())
+    if digits_and_plus.startswith("0"):
+        return "+84" + digits_and_plus[1:]
+    if digits_and_plus and not digits_and_plus.startswith("+"):
+        # Nhap thieu ma vung, khong co so 0 dau (vd "912345678") - gia dinh
+        # VN, day la truong hop pho bien nhat cua he thong nay.
+        return "+84" + digits_and_plus
+    return digits_and_plus
+
+
+def get_public_quote(token: str, email: str | None = None, phone: str | None = None) -> dict:
     """BUG THAT DA GAP ("khóa link rồi mà vào lại link thì hiển thị tbao
     nha"): ban truoc loc thang `.eq("public_enabled", True)` NGAY TRONG cau
     truy van - khi link da bi KHOA (Khoá link, revoke_public_quote), token
@@ -1322,33 +1345,61 @@ def get_public_quote(token: str, email: str | None = None) -> dict:
     if row.get("status") not in ("approved", "confirmed"):
         raise ValueError("Báo giá chưa được phát hành.")
 
-    if row.get("public_email_gate_enabled"):
-        allowed = {str(e).strip().lower() for e in (row.get("public_allowed_emails") or []) if e}
-        normalized_email = (email or "").strip().lower()
+    access_mode = row.get("public_access_mode") or "none"
+    if access_mode == "email":
+        allowed = {normalize_public_access_email(e) for e in (row.get("public_allowed_emails") or []) if e}
+        normalized_email = normalize_public_access_email(email or "")
         if not normalized_email:
-            raise PublicQuoteEmailRequiredError(invalid=False)
+            raise PublicQuoteVerificationRequiredError(method="email", invalid=False)
         if normalized_email not in allowed:
-            raise PublicQuoteEmailRequiredError(invalid=True)
+            raise PublicQuoteVerificationRequiredError(method="email", invalid=True)
+    elif access_mode == "phone":
+        allowed_phones = {normalize_public_access_phone(p) for p in (row.get("public_allowed_phones") or []) if p}
+        normalized_phone = normalize_public_access_phone(phone or "") if phone else ""
+        if not normalized_phone:
+            raise PublicQuoteVerificationRequiredError(method="phone", invalid=False)
+        if normalized_phone not in allowed_phones:
+            raise PublicQuoteVerificationRequiredError(method="phone", invalid=True)
+    # access_mode == "none" -> khong kiem tra gi ca, khach mo link la xem duoc
+    # ngay (BUG THAT DA GAP: ban cu dung 1 cot boolean rieng
+    # `public_email_gate_enabled` song song voi danh sach email - khi "tat
+    # gioi han" chi xoa/false cot boolean nhung code khac lo doc nham hoac
+    # quen cap nhat se van hoi Email. Gio CHI CON 1 cot enum duy nhat quyet
+    # dinh toan bo nhanh re, khong con truong hop "tat roi ma van hoi").
 
     return _row_to_public_quote(row, _quote_items(row["id"]))
 
 
-def set_public_email_gate(quote_id: str, actor_id: str | None, enabled: bool, emails: list[str]) -> dict:
-    """Bat/tat + cap nhat danh sach email duoc phep xem link cong khai cua 1
-    quote cu the (migration 116) - KHONG qua RPC (chi la 1 UPDATE metadata
-    don gian, khong dung logic nghiep vu phuc tap nhu cac RPC vong doi khac)."""
+def set_public_access_restriction(
+    quote_id: str,
+    actor_id: str | None,
+    mode: str,
+    emails: list[str] | None = None,
+    phones: list[str] | None = None,
+) -> dict:
+    """Doi che do gioi han xem link cong khai cua 1 quote: 'none' / 'email' /
+    'phone' (migration 118, thay the set_public_email_gate cu). CHI 1 cot
+    enum duy nhat quyet dinh - khong con boolean rieng de tranh bug "tat roi
+    ma van hoi Email" da gap truoc do. KHONG qua RPC (UPDATE metadata don
+    gian, khong dung logic nghiep vu phuc tap nhu cac RPC vong doi khac)."""
+    if mode not in ("none", "email", "phone"):
+        raise ValueError("Che do gioi han khong hop le (phai la none/email/phone).")
     supabase: Client = get_supabase_client()
-    normalized = sorted({e.strip().lower() for e in emails if e and e.strip()})
-    supabase.table(QUOTES_TABLE).update({
-        "public_email_gate_enabled": bool(enabled),
-        "public_allowed_emails": normalized,
-        "updated_by": actor_id,
-    }).eq("id", quote_id).is_("deleted_at", "null").execute()
+    normalized_emails = sorted({normalize_public_access_email(e) for e in (emails or []) if e and e.strip()})
+    normalized_phones = sorted({normalize_public_access_phone(p) for p in (phones or []) if p and p.strip()})
+    update_payload: dict = {"public_access_mode": mode, "updated_by": actor_id}
+    if mode == "email":
+        update_payload["public_allowed_emails"] = normalized_emails
+    elif mode == "phone":
+        update_payload["public_allowed_phones"] = normalized_phones
+    # mode == "none": giu nguyen danh sach email/phone da luu truoc do (chi
+    # doi cot mode) de neu bat lai cung che do thi khong mat du lieu da nhap.
+    supabase.table(QUOTES_TABLE).update(update_payload).eq("id", quote_id).is_("deleted_at", "null").execute()
     supabase.table("quote_activity_log").insert({
         "quote_id": quote_id,
         "actor_id": actor_id,
-        "action": "public_email_gate_updated",
-        "changes": {"enabled": bool(enabled), "allowed_emails": normalized},
+        "action": "public_access_restriction_updated",
+        "changes": {"mode": mode, "allowed_emails": normalized_emails, "allowed_phones": normalized_phones},
     }).execute()
     return get_quote(quote_id)
 

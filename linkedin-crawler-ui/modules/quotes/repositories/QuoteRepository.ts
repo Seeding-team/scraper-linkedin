@@ -29,7 +29,7 @@ export interface QuoteRepository {
 
   getQuotes(): Promise<Quote[]>;
   getQuote(id: string): Promise<Quote>;
-  getPublicQuote(token: string, email?: string): Promise<Quote>;
+  getPublicQuote(token: string, email?: string, phone?: string): Promise<Quote>;
   createQuote(input: CreateQuoteInput): Promise<Quote>;
   updateQuote(id: string, input: UpdateQuoteInput): Promise<Quote>;
   deleteQuote(id: string): Promise<void>;
@@ -84,8 +84,14 @@ export interface QuoteRepository {
   revokePublicQuote(quoteId: string): Promise<Quote>;
   /** Mở lại link báo giá — chiều ngược của revokePublicQuote(), giữ nguyên public_token cũ. */
   enablePublicQuote(quoteId: string): Promise<Quote>;
-  /** Giới hạn xem link công khai theo danh sách email cụ thể của quote này. */
-  setPublicEmailGate(quoteId: string, enabled: boolean, allowedEmails: string[]): Promise<Quote>;
+  /** Giới hạn xem link công khai bằng Email hoặc Số điện thoại (migration 118) -
+   * `mode`: 'none' | 'email' | 'phone', chỉ 1 chế độ có hiệu lực tại 1 thời điểm. */
+  setPublicAccessRestriction(
+    quoteId: string,
+    mode: 'none' | 'email' | 'phone',
+    allowedEmails: string[],
+    allowedPhones: string[]
+  ): Promise<Quote>;
   /** Xoá mềm — khôi phục được qua restoreQuote(). */
   softDeleteQuote(quoteId: string, reason?: string): Promise<Quote>;
   restoreQuote(quoteId: string): Promise<Quote>;

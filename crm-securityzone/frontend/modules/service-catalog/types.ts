@@ -54,6 +54,24 @@ export interface ServiceCatalogItem {
   defaultCustomerPriceVnd?: number | null;
 }
 
+/** "Đơn vị tính & VAT" - master-data THẬT (migration 117), quản lý qua
+ * ServiceCatalogConfigPage.tsx - tách biệt hoàn toàn với
+ * ServiceCatalogItem.unit/defaultVatRate (vẫn là chuỗi/số tự do trên từng
+ * sản phẩm, không đổi). */
+export interface ServiceCatalogUnit {
+  id: string;
+  name: string;
+  status: ServiceCatalogStatus;
+  sortOrder: number;
+}
+
+export interface ServiceCatalogVatRate {
+  id: string;
+  rate: number;
+  status: ServiceCatalogStatus;
+  sortOrder: number;
+}
+
 export interface ServiceCatalogOptions {
   bundles: ServiceCatalogItem[];
   components: ServiceCatalogItem[];

@@ -5,6 +5,9 @@ import type {
   BundleComponentInput,
   ServiceCatalogItemPricingRow,
   ServiceCatalogItemPricingUpsertInput,
+  ServiceCatalogUnit,
+  ServiceCatalogVatRate,
+  ServiceCatalogStatus,
 } from '../types';
 
 type ApiResponse<T> = {
@@ -132,6 +135,48 @@ export class ServiceCatalogRepository {
     return apiFetch<ServiceCatalogItem[]>('/api/all-platform/service-catalog/reorder', {
       method: 'PUT',
       body: JSON.stringify({ id, direction }),
+    });
+  }
+
+  // "Đơn vị tính & VAT" (migration 117) - master-data that, dung cho
+  // ServiceCatalogConfigPage.tsx.
+  async listUnits(includeInactive = true): Promise<ServiceCatalogUnit[]> {
+    return apiFetch<ServiceCatalogUnit[]>(
+      `/api/all-platform/service-catalog/units?include_inactive=${includeInactive}`
+    );
+  }
+
+  async createUnit(name: string, status: ServiceCatalogStatus = 'active'): Promise<ServiceCatalogUnit> {
+    return apiFetch<ServiceCatalogUnit>('/api/all-platform/service-catalog/units', {
+      method: 'POST',
+      body: JSON.stringify({ name, status }),
+    });
+  }
+
+  async updateUnit(id: string, patch: { name?: string; status?: ServiceCatalogStatus }): Promise<ServiceCatalogUnit> {
+    return apiFetch<ServiceCatalogUnit>(`/api/all-platform/service-catalog/units/${encodeURIComponent(id)}`, {
+      method: 'PUT',
+      body: JSON.stringify({ id, ...patch }),
+    });
+  }
+
+  async listVatRates(includeInactive = true): Promise<ServiceCatalogVatRate[]> {
+    return apiFetch<ServiceCatalogVatRate[]>(
+      `/api/all-platform/service-catalog/vat-rates?include_inactive=${includeInactive}`
+    );
+  }
+
+  async createVatRate(rate: number, status: ServiceCatalogStatus = 'active'): Promise<ServiceCatalogVatRate> {
+    return apiFetch<ServiceCatalogVatRate>('/api/all-platform/service-catalog/vat-rates', {
+      method: 'POST',
+      body: JSON.stringify({ rate, status }),
+    });
+  }
+
+  async updateVatRate(id: string, patch: { rate?: number; status?: ServiceCatalogStatus }): Promise<ServiceCatalogVatRate> {
+    return apiFetch<ServiceCatalogVatRate>(`/api/all-platform/service-catalog/vat-rates/${encodeURIComponent(id)}`, {
+      method: 'PUT',
+      body: JSON.stringify({ id, ...patch }),
     });
   }
 

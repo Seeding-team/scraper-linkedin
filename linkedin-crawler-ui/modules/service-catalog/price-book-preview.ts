@@ -80,7 +80,9 @@ export function previewPriceBookItem(input: PriceBookPreviewInput): PriceBookPre
 
 export function formatVnd(value: number | null | undefined): string {
   if (value == null || Number.isNaN(value)) return '—';
-  return `${Math.round(value).toLocaleString('vi-VN')}đ`;
+  // BUG THAT DA GAP ("Không dính ký hiệu đ sát số") - them 1 khoang trang
+  // truoc "đ" (vd "1.754.891 đ" thay vi "1.754.891đ" dinh lien).
+  return `${Math.round(value).toLocaleString('vi-VN')} đ`;
 }
 
 export function formatPercent(value: number | null | undefined): string {
