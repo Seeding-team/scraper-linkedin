@@ -60,6 +60,7 @@ from app.modules.all_platform.schemas.quote import (
     QuoteHardDeleteRequest,
     QuoteRequestChangesRequest,
     QuoteApproveRequest,
+    QuotePublicEmailGateUpdateRequest,
     IssuerCompanyCreateRequest,
     IssuerCompanyUpdateRequest,
 )

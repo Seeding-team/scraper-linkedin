@@ -2774,6 +2774,14 @@
 .qc-workspace-summary-row strong { min-width: 0; overflow-wrap: anywhere; text-align: right; }
 .qc-workspace-summary-row--total { border-top: 1px dashed #eee; margin-top: 4px; padding-top: 8px; font-weight: 700; color: #2b3445; }
 
+/* "Giới hạn xem link theo email" (migration 116) - khoi nho trong card
+ * "Thông tin phát hành", tach biet voi cac .qc-workspace-summary-row (chi
+ * hien thi) ngay ben tren no. */
+.qc-workspace-email-gate { margin-top: 8px; padding-top: 8px; border-top: 1px dashed #eee; display: flex; flex-direction: column; gap: 6px; }
+.qc-workspace-email-gate-toggle { display: flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 600; color: #2b3445; cursor: pointer; }
+.qc-workspace-email-gate-toggle input { width: auto; }
+.qc-workspace-email-gate-textarea { min-height: 64px; resize: vertical; border: 1px solid #dbe1ea; border-radius: 8px; padding: 6px 8px; font-size: 12px; font-family: inherit; }
+
 .qc-workspace-checks { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: 12.5px; }
 .qc-workspace-checks li { padding-left: 18px; position: relative; color: #5b6576; }
 .qc-workspace-checks li.ok::before { content: '✓'; position: absolute; left: 0; color: #22a06b; }

@@ -1774,6 +1774,13 @@ export function QuoteWorkspaceModal({
   // giong "Yêu cầu & phạm vi".
   const [summaryItemsCardOpen, setSummaryItemsCardOpen] = useState(false);
   const [editExpectedProducts, setEditExpectedProducts] = useState('');
+  // "Giới hạn xem link theo email" (migration 116) - state cuc bo cho khoi
+  // sua trong card "Thông tin phát hành", dong bo lai TU quote moi lan doi
+  // quote?.id (cung pattern voi scopeCardOpen/handoffCardOpen ben tren -
+  // QuoteCenterPage khong unmount modal giua 2 lan mo quote khac nhau).
+  const [emailGateEnabled, setEmailGateEnabled] = useState(false);
+  const [emailGateEmailsText, setEmailGateEmailsText] = useState('');
+  const [emailGateSaving, setEmailGateSaving] = useState(false);
   useEffect(() => {
     setEditSummary(requestSummaryText);
     setEditScope(scopeBlock?.content || '');
@@ -1791,8 +1798,28 @@ export function QuoteWorkspaceModal({
     // (chay moi lan quote?.id doi that su).
     setHandoffCardOpen(true);
     setSummaryItemsCardOpen(false);
+    setEmailGateEnabled(Boolean(quote?.publicEmailGateEnabled));
+    setEmailGateEmailsText((quote?.publicAllowedEmails || []).join('\n'));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [quote?.id]);
+
+  async function saveEmailGate() {
+    if (!quote) return;
+    const emails = emailGateEmailsText
+      .split(/[\n,;]/)
+      .map(e => e.trim())
+      .filter(Boolean);
+    setEmailGateSaving(true);
+    try {
+      const updated = await seedingQuoteRepository.setPublicEmailGate(quote.id, emailGateEnabled, emails);
+      setQuote(updated);
+      showToast(true, 'Đã lưu cấu hình giới hạn email.');
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : 'Không lưu được cấu hình giới hạn email.');
+    } finally {
+      setEmailGateSaving(false);
+    }
+  }
 
   async function saveScopeSummary() {
     if (!quote) return;
@@ -2691,6 +2718,25 @@ export function QuoteWorkspaceModal({
       showToast(true, 'Đã khoá link báo giá.');
     } catch (err) {
       window.alert(err instanceof Error ? err.message : 'Không khoá được link báo giá.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // "Mở lại link báo giá" - yeu cau rieng ("khóa link rồi ... k thấy nút mở
+  // link nha bro"): truoc day chi co chieu khoa (tren), khong co cach nao mo
+  // lai link cu ma khong lam gi ca - gio dung API moi (/enable-public,
+  // migration 115), giu nguyen public_token cu nen link cu hoat dong lai y
+  // het, khong can gui lai link moi cho khach.
+  async function enablePublicLinkFromWorkspace() {
+    if (!quote) return;
+    setBusy(true);
+    try {
+      const updated = await seedingQuoteRepository.enablePublicQuote(quote.id);
+      setQuote(updated);
+      showToast(true, 'Đã mở lại link báo giá.');
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : 'Không mở lại được link báo giá.');
     } finally {
       setBusy(false);
     }
@@ -3800,7 +3846,14 @@ export function QuoteWorkspaceModal({
                         // trong file Excel mau).
                         let sectionCounter = 0;
                         let itemCounter = 0;
-                        const actionColSpan = canEdit && isDraft && !isLockedForReview ? 9 : 8;
+                        // BUG THAT DA GAP ("dòng Mục cha 'abc' bị hồng không hết hàng",
+                        // nen hong ket thuc som, de trang trong Thanh tien/Margin
+                        // ben phai): 9 <th> co dinh (Hang muc/DVT/SL/Gia von/Cost
+                        // tong/Markup/Gia khach/Thanh tien/Margin) + 1 <th> "Thao
+                        // tac" CHI hien khi editable = 10 cot that su khi editable,
+                        // 9 khi khoa (xem <thead> ngay tren) - actionColSpan truoc
+                        // day ghi cung "9 : 8", THIEU DUNG 1 so voi tong that.
+                        const actionColSpan = canEdit && isDraft && !isLockedForReview ? 10 : 9;
                         const canDragRows = canEdit && isDraft && !isLockedForReview;
                         return itemsDraft.map((item, index) => {
                           if (item.rowType === 'section') {
@@ -4319,6 +4372,32 @@ export function QuoteWorkspaceModal({
                     <div className="qc-workspace-summary-row"><span>Public URL</span><strong>{quote.publicUrl || '—'}</strong></div>
                     <div className="qc-workspace-summary-row"><span>Người phát hành</span><strong>{quote.publishedById ? nameFor(quote.publishedById) : '—'}</strong></div>
                     <div className="qc-workspace-summary-row"><span>Ngày phát hành</span><strong>{quote.publishedAt ? formatDate(quote.publishedAt) : '—'}</strong></div>
+                    {/* "Giới hạn xem link theo email" (migration 116) - mac
+                     * dinh TAT (khong doi hanh vi cu, ai co link cung xem
+                     * duoc). Bat len + nhap danh sach email thi link cong
+                     * khai bat khach nhap dung 1 trong cac email nay truoc
+                     * khi hien noi dung. */}
+                    <div className="qc-workspace-email-gate">
+                      <label className="qc-workspace-email-gate-toggle">
+                        <input
+                          type="checkbox"
+                          checked={emailGateEnabled}
+                          onChange={e => setEmailGateEnabled(e.target.checked)}
+                        />
+                        Giới hạn xem link theo email
+                      </label>
+                      {emailGateEnabled ? (
+                        <textarea
+                          className="qc-workspace-email-gate-textarea"
+                          placeholder={'Nhập email được phép xem, mỗi dòng 1 email\nvd: khach@congty.com'}
+                          value={emailGateEmailsText}
+                          onChange={e => setEmailGateEmailsText(e.target.value)}
+                        />
+                      ) : null}
+                      <button type="button" className="qc-mini-btn" disabled={emailGateSaving} onClick={() => void saveEmailGate()}>
+                        {emailGateSaving ? 'Đang lưu...' : 'Lưu giới hạn email'}
+                      </button>
+                    </div>
                     {quote.sentAt ? (
                       <>
                         <div className="qc-workspace-summary-row"><span>Người gửi</span><strong>{quote.sentById ? nameFor(quote.sentById) : '—'}</strong></div>
@@ -4517,7 +4596,12 @@ export function QuoteWorkspaceModal({
                 </>
               ) : null}
               {quote?.status === 'approved' && quote.publicUrl && quote.publicEnabled === false ? (
-                <span className="qc-workspace-footer-note">Link báo giá đã bị khoá</span>
+                <>
+                  <span className="qc-workspace-footer-note">Link báo giá đã bị khoá</span>
+                  <button type="button" className="qc-btn" disabled={busy} onClick={() => void enablePublicLinkFromWorkspace()}>
+                    Mở lại link
+                  </button>
+                </>
               ) : null}
             </div>
             ) : null}
@@ -4658,7 +4742,12 @@ export function QuoteWorkspaceModal({
                           </button>
                         </>
                       ) : (
-                        <span className="qc-workspace-footer-note">Link báo giá đã bị khoá</span>
+                        <>
+                          <span className="qc-workspace-footer-note">Link báo giá đã bị khoá</span>
+                          <button type="button" className="qc-btn" disabled={busy} onClick={() => void enablePublicLinkFromWorkspace()}>
+                            Mở lại link
+                          </button>
+                        </>
                       )}
                       {quote.sentAt ? (
                         <>

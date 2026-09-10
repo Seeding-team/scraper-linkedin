@@ -2,9 +2,30 @@
 
 import { useEffect, useState } from 'react';
 import { QUOTE_STATUS_LABELS } from '../constants/quoteConfig';
-import { seedingQuoteRepository } from '../repositories/SeedingQuoteRepository';
+import { QuotePublicEmailRequiredError, seedingQuoteRepository } from '../repositories/SeedingQuoteRepository';
 import type { Quote } from '../types';
 import { QuoteDocumentRenderer } from './QuoteDocumentRenderer';
+
+/** "Giới hạn xem link theo email" (migration 116) - email đã nhập đúng được
+ * nhớ theo TỪNG token (mỗi báo giá 1 link riêng) qua localStorage, khỏi phải
+ * nhập lại mỗi lần mở lại đúng link đó trên cùng trình duyệt. Server vẫn là
+ * nguồn xác thực thật (mọi lần gọi getPublicQuote đều gửi kèm email lên lại
+ * để backend tự đối chiếu, KHÔNG tin tưởng mù client). */
+function emailGateStorageKey(token: string): string {
+  return `quote-public-email:${token}`;
+}
+function readCachedEmail(token: string): string {
+  try {
+    return window.localStorage.getItem(emailGateStorageKey(token)) || '';
+  } catch {
+    return '';
+  }
+}
+function writeCachedEmail(token: string, email: string) {
+  try {
+    window.localStorage.setItem(emailGateStorageKey(token), email);
+  } catch {}
+}
 
 interface Props {
   token: string;
@@ -36,21 +57,45 @@ export function PublicQuotePage({ token }: Props) {
   const [quote, setQuote] = useState<Quote | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  // "Giới hạn xem link theo email" (migration 116) - null = gate không áp
+  // dụng (link mở bình thường, hành vi cũ) hoặc chưa xác định xong; object =
+  // đang cần nhập/nhập sai email, hiện form thay vì nội dung báo giá.
+  const [emailGate, setEmailGate] = useState<{ invalid: boolean } | null>(null);
+  const [emailInput, setEmailInput] = useState('');
+  const [emailSubmitting, setEmailSubmitting] = useState(false);
 
   async function downloadPDF() {
     await waitForPrintReady();
     window.print();
   }
 
-  useEffect(() => {
+  function loadQuote(emailToTry?: string) {
+    setLoading(true);
     seedingQuoteRepository
-      .getPublicQuote(token)
+      .getPublicQuote(token, emailToTry)
       .then(row => {
         setQuote(row);
+        setEmailGate(null);
+        setError('');
+        if (emailToTry) writeCachedEmail(token, emailToTry);
         document.title = row.quoteNumber ? `Bao-gia-${row.quoteNumber}` : 'Báo giá';
       })
-      .catch(err => setError(err instanceof Error ? err.message : 'Không tải được báo giá.'))
-      .finally(() => setLoading(false));
+      .catch(err => {
+        if (err instanceof QuotePublicEmailRequiredError) {
+          setEmailGate({ invalid: err.invalidEmail });
+          return;
+        }
+        setError(err instanceof Error ? err.message : 'Không tải được báo giá.');
+      })
+      .finally(() => {
+        setLoading(false);
+        setEmailSubmitting(false);
+      });
+  }
+
+  useEffect(() => {
+    loadQuote(readCachedEmail(token) || undefined);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
   useEffect(() => {
@@ -61,7 +106,48 @@ export function PublicQuotePage({ token }: Props) {
     return () => window.clearTimeout(timer);
   }, [quote]);
 
+  function submitEmailGate() {
+    const trimmed = emailInput.trim();
+    if (!trimmed) return;
+    setEmailSubmitting(true);
+    loadQuote(trimmed);
+  }
+
   if (loading) return <main className="quote-public-page"><section className="quote-state">Đang tải báo giá...</section></main>;
+
+  if (emailGate) {
+    return (
+      <main className="quote-public-page">
+        <section className="quote-state quote-email-gate">
+          <h2>Xác nhận email để xem báo giá</h2>
+          <p>Báo giá này chỉ hiển thị cho email được chỉ định. Vui lòng nhập email của bạn để tiếp tục.</p>
+          <form
+            onSubmit={e => {
+              e.preventDefault();
+              submitEmailGate();
+            }}
+          >
+            <input
+              type="email"
+              required
+              autoFocus
+              placeholder="ban@congty.com"
+              value={emailInput}
+              onChange={e => setEmailInput(e.target.value)}
+              className="quote-input"
+            />
+            <button type="submit" className="quote-button quote-button--primary" disabled={emailSubmitting}>
+              {emailSubmitting ? 'Đang kiểm tra...' : 'Xem báo giá'}
+            </button>
+          </form>
+          {emailGate.invalid ? (
+            <p className="quote-email-gate-error">Email này không có quyền xem báo giá. Vui lòng liên hệ người gửi báo giá.</p>
+          ) : null}
+        </section>
+      </main>
+    );
+  }
+
   if (error || !quote) return <main className="quote-public-page"><section className="quote-state quote-state--error">{error || 'Không thể truy cập báo giá.'}</section></main>;
 
   return (

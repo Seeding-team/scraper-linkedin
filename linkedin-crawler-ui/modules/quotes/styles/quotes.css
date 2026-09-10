@@ -177,6 +177,47 @@
   color: #b91c1c;
 }
 
+/* "Giới hạn xem link theo email" (migration 116) - man hinh nho yeu cau nhap
+ * email TRUOC khi hien noi dung bao gia, thay cho .quote-state text-align
+ * center mac dinh (form can trai/gon, khong phai 1 dong chu tinh). */
+.quote-email-gate {
+  max-width: 26rem;
+  margin: 3rem auto;
+  text-align: left;
+  font-weight: 400;
+}
+
+.quote-email-gate h2 {
+  margin: 0 0 0.5rem;
+  color: #0f172a;
+  font-size: 1.1rem;
+  font-weight: 700;
+  text-align: center;
+}
+
+.quote-email-gate p {
+  margin: 0 0 1rem;
+  color: #64748b;
+  font-size: 0.85rem;
+  text-align: center;
+}
+
+.quote-email-gate form {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.quote-email-gate .quote-input {
+  flex: 1;
+}
+
+.quote-email-gate-error {
+  margin-top: 0.75rem !important;
+  color: #b91c1c !important;
+  font-size: 0.82rem;
+  text-align: center;
+}
+
 /* Danh sach mau bao gia: 1 cot o laptop/tablet (card can du rong de 2 nut +
  * ActionMenu khong bi bop), 2 cot chi tu man rat rong (>=1440px). */
 .quote-grid {
