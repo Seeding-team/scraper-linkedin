@@ -1315,7 +1315,7 @@ def get_public_quote(token: str, email: str | None = None) -> dict:
     if not row:
         raise ValueError("Không tìm thấy báo giá — link không hợp lệ hoặc đã bị xoá.")
     if not row.get("public_enabled"):
-        raise ValueError("Link báo giá này đã bị khoá. Vui lòng liên hệ người gửi để nhận lại link mới.")
+        raise ValueError("Link báo giá này đã bị khoá.")
     # 'confirmed' = quote tao truoc migration 053 (luon duoc coi la da chot/cong khai
     # nhu cu, khong hoi to) - 'draft'/'cancelled' thi CHUA duoc xem cong khai, phai
     # qua approve_quote() truoc.
