@@ -2230,21 +2230,18 @@ select.quote-compact-vat:hover {
   overflow-wrap: anywhere;
 }
 /* BUG THAT DA GAP ("ĐVT bị tách thành th/án/g" -> "Core/tháng2 dính liền" ->
- * "không cho rớt chữ"): qua 3 lan sua deu that bai vi con cho phep XUONG
- * DONG (wrap) o cot nay duoi 1 dang nao do (nowrap tung bi bo vi gay tran;
- * overflow-wrap:normal/anywhere van cho phep ngat dong hoac tran khi khong
- * co khoang trang). Yeu cau ro rang lan nay: KHONG BAO GIO xuong dong/tach
- * chu - CHOT LAI bang nowrap (giu dung 1 dong) + width % rieng du dung (o
- * tren) de it khi can toi truong hop cuoi + overflow:hidden/text-overflow:
- * ellipsis lam luoi an toan CUOI CUNG (chi rat hiem khi kich hoat, cho gia
- * tri dai bat thuong) - "..." thay vi tran de len cot SL ke ben, khong bao
- * gio con hien tuong xuong dong/tach ky tu nua. */
+ * "không cho rớt chữ" -> "k đc ẩn luôn"): yeu cau ro rang CHOT LAI - KHONG
+ * duoc xuong dong (nowrap), KHONG duoc an bot chu (khong dung ellipsis).
+ * Da xac nhan huong xu ly voi nguoi dung: NOI RONG han do rong cot (13%,
+ * thay vi 9%) de hau het ten don vi thuc te ("Core/tháng", "Người dùng/
+ * tháng"...) vua du tren 1 dong ma khong can toi giai phap "che/cat" nao ca
+ * - chi con rui ro voi ten don vi dai bat thuong (hiem gap). Bo han
+ * overflow:hidden/text-overflow:ellipsis cua lan truoc (an chu - dung yeu
+ * cau moi nay). */
 .sheet-items-table th.unit-cell,
 .sheet-items-table td.unit-cell {
-  width: 9%;
+  width: 13%;
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 /* Header duoc phep xuong dong khi cot hep (nhieu cot dang hien cung luc) -
