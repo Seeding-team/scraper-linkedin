@@ -4635,7 +4635,15 @@ export function QuoteWorkspaceModal({
             </div>
             ) : null}
 
-            {stage === 'request' || stage === 'pricing' || stage === 'review' ? (
+            {/* BUG THAT DA GAP ("ở bước 1 có cái này mà sao bên hợp đồng đó
+             * không có"): dieu kien truoc day thieu stage 'technical' - trong
+             * khi "Buoc 1 Yeu cau & Ky thuat" tren UI gom CA 2 gia tri stage
+             * 'request' VA 'technical' (xem cac cho khac dung chung dieu kien
+             * `stage === 'request' || stage === 'technical'`, vd nut "Bàn
+             * giao" o footer) - quote nao dang o dung stage 'technical' thi
+             * the "Preview khách hàng" bien mat vo ly, khong nhat quan voi
+             * phan con lai cua Buoc 1. */}
+            {stage === 'request' || stage === 'technical' || stage === 'pricing' || stage === 'review' ? (
             <div className="qc-workspace-card">
               <h3>Preview khách hàng</h3>
               {canPreview ? (
