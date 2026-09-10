@@ -177,6 +177,47 @@
   color: #b91c1c;
 }
 
+/* "Giới hạn xem link theo email" (migration 116) - man hinh nho yeu cau nhap
+ * email TRUOC khi hien noi dung bao gia, thay cho .quote-state text-align
+ * center mac dinh (form can trai/gon, khong phai 1 dong chu tinh). */
+.quote-email-gate {
+  max-width: 26rem;
+  margin: 3rem auto;
+  text-align: left;
+  font-weight: 400;
+}
+
+.quote-email-gate h2 {
+  margin: 0 0 0.5rem;
+  color: #0f172a;
+  font-size: 1.1rem;
+  font-weight: 700;
+  text-align: center;
+}
+
+.quote-email-gate p {
+  margin: 0 0 1rem;
+  color: #64748b;
+  font-size: 0.85rem;
+  text-align: center;
+}
+
+.quote-email-gate form {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.quote-email-gate .quote-input {
+  flex: 1;
+}
+
+.quote-email-gate-error {
+  margin-top: 0.75rem !important;
+  color: #b91c1c !important;
+  font-size: 0.82rem;
+  text-align: center;
+}
+
 /* Danh sach mau bao gia: 1 cot o laptop/tablet (card can du rong de 2 nut +
  * ActionMenu khong bi bop), 2 cot chi tu man rat rong (>=1440px). */
 .quote-grid {
@@ -2097,9 +2138,18 @@ select.quote-compact-vat:hover {
   margin-top: 1.25rem;
 }
 
+/* CHOT LAI ("Bỏ toàn bộ box/card bao quanh Thông tin khách hàng và Người
+ * phụ trách - trình bày 2 cột gọn, nền trắng, không viền lớn"): .sheet-
+ * parties > div (base, dung chung voi villa layout khac) co border+nen xam
+ * nhat - --standard tung chi doi border-radius/nen ma KHONG bo border, van
+ * con nhin nhu 1 "box" ro rang. Ghi de het thanh khong vien/khong nen/khong
+ * padding rieng - CHI anh huong layout standard nay, khong dung .sheet-
+ * parties goc (villa van giu box nhu cu). */
 .sheet-parties--standard > div {
-  border-radius: 0.45rem;
-  background: #ffffff;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
 }
 
 .sheet-parties--standard p {
@@ -2179,6 +2229,21 @@ select.quote-compact-vat:hover {
   vertical-align: top;
   overflow-wrap: anywhere;
 }
+/* BUG THAT DA GAP ("ĐVT bị tách thành th/án/g"): overflow-wrap:anywhere o
+ * tren (can thiet cho cot Ten/Mo ta dai) vo tinh cat CA cot ĐVT (gia tri
+ * ngan nhu "tháng"/"Core/tháng") thanh tung mieng khi cot hep. CHOT LAI LAN
+ * 2 (bug moi phat hien: white-space:nowrap truoc do khien ĐVT TRAN qua de
+ * len cot SL ke ben khi cot % qua hep, vd "Core/tháng2" dinh lien - do cot
+ * nay dung % dong (khong co px co dinh nhu bang Workspace), nowrap khong an
+ * toan o day) - BO nowrap, CHI giu overflow-wrap/word-break:normal (cho
+ * phep xuong dong THEO KHOANG TRANG binh thuong khi that su khong du cho,
+ * KHONG BAO GIO cat giua 1 tu) - an toan hon nowrap, khong con tran/de
+ * chong len cot ke. */
+.sheet-items-table th.unit-cell,
+.sheet-items-table td.unit-cell {
+  overflow-wrap: normal;
+  word-break: normal;
+}
 
 /* Header duoc phep xuong dong khi cot hep (nhieu cot dang hien cung luc) -
  * truoc day "nowrap" ep header luon 1 dong, buoc bang phai phinh rong hon can
@@ -2192,6 +2257,33 @@ select.quote-compact-vat:hover {
   vertical-align: top;
   white-space: normal;
   word-break: normal;
+  position: relative;
+}
+
+/* Resize cot kieu Excel (man hinh xem truoc/chi tiet noi bo - xem
+ * allowColumnResize trong QuoteDocumentRenderer.tsx) - tay keo mong o mep
+ * phai moi <th>, keo ngang de doi do rong CHINH cot do (khong co lai cot
+ * ben canh, giong Excel/Google Sheet - bang tu gian rong hon, wrapper
+ * .sheet-items-table-wrap co san overflow-x:auto se hien thanh cuon).
+ * .sheet-items-table--resizable khong can rule rieng (table-layout:fixed da
+ * co san o rule .sheet-items-table chung ngay tren) - class nay chi de danh
+ * dau/de nhan biet qua className neu can, gan giong cach dang lam voi
+ * --print-landscape. */
+.quote-col-resize-handle {
+  position: absolute;
+  top: 0;
+  right: -3px;
+  bottom: 0;
+  width: 6px;
+  cursor: col-resize;
+  user-select: none;
+  z-index: 1;
+  touch-action: none;
+}
+
+.quote-col-resize-handle:hover,
+.quote-col-resize-handle:active {
+  background: #94a3b8;
 }
 
 .sheet-items-table th,
@@ -2608,6 +2700,45 @@ select.quote-compact-vat:hover {
     width: 100%;
   }
 
+  /* BUG THAT DA GAP THAT SU ("2 hạng mục in ra 3-10 trang, letterhead công ty
+   * lặp lại giữa chừng nhiều lần"): .quote-print-root (o QuoteWorkspaceModal)
+   * nam BEN TRONG .qc-modal-backdrop - backdrop nay dung position:fixed (de
+   * che toan man hinh khi xem binh thuong). position:fixed VAN GIU nguyen
+   * hieu luc luc in du da bi visibility:hidden (visibility khong xoa duoc
+   * layout/positioning) - Chromium co 1 loi/hanh vi da biet: noi dung nam
+   * trong 1 to tien position:fixed bi coi nhu "lop trang trí lap lai moi
+   * trang" khi phan trang, in lai CA KHOI nhieu lan thay vi chi 1 lan duy
+   * nhat - khop chinh xac trieu chung da QA thuc te (letterhead cong ty xuat
+   * hien lai giua bang, 2 dong hang muc bi giai ra thanh 10 trang). Ep VE
+   * position:static cho MOI to tien co the la modal/backdrop khi in - .quote-
+   * print-root (position:absolute, dat rieng o tren) luc do se lay THANG
+   * trang giay (initial containing block) lam moc, khong con phu thuoc 1
+   * backdrop fixed nao nua. */
+  .qc-modal-backdrop,
+  .qc-modal-backdrop--nested,
+  .qc-workspace-preview-modal {
+    position: static !important;
+    inset: auto !important;
+    transform: none !important;
+  }
+  /* BUG THAT DA GAP THAT SU LAN 2 ("11 trang, nhieu trang trắng giữa
+   * chừng"): .qc-workspace-preview-modal--doc/.qc-workspace-preview-modal-
+   * body--doc dat height:94vh + overflow:hidden CO DINH cho man hinh (xem
+   * quote-center.css) - overflow:hidden cua 1 to tien VAN CAT noi dung con
+   * dang position:absolute (day KHONG phai dac tinh rieng cua "containing
+   * block", overflow:hidden luon cat MOI hau due ve mat thi giac bat ke
+   * position gi) - .quote-print-root ben trong tuy da absolute+position:
+   * static o tren nhung VAN bi khung 94vh nay "giam giu" ve mat clip region,
+   * Chromium sau do co gang phan trang PHAN BI KET do sinh ra trang trắng
+   * xen ke thay vi 1 luong lien tuc binh thuong. Phai reset ca overflow LAN
+   * height/max-height ve auto/visible khi in - khong chi position. */
+  .qc-workspace-preview-modal--doc,
+  .qc-workspace-preview-modal-body--doc {
+    overflow: visible !important;
+    height: auto !important;
+    max-height: none !important;
+  }
+
   /* Sidebar + header sticky cua app-shell (AllPlatformShell.tsx) chua tung
    * duoc an khi in trang bao gia - QA thuc te xac nhan ban in/PDF in ca
    * sidebar lan noi dung, dun .quote-sheet (210mm) bi chen/cat mep phai vi
@@ -2619,9 +2750,18 @@ select.quote-compact-vat:hover {
   [data-slot="sidebar-container"],
   .no-print,
   .quote-head,
-  .quote-action-bar {
+  .quote-action-bar,
+  .quote-col-resize-handle {
     display: none !important;
   }
+
+  /* Neu ai do bam in truc tiep tu trang chi tiet noi bo (mode='detail', co
+   * the da resize cot tren man hinh truoc do bang do rong px inline) - rule
+   * "width:auto !important" chung o duoi (.sheet-items-table th/td) va cac
+   * rule % rieng theo nth-child da co san (cung specificity/!important,
+   * dung sau trong file nen thang) tu dong ghi de het do rong px do, luon
+   * quay ve chia % chuan khi in - resize chi la tien ich xem man hinh,
+   * khong can xu ly gi them o day. */
 
   .quote-page,
   .quote-builder,
@@ -2650,6 +2790,105 @@ select.quote-compact-vat:hover {
     border: 0 !important;
     box-shadow: none !important;
     box-sizing: border-box !important;
+  }
+
+  /* Thu gon phan dau tai lieu de bang hang muc bat dau SOM HON tren trang 1
+   * (yeu cau thuc te: "14 hang muc con khoang 3 trang" - phan header/meta/
+   * thong tin khach hang truoc do chiem qua nhieu khoang trang doc, day bang
+   * xuong thap, lam so trang tang len khong can thiet). CHI giam khoang cach
+   * dung (margin/padding doc) luc in, KHONG dong vao man hinh xem (rule nay
+   * nam trong @media print, cac gia tri man hinh o rule goc ngoai @media giu
+   * nguyen). Van du "de doc" - chi bot khoang trang thua, khong doi font/bo
+   * noi dung nao. */
+  .quote-sheet--standard {
+    padding: 1.1rem 1.5rem !important;
+  }
+
+  /* Cung bug voi .sheet-parties o duoi: letterhead (logo/ten cong ty + so bao
+   * gia) cung bi rule mobile @media(max-width:900px) ep stack doc khi in (do
+   * vung in A4 < 900px), khien phan dau tai lieu cao hon can thiet - ngay ca
+   * yeu cau chinh cua muc nay la "thu gon phan dau" nen cang can giu dung 1
+   * hang ngang luc in. */
+  .sheet-company {
+    flex-direction: row !important;
+  }
+
+  .sheet-company--standard {
+    padding-bottom: 0.6rem !important;
+  }
+
+  .sheet-title-block--standard {
+    margin-top: 0.65rem !important;
+  }
+
+  .sheet-quote-meta--cards {
+    margin-top: 0.4rem !important;
+    padding: 0.35rem 0 !important;
+  }
+
+  .sheet-parties--standard {
+    margin-top: 0.7rem !important;
+  }
+
+  .sheet-parties--standard > div {
+    padding: 0 !important;
+  }
+
+  /* BUG THAT ("Thông tin khách hàng/Người phụ trách không nằm 2 cột khi in"):
+   * .sheet-parties dung display:flex hang ngang o rule goc, NHUNG rule
+   * @media (max-width:900px) o duoi file (dung chung cho man hinh mobile) lai
+   * ep flex-direction:column - trang A4 portrait khi in chi con ~718px be
+   * rong vung noi dung (< 900px), nen Chromium AP DUNG NHAM rule mobile nay
+   * luc in/xuat PDF, lam 2 khoi xep chong doc thay vi song song ngang. Ep lai
+   * row + 2 cot deu nhau ngay trong @media print, khong phu thuoc breakpoint
+   * mobile o tren. */
+  .sheet-parties {
+    flex-direction: row !important;
+    align-items: stretch !important;
+    gap: 1.2rem !important;
+  }
+
+  .sheet-parties > div {
+    flex: 1 1 0 !important;
+    min-width: 0 !important;
+  }
+
+  .sheet-insights {
+    margin-top: 0.7rem !important;
+    padding: 0.6rem !important;
+  }
+
+  .sheet-items {
+    margin-top: 0.8rem !important;
+  }
+
+  .sheet-section-heading {
+    margin-bottom: 0.35rem !important;
+    padding-bottom: 0.25rem !important;
+  }
+
+  /* Section heading ("HẠNG MỤC BÁO GIÁ"...) khong duoc dung 1 minh cuoi
+   * trang, ngay truoc 1 khoi bi day sang trang sau (nhin nhu tieu de mo coi -
+   * giong y het bug thead o tren, ap dung cho MOI tieu de section dung truoc
+   * 1 khoi noi dung). */
+  .sheet-section-heading,
+  .sheet-parties h3,
+  .sheet-items h3 {
+    break-after: avoid;
+    page-break-after: avoid;
+  }
+
+  .sheet-total-block {
+    margin-top: 0.7rem !important;
+  }
+
+  .sheet-note {
+    margin-top: 0.7rem !important;
+    padding: 0.6rem !important;
+  }
+
+  .sheet-signatures {
+    margin-top: 1.1rem !important;
   }
 
   /* .quote-sheet--standard co san "overflow:hidden" (dung cho man hinh, che
@@ -2706,10 +2945,11 @@ select.quote-compact-vat:hover {
 
   .sheet-items-table th,
   .sheet-items-table td {
-    padding: 0.35rem 0.3rem !important;
+    padding: 0.3rem 0.3rem !important;
     min-width: 0 !important;
     width: auto !important;
     overflow-wrap: anywhere !important;
+    line-height: 1.3 !important;
   }
 
   /* Doi lai quyet dinh cu "header khong xuong dong khi in" - QA thuc te (bao
@@ -2772,8 +3012,23 @@ select.quote-compact-vat:hover {
     display: table-header-group;
   }
 
+  /* BUG THAT ("header bảng đứng 1 mình cuối trang, không có dòng dữ liệu nào
+   * theo sau"): thead lap lai o moi trang (rule tren) nhung khong co gi ngan
+   * Chromium dat header o dong cuoi cung trang 1 roi day TOAN BO dong du lieu
+   * dau tien xuong trang 2 - nhin nhu 1 dong tieu de bang mo coi. break-after:
+   * avoid tren thead bao trinh duyet: khong duoc ngat trang NGAY SAU thead,
+   * ep no phai di kem it nhat 1 dong du lieu hoac tu chuyen ca thead xuong
+   * trang sau neu khong du cho cho ca header + 1 dong. tbody cung avoid tuong
+   * tu (Chromium moi ho tro break-after/break-inside tren cac row-group cua
+   * table, khong chi tren <tr> le). */
+  .sheet-items-table thead {
+    break-after: avoid;
+    page-break-after: avoid;
+  }
+
   .sheet-items-table tr {
     page-break-inside: avoid;
+    break-inside: avoid;
   }
 
   /* QA thuc te (bao gia 20 dong, xuat PDF landscape 8 trang): khoi tong tien/

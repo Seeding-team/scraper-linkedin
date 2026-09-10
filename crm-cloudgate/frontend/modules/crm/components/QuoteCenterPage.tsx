@@ -224,19 +224,40 @@ export function QuoteCenterPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
 
+  // BUG THAT DA GAP THAT SU ("bấm submenu Báo giá là lỗi ngay" - Next.js
+  // Runtime Error "Uncaught (in promise) Error"): getQuotes()/getForms()/
+  // getIssuerCompanies()/teamsService.getAll() o day KHONG CO .catch() nao ca
+  // (chi getContracts() la co) - neu BAT KY API PHU nao trong so nay tra ve
+  // loi (vd loi ket noi tam thoi/500 tam thoi tu backend), promise bi reject
+  // ma khong ai bat, React/Next.js coi la "unhandled rejection" va render
+  // luon man hinh Runtime Error đè het ca trang, thay vi chi 1 phan du lieu
+  // phu bi rong. Day la 4 API PHU (KPI/funnel/dropdown mau bao gia/don vi
+  // phat hanh/team) - bang chinh "Danh sach bao gia" dung getQuotesByPhase()
+  // rieng (da co .catch()+byPhaseError o duoi, khong dinh loi nay). Them
+  // .catch() rieng cho tung API, fallback ve mang rong - trang van mo binh
+  // thuong, chi KPI/dropdown lien quan hien rong/it du lieu hon thay vi sap
+  // toan trang.
   useEffect(() => {
     let alive = true;
     void seedingQuoteRepository.getQuotes().then(rows => {
       if (alive) setQuotes(rows);
+    }).catch(() => {
+      if (alive) setQuotes([]);
     }).finally(() => alive && setQuotesLoading(false));
     void seedingQuoteRepository.getForms().then(rows => {
       if (alive) setForms(rows);
+    }).catch(() => {
+      if (alive) setForms([]);
     });
     void seedingQuoteRepository.getIssuerCompanies().then(rows => {
       if (alive) setIssuerCompanies(rows);
+    }).catch(() => {
+      if (alive) setIssuerCompanies([]);
     });
     void teamsService.getAll().then(res => {
       if (alive && res.success && res.data) setTeams(res.data);
+    }).catch(() => {
+      if (alive) setTeams([]);
     });
     // Dung de tim hop dong THAT gan voi 1 quote da chot ("Xem hop dong" o
     // action menu Won) - khong fabricate, chi hien khi that su co hop dong
@@ -579,13 +600,25 @@ export function QuoteCenterPage() {
 
   async function refreshByPhase() {
     const seq = ++byPhaseSeqRef.current;
+    // BUG THAT DA GAP ("nút Thử lại phải phục hồi được"): ham nay truoc day
+    // nuot loi im lang VA khong bao gio tu clear byPhaseError khi thanh cong
+    // - nut "Thử lại" (goi ham nay) neu load lai thanh cong van hien nguyen
+    // thong bao loi CU de tren man hinh (state loi khong bao gio duoc reset),
+    // nhin nhu bam khong an thua. Dat lai loading/error dung nhu lan tai
+    // chinh (useEffect ben tren) de UI dong bo that su voi ket qua goi lai.
+    setByPhaseLoading(true);
     try {
       const result = await seedingQuoteRepository.getQuotesByPhase(buildByPhaseParams(page));
-      if (seq === byPhaseSeqRef.current) setByPhase(result);
-    } catch {
-      // Loi refresh sau 1 hanh dong (duyet/huy/tao version...) khong quan
-      // trong bang loi tai trang dau - da co state loi rieng cho lan tai
-      // chinh, khong can bao trung lap o day.
+      if (seq === byPhaseSeqRef.current) {
+        setByPhase(result);
+        setByPhaseError(null);
+      }
+    } catch (err) {
+      if (seq === byPhaseSeqRef.current) {
+        setByPhaseError(err instanceof Error ? err.message : 'Không tải được danh sách báo giá.');
+      }
+    } finally {
+      if (seq === byPhaseSeqRef.current) setByPhaseLoading(false);
     }
   }
 
@@ -1539,6 +1572,8 @@ export function QuoteCenterPage() {
                 <tr>
                   <td colSpan={10} className="qc-empty qc-empty-error">
                     Không tải được danh sách báo giá: {byPhaseError}
+                    {' '}
+                    <button type="button" className="qc-mini-btn" onClick={() => void refreshByPhase()}>Thử lại</button>
                   </td>
                 </tr>
               ) : byPhaseLoading && !byPhase ? (
@@ -1584,7 +1619,11 @@ export function QuoteCenterPage() {
 
         <div className="qc-quote-mobile-cards">
           {byPhaseError ? (
-            <p className="qc-empty qc-empty-error">Không tải được danh sách báo giá: {byPhaseError}</p>
+            <p className="qc-empty qc-empty-error">
+              Không tải được danh sách báo giá: {byPhaseError}
+              {' '}
+              <button type="button" className="qc-mini-btn" onClick={() => void refreshByPhase()}>Thử lại</button>
+            </p>
           ) : byPhaseLoading && !byPhase ? (
             <p className="qc-empty">Đang tải danh sách báo giá…</p>
           ) : chainRows.length === 0 ? (

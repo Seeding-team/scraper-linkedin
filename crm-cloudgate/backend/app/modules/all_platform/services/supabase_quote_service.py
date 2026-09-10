@@ -227,6 +227,11 @@ def _row_to_quote(row: dict, items: list[dict] | None = None) -> dict:
         "publicToken": row.get("public_token"),
         "publicUrl": f"/public/quotes/{row['public_token']}" if row.get("public_token") else None,
         "publicEnabled": row.get("public_enabled") if row.get("public_enabled") is not None else True,
+        # "Giới hạn xem link theo email" (migration 116) - NOI BO, khong bao
+        # gio lo qua _row_to_public_quote (danh sach email khong phai du lieu
+        # cho khach xem link cong khai thay).
+        "publicEmailGateEnabled": bool(row.get("public_email_gate_enabled")),
+        "publicAllowedEmails": row.get("public_allowed_emails") or [],
         "versionChainId": row.get("version_chain_id"),
         "versionNumber": row.get("version_number") or 1,
         "parentQuoteId": row.get("parent_quote_id"),
@@ -1275,24 +1280,77 @@ def get_quote(quote_id: str, include_deleted: bool = False) -> dict:
     return _row_to_quote(row, _quote_items(quote_id))
 
 
-def get_public_quote(token: str) -> dict:
+class PublicQuoteEmailRequiredError(Exception):
+    """"Giới hạn xem link báo giá theo email" (migration 116) - nem loi nay
+    (KHONG phai ValueError thuong) de router phan biet duoc voi loi "chua
+    phat hanh"/"khong tim thay" thong thuong, tra ve them co "requiresEmail"
+    cho FE biet ma hien man hinh nhap email thay vi 1 trang loi tinh."""
+
+    def __init__(self, invalid: bool = False):
+        self.invalid = invalid
+        super().__init__("quote_public_email_required" if not invalid else "quote_public_email_not_allowed")
+
+
+def get_public_quote(token: str, email: str | None = None) -> dict:
+    """BUG THAT DA GAP ("khóa link rồi mà vào lại link thì hiển thị tbao
+    nha"): ban truoc loc thang `.eq("public_enabled", True)` NGAY TRONG cau
+    truy van - khi link da bi KHOA (Khoá link, revoke_public_quote), token
+    van dung nhung row khong khop dieu kien nay nen tra ve y het TRUONG HOP
+    token sai/khong ton tai, ca 2 deu roi vao chung 1 thong bao chung chung
+    "Báo giá chưa được phát hành." - sai nghia thuc te (bao gia NAY that ra
+    DA tung phat hanh, chi la bi khoa lai) va khong ro rang cho khach hang.
+    Tach lam 2 buoc: (1) tim row CHI theo token/deleted_at (khong loc
+    public_enabled) de biet CHINH XAC ly do - khong tim thay token nao vs
+    tim thay nhung dang bi khoa; (2) tra thong bao rieng cho tung truong hop."""
     supabase: Client = get_supabase_client()
     result = (
         supabase.table(QUOTES_TABLE)
         .select("*")
         .eq("public_token", token)
-        .eq("public_enabled", True)
         .is_("deleted_at", "null")
-        .single()
+        .maybe_single()
         .execute()
     )
-    row = result.data
+    row = result.data if result else None
+    if not row:
+        raise ValueError("Không tìm thấy báo giá — link không hợp lệ hoặc đã bị xoá.")
+    if not row.get("public_enabled"):
+        raise ValueError("Link báo giá này đã bị khoá. Vui lòng liên hệ người gửi để nhận lại link mới.")
     # 'confirmed' = quote tao truoc migration 053 (luon duoc coi la da chot/cong khai
     # nhu cu, khong hoi to) - 'draft'/'cancelled' thi CHUA duoc xem cong khai, phai
     # qua approve_quote() truoc.
-    if not row or row.get("status") not in ("approved", "confirmed"):
+    if row.get("status") not in ("approved", "confirmed"):
         raise ValueError("Báo giá chưa được phát hành.")
+
+    if row.get("public_email_gate_enabled"):
+        allowed = {str(e).strip().lower() for e in (row.get("public_allowed_emails") or []) if e}
+        normalized_email = (email or "").strip().lower()
+        if not normalized_email:
+            raise PublicQuoteEmailRequiredError(invalid=False)
+        if normalized_email not in allowed:
+            raise PublicQuoteEmailRequiredError(invalid=True)
+
     return _row_to_public_quote(row, _quote_items(row["id"]))
+
+
+def set_public_email_gate(quote_id: str, actor_id: str | None, enabled: bool, emails: list[str]) -> dict:
+    """Bat/tat + cap nhat danh sach email duoc phep xem link cong khai cua 1
+    quote cu the (migration 116) - KHONG qua RPC (chi la 1 UPDATE metadata
+    don gian, khong dung logic nghiep vu phuc tap nhu cac RPC vong doi khac)."""
+    supabase: Client = get_supabase_client()
+    normalized = sorted({e.strip().lower() for e in emails if e and e.strip()})
+    supabase.table(QUOTES_TABLE).update({
+        "public_email_gate_enabled": bool(enabled),
+        "public_allowed_emails": normalized,
+        "updated_by": actor_id,
+    }).eq("id", quote_id).is_("deleted_at", "null").execute()
+    supabase.table("quote_activity_log").insert({
+        "quote_id": quote_id,
+        "actor_id": actor_id,
+        "action": "public_email_gate_updated",
+        "changes": {"enabled": bool(enabled), "allowed_emails": normalized},
+    }).execute()
+    return get_quote(quote_id)
 
 
 def create_quote(payload: dict, created_by: str | None) -> dict:
@@ -1426,6 +1484,7 @@ _RPC_ERROR_MESSAGES = {
     "quote_item_invalid_markup": "Có hạng mục với markup không hợp lệ (thấp hơn -100%).",
     "quote_missing_payment_terms": "Chưa chọn Điều khoản thanh toán — vào mục \"Thanh toán\" (dropdown số ngày) để chọn, không phải \"+ Ghi chú bổ sung\".",
     "quote_invalid_total_amount": "Tổng tiền tính lại không hợp lệ.",
+    "quote_not_published": "Báo giá chưa từng được phát hành, không thể mở lại link — hãy Phát hành trước.",
 }
 
 
@@ -1648,6 +1707,20 @@ def revoke_public_quote(quote_id: str, actor_id: str | None) -> dict:
     supabase: Client = get_supabase_client()
     try:
         supabase.rpc("quote_revoke_public", {
+            "p_quote_id": quote_id, "p_actor_id": actor_id,
+        }).execute()
+    except Exception as exc:
+        _raise_friendly_rpc_error(exc)
+    return get_quote(quote_id)
+
+
+def enable_public_quote(quote_id: str, actor_id: str | None) -> dict:
+    """"Mở lại link báo giá" - chieu nguoc cua revoke_public_quote() (truoc
+    day CHUA co, chi co "Khoá link" ma khong the mo lai). Giu nguyen
+    public_token cu (khong sinh token moi) - xem migration 115."""
+    supabase: Client = get_supabase_client()
+    try:
+        supabase.rpc("quote_enable_public", {
             "p_quote_id": quote_id, "p_actor_id": actor_id,
         }).execute()
     except Exception as exc:

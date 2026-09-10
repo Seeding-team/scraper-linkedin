@@ -42,6 +42,19 @@ export class QuoteApprovalRequiresExceptionError extends Error {
   }
 }
 
+/** "Giới hạn xem link theo email" (migration 116) - PublicQuotePage bắt lỗi
+ * này để hiện màn hình nhập email thay vì 1 trang lỗi tĩnh. `invalidEmail` =
+ * true nghĩa là đã nhập nhưng không nằm trong danh sách cho phép (khác với
+ * false = chưa nhập lần nào). */
+export class QuotePublicEmailRequiredError extends Error {
+  invalidEmail: boolean;
+  constructor(invalidEmail: boolean) {
+    super(invalidEmail ? 'quote_public_email_not_allowed' : 'quote_public_email_required');
+    this.name = 'QuotePublicEmailRequiredError';
+    this.invalidEmail = invalidEmail;
+  }
+}
+
 type QuoteItemPayload = {
   row_type?: 'section' | 'item';
   description: string;
@@ -94,6 +107,10 @@ async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
     if (body.message === 'quote_requires_exception_reason') {
       const evaluation = (body.data as { evaluation?: { result?: string; details?: unknown } } | undefined)?.evaluation;
       throw new QuoteApprovalRequiresExceptionError(evaluation || null);
+    }
+    const gateData = body.data as { requiresEmail?: boolean; invalidEmail?: boolean } | undefined;
+    if (gateData?.requiresEmail) {
+      throw new QuotePublicEmailRequiredError(Boolean(gateData.invalidEmail));
     }
     throw new Error(body.message || 'Không thực hiện được yêu cầu báo giá.');
   }
@@ -308,8 +325,18 @@ export class SeedingQuoteRepository implements QuoteRepository {
     return apiFetch<Quote>(`/api/all-platform/quotes/${encodeURIComponent(id)}`);
   }
 
-  async getPublicQuote(token: string): Promise<Quote> {
-    return apiFetch<Quote>(`/api/all-platform/quotes/public/${encodeURIComponent(token)}`);
+  async getPublicQuote(token: string, email?: string): Promise<Quote> {
+    const qs = email ? `?email=${encodeURIComponent(email)}` : '';
+    return apiFetch<Quote>(`/api/all-platform/quotes/public/${encodeURIComponent(token)}${qs}`);
+  }
+
+  /** "Giới hạn xem link theo email" (migration 116) - bật/tắt + cập nhật
+   * danh sách email được phép xem link công khai của 1 quote cụ thể. */
+  async setPublicEmailGate(quoteId: string, enabled: boolean, allowedEmails: string[]): Promise<Quote> {
+    return apiFetch<Quote>(`/api/all-platform/quotes/${encodeURIComponent(quoteId)}/public-email-gate`, {
+      method: 'PUT',
+      body: JSON.stringify({ enabled, allowed_emails: allowedEmails }),
+    });
   }
 
   async createQuote(input: CreateQuoteInput): Promise<Quote> {
@@ -468,6 +495,14 @@ export class SeedingQuoteRepository implements QuoteRepository {
 
   async revokePublicQuote(quoteId: string): Promise<Quote> {
     return apiFetch<Quote>(`/api/all-platform/quotes/${encodeURIComponent(quoteId)}/revoke-public`, {
+      method: 'POST',
+    });
+  }
+
+  /** "Mở lại link báo giá" - chieu nguoc cua revokePublicQuote() (truoc day
+   * CHUA co, chi co "Khoá link" ma khong the mo lai). */
+  async enablePublicQuote(quoteId: string): Promise<Quote> {
+    return apiFetch<Quote>(`/api/all-platform/quotes/${encodeURIComponent(quoteId)}/enable-public`, {
       method: 'POST',
     });
   }

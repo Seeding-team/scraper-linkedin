@@ -11,6 +11,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import JSONResponse
 
+from app.core.supabase_client import friendly_supabase_error_message
 from app.modules.all_platform.auth_deps import get_current_user
 from app.modules.all_platform.schemas import (
     BaseResponse,
@@ -27,6 +28,7 @@ from app.modules.all_platform.schemas import (
     QuoteHardDeleteRequest,
     QuoteRequestChangesRequest,
     QuoteApproveRequest,
+    QuotePublicEmailGateUpdateRequest,
     QuoteFormCatalogLinksSetRequest,
     IssuerCompanyCreateRequest,
     IssuerCompanyUpdateRequest,
@@ -37,6 +39,9 @@ from app.modules.all_platform.services import (
     publish_quote,
     cancel_quote,
     revoke_public_quote,
+    enable_public_quote,
+    set_public_email_gate,
+    PublicQuoteEmailRequiredError,
     soft_delete_quote,
     restore_quote,
     hard_delete_quote,
@@ -98,7 +103,7 @@ def quote_forms_list(status: str | None = Query(None), _user: dict = Depends(get
     try:
         return BaseResponse(success=True, data=list_quote_forms(status))
     except Exception as e:
-        return BaseResponse(success=False, message=str(e))
+        return BaseResponse(success=False, message=friendly_supabase_error_message(e))
 
 
 @quote_forms_router.get("/public/{token}")
@@ -114,7 +119,7 @@ def quote_forms_get(form_id: str, _user: dict = Depends(get_current_user)) -> Ba
     try:
         return BaseResponse(success=True, data=get_quote_form(form_id))
     except Exception as e:
-        return BaseResponse(success=False, message=str(e))
+        return BaseResponse(success=False, message=friendly_supabase_error_message(e))
 
 
 @quote_forms_router.post("")
@@ -125,7 +130,7 @@ def quote_forms_create(payload: QuoteFormCreateRequest, _user: dict = Depends(ge
     except HTTPException:
         raise
     except Exception as e:
-        return BaseResponse(success=False, message=str(e))
+        return BaseResponse(success=False, message=friendly_supabase_error_message(e))
 
 
 @quote_forms_router.put("/{form_id}")
@@ -136,7 +141,7 @@ def quote_forms_update(form_id: str, payload: QuoteFormUpdateRequest, _user: dic
     except HTTPException:
         raise
     except Exception as e:
-        return BaseResponse(success=False, message=str(e))
+        return BaseResponse(success=False, message=friendly_supabase_error_message(e))
 
 
 @quote_forms_router.delete("/{form_id}")
@@ -145,7 +150,7 @@ def quote_forms_delete(form_id: str, _user: dict = Depends(get_current_user)) ->
         data = delete_quote_form(form_id)
         return BaseResponse(success=True, data=data)
     except Exception as e:
-        return BaseResponse(success=False, message=str(e))
+        return BaseResponse(success=False, message=friendly_supabase_error_message(e))
 
 
 @quote_forms_router.post("/{form_id}/duplicate")
@@ -154,7 +159,7 @@ def quote_forms_duplicate(form_id: str, _user: dict = Depends(get_current_user))
         data = duplicate_quote_form(form_id)
         return BaseResponse(success=True, data=data)
     except Exception as e:
-        return BaseResponse(success=False, message=str(e))
+        return BaseResponse(success=False, message=friendly_supabase_error_message(e))
 
 
 @quote_forms_router.post("/{form_id}/share")
@@ -163,7 +168,7 @@ def quote_forms_share(form_id: str, enabled: bool = True, _user: dict = Depends(
         data = share_quote_form(form_id, enabled)
         return BaseResponse(success=True, data=data)
     except Exception as e:
-        return BaseResponse(success=False, message=str(e))
+        return BaseResponse(success=False, message=friendly_supabase_error_message(e))
 
 
 @quote_forms_router.get("/{form_id}/catalog-links")
@@ -171,7 +176,7 @@ def quote_forms_get_catalog_links(form_id: str, _user: dict = Depends(get_curren
     try:
         return BaseResponse(success=True, data=get_quote_form_catalog_links(form_id))
     except Exception as e:
-        return BaseResponse(success=False, message=str(e))
+        return BaseResponse(success=False, message=friendly_supabase_error_message(e))
 
 
 @quote_forms_router.put("/{form_id}/catalog-links")
@@ -182,7 +187,7 @@ def quote_forms_set_catalog_links(
         data = set_quote_form_catalog_links(form_id, payload.catalog_item_ids)
         return BaseResponse(success=True, message="Đã lưu danh mục dịch vụ áp dụng", data=data)
     except Exception as e:
-        return BaseResponse(success=False, message=str(e))
+        return BaseResponse(success=False, message=friendly_supabase_error_message(e))
 
 
 # ── Quotes ─────────────────────────────────────────────────────────────────
@@ -193,7 +198,7 @@ def quotes_list(deal_id: str | None = Query(None), user: dict = Depends(get_curr
         data = [apply_quote_field_permissions(quote, user) for quote in list_quotes(deal_id)]
         return BaseResponse(success=True, data=data)
     except Exception as e:
-        return BaseResponse(success=False, message=str(e))
+        return BaseResponse(success=False, message=friendly_supabase_error_message(e))
 
 
 @quotes_router.get("/by-phase")
@@ -243,15 +248,46 @@ def quotes_list_by_phase(
     except ValueError as e:
         return BaseResponse(success=False, message=str(e))
     except Exception as e:
-        return BaseResponse(success=False, message=str(e))
+        return BaseResponse(success=False, message=friendly_supabase_error_message(e))
 
 
 @quotes_router.get("/public/{token}")
-def quotes_get_public(token: str) -> BaseResponse:
+def quotes_get_public(token: str, email: str | None = Query(None)) -> BaseResponse:
     try:
-        return BaseResponse(success=True, data=get_public_quote(token))
+        return BaseResponse(success=True, data=get_public_quote(token, email))
+    except PublicQuoteEmailRequiredError as e:
+        # "Giới hạn xem link theo email" (migration 116) - message la sentinel
+        # rieng ("quote_public_email_required"/"quote_public_email_not_allowed")
+        # de FE phan biet duoc voi loi thong thuong ("chua phat hanh"...) va
+        # hien man hinh nhap email thay vi 1 trang loi tinh. `invalidEmail`
+        # trong data cho FE biet co phai la lan dau (chua nhap) hay da nhap
+        # sai/khong duoc phep, de hien thong bao phu hop.
+        return BaseResponse(
+            success=False,
+            message=str(e),
+            data={"requiresEmail": True, "invalidEmail": e.invalid},
+        )
     except ValueError as e:
         return BaseResponse(success=False, message=str(e))
+
+
+@quotes_router.put("/{quote_id}/public-email-gate")
+def quotes_update_public_email_gate(
+    quote_id: str, payload: QuotePublicEmailGateUpdateRequest, user: dict = Depends(get_current_user)
+) -> BaseResponse:
+    """Bat/tat + cap nhat danh sach email duoc phep xem link cong khai cua 1
+    quote (migration 116) - dung cung quyen voi cac thao tac link khac
+    (Khoá/Mở lại link) tren chinh quote nay."""
+    try:
+        quote, lead = _load_quote_and_lead(quote_id)
+        if not can_edit_quote(user, quote, lead):
+            return BaseResponse(success=False, message="Không có quyền sửa cấu hình link báo giá này")
+        data = set_public_email_gate(quote_id, user.get("id"), payload.enabled, payload.allowed_emails)
+        return BaseResponse(success=True, message="Đã lưu cấu hình giới hạn email", data=data)
+    except QuoteNotFoundError as e:
+        return _not_found_response(e)
+    except Exception as e:
+        return BaseResponse(success=False, message=friendly_supabase_error_message(e))
 
 
 @quotes_router.get("/service-catalog-options")
@@ -262,7 +298,7 @@ def quotes_service_catalog_options(form_id: str = Query(..., alias="formId"), _u
     try:
         return BaseResponse(success=True, data=get_service_catalog_options_for_form(form_id))
     except Exception as e:
-        return BaseResponse(success=False, message=str(e))
+        return BaseResponse(success=False, message=friendly_supabase_error_message(e))
 
 
 @quotes_router.get("/issuer-companies")
@@ -275,7 +311,7 @@ def quotes_issuer_companies(
     try:
         return BaseResponse(success=True, data=list_issuer_companies(include_inactive))
     except Exception as e:
-        return BaseResponse(success=False, message=str(e))
+        return BaseResponse(success=False, message=friendly_supabase_error_message(e))
 
 
 @quotes_router.post("/issuer-companies")
@@ -286,7 +322,7 @@ def quotes_issuer_companies_create(
         data = create_issuer_company(payload.model_dump())
         return BaseResponse(success=True, message="Đã tạo công ty phát hành", data=data)
     except Exception as e:
-        return BaseResponse(success=False, message=str(e))
+        return BaseResponse(success=False, message=friendly_supabase_error_message(e))
 
 
 @quotes_router.put("/issuer-companies/{company_id}")
@@ -297,7 +333,7 @@ def quotes_issuer_companies_update(
         data = update_issuer_company(company_id, payload.model_dump(exclude_none=True))
         return BaseResponse(success=True, message="Đã lưu công ty phát hành", data=data)
     except Exception as e:
-        return BaseResponse(success=False, message=str(e))
+        return BaseResponse(success=False, message=friendly_supabase_error_message(e))
 
 
 # Field-level authorization cho PUT /quotes/{id} (RPC quote_update luon
@@ -405,7 +441,7 @@ def quotes_get(quote_id: str, user: dict = Depends(get_current_user)) -> BaseRes
             return BaseResponse(success=False, message="Không có quyền xem báo giá này")
         return BaseResponse(success=True, data=apply_quote_field_permissions(quote, user))
     except Exception as e:
-        return BaseResponse(success=False, message=str(e))
+        return BaseResponse(success=False, message=friendly_supabase_error_message(e))
 
 
 @quotes_router.post("")
@@ -418,7 +454,7 @@ def quotes_create(payload: QuoteCreateRequest, user: dict = Depends(get_current_
     except HTTPException:
         raise
     except Exception as e:
-        return BaseResponse(success=False, message=str(e))
+        return BaseResponse(success=False, message=friendly_supabase_error_message(e))
 
 
 @quotes_router.put("/{quote_id}")
@@ -455,7 +491,7 @@ def quotes_update(quote_id: str, payload: QuoteUpdateRequest, user: dict = Depen
     except HTTPException:
         raise
     except Exception as e:
-        return BaseResponse(success=False, message=str(e))
+        return BaseResponse(success=False, message=friendly_supabase_error_message(e))
 
 
 @quotes_router.delete("/{quote_id}")
@@ -479,7 +515,7 @@ def quotes_delete(quote_id: str, user: dict = Depends(get_current_user)) -> Base
     except ValueError as e:
         return BaseResponse(success=False, message=str(e))
     except Exception as e:
-        return BaseResponse(success=False, message=str(e))
+        return BaseResponse(success=False, message=friendly_supabase_error_message(e))
 
 
 def _guard_exception_approval(quote_id: str, user: dict, exception_reason: str | None) -> BaseResponse | None:
@@ -527,7 +563,7 @@ def quotes_approve(quote_id: str, payload: QuoteApproveRequest = QuoteApproveReq
     except ValueError as e:
         return BaseResponse(success=False, message=str(e))
     except Exception as e:
-        return BaseResponse(success=False, message=str(e))
+        return BaseResponse(success=False, message=friendly_supabase_error_message(e))
 
 
 @quotes_router.post("/{quote_id}/update-and-approve")
@@ -556,7 +592,7 @@ def quotes_update_and_approve(
     except ValueError as e:
         return BaseResponse(success=False, message=str(e))
     except Exception as e:
-        return BaseResponse(success=False, message=str(e))
+        return BaseResponse(success=False, message=friendly_supabase_error_message(e))
 
 
 @quotes_router.post("/{quote_id}/create-version")
@@ -577,7 +613,7 @@ def quotes_create_version(quote_id: str, user: dict = Depends(get_current_user))
     except ValueError as e:
         return BaseResponse(success=False, message=str(e))
     except Exception as e:
-        return BaseResponse(success=False, message=str(e))
+        return BaseResponse(success=False, message=friendly_supabase_error_message(e))
 
 
 @quotes_router.get("/{quote_id}/versions")
@@ -589,7 +625,7 @@ def quotes_list_versions(quote_id: str, user: dict = Depends(get_current_user)) 
         versions = [apply_quote_field_permissions(v, user) for v in list_quote_versions(quote["versionChainId"])]
         return BaseResponse(success=True, data=versions)
     except Exception as e:
-        return BaseResponse(success=False, message=str(e))
+        return BaseResponse(success=False, message=friendly_supabase_error_message(e))
 
 
 @quotes_router.post("/{quote_id}/processing-stage")
@@ -628,7 +664,7 @@ def quotes_set_processing_stage(
     except ValueError as e:
         return BaseResponse(success=False, message=str(e))
     except Exception as e:
-        return BaseResponse(success=False, message=str(e))
+        return BaseResponse(success=False, message=friendly_supabase_error_message(e))
 
 
 @quotes_router.post("/{quote_id}/request-changes")
@@ -645,7 +681,7 @@ def quotes_request_changes(
     except ValueError as e:
         return BaseResponse(success=False, message=str(e))
     except Exception as e:
-        return BaseResponse(success=False, message=str(e))
+        return BaseResponse(success=False, message=friendly_supabase_error_message(e))
 
 
 @quotes_router.post("/{quote_id}/publish")
@@ -660,7 +696,7 @@ def quotes_publish(quote_id: str, user: dict = Depends(get_current_user)) -> Bas
     except ValueError as e:
         return BaseResponse(success=False, message=str(e))
     except Exception as e:
-        return BaseResponse(success=False, message=str(e))
+        return BaseResponse(success=False, message=friendly_supabase_error_message(e))
 
 
 @quotes_router.post("/{quote_id}/cancel")
@@ -678,7 +714,7 @@ def quotes_cancel(quote_id: str, payload: QuoteCancelRequest, user: dict = Depen
     except ValueError as e:
         return BaseResponse(success=False, message=str(e))
     except Exception as e:
-        return BaseResponse(success=False, message=str(e))
+        return BaseResponse(success=False, message=friendly_supabase_error_message(e))
 
 
 @quotes_router.post("/{quote_id}/revoke-public")
@@ -697,7 +733,25 @@ def quotes_revoke_public(quote_id: str, user: dict = Depends(get_current_user)) 
     except ValueError as e:
         return BaseResponse(success=False, message=str(e))
     except Exception as e:
+        return BaseResponse(success=False, message=friendly_supabase_error_message(e))
+
+
+@quotes_router.post("/{quote_id}/enable-public")
+def quotes_enable_public(quote_id: str, user: dict = Depends(get_current_user)) -> BaseResponse:
+    """"Mở lại link báo giá" - chieu nguoc cua revoke-public (truoc day CHUA
+    co endpoint nay). Giu nguyen public_token cu (xem migration 115)."""
+    try:
+        quote, lead = _load_quote_and_lead(quote_id)
+        if not can_edit_quote(user, quote, lead):
+            return BaseResponse(success=False, message="Không có quyền mở lại link báo giá này")
+        data = enable_public_quote(quote_id, user.get("id"))
+        return BaseResponse(success=True, message="Đã mở lại link báo giá", data=data)
+    except QuoteNotFoundError as e:
+        return _not_found_response(e)
+    except ValueError as e:
         return BaseResponse(success=False, message=str(e))
+    except Exception as e:
+        return BaseResponse(success=False, message=friendly_supabase_error_message(e))
 
 
 @quotes_router.post("/{quote_id}/soft-delete")
@@ -716,7 +770,7 @@ def quotes_soft_delete(quote_id: str, payload: QuoteSoftDeleteRequest, user: dic
     except ValueError as e:
         return BaseResponse(success=False, message=str(e))
     except Exception as e:
-        return BaseResponse(success=False, message=str(e))
+        return BaseResponse(success=False, message=friendly_supabase_error_message(e))
 
 
 @quotes_router.post("/{quote_id}/restore")
@@ -736,7 +790,7 @@ def quotes_restore(quote_id: str, user: dict = Depends(get_current_user)) -> Bas
     except ValueError as e:
         return BaseResponse(success=False, message=str(e))
     except Exception as e:
-        return BaseResponse(success=False, message=str(e))
+        return BaseResponse(success=False, message=friendly_supabase_error_message(e))
 
 
 @quotes_router.post("/{quote_id}/hard-delete")
@@ -763,7 +817,7 @@ def quotes_hard_delete(
     except ValueError as e:
         return BaseResponse(success=False, message=str(e))
     except Exception as e:
-        return BaseResponse(success=False, message=str(e))
+        return BaseResponse(success=False, message=friendly_supabase_error_message(e))
 
 
 @quotes_router.post("/{quote_id}/owners")
@@ -786,7 +840,7 @@ def quotes_assign_owners(
         )
         return BaseResponse(success=True, data=apply_quote_field_permissions(data, user))
     except Exception as e:
-        return BaseResponse(success=False, message=str(e))
+        return BaseResponse(success=False, message=friendly_supabase_error_message(e))
 
 
 @quotes_router.get("/{quote_id}/handoff-checklist")
@@ -797,7 +851,7 @@ def quotes_get_handoff_checklist(quote_id: str, user: dict = Depends(get_current
             return BaseResponse(success=False, message="Không có quyền xem báo giá này")
         return BaseResponse(success=True, data=get_quote_handoff_checklist(quote_id))
     except Exception as e:
-        return BaseResponse(success=False, message=str(e))
+        return BaseResponse(success=False, message=friendly_supabase_error_message(e))
 
 
 @quotes_router.put("/{quote_id}/handoff-checklist")
@@ -811,7 +865,7 @@ def quotes_save_handoff_checklist(
         data = save_quote_handoff_checklist(quote_id, user.get("id"), payload.model_dump())
         return BaseResponse(success=True, message="Đã lưu bàn giao kỹ thuật", data=data)
     except Exception as e:
-        return BaseResponse(success=False, message=str(e))
+        return BaseResponse(success=False, message=friendly_supabase_error_message(e))
 
 
 @quotes_router.get("/{quote_id}/activity-log")
@@ -822,7 +876,7 @@ def quotes_get_activity_log(quote_id: str, user: dict = Depends(get_current_user
             return BaseResponse(success=False, message="Không có quyền xem báo giá này")
         return BaseResponse(success=True, data=list_quote_activity_log(quote_id))
     except Exception as e:
-        return BaseResponse(success=False, message=str(e))
+        return BaseResponse(success=False, message=friendly_supabase_error_message(e))
 
 
 @quotes_router.post("/{quote_id}/version-reason")
@@ -840,7 +894,7 @@ def quotes_log_version_reason(
     except ValueError as e:
         return BaseResponse(success=False, message=str(e))
     except Exception as e:
-        return BaseResponse(success=False, message=str(e))
+        return BaseResponse(success=False, message=friendly_supabase_error_message(e))
 
 
 @quotes_router.get("/{quote_id}/telegram-log")
@@ -851,7 +905,7 @@ def quotes_get_telegram_log(quote_id: str, user: dict = Depends(get_current_user
             return BaseResponse(success=False, message="Không có quyền xem báo giá này")
         return BaseResponse(success=True, data=get_quote_telegram_log(quote_id))
     except Exception as e:
-        return BaseResponse(success=False, message=str(e))
+        return BaseResponse(success=False, message=friendly_supabase_error_message(e))
 
 
 @quotes_router.post("/{quote_id}/send-telegram")
@@ -868,7 +922,7 @@ def quotes_send_telegram(quote_id: str, user: dict = Depends(get_current_user)) 
     except ValueError as e:
         return BaseResponse(success=False, message=str(e))
     except Exception as e:
-        return BaseResponse(success=False, message=str(e))
+        return BaseResponse(success=False, message=friendly_supabase_error_message(e))
 
 
 # ─────────────────────────────────────────────────────────────────────────

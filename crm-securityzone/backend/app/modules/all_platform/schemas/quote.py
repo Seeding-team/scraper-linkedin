@@ -173,6 +173,13 @@ class QuoteSoftDeleteRequest(BaseModel):
     reason: Optional[str] = None
 
 
+class QuotePublicEmailGateUpdateRequest(BaseModel):
+    """"Giới hạn xem link theo email" (migration 116)."""
+
+    enabled: bool
+    allowed_emails: list[str] = []
+
+
 class QuoteHardDeleteRequest(BaseModel):
     """Xac nhan hard-delete - client PHAI gui lai quote_number that (backend
     doi chieu voi ban ghi that truoc khi xoa, khong chi tin ID)."""

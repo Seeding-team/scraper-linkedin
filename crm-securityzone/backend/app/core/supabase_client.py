@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import re
 import socket
+import threading
 import time
 from typing import TYPE_CHECKING, Callable, TypeVar
 
@@ -16,6 +17,17 @@ if TYPE_CHECKING:
 
 T = TypeVar("T")
 _supabase_client: Client | None = None
+# BUG THAT DA GAP ("Cannot send a request, as the client has been closed"):
+# FastAPI chay cac sync route handler tren mot threadpool, nen nhieu request
+# CO THE dong thoi doc/ghi bien global `_supabase_client` nay - truoc day
+# khong co lock nao ca. 1 thread gap loi transient goi reset_supabase_client()
+# CUNG LUC 1 thread khac dang goi get_supabase_client() co the doc duoc client
+# nam giua chung 2 thao tac (vua bi set None vua chua kip tao lai), hoac te
+# hon: dong session cua client MA THREAD KIA DANG DUNG DO. Lock nay chi bao ve
+# thao tac DOC/GHI bien global cho atomic (khong con race lam rong/tao trung
+# client) - no KHONG the bao ve 1 thread da lay san tham chieu client TRUOC do
+# roi dang ban I/O luc bi reset (xem them ly do bo han .close() ben duoi).
+_client_lock = threading.Lock()
 
 # Transient network markers (substring match on f"{type(exc).__name__}: {exc}")
 _TRANSIENT_ERROR_MARKERS = (
@@ -40,6 +52,16 @@ _TRANSIENT_ERROR_MARKERS = (
 _TRANSIENT_WSA_CODES = frozenset({
     10035,  # WSAEWOULDBLOCK — non-blocking socket op could not complete immediately
     10036,  # WSAEINPROGRESS — a blocking Windows Sockets 1.1 call is in progress
+    10038,  # WSAENOTSOCK — op attempted on a fd that is no longer a valid socket
+            # (httpx pool handed out a connection whose underlying OS handle was
+            # already closed/reused elsewhere in the process — same failure
+            # family as 10054/10053, just a different Winsock code depending on
+            # exactly which syscall hits the stale fd first). BUG THAT DA GAP:
+            # code nay TUNG THIEU trong danh sach, nen loi nay bi coi la KHONG
+            # transient -> khong reset client/retry, loi that thoat ra ngay lan
+            # dau (QA thuc te: "Error getting customer leads/SDRs" roi request
+            # sau do lai 200 OK binh thuong, dung dau hieu 1 loi tam thoi bi xu
+            # ly sai thanh vinh vien).
     10053,  # WSAECONNABORTED — software caused connection abort
     10054,  # WSAECONNRESET — existing connection forcibly closed by remote host
     10060,  # WSAETIMEDOUT — connection timed out
@@ -70,20 +92,24 @@ _TRANSIENT_OS_EXC_CLASSES = (
 def reset_supabase_client() -> None:
     """Drop the cached Supabase client after a broken HTTP connection.
 
-    Closes the underlying ``httpx.Client`` first — otherwise its connection
-    pool (and the half-dead sockets in it) is leaked on every reset.
+    BUG THAT DA GAP ("Cannot send a request, as the client has been closed"):
+    ban truoc goi ``session.close()`` NGAY LAP TUC tren client dang bi thay
+    the - nhung client CU do co the dang duoc 1 REQUEST/THREAD KHAC su dung
+    dong thoi (FastAPI chay sync handler tren threadpool, nhieu request chia
+    chung 1 singleton). Dong session cua no giua chung khien request kia nhan
+    ngay loi "client has been closed" du ban than request kia khong gap loi
+    transient gi ca (QA thuc te xac nhan: 1 request "customer-leads" loi
+    transient, request "sdrs" chay gan cung luc tren thread khac bi vo dung
+    session vua bi dong nay). Chi DROP tham chieu global (duoi lock, atomic
+    voi get_supabase_client()) - KHONG con chu dong dong session nua. Client
+    cu tro thanh "mo coi", cac request dang giu tham chieu rieng van dung
+    duoc binh thuong cho toi khi xong; httpx.Client tu dong giai phong ket
+    noi khi bi garbage-collect (doi lay 1 it leak-cho-toi-GC ngan de doi lay
+    KHONG con loi "closed" gia gay boi chinh co che reset nay).
     """
     global _supabase_client
-    client = _supabase_client
-    _supabase_client = None
-    if client is None:
-        return
-    try:
-        session = getattr(getattr(client, "postgrest", None), "session", None)
-        if session is not None:
-            session.close()
-    except Exception:
-        pass
+    with _client_lock:
+        _supabase_client = None
 
 
 def is_transient_supabase_error(exc: BaseException) -> bool:
@@ -117,14 +143,28 @@ def is_transient_supabase_error(exc: BaseException) -> bool:
         return True
 
     # 4. "[Errno NNNN]" / "WinError NNNN" / "WSAE..." markers in message
-    if re.search(r"\[Errno (?:10035|10053|10054|10060|10061|10065)\]", msg):
+    if re.search(r"\[Errno (?:10035|10038|10053|10054|10060|10061|10065)\]", msg):
         return True
-    if re.search(r"WinError (?:10035|10053|10054|10060|10061|10065)", msg):
+    if re.search(r"WinError (?:10035|10038|10053|10054|10060|10061|10065)", msg):
         return True
-    if re.search(r"WSA(EWOULDBLOCK|ECONNABORTED|ECONNRESET|ETIMEDOUT|ECONNREFUSED|ENETUNREACH)", msg):
+    if re.search(r"WSA(EWOULDBLOCK|ENOTSOCK|ECONNABORTED|ECONNRESET|ETIMEDOUT|ECONNREFUSED|ENETUNREACH)", msg):
         return True
 
     return False
+
+
+def friendly_supabase_error_message(exc: BaseException) -> str:
+    """User-facing message for a Supabase/network failure — NEVER the raw
+    exception text (yeu cau ro rang "không render raw WinError ra giao
+    diện"). Loi transient (socket Windows, timeout, 502/503...) da qua het
+    so lan retry cua execute_supabase_query() van co the roi toi day - tra
+    ve 1 cau chung chung, khong lo chi tiet ky thuat noi bo cho FE/nguoi
+    dung cuoi. Loi KHONG transient (schema/permission/logic that) van giu
+    nguyen str(exc) - do la loi nghiep vu that can thay de debug/xu ly.
+    """
+    if is_transient_supabase_error(exc):
+        return "Không tải được dữ liệu do lỗi kết nối tạm thời. Vui lòng thử lại sau ít phút."
+    return str(exc)
 
 
 def execute_supabase_query(
@@ -189,7 +229,17 @@ def get_supabase_client() -> Client:
       ``execute_supabase_query`` retry on top of that).
     """
     global _supabase_client
-    if _supabase_client is None:
+    # Doc nhanh KHONG lock truoc (fast path - da co client thi tra ve ngay,
+    # khong tranh chap voi thread khac). Chi vao lock khi THAT SU can tao moi
+    # - double-checked locking: kiem tra lai 1 lan nua SAU khi vao lock, vi 1
+    # thread khac co the da tao xong trong luc thread nay cho lay lock.
+    if _supabase_client is not None:
+        return _supabase_client
+
+    with _client_lock:
+        if _supabase_client is not None:
+            return _supabase_client
+
         url = os.getenv("SUPABASE_URL")
         key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
         if not url or not key:
@@ -234,4 +284,4 @@ def get_supabase_client() -> Client:
                 httpx_client=_http_client,
             ),
         )
-    return _supabase_client
+        return _supabase_client

@@ -5,14 +5,16 @@ import { useSearchParams } from 'next/navigation';
 import { useEffect, useMemo, useState } from 'react';
 import { API_BASE_URL, API_KEY } from '@/lib/env';
 import { useAppAuth } from '@/contexts/AppAuthContext';
-import { formatVND, getStageMeta } from '../constants/crmConfig';
-import type { DealStage } from '../types';
+import { formatVND, getStageMeta, SOURCE_OPTIONS, SERVICE_PACKAGE_OPTIONS, CRM_PACKAGE_OPTIONS, INDUSTRY_OPTIONS } from '../constants/crmConfig';
+import type { CreateDealInput, CrmUserOption, DealStage } from '../types';
 import { CustomerFormModal } from './CustomerFormModal';
 import { CrmContactsPanel } from './CrmContactsPanel';
 import { ProjectFormModal } from './ProjectFormModal';
+import { DealFormModal, clearDealDraft } from './DealFormModal';
+import { mergeCategoryOptions } from '../hooks/useCrm';
 import { Loader2, Plus } from './icons';
 import type { CrmCustomerRow } from '../types';
-import { customerProjectsSummaryService, type CustomerProjectsSummary, type Project } from '@/services/all-platform.service';
+import { customerProjectsSummaryService, allPlatformCategoriesService, type CustomerProjectsSummary, type Project } from '@/services/all-platform.service';
 import { formatMoney, relativeTime } from '../utils/quoteDisplay';
 import { useMembers } from '@/hooks/useMembers';
 import { QuoteWorkspaceModal } from './QuoteWorkspaceModal';
@@ -189,6 +191,56 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
   const [projectsError, setProjectsError] = useState('');
   const [projectModal, setProjectModal] = useState<{ open: boolean; project: Project | null }>({ open: false, project: null });
 
+  // BUG THAT DA GAP ("tạo cơ hội ở trang chi tiết khách hàng bị nhảy qua
+  // /all-platform/crm"): nut "+ Tạo cơ hội" (header + tren tung Project card)
+  // truoc day la <Link href="/all-platform/crm?openDeal=new&...">, dieu
+  // huong THAT su roi cho CrmShell.tsx mo modal ben do - dung y DealFormModal
+  // da co san prop initialCustomer/initialProject de mo NGAY tai day (cung
+  // pattern voi "+ Tạo dự án" o ngay ben canh dung ProjectFormModal inline),
+  // nhung chua tung duoc noi day. Tu fetch agents/danh muc rieng (KHONG dung
+  // ca useCrm() - hook do con tu fetch toan bo danh sach deal cua he thong,
+  // thua thai cho 1 trang Ho so 1 khach hang).
+  const [dealModal, setDealModal] = useState<{ open: boolean; project: Project | null }>({ open: false, project: null });
+  const [dealSaving, setDealSaving] = useState(false);
+  const [dealAgents, setDealAgents] = useState<CrmUserOption[]>([]);
+  const [dealSourceOptions, setDealSourceOptions] = useState(SOURCE_OPTIONS);
+  const [dealServicePackageOptions, setDealServicePackageOptions] = useState(SERVICE_PACKAGE_OPTIONS);
+  const [dealPackageOptions, setDealPackageOptions] = useState(CRM_PACKAGE_OPTIONS);
+  const [dealIndustryOptions, setDealIndustryOptions] = useState(INDUSTRY_OPTIONS.map(v => ({ value: v, label: v })));
+  useEffect(() => {
+    let alive = true;
+    seedingCrmRepository.getAgents().then(res => { if (alive) setDealAgents(res); }).catch(() => { if (alive) setDealAgents([]); });
+    Promise.all([
+      allPlatformCategoriesService.getAll('crm_source'),
+      allPlatformCategoriesService.getAll('crm_service_package'),
+      allPlatformCategoriesService.getAll('crm_package'),
+      allPlatformCategoriesService.getAll('crm_industry'),
+    ])
+      .then(([sourceRes, servicePackageRes, packageRes, industryRes]) => {
+        if (!alive) return;
+        setDealSourceOptions(mergeCategoryOptions(SOURCE_OPTIONS, sourceRes.data));
+        setDealServicePackageOptions(mergeCategoryOptions(SERVICE_PACKAGE_OPTIONS, servicePackageRes.data));
+        setDealPackageOptions(mergeCategoryOptions(CRM_PACKAGE_OPTIONS, packageRes.data));
+        setDealIndustryOptions(mergeCategoryOptions(INDUSTRY_OPTIONS.map(v => ({ value: v, label: v })), industryRes.data));
+      })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, []);
+  async function handleCreateDeal(input: CreateDealInput) {
+    setDealSaving(true);
+    try {
+      await seedingCrmRepository.createDeal(input);
+      clearDealDraft();
+      setDealModal({ open: false, project: null });
+      setReloadTick(t => t + 1);
+      setTab('deals');
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : 'Không tạo được cơ hội. Vui lòng kiểm tra lại thông tin.');
+    } finally {
+      setDealSaving(false);
+    }
+  }
+
   // Tab "Báo giá" - filter theo 1 Project cu the (Block 1, muc 7: "Xem báo
   // giá" tren Project card phai THAT SU chuyen tab + loc, khong chi navigate).
   const [quoteProjectFilter, setQuoteProjectFilter] = useState<string | null>(searchParams.get('projectId'));
@@ -309,19 +361,6 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
   // crm_permission_service.py) - server van tu enforce lai khi POST.
   const canManageProject = Boolean(user && isAdminOrLeader(user.role));
 
-  const dealLink = useMemo(() => {
-    if (!customer) return '/all-platform/crm';
-    const params = new URLSearchParams({
-      openDeal: 'new',
-      customerId: customer.id,
-      customerName: customer.customer_name || '',
-    });
-    if (customer.company_name) params.set('companyName', customer.company_name);
-    if (customer.phone) params.set('phone', customer.phone);
-    if (customer.email) params.set('email', customer.email);
-    return `/all-platform/crm?${params.toString()}`;
-  }, [customer]);
-
   // "+ Tạo báo giá" o header - CHI mang customerId (khong projectId, Du an
   // se cho chon tu do trong workspace vi day la muc header cua ca Ho so,
   // khong phai cua 1 Project cu the - khac voi nut tren tung Project card).
@@ -393,9 +432,9 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
                 + Tạo dự án
               </button>
             ) : null}
-            <Link href={dealLink} className="crm-secondary-button">
+            <button type="button" className="crm-secondary-button" onClick={() => setDealModal({ open: true, project: null })}>
               + Tạo cơ hội
-            </Link>
+            </button>
             <Link href={quoteLink} className="crm-primary-button">
               + Tạo báo giá
             </Link>
@@ -514,9 +553,9 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
                           <Link className="crm-secondary-button" href={`/all-platform/quote-center?openQuote=new&projectId=${project.id}&customerId=${customerId}`}>
                             Tạo báo giá
                           </Link>
-                          <Link className="crm-secondary-button" href={`/all-platform/crm?openDeal=new&customerId=${customerId}&projectId=${project.id}`}>
+                          <button type="button" className="crm-secondary-button" onClick={() => setDealModal({ open: true, project })}>
                             Tạo cơ hội
-                          </Link>
+                          </button>
                           {canManageProject ? (
                             <button type="button" className="crm-secondary-button" onClick={() => setProjectModal({ open: true, project })}>
                               Sửa dự án
@@ -689,6 +728,29 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
         onClose={() => setProjectModal({ open: false, project: null })}
         onSaved={() => { setProjectModal({ open: false, project: null }); setReloadTick(t => t + 1); }}
       />
+      {dealModal.open && customer ? (
+        <DealFormModal
+          open={dealModal.open}
+          onClose={() => setDealModal({ open: false, project: null })}
+          onCreate={input => void handleCreateDeal(input)}
+          onUpdate={() => {}}
+          agents={dealAgents}
+          sourceOptions={dealSourceOptions}
+          servicePackageOptions={dealServicePackageOptions}
+          packageOptions={dealPackageOptions}
+          industryOptions={dealIndustryOptions}
+          currentUser={user}
+          loading={dealSaving}
+          initialCustomer={{
+            id: customer.id,
+            name: customer.customer_name || '',
+            companyName: customer.company_name || undefined,
+            phone: customer.phone || undefined,
+            email: customer.email || undefined,
+          }}
+          initialProject={dealModal.project ? { id: dealModal.project.id } : null}
+        />
+      ) : null}
       {quoteWorkspace ? (
         <QuoteWorkspaceModal
           quoteId={quoteWorkspace.quoteId}

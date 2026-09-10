@@ -12,6 +12,7 @@ from app.modules.all_platform.schemas.customer_lead import (
 )
 from app.modules.all_platform.services import customer_lead_service, decode_token, get_user_by_id, can_write_deal
 from app.modules.all_platform.services.customer_lead_service import TransitionError
+from app.core.supabase_client import friendly_supabase_error_message
 from app.modules.all_platform.services.crm_attachment_service import (
     upload_attachment,
     allowed_mime,
@@ -82,7 +83,7 @@ def get_customer_leads(
         )
         return BaseResponse(success=True, data=result, message="Success")
     except Exception as e:
-        return BaseResponse(success=False, message=str(e))
+        return BaseResponse(success=False, message=friendly_supabase_error_message(e))
 
 
 @router.get("/stage-counts", response_model=BaseResponse)
@@ -92,7 +93,7 @@ def get_stage_counts(current_user: Any = Depends(get_current_user)):
         counts = customer_lead_service.get_stage_counts(current_user=current_user)
         return BaseResponse(success=True, data=counts, message="Success")
     except Exception as e:
-        return BaseResponse(success=False, message=str(e))
+        return BaseResponse(success=False, message=friendly_supabase_error_message(e))
 
 
 @router.get("/sdrs", response_model=BaseResponse)
@@ -101,7 +102,7 @@ def get_sdrs(_: Any = Depends(get_current_user)):
         data = customer_lead_service.get_all_sdrs()
         return BaseResponse(success=True, data=data, message="Success")
     except Exception as e:
-        return BaseResponse(success=False, message=str(e))
+        return BaseResponse(success=False, message=friendly_supabase_error_message(e))
 
 
 @router.get("/by-conv/{conv_id}", response_model=BaseResponse)

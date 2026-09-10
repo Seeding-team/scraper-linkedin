@@ -106,6 +106,12 @@ export function QuoteDetailPage({ quoteId }: Props) {
           <TelegramSendButton quoteId={quote.id} status={quote.status} />
         </div>
       </header>
+      {quote.status === 'approved' || quote.status === 'confirmed' ? (
+        <p className="quote-print-hint no-print">
+          Mẹo: trong hộp thoại in, bấm "Xem thêm cài đặt" và tắt "Tiêu đề và chân trang"
+          (Headers and footers) để bản PDF không hiện URL/ngày giờ của trình duyệt.
+        </p>
+      ) : null}
       {versions.length > 1 ? (
         <section className="quote-version-history no-print">
           <h2>Lịch sử phiên bản</h2>
@@ -139,6 +145,8 @@ export function QuoteDetailPage({ quoteId }: Props) {
             totalAmount: quote.totalAmount,
           }}
           mode="detail"
+          isPublished={quote.processingStage === 'published'}
+          quoteNumber={quote.quoteNumber}
         />
       </div>
     </main>

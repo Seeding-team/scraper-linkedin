@@ -2,7 +2,7 @@ import logging
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timezone, date
 from app.core.config import settings
-from app.core.supabase_client import get_supabase_client
+from app.core.supabase_client import get_supabase_client, execute_supabase_query
 from app.modules.all_platform.schemas.customer_lead import STAGE_REQUIRED_FIELDS, is_transition_allowed
 from app.modules.all_platform.services.crm_position_service import apply_position_category
 
@@ -132,46 +132,62 @@ def get_all_customer_leads(
     Set `exclude_terminal=True` để loại bỏ won/lost ra khỏi kết quả (UI tab chính).
     """
     try:
-        supabase = get_supabase_client()
-        query = supabase.table("customer_leads").select(BASE_COLUMNS, count="exact").eq("instance", settings.crm_instance)
-
-        if search:
-            query = query.or_(
-                f"customer_name.ilike.%{search}%,"
-                f"company_name.ilike.%{search}%,"
-                f"phone.ilike.%{search}%,"
-                f"email.ilike.%{search}%"
-            )
-        if status:
-            query = query.eq("status", status)
-        if deal_stage:
-            query = query.eq("deal_stage", deal_stage)
-        if exclude_terminal:
-            # Loại bỏ won/lost để tab chính gọn
-            query = query.not_.in_("deal_stage", ["won", "lost"])
-        if city:
-            query = query.eq("city", city)
-        if industry:
-            query = query.eq("industry", industry)
-        if source_platform:
-            query = query.eq("source_platform", source_platform)
-
-        # Doc Pipeline gio la UNIVERSAL cho moi user da dang nhap (admin/leader/
-        # sale-team/member deu thay toan bo deal, ke ca cua nguoi khac/team
-        # khac) - phan quyen chi con ap dung o buoc GHI (update/delete/
-        # transition), xem can_write_deal() trong crm_permission_service.py.
-        # (Truoc day co self-scope leaded_by/sdr_id==uid cho non-admin/leader,
-        # da bo theo yeu cau "Member duoc xem Pipeline cua minh va team khac".)
-
-        # Sắp xếp theo stage_entered_at DESC — deal mới nhất lên đầu trong cột
         offset = (page - 1) * page_size
-        query = (
-            query.order("stage_entered_at", desc=True, nullsfirst=False)
-            .order("created_at", desc=True)
-            .range(offset, offset + page_size - 1)
-        )
 
-        res = query.execute()
+        # BUG THAT DA GAP LAN 2 ("Cannot send a request, as the client has
+        # been closed"): ban truoc XAY query 1 LAN duy nhat bang client lay
+        # san (`supabase = get_supabase_client()` ngay dau ham), roi goi
+        # thang `query.execute()` - khong qua execute_supabase_query() nen
+        # khong tu phuc hoi duoc khi 1 request khac (thread khac, FastAPI
+        # chay sync handler tren threadpool) gap loi transient va goi
+        # reset_supabase_client() giua chung (ham do drop client dang cache).
+        # Sua dung quy uoc chung cua repo (xem comment trong
+        # supabase_crawl_queue_service.py: "mọi lambda truyền vào
+        # execute_supabase_query() đều tự gọi get_supabase_client()") - xay
+        # LAI toan bo query TU DAU trong 1 ham noi bo, goi get_supabase_client()
+        # MOI LAN thu (kem ca lan retry), khong bao gio tai su dung 1 client/
+        # query object da xay san truoc do.
+        def _run():
+            supabase = get_supabase_client()
+            query = supabase.table("customer_leads").select(BASE_COLUMNS, count="exact").eq("instance", settings.crm_instance)
+
+            if search:
+                query = query.or_(
+                    f"customer_name.ilike.%{search}%,"
+                    f"company_name.ilike.%{search}%,"
+                    f"phone.ilike.%{search}%,"
+                    f"email.ilike.%{search}%"
+                )
+            if status:
+                query = query.eq("status", status)
+            if deal_stage:
+                query = query.eq("deal_stage", deal_stage)
+            if exclude_terminal:
+                # Loại bỏ won/lost để tab chính gọn
+                query = query.not_.in_("deal_stage", ["won", "lost"])
+            if city:
+                query = query.eq("city", city)
+            if industry:
+                query = query.eq("industry", industry)
+            if source_platform:
+                query = query.eq("source_platform", source_platform)
+
+            # Doc Pipeline gio la UNIVERSAL cho moi user da dang nhap (admin/leader/
+            # sale-team/member deu thay toan bo deal, ke ca cua nguoi khac/team
+            # khac) - phan quyen chi con ap dung o buoc GHI (update/delete/
+            # transition), xem can_write_deal() trong crm_permission_service.py.
+            # (Truoc day co self-scope leaded_by/sdr_id==uid cho non-admin/leader,
+            # da bo theo yeu cau "Member duoc xem Pipeline cua minh va team khac".)
+
+            # Sắp xếp theo stage_entered_at DESC — deal mới nhất lên đầu trong cột
+            query = (
+                query.order("stage_entered_at", desc=True, nullsfirst=False)
+                .order("created_at", desc=True)
+                .range(offset, offset + page_size - 1)
+            )
+            return query.execute()
+
+        res = execute_supabase_query(_run)
         items = [_normalize_row(row) for row in (res.data or [])]
         total = res.count or 0
 
@@ -589,13 +605,19 @@ def get_all_sdrs() -> List[Dict[str, Any]]:
     de test local (vd devadmin@markee.vn, leader@markee.test, admin123@gmail.com).
     """
     try:
-        supabase = get_supabase_client()
-        res = (
-            supabase.table("app_users")
-            .select("id, name, email, role")
-            .in_("role", ["admin", "leader"])
-            .execute()
-        )
+        # Xem giai thich trong get_all_customer_leads() o tren - xay LAI
+        # query moi lan thu (khong tai su dung 1 client/query da xay san) de
+        # tranh dung phai session da bi reset_supabase_client() dong giua chung.
+        def _run():
+            supabase = get_supabase_client()
+            return (
+                supabase.table("app_users")
+                .select("id, name, email, role")
+                .in_("role", ["admin", "leader"])
+                .execute()
+            )
+
+        res = execute_supabase_query(_run)
         users = [u for u in (res.data or []) if not _is_test_account(u.get("email"), u.get("name"))]
         return [{"id": u["id"], "name": u["name"], "role": u["role"]} for u in users]
     except Exception as e:

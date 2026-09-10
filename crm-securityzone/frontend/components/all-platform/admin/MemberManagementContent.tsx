@@ -16,6 +16,7 @@ import {
   PlatformStatCard,
   PlatformStatsRow,
 } from "@/components/features/shared/PlatformStatCard";
+import { SearchableSelect } from "@/modules/crm/components/SearchableSelect";
 
 type MemberFormState = {
   id?: string;
@@ -745,20 +746,20 @@ export function MemberManagementContent() {
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <Field label="Liên kết tài khoản đăng nhập" hint="tùy chọn">
-                    <select value={form.linked_user_id} onChange={e => setForm({ ...form, linked_user_id: e.target.value })}>
-                      <option value="">-- Chưa liên kết --</option>
-                      {appUsers.map(u => (
-                        <option key={u.id} value={u.id}>{u.name || u.email} ({u.email})</option>
-                      ))}
-                    </select>
+                    <SearchableSelect
+                      value={form.linked_user_id}
+                      onChange={v => setForm({ ...form, linked_user_id: v })}
+                      placeholder="-- Chưa liên kết --"
+                      options={appUsers.map(u => ({ value: u.id, label: `${u.name || u.email} (${u.email})` }))}
+                    />
                   </Field>
                   <Field label="Liên kết tài khoản đăng nhập (phụ)" hint="tùy chọn">
-                    <select value={form.linked_user_id_2} onChange={e => setForm({ ...form, linked_user_id_2: e.target.value })}>
-                      <option value="">-- Chưa liên kết --</option>
-                      {appUsers.map(u => (
-                        <option key={u.id} value={u.id}>{u.name || u.email} ({u.email})</option>
-                      ))}
-                    </select>
+                    <SearchableSelect
+                      value={form.linked_user_id_2}
+                      onChange={v => setForm({ ...form, linked_user_id_2: v })}
+                      placeholder="-- Chưa liên kết --"
+                      options={appUsers.map(u => ({ value: u.id, label: `${u.name || u.email} (${u.email})` }))}
+                    />
                     {/* Hint dài để dưới select thay vì nhét vô label — nhét
                      * vô label làm label 2 dòng, lệch hàng với ô bên cạnh. */}
                     <p className="text-[10px] text-on-surface-variant font-normal normal-case mt-1">
