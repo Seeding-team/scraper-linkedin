@@ -1064,6 +1064,94 @@ select.quote-compact-vat:hover {
   background: #fff;
 }
 
+/* Editor hạng mục đọc cột trực tiếp từ schema của mẫu báo giá. Giữ min-width
+   để đủ chỗ cho mẫu nhiều cột, phần bọc cho phép cuộn ngang trong modal. */
+.quote-schema-items-table {
+  min-width: max(100%, 1120px);
+}
+
+.quote-schema-items-table th,
+.quote-schema-items-table td {
+  vertical-align: middle;
+}
+
+.quote-schema-items-table textarea,
+.quote-schema-items-table input,
+.quote-schema-items-table select {
+  width: 100%;
+  min-width: 6.5rem;
+  border: 1px solid #dbe2ea;
+  border-radius: 6px;
+  background: #fff;
+  padding: 7px 8px;
+  color: #1f2937;
+  font: inherit;
+}
+
+.quote-schema-items-table textarea {
+  min-width: 12rem;
+  min-height: 52px;
+  resize: vertical;
+}
+
+.quote-schema-items-table td:first-child,
+.quote-schema-items-table th:first-child {
+  text-align: center;
+}
+
+.quote-schema-calculated {
+  display: block;
+  min-width: 7.5rem;
+  text-align: right;
+  color: #172033;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.quote-schema-row-number {
+  color: #64748b;
+  font-weight: 700;
+}
+
+.quote-schema-section-row td {
+  padding: 8px 12px !important;
+  background: #fff1f3;
+}
+
+.quote-schema-section-row td {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) 32px;
+  gap: 8px;
+  align-items: center;
+}
+
+.quote-schema-section-row span {
+  color: #be123c;
+  font-weight: 800;
+  text-align: center;
+}
+
+.quote-schema-section-row input {
+  min-width: 0;
+  border-color: transparent;
+  background: transparent;
+  font-weight: 800;
+}
+
+.quote-schema-section-row button,
+.quote-schema-item-action button {
+  border: 0;
+  background: transparent;
+  color: #94a3b8;
+  font-size: 18px;
+  cursor: pointer;
+}
+
+.quote-schema-section-row button:hover,
+.quote-schema-item-action button:hover {
+  color: #dc2626;
+}
+
 /* Badge so luong hang muc + dong goi y ngan canh tieu de "Bang dich vu"/"Danh
    sach giai phap" (Buoc 3 wizard) - dung chung cho ca quoteItems/solutionItems. */
 .quote-section-count-badge {

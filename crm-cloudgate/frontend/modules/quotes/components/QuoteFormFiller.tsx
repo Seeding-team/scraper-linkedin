@@ -70,6 +70,13 @@ function emptySolutionRow(): VillaSolutionItem {
   return { name: '', description: '', originalPrice: 0, offerPrice: 0, note: '' };
 }
 
+function countQuoteItemRows(items: QuoteItem[]): number {
+  return items.reduce(
+    (count, item) => count + (item.rowType === 'section' ? countQuoteItemRows(item.children || []) : 1),
+    0
+  );
+}
+
 function coerceNumber(value: string) {
   return Number(value) || 0;
 }
@@ -98,7 +105,7 @@ export function QuoteFormFiller({ schema, value, onChange, quoteFormId, showTota
         if (repeaterField) {
           const isSolutionTable = repeaterField.key === 'solutionItems';
           const isQuoteItemsTable = repeaterField.key === 'quoteItems';
-          const itemCount = isQuoteItemsTable ? value.items.length : isSolutionTable ? value.solutionItems.length : 0;
+          const itemCount = isQuoteItemsTable ? countQuoteItemRows(value.items) : isSolutionTable ? value.solutionItems.length : 0;
           return (
             <section key={section.key} className="quote-section-card">
               <div className="quote-section-head">
@@ -115,6 +122,7 @@ export function QuoteFormFiller({ schema, value, onChange, quoteFormId, showTota
               {isQuoteItemsTable ? (
                 <QuoteItemsEditor
                   items={value.items}
+                  columns={repeaterField.config?.columns || []}
                   onChange={items => onChange({ ...value, items })}
                   quoteFormId={quoteFormId}
                 />
@@ -772,10 +780,12 @@ function QuoteCatalogPicker({
 
 function QuoteItemsEditor({
   items,
+  columns,
   onChange,
   quoteFormId,
 }: {
   items: QuoteItem[];
+  columns: QuoteField[];
   onChange: (items: QuoteItem[]) => void;
   quoteFormId?: string;
 }) {
@@ -834,8 +844,9 @@ function QuoteItemsEditor({
   const useFlatTerms = hasCatalogItems;
 
   if (useFlatTerms) {
-    // Mẫu có Danh mục dịch vụ liên kết (vd VPS): bảng compact-row 1 dòng/dịch
-    // vụ, không có cấu trúc cha/con — đúng bố cục mẫu HTML (.product-row).
+    // Bảng chỉnh sửa phải dùng đúng cấu hình cột của mẫu đã chọn. Dữ liệu báo
+    // giá cũ có thể chứa section -> children, nên không được map các section
+    // thành dòng dịch vụ rồi làm rơi toàn bộ children như bảng compact cũ.
     return (
       <div className="quote-items-editor">
         {catalogOptions ? (
@@ -849,29 +860,14 @@ function QuoteItemsEditor({
         {items.length === 0 ? (
           <div className="empty-row quote-items-empty">Chưa có dòng báo giá. Chọn gói hoặc thêm hạng mục để bắt đầu.</div>
         ) : (
-          <div className="quote-compact-table">
-            <div className="quote-compact-head">
-              <span className="quote-compact-cell--index">STT</span>
-              <span>Sản phẩm/Dịch vụ</span>
-              <span className="quote-compact-cell--description">Mô tả</span>
-              <span className="quote-compact-cell--unit">ĐVT</span>
-              <span>SL</span>
-              <span>Đơn giá</span>
-              <span className="quote-compact-cell--discount">CK</span>
-              <span className="quote-compact-cell--vat">VAT</span>
-              <span>Thành tiền</span>
-              <span />
-            </div>
-            {items.map((item, index) => (
-              <CompactItemRow
-                key={item.id || index}
-                index={index}
-                item={item}
-                onChange={patch => updateParent(index, patch)}
-                onRemove={() => removeParent(index)}
-              />
-            ))}
-          </div>
+          <SchemaQuoteItemsTable
+            items={items}
+            columns={columns}
+            onUpdateParent={updateParent}
+            onUpdateChild={updateChild}
+            onRemoveParent={removeParent}
+            onRemoveChild={removeChild}
+          />
         )}
         <div className="quote-items-divider">hoặc</div>
         <button type="button" className="quote-add-parent-button quote-add-parent-button--secondary" onClick={addParent}>
@@ -942,101 +938,178 @@ function QuoteItemsEditor({
   );
 }
 
-/** 1 dòng gọn (product-row) cho mẫu dùng Danh mục dịch vụ - Sản phẩm/Dịch vụ,
- * Mô tả, SL, Đơn giá, VAT, Thành tiền, nút xoá. Không có ô Giảm giá trong bảng
- * này (giảm giá tổng đã tính riêng ở khối Tổng tiền) nhưng KHÔNG đổi công thức
- * tính - discountPercent của dòng (nếu catalog có set mặc định) vẫn được giữ
- * nguyên trong dữ liệu và cộng vào tổng như cũ, chỉ không có ô sửa tay ở đây. */
-// VAT o VN thuc te chi co vai muc pho bien - dung select thay vi go tay so
-// tuy y, nhung van giu duoc muc khac 0/5/8/10 neu du lieu cu/catalog dat san 1
-// muc khac (vd nhap tay tu truoc) - luc do them option do vao cuoi danh sach,
-// khong lam mat gia tri that su dang luu.
-const VAT_RATE_PRESETS = [0, 5, 8, 10];
+const QUOTE_ITEM_EDITOR_FALLBACK_COLUMNS: QuoteField[] = [
+  { key: 'order', label: 'STT', type: 'auto-number', editable: false },
+  { key: 'serviceDescription', label: 'Hạng mục', type: 'textarea' },
+  { key: 'description', label: 'Mô tả', type: 'textarea' },
+  { key: 'unit', label: 'ĐVT', type: 'text' },
+  { key: 'quantity', label: 'SL', type: 'number' },
+  { key: 'unitPrice', label: 'Đơn giá', type: 'currency' },
+  { key: 'discountPercent', label: 'Giảm giá (%)', type: 'number' },
+  { key: 'vatRate', label: 'VAT (%)', type: 'number' },
+  { key: 'total', label: 'Thành tiền', type: 'calculated', editable: false },
+];
 
-function CompactItemRow({
+type QuoteItemEditorRow =
+  | { kind: 'section'; item: QuoteItem; parentIndex: number; number: string }
+  | { kind: 'item'; item: QuoteItem; parentIndex: number; childIndex?: number; number: string };
+
+function toRomanNumeral(value: number) {
+  const numerals: Array<[number, string]> = [
+    [1000, 'M'], [900, 'CM'], [500, 'D'], [400, 'CD'], [100, 'C'], [90, 'XC'],
+    [50, 'L'], [40, 'XL'], [10, 'X'], [9, 'IX'], [5, 'V'], [4, 'IV'], [1, 'I'],
+  ];
+  let remaining = value;
+  return numerals.reduce((result, [amount, numeral]) => {
+    while (remaining >= amount) {
+      result += numeral;
+      remaining -= amount;
+    }
+    return result;
+  }, '');
+}
+
+function SchemaQuoteItemsTable({
+  items,
+  columns,
+  onUpdateParent,
+  onUpdateChild,
+  onRemoveParent,
+  onRemoveChild,
+}: {
+  items: QuoteItem[];
+  columns: QuoteField[];
+  onUpdateParent: (index: number, patch: Partial<QuoteItem>) => void;
+  onUpdateChild: (parentIndex: number, childIndex: number, patch: Partial<QuoteItem>) => void;
+  onRemoveParent: (index: number) => void;
+  onRemoveChild: (parentIndex: number, childIndex: number) => void;
+}) {
+  const visibleColumns = columns.filter(column => column.visible !== false);
+  const editorColumns = visibleColumns.length ? visibleColumns : QUOTE_ITEM_EDITOR_FALLBACK_COLUMNS;
+  let sectionNumber = 0;
+  let itemNumber = 0;
+  const rows: QuoteItemEditorRow[] = items.flatMap((item, parentIndex) => {
+    if (item.rowType === 'section') {
+      sectionNumber += 1;
+      const sectionRow: QuoteItemEditorRow = {
+        kind: 'section', item, parentIndex, number: toRomanNumeral(sectionNumber),
+      };
+      const childRows: QuoteItemEditorRow[] = (item.children || []).map((child, childIndex) => {
+        itemNumber += 1;
+        return { kind: 'item', item: child, parentIndex, childIndex, number: String(itemNumber).padStart(2, '0') };
+      });
+      return [sectionRow, ...childRows];
+    }
+    itemNumber += 1;
+    return [{ kind: 'item', item, parentIndex, number: String(itemNumber).padStart(2, '0') }];
+  });
+
+  return (
+    <div className="quote-table-wrap quote-schema-items-wrap">
+      <table className="quote-table quote-table--editable quote-schema-items-table">
+        <thead>
+          <tr>
+            {editorColumns.map(column => <th key={column.key}>{column.label}</th>)}
+            <th aria-label="Thao tác" />
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map(row => row.kind === 'section' ? (
+            <tr key={row.item.id || `section-${row.parentIndex}`} className="quote-schema-section-row">
+              <td colSpan={editorColumns.length + 1}>
+                <span>{row.number}</span>
+                <input
+                  value={row.item.description || row.item.serviceDescription || ''}
+                  aria-label="Tên mục cha"
+                  onChange={event => onUpdateParent(row.parentIndex, { description: event.target.value })}
+                />
+                <button type="button" onClick={() => onRemoveParent(row.parentIndex)} aria-label="Xóa mục cha">×</button>
+              </td>
+            </tr>
+          ) : (
+            <tr key={row.item.id || `item-${row.parentIndex}-${row.childIndex ?? 'root'}`}>
+              {editorColumns.map(column => (
+                <td key={column.key} data-label={column.label}>
+                  <SchemaQuoteItemCell
+                    item={row.item}
+                    column={column}
+                    number={row.number}
+                    onChange={patch => row.childIndex === undefined
+                      ? onUpdateParent(row.parentIndex, patch)
+                      : onUpdateChild(row.parentIndex, row.childIndex, patch)}
+                  />
+                </td>
+              ))}
+              <td className="quote-schema-item-action">
+                <button
+                  type="button"
+                  onClick={() => row.childIndex === undefined
+                    ? onRemoveParent(row.parentIndex)
+                    : onRemoveChild(row.parentIndex, row.childIndex)}
+                  aria-label="Xóa dòng"
+                >×</button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function SchemaQuoteItemCell({
   item,
-  index,
+  column,
+  number,
   onChange,
-  onRemove,
 }: {
   item: QuoteItem;
-  index: number;
+  column: QuoteField;
+  number: string;
   onChange: (patch: Partial<QuoteItem>) => void;
-  onRemove: () => void;
 }) {
-  const total = calculateItemTotal(item);
-  const vatOptions = VAT_RATE_PRESETS.includes(item.vatRate || 0) ? VAT_RATE_PRESETS : [...VAT_RATE_PRESETS, item.vatRate || 0];
+  if (column.type === 'auto-number' || column.key === 'order') return <span className="quote-schema-row-number">{number}</span>;
+
+  const calculatedValues: Record<string, number> = {
+    subtotal: calculateItemSubtotal(item),
+    amountAfterDiscount: calculateItemAfterDiscount(item),
+    vatAmount: calculateItemVat(item),
+    total: calculateItemTotal(item),
+  };
+  if (column.type === 'calculated' || Object.prototype.hasOwnProperty.call(calculatedValues, column.key)) {
+    return <span className="quote-schema-calculated">{formatVnd(calculatedValues[column.key] ?? 0)}</span>;
+  }
+
+  const record = item as unknown as Record<string, unknown>;
+  const rawValue = record[column.key] ?? column.defaultValue ?? '';
+  const setValue = (next: unknown) => onChange({ [column.key]: next } as Partial<QuoteItem>);
+  if (column.type === 'select') {
+    return (
+      <select value={String(rawValue)} disabled={column.editable === false} onChange={event => setValue(event.target.value)}>
+        {(column.options || []).map(option => <option key={option} value={option}>{option}</option>)}
+      </select>
+    );
+  }
+  if (column.type === 'textarea') {
+    return (
+      <textarea
+        value={String(rawValue)}
+        placeholder={column.placeholder}
+        disabled={column.editable === false}
+        onChange={event => setValue(event.target.value)}
+      />
+    );
+  }
+  const numeric = column.type === 'number' || column.type === 'currency';
   return (
-    <div className="quote-compact-row">
-      <span className="quote-compact-cell quote-compact-cell--index">{index + 1}</span>
-      <span className="quote-compact-cell quote-compact-cell--name">
-        <input
-          value={item.serviceDescription || ''}
-          placeholder="Tên dịch vụ"
-          onChange={event => onChange({ serviceDescription: event.target.value })}
-        />
-        {item.catalogItemId ? <small className="quote-compact-sku">Từ danh mục dịch vụ</small> : null}
-      </span>
-      <span className="quote-compact-cell quote-compact-cell--description">
-        <textarea
-          className="quote-compact-description"
-          value={item.description || ''}
-          placeholder="Mô tả"
-          onChange={event => onChange({ description: event.target.value })}
-        />
-      </span>
-      <span className="quote-compact-cell quote-compact-cell--unit">
-        <input
-          className="quote-compact-unit"
-          value={item.unit || ''}
-          placeholder="ĐVT"
-          onChange={event => onChange({ unit: event.target.value })}
-        />
-      </span>
-      <span className="quote-compact-cell">
-        <input
-          type="number"
-          min={0}
-          className="quote-compact-qty"
-          value={item.quantity || 0}
-          onChange={event => onChange({ quantity: coerceNumber(event.target.value) })}
-        />
-      </span>
-      <span className="quote-compact-cell">
-        <input
-          type="number"
-          min={0}
-          className="quote-compact-price"
-          value={item.unitPrice || 0}
-          onChange={event => onChange({ unitPrice: coerceNumber(event.target.value) })}
-        />
-      </span>
-      <span className="quote-compact-cell quote-compact-cell--discount">
-        <input
-          type="number"
-          min={0}
-          max={100}
-          className="quote-compact-discount"
-          value={item.discountPercent ?? 0}
-          onChange={event => onChange({ discountPercent: coercePercent(event.target.value) })}
-        />
-      </span>
-      <span className="quote-compact-cell quote-compact-cell--vat">
-        <select
-          className="quote-compact-vat"
-          value={item.vatRate || 0}
-          onChange={event => onChange({ vatRate: coercePercent(event.target.value) })}
-        >
-          {vatOptions.map(rate => (
-            <option key={rate} value={rate}>{rate}%</option>
-          ))}
-        </select>
-      </span>
-      <span className="quote-compact-cell quote-compact-cell--total">{formatVnd(total)}</span>
-      <button type="button" className="quote-compact-remove" onClick={onRemove} aria-label="Xoá dòng">
-        ×
-      </button>
-    </div>
+    <input
+      type={numeric ? 'number' : 'text'}
+      min={numeric ? 0 : undefined}
+      value={String(rawValue)}
+      placeholder={column.placeholder}
+      disabled={column.editable === false}
+      onChange={event => setValue(numeric ? coerceNumber(event.target.value) : event.target.value)}
+    />
   );
 }
 

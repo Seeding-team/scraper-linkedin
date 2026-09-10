@@ -2447,9 +2447,8 @@ export function QuoteWorkspaceModal({
       }
       // Bam "Bàn giao" tuc la Presale coi nhu DA XONG ca hang muc lan gia
       // von NGAY tai buoc gop (bubble "Yêu cầu & Kỹ thuật") - neu moi thu da
-      // du dieu kien (dung DUNG dieu kien RPC quote_set_processing_stage,
-      // migration 090, se kiem tra that: co scope, co hang muc, SL>0, da
-      // nhap gia von hoac tick "khong ap dung", checklist 4/4) thi chuyen
+      // du dieu kien (dung DUNG dieu kien RPC quote_set_processing_stage:
+      // co hang muc, SL>0, da nhap gia von hoac tick "khong ap dung") thi chuyen
       // luon tiep sang 'pricing' TRONG CUNG 1 lan bam - tranh nguoi dung
       // tuong "bam bàn giao xong roi" ma van con ket o bubble buoc 1 (bug
       // that da gap: du da chuyen 'technical' that su duoi DB, bubble van
@@ -2461,11 +2460,6 @@ export function QuoteWorkspaceModal({
         const realDraftItems = itemsDraft.filter(item => item.rowType !== 'section');
         const stillMissingCost = realDraftItems.some(item => !item.costNotApplicable && item.costPrice == null);
         const stillMissingQty = realDraftItems.some(item => !(item.quantity > 0));
-        const finalChecklist = hasChecklistInput ? pendingChecklist : checklistDraft;
-        const checklistReady = Boolean(
-          finalChecklist.scopeConfirmed && finalChecklist.costConfirmed &&
-          finalChecklist.timelineConfirmed && finalChecklist.assumptionConfirmed
-        );
         // Ly do CU THE khien chua chuyen tiep duoc sang 'pricing' - hien ro
         // cho nguoi dung (KHONG im lang nua, bug that da gap: nguoi dung
         // khong hieu vi sao bam "Bàn giao" xong van con nut "Bàn giao xử lý
@@ -2474,7 +2468,6 @@ export function QuoteWorkspaceModal({
           realDraftItems.length === 0 ? 'chưa có hạng mục nào' : null,
           stillMissingQty ? 'còn hạng mục chưa nhập số lượng' : null,
           stillMissingCost ? 'còn hạng mục chưa nhập giá vốn (hoặc chưa tick "Không áp dụng")' : null,
-          !checklistReady ? 'checklist bàn giao chưa tick đủ 4 mục' : null,
         ].filter((reason): reason is string => Boolean(reason));
         if (blockingReasons.length === 0) {
           try {
@@ -3072,7 +3065,6 @@ export function QuoteWorkspaceModal({
       (checklistDraft.handoffNote || '') !== (checklist?.handoffNote || '')
     )
   );
-  const handoffBadge = checklist?.handedOffAt ? 'Đã bàn giao' : (checklist && (checklist.scopeConfirmed || checklist.costConfirmed || checklist.timelineConfirmed || checklist.assumptionConfirmed)) ? 'Cần bổ sung' : 'Chưa bàn giao';
   const paymentTermsBlock = (quote?.data?.customBlocks || []).find(block => block.kind === 'payment_terms' && block.content.trim());
   const canReadyForApproval = Boolean(quote && rootItems.length > 0 && quote.totalAmount > 0);
 
@@ -4416,9 +4408,6 @@ export function QuoteWorkspaceModal({
                   <span className="qc-workspace-collapsible-hint">{handoffCardOpen ? '(bấm để thu gọn)' : '(bấm để xem)'}</span>
                   <div className="qc-workspace-card-head-badges">
                     {checklistDirty ? <span className="qc-badge qc-badge-amber">Có thay đổi chưa lưu</span> : null}
-                    <span className={`qc-badge ${handoffBadge === 'Đã bàn giao' ? 'qc-badge-green' : handoffBadge === 'Cần bổ sung' ? 'qc-badge-amber' : 'qc-badge-rose'}`}>
-                      {handoffBadge}
-                    </span>
                   </div>
                 </summary>
                 <div className="qc-workspace-checklist">
@@ -4796,17 +4785,6 @@ export function QuoteWorkspaceModal({
                   <span>Hạng mục thiếu giá vốn</span>
                   <strong className={itemsMissingCost.length ? 'qc-cell-margin-bad' : undefined}>{itemsMissingCost.length}</strong>
                 </div>
-              </div>
-            ) : null}
-            {stage === 'technical' ? (
-              <div className="qc-workspace-card">
-                <h3>Tiến độ checklist</h3>
-                <ul className="qc-workspace-checks">
-                  <li className={checklistDraft?.scopeConfirmed ? 'ok' : 'pending'}>Phạm vi (Scope)</li>
-                  <li className={checklistDraft?.costConfirmed ? 'ok' : 'pending'}>Giá vốn (Cost)</li>
-                  <li className={checklistDraft?.timelineConfirmed ? 'ok' : 'pending'}>Tiến độ (Timeline)</li>
-                  <li className={checklistDraft?.assumptionConfirmed ? 'ok' : 'pending'}>Giả định/Ngoại lệ</li>
-                </ul>
               </div>
             ) : null}
             {stage === 'technical' ? (
