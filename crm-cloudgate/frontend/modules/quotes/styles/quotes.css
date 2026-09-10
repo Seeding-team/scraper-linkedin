@@ -2231,17 +2231,22 @@ select.quote-compact-vat:hover {
 }
 /* BUG THAT DA GAP ("ĐVT bị tách thành th/án/g"): overflow-wrap:anywhere o
  * tren (can thiet cho cot Ten/Mo ta dai) vo tinh cat CA cot ĐVT (gia tri
- * ngan nhu "tháng"/"Core/tháng") thanh tung mieng khi cot hep. CHOT LAI LAN
- * 2 (bug moi phat hien: white-space:nowrap truoc do khien ĐVT TRAN qua de
- * len cot SL ke ben khi cot % qua hep, vd "Core/tháng2" dinh lien - do cot
- * nay dung % dong (khong co px co dinh nhu bang Workspace), nowrap khong an
- * toan o day) - BO nowrap, CHI giu overflow-wrap/word-break:normal (cho
- * phep xuong dong THEO KHOANG TRANG binh thuong khi that su khong du cho,
- * KHONG BAO GIO cat giua 1 tu) - an toan hon nowrap, khong con tran/de
- * chong len cot ke. */
+ * ngan nhu "tháng"/"Core/tháng") thanh tung mieng khi cot hep. Lan sua truoc
+ * (bo nowrap, dat overflow-wrap:normal) tuong la an toan, nhung "Core/tháng"
+ * KHONG CO khoang trang nao de ngat theo overflow-wrap:normal - ket qua la
+ * chu van TRAN de chong len cot SL ke ben ("Core/tháng2" dinh lien, BUG THAT
+ * DA GAP LAN 3, y het trieu chung lan 2 nhung do nguyen nhan khac: khong
+ * phai nowrap nua ma la "khong co cho ngat nen chu tu tran ra ngoai o").
+ * CHOT LAI: cho cot ĐVT 1 do rong % rieng du dung (thay vi chia deu ngau
+ * nhien voi cac cot khac qua table-layout:fixed) DE THUC SU CO DU CHO cho
+ * cac gia tri ngan pho bien ("Core/tháng", "Người dùng/tháng"...), roi moi
+ * dung lai overflow-wrap:anywhere lam luoi an toan cuoi cung cho truong hop
+ * cuc doan (ten don vi qua dai) - voi du rong da co, luoi an toan nay hiem
+ * khi phai kich hoat that su. */
 .sheet-items-table th.unit-cell,
 .sheet-items-table td.unit-cell {
-  overflow-wrap: normal;
+  width: 9%;
+  overflow-wrap: anywhere;
   word-break: normal;
 }
 
