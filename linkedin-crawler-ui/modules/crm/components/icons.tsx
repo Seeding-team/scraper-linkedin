@@ -42,6 +42,10 @@ export const AlertTriangle = makeIcon([
 ]);
 export const ArrowLeft = makeIcon([{ d: 'M19 12H5' }, { d: 'm12 19-7-7 7-7' }]);
 export const ArrowRight = makeIcon([{ d: 'M5 12h14' }, { d: 'm12 5 7 7-7 7' }]);
+// "Điền xuống" (fill-down Giá vốn/Markup) - dung dung path chuan cua lucide
+// "arrow-down-to-line" (khong cai them thu vien, tu ve lai bang makeIcon co
+// san, giu 24x24 viewBox nhu cac icon khac trong file nay).
+export const ArrowDownToLine = makeIcon([{ d: 'M12 17V3' }, { d: 'm6 11 6 6 6-6' }, { d: 'M19 21H5' }]);
 export const Building2 = makeIcon([
   { d: 'M6 22V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v18' },
   { d: 'M6 12H4a2 2 0 0 0-2 2v8h20v-8a2 2 0 0 0-2-2h-2' },

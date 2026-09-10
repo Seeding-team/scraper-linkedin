@@ -92,6 +92,8 @@ export function PublicQuotePage({ token }: Props) {
             totalAmount: quote.totalAmount,
           }}
           mode="public"
+          isPublished={quote.processingStage ? quote.processingStage === 'published' : true}
+          quoteNumber={quote.quoteNumber}
         />
       </div>
     </main>

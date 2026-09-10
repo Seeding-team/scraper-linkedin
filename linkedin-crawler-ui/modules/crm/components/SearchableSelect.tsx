@@ -33,10 +33,18 @@ export function SearchableSelect({
   options,
   placeholder = '-- Chọn --',
   disabled = false,
+  // Yeu cau rieng "bỏ chữ Chưa thuộc dự án/Chọn cơ hội trong danh sách" -
+  // trigger DA hien dung placeholder nay khi chua chon gi, hien lai 1 lan
+  // nua thanh 1 dong trong danh sach (dung de "clear ve rong") bi thua/gay
+  // roi mat voi 1 so field (vd Dự án/Cơ hội trong Quote Workspace). Mac dinh
+  // van hien (khong doi hanh vi cac noi goi khac), CHI tat khi truyen ro
+  // hideClearOption.
+  hideClearOption = false,
 }: {
   value: string;
   onChange: (value: string) => void;
   options: Option[];
+  hideClearOption?: boolean;
   placeholder?: string;
   disabled?: boolean;
 }) {
@@ -146,13 +154,15 @@ export function SearchableSelect({
                 className="crm-searchable-select-input"
               />
               <div className="crm-searchable-select-list">
-                <button
-                  type="button"
-                  className="crm-searchable-select-option"
-                  onClick={() => { onChange(''); setIsOpen(false); setSearch(''); }}
-                >
-                  {placeholder}
-                </button>
+                {hideClearOption ? null : (
+                  <button
+                    type="button"
+                    className="crm-searchable-select-option"
+                    onClick={() => { onChange(''); setIsOpen(false); setSearch(''); }}
+                  >
+                    {placeholder}
+                  </button>
+                )}
                 {filtered.map(option => (
                   <button
                     key={optionValue(option)}
