@@ -28,7 +28,7 @@ from app.modules.all_platform.schemas import (
     QuoteHardDeleteRequest,
     QuoteRequestChangesRequest,
     QuoteApproveRequest,
-    QuotePublicEmailGateUpdateRequest,
+    QuotePublicAccessRestrictionUpdateRequest,
     QuoteFormCatalogLinksSetRequest,
     IssuerCompanyCreateRequest,
     IssuerCompanyUpdateRequest,
@@ -40,8 +40,8 @@ from app.modules.all_platform.services import (
     cancel_quote,
     revoke_public_quote,
     enable_public_quote,
-    set_public_email_gate,
-    PublicQuoteEmailRequiredError,
+    set_public_access_restriction,
+    PublicQuoteVerificationRequiredError,
     soft_delete_quote,
     restore_quote,
     hard_delete_quote,
@@ -252,40 +252,47 @@ def quotes_list_by_phase(
 
 
 @quotes_router.get("/public/{token}")
-def quotes_get_public(token: str, email: str | None = Query(None)) -> BaseResponse:
+def quotes_get_public(
+    token: str, email: str | None = Query(None), phone: str | None = Query(None)
+) -> BaseResponse:
     try:
-        return BaseResponse(success=True, data=get_public_quote(token, email))
-    except PublicQuoteEmailRequiredError as e:
-        # "Giới hạn xem link theo email" (migration 116) - message la sentinel
-        # rieng ("quote_public_email_required"/"quote_public_email_not_allowed")
-        # de FE phan biet duoc voi loi thong thuong ("chua phat hanh"...) va
-        # hien man hinh nhap email thay vi 1 trang loi tinh. `invalidEmail`
-        # trong data cho FE biet co phai la lan dau (chua nhap) hay da nhap
+        return BaseResponse(success=True, data=get_public_quote(token, email, phone))
+    except PublicQuoteVerificationRequiredError as e:
+        # "Giới hạn xem link bằng Email hoặc Số điện thoại" (migration 118) -
+        # message la sentinel rieng ("quote_public_email_required"/
+        # "quote_public_phone_not_allowed"...) de FE phan biet duoc voi loi
+        # thong thuong ("chua phat hanh"...) va hien dung man hinh xac minh
+        # theo DUNG phuong thuc dang bat (`method`), khong bao gio hien ca 2.
+        # `invalid` cho FE biet co phai la lan dau (chua nhap) hay da nhap
         # sai/khong duoc phep, de hien thong bao phu hop.
         return BaseResponse(
             success=False,
             message=str(e),
-            data={"requiresEmail": True, "invalidEmail": e.invalid},
+            data={"requiresVerification": True, "method": e.method, "invalid": e.invalid},
         )
     except ValueError as e:
         return BaseResponse(success=False, message=str(e))
 
 
-@quotes_router.put("/{quote_id}/public-email-gate")
-def quotes_update_public_email_gate(
-    quote_id: str, payload: QuotePublicEmailGateUpdateRequest, user: dict = Depends(get_current_user)
+@quotes_router.put("/{quote_id}/public-access-restriction")
+def quotes_update_public_access_restriction(
+    quote_id: str, payload: QuotePublicAccessRestrictionUpdateRequest, user: dict = Depends(get_current_user)
 ) -> BaseResponse:
-    """Bat/tat + cap nhat danh sach email duoc phep xem link cong khai cua 1
-    quote (migration 116) - dung cung quyen voi cac thao tac link khac
+    """Doi che do gioi han xem link cong khai cua 1 quote: 'none'/'email'/
+    'phone' (migration 118) - dung cung quyen voi cac thao tac link khac
     (Khoá/Mở lại link) tren chinh quote nay."""
     try:
         quote, lead = _load_quote_and_lead(quote_id)
         if not can_edit_quote(user, quote, lead):
             return BaseResponse(success=False, message="Không có quyền sửa cấu hình link báo giá này")
-        data = set_public_email_gate(quote_id, user.get("id"), payload.enabled, payload.allowed_emails)
-        return BaseResponse(success=True, message="Đã lưu cấu hình giới hạn email", data=data)
+        data = set_public_access_restriction(
+            quote_id, user.get("id"), payload.mode, payload.allowed_emails, payload.allowed_phones
+        )
+        return BaseResponse(success=True, message="Đã lưu cấu hình giới hạn xem link", data=data)
     except QuoteNotFoundError as e:
         return _not_found_response(e)
+    except ValueError as e:
+        return BaseResponse(success=False, message=str(e))
     except Exception as e:
         return BaseResponse(success=False, message=friendly_supabase_error_message(e))
 

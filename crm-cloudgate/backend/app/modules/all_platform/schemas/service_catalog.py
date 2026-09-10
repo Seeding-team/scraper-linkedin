@@ -66,6 +66,31 @@ class QuoteFormCatalogLinksSetRequest(BaseModel):
     catalog_item_ids: list[str] = []
 
 
+class ServiceCatalogUnitCreateRequest(BaseModel):
+    """"Đơn vị tính & VAT" - master-data THAT (migration 117), thay cho
+    truoc day chi la bao cao thong ke tu du lieu san pham."""
+
+    name: str
+    status: str = "active"
+
+
+class ServiceCatalogUnitUpdateRequest(BaseModel):
+    id: str
+    name: Optional[str] = None
+    status: Optional[str] = None
+
+
+class ServiceCatalogVatRateCreateRequest(BaseModel):
+    rate: float = Field(ge=0, le=100)
+    status: str = "active"
+
+
+class ServiceCatalogVatRateUpdateRequest(BaseModel):
+    id: str
+    rate: Optional[float] = Field(default=None, ge=0, le=100)
+    status: Optional[str] = None
+
+
 class ServiceCatalogItemPricingUpsertRequest(BaseModel):
     """Bo gia MAC DINH rieng cho danh muc chung (migration 107,
     service_catalog_item_pricing) - TACH BIET hoan toan default_unit_price_vnd

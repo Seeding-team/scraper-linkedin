@@ -173,11 +173,16 @@ class QuoteSoftDeleteRequest(BaseModel):
     reason: Optional[str] = None
 
 
-class QuotePublicEmailGateUpdateRequest(BaseModel):
-    """"Giới hạn xem link theo email" (migration 116)."""
+class QuotePublicAccessRestrictionUpdateRequest(BaseModel):
+    """"Giới hạn xem link báo giá bằng Email hoặc Số điện thoại" (migration
+    118, thay the QuotePublicEmailGateUpdateRequest cu chi ho tro email).
+    `mode`: 'none' | 'email' | 'phone' - CHI 1 che do co hieu luc, tranh bug
+    "tat gioi han nhung van hoi Email" do truoc day dung 1 boolean rieng
+    song song voi danh sach email."""
 
-    enabled: bool
+    mode: str
     allowed_emails: list[str] = []
+    allowed_phones: list[str] = []
 
 
 class QuoteHardDeleteRequest(BaseModel):

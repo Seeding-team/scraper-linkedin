@@ -42,16 +42,19 @@ export class QuoteApprovalRequiresExceptionError extends Error {
   }
 }
 
-/** "Giới hạn xem link theo email" (migration 116) - PublicQuotePage bắt lỗi
- * này để hiện màn hình nhập email thay vì 1 trang lỗi tĩnh. `invalidEmail` =
- * true nghĩa là đã nhập nhưng không nằm trong danh sách cho phép (khác với
- * false = chưa nhập lần nào). */
-export class QuotePublicEmailRequiredError extends Error {
-  invalidEmail: boolean;
-  constructor(invalidEmail: boolean) {
-    super(invalidEmail ? 'quote_public_email_not_allowed' : 'quote_public_email_required');
-    this.name = 'QuotePublicEmailRequiredError';
-    this.invalidEmail = invalidEmail;
+/** "Giới hạn xem link báo giá bằng Email hoặc Số điện thoại" (migration 118,
+ * thay thế QuotePublicEmailRequiredError cũ chỉ hỗ trợ email) - PublicQuotePage
+ * bắt lỗi này để hiện ĐÚNG màn hình xác minh theo `method` đang bật ('email'
+ * hoặc 'phone'), không bao giờ hiện cả 2. `invalid` = true nghĩa là đã nhập
+ * nhưng không nằm trong danh sách cho phép (khác với false = chưa nhập lần nào). */
+export class QuotePublicVerificationRequiredError extends Error {
+  method: 'email' | 'phone';
+  invalid: boolean;
+  constructor(method: 'email' | 'phone', invalid: boolean) {
+    super(invalid ? `quote_public_${method}_not_allowed` : `quote_public_${method}_required`);
+    this.name = 'QuotePublicVerificationRequiredError';
+    this.method = method;
+    this.invalid = invalid;
   }
 }
 
@@ -108,9 +111,9 @@ async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
       const evaluation = (body.data as { evaluation?: { result?: string; details?: unknown } } | undefined)?.evaluation;
       throw new QuoteApprovalRequiresExceptionError(evaluation || null);
     }
-    const gateData = body.data as { requiresEmail?: boolean; invalidEmail?: boolean } | undefined;
-    if (gateData?.requiresEmail) {
-      throw new QuotePublicEmailRequiredError(Boolean(gateData.invalidEmail));
+    const gateData = body.data as { requiresVerification?: boolean; method?: 'email' | 'phone'; invalid?: boolean } | undefined;
+    if (gateData?.requiresVerification && gateData.method) {
+      throw new QuotePublicVerificationRequiredError(gateData.method, Boolean(gateData.invalid));
     }
     throw new Error(body.message || 'Không thực hiện được yêu cầu báo giá.');
   }
@@ -325,17 +328,25 @@ export class SeedingQuoteRepository implements QuoteRepository {
     return apiFetch<Quote>(`/api/all-platform/quotes/${encodeURIComponent(id)}`);
   }
 
-  async getPublicQuote(token: string, email?: string): Promise<Quote> {
-    const qs = email ? `?email=${encodeURIComponent(email)}` : '';
-    return apiFetch<Quote>(`/api/all-platform/quotes/public/${encodeURIComponent(token)}${qs}`);
+  async getPublicQuote(token: string, email?: string, phone?: string): Promise<Quote> {
+    const qs = new URLSearchParams();
+    if (email) qs.set('email', email);
+    if (phone) qs.set('phone', phone);
+    const qsStr = qs.toString();
+    return apiFetch<Quote>(`/api/all-platform/quotes/public/${encodeURIComponent(token)}${qsStr ? `?${qsStr}` : ''}`);
   }
 
-  /** "Giới hạn xem link theo email" (migration 116) - bật/tắt + cập nhật
-   * danh sách email được phép xem link công khai của 1 quote cụ thể. */
-  async setPublicEmailGate(quoteId: string, enabled: boolean, allowedEmails: string[]): Promise<Quote> {
-    return apiFetch<Quote>(`/api/all-platform/quotes/${encodeURIComponent(quoteId)}/public-email-gate`, {
+  /** "Giới hạn xem link báo giá bằng Email hoặc Số điện thoại" (migration 118) -
+   * đổi chế độ giới hạn xem link công khai của 1 quote cụ thể: 'none'/'email'/'phone'. */
+  async setPublicAccessRestriction(
+    quoteId: string,
+    mode: 'none' | 'email' | 'phone',
+    allowedEmails: string[],
+    allowedPhones: string[]
+  ): Promise<Quote> {
+    return apiFetch<Quote>(`/api/all-platform/quotes/${encodeURIComponent(quoteId)}/public-access-restriction`, {
       method: 'PUT',
-      body: JSON.stringify({ enabled, allowed_emails: allowedEmails }),
+      body: JSON.stringify({ mode, allowed_emails: allowedEmails, allowed_phones: allowedPhones }),
     });
   }
 
