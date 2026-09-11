@@ -91,7 +91,7 @@ export function WorkspaceSwitcherShadcn() {
   }
 
   return (
-    <div className="relative px-2 pb-1">
+    <div className="relative px-2 pt-1 pb-2">
       {isSwitching ? (
         <div className="fixed inset-0 z-[100] flex flex-col items-center justify-center gap-3 bg-background/80 backdrop-blur-sm animate-in fade-in duration-200">
           <Loader2 className="size-8 animate-spin text-sidebar-primary" />
@@ -123,7 +123,7 @@ export function WorkspaceSwitcherShadcn() {
       {isOpen ? (
         <>
           <div className="fixed inset-0 z-40" onClick={() => setIsOpen(false)} />
-          <div className="absolute inset-x-2 bottom-full z-50 mb-1 overflow-hidden rounded-xl border border-sidebar-border bg-popover text-popover-foreground shadow-lg">
+          <div className="absolute inset-x-2 top-full z-50 mt-1 overflow-hidden rounded-xl border border-sidebar-border bg-popover text-popover-foreground shadow-lg">
             {items.map((item) => (
               <button
                 key={item.instance}

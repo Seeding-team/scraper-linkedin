@@ -188,6 +188,7 @@ export function AllPlatformSidebarShadcn() {
         <div className="px-1 py-1 group-data-[collapsible=icon]:px-0">
           <SidebarLogoHeader />
         </div>
+        {isAdmin ? <WorkspaceSwitcherShadcn /> : null}
       </SidebarHeader>
 
       <SidebarContent>
@@ -209,7 +210,6 @@ export function AllPlatformSidebarShadcn() {
       </SidebarContent>
 
       <SidebarFooter>
-        {isAdmin ? <WorkspaceSwitcherShadcn /> : null}
         <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuButton
