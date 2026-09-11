@@ -1,5 +1,4 @@
 import type { QuoteField, QuoteItem, QuoteSchema } from '../types';
-import { flattenQuoteItems } from './quoteCalculations';
 
 /** Cột mặc định khi mẫu KHÔNG khai báo cột nào trong schema (repeater-table
  * quoteItems trống config.columns) — chỉ dùng làm fallback cuối cùng, KHÔNG
@@ -14,11 +13,14 @@ const FALLBACK_COLUMNS: QuoteField[] = [
   { key: 'total', label: 'Thành tiền', type: 'currency' },
 ];
 
-const CATALOG_PRICING_COLUMNS: QuoteField[] = [
-  { key: 'listPriceUsd', label: 'List price USD', type: 'text' },
-  { key: 'unitPriceUsd', label: 'Unit Price USD', type: 'text' },
-  { key: 'unitPriceVnd', label: 'Unit price VND', type: 'text' },
-];
+/** BUG THAT DA GAP ("cột hiển thị lấy sai kìa"/"cột không thuộc mẫu tuyệt đối
+ * không xuất hiện"): 3 cot nay TRUOC DAY duoc TU DONG chen vao bat ke mau
+ * bao gia co khai bao hay khong, chi vi hang muc co catalogItemId (lay tu
+ * "Sản phẩm & dịch vụ") - vi pham nguyen tac "mẫu báo giá quyết định cột
+ * nào duoc phep xuat hien". Khong co mau bao gia THAT nao trong seed data
+ * khai bao 3 cot nay ca (da xac nhan qua audit) - DA XOA HAN logic tu chen,
+ * chi con hien thi neu CHINH mau dang chon THAT SU khai bao trong
+ * config.columns cua no. */
 
 /** Tìm field bảng hạng mục THẬT của mẫu báo giá — không còn hardcode key
  * 'quoteItems'. Ưu tiên field key đúng 'quoteItems' nếu có (giữ nguyên hành vi
@@ -36,32 +38,33 @@ function findItemTableField(schema: QuoteSchema): QuoteField | undefined {
 /** Cột bảng hạng mục thật của MẪU này (đọc từ schema, không phải danh sách cố
  * định) — dùng chung cho cả QuoteDocumentRenderer (khi render) và
  * ReviewQuoteStep (khi dựng checkbox "Cột hiển thị"), để 2 nơi luôn khớp nhau.
- * quoteItems truyền vào chỉ để biết có dùng Danh mục dịch vụ hay không (chèn
- * thêm 3 cột giá USD/VND tham khảo), không đổi cột theo TỪNG dòng. */
-export function resolveQuoteItemColumns(schema: QuoteSchema, quoteItems: QuoteItem[] = []): QuoteField[] {
+ * `quoteItems` giữ lại trong chữ ký (khong xoa param, tranh doi API o moi
+ * noi goi) nhung KHONG con dung de tu chen cot nao nua - "Mẫu báo giá quyết
+ * định những cột nào được phép xuất hiện", du lieu hang muc co ton tai
+ * khong dong nghia cot phai duoc hien thi (yeu cau ro rang). */
+export function resolveQuoteItemColumns(schema: QuoteSchema, _quoteItems: QuoteItem[] = []): QuoteField[] {
   const itemField = findItemTableField(schema);
   const isQuoteItemsField = !itemField || itemField.key === 'quoteItems';
 
   if (!isQuoteItemsField) {
     // Bảng hạng mục KHÔNG phải quoteItems (vd solutionItems của villa) - cấu
     // trúc cột hoàn toàn khác (không có unitPrice/unit/vatRate/description...),
-    // nên KHÔNG áp các phép bổ sung riêng của quoteItems bên dưới (catalog
-    // pricing/description/discountPercent auto-insert) - trả đúng cột đã khai
-    // báo trong schema, filter chỉ ẩn cột visible:false rõ ràng.
+    // nên KHÔNG áp các phép bổ sung riêng của quoteItems bên dưới (mo ta/
+    // discountPercent auto-insert) - trả đúng cột đã khai báo trong schema,
+    // filter chỉ ẩn cột visible:false rõ ràng.
     const declaredColumns = itemField.config?.columns?.filter(column => column.visible !== false) || [];
     return declaredColumns.length ? declaredColumns : [...FALLBACK_COLUMNS];
   }
 
+  // BUG THAT DA GAP ("List price USD/Unit Price USD/Unit price VND xuất
+  // hiện dù mẫu không khai báo"): TRUOC DAY tu chen them CATALOG_PRICING_COLUMNS
+  // vao day chi vi hang muc co catalogItemId, BAT KE mau co khai bao 3 cot
+  // nay hay khong. DA BO HAN buoc chen nay - `baseColumns` (tu chinh
+  // config.columns cua mau) la nguon DUY NHAT, mau nao khai bao 3 cot nay
+  // that su thi chung da nam san trong baseColumns roi, khong can chen tay.
   const baseColumns = itemField?.config?.columns?.filter(column => column.visible !== false) || [];
-  const hasCatalogPricing = flattenQuoteItems(quoteItems).some(item => item.catalogItemId);
-  const unitPriceIndex = baseColumns.findIndex(column => column.key === 'unitPrice');
-  const withCatalogColumns = hasCatalogPricing
-    ? unitPriceIndex >= 0
-      ? [...baseColumns.slice(0, unitPriceIndex), ...CATALOG_PRICING_COLUMNS, ...baseColumns.slice(unitPriceIndex)]
-      : [...CATALOG_PRICING_COLUMNS, ...baseColumns]
-    : baseColumns;
 
-  const columns = (withCatalogColumns.length ? [...withCatalogColumns] : [...FALLBACK_COLUMNS]).filter(
+  const columns = (baseColumns.length ? [...baseColumns] : [...FALLBACK_COLUMNS]).filter(
     column => !['subtotal', 'vatAmount'].includes(column.key)
   );
   if (!columns.some(column => column.key === 'order' || column.type === 'auto-number')) {
@@ -93,13 +96,15 @@ const LOCKED_COLUMN_KEYS_BY_ITEM_FIELD_KEY: Record<string, string[]> = {
 };
 
 /** Cột ẩn hẳn khỏi khối "Cột hiển thị" (không phải khoá bắt buộc, cũng không
- * phải tuỳ chọn — đơn giản không hiện trong picker) - giữ nguyên hành vi cũ:
- * discountPercent của bảng quoteItems luôn hiện trong bảng, không cho
- * toggle/không hiện checkbox, tránh vỡ tương thích ngược với báo giá cũ đã lưu
- * visibleColumns trước khi có field này. */
-const HIDDEN_FROM_PICKER_KEYS_BY_ITEM_FIELD_KEY: Record<string, string[]> = {
-  quoteItems: ['discountPercent'],
-};
+ * phải tuỳ chọn — đơn giản không hiện trong picker).
+ * "discountPercent" (Giảm giá) TRƯỚC ĐÂY bị ẩn ở đây (luôn hiện trong bảng,
+ * không cho toggle) - QA thực tế phát hiện điều này khiến khối "Cột hiển thị"
+ * KHÔNG khớp với các cột thật sự có trên bảng gửi khách (thiếu hẳn 1 dòng
+ * checkbox cho cột đang hiển thị), gây hiểu lầm. Đã bỏ exception này - xem
+ * QuoteDocumentRenderer.tsx (AUTO_INCLUDE_LEGACY_COLUMN_KEYS) để biết cách xử
+ * lý tương thích ngược cho báo giá CŨ đã lưu visibleColumns từ trước khi
+ * 'discountPercent' là toggle option. */
+const HIDDEN_FROM_PICKER_KEYS_BY_ITEM_FIELD_KEY: Record<string, string[]> = {};
 
 /** Key của field bảng hạng mục thật của mẫu này ('quoteItems'/'solutionItems'/
  * ... ) - dùng để tra LOCKED_COLUMN_KEYS_BY_ITEM_FIELD_KEY ở cả quoteColumns.ts

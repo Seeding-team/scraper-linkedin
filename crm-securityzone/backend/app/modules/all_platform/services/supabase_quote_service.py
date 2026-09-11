@@ -1946,6 +1946,34 @@ def set_quote_processing_stage(quote_id: str, actor_id: str | None, stage: str) 
     current = get_quote(quote_id)
     is_first_technical_handoff = stage == "technical" and current.get("processingStage") == "request"
     if is_first_technical_handoff:
+        deal_id = current.get("dealId")
+        if not deal_id:
+            raise ValueError("Cần chọn cơ hội CRM trước khi bàn giao báo giá.")
+        deal_result = (
+            supabase.table("customer_leads")
+            .select("customer_id")
+            .eq("id", deal_id)
+            .maybe_single()
+            .execute()
+        )
+        if not deal_result or not deal_result.data or not deal_result.data.get("customer_id"):
+            raise ValueError("Cơ hội CRM phải được liên kết với khách hàng trước khi bàn giao báo giá.")
+        if not current.get("quoteFormId"):
+            raise ValueError("Cần chọn mẫu báo giá trước khi bàn giao.")
+        if not current.get("technicalOwnerId"):
+            raise ValueError("Cần chọn Presale trước khi bàn giao báo giá.")
+        if not current.get("quoteOwnerId"):
+            raise ValueError("Cần chọn Sale trước khi bàn giao báo giá.")
+
+        def has_priced_item(rows: list[dict]) -> bool:
+            return any(
+                row.get("rowType") != "section" or has_priced_item(row.get("children") or [])
+                for row in rows
+            )
+
+        if not has_priced_item(current.get("items") or []):
+            raise ValueError("Cần thêm ít nhất một hạng mục trước khi bàn giao báo giá.")
+
         sla_due_at = current.get("slaDueAt")
         if not sla_due_at:
             raise ValueError("Cần đặt SLA / hạn hoàn tất nội bộ trước khi gửi yêu cầu xử lý.")

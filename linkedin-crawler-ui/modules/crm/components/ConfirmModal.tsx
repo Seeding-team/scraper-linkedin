@@ -19,16 +19,26 @@ export function ConfirmModal({
   message,
   actions,
   onClose,
+  elevated,
 }: {
   open: boolean;
   title: string;
   message: string;
   actions: ConfirmModalAction[];
   onClose: () => void;
+  /** BUG THAT DA GAP ("không bấm tick được" - Cột hiển thị trong popup
+   * preview): .crm-modal-backdrop mac dinh z-index:100000, THAP HON
+   * .qc-modal-backdrop--nested (100210, popup preview dang mo) - ConfirmModal
+   * mo ra bi VE PHIA SAU popup preview, VO HINH voi nguoi dung (bam vao
+   * "khong thay gi xay ra" thuc chat la dang bam xuyen qua 1 dialog an sau
+   * lung). Optional, mac dinh false de KHONG doi hanh vi/giao dien cua moi
+   * noi khac dang dung ConfirmModal (hang chuc noi trong app) - CHI bat len
+   * o noi can hien TREN 1 modal khac dang mo san. */
+  elevated?: boolean;
 }) {
   if (!open) return null;
   return (
-    <div className="crm-modal-backdrop" onClick={onClose}>
+    <div className="crm-modal-backdrop" style={elevated ? { zIndex: 100300 } : undefined} onClick={onClose}>
       <div className="crm-modal crm-modal--confirm" onClick={event => event.stopPropagation()}>
         <header className="crm-modal-header">
           <h2 className="crm-modal-title">{title}</h2>

@@ -271,22 +271,23 @@ export function QuickAddProductModal({
       });
       const parsedCost = parseNullableNumber(costPrice);
       const parsedMarkup = parseNullableNumber(markupPercent);
+      let hydratedCreated = created;
       if (parsedCost != null || parsedMarkup != null) {
-        try {
-          await serviceCatalogRepository.upsertPricing(created.id, {
-            issuerCompanyId: null,
-            defaultCostPriceVnd: parsedCost,
-            defaultMarkupPercent: parsedMarkup,
-            defaultCustomerPriceVnd: parseNullableNumber(customerPrice),
-            pricingInputMode: parsedMarkup != null ? 'markup' : 'customer_price',
-          });
-        } catch {
-          // Loi luu bo gia mac dinh KHONG duoc chan viec tao san pham thanh
-          // cong - san pham van tao xong, chi thieu bo gia (nguoi dung vao
-          // "Sản phẩm & dịch vụ" bo sung sau).
-        }
+        const pricing = await serviceCatalogRepository.upsertPricing(created.id, {
+          issuerCompanyId: null,
+          defaultCostPriceVnd: parsedCost,
+          defaultMarkupPercent: parsedMarkup,
+          defaultCustomerPriceVnd: parseNullableNumber(customerPrice),
+          pricingInputMode: parsedMarkup != null ? 'markup' : 'customer_price',
+        });
+        hydratedCreated = {
+          ...created,
+          defaultCostPriceVnd: pricing.defaultCostPriceVnd,
+          defaultMarkupPercent: pricing.defaultMarkupPercent,
+          defaultCustomerPriceVnd: pricing.defaultCustomerPriceVnd,
+        };
       }
-      onCreated(created);
+      onCreated(hydratedCreated);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Không tạo được sản phẩm.');
     } finally {

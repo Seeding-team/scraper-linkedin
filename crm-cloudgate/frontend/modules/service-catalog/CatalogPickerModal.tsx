@@ -73,6 +73,9 @@ export function CatalogPickerModal({
   groupFilterValue,
   onGroupFilterChange,
   autoSelectId,
+  hydratingItem,
+  hydrationError,
+  onRetryHydration,
 }: {
   open: boolean;
   onClose: () => void;
@@ -103,6 +106,9 @@ export function CatalogPickerModal({
    * LAN tao xong (vd sau refreshCatalogTree()) - component tu tick khi id
    * xuat hien trong `items`. */
   autoSelectId?: string | null;
+  hydratingItem?: { id: string; name: string } | null;
+  hydrationError?: string | null;
+  onRetryHydration?: () => void;
 }) {
   const [search, setSearch] = useState('');
   const [internalGroupFilter, setInternalGroupFilter] = useState('');
@@ -238,6 +244,17 @@ export function CatalogPickerModal({
           </button>
         </div>
         {extraToolbar}
+        {hydratingItem ? (
+          <div className="cp-hydration-state" role="status">
+            <span className="cp-hydration-spinner" aria-hidden="true" />
+            Đang tải đầy đủ giá của “{hydratingItem.name}”…
+          </div>
+        ) : hydrationError ? (
+          <div className="cp-hydration-state cp-hydration-state--error" role="alert">
+            <span>{hydrationError}</span>
+            <button type="button" className="qc-mini-btn" onClick={onRetryHydration}>Thử lại</button>
+          </div>
+        ) : null}
 
         <div className="cp-body">
           <aside className="cp-sidebar">
@@ -385,7 +402,7 @@ export function CatalogPickerModal({
             <button type="button" className="qc-btn" onClick={() => setSelected(new Set())} disabled={selected.size === 0}>
               Bỏ chọn
             </button>
-            <button type="button" className="qc-btn qc-btn-primary" disabled={selected.size === 0 || adding} onClick={handleAdd}>
+            <button type="button" className="qc-btn qc-btn-primary" disabled={selected.size === 0 || adding || Boolean(hydratingItem)} onClick={handleAdd}>
               {adding ? 'Đang thêm…' : `+ Thêm vào báo giá (${selected.size})`}
             </button>
           </div>

@@ -399,22 +399,20 @@ export function QuoteDocumentRenderer({
   // 'vatRate' -> phai tu bo sung vao de KHONG lam VAT bi an mat khoi bao gia cu
   // (truoc day VAT luon hien, khong toggle duoc). Bao gia MOI tu gio deu di qua
   // resolveToggleableColumns() (da co san 'vatRate') nen khong bi anh huong.
-  const rawCustomerVisibleColumns = Array.isArray(quoteData.visibleColumns) ? quoteData.visibleColumns : null;
-  // "discountPercent" (Giam gia) moi duoc mo cho toggle trong "Cot hien thi"
-  // (truoc day an han khoi picker, luon hien khong toggle duoc - gay lech
-  // giua danh sach checkbox va cot that su tren bang, QA thuc te phat hien).
-  // Cung 1 ly do/cach xu ly nhu 'vatRate' o tren: bao gia CU da luu san
-  // visibleColumns tu truoc khi 'discountPercent' la toggle option se KHONG
-  // biet gi ve key nay - phai tu bo sung de KHONG lam cot Giam gia bi an mat
-  // khoi ban gui khach (truoc day luon hien, khong duoc phep tu nhien bien
-  // mat chi vi thay doi logic toggle).
-  const AUTO_INCLUDE_LEGACY_COLUMN_KEYS = ['vatRate', 'discountPercent'];
-  const customerVisibleColumns = rawCustomerVisibleColumns
-    ? [
-        ...rawCustomerVisibleColumns,
-        ...AUTO_INCLUDE_LEGACY_COLUMN_KEYS.filter(key => !rawCustomerVisibleColumns.includes(key)),
-      ]
-    : rawCustomerVisibleColumns;
+  // BUG THAT DA GAP ("tick ẩn Giảm giá rồi mà nó không ẩn trên bản xem
+  // trước"): AUTO_INCLUDE_LEGACY_COLUMN_KEYS (['vatRate','discountPercent'])
+  // TRUOC DAY luon tu CHEN LAI 2 key nay vao customerVisibleColumns BAT KE
+  // nguoi dung co chu dong tat hay khong - y dinh ban dau la "tuong thich
+  // nguoc" cho bao gia CU luu visibleColumns TRUOC KHI 2 cot nay la toggle
+  // option (mang cu khong biet gi ve 2 key nay = khong phai nguoi dung
+  // "chu dong tat"). Nhung logic nay KHONG PHAN BIET DUOC "mang cu chua
+  // tung biet key nay" voi "nguoi dung MOI VUA TAT key nay that su" - ca 2
+  // truong hop deu la "key vang mat trong mang da luu", nen MOI LAN nguoi
+  // dung tat 'vatRate'/'discountPercent' deu bi ghi de lai thanh BAT ngay
+  // lap tuc, dung nguyen chinh 2 cot nay khong bao gio tat duoc. Xoa han co
+  // che "tu suy doan" nay - ton trong CHINH XAC gia tri da luu
+  // (quoteData.visibleColumns), khong tu chen them bat ky key nao vao.
+  const customerVisibleColumns = Array.isArray(quoteData.visibleColumns) ? quoteData.visibleColumns : null;
   // BUG THAT DA GAP ("Bản xem trước cho khách hàng vẫn có horizontal
   // scrollbar", "Không hiển thị đồng thời List price USD, Unit price USD,
   // Unit price VND"): khi quote CHUA TUNG duoc admin tuy chinh "Cột hiển

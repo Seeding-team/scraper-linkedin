@@ -1456,6 +1456,40 @@
   gap: 8px;
 }
 
+.cp-hydration-state {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 16px 0;
+  padding: 9px 12px;
+  border: 1px solid #dbe7f5;
+  border-radius: 6px;
+  background: #f5f9ff;
+  color: #344054;
+  font-size: 12px;
+}
+
+.cp-hydration-state--error {
+  justify-content: space-between;
+  border-color: #fecaca;
+  background: #fff7f7;
+  color: #b42318;
+}
+
+.cp-hydration-spinner {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 14px;
+  border: 2px solid #bfd4ee;
+  border-top-color: #2563eb;
+  border-radius: 50%;
+  animation: cp-hydration-spin 0.8s linear infinite;
+}
+
+@keyframes cp-hydration-spin {
+  to { transform: rotate(360deg); }
+}
+
 @media (max-width: 767px) {
   .cp-modal {
     width: 100vw;

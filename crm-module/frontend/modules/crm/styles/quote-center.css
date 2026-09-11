@@ -2520,6 +2520,40 @@
   border-color: #dde1e8;
   background: #f4f5f8;
 }
+/* "Chỉnh Mô tả hạng mục" - icon rieng canh ten hang muc, dung KICH THUOC/vi
+ * tri voi cac icon link-badge/quick-add o tren de dong bo. 2 trang thai:
+ * nhat (chua co mo ta) vs dam mau (da co mo ta) de de nhan biet dong nao da
+ * nhap mo ta ma khong can mo popover moi biet. */
+.qc-workspace-item-desc-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  align-self: flex-start;
+  margin-top: 2px;
+  width: 20px;
+  height: 20px;
+  border: 1px solid #e4e7ec;
+  border-radius: 6px;
+  background: #fff;
+  color: #b5bcc7;
+  cursor: pointer;
+}
+.qc-workspace-item-desc-btn:hover {
+  color: #566277;
+  border-color: #c7ccd6;
+  background: #f7f9fb;
+}
+.qc-workspace-item-desc-btn--filled {
+  color: #566277;
+  border-color: #cdd3dc;
+  background: #f4f5f8;
+}
+.qc-workspace-item-desc-btn--filled:hover {
+  color: #2b3445;
+  border-color: #b7bfcc;
+  background: #eef0f4;
+}
 .qc-workspace-drawer-field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: #5b6576; }
 .qc-workspace-drawer-field p { margin: 0; font-size: 13px; color: #1f2530; }
 .qc-mini-btn-icon {
@@ -2805,6 +2839,135 @@
 .qc-workspace-items-empty { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 6px 0; }
 .qc-workspace-items-empty-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
 .qc-workspace-add-row { display: flex; gap: 8px; padding: 8px 0 2px; }
+
+.qc-workspace-quickbar.qc-workspace-pricing-bar {
+  justify-content: flex-start;
+  flex-wrap: nowrap;
+  gap: 14px;
+  padding: 8px 0 10px;
+  margin: 0;
+}
+
+.qc-pricing-group {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.qc-workspace-pricing-bar .qc-qb-row-label {
+  min-width: auto;
+}
+
+.qc-workspace-pricing-bar .qc-workspace-quickbar-input {
+  width: 68px;
+}
+
+.qc-workspace-pricing-bar .qc-workspace-quickbar-sep,
+.qc-workspace-commercial-row .qc-workspace-quickbar-sep {
+  width: 1px;
+  height: 24px;
+  align-self: center;
+  flex: 0 0 1px;
+}
+
+.qc-workspace-pricing-bar .qc-qb-margin-hint {
+  margin-left: auto;
+  color: #8a94a6;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+/* BUG THAT DA GAP ("cách ra xíu sát quá rồi") - border-top dinh sat ngay
+ * duoi .qc-workspace-totals (khong co margin), nhin nhu 2 khoi dinh lien
+ * vao nhau. Them margin-top de tach ro 2 nhom, van giu border lam ranh
+ * gioi thi giac nhe nhu cu. */
+.qc-workspace-commercial-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 10px;
+  margin-top: 14px;
+  padding: 12px 0 9px;
+  border-top: 1px solid #edf0f4;
+  border-bottom: 1px solid #edf0f4;
+}
+
+.qc-workspace-preview-sidebar-btn {
+  width: 100%;
+  justify-content: center;
+  background: #fff;
+  color: #344054;
+}
+/* "cho nút xem màu vàng hay màu gì cho nổi đi" - nut trang mac dinh qua chim
+ * trong sidebar, doi sang mau vang canh bao/noi bat (KHONG dung do thuong
+ * hieu - do da la mau nut hanh dong chinh "Bàn giao"/"Phát hành", tranh
+ * canh tranh thi giac voi nut hanh dong chinh nhu yeu cau truoc do). */
+.qc-workspace-preview-sidebar-btn--accent {
+  background: #fef3c7;
+  border-color: #f2c94c;
+  color: #7a5b00;
+  font-weight: 700;
+}
+.qc-workspace-preview-sidebar-btn--accent:hover {
+  background: #fde79a;
+  border-color: #e0b73a;
+  color: #5c4400;
+}
+
+/* "Cột hiển thị" gop vao goc tren phai popup preview (yeu cau rieng "Gộp
+ * lại chức năng Cột hiển thị vào bên trong Xem bản khách hàng") - dat CANH
+ * nut Dong (X) trong .qc-workspace-card-head-badges cua modal preview,
+ * KHONG con o sidebar nua. Giu nguyen 100% thiet ke popover cua
+ * QuoteColumnVisibilityPicker, chi can trigger button vua voi hang tieu de. */
+.qc-workspace-card-head-badges .crm-quote-column-picker {
+  position: relative;
+}
+.qc-workspace-card-head-badges .crm-quote-column-picker > button {
+  white-space: nowrap;
+}
+.qc-workspace-card-head-badges .crm-quote-column-menu {
+  right: 0;
+  left: auto;
+}
+
+.qc-required-mark {
+  color: #d92d20;
+  font-weight: 800;
+}
+
+.qc-field-error {
+  margin: 4px 0 0;
+  color: #d92d20;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.qc-field-error--card {
+  padding-bottom: 4px;
+}
+
+@media (max-width: 1280px) {
+  .qc-workspace-quickbar.qc-workspace-pricing-bar {
+    flex-wrap: wrap;
+  }
+  .qc-workspace-pricing-bar .qc-qb-margin-hint {
+    width: 100%;
+    margin-left: 0;
+  }
+}
+
+@media (max-width: 767px) {
+  .qc-pricing-group,
+  .qc-workspace-commercial-row {
+    flex-wrap: wrap;
+  }
+  .qc-workspace-pricing-bar .qc-workspace-quickbar-sep,
+  .qc-workspace-commercial-row .qc-workspace-quickbar-sep {
+    display: none;
+  }
+}
 
 .qc-mini-btn {
   display: inline-flex;
