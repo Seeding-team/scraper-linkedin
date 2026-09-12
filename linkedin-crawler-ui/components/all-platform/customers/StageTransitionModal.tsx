@@ -64,6 +64,7 @@ import {
   ExternalLink,
 } from "lucide-react";
 import { toast } from "sonner";
+import { CurrencyInput } from "@/components/CurrencyInput";
 import type { Customer } from "@/services/customer-lead.service";
 import {
   LOST_REASON_OPTIONS,
@@ -76,7 +77,7 @@ import {
 } from "@/services/customer-lead.service";
 import { getCurrentStage } from "@/services/crm-pipeline.helpers";
 import { cn } from "@/lib/utils";
-import { ThousandsInput } from "../components/thousands-input";
+import { useCrmCategoryCodeOptions } from "@/modules/crm/components/CrmCategorySelect";
 import { TerminalReviewForm } from "./TerminalReviewForm";
 
 interface Props {
@@ -140,6 +141,7 @@ export function StageTransitionModal({
   const [estBudget, setEstBudget] = useState<string>(String(customer.estimated_budget ?? ""));
   const [followUpDate, setFollowUpDate] = useState("");
   const [busy, setBusy] = useState(false);
+  const { options: lostReasonOptions } = useCrmCategoryCodeOptions("crm_lost_reason", LOST_REASON_OPTIONS);
 
   // Chỉ portal sau khi đã mount trên client — tránh hydration mismatch với React 19.
   // Server render `null`, client lần đầu render `null`, useEffect set mounted=true
@@ -364,7 +366,7 @@ export function StageTransitionModal({
                     className={inputCls}
                   >
                     <option value="">— Chọn lý do —</option>
-                    {LOST_REASON_OPTIONS.map((r) => (
+                    {lostReasonOptions.map((r) => (
                       <option key={r.value} value={r.value}>
                         {r.label}
                       </option>
@@ -412,11 +414,11 @@ export function StageTransitionModal({
                   <Wallet className="mr-1 inline size-3.5" /> Ngân sách dự kiến (VNĐ){" "}
                   <span className="text-red-500">*</span>
                 </label>
-                <ThousandsInput
+                <CurrencyInput
                   required
                   min={1}
-                  value={estBudget}
-                  onChange={(n) => setEstBudget(String(n))}
+                  value={estBudget ? Number(estBudget) : null}
+                  onChange={(n) => setEstBudget(n != null ? String(n) : "")}
                   className={inputCls}
                   placeholder="VD: 50.000.000"
                 />

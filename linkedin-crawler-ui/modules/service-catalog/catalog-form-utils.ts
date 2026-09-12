@@ -1,4 +1,5 @@
 import type { ServiceCatalogItem, ServiceCatalogItemInput } from './types';
+import { formatCurrencyDisplay } from '@/lib/currency';
 
 /** Helper dung chung cho form Nhom/San pham + tinh toan bo gia mac dinh
  * (Gia von/Markup/Gia khach) - tach rieng ra khoi ServiceCatalogPage.tsx cu
@@ -57,10 +58,10 @@ export function itemToForm(item: ServiceCatalogItem): ServiceCatalogItemInput {
   };
 }
 
+// Wrapper mong quanh formatCurrencyDisplay() dung chung (lib/currency.ts) -
+// khong tu goi toLocaleString rieng nua.
 export function formatVnd(value: number | undefined | null): string {
-  // Dong bo dinh dang voi price-book-preview.ts formatVnd() ("Không dính ký
-  // hiệu đ sát số") - them khoang trang truoc "đ".
-  return `${(value || 0).toLocaleString('vi-VN')} đ`;
+  return `${formatCurrencyDisplay(value || 0)} đ`;
 }
 
 /** Gia `0` la 1 gia tri DA cau hinh, khac voi "chua nhap" (null/undefined) -
@@ -68,7 +69,7 @@ export function formatVnd(value: number | undefined | null): string {
  * dung `value || fallback`). */
 export function formatVndOrMissing(value: number | undefined | null): string {
   if (value == null) return 'Chưa nhập';
-  return `${value.toLocaleString('vi-VN')} đ`;
+  return `${formatCurrencyDisplay(value)} đ`;
 }
 
 export function formatMarkupOrMissing(value: number | undefined | null): string {

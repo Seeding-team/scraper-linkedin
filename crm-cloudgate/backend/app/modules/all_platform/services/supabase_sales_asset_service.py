@@ -151,16 +151,19 @@ def list_sales_assets(
 
 
 def get_sales_asset(asset_id: str) -> dict[str, Any]:
+    # BUG THAT DA GAP: .single() nem APIError tho (PGRST116) khi 0 dong khop
+    # (id khong ton tai, HOAC ton tai o instance khac) - khien nhanh
+    # "if not result.data" ben duoi thanh dead code. Doi sang .maybe_single().
     supabase: Client = get_supabase_client()
     result = (
         supabase.table(SALES_ASSETS_TABLE)
         .select("*")
         .eq("id", asset_id)
         .eq("instance", settings.crm_instance)
-        .single()
+        .maybe_single()
         .execute()
     )
-    if not result.data:
+    if not result or not result.data:
         raise ValueError("Tai lieu ban hang khong ton tai.")
     return _row_to_asset(_hydrate_asset_rows([result.data])[0])
 

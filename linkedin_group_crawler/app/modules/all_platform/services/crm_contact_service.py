@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import logging
 from typing import Any
 
+from app.core.config import settings
 from app.core.supabase_client import execute_supabase_query, get_supabase_client
 from app.modules.all_platform.services.crm_customer_service import (
     _clean_text,
@@ -18,6 +20,7 @@ CONTACT_COLUMNS = (
     "email_normalized, zalo, facebook, is_primary, note, created_by, "
     "created_at, updated_at"
 )
+logger = logging.getLogger(__name__)
 
 
 def _normalize_payload(payload: dict[str, Any], actor_id: str | None = None) -> dict[str, Any]:
@@ -38,6 +41,7 @@ def list_contacts(customer_id: str, user: dict[str, Any]) -> list[dict[str, Any]
         lambda: supabase.table("crm_contacts")
         .select(CONTACT_COLUMNS)
         .eq("customer_id", customer_id)
+        .eq("instance", settings.crm_instance)
         .order("is_primary", desc=True)
         .order("created_at")
         .execute()
@@ -53,17 +57,30 @@ def create_contact(customer_id: str, payload: dict[str, Any], user: dict[str, An
     data = _normalize_payload(payload, actor_id=actor_id)
     apply_position_category(data)
     data["customer_id"] = customer_id
+    data["instance"] = settings.crm_instance
+    logger.info(
+        "tenant_write table=crm_contacts operation=insert settings.crm_instance=%s resolved_instance=%s",
+        settings.crm_instance,
+        data["instance"],
+    )
     supabase = get_supabase_client()
     res = execute_supabase_query(lambda: supabase.table("crm_contacts").insert(data).execute())
     return res.data[0]
 
 
 def _get_contact(contact_id: str) -> dict[str, Any]:
+    # BUG THAT DA GAP: .single() nem APIError tho (PGRST116) khi 0 dong khop -
+    # khien nhanh "if not contact" ben duoi thanh dead code. Doi sang .maybe_single().
     supabase = get_supabase_client()
     res = execute_supabase_query(
-        lambda: supabase.table("crm_contacts").select(CONTACT_COLUMNS).eq("id", contact_id).single().execute()
+        lambda: supabase.table("crm_contacts")
+        .select(CONTACT_COLUMNS)
+        .eq("id", contact_id)
+        .eq("instance", settings.crm_instance)
+        .maybe_single()
+        .execute()
     )
-    contact = res.data
+    contact = res.data if res else None
     if not contact:
         raise ValueError("Khong tim thay lien he.")
     return contact
@@ -85,8 +102,15 @@ def update_contact(customer_id: str, contact_id: str, payload: dict[str, Any], u
     data.pop("id", None)
     data.pop("customer_id", None)
     data.pop("created_by", None)
+    data.pop("instance", None)
     supabase = get_supabase_client()
-    res = execute_supabase_query(lambda: supabase.table("crm_contacts").update(data).eq("id", contact_id).execute())
+    res = execute_supabase_query(
+        lambda: supabase.table("crm_contacts")
+        .update(data)
+        .eq("id", contact_id)
+        .eq("instance", settings.crm_instance)
+        .execute()
+    )
     return res.data[0]
 
 
@@ -98,4 +122,6 @@ def delete_contact(customer_id: str, contact_id: str, user: dict[str, Any]) -> N
     if str(contact.get("customer_id")) != str(customer_id):
         raise ValueError("Lien he khong thuoc khach hang nay.")
     supabase = get_supabase_client()
-    execute_supabase_query(lambda: supabase.table("crm_contacts").delete().eq("id", contact_id).execute())
+    execute_supabase_query(
+        lambda: supabase.table("crm_contacts").delete().eq("id", contact_id).eq("instance", settings.crm_instance).execute()
+    )

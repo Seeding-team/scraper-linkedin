@@ -395,16 +395,25 @@ def quick_search_customers(user: dict[str, Any], q: str, limit: int = 8) -> list
 
 
 def get_customer(customer_id: str, user: dict[str, Any]) -> dict[str, Any]:
+    # BUG THAT DA GAP ("Không tải được hồ sơ khách hàng" hiện nguyên object
+    # loi PostgREST tho ra UI, vd {'message': 'Cannot coerce...', 'code':
+    # 'PGRST116'...}): .single() nem APIError tho khi 0 dong khop (id khong
+    # ton tai, HOAC ton tai o instance khac - router chi lam str(exc) roi tra
+    # thang len UI, lo ca chi tiet loi DB noi bo. Doi sang .maybe_single()
+    # (tra None thay vi raise) + tu rai ValueError sach - dung y het pattern
+    # "Khong tim thay ..." da dung o get_project()/get_quote().
     supabase = get_supabase_client()
     res = execute_supabase_query(
         lambda: supabase.table("crm_customers")
         .select(CUSTOMER_COLUMNS)
         .eq("id", customer_id)
         .eq("instance", settings.crm_instance)
-        .single()
+        .maybe_single()
         .execute()
     )
-    customer = res.data
+    customer = res.data if res else None
+    if not customer:
+        raise ValueError("Không tìm thấy khách hàng.")
     if not can_view_customer(user, customer):
         raise PermissionError("Khong co quyen xem ho so khach hang nay.")
     return _attach_customer_metrics([customer])[0]
@@ -622,6 +631,7 @@ def create_customer_with_deal(payload: dict[str, Any], user: dict[str, Any]) -> 
             "p_actor_id": actor_id,
             "p_idempotency_key": idempotency_key,
             "p_update_customer": update_customer_profile,
+            "p_instance": settings.crm_instance,
         }).execute()
     )
     data = res.data or {}

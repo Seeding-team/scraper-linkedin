@@ -25,6 +25,7 @@ from fastapi import FastAPI, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
+from app.core.config import settings
 from app.core.logger import get_logger, setup_logging
 from app.modules.all_platform.router import all_platform_router
 from app.modules.all_platform.schemas.common import BaseResponse
@@ -86,6 +87,19 @@ async def handle_cors_middleware(request: Request, call_next):
 def root_health() -> BaseResponse:
     """Health check cho Docker/reverse-proxy."""
     return BaseResponse(success=True, message="CRM module is healthy")
+
+
+@app.get("/debug/instance", response_model=BaseResponse)
+def debug_instance(request: Request) -> BaseResponse:
+    """Debug endpoint to verify the fixed CRM tenant for this backend."""
+    return BaseResponse(
+        success=True,
+        data={
+            "host_header": (request.headers.get("host") or "").split(":")[0].strip().lower(),
+            "resolved_instance": settings.crm_instance,
+            "default_crm_instance": settings.crm_instance,
+        },
+    )
 
 
 @app.exception_handler(RequestValidationError)

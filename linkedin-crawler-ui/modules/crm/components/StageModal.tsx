@@ -2,7 +2,7 @@
 
 /* eslint-disable react-hooks/set-state-in-effect */
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { AlertTriangle, CalendarDays, Loader2, MessageSquare, UserCog, Wallet, X } from './icons';
 import {
   DEAL_STAGE_META,
@@ -10,9 +10,10 @@ import {
   STAGE_REQUIREMENTS,
   WON_REASON_OPTIONS,
   formatVND,
-  parseMoney,
 } from '../constants/crmConfig';
 import type { Deal, DealStage, StageTransitionInput } from '../types';
+import { CurrencyInput } from '@/components/CurrencyInput';
+import { useCrmCategoryCodeOptions } from './CrmCategorySelect';
 
 const CONFIDENCE_OPTIONS = [
   { value: 'high_confirmed', label: 'Cao - Có khách hàng xác nhận' },
@@ -126,15 +127,20 @@ export function StageModal({
   const [kbStatus, setKbStatus] = useState('draft');
   const [kbScope, setKbScope] = useState('Nội bộ Markee + AI Sales Coach');
   const [decisionMaker, setDecisionMaker] = useState('');
-  const [budget, setBudget] = useState('');
+  const [budget, setBudget] = useState<number | null>(null);
   const [followUpDate, setFollowUpDate] = useState('');
   const req = STAGE_REQUIREMENTS[toStage] || {};
   const isOutcomeStage = toStage === 'won' || toStage === 'lost';
   const meta = DEAL_STAGE_META[toStage];
-  const reasonOptions = useMemo(
-    () => (toStage === 'won' ? WON_REASON_OPTIONS : LOST_REASON_OPTIONS),
-    [toStage]
-  );
+  const { options: wonReasonOptions } = useCrmCategoryCodeOptions('crm_won_reason', WON_REASON_OPTIONS);
+  const { options: lostReasonOptions } = useCrmCategoryCodeOptions('crm_lost_reason', LOST_REASON_OPTIONS);
+  const { options: confidenceOptions } = useCrmCategoryCodeOptions('crm_outcome_confidence', CONFIDENCE_OPTIONS);
+  const { options: triggerOptions } = useCrmCategoryCodeOptions('crm_outcome_trigger', TRIGGER_OPTIONS);
+  const { options: objectionOptions } = useCrmCategoryCodeOptions('crm_outcome_objection', OBJECTION_OPTIONS);
+  const { options: reuseLevelOptions } = useCrmCategoryCodeOptions('crm_kb_reuse_level', REUSE_LEVEL_OPTIONS);
+  const { options: kbOwnerOptions } = useCrmCategoryCodeOptions('crm_kb_owner', KB_OWNER_OPTIONS);
+  const { options: kbStatusOptions } = useCrmCategoryCodeOptions('crm_kb_status', KB_STATUS_OPTIONS);
+  const outcomeReasonOptions = toStage === 'won' ? wonReasonOptions : lostReasonOptions;
 
   useEffect(() => {
     if (!open || !deal) return;
@@ -164,7 +170,7 @@ export function StageModal({
     setKbStatus(outcome.kbStatus || 'draft');
     setKbScope(outcome.kbScope || 'Nội bộ Markee + AI Sales Coach');
     setDecisionMaker(deal.decisionMaker || '');
-    setBudget(deal.estimatedBudget ? String(deal.estimatedBudget) : '');
+    setBudget(deal.estimatedBudget ?? null);
     setFollowUpDate(deal.followUpDate ? String(deal.followUpDate).slice(0, 10) : '');
   }, [deal, open, toStage]);
 
@@ -193,7 +199,7 @@ export function StageModal({
       window.alert('Vui lòng nhập lý do tạm dừng.');
       return;
     }
-    if (req.requireBudget && parseMoney(budget) <= 0) {
+    if (req.requireBudget && (budget ?? 0) <= 0) {
       window.alert('Vui lòng nhập ngân sách dự kiến lớn hơn 0.');
       return;
     }
@@ -209,7 +215,7 @@ export function StageModal({
       note: isOutcomeStage ? reason.trim() : note.trim(),
       pauseReason: toStage === 'on_hold' ? note.trim() : '',
       decisionMaker: decisionMaker.trim(),
-      estimatedBudget: budget ? parseMoney(budget) : undefined,
+      estimatedBudget: budget != null ? budget : undefined,
       followUpDate: followUpDate || '',
       outcome: isOutcomeStage
         ? {
@@ -292,13 +298,13 @@ export function StageModal({
                     <label className="crm-review-field">
                       <span>Mức độ chắc chắn của kết luận <b>*</b></span>
                       <select value={confidence} onChange={event => setConfidence(event.target.value)}>
-                        {CONFIDENCE_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+                        {confidenceOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
                       </select>
                     </label>
                     <div className="crm-review-field crm-review-field--full">
                       <span>{toStage === 'won' ? 'Lý do thắng deal' : 'Lý do thua deal'} <b>*</b></span>
                       <div className="crm-review-checkbox-grid">
-                        {reasonOptions.map(option => (
+                        {outcomeReasonOptions.map(option => (
                           <label key={option.value} className="crm-review-checkbox">
                             <input
                               type="checkbox"
@@ -332,13 +338,13 @@ export function StageModal({
                     <label className="crm-review-field">
                       <span>Trigger khiến khách hàng hành động</span>
                       <select value={trigger} onChange={event => setTrigger(event.target.value)}>
-                        {TRIGGER_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+                        {triggerOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
                       </select>
                     </label>
                     <label className="crm-review-field">
                       <span>Objection lớn nhất</span>
                       <select value={objection} onChange={event => setObjection(event.target.value)}>
-                        {OBJECTION_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+                        {objectionOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
                       </select>
                     </label>
                     <label className="crm-review-field crm-review-field--full">
@@ -381,7 +387,7 @@ export function StageModal({
                     <label className="crm-review-field">
                       <span>Khả năng tái sử dụng</span>
                       <select value={reuseLevel} onChange={event => setReuseLevel(event.target.value)}>
-                        {REUSE_LEVEL_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+                        {reuseLevelOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
                       </select>
                     </label>
                     <label className="crm-review-field crm-review-field--full">
@@ -397,19 +403,19 @@ export function StageModal({
                     <label className="crm-review-field">
                       <span>Owner bài học</span>
                       <select value={kbOwner} onChange={event => setKbOwner(event.target.value)}>
-                        {KB_OWNER_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+                        {kbOwnerOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
                       </select>
                     </label>
                     <label className="crm-review-field">
                       <span>Người duyệt</span>
                       <select value={kbReviewer} onChange={event => setKbReviewer(event.target.value)}>
-                        {KB_OWNER_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+                        {kbOwnerOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
                       </select>
                     </label>
                     <label className="crm-review-field">
                       <span>Trạng thái tri thức</span>
                       <select value={kbStatus} onChange={event => setKbStatus(event.target.value)}>
-                        {KB_STATUS_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+                        {kbStatusOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
                       </select>
                     </label>
                     <label className="crm-review-field crm-review-field--full">
@@ -427,7 +433,7 @@ export function StageModal({
             </label>
             <label className="crm-stage-field">
               <span><Wallet className="crm-line-icon" /> Ngân sách dự kiến (VND) {req.requireBudget ? <b>*</b> : null}</span>
-              <input value={budget} onChange={event => setBudget(event.target.value)} inputMode="decimal" placeholder={formatVND(deal.estimatedBudget) || 'VD: 50.000.000'} />
+              <CurrencyInput value={budget} onChange={setBudget} placeholder={formatVND(deal.estimatedBudget) || 'VD: 50.000.000'} />
             </label>
             {deal.quote ? (
               <div className="crm-stage-quote-card">

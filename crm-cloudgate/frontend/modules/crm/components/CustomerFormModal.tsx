@@ -5,8 +5,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { API_BASE_URL, API_KEY } from '@/lib/env';
 import { useMembers } from '@/hooks/useMembers';
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
-import { CITY_OPTIONS, INDUSTRY_OPTIONS, SOURCE_OPTIONS } from '../constants/crmConfig';
 import { SearchableSelect } from './SearchableSelect';
+import { CrmCategoryCodeSelect, CrmCategorySelect } from './CrmCategorySelect';
 import { PositionSelect } from './PositionSelect';
 import { Loader2, X } from './icons';
 import type { AppUser } from '@/types/unified.types';
@@ -18,10 +18,6 @@ const STATUS_OPTIONS: Array<{ value: CrmCustomerStatus; label: string }> = [
   { value: 'current_customer', label: 'Đã mua' },
   { value: 'not_fit', label: 'Ngừng hoạt động' },
 ];
-
-const SOURCE_SELECT_OPTIONS = SOURCE_OPTIONS;
-const CITY_SELECT_OPTIONS = CITY_OPTIONS.map(city => ({ value: city, label: city }));
-const INDUSTRY_SELECT_OPTIONS = INDUSTRY_OPTIONS.map(value => ({ value, label: value }));
 
 type FormState = {
   customerName: string;
@@ -329,13 +325,13 @@ export function CustomerFormModal({
                 <input value={form.taxCode} onChange={e => setValue('taxCode', e.target.value)} />
               </Field>
               <Field label="Lĩnh vực">
-                <SearchableSelect value={form.industry} onChange={value => setValue('industry', value)} options={INDUSTRY_SELECT_OPTIONS} placeholder="-- Chọn --" />
+                <CrmCategoryCodeSelect categoryType="crm_industry" value={form.industry} onChange={value => setValue('industry', value)} placeholder="-- Chọn --" />
               </Field>
               <Field label="Thành phố">
-                <SearchableSelect value={form.city} onChange={value => setValue('city', value)} options={CITY_SELECT_OPTIONS} placeholder="-- Chọn --" />
+                <CrmCategorySelect categoryType="crm_city" value={form.city} onChange={value => setValue('city', value)} placeholder="-- Chọn --" />
               </Field>
               <Field label="Nguồn">
-                <SearchableSelect value={form.source} onChange={value => setValue('source', value)} options={SOURCE_SELECT_OPTIONS} />
+                <CrmCategoryCodeSelect categoryType="crm_source" value={form.source} onChange={value => setValue('source', value)} />
               </Field>
               <Field full label="Địa chỉ">
                 <input value={form.address} onChange={e => setValue('address', e.target.value)} />

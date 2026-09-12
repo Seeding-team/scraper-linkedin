@@ -95,6 +95,18 @@ export const MapPin = makeIcon([
   { d: 'M20 10c0 6-8 12-8 12S4 16 4 10a8 8 0 1 1 16 0Z' },
   { tag: 'circle', cx: 12, cy: 10, r: 3 },
 ]);
+export const Maximize2 = makeIcon([
+  { d: 'M15 3h6v6' },
+  { d: 'm21 3-7 7' },
+  { d: 'M9 21H3v-6' },
+  { d: 'm3 21 7-7' },
+]);
+export const Minimize2 = makeIcon([
+  { d: 'M4 14h6v6' },
+  { d: 'm10 14-7 7' },
+  { d: 'M20 10h-6V4' },
+  { d: 'm14 10 7-7' },
+]);
 export const MessageCircle = makeIcon([
   { d: 'M21 11.5a8.4 8.4 0 0 1-9 8.4 8.5 8.5 0 0 1-4-.9L3 21l1.8-4.6A8.5 8.5 0 1 1 21 11.5Z' },
 ]);

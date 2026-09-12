@@ -1,15 +1,22 @@
 export type BillingType = 'one_time' | 'monthly' | 'yearly';
 
 export type DealStage =
+  | 'dealing'
+  | 'proposal_sent'
+  | 'negotiation'
+  | 'contract_signed'
+  | 'payment_1'
+  | 'implementation'
+  | 'acceptance'
+  | 'payment_final'
+  | 'post_sale_care'
   | 'new_lead'
   | 'contacted'
   | 'qualified'
   | 'requirement'
-  | 'proposal_sent'
-  | 'negotiation'
   | 'contract_sent'
-  | 'on_hold'
   | 'won'
+  | 'on_hold'
   | 'lost';
 
 export type ContractStatus =
@@ -128,9 +135,9 @@ export interface Deal {
   contactId: string;
   dealId: string;
   customerId?: string;
-  customerName: string;
   /** Du an that (migration 097) - null/undefined = Co hoi chua gan Du an nao. */
   projectId?: string | null;
+  customerName: string;
   position?: string;
   positionCategoryId?: string;
   positionLabelSnapshot?: string;
@@ -221,6 +228,10 @@ export interface CrmCustomerRow extends CrmCustomerSummary {
   note?: string;
   phoneNormalized?: string;
   emailNormalized?: string;
+  externalSystem?: string;
+  externalId?: string;
+  externalPayload?: Record<string, unknown>;
+  syncedAt?: string;
   createdBy?: string;
   createdAt?: string;
   updatedAt?: string;
@@ -366,7 +377,17 @@ export interface RevenueRow {
 // ===== Leads (crm_leads) — trang riêng /all-platform/crm/leads, KHÁC hẳn
 // CrmCustomerRow (crm_customers) và Deal (customer_leads). Khớp
 // CrmLeadResponse ở backend (app/modules/all_platform/schemas/crm_lead.py). =====
-export type CrmLeadStatus = 'new_lead' | 'qualifying' | 'qualified' | 'nurture' | 'converted' | 'disqualified';
+export type CrmLeadStatus =
+  | 'mql'
+  | 'sql'
+  | 'nurturing'
+  | 'unqualified'
+  | 'new_lead'
+  | 'qualifying'
+  | 'qualified'
+  | 'nurture'
+  | 'converted'
+  | 'disqualified';
 
 export interface CrmLeadRow {
   id: string;
@@ -406,9 +427,10 @@ export interface CrmLeadRow {
 
 export interface CrmLeadKpi {
   total: number;
-  new_lead: number;
-  qualifying: number;
-  qualified: number;
+  mql: number;
+  sql: number;
+  nurturing: number;
+  unqualified: number;
 }
 
 export interface CrmAnalytics {

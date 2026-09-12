@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from supabase import Client
 
-from app.core.config import settings
 from app.core.supabase_client import get_supabase_client
 
 
@@ -12,13 +11,23 @@ def get_all_categories() -> list[dict]:
     """Get all categories across all types."""
     supabase: Client = get_supabase_client()
 
-    result = (
-        supabase.table("categories")
-        .select("*")
-        .eq("instance", settings.crm_instance)
-        .order("category_type")
-        .execute()
-    )
+    try:
+        result = (
+            supabase.table("categories")
+            .select("*")
+            .order("category_type")
+            .order("sort_order")
+            .order("code")
+            .execute()
+        )
+    except Exception:
+        result = (
+            supabase.table("categories")
+            .select("*")
+            .order("category_type")
+            .order("code")
+            .execute()
+        )
     return result.data or []
 
 
@@ -29,15 +38,13 @@ def get_categories_by_type(category_type: str, active_only: bool = False) -> lis
     default) so deactivated rows still show up for reactivation."""
     supabase: Client = get_supabase_client()
 
-    query = (
-        supabase.table("categories")
-        .select("*")
-        .eq("category_type", category_type)
-        .eq("instance", settings.crm_instance)
-    )
+    query = supabase.table("categories").select("*").eq("category_type", category_type)
     if active_only:
         query = query.eq("is_active", True)
-    result = query.order("code").execute()
+    try:
+        result = query.order("sort_order").order("code").execute()
+    except Exception:
+        result = query.order("code").execute()
     return result.data or []
 
 
@@ -52,8 +59,9 @@ def add_category(payload: dict) -> dict:
         "description": payload.get("description"),
         "platform": payload.get("platform", "general"),
         "is_active": payload.get("is_active", True),
-        "instance": settings.crm_instance,
     }
+    if "sort_order" in payload:
+        insert_data["sort_order"] = payload.get("sort_order") or 0
 
     result = (
         supabase.table("categories")
@@ -74,7 +82,6 @@ def update_category(category_id: str, payload: dict) -> dict:
         supabase.table("categories")
         .update(update_data)
         .eq("id", category_id)
-        .eq("instance", settings.crm_instance)
         .execute()
     )
     return result.data[0] if result.data else {}
@@ -88,7 +95,6 @@ def delete_category(category_id: str) -> dict:
         supabase.table("categories")
         .delete()
         .eq("id", category_id)
-        .eq("instance", settings.crm_instance)
         .execute()
     )
     return {"deleted": len(result.data) if result.data else 0}

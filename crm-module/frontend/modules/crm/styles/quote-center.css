@@ -2088,6 +2088,27 @@
   align-items: center;
   gap: 5px;
 }
+.qc-workspace-items-fullscreen-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.qc-workspace-items-card--fullscreen {
+  position: fixed;
+  inset: 12px;
+  z-index: 1200;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: 0 24px 80px rgba(20, 26, 40, 0.28);
+}
+.qc-workspace-items-card--fullscreen .qc-workspace-items-card-head {
+  flex-shrink: 0;
+}
+.qc-workspace-items-card--fullscreen .qc-workspace-items-scroll {
+  flex: 1;
+  min-height: 0;
+}
 /* Trang thai rong (yeu cau "Vẫn giữ chiều cao lớn của vùng hạng mục... hiển
  * thị ở giữa") - dung chinh vung cuon 58vh da khai bao o
  * .qc-workspace-main .qc-table-wrap.qc-workspace-items-scroll, chi can can
@@ -2367,6 +2388,7 @@
 .qc-workspace-main .qc-table-wrap.qc-workspace-items-scroll {
   max-height: 58vh;
   min-height: 260px;
+  overflow-x: auto;
   overflow-y: auto;
 }
 .qc-workspace-items-scroll thead th {
@@ -2376,7 +2398,10 @@
   background: #fbfbfd;
 }
 .qc-workspace-items-table--unified {
-  min-width: 1000px;
+  min-width: 1180px;
+}
+.qc-workspace-items-card--fullscreen .qc-table-wrap.qc-workspace-items-scroll {
+  max-height: none;
 }
 /* BUG THAT DA GAP: tung thu them 2 icon nhanh (Plus/LayoutGrid) canh nut "⋮"
  * trong 1 cot rong bang flex - gay chong lan/vo layout that tren man hinh

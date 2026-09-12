@@ -2,12 +2,10 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { API_BASE_URL, API_KEY } from '@/lib/env';
-import { allPlatformCategoriesService } from '@/services/all-platform.service';
 import { useMembers } from '@/hooks/useMembers';
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
-import { SOURCE_OPTIONS } from '../constants/crmConfig';
-import { mergeCategoryOptions } from '../hooks/useCrm';
 import { PositionSelect } from './PositionSelect';
+import { CrmCategoryCodeSelect } from './CrmCategorySelect';
 import { mapLead, LEAD_STATUS_LABEL } from './LeadsDirectory';
 import { ChevronDown, ChevronUp, Loader2, X } from './icons';
 import type { AppUser } from '@/types/unified.types';
@@ -161,33 +159,6 @@ export function LeadFormDrawer({
   const { members } = useMembers();
   const leadNameRef = useRef<HTMLInputElement>(null);
   useBodyScrollLock(open);
-
-  // BUG THAT DA GAP ("chỗ nguồn lead vẫn chưa feed"): dropdown "Nguồn" truoc
-  // day dung THANG `SOURCE_OPTIONS` tinh (hardcode trong crmConfig.ts), trong
-  // khi trang "Danh mục CRM" cho phep them/sua "Nguồn" dong qua bang
-  // categories (category_type='crm_source') - them "Nguồn" moi o Danh muc thi
-  // dropdown nay KHONG BAO GIO thay vi khong he goi API. `useCrm()` (hook
-  // dung o trang Leads/Pipeline chinh) da co san dung logic merge nay
-  // (`loadCrmCategoryOptions`) nhung LeadFormDrawer la drawer doc lap, KHONG
-  // dung chung hook nang do (se keo theo load ca deals/agents khong can) - chi
-  // tai su dung ham `mergeCategoryOptions()` da export tu useCrm.ts, tu fetch
-  // rieng 1 lan khi mo drawer.
-  const [sourceOptions, setSourceOptions] = useState(SOURCE_OPTIONS);
-  useEffect(() => {
-    if (!open) return;
-    let alive = true;
-    allPlatformCategoriesService
-      .getAll('crm_source')
-      .then(res => {
-        if (alive) setSourceOptions(mergeCategoryOptions(SOURCE_OPTIONS, res.data));
-      })
-      .catch(() => {
-        // Giu nguyen danh sach mac dinh neu tai danh muc mo rong that bai.
-      });
-    return () => {
-      alive = false;
-    };
-  }, [open]);
 
   // Bo dem chan-doi-thi (generation counter) - moi lan len lich goi
   // duplicate-check tang seq; khi response ve chi ap dung neu no van la lan
@@ -718,11 +689,11 @@ export function LeadFormDrawer({
                     />
                   </Field>
                   <Field label="Nguồn" required>
-                    <select value={form.source} onChange={e => setValue('source', e.target.value)}>
-                      {sourceOptions.map(option => (
-                        <option key={option.value} value={option.value}>{option.label}</option>
-                      ))}
-                    </select>
+                    <CrmCategoryCodeSelect
+                      categoryType="crm_source"
+                      value={form.source}
+                      onChange={value => setValue('source', value)}
+                    />
                   </Field>
                   {canPickOwner ? (
                     <Field label="Người phụ trách Lead" required>

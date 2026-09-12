@@ -4,6 +4,8 @@ import { useState } from "react";
 import { Check, Loader2, AlertTriangle } from "lucide-react";
 import { DealStage, StageTransitionPayload, RejectReasonType, LOST_REASON_OPTIONS } from "@/services/customer-lead.service";
 import { cn } from "@/lib/utils";
+import { CurrencyInput } from "@/components/CurrencyInput";
+import { useCrmCategoryCodeOptions } from "@/modules/crm/components/CrmCategorySelect";
 
 interface Props {
   toStage: "won" | "lost";
@@ -36,6 +38,33 @@ const LOST_REASONS = [
   "Lý do khác",
 ];
 
+const toOptions = (labels: string[]) => labels.map((label) => ({ value: label, label }));
+
+const CONFIDENCE_OPTIONS = toOptions([
+  "Cao - C? kh?ch h?ng x?c nh?n",
+  "Trung b?nh - D?a tr?n t?n hi?u",
+  "Th?p - Ph?ng ?o?n c?a Sale",
+]);
+
+const TRIGGER_OPTIONS = toOptions([
+  "C?n go-live theo deadline",
+  "?ang g?p s? c? c?n x? l?",
+]);
+
+const OBJECTION_OPTIONS = toOptions([
+  "Lo ng?i ti?n ?? tri?n khai",
+  "Gi? cao h?n ng?n s?ch",
+]);
+
+const REUSE_LEVEL_OPTIONS = toOptions([
+  "Cao - C? th? th?nh playbook",
+  "Trung b?nh",
+]);
+
+const KB_OWNER_OPTIONS = toOptions(["Sale ph? tr?ch deal"]);
+const KB_STATUS_OPTIONS = toOptions(["Draft - Ch? duy?t"]);
+
+
 const SCORES = [
   "5 — Rất mạnh",
   "4 — Mạnh",
@@ -46,6 +75,14 @@ const SCORES = [
 
 export function TerminalReviewForm({ toStage, customerName, onCancel, onSubmit, busy }: Props) {
   const isWon = toStage === "won";
+  const { options: wonReasonOptions } = useCrmCategoryCodeOptions("crm_won_reason", toOptions(WIN_REASONS));
+  const { options: lostReasonOptions } = useCrmCategoryCodeOptions("crm_lost_reason", LOST_REASON_OPTIONS);
+  const { options: confidenceOptions } = useCrmCategoryCodeOptions("crm_outcome_confidence", CONFIDENCE_OPTIONS);
+  const { options: triggerOptions } = useCrmCategoryCodeOptions("crm_outcome_trigger", TRIGGER_OPTIONS);
+  const { options: objectionOptions } = useCrmCategoryCodeOptions("crm_outcome_objection", OBJECTION_OPTIONS);
+  const { options: reuseLevelOptions } = useCrmCategoryCodeOptions("crm_kb_reuse_level", REUSE_LEVEL_OPTIONS);
+  const { options: kbOwnerOptions } = useCrmCategoryCodeOptions("crm_kb_owner", KB_OWNER_OPTIONS);
+  const { options: kbStatusOptions } = useCrmCategoryCodeOptions("crm_kb_status", KB_STATUS_OPTIONS);
 
   // State
   const [reviewResult, setReviewResult] = useState(isWon ? "Won — Đã ký / chốt mua" : "Lost — Thất bại");
@@ -78,7 +115,7 @@ export function TerminalReviewForm({ toStage, customerName, onCancel, onSubmit, 
   const [scope, setScope] = useState("Nội bộ Markee + AI Sales Coach");
 
   const [decisionMaker, setDecisionMaker] = useState("");
-  const [budget, setBudget] = useState("");
+  const [budget, setBudget] = useState<number | null>(null);
   const [quoteLink, setQuoteLink] = useState("");
   const [quoteName, setQuoteName] = useState("");
   const [followUpDate, setFollowUpDate] = useState("");
@@ -96,7 +133,7 @@ export function TerminalReviewForm({ toStage, customerName, onCancel, onSubmit, 
     const lines = [
       `[1. KẾT QUẢ & LÝ DO CHÍNH]`,
       `• Kết quả xác nhận: ${reviewResult}`,
-      ...(isWon ? [] : [`• Phân loại thất bại: ${LOST_REASON_OPTIONS.find(x => x.value === rejectReasonType)?.label || rejectReasonType}`]),
+      ...(isWon ? [] : [`• Phân loại thất bại: ${lostReasonOptions.find(x => x.value === rejectReasonType)?.label || rejectReasonType}`]),
       `• Mức độ chắc chắn: ${confidence}`,
       `• Lý do chính: ${reasons.join(", ")}`,
       `• Diễn giải: ${rootCause}`,
@@ -121,7 +158,7 @@ export function TerminalReviewForm({ toStage, customerName, onCancel, onSubmit, 
       `[5. QUY TRÌNH]`,
       `• Owner: ${owner} | Reviewer: ${reviewer} | Status: ${kbStatus} | Scope: ${scope}`,
       `• Decision Maker: ${decisionMaker}`,
-      `• Ngân sách: ${budget}`,
+      `• Ngân sách: ${budget ?? ""}`,
       `• Báo giá: ${quoteName || "Link"} (${quoteLink || "No link"})`,
     ];
 
@@ -131,7 +168,7 @@ export function TerminalReviewForm({ toStage, customerName, onCancel, onSubmit, 
       to_stage: toStage,
       note: notePayload,
       ...(decisionMaker ? { decision_maker: decisionMaker } : {}),
-      ...(budget ? { estimated_budget: Number(budget) } : {}),
+      ...(budget !== null ? { estimated_budget: budget } : {}),
       ...(followUpDate ? { follow_up_date: followUpDate } : {}),
       ...(rejectReasonType ? { reject_reason_type: rejectReasonType as RejectReasonType } : {}),
     };
@@ -139,7 +176,7 @@ export function TerminalReviewForm({ toStage, customerName, onCancel, onSubmit, 
     onSubmit(payload);
   };
 
-  const reasonsList = isWon ? WIN_REASONS : LOST_REASONS;
+  const reasonsList = (isWon ? wonReasonOptions : lostReasonOptions).map((option) => option.label);
 
   return (
     <div className="flex h-[85vh] w-full max-w-4xl flex-col rounded-xl bg-white shadow-2xl">
@@ -190,7 +227,7 @@ export function TerminalReviewForm({ toStage, customerName, onCancel, onSubmit, 
                   <label className={labelCls}>Phân loại lý do hệ thống (Bắt buộc) *</label>
                   <select className={inputCls} value={rejectReasonType} onChange={(e) => setRejectReasonType(e.target.value as any)}>
                     <option value="">-- Chọn lý do hệ thống --</option>
-                    {LOST_REASON_OPTIONS.map((opt) => (
+                    {lostReasonOptions.map((opt) => (
                       <option key={opt.value} value={opt.value}>{opt.label}</option>
                     ))}
                   </select>
@@ -199,9 +236,7 @@ export function TerminalReviewForm({ toStage, customerName, onCancel, onSubmit, 
                 <div>
                   <label className={labelCls}>Mức độ chắc chắn của kết luận *</label>
                   <select className={inputCls} value={confidence} onChange={(e) => setConfidence(e.target.value)}>
-                    <option>Cao — Có khách hàng xác nhận</option>
-                    <option>Trung bình — Dựa trên tín hiệu</option>
-                    <option>Thấp — Phỏng đoán của Sale</option>
+                    {confidenceOptions.map((opt) => <option key={opt.value} value={opt.label}>{opt.label}</option>)}
                   </select>
                 </div>
               )}
@@ -246,15 +281,13 @@ export function TerminalReviewForm({ toStage, customerName, onCancel, onSubmit, 
               <div>
                 <label className={labelCls}>Trigger khiến khách hàng hành động</label>
                 <select className={inputCls} value={trigger} onChange={e => setTrigger(e.target.value)}>
-                  <option>Cần go-live theo deadline</option>
-                  <option>Đang gặp sự cố cần xử lý</option>
+                  {triggerOptions.map((opt) => <option key={opt.value} value={opt.label}>{opt.label}</option>)}
                 </select>
               </div>
               <div>
                 <label className={labelCls}>Objection lớn nhất</label>
                 <select className={inputCls} value={objection} onChange={e => setObjection(e.target.value)}>
-                  <option>Lo ngại tiến độ triển khai</option>
-                  <option>Giá cao hơn ngân sách</option>
+                  {objectionOptions.map((opt) => <option key={opt.value} value={opt.label}>{opt.label}</option>)}
                 </select>
               </div>
             </div>
@@ -308,8 +341,7 @@ export function TerminalReviewForm({ toStage, customerName, onCancel, onSubmit, 
               <div>
                 <label className={labelCls}>Khả năng tái sử dụng</label>
                 <select className={inputCls} value={reusability} onChange={e => setReusability(e.target.value)}>
-                  <option>Cao — Có thể thành playbook</option>
-                  <option>Trung bình</option>
+                  {reuseLevelOptions.map((opt) => <option key={opt.value} value={opt.label}>{opt.label}</option>)}
                 </select>
               </div>
             </div>
@@ -327,7 +359,9 @@ export function TerminalReviewForm({ toStage, customerName, onCancel, onSubmit, 
             <div className="grid grid-cols-3 gap-4 mb-4">
               <div>
                 <label className={labelCls}>Owner bài học</label>
-                <select className={inputCls} value={owner} onChange={e => setOwner(e.target.value)}><option>Sale phụ trách deal</option></select>
+                <select className={inputCls} value={owner} onChange={e => setOwner(e.target.value)}>
+                  {kbOwnerOptions.map((opt) => <option key={opt.value} value={opt.label}>{opt.label}</option>)}
+                </select>
               </div>
               <div>
                 <label className={labelCls}>Người duyệt</label>
@@ -335,7 +369,9 @@ export function TerminalReviewForm({ toStage, customerName, onCancel, onSubmit, 
               </div>
               <div>
                 <label className={labelCls}>Trạng thái tri thức</label>
-                <select className={inputCls} value={kbStatus} onChange={e => setKbStatus(e.target.value)}><option>Draft — Chờ duyệt</option></select>
+                <select className={inputCls} value={kbStatus} onChange={e => setKbStatus(e.target.value)}>
+                  {kbStatusOptions.map((opt) => <option key={opt.value} value={opt.label}>{opt.label}</option>)}
+                </select>
               </div>
             </div>
             
@@ -353,7 +389,7 @@ export function TerminalReviewForm({ toStage, customerName, onCancel, onSubmit, 
             <div className="grid grid-cols-2 gap-4 mb-4">
               <div>
                 <label className={labelCls}>Ngân sách dự kiến (VND)</label>
-                <input className={inputCls} type="number" value={budget} onChange={e => setBudget(e.target.value)} />
+                <CurrencyInput className={inputCls} value={budget} onChange={setBudget} />
               </div>
               <div>
                 <label className={labelCls}>Ngày follow-up lại</label>

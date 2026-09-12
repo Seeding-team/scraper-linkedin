@@ -17,7 +17,8 @@ import {
   PAYMENT_STATUS_OPTIONS,
 } from "@/services/customer-lead.service";
 import { toast } from "sonner";
-import { ThousandsInput } from "./thousands-input";
+import { CurrencyInput } from "@/components/CurrencyInput";
+import { useCrmCategoryCodeOptions, useCrmCategoryLabels } from "@/modules/crm/components/CrmCategorySelect";
 
 interface CrmCustomerModalProps {
   isOpen: boolean;
@@ -90,6 +91,15 @@ export function CrmCustomerModal({
   const [sdrs, setSdrs] = useState<SDRUser[]>([]);
   const [leaders, setLeaders] = useState<SDRUser[]>([]);
   const [formData, setFormData] = useState<Partial<Customer>>(emptyForm());
+  const { options: sourceOptions } = useCrmCategoryCodeOptions("crm_source", SOURCE_PLATFORM_OPTIONS);
+  const { labels: cityOptions } = useCrmCategoryLabels("crm_city", CITY_OPTIONS);
+  const { options: industryOptions } = useCrmCategoryCodeOptions(
+    "crm_industry",
+    INDUSTRY_OPTIONS.map((value) => ({ value, label: value })),
+  );
+  const { options: servicePackageOptions } = useCrmCategoryCodeOptions("crm_service_package", SERVICE_PACKAGE_OPTIONS);
+  const { options: contractStatusOptions } = useCrmCategoryCodeOptions("crm_contract_status", CONTRACT_STATUS_OPTIONS);
+  const { options: paymentStatusOptions } = useCrmCategoryCodeOptions("crm_payment_status", PAYMENT_STATUS_OPTIONS);
 
   useEffect(() => { setMounted(true); }, []);
 
@@ -228,7 +238,7 @@ export function CrmCustomerModal({
             </h2>
             <p className="text-xs text-slate-400 mt-0.5">
               {formData.source_platform
-                ? `Nguồn: ${SOURCE_PLATFORM_OPTIONS.find((o) => o.value === formData.source_platform)?.label ?? formData.source_platform}`
+                ? `Nguồn: ${sourceOptions.find((o) => o.value === formData.source_platform)?.label ?? formData.source_platform}`
                 : "Chưa chọn nguồn"}
             </p>
           </div>
@@ -353,7 +363,7 @@ export function CrmCustomerModal({
                     className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-red-500/30 focus:border-red-500 text-sm bg-white"
                   >
                     <option value="">-- Chọn --</option>
-                    {CITY_OPTIONS.map((c) => (
+                    {cityOptions.map((c) => (
                       <option key={c} value={c}>{c}</option>
                     ))}
                   </select>
@@ -366,8 +376,8 @@ export function CrmCustomerModal({
                     className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-red-500/30 focus:border-red-500 text-sm bg-white"
                   >
                     <option value="">-- Chọn --</option>
-                    {INDUSTRY_OPTIONS.map((ind) => (
-                      <option key={ind} value={ind}>{ind}</option>
+                    {industryOptions.map((ind) => (
+                      <option key={ind.value} value={ind.value}>{ind.label}</option>
                     ))}
                   </select>
                 </div>
@@ -387,7 +397,7 @@ export function CrmCustomerModal({
                     onChange={(e) => set("source_platform", e.target.value as SourcePlatform)}
                     className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-red-500/30 focus:border-red-500 text-sm bg-white"
                   >
-                    {SOURCE_PLATFORM_OPTIONS.map((o) => (
+                    {sourceOptions.map((o) => (
                       <option key={o.value} value={o.value}>{o.label}</option>
                     ))}
                   </select>
@@ -402,7 +412,7 @@ export function CrmCustomerModal({
                     className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-red-500/30 focus:border-red-500 text-sm bg-white"
                   >
                     <option value="">-- Chưa chọn --</option>
-                    {SERVICE_PACKAGE_OPTIONS.map((o) => (
+                    {servicePackageOptions.map((o) => (
                       <option key={o.value} value={o.value}>{o.label}</option>
                     ))}
                   </select>
@@ -470,9 +480,9 @@ export function CrmCustomerModal({
                   <label className="block text-xs font-semibold text-slate-600 mb-1">
                     Ngân sách ước tính (VNĐ)
                   </label>
-                  <ThousandsInput
-                    value={formData.estimated_budget ?? 0}
-                    onChange={(n) => set("estimated_budget", n)}
+                  <CurrencyInput
+                    value={formData.estimated_budget ?? null}
+                    onChange={(n) => set("estimated_budget", n ?? 0)}
                     className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500 text-sm"
                     placeholder="50.000.000"
                   />
@@ -533,9 +543,9 @@ export function CrmCustomerModal({
                     onChange={(e) => set("contract_status", e.target.value as Customer["contract_status"])}
                     className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500 text-sm bg-white"
                   >
-                    <option value="active">Đang hoạt động</option>
-                    <option value="completed">Đã hoàn thành</option>
-                    <option value="maintenance">Bảo trì / bảo hành</option>
+                    {contractStatusOptions.map((opt) => (
+                      <option key={opt.value} value={opt.value}>{opt.label}</option>
+                    ))}
                   </select>
                 </div>
 
@@ -546,7 +556,7 @@ export function CrmCustomerModal({
                     onChange={(e) => set("payment_status", e.target.value as Customer["payment_status"])}
                     className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500 text-sm bg-white"
                   >
-                    {PAYMENT_STATUS_OPTIONS.map((opt) => (
+                    {paymentStatusOptions.map((opt) => (
                       <option key={opt.value} value={opt.value}>{opt.label}</option>
                     ))}
                   </select>
@@ -567,9 +577,9 @@ export function CrmCustomerModal({
 
                 <div>
                   <label className="block text-xs font-semibold text-slate-600 mb-1">Giá trị hợp đồng / LTV (VND)</label>
-                  <ThousandsInput
-                    value={formData.lifetime_value ?? 0}
-                    onChange={(n) => set("lifetime_value", n)}
+                  <CurrencyInput
+                    value={formData.lifetime_value ?? null}
+                    onChange={(n) => set("lifetime_value", n ?? 0)}
                     className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500 text-sm"
                     placeholder="20.000.000"
                   />

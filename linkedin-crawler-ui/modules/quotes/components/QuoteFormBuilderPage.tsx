@@ -8,6 +8,7 @@ import { seedingQuoteRepository } from '../repositories/SeedingQuoteRepository';
 import type { IssuerCompany, QuoteField, QuoteForm, QuoteLayoutType, QuoteSchema } from '../types';
 import { serviceCatalogRepository } from '../../service-catalog/repositories/ServiceCatalogRepository';
 import type { ServiceCatalogItem } from '../../service-catalog/types';
+import { CurrencyInput } from '@/components/CurrencyInput';
 
 const clone = <T,>(value: T): T => structuredClone(value);
 
@@ -98,8 +99,18 @@ function FieldValueInput({ field, onChange }: { field: QuoteField; onChange: (va
       />
     );
   }
+  if (field.type === 'currency') {
+    const raw = field.defaultValue;
+    const numericValue = typeof raw === 'number' ? raw : raw ? Number(raw) : null;
+    return (
+      <CurrencyInput
+        value={Number.isFinite(numericValue) ? numericValue : null}
+        onChange={value => onChange(value ?? undefined)}
+      />
+    );
+  }
   const inputType =
-    field.type === 'number' || field.type === 'currency'
+    field.type === 'number'
       ? 'number'
       : field.type === 'date'
         ? 'date'

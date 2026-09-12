@@ -13,6 +13,7 @@ import {
   type PriceBookVersion,
 } from './repositories/PriceBookZoneRepository';
 import { previewPriceBookItem, formatVnd, formatPercent, formatUsd } from './price-book-preview';
+import { CurrencyInput } from '@/components/CurrencyInput';
 
 function emptyForm(groupLabel: 'I' | 'II'): PriceBookItemInput {
   return {
@@ -617,19 +618,18 @@ export function PriceBookZoneTab() {
                 {form.costMode === 'usd' ? (
                   <label className="sc-field">
                     <span>Đơn giá USD</span>
-                    <input
-                      type="number"
-                      value={form.unitPriceUsd ?? ''}
-                      onChange={e => setForm({ ...form, unitPriceUsd: e.target.value ? Number(e.target.value) : null })}
+                    <CurrencyInput
+                      locale="en-US"
+                      value={form.unitPriceUsd ?? null}
+                      onChange={value => setForm({ ...form, unitPriceUsd: value })}
                     />
                   </label>
                 ) : (
                   <label className="sc-field">
                     <span>Giá vốn VND trực tiếp</span>
-                    <input
-                      type="number"
-                      value={form.unitPriceVndDirect ?? ''}
-                      onChange={e => setForm({ ...form, unitPriceVndDirect: e.target.value ? Number(e.target.value) : null })}
+                    <CurrencyInput
+                      value={form.unitPriceVndDirect ?? null}
+                      onChange={value => setForm({ ...form, unitPriceVndDirect: value })}
                     />
                   </label>
                 )}
@@ -639,10 +639,9 @@ export function PriceBookZoneTab() {
                  * ty gia nao ca, khong quy doi duoc. */}
                 <label className="sc-field">
                   <span>Tỷ giá (USD/VNĐ)</span>
-                  <input
-                    type="number"
-                    value={form.exchangeRate ?? ''}
-                    onChange={e => setForm({ ...form, exchangeRate: e.target.value ? Number(e.target.value) : null })}
+                  <CurrencyInput
+                    value={form.exchangeRate ?? null}
+                    onChange={value => setForm({ ...form, exchangeRate: value })}
                     placeholder="Vd: 26326"
                   />
                 </label>
@@ -686,10 +685,9 @@ export function PriceBookZoneTab() {
                 </label>
                 <label className="sc-field">
                   <span>Giá tham chiếu (tuỳ chọn)</span>
-                  <input
-                    type="number"
-                    value={form.referencePrice ?? ''}
-                    onChange={e => setForm({ ...form, referencePrice: e.target.value ? Number(e.target.value) : null })}
+                  <CurrencyInput
+                    value={form.referencePrice ?? null}
+                    onChange={value => setForm({ ...form, referencePrice: value })}
                   />
                 </label>
                 <label className="sc-field">

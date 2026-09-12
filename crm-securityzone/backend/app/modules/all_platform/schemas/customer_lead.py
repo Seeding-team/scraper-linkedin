@@ -7,11 +7,13 @@ from datetime import datetime
 # Bảng stage hợp lệ — dùng để validate input từ client lẫn output ra view.
 # ---------------------------------------------------------------------------
 DEAL_STAGES = [
-    "new_lead", "contacted", "qualified", "requirement",
-    "proposal_sent", "negotiation", "contract_sent",
-    "on_hold", "won", "lost",
+    "dealing", "proposal_sent", "negotiation", "contract_signed",
+    "payment_1", "implementation", "acceptance", "payment_final",
+    "post_sale_care", "lost", "on_hold",
+    # Legacy values kept during migration/backfill audit.
+    "new_lead", "contacted", "qualified", "requirement", "contract_sent", "won",
 ]
-TERMINAL_STAGES = ["won", "lost"]
+TERMINAL_STAGES = ["post_sale_care", "lost"]
 
 # Trạng thái thanh toán — dùng để lọc nhanh "khách nào còn nợ tiền".
 PAYMENT_STATUSES = ["unpaid", "partial", "paid"]
@@ -38,16 +40,24 @@ def is_transition_allowed(from_stage: str, to_stage: str) -> bool:
 # Required fields theo stage — server-side enforcement, mirror với client.
 # Khi client POST transition, server check lại để chặn hack.
 STAGE_REQUIRED_FIELDS: dict[str, dict[str, list[str]]] = {
+    "dealing":        {},
+    "proposal_sent":  {"required": ["attachment_url"]},
+    "negotiation":    {"required": ["note"]},
+    "contract_signed": {"required": ["attachment_url"]},
+    "payment_1":      {"required": ["estimated_budget", "follow_up_date", "attachment_url"]},
+    "implementation": {"required": ["sdr_id", "follow_up_date"]},
+    "acceptance":     {"required": ["follow_up_date", "attachment_url"]},
+    "payment_final":  {"required": ["estimated_budget", "follow_up_date", "attachment_url"]},
+    "post_sale_care": {},
+    "lost":           {"required": ["reject_reason_type", "note"]},
+    "on_hold":        {"required": ["follow_up_date", "note"]},
+    # Legacy rules kept until old data/UI paths are fully removed.
     "new_lead":       {},
     "contacted":      {"required": ["note"]},
     "qualified":      {"required": ["decision_maker", "estimated_budget", "note"]},
     "requirement":    {"required": ["note", "attachment_url"]},
-    "proposal_sent":  {"required": ["attachment_url"]},
-    "negotiation":    {"required": ["note"]},
     "contract_sent":  {"required": ["attachment_url"]},
-    "on_hold":        {"required": ["follow_up_date", "note"]},
     "won":            {},
-    "lost":           {"required": ["reject_reason_type", "note"]},
 }
 
 
@@ -57,6 +67,8 @@ STAGE_REQUIRED_FIELDS: dict[str, dict[str, list[str]]] = {
 class CustomerLeadCreate(BaseModel):
     customer_name: str
     customer_id: Optional[str] = None
+    # Du an that (migration 097) - null = Co hoi chua gan Du an.
+    project_id: Optional[str] = None
 
     company_name: Optional[str] = None
     phone: Optional[str] = None
@@ -81,7 +93,7 @@ class CustomerLeadCreate(BaseModel):
     activity_status: str = "active"
 
     # CRM pipeline (mới)
-    deal_stage: Optional[str] = "new_lead"  # nếu None sẽ fall back về new_lead
+    deal_stage: Optional[str] = "dealing"  # nếu None sẽ fall back về dealing
     prev_stage: Optional[str] = None
     follow_up_date: Optional[datetime] = None
     decision_maker: Optional[str] = None
@@ -139,6 +151,10 @@ class CustomerLeadCreate(BaseModel):
 
 class CustomerLeadUpdate(BaseModel):
     customer_id: Optional[str] = None
+    # Du an that (migration 097) - None/khong gui = giu nguyen; gui project_id=null
+    # RO RANG (khong phai bo qua key) = bo gan Du an that su (xem router
+    # update_customer_lead() - PHAI dung exclude_unset de phan biet 2 truong hop nay).
+    project_id: Optional[str] = None
     company_name: Optional[str] = None
     customer_name: Optional[str] = None
     phone: Optional[str] = None
@@ -240,7 +256,7 @@ class CustomerLeadResponse(BaseModel):
     activity_status: str = "active"
 
     # CRM pipeline
-    deal_stage: Optional[str] = "new_lead"
+    deal_stage: Optional[str] = "dealing"
     prev_stage: Optional[str] = None
     follow_up_date: Optional[datetime] = None
     decision_maker: Optional[str] = None

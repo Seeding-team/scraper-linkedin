@@ -147,6 +147,7 @@ export function QuoteDetailPage({ quoteId }: Props) {
           mode="detail"
           isPublished={quote.processingStage === 'published'}
           quoteNumber={quote.quoteNumber}
+          overallDiscountPercent={quote.overallDiscountPercent}
         />
       </div>
     </main>

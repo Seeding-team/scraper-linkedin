@@ -1,4 +1,5 @@
 import logging
+import logging
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timezone, date
 from app.core.config import settings
@@ -7,6 +8,26 @@ from app.modules.all_platform.schemas.customer_lead import STAGE_REQUIRED_FIELDS
 from app.modules.all_platform.services.crm_position_service import apply_position_category
 
 logger = logging.getLogger(__name__)
+
+DEAL_STAGE_MAP = {
+    "new_lead": "dealing",
+    "contacted": "dealing",
+    "qualified": "dealing",
+    "requirement": "dealing",
+    "contract_sent": "proposal_sent",
+    "won": "post_sale_care",
+}
+
+DEAL_STAGE_FILTERS = {
+    "dealing": ["dealing", "new_lead", "contacted", "qualified", "requirement"],
+    "proposal_sent": ["proposal_sent", "contract_sent"],
+    "post_sale_care": ["post_sale_care", "won"],
+}
+
+
+def normalize_deal_stage(value: str | None) -> str:
+    raw = str(value or "dealing")
+    return DEAL_STAGE_MAP.get(raw, raw)
 
 
 def _serialize_datetimes(payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -37,7 +58,7 @@ def _serialize_datetimes(payload: Dict[str, Any]) -> Dict[str, Any]:
 # Cột UUID nullable trên customer_leads — frontend (vd wizard "Thêm deal và báo giá"
 # khi chưa chọn Leader/SDR) có thể gửi "" thay vì null, Postgres reject với
 # "invalid input syntax for type uuid" nếu insert/update thẳng chuỗi rỗng.
-_NULLABLE_UUID_COLUMNS = ("leaded_by", "sdr_id", "quote_id", "team_id", "customer_id")
+_NULLABLE_UUID_COLUMNS = ("leaded_by", "sdr_id", "quote_id", "team_id", "customer_id", "project_id")
 
 
 def _normalize_uuid_fields(payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -59,7 +80,7 @@ BASE_COLUMNS = (
     "payment_due_date, payment_status, "
     "tags, has_budget, note, reject_reason, reject_reason_type, review_result, "
     "position, position_category_id, position_label_snapshot, crm_package, zalo, facebook, telegram, pause_reason, next_step, closed_at, outcome_detail, quote_id, "
-    "leaded_by_name_hint, sdr_name_hint, team_id, "
+    "leaded_by_name_hint, sdr_name_hint, team_id, project_id, "
     "created_at, updated_at, leader:leaded_by(name), sdr:sdr_id(name), "
     "quote:quote_id(quote_number, total_amount, public_token, status, version_number, version_chain_id), "
     "team:team_id(name_team, team_type)"
@@ -67,6 +88,9 @@ BASE_COLUMNS = (
 
 
 def _normalize_row(row: Dict[str, Any]) -> Dict[str, Any]:
+    raw_stage = row.get("deal_stage")
+    row["legacy_deal_stage"] = raw_stage
+    row["deal_stage"] = normalize_deal_stage(raw_stage)
     # leader_name/sdr_name resolve qua JOIN leaded_by(name)/sdr_id(name) — nếu
     # leaded_by/sdr_id là NULL (người được chọn chưa liên kết tài khoản đăng
     # nhập), fallback về *_name_hint (tên đã chọn tại thời điểm lưu, xem
@@ -136,11 +160,15 @@ def get_all_customer_leads(
 
         # BUG THAT DA GAP LAN 2 ("Cannot send a request, as the client has
         # been closed"): ban truoc XAY query 1 LAN duy nhat bang client lay
-        # san (`supabase = get_supabase_client()` ngay dau ham), roi goi
-        # thang `query.execute()` - khong qua execute_supabase_query() nen
-        # khong tu phuc hoi duoc khi 1 request khac (thread khac, FastAPI
-        # chay sync handler tren threadpool) gap loi transient va goi
-        # reset_supabase_client() giua chung (ham do drop client dang cache).
+        # san (`supabase = get_supabase_client()` ngay dau ham), roi truyen
+        # `query.execute` (da BOUND vao dung client/session luc do) cho
+        # execute_supabase_query() retry. Khi 1 request khac (thread khac,
+        # FastAPI chay sync handler tren threadpool) gap loi transient va
+        # goi reset_supabase_client() giua chung - ham do dong LUON session
+        # cua client dang cache, nhung query o day van con giu tham chieu
+        # toi client/session CU do (khong bao gio tu lay lai client moi) nen
+        # lan goi .execute() ke tiep (ca lan retry cua chinh no lan cac
+        # request khac dang dung chung session) deu vo mot session da dong.
         # Sua dung quy uoc chung cua repo (xem comment trong
         # supabase_crawl_queue_service.py: "mọi lambda truyền vào
         # execute_supabase_query() đều tự gọi get_supabase_client()") - xay
@@ -161,10 +189,10 @@ def get_all_customer_leads(
             if status:
                 query = query.eq("status", status)
             if deal_stage:
-                query = query.eq("deal_stage", deal_stage)
+                query = query.in_("deal_stage", DEAL_STAGE_FILTERS.get(deal_stage, [deal_stage]))
             if exclude_terminal:
                 # Loại bỏ won/lost để tab chính gọn
-                query = query.not_.in_("deal_stage", ["won", "lost"])
+                query = query.not_.in_("deal_stage", ["post_sale_care", "won", "lost"])
             if city:
                 query = query.eq("city", city)
             if industry:
@@ -216,7 +244,7 @@ def get_stage_counts(current_user: Optional[Dict[str, Any]] = None) -> Dict[str,
         res = q.execute()
         counts: Dict[str, int] = {}
         for row in res.data or []:
-            s = row.get("deal_stage") or "new_lead"
+            s = normalize_deal_stage(row.get("deal_stage"))
             counts[s] = counts.get(s, 0) + 1
         return counts
     except Exception as e:
@@ -261,8 +289,26 @@ def get_customer_lead_by_conv_id(conv_id: str) -> Optional[Dict[str, Any]]:
         return None
 
 
+def validate_project_belongs_to_customer(project_id: Optional[str], customer_id: Optional[str]) -> None:
+    """Chan 'Cross-customer Project' o tang service - Co hoi chi duoc gan 1
+    Project THUOC DUNG Customer cua no (khong chi dua vao dropdown UI da
+    loc dung). Import tre (lazy) de tranh vong lap module voi
+    supabase_project_service.py."""
+    if not project_id:
+        return
+    from app.modules.all_platform.services.supabase_project_service import get_project
+
+    try:
+        project = get_project(project_id)
+    except ValueError:
+        raise ValueError("Dự án đã chọn không tồn tại.")
+    if str(project.get("customerId") or "") != str(customer_id or ""):
+        raise ValueError("Dự án đã chọn không thuộc đúng khách hàng này.")
+
+
 def create_customer_lead(data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     try:
+        validate_project_belongs_to_customer(data.get("project_id"), data.get("customer_id"))
         supabase = get_supabase_client()
         if "tags" not in data or data["tags"] is None:
             data["tags"] = []
@@ -271,8 +317,9 @@ def create_customer_lead(data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         if "source_platform" not in data or not data["source_platform"]:
             data["source_platform"] = "FB_Inbox"
         # Map deal_stage → status để tương thích code cũ
-        ds = data.get("deal_stage") or "new_lead"
-        if ds == "won":
+        ds = normalize_deal_stage(data.get("deal_stage") or "dealing")
+        data["deal_stage"] = ds
+        if ds == "post_sale_care":
             data["status"] = "closed"
         elif ds == "lost":
             data["status"] = "rejected"
@@ -289,6 +336,11 @@ def create_customer_lead(data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         data = _serialize_datetimes(data)
         data = _normalize_uuid_fields(data)
         data["instance"] = settings.crm_instance
+        logger.info(
+            "tenant_write table=customer_leads operation=insert settings.crm_instance=%s resolved_instance=%s",
+            settings.crm_instance,
+            data["instance"],
+        )
         res = supabase.table("customer_leads").insert(data).execute()
         if res.data:
             new_row = _normalize_row(res.data[0])
@@ -315,6 +367,10 @@ def update_customer_lead(lead_id: str, data: Dict[str, Any]) -> Optional[Dict[st
     try:
         supabase = get_supabase_client()
         safe_data = dict(data)
+        if "project_id" in safe_data and safe_data.get("project_id"):
+            current = get_customer_lead_by_id(lead_id) or {}
+            target_customer_id = safe_data.get("customer_id") or current.get("customer_id")
+            validate_project_belongs_to_customer(safe_data.get("project_id"), target_customer_id)
         if "position_category_id" in safe_data:
             current = get_customer_lead_by_id(lead_id) or {}
             apply_position_category(safe_data, current_position_category_id=current.get("position_category_id"))
@@ -389,13 +445,13 @@ def transition_stage(
         if not current:
             raise TransitionError(f"Customer lead {lead_id} không tồn tại")
 
-        from_stage = current.get("deal_stage") or "new_lead"
-        to_stage = payload.get("to_stage")
+        from_stage = normalize_deal_stage(current.get("deal_stage"))
+        to_stage = normalize_deal_stage(payload.get("to_stage"))
         if not to_stage:
             raise TransitionError("Thiếu 'to_stage'")
 
         # Check terminal
-        if from_stage in ("won", "lost"):
+        if from_stage in ("post_sale_care", "lost"):
             raise TransitionError(
                 f"Deal đã ở trạng thái terminal '{from_stage}' — không thể đổi sang stage khác. "
                 "Muốn tiếp tục hãy tạo deal mới."
@@ -424,7 +480,7 @@ def transition_stage(
             "stage_entered_at": now,
         }
         # Map ngược sang status cũ
-        if to_stage == "won":
+        if to_stage == "post_sale_care":
             update["status"] = "closed"
             if not current.get("customer_since"):
                 update["customer_since"] = now

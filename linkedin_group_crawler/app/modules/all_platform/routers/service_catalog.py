@@ -33,6 +33,7 @@ from app.modules.all_platform.services import (
 )
 from app.modules.all_platform.services import supabase_service_catalog_service as catalog_service
 from app.modules.all_platform.services.crm_permission_service import (
+    can_manage_shared_master_data,
     can_manage_service_catalog_pricing,
     can_view_quote_cost,
 )
@@ -40,6 +41,11 @@ from app.modules.all_platform.services.supabase_quote_service import get_quote, 
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+
+def _require_master_data_manager(user: dict) -> None:
+    if not can_manage_shared_master_data(user):
+        raise HTTPException(status_code=403, detail="Forbidden: CRM master data manager role required")
 
 
 def _resolve_catalog_pricing_visibility(user: dict, context: str, quote_id: Optional[str]) -> tuple[bool, Optional[str]]:
@@ -143,6 +149,7 @@ def service_catalog_lookup(ids: str = Query(..., description="Danh sach id, phan
 
 @router.post("/add")
 def service_catalog_add(payload: ServiceCatalogItemCreateRequest, user: dict = Depends(get_current_user)) -> BaseResponse:
+    _require_master_data_manager(user)
     try:
         data = create_service_catalog_item(payload.model_dump(), user.get("id"))
         return BaseResponse(success=True, message="Đã thêm dịch vụ", data=data)
@@ -156,6 +163,7 @@ def service_catalog_add(payload: ServiceCatalogItemCreateRequest, user: dict = D
 
 @router.put("/update")
 def service_catalog_update(payload: ServiceCatalogItemUpdateRequest, user: dict = Depends(get_current_user)) -> BaseResponse:
+    _require_master_data_manager(user)
     try:
         data = update_service_catalog_item(payload.id, payload.model_dump(exclude_none=True), user.get("id"))
         return BaseResponse(success=True, message="Đã cập nhật dịch vụ", data=data)
@@ -168,34 +176,44 @@ def service_catalog_update(payload: ServiceCatalogItemUpdateRequest, user: dict 
 
 
 @router.delete("/delete")
-def service_catalog_delete(id: str = Query(...), _user: dict = Depends(get_current_user)) -> BaseResponse:
+def service_catalog_delete(id: str = Query(...), user: dict = Depends(get_current_user)) -> BaseResponse:
+    _require_master_data_manager(user)
     try:
         data = delete_service_catalog_item(id)
-        return BaseResponse(success=True, message="Đã xoá dịch vụ", data=data)
+        message = "Da xoa dich vu" if data.get("deleted") else "Dich vu da tung duoc dung - da chuyen sang Ngung su dung"
+        return BaseResponse(success=True, message=message, data=data)
     except ValueError as e:
         return BaseResponse(success=False, message=str(e))
+    except HTTPException:
+        raise
     except Exception as e:
         return BaseResponse(success=False, message=str(e))
 
 
 @router.put("/reorder")
-def service_catalog_reorder(payload: ServiceCatalogReorderRequest, _user: dict = Depends(get_current_user)) -> BaseResponse:
+def service_catalog_reorder(payload: ServiceCatalogReorderRequest, user: dict = Depends(get_current_user)) -> BaseResponse:
+    _require_master_data_manager(user)
     try:
         data = reorder_service_catalog_item(payload.id, payload.direction)
         return BaseResponse(success=True, data=data)
+    except HTTPException:
+        raise
     except Exception as e:
         return BaseResponse(success=False, message=str(e))
 
 
 @router.put("/{bundle_id}/components")
 def service_catalog_set_bundle_components(
-    bundle_id: str, payload: BundleComponentsSetRequest, _user: dict = Depends(get_current_user)
+    bundle_id: str, payload: BundleComponentsSetRequest, user: dict = Depends(get_current_user)
 ) -> BaseResponse:
+    _require_master_data_manager(user)
     try:
         data = set_bundle_components(bundle_id, [item.model_dump() for item in payload.items])
-        return BaseResponse(success=True, message="Đã cập nhật thành phần gói", data=data)
+        return BaseResponse(success=True, message="Da cap nhat thanh phan goi", data=data)
     except ValueError as e:
         return BaseResponse(success=False, message=str(e))
+    except HTTPException:
+        raise
     except Exception as e:
         return BaseResponse(success=False, message=str(e))
 

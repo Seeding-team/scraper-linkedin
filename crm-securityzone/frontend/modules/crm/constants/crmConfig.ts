@@ -1,5 +1,6 @@
 import type { BillingType, ContractStatus, Deal, DealStage, PaymentStatus } from '../types';
 import type { AppUser } from '@/types/unified.types';
+import { formatCurrencyDisplay, parseCurrencyInput } from '@/lib/currency';
 
 /** Mirror của can_write_deal() bên backend (customer_lead_service.py) — chỉ
  * dùng để ẨN/DISABLE nút sửa/xóa/chuyển giai đoạn cho đúng UX, KHÔNG phải lớp
@@ -27,6 +28,11 @@ export function canApproveQuote(user: AppUser | null | undefined): boolean {
 
 type QuoteOwnerShape = { technicalOwnerId?: string | null; quoteOwnerId?: string | null } | null | undefined;
 
+function hasQuoteBusinessRole(user: AppUser | null | undefined, role: 'presale' | 'sale'): boolean {
+  const businessRole = user?.quote_business_role;
+  return businessRole === role || businessRole === 'both';
+}
+
 /** Mirror cua crm_permission_service.can_edit_technical_quote (backend) - CHI
  * dung de khoa/mo cell Giá vốn tren FE cho dung UX (bang hang muc thong nhat,
  * Section 4). Backend van la lop chan THAT (_check_item_field_level_permission),
@@ -35,7 +41,7 @@ export function canEditQuoteCost(user: AppUser | null | undefined, quote: QuoteO
   if (!user) return false;
   if (user.role === 'admin' || user.role === 'leader' || user.is_sale) return true;
   if (!quote) return false;
-  return quote.technicalOwnerId === user.id;
+  return quote.technicalOwnerId === user.id && hasQuoteBusinessRole(user, 'presale');
 }
 
 /** Mirror cua crm_permission_service.can_edit_quote_pricing (backend) - CHI
@@ -44,20 +50,22 @@ export function canEditQuotePricingFields(user: AppUser | null | undefined, quot
   if (!user) return false;
   if (user.role === 'admin' || user.role === 'leader' || user.is_sale) return true;
   if (!quote) return false;
-  return quote.quoteOwnerId === user.id;
+  return quote.quoteOwnerId === user.id && hasQuoteBusinessRole(user, 'sale');
 }
 
 export const PIPELINE_COLUMNS: DealStage[] = [
-  'new_lead',
-  'contacted',
-  'qualified',
-  'requirement',
+  'dealing',
   'proposal_sent',
   'negotiation',
-  'contract_sent',
+  'contract_signed',
+  'payment_1',
+  'implementation',
+  'acceptance',
+  'payment_final',
+  'post_sale_care',
 ];
 
-export const TERMINAL_STAGES: DealStage[] = ['on_hold', 'won', 'lost'];
+export const TERMINAL_STAGES: DealStage[] = ['on_hold', 'lost'];
 export const DEAL_STAGES: DealStage[] = [...PIPELINE_COLUMNS, ...TERMINAL_STAGES];
 
 export const DEAL_STAGE_META: Record<
@@ -70,75 +78,124 @@ export const DEAL_STAGE_META: Record<
     description: string;
   }
 > = {
-  new_lead: {
+  dealing: {
     order: 1,
-    label: 'Khách mới',
+    label: 'Đang deal',
     color: '#2563eb',
     badgeClass: 'stage-badge-blue',
-    description: 'Deal mới, chưa có tương tác',
-  },
-  contacted: {
-    order: 2,
-    label: 'Đã liên hệ',
-    color: '#0891b2',
-    badgeClass: 'stage-badge-cyan',
-    description: 'Đã liên hệ khách hàng',
-  },
-  qualified: {
-    order: 3,
-    label: 'Đủ điều kiện',
-    color: '#8b5cf6',
-    badgeClass: 'stage-badge-violet',
-    description: 'Có nhu cầu, ngân sách và người quyết định',
-  },
-  requirement: {
-    order: 4,
-    label: 'Lấy yêu cầu',
-    color: '#c026d3',
-    badgeClass: 'stage-badge-fuchsia',
-    description: 'Đang thu thập yêu cầu',
+    description: 'Cơ hội đang được Sales xử lý',
   },
   proposal_sent: {
-    order: 5,
-    label: 'Đã báo giá',
+    order: 2,
+    label: 'Lên Proposal',
     color: '#f59e0b',
     badgeClass: 'stage-badge-amber',
-    description: 'Đã gửi báo giá',
+    description: 'Đã lên hoặc gửi proposal/báo giá',
   },
   negotiation: {
-    order: 6,
-    label: 'Đàm phán',
+    order: 3,
+    label: 'Chăm sóc/Đàm phán',
     color: '#fb923c',
     badgeClass: 'stage-badge-orange',
-    description: 'Đang đàm phán',
+    description: 'Đang chăm sóc, xử lý phản hồi và đàm phán',
   },
-  contract_sent: {
-    order: 7,
-    label: 'Đã gửi hợp đồng',
+  contract_signed: {
+    order: 4,
+    label: 'Lên hợp đồng',
     color: '#f43f5e',
     badgeClass: 'stage-badge-rose',
-    description: 'Đã gửi hợp đồng',
+    description: 'Đã có hợp đồng hoặc thông tin hợp đồng',
+  },
+  payment_1: {
+    order: 5,
+    label: 'Thanh toán đợt 1',
+    color: '#0d9488',
+    badgeClass: 'stage-badge-cyan',
+    description: 'Theo dõi thanh toán đợt đầu',
+  },
+  implementation: {
+    order: 6,
+    label: 'Triển khai',
+    color: '#7c3aed',
+    badgeClass: 'stage-badge-violet',
+    description: 'Đang triển khai sau bán',
+  },
+  acceptance: {
+    order: 7,
+    label: 'Nghiệm thu',
+    color: '#4f46e5',
+    badgeClass: 'stage-badge-blue',
+    description: 'Đang nghiệm thu/bàn giao',
+  },
+  payment_final: {
+    order: 8,
+    label: 'Thanh toán còn lại',
+    color: '#0891b2',
+    badgeClass: 'stage-badge-cyan',
+    description: 'Theo dõi khoản thanh toán còn lại',
+  },
+  post_sale_care: {
+    order: 9,
+    label: 'Chăm sóc sau bán',
+    color: '#059669',
+    badgeClass: 'stage-badge-emerald',
+    description: 'Deal đã hoàn tất, chuyển sang chăm sóc sau bán',
   },
   on_hold: {
-    order: 8,
-    label: 'Tạm dừng',
+    order: 10,
+    label: 'Tiếp tục chăm sóc',
     color: '#64748b',
     badgeClass: 'stage-badge-slate',
-    description: 'Tạm dừng, cần follow-up sau',
+    description: 'Chưa chốt, tiếp tục chăm sóc sau',
+  },
+  lost: {
+    order: 11,
+    label: 'Out',
+    color: '#dc2626',
+    badgeClass: 'stage-badge-red',
+    description: 'Cơ hội đã mất',
+  },
+  new_lead: {
+    order: 1,
+    label: 'Đang deal',
+    color: '#2563eb',
+    badgeClass: 'stage-badge-blue',
+    description: 'Legacy: Khách mới',
+  },
+  contacted: {
+    order: 1,
+    label: 'Đang deal',
+    color: '#2563eb',
+    badgeClass: 'stage-badge-blue',
+    description: 'Legacy: Đã liên hệ',
+  },
+  qualified: {
+    order: 1,
+    label: 'Đang deal',
+    color: '#2563eb',
+    badgeClass: 'stage-badge-blue',
+    description: 'Legacy: Đủ điều kiện',
+  },
+  requirement: {
+    order: 1,
+    label: 'Đang deal',
+    color: '#2563eb',
+    badgeClass: 'stage-badge-blue',
+    description: 'Legacy: Lấy yêu cầu',
+  },
+  contract_sent: {
+    order: 2,
+    label: 'Lên Proposal',
+    color: '#f59e0b',
+    badgeClass: 'stage-badge-amber',
+    description: 'Legacy: Đã gửi hợp đồng',
   },
   won: {
     order: 9,
-    label: 'Hoàn thành',
+    label: 'Chăm sóc sau bán',
     color: '#059669',
     badgeClass: 'stage-badge-emerald',
-    description: 'Deal đã thắng',
-  },
-  lost: {
-    order: 10,
-    label: 'Từ chối',
-    color: '#dc2626',
-    badgeClass: 'stage-badge-red',
-    description: 'Deal đã mất',
+    description: 'Legacy: Hoàn thành',
   },
 };
 
@@ -278,16 +335,23 @@ export function getBillingTypeLabel(value?: BillingType | string) {
 }
 
 export const STAGE_CONTRACT_STATUS: Record<DealStage, ContractStatus> = {
+  dealing: 'moi_tiep_nhan',
+  proposal_sent: 'da_bao_gia',
+  negotiation: 'dang_dam_phan',
+  contract_signed: 'da_chot',
+  payment_1: 'da_chot',
+  implementation: 'dang_xu_ly',
+  acceptance: 'dang_xu_ly',
+  payment_final: 'da_chot',
+  post_sale_care: 'da_chot',
+  lost: 'khong_hoat_dong',
+  on_hold: 'tam_dung',
   new_lead: 'moi_tiep_nhan',
   contacted: 'dang_xu_ly',
   qualified: 'dang_xu_ly',
   requirement: 'dang_xu_ly',
-  proposal_sent: 'da_bao_gia',
-  negotiation: 'dang_dam_phan',
   contract_sent: 'da_bao_gia',
-  on_hold: 'tam_dung',
   won: 'da_chot',
-  lost: 'khong_hoat_dong',
 };
 
 export const LOST_REASON_OPTIONS = [
@@ -318,14 +382,20 @@ export const STAGE_REQUIREMENTS: Partial<
     }
   >
 > = {
+  proposal_sent: { requireBudget: true },
+  negotiation: { requireNote: true },
+  contract_signed: { requireNote: true },
+  payment_1: { requireBudget: true, requireNote: true },
+  implementation: { requireNote: true },
+  acceptance: { requireNote: true },
+  payment_final: { requireBudget: true, requireNote: true },
+  post_sale_care: { requireWonReason: true },
+  lost: { requireRejectReason: true, requireNote: true },
+  on_hold: { requireNote: true },
   contacted: { requireNote: true },
   qualified: { requireDecisionMaker: true, requireBudget: true, requireNote: true },
   requirement: { requireNote: true },
-  proposal_sent: { requireBudget: true },
-  negotiation: { requireNote: true },
-  on_hold: { requireNote: true },
   won: { requireWonReason: true },
-  lost: { requireRejectReason: true, requireNote: true },
 };
 
 // Nhãn tiếng Việt cho field key mà backend dùng trong message lỗi thô (vd
@@ -366,20 +436,19 @@ export function humanizeCrmError(message: string): string {
 }
 
 export function getCurrentStage(deal?: Pick<Deal, 'stage'> | null): DealStage {
-  return deal?.stage && DEAL_STAGES.includes(deal.stage) ? deal.stage : 'new_lead';
+  return deal?.stage && DEAL_STAGES.includes(deal.stage) ? deal.stage : 'dealing';
 }
 
 export function getStageMeta(stage: DealStage) {
-  return DEAL_STAGE_META[stage] || DEAL_STAGE_META.new_lead;
+  return DEAL_STAGE_META[stage] || DEAL_STAGE_META.dealing;
 }
 
 export function formatVND(value?: number | string | null) {
   if (!Number(value || 0)) return null;
-  return new Intl.NumberFormat('vi-VN', {
-    style: 'currency',
-    currency: 'VND',
-    maximumFractionDigits: 0,
-  }).format(Number(value));
+  // Wrapper mong quanh formatCurrencyDisplay() dung chung (lib/currency.ts) -
+  // giu nguyen dinh dang output cu ("5.000.000 ₫", co ky hieu tien te), khong
+  // tu lam Intl.NumberFormat rieng nua.
+  return `${formatCurrencyDisplay(Number(value))} ₫`;
 }
 
 export function formatCompactVND(value?: number | string | null) {
@@ -485,29 +554,11 @@ export function allowedNextStages(currentStage: DealStage): DealStage[] {
   return DEAL_STAGES.filter(stage => stage !== currentStage);
 }
 
-export function parseMoney(value: string | number | undefined) {
-  const raw = String(value ?? '').trim();
-  if (!raw) return 0;
-  const cleaned = raw.replace(/[^\d.,-]/g, '');
-  const hasComma = cleaned.includes(',');
-  const hasDot = cleaned.includes('.');
-  let normalized = cleaned;
-  if (hasComma && hasDot) {
-    normalized =
-      cleaned.lastIndexOf(',') > cleaned.lastIndexOf('.')
-        ? cleaned.replace(/\./g, '').replace(',', '.')
-        : cleaned.replace(/,/g, '');
-  } else if (hasComma) {
-    const parts = cleaned.split(',');
-    normalized =
-      parts.length > 2 || parts.at(-1)?.length === 3
-        ? cleaned.replace(/,/g, '')
-        : cleaned.replace(',', '.');
-  } else {
-    normalized = cleaned.replace(/\.(?=\d{3}(\D|$))/g, '');
-  }
-  const parsed = Number(normalized);
-  return Number.isFinite(parsed) ? parsed : 0;
+/** Wrapper mong quanh parseCurrencyInput() dung chung (lib/currency.ts) - giu
+ * nguyen hanh vi cu tra `0` (khong phai `null`) khi rong/khong parse duoc, vi
+ * cac noi goi hien tai (DealFormFields/StageModal...) dang mac dinh nhu vay. */
+export function parseMoney(value: string | number | undefined): number {
+  return parseCurrencyInput(value ?? '') ?? 0;
 }
 
 /** Định dạng LIVE cho ô nhập tiền VND: thêm dấu chấm ngăn nghìn ngay khi gõ.
@@ -524,19 +575,10 @@ export function parseMoney(value: string | number | undefined) {
 export function formatMoneyInput(value: string): string {
   const raw = String(value ?? '');
   if (!raw.trim()) return '';
-  // BUG THAT DA GAP: truoc day ham nay strip TOAN BO ky tu khong phai chu so
-  // (`replace(/[^\d]/g, '')`) TRUOC KHI goi parseMoney() - voi 1 gia tri co
-  // phan thap phan (vd unitPrice = 1428571.428571... sau khi tinh Margin muc
-  // tieu, String() ra "1428571.4285714286"), buoc strip nay xoa luon dau "."
-  // NGAN CACH THAP PHAN, bien "1428571.4285714286" thanh chuoi so nguyen
-  // "14285714285714286" roi group lai thanh "14.285.714.285.714.286" - mot so
-  // tien VNĐ khong lo, sai hoan toan (thay vi 1.428.571 dung). Goi thang
-  // parseMoney() (da co san logic phan biet dau "." la thap phan hay ngan
-  // nghin dua theo so chu so theo sau) roi lam tron ve DONG NGUYEN (VNĐ
-  // khong co phan thap phan) TRUOC khi group - vua sua dung ca 2 truong hop:
-  // (a) gia tri tho tu state (co the co thap phan) (b) chuoi nguoi dung dang
-  // go do co dau cham ngan nghin ("1.500.000"/"50.000.0" dang go do).
-  const numeric = parseMoney(raw);
-  if (!Number.isFinite(numeric)) return '';
-  return new Intl.NumberFormat('vi-VN', { maximumFractionDigits: 0 }).format(Math.round(numeric));
+  // Wrapper mong quanh formatCurrencyDisplay() dung chung (lib/currency.ts) -
+  // KHONG con tu lam Intl.NumberFormat rieng. formatCurrencyDisplay() da tu
+  // parse qua parseCurrencyInput() (phan biet dung "." la thap phan hay ngan
+  // nghin dua theo so chu so theo sau) roi lam tron ve dong nguyen truoc khi
+  // group, dung y het bug-fix da ghi chu truoc day.
+  return formatCurrencyDisplay(raw);
 }

@@ -62,16 +62,19 @@ def create_contact(customer_id: str, payload: dict[str, Any], user: dict[str, An
 
 
 def _get_contact(contact_id: str) -> dict[str, Any]:
+    # BUG THAT DA GAP: .single() nem APIError tho (PGRST116) khi 0 dong khop
+    # (id khong ton tai, HOAC ton tai o instance khac) - khien nhanh "if not
+    # contact" ben duoi thanh dead code. Doi sang .maybe_single().
     supabase = get_supabase_client()
     res = execute_supabase_query(
         lambda: supabase.table("crm_contacts")
         .select(CONTACT_COLUMNS)
         .eq("id", contact_id)
         .eq("instance", settings.crm_instance)
-        .single()
+        .maybe_single()
         .execute()
     )
-    contact = res.data
+    contact = res.data if res else None
     if not contact:
         raise ValueError("Khong tim thay lien he.")
     return contact

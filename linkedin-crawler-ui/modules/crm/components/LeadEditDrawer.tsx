@@ -4,8 +4,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { API_BASE_URL, API_KEY } from '@/lib/env';
 import { useMembers } from '@/hooks/useMembers';
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
-import { SOURCE_OPTIONS } from '../constants/crmConfig';
 import { PositionSelect } from './PositionSelect';
+import { CrmCategoryCodeSelect } from './CrmCategorySelect';
 import { mapLead } from './LeadsDirectory';
 import { Loader2, X } from './icons';
 import type { AppUser } from '@/types/unified.types';
@@ -28,11 +28,9 @@ function isAdminOrLeader(user: AppUser | null) {
  * đang ở 'converted' thì ô này hiện read-only thay vì đưa ra lựa chọn sẽ bị
  * backend từ chối. */
 const EDITABLE_STATUS_OPTIONS: Array<{ value: CrmLeadStatus; label: string }> = [
-  { value: 'new_lead', label: 'Lead mới' },
-  { value: 'qualifying', label: 'Đang xác minh' },
-  { value: 'qualified', label: 'Đủ điều kiện' },
-  { value: 'nurture', label: 'Theo dõi sau' },
-  { value: 'disqualified', label: 'Không phù hợp' },
+  { value: 'mql', label: 'MQL' },
+  { value: 'nurturing', label: 'Nuôi dưỡng' },
+  { value: 'unqualified', label: 'Không đạt chuẩn' },
 ];
 
 type EditFormState = {
@@ -133,7 +131,7 @@ export function LeadEditDrawer({
   if (!open || !lead || !form) return null;
 
   const canWrite = Boolean(lead.canWrite);
-  const isConverted = lead.status === 'converted';
+  const isConverted = lead.status === 'converted' || lead.status === 'sql';
 
   function setValue<K extends keyof EditFormState>(key: K, value: EditFormState[K]) {
     setForm(current => (current ? { ...current, [key]: value } : current));
@@ -194,10 +192,6 @@ export function LeadEditDrawer({
       setSaving(false);
     }
   }
-
-  const sourceOptions = form.source && !SOURCE_OPTIONS.some(o => o.value === form.source)
-    ? [{ value: form.source, label: form.source }, ...SOURCE_OPTIONS]
-    : SOURCE_OPTIONS;
 
   return (
     <>
@@ -276,12 +270,12 @@ export function LeadEditDrawer({
               <p className="crm-form-title">Nguồn · Phụ trách · Trạng thái</p>
               <div className="crm-form-grid">
                 <Field label="Nguồn">
-                  <select data-testid="edit-source" value={form.source} onChange={e => setValue('source', e.target.value)}>
-                    <option value="">-- Chưa chọn --</option>
-                    {sourceOptions.map(option => (
-                      <option key={option.value} value={option.value}>{option.label}</option>
-                    ))}
-                  </select>
+                  <CrmCategoryCodeSelect
+                    categoryType="crm_source"
+                    value={form.source}
+                    onChange={value => setValue('source', value)}
+                    placeholder="-- Chưa chọn --"
+                  />
                 </Field>
                 {canPickOwner ? (
                   <Field label="Người phụ trách (SDR)">

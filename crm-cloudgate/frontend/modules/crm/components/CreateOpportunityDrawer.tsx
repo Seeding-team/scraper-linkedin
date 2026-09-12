@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import { API_BASE_URL, API_KEY } from '@/lib/env';
+import { CurrencyInput } from '@/components/CurrencyInput';
+import { parseCurrencyInput } from '@/lib/currency';
 import { useMembers } from '@/hooks/useMembers';
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
 import { allPlatformCategoriesService } from '@/services/all-platform.service';
@@ -12,12 +14,12 @@ import {
   buildDealPayload,
   CREATE_STAGE_CHIPS,
   CREATE_STAGE_LABELS,
-  NEXT_STEP_PRESETS,
   type DealFormState,
 } from './DealFormFields';
 import { DEAL_STAGE_META } from '../constants/crmConfig';
 import { CrmContactsPanel } from './CrmContactsPanel';
 import { SearchableSelect } from './SearchableSelect';
+import { CrmCategoryCodeSelect, CrmCategorySelect } from './CrmCategorySelect';
 import { Loader2, X } from './icons';
 import { seedingCrmRepository } from '../repositories/SeedingCrmRepository';
 import type { CreateDealInput, CrmCustomerRow } from '../types';
@@ -66,19 +68,6 @@ const CONTACT_ROLE_OPTIONS = [
  * dữ liệu cũ) — xem _validate_source() ở backend (crm_customer_service.py),
  * nguồn hợp lệ do bảng categories(category_type='crm_source') quyết định từ
  * migration 056, không còn CHECK constraint cứng.
- */
-const OPPORTUNITY_SOURCE_OPTIONS = [
-  { value: 'Existing_Customer', label: 'Khách hàng hiện có' },
-  { value: 'Lead_Convert', label: 'Chuyển đổi từ Lead' },
-  { value: 'Upsell', label: 'Bán thêm' },
-  { value: 'Referral', label: 'Giới thiệu' },
-];
-
-/**
- * Xác suất chốt theo giai đoạn — DEAL_STAGE_META (crmConfig.ts) chưa có field
- * probability nào, nên đây là mapping cố định TỰ CHỌN cho riêng popup này
- * (judgment call, xem báo cáo cuối task). Chỉ áp dụng cho đúng 5 stage của
- * CREATE_STAGE_CHIPS (chip picker rút gọn lúc tạo mới).
  */
 const STAGE_PROBABILITY: Partial<Record<string, number>> = {
   new_lead: 10,
@@ -146,7 +135,6 @@ export function CreateOpportunityDrawer({
 
   const [oppSource, setOppSource] = useState('Existing_Customer');
   const [closeDate, setCloseDate] = useState('');
-  const [nextStepCustom, setNextStepCustom] = useState(false);
 
   const [saving, setSaving] = useState<'' | 'stay' | 'deal' | 'calendar'>('');
   const [error, setError] = useState('');
@@ -171,7 +159,6 @@ export function CreateOpportunityDrawer({
     setEstimatedBudget('');
     setOppSource('Existing_Customer');
     setCloseDate('');
-    setNextStepCustom(false);
     setError('');
     setSaving('');
   }, [open, customer?.id]);
@@ -422,7 +409,11 @@ export function CreateOpportunityDrawer({
                 />
               </Field>
               <Field label="Giá trị ước tính (VND)" hint="danh mục sản phẩm chưa có giá niêm yết, nhập tay">
-                <input value={estimatedBudget} onChange={e => setEstimatedBudget(e.target.value)} inputMode="decimal" placeholder="VD: 50.000.000" />
+                <CurrencyInput
+                  value={parseCurrencyInput(estimatedBudget)}
+                  onChange={value => setEstimatedBudget(value != null ? String(value) : '')}
+                  placeholder="VD: 50.000.000"
+                />
               </Field>
             </div>
           </section>
@@ -470,9 +461,11 @@ export function CreateOpportunityDrawer({
                 <input value={closeDate} onChange={e => setCloseDate(e.target.value)} type="date" />
               </Field>
               <Field label="Nguồn cơ hội">
-                <select value={oppSource} onChange={e => setOppSource(e.target.value)}>
-                  {OPPORTUNITY_SOURCE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-                </select>
+                <CrmCategoryCodeSelect
+                  categoryType="crm_source"
+                  value={oppSource}
+                  onChange={setOppSource}
+                />
               </Field>
             </div>
           </section>
@@ -481,28 +474,13 @@ export function CreateOpportunityDrawer({
             <p className="crm-form-title">5. Việc tiếp theo <b>*</b></p>
             <div className="crm-form-grid">
               <Field label="Việc cần làm" required>
-                {nextStepCustom ? (
-                  <div className="crm-inline-with-link">
-                    <input value={customerForm.nextStep} onChange={e => setCustomerFormValue('nextStep', e.target.value)} placeholder="Nhập việc cần làm tiếp theo..." />
-                    <button type="button" className="crm-inline-link-btn" onClick={() => setNextStepCustom(false)}>Chọn từ danh sách</button>
-                  </div>
-                ) : (
-                  <select
-                    value={NEXT_STEP_PRESETS.includes(customerForm.nextStep) ? customerForm.nextStep : ''}
-                    onChange={e => {
-                      if (e.target.value === '__custom__') {
-                        setCustomerFormValue('nextStep', '');
-                        setNextStepCustom(true);
-                      } else {
-                        setCustomerFormValue('nextStep', e.target.value);
-                      }
-                    }}
-                  >
-                    <option value="">-- Chọn --</option>
-                    {NEXT_STEP_PRESETS.map(preset => <option key={preset} value={preset}>{preset}</option>)}
-                    <option value="__custom__">✎ Tuỳ chỉnh...</option>
-                  </select>
-                )}
+                <CrmCategorySelect
+                  categoryType="crm_next_step"
+                  value={customerForm.nextStep}
+                  onChange={value => setCustomerFormValue('nextStep', value)}
+                  placeholder="-- Chọn --"
+                  excludeLabels={["Khác", "Khac"]}
+                />
               </Field>
               <Field label="Ngày follow-up" required>
                 <input value={customerForm.followUpDate} onChange={e => setCustomerFormValue('followUpDate', e.target.value)} type="datetime-local" />

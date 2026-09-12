@@ -8,7 +8,19 @@ from pydantic import BaseModel, Field
 # Cung to chuc file rieng cho schema Lead, giong precedent crm_customer.py
 # (co file schemas/crm_customer.py rieng, router import thang tu do, khong
 # qua aggregator schemas/__init__.py) - khong piggyback vao 1 file khac.
-CrmLeadStatus = Literal["new_lead", "qualifying", "qualified", "nurture", "converted", "disqualified"]
+CrmLeadStatus = Literal[
+    "mql",
+    "sql",
+    "nurturing",
+    "unqualified",
+    # Legacy values kept for read/update compatibility until data is backfilled.
+    "new_lead",
+    "qualifying",
+    "qualified",
+    "nurture",
+    "converted",
+    "disqualified",
+]
 
 
 class CrmLeadBase(BaseModel):
@@ -24,7 +36,7 @@ class CrmLeadBase(BaseModel):
     telegram: Optional[str] = None
     website: Optional[str] = None
     source: Optional[str] = None
-    status: CrmLeadStatus = "new_lead"
+    status: CrmLeadStatus = "mql"
     score: Optional[float] = None
     sdr_id: Optional[str] = None
     note: Optional[str] = None

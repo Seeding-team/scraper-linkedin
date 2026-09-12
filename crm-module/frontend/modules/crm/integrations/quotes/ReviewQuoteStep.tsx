@@ -61,6 +61,7 @@ export function ReviewQuoteStep({
         totals={totals}
         mode="preview"
         respectVisibleColumns={Boolean(onChange)}
+        overallDiscountPercent={draft.overallDiscountPercent}
       />
 
       {onChange ? (

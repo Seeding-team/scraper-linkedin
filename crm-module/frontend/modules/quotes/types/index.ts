@@ -47,10 +47,30 @@ export interface QuoteSection {
   fields: QuoteField[];
 }
 
+/** Nhom "Tong hop gia" trong "Cot hien thi" (5 dong cua khoi tong tien cuoi bao
+ * gia - KHAC HOAN TOAN voi cot bang hang muc, xem resolveQuoteItemColumns) -
+ * cau hinh nay thuoc VE SCHEMA cua tung Mau bao gia (giong het cach
+ * config.columns[].visible/required cua bang hang muc da la 1 phan schema),
+ * KHONG hardcode theo layoutType trong resolver - xem quoteSummaryFields.ts. */
+export interface SummaryFieldConfig {
+  key: 'subtotalBeforeVat' | 'overallDiscount' | 'subtotalAfterDiscount' | 'vatTotal' | 'grandTotal';
+  label?: string;
+  order?: number;
+  defaultVisible?: boolean;
+  /** true = khong duoc phep tat (hien "Bắt buộc" trong Cột hiển thị). Mac dinh
+   * KHONG khoa truong nao (xem DEFAULT_SUMMARY_FIELDS) - mau nao can bat buoc 1
+   * truong thi tu khai rieng required:true trong CHINH schema cua minh. */
+  required?: boolean;
+}
+
 export interface QuoteSchema {
   version: number;
   layoutType: QuoteLayoutType;
   sections: QuoteSection[];
+  /** Optional - schema chua co (mau cu chua backfill) thi resolver dung fallback
+   * DEFAULT_SUMMARY_FIELDS (xem quoteSummaryFields.ts), khong bao gio undefined
+   * gay loi hien thi. */
+  summaryFields?: SummaryFieldConfig[];
 }
 
 export interface QuoteForm {
@@ -231,6 +251,11 @@ export interface QuoteData {
    * undefined = hiện hết. Nội bộ (preview/detail) luôn hiện đủ cột, không bị
    * ảnh hưởng bởi field này. Xem QuoteDocumentRenderer (mode==='public'). */
   visibleColumns?: string[];
+  /** Trường "Tổng hợp giá" hiện cho KHÁCH (5 dòng khối tổng tiền) - áp dụng ở
+   * MỌI mode (preview/detail/public/print), KHÁC với visibleColumns (chỉ lọc ở
+   * public/print/preview, mode='detail' luôn hiện đủ cột bảng). Xem
+   * quoteSummaryFields.ts. */
+  visibleSummaryFields?: string[];
   customBlocks?: CustomBlock[];
   [key: string]: unknown;
 }

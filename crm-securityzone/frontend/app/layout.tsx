@@ -30,12 +30,12 @@ export const viewport: Viewport = {
 };
 
 export const metadata: Metadata = {
-  title: "MarkeeAI - CRM",
+  title: "SecurityZone - CRM",
   description: "Quản lý Leads, Khách hàng, Cơ hội, Báo giá, Hợp đồng và Sản phẩm & dịch vụ.",
   icons: {
-    icon: "https://markeeai.com/logo.svg",
-    shortcut: "https://markeeai.com/logo.svg",
-    apple: "https://markeeai.com/logo.svg",
+    icon: "/securityzone_logo.png",
+    shortcut: "/securityzone_logo.png",
+    apple: "/securityzone_logo.png",
   },
 };
 

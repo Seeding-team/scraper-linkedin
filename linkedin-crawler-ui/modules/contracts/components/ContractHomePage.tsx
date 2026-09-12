@@ -6,7 +6,6 @@ import { seedingContractRepository } from '../repositories/SeedingContractReposi
 import { contractStatusClass, contractStatusLabel } from '../constants/contractConfig';
 import { formatVnd } from '@/modules/quotes/utils/quoteCalculations';
 import { ContractAIWizard } from '@/modules/crm/integrations/contracts';
-import { ManualContractModal } from './ManualContractModal';
 import { ContractTemplatesPanel } from '@/modules/contract-templates';
 import type { Contract, ContractDashboardStats } from '../types';
 
@@ -42,7 +41,6 @@ export function ContractHomePage() {
   const [statusFilter, setStatusFilter] = useState('');
   const [search, setSearch] = useState('');
   const [wizardOpen, setWizardOpen] = useState(false);
-  const [manualOpen, setManualOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<ContractTab>('contracts');
 
   async function load() {
@@ -124,14 +122,9 @@ export function ContractHomePage() {
             {activeTab === 'contracts' ? '📎 Mẫu hợp đồng' : '← Danh sách hợp đồng'}
           </button>
           {activeTab === 'contracts' ? (
-            <>
-              <button type="button" className="contract-button contract-button--secondary" onClick={() => setManualOpen(true)}>
-                ＋ Tạo hợp đồng
-              </button>
-              <button type="button" className="contract-button contract-button--primary" onClick={() => setWizardOpen(true)}>
-                ✦ Soạn hợp đồng bằng AI
-              </button>
-            </>
+            <button type="button" className="contract-button contract-button--primary" onClick={() => setWizardOpen(true)}>
+              ✦ Soạn hợp đồng bằng AI
+            </button>
           ) : null}
         </div>
       </header>
@@ -292,14 +285,6 @@ export function ContractHomePage() {
         onClose={() => setWizardOpen(false)}
         onCreated={() => {
           setWizardOpen(false);
-          void load();
-        }}
-      />
-      <ManualContractModal
-        open={manualOpen}
-        onClose={() => setManualOpen(false)}
-        onCreated={() => {
-          setManualOpen(false);
           void load();
         }}
       />

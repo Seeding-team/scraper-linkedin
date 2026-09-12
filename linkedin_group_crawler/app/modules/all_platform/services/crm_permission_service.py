@@ -72,6 +72,16 @@ def is_sale_member(user_id: str | None) -> bool:
     return _SALE_TEAM_TYPE in get_user_team_types(user_id)
 
 
+def has_quote_business_role(user: dict[str, Any] | None, target: str) -> bool:
+    """True neu user da duoc gan vai tro nghiep vu bao gia `target`
+    ('presale'/'sale'). `both` hop le cho ca hai vai tro, doc lap voi system
+    role admin/leader/member."""
+    if target not in ("presale", "sale"):
+        return False
+    value = str((user or {}).get("quote_business_role") or "").strip().lower()
+    return value == target or value == "both"
+
+
 def has_full_crm_access(user: dict[str, Any] | None) -> bool:
     """True neu user duoc xem/sua toan bo Pipeline + Phan tich CRM: admin,
     leader, hoac thanh vien 1 team team_type='sale'."""
@@ -128,7 +138,10 @@ def can_edit_technical_quote(user: dict[str, Any] | None, quote: dict[str, Any] 
     uid = str(user.get("id") or "")
     if not uid or not quote:
         return False
-    return str(quote.get("technicalOwnerId") or quote.get("technical_owner_id") or "") == uid
+    return (
+        str(quote.get("technicalOwnerId") or quote.get("technical_owner_id") or "") == uid
+        and has_quote_business_role(user, "presale")
+    )
 
 
 # ── Quyen doc/sua GIA VON / GIA BAN / LOI NHUAN - 3 NHOM RIENG (sua lai sau
@@ -165,7 +178,10 @@ def can_view_quote_cost(user: dict[str, Any] | None, quote: dict[str, Any] | Non
         return False
     technical_owner_id = str(quote.get("technicalOwnerId") or quote.get("technical_owner_id") or "")
     quote_owner_id = str(quote.get("quoteOwnerId") or quote.get("quote_owner_id") or "")
-    return uid == technical_owner_id or uid == quote_owner_id
+    return (
+        (uid == technical_owner_id and has_quote_business_role(user, "presale"))
+        or (uid == quote_owner_id and has_quote_business_role(user, "sale"))
+    )
 
 
 def can_edit_quote_cost(user: dict[str, Any] | None, quote: dict[str, Any] | None) -> bool:
@@ -206,7 +222,10 @@ def can_view_quote_pricing(user: dict[str, Any] | None, quote: dict[str, Any] | 
     uid = str(user.get("id") or "")
     if not uid or not quote:
         return False
-    return uid == str(quote.get("quoteOwnerId") or quote.get("quote_owner_id") or "")
+    return (
+        uid == str(quote.get("quoteOwnerId") or quote.get("quote_owner_id") or "")
+        and has_quote_business_role(user, "sale")
+    )
 
 
 def can_view_quote_profitability(user: dict[str, Any] | None, quote: dict[str, Any] | None) -> bool:
@@ -226,7 +245,10 @@ def can_view_quote_profitability(user: dict[str, Any] | None, quote: dict[str, A
     uid = str(user.get("id") or "")
     if not uid or not quote:
         return False
-    return uid == str(quote.get("quoteOwnerId") or quote.get("quote_owner_id") or "")
+    return (
+        uid == str(quote.get("quoteOwnerId") or quote.get("quote_owner_id") or "")
+        and has_quote_business_role(user, "sale")
+    )
 
 
 def can_edit_quote_pricing(user: dict[str, Any] | None, quote: dict[str, Any] | None) -> bool:
@@ -241,7 +263,10 @@ def can_edit_quote_pricing(user: dict[str, Any] | None, quote: dict[str, Any] | 
     uid = str(user.get("id") or "")
     if not uid or not quote:
         return False
-    return str(quote.get("quoteOwnerId") or quote.get("quote_owner_id") or "") == uid
+    return (
+        str(quote.get("quoteOwnerId") or quote.get("quote_owner_id") or "") == uid
+        and has_quote_business_role(user, "sale")
+    )
 
 
 def can_transition_quote_stage(user: dict[str, Any] | None, quote: dict[str, Any] | None, target_stage: str) -> bool:
@@ -327,7 +352,10 @@ def can_send_quote_email(user: dict[str, Any] | None, quote: dict[str, Any] | No
     uid = str(user.get("id") or "")
     if not uid or not quote:
         return False
-    return str(quote.get("quoteOwnerId") or quote.get("quote_owner_id") or "") == uid
+    return (
+        str(quote.get("quoteOwnerId") or quote.get("quote_owner_id") or "") == uid
+        and has_quote_business_role(user, "sale")
+    )
 
 
 def can_view_project(user: dict[str, Any] | None) -> bool:
@@ -391,10 +419,23 @@ def can_manage_service_catalog_pricing(user: dict[str, Any] | None) -> bool:
     Admin (mirror can_manage_price_book) - khong lien quan 1 quote cu the
     nao nen dung kiem tra role toan cuc, khong the dung
     can_view_quote_cost(user, quote) o day (chua co quote de kiem)."""
+    return can_manage_shared_master_data(user)
+
+
+def can_manage_shared_master_data(user: dict[str, Any] | None) -> bool:
+    """Quyen quan tri master data dung chung CRM/Quote:
+    - admin/leader: full.
+    - member co quote_business_role sale/presale/both: duoc them/sua/ngung dung.
+    - member thuong: chi xem/chon.
+
+    Ham nay KHONG lien quan tenant business data; chi dung cho bang dung chung
+    nhu categories, service_catalog, quote_forms/issuer companies."""
     if not user:
         return False
     role = str(user.get("role") or "").strip().lower()
-    return role == "admin"
+    if role in ("admin", "leader"):
+        return True
+    return has_quote_business_role(user, "sale") or has_quote_business_role(user, "presale")
 
 
 def can_view_price_book_cost(user: dict[str, Any] | None, quote: dict[str, Any] | None) -> bool:

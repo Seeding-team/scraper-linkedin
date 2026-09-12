@@ -187,8 +187,8 @@ export function DashboardSidebar() {
         <div className="flex items-center gap-3">
         <div className="relative h-11 w-11 shrink-0 overflow-hidden rounded-lg border border-outline-variant bg-surface shadow-sm">
           <Image
-            src="https://markeeai.com/logo.svg"
-            alt="MarkeeAI"
+            src="/securityzone_logo.png"
+            alt="SecurityZone"
             fill
             sizes="44px"
             className="object-contain p-1.5"

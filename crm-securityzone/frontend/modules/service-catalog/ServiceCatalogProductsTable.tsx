@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom';
 import { ConfirmModal } from '@/modules/crm/components/ConfirmModal';
 import { ActionMenu } from '@/modules/crm/components/ActionMenu';
 import { Eye, Pencil, PauseCircle, Trash2, X } from '@/modules/crm/components/icons';
+import { CurrencyInput } from '@/components/CurrencyInput';
 import { serviceCatalogRepository } from './repositories/ServiceCatalogRepository';
 import type { ServiceCatalogItem, ServiceCatalogItemInput, ServiceCatalogPricingInputMode } from './types';
 import {
@@ -346,10 +347,9 @@ export const ServiceCatalogProductsTable = forwardRef<ServiceCatalogProductsTabl
                 </label>
                 <label className="sc-field">
                   <span>Đơn giá Sale (VND)</span>
-                  <input
-                    type="number"
+                  <CurrencyInput
                     value={form.defaultUnitPriceVnd ?? 0}
-                    onChange={e => setForm({ ...form, defaultUnitPriceVnd: Number(e.target.value) })}
+                    onChange={value => setForm({ ...form, defaultUnitPriceVnd: value ?? 0 })}
                   />
                 </label>
                 <label className="sc-field">
@@ -362,18 +362,18 @@ export const ServiceCatalogProductsTable = forwardRef<ServiceCatalogProductsTabl
                 </label>
                 <label className="sc-field">
                   <span>List price USD</span>
-                  <input
-                    type="number"
-                    value={form.listPriceUsd ?? ''}
-                    onChange={e => setForm({ ...form, listPriceUsd: e.target.value === '' ? undefined : Number(e.target.value) })}
+                  <CurrencyInput
+                    locale="en-US"
+                    value={form.listPriceUsd ?? null}
+                    onChange={value => setForm({ ...form, listPriceUsd: value ?? undefined })}
                   />
                 </label>
                 <label className="sc-field">
                   <span>Unit price USD</span>
-                  <input
-                    type="number"
-                    value={form.unitPriceUsd ?? ''}
-                    onChange={e => setForm({ ...form, unitPriceUsd: e.target.value === '' ? undefined : Number(e.target.value) })}
+                  <CurrencyInput
+                    locale="en-US"
+                    value={form.unitPriceUsd ?? null}
+                    onChange={value => setForm({ ...form, unitPriceUsd: value ?? undefined })}
                   />
                 </label>
                 <label className="sc-field">
@@ -405,7 +405,7 @@ export const ServiceCatalogProductsTable = forwardRef<ServiceCatalogProductsTabl
                   <div className="sc-pricing-grid">
                     <label className="sc-field">
                       <span>Giá vốn/ĐV *</span>
-                      <input type="number" value={pricingCost} onChange={e => handleCostChange(e.target.value)} />
+                      <CurrencyInput value={costPreview} onChange={value => handleCostChange(value == null ? '' : String(value))} />
                     </label>
                     <label className="sc-field">
                       <span>Markup mặc định *</span>
@@ -417,10 +417,9 @@ export const ServiceCatalogProductsTable = forwardRef<ServiceCatalogProductsTabl
                     </label>
                     <label className="sc-field">
                       <span>Giá khách/ĐV *</span>
-                      <input
-                        type="number"
-                        value={pricingMode === 'customer_price' ? pricingCustomer : (previewCustomer ?? '')}
-                        onChange={e => handleCustomerChange(e.target.value)}
+                      <CurrencyInput
+                        value={pricingMode === 'customer_price' ? customerPreview : previewCustomer}
+                        onChange={value => handleCustomerChange(value == null ? '' : String(value))}
                       />
                     </label>
                   </div>

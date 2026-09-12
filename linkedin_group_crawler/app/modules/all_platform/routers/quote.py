@@ -88,12 +88,18 @@ from app.modules.all_platform.services.crm_permission_service import (
     can_manage_quote_email_settings,
     can_send_quote_email,
     can_manage_quote_approval_rules,
+    can_manage_shared_master_data,
 )
 from app.modules.all_platform.services import quote_rule_evaluation_service
 from app.modules.all_platform.services.customer_lead_service import get_customer_lead_by_id
 
 quote_forms_router = APIRouter()
 quotes_router = APIRouter()
+
+
+def _require_master_data_manager(user: dict) -> None:
+    if not can_manage_shared_master_data(user):
+        raise HTTPException(status_code=403, detail="Forbidden: CRM master data manager role required")
 
 
 # ── Quote Forms ────────────────────────────────────────────────────────────
@@ -123,7 +129,8 @@ def quote_forms_get(form_id: str, _user: dict = Depends(get_current_user)) -> Ba
 
 
 @quote_forms_router.post("")
-def quote_forms_create(payload: QuoteFormCreateRequest, _user: dict = Depends(get_current_user)) -> BaseResponse:
+def quote_forms_create(payload: QuoteFormCreateRequest, user: dict = Depends(get_current_user)) -> BaseResponse:
+    _require_master_data_manager(user)
     try:
         data = create_quote_form(payload.model_dump())
         return BaseResponse(success=True, message="Đã tạo mẫu báo giá", data=data)
@@ -134,7 +141,8 @@ def quote_forms_create(payload: QuoteFormCreateRequest, _user: dict = Depends(ge
 
 
 @quote_forms_router.put("/{form_id}")
-def quote_forms_update(form_id: str, payload: QuoteFormUpdateRequest, _user: dict = Depends(get_current_user)) -> BaseResponse:
+def quote_forms_update(form_id: str, payload: QuoteFormUpdateRequest, user: dict = Depends(get_current_user)) -> BaseResponse:
+    _require_master_data_manager(user)
     try:
         data = update_quote_form(form_id, payload.model_dump(exclude_none=True))
         return BaseResponse(success=True, message="Đã lưu mẫu báo giá", data=data)
@@ -145,7 +153,8 @@ def quote_forms_update(form_id: str, payload: QuoteFormUpdateRequest, _user: dic
 
 
 @quote_forms_router.delete("/{form_id}")
-def quote_forms_delete(form_id: str, _user: dict = Depends(get_current_user)) -> BaseResponse:
+def quote_forms_delete(form_id: str, user: dict = Depends(get_current_user)) -> BaseResponse:
+    _require_master_data_manager(user)
     try:
         data = delete_quote_form(form_id)
         return BaseResponse(success=True, data=data)
@@ -154,7 +163,8 @@ def quote_forms_delete(form_id: str, _user: dict = Depends(get_current_user)) ->
 
 
 @quote_forms_router.post("/{form_id}/duplicate")
-def quote_forms_duplicate(form_id: str, _user: dict = Depends(get_current_user)) -> BaseResponse:
+def quote_forms_duplicate(form_id: str, user: dict = Depends(get_current_user)) -> BaseResponse:
+    _require_master_data_manager(user)
     try:
         data = duplicate_quote_form(form_id)
         return BaseResponse(success=True, data=data)
@@ -163,7 +173,8 @@ def quote_forms_duplicate(form_id: str, _user: dict = Depends(get_current_user))
 
 
 @quote_forms_router.post("/{form_id}/share")
-def quote_forms_share(form_id: str, enabled: bool = True, _user: dict = Depends(get_current_user)) -> BaseResponse:
+def quote_forms_share(form_id: str, enabled: bool = True, user: dict = Depends(get_current_user)) -> BaseResponse:
+    _require_master_data_manager(user)
     try:
         data = share_quote_form(form_id, enabled)
         return BaseResponse(success=True, data=data)
@@ -181,8 +192,9 @@ def quote_forms_get_catalog_links(form_id: str, _user: dict = Depends(get_curren
 
 @quote_forms_router.put("/{form_id}/catalog-links")
 def quote_forms_set_catalog_links(
-    form_id: str, payload: QuoteFormCatalogLinksSetRequest, _user: dict = Depends(get_current_user)
+    form_id: str, payload: QuoteFormCatalogLinksSetRequest, user: dict = Depends(get_current_user)
 ) -> BaseResponse:
+    _require_master_data_manager(user)
     try:
         data = set_quote_form_catalog_links(form_id, payload.catalog_item_ids)
         return BaseResponse(success=True, message="Đã lưu danh mục dịch vụ áp dụng", data=data)
@@ -323,8 +335,9 @@ def quotes_issuer_companies(
 
 @quotes_router.post("/issuer-companies")
 def quotes_issuer_companies_create(
-    payload: IssuerCompanyCreateRequest, _user: dict = Depends(get_current_user)
+    payload: IssuerCompanyCreateRequest, user: dict = Depends(get_current_user)
 ) -> BaseResponse:
+    _require_master_data_manager(user)
     try:
         data = create_issuer_company(payload.model_dump())
         return BaseResponse(success=True, message="Đã tạo công ty phát hành", data=data)
@@ -334,8 +347,9 @@ def quotes_issuer_companies_create(
 
 @quotes_router.put("/issuer-companies/{company_id}")
 def quotes_issuer_companies_update(
-    company_id: str, payload: IssuerCompanyUpdateRequest, _user: dict = Depends(get_current_user)
+    company_id: str, payload: IssuerCompanyUpdateRequest, user: dict = Depends(get_current_user)
 ) -> BaseResponse:
+    _require_master_data_manager(user)
     try:
         data = update_issuer_company(company_id, payload.model_dump(exclude_none=True))
         return BaseResponse(success=True, message="Đã lưu công ty phát hành", data=data)

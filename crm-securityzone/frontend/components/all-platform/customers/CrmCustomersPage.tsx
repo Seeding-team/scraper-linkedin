@@ -46,12 +46,10 @@ import {
   type SourcePlatform,
   DEAL_STAGE_META,
   PAYMENT_STATUS_OPTIONS,
-  SOURCE_PLATFORM_OPTIONS,
-  INDUSTRY_OPTIONS,
-  CITY_OPTIONS,
 } from "@/services/customer-lead.service";
 import { getCurrentStage, isPaymentOverdue } from "@/services/crm-pipeline.helpers";
 import { cn } from "@/lib/utils";
+import { useCrmCategoryCodeOptions, useCrmCategoryLabels } from "@/modules/crm/components/CrmCategorySelect";
 
 type ViewMode = "kanban" | "table";
 
@@ -109,6 +107,9 @@ function FilterBar({
     filters.stageFilter.size > 0 ||
     filters.paymentFilter.size > 0 ||
     filters.onlyOverdue;
+  const { options: sourceOptions } = useCrmCategoryCodeOptions("crm_source");
+  const { labels: cityOptions } = useCrmCategoryLabels("crm_city");
+  const { options: industryOptions } = useCrmCategoryCodeOptions("crm_industry");
 
   return (
     <div className="space-y-2">
@@ -129,7 +130,7 @@ function FilterBar({
           className={inputCls}
         >
           <option value="">Tất cả nguồn</option>
-          {SOURCE_PLATFORM_OPTIONS.map((o) => (
+          {sourceOptions.map((o) => (
             <option key={o.value} value={o.value}>{o.label}</option>
           ))}
         </select>
@@ -139,7 +140,7 @@ function FilterBar({
           className={cn(inputCls, "min-w-[150px]")}
         >
           <option value="">Tất cả thành phố</option>
-          {CITY_OPTIONS.map((c) => (
+          {cityOptions.map((c) => (
             <option key={c} value={c}>{c}</option>
           ))}
         </select>
@@ -149,8 +150,8 @@ function FilterBar({
           className={cn(inputCls, "min-w-[180px]")}
         >
           <option value="">Tất cả lĩnh vực</option>
-          {INDUSTRY_OPTIONS.map((i) => (
-            <option key={i} value={i}>{i}</option>
+          {industryOptions.map((i) => (
+            <option key={i.value} value={i.value}>{i.label}</option>
           ))}
         </select>
         {hasFilter && (

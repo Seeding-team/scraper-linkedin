@@ -6,6 +6,13 @@ import { projectsService, memberOptionsService, type Project, type MemberOption 
 import { initialsOf } from '../utils/quoteDisplay';
 import { Loader2, X } from './icons';
 
+// Ghi chu ve debounce/phan trang (yeu cau ke hoach muc C.2): danh sach Sale
+// duoc tai 1 LAN DUY NHAT khi mo modal (khong goi lai API moi lan go phim) -
+// o "tim kiem" chi loc client-side tren mang DA CO SAN trong bo nho, nen
+// KHONG can debounce (khong co round-trip nao de debounce ca) va KHONG can
+// phan trang (danh sach Sale thuc te nho, tai 1 lan la du - dung tinh than
+// "tranh xay phan trang cho use-case chua tung xay ra" da chot trong ke hoach).
+
 const STATUS_OPTIONS: Array<{ value: Project['status']; label: string }> = [
   { value: 'planning', label: 'Lên kế hoạch' },
   { value: 'active', label: 'Đang triển khai' },
@@ -91,7 +98,7 @@ function OwnerPicker({
             type="text"
             value={search}
             onChange={e => setSearch(e.target.value)}
-            placeholder="Tìm theo tên..."
+            placeholder="Tìm nhân viên Sale..."
             className="crm-searchable-select-input"
           />
           <div className="crm-searchable-select-list">
@@ -105,7 +112,7 @@ function OwnerPicker({
             {loading ? <div className="crm-owner-picker-state">Đang tải thành viên...</div> : null}
             {!loading && error ? <div className="crm-owner-picker-state crm-owner-picker-state--error">{error}</div> : null}
             {!loading && !error && filtered.length === 0 ? (
-              <div className="crm-owner-picker-state">Chưa có thành viên đang hoạt động</div>
+              <div className="crm-owner-picker-state">Không tìm thấy nhân viên Sale.</div>
             ) : null}
             {!loading && !error
               ? filtered.map(option => (
@@ -147,13 +154,18 @@ function Field({ label, hint, required, full, children }: { label: string; hint?
 /** Modal Tao/Sua Du an (Checkpoint C tab "Dự án" trong Ho so khach hang) -
  * Customer LUON co dinh theo Ho so dang mo, hien nhu 1 khoi context CHI DOC
  * o dau form (khong phai field trong grid - customer_id cho payload LUON lay
- * tu prop `customerId`, khong bao gio tu input). Sua thi khoa project_code +
- * customer_id (khop dung update_project() backend - 2 field nay KHONG cho
- * sua sau khi tao). */
+ * tu prop `customerId`, khong bao gio tu input). Sua thi khoa customer_id
+ * (khop dung update_project() backend - khong cho sua sau khi tao).
+ *
+ * "Mã dự án tự sinh hoàn toàn ở backend" - KHÔNG còn là input, chỉ hiện dòng
+ * preview "Dự kiến: ..." (xem projectsService.previewCode()) - mã CHÍNH THỨC
+ * luôn do backend cấp lúc bấm "Tạo dự án" (create_project() tự sinh, atomic
+ * qua retry quanh UNIQUE index - xem supabase_project_service.py). */
 export function ProjectFormModal({
   open,
   customerId,
   customerName,
+  currentUserId,
   project,
   onClose,
   onSaved,
@@ -161,6 +173,10 @@ export function ProjectFormModal({
   open: boolean;
   customerId: string;
   customerName: string;
+  /** Id người đang đăng nhập - dùng để tự chọn chính họ làm "Người phụ trách
+   * dự án" NẾU họ thuộc Sale, khi tạo dự án mới (không tự chọn người ngoài
+   * Sale). Optional - nơi gọi chưa truyền thì bỏ qua autofill, không lỗi. */
+  currentUserId?: string | null;
   project?: Project | null;
   onClose: () => void;
   /** Truyền lại dự án vừa tạo/sửa (nếu API trả về) để nơi gọi tự chọn luôn
@@ -171,7 +187,6 @@ export function ProjectFormModal({
   const isEdit = Boolean(project);
 
   const [name, setName] = useState('');
-  const [projectCode, setProjectCode] = useState('');
   const [managerId, setManagerId] = useState('');
   const [status, setStatus] = useState<Project['status']>('planning');
   const [description, setDescription] = useState('');
@@ -181,16 +196,42 @@ export function ProjectFormModal({
   const [ownerOptions, setOwnerOptions] = useState<MemberOption[]>([]);
   const [ownerLoading, setOwnerLoading] = useState(false);
   const [ownerError, setOwnerError] = useState<string | null>(null);
+  // "Người cũ không còn thuộc Sale" - phát hiện khi managerId đã lưu KHÔNG
+  // nằm trong danh sách Sale vừa tải về (đã lọc team_type='sale' ở backend).
+  const [staleManagerWarning, setStaleManagerWarning] = useState(false);
+
+  const [previewCode, setPreviewCode] = useState('');
+  const [previewLoading, setPreviewLoading] = useState(false);
 
   useEffect(() => {
     if (!open) return;
     setName(project?.name || '');
-    setProjectCode(project?.projectCode || '');
     setManagerId(project?.managerId || '');
     setStatus(project?.status || 'planning');
     setDescription(project?.description || '');
     setError(null);
+    setStaleManagerWarning(false);
   }, [open, project]);
+
+  // Preview "Dự kiến" - CHỈ khi tạo mới (project đã tồn tại thì đã có
+  // projectCode chính thức, không cần preview).
+  useEffect(() => {
+    if (!open || isEdit || !customerId) return;
+    let cancelled = false;
+    setPreviewLoading(true);
+    projectsService
+      .previewCode(customerId)
+      .then(res => {
+        if (cancelled) return;
+        if (res.success && res.data) setPreviewCode(res.data.projectCode);
+      })
+      .finally(() => {
+        if (!cancelled) setPreviewLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, isEdit, customerId]);
 
   useEffect(() => {
     if (!open) return;
@@ -198,18 +239,29 @@ export function ProjectFormModal({
     setOwnerLoading(true);
     setOwnerError(null);
     const includeIds = project?.managerId ? [project.managerId] : [];
+    // "Người phụ trách dự án chỉ chọn Sale" - loc theo dung role/team/permission
+    // ID that (team_type='sale', migration 049), KHONG loc bang text hien thi.
     memberOptionsService
-      .getOptions({ active: true, includeIds })
+      .getOptions({ active: true, includeIds, teamType: 'sale' })
       .then(res => {
         if (cancelled) return;
         if (res.success && res.data) {
-          setOwnerOptions(res.data.items);
+          const items = res.data.items;
+          setOwnerOptions(items);
+          const currentManagerStillSale = !project?.managerId || items.some(o => o.id === project.managerId);
+          setStaleManagerWarning(Boolean(project?.managerId) && !currentManagerStillSale);
+          if (currentManagerStillSale === false) setManagerId('');
+          // Autofill: nguoi tao dang la Sale -> tu chon chinh ho (CHI khi tao
+          // moi, chua co lua chon nao khac). Khong tu chon nguoi ngoai Sale.
+          if (!isEdit && !project?.managerId && currentUserId && items.some(o => o.id === currentUserId)) {
+            setManagerId(prev => prev || currentUserId);
+          }
         } else {
-          setOwnerError('Không thể tải danh sách thành viên. Thử lại');
+          setOwnerError('Không thể tải danh sách nhân viên Sale. Thử lại');
         }
       })
       .catch(() => {
-        if (!cancelled) setOwnerError('Không thể tải danh sách thành viên. Thử lại');
+        if (!cancelled) setOwnerError('Không thể tải danh sách nhân viên Sale. Thử lại');
       })
       .finally(() => {
         if (!cancelled) setOwnerLoading(false);
@@ -220,7 +272,7 @@ export function ProjectFormModal({
     // project?.id đủ để phát hiện đổi project đang sửa - không cần theo dõi
     // toàn bộ object `project` (tránh refetch khi chỉ đổi field khác của nó).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, project?.id, project?.managerId]);
+  }, [open, project?.id, project?.managerId, isEdit, currentUserId]);
 
   const customerInitials = useMemo(() => initialsOf(customerName || '?'), [customerName]);
 
@@ -233,8 +285,8 @@ export function ProjectFormModal({
       setError('Vui lòng nhập tên dự án.');
       return;
     }
-    if (!isEdit && !projectCode.trim()) {
-      setError('Vui lòng nhập mã dự án.');
+    if (staleManagerWarning) {
+      setError('Người phụ trách hiện tại không còn thuộc nhóm Sale — vui lòng chọn lại.');
       return;
     }
     setBusy(true);
@@ -250,8 +302,8 @@ export function ProjectFormModal({
         if (!res.success) throw new Error(res.message || 'Không lưu được dự án.');
         onSaved(res.data);
       } else {
+        // KHONG gui project_code - backend luon tu sinh (xem CreateProjectInput).
         const res = await projectsService.create({
-          project_code: projectCode.trim(),
           name: name.trim(),
           customer_id: customerId,
           manager_id: managerId || null,
@@ -293,11 +345,20 @@ export function ProjectFormModal({
               <Field label="Tên dự án" required>
                 <input value={name} onChange={e => setName(e.target.value)} placeholder="Ví dụ: Website công ty ABC" />
               </Field>
-              <Field label="Mã dự án" required hint={isEdit ? 'không thể sửa' : undefined}>
-                <input value={projectCode} onChange={e => setProjectCode(e.target.value)} placeholder="Ví dụ: DA-2026-001" disabled={isEdit} />
+              <Field label="Mã dự án">
+                {isEdit ? (
+                  <p className="crm-project-code-preview">{project?.projectCode}</p>
+                ) : (
+                  <p className="crm-project-code-preview crm-project-code-preview--pending">
+                    {previewLoading ? 'Đang tính...' : previewCode ? `Dự kiến: ${previewCode}` : 'Tự động tạo khi lưu'}
+                  </p>
+                )}
               </Field>
               <Field label="Người phụ trách dự án">
                 <OwnerPicker value={managerId} onChange={setManagerId} options={ownerOptions} loading={ownerLoading} error={ownerError} />
+                {staleManagerWarning ? (
+                  <p className="crm-error">Người phụ trách hiện tại không còn thuộc nhóm Sale — vui lòng chọn lại.</p>
+                ) : null}
               </Field>
               <Field label="Trạng thái" required>
                 <select value={status} onChange={e => setStatus(e.target.value as Project['status'])}>

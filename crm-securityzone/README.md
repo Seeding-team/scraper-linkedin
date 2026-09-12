@@ -1,7 +1,7 @@
 # Module CRM độc lập — deploy cho SecurityZone (`instance=SECURITYZONE`)
 
 > Đây là bản clone của `crm-module/` (deploy cho Markee) — CÙNG code, chỉ khác
-> `backend/.env`'s `CRM_INSTANCE=SECURITYZONE` (đọc/ghi riêng dữ liệu
+> `backend/.env`'s `CRM_INSTANCE=securityzone` (đọc/ghi riêng dữ liệu
 > SecurityZone trên cùng 1 DB self-host). Deploy chung host với app seeding
 > (`10.120.60.26`), port riêng `18092` (khác `18090` của crm-module và
 > `18091` của crm-cloudgate). Xem mục "Multi-tenant" bên dưới để hiểu cơ chế.

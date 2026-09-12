@@ -42,3 +42,44 @@ export function clearVisibleColumnsDraft(quoteFormId?: string): void {
     // ignore
   }
 }
+
+// Nháp lựa chọn "Tổng hợp giá" (visibleSummaryFields) - mirror y hệt pattern
+// visibleColumns ở trên, prefix key riêng để không lẫn 2 nhóm. CHỈ dùng làm
+// nháp TRƯỚC KHI lưu quote - visibleSummaryFields của quote đã lưu nằm trong
+// quotes.data (JSONB), round-trip qua create/update API bình thường như
+// visibleColumns, không liên quan file này.
+const QUOTE_VISIBLE_SUMMARY_FIELDS_DRAFT_PREFIX = 'crm:quote-visible-summary-fields-draft:v1:';
+
+function summaryFieldsDraftKey(quoteFormId: string): string {
+  return `${QUOTE_VISIBLE_SUMMARY_FIELDS_DRAFT_PREFIX}${quoteFormId}`;
+}
+
+export function loadVisibleSummaryFieldsDraft(quoteFormId?: string): string[] | null {
+  if (typeof window === 'undefined' || !quoteFormId) return null;
+  try {
+    const raw = window.localStorage.getItem(summaryFieldsDraftKey(quoteFormId));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? (parsed as string[]) : null;
+  } catch {
+    return null;
+  }
+}
+
+export function saveVisibleSummaryFieldsDraft(quoteFormId: string | undefined, keys: string[]): void {
+  if (typeof window === 'undefined' || !quoteFormId) return;
+  try {
+    window.localStorage.setItem(summaryFieldsDraftKey(quoteFormId), JSON.stringify(keys));
+  } catch {
+    // localStorage đầy/bị chặn - bỏ qua, không phải lỗi nghiêm trọng.
+  }
+}
+
+export function clearVisibleSummaryFieldsDraft(quoteFormId?: string): void {
+  if (typeof window === 'undefined' || !quoteFormId) return;
+  try {
+    window.localStorage.removeItem(summaryFieldsDraftKey(quoteFormId));
+  } catch {
+    // ignore
+  }
+}

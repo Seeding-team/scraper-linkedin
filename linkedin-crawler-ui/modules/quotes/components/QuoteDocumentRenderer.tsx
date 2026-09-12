@@ -15,8 +15,8 @@ import {
   calculateItemSubtotal,
   calculateItemTotal,
   calculateItemVat,
+  calculateOverallDiscountSummary,
   formatVnd as formatVndRaw,
-  flattenQuoteItems,
 } from '../utils/quoteCalculations';
 
 // Yeu cau rieng "bỏ 'đ' trong các mẫu báo giá đi" - moi tien te da ghi ro 1
@@ -28,6 +28,7 @@ function formatVnd(value: unknown): string {
   return formatVndRaw(value).replace(/\s*đ$/, '');
 }
 import { resolveQuoteItemColumns, resolveToggleableColumns } from '../utils/quoteColumns';
+import { resolveVisibleSummaryFieldKeys } from '../utils/quoteSummaryFields';
 
 interface Totals {
   subtotalAmount: number;
@@ -66,6 +67,12 @@ interface Props {
    * vay LUON rong, hien mai placeholder "[Số báo giá]" du da phat hanh.
    * Truyen thang gia tri THAT tu quote.quoteNumber qua day. */
   quoteNumber?: string;
+  /** Chiet khau tong (quote.overallDiscountPercent, migration 106) - null/undefined
+   * = khong ap dung (an dong Giam gia tong/Tong sau giam gia). Dung de tinh khoi
+   * "Tong hop gia" moi (xem calculateOverallDiscountSummary) - KHONG anh huong
+   * totals truyen vao (totals van la so goc, phep tinh chiet khau chi xay ra o
+   * tang hien thi trong component nay). */
+  overallDiscountPercent?: number | null;
 }
 
 function emptySchema(): QuoteSchema {
@@ -207,6 +214,7 @@ export function QuoteDocumentRenderer({
   respectVisibleColumns = false,
   isPublished = false,
   quoteNumber,
+  overallDiscountPercent = null,
 }: Props) {
   // Resize cot bang hang muc kieu Excel - CHI cho man hinh xem truoc/chi tiet
   // noi bo (mode 'preview'/'detail', xem allowColumnResize ben duoi), KHONG
@@ -328,17 +336,26 @@ export function QuoteDocumentRenderer({
     return '';
   };
 
-  const lineDiscountAmount = flattenQuoteItems(quoteItems).reduce(
-    (sum, item) => sum + calculateItemDiscount(item),
-    0
+  // "Chiết khấu tổng" (Tổng hợp giá) - thay hẳn cho khối "Giảm giá" (dòng đơn,
+  // suy từ discountAmount/discountPercent legacy) đã có trước đây. Công thức
+  // chỉ chạy Ở TẦNG HIỂN THỊ (không đổi totals/DB) - xem calculateOverallDiscountSummary.
+  // subtotalBeforeVat lấy từ totals.totalAmount - totals.totalVatAmount (LUÔN có ở
+  // mọi call site đã audit) thay vì subtotalAmount/discountAmount (không phải nơi
+  // gọi nào cũng truyền discountAmount) nên tự động net đúng phần giảm giá TỪNG
+  // DÒNG (nếu có) đã có sẵn trong totals, không cần đọc lại quoteItems/discountPercent
+  // legacy ở đây nữa.
+  const discountSummary = calculateOverallDiscountSummary(totals, overallDiscountPercent);
+  // "Giảm giá tổng"/"Tổng sau giảm giá" chỉ hiện khi > 0, BẤT KỂ đang bật trong
+  // cấu hình "Tổng hợp giá" hay không (auto-hide đè lên cấu hình - yêu cầu rõ
+  // "trùng với tạm tính thì ẩn").
+  const hasOverallDiscount = discountSummary.overallDiscountAmount > 0;
+  // Trường "Tổng hợp giá" hiện cho khách - áp dụng ở MỌI mode (preview/detail/
+  // public/print), KHÁC với cột bảng hạng mục (applyCustomerColumnFilter chỉ áp ở
+  // public/print/preview) - yêu cầu rõ "Chi tiết báo giá đã duyệt phải đồng nhất
+  // với preview" cho riêng khối tổng tiền này.
+  const visibleSummaryKeys = new Set(
+    resolveVisibleSummaryFieldKeys(schema, quoteData.visibleSummaryFields)
   );
-  const discountPercentValue = textValue(quoteData.discountPercent);
-  // Quote mới dùng giảm giá theo từng dòng cha/con. Giữ fallback discountPercent
-  // tổng cho quote cũ đã lưu trước khi có cấu trúc line-level discount.
-  const resolvedDiscountAmount =
-    totals.discountAmount ??
-    (lineDiscountAmount ||
-      (discountPercentValue ? (totals.subtotalAmount * Number(discountPercentValue)) / 100 : 0));
   const notesValue = fieldValue('notes');
   const notesRows = splitLines(notesValue).map(cleanDocumentText).filter(Boolean);
   const commitments = fieldValue('commitments');
@@ -552,21 +569,60 @@ export function QuoteDocumentRenderer({
             </section>
             <section className="villa-totals">
               <h3>Tổng đầu tư</h3>
-              <div className="villa-total-row">
-                <span>Phí triển khai</span>
-                <strong>{formatVnd(setupTotal || totals.totalAmount)}</strong>
-              </div>
+              {visibleSummaryKeys.has('subtotalBeforeVat') ? (
+                <div className="villa-total-row">
+                  <span>Phí triển khai</span>
+                  <strong>{formatVnd(discountSummary.subtotalBeforeVat || setupTotal || totals.totalAmount)}</strong>
+                </div>
+              ) : null}
+              {visibleSummaryKeys.has('overallDiscount') && hasOverallDiscount ? (
+                <div className="villa-total-row villa-total-row--discount">
+                  <span>Giảm giá tổng ({overallDiscountPercent}%)</span>
+                  <strong>-{formatVnd(discountSummary.overallDiscountAmount)}</strong>
+                </div>
+              ) : null}
+              {visibleSummaryKeys.has('subtotalAfterDiscount') && hasOverallDiscount ? (
+                <div className="villa-total-row">
+                  <span>Tổng sau giảm giá</span>
+                  <strong>{formatVnd(discountSummary.subtotalAfterDiscount)}</strong>
+                </div>
+              ) : null}
+              {/* Villa khong co khai niem VAT that (calculateVillaTotals() luon
+                  tra totalVatAmount:0) nhung van hien dong nay theo dung yeu
+                  cau "ca 5 truong ap dung dong nhat moi mau, khong loai tru
+                  theo layout" - gia tri se luon la 0d, khong phai bug. */}
+              {visibleSummaryKeys.has('vatTotal') ? (
+                <div className="villa-total-row">
+                  <span>Thuế GTGT</span>
+                  <strong>{formatVnd(discountSummary.vatAfterDiscount)}</strong>
+                </div>
+              ) : null}
               <div className="villa-total-row">
                 <span>Phí duy trì hàng tháng</span>
                 <strong>{formatVnd(fieldValue('monthlyAmount'))}</strong>
               </div>
+              {visibleSummaryKeys.has('grandTotal') ? (
+                <div className="villa-total-row villa-total-row--grand">
+                  <span>Tổng thanh toán</span>
+                  <strong>{formatVnd(discountSummary.grandTotal)}</strong>
+                </div>
+              ) : null}
+              {/* Sua base tinh 2 dong "Thanh toan dot 1/2": TRUOC DAY nhan thang
+                  vao setupTotal (truoc chiet khau) - neu Chiet khau tong > 0 thi
+                  tong 2 dot se KHONG con khop voi "Tong thanh toan" da tru giam
+                  gia o tren, gay mau thuan 2 con so tren cung 1 to bao gia. Doi
+                  sang discountSummary.grandTotal (phan phi trien khai SAU chiet
+                  khau - Chiet khau tong KHONG ap dung cho "Phi duy tri hang
+                  thang", xem audit trong ke hoach) de dot1+dot2 = Tong thanh toan
+                  luon dung tuyet doi (gia dinh phaseOnePercent+phaseTwoPercent=100,
+                  dung nhu thiet ke san co cua 2 field nay). */}
               <div className="villa-total-sub">
                 Thanh toán đợt 1 ({phaseOnePercent}%):{' '}
-                {formatVnd((setupTotal * phaseOnePercent) / 100)}
+                {formatVnd((discountSummary.grandTotal * phaseOnePercent) / 100)}
               </div>
               <div className="villa-total-sub">
                 Thanh toán đợt 2 ({phaseTwoPercent}%):{' '}
-                {formatVnd((setupTotal * phaseTwoPercent) / 100)}
+                {formatVnd((discountSummary.grandTotal * phaseTwoPercent) / 100)}
               </div>
             </section>
           </div>
@@ -801,24 +857,36 @@ export function QuoteDocumentRenderer({
         </section>
 
         <section className="sheet-total-block sheet-total-block--standard">
-          <div className="sheet-total-row">
-            <span>{findField('subtotalAmount').label || 'Tổng trước VAT'}</span>
-            <strong>{formatVnd(totals.subtotalAmount)}</strong>
-          </div>
-          {resolvedDiscountAmount ? (
-            <div className="sheet-total-row sheet-total-row--discount">
-              <span>Giảm giá</span>
-              <strong>-{formatVnd(resolvedDiscountAmount)}</strong>
+          {visibleSummaryKeys.has('subtotalBeforeVat') ? (
+            <div className="sheet-total-row">
+              <span>{findField('subtotalAmount').label || 'Tổng cộng chưa bao gồm thuế GTGT'}</span>
+              <strong>{formatVnd(discountSummary.subtotalBeforeVat)}</strong>
             </div>
           ) : null}
-          <div className="sheet-total-row">
-            <span>{findField('totalVatAmount').label || 'VAT'}</span>
-            <strong>{formatVnd(totals.totalVatAmount)}</strong>
-          </div>
-          <div className="sheet-total-row sheet-total-row--grand">
-            <span>{findField('totalAmount').label || 'Tổng cộng'}</span>
-            <strong>{formatVnd(totals.totalAmount)}</strong>
-          </div>
+          {visibleSummaryKeys.has('overallDiscount') && hasOverallDiscount ? (
+            <div className="sheet-total-row sheet-total-row--discount">
+              <span>Giảm giá tổng ({overallDiscountPercent}%)</span>
+              <strong>-{formatVnd(discountSummary.overallDiscountAmount)}</strong>
+            </div>
+          ) : null}
+          {visibleSummaryKeys.has('subtotalAfterDiscount') && hasOverallDiscount ? (
+            <div className="sheet-total-row">
+              <span>Tổng sau giảm giá</span>
+              <strong>{formatVnd(discountSummary.subtotalAfterDiscount)}</strong>
+            </div>
+          ) : null}
+          {visibleSummaryKeys.has('vatTotal') ? (
+            <div className="sheet-total-row">
+              <span>{findField('totalVatAmount').label || 'Thuế GTGT'}</span>
+              <strong>{formatVnd(discountSummary.vatAfterDiscount)}</strong>
+            </div>
+          ) : null}
+          {visibleSummaryKeys.has('grandTotal') ? (
+            <div className="sheet-total-row sheet-total-row--grand">
+              <span>{findField('totalAmount').label || 'Tổng thanh toán'}</span>
+              <strong>{formatVnd(discountSummary.grandTotal)}</strong>
+            </div>
+          ) : null}
         </section>
 
         {notesRows.length ? (

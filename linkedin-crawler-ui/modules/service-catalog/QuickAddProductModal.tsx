@@ -5,6 +5,7 @@ import { X } from '@/modules/crm/components/icons';
 import { serviceCatalogRepository } from './repositories/ServiceCatalogRepository';
 import type { ServiceCatalogItem, ServiceCatalogItemInput, ServiceCatalogUnit, ServiceCatalogVatRate } from './types';
 import { emptyProductForm, formatSkuName, computeCustomerFromMarkup, computeMarkupFromCustomer, parseNullableNumber } from './catalog-form-utils';
+import { CurrencyInput } from '@/components/CurrencyInput';
 import './styles/service-catalog.css';
 import '@/modules/crm/styles/quote-center.css';
 
@@ -80,9 +81,9 @@ export function QuickAddProductModal({
   const [nameInput, setNameInput] = useState('');
   const [unitInput, setUnitInput] = useState('');
   const [vatInput, setVatInput] = useState('');
-  const [costPrice, setCostPrice] = useState('');
+  const [costPrice, setCostPrice] = useState<number | null>(null);
   const [markupPercent, setMarkupPercent] = useState('');
-  const [customerPrice, setCustomerPrice] = useState('');
+  const [customerPrice, setCustomerPrice] = useState<number | null>(null);
   const [description, setDescription] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -110,9 +111,9 @@ export function QuickAddProductModal({
     setNameInput(initialValues?.name || '');
     setUnitInput(initialValues?.unit || '');
     setVatInput(initialValues?.vatRate != null ? String(initialValues.vatRate) : '');
-    setCostPrice(initialValues?.costPriceVnd != null ? String(initialValues.costPriceVnd) : '');
+    setCostPrice(initialValues?.costPriceVnd ?? null);
     setMarkupPercent('');
-    setCustomerPrice(initialValues?.unitPriceVnd != null ? String(initialValues.unitPriceVnd) : '');
+    setCustomerPrice(initialValues?.unitPriceVnd ?? null);
     setDescription('');
     setError(null);
     setFieldErrors({});
@@ -156,25 +157,21 @@ export function QuickAddProductModal({
   // Markup (dung LAI DUNG cong thuc computeCustomerFromMarkup/
   // computeMarkupFromCustomer da co san o trang quan ly, khong viet cong
   // thuc rieng thu 2).
-  function handleCostChange(raw: string) {
-    setCostPrice(raw);
-    const cost = parseNullableNumber(raw);
+  function handleCostChange(value: number | null) {
+    setCostPrice(value);
     const markup = parseNullableNumber(markupPercent);
-    const computed = computeCustomerFromMarkup(cost, markup);
-    if (computed != null) setCustomerPrice(String(Math.round(computed)));
+    const computed = computeCustomerFromMarkup(value, markup);
+    if (computed != null) setCustomerPrice(Math.round(computed));
   }
   function handleMarkupChange(raw: string) {
     setMarkupPercent(raw);
-    const cost = parseNullableNumber(costPrice);
     const markup = parseNullableNumber(raw);
-    const computed = computeCustomerFromMarkup(cost, markup);
-    if (computed != null) setCustomerPrice(String(Math.round(computed)));
+    const computed = computeCustomerFromMarkup(costPrice, markup);
+    if (computed != null) setCustomerPrice(Math.round(computed));
   }
-  function handleCustomerPriceChange(raw: string) {
-    setCustomerPrice(raw);
-    const cost = parseNullableNumber(costPrice);
-    const customer = parseNullableNumber(raw);
-    const computed = computeMarkupFromCustomer(cost, customer);
+  function handleCustomerPriceChange(value: number | null) {
+    setCustomerPrice(value);
+    const computed = computeMarkupFromCustomer(costPrice, value);
     if (computed != null) setMarkupPercent(computed.toFixed(2));
   }
 
@@ -266,10 +263,10 @@ export function QuickAddProductModal({
         name: nameInput.trim(),
         unit: unitName,
         defaultVatRate: vatRate,
-        defaultUnitPriceVnd: parseNullableNumber(customerPrice) ?? 0,
+        defaultUnitPriceVnd: customerPrice ?? 0,
         description: description.trim() || undefined,
       });
-      const parsedCost = parseNullableNumber(costPrice);
+      const parsedCost = costPrice;
       const parsedMarkup = parseNullableNumber(markupPercent);
       let hydratedCreated = created;
       if (parsedCost != null || parsedMarkup != null) {
@@ -277,7 +274,7 @@ export function QuickAddProductModal({
           issuerCompanyId: null,
           defaultCostPriceVnd: parsedCost,
           defaultMarkupPercent: parsedMarkup,
-          defaultCustomerPriceVnd: parseNullableNumber(customerPrice),
+          defaultCustomerPriceVnd: customerPrice,
           pricingInputMode: parsedMarkup != null ? 'markup' : 'customer_price',
         });
         hydratedCreated = {
@@ -384,7 +381,7 @@ export function QuickAddProductModal({
 
             <label className="sc-field">
               <span>Giá vốn/ĐV mặc định</span>
-              <input type="number" placeholder="Chưa nhập" value={costPrice} onChange={e => handleCostChange(e.target.value)} />
+              <CurrencyInput placeholder="Chưa nhập" value={costPrice} onChange={handleCostChange} />
             </label>
             <label className="sc-field">
               <span>Markup mặc định (%)</span>
@@ -394,7 +391,7 @@ export function QuickAddProductModal({
 
             <label className="sc-field" style={{ gridColumn: '1 / -1' }}>
               <span>Giá bán/ĐV mặc định</span>
-              <input type="number" placeholder="Tự tính từ Giá vốn + Markup, hoặc nhập tay" value={customerPrice} onChange={e => handleCustomerPriceChange(e.target.value)} />
+              <CurrencyInput placeholder="Tự tính từ Giá vốn + Markup, hoặc nhập tay" value={customerPrice} onChange={handleCustomerPriceChange} />
             </label>
 
             <label className="sc-field" style={{ gridColumn: '1 / -1' }}>

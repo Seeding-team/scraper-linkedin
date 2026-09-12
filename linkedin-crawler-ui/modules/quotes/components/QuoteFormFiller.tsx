@@ -21,6 +21,7 @@ import { SearchableSelect } from '../../crm/components/SearchableSelect';
 import { CatalogPickerModal, type CatalogPickerListItem } from '../../service-catalog/CatalogPickerModal';
 import { useCatalogItemAdd } from '../../service-catalog/useCatalogItemAdd';
 import { ConfirmModal } from '../../crm/components/ConfirmModal';
+import { CurrencyInput } from '@/components/CurrencyInput';
 
 export interface QuoteFillValue {
   data: QuoteData;
@@ -285,8 +286,28 @@ function FieldInput({
     );
   }
 
+  if (field.type === 'currency') {
+    const numericValue =
+      typeof value === 'number'
+        ? value
+        : value === undefined || value === null || value === ''
+          ? (typeof field.defaultValue === 'number' ? field.defaultValue : null)
+          : Number(value) || 0;
+    return (
+      <label className={fieldClass}>
+        {label}
+        <CurrencyInput
+          value={numericValue}
+          placeholder={field.placeholder}
+          disabled={disabled}
+          onChange={next => onChange(next ?? 0)}
+        />
+      </label>
+    );
+  }
+
   const inputType =
-    field.type === 'number' || field.type === 'currency'
+    field.type === 'number'
       ? 'number'
       : field.type === 'email'
         ? 'email'
@@ -304,7 +325,7 @@ function FieldInput({
         value={value === undefined || value === null ? String(field.defaultValue ?? '') : String(value)}
         placeholder={field.placeholder}
         disabled={disabled}
-        onChange={event => onChange(field.type === 'number' || field.type === 'currency' ? Number(event.target.value) || 0 : event.target.value)}
+        onChange={event => onChange(field.type === 'number' ? Number(event.target.value) || 0 : event.target.value)}
       />
     </label>
   );
@@ -1100,7 +1121,24 @@ function SchemaQuoteItemCell({
       />
     );
   }
-  const numeric = column.type === 'number' || column.type === 'currency';
+  if (column.type === 'currency') {
+    const numericValue =
+      typeof rawValue === 'number'
+        ? rawValue
+        : rawValue === null || rawValue === undefined || rawValue === ''
+          ? null
+          : Number(rawValue) || 0;
+    return (
+      <CurrencyInput
+        value={numericValue}
+        placeholder={column.placeholder}
+        disabled={column.editable === false}
+        onChange={next => setValue(next ?? 0)}
+      />
+    );
+  }
+
+  const numeric = column.type === 'number';
   return (
     <input
       type={numeric ? 'number' : 'text'}
@@ -1200,21 +1238,17 @@ function CompactSolutionRow({
         />
       </span>
       <span className="quote-compact-cell">
-        <input
-          type="number"
-          min={0}
+        <CurrencyInput
           className="quote-compact-price"
           value={item.originalPrice || 0}
-          onChange={event => onChange({ originalPrice: coerceNumber(event.target.value) })}
+          onChange={next => onChange({ originalPrice: next ?? 0 })}
         />
       </span>
       <span className="quote-compact-cell">
-        <input
-          type="number"
-          min={0}
+        <CurrencyInput
           className="quote-compact-price"
           value={item.offerPrice || 0}
-          onChange={event => onChange({ offerPrice: coerceNumber(event.target.value) })}
+          onChange={next => onChange({ offerPrice: next ?? 0 })}
         />
       </span>
       <span className="quote-compact-cell quote-compact-cell--description">
@@ -1254,7 +1288,7 @@ function QuoteItemFields({ item, prefix, onChange }: { item: QuoteItem; prefix: 
       </label>
       <label className="crm-field">
         <span>Đơn giá</span>
-        <input type="number" min={0} value={item.unitPrice || 0} onChange={event => onChange({ unitPrice: coerceNumber(event.target.value) })} />
+        <CurrencyInput value={item.unitPrice || 0} onChange={next => onChange({ unitPrice: next ?? 0 })} />
       </label>
       <label className="crm-field">
         <span>Giảm giá (%)</span>
@@ -1335,16 +1369,28 @@ function RepeaterTable({
                   <td key={column.key}>
                     {column.type === 'auto-number' ? (
                       <input value={index + 1} disabled readOnly />
+                    ) : column.type === 'currency' ? (
+                      <CurrencyInput
+                        value={
+                          typeof row[column.key] === 'number'
+                            ? row[column.key] as number
+                            : row[column.key] === null || row[column.key] === undefined || row[column.key] === ''
+                              ? null
+                              : Number(row[column.key]) || 0
+                        }
+                        placeholder={column.placeholder}
+                        onChange={next => updateRow(index, column.key, next ?? 0)}
+                      />
                     ) : (
                       <input
-                        type={column.type === 'number' || column.type === 'currency' ? 'number' : 'text'}
+                        type={column.type === 'number' ? 'number' : 'text'}
                         value={String(row[column.key] ?? '')}
                         placeholder={column.placeholder}
                         onChange={event =>
                           updateRow(
                             index,
                             column.key,
-                            column.type === 'number' || column.type === 'currency'
+                            column.type === 'number'
                               ? Number(event.target.value) || 0
                               : event.target.value
                           )

@@ -252,6 +252,20 @@ def root_health() -> BaseResponse:
     return BaseResponse(success=True, message="Service is healthy")
 
 
+@app.get("/debug/instance", response_model=BaseResponse)
+def debug_instance(request: Request) -> BaseResponse:
+    """Local/debug endpoint to verify which CRM tenant this backend serves."""
+    return BaseResponse(
+        success=True,
+        message="CRM instance debug",
+        data={
+            "host_header": (request.headers.get("host") or "").split(":")[0].strip().lower(),
+            "runtime_instance": settings.crm_instance,
+            "default_crm_instance": settings.crm_instance,
+        },
+    )
+
+
 
 @app.exception_handler(RequestValidationError)
 async def request_validation_exception_handler(_, exc: RequestValidationError) -> JSONResponse:

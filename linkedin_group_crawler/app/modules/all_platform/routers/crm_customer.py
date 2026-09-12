@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.modules.all_platform.auth_deps import get_current_user
 from app.modules.all_platform.schemas import BaseResponse
@@ -13,6 +13,7 @@ from app.modules.all_platform.schemas.crm_customer import (
 )
 from app.modules.all_platform.services.crm_customer_service import (
     CustomerLinkedError,
+    CustomerNotFoundError,
     DuplicateCustomerError,
     create_customer,
     create_customer_with_deal,
@@ -38,8 +39,10 @@ def _error(exc: Exception) -> BaseResponse:
             message=str(exc),
             data={"deal_count": exc.deal_count, "contact_count": exc.contact_count},
         )
+    if isinstance(exc, CustomerNotFoundError):
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     if isinstance(exc, PermissionError):
-        return BaseResponse(success=False, message=str(exc))
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
     return BaseResponse(success=False, message=str(exc))
 
 

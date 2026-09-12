@@ -22,5 +22,5 @@ export type {
   QuoteRuleEvaluationDetail,
   QuoteRuleEvaluation,
 } from './repositories/QuoteRepository';
-export { calculateQuoteTotals, calculateVillaTotals } from './utils/quoteCalculations';
+export { calculateQuoteTotals, calculateVillaTotals, calculateOverallDiscountSummary } from './utils/quoteCalculations';
 export type * from './types';

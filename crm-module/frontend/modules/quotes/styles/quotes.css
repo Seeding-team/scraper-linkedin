@@ -2673,6 +2673,20 @@ select.quote-compact-vat:hover {
   margin-bottom: 0.7rem;
 }
 
+.villa-total-row--discount {
+  color: #b91c1c;
+}
+
+.villa-total-row--discount strong {
+  color: #b91c1c;
+}
+
+.villa-total-row--grand {
+  font-size: 1.05rem;
+  border-top: 1px solid #e5e7eb;
+  padding-top: 0.6rem;
+}
+
 .villa-total-sub {
   color: #64748b;
   font-size: 0.82rem;

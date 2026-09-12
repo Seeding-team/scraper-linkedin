@@ -264,8 +264,8 @@ export function AuthPage() {
               style={{ transform: "rotate(3deg)", transition: "transform 0.3s" }}
             >
               <Image
-                src="https://markeeai.com/logo.svg"
-                alt="MarkeeAI"
+                src="/securityzone_logo.png"
+                alt="SecurityZone"
                 fill
                 sizes="64px"
                 className="object-contain p-2"

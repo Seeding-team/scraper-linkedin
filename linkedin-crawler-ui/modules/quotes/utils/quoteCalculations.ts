@@ -1,4 +1,5 @@
 import type { QuoteItem, VillaSolutionItem } from '../types';
+import { formatCurrencyDisplay } from '@/lib/currency';
 
 export const parseCurrencyInput = (value: unknown) => {
   if (value === null || value === undefined || value === '') return 0;
@@ -87,7 +88,41 @@ export const calculateVillaTotals = (items: Partial<VillaSolutionItem>[] = []) =
   };
 };
 
+/** Chiet khau tong (overallDiscountPercent, migration 106) - tinh CHI o tang
+ * hien thi (khong dung lai ket qua nay de ghi de totals goc/DB) de khoi tong
+ * tien (QuoteDocumentRenderer) hien dung "Giam gia tong/Tong sau giam gia/Tong
+ * thanh toan". `subtotalBeforeVat` lay tu totalAmount - totalVatAmount thay vi
+ * doc thang subtotalAmount/discountAmount - vi 2 field sau KHONG phai luon co
+ * mat o moi noi goi (da audit: QuoteWorkspaceModal popup/PublicQuotePage/
+ * QuoteDetailPage chi truyen subtotalAmount/totalVatAmount/totalAmount, khong
+ * truyen discountAmount) trong khi totalAmount/totalVatAmount thi LUON co -
+ * hieu sai tru duoc dung phan da net giam gia TUNG DONG (neu co) san co trong
+ * totals, khong can biet discountAmount co mat hay khong.
+ * VAT hien thi co gian theo ty le giam gia tong (giong cach VAT tung dong da
+ * co-gian theo % giam gia dong do, xem calculateItemVat/calculateQuoteTotals
+ * o tren) - KHONG tinh lai VAT tu dau. */
+export const calculateOverallDiscountSummary = (
+  totals: { totalAmount: number; totalVatAmount: number },
+  overallDiscountPercent?: number | null
+) => {
+  const pct = clampDiscountPercent(overallDiscountPercent ?? 0);
+  const subtotalBeforeVat = toSafeNumber(totals.totalAmount) - toSafeNumber(totals.totalVatAmount);
+  const overallDiscountAmount = (subtotalBeforeVat * pct) / 100;
+  const subtotalAfterDiscount = subtotalBeforeVat - overallDiscountAmount;
+  const vatAfterDiscount = toSafeNumber(totals.totalVatAmount) * (1 - pct / 100);
+  return {
+    subtotalBeforeVat,
+    overallDiscountAmount,
+    subtotalAfterDiscount,
+    vatAfterDiscount,
+    grandTotal: subtotalAfterDiscount + vatAfterDiscount,
+  };
+};
+
+// Wrapper mong quanh formatCurrencyDisplay() dung chung (lib/currency.ts) -
+// giu nguyen dinh dang output cu ("5.000.000 đ"), khong tu goi toLocaleString
+// rieng nua.
 export const formatVnd = (value: unknown) =>
-  `${Math.round(toSafeNumber(value)).toLocaleString('vi-VN')} đ`;
+  `${formatCurrencyDisplay(toSafeNumber(value))} đ`;
 
 export const sanitizeMoneyInput = (value: unknown) => toSafeNumber(value);

@@ -1,4 +1,5 @@
 import type { QuoteField, QuoteFormStatus, QuoteLayoutType, QuoteSchema } from '../types';
+import { DEFAULT_SUMMARY_FIELDS } from '../utils/quoteSummaryFields';
 
 export const QUOTE_STATUS_LABELS: Record<string, string> = {
   draft: '🟠 Chưa duyệt',
@@ -179,6 +180,7 @@ export function createDefaultCloudgateSchema(): QuoteSchema {
   return {
     version: 1,
     layoutType: 'cloudgate_standard_quote',
+    summaryFields: DEFAULT_SUMMARY_FIELDS,
     sections: [
       {
         key: 'seller',
@@ -258,6 +260,7 @@ export function createVillaSchema(): QuoteSchema {
   return {
     version: 1,
     layoutType: 'villa_solution_package',
+    summaryFields: DEFAULT_SUMMARY_FIELDS,
     sections: [
       {
         key: 'villaHeader',
@@ -322,6 +325,7 @@ export function createBlankSchema(): QuoteSchema {
   return {
     version: 1,
     layoutType: 'blank_quote',
+    summaryFields: DEFAULT_SUMMARY_FIELDS,
     sections: [
       {
         key: 'general',

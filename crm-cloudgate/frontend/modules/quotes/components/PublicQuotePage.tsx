@@ -213,6 +213,7 @@ export function PublicQuotePage({ token }: Props) {
           mode="public"
           isPublished={quote.processingStage ? quote.processingStage === 'published' : true}
           quoteNumber={quote.quoteNumber}
+          overallDiscountPercent={quote.overallDiscountPercent}
         />
       </div>
     </main>

@@ -4,35 +4,41 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { API_BASE_URL, API_KEY } from '@/lib/env';
 import { useAppAuth } from '@/contexts/AppAuthContext';
 import { useMembers } from '@/hooks/useMembers';
-import { SOURCE_OPTIONS } from '../constants/crmConfig';
 import { ActionMenu, type ActionMenuItem } from './ActionMenu';
 import { LeadFormDrawer } from './LeadFormDrawer';
 import { LeadDetailDrawer } from './LeadDetailDrawer';
 import { LeadEditDrawer } from './LeadEditDrawer';
 import { SearchableSelect } from './SearchableSelect';
+import { useCrmCategoryCodeOptions } from './CrmCategorySelect';
 import { Loader2, Plus, RotateCcw } from './icons';
 import type { CrmLeadKpi, CrmLeadRow, CrmLeadStatus } from '../types';
 
 const STATUS_OPTIONS: Array<{ value: CrmLeadStatus | ''; label: string }> = [
   { value: '', label: 'Tất cả trạng thái' },
-  { value: 'new_lead', label: 'Lead mới' },
-  { value: 'qualifying', label: 'Đang xác minh' },
-  { value: 'qualified', label: 'Đủ điều kiện' },
-  { value: 'nurture', label: 'Theo dõi sau' },
-  { value: 'converted', label: 'Đã tạo cơ hội' },
-  { value: 'disqualified', label: 'Không phù hợp' },
+  { value: 'mql', label: 'MQL' },
+  { value: 'sql', label: 'SQL' },
+  { value: 'nurturing', label: 'Nuôi dưỡng' },
+  { value: 'unqualified', label: 'Không đạt chuẩn' },
 ];
 
 export const LEAD_STATUS_LABEL: Record<string, string> = {
-  new_lead: 'Lead mới',
-  qualifying: 'Đang xác minh',
-  qualified: 'Đủ điều kiện',
-  nurture: 'Theo dõi sau',
-  converted: 'Đã tạo cơ hội',
-  disqualified: 'Không phù hợp',
+  mql: 'MQL',
+  sql: 'SQL',
+  nurturing: 'Nuôi dưỡng',
+  unqualified: 'Không đạt chuẩn',
+  new_lead: 'MQL',
+  qualifying: 'MQL',
+  qualified: 'SQL',
+  nurture: 'Nuôi dưỡng',
+  converted: 'SQL',
+  disqualified: 'Không đạt chuẩn',
 };
 
 const STATUS_BADGE_CLASS: Record<string, string> = {
+  mql: 'crm-lead-status--new',
+  sql: 'crm-lead-status--qualified',
+  nurturing: 'crm-lead-status--nurture',
+  unqualified: 'crm-lead-status--disqualified',
   new_lead: 'crm-lead-status--new',
   qualifying: 'crm-lead-status--qualifying',
   qualified: 'crm-lead-status--qualified',
@@ -108,7 +114,7 @@ export function mapLead(row: ApiLeadRow): CrmLeadRow {
     telegram: row.telegram || '',
     website: row.website || '',
     source: row.source || '',
-    status: row.status || 'new_lead',
+    status: row.status || 'mql',
     score: row.score ?? null,
     sdrId: row.sdr_id || '',
     note: row.note || '',
@@ -136,7 +142,7 @@ export function LeadsDirectory() {
   const { members } = useMembers();
   const [items, setItems] = useState<CrmLeadRow[]>([]);
   const [total, setTotal] = useState(0);
-  const [kpi, setKpi] = useState<CrmLeadKpi>({ total: 0, new_lead: 0, qualifying: 0, qualified: 0 });
+  const [kpi, setKpi] = useState<CrmLeadKpi>({ total: 0, mql: 0, sql: 0, nurturing: 0, unqualified: 0 });
   const [page, setPage] = useState(1);
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
@@ -153,6 +159,7 @@ export function LeadsDirectory() {
   const [deleteTarget, setDeleteTarget] = useState<CrmLeadRow | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState('');
+  const { options: sourceOptions } = useCrmCategoryCodeOptions('crm_source');
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -185,11 +192,13 @@ export function LeadsDirectory() {
         if (!alive) return;
         setItems((data.items || []).map(mapLead));
         setTotal(data.total || 0);
+        const rawKpi = (data.kpi || {}) as Record<string, number | undefined>;
         setKpi({
           total: data.kpi?.total ?? 0,
-          new_lead: data.kpi?.new_lead ?? 0,
-          qualifying: data.kpi?.qualifying ?? 0,
-          qualified: data.kpi?.qualified ?? 0,
+          mql: rawKpi.mql ?? rawKpi.new_lead ?? 0,
+          sql: rawKpi.sql ?? rawKpi.qualified ?? 0,
+          nurturing: rawKpi.nurturing ?? rawKpi.nurture ?? 0,
+          unqualified: rawKpi.unqualified ?? rawKpi.disqualified ?? 0,
         });
         setError('');
       })
@@ -230,9 +239,10 @@ export function LeadsDirectory() {
 
   const kpiCards = [
     { label: 'Tổng Lead', value: kpi.total, tone: 'total' },
-    { label: 'Lead mới', value: kpi.new_lead, tone: 'open' },
-    { label: 'Đang xác minh', value: kpi.qualifying, tone: 'won-value' },
-    { label: 'Đủ điều kiện', value: kpi.qualified, tone: 'won' },
+    { label: 'MQL', value: kpi.mql, tone: 'open' },
+    { label: 'SQL', value: kpi.sql, tone: 'won' },
+    { label: 'Nuôi dưỡng', value: kpi.nurturing, tone: 'won-value' },
+    { label: 'Không đạt chuẩn', value: kpi.unqualified, tone: 'lost' },
   ];
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
@@ -310,7 +320,7 @@ export function LeadsDirectory() {
    * khác nhau. Lead đã kết thúc luồng (converted / không phù hợp) mở ở chế độ
    * xem, phần còn lại mở thẳng luồng xác minh. */
   function openRow(lead: CrmLeadRow) {
-    if (lead.status === 'converted' || lead.status === 'disqualified') {
+    if (lead.status === 'sql' || lead.status === 'unqualified' || lead.status === 'converted' || lead.status === 'disqualified') {
       openView(lead);
       return;
     }
@@ -323,25 +333,28 @@ export function LeadsDirectory() {
    * deep-link mà CrmShell.tsx đã đọc sẵn) thay vì mở lại drawer xác minh. */
   function primaryActionOf(lead: CrmLeadRow): { label: string; run: () => void } {
     switch (lead.status) {
+      case 'mql':
       case 'new_lead':
-        return { label: 'Xác minh', run: () => openQualifyForNewLead(lead) };
       case 'qualifying':
-        return { label: 'Tiếp tục', run: () => openQualifyForNewLead(lead) };
+        return { label: 'Xác minh', run: () => openQualifyForNewLead(lead) };
+      case 'sql':
       case 'qualified':
-        return { label: 'Tạo cơ hội', run: () => openQualifyForNewLead(lead) };
-      case 'nurture':
-        return { label: 'Mở', run: () => openQualifyForNewLead(lead) };
       case 'converted':
-        return {
-          label: 'Mở',
-          run: () => {
-            if (lead.convertedDealId) {
-              window.location.href = `/all-platform/crm?openDeal=${encodeURIComponent(lead.convertedDealId)}`;
-              return;
-            }
-            openView(lead);
-          },
-        };
+        if (lead.convertedDealId) {
+          const dealId = lead.convertedDealId;
+          return {
+            label: 'Mở Deal',
+            run: () => {
+              window.location.href = `/all-platform/crm?openDeal=${encodeURIComponent(dealId)}`;
+            },
+          };
+        }
+        return { label: 'Xem xác minh', run: () => openQualifyForNewLead(lead) };
+      case 'nurturing':
+      case 'nurture':
+      case 'unqualified':
+      case 'disqualified':
+        return { label: 'Xem xác minh', run: () => openQualifyForNewLead(lead) };
       default:
         return { label: 'Mở', run: () => openView(lead) };
     }
@@ -354,10 +367,7 @@ export function LeadsDirectory() {
   function secondaryActionsOf(lead: CrmLeadRow): ActionMenuItem[] {
     return [
       { key: 'edit', label: 'Sửa nhanh', onSelect: () => openEdit(lead) },
-      ...(lead.canWrite && lead.status !== 'converted'
-        ? [{ key: 'convert', label: 'Tạo cơ hội', onSelect: () => openQualifyForNewLead(lead) }]
-        : []),
-      ...(lead.status === 'converted' && lead.convertedCustomerId
+      ...((lead.status === 'converted' || lead.status === 'sql') && lead.convertedCustomerId
         ? [{
             key: 'customer',
             label: 'Xem khách hàng',
@@ -416,7 +426,7 @@ export function LeadsDirectory() {
                 value={source}
                 onChange={setSource}
                 placeholder="Tất cả nguồn"
-                options={SOURCE_OPTIONS}
+                options={sourceOptions}
               />
             </div>
             <div className="crm-filter-select-wrap">

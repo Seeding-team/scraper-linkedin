@@ -6,7 +6,8 @@ import { API_BASE_URL, API_KEY } from '@/lib/env';
 import { seedingQuoteRepository, QuoteApprovalRequiresExceptionError, QuoteDocumentRenderer } from '@/modules/quotes';
 import type { Quote, QuoteActivityLogEntry, QuoteHandoffChecklist, QuoteItem, QuoteProcessingStage, QuoteApprovalRuleSet, QuoteApprovalRuleType, QuoteRuleEvaluation, QuoteDeliveryLogEntry, QuoteForm } from '@/modules/quotes';
 import type { AppUser } from '@/types/unified.types';
-import { canApproveQuote, canEditQuoteCost, canEditQuotePricingFields, canWriteDeal, formatMoneyInput, getPackageText, getServicePackageText, SOURCE_OPTIONS, SERVICE_PACKAGE_OPTIONS, CRM_PACKAGE_OPTIONS, INDUSTRY_OPTIONS } from '../constants/crmConfig';
+import { canApproveQuote, canEditQuoteCost, canEditQuotePricingFields, canWriteDeal, getPackageText, getServicePackageText, SOURCE_OPTIONS, SERVICE_PACKAGE_OPTIONS, CRM_PACKAGE_OPTIONS, INDUSTRY_OPTIONS } from '../constants/crmConfig';
+import { CurrencyInput } from '@/components/CurrencyInput';
 import type { CrmUserOption, Deal, CreateDealInput } from '../types';
 import type { ServiceCatalogItem } from '@/modules/service-catalog/types';
 import { serviceCatalogRepository } from '@/modules/service-catalog/repositories/ServiceCatalogRepository';
@@ -25,7 +26,7 @@ import {
   quoteDisplayStatus,
   relativeTime,
 } from '../utils/quoteDisplay';
-import { ArrowDownToLine, CheckCircle2, ChevronDown, ChevronUp, Eye, FileText, GitBranchPlus, History, LayoutGrid, Link2, Plus, Send, Trash2, X } from './icons';
+import { ArrowDownToLine, CheckCircle2, ChevronDown, ChevronUp, Eye, FileText, GitBranchPlus, History, LayoutGrid, Link2, Maximize2, Minimize2, Plus, Send, Trash2, X } from './icons';
 import { usersService, projectsService, allPlatformCategoriesService, type QuoteBusinessRoleUser, type Project } from '@/services/all-platform.service';
 import { computeQuoteSla } from '../utils/quoteSla';
 import { SearchableSelect } from './SearchableSelect';
@@ -495,6 +496,14 @@ export function QuoteWorkspaceModal({
   const [draftTechnicalOwnerId, setDraftTechnicalOwnerId] = useState('');
   const [draftQuoteOwnerId, setDraftQuoteOwnerId] = useState('');
   const [draftVisibleColumns, setDraftVisibleColumns] = useState<string[] | undefined>(undefined);
+  const [draftVisibleSummaryFields, setDraftVisibleSummaryFields] = useState<string[] | undefined>(undefined);
+  // BUG THAT DA GAP ("go Chiet khau tong khi chua co quote thi khong co tac
+  // dung gi ca"): o quickbar (~4448), onChange goc chi goi
+  // setQuote(prev => prev ? {...} : prev) - khi CHUA co `quote` (dang tao moi,
+  // chua luu lan nao) day la no-op tuyet doi, gia tri go vao KHONG phan anh
+  // duoc vao dau (ke ca popup preview) cho toi khi quote duoc tao. Them state
+  // rieng mirror dung pattern `draftPaymentTermsDays` da co san trong file nay.
+  const [draftOverallDiscountPercent, setDraftOverallDiscountPercent] = useState<number | null | undefined>(undefined);
   const [requiredFieldErrors, setRequiredFieldErrors] = useState<Record<string, string>>({});
 
   function focusFirstRequiredError(errors: Record<string, string>) {
@@ -612,7 +621,7 @@ export function QuoteWorkspaceModal({
   // drawer nay KHONG con tu luu qua onBlur nua, chi luu that khi bam "Lưu"
   // ro rang; dong khong luu se phuc hoi lai dung snapshot nay).
   const [itemDetailDrawerSnapshot, setItemDetailDrawerSnapshot] = useState<QuoteItem | null>(null);
-  const [costOverrideModal, setCostOverrideModal] = useState<{ index: number; reason: string } | null>(null);
+  const [costOverrideModal, setCostOverrideModal] = useState<{ index: number; reason: string; value: number | null } | null>(null);
   // "Chỉnh Mô tả hạng mục" (popover rieng, KHONG them cot vao bang) - luu
   // vao DUNG field quote_item.description da co san (KHONG dung ten field
   // moi "featuresIncluded"/tao field DB moi). readOnly khi quote da khoa/
@@ -841,10 +850,20 @@ export function QuoteWorkspaceModal({
   // data LAN items hien tai, neu khong se VO TINH XOA SACH item/data con lai
   // (bug thuc te phat hien khi doc lai RPC, khong phai gia dinh).
   const [itemsDraft, setItemsDraft] = useState<QuoteItem[]>([]);
+  const [itemsFullscreen, setItemsFullscreen] = useState(false);
   useEffect(() => {
     setItemsDraft(quote?.items ? flattenItemTree(quote.items) : []);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [quote?.id]);
+
+  useEffect(() => {
+    if (!itemsFullscreen) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [itemsFullscreen]);
 
   // Kiem tra kenh gui email san sang hay chua - CHI goi khi bao gia da
   // duyet+phat hanh (dung dieu kien "Chua duyet"/"Chua phat hanh" da du de
@@ -874,14 +893,11 @@ export function QuoteWorkspaceModal({
   // `Number(raw) || 0` (KHONG du: NaN||0 tinh cờ ve 0 dung, nhung Math.max(0,
   // NaN) van tra ve NaN - da xac nhan bug that qua test yeu cau, khong phai
   // gia dinh).
-  function toSafeNonNegative(raw: string): number | null {
-    // Strip dau cham ngan nghin (nguoi dung go "1.500.000") truoc khi parse -
-    // Number("1.500.000") se ra NaN neu khong strip.
-    const digitsOnly = raw.replace(/[^\d]/g, '');
-    if (!digitsOnly) return null;
-    const parsed = Number(digitsOnly);
-    if (!Number.isFinite(parsed)) return null;
-    return Math.max(0, parsed);
+  // CurrencyInput da tu parse ra number|null (xem lib/currency.ts) - handler
+  // chi con can kep am, khong tu parse chuoi rieng nua.
+  function toSafeNonNegative(value: number | null): number | null {
+    if (value === null) return null;
+    return Math.max(0, value);
   }
 
   function applyCostToRow(row: QuoteItem, cost: number | null): QuoteItem {
@@ -908,8 +924,8 @@ export function QuoteWorkspaceModal({
   // Muon dien nhieu dong PHAI chu dong bam icon "Điền xuống" (xem
   // fillDownTargets/applyFillDown/fillDownUndo ben duoi) - tach biet hoan
   // toan 2 co che, khong con "1 lan tu dong + Dien xuong thu cong" nhu truoc.
-  function handleCostPriceChange(index: number, raw: string) {
-    const cost = toSafeNonNegative(raw);
+  function handleCostPriceChange(index: number, value: number | null) {
+    const cost = toSafeNonNegative(value);
     setItemsDraft(prev => prev.map((r, i) => (i === index ? applyCostToRow(r, cost) : r)));
   }
 
@@ -977,8 +993,8 @@ export function QuoteWorkspaceModal({
     );
   }
 
-  function handleUnitPriceChange(index: number, raw: string) {
-    const price = toSafeNonNegative(raw) ?? 0;
+  function handleUnitPriceChange(index: number, value: number | null) {
+    const price = toSafeNonNegative(value) ?? 0;
     setItemsDraft(prev =>
       prev.map((row, i) => {
         if (i !== index) return row;
@@ -2443,6 +2459,7 @@ export function QuoteWorkspaceModal({
           quoteTitle: draftTitle.trim() || 'Yêu cầu hỗ trợ báo giá',
           customBlocks,
           ...(draftVisibleColumns ? { visibleColumns: draftVisibleColumns } : {}),
+          ...(draftVisibleSummaryFields ? { visibleSummaryFields: draftVisibleSummaryFields } : {}),
           // Field noi bo rieng cho luong "Yeu cau ho tro bao gia" - KHONG phai
           // customBlocks (customBlocks la du lieu hien cho khach qua public
           // link/PDF) - luu truc tiep vao `data` (JSONB schema-less, khong can
@@ -3222,6 +3239,7 @@ export function QuoteWorkspaceModal({
       quoteTitle: draftTitle.trim() || 'Yêu cầu hỗ trợ báo giá',
       customBlocks,
       ...(draftVisibleColumns ? { visibleColumns: draftVisibleColumns } : {}),
+      ...(draftVisibleSummaryFields ? { visibleSummaryFields: draftVisibleSummaryFields } : {}),
       ...(deal || customerRecord
         ? {
             customerRecipient: displayName || undefined,
@@ -3234,7 +3252,7 @@ export function QuoteWorkspaceModal({
           }
         : {}),
     };
-  }, [deal, draftCustomerId, customers, draftTitle, draftScope, draftPaymentTermsDays, draftExtraTerms, draftVisibleColumns]);
+  }, [deal, draftCustomerId, customers, draftTitle, draftScope, draftPaymentTermsDays, draftExtraTerms, draftVisibleColumns, draftVisibleSummaryFields]);
   const columnVisibilitySchema = quote?.formSnapshot || draftSelectedForm?.schemaJson;
   const columnVisibilityDraft: QuoteDraft = {
     data: quote ? quote.data : draftPreviewData,
@@ -3258,16 +3276,18 @@ export function QuoteWorkspaceModal({
   // CACH goi ham xac nhan o tang goi (QuoteWorkspaceModal), khong dung
   // component/state moi nao khac.
   function handleColumnVisibilityChange(next: QuoteDraft) {
-    if (!window.confirm('Bạn có chắc muốn lưu và hiển thị đúng các cột đã chọn cho bản xem/khách hàng không?')) {
+    if (!window.confirm('Bạn có chắc muốn lưu và áp dụng đúng cấu hình hiển thị (cột & tổng hợp giá) đã chọn cho bản xem/khách hàng không?')) {
       return;
     }
     const visibleColumns = next.data.visibleColumns;
+    const visibleSummaryFields = next.data.visibleSummaryFields;
     if (quote) {
-      const nextData = { ...quote.data, visibleColumns };
+      const nextData = { ...quote.data, visibleColumns, visibleSummaryFields };
       setQuote(current => (current ? { ...current, data: nextData } : current));
       void persistQuote({ data: nextData }, { silent: true });
     } else {
       setDraftVisibleColumns(Array.isArray(visibleColumns) ? visibleColumns : undefined);
+      setDraftVisibleSummaryFields(Array.isArray(visibleSummaryFields) ? visibleSummaryFields : undefined);
     }
   }
   // Tinh tam TU itemsDraft (chi de xem truoc, KHONG phai so luu that) - khop
@@ -3850,7 +3870,11 @@ export function QuoteWorkspaceModal({
                 })()}
               </>
             ) : null}
-            <div className="qc-workspace-card qc-workspace-items-card" data-qc-anchor="items" data-qc-required="items">
+            <div
+              className={`qc-workspace-card qc-workspace-items-card${itemsFullscreen ? ' qc-workspace-items-card--fullscreen' : ''}`}
+              data-qc-anchor="items"
+              data-qc-required="items"
+            >
               <div className="qc-workspace-card-head qc-workspace-items-card-head">
                 <div className="qc-workspace-items-card-head-title">
                   <h3>Hạng mục &amp; cấu trúc giá <span className="qc-required-mark">*</span></h3>
@@ -3946,6 +3970,16 @@ export function QuoteWorkspaceModal({
                     <span className="qc-qb-margin-hint" title="Ngưỡng tham chiếu, không tự động chặn">Ngưỡng margin tham chiếu: 20%</span>
                 </div>
                 ) : null}
+                <button
+                  type="button"
+                  className="qc-mini-btn qc-workspace-items-fullscreen-btn"
+                  onClick={() => setItemsFullscreen(value => !value)}
+                  title={itemsFullscreen ? 'Thu nhỏ bảng hạng mục' : 'Phóng to bảng hạng mục'}
+                  aria-label={itemsFullscreen ? 'Thu nhỏ bảng hạng mục' : 'Phóng to bảng hạng mục'}
+                >
+                  {itemsFullscreen ? <Minimize2 className="qc-inline-icon" /> : <Maximize2 className="qc-inline-icon" />}
+                  <span>{itemsFullscreen ? 'Thu nhỏ' : 'Phóng to'}</span>
+                </button>
               </div>
               {requiredFieldErrors.items ? <p className="qc-field-error qc-field-error--card">{requiredFieldErrors.items}</p> : null}
 
@@ -4262,14 +4296,12 @@ export function QuoteWorkspaceModal({
                                   {!costViewAllowed ? (
                                     <span className="qc-row-sub">Không có quyền xem</span>
                                   ) : editableTechnicalCells ? (
-                                    <input
-                                      type="text"
-                                      inputMode="numeric"
+                                    <CurrencyInput
                                       className="qc-cell-input qc-cell-input-money"
-                                      value={item.costPrice != null ? formatMoneyInput(String(item.costPrice)) : ''}
+                                      value={item.costPrice ?? null}
                                       placeholder={item.costNotApplicable ? 'Không áp dụng' : 'Bắt buộc nhập'}
                                       disabled={item.costNotApplicable}
-                                      onChange={e => handleCostPriceChange(index, e.target.value)}
+                                      onChange={value => handleCostPriceChange(index, value)}
                                       onBlur={handleCostPriceBlur}
                                     />
                                   ) : (
@@ -4296,12 +4328,10 @@ export function QuoteWorkspaceModal({
                             </td>
                             <td className="qc-cell-money qc-cell-markup" data-label="Giá khách/ĐV">
                               {editableCells ? (
-                                <input
-                                  type="text"
-                                  inputMode="numeric"
+                                <CurrencyInput
                                   className="qc-cell-input qc-cell-input-money"
-                                  value={item.unitPrice ? formatMoneyInput(String(item.unitPrice)) : ''}
-                                  onChange={e => handleUnitPriceChange(index, e.target.value)}
+                                  value={item.unitPrice ?? null}
+                                  onChange={value => handleUnitPriceChange(index, value)}
                                   onBlur={() => void persistQuote({}, { silent: true })}
                                 />
                               ) : formatMoney(item.unitPrice)}
@@ -4445,14 +4475,18 @@ export function QuoteWorkspaceModal({
                       min={0}
                       max={100}
                       className="qc-workspace-quickbar-input qc-qb-discount-input"
-                      value={quote?.overallDiscountPercent ?? ''}
+                      value={(quote ? quote.overallDiscountPercent : draftOverallDiscountPercent) ?? ''}
                       placeholder="0"
                       onChange={event => {
                         const raw = event.target.value;
                         const value = raw.trim() === '' ? null : Number(raw);
-                        setQuote(prev => (prev ? { ...prev, overallDiscountPercent: value } : prev));
+                        if (quote) {
+                          setQuote(prev => (prev ? { ...prev, overallDiscountPercent: value } : prev));
+                        } else {
+                          setDraftOverallDiscountPercent(value);
+                        }
                       }}
-                      onBlur={() => void persistQuote({ overallDiscountPercent: quote?.overallDiscountPercent ?? null }, { silent: true })}
+                      onBlur={() => quote && void persistQuote({ overallDiscountPercent: quote.overallDiscountPercent ?? null }, { silent: true })}
                     />
                     %
                   </label>
@@ -5303,6 +5337,7 @@ export function QuoteWorkspaceModal({
         open={projectModalOpen}
         customerId={effectiveCustomerIdForProjects || ''}
         customerName={quote ? deal?.customerName || 'Khách hàng hiện tại' : customers.find(c => c.id === draftCustomerId)?.label || 'Khách hàng hiện tại'}
+        currentUserId={user?.id ?? null}
         onClose={() => setProjectModalOpen(false)}
         onSaved={created => {
           setProjectModalOpen(false);
@@ -5423,6 +5458,7 @@ export function QuoteWorkspaceModal({
                   mode="public"
                   isPublished={quote ? quote.processingStage === 'published' : false}
                   quoteNumber={quote?.quoteNumber}
+                  overallDiscountPercent={quote ? quote.overallDiscountPercent ?? null : draftOverallDiscountPercent ?? null}
                 />
               </div>
             ) : (
@@ -6042,7 +6078,7 @@ export function QuoteWorkspaceModal({
 
                     {canEditCostCells ? (
                       <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-                        <button type="button" className="qc-btn" onClick={() => setCostOverrideModal({ index: priceBookDrawerIndex, reason: '' })}>
+                        <button type="button" className="qc-btn" onClick={() => setCostOverrideModal({ index: priceBookDrawerIndex, reason: '', value: drawerItem.costPrice ?? null })}>
                           Ghi đè giá vốn (có lý do)
                         </button>
                         {hasOverride ? (
@@ -6191,13 +6227,11 @@ export function QuoteWorkspaceModal({
                     <label className="qc-workspace-drawer-field">
                       Giá vốn/ĐV
                       {drawerEditableTechnical ? (
-                        <input
-                          type="text"
-                          inputMode="numeric"
+                        <CurrencyInput
                           className="qc-cell-input"
-                          value={drawerItem.costPrice != null ? formatMoneyInput(String(drawerItem.costPrice)) : ''}
+                          value={drawerItem.costPrice ?? null}
                           disabled={drawerItem.costNotApplicable}
-                          onChange={e => handleCostPriceChange(drawerIndex, e.target.value)}
+                          onChange={value => handleCostPriceChange(drawerIndex, value)}
                         />
                       ) : (
                         <p>{drawerItem.costNotApplicable ? 'Không áp dụng' : drawerItem.costPrice != null ? formatMoney(drawerItem.costPrice) : 'Còn thiếu'}</p>
@@ -6254,11 +6288,10 @@ export function QuoteWorkspaceModal({
               <div className="qc-workspace-preview-modal-body">
                 <label className="qc-field">
                   <span>Giá vốn mới (VND)</span>
-                  <input
-                    type="number"
+                  <CurrencyInput
                     className="qc-cell-input qc-cell-input-money"
-                    defaultValue={targetItem?.costPrice ?? undefined}
-                    id="qc-cost-override-value"
+                    value={costOverrideModal.value ?? targetItem?.costPrice ?? null}
+                    onChange={value => setCostOverrideModal({ ...costOverrideModal, value })}
                   />
                 </label>
                 <label className="qc-field">
@@ -6277,9 +6310,8 @@ export function QuoteWorkspaceModal({
                   className="qc-btn qc-btn-primary"
                   disabled={!costOverrideModal.reason.trim()}
                   onClick={() => {
-                    const input = document.getElementById('qc-cost-override-value') as HTMLInputElement | null;
-                    const value = input ? Number(input.value) : NaN;
-                    if (!Number.isFinite(value) || value < 0) return;
+                    const value = costOverrideModal.value;
+                    if (value === null || !Number.isFinite(value) || value < 0) return;
                     applyCostOverride(costOverrideModal.index, value, costOverrideModal.reason.trim());
                   }}
                 >

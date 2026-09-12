@@ -5,7 +5,7 @@
    These types mirror the Supabase database schema. */
 
 export type FeedPlatform = "facebook" | "linkedin";
-export type CategoryType = "intent" | "industry" | "tier" | "team" | "icp" | "content_type" | "product_seeding" | "crm_source" | "crm_service_package" | "crm_package" | "crm_industry" | "crm_position" | "crm_next_step" | "crm_quote_type";
+export type CategoryType = "intent" | "industry" | "tier" | "team" | "icp" | "content_type" | "product_seeding" | "crm_source" | "crm_service_package" | "crm_package" | "crm_industry" | "crm_position" | "crm_city" | "crm_expected_timeline" | "crm_next_step" | "crm_nurture_reason" | "crm_follow_up_channel" | "crm_unqualified_reason" | "crm_quote_type" | "crm_contract_status" | "crm_payment_status" | "crm_billing_type" | "crm_won_reason" | "crm_lost_reason" | "crm_outcome_confidence" | "crm_outcome_trigger" | "crm_outcome_objection" | "crm_kb_reuse_level" | "crm_kb_owner" | "crm_kb_status";
 export type VerifyStatus = "pending" | "yes" | "no";
 export type UserRole = "member" | "leader" | "admin";
 
@@ -146,9 +146,10 @@ export interface Category {
   name?: string;
   description?: string;
   platform: string;
-  is_active?: boolean;
-  created_at?: string;
-}
+    is_active?: boolean;
+    sort_order?: number;
+    created_at?: string;
+  }
 
 // ── Members (HR roster, độc lập với app_users) ────────────────────────────────
 
@@ -426,11 +427,14 @@ export interface AppUser {
   /** true nếu được cấp quyền duyệt Báo giá (migration 053) — admin luôn duyệt
    * được dù cờ này false. */
   can_approve_quotes?: boolean;
+  quote_business_role?: "presale" | "sale" | "both" | null;
 }
 
 export interface AuthLoginResponse {
   user: AppUser;
   access_token: string;
+  redirect_required?: boolean;
+  redirect_url?: string;
 }
 
 export interface SocialAccount {

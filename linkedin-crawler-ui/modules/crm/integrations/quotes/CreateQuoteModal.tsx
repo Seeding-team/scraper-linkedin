@@ -845,6 +845,7 @@ export function CreateQuoteModal({
         open={projectModalOpen}
         customerId={effectiveCustomerIdForProjects}
         customerName={activeCustomer.companyName || activeCustomer.customerName || 'Khách hàng hiện tại'}
+        currentUserId={currentUser?.id ?? null}
         onClose={() => setProjectModalOpen(false)}
         onSaved={created => {
           setProjectModalOpen(false);

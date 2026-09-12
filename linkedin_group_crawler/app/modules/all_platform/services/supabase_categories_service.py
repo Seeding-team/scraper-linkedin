@@ -11,12 +11,23 @@ def get_all_categories() -> list[dict]:
     """Get all categories across all types."""
     supabase: Client = get_supabase_client()
 
-    result = (
-        supabase.table("categories")
-        .select("*")
-        .order("category_type")
-        .execute()
-    )
+    try:
+        result = (
+            supabase.table("categories")
+            .select("*")
+            .order("category_type")
+            .order("sort_order")
+            .order("code")
+            .execute()
+        )
+    except Exception:
+        result = (
+            supabase.table("categories")
+            .select("*")
+            .order("category_type")
+            .order("code")
+            .execute()
+        )
     return result.data or []
 
 
@@ -30,7 +41,10 @@ def get_categories_by_type(category_type: str, active_only: bool = False) -> lis
     query = supabase.table("categories").select("*").eq("category_type", category_type)
     if active_only:
         query = query.eq("is_active", True)
-    result = query.order("code").execute()
+    try:
+        result = query.order("sort_order").order("code").execute()
+    except Exception:
+        result = query.order("code").execute()
     return result.data or []
 
 
@@ -46,6 +60,8 @@ def add_category(payload: dict) -> dict:
         "platform": payload.get("platform", "general"),
         "is_active": payload.get("is_active", True),
     }
+    if "sort_order" in payload:
+        insert_data["sort_order"] = payload.get("sort_order") or 0
 
     result = (
         supabase.table("categories")

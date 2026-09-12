@@ -316,6 +316,9 @@ class Settings:
     cors_origins: list[str] | None = None
     host: str = os.getenv("HOST", "0.0.0.0")
     port: int = int(os.getenv("PORT", "8000"))
+    # Main CRM tenant. Main is not a special case that can read all CRM data;
+    # it must use the same instance filter mechanism as the clone apps.
+    crm_instance: str = (os.getenv("CRM_INSTANCE") or "markee").strip()
     raw_data_dir: Path = BASE_DIR / "data" / "raw"
     output_data_dir: Path = BASE_DIR / "data" / "output"
     n8n_webhook_url: str = os.getenv("N8N_WEBHOOK_URL", "")

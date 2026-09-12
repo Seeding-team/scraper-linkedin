@@ -16,7 +16,7 @@ from app.core.config import settings
 from app.core.supabase_client import execute_supabase_query, get_supabase_client
 from app.modules.all_platform.services.crm_permission_service import is_sale_member
 
-_USER_PUBLIC_FIELDS = "id, email, name, role, is_active, can_approve_quotes, created_at, updated_at"
+_USER_PUBLIC_FIELDS = "id, email, name, role, is_active, can_approve_quotes, quote_business_role, created_at, updated_at"
 _USER_CACHE_TTL_SECONDS = 30.0
 _USER_BY_ID_CACHE: dict[str, tuple[float, dict]] = {}
 _USER_BY_EMAIL_CACHE: dict[str, tuple[float, dict]] = {}
@@ -154,7 +154,7 @@ def login_user(email: str, password: str) -> dict:
     result = execute_supabase_query(
         lambda: get_supabase_client()
         .table("app_users")
-        .select("id, email, name, role, is_active, can_approve_quotes, password")
+        .select("id, email, name, role, is_active, can_approve_quotes, quote_business_role, password")
         .eq("email", email.lower().strip())
         .execute()
     )
@@ -181,6 +181,7 @@ def login_user(email: str, password: str) -> dict:
             "role": cached_user.get("role", "member"),
             "is_sale": is_sale_member(cached_user["id"]),
             "can_approve_quotes": bool(cached_user.get("can_approve_quotes")),
+            "quote_business_role": cached_user.get("quote_business_role"),
         },
         "access_token": access_token,
     }
@@ -279,7 +280,7 @@ def login_with_google(id_token_str: str) -> dict:
     result = execute_supabase_query(
         lambda: get_supabase_client()
         .table("app_users")
-        .select("id, email, name, role, is_active, can_approve_quotes")
+        .select("id, email, name, role, is_active, can_approve_quotes, quote_business_role")
         .eq("email", email)
         .execute()
     )
@@ -303,6 +304,7 @@ def login_with_google(id_token_str: str) -> dict:
             "role": cached_user.get("role", "member"),
             "is_sale": is_sale_member(cached_user["id"]),
             "can_approve_quotes": bool(cached_user.get("can_approve_quotes")),
+            "quote_business_role": cached_user.get("quote_business_role"),
         },
         "access_token": access_token,
     }

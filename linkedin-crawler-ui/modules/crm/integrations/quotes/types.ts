@@ -1,7 +1,8 @@
 import type { IssuerCompany, Quote, QuoteData, QuoteForm, QuoteItem, VillaSolutionItem } from '@/modules/quotes';
 import { resolveToggleableColumns } from '@/modules/quotes/utils/quoteColumns';
+import { resolveToggleableSummaryFields } from '@/modules/quotes/utils/quoteSummaryFields';
 import type { DealFormState } from '../../components/DealFormFields';
-import { loadVisibleColumnsDraft } from './quoteColumnsDraft';
+import { loadVisibleColumnsDraft, loadVisibleSummaryFieldsDraft } from './quoteColumnsDraft';
 
 export type WizardStep = 1 | 2 | 3 | 4;
 
@@ -9,6 +10,12 @@ export interface QuoteDraft {
   data: QuoteData;
   items: QuoteItem[];
   solutionItems: VillaSolutionItem[];
+  /** Chiet khau tong (quote.overallDiscountPercent) - CHI passthrough (khong
+   * co UI nhap moi o luong "Tao bao gia" cu, xem ReviewQuoteStep.tsx) de khoi
+   * tong tien hien dung khi sua 1 quote da co san gia tri nay tu luong
+   * Workspace. Mau MOI tao qua luong cu se khong co gia tri (undefined - dong
+   * Giam gia tong tu an, dung hanh vi cu 100%). */
+  overallDiscountPercent?: number | null;
 }
 
 export function emptyQuoteDraft(): QuoteDraft {
@@ -46,6 +53,14 @@ export function quoteDraftFromForm(form: QuoteForm, dealDraft?: DealFormState, i
     // mac dinh hien tat ca.
     const draftColumns = loadVisibleColumnsDraft(form.id)?.filter(key => toggleableKeys.includes(key));
     data.visibleColumns = draftColumns && draftColumns.length ? draftColumns : toggleableKeys;
+  }
+  if (!data.visibleSummaryFields) {
+    // Seed mac dinh "Tong hop gia" - mirror y het cach visibleColumns dang seed
+    // o tren (uu tien nhap dang do trong localStorage theo dung mau nay truoc
+    // khi dung mac dinh cua schema).
+    const toggleableSummaryKeys: string[] = resolveToggleableSummaryFields(form.schemaJson).map(field => field.key);
+    const draftSummaryFields = loadVisibleSummaryFieldsDraft(form.id)?.filter(key => toggleableSummaryKeys.includes(key));
+    data.visibleSummaryFields = draftSummaryFields && draftSummaryFields.length ? draftSummaryFields : toggleableSummaryKeys;
   }
 
   if (dealDraft) {
@@ -101,5 +116,10 @@ export function quoteDraftFromExistingQuote(quote: Quote): QuoteDraft {
     data,
     items: quote.items || [],
     solutionItems: Array.isArray(solutionItems) ? solutionItems : [],
+    // Passthrough thuan tuy (khong co UI nhap moi o day) - quote.overallDiscountPercent
+    // truoc day bi BO SOT hoan toan khoi QuoteDraft, khien khoi tong tien luon
+    // hien nhu chua co chiet khau du quote da co gia tri that (vd sua qua luong
+    // Workspace roi mo lai o luong cu).
+    overallDiscountPercent: quote.overallDiscountPercent ?? null,
   };
 }

@@ -1316,14 +1316,14 @@ export const allPlatformCategoriesService = {
     return cachedFetch(`categories:${category_type || "all"}:${options?.activeOnly ? "active" : "all"}`, 30_000, () => requestJson<Category[]>(url));
   },
 
-  add: (payload: { category_type: string; code: string; name?: string; description?: string; leader?: string; geo?: string; platform?: string; is_active?: boolean }): Promise<ApiResponse<Category>> => {
+  add: (payload: { category_type: string; code: string; name?: string; description?: string; leader?: string; geo?: string; platform?: string; is_active?: boolean; sort_order?: number }): Promise<ApiResponse<Category>> => {
     return requestJson(`${BASE}/categories/add`, {
       method: "POST",
       body: JSON.stringify(payload),
     });
   },
 
-  update: (payload: { id: string; category_type?: string; code?: string; name?: string; description?: string; leader?: string; geo?: string; platform?: string; is_active?: boolean }): Promise<ApiResponse<Category>> => {
+  update: (payload: { id: string; category_type?: string; code?: string; name?: string; description?: string; leader?: string; geo?: string; platform?: string; is_active?: boolean; sort_order?: number }): Promise<ApiResponse<Category>> => {
     return requestJson(`${BASE}/categories/update`, {
       method: "PUT",
       body: JSON.stringify(payload),
@@ -1616,18 +1616,20 @@ export const authService = {
   me: (): Promise<ApiResponse<AppUser>> => {
     return requestJson(`${BASE}/auth/me`);
   },
-
-  listWorkspaces: (): Promise<ApiResponse<{ items: Array<{ instance: string; url: string; current: boolean }>; current_instance: string }>> => {
+  listWorkspaces: (): Promise<ApiResponse<{ items: Array<{ instance: string; url: string; current: boolean }> }>> => {
     return requestJson(`${BASE}/auth/workspaces`);
   },
 
   mintWorkspaceHandoff: (): Promise<ApiResponse<{ code: string }>> => {
-    return requestJson(`${BASE}/auth/workspace-handoff`, { method: "POST" });
+    return requestJson(`${BASE}/auth/workspace-handoff`, {
+      method: "POST",
+    });
   },
 
-  consumeWorkspaceHandoff: (code: string): Promise<ApiResponse<{ user: AppUser }>> => {
+  consumeWorkspaceHandoff: (code: string): Promise<ApiResponse<AuthLoginResponse>> => {
     return requestJson(`${BASE}/auth/workspace-handoff/consume?code=${encodeURIComponent(code)}`);
   },
+
 
   updateProfile: (payload: { name?: string }): Promise<ApiResponse<AppUser>> => {
     return requestJson(`${BASE}/auth/me/profile`, {
@@ -1956,10 +1958,14 @@ export const memberOptionsService = {
    * trả email/password/token. `includeIds` ép trả thêm 1 vài id cụ thể dù
    * đang bị vô hiệu hoá - dùng khi Sửa 1 project mà người phụ trách hiện tại
    * đã ngừng hoạt động (vẫn phải hiện tên + badge, không được biến mất). */
-  getOptions: (opts?: { active?: boolean; includeIds?: string[] }): Promise<ApiResponse<{ items: MemberOption[] }>> => {
+  /** `teamType` (vd 'sale'): loc CHI giu nguoi thuoc dung team_type nay (backend
+   * whitelist gia tri hop le - xem routers/users.py _ALLOWED_TEAM_TYPE_FILTERS,
+   * gui gia tri khac se bi tu choi ro rang). */
+  getOptions: (opts?: { active?: boolean; includeIds?: string[]; teamType?: string }): Promise<ApiResponse<{ items: MemberOption[] }>> => {
     const params = new URLSearchParams();
     if (opts?.active === false) params.set("active", "false");
     if (opts?.includeIds?.length) params.set("include_id", opts.includeIds.join(","));
+    if (opts?.teamType) params.set("team_type", opts.teamType);
     const qs = params.toString();
     return requestJson(`${BASE}/users/member-options${qs ? `?${qs}` : ""}`);
   },
@@ -1982,13 +1988,20 @@ export interface Project {
 }
 
 export interface CreateProjectInput {
-  project_code: string;
+  // "Mã dự án tự sinh hoàn toàn ở backend" - KHÔNG còn field project_code ở
+  // đây nữa, frontend không tự dựng mã (xem preview_project_code() +
+  // create_project() ở backend).
   name: string;
   customer_id: string;
   description?: string;
   status?: Project["status"];
   manager_id?: string | null;
   team_id?: string | null;
+}
+
+export interface ProjectCodePreview {
+  projectCode: string;
+  isCustomerCodeNew: boolean;
 }
 
 export const projectsService = {
@@ -2000,6 +2013,12 @@ export const projectsService = {
   },
   get: (id: string): Promise<ApiResponse<Project>> => {
     return requestJson(`${BASE}/projects/${encodeURIComponent(id)}`);
+  },
+  /** CHỈ tính "Dự kiến" để hiển thị trên form - KHÔNG insert/persist gì (xem
+   * preview_project_code() ở backend). Mã chính thức luôn do create() cấp lại
+   * lúc tạo thật. */
+  previewCode: (customerId: string): Promise<ApiResponse<ProjectCodePreview>> => {
+    return requestJson(`${BASE}/projects/preview-code?customer_id=${encodeURIComponent(customerId)}`);
   },
   /** Chi Admin/Leader tao duoc (backend tu choi that neu goi sai quyen -
    * can_manage_project(), xem crm_permission_service.py). */

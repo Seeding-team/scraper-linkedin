@@ -103,16 +103,22 @@ def list_contract_templates() -> list[dict]:
 
 
 def get_contract_template(template_id: str, include_text: bool = True) -> dict:
+    # BUG THAT DA GAP: .single() nem APIError tho (PGRST116) khi 0 dong khop
+    # (id khong ton tai, HOAC ton tai o instance khac) - truoc day khong co
+    # guard nao ca, se lam _row_to_template(None,...) crash mo ho hoac de lo
+    # loi DB tho ra UI. Doi sang .maybe_single() + tu rai ValueError sach.
     supabase: Client = get_supabase_client()
-    row = (
+    result = (
         supabase.table(TABLE)
         .select("*")
         .eq("id", template_id)
         .eq("instance", settings.crm_instance)
-        .single()
+        .maybe_single()
         .execute()
-        .data
     )
+    row = result.data if result else None
+    if not row:
+        raise ValueError("Khong tim thay mau hop dong.")
     return _row_to_template(row, include_text=include_text)
 
 

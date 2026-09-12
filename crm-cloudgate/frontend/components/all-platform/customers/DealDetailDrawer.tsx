@@ -56,6 +56,7 @@ import {
   stageLabel,
 } from "@/services/crm-pipeline.helpers";
 import { QuickChatBox } from "./QuickChatBox";
+import { useCrmCategoryCodeOptions } from "@/modules/crm/components/CrmCategorySelect";
 
 interface Props {
   customer: Customer | null;
@@ -115,6 +116,9 @@ export function DealDetailDrawer({ customer, open, onClose, onRequestTransition,
   const [reviewOpen, setReviewOpen] = useState(false);
   const [reviewDraft, setReviewDraft] = useState<ReviewResult>("Chua_xem_xet");
   const [savingReview, setSavingReview] = useState(false);
+  const { options: contractStatusOptions } = useCrmCategoryCodeOptions("crm_contract_status", CONTRACT_STATUS_OPTIONS);
+  const { options: paymentStatusOptions } = useCrmCategoryCodeOptions("crm_payment_status", PAYMENT_STATUS_OPTIONS);
+  const { options: lostReasonOptions } = useCrmCategoryCodeOptions("crm_lost_reason", LOST_REASON_OPTIONS);
 
   const stage = useMemo(() => (customer ? getCurrentStage(customer) : null), [customer]);
   const nextOptions = useMemo(() => (stage ? allowedNextStages(stage) : []), [stage]);
@@ -220,11 +224,11 @@ export function DealDetailDrawer({ customer, open, onClose, onRequestTransition,
   const servicePackageLabel = getServicePackageText(customer.service_package);
   const terminalContractStatus = getTerminalContractStatus(
     stage,
-    CONTRACT_STATUS_OPTIONS.find((option) => option.value === contractStatusDraft)?.label || null,
+    contractStatusOptions.find((option) => option.value === contractStatusDraft)?.label || null,
   );
   const lostReasonLabel =
     customer.reject_reason_type
-      ? LOST_REASON_OPTIONS.find((r) => r.value === customer.reject_reason_type)?.label ??
+      ? lostReasonOptions.find((r) => r.value === customer.reject_reason_type)?.label ??
         customer.reject_reason_type
       : null;
 
@@ -440,7 +444,7 @@ export function DealDetailDrawer({ customer, open, onClose, onRequestTransition,
                       onChange={(e) => handleContractStatusChange(e.target.value as ContractStatus)}
                       className="mt-1 w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm font-medium text-slate-700 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-60"
                     >
-                      {CONTRACT_STATUS_OPTIONS.map((opt) => (
+                      {contractStatusOptions.map((opt) => (
                         <option key={opt.value} value={opt.value}>
                           {opt.label}
                         </option>
@@ -459,7 +463,7 @@ export function DealDetailDrawer({ customer, open, onClose, onRequestTransition,
                     onChange={(e) => handlePaymentStatusChange(e.target.value as PaymentStatus)}
                     className="mt-1 w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm font-medium text-slate-700 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-60"
                   >
-                    {PAYMENT_STATUS_OPTIONS.map((opt) => (
+                    {paymentStatusOptions.map((opt) => (
                       <option key={opt.value} value={opt.value}>
                         {opt.label}
                       </option>

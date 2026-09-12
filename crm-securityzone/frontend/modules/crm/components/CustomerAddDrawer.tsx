@@ -4,11 +4,10 @@ import Link from 'next/link';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { API_BASE_URL, API_KEY } from '@/lib/env';
-import { useMembers } from '@/hooks/useMembers';
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
 import { usersService, type QuoteBusinessRoleUser } from '@/services/all-platform.service';
-import { CITY_OPTIONS, INDUSTRY_OPTIONS, SOURCE_OPTIONS } from '../constants/crmConfig';
 import { SearchableSelect } from './SearchableSelect';
+import { CrmCategoryCodeSelect, CrmCategorySelect } from './CrmCategorySelect';
 import { PositionSelect } from './PositionSelect';
 import { ChevronDown, Loader2, X } from './icons';
 import type { AppUser } from '@/types/unified.types';
@@ -78,9 +77,6 @@ const STATUS_OPTIONS: Array<{ value: ManageForm['status']; label: string; hint: 
   { value: 'current_customer', label: 'Đã mua', hint: 'Khách hàng hiện hữu / import từ hệ thống cũ.' },
 ];
 
-const CITY_SELECT_OPTIONS = CITY_OPTIONS.map(city => ({ value: city, label: city }));
-const INDUSTRY_SELECT_OPTIONS = INDUSTRY_OPTIONS.map(value => ({ value, label: value }));
-
 const ANCHORS = [
   { key: 'crm', label: 'Tìm CRM' },
   { key: 'company', label: 'Công ty' },
@@ -112,7 +108,6 @@ export function CustomerAddDrawer({
   onCreated: (customerId: string) => void;
 }) {
   useBodyScrollLock(open);
-  const { members } = useMembers();
   const canPickOwner = isAdminOrLeader(currentUser);
 
   // "Sale manager" (yeu cau rieng, canh "Nguoi phu trach") - danh sach chon
@@ -120,17 +115,31 @@ export function CustomerAddDrawer({
   // (app_users.quote_business_role) qua GET /users/by-quote-business-role -
   // API nay da tu gom ca 'sale' lan 'both' (list_users_by_quote_business_role()),
   // dung y het cach QuoteWorkspaceModal dung cho picker Presale/Sale.
+  const [ownerAssignableOptions, setOwnerAssignableOptions] = useState<QuoteBusinessRoleUser[]>([]);
   const [saleManagerOptions, setSaleManagerOptions] = useState<QuoteBusinessRoleUser[]>([]);
   useEffect(() => {
     if (!open) return;
     let alive = true;
-    usersService
-      .getUsersByQuoteBusinessRole('sale')
-      .then(res => {
-        if (alive) setSaleManagerOptions(res.success ? res.data || [] : []);
+    Promise.all([
+      usersService.getUsersByQuoteBusinessRole('sale'),
+      usersService.getUsersByQuoteBusinessRole('presale'),
+    ])
+      .then(([saleRes, presaleRes]) => {
+        if (!alive) return;
+        const saleUsers = saleRes.success ? saleRes.data || [] : [];
+        const presaleUsers = presaleRes.success ? presaleRes.data || [] : [];
+        const assignable = new Map<string, QuoteBusinessRoleUser>();
+        [...saleUsers, ...presaleUsers].forEach(user => {
+          if (user.id) assignable.set(user.id, user);
+        });
+        setOwnerAssignableOptions([...assignable.values()].sort((a, b) => a.name.localeCompare(b.name)));
+        setSaleManagerOptions(saleUsers.sort((a, b) => a.name.localeCompare(b.name)));
       })
       .catch(() => {
-        if (alive) setSaleManagerOptions([]);
+        if (alive) {
+          setOwnerAssignableOptions([]);
+          setSaleManagerOptions([]);
+        }
       });
     return () => {
       alive = false;
@@ -243,12 +252,14 @@ export function CustomerAddDrawer({
     setManage(current => ({ ...current, [key]: value }));
   }
 
-  const ownerOptions = useMemo(() => {
-    const linked = members.filter(m => m.linked_user_id || m.linked_user_id_2);
-    return [...linked].sort((a, b) => a.display_name.localeCompare(b.display_name));
-  }, [members]);
-  const selectionKeyOf = (m: { id: string; linked_user_id?: string | null; linked_user_id_2?: string | null }) =>
-    m.linked_user_id || m.linked_user_id_2 || m.id;
+  const ownerSelectOptions = useMemo(
+    () => ownerAssignableOptions.map(user => ({ value: user.id, label: user.name })),
+    [ownerAssignableOptions],
+  );
+  const saleManagerSelectOptions = useMemo(
+    () => saleManagerOptions.map(user => ({ value: user.id, label: user.name })),
+    [saleManagerOptions],
+  );
 
   const contactFilled = Boolean(
     contact.name.trim() || contact.phone.trim() || contact.email.trim() || contact.positionCategoryId || contact.zalo.trim() || contact.facebook.trim(),
@@ -275,6 +286,11 @@ export function CustomerAddDrawer({
       setError(companyErr);
       companySectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
       window.setTimeout(() => customerNameInputRef.current?.focus(), 300);
+      return false;
+    }
+    if (canPickOwner && !manage.ownerId) {
+      setError('Vui lòng chọn người phụ trách thuộc nhóm Sale/Presale.');
+      manageSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
       return false;
     }
     const manageErr = validateStep4ForFollowing();
@@ -552,13 +568,13 @@ export function CustomerAddDrawer({
                 <input value={company.website} onChange={e => setCompanyField('website', e.target.value)} placeholder="https://..." />
               </Field>
               <Field label="Thành phố">
-                <SearchableSelect value={company.city} onChange={value => setCompanyField('city', value)} options={CITY_SELECT_OPTIONS} placeholder="-- Chọn --" />
+                <CrmCategorySelect categoryType="crm_city" value={company.city} onChange={value => setCompanyField('city', value)} placeholder="-- Chọn --" />
               </Field>
               <Field label="Lĩnh vực">
-                <SearchableSelect value={company.industry} onChange={value => setCompanyField('industry', value)} options={INDUSTRY_SELECT_OPTIONS} placeholder="-- Chọn --" />
+                <CrmCategoryCodeSelect categoryType="crm_industry" value={company.industry} onChange={value => setCompanyField('industry', value)} placeholder="-- Chọn --" />
               </Field>
               <Field label="Nguồn">
-                <SearchableSelect value={company.source} onChange={value => setCompanyField('source', value)} options={SOURCE_OPTIONS} />
+                <CrmCategoryCodeSelect categoryType="crm_source" value={company.source} onChange={value => setCompanyField('source', value)} />
               </Field>
               <Field full label="Địa chỉ">
                 <input value={company.address} onChange={e => setCompanyField('address', e.target.value)} />
@@ -603,23 +619,22 @@ export function CustomerAddDrawer({
             <div className="crm-form-grid">
               {canPickOwner ? (
                 <Field label="Người phụ trách">
-                  <select value={manage.ownerId} onChange={e => setManageField('ownerId', e.target.value)}>
-                    <option value="">-- Chính bạn --</option>
-                    {ownerOptions.map(m => (
-                      <option key={m.id} value={selectionKeyOf(m)}>
-                        {m.display_name}{m.email ? ` (${m.email})` : ''}
-                      </option>
-                    ))}
-                  </select>
+                  <SearchableSelect
+                    value={manage.ownerId}
+                    onChange={value => setManageField('ownerId', value)}
+                    options={ownerSelectOptions}
+                    placeholder="-- Chọn Sale/Presale --"
+                    hideClearOption
+                  />
                 </Field>
               ) : null}
               <Field label="Sale manager">
-                <select value={manage.saleManagerId} onChange={e => setManageField('saleManagerId', e.target.value)}>
-                  <option value="">-- Không chọn --</option>
-                  {saleManagerOptions.map(u => (
-                    <option key={u.id} value={u.id}>{u.name}</option>
-                  ))}
-                </select>
+                <SearchableSelect
+                  value={manage.saleManagerId}
+                  onChange={value => setManageField('saleManagerId', value)}
+                  options={saleManagerSelectOptions}
+                  placeholder="-- Không chọn --"
+                />
               </Field>
             </div>
 

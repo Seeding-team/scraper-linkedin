@@ -853,6 +853,24 @@
 .crm-owner-picker-state--error {
   color: #dc2626;
 }
+/* "Mã dự án" gio chi la dong preview/chi doc (backend tu sinh), khong con
+   la <input> - style nhu 1 truong disabled de nguoi dung khong tuong nham
+   go duoc. */
+.crm-project-code-preview {
+  margin: 0;
+  padding: 0.5rem 0.7rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 0.4rem;
+  background: #f8fafc;
+  color: #334155;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+.crm-project-code-preview--pending {
+  color: #64748b;
+  font-style: italic;
+  font-weight: 400;
+}
 
 .crm-form-title-row {
   display: flex;
@@ -5169,6 +5187,24 @@
   cursor: pointer;
 }
 
+/* Nhom "Cot bang hang muc"/"Tong hop gia" ben trong 1 popover "Cot hien thi"
+   duy nhat - 2 khoi tach roi, moi khoi tu dem rieng so dang bat (KHONG gop
+   chung vao 1 con so o badge nut chinh). */
+.crm-quote-column-group + .crm-quote-column-group {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed #e2e8f0;
+}
+
+.crm-quote-column-group-title {
+  margin: 0 0 4px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: #94a3b8;
+}
+
 /* Khoi "Cot hien thi" khi mau khong co cot tuy chon nao (vd layout villa)
    hoac schema loi - hien thong bao ro rang thay vi bien mat ca khoi. */
 .crm-quote-column-warning {
@@ -6156,6 +6192,10 @@
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
+.crm-leads-page-shell .crm-stat-grid--4 {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
 .crm-filter-grid--leads {
   grid-template-columns: minmax(14rem, 1.3fr) minmax(9rem, 1fr) minmax(9rem, 1fr) minmax(11rem, 1fr) auto;
 }
@@ -6213,6 +6253,9 @@
 
 @media (max-width: 900px) {
   .crm-stat-grid--4 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .crm-leads-page-shell .crm-stat-grid--4 {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
   .crm-filter-grid--leads {
@@ -7257,6 +7300,48 @@
   font-size: 0.78rem;
   margin-top: 0.7rem;
   padding: 0.5rem 0.7rem;
+}
+
+.crm-verify-result {
+  display: grid;
+  gap: 0.65rem;
+  margin-top: 0.9rem;
+}
+
+.crm-verify-result-options {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.5rem;
+}
+
+.crm-verify-result-option {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-width: 0;
+  border: 1px solid #dbe3ef;
+  border-radius: 0.7rem;
+  background: #ffffff;
+  padding: 0.55rem 0.65rem;
+  color: #334155;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.crm-verify-result-option.is-selected {
+  border-color: #be1e4b;
+  background: #fff1f5;
+  color: #9f1239;
+}
+
+.crm-verify-result-option input {
+  flex: 0 0 auto;
+}
+
+@media (max-width: 640px) {
+  .crm-verify-result-options {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* ---- Checklist san sang Convert ---- */

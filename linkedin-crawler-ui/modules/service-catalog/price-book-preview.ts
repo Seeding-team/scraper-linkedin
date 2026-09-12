@@ -1,3 +1,5 @@
+import { formatCurrencyDisplay } from '@/lib/currency';
+
 /** Preview cong thuc phia FE - CHI de hien thi truoc khi Luu, KHONG phai
  * nguon tinh chinh thuc (backend luon tinh lai bang Decimal khi luu, xem
  * price_book_service.compute_item_pricing() o backend - phai giu 2 ham nay
@@ -78,11 +80,11 @@ export function previewPriceBookItem(input: PriceBookPreviewInput): PriceBookPre
   };
 }
 
+// Wrapper mong quanh formatCurrencyDisplay() dung chung (lib/currency.ts) -
+// khong tu goi toLocaleString rieng nua.
 export function formatVnd(value: number | null | undefined): string {
   if (value == null || Number.isNaN(value)) return '—';
-  // BUG THAT DA GAP ("Không dính ký hiệu đ sát số") - them 1 khoang trang
-  // truoc "đ" (vd "1.754.891 đ" thay vi "1.754.891đ" dinh lien).
-  return `${Math.round(value).toLocaleString('vi-VN')} đ`;
+  return `${formatCurrencyDisplay(value)} đ`;
 }
 
 export function formatPercent(value: number | null | undefined): string {

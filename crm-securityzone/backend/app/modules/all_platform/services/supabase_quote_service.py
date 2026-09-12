@@ -6,6 +6,7 @@ QuoteReference phía frontend (modules/quotes) — tránh phải map lại 2 l�
 
 from __future__ import annotations
 
+import logging
 import re
 import secrets
 from datetime import datetime, timedelta, timezone
@@ -15,8 +16,11 @@ from typing import Any
 from postgrest.exceptions import APIError
 from supabase import Client
 
+from app.core.config import settings
 from app.core.supabase_client import get_supabase_client
 from app.modules.all_platform.services.supabase_categories_service import get_categories_by_type
+
+logger = logging.getLogger(__name__)
 
 
 class QuoteNotFoundError(ValueError):
@@ -39,6 +43,17 @@ ISSUER_COMPANIES_TABLE = "quote_issuer_companies"
 # "Asia/Ho_Chi_Minh" và không cần dữ liệu tzdata của hệ điều hành (image
 # production thiếu tzdata -> ZoneInfo() crash toàn bộ backend khi import).
 VN_TZ = timezone(timedelta(hours=7))
+
+
+def _crm_instance() -> str:
+    instance = (settings.crm_instance or "").strip()
+    if not instance:
+        raise RuntimeError("CRM_INSTANCE is required for quote tenant scoping.")
+    return instance
+
+
+def _ensure_quote_in_instance(quote_id: str, include_deleted: bool = False) -> dict:
+    return get_quote(quote_id, include_deleted=include_deleted)
 
 
 def _now_iso() -> str:
@@ -637,6 +652,7 @@ def _next_quote_number() -> str:
     result = (
         supabase.table(QUOTES_TABLE)
         .select("quote_number")
+        .eq("instance", _crm_instance())
         .or_(f"quote_number.eq.{base},quote_number.like.{base}-%")
         .execute()
     )
@@ -873,7 +889,11 @@ def update_quote_form(form_id: str, payload: dict) -> dict:
 def delete_quote_form(form_id: str) -> dict:
     supabase: Client = get_supabase_client()
     has_quotes = (
-        supabase.table(QUOTES_TABLE).select("id").eq("quote_form_id", form_id).limit(1).execute()
+        supabase.table(QUOTES_TABLE)
+        .select("id")
+        .eq("quote_form_id", form_id)
+        .limit(1)
+        .execute()
     )
     if has_quotes.data:
         result = (
@@ -898,6 +918,7 @@ def duplicate_quote_form(form_id: str) -> dict:
         "layout_type": source["layout_type"],
         "schema_version": source["schema_version"],
         "schema_json": source["schema_json"],
+        "issuer_company_id": source.get("issuer_company_id"),
     }
     result = supabase.table(FORMS_TABLE).insert(insert_data).execute()
     return _row_to_form(result.data[0])
@@ -920,7 +941,7 @@ def share_quote_form(form_id: str, enabled: bool = True) -> dict:
 
 def list_quotes(deal_id: str | None = None, include_deleted: bool = False) -> list[dict]:
     supabase: Client = get_supabase_client()
-    query = supabase.table(QUOTES_TABLE).select("*")
+    query = supabase.table(QUOTES_TABLE).select("*").eq("instance", _crm_instance())
     if deal_id:
         query = query.eq("deal_id", deal_id)
     if not include_deleted:
@@ -1062,6 +1083,7 @@ def list_quotes_by_phase(
             "sent_at, published_at, approved_at, issued_at, created_at, updated_at, "
             "sla_due_at, completed_at, quote_type_codes"
         )
+        .eq("instance", _crm_instance())
         .is_("deleted_at", "null")
         .execute()
     )
@@ -1091,6 +1113,7 @@ def list_quotes_by_phase(
             deal_result = (
                 supabase.table("customer_leads")
                 .select("id, customer_id, team_id, sdr_id, leaded_by")
+                .eq("instance", _crm_instance())
                 .in_("id", deal_ids)
                 .execute()
             )
@@ -1208,14 +1231,23 @@ def list_quotes_by_phase(
     page_ids = [r["id"] for _, r in page_slice]
     items: list[dict] = []
     if page_ids:
-        full_result = supabase.table(QUOTES_TABLE).select("*").in_("id", page_ids).execute()
+        full_result = (
+            supabase.table(QUOTES_TABLE)
+            .select("*")
+            .eq("instance", _crm_instance())
+            .in_("id", page_ids)
+            .execute()
+        )
         full_by_id = {r["id"]: r for r in (full_result.data or [])}
 
         page_project_ids = list({r.get("project_id") for _, r in page_slice if r.get("project_id")})
         projects_by_id: dict[str, dict] = {}
         if page_project_ids:
             proj_result = (
-                supabase.table("projects").select("id, project_code, name, status").in_("id", page_project_ids).execute()
+                supabase.table("projects")
+                .select("id, project_code, name, status")
+                .in_("id", page_project_ids)
+                .execute()
             )
             projects_by_id = {p["id"]: p for p in (proj_result.data or [])}
 
@@ -1270,7 +1302,7 @@ def get_quote(quote_id: str, include_deleted: bool = False) -> dict:
     CHI loi zero-rows (PGRST116) moi duoc map sang QuoteNotFoundError - loi
     ket noi/permission/DB khac deu duoc RE-RAISE nguyen ven, khong nuot."""
     supabase: Client = get_supabase_client()
-    query = supabase.table(QUOTES_TABLE).select("*").eq("id", quote_id)
+    query = supabase.table(QUOTES_TABLE).select("*").eq("id", quote_id).eq("instance", _crm_instance())
     if not include_deleted:
         query = query.is_("deleted_at", "null")
     try:
@@ -1330,6 +1362,7 @@ def get_public_quote(token: str, email: str | None = None, phone: str | None = N
         supabase.table(QUOTES_TABLE)
         .select("*")
         .eq("public_token", token)
+        .eq("instance", _crm_instance())
         .is_("deleted_at", "null")
         .maybe_single()
         .execute()
@@ -1382,6 +1415,7 @@ def set_public_access_restriction(
     enum duy nhat quyet dinh - khong con boolean rieng de tranh bug "tat roi
     ma van hoi Email" da gap truoc do. KHONG qua RPC (UPDATE metadata don
     gian, khong dung logic nghiep vu phuc tap nhu cac RPC vong doi khac)."""
+    _ensure_quote_in_instance(quote_id)
     if mode not in ("none", "email", "phone"):
         raise ValueError("Che do gioi han khong hop le (phai la none/email/phone).")
     supabase: Client = get_supabase_client()
@@ -1394,7 +1428,7 @@ def set_public_access_restriction(
         update_payload["public_allowed_phones"] = normalized_phones
     # mode == "none": giu nguyen danh sach email/phone da luu truoc do (chi
     # doi cot mode) de neu bat lai cung che do thi khong mat du lieu da nhap.
-    supabase.table(QUOTES_TABLE).update(update_payload).eq("id", quote_id).is_("deleted_at", "null").execute()
+    supabase.table(QUOTES_TABLE).update(update_payload).eq("id", quote_id).eq("instance", _crm_instance()).is_("deleted_at", "null").execute()
     supabase.table("quote_activity_log").insert({
         "quote_id": quote_id,
         "actor_id": actor_id,
@@ -1425,6 +1459,7 @@ def create_quote(payload: dict, created_by: str | None) -> dict:
     quote_number = _next_quote_number()
     now = _now_iso()
     insert_data = {
+        "instance": _crm_instance(),
         "deal_id": payload.get("deal_id"),
         "quote_form_id": form["id"],
         "issuer_company_id": payload.get("issuer_company_id"),
@@ -1458,6 +1493,11 @@ def create_quote(payload: dict, created_by: str | None) -> dict:
         # khong doi update_quote() duy nhat.
         "quote_type_codes": payload.get("quote_type_codes") or [],
     }
+    logger.info(
+        "tenant_write table=quotes operation=insert settings.crm_instance=%s resolved_instance=%s",
+        _crm_instance(),
+        insert_data["instance"],
+    )
     quote_row = supabase.table(QUOTES_TABLE).insert(insert_data).execute().data[0]
 
     inserted_items = []
@@ -1507,7 +1547,7 @@ def create_quote(payload: dict, created_by: str | None) -> dict:
         # Chua duyet -> chi gan FK quote_id de Deal card thay ngay bao gia "Chua
         # duyet", KHONG ghi last_attachment_url/estimated_budget (chua co public
         # url that, chua chac chan gia da chot).
-        supabase.table("customer_leads").update({"quote_id": quote_row["id"]}).eq("id", quote_row["deal_id"]).execute()
+        supabase.table("customer_leads").update({"quote_id": quote_row["id"]}).eq("id", quote_row["deal_id"]).eq("instance", _crm_instance()).execute()
 
     return _row_to_quote(quote_row, inserted_items)
 
@@ -1553,18 +1593,33 @@ def _validate_deal_project_consistency(deal_id: str | None, project_id: str | No
     (1) Du an (neu co) phai thuoc DUNG khach hang cua Co hoi dang gan; (2) neu
     Co hoi do da tu thuoc san 1 Du an KHAC (customer_leads.project_id) thi
     Du an dang chon phai TRUNG voi Du an do, khong duoc chon lech.
-    Bo qua (khong chan) khi thieu du lieu de so sanh - an toan hon doan sai,
-    dung tinh than "_validate_project_matches_quote_customer" cu."""
-    if not deal_id or not project_id:
+    Neu co deal_id thi deal phai nam trong dung instance hien tai; project_id
+    (neu co) phai khop customer cua deal."""
+    if not deal_id:
         return
     supabase = get_supabase_client()
-    deal_row = supabase.table("customer_leads").select("customer_id, project_id").eq("id", deal_id).maybe_single().execute()
+    deal_row = (
+        supabase.table("customer_leads")
+        .select("customer_id, project_id")
+        .eq("id", deal_id)
+        .eq("instance", _crm_instance())
+        .maybe_single()
+        .execute()
+    )
     deal_data = deal_row.data if deal_row else None
     if not deal_data:
+        raise ValueError("Không tìm thấy cơ hội CRM trong instance hiện tại.")
+    if not project_id:
         return
     deal_customer_id = deal_data.get("customer_id")
     if deal_customer_id:
-        project_row = supabase.table("projects").select("customer_id").eq("id", project_id).maybe_single().execute()
+        project_row = (
+            supabase.table("projects")
+            .select("customer_id")
+            .eq("id", project_id)
+            .maybe_single()
+            .execute()
+        )
         if not project_row or not project_row.data:
             raise ValueError("Không tìm thấy dự án.")
         if project_row.data.get("customer_id") != deal_customer_id:
@@ -1579,7 +1634,14 @@ def _validate_project_matches_quote_customer(quote_id: str, project_id: str) -> 
     cho _validate_deal_project_consistency() (dung 1 nguon logic voi
     create_quote, tranh lech quy tac giua tao moi/cap nhat)."""
     supabase = get_supabase_client()
-    quote_row = supabase.table(QUOTES_TABLE).select("deal_id").eq("id", quote_id).maybe_single().execute()
+    quote_row = (
+        supabase.table(QUOTES_TABLE)
+        .select("deal_id")
+        .eq("id", quote_id)
+        .eq("instance", _crm_instance())
+        .maybe_single()
+        .execute()
+    )
     deal_id = quote_row.data.get("deal_id") if quote_row else None
     _validate_deal_project_consistency(deal_id, project_id)
 
@@ -1612,6 +1674,7 @@ def update_quote(quote_id: str, payload: dict, actor_id: str | None) -> dict:
     (vd chi doi `data`/`issuer_company_id`) - VO TINH xoa sach hang muc that
     su cua quote. Gio PHAI truy lai items HIEN CO va truyen nguyen ven cho
     RPC trong truong hop nay, KHONG duoc mac dinh ve []."""
+    _ensure_quote_in_instance(quote_id)
     supabase: Client = get_supabase_client()
     items = payload.get("items")
     items_changed = items is not None
@@ -1656,13 +1719,18 @@ def update_quote(quote_id: str, payload: dict, actor_id: str | None) -> dict:
         # doc gia tri CU truoc khi ghi de (update() thang khong qua RPC nen
         # khong tu dong co "before" nhu cac thay doi hang muc qua quote_update()).
         current_row = (
-            supabase.table(QUOTES_TABLE).select("quote_type_codes").eq("id", quote_id).maybe_single().execute()
+            supabase.table(QUOTES_TABLE)
+            .select("quote_type_codes")
+            .eq("id", quote_id)
+            .eq("instance", _crm_instance())
+            .maybe_single()
+            .execute()
         )
         old_quote_type_codes = (current_row.data or {}).get("quote_type_codes") or [] if current_row else []
         quote_type_changed = sorted(old_quote_type_codes) != sorted(new_quote_type_codes)
         direct_fields["quote_type_codes"] = new_quote_type_codes
     if direct_fields:
-        supabase.table(QUOTES_TABLE).update(direct_fields).eq("id", quote_id).execute()
+        supabase.table(QUOTES_TABLE).update(direct_fields).eq("id", quote_id).eq("instance", _crm_instance()).execute()
     if quote_type_changed:
         supabase.table("quote_activity_log").insert({
             "quote_id": quote_id,
@@ -1693,6 +1761,7 @@ def approve_quote(quote_id: str, actor_id: str | None) -> dict:
     du DB dang chay ban RPC nao, (2) khong bao gio de 1 quote 'approved' ket
     dinh o processing_stage cu - CHI set khi processing_stage CHUA o
     ready_to_publish/published (khong bao gio LUI lai tu 'published')."""
+    _ensure_quote_in_instance(quote_id)
     supabase: Client = get_supabase_client()
     try:
         supabase.rpc("quote_approve", {
@@ -1705,7 +1774,7 @@ def approve_quote(quote_id: str, actor_id: str | None) -> dict:
 
     quote = get_quote(quote_id)
     if quote.get("status") == "approved" and quote.get("processingStage") not in _READY_OR_LATER_STAGES:
-        supabase.table(QUOTES_TABLE).update({"processing_stage": "ready_to_publish"}).eq("id", quote_id).execute()
+        supabase.table(QUOTES_TABLE).update({"processing_stage": "ready_to_publish"}).eq("id", quote_id).eq("instance", _crm_instance()).execute()
         quote = get_quote(quote_id)
     return quote
 
@@ -1714,6 +1783,7 @@ def publish_quote(quote_id: str, actor_id: str | None) -> dict:
     """Phát hành báo giá đã duyệt: sinh/bật public_token/public_enabled THẬT
     ở đây (không còn ở approve), processing_stage -> 'published'. Chỉ sau
     bước này Deal mới được link với public URL thật."""
+    _ensure_quote_in_instance(quote_id)
     supabase: Client = get_supabase_client()
     try:
         supabase.rpc("quote_publish", {
@@ -1738,12 +1808,13 @@ def publish_quote(quote_id: str, actor_id: str | None) -> dict:
     # sua 1 field trong `data`) - update thang cot `data` qua supabase client.
     quote_data = dict(quote.get("data") or {})
     quote_data["quoteDate"] = _now_iso()
-    supabase.table(QUOTES_TABLE).update({"data": quote_data}).eq("id", quote_id).execute()
+    supabase.table(QUOTES_TABLE).update({"data": quote_data}).eq("id", quote_id).eq("instance", _crm_instance()).execute()
     quote["data"] = quote_data
     return quote
 
 
 def cancel_quote(quote_id: str, actor_id: str | None, reason: str) -> dict:
+    _ensure_quote_in_instance(quote_id)
     supabase: Client = get_supabase_client()
     try:
         supabase.rpc("quote_cancel", {
@@ -1755,6 +1826,7 @@ def cancel_quote(quote_id: str, actor_id: str | None, reason: str) -> dict:
 
 
 def revoke_public_quote(quote_id: str, actor_id: str | None) -> dict:
+    _ensure_quote_in_instance(quote_id)
     supabase: Client = get_supabase_client()
     try:
         supabase.rpc("quote_revoke_public", {
@@ -1769,6 +1841,7 @@ def enable_public_quote(quote_id: str, actor_id: str | None) -> dict:
     """"Mở lại link báo giá" - chieu nguoc cua revoke_public_quote() (truoc
     day CHUA co, chi co "Khoá link" ma khong the mo lai). Giu nguyen
     public_token cu (khong sinh token moi) - xem migration 115."""
+    _ensure_quote_in_instance(quote_id)
     supabase: Client = get_supabase_client()
     try:
         supabase.rpc("quote_enable_public", {
@@ -1780,6 +1853,7 @@ def enable_public_quote(quote_id: str, actor_id: str | None) -> dict:
 
 
 def soft_delete_quote(quote_id: str, actor_id: str | None, reason: str | None) -> dict:
+    _ensure_quote_in_instance(quote_id)
     supabase: Client = get_supabase_client()
     try:
         supabase.rpc("quote_soft_delete", {
@@ -1791,6 +1865,7 @@ def soft_delete_quote(quote_id: str, actor_id: str | None, reason: str | None) -
 
 
 def restore_quote(quote_id: str, actor_id: str | None) -> dict:
+    _ensure_quote_in_instance(quote_id, include_deleted=True)
     supabase: Client = get_supabase_client()
     try:
         supabase.rpc("quote_restore", {
@@ -1806,6 +1881,7 @@ def hard_delete_quote(quote_id: str, actor_id: str | None, quote_number_confirm:
     admin/superadmin thật. Backend tự đọc lại quote_number và đối chiếu với
     quote_number_confirm client gửi (double-check) trước khi RPC ghi
     quote_deletion_audit rồi mới DELETE thật, cùng 1 transaction Postgres."""
+    _ensure_quote_in_instance(quote_id, include_deleted=True)
     supabase: Client = get_supabase_client()
     try:
         supabase.rpc("quote_hard_delete", {
@@ -1820,6 +1896,7 @@ def hard_delete_quote(quote_id: str, actor_id: str | None, quote_number_confirm:
 
 
 def request_quote_changes(quote_id: str, actor_id: str | None, target_stage: str, reason: str) -> dict:
+    _ensure_quote_in_instance(quote_id)
     supabase: Client = get_supabase_client()
     try:
         supabase.rpc("quote_request_changes", {
@@ -1842,6 +1919,7 @@ def update_and_approve_quote(quote_id: str, payload: dict, actor_id: str | None)
     tu p_items. Neu caller khong gui "items" (vd chi doi data/issuer_company_id
     roi bam Duyet), PHAI truyen lai items HIEN CO thay vi [] - khong thi bam
     Duyet se xoa sach hang muc."""
+    _ensure_quote_in_instance(quote_id)
     supabase: Client = get_supabase_client()
     items = payload.get("items")
     items_changed = items is not None
@@ -1885,6 +1963,7 @@ def create_quote_version(clicked_quote_id: str, actor_id: str | None) -> dict:
     Trả thêm 'created' (False nếu chỉ redirect tới bản nháp có sẵn, không tạo
     mới) và thông tin bản nguồn thật sự đã copy (để FE cảnh báo nếu khác
     clicked_quote_id, vd bấm ở V1 nhưng nguồn thật là V2)."""
+    _ensure_quote_in_instance(clicked_quote_id)
     supabase: Client = get_supabase_client()
     try:
         result = supabase.rpc("quote_create_version", {
@@ -1915,6 +1994,7 @@ def list_quote_versions(chain_id: str) -> list[dict]:
         supabase.table(QUOTES_TABLE)
         .select("*")
         .eq("version_chain_id", chain_id)
+        .eq("instance", _crm_instance())
         .is_("deleted_at", "null")
         .order("version_number", desc=True)
         .execute()
@@ -1953,6 +2033,7 @@ def set_quote_processing_stage(quote_id: str, actor_id: str | None, stage: str) 
             supabase.table("customer_leads")
             .select("customer_id")
             .eq("id", deal_id)
+            .eq("instance", _crm_instance())
             .maybe_single()
             .execute()
         )
@@ -1996,7 +2077,7 @@ def set_quote_processing_stage(quote_id: str, actor_id: str | None, stage: str) 
         _raise_friendly_rpc_error(exc)
 
     if is_first_technical_handoff and not current.get("slaStartedAt"):
-        supabase.table(QUOTES_TABLE).update({"sla_started_at": "now()"}).eq("id", quote_id).is_("sla_started_at", "null").execute()
+        supabase.table(QUOTES_TABLE).update({"sla_started_at": "now()"}).eq("id", quote_id).eq("instance", _crm_instance()).is_("sla_started_at", "null").execute()
 
     return get_quote(quote_id)
 
@@ -2011,6 +2092,7 @@ def assign_quote_owner(
     atomic voi tinh lai tong tien). `assign_technical`/`assign_quote_owner_field`
     phan biet "khong gui field nay" voi "gui gia tri None de bo gan" (giong
     han che cua issuer company nullable field truoc do)."""
+    _ensure_quote_in_instance(quote_id)
     supabase: Client = get_supabase_client()
     update_data: dict = {"updated_by": actor_id}
     if assign_technical:
@@ -2018,7 +2100,7 @@ def assign_quote_owner(
     if assign_quote_owner_field:
         update_data["quote_owner_id"] = quote_owner_id or None
     if len(update_data) > 1:
-        supabase.table(QUOTES_TABLE).update(update_data).eq("id", quote_id).execute()
+        supabase.table(QUOTES_TABLE).update(update_data).eq("id", quote_id).eq("instance", _crm_instance()).execute()
         supabase.table(ACTIVITY_LOG_TABLE).insert({
             "quote_id": quote_id, "actor_id": actor_id, "action": "owner_assigned",
             "changes": {"technicalOwnerId": technical_owner_id, "quoteOwnerId": quote_owner_id},
@@ -2033,12 +2115,13 @@ def pin_quote(quote_id: str, actor_id: str | None) -> dict:
     KHONG bump updated_at khi UPDATE chi doi dung 3 cot nay, dung yeu cau
     "không sửa giả updated_at/created_at". Quyen CHI Admin da chan o router
     (can_pin_quote) - ham nay khong tu kiem tra lai quyen."""
+    _ensure_quote_in_instance(quote_id)
     supabase: Client = get_supabase_client()
     supabase.table(QUOTES_TABLE).update({
         "is_pinned": True,
         "pinned_at": _now_iso(),
         "pinned_by": actor_id,
-    }).eq("id", quote_id).execute()
+    }).eq("id", quote_id).eq("instance", _crm_instance()).execute()
     supabase.table(ACTIVITY_LOG_TABLE).insert({
         "quote_id": quote_id, "actor_id": actor_id, "action": "pinned",
         "changes": {},
@@ -2050,12 +2133,13 @@ def unpin_quote(quote_id: str, actor_id: str | None) -> dict:
     """Bo ghim - dua ca 3 cot ve trang thai "chua tung ghim" (is_pinned=false,
     pinned_at/pinned_by=NULL) dung constraint quotes_pin_consistency_check
     (migration 103) - khong de lai dau vet pinned_at cu."""
+    _ensure_quote_in_instance(quote_id)
     supabase: Client = get_supabase_client()
     supabase.table(QUOTES_TABLE).update({
         "is_pinned": False,
         "pinned_at": None,
         "pinned_by": None,
-    }).eq("id", quote_id).execute()
+    }).eq("id", quote_id).eq("instance", _crm_instance()).execute()
     supabase.table(ACTIVITY_LOG_TABLE).insert({
         "quote_id": quote_id, "actor_id": actor_id, "action": "unpinned",
         "changes": {},
@@ -2093,6 +2177,7 @@ def _row_to_handoff(quote_id: str, row: dict | None) -> dict:
 
 
 def get_quote_handoff_checklist(quote_id: str) -> dict:
+    _ensure_quote_in_instance(quote_id)
     supabase: Client = get_supabase_client()
     result = supabase.table(HANDOFF_TABLE).select("*").eq("quote_id", quote_id).limit(1).execute()
     row = (result.data or [None])[0]
@@ -2103,6 +2188,7 @@ def save_quote_handoff_checklist(quote_id: str, actor_id: str | None, payload: d
     """Luu checklist ban giao (Scope/Cost/Timeline/Assumption) - upsert qua RPC
     (tu tinh handed_off_at/handed_off_by khi ca 4 muc deu da xac nhan, xem
     quote_save_handoff_checklist migration 085)."""
+    _ensure_quote_in_instance(quote_id)
     supabase: Client = get_supabase_client()
     try:
         result = supabase.rpc("quote_save_handoff_checklist", {
@@ -2141,6 +2227,7 @@ def list_quote_activity_log(quote_id: str) -> list[dict]:
     cancelled/version_created/stage_changed/handoff_updated/owner_assigned) -
     dung cho khoi "Activity & handoff" trong workspace. Actor chi tra id, FE tu
     resolve ten qua danh sach agents da co (khong join ten o backend)."""
+    _ensure_quote_in_instance(quote_id, include_deleted=True)
     supabase: Client = get_supabase_client()
     result = (
         supabase.table(ACTIVITY_LOG_TABLE)
@@ -2161,6 +2248,7 @@ def log_quote_version_reason(quote_id: str, actor_id: str | None, reason: str) -
     nhan tham so ly do nen ghi bang 1 dong INSERT rieng ngay sau khi version
     moi tao xong thanh cong (khong doi lai RPC versioning da on dinh qua nhieu
     migration). Chi chap nhan gia tri that trong danh sach ly do co dinh."""
+    _ensure_quote_in_instance(quote_id)
     if reason not in _VALID_VERSION_REASONS:
         raise ValueError("Lý do tạo phiên bản không hợp lệ.")
     supabase: Client = get_supabase_client()
@@ -2171,11 +2259,11 @@ def log_quote_version_reason(quote_id: str, actor_id: str | None, reason: str) -
 
 
 def delete_quote(quote_id: str) -> None:
+    current = get_quote(quote_id)
     supabase: Client = get_supabase_client()
-    current = supabase.table(QUOTES_TABLE).select("status").eq("id", quote_id).single().execute().data
     if current and current.get("status") == "approved":
         raise ValueError("Báo giá đã duyệt, không thể xoá.")
-    supabase.table(QUOTES_TABLE).delete().eq("id", quote_id).execute()
+    supabase.table(QUOTES_TABLE).delete().eq("id", quote_id).eq("instance", _crm_instance()).execute()
 
 
 def link_quote_to_deal(quote_id: str, deal_id: str, reference: dict | None = None) -> dict:
@@ -2183,8 +2271,9 @@ def link_quote_to_deal(quote_id: str, deal_id: str, reference: dict | None = Non
     trên customer_leads — Deal Card/Drawer đọc y hệt như tham chiếu thủ công cũ
     (rowToDeal() phía frontend không cần sửa gì), chỉ khác nguồn dữ liệu giờ là
     quote thật thay vì user tự gõ tay."""
+    _ensure_quote_in_instance(quote_id)
     supabase: Client = get_supabase_client()
-    supabase.table(QUOTES_TABLE).update({"deal_id": deal_id, "updated_at": _now_iso()}).eq("id", quote_id).execute()
+    supabase.table(QUOTES_TABLE).update({"deal_id": deal_id, "updated_at": _now_iso()}).eq("id", quote_id).eq("instance", _crm_instance()).execute()
 
     update_data: dict[str, Any] = {"quote_id": quote_id}
     if reference:
@@ -2194,9 +2283,15 @@ def link_quote_to_deal(quote_id: str, deal_id: str, reference: dict | None = Non
             update_data["last_attachment_name"] = reference["number"]
         if reference.get("totalAmount"):
             current = (
-                supabase.table("customer_leads").select("estimated_budget").eq("id", deal_id).single().execute().data
+                supabase.table("customer_leads")
+                .select("estimated_budget")
+                .eq("id", deal_id)
+                .eq("instance", _crm_instance())
+                .single()
+                .execute()
+                .data
             )
             if not (current or {}).get("estimated_budget"):
                 update_data["estimated_budget"] = reference["totalAmount"]
-    supabase.table("customer_leads").update(update_data).eq("id", deal_id).execute()
+    supabase.table("customer_leads").update(update_data).eq("id", deal_id).eq("instance", _crm_instance()).execute()
     return get_quote(quote_id)

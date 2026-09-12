@@ -137,7 +137,9 @@ def list_service_catalog_items() -> list[dict]:
 
 def get_service_catalog_item(item_id: str) -> dict:
     supabase: Client = get_supabase_client()
-    row = supabase.table(ITEMS_TABLE).select("*").eq("id", item_id).single().execute().data
+    row = supabase.table(ITEMS_TABLE).select("*").eq("id", item_id).maybe_single().execute().data
+    if not row:
+        raise ValueError("Khong tim thay dich vu.")
     item = _row_to_item(row)
     if item["itemType"] == "bundle":
         item["components"] = _bundle_components(item_id)
@@ -199,19 +201,21 @@ def update_service_catalog_item(item_id: str, payload: dict, actor_id: str | Non
     update_data["updated_by"] = actor_id
     update_data["updated_at"] = _now_iso()
     result = supabase.table(ITEMS_TABLE).update(update_data).eq("id", item_id).execute()
+    if not result.data:
+        raise ValueError("Khong tim thay dich vu.")
     return _row_to_item(result.data[0])
 
 
 def delete_service_catalog_item(item_id: str) -> dict:
     supabase: Client = get_supabase_client()
-    item = supabase.table(ITEMS_TABLE).select("*").eq("id", item_id).single().execute().data
+    item = supabase.table(ITEMS_TABLE).select("*").eq("id", item_id).maybe_single().execute().data
     if not item:
-        raise ValueError("Không tìm thấy dịch vụ.")
+        raise ValueError("Khong tim thay dich vu.")
 
     if item["item_type"] == "group":
         children = supabase.table(ITEMS_TABLE).select("id").eq("parent_id", item_id).limit(1).execute()
         if children.data:
-            raise ValueError("Nhóm dịch vụ còn dịch vụ con, không thể xoá.")
+            raise ValueError("Nhom dich vu con dich vu con, khong the xoa.")
 
     if item["item_type"] == "component":
         used_in = (
@@ -226,25 +230,28 @@ def delete_service_catalog_item(item_id: str) -> dict:
             bundle_ids = list({row["bundle_id"] for row in used_in})
             bundles = supabase.table(ITEMS_TABLE).select("name").in_("id", bundle_ids).execute().data or []
             names = ", ".join(b["name"] for b in bundles)
-            raise ValueError(f"Dịch vụ đang được dùng trong gói: {names}. Không thể xoá.")
+            raise ValueError(f"Dich vu dang duoc dung trong goi: {names}. Khong the xoa.")
 
-    # Không xoá cứng dịch vụ đã từng được chọn trong 1 báo giá (kể cả báo giá cũ) -
-    # quote_items lưu snapshot riêng nên xoá không phá dữ liệu báo giá cũ, nhưng vẫn
-    # chặn theo đúng yêu cầu nghiệp vụ: dùng "Ngưng kinh doanh" (đổi status) thay vì xoá.
     used_in_quotes = (
         supabase.table("quote_items").select("id").eq("catalog_item_id", item_id).limit(1).execute().data or []
     )
     if used_in_quotes:
-        raise ValueError("Dịch vụ đã được dùng trong báo giá, không thể xoá — chuyển sang Ngưng kinh doanh.")
+        result = (
+            supabase.table(ITEMS_TABLE)
+            .update({"status": "inactive", "updated_at": _now_iso()})
+            .eq("id", item_id)
+            .execute()
+        )
+        updated = result.data[0] if result.data else {**item, "status": "inactive"}
+        return {"deleted": False, "deactivated": True, "item": _row_to_item(updated)}
 
     supabase.table(ITEMS_TABLE).delete().eq("id", item_id).execute()
-    return {"deleted": True}
-
+    return {"deleted": True, "deactivated": False}
 
 def reorder_service_catalog_item(item_id: str, direction: str) -> list[dict]:
     """Swap sort_order giữa dòng target và hàng xóm liền kề, TRONG CÙNG parent_id."""
     supabase: Client = get_supabase_client()
-    current = supabase.table(ITEMS_TABLE).select("*").eq("id", item_id).single().execute().data
+    current = supabase.table(ITEMS_TABLE).select("*").eq("id", item_id).maybe_single().execute().data
     if not current:
         return list_service_catalog_items()
 
@@ -271,7 +278,7 @@ def reorder_service_catalog_item(item_id: str, direction: str) -> list[dict]:
 
 def set_bundle_components(bundle_id: str, items: list[dict]) -> dict:
     supabase: Client = get_supabase_client()
-    bundle = supabase.table(ITEMS_TABLE).select("*").eq("id", bundle_id).single().execute().data
+    bundle = supabase.table(ITEMS_TABLE).select("*").eq("id", bundle_id).maybe_single().execute().data
     if not bundle or bundle["item_type"] != "bundle":
         raise ValueError("Không tìm thấy gói dịch vụ.")
 

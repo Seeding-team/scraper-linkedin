@@ -5,16 +5,13 @@ import { useMembers } from '@/hooks/useMembers';
 import { teamsService, projectsService, type TeamRow, type Project } from '@/services/all-platform.service';
 import { SearchableSelect } from './SearchableSelect';
 import { PositionSelect } from './PositionSelect';
+import { CrmCategoryCodeSelect, CrmCategorySelect } from './CrmCategorySelect';
 import type { MemberProfile } from '@/types/unified.types';
 import {
-  CITY_OPTIONS,
-  CONTRACT_STATUS_OPTIONS,
   CRM_PACKAGE_OPTIONS,
   DEAL_STAGE_META,
   DEAL_STAGES,
   INDUSTRY_OPTIONS,
-  PAYMENT_STATUS_OPTIONS,
-  BILLING_TYPE_OPTIONS,
   SERVICE_PACKAGE_OPTIONS,
   SOURCE_OPTIONS,
   parseMoney,
@@ -22,6 +19,8 @@ import {
 import type { CreateDealInput, CrmCustomerSummary, CrmUserOption, Deal, UpdateDealInput } from '../types';
 import { seedingCrmRepository } from '../repositories/SeedingCrmRepository';
 import type { AppUser } from '@/types/unified.types';
+import { CurrencyInput } from '@/components/CurrencyInput';
+import { formatCurrencyDisplay, parseCurrencyInput } from '@/lib/currency';
 
 const DEFAULT_INDUSTRY_OPTIONS = INDUSTRY_OPTIONS.map(value => ({ value, label: value }));
 
@@ -110,7 +109,7 @@ export function emptyDealForm(): DealFormState {
     sourcePlatform: 'Manual',
     servicePackage: '',
     package: '',
-    stage: 'new_lead',
+    stage: 'dealing',
     decisionMaker: '',
     estimatedBudget: '',
     followUpDate: '',
@@ -175,7 +174,7 @@ export function dealFormFromDeal(deal: Deal): DealFormState {
     sourcePlatform: deal.sourcePlatform || 'Manual',
     servicePackage: deal.servicePackage || '',
     package: deal.package || '',
-    stage: deal.stage || 'new_lead',
+    stage: deal.stage || 'dealing',
     decisionMaker: deal.decisionMaker || '',
     estimatedBudget: String(deal.estimatedBudget || ''),
     followUpDate: toDateTimeInput(deal.followUpDate),
@@ -766,10 +765,6 @@ export function DealFormFields({
 
   // Next step: dropdown gợi ý thao tác phổ biến, vẫn cho gõ tự do — bắt đầu ở chế độ tuỳ
   // chỉnh nếu giá trị đang có (vd deal cũ) không khớp preset nào.
-  const [nextStepCustom, setNextStepCustom] = useState(
-    () => form.nextStep.trim() !== '' && !NEXT_STEP_PRESETS.includes(form.nextStep)
-  );
-
   return (
     <>
       {isCreate ? (
@@ -817,10 +812,14 @@ export function DealFormFields({
             </div>
           </Field>
           <Field label="Sản phẩm / dịch vụ" required>
-            <SearchableSelect value={form.servicePackage} onChange={value => setValue('servicePackage', value)} options={servicePackageOptions} placeholder="-- Chọn --" />
+            <CrmCategoryCodeSelect categoryType="crm_service_package" value={form.servicePackage} onChange={value => setValue('servicePackage', value)} fallbackOptions={servicePackageOptions} placeholder="-- Chọn --" />
           </Field>
           <Field label="Giá trị ước tính (VND)">
-            <input value={form.estimatedBudget} onChange={event => setValue('estimatedBudget', event.target.value)} inputMode="decimal" placeholder="VD: 50.000.000" />
+            <CurrencyInput
+              value={parseCurrencyInput(form.estimatedBudget)}
+              onChange={value => setValue('estimatedBudget', value != null ? String(value) : '')}
+              placeholder="VD: 50.000.000"
+            />
           </Field>
         </div>
       </section>
@@ -859,30 +858,7 @@ export function DealFormFields({
             </Field>
           )}
           <Field label="Next step" required>
-            {nextStepCustom ? (
-              <div className="crm-inline-with-link">
-                <input value={form.nextStep} onChange={event => setValue('nextStep', event.target.value)} placeholder="Nhập việc cần làm tiếp theo..." />
-                <button type="button" className="crm-inline-link-btn" onClick={() => setNextStepCustom(false)}>Chọn từ danh sách</button>
-              </div>
-            ) : (
-              <select
-                value={NEXT_STEP_PRESETS.includes(form.nextStep) ? form.nextStep : ''}
-                onChange={event => {
-                  if (event.target.value === '__custom__') {
-                    setValue('nextStep', '');
-                    setNextStepCustom(true);
-                  } else {
-                    setValue('nextStep', event.target.value);
-                  }
-                }}
-              >
-                <option value="">-- Chọn --</option>
-                {NEXT_STEP_PRESETS.map(preset => (
-                  <option key={preset} value={preset}>{preset}</option>
-                ))}
-                <option value="__custom__">✎ Tuỳ chỉnh...</option>
-              </select>
-            )}
+            <CrmCategorySelect categoryType="crm_next_step" value={form.nextStep} onChange={value => setValue('nextStep', value)} placeholder="-- Chọn --" excludeLabels={["Khác", "Khac"]} />
           </Field>
           <Field label="Hạn follow-up" required>
             <input value={form.followUpDate} onChange={event => setValue('followUpDate', event.target.value)} type="datetime-local" />
@@ -937,13 +913,17 @@ export function DealFormFields({
               <h3 className="crm-form-title">Thông tin nâng cao – không bắt buộc khi tạo deal</h3>
               <div className="crm-form-grid">
                 <Field label="Nguồn">
-                  <SearchableSelect value={form.sourcePlatform} onChange={value => setValue('sourcePlatform', value)} options={sourceOptions} />
+                  <CrmCategoryCodeSelect categoryType="crm_source" value={form.sourcePlatform} onChange={value => setValue('sourcePlatform', value)} fallbackOptions={sourceOptions} />
                 </Field>
                 <Field label="Người quyết định (DM)">
                   <input value={form.decisionMaker} onChange={event => setValue('decisionMaker', event.target.value)} placeholder="VD: CEO / Marketing Director" />
                 </Field>
                 <Field label="Ngân sách xác nhận">
-                  <input value={form.estimatedBudget} onChange={event => setValue('estimatedBudget', event.target.value)} inputMode="decimal" placeholder="VD: 50-100 triệu" />
+                  <CurrencyInput
+                    value={parseCurrencyInput(form.estimatedBudget)}
+                    onChange={value => setValue('estimatedBudget', value != null ? String(value) : '')}
+                    placeholder="VD: 50.000.000"
+                  />
                 </Field>
                 <Field label="Xác suất chốt">
                   <select value="auto" disabled title="Tự tính theo giai đoạn, chưa chỉnh tay được">
@@ -991,13 +971,13 @@ export function DealFormFields({
                   <input value={form.website} onChange={event => setValue('website', event.target.value)} placeholder="https://..." />
                 </Field>
                 <Field label="Thành phố">
-                  <SearchableSelect value={form.city} onChange={value => setValue('city', value)} options={CITY_OPTIONS} />
+                  <CrmCategorySelect categoryType="crm_city" value={form.city} onChange={value => setValue('city', value)} />
                 </Field>
                 <Field label="Lĩnh vực">
-                  <SearchableSelect value={form.industry} onChange={value => setValue('industry', value)} options={industryOptions} />
+                  <CrmCategoryCodeSelect categoryType="crm_industry" value={form.industry} onChange={value => setValue('industry', value)} fallbackOptions={industryOptions} />
                 </Field>
                 <Field label="Gói" hint="tùy chọn">
-                  <SearchableSelect value={form.package} onChange={value => setValue('package', value)} options={packageOptions} placeholder="-- Chưa chọn --" />
+                  <CrmCategoryCodeSelect categoryType="crm_package" value={form.package} onChange={value => setValue('package', value)} fallbackOptions={packageOptions} placeholder="-- Chưa chọn --" />
                 </Field>
               </div>
             </section>
@@ -1006,10 +986,7 @@ export function DealFormFields({
               <h3 className="crm-form-title">Hợp đồng &amp; thanh toán</h3>
               <div className="crm-form-grid">
                 <Field label="Tình trạng hợp đồng">
-                  <select value={form.contractStatus} onChange={event => setValue('contractStatus', event.target.value)}>
-                    <option value="">-- Chưa chọn --</option>
-                    {CONTRACT_STATUS_OPTIONS.map(status => <option key={status.value} value={status.value}>{status.label}</option>)}
-                  </select>
+                  <CrmCategoryCodeSelect categoryType="crm_contract_status" value={form.contractStatus} onChange={value => setValue('contractStatus', value)} placeholder="-- Chưa chọn --" />
                 </Field>
                 {variant === 'edit' ? (
                   <>
@@ -1025,17 +1002,13 @@ export function DealFormFields({
                   </>
                 ) : null}
                 <Field label="Trạng thái thanh toán">
-                  <select value={form.paymentStatus} onChange={event => setValue('paymentStatus', event.target.value)}>
-                    {PAYMENT_STATUS_OPTIONS.map(status => <option key={status.value} value={status.value}>{status.label}</option>)}
-                  </select>
+                  <CrmCategoryCodeSelect categoryType="crm_payment_status" value={form.paymentStatus} onChange={value => setValue('paymentStatus', value)} />
                 </Field>
                 <Field label="Ngày cần thanh toán">
                   <input value={form.paymentDueDate} onChange={event => setValue('paymentDueDate', event.target.value)} type="date" />
                 </Field>
                 <Field label="Loại thanh toán">
-                  <select value={form.billingType} onChange={event => setValue('billingType', event.target.value)}>
-                    {BILLING_TYPE_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
-                  </select>
+                  <CrmCategoryCodeSelect categoryType="crm_billing_type" value={form.billingType} onChange={value => setValue('billingType', value)} />
                 </Field>
                 <Field
                   label={
@@ -1046,7 +1019,11 @@ export function DealFormFields({
                       : 'Giá trị hợp đồng / LTV (VND)'
                   }
                 >
-                  <input value={form.lifetimeValue} onChange={event => setValue('lifetimeValue', event.target.value)} inputMode="decimal" placeholder="0" />
+                  <CurrencyInput
+                    value={parseCurrencyInput(form.lifetimeValue)}
+                    onChange={value => setValue('lifetimeValue', value != null ? String(value) : '')}
+                    placeholder="0"
+                  />
                 </Field>
                 <Field label="Ngày ký hợp đồng">
                   <input value={form.contractSignedAt} onChange={event => setValue('contractSignedAt', event.target.value)} type="date" />
@@ -1074,7 +1051,7 @@ export function DealFormFields({
                     <input value={form.quoteNumber} readOnly placeholder="Chưa có báo giá" title="Tham chiếu báo giá chỉ đọc, được đồng bộ từ báo giá đã gắn với deal." />
                   </Field>
                   <Field label="Tổng tiền báo giá">
-                    <input value={form.quoteTotalAmount} readOnly inputMode="decimal" placeholder="0" title="Tham chiếu báo giá chỉ đọc, được đồng bộ từ báo giá đã gắn với deal." />
+                    <input value={form.quoteTotalAmount ? formatCurrencyDisplay(form.quoteTotalAmount) : ''} readOnly placeholder="0" title="Tham chiếu báo giá chỉ đọc, được đồng bộ từ báo giá đã gắn với deal." />
                   </Field>
                 </div>
               </section>
@@ -1116,17 +1093,17 @@ export function DealFormFields({
 /** 5 giai đoạn cho chip picker lúc TẠO MỚI — cố ý không gồm on_hold/won/lost (3 stage đó chỉ
  * đạt tới qua kanban/sửa deal, không hợp lý chọn ngay lúc tạo nhanh) và bỏ qua 'requirement'
  * (Lấy yêu cầu) để khớp đúng 5 bước rút gọn của form nhanh. */
-export const CREATE_STAGE_CHIPS: Deal['stage'][] = ['new_lead', 'contacted', 'qualified', 'proposal_sent', 'negotiation'];
+export const CREATE_STAGE_CHIPS: Deal['stage'][] = ['dealing', 'proposal_sent', 'negotiation', 'contract_signed', 'payment_1'];
 
 /** Nhãn hiển thị RIÊNG cho chip picker của form nhanh — khác nhãn dùng chung
  * DEAL_STAGE_META (vd 'new_lead' vẫn là "Khách mới" ở kanban/nơi khác, chỉ ở đây gọi "Lead
  * mới") — cùng 1 giá trị stage lưu xuống DB, chỉ đổi CHỮ hiển thị tại đúng chỗ này. */
 export const CREATE_STAGE_LABELS: Partial<Record<Deal['stage'], string>> = {
-  new_lead: 'Lead mới',
-  contacted: 'Đã liên hệ',
-  qualified: 'Đủ điều kiện',
-  proposal_sent: 'Báo giá',
-  negotiation: 'Đàm phán',
+  dealing: 'Đang deal',
+  proposal_sent: 'Lên Proposal',
+  negotiation: 'Chăm sóc/Đàm phán',
+  contract_signed: 'Lên hợp đồng',
+  payment_1: 'Thanh toán đợt 1',
 };
 
 /** Gợi ý Next step phổ biến — vẫn cho gõ tự do qua "Tuỳ chỉnh...". */

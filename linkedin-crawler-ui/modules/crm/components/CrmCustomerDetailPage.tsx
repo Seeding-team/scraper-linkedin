@@ -134,6 +134,19 @@ function headers() {
   return value;
 }
 
+function customerDetailErrorMessage(status: number, body: unknown, fallback: string): string {
+  const payload = body as { message?: unknown; detail?: unknown } | null;
+  const raw = typeof payload?.message === 'string'
+    ? payload.message
+    : typeof payload?.detail === 'string'
+      ? payload.detail
+      : '';
+  if (raw) return raw;
+  if (status === 403) return 'Không có quyền xem hồ sơ khách hàng này.';
+  if (status === 404) return 'Không tìm thấy hồ sơ khách hàng này.';
+  return fallback;
+}
+
 function isAdminOrLeader(role?: string) {
   const normalized = String(role || '').toLowerCase();
   return normalized === 'admin' || normalized === 'leader';
@@ -324,8 +337,10 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
       headers: headers(),
     })
       .then(async res => {
-        const body = await res.json();
-        if (!res.ok || body.success === false) throw new Error(body.message || 'Không tải được hồ sơ khách hàng.');
+        const body = await res.json().catch(() => null);
+        if (!res.ok || body?.success === false) {
+          throw new Error(customerDetailErrorMessage(res.status, body, 'Không tải được hồ sơ khách hàng.'));
+        }
         return body.data as RelatedPayload;
       })
       .then(payload => {
@@ -391,6 +406,9 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
             <button type="button" className="crm-primary-button crm-empty-action" onClick={() => setReloadTick(t => t + 1)}>
               Thử lại
             </button>
+            <Link className="crm-secondary-button crm-empty-action" href="/all-platform/crm/customers">
+              Quay về danh sách
+            </Link>
           </div>
         </div>
       </div>
@@ -724,6 +742,7 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
         open={projectModal.open}
         customerId={customerId}
         customerName={customer?.customer_name || 'Khách hàng chưa tên'}
+        currentUserId={user?.id ?? null}
         project={projectModal.project}
         onClose={() => setProjectModal({ open: false, project: null })}
         onSaved={() => { setProjectModal({ open: false, project: null }); setReloadTick(t => t + 1); }}

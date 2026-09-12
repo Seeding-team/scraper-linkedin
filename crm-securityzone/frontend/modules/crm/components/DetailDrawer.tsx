@@ -38,6 +38,7 @@ import {
 } from '../constants/crmConfig';
 import type { ContractStatus, Deal, DealStage } from '../types';
 import { useAppAuth } from '@/contexts/AppAuthContext';
+import { useCrmCategoryCodeOptions } from './CrmCategorySelect';
 
 type Props = {
   deal: Deal | null;
@@ -85,6 +86,7 @@ export function DetailDrawer({
 }: Props) {
   const { user } = useAppAuth();
   const [otherVersions, setOtherVersions] = useState<Quote[]>([]);
+  const { options: contractStatusOptions } = useCrmCategoryCodeOptions('crm_contract_status', CONTRACT_STATUS_OPTIONS);
 
   useEffect(() => {
     setOtherVersions([]);
@@ -215,7 +217,7 @@ export function DetailDrawer({
                   onChange={event => onUpdateContractStatus(deal, event.target.value as ContractStatus)}
                 >
                   <option value="">-- Chưa chọn --</option>
-                  {CONTRACT_STATUS_OPTIONS.map(status => <option key={status.value} value={status.value}>{status.label}</option>)}
+                  {contractStatusOptions.map(status => <option key={status.value} value={status.value}>{status.label}</option>)}
                 </select>
                 {deal.contract.status ? <span className="crm-contract-status-badge">{getContractStatusText(deal.contract.status)}</span> : null}
               </div>

@@ -3,8 +3,9 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
-import { MaterialIcon } from "@/components/ui";
+import { MaterialIcon, type MaterialSymbolName } from "@/components/ui";
 import { useAppPlatform } from "@/components/providers/AppPlatformProvider";
+import { useAppAuth } from "@/contexts/AppAuthContext";
 import { useMembers } from "@/hooks/useMembers";
 import {
   allPlatformCategoriesService,
@@ -375,6 +376,20 @@ const CRM_SECTIONS: Array<{ key: CategoryType; label: string; description: strin
     placeholderName: "Vd: Trưởng phòng Kinh doanh",
   },
   {
+    key: "crm_city",
+    label: "Thanh pho",
+    description: "Thanh pho/tinh dung trong ho so Khach hang, Lead va Deal.",
+    placeholderCode: "Vd: Da_Nang",
+    placeholderName: "Vd: Da Nang",
+  },
+  {
+    key: "crm_expected_timeline",
+    label: "Thời gian triển khai",
+    description: "Mốc thời gian dự kiến triển khai trong form Xác minh Lead.",
+    placeholderCode: "Vd: Trong_1_thang",
+    placeholderName: "Vd: Trong 1 tháng",
+  },
+  {
     // migration 080 — dropdown "SDR/Sale cần làm gì tiếp" trong drawer
     // "Xác minh Lead" (LeadDetailDrawer.tsx). Nhãn của mục được chọn lưu
     // thẳng vào crm_leads.next_step (cột TEXT đã có), không thêm cột mới.
@@ -383,6 +398,27 @@ const CRM_SECTIONS: Array<{ key: CategoryType; label: string; description: strin
     description: "Việc SDR/Sale cần làm tiếp sau khi xác minh Lead (vd: Gọi lại, Gửi báo giá...).",
     placeholderCode: "Vd: Gui_bao_gia",
     placeholderName: "Vd: Gửi báo giá",
+  },
+  {
+    key: "crm_nurture_reason",
+    label: "Lý do nuôi dưỡng",
+    description: "Lý do giữ Lead ở nhánh Nuôi dưỡng trong form Xác minh Lead.",
+    placeholderCode: "Vd: Chua_co_ngan_sach",
+    placeholderName: "Vd: Chưa có ngân sách",
+  },
+  {
+    key: "crm_follow_up_channel",
+    label: "Kênh chăm sóc lại",
+    description: "Kênh dự kiến dùng để chăm sóc lại Lead nuôi dưỡng.",
+    placeholderCode: "Vd: Zalo",
+    placeholderName: "Vd: Zalo",
+  },
+  {
+    key: "crm_unqualified_reason",
+    label: "Lý do không đạt chuẩn",
+    description: "Lý do chốt Lead không đạt chuẩn trong form Xác minh Lead.",
+    placeholderCode: "Vd: Sai_thong_tin",
+    placeholderName: "Vd: Sai thông tin",
   },
   {
     // Category type MOI, RIENG (khong dung chung voi crm_industry) - "Loại
@@ -396,6 +432,17 @@ const CRM_SECTIONS: Array<{ key: CategoryType; label: string; description: strin
     placeholderCode: "Vd: Thiet_ke_website",
     placeholderName: "Vd: Thiết kế website",
   },
+  { key: "crm_contract_status", label: "Tinh trang hop dong", description: "Cac lua chon tinh trang hop dong trong Deal/Hop dong.", placeholderCode: "Vd: dang_xu_ly", placeholderName: "Vd: Dang xu ly" },
+  { key: "crm_payment_status", label: "Trang thai thanh toan", description: "Cac lua chon trang thai thanh toan trong Deal/Hop dong.", placeholderCode: "Vd: chua_thanh_toan", placeholderName: "Vd: Chua thanh toan" },
+  { key: "crm_billing_type", label: "Loai thanh toan", description: "Cac lua chon chu ky/loai thanh toan cua hop dong.", placeholderCode: "Vd: one_time", placeholderName: "Vd: Mot lan" },
+  { key: "crm_won_reason", label: "Ly do thang deal", description: "Ly do chuan hoa khi chot thang Deal.", placeholderCode: "Vd: solution_fit", placeholderName: "Vd: Giai phap phu hop" },
+  { key: "crm_lost_reason", label: "Ly do thua deal", description: "Ly do chuan hoa khi chot thua Deal.", placeholderCode: "Vd: no_budget", placeholderName: "Vd: Khach chua co ngan sach" },
+  { key: "crm_outcome_confidence", label: "Do chac chan danh gia", description: "Muc do chac chan cua ket luan thang/thua.", placeholderCode: "Vd: high_confirmed", placeholderName: "Vd: Cao - Co khach hang xac nhan" },
+  { key: "crm_outcome_trigger", label: "Trigger hanh dong", description: "Boi canh khien khach hang hanh dong trong danh gia Deal.", placeholderCode: "Vd: deadline", placeholderName: "Vd: Can go-live theo deadline" },
+  { key: "crm_outcome_objection", label: "Objection", description: "Cac phan doi/lo ngai chinh trong danh gia Deal.", placeholderCode: "Vd: price", placeholderName: "Vd: Lo ngai gia / ngan sach" },
+  { key: "crm_kb_reuse_level", label: "Muc tai su dung KB", description: "Muc do co the tai su dung bai hoc sau khi dong Deal.", placeholderCode: "Vd: high_playbook", placeholderName: "Vd: Cao - Co the thanh playbook" },
+  { key: "crm_kb_owner", label: "Owner KB", description: "Nhom/nguoi phu trach bai hoc Knowledge Base.", placeholderCode: "Vd: sales_manager", placeholderName: "Vd: Quan ly sales" },
+  { key: "crm_kb_status", label: "Trang thai KB", description: "Trang thai duyet bai hoc Knowledge Base.", placeholderCode: "Vd: approved", placeholderName: "Vd: Approved - Da duyet" },
 ];
 
 // Chỉ category_type='crm_position'/'crm_quote_type' dùng NGỪNG DÙNG
@@ -404,21 +451,61 @@ const CRM_SECTIONS: Array<{ key: CategoryType; label: string; description: strin
 // "Không xóa cứng loại đã được báo giá sử dụng". 3 mục kia (Lĩnh vực/Nguồn/
 // Danh mục sản phẩm/Gói) giữ nguyên hành vi xóa cứng đã có từ trước (ngoài
 // phạm vi task này, xem migration 079).
-const DEACTIVATABLE_SECTIONS = new Set<CategoryType>(["crm_position", "crm_quote_type"]);
+const DEACTIVATABLE_SECTIONS = new Set<CategoryType>(CRM_SECTIONS.map(section => section.key));
+
+const CRM_SECTION_GROUPS = [
+  "Lead & Khách hàng",
+  "Xác minh & Chăm sóc",
+  "Deal & Báo giá",
+  "Hợp đồng & Thanh toán",
+  "Đánh giá & Knowledge Base",
+] as const;
+
+const CRM_SECTION_PRESENTATION: Partial<Record<CategoryType, { group: (typeof CRM_SECTION_GROUPS)[number]; icon: MaterialSymbolName }>> = {
+  crm_industry: { group: "Lead & Khách hàng", icon: "domain" },
+  crm_source: { group: "Lead & Khách hàng", icon: "travel_explore" },
+  crm_service_package: { group: "Lead & Khách hàng", icon: "category" },
+  crm_package: { group: "Lead & Khách hàng", icon: "folder" },
+  crm_position: { group: "Lead & Khách hàng", icon: "person" },
+  crm_city: { group: "Lead & Khách hàng", icon: "domain" },
+  crm_expected_timeline: { group: "Xác minh & Chăm sóc", icon: "calendar_month" },
+  crm_next_step: { group: "Xác minh & Chăm sóc", icon: "arrow_forward" },
+  crm_nurture_reason: { group: "Xác minh & Chăm sóc", icon: "lightbulb" },
+  crm_follow_up_channel: { group: "Xác minh & Chăm sóc", icon: "forum" },
+  crm_unqualified_reason: { group: "Xác minh & Chăm sóc", icon: "block" },
+  crm_quote_type: { group: "Deal & Báo giá", icon: "request_quote" },
+  crm_won_reason: { group: "Deal & Báo giá", icon: "military_tech" },
+  crm_lost_reason: { group: "Deal & Báo giá", icon: "block" },
+  crm_contract_status: { group: "Hợp đồng & Thanh toán", icon: "assignment" },
+  crm_payment_status: { group: "Hợp đồng & Thanh toán", icon: "paid" },
+  crm_billing_type: { group: "Hợp đồng & Thanh toán", icon: "description" },
+  crm_outcome_confidence: { group: "Đánh giá & Knowledge Base", icon: "verified" },
+  crm_outcome_trigger: { group: "Đánh giá & Knowledge Base", icon: "bolt" },
+  crm_outcome_objection: { group: "Đánh giá & Knowledge Base", icon: "comment" },
+  crm_kb_reuse_level: { group: "Đánh giá & Knowledge Base", icon: "sync" },
+  crm_kb_owner: { group: "Đánh giá & Knowledge Base", icon: "manage_accounts" },
+  crm_kb_status: { group: "Đánh giá & Knowledge Base", icon: "check_circle" },
+};
+
+type CrmCategoryStatusFilter = "all" | "active" | "inactive";
 
 function CrmCategorySections({
   categories,
   onChanged,
   isLoading,
   errorMsg,
+  canManage,
 }: {
   categories: Record<string, Category[]>;
   onChanged: () => Promise<void>;
   isLoading: boolean;
   errorMsg: string | null;
+  canManage: boolean;
 }) {
   const [activeSection, setActiveSection] = useState<CategoryType>(CRM_SECTIONS[0].key);
+  const [sectionSearch, setSectionSearch] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
+  const [statusFilter, setStatusFilter] = useState<CrmCategoryStatusFilter>("all");
   const [modal, setModal] = useState<{
     sectionKey: CategoryType;
     mode: "add" | "edit";
@@ -431,15 +518,52 @@ function CrmCategorySections({
   const [deleteTarget, setDeleteTarget] = useState<{ sectionKey: CategoryType; item: Category } | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
 
-  const activeMeta = CRM_SECTIONS.find(s => s.key === activeSection)!;
-  const sectionItems = categories[activeSection] || [];
+  const activeMeta = CRM_SECTIONS.find(s => s.key === activeSection) || CRM_SECTIONS[0];
+  const activePresentation = CRM_SECTION_PRESENTATION[activeSection] || { group: CRM_SECTION_GROUPS[0], icon: "folder" };
+  const sectionItems = useMemo(
+    () => [...(categories[activeSection] || [])].sort((a, b) => {
+      const orderA = typeof a.sort_order === "number" ? a.sort_order : 0;
+      const orderB = typeof b.sort_order === "number" ? b.sort_order : 0;
+      return orderA - orderB || (a.code || "").localeCompare(b.code || "");
+    }),
+    [activeSection, categories],
+  );
+
   const filteredItems = useMemo(() => {
-    if (!searchTerm.trim()) return sectionItems;
     const term = searchTerm.trim().toLowerCase();
-    return sectionItems.filter(
-      item => item.code.toLowerCase().includes(term) || (item.name || "").toLowerCase().includes(term)
-    );
-  }, [sectionItems, searchTerm]);
+    return sectionItems.filter(item => {
+      const isInactive = item.is_active === false;
+      if (statusFilter === "active" && isInactive) return false;
+      if (statusFilter === "inactive" && !isInactive) return false;
+      if (!term) return true;
+      return (item.code || "").toLowerCase().includes(term) || (item.name || "").toLowerCase().includes(term);
+    });
+  }, [sectionItems, searchTerm, statusFilter]);
+
+  const visibleSectionsByGroup = useMemo(() => {
+    const term = sectionSearch.trim().toLowerCase();
+    const grouped = new Map<(typeof CRM_SECTION_GROUPS)[number], typeof CRM_SECTIONS>();
+    CRM_SECTION_GROUPS.forEach(group => grouped.set(group, []));
+    CRM_SECTIONS.forEach(section => {
+      const presentation = CRM_SECTION_PRESENTATION[section.key] || { group: CRM_SECTION_GROUPS[0] };
+      const count = categories[section.key]?.length || 0;
+      const haystack = `${section.label} ${section.description} ${section.key}`.toLowerCase();
+      if (term && !haystack.includes(term)) return;
+      grouped.set(presentation.group, [...(grouped.get(presentation.group) || []), section]);
+    });
+    return grouped;
+  }, [categories, sectionSearch]);
+
+  const handleSelectSection = (sectionKey: CategoryType) => {
+    setActiveSection(sectionKey);
+    setSearchTerm("");
+    setStatusFilter("all");
+  };
+
+  const handleOpenAdd = () => {
+    setModal({ sectionKey: activeSection, mode: "add", code: "", name: "" });
+    setModalError(null);
+  };
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -462,9 +586,6 @@ function CrmCategorySections({
         return;
       }
       if (modal.sectionKey === "crm_position") invalidatePositionOptionsCache();
-      // Combobox danh muc CRM dung chung (vd "Viec tiep theo") cache theo
-      // category_type — xoa cache cua dung muc vua sua de moi dropdown dang
-      // mo load lai ngay, khong can reload trang.
       invalidateCrmCategoryCache(modal.sectionKey);
       setModal(null);
       await onChanged();
@@ -479,10 +600,6 @@ function CrmCategorySections({
     if (!deleteTarget) return;
     setIsDeleting(true);
     try {
-      // "Chức vụ" (crm_position) không xóa cứng — bản ghi cũ (deal/khách hàng/
-      // contact) đã lưu category này vẫn phải hiển thị đúng tên qua
-      // position_label_snapshot ngay cả sau khi mục này ngừng dùng, nên chỉ
-      // toggle is_active thay vì DELETE (xem migration 079).
       const isDeactivatable = DEACTIVATABLE_SECTIONS.has(deleteTarget.sectionKey);
       const nextActive = isDeactivatable ? deleteTarget.item.is_active === false : undefined;
       const res = isDeactivatable
@@ -503,158 +620,278 @@ function CrmCategorySections({
     }
   };
 
+  const handleMove = async (item: Category, direction: "up" | "down") => {
+    const index = sectionItems.findIndex(row => row.id === item.id);
+    const target = sectionItems[direction === "up" ? index - 1 : index + 1];
+    if (!target) return;
+    const currentOrder = typeof item.sort_order === "number" ? item.sort_order : index;
+    const targetOrder = typeof target.sort_order === "number" ? target.sort_order : direction === "up" ? index - 1 : index + 1;
+    const [first, second] = await Promise.all([
+      allPlatformCategoriesService.update({ id: item.id, sort_order: targetOrder }),
+      allPlatformCategoriesService.update({ id: target.id, sort_order: currentOrder }),
+    ]);
+    if (!first.success || !second.success) {
+      alert(first.message || second.message || "Không thể sắp xếp danh mục. Hãy kiểm tra migration 124 đã được chạy chưa.");
+      return;
+    }
+    invalidateCrmCategoryCache(activeSection);
+    await onChanged();
+  };
+
   return (
-    <div>
-      {/* ── 4 TABS: Lĩnh vực / Nguồn / Danh mục sản phẩm / Gói ── */}
-      <div className="crm-page-tabs">
-        {CRM_SECTIONS.map(section => {
-          const count = categories[section.key]?.length || 0;
-          const isActive = activeSection === section.key;
-          return (
-            <button
-              key={section.key}
-              type="button"
-              onClick={() => {
-                setActiveSection(section.key);
-                setSearchTerm("");
-              }}
-              className={cn("crm-page-tab", isActive && "crm-page-tab--active")}
-            >
-              {section.label}
-              <span className="crm-page-tab-count">{count}</span>
-            </button>
-          );
-        })}
-      </div>
-
-      {/* ── TOOLBAR: search + "+ Thêm danh mục" ── */}
-      <div className="crm-toolbar">
-        <div className="crm-toolbar-filters">
-          <div className="crm-toolbar-search">
-            <MaterialIcon name="search" className="text-[20px]" />
-            <input
-              type="text"
-              value={searchTerm}
-              onChange={e => setSearchTerm(e.target.value)}
-              placeholder={`Tìm theo tên hoặc mã trong "${activeMeta.label}"...`}
-              className="crm-input"
-            />
+    <div className="overflow-hidden rounded-xl border border-outline-variant bg-surface text-on-surface shadow-sm">
+      <div className="grid min-h-[560px] grid-cols-1 lg:h-[calc(100vh-170px)] lg:grid-cols-[300px_minmax(0,1fr)] lg:overflow-hidden">
+        <aside className="hidden min-h-0 border-r border-outline-variant bg-surface-container-low/30 lg:flex lg:flex-col">
+          <div className="border-b border-outline-variant p-4">
+            <label className="relative block">
+              <MaterialIcon name="search" className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[18px] text-on-surface-variant" />
+              <input
+                type="text"
+                value={sectionSearch}
+                onChange={e => setSectionSearch(e.target.value)}
+                placeholder="Tìm danh mục..."
+                className="h-10 w-full rounded-lg border border-outline-variant bg-surface px-9 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/10"
+              />
+            </label>
           </div>
-        </div>
-        <div className="crm-toolbar-actions">
-          <button
-            type="button"
-            onClick={() => {
-              setModal({ sectionKey: activeSection, mode: "add", code: "", name: "" });
-              setModalError(null);
-            }}
-            className="crm-primary-button crm-primary-button--compact"
-          >
-            Thêm danh mục
-          </button>
-        </div>
-      </div>
-      <p className="crm-toolbar-hint" style={{ marginTop: "-0.4rem", marginBottom: "0.9rem" }}>
-        {activeMeta.description}
-      </p>
+          <div className="min-h-0 flex-1 overflow-y-auto p-3">
+            {CRM_SECTION_GROUPS.map(group => {
+              const sections = visibleSectionsByGroup.get(group) || [];
+              if (sections.length === 0) return null;
+              return (
+                <div key={group} className="mb-4 last:mb-0">
+                  <div className="mb-2 px-2 text-[11px] font-bold uppercase tracking-wide text-on-surface-variant">
+                    {group}
+                  </div>
+                  <div className="space-y-1">
+                    {sections.map(section => {
+                      const isActive = activeSection === section.key;
+                      const count = categories[section.key]?.length || 0;
+                      const icon = CRM_SECTION_PRESENTATION[section.key]?.icon || "folder";
+                      return (
+                        <button
+                          key={section.key}
+                          type="button"
+                          onClick={() => handleSelectSection(section.key)}
+                          className={cn(
+                            "flex h-11 w-full items-center gap-2 rounded-lg border px-2.5 text-left text-sm transition",
+                            isActive
+                              ? "border-primary/35 bg-primary/5 text-primary shadow-[inset_3px_0_0_rgba(194,24,91,0.9)]"
+                              : "border-transparent text-on-surface hover:border-outline-variant hover:bg-surface",
+                          )}
+                        >
+                          <MaterialIcon name={icon} className="text-[18px] text-current" />
+                          <span className="min-w-0 flex-1 truncate font-semibold">{section.label}</span>
+                          <span className={cn(
+                            "rounded-full px-2 py-0.5 text-[11px] font-bold",
+                            isActive ? "bg-primary/10 text-primary" : "bg-surface text-on-surface-variant",
+                          )}>
+                            {count}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+            {[...visibleSectionsByGroup.values()].every(sections => sections.length === 0) ? (
+              <div className="rounded-lg border border-dashed border-outline-variant bg-surface p-4 text-center text-sm text-on-surface-variant">
+                Không tìm thấy nhóm phù hợp.
+              </div>
+            ) : null}
+          </div>
+        </aside>
 
-      {/* ── TABLE ── */}
-      <div className="crm-table-card">
-        <div className="crm-table-scroll">
-          <table className="crm-table" style={{ tableLayout: "auto" }}>
-            <thead>
-              <tr>
-                <th className="crm-th">Tên</th>
-                <th className="crm-th">Mã</th>
-                <th className="crm-th crm-th--right" style={{ width: "7rem" }}>
-                  Thao tác
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {isLoading ? (
-                <tr>
-                  <td colSpan={3} className="crm-td" style={{ padding: "2.5rem 0", textAlign: "center" }}>
-                    <span className="crm-muted">Đang tải danh sách...</span>
-                  </td>
-                </tr>
-              ) : errorMsg ? (
-                <tr>
-                  <td colSpan={3} className="crm-td" style={{ padding: "2.5rem 0", textAlign: "center" }}>
-                    <span className="crm-error">{errorMsg}</span>
-                  </td>
-                </tr>
-              ) : filteredItems.length === 0 ? (
-                <tr>
-                  <td colSpan={3}>
-                    <div className="crm-empty-state">
-                      <span className="crm-empty-state-icon">
-                        <MaterialIcon name="inbox" />
-                      </span>
-                      <p className="crm-empty-state-title">
-                        {searchTerm.trim() ? "Không tìm thấy danh mục phù hợp" : `Chưa có "${activeMeta.label}" nào`}
-                      </p>
-                      <p className="crm-empty-state-desc">
-                        {searchTerm.trim()
-                          ? "Thử tìm với từ khóa khác hoặc xóa bộ lọc tìm kiếm."
-                          : `Bấm "Thêm danh mục" để tạo mục ${activeMeta.label.toLowerCase()} đầu tiên.`}
-                      </p>
-                    </div>
-                  </td>
-                </tr>
-              ) : (
-                filteredItems.map(item => {
-                  const isDeactivatable = DEACTIVATABLE_SECTIONS.has(activeSection);
-                  const isInactive = isDeactivatable && item.is_active === false;
-                  return (
-                  <tr key={item.id} className="crm-row">
-                    <td className="crm-td">
-                      <span className="crm-customer-name crm-truncate" title={item.name}>{item.name}</span>
-                      {isInactive ? <span className="crm-badge crm-badge--neutral" style={{ marginLeft: "0.5rem" }}>Đã ngừng dùng</span> : null}
-                    </td>
-                    <td className="crm-td">
-                      <span className="crm-truncate crm-mono-code" title={item.code}>{item.code}</span>
-                    </td>
-                    <td className="crm-td crm-td--right">
-                      <div className="crm-icon-action-group">
-                        <ActionMenu
-                          items={[
-                            {
-                              key: "edit",
-                              label: "Sửa",
-                              onSelect: () => {
-                                setModal({ sectionKey: activeSection, mode: "edit", id: item.id, code: item.code, name: item.name || "" });
-                                setModalError(null);
-                              },
-                            },
-                            isDeactivatable
-                              ? {
-                                  key: "toggle-active",
-                                  label: isInactive ? "Kích hoạt lại" : "Ngừng dùng",
-                                  danger: !isInactive,
-                                  onSelect: () => setDeleteTarget({ sectionKey: activeSection, item }),
-                                }
-                              : {
-                                  key: "delete",
-                                  label: "Xóa",
-                                  danger: true,
-                                  onSelect: () => setDeleteTarget({ sectionKey: activeSection, item }),
-                                },
-                          ]}
-                        />
-                      </div>
-                    </td>
-                  </tr>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
+        <section className="min-w-0 bg-surface lg:min-h-0 lg:overflow-y-auto">
+          <div className="border-b border-outline-variant p-4 lg:hidden">
+            <label className="mb-2 block text-xs font-bold uppercase text-on-surface-variant">Danh mục</label>
+            <select
+              value={activeSection}
+              onChange={e => handleSelectSection(e.target.value as CategoryType)}
+              className="h-11 w-full rounded-lg border border-outline-variant bg-surface px-3 text-sm font-semibold outline-none focus:border-primary focus:ring-2 focus:ring-primary/10"
+            >
+              {CRM_SECTION_GROUPS.map(group => (
+                <optgroup key={group} label={group}>
+                  {CRM_SECTIONS.filter(section => (CRM_SECTION_PRESENTATION[section.key]?.group || CRM_SECTION_GROUPS[0]) === group).map(section => (
+                    <option key={section.key} value={section.key}>{section.label} ({categories[section.key]?.length || 0})</option>
+                  ))}
+                </optgroup>
+              ))}
+            </select>
+          </div>
+
+          <div className="flex flex-col gap-4 border-b border-outline-variant p-5 md:flex-row md:items-start md:justify-between md:p-6">
+            <div className="min-w-0">
+              <div className="mb-2 flex items-center gap-2 text-xs font-semibold text-on-surface-variant">
+                <MaterialIcon name={activePresentation.icon} className="text-[18px]" />
+                <span>{activePresentation.group}</span>
+              </div>
+              <h2 className="text-xl font-bold text-on-surface">{activeMeta.label}</h2>
+              <p className="mt-1 max-w-3xl text-sm leading-6 text-on-surface-variant">{activeMeta.description}</p>
+              <p className="mt-2 text-sm font-semibold text-on-surface-variant">{sectionItems.length} giá trị</p>
+            </div>
+            {canManage ? (
+              <button type="button" onClick={handleOpenAdd} className="crm-primary-button shrink-0">
+                <MaterialIcon name="add" className="text-[18px]" />
+                Thêm {activeMeta.label.toLowerCase()}
+              </button>
+            ) : null}
+          </div>
+
+          <div className="space-y-4 p-4 md:p-6">
+            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <label className="relative block w-full md:max-w-md">
+                <MaterialIcon name="search" className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[18px] text-on-surface-variant" />
+                <input
+                  type="text"
+                  value={searchTerm}
+                  onChange={e => setSearchTerm(e.target.value)}
+                  placeholder="Tìm theo tên hoặc mã..."
+                  className="h-10 w-full rounded-lg border border-outline-variant bg-surface px-9 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/10"
+                />
+              </label>
+              <div className="inline-flex rounded-lg border border-outline-variant bg-surface-container-low p-1">
+                {[
+                  ["all", "Tất cả"],
+                  ["active", "Đang sử dụng"],
+                  ["inactive", "Ngừng sử dụng"],
+                ].map(([value, label]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => setStatusFilter(value as CrmCategoryStatusFilter)}
+                    className={cn(
+                      "h-8 rounded-md px-3 text-xs font-bold transition",
+                      statusFilter === value ? "bg-surface text-primary shadow-sm" : "text-on-surface-variant hover:text-on-surface",
+                    )}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="overflow-hidden rounded-xl border border-outline-variant bg-surface">
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[660px] border-collapse text-left text-sm">
+                  <thead className="border-b border-outline-variant bg-surface-container-low text-[11px] font-bold uppercase text-on-surface-variant">
+                    <tr>
+                      <th className="px-4 py-3">Tên</th>
+                      <th className="px-4 py-3">Mã</th>
+                      <th className="px-4 py-3">Trạng thái</th>
+                      <th className="w-24 px-4 py-3 text-right">Thao tác</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-outline-variant">
+                    {isLoading ? (
+                      <tr>
+                        <td colSpan={4} className="px-4 py-12 text-center text-sm text-on-surface-variant">
+                          <span className="inline-flex items-center gap-2 font-semibold">
+                            <span className="h-4 w-4 animate-spin rounded-full border-2 border-primary/30 border-t-primary" />
+                            Đang tải danh sách...
+                          </span>
+                        </td>
+                      </tr>
+                    ) : errorMsg ? (
+                      <tr>
+                        <td colSpan={4} className="px-4 py-12 text-center text-sm font-semibold text-red-600">{errorMsg}</td>
+                      </tr>
+                    ) : filteredItems.length === 0 ? (
+                      <tr>
+                        <td colSpan={4} className="px-4 py-12">
+                          <div className="mx-auto max-w-sm text-center">
+                            <MaterialIcon name="inbox" className="mx-auto mb-2 text-[28px] text-on-surface-variant" />
+                            <p className="font-bold text-on-surface">
+                              {searchTerm.trim() || statusFilter !== "all" ? "Không có giá trị phù hợp" : `Chưa có ${activeMeta.label.toLowerCase()}`}
+                            </p>
+                            <p className="mt-1 text-sm leading-5 text-on-surface-variant">
+                              {searchTerm.trim() || statusFilter !== "all"
+                                ? "Thay đổi từ khóa hoặc trạng thái lọc."
+                                : canManage
+                                  ? `Bấm Thêm ${activeMeta.label.toLowerCase()} để tạo giá trị đầu tiên.`
+                                  : "Danh mục này chưa có giá trị đang hiển thị."}
+                            </p>
+                          </div>
+                        </td>
+                      </tr>
+                    ) : (
+                      filteredItems.map(item => {
+                        const isDeactivatable = DEACTIVATABLE_SECTIONS.has(activeSection);
+                        const isInactive = item.is_active === false;
+                        return (
+                          <tr key={item.id} className="h-14 transition hover:bg-surface-container-low/60">
+                            <td className="max-w-[360px] px-4 py-3">
+                              <div className="truncate font-semibold text-on-surface" title={item.name || ""}>{item.name}</div>
+                            </td>
+                            <td className="max-w-[260px] px-4 py-3">
+                              <code className="block truncate rounded bg-surface-container-low px-2 py-1 font-mono text-xs text-on-surface-variant" title={item.code || ""}>{item.code}</code>
+                            </td>
+                            <td className="px-4 py-3">
+                              <span className={cn(
+                                "inline-flex rounded-full border px-2.5 py-1 text-xs font-bold",
+                                isInactive
+                                  ? "border-outline-variant bg-surface-container-low text-on-surface-variant"
+                                  : "border-emerald-200 bg-emerald-50 text-emerald-700",
+                              )}>
+                                {isInactive ? "Ngừng sử dụng" : "Đang sử dụng"}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3 text-right">
+                              {canManage ? (
+                                <ActionMenu
+                                  items={[
+                                    {
+                                      key: "edit",
+                                      label: "Sửa",
+                                      onSelect: () => {
+                                        setModal({ sectionKey: activeSection, mode: "edit", id: item.id, code: item.code, name: item.name || "" });
+                                        setModalError(null);
+                                      },
+                                    },
+                                    {
+                                      key: "move-up",
+                                      label: "Đưa lên",
+                                      disabled: sectionItems[0]?.id === item.id,
+                                      onSelect: () => void handleMove(item, "up"),
+                                    },
+                                    {
+                                      key: "move-down",
+                                      label: "Đưa xuống",
+                                      disabled: sectionItems[sectionItems.length - 1]?.id === item.id,
+                                      onSelect: () => void handleMove(item, "down"),
+                                    },
+                                    isDeactivatable
+                                      ? {
+                                          key: "toggle-active",
+                                          label: isInactive ? "Kích hoạt lại" : "Ngừng sử dụng",
+                                          danger: !isInactive,
+                                          onSelect: () => setDeleteTarget({ sectionKey: activeSection, item }),
+                                        }
+                                      : {
+                                          key: "delete",
+                                          label: "Xóa",
+                                          danger: true,
+                                          onSelect: () => setDeleteTarget({ sectionKey: activeSection, item }),
+                                        },
+                                  ]}
+                                />
+                              ) : null}
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </section>
       </div>
 
       {modal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-[1px] animate-in fade-in duration-200">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-[1px] animate-in fade-in duration-200">
           <div
             style={{ width: "100%", maxWidth: "420px" }}
             className="overflow-hidden rounded-xl border border-outline-variant bg-surface shadow-2xl animate-in zoom-in-95 duration-200"
@@ -677,27 +914,27 @@ function CrmCategorySections({
             <form onSubmit={e => void handleSave(e)} className="space-y-4 p-6">
               <div className="space-y-1">
                 <label className="block text-[10px] font-bold uppercase text-on-surface-variant">
-                  Mã (code) <span className="text-error">*</span>
+                  Mã <span className="text-error">*</span>
                 </label>
                 <input
                   type="text"
                   placeholder={CRM_SECTIONS.find(s => s.key === modal.sectionKey)?.placeholderCode}
                   value={modal.code}
                   onChange={e => setModal({ ...modal, code: e.target.value })}
-                  className="w-full rounded-xl border border-outline-variant bg-surface-container-low px-4 py-2 text-xs text-on-surface outline-none transition focus:border-sky-500 focus:ring-2 focus:ring-sky-500/20"
+                  className="w-full rounded-xl border border-outline-variant bg-surface-container-low px-4 py-2 text-xs text-on-surface outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/10"
                   autoFocus
                 />
               </div>
               <div className="space-y-1">
                 <label className="block text-[10px] font-bold uppercase text-on-surface-variant">
-                  Tên hiển thị (name) <span className="text-error">*</span>
+                  Tên hiển thị <span className="text-error">*</span>
                 </label>
                 <input
                   type="text"
                   placeholder={CRM_SECTIONS.find(s => s.key === modal.sectionKey)?.placeholderName}
                   value={modal.name}
                   onChange={e => setModal({ ...modal, name: e.target.value })}
-                  className="w-full rounded-xl border border-outline-variant bg-surface-container-low px-4 py-2 text-xs text-on-surface outline-none transition focus:border-sky-500 focus:ring-2 focus:ring-sky-500/20"
+                  className="w-full rounded-xl border border-outline-variant bg-surface-container-low px-4 py-2 text-xs text-on-surface outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/10"
                 />
               </div>
               {modalError && (
@@ -714,9 +951,9 @@ function CrmCategorySections({
                 <button
                   type="submit"
                   disabled={isSubmitting}
-                  className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-primary py-2 text-xs font-bold text-white shadow-sm transition hover:bg-on-primary-fixed-variant"
+                  className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-primary py-2 text-xs font-bold text-white shadow-sm transition hover:bg-on-primary-fixed-variant disabled:opacity-60"
                 >
-                  {isSubmitting && <div className="h-3 w-3 animate-spin rounded-full border-2 border-white border-t-transparent" />}
+                  {isSubmitting && <span className="h-3 w-3 animate-spin rounded-full border-2 border-white border-t-transparent" />}
                   {modal.mode === "add" ? "Thêm mới" : "Lưu thay đổi"}
                 </button>
               </div>
@@ -729,66 +966,54 @@ function CrmCategorySections({
         const isDeactivatable = DEACTIVATABLE_SECTIONS.has(deleteTarget.sectionKey);
         const isCurrentlyActive = deleteTarget.item.is_active !== false;
         const isReactivate = isDeactivatable && !isCurrentlyActive;
-        const title = isDeactivatable ? (isReactivate ? "Xác nhận kích hoạt lại" : "Xác nhận ngừng dùng") : "Xác nhận xóa";
-        const actionLabel = isDeactivatable ? (isReactivate ? "Kích hoạt lại" : "Ngừng dùng") : "Xác nhận xóa";
+        const title = isDeactivatable ? (isReactivate ? "Kích hoạt lại giá trị" : "Ngừng sử dụng giá trị") : "Xóa giá trị";
+        const actionLabel = isDeactivatable ? (isReactivate ? "Kích hoạt lại" : "Ngừng sử dụng") : "Xóa";
         const busyLabel = isDeactivatable ? "Đang lưu..." : "Đang xóa...";
         return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-[1px] animate-in fade-in duration-200">
-          <div style={{ width: "100%", maxWidth: "420px" }} className="overflow-hidden rounded-xl border border-outline-variant bg-surface shadow-2xl animate-in zoom-in-95 duration-200">
-            <div className="flex items-center justify-between border-b border-outline-variant bg-surface-container-low px-6 py-4">
-              <h3 className="flex items-center gap-2 font-bold text-on-surface">
-                <span className="text-xl">⚠️</span> {title}
-              </h3>
-              <button
-                onClick={() => setDeleteTarget(null)}
-                className="rounded-lg p-1.5 text-on-surface-variant transition-colors hover:bg-surface-container-low"
-                disabled={isDeleting}
-              >
-                <MaterialIcon name="close" className="text-xl" />
-              </button>
-            </div>
-            <div className="space-y-4 p-6">
-              <p className="text-xs leading-relaxed text-on-surface">
-                Bạn có chắc chắn muốn {isDeactivatable ? (isReactivate ? "kích hoạt lại" : "ngừng dùng") : "xóa"}{" "}
-                <span className="font-semibold">
-                  {deleteTarget.item.name} ({deleteTarget.item.code})
-                </span>{" "}
-                khỏi danh mục &quot;{CRM_SECTIONS.find(s => s.key === deleteTarget.sectionKey)?.label}&quot; không?
-              </p>
-              <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-[11px] font-medium leading-relaxed text-amber-800">
-                {isDeactivatable ? (
-                  isReactivate
-                    ? "⚠️ Mục này sẽ xuất hiện lại trong ô chọn Chức vụ cho các lựa chọn MỚI."
-                    : "⚠️ Các bản ghi đã chọn Chức vụ này vẫn giữ nguyên hiển thị đúng tên cũ, nhưng mục này sẽ KHÔNG còn xuất hiện trong ô chọn Chức vụ cho các lựa chọn mới."
-                ) : (
-                  <>
-                    ⚠️ Nếu mã &quot;{deleteTarget.item.code}&quot; đang được dùng ở khách hàng/deal hiện có, các bản ghi đó vẫn giữ
-                    nguyên giá trị cũ nhưng sẽ không còn chọn lại được mã này trong form thêm/sửa deal. Hành động này
-                    không thể hoàn tác.
-                  </>
-                )}
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-[1px] animate-in fade-in duration-200">
+            <div style={{ width: "100%", maxWidth: "420px" }} className="overflow-hidden rounded-xl border border-outline-variant bg-surface shadow-2xl animate-in zoom-in-95 duration-200">
+              <div className="flex items-center justify-between border-b border-outline-variant bg-surface-container-low px-6 py-4">
+                <h3 className="flex items-center gap-2 font-bold text-on-surface">
+                  <MaterialIcon name="warning" className="text-xl text-amber-600" /> {title}
+                </h3>
+                <button
+                  onClick={() => setDeleteTarget(null)}
+                  className="rounded-lg p-1.5 text-on-surface-variant transition-colors hover:bg-surface-container-low"
+                  disabled={isDeleting}
+                  aria-label="Đóng"
+                >
+                  <MaterialIcon name="close" className="text-xl" />
+                </button>
+              </div>
+              <div className="space-y-4 p-6">
+                <p className="text-xs leading-relaxed text-on-surface">
+                  Bạn có chắc chắn muốn {isDeactivatable ? (isReactivate ? "kích hoạt lại" : "ngừng sử dụng") : "xóa"}{" "}
+                  <span className="font-semibold">{deleteTarget.item.name} ({deleteTarget.item.code})</span>{" "}
+                  trong danh mục &quot;{CRM_SECTIONS.find(s => s.key === deleteTarget.sectionKey)?.label}&quot; không?
+                </p>
+                <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-[11px] font-medium leading-relaxed text-amber-800">
+                  {isDeactivatable
+                    ? isReactivate
+                      ? "Giá trị này sẽ xuất hiện lại trong các ô chọn mới."
+                      : "Record cũ vẫn giữ dữ liệu lịch sử; giá trị này sẽ không còn xuất hiện trong lựa chọn mới."
+                    : "Hành động xóa không thể hoàn tác nếu backend cho phép xóa cứng giá trị này."}
+                </div>
+              </div>
+              <div className="flex justify-end gap-3 border-t border-outline-variant bg-surface-container-low px-6 py-4">
+                <button type="button" onClick={() => setDeleteTarget(null)} className="crm-cancel-button" disabled={isDeleting}>
+                  Hủy bỏ
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleDelete()}
+                  disabled={isDeleting}
+                  className="flex items-center gap-1.5 rounded-xl bg-red-600 px-4 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-red-700 disabled:opacity-60"
+                >
+                  {isDeleting ? busyLabel : actionLabel}
+                </button>
               </div>
             </div>
-            <div className="flex justify-end gap-3 border-t border-outline-variant bg-surface-container-low px-6 py-4">
-              <button
-                type="button"
-                onClick={() => setDeleteTarget(null)}
-                className="crm-cancel-button"
-                disabled={isDeleting}
-              >
-                Hủy bỏ
-              </button>
-              <button
-                type="button"
-                onClick={() => void handleDelete()}
-                disabled={isDeleting}
-                className="flex items-center gap-1.5 rounded-xl bg-red-600 px-4 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-red-700 disabled:opacity-60"
-              >
-                {isDeleting ? busyLabel : actionLabel}
-              </button>
-            </div>
           </div>
-        </div>
         );
       })()}
     </div>
@@ -800,8 +1025,17 @@ export function CategoryManagementContent({
   excludeCrm = false,
 }: { crmOnly?: boolean; excludeCrm?: boolean } = {}) {
   const { platform } = useAppPlatform();
+  const { user } = useAppAuth();
   const router = useRouter();
   const queryClient = useQueryClient();
+  const canManageMasterData = Boolean(
+    user &&
+      (user.role === "admin" ||
+        user.role === "leader" ||
+        user.quote_business_role === "sale" ||
+        user.quote_business_role === "presale" ||
+        user.quote_business_role === "both"),
+  );
 
   // State quản lý danh mục
   const [categories, setCategories] = useState<Record<string, Category[]>>({
@@ -817,7 +1051,11 @@ export function CategoryManagementContent({
     crm_package: [],
     crm_industry: [],
     crm_position: [],
+    crm_expected_timeline: [],
     crm_next_step: [],
+    crm_nurture_reason: [],
+    crm_follow_up_channel: [],
+    crm_unqualified_reason: [],
     crm_quote_type: [],
   });
 
@@ -892,9 +1130,16 @@ export function CategoryManagementContent({
         crm_package: [],
         crm_industry: [],
         crm_position: [],
+        crm_expected_timeline: [],
         crm_next_step: [],
+        crm_nurture_reason: [],
+        crm_follow_up_channel: [],
+        crm_unqualified_reason: [],
         crm_quote_type: [],
       };
+      CRM_SECTIONS.forEach(section => {
+        if (!grouped[section.key]) grouped[section.key] = [];
+      });
 
       list.forEach((item) => {
         if (grouped[item.category_type]) {
@@ -1185,6 +1430,7 @@ export function CategoryManagementContent({
           onChanged={fetchCategories}
           isLoading={isLoading}
           errorMsg={errorMsg}
+          canManage={canManageMasterData}
         />
       ) : (
       <div className="rounded-xl border border-outline-variant bg-surface p-6 shadow-sm space-y-6">

@@ -303,7 +303,11 @@ def get_users_by_role(role: str) -> list[dict]:
     return result.data or []
 
 
-def get_member_options(active_only: bool = True, include_ids: list[str] | None = None) -> list[dict]:
+def get_member_options(
+    active_only: bool = True,
+    include_ids: list[str] | None = None,
+    team_type: str | None = None,
+) -> list[dict]:
     """Danh sach nhan su cho picker "Nguoi phu trach du an" (va cac picker
     tuong tu can chon 1 tai khoan dang nhap that su thuoc he thong). KHAC voi
     `get_all_users()`/`get_all_teams()`: KHONG bao gio tra ve email (tranh lo
@@ -316,7 +320,13 @@ def get_member_options(active_only: bool = True, include_ids: list[str] | None =
     trach): chi tra is_active=true. `include_ids` cho phep ep tra THEM 1 vai
     id cu the du ho khong active - dung khi Sua 1 project ma nguoi phu trach
     hien tai da bi vo hieu hoa (van phai hien ten + badge "Da ngung hoat
-    dong", khong duoc bien mat khoi form)."""
+    dong", khong duoc bien mat khoi form).
+
+    `team_type` (vd 'sale', migration 049): loc CHI giu user thuoc >=1 team co
+    dung team_type nay (xem is_sale_member() o crm_permission_service.py -
+    cung 1 nguon that team_type, khong tu doan bang text hien thi). Loc nay
+    ap dung SAU KHI da include_ids (KHONG dac cach bo qua loc team_type chi vi
+    1 id bi ep include - khac voi dac cach is_active o tren)."""
     supabase: Client = get_supabase_client()
     query = supabase.table("app_users").select(
         "id, name, email, role, is_active, quote_business_role"
@@ -330,22 +340,40 @@ def get_member_options(active_only: bool = True, include_ids: list[str] | None =
         if (not active_only or r.get("is_active", True)) or str(r.get("id")) in include_id_set
     ]
 
-    # Team names: id_member trong member_of_teams la app_users.id that (xem
-    # _load_all_teams() o tren - user_map duoc build tu bang app_users).
+    # Team names + team_type: id_member trong member_of_teams la app_users.id
+    # that (xem _load_all_teams() o tren - user_map duoc build tu bang
+    # app_users). Tan dung CHINH 2 truy van nay cho ca team_names (hien thi) va
+    # team_types (loc Sale) - khong them query rieng.
     team_names_by_user: dict[str, list[str]] = {}
+    team_types_by_user: dict[str, set[str]] = {}
     try:
         teams_rows = get_all_teams()
         mot_result = execute_supabase_query(
             lambda: supabase.table("member_of_teams").select("id_member, id_teams").execute()
         )
         team_name_by_id = {str(t["id"]): t.get("name_team") for t in teams_rows}
+        team_type_by_id = {str(t["id"]): t.get("team_type") for t in teams_rows}
         for mot in (mot_result.data or []):
-            uid = str(mot.get("id_member"))
-            tname = team_name_by_id.get(str(mot.get("id_teams")))
+            if not mot.get("id_member") or not mot.get("id_teams"):
+                continue
+            uid = str(mot["id_member"])
+            team_id = str(mot["id_teams"])
+            tname = team_name_by_id.get(team_id)
             if uid and tname:
                 team_names_by_user.setdefault(uid, []).append(tname)
+            ttype = team_type_by_id.get(team_id)
+            if uid and ttype:
+                team_types_by_user.setdefault(uid, set()).add(ttype)
     except Exception:
+        if team_type:
+            # Loc team_type la 1 dieu kien BAO MAT (chi cho Sale) - KHONG duoc
+            # im lang tra ve danh sach chua loc neu khong lay duoc du lieu
+            # team, se lam lo nguoi ngoai Sale vao picker.
+            raise
         logger.warning("get_member_options: khong lay duoc team names, tra danh sach khong kem team", exc_info=True)
+
+    if team_type:
+        rows = [r for r in rows if team_type in team_types_by_user.get(str(r.get("id")), set())]
 
     options = []
     for r in rows:
@@ -433,8 +461,18 @@ def _load_all_teams() -> list[dict]:
     mot_rows = mot_result.data or []
 
     # Map team ID to list of member IDs
+    # BUG THAT DA GAP ("invalid input syntax for type uuid: 'None'"): 1 dong
+    # member_of_teams that co id_member=NULL (du lieu rac, khong phai loi code
+    # tao ra - vd id=238, id_teams='Test Team (QA)') - truoc day str(None) bien
+    # thanh CHUOI VAN BAN "None" roi bi dua thang vao query .in_("id", [...])
+    # phia duoi, Postgres tu choi vi "None" khong phai UUID hop le -> toan bo
+    # get_all_teams()/get_member_options() (dung cho MOI picker "Nguoi phu
+    # trach") sap voi loi 500 tren cache mien (deploy moi/restart). Bo qua
+    # thang cac dong thieu id_teams/id_member tu day, khong dua vao map.
     team_members_map = {}
     for mot in mot_rows:
+        if not mot.get("id_teams") or not mot.get("id_member"):
+            continue
         tid = str(mot["id_teams"])
         mid = str(mot["id_member"])
         if tid not in team_members_map:

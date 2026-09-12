@@ -1,11 +1,33 @@
 import logging
+import logging
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timezone, date
+from app.core.config import settings
 from app.core.supabase_client import get_supabase_client, execute_supabase_query
 from app.modules.all_platform.schemas.customer_lead import STAGE_REQUIRED_FIELDS, is_transition_allowed
 from app.modules.all_platform.services.crm_position_service import apply_position_category
 
 logger = logging.getLogger(__name__)
+
+DEAL_STAGE_MAP = {
+    "new_lead": "dealing",
+    "contacted": "dealing",
+    "qualified": "dealing",
+    "requirement": "dealing",
+    "contract_sent": "proposal_sent",
+    "won": "post_sale_care",
+}
+
+DEAL_STAGE_FILTERS = {
+    "dealing": ["dealing", "new_lead", "contacted", "qualified", "requirement"],
+    "proposal_sent": ["proposal_sent", "contract_sent"],
+    "post_sale_care": ["post_sale_care", "won"],
+}
+
+
+def normalize_deal_stage(value: str | None) -> str:
+    raw = str(value or "dealing")
+    return DEAL_STAGE_MAP.get(raw, raw)
 
 
 def _serialize_datetimes(payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -66,6 +88,9 @@ BASE_COLUMNS = (
 
 
 def _normalize_row(row: Dict[str, Any]) -> Dict[str, Any]:
+    raw_stage = row.get("deal_stage")
+    row["legacy_deal_stage"] = raw_stage
+    row["deal_stage"] = normalize_deal_stage(raw_stage)
     # leader_name/sdr_name resolve qua JOIN leaded_by(name)/sdr_id(name) — nếu
     # leaded_by/sdr_id là NULL (người được chọn chưa liên kết tài khoản đăng
     # nhập), fallback về *_name_hint (tên đã chọn tại thời điểm lưu, xem
@@ -152,7 +177,7 @@ def get_all_customer_leads(
         # query object da xay san truoc do.
         def _run():
             supabase = get_supabase_client()
-            query = supabase.table("customer_leads").select(BASE_COLUMNS, count="exact")
+            query = supabase.table("customer_leads").select(BASE_COLUMNS, count="exact").eq("instance", settings.crm_instance)
 
             if search:
                 query = query.or_(
@@ -164,10 +189,10 @@ def get_all_customer_leads(
             if status:
                 query = query.eq("status", status)
             if deal_stage:
-                query = query.eq("deal_stage", deal_stage)
+                query = query.in_("deal_stage", DEAL_STAGE_FILTERS.get(deal_stage, [deal_stage]))
             if exclude_terminal:
                 # Loại bỏ won/lost để tab chính gọn
-                query = query.not_.in_("deal_stage", ["won", "lost"])
+                query = query.not_.in_("deal_stage", ["post_sale_care", "won", "lost"])
             if city:
                 query = query.eq("city", city)
             if industry:
@@ -214,12 +239,12 @@ def get_stage_counts(current_user: Optional[Dict[str, Any]] = None) -> Dict[str,
     """
     try:
         supabase = get_supabase_client()
-        q = supabase.table("customer_leads").select("deal_stage", count="exact")
+        q = supabase.table("customer_leads").select("deal_stage", count="exact").eq("instance", settings.crm_instance)
         # Universal read - xem get_all_customer_leads() ve ly do bo self-scope.
         res = q.execute()
         counts: Dict[str, int] = {}
         for row in res.data or []:
-            s = row.get("deal_stage") or "new_lead"
+            s = normalize_deal_stage(row.get("deal_stage"))
             counts[s] = counts.get(s, 0) + 1
         return counts
     except Exception as e:
@@ -234,6 +259,7 @@ def get_customer_lead_by_id(lead_id: str) -> Optional[Dict[str, Any]]:
             supabase.table("customer_leads")
             .select(BASE_COLUMNS)
             .eq("id", lead_id)
+            .eq("instance", settings.crm_instance)
             .execute()
         )
         if res.data:
@@ -251,6 +277,7 @@ def get_customer_lead_by_conv_id(conv_id: str) -> Optional[Dict[str, Any]]:
             supabase.table("customer_leads")
             .select(BASE_COLUMNS)
             .eq("conv_id", conv_id)
+            .eq("instance", settings.crm_instance)
             .maybe_single()
             .execute()
         )
@@ -290,8 +317,9 @@ def create_customer_lead(data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         if "source_platform" not in data or not data["source_platform"]:
             data["source_platform"] = "FB_Inbox"
         # Map deal_stage → status để tương thích code cũ
-        ds = data.get("deal_stage") or "new_lead"
-        if ds == "won":
+        ds = normalize_deal_stage(data.get("deal_stage") or "dealing")
+        data["deal_stage"] = ds
+        if ds == "post_sale_care":
             data["status"] = "closed"
         elif ds == "lost":
             data["status"] = "rejected"
@@ -307,6 +335,12 @@ def create_customer_lead(data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         # tự handle datetime/date → JSON serialize error).
         data = _serialize_datetimes(data)
         data = _normalize_uuid_fields(data)
+        data["instance"] = settings.crm_instance
+        logger.info(
+            "tenant_write table=customer_leads operation=insert settings.crm_instance=%s resolved_instance=%s",
+            settings.crm_instance,
+            data["instance"],
+        )
         res = supabase.table("customer_leads").insert(data).execute()
         if res.data:
             new_row = _normalize_row(res.data[0])
@@ -347,6 +381,7 @@ def update_customer_lead(lead_id: str, data: Dict[str, Any]) -> Optional[Dict[st
             supabase.table("customer_leads")
             .update(safe_data)
             .eq("id", lead_id)
+            .eq("instance", settings.crm_instance)
             .execute()
         )
         if res.data:
@@ -410,13 +445,13 @@ def transition_stage(
         if not current:
             raise TransitionError(f"Customer lead {lead_id} không tồn tại")
 
-        from_stage = current.get("deal_stage") or "new_lead"
-        to_stage = payload.get("to_stage")
+        from_stage = normalize_deal_stage(current.get("deal_stage"))
+        to_stage = normalize_deal_stage(payload.get("to_stage"))
         if not to_stage:
             raise TransitionError("Thiếu 'to_stage'")
 
         # Check terminal
-        if from_stage in ("won", "lost"):
+        if from_stage in ("post_sale_care", "lost"):
             raise TransitionError(
                 f"Deal đã ở trạng thái terminal '{from_stage}' — không thể đổi sang stage khác. "
                 "Muốn tiếp tục hãy tạo deal mới."
@@ -445,7 +480,7 @@ def transition_stage(
             "stage_entered_at": now,
         }
         # Map ngược sang status cũ
-        if to_stage == "won":
+        if to_stage == "post_sale_care":
             update["status"] = "closed"
             if not current.get("customer_since"):
                 update["customer_since"] = now
@@ -497,6 +532,7 @@ def transition_stage(
             supabase.table("customer_leads")
             .update(update)
             .eq("id", lead_id)
+            .eq("instance", settings.crm_instance)
             .execute()
         )
         if not res.data:
@@ -556,6 +592,7 @@ def _write_activity_log(
         }
         # Loại bỏ key None để insert gọn
         log_entry = {k: v for k, v in log_entry.items() if v is not None}
+        log_entry["instance"] = settings.crm_instance
         supabase.table("customer_lead_activity_log").insert(log_entry).execute()
     except Exception as e:
         # Log không quyết định business; chỉ warn
@@ -575,6 +612,7 @@ def get_activity_log(
             supabase.table("customer_lead_activity_log")
             .select("id", count="exact")
             .eq("customer_id", lead_id)
+            .eq("instance", settings.crm_instance)
             .execute()
         )
         total = count_res.count or 0
@@ -584,6 +622,7 @@ def get_activity_log(
             supabase.table("customer_lead_activity_log")
             .select("*")
             .eq("customer_id", lead_id)
+            .eq("instance", settings.crm_instance)
             .order("created_at", desc=True)
             .range(offset, offset + limit - 1)
             .execute()
@@ -596,7 +635,7 @@ def get_activity_log(
 
 def delete_customer_lead(lead_id: str) -> bool:
     supabase = get_supabase_client()
-    supabase.table("customer_leads").delete().eq("id", lead_id).execute()
+    supabase.table("customer_leads").delete().eq("id", lead_id).eq("instance", settings.crm_instance).execute()
     return True
 
 

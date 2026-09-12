@@ -12,11 +12,8 @@ import { LayoutGrid, Loader2, Plus, RotateCcw, TableIcon, Trophy } from './icons
 import { StageModal } from './StageModal';
 import { CreateQuoteModal } from '../integrations/quotes';
 import {
-  CITY_OPTIONS,
   DEAL_STAGE_META,
   DEAL_STAGES,
-  INDUSTRY_OPTIONS,
-  SOURCE_OPTIONS,
   canApproveQuote,
   formatVND,
   getContractUrl,
@@ -45,6 +42,7 @@ export function CrmShell() {
     servicePackageOptions: dealFormServicePackageOptions,
     packageOptions: dealFormPackageOptions,
     industryOptions: dealFormIndustryOptions,
+    cityOptions: dealFormCityOptions,
     loading,
     saving,
     error,
@@ -104,20 +102,32 @@ export function CrmShell() {
 
   const sourceOptions = useMemo(() => {
     const fromData = deals.map(deal => deal.sourcePlatform || 'Manual').filter(Boolean);
-    const map = new Map(SOURCE_OPTIONS.map(option => [option.value, option]));
+    const map = new Map(dealFormSourceOptions.map(option => [option.value, option]));
     fromData.forEach(value => {
       if (!map.has(value)) map.set(value, { value, label: value });
     });
     return [...map.values()];
-  }, [deals]);
+  }, [dealFormSourceOptions, deals]);
 
-  const cityOptions = useMemo(() => [...new Set([...CITY_OPTIONS, ...deals.map(deal => deal.city || '').filter(Boolean)])], [deals]);
-  const industryOptions = useMemo(() => [...new Set([...INDUSTRY_OPTIONS, ...deals.map(deal => deal.industry || '').filter(Boolean)])], [deals]);
+  const cityOptions = useMemo(() => {
+    const map = new Map(dealFormCityOptions.map(option => [option.value, option.label]));
+    deals.map(deal => deal.city || '').filter(Boolean).forEach(value => {
+      if (!map.has(value)) map.set(value, value);
+    });
+    return [...map.entries()].map(([value, label]) => ({ value, label }));
+  }, [dealFormCityOptions, deals]);
+  const industryOptions = useMemo(() => {
+    const map = new Map(dealFormIndustryOptions.map(option => [option.value, option.label]));
+    deals.map(deal => deal.industry || '').filter(Boolean).forEach(value => {
+      if (!map.has(value)) map.set(value, value);
+    });
+    return [...map.entries()].map(([value, label]) => ({ value, label }));
+  }, [dealFormIndustryOptions, deals]);
 
   const filterDropdownOptions = {
     source: [{ value: '', label: 'Tất cả nguồn' }, ...sourceOptions],
-    city: [{ value: '', label: 'Tất cả thành phố' }, ...cityOptions.map(city => ({ value: city, label: city }))],
-    industry: [{ value: '', label: 'Tất cả lĩnh vực' }, ...industryOptions.map(industry => ({ value: industry, label: industry }))],
+    city: [{ value: '', label: 'Tất cả thành phố' }, ...cityOptions],
+    industry: [{ value: '', label: 'Tất cả lĩnh vực' }, ...industryOptions],
     team: [{ value: '', label: 'Tất cả team' }, ...teams.map(t => ({ value: t.id, label: t.name_team }))],
   };
 

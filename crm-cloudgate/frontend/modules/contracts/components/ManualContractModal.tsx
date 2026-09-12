@@ -8,6 +8,7 @@ import type { Quote } from '@/modules/quotes';
 import { seedingContractRepository } from '../repositories/SeedingContractRepository';
 import { CONTRACT_TEMPLATE_OPTIONS } from '../constants/contractConfig';
 import type { ContractTemplateType } from '../types';
+import { CurrencyInput } from '@/components/CurrencyInput';
 
 interface UserOption {
   id: string;
@@ -32,7 +33,7 @@ export function ManualContractModal({
   const [quoteId, setQuoteId] = useState('');
   const [title, setTitle] = useState('');
   const [templateType, setTemplateType] = useState<ContractTemplateType>('service');
-  const [contractValue, setContractValue] = useState('');
+  const [contractValue, setContractValue] = useState<number | null>(null);
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [paymentTerms, setPaymentTerms] = useState('');
@@ -73,7 +74,7 @@ export function ManualContractModal({
     setQuoteId('');
     setTitle('');
     setTemplateType('service');
-    setContractValue('');
+    setContractValue(null);
     setStartDate('');
     setEndDate('');
     setPaymentTerms('');
@@ -104,7 +105,7 @@ export function ManualContractModal({
         quoteId: quoteId || undefined,
         title: title.trim(),
         templateType,
-        contractValue: Number(contractValue) || 0,
+        contractValue: contractValue ?? 0,
         startDate: startDate || undefined,
         endDate: endDate || undefined,
         paymentTerms: paymentTerms || undefined,
@@ -194,7 +195,7 @@ export function ManualContractModal({
               </label>
               <label style={labelStyle}>
                 Giá trị hợp đồng (VND)
-                <input style={inputStyle} type="number" min={0} value={contractValue} onChange={e => setContractValue(e.target.value)} />
+                <CurrencyInput style={inputStyle} value={contractValue} onChange={setContractValue} />
               </label>
             </div>
 
