@@ -611,3 +611,4 @@ function StatCard({ tone, label, value }: { tone: string; label: React.ReactNode
     </div>
   );
 }
+

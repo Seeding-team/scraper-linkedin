@@ -217,3 +217,4 @@ export function CrmKanbanBoard({ deals, loading, onCardClick, onContractClick, o
     </div>
   );
 }
+
