@@ -240,7 +240,7 @@ function DealCard({
 }) {
   const stage = getCurrentStage(customer);
   const isUnpaid = customer.payment_status === "unpaid" || customer.payment_status === "partial";
-  const isUnpaidTerminal = (stage === "won" || stage === "lost") && isUnpaid;
+  const isUnpaidTerminal = stage === "won" && isUnpaid;
   const effectiveStage = isUnpaidTerminal ? "contract_sent" : stage;
   
   const overdue = isPaymentOverdue(customer);
@@ -707,7 +707,7 @@ export function CrmKanbanBoard({
     customers.forEach((customer) => {
       let stage = getCurrentStage(customer);
       const isUnpaid = customer.payment_status === "unpaid" || customer.payment_status === "partial";
-      if ((stage === "won" || stage === "lost") && isUnpaid) {
+      if (stage === "won" && isUnpaid) {
         stage = "contract_sent";
       }
       groups[stage].push(customer);
