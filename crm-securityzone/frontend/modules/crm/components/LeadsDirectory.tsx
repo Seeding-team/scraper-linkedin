@@ -257,6 +257,22 @@ export function LeadsDirectory() {
     setPage(1);
   }
 
+  function clearSearchFilter() {
+    setSearchInput('');
+    setSearch('');
+    setPage(1);
+  }
+
+  function openLeadFormDrawer() {
+    clearSearchFilter();
+    setFormOpen(true);
+  }
+
+  function closeLeadFormDrawer() {
+    setFormOpen(false);
+    clearSearchFilter();
+  }
+
   function handleSaved() {
     setReloadTick(tick => tick + 1);
   }
@@ -407,6 +423,8 @@ export function LeadsDirectory() {
         <section className="crm-filter-card">
           <div className="crm-filter-grid crm-filter-grid--leads">
             <input
+              type="search"
+              name="crm-leads-directory-search"
               value={searchInput}
               onChange={event => setSearchInput(event.target.value)}
               className="crm-input"
@@ -443,7 +461,7 @@ export function LeadsDirectory() {
                   <RotateCcw className="crm-button-icon" /> Xóa lọc
                 </button>
               ) : null}
-              <button type="button" className="crm-primary-button" onClick={() => setFormOpen(true)}>
+              <button type="button" className="crm-primary-button" onClick={openLeadFormDrawer}>
                 <Plus className="crm-button-icon" /> Thêm Lead
               </button>
             </div>
@@ -547,7 +565,7 @@ export function LeadsDirectory() {
                               <RotateCcw className="crm-button-icon" /> Xóa lọc
                             </button>
                           ) : (
-                            <button type="button" className="crm-primary-button" onClick={() => setFormOpen(true)}>
+                            <button type="button" className="crm-primary-button" onClick={openLeadFormDrawer}>
                               <Plus className="crm-button-icon" /> Thêm Lead đầu tiên
                             </button>
                           )}
@@ -623,7 +641,7 @@ export function LeadsDirectory() {
                     <RotateCcw className="crm-button-icon" /> Xóa lọc
                   </button>
                 ) : (
-                  <button type="button" className="crm-primary-button" onClick={() => setFormOpen(true)}>
+                  <button type="button" className="crm-primary-button" onClick={openLeadFormDrawer}>
                     <Plus className="crm-button-icon" /> Thêm Lead đầu tiên
                   </button>
                 )}
@@ -652,14 +670,14 @@ export function LeadsDirectory() {
       <LeadFormDrawer
         open={formOpen}
         currentUser={user}
-        onClose={() => setFormOpen(false)}
+        onClose={closeLeadFormDrawer}
         onSaved={handleSaved}
         onOpenQualification={lead => {
-          setFormOpen(false);
+          closeLeadFormDrawer();
           openQualifyForNewLead(lead);
         }}
         onOpenExistingLead={lead => {
-          setFormOpen(false);
+          closeLeadFormDrawer();
           openRow(lead);
         }}
       />

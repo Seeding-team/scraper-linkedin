@@ -377,10 +377,10 @@ const CRM_SECTIONS: Array<{ key: CategoryType; label: string; description: strin
   },
   {
     key: "crm_city",
-    label: "Thanh pho",
-    description: "Thanh pho/tinh dung trong ho so Khach hang, Lead va Deal.",
+    label: "Thành phố",
+    description: "Thành phố/tỉnh dùng trong hồ sơ Khách hàng, Lead và Deal.",
     placeholderCode: "Vd: Da_Nang",
-    placeholderName: "Vd: Da Nang",
+    placeholderName: "Vd: Đà Nẵng",
   },
   {
     key: "crm_expected_timeline",
@@ -432,17 +432,17 @@ const CRM_SECTIONS: Array<{ key: CategoryType; label: string; description: strin
     placeholderCode: "Vd: Thiet_ke_website",
     placeholderName: "Vd: Thiết kế website",
   },
-  { key: "crm_contract_status", label: "Tinh trang hop dong", description: "Cac lua chon tinh trang hop dong trong Deal/Hop dong.", placeholderCode: "Vd: dang_xu_ly", placeholderName: "Vd: Dang xu ly" },
-  { key: "crm_payment_status", label: "Trang thai thanh toan", description: "Cac lua chon trang thai thanh toan trong Deal/Hop dong.", placeholderCode: "Vd: chua_thanh_toan", placeholderName: "Vd: Chua thanh toan" },
-  { key: "crm_billing_type", label: "Loai thanh toan", description: "Cac lua chon chu ky/loai thanh toan cua hop dong.", placeholderCode: "Vd: one_time", placeholderName: "Vd: Mot lan" },
-  { key: "crm_won_reason", label: "Ly do thang deal", description: "Ly do chuan hoa khi chot thang Deal.", placeholderCode: "Vd: solution_fit", placeholderName: "Vd: Giai phap phu hop" },
-  { key: "crm_lost_reason", label: "Ly do thua deal", description: "Ly do chuan hoa khi chot thua Deal.", placeholderCode: "Vd: no_budget", placeholderName: "Vd: Khach chua co ngan sach" },
-  { key: "crm_outcome_confidence", label: "Do chac chan danh gia", description: "Muc do chac chan cua ket luan thang/thua.", placeholderCode: "Vd: high_confirmed", placeholderName: "Vd: Cao - Co khach hang xac nhan" },
-  { key: "crm_outcome_trigger", label: "Trigger hanh dong", description: "Boi canh khien khach hang hanh dong trong danh gia Deal.", placeholderCode: "Vd: deadline", placeholderName: "Vd: Can go-live theo deadline" },
-  { key: "crm_outcome_objection", label: "Objection", description: "Cac phan doi/lo ngai chinh trong danh gia Deal.", placeholderCode: "Vd: price", placeholderName: "Vd: Lo ngai gia / ngan sach" },
-  { key: "crm_kb_reuse_level", label: "Muc tai su dung KB", description: "Muc do co the tai su dung bai hoc sau khi dong Deal.", placeholderCode: "Vd: high_playbook", placeholderName: "Vd: Cao - Co the thanh playbook" },
-  { key: "crm_kb_owner", label: "Owner KB", description: "Nhom/nguoi phu trach bai hoc Knowledge Base.", placeholderCode: "Vd: sales_manager", placeholderName: "Vd: Quan ly sales" },
-  { key: "crm_kb_status", label: "Trang thai KB", description: "Trang thai duyet bai hoc Knowledge Base.", placeholderCode: "Vd: approved", placeholderName: "Vd: Approved - Da duyet" },
+  { key: "crm_contract_status", label: "Tình trạng hợp đồng", description: "Các lựa chọn tình trạng hợp đồng trong Deal/Hợp đồng.", placeholderCode: "Vd: dang_xu_ly", placeholderName: "Vd: Đang xử lý" },
+  { key: "crm_payment_status", label: "Trạng thái thanh toán", description: "Các lựa chọn trạng thái thanh toán trong Deal/Hợp đồng.", placeholderCode: "Vd: chua_thanh_toan", placeholderName: "Vd: Chưa thanh toán" },
+  { key: "crm_billing_type", label: "Loại thanh toán", description: "Các lựa chọn chu kỳ/loại thanh toán của hợp đồng.", placeholderCode: "Vd: one_time", placeholderName: "Vd: Một lần" },
+  { key: "crm_won_reason", label: "Lý do thắng deal", description: "Lý do chuẩn hóa khi chốt thắng Deal.", placeholderCode: "Vd: solution_fit", placeholderName: "Vd: Giải pháp phù hợp" },
+  { key: "crm_lost_reason", label: "Lý do thua deal", description: "Lý do chuẩn hóa khi chốt thua Deal.", placeholderCode: "Vd: no_budget", placeholderName: "Vd: Khách chưa có ngân sách" },
+  { key: "crm_outcome_confidence", label: "Độ chắc chắn đánh giá", description: "Mức độ chắc chắn của kết luận thắng/thua.", placeholderCode: "Vd: high_confirmed", placeholderName: "Vd: Cao - Có khách hàng xác nhận" },
+  { key: "crm_outcome_trigger", label: "Trigger hành động", description: "Bối cảnh khiến khách hàng hành động trong đánh giá Deal.", placeholderCode: "Vd: deadline", placeholderName: "Vd: Cần go-live theo deadline" },
+  { key: "crm_outcome_objection", label: "Objection", description: "Các phản đối/lo ngại chính trong đánh giá Deal.", placeholderCode: "Vd: price", placeholderName: "Vd: Lo ngại giá / ngân sách" },
+  { key: "crm_kb_reuse_level", label: "Mức tái sử dụng KB", description: "Mức độ có thể tái sử dụng bài học sau khi đóng Deal.", placeholderCode: "Vd: high_playbook", placeholderName: "Vd: Cao - Có thể thành playbook" },
+  { key: "crm_kb_owner", label: "Owner KB", description: "Nhóm/người phụ trách bài học Knowledge Base.", placeholderCode: "Vd: sales_manager", placeholderName: "Vd: Quản lý sales" },
+  { key: "crm_kb_status", label: "Trạng thái KB", description: "Trạng thái duyệt bài học Knowledge Base.", placeholderCode: "Vd: approved", placeholderName: "Vd: Approved - Đã duyệt" },
 ];
 
 // Chỉ category_type='crm_position'/'crm_quote_type' dùng NGỪNG DÙNG
@@ -639,14 +639,16 @@ function CrmCategorySections({
   };
 
   return (
-    <div className="overflow-hidden rounded-xl border border-outline-variant bg-surface text-on-surface shadow-sm">
-      <div className="grid min-h-[560px] grid-cols-1 lg:h-[calc(100vh-170px)] lg:grid-cols-[300px_minmax(0,1fr)] lg:overflow-hidden">
+    <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-xl border border-outline-variant bg-surface text-on-surface shadow-sm">
+      <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[300px_minmax(0,1fr)] lg:overflow-hidden">
         <aside className="hidden min-h-0 border-r border-outline-variant bg-surface-container-low/30 lg:flex lg:flex-col">
           <div className="border-b border-outline-variant p-4">
             <label className="relative block">
               <MaterialIcon name="search" className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[18px] text-on-surface-variant" />
               <input
-                type="text"
+                type="search"
+                name="crm-category-section-search"
+                autoComplete="off"
                 value={sectionSearch}
                 onChange={e => setSectionSearch(e.target.value)}
                 placeholder="Tìm danh mục..."
@@ -654,7 +656,7 @@ function CrmCategorySections({
               />
             </label>
           </div>
-          <div className="min-h-0 flex-1 overflow-y-auto p-3">
+          <div className="scrollbar-none min-h-0 flex-1 overflow-y-auto p-3">
             {CRM_SECTION_GROUPS.map(group => {
               const sections = visibleSectionsByGroup.get(group) || [];
               if (sections.length === 0) return null;
@@ -703,7 +705,7 @@ function CrmCategorySections({
           </div>
         </aside>
 
-        <section className="min-w-0 bg-surface lg:min-h-0 lg:overflow-y-auto">
+        <section className="flex min-h-0 min-w-0 flex-col overflow-hidden bg-surface">
           <div className="border-b border-outline-variant p-4 lg:hidden">
             <label className="mb-2 block text-xs font-bold uppercase text-on-surface-variant">Danh mục</label>
             <select
@@ -721,7 +723,7 @@ function CrmCategorySections({
             </select>
           </div>
 
-          <div className="flex flex-col gap-4 border-b border-outline-variant p-5 md:flex-row md:items-start md:justify-between md:p-6">
+          <div className="shrink-0 flex flex-col gap-4 border-b border-outline-variant p-5 md:flex-row md:items-start md:justify-between md:p-6">
             <div className="min-w-0">
               <div className="mb-2 flex items-center gap-2 text-xs font-semibold text-on-surface-variant">
                 <MaterialIcon name={activePresentation.icon} className="text-[18px]" />
@@ -739,12 +741,14 @@ function CrmCategorySections({
             ) : null}
           </div>
 
-          <div className="space-y-4 p-4 md:p-6">
-            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div className="flex min-h-0 flex-1 flex-col gap-4 p-4 md:p-6">
+            <div className="shrink-0 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
               <label className="relative block w-full md:max-w-md">
                 <MaterialIcon name="search" className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[18px] text-on-surface-variant" />
                 <input
-                  type="text"
+                  type="search"
+                  name="crm-category-value-search"
+                  autoComplete="off"
                   value={searchTerm}
                   onChange={e => setSearchTerm(e.target.value)}
                   placeholder="Tìm theo tên hoặc mã..."
@@ -772,10 +776,10 @@ function CrmCategorySections({
               </div>
             </div>
 
-            <div className="overflow-hidden rounded-xl border border-outline-variant bg-surface">
-              <div className="overflow-x-auto">
+            <div className="min-h-0 flex-1 overflow-hidden rounded-xl border border-outline-variant bg-surface">
+              <div className="scrollbar-none h-full overflow-auto">
                 <table className="w-full min-w-[660px] border-collapse text-left text-sm">
-                  <thead className="border-b border-outline-variant bg-surface-container-low text-[11px] font-bold uppercase text-on-surface-variant">
+                  <thead className="sticky top-0 z-10 border-b border-outline-variant bg-surface-container-low text-[11px] font-bold uppercase text-on-surface-variant">
                     <tr>
                       <th className="px-4 py-3">Tên</th>
                       <th className="px-4 py-3">Mã</th>
@@ -1350,7 +1354,7 @@ export function CategoryManagementContent({
   // không cần lặp lại tiêu đề topbar — chỉ giữ lại KPI + tab-selector
   // vốn có, hữu ích cho use case đó.
   return (
-    <div className="w-full min-w-0 space-y-6 font-sans">
+    <div className={cn("w-full min-w-0 font-sans", crmOnly ? "h-[calc(100vh-112px)] min-h-0" : "space-y-6")}>
       {!crmOnly && (
         <>
           {/* ── STATS ROW ───────────────────────────────────────── */}
@@ -1449,7 +1453,9 @@ export function CategoryManagementContent({
               search
             </span>
             <input
-              type="text"
+              type="search"
+              name="dashboard-category-value-search"
+              autoComplete="off"
               placeholder={`Tìm kiếm ${currentMetadata.label.toLowerCase()}...`}
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}

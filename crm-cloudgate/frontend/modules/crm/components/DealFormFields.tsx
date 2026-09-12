@@ -721,19 +721,6 @@ export function DealFormFields({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isCreate, currentUser?.id, assignableMembers.length]);
 
-  // Khối "AI điền nhanh" — kiểm tra 1 lần lúc mount xem backend có cấu hình AI thật
-  // (OPENAI_API_KEY) hay không, KHÔNG gọi thử AI thật để check. Thiếu cấu hình → ẩn hẳn
-  // khối này, không hiện nút rồi mới báo lỗi.
-  const [aiConfigured, setAiConfigured] = useState(false);
-  useEffect(() => {
-    if (!isCreate) return;
-    let alive = true;
-    void seedingCrmRepository.getAiParseDealStatus().then(configured => {
-      if (alive) setAiConfigured(configured);
-    });
-    return () => { alive = false; };
-  }, [isCreate]);
-
   const [aiText, setAiText] = useState('');
   const [aiLoading, setAiLoading] = useState(false);
   const [aiError, setAiError] = useState('');
@@ -781,8 +768,7 @@ export function DealFormFields({
             <button
               type="button"
               className="crm-ai-fill-btn"
-              disabled={aiLoading || !aiText.trim() || !aiConfigured}
-              title={!aiConfigured ? 'Chưa cấu hình AI' : undefined}
+              disabled={aiLoading || !aiText.trim()}
               onClick={() => void handleAiParse()}
             >
               ✨ {aiLoading ? 'Đang phân tích...' : 'AI điền nhanh'}

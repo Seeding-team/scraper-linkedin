@@ -145,8 +145,8 @@ export const DEAL_STAGE_META: Record<
   { label: string; description: string; color: string; ringClass: string; headerClass: string; badgeClass: string; order: number }
 > = {
   new_lead: {
-    label: "New Lead",
-    description: "Deal mới — chưa có tương tác",
+    label: "Khách mới",
+    description: "Deal mới - chưa có tương tác",
     color: "#3b82f6",
     ringClass: "ring-blue-500/40",
     headerClass: "bg-blue-500",
@@ -154,7 +154,7 @@ export const DEAL_STAGE_META: Record<
     order: 1,
   },
   contacted: {
-    label: "Contacted",
+    label: "Đã liên hệ",
     description: "Đã liên hệ ít nhất 1 lần",
     color: "#6366f1",
     ringClass: "ring-indigo-500/40",
@@ -163,8 +163,8 @@ export const DEAL_STAGE_META: Record<
     order: 2,
   },
   qualified: {
-    label: "Qualified",
-    description: "Có nhu cầu, ngân sách, decision-maker",
+    label: "Đủ điều kiện",
+    description: "Có nhu cầu, ngân sách, người quyết định",
     color: "#8b5cf6",
     ringClass: "ring-violet-500/40",
     headerClass: "bg-violet-500",
@@ -172,7 +172,7 @@ export const DEAL_STAGE_META: Record<
     order: 3,
   },
   requirement: {
-    label: "Requirement Gathering",
+    label: "Lấy yêu cầu",
     description: "Đang thu thập brief/yêu cầu",
     color: "#a855f7",
     ringClass: "ring-purple-500/40",
@@ -181,7 +181,7 @@ export const DEAL_STAGE_META: Record<
     order: 4,
   },
   proposal_sent: {
-    label: "Proposal Sent",
+    label: "Đã báo giá",
     description: "Đã gửi báo giá chính thức",
     color: "#f59e0b",
     ringClass: "ring-amber-500/40",
@@ -190,7 +190,7 @@ export const DEAL_STAGE_META: Record<
     order: 5,
   },
   negotiation: {
-    label: "Negotiation",
+    label: "Đàm phán",
     description: "Đang đàm phán điều khoản",
     color: "#ea580c",
     ringClass: "ring-orange-500/40",
@@ -199,7 +199,7 @@ export const DEAL_STAGE_META: Record<
     order: 6,
   },
   contract_sent: {
-    label: "Contract Sent",
+    label: "Đã gửi hợp đồng",
     description: "Đã gửi hợp đồng chờ ký",
     color: "#0ea5e9",
     ringClass: "ring-sky-500/40",
@@ -208,8 +208,8 @@ export const DEAL_STAGE_META: Record<
     order: 7,
   },
   on_hold: {
-    label: "On Hold",
-    description: "Tạm dừng — không phải step chính",
+    label: "Tạm dừng",
+    description: "Tạm dừng - không phải step chính",
     color: "#64748b",
     ringClass: "ring-slate-500/40",
     headerClass: "bg-slate-500",
@@ -217,8 +217,8 @@ export const DEAL_STAGE_META: Record<
     order: 8,
   },
   won: {
-    label: "Won",
-    description: "Đã ký hợp đồng — terminal",
+    label: "Hoàn thành",
+    description: "Đã ký hợp đồng - terminal",
     color: "#16a34a",
     ringClass: "ring-green-500/40",
     headerClass: "bg-green-600",
@@ -226,8 +226,8 @@ export const DEAL_STAGE_META: Record<
     order: 9,
   },
   lost: {
-    label: "Lost",
-    description: "Rớt — terminal, không đổi tiếp",
+    label: "Từ chối",
+    description: "Rớt - terminal, không đổi tiếp",
     color: "#dc2626",
     ringClass: "ring-red-500/40",
     headerClass: "bg-red-600",
@@ -337,6 +337,8 @@ export interface Customer {
   updated_at: string;
   leader_name?: string | null;
   sdr_name?: string | null;
+  team_name?: string | null;
+  team_type?: string | null;
 }
 
 export interface CustomerListResponse {

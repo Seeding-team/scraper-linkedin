@@ -32,6 +32,7 @@ import {
 import { toast } from "sonner";
 
 import { CrmCustomerModal } from "@/components/all-platform/components/CrmCustomerModal";
+import { DealFormModal, clearDealDraft } from "@/modules/crm/components/DealFormModal";
 import { QuickChatBox } from "./QuickChatBox";
 import { StageTransitionModal } from "./StageTransitionModal";
 import { DealDetailDrawer } from "./DealDetailDrawer";
@@ -50,6 +51,9 @@ import {
 import { getCurrentStage, isPaymentOverdue } from "@/services/crm-pipeline.helpers";
 import { cn } from "@/lib/utils";
 import { useCrmCategoryCodeOptions, useCrmCategoryLabels } from "@/modules/crm/components/CrmCategorySelect";
+import { useCrm } from "@/modules/crm/hooks/useCrm";
+import type { CreateDealInput } from "@/modules/crm/types";
+import { useAppAuth } from "@/contexts/AppAuthContext";
 
 type ViewMode = "kanban" | "table";
 
@@ -117,7 +121,9 @@ function FilterBar({
         <div className="relative flex-1 min-w-[220px]">
           <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-400" />
           <input
-            type="text"
+            type="search"
+            name="all-platform-crm-opportunities-search"
+            autoComplete="off"
             placeholder="Tìm tên, SĐT, email..."
             value={filters.search}
             onChange={(e) => set("search", e.target.value)}
@@ -238,6 +244,16 @@ function FilterBar({
 }
 
 export default function CrmCustomersPage() {
+  const {
+    agents,
+    sourceOptions: dealFormSourceOptions,
+    servicePackageOptions: dealFormServicePackageOptions,
+    packageOptions: dealFormPackageOptions,
+    industryOptions: dealFormIndustryOptions,
+    saving: dealSaving,
+    createDeal,
+  } = useCrm();
+  const { user } = useAppAuth();
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [stageCounts, setStageCounts] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
@@ -254,6 +270,7 @@ export default function CrmCustomersPage() {
   });
 
   const [modalOpen, setModalOpen] = useState(false);
+  const [quickDealOpen, setQuickDealOpen] = useState(false);
   const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
 
   const [transitionTarget, setTransitionTarget] = useState<{
@@ -338,9 +355,14 @@ export default function CrmCustomersPage() {
 
   const handleFilterChange = (f: FilterState) => setFilters(f);
 
+  function clearSearchFilter() {
+    setFilters(current => ({ ...current, search: "" }));
+  }
+
   function openNewModal() {
     setEditingCustomer(null);
-    setModalOpen(true);
+    clearSearchFilter();
+    setQuickDealOpen(true);
   }
 
   function openEditModal(c: Customer) {
@@ -351,6 +373,26 @@ export default function CrmCustomersPage() {
   function handleSaved() {
     void fetchCustomers();
     void fetchStageCounts();
+  }
+
+  async function handleCreateDeal(input: CreateDealInput) {
+    try {
+      const deal = await createDeal(input);
+      clearDealDraft();
+      setQuickDealOpen(false);
+      clearSearchFilter();
+      await Promise.all([fetchCustomers(), fetchStageCounts()]);
+      toast.success("Đã tạo deal");
+      if (deal.customerProfileMessage) toast.info(deal.customerProfileMessage);
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : "Không tạo được deal. Vui lòng kiểm tra lại thông tin.");
+    }
+  }
+
+  async function handleCreateDealAndContinue(input: CreateDealInput) {
+    const deal = await createDeal(input);
+    await Promise.all([fetchCustomers(), fetchStageCounts()]);
+    if (deal.customerProfileMessage) toast.info(deal.customerProfileMessage);
   }
 
   function handleDelete(id: string) {
@@ -545,7 +587,26 @@ export default function CrmCustomersPage() {
         />
       )}
 
-      {/* Add / Edit customer modal */}
+      {/* Add deal quick modal */}
+      <DealFormModal
+        open={quickDealOpen}
+        loading={dealSaving}
+        agents={agents}
+        sourceOptions={dealFormSourceOptions}
+        servicePackageOptions={dealFormServicePackageOptions}
+        packageOptions={dealFormPackageOptions}
+        industryOptions={dealFormIndustryOptions}
+        onClose={() => {
+          setQuickDealOpen(false);
+          clearSearchFilter();
+        }}
+        onCreate={handleCreateDeal}
+        onCreateAndContinue={handleCreateDealAndContinue}
+        onUpdate={() => undefined}
+        currentUser={user}
+      />
+
+      {/* Edit customer modal */}
       <CrmCustomerModal
         isOpen={modalOpen}
         onClose={() => {

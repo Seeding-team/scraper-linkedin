@@ -666,21 +666,51 @@ export function QuoteCenterPage() {
       .slice(0, 30);
   }, [deals, dealSearch]);
 
+  function clearListSearch() {
+    setListSearch('');
+    setPage(1);
+  }
   function openFreshModal() {
+    clearListSearch();
     setQuoteModal({ open: true, deal: null });
+  }
+  function closeFreshModal() {
+    setQuoteModal({ open: false, deal: null });
+    clearListSearch();
+  }
+  function openQuoteWorkspace(quoteId: string) {
+    clearListSearch();
+    setWorkspaceQuoteId(quoteId);
   }
   /** "+ Yêu cầu hỗ trợ báo giá" - KHÔNG dùng wizard CreateQuoteModal (khác
    * handler hoàn toàn với "Tạo báo giá") - mở thẳng QuoteWorkspaceModal ở chế
    * độ tạo mới (quoteId=null), bám UI/luồng HTML Phase 2. */
   function openRequestWorkspace() {
+    clearListSearch();
     setWorkspaceCreateMode(true);
   }
+  function closeRequestWorkspace() {
+    setWorkspaceQuoteId(null);
+    setWorkspaceCreateMode(false);
+    setWorkspacePrefill(null);
+    clearListSearch();
+  }
   function openTemplateModal(form: QuoteForm) {
+    clearListSearch();
     setQuoteModal({ open: true, deal: null, quoteFormId: form.id });
   }
-  function pickDealAndOpen(deal: Deal) {
+  function openDealPicker() {
+    clearListSearch();
+    setDealSearch('');
+    setDealPickerOpen(true);
+  }
+  function closeDealPicker() {
     setDealPickerOpen(false);
     setDealSearch('');
+    clearListSearch();
+  }
+  function pickDealAndOpen(deal: Deal) {
+    closeDealPicker();
     setQuoteModal({ open: true, deal });
   }
 
@@ -709,6 +739,7 @@ export function QuoteCenterPage() {
       // tu cuon xuong dung bang de lo dong moi ra thay vi bat tim thu cong.
       linkedQuotesSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
       const deal = result.quote.dealId ? dealsById.get(result.quote.dealId) : null;
+      clearListSearch();
       setQuoteModal({ open: true, deal: deal || null, editQuote: result.quote });
     } catch (err) {
       window.alert(err instanceof Error ? err.message : 'Không tạo được phiên bản báo giá mới.');
@@ -718,6 +749,7 @@ export function QuoteCenterPage() {
   async function editDraft(row: QuoteChainRow) {
     try {
       const quote = await seedingQuoteRepository.getQuote(row.current.id);
+      clearListSearch();
       setQuoteModal({ open: true, deal: row.deal || null, editQuote: quote });
     } catch (err) {
       window.alert(err instanceof Error ? err.message : 'Không tải được báo giá để sửa.');
@@ -827,7 +859,7 @@ export function QuoteCenterPage() {
       label: 'Mở báo giá',
       icon: ExternalLink,
       group: 1,
-      onSelect: () => setWorkspaceQuoteId(current.id),
+      onSelect: () => openQuoteWorkspace(current.id),
     };
     const historyItem: ActionMenuItem = {
       key: 'history',
@@ -952,7 +984,7 @@ export function QuoteCenterPage() {
       <tr key={current.id} className="qc-row-compact">
         <td data-label="Báo giá / Cơ hội · Version" className="qc-cell-quote">
           <div className="qc-cell-quote-line1">
-            <button type="button" className="qc-row-link qc-row-link-btn" title={current.quoteNumber} onClick={() => setWorkspaceQuoteId(current.id)}>
+            <button type="button" className="qc-row-link qc-row-link-btn" title={current.quoteNumber} onClick={() => openQuoteWorkspace(current.id)}>
               {current.quoteNumber}
             </button>
             <span className="qc-badge qc-badge-version">V{current.versionNumber || 1} hiện tại</span>
@@ -1080,7 +1112,7 @@ export function QuoteCenterPage() {
       <div key={current.id} className="qc-quote-card">
         <div className="qc-quote-card-head">
           <div>
-            <button type="button" className="qc-row-link qc-row-link-btn" onClick={() => setWorkspaceQuoteId(current.id)}>
+            <button type="button" className="qc-row-link qc-row-link-btn" onClick={() => openQuoteWorkspace(current.id)}>
               {current.quoteNumber}
             </button>
             <span className="qc-badge qc-badge-version">V{current.versionNumber || 1} hiện tại</span>
@@ -1353,7 +1385,7 @@ export function QuoteCenterPage() {
             <button type="button" className="qc-btn qc-btn-soft" onClick={openFreshModal}>
               Tạo báo giá nhanh
             </button>
-            <button type="button" className="qc-btn qc-btn-soft" onClick={() => setDealPickerOpen(true)}>
+            <button type="button" className="qc-btn qc-btn-soft" onClick={openDealPicker}>
               Tạo từ cơ hội CRM →
             </button>
           </div>
@@ -1477,6 +1509,9 @@ export function QuoteCenterPage() {
 
         <div className="qc-list-tools">
           <input
+            type="search"
+            name="crm-quote-center-list-search"
+            autoComplete="off"
             placeholder="Tìm theo mã báo giá..."
             value={listSearch}
             onChange={event => setListSearch(event.target.value)}
@@ -1697,11 +1732,14 @@ export function QuoteCenterPage() {
       </section>
 
       {dealPickerOpen ? (
-        <div className="qc-modal-backdrop" onClick={() => setDealPickerOpen(false)}>
+        <div className="qc-modal-backdrop" onClick={closeDealPicker}>
           <div className="qc-deal-picker" onClick={event => event.stopPropagation()}>
             <h3>Chọn cơ hội CRM</h3>
             <input
               autoFocus
+              type="search"
+              name="crm-quote-center-deal-picker-search"
+              autoComplete="off"
               placeholder="Tìm theo tên khách hàng hoặc công ty..."
               value={dealSearch}
               onChange={event => setDealSearch(event.target.value)}
@@ -1719,7 +1757,7 @@ export function QuoteCenterPage() {
               )}
             </div>
             <div className="qc-deal-picker-foot">
-              <button type="button" className="qc-btn" onClick={() => setDealPickerOpen(false)}>
+              <button type="button" className="qc-btn" onClick={closeDealPicker}>
                 Hủy
               </button>
             </div>
@@ -1814,7 +1852,7 @@ export function QuoteCenterPage() {
         editQuote={quoteModal.editQuote}
         initialQuoteFormId={quoteModal.quoteFormId}
         canApproveQuotes={canApproveQuote(user)}
-        onClose={() => setQuoteModal({ open: false, deal: null })}
+        onClose={closeFreshModal}
         onCreated={async () => {
           const rows = await seedingQuoteRepository.getQuotes();
           setQuotes(rows);
@@ -1838,13 +1876,12 @@ export function QuoteCenterPage() {
           initialProjectId={workspacePrefill?.projectId}
           lockCustomer={Boolean(workspacePrefill?.customerId)}
           lockProject={Boolean(workspacePrefill?.lockProject)}
-          onClose={() => {
-            setWorkspaceQuoteId(null);
-            setWorkspaceCreateMode(false);
-            setWorkspacePrefill(null);
-          }}
+          onClose={closeRequestWorkspace}
           onChanged={refreshQuotes}
-          onEditDraft={quote => setQuoteModal({ open: true, deal: quote.dealId ? dealsById.get(quote.dealId) || null : null, editQuote: quote })}
+          onEditDraft={quote => {
+            clearListSearch();
+            setQuoteModal({ open: true, deal: quote.dealId ? dealsById.get(quote.dealId) || null : null, editQuote: quote });
+          }}
         />
       ) : null}
     </div>

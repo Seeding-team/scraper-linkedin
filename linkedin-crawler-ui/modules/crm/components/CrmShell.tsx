@@ -160,6 +160,33 @@ export function CrmShell() {
     setOpenFilter('');
   }
 
+  function clearSearchFilter() {
+    setFilters(current => ({ ...current, search: '' }));
+  }
+
+  function openCreateDealModal() {
+    clearSearchFilter();
+    setCreateOpen(true);
+  }
+
+  function closeDealFormModal() {
+    setCreateOpen(false);
+    setEditingDeal(null);
+    setInitialCustomer(null);
+    setInitialProject(null);
+    clearSearchFilter();
+  }
+
+  function openQuoteModal(deal: Deal, editQuote: Quote | null = null) {
+    clearSearchFilter();
+    setQuoteModal({ open: true, deal, editQuote });
+  }
+
+  function closeQuoteModal() {
+    setQuoteModal({ open: false, deal: null, editQuote: null });
+    clearSearchFilter();
+  }
+
   function toggleStageFilter(stage: DealStage) {
     setActiveStageFilters(current =>
       current.includes(stage) ? current.filter(item => item !== stage) : [...current, stage]
@@ -217,7 +244,7 @@ export function CrmShell() {
         // chỉ mang query param rồi bỏ qua.
         const projectId = searchParams.get('projectId');
         setInitialProject(projectId ? { id: projectId } : null);
-        setCreateOpen(true);
+        openCreateDealModal();
       }
     } else {
       void openDetailById(openDealId);
@@ -325,7 +352,7 @@ export function CrmShell() {
     if (!deal.quote?.id) return;
     try {
       const quote = await seedingQuoteRepository.getQuote(deal.quote.id);
-      setQuoteModal({ open: true, deal, editQuote: quote });
+      openQuoteModal(deal, quote);
     } catch (err) {
       window.alert(err instanceof Error ? err.message : 'Không tải được báo giá để sửa.');
     }
@@ -334,7 +361,7 @@ export function CrmShell() {
   async function handleOpenQuoteVersion(deal: Deal, quoteId: string) {
     try {
       const quote = await seedingQuoteRepository.getQuote(quoteId);
-      setQuoteModal({ open: true, deal, editQuote: quote });
+      openQuoteModal(deal, quote);
     } catch (err) {
       window.alert(err instanceof Error ? err.message : 'Không tải được phiên bản báo giá này.');
     }
@@ -354,7 +381,7 @@ export function CrmShell() {
         setToast(`Đã tạo phiên bản mới V${result.quote.versionNumber}.`);
       }
       setQuoteVersionsRefreshKey(key => key + 1);
-      setQuoteModal({ open: true, deal, editQuote: result.quote });
+      openQuoteModal(deal, result.quote);
     } catch (err) {
       window.alert(err instanceof Error ? humanizeCrmError(err.message) : 'Không tạo được phiên bản báo giá mới.');
     }
@@ -401,7 +428,7 @@ export function CrmShell() {
                 <TableIcon className="crm-button-icon" /> Bảng
               </button>
             </div>
-            <button type="button" className="crm-primary-button" disabled={loading || saving} onClick={() => setCreateOpen(true)}>
+            <button type="button" className="crm-primary-button" disabled={loading || saving} onClick={openCreateDealModal}>
               <Plus className="crm-button-icon" /> Tạo cơ hội
             </button>
           </div>
@@ -419,7 +446,8 @@ export function CrmShell() {
             <input
               value={filters.search}
               onChange={event => setFilters(current => ({ ...current, search: event.target.value }))}
-              type="text"
+              type="search"
+              name="crm-pipeline-search"
               className="crm-input"
               placeholder="Tìm tên, SĐT, email..."
               autoComplete="off"
@@ -489,7 +517,7 @@ export function CrmShell() {
               <div>
                 <h3>Chưa có khách hàng CRM</h3>
                 <p>Tạo deal mới để bắt đầu quản lý pipeline.</p>
-                <button type="button" className="crm-primary-button crm-empty-action" onClick={() => setCreateOpen(true)}>
+                <button type="button" className="crm-primary-button crm-empty-action" onClick={openCreateDealModal}>
                   <Plus className="crm-button-icon" /> Tạo cơ hội
                 </button>
               </div>
@@ -500,7 +528,7 @@ export function CrmShell() {
               loading={loading}
               onCardClick={openDetail}
               onContractClick={setContractDeal}
-              onCreateQuote={deal => setQuoteModal({ open: true, deal, editQuote: null })}
+              onCreateQuote={deal => openQuoteModal(deal)}
               onRequestMove={(deal, toStage) => setStageData({ deal, toStage })}
             />
           ) : (
@@ -520,7 +548,7 @@ export function CrmShell() {
         onEdit={setEditingDeal}
         onDelete={handleDelete}
         onUpdateContractStatus={updateContractStatus}
-        onCreateQuote={deal => setQuoteModal({ open: true, deal, editQuote: null })}
+        onCreateQuote={deal => openQuoteModal(deal)}
         onEditQuote={handleEditQuote}
         onDeleteQuote={handleDeleteQuote}
         onCreateQuoteVersion={handleCreateQuoteVersion}
@@ -550,7 +578,7 @@ export function CrmShell() {
         initialDeal={quoteModal.deal}
         editQuote={quoteModal.editQuote}
         canApproveQuotes={canApproveQuote(user)}
-        onClose={() => setQuoteModal({ open: false, deal: null, editQuote: null })}
+        onClose={closeQuoteModal}
         onCreated={async quote => {
           // Quote tạo xong đã gắn deal_id (nếu có) ở backend rồi, nhưng danh sách
           // deal trên board vẫn là bản cũ trong state — phải load lại thì card mới
@@ -572,12 +600,7 @@ export function CrmShell() {
         servicePackageOptions={dealFormServicePackageOptions}
         packageOptions={dealFormPackageOptions}
         industryOptions={dealFormIndustryOptions}
-        onClose={() => {
-          setCreateOpen(false);
-          setEditingDeal(null);
-          setInitialCustomer(null);
-          setInitialProject(null);
-        }}
+        onClose={closeDealFormModal}
         onCreate={handleCreate}
         onCreateAndContinue={handleCreateAndContinue}
         onUpdate={handleUpdate}

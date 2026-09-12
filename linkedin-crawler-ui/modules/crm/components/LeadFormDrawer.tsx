@@ -487,6 +487,7 @@ export function LeadFormDrawer({
               <div className="crm-form-grid">
                 <Field label="Số điện thoại">
                   <input
+                    name="crm-lead-form-check-phone"
                     value={checkPhone}
                     onChange={e => setCheckPhone(e.target.value)}
                     type="tel"
@@ -496,6 +497,7 @@ export function LeadFormDrawer({
                 </Field>
                 <Field label="Email">
                   <input
+                    name="crm-lead-form-check-email"
                     value={checkEmail}
                     onChange={e => setCheckEmail(e.target.value)}
                     type="email"
@@ -630,6 +632,7 @@ export function LeadFormDrawer({
                 <div className="crm-ai-fill crm-lead-paste-box">
                   <div className="crm-ai-fill-row">
                     <textarea
+                      name="crm-lead-form-paste-text"
                       className="crm-ai-fill-textarea"
                       value={pasteText}
                       onChange={event => setPasteText(event.target.value)}

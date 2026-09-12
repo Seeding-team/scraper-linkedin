@@ -1,5 +1,5 @@
 import { Suspense } from "react";
-import { CrmShell } from "@/modules/crm";
+import CrmCustomersPage from "@/components/all-platform/customers/CrmCustomersPage";
 import { Metadata } from "next";
 
 export const metadata: Metadata = {
@@ -10,7 +10,7 @@ export const metadata: Metadata = {
 export default function CrmRoute() {
   return (
     <Suspense fallback={null}>
-      <CrmShell />
+      <CrmCustomersPage />
     </Suspense>
   );
 }

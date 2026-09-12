@@ -133,23 +133,24 @@ export function CrmCustomerModal({
   const selectedSdrId = formData.sdr_id?.trim() || "";
   const currentLeaderName = customer?.leader_name?.trim() || "";
   const currentSdrName = customer?.sdr_name?.trim() || "";
+  const normalizeUserName = (value: string | null | undefined) => String(value || "").trim().toLowerCase();
 
   const resolvedLeaderId =
     selectedLeaderId ||
-    leaders.find((item) => item.name.trim().toLowerCase() === currentLeaderName.toLowerCase())?.id ||
+    leaders.find((item) => normalizeUserName(item.name) === normalizeUserName(currentLeaderName))?.id ||
     "";
   const resolvedSdrId =
     selectedSdrId ||
-    sdrs.find((item) => item.name.trim().toLowerCase() === currentSdrName.toLowerCase())?.id ||
+    sdrs.find((item) => normalizeUserName(item.name) === normalizeUserName(currentSdrName))?.id ||
     "";
 
   const leaderOptions =
-    resolvedLeaderId || !currentLeaderName || leaders.some((item) => item.name === currentLeaderName)
+    resolvedLeaderId || !currentLeaderName || leaders.some((item) => normalizeUserName(item.name) === normalizeUserName(currentLeaderName))
       ? leaders
       : [{ id: `current-leader-${customer?.id ?? "new"}`, name: currentLeaderName, role: "leader" }, ...leaders];
 
   const sdrOptions =
-    resolvedSdrId || !currentSdrName || sdrs.some((item) => item.name === currentSdrName)
+    resolvedSdrId || !currentSdrName || sdrs.some((item) => normalizeUserName(item.name) === normalizeUserName(currentSdrName))
       ? sdrs
       : [{ id: `current-sdr-${customer?.id ?? "new"}`, name: currentSdrName, role: "SDR" }, ...sdrs];
 

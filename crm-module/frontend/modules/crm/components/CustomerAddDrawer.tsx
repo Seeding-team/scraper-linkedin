@@ -513,6 +513,8 @@ export function CustomerAddDrawer({
               Tìm theo tên doanh nghiệp, SĐT hoặc email để tránh tạo trùng hồ sơ đã có.
             </p>
             <input
+              type="search"
+              name="crm-customer-add-duplicate-search"
               className="crm-customer-drawer-search"
               value={query}
               onChange={event => setQuery(event.target.value)}

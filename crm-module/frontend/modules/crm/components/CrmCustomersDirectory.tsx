@@ -262,6 +262,22 @@ export function CrmCustomersDirectory() {
     setPage(1);
   }
 
+  function clearSearchFilter() {
+    setSearchInput('');
+    setSearch('');
+    setPage(1);
+  }
+
+  function openAddCustomerDrawer() {
+    clearSearchFilter();
+    setAddDrawerOpen(true);
+  }
+
+  function closeAddCustomerDrawer() {
+    setAddDrawerOpen(false);
+    clearSearchFilter();
+  }
+
   function handleSaved() {
     setFormOpen(false);
     setEditingCustomer(null);
@@ -397,6 +413,8 @@ export function CrmCustomersDirectory() {
         <section className="crm-filter-card">
           <div className="crm-filter-grid crm-filter-grid--customers-v2">
             <input
+              type="search"
+              name="crm-customers-directory-search"
               value={searchInput}
               onChange={event => setSearchInput(event.target.value)}
               className="crm-input"
@@ -425,7 +443,7 @@ export function CrmCustomersDirectory() {
                   <RotateCcw className="crm-button-icon" /> Xóa lọc
                 </button>
               ) : null}
-              <button type="button" className="crm-primary-button" onClick={() => setAddDrawerOpen(true)}>
+              <button type="button" className="crm-primary-button" onClick={openAddCustomerDrawer}>
                 <Plus className="crm-button-icon" /> Thêm khách hàng
               </button>
             </div>
@@ -550,7 +568,7 @@ export function CrmCustomersDirectory() {
                             <button
                               type="button"
                               className="crm-primary-button"
-                              onClick={() => setAddDrawerOpen(true)}
+                              onClick={openAddCustomerDrawer}
                             >
                               <Plus className="crm-button-icon" /> Thêm khách hàng đầu tiên
                             </button>
@@ -646,7 +664,7 @@ export function CrmCustomersDirectory() {
                   <button
                     type="button"
                     className="crm-primary-button"
-                    onClick={() => setAddDrawerOpen(true)}
+                    onClick={openAddCustomerDrawer}
                   >
                     <Plus className="crm-button-icon" /> Thêm khách hàng đầu tiên
                   </button>
@@ -684,7 +702,7 @@ export function CrmCustomersDirectory() {
       <CustomerAddDrawer
         open={addDrawerOpen}
         currentUser={user}
-        onClose={() => setAddDrawerOpen(false)}
+        onClose={closeAddCustomerDrawer}
         onCreated={handleCreated}
       />
 
