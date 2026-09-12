@@ -26,8 +26,7 @@ DEAL_STAGE_FILTERS = {
 
 
 def normalize_deal_stage(value: str | None) -> str:
-    raw = str(value or "dealing")
-    return DEAL_STAGE_MAP.get(raw, raw)
+    return str(value or "new_lead")
 
 
 def _serialize_datetimes(payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -319,7 +318,7 @@ def create_customer_lead(data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         # Map deal_stage → status để tương thích code cũ
         ds = normalize_deal_stage(data.get("deal_stage") or "dealing")
         data["deal_stage"] = ds
-        if ds == "post_sale_care":
+        if ds in ("post_sale_care", "won"):
             data["status"] = "closed"
         elif ds == "lost":
             data["status"] = "rejected"
@@ -451,7 +450,7 @@ def transition_stage(
             raise TransitionError("Thiếu 'to_stage'")
 
         # Check terminal
-        if from_stage in ("post_sale_care", "lost"):
+        if from_stage in ("post_sale_care", "won", "lost"):
             raise TransitionError(
                 f"Deal đã ở trạng thái terminal '{from_stage}' — không thể đổi sang stage khác. "
                 "Muốn tiếp tục hãy tạo deal mới."
@@ -480,7 +479,7 @@ def transition_stage(
             "stage_entered_at": now,
         }
         # Map ngược sang status cũ
-        if to_stage == "post_sale_care":
+        if to_stage in ("post_sale_care", "won"):
             update["status"] = "closed"
             if not current.get("customer_since"):
                 update["customer_since"] = now

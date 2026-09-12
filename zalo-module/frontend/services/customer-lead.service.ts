@@ -68,20 +68,23 @@ export type DealStage =
  *   sang `proposal_sent`. `requirement` vẫn là stage hợp lệ nếu khách
  *   thực sự cần thu thập brief (kéo từ qualified sang requirement như cũ).
  */
+const ALL_STAGES: DealStage[] = [
+  "new_lead", "contacted", "qualified", "requirement",
+  "proposal_sent", "negotiation", "contract_sent",
+  "on_hold", "won", "lost"
+];
+
 export const DEAL_STAGE_TRANSITIONS: Record<DealStage, DealStage[]> = {
-  new_lead:       ["contacted", "lost"],
-  // Contacted → qualified (gặp khách, lấy info cơ bản) HOẶC nhảy thẳng proposal
-  // nếu khách chốt gói tiêu chuẩn qua điện thoại.
-  contacted:      ["qualified", "proposal_sent", "on_hold", "lost"],
-  // Qualified → requirement (brief riêng) HOẶC nhảy thẳng proposal (gói có sẵn).
-  qualified:      ["requirement", "proposal_sent", "on_hold", "lost"],
-  requirement:    ["proposal_sent", "on_hold", "lost"],
-  proposal_sent:  ["negotiation", "on_hold", "lost"],
-  negotiation:    ["contract_sent", "on_hold", "lost"],
-  contract_sent:  ["won", "lost"],
-  on_hold:        ["lost"], // quay lại stage trước xử lý riêng qua prev_stage
-  won:            [],
-  lost:           [],
+  new_lead:       ALL_STAGES.filter(s => s !== "new_lead"),
+  contacted:      ALL_STAGES.filter(s => s !== "contacted"),
+  qualified:      ALL_STAGES.filter(s => s !== "qualified"),
+  requirement:    ALL_STAGES.filter(s => s !== "requirement"),
+  proposal_sent:  ALL_STAGES.filter(s => s !== "proposal_sent"),
+  negotiation:    ALL_STAGES.filter(s => s !== "negotiation"),
+  contract_sent:  ALL_STAGES.filter(s => s !== "contract_sent"),
+  on_hold:        ALL_STAGES.filter(s => s !== "on_hold"),
+  won:            [], // terminal
+  lost:           [], // terminal
 };
 
 /** Stage terminal — không cho phép đổi tiếp bằng drag thường, chỉ "reopen" qua quy trình riêng. */
