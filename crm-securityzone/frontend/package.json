@@ -3,13 +3,17 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "clean:next-dev": "node -e \"require('node:fs').rmSync('.next/dev',{recursive:true,force:true})\"",
+    "predev": "npm run clean:next-dev",
     "dev": "next dev",
+    "prebuild": "npm run clean:next-dev",
     "build": "next build",
     "postbuild": "node scripts/copy-standalone-assets.mjs",
     "build:prod": "npm run build",
     "start:standalone": "node .next/standalone/server.js",
     "start": "next start",
     "lint": "eslint",
+    "pretype-check": "npm run clean:next-dev",
     "type-check": "tsc --noEmit",
     "check": "npm run type-check && npm run lint"
   },

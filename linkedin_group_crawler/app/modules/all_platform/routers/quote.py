@@ -83,6 +83,7 @@ from app.modules.all_platform.services.crm_permission_service import (
     can_approve_quote,
     can_edit_quote,
     can_edit_technical_quote,
+    can_edit_quote_cost,
     can_edit_quote_pricing,
     can_transition_quote_stage,
     can_manage_quote_email_settings,
@@ -371,8 +372,6 @@ _TECHNICAL_ITEM_FIELD_PAIRS = [
     ("serviceDescription", "service_description"),
     ("unit", "unit"),
     ("quantity", "quantity"),
-    ("costPrice", "cost_price"),
-    ("costNotApplicable", "cost_not_applicable"),
 ]
 _PRICING_ITEM_FIELD_PAIRS = [
     ("unitPrice", "unit_price"),
@@ -433,6 +432,29 @@ def _check_item_field_level_permission(user: dict, quote: dict, new_items: Optio
         return "Giá vốn chỉ được nhập từ Bước 2 (Thông tin kỹ thuật) trở đi"
     if _items_touch_fields(existing_items, new_items, _PRICING_ITEM_FIELD_PAIRS) and stage != "pricing":
         return "Markup/Giá khách chỉ được nhập ở Bước 3 (Hoàn thiện giá bán)"
+    return None
+
+
+def _check_item_field_level_permission(user: dict, quote: dict, new_items: Optional[list]) -> Optional[str]:
+    """Field-level guard, latest business rule.
+
+    Service catalog defaultCostPriceVnd is only a prefill. In a quote request,
+    authorized quote participants may edit cost_price for the case without
+    writing back to the catalog default.
+    """
+    if new_items is None:
+        return None
+    existing_items = quote.get("items") or []
+    if _items_touch_fields(existing_items, new_items, _TECHNICAL_ITEM_FIELD_PAIRS) and not can_edit_technical_quote(user, quote):
+        return "Khong co quyen sua phan ky thuat cua bao gia nay"
+    if _items_touch_fields(existing_items, new_items, _COST_ONLY_ITEM_FIELD_PAIRS) and not can_edit_quote_cost(user, quote):
+        return "Khong co quyen sua gia von cua bao gia nay"
+    if _items_touch_fields(existing_items, new_items, _PRICING_ITEM_FIELD_PAIRS) and not can_edit_quote_pricing(user, quote):
+        return "Khong co quyen sua phan gia ban cua bao gia nay"
+
+    stage = quote.get("processingStage") or "request"
+    if _items_touch_fields(existing_items, new_items, _PRICING_ITEM_FIELD_PAIRS) and stage != "pricing":
+        return "Markup/Gia khach chi duoc nhap o Buoc 3"
     return None
 
 

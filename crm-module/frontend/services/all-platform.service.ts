@@ -1305,7 +1305,7 @@ export const allPlatformPostsService = {
 // ── CATEGORIES ────────────────────────────────────────────────────────────────
 
 export const allPlatformCategoriesService = {
-  getAll: (category_type?: string, options?: { activeOnly?: boolean }): Promise<ApiResponse<Category[]>> => {
+  getAll: (category_type?: string, options?: { activeOnly?: boolean; forceRefresh?: boolean }): Promise<ApiResponse<Category[]>> => {
     const params = new URLSearchParams();
     if (category_type) params.set("category_type", category_type);
     if (options?.activeOnly) params.set("active_only", "true");
@@ -1313,7 +1313,9 @@ export const allPlatformCategoriesService = {
     const url = qs ? `${BASE}/categories?${qs}` : `${BASE}/categories`;
     // Cache the entire categories list for 30s. Categories rarely change;
     // admin can invalidateTaxonomyCache() after edits.
-    return cachedFetch(`categories:${category_type || "all"}:${options?.activeOnly ? "active" : "all"}`, 30_000, () => requestJson<Category[]>(url));
+    const cacheKey = `categories:${category_type || "all"}:${options?.activeOnly ? "active" : "all"}`;
+    if (options?.forceRefresh) invalidateTaxonomyCache(cacheKey);
+    return cachedFetch(cacheKey, 30_000, () => requestJson<Category[]>(url));
   },
 
   add: (payload: { category_type: string; code: string; name?: string; description?: string; leader?: string; geo?: string; platform?: string; is_active?: boolean; sort_order?: number }): Promise<ApiResponse<Category>> => {

@@ -30,6 +30,8 @@ import { ArrowDownToLine, CheckCircle2, ChevronDown, ChevronUp, Eye, FileText, G
 import { usersService, projectsService, allPlatformCategoriesService, type QuoteBusinessRoleUser, type Project } from '@/services/all-platform.service';
 import { computeQuoteSla } from '../utils/quoteSla';
 import { SearchableSelect } from './SearchableSelect';
+import { CustomerAddDrawer } from './CustomerAddDrawer';
+import { CrmCategoryManageDrawer, CrmCategoryQuickModal, invalidateCrmCategoryCache } from './CrmCategorySelect';
 import { seedingCrmRepository } from '../repositories/SeedingCrmRepository';
 import { ProjectFormModal } from './ProjectFormModal';
 import { DealFormModal, clearDealDraft } from './DealFormModal';
@@ -54,6 +56,71 @@ const STAGE_LABELS: Record<QuoteProcessingStage, string> = {
   ready_to_publish: 'Đã duyệt · Chưa phát hành',
   published: 'Đã phát hành',
 };
+
+type QuoteCustomerOption = {
+  id: string;
+  label: string;
+  name?: string;
+  companyName?: string;
+  phone?: string;
+  email?: string;
+  address?: string;
+  taxCode?: string;
+};
+
+async function loadQuoteCustomerOptions(): Promise<QuoteCustomerOption[]> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (API_KEY) headers['X-API-Key'] = API_KEY;
+  const res = await fetch(`${API_BASE_URL}/api/all-platform/crm/customers?page=1&page_size=200`, { credentials: 'include', headers });
+  const body = await res.json();
+  if (!res.ok || body.success === false) throw new Error(body.message || 'load failed');
+  const items = (body.data?.items || []) as Array<{
+    id: string;
+    customer_name?: string;
+    company_name?: string;
+    phone?: string;
+    email?: string;
+    address?: string;
+    tax_code?: string;
+  }>;
+  return items.map(row => ({
+    id: row.id,
+    label: `${row.customer_name || 'KhÃ¡ch hÃ ng chÆ°a tÃªn'}${row.company_name ? ' Â· ' + row.company_name : ''}`,
+    name: row.customer_name,
+    companyName: row.company_name,
+    phone: row.phone,
+    email: row.email,
+    address: row.address,
+    taxCode: row.tax_code,
+  }));
+}
+
+async function loadQuoteCustomerOption(customerId: string): Promise<QuoteCustomerOption | null> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (API_KEY) headers['X-API-Key'] = API_KEY;
+  const res = await fetch(`${API_BASE_URL}/api/all-platform/crm/customers/${customerId}`, { credentials: 'include', headers });
+  const body = await res.json();
+  if (!res.ok || body.success === false || !body.data) return null;
+  const row = body.data as {
+    id: string;
+    customer_name?: string;
+    company_name?: string;
+    phone?: string;
+    email?: string;
+    address?: string;
+    tax_code?: string;
+  };
+  return {
+    id: row.id,
+    label: `${row.customer_name || 'KhÃ¡ch hÃ ng chÆ°a tÃªn'}${row.company_name ? ' Â· ' + row.company_name : ''}`,
+    name: row.customer_name,
+    companyName: row.company_name,
+    phone: row.phone,
+    email: row.email,
+    address: row.address,
+    taxCode: row.tax_code,
+  };
+}
 
 const ACTIVITY_LABELS: Record<string, string> = {
   created: 'Tạo báo giá',
@@ -375,9 +442,8 @@ export function QuoteWorkspaceModal({
   // nen Khach hang o day chi dung de LOC danh sach Co hoi cho de tim, gia tri
   // THAT su duoc ghi la draftDealId.
   const [draftCustomerId, setDraftCustomerId] = useState(initialCustomerId || '');
-  const [customers, setCustomers] = useState<
-    { id: string; label: string; name?: string; companyName?: string; phone?: string; email?: string; address?: string; taxCode?: string }[]
-  >([]);
+  const [customers, setCustomers] = useState<QuoteCustomerOption[]>([]);
+  const [customerDrawerOpen, setCustomerDrawerOpen] = useState(false);
   const [draftDealId, setDraftDealId] = useState('');
   // "+ Tạo cơ hội mới" ngay trong dropdown - BUG THAT DA GAP (gap that su,
   // khong phai gia dinh): khach hang chua co Cơ hội nao thi dropdown chi
@@ -451,12 +517,19 @@ export function QuoteWorkspaceModal({
   const [quoteTypeOptions, setQuoteTypeOptions] = useState<{ value: string; label: string }[]>([]);
   const [quoteTypeDropdownOpen, setQuoteTypeDropdownOpen] = useState(false);
   const [quoteTypeSearch, setQuoteTypeSearch] = useState('');
+  const [quoteTypeQuickAddOpen, setQuoteTypeQuickAddOpen] = useState(false);
+  const [quoteTypeManageOpen, setQuoteTypeManageOpen] = useState(false);
+  async function reloadQuoteTypeOptions(forceRefresh = false) {
+    const res = await allPlatformCategoriesService.getAll('crm_quote_type', { activeOnly: true, forceRefresh });
+    const next = (res.data || []).map(c => ({ value: c.code, label: c.name || c.code }));
+    setQuoteTypeOptions(next);
+    return next;
+  }
   useEffect(() => {
     let alive = true;
-    allPlatformCategoriesService
-      .getAll('crm_quote_type', { activeOnly: true })
-      .then(res => {
-        if (alive) setQuoteTypeOptions((res.data || []).map(c => ({ value: c.code, label: c.name || c.code })));
+    reloadQuoteTypeOptions()
+      .then(options => {
+        if (alive) setQuoteTypeOptions(options);
       })
       .catch(() => {
         if (alive) setQuoteTypeOptions([]);
@@ -1439,7 +1512,7 @@ export function QuoteWorkspaceModal({
       // the la `undefined` (khong du quyen xem, API da loai han field) hoac
       // `null` (du quyen nhung chua cau hinh) - ca 2 truong hop deu quy ve
       // costPrice=null, KHONG bia so 0.
-      costPrice: canEditCostCells ? (item.defaultCostPriceVnd ?? null) : null,
+      costPrice: costViewAllowed ? (item.defaultCostPriceVnd ?? null) : null,
       // BUG THAT DA GAP: markupPercent truoc day gate theo canEditCostCells
       // (chi yeu cau stage != 'request') nhung backend coi markupPercent la
       // field PRICING (_PRICING_ITEM_FIELD_PAIRS trong quote.py), CHI duoc
@@ -1518,6 +1591,9 @@ export function QuoteWorkspaceModal({
   // parentItemId tu chinh dong nguon). Khong truyen gi = giu nguyen hanh vi
   // cu (them vao cuoi bang, nguoi dung tu chon Muc cha dich qua dropdown
   // extraToolbar neu muon).
+  const draftCatalogIssuerCompanyId =
+    quote?.issuerCompanyId ?? quoteForms.find(form => form.id === (draftFormId || defaultFormId))?.issuerCompanyId ?? null;
+
   async function openCatalogPicker(target?: { sectionId?: string; afterIndex?: number }) {
     setCatalogHydrationError(null);
     setCatalogHydrationRetryItem(null);
@@ -1542,7 +1618,11 @@ export function QuoteWorkspaceModal({
       // luon hien), chi CHUA thay Gia von/Markup cho toi khi bao gia duoc
       // luu that (khong con ngoai le "tu cap cho nguoi goi" nhu thiet ke cu
       // - da bi audit bat lo hong bao mat, xem plan).
-      const tree = await serviceCatalogRepository.list({ context: 'quote_picker', quoteId: quote?.id });
+      const tree = await serviceCatalogRepository.list({
+        context: 'quote_picker',
+        quoteId: quote?.id,
+        issuerCompanyId: draftCatalogIssuerCompanyId,
+      });
       setCatalogTree(tree);
       setCatalogTreeQuoteId(quote?.id ?? null);
     } catch {
@@ -1634,7 +1714,11 @@ export function QuoteWorkspaceModal({
   // ngay trong danh sách" voi DAY DU gia von/markup (khong phai ban rong).
   async function refreshCatalogTree(): Promise<ServiceCatalogItem[] | null> {
     try {
-      const tree = await serviceCatalogRepository.list({ context: 'quote_picker', quoteId: quote?.id });
+      const tree = await serviceCatalogRepository.list({
+        context: 'quote_picker',
+        quoteId: quote?.id,
+        issuerCompanyId: draftCatalogIssuerCompanyId,
+      });
       setCatalogTree(tree);
       setCatalogTreeQuoteId(quote?.id ?? null);
       return tree;
@@ -2205,6 +2289,33 @@ export function QuoteWorkspaceModal({
   // da xay ra khi bam Luu nhap/Gui yeu cau xu ly trong che do tao moi).
   const deal = quote?.dealId ? effectiveDealsById.get(quote.dealId) : draftDealId ? effectiveDealsById.get(draftDealId) : undefined;
 
+  function selectDraftCustomer(value: string) {
+    setDraftCustomerId(value);
+    if (value) clearRequiredError('customer');
+    // Doi khach hang -> co hoi da chon (neu co) co the khong con thuoc
+    // khach hang moi - bo chon de tranh luu sai lech.
+    if (draftDealId && effectiveDealsById.get(draftDealId)?.customerId !== value) setDraftDealId('');
+    // Du an cung thuoc DUNG 1 khach hang - doi khach hang thi bo chon Du an cu.
+    setDraftProjectId('');
+  }
+
+  async function handleCustomerCreated(customerId: string) {
+    setCustomerDrawerOpen(false);
+    selectDraftCustomer(customerId);
+    try {
+      const nextCustomers = await loadQuoteCustomerOptions();
+      if (nextCustomers.some(customer => customer.id === customerId)) {
+        setCustomers(nextCustomers);
+        return;
+      }
+      const createdCustomer = await loadQuoteCustomerOption(customerId);
+      if (createdCustomer) setCustomers(prev => [createdCustomer, ...prev.filter(customer => customer.id !== customerId)]);
+    } catch {
+      // Khong chan flow tao bao gia: customer vua tao van duoc gan vao draft,
+      // list dropdown se nap lai o lan mo sau neu fetch tam thoi loi.
+    }
+  }
+
   // Goi y + tu dien email/SDT khach hang cua chinh quote nay (cung nguon voi
   // autofill customerEmail/customerPhone luc tao quote o tren - uu tien ho so
   // Khach hang that, fallback ve Co hoi) - dung de goi y khi Sale bat 1 trong
@@ -2305,7 +2416,7 @@ export function QuoteWorkspaceModal({
   // ban tiep theo trong chuoi) - quote V1/tao moi van giu dung khoa theo
   // stage nhu cu, tranh sua gia non khi chua qua xac nhan ky thuat.
   const isVersionedQuote = (quote?.versionNumber || 1) > 1;
-  const costStageOk = !quote || stage !== 'request' || isVersionedQuote;
+  const costStageOk = true;
   const pricingStageOk = stage === 'pricing' || isVersionedQuote;
   const canEditCostCells = canEdit && isDraft && !isLockedForReview && canEditQuoteCost(user, quote) && costStageOk;
   const canEditPricingCells = canEdit && isDraft && !isLockedForReview && canEditQuotePricingFields(user, quote) && pricingStageOk;
@@ -3533,17 +3644,12 @@ export function QuoteWorkspaceModal({
             ) : !quote ? (
               <SearchableSelect
                 value={draftCustomerId}
-                onChange={value => {
-                  setDraftCustomerId(value);
-                  if (value) clearRequiredError('customer');
-                  // Doi khach hang -> co hoi da chon (neu co) co the khong con
-                  // thuoc khach hang moi - bo chon de tranh luu sai lech.
-                  if (draftDealId && effectiveDealsById.get(draftDealId)?.customerId !== value) setDraftDealId('');
-                  // Du an cung thuoc DUNG 1 khach hang - doi khach hang thi bo
-                  // chon Du an cu (se nap lai danh sach Du an moi qua effect).
-                  setDraftProjectId('');
-                }}
+                onChange={selectDraftCustomer}
                 options={customers.map(c => ({ value: c.id, label: c.label }))}
+                actions={[
+                  { key: 'create-customer', label: '+ Tạo khách hàng mới', onSelect: () => setCustomerDrawerOpen(true) },
+                  { key: 'manage-customers', label: 'Quản lý khách hàng', onSelect: () => window.open('/all-platform/crm/customers', '_blank', 'noopener,noreferrer') },
+                ]}
                 placeholder="Chọn khách hàng..."
               />
             ) : (
@@ -3728,6 +3834,15 @@ export function QuoteWorkspaceModal({
                       Chưa có Loại báo giá nào trong Danh mục CRM.
                     </div>
                   ) : null}
+                  <div className="crm-searchable-select-actions">
+                    <div className="crm-searchable-select-divider" />
+                    <button type="button" className="crm-searchable-select-action" onClick={() => { setQuoteTypeDropdownOpen(false); setQuoteTypeQuickAddOpen(true); }}>
+                      + Thêm loại báo giá
+                    </button>
+                    <button type="button" className="crm-searchable-select-action" onClick={() => { setQuoteTypeDropdownOpen(false); setQuoteTypeManageOpen(true); }}>
+                      Quản lý loại báo giá
+                    </button>
+                  </div>
                 </div>
               </div>
             ) : null}
@@ -5331,6 +5446,38 @@ export function QuoteWorkspaceModal({
             </div>
           </div>
         </div>
+      ) : null}
+
+      <CustomerAddDrawer
+        open={customerDrawerOpen}
+        currentUser={user ?? null}
+        onClose={() => setCustomerDrawerOpen(false)}
+        onCreated={customerId => void handleCustomerCreated(customerId)}
+      />
+
+      {quoteTypeQuickAddOpen ? (
+        <CrmCategoryQuickModal
+          categoryType="crm_quote_type"
+          onClose={() => setQuoteTypeQuickAddOpen(false)}
+          onSaved={category => {
+            setQuoteTypeQuickAddOpen(false);
+            invalidateCrmCategoryCache('crm_quote_type');
+            void reloadQuoteTypeOptions(true).then(() => {
+              if (category.code) toggleQuoteTypeCode(category.code);
+            });
+          }}
+        />
+      ) : null}
+
+      {quoteTypeManageOpen ? (
+        <CrmCategoryManageDrawer
+          categoryType="crm_quote_type"
+          onClose={() => setQuoteTypeManageOpen(false)}
+          onChanged={() => {
+            invalidateCrmCategoryCache('crm_quote_type');
+            void reloadQuoteTypeOptions(true);
+          }}
+        />
       ) : null}
 
       <ProjectFormModal

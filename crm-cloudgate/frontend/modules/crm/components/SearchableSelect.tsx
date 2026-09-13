@@ -4,6 +4,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
 type Option = string | { value: string; label: string };
+type SelectAction = { key: string; label: string; onSelect: () => void; disabled?: boolean };
 
 function optionValue(option: Option): string {
   return typeof option === 'string' ? option : option.value;
@@ -31,6 +32,7 @@ export function SearchableSelect({
   value,
   onChange,
   options,
+  actions = [],
   placeholder = '-- Chọn --',
   disabled = false,
   // Yeu cau rieng "bỏ chữ Chưa thuộc dự án/Chọn cơ hội trong danh sách" -
@@ -44,6 +46,7 @@ export function SearchableSelect({
   value: string;
   onChange: (value: string) => void;
   options: Option[];
+  actions?: SelectAction[];
   hideClearOption?: boolean;
   placeholder?: string;
   disabled?: boolean;
@@ -175,6 +178,27 @@ export function SearchableSelect({
                 ))}
                 {filtered.length === 0 ? (
                   <div className="crm-searchable-select-empty">Không tìm thấy</div>
+                ) : null}
+                {actions.length > 0 ? (
+                  <div className="crm-searchable-select-actions">
+                    <div className="crm-searchable-select-divider" />
+                    {actions.map(action => (
+                      <button
+                        key={action.key}
+                        type="button"
+                        className="crm-searchable-select-action"
+                        disabled={action.disabled}
+                        onClick={() => {
+                          if (action.disabled) return;
+                          action.onSelect();
+                          setIsOpen(false);
+                          setSearch('');
+                        }}
+                      >
+                        {action.label}
+                      </button>
+                    ))}
+                  </div>
                 ) : null}
               </div>
             </div>,

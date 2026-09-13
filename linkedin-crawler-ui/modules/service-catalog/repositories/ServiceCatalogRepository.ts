@@ -66,12 +66,13 @@ export interface ServiceCatalogListOptions {
   /** 'quote_picker' = dang goi tu Catalog Picker trong 1 quote - anh huong
    * quyen xem Gia von/Markup mac dinh (Gia khach LUON tra, khong qua cong
    * quyen nay). BAT BUOC kem `quoteId` THAT (1 row `quotes` da ton tai) de
-   * duoc cap cost - KHONG con nhan `issuerCompanyId` rieng: thieu quoteId
-   * se LUON bi an cost, khong co ngoai le nao cho "dang tao moi" (da sua lo
-   * hong bao mat o backend, xem routers/service_catalog.py). Mac dinh
-   * 'admin' (trang quan tri danh muc). */
+   * duoc cap cost theo quote. Rieng draft chua co quoteId co the truyen
+   * `issuerCompanyId`; backend chi cap cost draft cho global cost viewer
+   * (Admin/Leader), khong mo cho moi user da dang nhap. Mac dinh 'admin'
+   * (trang quan tri danh muc). */
   context?: 'admin' | 'quote_picker';
   quoteId?: string | null;
+  issuerCompanyId?: string | null;
 }
 
 export class ServiceCatalogRepository {
@@ -79,6 +80,7 @@ export class ServiceCatalogRepository {
     const params = new URLSearchParams();
     if (options?.context) params.set('context', options.context);
     if (options?.quoteId) params.set('quote_id', options.quoteId);
+    if (options?.issuerCompanyId) params.set('issuer_company_id', options.issuerCompanyId);
     const qs = params.toString();
     return apiFetch<ServiceCatalogItem[]>(`/api/all-platform/service-catalog${qs ? `?${qs}` : ''}`);
   }

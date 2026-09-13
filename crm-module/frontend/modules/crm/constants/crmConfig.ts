@@ -40,8 +40,11 @@ function hasQuoteBusinessRole(user: AppUser | null | undefined, role: 'presale' 
 export function canEditQuoteCost(user: AppUser | null | undefined, quote: QuoteOwnerShape): boolean {
   if (!user) return false;
   if (user.role === 'admin' || user.role === 'leader' || user.is_sale) return true;
-  if (!quote) return false;
-  return quote.technicalOwnerId === user.id && hasQuoteBusinessRole(user, 'presale');
+  if (!quote) return hasQuoteBusinessRole(user, 'presale') || hasQuoteBusinessRole(user, 'sale');
+  return (
+    (quote.technicalOwnerId === user.id && hasQuoteBusinessRole(user, 'presale'))
+    || (quote.quoteOwnerId === user.id && hasQuoteBusinessRole(user, 'sale'))
+  );
 }
 
 /** Mirror cua crm_permission_service.can_edit_quote_pricing (backend) - CHI

@@ -75,10 +75,17 @@ def _resolve_catalog_pricing_visibility(user: dict, context: str, quote_id: Opti
     return can_view_quote_cost(user, quote), quote.get("issuerCompanyId")
 
 
+def _can_view_draft_catalog_cost(user: dict) -> bool:
+    """Draft quote has no persisted owner yet, so only global cost viewers pass."""
+    role = str(user.get("role") or "").strip().lower() if user else ""
+    return role in ("admin", "leader")
+
+
 @router.get("")
 def service_catalog_get_all(
     context: str = Query("admin", pattern="^(admin|quote_picker)$"),
     quote_id: Optional[str] = Query(None),
+    issuer_company_id: Optional[str] = Query(None),
     user: dict = Depends(get_current_user),
 ) -> BaseResponse:
     try:
@@ -92,6 +99,9 @@ def service_catalog_get_all(
     # thuong, chi la chua co gia mac dinh di kem).
     try:
         can_view_cost, resolved_issuer = _resolve_catalog_pricing_visibility(user, context, quote_id)
+        if context == "quote_picker" and not quote_id and issuer_company_id and _can_view_draft_catalog_cost(user):
+            can_view_cost = True
+            resolved_issuer = issuer_company_id
         item_ids = catalog_service._collect_item_ids(tree)  # noqa: SLF001
         pricing_map = catalog_service.resolve_pricing_map(item_ids, resolved_issuer)
         catalog_service.merge_pricing_into_tree(tree, pricing_map)

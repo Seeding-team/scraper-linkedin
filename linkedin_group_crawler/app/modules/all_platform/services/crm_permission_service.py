@@ -185,14 +185,26 @@ def can_view_quote_cost(user: dict[str, Any] | None, quote: dict[str, Any] | Non
 
 
 def can_edit_quote_cost(user: dict[str, Any] | None, quote: dict[str, Any] | None) -> bool:
-    """Quyen SUA gia von - CHI technical_owner (Presale duoc gan) hoac admin/
-    leader/sale-team (giu nguyen has_full_crm_access, KHONG doi hanh vi SUA da
-    chot tu truoc). Sale (quote_owner) KHONG duoc sua cost du duoc XEM read-
-    only qua can_view_quote_cost() - day la lan ranh READ vs WRITE THAT SU,
-    chan o tang API (_check_item_field_level_permission), khong chi FE disable
-    input. Alias ten ro nghia cua can_edit_technical_quote() (giu nguyen ham
-    do cho cac noi goi cu, khong doi hanh vi)."""
-    return can_edit_technical_quote(user, quote)
+    """Quyen SUA gia von trong quote.
+
+    defaultCostPriceVnd trong San pham & Dich vu chi la gia von mac dinh de
+    prefill. Trong Yeu cau bao gia, gia von la gia thuc te theo case va duoc
+    sua rieng boi nguoi tham gia bao gia: admin/leader/full CRM, Presale duoc
+    gan technical_owner, hoac Sale duoc gan quote_owner.
+    """
+    if not user:
+        return False
+    if has_full_crm_access(user):
+        return True
+    uid = str(user.get("id") or "")
+    if not uid or not quote:
+        return False
+    technical_owner_id = str(quote.get("technicalOwnerId") or quote.get("technical_owner_id") or "")
+    quote_owner_id = str(quote.get("quoteOwnerId") or quote.get("quote_owner_id") or "")
+    return (
+        (uid == technical_owner_id and has_quote_business_role(user, "presale"))
+        or (uid == quote_owner_id and has_quote_business_role(user, "sale"))
+    )
 
 
 def can_view_quote_pricing(user: dict[str, Any] | None, quote: dict[str, Any] | None) -> bool:
