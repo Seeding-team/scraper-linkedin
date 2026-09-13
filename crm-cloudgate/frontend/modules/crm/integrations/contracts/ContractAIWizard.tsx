@@ -6,11 +6,12 @@ import type { Customer } from '@/services/customer-lead.service';
 import { seedingQuoteRepository } from '@/modules/quotes';
 import type { Quote } from '@/modules/quotes';
 import { seedingContractRepository } from '@/modules/contracts/repositories/SeedingContractRepository';
-import { CONTRACT_TEMPLATE_OPTIONS } from '@/modules/contracts/constants/contractConfig';
+import { CONTRACT_TEMPLATE_OPTIONS, extractPaymentTermsFromClauses } from '@/modules/contracts/constants/contractConfig';
 import type { ContractClause, ContractTemplateType } from '@/modules/contracts/types';
 import { seedingContractTemplateRepository } from '@/modules/contract-templates';
 import type { ContractTemplate } from '@/modules/contract-templates';
 import { formatVnd } from '@/modules/quotes/utils/quoteCalculations';
+import { CurrencyInput } from '@/components/CurrencyInput';
 import { DEAL_STAGE_META } from '../../constants/crmConfig';
 import type { DealStage } from '../../types';
 import { X } from '../../components/icons';
@@ -41,6 +42,9 @@ export function ContractAIWizard({
   const [dealId, setDealId] = useState('');
   const [manualCustomerName, setManualCustomerName] = useState('');
   const [quoteId, setQuoteId] = useState('');
+  // Gia tri hop dong - mac dinh dong bo theo bao gia da chon, nhung LUON sua tay
+  // duoc (bat buoc phai sua neu "Khong dinh kem bao gia" vi khong co nguon nao khac).
+  const [manualContractValue, setManualContractValue] = useState<number | null>(null);
   // Khong con cho chon "Loai hop dong" tren UI (trung y voi "Mau hop dong" -
   // gay nham lan), luon mac dinh 'service'; AI van soan du 7 dieu khoan chuan.
   const templateType: ContractTemplateType = 'service';
@@ -111,6 +115,7 @@ export function ContractAIWizard({
     setDealId('');
     setManualCustomerName('');
     setQuoteId('');
+    setManualContractValue(null);
     setReferenceTemplateId('');
     setClauses([]);
     setAiScore(null);
@@ -129,6 +134,14 @@ export function ContractAIWizard({
 
   const selectedDeal = deals.find(d => d.id === dealId) || null;
   const selectedQuote = quotes.find(q => q.id === quoteId) || null;
+  // Dong bo o nhap tay theo bao gia MOI ĐUỢC CHỌN (khong ghi de neu user da tung
+  // sua tay o cung 1 bao gia) - dung selectedQuote?.id lam dependency, khong phai
+  // ca object, de tranh chay lai vo ich khi quotes re-fetch nhung id khong doi.
+  useEffect(() => {
+    setManualContractValue(selectedQuote ? selectedQuote.totalAmount : null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedQuote?.id]);
+  const effectiveContractValue = manualContractValue ?? 0;
 
   async function handleGenerate() {
     setError('');
@@ -154,8 +167,8 @@ export function ContractAIWizard({
       const review = await seedingContractRepository.reviewRisk({
         clauses: draft.clauses,
         quoteId: quoteId || undefined,
-        contractValue: selectedQuote?.totalAmount,
-        paymentTerms: extraPrompt,
+        contractValue: effectiveContractValue,
+        paymentTerms: extractPaymentTermsFromClauses(draft.clauses),
       });
       setAiScore(review.score);
       setAiFindings(review.findings);
@@ -179,8 +192,8 @@ export function ContractAIWizard({
       const review = await seedingContractRepository.reviewRisk({
         clauses: refined.clauses,
         quoteId: quoteId || undefined,
-        contractValue: selectedQuote?.totalAmount,
-        paymentTerms: extraPrompt,
+        contractValue: effectiveContractValue,
+        paymentTerms: extractPaymentTermsFromClauses(refined.clauses),
       });
       setAiScore(review.score);
       setAiFindings(review.findings);
@@ -206,11 +219,11 @@ export function ContractAIWizard({
         quoteId: quoteId || undefined,
         title: title || 'Hợp đồng cung cấp dịch vụ',
         templateType,
-        contractValue: selectedQuote?.totalAmount || 0,
+        contractValue: effectiveContractValue,
         currency: selectedQuote?.currency || 'VND',
         startDate: startDate || undefined,
         endDate: endDate || undefined,
-        paymentTerms: extraPrompt,
+        paymentTerms: extractPaymentTermsFromClauses(clauses),
         clauses,
         aiGenerated: true,
         aiRiskScore: aiScore ?? undefined,
@@ -386,6 +399,13 @@ export function ContractAIWizard({
                         </select>
                       </label>
                     </div>
+                    <label>
+                      Giá trị hợp đồng (VND)
+                      <CurrencyInput value={manualContractValue} onChange={setManualContractValue} />
+                      {!selectedQuote ? (
+                        <small style={{ color: '#bf7810' }}>Không đính kèm báo giá — bắt buộc nhập tay giá trị thật, nếu không hợp đồng sẽ lưu 0đ.</small>
+                      ) : null}
+                    </label>
                     {dealId && quotes.length === 0 ? (
                       <p style={{ color: '#bf7810', fontSize: '0.7rem', margin: 0 }}>
                         Khách hàng này chưa có báo giá đã duyệt — AI vẫn soạn được nhưng sẽ thiếu ngữ cảnh giá trị.

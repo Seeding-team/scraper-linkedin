@@ -3,9 +3,10 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { seedingContractRepository } from '../repositories/SeedingContractRepository';
-import { contractStatusClass, contractStatusLabel, CONTRACT_STATUS_TRANSITIONS } from '../constants/contractConfig';
+import { contractStatusClass, contractStatusLabel, CONTRACT_STATUS_TRANSITIONS, extractPaymentTermsFromClauses } from '../constants/contractConfig';
 import { formatVnd } from '@/modules/quotes/utils/quoteCalculations';
 import type { Contract, ContractClause } from '../types';
+import { CurrencyInput } from '@/components/CurrencyInput';
 
 function pdfSafe(value?: string | number | null) {
   return String(value ?? '')
@@ -77,6 +78,7 @@ export function ContractDetailPage({ contractId }: { contractId: string }) {
   const [reviewing, setReviewing] = useState(false);
   const [progressPercent, setProgressPercent] = useState(0);
   const [paymentCollectedPercent, setPaymentCollectedPercent] = useState(0);
+  const [contractValue, setContractValue] = useState<number | null>(0);
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
 
@@ -89,6 +91,7 @@ export function ContractDetailPage({ contractId }: { contractId: string }) {
       setClauses(data.clauses);
       setProgressPercent(data.progressPercent);
       setPaymentCollectedPercent(data.paymentCollectedPercent);
+      setContractValue(data.contractValue);
       setStartDate(data.startDate || '');
       setEndDate(data.endDate || '');
     } catch (err) {
@@ -115,6 +118,11 @@ export function ContractDetailPage({ contractId }: { contractId: string }) {
         clauses,
         progressPercent,
         paymentCollectedPercent,
+        contractValue: contractValue ?? 0,
+        // Dong bo lai payment_terms tu noi dung dieu khoan THAT (co the vua sua
+        // tay o duoi) - tranh lech voi noi dung hop dong that (xem ContractAIWizard
+        // luc tao, cung dung chung helper nay).
+        paymentTerms: extractPaymentTermsFromClauses(clauses),
         startDate: startDate || null,
         endDate: endDate || null,
       });
@@ -122,6 +130,7 @@ export function ContractDetailPage({ contractId }: { contractId: string }) {
       setClauses(updated.clauses);
       setProgressPercent(updated.progressPercent);
       setPaymentCollectedPercent(updated.paymentCollectedPercent);
+      setContractValue(updated.contractValue);
       setStartDate(updated.startDate || '');
       setEndDate(updated.endDate || '');
     } catch (err) {
@@ -138,8 +147,8 @@ export function ContractDetailPage({ contractId }: { contractId: string }) {
       const review = await seedingContractRepository.reviewRisk({
         clauses,
         quoteId: contract.quoteId,
-        contractValue: contract.contractValue,
-        paymentTerms: contract.paymentTerms,
+        contractValue: contractValue ?? 0,
+        paymentTerms: extractPaymentTermsFromClauses(clauses),
       });
       const updated = await seedingContractRepository.updateContract(contract.id, {
         aiRiskScore: review.score ?? undefined,
@@ -200,7 +209,20 @@ export function ContractDetailPage({ contractId }: { contractId: string }) {
         </div>
       </header>
 
-      <section className="contract-stats" style={{ gridTemplateColumns: 'repeat(3, minmax(0, 1fr))' }}>
+      <section className="contract-stats" style={{ gridTemplateColumns: 'repeat(4, minmax(0, 1fr))' }}>
+        <article className="contract-stat">
+          <span>Giá trị hợp đồng</span>
+          <div style={{ marginTop: '0.3rem' }}>
+            <CurrencyInput
+              value={contractValue}
+              onChange={setContractValue}
+              style={{ width: '100%', height: '2rem', borderRadius: '0.4rem', border: '1px solid #dce2e9', padding: '0 0.5rem' }}
+            />
+            {!contract.quoteId ? (
+              <small style={{ color: '#bf7810', display: 'block', marginTop: '0.2rem' }}>Không gắn báo giá — sửa tay giá trị thật ở đây.</small>
+            ) : null}
+          </div>
+        </article>
         <article className="contract-stat">
           <span>Thời hạn hợp đồng</span>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginTop: '0.3rem', flexWrap: 'wrap' }}>
@@ -239,7 +261,7 @@ export function ContractDetailPage({ contractId }: { contractId: string }) {
               onChange={e => setPaymentCollectedPercent(Math.min(100, Math.max(0, Number(e.target.value) || 0)))}
               style={{ width: '4.5rem', height: '2rem', borderRadius: '0.4rem', border: '1px solid #dce2e9', padding: '0 0.5rem' }}
             />
-            <span>% · {formatVnd(contract.contractValue * paymentCollectedPercent / 100)}</span>
+            <span>% · {formatVnd((contractValue ?? 0) * paymentCollectedPercent / 100)}</span>
           </div>
         </article>
       </section>
