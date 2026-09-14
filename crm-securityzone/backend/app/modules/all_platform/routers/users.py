@@ -188,10 +188,18 @@ def users_get_all(user: dict = Depends(get_current_user)) -> BaseResponse:
         return BaseResponse(success=False, message=str(e))
 
 
+# Whitelist gia tri hop le cho team_type filter - hien use case CHI can
+# "sale" (picker "Nguoi phu trach du an"). Whitelist tuong minh thay vi nhan
+# bat ky chuoi nao client gui len, tranh client gui nham gia tri ma tuong da
+# loc dung.
+_ALLOWED_TEAM_TYPE_FILTERS = {"sale"}
+
+
 @router.get("/member-options")
 def users_member_options(
     active: bool = Query(True),
     include_id: str = Query(""),
+    team_type: str = Query(""),
     _user: dict = Depends(get_current_user),
 ) -> BaseResponse:
     """Danh sach nhan su cho cac picker "Người phụ trách" (vi du Nguoi phu
@@ -200,10 +208,19 @@ def users_member_options(
     endpoint quan tri). `include_id` (tuy chon, phan cach boi dau phay): ep
     tra THEM 1 vai id cu the du dang bi vo hieu hoa - dung khi mo form Sua 1
     project ma nguoi phu trach hien tai da ngung hoat dong, form van phai
-    hien ten nguoi do kem badge "Đã ngưng hoạt động"."""
+    hien ten nguoi do kem badge "Đã ngưng hoạt động". `team_type` (tuy chon):
+    loc CHI giu nguoi thuoc dung team_type nay (vd 'sale' - xem
+    is_sale_member()/teams.team_type, migration 049) - phai nam trong
+    _ALLOWED_TEAM_TYPE_FILTERS, gia tri khac bi tu choi ro rang thay vi am
+    tham bo qua."""
     try:
         include_ids = [i.strip() for i in include_id.split(",") if i.strip()] if include_id else []
-        data = get_member_options(active_only=active, include_ids=include_ids)
+        team_type_filter: str | None = None
+        if team_type:
+            if team_type not in _ALLOWED_TEAM_TYPE_FILTERS:
+                return BaseResponse(success=False, message=f"team_type không hợp lệ: {team_type!r}")
+            team_type_filter = team_type
+        data = get_member_options(active_only=active, include_ids=include_ids, team_type=team_type_filter)
         return BaseResponse(success=True, data={"items": data})
     except Exception as e:
         return BaseResponse(success=False, message=str(e))
