@@ -155,6 +155,7 @@ def users_by_quote_business_role(role: str = Query(...), _user: dict = Depends(g
 def users_member_options(
     active: bool = Query(True),
     include_id: str = Query(""),
+    team_type: str | None = Query(None),
     _user: dict = Depends(get_current_user),
 ) -> BaseResponse:
     """Danh sach nhan su cho cac picker "Người phụ trách" (vi du Nguoi phu
@@ -165,8 +166,10 @@ def users_member_options(
     project ma nguoi phu trach hien tai da ngung hoat dong, form van phai
     hien ten nguoi do kem badge "Đã ngưng hoạt động"."""
     try:
+        if team_type and team_type not in TEAM_TYPES:
+            return BaseResponse(success=False, message=f"team_type phải là một trong: {', '.join(TEAM_TYPES)}")
         include_ids = [i.strip() for i in include_id.split(",") if i.strip()] if include_id else []
-        data = get_member_options(active_only=active, include_ids=include_ids)
+        data = get_member_options(active_only=active, include_ids=include_ids, team_type=team_type)
         return BaseResponse(success=True, data={"items": data})
     except Exception as e:
         return BaseResponse(success=False, message=str(e))

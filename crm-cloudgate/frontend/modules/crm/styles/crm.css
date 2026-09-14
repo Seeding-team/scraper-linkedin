@@ -575,22 +575,38 @@
   border: 0;
   border-radius: 0.5rem;
   background: transparent;
-  color: #be1e4b;
+  color: #0f172a;
   font-size: 0.84rem;
-  font-weight: 700;
+  font-weight: 500;
   padding: 0.45rem 0.65rem;
   text-align: left;
 }
 
 .crm-searchable-select-action:hover {
-  background: #fff1f2;
+  background: #f1f5f9;
+}
+
+.crm-searchable-select-action--add {
+  color: #2563eb;
+  font-weight: 600;
+}
+
+.crm-searchable-select-action--add:hover {
+  background: #eff6ff;
+}
+
+.crm-searchable-select-action--manage {
+  color: #475569;
+}
+
+.crm-searchable-select-action--manage:hover {
+  background: #f8fafc;
 }
 
 .crm-searchable-select-action:disabled {
   cursor: not-allowed;
   color: #94a3b8;
 }
-
 .crm-category-quick-modal,
 .crm-category-manage-drawer {
   background: #ffffff;

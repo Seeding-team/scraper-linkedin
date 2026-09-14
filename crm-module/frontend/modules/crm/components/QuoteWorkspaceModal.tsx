@@ -1489,10 +1489,7 @@ export function QuoteWorkspaceModal({
     if (quote) void persistQuote({ items: next }, { silent: true });
   }
 
-  /** Mapping khi them tu danh muc - CHI dien ma/ten, mo ta, don vi, VAT, SL
-   * mac dinh 1. TUYET DOI khong tu dien "Gia khach" (unitPrice) khi con o
-   * Buoc 1 (chua duoc canEditPricingCells) - giu dung hanh vi khoa gia Sale
-   * da co san, tranh lo gia truoc khi sang Buoc 2. */
+  /** Mapping khi them tu danh muc: snapshot day du ma/ten, mo ta, don vi, VAT, SL, gia von, markup va Gia khach mac dinh tu catalog. Quyen sua o tren UI/backend van theo role + buoc hien tai. */
   function catalogItemToQuoteItem(item: ServiceCatalogItem): QuoteItem {
     return {
       description: item.description || item.name,
@@ -1502,7 +1499,7 @@ export function QuoteWorkspaceModal({
       // Uu tien Gia khach da cau hinh o Bo gia mac dinh (migration 107) -
       // fallback ve Don gia Sale cu (default_unit_price_vnd) cho san pham
       // CHUA duoc cau hinh bo gia moi, tranh Gia khach ve 0 vo ly.
-      unitPrice: canEditPricingCells ? (item.defaultCustomerPriceVnd ?? item.defaultUnitPriceVnd ?? 0) : 0,
+      unitPrice: item.defaultCustomerPriceVnd ?? item.defaultUnitPriceVnd ?? 0,
       discountPercent: item.defaultDiscountPercent || 0,
       vatRate: item.defaultVatRate ?? 10,
       // Bo gia MAC DINH cua danh muc chung (migration 107,
@@ -1521,7 +1518,7 @@ export function QuoteWorkspaceModal({
       // "Markup/Giá khách chỉ được nhập ở Bước 3" du costPrice hoan toan hop
       // le, khien hang muc KHONG luu duoc. Doi sang canEditPricingCells cho
       // dung phan loai field cua backend.
-      markupPercent: canEditPricingCells ? (item.defaultMarkupPercent ?? null) : null,
+      markupPercent: item.defaultMarkupPercent ?? null,
       catalogItemId: item.id,
     };
   }

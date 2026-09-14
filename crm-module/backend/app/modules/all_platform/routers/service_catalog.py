@@ -36,6 +36,8 @@ from app.modules.all_platform.services.crm_permission_service import (
     can_manage_shared_master_data,
     can_manage_service_catalog_pricing,
     can_view_quote_cost,
+    has_full_crm_access,
+    has_quote_business_role,
 )
 from app.modules.all_platform.services.supabase_quote_service import get_quote, QuoteNotFoundError
 
@@ -75,10 +77,26 @@ def _resolve_catalog_pricing_visibility(user: dict, context: str, quote_id: Opti
     return can_view_quote_cost(user, quote), quote.get("issuerCompanyId")
 
 
+def _can_view_draft_catalog_cost(user: dict) -> bool:
+    """Draft quote has no persisted owner yet.
+
+    Allow quote participants to receive catalog cost/markup defaults for prefill.
+    Backend still enforces field-level permissions when the quote/items are saved.
+    """
+    if not user:
+        return False
+    return (
+        has_full_crm_access(user)
+        or has_quote_business_role(user, "presale")
+        or has_quote_business_role(user, "sale")
+    )
+
+
 @router.get("")
 def service_catalog_get_all(
     context: str = Query("admin", pattern="^(admin|quote_picker)$"),
     quote_id: Optional[str] = Query(None),
+    issuer_company_id: Optional[str] = Query(None),
     user: dict = Depends(get_current_user),
 ) -> BaseResponse:
     try:
@@ -92,6 +110,9 @@ def service_catalog_get_all(
     # thuong, chi la chua co gia mac dinh di kem).
     try:
         can_view_cost, resolved_issuer = _resolve_catalog_pricing_visibility(user, context, quote_id)
+        if context == "quote_picker" and not quote_id and _can_view_draft_catalog_cost(user):
+            can_view_cost = True
+            resolved_issuer = issuer_company_id
         item_ids = catalog_service._collect_item_ids(tree)  # noqa: SLF001
         pricing_map = catalog_service.resolve_pricing_map(item_ids, resolved_issuer)
         catalog_service.merge_pricing_into_tree(tree, pricing_map)

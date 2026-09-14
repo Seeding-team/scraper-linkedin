@@ -303,7 +303,11 @@ def get_users_by_role(role: str) -> list[dict]:
     return result.data or []
 
 
-def get_member_options(active_only: bool = True, include_ids: list[str] | None = None) -> list[dict]:
+def get_member_options(
+    active_only: bool = True,
+    include_ids: list[str] | None = None,
+    team_type: str | None = None,
+) -> list[dict]:
     """Danh sach nhan su cho picker "Nguoi phu trach du an" (va cac picker
     tuong tu can chon 1 tai khoan dang nhap that su thuoc he thong). KHAC voi
     `get_all_users()`/`get_all_teams()`: KHONG bao gio tra ve email (tranh lo
@@ -325,27 +329,42 @@ def get_member_options(active_only: bool = True, include_ids: list[str] | None =
     all_rows = result.data or []
 
     include_id_set = {str(i) for i in (include_ids or []) if i}
-    rows = [
-        r for r in all_rows
-        if (not active_only or r.get("is_active", True)) or str(r.get("id")) in include_id_set
-    ]
-
-    # Team names: id_member trong member_of_teams la app_users.id that (xem
-    # _load_all_teams() o tren - user_map duoc build tu bang app_users).
+    # Team names + optional team_type filter: id_member trong member_of_teams la
+    # app_users.id that (xem _load_all_teams() o tren - user_map duoc build tu
+    # bang app_users). Neu picker can chi hien Sale/Presale/... thi filter tren
+    # team_type that, khop backend validation (vd projects.manager_id).
     team_names_by_user: dict[str, list[str]] = {}
+    users_in_requested_team_type: set[str] | None = None
     try:
         teams_rows = get_all_teams()
         mot_result = execute_supabase_query(
             lambda: supabase.table("member_of_teams").select("id_member, id_teams").execute()
         )
         team_name_by_id = {str(t["id"]): t.get("name_team") for t in teams_rows}
+        team_type_by_id = {str(t["id"]): t.get("team_type") for t in teams_rows}
+        if team_type:
+            matching_team_ids = {tid for tid, ttype in team_type_by_id.items() if ttype == team_type}
+            users_in_requested_team_type = set()
         for mot in (mot_result.data or []):
             uid = str(mot.get("id_member"))
-            tname = team_name_by_id.get(str(mot.get("id_teams")))
+            team_id = str(mot.get("id_teams"))
+            tname = team_name_by_id.get(team_id)
             if uid and tname:
                 team_names_by_user.setdefault(uid, []).append(tname)
+            if users_in_requested_team_type is not None and team_id in matching_team_ids and uid:
+                users_in_requested_team_type.add(uid)
     except Exception:
         logger.warning("get_member_options: khong lay duoc team names, tra danh sach khong kem team", exc_info=True)
+        if team_type:
+            users_in_requested_team_type = set()
+
+    rows = []
+    for r in all_rows:
+        uid = str(r.get("id"))
+        if users_in_requested_team_type is not None and uid not in users_in_requested_team_type:
+            continue
+        if (not active_only or r.get("is_active", True)) or uid in include_id_set:
+            rows.append(r)
 
     options = []
     for r in rows:
