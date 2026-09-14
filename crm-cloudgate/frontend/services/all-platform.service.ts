@@ -1859,6 +1859,9 @@ export interface AppUserProfile {
   /** Vai trò NGHIỆP VỤ báo giá (migration 095) — presale/sale/both/null, TÁCH
    * BIỆT hoàn toàn với `role` (system role admin/leader/member). */
   quote_business_role?: "presale" | "sale" | "both" | null;
+  /** Danh sách workspace (instance) tài khoản được PHÉP truy cập (migration
+   * 005). undefined/rỗng = không giới hạn. */
+  allowed_instances?: string[];
 }
 
 export interface QuoteBusinessRoleUser {
@@ -1924,6 +1927,14 @@ export const usersService = {
     return requestJson(`${BASE}/users/update-quote-approver`, {
       method: "POST",
       body: JSON.stringify({ email, can_approve_quotes }),
+    });
+  },
+  /** Admin-only: gán danh sách workspace (instance) 1 tài khoản được phép
+   * truy cập (migration 005). Rỗng = không giới hạn. */
+  updateAllowedInstances: (email: string, allowed_instances: string[]): Promise<ApiResponse<AppUserProfile>> => {
+    return requestJson(`${BASE}/users/update-allowed-instances`, {
+      method: "POST",
+      body: JSON.stringify({ email, allowed_instances }),
     });
   },
   /** Admin-ONLY (backend trả 403 thật cho Leader/Member — migration 095):

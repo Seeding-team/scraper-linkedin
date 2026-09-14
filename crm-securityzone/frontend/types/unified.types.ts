@@ -428,6 +428,10 @@ export interface AppUser {
    * được dù cờ này false. */
   can_approve_quotes?: boolean;
   quote_business_role?: "presale" | "sale" | "both" | null;
+  /** Danh sách workspace (instance) tài khoản này được PHÉP truy cập
+   * (migration 005 — gán qua "Quản lý thành viên"). undefined/rỗng = không
+   * giới hạn (admin luôn undefined vì không áp dụng). */
+  allowedInstances?: string[];
 }
 
 export interface AuthLoginResponse {

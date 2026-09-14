@@ -16,7 +16,7 @@ from app.core.config import settings
 from app.core.supabase_client import execute_supabase_query, get_supabase_client
 from app.modules.all_platform.services.crm_permission_service import is_sale_member
 
-_USER_PUBLIC_FIELDS = "id, email, name, role, is_active, can_approve_quotes, created_at, updated_at"
+_USER_PUBLIC_FIELDS = "id, email, name, role, is_active, can_approve_quotes, created_at, updated_at, home_instance, allowed_instances"
 _USER_CACHE_TTL_SECONDS = 30.0
 _USER_BY_ID_CACHE: dict[str, tuple[float, dict]] = {}
 _USER_BY_EMAIL_CACHE: dict[str, tuple[float, dict]] = {}
@@ -129,6 +129,10 @@ def register_user(email: str, password: str, name: Optional[str] = None) -> dict
         # (xem middleware resolve_crm_instance_middleware trong app/main.py) —
         # dung de chan/redirect neu sau nay dang nhap nham site khac.
         "home_instance": settings.crm_instance,
+        # Danh sach workspace duoc phep truy cap (migration 005) — mac dinh
+        # chi co dung site vua dang ky, admin co the mo them qua "Quan ly
+        # thanh vien" sau nay.
+        "allowed_instances": [settings.crm_instance],
     }
     result = execute_supabase_query(
         lambda: get_supabase_client().table("app_users").insert(user_data).execute()
@@ -148,27 +152,36 @@ def register_user(email: str, password: str, name: Optional[str] = None) -> dict
             "email": cached_user["email"],
             "name": cached_user.get("name"),
             "role": cached_user["role"],
+            "allowedInstances": cached_user.get("allowed_instances"),
         },
         "access_token": access_token,
     }
 
 
 def _check_home_instance_redirect(user: dict) -> Optional[dict]:
-    """Non-admin: neu tai khoan co home_instance (site da dang ky) khac voi
-    instance dang phuc vu request HIEN TAI (settings.crm_instance, suy tu Host
-    header) -> tra ve tin hieu redirect thay vi dang nhap thang. Admin luon
-    duoc bo qua (dang nhap truc tiep duoc o ca 3 site, dung switcher rieng de
-    chuyen qua lai). home_instance=None (tai khoan tao truoc tinh nang nay) ->
-    khong bi rang buoc."""
-    home_instance = user.get("home_instance")
-    if user.get("role") == "admin" or not home_instance:
+    """Non-admin: neu instance dang phuc vu request HIEN TAI (settings.crm_instance,
+    suy tu Host header) KHONG nam trong danh sach allowed_instances (danh sach
+    workspace admin cho phep truy cap, migration 005 — gan qua "Quan ly thanh
+    vien") -> tra ve tin hieu redirect ve workspace DAU TIEN duoc phep, thay vi
+    dang nhap thang. Admin luon duoc bo qua (dang nhap truc tiep duoc o moi
+    site, dung switcher rieng de chuyen qua lai). allowed_instances rong/NULL
+    -> fallback ve home_instance (tai khoan tao truoc migration 005, chua duoc
+    admin gan gi) -> van rong/NULL nua thi khong bi rang buoc gi (giu hanh vi
+    cu)."""
+    if user.get("role") == "admin":
         return None
-    if home_instance == settings.crm_instance:
+    allowed = user.get("allowed_instances")
+    if not allowed:
+        home_instance = user.get("home_instance")
+        allowed = [home_instance] if home_instance else None
+    if not allowed:
+        return None
+    if settings.crm_instance in allowed:
         return None
     return {
         "redirect_required": True,
         "user_id": user["id"],
-        "home_instance": home_instance,
+        "home_instance": allowed[0],
     }
 
 
@@ -179,7 +192,7 @@ def login_user(email: str, password: str) -> dict:
     result = execute_supabase_query(
         lambda: get_supabase_client()
         .table("app_users")
-        .select("id, email, name, role, is_active, can_approve_quotes, password, home_instance")
+        .select("id, email, name, role, is_active, can_approve_quotes, password, home_instance, allowed_instances")
         .eq("email", email.lower().strip())
         .execute()
     )
@@ -210,6 +223,7 @@ def login_user(email: str, password: str) -> dict:
             "role": cached_user.get("role", "member"),
             "is_sale": is_sale_member(cached_user["id"]),
             "can_approve_quotes": bool(cached_user.get("can_approve_quotes")),
+            "allowedInstances": cached_user.get("allowed_instances"),
         },
         "access_token": access_token,
     }
@@ -308,7 +322,7 @@ def login_with_google(id_token_str: str) -> dict:
     result = execute_supabase_query(
         lambda: get_supabase_client()
         .table("app_users")
-        .select("id, email, name, role, is_active, can_approve_quotes, home_instance")
+        .select("id, email, name, role, is_active, can_approve_quotes, home_instance, allowed_instances")
         .eq("email", email)
         .execute()
     )
@@ -336,6 +350,7 @@ def login_with_google(id_token_str: str) -> dict:
             "role": cached_user.get("role", "member"),
             "is_sale": is_sale_member(cached_user["id"]),
             "can_approve_quotes": bool(cached_user.get("can_approve_quotes")),
+            "allowedInstances": cached_user.get("allowed_instances"),
         },
         "access_token": access_token,
     }

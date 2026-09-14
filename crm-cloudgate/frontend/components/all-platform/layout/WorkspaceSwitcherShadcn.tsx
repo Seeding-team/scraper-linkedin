@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Building2, Check, ChevronDown, Loader2 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { authService } from "@/services/all-platform.service";
+import { useAppAuth } from "@/contexts/AppAuthContext";
 
 type WorkspaceItem = { instance: string; url: string; current: boolean };
 
@@ -19,8 +20,14 @@ function workspaceLabel(instance: string): string {
 }
 
 /** Bản dùng cho AllPlatformSidebarShadcn.tsx (sidebar THẬT đang được render —
- * xem AllPlatformShell.tsx). Chỉ render khi role=admin (kiểm tra ở nơi gọi). */
+ * xem AllPlatformShell.tsx). Render cho admin (thấy hết workspace đã cấu
+ * hình) HOẶC non-admin có >1 workspace trong `allowedInstances` (migration
+ * 005 — admin gán qua "Quản lý thành viên") — điều kiện render kiểm tra ở nơi
+ * gọi (AllPlatformSidebarShadcn.tsx), component này chỉ lo phần LỌC danh sách
+ * hiện ra theo đúng quyền. */
 export function WorkspaceSwitcherShadcn() {
+  const { user } = useAppAuth();
+  const isAdmin = user?.role === "admin";
   const [items, setItems] = useState<WorkspaceItem[] | null>(null);
   const [isOpen, setIsOpen] = useState(false);
   const [switchingTo, setSwitchingTo] = useState<WorkspaceItem | null>(null);
@@ -39,14 +46,25 @@ export function WorkspaceSwitcherShadcn() {
     };
   }, []);
 
+  // Non-admin: chỉ thấy đúng workspace nằm trong allowedInstances của mình
+  // (admin thấy hết, không giới hạn) — enforce THẬT nằm ở backend
+  // (/workspace-handoff/consume), lọc ở đây chỉ để UI không mời chọn workspace
+  // chắc chắn sẽ bị từ chối.
+  const visibleItems = useMemo(() => {
+    if (!items) return null;
+    if (isAdmin) return items;
+    const allowed = new Set(user?.allowedInstances || []);
+    return items.filter((item) => allowed.has(item.instance));
+  }, [items, isAdmin, user?.allowedInstances]);
+
   // Preconnect (DNS/TLS) tới các domain workspace khác ngay khi biết danh
   // sách — đỡ phải chờ bắt tay TLS lúc thật sự bấm chuyển, đổi domain cảm
   // giác nhanh hơn rõ rệt (chỉ có tác dụng thật với domain thật, vô hại với
   // localhost lúc test).
   useEffect(() => {
-    if (!items) return;
+    if (!visibleItems) return;
     const links: HTMLLinkElement[] = [];
-    for (const item of items) {
+    for (const item of visibleItems) {
       if (item.current) continue;
       try {
         const origin = new URL(item.url).origin;
@@ -63,11 +81,11 @@ export function WorkspaceSwitcherShadcn() {
     return () => {
       for (const link of links) link.remove();
     };
-  }, [items]);
+  }, [visibleItems]);
 
-  if (!items || items.length <= 1) return null;
+  if (!visibleItems || visibleItems.length <= 1) return null;
 
-  const current = items.find((i) => i.current);
+  const current = visibleItems.find((i) => i.current);
 
   async function handleSwitch(target: WorkspaceItem) {
     if (target.current || isSwitching) return;
@@ -121,7 +139,7 @@ export function WorkspaceSwitcherShadcn() {
         <>
           <div className="fixed inset-0 z-40" onClick={() => setIsOpen(false)} />
           <div className="absolute inset-x-2 top-full z-50 mt-1 overflow-hidden rounded-xl border border-sidebar-border bg-popover text-popover-foreground shadow-lg">
-            {items.map((item) => (
+            {visibleItems.map((item) => (
               <button
                 key={item.instance}
                 type="button"

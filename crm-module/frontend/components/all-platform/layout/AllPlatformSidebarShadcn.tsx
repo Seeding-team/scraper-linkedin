@@ -188,7 +188,10 @@ export function AllPlatformSidebarShadcn() {
         <div className="px-1 py-1 group-data-[collapsible=icon]:px-0">
           <SidebarLogoHeader />
         </div>
-        {isAdmin ? <WorkspaceSwitcherShadcn /> : null}
+        {/* Non-admin cung thay switcher neu duoc admin cap >1 workspace
+         * (allowedInstances, migration 005) - component tu loc danh sach hien
+         * ra dung quyen, o day chi quyet dinh CO render hay khong. */}
+        {isAdmin || (user?.allowedInstances?.length ?? 0) > 1 ? <WorkspaceSwitcherShadcn /> : null}
       </SidebarHeader>
 
       <SidebarContent>

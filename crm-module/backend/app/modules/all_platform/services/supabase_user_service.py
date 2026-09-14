@@ -52,7 +52,7 @@ def _is_transient_supabase_error(exc: Exception) -> bool:
     return any(part in msg for part in ("server disconnected", "remoteprotocolerror", "timed out", "timeout"))
 
 
-_SAFE_USER_COLUMNS = "id, email, name, role, is_active, can_approve_quotes, quote_business_role, created_at, updated_at"
+_SAFE_USER_COLUMNS = "id, email, name, role, is_active, can_approve_quotes, quote_business_role, created_at, updated_at, home_instance, allowed_instances"
 
 
 def get_user(email: str) -> dict:
@@ -188,6 +188,25 @@ def list_users_by_quote_business_role(target: str) -> list[dict]:
         .execute()
     )
     return result.data or []
+
+
+def update_user_allowed_instances(email: str, allowed_instances: list[str]) -> dict:
+    """Admin-only: gán danh sách workspace (instance) 1 tài khoản non-admin
+    được PHÉP truy cập (migration 005) — thay thế "chỉ 1 site" (home_instance)
+    bằng danh sách nhiều site do admin chọn trong "Quản lý thành viên". Danh
+    sách rỗng = KHÔNG giới hạn (vào được mọi site, giống tài khoản tạo trước
+    tính năng này)."""
+    supabase: Client = get_supabase_client()
+
+    result = (
+        supabase.table("app_users")
+        .update({"allowed_instances": allowed_instances or None, "updated_at": "now()"})
+        .eq("email", email.lower().strip())
+        .execute()
+    )
+    _clear_people_caches()
+    _clear_auth_cache(email=email)
+    return result.data[0] if result.data else {}
 
 
 def update_user_active_status(email: str, is_active: bool) -> dict:

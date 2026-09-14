@@ -7,7 +7,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
 
 from app.core.config import settings
-from app.modules.all_platform.auth_deps import require_admin, require_admin_strict
+from app.modules.all_platform.auth_deps import get_current_user, require_admin
 from app.modules.all_platform.services.workspace_handoff_service import (
     consume_handoff_code,
     mint_handoff_code,
@@ -169,9 +169,12 @@ def auth_list_workspaces(request: Request) -> BaseResponse:
 
 
 @router.post("/workspace-handoff")
-def auth_mint_workspace_handoff(user: dict = Depends(require_admin_strict)) -> BaseResponse:
-    """CHỈ admin (không tính leader) — sinh 1 mã dùng 1 lần (~30s) để mang
-    session sang domain brand khác."""
+def auth_mint_workspace_handoff(user: dict = Depends(get_current_user)) -> BaseResponse:
+    """Bất kỳ tài khoản đã đăng nhập nào (admin hay non-admin đều mint được
+    mã cho CHÍNH mình) — sinh 1 mã dùng 1 lần (~30s) để mang session sang
+    domain brand khác. Việc mã này có ĐỔI ĐƯỢC cookie ở domain đích hay không
+    do `/workspace-handoff/consume` quyết định (kiểm tra allowed_instances ở
+    đó) — mint không phải là bước enforce quyền, chỉ enforce ở consume."""
     code = mint_handoff_code(user["id"])
     return BaseResponse(success=True, data={"code": code})
 
@@ -180,7 +183,10 @@ def auth_mint_workspace_handoff(user: dict = Depends(require_admin_strict)) -> B
 def auth_consume_workspace_handoff(code: str, response: Response) -> BaseResponse:
     """Đổi mã dùng 1 lần lấy cookie đăng nhập MỚI cho domain hiện tại (domain
     đích của switcher hoặc redirect). Không cần auth (chính mã này LÀ bằng
-    chứng quyền truy cập, đã bị đốt ngay sau khi đọc dù thành công hay thất bại)."""
+    chứng quyền truy cập, đã bị đốt ngay sau khi đọc dù thành công hay thất bại)
+    — NHƯNG vẫn kiểm tra allowed_instances ở đây (không phải ở mint) vì mint
+    giờ mở cho mọi tài khoản, phải chặn đúng chỗ để non-admin không tự mint
+    rồi consume sang site họ không được cấp quyền."""
     user_id = consume_handoff_code(code)
     if not user_id:
         raise HTTPException(status_code=400, detail="Mã chuyển workspace đã hết hạn hoặc không hợp lệ, vui lòng thử lại.")
@@ -188,6 +194,11 @@ def auth_consume_workspace_handoff(code: str, response: Response) -> BaseRespons
     user = get_user_by_id(user_id)
     if not user or not user.get("is_active", True):
         raise HTTPException(status_code=401, detail="Tài khoản không hợp lệ hoặc đã bị vô hiệu hoá.")
+
+    if user.get("role") != "admin":
+        allowed = user.get("allowed_instances") or ([user["home_instance"]] if user.get("home_instance") else None)
+        if allowed and settings.crm_instance not in allowed:
+            raise HTTPException(status_code=403, detail="Tài khoản này không có quyền truy cập workspace này.")
 
     token = create_access_token(user["id"], user["email"], user["role"])
     response.set_cookie(
@@ -295,6 +306,7 @@ def auth_me(request: Request, authorization: str | None = Header(None)) -> BaseR
             "created_at": user.get("created_at"),
             "is_sale": is_sale_member(user.get("id")),
             "can_approve_quotes": bool(user.get("can_approve_quotes")),
+            "allowedInstances": user.get("allowed_instances"),
         })
     except HTTPException as e:
         return BaseResponse(success=False, message=e.detail)

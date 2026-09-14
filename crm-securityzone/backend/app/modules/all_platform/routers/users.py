@@ -15,6 +15,7 @@ from app.modules.all_platform.services import (
     update_user_slug,
     update_user_role,
     update_user_active_status,
+    update_user_allowed_instances,
     update_user_quote_approver,
     update_user_quote_business_role,
     list_users_by_quote_business_role,
@@ -74,6 +75,24 @@ def users_update_role(payload: dict, _admin: dict = Depends(require_admin)) -> B
             return BaseResponse(success=False, message="email and role are required")
         data = update_user_role(email, role)
         return BaseResponse(success=True, message="Role updated", data=data)
+    except Exception as e:
+        return BaseResponse(success=False, message=str(e))
+
+
+@router.post("/update-allowed-instances")
+def users_update_allowed_instances(payload: dict, _admin: dict = Depends(require_admin)) -> BaseResponse:
+    """Admin: gán danh sách workspace (instance) 1 tài khoản non-admin được
+    PHÉP truy cập (migration 005) — thay thế "chỉ 1 site" bằng nhiều site.
+    Danh sách rỗng = không giới hạn (vào được mọi site)."""
+    try:
+        email = payload.get("email")
+        instances = payload.get("allowed_instances")
+        if not email or instances is None:
+            return BaseResponse(success=False, message="email and allowed_instances are required")
+        if not isinstance(instances, list):
+            return BaseResponse(success=False, message="allowed_instances must be a list")
+        data = update_user_allowed_instances(email, [str(i) for i in instances])
+        return BaseResponse(success=True, message="Đã cập nhật workspace", data=data)
     except Exception as e:
         return BaseResponse(success=False, message=str(e))
 

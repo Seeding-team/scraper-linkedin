@@ -8,6 +8,7 @@ import { useMembers } from "@/hooks/useMembers";
 import { useAppAuth } from "@/contexts/AppAuthContext";
 import {
   allPlatformMembersService,
+  authService,
   usersService,
   type AppUserProfile,
 } from "@/services/all-platform.service";
@@ -35,6 +36,18 @@ type MemberFormState = {
   linked_user_id_2: string;
   skill_ids: string[];
 };
+
+// Cung nhan biet nhu WorkspaceSwitcherShadcn.tsx - danh sach that lay tu
+// /auth/workspaces (authService.listWorkspaces), day chi la nhan hien thi.
+const WORKSPACE_LABELS: Record<string, string> = {
+  markee: "Markee",
+  cloudgate: "CloudGate",
+  SECURITYZONE: "SecurityZone",
+};
+
+function workspaceLabel(instance: string): string {
+  return WORKSPACE_LABELS[instance] || instance;
+}
 
 function emptyMemberForm(): MemberFormState {
   return {
@@ -81,6 +94,7 @@ export function MemberManagementContent() {
   const { members, loading, error: membersError, loadMembers } = useMembers();
   const [skills, setSkills] = useState<Skill[]>([]);
   const [appUsers, setAppUsers] = useState<AppUserProfile[]>([]);
+  const [workspaceOptions, setWorkspaceOptions] = useState<{ instance: string; url: string }[]>([]);
   const [searchTerm, setSearchTerm] = useState("");
   const [teamFilter, setTeamFilter] = useState("");
 
@@ -118,6 +132,10 @@ export function MemberManagementContent() {
       setSkills(res.data || []);
     })();
     void loadAppUsers();
+    void (async () => {
+      const res = await authService.listWorkspaces();
+      setWorkspaceOptions(res.data?.items || []);
+    })();
   }, []);
 
   const appUsersById = useMemo(() => {
@@ -197,6 +215,23 @@ export function MemberManagementContent() {
       await loadAppUsers();
     } catch (err) {
       alert(err instanceof Error ? err.message : "Không cập nhật được vai trò báo giá");
+    } finally {
+      setSavingUserId(null);
+    }
+  }
+
+  async function handleRowToggleWorkspace(account: AppUserProfile, instance: string, checked: boolean) {
+    if (!isAdmin) return; // /update-allowed-instances: chỉ admin
+    const current = new Set(account.allowed_instances || []);
+    if (checked) current.add(instance);
+    else current.delete(instance);
+    setSavingUserId(account.id);
+    try {
+      const res = await usersService.updateAllowedInstances(account.email, Array.from(current));
+      if (!res.success) throw new Error(res.message || "Không cập nhật được workspace");
+      await loadAppUsers();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Không cập nhật được workspace");
     } finally {
       setSavingUserId(null);
     }
@@ -521,6 +556,7 @@ export function MemberManagementContent() {
                 <th className="py-3 px-4">Email đăng nhập</th>
                 <th className="py-3 px-4">Role</th>
                 <th className="py-3 px-4">Vai trò báo giá</th>
+                <th className="py-3 px-4">Workspace</th>
                 <th className="py-3 px-4">Trạng thái</th>
                 <th className="py-3 px-4 text-center">Hành động</th>
               </tr>
@@ -629,6 +665,37 @@ export function MemberManagementContent() {
                           )
                         ) : (
                           <span className="text-on-surface-variant">—</span>
+                        )}
+                      </td>
+                      <td className="py-3 px-4">
+                        {!account ? (
+                          <span className="text-on-surface-variant">—</span>
+                        ) : account.role === "admin" ? (
+                          <span
+                            className="px-2 py-0.5 rounded-full text-[9px] font-bold border border-outline-variant bg-surface-container-low text-on-surface-variant"
+                            title="Admin luôn vào được mọi workspace, không giới hạn"
+                          >
+                            Tất cả
+                          </span>
+                        ) : (
+                          <div className="flex flex-col gap-1">
+                            {workspaceOptions.map(w => (
+                              <label key={w.instance} className="flex items-center gap-1.5 text-[10px] text-on-surface-variant cursor-pointer disabled:cursor-not-allowed">
+                                <input
+                                  type="checkbox"
+                                  checked={(account.allowed_instances || []).includes(w.instance)}
+                                  disabled={!isAdmin || savingUserId === account.id}
+                                  onChange={e => handleRowToggleWorkspace(account, w.instance, e.target.checked)}
+                                />
+                                {workspaceLabel(w.instance)}
+                              </label>
+                            ))}
+                            {!account.allowed_instances?.length && (
+                              <span className="text-[9px] italic text-on-surface-variant">
+                                Mặc định: chỉ site đã đăng ký
+                              </span>
+                            )}
+                          </div>
                         )}
                       </td>
                       <td className="py-3 px-4">
