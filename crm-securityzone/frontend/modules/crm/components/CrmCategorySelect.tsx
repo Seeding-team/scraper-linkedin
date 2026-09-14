@@ -215,7 +215,9 @@ export function CrmCategoryQuickModal({
   initialCategory,
   onClose,
   onSaved,
+  inline = false,
 }: {
+  inline?: boolean;
   categoryType: CategoryType;
   initialCategory?: Category | null;
   onClose: () => void;
@@ -255,9 +257,8 @@ export function CrmCategoryQuickModal({
     }
   }
 
-  return (
-    <div className="qc-modal-backdrop qc-modal-backdrop--nested" onMouseDown={event => { if (event.target === event.currentTarget && !busy) onClose(); }}>
-      <div className="crm-category-quick-modal" onMouseDown={event => event.stopPropagation()}>
+  const content = (
+      <div className={inline ? "crm-category-quick-inline" : "crm-category-quick-modal"} onMouseDown={event => event.stopPropagation()} style={inline ? { display: 'flex', flexDirection: 'column', height: '100%', padding: '0 1rem' } : {}}>
         <div className="crm-category-quick-head">
           <div>
             <p>{initialCategory ? `Sửa ${typeLabel}` : `Thêm ${typeLabel}`}</p>
@@ -285,6 +286,11 @@ export function CrmCategoryQuickModal({
           </button>
         </div>
       </div>
+  );
+  if (inline) return content;
+  return (
+    <div className="qc-modal-backdrop qc-modal-backdrop--nested" onMouseDown={event => { if (event.target === event.currentTarget && !busy) onClose(); }}>
+      {content}
     </div>
   );
 }
@@ -365,42 +371,45 @@ export function CrmCategoryManageDrawer({
           </div>
           <button type="button" onClick={onClose}>×</button>
         </div>
-        <div className="crm-category-manage-toolbar">
-          <input value={query} onChange={event => setQuery(event.target.value)} placeholder={`Tìm ${typeLabel}...`} />
-          <button type="button" className="qc-btn qc-btn-primary" onClick={() => setAdding(true)}>+ Thêm {typeLabel}</button>
-        </div>
-        <div className="crm-category-status-tabs">
-          {(['all', 'active', 'inactive'] as const).map(key => (
-            <button key={key} type="button" className={statusFilter === key ? 'is-active' : ''} onClick={() => setStatusFilter(key)}>
-              {key === 'all' ? 'Tất cả' : key === 'active' ? 'Đang sử dụng' : 'Ngừng sử dụng'}
-            </button>
-          ))}
-        </div>
-        {error ? <div className="crm-inline-error">{error}</div> : null}
-        <div className="crm-category-manage-list">
-          {loading ? <div className="crm-searchable-select-empty">Đang tải...</div> : null}
-          {!loading && filteredRows.length === 0 ? <div className="crm-searchable-select-empty">Không tìm thấy</div> : null}
-          {filteredRows.map(row => (
-            <div key={row.id} className="crm-category-manage-row">
-              <div>
-                <strong>{row.name || row.code}</strong>
-                <span>{row.code}</span>
-              </div>
-              <em className={row.is_active === false ? 'is-off' : ''}>{row.is_active === false ? 'Ngừng sử dụng' : 'Đang sử dụng'}</em>
-              <button type="button" className="qc-btn" onClick={() => setEditing(row)}>Sửa</button>
-              <button type="button" className="qc-btn" onClick={() => void toggleActive(row)}>
-                {row.is_active === false ? 'Bật lại' : 'Ngừng'}
-              </button>
+        {!(adding || editing) ? (
+          <>
+            <div className="crm-category-manage-toolbar">
+              <input value={query} onChange={event => setQuery(event.target.value)} placeholder={`Tìm ${typeLabel}...`} />
+              <button type="button" className="qc-btn qc-btn-primary" onClick={() => setAdding(true)}>+ Thêm {typeLabel}</button>
             </div>
-          ))}
-        </div>
+            <div className="crm-category-status-tabs">
+              {(['all', 'active', 'inactive'] as const).map(key => (
+                <button key={key} type="button" className={statusFilter === key ? 'is-active' : ''} onClick={() => setStatusFilter(key)}>
+                  {key === 'all' ? 'Tất cả' : key === 'active' ? 'Đang sử dụng' : 'Ngừng sử dụng'}
+                </button>
+              ))}
+            </div>
+            {error ? <div className="crm-inline-error">{error}</div> : null}
+            <div className="crm-category-manage-list">
+              {loading ? <div className="crm-searchable-select-empty">Đang tải...</div> : null}
+              {!loading && filteredRows.length === 0 ? <div className="crm-searchable-select-empty">Không tìm thấy</div> : null}
+              {filteredRows.map(row => (
+                <div key={row.id} className="crm-category-manage-row">
+                  <div>
+                    <strong>{row.name || row.code}</strong>
+                    <span>{row.code}</span>
+                  </div>
+                  <em className={row.is_active === false ? 'is-off' : ''}>{row.is_active === false ? 'Ngừng sử dụng' : 'Đang sử dụng'}</em>
+                  <button type="button" className="qc-btn" onClick={() => setEditing(row)}>Sửa</button>
+                  <button type="button" className="qc-btn" onClick={() => void toggleActive(row)}>
+                    {row.is_active === false ? 'Bật lại' : 'Ngừng'}
+                  </button>
+                </div>
+              ))}
+            </div>
+          </>
+        ) : (
+          <div style={{ flex: 1, overflowY: 'auto' }}>
+            {adding && <CrmCategoryQuickModal inline categoryType={categoryType} onClose={() => setAdding(false)} onSaved={handleSaved} />}
+            {editing && <CrmCategoryQuickModal inline categoryType={categoryType} initialCategory={editing} onClose={() => setEditing(null)} onSaved={handleSaved} />}
+          </div>
+        )}
       </aside>
-      {adding ? (
-        <CrmCategoryQuickModal categoryType={categoryType} onClose={() => setAdding(false)} onSaved={handleSaved} />
-      ) : null}
-      {editing ? (
-        <CrmCategoryQuickModal categoryType={categoryType} initialCategory={editing} onClose={() => setEditing(null)} onSaved={handleSaved} />
-      ) : null}
     </div>
   );
 }

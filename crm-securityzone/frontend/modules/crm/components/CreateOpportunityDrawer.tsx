@@ -399,7 +399,7 @@ export function CreateOpportunityDrawer({
             <p className="crm-form-title">3. Khách đang quan tâm gì</p>
             <div className="crm-form-grid">
               <Field label="Sản phẩm / dịch vụ" required>
-                <SearchableSelect value={productValue} onChange={setProductValue} options={productOptions} placeholder="-- Chọn --" />
+                <CrmCategoryCodeSelect categoryType="crm_service_package" value={productValue} onChange={setProductValue} placeholder="-- Chọn --" />
               </Field>
               <Field label="Tên cơ hội" required>
                 <input

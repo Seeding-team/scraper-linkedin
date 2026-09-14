@@ -4,7 +4,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
 type Option = string | { value: string; label: string };
-type SelectAction = { key: string; label: string; onSelect: () => void; disabled?: boolean };
+type SelectAction = { key: string; label: string; onSelect: () => void; disabled?: boolean; type?: 'add' | 'manage' | 'default' };
 
 function optionValue(option: Option): string {
   return typeof option === 'string' ? option : option.value;

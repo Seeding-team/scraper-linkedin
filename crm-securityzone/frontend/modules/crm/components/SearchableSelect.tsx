@@ -4,7 +4,8 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
 type Option = string | { value: string; label: string };
-type SelectAction = { key: string; label: string; onSelect: () => void; disabled?: boolean };
+type SelectAction = { key: string; label: string; onSelect: () => void; disabled?: boolean; type?: 'add' | 'manage' | 'default' };
+import { Settings } from 'lucide-react';
 
 function optionValue(option: Option): string {
   return typeof option === 'string' ? option : option.value;
@@ -156,7 +157,7 @@ export function SearchableSelect({
                 placeholder="Tìm..."
                 className="crm-searchable-select-input"
               />
-              <div className="crm-searchable-select-list">
+                            <div className="crm-searchable-select-list">
                 {hideClearOption ? null : (
                   <button
                     type="button"
@@ -179,28 +180,29 @@ export function SearchableSelect({
                 {filtered.length === 0 ? (
                   <div className="crm-searchable-select-empty">Không tìm thấy</div>
                 ) : null}
-                {actions.length > 0 ? (
-                  <div className="crm-searchable-select-actions">
-                    <div className="crm-searchable-select-divider" />
-                    {actions.map(action => (
-                      <button
-                        key={action.key}
-                        type="button"
-                        className="crm-searchable-select-action"
-                        disabled={action.disabled}
-                        onClick={() => {
-                          if (action.disabled) return;
-                          action.onSelect();
-                          setIsOpen(false);
-                          setSearch('');
-                        }}
-                      >
-                        {action.label}
-                      </button>
-                    ))}
-                  </div>
-                ) : null}
               </div>
+              {actions.length > 0 ? (
+                <div className="crm-searchable-select-actions">
+                  <div className="crm-searchable-select-divider" />
+                  {actions.map(action => (
+                    <button
+                      key={action.key}
+                      type="button"
+                      className={`crm-searchable-select-action ${action.type ? 'crm-searchable-select-action--' + action.type : ''}`}
+                      disabled={action.disabled}
+                      onClick={() => {
+                        if (action.disabled) return;
+                        action.onSelect();
+                        setIsOpen(false);
+                        setSearch('');
+                      }}
+                    >
+                      {action.type === 'manage' && <Settings size={14} style={{ marginRight: 6 }} />}
+                      {action.label}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
             </div>,
             document.body,
           )
