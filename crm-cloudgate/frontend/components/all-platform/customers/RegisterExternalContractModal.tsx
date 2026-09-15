@@ -31,11 +31,18 @@ interface Props {
   deal: Customer; // "Customer" type ở đây thực chất là 1 dòng Deal (xem customer-lead.service.ts)
   onClose: () => void;
   onCreated: (contract: Contract) => void;
+  /** BUG THAT DA GAP: truoc day Cơ hội bi CUNG 1 gia tri (readonly, khong sua
+   * duoc) - neu Khach hang co NHIEU Co hoi/Du an, nguoi dung khong the chon
+   * dung Co hoi can ghi nhan hop dong. Danh sach cac Deal cua CUNG 1 Khach
+   * hang (Customer 360 da fetch san qua /related, tai su dung KHONG goi lai
+   * API) - > 1 phan tu moi hien dropdown, <=1 van hien readonly nhu cu de
+   * khong doi UX luc chi co dung 1 lua chon. */
+  dealOptions?: Array<{ id: string; customer_name?: string | null; project_id?: string | null }>;
 }
 
 const STATUS_OPTIONS: ContractStatus[] = ["signed", "active", "completed", "draft", "pending_signature", "terminated"];
 
-export function RegisterExternalContractModal({ open, deal, onClose, onCreated }: Props) {
+export function RegisterExternalContractModal({ open, deal, onClose, onCreated, dealOptions }: Props) {
   const [title, setTitle] = useState("");
   const [contractNumber, setContractNumber] = useState("");
   const [contractValue, setContractValue] = useState("");
@@ -49,6 +56,9 @@ export function RegisterExternalContractModal({ open, deal, onClose, onCreated }
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [projectLabel, setProjectLabel] = useState("");
+  const [selectedDealId, setSelectedDealId] = useState(deal.id);
+  const [selectedDealProjectId, setSelectedDealProjectId] = useState<string | null | undefined>(deal.project_id);
+  const [dealSwitching, setDealSwitching] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -63,15 +73,39 @@ export function RegisterExternalContractModal({ open, deal, onClose, onCreated }
     setNote("");
     setError("");
     setProjectLabel("");
-    if (deal.project_id) {
+    setSelectedDealId(deal.id);
+    setSelectedDealProjectId(deal.project_id);
+  }, [open, deal.id, deal.project_id]);
+
+  useEffect(() => {
+    if (!open) return;
+    setProjectLabel("");
+    if (selectedDealProjectId) {
       projectsService
-        .get(deal.project_id)
+        .get(selectedDealProjectId)
         .then(res => {
           if (res.success && res.data) setProjectLabel(`${res.data.projectCode} · ${res.data.name}`);
         })
         .catch(() => undefined);
     }
-  }, [open, deal.project_id]);
+  }, [open, selectedDealProjectId]);
+
+  async function handleDealChange(newDealId: string) {
+    setSelectedDealId(newDealId);
+    if (newDealId === deal.id) {
+      setSelectedDealProjectId(deal.project_id);
+      return;
+    }
+    setDealSwitching(true);
+    try {
+      const full = await customerLeadService.getById(newDealId);
+      setSelectedDealProjectId(full?.project_id ?? null);
+    } catch {
+      setSelectedDealProjectId(null);
+    } finally {
+      setDealSwitching(false);
+    }
+  }
 
   if (!open) return null;
 
@@ -101,7 +135,7 @@ export function RegisterExternalContractModal({ open, deal, onClose, onCreated }
     setError("");
     try {
       const contract = await seedingContractRepository.createContract({
-        dealId: deal.id,
+        dealId: selectedDealId,
         contractNumber: contractNumber.trim() || undefined,
         title: title.trim(),
         status,
@@ -169,10 +203,23 @@ export function RegisterExternalContractModal({ open, deal, onClose, onCreated }
 
           <label className="block">
             <span className="mb-1 block text-xs font-semibold text-slate-600">Cơ hội</span>
-            <input value={deal.customer_name || ""} disabled readOnly className="w-full rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-500" />
+            {dealOptions && dealOptions.length > 1 ? (
+              <select
+                value={selectedDealId}
+                onChange={e => void handleDealChange(e.target.value)}
+                disabled={dealSwitching}
+                className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+              >
+                {dealOptions.map(d => (
+                  <option key={d.id} value={d.id}>{d.customer_name || d.id}</option>
+                ))}
+              </select>
+            ) : (
+              <input value={deal.customer_name || ""} disabled readOnly className="w-full rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-500" />
+            )}
           </label>
 
-          {deal.project_id ? (
+          {selectedDealProjectId ? (
             <label className="block">
               <span className="mb-1 block text-xs font-semibold text-slate-600">Dự án</span>
               <input value={projectLabel || "Đang tải..."} disabled readOnly className="w-full rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-500" />

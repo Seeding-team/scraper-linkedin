@@ -1249,6 +1249,7 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
         <RegisterExternalContractModal
           open={registerContractOpen}
           deal={registerContractDeal}
+          dealOptions={data?.deals}
           onClose={() => setRegisterContractOpen(false)}
           onCreated={() => { setRegisterContractOpen(false); setReloadTick(t => t + 1); }}
         />
