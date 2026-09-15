@@ -2,6 +2,16 @@
 -- ghi/đọc các cột mới thêm ở migration 127 (ts, raw_content, mentions, cli_msg_id,
 -- msg_kind) — nếu không có migration này, các cột mới sẽ LUÔN rỗng dù backend gửi
 -- đủ field, vì 2 RPC này hardcode danh sách cột INSERT/SELECT.
+--
+-- QUAN TRỌNG (phát hiện + fix trực tiếp trên production 2026-09-15): 2 index tạo Ở
+-- BÊN TRONG thân hàm fn_bulk_save_zalo_messages ("Step 3" bản cũ) làm hàm lỗi
+-- "must be owner of table zalo_messages" khi PostgREST gọi bằng service_role
+-- (không phải owner bảng) NẾU 1 trong 2 index chưa từng tồn tại — CREATE INDEX IF
+-- NOT EXISTS chỉ bỏ qua permission check khi index ĐÃ CÓ SẴN, còn khi phải tạo
+-- mới thì vẫn cần quyền owner. Chuyển hẳn 2 CREATE INDEX ra NGOÀI thân hàm (chạy 1
+-- lần lúc áp migration, không phải mỗi lần gọi hàm) để tránh lặp lại lỗi này.
+CREATE INDEX IF NOT EXISTS idx_zalo_messages_lookup ON public.zalo_messages (user_id, group_id, source_message_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_zalo_groups_uniq ON public.zalo_groups (user_id, group_id);
 
 CREATE OR REPLACE FUNCTION public.fn_bulk_save_zalo_messages(
     p_user_id TEXT,
@@ -91,10 +101,6 @@ BEGIN
 
         GET DIAGNOSTICS v_saved_count = ROW_COUNT;
     END IF;
-
-    -- 3. Add optimization indexes if they don't exist
-    CREATE INDEX IF NOT EXISTS idx_zalo_messages_lookup ON public.zalo_messages (user_id, group_id, source_message_id);
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_zalo_groups_uniq ON public.zalo_groups (user_id, group_id);
 
     RETURN v_saved_count;
 END;
