@@ -65,7 +65,7 @@ router = APIRouter(
 # Thông báo chuẩn khi phiên Zalo hết hạn — FE dựa vào status 401 + code này để hiện CTA login lại.
 ZCA_SESSION_EXPIRED_DETAIL = {
     "code": "zca_session_expired",
-    "message": "Phiên đăng nhập Zalo đã hết hạn. Vui lòng đăng nhập lại bằng mã QR.",
+    "message": "Phiên đăng nhập Zalo đã hết hạn hoặc bị đăng xuất (có thể do đăng nhập cùng lúc ở nơi khác). Vui lòng đăng nhập lại qua Chrome Extension.",
 }
 
 

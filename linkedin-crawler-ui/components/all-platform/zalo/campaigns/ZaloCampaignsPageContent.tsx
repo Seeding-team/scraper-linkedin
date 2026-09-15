@@ -95,11 +95,11 @@ export function ZaloCampaignsPageContent() {
     <div className="flex-1 overflow-y-auto bg-[#f8fafc] p-4 sm:p-6">
       <div className={`mx-auto max-w-5xl ${pageStack}`}>
         <header className="flex flex-wrap items-start justify-between gap-4">
-          <div className="flex items-start gap-3">
+          <div className="flex min-w-0 flex-1 items-start gap-3">
             <div className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-brand text-white">
               <Megaphone className="h-5 w-5" />
             </div>
-            <div>
+            <div className="min-w-0">
               <h1 className="text-xl font-bold tracking-tight text-slate-900 sm:text-2xl">Chiến dịch nhắn tin tự động</h1>
               <p className="mt-1 max-w-xl text-sm text-slate-500">
                 Nhắn tin lặp lịch theo khung giờ/ngày trong tuần, xoay vòng mẫu tin, gợi ý nội dung bằng AI.

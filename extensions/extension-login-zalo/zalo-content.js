@@ -528,6 +528,25 @@
   }
 
   function findImeiCandidate() {
+    // ƯU TIÊN đọc đúng key "z_uuid" — đây LÀ device id thật mà chính Zalo Web
+    // lưu trong localStorage và gắn với session/cookie hiện tại (xác nhận qua
+    // extension tham chiếu của module gốc — đọc thẳng `localStorage.getItem
+    // ("z_uuid")`, không dò mò). Trước đây hàm này dò TOÀN BỘ localStorage/
+    // sessionStorage theo pattern mơ hồ (bất kỳ chuỗi hex 16+ ký tự nào) — Zalo
+    // Web lưu rất nhiều token/hash không liên quan (session token, feature
+    // flag, analytics id...) cũng khớp pattern đó, nên dễ lấy NHẦM giá trị —
+    // gửi sai imei lên khiến Zalo từ chối cookie đúng 100% với lỗi "session key
+    // improperly submitted", hiển thị nhầm thành "phiên đăng nhập hết hạn".
+    try {
+      const zUuid = window.localStorage ? window.localStorage.getItem("z_uuid") : "";
+      if (zUuid && /^[0-9a-f-]{16,}$/i.test(zUuid)) return zUuid;
+    } catch (_) {
+      // localStorage bị chặn — rơi xuống fallback dò mò bên dưới.
+    }
+
+    // Fallback: dò mò như cũ, CHỈ dùng khi không tìm được đúng "z_uuid" ở trên
+    // (vd Zalo đổi tên key trong tương lai) — giữ lại để không mất khả năng
+    // hoạt động hoàn toàn, nhưng đây không còn là đường đi chính.
     const candidates = [];
     try {
       for (const store of [window.localStorage, window.sessionStorage]) {

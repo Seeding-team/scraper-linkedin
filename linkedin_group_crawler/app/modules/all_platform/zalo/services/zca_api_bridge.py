@@ -13,7 +13,7 @@ from app.modules.all_platform.zalo.schemas.message import Message
 
 
 class ZcaAuthExpiredError(RuntimeError):
-    """Cookie/session ZCA đã hết hạn hoặc bị Zalo vô hiệu hóa — cần đăng nhập lại bằng QR."""
+    """Cookie/session ZCA đã hết hạn hoặc bị Zalo vô hiệu hóa — cần đăng nhập lại qua Chrome Extension."""
 
 
 # Các chuỗi lỗi từ zca-js cho biết phiên đăng nhập đã hỏng.

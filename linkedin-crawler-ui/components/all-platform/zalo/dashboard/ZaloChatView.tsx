@@ -1548,7 +1548,7 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
           className={cn(
             "zalo-chat-list-panel relative border-r border-outline-variant flex-col bg-surface overflow-hidden h-full min-h-0 shrink-0",
             "w-full lg:w-[var(--sidebar-w)] lg:min-w-[var(--sidebar-w)]",
-            selectedConversationId ? "hidden lg:flex" : "flex"
+            selectedConversationId || !flow.isLoggedIn ? "hidden lg:flex" : "flex"
           )}
           style={{ "--sidebar-w": `${sidebarWidth}px` } as React.CSSProperties}
         >
@@ -1704,7 +1704,7 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
         <section
           className={cn(
             "flex-1 flex-col h-full bg-surface-container-low min-w-0 relative border-r border-outline-variant",
-            selectedConversationId ? "flex" : "hidden lg:flex"
+            selectedConversationId || !flow.isLoggedIn ? "flex" : "hidden lg:flex"
           )}
         >
           {selectedConversationView ? (
@@ -2375,51 +2375,21 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
             </>
           ) : !flow.isLoggedIn ? (
             <div className="flex-1 flex flex-col items-center justify-center p-6 bg-surface-container-low w-full overflow-y-auto">
-              {/* QR Code Display - 3 states: has QR, generating QR, no QR */}
-              {flow.qrBase64 ? (
-                <>
-                  <div className="bg-surface p-4 rounded-xl shadow-lg mb-4 border border-outline-variant relative">
-                    <img
-                      src={flow.qrBase64.startsWith("data:") ? flow.qrBase64 : `data:image/png;base64,${flow.qrBase64}`}
-                      alt="Zalo QR"
-                      className="w-48 h-48 object-fill"
-                    />
-                    {flow.authStatus === "waiting_scan" && (
-                      <div className="absolute -bottom-3 left-1/2 -translate-x-1/2 bg-primary text-white hover:bg-red-700 px-3 py-1 rounded-full text-[10px] font-bold shadow-md animate-pulse whitespace-nowrap">
-                        Đang chờ quét mã...
-                      </div>
-                    )}
-                  </div>
-                  <h3 className="text-base font-bold text-on-surface mb-1.5 mt-2 text-center">Quét mã QR bằng Zalo</h3>
-                  <div
-                    className="text-on-surface-variant text-[11px] text-center mb-4 leading-relaxed"
-                    style={{ minWidth: "240px", maxWidth: "100%", width: "100%" }}
-                  >
-                    <p>Mở ứng dụng Zalo trên điện thoại → Quét QR → Xác nhận đăng nhập</p>
-                  </div>
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => void flow.startSession()}
-                      disabled={flow.isStartingSession}
-                      className="bg-surface border border-outline-variant text-on-surface px-4 py-2 rounded-lg text-[12px] font-semibold hover:bg-surface-container-low transition shadow-sm disabled:opacity-50"
-                    >
-                      {flow.isStartingSession ? "Đang tạo..." : "Làm mới QR"}
-                    </button>
-                  </div>
-                </>
-              ) : flow.isStartingSession ? (
+              {/* Đăng nhập CHỈ còn qua Chrome Extension (đã bỏ hẳn QR/Playwright) — 2 trạng
+                  thái: đang kết nối extension, hoặc chưa đăng nhập (bấm để mở Zalo Web). */}
+              {flow.isStartingSession ? (
                 <>
                   <div className="w-48 h-48 bg-surface rounded-xl mb-6 flex items-center justify-center border-2 border-dashed border-outline-variant shadow-sm">
                     <div className="flex flex-col items-center gap-2 text-on-surface-variant">
-                      <MaterialIcon name="qr_code_scanner" className="text-3xl animate-pulse text-primary" />
-                      <span className="text-[12px] font-semibold">Đang tạo mã QR...</span>
+                      <MaterialIcon name="sync" className="text-3xl animate-pulse text-primary" />
+                      <span className="text-[12px] font-semibold">Đang kết nối qua Chrome Extension...</span>
                     </div>
                   </div>
                   <div
                     className="text-on-surface-variant text-[11px] text-center leading-relaxed"
                     style={{ minWidth: "240px", maxWidth: "100%", width: "100%" }}
                   >
-                    <p>Hệ thống đang khởi tạo phiên Zalo và tạo mã QR. Quá trình này có thể mất vài giây.</p>
+                    <p>Hệ thống đang lấy phiên đăng nhập Zalo hiện có qua extension. Quá trình này có thể mất vài giây.</p>
                   </div>
                 </>
               ) : (
@@ -2443,9 +2413,9 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
                   </button>
                 </>
               )}
-              {flow.authStatus === "qr_expired" && (
-                <div className="mt-4 text-[11px] text-orange-600 bg-orange-50 px-3 py-1.5 rounded border border-orange-100">
-                  Mã QR đã hết hạn. Bấm &quot;Làm mới QR&quot; để tạo mã mới.
+              {flow.warningMessage && (
+                <div className="mt-4 max-w-sm text-[11px] text-orange-600 bg-orange-50 px-3 py-1.5 rounded border border-orange-100 text-center">
+                  {flow.warningMessage}
                 </div>
               )}
             </div>
