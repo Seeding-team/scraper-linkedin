@@ -128,6 +128,8 @@ export interface ZaloConversationSummary {
   avatar_url?: string | null;
   unread_count?: number;
   is_pinned?: boolean;
+  is_friend?: boolean;
+  thread_type?: "user" | "group" | string;
 }
 
 export interface ZaloConversationListResponse {

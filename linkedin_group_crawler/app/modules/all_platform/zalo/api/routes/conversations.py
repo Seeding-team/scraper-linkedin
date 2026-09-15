@@ -249,6 +249,8 @@ async def list_conversations_for_caller(
                 "avatar_url": r.get("avatar_url"),
                 "unread_count": int(r.get("unread_count") or 0),
                 "is_pinned": bool(r.get("is_pinned")),
+                "is_friend": bool(r.get("is_friend")),
+                "thread_type": r.get("thread_type") or ("user" if r.get("is_friend") else "group"),
             })
         return results
     except Exception as exc:

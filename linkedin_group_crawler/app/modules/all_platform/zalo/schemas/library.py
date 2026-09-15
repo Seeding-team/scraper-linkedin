@@ -106,6 +106,10 @@ class ZaloConversationSummary(BaseModel):
     avatar_url: Optional[str] = None
     unread_count: int = 0
     is_pinned: bool = False
+    # Zalo tập trung (migration 129) — để FE lọc "chỉ hiện nhóm" cho các trang
+    # bulk-send/broadcast-groups/scan-group-members/forward-rules.
+    is_friend: bool = False
+    thread_type: str = "group"
 
 
 class ZaloConversationListResponse(BaseModel):

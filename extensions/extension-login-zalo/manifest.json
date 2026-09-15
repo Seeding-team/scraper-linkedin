@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Markee Zalo Login Extension",
-  "version": "2.0.1",
-  "description": "Capture Zalo Web cookies and sync visible Zalo Web messages to Markee.",
+  "name": "Seeding Zalo Connector",
+  "version": "3.0.0",
+  "description": "Đăng nhập Zalo cho app Seeding (seeding.markeeai.com) — lấy cookie Zalo Web + đồng bộ tin nhắn. Tên/version đổi khác hẳn extension của các app khác (vd Markee Zalo Personal Connector) để không bị nhầm lẫn khi cài song song.",
   "permissions": [
     "activeTab",
     "cookies",
@@ -55,7 +55,7 @@
     }
   ],
   "action": {
-    "default_title": "Markee Zalo",
+    "default_title": "Seeding Zalo Connector",
     "default_popup": "popup.html"
   },
   "content_security_policy": {

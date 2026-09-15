@@ -1,115 +1,198 @@
 "use client";
 
-import { useState } from "react";
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { MaterialIcon } from "@/components/ui";
+/** Modal tạo rule — port nguyên từ RuleEditorModal (ForwardRulesDashboard.tsx,
+ * zalo-forward-module), chỉ đổi màu thương hiệu. Logic/API call giữ nguyên
+ * theo hợp đồng đã có của app này. */
+
+import { useMemo, useState } from "react";
+import { Check, Loader2, Search } from "lucide-react";
 import { useZaloConversationOptions } from "../centralized-shared/useZaloAccountOptions";
-import { ZaloGroupPickerList } from "../centralized-shared/ZaloGroupPickerList";
 import { createZaloForwardRule } from "@/services/zaloCrawlerService";
+import { btn, btnSize, input } from "../centralized-shared/zaloUi";
 
 interface CreateForwardRuleDialogProps {
   accountId: string;
+  onClose: () => void;
   onCreated: () => void;
 }
 
-export function CreateForwardRuleDialog({ accountId, onCreated }: CreateForwardRuleDialogProps) {
-  const [open, setOpen] = useState(false);
+type GroupOption = { id: string; name: string };
+
+function GroupPickerList({
+  groups,
+  excludeIds,
+  mode,
+  selectedIds,
+  onSelectSingle,
+  onToggleMulti,
+}: {
+  groups: GroupOption[];
+  excludeIds: Set<string>;
+  mode: "single" | "multi";
+  selectedIds: Set<string>;
+  onSelectSingle?: (id: string) => void;
+  onToggleMulti?: (id: string) => void;
+}) {
+  const [search, setSearch] = useState("");
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return groups.filter((g) => !excludeIds.has(g.id)).filter((g) => !q || g.name.toLowerCase().includes(q));
+  }, [groups, excludeIds, search]);
+
+  return (
+    <div className="overflow-hidden rounded-lg border border-slate-200">
+      <div className="flex items-center gap-1.5 border-b border-slate-200 bg-slate-50 px-2.5 py-1.5">
+        <Search className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+        <input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Tìm nhóm..."
+          className="w-full bg-transparent text-xs text-slate-900 outline-none placeholder:text-slate-400"
+        />
+      </div>
+      <div className="max-h-48 overflow-auto">
+        {filtered.length === 0 ? (
+          <div className="px-3 py-4 text-center text-[11px] text-slate-500">Không có nhóm phù hợp.</div>
+        ) : (
+          filtered.map((g) => {
+            const checked = selectedIds.has(g.id);
+            return (
+              <label
+                key={g.id}
+                className="flex cursor-pointer items-center gap-2 border-b border-slate-100 px-2.5 py-1.5 text-xs last:border-b-0 hover:bg-slate-50"
+              >
+                <input
+                  type={mode === "single" ? "radio" : "checkbox"}
+                  name={mode === "single" ? "master-group" : undefined}
+                  checked={checked}
+                  onChange={() => (mode === "single" ? onSelectSingle?.(g.id) : onToggleMulti?.(g.id))}
+                  className="accent-brand"
+                />
+                <span className="truncate text-slate-700">{g.name}</span>
+              </label>
+            );
+          })
+        )}
+      </div>
+    </div>
+  );
+}
+
+export function CreateForwardRuleDialog({ accountId, onClose, onCreated }: CreateForwardRuleDialogProps) {
   const [name, setName] = useState("");
-  const [masterIds, setMasterIds] = useState<string[]>([]);
-  const [targetIds, setTargetIds] = useState<string[]>([]);
-  const [submitting, setSubmitting] = useState(false);
+  const [masterId, setMasterId] = useState("");
+  const [targetIds, setTargetIds] = useState<Set<string>>(new Set());
+  const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const { conversations, loading } = useZaloConversationOptions(open ? accountId : "");
-  const master = conversations.find((c) => c.conversation_id === masterIds[0]);
+  const { conversations } = useZaloConversationOptions(accountId);
+  const groups: GroupOption[] = useMemo(
+    () =>
+      conversations
+        .filter((c) => c.conversation_id) // group_id/thread_id có sẵn
+        .map((c) => ({ id: c.conversation_id, name: c.conversation_name || `Nhóm ${c.conversation_id}` })),
+    [conversations],
+  );
+  const nameOf = (id: string) => groups.find((g) => g.id === id)?.name || id;
 
-  async function handleSubmit() {
-    if (!masterIds[0] || targetIds.length === 0) {
-      setError("Cần chọn 1 nhóm chính và ít nhất 1 nhóm đích.");
+  async function handleSave() {
+    if (!masterId) {
+      setError("Vui lòng chọn nhóm chính.");
       return;
     }
-    setSubmitting(true);
+    if (targetIds.size === 0) {
+      setError("Vui lòng chọn ít nhất 1 nhóm đích.");
+      return;
+    }
+    setSaving(true);
     setError(null);
     try {
-      const targetNames: Record<string, string> = {};
-      for (const id of targetIds) {
-        const c = conversations.find((x) => x.conversation_id === id);
-        if (c) targetNames[id] = c.conversation_name;
-      }
+      const targetThreadIds = Array.from(targetIds);
+      const targetThreadNames: Record<string, string> = {};
+      for (const id of targetThreadIds) targetThreadNames[id] = nameOf(id);
       await createZaloForwardRule({
         account_id: accountId,
         name: name.trim() || undefined,
-        master_thread_id: masterIds[0],
-        master_thread_name: master?.conversation_name,
-        target_thread_ids: targetIds,
-        target_thread_names: targetNames,
+        master_thread_id: masterId,
+        master_thread_name: nameOf(masterId),
+        target_thread_ids: targetThreadIds,
+        target_thread_names: targetThreadNames,
       });
-      setOpen(false);
-      setName("");
-      setMasterIds([]);
-      setTargetIds([]);
       onCreated();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Không tạo được rule");
+      setError(e instanceof Error ? e.message : "Lỗi lưu luật chuyển tiếp.");
     } finally {
-      setSubmitting(false);
+      setSaving(false);
     }
   }
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>
-        <Button size="sm">
-          <MaterialIcon name="add" className="text-base" />
-          Tạo rule mới
-        </Button>
-      </DialogTrigger>
-      <DialogContent className="max-w-2xl">
-        <DialogHeader>
-          <DialogTitle>Tạo rule chuyển tiếp tin nhắn</DialogTitle>
-        </DialogHeader>
-        <div className="flex flex-col gap-4">
-          <div>
-            <Label htmlFor="rule-name">Tên rule (tuỳ chọn)</Label>
-            <Input id="rule-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="VD: Nhóm sale -> nhóm tổng" />
-          </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <Label className="mb-2 block">Nhóm chính (nguồn)</Label>
-              <ZaloGroupPickerList
-                conversations={conversations}
-                loading={loading}
-                mode="single"
-                selectedIds={masterIds}
-                onChange={setMasterIds}
-              />
+    <div className="fixed inset-0 z-[170] grid place-items-center bg-black/50 px-4">
+      <button type="button" className="absolute inset-0" aria-label="Đóng" onClick={onClose} />
+      <div className="relative flex max-h-[90vh] w-full max-w-2xl flex-col rounded-xl border border-slate-200 bg-white shadow-lg">
+        <div className="shrink-0 px-5 pt-5 text-base font-semibold text-slate-900">Tạo luật chuyển tiếp mới</div>
+        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-3">
+          <div className="space-y-3">
+            <input
+              type="text"
+              placeholder="Tên luật (tuỳ chọn, vd: Thông báo cửa hàng)"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              className={input}
+            />
+
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div>
+                <div className="mb-1 text-xs font-semibold text-slate-700">
+                  Nhóm chính {masterId ? <span className="font-normal text-slate-400">— {nameOf(masterId)}</span> : null}
+                </div>
+                <GroupPickerList
+                  groups={groups}
+                  excludeIds={targetIds}
+                  mode="single"
+                  selectedIds={new Set(masterId ? [masterId] : [])}
+                  onSelectSingle={(id) => setMasterId(id)}
+                />
+              </div>
+
+              <div>
+                <div className="mb-1 text-xs font-semibold text-slate-700">Nhóm đích ({targetIds.size} đã chọn)</div>
+                <GroupPickerList
+                  groups={groups}
+                  excludeIds={new Set(masterId ? [masterId] : [])}
+                  mode="multi"
+                  selectedIds={targetIds}
+                  onToggleMulti={(id) =>
+                    setTargetIds((prev) => {
+                      const next = new Set(prev);
+                      if (next.has(id)) next.delete(id);
+                      else next.add(id);
+                      return next;
+                    })
+                  }
+                />
+              </div>
             </div>
-            <div>
-              <Label className="mb-2 block">Nhóm đích (có thể chọn nhiều)</Label>
-              <ZaloGroupPickerList
-                conversations={conversations}
-                loading={loading}
-                mode="multi"
-                selectedIds={targetIds}
-                onChange={setTargetIds}
-                excludeId={masterIds[0]}
-              />
-            </div>
+
+            {error ? <p className="text-sm text-red-600">{error}</p> : null}
           </div>
-          {error && <p className="text-sm text-destructive">{error}</p>}
         </div>
-        <DialogFooter>
-          <Button variant="outline" onClick={() => setOpen(false)}>
-            Huỷ
-          </Button>
-          <Button onClick={() => void handleSubmit()} disabled={submitting}>
-            {submitting ? "Đang tạo..." : "Tạo rule"}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+
+        <div className="flex shrink-0 justify-end gap-2 border-t border-slate-100 px-5 py-3">
+          <button type="button" onClick={onClose} className={`${btn.outline} ${btnSize.sm}`}>
+            Hủy
+          </button>
+          <button
+            type="button"
+            onClick={() => void handleSave()}
+            disabled={saving || !masterId || targetIds.size === 0}
+            className={`${btn.primary} ${btnSize.sm}`}
+          >
+            {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+            Lưu
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }

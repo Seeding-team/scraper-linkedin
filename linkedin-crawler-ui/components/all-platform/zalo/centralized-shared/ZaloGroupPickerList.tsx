@@ -15,6 +15,10 @@ interface ZaloGroupPickerListProps {
   onChange: (ids: string[]) => void;
   /** Loại trừ 1 conversation_id khỏi danh sách chọn (vd: nhóm chính không được chọn làm đích). */
   excludeId?: string | null;
+  /** Chỉ hiện hội thoại nhóm (thread_type=group), ẩn chat 1-1 — đúng hành vi
+   * bulk-send/broadcast-groups/scan-group-members/forward-rules bên module gốc
+   * (chỉ áp dụng được cho nhóm, không áp dụng cho chat cá nhân). */
+  groupsOnly?: boolean;
 }
 
 export function ZaloGroupPickerList({
@@ -24,15 +28,17 @@ export function ZaloGroupPickerList({
   selectedIds,
   onChange,
   excludeId,
+  groupsOnly,
 }: ZaloGroupPickerListProps) {
   const [query, setQuery] = useState("");
 
   const filtered = useMemo(() => {
-    const groupsOnly = conversations.filter((c) => c.conversation_id !== excludeId);
-    if (!query.trim()) return groupsOnly;
+    let list = conversations.filter((c) => c.conversation_id !== excludeId);
+    if (groupsOnly) list = list.filter((c) => c.thread_type !== "user" && !c.is_friend);
+    if (!query.trim()) return list;
     const q = query.trim().toLowerCase();
-    return groupsOnly.filter((c) => c.conversation_name?.toLowerCase().includes(q));
-  }, [conversations, query, excludeId]);
+    return list.filter((c) => c.conversation_name?.toLowerCase().includes(q));
+  }, [conversations, query, excludeId, groupsOnly]);
 
   function toggle(id: string) {
     if (mode === "single") {

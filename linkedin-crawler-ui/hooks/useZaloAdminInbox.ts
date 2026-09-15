@@ -78,6 +78,7 @@ export interface ZaloConv {
   deleted: boolean;
   archived?: boolean;
   archived_at?: string;
+  avatar_url?: string | null;
 }
 
 export interface ZaloArchiveConv {
@@ -1011,6 +1012,7 @@ export function useZaloAdminInbox() {
         pushed_to_zalo: true,
         deleted: isHidden,
         archived: isHidden,
+        avatar_url: c.avatar_url ?? null,
       };
     });
   }, [conversations, isCustomerSet, hiddenConvIds]);

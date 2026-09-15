@@ -4,6 +4,7 @@ import Image from "next/image";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { MaterialIcon, type MaterialSymbolName } from "@/components/ui";
+import { cn } from "@/lib/utils";
 import { API_BASE_URL, API_KEY } from "@/lib/env";
 import type { ZaloCrawlerFlowValue } from "@/hooks/useZaloCrawlerFlow";
 import {
@@ -1473,9 +1474,15 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
     <div
       className="flex-1 h-full w-full bg-surface overflow-hidden min-h-0 flex flex-col"
     >
-      {/* [P2] STATS BAR (Horizontal row at the top) */}
+      {/* [P2] STATS BAR (Horizontal row at the top) — ẩn trên mobile khi đang mở 1
+          hội thoại (full-screen chat trên mobile, đúng pattern zalo-account-module gốc). */}
       {flow.isLoggedIn && (
-        <section className="grid grid-cols-2 md:grid-cols-4 gap-2.5 px-4 py-1.5 border-b border-outline-variant bg-surface shrink-0 shadow-sm">
+        <section
+          className={cn(
+            "grid-cols-2 md:grid-cols-4 gap-2.5 px-4 py-1.5 border-b border-outline-variant bg-surface shrink-0 shadow-sm",
+            selectedConversationId ? "hidden lg:grid" : "grid"
+          )}
+        >
           {/* Card 1: Zalo Conversations */}
           <div className="bg-surface rounded-lg py-1 px-2.5 border border-outline-variant flex items-center justify-between relative overflow-hidden transition-all hover:shadow-md">
             <div className="absolute top-0 left-0 w-[3px] h-full bg-slate-400"></div>
@@ -1532,11 +1539,18 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
       {/* CORE INBOX LAYOUT (Conversations, Chat Area, Campaign Sidebar) */}
       <div className="flex-1 flex min-h-0 overflow-hidden relative bg-surface-container-low">
 
-        {/* Left Column: Conversations */}
+        {/* Left Column: Conversations. Mobile (dưới lg): full width, ẩn khi đang mở
+            1 hội thoại. Desktop (lg+): giữ NGUYÊN width resize-được như cũ (đặt qua
+            CSS var vì --sidebar-w là giá trị động, Tailwind arbitrary value không
+            nhận biến JS trực tiếp có breakpoint prefix). */}
         <section
           ref={sidebarRef}
-          className="zalo-chat-list-panel relative border-r border-outline-variant flex flex-col bg-surface overflow-hidden h-full min-h-0 shrink-0"
-          style={{ width: `${sidebarWidth}px`, minWidth: `${sidebarWidth}px` }}
+          className={cn(
+            "zalo-chat-list-panel relative border-r border-outline-variant flex-col bg-surface overflow-hidden h-full min-h-0 shrink-0",
+            "w-full lg:w-[var(--sidebar-w)] lg:min-w-[var(--sidebar-w)]",
+            selectedConversationId ? "hidden lg:flex" : "flex"
+          )}
+          style={{ "--sidebar-w": `${sidebarWidth}px` } as React.CSSProperties}
         >
           {flow.sessionExpired && (
             <div className="m-2 rounded-lg border border-error-container bg-error-container/40 px-2 py-1.5 text-[10px] text-error">
@@ -1685,8 +1699,14 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
 
         </section>
 
-        {/* Middle Column: Chat Workspace */}
-        <section className="flex-1 flex flex-col h-full bg-surface-container-low min-w-0 relative border-r border-outline-variant">
+        {/* Middle Column: Chat Workspace. Mobile: chỉ hiện khi đã chọn hội thoại
+            (full-screen), ẩn khi đang ở danh sách. Desktop: luôn hiện song song. */}
+        <section
+          className={cn(
+            "flex-1 flex-col h-full bg-surface-container-low min-w-0 relative border-r border-outline-variant",
+            selectedConversationId ? "flex" : "hidden lg:flex"
+          )}
+        >
           {selectedConversationView ? (
             <>
               {/* [P4.1] Chat Header with Sync status sublabel */}
@@ -1694,6 +1714,15 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
                 fullScreen ? "px-5 h-16" : "px-3 h-12"
               } shadow-sm z-10 shrink-0`}>
                 <div className="flex items-center gap-2 min-w-0 flex-1">
+                  {/* Back mobile — quay lại danh sách hội thoại (ẩn trên desktop). */}
+                  <button
+                    type="button"
+                    onClick={() => setSelectedConversationId(null)}
+                    className="-ml-1 shrink-0 rounded-lg p-1 text-on-surface-variant hover:bg-surface-container-low lg:hidden"
+                    title="Quay lại danh sách hội thoại"
+                  >
+                    <MaterialIcon name="chevron_left" className="text-[20px]" />
+                  </button>
                   {selectedConversationView.avatar_url && !avatarErrors[`header-${selectedConversationView.conversation_id}`] ? (
                     <img
                       src={selectedConversationView.avatar_url}

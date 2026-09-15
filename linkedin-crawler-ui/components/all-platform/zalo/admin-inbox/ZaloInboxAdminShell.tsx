@@ -4,6 +4,7 @@ import { useMemo, useState, useRef, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { useZaloAdminInbox, type ZaloConv } from "@/hooks/useZaloAdminInbox";
 import { useZaloPushNotifications } from "@/hooks/useZaloPushNotifications";
+import { Avatar } from "../dashboard/Avatar";
 import ZaloTeamAccountTree from "./ZaloTeamAccountTree";
 import ZaloAccountAuthView from "./ZaloAccountAuthView";
 import { CrmCustomerModal } from "@/components/all-platform/components/CrmCustomerModal";
@@ -633,6 +634,10 @@ export function ZaloInboxAdminShell() {
 
   return (
     <div className="w-full max-w-full text-[#1A1A1A] flex flex-col bg-slate-50 pb-8">
+      {/* Header/Stats/KPI/Employee panel: ẩn trên mobile khi đang mở 1 hội thoại
+          (đúng pattern "full-screen chat trên mobile" của zalo-account-module gốc,
+          ZaloPageContent.tsx) — desktop (lg+) luôn hiện, không đổi gì. */}
+      <div className={cn(inbox.openConv ? "hidden lg:contents" : "contents")}>
       {/* ── Header ── */}
       <div className="mb-4 flex flex-wrap items-start justify-between gap-3 flex-shrink-0">
         <div>
@@ -748,11 +753,21 @@ export function ZaloInboxAdminShell() {
           owner={inbox.leaderEmail}
         />
       </div>
+      </div>
 
       {/* ── 3-Pane Layout ── */}
-      <div className="grid min-w-0 grid-cols-[280px_1fr_260px] gap-4">
+      {/* Mobile (dưới lg): grid-cols-1, mỗi lần chỉ hiện 1 "pane" (list hoặc chat)
+          theo inbox.openConv — đúng trải nghiệm "chọn hội thoại -> full màn hình
+          chat, nút Back quay lại danh sách" của module gốc. Desktop (lg+): giữ
+          NGUYÊN 3 cột song song như cũ, không đổi gì. */}
+      <div className="grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-[280px_1fr_260px]">
         {/* Pane 1: Conversations list */}
-        <section className="min-w-0 overflow-hidden rounded-xl border border-[#E5E5E5] bg-white shadow-sm flex flex-col">
+        <section
+          className={cn(
+            "min-w-0 overflow-hidden rounded-xl border border-[#E5E5E5] bg-white shadow-sm flex-col",
+            inbox.openConv ? "hidden lg:flex" : "flex"
+          )}
+        >
           <div className="border-b border-[#E5E5E5] p-3 flex-shrink-0 space-y-2">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-1.5 min-w-0">
@@ -855,6 +870,7 @@ export function ZaloInboxAdminShell() {
                   )}
                 >
                   <div className="flex items-start justify-between gap-1.5">
+                    <Avatar src={conv.avatar_url} name={conv.name} className="h-9 w-9 text-xs" />
                     <div className="min-w-0 flex-1">
                       <div className={cn("truncate font-bold text-slate-800", conv.unread && "font-black text-black")}>
                         {conv.name}
@@ -893,7 +909,13 @@ export function ZaloInboxAdminShell() {
         </section>
 
         {/* Pane 2: Chat panel (middle) */}
-        <section className="flex h-[700px] min-w-0 flex-col overflow-hidden rounded-xl border border-[#E5E5E5] bg-white shadow-sm">
+        <section
+          className={cn(
+            "min-w-0 flex-col overflow-hidden rounded-xl border border-[#E5E5E5] bg-white shadow-sm",
+            "h-[calc(100dvh-6rem)] lg:h-[700px]",
+            inbox.openConv ? "flex" : "hidden lg:flex"
+          )}
+        >
           {inbox.selectedAccountId && (accountStatus === "expired" || accountStatus === "offline") && (
             <div className="bg-amber-50 border-b border-amber-200 px-4 py-2 flex items-center justify-between text-xs text-amber-800 flex-shrink-0 animate-fade-in">
               <span className="flex items-center gap-1.5 font-semibold">
@@ -916,6 +938,18 @@ export function ZaloInboxAdminShell() {
           <div className="flex items-center justify-between gap-3 border-b border-[#E5E5E5] px-4 py-2.5 bg-[#FAFAFA] flex-shrink-0">
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2">
+                {/* Back mobile — quay lại danh sách hội thoại (ẩn trên desktop, luôn hiện cả 2 pane). */}
+                <button
+                  type="button"
+                  onClick={() => inbox.openChat("")}
+                  className="-ml-1 shrink-0 rounded-lg p-1 text-slate-500 hover:bg-slate-100 lg:hidden"
+                  title="Quay lại danh sách hội thoại"
+                >
+                  <MaterialIcon name="chevron_left" className="text-[20px]" />
+                </button>
+                {selectedConv && !inbox.archiveReading && (
+                  <Avatar src={selectedConv.avatar_url} name={selectedName} className="h-7 w-7 text-[10px]" />
+                )}
                 <h2 className="truncate text-sm font-bold text-slate-800">{selectedName || "Hội thoại"}</h2>
                 {/* Trạng thái bạn bè (Mục 3.3.5/11.1 guide) — chỉ hiện khi backend trả
                     được kết quả (1-1 với uid Zalo thật; group sẽ tự lỗi và ẩn badge). */}
@@ -1117,7 +1151,7 @@ export function ZaloInboxAdminShell() {
                           {/* Checkbox on left for received messages */}
                           {!isSent && checkboxEl}
 
-                          <div className={cn("max-w-[75%]", isSent ? "text-right" : "text-left")}>
+                          <div className={cn("max-w-[88%] sm:max-w-[75%]", isSent ? "text-right" : "text-left")}>
                             {!isSent && msg.sender_name && (
                               <div className="flex items-center gap-1 mb-0.5 px-1">
                                 <span className="text-[10px] text-[#A0A0A0]">{msg.sender_name}</span>
@@ -1144,14 +1178,14 @@ export function ZaloInboxAdminShell() {
                             {msg.content && (
                               <div
                                 className={cn(
-                                  "whitespace-pre-wrap rounded-xl px-3 py-2 text-xs leading-relaxed break-words transition-all duration-200",
+                                  "whitespace-pre-wrap rounded-2xl px-3.5 py-2 text-xs leading-relaxed break-words transition-all duration-200 shadow-sm",
                                   isSent
-                                    ? "bg-[#E3000F] text-white rounded-br-sm"
-                                    : "bg-white text-slate-800 shadow-sm ring-1 ring-slate-150 rounded-bl-sm",
+                                    ? "bg-brand text-white rounded-br-md"
+                                    : "bg-[#f1f4f8] text-[#1f2a3a] rounded-bl-md",
                                   isSelected && (
                                     isSent
-                                      ? "ring-2 ring-[#E3000F] ring-offset-2"
-                                      : "ring-2 ring-[#E3000F]/60 bg-red-50/30"
+                                      ? "ring-2 ring-brand ring-offset-2"
+                                      : "ring-2 ring-brand/60 bg-brand-subtle"
                                   )
                                 )}
                               >
@@ -1411,8 +1445,10 @@ export function ZaloInboxAdminShell() {
           </div>
         </section>
 
-        {/* Pane 3: Tabs sidebar (Templates / Customer / KPI / Account Management) */}
-        <aside className="min-w-0 overflow-hidden rounded-xl border border-[#E5E5E5] bg-white shadow-sm flex flex-col h-[700px]">
+        {/* Pane 3: Tabs sidebar (Templates / Customer / KPI / Account Management) —
+            chỉ hiện ở desktop (lg+), mobile ưu tiên trải nghiệm list<->chat đơn giản
+            giống module gốc (không có pane thứ 3 tương đương). */}
+        <aside className="hidden min-w-0 overflow-hidden rounded-xl border border-[#E5E5E5] bg-white shadow-sm lg:flex lg:flex-col lg:h-[700px]">
           <div className="grid border-b border-[#E5E5E5] bg-[#FAFAFA] text-[11px] font-black shrink-0 grid-cols-3">
             <button
               onClick={() => {
