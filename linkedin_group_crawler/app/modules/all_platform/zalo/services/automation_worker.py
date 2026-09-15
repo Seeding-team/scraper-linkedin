@@ -13,8 +13,7 @@ from __future__ import annotations
 import asyncio
 import os
 import random
-from datetime import datetime, timezone
-from zoneinfo import ZoneInfo
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 from loguru import logger
@@ -29,7 +28,12 @@ from app.modules.all_platform.zalo.services.zca_api_bridge import (
     send_zca_friend_request,
 )
 
-VN_TZ = ZoneInfo("Asia/Ho_Chi_Minh")
+
+# ZoneInfo("Asia/Ho_Chi_Minh") crash o production: container thieu goi he thong
+# `tzdata`, ZoneInfoNotFoundError ngay tu module level -> ca backend crash-loop.
+# Da gap + fix dung offset co dinh nay 1 lan truoc o supabase_quote_service.py,
+# lam lai dung y het pattern do thay vi ZoneInfo.
+VN_TZ = timezone(timedelta(hours=7))
 
 
 def _account_lock_registry() -> Dict[str, asyncio.Lock]:
