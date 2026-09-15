@@ -7,7 +7,6 @@ from typing import Any
 
 from supabase import Client
 
-from app.core.config import settings
 from app.core.supabase_client import get_supabase_client
 
 SALES_ASSETS_TABLE = "sales_assets"
@@ -88,7 +87,6 @@ def _hydrate_asset_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         supabase.table(CUSTOMER_LEADS_TABLE)
         .select("id, customer_name, company_name, conv_id, service_package")
         .in_("id", list(ids))
-        .eq("instance", settings.crm_instance)
         .execute()
     )
     lead_map = {row["id"]: row for row in (leads_res.data or [])}
@@ -130,7 +128,7 @@ def list_sales_assets(
     include_archived: bool = False,
 ) -> list[dict[str, Any]]:
     supabase: Client = get_supabase_client()
-    query = supabase.table(SALES_ASSETS_TABLE).select("*").eq("instance", settings.crm_instance)
+    query = supabase.table(SALES_ASSETS_TABLE).select("*")
     if asset_type:
         query = query.eq("type", asset_type)
     if status:
@@ -151,18 +149,10 @@ def list_sales_assets(
 
 
 def get_sales_asset(asset_id: str) -> dict[str, Any]:
-    # BUG THAT DA GAP: .single() nem APIError tho (PGRST116) khi 0 dong khop
-    # (id khong ton tai, HOAC ton tai o instance khac) - khien nhanh
-    # "if not result.data" ben duoi thanh dead code. Doi sang .maybe_single().
+    # BUG THAT DA GAP: .single() nem APIError tho (PGRST116) khi 0 dong khop -
+    # khien nhanh "if not result.data" ben duoi thanh dead code. Doi sang .maybe_single().
     supabase: Client = get_supabase_client()
-    result = (
-        supabase.table(SALES_ASSETS_TABLE)
-        .select("*")
-        .eq("id", asset_id)
-        .eq("instance", settings.crm_instance)
-        .maybe_single()
-        .execute()
-    )
+    result = supabase.table(SALES_ASSETS_TABLE).select("*").eq("id", asset_id).maybe_single().execute()
     if not result or not result.data:
         raise ValueError("Tai lieu ban hang khong ton tai.")
     return _row_to_asset(_hydrate_asset_rows([result.data])[0])
@@ -188,7 +178,6 @@ def create_sales_asset(payload: dict[str, Any], created_by: str | None = None) -
         "thumbnail_url": payload.get("thumbnail_url") or "",
         "status": payload.get("status") or "active",
         "created_by": created_by,
-        "instance": settings.crm_instance,
     }
     result = supabase.table(SALES_ASSETS_TABLE).insert(insert_data).execute()
     return _row_to_asset(_hydrate_asset_rows([result.data[0]])[0])
@@ -228,13 +217,7 @@ def update_sales_asset(asset_id: str, payload: dict[str, Any]) -> dict[str, Any]
     update_data["updated_at"] = _now_iso()
     if update_data.get("status") != "archived":
         update_data["archived_at"] = None
-    result = (
-        supabase.table(SALES_ASSETS_TABLE)
-        .update(update_data)
-        .eq("id", asset_id)
-        .eq("instance", settings.crm_instance)
-        .execute()
-    )
+    result = supabase.table(SALES_ASSETS_TABLE).update(update_data).eq("id", asset_id).execute()
     if not result.data:
         raise ValueError("Tai lieu ban hang khong ton tai.")
     return _row_to_asset(_hydrate_asset_rows([result.data[0]])[0])
@@ -246,7 +229,6 @@ def archive_sales_asset(asset_id: str) -> dict[str, Any]:
         supabase.table(SALES_ASSETS_TABLE)
         .update({"status": "archived", "archived_at": _now_iso(), "updated_at": _now_iso()})
         .eq("id", asset_id)
-        .eq("instance", settings.crm_instance)
         .execute()
     )
     if not result.data:
@@ -257,7 +239,7 @@ def archive_sales_asset(asset_id: str) -> dict[str, Any]:
 def delete_sales_asset(asset_id: str) -> bool:
     """Xoa han (hard delete) 1 tai lieu ban hang khoi sales_assets."""
     supabase: Client = get_supabase_client()
-    result = supabase.table(SALES_ASSETS_TABLE).delete().eq("id", asset_id).eq("instance", settings.crm_instance).execute()
+    result = supabase.table(SALES_ASSETS_TABLE).delete().eq("id", asset_id).execute()
     if not result.data:
         raise ValueError("Tai lieu ban hang khong ton tai.")
     return True
@@ -268,21 +250,13 @@ def _find_lead(payload: dict[str, Any]) -> dict[str, Any] | None:
     deal_id = payload.get("deal_id")
     conversation_id = payload.get("conversation_id")
     if deal_id:
-        result = (
-            supabase.table(CUSTOMER_LEADS_TABLE)
-            .select("*")
-            .eq("id", deal_id)
-            .eq("instance", settings.crm_instance)
-            .limit(1)
-            .execute()
-        )
+        result = supabase.table(CUSTOMER_LEADS_TABLE).select("*").eq("id", deal_id).limit(1).execute()
         return (result.data or [None])[0]
     if conversation_id:
         result = (
             supabase.table(CUSTOMER_LEADS_TABLE)
             .select("*")
             .eq("conv_id", conversation_id)
-            .eq("instance", settings.crm_instance)
             .limit(1)
             .execute()
         )
@@ -310,7 +284,6 @@ def _write_selected_activity(asset: dict[str, Any], payload: dict[str, Any], act
         "new_value": link,
     }
     log_entry = {key: value for key, value in log_entry.items() if value is not None}
-    log_entry["instance"] = settings.crm_instance
     supabase.table(ACTIVITY_TABLE).insert(log_entry).execute()
     return lead["id"]
 

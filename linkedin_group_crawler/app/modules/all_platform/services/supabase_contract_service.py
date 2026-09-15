@@ -10,7 +10,9 @@ from typing import Any
 
 from supabase import Client
 
+from app.core.config import settings
 from app.core.supabase_client import get_supabase_client
+from app.modules.all_platform.services.customer_lead_service import get_customer_lead_by_id
 
 CONTRACTS_TABLE = "contracts"
 ACTIVITY_LOG_TABLE = "contract_activity_log"
@@ -36,6 +38,7 @@ def _row_to_contract(row: dict) -> dict:
         "dealId": row.get("deal_id"),
         "dealCustomerName": deal.get("customer_name"),
         "dealCompanyName": deal.get("company_name"),
+        "customerId": row.get("customer_id"),
         "manualCustomerName": row.get("manual_customer_name"),
         "quoteId": row.get("quote_id"),
         "title": row["title"],
@@ -61,6 +64,10 @@ def _row_to_contract(row: dict) -> dict:
         "updatedById": row.get("updated_by"),
         "createdAt": row.get("created_at"),
         "updatedAt": row.get("updated_at"),
+        # Migration 136 — "Ghi nhận hợp đồng có sẵn".
+        "source": row.get("source") or "crm",
+        "fileUrl": row.get("file_url"),
+        "note": row.get("note"),
     }
 
 
@@ -88,6 +95,7 @@ def _log_activity(contract_id: str, actor_id: str | None, action: str, changes: 
     supabase: Client = get_supabase_client()
     supabase.table(ACTIVITY_LOG_TABLE).insert({
         "contract_id": contract_id, "actor_id": actor_id, "action": action, "changes": changes,
+        "instance": settings.crm_instance,
     }).execute()
 
 
@@ -105,7 +113,7 @@ def _serialize_clauses(clauses: list[Any] | None) -> list[dict]:
 
 def list_contracts(deal_id: str | None = None, status: str | None = None) -> list[dict]:
     supabase: Client = get_supabase_client()
-    query = supabase.table(CONTRACTS_TABLE).select(LIST_SELECT)
+    query = supabase.table(CONTRACTS_TABLE).select(LIST_SELECT).eq("instance", settings.crm_instance)
     if deal_id:
         query = query.eq("deal_id", deal_id)
     if status:
@@ -116,20 +124,43 @@ def list_contracts(deal_id: str | None = None, status: str | None = None) -> lis
 
 def get_contract(contract_id: str) -> dict:
     supabase: Client = get_supabase_client()
-    row = supabase.table(CONTRACTS_TABLE).select(LIST_SELECT).eq("id", contract_id).single().execute().data
+    row = (
+        supabase.table(CONTRACTS_TABLE)
+        .select(LIST_SELECT)
+        .eq("id", contract_id)
+        .eq("instance", settings.crm_instance)
+        .single()
+        .execute()
+        .data
+    )
     return _row_to_contract(row)
+
+
+def _resolve_customer_id(deal_id: str | None, customer_id: str | None) -> str | None:
+    """Deal thang khi co ca 2 - khong tin customer_id client gui neu no lech
+    voi customer that su cua deal (vd deal doi khach hang gan deal_id cu)."""
+    if deal_id:
+        deal = get_customer_lead_by_id(deal_id)
+        return (deal or {}).get("customer_id")
+    return customer_id
 
 
 def create_contract(payload: dict, created_by: str | None) -> dict:
     supabase: Client = get_supabase_client()
     insert_data = {
-        "contract_number": _next_contract_number(),
+        "contract_number": payload.get("contract_number") or _next_contract_number(),
         "deal_id": payload.get("deal_id"),
+        "customer_id": _resolve_customer_id(payload.get("deal_id"), payload.get("customer_id")),
         "manual_customer_name": payload.get("manual_customer_name"),
         "quote_id": payload.get("quote_id"),
         "title": payload["title"],
         "template_type": payload.get("template_type") or "service",
-        "status": "draft",
+        # Hop dong ngoai (External) thuong duoc ghi lai SAU khi da ky ngoai doi
+        # thuc - cho phep chon trang thai/ngay ky ban dau thay vi luon ep
+        # 'draft', dung lai CHINH enum da co san tren cot `status` (khong them
+        # gia tri moi). Mac dinh van la 'draft' neu khong truyen.
+        "status": payload.get("status") or "draft",
+        "signed_at": payload.get("signed_at"),
         "contract_value": float(payload.get("contract_value") or 0),
         "currency": payload.get("currency") or "VND",
         "start_date": payload.get("start_date"),
@@ -143,8 +174,12 @@ def create_contract(payload: dict, created_by: str | None) -> dict:
         "ai_risk_score": payload.get("ai_risk_score"),
         "ai_review": payload.get("ai_review"),
         "ai_prompt": payload.get("ai_prompt"),
+        "source": payload.get("source") or "crm",
+        "file_url": payload.get("file_url"),
+        "note": payload.get("note"),
         "created_by": created_by,
         "updated_by": created_by,
+        "instance": settings.crm_instance,
     }
     row = supabase.table(CONTRACTS_TABLE).insert(insert_data).execute().data[0]
     _log_activity(row["id"], created_by, "created")
@@ -171,8 +206,17 @@ def update_contract(contract_id: str, payload: dict, actor_id: str | None) -> di
         return get_contract(contract_id)
     update_data["updated_by"] = actor_id
     update_data["updated_at"] = _now_iso()
-    update_data["version"] = supabase.table(CONTRACTS_TABLE).select("version").eq("id", contract_id).single().execute().data.get("version", 1) + 1
-    supabase.table(CONTRACTS_TABLE).update(update_data).eq("id", contract_id).execute()
+    current_version = (
+        supabase.table(CONTRACTS_TABLE)
+        .select("version")
+        .eq("id", contract_id)
+        .eq("instance", settings.crm_instance)
+        .single()
+        .execute()
+        .data
+    )
+    update_data["version"] = current_version.get("version", 1) + 1
+    supabase.table(CONTRACTS_TABLE).update(update_data).eq("id", contract_id).eq("instance", settings.crm_instance).execute()
     _log_activity(contract_id, actor_id, "updated", {"fields": list(update_data.keys())})
     return get_contract(contract_id)
 
@@ -184,17 +228,25 @@ def update_contract_status(contract_id: str, status: str, signed_at: str | None,
         signed_at = _now_iso()
     if signed_at:
         update_data["signed_at"] = signed_at
-    supabase.table(CONTRACTS_TABLE).update(update_data).eq("id", contract_id).execute()
+    supabase.table(CONTRACTS_TABLE).update(update_data).eq("id", contract_id).eq("instance", settings.crm_instance).execute()
     _log_activity(contract_id, actor_id, f"status_changed:{status}")
     return get_contract(contract_id)
 
 
 def delete_contract(contract_id: str) -> None:
     supabase: Client = get_supabase_client()
-    current = supabase.table(CONTRACTS_TABLE).select("status").eq("id", contract_id).single().execute().data
+    current = (
+        supabase.table(CONTRACTS_TABLE)
+        .select("status")
+        .eq("id", contract_id)
+        .eq("instance", settings.crm_instance)
+        .single()
+        .execute()
+        .data
+    )
     if current and current.get("status") not in ("draft", "pending_legal"):
         raise ValueError("Hợp đồng đã ký/đang thực hiện, không thể xoá.")
-    supabase.table(CONTRACTS_TABLE).delete().eq("id", contract_id).execute()
+    supabase.table(CONTRACTS_TABLE).delete().eq("id", contract_id).eq("instance", settings.crm_instance).execute()
 
 
 def get_contracts_dashboard_stats() -> dict:
@@ -207,6 +259,7 @@ def get_contracts_dashboard_stats() -> dict:
     rows = (
         supabase.table(CONTRACTS_TABLE)
         .select("status, contract_value, end_date, payment_collected_percent")
+        .eq("instance", settings.crm_instance)
         .execute()
         .data
         or []

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.modules.all_platform.auth_deps import get_current_user
 from app.modules.all_platform.schemas import BaseResponse
@@ -13,6 +13,7 @@ from app.modules.all_platform.schemas.crm_customer import (
 )
 from app.modules.all_platform.services.crm_customer_service import (
     CustomerLinkedError,
+    CustomerNotFoundError,
     DuplicateCustomerError,
     create_customer,
     create_customer_with_deal,
@@ -21,9 +22,9 @@ from app.modules.all_platform.services.crm_customer_service import (
     list_customers,
     quick_search_customers,
     related_records,
+    get_customer_activity,
     update_customer,
 )
-from app.modules.all_platform.services.markee_cfo_customer_sync_service import ensure_recent_markee_cfo_sync
 from app.modules.all_platform.services.supabase_project_service import get_customer_projects_summary
 from app.modules.all_platform.services.crm_permission_service import can_view_project
 
@@ -39,8 +40,10 @@ def _error(exc: Exception) -> BaseResponse:
             message=str(exc),
             data={"deal_count": exc.deal_count, "contact_count": exc.contact_count},
         )
+    if isinstance(exc, CustomerNotFoundError):
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     if isinstance(exc, PermissionError):
-        return BaseResponse(success=False, message=str(exc))
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
     return BaseResponse(success=False, message=str(exc))
 
 
@@ -51,7 +54,6 @@ def customers_list(
     source: str | None = Query(None),
     owner_id: str | None = Query(None),
     sale_manager_id: str | None = Query(None),
-    scope: str = Query("all", pattern="^(all|local|markee_cfo)$"),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
     user: dict[str, Any] = Depends(get_current_user),
@@ -60,15 +62,8 @@ def customers_list(
         return BaseResponse(
             success=True,
             data=list_customers(
-                user,
-                search=search,
-                status=status,
-                source=source,
-                owner_id=owner_id,
-                sale_manager_id=sale_manager_id,
-                scope=scope,
-                page=page,
-                page_size=page_size,
+                user, search=search, status=status, source=source,
+                owner_id=owner_id, sale_manager_id=sale_manager_id, page=page, page_size=page_size,
             ),
         )
     except Exception as exc:
@@ -101,21 +96,6 @@ def customers_create_with_deal(payload: CrmCustomerWithDealCreate, user: dict[st
         data = create_customer_with_deal(payload.model_dump(exclude_none=True), user)
         message = data.get("partial_message") or "Da tao deal"
         return BaseResponse(success=True, message=message, data=data)
-    except Exception as exc:
-        return _error(exc)
-
-
-@router.post("/sync/markee-cfo")
-def customers_sync_markee_cfo(user: dict[str, Any] = Depends(get_current_user)) -> BaseResponse:
-    """Force a reconciliation; routine listing already syncs every 30s."""
-    try:
-        if str(user.get("role") or "").strip().lower() != "admin":
-            raise PermissionError("Chi admin duoc phep dong bo thu cong tu Markee CFO.")
-        return BaseResponse(
-            success=True,
-            message="Da dong bo danh muc khach hang tu Markee CFO",
-            data=ensure_recent_markee_cfo_sync(force=True),
-        )
     except Exception as exc:
         return _error(exc)
 
@@ -153,6 +133,18 @@ def customers_delete(customer_id: str, user: dict[str, Any] = Depends(get_curren
 def customers_related(customer_id: str, user: dict[str, Any] = Depends(get_current_user)) -> BaseResponse:
     try:
         return BaseResponse(success=True, data=related_records(customer_id, user))
+    except Exception as exc:
+        return _error(exc)
+
+
+@router.get("/{customer_id}/activity")
+def customers_activity(customer_id: str, user: dict[str, Any] = Depends(get_current_user)) -> BaseResponse:
+    """Tab "Hoạt động" trong Customer 360 — Phase 3 scope: CHỈ gộp Deal/Sales
+    activity (customer_lead_activity_log) của mọi Deal thuộc customer này,
+    KHÔNG phải Activity Timeline hợp nhất (chưa gồm Quote/Contract/Customer
+    event) — FE phải ghi rõ phạm vi này khi hiển thị."""
+    try:
+        return BaseResponse(success=True, data=get_customer_activity(customer_id, user))
     except Exception as exc:
         return _error(exc)
 

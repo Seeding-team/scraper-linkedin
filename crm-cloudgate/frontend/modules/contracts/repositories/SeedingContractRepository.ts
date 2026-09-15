@@ -45,11 +45,15 @@ function toClausePayload(clause: ContractClause) {
 
 function toCreatePayload(input: CreateContractInput) {
   return {
+    contract_number: input.contractNumber,
     deal_id: input.dealId,
+    customer_id: input.customerId,
     manual_customer_name: input.manualCustomerName,
     quote_id: input.quoteId,
     title: input.title,
     template_type: input.templateType,
+    status: input.status,
+    signed_at: input.signedAt,
     contract_value: input.contractValue,
     currency: input.currency,
     start_date: input.startDate,
@@ -63,6 +67,9 @@ function toCreatePayload(input: CreateContractInput) {
     ai_risk_score: input.aiRiskScore,
     ai_review: input.aiReview,
     ai_prompt: input.aiPrompt,
+    source: input.source,
+    file_url: input.fileUrl,
+    note: input.note,
   };
 }
 

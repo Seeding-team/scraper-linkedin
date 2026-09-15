@@ -1,9 +1,11 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
 import { projectsService, memberOptionsService, type Project, type MemberOption } from '@/services/all-platform.service';
 import { initialsOf } from '../utils/quoteDisplay';
+import { MemberSearchSelect } from './MemberSearchSelect';
+import { seedingCrmRepository } from '../repositories/SeedingCrmRepository';
 import { Loader2, X } from './icons';
 
 // Ghi chu ve debounce/phan trang (yeu cau ke hoach muc C.2): danh sach Sale
@@ -36,110 +38,6 @@ function ownerOptionSubtitle(option: MemberOption): string {
   return parts.join(' · ');
 }
 
-/** Combobox tìm kiếm được cho "Người phụ trách dự án" — mỗi dòng hiện
- * avatar/initials + tên + vai trò hệ thống + team (KHÔNG BAO GIỜ render UUID
- * thô), có option tường minh "Chưa gán người phụ trách" (manager_id nullable),
- * và badge "Đã ngưng hoạt động" nếu người đang được chọn đã bị vô hiệu hoá. */
-function OwnerPicker({
-  value,
-  onChange,
-  options,
-  loading,
-  error,
-}: {
-  value: string;
-  onChange: (value: string) => void;
-  options: MemberOption[];
-  loading: boolean;
-  error: string | null;
-}) {
-  const [open, setOpen] = useState(false);
-  const [search, setSearch] = useState('');
-  const containerRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    function onClickOutside(event: MouseEvent) {
-      if (containerRef.current?.contains(event.target as Node)) return;
-      setOpen(false);
-      setSearch('');
-    }
-    document.addEventListener('mousedown', onClickOutside);
-    return () => document.removeEventListener('mousedown', onClickOutside);
-  }, [open]);
-
-  const selected = options.find(o => o.id === value) || null;
-  const filtered = search.trim()
-    ? options.filter(o => o.displayName.toLowerCase().includes(search.trim().toLowerCase()))
-    : options;
-
-  return (
-    <div ref={containerRef} className="crm-searchable-select crm-owner-picker">
-      <button
-        type="button"
-        className="crm-searchable-select-trigger crm-owner-picker-trigger"
-        onClick={() => setOpen(o => !o)}
-      >
-        {selected ? (
-          <>
-            <span className="crm-owner-picker-trigger-avatar">{initialsOf(selected.displayName)}</span>
-            <span className="crm-owner-picker-trigger-label">{selected.displayName}</span>
-            {!selected.isActive ? <span className="crm-owner-inactive-badge">Đã ngưng hoạt động</span> : null}
-          </>
-        ) : (
-          <span className="crm-owner-picker-trigger-label">Chưa gán người phụ trách</span>
-        )}
-        <span aria-hidden>▾</span>
-      </button>
-      {open ? (
-        <div className="crm-searchable-select-menu">
-          <input
-            autoFocus
-            type="text"
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            placeholder="Tìm nhân viên Sale..."
-            className="crm-searchable-select-input"
-          />
-          <div className="crm-searchable-select-list">
-            <button
-              type="button"
-              className={`crm-searchable-select-option ${value === '' ? 'is-selected' : ''}`}
-              onClick={() => { onChange(''); setOpen(false); setSearch(''); }}
-            >
-              Chưa gán người phụ trách
-            </button>
-            {loading ? <div className="crm-owner-picker-state">Đang tải thành viên...</div> : null}
-            {!loading && error ? <div className="crm-owner-picker-state crm-owner-picker-state--error">{error}</div> : null}
-            {!loading && !error && filtered.length === 0 ? (
-              <div className="crm-owner-picker-state">Không tìm thấy nhân viên Sale.</div>
-            ) : null}
-            {!loading && !error
-              ? filtered.map(option => (
-                  <button
-                    key={option.id}
-                    type="button"
-                    className={`crm-searchable-select-option ${value === option.id ? 'is-selected' : ''}`}
-                    onClick={() => { onChange(option.id); setOpen(false); setSearch(''); }}
-                  >
-                    <span className="crm-owner-option">
-                      <span className="crm-owner-option-avatar">{initialsOf(option.displayName)}</span>
-                      <span className="crm-owner-option-meta">
-                        <span className="crm-owner-option-name">{option.displayName}</span>
-                        <span className="crm-owner-option-sub">{ownerOptionSubtitle(option)}</span>
-                      </span>
-                      {!option.isActive ? <span className="crm-owner-inactive-badge">Đã ngưng hoạt động</span> : null}
-                    </span>
-                  </button>
-                ))
-              : null}
-          </div>
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
 function Field({ label, hint, required, full, children }: { label: string; hint?: string; required?: boolean; full?: boolean; children: React.ReactNode }) {
   return (
     <label className={`crm-field ${full ? 'crm-field--full' : ''}`}>
@@ -167,6 +65,8 @@ export function ProjectFormModal({
   customerName,
   currentUserId,
   project,
+  initialContactId,
+  initialContactName,
   onClose,
   onSaved,
 }: {
@@ -178,6 +78,8 @@ export function ProjectFormModal({
    * Sale). Optional - nơi gọi chưa truyền thì bỏ qua autofill, không lỗi. */
   currentUserId?: string | null;
   project?: Project | null;
+  initialContactId?: string;
+  initialContactName?: string;
   onClose: () => void;
   /** Truyền lại dự án vừa tạo/sửa (nếu API trả về) để nơi gọi tự chọn luôn
    * bản ghi vừa tạo — tham số optional, các nơi gọi cũ không cần sửa. */
@@ -188,6 +90,7 @@ export function ProjectFormModal({
 
   const [name, setName] = useState('');
   const [managerId, setManagerId] = useState('');
+  const [primaryContactId, setPrimaryContactId] = useState('');
   const [status, setStatus] = useState<Project['status']>('planning');
   const [description, setDescription] = useState('');
   const [busy, setBusy] = useState(false);
@@ -196,6 +99,10 @@ export function ProjectFormModal({
   const [ownerOptions, setOwnerOptions] = useState<MemberOption[]>([]);
   const [ownerLoading, setOwnerLoading] = useState(false);
   const [ownerError, setOwnerError] = useState<string | null>(null);
+
+  const [contacts, setContacts] = useState<any[]>([]);
+  const [contactsLoading, setContactsLoading] = useState(false);
+
   // "Người cũ không còn thuộc Sale" - phát hiện khi managerId đã lưu KHÔNG
   // nằm trong danh sách Sale vừa tải về (đã lọc team_type='sale' ở backend).
   const [staleManagerWarning, setStaleManagerWarning] = useState(false);
@@ -207,11 +114,31 @@ export function ProjectFormModal({
     if (!open) return;
     setName(project?.name || '');
     setManagerId(project?.managerId || '');
+    setPrimaryContactId((project as any)?.primaryContactId || initialContactId || '');
     setStatus(project?.status || 'planning');
     setDescription(project?.description || '');
     setError(null);
     setStaleManagerWarning(false);
-  }, [open, project]);
+  }, [open, project, initialContactId]);
+
+  useEffect(() => {
+    if (!open || !customerId) return;
+    let alive = true;
+    setContactsLoading(true);
+    void seedingCrmRepository.listContacts(customerId)
+      .then(rows => {
+        if (alive) {
+          setContacts(rows || []);
+        }
+      })
+      .catch(() => {
+        if (alive) setContacts([]);
+      })
+      .finally(() => {
+        if (alive) setContactsLoading(false);
+      });
+    return () => { alive = false; };
+  }, [open, customerId]);
 
   // Preview "Dự kiến" - CHỈ khi tạo mới (project đã tồn tại thì đã có
   // projectCode chính thức, không cần preview).
@@ -296,10 +223,11 @@ export function ProjectFormModal({
         const res = await projectsService.update(project.id, {
           name: name.trim(),
           manager_id: managerId || null,
+          primary_contact_id: primaryContactId || null,
           status,
           description: description.trim() || undefined,
         });
-        if (!res.success) throw new Error(res.message || 'Không lưu được dự án.');
+        if (!res.success) throw new Error(res.message || 'Không lưu được dự án.');
         onSaved(res.data);
       } else {
         // KHONG gui project_code - backend luon tu sinh (xem CreateProjectInput).
@@ -307,10 +235,11 @@ export function ProjectFormModal({
           name: name.trim(),
           customer_id: customerId,
           manager_id: managerId || null,
+          primary_contact_id: primaryContactId || null,
           status,
           description: description.trim() || undefined,
         });
-        if (!res.success) throw new Error(res.message || 'Không tạo được dự án.');
+        if (!res.success) throw new Error(res.message || 'Không tạo được dự án.');
         onSaved(res.data);
       }
     } catch (err) {
@@ -335,15 +264,33 @@ export function ProjectFormModal({
           <div className="crm-project-customer-context">
             <span className="crm-project-customer-avatar">{customerInitials}</span>
             <span className="crm-project-customer-meta">
-              <span className="crm-project-customer-label">Khách hàng</span>
+              <span className="crm-project-customer-label">Khách hàng</span>
               <span className="crm-project-customer-name">{customerName}</span>
             </span>
           </div>
           {error ? <p className="crm-error">{error}</p> : null}
           <div className="crm-form-section">
             <div className="crm-form-grid">
-              <Field label="Tên dự án" required>
-                <input value={name} onChange={e => setName(e.target.value)} placeholder="Ví dụ: Website công ty ABC" />
+              <Field label="Người liên hệ chính" hint={initialContactId ? "đã khóa" : undefined}>
+                {initialContactId ? (
+                  <input value={initialContactName || 'Người liên hệ hiện tại'} disabled readOnly />
+                ) : (
+                  <select
+                    value={primaryContactId}
+                    onChange={e => setPrimaryContactId(e.target.value)}
+                    disabled={contactsLoading}
+                  >
+                    <option value="">-- Chưa chọn / Liên hệ chung --</option>
+                    {contacts.map(c => (
+                      <option key={c.id} value={c.id}>
+                        {c.name} {c.email ? `(${c.email})` : c.phone ? `(${c.phone})` : ''}
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </Field>
+              <Field label="Tên dự án" required>
+                <input value={name} onChange={e => setName(e.target.value)} placeholder="Ví dụ: Website công ty ABC" />
               </Field>
               <Field label="Mã dự án">
                 {isEdit ? (
@@ -355,7 +302,21 @@ export function ProjectFormModal({
                 )}
               </Field>
               <Field label="Người phụ trách dự án">
-                <OwnerPicker value={managerId} onChange={setManagerId} options={ownerOptions} loading={ownerLoading} error={ownerError} />
+                <MemberSearchSelect
+                  value={managerId}
+                  onChange={setManagerId}
+                  loading={ownerLoading}
+                  placeholder="Chưa gán người phụ trách"
+                  searchPlaceholder="Tìm nhân viên Sale..."
+                  emptyText="Không tìm thấy nhân viên Sale."
+                  members={ownerOptions.map(o => ({
+                    id: o.id,
+                    displayName: o.displayName,
+                    subtitle: ownerOptionSubtitle(o),
+                    isActive: o.isActive,
+                  }))}
+                />
+                {ownerError ? <p className="crm-error">{ownerError}</p> : null}
                 {staleManagerWarning ? (
                   <p className="crm-error">Người phụ trách hiện tại không còn thuộc nhóm Sale — vui lòng chọn lại.</p>
                 ) : null}

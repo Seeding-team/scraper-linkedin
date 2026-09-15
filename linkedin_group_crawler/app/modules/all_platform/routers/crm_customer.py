@@ -22,6 +22,7 @@ from app.modules.all_platform.services.crm_customer_service import (
     list_customers,
     quick_search_customers,
     related_records,
+    get_customer_activity,
     update_customer,
 )
 from app.modules.all_platform.services.supabase_project_service import get_customer_projects_summary
@@ -132,6 +133,18 @@ def customers_delete(customer_id: str, user: dict[str, Any] = Depends(get_curren
 def customers_related(customer_id: str, user: dict[str, Any] = Depends(get_current_user)) -> BaseResponse:
     try:
         return BaseResponse(success=True, data=related_records(customer_id, user))
+    except Exception as exc:
+        return _error(exc)
+
+
+@router.get("/{customer_id}/activity")
+def customers_activity(customer_id: str, user: dict[str, Any] = Depends(get_current_user)) -> BaseResponse:
+    """Tab "Hoạt động" trong Customer 360 — Phase 3 scope: CHỈ gộp Deal/Sales
+    activity (customer_lead_activity_log) của mọi Deal thuộc customer này,
+    KHÔNG phải Activity Timeline hợp nhất (chưa gồm Quote/Contract/Customer
+    event) — FE phải ghi rõ phạm vi này khi hiển thị."""
+    try:
+        return BaseResponse(success=True, data=get_customer_activity(customer_id, user))
     except Exception as exc:
         return _error(exc)
 

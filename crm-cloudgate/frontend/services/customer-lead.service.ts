@@ -285,6 +285,24 @@ export interface StageTransitionPayload {
 
 export interface Customer {
   id: string;
+  /** FK sang crm_customers (khách hàng canonical) — migration 077. */
+  customer_id?: string | null;
+  /** FK sang projects (migration 097/125) — null/undefined = chưa gắn Dự án. */
+  project_id?: string | null;
+  /** Người liên hệ chính của Deal (migration 134/135, FK sang crm_contacts) —
+   * null/undefined = chưa chọn. */
+  primary_contact_id?: string | null;
+  quote_id?: string | null;
+  /** Quote canonical đang gắn chính thức (BE flatten từ JOIN quote:quote_id(...)
+   * trong customer_lead_service.py _normalize_row() — KHÔNG phải object lồng
+   * nhau). null/undefined = chưa có quote nào gắn chính thức. Dùng GET
+   * /quotes?deal_id= cho toàn bộ danh sách quote của deal, không chỉ cái này. */
+  quote_number?: string | null;
+  quote_total_amount?: number | null;
+  quote_public_url?: string | null;
+  quote_status?: string | null;
+  quote_version_number?: number | null;
+  quote_version_chain_id?: string | null;
   customer_name: string;
   company_name: string | null;
   phone: string | null;
@@ -581,6 +599,18 @@ export const customerLeadService = {
   getByConvId: async (convId: string): Promise<Customer | null> => {
     const data = await apiFetch(`/api/all-platform/customer-leads/by-conv/${encodeURIComponent(convId)}`);
     return data?.data ?? null;
+  },
+
+  /** 1 deal đầy đủ theo id — dùng để mở Deal Workspace (DealDetailDrawer)
+   * làm overlay từ 1 nơi KHÔNG có sẵn cả list (vd Customer 360's Cơ hội tab),
+   * khác `getAll()` (list) — cùng shape hàng trả về (BE dùng chung
+   * BASE_COLUMNS + _normalize_row cho cả 2 endpoint). */
+  getById: async (id: string): Promise<Customer> => {
+    const data = await apiFetch(`/api/all-platform/customer-leads/${encodeURIComponent(id)}`);
+    if (data?.success === false || !data?.data) {
+      throw new Error(data?.message || "Không tải được cơ hội này");
+    }
+    return data.data as Customer;
   },
 
   getSdrs: async (): Promise<SDRUser[]> => {

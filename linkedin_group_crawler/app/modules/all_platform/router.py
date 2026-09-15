@@ -36,8 +36,11 @@ from app.modules.all_platform.routers.fb_inbox_accounts import router as fb_inbo
 from app.modules.all_platform.routers.crawl_fb_dashboard import router as crawl_fb_dashboard_router
 from app.modules.all_platform.routers.customer_lead import router as customer_lead_router
 from app.modules.all_platform.routers.project import router as project_router
+from app.modules.all_platform.routers.vendor_imports import router as vendor_imports_router
+from app.modules.all_platform.routers.vendors import router as vendors_router
 from app.modules.all_platform.routers.crm_customer import router as crm_customer_router
 from app.modules.all_platform.routers.crm_lead import router as crm_lead_router
+from app.modules.all_platform.routers.crm_contact import detail_router as crm_contact_detail_router
 from app.modules.all_platform.routers.crm_contact import router as crm_contact_router
 from app.modules.all_platform.routers.quote import quote_forms_router, quotes_router, quote_email_provider_router, quote_approval_rules_router
 from app.modules.all_platform.routers.price_book import price_book_router, price_book_admin_router
@@ -284,6 +287,16 @@ all_platform_router.include_router(
     tags=["Customer Leads"]
 )
 all_platform_router.include_router(
+    vendor_imports_router,
+    prefix="/crm/vendor-imports",
+    tags=["All-Platform CRM Vendor Imports"],
+)
+all_platform_router.include_router(
+    vendors_router,
+    prefix="/crm/vendors",
+    tags=["All-Platform CRM Vendors"],
+)
+all_platform_router.include_router(
     crm_customer_router,
     prefix="/crm/customers",
     tags=["All-Platform CRM Customers"],
@@ -296,6 +309,11 @@ all_platform_router.include_router(
 all_platform_router.include_router(
     crm_contact_router,
     prefix="/crm/customers/{customer_id}/contacts",
+    tags=["All-Platform CRM Contacts"],
+)
+all_platform_router.include_router(
+    crm_contact_detail_router,
+    prefix="/crm/contacts",
     tags=["All-Platform CRM Contacts"],
 )
 

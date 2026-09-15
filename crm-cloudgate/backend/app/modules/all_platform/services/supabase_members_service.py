@@ -79,6 +79,26 @@ def get_member(member_id: str) -> Optional[Dict[str, Any]]:
     return _flatten_skills(result.data[0])
 
 
+def get_member_by_display_name(display_name: str) -> Optional[Dict[str, Any]]:
+    """Phase 3.5 A5: xac nhan 1 ten hint (leaded_by_name_hint/sdr_name_hint,
+    dung cho nhan su CHUA lien ket tai khoan) khop 1 dong that trong danh ba
+    `members` - khong cho phep tu go 1 chuoi bat ky vao hint roi luu thang
+    xuong DB ma khong doi chieu. Bang `members` khong co cot active/instance
+    (danh ba HR dung chung, khong tenant-scoped) nen day la kiem tra ton tai
+    duy nhat co the lam that su."""
+    if not display_name or not display_name.strip():
+        return None
+    supabase = get_supabase_client()
+    result = (
+        supabase.table("members")
+        .select("id, display_name")
+        .eq("display_name", display_name.strip())
+        .limit(1)
+        .execute()
+    )
+    return result.data[0] if result.data else None
+
+
 def _set_member_skills(supabase: Client, member_id: str, skill_ids: List[str]) -> None:
     supabase.table("member_skills").delete().eq("member_id", member_id).execute()
     if skill_ids:

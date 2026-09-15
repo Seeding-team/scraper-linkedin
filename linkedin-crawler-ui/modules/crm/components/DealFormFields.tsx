@@ -26,17 +26,14 @@ const DEFAULT_INDUSTRY_OPTIONS = INDUSTRY_OPTIONS.map(value => ({ value, label: 
 
 export type DealFormState = {
   customerId: string;
-  /** Ho so Khach hang bi khoa (khong cho doi sang khach khac) - khi mo tu
-   * nut "Tạo cơ hội" o Ho so khach hang/Project card (Block 1), Customer
-   * PHAI tu dien va khoa, khong duoc doi giua chung. */
   customerLocked: boolean;
+  primaryContactId: string;
+  primaryContactLocked: boolean;
   updateCustomerProfile: boolean;
   customerProfileCanEdit: boolean;
   customerName: string;
-  /** Du an that (migration 097) - '' = Chua thuoc du an. */
+  dealName: string;
   projectId: string;
-  /** Khoa Du an (khong cho doi) - khi mo tu nut "Tạo cơ hội" tren 1 Project
-   * card cu the (Block 1: "tự điền Project; không cho chọn Project khác"). */
   projectLocked: boolean;
   positionCategoryId: string;
   positionLabel: string;
@@ -88,9 +85,12 @@ export function emptyDealForm(): DealFormState {
   return {
     customerId: '',
     customerLocked: false,
+    primaryContactId: '',
+    primaryContactLocked: false,
     updateCustomerProfile: false,
     customerProfileCanEdit: false,
     customerName: '',
+    dealName: '',
     projectId: '',
     projectLocked: false,
     positionCategoryId: '',
@@ -155,8 +155,8 @@ export function dealFormFromDeal(deal: Deal): DealFormState {
     customerLocked: false,
     updateCustomerProfile: false,
     customerProfileCanEdit: false,
-    customerName: deal.customerName,
-    projectId: deal.projectId || '',
+    customerName: deal.customerName, dealName: deal.customerName,
+    primaryContactId: deal.primaryContactId || '', primaryContactLocked: false, projectId: deal.projectId || '',
     projectLocked: false,
     positionCategoryId: deal.positionCategoryId || '',
     positionLabel: deal.positionLabelSnapshot || deal.position || '',
@@ -285,9 +285,9 @@ export function buildDealPayload(form: DealFormState, _agents: CrmUserOption[] =
       : undefined;
   return {
     customerId: form.customerId || undefined,
-    projectId: form.projectId || null,
+    projectId: form.projectId || null, primaryContactId: form.primaryContactId || null,
     updateCustomerProfile: form.updateCustomerProfile,
-    customerName: form.customerName.trim(),
+    customerName: form.dealName.trim(),
     positionCategoryId: form.positionCategoryId || undefined,
     companyName: form.companyName.trim(),
     phone: form.phone.trim(),
@@ -594,6 +594,49 @@ function ProjectPicker({
   );
 }
 
+function ContactPicker({
+  form,
+  setValue,
+  locked = false,
+}: {
+  form: DealFormState;
+  setValue: <K extends keyof DealFormState>(key: K, value: DealFormState[K]) => void;
+  locked?: boolean;
+}) {
+  const [options, setOptions] = useState<{ value: string; label: string }[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!form.customerId) {
+      setOptions([]);
+      return;
+    }
+    let alive = true;
+    setLoading(true);
+    void seedingCrmRepository.listContacts(form.customerId).then(res => {
+      if (!alive) return;
+      setOptions(res.map(c => ({ value: c.id, label: c.name })));
+    }).finally(() => {
+      if (alive) setLoading(false);
+    });
+    return () => { alive = false; };
+  }, [form.customerId]);
+
+  if (locked) {
+    const current = options.find(o => o.value === form.primaryContactId);
+    return <input value={current ? current.label : form.primaryContactId ? 'Người liên hệ đã chọn' : 'Chưa chọn'} disabled readOnly />;
+  }
+
+  return (
+    <SearchableSelect
+      value={form.primaryContactId}
+      onChange={value => setValue('primaryContactId', value)}
+      options={options}
+      placeholder={loading ? 'Đang tải người liên hệ...' : 'Chưa chọn'}
+    />
+  );
+}
+
 export function DealFormFields({
   form,
   setValue,
@@ -732,7 +775,7 @@ export function DealFormFields({
     try {
       const result = await seedingCrmRepository.parseDealText(aiText.trim());
       // Chỉ điền field ĐANG RỖNG — không âm thầm ghi đè field Sale đã tự gõ tay.
-      if (result.customerName && !form.customerName.trim()) setValue('customerName', String(result.customerName));
+      if (result.customerName && !form.customerName.trim()) setValue('customerName', String(result.customerName)); if (result.customerName && !form.dealName.trim()) setValue('dealName', String(result.customerName));
       if (result.companyName && !form.companyName.trim()) setValue('companyName', String(result.companyName));
       if (result.phone && !form.phone.trim()) setValue('phone', String(result.phone));
       if (result.email && !form.email.trim()) setValue('email', String(result.email));
@@ -782,11 +825,17 @@ export function DealFormFields({
       <section className="crm-form-section">
         <h3 className="crm-form-title">1. Khách hàng &amp; Cơ hội</h3>
         <div className="crm-form-grid">
+          <Field label="Tên cơ hội" required>
+            <input value={form.dealName} onChange={e => setValue('dealName', e.target.value)} placeholder="Ví dụ: Website Unifarm..." />
+          </Field>
           <Field label="Tên khách hàng" required>
             <CustomerProfileCombobox form={form} setValue={setValue} locked={form.customerLocked} />
           </Field>
           <Field label="Dự án" hint={form.projectLocked ? undefined : 'tùy chọn'}>
             <ProjectPicker form={form} setValue={setValue} locked={form.projectLocked} />
+          </Field>
+          <Field label="Người liên hệ chính" hint={form.primaryContactLocked ? undefined : 'tùy chọn'}>
+            <ContactPicker form={form} setValue={setValue} locked={form.primaryContactLocked} />
           </Field>
           <Field label="Công ty" hint="tùy chọn">
             <input value={form.companyName} onChange={event => setValue('companyName', event.target.value)} placeholder="Công ty TNHH ABC" />

@@ -1,17 +1,12 @@
 'use client';
 
+import { useEffect, useState } from 'react';
 import { CalendarDays, FileText, Wallet, X } from './icons';
-import {
-  formatDate,
-  formatDateTime,
-  formatVND,
-  getContractLabel,
-  getContractStatusText,
-  getContractUrl,
-  getPaymentStatusText,
-  getServicePackageText,
-} from '../constants/crmConfig';
+import { formatDate, formatVND } from '../constants/crmConfig';
 import type { Deal } from '../types';
+import { seedingContractRepository } from '@/modules/contracts/repositories/SeedingContractRepository';
+import type { Contract } from '@/modules/contracts';
+import { contractStatusLabel } from '@/modules/contracts/constants/contractConfig';
 
 type Props = {
   deal: Deal | null;
@@ -19,100 +14,56 @@ type Props = {
   onClose: () => void;
 };
 
-function pdfSafe(value?: string | number | null) {
-  return String(value || '')
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^\x20-\x7E]/g, '')
-    .replace(/\\/g, '\\\\')
-    .replace(/\(/g, '\\(')
-    .replace(/\)/g, '\\)');
-}
-
-function buildSimplePdf(lines: string[]) {
-  const content = [
-    'BT',
-    '/F1 15 Tf',
-    '50 790 Td',
-    ...lines.flatMap((line, index) => [
-      index === 0 ? `(${pdfSafe(line)}) Tj` : `0 -22 Td (${pdfSafe(line)}) Tj`,
-    ]),
-    'ET',
-  ].join('\n');
-  const objects = [
-    '1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n',
-    '2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n',
-    '3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>\nendobj\n',
-    '4 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n',
-    `5 0 obj\n<< /Length ${content.length} >>\nstream\n${content}\nendstream\nendobj\n`,
-  ];
-  let pdf = '%PDF-1.4\n';
-  const offsets = [0];
-  objects.forEach(object => {
-    offsets.push(pdf.length);
-    pdf += object;
-  });
-  const xref = pdf.length;
-  pdf += `xref\n0 ${objects.length + 1}\n`;
-  pdf += '0000000000 65535 f \n';
-  offsets.slice(1).forEach(offset => {
-    pdf += `${String(offset).padStart(10, '0')} 00000 n \n`;
-  });
-  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`;
-  return pdf;
-}
-
-function downloadContractPdf(deal: Deal) {
-  const label = getContractLabel(deal) || deal.dealId;
-  const rows = contractRows(deal);
-  const pdf = buildSimplePdf([
-    'CHI TIET HOP DONG / BAO GIA',
-    `Ma: ${label}`,
-    `Khach hang: ${deal.customerName}`,
-    `Cong ty: ${deal.companyName || 'Chua cap nhat'}`,
-    ...rows.map(row => `${row.label}: ${row.value || 'Chua cap nhat'}`),
-  ]);
-  const url = URL.createObjectURL(new Blob([pdf], { type: 'application/pdf' }));
-  const anchor = document.createElement('a');
-  anchor.href = url;
-  anchor.download = `${label.replace(/[\\/:*?"<>|]/g, '-') || 'hop-dong'}.pdf`;
-  document.body.appendChild(anchor);
-  anchor.click();
-  anchor.remove();
-  URL.revokeObjectURL(url);
-}
-
-function contractRows(deal: Deal) {
+/** Nguon that: bang `contracts` canonical (xem docs/CRM_QUOTES_CONTRACTS_OVERVIEW.md).
+ * KHONG con doc `deal.contract.*` (customer_leads.contract_status/last_attachment_*) -
+ * do la field legacy, chi dung lam fallback hien thi khi deal chua co ban ghi
+ * contracts nao, tranh 2 noi (Deal Workspace vs Customer 360) hien 2 trang thai khac
+ * nhau cho cung 1 hop dong (xem CRM_CUSTOMER_360_PRD Phase 1 Foundation). */
+function contractRows(contract: Contract) {
   return [
-    { label: 'Mã HĐ/BG', value: getContractLabel(deal), icon: FileText },
-    { label: 'Tên hợp đồng', value: deal.contract.title, icon: FileText },
-    { label: 'Tình trạng hợp đồng', value: getContractStatusText(deal.contract.status), icon: FileText },
-    { label: 'Trạng thái thanh toán', value: getPaymentStatusText(deal.contract.paymentStatus), icon: Wallet },
-    { label: 'Giá trị hợp đồng', value: formatVND(deal.estimatedBudget || deal.lifetimeValue || deal.quote?.totalAmount || 0), icon: Wallet },
-    { label: 'Danh mục sản phẩm', value: getServicePackageText(deal.servicePackage), icon: FileText },
-    { label: 'Số báo giá', value: deal.quote?.number || deal.quote?.id, icon: FileText },
-    { label: 'Giá trị báo giá', value: formatVND(deal.quote?.totalAmount || 0), icon: Wallet },
-    { label: 'Ngày ký', value: formatDate(deal.contract.signedAt), icon: CalendarDays },
-    { label: 'Ngày cần thanh toán', value: formatDate(deal.contract.paymentDueDate), icon: CalendarDays },
-    { label: 'Ngày đóng', value: formatDate(deal.closedAt), icon: CalendarDays },
-    { label: 'Bảo hành đến', value: formatDate(deal.contract.warrantyExpiresAt), icon: CalendarDays },
-    { label: 'Ngày thành khách hàng', value: formatDate(deal.contract.customerSince), icon: CalendarDays },
-    { label: 'Lần chăm sóc gần nhất', value: formatDateTime(deal.contract.lastCareAt), icon: CalendarDays },
+    { label: 'Số hợp đồng', value: contract.contractNumber, icon: FileText },
+    { label: 'Tên hợp đồng', value: contract.title, icon: FileText },
+    { label: 'Trạng thái', value: contractStatusLabel(contract.status), icon: FileText },
+    { label: 'Giá trị hợp đồng', value: formatVND(contract.contractValue || 0), icon: Wallet },
+    { label: '% đã thu', value: `${contract.paymentCollectedPercent || 0}%`, icon: Wallet },
+    { label: 'Ngày bắt đầu', value: formatDate(contract.startDate), icon: CalendarDays },
+    { label: 'Ngày kết thúc', value: formatDate(contract.endDate), icon: CalendarDays },
+    { label: 'Ngày ký', value: formatDate(contract.signedAt), icon: CalendarDays },
   ];
 }
 
 export function ContractDetailModal({ deal, open, onClose }: Props) {
+  const [loading, setLoading] = useState(false);
+  const [contracts, setContracts] = useState<Contract[]>([]);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    if (!open || !deal) {
+      setContracts([]);
+      return;
+    }
+    let alive = true;
+    setLoading(true);
+    setError('');
+    seedingContractRepository
+      .getContracts({ dealId: deal.id })
+      .then(rows => { if (alive) setContracts(rows); })
+      .catch(err => { if (alive) setError(err instanceof Error ? err.message : 'Không tải được hợp đồng.'); })
+      .finally(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
+  }, [open, deal]);
+
   if (!open || !deal) return null;
-  const label = getContractLabel(deal);
-  const url = getContractUrl(deal);
+
+  const contract = contracts[0] || null;
 
   return (
     <div className="crm-modal-backdrop crm-contract-detail-backdrop" onClick={onClose}>
       <section className="crm-contract-detail-modal" onClick={event => event.stopPropagation()}>
         <header className="crm-contract-detail-header">
           <div>
-            <span>Chi tiết hợp đồng / báo giá</span>
-            <h2>{label || 'Chưa có mã HĐ/BG'}</h2>
+            <span>Chi tiết hợp đồng</span>
+            <h2>{contract ? contract.contractNumber : 'Chưa có hợp đồng chính thức'}</h2>
             <p>{deal.position ? `${deal.customerName} - ${deal.position}` : deal.customerName}</p>
           </div>
           <button type="button" className="crm-modal-close" onClick={onClose} aria-label="Đóng">
@@ -121,37 +72,50 @@ export function ContractDetailModal({ deal, open, onClose }: Props) {
         </header>
 
         <div className="crm-contract-detail-body">
-          <div className="crm-contract-detail-summary">
-            <strong>{deal.companyName || 'Chưa có công ty'}</strong>
-            <span>{deal.contract.note || deal.note || 'Chưa có ghi chú hợp đồng.'}</span>
-          </div>
-
-          <div className="crm-contract-detail-grid">
-            {contractRows(deal).map(row => {
-              const Icon = row.icon;
-              return (
-                <article key={row.label} className="crm-contract-detail-card">
-                  <span><Icon className="crm-line-icon" /> {row.label}</span>
-                  <b>{row.value || 'Chưa cập nhật'}</b>
-                </article>
-              );
-            })}
-          </div>
-
-          {url ? (
-            <a className="crm-contract-source-link" href={url} target="_blank" rel="noopener noreferrer">
-              <FileText className="crm-line-icon" />
-              Mở link hợp đồng / báo giá gốc
-            </a>
-          ) : null}
+          {loading ? (
+            <div className="crm-contract-detail-summary"><span>Đang tải...</span></div>
+          ) : error ? (
+            <div className="crm-contract-detail-summary"><span>{error}</span></div>
+          ) : contract ? (
+            <>
+              <div className="crm-contract-detail-summary">
+                <strong>{deal.companyName || 'Chưa có công ty'}</strong>
+                <span>{contract.paymentTerms || 'Chưa có điều khoản thanh toán.'}</span>
+              </div>
+              <div className="crm-contract-detail-grid">
+                {contractRows(contract).map(row => {
+                  const Icon = row.icon;
+                  return (
+                    <article key={row.label} className="crm-contract-detail-card">
+                      <span><Icon className="crm-line-icon" /> {row.label}</span>
+                      <b>{row.value || 'Chưa cập nhật'}</b>
+                    </article>
+                  );
+                })}
+              </div>
+              <a className="crm-contract-source-link" href={`/all-platform/contracts/${contract.id}`} target="_blank" rel="noopener noreferrer">
+                <FileText className="crm-line-icon" />
+                Mở trang chi tiết hợp đồng
+              </a>
+            </>
+          ) : (
+            <div className="crm-contract-detail-summary">
+              <span>
+                Deal này chưa có hợp đồng chính thức trong module Hợp đồng.
+                {deal.contract?.status || deal.contract?.url ? (
+                  <>
+                    {' '}Dữ liệu cũ (chưa được tạo lại thành hợp đồng chính thức):{' '}
+                    {deal.contract.status ? `trạng thái "${deal.contract.status}"` : ''}
+                    {deal.contract?.url ? ' — có link/tệp đính kèm cũ' : ''}.
+                  </>
+                ) : null}
+              </span>
+            </div>
+          )}
         </div>
 
         <footer className="crm-contract-detail-footer">
           <button type="button" className="crm-secondary-button" onClick={onClose}>Đóng</button>
-          <button type="button" className="crm-primary-button" onClick={() => downloadContractPdf(deal)}>
-            <FileText className="crm-button-icon" />
-            Tải PDF
-          </button>
         </footer>
       </section>
     </div>

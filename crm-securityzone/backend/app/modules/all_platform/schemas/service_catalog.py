@@ -26,6 +26,29 @@ class ServiceCatalogItemCreateRequest(BaseModel):
     spec_unit_label: Optional[str] = None
     note: Optional[str] = None
     status: str = "active"
+    brand: Optional[str] = None
+    part_number: Optional[str] = None
+    product_type: Optional[str] = None
+    internal_note: Optional[str] = None
+    supplier_currency: Optional[str] = None
+    supplier_list_price: Optional[Decimal] = None
+    supplier_discount_percent: Optional[Decimal] = None
+    supplier_net_price: Optional[Decimal] = None
+    supplier_exchange_rate: Optional[Decimal] = None
+    supplier_converted_price: Optional[Decimal] = None
+    supplier_vendor_id: Optional[str] = None
+    supplier_quote_ref: Optional[str] = None
+    supplier_quote_source: Optional[str] = None
+    supplier_quote_date: Optional[str] = None
+    supplier_valid_until: Optional[str] = None
+    shipping_cost: Optional[Decimal] = None
+    import_fee: Optional[Decimal] = None
+    other_cost: Optional[Decimal] = None
+    pricing_policy: Optional[str] = None
+    pricing_input_mode: Optional[str] = "cost"
+    default_cost_price_vnd: Optional[Decimal] = None
+    default_markup_percent: Optional[Decimal] = None
+    default_customer_price_vnd: Optional[Decimal] = None
 
 
 class ServiceCatalogItemUpdateRequest(BaseModel):
@@ -45,6 +68,29 @@ class ServiceCatalogItemUpdateRequest(BaseModel):
     spec_unit_label: Optional[str] = None
     note: Optional[str] = None
     status: Optional[str] = None
+    brand: Optional[str] = None
+    part_number: Optional[str] = None
+    product_type: Optional[str] = None
+    internal_note: Optional[str] = None
+    supplier_currency: Optional[str] = None
+    supplier_list_price: Optional[Decimal] = None
+    supplier_discount_percent: Optional[Decimal] = None
+    supplier_net_price: Optional[Decimal] = None
+    supplier_exchange_rate: Optional[Decimal] = None
+    supplier_converted_price: Optional[Decimal] = None
+    supplier_vendor_id: Optional[str] = None
+    supplier_quote_ref: Optional[str] = None
+    supplier_quote_source: Optional[str] = None
+    supplier_quote_date: Optional[str] = None
+    supplier_valid_until: Optional[str] = None
+    shipping_cost: Optional[Decimal] = None
+    import_fee: Optional[Decimal] = None
+    other_cost: Optional[Decimal] = None
+    pricing_policy: Optional[str] = None
+    pricing_input_mode: Optional[str] = "cost"
+    default_cost_price_vnd: Optional[Decimal] = None
+    default_markup_percent: Optional[Decimal] = None
+    default_customer_price_vnd: Optional[Decimal] = None
 
 
 class ServiceCatalogReorderRequest(BaseModel):
@@ -72,23 +118,115 @@ class ServiceCatalogUnitCreateRequest(BaseModel):
 
     name: str
     status: str = "active"
+    brand: Optional[str] = None
+    part_number: Optional[str] = None
+    product_type: Optional[str] = None
+    internal_note: Optional[str] = None
+    supplier_currency: Optional[str] = None
+    supplier_list_price: Optional[Decimal] = None
+    supplier_discount_percent: Optional[Decimal] = None
+    supplier_net_price: Optional[Decimal] = None
+    supplier_exchange_rate: Optional[Decimal] = None
+    supplier_converted_price: Optional[Decimal] = None
+    supplier_vendor_id: Optional[str] = None
+    supplier_quote_ref: Optional[str] = None
+    supplier_quote_source: Optional[str] = None
+    supplier_quote_date: Optional[str] = None
+    supplier_valid_until: Optional[str] = None
+    shipping_cost: Optional[Decimal] = None
+    import_fee: Optional[Decimal] = None
+    other_cost: Optional[Decimal] = None
+    pricing_policy: Optional[str] = None
+    pricing_input_mode: Optional[str] = "cost"
+    default_cost_price_vnd: Optional[Decimal] = None
+    default_markup_percent: Optional[Decimal] = None
+    default_customer_price_vnd: Optional[Decimal] = None
 
 
 class ServiceCatalogUnitUpdateRequest(BaseModel):
     id: str
     name: Optional[str] = None
     status: Optional[str] = None
+    brand: Optional[str] = None
+    part_number: Optional[str] = None
+    product_type: Optional[str] = None
+    internal_note: Optional[str] = None
+    supplier_currency: Optional[str] = None
+    supplier_list_price: Optional[Decimal] = None
+    supplier_discount_percent: Optional[Decimal] = None
+    supplier_net_price: Optional[Decimal] = None
+    supplier_exchange_rate: Optional[Decimal] = None
+    supplier_converted_price: Optional[Decimal] = None
+    supplier_vendor_id: Optional[str] = None
+    supplier_quote_ref: Optional[str] = None
+    supplier_quote_source: Optional[str] = None
+    supplier_quote_date: Optional[str] = None
+    supplier_valid_until: Optional[str] = None
+    shipping_cost: Optional[Decimal] = None
+    import_fee: Optional[Decimal] = None
+    other_cost: Optional[Decimal] = None
+    pricing_policy: Optional[str] = None
+    pricing_input_mode: Optional[str] = "cost"
+    default_cost_price_vnd: Optional[Decimal] = None
+    default_markup_percent: Optional[Decimal] = None
+    default_customer_price_vnd: Optional[Decimal] = None
 
 
 class ServiceCatalogVatRateCreateRequest(BaseModel):
     rate: float = Field(ge=0, le=100)
     status: str = "active"
+    brand: Optional[str] = None
+    part_number: Optional[str] = None
+    product_type: Optional[str] = None
+    internal_note: Optional[str] = None
+    supplier_currency: Optional[str] = None
+    supplier_list_price: Optional[Decimal] = None
+    supplier_discount_percent: Optional[Decimal] = None
+    supplier_net_price: Optional[Decimal] = None
+    supplier_exchange_rate: Optional[Decimal] = None
+    supplier_converted_price: Optional[Decimal] = None
+    supplier_vendor_id: Optional[str] = None
+    supplier_quote_ref: Optional[str] = None
+    supplier_quote_source: Optional[str] = None
+    supplier_quote_date: Optional[str] = None
+    supplier_valid_until: Optional[str] = None
+    shipping_cost: Optional[Decimal] = None
+    import_fee: Optional[Decimal] = None
+    other_cost: Optional[Decimal] = None
+    pricing_policy: Optional[str] = None
+    pricing_input_mode: Optional[str] = "cost"
+    default_cost_price_vnd: Optional[Decimal] = None
+    default_markup_percent: Optional[Decimal] = None
+    default_customer_price_vnd: Optional[Decimal] = None
 
 
 class ServiceCatalogVatRateUpdateRequest(BaseModel):
     id: str
     rate: Optional[float] = Field(default=None, ge=0, le=100)
     status: Optional[str] = None
+    brand: Optional[str] = None
+    part_number: Optional[str] = None
+    product_type: Optional[str] = None
+    internal_note: Optional[str] = None
+    supplier_currency: Optional[str] = None
+    supplier_list_price: Optional[Decimal] = None
+    supplier_discount_percent: Optional[Decimal] = None
+    supplier_net_price: Optional[Decimal] = None
+    supplier_exchange_rate: Optional[Decimal] = None
+    supplier_converted_price: Optional[Decimal] = None
+    supplier_vendor_id: Optional[str] = None
+    supplier_quote_ref: Optional[str] = None
+    supplier_quote_source: Optional[str] = None
+    supplier_quote_date: Optional[str] = None
+    supplier_valid_until: Optional[str] = None
+    shipping_cost: Optional[Decimal] = None
+    import_fee: Optional[Decimal] = None
+    other_cost: Optional[Decimal] = None
+    pricing_policy: Optional[str] = None
+    pricing_input_mode: Optional[str] = "cost"
+    default_cost_price_vnd: Optional[Decimal] = None
+    default_markup_percent: Optional[Decimal] = None
+    default_customer_price_vnd: Optional[Decimal] = None
 
 
 class ServiceCatalogItemPricingUpsertRequest(BaseModel):

@@ -3644,8 +3644,8 @@ export function QuoteWorkspaceModal({
                 onChange={selectDraftCustomer}
                 options={customers.map(c => ({ value: c.id, label: c.label }))}
                 actions={[
-                  { key: 'create-customer', label: '+ Tạo khách hàng mới', onSelect: () => setCustomerDrawerOpen(true) },
-                  { key: 'manage-customers', label: 'Quản lý khách hàng', onSelect: () => window.open('/all-platform/crm/customers', '_blank', 'noopener,noreferrer') },
+                  { key: 'create-customer', label: '+ Tạo khách hàng mới', onSelect: () => setCustomerDrawerOpen(true), type: 'add' },
+                  { key: 'manage-customers', label: 'Quản lý khách hàng', onSelect: () => window.open('/all-platform/crm/customers', '_blank', 'noopener,noreferrer'), type: 'manage' },
                 ]}
                 placeholder="Chọn khách hàng..."
               />

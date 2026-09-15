@@ -1,4 +1,5 @@
 import type { QuoteItem, VillaSolutionItem } from '../types';
+import { formatCurrencyDisplay } from '@/lib/currency';
 
 export const parseCurrencyInput = (value: unknown) => {
   if (value === null || value === undefined || value === '') return 0;
@@ -118,7 +119,10 @@ export const calculateOverallDiscountSummary = (
   };
 };
 
+// Wrapper mong quanh formatCurrencyDisplay() dung chung (lib/currency.ts) -
+// giu nguyen dinh dang output cu ("5.000.000 đ"), khong tu goi toLocaleString
+// rieng nua.
 export const formatVnd = (value: unknown) =>
-  `${Math.round(toSafeNumber(value)).toLocaleString('vi-VN')} đ`;
+  `${formatCurrencyDisplay(toSafeNumber(value))} đ`;
 
 export const sanitizeMoneyInput = (value: unknown) => toSafeNumber(value);

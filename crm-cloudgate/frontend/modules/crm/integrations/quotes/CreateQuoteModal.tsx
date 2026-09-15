@@ -3,6 +3,7 @@
 /* eslint-disable react-hooks/set-state-in-effect */
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import type { ReactNode } from 'react';
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
 import type { IssuerCompany, QuoteForm } from '@/modules/quotes';
@@ -622,7 +623,15 @@ export function CreateQuoteModal({
     }
   }
 
-  return (
+  // BUG THAT DA GAP (modal "hoi nho" khi mo tu Deal Workspace): modal nay
+  // dung position:fixed nhung KHONG portal ra document.body - khi render
+  // long ben trong DealDetailDrawer's <aside> (co transition-transform),
+  // ancestor co `transform` tro thanh containing block cho moi phan tu con
+  // dung position:fixed (dac ta CSS chuan), khien modal bi ep vao kich thuoc
+  // cua chinh aside do (~42rem) thay vi true viewport, BAT KE gia tri
+  // width/max-width CSS khai bao la gi. Portal ra document.body de thoat
+  // hoan toan containing block bi anh huong boi transform cua drawer cha.
+  return createPortal(
     <div className="crm-modal-backdrop" onClick={resetAndClose}>
       <div
         className={`crm-modal crm-wizard-modal${step === 3 ? ' crm-wizard-modal--wide' : ''}`}
@@ -845,6 +854,7 @@ export function CreateQuoteModal({
         open={projectModalOpen}
         customerId={effectiveCustomerIdForProjects}
         customerName={activeCustomer.companyName || activeCustomer.customerName || 'Khách hàng hiện tại'}
+        currentUserId={currentUser?.id ?? null}
         onClose={() => setProjectModalOpen(false)}
         onSaved={created => {
           setProjectModalOpen(false);
@@ -897,7 +907,8 @@ export function CreateQuoteModal({
           },
         ]}
       />
-    </div>
+    </div>,
+    document.body,
   );
 }
 

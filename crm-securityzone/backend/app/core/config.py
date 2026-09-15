@@ -83,6 +83,7 @@ class Settings:
     openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
     openai_base_url: str = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
     ai_model: str = os.getenv("AI_MODEL", "gpt-4o")
+    gemini_api_key: str = os.getenv("GEMINI_API_KEY", "")
 
     # Không dùng tới trong module CRM (không mount router KPI/MarkeeAI nào),
     # nhưng vài service dùng chung (supabase_kpi_service.py, markeeai_client.py)

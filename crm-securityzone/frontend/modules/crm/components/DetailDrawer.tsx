@@ -191,7 +191,7 @@ export function DetailDrawer({
 
           <section className="crm-meta-grid">
             {deal.decisionMaker ? <MetaCard icon={UserCog} label="Người quyết định" value={deal.decisionMaker} /> : null}
-            {deal.estimatedBudget ? <MetaCard icon={Wallet} label="Ngân sách" value={formatVND(deal.estimatedBudget) || ''} /> : null}
+            {deal.estimatedBudget != null ? <MetaCard icon={Wallet} label="Ngân sách" value={formatVND(deal.estimatedBudget) || '0 đ'} /> : null}
             {deal.followUpDate ? (
               <div className="crm-follow-up"><CalendarDays className="crm-line-icon" /> Follow-up dự kiến: <b>{formatDate(deal.followUpDate)}</b></div>
             ) : null}

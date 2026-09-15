@@ -476,7 +476,17 @@ export function LeadDetailDrawer({
       };
       if (customerChoice === 'new') {
         payload.customer = {
-          customer_name: lead.leadName,
+          // BUG THAT DA GAP: truoc day luon dung lead.leadName (ten CA NHAN)
+          // lam customer_name - Khach hang (crm_customers) la TO CHUC/CONG TY
+          // trong mo hinh B2B nay (company_name la field rieng, contact.name
+          // moi la nguoi), nen tieu de Khach hang (CrmCustomerDetailPage/
+          // CrmCustomersDirectory deu hien thi customer_name lam <h1> chinh)
+          // bi doi lot thanh ten nguoi. Uu tien company_name neu Lead co cong
+          // ty - dung CHINH pattern fallback da dung san o hien thi dropdown
+          // "Doanh nghiep" ngay ben duoi (dong ~624/632: lead.companyName ||
+          // lead.leadName) - chi Lead ca nhan/khong co cong ty moi fallback
+          // ve leadName (customer_name NOT NULL, khong the de rong).
+          customer_name: lead.companyName || lead.leadName,
           company_name: lead.companyName || null,
           position_category_id: lead.positionCategoryId || null,
           phone: lead.phone || null,
