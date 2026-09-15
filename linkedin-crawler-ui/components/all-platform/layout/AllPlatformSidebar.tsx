@@ -389,6 +389,53 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, workspaceTab: 
   // tab Nhom, khong hien o tab Ca nhan (giong dung tinh than comment o duoi:
   // "Nhom: full bo cong cu quan ly"). Truoc day file nay khong co entry nao
   // tro toi trang do ca - nguoi dung chi vao duoc qua link truc tiep.
+  // Zalo tập trung (port ZALO_CENTRALIZED_MODULE_GUIDE.md, 2026-09-15) — 5 công cụ
+  // nâng cao chỉ admin/leader cần: forward-rules, bulk-send, campaigns,
+  // broadcast-groups, scan-group-members. Gộp thẳng vào "Quản lý kênh & CSKH"
+  // (không tách group riêng "Zalo tập trung" nữa, theo yêu cầu 2026-09-15).
+  const zaloAdvancedItems: NavLeafItem[] = [
+    {
+      type: "item",
+      id: "zalo-forward-rules",
+      href: "/all-platform/zalo-forward-rules",
+      icon: "arrow_forward",
+      label: "Chuyển tiếp tự động",
+      matchStartsWith: ["/all-platform/zalo-forward-rules"],
+    },
+    {
+      type: "item",
+      id: "zalo-bulk-send",
+      href: "/all-platform/zalo-bulk-send",
+      icon: "send",
+      label: "Gửi hàng loạt",
+      matchStartsWith: ["/all-platform/zalo-bulk-send"],
+    },
+    {
+      type: "item",
+      id: "zalo-campaigns",
+      href: "/all-platform/zalo-campaigns",
+      icon: "campaign",
+      label: "Chiến dịch tự động",
+      matchStartsWith: ["/all-platform/zalo-campaigns"],
+    },
+    {
+      type: "item",
+      id: "zalo-broadcast-groups",
+      href: "/all-platform/zalo-broadcast-groups",
+      icon: "share",
+      label: "Gửi nhiều nhóm",
+      matchStartsWith: ["/all-platform/zalo-broadcast-groups"],
+    },
+    {
+      type: "item",
+      id: "zalo-scan-group-members",
+      href: "/all-platform/zalo-scan-group-members",
+      icon: "group",
+      label: "Quét thành viên nhóm",
+      matchStartsWith: ["/all-platform/zalo-scan-group-members"],
+    },
+  ];
+
   const channelItemsTeam: NavLeafItem[] = [
     ...channelItems,
     {
@@ -399,6 +446,7 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, workspaceTab: 
       label: "Inbox Zalo Admin",
       matchStartsWith: ["/all-platform/zalo-inbox"],
     },
+    ...(isAdmin || isLeader ? zaloAdvancedItems : []),
   ];
 
   const resourceItems: NavLeafItem[] = [

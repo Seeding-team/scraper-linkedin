@@ -83,6 +83,19 @@
   --color-sidebar-ring: #a1a1a1;
   --color-markee-primary: #ba244a;
 
+  /* ── "brand" scale — port nguyên UI từ zalo-account-module/zalo-forward-module
+     (InvoiceFlowManager) cho các trang Zalo tập trung: 2 module gốc dùng
+     bg-brand/bg-brand-hover/bg-brand-subtle/border-brand (Tailwind v3 config
+     "brand:{DEFAULT,hover,dark,subtle,border}") — khai đúng cùng tên ở đây
+     (Tailwind v4 @theme) để COPY THẲNG className từ component gốc, không phải
+     sửa từng chỗ, chỉ đổi GIÁ TRỊ màu sang tông thương hiệu app này (#ba244a)
+     thay vì xanh Zalo (#0068ff) của module gốc. */
+  --color-brand: #ba244a;
+  --color-brand-hover: #a01f3f;
+  --color-brand-dark: #86192f;
+  --color-brand-subtle: #fbe7ec;
+  --color-brand-border: #f0b8c6;
+
   /* ── shadcn/ui tokens — lay dung tu CSS production cua app.markeeai.com
      (fetch truc tiep https://app.markeeai.com, extract --var trong :root),
      dung lam nen tang de dong bo dan UI voi app chinh.

@@ -4,6 +4,7 @@ import Image from "next/image";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { MaterialIcon, type MaterialSymbolName } from "@/components/ui";
+import { cn } from "@/lib/utils";
 import { API_BASE_URL, API_KEY } from "@/lib/env";
 import type { ZaloCrawlerFlowValue } from "@/hooks/useZaloCrawlerFlow";
 import {
@@ -16,11 +17,23 @@ import {
   buildZaloRealtimeStreamUrl,
   getZaloConversationShareStatus,
   setZaloConversationShare,
+  recallZaloMessage,
+  sendZaloMessageWithMentions,
+  getZaloFriendStatus,
+  sendZaloFriendRequest,
+  acceptZaloFriendRequest,
+  getZaloGroupMembers,
+  sendZaloSticker,
+  getZaloStickersDetail,
 } from "@/services/zaloCrawlerService";
 import type {
   ZaloConversationSummary,
   ZaloLibraryMessage,
   ZaloBroadcastTarget,
+  ZaloMention,
+  ZaloFriendStatusResponse,
+  ZaloGroupMember,
+  ZaloStickerDetail,
 } from "@/types/zalo-api";
 import { ZaloChatHeaderSkeleton, ZaloMessageListSkeleton } from "./chat/ZaloChatSkeleton";
 import { ZaloEmptyChat } from "./chat/ZaloEmptyChat";
@@ -423,6 +436,24 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
 
   // Quick replies states
   const [showQuickReplies, setShowQuickReplies] = useState(false);
+
+  // Zalo tập trung (port ZALO_CENTRALIZED_MODULE_GUIDE.md) — recall/mentions/
+  // friend-status/sticker/group-scan. Không dùng useZaloAdminInbox (component này
+  // tự quản lý conversations/messages riêng), gọi thẳng zaloCrawlerService.
+  const [friendStatus, setFriendStatus] = useState<ZaloFriendStatusResponse | null>(null);
+  const [isLoadingFriendStatus, setIsLoadingFriendStatus] = useState(false);
+  const [friendActionError, setFriendActionError] = useState<string | null>(null);
+  const [showStickerPicker, setShowStickerPicker] = useState(false);
+  const [stickerSearchIds, setStickerSearchIds] = useState("");
+  const [stickerResults, setStickerResults] = useState<ZaloStickerDetail[]>([]);
+  const [isSearchingStickers, setIsSearchingStickers] = useState(false);
+  const [showMentionPicker, setShowMentionPicker] = useState(false);
+  const [mentionQuery, setMentionQuery] = useState("");
+  const [mentionAnchorPos, setMentionAnchorPos] = useState<number | null>(null);
+  const [pendingMentions, setPendingMentions] = useState<ZaloMention[]>([]);
+  const [groupMembers, setGroupMembers] = useState<ZaloGroupMember[]>([]);
+  const [isLoadingGroupMembers, setIsLoadingGroupMembers] = useState(false);
+  const [showGroupMembersPanel, setShowGroupMembersPanel] = useState(false);
 
   const handleOpenZaloWeb = useCallback(() => {
     const params = new URLSearchParams({
@@ -1209,9 +1240,11 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
     if (!selectedConversationId || isSendingDirect) return;
     const conversationIdToSend = selectedConversationId;
     const textToSend = inputText.trim();
+    const mentionsToSend = pendingMentions;
     if (!textToSend && selectedMedia.length === 0) return;
 
     setInputText("");
+    setPendingMentions([]);
     const mediaToSend = [...selectedMedia];
     setSelectedMedia([]);
     setDirectSendError(null);
@@ -1226,6 +1259,8 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
           textToSend,
           filesOnly
         );
+      } else if (mentionsToSend.length > 0) {
+        await sendZaloMessageWithMentions(flow.userId, conversationIdToSend, textToSend, mentionsToSend);
       } else {
         await sendZaloMessage(flow.userId, conversationIdToSend, {
           text: textToSend,
@@ -1246,11 +1281,168 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
         setDirectSendError(err instanceof Error ? err.message : "Không thể gửi tin nhắn.");
       }
       setInputText(textToSend);
+      setPendingMentions(mentionsToSend);
       setSelectedMedia(mediaToSend);
     } finally {
       setIsSendingDirect(false);
     }
   };
+
+  // ── Zalo tập trung: recall / friend-status / sticker / group-scan ────────────
+
+  const handleRecallMessage = useCallback(async (message: ZaloLibraryMessage) => {
+    if (!selectedConversationId || !message.source_message_id || !message.cli_msg_id) return;
+    try {
+      await recallZaloMessage(flow.userId, selectedConversationId, {
+        msg_id: message.source_message_id,
+        cli_msg_id: message.cli_msg_id,
+      });
+      setMessages((prev) =>
+        prev.map((m) => (messageKey(m) === messageKey(message) ? { ...m, is_deleted: true, content: null } : m)),
+      );
+    } catch (err) {
+      setDirectSendError(err instanceof Error ? err.message : "Không thể thu hồi tin nhắn.");
+    }
+  }, [flow.userId, selectedConversationId]);
+
+  const loadFriendStatus = useCallback(async (uid: string) => {
+    setIsLoadingFriendStatus(true);
+    setFriendStatus(null);
+    setFriendActionError(null);
+    try {
+      const result = await getZaloFriendStatus(flow.userId, uid);
+      setFriendStatus(result);
+    } catch {
+      // Có thể là group (không phải 1-1) — bỏ qua badge, không phải lỗi cần báo.
+      setFriendStatus(null);
+    } finally {
+      setIsLoadingFriendStatus(false);
+    }
+  }, [flow.userId]);
+
+  const handleSendFriendRequest = useCallback(async () => {
+    if (!selectedConversationId) return;
+    setFriendActionError(null);
+    try {
+      await sendZaloFriendRequest(flow.userId, selectedConversationId);
+      await loadFriendStatus(selectedConversationId);
+    } catch (err) {
+      setFriendActionError(err instanceof Error ? err.message : "Không thể gửi lời mời kết bạn.");
+    }
+  }, [flow.userId, loadFriendStatus, selectedConversationId]);
+
+  const handleAcceptFriendRequest = useCallback(async () => {
+    if (!selectedConversationId) return;
+    setFriendActionError(null);
+    try {
+      await acceptZaloFriendRequest(flow.userId, selectedConversationId);
+      await loadFriendStatus(selectedConversationId);
+    } catch (err) {
+      setFriendActionError(err instanceof Error ? err.message : "Không thể chấp nhận lời mời kết bạn.");
+    }
+  }, [flow.userId, loadFriendStatus, selectedConversationId]);
+
+  const handleSearchStickers = useCallback(async () => {
+    const ids = stickerSearchIds
+      .split(",")
+      .map((s) => Number(s.trim()))
+      .filter((n) => Number.isFinite(n));
+    if (ids.length === 0) return;
+    setIsSearchingStickers(true);
+    try {
+      const result = await getZaloStickersDetail(flow.userId, ids);
+      setStickerResults(result.stickers);
+    } catch (err) {
+      setDirectSendError(err instanceof Error ? err.message : "Không thể tra sticker.");
+    } finally {
+      setIsSearchingStickers(false);
+    }
+  }, [flow.userId, stickerSearchIds]);
+
+  const handleSendSticker = useCallback(async (sticker: ZaloStickerDetail) => {
+    if (!selectedConversationId) return;
+    try {
+      await sendZaloSticker(flow.userId, selectedConversationId, { id: sticker.id, cate_id: sticker.cateId });
+      setShowStickerPicker(false);
+      await loadLatestMessages(selectedConversationId, { silent: true });
+    } catch (err) {
+      setDirectSendError(err instanceof Error ? err.message : "Không thể gửi sticker.");
+    }
+  }, [flow.userId, loadLatestMessages, selectedConversationId]);
+
+  const handleLoadGroupMembers = useCallback(async () => {
+    if (!selectedConversationId) return;
+    setIsLoadingGroupMembers(true);
+    setShowGroupMembersPanel(true);
+    try {
+      const result = await getZaloGroupMembers(flow.userId, selectedConversationId);
+      setGroupMembers(result.members);
+    } catch (err) {
+      setDirectSendError(err instanceof Error ? err.message : "Không thể quét thành viên nhóm (có thể đây không phải là nhóm).");
+      setGroupMembers([]);
+    } finally {
+      setIsLoadingGroupMembers(false);
+    }
+  }, [flow.userId, selectedConversationId]);
+
+  // Mention picker: gõ "@" trong ô soạn tin -> mở popup chọn thành viên nhóm.
+  const handleComposerChange = useCallback((value: string, caretPos: number) => {
+    setInputText(value);
+    const upToCaret = value.slice(0, caretPos);
+    const atIndex = upToCaret.lastIndexOf("@");
+    if (atIndex === -1) {
+      setShowMentionPicker(false);
+      return;
+    }
+    const afterAt = upToCaret.slice(atIndex + 1);
+    if (/\s/.test(afterAt)) {
+      setShowMentionPicker(false);
+      return;
+    }
+    setMentionAnchorPos(atIndex);
+    setMentionQuery(afterAt);
+    setShowMentionPicker(true);
+    if (groupMembers.length === 0 && selectedConversationId) {
+      void handleLoadGroupMembers();
+    }
+  }, [groupMembers.length, handleLoadGroupMembers, selectedConversationId]);
+
+  const insertMention = useCallback((member: ZaloGroupMember) => {
+    if (mentionAnchorPos == null) return;
+    const before = inputText.slice(0, mentionAnchorPos);
+    const after = inputText.slice(mentionAnchorPos + 1 + mentionQuery.length);
+    const label = `@${member.display_name}`;
+    const nextText = `${before}${label} ${after}`;
+    setInputText(nextText);
+    setPendingMentions((prev) => [...prev, { pos: before.length, uid: member.uid, len: label.length }]);
+    setShowMentionPicker(false);
+    setMentionAnchorPos(null);
+    setMentionQuery("");
+    textareaRef.current?.focus();
+  }, [inputText, mentionAnchorPos, mentionQuery]);
+
+  const filteredMentionMembers = useMemo(() => {
+    const q = mentionQuery.trim().toLowerCase();
+    if (!q) return groupMembers.slice(0, 8);
+    return groupMembers.filter((m) => m.display_name.toLowerCase().includes(q)).slice(0, 8);
+  }, [groupMembers, mentionQuery]);
+
+  // Zalo tập trung: reset state gắn với conversation cũ + thử tải friend-status
+  // (im lặng bỏ qua nếu đây là nhóm, không phải 1-1 — xem loadFriendStatus).
+  useEffect(() => {
+    setPendingMentions([]);
+    setShowMentionPicker(false);
+    setShowStickerPicker(false);
+    setStickerResults([]);
+    setGroupMembers([]);
+    setShowGroupMembersPanel(false);
+    setFriendActionError(null);
+    if (selectedConversationId) {
+      void loadFriendStatus(selectedConversationId);
+    } else {
+      setFriendStatus(null);
+    }
+  }, [selectedConversationId, loadFriendStatus]);
 
   const handleQuickReply = async (text: string) => {
     if (!selectedConversationId || isSendingDirect) return;
@@ -1282,9 +1474,15 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
     <div
       className="flex-1 h-full w-full bg-surface overflow-hidden min-h-0 flex flex-col"
     >
-      {/* [P2] STATS BAR (Horizontal row at the top) */}
+      {/* [P2] STATS BAR (Horizontal row at the top) — ẩn trên mobile khi đang mở 1
+          hội thoại (full-screen chat trên mobile, đúng pattern zalo-account-module gốc). */}
       {flow.isLoggedIn && (
-        <section className="grid grid-cols-2 md:grid-cols-4 gap-2.5 px-4 py-1.5 border-b border-outline-variant bg-surface shrink-0 shadow-sm">
+        <section
+          className={cn(
+            "grid-cols-2 md:grid-cols-4 gap-2.5 px-4 py-1.5 border-b border-outline-variant bg-surface shrink-0 shadow-sm",
+            selectedConversationId ? "hidden lg:grid" : "grid"
+          )}
+        >
           {/* Card 1: Zalo Conversations */}
           <div className="bg-surface rounded-lg py-1 px-2.5 border border-outline-variant flex items-center justify-between relative overflow-hidden transition-all hover:shadow-md">
             <div className="absolute top-0 left-0 w-[3px] h-full bg-slate-400"></div>
@@ -1341,11 +1539,18 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
       {/* CORE INBOX LAYOUT (Conversations, Chat Area, Campaign Sidebar) */}
       <div className="flex-1 flex min-h-0 overflow-hidden relative bg-surface-container-low">
 
-        {/* Left Column: Conversations */}
+        {/* Left Column: Conversations. Mobile (dưới lg): full width, ẩn khi đang mở
+            1 hội thoại. Desktop (lg+): giữ NGUYÊN width resize-được như cũ (đặt qua
+            CSS var vì --sidebar-w là giá trị động, Tailwind arbitrary value không
+            nhận biến JS trực tiếp có breakpoint prefix). */}
         <section
           ref={sidebarRef}
-          className="zalo-chat-list-panel relative border-r border-outline-variant flex flex-col bg-surface overflow-hidden h-full min-h-0 shrink-0"
-          style={{ width: `${sidebarWidth}px`, minWidth: `${sidebarWidth}px` }}
+          className={cn(
+            "zalo-chat-list-panel relative border-r border-outline-variant flex-col bg-surface overflow-hidden h-full min-h-0 shrink-0",
+            "w-full lg:w-[var(--sidebar-w)] lg:min-w-[var(--sidebar-w)]",
+            selectedConversationId ? "hidden lg:flex" : "flex"
+          )}
+          style={{ "--sidebar-w": `${sidebarWidth}px` } as React.CSSProperties}
         >
           {flow.sessionExpired && (
             <div className="m-2 rounded-lg border border-error-container bg-error-container/40 px-2 py-1.5 text-[10px] text-error">
@@ -1494,8 +1699,14 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
 
         </section>
 
-        {/* Middle Column: Chat Workspace */}
-        <section className="flex-1 flex flex-col h-full bg-surface-container-low min-w-0 relative border-r border-outline-variant">
+        {/* Middle Column: Chat Workspace. Mobile: chỉ hiện khi đã chọn hội thoại
+            (full-screen), ẩn khi đang ở danh sách. Desktop: luôn hiện song song. */}
+        <section
+          className={cn(
+            "flex-1 flex-col h-full bg-surface-container-low min-w-0 relative border-r border-outline-variant",
+            selectedConversationId ? "flex" : "hidden lg:flex"
+          )}
+        >
           {selectedConversationView ? (
             <>
               {/* [P4.1] Chat Header with Sync status sublabel */}
@@ -1503,6 +1714,15 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
                 fullScreen ? "px-5 h-16" : "px-3 h-12"
               } shadow-sm z-10 shrink-0`}>
                 <div className="flex items-center gap-2 min-w-0 flex-1">
+                  {/* Back mobile — quay lại danh sách hội thoại (ẩn trên desktop). */}
+                  <button
+                    type="button"
+                    onClick={() => setSelectedConversationId(null)}
+                    className="-ml-1 shrink-0 rounded-lg p-1 text-on-surface-variant hover:bg-surface-container-low lg:hidden"
+                    title="Quay lại danh sách hội thoại"
+                  >
+                    <MaterialIcon name="chevron_left" className="text-[20px]" />
+                  </button>
                   {selectedConversationView.avatar_url && !avatarErrors[`header-${selectedConversationView.conversation_id}`] ? (
                     <img
                       src={selectedConversationView.avatar_url}
@@ -1540,7 +1760,40 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
                     </div>
                   </div>
                 </div>
-                <div className="flex gap-1 shrink-0">
+                <div className="flex items-center gap-1 shrink-0">
+                  {/* Zalo tập trung: badge trạng thái bạn bè (chỉ hiện nếu tra được — 1-1) */}
+                  {!isLoadingFriendStatus && friendStatus && !friendStatus.is_friend && (
+                    <div className="flex items-center gap-1 mr-1">
+                      {friendStatus.is_requesting ? (
+                        <button
+                          onClick={() => void handleAcceptFriendRequest()}
+                          className="px-2 py-1 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 transition"
+                          title="Họ đã gửi lời mời kết bạn cho bạn"
+                        >
+                          Chấp nhận kết bạn
+                        </button>
+                      ) : friendStatus.is_requested ? (
+                        <span className="px-2 py-1 rounded-full text-[10px] font-bold bg-surface-container-low text-on-surface-variant border border-outline-variant">
+                          Đã gửi lời mời
+                        </span>
+                      ) : (
+                        <button
+                          onClick={() => void handleSendFriendRequest()}
+                          className="px-2 py-1 rounded-full text-[10px] font-bold bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100 transition"
+                          title="Chưa là bạn bè trên Zalo"
+                        >
+                          Kết bạn
+                        </button>
+                      )}
+                    </div>
+                  )}
+                  <button
+                    onClick={() => void handleLoadGroupMembers()}
+                    className="h-7 w-7 flex items-center justify-center rounded-full hover:bg-surface-container-low text-on-surface-variant transition"
+                    title="Quét thành viên nhóm"
+                  >
+                    <MaterialIcon name="groups" className="text-sm" />
+                  </button>
                   <button
                     onClick={() => setIsAutoSendOpen(prev => !prev)}
                     className={`h-7 w-7 flex items-center justify-center rounded-full transition ${
@@ -1563,6 +1816,33 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
                   </button>
                 </div>
               </header>
+
+              {friendActionError && (
+                <div className="bg-red-50 border-b border-red-100 px-3 py-1 text-[10.5px] text-red-700 shrink-0">
+                  {friendActionError}
+                </div>
+              )}
+
+              {/* Zalo tập trung: panel thành viên nhóm (quét đầy đủ, vượt cap UI Zalo) */}
+              {showGroupMembersPanel && (
+                <div className="bg-surface border-b border-outline-variant px-3 py-2 shrink-0 max-h-40 overflow-y-auto">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-[11px] font-bold text-on-surface-variant">
+                      Thành viên nhóm {isLoadingGroupMembers ? "(đang quét...)" : `(${groupMembers.length})`}
+                    </span>
+                    <button onClick={() => setShowGroupMembersPanel(false)} className="text-on-surface-variant hover:text-primary">
+                      <MaterialIcon name="close" className="text-[14px]" />
+                    </button>
+                  </div>
+                  <div className="flex flex-wrap gap-1">
+                    {groupMembers.map((member) => (
+                      <span key={member.uid} className="px-2 py-0.5 rounded-full text-[10px] bg-surface-container-low text-on-surface border border-outline-variant">
+                        {member.display_name}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {!flow.isLoggedIn && (
                 <div className="bg-amber-50/80 border-b border-amber-100 px-3 py-1.5 text-[10.5px] text-amber-800 flex items-center justify-between z-10 shrink-0">
@@ -1643,13 +1923,30 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
                               : 'bg-surface text-on-surface rounded-tl-none shadow-sm border border-outline-variant'
                           } ${isSelected ? 'ring-2 ring-red-500 ring-offset-2' : ''}`}>
 
-                            {message.content && (
+                            {/* Zalo tập trung: nút thu hồi — chỉ hiện với tin CHÍNH MÌNH gửi và có đủ
+                                source_message_id + cli_msg_id (bắt buộc cho api.undo) */}
+                            {isSentByMe && !message.is_deleted && message.source_message_id && message.cli_msg_id && (
+                              <button
+                                type="button"
+                                onClick={() => void handleRecallMessage(message)}
+                                className="absolute -left-6 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition text-on-surface-variant hover:text-red-600 p-0.5"
+                                title="Thu hồi tin nhắn"
+                              >
+                                <MaterialIcon name="delete" className="text-[13px]" />
+                              </button>
+                            )}
+
+                            {message.is_deleted ? (
+                              <p className={`italic text-[12.5px] ${isSentByMe ? 'text-white/70' : 'text-on-surface-variant'}`}>
+                                Tin nhắn đã được thu hồi
+                              </p>
+                            ) : message.content ? (
                               <p className={`whitespace-pre-wrap break-words text-[13px] leading-relaxed ${isSentByMe ? 'text-white/95' : 'text-on-surface'}`}>
                                 {message.content}
                               </p>
-                            )}
+                            ) : null}
 
-                            {assets.length > 0 && (
+                            {!message.is_deleted && assets.length > 0 && (
                               <div className="mt-1 grid gap-1 sm:grid-cols-2">
                                 {assets.map((asset) => (
                                   <Image
@@ -1775,6 +2072,71 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
                         <p className="text-[11px] text-on-surface-variant truncate w-full font-medium">{reply.text}</p>
                       </button>
                     ))}
+                  </div>
+                )}
+
+                {/* Zalo tập trung: Mention Picker Popup (gõ "@" để mở) */}
+                {showMentionPicker && (
+                  <div className="absolute bottom-full mb-3 left-4 right-4 z-50 max-h-56 bg-surface border border-outline-variant rounded-xl shadow-xl flex flex-col overflow-y-auto animate-in fade-in slide-in-from-bottom-2 duration-150">
+                    <div className="px-3 py-1.5 bg-surface-container-low text-[10px] font-bold text-on-surface-variant uppercase sticky top-0">
+                      {isLoadingGroupMembers ? "Đang tải thành viên nhóm..." : "Chọn thành viên để @tag"}
+                    </div>
+                    {filteredMentionMembers.length === 0 && !isLoadingGroupMembers && (
+                      <div className="px-3 py-2 text-[11px] text-on-surface-variant">Không tìm thấy thành viên phù hợp.</div>
+                    )}
+                    {filteredMentionMembers.map((member) => (
+                      <button
+                        key={member.uid}
+                        type="button"
+                        onClick={() => insertMention(member)}
+                        className="w-full text-left px-3 py-2 text-[12px] text-on-surface hover:bg-surface-container-low transition flex items-center gap-2"
+                      >
+                        <span className="w-6 h-6 rounded-full bg-primary text-white flex items-center justify-center text-[10px] font-semibold shrink-0">
+                          {initials(member.display_name)}
+                        </span>
+                        {member.display_name}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                {/* Zalo tập trung: Sticker Picker Popup */}
+                {showStickerPicker && (
+                  <div className="absolute bottom-full mb-3 left-4 z-50 w-72 bg-surface border border-outline-variant rounded-xl shadow-xl flex flex-col overflow-hidden animate-in fade-in slide-in-from-bottom-2 duration-200">
+                    <div className="px-3 py-2 border-b border-outline-variant flex items-center gap-1.5">
+                      <input
+                        value={stickerSearchIds}
+                        onChange={(e) => setStickerSearchIds(e.target.value)}
+                        placeholder="Nhập sticker id, cách nhau bởi dấu phẩy"
+                        className="flex-1 text-[11px] px-2 py-1 rounded-lg border border-outline-variant focus:outline-none focus:ring-2 focus:ring-red-500/20"
+                        onKeyDown={(e) => e.key === "Enter" && void handleSearchStickers()}
+                      />
+                      <button
+                        onClick={() => void handleSearchStickers()}
+                        disabled={isSearchingStickers}
+                        className="text-[11px] font-semibold px-2 py-1 rounded-lg bg-primary text-white hover:bg-red-700 transition disabled:opacity-50"
+                      >
+                        Tra
+                      </button>
+                    </div>
+                    <div className="p-2 grid grid-cols-4 gap-2 max-h-48 overflow-y-auto">
+                      {stickerResults.length === 0 && (
+                        <p className="col-span-4 text-[10.5px] text-on-surface-variant text-center py-4">
+                          Zalo không có danh mục sticker duyệt được qua zca-js — nhập id sticker đã biết để tra và gửi.
+                        </p>
+                      )}
+                      {stickerResults.map((sticker) => (
+                        <button
+                          key={sticker.id}
+                          type="button"
+                          onClick={() => void handleSendSticker(sticker)}
+                          className="aspect-square rounded-lg border border-outline-variant hover:border-primary flex items-center justify-center text-[10px] text-on-surface-variant transition"
+                          title={`Sticker #${sticker.id}`}
+                        >
+                          #{sticker.id}
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 )}
 
@@ -1930,12 +2292,23 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
                   >
                     <MaterialIcon name="attach_file" className="text-[18px]" />
                   </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowStickerPicker(!showStickerPicker)}
+                    disabled={!flow.isLoggedIn}
+                    className={`text-on-surface-variant hover:text-primary p-1.5 rounded-full hover:bg-red-50 transition disabled:opacity-40 disabled:hover:bg-transparent cursor-pointer ${
+                      showStickerPicker ? "text-primary bg-red-50" : ""
+                    }`}
+                    title="Gửi sticker"
+                  >
+                    <MaterialIcon name="celebration" className="text-[18px]" />
+                  </button>
 
                   <textarea
                     ref={textareaRef}
                     rows={1}
                     value={inputText}
-                    onChange={(e) => setInputText(e.target.value)}
+                    onChange={(e) => handleComposerChange(e.target.value, e.target.selectionStart ?? e.target.value.length)}
                     placeholder={
                       !flow.isLoggedIn
                         ? "Hãy đăng nhập để nhắn tin..."

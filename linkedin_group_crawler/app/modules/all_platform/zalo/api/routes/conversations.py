@@ -20,7 +20,7 @@ from app.modules.all_platform.zalo.schemas.library import (
     ZaloLibraryListResponse,
     ZaloLibraryMessage,
 )
-from app.modules.all_platform.zalo.schemas.message import Message
+from app.modules.all_platform.zalo.schemas.message import Message, Mention
 from app.modules.all_platform.zalo.services.supabase_service import (
     SupabaseNotConfigured,
     _rest,
@@ -46,6 +46,13 @@ from app.modules.all_platform.zalo.services.zca_api_bridge import (
     send_zca_images,
     sync_zca_group_old_messages,
     remove_zca_unread_mark,
+    recall_zca_message,
+    get_zca_friend_status,
+    send_zca_friend_request,
+    accept_zca_friend_request,
+    get_zca_group_members_full,
+    get_zca_stickers_detail,
+    send_zca_sticker,
 )
 from app.core.phone import vn_phone_to_e164
 
@@ -242,6 +249,8 @@ async def list_conversations_for_caller(
                 "avatar_url": r.get("avatar_url"),
                 "unread_count": int(r.get("unread_count") or 0),
                 "is_pinned": bool(r.get("is_pinned")),
+                "is_friend": bool(r.get("is_friend")),
+                "thread_type": r.get("thread_type") or ("user" if r.get("is_friend") else "group"),
             })
         return results
     except Exception as exc:
@@ -743,6 +752,10 @@ class SendMessageRequest(BaseModel):
         None,
         description="0 = cá nhân, 1 = nhóm. Nếu để trống, tự suy ra từ conversation_id.",
     )
+    # Zalo tập trung (Mục 3.3.5 + 4.6 mentionUtils guide) — @tag/@All trong tin nhắn nhóm.
+    mentions: Optional[List[Mention]] = Field(
+        None, description="[{pos,uid,len}] — vị trí/uid/độ dài mỗi mention trong `text`"
+    )
 
 
 class SendMessageResponse(BaseModel):
@@ -792,12 +805,14 @@ async def send_message_to_conversation(
     else:
         thread_type = await resolve_thread_type(user_id, conversation_id.strip())
 
+    mentions_payload = [m.model_dump() for m in body.mentions] if body.mentions else None
     try:
         result = await send_zca_message(
             auth,
             conversation_id.strip(),
             body.text.strip(),
             thread_type=thread_type,
+            mentions=mentions_payload,
         )
     except ZcaAuthExpiredError:
         raise HTTPException(status_code=401, detail=ZCA_SESSION_EXPIRED_DETAIL)
@@ -805,7 +820,9 @@ async def send_message_to_conversation(
         raise HTTPException(status_code=500, detail=f"Không thể gửi tin nhắn: {exc}")
 
     # Persist sent message vào Supabase — zca-js chỉ trả về msgId (không có sender/timestamp)
-    # nên ta tạo Message tối thiểu với is_sent=True, listener sẽ tự merge khi echo về.
+    # nên ta tạo Message tối thiểu với is_sent=True, listener sẽ tự merge khi echo về
+    # (cli_msg_id cũng được listener điền bù lúc echo — zca-js.sendMessage() không trả
+    # cliMsgId ngay, chỉ có msgId; xem zca_persistent_listener.js normalizeMessage()).
     # "response" là key chuẩn (zca_api_bridge.js + zca_api_server.js, đã đồng bộ
     # 2026-08-26); vẫn thử "result" phòng hộ nếu 1 worker cũ chưa restart kịp
     # còn trả key cũ — tránh lại rơi vào fallback ID tạm gây lặp tin.
@@ -816,6 +833,7 @@ async def send_message_to_conversation(
         api_payload,
         content=body.text.strip(),
         message_type="text",
+        mentions=body.mentions,
     )
 
     return SendMessageResponse(
@@ -997,6 +1015,99 @@ async def mark_conversation_read(
     )
 
 
+class RecallMessageRequest(BaseModel):
+    source_message_id: str = Field(..., min_length=1, description="zalo_messages.source_message_id (= msgId thật)")
+    thread_type: Optional[int] = Field(None, description="0 = cá nhân, 1 = nhóm. Nếu trống, tự suy ra.")
+
+
+class RecallMessageResponse(BaseModel):
+    ok: bool
+    conversation_id: str
+    source_message_id: str
+
+
+@router.post("/{conversation_id}/recall", response_model=RecallMessageResponse)
+async def recall_conversation_message(
+    conversation_id: str,
+    body: RecallMessageRequest,
+    account_id: Optional[str] = Query(None),
+    x_user_id: str = Header("default", alias="X-User-ID"),
+    x_caller_email: Optional[str] = Depends(get_authenticated_caller_email),
+):
+    """Thu hồi tin nhắn thật (api.undo — Mục 3.3.5 guide) — tin biến mất ở CẢ HAI phía.
+
+    Chỉ cho phép thu hồi tin do CHÍNH tài khoản Zalo này gửi (is_sent=true) và
+    còn `cli_msg_id` (được listener điền bù ngay sau khi gửi — xem
+    `_persist_outgoing_message`/`zca_persistent_listener.js`); tin cũ gửi TRƯỚC
+    khi có cột này, hoặc tin gửi rất gần đây mà listener chưa kịp echo về, sẽ
+    trả 409 để user thử lại sau vài giây thay vì âm thầm gọi undo() với
+    cli_msg_id rỗng (Zalo sẽ từ chối).
+    """
+    user_id = _normalize_user_id(account_id or x_user_id)
+    allowed_conv_ids = await check_caller_conversation_access(user_id, x_caller_email)
+    if allowed_conv_ids is not None and conversation_id.strip() not in allowed_conv_ids:
+        raise HTTPException(status_code=403, detail="Cuộc trò chuyện này ở chế độ riêng tư và chưa được chia sẻ với bạn.")
+
+    auth = await load_zca_auth(user_id)
+    if not auth:
+        raise HTTPException(status_code=401, detail="Chưa có phiên ZCA hợp lệ. Hãy đăng nhập lại qua extension.")
+
+    rows = await _rest(
+        "GET",
+        "zalo_messages",
+        params={
+            "select": "source_message_id,cli_msg_id,is_sent,is_deleted",
+            "user_id": f"eq.{user_id}",
+            "group_id": f"eq.{conversation_id.strip()}",
+            "source_message_id": f"eq.{body.source_message_id.strip()}",
+            "limit": "1",
+        },
+    ) or []
+    if not rows:
+        raise HTTPException(status_code=404, detail="Không tìm thấy tin nhắn này.")
+    row = rows[0]
+    if not row.get("is_sent"):
+        raise HTTPException(status_code=403, detail="Chỉ được thu hồi tin nhắn do chính tài khoản này gửi.")
+    if row.get("is_deleted"):
+        raise HTTPException(status_code=409, detail="Tin nhắn này đã bị thu hồi trước đó.")
+    cli_msg_id = row.get("cli_msg_id")
+    if not cli_msg_id:
+        raise HTTPException(
+            status_code=409,
+            detail="Chưa xác định được cli_msg_id của tin nhắn (có thể vừa gửi, đợi vài giây rồi thử lại).",
+        )
+
+    thread_type = body.thread_type if body.thread_type is not None else await resolve_thread_type(user_id, conversation_id.strip())
+    try:
+        await recall_zca_message(
+            auth,
+            conversation_id.strip(),
+            msg_id=body.source_message_id.strip(),
+            cli_msg_id=str(cli_msg_id),
+            thread_type=thread_type,
+        )
+    except ZcaAuthExpiredError:
+        raise HTTPException(status_code=401, detail=ZCA_SESSION_EXPIRED_DETAIL)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Không thể thu hồi tin nhắn: {exc}")
+
+    try:
+        await _rest(
+            "PATCH",
+            "zalo_messages",
+            params={
+                "user_id": f"eq.{user_id}",
+                "group_id": f"eq.{conversation_id.strip()}",
+                "source_message_id": f"eq.{body.source_message_id.strip()}",
+            },
+            json={"is_deleted": True, "updated_at": datetime.utcnow().isoformat()},
+        )
+    except Exception as exc:
+        logger.warning(f"Recalled on Zalo but could not mark is_deleted in DB: {exc}")
+
+    return RecallMessageResponse(ok=True, conversation_id=conversation_id, source_message_id=body.source_message_id)
+
+
 # --------------------------------------------------------------------------------------
 # Helpers: lưu tin nhắn gửi đi vào Supabase
 # --------------------------------------------------------------------------------------
@@ -1066,6 +1177,7 @@ async def _persist_outgoing_message(
     content: str,
     message_type: str = "text",
     image_urls: Optional[List[str]] = None,
+    mentions: Optional[List[Mention]] = None,
 ) -> None:
     """Lưu message gửi đi vào Supabase để hiển thị ngay trong chat history.
 
@@ -1101,6 +1213,9 @@ async def _persist_outgoing_message(
         is_sent=True,
         is_deleted=False,
         group_id=conversation_id,
+        ts=now_ms,
+        msg_kind=resolved_type,
+        mentions=mentions or [],
     )
 
     group_name = await _resolve_group_name(user_id, conversation_id)
@@ -1222,6 +1337,74 @@ async def find_zalo_user(
     }
 
 
+@router.get("/users/{uid}/friend-status")
+async def get_friend_status(
+    uid: str,
+    account_id: Optional[str] = Query(None),
+    x_user_id: str = Header("default", alias="X-User-ID"),
+):
+    """Trạng thái bạn bè với 1 uid Zalo (Mục 3.3.5 guide).
+
+    CẢNH BÁO field ngược tên gọi trực giác (Mục 11.1 guide) — GIỮ NGUYÊN, không đảo:
+    - is_requested=true  → MÌNH đã gửi lời mời kết bạn (đang chờ họ chấp nhận).
+    - is_requesting=true → HỌ đang gửi lời mời kết bạn cho MÌNH (đang chờ mình chấp nhận).
+    """
+    user_id = _normalize_user_id(account_id or x_user_id)
+    auth = await load_zca_auth(user_id)
+    if not auth:
+        raise HTTPException(status_code=401, detail="Chưa có phiên ZCA hợp lệ. Hãy đăng nhập lại qua extension.")
+    try:
+        status = await get_zca_friend_status(auth, uid.strip())
+    except ZcaAuthExpiredError:
+        raise HTTPException(status_code=401, detail=ZCA_SESSION_EXPIRED_DETAIL)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Không thể tra trạng thái bạn bè: {exc}")
+    return {"uid": uid, **status}
+
+
+class FriendRequestBody(BaseModel):
+    message: str = Field("", description="Lời nhắn kèm lời mời kết bạn (có thể để trống)")
+
+
+@router.post("/users/{uid}/friend-request")
+async def send_friend_request(
+    uid: str,
+    body: FriendRequestBody,
+    account_id: Optional[str] = Query(None),
+    x_user_id: str = Header("default", alias="X-User-ID"),
+):
+    user_id = _normalize_user_id(account_id or x_user_id)
+    auth = await load_zca_auth(user_id)
+    if not auth:
+        raise HTTPException(status_code=401, detail="Chưa có phiên ZCA hợp lệ. Hãy đăng nhập lại qua extension.")
+    try:
+        result = await send_zca_friend_request(auth, uid.strip(), message=body.message or "")
+    except ZcaAuthExpiredError:
+        raise HTTPException(status_code=401, detail=ZCA_SESSION_EXPIRED_DETAIL)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Không thể gửi lời mời kết bạn: {exc}")
+    return {"ok": True, "uid": uid, "result": result}
+
+
+@router.post("/users/{uid}/friend-request/accept")
+async def accept_friend_request(
+    uid: str,
+    account_id: Optional[str] = Query(None),
+    x_user_id: str = Header("default", alias="X-User-ID"),
+):
+    user_id = _normalize_user_id(account_id or x_user_id)
+    auth = await load_zca_auth(user_id)
+    if not auth:
+        raise HTTPException(status_code=401, detail="Chưa có phiên ZCA hợp lệ. Hãy đăng nhập lại qua extension.")
+    try:
+        result = await accept_zca_friend_request(auth, uid.strip())
+    except ZcaAuthExpiredError:
+        raise HTTPException(status_code=401, detail=ZCA_SESSION_EXPIRED_DETAIL)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Không thể chấp nhận lời mời kết bạn: {exc}")
+    return {"ok": True, "uid": uid, "result": result}
+
+
 class CreateUserThreadRequest(BaseModel):
     user_id: str = Field(..., min_length=4, description="Zalo userId từ /users/find")
     display_name: str = Field(..., min_length=1, description="Tên hiển thị để show trong sidebar")
@@ -1270,3 +1453,76 @@ async def create_user_thread(
         "display_name": body.display_name.strip(),
         "thread_type": 0,
     }
+
+
+@router.get("/{account_id}/groups/{group_id}/members")
+async def get_group_members(
+    account_id: str,
+    group_id: str,
+):
+    """Quét ĐẦY ĐỦ thành viên 1 nhóm — dùng để tạo bulk-send job (Mục 3.3.5/8(i) guide)."""
+    user_id = _normalize_user_id(account_id)
+    auth = await load_zca_auth(user_id)
+    if not auth:
+        raise HTTPException(status_code=401, detail="Chưa có phiên ZCA hợp lệ. Hãy đăng nhập lại qua extension.")
+    try:
+        result = await get_zca_group_members_full(auth, group_id.strip())
+    except ZcaAuthExpiredError:
+        raise HTTPException(status_code=401, detail=ZCA_SESSION_EXPIRED_DETAIL)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Không thể quét thành viên nhóm: {exc}")
+    return result
+
+
+class SendStickerBody(BaseModel):
+    id: int
+    cate_id: int
+    type: int = 1
+
+
+@router.post("/{conversation_id}/send-sticker")
+async def send_sticker_to_conversation(
+    conversation_id: str,
+    body: SendStickerBody,
+    account_id: Optional[str] = Query(None),
+    x_user_id: str = Header("default", alias="X-User-ID"),
+):
+    user_id = _normalize_user_id(account_id or x_user_id)
+    auth = await load_zca_auth(user_id)
+    if not auth:
+        raise HTTPException(status_code=401, detail="Chưa có phiên ZCA hợp lệ. Hãy đăng nhập lại qua extension.")
+    thread_type = await resolve_thread_type(user_id, conversation_id)
+    try:
+        result = await send_zca_sticker(
+            auth, conversation_id.strip(),
+            sticker_id=body.id, cate_id=body.cate_id, sticker_type=body.type,
+            thread_type=thread_type,
+        )
+    except ZcaAuthExpiredError:
+        raise HTTPException(status_code=401, detail=ZCA_SESSION_EXPIRED_DETAIL)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Không thể gửi sticker: {exc}")
+    return {"ok": True, "result": result}
+
+
+@router.get("/stickers")
+async def get_stickers_detail(
+    ids: str = Query(..., description="Danh sách sticker id, phân tách bằng dấu phẩy"),
+    account_id: Optional[str] = Query(None),
+    x_user_id: str = Header("default", alias="X-User-ID"),
+):
+    user_id = _normalize_user_id(account_id or x_user_id)
+    auth = await load_zca_auth(user_id)
+    if not auth:
+        raise HTTPException(status_code=401, detail="Chưa có phiên ZCA hợp lệ. Hãy đăng nhập lại qua extension.")
+    try:
+        sticker_ids = [int(s.strip()) for s in ids.split(",") if s.strip()]
+    except ValueError:
+        raise HTTPException(status_code=400, detail="ids phải là danh sách số nguyên, phân tách bằng dấu phẩy")
+    try:
+        stickers = await get_zca_stickers_detail(auth, sticker_ids)
+    except ZcaAuthExpiredError:
+        raise HTTPException(status_code=401, detail=ZCA_SESSION_EXPIRED_DETAIL)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Không thể tra sticker: {exc}")
+    return {"stickers": stickers}

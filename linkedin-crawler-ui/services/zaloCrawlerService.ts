@@ -28,6 +28,24 @@ import type {
   ZaloVerifyGroupRequestItem,
   ZaloVerifyGroupsResponse,
   ZaloWorkersResponse,
+  ZaloMention,
+  ZaloRecallMessageRequest,
+  ZaloFriendStatusResponse,
+  ZaloGroupMembersResponse,
+  ZaloStickerDetail,
+  ZaloAccountAssignment,
+  ZaloForwardRule,
+  ZaloForwardRuleCreateRequest,
+  ZaloForwardLog,
+  ZaloBulkJob,
+  ZaloBulkJobItem,
+  ZaloBulkJobCreateRequest,
+  ZaloBulkJobRecipient,
+  ZaloCampaign,
+  ZaloCampaignCreateRequest,
+  ZaloCampaignRecipient,
+  ZaloCampaignLog,
+  ZaloPushSubscribeRequest,
 } from "@/types/zalo-api";
 
 const JSON_HEADERS = {
@@ -860,5 +878,294 @@ export function createZaloUserThread(
       body: JSON.stringify(payload),
     },
   );
+}
+
+// ── Zalo tập trung (port ZALO_CENTRALIZED_MODULE_GUIDE.md) ─────────────────────
+
+/** Thu hồi tin nhắn thật (api.undo) — chỉ khả dụng cho tin do chính account gửi. */
+export function recallZaloMessage(
+  accountId: string,
+  conversationId: string,
+  payload: ZaloRecallMessageRequest,
+): Promise<{ ok: boolean }> {
+  return requestJson(`/api/all-platform/zalo/conversations/${encodeURIComponent(conversationId)}/recall`, {
+    method: "POST",
+    headers: buildHeaders({ "X-User-ID": accountId }),
+    body: JSON.stringify(payload),
+  });
+}
+
+export function getZaloFriendStatus(accountId: string, uid: string): Promise<ZaloFriendStatusResponse> {
+  return requestJson(`/api/all-platform/zalo/conversations/users/${encodeURIComponent(uid)}/friend-status`, {
+    method: "GET",
+    headers: { "X-User-ID": accountId },
+  });
+}
+
+export function sendZaloFriendRequest(accountId: string, uid: string, message = ""): Promise<{ ok: boolean }> {
+  return requestJson(`/api/all-platform/zalo/conversations/users/${encodeURIComponent(uid)}/friend-request`, {
+    method: "POST",
+    headers: buildHeaders({ "X-User-ID": accountId }),
+    body: JSON.stringify({ message }),
+  });
+}
+
+export function acceptZaloFriendRequest(accountId: string, uid: string): Promise<{ ok: boolean }> {
+  return requestJson(`/api/all-platform/zalo/conversations/users/${encodeURIComponent(uid)}/friend-request/accept`, {
+    method: "POST",
+    headers: buildHeaders({ "X-User-ID": accountId }),
+  });
+}
+
+export function getZaloGroupMembers(accountId: string, groupId: string): Promise<ZaloGroupMembersResponse> {
+  return requestJson(
+    `/api/all-platform/zalo/conversations/${encodeURIComponent(accountId)}/groups/${encodeURIComponent(groupId)}/members`,
+    { method: "GET", headers: { "X-User-ID": accountId } },
+  );
+}
+
+export function sendZaloSticker(
+  accountId: string,
+  conversationId: string,
+  sticker: { id: number; cate_id: number; type?: number },
+): Promise<{ ok: boolean }> {
+  return requestJson(`/api/all-platform/zalo/conversations/${encodeURIComponent(conversationId)}/send-sticker`, {
+    method: "POST",
+    headers: buildHeaders({ "X-User-ID": accountId }),
+    body: JSON.stringify(sticker),
+  });
+}
+
+export function getZaloStickersDetail(accountId: string, ids: number[]): Promise<{ stickers: ZaloStickerDetail[] }> {
+  const params = new URLSearchParams({ ids: ids.join(",") });
+  return requestJson(`/api/all-platform/zalo/conversations/stickers?${params.toString()}`, {
+    method: "GET",
+    headers: { "X-User-ID": accountId },
+  });
+}
+
+/** sendZaloMessage hiện có KHÔNG nhận mentions — dùng hàm riêng này cho tin có @tag/@All. */
+export function sendZaloMessageWithMentions(
+  accountId: string,
+  conversationId: string,
+  text: string,
+  mentions: ZaloMention[],
+): Promise<ZaloSendMessageResponse> {
+  return requestJson(`/api/all-platform/zalo/conversations/${encodeURIComponent(conversationId)}/send`, {
+    method: "POST",
+    headers: buildHeaders({ "X-User-ID": accountId }),
+    body: JSON.stringify({ text, mentions }),
+  });
+}
+
+// RBAC — gán quyền xem/gửi/broadcast theo tài khoản Zalo cho từng nhân viên
+
+export function listZaloAccountAssignments(accountId: string): Promise<{ account_id: string; assignments: ZaloAccountAssignment[] }> {
+  return requestJson(`/api/all-platform/zalo/accounts/${encodeURIComponent(accountId)}/assignments`, {
+    method: "GET",
+    headers: buildHeaders({ "X-User-ID": accountId }),
+  });
+}
+
+export function upsertZaloAccountAssignment(
+  accountId: string,
+  payload: { app_user_id: string; can_view: boolean; can_send: boolean; can_broadcast: boolean },
+): Promise<{ assignment: ZaloAccountAssignment }> {
+  return requestJson(`/api/all-platform/zalo/accounts/${encodeURIComponent(accountId)}/assignments`, {
+    method: "POST",
+    headers: buildHeaders({ "X-User-ID": accountId }),
+    body: JSON.stringify(payload),
+  });
+}
+
+export function deleteZaloAccountAssignment(accountId: string, appUserId: string): Promise<{ deleted: boolean }> {
+  return requestJson(
+    `/api/all-platform/zalo/accounts/${encodeURIComponent(accountId)}/assignments/${encodeURIComponent(appUserId)}`,
+    { method: "DELETE", headers: buildHeaders({ "X-User-ID": accountId }) },
+  );
+}
+
+// Forward rules
+
+export function listZaloForwardRules(accountId: string): Promise<{ account_id: string; rules: ZaloForwardRule[] }> {
+  const params = new URLSearchParams({ account_id: accountId });
+  return requestJson(`/api/all-platform/zalo/forward-rules?${params.toString()}`, {
+    method: "GET",
+    headers: buildHeaders({ "X-User-ID": accountId }),
+  });
+}
+
+export function createZaloForwardRule(payload: ZaloForwardRuleCreateRequest): Promise<{ rule: ZaloForwardRule }> {
+  return requestJson("/api/all-platform/zalo/forward-rules", {
+    method: "POST",
+    headers: buildHeaders({ "X-User-ID": payload.account_id }),
+    body: JSON.stringify(payload),
+  });
+}
+
+export function updateZaloForwardRule(
+  accountId: string,
+  ruleId: number,
+  patch: { name?: string; is_enabled?: boolean },
+): Promise<{ rule: ZaloForwardRule }> {
+  return requestJson(`/api/all-platform/zalo/forward-rules/${ruleId}`, {
+    method: "PATCH",
+    headers: buildHeaders({ "X-User-ID": accountId }),
+    body: JSON.stringify(patch),
+  });
+}
+
+export function deleteZaloForwardRule(accountId: string, ruleId: number): Promise<{ deleted: boolean }> {
+  return requestJson(`/api/all-platform/zalo/forward-rules/${ruleId}`, {
+    method: "DELETE",
+    headers: buildHeaders({ "X-User-ID": accountId }),
+  });
+}
+
+export function listZaloForwardLogs(accountId: string, ruleId: number): Promise<{ logs: ZaloForwardLog[] }> {
+  return requestJson(`/api/all-platform/zalo/forward-rules/${ruleId}/logs`, {
+    method: "GET",
+    headers: buildHeaders({ "X-User-ID": accountId }),
+  });
+}
+
+// Bulk-send
+
+export function listZaloBulkJobs(accountId: string): Promise<{ jobs: ZaloBulkJob[] }> {
+  const params = new URLSearchParams({ account_id: accountId });
+  return requestJson(`/api/all-platform/zalo/bulk-jobs?${params.toString()}`, {
+    method: "GET",
+    headers: buildHeaders({ "X-User-ID": accountId }),
+  });
+}
+
+export function createZaloBulkJob(payload: ZaloBulkJobCreateRequest): Promise<{ job: ZaloBulkJob }> {
+  return requestJson("/api/all-platform/zalo/bulk-jobs", {
+    method: "POST",
+    headers: buildHeaders({ "X-User-ID": payload.account_id }),
+    body: JSON.stringify(payload),
+  });
+}
+
+export function getZaloBulkJob(accountId: string, jobId: number): Promise<{ job: ZaloBulkJob; items: ZaloBulkJobItem[] }> {
+  return requestJson(`/api/all-platform/zalo/bulk-jobs/${jobId}`, {
+    method: "GET",
+    headers: buildHeaders({ "X-User-ID": accountId }),
+  });
+}
+
+export function patchZaloBulkJobStatus(accountId: string, jobId: number, status: string): Promise<{ job: ZaloBulkJob }> {
+  return requestJson(`/api/all-platform/zalo/bulk-jobs/${jobId}`, {
+    method: "PATCH",
+    headers: buildHeaders({ "X-User-ID": accountId }),
+    body: JSON.stringify({ status }),
+  });
+}
+
+export function deleteZaloBulkJob(accountId: string, jobId: number): Promise<{ deleted: boolean }> {
+  return requestJson(`/api/all-platform/zalo/bulk-jobs/${jobId}`, {
+    method: "DELETE",
+    headers: buildHeaders({ "X-User-ID": accountId }),
+  });
+}
+
+// Campaigns
+
+export function listZaloCampaigns(accountId: string): Promise<{ campaigns: ZaloCampaign[] }> {
+  const params = new URLSearchParams({ account_id: accountId });
+  return requestJson(`/api/all-platform/zalo/campaigns?${params.toString()}`, {
+    method: "GET",
+    headers: buildHeaders({ "X-User-ID": accountId }),
+  });
+}
+
+export function createZaloCampaign(payload: ZaloCampaignCreateRequest): Promise<{ campaign: ZaloCampaign }> {
+  return requestJson("/api/all-platform/zalo/campaigns", {
+    method: "POST",
+    headers: buildHeaders({ "X-User-ID": payload.account_id }),
+    body: JSON.stringify(payload),
+  });
+}
+
+export function getZaloCampaign(accountId: string, campaignId: number): Promise<{ campaign: ZaloCampaign }> {
+  return requestJson(`/api/all-platform/zalo/campaigns/${campaignId}`, {
+    method: "GET",
+    headers: buildHeaders({ "X-User-ID": accountId }),
+  });
+}
+
+export function patchZaloCampaign(
+  accountId: string,
+  campaignId: number,
+  patch: Partial<ZaloCampaignCreateRequest>,
+): Promise<{ campaign: ZaloCampaign }> {
+  return requestJson(`/api/all-platform/zalo/campaigns/${campaignId}`, {
+    method: "PATCH",
+    headers: buildHeaders({ "X-User-ID": accountId }),
+    body: JSON.stringify(patch),
+  });
+}
+
+export function deleteZaloCampaign(accountId: string, campaignId: number): Promise<{ deleted: boolean }> {
+  return requestJson(`/api/all-platform/zalo/campaigns/${campaignId}`, {
+    method: "DELETE",
+    headers: buildHeaders({ "X-User-ID": accountId }),
+  });
+}
+
+export function listZaloCampaignLogs(accountId: string, campaignId: number): Promise<{ logs: ZaloCampaignLog[] }> {
+  return requestJson(`/api/all-platform/zalo/campaigns/${campaignId}/logs`, {
+    method: "GET",
+    headers: buildHeaders({ "X-User-ID": accountId }),
+  });
+}
+
+export function listZaloCampaignRecipients(accountId: string, campaignId: number): Promise<{ recipients: ZaloCampaignRecipient[] }> {
+  return requestJson(`/api/all-platform/zalo/campaigns/${campaignId}/recipients`, {
+    method: "GET",
+    headers: buildHeaders({ "X-User-ID": accountId }),
+  });
+}
+
+export function addZaloCampaignRecipients(
+  accountId: string,
+  campaignId: number,
+  recipients: ZaloBulkJobRecipient[],
+): Promise<{ added: number }> {
+  return requestJson(`/api/all-platform/zalo/campaigns/${campaignId}/recipients`, {
+    method: "POST",
+    headers: buildHeaders({ "X-User-ID": accountId }),
+    body: JSON.stringify(recipients),
+  });
+}
+
+export function suggestZaloCampaignTemplates(brief: string): Promise<{ templates: string[] }> {
+  return requestJson("/api/all-platform/zalo/campaigns/ai-suggest", {
+    method: "POST",
+    headers: buildHeaders(),
+    body: JSON.stringify({ brief }),
+  });
+}
+
+// Web Push
+
+export function getZaloVapidPublicKey(): Promise<{ public_key: string }> {
+  return requestJson("/api/all-platform/zalo/push/vapid-public-key", { method: "GET" });
+}
+
+export function subscribeZaloPush(payload: ZaloPushSubscribeRequest): Promise<{ subscribed: boolean }> {
+  return requestJson("/api/all-platform/zalo/push/subscribe", {
+    method: "POST",
+    headers: buildHeaders(),
+    body: JSON.stringify(payload),
+  });
+}
+
+export function unsubscribeZaloPush(endpoint: string): Promise<{ subscribed: boolean }> {
+  return requestJson("/api/all-platform/zalo/push/subscribe", {
+    method: "DELETE",
+    headers: buildHeaders(),
+    body: JSON.stringify({ endpoint }),
+  });
 }
 

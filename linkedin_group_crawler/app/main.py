@@ -54,6 +54,9 @@ ensure_directory(settings.session_storage_dir)
 async def lifespan(_: FastAPI):
     warmup_task: asyncio.Task[None] | None = None
     zca_listeners_task: asyncio.Task[None] | None = None
+    zalo_forward_task: asyncio.Task[None] | None = None
+    zalo_automation_task: asyncio.Task[None] | None = None
+    zalo_push_task: asyncio.Task[None] | None = None
     # An toàn khi chạy dev/local: đặt env DISABLE_SCHEDULER=1 để KHÔNG bật scheduler tự cào
     # (tránh cào bằng acc production khi dev). Production không set -> chạy như cũ.
     import os as _os
@@ -113,9 +116,52 @@ async def lifespan(_: FastAPI):
     else:
         zca_listeners_task = asyncio.create_task(_start_zca_listeners_background())
 
+    # ── Zalo tập trung: 3 background tick loop (forward engine / bulk-send+campaigns /
+    # web push) — dịch từ 3 worker Node.js riêng của guide sang asyncio task cùng
+    # process, giống pattern zca_listeners_task ở trên. Mỗi task tự bắt Exception
+    # trong tick của nó (không để 1 lỗi tick làm chết cả loop).
+    async def _tick_loop(name: str, tick_fn, interval_ms_env: str, default_ms: int) -> None:
+        interval_s = max(1.0, int(_os.getenv(interval_ms_env, str(default_ms))) / 1000)
+        while True:
+            try:
+                await tick_fn()
+            except Exception:
+                logger.exception(f"[{name}] tick loop error")
+            await asyncio.sleep(interval_s)
+
+    if _os.getenv("DISABLE_ZALO_FORWARD_ENGINE", "").strip().lower() in {"1", "true", "yes"}:
+        logger.warning("DISABLE_ZALO_FORWARD_ENGINE enabled -> not starting forward engine.")
+    else:
+        from app.modules.all_platform.zalo.services.forward_engine import run_forward_tick
+        zalo_forward_task = asyncio.create_task(_tick_loop("zalo-forward", run_forward_tick, "FORWARD_POLL_INTERVAL_MS", 3000))
+
+    if _os.getenv("DISABLE_ZALO_AUTOMATION_WORKER", "").strip().lower() in {"1", "true", "yes"}:
+        logger.warning("DISABLE_ZALO_AUTOMATION_WORKER enabled -> not starting bulk-send/campaigns worker.")
+    else:
+        from app.modules.all_platform.zalo.services.automation_worker import run_automation_tick
+        zalo_automation_task = asyncio.create_task(_tick_loop("zalo-automation", run_automation_tick, "AUTOMATION_TICK_INTERVAL_MS", 5000))
+
+    if _os.getenv("DISABLE_ZALO_PUSH_NOTIFIER", "").strip().lower() in {"1", "true", "yes"}:
+        logger.warning("DISABLE_ZALO_PUSH_NOTIFIER enabled -> not starting push notifier.")
+    else:
+        from app.modules.all_platform.zalo.services.push_notifier import run_push_tick
+        zalo_push_task = asyncio.create_task(_tick_loop("zalo-push", run_push_tick, "PUSH_POLL_INTERVAL_MS", 4000))
+
     try:
         yield
     finally:
+        for task in (zalo_forward_task, zalo_automation_task, zalo_push_task):
+            if task is not None and not task.done():
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+        try:
+            from app.modules.all_platform.zalo.services.forward_engine import flush_all_pending_image_batches
+            await asyncio.wait_for(flush_all_pending_image_batches(), timeout=8.0)
+        except Exception:
+            logger.exception("Zalo forward engine: flush pending image batches on shutdown failed")
         if warmup_task is not None and not warmup_task.done():
             warmup_task.cancel()
             try:

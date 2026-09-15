@@ -292,6 +292,13 @@ function normalizeMessage(raw, index, ownId = null) {
     }
   }
 
+  // Zalo tập trung (Mục 7.1 guide): cli_msg_id RIÊNG với message_id — message_id
+  // ưu tiên msgId thật (dùng làm source_message_id/dedup key), cli_msg_id CHỈ để
+  // thu hồi tin (api.undo cần cả 2). KHÔNG gộp chung như messageId ở trên vì
+  // cliMsgId có thể trùng giữa nhiều tin nếu dùng làm dedup key.
+  const cliMsgId = data.cliMsgId != null ? String(data.cliMsgId) : (raw.cliMsgId != null ? String(raw.cliMsgId) : null);
+  const mentions = Array.isArray(data.mentions) ? data.mentions : (Array.isArray(raw.mentions) ? raw.mentions : null);
+
   return {
     thread_id: threadId || null,
     message_id: messageId,
@@ -305,6 +312,10 @@ function normalizeMessage(raw, index, ownId = null) {
     reply_to_id: data.quote?.msgId || data.quoteMsgId || null,
     is_deleted: msgType === "chat.delete" || msgType === "recalled",
     is_sent: isSent,
+    ts: timestamp || null,
+    cli_msg_id: cliMsgId,
+    mentions,
+    msg_kind: imageUrls.length ? "image" : msgType,
     raw,
   };
 }
