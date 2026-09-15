@@ -10,7 +10,7 @@ import { formatCurrencyDisplay, parseCurrencyInput } from '@/lib/currency';
  */
 export function canWriteDeal(user: AppUser | null | undefined, deal: Deal | null | undefined): boolean {
   if (!user) return false;
-  if (user.role === 'admin' || user.role === 'leader' || user.is_sale) return true;
+  if (hasFullCrmAccess(user)) return true;
   if (!deal) return false;
   return deal.assignment.leadedById === user.id || deal.assignment.sdrId === user.id;
 }
@@ -33,13 +33,24 @@ function hasQuoteBusinessRole(user: AppUser | null | undefined, role: 'presale' 
   return businessRole === role || businessRole === 'both';
 }
 
+export function hasFullCrmAccess(user: AppUser | null | undefined): boolean {
+  if (!user) return false;
+  return (
+    user.role === 'admin'
+    || user.role === 'leader'
+    || Boolean(user.is_sale)
+    || hasQuoteBusinessRole(user, 'sale')
+    || hasQuoteBusinessRole(user, 'presale')
+  );
+}
+
 /** Mirror cua crm_permission_service.can_edit_technical_quote (backend) - CHI
  * dung de khoa/mo cell Giá vốn tren FE cho dung UX (bang hang muc thong nhat,
  * Section 4). Backend van la lop chan THAT (_check_item_field_level_permission),
  * ham nay khong bao gio la lop bao mat. */
 export function canEditQuoteCost(user: AppUser | null | undefined, quote: QuoteOwnerShape): boolean {
   if (!user) return false;
-  if (user.role === 'admin' || user.role === 'leader' || user.is_sale) return true;
+  if (hasFullCrmAccess(user)) return true;
   if (!quote) return hasQuoteBusinessRole(user, 'presale') || hasQuoteBusinessRole(user, 'sale');
   return (
     (quote.technicalOwnerId === user.id && hasQuoteBusinessRole(user, 'presale'))
@@ -51,7 +62,7 @@ export function canEditQuoteCost(user: AppUser | null | undefined, quote: QuoteO
  * dung de khoa/mo cell Markup/Giá khách tren FE. */
 export function canEditQuotePricingFields(user: AppUser | null | undefined, quote: QuoteOwnerShape): boolean {
   if (!user) return false;
-  if (user.role === 'admin' || user.role === 'leader' || user.is_sale) return true;
+  if (hasFullCrmAccess(user)) return true;
   if (!quote) return false;
   return quote.quoteOwnerId === user.id && hasQuoteBusinessRole(user, 'sale');
 }
@@ -447,7 +458,7 @@ export function getStageMeta(stage: DealStage) {
 }
 
 export function formatVND(value?: number | string | null) {
-  if (!Number(value || 0)) return null;
+  if (value == null || value === '' || Number.isNaN(Number(value))) return null;
   // Wrapper mong quanh formatCurrencyDisplay() dung chung (lib/currency.ts) -
   // giu nguyen dinh dang output cu ("5.000.000 ₫", co ky hieu tien te), khong
   // tu lam Intl.NumberFormat rieng nua.

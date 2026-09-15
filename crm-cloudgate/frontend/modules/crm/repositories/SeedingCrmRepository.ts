@@ -58,6 +58,8 @@ type CustomerLeadRow = {
   team_type?: string | null;
   /** Du an that (migration 097) - null = Co hoi chua gan Du an nao. */
   project_id?: string | null;
+  /** Nguoi lien he chinh (migration 134/135) - null = chua chon. */
+  primary_contact_id?: string | null;
   status?: 'pending' | 'closed' | 'rejected' | string | null;
   activity_status?: string | null;
   deal_stage?: DealStage | null;
@@ -401,6 +403,7 @@ function rowToDeal(row: CustomerLeadRow, history: StageHistory[] = []): Deal {
     dealId: row.id,
     customerId: asText(row.customer_id),
     projectId: asText(row.project_id),
+    primaryContactId: asText(row.primary_contact_id),
     position: asText(row.position),
     positionCategoryId: asText(row.position_category_id),
     positionLabelSnapshot: asText(row.position_label_snapshot),
@@ -520,6 +523,7 @@ function toCustomerPayload(input: CreateDealInput | UpdateDealInput): Partial<Cu
   // nay chay o CA 2 truong hop tao moi VA sua - gui project_id=null RO
   // RANG khi bo gan (khong duoc IM LANG bo qua project_id nhu bug cu).
   if ('projectId' in input) payload.project_id = input.projectId || null;
+  if ('primaryContactId' in input) payload.primary_contact_id = input.primaryContactId || null;
   if ('customerName' in input) payload.customer_name = input.customerName;
   if ('companyName' in input) payload.company_name = input.companyName;
   if ('phone' in input) payload.phone = input.phone;
@@ -856,6 +860,13 @@ export class SeedingCrmRepository implements CrmRepository {
     const qs = new URLSearchParams({ q: query, limit: String(limit) });
     const rows = await apiFetch<CrmCustomerRow[]>(`/api/all-platform/crm/customers/quick-search?${qs.toString()}`);
     return (rows || []).map(rowToCustomer);
+  }
+
+  /** Danh sach Contact THUOC DUNG 1 Customer - dung cho dropdown "Người liên
+   * hệ chính" khi tao/sua Deal (phai loc dung customerId, khong duoc lo
+   * Contact cua Customer khac). */
+  async listContacts(customerId: string): Promise<Array<{ id: string; name: string; position_label_snapshot?: string | null; position?: string | null; phone?: string | null }>> {
+    return apiFetch(`/api/all-platform/crm/customers/${encodeURIComponent(customerId)}/contacts`);
   }
 }
 

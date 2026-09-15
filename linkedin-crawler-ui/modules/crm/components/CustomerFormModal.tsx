@@ -5,7 +5,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { API_BASE_URL, API_KEY } from '@/lib/env';
 import { useMembers } from '@/hooks/useMembers';
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
-import { SearchableSelect } from './SearchableSelect';
+import { MemberSearchSelect } from './MemberSearchSelect';
 import { CrmCategoryCodeSelect, CrmCategorySelect } from './CrmCategorySelect';
 import { PositionSelect } from './PositionSelect';
 import { Loader2, X } from './icons';
@@ -344,17 +344,18 @@ export function CustomerFormModal({
             <div className="crm-form-grid">
               {canPickOwner ? (
                 <Field label="Người phụ trách">
-                  <select value={form.ownerId} onChange={e => setValue('ownerId', e.target.value)}>
-                    <option value="">-- Chính bạn --</option>
-                    {currentUserMissing && currentUser ? (
-                      <option value={currentUser.id}>{currentUser.name || currentUser.email}</option>
-                    ) : null}
-                    {ownerOptions.map(m => (
-                      <option key={m.id} value={selectionKeyOf(m)}>
-                        {m.display_name}{m.email ? ` (${m.email})` : ''}
-                      </option>
-                    ))}
-                  </select>
+                  <MemberSearchSelect
+                    value={form.ownerId}
+                    onChange={value => setValue('ownerId', value)}
+                    placeholder="-- Chính bạn --"
+                    showAvatar={false}
+                    members={[
+                      ...(currentUserMissing && currentUser
+                        ? [{ id: currentUser.id, displayName: currentUser.name || currentUser.email || 'Bạn' }]
+                        : []),
+                      ...ownerOptions.map(m => ({ id: selectionKeyOf(m), displayName: m.display_name, email: m.email })),
+                    ]}
+                  />
                 </Field>
               ) : null}
               <Field label="Ghi chú" full={!canPickOwner}>
@@ -378,7 +379,7 @@ export function CustomerFormModal({
   );
 }
 
-function Field({
+export function Field({
   label,
   hint,
   required,

@@ -2005,7 +2005,7 @@ export interface CreateProjectInput {
   // đây nữa, frontend không tự dựng mã (xem preview_project_code() +
   // create_project() ở backend).
   name: string;
-  customer_id: string;
+  customer_id: string; primary_contact_id?: string | null;
   description?: string;
   status?: Project["status"];
   manager_id?: string | null;

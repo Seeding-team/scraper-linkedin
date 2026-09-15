@@ -135,6 +135,10 @@ export interface Deal {
   contactId: string;
   dealId: string;
   customerId?: string;
+  /** Nguoi lien he chinh cua Deal (migration 134/135: customer_leads.
+   * primary_contact_id) - trs `crm_contacts.id`, KHAC voi `contactId` o tren
+   * (field cu, khong lien quan Contact 360). null/undefined = chua chon. */
+  primaryContactId?: string | null;
   /** Du an that (migration 097) - null/undefined = Co hoi chua gan Du an nao. */
   projectId?: string | null;
   customerName: string;

@@ -547,9 +547,15 @@
 }
 
 .crm-searchable-select-option:hover,
-.crm-searchable-select-option.is-selected {
+.crm-searchable-select-option.is-selected,
+.crm-searchable-select-option.is-highlighted {
   background: #fff1f2;
   color: #be1e4b;
+}
+
+.crm-searchable-select-option:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .crm-searchable-select-empty {
@@ -1158,6 +1164,33 @@
   white-space: nowrap;
   cursor: pointer;
   padding: 0;
+}
+
+.crm-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.3rem;
+  border-radius: 0.5rem;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.crm-btn--outline {
+  border: 1px solid #cbd5e1;
+  background: #ffffff;
+  color: #475569;
+}
+.crm-btn--outline:hover {
+  border-color: #94a3b8;
+  background: #f8fafc;
+  color: #1e293b;
+}
+.crm-btn--small {
+  min-height: 1.7rem;
+  padding: 0 0.55rem;
+  font-size: 0.72rem;
 }
 
 .crm-quote-filter-pill {
@@ -2392,6 +2425,21 @@
 .crm-row-action--delete {
   border-color: #fecaca;
   color: #dc2626;
+}
+
+/* Select gan nhanh "Người liên hệ chính" ngay trong o Thao tac cua bang
+ * Cơ hội/Báo giá/Hợp đồng (Customer 360) - thay the tam thoi cho nut
+ * .crm-row-action luc dang chinh sua, gon bang kich thuoc voi cac nut hang
+ * xom, khong lam vo layout bang. */
+.crm-inline-assign-select {
+  border: 1px solid #cbd5e1;
+  border-radius: 0.38rem;
+  background: #ffffff;
+  color: #1e293b;
+  font-size: 0.7rem;
+  font-weight: 600;
+  padding: 0.22rem 0.35rem;
+  max-width: 9.5rem;
 }
 
 .crm-table-contract-link {
@@ -4529,8 +4577,12 @@
 }
 
 /* Deal+Quote wizard — values ported from chatwoot/overrides CrmDealQuoteModal.vue (scoped styles) */
+/* Fix UX "modal hoi nho so voi luong noi dung" - tang len dung khoang task
+ * yeu cau (90vw, max-width ~1200-1280px, height ke thua max-height:90vh tu
+ * .crm-modal goc) - KHONG thanh full-page, van la modal co backdrop. */
 .crm-wizard-modal {
-  width: min(74rem, 96vw);
+  width: min(1200px, 90vw);
+  max-height: 90vh;
 }
 
 /* Buoc 3 "Hạng mục báo giá" - bang co qua nhieu cot (STT/Ten dich vu/Mo ta/
@@ -4538,7 +4590,8 @@
  * chuan, giong dung van de da fix cho ban in A4 ngang (xem quotes.css/
  * QuoteDocumentRenderer.tsx) - rong hon cho DUNG buoc nay. */
 .crm-wizard-modal--wide {
-  width: min(96rem, 98vw);
+  width: min(1280px, 90vw);
+  max-height: 90vh;
 }
 
 .crm-wizard-stepper-container {
@@ -6549,6 +6602,19 @@
   display: none;
 }
 
+/* An thanh cuon tho (mac dinh trinh duyet) o cac drawer/form cuon doc trong
+ * CRM - dung y het tinh than .crm-lead-drawer-body: van cuon duoc binh
+ * thuong, chi khong ve scrollbar tho lam xau UI (vd drawer "Ghi nhận hợp
+ * đồng có sẵn"). */
+.crm-scroll-hidden {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.crm-scroll-hidden::-webkit-scrollbar {
+  display: none;
+}
+
 .crm-lead-drawer-footer {
   flex-wrap: wrap;
   gap: 0.6rem;
@@ -7226,6 +7292,16 @@
   padding: 0.6rem 0.75rem;
 }
 
+.crm-contact-row--clickable {
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.crm-contact-row--clickable:hover {
+  border-color: #cbd5e1;
+  background: #f1f5f9;
+}
+
 .crm-contact-row-main {
   display: flex;
   flex-direction: column;
@@ -7250,6 +7326,74 @@
   font-weight: 800;
   padding: 0.1rem 0.45rem;
   text-transform: uppercase;
+}
+
+/* Fix UX "checkbox + label bi tach roi, trong nhu bi loi" trong form Sua/
+ * Them Contact - gop lai thanh 1 hang gon gang (label+switch cung 1 khoi),
+ * dat gan cuoi form. Component switch dung chung (khong co san trong repo -
+ * tao 1 lan, co the tai su dung cho toggle khac sau nay). */
+.crm-switch-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 0.6rem;
+  background: #f8fafc;
+  padding: 0.65rem 0.85rem;
+  grid-column: 1 / -1;
+}
+
+.crm-switch-row-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.crm-switch-row-label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.crm-switch-row-hint {
+  font-size: 0.72rem;
+  color: #64748b;
+}
+
+.crm-switch {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  width: 2.5rem;
+  height: 1.4rem;
+  border-radius: 999px;
+  background: #cbd5e1;
+  cursor: pointer;
+  transition: background 0.15s ease;
+  border: none;
+  padding: 0;
+}
+
+.crm-switch--on {
+  background: #be1e4b;
+}
+
+.crm-switch-thumb {
+  position: absolute;
+  top: 0.15rem;
+  left: 0.15rem;
+  width: 1.1rem;
+  height: 1.1rem;
+  border-radius: 999px;
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.25);
+  transition: transform 0.15s ease;
+}
+
+.crm-switch--on .crm-switch-thumb {
+  transform: translateX(1.1rem);
 }
 
 .crm-contact-row-info {

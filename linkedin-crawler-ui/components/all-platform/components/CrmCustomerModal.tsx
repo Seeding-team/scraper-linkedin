@@ -19,6 +19,7 @@ import {
 import { toast } from "sonner";
 import { CurrencyInput } from "@/components/CurrencyInput";
 import { useCrmCategoryCodeOptions, useCrmCategoryLabels } from "@/modules/crm/components/CrmCategorySelect";
+import { seedingCrmRepository } from "@/modules/crm/repositories/SeedingCrmRepository";
 
 interface CrmCustomerModalProps {
   isOpen: boolean;
@@ -91,6 +92,7 @@ export function CrmCustomerModal({
   const [sdrs, setSdrs] = useState<SDRUser[]>([]);
   const [leaders, setLeaders] = useState<SDRUser[]>([]);
   const [formData, setFormData] = useState<Partial<Customer>>(emptyForm());
+  const [contacts, setContacts] = useState<Array<{ id: string; name: string }>>([]);
   const { options: sourceOptions } = useCrmCategoryCodeOptions("crm_source", SOURCE_PLATFORM_OPTIONS);
   const { labels: cityOptions } = useCrmCategoryLabels("crm_city", CITY_OPTIONS);
   const { options: industryOptions } = useCrmCategoryCodeOptions(
@@ -123,6 +125,23 @@ export function CrmCustomerModal({
     // cho semantic rõ ràng — nếu sau này tách bảng leaders thì không phải sửa UI.
     customerLeadService.getSdrs().then(setLeaders).catch(() => {});
   }, [isOpen, customer, defaultConvId, defaultCustomerName, defaultSourcePlatform]);
+
+  // Danh sach Contact cho dropdown "Người liên hệ chính" - PHAI loc dung
+  // customer_id (crm_customers, khach hang canonical) cua deal nay, khong
+  // duoc lo Contact cua khach hang khac. Deal chua lien ket Customer nao
+  // (customer_id rong - vd Lead moi) thi chua co Contact nao de chon ca.
+  useEffect(() => {
+    if (!isOpen || !customer?.customer_id) {
+      setContacts([]);
+      return;
+    }
+    let alive = true;
+    seedingCrmRepository
+      .listContacts(customer.customer_id)
+      .then(rows => { if (alive) setContacts(rows.map(r => ({ id: r.id, name: r.name }))); })
+      .catch(() => { if (alive) setContacts([]); });
+    return () => { alive = false; };
+  }, [isOpen, customer?.customer_id]);
 
   if (!isOpen) return null;
 
@@ -195,6 +214,10 @@ export function CrmCustomerModal({
         last_attachment_url: formData.last_attachment_url?.trim() || null,
         note: formData.note?.trim() || null,
         deal_stage: formData.deal_stage ?? "new_lead",
+        // Nguoi lien he chinh (migration 134/135) - chi gan duoc Contact
+        // THUOC DUNG khach hang nay, server tu kiem tra lai (xem
+        // validate_contact_belongs_to_customer o customer_lead_service.py).
+        primary_contact_id: formData.primary_contact_id || null,
         leaded_by: (formData.leaded_by?.trim() || resolvedLeaderId || "") || null,
         sdr_id: (formData.sdr_id?.trim() || resolvedSdrId || "") || null,
         is_assigned: !!(formData.sdr_id?.trim() || resolvedSdrId),
@@ -460,6 +483,31 @@ export function CrmCustomerModal({
                         </option>
                       ))}
                   </select>
+                </div>
+
+                {/* Nguoi lien he chinh (migration 134/135) - can khi tao bao gia.
+                    Chi liet ke Contact THUOC DUNG khach hang canonical cua deal
+                    nay (xem effect fetch contacts o tren). */}
+                <div className="col-span-2">
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">
+                    Người liên hệ chính
+                  </label>
+                  <select
+                    value={formData.primary_contact_id ?? ""}
+                    onChange={(e) => set("primary_contact_id", e.target.value || null)}
+                    disabled={!customer?.customer_id}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500 text-sm bg-white disabled:bg-slate-50 disabled:text-slate-400"
+                  >
+                    <option value="">— Chưa chọn —</option>
+                    {contacts.map((c) => (
+                      <option key={c.id} value={c.id}>{c.name}</option>
+                    ))}
+                  </select>
+                  {!customer?.customer_id ? (
+                    <p className="mt-1 text-[10px] text-slate-400">
+                      Khách hàng này chưa liên kết hồ sơ CRM chính thức nên chưa có Người liên hệ để chọn.
+                    </p>
+                  ) : null}
                 </div>
 
                 {/* Decision maker — chỉ cần từ qualified trở đi */}

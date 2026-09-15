@@ -15,12 +15,11 @@ from typing import Any, Optional
 from supabase import Client
 
 from app.core.supabase_client import get_supabase_client
-from app.modules.all_platform.services.crm_permission_service import is_sale_member
 from app.modules.all_platform.services.supabase_quote_service import VN_TZ, _crm_instance
 from app.modules.all_platform.services.supabase_user_service import get_member_option_by_id
 
 TABLE = "projects"
-_COLUMNS = "id, project_code, name, customer_id, description, status, manager_id, team_id, created_by, created_at, updated_at, instance"
+_COLUMNS = "id, project_code, name, customer_id, primary_contact_id, description, status, manager_id, team_id, created_by, created_at, updated_at, instance"
 
 # "Mã dự án tự sinh backend theo YYYY-MM-MÃKH-STT" - xem migration
 # 119_crm_customers_customer_code.sql. MÃKH lấy từ crm_customers.customer_code
@@ -183,8 +182,8 @@ def _validate_manager_id(manager_id: Optional[str], current_manager_id: Optional
     # Backend validate THẬT (không chỉ lọc ở frontend) - dùng đúng is_sale_member()
     # đã có sẵn (crm_permission_service.py, dựa trên teams.team_type='sale',
     # migration 049), không tự đoán bằng text hiển thị.
-    if not is_sale_member(manager_id):
-        raise ValueError("Người phụ trách dự án phải là nhân viên Sale.")
+    if user.get("quoteBusinessRole") not in ("presale", "sale", "both"):
+        raise ValueError("Người phụ trách dự án phải có vai trò báo giá.")
 
 
 def _row_to_project(row: dict) -> dict:
@@ -193,6 +192,7 @@ def _row_to_project(row: dict) -> dict:
         "projectCode": row["project_code"],
         "name": row["name"],
         "customerId": row.get("customer_id"),
+        "primaryContactId": row.get("primary_contact_id"),
         "description": row.get("description"),
         "status": row.get("status") or "active",
         "managerId": row.get("manager_id"),
@@ -222,27 +222,39 @@ def get_project(project_id: str) -> dict:
     return _row_to_project(row)
 
 
+def _validate_primary_contact_id(supabase: Client, contact_id: str | None, customer_id: str) -> None:
+    if not contact_id:
+        return
+    res = supabase.table("crm_contacts").select("id, customer_id").eq("id", contact_id).eq("instance", _crm_instance()).maybe_single().execute()
+    if not res.data:
+        raise ValueError("Người liên hệ không tồn tại hoặc không thuộc tenant này.")
+    if res.data.get("customer_id") != customer_id:
+        raise ValueError("Người liên hệ không thuộc khách hàng của dự án này.")
+
 def create_project(payload: dict[str, Any], actor_id: Optional[str]) -> dict:
-    # "Mã dự án tự sinh hoàn toàn ở backend" - KHÔNG bao giờ đọc project_code
-    # từ payload nữa (dù frontend có lỡ gửi lên cũng bị bỏ qua hoàn toàn),
-    # tránh Sale tự dựng mã ở client như luồng cũ.
+    # "MÃ dự án tự sinh hoàn toàn ở backend" - KHÔNG bao giờ đọc project_code
+    # từ payload nữa (dù frontend có lỡ gửi lên cũng bị bỏ qua hoàn toàn),
+    # tránh Sale tự dựng mã ở client như luồng cũ.
     name = (payload.get("name") or "").strip()
     customer_id = payload.get("customer_id")
     if not name:
-        raise ValueError("Vui lòng nhập tên dự án.")
+        raise ValueError("Vui lòng nhập tên dự án.")
     if not customer_id:
-        raise ValueError("Dự án phải thuộc đúng 1 khách hàng.")
+        raise ValueError("Dự án phải thuộc đúng 1 khách hàng.")
 
     status = payload.get("status") or "active"
     if status not in ("planning", "active", "completed", "cancelled"):
-        raise ValueError(f"status không hợp lệ: {status!r}")
+        raise ValueError(f"status không hợp lệ: {status!r}")
     _validate_manager_id(payload.get("manager_id"))
 
     supabase: Client = get_supabase_client()
+    _validate_primary_contact_id(supabase, payload.get("primary_contact_id"), customer_id)
+
     prefix, _customer_code = _generate_project_code_prefix(customer_id)
     row_base = {
         "name": name,
         "customer_id": customer_id,
+        "primary_contact_id": payload.get("primary_contact_id"),
         "description": payload.get("description"),
         "status": status,
         "manager_id": payload.get("manager_id"),
@@ -250,9 +262,9 @@ def create_project(payload: dict[str, Any], actor_id: Optional[str]) -> dict:
         "created_by": actor_id,
         "instance": _crm_instance(),
     }
-    # Atomic qua retry: tính STT tiếp theo, thử insert, nếu 2 người tạo cùng
-    # lúc đụng đúng 1 STT (unique index projects_project_code_unique, migration
-    # 097) thì tính lại STT mới và thử lại - tối đa 5 lần.
+    # Atomic qua retry: tính STT tiếp theo, thử insert, nếu 2 người tạo cùng
+    # lúc đụng đúng 1 STT (unique index projects_project_code_unique, migration
+    # 097) thì tính lại STT mới và thử lại - tối đa 5 lần.
     last_exc: Exception | None = None
     for attempt in range(5):
         seq = _next_project_seq(f"{prefix}-")
@@ -265,14 +277,14 @@ def create_project(payload: dict[str, Any], actor_id: Optional[str]) -> dict:
             if _is_unique_violation(exc, "project_code") and attempt < 4:
                 continue
             raise
-    raise last_exc or ValueError("Không tạo được mã dự án, vui lòng thử lại.")
+    raise last_exc or ValueError("Không tạo được mã dự án, vui lòng thử lại.")
 
 
 def _generate_project_code_prefix(customer_id: str) -> tuple[str, str]:
-    """Trả về (prefix, customer_code) - prefix là "YYYY-MM-MÃKH" (chưa có hậu
-    tố STT), dùng làm tiền tố truyền vào _next_project_seq(). Gọi
-    _resolve_customer_code() (CÓ persist, khác preview_project_code() ở trên
-    chỉ tính hypothetical không lưu gì)."""
+    """Trả về (prefix, customer_code) - prefix là "YYYY-MM-MÃKH" (chưa có hậu
+    tố STT), dùng làm tiền tố truyền vào _next_project_seq(). Gọi
+    _resolve_customer_code() (CÓ persist, khác preview_project_code() ở trên
+    chỉ tính hypothetical không lưu gì)."""
     year_month = datetime.now(VN_TZ).strftime("%Y-%m")
     customer_code = _resolve_customer_code(customer_id)
     return f"{year_month}-{customer_code}", customer_code
@@ -280,35 +292,43 @@ def _generate_project_code_prefix(customer_id: str) -> tuple[str, str]:
 
 def update_project(project_id: str, payload: dict[str, Any], actor_id: Optional[str]) -> dict:
     supabase: Client = get_supabase_client()
+
+    current = (
+        supabase.table(TABLE).select("customer_id, manager_id").eq("id", project_id).eq("instance", _crm_instance()).maybe_single().execute()
+    )
+    if not current.data:
+        raise ValueError("Không tìm thấy dự án.")
+
     update_row: dict[str, Any] = {"updated_at": "now()"}
     if "name" in payload:
         name = (payload.get("name") or "").strip()
         if not name:
-            raise ValueError("Tên dự án không được để trống.")
+            raise ValueError("Tên dự án không được để trống.")
         update_row["name"] = name
     if "description" in payload:
         update_row["description"] = payload.get("description")
     if "status" in payload:
         status = payload.get("status")
         if status not in ("planning", "active", "completed", "cancelled"):
-            raise ValueError(f"status không hợp lệ: {status!r}")
+            raise ValueError(f"status không hợp lệ: {status!r}")
         update_row["status"] = status
     if "manager_id" in payload:
-        current = (
-            supabase.table(TABLE).select("manager_id").eq("id", project_id).eq("instance", _crm_instance()).maybe_single().execute()
-        )
-        current_manager_id = (current.data or {}).get("manager_id") if current and current.data else None
+        current_manager_id = current.data.get("manager_id")
         _validate_manager_id(payload.get("manager_id"), current_manager_id=current_manager_id)
         update_row["manager_id"] = payload.get("manager_id")
     if "team_id" in payload:
         update_row["team_id"] = payload.get("team_id")
+    if "primary_contact_id" in payload:
+        _validate_primary_contact_id(supabase, payload.get("primary_contact_id"), current.data["customer_id"])
+        update_row["primary_contact_id"] = payload.get("primary_contact_id")
+
     # customer_id/project_code KHONG cho sua sau khi tao - doi khach hang cua
     # 1 du an da co Co hoi/Quote gan vao se lam sai toan bo du lieu da lien
     # ket (dung nguyen tac "Khong cho chon Project thuoc khach hang khac").
 
     result = supabase.table(TABLE).update(update_row).eq("id", project_id).eq("instance", _crm_instance()).execute()
     if not result.data:
-        raise ValueError("Không tìm thấy dự án.")
+        raise ValueError("Không tìm thấy dự án để cập nhật.")
     return _row_to_project(result.data[0])
 
 
