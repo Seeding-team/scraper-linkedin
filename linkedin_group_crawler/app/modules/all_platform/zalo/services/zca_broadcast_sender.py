@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 import asyncio
+import mimetypes
 import os
 import tempfile
 
+import httpx
 from loguru import logger
 
 from app.modules.all_platform.zalo.services.supabase_service import download_asset_bytes, resolve_thread_type
@@ -15,12 +17,25 @@ def _uploaded_assets(message: Dict[str, Any]) -> List[Dict[str, Any]]:
     return [
         asset
         for asset in (message.get("assets") or [])
-        if asset.get("status") == "uploaded" and asset.get("storage_path")
+        if asset.get("status") == "uploaded" and (asset.get("storage_path") or asset.get("storage_url"))
     ]
 
 
 async def _asset_to_temp_file(asset: Dict[str, Any]) -> str:
-    content, _content_type, ext = await download_asset_bytes(asset["storage_path"])
+    """Tải bytes ảnh về file tạm — asset đã lưu Library dùng `storage_path` (Supabase
+    Storage nội bộ); asset "gõ trực tiếp" (Zalo tập trung, không qua Library) chỉ có
+    `storage_url` (URL công khai bất kỳ) — tải thẳng qua httpx thay vì Supabase Storage API."""
+    storage_path = asset.get("storage_path")
+    if storage_path:
+        content, _content_type, ext = await download_asset_bytes(storage_path)
+    else:
+        url = asset["storage_url"]
+        async with httpx.AsyncClient(timeout=60, follow_redirects=True) as client:
+            response = await client.get(url)
+        response.raise_for_status()
+        content_type = response.headers.get("content-type", "").split(";")[0].strip() or "application/octet-stream"
+        ext = mimetypes.guess_extension(content_type) or ".jpg"
+        content = response.content
     fd, path = tempfile.mkstemp(prefix="zalo-zca-send-", suffix=ext or ".jpg")
     with os.fdopen(fd, "wb") as tmp:
         tmp.write(content)

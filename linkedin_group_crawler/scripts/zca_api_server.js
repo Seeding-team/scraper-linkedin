@@ -13,7 +13,10 @@
  *
  * Commands: list-groups | list-friends | group-history | user-history |
  *           group-related-ids | send-message | send-images | remove-unread |
- *           find-user-by-phone | find-user-by-username | first-time-sync
+ *           find-user-by-phone | find-user-by-username | first-time-sync |
+ *           recall-message | friend-status | send-friend-request |
+ *           accept-friend-request | group-members-full | stickers-detail |
+ *           send-sticker (Zalo tập trung — port từ ZALO_CENTRALIZED_MODULE_GUIDE.md)
  *
  * Server tự thoát sau MAX_IDLE_MS ms không có request (mặc định 10 phút).
  * Python pool sẽ restart lại khi cần.
@@ -381,12 +384,18 @@ async function cmdGroupRelatedIds(api, args) {
   return { ok: true, ids, groups };
 }
 
-async function cmdSendMessage(api, args) {
+async function cmdSendMessage(api, args, payload) {
   const { "thread-id": threadId, type = "1", text = "" } = args;
   if (!threadId) throw new Error("Missing --thread-id");
   const { ThreadType } = require("zca-js");
   const threadType = Number(type) === 0 ? ThreadType.User : ThreadType.Group;
-  const response = await api.sendMessage({ msg: text }, String(threadId), threadType);
+  // mentions: [{pos,uid,len}] cho @tag/@All — xem Mục 3.3.5 + Mục 4.6 (mentionUtils)
+  // của ZALO_CENTRALIZED_MODULE_GUIDE.md. Đến từ payload (không phải args) vì là mảng object.
+  const mentions = (payload || {}).mentions;
+  const messageContent = Array.isArray(mentions) && mentions.length
+    ? { msg: text, mentions }
+    : { msg: text };
+  const response = await api.sendMessage(messageContent, String(threadId), threadType);
   // QUAN TRỌNG: key PHẢI là "response" (khớp với zca_api_bridge.js's
   // `emitAndExit({ ok: true, response })`) — Python (_persist_outgoing_message
   // -> _build_outgoing_message_id) luôn đọc result.get("response") để lấy
@@ -422,6 +431,114 @@ async function cmdFindUserByUsername(api, args) {
   if (!username) throw new Error("Missing --username");
   const result = await api.findUserByUsername(String(username));
   return { ok: true, user: result };
+}
+
+// ── Zalo tập trung: recall/mentions/friend-actions/group-scan (port guide) ────
+
+async function cmdRecallMessage(api, args, payload) {
+  const { "thread-id": threadId, type = "1" } = args;
+  const { msg_id: msgId, cli_msg_id: cliMsgId } = payload || {};
+  if (!threadId) throw new Error("Missing --thread-id");
+  if (!msgId || !cliMsgId) throw new Error("Missing msg_id/cli_msg_id in payload");
+  const { ThreadType } = require("zca-js");
+  const threadType = Number(type) === 0 ? ThreadType.User : ThreadType.Group;
+  const response = await api.undo({ msgId, cliMsgId }, String(threadId), threadType);
+  return { ok: true, response };
+}
+
+async function cmdFriendStatus(api, args) {
+  const { uid } = args;
+  if (!uid) throw new Error("Missing --uid");
+  const response = await api.getFriendRequestStatus(String(uid));
+  // is_requested=true: MÌNH đã gửi lời mời (chờ họ chấp nhận).
+  // is_requesting=true: HỌ đang gửi lời mời cho MÌNH (chờ mình chấp nhận).
+  // Cảnh báo Mục 11.1 guide: rất dễ map ngược 2 field này — KHÔNG đảo tên khi dùng ở Python/FE.
+  return { ok: true, response };
+}
+
+async function cmdSendFriendRequest(api, args, payload) {
+  const { uid } = args;
+  const msg = (payload || {}).msg || "";
+  if (!uid) throw new Error("Missing --uid");
+  const response = await api.sendFriendRequest(String(msg), String(uid));
+  return { ok: true, response };
+}
+
+async function cmdAcceptFriendRequest(api, args) {
+  const { uid } = args;
+  if (!uid) throw new Error("Missing --uid");
+  const response = await api.acceptFriendRequest(String(uid));
+  return { ok: true, response };
+}
+
+async function cmdGroupMembersFull(api, args) {
+  const { "group-id": groupId } = args;
+  if (!groupId) throw new Error("Missing --group-id");
+  const infoResponse = await api.getGroupInfo(String(groupId));
+  const info = (infoResponse.gridInfoMap || {})[String(groupId)] || {};
+  // getGroupInfo đã trả memberIds ĐẦY ĐỦ (không cap 155-200 — cap đó chỉ ở UI Zalo),
+  // currentMems có sẵn role (admin/member) cho từng id.
+  const memberIds = Array.from(new Set(info.memberIds || (info.currentMems || []).map(m => m.id))).filter(Boolean);
+  const roleById = new Map((info.currentMems || []).map(m => [String(m.id), m]));
+
+  const profiles = [];
+  for (let i = 0; i < memberIds.length; i += 50) {
+    const chunk = memberIds.slice(i, i + 50);
+    try {
+      const resp = await api.getGroupMembersInfo(chunk);
+      const map = resp.profiles || {};
+      for (const id of chunk) {
+        const p = map[id];
+        const roleInfo = roleById.get(String(id));
+        profiles.push({
+          uid: String(id),
+          display_name: p ? (p.zaloName || p.displayName || String(id)) : String(id),
+          avatar_url: p ? p.avatar : null,
+          role: roleInfo ? (roleInfo.isAdmin ? "admin" : "member") : "member",
+        });
+      }
+    } catch (err) {
+      for (const id of chunk) profiles.push({ uid: String(id), display_name: String(id), avatar_url: null, role: "member" });
+    }
+  }
+  return { ok: true, group_id: String(groupId), total_member: info.totalMember || memberIds.length, members: profiles };
+}
+
+async function cmdStickersDetail(api, args) {
+  const { ids } = args;
+  if (!ids) throw new Error("Missing --ids");
+  const idList = String(ids).split(",").map(s => Number(s.trim())).filter(n => Number.isFinite(n));
+  const response = await api.getStickersDetail(idList);
+  return { ok: true, stickers: response };
+}
+
+async function cmdInviteToGroup(api, args) {
+  // "add thẳng nếu đã bạn bè, invite nếu quen biết" (Mục 3.3.5 guide) — zca-js expose
+  // 2 API khác nhau tuỳ quan hệ; thử addUserToGroup (thêm thẳng) trước, fallback
+  // inviteUserToGroups (gửi lời mời) nếu bị từ chối.
+  const { uid, "group-id": groupId } = args;
+  if (!uid) throw new Error("Missing --uid");
+  if (!groupId) throw new Error("Missing --group-id");
+  try {
+    const response = await api.addUserToGroup(String(uid), String(groupId));
+    const failed = Array.isArray(response.errorMembers) && response.errorMembers.includes(String(uid));
+    if (!failed) return { ok: true, mode: "add", response };
+  } catch (_) {
+    // rơi qua invite bên dưới
+  }
+  const response = await api.inviteUserToGroups(String(uid), String(groupId));
+  return { ok: true, mode: "invite", response };
+}
+
+async function cmdSendSticker(api, args, payload) {
+  const { "thread-id": threadId, type = "1" } = args;
+  const { id, cateId, type: stickerType } = payload || {};
+  if (!threadId) throw new Error("Missing --thread-id");
+  if (id == null || cateId == null) throw new Error("Missing id/cateId in payload");
+  const { ThreadType } = require("zca-js");
+  const threadType = Number(type) === 0 ? ThreadType.User : ThreadType.Group;
+  const response = await api.sendSticker({ id: Number(id), cateId: Number(cateId), type: Number(stickerType || 1) }, String(threadId), threadType);
+  return { ok: true, response };
 }
 
 async function cmdFirstTimeSync(api, args) {
@@ -485,6 +602,14 @@ const COMMANDS = {
   "find-user-by-phone": cmdFindUserByPhone,
   "find-user-by-username": cmdFindUserByUsername,
   "first-time-sync": cmdFirstTimeSync,
+  "recall-message": cmdRecallMessage,
+  "friend-status": cmdFriendStatus,
+  "send-friend-request": cmdSendFriendRequest,
+  "accept-friend-request": cmdAcceptFriendRequest,
+  "group-members-full": cmdGroupMembersFull,
+  "stickers-detail": cmdStickersDetail,
+  "send-sticker": cmdSendSticker,
+  "invite-to-group": cmdInviteToGroup,
   // sync-old-messages: complex (needs listener), keep using spawn-per-call via zca_api_bridge.js
 };
 

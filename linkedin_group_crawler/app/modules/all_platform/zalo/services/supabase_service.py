@@ -229,6 +229,13 @@ def _listener_message_payload(user_id: str, group_id: str, group_name: str, msg:
         "is_sent": msg.is_sent,
         "is_deleted": msg.is_deleted,
         "updated_at": datetime.utcnow().isoformat(),
+        # Zalo tập trung (Mục 7.1 guide) — ghi qua RPC fn_bulk_save_zalo_messages
+        # (migration 128) hoặc REST fallback trực tiếp (cột đã có từ migration 127).
+        "ts": msg.ts,
+        "raw_content": msg.raw_content,
+        "mentions": [m.model_dump() for m in msg.mentions] if msg.mentions else None,
+        "cli_msg_id": msg.cli_msg_id,
+        "msg_kind": msg.msg_kind,
     }
 
 
@@ -250,6 +257,11 @@ def _message_from_row(row: Dict[str, Any]) -> Message:
         image_urls=list(dict.fromkeys(image_urls)),
         is_deleted=bool(row.get("is_deleted")),
         is_sent=bool(row.get("is_sent")),
+        ts=row.get("ts"),
+        cli_msg_id=row.get("cli_msg_id") or None,
+        mentions=row.get("mentions") or [],
+        msg_kind=row.get("msg_kind") or None,
+        raw_content=row.get("raw_content") or None,
     )
 
 
@@ -2263,5 +2275,57 @@ async def mark_conversation_as_read(user_id: str, group_id: str) -> None:
             "unread_count": 0,
             "updated_at": datetime.utcnow().isoformat(),
         },
+    )
+
+
+# ── Zalo tập trung: RBAC theo tài khoản (zalo_account_assignments) ──────────
+# Thay cho "staff_zalo_assignments" của ZALO_CENTRALIZED_MODULE_GUIDE.md —
+# khoá theo app_users.id vì dùng chung SSO app chính, không có bảng staff riêng.
+
+async def list_account_assignments(account_id: str) -> List[Dict[str, Any]]:
+    if not is_supabase_configured():
+        return []
+    return await _rest(
+        "GET",
+        "zalo_account_assignments",
+        params={"account_id": f"eq.{account_id}", "select": "*", "order": "created_at.asc"},
+    ) or []
+
+
+async def upsert_account_assignment(
+    account_id: str,
+    app_user_id: str,
+    *,
+    can_view: bool = True,
+    can_send: bool = False,
+    can_broadcast: bool = False,
+) -> Dict[str, Any]:
+    if not is_supabase_configured():
+        raise SupabaseNotConfigured("SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required")
+    now = datetime.utcnow().isoformat()
+    result = await _rest(
+        "POST",
+        "zalo_account_assignments",
+        params={"on_conflict": "app_user_id,account_id"},
+        json={
+            "account_id": account_id,
+            "app_user_id": app_user_id,
+            "can_view": can_view,
+            "can_send": can_send,
+            "can_broadcast": can_broadcast,
+            "updated_at": now,
+        },
+        prefer="resolution=merge-duplicates,return=representation",
+    )
+    return (result or [{}])[0] if isinstance(result, list) else (result or {})
+
+
+async def delete_account_assignment(account_id: str, app_user_id: str) -> None:
+    if not is_supabase_configured():
+        return
+    await _rest(
+        "DELETE",
+        "zalo_account_assignments",
+        params={"account_id": f"eq.{account_id}", "app_user_id": f"eq.{app_user_id}"},
     )
 

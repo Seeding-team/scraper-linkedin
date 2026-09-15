@@ -10,8 +10,7 @@ from app.modules.all_platform.auth_deps import get_authenticated_caller_email
 from app.modules.all_platform.zalo.api.security import verify_zalo_api_key
 from app.modules.all_platform.zalo.services.zca_auth_store import delete_zca_auth, list_zca_auth_users, load_zca_auth
 from app.modules.all_platform.zalo.services.zca_persistent_listener import get_listener_status, restart_listener, stop_listener
-from app.modules.all_platform.zalo.services.session_store import delete_sessions_for_user, get_profile_lock
-from app.modules.all_platform.zalo.crawler.browser import clear_user_profile_data
+from app.modules.all_platform.zalo.services.session_store import delete_sessions_for_user
 from app.modules.all_platform.zalo.services.supabase_service import (
     SupabaseNotConfigured,
     delete_zalo_account,
@@ -24,6 +23,9 @@ from app.modules.all_platform.zalo.services.supabase_service import (
     upsert_zalo_user,
     hard_delete_zalo_account_data,
     get_zalo_account_by_id,
+    list_account_assignments,
+    upsert_account_assignment,
+    delete_account_assignment,
 )
 
 
@@ -349,30 +351,22 @@ async def remove_account(
     await stop_listener(safe_account_id)
     
     sessions_removed = 0
-    profile_cleared = False
-    
+
     if delete_auth:
         await delete_zca_auth(safe_account_id)
         sessions_removed = await delete_sessions_for_user(safe_account_id)
-        try:
-            profile_lock = await get_profile_lock(safe_account_id)
-            async with profile_lock:
-                profile_cleared = clear_user_profile_data(safe_account_id)
-        except Exception as exc:
-            logger.warning(f"Failed to clear profile data for user={safe_account_id} after deletion: {exc}")
-        
+
         try:
             await hard_delete_zalo_account_data(safe_account_id)
         except Exception as exc:
             logger.warning(f"Failed to hard delete Supabase data for user={safe_account_id}: {exc}")
-            
+
     await delete_zalo_account(safe_account_id)
     return {
         "account_id": safe_account_id,
         "deleted": True,
         "auth_deleted": delete_auth,
         "sessions_removed": sessions_removed,
-        "profile_cleared": profile_cleared,
     }
 
 
@@ -384,6 +378,77 @@ async def restart_account_listener(account_id: str):
         return await restart_listener(safe_account_id)
     except RuntimeError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
+
+
+# ── RBAC theo tài khoản (zalo_account_assignments) — Zalo tập trung ─────────
+# Tương đương staff_zalo_assignments trong ZALO_CENTRALIZED_MODULE_GUIDE.md,
+# khoá theo app_users vì dùng chung SSO app chính (không có bảng staff riêng).
+
+class AccountAssignmentUpsert(BaseModel):
+    app_user_id: str
+    can_view: bool = True
+    can_send: bool = False
+    can_broadcast: bool = False
+
+
+@router.get("/{account_id}/assignments")
+async def list_assignments(
+    account_id: str,
+    caller_email: Optional[str] = Depends(get_authenticated_caller_email),
+):
+    safe_account_id = _normalize_id(account_id)
+    existing = await get_zalo_account_by_id(safe_account_id)
+    await _require_admin_leader_or_self(
+        caller_email,
+        (existing or {}).get("id_member") or (existing or {}).get("owner_id"),
+    )
+    try:
+        return {"account_id": safe_account_id, "assignments": await list_account_assignments(safe_account_id)}
+    except SupabaseNotConfigured as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+
+
+@router.post("/{account_id}/assignments")
+async def upsert_assignment(
+    account_id: str,
+    body: AccountAssignmentUpsert,
+    caller_email: Optional[str] = Depends(get_authenticated_caller_email),
+):
+    safe_account_id = _normalize_id(account_id)
+    existing = await get_zalo_account_by_id(safe_account_id)
+    await _require_admin_leader_or_self(
+        caller_email,
+        (existing or {}).get("id_member") or (existing or {}).get("owner_id"),
+    )
+    try:
+        row = await upsert_account_assignment(
+            safe_account_id,
+            body.app_user_id,
+            can_view=body.can_view,
+            can_send=body.can_send,
+            can_broadcast=body.can_broadcast,
+        )
+    except SupabaseNotConfigured as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"account_id": safe_account_id, "assignment": row}
+
+
+@router.delete("/{account_id}/assignments/{app_user_id}")
+async def remove_assignment(
+    account_id: str,
+    app_user_id: str,
+    caller_email: Optional[str] = Depends(get_authenticated_caller_email),
+):
+    safe_account_id = _normalize_id(account_id)
+    existing = await get_zalo_account_by_id(safe_account_id)
+    await _require_admin_leader_or_self(
+        caller_email,
+        (existing or {}).get("id_member") or (existing or {}).get("owner_id"),
+    )
+    await delete_account_assignment(safe_account_id, app_user_id)
+    return {"account_id": safe_account_id, "app_user_id": app_user_id, "deleted": True}
 
 
 @router.get("/inbox-report")

@@ -1,6 +1,12 @@
 
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
+
+
+class ZaloMentionOut(BaseModel):
+    pos: int
+    uid: str
+    len: int
 
 
 class ZaloMessageAsset(BaseModel):
@@ -31,6 +37,12 @@ class ZaloLibraryMessage(BaseModel):
     assets: List[ZaloMessageAsset] = Field(default_factory=list)
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
+    # Zalo tập trung (Mục 7.1 guide) — recall/mentions/forward-engine watermark.
+    ts: Optional[int] = None
+    cli_msg_id: Optional[str] = None
+    mentions: List[ZaloMentionOut] = Field(default_factory=list)
+    msg_kind: Optional[str] = None
+    raw_content: Optional[Dict[str, Any]] = None
 
 
 class ZaloLibraryMessageCreate(BaseModel):

@@ -1,17 +1,8 @@
-from typing import Optional
 from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    google_credentials_path: str = Field(
-        default="/app/credentials/service_account.json",
-        validation_alias=AliasChoices("ZALO_GOOGLE_CREDENTIALS_PATH", "GOOGLE_CREDENTIALS_PATH"),
-    )
-    default_sheet_id: str = Field(
-        default="",
-        validation_alias=AliasChoices("ZALO_DEFAULT_SHEET_ID", "DEFAULT_SHEET_ID"),
-    )
     cors_origins: str = Field(
         default="http://localhost:3000",
         validation_alias=AliasChoices("ZALO_CORS_ORIGINS", "CORS_ORIGINS"),
@@ -20,54 +11,9 @@ class Settings(BaseSettings):
         default=8,
         validation_alias=AliasChoices("ZALO_SESSION_TTL_HOURS", "SESSION_TTL_HOURS"),
     )
-    debug_artifacts_dir: str = Field(
-        default="artifacts/debug",
-        validation_alias=AliasChoices("ZALO_DEBUG_ARTIFACTS_DIR", "DEBUG_ARTIFACTS_DIR"),
-    )
     zca_auth_store_dir: str = Field(
         default="artifacts/zca-auth",
         validation_alias=AliasChoices("ZALO_ZCA_AUTH_STORE_DIR", "ZCA_AUTH_STORE_DIR"),
-    )
-    browser_headless: bool = Field(
-        default=True,
-        validation_alias=AliasChoices("ZALO_BROWSER_HEADLESS", "BROWSER_HEADLESS"),
-    )
-    browser_stealth: bool = Field(
-        default=True,
-        validation_alias=AliasChoices("ZALO_BROWSER_STEALTH", "BROWSER_STEALTH"),
-    )
-    browser_persistent_profile: bool = Field(
-        default=False,
-        validation_alias=AliasChoices(
-            "ZALO_BROWSER_PERSISTENT_PROFILE",
-            "BROWSER_PERSISTENT_PROFILE",
-        ),
-    )
-    browser_user_data_dir: str = Field(
-        default="artifacts/chromium-profile",
-        validation_alias=AliasChoices("ZALO_BROWSER_USER_DATA_DIR", "BROWSER_USER_DATA_DIR"),
-    )
-    browser_kill_stale_processes: bool = Field(
-        default=True,
-        validation_alias=AliasChoices(
-            "ZALO_BROWSER_KILL_STALE_PROCESSES",
-            "BROWSER_KILL_STALE_PROCESSES",
-        ),
-    )
-    browser_executable_path: Optional[str] = Field(
-        default=None,
-        validation_alias=AliasChoices("ZALO_BROWSER_EXECUTABLE_PATH", "BROWSER_EXECUTABLE_PATH"),
-    )
-    browser_remote_viewer_url: Optional[str] = Field(
-        default=None,
-        validation_alias=AliasChoices(
-            "ZALO_BROWSER_REMOTE_VIEWER_URL",
-            "BROWSER_REMOTE_VIEWER_URL",
-        ),
-    )
-    qr_login_mode: str = Field(
-        default="web",
-        validation_alias=AliasChoices("ZALO_QR_LOGIN_MODE", "QR_LOGIN_MODE"),
     )
     supabase_url: str = Field(
         default="",
@@ -89,20 +35,9 @@ class Settings(BaseSettings):
         default=True,
         validation_alias=AliasChoices("ZALO_SUPABASE_SSL_VERIFY", "SUPABASE_SSL_VERIFY"),
     )
-    write_google_sheet: bool = Field(
-        default=False,
-        validation_alias=AliasChoices("ZALO_WRITE_GOOGLE_SHEET", "WRITE_GOOGLE_SHEET"),
-    )
     broadcast_delay_seconds: float = Field(
         default=3.0,
         validation_alias=AliasChoices("ZALO_BROADCAST_DELAY_SECONDS", "BROADCAST_DELAY_SECONDS"),
-    )
-    broadcast_composer_timeout_seconds: int = Field(
-        default=60,
-        validation_alias=AliasChoices(
-            "ZALO_BROADCAST_COMPOSER_TIMEOUT_SECONDS",
-            "BROADCAST_COMPOSER_TIMEOUT_SECONDS",
-        ),
     )
     asset_retention_days: int = Field(
         default=7,
@@ -119,6 +54,22 @@ class Settings(BaseSettings):
     zca_startup_sync_enabled: bool = Field(
         default=False,
         validation_alias=AliasChoices("ZALO_ZCA_STARTUP_SYNC_ENABLED", "ZCA_STARTUP_SYNC_ENABLED"),
+    )
+
+    # Web Push (ZALO_CENTRALIZED_MODULE_GUIDE.md Mục 4.7/11.10) — public key PHẢI
+    # được đọc runtime qua API (routes/push.py), KHÔNG được bake vào NEXT_PUBLIC_*
+    # lúc build frontend. Private key/subject chỉ backend dùng để ký VAPID JWT.
+    vapid_public_key: str = Field(
+        default="",
+        validation_alias=AliasChoices("VAPID_PUBLIC_KEY", "ZALO_VAPID_PUBLIC_KEY"),
+    )
+    vapid_private_key: str = Field(
+        default="",
+        validation_alias=AliasChoices("VAPID_PRIVATE_KEY", "ZALO_VAPID_PRIVATE_KEY"),
+    )
+    vapid_subject: str = Field(
+        default="mailto:admin@markeeai.com",
+        validation_alias=AliasChoices("VAPID_SUBJECT", "ZALO_VAPID_SUBJECT"),
     )
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")

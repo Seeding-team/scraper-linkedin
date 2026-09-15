@@ -14,4 +14,5 @@ class Group(BaseModel):
     unread_count: int = 0
     is_pinned: bool = False
     is_friend: bool = False  # True nếu là chat cá nhân (DM) thay vì group
+    thread_type: str = "group"  # "user" | "group" — Zalo tập trung, dùng bởi forward engine
 

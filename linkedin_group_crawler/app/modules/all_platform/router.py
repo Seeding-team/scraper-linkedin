@@ -369,10 +369,6 @@ all_platform_router.include_router(
 
 # ── Zalo ───────────────────────────────────────────────────────────────────────
 from app.modules.all_platform.zalo.api.routes.auth import router as zalo_auth_router
-from app.modules.all_platform.zalo.api.routes.crawler import router as zalo_crawl_router
-from app.modules.all_platform.zalo.api.routes.groups import router as zalo_groups_router
-from app.modules.all_platform.zalo.api.routes.jobs import router as zalo_jobs_router
-from app.modules.all_platform.zalo.api.routes.library import router as zalo_library_router
 from app.modules.all_platform.zalo.api.routes.broadcasts import router as zalo_broadcasts_router
 from app.modules.all_platform.zalo.api.routes.maintenance import router as zalo_maintenance_router
 from app.modules.all_platform.zalo.api.routes.listener import router as zalo_listener_router
@@ -380,13 +376,16 @@ from app.modules.all_platform.zalo.api.routes.accounts import router as zalo_acc
 from app.modules.all_platform.zalo.api.routes.conversations import router as zalo_conversations_router
 from app.modules.all_platform.zalo.api.routes.events import router as zalo_events_router
 from app.modules.all_platform.zalo.api.routes.inbox_share import router as zalo_inbox_share_router
-from app.modules.all_platform.zalo.api.proxy import router as zalo_proxy_router
+from app.modules.all_platform.zalo.api.routes.forward_rules import router as zalo_forward_rules_router
+from app.modules.all_platform.zalo.api.routes.bulk_jobs import router as zalo_bulk_jobs_router
+from app.modules.all_platform.zalo.api.routes.campaigns import router as zalo_campaigns_router
+from app.modules.all_platform.zalo.api.routes.push import router as zalo_push_router
+# Zalo tập trung (port ZALO_CENTRALIZED_MODULE_GUIDE.md): crawler/groups/jobs/library/proxy
+# routers (luồng Playwright/QR/crawl-job/Google Sheet cũ) đã bỏ mount tại đây — file gốc
+# xóa hẳn ở bước dọn dẹp cuối cùng sau khi broadcasts.py được viết lại (không còn phụ
+# thuộc crawler/broadcast_sender.py Playwright).
 
 all_platform_router.include_router(zalo_auth_router, prefix="/zalo", tags=["Zalo Auth"])
-all_platform_router.include_router(zalo_crawl_router, prefix="/zalo", tags=["Zalo Crawl"])
-all_platform_router.include_router(zalo_groups_router, prefix="/zalo", tags=["Zalo Groups"])
-all_platform_router.include_router(zalo_jobs_router, prefix="/zalo", tags=["Zalo Jobs"])
-all_platform_router.include_router(zalo_library_router, prefix="/zalo", tags=["Zalo Library"])
 all_platform_router.include_router(zalo_broadcasts_router, prefix="/zalo", tags=["Zalo Broadcasts"])
 all_platform_router.include_router(zalo_maintenance_router, prefix="/zalo", tags=["Zalo Maintenance"])
 all_platform_router.include_router(zalo_listener_router, prefix="/zalo", tags=["Zalo Listener"])
@@ -394,7 +393,10 @@ all_platform_router.include_router(zalo_accounts_router, prefix="/zalo", tags=["
 all_platform_router.include_router(zalo_conversations_router, prefix="/zalo", tags=["Zalo Conversations"])
 all_platform_router.include_router(zalo_events_router, prefix="/zalo", tags=["Zalo Events"])
 all_platform_router.include_router(zalo_inbox_share_router, prefix="/zalo", tags=["Zalo Inbox Share"])
-all_platform_router.include_router(zalo_proxy_router, prefix="/zalo", tags=["Zalo Proxy"])
+all_platform_router.include_router(zalo_forward_rules_router, prefix="/zalo", tags=["Zalo Forward Rules"])
+all_platform_router.include_router(zalo_bulk_jobs_router, prefix="/zalo", tags=["Zalo Bulk Jobs"])
+all_platform_router.include_router(zalo_campaigns_router, prefix="/zalo", tags=["Zalo Campaigns"])
+all_platform_router.include_router(zalo_push_router, prefix="/zalo", tags=["Zalo Push"])
 
 # ── Scheduled Comments ─────────────────────────────────────────────────────────
 all_platform_router.include_router(

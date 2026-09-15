@@ -239,6 +239,13 @@ export interface ZaloLibraryMessage {
   is_deleted: boolean;
   role?: "leader" | "staff" | "client" | string | null;
   assets: ZaloStoredAsset[];
+  // Zalo tập trung (Mục 7.1 guide) — trả về bởi fn_get_zalo_conversation_messages
+  // (migration 128). cli_msg_id bắt buộc để thu hồi tin (chỉ có ở tin mình gửi).
+  ts?: number | null;
+  cli_msg_id?: string | null;
+  mentions?: ZaloMention[] | null;
+  msg_kind?: string | null;
+  raw_content?: Record<string, unknown> | null;
 }
 
 export type ZaloLibraryContentKind = "all" | "text" | "image";
@@ -346,7 +353,11 @@ export interface ZaloBroadcastTarget {
 
 export interface ZaloBroadcastRequest {
   user_id?: string;
-  message_ids: string[];
+  /** Luồng cũ: chọn tin đã lưu Library. Bỏ trống nếu dùng text/image_urls bên dưới. */
+  message_ids?: string[];
+  /** Luồng mới (Zalo tập trung) — gõ trực tiếp, không cần lưu Library trước. */
+  text?: string;
+  image_urls?: string[];
   targets: ZaloBroadcastTarget[];
   content_mode: ZaloBroadcastContentMode;
   text_overrides?: Record<string, string>;
@@ -379,4 +390,222 @@ export interface ZaloBroadcastStatusResponse {
   targets: Record<string, unknown>[];
   items: Record<string, unknown>[];
   logs: Record<string, unknown>[];
+}
+
+// ── Zalo tập trung (port ZALO_CENTRALIZED_MODULE_GUIDE.md) ─────────────────────
+
+export interface ZaloMention {
+  pos: number;
+  uid: string;
+  len: number;
+}
+
+export interface ZaloRecallMessageRequest {
+  msg_id: string;
+  cli_msg_id: string;
+}
+
+export interface ZaloFriendStatusResponse {
+  uid: string;
+  /** true = MÌNH đã gửi lời mời (chờ họ chấp nhận). KHÔNG đảo nghĩa field này. */
+  is_requested?: number | boolean;
+  /** true = HỌ đang gửi lời mời cho MÌNH (chờ mình chấp nhận). KHÔNG đảo nghĩa field này. */
+  is_requesting?: number | boolean;
+  is_friend?: number | boolean;
+  [key: string]: unknown;
+}
+
+export interface ZaloGroupMember {
+  uid: string;
+  display_name: string;
+  avatar_url?: string | null;
+  role: "admin" | "member" | string;
+}
+
+export interface ZaloGroupMembersResponse {
+  group_id: string;
+  total_member: number;
+  members: ZaloGroupMember[];
+}
+
+export interface ZaloStickerDetail {
+  id: number;
+  cateId: number;
+  [key: string]: unknown;
+}
+
+export interface ZaloAccountAssignment {
+  id: number;
+  app_user_id: string;
+  account_id: string;
+  can_view: boolean;
+  can_send: boolean;
+  can_broadcast: boolean;
+}
+
+// Forward rules
+
+export interface ZaloForwardTarget {
+  id?: number;
+  target_thread_id: string;
+  target_thread_name?: string | null;
+  is_enabled?: boolean;
+}
+
+export interface ZaloForwardRule {
+  id: number;
+  account_id: string;
+  name?: string | null;
+  master_thread_id: string;
+  master_thread_name?: string | null;
+  is_enabled: boolean;
+  created_at: string;
+  updated_at: string;
+  zalo_forward_targets?: ZaloForwardTarget[];
+}
+
+export interface ZaloForwardRuleCreateRequest {
+  account_id: string;
+  name?: string;
+  master_thread_id: string;
+  master_thread_name?: string;
+  target_thread_ids: string[];
+  target_thread_names?: Record<string, string>;
+}
+
+export interface ZaloForwardLog {
+  id: number;
+  rule_id: number | null;
+  account_id: string;
+  source_thread_id: string;
+  source_msg_id?: string | null;
+  target_thread_id: string;
+  content_type: string;
+  status: "success" | "failed" | "dry_run" | "skipped" | "rate_limited";
+  error?: string | null;
+  created_at: string;
+}
+
+// Bulk-send
+
+export type ZaloBulkJobType = "send_message" | "add_friend" | "invite_group";
+export type ZaloBulkJobStatus = "pending" | "running" | "completed" | "paused" | "cancelled";
+
+export interface ZaloBulkJobRecipient {
+  phone?: string | null;
+  uid?: string | null;
+  display_name?: string | null;
+}
+
+export interface ZaloBulkJob {
+  id: number;
+  account_id: string;
+  job_type: ZaloBulkJobType;
+  status: ZaloBulkJobStatus;
+  message?: string | null;
+  friend_message?: string | null;
+  image_urls: string[];
+  target_group_id?: string | null;
+  target_group_name?: string | null;
+  delay_seconds_min: number;
+  delay_seconds_max: number;
+  total_count: number;
+  sent_count: number;
+  success_count: number;
+  failed_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ZaloBulkJobItem {
+  id: number;
+  job_id: number;
+  phone?: string | null;
+  uid?: string | null;
+  display_name?: string | null;
+  status: "pending" | "sent" | "failed" | "not_found" | "skipped";
+  error?: string | null;
+  processed_at?: string | null;
+}
+
+export interface ZaloBulkJobCreateRequest {
+  account_id: string;
+  job_type: ZaloBulkJobType;
+  recipients: ZaloBulkJobRecipient[];
+  message?: string;
+  friend_message?: string;
+  image_urls?: string[];
+  target_group_id?: string;
+  target_group_name?: string;
+  delay_seconds_min?: number;
+  delay_seconds_max?: number;
+  scheduled_at?: string;
+}
+
+// Campaigns
+
+export interface ZaloCampaign {
+  id: number;
+  account_id: string;
+  name: string;
+  is_enabled: boolean;
+  start_time?: string | null;
+  end_time?: string | null;
+  days_of_week?: number[] | null;
+  interval_seconds_min: number;
+  interval_seconds_max: number;
+  daily_limit: number;
+  message_templates: string[];
+  next_template_index: number;
+  repeat_cycle_seconds: number;
+  sent_today: number;
+  sent_today_date?: string | null;
+  last_sent_at?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ZaloCampaignCreateRequest {
+  account_id: string;
+  name: string;
+  is_enabled?: boolean;
+  start_time?: string;
+  end_time?: string;
+  days_of_week?: number[];
+  interval_seconds_min?: number;
+  interval_seconds_max?: number;
+  daily_limit?: number;
+  message_templates: string[];
+  repeat_cycle_seconds?: number;
+  recipients?: ZaloBulkJobRecipient[];
+}
+
+export interface ZaloCampaignRecipient {
+  id: number;
+  campaign_id: number;
+  phone?: string | null;
+  uid?: string | null;
+  display_name?: string | null;
+  status: string;
+  last_error?: string | null;
+  sent_at?: string | null;
+}
+
+export interface ZaloCampaignLog {
+  id: number;
+  campaign_id: number;
+  recipient_id?: number | null;
+  phone?: string | null;
+  status: "success" | "failed";
+  error?: string | null;
+  message_sent?: string | null;
+  created_at: string;
+}
+
+// Web Push
+
+export interface ZaloPushSubscribeRequest {
+  endpoint: string;
+  keys: { p256dh: string; auth: string };
+  user_agent?: string;
 }

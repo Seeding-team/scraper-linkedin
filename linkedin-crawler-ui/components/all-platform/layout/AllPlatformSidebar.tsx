@@ -401,6 +401,60 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, workspaceTab: 
     },
   ];
 
+  // Zalo tập trung (port ZALO_CENTRALIZED_MODULE_GUIDE.md, 2026-09-15) — 5 công cụ
+  // nâng cao chỉ admin/leader cần: forward-rules, bulk-send, campaigns,
+  // broadcast-groups, scan-group-members. Gom vào 1 group riêng thay vì thả
+  // phẳng vào channelItemsTeam để không rối "Zalo Chat"/"Inbox Zalo Admin".
+  const zaloAdvancedItems: NavLeafItem[] = [
+    {
+      type: "item",
+      id: "zalo-forward-rules",
+      href: "/all-platform/zalo-forward-rules",
+      icon: "arrow_forward",
+      label: "Chuyển tiếp tự động",
+      matchStartsWith: ["/all-platform/zalo-forward-rules"],
+    },
+    {
+      type: "item",
+      id: "zalo-bulk-send",
+      href: "/all-platform/zalo-bulk-send",
+      icon: "send",
+      label: "Gửi hàng loạt",
+      matchStartsWith: ["/all-platform/zalo-bulk-send"],
+    },
+    {
+      type: "item",
+      id: "zalo-campaigns",
+      href: "/all-platform/zalo-campaigns",
+      icon: "campaign",
+      label: "Chiến dịch tự động",
+      matchStartsWith: ["/all-platform/zalo-campaigns"],
+    },
+    {
+      type: "item",
+      id: "zalo-broadcast-groups",
+      href: "/all-platform/zalo-broadcast-groups",
+      icon: "share",
+      label: "Gửi nhiều nhóm",
+      matchStartsWith: ["/all-platform/zalo-broadcast-groups"],
+    },
+    {
+      type: "item",
+      id: "zalo-scan-group-members",
+      href: "/all-platform/zalo-scan-group-members",
+      icon: "group",
+      label: "Quét thành viên nhóm",
+      matchStartsWith: ["/all-platform/zalo-scan-group-members"],
+    },
+  ];
+  const zaloAdvancedGroup: SidebarEntry = {
+    type: "group",
+    id: "zalo-advanced",
+    icon: "auto_awesome",
+    label: "Zalo tập trung",
+    items: zaloAdvancedItems,
+  };
+
   const resourceItems: NavLeafItem[] = [
     {
       type: "item",
@@ -504,6 +558,7 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, workspaceTab: 
     },
     contentGroup,
     channelGroupTeam,
+    ...(isAdmin || isLeader ? [zaloAdvancedGroup] : []),
     ...crmEntries,
     ...(isAdmin || isLeader
       ? [

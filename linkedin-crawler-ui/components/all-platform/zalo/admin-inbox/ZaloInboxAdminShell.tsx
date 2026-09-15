@@ -3,6 +3,7 @@
 import { useMemo, useState, useRef, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { useZaloAdminInbox, type ZaloConv } from "@/hooks/useZaloAdminInbox";
+import { useZaloPushNotifications } from "@/hooks/useZaloPushNotifications";
 import ZaloTeamAccountTree from "./ZaloTeamAccountTree";
 import ZaloAccountAuthView from "./ZaloAccountAuthView";
 import { CrmCustomerModal } from "@/components/all-platform/components/CrmCustomerModal";
@@ -110,6 +111,7 @@ function formatDate(value: string | null | undefined): string {
 
 export function ZaloInboxAdminShell() {
   const inbox = useZaloAdminInbox();
+  const push = useZaloPushNotifications();
 
   const [mounted, setMounted] = useState(false);
   useEffect(() => {
@@ -196,6 +198,13 @@ export function ZaloInboxAdminShell() {
   const [currentLead, setCurrentLead] = useState<Customer | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Zalo tập trung: mention picker ("@" trong ô trả lời) + sticker picker
+  const [showMentionPicker, setShowMentionPicker] = useState(false);
+  const [mentionQuery, setMentionQuery] = useState("");
+  const [mentionAtPos, setMentionAtPos] = useState<number | null>(null);
+  const [showStickerPicker, setShowStickerPicker] = useState(false);
+  const [stickerIdInput, setStickerIdInput] = useState("");
+
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files ?? []);
     setSelectedFiles((prev) => [...prev, ...files]);
@@ -218,6 +227,45 @@ export function ZaloInboxAdminShell() {
 
   const appendEmoji = (emoji: string) => {
     inbox.setReply((prev) => prev + emoji);
+  };
+
+  // Zalo tập trung: gõ "@" mở popup chọn thành viên nhóm (cần đã bấm "Quét thành
+  // viên" ở tab Thông tin trước — xem inbox.groupMembers) — chèn mention token
+  // {pos,uid,len} khớp format sendZaloMessageWithMentions cần.
+  const handleReplyChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const value = e.target.value;
+    inbox.setReply(value);
+    const caret = e.target.selectionStart ?? value.length;
+    const atIdx = value.lastIndexOf("@", caret - 1);
+    if (atIdx === -1 || /\s/.test(value.slice(atIdx + 1, caret))) {
+      setShowMentionPicker(false);
+      setMentionAtPos(null);
+      return;
+    }
+    setMentionAtPos(atIdx);
+    setMentionQuery(value.slice(atIdx + 1, caret));
+    setShowMentionPicker(true);
+  };
+
+  const insertMention = (uid: string, displayName: string) => {
+    if (mentionAtPos === null) return;
+    const before = inbox.reply.slice(0, mentionAtPos);
+    const after = inbox.reply.slice(mentionAtPos + 1 + mentionQuery.length);
+    const label = `@${displayName}`;
+    inbox.setReply(`${before}${label} ${after}`);
+    inbox.setPendingMentions((prev) => [...prev, { pos: before.length, uid, len: label.length }]);
+    setShowMentionPicker(false);
+    setMentionAtPos(null);
+    setMentionQuery("");
+  };
+
+  const filteredMentionCandidates = (inbox.groupMembers?.members ?? []).filter((m) =>
+    !mentionQuery.trim() || m.display_name.toLowerCase().includes(mentionQuery.trim().toLowerCase())
+  );
+
+  const handleSendSticker = (sticker: { id: number; cateId: number }) => {
+    setShowStickerPicker(false);
+    void inbox.sendStickerAction(sticker);
   };
 
   const handleAutoSend = async () => {
@@ -869,6 +917,35 @@ export function ZaloInboxAdminShell() {
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2">
                 <h2 className="truncate text-sm font-bold text-slate-800">{selectedName || "Hội thoại"}</h2>
+                {/* Trạng thái bạn bè (Mục 3.3.5/11.1 guide) — chỉ hiện khi backend trả
+                    được kết quả (1-1 với uid Zalo thật; group sẽ tự lỗi và ẩn badge). */}
+                {inbox.friendStatus && !inbox.loadingFriendStatus && (
+                  <>
+                    {inbox.friendStatus.is_friend ? null : inbox.friendStatus.is_requesting ? (
+                      <button
+                        onClick={() => void inbox.acceptFriendRequestAction()}
+                        disabled={inbox.friendActionLoading}
+                        className="rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 text-[10px] font-bold px-2 py-0.5 hover:bg-emerald-100 transition disabled:opacity-50"
+                        title="Họ đã gửi lời mời kết bạn cho bạn"
+                      >
+                        Chấp nhận kết bạn
+                      </button>
+                    ) : inbox.friendStatus.is_requested ? (
+                      <span className="rounded-full bg-amber-50 border border-amber-200 text-amber-700 text-[10px] font-bold px-2 py-0.5">
+                        Đã gửi lời mời
+                      </span>
+                    ) : (
+                      <button
+                        onClick={() => void inbox.sendFriendRequestAction()}
+                        disabled={inbox.friendActionLoading}
+                        className="rounded-full bg-blue-50 border border-blue-200 text-blue-700 text-[10px] font-bold px-2 py-0.5 hover:bg-blue-100 transition disabled:opacity-50"
+                        title="Chưa kết bạn với người này"
+                      >
+                        Kết bạn
+                      </button>
+                    )}
+                  </>
+                )}
                 {/* Nút "Đồng bộ" tin nhắn theo hội thoại đã bị bỏ (2026-07-04) —
                     cùng lý do với nút đồng bộ ở Hộp thư: gọi syncZaloConversationMessages
                     làm backend đăng nhập lại phiên Zalo qua worker pool, đè lên
@@ -938,6 +1015,38 @@ export function ZaloInboxAdminShell() {
                   <MaterialIcon name="campaign" className="text-base" />
                   <span>Auto Send</span>
                 </button>
+                {/* Quét thành viên nhóm (Mục 3.3.5/8(i) guide) — dùng cho mention picker
+                    và bulk-send job ở trang /all-platform/zalo-bulk-send. */}
+                <button
+                  onClick={() => void inbox.loadGroupMembers()}
+                  disabled={inbox.loadingGroupMembers}
+                  title="Quét đầy đủ thành viên nhóm này"
+                  className="rounded-lg border border-[#E5E5E5] bg-white px-2 py-1 text-xs font-bold hover:border-[#E3000F] text-slate-700 flex items-center gap-1 disabled:opacity-50"
+                >
+                  <MaterialIcon name={inbox.loadingGroupMembers ? "sync" : "group"} className={cn("text-[13px]", inbox.loadingGroupMembers && "animate-spin")} />
+                  {inbox.groupMembers ? `${inbox.groupMembers.total_member} TV` : "Quét TV"}
+                </button>
+                {/* Web Push (Mục 4.5/4.9/8(l) guide) — bật/tắt thông báo tin nhắn Zalo
+                    mới trên trình duyệt, không cần mở tab. Ẩn nếu trình duyệt không hỗ trợ. */}
+                {push.supported && (
+                  <button
+                    onClick={() => void (push.subscribed ? push.unsubscribe() : push.subscribe())}
+                    disabled={push.loading}
+                    title={push.subscribed ? "Tắt thông báo tin nhắn mới" : "Bật thông báo tin nhắn mới"}
+                    className={cn(
+                      "rounded-lg border px-2 py-1 text-xs font-bold transition flex items-center gap-1 disabled:opacity-50",
+                      push.subscribed
+                        ? "border-[#E3000F]/30 bg-red-50 text-[#E3000F] hover:bg-red-100"
+                        : "border-[#E5E5E5] bg-white text-slate-700 hover:border-[#E3000F]"
+                    )}
+                  >
+                    <MaterialIcon
+                      name={push.loading ? "sync" : "notifications"}
+                      className={cn("text-[13px]", push.loading && "animate-spin")}
+                    />
+                    {push.subscribed ? "Đã bật TB" : "Bật TB"}
+                  </button>
+                )}
                 <button
                   onClick={() => inbox.mark(selectedConv.conv_id, "is_customer", !selectedConv.is_customer)}
                   className="rounded-lg border border-[#E5E5E5] bg-white px-2 py-1 text-xs font-bold hover:border-[#E3000F] text-slate-700"
@@ -1080,7 +1189,25 @@ export function ZaloInboxAdminShell() {
                                   )}
                                 </div>
                               ))}
-                            {time && <div className="mt-0.5 px-1 text-[9px] text-[#A0A0A0]">{time}</div>}
+                            <div className="mt-0.5 flex items-center gap-1 px-1" style={{ justifyContent: isSent ? "flex-end" : "flex-start" }}>
+                              {time && <span className="text-[9px] text-[#A0A0A0]">{time}</span>}
+                              {/* Thu hồi tin nhắn thật (api.undo) — chỉ khả dụng cho tin CHÍNH
+                                  MÌNH gửi và có cli_msg_id (được backend fill lúc echo lại tin
+                                  vừa gửi — xem services/supabase_service.py). */}
+                              {isSent && !msg.is_deleted && (msg as unknown as { cli_msg_id?: string }).cli_msg_id && (
+                                <button
+                                  type="button"
+                                  onClick={() => void inbox.recallMessage(msg)}
+                                  title="Thu hồi tin nhắn"
+                                  className="opacity-0 group-hover:opacity-100 transition-opacity text-[#A0A0A0] hover:text-[#E3000F]"
+                                >
+                                  <MaterialIcon name="delete" className="text-[11px]" />
+                                </button>
+                              )}
+                              {msg.is_deleted && (
+                                <span className="italic text-[9px] text-[#A0A0A0]">Tin nhắn đã thu hồi</span>
+                              )}
+                            </div>
                           </div>
 
                           {/* Checkbox on right for sent messages */}
@@ -1167,26 +1294,103 @@ export function ZaloInboxAdminShell() {
               >
                 <MaterialIcon name="description" className="text-slate-500 text-[18px]" />
               </button>
-              <textarea
-                value={inbox.reply}
-                onChange={(e) => inbox.setReply(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && !e.shiftKey) {
-                    e.preventDefault();
-                    void handleSendReply();
+              <div className="relative flex-shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setShowStickerPicker((v) => !v)}
+                  className="h-8 w-8 rounded-lg flex items-center justify-center hover:bg-slate-100 transition"
+                  title="Gửi sticker"
+                  disabled={!inbox.openConv || inbox.archiveReading}
+                >
+                  <MaterialIcon name="mood" className="text-slate-500 text-[18px]" />
+                </button>
+                {showStickerPicker && (
+                  <div className="absolute bottom-10 left-0 z-20 w-64 rounded-lg border border-[#E5E5E5] bg-white p-2.5 shadow-lg">
+                    <p className="mb-1.5 text-[10px] text-[#A0A0A0]">
+                      Nhập id sticker Zalo (lấy từ tin sticker đã nhận trước đó), cách nhau dấu phẩy.
+                    </p>
+                    <div className="flex gap-1.5">
+                      <input
+                        value={stickerIdInput}
+                        onChange={(e) => setStickerIdInput(e.target.value)}
+                        placeholder="vd: 1234,5678"
+                        className="h-7 flex-1 rounded border border-[#E5E5E5] px-2 text-[11px] outline-none focus:border-[#E3000F]"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const ids = stickerIdInput.split(",").map((s) => parseInt(s.trim(), 10)).filter((n) => !Number.isNaN(n));
+                          void inbox.searchStickers(ids);
+                        }}
+                        className="h-7 rounded bg-slate-100 px-2 text-[11px] font-bold hover:bg-slate-200"
+                      >
+                        Tra
+                      </button>
+                    </div>
+                    {inbox.loadingStickers ? (
+                      <p className="mt-2 text-[10px] text-[#A0A0A0]">Đang tra...</p>
+                    ) : inbox.stickerResults.length > 0 ? (
+                      <div className="mt-2 grid grid-cols-4 gap-1.5">
+                        {inbox.stickerResults.map((s) => (
+                          <button
+                            key={s.id}
+                            type="button"
+                            onClick={() => handleSendSticker({ id: s.id, cateId: s.cateId })}
+                            className="rounded border border-[#E5E5E5] px-1 py-1.5 text-[10px] hover:border-[#E3000F] hover:bg-red-50"
+                            title={`Gửi sticker #${s.id}`}
+                          >
+                            #{s.id}
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+                )}
+              </div>
+              <div className="relative flex-1">
+                {showMentionPicker && (
+                  <div className="absolute bottom-full left-0 z-20 mb-1 w-64 max-h-48 overflow-y-auto rounded-lg border border-[#E5E5E5] bg-white shadow-lg">
+                    {!inbox.groupMembers ? (
+                      <div className="px-3 py-2 text-[11px] text-[#A0A0A0]">
+                        Chưa có danh sách thành viên. Bấm "Quét thành viên" ở tab Thông tin trước.
+                      </div>
+                    ) : filteredMentionCandidates.length === 0 ? (
+                      <div className="px-3 py-2 text-[11px] text-[#A0A0A0]">Không tìm thấy thành viên phù hợp.</div>
+                    ) : (
+                      filteredMentionCandidates.slice(0, 20).map((m) => (
+                        <button
+                          key={m.uid}
+                          type="button"
+                          onClick={() => insertMention(m.uid, m.display_name)}
+                          className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[11px] hover:bg-slate-50"
+                        >
+                          <span className="font-bold text-slate-700">{m.display_name}</span>
+                        </button>
+                      ))
+                    )}
+                  </div>
+                )}
+                <textarea
+                  value={inbox.reply}
+                  onChange={handleReplyChange}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey && !showMentionPicker) {
+                      e.preventDefault();
+                      void handleSendReply();
+                    }
+                  }}
+                  disabled={!inbox.openConv || inbox.archiveReading}
+                  rows={2}
+                  placeholder={
+                    inbox.archiveReading
+                      ? "Đang xem lưu trữ..."
+                      : !inbox.selectedAccountId
+                      ? "Chưa chọn tài khoản..."
+                      : "Nhập câu trả lời... (@ để gắn thẻ, Enter để gửi)"
                   }
-                }}
-                disabled={!inbox.openConv || inbox.archiveReading}
-                rows={2}
-                placeholder={
-                  inbox.archiveReading
-                    ? "Đang xem lưu trữ..."
-                    : !inbox.selectedAccountId
-                    ? "Chưa chọn tài khoản..."
-                    : "Nhập câu trả lời... (Enter để gửi)"
-                }
-                className="min-h-[44px] flex-1 resize-none rounded-lg border border-[#E5E5E5] px-3 py-2 text-xs outline-none transition focus:border-[#E3000F] focus:ring-2 focus:ring-[#E3000F]/20 disabled:cursor-not-allowed disabled:bg-[#F5F5F5]"
-              />
+                  className="min-h-[44px] w-full resize-none rounded-lg border border-[#E5E5E5] px-3 py-2 text-xs outline-none transition focus:border-[#E3000F] focus:ring-2 focus:ring-[#E3000F]/20 disabled:cursor-not-allowed disabled:bg-[#F5F5F5]"
+                />
+              </div>
               <button
                 onClick={() => void handleSendReply()}
                 disabled={

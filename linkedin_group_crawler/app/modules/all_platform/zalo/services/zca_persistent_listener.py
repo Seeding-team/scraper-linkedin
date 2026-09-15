@@ -349,6 +349,7 @@ def _sort_messages_new_to_old(messages: List[Message]) -> List[Message]:
 
 
 def _to_message(row: Dict[str, Any]) -> Message:
+    raw_mentions = row.get("mentions") or []
     return Message(
         message_id=str(row.get("message_id") or ""),
         sender_id=row.get("sender_id") or None,
@@ -363,6 +364,12 @@ def _to_message(row: Dict[str, Any]) -> Message:
         is_sent=bool(row.get("is_sent")),
         # thread_id / group_id từ raw row (dùng khi resolve group_name).
         group_id=str(row.get("thread_id") or row.get("group_id") or "") or None,
+        # Zalo tập trung (Mục 7.1 guide) — cli_msg_id để thu hồi tin, ts cho
+        # forward engine watermark, mentions cho @tag hiển thị lại đúng.
+        ts=int(row["ts"]) if row.get("ts") else None,
+        cli_msg_id=row.get("cli_msg_id") or None,
+        mentions=[m for m in raw_mentions if isinstance(m, dict) and "uid" in m],
+        msg_kind=row.get("msg_kind") or None,
     )
 
 
@@ -872,7 +879,7 @@ class ZcaPersistentListenerManager:
         ]
 
         if sys.platform == "win32":
-            from app.modules.all_platform.zalo.services.zca_qr_bridge import WindowsSubprocessWrapper
+            from app.modules.all_platform.zalo.services.win_subprocess import WindowsSubprocessWrapper
             stdin_payload = json.dumps(
                 {"auth": state.auth, "user_id": state.user_id}
             ).encode("utf-8")

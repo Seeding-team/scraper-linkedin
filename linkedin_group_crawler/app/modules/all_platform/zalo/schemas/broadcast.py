@@ -12,7 +12,14 @@ class ZaloBroadcastTarget(BaseModel):
 
 class ZaloBroadcastRequest(BaseModel):
     user_id: Optional[str] = None
+    # 2 cách cung cấp nội dung — dùng 1 trong 2:
+    #   (a) message_ids: chọn tin đã lưu Library (luồng cũ, giữ tương thích ngược
+    #       nếu Library còn được mount — hiện KHÔNG mount nữa, để trống cho luồng mới).
+    #   (b) text/image_urls: gõ trực tiếp 1 tin để gửi ngay (Zalo tập trung, guide
+    #       Mục 3.3.5 "broadcasts" — không cần khái niệm Library).
     message_ids: List[str] = Field(default_factory=list)
+    text: Optional[str] = None
+    image_urls: List[str] = Field(default_factory=list)
     targets: List[ZaloBroadcastTarget] = Field(default_factory=list)
     content_mode: BroadcastContentMode = "both"
     text_overrides: Optional[dict[str, str]] = None
