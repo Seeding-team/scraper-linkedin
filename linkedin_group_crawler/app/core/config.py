@@ -414,6 +414,7 @@ class Settings:
     openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
     openai_base_url: str = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
     ai_model: str = os.getenv("AI_MODEL", "gpt-4o")
+    gemini_api_key: str = os.getenv("GEMINI_API_KEY", "")
 
     # Hardcoded defaults (not read from env) so every deploy target — dev,
     # production, or a fresh server — works out of the box with no .env

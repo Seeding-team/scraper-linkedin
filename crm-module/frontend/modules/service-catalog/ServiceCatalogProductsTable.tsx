@@ -208,7 +208,7 @@ export const ServiceCatalogProductsTable = forwardRef<ServiceCatalogProductsTabl
   const markupPreview = parseNullableNumber(pricingMarkup);
   const customerPreview = parseNullableNumber(pricingCustomer);
   const previewCustomer = pricingMode === 'markup' ? computeCustomerFromMarkup(costPreview, markupPreview) : customerPreview;
-  const previewMarkup = pricingMode === 'customer_price' ? computeMarkupFromCustomer(costPreview, customerPreview) : markupPreview;
+  const previewMarkup = pricingMode === 'price' ? computeMarkupFromCustomer(costPreview, customerPreview) : markupPreview;
 
   function handleCostChange(raw: string) {
     setPricingCost(raw);
@@ -218,7 +218,7 @@ export const ServiceCatalogProductsTable = forwardRef<ServiceCatalogProductsTabl
     setPricingMarkup(raw);
   }
   function handleCustomerChange(raw: string) {
-    setPricingMode('customer_price');
+    setPricingMode('price');
     setPricingCustomer(raw);
   }
 
@@ -231,7 +231,7 @@ export const ServiceCatalogProductsTable = forwardRef<ServiceCatalogProductsTabl
         issuerCompanyId: null,
         defaultCostPriceVnd: costPreview,
         defaultMarkupPercent: pricingMode === 'markup' ? markupPreview : previewMarkup,
-        defaultCustomerPriceVnd: pricingMode === 'customer_price' ? customerPreview : previewCustomer,
+        defaultCustomerPriceVnd: pricingMode === 'price' ? customerPreview : previewCustomer,
         pricingInputMode: pricingMode,
       });
       // Ghi de lai bang DUNG gia tri backend da tinh (co the khac so preview
@@ -418,7 +418,7 @@ export const ServiceCatalogProductsTable = forwardRef<ServiceCatalogProductsTabl
                     <label className="sc-field">
                       <span>Giá khách/ĐV *</span>
                       <CurrencyInput
-                        value={pricingMode === 'customer_price' ? customerPreview : previewCustomer}
+                        value={pricingMode === 'price' ? customerPreview : previewCustomer}
                         onChange={value => handleCustomerChange(value == null ? '' : String(value))}
                       />
                     </label>

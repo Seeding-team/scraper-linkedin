@@ -13,6 +13,7 @@ from app.modules.all_platform.services.supabase_quote_service import apply_quote
 from app.modules.all_platform.services.crm_permission_service import can_edit_contract, has_full_crm_access
 from app.modules.all_platform.services.supabase_categories_service import get_categories_by_type
 from app.modules.all_platform.services.crm_position_service import apply_position_category
+from app.modules.all_platform.services.crm_city_normalizer import normalize_city_fields, normalize_vietnam_city
 
 CUSTOMER_COLUMNS = (
     "id, customer_name, company_name, position, position_category_id, "
@@ -74,6 +75,8 @@ def normalize_phone(value: Any) -> str | None:
 
 def _normalize_payload(payload: dict[str, Any], actor_id: str | None = None) -> dict[str, Any]:
     out = {key: _clean_text(value) if isinstance(value, str) else value for key, value in payload.items()}
+    if "city" in out:
+        out["city"] = normalize_vietnam_city(out.get("city"))
     out["email_normalized"] = normalize_email(out.get("email"))
     out["phone_normalized"] = normalize_phone(out.get("phone"))
     if actor_id:
@@ -119,7 +122,7 @@ def _duplicate_query(email_normalized: str | None, phone_normalized: str | None,
             matches[row["id"]] = row
     if exclude_id:
         matches.pop(exclude_id, None)
-    return list(matches.values())
+    return [normalize_city_fields(row) for row in matches.values()]
 
 
 def _customer_ids_visible_to(user: dict[str, Any]) -> set[str] | None:
@@ -209,6 +212,7 @@ def _attach_customer_metrics(customers: list[dict[str, Any]], user: dict[str, An
             contact_counts[cid] = contact_counts.get(cid, 0) + 1
 
     for customer in customers:
+        normalize_city_fields(customer)
         leads = by_customer.get(customer["id"], [])
         if user is not None:
             leads = [lead for lead in leads if _deal_visible_to(user, lead)]
@@ -264,7 +268,7 @@ def list_customers(
             f"phone.ilike.%{search}%,email.ilike.%{search}%,tax_code.ilike.%{search}%"
         )
     res = execute_supabase_query(lambda: query.order("updated_at", desc=True).execute())
-    rows = res.data or []
+    rows = [normalize_city_fields(row) for row in (res.data or [])]
 
     contact_customer_ids: set[str] = set()
     if search:
@@ -289,7 +293,7 @@ def list_customers(
             extra_res = execute_supabase_query(
                 lambda: base_query().in_("id", missing_ids).execute()
             )
-            rows = rows + (extra_res.data or [])
+            rows = rows + [normalize_city_fields(row) for row in (extra_res.data or [])]
 
     visible = _customer_ids_visible_to(user)
     if visible is not None:
@@ -309,7 +313,7 @@ def list_customers(
                 f"phone.ilike.%{search}%,email.ilike.%{search}%,tax_code.ilike.%{search}%"
             )
         kpi_res = execute_supabase_query(lambda: kpi_query.execute())
-        kpi_rows = kpi_res.data or []
+        kpi_rows = [normalize_city_fields(row) for row in (kpi_res.data or [])]
         if search:
             existing_kpi_ids = {row["id"] for row in kpi_rows}
             missing_kpi_ids = list(contact_customer_ids - existing_kpi_ids)
@@ -317,7 +321,7 @@ def list_customers(
                 extra_kpi_res = execute_supabase_query(
                     lambda: base_query(include_status=False).in_("id", missing_kpi_ids).execute()
                 )
-                kpi_rows = kpi_rows + (extra_kpi_res.data or [])
+                kpi_rows = kpi_rows + [normalize_city_fields(row) for row in (extra_kpi_res.data or [])]
         if visible is not None:
             kpi_rows = [row for row in kpi_rows if row.get("id") in visible]
     else:
@@ -347,7 +351,7 @@ def get_customer(customer_id: str, user: dict[str, Any]) -> dict[str, Any]:
     res = execute_supabase_query(
         lambda: supabase.table("crm_customers").select(CUSTOMER_COLUMNS).eq("id", customer_id).eq("instance", settings.crm_instance).maybe_single().execute()
     )
-    customer = res.data if res else None
+    customer = normalize_city_fields(res.data) if res and res.data else None
     if not customer:
         raise CustomerNotFoundError("Khong tim thay khach hang.")
     if not can_view_customer(user, customer):
@@ -378,7 +382,7 @@ def create_customer(payload: dict[str, Any], user: dict[str, Any]) -> dict[str, 
     )
     supabase = get_supabase_client()
     res = execute_supabase_query(lambda: supabase.table("crm_customers").insert(data).execute())
-    return res.data[0]
+    return normalize_city_fields(res.data[0])
 
 
 def update_customer(customer_id: str, payload: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]:
@@ -399,7 +403,7 @@ def update_customer(customer_id: str, payload: dict[str, Any], user: dict[str, A
         .eq("instance", settings.crm_instance)
         .execute()
     )
-    return res.data[0]
+    return normalize_city_fields(res.data[0])
 
 
 def delete_customer(customer_id: str, user: dict[str, Any]) -> dict[str, Any]:

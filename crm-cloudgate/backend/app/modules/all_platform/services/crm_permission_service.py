@@ -83,12 +83,16 @@ def has_quote_business_role(user: dict[str, Any] | None, target: str) -> bool:
 
 
 def has_full_crm_access(user: dict[str, Any] | None) -> bool:
-    """True neu user duoc xem/sua toan bo Pipeline + Phan tich CRM: admin,
-    leader, hoac thanh vien 1 team team_type='sale'."""
+    """True neu user duoc xem/sua toan bo CRM: admin, leader, thanh vien
+    team_type='sale', hoac user da duoc gan vai tro nghiep vu bao gia
+    (presale/sale/both). Quote business role la nguon quyen CRM chung moi,
+    khong bat buoc phai nam trong team sale."""
     if not user:
         return False
     role = str(user.get("role") or "").strip().lower()
     if role in ("admin", "leader"):
+        return True
+    if has_quote_business_role(user, "sale") or has_quote_business_role(user, "presale"):
         return True
     return is_sale_member(user.get("id"))
 
@@ -185,14 +189,26 @@ def can_view_quote_cost(user: dict[str, Any] | None, quote: dict[str, Any] | Non
 
 
 def can_edit_quote_cost(user: dict[str, Any] | None, quote: dict[str, Any] | None) -> bool:
-    """Quyen SUA gia von - CHI technical_owner (Presale duoc gan) hoac admin/
-    leader/sale-team (giu nguyen has_full_crm_access, KHONG doi hanh vi SUA da
-    chot tu truoc). Sale (quote_owner) KHONG duoc sua cost du duoc XEM read-
-    only qua can_view_quote_cost() - day la lan ranh READ vs WRITE THAT SU,
-    chan o tang API (_check_item_field_level_permission), khong chi FE disable
-    input. Alias ten ro nghia cua can_edit_technical_quote() (giu nguyen ham
-    do cho cac noi goi cu, khong doi hanh vi)."""
-    return can_edit_technical_quote(user, quote)
+    """Quyen SUA gia von trong quote.
+
+    defaultCostPriceVnd trong San pham & Dich vu chi la gia von mac dinh de
+    prefill. Trong Yeu cau bao gia, gia von la gia thuc te theo case va duoc
+    sua rieng boi nguoi tham gia bao gia: admin/leader/full CRM, Presale duoc
+    gan technical_owner, hoac Sale duoc gan quote_owner.
+    """
+    if not user:
+        return False
+    if has_full_crm_access(user):
+        return True
+    uid = str(user.get("id") or "")
+    if not uid or not quote:
+        return False
+    technical_owner_id = str(quote.get("technicalOwnerId") or quote.get("technical_owner_id") or "")
+    quote_owner_id = str(quote.get("quoteOwnerId") or quote.get("quote_owner_id") or "")
+    return (
+        (uid == technical_owner_id and has_quote_business_role(user, "presale"))
+        or (uid == quote_owner_id and has_quote_business_role(user, "sale"))
+    )
 
 
 def can_view_quote_pricing(user: dict[str, Any] | None, quote: dict[str, Any] | None) -> bool:
@@ -366,19 +382,12 @@ def can_view_project(user: dict[str, Any] | None) -> bool:
 
 
 def can_manage_project(user: dict[str, Any] | None, project: dict[str, Any] | None = None) -> bool:
-    """QUAN TRONG: KHONG dung has_full_crm_access() o day - ham do gom ca
-    "thanh vien 1 team team_type='sale'" (mot co che TEAM assignment THAT,
-    KHONG PHAI system role thu 4 - xem get_user_team_types()/teams.team_type,
-    migration 049; app_users.role van CHI co admin/leader/member, khong doi).
-    Nhung rieng cho QUAN TRI Du an, yeu cau moi noi ro: sale-team KHONG tu
-    dong duoc quan tri Project - chi Admin/Leader, HOAC (voi 1 Du an DA TON
-    TAI) chinh nguoi tao (`created_by`) hoac nguoi duoc gan quan ly
-    (`manager_id`) cua DUNG Du an do. Tao Du an MOI: CHI Admin/Leader (chua
-    co project de tu nhan la "nguoi tao/manager")."""
+    """Quan ly Du an theo quyen CRM chung: admin/leader/member co vai tro bao
+    gia (sale/presale/both) duoc them/sua; member thuong chi sua du an minh
+    tao hoac duoc gan quan ly."""
     if not user:
         return False
-    role = str(user.get("role") or "").strip().lower()
-    if role in ("admin", "leader"):
+    if has_full_crm_access(user):
         return True
     if not project:
         return False

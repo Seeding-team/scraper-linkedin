@@ -19,12 +19,13 @@ export interface BundleComponentLine {
    * _resolve_catalog_pricing_visibility o backend) - undefined = KHONG co
    * quyen xem (khac null = co quyen nhung chua cau hinh). defaultCustomerPriceVnd
    * LUON co mat cho moi request da auth (khong qua cong quyen nay). */
-  defaultCostPriceVnd?: number | null;
-  defaultMarkupPercent?: number | null;
-  defaultCustomerPriceVnd?: number | null;
 }
 
 export interface ServiceCatalogItem {
+  defaultCostPriceVnd?: number | null;
+  defaultMarkupPercent?: number | null;
+  defaultCustomerPriceVnd?: number | null;
+  pricingInputMode?: ServiceCatalogPricingInputMode;
   id: string;
   itemType: ServiceCatalogItemType;
   parentId?: string;
@@ -47,11 +48,29 @@ export interface ServiceCatalogItem {
   note?: string;
   status: ServiceCatalogStatus;
   sortOrder: number;
+  brand?: string;
+  partNumber?: string;
+  productType?: string;
+  internalNote?: string;
+  supplierCurrency?: string;
+  supplierListPrice?: number | null;
+  supplierDiscountPercent?: number | null;
+  supplierNetPrice?: number | null;
+  supplierExchangeRate?: number | null;
+  supplierConvertedPrice?: number | null;
+  supplierVendorId?: string | null;
+  supplierQuoteRef?: string | null;
+  supplierQuoteSource?: string | null;
+  supplierQuoteDate?: string | null;
+  supplierValidUntil?: string | null;
+  shippingCost?: number | null;
+  importFee?: number | null;
+  otherCost?: number | null;
+  pricingPolicy?: string | null;
+
+
   children?: ServiceCatalogItem[];
   components?: BundleComponentLine[];
-  defaultCostPriceVnd?: number | null;
-  defaultMarkupPercent?: number | null;
-  defaultCustomerPriceVnd?: number | null;
 }
 
 /** "Đơn vị tính & VAT" - master-data THẬT (migration 117), quản lý qua
@@ -78,6 +97,10 @@ export interface ServiceCatalogOptions {
 }
 
 export interface ServiceCatalogItemInput {
+  defaultCostPriceVnd?: number | null;
+  defaultMarkupPercent?: number | null;
+  defaultCustomerPriceVnd?: number | null;
+  pricingInputMode?: ServiceCatalogPricingInputMode;
   itemType: ServiceCatalogItemType;
   parentId?: string;
   sku?: string;
@@ -94,6 +117,26 @@ export interface ServiceCatalogItemInput {
   specUnitLabel?: string;
   note?: string;
   status?: ServiceCatalogStatus;
+  brand?: string;
+  partNumber?: string;
+  productType?: string;
+  internalNote?: string;
+  supplierCurrency?: string;
+  supplierListPrice?: number | null;
+  supplierDiscountPercent?: number | null;
+  supplierNetPrice?: number | null;
+  supplierExchangeRate?: number | null;
+  supplierConvertedPrice?: number | null;
+  supplierVendorId?: string | null;
+  supplierQuoteRef?: string | null;
+  supplierQuoteSource?: string | null;
+  supplierQuoteDate?: string | null;
+  supplierValidUntil?: string | null;
+  shippingCost?: number | null;
+  importFee?: number | null;
+  otherCost?: number | null;
+  pricingPolicy?: string | null;
+
 }
 
 export interface BundleComponentInput {
@@ -107,18 +150,35 @@ export interface BundleComponentInput {
 export interface ServiceCatalogItemPricingRow {
   id: string;
   issuerCompanyId: string | null;
-  defaultCostPriceVnd: number | null;
-  defaultMarkupPercent: number | null;
-  defaultCustomerPriceVnd: number | null;
   updatedAt?: string;
+
+  defaultCostPriceVnd?: number | null;
+  defaultMarkupPercent?: number | null;
+  defaultCustomerPriceVnd?: number | null;
 }
 
-export type ServiceCatalogPricingInputMode = 'markup' | 'customer_price';
+export type ServiceCatalogPricingInputMode = 'cost' | 'markup' | 'price';
 
 export interface ServiceCatalogItemPricingUpsertInput {
+  pricingInputMode: ServiceCatalogPricingInputMode;
   issuerCompanyId?: string | null;
   defaultCostPriceVnd?: number | null;
   defaultMarkupPercent?: number | null;
   defaultCustomerPriceVnd?: number | null;
-  pricingInputMode: ServiceCatalogPricingInputMode;
+  supplierCurrency?: string;
+  supplierListPrice?: number | null;
+  supplierDiscountPercent?: number | null;
+  supplierNetPrice?: number | null;
+  supplierExchangeRate?: number | null;
+  supplierConvertedPrice?: number | null;
+  supplierVendorId?: string | null;
+  supplierQuoteRef?: string | null;
+  supplierQuoteSource?: string | null;
+  supplierQuoteDate?: string | null;
+  supplierValidUntil?: string | null;
+  shippingCost?: number | null;
+  importFee?: number | null;
+  otherCost?: number | null;
+  pricingPolicy?: string | null;
+
 }

@@ -305,6 +305,24 @@ async def post_ai_parse_deal(
 
 
 # ---------------------------------------------------------------------------
+# Single get — Customer 360's Cơ hội tab needs the FULL row to open the live
+# Deal Workspace (DealDetailDrawer) in-place, without a page navigation.
+# Placed AFTER every literal-path GET above (/stage-counts, /sdrs,
+# /ai-parse-deal/status) so this catch-all {lead_id} route doesn't shadow
+# them at registration time.
+# ---------------------------------------------------------------------------
+@router.get("/{lead_id}", response_model=BaseResponse)
+def get_customer_lead(lead_id: str, current_user: Any = Depends(get_current_user)):
+    try:
+        lead = customer_lead_service.get_customer_lead_by_id(lead_id)
+        if not lead:
+            return BaseResponse(success=False, message="Không tìm thấy cơ hội này.")
+        return BaseResponse(success=True, data=lead)
+    except Exception as e:
+        return BaseResponse(success=False, message=friendly_supabase_error_message(e))
+
+
+# ---------------------------------------------------------------------------
 # CRUD
 # ---------------------------------------------------------------------------
 @router.post("", response_model=BaseResponse)
@@ -320,7 +338,7 @@ def create_customer_lead(
             # (tên leader được JOIN qua `leader:leaded_by(name)` ở SELECT và cache qua
             # `customer_lead_activity_log.actor_name` cho audit). Trước đây dòng này
             # gây PGRST204 khi ghi.
-        new_lead = customer_lead_service.create_customer_lead(data_dict)
+        new_lead = customer_lead_service.create_customer_lead(data_dict, actor=current_user)
         return BaseResponse(success=True, data=new_lead, message="Success")
     except Exception as e:
         return BaseResponse(success=False, message=str(e))
@@ -339,6 +357,7 @@ def update_customer_lead(
         updated = customer_lead_service.update_customer_lead(
             lead_id,
             payload.model_dump(exclude_unset=True),
+            actor=current_user,
         )
         if not updated:
             return BaseResponse(success=False, message="Not found or update failed")

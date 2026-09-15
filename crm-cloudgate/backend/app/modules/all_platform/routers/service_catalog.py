@@ -80,8 +80,9 @@ def _resolve_catalog_pricing_visibility(user: dict, context: str, quote_id: Opti
 def _can_view_draft_catalog_cost(user: dict) -> bool:
     """Draft quote has no persisted owner yet.
 
-    Allow quote participants to receive catalog cost/markup defaults for prefill.
-    Backend still enforces field-level permissions when the quote/items are saved.
+    Allow the same people who can actually work on a quote draft to receive
+    catalog cost/markup defaults for prefill. Backend still enforces field-level
+    permissions when the quote/items are saved.
     """
     if not user:
         return False

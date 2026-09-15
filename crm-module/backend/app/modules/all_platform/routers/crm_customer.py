@@ -25,7 +25,6 @@ from app.modules.all_platform.services.crm_customer_service import (
     get_customer_activity,
     update_customer,
 )
-from app.modules.all_platform.services.markee_cfo_customer_sync_service import ensure_recent_markee_cfo_sync
 from app.modules.all_platform.services.supabase_project_service import get_customer_projects_summary
 from app.modules.all_platform.services.crm_permission_service import can_view_project
 
@@ -55,7 +54,6 @@ def customers_list(
     source: str | None = Query(None),
     owner_id: str | None = Query(None),
     sale_manager_id: str | None = Query(None),
-    scope: str = Query("all", pattern="^(all|local|markee_cfo)$"),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
     user: dict[str, Any] = Depends(get_current_user),
@@ -64,15 +62,8 @@ def customers_list(
         return BaseResponse(
             success=True,
             data=list_customers(
-                user,
-                search=search,
-                status=status,
-                source=source,
-                owner_id=owner_id,
-                sale_manager_id=sale_manager_id,
-                scope=scope,
-                page=page,
-                page_size=page_size,
+                user, search=search, status=status, source=source,
+                owner_id=owner_id, sale_manager_id=sale_manager_id, page=page, page_size=page_size,
             ),
         )
     except Exception as exc:
@@ -105,21 +96,6 @@ def customers_create_with_deal(payload: CrmCustomerWithDealCreate, user: dict[st
         data = create_customer_with_deal(payload.model_dump(exclude_none=True), user)
         message = data.get("partial_message") or "Da tao deal"
         return BaseResponse(success=True, message=message, data=data)
-    except Exception as exc:
-        return _error(exc)
-
-
-@router.post("/sync/markee-cfo")
-def customers_sync_markee_cfo(user: dict[str, Any] = Depends(get_current_user)) -> BaseResponse:
-    """Force a reconciliation; routine listing already syncs every 30s."""
-    try:
-        if str(user.get("role") or "").strip().lower() != "admin":
-            raise PermissionError("Chi admin duoc phep dong bo thu cong tu Markee CFO.")
-        return BaseResponse(
-            success=True,
-            message="Da dong bo danh muc khach hang tu Markee CFO",
-            data=ensure_recent_markee_cfo_sync(force=True),
-        )
     except Exception as exc:
         return _error(exc)
 

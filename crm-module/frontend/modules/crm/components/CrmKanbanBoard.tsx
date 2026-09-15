@@ -3,7 +3,7 @@
 import { useMemo, useState } from 'react';
 import { CheckCircle2, Loader2, PauseCircle, XCircle } from './icons';
 import { DealCard } from './DealCard';
-import { DEAL_STAGE_META, PIPELINE_COLUMNS, formatVND } from '../constants/crmConfig';
+import { DEAL_STAGE_META, PIPELINE_COLUMNS, formatVND, hasFullCrmAccess } from '../constants/crmConfig';
 import type { Deal, DealStage } from '../types';
 import { useAppAuth } from '@/contexts/AppAuthContext';
 
@@ -46,7 +46,7 @@ export function CrmKanbanBoard({ deals, loading, onCardClick, onContractClick, o
   // "Kết quả cuối cùng" (khu kéo-thả đóng deal + tổng doanh thu) chỉ admin/
   // leader/sale xem — member thường vẫn tự đóng deal của mình bình thường qua
   // nút "Chuyển giai đoạn tiếp theo" trong DetailDrawer (không cần khu này).
-  const canSeeFinalResults = user?.role === 'admin' || user?.role === 'leader' || Boolean(user?.is_sale);
+  const canSeeFinalResults = hasFullCrmAccess(user);
   const [dragOverStage, setDragOverStage] = useState<DealStage | null>(null);
   const grouped = useMemo(() => {
     const out = Object.fromEntries(

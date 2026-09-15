@@ -77,7 +77,7 @@ const CONTRACT_STATUS_META: Record<
 };
 
 function formatVND(value: number | null | undefined) {
-  if (!value) return null;
+  if (value == null) return null;
   return new Intl.NumberFormat("vi-VN", {
     style: "currency",
     currency: "VND",

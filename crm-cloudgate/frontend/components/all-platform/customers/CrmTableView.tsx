@@ -26,7 +26,7 @@ interface ColumnDef<T> {
 }
 
 function formatVND(value: number | null | undefined) {
-  if (!value) return "—";
+  if (value == null) return "—";
   return new Intl.NumberFormat("vi-VN", {
     style: "currency",
     currency: "VND",

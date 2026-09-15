@@ -69,6 +69,8 @@ class CustomerLeadCreate(BaseModel):
     customer_id: Optional[str] = None
     # Du an that (migration 097) - null = Co hoi chua gan Du an.
     project_id: Optional[str] = None
+    # Nguoi lien he chinh (migration 134/135) - null = chua chon.
+    primary_contact_id: Optional[str] = None
 
     company_name: Optional[str] = None
     phone: Optional[str] = None
@@ -155,6 +157,8 @@ class CustomerLeadUpdate(BaseModel):
     # RO RANG (khong phai bo qua key) = bo gan Du an that su (xem router
     # update_customer_lead() - PHAI dung exclude_unset de phan biet 2 truong hop nay).
     project_id: Optional[str] = None
+    # Nguoi lien he chinh (migration 134/135) - cung quy tac exclude_unset nhu project_id.
+    primary_contact_id: Optional[str] = None
     company_name: Optional[str] = None
     customer_name: Optional[str] = None
     phone: Optional[str] = None

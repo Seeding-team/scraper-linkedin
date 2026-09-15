@@ -24,6 +24,10 @@ export function emptyProductForm(parentId?: string): ServiceCatalogItemInput {
     specUnitLabel: '',
     note: '',
     status: 'active',
+    brand: '',
+    partNumber: '',
+    productType: '',
+    internalNote: '',
   };
 }
 
@@ -34,6 +38,10 @@ export function emptyGroupForm(): ServiceCatalogItemInput {
     name: '',
     description: '',
     status: 'active',
+    brand: '',
+    partNumber: '',
+    productType: '',
+    internalNote: '',
   };
 }
 
@@ -55,6 +63,10 @@ export function itemToForm(item: ServiceCatalogItem): ServiceCatalogItemInput {
     specUnitLabel: item.specUnitLabel || '',
     note: item.note || '',
     status: item.status,
+    brand: item.brand,
+    partNumber: item.partNumber,
+    productType: item.productType,
+    internalNote: item.internalNote,
   };
 }
 

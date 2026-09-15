@@ -20,6 +20,7 @@ from app.modules.all_platform.routers.customer_lead import router as customer_le
 from app.modules.all_platform.routers.crm_customer import router as crm_customer_router
 from app.modules.all_platform.routers.crm_lead import router as crm_lead_router
 from app.modules.all_platform.routers.crm_contact import router as crm_contact_router
+from app.modules.all_platform.routers.crm_contact import detail_router as crm_contact_detail_router
 from app.modules.all_platform.routers.quote import (
     quote_forms_router,
     quotes_router,
@@ -32,6 +33,8 @@ from app.modules.all_platform.routers.contract import contracts_router
 from app.modules.all_platform.routers.contract_template import contract_templates_router
 from app.modules.all_platform.routers.service_catalog import router as service_catalog_router
 from app.modules.all_platform.routers.sales_asset import router as sales_asset_router
+from app.modules.all_platform.routers.vendor_imports import router as vendor_imports_router
+from app.modules.all_platform.routers.vendors import router as vendors_router
 
 all_platform_router = APIRouter()
 
@@ -55,6 +58,11 @@ all_platform_router.include_router(crm_lead_router, prefix="/crm/leads", tags=["
 all_platform_router.include_router(
     crm_contact_router,
     prefix="/crm/customers/{customer_id}/contacts",
+    tags=["All-Platform CRM Contacts"],
+)
+all_platform_router.include_router(
+    crm_contact_detail_router,
+    prefix="/crm/contacts",
     tags=["All-Platform CRM Contacts"],
 )
 
@@ -95,6 +103,8 @@ all_platform_router.include_router(
 
 # ── Danh mục dịch vụ (Service Catalog) ─────────────────────────────────────────
 all_platform_router.include_router(service_catalog_router, prefix="/service-catalog", tags=["All-Platform Service Catalog"])
+all_platform_router.include_router(vendor_imports_router, prefix="/crm/vendor-imports", tags=["All-Platform CRM Vendor Imports"])
+all_platform_router.include_router(vendors_router, prefix="/crm/vendors", tags=["All-Platform CRM Vendors"])
 
 # ── Tài liệu bán hàng (Sales Assets) ───────────────────────────────────────────
 all_platform_router.include_router(sales_asset_router, prefix="/sales-assets", tags=["All-Platform Sales Assets"])
