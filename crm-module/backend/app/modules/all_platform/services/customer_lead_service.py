@@ -6,6 +6,9 @@ from app.core.config import settings
 from app.core.supabase_client import get_supabase_client, execute_supabase_query
 from app.modules.all_platform.schemas.customer_lead import STAGE_REQUIRED_FIELDS, is_transition_allowed
 from app.modules.all_platform.services.crm_position_service import apply_position_category
+from app.modules.all_platform.services.crm_city_normalizer import normalize_vietnam_city
+from app.modules.all_platform.services.supabase_user_service import get_member_option_by_id
+from app.modules.all_platform.services.supabase_members_service import get_member_by_display_name
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +60,7 @@ def _serialize_datetimes(payload: Dict[str, Any]) -> Dict[str, Any]:
 # Cột UUID nullable trên customer_leads — frontend (vd wizard "Thêm deal và báo giá"
 # khi chưa chọn Leader/SDR) có thể gửi "" thay vì null, Postgres reject với
 # "invalid input syntax for type uuid" nếu insert/update thẳng chuỗi rỗng.
-_NULLABLE_UUID_COLUMNS = ("leaded_by", "sdr_id", "quote_id", "team_id", "customer_id", "project_id")
+_NULLABLE_UUID_COLUMNS = ("leaded_by", "sdr_id", "quote_id", "team_id", "customer_id", "project_id", "primary_contact_id")
 
 
 def _normalize_uuid_fields(payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -79,7 +82,7 @@ BASE_COLUMNS = (
     "payment_due_date, payment_status, "
     "tags, has_budget, note, reject_reason, reject_reason_type, review_result, "
     "position, position_category_id, position_label_snapshot, crm_package, zalo, facebook, telegram, pause_reason, next_step, closed_at, outcome_detail, quote_id, "
-    "leaded_by_name_hint, sdr_name_hint, team_id, project_id, "
+    "leaded_by_name_hint, sdr_name_hint, team_id, project_id, primary_contact_id, "
     "created_at, updated_at, leader:leaded_by(name), sdr:sdr_id(name), "
     "quote:quote_id(quote_number, total_amount, public_token, status, version_number, version_chain_id), "
     "team:team_id(name_team, team_type)"
@@ -87,6 +90,8 @@ BASE_COLUMNS = (
 
 
 def _normalize_row(row: Dict[str, Any]) -> Dict[str, Any]:
+    if "city" in row:
+        row["city"] = normalize_vietnam_city(row.get("city"))
     raw_stage = row.get("deal_stage")
     row["legacy_deal_stage"] = raw_stage
     row["deal_stage"] = normalize_deal_stage(raw_stage)
@@ -193,7 +198,7 @@ def get_all_customer_leads(
                 # Loại bỏ won/lost để tab chính gọn
                 query = query.not_.in_("deal_stage", ["post_sale_care", "won", "lost"])
             if city:
-                query = query.eq("city", city)
+                query = query.eq("city", normalize_vietnam_city(city) or city)
             if industry:
                 query = query.eq("industry", industry)
             if source_platform:
@@ -305,10 +310,103 @@ def validate_project_belongs_to_customer(project_id: Optional[str], customer_id:
         raise ValueError("Dự án đã chọn không thuộc đúng khách hàng này.")
 
 
-def create_customer_lead(data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+def validate_contact_belongs_to_customer(contact_id: Optional[str], customer_id: Optional[str]) -> None:
+    """Chan 'Cross-customer Contact' o tang service - dung y het
+    validate_project_belongs_to_customer() ben tren: Deal chi duoc gan
+    primary_contact_id THUOC DUNG Customer cua no, khong chi dua vao dropdown
+    UI da loc dung (defense-in-depth, task yeu cau ro "Contact dropdown must
+    not show Contacts from another Customer" - server phai tu kiem tra lai,
+    khong tin FE). Import tre de tranh vong lap module voi crm_contact_service.py."""
+    if not contact_id:
+        return
+    from app.modules.all_platform.services.crm_contact_service import _get_contact
+
     try:
+        contact = _get_contact(contact_id)
+    except ValueError:
+        raise ValueError("Người liên hệ đã chọn không tồn tại.")
+    if str(contact.get("customer_id") or "") != str(customer_id or ""):
+        raise ValueError("Người liên hệ đã chọn không thuộc đúng khách hàng này.")
+
+
+_DEAL_ASSIGNMENT_FIELD_LABELS = {"leaded_by": "Người phụ trách", "sdr_id": "SDR"}
+
+
+def _validate_one_deal_assignment_field(
+    actor: Dict[str, Any] | None, field: str, hint_field: str,
+    payload: Dict[str, Any], existing: Dict[str, Any] | None,
+) -> None:
+    """Phase 3.5 A5 hybrid rule cho leaded_by/sdr_id (Deal owner/SDR).
+
+    Linked user (field co gia tri = FK toi app_users.id thuc su): phai active
+    + quote_business_role in (sale, both) - presale thuan tuy KHONG duoc lam
+    Deal owner/SDR du la ai gan.
+    Unlinked staff (field rong, chi co *_name_hint - workflow "gan truoc khi
+    lien ket tai khoan" co tu truoc, KHONG duoc bo): giu nguyen cho phep, chi
+    doi chieu ten co that trong danh ba `members` (khong the check
+    active/tenant vi bang members khong co cot do - danh ba HR dung chung).
+    Quyen gan: he thong-role admin/leader duoc gan bat ky ai (linked hop le
+    hoac unlinked); he thong-role member CHI duoc tu gan chinh minh (linked),
+    khong duoc gan unlinked staff ho (vi ho khong the "la" 1 nhan su chua lien
+    ket - member dang dang nhap luon la 1 linked user). Day la kiem tra
+    STRICT theo system role (admin/leader/member), co tinh khac voi
+    has_full_crm_access() (vi has_full_crm_access coi ca thanh vien team sale
+    la "full access" - task nay yeu cau tach rieng quyen GAN NGUOI, khong
+    dung chung tieu chi voi quyen xem Pipeline/Analytics).
+    Existing khong doi (resend id/hint cu nguyen) = grandfather, KHONG
+    re-validate - tranh 1 deal cu voi assignment da khong con hop le (vd
+    quote_business_role bi doi sau do) bi chan luu chi vi sua field khac.
+    """
+    id_touched = field in payload
+    hint_touched = hint_field in payload
+    if not id_touched and not hint_touched:
+        return
+    existing = existing or {}
+    new_id = payload.get(field) if id_touched else existing.get(field)
+    new_hint = payload.get(hint_field) if hint_touched else existing.get(hint_field)
+    current_id = existing.get(field)
+    current_hint = existing.get(hint_field)
+    changed = (str(new_id or "") != str(current_id or "")) or (str(new_hint or "") != str(current_hint or ""))
+    if not changed:
+        return
+
+    label = _DEAL_ASSIGNMENT_FIELD_LABELS.get(field, field)
+    actor_role = str((actor or {}).get("role") or "").strip().lower()
+    actor_id = str((actor or {}).get("id") or "")
+    is_admin_or_leader = actor_role in ("admin", "leader")
+
+    if new_id:
+        user = get_member_option_by_id(new_id)
+        if not user:
+            raise ValueError(f"{label} không hợp lệ hoặc không còn tồn tại.")
+        if not user.get("isActive", True):
+            raise ValueError(f"{label} đã ngừng hoạt động. Vui lòng chọn người khác.")
+        if user.get("quoteBusinessRole") not in ("sale", "both"):
+            raise ValueError(f"{label} phải có vai trò báo giá Sale hoặc Both — không thể là Presale.")
+        if not is_admin_or_leader and str(new_id) != actor_id:
+            raise ValueError(f"Bạn không có quyền gán {label.lower()} cho người khác — chỉ tự gán cho chính mình.")
+        return
+
+    if new_hint:
+        if not get_member_by_display_name(new_hint):
+            raise ValueError(f"{label} '{new_hint}' không khớp với danh bạ nhân sự.")
+        if not is_admin_or_leader:
+            raise ValueError(f"Bạn không có quyền gán {label.lower()} cho nhân sự chưa liên kết tài khoản.")
+
+
+def validate_deal_assignment_fields(actor: Dict[str, Any] | None, payload: Dict[str, Any], existing: Dict[str, Any] | None = None) -> None:
+    _validate_one_deal_assignment_field(actor, "leaded_by", "leaded_by_name_hint", payload, existing)
+    _validate_one_deal_assignment_field(actor, "sdr_id", "sdr_name_hint", payload, existing)
+
+
+def create_customer_lead(data: Dict[str, Any], actor: Dict[str, Any] | None = None) -> Optional[Dict[str, Any]]:
+    try:
+        validate_deal_assignment_fields(actor, data, existing=None)
         validate_project_belongs_to_customer(data.get("project_id"), data.get("customer_id"))
+        validate_contact_belongs_to_customer(data.get("primary_contact_id"), data.get("customer_id"))
         supabase = get_supabase_client()
+        if "city" in data:
+            data["city"] = normalize_vietnam_city(data.get("city"))
         if "tags" not in data or data["tags"] is None:
             data["tags"] = []
         if "has_budget" not in data:
@@ -358,18 +456,26 @@ def create_customer_lead(data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         raise e
 
 
-def update_customer_lead(lead_id: str, data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+def update_customer_lead(lead_id: str, data: Dict[str, Any], actor: Dict[str, Any] | None = None) -> Optional[Dict[str, Any]]:
     """
     Update thông thường (không phải stage change).
     KHÔNG ghi log ở đây — chỉ API /transition mới ghi log stage.
     """
     try:
+        existing_for_assignment = get_customer_lead_by_id(lead_id) or {}
+        validate_deal_assignment_fields(actor, data, existing=existing_for_assignment)
         supabase = get_supabase_client()
         safe_data = dict(data)
+        if "city" in safe_data:
+            safe_data["city"] = normalize_vietnam_city(safe_data.get("city"))
         if "project_id" in safe_data and safe_data.get("project_id"):
             current = get_customer_lead_by_id(lead_id) or {}
             target_customer_id = safe_data.get("customer_id") or current.get("customer_id")
             validate_project_belongs_to_customer(safe_data.get("project_id"), target_customer_id)
+        if "primary_contact_id" in safe_data and safe_data.get("primary_contact_id"):
+            current = get_customer_lead_by_id(lead_id) or {}
+            target_customer_id = safe_data.get("customer_id") or current.get("customer_id")
+            validate_contact_belongs_to_customer(safe_data.get("primary_contact_id"), target_customer_id)
         if "position_category_id" in safe_data:
             current = get_customer_lead_by_id(lead_id) or {}
             apply_position_category(safe_data, current_position_category_id=current.get("position_category_id"))
@@ -607,6 +713,11 @@ def get_activity_log(
     try:
         supabase = get_supabase_client()
         # Count
+        # CHU Y: mot Supabase project khac (dung tam thoi de test trong phien
+        # nay) KHONG co cot `instance` tren bang nay, nhung DB THAT
+        # (seeding.db.markeeai.com, dung chung 3 tenant markee/cloudgate/
+        # securityzone) THI CO va da co du lieu nhieu tenant that su - phai
+        # loc lai, khong duoc bo di.
         count_res = (
             supabase.table("customer_lead_activity_log")
             .select("id", count="exact")
@@ -633,7 +744,22 @@ def get_activity_log(
 
 
 def delete_customer_lead(lead_id: str) -> bool:
+    """Hard delete 1 Deal. Phase 3.5 A6: truoc day khong co guard nao ca -
+    xoa mot Deal da co Quote/Contract se de lai ban ghi mo coi (orphaned
+    deal_id) va mat lich su thuc su. Chan lai neu da ton tai Quote hoac
+    Contract gan voi deal nay - nguoi dung phai dung "Hủy"/trang thai khac
+    cho cac truong hop nay, khong hard-delete."""
     supabase = get_supabase_client()
+    quote_res = execute_supabase_query(
+        lambda: supabase.table("quotes").select("id", count="exact").eq("deal_id", lead_id).eq("instance", settings.crm_instance).limit(1).execute()
+    )
+    if quote_res.count:
+        raise ValueError("Deal đã có Báo giá — không thể xóa. Vui lòng chuyển trạng thái deal sang Thất bại/Hủy thay vì xóa.")
+    contract_res = execute_supabase_query(
+        lambda: supabase.table("contracts").select("id", count="exact").eq("deal_id", lead_id).eq("instance", settings.crm_instance).limit(1).execute()
+    )
+    if contract_res.count:
+        raise ValueError("Deal đã có Hợp đồng — không thể xóa. Vui lòng chuyển trạng thái deal sang Thất bại/Hủy thay vì xóa.")
     supabase.table("customer_leads").delete().eq("id", lead_id).eq("instance", settings.crm_instance).execute()
     return True
 

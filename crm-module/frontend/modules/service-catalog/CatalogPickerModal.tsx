@@ -9,6 +9,7 @@ import './styles/service-catalog.css';
 // san du du dieu kien caller nao render truoc, khong phu thuoc thu tu import
 // CSS toan cuc cua trang).
 import '@/modules/crm/styles/quote-center.css';
+import { formatVnd, formatUsd } from './price-book-preview';
 
 /** Dong da chuan hoa de hien thi trong Catalog Picker - noi goi (QuoteWorkspaceModal,
  * FillQuoteStep) tu quy doi ServiceCatalogItem/PriceBookItem thanh dang nay,
@@ -37,16 +38,6 @@ export interface CatalogPickerListItem {
   costPriceUsd?: number | null;
   customerPriceUsd?: number | null;
   exchangeRate?: number | null;
-}
-
-function formatVnd(value: number | null | undefined): string {
-  if (value == null) return '—';
-  return `${value.toLocaleString('vi-VN')}đ`;
-}
-
-function formatUsd(value: number | null | undefined): string {
-  if (value == null) return '—';
-  return `$${value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
 function foldDiacritics(value: string): string {

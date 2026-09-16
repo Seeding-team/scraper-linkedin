@@ -8,10 +8,18 @@ import {
   getZaloConversationMessages,
   sendZaloMessage,
   sendZaloMessageWithFiles,
+  sendZaloMessageWithMentions,
   buildZaloRealtimeStreamUrl,
   markZaloConversationAsRead,
   syncZaloRecentConversations,
   syncZaloConversationMessages,
+  recallZaloMessage,
+  getZaloFriendStatus,
+  sendZaloFriendRequest,
+  acceptZaloFriendRequest,
+  getZaloGroupMembers,
+  sendZaloSticker,
+  reactToZaloMessage,
   type BuildZaloRealtimeStreamOptions,
 } from "@/services/zaloCrawlerService";
 import { allPlatformKpiService, zaloInboxShareService } from "@/services/all-platform.service";
@@ -19,6 +27,9 @@ import type {
   ZaloAccountInfo,
   ZaloConversationSummary,
   ZaloLibraryMessage,
+  ZaloMention,
+  ZaloFriendStatusResponse,
+  ZaloGroupMembersResponse,
 } from "@/types/zalo-api";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -66,6 +77,7 @@ export interface ZaloConv {
   deleted: boolean;
   archived?: boolean;
   archived_at?: string;
+  avatar_url?: string | null;
 }
 
 export interface ZaloArchiveConv {
@@ -151,6 +163,14 @@ export function useZaloAdminInbox() {
 
   // ── Scanning ────────────────────────────────────────────────────────────────
   const [scanning, setScanning] = useState(false);
+
+  // ── Zalo tập trung: recall / mentions / friend-status / sticker / group-scan ──
+  const [pendingMentions, setPendingMentions] = useState<ZaloMention[]>([]);
+  const [friendStatus, setFriendStatus] = useState<ZaloFriendStatusResponse | null>(null);
+  const [loadingFriendStatus, setLoadingFriendStatus] = useState(false);
+  const [friendActionLoading, setFriendActionLoading] = useState(false);
+  const [groupMembers, setGroupMembers] = useState<ZaloGroupMembersResponse | null>(null);
+  const [loadingGroupMembers, setLoadingGroupMembers] = useState(false);
 
   // ── Error & Toast ───────────────────────────────────────────────────────────
   const [error, setError] = useState<string | null>(null);
@@ -820,16 +840,164 @@ export function useZaloAdminInbox() {
     try {
       if (files && files.length > 0) {
         await sendZaloMessageWithFiles(accId, convId, text, files);
+      } else if (pendingMentions.length > 0) {
+        // Tin có @tag/@All — dùng route riêng hỗ trợ mentions (Mục 3.3.5 guide).
+        await sendZaloMessageWithMentions(accId, convId, text, pendingMentions);
       } else {
         await sendZaloMessage(accId, convId, { text });
       }
+      setPendingMentions([]);
       await loadMessages(accId, convId, true);
     } catch (e) {
       setSendError(e instanceof Error ? e.message : "Gửi tin nhắn thất bại");
     } finally {
       setIsSending(false);
     }
-  }, [loadMessages]);
+  }, [loadMessages, pendingMentions]);
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Thu hồi tin nhắn thật (api.undo) — chỉ khả dụng cho tin do chính mình gửi,
+  // yêu cầu cả message_id thật lẫn cli_msg_id (id lúc gửi) trên message row.
+  // ─────────────────────────────────────────────────────────────────────────────
+  const recallMessage = useCallback(async (message: ZaloLibraryMessage) => {
+    const accId = selectedAccountIdRef.current;
+    const convId = selectedConvIdRef.current;
+    const msgId = message.source_message_id || String(message.id || "");
+    const cliMsgId = (message as unknown as { cli_msg_id?: string }).cli_msg_id;
+    if (!accId || !convId || !msgId || !cliMsgId) {
+      showToast("Tin này không thể thu hồi (thiếu cli_msg_id).", false);
+      return;
+    }
+    try {
+      await recallZaloMessage(accId, convId, { msg_id: msgId, cli_msg_id: cliMsgId });
+      setMessages((prev) => prev.map((m) => (m.id === message.id ? { ...m, is_deleted: true } : m)));
+      showToast("Đã thu hồi tin nhắn", true);
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : "Thu hồi tin nhắn thất bại", false);
+    }
+  }, [showToast]);
+
+  // UID Zalo thật của account đang xem — suy từ sender_id của tin CHÍNH MÌNH
+  // đã gửi (không có API riêng trả "own id" qua REST). Dùng để tô sáng
+  // reaction của mình trong ZaloReactionBadges.
+  const myZaloUid = useMemo(
+    () => messages.find((m) => m.is_sent && m.sender_id)?.sender_id || null,
+    [messages],
+  );
+
+  // Thả cảm xúc — CHỈ gửi lên Zalo thật, KHÔNG tự ghi DB (listener xử lý khi
+  // nhận event "reaction" echo lại, xem comment route POST /react phía
+  // backend) — tự hiện tạm (optimistic) ngay bằng myZaloUid nếu đã biết.
+  const reactToMessage = useCallback(async (message: ZaloLibraryMessage, icon: string) => {
+    const accId = selectedAccountIdRef.current;
+    const convId = selectedConvIdRef.current;
+    const msgId = message.source_message_id || String(message.id || "");
+    const cliMsgId = (message as unknown as { cli_msg_id?: string }).cli_msg_id;
+    if (!accId || !convId || !msgId || !cliMsgId) return;
+    const reactorKey = myZaloUid || "__me__";
+    const existing = message.reactions?.[reactorKey];
+    const nextIcon = existing === icon ? "NONE" : icon;
+    setMessages((prev) =>
+      prev.map((m) => {
+        if (m.id !== message.id) return m;
+        const nextReactions = { ...(m.reactions || {}) };
+        if (nextIcon === "NONE") delete nextReactions[reactorKey];
+        else nextReactions[reactorKey] = nextIcon;
+        return { ...m, reactions: nextReactions };
+      }),
+    );
+    try {
+      await reactToZaloMessage(accId, convId, { source_message_id: msgId, icon: nextIcon });
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : "Không thể thả cảm xúc", false);
+    }
+  }, [myZaloUid, showToast]);
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Trạng thái bạn bè — tự tải khi mở 1 hội thoại (best-effort: nếu convId là
+  // 1 group (không phải uid cá nhân), backend/zca-js sẽ trả lỗi và ta chỉ cần
+  // im lặng bỏ qua, không có cách nào rẻ để phân biệt group/user ở tầng FE này
+  // mà không thêm 1 round-trip riêng).
+  // ─────────────────────────────────────────────────────────────────────────────
+  useEffect(() => {
+    setFriendStatus(null);
+    if (!selectedAccountId || !selectedConvId) return;
+    let cancelled = false;
+    setLoadingFriendStatus(true);
+    getZaloFriendStatus(selectedAccountId, selectedConvId)
+      .then((res) => { if (!cancelled) setFriendStatus(res); })
+      .catch(() => { if (!cancelled) setFriendStatus(null); })
+      .finally(() => { if (!cancelled) setLoadingFriendStatus(false); });
+    return () => { cancelled = true; };
+  }, [selectedAccountId, selectedConvId]);
+
+  const sendFriendRequestAction = useCallback(async (message = "") => {
+    if (!selectedAccountId || !selectedConvId) return;
+    setFriendActionLoading(true);
+    try {
+      await sendZaloFriendRequest(selectedAccountId, selectedConvId, message);
+      showToast("Đã gửi lời mời kết bạn", true);
+      const res = await getZaloFriendStatus(selectedAccountId, selectedConvId);
+      setFriendStatus(res);
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : "Gửi lời mời kết bạn thất bại", false);
+    } finally {
+      setFriendActionLoading(false);
+    }
+  }, [selectedAccountId, selectedConvId, showToast]);
+
+  const acceptFriendRequestAction = useCallback(async () => {
+    if (!selectedAccountId || !selectedConvId) return;
+    setFriendActionLoading(true);
+    try {
+      await acceptZaloFriendRequest(selectedAccountId, selectedConvId);
+      showToast("Đã chấp nhận lời mời kết bạn", true);
+      const res = await getZaloFriendStatus(selectedAccountId, selectedConvId);
+      setFriendStatus(res);
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : "Chấp nhận lời mời kết bạn thất bại", false);
+    } finally {
+      setFriendActionLoading(false);
+    }
+  }, [selectedAccountId, selectedConvId, showToast]);
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Quét thành viên nhóm — chỉ gọi tay (nút "Quét thành viên"), dùng để tạo
+  // bulk-send job ở trang riêng (Mục 8(i) guide) — trang đó tự điều hướng sang
+  // /all-platform/zalo-bulk-send với kết quả này, không xử lý bulk-send ở đây.
+  // ─────────────────────────────────────────────────────────────────────────────
+  const loadGroupMembers = useCallback(async () => {
+    if (!selectedAccountId || !selectedConvId) return;
+    setLoadingGroupMembers(true);
+    try {
+      const res = await getZaloGroupMembers(selectedAccountId, selectedConvId);
+      setGroupMembers(res);
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : "Quét thành viên nhóm thất bại", false);
+    } finally {
+      setLoadingGroupMembers(false);
+    }
+  }, [selectedAccountId, selectedConvId, showToast]);
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Sticker — tìm theo từ khoá thật (searchZaloStickers, giống ô tìm sticker
+  // trong app Zalo) qua <ZaloStickerPicker> (component tự quản lý state tìm
+  // kiếm riêng), hook chỉ cần expose hành động GỬI.
+  // ─────────────────────────────────────────────────────────────────────────────
+  const sendStickerAction = useCallback(async (sticker: { id: number; cateId: number }) => {
+    const accId = selectedAccountIdRef.current;
+    const convId = selectedConvIdRef.current;
+    if (!accId || !convId) return;
+    setIsSending(true);
+    try {
+      await sendZaloSticker(accId, convId, { id: sticker.id, cate_id: sticker.cateId });
+      await loadMessages(accId, convId, true);
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : "Gửi sticker thất bại", false);
+    } finally {
+      setIsSending(false);
+    }
+  }, [loadMessages, showToast]);
 
   // ─────────────────────────────────────────────────────────────────────────────
   // Derived: map conversations to FB style ZaloConv
@@ -863,6 +1031,7 @@ export function useZaloAdminInbox() {
         pushed_to_zalo: true,
         deleted: isHidden,
         archived: isHidden,
+        avatar_url: c.avatar_url ?? null,
       };
     });
   }, [conversations, isCustomerSet, hiddenConvIds]);
@@ -997,6 +1166,22 @@ export function useZaloAdminInbox() {
     sendReply,
     isSending,
     sendError,
+
+    // Zalo tập trung: recall / mentions / friend-status / sticker / group-scan
+    pendingMentions,
+    setPendingMentions,
+    recallMessage,
+    friendStatus,
+    loadingFriendStatus,
+    friendActionLoading,
+    sendFriendRequestAction,
+    acceptFriendRequestAction,
+    groupMembers,
+    loadingGroupMembers,
+    loadGroupMembers,
+    sendStickerAction,
+    myZaloUid,
+    reactToMessage,
 
     // Account stats
     selectedOwnerId,

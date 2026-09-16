@@ -12,6 +12,17 @@
   --spacing-gutter: 20px;
   --spacing-base: 4px;
 
+  /* --container-xs/sm/md/lg/xl: Tailwind v4 đã tự có sẵn 5 giá trị này y hệt
+     (xem node_modules/tailwindcss/theme.css) nên khai lại ở đây KHÔNG có tác
+     dụng gì — giữ lại chỉ để rõ ràng ý định, KHÔNG phải fix thật. Fix thật nằm
+     ở khối `.max-w-xs/.max-w-sm/.max-w-md/.max-w-lg/.max-w-xl` bên dưới trong
+     `@layer utilities`, xem comment ở đó để rõ nguyên nhân thật. */
+  --container-xs: 20rem;
+  --container-sm: 24rem;
+  --container-md: 28rem;
+  --container-lg: 32rem;
+  --container-xl: 36rem;
+
   /* Radius chuẩn shadcn/app.markeeai.com (base --radius: 0.625rem của app chính).
      Trước đây bị ghi đè nhỏ bất thường (lg=0.25rem, xl=0.5rem) làm bo góc gắt hơn
      app chính; đổi về chuẩn để mọi trang tự "tròn" giống app.markee. */
@@ -83,6 +94,19 @@
   --color-sidebar-ring: #a1a1a1;
   --color-markee-primary: #ba244a;
 
+  /* ── "brand" scale — port nguyên UI từ zalo-account-module/zalo-forward-module
+     (InvoiceFlowManager) cho các trang Zalo tập trung: 2 module gốc dùng
+     bg-brand/bg-brand-hover/bg-brand-subtle/border-brand (Tailwind v3 config
+     "brand:{DEFAULT,hover,dark,subtle,border}") — khai đúng cùng tên ở đây
+     (Tailwind v4 @theme) để COPY THẲNG className từ component gốc, không phải
+     sửa từng chỗ, chỉ đổi GIÁ TRỊ màu sang tông thương hiệu app này (#ba244a)
+     thay vì xanh Zalo (#0068ff) của module gốc. */
+  --color-brand: #ba244a;
+  --color-brand-hover: #a01f3f;
+  --color-brand-dark: #86192f;
+  --color-brand-subtle: #fbe7ec;
+  --color-brand-border: #f0b8c6;
+
   /* ── shadcn/ui tokens — lay dung tu CSS production cua app.markeeai.com
      (fetch truc tiep https://app.markeeai.com, extract --var trong :root),
      dung lam nen tang de dong bo dan UI voi app chinh.
@@ -150,6 +174,38 @@
 }
 
 @layer utilities {
+  /* BUG THẬT đã tìm ra (2026-09-16): Tailwind v4 sinh utility `max-w-{key}`
+     (dùng cho max-width) bằng cách ưu tiên tra `--spacing-{key}` TRƯỚC, chỉ
+     rơi về `--container-{key}` nếu không có key trùng tên trong thang spacing
+     — KHÔNG phải khai thêm --container-* là xong (đã thử, verify bằng CSS
+     biên dịch thật vẫn ra --spacing-xl=32px, không phải 36rem chuẩn). Vì app
+     này có sẵn thang `--spacing-xs/sm/md/lg/xl` riêng (dùng thật cho p-sm,
+     gap-lg... ở 26+ nơi, KHÔNG được đổi tên) nên mọi class `max-w-xs/sm/md/lg/xl`
+     toàn app bị "cướp" giá trị sai (vd max-w-xl chỉ còn 32px thay vì 576px),
+     gây lỗi "chữ dồn từng chữ 1 dòng" ở các trang Zalo mới port. Fix: định
+     nghĩa tay lại đúng 5 class này bằng giá trị chuẩn Tailwind — đặt ở đây
+     (trong @layer utilities, sau @import "tailwindcss") để thắng cascade so
+     với rule tự sinh sai (cùng layer, cùng specificity, đứng sau thắng). */
+  .max-w-xs {
+    max-width: 20rem;
+  }
+
+  .max-w-sm {
+    max-width: 24rem;
+  }
+
+  .max-w-md {
+    max-width: 28rem;
+  }
+
+  .max-w-lg {
+    max-width: 32rem;
+  }
+
+  .max-w-xl {
+    max-width: 36rem;
+  }
+
   .scrollbar-none {
     -ms-overflow-style: none;
     scrollbar-width: none;

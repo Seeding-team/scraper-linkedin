@@ -366,7 +366,7 @@ def create_lead(payload: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]
     )
     supabase = get_supabase_client()
     res = execute_supabase_query(lambda: supabase.table("crm_leads").insert(data).execute())
-    return res.data[0]
+    return get_lead(res.data[0]["id"], user)
 
 
 def update_lead(lead_id: str, payload: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]:
@@ -407,7 +407,9 @@ def update_lead(lead_id: str, payload: dict[str, Any], user: dict[str, Any]) -> 
 
     supabase = get_supabase_client()
     res = execute_supabase_query(lambda: supabase.table("crm_leads").update(data).eq("id", lead_id).eq("instance", settings.crm_instance).execute())
-    return res.data[0]
+    if not res.data:
+        raise ValueError("Khong tim thay lead.")
+    return get_lead(lead_id, user)
 
 
 class LeadLinkedError(ValueError):

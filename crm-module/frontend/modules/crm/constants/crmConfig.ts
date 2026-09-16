@@ -10,7 +10,7 @@ import { formatCurrencyDisplay, parseCurrencyInput } from '@/lib/currency';
  */
 export function canWriteDeal(user: AppUser | null | undefined, deal: Deal | null | undefined): boolean {
   if (!user) return false;
-  if (user.role === 'admin' || user.role === 'leader' || user.is_sale) return true;
+  if (hasFullCrmAccess(user)) return true;
   if (!deal) return false;
   return deal.assignment.leadedById === user.id || deal.assignment.sdrId === user.id;
 }
@@ -33,13 +33,24 @@ function hasQuoteBusinessRole(user: AppUser | null | undefined, role: 'presale' 
   return businessRole === role || businessRole === 'both';
 }
 
+export function hasFullCrmAccess(user: AppUser | null | undefined): boolean {
+  if (!user) return false;
+  return (
+    user.role === 'admin'
+    || user.role === 'leader'
+    || Boolean(user.is_sale)
+    || hasQuoteBusinessRole(user, 'sale')
+    || hasQuoteBusinessRole(user, 'presale')
+  );
+}
+
 /** Mirror cua crm_permission_service.can_edit_technical_quote (backend) - CHI
  * dung de khoa/mo cell Giá vốn tren FE cho dung UX (bang hang muc thong nhat,
  * Section 4). Backend van la lop chan THAT (_check_item_field_level_permission),
  * ham nay khong bao gio la lop bao mat. */
 export function canEditQuoteCost(user: AppUser | null | undefined, quote: QuoteOwnerShape): boolean {
   if (!user) return false;
-  if (user.role === 'admin' || user.role === 'leader' || user.is_sale) return true;
+  if (hasFullCrmAccess(user)) return true;
   if (!quote) return hasQuoteBusinessRole(user, 'presale') || hasQuoteBusinessRole(user, 'sale');
   return (
     (quote.technicalOwnerId === user.id && hasQuoteBusinessRole(user, 'presale'))
@@ -51,7 +62,7 @@ export function canEditQuoteCost(user: AppUser | null | undefined, quote: QuoteO
  * dung de khoa/mo cell Markup/Giá khách tren FE. */
 export function canEditQuotePricingFields(user: AppUser | null | undefined, quote: QuoteOwnerShape): boolean {
   if (!user) return false;
-  if (user.role === 'admin' || user.role === 'leader' || user.is_sale) return true;
+  if (hasFullCrmAccess(user)) return true;
   if (!quote) return false;
   return quote.quoteOwnerId === user.id && hasQuoteBusinessRole(user, 'sale');
 }
@@ -214,69 +225,69 @@ export const SOURCE_OPTIONS = [
 
 // Đủ 63 tỉnh/thành Việt Nam — 5 thành phố trực thuộc trung ương trước, còn lại xếp theo bảng chữ cái.
 export const CITY_OPTIONS = [
-  'Hà Nội',
-  'Hồ Chí Minh',
-  'Hải Phòng',
-  'Đà Nẵng',
-  'Cần Thơ',
-  'An Giang',
-  'Bà Rịa - Vũng Tàu',
-  'Bạc Liêu',
-  'Bắc Giang',
-  'Bắc Kạn',
-  'Bắc Ninh',
-  'Bến Tre',
-  'Bình Định',
-  'Bình Dương',
-  'Bình Phước',
-  'Bình Thuận',
-  'Cà Mau',
-  'Cao Bằng',
-  'Đắk Lắk',
-  'Đắk Nông',
-  'Điện Biên',
-  'Đồng Nai',
-  'Đồng Tháp',
-  'Gia Lai',
-  'Hà Giang',
-  'Hà Nam',
-  'Hà Tĩnh',
-  'Hải Dương',
-  'Hậu Giang',
-  'Hòa Bình',
-  'Hưng Yên',
-  'Khánh Hòa',
-  'Kiên Giang',
-  'Kon Tum',
-  'Lai Châu',
-  'Lâm Đồng',
-  'Lạng Sơn',
-  'Lào Cai',
-  'Long An',
-  'Nam Định',
-  'Nghệ An',
-  'Ninh Bình',
-  'Ninh Thuận',
-  'Phú Thọ',
-  'Phú Yên',
-  'Quảng Bình',
-  'Quảng Nam',
-  'Quảng Ngãi',
-  'Quảng Ninh',
-  'Quảng Trị',
-  'Sóc Trăng',
-  'Sơn La',
-  'Tây Ninh',
-  'Thái Bình',
-  'Thái Nguyên',
-  'Thanh Hóa',
-  'Thừa Thiên Huế',
-  'Tiền Giang',
-  'Trà Vinh',
-  'Tuyên Quang',
-  'Vĩnh Long',
-  'Vĩnh Phúc',
-  'Yên Bái',
+  "An Giang",
+  "B\u00e0 R\u1ecba - V\u0169ng T\u00e0u",
+  "B\u1ea1c Li\u00eau",
+  "B\u1eafc Giang",
+  "B\u1eafc K\u1ea1n",
+  "B\u1eafc Ninh",
+  "B\u1ebfn Tre",
+  "B\u00ecnh \u0110\u1ecbnh",
+  "B\u00ecnh D\u01b0\u01a1ng",
+  "B\u00ecnh Ph\u01b0\u1edbc",
+  "B\u00ecnh Thu\u1eadn",
+  "C\u00e0 Mau",
+  "Cao B\u1eb1ng",
+  "C\u1ea7n Th\u01a1",
+  "\u0110\u00e0 N\u1eb5ng",
+  "\u0110\u1eafk L\u1eafk",
+  "\u0110\u1eafk N\u00f4ng",
+  "\u0110i\u1ec7n Bi\u00ean",
+  "\u0110\u1ed3ng Nai",
+  "\u0110\u1ed3ng Th\u00e1p",
+  "Gia Lai",
+  "H\u00e0 Giang",
+  "H\u00e0 Nam",
+  "H\u00e0 N\u1ed9i",
+  "H\u00e0 T\u0129nh",
+  "H\u1ea3i D\u01b0\u01a1ng",
+  "H\u1ea3i Ph\u00f2ng",
+  "H\u1eadu Giang",
+  "H\u00f2a B\u00ecnh",
+  "H\u01b0ng Y\u00ean",
+  "Kh\u00e1nh H\u00f2a",
+  "Ki\u00ean Giang",
+  "Kon Tum",
+  "Lai Ch\u00e2u",
+  "L\u00e2m \u0110\u1ed3ng",
+  "L\u1ea1ng S\u01a1n",
+  "L\u00e0o Cai",
+  "Long An",
+  "Nam \u0110\u1ecbnh",
+  "Ngh\u1ec7 An",
+  "Ninh B\u00ecnh",
+  "Ninh Thu\u1eadn",
+  "Ph\u00fa Th\u1ecd",
+  "Ph\u00fa Y\u00ean",
+  "Qu\u1ea3ng B\u00ecnh",
+  "Qu\u1ea3ng Nam",
+  "Qu\u1ea3ng Ng\u00e3i",
+  "Qu\u1ea3ng Ninh",
+  "Qu\u1ea3ng Tr\u1ecb",
+  "S\u00f3c Tr\u0103ng",
+  "S\u01a1n La",
+  "T\u00e2y Ninh",
+  "Th\u00e1i B\u00ecnh",
+  "Th\u00e1i Nguy\u00ean",
+  "Thanh H\u00f3a",
+  "Th\u1eeba Thi\u00ean Hu\u1ebf",
+  "Ti\u1ec1n Giang",
+  "TP. H\u1ed3 Ch\u00ed Minh",
+  "Tr\u00e0 Vinh",
+  "Tuy\u00ean Quang",
+  "V\u0129nh Long",
+  "V\u0129nh Ph\u00fac",
+  "Y\u00ean B\u00e1i",
 ];
 
 export const INDUSTRY_OPTIONS = [
@@ -447,7 +458,7 @@ export function getStageMeta(stage: DealStage) {
 }
 
 export function formatVND(value?: number | string | null) {
-  if (!Number(value || 0)) return null;
+  if (value == null || value === '' || Number.isNaN(Number(value))) return null;
   // Wrapper mong quanh formatCurrencyDisplay() dung chung (lib/currency.ts) -
   // giu nguyen dinh dang output cu ("5.000.000 ₫", co ky hieu tien te), khong
   // tu lam Intl.NumberFormat rieng nua.

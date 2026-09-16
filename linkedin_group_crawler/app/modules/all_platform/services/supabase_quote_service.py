@@ -19,6 +19,7 @@ from supabase import Client
 from app.core.config import settings
 from app.core.supabase_client import get_supabase_client
 from app.modules.all_platform.services.supabase_categories_service import get_categories_by_type
+from app.modules.all_platform.services.supabase_user_service import get_member_option_by_id
 
 logger = logging.getLogger(__name__)
 
@@ -2082,6 +2083,21 @@ def set_quote_processing_stage(quote_id: str, actor_id: str | None, stage: str) 
     return get_quote(quote_id)
 
 
+def _validate_quote_owner_assignment(user_id: str | None, allowed_roles: tuple[str, ...], label: str) -> None:
+    """Phase 3.5 A4: assign_quote_owner() truoc day khong kiem tra gi ca -
+    payload sua tay van gan duoc 1 user quote_business_role=NULL/sai vai tro
+    lam technical/quote owner. Cung 1 pattern voi _validate_manager_id()
+    (supabase_project_service.py) - tu choi som bang thong bao tieng Viet
+    thay vi de quote roi vao trang thai assignment mo coi."""
+    if not user_id:
+        return
+    user = get_member_option_by_id(user_id)
+    if not user:
+        raise ValueError(f"{label} không hợp lệ hoặc không còn tồn tại.")
+    if user.get("quoteBusinessRole") not in allowed_roles:
+        raise ValueError(f"{label} phải có vai trò báo giá phù hợp.")
+
+
 def assign_quote_owner(
     quote_id: str, actor_id: str | None,
     technical_owner_id: str | None = None, quote_owner_id: str | None = None,
@@ -2093,6 +2109,10 @@ def assign_quote_owner(
     phan biet "khong gui field nay" voi "gui gia tri None de bo gan" (giong
     han che cua issuer company nullable field truoc do)."""
     _ensure_quote_in_instance(quote_id)
+    if assign_technical:
+        _validate_quote_owner_assignment(technical_owner_id, ("presale", "both"), "Người phụ trách kỹ thuật")
+    if assign_quote_owner_field:
+        _validate_quote_owner_assignment(quote_owner_id, ("sale", "both"), "Người phụ trách báo giá")
     supabase: Client = get_supabase_client()
     update_data: dict = {"updated_by": actor_id}
     if assign_technical:

@@ -273,8 +273,9 @@ export class SeedingQuoteRepository implements QuoteRepository {
     );
   }
 
-  async getQuotes(): Promise<Quote[]> {
-    return apiFetch<Quote[]>('/api/all-platform/quotes');
+  async getQuotes(params?: { dealId?: string }): Promise<Quote[]> {
+    const qs = params?.dealId ? `?deal_id=${encodeURIComponent(params.dealId)}` : '';
+    return apiFetch<Quote[]>(`/api/all-platform/quotes${qs}`);
   }
 
   /** Quote Center THAT (backend gom theo version_chain_id + loc/dem/phan

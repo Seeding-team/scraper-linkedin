@@ -2,14 +2,18 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from typing import Any
 
 from app.core.config import settings
 from app.core.phone import vn_phone_to_e164
 from app.core.supabase_client import execute_supabase_query, get_supabase_client
 from app.modules.all_platform.services.customer_lead_service import BASE_COLUMNS, _normalize_row
+from app.modules.all_platform.services.supabase_quote_service import apply_quote_field_permissions
+from app.modules.all_platform.services.crm_permission_service import can_edit_contract, has_full_crm_access
 from app.modules.all_platform.services.supabase_categories_service import get_categories_by_type
 from app.modules.all_platform.services.crm_position_service import apply_position_category
+from app.modules.all_platform.services.crm_city_normalizer import normalize_city_fields, normalize_vietnam_city
 
 CUSTOMER_COLUMNS = (
     "id, customer_name, company_name, position, position_category_id, "
@@ -18,12 +22,17 @@ CUSTOMER_COLUMNS = (
     "address, city, industry, source, status, owner_id, sale_manager_id, "
     "created_by, note, created_at, updated_at"
 )
+logger = logging.getLogger(__name__)
 
 
 class DuplicateCustomerError(ValueError):
     def __init__(self, matches: list[dict[str, Any]]) -> None:
         super().__init__("Khach hang da ton tai voi email hoac so dien thoai nay.")
         self.matches = matches
+
+
+class CustomerNotFoundError(ValueError):
+    pass
 
 
 class CustomerLinkedError(ValueError):
@@ -44,8 +53,7 @@ class CustomerLinkedError(ValueError):
 
 
 def _is_admin_or_leader(user: dict[str, Any] | None) -> bool:
-    role = str((user or {}).get("role") or "").strip().lower()
-    return role in {"admin", "leader"}
+    return has_full_crm_access(user)
 
 
 def _clean_text(value: Any) -> str | None:
@@ -67,6 +75,8 @@ def normalize_phone(value: Any) -> str | None:
 
 def _normalize_payload(payload: dict[str, Any], actor_id: str | None = None) -> dict[str, Any]:
     out = {key: _clean_text(value) if isinstance(value, str) else value for key, value in payload.items()}
+    if "city" in out:
+        out["city"] = normalize_vietnam_city(out.get("city"))
     out["email_normalized"] = normalize_email(out.get("email"))
     out["phone_normalized"] = normalize_phone(out.get("phone"))
     if actor_id:
@@ -112,7 +122,7 @@ def _duplicate_query(email_normalized: str | None, phone_normalized: str | None,
             matches[row["id"]] = row
     if exclude_id:
         matches.pop(exclude_id, None)
-    return list(matches.values())
+    return [normalize_city_fields(row) for row in matches.values()]
 
 
 def _customer_ids_visible_to(user: dict[str, Any]) -> set[str] | None:
@@ -126,27 +136,15 @@ def _customer_ids_visible_to(user: dict[str, Any]) -> set[str] | None:
     supabase = get_supabase_client()
     visible: set[str] = set()
     owned = execute_supabase_query(
-        lambda: supabase.table("crm_customers")
-        .select("id")
-        .eq("owner_id", uid)
-        .eq("instance", settings.crm_instance)
-        .execute()
+        lambda: supabase.table("crm_customers").select("id").eq("owner_id", uid).eq("instance", settings.crm_instance).execute()
     )
     visible.update(row["id"] for row in owned.data or [] if row.get("id"))
 
     by_leaded = execute_supabase_query(
-        lambda: supabase.table("customer_leads")
-        .select("customer_id")
-        .eq("leaded_by", uid)
-        .eq("instance", settings.crm_instance)
-        .execute()
+        lambda: supabase.table("customer_leads").select("customer_id").eq("leaded_by", uid).eq("instance", settings.crm_instance).execute()
     )
     by_sdr = execute_supabase_query(
-        lambda: supabase.table("customer_leads")
-        .select("customer_id")
-        .eq("sdr_id", uid)
-        .eq("instance", settings.crm_instance)
-        .execute()
+        lambda: supabase.table("customer_leads").select("customer_id").eq("sdr_id", uid).eq("instance", settings.crm_instance).execute()
     )
     for row in (by_leaded.data or []) + (by_sdr.data or []):
         if row.get("customer_id"):
@@ -205,11 +203,7 @@ def _attach_customer_metrics(customers: list[dict[str, Any]], user: dict[str, An
     # So Contact that theo tung khach hang - 1 truy van gop cho ca trang, khong
     # phai N+1 (khop do phuc tap voi cach lam cua lead_res o tren).
     contact_res = execute_supabase_query(
-        lambda: supabase.table("crm_contacts")
-        .select("id, customer_id")
-        .in_("customer_id", ids)
-        .eq("instance", settings.crm_instance)
-        .execute()
+        lambda: supabase.table("crm_contacts").select("id, customer_id").in_("customer_id", ids).eq("instance", settings.crm_instance).execute()
     )
     contact_counts: dict[str, int] = {}
     for contact in contact_res.data or []:
@@ -218,6 +212,7 @@ def _attach_customer_metrics(customers: list[dict[str, Any]], user: dict[str, An
             contact_counts[cid] = contact_counts.get(cid, 0) + 1
 
     for customer in customers:
+        normalize_city_fields(customer)
         leads = by_customer.get(customer["id"], [])
         if user is not None:
             leads = [lead for lead in leads if _deal_visible_to(user, lead)]
@@ -273,7 +268,7 @@ def list_customers(
             f"phone.ilike.%{search}%,email.ilike.%{search}%,tax_code.ilike.%{search}%"
         )
     res = execute_supabase_query(lambda: query.order("updated_at", desc=True).execute())
-    rows = res.data or []
+    rows = [normalize_city_fields(row) for row in (res.data or [])]
 
     contact_customer_ids: set[str] = set()
     if search:
@@ -298,7 +293,7 @@ def list_customers(
             extra_res = execute_supabase_query(
                 lambda: base_query().in_("id", missing_ids).execute()
             )
-            rows = rows + (extra_res.data or [])
+            rows = rows + [normalize_city_fields(row) for row in (extra_res.data or [])]
 
     visible = _customer_ids_visible_to(user)
     if visible is not None:
@@ -318,7 +313,7 @@ def list_customers(
                 f"phone.ilike.%{search}%,email.ilike.%{search}%,tax_code.ilike.%{search}%"
             )
         kpi_res = execute_supabase_query(lambda: kpi_query.execute())
-        kpi_rows = kpi_res.data or []
+        kpi_rows = [normalize_city_fields(row) for row in (kpi_res.data or [])]
         if search:
             existing_kpi_ids = {row["id"] for row in kpi_rows}
             missing_kpi_ids = list(contact_customer_ids - existing_kpi_ids)
@@ -326,7 +321,7 @@ def list_customers(
                 extra_kpi_res = execute_supabase_query(
                     lambda: base_query(include_status=False).in_("id", missing_kpi_ids).execute()
                 )
-                kpi_rows = kpi_rows + (extra_kpi_res.data or [])
+                kpi_rows = kpi_rows + [normalize_city_fields(row) for row in (extra_kpi_res.data or [])]
         if visible is not None:
             kpi_rows = [row for row in kpi_rows if row.get("id") in visible]
     else:
@@ -347,24 +342,18 @@ def quick_search_customers(user: dict[str, Any], q: str, limit: int = 8) -> list
 
 def get_customer(customer_id: str, user: dict[str, Any]) -> dict[str, Any]:
     # BUG THAT DA GAP ("Không tải được hồ sơ khách hàng" hiện nguyên object
-    # loi PostgREST tho ra UI, vd {'message': 'Cannot coerce...', 'code':
-    # 'PGRST116'...}): .single() nem APIError tho khi 0 dong khop (id khong
-    # ton tai, HOAC ton tai o instance khac - router chi lam str(exc) roi tra
-    # thang len UI, lo ca chi tiet loi DB noi bo. Doi sang .maybe_single()
+    # loi PostgREST tho ra UI): .single() nem APIError tho (PGRST116 "0 rows")
+    # khi id khong ton tai/khong khop instance - router chi lam str(exc) roi
+    # tra thang len UI, lo ca chi tiet loi DB noi bo. Doi sang .maybe_single()
     # (tra None thay vi raise) + tu rai ValueError sach - dung y het pattern
     # "Khong tim thay ..." da dung o get_project()/get_quote().
     supabase = get_supabase_client()
     res = execute_supabase_query(
-        lambda: supabase.table("crm_customers")
-        .select(CUSTOMER_COLUMNS)
-        .eq("id", customer_id)
-        .eq("instance", settings.crm_instance)
-        .maybe_single()
-        .execute()
+        lambda: supabase.table("crm_customers").select(CUSTOMER_COLUMNS).eq("id", customer_id).eq("instance", settings.crm_instance).maybe_single().execute()
     )
-    customer = res.data if res else None
+    customer = normalize_city_fields(res.data) if res and res.data else None
     if not customer:
-        raise ValueError("Không tìm thấy khách hàng.")
+        raise CustomerNotFoundError("Khong tim thay khach hang.")
     if not can_view_customer(user, customer):
         raise PermissionError("Khong co quyen xem ho so khach hang nay.")
     return _attach_customer_metrics([customer])[0]
@@ -386,9 +375,14 @@ def create_customer(payload: dict[str, Any], user: dict[str, Any]) -> dict[str, 
     else:
         data["owner_id"] = actor_id or None
     data["instance"] = settings.crm_instance
+    logger.info(
+        "tenant_write table=crm_customers operation=insert settings.crm_instance=%s resolved_instance=%s",
+        settings.crm_instance,
+        data["instance"],
+    )
     supabase = get_supabase_client()
     res = execute_supabase_query(lambda: supabase.table("crm_customers").insert(data).execute())
-    return res.data[0]
+    return normalize_city_fields(res.data[0])
 
 
 def update_customer(customer_id: str, payload: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]:
@@ -409,7 +403,7 @@ def update_customer(customer_id: str, payload: dict[str, Any], user: dict[str, A
         .eq("instance", settings.crm_instance)
         .execute()
     )
-    return res.data[0]
+    return normalize_city_fields(res.data[0])
 
 
 def delete_customer(customer_id: str, user: dict[str, Any]) -> dict[str, Any]:
@@ -418,30 +412,16 @@ def delete_customer(customer_id: str, user: dict[str, Any]) -> dict[str, Any]:
         raise PermissionError("Khong co quyen xoa ho so khach hang nay.")
     supabase = get_supabase_client()
     deal_res = execute_supabase_query(
-        lambda: supabase.table("customer_leads")
-        .select("id", count="exact")
-        .eq("customer_id", customer_id)
-        .eq("instance", settings.crm_instance)
-        .execute()
+        lambda: supabase.table("customer_leads").select("id", count="exact").eq("customer_id", customer_id).eq("instance", settings.crm_instance).execute()
     )
     contact_res = execute_supabase_query(
-        lambda: supabase.table("crm_contacts")
-        .select("id", count="exact")
-        .eq("customer_id", customer_id)
-        .eq("instance", settings.crm_instance)
-        .execute()
+        lambda: supabase.table("crm_contacts").select("id", count="exact").eq("customer_id", customer_id).eq("instance", settings.crm_instance).execute()
     )
     deal_count = deal_res.count or 0
     contact_count = contact_res.count or 0
     if deal_count or contact_count:
         raise CustomerLinkedError(deal_count, contact_count)
-    execute_supabase_query(
-        lambda: supabase.table("crm_customers")
-        .delete()
-        .eq("id", customer_id)
-        .eq("instance", settings.crm_instance)
-        .execute()
-    )
+    execute_supabase_query(lambda: supabase.table("crm_customers").delete().eq("id", customer_id).eq("instance", settings.crm_instance).execute())
     return {}
 
 
@@ -449,38 +429,61 @@ def related_records(customer_id: str, user: dict[str, Any]) -> dict[str, Any]:
     customer = get_customer(customer_id, user)
     supabase = get_supabase_client()
     lead_res = execute_supabase_query(
-        lambda: supabase.table("customer_leads")
-        .select(BASE_COLUMNS)
-        .eq("customer_id", customer_id)
-        .eq("instance", settings.crm_instance)
-        .execute()
+        lambda: supabase.table("customer_leads").select(BASE_COLUMNS).eq("customer_id", customer_id).eq("instance", settings.crm_instance).execute()
     )
-    deals = [_normalize_row(row) for row in lead_res.data or []]
-    deals = [deal for deal in deals if _deal_visible_to(user, deal)]
+    all_deals = [_normalize_row(row) for row in lead_res.data or []]
+    all_deals_by_id = {deal["id"]: deal for deal in all_deals}
+    deals = [deal for deal in all_deals if _deal_visible_to(user, deal)]
     deal_ids = [deal["id"] for deal in deals]
 
     quotes: list[dict[str, Any]] = []
     contracts: list[dict[str, Any]] = []
     if deal_ids:
         quote_res = execute_supabase_query(
-            lambda: supabase.table("quotes")
-            .select("*")
-            .in_("deal_id", deal_ids)
-            .eq("instance", settings.crm_instance)
-            .execute()
+            lambda: supabase.table("quotes").select("*").eq("instance", settings.crm_instance).in_("deal_id", deal_ids).execute()
         )
-        quotes = quote_res.data or []
-        try:
-            contract_res = execute_supabase_query(
-                lambda: supabase.table("contracts")
-                .select("*")
-                .in_("deal_id", deal_ids)
-                .eq("instance", settings.crm_instance)
-                .execute()
+        # Cung 1 lop loc field-permission (cost/pricing/profitability) ma moi
+        # endpoint khac cua Quote da ap dung (xem apply_quote_field_permissions
+        # trong routers/quote.py) - truoc ban vá nay related_records() tra
+        # nguyen raw row, lam lo cost/pricing cho nguoi khong co quyen xem.
+        quotes = [apply_quote_field_permissions(row, user) for row in (quote_res.data or [])]
+
+    # Hop dong co the tao truc tiep tu Customer (khong qua Deal, xem
+    # ManualContractModal + contracts.customer_id, migration 130) nen phai
+    # gop ca 2 duong: qua deal_id (nhu cu) VA qua customer_id truc tiep, roi
+    # khu trung theo id. `contracts.instance` CO ton tai tren DB that
+    # (seeding.db.markeeai.com, dung chung 3 tenant markee/cloudgate/
+    # securityzone) - loc lai o day theo dung convention cua moi query khac
+    # trong file nay, dung chi dua vao deal_ids/customer_id da tenant-scoped
+    # tu truoc (defense-in-depth, tranh 1 hang du lieu loi/instance sai lech
+    # khoi lo sang tenant khac).
+    contracts_by_id: dict[str, dict[str, Any]] = {}
+    try:
+        if deal_ids:
+            by_deal = execute_supabase_query(
+                lambda: supabase.table("contracts").select("*").eq("instance", settings.crm_instance).in_("deal_id", deal_ids).execute()
             )
-            contracts = contract_res.data or []
-        except Exception:
-            contracts = []
+            for row in by_deal.data or []:
+                contracts_by_id[row["id"]] = row
+        by_customer = execute_supabase_query(
+            lambda: supabase.table("contracts").select("*").eq("instance", settings.crm_instance).eq("customer_id", customer_id).execute()
+        )
+        for row in by_customer.data or []:
+            # Hop dong tao truc tiep tren Customer KHONG duoc gop mu theo
+            # customer_id (Phase 3.5 A2) - phai qua dung permission cua canonical
+            # Contract (can_edit_contract: nguoi tao / phu trach deal gan / full
+            # CRM access), giong het rule ap dung cho hop dong gan qua deal_id o
+            # tren. row["created_by"] -> can_edit_contract doc "createdById" nen
+            # bo sung alias truoc khi check (raw select("*") la snake_case).
+            row_for_check = {**row, "createdById": row.get("created_by")}
+            linked_deal = all_deals_by_id.get(row.get("deal_id")) if row.get("deal_id") else None
+            if not can_edit_contract(user, row_for_check, linked_deal):
+                continue
+            contracts_by_id[row["id"]] = row
+        contracts = list(contracts_by_id.values())
+    except Exception:
+        logger.exception("related_records: failed to load contracts for customer %s", customer_id)
+        contracts = []
 
     total_value = sum(float(deal.get("estimated_budget") or deal.get("lifetime_value") or 0) for deal in deals)
     return {
@@ -490,6 +493,31 @@ def related_records(customer_id: str, user: dict[str, Any]) -> dict[str, Any]:
         "contracts": contracts,
         "kpi": {"deal_count": len(deals), "quote_count": len(quotes), "contract_count": len(contracts), "total_value": total_value},
     }
+
+
+def get_customer_activity(customer_id: str, user: dict[str, Any]) -> list[dict[str, Any]]:
+    """Customer 360 'Hoạt động' tab, Phase 3 scope = Deal/Sales activity ONLY
+    (aggregate the same `customer_lead_activity_log` table Deal Workspace's
+    Hoạt động tab already reads, across every Deal of this Customer) - KHONG
+    phai unified Activity Timeline (chua gom Quote/Contract/Customer event).
+    UI phai ghi ro pham vi nay (vd "Hoạt động bán hàng"), khong duoc gioi
+    thieu nhu Activity day du.
+
+    Cot lien ket that su (xac minh tu migration 021/038, KHONG doan ten):
+    `customer_lead_activity_log.customer_id` la FK toi `customer_leads.id`
+    (Deal), khong phai `crm_customers.id`."""
+    customer = get_customer(customer_id, user)  # raises if not found/not visible - same visibility gate as /related
+    supabase = get_supabase_client()
+    lead_res = execute_supabase_query(
+        lambda: supabase.table("customer_leads").select("id").eq("customer_id", customer_id).eq("instance", settings.crm_instance).execute()
+    )
+    deal_ids = [row["id"] for row in (lead_res.data or [])]
+    if not deal_ids:
+        return []
+    log_res = execute_supabase_query(
+        lambda: supabase.table("customer_lead_activity_log").select("*").eq("instance", settings.crm_instance).in_("customer_id", deal_ids).order("created_at", desc=True).execute()
+    )
+    return log_res.data or []
 
 
 def _request_hash(payload: dict[str, Any]) -> str:
@@ -560,22 +588,45 @@ def create_customer_with_deal(payload: dict[str, Any], user: dict[str, Any]) -> 
             partial = True
             partial_message = "Deal da tao, nhung ho so khach hang khong duoc cap nhat vi ban khong co quyen sua."
         deal["customer_id"] = customer_id
+        # Contact 360: Deal chi duoc gan primary_contact_id THUOC DUNG
+        # Customer nay - server tu kiem tra lai, khong chi tin dropdown FE da
+        # loc dung (dung y het validate_project_belongs_to_customer()).
+        from app.modules.all_platform.services.customer_lead_service import validate_contact_belongs_to_customer
+
+        validate_contact_belongs_to_customer(deal.get("primary_contact_id"), customer_id)
     else:
+        # Customer moi tao trong chinh request nay chua the co san Contact
+        # nao ca - bo qua primary_contact_id neu client lo gui len (khong co
+        # customer_id de doi chieu, khong tin bat ky gia tri nao o day).
+        deal.pop("primary_contact_id", None)
         matches = _duplicate_query(customer.get("email_normalized"), customer.get("phone_normalized"))
         if matches:
             raise DuplicateCustomerError(matches)
 
     supabase = get_supabase_client()
-    res = execute_supabase_query(
-        lambda: supabase.rpc("crm_create_customer_with_deal", {
-            "p_customer": customer,
-            "p_deal": deal,
-            "p_actor_id": actor_id,
-            "p_idempotency_key": idempotency_key,
-            "p_update_customer": update_customer_profile,
-            "p_instance": settings.crm_instance,
-        }).execute()
-    )
+    try:
+        logger.info(
+            "tenant_write rpc=crm_create_customer_with_deal settings.crm_instance=%s resolved_instance=%s",
+            settings.crm_instance,
+            settings.crm_instance,
+        )
+        res = execute_supabase_query(
+            lambda: supabase.rpc("crm_create_customer_with_deal", {
+                "p_customer": customer,
+                "p_deal": deal,
+                "p_actor_id": actor_id,
+                "p_idempotency_key": idempotency_key,
+                "p_update_customer": update_customer_profile,
+                "p_instance": settings.crm_instance,
+            }).execute()
+        )
+    except Exception as exc:
+        # migration 101 - RPC tu choi project_id khac Customer bang RAISE
+        # EXCEPTION 'project_customer_mismatch' - dich sang thong bao nguoi
+        # dung thay vi de nguyen loi Postgres tho lo ra ngoai.
+        if "project_customer_mismatch" in str(exc):
+            raise ValueError("Dự án đã chọn không thuộc đúng khách hàng này.") from exc
+        raise
     data = res.data or {}
     data["partial"] = partial
     if partial_message:

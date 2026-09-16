@@ -17,19 +17,13 @@ import { Loader2, X } from './icons';
 import type { CreateDealInput, CrmUserOption, Deal, UpdateDealInput } from '../types';
 import type { AppUser } from '@/types/unified.types';
 
-// Nháp deal đang tạo (chưa bấm "Tạo deal") — lưu localStorage để lỡ tay
-// click ra ngoài / đóng modal cũng không mất dữ liệu đã điền.
+// Nhap deal cu (localStorage key "crm:deal-draft:v1") tung tu dong luu/nap
+// da bi BO HOAN TOAN o duoi (xem ghi chu tai noi setForm(emptyDealForm())) -
+// no tung khien deal moi bi "an" nham thong tin khach hang cu chua bao gio
+// duoc bam luu. clearDealDraft() giu lai (khong xoa) CHI de don rac key cu
+// con sot trong trinh duyet cua nguoi dung tu ban truoc, va de khong pha vo
+// cac noi da goi ham nay sau moi lan tao deal thanh cong o nhieu file khac.
 const CRM_DEAL_DRAFT_KEY = 'crm:deal-draft:v1';
-
-function loadDealDraft(): Partial<DealFormState> | null {
-  if (typeof window === 'undefined') return null;
-  try {
-    const raw = window.localStorage.getItem(CRM_DEAL_DRAFT_KEY);
-    return raw ? (JSON.parse(raw) as Partial<DealFormState>) : null;
-  } catch {
-    return null;
-  }
-}
 
 export function clearDealDraft() {
   if (typeof window === 'undefined') return;
@@ -52,6 +46,7 @@ export function DealFormModal({
   currentUser = null,
   initialCustomer = null,
   initialProject = null,
+  initialContact = null,
 }: {
   open: boolean;
   loading?: boolean;
@@ -75,6 +70,10 @@ export function DealFormModal({
   /** Prefill + KHOÁ Dự án khi mở "Tạo cơ hội" từ 1 Project card cụ thể
    * (Block 1, mục 3) — CHỈ áp dụng lúc tạo mới, đi kèm initialCustomer. */
   initialProject?: { id: string } | null;
+  /** Prefill + KHOÁ Người liên hệ chính khi mở "Tạo cơ hội" từ Contact 360
+   * (contact.customerId + contact.id đã xác định sẵn, khoá cả 2 — không cho
+   * đổi sang Customer/Contact khác). CHỈ áp dụng lúc tạo mới. */
+  initialContact?: { id: string } | null;
 }) {
   const isCreate = !deal;
   const [form, setForm] = useState<DealFormState>(emptyDealForm);
@@ -101,25 +100,25 @@ export function DealFormModal({
         email: initialCustomer.email || '',
         projectId: initialProject?.id || '',
         projectLocked: Boolean(initialProject?.id),
+        primaryContactId: initialContact?.id || '',
+        primaryContactLocked: Boolean(initialContact?.id),
       });
       return;
     }
-    // Merge với default để draft cũ (lưu từ trước khi có field mới như nextStep) không
-    // thiếu key — tránh input bị undefined.
-    setForm({ ...emptyDealForm(), ...(loadDealDraft() || {}) });
+    // BUG THAT DA GAP (nghiem trong): truoc day o day tu dong nap lai "nhap"
+    // tu localStorage (loadDealDraft()) MOI LAN mo form tao moi khong co
+    // initialCustomer — nghia la CHI GO CHU (chua bam Luu/Tao deal nao ca)
+    // cung tu dong duoc luu thanh "nhap" (xem effect ben duoi da bi xoa) va
+    // tu dong dien lai cho lan mo "+ Them deal" TIEP THEO o BAT KY dau (ke ca
+    // trang Co hoi toan cuc, khong lien quan khach hang nao), lam ro data
+    // (ten/SDT/email/nguoi lien he) cua 1 khach hang cu bi gan nham sang deal
+    // moi cua khach khac. Yeu cau nghiep vu ro rang: CHI tinh la du lieu that
+    // khi nguoi dung THAT SU bam luu (Tao deal / Luu & them tiep) - khong
+    // duoc tu y "nho" bat ky thu gi nguoi dung moi go, chua bam gi ca. Bo hoan
+    // toan co che tu luu/tu nap nhap - luon bat dau tu form trang.
+    setForm(emptyDealForm());
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [deal, open, initialCustomer?.id, initialProject?.id]);
-
-  // Chỉ lưu nháp khi đang TẠO MỚI (không phải sửa deal có sẵn) — tránh
-  // nháp cũ ghi đè lên dữ liệu deal thật khi mở form sửa.
-  useEffect(() => {
-    if (!open || deal) return;
-    try {
-      window.localStorage.setItem(CRM_DEAL_DRAFT_KEY, JSON.stringify(form));
-    } catch {
-      // localStorage đầy hoặc bị chặn — bỏ qua, không phải lỗi nghiêm trọng.
-    }
-  }, [form, open, deal]);
+  }, [deal, open, initialCustomer?.id, initialProject?.id, initialContact?.id]);
 
   function setValue<K extends keyof DealFormState>(key: K, value: DealFormState[K]) {
     setForm(current => ({ ...current, [key]: value }));
@@ -133,8 +132,18 @@ export function DealFormModal({
       return;
     }
     const payload = buildDealPayload(form, agents);
-    if (deal) onUpdate(deal.id, payload);
-    else onCreate(payload as CreateDealInput);
+    if (deal) {
+      onUpdate(deal.id, payload);
+    } else {
+      // BUG THAT DA GAP: nhanh "Tạo deal" (khác "Lưu & thêm tiếp") KHÔNG xoá
+      // nháp localStorage sau khi tạo — lần mở "+ Thêm deal" TIẾP THEO (kể cả
+      // ở trang Cơ hội toàn cục, không liên quan Customer nào) sẽ tự điền lại
+      // NGUYÊN VẸN dữ liệu khách hàng cũ đã tạo xong từ trước, dễ gây nhầm gán
+      // deal mới cho sai khách hàng. Xoá nháp ngay khi bấm tạo (modal đường
+      // nào cũng đóng theo đúng luồng hiện tại của nút "Tạo deal").
+      clearDealDraft();
+      onCreate(payload as CreateDealInput);
+    }
   }
 
   async function handleSaveAndContinue() {

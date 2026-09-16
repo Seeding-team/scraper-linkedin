@@ -61,7 +61,21 @@ function formFromContact(contact: ApiContact): ContactFormState {
  * mockup. canEdit dieu khien co hien nut Sua/Xoa/+ Them hay khong (server van
  * tu kiem tra lai qua can_edit_customer()).
  */
-export function CrmContactsPanel({ customerId, canEdit }: { customerId: string; canEdit: boolean }) {
+export function CrmContactsPanel({
+  customerId,
+  canEdit,
+  onOpenContact,
+  onCountChange,
+  onCreateDeal,
+  onCreateProject,
+}: {
+  customerId: string;
+  canEdit: boolean;
+  onOpenContact?: (contactId: string) => void;
+  onCountChange?: (count: number) => void;
+  onCreateDeal?: (contactId: string) => void;
+  onCreateProject?: (contactId: string) => void;
+}) {
   const [contacts, setContacts] = useState<ApiContact[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -88,6 +102,7 @@ export function CrmContactsPanel({ customerId, canEdit }: { customerId: string; 
         if (alive) {
           setContacts(rows);
           setError('');
+          onCountChange?.(rows.length);
         }
       })
       .catch(err => {
@@ -183,7 +198,13 @@ export function CrmContactsPanel({ customerId, canEdit }: { customerId: string; 
       ) : contacts.length ? (
         <div className="crm-contacts-list">
           {contacts.map(contact => (
-            <div key={contact.id} className="crm-contact-row">
+            <div
+              key={contact.id}
+              className={`crm-contact-row ${onOpenContact ? 'crm-contact-row--clickable' : ''}`}
+              onClick={onOpenContact ? () => onOpenContact(contact.id) : undefined}
+              role={onOpenContact ? 'button' : undefined}
+              tabIndex={onOpenContact ? 0 : undefined}
+            >
               <div className="crm-contact-row-main">
                 <span className="crm-contact-row-name">
                   {contact.name}
@@ -193,19 +214,27 @@ export function CrmContactsPanel({ customerId, canEdit }: { customerId: string; 
                   <span className="crm-small">{contact.position_label_snapshot || contact.position}</span>
                 ) : null}
               </div>
-              <div className="crm-contact-row-info">
+              <div className="crm-contact-row-info" onClick={event => event.stopPropagation()}>
                 {contact.phone ? <a className="crm-contact-link" href={`tel:${contact.phone.replace(/[^\d+]/g, '')}`}>{contact.phone}</a> : null}
                 {contact.email ? <a className="crm-contact-link crm-muted" href={`mailto:${contact.email}`}>{contact.email}</a> : null}
               </div>
-              {canEdit ? (
-                <ActionMenu
-                  label="Thao tác contact"
-                  items={[
-                    { key: 'edit', label: 'Sửa', onSelect: () => openEdit(contact) },
-                    { key: 'delete', label: 'Xóa', danger: true, onSelect: () => void handleDelete(contact) },
-                  ]}
-                />
-              ) : null}
+              <div className="crm-contact-row-actions" onClick={event => event.stopPropagation()} style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                {onCreateDeal && (
+                  <button type="button" className="crm-btn crm-btn--outline crm-btn--small" onClick={() => onCreateDeal(contact.id)}>+ Cơ hội</button>
+                )}
+                {onCreateProject && (
+                  <button type="button" className="crm-btn crm-btn--outline crm-btn--small" onClick={() => onCreateProject(contact.id)}>+ Dự án</button>
+                )}
+                {canEdit && (
+                  <ActionMenu
+                    label="Thao tác contact"
+                    items={[
+                      { key: 'edit', label: 'Sửa', onSelect: () => openEdit(contact) },
+                      { key: 'delete', label: 'Xóa', danger: true, onSelect: () => void handleDelete(contact) },
+                    ]}
+                  />
+                )}
+              </div>
             </div>
           ))}
         </div>
@@ -251,10 +280,21 @@ export function CrmContactsPanel({ customerId, canEdit }: { customerId: string; 
                   <span>Facebook</span>
                   <input value={form.facebook} onChange={e => setForm(f => ({ ...f, facebook: e.target.value }))} />
                 </label>
-                <label className="crm-field crm-field--full crm-checkbox-field">
-                  <input type="checkbox" checked={form.isPrimary} onChange={e => setForm(f => ({ ...f, isPrimary: e.target.checked }))} />
-                  <span>Contact chính</span>
-                </label>
+                <div className="crm-switch-row">
+                  <div className="crm-switch-row-text">
+                    <span className="crm-switch-row-label">Liên hệ chính</span>
+                    <span className="crm-switch-row-hint">Người liên hệ chính của khách hàng này</span>
+                  </div>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={form.isPrimary}
+                    className={`crm-switch ${form.isPrimary ? 'crm-switch--on' : ''}`}
+                    onClick={() => setForm(f => ({ ...f, isPrimary: !f.isPrimary }))}
+                  >
+                    <span className="crm-switch-thumb" />
+                  </button>
+                </div>
               </div>
             </form>
             <footer className="crm-modal-footer">

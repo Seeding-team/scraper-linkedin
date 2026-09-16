@@ -16,7 +16,7 @@ from app.core.config import settings
 from app.core.supabase_client import execute_supabase_query, get_supabase_client
 from app.modules.all_platform.services.crm_permission_service import is_sale_member
 
-_USER_PUBLIC_FIELDS = "id, email, name, role, is_active, can_approve_quotes, created_at, updated_at, home_instance, allowed_instances"
+_USER_PUBLIC_FIELDS = "id, email, name, role, is_active, can_approve_quotes, quote_business_role, created_at, updated_at, home_instance, allowed_instances"
 _USER_CACHE_TTL_SECONDS = 30.0
 _USER_BY_ID_CACHE: dict[str, tuple[float, dict]] = {}
 _USER_BY_EMAIL_CACHE: dict[str, tuple[float, dict]] = {}
@@ -185,13 +185,11 @@ def _check_home_instance_redirect(user: dict) -> Optional[dict]:
 
 
 def login_user(email: str, password: str) -> dict:
-    """Login an existing app user. Returns user + token, or a redirect signal
-    if this account belongs to a different site (home_instance), or raises
-    ValueError."""
+    """Login an existing app user. Returns user + token or raises ValueError."""
     result = execute_supabase_query(
         lambda: get_supabase_client()
         .table("app_users")
-        .select("id, email, name, role, is_active, can_approve_quotes, password, home_instance, allowed_instances")
+        .select("id, email, name, role, is_active, can_approve_quotes, quote_business_role, password, home_instance, allowed_instances")
         .eq("email", email.lower().strip())
         .execute()
     )
@@ -223,6 +221,8 @@ def login_user(email: str, password: str) -> dict:
             "is_sale": is_sale_member(cached_user["id"]),
             "can_approve_quotes": bool(cached_user.get("can_approve_quotes")),
             "allowedInstances": cached_user.get("allowed_instances"),
+            "quote_business_role": cached_user.get("quote_business_role"),
+
         },
         "access_token": access_token,
     }
@@ -321,7 +321,7 @@ def login_with_google(id_token_str: str) -> dict:
     result = execute_supabase_query(
         lambda: get_supabase_client()
         .table("app_users")
-        .select("id, email, name, role, is_active, can_approve_quotes, home_instance, allowed_instances")
+        .select("id, email, name, role, is_active, can_approve_quotes, quote_business_role, home_instance, allowed_instances")
         .eq("email", email)
         .execute()
     )
@@ -350,6 +350,8 @@ def login_with_google(id_token_str: str) -> dict:
             "is_sale": is_sale_member(cached_user["id"]),
             "can_approve_quotes": bool(cached_user.get("can_approve_quotes")),
             "allowedInstances": cached_user.get("allowed_instances"),
+            "quote_business_role": cached_user.get("quote_business_role"),
+
         },
         "access_token": access_token,
     }

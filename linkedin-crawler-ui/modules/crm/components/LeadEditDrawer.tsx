@@ -5,9 +5,11 @@ import { API_BASE_URL, API_KEY } from '@/lib/env';
 import { useMembers } from '@/hooks/useMembers';
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
 import { PositionSelect } from './PositionSelect';
+import { MemberSearchSelect } from './MemberSearchSelect';
 import { CrmCategoryCodeSelect } from './CrmCategorySelect';
 import { mapLead } from './LeadsDirectory';
 import { Loader2, X } from './icons';
+import { hasFullCrmAccess } from '../constants/crmConfig';
 import type { AppUser } from '@/types/unified.types';
 import type { CrmLeadRow, CrmLeadStatus } from '../types';
 
@@ -18,8 +20,7 @@ function headers() {
 }
 
 function isAdminOrLeader(user: AppUser | null) {
-  const role = String(user?.role || '').toLowerCase();
-  return role === 'admin' || role === 'leader';
+  return hasFullCrmAccess(user);
 }
 
 /** Trạng thái được phép chọn tay. 'converted' KHÔNG có mặt: backend
@@ -141,7 +142,7 @@ export function LeadEditDrawer({
    * phải có tên, và phải có ít nhất SĐT hoặc email. Không siết thêm luật mới
    * ở màn sửa để không khoá cứng những Lead cũ hợp lệ. */
   function validate(state: EditFormState): string | null {
-    if (!state.leadName.trim()) return 'Vui lòng nhập tên khách hàng.';
+    if (!state.leadName.trim()) return 'Vui lòng nhập họ và tên người liên hệ.';
     if (!state.phone.trim() && !state.email.trim()) return 'Cần nhập số điện thoại hoặc email.';
     return null;
   }
@@ -218,7 +219,7 @@ export function LeadEditDrawer({
             <section className="crm-form-section">
               <p className="crm-form-title">Thông tin cơ bản</p>
               <div className="crm-form-grid">
-                <Field label="Tên khách hàng" required>
+                <Field label="Họ và tên người liên hệ" required>
                   <input
                     data-testid="edit-lead-name"
                     value={form.leadName}
@@ -226,7 +227,7 @@ export function LeadEditDrawer({
                     placeholder="Nguyễn Văn A"
                   />
                 </Field>
-                <Field label="Công ty">
+                <Field label="Công ty / Tổ chức">
                   <input
                     data-testid="edit-company-name"
                     value={form.companyName}
@@ -279,17 +280,19 @@ export function LeadEditDrawer({
                 </Field>
                 {canPickOwner ? (
                   <Field label="Người phụ trách (SDR)">
-                    <select data-testid="edit-sdr" value={form.sdrId} onChange={e => setValue('sdrId', e.target.value)}>
-                      <option value="">-- Chưa gán --</option>
-                      {currentUser?.id && !sdrOptions.some(m => selectionKeyOf(m) === currentUser.id) ? (
-                        <option value={currentUser.id}>-- Chính bạn --</option>
-                      ) : null}
-                      {sdrOptions.map(m => (
-                        <option key={m.id} value={selectionKeyOf(m)}>
-                          {m.display_name}{m.email ? ` (${m.email})` : ''}
-                        </option>
-                      ))}
-                    </select>
+                    <MemberSearchSelect
+                      testId="edit-sdr"
+                      value={form.sdrId}
+                      onChange={value => setValue('sdrId', value)}
+                      placeholder="-- Chưa gán --"
+                      showAvatar={false}
+                      members={[
+                        ...(currentUser?.id && !sdrOptions.some(m => selectionKeyOf(m) === currentUser.id)
+                          ? [{ id: currentUser.id, displayName: `${currentUser.name || currentUser.email || 'Bạn'} (Chính bạn)`, email: currentUser.email }]
+                          : []),
+                        ...sdrOptions.map(m => ({ id: selectionKeyOf(m), displayName: m.display_name, email: m.email })),
+                      ]}
+                    />
                   </Field>
                 ) : (
                   <Field label="Người phụ trách (SDR)" hint="chỉ admin/leader đổi được">

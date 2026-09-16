@@ -343,11 +343,10 @@ def get_member_options(
     hien tai da bi vo hieu hoa (van phai hien ten + badge "Da ngung hoat
     dong", khong duoc bien mat khoi form).
 
-    `team_type` (vd 'sale', migration 049): loc CHI giu user thuoc >=1 team co
-    dung team_type nay (xem is_sale_member() o crm_permission_service.py -
-    cung 1 nguon that team_type, khong tu doan bang text hien thi). Loc nay
-    ap dung SAU KHI da include_ids (KHONG dac cach bo qua loc team_type chi vi
-    1 id bi ep include - khac voi dac cach is_active o tren)."""
+    `team_type` giu lai de tuong thich request cu cua frontend. Voi picker
+    "Nguoi phu trach du an", khi client gui team_type='sale' thi loc theo
+    quote_business_role that su da gan (presale/sale/both), khong con phan
+    biet theo team nua."""
     supabase: Client = get_supabase_client()
     query = supabase.table("app_users").select(
         "id, name, email, role, is_active, quote_business_role"
@@ -394,7 +393,7 @@ def get_member_options(
         logger.warning("get_member_options: khong lay duoc team names, tra danh sach khong kem team", exc_info=True)
 
     if team_type:
-        rows = [r for r in rows if team_type in team_types_by_user.get(str(r.get("id")), set())]
+        rows = [r for r in rows if r.get("quote_business_role") in _VALID_QUOTE_BUSINESS_ROLES]
 
     options = []
     for r in rows:

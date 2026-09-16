@@ -83,6 +83,7 @@ class Settings:
     openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
     openai_base_url: str = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
     ai_model: str = os.getenv("AI_MODEL", "gpt-4o")
+    gemini_api_key: str = os.getenv("GEMINI_API_KEY", "")
 
     # Không dùng tới trong module CRM (không mount router KPI/MarkeeAI nào),
     # nhưng vài service dùng chung (supabase_kpi_service.py, markeeai_client.py)
@@ -95,6 +96,13 @@ class Settings:
     markeeai_campaign_ids: list[str] = field(default_factory=lambda: _parse_csv(os.getenv("MARKEEAI_CAMPAIGN_IDS"), default=()))
     seeder_service_url: str = os.getenv("SEEDER_SERVICE_URL", "")
     seeder_service_api_key: str = os.getenv("SEEDER_SERVICE_API_KEY", "")
+
+    # Static API key cho endpoint /sync/* (Tech Support hoac he thong ngoai PULL
+    # khach hang da mua + contact ve). Tach biet hoan toan khoi JWT app_users -
+    # khong gan voi 1 nhan vien that, khong het han theo
+    # JWT_ACCESS_TOKEN_EXPIRE_MINUTES. De trong = /sync/* luon tra 503 (fail-safe,
+    # khong vo tinh mo endpoint export du lieu khach hang ma khong ai biet).
+    crm_sync_api_key: str = os.getenv("CRM_SYNC_API_KEY", "")
 
     def __post_init__(self) -> None:
         if self.cors_origins is None:

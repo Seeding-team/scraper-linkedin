@@ -345,7 +345,7 @@ export function StageTransitionModal({
 
         {/* Body */}
         <form onSubmit={handleSubmit} className="flex min-h-0 flex-1 flex-col">
-          <div className="flex-1 space-y-4 overflow-y-auto px-5 py-4">
+          <div className="crm-scroll-hidden flex-1 space-y-4 overflow-y-auto px-5 py-4">
             {/* Mô tả ngắn của stage đích */}
             <div className="flex items-start gap-2 rounded-md bg-slate-50 px-3 py-2 text-xs text-slate-600">
               <FileText className="mt-0.5 size-3.5 shrink-0 text-slate-400" />

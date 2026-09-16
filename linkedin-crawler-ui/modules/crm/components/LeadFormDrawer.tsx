@@ -5,6 +5,7 @@ import { API_BASE_URL, API_KEY } from '@/lib/env';
 import { useMembers } from '@/hooks/useMembers';
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
 import { PositionSelect } from './PositionSelect';
+import { MemberSearchSelect } from './MemberSearchSelect';
 import { CrmCategoryCodeSelect } from './CrmCategorySelect';
 import { mapLead, LEAD_STATUS_LABEL } from './LeadsDirectory';
 import { ChevronDown, ChevronUp, Loader2, X } from './icons';
@@ -669,10 +670,10 @@ export function LeadFormDrawer({
 
               <fieldset className="crm-lead-info-fieldset" disabled={!unlocked}>
                 <div className="crm-form-grid">
-                  <Field label="Tên khách hàng" required>
+                  <Field label="Họ và tên người liên hệ" required>
                     <input ref={leadNameRef} value={form.leadName} onChange={e => setValue('leadName', e.target.value)} placeholder="Nguyễn Văn A" />
                   </Field>
-                  <Field label="Công ty">
+                  <Field label="Công ty / Tổ chức">
                     <input value={form.companyName} onChange={e => handleCompanyNameChange(e.target.value)} placeholder="Công ty TNHH ABC" />
                   </Field>
                   <Field label="Số điện thoại" hint="cần SĐT hoặc email">
@@ -700,14 +701,24 @@ export function LeadFormDrawer({
                   </Field>
                   {canPickOwner ? (
                     <Field label="Người phụ trách Lead" required>
-                      <select value={form.sdrId} onChange={e => setValue('sdrId', e.target.value)}>
-                        <option value={currentUser?.id || ''}>-- Chính bạn --</option>
-                        {sdrOptions.map(m => (
-                          <option key={m.id} value={selectionKeyOf(m)}>
-                            {m.display_name}{m.email ? ` (${m.email})` : ''}
-                          </option>
-                        ))}
-                      </select>
+                      <MemberSearchSelect
+                        value={form.sdrId}
+                        onChange={value => setValue('sdrId', value)}
+                        hideClearOption
+                        showAvatar={false}
+                        members={[
+                          ...(currentUser?.id
+                            ? [{
+                                id: currentUser.id,
+                                displayName: `${currentUser.name || currentUser.email || 'Bạn'} (Chính bạn)`,
+                                email: currentUser.email,
+                              }]
+                            : []),
+                          ...sdrOptions
+                            .filter(m => selectionKeyOf(m) !== currentUser?.id)
+                            .map(m => ({ id: selectionKeyOf(m), displayName: m.display_name, email: m.email })),
+                        ]}
+                      />
                     </Field>
                   ) : (
                     <Field label="Người phụ trách Lead" required>

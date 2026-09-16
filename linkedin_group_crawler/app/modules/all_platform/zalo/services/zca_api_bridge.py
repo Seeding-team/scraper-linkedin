@@ -13,7 +13,7 @@ from app.modules.all_platform.zalo.schemas.message import Message
 
 
 class ZcaAuthExpiredError(RuntimeError):
-    """Cookie/session ZCA đã hết hạn hoặc bị Zalo vô hiệu hóa — cần đăng nhập lại bằng QR."""
+    """Cookie/session ZCA đã hết hạn hoặc bị Zalo vô hiệu hóa — cần đăng nhập lại qua Chrome Extension."""
 
 
 # Các chuỗi lỗi từ zca-js cho biết phiên đăng nhập đã hỏng.
@@ -376,12 +376,17 @@ async def send_zca_message(
     text: str,
     *,
     thread_type: int = 1,
+    mentions: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
+    """Gửi tin nhắn text. ``mentions`` = [{"pos":int,"uid":str,"len":int}] cho @tag/@All
+    (xem Mục 3.3.5 + 4.6 mentionUtils của ZALO_CENTRALIZED_MODULE_GUIDE.md)."""
+    payload = {"mentions": mentions} if mentions else None
     try:
         return await _run_zca_command(
             "send-message",
             auth,
             args=["--thread-id", thread_id, "--type", str(thread_type), "--text", text],
+            payload=payload,
             timeout_seconds=90,
         )
     except RuntimeError as exc:
@@ -392,6 +397,7 @@ async def send_zca_message(
                 "send-message",
                 auth,
                 args=["--thread-id", thread_id, "--type", "0", "--text", text],
+                payload=payload,
                 timeout_seconds=90,
             )
         raise
@@ -534,4 +540,149 @@ async def first_time_sync(
         )
         # Re-raise để caller quyết định — listener sẽ vẫn start dù sync fail.
         raise
+
+
+# ── Zalo tập trung: recall / friend actions / group-scan / sticker ──────────
+# Port từ ZALO_CENTRALIZED_MODULE_GUIDE.md (InvoiceFlowManager) — xem Mục 3.3.5,
+# 3.5, 8(c)(e)(f) và cảnh báo Mục 11.1 (is_requested/is_requesting map ngược).
+
+async def recall_zca_message(
+    auth: Dict[str, Any],
+    thread_id: str,
+    *,
+    msg_id: str,
+    cli_msg_id: str,
+    thread_type: int = 1,
+) -> Dict[str, Any]:
+    """Thu hồi tin nhắn thật (api.undo) — tin biến mất ở CẢ HAI phía, khác 'xoá ở phía tôi'.
+
+    Cần cả msg_id (real Zalo message id) lẫn cli_msg_id (id phía client lúc gửi) —
+    chỉ có ở tin do CHÍNH tài khoản này gửi.
+    """
+    return await _run_zca_command(
+        "recall-message",
+        auth,
+        args=["--thread-id", thread_id, "--type", str(thread_type)],
+        payload={"msg_id": msg_id, "cli_msg_id": cli_msg_id},
+        timeout_seconds=30,
+    )
+
+
+async def add_zca_reaction(
+    auth: Dict[str, Any],
+    thread_id: str,
+    *,
+    msg_id: str,
+    cli_msg_id: str,
+    icon: str,
+    thread_type: int = 1,
+) -> Dict[str, Any]:
+    """Thả cảm xúc (giống bấm giữ tin nhắn trên app Zalo rồi chọn icon).
+
+    `icon` là tên enum Reactions của zca-js (HEART/LIKE/HAHA/WOW/CRY/ANGRY/...),
+    map thật sang giá trị Zalo cần ở phía Node (xem cmdAddReaction). msg_id/
+    cli_msg_id là của TIN ĐANG ĐƯỢC REACT (không phải tin mới), giống recall.
+    """
+    return await _run_zca_command(
+        "add-reaction",
+        auth,
+        args=["--thread-id", thread_id, "--type", str(thread_type)],
+        payload={"msg_id": msg_id, "cli_msg_id": cli_msg_id, "icon": icon},
+        timeout_seconds=30,
+    )
+
+
+async def search_zca_stickers(auth: Dict[str, Any], keyword: str, limit: int = 24) -> List[Dict[str, Any]]:
+    """Tìm sticker thật theo từ khoá (giống thanh tìm sticker trong app Zalo) —
+    trả về sticker đã có đủ url ảnh (stickerUrl/stickerWebpUrl) để hiển thị
+    trực tiếp lên UI, không cần FE gọi thêm round-trip lấy detail."""
+    result = await _run_zca_command(
+        "search-stickers",
+        auth,
+        args=["--keyword", keyword, "--limit", str(limit)],
+        timeout_seconds=30,
+    )
+    return result.get("stickers") or []
+
+
+async def get_zca_friend_status(auth: Dict[str, Any], uid: str) -> Dict[str, Any]:
+    """Trả {is_friend, is_requested, is_requesting, ...}.
+
+    CẢNH BÁO (Mục 11.1 guide): is_requested=True nghĩa là MÌNH đã gửi lời mời (chờ họ
+    chấp nhận); is_requesting=True nghĩa là HỌ đang gửi lời mời cho MÌNH. Rất dễ map
+    ngược — giữ nguyên tên field khi trả lên API/FE, không đảo nghĩa.
+    """
+    result = await _run_zca_command(
+        "friend-status", auth, args=["--uid", uid], timeout_seconds=20,
+    )
+    return result.get("response") or {}
+
+
+async def send_zca_friend_request(
+    auth: Dict[str, Any], uid: str, *, message: str = "",
+) -> Dict[str, Any]:
+    return await _run_zca_command(
+        "send-friend-request",
+        auth,
+        args=["--uid", uid],
+        payload={"msg": message},
+        timeout_seconds=30,
+    )
+
+
+async def accept_zca_friend_request(auth: Dict[str, Any], uid: str) -> Dict[str, Any]:
+    return await _run_zca_command(
+        "accept-friend-request", auth, args=["--uid", uid], timeout_seconds=30,
+    )
+
+
+async def get_zca_group_members_full(
+    auth: Dict[str, Any], group_id: str,
+) -> Dict[str, Any]:
+    """Quét ĐẦY ĐỦ thành viên 1 nhóm (memberIds từ getGroupInfo không bị cap ở tầng
+    API — cap ~155-200 chỉ xảy ra ở UI Zalo), resolve tên/avatar theo batch 50.
+
+    Returns: {group_id, total_member, members: [{uid, display_name, avatar_url, role}]}.
+    """
+    result = await _run_zca_command(
+        "group-members-full", auth, args=["--group-id", group_id], timeout_seconds=90,
+    )
+    return {
+        "group_id": result.get("group_id") or group_id,
+        "total_member": int(result.get("total_member") or 0),
+        "members": result.get("members") or [],
+    }
+
+
+async def get_zca_stickers_detail(auth: Dict[str, Any], sticker_ids: List[int]) -> List[Dict[str, Any]]:
+    ids_csv = ",".join(str(int(i)) for i in sticker_ids)
+    result = await _run_zca_command(
+        "stickers-detail", auth, args=["--ids", ids_csv], timeout_seconds=30,
+    )
+    return result.get("stickers") or []
+
+
+async def invite_zca_user_to_group(auth: Dict[str, Any], uid: str, group_id: str) -> Dict[str, Any]:
+    """Thêm/mời uid vào group_id. Tự thử add thẳng trước (đã bạn bè), rồi mời (quen biết)."""
+    return await _run_zca_command(
+        "invite-to-group", auth, args=["--uid", uid, "--group-id", group_id], timeout_seconds=30,
+    )
+
+
+async def send_zca_sticker(
+    auth: Dict[str, Any],
+    thread_id: str,
+    *,
+    sticker_id: int,
+    cate_id: int,
+    sticker_type: int = 1,
+    thread_type: int = 1,
+) -> Dict[str, Any]:
+    return await _run_zca_command(
+        "send-sticker",
+        auth,
+        args=["--thread-id", thread_id, "--type", str(thread_type)],
+        payload={"id": sticker_id, "cateId": cate_id, "type": sticker_type},
+        timeout_seconds=30,
+    )
 

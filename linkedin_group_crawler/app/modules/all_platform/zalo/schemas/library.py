@@ -1,6 +1,12 @@
 
-from typing import List, Optional
-from pydantic import BaseModel, Field
+from typing import Any, Dict, List, Optional
+from pydantic import BaseModel, Field, field_validator
+
+
+class ZaloMentionOut(BaseModel):
+    pos: int
+    uid: str
+    len: int
 
 
 class ZaloMessageAsset(BaseModel):
@@ -31,6 +37,33 @@ class ZaloLibraryMessage(BaseModel):
     assets: List[ZaloMessageAsset] = Field(default_factory=list)
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
+    # Zalo tập trung (Mục 7.1 guide) — recall/mentions/forward-engine watermark.
+    ts: Optional[int] = None
+    cli_msg_id: Optional[str] = None
+    mentions: List[ZaloMentionOut] = Field(default_factory=list)
+    msg_kind: Optional[str] = None
+    raw_content: Optional[Dict[str, Any]] = None
+    # Thả cảm xúc (migration 138) — map {uid_người_react: icon}. Field thiếu
+    # hẳn (KHÔNG null) khi migration 138 chưa áp lên DB (RPC cũ không có key
+    # này trong JSON) — default_factory xử lý đúng case đó. Vẫn thêm
+    # validator coerce None -> {} để phòng hờ (giống bug "mentions" trước đây:
+    # 1 giá trị NULL rõ ràng cũng làm validate fail toàn bộ nếu không coerce).
+    reactions: Dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("mentions", mode="before")
+    @classmethod
+    def _coerce_null_mentions(cls, value: Any) -> Any:
+        # Cot "mentions" (them o migration 127) la NULL cho moi tin nhan cu/khong
+        # co @tag - RPC fn_get_zalo_conversation_messages tra thang gia tri cot
+        # nen no la None chu khong phai "thieu key" (default_factory chi ap dung
+        # khi thieu key). Khong coerce se lam validate fail 100% tin nhan cu,
+        # khien API /messages luon 500 va UI khong hien duoc tin nhan nao.
+        return [] if value is None else value
+
+    @field_validator("reactions", mode="before")
+    @classmethod
+    def _coerce_null_reactions(cls, value: Any) -> Any:
+        return {} if value is None else value
 
 
 class ZaloLibraryMessageCreate(BaseModel):
@@ -94,6 +127,13 @@ class ZaloConversationSummary(BaseModel):
     avatar_url: Optional[str] = None
     unread_count: int = 0
     is_pinned: bool = False
+    # Zalo tập trung (migration 129) — để FE lọc "chỉ hiện nhóm" cho các trang
+    # bulk-send/broadcast-groups/scan-group-members/forward-rules.
+    is_friend: bool = False
+    thread_type: str = "group"
+    # Tag phân loại khách (migration 139) — lưu server-side trên zalo_groups.tag,
+    # thay cho localStorage cũ (không đồng bộ giữa nhân viên cùng quản lý 1 tài khoản).
+    tag: Optional[str] = None
 
 
 class ZaloConversationListResponse(BaseModel):

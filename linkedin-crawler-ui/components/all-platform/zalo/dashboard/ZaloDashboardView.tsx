@@ -5,7 +5,9 @@ import type { ZaloCrawlerFlowValue } from "@/hooks/useZaloCrawlerFlow";
 import { useEffect, useState } from "react";
 import Image from "next/image";
 import { ZaloKpiPanel } from "./ZaloKpiPanel";
+import { ZaloAccountAssignmentsPanel } from "./ZaloAccountAssignmentsPanel";
 import { isZaloExtensionAvailable } from "@/services/zaloExtension";
+import { useAppAuth } from "@/contexts/AppAuthContext";
 
 interface ZaloDashboardViewProps {
   flow: ZaloCrawlerFlowValue;
@@ -38,9 +40,12 @@ function StatusDot({ tone }: { tone: "success" | "warning" | "muted" | "error" }
 }
 
 export function ZaloDashboardView({ flow, onEnterChat }: ZaloDashboardViewProps) {
+  const { user } = useAppAuth();
+  const isAdmin = user?.role === "admin";
   const [newAccountLabel, setNewAccountLabel] = useState("");
   const [newAccountPhone, setNewAccountPhone] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
+  const [permissionsAccount, setPermissionsAccount] = useState<{ id: string; label: string } | null>(null);
 
   // States for Editing and Dropdown Menu
   const [activeMenuAccountId, setActiveMenuAccountId] = useState<string | null>(null);
@@ -285,6 +290,18 @@ export function ZaloDashboardView({ flow, onEnterChat }: ZaloDashboardViewProps)
                               <MaterialIcon name="edit" className="text-[14px] text-primary" />
                               Chỉnh sửa
                             </button>
+                            {isAdmin && (
+                              <button
+                                onClick={() => {
+                                  setPermissionsAccount({ id: account.account_id, label: account.label || account.account_id });
+                                  setActiveMenuAccountId(null);
+                                }}
+                                className="w-full text-left px-3 py-2 text-[12.5px] hover:bg-surface-container-low flex items-center gap-2 font-semibold text-on-surface transition-colors border-t border-outline-variant"
+                              >
+                                <MaterialIcon name="lock" className="text-[14px] text-primary" />
+                                Phân quyền
+                              </button>
+                            )}
                             <button
                               onClick={() => {
                                 if (confirm(`Bạn có chắc muốn xóa hoàn toàn dữ liệu đăng nhập của ${account.label || account.account_id}?`)) {
@@ -481,6 +498,14 @@ export function ZaloDashboardView({ flow, onEnterChat }: ZaloDashboardViewProps)
             </div>
           </div>
         </div>
+      )}
+
+      {permissionsAccount && (
+        <ZaloAccountAssignmentsPanel
+          accountId={permissionsAccount.id}
+          accountLabel={permissionsAccount.label}
+          onClose={() => setPermissionsAccount(null)}
+        />
       )}
     </div>
   );

@@ -13,7 +13,10 @@
  *
  * Commands: list-groups | list-friends | group-history | user-history |
  *           group-related-ids | send-message | send-images | remove-unread |
- *           find-user-by-phone | find-user-by-username | first-time-sync
+ *           find-user-by-phone | find-user-by-username | first-time-sync |
+ *           recall-message | friend-status | send-friend-request |
+ *           accept-friend-request | group-members-full | stickers-detail |
+ *           send-sticker (Zalo tập trung — port từ ZALO_CENTRALIZED_MODULE_GUIDE.md)
  *
  * Server tự thoát sau MAX_IDLE_MS ms không có request (mặc định 10 phút).
  * Python pool sẽ restart lại khi cần.
@@ -124,6 +127,22 @@ function isLikelyImageUrl(value) {
   return /(photo|image|img|thumb|avatar|zalo|zstatic|zadn|zaloapp)/i.test(value);
 }
 
+// Đồng bộ với zca_persistent_listener.js: msgType Zalo đã tự phân loại rõ —
+// TIN vào giá trị này, không suy luận lại từ URL (video/file/voice cũng host
+// trên domain zdn.vn/zadn.vn giống ảnh nên isLikelyImageUrl dễ nhận nhầm).
+const STRUCTURED_MEDIA_MSG_TYPES = new Set([
+  "chat.photo", "chat.gif", "chat.doodle",
+  "chat.video.msg", "chat.voice", "share.file", "chat.sticker",
+]);
+const IMAGE_LIKE_MSG_TYPES = new Set(["chat.photo", "chat.gif", "chat.doodle"]);
+
+function resolveMessageType(msgType, imageUrlsCount) {
+  if (STRUCTURED_MEDIA_MSG_TYPES.has(msgType)) {
+    return IMAGE_LIKE_MSG_TYPES.has(msgType) ? "image" : msgType;
+  }
+  return imageUrlsCount ? "image" : msgType;
+}
+
 function collectUrls(value, out = []) {
   if (!value) return out;
   if (typeof value === "string") {
@@ -144,6 +163,77 @@ function collectUrls(value, out = []) {
     if (!found) for (const item of Object.values(value)) collectUrls(item, out);
   }
   return Array.from(new Set(out));
+}
+
+// Đồng bộ với zca_persistent_listener.js: quét rộng hơn collectUrls() (không
+// giới hạn "giống ảnh") để tin video/file/voice/gif sync lại từ lịch sử cũng
+// có URL thật để xem/tải, không chỉ ảnh. Xem comment đầy đủ ở file listener.
+function collectMediaUrls(value, out = []) {
+  if (!value) return out;
+  if (typeof value === "string") {
+    if (/^https?:\/\//i.test(value)) out.push(value);
+    return out;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) collectMediaUrls(item, out);
+    return out;
+  }
+  if (typeof value === "object") {
+    let found = false;
+    for (const key of [
+      "hdUrl", "normalUrl", "url", "imageUrl", "photoUrl", "src",
+      "fileUrl", "href", "stickerUrl", "stickerWebpUrl",
+      "videoUrl", "video_url", "voiceUrl", "voice_url", "oriUrl", "rawUrl",
+      "gifUrl", "downloadUrl",
+    ]) {
+      if (value[key] && typeof value[key] === "string" && /^https?:\/\//i.test(value[key])) {
+        out.push(value[key]); found = true; break;
+      }
+    }
+    if (found) return Array.from(new Set(out));
+    for (const [key, item] of Object.entries(value)) {
+      if (typeof item === "string" && /^(params|attach|attachment|content)$/i.test(key) && /^[{[]/.test(item.trim())) {
+        try {
+          collectMediaUrls(JSON.parse(item), out);
+          continue;
+        } catch (_) {
+          /* ignore */
+        }
+      }
+      collectMediaUrls(item, out);
+    }
+  }
+  return Array.from(new Set(out));
+}
+
+function collectFileName(value) {
+  if (!value || typeof value !== "object") return null;
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const name = collectFileName(item);
+      if (name) return name;
+    }
+    return null;
+  }
+  for (const key of ["fileName", "title", "name"]) {
+    if (typeof value[key] === "string" && value[key].trim()) return value[key].trim();
+  }
+  for (const [key, item] of Object.entries(value)) {
+    if (typeof item === "string" && /^(params|attach|attachment)$/i.test(key) && /^[{[]/.test(item.trim())) {
+      try {
+        const name = collectFileName(JSON.parse(item));
+        if (name) return name;
+      } catch (_) {
+        /* ignore */
+      }
+      continue;
+    }
+    if (item && typeof item === "object") {
+      const name = collectFileName(item);
+      if (name) return name;
+    }
+  }
+  return null;
 }
 
 function toTimestampMs(value) {
@@ -171,7 +261,10 @@ function firstTimestampMs(...values) {
 function normalizeMessage(raw, index, ownId = null) {
   const data = raw && raw.data ? raw.data : raw || {};
   const content = data.content ?? data.message ?? data.msg ?? raw.content ?? raw.message;
-  const imageUrls = collectUrls(content).concat(collectUrls(data.attachments || data.attachment || data.photos));
+  const attachmentsBlob = data.attachments || data.attachment || data.photos;
+  const imageUrls = collectUrls(content).concat(collectUrls(attachmentsBlob));
+  const mediaUrls = Array.from(new Set(collectMediaUrls(content).concat(collectMediaUrls(attachmentsBlob))));
+  const fileNameHint = collectFileName(content) || collectFileName(attachmentsBlob);
   const msgType = String(data.msgType || data.type || raw.type || "text");
   const senderId = String(data.uidFrom || raw.uidFrom || raw.senderId || raw.sender_id || "");
   const isSent = Boolean(raw.isSelf || data.isSelf || (ownId && String(senderId) === String(ownId)));
@@ -189,19 +282,26 @@ function normalizeMessage(raw, index, ownId = null) {
     const trimmed = contentText.trim();
     if (imageUrls.includes(trimmed) || isLikelyImageUrl(trimmed)) contentText = "";
   }
+  if (!contentText && fileNameHint) {
+    contentText = fileNameHint;
+  }
+  const resolvedType = resolveMessageType(msgType, imageUrls.length);
   return {
     message_id: messageId,
     sender_id: senderId || null,
     sender_name: data.dName || data.displayName || raw.senderName || raw.sender_name || null,
     timestamp: timestampMs ? String(timestampMs) : null,
     time_text: timestampMs ? new Date(Number(timestampMs)).toISOString() : null,
-    type: imageUrls.length ? "image" : msgType,
+    type: resolvedType,
     content: contentText || null,
-    image_urls: Array.from(new Set(imageUrls)),
+    // Giữ tên field cũ nhưng mang URL media thật của mọi loại — xem comment
+    // collectMediaUrls() ở trên và trong zca_persistent_listener.js.
+    image_urls: mediaUrls,
     reply_to_id: data.quote?.msgId || data.quoteMsgId || null,
     is_deleted: msgType === "chat.delete" || msgType === "recalled",
     is_sent: isSent,
     group_id: threadId || null,
+    msg_kind: resolvedType,
   };
 }
 
@@ -381,12 +481,18 @@ async function cmdGroupRelatedIds(api, args) {
   return { ok: true, ids, groups };
 }
 
-async function cmdSendMessage(api, args) {
+async function cmdSendMessage(api, args, payload) {
   const { "thread-id": threadId, type = "1", text = "" } = args;
   if (!threadId) throw new Error("Missing --thread-id");
   const { ThreadType } = require("zca-js");
   const threadType = Number(type) === 0 ? ThreadType.User : ThreadType.Group;
-  const response = await api.sendMessage({ msg: text }, String(threadId), threadType);
+  // mentions: [{pos,uid,len}] cho @tag/@All — xem Mục 3.3.5 + Mục 4.6 (mentionUtils)
+  // của ZALO_CENTRALIZED_MODULE_GUIDE.md. Đến từ payload (không phải args) vì là mảng object.
+  const mentions = (payload || {}).mentions;
+  const messageContent = Array.isArray(mentions) && mentions.length
+    ? { msg: text, mentions }
+    : { msg: text };
+  const response = await api.sendMessage(messageContent, String(threadId), threadType);
   // QUAN TRỌNG: key PHẢI là "response" (khớp với zca_api_bridge.js's
   // `emitAndExit({ ok: true, response })`) — Python (_persist_outgoing_message
   // -> _build_outgoing_message_id) luôn đọc result.get("response") để lấy
@@ -422,6 +528,155 @@ async function cmdFindUserByUsername(api, args) {
   if (!username) throw new Error("Missing --username");
   const result = await api.findUserByUsername(String(username));
   return { ok: true, user: result };
+}
+
+// ── Zalo tập trung: recall/mentions/friend-actions/group-scan (port guide) ────
+
+async function cmdRecallMessage(api, args, payload) {
+  const { "thread-id": threadId, type = "1" } = args;
+  const { msg_id: msgId, cli_msg_id: cliMsgId } = payload || {};
+  if (!threadId) throw new Error("Missing --thread-id");
+  if (!msgId || !cliMsgId) throw new Error("Missing msg_id/cli_msg_id in payload");
+  const { ThreadType } = require("zca-js");
+  const threadType = Number(type) === 0 ? ThreadType.User : ThreadType.Group;
+  const response = await api.undo({ msgId, cliMsgId }, String(threadId), threadType);
+  return { ok: true, response };
+}
+
+// Thả cảm xúc (reaction) cho 1 tin nhắn — giống bấm giữ tin nhắn trên app Zalo
+// rồi chọn icon. Cần đúng msgId (source_message_id, số nguyên) + cliMsgId của
+// tin ĐANG được react tới (không phải tin mới), giống hệt recall-message.
+async function cmdAddReaction(api, args, payload) {
+  const { "thread-id": threadId, type = "1" } = args;
+  const { msg_id: msgId, cli_msg_id: cliMsgId, icon } = payload || {};
+  if (!threadId) throw new Error("Missing --thread-id");
+  if (!msgId || !cliMsgId) throw new Error("Missing msg_id/cli_msg_id in payload");
+  if (!icon) throw new Error("Missing icon in payload");
+  const { ThreadType, Reactions } = require("zca-js");
+  const threadType = Number(type) === 0 ? ThreadType.User : ThreadType.Group;
+  // icon là tên enum Reactions (vd "HEART", "LIKE"..., hoặc "NONE" để BỎ react
+  // — Reactions.NONE = "" nên KHÔNG được check bằng "!reactionValue" (chuỗi
+  // rỗng là falsy trong JS, sẽ bị coi nhầm là "không tìm thấy") — phải check
+  // đúng bằng "key có tồn tại trong enum hay không".
+  const iconKey = String(icon).toUpperCase();
+  if (!(iconKey in Reactions)) throw new Error(`Unknown reaction icon: ${icon}`);
+  const reactionValue = Reactions[iconKey];
+  const response = await api.addReaction(reactionValue, {
+    data: { msgId: String(msgId), cliMsgId: String(cliMsgId) },
+    threadId: String(threadId),
+    type: threadType,
+  });
+  return { ok: true, response };
+}
+
+async function cmdFriendStatus(api, args) {
+  const { uid } = args;
+  if (!uid) throw new Error("Missing --uid");
+  const response = await api.getFriendRequestStatus(String(uid));
+  // is_requested=true: MÌNH đã gửi lời mời (chờ họ chấp nhận).
+  // is_requesting=true: HỌ đang gửi lời mời cho MÌNH (chờ mình chấp nhận).
+  // Cảnh báo Mục 11.1 guide: rất dễ map ngược 2 field này — KHÔNG đảo tên khi dùng ở Python/FE.
+  return { ok: true, response };
+}
+
+async function cmdSendFriendRequest(api, args, payload) {
+  const { uid } = args;
+  const msg = (payload || {}).msg || "";
+  if (!uid) throw new Error("Missing --uid");
+  const response = await api.sendFriendRequest(String(msg), String(uid));
+  return { ok: true, response };
+}
+
+async function cmdAcceptFriendRequest(api, args) {
+  const { uid } = args;
+  if (!uid) throw new Error("Missing --uid");
+  const response = await api.acceptFriendRequest(String(uid));
+  return { ok: true, response };
+}
+
+async function cmdGroupMembersFull(api, args) {
+  const { "group-id": groupId } = args;
+  if (!groupId) throw new Error("Missing --group-id");
+  const infoResponse = await api.getGroupInfo(String(groupId));
+  const info = (infoResponse.gridInfoMap || {})[String(groupId)] || {};
+  // getGroupInfo đã trả memberIds ĐẦY ĐỦ (không cap 155-200 — cap đó chỉ ở UI Zalo),
+  // currentMems có sẵn role (admin/member) cho từng id.
+  const memberIds = Array.from(new Set(info.memberIds || (info.currentMems || []).map(m => m.id))).filter(Boolean);
+  const roleById = new Map((info.currentMems || []).map(m => [String(m.id), m]));
+
+  const profiles = [];
+  for (let i = 0; i < memberIds.length; i += 50) {
+    const chunk = memberIds.slice(i, i + 50);
+    try {
+      const resp = await api.getGroupMembersInfo(chunk);
+      const map = resp.profiles || {};
+      for (const id of chunk) {
+        const p = map[id];
+        const roleInfo = roleById.get(String(id));
+        profiles.push({
+          uid: String(id),
+          display_name: p ? (p.zaloName || p.displayName || String(id)) : String(id),
+          avatar_url: p ? p.avatar : null,
+          role: roleInfo ? (roleInfo.isAdmin ? "admin" : "member") : "member",
+        });
+      }
+    } catch (err) {
+      for (const id of chunk) profiles.push({ uid: String(id), display_name: String(id), avatar_url: null, role: "member" });
+    }
+  }
+  return { ok: true, group_id: String(groupId), total_member: info.totalMember || memberIds.length, members: profiles };
+}
+
+async function cmdStickersDetail(api, args) {
+  const { ids } = args;
+  if (!ids) throw new Error("Missing --ids");
+  const idList = String(ids).split(",").map(s => Number(s.trim())).filter(n => Number.isFinite(n));
+  const response = await api.getStickersDetail(idList);
+  return { ok: true, stickers: response };
+}
+
+// Trước đây UI chỉ có ô nhập "sticker id đã biết" (Zalo không có API liệt kê
+// đủ mọi category qua zca-js) — searchSticker(keyword) là API TÌM sticker
+// thật theo từ khoá (giống thanh tìm sticker trong app Zalo), trả về
+// {cate_id, sticker_id} nên phải gọi tiếp getStickersDetail để lấy URL ảnh
+// thật hiển thị lên UI. Gộp 2 lệnh thành 1 round-trip cho FE đơn giản.
+async function cmdSearchStickers(api, args) {
+  const { keyword, limit = "24" } = args;
+  if (!keyword) throw new Error("Missing --keyword");
+  const basics = await api.searchSticker(String(keyword), Number(limit) || 24);
+  const ids = Array.from(new Set((basics || []).map((b) => Number(b.sticker_id)).filter((n) => Number.isFinite(n))));
+  if (ids.length === 0) return { ok: true, stickers: [] };
+  const details = await api.getStickersDetail(ids);
+  return { ok: true, stickers: details };
+}
+
+async function cmdInviteToGroup(api, args) {
+  // "add thẳng nếu đã bạn bè, invite nếu quen biết" (Mục 3.3.5 guide) — zca-js expose
+  // 2 API khác nhau tuỳ quan hệ; thử addUserToGroup (thêm thẳng) trước, fallback
+  // inviteUserToGroups (gửi lời mời) nếu bị từ chối.
+  const { uid, "group-id": groupId } = args;
+  if (!uid) throw new Error("Missing --uid");
+  if (!groupId) throw new Error("Missing --group-id");
+  try {
+    const response = await api.addUserToGroup(String(uid), String(groupId));
+    const failed = Array.isArray(response.errorMembers) && response.errorMembers.includes(String(uid));
+    if (!failed) return { ok: true, mode: "add", response };
+  } catch (_) {
+    // rơi qua invite bên dưới
+  }
+  const response = await api.inviteUserToGroups(String(uid), String(groupId));
+  return { ok: true, mode: "invite", response };
+}
+
+async function cmdSendSticker(api, args, payload) {
+  const { "thread-id": threadId, type = "1" } = args;
+  const { id, cateId, type: stickerType } = payload || {};
+  if (!threadId) throw new Error("Missing --thread-id");
+  if (id == null || cateId == null) throw new Error("Missing id/cateId in payload");
+  const { ThreadType } = require("zca-js");
+  const threadType = Number(type) === 0 ? ThreadType.User : ThreadType.Group;
+  const response = await api.sendSticker({ id: Number(id), cateId: Number(cateId), type: Number(stickerType || 1) }, String(threadId), threadType);
+  return { ok: true, response };
 }
 
 async function cmdFirstTimeSync(api, args) {
@@ -485,6 +740,16 @@ const COMMANDS = {
   "find-user-by-phone": cmdFindUserByPhone,
   "find-user-by-username": cmdFindUserByUsername,
   "first-time-sync": cmdFirstTimeSync,
+  "recall-message": cmdRecallMessage,
+  "add-reaction": cmdAddReaction,
+  "friend-status": cmdFriendStatus,
+  "send-friend-request": cmdSendFriendRequest,
+  "accept-friend-request": cmdAcceptFriendRequest,
+  "group-members-full": cmdGroupMembersFull,
+  "stickers-detail": cmdStickersDetail,
+  "search-stickers": cmdSearchStickers,
+  "send-sticker": cmdSendSticker,
+  "invite-to-group": cmdInviteToGroup,
   // sync-old-messages: complex (needs listener), keep using spawn-per-call via zca_api_bridge.js
 };
 

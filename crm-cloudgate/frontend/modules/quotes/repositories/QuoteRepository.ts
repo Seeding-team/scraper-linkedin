@@ -27,7 +27,7 @@ export interface QuoteRepository {
   duplicateForm(id: string): Promise<QuoteForm>;
   shareForm(id: string, enabled?: boolean): Promise<QuoteForm>;
 
-  getQuotes(): Promise<Quote[]>;
+  getQuotes(params?: { dealId?: string }): Promise<Quote[]>;
   getQuote(id: string): Promise<Quote>;
   getPublicQuote(token: string, email?: string, phone?: string): Promise<Quote>;
   createQuote(input: CreateQuoteInput): Promise<Quote>;

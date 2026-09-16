@@ -128,7 +128,8 @@ export type MaterialSymbolName =
   // Sidebar CRM: "Cơ hội" (Pipeline/Kanban) — thêm mới cho việc đổi nhãn mục
   // /all-platform/crm từ "CRM" sang "Cơ hội" kèm icon phễu, phân biệt với
   // "Leads" (person_add) và các icon còn lại trong nhóm Quản lý CRM.
-  | "filter_alt";
+  | "filter_alt"
+  | "bookmark_add";
 
 export interface MaterialIconProps {
   name: MaterialSymbolName;

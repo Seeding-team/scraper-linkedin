@@ -1,9 +1,10 @@
 'use client';
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 
-type Option = string | { value: string; label: string };
+type Option = string | { value: string; label: string; richLabel?: ReactNode; searchText?: string; disabled?: boolean };
 type SelectAction = { key: string; label: string; onSelect: () => void; disabled?: boolean; type?: 'add' | 'manage' | 'default' };
 import { Settings } from 'lucide-react';
 
@@ -13,6 +14,24 @@ function optionValue(option: Option): string {
 
 function optionLabel(option: Option): string {
   return typeof option === 'string' ? option : option.label;
+}
+
+// richLabel (khi co, vd MemberSearchSelect ve avatar+ten+subtitle) - dung DE
+// HIEN THI thay vi label thuong (van dung label thuong lam fallback text cho
+// trigger/search - xem optionLabel/optionSearchText).
+function optionRichLabel(option: Option): ReactNode {
+  return typeof option === 'string' ? option : (option.richLabel ?? option.label);
+}
+
+// searchText (khi co, vd MemberSearchSelect ghep them email/ma nhan vien) -
+// dung DE TIM thay vi label hien thi, cho phep go email/ma nhan vien van ra
+// dung ket qua ngay ca khi label chi hien ten.
+function optionSearchText(option: Option): string {
+  return typeof option === 'string' ? option : option.searchText ?? option.label;
+}
+
+function optionDisabled(option: Option): boolean {
+  return typeof option === 'string' ? false : Boolean(option.disabled);
 }
 
 // Bỏ dấu tiếng Việt để search không phân biệt dấu (vd gõ "giam doc" vẫn khớp
@@ -35,6 +54,7 @@ export function SearchableSelect({
   options,
   actions = [],
   placeholder = '-- Chọn --',
+  searchPlaceholder = 'Tìm...',
   disabled = false,
   // Yeu cau rieng "bỏ chữ Chưa thuộc dự án/Chọn cơ hội trong danh sách" -
   // trigger DA hien dung placeholder nay khi chua chon gi, hien lai 1 lan
@@ -43,6 +63,9 @@ export function SearchableSelect({
   // van hien (khong doi hanh vi cac noi goi khac), CHI tat khi truyen ro
   // hideClearOption.
   hideClearOption = false,
+  loading = false,
+  emptyText = 'Không tìm thấy',
+  testId,
 }: {
   value: string;
   onChange: (value: string) => void;
@@ -50,12 +73,22 @@ export function SearchableSelect({
   actions?: SelectAction[];
   hideClearOption?: boolean;
   placeholder?: string;
+  searchPlaceholder?: string;
   disabled?: boolean;
+  loading?: boolean;
+  emptyText?: string;
+  /** Gan data-testid len container ngoai cung - giu tuong thich cho cac
+   * Playwright script cu tra cuu theo id nay (dau vay ban query truoc
+   * gio dua vao "<select> option" that se khong con dung, vi day la
+   * dropdown div-based, khong phai <select> goc). */
+  testId?: string;
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const [search, setSearch] = useState('');
+  const [highlightedIndex, setHighlightedIndex] = useState(0);
   const containerRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
   const [menuStyle, setMenuStyle] = useState<{ top: number; left: number; width: number } | null>(null);
 
   /** Menu render qua Portal ra document.body (position:fixed) - KHONG con long
@@ -126,20 +159,66 @@ export function SearchableSelect({
   }, []);
 
   const filtered = search.trim()
-    ? options.filter(o => foldDiacritics(optionLabel(o)).includes(foldDiacritics(search.trim())))
+    ? options.filter(o => foldDiacritics(optionSearchText(o)).includes(foldDiacritics(search.trim())))
     : options;
+
+  // Giu nguoi/gia tri DANG DUOC CHON hien o dau danh sach ke ca khi khong
+  // khop filter hien tai - vd ban ghi cu/da nghi viec van phai thay duoc
+  // "dang gan cho ai" thay vi bien mat khoi list khi go tim (yeu cau
+  // "Keep currently selected member visible even if temporarily outside the
+  // current filter"). Chi ap dung khi value THAT SU ton tai trong options
+  // goc (khong tu bia them lua chon khong co that).
+  const selectedOption = value ? options.find(o => optionValue(o) === value) : undefined;
+  const visibleOptions =
+    selectedOption && !filtered.some(o => optionValue(o) === value) ? [selectedOption, ...filtered] : filtered;
 
   const selectedLabel = options.find(o => optionValue(o) === value);
 
+  // Danh sach dieu huong ban phim PHAI khop DUNG thu tu render ben duoi (dong
+  // "clear" - neu co - roi moi den tung option) de arrow-key/Enter chon
+  // trung voi cai dang highlight tren man hinh.
+  const keyboardItems: Array<{ value: string; disabled?: boolean }> = [
+    ...(hideClearOption ? [] : [{ value: '' }]),
+    ...visibleOptions.map(o => ({ value: optionValue(o), disabled: optionDisabled(o) })),
+  ];
+
+  useEffect(() => {
+    setHighlightedIndex(0);
+  }, [search, isOpen]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const el = listRef.current?.querySelector<HTMLElement>('[data-highlighted="true"]');
+    el?.scrollIntoView({ block: 'nearest' });
+  }, [highlightedIndex, isOpen]);
+
+  function handleInputKeyDown(event: ReactKeyboardEvent<HTMLInputElement>) {
+    if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      setHighlightedIndex(i => Math.min(i + 1, keyboardItems.length - 1));
+    } else if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      setHighlightedIndex(i => Math.max(i - 1, 0));
+    } else if (event.key === 'Enter') {
+      event.preventDefault();
+      const target = keyboardItems[highlightedIndex];
+      if (target && !target.disabled) {
+        onChange(target.value);
+        setIsOpen(false);
+        setSearch('');
+      }
+    }
+  }
+
   return (
-    <div ref={containerRef} className="crm-searchable-select">
+    <div ref={containerRef} className="crm-searchable-select" data-testid={testId}>
       <button
         type="button"
         className="crm-searchable-select-trigger"
         onClick={() => !disabled && setIsOpen(open => !open)}
         disabled={disabled}
       >
-        <span>{selectedLabel ? optionLabel(selectedLabel) : placeholder}</span>
+        <span>{selectedLabel ? optionRichLabel(selectedLabel) : placeholder}</span>
         <span aria-hidden>▾</span>
       </button>
       {isOpen && !disabled && menuStyle
@@ -154,31 +233,40 @@ export function SearchableSelect({
                 type="text"
                 value={search}
                 onChange={event => setSearch(event.target.value)}
-                placeholder="Tìm..."
+                onKeyDown={handleInputKeyDown}
+                placeholder={searchPlaceholder}
                 className="crm-searchable-select-input"
               />
-                            <div className="crm-searchable-select-list">
+              <div className="crm-searchable-select-list" ref={listRef}>
                 {hideClearOption ? null : (
                   <button
                     type="button"
-                    className="crm-searchable-select-option"
+                    data-highlighted={highlightedIndex === 0}
+                    className={`crm-searchable-select-option ${highlightedIndex === 0 ? 'is-highlighted' : ''}`}
                     onClick={() => { onChange(''); setIsOpen(false); setSearch(''); }}
                   >
                     {placeholder}
                   </button>
                 )}
-                {filtered.map(option => (
-                  <button
-                    key={optionValue(option)}
-                    type="button"
-                    className={`crm-searchable-select-option ${value === optionValue(option) ? 'is-selected' : ''}`}
-                    onClick={() => { onChange(optionValue(option)); setIsOpen(false); setSearch(''); }}
-                  >
-                    {optionLabel(option)}
-                  </button>
-                ))}
-                {filtered.length === 0 ? (
-                  <div className="crm-searchable-select-empty">Không tìm thấy</div>
+                {!loading && visibleOptions.map((option, index) => {
+                  const keyboardIndex = (hideClearOption ? 0 : 1) + index;
+                  return (
+                    <button
+                      key={optionValue(option)}
+                      type="button"
+                      disabled={optionDisabled(option)}
+                      data-highlighted={highlightedIndex === keyboardIndex}
+                      className={`crm-searchable-select-option ${value === optionValue(option) ? 'is-selected' : ''} ${highlightedIndex === keyboardIndex ? 'is-highlighted' : ''}`}
+                      onClick={() => { if (optionDisabled(option)) return; onChange(optionValue(option)); setIsOpen(false); setSearch(''); }}
+                    >
+                      {optionRichLabel(option)}
+                    </button>
+                  );
+                })}
+                {loading ? (
+                  <div className="crm-searchable-select-empty">Đang tải...</div>
+                ) : visibleOptions.length === 0 ? (
+                  <div className="crm-searchable-select-empty">{emptyText}</div>
                 ) : null}
               </div>
               {actions.length > 0 ? (

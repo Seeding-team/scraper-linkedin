@@ -83,6 +83,7 @@ from app.modules.all_platform.services.crm_permission_service import (
     can_approve_quote,
     can_edit_quote,
     can_edit_technical_quote,
+    can_edit_quote_cost,
     can_edit_quote_pricing,
     can_transition_quote_stage,
     can_manage_quote_email_settings,
@@ -371,8 +372,6 @@ _TECHNICAL_ITEM_FIELD_PAIRS = [
     ("serviceDescription", "service_description"),
     ("unit", "unit"),
     ("quantity", "quantity"),
-    ("costPrice", "cost_price"),
-    ("costNotApplicable", "cost_not_applicable"),
 ]
 _PRICING_ITEM_FIELD_PAIRS = [
     ("unitPrice", "unit_price"),
@@ -410,29 +409,39 @@ def _items_touch_fields(existing_items: list[dict], new_items: list[dict], field
 
 
 def _check_item_field_level_permission(user: dict, quote: dict, new_items: Optional[list]) -> Optional[str]:
-    """Tra ve None neu OK, hoac 1 thong bao loi tieng Viet neu bi tu choi.
+    """Field-level guard, latest business rule.
 
-    Ngoai quyen theo VAI TRO (co san tu truoc), them khoa theo BUOC
-    (processingStage) cho dung 2 nhom field hep hon (Gia von / Markup+Gia
-    khach) - yeu cau moi (SUA LAI lan 2, bo han ngoai le Admin/Leader): Buoc 1
-    (request) chi duoc dien Hang muc+SL, CHUA duoc dien Gia von; tu Buoc 2
-    (technical) tro di moi dien duoc Gia von; Markup/Gia khach CHI dien duoc
-    dung o Buoc 3 (pricing). Khoa nay ap dung cho TAT CA, KHONG con ngoai le
-    Admin/Leader (khac han_full_crm_access o cac quyen SUA khac trong file
-    nay - day la khoa THEO BUOC, khong phai khoa theo VAI TRO)."""
+    Service catalog defaultCostPriceVnd is only a prefill. In a quote request,
+    authorized quote participants may edit cost_price for the case without
+    writing back to the catalog default.
+
+    Version-clone bypass (fix: quote V2 pricing rejected with "chi duoc nhap o
+    Buoc 3" even though FE unlocks pricing cells immediately for it): quote
+    version V2/V3... created via quote_create_version() is a COPY of an
+    ALREADY-APPROVED source version, so Gia von/Markup/Gia khach are already
+    populated at creation time - user must be able to adjust them right away
+    at Buoc 1 (processing_stage stays 'request' for a fresh version, by
+    design - see 114_quote_create_version_exclude_deleted.sql), not forced to
+    redo "Ban giao ky thuat -> Hoan thien gia ban" like a brand-new quote.
+    Mirrors the exact same versionNumber > 1 condition the frontend already
+    uses to unlock these cells (QuoteWorkspaceModal.tsx isVersionedQuote/
+    pricingStageOk) - backend and frontend must agree or every V2 pricing
+    edit gets silently rejected on save. Only V1/brand-new quotes still keep
+    the stage lock."""
     if new_items is None:
         return None
     existing_items = quote.get("items") or []
     if _items_touch_fields(existing_items, new_items, _TECHNICAL_ITEM_FIELD_PAIRS) and not can_edit_technical_quote(user, quote):
-        return "Không có quyền sửa phần kỹ thuật (mô tả/số lượng/giá vốn) của báo giá này"
+        return "Khong co quyen sua phan ky thuat cua bao gia nay"
+    if _items_touch_fields(existing_items, new_items, _COST_ONLY_ITEM_FIELD_PAIRS) and not can_edit_quote_cost(user, quote):
+        return "Khong co quyen sua gia von cua bao gia nay"
     if _items_touch_fields(existing_items, new_items, _PRICING_ITEM_FIELD_PAIRS) and not can_edit_quote_pricing(user, quote):
-        return "Không có quyền sửa phần giá bán (markup/chiết khấu/giá khách) của báo giá này"
+        return "Khong co quyen sua phan gia ban cua bao gia nay"
 
+    is_versioned_quote = (quote.get("versionNumber") or 1) > 1
     stage = quote.get("processingStage") or "request"
-    if _items_touch_fields(existing_items, new_items, _COST_ONLY_ITEM_FIELD_PAIRS) and stage == "request":
-        return "Giá vốn chỉ được nhập từ Bước 2 (Thông tin kỹ thuật) trở đi"
-    if _items_touch_fields(existing_items, new_items, _PRICING_ITEM_FIELD_PAIRS) and stage != "pricing":
-        return "Markup/Giá khách chỉ được nhập ở Bước 3 (Hoàn thiện giá bán)"
+    if not is_versioned_quote and _items_touch_fields(existing_items, new_items, _PRICING_ITEM_FIELD_PAIRS) and stage != "pricing":
+        return "Markup/Gia khach chi duoc nhap o Buoc 3"
     return None
 
 

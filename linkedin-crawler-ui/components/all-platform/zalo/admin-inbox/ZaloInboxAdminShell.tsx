@@ -3,6 +3,8 @@
 import { useMemo, useState, useRef, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { useZaloAdminInbox, type ZaloConv } from "@/hooks/useZaloAdminInbox";
+import { useZaloPushNotifications } from "@/hooks/useZaloPushNotifications";
+import { Avatar } from "../dashboard/Avatar";
 import ZaloTeamAccountTree from "./ZaloTeamAccountTree";
 import ZaloAccountAuthView from "./ZaloAccountAuthView";
 import { CrmCustomerModal } from "@/components/all-platform/components/CrmCustomerModal";
@@ -12,6 +14,9 @@ import { resolveZaloConversationAccount } from "@/services/zaloCrawlerService";
 import { KpiProgressCard } from "@/components/all-platform/components/kpi-progress-card";
 import { MaterialIcon } from "@/components/ui";
 import { cn } from "@/lib/utils";
+import { ZaloStickerPicker } from "../centralized-shared/ZaloStickerPicker";
+import { ZaloReactionQuickPicker, ZaloReactionBadges } from "../centralized-shared/ZaloReactionPicker";
+import { ZaloMessageSearchPanel } from "../centralized-shared/ZaloMessageSearchPanel";
 import type { ZaloConversationSummary, ZaloLibraryMessage } from "@/types/zalo-api";
 import {
   restartZaloAccountListener,
@@ -22,6 +27,10 @@ import {
   createZaloBroadcast,
   createZaloUserThread,
   updateZaloLibraryMessage,
+  getZaloQuickReplies,
+  createZaloQuickReply,
+  deleteZaloQuickReply,
+  type ZaloQuickReply,
 } from "@/services/zaloCrawlerService";
 import type { ZaloBroadcastTarget } from "@/types/zalo-api";
 import { customerLeadService, type Customer } from "@/services/customer-lead.service";
@@ -106,10 +115,80 @@ function formatDate(value: string | null | undefined): string {
   });
 }
 
+// Render tin nhắn theo đúng loại nội dung (đồng bộ logic với ZaloChatView.tsx)
+// — ảnh/gif hiện inline, video hiện inline có control, còn lại (file/doc lạ)
+// hiện tên file thật + nút bấm tải về (trước đây mọi loại không phải ảnh chỉ
+// hiện nhãn chung "File đính kèm", không biết tên file, không phát được video).
+const VIDEO_EXT_RE = /\.(mp4|webm|mov|m4v|3gp|mkv|avi)(\?|#|$)/i;
+const IMAGE_EXT_RE = /\.(png|jpe?g|webp|gif|bmp|svg)(\?|#|$)/i;
+const AUDIO_EXT_RE = /\.(mp3|m4a|aac|wav|ogg|opus)(\?|#|$)/i;
+
+type ZaloAssetKind = "image" | "video" | "audio" | "file";
+
+function classifyAssetKind(url: string, message: ZaloLibraryMessage): ZaloAssetKind {
+  if (VIDEO_EXT_RE.test(url)) return "video";
+  if (AUDIO_EXT_RE.test(url)) return "audio";
+  if (IMAGE_EXT_RE.test(url)) return "image";
+  const type = String(message.type || message.msg_kind || "").toLowerCase();
+  if (type === "image" || type === "chat.gif" || type === "chat.sticker") return "image";
+  if (type === "chat.video.msg" || type.startsWith("video")) return "video";
+  if (type === "chat.voice" || type.startsWith("voice") || type.startsWith("audio")) return "audio";
+  return type === "image" ? "image" : "file";
+}
+
+function assetFileName(url: string, message: ZaloLibraryMessage): string {
+  const fromContent = (message.content || "").trim();
+  if (fromContent && !fromContent.includes("\n") && fromContent.length <= 150) {
+    return fromContent;
+  }
+  try {
+    const base = decodeURIComponent(url.split("/").pop()?.split("?")[0] || "");
+    return base || "file";
+  } catch {
+    return "file";
+  }
+}
+
+function ZaloMessageAssetView({ asset, message }: { asset: NonNullable<ZaloLibraryMessage["assets"]>[number]; message: ZaloLibraryMessage }) {
+  const url = asset.storage_url || "";
+  const kind = classifyAssetKind(url, message);
+  const fileName = assetFileName(url, message);
+
+  if (kind === "image") {
+    return (
+      <a href={url} target="_blank" rel="noopener noreferrer" title="Mở ảnh gốc">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={url} alt={fileName} className="w-full h-auto" loading="lazy" />
+      </a>
+    );
+  }
+  if (kind === "video") {
+    return <video src={url} controls preload="metadata" className="w-full max-h-[220px] bg-black/5" />;
+  }
+  if (kind === "audio") {
+    return <audio src={url} controls className="w-full" />;
+  }
+  return (
+    <a
+      href={url}
+      download={fileName}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="flex items-center gap-1.5 p-2 text-[11px] text-blue-600 hover:underline bg-white"
+      title={`Tải về: ${fileName}`}
+    >
+      <MaterialIcon name="description" className="text-[14px] shrink-0" />
+      <span className="truncate">{fileName}</span>
+      <MaterialIcon name="download" className="text-[13px] shrink-0" />
+    </a>
+  );
+}
+
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export function ZaloInboxAdminShell() {
   const inbox = useZaloAdminInbox();
+  const push = useZaloPushNotifications();
 
   const [mounted, setMounted] = useState(false);
   useEffect(() => {
@@ -196,10 +275,103 @@ export function ZaloInboxAdminShell() {
   const [currentLead, setCurrentLead] = useState<Customer | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Zalo tập trung: mention picker ("@" trong ô trả lời) + sticker picker
+  const [showMentionPicker, setShowMentionPicker] = useState(false);
+  const [mentionQuery, setMentionQuery] = useState("");
+  const [mentionAtPos, setMentionAtPos] = useState<number | null>(null);
+  const [showStickerPicker, setShowStickerPicker] = useState(false);
+  const [reactionPickerFor, setReactionPickerFor] = useState<string | null>(null);
+  const [showSearchPanel, setShowSearchPanel] = useState(false);
+
+  // Mẫu nhắn nhanh tự soạn (migration 139) — "giữ tin nhắn mời mua hàng lại"
+  // để dùng nhiều lần, cạnh các mẫu QUICK_REPLY_GROUPS hardcode ở trên.
+  const [customQuickReplies, setCustomQuickReplies] = useState<ZaloQuickReply[]>([]);
+  const [showSaveTemplateForm, setShowSaveTemplateForm] = useState(false);
+  const [newTemplateLabel, setNewTemplateLabel] = useState("");
+  const [isSavingTemplate, setIsSavingTemplate] = useState(false);
+
+  useEffect(() => {
+    if (!inbox.selectedAccountId) {
+      setCustomQuickReplies([]);
+      return;
+    }
+    let cancelled = false;
+    getZaloQuickReplies(inbox.selectedAccountId)
+      .then((list) => {
+        if (!cancelled) setCustomQuickReplies(list);
+      })
+      .catch(() => {
+        if (!cancelled) setCustomQuickReplies([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [inbox.selectedAccountId]);
+
+  const handleSaveCurrentAsTemplate = async () => {
+    const text = inbox.reply.trim();
+    const label = newTemplateLabel.trim();
+    if (!text || !label || !inbox.selectedAccountId) return;
+    setIsSavingTemplate(true);
+    try {
+      const created = await createZaloQuickReply(inbox.selectedAccountId, { label, text });
+      setCustomQuickReplies((prev) => [created, ...prev]);
+      setNewTemplateLabel("");
+      setShowSaveTemplateForm(false);
+    } catch (e) {
+      inbox.showToast(e instanceof Error ? e.message : "Không thể lưu mẫu nhắn nhanh.", false);
+    } finally {
+      setIsSavingTemplate(false);
+    }
+  };
+
+  const handleDeleteQuickReply = async (replyId: number) => {
+    if (!inbox.selectedAccountId) return;
+    setCustomQuickReplies((prev) => prev.filter((r) => r.id !== replyId));
+    try {
+      await deleteZaloQuickReply(inbox.selectedAccountId, replyId);
+    } catch (e) {
+      inbox.showToast(e instanceof Error ? e.message : "Không thể xoá mẫu nhắn nhanh.", false);
+    }
+  };
+
+  // Nhảy tới 1 tin nhắn tìm được — best-effort, chỉ hoạt động nếu tin đang
+  // nằm trong danh sách ĐÃ TẢI (data-msg-anchor khớp source_message_id).
+  const handleJumpToSearchedMessage = (message: ZaloLibraryMessage): boolean => {
+    if (!message.source_message_id) return false;
+    const el = chatScrollRef.current?.querySelector(
+      `[data-msg-anchor="${CSS.escape(message.source_message_id)}"]`,
+    ) as HTMLElement | null;
+    if (!el) return false;
+    el.scrollIntoView({ behavior: "smooth", block: "center" });
+    el.classList.add("ring-2", "ring-[#E3000F]", "ring-offset-2");
+    setTimeout(() => el.classList.remove("ring-2", "ring-[#E3000F]", "ring-offset-2"), 1600);
+    return true;
+  };
+
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files ?? []);
     setSelectedFiles((prev) => [...prev, ...files]);
     e.target.value = "";
+  };
+
+  // Dán hình trực tiếp vào ô nhắn tin (Ctrl+V) để gửi luôn, không cần bấm
+  // chọn file — giống hành vi chuẩn của Zalo Web/app thật.
+  const handlePasteImage = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const items = e.clipboardData?.items;
+    if (!items || items.length === 0) return;
+    const files: File[] = [];
+    for (let i = 0; i < items.length; i += 1) {
+      const item = items[i];
+      if (item.kind === "file" && item.type.startsWith("image/")) {
+        const file = item.getAsFile();
+        if (file) files.push(file);
+      }
+    }
+    if (files.length > 0) {
+      e.preventDefault();
+      setSelectedFiles((prev) => [...prev, ...files]);
+    }
   };
 
   const handleSendReply = async () => {
@@ -219,6 +391,51 @@ export function ZaloInboxAdminShell() {
   const appendEmoji = (emoji: string) => {
     inbox.setReply((prev) => prev + emoji);
   };
+
+  // Zalo tập trung: gõ "@" mở popup chọn thành viên nhóm (cần đã bấm "Quét thành
+  // viên" ở tab Thông tin trước — xem inbox.groupMembers) — chèn mention token
+  // {pos,uid,len} khớp format sendZaloMessageWithMentions cần.
+  const handleReplyChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const value = e.target.value;
+    inbox.setReply(value);
+    const caret = e.target.selectionStart ?? value.length;
+    const atIdx = value.lastIndexOf("@", caret - 1);
+    if (atIdx === -1 || /\s/.test(value.slice(atIdx + 1, caret))) {
+      setShowMentionPicker(false);
+      setMentionAtPos(null);
+      return;
+    }
+    setMentionAtPos(atIdx);
+    setMentionQuery(value.slice(atIdx + 1, caret));
+    setShowMentionPicker(true);
+  };
+
+  const insertMention = (uid: string, displayName: string) => {
+    if (mentionAtPos === null) return;
+    const before = inbox.reply.slice(0, mentionAtPos);
+    const after = inbox.reply.slice(mentionAtPos + 1 + mentionQuery.length);
+    const label = `@${displayName}`;
+    inbox.setReply(`${before}${label} ${after}`);
+    inbox.setPendingMentions((prev) => [...prev, { pos: before.length, uid, len: label.length }]);
+    setShowMentionPicker(false);
+    setMentionAtPos(null);
+    setMentionQuery("");
+  };
+
+  const filteredMentionCandidates = (inbox.groupMembers?.members ?? []).filter((m) =>
+    !mentionQuery.trim() || m.display_name.toLowerCase().includes(mentionQuery.trim().toLowerCase())
+  );
+
+  const handleSendSticker = (sticker: { id: number; cateId: number }) => {
+    setShowStickerPicker(false);
+    void inbox.sendStickerAction(sticker);
+  };
+
+  // Đóng panel tìm tin nhắn khi đổi hội thoại — tránh tìm nhầm sang hội
+  // thoại khác vẫn đang hiện kết quả cũ.
+  useEffect(() => {
+    setShowSearchPanel(false);
+  }, [inbox.openConv]);
 
   const handleAutoSend = async () => {
     if (!inbox.selectedAccountId || selectedMessageIds.length === 0) return;
@@ -585,6 +802,10 @@ export function ZaloInboxAdminShell() {
 
   return (
     <div className="w-full max-w-full text-[#1A1A1A] flex flex-col bg-slate-50 pb-8">
+      {/* Header/Stats/KPI/Employee panel: ẩn trên mobile khi đang mở 1 hội thoại
+          (đúng pattern "full-screen chat trên mobile" của zalo-account-module gốc,
+          ZaloPageContent.tsx) — desktop (lg+) luôn hiện, không đổi gì. */}
+      <div className={cn(inbox.openConv ? "hidden lg:contents" : "contents")}>
       {/* ── Header ── */}
       <div className="mb-4 flex flex-wrap items-start justify-between gap-3 flex-shrink-0">
         <div>
@@ -700,11 +921,21 @@ export function ZaloInboxAdminShell() {
           owner={inbox.leaderEmail}
         />
       </div>
+      </div>
 
       {/* ── 3-Pane Layout ── */}
-      <div className="grid min-w-0 grid-cols-[280px_1fr_260px] gap-4">
+      {/* Mobile (dưới lg): grid-cols-1, mỗi lần chỉ hiện 1 "pane" (list hoặc chat)
+          theo inbox.openConv — đúng trải nghiệm "chọn hội thoại -> full màn hình
+          chat, nút Back quay lại danh sách" của module gốc. Desktop (lg+): giữ
+          NGUYÊN 3 cột song song như cũ, không đổi gì. */}
+      <div className="grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-[280px_1fr_260px]">
         {/* Pane 1: Conversations list */}
-        <section className="min-w-0 overflow-hidden rounded-xl border border-[#E5E5E5] bg-white shadow-sm flex flex-col">
+        <section
+          className={cn(
+            "min-w-0 overflow-hidden rounded-xl border border-[#E5E5E5] bg-white shadow-sm flex-col",
+            inbox.openConv ? "hidden lg:flex" : "flex"
+          )}
+        >
           <div className="border-b border-[#E5E5E5] p-3 flex-shrink-0 space-y-2">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-1.5 min-w-0">
@@ -807,6 +1038,7 @@ export function ZaloInboxAdminShell() {
                   )}
                 >
                   <div className="flex items-start justify-between gap-1.5">
+                    <Avatar src={conv.avatar_url} name={conv.name} className="h-9 w-9 text-xs" />
                     <div className="min-w-0 flex-1">
                       <div className={cn("truncate font-bold text-slate-800", conv.unread && "font-black text-black")}>
                         {conv.name}
@@ -845,7 +1077,13 @@ export function ZaloInboxAdminShell() {
         </section>
 
         {/* Pane 2: Chat panel (middle) */}
-        <section className="flex h-[700px] min-w-0 flex-col overflow-hidden rounded-xl border border-[#E5E5E5] bg-white shadow-sm">
+        <section
+          className={cn(
+            "min-w-0 flex-col overflow-hidden rounded-xl border border-[#E5E5E5] bg-white shadow-sm",
+            "h-[calc(100dvh-6rem)] lg:h-[700px]",
+            inbox.openConv ? "flex" : "hidden lg:flex"
+          )}
+        >
           {inbox.selectedAccountId && (accountStatus === "expired" || accountStatus === "offline") && (
             <div className="bg-amber-50 border-b border-amber-200 px-4 py-2 flex items-center justify-between text-xs text-amber-800 flex-shrink-0 animate-fade-in">
               <span className="flex items-center gap-1.5 font-semibold">
@@ -868,7 +1106,48 @@ export function ZaloInboxAdminShell() {
           <div className="flex items-center justify-between gap-3 border-b border-[#E5E5E5] px-4 py-2.5 bg-[#FAFAFA] flex-shrink-0">
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2">
+                {/* Back mobile — quay lại danh sách hội thoại (ẩn trên desktop, luôn hiện cả 2 pane). */}
+                <button
+                  type="button"
+                  onClick={() => inbox.openChat("")}
+                  className="-ml-1 shrink-0 rounded-lg p-1 text-slate-500 hover:bg-slate-100 lg:hidden"
+                  title="Quay lại danh sách hội thoại"
+                >
+                  <MaterialIcon name="chevron_left" className="text-[20px]" />
+                </button>
+                {selectedConv && !inbox.archiveReading && (
+                  <Avatar src={selectedConv.avatar_url} name={selectedName} className="h-7 w-7 text-[10px]" />
+                )}
                 <h2 className="truncate text-sm font-bold text-slate-800">{selectedName || "Hội thoại"}</h2>
+                {/* Trạng thái bạn bè (Mục 3.3.5/11.1 guide) — chỉ hiện khi backend trả
+                    được kết quả (1-1 với uid Zalo thật; group sẽ tự lỗi và ẩn badge). */}
+                {inbox.friendStatus && !inbox.loadingFriendStatus && (
+                  <>
+                    {inbox.friendStatus.is_friend ? null : inbox.friendStatus.is_requesting ? (
+                      <button
+                        onClick={() => void inbox.acceptFriendRequestAction()}
+                        disabled={inbox.friendActionLoading}
+                        className="rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 text-[10px] font-bold px-2 py-0.5 hover:bg-emerald-100 transition disabled:opacity-50"
+                        title="Họ đã gửi lời mời kết bạn cho bạn"
+                      >
+                        Chấp nhận kết bạn
+                      </button>
+                    ) : inbox.friendStatus.is_requested ? (
+                      <span className="rounded-full bg-amber-50 border border-amber-200 text-amber-700 text-[10px] font-bold px-2 py-0.5">
+                        Đã gửi lời mời
+                      </span>
+                    ) : (
+                      <button
+                        onClick={() => void inbox.sendFriendRequestAction()}
+                        disabled={inbox.friendActionLoading}
+                        className="rounded-full bg-blue-50 border border-blue-200 text-blue-700 text-[10px] font-bold px-2 py-0.5 hover:bg-blue-100 transition disabled:opacity-50"
+                        title="Chưa kết bạn với người này"
+                      >
+                        Kết bạn
+                      </button>
+                    )}
+                  </>
+                )}
                 {/* Nút "Đồng bộ" tin nhắn theo hội thoại đã bị bỏ (2026-07-04) —
                     cùng lý do với nút đồng bộ ở Hộp thư: gọi syncZaloConversationMessages
                     làm backend đăng nhập lại phiên Zalo qua worker pool, đè lên
@@ -938,6 +1217,52 @@ export function ZaloInboxAdminShell() {
                   <MaterialIcon name="campaign" className="text-base" />
                   <span>Auto Send</span>
                 </button>
+                {/* Quét thành viên nhóm (Mục 3.3.5/8(i) guide) — dùng cho mention picker
+                    và bulk-send job ở trang /all-platform/zalo-bulk-send. */}
+                <button
+                  onClick={() => void inbox.loadGroupMembers()}
+                  disabled={inbox.loadingGroupMembers}
+                  title="Quét đầy đủ thành viên nhóm này"
+                  className="rounded-lg border border-[#E5E5E5] bg-white px-2 py-1 text-xs font-bold hover:border-[#E3000F] text-slate-700 flex items-center gap-1 disabled:opacity-50"
+                >
+                  <MaterialIcon name={inbox.loadingGroupMembers ? "sync" : "group"} className={cn("text-[13px]", inbox.loadingGroupMembers && "animate-spin")} />
+                  {inbox.groupMembers ? `${inbox.groupMembers.total_member} TV` : "Quét TV"}
+                </button>
+                {/* Tìm tin nhắn cũ trong hội thoại này (vd tìm "Leo" trong 1 nhóm cụ thể). */}
+                <button
+                  type="button"
+                  onClick={() => setShowSearchPanel((v) => !v)}
+                  title="Tìm tin nhắn trong hội thoại này"
+                  className={cn(
+                    "rounded-lg border px-2 py-1 text-xs font-bold transition flex items-center gap-1",
+                    showSearchPanel
+                      ? "border-[#E3000F]/30 bg-red-50 text-[#E3000F]"
+                      : "border-[#E5E5E5] bg-white text-slate-700 hover:border-[#E3000F]"
+                  )}
+                >
+                  <MaterialIcon name="search" className="text-[13px]" />
+                </button>
+                {/* Web Push (Mục 4.5/4.9/8(l) guide) — bật/tắt thông báo tin nhắn Zalo
+                    mới trên trình duyệt, không cần mở tab. Ẩn nếu trình duyệt không hỗ trợ. */}
+                {push.supported && (
+                  <button
+                    onClick={() => void (push.subscribed ? push.unsubscribe() : push.subscribe())}
+                    disabled={push.loading}
+                    title={push.subscribed ? "Tắt thông báo tin nhắn mới" : "Bật thông báo tin nhắn mới"}
+                    className={cn(
+                      "rounded-lg border px-2 py-1 text-xs font-bold transition flex items-center gap-1 disabled:opacity-50",
+                      push.subscribed
+                        ? "border-[#E3000F]/30 bg-red-50 text-[#E3000F] hover:bg-red-100"
+                        : "border-[#E5E5E5] bg-white text-slate-700 hover:border-[#E3000F]"
+                    )}
+                  >
+                    <MaterialIcon
+                      name={push.loading ? "sync" : "notifications"}
+                      className={cn("text-[13px]", push.loading && "animate-spin")}
+                    />
+                    {push.subscribed ? "Đã bật TB" : "Bật TB"}
+                  </button>
+                )}
                 <button
                   onClick={() => inbox.mark(selectedConv.conv_id, "is_customer", !selectedConv.is_customer)}
                   className="rounded-lg border border-[#E5E5E5] bg-white px-2 py-1 text-xs font-bold hover:border-[#E3000F] text-slate-700"
@@ -959,6 +1284,15 @@ export function ZaloInboxAdminShell() {
               </div>
             )}
           </div>
+
+          {showSearchPanel && inbox.openConv && (
+            <ZaloMessageSearchPanel
+              accountId={inbox.selectedAccountId || ""}
+              conversationId={inbox.openConv}
+              onClose={() => setShowSearchPanel(false)}
+              onJumpToMessage={handleJumpToSearchedMessage}
+            />
+          )}
 
           {/* Messages scroll box */}
           <div ref={chatScrollRef} className="flex-1 overflow-y-auto bg-[#FCFCFC] px-4 py-4 space-y-3">
@@ -1004,11 +1338,15 @@ export function ZaloInboxAdminShell() {
                       );
 
                       return (
-                        <div key={index} className={cn("flex items-center gap-2 group", isSent ? "justify-end" : "justify-start")}>
+                        <div
+                          key={index}
+                          data-msg-anchor={msg.source_message_id || undefined}
+                          className={cn("flex items-center gap-2 group rounded-lg transition-shadow", isSent ? "justify-end" : "justify-start")}
+                        >
                           {/* Checkbox on left for received messages */}
                           {!isSent && checkboxEl}
 
-                          <div className={cn("max-w-[75%]", isSent ? "text-right" : "text-left")}>
+                          <div className={cn("max-w-[88%] sm:max-w-[75%]", isSent ? "text-right" : "text-left")}>
                             {!isSent && msg.sender_name && (
                               <div className="flex items-center gap-1 mb-0.5 px-1">
                                 <span className="text-[10px] text-[#A0A0A0]">{msg.sender_name}</span>
@@ -1035,14 +1373,14 @@ export function ZaloInboxAdminShell() {
                             {msg.content && (
                               <div
                                 className={cn(
-                                  "whitespace-pre-wrap rounded-xl px-3 py-2 text-xs leading-relaxed break-words transition-all duration-200",
+                                  "whitespace-pre-wrap rounded-2xl px-3.5 py-2 text-xs leading-relaxed break-words transition-all duration-200 shadow-sm",
                                   isSent
-                                    ? "bg-[#E3000F] text-white rounded-br-sm"
-                                    : "bg-white text-slate-800 shadow-sm ring-1 ring-slate-150 rounded-bl-sm",
+                                    ? "bg-brand text-white rounded-br-md"
+                                    : "bg-[#f1f4f8] text-[#1f2a3a] rounded-bl-md",
                                   isSelected && (
                                     isSent
-                                      ? "ring-2 ring-[#E3000F] ring-offset-2"
-                                      : "ring-2 ring-[#E3000F]/60 bg-red-50/30"
+                                      ? "ring-2 ring-brand ring-offset-2"
+                                      : "ring-2 ring-brand/60 bg-brand-subtle"
                                   )
                                 )}
                               >
@@ -1059,28 +1397,66 @@ export function ZaloInboxAdminShell() {
                                     isSent ? "ml-auto" : "mr-auto"
                                   )}
                                 >
-                                  {asset.storage_url?.match(/\.(jpg|jpeg|png|gif|webp)/i) ? (
-                                    // eslint-disable-next-line @next/next/no-img-element
-                                    <img
-                                      src={asset.storage_url!}
-                                      alt="media"
-                                      className="w-full h-auto"
-                                      loading="lazy"
-                                    />
-                                  ) : (
-                                    <a
-                                      href={asset.storage_url!}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                      className="flex items-center gap-1.5 p-2 text-[11px] text-blue-600 hover:underline bg-white"
-                                    >
-                                      <MaterialIcon name="attach_file" className="text-[14px]" />
-                                      File đính kèm
-                                    </a>
-                                  )}
+                                  <ZaloMessageAssetView asset={asset} message={msg} />
                                 </div>
                               ))}
-                            {time && <div className="mt-0.5 px-1 text-[9px] text-[#A0A0A0]">{time}</div>}
+                            {(() => {
+                              const msgKey = msg.source_message_id || msg.id || String(index);
+                              const canReact = !msg.is_deleted && msg.source_message_id && (msg as unknown as { cli_msg_id?: string }).cli_msg_id;
+                              return (
+                                <div className="relative mt-0.5 flex items-center gap-1 px-1" style={{ justifyContent: isSent ? "flex-end" : "flex-start" }}>
+                                  {time && <span className="text-[9px] text-[#A0A0A0]">{time}</span>}
+                                  {/* Thả cảm xúc — mọi tin, kể cả người khác gửi, giống Zalo thật. */}
+                                  {canReact && (
+                                    <button
+                                      type="button"
+                                      data-zalo-reaction-ui
+                                      onClick={() => setReactionPickerFor((prev) => (prev === msgKey ? null : msgKey))}
+                                      title="Thả cảm xúc"
+                                      className="opacity-0 group-hover:opacity-100 transition-opacity text-[#A0A0A0] hover:text-brand"
+                                    >
+                                      <MaterialIcon name="mood" className="text-[11px]" />
+                                    </button>
+                                  )}
+                                  {/* Thu hồi tin nhắn thật (api.undo) — chỉ khả dụng cho tin CHÍNH
+                                      MÌNH gửi và có cli_msg_id (được backend fill lúc echo lại tin
+                                      vừa gửi — xem services/supabase_service.py). */}
+                                  {isSent && !msg.is_deleted && (msg as unknown as { cli_msg_id?: string }).cli_msg_id && (
+                                    <button
+                                      type="button"
+                                      onClick={() => void inbox.recallMessage(msg)}
+                                      title="Thu hồi tin nhắn"
+                                      className="opacity-0 group-hover:opacity-100 transition-opacity text-[#A0A0A0] hover:text-[#E3000F]"
+                                    >
+                                      <MaterialIcon name="delete" className="text-[11px]" />
+                                    </button>
+                                  )}
+                                  {msg.is_deleted && (
+                                    <span className="italic text-[9px] text-[#A0A0A0]">Tin nhắn đã thu hồi</span>
+                                  )}
+                                  {reactionPickerFor === msgKey && (
+                                    <div data-zalo-reaction-ui className={`absolute bottom-full z-30 mb-1 ${isSent ? "right-0" : "left-0"}`}>
+                                      <ZaloReactionQuickPicker
+                                        activeIcon={msg.reactions?.[inbox.myZaloUid || "__me__"] || null}
+                                        onPick={(icon) => {
+                                          void inbox.reactToMessage(msg, icon);
+                                          setReactionPickerFor(null);
+                                        }}
+                                      />
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })()}
+                            {!msg.is_deleted && (
+                              <div className={isSent ? "flex justify-end" : "flex justify-start"}>
+                                <ZaloReactionBadges
+                                  reactions={msg.reactions}
+                                  myUid={inbox.myZaloUid}
+                                  onClickIcon={(icon) => void inbox.reactToMessage(msg, icon)}
+                                />
+                              </div>
+                            )}
                           </div>
 
                           {/* Checkbox on right for sent messages */}
@@ -1167,26 +1543,70 @@ export function ZaloInboxAdminShell() {
               >
                 <MaterialIcon name="description" className="text-slate-500 text-[18px]" />
               </button>
-              <textarea
-                value={inbox.reply}
-                onChange={(e) => inbox.setReply(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && !e.shiftKey) {
-                    e.preventDefault();
-                    void handleSendReply();
+              <div className="relative flex-shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setShowStickerPicker((v) => !v)}
+                  className="h-8 w-8 rounded-lg flex items-center justify-center hover:bg-slate-100 transition"
+                  title="Gửi sticker"
+                  disabled={!inbox.openConv || inbox.archiveReading}
+                >
+                  <MaterialIcon name="mood" className="text-slate-500 text-[18px]" />
+                </button>
+                {showStickerPicker && (
+                  <div className="absolute bottom-10 left-0 z-20">
+                    <ZaloStickerPicker
+                      accountId={inbox.selectedAccountId || ""}
+                      onPick={(s) => handleSendSticker({ id: s.id, cateId: s.cateId })}
+                    />
+                  </div>
+                )}
+              </div>
+              <div className="relative flex-1">
+                {showMentionPicker && (
+                  <div className="absolute bottom-full left-0 z-20 mb-1 w-64 max-h-48 overflow-y-auto rounded-lg border border-[#E5E5E5] bg-white shadow-lg">
+                    {!inbox.groupMembers ? (
+                      <div className="px-3 py-2 text-[11px] text-[#A0A0A0]">
+                        Chưa có danh sách thành viên. Bấm "Quét thành viên" ở tab Thông tin trước.
+                      </div>
+                    ) : filteredMentionCandidates.length === 0 ? (
+                      <div className="px-3 py-2 text-[11px] text-[#A0A0A0]">Không tìm thấy thành viên phù hợp.</div>
+                    ) : (
+                      filteredMentionCandidates.slice(0, 20).map((m) => (
+                        <button
+                          key={m.uid}
+                          type="button"
+                          onClick={() => insertMention(m.uid, m.display_name)}
+                          className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[11px] hover:bg-slate-50"
+                        >
+                          <span className="font-bold text-slate-700">{m.display_name}</span>
+                        </button>
+                      ))
+                    )}
+                  </div>
+                )}
+                <textarea
+                  value={inbox.reply}
+                  onChange={handleReplyChange}
+                  onPaste={handlePasteImage}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey && !showMentionPicker) {
+                      e.preventDefault();
+                      void handleSendReply();
+                    }
+                  }}
+                  disabled={!inbox.openConv || inbox.archiveReading}
+                  rows={2}
+                  placeholder={
+                    inbox.archiveReading
+                      ? "Đang xem lưu trữ..."
+                      : !inbox.selectedAccountId
+                      ? "Chưa chọn tài khoản..."
+                      : "Nhập câu trả lời... (@ để gắn thẻ, Enter để gửi)"
                   }
-                }}
-                disabled={!inbox.openConv || inbox.archiveReading}
-                rows={2}
-                placeholder={
-                  inbox.archiveReading
-                    ? "Đang xem lưu trữ..."
-                    : !inbox.selectedAccountId
-                    ? "Chưa chọn tài khoản..."
-                    : "Nhập câu trả lời... (Enter để gửi)"
-                }
-                className="min-h-[44px] flex-1 resize-none rounded-lg border border-[#E5E5E5] px-3 py-2 text-xs outline-none transition focus:border-[#E3000F] focus:ring-2 focus:ring-[#E3000F]/20 disabled:cursor-not-allowed disabled:bg-[#F5F5F5]"
-              />
+                  className="min-h-[44px] w-full resize-none rounded-lg border border-[#E5E5E5] px-3 py-2 text-xs outline-none transition focus:border-[#E3000F] focus:ring-2 focus:ring-[#E3000F]/20 disabled:cursor-not-allowed disabled:bg-[#F5F5F5]"
+                />
+              </div>
               <button
                 onClick={() => void handleSendReply()}
                 disabled={
@@ -1207,8 +1627,10 @@ export function ZaloInboxAdminShell() {
           </div>
         </section>
 
-        {/* Pane 3: Tabs sidebar (Templates / Customer / KPI / Account Management) */}
-        <aside className="min-w-0 overflow-hidden rounded-xl border border-[#E5E5E5] bg-white shadow-sm flex flex-col h-[700px]">
+        {/* Pane 3: Tabs sidebar (Templates / Customer / KPI / Account Management) —
+            chỉ hiện ở desktop (lg+), mobile ưu tiên trải nghiệm list<->chat đơn giản
+            giống module gốc (không có pane thứ 3 tương đương). */}
+        <aside className="hidden min-w-0 overflow-hidden rounded-xl border border-[#E5E5E5] bg-white shadow-sm lg:flex lg:flex-col lg:h-[700px]">
           <div className="grid border-b border-[#E5E5E5] bg-[#FAFAFA] text-[11px] font-black shrink-0 grid-cols-3">
             <button
               onClick={() => {
@@ -1279,6 +1701,77 @@ export function ZaloInboxAdminShell() {
 
                 {panelTab === "templates" && (
                   <div className="space-y-3">
+                    {/* "Giữ tin nhắn mời mua hàng lại" — lưu tin đang soạn trong ô trả
+                        lời thành mẫu dùng lại nhiều lần, đồng bộ theo tài khoản Zalo. */}
+                    <div className="rounded-lg border border-[#E5E5E5] bg-[#FAFAFA] p-2">
+                      {showSaveTemplateForm ? (
+                        <div className="flex flex-col gap-1.5">
+                          <input
+                            autoFocus
+                            value={newTemplateLabel}
+                            onChange={(e) => setNewTemplateLabel(e.target.value)}
+                            onKeyDown={(e) => e.key === "Enter" && void handleSaveCurrentAsTemplate()}
+                            placeholder="Tên mẫu (vd: Mời mua hàng)"
+                            className="rounded border border-[#E5E5E5] px-2 py-1 text-[11px] outline-none focus:border-[#E3000F]"
+                          />
+                          <p className="text-[10px] text-[#A0A0A0] line-clamp-2">
+                            Nội dung: {inbox.reply.trim() || "(ô trả lời đang trống)"}
+                          </p>
+                          <div className="flex gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => void handleSaveCurrentAsTemplate()}
+                              disabled={isSavingTemplate || !inbox.reply.trim() || !newTemplateLabel.trim()}
+                              className="flex-1 rounded bg-[#E3000F] px-2 py-1 text-[11px] font-bold text-white disabled:opacity-50"
+                            >
+                              {isSavingTemplate ? "Đang lưu..." : "Lưu mẫu"}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setShowSaveTemplateForm(false)}
+                              className="rounded border border-[#E5E5E5] px-2 py-1 text-[11px] text-[#666666]"
+                            >
+                              Hủy
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setShowSaveTemplateForm(true)}
+                          disabled={!inbox.reply.trim()}
+                          className="flex w-full items-center justify-center gap-1.5 rounded border border-dashed border-[#E5E5E5] px-2 py-1.5 text-[11px] font-bold text-[#E3000F] hover:bg-red-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                          title={!inbox.reply.trim() ? "Nhập tin nhắn vào ô trả lời trước để lưu thành mẫu" : "Lưu tin đang soạn thành mẫu dùng lại"}
+                        >
+                          <MaterialIcon name="bookmark_add" className="text-[13px]" />
+                          Lưu tin đang soạn thành mẫu
+                        </button>
+                      )}
+                    </div>
+                    {customQuickReplies.length > 0 && (
+                      <div className="space-y-1.5">
+                        <span className="text-[10px] font-bold uppercase text-[#A0A0A0]">Mẫu đã lưu</span>
+                        {customQuickReplies.map((reply) => (
+                          <div key={reply.id} className="group flex items-center gap-1">
+                            <button
+                              onClick={() => appendTemplate(reply.text)}
+                              disabled={!inbox.openConv || inbox.archiveReading}
+                              className="flex-1 rounded-lg border border-[#E5E5E5] bg-white p-2 text-left text-xs leading-relaxed transition hover:border-[#E3000F]/60 hover:bg-[#FFF8F8] disabled:opacity-40 disabled:cursor-not-allowed"
+                            >
+                              <span className="block font-bold text-[11px]">{reply.label}</span>
+                              <span className="block truncate text-[#666666]">{reply.text}</span>
+                            </button>
+                            <button
+                              onClick={() => void handleDeleteQuickReply(reply.id)}
+                              title="Xoá mẫu này"
+                              className="shrink-0 p-1 text-[#A0A0A0] opacity-0 group-hover:opacity-100 hover:text-red-600 transition"
+                            >
+                              <MaterialIcon name="delete" className="text-[13px]" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                     <div className="flex flex-wrap gap-1">
                       {QUICK_REPLY_GROUPS.map((group) => (
                         <button
@@ -1349,7 +1842,7 @@ export function ZaloInboxAdminShell() {
                                         key={ai}
                                         className="rounded-lg overflow-hidden border border-slate-200 max-w-[120px] mt-1 bg-white"
                                       >
-                                        {asset.storage_url?.match(/\.(jpg|jpeg|png|gif|webp)/i) ? (
+                                        {classifyAssetKind(asset.storage_url || "", m) === "image" ? (
                                           // eslint-disable-next-line @next/next/no-img-element
                                           <img
                                             src={asset.storage_url!}
@@ -1359,7 +1852,7 @@ export function ZaloInboxAdminShell() {
                                         ) : (
                                           <div className="flex items-center gap-1 p-1.5 text-[9px] text-blue-600">
                                             <MaterialIcon name="attach_file" className="text-[12px]" />
-                                            <span className="truncate">File đính kèm</span>
+                                            <span className="truncate">{assetFileName(asset.storage_url || "", m)}</span>
                                           </div>
                                         )}
                                       </div>

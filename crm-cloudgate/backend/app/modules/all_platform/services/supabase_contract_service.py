@@ -12,6 +12,7 @@ from supabase import Client
 
 from app.core.config import settings
 from app.core.supabase_client import get_supabase_client
+from app.modules.all_platform.services.customer_lead_service import get_customer_lead_by_id
 
 CONTRACTS_TABLE = "contracts"
 ACTIVITY_LOG_TABLE = "contract_activity_log"
@@ -37,6 +38,7 @@ def _row_to_contract(row: dict) -> dict:
         "dealId": row.get("deal_id"),
         "dealCustomerName": deal.get("customer_name"),
         "dealCompanyName": deal.get("company_name"),
+        "customerId": row.get("customer_id"),
         "manualCustomerName": row.get("manual_customer_name"),
         "quoteId": row.get("quote_id"),
         "title": row["title"],
@@ -62,6 +64,10 @@ def _row_to_contract(row: dict) -> dict:
         "updatedById": row.get("updated_by"),
         "createdAt": row.get("created_at"),
         "updatedAt": row.get("updated_at"),
+        # Migration 136 — "Ghi nhận hợp đồng có sẵn".
+        "source": row.get("source") or "crm",
+        "fileUrl": row.get("file_url"),
+        "note": row.get("note"),
     }
 
 
@@ -73,7 +79,6 @@ def _next_contract_number() -> str:
         supabase.table(CONTRACTS_TABLE)
         .select("contract_number")
         .like("contract_number", f"{prefix}%")
-        .eq("instance", settings.crm_instance)
         .execute()
     )
     max_seq = 0
@@ -131,16 +136,31 @@ def get_contract(contract_id: str) -> dict:
     return _row_to_contract(row)
 
 
+def _resolve_customer_id(deal_id: str | None, customer_id: str | None) -> str | None:
+    """Deal thang khi co ca 2 - khong tin customer_id client gui neu no lech
+    voi customer that su cua deal (vd deal doi khach hang gan deal_id cu)."""
+    if deal_id:
+        deal = get_customer_lead_by_id(deal_id)
+        return (deal or {}).get("customer_id")
+    return customer_id
+
+
 def create_contract(payload: dict, created_by: str | None) -> dict:
     supabase: Client = get_supabase_client()
     insert_data = {
-        "contract_number": _next_contract_number(),
+        "contract_number": payload.get("contract_number") or _next_contract_number(),
         "deal_id": payload.get("deal_id"),
+        "customer_id": _resolve_customer_id(payload.get("deal_id"), payload.get("customer_id")),
         "manual_customer_name": payload.get("manual_customer_name"),
         "quote_id": payload.get("quote_id"),
         "title": payload["title"],
         "template_type": payload.get("template_type") or "service",
-        "status": "draft",
+        # Hop dong ngoai (External) thuong duoc ghi lai SAU khi da ky ngoai doi
+        # thuc - cho phep chon trang thai/ngay ky ban dau thay vi luon ep
+        # 'draft', dung lai CHINH enum da co san tren cot `status` (khong them
+        # gia tri moi). Mac dinh van la 'draft' neu khong truyen.
+        "status": payload.get("status") or "draft",
+        "signed_at": payload.get("signed_at"),
         "contract_value": float(payload.get("contract_value") or 0),
         "currency": payload.get("currency") or "VND",
         "start_date": payload.get("start_date"),
@@ -154,6 +174,9 @@ def create_contract(payload: dict, created_by: str | None) -> dict:
         "ai_risk_score": payload.get("ai_risk_score"),
         "ai_review": payload.get("ai_review"),
         "ai_prompt": payload.get("ai_prompt"),
+        "source": payload.get("source") or "crm",
+        "file_url": payload.get("file_url"),
+        "note": payload.get("note"),
         "created_by": created_by,
         "updated_by": created_by,
         "instance": settings.crm_instance,

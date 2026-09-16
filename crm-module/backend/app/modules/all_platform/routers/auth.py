@@ -310,6 +310,11 @@ def auth_me(request: Request, authorization: str | None = Header(None)) -> BaseR
             "is_sale": is_sale_member(user.get("id")),
             "can_approve_quotes": bool(user.get("can_approve_quotes")),
             "allowedInstances": user.get("allowed_instances"),
+            # Port tu Main: thieu field nay khien FE khong biet Sale/Presale/
+            # Both cua chinh user dang dang nhap (dung xuyen suot he thong
+            # gan Deal/Quote owner - xem DealFormFields.tsx/QuoteWorkspaceModal.tsx).
+            "quote_business_role": user.get("quote_business_role"),
+
         })
     except HTTPException as e:
         return BaseResponse(success=False, message=e.detail)

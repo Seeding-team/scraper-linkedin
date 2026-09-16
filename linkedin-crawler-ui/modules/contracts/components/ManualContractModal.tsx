@@ -1,13 +1,20 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { customerLeadService } from '@/services/customer-lead.service';
 import type { Customer } from '@/services/customer-lead.service';
 import { seedingQuoteRepository } from '@/modules/quotes';
 import type { Quote } from '@/modules/quotes';
+import { seedingCrmRepository } from '@/modules/crm/repositories/SeedingCrmRepository';
+import type { CrmCustomerSummary } from '@/modules/crm/types';
 import { seedingContractRepository } from '../repositories/SeedingContractRepository';
-import { CONTRACT_TEMPLATE_OPTIONS } from '../constants/contractConfig';
-import type { ContractTemplateType } from '../types';
+import { CONTRACT_TEMPLATE_OPTIONS, CONTRACT_STATUS_LABELS } from '../constants/contractConfig';
+import type { ContractTemplateType, ContractStatus } from '../types';
+
+const CONTRACT_STATUS_OPTIONS_FOR_CREATE: ContractStatus[] = [
+  'draft', 'pending_signature', 'signed', 'active',
+];
 import { CurrencyInput } from '@/components/CurrencyInput';
 
 interface UserOption {
@@ -19,21 +26,45 @@ export function ManualContractModal({
   open,
   onClose,
   onCreated,
+  lockedDealId,
+  lockedDealLabel,
+  lockedCustomerId,
+  lockedCustomerLabel,
 }: {
   open: boolean;
   onClose: () => void;
   onCreated: (contractId: string) => void;
+  /** Mở từ trong 1 Deal Workspace cụ thể — khoá cứng dealId, ẩn hẳn dropdown
+   * chọn deal VÀ khối "Khách hàng CRM (không cần Deal)" (deal đã có sẵn
+   * customer_id thật, contracts.customer_id sẽ tự suy ra từ deal_id ở service
+   * layer — xem _resolve_customer_id() — không cần chọn lại). */
+  lockedDealId?: string;
+  lockedDealLabel?: string;
+  /** Mở trực tiếp từ tab "Hợp đồng" ở Customer 360 (không qua 1 Deal cụ thể
+   * nào) — khoá cứng customerId, ẩn hẳn dropdown chọn Deal VÀ ô tìm khách
+   * hàng (đã biết chắc đang ở đúng khách hàng nào). Hợp đồng tạo ra dùng
+   * DUNG con duong contracts.customer_id truc tiep (Phase 1), khong bat buoc
+   * phai co Deal. Bo qua khi co lockedDealId (uu tien khoa theo Deal). */
+  lockedCustomerId?: string;
+  lockedCustomerLabel?: string;
 }) {
   const [deals, setDeals] = useState<Customer[]>([]);
   const [quotes, setQuotes] = useState<Quote[]>([]);
   const [users, setUsers] = useState<UserOption[]>([]);
 
-  const [dealId, setDealId] = useState('');
+  const [dealId, setDealId] = useState(lockedDealId || '');
+  const [customerId, setCustomerId] = useState(lockedDealId ? '' : lockedCustomerId || '');
+  const [customerQuery, setCustomerQuery] = useState('');
+  const [customerResults, setCustomerResults] = useState<CrmCustomerSummary[]>([]);
+  const [customerDropdownOpen, setCustomerDropdownOpen] = useState(false);
+  const customerFieldRef = useRef<HTMLDivElement>(null);
   const [manualCustomerName, setManualCustomerName] = useState('');
   const [quoteId, setQuoteId] = useState('');
   const [title, setTitle] = useState('');
   const [templateType, setTemplateType] = useState<ContractTemplateType>('service');
   const [contractValue, setContractValue] = useState<number | null>(null);
+  const [status, setStatus] = useState<ContractStatus>('draft');
+  const [signedAt, setSignedAt] = useState('');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [paymentTerms, setPaymentTerms] = useState('');
@@ -46,12 +77,24 @@ export function ManualContractModal({
 
   useEffect(() => {
     if (!open) return;
-    customerLeadService.getAll({ page_size: 200 }).then(res => setDeals(res.items)).catch(() => setDeals([]));
+    setDealId(lockedDealId || '');
+    setCustomerId(lockedDealId ? '' : lockedCustomerId || '');
+    if (!lockedDealId && !lockedCustomerId) {
+      customerLeadService.getAll({ page_size: 200 }).then(res => setDeals(res.items)).catch(() => setDeals([]));
+    }
     fetch('/api/all-platform/users/all-profiles', { credentials: 'include' })
       .then(res => res.json())
       .then(body => setUsers((body?.data || []).map((u: { id: string; name: string }) => ({ id: u.id, name: u.name }))))
       .catch(() => setUsers([]));
-  }, [open]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, lockedDealId, lockedCustomerId]);
+
+  useEffect(() => {
+    if (open && lockedCustomerId && lockedCustomerLabel && !title) {
+      setTitle(`Hợp đồng cung cấp dịch vụ — ${lockedCustomerLabel}`);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, lockedCustomerId, lockedCustomerLabel]);
 
   useEffect(() => {
     if (!dealId) {
@@ -63,18 +106,58 @@ export function ManualContractModal({
       .getQuotes()
       .then(all => setQuotes(all.filter(q => q.dealId === dealId)))
       .catch(() => setQuotes([]));
-    const deal = deals.find(d => d.id === dealId);
-    if (deal && !title) setTitle(`Hợp đồng cung cấp dịch vụ — ${deal.customer_name}`);
+    const dealName = lockedDealLabel || deals.find(d => d.id === dealId)?.customer_name;
+    if (dealName && !title) setTitle(`Hợp đồng cung cấp dịch vụ — ${dealName}`);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dealId]);
 
+  // Tim khach hang CRM that (crm_customers) khi khong chon Deal - dung chung
+  // repository voi combobox khach hang o form tao deal (CustomerProfileCombobox),
+  // de hop dong tao ra co the resolve ve Customer 360 (contracts.customer_id,
+  // xem migration 130) thay vi chi la 1 chuoi ten nhap tay.
+  useEffect(() => {
+    const keyword = customerQuery.trim();
+    if (dealId || !customerDropdownOpen || keyword.length < 2) {
+      setCustomerResults([]);
+      return;
+    }
+    let alive = true;
+    const timer = window.setTimeout(() => {
+      seedingCrmRepository
+        .quickSearchCustomers(keyword, 8)
+        .then(rows => { if (alive) setCustomerResults(rows); })
+        .catch(() => { if (alive) setCustomerResults([]); });
+    }, 300);
+    return () => {
+      alive = false;
+      window.clearTimeout(timer);
+    };
+  }, [customerQuery, customerDropdownOpen, dealId]);
+
+  useEffect(() => {
+    if (!customerDropdownOpen) return;
+    function handlePointerDown(event: MouseEvent) {
+      if (customerFieldRef.current && !customerFieldRef.current.contains(event.target as Node)) {
+        setCustomerDropdownOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', handlePointerDown);
+    return () => document.removeEventListener('mousedown', handlePointerDown);
+  }, [customerDropdownOpen]);
+
   function reset() {
-    setDealId('');
+    setDealId(lockedDealId || '');
+    setCustomerId(lockedDealId ? '' : lockedCustomerId || '');
+    setCustomerQuery('');
+    setCustomerResults([]);
+    setCustomerDropdownOpen(false);
     setManualCustomerName('');
     setQuoteId('');
     setTitle('');
     setTemplateType('service');
     setContractValue(null);
+    setStatus('draft');
+    setSignedAt('');
     setStartDate('');
     setEndDate('');
     setPaymentTerms('');
@@ -101,11 +184,14 @@ export function ManualContractModal({
     try {
       const contract = await seedingContractRepository.createContract({
         dealId: dealId || undefined,
-        manualCustomerName: dealId ? undefined : manualCustomerName.trim() || undefined,
+        customerId: dealId ? undefined : customerId || undefined,
+        manualCustomerName: dealId || customerId ? undefined : manualCustomerName.trim() || undefined,
         quoteId: quoteId || undefined,
         title: title.trim(),
         templateType,
         contractValue: contractValue ?? 0,
+        status,
+        signedAt: signedAt || undefined,
         startDate: startDate || undefined,
         endDate: endDate || undefined,
         paymentTerms: paymentTerms || undefined,
@@ -136,7 +222,10 @@ export function ManualContractModal({
   };
   const labelStyle: React.CSSProperties = { display: 'block', fontSize: '0.78rem', fontWeight: 700 };
 
-  return (
+  // Portal ra document.body - dung y het fix da ap dung o CreateQuoteModal.tsx
+  // (transform cua DealDetailDrawer's <aside> lam containing block cho
+  // position:fixed neu khong portal, ep modal vao kich thuoc drawer).
+  return createPortal(
     <div className="crm-modal-backdrop" onClick={closeAndReset}>
       <div className="crm-modal" onClick={event => event.stopPropagation()} style={{ maxWidth: '640px' }}>
         <header className="crm-modal-header">
@@ -156,23 +245,89 @@ export function ManualContractModal({
 
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.8rem' }}>
               <label style={labelStyle}>
-                Khách hàng CRM
-                <select style={inputStyle} value={dealId} onChange={e => setDealId(e.target.value)}>
-                  <option value="">-- Không liên kết --</option>
-                  {deals.map(d => (
-                    <option key={d.id} value={d.id}>{d.customer_name}{d.company_name ? ` — ${d.company_name}` : ''}</option>
-                  ))}
-                </select>
-              </label>
-              {!dealId ? (
-                <label style={labelStyle}>
-                  Tên khách hàng (nhập tay)
-                  <input
+                Cơ hội (Deal) liên kết
+                {lockedDealId ? (
+                  <div style={{ ...inputStyle, display: 'flex', alignItems: 'center', background: '#f4f6f8', color: '#4a5568' }}>
+                    {lockedDealLabel || 'Deal hiện tại'}
+                  </div>
+                ) : lockedCustomerId ? (
+                  <div style={{ ...inputStyle, display: 'flex', alignItems: 'center', background: '#f4f6f8', color: '#4a5568' }}>
+                    Không gắn Deal — hợp đồng cho toàn bộ khách hàng
+                  </div>
+                ) : (
+                  <select
                     style={inputStyle}
-                    value={manualCustomerName}
-                    onChange={e => setManualCustomerName(e.target.value)}
-                    placeholder="Không chọn CRM ở trên thì nhập tên ở đây"
-                  />
+                    value={dealId}
+                    onChange={e => {
+                      setDealId(e.target.value);
+                      if (e.target.value) {
+                        setCustomerId('');
+                        setCustomerQuery('');
+                      }
+                    }}
+                  >
+                    <option value="">-- Không liên kết --</option>
+                    {deals.map(d => (
+                      <option key={d.id} value={d.id}>{d.customer_name}{d.company_name ? ` — ${d.company_name}` : ''}</option>
+                    ))}
+                  </select>
+                )}
+              </label>
+              {lockedCustomerId ? (
+                <label style={labelStyle}>
+                  Khách hàng CRM
+                  <div style={{ ...inputStyle, display: 'flex', alignItems: 'center', background: '#f4f6f8', color: '#4a5568' }}>
+                    {lockedCustomerLabel || 'Khách hàng hiện tại'}
+                  </div>
+                </label>
+              ) : !dealId ? (
+                <label style={labelStyle}>
+                  Khách hàng CRM (không cần Deal)
+                  <div ref={customerFieldRef} style={{ position: 'relative' }}>
+                    <input
+                      style={inputStyle}
+                      value={customerQuery}
+                      onChange={e => {
+                        setCustomerId('');
+                        setCustomerQuery(e.target.value);
+                        setManualCustomerName(e.target.value);
+                      }}
+                      onFocus={() => setCustomerDropdownOpen(true)}
+                      placeholder="Gõ tên khách hàng đã có trong CRM..."
+                    />
+                    {customerDropdownOpen && customerResults.length > 0 ? (
+                      <ul
+                        style={{
+                          position: 'absolute', zIndex: 20, left: 0, right: 0, top: '2.6rem',
+                          background: '#fff', border: '1px solid #dce2e9', borderRadius: '0.5rem',
+                          maxHeight: '200px', overflowY: 'auto', listStyle: 'none', margin: 0, padding: '0.25rem 0',
+                          boxShadow: '0 8px 20px rgba(0,0,0,0.08)',
+                        }}
+                      >
+                        {customerResults.map(c => (
+                          <li key={c.id}>
+                            <button
+                              type="button"
+                              style={{ display: 'block', width: '100%', textAlign: 'left', padding: '0.4rem 0.6rem', border: 'none', background: 'transparent', cursor: 'pointer' }}
+                              onClick={() => {
+                                setCustomerId(c.id);
+                                setCustomerQuery(c.customerName);
+                                setManualCustomerName('');
+                                setCustomerDropdownOpen(false);
+                              }}
+                            >
+                              {c.customerName}{c.companyName ? ` — ${c.companyName}` : ''}
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : null}
+                  </div>
+                  {!customerId && customerQuery.trim() ? (
+                    <span style={{ fontSize: '0.72rem', color: '#8a8f98', fontWeight: 400 }}>
+                      Chưa chọn khách hàng có sẵn — sẽ lưu như tên nhập tay, chưa gắn được vào Customer 360.
+                    </span>
+                  ) : null}
                 </label>
               ) : null}
               <label style={labelStyle}>
@@ -196,6 +351,21 @@ export function ManualContractModal({
               <label style={labelStyle}>
                 Giá trị hợp đồng (VND)
                 <CurrencyInput style={inputStyle} value={contractValue} onChange={setContractValue} />
+              </label>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.8rem' }}>
+              <label style={labelStyle}>
+                Trạng thái
+                <select style={inputStyle} value={status} onChange={e => setStatus(e.target.value as ContractStatus)}>
+                  {CONTRACT_STATUS_OPTIONS_FOR_CREATE.map(s => (
+                    <option key={s} value={s}>{CONTRACT_STATUS_LABELS[s]}</option>
+                  ))}
+                </select>
+              </label>
+              <label style={labelStyle}>
+                Ngày ký
+                <input style={inputStyle} type="date" value={signedAt} onChange={e => setSignedAt(e.target.value)} />
               </label>
             </div>
 
@@ -248,6 +418,7 @@ export function ManualContractModal({
           </footer>
         </form>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

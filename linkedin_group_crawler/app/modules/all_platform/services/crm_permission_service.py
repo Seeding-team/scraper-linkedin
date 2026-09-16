@@ -83,12 +83,16 @@ def has_quote_business_role(user: dict[str, Any] | None, target: str) -> bool:
 
 
 def has_full_crm_access(user: dict[str, Any] | None) -> bool:
-    """True neu user duoc xem/sua toan bo Pipeline + Phan tich CRM: admin,
-    leader, hoac thanh vien 1 team team_type='sale'."""
+    """True neu user duoc xem/sua toan bo CRM: admin, leader, thanh vien
+    team_type='sale', hoac user da duoc gan vai tro nghiep vu bao gia
+    (presale/sale/both). Quote business role la nguon quyen CRM chung moi,
+    khong bat buoc phai nam trong team sale."""
     if not user:
         return False
     role = str(user.get("role") or "").strip().lower()
     if role in ("admin", "leader"):
+        return True
+    if has_quote_business_role(user, "sale") or has_quote_business_role(user, "presale"):
         return True
     return is_sale_member(user.get("id"))
 
@@ -378,19 +382,12 @@ def can_view_project(user: dict[str, Any] | None) -> bool:
 
 
 def can_manage_project(user: dict[str, Any] | None, project: dict[str, Any] | None = None) -> bool:
-    """QUAN TRONG: KHONG dung has_full_crm_access() o day - ham do gom ca
-    "thanh vien 1 team team_type='sale'" (mot co che TEAM assignment THAT,
-    KHONG PHAI system role thu 4 - xem get_user_team_types()/teams.team_type,
-    migration 049; app_users.role van CHI co admin/leader/member, khong doi).
-    Nhung rieng cho QUAN TRI Du an, yeu cau moi noi ro: sale-team KHONG tu
-    dong duoc quan tri Project - chi Admin/Leader, HOAC (voi 1 Du an DA TON
-    TAI) chinh nguoi tao (`created_by`) hoac nguoi duoc gan quan ly
-    (`manager_id`) cua DUNG Du an do. Tao Du an MOI: CHI Admin/Leader (chua
-    co project de tu nhan la "nguoi tao/manager")."""
+    """Quan ly Du an theo quyen CRM chung: admin/leader/member co vai tro bao
+    gia (sale/presale/both) duoc them/sua; member thuong chi sua du an minh
+    tao hoac duoc gan quan ly."""
     if not user:
         return False
-    role = str(user.get("role") or "").strip().lower()
-    if role in ("admin", "leader"):
+    if has_full_crm_access(user):
         return True
     if not project:
         return False

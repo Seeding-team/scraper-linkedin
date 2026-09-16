@@ -1,7 +1,7 @@
-"""Danh mục dịch vụ (Service Catalog): group/component/bundle dùng chung cho các
-Mẫu báo giá. Bundle (gói/combo, vd SZ-VPS) tổ hợp nhiều component qua
-service_catalog_bundle_items — khi chọn 1 bundle lúc điền báo giá, hệ thống ghép
-Description Items từ các thành phần và chỉ sinh ĐÚNG 1 dòng quote_item.
+﻿"""Danh má»¥c dá»‹ch vá»¥ (Service Catalog): group/component/bundle dÃ¹ng chung cho cÃ¡c
+Máº«u bÃ¡o giÃ¡. Bundle (gÃ³i/combo, vd SZ-VPS) tá»• há»£p nhiá»u component qua
+service_catalog_bundle_items â€” khi chá»n 1 bundle lÃºc Ä‘iá»n bÃ¡o giÃ¡, há»‡ thá»‘ng ghÃ©p
+Description Items tá»« cÃ¡c thÃ nh pháº§n vÃ  chá»‰ sinh ÄÃšNG 1 dÃ²ng quote_item.
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ def _now_iso() -> str:
 
 
 def format_quantity(value: float) -> str:
-    """Bỏ phần thập phân dư: 8.0 -> "8", 8.5 -> "8.5"."""
+    """Bá» pháº§n tháº­p phÃ¢n dÆ°: 8.0 -> "8", 8.5 -> "8.5"."""
     if value == int(value):
         return str(int(value))
     return str(round(value, 2))
@@ -51,6 +51,10 @@ def _row_to_item(row: dict) -> dict:
         "note": row.get("note"),
         "status": row.get("status") or "active",
         "sortOrder": row.get("sort_order") or 0,
+        "brand": row.get("brand"),
+        "partNumber": row.get("part_number"),
+        "productType": row.get("product_type"),
+        "internalNote": row.get("internal_note"),
         "children": [],
     }
 
@@ -104,9 +108,9 @@ def _bundle_components(bundle_id: str) -> list[dict]:
 
 
 def render_bundle_description(bundle_id: str) -> str:
-    """Ghép Description Items từ các thành phần của 1 bundle. Mỗi dòng chỉ là
-    displayText (số lượng cuối cùng đã quy đổi + đơn vị) kèm mô tả nếu có -
-    TUYỆT ĐỐI không nối tên component hay hiển thị dạng phép nhân."""
+    """GhÃ©p Description Items tá»« cÃ¡c thÃ nh pháº§n cá»§a 1 bundle. Má»—i dÃ²ng chá»‰ lÃ
+    displayText (sá»‘ lÆ°á»£ng cuá»‘i cÃ¹ng Ä‘Ã£ quy Ä‘á»•i + Ä‘Æ¡n vá»‹) kÃ¨m mÃ´ táº£ náº¿u cÃ³ -
+    TUYá»†T Äá»I khÃ´ng ná»‘i tÃªn component hay hiá»ƒn thá»‹ dáº¡ng phÃ©p nhÃ¢n."""
     lines = []
     for component in _bundle_components(bundle_id):
         text = component["displayText"]
@@ -190,20 +194,91 @@ def create_service_catalog_item(payload: dict, created_by: str | None) -> dict:
         "sort_order": next_order,
         "created_by": created_by,
         "updated_by": created_by,
+        "brand": payload.get("brand"),
+        "part_number": payload.get("part_number"),
+        "product_type": payload.get("product_type"),
+        "internal_note": payload.get("internal_note"),
     }
     result = supabase.table(ITEMS_TABLE).insert(insert_data).execute()
-    return _row_to_item(result.data[0])
+    item = result.data[0]
+
+    # Also upsert pricing if provided
+    upsert_service_catalog_item_pricing(
+        item_id=item["id"],
+        issuer_company_id=None,
+        cost_price_vnd=payload.get("default_cost_price_vnd"),
+        markup_percent=payload.get("default_markup_percent"),
+        customer_price_vnd=payload.get("default_customer_price_vnd"),
+        pricing_input_mode=payload.get("pricing_input_mode") or "cost",
+        supplier_currency=payload.get("supplier_currency"),
+        supplier_list_price=payload.get("supplier_list_price"),
+        supplier_discount_percent=payload.get("supplier_discount_percent"),
+        supplier_net_price=payload.get("supplier_net_price"),
+        supplier_exchange_rate=payload.get("supplier_exchange_rate"),
+        supplier_converted_price=payload.get("supplier_converted_price"),
+        supplier_vendor_id=payload.get("supplier_vendor_id"),
+        supplier_quote_ref=payload.get("supplier_quote_ref"),
+        supplier_quote_source=payload.get("supplier_quote_source"),
+        supplier_quote_date=payload.get("supplier_quote_date"),
+        supplier_valid_until=payload.get("supplier_valid_until"),
+        shipping_cost=payload.get("shipping_cost"),
+        import_fee=payload.get("import_fee"),
+        other_cost=payload.get("other_cost"),
+        pricing_policy=payload.get("pricing_policy"),
+    )
+
+    created_item = _row_to_item(item)
+    merge_pricing_into_tree([created_item], resolve_pricing_map([item["id"]], None))
+    return created_item
 
 
 def update_service_catalog_item(item_id: str, payload: dict, actor_id: str | None) -> dict:
     supabase: Client = get_supabase_client()
-    update_data = {k: v for k, v in payload.items() if k != "id" and v is not None}
+
+    allowed_keys = {"item_type", "parent_id", "sku", "name", "description", "unit", "list_price_usd", "unit_price_usd", "exchange_rate_snapshot", "default_unit_price_vnd", "default_discount_percent", "default_vat_rate", "spec_quantity_per_unit", "spec_unit_label", "note", "status", "sort_order", "brand", "part_number", "product_type", "internal_note"}
+    update_data = {k: v for k, v in payload.items() if k in allowed_keys and v is not None}
+
     update_data["updated_by"] = actor_id
     update_data["updated_at"] = _now_iso()
     result = supabase.table(ITEMS_TABLE).update(update_data).eq("id", item_id).execute()
     if not result.data:
         raise ValueError("Khong tim thay dich vu.")
-    return _row_to_item(result.data[0])
+
+    # Also upsert pricing if provided
+    if any(k in payload for k in [
+        "default_cost_price_vnd", "default_markup_percent", "default_customer_price_vnd",
+        "supplier_currency", "supplier_list_price", "supplier_discount_percent",
+        "supplier_net_price", "supplier_exchange_rate", "supplier_converted_price",
+        "supplier_vendor_id", "supplier_quote_ref", "supplier_quote_source", "supplier_quote_date",
+        "supplier_valid_until", "shipping_cost", "import_fee", "other_cost", "pricing_policy"
+    ]):
+        upsert_service_catalog_item_pricing(
+            item_id=item_id,
+            issuer_company_id=None,
+            cost_price_vnd=payload.get("default_cost_price_vnd"),
+            markup_percent=payload.get("default_markup_percent"),
+            customer_price_vnd=payload.get("default_customer_price_vnd"),
+            pricing_input_mode=payload.get("pricing_input_mode") or "cost",
+            supplier_currency=payload.get("supplier_currency"),
+            supplier_list_price=payload.get("supplier_list_price"),
+            supplier_discount_percent=payload.get("supplier_discount_percent"),
+            supplier_net_price=payload.get("supplier_net_price"),
+            supplier_exchange_rate=payload.get("supplier_exchange_rate"),
+            supplier_converted_price=payload.get("supplier_converted_price"),
+            supplier_vendor_id=payload.get("supplier_vendor_id"),
+            supplier_quote_ref=payload.get("supplier_quote_ref"),
+            supplier_quote_source=payload.get("supplier_quote_source"),
+            supplier_quote_date=payload.get("supplier_quote_date"),
+            supplier_valid_until=payload.get("supplier_valid_until"),
+            shipping_cost=payload.get("shipping_cost"),
+            import_fee=payload.get("import_fee"),
+            other_cost=payload.get("other_cost"),
+            pricing_policy=payload.get("pricing_policy"),
+        )
+
+    updated_item = _row_to_item(result.data[0])
+    merge_pricing_into_tree([updated_item], resolve_pricing_map([item_id], None))
+    return updated_item
 
 
 def delete_service_catalog_item(item_id: str) -> dict:
@@ -249,7 +324,7 @@ def delete_service_catalog_item(item_id: str) -> dict:
     return {"deleted": True, "deactivated": False}
 
 def reorder_service_catalog_item(item_id: str, direction: str) -> list[dict]:
-    """Swap sort_order giữa dòng target và hàng xóm liền kề, TRONG CÙNG parent_id."""
+    """Swap sort_order giá»¯a dÃ²ng target vÃ  hÃ ng xÃ³m liá»n ká», TRONG CÃ™NG parent_id."""
     supabase: Client = get_supabase_client()
     current = supabase.table(ITEMS_TABLE).select("*").eq("id", item_id).maybe_single().execute().data
     if not current:
@@ -280,7 +355,7 @@ def set_bundle_components(bundle_id: str, items: list[dict]) -> dict:
     supabase: Client = get_supabase_client()
     bundle = supabase.table(ITEMS_TABLE).select("*").eq("id", bundle_id).maybe_single().execute().data
     if not bundle or bundle["item_type"] != "bundle":
-        raise ValueError("Không tìm thấy gói dịch vụ.")
+        raise ValueError("KhÃ´ng tÃ¬m tháº¥y gÃ³i dá»‹ch vá»¥.")
 
     supabase.table(BUNDLE_ITEMS_TABLE).delete().eq("bundle_id", bundle_id).execute()
     for index, item in enumerate(items):
@@ -294,7 +369,7 @@ def set_bundle_components(bundle_id: str, items: list[dict]) -> dict:
     return get_service_catalog_item(bundle_id)
 
 
-# ── Liên kết Mẫu báo giá <-> Danh mục dịch vụ ───────────────────────────────
+# â”€â”€ LiÃªn káº¿t Máº«u bÃ¡o giÃ¡ <-> Danh má»¥c dá»‹ch vá»¥ â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def get_quote_form_catalog_links(quote_form_id: str) -> list[str]:
     supabase: Client = get_supabase_client()
@@ -321,9 +396,9 @@ def set_quote_form_catalog_links(quote_form_id: str, catalog_item_ids: list[str]
 
 
 def get_service_catalog_options_for_form(quote_form_id: str) -> dict:
-    """Trả về, theo các group đã liên kết với mẫu báo giá: danh sách bundle (kèm
-    components[] đã tính sẵn displayText) + danh sách component - dùng để dựng
-    dropdown 2 nhóm "Gói bán"/"Dịch vụ thành phần" khi điền báo giá."""
+    """Tráº£ vá», theo cÃ¡c group Ä‘Ã£ liÃªn káº¿t vá»›i máº«u bÃ¡o giÃ¡: danh sÃ¡ch bundle (kÃ¨m
+    components[] Ä‘Ã£ tÃ­nh sáºµn displayText) + danh sÃ¡ch component - dÃ¹ng Ä‘á»ƒ dá»±ng
+    dropdown 2 nhÃ³m "GÃ³i bÃ¡n"/"Dá»‹ch vá»¥ thÃ nh pháº§n" khi Ä‘iá»n bÃ¡o giÃ¡."""
     supabase: Client = get_supabase_client()
     group_ids = get_quote_form_catalog_links(quote_form_id)
     if not group_ids:
@@ -356,8 +431,8 @@ def get_service_catalog_options_for_form(quote_form_id: str) -> dict:
     return {"bundles": bundles, "components": components}
 
 
-# ── Bo gia MAC DINH rieng cho danh muc chung (migration 107,
-# service_catalog_item_pricing) ───────────────────────────────────────────
+# â”€â”€ Bo gia MAC DINH rieng cho danh muc chung (migration 107,
+# service_catalog_item_pricing) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 #
 # TACH BIET hoan toan default_unit_price_vnd (gia BAN, tren chinh
 # service_catalog_items - bang do RLS mo, doc truc tiep duoc). Bang pricing
@@ -397,7 +472,14 @@ def resolve_pricing_map(item_ids: list[str], issuer_company_id: str | None) -> d
     supabase: Client = get_supabase_client()
     rows = (
         supabase.table(PRICING_TABLE)
-        .select("service_catalog_item_id, issuer_company_id, default_cost_price_vnd, default_markup_percent, default_customer_price_vnd")
+        .select(
+            "service_catalog_item_id, issuer_company_id, default_cost_price_vnd, "
+            "default_markup_percent, default_customer_price_vnd, supplier_currency, "
+            "supplier_list_price, supplier_discount_percent, supplier_net_price, "
+            "supplier_exchange_rate, supplier_converted_price, supplier_vendor_id, "
+            "supplier_quote_ref, supplier_quote_source, supplier_quote_date, "
+            "supplier_valid_until, shipping_cost, import_fee, other_cost, pricing_policy"
+        )
         .in_("service_catalog_item_id", item_ids)
         .execute()
         .data
@@ -411,6 +493,21 @@ def resolve_pricing_map(item_ids: list[str], issuer_company_id: str | None) -> d
             "cost": _to_decimal(row.get("default_cost_price_vnd")),
             "markup": _to_decimal(row.get("default_markup_percent")),
             "customer": _to_decimal(row.get("default_customer_price_vnd")),
+            "supplierCurrency": row.get("supplier_currency"),
+            "supplierListPrice": _to_decimal(row.get("supplier_list_price")),
+            "supplierDiscountPercent": _to_decimal(row.get("supplier_discount_percent")),
+            "supplierNetPrice": _to_decimal(row.get("supplier_net_price")),
+            "supplierExchangeRate": _to_decimal(row.get("supplier_exchange_rate")),
+            "supplierConvertedPrice": _to_decimal(row.get("supplier_converted_price")),
+            "supplierVendorId": row.get("supplier_vendor_id"),
+            "supplierQuoteRef": row.get("supplier_quote_ref"),
+            "supplierQuoteSource": row.get("supplier_quote_source"),
+            "supplierQuoteDate": row.get("supplier_quote_date"),
+            "supplierValidUntil": row.get("supplier_valid_until"),
+            "shippingCost": _to_decimal(row.get("shipping_cost")),
+            "importFee": _to_decimal(row.get("import_fee")),
+            "otherCost": _to_decimal(row.get("other_cost")),
+            "pricingPolicy": row.get("pricing_policy"),
         }
         if row.get("issuer_company_id") and issuer_company_id and row["issuer_company_id"] == issuer_company_id:
             specific[item_id] = entry
@@ -422,6 +519,27 @@ def resolve_pricing_map(item_ids: list[str], issuer_company_id: str | None) -> d
     return result
 
 
+def _merge_pricing_entry(item: dict, entry: dict) -> None:
+    item["defaultCostPriceVnd"] = float(entry["cost"]) if entry.get("cost") is not None else None
+    item["defaultMarkupPercent"] = float(entry["markup"]) if entry.get("markup") is not None else None
+    item["defaultCustomerPriceVnd"] = float(entry["customer"]) if entry.get("customer") is not None else None
+    item["supplierCurrency"] = entry.get("supplierCurrency")
+    item["supplierListPrice"] = float(entry["supplierListPrice"]) if entry.get("supplierListPrice") is not None else None
+    item["supplierDiscountPercent"] = float(entry["supplierDiscountPercent"]) if entry.get("supplierDiscountPercent") is not None else None
+    item["supplierNetPrice"] = float(entry["supplierNetPrice"]) if entry.get("supplierNetPrice") is not None else None
+    item["supplierExchangeRate"] = float(entry["supplierExchangeRate"]) if entry.get("supplierExchangeRate") is not None else None
+    item["supplierConvertedPrice"] = float(entry["supplierConvertedPrice"]) if entry.get("supplierConvertedPrice") is not None else None
+    item["supplierVendorId"] = entry.get("supplierVendorId")
+    item["supplierQuoteRef"] = entry.get("supplierQuoteRef")
+    item["supplierQuoteSource"] = entry.get("supplierQuoteSource")
+    item["supplierQuoteDate"] = entry.get("supplierQuoteDate")
+    item["supplierValidUntil"] = entry.get("supplierValidUntil")
+    item["shippingCost"] = float(entry["shippingCost"]) if entry.get("shippingCost") is not None else None
+    item["importFee"] = float(entry["importFee"]) if entry.get("importFee") is not None else None
+    item["otherCost"] = float(entry["otherCost"]) if entry.get("otherCost") is not None else None
+    item["pricingPolicy"] = entry.get("pricingPolicy")
+
+
 def merge_pricing_into_tree(tree: list[dict], pricing_map: dict[str, dict[str, Decimal | None]]) -> None:
     """Gan defaultCostPriceVnd/defaultMarkupPercent/defaultCustomerPriceVnd vao
     TUNG item trong cay (mutate in-place) - CHI goi ham nay sau khi router da
@@ -431,16 +549,12 @@ def merge_pricing_into_tree(tree: list[dict], pricing_map: dict[str, dict[str, D
     nay - xem router)."""
     for item in tree:
         entry = pricing_map.get(item["id"], {})
-        item["defaultCostPriceVnd"] = float(entry["cost"]) if entry.get("cost") is not None else None
-        item["defaultMarkupPercent"] = float(entry["markup"]) if entry.get("markup") is not None else None
-        item["defaultCustomerPriceVnd"] = float(entry["customer"]) if entry.get("customer") is not None else None
+        _merge_pricing_entry(item, entry)
         merge_pricing_into_tree(item.get("children") or [], pricing_map)
         for component in item.get("components") or []:
             comp_id = component.get("componentId")
             comp_entry = pricing_map.get(comp_id, {}) if comp_id else {}
-            component["defaultCostPriceVnd"] = float(comp_entry["cost"]) if comp_entry.get("cost") is not None else None
-            component["defaultMarkupPercent"] = float(comp_entry["markup"]) if comp_entry.get("markup") is not None else None
-            component["defaultCustomerPriceVnd"] = float(comp_entry["customer"]) if comp_entry.get("customer") is not None else None
+            _merge_pricing_entry(component, comp_entry)
 
 
 def strip_cost_markup_fields(tree: list[dict]) -> None:
@@ -488,8 +602,23 @@ def upsert_service_catalog_item_pricing(
     cost_price_vnd: Decimal | None,
     markup_percent: Decimal | None,
     customer_price_vnd: Decimal | None,
-    pricing_input_mode: Literal["markup", "customer_price"],
-    actor_id: str | None,
+    pricing_input_mode: Literal["cost", "markup", "price", "customer_price"],
+    actor_id: str | None = None,
+    supplier_currency: str | None = None,
+    supplier_list_price: Decimal | None = None,
+    supplier_discount_percent: Decimal | None = None,
+    supplier_net_price: Decimal | None = None,
+    supplier_exchange_rate: Decimal | None = None,
+    supplier_converted_price: Decimal | None = None,
+    supplier_vendor_id: str | None = None,
+    supplier_quote_ref: str | None = None,
+    supplier_quote_source: str | None = None,
+    supplier_quote_date: str | None = None,
+    supplier_valid_until: str | None = None,
+    shipping_cost: Decimal | None = None,
+    import_fee: Decimal | None = None,
+    other_cost: Decimal | None = None,
+    pricing_policy: str | None = None,
 ) -> dict:
     """Backend la nguon THAT DUY NHAT tinh 3 gia tri - KHONG luu nguyen so
     client gui cho field KHONG phai field dieu khien (dung yeu cau audit:
@@ -506,9 +635,9 @@ def upsert_service_catalog_item_pricing(
     markup hang muc bao gia - khong co nguong tren nghiep vu nao dung chung
     cho danh muc mac dinh nen khong bia them gioi han tren)."""
     if cost_price_vnd is not None and cost_price_vnd < 0:
-        raise ValueError("Giá vốn không được âm.")
+        raise ValueError("GiÃ¡ vá»‘n khÃ´ng Ä‘Æ°á»£c Ã¢m.")
     if customer_price_vnd is not None and customer_price_vnd < 0:
-        raise ValueError("Giá khách không được âm.")
+        raise ValueError("GiÃ¡ khÃ¡ch khÃ´ng Ä‘Æ°á»£c Ã¢m.")
 
     if pricing_input_mode == "markup":
         markup = None if markup_percent is None else max(Decimal("-100"), markup_percent)
@@ -517,12 +646,14 @@ def upsert_service_catalog_item_pricing(
         else:
             customer = cost_price_vnd * (Decimal("1") + markup / Decimal("100"))
         cost, resolved_markup, resolved_customer = cost_price_vnd, markup, customer
-    else:  # customer_price
+    elif pricing_input_mode in ("price", "customer_price"):
         if cost_price_vnd is None or cost_price_vnd == 0 or customer_price_vnd is None:
             resolved_markup = None
         else:
             resolved_markup = (customer_price_vnd / cost_price_vnd - Decimal("1")) * Decimal("100")
         cost, resolved_customer = cost_price_vnd, customer_price_vnd
+    else:
+        cost, resolved_markup, resolved_customer = cost_price_vnd, markup_percent, customer_price_vnd
 
     supabase: Client = get_supabase_client()
     query = supabase.table(PRICING_TABLE).select("id").eq("service_catalog_item_id", item_id)
@@ -537,6 +668,28 @@ def upsert_service_catalog_item_pricing(
         "updated_by": actor_id,
         "updated_at": _now_iso(),
     }
+    supplier_payload = {
+        "supplier_currency": supplier_currency,
+        "supplier_list_price": supplier_list_price,
+        "supplier_discount_percent": supplier_discount_percent,
+        "supplier_net_price": supplier_net_price,
+        "supplier_exchange_rate": supplier_exchange_rate,
+        "supplier_converted_price": supplier_converted_price,
+        "supplier_vendor_id": supplier_vendor_id,
+        "supplier_quote_ref": supplier_quote_ref,
+        "supplier_quote_source": supplier_quote_source,
+        "supplier_quote_date": supplier_quote_date,
+        "supplier_valid_until": supplier_valid_until,
+        "shipping_cost": shipping_cost,
+        "import_fee": import_fee,
+        "other_cost": other_cost,
+        "pricing_policy": pricing_policy,
+    }
+    payload.update({
+        key: (float(value) if isinstance(value, Decimal) else value)
+        for key, value in supplier_payload.items()
+        if value is not None
+    })
     if existing:
         result = supabase.table(PRICING_TABLE).update(payload).eq("id", existing[0]["id"]).execute()
     else:

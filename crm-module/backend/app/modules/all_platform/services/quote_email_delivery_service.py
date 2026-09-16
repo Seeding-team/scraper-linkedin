@@ -17,6 +17,7 @@ from typing import Any, Optional
 from app.core.supabase_client import get_supabase_client
 from app.modules.all_platform.services import quote_email_provider_service as email_provider_service
 from app.modules.all_platform.services.crm_permission_service import can_send_quote_email
+from app.modules.all_platform.services.supabase_quote_service import _crm_instance
 
 _DELIVERY_LOG_TABLE = "quote_delivery_log"
 _MAX_ATTEMPTS_PER_QUOTE_VERSION = 3
@@ -146,7 +147,7 @@ def _record_email_sent(
         supabase.table(_DELIVERY_LOG_TABLE).update(update_payload).eq("id", log_id).execute()
         supabase.table("quotes").update({
             "sent_at": sent_at, "sent_by": actor_id, "completed_at": sent_at,
-        }).eq("id", quote_id).execute()
+        }).eq("id", quote_id).eq("instance", _crm_instance()).execute()
         supabase.table("quote_activity_log").insert({
             "quote_id": quote_id, "actor_id": actor_id, "action": "sent_email",
             "changes": {"delivery_log_id": log_id},
