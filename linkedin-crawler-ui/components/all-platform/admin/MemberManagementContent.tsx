@@ -36,6 +36,27 @@ type MemberFormState = {
   skill_ids: string[];
 };
 
+// Main la CRM markee co dinh, khong co endpoint /auth/workspaces (khong co
+// workspace switcher o Main) - danh sach 3 workspace/clone doc lap dung
+// chung bang app_users nay phai khai bao TINH tai day (chi dung de Admin gan
+// quyen dang nhap o "Quan ly thanh vien", khac voi cac clone crm-module/
+// crm-cloudgate/crm-securityzone lay danh sach dong tu authService.listWorkspaces()).
+const WORKSPACE_OPTIONS: { instance: string }[] = [
+  { instance: "markee" },
+  { instance: "cloudgate" },
+  { instance: "SECURITYZONE" },
+];
+
+const WORKSPACE_LABELS: Record<string, string> = {
+  markee: "Markee",
+  cloudgate: "CloudGate",
+  SECURITYZONE: "SecurityZone",
+};
+
+function workspaceLabel(instance: string): string {
+  return WORKSPACE_LABELS[instance] || instance;
+}
+
 function emptyMemberForm(): MemberFormState {
   return {
     display_name: "",
@@ -197,6 +218,23 @@ export function MemberManagementContent() {
       await loadAppUsers();
     } catch (err) {
       alert(err instanceof Error ? err.message : "Không cập nhật được vai trò báo giá");
+    } finally {
+      setSavingUserId(null);
+    }
+  }
+
+  async function handleRowToggleWorkspace(account: AppUserProfile, instance: string, checked: boolean) {
+    if (!isAdmin) return; // /update-allowed-instances: chỉ admin
+    const current = new Set(account.allowed_instances || []);
+    if (checked) current.add(instance);
+    else current.delete(instance);
+    setSavingUserId(account.id);
+    try {
+      const res = await usersService.updateAllowedInstances(account.email, Array.from(current));
+      if (!res.success) throw new Error(res.message || "Không cập nhật được workspace");
+      await loadAppUsers();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Không cập nhật được workspace");
     } finally {
       setSavingUserId(null);
     }
@@ -521,6 +559,7 @@ export function MemberManagementContent() {
                 <th className="py-3 px-4">Email đăng nhập</th>
                 <th className="py-3 px-4">Role</th>
                 <th className="py-3 px-4">Vai trò báo giá</th>
+                <th className="py-3 px-4">Workspace</th>
                 <th className="py-3 px-4">Trạng thái</th>
                 <th className="py-3 px-4 text-center">Hành động</th>
               </tr>
@@ -629,6 +668,37 @@ export function MemberManagementContent() {
                           )
                         ) : (
                           <span className="text-on-surface-variant">—</span>
+                        )}
+                      </td>
+                      <td className="py-3 px-4">
+                        {!account ? (
+                          <span className="text-on-surface-variant">—</span>
+                        ) : account.role === "admin" ? (
+                          <span
+                            className="px-2 py-0.5 rounded-full text-[9px] font-bold border border-outline-variant bg-surface-container-low text-on-surface-variant"
+                            title="Admin luôn vào được mọi workspace, không giới hạn"
+                          >
+                            Tất cả
+                          </span>
+                        ) : (
+                          <div className="flex flex-col gap-1">
+                            {WORKSPACE_OPTIONS.map(w => (
+                              <label key={w.instance} className="flex items-center gap-1.5 text-[10px] text-on-surface-variant cursor-pointer disabled:cursor-not-allowed">
+                                <input
+                                  type="checkbox"
+                                  checked={(account.allowed_instances || []).includes(w.instance)}
+                                  disabled={!isAdmin || savingUserId === account.id}
+                                  onChange={e => handleRowToggleWorkspace(account, w.instance, e.target.checked)}
+                                />
+                                {workspaceLabel(w.instance)}
+                              </label>
+                            ))}
+                            {!account.allowed_instances?.length && (
+                              <span className="text-[9px] italic text-on-surface-variant">
+                                Mặc định: chỉ site đã đăng ký
+                              </span>
+                            )}
+                          </div>
                         )}
                       </td>
                       <td className="py-3 px-4">

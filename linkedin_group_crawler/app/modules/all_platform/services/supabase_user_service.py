@@ -52,7 +52,7 @@ def _is_transient_supabase_error(exc: Exception) -> bool:
     return any(part in msg for part in ("server disconnected", "remoteprotocolerror", "timed out", "timeout"))
 
 
-_SAFE_USER_COLUMNS = "id, email, name, role, is_active, can_approve_quotes, quote_business_role, created_at, updated_at"
+_SAFE_USER_COLUMNS = "id, email, name, role, is_active, can_approve_quotes, quote_business_role, created_at, updated_at, allowed_instances"
 
 
 def get_user(email: str) -> dict:
@@ -123,6 +123,27 @@ def update_user_role(email: str, role: str) -> dict:
         supabase.table("app_users")
         .update(update_data)
         .eq("email", email)
+        .execute()
+    )
+    _clear_people_caches()
+    _clear_auth_cache(email=email)
+    return result.data[0] if result.data else {}
+
+
+def update_user_allowed_instances(email: str, allowed_instances: list[str]) -> dict:
+    """Admin-only: gan danh sach workspace/clone CRM (markee/cloudgate/
+    SECURITYZONE) 1 tai khoan duoc PHEP dang nhap - dung o "Quan ly thanh
+    vien" cua Main (migration 127). Main tu than KHONG dung cot nay de switch
+    (Main la CRM markee co dinh, khong co workspace switcher) - day chi la
+    noi QUAN TRI quyen cho 3 clone doc lap dung chung bang app_users nay.
+    Danh sach rong = khong gioi han (vao duoc moi site, giong tai khoan tao
+    truoc tinh nang nay)."""
+    supabase: Client = get_supabase_client()
+
+    result = (
+        supabase.table("app_users")
+        .update({"allowed_instances": allowed_instances or None, "updated_at": "now()"})
+        .eq("email", email.lower().strip())
         .execute()
     )
     _clear_people_caches()
