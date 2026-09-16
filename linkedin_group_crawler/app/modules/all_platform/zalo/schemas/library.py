@@ -1,6 +1,6 @@
 
 from typing import Any, Dict, List, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class ZaloMentionOut(BaseModel):
@@ -43,6 +43,16 @@ class ZaloLibraryMessage(BaseModel):
     mentions: List[ZaloMentionOut] = Field(default_factory=list)
     msg_kind: Optional[str] = None
     raw_content: Optional[Dict[str, Any]] = None
+
+    @field_validator("mentions", mode="before")
+    @classmethod
+    def _coerce_null_mentions(cls, value: Any) -> Any:
+        # Cot "mentions" (them o migration 127) la NULL cho moi tin nhan cu/khong
+        # co @tag - RPC fn_get_zalo_conversation_messages tra thang gia tri cot
+        # nen no la None chu khong phai "thieu key" (default_factory chi ap dung
+        # khi thieu key). Khong coerce se lam validate fail 100% tin nhan cu,
+        # khien API /messages luon 500 va UI khong hien duoc tin nhan nao.
+        return [] if value is None else value
 
 
 class ZaloLibraryMessageCreate(BaseModel):
