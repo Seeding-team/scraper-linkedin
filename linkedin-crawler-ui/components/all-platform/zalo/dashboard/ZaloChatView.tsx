@@ -25,6 +25,11 @@ import {
   getZaloGroupMembers,
   sendZaloSticker,
   reactToZaloMessage,
+  setZaloConversationTag,
+  getZaloQuickReplies,
+  createZaloQuickReply,
+  deleteZaloQuickReply,
+  type ZaloQuickReply,
 } from "@/services/zaloCrawlerService";
 import type {
   ZaloConversationSummary,
@@ -42,6 +47,7 @@ import { ZaloNewChatModal } from "./ZaloNewChatModal";
 import { ZaloKpiPanel } from "./ZaloKpiPanel";
 import { ZaloStickerPicker } from "../centralized-shared/ZaloStickerPicker";
 import { ZaloReactionQuickPicker, ZaloReactionBadges } from "../centralized-shared/ZaloReactionPicker";
+import { ZaloMessageSearchPanel } from "../centralized-shared/ZaloMessageSearchPanel";
 
 const REFRESH_INTERVAL_MS = 2000;
 const MESSAGE_PAGE_SIZE = 50;
@@ -299,9 +305,17 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
   const [newChatModalOpen, setNewChatModalOpen] = useState(false);
   const [newChatToast, setNewChatToast] = useState<string | null>(null);
 
-  // Custom Status Tags & Filtering
-  const [conversationTags, setConversationTags] = useState<Record<string, string>>({});
+  // Custom Status Tags & Filtering — lưu server-side (zalo_groups.tag, migration
+  // 139), đồng bộ giữa các nhân viên cùng quản lý 1 tài khoản Zalo tập trung
+  // (trước đây chỉ localStorage, riêng từng máy/browser, không ai khác thấy được).
   const [filterTag, setFilterTag] = useState<string | null>(null);
+  const conversationTags = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const c of conversations) {
+      if (c.tag) map[c.conversation_id] = c.tag;
+    }
+    return map;
+  }, [conversations]);
 
   // Slash command quick replies states
   const [showSlashMenu, setShowSlashMenu] = useState(false);
@@ -314,28 +328,12 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
     { value: "inactive", label: "Không HĐ", bg: "bg-surface-container-low text-on-surface-variant border-outline-variant" },
   ], []);
 
-  useEffect(() => {
-    if (typeof window !== "undefined") {
-      try {
-        const saved = localStorage.getItem("zalo_conversation_tags");
-        if (saved) {
-          setConversationTags(JSON.parse(saved));
-        }
-      } catch (e) {
-        console.warn("Failed to load conversation tags", e);
-      }
-    }
-  }, []);
-
   const handleSetConversationTag = useCallback((convId: string, tag: string) => {
-    setConversationTags((prev) => {
-      const next = { ...prev, [convId]: tag };
-      if (typeof window !== "undefined") {
-        localStorage.setItem("zalo_conversation_tags", JSON.stringify(next));
-      }
-      return next;
+    setConversations((prev) => prev.map((c) => (c.conversation_id === convId ? { ...c, tag } : c)));
+    setZaloConversationTag(flow.userId, convId, tag).catch((err) => {
+      setConversationError(err instanceof Error ? err.message : "Không thể lưu tag phân loại khách.");
     });
-  }, []);
+  }, [flow.userId]);
 
   // Auto send / Broadcast states
   const [selectedMessageIds, setSelectedMessageIds] = useState<string[]>([]);
@@ -477,6 +475,12 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
 
   // Quick replies states
   const [showQuickReplies, setShowQuickReplies] = useState(false);
+  // Mẫu nhắn nhanh tự soạn (migration 139) — "giữ tin nhắn mời mua hàng lại"
+  // để dùng nhiều lần, cạnh 6 mẫu mặc định QUICK_REPLIES ở trên.
+  const [customQuickReplies, setCustomQuickReplies] = useState<ZaloQuickReply[]>([]);
+  const [showSaveTemplateForm, setShowSaveTemplateForm] = useState(false);
+  const [newTemplateLabel, setNewTemplateLabel] = useState("");
+  const [isSavingTemplate, setIsSavingTemplate] = useState(false);
 
   // Zalo tập trung (port ZALO_CENTRALIZED_MODULE_GUIDE.md) — recall/mentions/
   // friend-status/sticker/group-scan. Không dùng useZaloAdminInbox (component này
@@ -485,6 +489,7 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
   const [isLoadingFriendStatus, setIsLoadingFriendStatus] = useState(false);
   const [friendActionError, setFriendActionError] = useState<string | null>(null);
   const [showStickerPicker, setShowStickerPicker] = useState(false);
+  const [showSearchPanel, setShowSearchPanel] = useState(false);
   const [showMentionPicker, setShowMentionPicker] = useState(false);
   const [mentionQuery, setMentionQuery] = useState("");
   const [mentionAnchorPos, setMentionAnchorPos] = useState<number | null>(null);
@@ -1188,19 +1193,43 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
     }
   };
 
+  const addFilesToSelectedMedia = useCallback((files: File[]) => {
+    if (files.length === 0) return;
+    const newMedia = files.map((file) => {
+      const isImage = file.type.startsWith("image/");
+      return {
+        file,
+        previewUrl: isImage ? URL.createObjectURL(file) : undefined,
+      };
+    });
+    setSelectedMedia((prev) => [...prev, ...newMedia]);
+  }, []);
+
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files) {
-      const newMedia = Array.from(e.target.files).map((file) => {
-        const isImage = file.type.startsWith("image/");
-        return {
-          file,
-          previewUrl: isImage ? URL.createObjectURL(file) : undefined,
-        };
-      });
-      setSelectedMedia((prev) => [...prev, ...newMedia]);
+      addFilesToSelectedMedia(Array.from(e.target.files));
     }
     e.target.value = "";
   };
+
+  // Dán hình trực tiếp vào ô chat (Ctrl+V) để gửi luôn, không cần bấm chọn
+  // file — giống hành vi chuẩn của Zalo Web/app thật.
+  const handlePasteImage = useCallback((e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const items = e.clipboardData?.items;
+    if (!items || items.length === 0) return;
+    const files: File[] = [];
+    for (let i = 0; i < items.length; i += 1) {
+      const item = items[i];
+      if (item.kind === "file" && item.type.startsWith("image/")) {
+        const file = item.getAsFile();
+        if (file) files.push(file);
+      }
+    }
+    if (files.length > 0) {
+      e.preventDefault(); // chặn dán base64/tên file lẫn vào text nếu clipboard có cả 2
+      addFilesToSelectedMedia(files);
+    }
+  }, [addFilesToSelectedMedia]);
 
   const handleRemoveMedia = (index: number) => {
     setSelectedMedia((prev) => {
@@ -1385,6 +1414,22 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
     }
   }, [flow.userId, myZaloUid, selectedConversationId]);
 
+  // Nhảy tới 1 tin nhắn tìm được (từ ZaloMessageSearchPanel) — best-effort:
+  // chỉ hoạt động nếu tin đó đang nằm trong danh sách ĐÃ TẢI (data-msg-anchor
+  // khớp source_message_id trong DOM). Trả false nếu không tìm thấy để panel
+  // tự báo cho user (tin quá cũ, ngoài phạm vi trang hiện tại).
+  const handleJumpToSearchedMessage = useCallback((message: ZaloLibraryMessage): boolean => {
+    if (!message.source_message_id) return false;
+    const el = messageListRef.current?.querySelector(
+      `[data-msg-anchor="${CSS.escape(message.source_message_id)}"]`,
+    ) as HTMLElement | null;
+    if (!el) return false;
+    el.scrollIntoView({ behavior: "smooth", block: "center" });
+    el.classList.add("ring-2", "ring-primary", "ring-offset-2");
+    setTimeout(() => el.classList.remove("ring-2", "ring-primary", "ring-offset-2"), 1600);
+    return true;
+  }, []);
+
   const loadFriendStatus = useCallback(async (uid: string) => {
     setIsLoadingFriendStatus(true);
     setFriendStatus(null);
@@ -1496,6 +1541,7 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
     setPendingMentions([]);
     setShowMentionPicker(false);
     setShowStickerPicker(false);
+    setShowSearchPanel(false);
     setReactionPickerFor(null);
     setGroupMembers([]);
     setShowGroupMembersPanel(false);
@@ -1526,6 +1572,52 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
       setIsSendingDirect(false);
     }
   };
+
+  // Mẫu nhắn nhanh tự soạn (migration 139) — tải theo tài khoản đang dùng.
+  useEffect(() => {
+    if (!flow.userId || flow.userId === "default") {
+      setCustomQuickReplies([]);
+      return;
+    }
+    let cancelled = false;
+    getZaloQuickReplies(flow.userId)
+      .then((list) => {
+        if (!cancelled) setCustomQuickReplies(list);
+      })
+      .catch(() => {
+        if (!cancelled) setCustomQuickReplies([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [flow.userId]);
+
+  const handleSaveCurrentAsTemplate = useCallback(async () => {
+    const text = inputText.trim();
+    const label = newTemplateLabel.trim();
+    if (!text || !label || !flow.userId) return;
+    setIsSavingTemplate(true);
+    try {
+      const created = await createZaloQuickReply(flow.userId, { label, text });
+      setCustomQuickReplies((prev) => [created, ...prev]);
+      setNewTemplateLabel("");
+      setShowSaveTemplateForm(false);
+    } catch (err) {
+      setDirectSendError(err instanceof Error ? err.message : "Không thể lưu mẫu nhắn nhanh.");
+    } finally {
+      setIsSavingTemplate(false);
+    }
+  }, [flow.userId, inputText, newTemplateLabel]);
+
+  const handleDeleteQuickReply = useCallback(async (replyId: number) => {
+    if (!flow.userId) return;
+    setCustomQuickReplies((prev) => prev.filter((r) => r.id !== replyId));
+    try {
+      await deleteZaloQuickReply(flow.userId, replyId);
+    } catch (err) {
+      setDirectSendError(err instanceof Error ? err.message : "Không thể xoá mẫu nhắn nhanh.");
+    }
+  }, [flow.userId]);
 
   const scrollbarClass = "[&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:bg-slate-300/80 [&::-webkit-scrollbar-thumb]:rounded-full hover:[&::-webkit-scrollbar-thumb]:bg-slate-400 [&::-webkit-scrollbar-track]:bg-transparent";
 
@@ -1851,6 +1943,15 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
                     </div>
                   )}
                   <button
+                    onClick={() => setShowSearchPanel((v) => !v)}
+                    className={`h-7 w-7 flex items-center justify-center rounded-full hover:bg-surface-container-low text-on-surface-variant transition ${
+                      showSearchPanel ? "text-primary bg-red-50" : ""
+                    }`}
+                    title="Tìm tin nhắn trong hội thoại này"
+                  >
+                    <MaterialIcon name="search" className="text-sm" />
+                  </button>
+                  <button
                     onClick={() => void handleLoadGroupMembers()}
                     className="h-7 w-7 flex items-center justify-center rounded-full hover:bg-surface-container-low text-on-surface-variant transition"
                     title="Quét thành viên nhóm"
@@ -1879,6 +1980,15 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
                   </button>
                 </div>
               </header>
+
+              {showSearchPanel && selectedConversationId && (
+                <ZaloMessageSearchPanel
+                  accountId={flow.userId}
+                  conversationId={selectedConversationId}
+                  onClose={() => setShowSearchPanel(false)}
+                  onJumpToMessage={handleJumpToSearchedMessage}
+                />
+              )}
 
               {friendActionError && (
                 <div className="bg-red-50 border-b border-red-100 px-3 py-1 text-[10.5px] text-red-700 shrink-0">
@@ -1957,7 +2067,11 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
                     }
 
                     return (
-                      <div key={messageRenderKey(message)} className={`flex group ${isSentByMe ? 'justify-end' : 'justify-start'} w-full mb-3`}>
+                      <div
+                        key={messageRenderKey(message)}
+                        data-msg-anchor={message.source_message_id || undefined}
+                        className={`flex group ${isSentByMe ? 'justify-end' : 'justify-start'} w-full mb-3 rounded-lg transition-shadow`}
+                      >
                         {/* Checkbox for Auto Send Selection - visible on hover or if selected */}
                         {!isSentByMe && (
                            <div className={`mr-1.5 pt-4 transition-opacity ${isSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
@@ -2309,7 +2423,82 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
                         <MaterialIcon name="close" className="text-[14px]" />
                       </button>
                     </div>
+                    {/* "Giữ tin nhắn mời mua hàng lại" — lưu tin đang soạn trong ô chat
+                        thành mẫu dùng lại nhiều lần, thay 6 mẫu hardcode cứng cũ. */}
+                    <div className="border-b border-outline-variant bg-surface-container-low/50 p-2">
+                      {showSaveTemplateForm ? (
+                        <div className="flex flex-col gap-1.5">
+                          <input
+                            autoFocus
+                            value={newTemplateLabel}
+                            onChange={(e) => setNewTemplateLabel(e.target.value)}
+                            onKeyDown={(e) => e.key === "Enter" && void handleSaveCurrentAsTemplate()}
+                            placeholder="Tên mẫu (vd: Mời mua hàng)"
+                            className="rounded-lg border border-outline-variant px-2 py-1 text-[11px] outline-none focus:border-primary"
+                          />
+                          <p className="text-[10px] text-on-surface-variant line-clamp-2">
+                            Nội dung: {inputText.trim() || "(ô chat đang trống)"}
+                          </p>
+                          <div className="flex gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => void handleSaveCurrentAsTemplate()}
+                              disabled={isSavingTemplate || !inputText.trim() || !newTemplateLabel.trim()}
+                              className="flex-1 rounded-lg bg-primary px-2 py-1 text-[11px] font-semibold text-white disabled:opacity-50"
+                            >
+                              {isSavingTemplate ? "Đang lưu..." : "Lưu mẫu"}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setShowSaveTemplateForm(false)}
+                              className="rounded-lg border border-outline-variant px-2 py-1 text-[11px] text-on-surface-variant"
+                            >
+                              Hủy
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setShowSaveTemplateForm(true)}
+                          disabled={!inputText.trim()}
+                          className="flex w-full items-center gap-1.5 rounded-lg border border-dashed border-outline-variant px-2 py-1.5 text-[11px] font-semibold text-primary hover:bg-brand-subtle disabled:opacity-40 disabled:cursor-not-allowed"
+                          title={!inputText.trim() ? "Nhập tin nhắn vào ô chat trước để lưu thành mẫu" : "Lưu tin đang soạn thành mẫu dùng lại"}
+                        >
+                          <MaterialIcon name="bookmark_add" className="text-[14px]" />
+                          Lưu tin đang soạn thành mẫu
+                        </button>
+                      )}
+                    </div>
                     <div className="flex flex-col p-1.5 gap-1 bg-surface">
+                      {customQuickReplies.length > 0 && (
+                        <span className="px-2 pt-1 text-[10px] font-bold uppercase text-on-surface-variant">Mẫu đã lưu</span>
+                      )}
+                      {customQuickReplies.map((reply) => (
+                        <div key={reply.id} className="group flex items-center gap-1">
+                          <button
+                            onClick={() => {
+                              handleQuickReply(reply.text);
+                              setShowQuickReplies(false);
+                            }}
+                            disabled={isSendingDirect}
+                            className="flex-1 text-left px-3 py-2 text-[12px] hover:bg-red-50 hover:text-primary text-on-surface rounded-lg transition-all border border-transparent hover:border-red-200 disabled:opacity-50 cursor-pointer"
+                          >
+                            <span className="font-semibold">{reply.label}</span>
+                            <span className="block truncate text-on-surface-variant">{reply.text}</span>
+                          </button>
+                          <button
+                            onClick={() => void handleDeleteQuickReply(reply.id)}
+                            title="Xoá mẫu này"
+                            className="shrink-0 p-1 text-on-surface-variant opacity-0 group-hover:opacity-100 hover:text-red-600 transition"
+                          >
+                            <MaterialIcon name="delete" className="text-[13px]" />
+                          </button>
+                        </div>
+                      ))}
+                      {customQuickReplies.length > 0 && (
+                        <span className="px-2 pt-1 text-[10px] font-bold uppercase text-on-surface-variant">Mẫu mặc định</span>
+                      )}
                       {QUICK_REPLIES.map((reply, idx) => (
                         <button
                           key={idx}
@@ -2438,6 +2627,7 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
                         ? "px-5 py-2.5 text-[15px]"
                         : "px-3.5 py-2 text-[13px]"
                     } text-on-surface placeholder:text-on-surface-variant focus:outline-none focus:ring-2 focus:ring-red-500/20 focus:bg-surface border border-transparent focus:border-red-500/30 transition-all disabled:opacity-60 resize-none min-h-[38px] max-h-[120px] overflow-y-auto`}
+                    onPaste={handlePasteImage}
                     onKeyDown={(e) => {
                       if (showSlashMenu && filteredSlashReplies.length > 0) {
                         if (e.key === "ArrowDown") {

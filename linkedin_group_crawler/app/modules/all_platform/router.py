@@ -398,6 +398,7 @@ from app.modules.all_platform.zalo.api.routes.forward_rules import router as zal
 from app.modules.all_platform.zalo.api.routes.bulk_jobs import router as zalo_bulk_jobs_router
 from app.modules.all_platform.zalo.api.routes.campaigns import router as zalo_campaigns_router
 from app.modules.all_platform.zalo.api.routes.push import router as zalo_push_router
+from app.modules.all_platform.zalo.api.routes.quick_replies import router as zalo_quick_replies_router
 # Zalo tập trung (port ZALO_CENTRALIZED_MODULE_GUIDE.md): crawler/groups/jobs/library/proxy
 # routers (luồng Playwright/QR/crawl-job/Google Sheet cũ) đã bỏ mount tại đây — file gốc
 # xóa hẳn ở bước dọn dẹp cuối cùng sau khi broadcasts.py được viết lại (không còn phụ
@@ -415,6 +416,7 @@ all_platform_router.include_router(zalo_forward_rules_router, prefix="/zalo", ta
 all_platform_router.include_router(zalo_bulk_jobs_router, prefix="/zalo", tags=["Zalo Bulk Jobs"])
 all_platform_router.include_router(zalo_campaigns_router, prefix="/zalo", tags=["Zalo Campaigns"])
 all_platform_router.include_router(zalo_push_router, prefix="/zalo", tags=["Zalo Push"])
+all_platform_router.include_router(zalo_quick_replies_router, prefix="/zalo", tags=["Zalo Quick Replies"])
 
 # ── Scheduled Comments ─────────────────────────────────────────────────────────
 all_platform_router.include_router(

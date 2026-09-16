@@ -26,6 +26,7 @@ from app.modules.all_platform.zalo.services.zca_api_bridge import (
     send_zca_images,
     find_zca_user_by_phone,
     send_zca_friend_request,
+    get_zca_friend_status,
 )
 
 
@@ -82,6 +83,19 @@ async def _process_bulk_item(account_id: str, job: Dict[str, Any], item: Dict[st
             else:
                 await send_zca_message(auth, uid, job.get("message") or "", thread_type=0)
         elif job_type == "add_friend":
+            # Bỏ qua nếu đã là bạn bè — trước đây gửi lời mời kết bạn vô điều
+            # kiện, Zalo trả lỗi/no-op cho người đã là bạn nhưng vẫn tính
+            # "failed", làm sai lệch báo cáo chiến dịch (yêu cầu 2026-09-17:
+            # chạy campaign theo SĐT/UID, cần tự bỏ qua người đã là bạn).
+            try:
+                friend_status = await get_zca_friend_status(auth, uid)
+            except Exception as exc:
+                logger.warning(f"[bulk-send] could not check friend status uid={uid}: {exc}")
+                friend_status = {}
+            if bool(friend_status.get("is_friend")):
+                await bulk.update_job_item_status(item["id"], "skipped", error="Đã là bạn bè, bỏ qua")
+                await bulk.bump_job_counters(job["id"], sent=1)
+                return
             await send_zca_friend_request(auth, uid, message=job.get("friend_message") or job.get("message") or "")
         elif job_type == "invite_group":
             # Mời vào nhóm dùng chung logic add-friend trước (nếu chưa bạn bè) rồi

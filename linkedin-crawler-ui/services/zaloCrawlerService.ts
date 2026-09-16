@@ -195,6 +195,24 @@ export function getZaloConversationMessages(
   );
 }
 
+/** Tìm tin nhắn cũ chứa từ khoá TRONG 1 hội thoại cụ thể (1 người/1 nhóm) —
+ * vd tìm "Leo" trong nhóm KẾ TOÁN - VẬN HÀNH DENFOOD. */
+export function searchZaloConversationMessages(
+  accountId: string,
+  conversationId: string,
+  keyword: string,
+  limit = 50,
+): Promise<ZaloLibraryListResponse> {
+  const params = new URLSearchParams({ account_id: accountId, q: keyword, limit: String(limit) });
+  return requestJson<ZaloLibraryListResponse>(
+    `/api/all-platform/zalo/conversations/${encodeURIComponent(conversationId)}/search-messages?${params.toString()}`,
+    {
+      method: "GET",
+      headers: { "X-User-ID": accountId },
+    },
+  );
+}
+
 export function syncZaloConversationMessages(
   accountId: string,
   conversationId: string,
@@ -820,6 +838,60 @@ export function markZaloConversationAsRead(
       }),
     },
   );
+}
+
+/** Gắn/đổi/bỏ tag phân loại khách cho 1 hội thoại — lưu server-side (migration
+ * 139), thay cho localStorage cũ (không đồng bộ giữa nhân viên cùng quản lý
+ * 1 tài khoản Zalo tập trung). */
+export function setZaloConversationTag(
+  accountId: string,
+  conversationId: string,
+  tag: string | null,
+): Promise<{ ok: boolean; conversation_id: string; tag: string | null }> {
+  return requestJson(`/api/all-platform/zalo/conversations/${encodeURIComponent(conversationId)}/tag`, {
+    method: "PATCH",
+    headers: buildHeaders({ "X-User-ID": accountId, "Content-Type": "application/json" }),
+    body: JSON.stringify({ tag }),
+  });
+}
+
+export interface ZaloQuickReply {
+  id: number;
+  account_id: string;
+  label: string;
+  text: string;
+  shortcut?: string | null;
+  created_at?: string | null;
+}
+
+/** Mẫu nhắn nhanh tự soạn (migration 139) — "giữ tin nhắn mời mua hàng lại"
+ * để dùng lại nhiều lần, thay cho 6 mẫu HARDCODE cứng trong code trước đây. */
+export function getZaloQuickReplies(accountId: string): Promise<ZaloQuickReply[]> {
+  const params = new URLSearchParams({ account_id: accountId });
+  return requestJson(`/api/all-platform/zalo/quick-replies?${params.toString()}`, {
+    method: "GET",
+    headers: { "X-User-ID": accountId },
+  });
+}
+
+export function createZaloQuickReply(
+  accountId: string,
+  payload: { label: string; text: string; shortcut?: string },
+): Promise<ZaloQuickReply> {
+  const params = new URLSearchParams({ account_id: accountId });
+  return requestJson(`/api/all-platform/zalo/quick-replies?${params.toString()}`, {
+    method: "POST",
+    headers: buildHeaders({ "X-User-ID": accountId, "Content-Type": "application/json" }),
+    body: JSON.stringify(payload),
+  });
+}
+
+export function deleteZaloQuickReply(accountId: string, replyId: number): Promise<{ ok: boolean }> {
+  const params = new URLSearchParams({ account_id: accountId });
+  return requestJson(`/api/all-platform/zalo/quick-replies/${replyId}?${params.toString()}`, {
+    method: "DELETE",
+    headers: { "X-User-ID": accountId },
+  });
 }
 
 export interface ZaloFoundUser {

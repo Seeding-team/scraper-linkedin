@@ -1444,7 +1444,7 @@ async def list_conversations(user_id: str, limit: int = 500) -> List[Dict[str, A
             "select": (
                 "group_id,group_name,avatar_url,unread_count,updated_at,"
                 "last_message_at,last_message_content,last_sender_id,"
-                "last_sender_name,last_message_type,is_pinned"
+                "last_sender_name,last_message_type,is_pinned,tag"
             ),
             "user_id": f"eq.{user_id}",
             "order": "is_pinned.desc,last_message_at.desc,updated_at.desc",
@@ -1467,6 +1467,7 @@ async def list_conversations(user_id: str, limit: int = 500) -> List[Dict[str, A
                 "last_sender_name": g.get("last_sender_name"),
                 "last_message_type": g.get("last_message_type"),
                 "is_pinned": bool(g.get("is_pinned")),
+                "tag": g.get("tag"),
             }
             if g_name:
                 group_name_to_id[g_name.lower()] = g_id
@@ -1541,6 +1542,7 @@ async def list_conversations(user_id: str, limit: int = 500) -> List[Dict[str, A
                 "unread_count": group_info.get(conversation_id, {}).get("unread_count", 0),
                 "updated_at": group_info.get(conversation_id, {}).get("updated_at"),
                 "is_pinned": group_info.get(conversation_id, {}).get("is_pinned", False),
+                "tag": group_info.get(conversation_id, {}).get("tag"),
             },
         )
         if is_fallback_name and usable_sender_name:
@@ -1581,6 +1583,7 @@ async def list_conversations(user_id: str, limit: int = 500) -> List[Dict[str, A
             "unread_count": int(group.get("unread_count") or 0),
             "updated_at": group.get("updated_at"),
             "is_pinned": bool(group.get("is_pinned")),
+            "tag": group.get("tag"),
         }
 
     # 4. Overlay metadata chính xác từ zalo_groups (last_message_at thật của tin nhắn).
@@ -1597,6 +1600,8 @@ async def list_conversations(user_id: str, limit: int = 500) -> List[Dict[str, A
             if info.get("last_sender_name"):
                 conv["latest_sender_name"] = info.get("last_sender_name")
         conv["is_pinned"] = info.get("is_pinned", conv.get("is_pinned", False))
+        if info.get("tag"):
+            conv["tag"] = info.get("tag")
 
     def _sort_key(item: Dict[str, Any]):
         real_ms = _parse_to_millis(item.get("latest_message_at"))
@@ -1803,6 +1808,45 @@ async def _list_conversation_messages_fallback(
     hydrated_rows = await hydrate_message_groups_from_jobs(user_id, rows or [])
     hydrated_rows.reverse()
     return hydrated_rows, total
+
+
+async def search_conversation_messages(
+    user_id: str,
+    conversation_id: str,
+    keyword: str,
+    *,
+    limit: int = 50,
+) -> List[Dict[str, Any]]:
+    """Tìm tin nhắn cũ chứa `keyword` (không phân hoa/thường) TRONG 1 hội
+    thoại cụ thể (1 người hoặc 1 nhóm) — vd tìm "Leo" trong nhóm KẾ TOÁN -
+    VẬN HÀNH DENFOOD. ILIKE trên `content`, luôn kèm user_id+group_id nên
+    chỉ scan trong đúng hội thoại đó (đã có index idx_zalo_messages_lookup
+    trên (user_id, group_id, source_message_id) làm hẹp phạm vi trước khi
+    ILIKE, không cần thêm index full-text riêng).
+    """
+    if not is_supabase_configured():
+        return []
+    safe_limit = max(1, min(limit, 200))
+    # Escape ký tự đặc biệt của ILIKE ("%", "_") để tìm ĐÚNG chuỗi người dùng
+    # nhập, không bị hiểu nhầm thành wildcard (vd tìm "50%" không match mọi
+    # nội dung dài >= 1 ký tự vì "%" là wildcard trần trong ILIKE).
+    escaped = keyword.strip().replace("%", "\\%").replace("_", "\\_")
+    if not escaped:
+        return []
+    rows = await _rest(
+        "GET",
+        "zalo_messages",
+        params={
+            "select": "id,source_message_id,sender_id,sender_name,content,timestamp_text,time_text,type,is_sent,created_at",
+            "user_id": f"eq.{user_id}",
+            "group_id": f"eq.{conversation_id}",
+            "is_deleted": "eq.false",
+            "content": f"ilike.*{escaped}*",
+            "order": "timestamp_text.desc,created_at.desc",
+            "limit": str(safe_limit),
+        },
+    ) or []
+    return rows
 
 
 def group_summaries_from_message_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:

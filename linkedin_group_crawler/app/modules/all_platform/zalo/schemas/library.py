@@ -131,6 +131,9 @@ class ZaloConversationSummary(BaseModel):
     # bulk-send/broadcast-groups/scan-group-members/forward-rules.
     is_friend: bool = False
     thread_type: str = "group"
+    # Tag phân loại khách (migration 139) — lưu server-side trên zalo_groups.tag,
+    # thay cho localStorage cũ (không đồng bộ giữa nhân viên cùng quản lý 1 tài khoản).
+    tag: Optional[str] = None
 
 
 class ZaloConversationListResponse(BaseModel):

@@ -32,6 +32,7 @@ from app.modules.all_platform.zalo.services.supabase_service import (
     upsert_group,
     mark_conversation_as_read,
     resolve_thread_type,
+    search_conversation_messages,
 )
 from app.modules.all_platform.zalo.services.zca_auth_store import load_zca_auth
 from app.modules.all_platform.zalo.services.zca_api_bridge import (
@@ -253,6 +254,7 @@ async def list_conversations_for_caller(
                 "is_pinned": bool(r.get("is_pinned")),
                 "is_friend": bool(r.get("is_friend")),
                 "thread_type": r.get("thread_type") or ("user" if r.get("is_friend") else "group"),
+                "tag": r.get("tag"),
             })
         return results
     except Exception as exc:
@@ -722,6 +724,43 @@ async def get_conversation_messages(
         raise HTTPException(status_code=500, detail=f"Không thể tải tin nhắn hội thoại Zalo: {exc}")
 
 
+@router.get("/{conversation_id}/search-messages", response_model=ZaloLibraryListResponse)
+async def search_conversation_messages_endpoint(
+    conversation_id: str,
+    q: str = Query(..., min_length=1, max_length=200),
+    account_id: Optional[str] = Query(None),
+    x_user_id: str = Header("default", alias="X-User-ID"),
+    x_caller_email: Optional[str] = Depends(get_authenticated_caller_email),
+    limit: int = Query(50, ge=1, le=200),
+):
+    """Tìm tin nhắn cũ chứa từ khoá TRONG 1 hội thoại cụ thể (1 người hoặc 1
+    nhóm) — vd tìm "Leo" trong nhóm KẾ TOÁN - VẬN HÀNH DENFOOD. Trả về danh
+    sách khớp (mới nhất trước), KHÔNG phân trang lồng vào luồng tin chính —
+    FE hiện như 1 panel kết quả riêng.
+    """
+    user_id = _normalize_user_id(account_id or x_user_id)
+    allowed_conv_ids = await check_caller_conversation_access(user_id, x_caller_email)
+    if allowed_conv_ids is not None and conversation_id.strip() not in allowed_conv_ids:
+        raise HTTPException(
+            status_code=403,
+            detail="Cuộc trò chuyện này ở chế độ riêng tư và chưa được chia sẻ với bạn."
+        )
+    try:
+        rows = await search_conversation_messages(user_id, conversation_id.strip(), q, limit=limit)
+        return {
+            "messages": [ZaloLibraryMessage(**row) for row in rows],
+            "groups": [],
+            "total": len(rows),
+            "limit": limit,
+            "offset": 0,
+            "has_more": False,
+        }
+    except SupabaseNotConfigured as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Không thể tìm tin nhắn: {exc}")
+
+
 @router.post("/{conversation_id}/sync")
 async def sync_conversation_messages_manually(
     conversation_id: str,
@@ -1015,6 +1054,35 @@ async def mark_conversation_read(
         conversation_id=conversation_id,
         message="Hội thoại đã được đánh dấu là đã đọc"
     )
+
+
+class SetConversationTagRequest(BaseModel):
+    tag: Optional[str] = Field(None, max_length=50, description="Tên tag phân loại khách, null để xoá tag")
+
+
+@router.patch("/{conversation_id}/tag")
+async def set_conversation_tag(
+    conversation_id: str,
+    body: SetConversationTagRequest,
+    account_id: Optional[str] = Query(None),
+    x_user_id: str = Header("default", alias="X-User-ID"),
+):
+    """Gắn/đổi/bỏ tag phân loại khách cho 1 hội thoại — lưu server-side trên
+    zalo_groups.tag (migration 139), thay cho localStorage cũ (chỉ 1 máy thấy
+    được, không đồng bộ giữa các nhân viên cùng quản lý 1 tài khoản Zalo).
+    """
+    user_id = _normalize_user_id(account_id or x_user_id)
+    tag = (body.tag or "").strip() or None
+    try:
+        await _rest(
+            "PATCH",
+            "zalo_groups",
+            params={"user_id": f"eq.{user_id}", "group_id": f"eq.{conversation_id.strip()}"},
+            json={"tag": tag},
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Không thể lưu tag: {exc}")
+    return {"ok": True, "conversation_id": conversation_id, "tag": tag}
 
 
 class RecallMessageRequest(BaseModel):

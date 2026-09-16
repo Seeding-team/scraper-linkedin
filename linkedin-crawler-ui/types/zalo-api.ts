@@ -130,6 +130,9 @@ export interface ZaloConversationSummary {
   is_pinned?: boolean;
   is_friend?: boolean;
   thread_type?: "user" | "group" | string;
+  // Tag phân loại khách (migration 139) — lưu server-side, đồng bộ giữa các
+  // nhân viên cùng quản lý 1 tài khoản Zalo tập trung.
+  tag?: string | null;
 }
 
 export interface ZaloConversationListResponse {

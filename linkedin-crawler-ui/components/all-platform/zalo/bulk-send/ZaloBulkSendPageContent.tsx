@@ -31,6 +31,7 @@ import {
   createZaloBulkJob,
   deleteZaloBulkJob,
   getZaloBulkJob,
+  getZaloConversations,
   listZaloBulkJobs,
   patchZaloBulkJobStatus,
 } from "@/services/zaloCrawlerService";
@@ -90,7 +91,12 @@ function parseRecipients(raw: string): ZaloBulkJobRecipient[] {
     const digits = phoneOrUid.replace(/\D/g, "");
     if (seen.has(digits)) continue;
     seen.add(digits);
-    const isPhone = /^[0-9+][0-9+\s]{6,}$/.test(phoneOrUid);
+    // SĐT VN (kể cả có +84/0084/khoảng trắng) không quá 12 số thuần — UID
+    // Zalo thật luôn dài hơn nhiều (14-19 số, vd "36191948659899943"). Nếu
+    // chỉ check hình dạng ký tự ("toàn số") sẽ nhận NHẦM UID thành SĐT, làm
+    // job "nhắn lại cho danh sách bạn bè" gọi sai find_zca_user_by_phone và
+    // báo lỗi "not_found" cho toàn bộ bạn bè (UID luôn toàn số, dài hơn SĐT).
+    const isPhone = /^[0-9+][0-9+\s]{6,}$/.test(phoneOrUid) && digits.replace(/^00|^84/, "").length <= 11;
     out.push(isPhone ? { phone: phoneOrUid, display_name: displayName } : { uid: phoneOrUid, display_name: displayName });
   }
   return out;
@@ -121,6 +127,35 @@ export function ZaloBulkSendPageContent() {
   const [pendingActionId, setPendingActionId] = useState<number | null>(null);
 
   const recipients = useMemo(() => parseRecipients(recipientsRaw), [recipientsRaw]);
+  const [isLoadingFriends, setIsLoadingFriends] = useState(false);
+
+  // "Zalo có 1000 bạn, mỗi tháng cần nhắn lại cho từng người trong danh sách
+  // bạn bè" (yêu cầu 2026-09-17) — nạp thẳng UID/tên từ toàn bộ bạn bè của
+  // tài khoản đang chọn vào ô nhập, khỏi phải tự gõ/copy tay từng người.
+  // GET /conversations đã trả đủ is_friend=true cho MỌI bạn bè (kể cả chưa
+  // từng nhắn tin) sau khi tài khoản được đồng bộ — không cần API mới.
+  const handleLoadFromFriendsList = useCallback(async () => {
+    if (!selectedAccountId) return;
+    setIsLoadingFriends(true);
+    setError(null);
+    try {
+      const res = await getZaloConversations(selectedAccountId);
+      const friends = (res.conversations || []).filter((c) => c.thread_type === "user" || c.is_friend);
+      if (friends.length === 0) {
+        setNotice("Không tìm thấy bạn bè nào — hãy bấm \"Đồng bộ\" ở trang Quản lý tài khoản trước.");
+        return;
+      }
+      const lines = friends.map((f) =>
+        f.conversation_name ? `${f.conversation_id}, ${f.conversation_name}` : f.conversation_id,
+      );
+      setRecipientsRaw(lines.join("\n"));
+      setNotice(`Đã nạp ${friends.length} bạn bè vào danh sách người nhận.`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Không thể tải danh sách bạn bè.");
+    } finally {
+      setIsLoadingFriends(false);
+    }
+  }, [selectedAccountId]);
 
   const reloadJobs = useCallback(async () => {
     if (!selectedAccountId) {
@@ -360,7 +395,21 @@ export function ZaloBulkSendPageContent() {
 
               <section className={`${card} bg-[#f8fafc] p-[18px_20px]`}>
                 <div>
-                  <label className={label}>Danh sách số điện thoại hoặc UID *</label>
+                  <div className="flex items-center justify-between gap-2">
+                    <label className={label}>Danh sách số điện thoại hoặc UID *</label>
+                    {/* "Zalo có 1000 bạn, mỗi tháng cần nhắn lại cho danh sách bạn bè" —
+                        nạp thẳng từ toàn bộ bạn bè tài khoản đang chọn, khỏi tự gõ tay. */}
+                    <button
+                      type="button"
+                      onClick={() => void handleLoadFromFriendsList()}
+                      disabled={!selectedAccountId || isLoadingFriends}
+                      className={`${btn.outline} ${btnSize.sm} shrink-0 flex items-center gap-1`}
+                      title="Nạp toàn bộ bạn bè của tài khoản đang chọn vào danh sách người nhận"
+                    >
+                      {isLoadingFriends ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Users className="h-3.5 w-3.5" />}
+                      Nạp từ danh sách bạn bè
+                    </button>
+                  </div>
                   <p className="mb-2 text-[11.5px] text-[#7a8a9b]">
                     Mỗi dòng 1 người, có thể thêm ", Tên" phía sau. VD: 0912345678, Chị Lan
                   </p>
@@ -476,6 +525,11 @@ export function ZaloBulkSendPageContent() {
                           <td className={`${table.cell} text-xs text-slate-500`}>
                             <span className="text-emerald-600">{job.success_count} thành công</span>
                             {job.failed_count > 0 ? <span className="text-red-500"> · {job.failed_count} thất bại</span> : null}
+                            {/* skipped = sent - success - failed (không có counter riêng ở DB,
+                                tính tại đây) — vd người đã là bạn bè khi chạy job add_friend. */}
+                            {job.sent_count - job.success_count - job.failed_count > 0 ? (
+                              <span className="text-slate-400"> · {job.sent_count - job.success_count - job.failed_count} bỏ qua</span>
+                            ) : null}
                           </td>
                           <td className={`${table.cell} text-xs text-slate-500`}>{new Date(job.created_at).toLocaleString("vi-VN")}</td>
                           <td className={table.cell}>

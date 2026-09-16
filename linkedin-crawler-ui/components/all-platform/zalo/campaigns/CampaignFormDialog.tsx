@@ -8,8 +8,8 @@
  * chèn {{ten}}, AI gợi ý nội dung. Logic/API call giữ nguyên hợp đồng đã có. */
 
 import { useMemo, useState } from "react";
-import { AlertTriangle, Calendar, Clock, Loader2, Plus, Save, ShieldAlert, Sparkles, Tag, Trash2, X } from "lucide-react";
-import { createZaloCampaign, suggestZaloCampaignTemplates } from "@/services/zaloCrawlerService";
+import { AlertTriangle, Calendar, Clock, Loader2, Plus, Save, ShieldAlert, Sparkles, Tag, Trash2, Users, X } from "lucide-react";
+import { createZaloCampaign, getZaloConversations, suggestZaloCampaignTemplates } from "@/services/zaloCrawlerService";
 import { alert, btn, btnSize, card, input, label, modal, select, textarea } from "../centralized-shared/zaloUi";
 
 interface CampaignFormDialogProps {
@@ -39,19 +39,25 @@ const CYCLE_UNIT_OPTIONS: Array<{ value: CycleUnit; label: string }> = [
   { value: "days", label: "ngày" },
 ];
 
-function parsePhones(text: string): { phone: string; display_name?: string }[] {
+function parsePhones(text: string): { phone?: string; uid?: string; display_name?: string }[] {
   return text
     .split("\n")
     .map((l) => l.trim())
     .filter(Boolean)
     .map((line) => {
-      const [phone, ...rest] = line.split(",").map((s) => s.trim());
-      return { phone, display_name: rest.join(", ") || undefined };
+      const [value, ...rest] = line.split(",").map((s) => s.trim());
+      const display_name = rest.join(", ") || undefined;
+      const digits = value.replace(/\D/g, "");
+      // SĐT VN không quá 12 số thuần (kể cả +84/0084) — UID Zalo thật dài
+      // hơn nhiều (14-19 số, vd nạp từ "Nạp từ danh sách bạn bè"). Không
+      // phân biệt sẽ gọi sai find_zca_user_by_phone cho mọi UID.
+      const isPhone = /^[0-9+][0-9+\s]{6,}$/.test(value) && digits.replace(/^00|^84/, "").length <= 11;
+      return isPhone ? { phone: value, display_name } : { uid: value, display_name };
     });
 }
 
 function countPhones(text: string): number {
-  return parsePhones(text).filter((p) => p.phone).length;
+  return parsePhones(text).filter((p) => p.phone || p.uid).length;
 }
 
 function TemplateEditorItem({
@@ -183,8 +189,34 @@ export function CampaignFormDialog({ accountId, onClose, onCreated }: CampaignFo
   const [phonesText, setPhonesText] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isLoadingFriends, setIsLoadingFriends] = useState(false);
 
   const phoneCount = useMemo(() => countPhones(phonesText), [phonesText]);
+
+  // "Zalo có 1000 bạn, mỗi tháng cần nhắn lại cho danh sách bạn bè" (yêu cầu
+  // 2026-09-17) — chiến dịch lặp lịch là nơi hợp lý nhất cho nhu cầu "nhắn
+  // lại hàng tháng", nạp thẳng từ toàn bộ bạn bè, khỏi tự gõ/copy tay.
+  const handleLoadFromFriendsList = async () => {
+    if (!accountId) return;
+    setIsLoadingFriends(true);
+    setError(null);
+    try {
+      const res = await getZaloConversations(accountId);
+      const friends = (res.conversations || []).filter((c) => c.thread_type === "user" || c.is_friend);
+      if (friends.length === 0) {
+        setError('Không tìm thấy bạn bè nào — hãy bấm "Đồng bộ" ở trang Quản lý tài khoản trước.');
+        return;
+      }
+      const lines = friends.map((f) =>
+        f.conversation_name ? `${f.conversation_id}, ${f.conversation_name}` : f.conversation_id,
+      );
+      setPhonesText(lines.join("\n"));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Không thể tải danh sách bạn bè.");
+    } finally {
+      setIsLoadingFriends(false);
+    }
+  };
 
   function toggleDay(d: number) {
     setDaysOfWeek((prev) => (prev.includes(d) ? prev.filter((x) => x !== d) : [...prev, d].sort((a, b) => a - b)));
@@ -373,16 +405,28 @@ export function CampaignFormDialog({ accountId, onClose, onCreated }: CampaignFo
           </div>
 
           <div>
-            <label className={label}>Người nhận (SĐT, mỗi dòng 1 người — có thể thêm sau)</label>
+            <div className="flex items-center justify-between gap-2">
+              <label className={label}>Người nhận (SĐT/UID, mỗi dòng 1 người — có thể thêm sau)</label>
+              <button
+                type="button"
+                onClick={() => void handleLoadFromFriendsList()}
+                disabled={isLoadingFriends}
+                className={`${btn.outline} ${btnSize.sm} shrink-0 flex items-center gap-1`}
+                title="Nạp toàn bộ bạn bè của tài khoản này vào danh sách người nhận"
+              >
+                {isLoadingFriends ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Users className="h-3.5 w-3.5" />}
+                Nạp từ danh sách bạn bè
+              </button>
+            </div>
             <textarea
               value={phonesText}
               onChange={(e) => setPhonesText(e.target.value)}
               rows={5}
-              placeholder={"Dán danh sách số điện thoại, mỗi số 1 dòng\nvd: 0912345678, Chị Lan"}
+              placeholder={"Dán danh sách số điện thoại hoặc UID, mỗi dòng 1 người\nvd: 0912345678, Chị Lan"}
               className={`${textarea} font-mono placeholder:font-sans`}
             />
             <p className="mt-1.5 text-xs text-slate-500">
-              Nhận diện được <strong className="text-slate-700">{phoneCount}</strong> số điện thoại.
+              Nhận diện được <strong className="text-slate-700">{phoneCount}</strong> người nhận.
             </p>
           </div>
         </div>
