@@ -204,6 +204,10 @@ def login_user(email: str, password: str) -> dict:
     if not _verify_password(password, user["password"]):
         raise ValueError("Sai mật khẩu")
 
+    redirect = _check_home_instance_redirect(user)
+    if redirect:
+        return redirect
+
     cached_user = _cache_user(user)
     access_token = create_access_token(user["id"], user["email"], user["role"])
 
@@ -328,6 +332,10 @@ def login_with_google(id_token_str: str) -> dict:
     user = result.data[0]
     if not user.get("is_active", True):
         raise ValueError("Tài khoản đã bị vô hiệu hóa")
+
+    redirect = _check_home_instance_redirect(user)
+    if redirect:
+        return redirect
 
     cached_user = _cache_user(user)
     access_token = create_access_token(user["id"], user["email"], user["role"])

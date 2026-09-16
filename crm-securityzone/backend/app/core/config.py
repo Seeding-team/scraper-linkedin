@@ -97,6 +97,13 @@ class Settings:
     seeder_service_url: str = os.getenv("SEEDER_SERVICE_URL", "")
     seeder_service_api_key: str = os.getenv("SEEDER_SERVICE_API_KEY", "")
 
+    # Static API key cho endpoint /sync/* (Tech Support hoac he thong ngoai PULL
+    # khach hang da mua + contact ve). Tach biet hoan toan khoi JWT app_users -
+    # khong gan voi 1 nhan vien that, khong het han theo
+    # JWT_ACCESS_TOKEN_EXPIRE_MINUTES. De trong = /sync/* luon tra 503 (fail-safe,
+    # khong vo tinh mo endpoint export du lieu khach hang ma khong ai biet).
+    crm_sync_api_key: str = os.getenv("CRM_SYNC_API_KEY", "")
+
     def __post_init__(self) -> None:
         if self.cors_origins is None:
             self.cors_origins = _parse_csv(

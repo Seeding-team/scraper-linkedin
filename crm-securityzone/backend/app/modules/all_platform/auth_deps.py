@@ -13,6 +13,7 @@ from typing import Any
 
 from fastapi import Header, HTTPException, Request
 
+from app.core.config import settings
 from app.modules.all_platform.services import decode_token, get_user_by_id
 
 
@@ -90,6 +91,23 @@ def get_authenticated_caller_email(request: Request, authorization: str | None =
     except HTTPException:
         return None
     return str(user.get("email") or "").strip().lower() or None
+
+
+def require_sync_api_key(
+    x_sync_api_key: str | None = Header(default=None, alias="X-Sync-Api-Key"),
+) -> str:
+    """Auth rieng cho /sync/* (he thong ngoai nhu Tech Support PULL khach hang
+    da mua + contact) - static API key qua header, KHONG dung JWT app_users vi
+    day khong phai 1 nhan vien dang nhap, la 1 service-to-service call chay
+    dinh ky (cron), khong nen phu thuoc vong doi/het han JWT hay 1 tai khoan
+    app_users cu the (neu tai khoan do bi disable/doi mat khau thi sync se gay
+    401 khong lien quan)."""
+    expected = settings.crm_sync_api_key
+    if not expected:
+        raise HTTPException(status_code=503, detail="CRM_SYNC_API_KEY chua duoc cau hinh")
+    if not x_sync_api_key or x_sync_api_key != expected:
+        raise HTTPException(status_code=401, detail="Invalid or missing X-Sync-Api-Key")
+    return x_sync_api_key
 
 
 async def require_admin_ws(websocket, authorization: str | None = None) -> dict[str, Any] | None:
