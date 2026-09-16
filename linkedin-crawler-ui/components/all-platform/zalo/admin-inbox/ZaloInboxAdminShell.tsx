@@ -14,6 +14,8 @@ import { resolveZaloConversationAccount } from "@/services/zaloCrawlerService";
 import { KpiProgressCard } from "@/components/all-platform/components/kpi-progress-card";
 import { MaterialIcon } from "@/components/ui";
 import { cn } from "@/lib/utils";
+import { ZaloStickerPicker } from "../centralized-shared/ZaloStickerPicker";
+import { ZaloReactionQuickPicker, ZaloReactionBadges } from "../centralized-shared/ZaloReactionPicker";
 import type { ZaloConversationSummary, ZaloLibraryMessage } from "@/types/zalo-api";
 import {
   restartZaloAccountListener,
@@ -273,7 +275,7 @@ export function ZaloInboxAdminShell() {
   const [mentionQuery, setMentionQuery] = useState("");
   const [mentionAtPos, setMentionAtPos] = useState<number | null>(null);
   const [showStickerPicker, setShowStickerPicker] = useState(false);
-  const [stickerIdInput, setStickerIdInput] = useState("");
+  const [reactionPickerFor, setReactionPickerFor] = useState<string | null>(null);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files ?? []);
@@ -1274,25 +1276,63 @@ export function ZaloInboxAdminShell() {
                                   <ZaloMessageAssetView asset={asset} message={msg} />
                                 </div>
                               ))}
-                            <div className="mt-0.5 flex items-center gap-1 px-1" style={{ justifyContent: isSent ? "flex-end" : "flex-start" }}>
-                              {time && <span className="text-[9px] text-[#A0A0A0]">{time}</span>}
-                              {/* Thu hồi tin nhắn thật (api.undo) — chỉ khả dụng cho tin CHÍNH
-                                  MÌNH gửi và có cli_msg_id (được backend fill lúc echo lại tin
-                                  vừa gửi — xem services/supabase_service.py). */}
-                              {isSent && !msg.is_deleted && (msg as unknown as { cli_msg_id?: string }).cli_msg_id && (
-                                <button
-                                  type="button"
-                                  onClick={() => void inbox.recallMessage(msg)}
-                                  title="Thu hồi tin nhắn"
-                                  className="opacity-0 group-hover:opacity-100 transition-opacity text-[#A0A0A0] hover:text-[#E3000F]"
-                                >
-                                  <MaterialIcon name="delete" className="text-[11px]" />
-                                </button>
-                              )}
-                              {msg.is_deleted && (
-                                <span className="italic text-[9px] text-[#A0A0A0]">Tin nhắn đã thu hồi</span>
-                              )}
-                            </div>
+                            {(() => {
+                              const msgKey = msg.source_message_id || msg.id || String(index);
+                              const canReact = !msg.is_deleted && msg.source_message_id && (msg as unknown as { cli_msg_id?: string }).cli_msg_id;
+                              return (
+                                <div className="relative mt-0.5 flex items-center gap-1 px-1" style={{ justifyContent: isSent ? "flex-end" : "flex-start" }}>
+                                  {time && <span className="text-[9px] text-[#A0A0A0]">{time}</span>}
+                                  {/* Thả cảm xúc — mọi tin, kể cả người khác gửi, giống Zalo thật. */}
+                                  {canReact && (
+                                    <button
+                                      type="button"
+                                      data-zalo-reaction-ui
+                                      onClick={() => setReactionPickerFor((prev) => (prev === msgKey ? null : msgKey))}
+                                      title="Thả cảm xúc"
+                                      className="opacity-0 group-hover:opacity-100 transition-opacity text-[#A0A0A0] hover:text-brand"
+                                    >
+                                      <MaterialIcon name="mood" className="text-[11px]" />
+                                    </button>
+                                  )}
+                                  {/* Thu hồi tin nhắn thật (api.undo) — chỉ khả dụng cho tin CHÍNH
+                                      MÌNH gửi và có cli_msg_id (được backend fill lúc echo lại tin
+                                      vừa gửi — xem services/supabase_service.py). */}
+                                  {isSent && !msg.is_deleted && (msg as unknown as { cli_msg_id?: string }).cli_msg_id && (
+                                    <button
+                                      type="button"
+                                      onClick={() => void inbox.recallMessage(msg)}
+                                      title="Thu hồi tin nhắn"
+                                      className="opacity-0 group-hover:opacity-100 transition-opacity text-[#A0A0A0] hover:text-[#E3000F]"
+                                    >
+                                      <MaterialIcon name="delete" className="text-[11px]" />
+                                    </button>
+                                  )}
+                                  {msg.is_deleted && (
+                                    <span className="italic text-[9px] text-[#A0A0A0]">Tin nhắn đã thu hồi</span>
+                                  )}
+                                  {reactionPickerFor === msgKey && (
+                                    <div data-zalo-reaction-ui className={`absolute bottom-full z-30 mb-1 ${isSent ? "right-0" : "left-0"}`}>
+                                      <ZaloReactionQuickPicker
+                                        activeIcon={msg.reactions?.[inbox.myZaloUid || "__me__"] || null}
+                                        onPick={(icon) => {
+                                          void inbox.reactToMessage(msg, icon);
+                                          setReactionPickerFor(null);
+                                        }}
+                                      />
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })()}
+                            {!msg.is_deleted && (
+                              <div className={isSent ? "flex justify-end" : "flex justify-start"}>
+                                <ZaloReactionBadges
+                                  reactions={msg.reactions}
+                                  myUid={inbox.myZaloUid}
+                                  onClickIcon={(icon) => void inbox.reactToMessage(msg, icon)}
+                                />
+                              </div>
+                            )}
                           </div>
 
                           {/* Checkbox on right for sent messages */}
@@ -1390,45 +1430,11 @@ export function ZaloInboxAdminShell() {
                   <MaterialIcon name="mood" className="text-slate-500 text-[18px]" />
                 </button>
                 {showStickerPicker && (
-                  <div className="absolute bottom-10 left-0 z-20 w-64 rounded-lg border border-[#E5E5E5] bg-white p-2.5 shadow-lg">
-                    <p className="mb-1.5 text-[10px] text-[#A0A0A0]">
-                      Nhập id sticker Zalo (lấy từ tin sticker đã nhận trước đó), cách nhau dấu phẩy.
-                    </p>
-                    <div className="flex gap-1.5">
-                      <input
-                        value={stickerIdInput}
-                        onChange={(e) => setStickerIdInput(e.target.value)}
-                        placeholder="vd: 1234,5678"
-                        className="h-7 flex-1 rounded border border-[#E5E5E5] px-2 text-[11px] outline-none focus:border-[#E3000F]"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const ids = stickerIdInput.split(",").map((s) => parseInt(s.trim(), 10)).filter((n) => !Number.isNaN(n));
-                          void inbox.searchStickers(ids);
-                        }}
-                        className="h-7 rounded bg-slate-100 px-2 text-[11px] font-bold hover:bg-slate-200"
-                      >
-                        Tra
-                      </button>
-                    </div>
-                    {inbox.loadingStickers ? (
-                      <p className="mt-2 text-[10px] text-[#A0A0A0]">Đang tra...</p>
-                    ) : inbox.stickerResults.length > 0 ? (
-                      <div className="mt-2 grid grid-cols-4 gap-1.5">
-                        {inbox.stickerResults.map((s) => (
-                          <button
-                            key={s.id}
-                            type="button"
-                            onClick={() => handleSendSticker({ id: s.id, cateId: s.cateId })}
-                            className="rounded border border-[#E5E5E5] px-1 py-1.5 text-[10px] hover:border-[#E3000F] hover:bg-red-50"
-                            title={`Gửi sticker #${s.id}`}
-                          >
-                            #{s.id}
-                          </button>
-                        ))}
-                      </div>
-                    ) : null}
+                  <div className="absolute bottom-10 left-0 z-20">
+                    <ZaloStickerPicker
+                      accountId={inbox.selectedAccountId || ""}
+                      onPick={(s) => handleSendSticker({ id: s.id, cateId: s.cateId })}
+                    />
                   </div>
                 )}
               </div>

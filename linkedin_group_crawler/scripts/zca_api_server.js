@@ -543,6 +543,32 @@ async function cmdRecallMessage(api, args, payload) {
   return { ok: true, response };
 }
 
+// Thả cảm xúc (reaction) cho 1 tin nhắn — giống bấm giữ tin nhắn trên app Zalo
+// rồi chọn icon. Cần đúng msgId (source_message_id, số nguyên) + cliMsgId của
+// tin ĐANG được react tới (không phải tin mới), giống hệt recall-message.
+async function cmdAddReaction(api, args, payload) {
+  const { "thread-id": threadId, type = "1" } = args;
+  const { msg_id: msgId, cli_msg_id: cliMsgId, icon } = payload || {};
+  if (!threadId) throw new Error("Missing --thread-id");
+  if (!msgId || !cliMsgId) throw new Error("Missing msg_id/cli_msg_id in payload");
+  if (!icon) throw new Error("Missing icon in payload");
+  const { ThreadType, Reactions } = require("zca-js");
+  const threadType = Number(type) === 0 ? ThreadType.User : ThreadType.Group;
+  // icon là tên enum Reactions (vd "HEART", "LIKE"..., hoặc "NONE" để BỎ react
+  // — Reactions.NONE = "" nên KHÔNG được check bằng "!reactionValue" (chuỗi
+  // rỗng là falsy trong JS, sẽ bị coi nhầm là "không tìm thấy") — phải check
+  // đúng bằng "key có tồn tại trong enum hay không".
+  const iconKey = String(icon).toUpperCase();
+  if (!(iconKey in Reactions)) throw new Error(`Unknown reaction icon: ${icon}`);
+  const reactionValue = Reactions[iconKey];
+  const response = await api.addReaction(reactionValue, {
+    data: { msgId: String(msgId), cliMsgId: String(cliMsgId) },
+    threadId: String(threadId),
+    type: threadType,
+  });
+  return { ok: true, response };
+}
+
 async function cmdFriendStatus(api, args) {
   const { uid } = args;
   if (!uid) throw new Error("Missing --uid");
@@ -607,6 +633,21 @@ async function cmdStickersDetail(api, args) {
   const idList = String(ids).split(",").map(s => Number(s.trim())).filter(n => Number.isFinite(n));
   const response = await api.getStickersDetail(idList);
   return { ok: true, stickers: response };
+}
+
+// Trước đây UI chỉ có ô nhập "sticker id đã biết" (Zalo không có API liệt kê
+// đủ mọi category qua zca-js) — searchSticker(keyword) là API TÌM sticker
+// thật theo từ khoá (giống thanh tìm sticker trong app Zalo), trả về
+// {cate_id, sticker_id} nên phải gọi tiếp getStickersDetail để lấy URL ảnh
+// thật hiển thị lên UI. Gộp 2 lệnh thành 1 round-trip cho FE đơn giản.
+async function cmdSearchStickers(api, args) {
+  const { keyword, limit = "24" } = args;
+  if (!keyword) throw new Error("Missing --keyword");
+  const basics = await api.searchSticker(String(keyword), Number(limit) || 24);
+  const ids = Array.from(new Set((basics || []).map((b) => Number(b.sticker_id)).filter((n) => Number.isFinite(n))));
+  if (ids.length === 0) return { ok: true, stickers: [] };
+  const details = await api.getStickersDetail(ids);
+  return { ok: true, stickers: details };
 }
 
 async function cmdInviteToGroup(api, args) {
@@ -700,11 +741,13 @@ const COMMANDS = {
   "find-user-by-username": cmdFindUserByUsername,
   "first-time-sync": cmdFirstTimeSync,
   "recall-message": cmdRecallMessage,
+  "add-reaction": cmdAddReaction,
   "friend-status": cmdFriendStatus,
   "send-friend-request": cmdSendFriendRequest,
   "accept-friend-request": cmdAcceptFriendRequest,
   "group-members-full": cmdGroupMembersFull,
   "stickers-detail": cmdStickersDetail,
+  "search-stickers": cmdSearchStickers,
   "send-sticker": cmdSendSticker,
   "invite-to-group": cmdInviteToGroup,
   // sync-old-messages: complex (needs listener), keep using spawn-per-call via zca_api_bridge.js

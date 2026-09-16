@@ -442,6 +442,57 @@ function normalizeMessage(raw, index, ownId = null) {
   };
 }
 
+// Map rType (số Zalo dùng nội bộ) -> tên icon enum Reactions của zca-js.
+// Trích thẳng từ node_modules/zca-js/dist/apis/addReaction.js (switch-case)
+// bằng script 1 lần (không chép tay để tránh sai số) — dùng để nhận diện
+// đúng cảm xúc người KHÁC thả (họ dùng app Zalo thật, không giới hạn 6 icon
+// nhanh của UI mình, có thể là bất kỳ icon nào trong ~54 icon Zalo hỗ trợ).
+const RTYPE_TO_REACTION_NAME = {
+  0: "HAHA", 1: "SAD", 2: "CRY", 3: "LIKE", 4: "DISLIKE", 5: "HEART",
+  7: "TEARS_OF_JOY", 8: "KISS", 16: "VERY_SAD", 20: "ANGRY", 21: "COOL",
+  22: "NERD", 23: "BIG_SMILE", 26: "SUNGLASSES", 29: "LOVE", 30: "NEUTRAL",
+  32: "WOW", 35: "SAD_FACE", 36: "BYE", 38: "SLEEPY", 39: "WIPE", 42: "DIG",
+  44: "ANGUISH", 45: "WINK", 46: "HANDCLAP", 47: "ANGRY_FACE", 48: "F_CHAIR",
+  49: "L_CHAIR", 50: "R_CHAIR", 51: "CONFUSED", 52: "SILENT", 53: "SURPRISE",
+  54: "EMBARRASSED", 60: "AFRAID", 61: "SAD2", 62: "BIG_LAUGH", 63: "RICH",
+  65: "BROKEN_HEART", 66: "SHIT", 67: "SUN", 68: "OK", 69: "PEACE",
+  70: "THANKS", 71: "PUNCH", 72: "SHARE", 73: "PRAY", 99: "BEER",
+  120: "ROSE", 121: "FADE", 126: "BIRTHDAY", 127: "BOMB", 131: "NO",
+  132: "BAD", 133: "LOVE_YOU",
+};
+
+// Chuẩn hoá event "reaction" từ listener zca-js thành payload gọn để Python
+// lưu vào cột reactions (map uid -> icon) — KHÁC message, reaction không có
+// nội dung/asset riêng, chỉ cần biết: ai react, react vào tin nào, icon gì.
+function normalizeReaction(reaction) {
+  const data = reaction && reaction.data ? reaction.data : {};
+  const content = typeof data.content === "string" ? safeJsonParse(data.content) : (data.content || {});
+  const rMsg = Array.isArray(content.rMsg) ? content.rMsg[0] : null;
+  const rType = content.rType;
+  const iconName = RTYPE_TO_REACTION_NAME[rType] || null;
+  return {
+    thread_id: reaction.threadId ? String(reaction.threadId) : null,
+    message_id: rMsg && rMsg.gMsgID != null ? String(rMsg.gMsgID) : null,
+    cli_msg_id: rMsg && rMsg.cMsgID != null ? String(rMsg.cMsgID) : null,
+    reactor_uid: data.uidFrom != null ? String(data.uidFrom) : null,
+    icon: iconName,
+    r_icon_raw: content.rIcon || null,
+    r_type_raw: rType != null ? Number(rType) : null,
+    is_self: Boolean(reaction.isSelf),
+    // rIcon = "" hoặc rType = -1/undefined nghĩa là BỎ reaction (Zalo gửi
+    // event reaction rỗng khi user bấm lại icon đang có để huỷ).
+    removed: !content.rIcon && (rType == null || rType === -1),
+  };
+}
+
+function safeJsonParse(value) {
+  try {
+    return JSON.parse(value);
+  } catch (_) {
+    return {};
+  }
+}
+
 async function login(auth) {
   const cookie = normalizeCookieJar(auth.cookies);
   if (!cookie || !auth.imei || !auth.userAgent) {
@@ -575,6 +626,17 @@ async function main() {
       emit({ event: "message", user_id: userId, message: normalized });
     } else {
       debugLog("message_dropped", { reason: "missing_ids", thread_id: normalized.thread_id, message_id: normalized.message_id });
+    }
+  });
+  // Thả cảm xúc (reaction) — event RIÊNG với "message", zca-js emit khi CHÍNH
+  // MÌNH react (selfListen=true nên tự react cũng echo về) HOẶC khi đối
+  // phương/thành viên khác trong nhóm react vào bất kỳ tin nào trong luồng.
+  listener.on("reaction", (reaction) => {
+    const normalized = normalizeReaction(reaction);
+    if (normalized.thread_id && normalized.message_id && normalized.reactor_uid) {
+      emit({ event: "reaction", user_id: userId, reaction: normalized });
+    } else {
+      debugLog("reaction_dropped", { reason: "missing_ids", ...normalized });
     }
   });
   listener.on("old_messages", (messages, type) => {

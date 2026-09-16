@@ -24,7 +24,7 @@ import {
   acceptZaloFriendRequest,
   getZaloGroupMembers,
   sendZaloSticker,
-  getZaloStickersDetail,
+  reactToZaloMessage,
 } from "@/services/zaloCrawlerService";
 import type {
   ZaloConversationSummary,
@@ -40,6 +40,8 @@ import { ZaloEmptyChat } from "./chat/ZaloEmptyChat";
 import { ZaloConversationListVirtualized } from "./sidebar/ZaloConversationListVirtualized";
 import { ZaloNewChatModal } from "./ZaloNewChatModal";
 import { ZaloKpiPanel } from "./ZaloKpiPanel";
+import { ZaloStickerPicker } from "../centralized-shared/ZaloStickerPicker";
+import { ZaloReactionQuickPicker, ZaloReactionBadges } from "../centralized-shared/ZaloReactionPicker";
 
 const REFRESH_INTERVAL_MS = 2000;
 const MESSAGE_PAGE_SIZE = 50;
@@ -483,9 +485,6 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
   const [isLoadingFriendStatus, setIsLoadingFriendStatus] = useState(false);
   const [friendActionError, setFriendActionError] = useState<string | null>(null);
   const [showStickerPicker, setShowStickerPicker] = useState(false);
-  const [stickerSearchIds, setStickerSearchIds] = useState("");
-  const [stickerResults, setStickerResults] = useState<ZaloStickerDetail[]>([]);
-  const [isSearchingStickers, setIsSearchingStickers] = useState(false);
   const [showMentionPicker, setShowMentionPicker] = useState(false);
   const [mentionQuery, setMentionQuery] = useState("");
   const [mentionAnchorPos, setMentionAnchorPos] = useState<number | null>(null);
@@ -564,6 +563,10 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
       }
       if (quickRepliesRef.current && !quickRepliesRef.current.contains(event.target as Node)) {
         setShowQuickReplies(false);
+      }
+      const target = event.target as HTMLElement;
+      if (!target.closest?.("[data-zalo-reaction-ui]")) {
+        setReactionPickerFor(null);
       }
     }
     document.addEventListener("mousedown", handleClickOutside);
@@ -1344,6 +1347,44 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
     }
   }, [flow.userId, selectedConversationId]);
 
+  // UID Zalo thật của chính tài khoản đang dùng — suy từ sender_id của bất kỳ
+  // tin CHÍNH MÌNH đã gửi trong hội thoại (không có API riêng trả "own id"
+  // qua REST, nhưng data này luôn có sẵn ngay khi đã gửi/nhận ít nhất 1 tin).
+  // Dùng để tô sáng reaction của mình trong ZaloReactionBadges.
+  const myZaloUid = useMemo(() => messages.find((m) => m.is_sent && m.sender_id)?.sender_id || null, [messages]);
+
+  const [reactionPickerFor, setReactionPickerFor] = useState<string | null>(null);
+
+  // Thả cảm xúc — CHỈ gửi lên Zalo thật (backend không tự ghi DB, xem comment
+  // route /react), nên tự hiện tạm (optimistic) ngay bằng myZaloUid nếu đã
+  // biết, để không phải chờ vài trăm ms nghe listener echo về mới thấy icon.
+  const handleReactToMessage = useCallback(async (message: ZaloLibraryMessage, icon: string) => {
+    if (!selectedConversationId || !message.source_message_id || !message.cli_msg_id) return;
+    setReactionPickerFor(null);
+    const reactorKey = myZaloUid || "__me__";
+    const existing = message.reactions?.[reactorKey];
+    // Bấm lại đúng icon mình đang có = bỏ react (giống Zalo thật) — gửi
+    // Reactions.NONE thay vì chỉ ẩn tại chỗ, để đối phương cũng thấy mất icon.
+    const nextIcon = existing === icon ? "NONE" : icon;
+    setMessages((prev) =>
+      prev.map((m) => {
+        if (messageKey(m) !== messageKey(message)) return m;
+        const nextReactions = { ...(m.reactions || {}) };
+        if (nextIcon === "NONE") delete nextReactions[reactorKey];
+        else nextReactions[reactorKey] = nextIcon;
+        return { ...m, reactions: nextReactions };
+      }),
+    );
+    try {
+      await reactToZaloMessage(flow.userId, selectedConversationId, {
+        source_message_id: message.source_message_id,
+        icon: nextIcon,
+      });
+    } catch (err) {
+      setDirectSendError(err instanceof Error ? err.message : "Không thể thả cảm xúc.");
+    }
+  }, [flow.userId, myZaloUid, selectedConversationId]);
+
   const loadFriendStatus = useCallback(async (uid: string) => {
     setIsLoadingFriendStatus(true);
     setFriendStatus(null);
@@ -1380,23 +1421,6 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
       setFriendActionError(err instanceof Error ? err.message : "Không thể chấp nhận lời mời kết bạn.");
     }
   }, [flow.userId, loadFriendStatus, selectedConversationId]);
-
-  const handleSearchStickers = useCallback(async () => {
-    const ids = stickerSearchIds
-      .split(",")
-      .map((s) => Number(s.trim()))
-      .filter((n) => Number.isFinite(n));
-    if (ids.length === 0) return;
-    setIsSearchingStickers(true);
-    try {
-      const result = await getZaloStickersDetail(flow.userId, ids);
-      setStickerResults(result.stickers);
-    } catch (err) {
-      setDirectSendError(err instanceof Error ? err.message : "Không thể tra sticker.");
-    } finally {
-      setIsSearchingStickers(false);
-    }
-  }, [flow.userId, stickerSearchIds]);
 
   const handleSendSticker = useCallback(async (sticker: ZaloStickerDetail) => {
     if (!selectedConversationId) return;
@@ -1472,7 +1496,7 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
     setPendingMentions([]);
     setShowMentionPicker(false);
     setShowStickerPicker(false);
-    setStickerResults([]);
+    setReactionPickerFor(null);
     setGroupMembers([]);
     setShowGroupMembersPanel(false);
     setFriendActionError(null);
@@ -1962,17 +1986,41 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
                               : 'bg-surface text-on-surface rounded-tl-none shadow-sm border border-outline-variant'
                           } ${isSelected ? 'ring-2 ring-red-500 ring-offset-2' : ''}`}>
 
-                            {/* Zalo tập trung: nút thu hồi — chỉ hiện với tin CHÍNH MÌNH gửi và có đủ
-                                source_message_id + cli_msg_id (bắt buộc cho api.undo) */}
-                            {isSentByMe && !message.is_deleted && message.source_message_id && message.cli_msg_id && (
-                              <button
-                                type="button"
-                                onClick={() => void handleRecallMessage(message)}
-                                className="absolute -left-6 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition text-on-surface-variant hover:text-red-600 p-0.5"
-                                title="Thu hồi tin nhắn"
+                            {/* Zalo tập trung: toolbar hover — thả cảm xúc (mọi tin, kể cả
+                                người khác gửi, giống Zalo thật) + thu hồi (chỉ tin CHÍNH
+                                MÌNH gửi và có đủ source_message_id + cli_msg_id). */}
+                            {!message.is_deleted && message.source_message_id && message.cli_msg_id && (
+                              <div
+                                data-zalo-reaction-ui
+                                className={`absolute -top-7 ${isSentByMe ? "right-0" : "left-0"} flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition z-20`}
                               >
-                                <MaterialIcon name="delete" className="text-[13px]" />
-                              </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setReactionPickerFor((prev) => (prev === msgId ? null : msgId))}
+                                  className="rounded-full bg-surface border border-outline-variant p-1 text-on-surface-variant hover:text-primary shadow-sm"
+                                  title="Thả cảm xúc"
+                                >
+                                  <MaterialIcon name="mood" className="text-[14px]" />
+                                </button>
+                                {isSentByMe && (
+                                  <button
+                                    type="button"
+                                    onClick={() => void handleRecallMessage(message)}
+                                    className="rounded-full bg-surface border border-outline-variant p-1 text-on-surface-variant hover:text-red-600 shadow-sm"
+                                    title="Thu hồi tin nhắn"
+                                  >
+                                    <MaterialIcon name="delete" className="text-[13px]" />
+                                  </button>
+                                )}
+                              </div>
+                            )}
+                            {reactionPickerFor === msgId && (
+                              <div data-zalo-reaction-ui className={`absolute -top-14 z-30 ${isSentByMe ? "right-0" : "left-0"}`}>
+                                <ZaloReactionQuickPicker
+                                  activeIcon={message.reactions?.[myZaloUid || "__me__"] || null}
+                                  onPick={(icon) => void handleReactToMessage(message, icon)}
+                                />
+                              </div>
                             )}
 
                             {message.is_deleted ? (
@@ -2056,6 +2104,16 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
                               {formatTime(message.timestamp_text || message.time_text)}
                             </div>
                           </div>
+
+                          {!message.is_deleted && (
+                            <div className={isSentByMe ? "flex justify-end" : "flex justify-start"}>
+                              <ZaloReactionBadges
+                                reactions={message.reactions}
+                                myUid={myZaloUid}
+                                onClickIcon={(icon) => void handleReactToMessage(message, icon)}
+                              />
+                            </div>
+                          )}
                         </div>
 
                         {isSentByMe && (
@@ -2190,43 +2248,11 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
                   </div>
                 )}
 
-                {/* Zalo tập trung: Sticker Picker Popup */}
+                {/* Zalo tập trung: Sticker Picker Popup — tìm sticker thật theo từ
+                    khoá (thay UI cũ phải nhập id đã biết), xem ZaloStickerPicker.tsx */}
                 {showStickerPicker && (
-                  <div className="absolute bottom-full mb-3 left-4 z-50 w-72 bg-surface border border-outline-variant rounded-xl shadow-xl flex flex-col overflow-hidden animate-in fade-in slide-in-from-bottom-2 duration-200">
-                    <div className="px-3 py-2 border-b border-outline-variant flex items-center gap-1.5">
-                      <input
-                        value={stickerSearchIds}
-                        onChange={(e) => setStickerSearchIds(e.target.value)}
-                        placeholder="Nhập sticker id, cách nhau bởi dấu phẩy"
-                        className="flex-1 text-[11px] px-2 py-1 rounded-lg border border-outline-variant focus:outline-none focus:ring-2 focus:ring-red-500/20"
-                        onKeyDown={(e) => e.key === "Enter" && void handleSearchStickers()}
-                      />
-                      <button
-                        onClick={() => void handleSearchStickers()}
-                        disabled={isSearchingStickers}
-                        className="text-[11px] font-semibold px-2 py-1 rounded-lg bg-primary text-white hover:bg-red-700 transition disabled:opacity-50"
-                      >
-                        Tra
-                      </button>
-                    </div>
-                    <div className="p-2 grid grid-cols-4 gap-2 max-h-48 overflow-y-auto">
-                      {stickerResults.length === 0 && (
-                        <p className="col-span-4 text-[10.5px] text-on-surface-variant text-center py-4">
-                          Zalo không có danh mục sticker duyệt được qua zca-js — nhập id sticker đã biết để tra và gửi.
-                        </p>
-                      )}
-                      {stickerResults.map((sticker) => (
-                        <button
-                          key={sticker.id}
-                          type="button"
-                          onClick={() => void handleSendSticker(sticker)}
-                          className="aspect-square rounded-lg border border-outline-variant hover:border-primary flex items-center justify-center text-[10px] text-on-surface-variant transition"
-                          title={`Sticker #${sticker.id}`}
-                        >
-                          #{sticker.id}
-                        </button>
-                      ))}
-                    </div>
+                  <div className="absolute bottom-full mb-3 left-4 z-50 animate-in fade-in slide-in-from-bottom-2 duration-200">
+                    <ZaloStickerPicker accountId={flow.userId} onPick={(s) => void handleSendSticker(s)} />
                   </div>
                 )}
 

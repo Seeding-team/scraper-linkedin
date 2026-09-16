@@ -53,6 +53,8 @@ from app.modules.all_platform.zalo.services.zca_api_bridge import (
     get_zca_group_members_full,
     get_zca_stickers_detail,
     send_zca_sticker,
+    add_zca_reaction,
+    search_zca_stickers,
 )
 from app.core.phone import vn_phone_to_e164
 
@@ -1106,6 +1108,124 @@ async def recall_conversation_message(
         logger.warning(f"Recalled on Zalo but could not mark is_deleted in DB: {exc}")
 
     return RecallMessageResponse(ok=True, conversation_id=conversation_id, source_message_id=body.source_message_id)
+
+
+# 6 cảm xúc nhanh — đúng bộ Zalo thật hiện khi bấm giữ 1 tin nhắn (❤️👍😆😮😢😠).
+# zca-js hỗ trợ ~50 icon (models/Reaction.js) nhưng chỉ dùng đúng 6 này để giữ
+# UX giống Zalo, không làm rối menu. "NONE" = bỏ react (Reactions.NONE = ""
+# trong zca-js — bấm lại đúng icon mình đã thả để huỷ, giống Zalo thật).
+QUICK_REACTION_ICONS = ("HEART", "LIKE", "HAHA", "WOW", "CRY", "ANGRY")
+_VALID_REACTION_ICONS = QUICK_REACTION_ICONS + ("NONE",)
+
+
+class ReactMessageRequest(BaseModel):
+    source_message_id: str = Field(..., min_length=1)
+    icon: str = Field(..., description="Tên enum Reactions của zca-js, vd HEART/LIKE/HAHA/WOW/CRY/ANGRY")
+    thread_type: Optional[int] = None
+
+
+class ReactMessageResponse(BaseModel):
+    ok: bool
+    conversation_id: str
+    source_message_id: str
+    icon: str
+
+
+@router.post("/{conversation_id}/react", response_model=ReactMessageResponse)
+async def react_to_conversation_message(
+    conversation_id: str,
+    body: ReactMessageRequest,
+    account_id: Optional[str] = Query(None),
+    x_user_id: str = Header("default", alias="X-User-ID"),
+    x_caller_email: Optional[str] = Depends(get_authenticated_caller_email),
+):
+    """Thả cảm xúc cho 1 tin — giống bấm giữ tin nhắn trên app Zalo rồi chọn
+    icon. KHÁC recall: cho phép react tin của BẤT KỲ AI (không chỉ tin mình
+    gửi) — đúng hành vi Zalo thật.
+
+    Lưu ý về persist: endpoint này CHỈ gửi reaction lên Zalo thật, KHÔNG tự
+    ghi vào cột `reactions` — việc lưu (cho cả reaction của mình lẫn của đối
+    phương) do listener xử lý khi nhận event "reaction" echo lại (zca-js bật
+    selfListen=true nên tự mình react cũng được echo về, tránh 2 nguồn ghi
+    tranh nhau gây trùng/lệch key định danh người react). FE tự hiện tạm
+    (optimistic) rồi đồng bộ lại khi poll/SSE tới.
+    """
+    icon = body.icon.strip().upper()
+    if icon not in _VALID_REACTION_ICONS:
+        raise HTTPException(status_code=400, detail=f"Icon không hợp lệ. Chỉ hỗ trợ: {', '.join(_VALID_REACTION_ICONS)}")
+
+    user_id = _normalize_user_id(account_id or x_user_id)
+    allowed_conv_ids = await check_caller_conversation_access(user_id, x_caller_email)
+    if allowed_conv_ids is not None and conversation_id.strip() not in allowed_conv_ids:
+        raise HTTPException(status_code=403, detail="Cuộc trò chuyện này ở chế độ riêng tư và chưa được chia sẻ với bạn.")
+
+    auth = await load_zca_auth(user_id)
+    if not auth:
+        raise HTTPException(status_code=401, detail="Chưa có phiên ZCA hợp lệ. Hãy đăng nhập lại qua extension.")
+
+    rows = await _rest(
+        "GET",
+        "zalo_messages",
+        params={
+            "select": "source_message_id,cli_msg_id,is_deleted",
+            "user_id": f"eq.{user_id}",
+            "group_id": f"eq.{conversation_id.strip()}",
+            "source_message_id": f"eq.{body.source_message_id.strip()}",
+            "limit": "1",
+        },
+    ) or []
+    if not rows:
+        raise HTTPException(status_code=404, detail="Không tìm thấy tin nhắn này.")
+    row = rows[0]
+    if row.get("is_deleted"):
+        raise HTTPException(status_code=409, detail="Không thể thả cảm xúc cho tin đã bị thu hồi.")
+    cli_msg_id = row.get("cli_msg_id")
+    if not cli_msg_id:
+        raise HTTPException(
+            status_code=409,
+            detail="Chưa xác định được cli_msg_id của tin nhắn (có thể vừa nhận/gửi, đợi vài giây rồi thử lại).",
+        )
+
+    thread_type = body.thread_type if body.thread_type is not None else await resolve_thread_type(user_id, conversation_id.strip())
+    try:
+        await add_zca_reaction(
+            auth,
+            conversation_id.strip(),
+            msg_id=body.source_message_id.strip(),
+            cli_msg_id=str(cli_msg_id),
+            icon=icon,
+            thread_type=thread_type,
+        )
+    except ZcaAuthExpiredError:
+        raise HTTPException(status_code=401, detail=ZCA_SESSION_EXPIRED_DETAIL)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Không thể thả cảm xúc: {exc}")
+
+    return ReactMessageResponse(ok=True, conversation_id=conversation_id, source_message_id=body.source_message_id, icon=icon)
+
+
+@router.get("/stickers/search")
+async def search_conversation_stickers(
+    q: str = Query(..., min_length=1, max_length=64),
+    limit: int = Query(24, ge=1, le=48),
+    account_id: Optional[str] = Query(None),
+    x_user_id: str = Header("default", alias="X-User-ID"),
+):
+    """Tìm sticker Zalo thật theo từ khoá (giống thanh tìm sticker trong app
+    Zalo) — thay cho UI cũ phải tự biết trước sticker id. Trả kèm URL ảnh
+    (stickerUrl/stickerWebpUrl) để FE hiện thumbnail thật, không chỉ số ID.
+    """
+    user_id = _normalize_user_id(account_id or x_user_id)
+    auth = await load_zca_auth(user_id)
+    if not auth:
+        raise HTTPException(status_code=401, detail="Chưa có phiên ZCA hợp lệ. Hãy đăng nhập Zalo qua Chrome Extension trước.")
+    try:
+        stickers = await search_zca_stickers(auth, q.strip(), limit)
+    except ZcaAuthExpiredError:
+        raise HTTPException(status_code=401, detail=ZCA_SESSION_EXPIRED_DETAIL)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Không thể tìm sticker: {exc}")
+    return {"ok": True, "stickers": stickers}
 
 
 # --------------------------------------------------------------------------------------

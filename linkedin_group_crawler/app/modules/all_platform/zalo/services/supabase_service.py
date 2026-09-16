@@ -2299,6 +2299,59 @@ async def mark_conversation_as_read(user_id: str, group_id: str) -> None:
     )
 
 
+async def set_zalo_message_reaction(
+    user_id: str,
+    group_id: str,
+    source_message_id: str,
+    reactor_uid: str,
+    icon: Optional[str],
+) -> Dict[str, str]:
+    """Thả/đổi/bỏ cảm xúc cho 1 tin — mỗi người chỉ có 1 icon/tin (giống Zalo
+    thật, đổi thì thay icon cũ). `icon=None` để bỏ reaction.
+
+    Cột `reactions` (migration 138) chưa có RPC merge riêng — tự GET rồi PATCH
+    lại nguyên cột (không atomic, nhưng đây không phải dữ liệu cần ACID chặt:
+    2 reaction cùng lúc trên cùng 1 tin, tệ nhất 1 cái bị đè, tự "sửa" ở lần
+    react tiếp theo). Nếu cột `reactions` chưa tồn tại (chưa áp migration 138),
+    _rest sẽ raise — caller (route) tự bắt và coi là "chưa hỗ trợ lưu", không
+    chặn việc GỬI reaction thật lên Zalo.
+
+    Trả về map reactions MỚI (sau khi merge) để caller trả thẳng cho FE, khỏi
+    phải GET lại.
+    """
+    rows = await _rest(
+        "GET",
+        "zalo_messages",
+        params={
+            "select": "id,reactions",
+            "user_id": f"eq.{user_id}",
+            "group_id": f"eq.{group_id}",
+            "source_message_id": f"eq.{source_message_id}",
+            "limit": "1",
+        },
+    ) or []
+    if not rows:
+        raise RuntimeError(f"Message not found: {source_message_id}")
+
+    current = dict(rows[0].get("reactions") or {})
+    if icon:
+        current[reactor_uid] = icon
+    else:
+        current.pop(reactor_uid, None)
+
+    await _rest(
+        "PATCH",
+        "zalo_messages",
+        params={
+            "user_id": f"eq.{user_id}",
+            "group_id": f"eq.{group_id}",
+            "source_message_id": f"eq.{source_message_id}",
+        },
+        json={"reactions": current, "updated_at": datetime.utcnow().isoformat()},
+    )
+    return current
+
+
 # ── Zalo tập trung: RBAC theo tài khoản (zalo_account_assignments) ──────────
 # Thay cho "staff_zalo_assignments" của ZALO_CENTRALIZED_MODULE_GUIDE.md —
 # khoá theo app_users.id vì dùng chung SSO app chính, không có bảng staff riêng.

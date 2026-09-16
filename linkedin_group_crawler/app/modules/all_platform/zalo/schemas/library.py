@@ -43,6 +43,12 @@ class ZaloLibraryMessage(BaseModel):
     mentions: List[ZaloMentionOut] = Field(default_factory=list)
     msg_kind: Optional[str] = None
     raw_content: Optional[Dict[str, Any]] = None
+    # Thả cảm xúc (migration 138) — map {uid_người_react: icon}. Field thiếu
+    # hẳn (KHÔNG null) khi migration 138 chưa áp lên DB (RPC cũ không có key
+    # này trong JSON) — default_factory xử lý đúng case đó. Vẫn thêm
+    # validator coerce None -> {} để phòng hờ (giống bug "mentions" trước đây:
+    # 1 giá trị NULL rõ ràng cũng làm validate fail toàn bộ nếu không coerce).
+    reactions: Dict[str, str] = Field(default_factory=dict)
 
     @field_validator("mentions", mode="before")
     @classmethod
@@ -53,6 +59,11 @@ class ZaloLibraryMessage(BaseModel):
         # khi thieu key). Khong coerce se lam validate fail 100% tin nhan cu,
         # khien API /messages luon 500 va UI khong hien duoc tin nhan nao.
         return [] if value is None else value
+
+    @field_validator("reactions", mode="before")
+    @classmethod
+    def _coerce_null_reactions(cls, value: Any) -> Any:
+        return {} if value is None else value
 
 
 class ZaloLibraryMessageCreate(BaseModel):

@@ -248,6 +248,10 @@ export interface ZaloLibraryMessage {
   mentions?: ZaloMention[] | null;
   msg_kind?: string | null;
   raw_content?: Record<string, unknown> | null;
+  // Thả cảm xúc (migration 138) — map {uid_người_react: icon}. Có thể thiếu
+  // hẳn (undefined) nếu backend chưa deploy migration này — luôn dùng
+  // `message.reactions ?? {}` khi đọc, không giả định luôn tồn tại.
+  reactions?: Record<string, string> | null;
 }
 
 export type ZaloLibraryContentKind = "all" | "text" | "image";
@@ -433,6 +437,9 @@ export interface ZaloGroupMembersResponse {
 export interface ZaloStickerDetail {
   id: number;
   cateId: number;
+  text?: string | null;
+  stickerUrl?: string | null;
+  stickerWebpUrl?: string | null;
   [key: string]: unknown;
 }
 

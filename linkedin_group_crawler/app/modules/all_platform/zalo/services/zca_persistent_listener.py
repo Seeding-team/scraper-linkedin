@@ -1108,6 +1108,67 @@ class ZcaPersistentListenerManager:
             return
         if event_name == "old_messages":
             await self._record_messages(state, event.get("messages") or [], increment_unread=False)
+            return
+        if event_name == "reaction":
+            await self._handle_reaction(state, event.get("reaction") or {})
+            return
+
+    async def _handle_reaction(self, state: ListenerState, reaction: Dict[str, Any]) -> None:
+        """Lưu cảm xúc (thả/đổi/bỏ) vào cột `reactions` của tin nhắn tương ứng.
+
+        Xử lý CẢ 2 nguồn: chính tài khoản này tự react (echo về do selfListen=
+        true — xem cmdAddReaction/POST /react) LẪN đối phương/thành viên khác
+        react — cùng 1 event "reaction" từ zca-js, phân biệt bằng is_self.
+        Đây là nơi DUY NHẤT ghi cột reactions (route /react chỉ gửi lên Zalo,
+        không tự ghi DB) để tránh 2 nguồn tranh nhau ghi đè.
+        """
+        group_id = str(reaction.get("thread_id") or "").strip()
+        message_id = str(reaction.get("message_id") or "").strip()
+        reactor_uid = str(reaction.get("reactor_uid") or "").strip()
+        if not group_id or not message_id or not reactor_uid:
+            return
+        icon = None if reaction.get("removed") else reaction.get("icon")
+        try:
+            from app.modules.all_platform.zalo.services.supabase_service import (
+                set_zalo_message_reaction,
+            )
+            new_reactions = await set_zalo_message_reaction(
+                state.user_id, group_id, message_id, reactor_uid, icon,
+            )
+        except Exception as exc:
+            # Fail-soft: cột `reactions` (migration 138) có thể chưa áp trên
+            # DB này, hoặc chưa từng thấy tin nhắn này (race hiếm) — reaction
+            # đã gửi lên Zalo thật thành công rồi (route /react), chỉ riêng
+            # phần LƯU LẠI để hiển thị lại sau bị bỏ qua, không phải lỗi chặn.
+            logger.info(
+                f"Could not persist reaction (msg={message_id} user={state.user_id}): {exc}"
+            )
+            return
+
+        try:
+            from app.modules.all_platform.zalo.services.message_events import (
+                publish_zalo_message_event,
+                register_account_owner,
+            )
+            from app.modules.all_platform.zalo.services.supabase_service import (
+                list_shared_conversation_ids,
+            )
+
+            register_account_owner(state.user_id, state.user_id)
+            shared_ids = await list_shared_conversation_ids(state.user_id)
+            await publish_zalo_message_event(
+                state.user_id,
+                {
+                    "type": "reaction_update",
+                    "account_id": state.user_id,
+                    "group_id": group_id,
+                    "source_message_id": message_id,
+                    "reactions": new_reactions,
+                },
+                shared_conversation_ids=shared_ids,
+            )
+        except Exception as exc:
+            logger.warning(f"Realtime reaction publish failed for user={state.user_id}: {exc}")
 
     async def _record_messages(self, state: ListenerState, rows: List[Dict[str, Any]], *, increment_unread: bool = True) -> None:
         grouped: Dict[str, List[Message]] = {}

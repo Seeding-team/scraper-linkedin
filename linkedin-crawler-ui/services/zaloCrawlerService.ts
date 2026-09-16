@@ -944,6 +944,43 @@ export function getZaloStickersDetail(accountId: string, ids: number[]): Promise
   });
 }
 
+/** Tìm sticker Zalo thật theo từ khoá (giống ô tìm sticker trong app Zalo) —
+ * trả kèm URL ảnh (stickerUrl/stickerWebpUrl), không cần biết ID trước. */
+export function searchZaloStickers(
+  accountId: string,
+  keyword: string,
+  limit = 24,
+): Promise<{ ok: boolean; stickers: ZaloStickerDetail[] }> {
+  const params = new URLSearchParams({ q: keyword, limit: String(limit) });
+  return requestJson(`/api/all-platform/zalo/conversations/stickers/search?${params.toString()}`, {
+    method: "GET",
+    headers: { "X-User-ID": accountId },
+  });
+}
+
+/** 6 icon cảm xúc nhanh — đúng bộ Zalo thật (bấm giữ 1 tin nhắn). Giá trị là
+ * tên enum Reactions của zca-js, khớp QUICK_REACTION_ICONS phía backend. */
+export const ZALO_QUICK_REACTIONS: { name: string; emoji: string }[] = [
+  { name: "HEART", emoji: "❤️" },
+  { name: "LIKE", emoji: "👍" },
+  { name: "HAHA", emoji: "😆" },
+  { name: "WOW", emoji: "😮" },
+  { name: "CRY", emoji: "😢" },
+  { name: "ANGRY", emoji: "😠" },
+];
+
+export function reactToZaloMessage(
+  accountId: string,
+  conversationId: string,
+  payload: { source_message_id: string; icon: string; thread_type?: number },
+): Promise<{ ok: boolean; icon: string }> {
+  return requestJson(`/api/all-platform/zalo/conversations/${encodeURIComponent(conversationId)}/react`, {
+    method: "POST",
+    headers: buildHeaders({ "X-User-ID": accountId }),
+    body: JSON.stringify(payload),
+  });
+}
+
 /** sendZaloMessage hiện có KHÔNG nhận mentions — dùng hàm riêng này cho tin có @tag/@All. */
 export function sendZaloMessageWithMentions(
   accountId: string,

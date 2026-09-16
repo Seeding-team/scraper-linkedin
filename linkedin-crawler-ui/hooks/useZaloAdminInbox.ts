@@ -18,8 +18,8 @@ import {
   sendZaloFriendRequest,
   acceptZaloFriendRequest,
   getZaloGroupMembers,
-  getZaloStickersDetail,
   sendZaloSticker,
+  reactToZaloMessage,
   type BuildZaloRealtimeStreamOptions,
 } from "@/services/zaloCrawlerService";
 import { allPlatformKpiService, zaloInboxShareService } from "@/services/all-platform.service";
@@ -30,7 +30,6 @@ import type {
   ZaloMention,
   ZaloFriendStatusResponse,
   ZaloGroupMembersResponse,
-  ZaloStickerDetail,
 } from "@/types/zalo-api";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -172,8 +171,6 @@ export function useZaloAdminInbox() {
   const [friendActionLoading, setFriendActionLoading] = useState(false);
   const [groupMembers, setGroupMembers] = useState<ZaloGroupMembersResponse | null>(null);
   const [loadingGroupMembers, setLoadingGroupMembers] = useState(false);
-  const [stickerResults, setStickerResults] = useState<ZaloStickerDetail[]>([]);
-  const [loadingStickers, setLoadingStickers] = useState(false);
 
   // ── Error & Toast ───────────────────────────────────────────────────────────
   const [error, setError] = useState<string | null>(null);
@@ -880,6 +877,42 @@ export function useZaloAdminInbox() {
     }
   }, [showToast]);
 
+  // UID Zalo thật của account đang xem — suy từ sender_id của tin CHÍNH MÌNH
+  // đã gửi (không có API riêng trả "own id" qua REST). Dùng để tô sáng
+  // reaction của mình trong ZaloReactionBadges.
+  const myZaloUid = useMemo(
+    () => messages.find((m) => m.is_sent && m.sender_id)?.sender_id || null,
+    [messages],
+  );
+
+  // Thả cảm xúc — CHỈ gửi lên Zalo thật, KHÔNG tự ghi DB (listener xử lý khi
+  // nhận event "reaction" echo lại, xem comment route POST /react phía
+  // backend) — tự hiện tạm (optimistic) ngay bằng myZaloUid nếu đã biết.
+  const reactToMessage = useCallback(async (message: ZaloLibraryMessage, icon: string) => {
+    const accId = selectedAccountIdRef.current;
+    const convId = selectedConvIdRef.current;
+    const msgId = message.source_message_id || String(message.id || "");
+    const cliMsgId = (message as unknown as { cli_msg_id?: string }).cli_msg_id;
+    if (!accId || !convId || !msgId || !cliMsgId) return;
+    const reactorKey = myZaloUid || "__me__";
+    const existing = message.reactions?.[reactorKey];
+    const nextIcon = existing === icon ? "NONE" : icon;
+    setMessages((prev) =>
+      prev.map((m) => {
+        if (m.id !== message.id) return m;
+        const nextReactions = { ...(m.reactions || {}) };
+        if (nextIcon === "NONE") delete nextReactions[reactorKey];
+        else nextReactions[reactorKey] = nextIcon;
+        return { ...m, reactions: nextReactions };
+      }),
+    );
+    try {
+      await reactToZaloMessage(accId, convId, { source_message_id: msgId, icon: nextIcon });
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : "Không thể thả cảm xúc", false);
+    }
+  }, [myZaloUid, showToast]);
+
   // ─────────────────────────────────────────────────────────────────────────────
   // Trạng thái bạn bè — tự tải khi mở 1 hội thoại (best-effort: nếu convId là
   // 1 group (không phải uid cá nhân), backend/zca-js sẽ trả lỗi và ta chỉ cần
@@ -947,24 +980,10 @@ export function useZaloAdminInbox() {
   }, [selectedAccountId, selectedConvId, showToast]);
 
   // ─────────────────────────────────────────────────────────────────────────────
-  // Sticker — không có catalog sticker công khai qua zca-js (chỉ có
-  // getStickersDetail(ids) để resolve ảnh THEO id đã biết), nên UI picker ở đây
-  // là 1 ô nhập id/cateId (người dùng lấy id từ tin sticker Zalo đã nhận trước
-  // đó) thay vì duyệt catalog đầy đủ — đúng giới hạn API đã ghi ở Mục 3.3.5 guide.
+  // Sticker — tìm theo từ khoá thật (searchZaloStickers, giống ô tìm sticker
+  // trong app Zalo) qua <ZaloStickerPicker> (component tự quản lý state tìm
+  // kiếm riêng), hook chỉ cần expose hành động GỬI.
   // ─────────────────────────────────────────────────────────────────────────────
-  const searchStickers = useCallback(async (ids: number[]) => {
-    if (!selectedAccountId || ids.length === 0) return;
-    setLoadingStickers(true);
-    try {
-      const res = await getZaloStickersDetail(selectedAccountId, ids);
-      setStickerResults(res.stickers);
-    } catch (e) {
-      showToast(e instanceof Error ? e.message : "Không thể tra sticker", false);
-    } finally {
-      setLoadingStickers(false);
-    }
-  }, [selectedAccountId, showToast]);
-
   const sendStickerAction = useCallback(async (sticker: { id: number; cateId: number }) => {
     const accId = selectedAccountIdRef.current;
     const convId = selectedConvIdRef.current;
@@ -1160,10 +1179,9 @@ export function useZaloAdminInbox() {
     groupMembers,
     loadingGroupMembers,
     loadGroupMembers,
-    stickerResults,
-    loadingStickers,
-    searchStickers,
     sendStickerAction,
+    myZaloUid,
+    reactToMessage,
 
     // Account stats
     selectedOwnerId,
