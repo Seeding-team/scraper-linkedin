@@ -13,6 +13,14 @@ import { useCrmCategoryCodeOptions } from './CrmCategorySelect';
 import { Loader2, Plus, RotateCcw } from './icons';
 import type { CrmLeadKpi, CrmLeadRow, CrmLeadStatus } from '../types';
 
+// Main la CRM markee CO DINH (khong co /auth/workspaces/switcher nhu 3
+// clone) - danh sach workspace dich khi sao chep Lead CHI CO 2 clone doc
+// lap con lai, khai bao TINH tai day thay vi goi API.
+const COPY_TARGET_OPTIONS: { instance: string; label: string }[] = [
+  { instance: 'cloudgate', label: 'CloudGate' },
+  { instance: 'SECURITYZONE', label: 'SecurityZone' },
+];
+
 const STATUS_OPTIONS: Array<{ value: CrmLeadStatus | ''; label: string }> = [
   { value: '', label: 'Tất cả trạng thái' },
   { value: 'mql', label: 'MQL' },
@@ -160,6 +168,51 @@ export function LeadsDirectory() {
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState('');
   const { options: sourceOptions } = useCrmCategoryCodeOptions('crm_source');
+
+  // Sao chep Lead (chua convert) sang 1 trong 2 clone CRM doc lap con lai -
+  // Lead goc van giu nguyen o Main (khong phai "chuyen han"). Chi Admin
+  // THAT moi thay/dung duoc (backend cung chan y het).
+  const [copyLead, setCopyLead] = useState<CrmLeadRow | null>(null);
+  const [copyTargetInstance, setCopyTargetInstance] = useState('');
+  const [copying, setCopying] = useState(false);
+  const [copyError, setCopyError] = useState('');
+  const canCopyInstance = user?.role === 'admin';
+
+  function openCopyModal(lead: CrmLeadRow) {
+    setCopyLead(lead);
+    setCopyTargetInstance('');
+    setCopyError('');
+  }
+
+  function closeCopyModal() {
+    if (copying) return;
+    setCopyLead(null);
+    setCopyTargetInstance('');
+    setCopyError('');
+  }
+
+  async function confirmCopy() {
+    const target = copyLead;
+    if (!target || !copyTargetInstance || copying) return;
+    setCopying(true);
+    setCopyError('');
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/all-platform/crm/leads/${encodeURIComponent(target.id)}/copy-instance`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: headers(),
+        body: JSON.stringify({ target_instance: copyTargetInstance }),
+      });
+      const body = await res.json();
+      if (!res.ok || body.success === false) throw new Error(body?.message || 'Không sao chép được sang workspace khác.');
+      setCopyLead(null);
+      setCopyTargetInstance('');
+    } catch (err) {
+      setCopyError(err instanceof Error ? err.message : 'Không sao chép được sang workspace khác.');
+    } finally {
+      setCopying(false);
+    }
+  }
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -390,6 +443,13 @@ export function LeadsDirectory() {
             onSelect: () => {
               window.location.href = `/all-platform/crm/customers/${lead.convertedCustomerId}`;
             },
+          }]
+        : []),
+      ...(canCopyInstance && lead.status !== 'converted' && !lead.convertedCustomerId
+        ? [{
+            key: 'copy-instance',
+            label: 'Sao chép sang workspace khác',
+            onSelect: () => openCopyModal(lead),
           }]
         : []),
       ...(lead.canWrite
@@ -702,6 +762,53 @@ export function LeadsDirectory() {
         onClose={() => setEditLead(null)}
         onSaved={applyUpdatedLead}
       />
+
+      {copyLead ? (
+        <div
+          className="crm-modal-backdrop crm-modal-backdrop--confirm"
+          onClick={() => (copying ? undefined : closeCopyModal())}
+        >
+          <div
+            className="crm-modal crm-modal--confirm"
+            role="dialog"
+            aria-modal="true"
+            onClick={event => event.stopPropagation()}
+          >
+            <header className="crm-modal-header">
+              <div>
+                <p className="crm-modal-title">Sao chép sang workspace khác</p>
+                <p className="crm-modal-subtitle">
+                  Tạo 1 bản sao của Lead &ldquo;{copyLead.leadName}&rdquo; ở workspace khác — Lead gốc vẫn
+                  giữ nguyên ở Main.
+                </p>
+              </div>
+            </header>
+            <div className="crm-modal-body">
+              {copyError ? <p className="crm-error">{copyError}</p> : null}
+              <SearchableSelect
+                value={copyTargetInstance}
+                onChange={setCopyTargetInstance}
+                placeholder="Chọn workspace đích"
+                options={COPY_TARGET_OPTIONS.map(option => ({ value: option.instance, label: option.label }))}
+              />
+            </div>
+            <footer className="crm-modal-footer">
+              <button type="button" className="crm-cancel-button" disabled={copying} onClick={closeCopyModal}>
+                Hủy
+              </button>
+              <button
+                type="button"
+                className="crm-primary-button"
+                disabled={copying || !copyTargetInstance}
+                onClick={() => void confirmCopy()}
+              >
+                {copying ? <Loader2 className="crm-save-spinner" /> : null}
+                {copying ? 'Đang sao chép...' : 'Sao chép'}
+              </button>
+            </footer>
+          </div>
+        </div>
+      ) : null}
 
       {deleteTarget ? (
         <div
