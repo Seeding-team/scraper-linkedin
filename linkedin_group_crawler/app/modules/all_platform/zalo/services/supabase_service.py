@@ -176,13 +176,32 @@ async def delete_storage_objects(paths: List[str]) -> None:
         raise RuntimeError(f"Supabase storage delete failed: {response.status_code} {response.text}")
 
 
-async def _download_image(source_url: str) -> Tuple[bytes, str, str]:
+def _guess_extension(content_type: str, filename_hint: Optional[str] = None, *, default: str = ".bin") -> str:
+    """Đoán extension từ content-type, ưu tiên extension THẬT của filename_hint
+    (tên file Zalo trả về cho share.file/video/voice) nếu content-type generic
+    (application/octet-stream — HTTP server nhiều khi không set đúng loại).
+    Trước đây fallback cứng ".jpg" cho MỌI loại không đoán được — sai hoàn
+    toàn với file/video/voice (huỷ luôn phần mở rộng thật, user tải về không
+    mở được), giờ chỉ fallback ".jpg" khi content-type xác nhận là ảnh."""
+    ext = mimetypes.guess_extension(content_type)
+    if ext:
+        return ext
+    if filename_hint:
+        hint_ext = posixpath.splitext(filename_hint)[1]
+        if hint_ext and len(hint_ext) <= 10:
+            return hint_ext
+    if content_type.startswith("image/"):
+        return ".jpg"
+    return default
+
+
+async def _download_image(source_url: str, filename_hint: Optional[str] = None) -> Tuple[bytes, str, str]:
     if source_url.startswith("data:image/"):
         header, _, payload = source_url.partition(",")
         if not payload or ";base64" not in header:
             raise RuntimeError("Unsupported data URL image format")
         content_type = header.removeprefix("data:").split(";")[0] or "image/jpeg"
-        ext = mimetypes.guess_extension(content_type) or ".jpg"
+        ext = _guess_extension(content_type, filename_hint)
         return base64.b64decode(payload), content_type, ext
 
     async with _http_client(timeout=60, follow_redirects=True) as client:
@@ -190,7 +209,7 @@ async def _download_image(source_url: str) -> Tuple[bytes, str, str]:
     if response.status_code >= 400:
         raise RuntimeError(f"Image download failed: HTTP {response.status_code}")
     content_type = response.headers.get("content-type", "").split(";")[0].strip() or "application/octet-stream"
-    ext = mimetypes.guess_extension(content_type) or ".jpg"
+    ext = _guess_extension(content_type, filename_hint)
     return response.content, content_type, ext
 
 
@@ -497,7 +516,7 @@ async def save_crawl_messages(user_id: str, job: JobData, group_id: str, message
                 source_msg_id = str(row.get("source_message_id") or "").strip()
                 original_msg = msg_by_source_id.get(source_msg_id)
                 if original_msg and original_msg.image_urls:
-                    asset_stats = await save_message_assets(message_uuid, user_id, job.job_id, original_msg.image_urls)
+                    asset_stats = await save_message_assets(message_uuid, user_id, job.job_id, original_msg.image_urls, filename_hint=original_msg.content)
                     uploaded_images += asset_stats["uploaded"]
                     failed_images += asset_stats["failed"]
         except Exception as exc:
@@ -1116,7 +1135,7 @@ async def save_listener_messages(
                 source_msg_id = str(row.get("source_message_id") or "").strip()
                 original_msg = msg_by_source_id.get(source_msg_id)
                 if original_msg and original_msg.image_urls:
-                    asset_stats = await save_message_assets(message_uuid, user_id, None, original_msg.image_urls)
+                    asset_stats = await save_message_assets(message_uuid, user_id, None, original_msg.image_urls, filename_hint=original_msg.content)
                     uploaded_images += asset_stats["uploaded"]
                     failed_images += asset_stats["failed"]
             
@@ -1165,7 +1184,7 @@ async def save_listener_messages(
                     source_msg_id = str(row.get("source_message_id") or "").strip()
                     original_msg = msg_by_source_id.get(source_msg_id)
                     if original_msg and original_msg.image_urls:
-                        asset_stats = await save_message_assets(message_uuid, user_id, None, original_msg.image_urls)
+                        asset_stats = await save_message_assets(message_uuid, user_id, None, original_msg.image_urls, filename_hint=original_msg.content)
                         uploaded_images += asset_stats["uploaded"]
                         failed_images += asset_stats["failed"]
         except Exception as exc:
@@ -1247,6 +1266,8 @@ async def save_message_assets(
     user_id: str,
     job_id: Optional[str],
     source_urls: Iterable[str],
+    *,
+    filename_hint: Optional[str] = None,
 ) -> Dict[str, int]:
     stats = {"uploaded": 0, "failed": 0}
     existing_assets = {}
@@ -1274,7 +1295,7 @@ async def save_message_assets(
         if source_url.startswith("data:image/"):
             # Normalize data URL structure to match source_url_ref hash check
             try:
-                content, content_type, ext = await _download_image(source_url)
+                content, content_type, ext = await _download_image(source_url, filename_hint)
                 source_url_ref = f"data:{content_type};sha256={hashlib.sha256(content).hexdigest()}"
             except Exception:
                 pass
@@ -1287,7 +1308,7 @@ async def save_message_assets(
             error = "Blob URL is browser-local and cannot be persisted after crawl"
         else:
             try:
-                content, content_type, ext = await _download_image(source_url)
+                content, content_type, ext = await _download_image(source_url, filename_hint)
                 if source_url.startswith("data:image/"):
                     source_url_ref = f"data:{content_type};sha256={hashlib.sha256(content).hexdigest()}"
                 storage_path = posixpath.join(

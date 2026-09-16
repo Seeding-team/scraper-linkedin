@@ -208,6 +208,45 @@ function messageAssets(message: ZaloLibraryMessage) {
   return deduped;
 }
 
+// ── Render tin nhắn theo đúng loại nội dung (Zalo tập trung, port từ module
+// tham chiếu): ảnh/gif → hiện inline; video → hiện inline có control; còn lại
+// (share.file, chat.doodle, loại lạ...) → hiện tên file + nút bấm tải về.
+// Suy loại từ URL asset trước (đáng tin nhất — đúng đuôi file thật), chỉ
+// dùng message.type làm gợi ý phụ khi URL không có đuôi rõ ràng.
+const VIDEO_EXT_RE = /\.(mp4|webm|mov|m4v|3gp|mkv|avi)(\?|#|$)/i;
+const IMAGE_EXT_RE = /\.(png|jpe?g|webp|gif|bmp|svg)(\?|#|$)/i;
+const AUDIO_EXT_RE = /\.(mp3|m4a|aac|wav|ogg|opus)(\?|#|$)/i;
+
+type ZaloAssetKind = "image" | "video" | "audio" | "file";
+
+function classifyAssetKind(url: string, message: ZaloLibraryMessage): ZaloAssetKind {
+  if (VIDEO_EXT_RE.test(url)) return "video";
+  if (AUDIO_EXT_RE.test(url)) return "audio";
+  if (IMAGE_EXT_RE.test(url)) return "image";
+  const type = String(message.type || message.msg_kind || "").toLowerCase();
+  if (type === "image" || type === "chat.gif" || type === "chat.sticker") return "image";
+  if (type === "chat.video.msg" || type.startsWith("video")) return "video";
+  if (type === "chat.voice" || type.startsWith("voice") || type.startsWith("audio")) return "audio";
+  // message.type == "image" (backend gán khi có URL "giống ảnh") nhưng đuôi
+  // URL lạ (CDN không kèm đuôi) — vẫn ưu tiên hiện như ảnh cho khớp phân loại
+  // backend, an toàn hơn rơi vào nhánh "file" (ảnh vẫn xem được nếu load lỗi
+  // thì chỉ vỡ layout, không hỏng tính năng).
+  return type === "image" ? "image" : "file";
+}
+
+function assetFileName(url: string, message: ZaloLibraryMessage): string {
+  const fromContent = (message.content || "").trim();
+  if (fromContent && !fromContent.includes("\n") && fromContent.length <= 150) {
+    return fromContent;
+  }
+  try {
+    const base = decodeURIComponent(url.split("/").pop()?.split("?")[0] || "");
+    return base || "file";
+  } catch {
+    return "file";
+  }
+}
+
 interface SelectedMedia {
   file: File;
   previewUrl?: string;
@@ -1940,25 +1979,76 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
                               <p className={`italic text-[12.5px] ${isSentByMe ? 'text-white/70' : 'text-on-surface-variant'}`}>
                                 Tin nhắn đã được thu hồi
                               </p>
-                            ) : message.content ? (
+                            ) : message.content && !(assets.length > 0 && classifyAssetKind(assets[0].storage_url || "", message) === "file") ? (
                               <p className={`whitespace-pre-wrap break-words text-[13px] leading-relaxed ${isSentByMe ? 'text-white/95' : 'text-on-surface'}`}>
                                 {message.content}
                               </p>
                             ) : null}
 
                             {!message.is_deleted && assets.length > 0 && (
-                              <div className="mt-1 grid gap-1 sm:grid-cols-2">
-                                {assets.map((asset) => (
-                                  <Image
-                                    key={asset.id || asset.storage_url}
-                                    src={asset.storage_url || ""}
-                                    alt="Image"
-                                    width={220}
-                                    height={150}
-                                    className="rounded-lg object-cover w-full h-auto"
-                                    unoptimized
-                                  />
-                                ))}
+                              <div className="mt-1 flex flex-col gap-1.5">
+                                {assets.map((asset) => {
+                                  const url = asset.storage_url || "";
+                                  const kind = classifyAssetKind(url, message);
+                                  const fileName = assetFileName(url, message);
+                                  if (kind === "image") {
+                                    return (
+                                      <a
+                                        key={asset.id || url}
+                                        href={url}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="block max-w-[220px]"
+                                        title="Mở ảnh gốc"
+                                      >
+                                        <Image
+                                          src={url}
+                                          alt={fileName}
+                                          width={220}
+                                          height={150}
+                                          className="rounded-lg object-cover w-full h-auto"
+                                          unoptimized
+                                        />
+                                      </a>
+                                    );
+                                  }
+                                  if (kind === "video") {
+                                    return (
+                                      <video
+                                        key={asset.id || url}
+                                        src={url}
+                                        controls
+                                        preload="metadata"
+                                        className="max-w-[260px] rounded-lg bg-black/5"
+                                      />
+                                    );
+                                  }
+                                  if (kind === "audio") {
+                                    return (
+                                      <audio key={asset.id || url} src={url} controls className="max-w-[240px]" />
+                                    );
+                                  }
+                                  // file/khác: hiện tên file + bấm để tải về.
+                                  return (
+                                    <a
+                                      key={asset.id || url}
+                                      href={url}
+                                      download={fileName}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className={`flex items-center gap-2 rounded-lg border px-2.5 py-2 text-[12px] transition ${
+                                        isSentByMe
+                                          ? "border-white/25 bg-white/10 text-white hover:bg-white/15"
+                                          : "border-outline-variant bg-surface-container-low text-on-surface hover:bg-surface-container"
+                                      }`}
+                                      title={`Tải về: ${fileName}`}
+                                    >
+                                      <MaterialIcon name="description" className="text-[16px] shrink-0" />
+                                      <span className="truncate flex-1">{fileName}</span>
+                                      <MaterialIcon name="download" className="text-[15px] shrink-0" />
+                                    </a>
+                                  );
+                                })}
                               </div>
                             )}
 

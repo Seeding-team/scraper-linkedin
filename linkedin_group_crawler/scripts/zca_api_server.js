@@ -127,6 +127,22 @@ function isLikelyImageUrl(value) {
   return /(photo|image|img|thumb|avatar|zalo|zstatic|zadn|zaloapp)/i.test(value);
 }
 
+// Đồng bộ với zca_persistent_listener.js: msgType Zalo đã tự phân loại rõ —
+// TIN vào giá trị này, không suy luận lại từ URL (video/file/voice cũng host
+// trên domain zdn.vn/zadn.vn giống ảnh nên isLikelyImageUrl dễ nhận nhầm).
+const STRUCTURED_MEDIA_MSG_TYPES = new Set([
+  "chat.photo", "chat.gif", "chat.doodle",
+  "chat.video.msg", "chat.voice", "share.file", "chat.sticker",
+]);
+const IMAGE_LIKE_MSG_TYPES = new Set(["chat.photo", "chat.gif", "chat.doodle"]);
+
+function resolveMessageType(msgType, imageUrlsCount) {
+  if (STRUCTURED_MEDIA_MSG_TYPES.has(msgType)) {
+    return IMAGE_LIKE_MSG_TYPES.has(msgType) ? "image" : msgType;
+  }
+  return imageUrlsCount ? "image" : msgType;
+}
+
 function collectUrls(value, out = []) {
   if (!value) return out;
   if (typeof value === "string") {
@@ -147,6 +163,77 @@ function collectUrls(value, out = []) {
     if (!found) for (const item of Object.values(value)) collectUrls(item, out);
   }
   return Array.from(new Set(out));
+}
+
+// Đồng bộ với zca_persistent_listener.js: quét rộng hơn collectUrls() (không
+// giới hạn "giống ảnh") để tin video/file/voice/gif sync lại từ lịch sử cũng
+// có URL thật để xem/tải, không chỉ ảnh. Xem comment đầy đủ ở file listener.
+function collectMediaUrls(value, out = []) {
+  if (!value) return out;
+  if (typeof value === "string") {
+    if (/^https?:\/\//i.test(value)) out.push(value);
+    return out;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) collectMediaUrls(item, out);
+    return out;
+  }
+  if (typeof value === "object") {
+    let found = false;
+    for (const key of [
+      "hdUrl", "normalUrl", "url", "imageUrl", "photoUrl", "src",
+      "fileUrl", "href", "stickerUrl", "stickerWebpUrl",
+      "videoUrl", "video_url", "voiceUrl", "voice_url", "oriUrl", "rawUrl",
+      "gifUrl", "downloadUrl",
+    ]) {
+      if (value[key] && typeof value[key] === "string" && /^https?:\/\//i.test(value[key])) {
+        out.push(value[key]); found = true; break;
+      }
+    }
+    if (found) return Array.from(new Set(out));
+    for (const [key, item] of Object.entries(value)) {
+      if (typeof item === "string" && /^(params|attach|attachment|content)$/i.test(key) && /^[{[]/.test(item.trim())) {
+        try {
+          collectMediaUrls(JSON.parse(item), out);
+          continue;
+        } catch (_) {
+          /* ignore */
+        }
+      }
+      collectMediaUrls(item, out);
+    }
+  }
+  return Array.from(new Set(out));
+}
+
+function collectFileName(value) {
+  if (!value || typeof value !== "object") return null;
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const name = collectFileName(item);
+      if (name) return name;
+    }
+    return null;
+  }
+  for (const key of ["fileName", "title", "name"]) {
+    if (typeof value[key] === "string" && value[key].trim()) return value[key].trim();
+  }
+  for (const [key, item] of Object.entries(value)) {
+    if (typeof item === "string" && /^(params|attach|attachment)$/i.test(key) && /^[{[]/.test(item.trim())) {
+      try {
+        const name = collectFileName(JSON.parse(item));
+        if (name) return name;
+      } catch (_) {
+        /* ignore */
+      }
+      continue;
+    }
+    if (item && typeof item === "object") {
+      const name = collectFileName(item);
+      if (name) return name;
+    }
+  }
+  return null;
 }
 
 function toTimestampMs(value) {
@@ -174,7 +261,10 @@ function firstTimestampMs(...values) {
 function normalizeMessage(raw, index, ownId = null) {
   const data = raw && raw.data ? raw.data : raw || {};
   const content = data.content ?? data.message ?? data.msg ?? raw.content ?? raw.message;
-  const imageUrls = collectUrls(content).concat(collectUrls(data.attachments || data.attachment || data.photos));
+  const attachmentsBlob = data.attachments || data.attachment || data.photos;
+  const imageUrls = collectUrls(content).concat(collectUrls(attachmentsBlob));
+  const mediaUrls = Array.from(new Set(collectMediaUrls(content).concat(collectMediaUrls(attachmentsBlob))));
+  const fileNameHint = collectFileName(content) || collectFileName(attachmentsBlob);
   const msgType = String(data.msgType || data.type || raw.type || "text");
   const senderId = String(data.uidFrom || raw.uidFrom || raw.senderId || raw.sender_id || "");
   const isSent = Boolean(raw.isSelf || data.isSelf || (ownId && String(senderId) === String(ownId)));
@@ -192,19 +282,26 @@ function normalizeMessage(raw, index, ownId = null) {
     const trimmed = contentText.trim();
     if (imageUrls.includes(trimmed) || isLikelyImageUrl(trimmed)) contentText = "";
   }
+  if (!contentText && fileNameHint) {
+    contentText = fileNameHint;
+  }
+  const resolvedType = resolveMessageType(msgType, imageUrls.length);
   return {
     message_id: messageId,
     sender_id: senderId || null,
     sender_name: data.dName || data.displayName || raw.senderName || raw.sender_name || null,
     timestamp: timestampMs ? String(timestampMs) : null,
     time_text: timestampMs ? new Date(Number(timestampMs)).toISOString() : null,
-    type: imageUrls.length ? "image" : msgType,
+    type: resolvedType,
     content: contentText || null,
-    image_urls: Array.from(new Set(imageUrls)),
+    // Giữ tên field cũ nhưng mang URL media thật của mọi loại — xem comment
+    // collectMediaUrls() ở trên và trong zca_persistent_listener.js.
+    image_urls: mediaUrls,
     reply_to_id: data.quote?.msgId || data.quoteMsgId || null,
     is_deleted: msgType === "chat.delete" || msgType === "recalled",
     is_sent: isSent,
     group_id: threadId || null,
+    msg_kind: resolvedType,
   };
 }
 

@@ -108,6 +108,75 @@ function formatDate(value: string | null | undefined): string {
   });
 }
 
+// Render tin nhắn theo đúng loại nội dung (đồng bộ logic với ZaloChatView.tsx)
+// — ảnh/gif hiện inline, video hiện inline có control, còn lại (file/doc lạ)
+// hiện tên file thật + nút bấm tải về (trước đây mọi loại không phải ảnh chỉ
+// hiện nhãn chung "File đính kèm", không biết tên file, không phát được video).
+const VIDEO_EXT_RE = /\.(mp4|webm|mov|m4v|3gp|mkv|avi)(\?|#|$)/i;
+const IMAGE_EXT_RE = /\.(png|jpe?g|webp|gif|bmp|svg)(\?|#|$)/i;
+const AUDIO_EXT_RE = /\.(mp3|m4a|aac|wav|ogg|opus)(\?|#|$)/i;
+
+type ZaloAssetKind = "image" | "video" | "audio" | "file";
+
+function classifyAssetKind(url: string, message: ZaloLibraryMessage): ZaloAssetKind {
+  if (VIDEO_EXT_RE.test(url)) return "video";
+  if (AUDIO_EXT_RE.test(url)) return "audio";
+  if (IMAGE_EXT_RE.test(url)) return "image";
+  const type = String(message.type || message.msg_kind || "").toLowerCase();
+  if (type === "image" || type === "chat.gif" || type === "chat.sticker") return "image";
+  if (type === "chat.video.msg" || type.startsWith("video")) return "video";
+  if (type === "chat.voice" || type.startsWith("voice") || type.startsWith("audio")) return "audio";
+  return type === "image" ? "image" : "file";
+}
+
+function assetFileName(url: string, message: ZaloLibraryMessage): string {
+  const fromContent = (message.content || "").trim();
+  if (fromContent && !fromContent.includes("\n") && fromContent.length <= 150) {
+    return fromContent;
+  }
+  try {
+    const base = decodeURIComponent(url.split("/").pop()?.split("?")[0] || "");
+    return base || "file";
+  } catch {
+    return "file";
+  }
+}
+
+function ZaloMessageAssetView({ asset, message }: { asset: NonNullable<ZaloLibraryMessage["assets"]>[number]; message: ZaloLibraryMessage }) {
+  const url = asset.storage_url || "";
+  const kind = classifyAssetKind(url, message);
+  const fileName = assetFileName(url, message);
+
+  if (kind === "image") {
+    return (
+      <a href={url} target="_blank" rel="noopener noreferrer" title="Mở ảnh gốc">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={url} alt={fileName} className="w-full h-auto" loading="lazy" />
+      </a>
+    );
+  }
+  if (kind === "video") {
+    return <video src={url} controls preload="metadata" className="w-full max-h-[220px] bg-black/5" />;
+  }
+  if (kind === "audio") {
+    return <audio src={url} controls className="w-full" />;
+  }
+  return (
+    <a
+      href={url}
+      download={fileName}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="flex items-center gap-1.5 p-2 text-[11px] text-blue-600 hover:underline bg-white"
+      title={`Tải về: ${fileName}`}
+    >
+      <MaterialIcon name="description" className="text-[14px] shrink-0" />
+      <span className="truncate">{fileName}</span>
+      <MaterialIcon name="download" className="text-[13px] shrink-0" />
+    </a>
+  );
+}
+
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export function ZaloInboxAdminShell() {
@@ -1202,25 +1271,7 @@ export function ZaloInboxAdminShell() {
                                     isSent ? "ml-auto" : "mr-auto"
                                   )}
                                 >
-                                  {asset.storage_url?.match(/\.(jpg|jpeg|png|gif|webp)/i) ? (
-                                    // eslint-disable-next-line @next/next/no-img-element
-                                    <img
-                                      src={asset.storage_url!}
-                                      alt="media"
-                                      className="w-full h-auto"
-                                      loading="lazy"
-                                    />
-                                  ) : (
-                                    <a
-                                      href={asset.storage_url!}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                      className="flex items-center gap-1.5 p-2 text-[11px] text-blue-600 hover:underline bg-white"
-                                    >
-                                      <MaterialIcon name="attach_file" className="text-[14px]" />
-                                      File đính kèm
-                                    </a>
-                                  )}
+                                  <ZaloMessageAssetView asset={asset} message={msg} />
                                 </div>
                               ))}
                             <div className="mt-0.5 flex items-center gap-1 px-1" style={{ justifyContent: isSent ? "flex-end" : "flex-start" }}>
@@ -1589,7 +1640,7 @@ export function ZaloInboxAdminShell() {
                                         key={ai}
                                         className="rounded-lg overflow-hidden border border-slate-200 max-w-[120px] mt-1 bg-white"
                                       >
-                                        {asset.storage_url?.match(/\.(jpg|jpeg|png|gif|webp)/i) ? (
+                                        {classifyAssetKind(asset.storage_url || "", m) === "image" ? (
                                           // eslint-disable-next-line @next/next/no-img-element
                                           <img
                                             src={asset.storage_url!}
@@ -1599,7 +1650,7 @@ export function ZaloInboxAdminShell() {
                                         ) : (
                                           <div className="flex items-center gap-1 p-1.5 text-[9px] text-blue-600">
                                             <MaterialIcon name="attach_file" className="text-[12px]" />
-                                            <span className="truncate">File đính kèm</span>
+                                            <span className="truncate">{assetFileName(asset.storage_url || "", m)}</span>
                                           </div>
                                         )}
                                       </div>

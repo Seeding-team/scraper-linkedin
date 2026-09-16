@@ -796,7 +796,7 @@ async def send_message_to_conversation(
     if not auth:
         raise HTTPException(
             status_code=401,
-            detail="Chưa có phiên ZCA hợp lệ. Hãy đăng nhập Zalo bằng QR trước.",
+            detail="Chưa có phiên ZCA hợp lệ. Hãy đăng nhập Zalo qua Chrome Extension trước.",
         )
 
     # Infer thread_type from conversation_id when not explicitly provided
@@ -870,7 +870,7 @@ async def send_media_to_conversation(
     if not auth:
         raise HTTPException(
             status_code=401,
-            detail="Chưa có phiên ZCA hợp lệ. Hãy đăng nhập Zalo bằng QR trước.",
+            detail="Chưa có phiên ZCA hợp lệ. Hãy đăng nhập Zalo qua Chrome Extension trước.",
         )
 
     if thread_type is not None:
@@ -1277,7 +1277,7 @@ async def find_zalo_user(
     if not auth:
         raise HTTPException(
             status_code=401,
-            detail="Chưa có phiên ZCA hợp lệ. Hãy đăng nhập Zalo bằng QR trước.",
+            detail="Chưa có phiên ZCA hợp lệ. Hãy đăng nhập Zalo qua Chrome Extension trước.",
         )
 
     raw = q.strip()

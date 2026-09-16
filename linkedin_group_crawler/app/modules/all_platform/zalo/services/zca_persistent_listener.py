@@ -816,7 +816,7 @@ class ZcaPersistentListenerManager:
                 if _looks_like_auth_expired(str(exc)):
                     state.auth_expired = True
 
-            # Cookie hết hạn: dừng hẳn, không restart vô ích. Chờ user đăng nhập lại bằng QR.
+            # Cookie hết hạn: dừng hẳn, không restart vô ích. Chờ user đăng nhập lại qua Chrome Extension.
             if state.auth_expired:
                 state.desired = False
                 reason = state.last_error or "unknown"
@@ -1034,6 +1034,22 @@ class ZcaPersistentListenerManager:
                 if chat.group_id and chat.name and chat.name != chat.group_id
             }
             logger.info(f"Loaded {len(state.group_names)} ZCA group/friend names for listener user={state.user_id}")
+
+            # Đồng bộ avatar + tên đầy đủ vào zalo_groups (trước đây groups/friends
+            # load từ ZCA API CÓ avatar_url thật nhưng chỉ dùng để build cache tên
+            # trong RAM (state.group_names) rồi bỏ luôn avatar_url — mọi hội thoại
+            # do listener tự phát hiện (không qua nút "Đồng bộ" tay) không bao giờ
+            # có avatar. upsert_groups() tự merge an toàn (không đè avatar/last_
+            # message cũ bằng null), chạy 1 lần lúc listener (re)connect, KHÔNG
+            # nằm trong hot path xử lý từng tin nhắn.
+            try:
+                from app.modules.all_platform.zalo.services.supabase_service import upsert_groups
+                await upsert_groups(
+                    state.user_id,
+                    [chat.model_dump() for chat in (groups + friends) if chat.group_id],
+                )
+            except Exception as exc:
+                logger.warning(f"Could not backfill avatar/name into zalo_groups for user={state.user_id}: {exc}")
         else:
             logger.info(f"No ZCA group/friend names loaded for listener user={state.user_id} (will use Supabase cache)")
 

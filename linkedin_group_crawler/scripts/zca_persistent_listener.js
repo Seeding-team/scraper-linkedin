@@ -161,6 +161,30 @@ function isLikelyImageUrl(value) {
   return /(photo|image|img|thumb|avatar|zalo|zstatic|zadn|zaloapp)/i.test(value);
 }
 
+function isLikelyVideoUrl(value) {
+  if (!/^https?:\/\//i.test(value)) return false;
+  return /\.(mp4|webm|mov|m4v|3gp)(\?|#|$)/i.test(value);
+}
+
+// msgType Zalo đã tự phân loại rõ ràng — TIN vào giá trị này, không suy luận
+// lại từ URL. Lý do: url video/file/voice cũng host trên domain zdn.vn/
+// zadn.vn giống ảnh, nên heuristic isLikelyImageUrl (match theo domain) dễ
+// nhận NHẦM video/file/voice thành "image" nếu chỉ dựa vào URL.
+const STRUCTURED_MEDIA_MSG_TYPES = new Set([
+  "chat.photo", "chat.gif", "chat.doodle",
+  "chat.video.msg", "chat.voice", "share.file", "chat.sticker",
+]);
+const IMAGE_LIKE_MSG_TYPES = new Set(["chat.photo", "chat.gif", "chat.doodle"]);
+
+function resolveMessageType(msgType, imageUrlsCount) {
+  if (STRUCTURED_MEDIA_MSG_TYPES.has(msgType)) {
+    return IMAGE_LIKE_MSG_TYPES.has(msgType) ? "image" : msgType;
+  }
+  // msgType lạ/text ("webchat"...) — giữ heuristic cũ: có URL "giống ảnh"
+  // trong nội dung text (dán link ảnh trần) thì coi là ảnh.
+  return imageUrlsCount ? "image" : msgType;
+}
+
 function collectUrls(value, out = []) {
   if (!value) return out;
   if (typeof value === "string") {
@@ -186,6 +210,87 @@ function collectUrls(value, out = []) {
     for (const item of Object.values(value)) collectUrls(item, out);
   }
   return Array.from(new Set(out));
+}
+
+// Trước đây chỉ collectUrls() (chỉ nhận URL "giống ảnh") — video/file/voice
+// (chat.video.msg, share.file, chat.voice, chat.gif...) không có URL nào được
+// lưu lại, khiến tin nhắn loại này KHÔNG THỂ xem/tải được (chỉ còn text/filename
+// suông). Hàm này quét RỘNG HƠN: nhận mọi URL http(s) hợp lệ ở các key thường
+// chứa link media/file của Zalo, không giới hạn "giống ảnh" — dùng cho
+// media_urls (ảnh/video/file/voice) để đưa vào pipeline lưu asset chung.
+function collectMediaUrls(value, out = []) {
+  if (!value) return out;
+  if (typeof value === "string") {
+    if (/^https?:\/\//i.test(value)) out.push(value);
+    return out;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) collectMediaUrls(item, out);
+    return out;
+  }
+  if (typeof value === "object") {
+    let found = false;
+    for (const key of [
+      "hdUrl", "normalUrl", "url", "imageUrl", "photoUrl", "src",
+      "fileUrl", "href", "stickerUrl", "stickerWebpUrl",
+      "videoUrl", "video_url", "voiceUrl", "voice_url", "oriUrl", "rawUrl",
+      "gifUrl", "downloadUrl",
+    ]) {
+      if (value[key] && typeof value[key] === "string" && /^https?:\/\//i.test(value[key])) {
+        out.push(value[key]);
+        found = true;
+        break;
+      }
+    }
+    if (found) {
+      return Array.from(new Set(out));
+    }
+    for (const [key, item] of Object.entries(value)) {
+      // Zalo hay double-encode "params"/"attach" thành 1 chuỗi JSON string
+      // (thay vì object) — thử parse trước khi bỏ qua.
+      if (typeof item === "string" && /^(params|attach|attachment|content)$/i.test(key) && /^[{[]/.test(item.trim())) {
+        try {
+          collectMediaUrls(JSON.parse(item), out);
+          continue;
+        } catch (_) {
+          /* không phải JSON hợp lệ, bỏ qua */
+        }
+      }
+      collectMediaUrls(item, out);
+    }
+  }
+  return Array.from(new Set(out));
+}
+
+// Tên file thực (dùng cho share.file/doc) — Zalo để tên file ở "fileName"/"title"/"name".
+function collectFileName(value) {
+  if (!value || typeof value !== "object") return null;
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const name = collectFileName(item);
+      if (name) return name;
+    }
+    return null;
+  }
+  for (const key of ["fileName", "title", "name"]) {
+    if (typeof value[key] === "string" && value[key].trim()) return value[key].trim();
+  }
+  for (const [key, item] of Object.entries(value)) {
+    if (typeof item === "string" && /^(params|attach|attachment)$/i.test(key) && /^[{[]/.test(item.trim())) {
+      try {
+        const name = collectFileName(JSON.parse(item));
+        if (name) return name;
+      } catch (_) {
+        /* ignore */
+      }
+      continue;
+    }
+    if (item && typeof item === "object") {
+      const name = collectFileName(item);
+      if (name) return name;
+    }
+  }
+  return null;
 }
 
 function toTimestampMs(value) {
@@ -216,7 +321,14 @@ function firstTimestampMs(...values) {
 function normalizeMessage(raw, index, ownId = null) {
   const data = raw && raw.data ? raw.data : raw || {};
   const content = data.content ?? data.message ?? data.msg ?? raw.content ?? raw.message;
-  const imageUrls = collectUrls(content).concat(collectUrls(data.attachments || data.attachment || data.photos));
+  const attachmentsBlob = data.attachments || data.attachment || data.photos;
+  const imageUrls = collectUrls(content).concat(collectUrls(attachmentsBlob));
+  // media_urls (rộng hơn imageUrls) — nhận cả URL video/file/voice/gif, không
+  // chỉ ảnh, để tin nhắn chat.video.msg/share.file/chat.voice/chat.gif cũng có
+  // link thật đưa vào pipeline lưu asset (trước đây các loại này KHÔNG hề có
+  // URL nào được lưu, chỉ còn text/filename suông, không xem/tải được).
+  const mediaUrls = Array.from(new Set(collectMediaUrls(content).concat(collectMediaUrls(attachmentsBlob))));
+  const fileNameHint = collectFileName(content) || collectFileName(attachmentsBlob);
   const msgType = String(data.msgType || data.type || raw.type || "text");
   
   const senderId = String(data.uidFrom || raw.uidFrom || raw.senderId || raw.sender_id || "");
@@ -291,6 +403,12 @@ function normalizeMessage(raw, index, ownId = null) {
       contentText = "";
     }
   }
+  // Tin file/video/voice không có text thật (content chỉ là data URL/blob) —
+  // dùng tên file thật (fileName/title) làm content để UI hiện đúng tên file
+  // thay vì rỗng hoặc rơi vào nhánh "URL bị strip" ở trên.
+  if (!contentText && fileNameHint) {
+    contentText = fileNameHint;
+  }
 
   // Zalo tập trung (Mục 7.1 guide): cli_msg_id RIÊNG với message_id — message_id
   // ưu tiên msgId thật (dùng làm source_message_id/dedup key), cli_msg_id CHỈ để
@@ -298,6 +416,7 @@ function normalizeMessage(raw, index, ownId = null) {
   // cliMsgId có thể trùng giữa nhiều tin nếu dùng làm dedup key.
   const cliMsgId = data.cliMsgId != null ? String(data.cliMsgId) : (raw.cliMsgId != null ? String(raw.cliMsgId) : null);
   const mentions = Array.isArray(data.mentions) ? data.mentions : (Array.isArray(raw.mentions) ? raw.mentions : null);
+  const resolvedType = resolveMessageType(msgType, imageUrls.length);
 
   return {
     thread_id: threadId || null,
@@ -306,16 +425,19 @@ function normalizeMessage(raw, index, ownId = null) {
     sender_name: data.dName || data.displayName || raw.senderName || raw.sender_name || null,
     timestamp: timestamp ? String(timestamp) : null,
     time_text: timestamp ? new Date(Number(timestamp)).toISOString() : null,
-    type: imageUrls.length ? "image" : msgType,
+    type: resolvedType,
     content: contentText || null,
-    image_urls: Array.from(new Set(imageUrls)),
+    // image_urls: giữ tên field cũ (đỡ đụng Python/DB) nhưng giờ mang URL
+    // media THẬT của mọi loại (ảnh/video/file/voice/gif), không chỉ ảnh —
+    // xem comment collectMediaUrls() ở trên.
+    image_urls: mediaUrls,
     reply_to_id: data.quote?.msgId || data.quoteMsgId || null,
     is_deleted: msgType === "chat.delete" || msgType === "recalled",
     is_sent: isSent,
     ts: timestamp || null,
     cli_msg_id: cliMsgId,
     mentions,
-    msg_kind: imageUrls.length ? "image" : msgType,
+    msg_kind: resolvedType,
     raw,
   };
 }
