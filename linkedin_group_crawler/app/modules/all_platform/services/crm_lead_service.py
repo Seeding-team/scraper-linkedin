@@ -33,7 +33,7 @@ LEAD_COLUMNS = (
     "qualification_expected_timeline, qualification_ae_id, next_step, "
     "follow_up_date, converted_customer_id, converted_contact_id, "
     "converted_deal_id, converted_by, converted_at, created_by, created_at, "
-    "updated_at"
+    "updated_at, origin_instance"
 )
 
 # sdr_id/qualification_ae_id la UUID nullable - frontend co the gui "" thay vi
@@ -364,6 +364,9 @@ def create_lead(payload: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]
     raw_status = str(data.get("status") or "mql")
     data["status"] = _STATUS_DISPLAY_TO_INTERNAL_MAP.get(raw_status, raw_status)
     data["instance"] = settings.crm_instance
+    # Workspace GOC - khong bao gio tin gia tri client gui len, va KHONG DOI
+    # sau nay du Lead co bi copy sang site khac (xem copy_lead_to_instance).
+    data["origin_instance"] = settings.crm_instance
     logger.info(
         "tenant_write table=crm_leads operation=insert settings.crm_instance=%s resolved_instance=%s",
         settings.crm_instance,
@@ -492,6 +495,17 @@ def copy_lead_to_instance(lead_id: str, target_instance: str, user: dict[str, An
     raw = raw_res.data if raw_res else None
     if not raw:
         raise ValueError("Không tìm thấy Lead ở workspace hiện tại.")
+    # Chan copy VE DUNG workspace da tao ra Lead nay ban dau (du dang dung o
+    # site nao) - tranh trung lap khi bi copy qua lai nhieu vong (BUG THAT DA
+    # GAP: Markee -> CloudGate -> copy nguoc lai Markee tao ban trung o dung
+    # noi da tao ra no). origin_instance khong bao gio doi (xem create_lead()),
+    # fallback ve instance hien tai cho du lieu cu chua backfill (khong xay
+    # ra tren du lieu that vi migration 128 da backfill toan bo).
+    origin_instance = raw.get("origin_instance") or raw.get("instance")
+    if target_instance == origin_instance:
+        raise ValueError(
+            "Không thể sao chép Lead về đúng workspace đã tạo ra nó ban đầu."
+        )
     copy_data = {
         key: value
         for key, value in raw.items()
