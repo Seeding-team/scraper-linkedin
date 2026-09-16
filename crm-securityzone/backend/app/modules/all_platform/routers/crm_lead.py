@@ -20,6 +20,7 @@ from app.modules.all_platform.services.crm_lead_service import (
     delete_lead,
     duplicate_check,
     get_lead,
+    copy_lead_to_instance,
     list_leads,
     update_lead,
 )
@@ -116,6 +117,23 @@ def leads_delete(lead_id: str, user: dict[str, Any] = Depends(get_current_user))
     try:
         delete_lead(lead_id, user)
         return BaseResponse(success=True, message="Đã xóa Lead")
+    except Exception as exc:
+        return _error(exc)
+
+
+@router.post("/{lead_id}/copy-instance")
+def leads_copy_instance(lead_id: str, payload: dict, user: dict[str, Any] = Depends(get_current_user)) -> BaseResponse:
+    """Chi Admin THAT (khong phai leader): tao 1 ban sao cua 1 Lead (chua
+    convert) sang 1 workspace khac, Lead goc van giu nguyen - thao tac xuyen
+    tenant."""
+    if str(user.get("role") or "").strip().lower() != "admin":
+        return BaseResponse(success=False, message="Chỉ Admin mới được sao chép Lead sang workspace khác")
+    try:
+        target_instance = payload.get("target_instance")
+        if not target_instance:
+            return BaseResponse(success=False, message="target_instance là bắt buộc")
+        data = copy_lead_to_instance(lead_id, str(target_instance), user)
+        return BaseResponse(success=True, message="Đã sao chép sang workspace khác", data=data)
     except Exception as exc:
         return _error(exc)
 

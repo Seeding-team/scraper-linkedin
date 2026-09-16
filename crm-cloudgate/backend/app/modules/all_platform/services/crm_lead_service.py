@@ -56,6 +56,22 @@ LEAD_STATUS_FILTERS = {
     "unqualified": ["unqualified", "disqualified"],
 }
 
+# Chieu NGUOC LAI voi LEAD_STATUS_MAP - dung khi GHI (create_lead/update_lead).
+# Client gui status theo vocab HIEN THI don gian (mql/sql/nurturing/unqualified
+# - xem STATUS_OPTIONS trong LeadsDirectory.tsx va CrmLeadCreate.status mac
+# dinh "mql"), phai doi ve vocab NOI BO truoc khi ghi xuong DB - cot
+# crm_leads.status chi nhan new_lead/qualifying/qualified/nurture/converted/
+# disqualified (CHECK constraint, migration 078). BUG THAT DA GAP: create_lead()
+# va update_lead() truoc day dung NHAM LEAD_STATUS_MAP (chieu noi bo -> hien
+# thi) o day, khien status="mql" (gia tri mac dinh cua CrmLeadCreate) bi ghi
+# thang vao DB va vi pham CHECK constraint ngay lan tao/sua lead dau tien.
+_STATUS_DISPLAY_TO_INTERNAL_MAP = {
+    "mql": "new_lead",
+    "sql": "qualified",
+    "nurturing": "nurture",
+    "unqualified": "disqualified",
+}
+
 
 def _normalize_lead_status(row: dict[str, Any]) -> dict[str, Any]:
     raw = str(row.get("status") or "mql")
@@ -340,7 +356,8 @@ def create_lead(payload: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]
         data["sdr_id"] = actor_id or None
     if data.get("status") in ("sql", "qualified", "converted"):
         raise ValueError("Khong duoc tao lead voi status SQL/converted truc tiep - phai qua Convert Lead.")
-    data["status"] = LEAD_STATUS_MAP.get(str(data.get("status") or "mql"), str(data.get("status") or "mql"))
+    raw_status = str(data.get("status") or "mql")
+    data["status"] = _STATUS_DISPLAY_TO_INTERNAL_MAP.get(raw_status, raw_status)
     data["instance"] = settings.crm_instance
     logger.info(
         "tenant_write table=crm_leads operation=insert settings.crm_instance=%s resolved_instance=%s",
@@ -373,9 +390,10 @@ def update_lead(lead_id: str, payload: dict[str, Any], user: dict[str, Any]) -> 
     if data.get("status") == "converted":
         raise ValueError("Khong duoc tu doi status sang converted - phai goi Convert Lead.")
     if "status" in data:
-        data["status"] = LEAD_STATUS_MAP.get(str(data.get("status") or ""), data.get("status"))
-        if data["status"] == "sql" and not current.get("converted_deal_id"):
+        raw_status = str(data.get("status") or "")
+        if raw_status == "sql" and not current.get("converted_deal_id"):
             raise ValueError("Lead chi duoc chuyen sang SQL thong qua luong Tao co hoi.")
+        data["status"] = _STATUS_DISPLAY_TO_INTERNAL_MAP.get(raw_status, raw_status)
     if not (has_full_crm_access(user) and "sdr_id" in data):
         data.pop("sdr_id", None)
 
@@ -433,6 +451,59 @@ def delete_lead(lead_id: str, user: dict[str, Any]) -> None:
 
     supabase = get_supabase_client()
     execute_supabase_query(lambda: supabase.table("crm_leads").delete().eq("id", lead_id).eq("instance", settings.crm_instance).execute())
+
+
+def copy_lead_to_instance(lead_id: str, target_instance: str, user: dict[str, Any]) -> dict[str, Any]:
+    """Admin-only: TAO 1 BAN SAO cua 1 Lead (dau moi tho, CHUA convert) sang 1
+    workspace khac - Lead GOC van giu nguyen o workspace hien tai (khong xoa/
+    doi instance ban goc, khac voi "chuyen han"). Dung khi 1 dau moi vua la
+    tiem nang cua site nay vua la tiem nang cua site khac, thay vi phai nhap
+    tay lai tu dau. KHONG cascade gi ca - Lead chua convert thi chua sinh ra
+    Khach hang/Lien he/Co hoi nao ca (xem migration 078). Chan neu da convert:
+    luc do ban sao se khong co y nghia vi da co du lieu downstream rieng cua
+    workspace hien tai."""
+    if target_instance not in settings.workspace_domains:
+        raise ValueError(f"Workspace \"{target_instance}\" khong hop le.")
+    if target_instance == settings.crm_instance:
+        raise ValueError("Không thể sao chép sang chính workspace hiện tại.")
+    current = get_lead(lead_id, user)
+    if current.get("status") == "converted" or current.get("converted_customer_id"):
+        raise ValueError(
+            "Lead này đã được chuyển đổi thành Khách hàng - không thể sao chép sang workspace khác."
+        )
+    supabase = get_supabase_client()
+    # Lay lai dong RAW (khong qua _normalize_lead_status trong get_lead() -
+    # ham do doi 'status' sang vocab hien thi vd 'mql', khong dung duoc de
+    # insert lai vi se vi pham CHECK constraint cua cot status).
+    raw_res = execute_supabase_query(
+        lambda: supabase.table("crm_leads")
+        .select(LEAD_COLUMNS)
+        .eq("id", lead_id)
+        .eq("instance", settings.crm_instance)
+        .maybe_single()
+        .execute()
+    )
+    raw = raw_res.data if raw_res else None
+    if not raw:
+        raise ValueError("Không tìm thấy Lead ở workspace hiện tại.")
+    copy_data = {
+        key: value
+        for key, value in raw.items()
+        if key
+        not in (
+            "id",
+            "created_at",
+            "updated_at",
+            "converted_customer_id",
+            "converted_contact_id",
+            "converted_deal_id",
+            "converted_by",
+            "converted_at",
+        )
+    }
+    copy_data["instance"] = target_instance
+    res = execute_supabase_query(lambda: supabase.table("crm_leads").insert(copy_data).execute())
+    return res.data[0]
 
 
 def _request_hash(payload: dict[str, Any]) -> str:

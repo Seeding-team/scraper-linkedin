@@ -156,6 +156,7 @@ from app.modules.all_platform.services.supabase_user_service import (
     update_user_slug,
     update_user_role,
     update_user_active_status,
+    update_user_allowed_instances,
     update_user_quote_approver,
     update_user_quote_business_role,
     list_users_by_quote_business_role,

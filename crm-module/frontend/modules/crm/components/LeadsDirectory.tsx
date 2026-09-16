@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { API_BASE_URL, API_KEY } from '@/lib/env';
 import { useAppAuth } from '@/contexts/AppAuthContext';
 import { useMembers } from '@/hooks/useMembers';
+import { authService } from '@/services/all-platform.service';
 import { ActionMenu, type ActionMenuItem } from './ActionMenu';
 import { LeadFormDrawer } from './LeadFormDrawer';
 import { LeadDetailDrawer } from './LeadDetailDrawer';
@@ -12,6 +13,21 @@ import { SearchableSelect } from './SearchableSelect';
 import { useCrmCategoryCodeOptions } from './CrmCategorySelect';
 import { Loader2, Plus, RotateCcw } from './icons';
 import type { CrmLeadKpi, CrmLeadRow, CrmLeadStatus } from '../types';
+
+// Cung 1 bang nhan voi WorkspaceSwitcherShadcn.tsx/MemberManagementContent.tsx
+// - instance code khong dong bo chu hoa/thuong giua cac site (vd
+// "SECURITYZONE" viet hoa het trong khi "markee"/"cloudgate" viet thuong,
+// xem config.py), phai hien thi qua bang nhan nay thay vi in thang gia tri
+// tho de UI nhat quan.
+const WORKSPACE_LABELS: Record<string, string> = {
+  markee: 'Markee',
+  cloudgate: 'CloudGate',
+  SECURITYZONE: 'SecurityZone',
+};
+
+function workspaceLabel(instance: string): string {
+  return WORKSPACE_LABELS[instance] || instance;
+}
 
 const STATUS_OPTIONS: Array<{ value: CrmLeadStatus | ''; label: string }> = [
   { value: '', label: 'Tất cả trạng thái' },
@@ -160,6 +176,73 @@ export function LeadsDirectory() {
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState('');
   const { options: sourceOptions } = useCrmCategoryCodeOptions('crm_source');
+
+  // Chuyen workspace: Lead chua convert thi chi la du lieu tho, chua co
+  // Khach hang/Deal gan voi no - chuyen chi can doi instance cua dung dong
+  // Lead nay (khong cascade gi ca, khac han chuyen Khach hang). Chi Admin
+  // THAT moi thay/dung duoc (backend cung chan y het). Day la SAO CHEP
+  // (copy) - Lead goc van giu nguyen o workspace hien tai, chi tao them 1
+  // ban ghi moi o workspace dich (khong phai "chuyen han" lam mat ban goc).
+  const [workspaceOptions, setWorkspaceOptions] = useState<Array<{ instance: string; url: string }>>([]);
+  const [copyLead, setCopyLead] = useState<CrmLeadRow | null>(null);
+  const [copyTargetInstance, setCopyTargetInstance] = useState('');
+  const [copying, setCopying] = useState(false);
+  const [copyError, setCopyError] = useState('');
+  const canCopyInstance = user?.role === 'admin' && workspaceOptions.length > 0;
+
+  useEffect(() => {
+    if (user?.role !== 'admin') return;
+    let alive = true;
+    authService
+      .listWorkspaces()
+      .then(res => {
+        if (!alive) return;
+        const items = res.success ? res.data?.items || [] : [];
+        setWorkspaceOptions(items.filter(item => !item.current).map(item => ({ instance: item.instance, url: item.url })));
+      })
+      .catch(() => {
+        if (alive) setWorkspaceOptions([]);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [user?.role]);
+
+  function openCopyModal(lead: CrmLeadRow) {
+    setCopyLead(lead);
+    setCopyTargetInstance('');
+    setCopyError('');
+  }
+
+  function closeCopyModal() {
+    if (copying) return;
+    setCopyLead(null);
+    setCopyTargetInstance('');
+    setCopyError('');
+  }
+
+  async function confirmCopy() {
+    const target = copyLead;
+    if (!target || !copyTargetInstance || copying) return;
+    setCopying(true);
+    setCopyError('');
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/all-platform/crm/leads/${encodeURIComponent(target.id)}/copy-instance`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: headers(),
+        body: JSON.stringify({ target_instance: copyTargetInstance }),
+      });
+      const body = await res.json();
+      if (!res.ok || body.success === false) throw new Error(body?.message || 'Không sao chép được sang workspace khác.');
+      setCopyLead(null);
+      setCopyTargetInstance('');
+    } catch (err) {
+      setCopyError(err instanceof Error ? err.message : 'Không sao chép được sang workspace khác.');
+    } finally {
+      setCopying(false);
+    }
+  }
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -390,6 +473,13 @@ export function LeadsDirectory() {
             onSelect: () => {
               window.location.href = `/all-platform/crm/customers/${lead.convertedCustomerId}`;
             },
+          }]
+        : []),
+      ...(canCopyInstance && lead.status !== 'converted' && !lead.convertedCustomerId
+        ? [{
+            key: 'copy-instance',
+            label: 'Sao chép sang workspace khác',
+            onSelect: () => openCopyModal(lead),
           }]
         : []),
       ...(lead.canWrite
@@ -702,6 +792,57 @@ export function LeadsDirectory() {
         onClose={() => setEditLead(null)}
         onSaved={applyUpdatedLead}
       />
+
+      {copyLead ? (
+        <div
+          className="crm-modal-backdrop crm-modal-backdrop--confirm"
+          onClick={() => (copying ? undefined : closeCopyModal())}
+        >
+          <div
+            className="crm-modal crm-modal--confirm"
+            role="dialog"
+            aria-modal="true"
+            onClick={event => event.stopPropagation()}
+          >
+            <header className="crm-modal-header">
+              <div>
+                <p className="crm-modal-title">Sao chép sang workspace khác</p>
+                <p className="crm-modal-subtitle">
+                  Tạo 1 bản sao của Lead &ldquo;{copyLead.leadName}&rdquo; ở workspace khác — Lead gốc vẫn
+                  giữ nguyên ở workspace hiện tại.
+                </p>
+              </div>
+            </header>
+            <div className="crm-modal-body">
+              {copyError ? <p className="crm-error">{copyError}</p> : null}
+              {workspaceOptions.length ? (
+                <SearchableSelect
+                  value={copyTargetInstance}
+                  onChange={setCopyTargetInstance}
+                  placeholder="Chọn workspace đích"
+                  options={workspaceOptions.map(option => ({ value: option.instance, label: workspaceLabel(option.instance) }))}
+                />
+              ) : (
+                <p className="crm-muted">Không có workspace nào khác được cấu hình.</p>
+              )}
+            </div>
+            <footer className="crm-modal-footer">
+              <button type="button" className="crm-cancel-button" disabled={copying} onClick={closeCopyModal}>
+                Hủy
+              </button>
+              <button
+                type="button"
+                className="crm-primary-button"
+                disabled={copying || !copyTargetInstance}
+                onClick={() => void confirmCopy()}
+              >
+                {copying ? <Loader2 className="crm-save-spinner" /> : null}
+                {copying ? 'Đang sao chép...' : 'Sao chép'}
+              </button>
+            </footer>
+          </div>
+        </div>
+      ) : null}
 
       {deleteTarget ? (
         <div

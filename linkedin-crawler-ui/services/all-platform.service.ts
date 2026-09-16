@@ -1845,6 +1845,9 @@ export interface AppUserProfile {
   /** Vai trò NGHIỆP VỤ báo giá (migration 095) — presale/sale/both/null, TÁCH
    * BIỆT hoàn toàn với `role` (system role admin/leader/member). */
   quote_business_role?: "presale" | "sale" | "both" | null;
+  /** Workspace/clone CRM (markee/cloudgate/SECURITYZONE) tài khoản này được
+   * phép đăng nhập (migration 127) — quản trị tại Main, dùng bởi 3 clone. */
+  allowed_instances?: string[] | null;
 }
 
 export interface QuoteBusinessRoleUser {
@@ -1888,6 +1891,14 @@ export const usersService = {
     return requestJson(`${BASE}/users/update-role`, {
       method: "POST",
       body: JSON.stringify({ email, role }),
+    });
+  },
+  /** Admin-only: gán danh sách workspace/clone CRM (markee/cloudgate/
+   * SECURITYZONE) 1 tài khoản được phép đăng nhập (migration 127). */
+  updateAllowedInstances: (email: string, allowed_instances: string[]): Promise<ApiResponse<AppUserProfile>> => {
+    return requestJson(`${BASE}/users/update-allowed-instances`, {
+      method: "POST",
+      body: JSON.stringify({ email, allowed_instances }),
     });
   },
   /** Admin-only: tạo tài khoản đăng nhập mới (chưa có mật khẩu dùng được — chỉ
