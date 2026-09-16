@@ -21,6 +21,7 @@ from app.modules.all_platform.routers.crm_customer import router as crm_customer
 from app.modules.all_platform.routers.crm_lead import router as crm_lead_router
 from app.modules.all_platform.routers.crm_contact import router as crm_contact_router
 from app.modules.all_platform.routers.crm_contact import detail_router as crm_contact_detail_router
+from app.modules.all_platform.routers.crm_sync import router as crm_sync_router
 from app.modules.all_platform.routers.quote import (
     quote_forms_router,
     quotes_router,
@@ -65,6 +66,11 @@ all_platform_router.include_router(
     prefix="/crm/contacts",
     tags=["All-Platform CRM Contacts"],
 )
+
+# ── Sync (he thong ngoai, vd Tech Support, PULL khach hang da mua + contact) ──
+# Auth rieng (require_sync_api_key), KHONG dung JWT app_users nhu cac router
+# CRM UI o tren.
+all_platform_router.include_router(crm_sync_router, prefix="/sync", tags=["CRM Sync (External)"])
 
 # ── Quote Forms + Quotes ───────────────────────────────────────────────────────
 all_platform_router.include_router(quote_forms_router, prefix="/quote-forms", tags=["All-Platform Quote Forms"])
