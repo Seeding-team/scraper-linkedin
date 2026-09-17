@@ -622,14 +622,16 @@ def upsert_service_catalog_item_pricing(
 ) -> dict:
     """Backend la nguon THAT DUY NHAT tinh 3 gia tri - KHONG luu nguyen so
     client gui cho field KHONG phai field dieu khien (dung yeu cau audit:
-    "backend phai dam bao 3 gia tri luon nhat quan"). `cost_price_vnd` LUON
-    duoc tin nguyen (khong co field nao khac dieu khien no); field con lai
-    tuy `pricing_input_mode`:
-      - mode='markup': customer = cost * (1 + markup/100). cost=None ->
-        customer=None (khong tinh duoc).
-      - mode='customer_price': cost=None HOAC cost==0 -> KHONG chia (tranh
-        ZeroDivisionError/suy nguoc vo nghia), markup tra ve None. Nguoc lai
-        markup = customer/cost - 1.
+    "backend phai dam bao 3 gia tri luon nhat quan"). Field duoc TINH LAI
+    (khong tin nguyen so client gui) tuy `pricing_input_mode`:
+      - mode='markup': cost + markup la input, customer = cost * (1 +
+        markup/100). cost=None -> customer=None (khong tinh duoc).
+      - mode='customer_price' (alias 'price'): cost + customer la input,
+        cost=None HOAC cost==0 -> KHONG chia (tranh ZeroDivisionError/suy
+        nguoc vo nghia), markup tra ve None. Nguoc lai markup = customer/cost - 1.
+      - mode='cost': markup + customer la input (nguoc voi mode='markup') -
+        cost = customer / (1 + markup/100). markup<=-100% (divisor<=0) hoac
+        thieu 1 trong 2 gia tri -> cost=None, khong chia/suy nguoc vo nghia.
     Validate: cost/customer khong am (< 0 -> ValueError). Markup kep toi
     thieu -100% (gia khach toi thieu = 0, giong dung cach da lam cho
     markup hang muc bao gia - khong co nguong tren nghiep vu nao dung chung
@@ -652,6 +654,17 @@ def upsert_service_catalog_item_pricing(
         else:
             resolved_markup = (customer_price_vnd / cost_price_vnd - Decimal("1")) * Decimal("100")
         cost, resolved_customer = cost_price_vnd, customer_price_vnd
+    elif pricing_input_mode == "cost":
+        # Suy nguoc Gia von tu Markup + Gia khach (nguoc voi mode='markup').
+        # divisor <= 0 (markup <= -100%) -> khong chia duoc, tra ve cost=None
+        # thay vi ZeroDivisionError/so am vo nghia.
+        markup = None if markup_percent is None else max(Decimal("-100"), markup_percent)
+        divisor = None if markup is None else (Decimal("1") + markup / Decimal("100"))
+        if divisor is None or divisor <= 0 or customer_price_vnd is None:
+            cost = None
+        else:
+            cost = customer_price_vnd / divisor
+        resolved_markup, resolved_customer = markup, customer_price_vnd
     else:
         cost, resolved_markup, resolved_customer = cost_price_vnd, markup_percent, customer_price_vnd
 

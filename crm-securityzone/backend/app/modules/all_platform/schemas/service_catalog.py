@@ -245,4 +245,4 @@ class ServiceCatalogItemPricingUpsertRequest(BaseModel):
     default_cost_price_vnd: Optional[Decimal] = Field(default=None, ge=0)
     default_markup_percent: Optional[Decimal] = None
     default_customer_price_vnd: Optional[Decimal] = Field(default=None, ge=0)
-    pricing_input_mode: Literal["markup", "customer_price"]
+    pricing_input_mode: Literal["cost", "markup", "customer_price"]

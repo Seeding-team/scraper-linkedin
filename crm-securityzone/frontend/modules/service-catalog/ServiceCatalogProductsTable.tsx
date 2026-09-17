@@ -16,6 +16,7 @@ import {
   formatMarkupOrMissing,
   computeCustomerFromMarkup,
   computeMarkupFromCustomer,
+  computeCostFromMarkupAndCustomer,
   parseNullableNumber,
   formatSkuName,
   type FlatProduct,
@@ -207,18 +208,22 @@ export const ServiceCatalogProductsTable = forwardRef<ServiceCatalogProductsTabl
   const costPreview = parseNullableNumber(pricingCost);
   const markupPreview = parseNullableNumber(pricingMarkup);
   const customerPreview = parseNullableNumber(pricingCustomer);
+  // Dung 1 trong 3 mode do nguoi dung CHON TUONG MINH qua bo chon "Tính tự
+  // động" (khong con suy tu field vua go nhu truoc - truoc day go Markup rồi
+  // go Giá khách sẽ tự đổi qua đổi lại giữa 2 mode, khong the nao vua nhap
+  // Giá khách VUA nhap Markup de suy ngược Giá vốn). Mode nao thi field
+  // TRUNG TEN mode do la field duoc TINH (disabled), 2 field con lai la input.
   const previewCustomer = pricingMode === 'markup' ? computeCustomerFromMarkup(costPreview, markupPreview) : customerPreview;
   const previewMarkup = pricingMode === 'price' ? computeMarkupFromCustomer(costPreview, customerPreview) : markupPreview;
+  const previewCost = pricingMode === 'cost' ? computeCostFromMarkupAndCustomer(markupPreview, customerPreview) : costPreview;
 
   function handleCostChange(raw: string) {
     setPricingCost(raw);
   }
   function handleMarkupChange(raw: string) {
-    setPricingMode('markup');
     setPricingMarkup(raw);
   }
   function handleCustomerChange(raw: string) {
-    setPricingMode('price');
     setPricingCustomer(raw);
   }
 
@@ -229,9 +234,9 @@ export const ServiceCatalogProductsTable = forwardRef<ServiceCatalogProductsTabl
     try {
       const saved = await serviceCatalogRepository.upsertPricing(editTarget.id, {
         issuerCompanyId: null,
-        defaultCostPriceVnd: costPreview,
-        defaultMarkupPercent: pricingMode === 'markup' ? markupPreview : previewMarkup,
-        defaultCustomerPriceVnd: pricingMode === 'price' ? customerPreview : previewCustomer,
+        defaultCostPriceVnd: pricingMode === 'cost' ? previewCost : costPreview,
+        defaultMarkupPercent: pricingMode === 'price' ? previewMarkup : markupPreview,
+        defaultCustomerPriceVnd: pricingMode === 'markup' ? previewCustomer : customerPreview,
         pricingInputMode: pricingMode,
       });
       // Ghi de lai bang DUNG gia tri backend da tinh (co the khac so preview
@@ -402,28 +407,44 @@ export const ServiceCatalogProductsTable = forwardRef<ServiceCatalogProductsTabl
                   <p className="sc-drawer-section-hint">
                     Bộ giá trị mặc định được lưu tại đây để tự động điền khi tạo báo giá.
                   </p>
+                  <label className="sc-field" style={{ marginBottom: 8 }}>
+                    <span>Tính tự động</span>
+                    <select value={pricingMode} onChange={e => setPricingMode(e.target.value as ServiceCatalogPricingInputMode)}>
+                      <option value="markup">Giá khách (nhập Giá vốn + Markup)</option>
+                      <option value="cost">Giá vốn (nhập Markup + Giá khách)</option>
+                      <option value="price">Markup (nhập Giá vốn + Giá khách)</option>
+                    </select>
+                  </label>
                   <div className="sc-pricing-grid">
                     <label className="sc-field">
                       <span>Giá vốn/ĐV *</span>
-                      <CurrencyInput value={costPreview} onChange={value => handleCostChange(value == null ? '' : String(value))} />
+                      <CurrencyInput
+                        value={pricingMode === 'cost' ? previewCost : costPreview}
+                        onChange={value => handleCostChange(value == null ? '' : String(value))}
+                        disabled={pricingMode === 'cost'}
+                      />
                     </label>
                     <label className="sc-field">
                       <span>Markup mặc định *</span>
                       <input
                         type="number"
-                        value={pricingMode === 'markup' ? pricingMarkup : (previewMarkup ?? '')}
+                        value={pricingMode === 'price' ? (previewMarkup ?? '') : pricingMarkup}
                         onChange={e => handleMarkupChange(e.target.value)}
+                        disabled={pricingMode === 'price'}
                       />
                     </label>
                     <label className="sc-field">
                       <span>Giá khách/ĐV *</span>
                       <CurrencyInput
-                        value={pricingMode === 'price' ? customerPreview : previewCustomer}
+                        value={pricingMode === 'markup' ? previewCustomer : customerPreview}
                         onChange={value => handleCustomerChange(value == null ? '' : String(value))}
+                        disabled={pricingMode === 'markup'}
                       />
                     </label>
                   </div>
-                  <p className="sc-drawer-section-hint">Thay đổi Markup sẽ tự tính lại Giá khách (và ngược lại).</p>
+                  <p className="sc-drawer-section-hint">
+                    Trường tô xám ở trên được tính tự động từ 2 trường còn lại — đổi ở "Tính tự động" nếu muốn tính ngược Giá vốn từ Giá khách + Markup.
+                  </p>
                   {pricingError ? <div className="sc-error">{pricingError}</div> : null}
                   {pricingSavedAt ? <div className="sc-notice">Đã lưu bộ giá.</div> : null}
                   <div className="sc-panel-actions">

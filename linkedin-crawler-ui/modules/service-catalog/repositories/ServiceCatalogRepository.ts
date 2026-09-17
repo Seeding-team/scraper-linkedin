@@ -122,7 +122,11 @@ export class ServiceCatalogRepository {
         default_cost_price_vnd: input.defaultCostPriceVnd ?? null,
         default_markup_percent: input.defaultMarkupPercent ?? null,
         default_customer_price_vnd: input.defaultCustomerPriceVnd ?? null,
-        pricing_input_mode: input.pricingInputMode,
+        // Backend chi chap nhan dung 3 literal "cost"|"markup"|"customer_price"
+        // (xem ServiceCatalogItemPricingUpsertRequest) - FE dung "price" lam
+        // ten mode noi bo (ServiceCatalogPricingInputMode), phai doi ten khi
+        // goi API keo Pydantic tra 422 "Invalid request body".
+        pricing_input_mode: input.pricingInputMode === 'price' ? 'customer_price' : input.pricingInputMode,
       }),
     });
   }
