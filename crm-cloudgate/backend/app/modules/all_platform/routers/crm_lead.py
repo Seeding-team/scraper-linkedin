@@ -21,6 +21,7 @@ from app.modules.all_platform.services.crm_lead_service import (
     duplicate_check,
     get_lead,
     copy_lead_to_instance,
+    copy_leads_to_instance,
     list_leads,
     update_lead,
 )
@@ -88,6 +89,28 @@ def leads_company_match(
 def leads_create(payload: CrmLeadCreate, user: dict[str, Any] = Depends(get_current_user)) -> BaseResponse:
     try:
         return BaseResponse(success=True, message="Da tao lead", data=create_lead(payload.model_dump(), user))
+    except Exception as exc:
+        return _error(exc)
+
+
+@router.post("/copy-instance")
+def leads_copy_instance_bulk(payload: dict, user: dict[str, Any] = Depends(get_current_user)) -> BaseResponse:
+    """Chi Admin THAT: sao chep NHIEU Lead (chua convert) cung luc sang 1
+    workspace dich - ban bulk cua POST /{lead_id}/copy-instance."""
+    if str(user.get("role") or "").strip().lower() != "admin":
+        return BaseResponse(success=False, message="Chỉ Admin mới được sao chép Lead sang workspace khác")
+    try:
+        lead_ids = payload.get("lead_ids")
+        target_instance = payload.get("target_instance")
+        if not lead_ids or not isinstance(lead_ids, list):
+            return BaseResponse(success=False, message="lead_ids là bắt buộc (danh sách)")
+        if not target_instance:
+            return BaseResponse(success=False, message="target_instance là bắt buộc")
+        data = copy_leads_to_instance([str(i) for i in lead_ids], str(target_instance), user)
+        failed_count = len(data.get("failed") or [])
+        copied_count = len(data.get("copied") or [])
+        message = f"Đã sao chép {copied_count} Lead" + (f", {failed_count} lỗi" if failed_count else "")
+        return BaseResponse(success=True, message=message, data=data)
     except Exception as exc:
         return _error(exc)
 

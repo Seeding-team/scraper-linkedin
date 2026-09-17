@@ -526,6 +526,22 @@ def copy_lead_to_instance(lead_id: str, target_instance: str, user: dict[str, An
     return res.data[0]
 
 
+def copy_leads_to_instance(lead_ids: list[str], target_instance: str, user: dict[str, Any]) -> dict[str, Any]:
+    """Ban nhieu (bulk) cua copy_lead_to_instance() - sao chep nhieu Lead cung
+    luc sang 1 workspace dich. Loi o 1 Lead (da convert, dung origin, khong
+    tim thay...) KHONG chan cac Lead con lai - tra ve ket qua tung Lead rieng
+    (thanh cong/that bai + ly do) de FE hien thi day du, giong tinh than
+    "khong de 1 dong xau lam hong ca lo"."""
+    copied: list[dict[str, Any]] = []
+    failed: list[dict[str, Any]] = []
+    for lead_id in lead_ids:
+        try:
+            copied.append(copy_lead_to_instance(lead_id, target_instance, user))
+        except Exception as exc:
+            failed.append({"lead_id": lead_id, "message": str(exc)})
+    return {"copied": copied, "failed": failed}
+
+
 def _request_hash(payload: dict[str, Any]) -> str:
     return hashlib.sha256(json.dumps(payload, sort_keys=True, default=str).encode("utf-8")).hexdigest()
 
