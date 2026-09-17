@@ -99,6 +99,16 @@ export function computeMarkupFromCustomer(cost: number | null, customer: number 
   return (customer / cost - 1) * 100;
 }
 
+/** Nguoc voi computeCustomerFromMarkup: suy Gia von tu Markup + Gia khach.
+ * divisor <= 0 (markup <= -100%) -> khong chia duoc, tra ve null thay vi
+ * so am/Infinity vo nghia. */
+export function computeCostFromMarkupAndCustomer(markup: number | null, customer: number | null): number | null {
+  if (markup == null || customer == null) return null;
+  const divisor = 1 + markup / 100;
+  if (divisor <= 0) return null;
+  return customer / divisor;
+}
+
 export function parseNullableNumber(raw: string): number | null {
   if (raw.trim() === '') return null;
   const n = Number(raw);
