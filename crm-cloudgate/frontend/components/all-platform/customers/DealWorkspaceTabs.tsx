@@ -328,7 +328,13 @@ export function ContractTab({ customer }: { customer: Customer }) {
 
   useEffect(refresh, [customer.id]);
 
-  const hasLegacy = contracts.length === 0 && LEGACY_CONTRACT_FIELDS.some((f) => Boolean(customer[f]));
+  // Vấn đề 2 (2026-09): purchase/sale_contract_links là mảng — Boolean([]) luôn
+  // true nên không đưa vào LEGACY_CONTRACT_FIELDS, check riêng bằng length.
+  const hasLegacy =
+    contracts.length === 0 &&
+    (LEGACY_CONTRACT_FIELDS.some((f) => Boolean(customer[f])) ||
+      (customer.purchase_contract_links ?? []).some((l) => l?.url) ||
+      (customer.sale_contract_links ?? []).some((l) => l?.url));
 
   return (
     <section className="space-y-3">
@@ -479,6 +485,48 @@ export function ContractTab({ customer }: { customer: Customer }) {
                 <div className="mt-0.5 text-sm font-medium text-amber-900">—</div>
               )}
             </div>
+            {/* Vấn đề 2 (2026-09): hợp đồng/báo giá MUA (Phase 1) — có thể nhiều link. */}
+            {(customer.purchase_contract_links ?? []).filter((l) => l?.url).length > 0 && (
+              <div className="rounded-md border border-amber-200 bg-white px-3 py-2">
+                <div className="text-[10px] uppercase tracking-wider text-amber-600">Hợp đồng mua (Phase 1)</div>
+                <div className="mt-0.5 space-y-0.5">
+                  {(customer.purchase_contract_links ?? [])
+                    .filter((l) => l?.url)
+                    .map((l, i) => (
+                      <a
+                        key={i}
+                        href={l.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="flex items-center gap-1 truncate text-sm font-medium text-blue-700 hover:underline"
+                      >
+                        <FileText className="size-3 shrink-0" /> {l.name || l.url}
+                      </a>
+                    ))}
+                </div>
+              </div>
+            )}
+            {/* Vấn đề 2 (2026-09): hợp đồng/báo giá BÁN (Phase 2) — có thể nhiều link. */}
+            {(customer.sale_contract_links ?? []).filter((l) => l?.url).length > 0 && (
+              <div className="rounded-md border border-amber-200 bg-white px-3 py-2">
+                <div className="text-[10px] uppercase tracking-wider text-amber-600">Hợp đồng bán (Phase 2)</div>
+                <div className="mt-0.5 space-y-0.5">
+                  {(customer.sale_contract_links ?? [])
+                    .filter((l) => l?.url)
+                    .map((l, i) => (
+                      <a
+                        key={i}
+                        href={l.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="flex items-center gap-1 truncate text-sm font-medium text-blue-700 hover:underline"
+                      >
+                        <FileText className="size-3 shrink-0" /> {l.name || l.url}
+                      </a>
+                    ))}
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
