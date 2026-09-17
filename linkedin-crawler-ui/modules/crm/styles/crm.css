@@ -2508,6 +2508,230 @@
   background: #f8fafc;
 }
 
+/* Import Lead Excel: modal rong de preview tung dong/cot ma van giu header,
+ * footer va cach dieu huong chung cua CRM. */
+.crm-lead-import-modal {
+  width: min(92rem, 100%);
+  max-height: 94vh;
+}
+
+.crm-lead-import-modal .crm-modal-body {
+  min-height: 0;
+  min-width: 0;
+}
+
+/* Stepper song song voi title tren header modal (khong con hang rieng trong
+ * body) - xem `.crm-lead-import-header`. Mau dung chung voi CRM primary
+ * (#be1e4b, giong `.crm-primary-button`/`.crm-page-tab--active`) thay vi mau
+ * tim rieng truoc day. */
+.crm-lead-import-header {
+  align-items: flex-start;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+.crm-lead-import-header-steps {
+  display: flex;
+  align-items: center;
+  list-style: none;
+  flex-shrink: 0;
+  margin-top: .4rem;
+}
+.crm-lead-import-step {
+  display: flex;
+  align-items: center;
+  gap: .45rem;
+}
+.crm-lead-import-step-circle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.4rem;
+  height: 1.4rem;
+  flex-shrink: 0;
+  border-radius: 999px;
+  background: #e2e8f0;
+  color: #94a3b8;
+  font-size: .7rem;
+  font-weight: 700;
+}
+.crm-lead-import-step-label {
+  font-size: .78rem;
+  font-weight: 600;
+  color: #94a3b8;
+  white-space: nowrap;
+}
+.crm-lead-import-step-connector {
+  width: 1.5rem;
+  height: 2px;
+  margin: 0 .5rem;
+  flex-shrink: 0;
+  background: #e2e8f0;
+}
+.crm-lead-import-step-connector.is-filled { background: #f0b5c8; }
+.crm-lead-import-step.is-active .crm-lead-import-step-circle { background: #be1e4b; color: #fff; }
+.crm-lead-import-step.is-active .crm-lead-import-step-label { color: #0f172a; }
+.crm-lead-import-step.is-done .crm-lead-import-step-circle { background: #fbdce6; color: #be1e4b; }
+.crm-lead-import-step.is-done .crm-lead-import-step-label { color: #64748b; }
+
+@media (max-width: 900px) {
+  .crm-lead-import-header-steps { width: 100%; margin-left: 0; }
+}
+
+.crm-lead-import-notice {
+  margin-bottom: 1rem;
+  border: 1px solid #bae6fd;
+  border-radius: .7rem;
+  background: #f0f9ff;
+  color: #075985;
+  padding: .75rem 1rem;
+}
+
+.crm-lead-import-filebar,
+.crm-lead-import-mapping,
+.crm-lead-import-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: .65rem;
+  margin-bottom: 1rem;
+}
+
+.crm-lead-import-mapping span,
+.crm-lead-import-summary span {
+  border-radius: 999px;
+  background: #f1f5f9;
+  color: #475569;
+  font-size: .75rem;
+  padding: .3rem .65rem;
+}
+
+.crm-lead-import-summary .is-valid { background: #dcfce7; color: #166534; }
+.crm-lead-import-summary .is-duplicate { background: #fef3c7; color: #92400e; }
+.crm-lead-import-summary .is-error { background: #fee2e2; color: #991b1b; }
+.crm-lead-import-table-wrap {
+  max-height: min(48vh, 32rem);
+  overflow: auto;
+  overscroll-behavior: contain;
+  border: 1px solid #e2e8f0;
+  border-radius: .7rem;
+}
+.crm-lead-import-table th,
+.crm-lead-import-table td {
+  padding: .65rem .75rem;
+  text-align: left;
+  vertical-align: top;
+  font-size: .75rem;
+  line-height: 1.5;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.crm-lead-import-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #f8fafc;
+}
+.crm-lead-import-table input[type="checkbox"] { display: block; margin: .15rem auto; }
+.crm-lead-import-table tr.is-duplicate td { background: #fffbeb; }
+.crm-lead-import-table tr.is-error td { background: #fff1f2; }
+.crm-lead-import-table td:last-child div { margin-top: .2rem; color: #b91c1c; }
+
+/* "Xem thêm cột" mo rong ngang (khong tang chieu cao row) - Checkbox+Ho ten
+ * ghim trai, Trang thai ghim phai, cuon ngang o giua khi bat cot phu. */
+.crm-lead-import-columns-toggle {
+  margin-left: auto;
+  border: 1px solid #cbd5e1;
+  border-radius: .5rem;
+  background: #fff;
+  color: #2563eb;
+  font-size: .75rem;
+  font-weight: 600;
+  padding: .35rem .75rem;
+  white-space: nowrap;
+}
+.crm-lead-import-columns-toggle:hover { background: #f8fafc; }
+
+.crm-lead-import-table th:nth-child(1),
+.crm-lead-import-table td:nth-child(1) {
+  position: sticky;
+  left: 0;
+  width: 2.75rem;
+  min-width: 2.75rem;
+}
+.crm-lead-import-table th:nth-child(2),
+.crm-lead-import-table td:nth-child(2) {
+  position: sticky;
+  left: 2.75rem;
+  min-width: 10rem;
+}
+.crm-lead-import-table th:last-child,
+.crm-lead-import-table td:last-child {
+  position: sticky;
+  right: 0;
+  min-width: 12rem;
+}
+.crm-lead-import-table th:nth-child(1),
+.crm-lead-import-table th:nth-child(2),
+.crm-lead-import-table th:last-child { z-index: 2; }
+.crm-lead-import-table td:nth-child(1),
+.crm-lead-import-table td:nth-child(2),
+.crm-lead-import-table td:last-child { z-index: 1; background: #fff; }
+.crm-lead-import-table tr.is-duplicate td:nth-child(1),
+.crm-lead-import-table tr.is-duplicate td:nth-child(2),
+.crm-lead-import-table tr.is-duplicate td:last-child { background: #fffbeb; }
+.crm-lead-import-table tr.is-error td:nth-child(1),
+.crm-lead-import-table tr.is-error td:nth-child(2),
+.crm-lead-import-table tr.is-error td:last-child { background: #fff1f2; }
+.crm-lead-import-result { border-radius: .8rem; background: #f0fdf4; color: #166534; padding: 1.25rem; }
+.crm-lead-import-result h3 { margin-bottom: .5rem; font-size: 1.05rem; }
+.crm-lead-import-result ul { margin: .75rem 0 0 1.25rem; }
+
+/* O bang bam-vao-de-sua (EditableTextCell) trong Preview Import Lead. */
+.crm-lead-import-cell-display {
+  display: block;
+  width: 100%;
+  min-height: 1.6rem;
+  border: 1px dashed transparent;
+  border-radius: .4rem;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  padding: .15rem .3rem;
+}
+.crm-lead-import-cell-display:hover { border-color: #cbd5e1; background: #f8fafc; }
+.crm-lead-import-cell-input {
+  width: 100%;
+  border: 1px solid #2563eb;
+  border-radius: .4rem;
+  padding: .25rem .4rem;
+  font: inherit;
+  color: inherit;
+}
+
+.crm-lead-import-pending-create {
+  margin-top: .2rem;
+  color: #1d4ed8;
+}
+
+/* Badge "Sẽ tạo mới" ben canh gia tri Nguon/Chuc vu chua co master that -
+ * hien ca o trigger dong lan trong danh sach mo cua SearchableSelect (xem
+ * withPendingOption trong LeadImportDialog.tsx). */
+.crm-lead-import-pending-option {
+  display: inline-flex;
+  align-items: center;
+  gap: .35rem;
+}
+.crm-lead-import-pending-badge {
+  border-radius: 999px;
+  background: #dbeafe;
+  color: #1d4ed8;
+  font-size: .65rem;
+  font-weight: 700;
+  padding: .1rem .45rem;
+  white-space: nowrap;
+}
+
 .crm-modal-header {
   display: flex;
   align-items: center;
@@ -7017,6 +7241,166 @@
 /* "SO DEAL" can rong hon 5% mac dinh (ke thua tu ban cu 1 tu "Deal") de
  * khong bi ellipsis header thanh "SO D..." (xac nhan qua screenshot 1440px). */
 .crm-customer-directory-table--v2 .crm-col-cust-deals { width: 8%; }
+
+/* Contact 360 tren bang Khach hang: cot "So nguoi lien he" (dem) doi thanh 3
+ * cot "Nguoi lien he chinh"/"SDT"/"Email" - thu hep name-v2/taxcode/value de
+ * co cho, .crm-col-cust-contacts giu lai o tren nhung khong con dung o
+ * colgroup nua (khong xoa - tranh vo lien ket neu con noi khac tham chieu). */
+.crm-col-cust-name-v2 { width: 18%; }
+.crm-col-cust-taxcode { width: 7%; }
+.crm-col-cust-value { width: 10%; }
+.crm-col-cust-owner { width: 9%; }
+.crm-customer-directory-table--v2 .crm-col-cust-deals { width: 6%; }
+.crm-col-cust-contact-name { width: 13%; }
+.crm-col-cust-contact-phone { width: 9%; }
+.crm-col-cust-contact-email { width: 13%; }
+
+.crm-customer-contact-name-cell {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 0;
+}
+
+.crm-customer-contact-name-cell > span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.crm-contact-summary-badge {
+  flex-shrink: 0;
+  border: none;
+  border-radius: 999px;
+  background: #f1f5f9;
+  color: #475569;
+  font-size: 0.7rem;
+  font-weight: 700;
+  padding: 0.1rem 0.4rem;
+  cursor: pointer;
+}
+
+.crm-contact-summary-badge:hover {
+  background: #e2e8f0;
+}
+
+.crm-contact-summary-popover {
+  position: fixed;
+  z-index: 99995;
+  min-width: 14rem;
+  max-width: 20rem;
+  max-height: 16rem;
+  overflow-y: auto;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 0.6rem;
+  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.18);
+  padding: 0.4rem;
+}
+
+.crm-contact-summary-popover-state {
+  padding: 0.5rem;
+  font-size: 0.8rem;
+  color: #64748b;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.crm-contact-summary-popover-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.crm-contact-summary-popover-item {
+  padding: 0.4rem 0.5rem;
+  border-radius: 0.4rem;
+}
+
+.crm-contact-summary-popover-item:hover {
+  background: #f8fafc;
+}
+
+.crm-contact-summary-popover-name {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.crm-contact-summary-popover-detail {
+  font-size: 0.76rem;
+  color: #64748b;
+}
+
+/* "Cột hiển thị" popover - trang Khach hang */
+.crm-column-visibility-popover {
+  position: fixed;
+  z-index: 99995;
+  width: 15.5rem;
+  max-height: 22rem;
+  overflow-y: auto;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 0.6rem;
+  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.18);
+  padding: 0.6rem;
+}
+
+.crm-column-visibility-title {
+  margin: 0 0 0.4rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.crm-column-visibility-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.crm-column-visibility-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 0.4rem;
+  border-radius: 0.4rem;
+  font-size: 0.82rem;
+  color: #0f172a;
+  cursor: pointer;
+}
+
+.crm-column-visibility-item:hover {
+  background: #f8fafc;
+}
+
+.crm-column-visibility-item input {
+  cursor: pointer;
+}
+
+.crm-column-visibility-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin-top: 0.5rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid #e2e8f0;
+}
+
+.crm-column-visibility-actions .crm-secondary-button {
+  width: 100%;
+  justify-content: center;
+}
 
 .crm-customer-directory-search-hint {
   margin: 0.6rem 0 0;
