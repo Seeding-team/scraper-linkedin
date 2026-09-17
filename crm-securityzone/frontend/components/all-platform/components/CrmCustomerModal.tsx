@@ -6,6 +6,7 @@ import {
   customerLeadService,
   type ContractStatus,
   type Customer,
+  type ContractLink,
   type SDRUser,
   type SourcePlatform,
   type DealStage,
@@ -56,6 +57,8 @@ const emptyForm = (): Partial<Customer> => ({
   last_care_at: null,
   last_attachment_name: null,
   last_attachment_url: null,
+  purchase_contract_links: [],
+  sale_contract_links: [],
   note: "",
   // CRM pipeline
   deal_stage: "new_lead",
@@ -78,6 +81,69 @@ const CONTRACT_STATUS_OPTIONS: { value: ContractStatus; label: string }[] = [
   { value: "maintenance", label: "Bảo trì / bảo hành" },
 ];
 
+/** 1 dòng "Tên hợp đồng/báo giá + URL" trong khu vực Phase 1 (mua) / Phase 2 (bán). */
+function ContractLinkRow({
+  link,
+  uploading,
+  onChangeName,
+  onChangeUrl,
+  onUploadFile,
+  onRemove,
+}: {
+  link: ContractLink;
+  uploading: boolean;
+  onChangeName: (value: string) => void;
+  onChangeUrl: (value: string) => void;
+  onUploadFile: (file: File) => void;
+  onRemove: () => void;
+}) {
+  return (
+    <div className="flex items-start gap-1.5">
+      <div className="grid flex-1 grid-cols-2 gap-1.5">
+        <input
+          type="text"
+          value={link.name ?? ""}
+          onChange={(e) => onChangeName(e.target.value)}
+          placeholder="Tên hợp đồng/báo giá"
+          className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500"
+        />
+        <input
+          type="url"
+          value={link.url ?? ""}
+          onChange={(e) => onChangeUrl(e.target.value)}
+          placeholder="https://..."
+          className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500"
+        />
+      </div>
+      <label
+        className={`shrink-0 cursor-pointer rounded-lg border border-slate-300 px-2 py-1.5 text-[11px] font-medium text-slate-600 hover:bg-slate-50 transition-colors ${
+          uploading ? "opacity-50 pointer-events-none" : ""
+        }`}
+      >
+        {uploading ? "Đang tải…" : "Tải file"}
+        <input
+          type="file"
+          className="hidden"
+          disabled={uploading}
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            if (file) onUploadFile(file);
+            e.target.value = "";
+          }}
+        />
+      </label>
+      <button
+        type="button"
+        onClick={onRemove}
+        title="Xoá dòng"
+        className="shrink-0 px-1.5 py-1.5 text-slate-400 hover:text-red-500 transition-colors text-sm leading-none"
+      >
+        ×
+      </button>
+    </div>
+  );
+}
+
 export function CrmCustomerModal({
   isOpen,
   onClose,
@@ -92,6 +158,8 @@ export function CrmCustomerModal({
   const [sdrs, setSdrs] = useState<SDRUser[]>([]);
   const [leaders, setLeaders] = useState<SDRUser[]>([]);
   const [formData, setFormData] = useState<Partial<Customer>>(emptyForm());
+  // key = `${field}-${index}` của dòng hợp đồng/báo giá đang upload (Vấn đề 2).
+  const [uploadingLinkKey, setUploadingLinkKey] = useState<string | null>(null);
   const [contacts, setContacts] = useState<Array<{ id: string; name: string }>>([]);
   const { options: sourceOptions } = useCrmCategoryCodeOptions("crm_source", SOURCE_PLATFORM_OPTIONS);
   const { labels: cityOptions } = useCrmCategoryLabels("crm_city", CITY_OPTIONS);
@@ -147,6 +215,52 @@ export function CrmCustomerModal({
 
   const set = <K extends keyof Customer>(key: K, value: Customer[K]) =>
     setFormData((prev) => ({ ...prev, [key]: value }));
+
+  /* ── Hợp đồng báo giá mua/bán (Vấn đề 2) — mỗi khu vực nhiều dòng {name, url} ── */
+  type ContractLinkField = "purchase_contract_links" | "sale_contract_links";
+
+  const addLinkRow = (field: ContractLinkField) =>
+    setFormData((prev) => ({
+      ...prev,
+      [field]: [...(prev[field] ?? []), { name: "", url: "" }],
+    }));
+
+  const updateLinkRow = (field: ContractLinkField, index: number, patch: Partial<ContractLink>) =>
+    setFormData((prev) => {
+      const list = [...(prev[field] ?? [])];
+      list[index] = { ...list[index], ...patch };
+      return { ...prev, [field]: list };
+    });
+
+  const removeLinkRow = (field: ContractLinkField, index: number) =>
+    setFormData((prev) => ({
+      ...prev,
+      [field]: (prev[field] ?? []).filter((_, i) => i !== index),
+    }));
+
+  /**
+   * Upload file trực tiếp từ dòng hợp đồng/báo giá (thay vì phải kéo-thả sang
+   * bước "chuyển stage" mới upload được — theo yêu cầu Vấn đề 2 phần 2). File
+   * lên Supabase Storage qua endpoint chung /customer-leads/upload, sau đó
+   * "tự động nhảy qua" — tự điền URL/tên vào đúng dòng vừa bấm.
+   */
+  const handleRowUpload = async (field: ContractLinkField, index: number, file: File) => {
+    const key = `${field}-${index}`;
+    setUploadingLinkKey(key);
+    try {
+      const result = await customerLeadService.uploadAttachment(file, "contract", customer?.id);
+      updateLinkRow(field, index, { name: result.name, url: result.url });
+      // Đồng bộ ngược last_attachment_* để Kanban card / Drawer (đang đọc field
+      // cũ) vẫn thấy được file vừa gắn, không cần sửa lại các nơi đó.
+      set("last_attachment_url", result.url);
+      set("last_attachment_name", result.name);
+      toast.success(`Đã tải "${file.name}" lên`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Upload thất bại");
+    } finally {
+      setUploadingLinkKey(null);
+    }
+  };
 
   const selectedLeaderId = formData.leaded_by?.trim() || "";
   const selectedSdrId = formData.sdr_id?.trim() || "";
@@ -212,6 +326,9 @@ export function CrmCustomerModal({
         last_care_at: formData.last_care_at || null,
         last_attachment_name: formData.last_attachment_name?.trim() || null,
         last_attachment_url: formData.last_attachment_url?.trim() || null,
+        // Vấn đề 2 — bỏ các dòng lỡ bấm "+ Thêm link" nhưng chưa điền URL.
+        purchase_contract_links: (formData.purchase_contract_links ?? []).filter((l) => l.url?.trim()),
+        sale_contract_links: (formData.sale_contract_links ?? []).filter((l) => l.url?.trim()),
         note: formData.note?.trim() || null,
         deal_stage: formData.deal_stage ?? "new_lead",
         // Nguoi lien he chinh (migration 134/135) - chi gan duoc Contact
@@ -562,27 +679,70 @@ export function CrmCustomerModal({
                   </p>
                 </div>
 
-                {/* ── Hợp đồng & báo giá (gộp vào Pipeline để khớp flow SMB) ── */}
-                <div>
-                  <label className="block text-xs font-semibold text-slate-600 mb-1">Tên file hợp đồng / báo giá</label>
-                  <input
-                    type="text"
-                    value={formData.last_attachment_name ?? ""}
-                    onChange={(e) => set("last_attachment_name", e.target.value || null)}
-                    className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500 text-sm"
-                    placeholder="Bao_gia_ABC.pdf"
-                  />
+                {/* ── Hợp đồng & báo giá (Vấn đề 2): tách Phase 1 mua / Phase 2 bán,
+                       mỗi bên nhiều link + upload file trực tiếp tại đây ── */}
+                <div className="col-span-2 rounded-lg border border-slate-200 bg-white p-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="text-xs font-semibold text-slate-700">
+                      Hợp đồng báo giá mua <span className="text-slate-400 font-normal">(Phase 1)</span>
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => addLinkRow("purchase_contract_links")}
+                      className="text-xs font-semibold text-indigo-600 hover:text-indigo-800"
+                    >
+                      + Thêm link
+                    </button>
+                  </div>
+                  {(formData.purchase_contract_links ?? []).length === 0 ? (
+                    <p className="text-[11px] text-slate-400">Chưa có hợp đồng/báo giá mua nào.</p>
+                  ) : (
+                    <div className="space-y-1.5">
+                      {(formData.purchase_contract_links ?? []).map((link, idx) => (
+                        <ContractLinkRow
+                          key={idx}
+                          link={link}
+                          uploading={uploadingLinkKey === `purchase_contract_links-${idx}`}
+                          onChangeName={(v) => updateLinkRow("purchase_contract_links", idx, { name: v })}
+                          onChangeUrl={(v) => updateLinkRow("purchase_contract_links", idx, { url: v })}
+                          onUploadFile={(f) => handleRowUpload("purchase_contract_links", idx, f)}
+                          onRemove={() => removeLinkRow("purchase_contract_links", idx)}
+                        />
+                      ))}
+                    </div>
+                  )}
                 </div>
 
-                <div>
-                  <label className="block text-xs font-semibold text-slate-600 mb-1">Link báo giá / hợp đồng</label>
-                  <input
-                    type="url"
-                    value={formData.last_attachment_url ?? ""}
-                    onChange={(e) => set("last_attachment_url", e.target.value || null)}
-                    className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500 text-sm"
-                    placeholder="https://..."
-                  />
+                <div className="col-span-2 rounded-lg border border-slate-200 bg-white p-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="text-xs font-semibold text-slate-700">
+                      Hợp đồng báo giá bán <span className="text-slate-400 font-normal">(Phase 2)</span>
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => addLinkRow("sale_contract_links")}
+                      className="text-xs font-semibold text-indigo-600 hover:text-indigo-800"
+                    >
+                      + Thêm link
+                    </button>
+                  </div>
+                  {(formData.sale_contract_links ?? []).length === 0 ? (
+                    <p className="text-[11px] text-slate-400">Chưa có hợp đồng/báo giá bán nào.</p>
+                  ) : (
+                    <div className="space-y-1.5">
+                      {(formData.sale_contract_links ?? []).map((link, idx) => (
+                        <ContractLinkRow
+                          key={idx}
+                          link={link}
+                          uploading={uploadingLinkKey === `sale_contract_links-${idx}`}
+                          onChangeName={(v) => updateLinkRow("sale_contract_links", idx, { name: v })}
+                          onChangeUrl={(v) => updateLinkRow("sale_contract_links", idx, { url: v })}
+                          onUploadFile={(f) => handleRowUpload("sale_contract_links", idx, f)}
+                          onRemove={() => removeLinkRow("sale_contract_links", idx)}
+                        />
+                      ))}
+                    </div>
+                  )}
                 </div>
 
                 <div>

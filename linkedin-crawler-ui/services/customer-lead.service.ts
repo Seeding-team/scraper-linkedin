@@ -251,6 +251,12 @@ export const PIPELINE_COLUMNS: DealStage[] = [
   "on_hold",
 ];
 
+/** 1 dòng hợp đồng/báo giá — Vấn đề 2: nhiều link mua/bán cho 1 deal. */
+export interface ContractLink {
+  name: string;
+  url: string;
+}
+
 /** Một dòng activity log (audit trail). */
 export interface ActivityLogEntry {
   id: string;
@@ -348,6 +354,10 @@ export interface Customer {
   payment_status?: PaymentStatus | null;
   last_attachment_url?: string | null;
   last_attachment_name?: string | null;
+  /** Hợp đồng báo giá MUA (Phase 1) — nhiều link, thay cho last_attachment_url cũ trong form sửa KH. */
+  purchase_contract_links?: ContractLink[] | null;
+  /** Hợp đồng báo giá BÁN (Phase 2) — nhiều link. */
+  sale_contract_links?: ContractLink[] | null;
   tags: string[];
   has_budget: boolean;
   note: string | null;

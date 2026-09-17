@@ -15,6 +15,12 @@ DEAL_STAGES = [
 ]
 TERMINAL_STAGES = ["post_sale_care", "lost"]
 
+
+class ContractLinkItem(BaseModel):
+    """1 dòng hợp đồng/báo giá (Vấn đề 2 — nhiều link mua/bán cho 1 deal)."""
+    name: Optional[str] = None
+    url: str
+
 # Trạng thái thanh toán — dùng để lọc nhanh "khách nào còn nợ tiền".
 PAYMENT_STATUSES = ["unpaid", "partial", "paid"]
 
@@ -130,6 +136,11 @@ class CustomerLeadCreate(BaseModel):
     last_attachment_name: Optional[str] = None
     closed_reason: Optional[str] = None
 
+    # Vấn đề 2 (2026-09): hợp đồng/báo giá MUA (Phase 1) / BÁN (Phase 2),
+    # mỗi bên nhiều link — thay cho field đơn last_attachment_url cũ.
+    purchase_contract_links: Optional[List[ContractLinkItem]] = []
+    sale_contract_links: Optional[List[ContractLinkItem]] = []
+
     # crm-next fields (migration 041)
     position: Optional[str] = None
     crm_package: Optional[str] = None
@@ -216,6 +227,10 @@ class CustomerLeadUpdate(BaseModel):
     last_attachment_name: Optional[str] = None
     closed_reason: Optional[str] = None
 
+    # Vấn đề 2 (2026-09): hợp đồng/báo giá MUA (Phase 1) / BÁN (Phase 2).
+    purchase_contract_links: Optional[List[ContractLinkItem]] = None
+    sale_contract_links: Optional[List[ContractLinkItem]] = None
+
     # crm-next fields (migration 041)
     position: Optional[str] = None
     crm_package: Optional[str] = None
@@ -270,6 +285,10 @@ class CustomerLeadResponse(BaseModel):
     last_attachment_url: Optional[str] = None
     last_attachment_name: Optional[str] = None
     closed_reason: Optional[str] = None
+
+    # Vấn đề 2 (2026-09): hợp đồng/báo giá MUA (Phase 1) / BÁN (Phase 2).
+    purchase_contract_links: Optional[List[ContractLinkItem]] = []
+    sale_contract_links: Optional[List[ContractLinkItem]] = []
 
     customer_since: Optional[datetime] = None
     service_package: Optional[str] = None
