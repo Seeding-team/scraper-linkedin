@@ -1,11 +1,12 @@
 'use client';
 
 /* eslint-disable react-hooks/set-state-in-effect */
+import { CatalogPickerModal } from './CatalogPickerModal';
 
 import { useEffect, useMemo, useState } from 'react';
 
 import { serviceCatalogRepository } from './repositories/ServiceCatalogRepository';
-import type { ServiceCatalogItem, ServiceCatalogItemInput, ServiceCatalogUnit, ServiceCatalogVatRate } from './types';
+import type { BundleComponentInput, ServiceCatalogItem, ServiceCatalogItemInput, ServiceCatalogUnit, ServiceCatalogVatRate } from './types';
 import { usePricingLogic } from './usePricingLogic';
 import { emptyProductForm, formatSkuName, parseNullableNumber } from './catalog-form-utils';
 import './styles/service-catalog.css';
@@ -30,6 +31,14 @@ function formatCurrency(val: number | string | null | undefined): string {
   return new Intl.NumberFormat('vi-VN').format(n);
 }
 
+type QuickBundleComponent = BundleComponentInput & {
+  sku?: string;
+  name?: string;
+  unit?: string;
+  defaultCustomerPriceVnd?: number | null;
+  defaultCostPriceVnd?: number | null;
+};
+
 export function QuickAddProductModal({
   open,
   onClose,
@@ -38,6 +47,8 @@ export function QuickAddProductModal({
   defaultGroupId,
   initialValues,
   onCreated,
+  editingItem,
+  onUpdated,
 }: {
   open: boolean;
   onClose: () => void;
@@ -53,8 +64,21 @@ export function QuickAddProductModal({
     costPriceVnd?: number | null;
   };
   onCreated: (created: ServiceCatalogItem) => void;
+  editingItem?: ServiceCatalogItem;
+  onUpdated?: (updated: ServiceCatalogItem) => void;
 }) {
   const [activeTab, setActiveTab] = useState<'manual' | 'vendor'>('manual');
+
+  const [itemType, setItemType] = useState<'component' | 'bundle'>('component');
+  const [bundleComponents, setBundleComponents] = useState<QuickBundleComponent[]>([]);
+  const [bundleMonthlyPrice, setBundleMonthlyPrice] = useState('');
+  const [bundleAnnualMonthlyPrice, setBundleAnnualMonthlyPrice] = useState('');
+  const [bundleAnnualTotalPrice, setBundleAnnualTotalPrice] = useState('');
+  const [bundleCostPrice, setBundleCostPrice] = useState('');
+  const [bundleDiscount, setBundleDiscount] = useState('');
+  const [showComponentPicker, setShowComponentPicker] = useState(false);
+  const [showNestedAdd, setShowNestedAdd] = useState(false);
+
 
   const [parentId, setParentId] = useState(defaultGroupId || '');
   const [skuInput, setSkuInput] = useState('');
@@ -62,7 +86,20 @@ export function QuickAddProductModal({
   const [unitInput, setUnitInput] = useState('');
   const [vatInput, setVatInput] = useState('');
   const [status, setStatus] = useState('active');
+  const [customerVisible, setCustomerVisible] = useState(true);
+  // Quota / diem noi bat cua goi - CHI dung khi itemType==='bundle' (component
+  // khong co khai niem quota nguoi dung/kenh/tin nhan, day la thuoc tinh cua
+  // ca goi Combo - xem migration 141 service_catalog_items.quota_*).
+  const [bundleQuotaUserLabel, setBundleQuotaUserLabel] = useState('');
+  const [bundleQuotaChannelsLabel, setBundleQuotaChannelsLabel] = useState('');
+  const [bundleQuotaMessagesLabel, setBundleQuotaMessagesLabel] = useState('');
+  const [bundleQuotaAiData, setBundleQuotaAiData] = useState('');
+  const [bundleQuotaHighlights, setBundleQuotaHighlights] = useState('');
   const [description, setDescription] = useState('');
+  const [note, setNote] = useState('');
+  const [quoteDisplayName, setQuoteDisplayName] = useState('');
+  const [quoteDescription, setQuoteDescription] = useState('');
+  const [quoteCta, setQuoteCta] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
@@ -72,7 +109,7 @@ export function QuickAddProductModal({
   const [vendorPartNumber, setVendorPartNumber] = useState('');
   const [internalNote, setInternalNote] = useState('');
 
-  const { state: pricing, setState: setPricingState, updateField: setPricingField, getProfit, getMargin } = usePricingLogic();
+  const { state: pricing, setState: setPricingState, updateField: setPricingField, getProfit } = usePricingLogic();
 
   const [units, setUnits] = useState<ServiceCatalogUnit[] | null>(null);
   const [vatRates, setVatRates] = useState<ServiceCatalogVatRate[] | null>(null);
@@ -95,8 +132,115 @@ export function QuickAddProductModal({
   const [showAdvancedSales, setShowAdvancedSales] = useState(false);
 
 
+
   useEffect(() => {
     if (open) {
+      setLocalGroups(groups);
+      if (editingItem) {
+        setItemType(editingItem.itemType === 'bundle' ? 'bundle' : 'component');
+        setSkuInput(editingItem.sku || '');
+        setNameInput(editingItem.name || '');
+        setUnitInput(editingItem.unit || '');
+        setVatInput(editingItem.defaultVatRate != null ? String(editingItem.defaultVatRate) : '');
+        setStatus(editingItem.status || 'active');
+        setDescription(editingItem.description || '');
+        setNote(editingItem.note || '');
+        setQuoteDisplayName(editingItem.quoteDisplayName || '');
+        setQuoteDescription(editingItem.quoteDescription || '');
+        setQuoteCta(editingItem.quoteCta || '');
+        setParentId(editingItem.parentId || defaultGroupId || '');
+        setBrand(editingItem.brand || '');
+        setProductType(editingItem.productType || '');
+        setVendorPartNumber(editingItem.partNumber || '');
+        setInternalNote(editingItem.internalNote || '');
+        setCustomerVisible(editingItem.customerVisible ?? true);
+
+        if (editingItem.itemType === 'bundle') {
+          setBundleMonthlyPrice(editingItem.monthlyPriceVnd != null ? String(editingItem.monthlyPriceVnd) : '');
+          setBundleAnnualMonthlyPrice(editingItem.annualCommitMonthlyPriceVnd != null ? String(editingItem.annualCommitMonthlyPriceVnd) : '');
+          setBundleAnnualTotalPrice(editingItem.annualTotalPriceVnd != null ? String(editingItem.annualTotalPriceVnd) : '');
+          setBundleCostPrice(editingItem.defaultCostPriceVnd != null ? String(editingItem.defaultCostPriceVnd) : '');
+          setBundleDiscount(editingItem.maxSaleDiscountPercent != null ? String(editingItem.maxSaleDiscountPercent) : '');
+          setBundleQuotaUserLabel(editingItem.quotaUserLabel || (editingItem.quotaUserCount != null ? String(editingItem.quotaUserCount) : ''));
+          setBundleQuotaChannelsLabel(editingItem.quotaConnectedChannelsLabel || (editingItem.quotaConnectedChannels != null ? String(editingItem.quotaConnectedChannels) : ''));
+          setBundleQuotaMessagesLabel(editingItem.quotaMessagesPerMonthLabel || (editingItem.quotaMessagesPerMonth != null ? String(editingItem.quotaMessagesPerMonth) : ''));
+          setBundleQuotaAiData(editingItem.quotaAiData || '');
+          setBundleQuotaHighlights(editingItem.quotaHighlights || '');
+          setPricingState(prev => ({
+            ...prev,
+            costPriceVnd: editingItem.defaultCostPriceVnd ?? 0,
+            customerPriceVnd: editingItem.monthlyPriceVnd ?? editingItem.defaultCustomerPriceVnd ?? 0,
+            markupPercent: editingItem.defaultMarkupPercent ?? 0,
+          }));
+
+          if (editingItem.components) {
+            setBundleComponents(editingItem.components.map((c, index) => ({
+              ...c,
+              quantity: c.quantity ?? 1,
+              sortOrder: c.sortOrder ?? index,
+              sku: c.sku || '',
+              name: c.name || '',
+              unit: c.unit || '',
+            })));
+          }
+        } else {
+          setPricingState({
+            pricingInputMode: editingItem.pricingInputMode || 'cost',
+            supplierCurrency: editingItem.supplierCurrency === 'USD' ? 'USD' : 'VND',
+            supplierListPrice: editingItem.supplierListPrice ?? 0,
+            supplierDiscountPercent: editingItem.supplierDiscountPercent ?? 0,
+            supplierNetPrice: editingItem.supplierNetPrice ?? 0,
+            supplierExchangeRate: editingItem.supplierExchangeRate ?? 25400,
+            supplierConvertedPrice: editingItem.supplierConvertedPrice ?? 0,
+            supplierVendorId: editingItem.supplierVendorId || '',
+            supplierQuoteRef: editingItem.supplierQuoteRef || '',
+            supplierQuoteSource: editingItem.supplierQuoteSource || '',
+            supplierQuoteDate: editingItem.supplierQuoteDate || '',
+            supplierValidUntil: editingItem.supplierValidUntil || '',
+            shippingCost: editingItem.shippingCost ?? 0,
+            importFee: editingItem.importFee ?? 0,
+            otherCost: editingItem.otherCost ?? 0,
+            pricingPolicy: editingItem.pricingPolicy || '',
+            costPriceVnd: editingItem.defaultCostPriceVnd ?? 0,
+            markupPercent: editingItem.defaultMarkupPercent ?? 0,
+            customerPriceVnd: editingItem.defaultCustomerPriceVnd ?? editingItem.defaultUnitPriceVnd ?? 0,
+          });
+          setBundleComponents([]);
+        }
+      } else {
+        // Reset form
+        setItemType('component');
+        setBundleComponents([]);
+        setBundleMonthlyPrice('');
+        setBundleAnnualMonthlyPrice('');
+        setBundleAnnualTotalPrice('');
+        setBundleCostPrice('');
+        setBundleDiscount('');
+        setBundleQuotaUserLabel('');
+        setBundleQuotaChannelsLabel('');
+        setBundleQuotaMessagesLabel('');
+        setBundleQuotaAiData('');
+        setBundleQuotaHighlights('');
+        setCustomerVisible(true);
+        setSkuInput('');
+        setNameInput('');
+        setDescription('');
+        setNote('');
+        setQuoteDisplayName('');
+        setQuoteDescription('');
+        setQuoteCta('');
+        setStatus('active');
+        setBrand('');
+        setProductType('');
+        setVendorPartNumber('');
+        setInternalNote('');
+        // keep default values...
+      }
+    }
+  }, [open, editingItem, defaultGroupId, groups, setPricingState]);
+
+  useEffect(() => {
+    if (open && !editingItem) {
       setParentId(defaultGroupId || '');
       setLocalGroups(groups);
       setSkuInput('');
@@ -104,6 +248,10 @@ export function QuickAddProductModal({
       setUnitInput(initialValues?.unit || '');
       setVatInput(initialValues?.vatRate != null ? String(initialValues.vatRate) : '');
       setDescription('');
+      setNote('');
+      setQuoteDisplayName('');
+      setQuoteDescription('');
+      setQuoteCta('');
       setError(null);
       setFieldErrors({});
       setActiveTab('manual');
@@ -136,7 +284,7 @@ export function QuickAddProductModal({
         customerPriceVnd: initialPrice,
       }));
     }
-  }, [open, defaultGroupId, initialValues, groups, setPricingState]);
+  }, [open, editingItem, defaultGroupId, initialValues, groups, setPricingState]);
 
 
 
@@ -152,13 +300,14 @@ export function QuickAddProductModal({
     const cmpName = foldDiacritics(nameInput);
     const cmpSku = foldDiacritics(skuInput);
     const found = existingItems.find(item => {
+      if (editingItem && item.id === editingItem.id) return false;
       if (cmpSku && item.sku && foldDiacritics(item.sku) === cmpSku) return true;
       if (cmpName && item.name && foldDiacritics(item.name) === cmpName) return true;
       return false;
     });
     if (!found) return null;
     return `Sản phẩm tương tự có thể đã tồn tại: ${formatSkuName(found.sku, found.name)} (Nhóm: ${found.groupName || '?'}).`;
-  }, [nameInput, skuInput, existingItems]);
+  }, [nameInput, skuInput, existingItems, editingItem]);
 
   async function handleCreateGroupInline() {
     const trimmed = newGroupName.trim();
@@ -262,6 +411,10 @@ export function QuickAddProductModal({
     }
   }
 
+  function updateBundleComponent(index: number, patch: Partial<QuickBundleComponent>) {
+    setBundleComponents(prev => prev.map((item, i) => (i === index ? { ...item, ...patch } : item)));
+  }
+
   async function handleSave() {
     const errs = validate();
     if (Object.keys(errs).length > 0) {
@@ -272,42 +425,120 @@ export function QuickAddProductModal({
     setSaving(true);
     setError(null);
     try {
-      const payload: ServiceCatalogItemInput = {
-        ...emptyProductForm(),
-        parentId,
-        sku: skuInput.trim() || undefined,
-        name: nameInput.trim(),
-        unit: await resolveUnitName(unitInput),
-        defaultVatRate: await resolveVatRate(vatInput),
-        defaultUnitPriceVnd: pricing.customerPriceVnd || undefined,
-        description: description.trim() || undefined,
-        status: 'active',
-        brand: brand.trim() || undefined,
-        partNumber: vendorPartNumber.trim() || undefined,
-        productType: productType.trim() || undefined,
-        internalNote: internalNote.trim() || undefined,
-        supplierCurrency: pricing.supplierCurrency,
-        supplierListPrice: pricing.supplierListPrice || undefined,
-        supplierDiscountPercent: pricing.supplierDiscountPercent || undefined,
-        supplierNetPrice: pricing.supplierNetPrice || undefined,
-        supplierExchangeRate: pricing.supplierExchangeRate || undefined,
-        supplierConvertedPrice: pricing.supplierConvertedPrice || undefined,
-        supplierVendorId: pricing.supplierVendorId || undefined,
-        supplierQuoteRef: pricing.supplierQuoteRef || undefined,
-        supplierQuoteSource: pricing.supplierQuoteSource || undefined,
-        supplierQuoteDate: pricing.supplierQuoteDate || undefined,
-        supplierValidUntil: pricing.supplierValidUntil || undefined,
-        shippingCost: pricing.shippingCost || undefined,
-        importFee: pricing.importFee || undefined,
-        otherCost: pricing.otherCost || undefined,
-        pricingInputMode: pricing.pricingInputMode,
-        defaultCostPriceVnd: pricing.costPriceVnd || undefined,
-        defaultMarkupPercent: pricing.markupPercent || undefined,
-        defaultCustomerPriceVnd: pricing.customerPriceVnd || undefined,
-        pricingPolicy: pricing.pricingPolicy || undefined,
+      const resolvedUnit = await resolveUnitName(unitInput);
+      const resolvedVatRate = await resolveVatRate(vatInput);
+      const cleanText = (value: string) => value.trim();
+      const cleanOptionalText = (value: string) => {
+        const trimmed = value.trim();
+        return trimmed ? trimmed : undefined;
       };
-      const created = await serviceCatalogRepository.create(payload);
-      onCreated(created);
+      const cleanDate = (value?: string) => {
+        const trimmed = (value || '').trim();
+        return trimmed ? trimmed : undefined;
+      };
+      const payload: ServiceCatalogItemInput = itemType === 'bundle'
+        ? {
+            ...emptyProductForm(),
+            itemType: 'bundle',
+            parentId,
+            sku: cleanText(skuInput),
+            name: nameInput.trim(),
+            unit: resolvedUnit,
+            defaultVatRate: resolvedVatRate,
+            description: cleanText(description),
+            note: cleanText(note),
+            quoteDisplayName: cleanText(quoteDisplayName),
+            quoteDescription: cleanText(quoteDescription),
+            quoteCta: cleanText(quoteCta),
+            status: status as 'active' | 'inactive',
+            customerVisible,
+            brand: cleanText(brand),
+            partNumber: cleanText(vendorPartNumber),
+            productType: cleanText(productType),
+            internalNote: cleanText(internalNote),
+            quotaUserLabel: cleanText(bundleQuotaUserLabel),
+            quotaUserCount: parseNullableNumber(bundleQuotaUserLabel),
+            quotaConnectedChannelsLabel: cleanText(bundleQuotaChannelsLabel),
+            quotaConnectedChannels: parseNullableNumber(bundleQuotaChannelsLabel),
+            quotaMessagesPerMonthLabel: cleanText(bundleQuotaMessagesLabel),
+            quotaMessagesPerMonth: parseNullableNumber(bundleQuotaMessagesLabel),
+            quotaAiData: cleanText(bundleQuotaAiData),
+            quotaHighlights: cleanText(bundleQuotaHighlights),
+            // emptyProductForm() mac dinh 2 field nay la CHUOI RONG (dung cho
+            // component - vendor quote date), nhung cot DB la kieu date - gui
+            // "" thay vi bo qua se bi Postgres tu choi (22007 invalid input
+            // syntax for type date). Bundle khong dung 2 field vendor nay nen
+            // luon bo qua (undefined), khac component (giu nguyen hanh vi cu).
+            supplierQuoteDate: undefined,
+            supplierValidUntil: undefined,
+            // Bundle dung gia nhap tay (Card "Gia goi"), KHONG suy tu vendor
+            // cost/markup nhu component thuong (xem ServiceCatalogProductsTable.tsx
+            // handleSave() - cung 1 quy uoc).
+            monthlyPriceVnd: parseNullableNumber(bundleMonthlyPrice),
+            annualCommitMonthlyPriceVnd: parseNullableNumber(bundleAnnualMonthlyPrice),
+            annualTotalPriceVnd: parseNullableNumber(bundleAnnualTotalPrice),
+            defaultUnitPriceVnd: parseNullableNumber(bundleMonthlyPrice) ?? 0,
+            maxSaleDiscountPercent: parseNullableNumber(bundleDiscount),
+            defaultCostPriceVnd: parseNullableNumber(bundleCostPrice),
+            defaultCustomerPriceVnd: parseNullableNumber(bundleMonthlyPrice),
+            pricingInputMode: 'cost',
+          }
+        : {
+            ...emptyProductForm(),
+            itemType: 'component',
+            parentId,
+            sku: cleanText(skuInput),
+            name: nameInput.trim(),
+            unit: resolvedUnit,
+            defaultVatRate: resolvedVatRate,
+            defaultUnitPriceVnd: pricing.customerPriceVnd,
+            description: cleanText(description),
+            note: cleanText(note),
+            quoteDisplayName: cleanText(quoteDisplayName),
+            quoteDescription: cleanText(quoteDescription),
+            quoteCta: cleanText(quoteCta),
+            status: status as 'active' | 'inactive',
+            customerVisible,
+            brand: cleanText(brand),
+            partNumber: cleanText(vendorPartNumber),
+            productType: cleanText(productType),
+            internalNote: cleanText(internalNote),
+            supplierCurrency: pricing.supplierCurrency,
+            supplierListPrice: pricing.supplierListPrice,
+            supplierDiscountPercent: pricing.supplierDiscountPercent,
+            supplierNetPrice: pricing.supplierNetPrice,
+            supplierExchangeRate: pricing.supplierExchangeRate,
+            supplierConvertedPrice: pricing.supplierConvertedPrice,
+            supplierVendorId: cleanOptionalText(pricing.supplierVendorId || ''),
+            supplierQuoteRef: cleanText(pricing.supplierQuoteRef || ''),
+            supplierQuoteSource: cleanText(pricing.supplierQuoteSource || ''),
+            supplierQuoteDate: cleanDate(pricing.supplierQuoteDate),
+            supplierValidUntil: cleanDate(pricing.supplierValidUntil),
+            shippingCost: pricing.shippingCost,
+            importFee: pricing.importFee,
+            otherCost: pricing.otherCost,
+            pricingInputMode: pricing.pricingInputMode,
+            defaultCostPriceVnd: pricing.costPriceVnd,
+            defaultMarkupPercent: pricing.markupPercent,
+            defaultCustomerPriceVnd: pricing.customerPriceVnd,
+            pricingPolicy: cleanText(pricing.pricingPolicy || ''),
+          };
+      const saved = editingItem
+        ? await serviceCatalogRepository.update(editingItem.id, payload)
+        : await serviceCatalogRepository.create(payload);
+      if (itemType === 'bundle' && bundleComponents.length > 0) {
+        await serviceCatalogRepository.setBundleComponents(
+          saved.id,
+          bundleComponents.map((c, index) => ({ ...c, quantity: c.quantity ?? 1, sortOrder: c.sortOrder ?? index })),
+        );
+      } else if (editingItem?.itemType === 'bundle' && itemType === 'bundle') {
+        await serviceCatalogRepository.setBundleComponents(editingItem.id, []);
+      }
+      if (editingItem) {
+        onUpdated?.(saved);
+      } else {
+        onCreated(saved);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Đã có lỗi xảy ra khi lưu.');
     } finally {
@@ -327,13 +558,23 @@ export function QuickAddProductModal({
 
   if (!open) return null;
 
-  const costVal = pricing.costPriceVnd;
-  const priceVal = pricing.customerPriceVnd;
-  const profit = getProfit();
-  const margin = getMargin();
+  const isBundleMode = itemType === 'bundle';
+  const costVal = isBundleMode ? (parseNullableNumber(bundleCostPrice) ?? 0) : pricing.costPriceVnd;
+  const priceVal = isBundleMode ? (parseNullableNumber(bundleMonthlyPrice) ?? 0) : pricing.customerPriceVnd;
+  const profit = isBundleMode ? priceVal - costVal : getProfit();
+  const margin = priceVal > 0 ? (profit / priceVal) * 100 : 0;
   const pricingValid = priceVal >= costVal;
+  const modalTitle = editingItem
+    ? (isBundleMode ? 'Chỉnh sửa gói Combo' : 'Chỉnh sửa sản phẩm')
+    : (isBundleMode ? 'Thêm gói Combo' : 'Thêm sản phẩm mới');
+  const modalSubtitle = isBundleMode
+    ? 'Thiết lập thông tin gói, giá bán và thành phần hiển thị trên báo giá.'
+    : editingItem
+      ? 'Cập nhật thông tin, giá vốn & chính sách giá bán tiêu chuẩn.'
+      : 'Tạo sản phẩm, thiết lập giá vốn & chính sách giá bán tiêu chuẩn.';
 
   return (
+    <>
     <div className="qc-modal-backdrop qc-modal-backdrop--nested" onMouseDown={event => { if (event.target === event.currentTarget) onClose(); }}>
       <div className="sc-drawer sc-drawer--modal relative flex flex-col bg-[#fff7fa]" style={{ maxWidth: '1200px', width: '95vw', maxHeight: '95vh' }} onMouseDown={event => event.stopPropagation()}>
 
@@ -342,20 +583,32 @@ export function QuickAddProductModal({
           <div className="flex justify-between items-start">
             <div>
               <div className="flex items-center gap-3">
-                <h2 className="text-xl font-semibold text-slate-900 m-0">Thêm sản phẩm mới</h2>
+                <h2 className="text-xl font-semibold text-slate-900 m-0">{modalTitle}</h2>
                 <div className="flex gap-2">
                   <span className="px-2.5 py-0.5 rounded-full bg-[#fde2eb] text-[#a91549] text-xs font-medium">VND mặc định</span>
                   <span className="px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-700 text-xs font-medium">Tự tính giá</span>
                 </div>
               </div>
-              <p className="mt-1.5 text-sm text-slate-500">Tạo sản phẩm, thiết lập giá vốn & chính sách giá bán tiêu chuẩn.</p>
+              <p className="mt-1.5 text-sm text-slate-500">{modalSubtitle}</p>
             </div>
             <button type="button" className="text-slate-400 hover:text-slate-600 transition-colors" onClick={onClose}>
               <X size={24} />
             </button>
           </div>
 
-          {/* 2 Choice Cards */}
+  
+        <div className="px-6 py-4 border-b border-slate-100 bg-slate-50 flex items-center justify-center gap-6">
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input type="radio" className="w-4 h-4 text-[#c2185b]" checked={itemType === 'component'} onChange={() => setItemType('component')} disabled={!!editingItem} />
+            <span className="text-sm font-medium text-slate-700">Sản phẩm lẻ / Add-on</span>
+          </label>
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input type="radio" className="w-4 h-4 text-[#c2185b]" checked={itemType === 'bundle'} onChange={() => setItemType('bundle')} disabled={!!editingItem} />
+            <span className="text-sm font-medium text-slate-700">Gói Combo</span>
+          </label>
+        </div>
+
+        {/* 2 Choice Cards */}
           <div className="grid grid-cols-2 gap-4 mt-2">
             <div
               onClick={() => setActiveTab('manual')}
@@ -496,6 +749,13 @@ export function QuickAddProductModal({
                             <option value="inactive">Ngừng kinh doanh</option>
                           </select>
                         </div>
+                        <div>
+                          <label className="block text-sm font-medium text-slate-700 mb-1.5">Hiển thị khách hàng</label>
+                          <select className="w-full h-9 px-3 border border-slate-300 rounded-md text-sm focus:border-[#c2185b] focus:ring-1 focus:ring-[#c2185b]" value={customerVisible ? 'yes' : 'no'} onChange={e => setCustomerVisible(e.target.value === 'yes')}>
+                            <option value="yes">Có</option>
+                            <option value="no">Không</option>
+                          </select>
+                        </div>
                       </div>
                     </div>
 
@@ -523,14 +783,210 @@ export function QuickAddProductModal({
                             <label className="block text-sm font-medium text-slate-700 mb-1.5">Ghi chú nội bộ</label>
                             <textarea className="w-full p-3 border border-slate-300 rounded-md text-sm focus:border-[#c2185b] min-h-[80px]" placeholder="Ghi chú nội bộ (không hiển thị cho khách)..." value={internalNote} onChange={e => setInternalNote(e.target.value)} />
                           </div>
+                          <div className="col-span-2">
+                            <label className="block text-sm font-medium text-slate-700 mb-1.5">Ghi chú</label>
+                            <textarea className="w-full p-3 border border-slate-300 rounded-md text-sm focus:border-[#c2185b] min-h-[80px]" value={note} onChange={e => setNote(e.target.value)} />
+                          </div>
+                          <div>
+                            <label className="block text-sm font-medium text-slate-700 mb-1.5">Tên hiển thị trên báo giá</label>
+                            <input className="w-full h-9 px-3 border border-slate-300 rounded-md text-sm focus:border-[#c2185b] bg-slate-50" value={quoteDisplayName} onChange={e => setQuoteDisplayName(e.target.value)} />
+                          </div>
+                          <div>
+                            <label className="block text-sm font-medium text-slate-700 mb-1.5">CTA / ghi chú bán hàng</label>
+                            <input className="w-full h-9 px-3 border border-slate-300 rounded-md text-sm focus:border-[#c2185b] bg-slate-50" value={quoteCta} onChange={e => setQuoteCta(e.target.value)} />
+                          </div>
+                          <div className="col-span-2">
+                            <label className="block text-sm font-medium text-slate-700 mb-1.5">Mô tả ngắn cho khách</label>
+                            <textarea className="w-full p-3 border border-slate-300 rounded-md text-sm focus:border-[#c2185b] min-h-[80px]" value={quoteDescription} onChange={e => setQuoteDescription(e.target.value)} />
+                          </div>
                         </div>
                       )}
                     </div>
                   </div>
                 </div>
 
-                {/* Card 2: Giá mua / Giá vốn */}
-                <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+                {/* Card Bundle: Thanh phan trong goi + Gia goi - CHI hien khi
+                    itemType==='bundle'. Card 2/3 ben duoi (gia von tu
+                    vendor/markup) khong ap dung cho Bundle (bundle dung gia
+                    nhap tay o day, KHONG suy tu vendor cost) - itemType===
+                    'component' van dung Card 2/3 nhu cu, khong doi hanh vi. */}
+                {itemType === 'bundle' ? (
+                  <>
+                    <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+                      <div className="px-5 py-4 border-b border-slate-100 bg-slate-50/50">
+                        <h3 className="font-semibold text-slate-800">Thành phần trong gói</h3>
+                      </div>
+                      <div className="p-5">
+                        {bundleComponents.length === 0 ? (
+                          <div className="rounded-lg border border-dashed border-slate-300 p-4 text-center text-sm text-slate-500">
+                            Chưa có thành phần nào trong gói.
+                          </div>
+                        ) : (
+                          <div className="flex flex-col gap-3">
+                            {bundleComponents.map((item, index) => (
+                              <div key={`${item.componentId}-${index}`} className="rounded-lg border border-slate-200 p-3">
+                                <div className="flex items-start justify-between gap-3">
+                                  <div className="min-w-0 flex-1">
+                                    <div className="truncate text-sm font-semibold text-slate-800">{formatSkuName(item.sku, item.name || item.componentId)}</div>
+                                    <div className="text-xs text-slate-500">{item.unit || ''}</div>
+                                  </div>
+                                  <button
+                                    type="button"
+                                    className="shrink-0 text-xs font-medium text-[#c2185b] hover:text-[#a91549]"
+                                    onClick={() => setBundleComponents(bundleComponents.filter((_, i) => i !== index))}
+                                  >
+                                    Xóa
+                                  </button>
+                                </div>
+                                <div className="mt-3 grid grid-cols-6 gap-3">
+                                  <div className="col-span-2">
+                                    <label className="block text-xs font-medium text-slate-600 mb-1">Tên hiển thị</label>
+                                    <input
+                                      className="w-full h-8 px-2 border border-slate-300 rounded text-sm"
+                                      value={item.customerDisplayName || ''}
+                                      onChange={e => updateBundleComponent(index, { customerDisplayName: e.target.value })}
+                                    />
+                                  </div>
+                                  <div>
+                                    <label className="block text-xs font-medium text-slate-600 mb-1">Quota</label>
+                                    <input
+                                      className="w-full h-8 px-2 border border-slate-300 rounded text-sm"
+                                      value={item.quota || ''}
+                                      onChange={e => updateBundleComponent(index, { quota: e.target.value })}
+                                    />
+                                  </div>
+                                  <label className="flex items-center gap-2 mt-5">
+                                    <input
+                                      type="checkbox"
+                                      checked={item.required ?? true}
+                                      onChange={e => updateBundleComponent(index, { required: e.target.checked })}
+                                    />
+                                    <span className="text-xs font-medium text-slate-600">Bắt buộc</span>
+                                  </label>
+                                  <div>
+                                    <label className="block text-xs font-medium text-slate-600 mb-1">Vượt quota tính thêm</label>
+                                    <input
+                                      className="w-full h-8 px-2 border border-slate-300 rounded text-sm"
+                                      value={item.overagePolicy || ''}
+                                      onChange={e => updateBundleComponent(index, { overagePolicy: e.target.value })}
+                                    />
+                                  </div>
+                                  <label className="flex items-center gap-2 mt-5">
+                                    <input
+                                      type="checkbox"
+                                      checked={item.showOnQuote ?? true}
+                                      onChange={e => updateBundleComponent(index, { showOnQuote: e.target.checked })}
+                                    />
+                                    <span className="text-xs font-medium text-slate-600">Hiển thị trên báo giá</span>
+                                  </label>
+                                  <div>
+                                    <label className="block text-xs font-medium text-slate-600 mb-1">Pool key</label>
+                                    <input
+                                      className="w-full h-8 px-2 border border-slate-300 rounded text-sm"
+                                      value={item.quotaPoolKey || ''}
+                                      onChange={e => updateBundleComponent(index, { quotaPoolKey: e.target.value })}
+                                    />
+                                  </div>
+                                  <div className="col-span-2">
+                                    <label className="block text-xs font-medium text-slate-600 mb-1">Tên pool</label>
+                                    <input
+                                      className="w-full h-8 px-2 border border-slate-300 rounded text-sm"
+                                      value={item.quotaPoolName || ''}
+                                      onChange={e => updateBundleComponent(index, { quotaPoolName: e.target.value })}
+                                    />
+                                  </div>
+                                  <div>
+                                    <label className="block text-xs font-medium text-slate-600 mb-1">Quota pool</label>
+                                    <input
+                                      className="w-full h-8 px-2 border border-slate-300 rounded text-sm"
+                                      value={item.quotaPoolQuota || ''}
+                                      onChange={e => updateBundleComponent(index, { quotaPoolQuota: e.target.value })}
+                                    />
+                                  </div>
+                                  <div className="col-span-2">
+                                    <label className="block text-xs font-medium text-slate-600 mb-1">Ghi chú CRM</label>
+                                    <input
+                                      className="w-full h-8 px-2 border border-slate-300 rounded text-sm"
+                                      value={item.crmNote || ''}
+                                      onChange={e => updateBundleComponent(index, { crmNote: e.target.value })}
+                                    />
+                                  </div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        <div className="mt-4 flex gap-3">
+                          <button type="button" className="rounded-md border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50" onClick={() => setShowComponentPicker(true)}>
+                            + Chọn sản phẩm lẻ
+                          </button>
+                          <button type="button" className="rounded-md border border-[#c2185b] px-3 py-2 text-sm font-medium text-[#c2185b] hover:bg-[#fff1f6]" onClick={() => setShowNestedAdd(true)}>
+                            + Tạo sản phẩm mới
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+                      <div className="px-5 py-4 border-b border-slate-100 bg-slate-50/50">
+                        <h3 className="font-semibold text-slate-800">Giá gói</h3>
+                      </div>
+                      <div className="p-5 grid grid-cols-2 gap-4">
+                        <div>
+                          <label className="block text-sm font-medium text-slate-700 mb-1.5">Giá bán theo tháng</label>
+                          <input type="number" className="w-full h-9 px-3 border border-slate-300 rounded-md text-sm" value={bundleMonthlyPrice} onChange={e => setBundleMonthlyPrice(e.target.value)} />
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-slate-700 mb-1.5">Giá / tháng khi thanh toán năm</label>
+                          <input type="number" className="w-full h-9 px-3 border border-slate-300 rounded-md text-sm" value={bundleAnnualMonthlyPrice} onChange={e => setBundleAnnualMonthlyPrice(e.target.value)} />
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-slate-700 mb-1.5">Tổng thanh toán 12 tháng</label>
+                          <input type="number" className="w-full h-9 px-3 border border-slate-300 rounded-md text-sm" value={bundleAnnualTotalPrice} onChange={e => setBundleAnnualTotalPrice(e.target.value)} />
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-slate-700 mb-1.5">Giá vốn target</label>
+                          <input type="number" className="w-full h-9 px-3 border border-slate-300 rounded-md text-sm" value={bundleCostPrice} onChange={e => setBundleCostPrice(e.target.value)} />
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-slate-700 mb-1.5">Discount tối đa Sale (%)</label>
+                          <input type="number" className="w-full h-9 px-3 border border-slate-300 rounded-md text-sm" value={bundleDiscount} onChange={e => setBundleDiscount(e.target.value)} />
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+                      <div className="px-5 py-4 border-b border-slate-100 bg-slate-50/50">
+                        <h3 className="font-semibold text-slate-800">Quota / điểm nổi bật của gói</h3>
+                      </div>
+                      <div className="p-5 grid grid-cols-2 gap-4">
+                        <div>
+                          <label className="block text-sm font-medium text-slate-700 mb-1.5">User</label>
+                          <input className="w-full h-9 px-3 border border-slate-300 rounded-md text-sm" value={bundleQuotaUserLabel} onChange={e => setBundleQuotaUserLabel(e.target.value)} />
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-slate-700 mb-1.5">Kênh</label>
+                          <input className="w-full h-9 px-3 border border-slate-300 rounded-md text-sm" value={bundleQuotaChannelsLabel} onChange={e => setBundleQuotaChannelsLabel(e.target.value)} />
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-slate-700 mb-1.5">Tin nhắn</label>
+                          <input className="w-full h-9 px-3 border border-slate-300 rounded-md text-sm" value={bundleQuotaMessagesLabel} onChange={e => setBundleQuotaMessagesLabel(e.target.value)} />
+                        </div>
+                        <div className="col-span-2">
+                          <label className="block text-sm font-medium text-slate-700 mb-1.5">AI / dữ liệu</label>
+                          <textarea className="w-full p-3 border border-slate-300 rounded-md text-sm min-h-[60px]" value={bundleQuotaAiData} onChange={e => setBundleQuotaAiData(e.target.value)} />
+                        </div>
+                        <div className="col-span-2">
+                          <label className="block text-sm font-medium text-slate-700 mb-1.5">Điểm nổi bật</label>
+                          <textarea className="w-full p-3 border border-slate-300 rounded-md text-sm min-h-[60px]" value={bundleQuotaHighlights} onChange={e => setBundleQuotaHighlights(e.target.value)} />
+                        </div>
+                      </div>
+                    </div>
+                  </>
+                ) : null}
+
+                {/* Card 2: Giá mua / Giá vốn - chi dung khi itemType==='component' */}
+                <div className={`bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden ${itemType === 'bundle' ? 'hidden' : ''}`}>
                   <div className="px-5 py-4 border-b border-slate-100 bg-slate-50/50 flex justify-between items-center">
                     <h3 className="font-semibold text-slate-800">Giá mua / Giá vốn</h3>
                     <div className="flex bg-slate-100 rounded-lg p-0.5 border border-slate-200">
@@ -633,8 +1089,8 @@ export function QuickAddProductModal({
                   </div>
                 </div>
 
-                {/* Card 3: Giá bán mặc định */}
-                <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+                {/* Card 3: Giá bán mặc định - chi dung khi itemType==='component' */}
+                <div className={`bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden ${itemType === 'bundle' ? 'hidden' : ''}`}>
                   <div className="px-5 py-4 border-b border-slate-100 bg-slate-50/50">
                     <h3 className="font-semibold text-slate-800">Giá bán mặc định</h3>
                   </div>
@@ -861,15 +1317,87 @@ export function QuickAddProductModal({
           </div>
           <div className="flex gap-3">
             <button type="button" className="px-4 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors" onClick={onClose}>
-              Lưu nháp
+              {editingItem ? 'Hủy' : 'Lưu nháp'}
             </button>
             <button type="button" className="px-4 py-2 text-sm font-medium text-white bg-[#c2185b] rounded-lg hover:bg-[#a91549] transition-colors disabled:opacity-50 flex items-center gap-2 shadow-sm" disabled={saving || activeTab === 'vendor'} onClick={handleSave}>
-              {saving ? 'Đang lưu...' : 'Tạo sản phẩm & lưu giá'}
+              {saving ? 'Đang lưu...' : editingItem ? 'Lưu thay đổi' : 'Tạo sản phẩm & lưu giá'}
             </button>
           </div>
         </div>
 
       </div>
     </div>
+    {showComponentPicker && (
+      <CatalogPickerModal
+        open={showComponentPicker}
+        onClose={() => setShowComponentPicker(false)}
+        activeSource="internal"
+        onSourceChange={() => {}}
+        showZoneTab={false}
+        loading={false}
+        items={existingItems.filter(i => i.itemType === 'component').map(i => ({
+          id: i.id,
+          itemType: 'component',
+          sku: i.sku,
+          name: i.name,
+          description: i.description,
+          groupId: i.groupId,
+          groupName: i.groupName,
+          unit: i.unit,
+          customerPriceVnd: i.defaultCustomerPriceVnd ?? i.defaultUnitPriceVnd ?? 0,
+          monthlyPriceVnd: i.monthlyPriceVnd,
+          annualCommitMonthlyPriceVnd: i.annualCommitMonthlyPriceVnd,
+          annualTotalPriceVnd: i.annualTotalPriceVnd,
+          status: i.status,
+          alreadyAdded: bundleComponents.some(c => c.componentId === i.id),
+        }))}
+        onAddSelected={ids => {
+          const selected = existingItems.filter(i => ids.includes(i.id) && !bundleComponents.some(c => c.componentId === i.id));
+          const newComponents: QuickBundleComponent[] = selected.map((i, index) => ({
+            componentId: i.id,
+            quantity: 1,
+            sku: i.sku,
+            name: i.name,
+            customerDisplayName: i.name,
+            unit: i.unit,
+            quota: '1',
+            required: true,
+            showOnQuote: true,
+            sortOrder: bundleComponents.length + index,
+            defaultCustomerPriceVnd: i.defaultCustomerPriceVnd,
+            defaultCostPriceVnd: i.defaultCostPriceVnd
+          }));
+          setBundleComponents([...bundleComponents, ...newComponents]);
+          setShowComponentPicker(false);
+        }}
+      />
+    )}
+    {showNestedAdd && (
+      <QuickAddProductModal
+        open={showNestedAdd}
+        onClose={() => setShowNestedAdd(false)}
+        groups={groups}
+        existingItems={existingItems}
+        defaultGroupId={parentId}
+        onCreated={(created) => {
+          setBundleComponents([...bundleComponents, {
+            componentId: created.id,
+            quantity: 1,
+            sku: created.sku,
+            name: created.name,
+            customerDisplayName: created.name,
+            unit: created.unit,
+            quota: '1',
+            required: true,
+            showOnQuote: true,
+            sortOrder: bundleComponents.length,
+            defaultCustomerPriceVnd: created.defaultCustomerPriceVnd,
+            defaultCostPriceVnd: created.defaultCostPriceVnd
+          }]);
+          setShowNestedAdd(false);
+        }}
+      />
+    )}
+    </>
   );
 }

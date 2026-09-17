@@ -725,6 +725,89 @@ def _calculate_totals(items: list[dict]) -> tuple[float, float, float]:
     return subtotal, vat, subtotal + vat
 
 
+def _bundle_snapshot_from_catalog_components(components: list[dict]) -> list[dict]:
+    return [
+        {
+            "componentId": component.get("componentId"),
+            "sku": component.get("sku"),
+            "name": component.get("name"),
+            "description": component.get("description"),
+            "unit": component.get("unit"),
+            "quantity": component.get("quantity"),
+            "computedQuantity": component.get("computedQuantity"),
+            "displayText": component.get("displayText"),
+            "unitPriceVnd": component.get("unitPriceVnd"),
+            "quota": component.get("quota"),
+            "customerDisplayName": component.get("customerDisplayName"),
+            "crmNote": component.get("crmNote"),
+            "quotaPoolKey": component.get("quotaPoolKey"),
+            "quotaPoolName": component.get("quotaPoolName"),
+            "quotaPoolQuota": component.get("quotaPoolQuota"),
+            "quotaPoolLimit": component.get("quotaPoolLimit"),
+            "required": component.get("required"),
+            "overagePolicy": component.get("overagePolicy"),
+            "showOnQuote": component.get("showOnQuote"),
+            "sortOrder": component.get("sortOrder"),
+        }
+        for component in components
+    ]
+
+
+def _enrich_bundle_catalog_quote_item(item: dict) -> dict:
+    """Server-side fallback for catalog bundle quote rows.
+
+    The UI normally sends description + full bundle_snapshot. This keeps API/RPC
+    writes correct when a caller only sends catalog_item_id, and uses
+    render_bundle_description() so show_on_quote=false never leaks to
+    customer-facing quote text while full components remain in CRM snapshot.
+    """
+    catalog_item_id = item.get("catalog_item_id") or item.get("catalogItemId")
+    if not catalog_item_id or item.get("row_type") == "section":
+        return item
+    from app.modules.all_platform.services.supabase_service_catalog_service import (
+        get_service_catalog_item,
+        render_bundle_description,
+    )
+    try:
+        catalog_item = get_service_catalog_item(catalog_item_id)
+    except Exception:
+        logger.exception("quote bundle enrich: khong doc duoc catalog_item_id=%s", catalog_item_id)
+        return item
+    if catalog_item.get("itemType") != "bundle":
+        return item
+
+    next_item = dict(item)
+    components = catalog_item.get("components") or []
+    if not next_item.get("bundle_snapshot"):
+        next_item["bundle_snapshot"] = _bundle_snapshot_from_catalog_components(components)
+
+    if not str(next_item.get("description") or "").strip():
+        included = render_bundle_description(catalog_item_id)
+        description_parts = [
+            catalog_item.get("quoteDescription") or catalog_item.get("description"),
+            catalog_item.get("quoteCta"),
+            f"Bao gồm:\n{included}" if included else None,
+        ]
+        next_item["description"] = "\n\n".join(str(part) for part in description_parts if part)
+
+    if not next_item.get("service_description"):
+        next_item["service_description"] = catalog_item.get("quoteDisplayName") or catalog_item.get("name")
+    return next_item
+
+
+def _enrich_bundle_catalog_quote_items(items: list[dict]) -> list[dict]:
+    enriched: list[dict] = []
+    for item in items:
+        next_item = _enrich_bundle_catalog_quote_item(item)
+        if next_item.get("children"):
+            next_item = {
+                **next_item,
+                "children": _enrich_bundle_catalog_quote_items(next_item.get("children") or []),
+            }
+        enriched.append(next_item)
+    return enriched
+
+
 def _flatten_computed_items(raw_items: list[dict]) -> tuple[list[dict], float, float, float]:
     flattened: list[dict] = []
     subtotal = 0.0
@@ -1449,7 +1532,7 @@ def create_quote(payload: dict, created_by: str | None) -> dict:
 
     is_villa = form["layout_type"] == "villa_solution_package"
     data = dict(payload.get("data") or {})
-    raw_items = payload.get("items") or []
+    raw_items = _enrich_bundle_catalog_quote_items(payload.get("items") or [])
 
     if is_villa:
         subtotal, vat, total = _calculate_villa_totals(data.get("solutionItems") or [])
@@ -1680,7 +1763,7 @@ def update_quote(quote_id: str, payload: dict, actor_id: str | None) -> dict:
     items = payload.get("items")
     items_changed = items is not None
     if items_changed:
-        rpc_items = [item for item in items]
+        rpc_items = _enrich_bundle_catalog_quote_items([item for item in items])
     else:
         rpc_items = _raw_items_for_rpc(_quote_items(quote_id))
     changes = {"data_changed": payload.get("data") is not None, "items_changed": items_changed}
