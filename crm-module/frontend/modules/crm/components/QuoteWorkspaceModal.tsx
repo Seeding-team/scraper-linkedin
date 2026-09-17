@@ -1675,6 +1675,11 @@ export function QuoteWorkspaceModal({
     () =>
       catalogFlatItems.map(item => ({
         id: item.id,
+        // Keep the catalog item type when handing data to CatalogPickerModal.
+        // Without this, bundle rows are treated as standalone components and
+        // the "Gói Combo" tab shows 0 even though the catalog has bundles.
+        itemType: item.itemType as 'component' | 'bundle',
+        components: item.components,
         sku: item.sku,
         name: item.name,
         description: item.description,
@@ -1684,6 +1689,9 @@ export function QuoteWorkspaceModal({
         costPriceVnd: item.defaultCostPriceVnd,
         markupPercent: item.defaultMarkupPercent,
         customerPriceVnd: item.defaultCustomerPriceVnd ?? item.defaultUnitPriceVnd ?? 0,
+        monthlyPriceVnd: item.monthlyPriceVnd,
+        annualCommitMonthlyPriceVnd: item.annualCommitMonthlyPriceVnd,
+        annualTotalPriceVnd: item.annualTotalPriceVnd,
         status: item.status,
         alreadyAdded: existingCatalogKeys.has(item.id),
       })),
