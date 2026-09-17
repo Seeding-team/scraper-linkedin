@@ -13,6 +13,9 @@ import { CustomerAddDrawer } from './CustomerAddDrawer';
 import { CreateOpportunityDrawer } from './CreateOpportunityDrawer';
 import { ActionMenu, type ActionMenuItem } from './ActionMenu';
 import { SearchableSelect } from './SearchableSelect';
+import { ContactSummaryBadge } from './ContactSummaryPopover';
+import { CustomerColumnVisibilityMenu } from './CustomerColumnVisibilityMenu';
+import { useCustomerColumnPreferences } from '../hooks/useCustomerColumnPreferences';
 import { Loader2, Plus, RotateCcw } from './icons';
 import type { CrmCustomerKpi, CrmCustomerRow } from '../types';
 
@@ -77,6 +80,7 @@ type ApiCustomerRow = {
   can_edit?: boolean | null;
   deal_count?: number | null;
   contact_count?: number | null;
+  primary_contact?: { id: string; name: string; phone?: string | null; email?: string | null } | null;
   total_value?: number | string | null;
   last_deal_at?: string | null;
   updated_at?: string | null;
@@ -116,6 +120,9 @@ function mapCustomer(row: ApiCustomerRow): CrmCustomerRow {
     canEdit: Boolean(row.can_edit),
     dealCount: Number(row.deal_count || 0),
     contactCount: Number(row.contact_count || 0),
+    primaryContact: row.primary_contact
+      ? { id: row.primary_contact.id, name: row.primary_contact.name || '', phone: row.primary_contact.phone || '', email: row.primary_contact.email || '' }
+      : null,
     totalValue: Number(row.total_value || 0),
     lastDealAt: row.last_deal_at || '',
     updatedAt: row.updated_at || '',
@@ -160,6 +167,16 @@ export function CrmCustomersDirectory() {
   const [deleteTarget, setDeleteTarget] = useState<CrmCustomerRow | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState('');
+
+  // Preference "cot nao hien" rieng theo workspace+user (khong phai key
+  // global) - workspace = API_BASE_URL (moi deployment/clone co gia tri rieng
+  // duoc build-bake tu env, on dinh, khong can them khai niem "workspace"
+  // moi o FE). user?.id chua co (dang load auth) -> hook tu dung mac dinh hien
+  // het cot, khong dung localStorage - xem useCustomerColumnPreferences.
+  const columnWorkspaceId = API_BASE_URL || null;
+  const columnUserId = user?.id || null;
+  const { visible: visibleColumns, toggle: toggleColumn, selectAll: selectAllColumns, resetToDefault: resetColumnsToDefault } =
+    useCustomerColumnPreferences(columnWorkspaceId, columnUserId);
 
   // Debounce ô tìm kiếm ~300ms — tránh gọi API mỗi lần gõ phím.
   useEffect(() => {
@@ -239,6 +256,10 @@ export function CrmCustomersDirectory() {
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const hasFilters = Boolean(search || ownerId || saleManagerId);
+  // "Doanh nghiệp" + "Hành động" luon hien (khong dua vao preference) + so cot
+  // tuy chon dang bat - dung de colSpan cho hang loading/empty khop dung so
+  // cot that su dang render.
+  const visibleColumnCount = 2 + visibleColumns.size;
 
   function resetFilters() {
     setSearchInput('');
@@ -414,6 +435,12 @@ export function CrmCustomersDirectory() {
                   <RotateCcw className="crm-button-icon" /> Xóa lọc
                 </button>
               ) : null}
+              <CustomerColumnVisibilityMenu
+                visible={visibleColumns}
+                onToggle={toggleColumn}
+                onSelectAll={selectAllColumns}
+                onReset={resetColumnsToDefault}
+              />
               <button type="button" className="crm-primary-button" onClick={openAddCustomerDrawer}>
                 <Plus className="crm-button-icon" /> Thêm khách hàng
               </button>
@@ -427,29 +454,33 @@ export function CrmCustomersDirectory() {
               <table className="crm-table crm-customer-directory-table crm-customer-directory-table--v2">
                 <colgroup>
                   <col className="crm-col-cust-name-v2" />
-                  <col className="crm-col-cust-taxcode" />
-                  <col className="crm-col-cust-contacts" />
-                  <col className="crm-col-cust-deals" />
-                  <col className="crm-col-cust-value" />
-                  <col className="crm-col-cust-status" />
-                  <col className="crm-col-cust-owner" />
+                  {visibleColumns.has('primaryContact') ? <col className="crm-col-cust-contact-name" /> : null}
+                  {visibleColumns.has('phone') ? <col className="crm-col-cust-contact-phone" /> : null}
+                  {visibleColumns.has('email') ? <col className="crm-col-cust-contact-email" /> : null}
+                  {visibleColumns.has('taxCode') ? <col className="crm-col-cust-taxcode" /> : null}
+                  {visibleColumns.has('dealCount') ? <col className="crm-col-cust-deals" /> : null}
+                  {visibleColumns.has('pipelineValue') ? <col className="crm-col-cust-value" /> : null}
+                  {visibleColumns.has('status') ? <col className="crm-col-cust-status" /> : null}
+                  {visibleColumns.has('owner') ? <col className="crm-col-cust-owner" /> : null}
                   <col className="crm-col-cust-actions" />
                 </colgroup>
                 <thead>
                   <tr>
                     <th className="crm-th">Doanh nghiệp</th>
-                    <th className="crm-th">MST</th>
-                    <th className="crm-th crm-th--right">Người liên hệ</th>
-                    <th className="crm-th crm-th--right">Cơ hội</th>
-                    <th className="crm-th crm-th--right">Giá trị Pipeline</th>
-                    <th className="crm-th">Trạng thái</th>
-                    <th className="crm-th">Owner</th>
+                    {visibleColumns.has('primaryContact') ? <th className="crm-th">Người liên hệ chính</th> : null}
+                    {visibleColumns.has('phone') ? <th className="crm-th">SĐT</th> : null}
+                    {visibleColumns.has('email') ? <th className="crm-th">Email</th> : null}
+                    {visibleColumns.has('taxCode') ? <th className="crm-th">MST</th> : null}
+                    {visibleColumns.has('dealCount') ? <th className="crm-th crm-th--right">Cơ hội</th> : null}
+                    {visibleColumns.has('pipelineValue') ? <th className="crm-th crm-th--right">Giá trị Pipeline</th> : null}
+                    {visibleColumns.has('status') ? <th className="crm-th">Trạng thái</th> : null}
+                    {visibleColumns.has('owner') ? <th className="crm-th">Owner</th> : null}
                     <th className="crm-th crm-th--right crm-th--actions-col">Hành động</th>
                   </tr>
                 </thead>
                 <tbody>
                   {loading ? (
-                    <tr><td colSpan={8} className="crm-empty-cell"><Loader2 className="crm-spin-icon" /> Đang tải...</td></tr>
+                    <tr><td colSpan={visibleColumnCount} className="crm-empty-cell"><Loader2 className="crm-spin-icon" /> Đang tải...</td></tr>
                   ) : items.length ? (
                     items.map(customer => (
                       <tr
@@ -477,16 +508,33 @@ export function CrmCustomersDirectory() {
                             </div>
                           ) : null}
                         </td>
-                        <td className="crm-td crm-muted">{customer.taxCode || '-'}</td>
-                        <td className="crm-td crm-td--right">{customer.contactCount || 0}</td>
-                        <td className="crm-td crm-td--right">{customer.dealCount || 0}</td>
-                        <td className="crm-td crm-td--right crm-budget">{formatVND(customer.totalValue || 0) || '0 đ'}</td>
-                        <td className="crm-td">
-                          <span className={`crm-customer-status-badge ${STATUS_BADGE_CLASS[customer.status || ''] || ''}`}>
-                            {STATUS_LABEL[customer.status || ''] || 'Chưa phân loại'}
-                          </span>
-                        </td>
-                        <td className="crm-td crm-small">{ownerName.get(customer.ownerId || '') || 'Chưa gán'}</td>
+                        {visibleColumns.has('primaryContact') ? (
+                          <td className="crm-td">
+                            <div className="crm-customer-contact-name-cell">
+                              <span title={customer.primaryContact?.name || undefined}>{customer.primaryContact?.name || '-'}</span>
+                              {(customer.contactCount || 0) > 1 ? (
+                                <ContactSummaryBadge customerId={customer.id} extraCount={(customer.contactCount || 0) - 1} />
+                              ) : null}
+                            </div>
+                          </td>
+                        ) : null}
+                        {visibleColumns.has('phone') ? <td className="crm-td crm-muted">{customer.primaryContact?.phone || '-'}</td> : null}
+                        {visibleColumns.has('email') ? <td className="crm-td crm-muted">{customer.primaryContact?.email || '-'}</td> : null}
+                        {visibleColumns.has('taxCode') ? <td className="crm-td crm-muted">{customer.taxCode || '-'}</td> : null}
+                        {visibleColumns.has('dealCount') ? <td className="crm-td crm-td--right">{customer.dealCount || 0}</td> : null}
+                        {visibleColumns.has('pipelineValue') ? (
+                          <td className="crm-td crm-td--right crm-budget">{formatVND(customer.totalValue || 0) || '0 đ'}</td>
+                        ) : null}
+                        {visibleColumns.has('status') ? (
+                          <td className="crm-td">
+                            <span className={`crm-customer-status-badge ${STATUS_BADGE_CLASS[customer.status || ''] || ''}`}>
+                              {STATUS_LABEL[customer.status || ''] || 'Chưa phân loại'}
+                            </span>
+                          </td>
+                        ) : null}
+                        {visibleColumns.has('owner') ? (
+                          <td className="crm-td crm-small">{ownerName.get(customer.ownerId || '') || 'Chưa gán'}</td>
+                        ) : null}
                         <td className="crm-td crm-td--actions-col" onClick={event => event.stopPropagation()}>
                           <div className="crm-row-actions">
                             {renderPrimaryAction(customer)}
@@ -500,7 +548,7 @@ export function CrmCustomersDirectory() {
                     ))
                   ) : (
                     <tr>
-                      <td colSpan={8}>
+                      <td colSpan={visibleColumnCount}>
                         <div className="crm-empty-state">
                           <span className="crm-empty-state-icon">
                             <Plus className="crm-button-icon" />

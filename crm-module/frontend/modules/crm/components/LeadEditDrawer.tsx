@@ -240,6 +240,7 @@ export function LeadEditDrawer({
                     value={form.positionCategoryId}
                     labelSnapshot={form.positionLabel}
                     disabled={!canWrite || saving}
+                    placeholder="-- Chưa chọn --"
                     onChange={(id, label) => {
                       setValue('positionCategoryId', id);
                       setValue('positionLabel', label);

@@ -8,6 +8,7 @@ import { ActionMenu, type ActionMenuItem } from './ActionMenu';
 import { LeadFormDrawer } from './LeadFormDrawer';
 import { LeadDetailDrawer } from './LeadDetailDrawer';
 import { LeadEditDrawer } from './LeadEditDrawer';
+import { LeadImportDialog } from './LeadImportDialog';
 import { SearchableSelect } from './SearchableSelect';
 import { useCrmCategoryCodeOptions } from './CrmCategorySelect';
 import { Loader2, Plus, RotateCcw } from './icons';
@@ -161,6 +162,7 @@ export function LeadsDirectory() {
   const [error, setError] = useState('');
   const [reloadTick, setReloadTick] = useState(0);
   const [formOpen, setFormOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
   const [detailLead, setDetailLead] = useState<CrmLeadRow | null>(null);
   const [detailMode, setDetailMode] = useState<'view' | 'qualify' | 'convert'>('view');
   const [editLead, setEditLead] = useState<CrmLeadRow | null>(null);
@@ -172,41 +174,104 @@ export function LeadsDirectory() {
   // Sao chep Lead (chua convert) sang 1 trong 2 clone CRM doc lap con lai -
   // Lead goc van giu nguyen o Main (khong phai "chuyen han"). Chi Admin
   // THAT moi thay/dung duoc (backend cung chan y het).
-  const [copyLead, setCopyLead] = useState<CrmLeadRow | null>(null);
-  const [copyTargetInstance, setCopyTargetInstance] = useState('');
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [copyLeadIds, setCopyLeadIds] = useState<string[]>([]);
+  // Moi Lead trong copyLeadIds duoc chon 1 workspace dich RIENG (khong bat
+  // buoc ca lo cung 1 dich) - map lead_id -> instance dich.
+  const [copyTargets, setCopyTargets] = useState<Record<string, string>>({});
   const [copying, setCopying] = useState(false);
   const [copyError, setCopyError] = useState('');
+  const [copyFailures, setCopyFailures] = useState<Array<{ lead_id: string; message: string }>>([]);
   const canCopyInstance = user?.role === 'admin';
+  const copyReady = copyLeadIds.length > 0 && copyLeadIds.every(id => copyTargets[id]);
+
+  // Lead da convert khong the copy (backend cung chan) - loai khoi danh sach
+  // chon duoc de tranh chon nham roi bi bao loi.
+  const selectableItems = useMemo(
+    () => items.filter(lead => lead.status !== 'converted' && !lead.convertedCustomerId),
+    [items],
+  );
+  const allOnPageSelected = selectableItems.length > 0 && selectableItems.every(lead => selectedIds.has(lead.id));
+
+  function toggleSelect(id: string) {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleSelectAllOnPage() {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (allOnPageSelected) selectableItems.forEach(lead => next.delete(lead.id));
+      else selectableItems.forEach(lead => next.add(lead.id));
+      return next;
+    });
+  }
+
+  function openCopyModalForSelection() {
+    if (selectedIds.size === 0) return;
+    setCopyLeadIds([...selectedIds]);
+    setCopyTargets({});
+    setCopyError('');
+    setCopyFailures([]);
+  }
 
   function openCopyModal(lead: CrmLeadRow) {
-    setCopyLead(lead);
-    setCopyTargetInstance('');
+    setCopyLeadIds([lead.id]);
+    setCopyTargets({});
     setCopyError('');
+    setCopyFailures([]);
   }
 
   function closeCopyModal() {
     if (copying) return;
-    setCopyLead(null);
-    setCopyTargetInstance('');
+    setCopyLeadIds([]);
+    setCopyTargets({});
     setCopyError('');
+    setCopyFailures([]);
+  }
+
+  function setCopyTargetFor(leadId: string, instance: string) {
+    setCopyTargets(prev => ({ ...prev, [leadId]: instance }));
+  }
+
+  function applyTargetToAll(instance: string) {
+    setCopyTargets(prev => {
+      const next = { ...prev };
+      copyLeadIds.forEach(id => { next[id] = instance; });
+      return next;
+    });
   }
 
   async function confirmCopy() {
-    const target = copyLead;
-    if (!target || !copyTargetInstance || copying) return;
+    if (!copyReady || copying) return;
     setCopying(true);
     setCopyError('');
+    setCopyFailures([]);
     try {
-      const res = await fetch(`${API_BASE_URL}/api/all-platform/crm/leads/${encodeURIComponent(target.id)}/copy-instance`, {
+      const assignments = copyLeadIds.map(id => ({ lead_id: id, target_instance: copyTargets[id] }));
+      const res = await fetch(`${API_BASE_URL}/api/all-platform/crm/leads/copy-instance`, {
         method: 'POST',
         credentials: 'include',
         headers: headers(),
-        body: JSON.stringify({ target_instance: copyTargetInstance }),
+        body: JSON.stringify({ assignments }),
       });
       const body = await res.json();
       if (!res.ok || body.success === false) throw new Error(body?.message || 'Không sao chép được sang workspace khác.');
-      setCopyLead(null);
-      setCopyTargetInstance('');
+      const failures = (body.data?.failed || []) as Array<{ lead_id: string; message: string }>;
+      if (failures.length > 0) {
+        setCopyFailures(failures);
+        const failedIds = new Set(failures.map(f => f.lead_id));
+        setSelectedIds(prev => new Set([...prev].filter(id => failedIds.has(id))));
+        setCopyLeadIds(failures.map(f => f.lead_id));
+      } else {
+        setSelectedIds(new Set());
+        setCopyLeadIds([]);
+        setCopyTargets({});
+      }
     } catch (err) {
       setCopyError(err instanceof Error ? err.message : 'Không sao chép được sang workspace khác.');
     } finally {
@@ -223,6 +288,10 @@ export function LeadsDirectory() {
   }, [searchInput]);
 
   useEffect(() => { setPage(1); }, [status, source, sdrId]);
+
+  useEffect(() => {
+    setSelectedIds(new Set());
+  }, [page, search, status, source, sdrId]);
 
   const load = useCallback(() => {
     let alive = true;
@@ -521,6 +590,9 @@ export function LeadsDirectory() {
                   <RotateCcw className="crm-button-icon" /> Xóa lọc
                 </button>
               ) : null}
+              <button type="button" className="crm-secondary-button" onClick={() => setImportOpen(true)}>
+                Import Excel
+              </button>
               <button type="button" className="crm-primary-button" onClick={openLeadFormDrawer}>
                 <Plus className="crm-button-icon" /> Thêm Lead
               </button>
@@ -528,11 +600,29 @@ export function LeadsDirectory() {
           </div>
         </section>
 
+        {canCopyInstance && selectedIds.size > 0 ? (
+          <div
+            className="crm-filter-card"
+            style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem' }}
+          >
+            <span style={{ fontWeight: 600 }}>Đã chọn {selectedIds.size} Lead</span>
+            <div className="crm-icon-action-group" style={{ gap: '0.5rem' }}>
+              <button type="button" className="crm-secondary-button" onClick={() => setSelectedIds(new Set())}>
+                Bỏ chọn
+              </button>
+              <button type="button" className="crm-primary-button" onClick={openCopyModalForSelection}>
+                Sao chép sang workspace khác
+              </button>
+            </div>
+          </div>
+        ) : null}
+
         <section className="crm-content-section">
           <div className="crm-table-card crm-lead-table-card--desktop">
             <div className="crm-table-scroll">
               <table className="crm-table crm-lead-directory-table">
                 <colgroup>
+                  {canCopyInstance ? <col style={{ width: 40 }} /> : null}
                   <col className="crm-col-lead-name" />
                   <col className="crm-col-lead-contact" />
                   <col className="crm-col-lead-source" />
@@ -544,6 +634,16 @@ export function LeadsDirectory() {
                 </colgroup>
                 <thead>
                   <tr>
+                    {canCopyInstance ? (
+                      <th className="crm-th">
+                        <input
+                          type="checkbox"
+                          checked={allOnPageSelected}
+                          onChange={toggleSelectAllOnPage}
+                          aria-label="Chọn tất cả Lead trên trang này"
+                        />
+                      </th>
+                    ) : null}
                     <th className="crm-th">Lead</th>
                     <th className="crm-th">Liên hệ</th>
                     <th className="crm-th">Nguồn</th>
@@ -556,10 +656,22 @@ export function LeadsDirectory() {
                 </thead>
                 <tbody>
                   {loading ? (
-                    <tr><td colSpan={8} className="crm-empty-cell"><Loader2 className="crm-spin-icon" /> Đang tải...</td></tr>
+                    <tr><td colSpan={canCopyInstance ? 9 : 8} className="crm-empty-cell"><Loader2 className="crm-spin-icon" /> Đang tải...</td></tr>
                   ) : items.length ? (
                     items.map(lead => (
                       <tr key={lead.id} className="crm-row">
+                        {canCopyInstance ? (
+                          <td className="crm-td" onClick={event => event.stopPropagation()}>
+                            {lead.status === 'converted' || lead.convertedCustomerId ? null : (
+                              <input
+                                type="checkbox"
+                                checked={selectedIds.has(lead.id)}
+                                onChange={() => toggleSelect(lead.id)}
+                                aria-label={`Chọn ${lead.leadName}`}
+                              />
+                            )}
+                          </td>
+                        ) : null}
                         <td className="crm-td">
                           <button type="button" className="crm-customer-name-link crm-lead-name-btn" title={lead.leadName} onClick={() => openRow(lead)}>
                             {lead.leadName}
@@ -607,7 +719,7 @@ export function LeadsDirectory() {
                     ))
                   ) : (
                     <tr>
-                      <td colSpan={8}>
+                      <td colSpan={canCopyInstance ? 9 : 8}>
                         <div className="crm-empty-state">
                           <span className="crm-empty-state-icon">
                             <Plus className="crm-button-icon" />
@@ -742,6 +854,12 @@ export function LeadsDirectory() {
         }}
       />
 
+      <LeadImportDialog
+        open={importOpen}
+        onClose={() => setImportOpen(false)}
+        onImported={handleSaved}
+      />
+
       <LeadDetailDrawer
         lead={detailLead}
         open={Boolean(detailLead)}
@@ -763,7 +881,7 @@ export function LeadsDirectory() {
         onSaved={applyUpdatedLead}
       />
 
-      {copyLead ? (
+      {copyLeadIds.length > 0 ? (
         <div
           className="crm-modal-backdrop crm-modal-backdrop--confirm"
           onClick={() => (copying ? undefined : closeCopyModal())}
@@ -778,19 +896,54 @@ export function LeadsDirectory() {
               <div>
                 <p className="crm-modal-title">Sao chép sang workspace khác</p>
                 <p className="crm-modal-subtitle">
-                  Tạo 1 bản sao của Lead &ldquo;{copyLead.leadName}&rdquo; ở workspace khác — Lead gốc vẫn
-                  giữ nguyên ở Main.
+                  {copyLeadIds.length > 1
+                    ? `Chọn workspace đích riêng cho từng Lead (${copyLeadIds.length} Lead) — Lead gốc vẫn giữ nguyên ở Main.`
+                    : `Tạo 1 bản sao của Lead "${items.find(l => l.id === copyLeadIds[0])?.leadName || ''}" ở workspace khác — Lead gốc vẫn giữ nguyên ở Main.`}
                 </p>
               </div>
             </header>
             <div className="crm-modal-body">
               {copyError ? <p className="crm-error">{copyError}</p> : null}
-              <SearchableSelect
-                value={copyTargetInstance}
-                onChange={setCopyTargetInstance}
-                placeholder="Chọn workspace đích"
-                options={COPY_TARGET_OPTIONS.map(option => ({ value: option.instance, label: option.label }))}
-              />
+              {copyFailures.length > 0 ? (
+                <div className="crm-error">
+                  <p>{copyFailures.length} Lead sao chép thất bại:</p>
+                  <ul style={{ margin: '0.25rem 0 0', paddingLeft: '1.25rem' }}>
+                    {copyFailures.map(f => (
+                      <li key={f.lead_id}>{items.find(l => l.id === f.lead_id)?.leadName || f.lead_id}: {f.message}</li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+              {copyLeadIds.length > 1 ? (
+                <div style={{ marginBottom: '0.75rem' }}>
+                  <SearchableSelect
+                    value=""
+                    onChange={applyTargetToAll}
+                    placeholder="Áp dụng 1 workspace cho tất cả (tuỳ chọn)"
+                    options={COPY_TARGET_OPTIONS.map(option => ({ value: option.instance, label: option.label }))}
+                  />
+                </div>
+              ) : null}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', maxHeight: 260, overflowY: 'auto' }}>
+                {copyLeadIds.map(leadId => {
+                  const lead = items.find(l => l.id === leadId);
+                  return (
+                    <div key={leadId} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <span className="crm-truncate" style={{ flex: 1, minWidth: 0 }} title={lead?.leadName || leadId}>
+                        {lead?.leadName || leadId}
+                      </span>
+                      <div style={{ width: 200, flexShrink: 0 }}>
+                        <SearchableSelect
+                          value={copyTargets[leadId] || ''}
+                          onChange={value => setCopyTargetFor(leadId, value)}
+                          placeholder="Chọn workspace"
+                          options={COPY_TARGET_OPTIONS.map(option => ({ value: option.instance, label: option.label }))}
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
             <footer className="crm-modal-footer">
               <button type="button" className="crm-cancel-button" disabled={copying} onClick={closeCopyModal}>
@@ -799,7 +952,7 @@ export function LeadsDirectory() {
               <button
                 type="button"
                 className="crm-primary-button"
-                disabled={copying || !copyTargetInstance}
+                disabled={copying || !copyReady}
                 onClick={() => void confirmCopy()}
               >
                 {copying ? <Loader2 className="crm-save-spinner" /> : null}

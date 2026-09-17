@@ -211,6 +211,10 @@ export interface CrmCustomerSummary {
   /** So Contact that thuoc khach hang nay (migration khong can - backend gan
    * them field nay o _attach_customer_metrics, xem crm_customer_service.py). */
   contactCount?: number;
+  /** Contact dai dien (is_primary=true, hoac created_at som nhat neu khong co
+   * contact nao is_primary) - cung gan o _attach_customer_metrics(), null neu
+   * khach hang chua co contact nao. */
+  primaryContact?: { id: string; name: string; phone?: string | null; email?: string | null } | null;
 }
 
 /**
