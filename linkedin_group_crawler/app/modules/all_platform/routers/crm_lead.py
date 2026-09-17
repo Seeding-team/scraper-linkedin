@@ -95,19 +95,17 @@ def leads_create(payload: CrmLeadCreate, user: dict[str, Any] = Depends(get_curr
 
 @router.post("/copy-instance")
 def leads_copy_instance_bulk(payload: dict, user: dict[str, Any] = Depends(get_current_user)) -> BaseResponse:
-    """Chi Admin THAT: sao chep NHIEU Lead (chua convert) cung luc sang 1
-    clone CRM doc lap khac (cloudgate/SECURITYZONE) - ban bulk cua
-    POST /{lead_id}/copy-instance."""
+    """Chi Admin THAT: sao chep NHIEU Lead cung luc, MOI Lead 1 workspace dich
+    RIENG (khong bat buoc cung 1 dich cho ca lo) trong so 2 clone CRM doc
+    lap (cloudgate/SECURITYZONE) - ban bulk cua POST /{lead_id}/copy-instance.
+    Payload: {"assignments": [{"lead_id": ..., "target_instance": ...}, ...]}."""
     if str(user.get("role") or "").strip().lower() != "admin":
         return BaseResponse(success=False, message="Chỉ Admin mới được sao chép Lead sang workspace khác")
     try:
-        lead_ids = payload.get("lead_ids")
-        target_instance = payload.get("target_instance")
-        if not lead_ids or not isinstance(lead_ids, list):
-            return BaseResponse(success=False, message="lead_ids là bắt buộc (danh sách)")
-        if not target_instance:
-            return BaseResponse(success=False, message="target_instance là bắt buộc")
-        data = copy_leads_to_instance([str(i) for i in lead_ids], str(target_instance), user)
+        assignments = payload.get("assignments")
+        if not assignments or not isinstance(assignments, list):
+            return BaseResponse(success=False, message="assignments là bắt buộc (danh sách)")
+        data = copy_leads_to_instance(assignments, user)
         failed_count = len(data.get("failed") or [])
         copied_count = len(data.get("copied") or [])
         message = f"Đã sao chép {copied_count} Lead" + (f", {failed_count} lỗi" if failed_count else "")
