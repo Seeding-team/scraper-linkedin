@@ -1,4 +1,4 @@
-﻿"""Danh má»¥c dá»‹ch vá»¥ (Service Catalog): group/component/bundle dÃ¹ng chung cho cÃ¡c
+"""Danh má»¥c dá»‹ch vá»¥ (Service Catalog): group/component/bundle dÃ¹ng chung cho cÃ¡c
 Máº«u bÃ¡o giÃ¡. Bundle (gÃ³i/combo, vd SZ-VPS) tá»• há»£p nhiá»u component qua
 service_catalog_bundle_items â€” khi chá»n 1 bundle lÃºc Ä‘iá»n bÃ¡o giÃ¡, há»‡ thá»‘ng ghÃ©p
 Description Items tá»« cÃ¡c thÃ nh pháº§n vÃ  chá»‰ sinh ÄÃšNG 1 dÃ²ng quote_item.
