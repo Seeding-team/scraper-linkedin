@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, File, Query, UploadFile
+from fastapi.responses import Response
 
 from app.modules.all_platform.auth_deps import get_current_user
 from app.modules.all_platform.schemas import BaseResponse
@@ -10,6 +11,17 @@ from app.modules.all_platform.schemas.crm_lead import (
     CrmLeadConvertRequest,
     CrmLeadCreate,
     CrmLeadUpdate,
+)
+from app.modules.all_platform.schemas.crm_lead_import import (
+    ImportConfirmRequest,
+    ImportRevalidateRequest,
+)
+from app.modules.all_platform.services.crm_lead_import_service import (
+    MAX_IMPORT_BYTES,
+    build_template,
+    confirm_import,
+    preview_import,
+    revalidate_rows,
 )
 from app.modules.all_platform.services.crm_lead_service import (
     DuplicateLeadError,
@@ -68,6 +80,56 @@ def leads_duplicate_check(
 ) -> BaseResponse:
     try:
         return BaseResponse(success=True, data={"matches": duplicate_check(user, phone, email)})
+    except Exception as exc:
+        return _error(exc)
+
+
+@router.get("/import/template")
+def leads_import_template(user: dict[str, Any] = Depends(get_current_user)) -> Response:
+    del user
+    content = build_template()
+    return Response(
+        content=content,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="lead-import-template.xlsx"'},
+    )
+
+
+@router.post("/import/preview")
+async def leads_import_preview(
+    file: UploadFile = File(...),
+    user: dict[str, Any] = Depends(get_current_user),
+) -> BaseResponse:
+    try:
+        if not (file.filename or "").lower().endswith(".xlsx"):
+            raise ValueError("Chi ho tro file Excel .xlsx.")
+        raw = await file.read(MAX_IMPORT_BYTES + 1)
+        return BaseResponse(success=True, data=preview_import(raw, user))
+    except Exception as exc:
+        return _error(exc)
+
+
+@router.post("/import/preview/revalidate")
+def leads_import_revalidate(
+    payload: ImportRevalidateRequest,
+    user: dict[str, Any] = Depends(get_current_user),
+) -> BaseResponse:
+    try:
+        rows_payload = [row.model_dump() for row in payload.rows]
+        return BaseResponse(success=True, data=revalidate_rows(rows_payload, user))
+    except Exception as exc:
+        return _error(exc)
+
+
+@router.post("/import/confirm")
+def leads_import_confirm(
+    payload: ImportConfirmRequest,
+    user: dict[str, Any] = Depends(get_current_user),
+) -> BaseResponse:
+    try:
+        rows_payload = [row.model_dump() for row in payload.rows]
+        data = confirm_import(rows_payload, payload.selected_rows, user)
+        return BaseResponse(success=True, message="Da hoan tat import Lead.", data=data)
     except Exception as exc:
         return _error(exc)
 

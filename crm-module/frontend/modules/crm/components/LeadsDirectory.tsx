@@ -9,6 +9,7 @@ import { ActionMenu, type ActionMenuItem } from './ActionMenu';
 import { LeadFormDrawer } from './LeadFormDrawer';
 import { LeadDetailDrawer } from './LeadDetailDrawer';
 import { LeadEditDrawer } from './LeadEditDrawer';
+import { LeadImportDialog } from './LeadImportDialog';
 import { SearchableSelect } from './SearchableSelect';
 import { useCrmCategoryCodeOptions } from './CrmCategorySelect';
 import { Loader2, Plus, RotateCcw } from './icons';
@@ -169,6 +170,7 @@ export function LeadsDirectory() {
   const [error, setError] = useState('');
   const [reloadTick, setReloadTick] = useState(0);
   const [formOpen, setFormOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
   const [detailLead, setDetailLead] = useState<CrmLeadRow | null>(null);
   const [detailMode, setDetailMode] = useState<'view' | 'qualify' | 'convert'>('view');
   const [editLead, setEditLead] = useState<CrmLeadRow | null>(null);
@@ -621,6 +623,9 @@ export function LeadsDirectory() {
                   <RotateCcw className="crm-button-icon" /> Xóa lọc
                 </button>
               ) : null}
+              <button type="button" className="crm-secondary-button" onClick={() => setImportOpen(true)}>
+                Import Excel
+              </button>
               <button type="button" className="crm-primary-button" onClick={openLeadFormDrawer}>
                 <Plus className="crm-button-icon" /> Thêm Lead
               </button>
@@ -880,6 +885,12 @@ export function LeadsDirectory() {
           closeLeadFormDrawer();
           openRow(lead);
         }}
+      />
+
+      <LeadImportDialog
+        open={importOpen}
+        onClose={() => setImportOpen(false)}
+        onImported={handleSaved}
       />
 
       <LeadDetailDrawer

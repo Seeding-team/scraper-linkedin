@@ -11,11 +11,13 @@ export function PositionSelect({
   labelSnapshot,
   onChange,
   disabled = false,
+  placeholder = '-- Chọn chức vụ --',
 }: {
   value: string;
   labelSnapshot?: string | null;
   onChange: (positionCategoryId: string, label: string) => void;
   disabled?: boolean;
+  placeholder?: string;
 }) {
   return (
     <CrmCategoryIdSelect
@@ -24,7 +26,7 @@ export function PositionSelect({
       labelSnapshot={labelSnapshot}
       onChange={onChange}
       disabled={disabled}
-      placeholder="-- Chọn chức vụ --"
+      placeholder={placeholder}
     />
   );
 }

@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
 from datetime import datetime
 from typing import Any
 
@@ -115,6 +116,11 @@ def _normalize_payload(payload: dict[str, Any], actor_id: str | None = None) -> 
         # created_by chi de audit - khong bao gio tin gia tri client gui len.
         out["created_by"] = actor_id
     return out
+
+
+def is_valid_email(value: Any) -> bool:
+    text = str(value or "").strip()
+    return bool(re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", text))
 
 
 def _website_domain(value: str | None) -> str | None:
@@ -298,6 +304,24 @@ def duplicate_check(user: dict[str, Any], phone: str | None, email: str | None) 
     return matches
 
 
+def _validate_owner(owner_id: str | None) -> None:
+    """sdr_id must always be an active app_users row; never trust display text
+    or an arbitrary UUID supplied by a client/import file."""
+    if not owner_id:
+        return
+    supabase = get_supabase_client()
+    res = execute_supabase_query(
+        lambda: supabase.table("app_users")
+        .select("id, is_active")
+        .eq("id", owner_id)
+        .eq("is_active", True)
+        .limit(1)
+        .execute()
+    )
+    if not (res.data or []):
+        raise ValueError("Nguoi phu trach Lead khong ton tai hoac da ngung hoat dong.")
+
+
 def company_match(user: dict[str, Any], tax_code: str | None, website: str | None, name: str | None) -> list[dict[str, Any]]:
     """Tim crm_customers khop theo tax_code chinh xac, domain website (bo
     protocol/www/dau '/' cuoi ca 2 phia truoc khi so sanh), hoac ten fuzzy
@@ -347,13 +371,31 @@ def company_match(user: dict[str, Any], tax_code: str | None, website: str | Non
 
 def create_lead(payload: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]:
     actor_id = str(user.get("id") or "")
+    allow_duplicate = bool(payload.pop("allow_duplicate", False))
     data = _normalize_payload(payload, actor_id=actor_id)
+    if not data.get("lead_name"):
+        raise ValueError("Vui long nhap ten Lead.")
+    if not data.get("phone") and not data.get("email"):
+        raise ValueError("Can nhap so dien thoai hoac email.")
+    if data.get("phone") and not data.get("phone_normalized"):
+        raise ValueError("So dien thoai khong hop le.")
+    if data.get("email"):
+        if not is_valid_email(data["email"]):
+            raise ValueError("Email khong hop le.")
+    duplicate_rows = _duplicate_query(
+        data.get("email_normalized"),
+        data.get("phone_normalized"),
+        raw_phone_digits="".join(ch for ch in str(data.get("phone") or "") if ch.isdigit()),
+    )
+    if duplicate_rows and not allow_duplicate:
+        raise DuplicateLeadError(duplicate_rows)
     _validate_source(data.get("source"))
     apply_position_category(data)
     # Khong tin sdr_id client gui len tru khi actor co full CRM access (cung
     # quy tac voi owner_id tren crm_customers.create_customer()).
     if not (has_full_crm_access(user) and data.get("sdr_id")):
         data["sdr_id"] = actor_id or None
+    _validate_owner(data.get("sdr_id"))
     if data.get("status") in ("sql", "qualified", "converted"):
         raise ValueError("Khong duoc tao lead voi status SQL/converted truc tiep - phai qua Convert Lead.")
     raw_status = str(data.get("status") or "mql")

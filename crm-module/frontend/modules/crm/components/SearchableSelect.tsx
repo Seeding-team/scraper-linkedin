@@ -66,6 +66,19 @@ export function SearchableSelect({
   loading = false,
   emptyText = 'Không tìm thấy',
   testId,
+  // Cho phep go mot gia tri CHUA co trong `options` va dung thang gia tri do
+  // (khong phai chon tu danh sach co san) - vd Nguon/Chuc vu moi trong Import
+  // Lead. Khi bat va text dang go khong khop option nao, chen 1 dong gia
+  // "+ Tao moi '{query}'" o dau danh sach; chon dong do goi onCreateOption
+  // thay vi onChange. KHONG doi hanh vi mac dinh (allowCreate=false) cho cac
+  // noi dang dung SearchableSelect/CrmCategorySelect/MemberSearchSelect.
+  allowCreate = false,
+  onCreateOption,
+  // Mo san menu ngay khi mount (khong doi hanh vi cu, mac dinh false) - dung
+  // cho cac o EditableCell trong bang Preview Import: click 1 lan vao o la
+  // vao thang trang thai tim kiem, khong phai click 2 lan (click de sua roi
+  // click them lan nua de mo dropdown).
+  autoOpen = false,
 }: {
   value: string;
   onChange: (value: string) => void;
@@ -82,8 +95,11 @@ export function SearchableSelect({
    * gio dua vao "<select> option" that se khong con dung, vi day la
    * dropdown div-based, khong phai <select> goc). */
   testId?: string;
+  allowCreate?: boolean;
+  onCreateOption?: (query: string) => void;
+  autoOpen?: boolean;
 }) {
-  const [isOpen, setIsOpen] = useState(false);
+  const [isOpen, setIsOpen] = useState(autoOpen);
   const [search, setSearch] = useState('');
   const [highlightedIndex, setHighlightedIndex] = useState(0);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -174,10 +190,17 @@ export function SearchableSelect({
 
   const selectedLabel = options.find(o => optionValue(o) === value);
 
+  const trimmedSearch = search.trim();
+  const showCreateOption =
+    allowCreate &&
+    trimmedSearch.length > 0 &&
+    !options.some(o => foldDiacritics(optionSearchText(o)) === foldDiacritics(trimmedSearch));
+
   // Danh sach dieu huong ban phim PHAI khop DUNG thu tu render ben duoi (dong
-  // "clear" - neu co - roi moi den tung option) de arrow-key/Enter chon
-  // trung voi cai dang highlight tren man hinh.
-  const keyboardItems: Array<{ value: string; disabled?: boolean }> = [
+  // "+ Tao moi" - neu co - roi "clear" - neu co - roi moi den tung option) de
+  // arrow-key/Enter chon trung voi cai dang highlight tren man hinh.
+  const keyboardItems: Array<{ value: string; disabled?: boolean; isCreate?: boolean }> = [
+    ...(showCreateOption ? [{ value: '__create__', isCreate: true }] : []),
     ...(hideClearOption ? [] : [{ value: '' }]),
     ...visibleOptions.map(o => ({ value: optionValue(o), disabled: optionDisabled(o) })),
   ];
@@ -203,7 +226,11 @@ export function SearchableSelect({
       event.preventDefault();
       const target = keyboardItems[highlightedIndex];
       if (target && !target.disabled) {
-        onChange(target.value);
+        if (target.isCreate) {
+          onCreateOption?.(trimmedSearch);
+        } else {
+          onChange(target.value);
+        }
         setIsOpen(false);
         setSearch('');
       }
@@ -238,18 +265,28 @@ export function SearchableSelect({
                 className="crm-searchable-select-input"
               />
               <div className="crm-searchable-select-list" ref={listRef}>
-                {hideClearOption ? null : (
+                {showCreateOption ? (
                   <button
                     type="button"
                     data-highlighted={highlightedIndex === 0}
-                    className={`crm-searchable-select-option ${highlightedIndex === 0 ? 'is-highlighted' : ''}`}
+                    className={`crm-searchable-select-option crm-searchable-select-action--add ${highlightedIndex === 0 ? 'is-highlighted' : ''}`}
+                    onClick={() => { onCreateOption?.(trimmedSearch); setIsOpen(false); setSearch(''); }}
+                  >
+                    + Tạo mới &quot;{trimmedSearch}&quot;
+                  </button>
+                ) : null}
+                {hideClearOption ? null : (
+                  <button
+                    type="button"
+                    data-highlighted={highlightedIndex === (showCreateOption ? 1 : 0)}
+                    className={`crm-searchable-select-option ${highlightedIndex === (showCreateOption ? 1 : 0) ? 'is-highlighted' : ''}`}
                     onClick={() => { onChange(''); setIsOpen(false); setSearch(''); }}
                   >
                     {placeholder}
                   </button>
                 )}
                 {!loading && visibleOptions.map((option, index) => {
-                  const keyboardIndex = (hideClearOption ? 0 : 1) + index;
+                  const keyboardIndex = (showCreateOption ? 1 : 0) + (hideClearOption ? 0 : 1) + index;
                   return (
                     <button
                       key={optionValue(option)}
