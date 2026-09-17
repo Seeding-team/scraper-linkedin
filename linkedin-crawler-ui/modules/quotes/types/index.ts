@@ -145,6 +145,16 @@ export interface BundleSnapshotComponent {
   computedQuantity: number;
   displayText: string;
   unitPriceVnd: number;
+  quota?: string | null;
+  customerDisplayName?: string | null;
+  crmNote?: string | null;
+  quotaPoolKey?: string | null;
+  quotaPoolName?: string | null;
+  quotaPoolQuota?: string | null;
+  quotaPoolLimit?: number | null;
+  required?: boolean;
+  overagePolicy?: string | null;
+  showOnQuote?: boolean;
   sortOrder?: number;
 }
 
