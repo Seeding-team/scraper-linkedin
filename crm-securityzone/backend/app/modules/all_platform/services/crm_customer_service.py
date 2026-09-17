@@ -200,16 +200,22 @@ def _attach_customer_metrics(customers: list[dict[str, Any]], user: dict[str, An
     for lead in lead_res.data or []:
         by_customer.setdefault(lead.get("customer_id"), []).append(lead)
 
-    # So Contact that theo tung khach hang - 1 truy van gop cho ca trang, khong
-    # phai N+1 (khop do phuc tap voi cach lam cua lead_res o tren).
+    # Contact that theo tung khach hang - 1 truy van gop cho ca trang, khong
+    # phai N+1 (khop do phuc tap voi cach lam cua lead_res o tren). Mo rong
+    # select them name/phone/email/is_primary/created_at de dung chung cho ca
+    # contact_count lan primary_contact - khong them query thu 2.
     contact_res = execute_supabase_query(
-        lambda: supabase.table("crm_contacts").select("id, customer_id").in_("customer_id", ids).eq("instance", settings.crm_instance).execute()
+        lambda: supabase.table("crm_contacts")
+        .select("id, customer_id, name, phone, email, is_primary, created_at")
+        .in_("customer_id", ids)
+        .eq("instance", settings.crm_instance)
+        .execute()
     )
-    contact_counts: dict[str, int] = {}
+    contacts_by_customer: dict[str, list[dict[str, Any]]] = {}
     for contact in contact_res.data or []:
         cid = contact.get("customer_id")
         if cid:
-            contact_counts[cid] = contact_counts.get(cid, 0) + 1
+            contacts_by_customer.setdefault(cid, []).append(contact)
 
     for customer in customers:
         normalize_city_fields(customer)
@@ -219,7 +225,21 @@ def _attach_customer_metrics(customers: list[dict[str, Any]], user: dict[str, An
         customer["deal_count"] = len(leads)
         customer["total_value"] = sum(float(lead.get("estimated_budget") or lead.get("lifetime_value") or 0) for lead in leads)
         customer["last_deal_at"] = max((lead.get("updated_at") or lead.get("created_at") for lead in leads), default=None)
-        customer["contact_count"] = contact_counts.get(customer["id"], 0)
+
+        contacts = contacts_by_customer.get(customer["id"], [])
+        customer["contact_count"] = len(contacts)
+        if contacts:
+            # Rule dung y het list_contacts(): is_primary=true len truoc, hoa
+            # thi created_at som nhat thang - khong lay dai dien ngau nhien.
+            primary = sorted(contacts, key=lambda c: (not c.get("is_primary"), c.get("created_at") or ""))[0]
+            customer["primary_contact"] = {
+                "id": primary.get("id"),
+                "name": primary.get("name"),
+                "phone": primary.get("phone"),
+                "email": primary.get("email"),
+            }
+        else:
+            customer["primary_contact"] = None
     return customers
 
 

@@ -351,6 +351,9 @@ export function LeadFormDrawer({
       status: 'new_lead',
       sdr_id: canPickOwner ? (form.sdrId || null) : (currentUser?.id || null),
       note: form.note.trim() || null,
+      // Backend is the final dedup gate.  This flag is only sent after the
+      // user explicitly chose the existing manual-flow override.
+      allow_duplicate: overrideCreate,
     };
   }
 

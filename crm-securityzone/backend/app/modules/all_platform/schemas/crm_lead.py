@@ -43,7 +43,9 @@ class CrmLeadBase(BaseModel):
 
 
 class CrmLeadCreate(CrmLeadBase):
-    pass
+    # Manual quick-create may explicitly override the duplicate warning.  The
+    # import flow never exposes/sends this flag and is always strict.
+    allow_duplicate: bool = False
 
 
 class CrmLeadUpdate(BaseModel):

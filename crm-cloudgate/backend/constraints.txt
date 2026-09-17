@@ -1,0 +1,9 @@
+# Reviewed Python 3.12 resolver constraints (2026-09-16).
+# Keep Pydantic v2; settings 0.2.5 pulls unsupported PyYAML 5.4.1.
+pydantic==2.13.5
+pydantic-settings==2.15.0
+PyYAML==6.0.3
+# google-generativeai -> generativelanguage 0.6.15 requires protobuf <6.
+# grpcio-status >=1.72 requires protobuf >=6; use the compatible branch.
+grpcio-status==1.71.2
+google-api-core==2.33.0
