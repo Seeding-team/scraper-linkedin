@@ -159,6 +159,7 @@ def default_standard_schema():
     còn hardcode "CLOUDGATE"/"Dương Thị Mai" nữa) và thêm 2 field mới sellerTaxCode/
     sellerLogo mà bản Cloudgate cũ chưa có."""
     schema = copy.deepcopy(standard_schema())
+    schema["enableDynamicPaymentPlan"] = True
     for section_data in schema["sections"]:
         if section_data["key"] == "seller":
             section_data["fields"] = [

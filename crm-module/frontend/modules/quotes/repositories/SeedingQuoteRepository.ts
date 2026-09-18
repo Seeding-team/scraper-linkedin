@@ -62,6 +62,7 @@ type QuoteItemPayload = {
   row_type?: 'section' | 'item';
   description: string;
   service_description: string | null;
+  warranty_scope: string | null;
   unit?: string;
   quantity: number;
   unit_price: number;
@@ -204,6 +205,7 @@ function toQuoteItemPayload(item: NonNullable<CreateQuoteInput['items']>[number]
     row_type: item.rowType === 'section' ? 'section' : 'item',
     description: item.description ?? '',
     service_description: item.serviceDescription ?? null,
+    warranty_scope: item.warrantyScope?.trim() || null,
     unit: item.unit,
     quantity: item.quantity,
     unit_price: item.unitPrice,

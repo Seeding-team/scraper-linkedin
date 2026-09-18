@@ -1,3 +1,18 @@
+.quote-item-warranty {
+  margin-top: 0.4rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 0.9em;
+  font-weight: normal;
+}
+.quote-item-warranty strong { display: block; }
+.sheet-payment-plan td { white-space: pre-wrap; overflow-wrap: anywhere; }
+.sheet-payment-plan .money-cell { white-space: nowrap; }
+@media print {
+  .sheet-payment-plan tr { break-inside: avoid; }
+  .sheet-payment-plan thead { display: table-header-group; }
+}
+
 .quote-page,
 .quote-builder,
 .quote-preview-page,
@@ -671,6 +686,25 @@
   display: flex;
   gap: 0.3rem;
   white-space: nowrap;
+}
+
+/* Payment plan "Tỷ lệ (%)" cell: suffix kept OUTSIDE the input (never part of
+ * its value) and the number right-aligned like the money column next to it. */
+.quote-percent-input-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  justify-content: flex-end;
+}
+
+.quote-percent-input {
+  width: 4.5rem !important;
+  min-width: 0 !important;
+  text-align: right;
+}
+
+.quote-percent-suffix {
+  color: #64748b;
 }
 
 .quote-row-actions button {

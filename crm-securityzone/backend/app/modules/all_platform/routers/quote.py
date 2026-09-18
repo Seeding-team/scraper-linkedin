@@ -370,6 +370,7 @@ def quotes_issuer_companies_update(
 _TECHNICAL_ITEM_FIELD_PAIRS = [
     ("description", "description"),
     ("serviceDescription", "service_description"),
+    ("warrantyScope", "warranty_scope"),
     ("unit", "unit"),
     ("quantity", "quantity"),
 ]

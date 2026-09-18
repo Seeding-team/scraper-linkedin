@@ -39,6 +39,10 @@ import { ConfirmModal } from './ConfirmModal';
 import { ActionMenu } from './ActionMenu';
 import { QuoteColumnVisibilityPicker } from '../integrations/quotes/QuoteColumnVisibilityPicker';
 import type { QuoteDraft } from '../integrations/quotes/types';
+import { CustomBlocksEditor } from '../integrations/quotes/CustomBlocksEditor';
+import { PaymentPlanEditor } from '@/modules/quotes/components/PaymentPlanEditor';
+import { calculateQuoteTotals, calculateOverallDiscountSummary } from '@/modules/quotes/utils/quoteCalculations';
+import type { CustomBlock, PaymentPlanRow } from '@/modules/quotes/types';
 
 /** 4 buoc THAT (Yeu cau bao gia/Thong tin ky thuat/Hoan thien gia ban/Cho
  * duyet-Phat hanh) - anh xa dung 1-1 voi `quotes.processing_stage` (migration
@@ -562,6 +566,8 @@ export function QuoteWorkspaceModal({
   }
   const [draftTitle, setDraftTitle] = useState('');
   const [draftScope, setDraftScope] = useState('');
+  const [draftCustomBlocks, setDraftCustomBlocks] = useState<CustomBlock[]>([]);
+  const [draftPaymentPlan, setDraftPaymentPlan] = useState<PaymentPlanRow[]>([]);
   const [draftSummary, setDraftSummary] = useState('');
   const [draftExpectedProducts, setDraftExpectedProducts] = useState('');
   const [draftInternalNote, setDraftInternalNote] = useState('');
@@ -701,9 +707,11 @@ export function QuoteWorkspaceModal({
   // khong con quyen sua (Buoc 3/da duyet) - van xem duoc, chi khong sua.
   const [descriptionPopoverIndex, setDescriptionPopoverIndex] = useState<number | null>(null);
   const [descriptionDraftText, setDescriptionDraftText] = useState('');
+  const [warrantyDraftText, setWarrantyDraftText] = useState('');
   function openDescriptionPopover(index: number) {
     setDescriptionPopoverIndex(index);
     setDescriptionDraftText(itemsDraft[index]?.description || '');
+    setWarrantyDraftText(itemsDraft[index]?.warrantyScope || '');
   }
   function saveDescriptionPopover() {
     if (descriptionPopoverIndex == null) return;
@@ -714,7 +722,7 @@ export function QuoteWorkspaceModal({
     // da co san o applyFillDown/doApplyQuickMarkup: tinh mang MOI truoc, set
     // state VA truyen thang mang do vao persistQuote({ items: next }) thay
     // vi de no tu doc itemsDraft.
-    const next = itemsDraft.map((row, i) => (i === idx ? { ...row, description: descriptionDraftText } : row));
+    const next = itemsDraft.map((row, i) => (i === idx ? { ...row, description: descriptionDraftText, warrantyScope: warrantyDraftText.trim() || null } : row));
     setItemsDraft(next);
     if (quote) void persistQuote({ items: next }, { silent: true });
     setDescriptionPopoverIndex(null);
@@ -1229,6 +1237,7 @@ export function QuoteWorkspaceModal({
       rowType: row.rowType === 'section' ? 'section' : 'item',
       description: row.description || '',
       serviceDescription: row.serviceDescription,
+      warrantyScope: row.warrantyScope,
       unit: row.unit,
       quantity: row.quantity,
       unitPrice: row.unitPrice,
@@ -1271,6 +1280,7 @@ export function QuoteWorkspaceModal({
   // Xem giai thich day du trong persistQuote() ben duoi - danh dau "sap dong,
   // dung autosave nua" tren onMouseDown cua nut Dong/Huy (chay TRUOC blur).
   const skipNextAutoSaveRef = useRef(false);
+  const quoteContentRevisionRef = useRef(0);
   function markClosingIntent() {
     skipNextAutoSaveRef.current = true;
   }
@@ -1304,13 +1314,16 @@ export function QuoteWorkspaceModal({
     }
     try {
       const nextItems = overrides.items ?? itemsDraft;
+      const contentRevision = quoteContentRevisionRef.current;
       const updated = await seedingQuoteRepository.updateQuote(quote.id, {
         data: overrides.data ?? quote.data,
         items: buildItemsPayload(nextItems),
         ...('overallDiscountPercent' in overrides ? { overallDiscountPercent: overrides.overallDiscountPercent } : {}),
         ...('quoteTypeCodes' in overrides ? { quoteTypeCodes: overrides.quoteTypeCodes } : {}),
       });
-      setQuote(updated);
+      setQuote(current => current?.id === updated.id && contentRevision !== quoteContentRevisionRef.current
+        ? { ...updated, data: { ...updated.data, paymentPlan: current.data.paymentPlan, customBlocks: current.data.customBlocks } }
+        : updated);
       await onChanged();
     } catch (err) {
       window.alert(err instanceof Error ? err.message : 'Không lưu được thay đổi.');
@@ -2540,7 +2553,7 @@ export function QuoteWorkspaceModal({
     setActiveAction(submitFully ? 'handoff' : 'draftSave');
     setBusy(true);
     try {
-      const customBlocks = [
+      const legacyBlocks = [
         ...(draftScope.trim()
           ? [{ id: newBlockId(), kind: 'scope_of_work' as const, title: 'Mô tả scope / yêu cầu cần estimate', content: draftScope.trim() }]
           : []),
@@ -2555,6 +2568,7 @@ export function QuoteWorkspaceModal({
         },
         ...draftExtraTerms.map(t => ({ id: t.id, kind: 'custom_field' as const, title: t.title, content: t.content })),
       ];
+      const customBlocks = [...legacyBlocks.filter(block => !draftCustomBlocks.some(b => b.kind !== 'custom_field' && b.kind === block.kind)), ...draftCustomBlocks].filter(b => b.content.trim());
       const created = await seedingQuoteRepository.createQuote({
         dealId: draftDealId,
         // Da validate o tren (!draftFormId && !defaultFormId -> return som) -
@@ -2566,6 +2580,7 @@ export function QuoteWorkspaceModal({
         data: {
           quoteTitle: draftTitle.trim() || 'Yêu cầu hỗ trợ báo giá',
           customBlocks,
+          paymentPlan: draftPaymentPlan,
           ...(draftVisibleColumns ? { visibleColumns: draftVisibleColumns } : {}),
           ...(draftVisibleSummaryFields ? { visibleSummaryFields: draftVisibleSummaryFields } : {}),
           // Field noi bo rieng cho luong "Yeu cau ho tro bao gia" - KHONG phai
@@ -3331,7 +3346,7 @@ export function QuoteWorkspaceModal({
     const customerId = deal?.customerId || draftCustomerId;
     const customerRecord = customerId ? customers.find(c => c.id === customerId) : undefined;
     const displayName = customerRecord?.name || deal?.customerName;
-    const customBlocks = [
+    const legacyBlocks = [
       ...(draftScope.trim()
         ? [{ id: 'preview-scope', kind: 'scope_of_work' as const, title: 'Mô tả scope / yêu cầu cần estimate', content: draftScope.trim() }]
         : []),
@@ -3343,9 +3358,11 @@ export function QuoteWorkspaceModal({
       },
       ...draftExtraTerms.map(t => ({ id: t.id, kind: 'custom_field' as const, title: t.title, content: t.content })),
     ];
+    const customBlocks = [...legacyBlocks.filter(block => !draftCustomBlocks.some(b => b.kind !== 'custom_field' && b.kind === block.kind)), ...draftCustomBlocks].filter(b => b.content.trim());
     return {
       quoteTitle: draftTitle.trim() || 'Yêu cầu hỗ trợ báo giá',
       customBlocks,
+      paymentPlan: draftPaymentPlan,
       ...(draftVisibleColumns ? { visibleColumns: draftVisibleColumns } : {}),
       ...(draftVisibleSummaryFields ? { visibleSummaryFields: draftVisibleSummaryFields } : {}),
       ...(deal || customerRecord
@@ -3360,7 +3377,7 @@ export function QuoteWorkspaceModal({
           }
         : {}),
     };
-  }, [deal, draftCustomerId, customers, draftTitle, draftScope, draftPaymentTermsDays, draftExtraTerms, draftVisibleColumns, draftVisibleSummaryFields]);
+  }, [deal, draftCustomerId, customers, draftTitle, draftScope, draftPaymentTermsDays, draftExtraTerms, draftCustomBlocks, draftPaymentPlan, draftVisibleColumns, draftVisibleSummaryFields]);
   const columnVisibilitySchema = quote?.formSnapshot || draftSelectedForm?.schemaJson;
   const columnVisibilityDraft: QuoteDraft = {
     data: quote ? quote.data : draftPreviewData,
@@ -4665,6 +4682,36 @@ export function QuoteWorkspaceModal({
               </div>
             ) : null}
 
+            {columnVisibilitySchema?.enableDynamicPaymentPlan && columnVisibilitySchema.layoutType !== 'villa_solution_package' ? (
+              <details className="qc-workspace-card qc-workspace-collapsible-card" data-testid="qc-payment-plan-card">
+                <summary className="qc-workspace-card-head qc-workspace-collapsible-summary">
+                  <h3>Kế hoạch thanh toán</h3>
+                  <span className="qc-workspace-collapsible-hint">(cấp báo giá · bấm để xem)</span>
+                </summary>
+              <PaymentPlanEditor rows={quote?.data.paymentPlan || draftPaymentPlan}
+                finalPayable={calculateOverallDiscountSummary(calculateQuoteTotals(itemsDraft), quote ? quote.overallDiscountPercent : draftOverallDiscountPercent).grandTotal}
+                disabled={!canEdit || !isDraft || isLockedForReview}
+                onChange={paymentPlan => {
+                  quoteContentRevisionRef.current += 1;
+                  if (quote) setQuote(current => current ? { ...current, data: { ...current.data, paymentPlan } } : current);
+                  else setDraftPaymentPlan(paymentPlan);
+                }} />
+              </details>
+            ) : null}
+            <details className="qc-workspace-card qc-workspace-collapsible-card" data-testid="qc-custom-blocks-card">
+              <summary className="qc-workspace-card-head qc-workspace-collapsible-summary">
+                <h3>Nội dung bổ sung</h3>
+                <span className="qc-workspace-collapsible-hint">(cấp báo giá · bấm để xem)</span>
+              </summary>
+            <fieldset disabled={!canEdit || !isDraft || isLockedForReview} style={{ border: 0, padding: 0, margin: 0 }}>
+              <CustomBlocksEditor blocks={quote?.data.customBlocks || draftCustomBlocks} onChange={customBlocks => {
+                quoteContentRevisionRef.current += 1;
+                if (quote) setQuote(current => current ? { ...current, data: { ...current.data, customBlocks } } : current);
+                else setDraftCustomBlocks(customBlocks);
+              }} />
+            </fieldset>
+            </details>
+
             {stage === 'technical' || stage === 'request' ? (
               // Gop Buoc 1+2: hien san khoi ban giao ngay tu luc con o
               // 'request' (truoc khi Sale kip them hang muc/quote tu tao
@@ -5594,11 +5641,11 @@ export function QuoteWorkspaceModal({
                   quoteData={quote ? quote.data : draftPreviewData}
                   quoteItems={itemsDraft}
                   solutionItems={quote ? quote.data?.solutionItems : undefined}
-                  totals={quote ? {
+                  totals={previewSchema.layoutType === 'villa_solution_package' && quote ? {
                     subtotalAmount: quote.subtotalAmount ?? 0,
                     totalVatAmount: quote.vatAmount ?? 0,
                     totalAmount: quote.totalAmount ?? 0,
-                  } : draftPreviewTotals}
+                  } : calculateQuoteTotals(itemsDraft)}
                   mode="public"
                   isPublished={quote ? quote.processingStage === 'published' : false}
                   quoteNumber={quote?.quoteNumber}
@@ -6268,7 +6315,7 @@ export function QuoteWorkspaceModal({
                   <p>{descItem.serviceDescription || '—'}</p>
                 </div>
                 <label className="qc-workspace-drawer-field">
-                  <span className="qc-workspace-info-label">Mô tả hạng mục</span>
+                  <span className="qc-workspace-info-label">Nội dung công việc</span>
                   <textarea
                     className="qc-cell-input"
                     rows={5}
@@ -6277,6 +6324,11 @@ export function QuoteWorkspaceModal({
                     placeholder={canEditDescription ? 'Nhập mô tả hạng mục...' : 'Chưa có mô tả.'}
                     onChange={e => setDescriptionDraftText(e.target.value)}
                   />
+                </label>
+                <label className="qc-workspace-drawer-field">
+                  <span className="qc-workspace-info-label">Phạm vi bảo hành</span>
+                  <textarea className="qc-cell-input" rows={5} value={warrantyDraftText} disabled={!canEditDescription}
+                    placeholder="Nhập phạm vi bảo hành riêng cho hạng mục..." onChange={e => setWarrantyDraftText(e.target.value)} />
                 </label>
               </div>
               <div className="qc-workspace-modal-actions">
