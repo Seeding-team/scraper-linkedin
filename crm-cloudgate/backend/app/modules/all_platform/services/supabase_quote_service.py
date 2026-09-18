@@ -778,24 +778,33 @@ def _enrich_bundle_catalog_quote_item(item: dict) -> dict:
         logger.exception("quote bundle enrich: khong doc duoc catalog_item_id=%s", catalog_item_id)
         return item
     if catalog_item.get("itemType") != "bundle":
-        return item
+        next_item = dict(item)
+    else:
+        next_item = dict(item)
+        components = catalog_item.get("components") or []
+        if not next_item.get("bundle_snapshot"):
+            next_item["bundle_snapshot"] = _bundle_snapshot_from_catalog_components(components)
 
-    next_item = dict(item)
-    components = catalog_item.get("components") or []
-    if not next_item.get("bundle_snapshot"):
-        next_item["bundle_snapshot"] = _bundle_snapshot_from_catalog_components(components)
-
-    if not str(next_item.get("description") or "").strip():
-        included = render_bundle_description(catalog_item_id)
-        description_parts = [
-            catalog_item.get("quoteDescription") or catalog_item.get("description"),
-            catalog_item.get("quoteCta"),
-            f"Bao gồm:\n{included}" if included else None,
-        ]
-        next_item["description"] = "\n\n".join(str(part) for part in description_parts if part)
+        if not str(next_item.get("description") or "").strip():
+            included = render_bundle_description(catalog_item_id)
+            description_parts = [
+                catalog_item.get("quoteDescription") or catalog_item.get("description"),
+                catalog_item.get("quoteCta"),
+                f"Bao gồm:\n{included}" if included else None,
+            ]
+            next_item["description"] = "\n\n".join(str(part) for part in description_parts if part)
 
     if not next_item.get("service_description"):
         next_item["service_description"] = catalog_item.get("quoteDisplayName") or catalog_item.get("name")
+    if next_item.get("cost_price") is None and catalog_item.get("defaultCostPriceVnd") is not None:
+        next_item["cost_price"] = catalog_item.get("defaultCostPriceVnd")
+        next_item["cost_not_applicable"] = False
+    if next_item.get("markup_percent") is None and catalog_item.get("defaultMarkupPercent") is not None:
+        next_item["markup_percent"] = catalog_item.get("defaultMarkupPercent")
+    if (not next_item.get("unit_price")) and catalog_item.get("defaultCustomerPriceVnd") is not None:
+        next_item["unit_price"] = catalog_item.get("defaultCustomerPriceVnd")
+    if (not next_item.get("unit_price")) and next_item.get("cost_price") is not None and next_item.get("markup_percent") is not None:
+        next_item["unit_price"] = float(next_item["cost_price"]) * (1 + float(next_item["markup_percent"]) / 100)
     return next_item
 
 

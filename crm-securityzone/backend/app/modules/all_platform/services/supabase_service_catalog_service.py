@@ -198,6 +198,7 @@ def get_service_catalog_item(item_id: str) -> dict:
     item = _row_to_item(row)
     if item["itemType"] == "bundle":
         item["components"] = _bundle_components(item_id)
+    merge_pricing_into_tree([item], resolve_pricing_map(_collect_item_ids([item]), None))
     return item
 
 

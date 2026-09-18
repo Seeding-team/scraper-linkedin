@@ -1816,8 +1816,11 @@ export function QuoteWorkspaceModal({
         setQuickAddProductTarget(null);
         return;
       }
-      setItemsDraft(prev => prev.map((row, i) => (i === linkIndex ? { ...row, catalogItemId: hydrated.id } : row)));
-      if (quote) void persistQuote({}, { silent: true });
+      setItemsDraft(prev => {
+        const next = prev.map((row, i) => (i === linkIndex ? { ...row, catalogItemId: hydrated.id } : row));
+        if (quote) void persistQuote({ items: next }, { silent: true });
+        return next;
+      });
       showToast(true, `Đã thêm "${created.name}" vào Sản phẩm & dịch vụ và liên kết với hạng mục này.`);
     } else {
       // 'newRow' - CHI tao san pham + tu tich chon trong Picker (van dang
@@ -3009,30 +3012,8 @@ export function QuoteWorkspaceModal({
       // khong lam gi duoc o do vi khong co quyen sua Buoc 2). Dung DUNG
       // sale_user_id (quote.quoteOwnerId) so voi current_user_id (user?.id)
       // - so bang ID THAT, KHONG so ten/email/text role.
-      const saleUserId = finalQuote.quoteOwnerId || null;
-      const currentUserId = user?.id || null;
-      if (saleUserId && currentUserId && saleUserId === currentUserId) {
-        // Truong hop 1: 1 nguoi kiem ca Presale+Sale - giu popup mo, tu nhay
-        // sang Buoc 2 (reload() tai lai quote/checklist/activity moi nhat,
-        // UI tu ve dung stage='pricing' vi da co san logic theo stage).
-        await reload();
-      } else {
-        // Truong hop 2/3: Sale la nguoi khac (hoac chua gan Sale) - KHONG
-        // dieu huong Presale sang Buoc 2. Hien toast xac nhan TRUOC, roi moi
-        // dong popup sau 1 khoang ngan de nguoi dung con kip doc toast (dong
-        // ngay lap tuc se lam bien mat toast chua kip hien - modal se
-        // unmount cung luc voi state toast).
-        showToast(
-          true,
-          saleUserId
-            ? `Đã hoàn thành Bước 1 và bàn giao cho ${nameFor(saleUserId)}.`
-            : 'Đã hoàn thành Bước 1. Báo giá đang chờ phân công Sale.'
-        );
-        window.setTimeout(() => {
-          markClosingIntent();
-          onClose();
-        }, 1200);
-      }
+      await reload();
+      showToast(true, `Đã bàn giao sang Bước 2${finalQuote.quoteOwnerId ? ` cho ${nameFor(finalQuote.quoteOwnerId)}` : ''}.`);
     } catch (err) {
       window.alert(err instanceof Error ? err.message : 'Chưa thể hoàn tất bàn giao. Vui lòng thử lại.');
       // Du that bai o buoc nao, tai lai du lieu THAT tu server (co the da
