@@ -5445,7 +5445,7 @@ export function QuoteWorkspaceModal({
                 // handoffStep1ToPricing() tu xu ly ca 2 hop (request-
                 // >technical NEU can, roi ->pricing) trong CUNG 1 lan bam.
                 <>
-                  <button type="button" className="qc-btn" disabled={busy || !checklistDirty} title="Lưu checklist ngay (không bắt buộc — bấm Bàn giao cũng tự lưu)" onClick={saveChecklist}>Lưu</button>
+                  <button type="button" className="qc-btn" disabled={busy} aria-busy={busy && activeAction === 'draftSave'} title="Lưu bản nháp báo giá" onClick={() => void persistQuote({}).then(() => showToast(true, 'Đã lưu bản nháp.'))}>Lưu</button>
                   <button
                     type="button"
                     className="qc-btn qc-btn-primary"
