@@ -37,9 +37,9 @@ jobs:
       - name: Build and apply CRM containers
         working-directory: /opt/apps/crm-securityzone
         run: |
-          docker compose build frontend backend
-          docker compose up -d frontend backend
-          docker compose restart router
+          docker compose -p crm-securityzone build frontend backend
+          docker compose -p crm-securityzone up -d frontend backend
+          docker compose -p crm-securityzone restart router
 
       - name: Verify CRM production
         run: |

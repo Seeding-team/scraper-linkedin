@@ -37,9 +37,9 @@ jobs:
       - name: Build and apply CRM containers
         working-directory: /opt/apps/crm-cloudgate
         run: |
-          docker compose build frontend backend
-          docker compose up -d frontend backend
-          docker compose restart router
+          docker compose -p crm-cloudgate build frontend backend
+          docker compose -p crm-cloudgate up -d frontend backend
+          docker compose -p crm-cloudgate restart router
 
       - name: Verify CRM production
         run: |
