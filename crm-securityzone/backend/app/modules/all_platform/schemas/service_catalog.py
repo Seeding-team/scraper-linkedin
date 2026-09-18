@@ -4,7 +4,7 @@ cho các Mẫu báo giá, thay thế dữ liệu dịch vụ hard-code trong sch
 from __future__ import annotations
 
 from decimal import Decimal
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -21,7 +21,27 @@ class ServiceCatalogItemCreateRequest(BaseModel):
     exchange_rate_snapshot: Optional[float] = None
     default_unit_price_vnd: float = 0
     default_discount_percent: float = Field(default=0, ge=0, le=100)
-    default_vat_rate: float = Field(default=0, ge=0, le=100)
+    default_vat_rate: Optional[float] = Field(default=None, ge=0, le=100)
+    customer_visible: bool = True
+    quote_display_name: Optional[str] = None
+    quote_description: Optional[str] = None
+    quote_cta: Optional[str] = None
+    monthly_price_vnd: Optional[Decimal] = Field(default=None, ge=0)
+    annual_commit_monthly_price_vnd: Optional[Decimal] = Field(default=None, ge=0)
+    annual_total_price_vnd: Optional[Decimal] = Field(default=None, ge=0)
+    max_sale_discount_percent: Optional[Decimal] = Field(default=None, ge=0, le=100)
+    target_gross_margin_percent: Optional[Decimal] = Field(default=None, ge=0, le=100)
+    cost_basis_rule: Optional[str] = None
+    pricing_policy_exceptions: Optional[list[dict[str, Any]]] = None
+    quota_user_count: Optional[Decimal] = Field(default=None, ge=0)
+    quota_user_label: Optional[str] = None
+    quota_connected_channels: Optional[Decimal] = Field(default=None, ge=0)
+    quota_connected_channels_label: Optional[str] = None
+    quota_messages_per_month: Optional[Decimal] = Field(default=None, ge=0)
+    quota_messages_per_month_label: Optional[str] = None
+    quota_ai_data: Optional[str] = None
+    quota_highlights: Optional[str] = None
+    quota_extra: Optional[dict[str, Any]] = None
     spec_quantity_per_unit: float = 1
     spec_unit_label: Optional[str] = None
     note: Optional[str] = None
@@ -64,6 +84,26 @@ class ServiceCatalogItemUpdateRequest(BaseModel):
     default_unit_price_vnd: Optional[float] = None
     default_discount_percent: Optional[float] = Field(default=None, ge=0, le=100)
     default_vat_rate: Optional[float] = Field(default=None, ge=0, le=100)
+    customer_visible: Optional[bool] = None
+    quote_display_name: Optional[str] = None
+    quote_description: Optional[str] = None
+    quote_cta: Optional[str] = None
+    monthly_price_vnd: Optional[Decimal] = Field(default=None, ge=0)
+    annual_commit_monthly_price_vnd: Optional[Decimal] = Field(default=None, ge=0)
+    annual_total_price_vnd: Optional[Decimal] = Field(default=None, ge=0)
+    max_sale_discount_percent: Optional[Decimal] = Field(default=None, ge=0, le=100)
+    target_gross_margin_percent: Optional[Decimal] = Field(default=None, ge=0, le=100)
+    cost_basis_rule: Optional[str] = None
+    pricing_policy_exceptions: Optional[list[dict[str, Any]]] = None
+    quota_user_count: Optional[Decimal] = Field(default=None, ge=0)
+    quota_user_label: Optional[str] = None
+    quota_connected_channels: Optional[Decimal] = Field(default=None, ge=0)
+    quota_connected_channels_label: Optional[str] = None
+    quota_messages_per_month: Optional[Decimal] = Field(default=None, ge=0)
+    quota_messages_per_month_label: Optional[str] = None
+    quota_ai_data: Optional[str] = None
+    quota_highlights: Optional[str] = None
+    quota_extra: Optional[dict[str, Any]] = None
     spec_quantity_per_unit: Optional[float] = None
     spec_unit_label: Optional[str] = None
     note: Optional[str] = None
@@ -101,6 +141,16 @@ class ServiceCatalogReorderRequest(BaseModel):
 class BundleComponentInput(BaseModel):
     component_id: str
     quantity: float = 1
+    quota: Optional[str] = None
+    customer_display_name: Optional[str] = None
+    crm_note: Optional[str] = None
+    quota_pool_key: Optional[str] = None
+    quota_pool_name: Optional[str] = None
+    quota_pool_quota: Optional[str] = None
+    quota_pool_limit: Optional[Decimal] = Field(default=None, ge=0)
+    is_required: bool = True
+    overage_policy: Optional[str] = None
+    show_on_quote: bool = True
     sort_order: int = 0
 
 

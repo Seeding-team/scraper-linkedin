@@ -1675,6 +1675,16 @@ export function QuoteWorkspaceModal({
     () =>
       catalogFlatItems.map(item => ({
         id: item.id,
+        // BUG THAT DA GAP: thieu itemType khien CatalogPickerModal loc
+        // item.itemType === 'bundle' luon ra RONG (tab "Goi Combo" luon hien
+        // 0 du API/DB co du lieu dung) - Combo khong bao gio hien duoc trong
+        // Product Picker cua Quote Workspace. components/monthlyPriceVnd/...
+        // cung thieu (can cho phan "Xem thanh phan" khi expand 1 Combo).
+        // flattenCatalogTree() chi push node itemType='component'|'bundle'
+        // (group luon bi "walk" xuyen qua, khong bao gio vao mang phang nay) -
+        // ep kieu hep lai dung voi thuc te runtime, khop CatalogPickerListItem.
+        itemType: item.itemType as 'component' | 'bundle',
+        components: item.components,
         sku: item.sku,
         name: item.name,
         description: item.description,
@@ -1684,6 +1694,9 @@ export function QuoteWorkspaceModal({
         costPriceVnd: item.defaultCostPriceVnd,
         markupPercent: item.defaultMarkupPercent,
         customerPriceVnd: item.defaultCustomerPriceVnd ?? item.defaultUnitPriceVnd ?? 0,
+        monthlyPriceVnd: item.monthlyPriceVnd,
+        annualCommitMonthlyPriceVnd: item.annualCommitMonthlyPriceVnd,
+        annualTotalPriceVnd: item.annualTotalPriceVnd,
         status: item.status,
         alreadyAdded: existingCatalogKeys.has(item.id),
       })),
@@ -6010,25 +6023,15 @@ export function QuoteWorkspaceModal({
         } : undefined}
         groupFilterValue={catalogSource === 'internal' ? pickerGroupFilter : undefined}
         onGroupFilterChange={catalogSource === 'internal' ? setPickerGroupFilter : undefined}
+        onQuickAddProduct={catalogSource === 'internal' ? () => setQuickAddProductTarget('newRow') : undefined}
+        onQuickAddGroup={catalogSource === 'internal' ? () => setQuickAddGroupOpen(true) : undefined}
         extraToolbar={
-          catalogSource === 'internal' ? (
+          catalogSource === 'internal' && catalogSectionOptions.length > 0 ? (
             <div className="cp-filter-chips" style={{ paddingTop: 0 }}>
-              {catalogSectionOptions.length > 0 ? (
-                <select className="crm-input" value={catalogTargetSectionId} onChange={e => setCatalogTargetSectionId(e.target.value)}>
-                  <option value="">Thêm vào: Cuối bảng</option>
-                  {catalogSectionOptions.map(s => <option key={s.id} value={s.id}>Thêm vào mục: {s.label}</option>)}
-                </select>
-              ) : null}
-              {/* "Tạo nhanh sản phẩm và nhóm sản phẩm ngay trong popup chọn từ
-               * danh mục" - dung DUNG serviceCatalogRepository (xem
-               * QuickAddProductModal/QuickAddGroupModal), khong tao nguon du
-               * lieu rieng. */}
-              <button type="button" className="qc-btn" onClick={() => setQuickAddProductTarget('newRow')}>
-                + Sản phẩm mới
-              </button>
-              <button type="button" className="qc-btn" onClick={() => setQuickAddGroupOpen(true)}>
-                + Nhóm sản phẩm
-              </button>
+              <select className="crm-input" value={catalogTargetSectionId} onChange={e => setCatalogTargetSectionId(e.target.value)}>
+                <option value="">Thêm vào: Cuối bảng</option>
+                {catalogSectionOptions.map(s => <option key={s.id} value={s.id}>Thêm vào mục: {s.label}</option>)}
+              </select>
             </div>
           ) : undefined
         }

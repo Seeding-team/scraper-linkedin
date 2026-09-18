@@ -1,28 +1,31 @@
-'use client';
+﻿'use client';
 
-import { forwardRef, useEffect, useImperativeHandle, useMemo, useState } from 'react';
-import { createPortal } from 'react-dom';
+import { Fragment, forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useState } from 'react';
 import { ConfirmModal } from '@/modules/crm/components/ConfirmModal';
-import { ActionMenu } from '@/modules/crm/components/ActionMenu';
-import { Eye, Pencil, PauseCircle, Trash2, X } from '@/modules/crm/components/icons';
-import { CurrencyInput } from '@/components/CurrencyInput';
-import { serviceCatalogRepository } from './repositories/ServiceCatalogRepository';
-import type { ServiceCatalogItem, ServiceCatalogItemInput, ServiceCatalogPricingInputMode } from './types';
+import { Pencil, PauseCircle, RotateCcw, Trash2 } from '@/modules/crm/components/icons';
+import { QuickAddProductModal } from './QuickAddProductModal';
+import type { BundleComponentLine, ServiceCatalogItem, ServiceCatalogItemInput } from './types';
 import {
-  emptyProductForm,
-  itemToForm,
   formatVnd,
   formatVndOrMissing,
-  formatMarkupOrMissing,
-  computeCustomerFromMarkup,
-  computeMarkupFromCustomer,
-  computeCostFromMarkupAndCustomer,
-  parseNullableNumber,
   formatSkuName,
   type FlatProduct,
 } from './catalog-form-utils';
 
 type PriceFilter = '' | 'configured' | 'unconfigured';
+
+type BundleComponentPresentation =
+  | { type: 'component'; component: BundleComponentLine }
+  | { type: 'pool'; key: string; name: string; quota: string; components: BundleComponentLine[] };
+
+function formatQuotaPoolName(poolKey?: string | null, poolName?: string | null): string {
+  const normalizedKey = (poolKey || '').toLowerCase();
+  const normalizedName = (poolName || '').toLowerCase();
+  if (normalizedKey.includes('channel') || normalizedName.includes('channel')) {
+    return 'Kênh kết nối';
+  }
+  return poolName || 'Nhóm quota';
+}
 
 /** Bang "Sản phẩm & dịch vụ" (danh sách + drawer thêm/sửa/xoá/bộ giá) - tach
  * rieng ra khoi ServiceCatalogPage.tsx cu (truoc day la 1 tab noi bo) de
@@ -42,7 +45,7 @@ type PriceFilter = '' | 'configured' | 'unconfigured';
  * nua o trang chi tiet nhom) - `openAdd()` van la state NOI BO cua component
  * nay (drawer/form), CHI expose 1 ham goi vao qua ref, khong lift toan bo
  * state ra ngoai. */
-export type ServiceCatalogProductsTableHandle = { openAdd: () => void };
+export type ServiceCatalogProductsTableHandle = { openAdd: () => void; openEditById: (id: string) => void };
 
 export const ServiceCatalogProductsTable = forwardRef<ServiceCatalogProductsTableHandle, {
   products: FlatProduct[];
@@ -58,7 +61,6 @@ export const ServiceCatalogProductsTable = forwardRef<ServiceCatalogProductsTabl
 }>(function ServiceCatalogProductsTable({
   products,
   groups,
-  createItem,
   updateItem,
   deleteItem,
   refresh,
@@ -67,24 +69,25 @@ export const ServiceCatalogProductsTable = forwardRef<ServiceCatalogProductsTabl
 }, ref) {
   const [search, setSearch] = useState('');
   const [groupFilter, setGroupFilter] = useState('');
-  const [statusFilter, setStatusFilter] = useState('');
+  const [statusFilter, setStatusFilter] = useState('active');
   const [priceFilter, setPriceFilter] = useState<PriceFilter>('');
-  const [editTarget, setEditTarget] = useState<{ mode: 'add' | 'edit'; id?: string } | null>(null);
-  const [form, setForm] = useState<ServiceCatalogItemInput>(emptyProductForm(fixedGroupId));
-  const [saving, setSaving] = useState(false);
-  const [formError, setFormError] = useState<string | null>(null);
   const [confirmDeleteTarget, setConfirmDeleteTarget] = useState<FlatProduct | null>(null);
+  const [activeCatalogTab, setActiveCatalogTab] = useState<'standalone' | 'bundle'>('standalone');
+  const [expandedBundles, setExpandedBundles] = useState<Set<string>>(new Set());
+  const [expandedQuotaPools, setExpandedQuotaPools] = useState<Set<string>>(new Set());
+  const [quickAddOpen, setQuickAddOpen] = useState(false);
+  const [quickAddEditingItem, setQuickAddEditingItem] = useState<FlatProduct | null>(null);
 
-  // Khoa cuon trang ben ngoai khi Drawer "Chi tiết sản phẩm" dang mo - dung
+  // Khoa cuon trang ben ngoai khi QuickAddProductModal dang mo - dung
   // pattern da co san o QuoteWorkspaceModal (document.body.style.overflow),
   // tranh nguoi dung cuon nham danh sach ben duoi trong khi drawer dang mo.
   useEffect(() => {
-    if (!editTarget) return;
+    if (!quickAddOpen) return;
     document.body.style.overflow = 'hidden';
     return () => {
       document.body.style.overflow = '';
     };
-  }, [editTarget]);
+  }, [quickAddOpen]);
 
   // Bo gia mac dinh (migration 107) - field CHI co mat trong response neu
   // nguoi dung hien tai co quyen quan tri gia (xem _resolve_catalog_pricing_visibility
@@ -93,22 +96,19 @@ export const ServiceCatalogProductsTable = forwardRef<ServiceCatalogProductsTabl
   // FE rieng - dong bo tuyet doi voi quyet dinh cua backend.
   const canViewPricing = products.length > 0 && products.some(p => p.defaultCostPriceVnd !== undefined);
 
-  // Bo gia (Gia von/Markup/Gia khach) cua dong dang sua - tach rieng khoi
-  // `form` (cac field con lai cua service_catalog_items) vi day la 1 bang
-  // rieng (service_catalog_item_pricing), luu qua endpoint /pricing rieng,
-  // CHI quan ly duoc dong "mac dinh chung" (issuerCompanyId=null) trong
-  // drawer nay - dung mockup (khong co bo chon Don vi phat hanh o day).
-  const [pricingCost, setPricingCost] = useState('');
-  const [pricingMarkup, setPricingMarkup] = useState('');
-  const [pricingCustomer, setPricingCustomer] = useState('');
-  const [pricingMode, setPricingMode] = useState<ServiceCatalogPricingInputMode>('markup');
-  const [pricingSaving, setPricingSaving] = useState(false);
-  const [pricingError, setPricingError] = useState<string | null>(null);
-  const [pricingSavedAt, setPricingSavedAt] = useState<number | null>(null);
+  const standaloneProducts = useMemo(() => products.filter(product => product.itemType !== 'bundle'), [products]);
+  const bundleProducts = useMemo(() => products.filter(product => product.itemType === 'bundle'), [products]);
+  const hasBundles = bundleProducts.length > 0;
+
+  useEffect(() => {
+    if (activeCatalogTab === 'bundle' && !hasBundles) setActiveCatalogTab('standalone');
+    if (activeCatalogTab === 'standalone' && standaloneProducts.length === 0 && hasBundles) setActiveCatalogTab('bundle');
+  }, [activeCatalogTab, hasBundles, standaloneProducts.length]);
 
   const filtered = useMemo(() => {
     const term = search.trim().toLowerCase();
-    return products.filter(product => {
+    const sourceProducts = activeCatalogTab === 'bundle' ? bundleProducts : standaloneProducts;
+    return sourceProducts.filter(product => {
       if (!fixedGroupId && groupFilter && product.parentId !== groupFilter) return false;
       if (statusFilter && product.status !== statusFilter) return false;
       if (priceFilter === 'configured' && product.defaultCostPriceVnd == null) return false;
@@ -120,69 +120,23 @@ export const ServiceCatalogProductsTable = forwardRef<ServiceCatalogProductsTabl
         (product.description || '').toLowerCase().includes(term)
       );
     });
-  }, [products, search, groupFilter, statusFilter, priceFilter, fixedGroupId]);
+  }, [activeCatalogTab, bundleProducts, standaloneProducts, search, groupFilter, statusFilter, priceFilter, fixedGroupId]);
 
-  function resetPricingFields(product?: FlatProduct) {
-    setPricingCost(product?.defaultCostPriceVnd != null ? String(product.defaultCostPriceVnd) : '');
-    setPricingMarkup(product?.defaultMarkupPercent != null ? String(product.defaultMarkupPercent) : '');
-    setPricingCustomer(product?.defaultCustomerPriceVnd != null ? String(product.defaultCustomerPriceVnd) : '');
-    setPricingMode('markup');
-    setPricingError(null);
-    setPricingSavedAt(null);
-  }
-
-  function openAdd() {
-    setEditTarget({ mode: 'add' });
-    setForm(emptyProductForm(fixedGroupId || groups[0]?.id));
-    setFormError(null);
-    resetPricingFields();
-  }
-  useImperativeHandle(ref, () => ({ openAdd }));
-  function openEdit(product: FlatProduct) {
-    setEditTarget({ mode: 'edit', id: product.id });
-    setForm(itemToForm(product));
-    setFormError(null);
-    resetPricingFields(product);
-  }
-  function closeDrawer() {
-    setEditTarget(null);
-  }
-
-  async function handleSave() {
-    if (!form.name.trim()) {
-      setFormError('Tên sản phẩm bắt buộc.');
-      return;
-    }
-    if (!form.parentId) {
-      setFormError('Vui lòng chọn nhóm sản phẩm.');
-      return;
-    }
-    setSaving(true);
-    setFormError(null);
-    try {
-      // Merge pricing state into form for both add and edit modes
-      const formWithPricing = {
-        ...form,
-        defaultCostPriceVnd: parseNullableNumber(pricingCost),
-        defaultMarkupPercent: parseNullableNumber(pricingMarkup),
-        defaultCustomerPriceVnd: parseNullableNumber(pricingCustomer),
-        pricingInputMode: pricingMode,
-      };
-      
-      if (editTarget?.mode === 'edit' && editTarget.id) {
-        await updateItem(editTarget.id, formWithPricing);
-      } else {
-        // Create product with pricing included
-        await createItem(formWithPricing);
-      }
-      setEditTarget(null);
-    } catch (err) {
-      setFormError(err instanceof Error ? err.message : 'Không lưu được sản phẩm.');
-    } finally {
-      setSaving(false);
-    }
-  }
-
+  // Create/Edit deu di qua QuickAddProductModal de giu 1 source of truth cho
+  // product form, bundle mode va nested-create component.
+  const openAdd = useCallback(() => {
+    setQuickAddEditingItem(null);
+    setQuickAddOpen(true);
+  }, []);
+  const openEdit = useCallback((product: FlatProduct) => {
+    setQuickAddEditingItem(product);
+    setQuickAddOpen(true);
+  }, []);
+  const openEditById = useCallback((id: string) => {
+    const product = products.find(item => item.id === id);
+    if (product) openEdit(product);
+  }, [openEdit, products]);
+  useImperativeHandle(ref, () => ({ openAdd, openEditById }), [openAdd, openEditById]);
   async function toggleStatus(product: ServiceCatalogItem) {
     const next = product.status === 'active' ? 'inactive' : 'active';
     try {
@@ -203,60 +157,74 @@ export const ServiceCatalogProductsTable = forwardRef<ServiceCatalogProductsTabl
     }
   }
 
-  // Preview tuc thi phia FE - CHI de UX muot (nguoi dung thay ngay so du
-  // kien khi go). Gia tri LUU THAT luon lay tu response backend sau khi goi
-  // upsertPricing() (BE tinh lai bang Decimal, xem supabase_service_catalog_service.py)
-  // - KHONG dua rieng vao so preview nay de dam bao tinh dung (yeu cau audit
-  // review lan 2).
-  const costPreview = parseNullableNumber(pricingCost);
-  const markupPreview = parseNullableNumber(pricingMarkup);
-  const customerPreview = parseNullableNumber(pricingCustomer);
-  // Dung 1 trong 3 mode do nguoi dung CHON TUONG MINH qua bo chon "Tính tự
-  // động" (khong con suy tu field vua go nhu truoc - truoc day go Markup rồi
-  // go Giá khách sẽ tự đổi qua đổi lại giữa 2 mode, khong the nao vua nhap
-  // Giá khách VUA nhap Markup de suy ngược Giá vốn). Mode nao thi field
-  // TRUNG TEN mode do la field duoc TINH (disabled), 2 field con lai la input.
-  const previewCustomer = pricingMode === 'markup' ? computeCustomerFromMarkup(costPreview, markupPreview) : customerPreview;
-  const previewMarkup = pricingMode === 'price' ? computeMarkupFromCustomer(costPreview, customerPreview) : markupPreview;
-  const previewCost = pricingMode === 'cost' ? computeCostFromMarkupAndCustomer(markupPreview, customerPreview) : costPreview;
-
-  function handleCostChange(raw: string) {
-    setPricingCost(raw);
-  }
-  function handleMarkupChange(raw: string) {
-    setPricingMarkup(raw);
-  }
-  function handleCustomerChange(raw: string) {
-    setPricingCustomer(raw);
+  function toggleBundleExpanded(id: string) {
+    setExpandedBundles(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
   }
 
-  async function handleSavePricing() {
-    if (!editTarget?.id) return;
-    setPricingSaving(true);
-    setPricingError(null);
-    try {
-      const saved = await serviceCatalogRepository.upsertPricing(editTarget.id, {
-        issuerCompanyId: null,
-        defaultCostPriceVnd: pricingMode === 'cost' ? previewCost : costPreview,
-        defaultMarkupPercent: pricingMode === 'price' ? previewMarkup : markupPreview,
-        defaultCustomerPriceVnd: pricingMode === 'markup' ? previewCustomer : customerPreview,
-        pricingInputMode: pricingMode,
-      });
-      // Ghi de lai bang DUNG gia tri backend da tinh (co the khac so preview
-      // FE neu lam tron khac nhau) - khong giu so preview cu.
-      setPricingCost(saved.defaultCostPriceVnd != null ? String(saved.defaultCostPriceVnd) : '');
-      setPricingMarkup(saved.defaultMarkupPercent != null ? String(saved.defaultMarkupPercent) : '');
-      setPricingCustomer(saved.defaultCustomerPriceVnd != null ? String(saved.defaultCustomerPriceVnd) : '');
-      setPricingSavedAt(Date.now());
-      await refresh();
-    } catch (err) {
-      setPricingError(err instanceof Error ? err.message : 'Không lưu được bộ giá.');
-    } finally {
-      setPricingSaving(false);
+  function toggleQuotaPoolExpanded(bundleId: string, poolKey: string) {
+    const stateKey = `${bundleId}:${poolKey}`;
+    setExpandedQuotaPools(prev => {
+      const next = new Set(prev);
+      if (next.has(stateKey)) next.delete(stateKey);
+      else next.add(stateKey);
+      return next;
+    });
+  }
+
+  function renderRowActions(product: FlatProduct) {
+    return (
+      <div className="sc-inline-actions">
+        <button type="button" className="sc-icon-btn" title="Sửa" aria-label="Sửa" onClick={() => openEdit(product)}>
+          <Pencil className="qc-inline-icon" />
+        </button>
+        <button
+          type="button"
+          className="sc-icon-btn"
+          title={product.status === 'inactive' ? 'Kích hoạt lại' : 'Ngừng kinh doanh'}
+          aria-label={product.status === 'inactive' ? 'Kích hoạt lại' : 'Ngừng kinh doanh'}
+          onClick={() => void toggleStatus(product)}
+        >
+          {product.status === 'inactive' ? <RotateCcw className="qc-inline-icon" /> : <PauseCircle className="qc-inline-icon" />}
+        </button>
+        <button type="button" className="sc-icon-btn sc-icon-btn-danger" title="Xóa" aria-label="Xóa" onClick={() => setConfirmDeleteTarget(product)}>
+          <Trash2 className="qc-inline-icon" />
+        </button>
+      </div>
+    );
+  }
+
+  function displayBundleComponents(product: FlatProduct): BundleComponentPresentation[] {
+    const rows: BundleComponentPresentation[] = [];
+    const pools = new Map<string, BundleComponentPresentation & { type: 'pool' }>();
+    for (const component of product.components || []) {
+      const poolKey = component.quotaPoolKey?.trim();
+      if (!poolKey) {
+        rows.push({ type: 'component', component });
+        continue;
+      }
+      let pool = pools.get(poolKey);
+      if (!pool) {
+        pool = {
+          type: 'pool',
+          key: poolKey,
+          name: formatQuotaPoolName(poolKey, component.quotaPoolName),
+          quota: component.quotaPoolQuota || component.quota || component.displayText || '—',
+          components: [],
+        };
+        pools.set(poolKey, pool);
+        rows.push(pool);
+      }
+      pool.components.push(component);
     }
+    return rows;
   }
 
-  const colSpan = canViewPricing ? (fixedGroupId ? 8 : 9) : (fixedGroupId ? 6 : 7);
+  const productColSpan = fixedGroupId ? 11 : 12;
 
   return (
     <div className="sc-tab-panel">
@@ -296,203 +264,152 @@ export const ServiceCatalogProductsTable = forwardRef<ServiceCatalogProductsTabl
         )}
       </div>
 
-      {editTarget ? createPortal(
-        // BUG THAT DA GAP (test Playwright phat hien): render Drawer NGAY
-        // TAI CHO (khong qua Portal) bi 1 to tien nao do cua layout trang
-        // (sidebar wrapper) gioi han - `position:fixed` cua backdrop KHONG
-        // con bam theo dung VIEWPORT THAT nua (chi phu vung noi dung chinh,
-        // khong che duoc sidebar, va nut Dong bi day ra ngoai vung nhin
-        // thay). Portal thang ra document.body - dung PATTERN da verify
-        // dung cua SearchableSelect/ActionMenu - de position:fixed luon
-        // tinh theo viewport that, bat ke component nay dang nam sau bao
-        // nhieu lop layout nao.
-        <div className="sc-drawer-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) closeDrawer(); }}>
-          <div className="sc-drawer">
-            <div className="sc-drawer-head">
-              <div>
-                <h2>{editTarget.mode === 'add' ? 'Thêm sản phẩm mới' : 'Chi tiết sản phẩm'}</h2>
-                <p>Xem và chỉnh sửa thông tin sản phẩm</p>
-              </div>
-              <button type="button" className="sc-icon-btn" aria-label="Đóng" onClick={closeDrawer}>
-                <X className="qc-inline-icon" />
-              </button>
-            </div>
-            <div className="sc-drawer-body">
-              <p className="sc-drawer-section-title">Thông tin sản phẩm</p>
-              <div className="sc-panel-grid">
-                <label className="sc-field">
-                  <span>Mã sản phẩm (SKU)</span>
-                  <input value={form.sku || ''} onChange={e => setForm({ ...form, sku: e.target.value })} />
-                </label>
-                <label className="sc-field">
-                  <span>Tên sản phẩm *</span>
-                  <input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} />
-                </label>
-                {fixedGroupId ? null : (
-                  <label className="sc-field">
-                    <span>Nhóm sản phẩm *</span>
-                    <select value={form.parentId || ''} onChange={e => setForm({ ...form, parentId: e.target.value })}>
-                      <option value="">-- Chọn nhóm --</option>
-                      {groups.map(group => (
-                        <option key={group.id} value={group.id}>
-                          {group.name}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                )}
-                <label className="sc-field">
-                  <span>Đơn vị tính (ĐVT) *</span>
-                  <input value={form.unit || ''} onChange={e => setForm({ ...form, unit: e.target.value })} />
-                </label>
-                <label className="sc-field">
-                  <span>VAT *</span>
-                  <input
-                    type="number"
-                    value={form.defaultVatRate ?? 0}
-                    onChange={e => setForm({ ...form, defaultVatRate: Number(e.target.value) })}
-                  />
-                </label>
-                <label className="sc-field">
-                  <span>Đơn giá Sale (VND)</span>
-                  <CurrencyInput
-                    value={form.defaultUnitPriceVnd ?? 0}
-                    onChange={value => setForm({ ...form, defaultUnitPriceVnd: value ?? 0 })}
-                  />
-                </label>
-                <label className="sc-field">
-                  <span>Giảm giá mặc định (%)</span>
-                  <input
-                    type="number"
-                    value={form.defaultDiscountPercent ?? 0}
-                    onChange={e => setForm({ ...form, defaultDiscountPercent: Number(e.target.value) })}
-                  />
-                </label>
-                <label className="sc-field">
-                  <span>List price USD</span>
-                  <CurrencyInput
-                    locale="en-US"
-                    value={form.listPriceUsd ?? null}
-                    onChange={value => setForm({ ...form, listPriceUsd: value ?? undefined })}
-                  />
-                </label>
-                <label className="sc-field">
-                  <span>Unit price USD</span>
-                  <CurrencyInput
-                    locale="en-US"
-                    value={form.unitPriceUsd ?? null}
-                    onChange={value => setForm({ ...form, unitPriceUsd: value ?? undefined })}
-                  />
-                </label>
-                <label className="sc-field">
-                  <span>Trạng thái</span>
-                  <select value={form.status} onChange={e => setForm({ ...form, status: e.target.value as 'active' | 'inactive' })}>
-                    <option value="active">Đang kinh doanh</option>
-                    <option value="inactive">Ngừng kinh doanh</option>
-                  </select>
-                </label>
-                <label className="sc-field" style={{ gridColumn: '1 / -1' }}>
-                  <span>Mô tả</span>
-                  <textarea value={form.description || ''} onChange={e => setForm({ ...form, description: e.target.value })} />
-                </label>
-                <label className="sc-field" style={{ gridColumn: '1 / -1' }}>
-                  <span>Ghi chú</span>
-                  <textarea value={form.note || ''} onChange={e => setForm({ ...form, note: e.target.value })} />
-                </label>
-              </div>
-              {formError ? <div className="sc-error">{formError}</div> : null}
-
-              {canViewPricing ? (
-                <>
-                  <p className="sc-drawer-section-title">Giá mặc định</p>
-                  <p className="sc-drawer-section-hint">
-                    Bộ giá trị mặc định được lưu tại đây để tự động điền khi tạo báo giá.
-                  </p>
-                  <label className="sc-field" style={{ marginBottom: 8 }}>
-                    <span>Tính tự động</span>
-                    <select value={pricingMode} onChange={e => setPricingMode(e.target.value as ServiceCatalogPricingInputMode)}>
-                      <option value="markup">Giá khách (nhập Giá vốn + Markup)</option>
-                      <option value="cost">Giá vốn (nhập Markup + Giá khách)</option>
-                      <option value="price">Markup (nhập Giá vốn + Giá khách)</option>
-                    </select>
-                  </label>
-                  <div className="sc-pricing-grid">
-                    <label className="sc-field">
-                      <span>Giá vốn/ĐV *</span>
-                      <CurrencyInput
-                        value={pricingMode === 'cost' ? previewCost : costPreview}
-                        onChange={value => handleCostChange(value == null ? '' : String(value))}
-                        disabled={pricingMode === 'cost'}
-                      />
-                    </label>
-                    <label className="sc-field">
-                      <span>Markup mặc định *</span>
-                      <input
-                        type="number"
-                        value={pricingMode === 'price' ? (previewMarkup ?? '') : pricingMarkup}
-                        onChange={e => handleMarkupChange(e.target.value)}
-                        disabled={pricingMode === 'price'}
-                      />
-                    </label>
-                    <label className="sc-field">
-                      <span>Giá khách/ĐV *</span>
-                      <CurrencyInput
-                        value={pricingMode === 'markup' ? previewCustomer : customerPreview}
-                        onChange={value => handleCustomerChange(value == null ? '' : String(value))}
-                        disabled={pricingMode === 'markup'}
-                      />
-                    </label>
-                  </div>
-                  <p className="sc-drawer-section-hint">
-                    Trường tô xám ở trên được tính tự động từ 2 trường còn lại — đổi ở "Tính tự động" nếu muốn tính ngược Giá vốn từ Giá khách + Markup.
-                  </p>
-                  {pricingError ? <div className="sc-error">{pricingError}</div> : null}
-                  {pricingSavedAt && editTarget.mode === 'edit' ? <div className="sc-notice">Đã lưu bộ giá.</div> : null}
-                  {editTarget.mode === 'edit' && (
-                    <div className="sc-panel-actions">
-                      <button type="button" className="sc-btn sc-btn-primary" disabled={pricingSaving} onClick={() => void handleSavePricing()}>
-                        {pricingSaving ? 'Đang lưu...' : 'Lưu bộ giá'}
-                      </button>
-                    </div>
-                  )}
-
-                  <p className="sc-drawer-section-title">Hiển thị khi chọn danh mục</p>
-                  <div className="sc-pricing-preview">
-                    <div className="sc-pricing-preview-card">
-                      <strong>{form.name || 'Sản phẩm mới'}</strong>
-                      <span className="sc-row-sub">
-                        {[form.sku, form.unit].filter(Boolean).join(' · ') || undefined}
-                      </span>
-                      <div className="sc-pricing-preview-row">
-                        <span>Giá vốn/ĐV</span>
-                        <span>{formatVndOrMissing(costPreview)}</span>
-                      </div>
-                      <div className="sc-pricing-preview-row">
-                        <span>Markup</span>
-                        <span>{formatMarkupOrMissing(previewMarkup)}</span>
-                      </div>
-                      <div className="sc-pricing-preview-row">
-                        <span>Giá khách/ĐV</span>
-                        <span>{formatVndOrMissing(previewCustomer)}</span>
-                      </div>
-                    </div>
-                  </div>
-                </>
-              ) : null}
-            </div>
-            <div className="sc-drawer-footer">
-              <button type="button" className="sc-btn" onClick={closeDrawer}>
-                Huỷ
-              </button>
-              <button type="button" className="sc-btn sc-btn-primary" disabled={saving} onClick={handleSave}>
-                {saving ? 'Đang lưu...' : 'Lưu thay đổi'}
-              </button>
-            </div>
-          </div>
-        </div>,
-        document.body
+      {hasBundles ? (
+        <div className="sc-subtabs" role="tablist" aria-label="Loại sản phẩm">
+          <button
+            type="button"
+            role="tab"
+            className={activeCatalogTab === 'standalone' ? 'active' : ''}
+            onClick={() => setActiveCatalogTab('standalone')}
+          >
+            Sản phẩm lẻ / Add-on <span>{standaloneProducts.filter(p => !statusFilter || p.status === statusFilter).length}</span>
+          </button>
+          <button
+            type="button"
+            role="tab"
+            className={activeCatalogTab === 'bundle' ? 'active' : ''}
+            onClick={() => setActiveCatalogTab('bundle')}
+          >
+            Gói Combo <span>{bundleProducts.filter(p => !statusFilter || p.status === statusFilter).length}</span>
+          </button>
+        </div>
       ) : null}
 
+
+
+      {activeCatalogTab === 'bundle' ? (
+        <div className="sc-bundle-list">
+          {filtered.length === 0 ? (
+            <div className="sc-empty">Không có gói Combo phù hợp.</div>
+          ) : (
+            filtered.map(product => {
+              const components = product.components || [];
+              const visibleComponents = displayBundleComponents(product);
+              const expanded = expandedBundles.has(product.id);
+              return (
+                <section className="sc-bundle-card" key={product.id}>
+                  <div className="sc-bundle-card-head">
+                    <div className="sc-bundle-card-main">
+                      <div className="sc-cell-title">
+                        <span className="sc-product-card-title">{product.quoteDisplayName || formatSkuName(product.sku, product.name)}</span>
+                        <span className="sc-badge sc-badge-bundle">Gói Combo</span>
+                        <span className={`sc-badge ${product.status === 'inactive' ? 'sc-badge-inactive' : 'sc-badge-active'}`}>
+                          {product.status === 'inactive' ? 'Ngừng kinh doanh' : 'Đang kinh doanh'}
+                        </span>
+                      </div>
+                      {product.quoteDescription || product.description ? <p className="sc-product-card-desc">{product.quoteDescription || product.description}</p> : null}
+                      <div className="sc-bundle-price-line">
+                        {product.annualCommitMonthlyPriceVnd != null ? (
+                          <strong>{formatVnd(product.annualCommitMonthlyPriceVnd)}/tháng khi thanh toán năm</strong>
+                        ) : (
+                          <strong>{formatVnd(product.monthlyPriceVnd ?? product.defaultCustomerPriceVnd ?? product.defaultUnitPriceVnd)}/tháng</strong>
+                        )}
+                        {product.annualTotalPriceVnd != null ? <span>Tổng 12 tháng: {formatVnd(product.annualTotalPriceVnd)}</span> : null}
+                        {product.quoteCta ? <span>{product.quoteCta}</span> : null}
+                      </div>
+                    </div>
+                    <div className="sc-bundle-card-actions">
+                      {renderRowActions(product)}
+                      <button type="button" className="sc-btn" onClick={() => toggleBundleExpanded(product.id)}>
+                        {expanded ? 'Ẩn thành phần' : 'Xem thành phần'} ({components.length})
+                      </button>
+                    </div>
+                  </div>
+                  {expanded ? (
+                    <div className="sc-bundle-components-preview">
+                      <div className="sc-bundle-components-title">Thành phần trong gói</div>
+                      {components.length === 0 ? (
+                        <p className="sc-tab-note">Chưa cấu hình thành phần cho gói này.</p>
+                      ) : (
+                        <div className="sc-bundle-components-table sc-bundle-components-table--readonly">
+                          <div className="sc-bundle-components-head">
+                            <span>SKU</span>
+                            <span>Tên hạng mục</span>
+                            <span>Mô tả</span>
+                            <span>ĐVT</span>
+                            <span>Quota</span>
+                            <span>Giá vốn</span>
+                            <span>Giá khách</span>
+                            <span>Bắt buộc</span>
+                            <span>Vượt quota tính thêm</span>
+                          </div>
+                          {visibleComponents.map(entry => {
+                            if (entry.type === 'pool') {
+                              const poolExpanded = expandedQuotaPools.has(`${product.id}:${entry.key}`);
+                              return (
+                                <Fragment key={`pool:${entry.key}`}>
+                                  <div className="sc-bundle-components-row sc-bundle-components-row--pool">
+                                    <span>
+                                      <button
+                                        type="button"
+                                        className="sc-quota-pool-toggle"
+                                        aria-expanded={poolExpanded}
+                                        onClick={() => toggleQuotaPoolExpanded(product.id, entry.key)}
+                                      >
+                                        {poolExpanded ? '−' : '+'}
+                                      </button>
+                                    </span>
+                                    <span>{entry.quota !== '—' ? `${entry.name} — ${entry.quota}` : entry.name}</span>
+                                    <span>{entry.components.map(component => component.sku).filter(Boolean).join(', ') || '—'}</span>
+                                    <span>Nhóm</span>
+                                    <span>{entry.quota}</span>
+                                    <span>—</span>
+                                    <span>—</span>
+                                    <span>{entry.components.some(component => component.required === false) ? 'Không' : 'Có'}</span>
+                                    <span>{entry.components.some(component => component.overagePolicy === 'charge') ? 'Có' : 'Không'}</span>
+                                  </div>
+                                  {poolExpanded ? entry.components.map(component => (
+                                    <div className="sc-bundle-components-row sc-bundle-components-row--pool-child" key={component.id || component.componentId}>
+                                      <span>{component.sku || '—'}</span>
+                                      <span>{component.customerDisplayName || component.name || '—'}</span>
+                                      <span>{component.description || '—'}</span>
+                                      <span>{component.unit || '—'}</span>
+                                      <span>{component.quota || component.displayText || 'Dùng chung'}</span>
+                                      <span>{formatVndOrMissing(component.defaultCostPriceVnd)}</span>
+                                      <span>{formatVndOrMissing(component.defaultCustomerPriceVnd ?? component.unitPriceVnd)}</span>
+                                      <span>{component.required === false ? 'Không' : 'Có'}</span>
+                                      <span>{component.overagePolicy === 'charge' ? 'Có' : 'Không'}</span>
+                                    </div>
+                                  )) : null}
+                                </Fragment>
+                              );
+                            }
+                            const { component } = entry;
+                            return (
+                              <div className="sc-bundle-components-row" key={component.id || component.componentId}>
+                                <span>{component.sku || '—'}</span>
+                                <span>{component.customerDisplayName || component.name || '—'}</span>
+                                <span>{component.description || '—'}</span>
+                                <span>{component.unit || '—'}</span>
+                                <span>{component.quota || component.displayText || '—'}</span>
+                                <span>{formatVndOrMissing(component.defaultCostPriceVnd)}</span>
+                                <span>{formatVndOrMissing(component.defaultCustomerPriceVnd ?? component.unitPriceVnd)}</span>
+                                <span>{component.required === false ? 'Không' : 'Có'}</span>
+                                <span>{component.overagePolicy === 'charge' ? 'Có' : 'Không'}</span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  ) : null}
+                </section>
+              );
+            })
+          )}
+        </div>
+      ) : (
+      <>
       <div className="sc-table-wrap">
         <table className="sc-table">
           <thead>
@@ -500,24 +417,20 @@ export const ServiceCatalogProductsTable = forwardRef<ServiceCatalogProductsTabl
               <th>Mã/Sản phẩm</th>
               {fixedGroupId ? null : <th>Nhóm</th>}
               <th>ĐVT</th>
-              {canViewPricing ? (
-                <>
-                  <th>Giá vốn/ĐV</th>
-                  <th>Markup mặc định</th>
-                  <th>Giá khách/ĐV</th>
-                </>
-              ) : (
-                <th>Đơn giá Sale</th>
-              )}
+              <th>Giá vốn</th>
+              <th>Giá tháng</th>
+              <th>Giá trả năm/tháng</th>
+              <th>Giá khách mặc định</th>
               <th>VAT</th>
               <th>Trạng thái</th>
-              <th></th>
+              <th>Hiển thị KH</th>
+              <th>Thao tác</th>
             </tr>
           </thead>
           <tbody>
             {filtered.length === 0 ? (
               <tr>
-                <td colSpan={colSpan} className="sc-empty">
+                <td colSpan={productColSpan} className="sc-empty">
                   Không có sản phẩm phù hợp.
                 </td>
               </tr>
@@ -539,48 +452,20 @@ export const ServiceCatalogProductsTable = forwardRef<ServiceCatalogProductsTabl
                     </td>
                     {fixedGroupId ? null : <td>{product.groupName}</td>}
                     <td>{product.unit || '—'}</td>
-                    {canViewPricing ? (
-                      <>
-                        <td className={product.defaultCostPriceVnd == null ? 'sc-cell-price-missing' : undefined}>
-                          {formatVndOrMissing(product.defaultCostPriceVnd)}
-                        </td>
-                        <td className={product.defaultMarkupPercent == null ? 'sc-cell-price-missing' : undefined}>
-                          {formatMarkupOrMissing(product.defaultMarkupPercent)}
-                        </td>
-                        <td>{formatVndOrMissing(product.defaultCustomerPriceVnd)}</td>
-                      </>
-                    ) : (
-                      <td>{formatVnd(product.defaultUnitPriceVnd)}</td>
-                    )}
-                    <td>{product.defaultVatRate ? `${product.defaultVatRate}%` : '—'}</td>
+                    <td className={product.defaultCostPriceVnd == null ? 'sc-cell-price-missing' : undefined}>
+                        {formatVndOrMissing(product.defaultCostPriceVnd)}
+                      </td>
+                      <td>{formatVndOrMissing(product.monthlyPriceVnd)}</td>
+                      <td>{formatVndOrMissing(product.annualCommitMonthlyPriceVnd)}</td>
+                      <td>{formatVndOrMissing(product.defaultCustomerPriceVnd)}</td>
+                    <td>{product.defaultVatRate != null ? `${product.defaultVatRate}%` : '—'}</td>
                     <td>
                       <span className={`sc-badge ${product.status === 'inactive' ? 'sc-badge-inactive' : 'sc-badge-active'}`}>
                         {product.status === 'inactive' ? 'Ngừng kinh doanh' : 'Đang kinh doanh'}
                       </span>
                     </td>
-                    <td className="sc-row-actions">
-                      <ActionMenu
-                        items={[
-                          { key: 'view', label: 'Xem chi tiết', icon: Eye, onSelect: () => openEdit(product) },
-                          { key: 'edit', label: 'Sửa', icon: Pencil, onSelect: () => openEdit(product) },
-                          {
-                            key: 'toggle',
-                            label: product.status === 'inactive' ? 'Kích hoạt lại' : 'Ngưng kinh doanh',
-                            icon: PauseCircle,
-                            onSelect: () => void toggleStatus(product),
-                            group: 2,
-                          },
-                          {
-                            key: 'delete',
-                            label: 'Xoá',
-                            icon: Trash2,
-                            danger: true,
-                            onSelect: () => setConfirmDeleteTarget(product),
-                            group: 3,
-                          },
-                        ]}
-                      />
-                    </td>
+                    <td>{product.customerVisible ? 'Có' : 'Không'}</td>
+                    <td className="sc-row-actions">{renderRowActions(product)}</td>
                   </tr>
               ))
             )}
@@ -598,29 +483,20 @@ export const ServiceCatalogProductsTable = forwardRef<ServiceCatalogProductsTabl
             {product.description ? <div className="sc-product-card-desc">{product.description}</div> : null}
             <div className="sc-row-sub">{fixedGroupId ? (product.unit || '—') : `${product.groupName} · ${product.unit || '—'}`}</div>
             <div className="sc-product-card-prices">
-              {canViewPricing ? (
-                <>
-                  <div className="sc-product-card-price-row"><span>Giá vốn/ĐV</span><span>{formatVndOrMissing(product.defaultCostPriceVnd)}</span></div>
-                  <div className="sc-product-card-price-row"><span>Markup</span><span>{formatMarkupOrMissing(product.defaultMarkupPercent)}</span></div>
-                  <div className="sc-product-card-price-row"><span>Giá khách/ĐV</span><span>{formatVndOrMissing(product.defaultCustomerPriceVnd)}</span></div>
-                </>
-              ) : (
-                <div className="sc-product-card-price-row"><span>Đơn giá Sale</span><span>{formatVnd(product.defaultUnitPriceVnd)}</span></div>
-              )}
+              <div className="sc-product-card-price-row"><span>Giá vốn</span><span>{formatVndOrMissing(product.defaultCostPriceVnd)}</span></div>
+              <div className="sc-product-card-price-row"><span>Giá tháng</span><span>{formatVndOrMissing(product.monthlyPriceVnd)}</span></div>
+              <div className="sc-product-card-price-row"><span>Giá trả năm/tháng</span><span>{formatVndOrMissing(product.annualCommitMonthlyPriceVnd)}</span></div>
+              <div className="sc-product-card-price-row"><span>Giá khách mặc định</span><span>{formatVndOrMissing(product.defaultCustomerPriceVnd)}</span></div>
             </div>
             <span className={`sc-badge ${product.status === 'inactive' ? 'sc-badge-inactive' : 'sc-badge-active'}`} style={{ alignSelf: 'flex-start' }}>
               {product.status === 'inactive' ? 'Ngừng kinh doanh' : 'Đang kinh doanh'}
             </span>
-            <div className="sc-pb-card-actions">
-              <button type="button" className="sc-btn" onClick={() => openEdit(product)}>Xem/Sửa</button>
-              <button type="button" className="sc-btn" onClick={() => void toggleStatus(product)}>
-                {product.status === 'inactive' ? 'Kích hoạt lại' : 'Ngưng kinh doanh'}
-              </button>
-              <button type="button" className="sc-btn-danger" onClick={() => setConfirmDeleteTarget(product)}>Xoá</button>
-            </div>
+            {renderRowActions(product)}
           </div>
         ))}
       </div>
+      </>
+      )}
 
       <ConfirmModal
         open={Boolean(confirmDeleteTarget)}
@@ -629,6 +505,30 @@ export const ServiceCatalogProductsTable = forwardRef<ServiceCatalogProductsTabl
         actions={[{ label: 'Xoá', variant: 'primary', onClick: () => void handleConfirmDelete() }]}
         onClose={() => setConfirmDeleteTarget(null)}
       />
+
+      {quickAddOpen ? (
+        <QuickAddProductModal
+          open={quickAddOpen}
+          onClose={() => {
+            setQuickAddOpen(false);
+            setQuickAddEditingItem(null);
+          }}
+          groups={groups}
+          existingItems={products}
+          defaultGroupId={fixedGroupId || groupFilter || undefined}
+          editingItem={quickAddEditingItem || undefined}
+          onCreated={() => {
+            setQuickAddOpen(false);
+            setQuickAddEditingItem(null);
+            void refresh();
+          }}
+          onUpdated={() => {
+            setQuickAddOpen(false);
+            setQuickAddEditingItem(null);
+            void refresh();
+          }}
+        />
+      ) : null}
     </div>
   );
 });

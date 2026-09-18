@@ -1,7 +1,7 @@
-"""Danh má»¥c dá»‹ch vá»¥ (Service Catalog): group/component/bundle dÃ¹ng chung cho cÃ¡c
-Máº«u bÃ¡o giÃ¡. Bundle (gÃ³i/combo, vd SZ-VPS) tá»• há»£p nhiá»u component qua
-service_catalog_bundle_items â€” khi chá»n 1 bundle lÃºc Ä‘iá»n bÃ¡o giÃ¡, há»‡ thá»‘ng ghÃ©p
-Description Items tá»« cÃ¡c thÃ nh pháº§n vÃ  chá»‰ sinh ÄÃšNG 1 dÃ²ng quote_item.
+﻿"""Danh mục dịch vụ (Service Catalog): group/component/bundle dùng chung cho các
+Mẫu báo giá. Bundle (gói/combo, vd SZ-VPS) tổ hợp nhiều component qua
+service_catalog_bundle_items — khi chọn 1 bundle lúc điền báo giá, hệ thống ghép
+Description Items từ các thành phần và chỉ sinh ÄÃšNG 1 dòng quote_item.
 """
 
 from __future__ import annotations
@@ -25,10 +25,16 @@ def _now_iso() -> str:
 
 
 def format_quantity(value: float) -> str:
-    """Bá» pháº§n tháº­p phÃ¢n dÆ°: 8.0 -> "8", 8.5 -> "8.5"."""
+    """Bỏ phần thập phân dư: 8.0 -> "8", 8.5 -> "8.5"."""
     if value == int(value):
         return str(int(value))
     return str(round(value, 2))
+
+
+def _float_or_none(value: Any) -> float | None:
+    if value is None or value == "":
+        return None
+    return float(value)
 
 
 def _row_to_item(row: dict) -> dict:
@@ -45,7 +51,27 @@ def _row_to_item(row: dict) -> dict:
         "exchangeRateSnapshot": row.get("exchange_rate_snapshot"),
         "defaultUnitPriceVnd": float(row.get("default_unit_price_vnd") or 0),
         "defaultDiscountPercent": float(row.get("default_discount_percent") or 0),
-        "defaultVatRate": float(row.get("default_vat_rate") or 0),
+        "defaultVatRate": _float_or_none(row.get("default_vat_rate")),
+        "customerVisible": bool(row.get("customer_visible", True)),
+        "quoteDisplayName": row.get("quote_display_name"),
+        "quoteDescription": row.get("quote_description"),
+        "quoteCta": row.get("quote_cta"),
+        "monthlyPriceVnd": _float_or_none(row.get("monthly_price_vnd")),
+        "annualCommitMonthlyPriceVnd": _float_or_none(row.get("annual_commit_monthly_price_vnd")),
+        "annualTotalPriceVnd": _float_or_none(row.get("annual_total_price_vnd")),
+        "maxSaleDiscountPercent": _float_or_none(row.get("max_sale_discount_percent")),
+        "targetGrossMarginPercent": _float_or_none(row.get("target_gross_margin_percent")),
+        "costBasisRule": row.get("cost_basis_rule"),
+        "pricingPolicyExceptions": row.get("pricing_policy_exceptions") or [],
+        "quotaUserCount": _float_or_none(row.get("quota_user_count")),
+        "quotaUserLabel": row.get("quota_user_label"),
+        "quotaConnectedChannels": _float_or_none(row.get("quota_connected_channels")),
+        "quotaConnectedChannelsLabel": row.get("quota_connected_channels_label"),
+        "quotaMessagesPerMonth": _float_or_none(row.get("quota_messages_per_month")),
+        "quotaMessagesPerMonthLabel": row.get("quota_messages_per_month_label"),
+        "quotaAiData": row.get("quota_ai_data"),
+        "quotaHighlights": row.get("quota_highlights"),
+        "quotaExtra": row.get("quota_extra") or {},
         "specQuantityPerUnit": float(row.get("spec_quantity_per_unit") or 1),
         "specUnitLabel": row.get("spec_unit_label"),
         "note": row.get("note"),
@@ -76,6 +102,18 @@ def _bundle_component_line(bundle_item_row: dict, component: dict) -> dict:
         "computedQuantity": computed_quantity,
         "displayText": display_text,
         "unitPriceVnd": float(component.get("default_unit_price_vnd") or 0),
+        "defaultCostPriceVnd": component.get("default_cost_price_vnd"),
+        "defaultCustomerPriceVnd": component.get("default_customer_price_vnd"),
+        "quota": bundle_item_row.get("quota"),
+        "customerDisplayName": bundle_item_row.get("customer_display_name"),
+        "crmNote": bundle_item_row.get("crm_note"),
+        "quotaPoolKey": bundle_item_row.get("quota_pool_key"),
+        "quotaPoolName": bundle_item_row.get("quota_pool_name"),
+        "quotaPoolQuota": bundle_item_row.get("quota_pool_quota"),
+        "quotaPoolLimit": _float_or_none(bundle_item_row.get("quota_pool_limit")),
+        "required": bool(bundle_item_row.get("is_required", True)),
+        "overagePolicy": bundle_item_row.get("overage_policy"),
+        "showOnQuote": bool(bundle_item_row.get("show_on_quote", True)),
         "sortOrder": bundle_item_row.get("sort_order") or 0,
     }
 
@@ -108,13 +146,26 @@ def _bundle_components(bundle_id: str) -> list[dict]:
 
 
 def render_bundle_description(bundle_id: str) -> str:
-    """GhÃ©p Description Items tá»« cÃ¡c thÃ nh pháº§n cá»§a 1 bundle. Má»—i dÃ²ng chá»‰ lÃ
-    displayText (sá»‘ lÆ°á»£ng cuá»‘i cÃ¹ng Ä‘Ã£ quy Ä‘á»•i + Ä‘Æ¡n vá»‹) kÃ¨m mÃ´ táº£ náº¿u cÃ³ -
-    TUYá»†T Äá»I khÃ´ng ná»‘i tÃªn component hay hiá»ƒn thá»‹ dáº¡ng phÃ©p nhÃ¢n."""
+    """Ghép Description Items từ các thành phần của 1 bundle. Mỗi dòng chỉ lÃ
+    displayText (số lượng cuối cùng đã quy đổi + đơn vị) kèm mô tả nếu có -
+    TUYỆT ĐỐI không nối tên component hay hiển thị dạng phép nhân."""
     lines = []
+    rendered_pool_keys: set[str] = set()
     for component in _bundle_components(bundle_id):
-        text = component["displayText"]
-        if component.get("description"):
+        if component.get("showOnQuote") is False:
+            continue
+        pool_key = component.get("quotaPoolKey")
+        if pool_key:
+            if pool_key in rendered_pool_keys:
+                continue
+            rendered_pool_keys.add(pool_key)
+            name = component.get("quotaPoolName") or component.get("customerDisplayName") or component.get("name") or component.get("displayText")
+            quota = component.get("quotaPoolQuota") or component.get("quota")
+            text = f"{name}: {quota}" if quota else name
+        else:
+            name = component.get("customerDisplayName")
+            text = f"{name}: {component.get('quota')}" if name and component.get("quota") else (name or component["displayText"])
+        if not pool_key and component.get("description") and not component.get("customerDisplayName"):
             text = f"{text} - {component['description']}"
         lines.append(text)
     return "\n".join(lines)
@@ -186,7 +237,27 @@ def create_service_catalog_item(payload: dict, created_by: str | None) -> dict:
         "exchange_rate_snapshot": payload.get("exchange_rate_snapshot"),
         "default_unit_price_vnd": payload.get("default_unit_price_vnd") or 0,
         "default_discount_percent": payload.get("default_discount_percent") or 0,
-        "default_vat_rate": payload.get("default_vat_rate") or 0,
+        "default_vat_rate": payload.get("default_vat_rate"),
+        "customer_visible": payload.get("customer_visible", True),
+        "quote_display_name": payload.get("quote_display_name"),
+        "quote_description": payload.get("quote_description"),
+        "quote_cta": payload.get("quote_cta"),
+        "monthly_price_vnd": _float_or_none(payload.get("monthly_price_vnd")),
+        "annual_commit_monthly_price_vnd": _float_or_none(payload.get("annual_commit_monthly_price_vnd")),
+        "annual_total_price_vnd": _float_or_none(payload.get("annual_total_price_vnd")),
+        "max_sale_discount_percent": _float_or_none(payload.get("max_sale_discount_percent")),
+        "target_gross_margin_percent": _float_or_none(payload.get("target_gross_margin_percent")),
+        "cost_basis_rule": payload.get("cost_basis_rule"),
+        "pricing_policy_exceptions": payload.get("pricing_policy_exceptions") or [],
+        "quota_user_count": _float_or_none(payload.get("quota_user_count")),
+        "quota_user_label": payload.get("quota_user_label"),
+        "quota_connected_channels": _float_or_none(payload.get("quota_connected_channels")),
+        "quota_connected_channels_label": payload.get("quota_connected_channels_label"),
+        "quota_messages_per_month": _float_or_none(payload.get("quota_messages_per_month")),
+        "quota_messages_per_month_label": payload.get("quota_messages_per_month_label"),
+        "quota_ai_data": payload.get("quota_ai_data"),
+        "quota_highlights": payload.get("quota_highlights"),
+        "quota_extra": payload.get("quota_extra") or {},
         "spec_quantity_per_unit": payload.get("spec_quantity_per_unit") or 1,
         "spec_unit_label": payload.get("spec_unit_label"),
         "note": payload.get("note"),
@@ -240,8 +311,37 @@ def create_service_catalog_item(payload: dict, created_by: str | None) -> dict:
 def update_service_catalog_item(item_id: str, payload: dict, actor_id: str | None) -> dict:
     supabase: Client = get_supabase_client()
 
-    allowed_keys = {"item_type", "parent_id", "sku", "name", "description", "unit", "list_price_usd", "unit_price_usd", "exchange_rate_snapshot", "default_unit_price_vnd", "default_discount_percent", "default_vat_rate", "spec_quantity_per_unit", "spec_unit_label", "note", "status", "sort_order", "brand", "part_number", "product_type", "internal_note"}
-    update_data = {k: v for k, v in payload.items() if k in allowed_keys and v is not None}
+    allowed_keys = {
+        "item_type", "parent_id", "sku", "name", "description", "unit",
+        "list_price_usd", "unit_price_usd", "exchange_rate_snapshot",
+        "default_unit_price_vnd", "default_discount_percent", "default_vat_rate",
+        "customer_visible", "quote_display_name", "quote_description", "quote_cta",
+        "monthly_price_vnd", "annual_commit_monthly_price_vnd",
+        "annual_total_price_vnd", "max_sale_discount_percent", "target_gross_margin_percent",
+        "cost_basis_rule", "pricing_policy_exceptions", "quota_user_count", "quota_user_label",
+        "quota_connected_channels", "quota_connected_channels_label",
+        "quota_messages_per_month", "quota_messages_per_month_label", "quota_ai_data",
+        "quota_highlights", "quota_extra", "spec_quantity_per_unit", "spec_unit_label",
+        "note", "status", "sort_order", "brand", "part_number", "product_type",
+        "internal_note",
+    }
+    nullable_clear_keys = {
+        "default_vat_rate", "quote_display_name", "quote_description", "quote_cta",
+        "target_gross_margin_percent", "cost_basis_rule", "pricing_policy_exceptions",
+    }
+    update_data = {
+        k: v for k, v in payload.items()
+        if k in allowed_keys and (v is not None or k in nullable_clear_keys)
+    }
+    for numeric_key in (
+        "monthly_price_vnd", "annual_commit_monthly_price_vnd", "annual_total_price_vnd",
+        "max_sale_discount_percent", "target_gross_margin_percent", "quota_user_count", "quota_connected_channels",
+        "quota_messages_per_month",
+    ):
+        if numeric_key in update_data:
+            update_data[numeric_key] = _float_or_none(update_data[numeric_key])
+    if update_data.get("pricing_policy_exceptions") is None:
+        update_data.pop("pricing_policy_exceptions", None)
 
     update_data["updated_by"] = actor_id
     update_data["updated_at"] = _now_iso()
@@ -326,7 +426,7 @@ def delete_service_catalog_item(item_id: str) -> dict:
     return {"deleted": True, "deactivated": False}
 
 def reorder_service_catalog_item(item_id: str, direction: str) -> list[dict]:
-    """Swap sort_order giá»¯a dÃ²ng target vÃ  hÃ ng xÃ³m liá»n ká», TRONG CÃ™NG parent_id."""
+    """Swap sort_order giữa dòng target và hàng xóm liền kề, TRONG CÙNG parent_id."""
     supabase: Client = get_supabase_client()
     current = supabase.table(ITEMS_TABLE).select("*").eq("id", item_id).maybe_single().execute().data
     if not current:
@@ -357,7 +457,7 @@ def set_bundle_components(bundle_id: str, items: list[dict]) -> dict:
     supabase: Client = get_supabase_client()
     bundle = supabase.table(ITEMS_TABLE).select("*").eq("id", bundle_id).maybe_single().execute().data
     if not bundle or bundle["item_type"] != "bundle":
-        raise ValueError("KhÃ´ng tÃ¬m tháº¥y gÃ³i dá»‹ch vá»¥.")
+        raise ValueError("Không tìm thấy gói dịch vụ.")
 
     supabase.table(BUNDLE_ITEMS_TABLE).delete().eq("bundle_id", bundle_id).execute()
     for index, item in enumerate(items):
@@ -365,13 +465,23 @@ def set_bundle_components(bundle_id: str, items: list[dict]) -> dict:
             "bundle_id": bundle_id,
             "component_id": item["component_id"],
             "quantity": item.get("quantity") or 1,
+            "quota": item.get("quota"),
+            "customer_display_name": item.get("customer_display_name"),
+            "crm_note": item.get("crm_note"),
+            "quota_pool_key": item.get("quota_pool_key"),
+            "quota_pool_name": item.get("quota_pool_name"),
+            "quota_pool_quota": item.get("quota_pool_quota"),
+            "quota_pool_limit": _float_or_none(item.get("quota_pool_limit")),
+            "is_required": item.get("is_required", True),
+            "overage_policy": item.get("overage_policy"),
+            "show_on_quote": item.get("show_on_quote", True),
             "sort_order": item.get("sort_order", index),
         }).execute()
 
     return get_service_catalog_item(bundle_id)
 
 
-# â”€â”€ LiÃªn káº¿t Máº«u bÃ¡o giÃ¡ <-> Danh má»¥c dá»‹ch vá»¥ â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── Liên kết Mẫu báo giá <-> Danh mục dịch vụ ───────────────────────────────
 
 def get_quote_form_catalog_links(quote_form_id: str) -> list[str]:
     supabase: Client = get_supabase_client()
@@ -398,9 +508,9 @@ def set_quote_form_catalog_links(quote_form_id: str, catalog_item_ids: list[str]
 
 
 def get_service_catalog_options_for_form(quote_form_id: str) -> dict:
-    """Tráº£ vá», theo cÃ¡c group Ä‘Ã£ liÃªn káº¿t vá»›i máº«u bÃ¡o giÃ¡: danh sÃ¡ch bundle (kÃ¨m
-    components[] Ä‘Ã£ tÃ­nh sáºµn displayText) + danh sÃ¡ch component - dÃ¹ng Ä‘á»ƒ dá»±ng
-    dropdown 2 nhÃ³m "GÃ³i bÃ¡n"/"Dá»‹ch vá»¥ thÃ nh pháº§n" khi Ä‘iá»n bÃ¡o giÃ¡."""
+    """Trả về, theo các group đã liên kết với mẫu báo giá: danh sách bundle (kèm
+    components[] đã tính sẵn displayText) + danh sách component - dùng để dựng
+    dropdown 2 nhóm "Gói bán"/"Dịch vụ thành phần" khi điền báo giá."""
     supabase: Client = get_supabase_client()
     group_ids = get_quote_form_catalog_links(quote_form_id)
     if not group_ids:
@@ -433,8 +543,8 @@ def get_service_catalog_options_for_form(quote_form_id: str) -> dict:
     return {"bundles": bundles, "components": components}
 
 
-# â”€â”€ Bo gia MAC DINH rieng cho danh muc chung (migration 107,
-# service_catalog_item_pricing) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── Bo gia MAC DINH rieng cho danh muc chung (migration 107,
+# service_catalog_item_pricing) ───────────────────────────────────────────
 #
 # TACH BIET hoan toan default_unit_price_vnd (gia BAN, tren chinh
 # service_catalog_items - bang do RLS mo, doc truc tiep duoc). Bang pricing
@@ -461,7 +571,11 @@ def _collect_item_ids(tree: list[dict]) -> list[str]:
             comp_id = component.get("componentId")
             if comp_id:
                 ids.append(comp_id)
-    return ids
+    return list(dict.fromkeys(ids))
+
+
+def _chunks(values: list[str], size: int) -> list[list[str]]:
+    return [values[index : index + size] for index in range(0, len(values), size)]
 
 
 def resolve_pricing_map(item_ids: list[str], issuer_company_id: str | None) -> dict[str, dict[str, Decimal | None]]:
@@ -472,41 +586,29 @@ def resolve_pricing_map(item_ids: list[str], issuer_company_id: str | None) -> d
     if not item_ids:
         return {}
     supabase: Client = get_supabase_client()
-    
-    # Try to select all columns first (for databases with migration 127 applied)
-    # If that fails, fall back to only core columns (for databases without migration 127)
-    try:
-        rows = (
+    unique_item_ids = list(dict.fromkeys(item_ids))
+    pricing_select = (
+        "service_catalog_item_id, issuer_company_id, default_cost_price_vnd, "
+        "default_markup_percent, default_customer_price_vnd, supplier_currency, "
+        "supplier_list_price, supplier_discount_percent, supplier_net_price, "
+        "supplier_exchange_rate, supplier_converted_price, supplier_vendor_id, "
+        "supplier_quote_ref, supplier_quote_source, supplier_quote_date, "
+        "supplier_valid_until, shipping_cost, import_fee, other_cost, pricing_policy"
+    )
+    rows: list[dict] = []
+    # PostgREST encodes `.in_(...)` in the request URL. The catalog page asks
+    # for every SKU plus bundle components, so a single request can exceed the
+    # gateway limit and make the router silently return catalog data without
+    # pricing. Keep this batched so DB pricing is not lost between API and FE.
+    for batch in _chunks(unique_item_ids, 25):
+        rows.extend(
             supabase.table(PRICING_TABLE)
-            .select(
-                "service_catalog_item_id, issuer_company_id, default_cost_price_vnd, "
-                "default_markup_percent, default_customer_price_vnd, supplier_currency, "
-                "supplier_list_price, supplier_discount_percent, supplier_net_price, "
-                "supplier_exchange_rate, supplier_converted_price, supplier_vendor_id, "
-                "supplier_quote_ref, supplier_quote_source, supplier_quote_date, "
-                "supplier_valid_until, shipping_cost, import_fee, other_cost, pricing_policy"
-            )
-            .in_("service_catalog_item_id", item_ids)
+            .select(pricing_select)
+            .in_("service_catalog_item_id", batch)
             .execute()
             .data
             or []
         )
-        has_supplier_columns = True
-    except Exception:
-        # Fall back to core columns only (for databases without migration 127)
-        rows = (
-            supabase.table(PRICING_TABLE)
-            .select(
-                "service_catalog_item_id, issuer_company_id, default_cost_price_vnd, "
-                "default_markup_percent, default_customer_price_vnd"
-            )
-            .in_("service_catalog_item_id", item_ids)
-            .execute()
-            .data
-            or []
-        )
-        has_supplier_columns = False
-    
     specific: dict[str, dict[str, Decimal | None]] = {}
     default: dict[str, dict[str, Decimal | None]] = {}
     for row in rows:
@@ -540,7 +642,7 @@ def resolve_pricing_map(item_ids: list[str], issuer_company_id: str | None) -> d
         elif not row.get("issuer_company_id"):
             default[item_id] = entry
     result: dict[str, dict[str, Decimal | None]] = {}
-    for item_id in item_ids:
+    for item_id in unique_item_ids:
         result[item_id] = specific.get(item_id, default.get(item_id, {"cost": None, "markup": None, "customer": None}))
     return result
 
@@ -663,9 +765,9 @@ def upsert_service_catalog_item_pricing(
     markup hang muc bao gia - khong co nguong tren nghiep vu nao dung chung
     cho danh muc mac dinh nen khong bia them gioi han tren)."""
     if cost_price_vnd is not None and cost_price_vnd < 0:
-        raise ValueError("GiÃ¡ vá»‘n khÃ´ng Ä‘Æ°á»£c Ã¢m.")
+        raise ValueError("Giá vốn không được âm.")
     if customer_price_vnd is not None and customer_price_vnd < 0:
-        raise ValueError("GiÃ¡ khÃ¡ch khÃ´ng Ä‘Æ°á»£c Ã¢m.")
+        raise ValueError("Giá khách không được âm.")
 
     if pricing_input_mode == "markup":
         markup = None if markup_percent is None else max(Decimal("-100"), markup_percent)

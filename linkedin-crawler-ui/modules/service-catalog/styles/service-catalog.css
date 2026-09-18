@@ -601,6 +601,46 @@
   padding: 8px 10px;
 }
 
+.sc-bundle-components-table {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 12px;
+  overflow-x: auto;
+}
+
+.sc-bundle-components-head,
+.sc-bundle-components-row {
+  display: grid;
+  grid-template-columns: minmax(220px, 1.2fr) minmax(150px, 1fr) minmax(120px, 0.8fr) minmax(190px, 1fr) 84px minmax(150px, 1fr) 112px minmax(140px, 1fr) 48px;
+  gap: 8px;
+  align-items: center;
+  min-width: 1280px;
+}
+
+.sc-bundle-components-head {
+  color: #667085;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.sc-bundle-components-row select,
+.sc-bundle-components-row input {
+  width: 100%;
+}
+
+.sc-bundle-components-row input[type='checkbox'] {
+  width: 18px;
+  height: 18px;
+  justify-self: start;
+}
+
+.sc-bundle-pool-fields {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 4px;
+}
+
 /* ── Bảng giá VPS Zone (PriceBookZoneTab) ─────────────────────────────── */
 
 .sc-pb-toolbar {
@@ -933,6 +973,195 @@
   background: #fdf2f5;
 }
 
+.sc-subtabs {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid #e4e7ec;
+  border-radius: 10px;
+  background: #f9fafb;
+  align-self: flex-start;
+}
+
+.sc-subtabs button {
+  border: 0;
+  background: transparent;
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #667085;
+  cursor: pointer;
+}
+
+.sc-subtabs button.active {
+  background: #fff;
+  color: #be1e4b;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.08);
+}
+
+.sc-subtabs span {
+  margin-left: 4px;
+  color: #98a2b3;
+}
+
+.sc-inline-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.sc-link-btn {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: #be1e4b;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.sc-link-btn-danger {
+  color: #b42318;
+}
+
+/* Thao tac chi icon (khong chu) o cot Thao tac cua bang San pham - gon hon
+ * .sc-link-btn cu (Sua/Ngung kinh doanh/Xoa co chu), tooltip qua title/aria-label. */
+.sc-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #667085;
+  cursor: pointer;
+}
+
+.sc-icon-btn:hover {
+  background: #f2f4f7;
+  color: #344054;
+}
+
+.sc-icon-btn-danger {
+  color: #b42318;
+}
+
+.sc-icon-btn-danger:hover {
+  background: #fef3f2;
+  color: #b42318;
+}
+
+.sc-inline-actions .qc-inline-icon {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+}
+
+.sc-bundle-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.sc-bundle-card {
+  border: 1px solid #e4e7ec;
+  border-radius: 10px;
+  background: #fff;
+  padding: 14px;
+}
+
+.sc-bundle-card-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-start;
+}
+
+.sc-bundle-card-main {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.sc-bundle-price-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  font-size: 13px;
+  color: #667085;
+}
+
+.sc-bundle-price-line strong {
+  color: #101828;
+}
+
+.sc-bundle-card-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.sc-bundle-components-preview {
+  margin-top: 14px;
+  border-top: 1px solid #f0f1f3;
+  padding-top: 12px;
+}
+
+.sc-bundle-components-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: #101828;
+  margin-bottom: 8px;
+}
+
+.sc-bundle-components-table--readonly {
+  overflow-x: auto;
+}
+
+.sc-bundle-components-table--readonly .sc-bundle-components-head,
+.sc-bundle-components-table--readonly .sc-bundle-components-row {
+  grid-template-columns: 110px minmax(150px, 1.2fr) minmax(180px, 1.4fr) 90px 130px 110px 110px 90px minmax(140px, 1fr);
+}
+
+.sc-bundle-components-row--pool {
+  background: #f8fafc;
+  font-weight: 600;
+}
+
+.sc-bundle-components-row--pool-child {
+  background: #fcfdff;
+  color: #475467;
+}
+
+.sc-bundle-components-row--pool-child > span:first-child {
+  padding-left: 22px;
+  border-left: 2px solid #bfdbfe;
+}
+
+.sc-quota-pool-toggle {
+  width: 24px;
+  height: 24px;
+  border: 1px solid #d0d5dd;
+  border-radius: 6px;
+  background: #fff;
+  color: #344054;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.sc-quota-pool-toggle:hover {
+  border-color: #98a2b3;
+  background: #f9fafb;
+}
+
 /* ── Drawer "Chi tiết sản phẩm" (Thêm/Sửa) - trượt tu phai, thay the panel
    inline cu (.sc-panel van giu de tai su dung style field ben trong). ───── */
 
@@ -1198,6 +1427,15 @@
   font-weight: 600;
 }
 
+.cp-product-tabs {
+  padding-top: 4px;
+}
+
+.cp-product-tabs span {
+  margin-left: 4px;
+  color: #98a2b3;
+}
+
 /* Toggle "Giá VNĐ | Xem quy đổi USD" trong Catalog Picker (tab Bảng giá VPS
  * Zone) - dung chung .sc-mode-toggle/.sc-pb-currency-toggle nhung nam trong
  * padding rieng cua modal Picker (khac trang quan ly). */
@@ -1423,6 +1661,20 @@
   color: #101828;
 }
 
+.cp-row-actions {
+  display: flex;
+  flex: 0 0 190px;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.qc-mini-btn-danger {
+  color: #b42318;
+  border-color: #fecaca;
+  background: #fff7f7;
+}
+
 .cp-row-add {
   flex-shrink: 0;
   padding: 6px 14px;
@@ -1438,6 +1690,95 @@
   border-color: #12b76a;
   color: #12b76a;
   background: #ecfdf5;
+}
+
+.cp-bundle-card {
+  border: 1px solid #e4e7ec;
+  border-radius: 10px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.cp-bundle-card:hover {
+  border-color: #d0d5dd;
+  background: #fbfbfc;
+}
+
+.cp-bundle-card-head,
+.cp-bundle-actions,
+.cp-bundle-price {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.cp-bundle-card-head {
+  justify-content: space-between;
+}
+
+.cp-bundle-select {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  font-weight: 700;
+  color: #101828;
+}
+
+.cp-bundle-select input {
+  width: 16px;
+  height: 16px;
+}
+
+.cp-bundle-desc {
+  margin: 0;
+  color: #667085;
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+.cp-bundle-price {
+  font-size: 13px;
+  color: #667085;
+}
+
+.cp-bundle-price strong {
+  color: #101828;
+}
+
+.cp-bundle-components {
+  border-top: 1px solid #f0f1f3;
+  padding-top: 10px;
+  display: grid;
+  gap: 8px;
+}
+
+.cp-bundle-components-title {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: #101828;
+}
+
+.cp-bundle-component {
+  border: 1px solid #f0f1f3;
+  border-radius: 8px;
+  padding: 10px;
+  display: grid;
+  gap: 3px;
+  font-size: 12px;
+  color: #475467;
+  background: #fff;
+}
+
+.cp-bundle-component strong {
+  color: #101828;
+}
+
+.cp-bundle-component small {
+  color: #667085;
 }
 
 .cp-footer {
@@ -1726,3 +2067,359 @@ a.sc-btn {
 .sc-row-clickable:hover {
   background: #f9fafb;
 }
+
+/* =========================================
+   CATALOG PICKER REDESIGN (SIDEBAR LAYOUT)
+   ========================================= */
+
+.cp-modal-redesign {
+  width: min(1300px, 96vw);
+  height: min(850px, 92vh);
+  display: flex;
+  flex-direction: column;
+}
+
+.cp-head-redesign {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 16px 20px;
+  border-bottom: 1px solid #e4e7ec;
+  flex-shrink: 0;
+}
+
+.cp-head-title h3 {
+  margin: 0 0 4px;
+  font-size: 18px;
+  color: #101828;
+}
+
+.cp-head-title p {
+  margin: 0;
+  font-size: 13px;
+  color: #667085;
+}
+
+.cp-head-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+}
+
+.cp-search {
+  padding: 8px 12px;
+  border: 1px solid #d0d5dd;
+  border-radius: 6px;
+  font-size: 14px;
+  width: 100%;
+  max-width: 400px;
+}
+
+.cp-source-select {
+  padding: 8px 12px;
+  border: 1px solid #d0d5dd;
+  border-radius: 6px;
+  font-size: 14px;
+  background-color: #fff;
+}
+
+.cp-close-btn {
+  margin-left: auto;
+}
+
+.cp-body-redesign {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+
+.cp-sidebar-redesign {
+  width: 220px;
+  flex-shrink: 0;
+  border-right: 1px solid #e4e7ec;
+  display: flex;
+  flex-direction: column;
+  background: #f9fafb;
+}
+
+.cp-sidebar-title {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: #667085;
+  padding: 16px 16px 8px;
+  letter-spacing: 0.5px;
+}
+
+.cp-sidebar-search {
+  padding: 0 16px 12px;
+}
+
+.cp-sidebar-search input {
+  width: 100%;
+  padding: 6px 10px;
+  border: 1px solid #d0d5dd;
+  border-radius: 4px;
+  font-size: 13px;
+}
+
+.cp-sidebar-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0 8px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.cp-sidebar-list button {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  border: none;
+  background: transparent;
+  text-align: left;
+  font-size: 14px;
+  color: #344054;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.cp-sidebar-list button:hover {
+  background: #f2f4f7;
+}
+
+.cp-sidebar-list button.active {
+  background: #fdf2f5;
+  color: #be1e4b;
+  font-weight: 500;
+}
+
+.cp-sidebar-list button span {
+  font-size: 12px;
+  color: #98a2b3;
+}
+
+.cp-sidebar-list button.active span {
+  color: #be1e4b;
+}
+
+.cp-content-redesign {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: #fff;
+}
+
+.cp-content-header {
+  padding: 20px 24px 0;
+}
+
+.cp-content-header h2 {
+  margin: 0;
+  font-size: 20px;
+  color: #101828;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.cp-content-header h2 span {
+  font-size: 13px;
+  font-weight: 400;
+  color: #667085;
+  background: #f2f4f7;
+  padding: 2px 8px;
+  border-radius: 12px;
+}
+
+.cp-content-scroll {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: auto;
+  padding: 20px 24px;
+}
+
+.cp-compact-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.cp-compact-table thead {
+  /* Chromium co the "ve de" noi dung dong tbody phia tren len tren cell
+   * sticky cua thead trong <table> that (khac hanh vi voi flex/grid) neu
+   * thead khong tu tao stacking context rieng - isolation: isolate ep
+   * z-index cua cac th ben trong so sanh dung pham vi, tranh bi dong ben
+   * tren "loi" qua header khi cuon (bug that da gap qua repro). */
+  isolation: isolate;
+}
+
+.cp-compact-table th {
+  padding: 10px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  color: #667085;
+  border-bottom: 1px solid #e4e7ec;
+  text-align: left;
+  background: #f9fafb;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.cp-selectable-row {
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.cp-selectable-row:hover {
+  background: #f9fafb;
+}
+
+.cp-selectable-row td {
+  padding: 12px;
+  border-bottom: 1px solid #e4e7ec;
+  font-size: 13px;
+  color: #344054;
+  vertical-align: middle;
+  /* BUG THAT DA GAP: td khong co background (trong suot) -> khi cuon, chu
+   * dong ben tren "loi" qua thanh header dinh (position: sticky) vi khong co
+   * gi che phu doi lap hoan toan. Nen trang dac de header luon che dung. */
+  background: #fff;
+}
+
+.cp-selectable-row.cp-row-selected td {
+  background: #fdf2f5;
+  border-bottom-color: #fce1e8;
+}
+.cp-selectable-row.cp-row-selected td:first-child {
+  border-left: 2px solid #be1e4b;
+}
+
+.cp-row-name {
+  font-weight: 500;
+  color: #101828;
+}
+
+.cp-row-desc {
+  font-size: 12px;
+  color: #667085;
+  margin-top: 4px;
+}
+
+.cp-bundle-cards-redesign {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.cp-bundle-card {
+  border: 1px solid #e4e7ec;
+  border-radius: 8px;
+  padding: 16px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.cp-bundle-card:hover {
+  border-color: #d0d5dd;
+  box-shadow: 0 1px 3px rgba(16, 24, 40, 0.05);
+}
+
+.cp-bundle-card.cp-row-selected {
+  background: #fdf2f5;
+  border-color: #be1e4b;
+}
+
+.cp-bundle-card-top {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.cp-bundle-select-box {
+  padding-top: 2px;
+}
+
+.cp-bundle-info {
+  flex: 1;
+}
+
+.cp-bundle-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: #101828;
+}
+
+.cp-bundle-desc {
+  font-size: 13px;
+  color: #475467;
+  margin-top: 6px;
+}
+
+.cp-bundle-price-info {
+  text-align: right;
+  min-width: 150px;
+}
+
+.cp-bundle-price-info strong {
+  font-size: 16px;
+  color: #101828;
+}
+
+.cp-bundle-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cp-footer-redesign {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 24px;
+  border-top: 1px solid #e4e7ec;
+  background: #fff;
+  flex-shrink: 0;
+}
+
+.cp-footer-left {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.cp-footer-count {
+  font-weight: 600;
+  font-size: 14px;
+  color: #101828;
+}
+
+.cp-footer-details {
+  font-size: 13px;
+  color: #667085;
+}
+
+.cp-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+
+.cp-compact-table {
+  table-layout: fixed;
+}
+.cp-truncate-2 {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;  
+  overflow: hidden;
+}
+
