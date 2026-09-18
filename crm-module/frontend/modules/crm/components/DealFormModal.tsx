@@ -16,6 +16,7 @@ import type { DealFormState } from './DealFormFields';
 import { Loader2, X } from './icons';
 import type { CreateDealInput, CrmUserOption, Deal, UpdateDealInput } from '../types';
 import type { AppUser } from '@/types/unified.types';
+import { seedingCrmRepository } from '../repositories/SeedingCrmRepository';
 
 // Nhap deal cu (localStorage key "crm:deal-draft:v1") tung tu dong luu/nap
 // da bi BO HOAN TOAN o duoi (xem ghi chu tai noi setForm(emptyDealForm())) -
@@ -82,6 +83,16 @@ export function DealFormModal({
   useBodyScrollLock(open);
 
   useEffect(() => {
+    if (!open || !deal?.customerId) return;
+    let alive = true;
+    void seedingCrmRepository.getCustomerProfile(deal.customerId).then(customer => {
+      if (alive) setForm(current => current.customerId === customer.id
+        ? { ...current, customerName: customer.customerName } : current);
+    }).catch(() => { /* Keep persisted Deal data on a denied/failed profile read. */ });
+    return () => { alive = false; };
+  }, [open, deal?.id, deal?.customerId]);
+
+  useEffect(() => {
     if (!open) return;
     setContinueMessage('');
     if (deal) {
@@ -102,6 +113,7 @@ export function DealFormModal({
         projectLocked: Boolean(initialProject?.id),
         primaryContactId: initialContact?.id || '',
         primaryContactLocked: Boolean(initialContact?.id),
+        contactPrefillPending: Boolean(initialContact?.id),
       });
       return;
     }

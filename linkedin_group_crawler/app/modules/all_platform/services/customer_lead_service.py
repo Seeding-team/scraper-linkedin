@@ -69,21 +69,6 @@ def _normalize_uuid_fields(payload: Dict[str, Any]) -> Dict[str, Any]:
             payload[col] = None
     return payload
 
-
-_CONTRACT_LINK_COLUMNS = ("purchase_contract_links", "sale_contract_links")
-
-
-def _clean_contract_links(payload: Dict[str, Any]) -> Dict[str, Any]:
-    """Loại các dòng thiếu URL (phòng client gửi dòng rỗng do bấm nhầm [+ Thêm link])."""
-    for col in _CONTRACT_LINK_COLUMNS:
-        items = payload.get(col)
-        if isinstance(items, list):
-            payload[col] = [
-                item for item in items
-                if isinstance(item, dict) and str(item.get("url") or "").strip()
-            ]
-    return payload
-
 # Cột lấy về — chỉ các cột có thật trên table customer_leads.
 # `days_in_stage` KHÔNG có trên table — nó được tính ở `_normalize_row()`
 # dựa vào `stage_entered_at`. Đừng select nó từ table.
@@ -92,7 +77,6 @@ BASE_COLUMNS = (
     "leaded_by, conv_id, source_platform, is_assigned, sdr_id, status, activity_status, "
     "deal_stage, prev_stage, follow_up_date, decision_maker, estimated_budget, stage_entered_at, "
     "last_attachment_url, last_attachment_name, closed_reason, "
-    "purchase_contract_links, sale_contract_links, "
     "customer_since, service_package, lifetime_value, billing_type, contract_signed_at, contract_status, "
     "warranty_expires_at, care_note, last_care_at, "
     "payment_due_date, payment_status, "
@@ -146,10 +130,6 @@ def _normalize_row(row: Dict[str, Any]) -> Dict[str, Any]:
         row["team_type"] = None
     if row.get("tags") is None:
         row["tags"] = []
-    if row.get("purchase_contract_links") is None:
-        row["purchase_contract_links"] = []
-    if row.get("sale_contract_links") is None:
-        row["sale_contract_links"] = []
     if row.get("days_in_stage") is None and row.get("stage_entered_at"):
         try:
             entered = datetime.fromisoformat(row["stage_entered_at"].replace("Z", "+00:00"))
@@ -421,9 +401,9 @@ def validate_deal_assignment_fields(actor: Dict[str, Any] | None, payload: Dict[
 
 def create_customer_lead(data: Dict[str, Any], actor: Dict[str, Any] | None = None) -> Optional[Dict[str, Any]]:
     try:
+        from app.modules.all_platform.services.deal_relation_service import validate_deal_relations
+        validate_deal_relations(data, actor)
         validate_deal_assignment_fields(actor, data, existing=None)
-        validate_project_belongs_to_customer(data.get("project_id"), data.get("customer_id"))
-        validate_contact_belongs_to_customer(data.get("primary_contact_id"), data.get("customer_id"))
         supabase = get_supabase_client()
         if "city" in data:
             data["city"] = normalize_vietnam_city(data.get("city"))
@@ -452,7 +432,6 @@ def create_customer_lead(data: Dict[str, Any], actor: Dict[str, Any] | None = No
         # tự handle datetime/date → JSON serialize error).
         data = _serialize_datetimes(data)
         data = _normalize_uuid_fields(data)
-        data = _clean_contract_links(data)
         data["instance"] = settings.crm_instance
         logger.info(
             "tenant_write table=customer_leads operation=insert settings.crm_instance=%s resolved_instance=%s",
@@ -489,21 +468,14 @@ def update_customer_lead(lead_id: str, data: Dict[str, Any], actor: Dict[str, An
         safe_data = dict(data)
         if "city" in safe_data:
             safe_data["city"] = normalize_vietnam_city(safe_data.get("city"))
-        if "project_id" in safe_data and safe_data.get("project_id"):
-            current = get_customer_lead_by_id(lead_id) or {}
-            target_customer_id = safe_data.get("customer_id") or current.get("customer_id")
-            validate_project_belongs_to_customer(safe_data.get("project_id"), target_customer_id)
-        if "primary_contact_id" in safe_data and safe_data.get("primary_contact_id"):
-            current = get_customer_lead_by_id(lead_id) or {}
-            target_customer_id = safe_data.get("customer_id") or current.get("customer_id")
-            validate_contact_belongs_to_customer(safe_data.get("primary_contact_id"), target_customer_id)
+        from app.modules.all_platform.services.deal_relation_service import validate_deal_relations
+        validate_deal_relations(safe_data, actor, existing_for_assignment)
         if "position_category_id" in safe_data:
             current = get_customer_lead_by_id(lead_id) or {}
             apply_position_category(safe_data, current_position_category_id=current.get("position_category_id"))
         # Serialize datetime/date → ISO string (supabase-py không tự JSON hóa)
         safe_data = _serialize_datetimes(safe_data)
         safe_data = _normalize_uuid_fields(safe_data)
-        safe_data = _clean_contract_links(safe_data)
         res = (
             supabase.table("customer_leads")
             .update(safe_data)
