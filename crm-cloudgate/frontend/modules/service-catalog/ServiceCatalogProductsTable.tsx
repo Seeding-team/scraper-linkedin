@@ -160,17 +160,20 @@ export const ServiceCatalogProductsTable = forwardRef<ServiceCatalogProductsTabl
     setSaving(true);
     setFormError(null);
     try {
+      // Merge pricing state into form for both add and edit modes
+      const formWithPricing = {
+        ...form,
+        defaultCostPriceVnd: parseNullableNumber(pricingCost),
+        defaultMarkupPercent: parseNullableNumber(pricingMarkup),
+        defaultCustomerPriceVnd: parseNullableNumber(pricingCustomer),
+        pricingInputMode: pricingMode,
+      };
+      
       if (editTarget?.mode === 'edit' && editTarget.id) {
-        await updateItem(editTarget.id, form);
+        await updateItem(editTarget.id, formWithPricing);
       } else {
-        const created = await createItem(form);
-        // Sau khi tao xong san pham MOI, chuyen drawer sang che do "edit" NGAY
-        // (khong dong lai) de nguoi dung cau hinh Bo gia mac dinh tiep - bang
-        // service_catalog_item_pricing can co item_id THAT (FK), chua the
-        // luu gia luc con o che do "add" (item chua ton tai).
-        setEditTarget({ mode: 'edit', id: created.id });
-        resetPricingFields();
-        return;
+        // Create product with pricing included
+        await createItem(formWithPricing);
       }
       setEditTarget(null);
     } catch (err) {
@@ -399,9 +402,7 @@ export const ServiceCatalogProductsTable = forwardRef<ServiceCatalogProductsTabl
               </div>
               {formError ? <div className="sc-error">{formError}</div> : null}
 
-              {editTarget.mode === 'add' ? (
-                <p className="sc-drawer-section-hint">Lưu sản phẩm trước để cấu hình Bộ giá mặc định.</p>
-              ) : canViewPricing ? (
+              {canViewPricing ? (
                 <>
                   <p className="sc-drawer-section-title">Giá mặc định</p>
                   <p className="sc-drawer-section-hint">
@@ -446,12 +447,14 @@ export const ServiceCatalogProductsTable = forwardRef<ServiceCatalogProductsTabl
                     Trường tô xám ở trên được tính tự động từ 2 trường còn lại — đổi ở "Tính tự động" nếu muốn tính ngược Giá vốn từ Giá khách + Markup.
                   </p>
                   {pricingError ? <div className="sc-error">{pricingError}</div> : null}
-                  {pricingSavedAt ? <div className="sc-notice">Đã lưu bộ giá.</div> : null}
-                  <div className="sc-panel-actions">
-                    <button type="button" className="sc-btn sc-btn-primary" disabled={pricingSaving} onClick={() => void handleSavePricing()}>
-                      {pricingSaving ? 'Đang lưu...' : 'Lưu bộ giá'}
-                    </button>
-                  </div>
+                  {pricingSavedAt && editTarget.mode === 'edit' ? <div className="sc-notice">Đã lưu bộ giá.</div> : null}
+                  {editTarget.mode === 'edit' && (
+                    <div className="sc-panel-actions">
+                      <button type="button" className="sc-btn sc-btn-primary" disabled={pricingSaving} onClick={() => void handleSavePricing()}>
+                        {pricingSaving ? 'Đang lưu...' : 'Lưu bộ giá'}
+                      </button>
+                    </div>
+                  )}
 
                   <p className="sc-drawer-section-title">Hiển thị khi chọn danh mục</p>
                   <div className="sc-pricing-preview">

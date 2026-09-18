@@ -238,3 +238,12 @@ zalo-module/frontend/.next
 zalo-module/frontend/nextdev.log
 zalo-module/frontend/npm-install.log
 crm-cloudgate/frontend/.next
+
+
+prompts
+
+Reports
+
+docker-compose.local-test.yml
+scripts/init-local-test-db.sql
+scripts/local-test/
