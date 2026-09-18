@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { useMembers } from '@/hooks/useMembers';
 import { teamsService, projectsService, usersService, type TeamRow, type Project } from '@/services/all-platform.service';
 import { SearchableSelect } from './SearchableSelect';
@@ -22,6 +22,7 @@ import { seedingCrmRepository } from '../repositories/SeedingCrmRepository';
 import type { AppUser } from '@/types/unified.types';
 import { CurrencyInput } from '@/components/CurrencyInput';
 import { formatCurrencyDisplay, parseCurrencyInput } from '@/lib/currency';
+import { aiMayFill, contactValues, hydrationConflicts, type ContactOption, type EditableIdentity } from './dealHydration';
 
 const DEFAULT_INDUSTRY_OPTIONS = INDUSTRY_OPTIONS.map(value => ({ value, label: value }));
 
@@ -38,9 +39,12 @@ export type DealFormState = {
   /** Khoa Contact (khong cho doi) - khi mo tu "Tạo cơ hội" tren Contact 360
    * (contact.customerId + contact.id da xac dinh san, khoa ca 2). */
   primaryContactLocked: boolean;
+  contactPrefillPending: boolean;
   updateCustomerProfile: boolean;
   customerProfileCanEdit: boolean;
   customerName: string;
+  contactName: string;
+  manuallyEditedIdentity: EditableIdentity[];
   dealName: string;
   /** Du an that (migration 097) - '' = Chua thuoc du an. */
   projectId: string;
@@ -99,9 +103,12 @@ export function emptyDealForm(): DealFormState {
     customerLocked: false,
     primaryContactId: '',
     primaryContactLocked: false,
+    contactPrefillPending: false,
     updateCustomerProfile: false,
     customerProfileCanEdit: false,
     customerName: '',
+    contactName: '',
+    manuallyEditedIdentity: [],
     dealName: '',
     projectId: '',
     projectLocked: false,
@@ -225,6 +232,7 @@ export function getSourceLabel(sourcePlatform: string) {
 }
 
 export function validateDealForm(form: DealFormState): string | null {
+  if (!form.dealName.trim()) return 'Vui lòng nhập tên cơ hội.';
   if (!form.customerName.trim()) return 'Vui lòng nhập tên khách hàng.';
   if (!form.email.trim() && !form.phone.trim()) return 'Cần nhập email hoặc số điện thoại để tạo contact.';
   if (!form.servicePackage.trim()) return 'Vui lòng chọn sản phẩm/dịch vụ.';
@@ -304,6 +312,7 @@ export function buildDealPayload(form: DealFormState, _agents: CrmUserOption[] =
     primaryContactId: form.primaryContactId || null,
     updateCustomerProfile: form.updateCustomerProfile,
     customerName: form.dealName.trim(),
+    customerProfileName: form.customerName.trim(),
     positionCategoryId: form.positionCategoryId || undefined,
     companyName: form.companyName.trim(),
     phone: form.phone.trim(),
@@ -374,8 +383,17 @@ export function CustomerProfileCombobox({
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [items, setItems] = useState<CrmCustomerSummary[]>([]);
+  const [resultsQuery, setResultsQuery] = useState('');
   const [activeIndex, setActiveIndex] = useState(-1);
   const containerRef = useRef<HTMLDivElement>(null);
+
+  // AI/company input only supplies a search term, never a customer ID.
+  const suggestedQuery = !form.customerId ? (form.companyName.trim() || form.customerName.trim()) : '';
+  useEffect(() => {
+    if (!suggestedQuery || locked) return;
+    const timer = window.setTimeout(() => { setQuery(suggestedQuery); setOpen(true); }, 0);
+    return () => window.clearTimeout(timer);
+  }, [suggestedQuery, locked]);
 
   useEffect(() => {
     const keyword = query.trim();
@@ -390,6 +408,7 @@ export function CustomerProfileCombobox({
         .then(result => {
           if (alive) {
             setItems(result);
+            setResultsQuery(keyword);
             setActiveIndex(-1);
           }
         })
@@ -422,14 +441,22 @@ export function CustomerProfileCombobox({
   // vu/SDT/email/nguon) - tranh cong don du lieu cua khach A khi doi sang go
   // ten khach moi hoac bam "Doi".
   function clearAutofilledContact() {
+    setValue('primaryContactId', '');
+    setValue('contactPrefillPending', false);
+    setValue('contactName', '');
+    setValue('manuallyEditedIdentity', []);
     setValue('companyName', '');
     setValue('positionCategoryId', '');
     setValue('positionLabel', '');
     setValue('phone', '');
     setValue('email', '');
+    for (const field of ['zalo', 'facebook', 'telegram', 'website', 'taxCode', 'address', 'city', 'industry'] as const) setValue(field, '');
+    setValue('sourcePlatform', 'Manual');
   }
 
   function typeName(value: string) {
+    if (form.customerId && form.manuallyEditedIdentity.length &&
+      !window.confirm('Đổi khách hàng sẽ xóa thông tin liên hệ đã sửa tay. Tiếp tục?')) return;
     setQuery(value);
     setOpen(true);
     setValue('customerName', value);
@@ -444,17 +471,25 @@ export function CustomerProfileCombobox({
   }
 
   function pick(customer: CrmCustomerSummary) {
+    if (resultsQuery !== query.trim()) return;
+    if (customer.id === form.customerId) { setOpen(false); return; }
+    const next = { companyName: customer.companyName || customer.customerName || '',
+      contactName: '', phone: customer.phone || '', email: customer.email || '' };
+    if (hydrationConflicts(form, form.manuallyEditedIdentity, next).length &&
+      !window.confirm('Thông tin đã sửa tay khác hồ sơ CRM. Dùng dữ liệu của khách hàng đã chọn?')) return;
+    clearAutofilledContact();
     setValue('customerId', customer.id);
     setValue('projectId', ''); // Customer moi -> Project cu (neu co) thuoc Customer khac, khong con hop le
     if (!form.primaryContactLocked) setValue('primaryContactId', ''); // Customer moi -> Contact cu (neu co) thuoc Customer khac, khong con hop le
     setValue('customerProfileCanEdit', Boolean(customer.canEdit));
     setValue('updateCustomerProfile', false);
     setValue('customerName', customer.customerName || '');
-    setValue('companyName', customer.companyName || '');
+    setValue('companyName', next.companyName);
     setValue('positionCategoryId', customer.positionCategoryId || '');
     setValue('positionLabel', customer.positionLabelSnapshot || customer.position || '');
-    setValue('phone', customer.phone || '');
-    setValue('email', customer.email || '');
+    setValue('phone', next.phone);
+    setValue('email', next.email);
+    // Person name is populated only after Sale confirms a Contact.
     setValue('sourcePlatform', customer.source || form.sourcePlatform || 'Manual');
     setQuery(customer.customerName || '');
     setOpen(false);
@@ -462,6 +497,8 @@ export function CustomerProfileCombobox({
   }
 
   function clearPickedCustomer() {
+    if (form.manuallyEditedIdentity.length &&
+      !window.confirm('Đổi khách hàng sẽ xóa thông tin liên hệ đã sửa tay. Tiếp tục?')) return;
     setValue('customerId', '');
     setValue('projectId', '');
     setValue('primaryContactId', '');
@@ -506,7 +543,7 @@ export function CustomerProfileCombobox({
           onChange={event => typeName(event.target.value)}
           onKeyDown={handleKeyDown}
           disabled={disabled || locked}
-          placeholder="Nguyễn Văn A"
+          placeholder="Tìm Customer / tên công ty"
           autoComplete="off"
           role="combobox"
           aria-expanded={open}
@@ -523,7 +560,7 @@ export function CustomerProfileCombobox({
         <div className="crm-customer-combobox-menu" id="crm-deal-customer-combobox-menu" role="listbox">
           {loading ? <p>Đang tìm...</p> : null}
           {!loading && !items.length ? <p>Không tìm thấy hồ sơ phù hợp</p> : null}
-          {items.map((customer, index) => (
+          {(resultsQuery === query.trim() ? items : []).map((customer, index) => (
             <button
               type="button"
               key={customer.id}
@@ -569,28 +606,34 @@ function ProjectPicker({
   locked?: boolean;
 }) {
   const [projects, setProjects] = useState<Project[]>([]);
+  const [projectsCustomerId, setProjectsCustomerId] = useState('');
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     if (!form.customerId) {
-      setProjects([]);
       return;
     }
     let alive = true;
+    const timer = window.setTimeout(() => {
     setLoading(true);
     void projectsService.list(form.customerId).then(res => {
-      if (alive && res.success && res.data) setProjects(res.data);
-    }).finally(() => {
+      if (alive && res.success && res.data) { setProjects(res.data); setProjectsCustomerId(form.customerId); }
+    }).catch(() => { if (alive) setProjects([]); }).finally(() => {
       if (alive) setLoading(false);
     });
-    return () => { alive = false; };
+    }, 0);
+    return () => { alive = false; window.clearTimeout(timer); };
   }, [form.customerId]);
 
   if (!form.customerId) {
     return <input value="" disabled placeholder="Chọn khách hàng trước" />;
   }
 
-  const options = [{ value: '', label: 'Chưa thuộc dự án' }, ...projects.map(p => ({ value: p.id, label: `${p.projectCode} · ${p.name}` }))];
+  // BUG THAT DA GAP ("2 dong Chua chon trong dropdown"): SearchableSelect da
+  // tu ve san 1 dong "clear" dung `placeholder` khi khong truyen
+  // hideClearOption - options o day KHONG duoc tu them lai 1 dong rong nua,
+  // keo bi trung 2 dong cung text.
+  const options = (projectsCustomerId === form.customerId ? projects : []).map(p => ({ value: p.id, label: `${p.projectCode} · ${p.name}` }));
 
   if (locked) {
     const current = projects.find(p => p.id === form.projectId);
@@ -606,21 +649,13 @@ function ProjectPicker({
   return (
     <SearchableSelect
       value={form.projectId}
-      onChange={value => setValue('projectId', value)}
+      onChange={value => { if (!value || projectsCustomerId === form.customerId) setValue('projectId', value); }}
       options={options}
       placeholder={loading ? 'Đang tải dự án...' : 'Chưa thuộc dự án'}
     />
   );
 }
 
-type ContactSummary = { id: string; name: string; position_label_snapshot?: string | null; position?: string | null; phone?: string | null };
-
-/** Dropdown "Người liên hệ chính" cua Co hoi (migration 134) - CHI hien
- * Contact THUOC DUNG Customer dang chon (khong duoc lo Contact cua Customer
- * khac - task yeu cau ro "Contact dropdown must not show Contacts from
- * another Customer"). Rong khi chua chon Customer. Server-side van tu kiem
- * tra lai qua validate_contact_belongs_to_customer() - khong chi tin dropdown
- * da loc dung. */
 function ContactPicker({
   form,
   setValue,
@@ -630,50 +665,91 @@ function ContactPicker({
   setValue: <K extends keyof DealFormState>(key: K, value: DealFormState[K]) => void;
   locked?: boolean;
 }) {
-  const [contacts, setContacts] = useState<ContactSummary[]>([]);
+  const [contacts, setContacts] = useState<ContactOption[]>([]);
+  const [loadedCustomerId, setLoadedCustomerId] = useState('');
+  const [contactError, setContactError] = useState('');
+  const currentContactForm = useRef(form);
+  useLayoutEffect(() => { currentContactForm.current = form; }, [form]);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     if (!form.customerId) {
-      setContacts([]);
       return;
     }
     let alive = true;
+    const timer = window.setTimeout(() => {
+    setContacts([]);
+    setLoadedCustomerId('');
+    setContactError('');
     setLoading(true);
-    void seedingCrmRepository
-      .listContacts(form.customerId)
-      .then(rows => {
-        if (alive) setContacts(rows);
-      })
-      .catch(() => {
-        if (alive) setContacts([]);
-      })
-      .finally(() => {
-        if (alive) setLoading(false);
-      });
-    return () => {
-      alive = false;
-    };
+    void seedingCrmRepository.listContacts(form.customerId).then(res => {
+      if (!alive) return;
+      setContacts(res);
+      setLoadedCustomerId(form.customerId);
+      const selected = res.find(c => c.id === currentContactForm.current.primaryContactId);
+      // Reopening a saved Deal resolves the name by canonical linked ID;
+      // do not overwrite its saved/edited phone/email on a list refresh.
+      if (selected && currentContactForm.current.primaryContactId === selected.id &&
+        !currentContactForm.current.contactName) setValue('contactName', selected.name || '');
+      const current = currentContactForm.current;
+      if (selected && current.primaryContactId === selected.id && current.contactPrefillPending) {
+        const next = contactValues(selected);
+        if (!hydrationConflicts(current, current.manuallyEditedIdentity, next).length ||
+          window.confirm('Dùng SĐT/Email của Contact đã chọn thay dữ liệu đã sửa tay?')) {
+          setValue('phone', next.phone);
+          setValue('email', next.email);
+          setValue('contactName', next.contactName);
+          setValue('manuallyEditedIdentity', current.manuallyEditedIdentity.filter(field => field === 'companyName'));
+        }
+        setValue('contactPrefillPending', false);
+      }
+    }).catch(() => {
+      if (alive) setContactError('Không tải được người liên hệ. Vui lòng chọn lại khách hàng để thử lại.');
+    }).finally(() => {
+      if (alive) setLoading(false);
+    });
+    }, 0);
+    return () => { alive = false; window.clearTimeout(timer); };
   }, [form.customerId]);
 
-  if (!form.customerId) {
-    return <input value="" disabled placeholder="Chọn khách hàng trước" />;
+  // BUG THAT DA GAP ("2 dong Chua chon trong dropdown"): xem giai thich o
+  // ProjectPicker.options ben tren - cung 1 nguyen nhan, cung 1 cach fix.
+  const options = loadedCustomerId === form.customerId
+    ? contacts.map(c => ({ value: c.id, label: c.name + (c.is_primary === true ? ' · Chính' : '') })) : [];
+
+  function chooseContact(id: string) {
+    if (loading || loadedCustomerId !== form.customerId) return;
+    const contact = contacts.find(c => c.id === id);
+    if (id === form.primaryContactId) return;
+    if (id && !contact) return;
+    const next = contactValues(contact);
+    if (hydrationConflicts(form, form.manuallyEditedIdentity, next).length &&
+      !window.confirm('Tên/SĐT/Email đã sửa tay khác dữ liệu CRM. Thay bằng thông tin người liên hệ đã chọn?')) return;
+    // No ID changes until conflict confirmation; missing values clear old data.
+    setValue('primaryContactId', id);
+    setValue('contactName', next.contactName);
+    setValue('phone', next.phone);
+    setValue('email', next.email);
+    setValue('manuallyEditedIdentity', form.manuallyEditedIdentity.filter(field => field === 'companyName'));
   }
 
-  const options = [{ value: '', label: 'Chưa chọn' }, ...contacts.map(c => ({ value: c.id, label: `${c.name}${c.position_label_snapshot || c.position ? ' · ' + (c.position_label_snapshot || c.position) : ''}` }))];
+  if (!form.customerId) return <input disabled readOnly placeholder="Chọn khách hàng trước" />;
 
   if (locked) {
-    const current = contacts.find(c => c.id === form.primaryContactId);
-    return <input value={current ? current.name : form.primaryContactId ? 'Người liên hệ đã chọn' : 'Chưa chọn'} disabled readOnly />;
+    const current = options.find(o => o.value === form.primaryContactId);
+    return <input value={current ? current.label : form.primaryContactId ? 'Người liên hệ đã chọn' : 'Chưa chọn'} disabled readOnly />;
   }
 
   return (
+    <>
     <SearchableSelect
       value={form.primaryContactId}
-      onChange={value => setValue('primaryContactId', value)}
+      onChange={chooseContact}
       options={options}
       placeholder={loading ? 'Đang tải người liên hệ...' : 'Chưa chọn'}
     />
+    {contactError ? <p className="crm-error">{contactError}</p> : null}
+    </>
   );
 }
 
@@ -830,22 +906,36 @@ export function DealFormFields({
   const [aiText, setAiText] = useState('');
   const [aiLoading, setAiLoading] = useState(false);
   const [aiError, setAiError] = useState('');
+  const latestForm = useRef(form);
+  useLayoutEffect(() => { latestForm.current = form; }, [form]);
+
+  function editIdentity(field: EditableIdentity, value: string) {
+    setValue(field, value);
+    setValue('manuallyEditedIdentity', [...new Set([...form.manuallyEditedIdentity, field])]);
+  }
 
   async function handleAiParse() {
     if (aiLoading || !aiText.trim()) return;
     setAiLoading(true);
     setAiError('');
+    const requestedCustomer = form.customerId;
+    const requestedContact = form.primaryContactId;
     try {
       const result = await seedingCrmRepository.parseDealText(aiText.trim());
+      const current = latestForm.current;
+      if (current.customerId !== requestedCustomer || current.primaryContactId !== requestedContact) return;
+      const mayFill = (field: keyof DealFormState) =>
+        aiMayFill(field, current.customerId, current.primaryContactId) && !String(current[field] || '').trim();
       // Chỉ điền field ĐANG RỖNG — không âm thầm ghi đè field Sale đã tự gõ tay.
-      if (result.customerName && !form.customerName.trim()) setValue('customerName', String(result.customerName)); if (result.customerName && !form.dealName.trim()) setValue('dealName', String(result.customerName));
-      if (result.companyName && !form.companyName.trim()) setValue('companyName', String(result.companyName));
-      if (result.phone && !form.phone.trim()) setValue('phone', String(result.phone));
-      if (result.email && !form.email.trim()) setValue('email', String(result.email));
-      if (result.servicePackage && !form.servicePackage.trim()) setValue('servicePackage', String(result.servicePackage));
-      if (result.estimatedBudget != null && !form.estimatedBudget.trim()) setValue('estimatedBudget', String(result.estimatedBudget));
-      if (result.nextStep && !form.nextStep.trim()) setValue('nextStep', String(result.nextStep));
-      if (result.note && !form.note.trim()) setValue('note', String(result.note));
+      const candidate = result.companyName || result.customerName;
+      if (candidate && mayFill('customerName')) setValue('customerName', String(candidate));
+      if (result.companyName && mayFill('companyName')) setValue('companyName', String(result.companyName));
+      if (result.phone && mayFill('phone')) setValue('phone', String(result.phone));
+      if (result.email && mayFill('email')) setValue('email', String(result.email));
+      if (result.servicePackage && mayFill('servicePackage')) setValue('servicePackage', String(result.servicePackage));
+      if (result.estimatedBudget != null && mayFill('estimatedBudget')) setValue('estimatedBudget', String(result.estimatedBudget));
+      if (result.nextStep && mayFill('nextStep')) setValue('nextStep', String(result.nextStep));
+      if (result.note && mayFill('note')) setValue('note', String(result.note));
     } catch (err) {
       setAiError(err instanceof Error ? err.message : 'AI điền nhanh thất bại, vui lòng nhập tay.');
     } finally {
@@ -891,7 +981,7 @@ export function DealFormFields({
           <Field label="Tên cơ hội" required>
             <input value={form.dealName} onChange={e => setValue('dealName', e.target.value)} placeholder="Ví dụ: Website Unifarm..." />
           </Field>
-          <Field label="Tên khách hàng" required>
+          <Field label="Customer / Công ty" required>
             <CustomerProfileCombobox form={form} setValue={setValue} locked={form.customerLocked} />
           </Field>
           <Field label="Dự án" hint={form.projectLocked ? undefined : 'tùy chọn'}>
@@ -901,12 +991,15 @@ export function DealFormFields({
             <ContactPicker form={form} setValue={setValue} locked={form.primaryContactLocked} />
           </Field>
           <Field label="Công ty" hint="tùy chọn">
-            <input value={form.companyName} onChange={event => setValue('companyName', event.target.value)} placeholder="Công ty TNHH ABC" />
+            <input value={form.companyName} onChange={event => editIdentity('companyName', event.target.value)} placeholder="Công ty TNHH ABC" />
+          </Field>
+          <Field label="Tên người liên hệ" hint={form.primaryContactId ? 'từ Contact đã chọn; không sửa hồ sơ CRM' : 'tùy chọn'}>
+            <input value={form.contactName} readOnly placeholder="Chọn Contact để lấy tên người liên hệ" />
           </Field>
           <Field full label="Liên hệ" required hint="chỉ cần SĐT hoặc Email">
             <div className="crm-inline-pair">
-              <input value={form.phone} onChange={event => setValue('phone', event.target.value)} type="tel" placeholder="Số điện thoại" />
-              <input value={form.email} onChange={event => setValue('email', event.target.value)} type="email" placeholder="Email" />
+              <input value={form.phone} onChange={event => editIdentity('phone', event.target.value)} type="tel" placeholder="Số điện thoại" />
+              <input value={form.email} onChange={event => editIdentity('email', event.target.value)} type="email" placeholder="Email" />
             </div>
           </Field>
           <Field label="Sản phẩm / dịch vụ" required>

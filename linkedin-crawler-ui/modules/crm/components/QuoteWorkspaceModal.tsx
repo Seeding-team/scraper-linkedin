@@ -42,6 +42,7 @@ import type { QuoteDraft } from '../integrations/quotes/types';
 import { CustomBlocksEditor } from '../integrations/quotes/CustomBlocksEditor';
 import { PaymentPlanEditor } from '@/modules/quotes/components/PaymentPlanEditor';
 import { calculateQuoteTotals, calculateOverallDiscountSummary } from '@/modules/quotes/utils/quoteCalculations';
+import { paymentPlanAmount, paymentPlanPercent } from '@/modules/quotes/utils/paymentPlan';
 import type { CustomBlock, PaymentPlanRow } from '@/modules/quotes/types';
 
 /** 4 buoc THAT (Yeu cau bao gia/Thong tin ky thuat/Hoan thien gia ban/Cho
@@ -2093,6 +2094,12 @@ export function QuoteWorkspaceModal({
   // lai quyet dinh truoc do). Checklist trong card nay KHONG con dung de
   // chan Luu/Chuyen buoc/Ban giao/Duyet nua; card chi con la tinh nang ho tro.
   const [handoffCardOpen, setHandoffCardOpen] = useState(false);
+  // "Kế hoạch thanh toán" - KHAC voi scope/handoff o tren (luon mac dinh
+  // dong): card nay lien quan truc tiep den tien nen phai TU MO khi con
+  // thieu/sai de Sale khong bo qua (yeu cau rieng) - dong bo lai theo dung
+  // paymentPlan CUA QUOTE trong effect [quote?.id] ben duoi (cung ly do
+  // "QuoteCenterPage khong unmount modal" nhu scopeCardOpen/handoffCardOpen).
+  const [paymentPlanCardOpen, setPaymentPlanCardOpen] = useState(false);
   // Card "Hạng mục & giá khách" o ban tom tat quote da khoa (review/
   // approved/published) - yeu cau rieng "cho thu gon" - mac dinh dong,
   // giong "Yêu cầu & phạm vi".
@@ -2124,6 +2131,8 @@ export function QuoteWorkspaceModal({
     // (chay moi lan quote?.id doi that su).
     setHandoffCardOpen(false);
     setSummaryItemsCardOpen(false);
+    const currentPaymentPlan = quote?.data.paymentPlan || draftPaymentPlan;
+    setPaymentPlanCardOpen(currentPaymentPlan.length === 0 || paymentPlanPercent(currentPaymentPlan) !== 100);
     setAccessMode(quote?.publicAccessMode || 'none');
     setAccessEmailsText((quote?.publicAllowedEmails || []).join('\n'));
     setAccessPhonesText((quote?.publicAllowedPhones || []).join('\n'));
@@ -3379,6 +3388,17 @@ export function QuoteWorkspaceModal({
     };
   }, [deal, draftCustomerId, customers, draftTitle, draftScope, draftPaymentTermsDays, draftExtraTerms, draftCustomBlocks, draftPaymentPlan, draftVisibleColumns, draftVisibleSummaryFields]);
   const columnVisibilitySchema = quote?.formSnapshot || draftSelectedForm?.schemaJson;
+  // "Kế hoạch thanh toán" dang chim qua trong 1 accordion phang - badge trang
+  // thai + tom tat khi dong de Sale khong bo qua (yeu cau rieng, xem
+  // paymentPlanCardOpen ben duoi). KHONG doi logic tinh tien/villa/persistence.
+  const paymentPlanRows = quote?.data.paymentPlan || draftPaymentPlan;
+  const paymentPlanFinalPayable = calculateOverallDiscountSummary(calculateQuoteTotals(itemsDraft), quote ? quote.overallDiscountPercent : draftOverallDiscountPercent).grandTotal;
+  const paymentPlanPct = paymentPlanPercent(paymentPlanRows);
+  const paymentPlanIsEmpty = paymentPlanRows.length === 0;
+  const paymentPlanIsComplete = !paymentPlanIsEmpty && paymentPlanPct === 100;
+  const paymentPlanBadgeText = paymentPlanIsEmpty ? 'Chưa thiết lập' : paymentPlanIsComplete ? `${paymentPlanRows.length} đợt · 100%` : 'Cần đủ 100%';
+  const paymentPlanBadgeClass = paymentPlanIsEmpty ? 'qc-badge-neutral' : paymentPlanIsComplete ? 'qc-badge-success' : 'qc-badge-warning';
+  const paymentPlanTotalAmount = paymentPlanRows.reduce((sum, row) => sum + paymentPlanAmount(paymentPlanFinalPayable, row.percent), 0);
   const columnVisibilityDraft: QuoteDraft = {
     data: quote ? quote.data : draftPreviewData,
     items: itemsDraft,
@@ -4683,13 +4703,20 @@ export function QuoteWorkspaceModal({
             ) : null}
 
             {columnVisibilitySchema?.enableDynamicPaymentPlan && columnVisibilitySchema.layoutType !== 'villa_solution_package' ? (
-              <details className="qc-workspace-card qc-workspace-collapsible-card" data-testid="qc-payment-plan-card">
+              <details className={`qc-workspace-card qc-workspace-collapsible-card qc-payment-plan-card${paymentPlanIsComplete ? ' qc-payment-plan-card--complete' : paymentPlanIsEmpty ? '' : ' qc-payment-plan-card--warning'}`} data-testid="qc-payment-plan-card"
+                open={paymentPlanCardOpen} onToggle={event => setPaymentPlanCardOpen((event.target as HTMLDetailsElement).open)}>
                 <summary className="qc-workspace-card-head qc-workspace-collapsible-summary">
                   <h3>Kế hoạch thanh toán</h3>
-                  <span className="qc-workspace-collapsible-hint">(cấp báo giá · bấm để xem)</span>
+                  <span className="qc-workspace-collapsible-hint">{paymentPlanCardOpen ? '(bấm để thu gọn)' : '(bấm để xem)'}</span>
+                  <div className="qc-workspace-card-head-badges">
+                    <span className={`qc-badge ${paymentPlanBadgeClass}`}>{paymentPlanBadgeText}</span>
+                    {!paymentPlanCardOpen && !paymentPlanIsEmpty ? (
+                      <span className="qc-workspace-collapsible-hint">Khách thanh toán: {formatMoney(paymentPlanTotalAmount)}</span>
+                    ) : null}
+                  </div>
                 </summary>
-              <PaymentPlanEditor rows={quote?.data.paymentPlan || draftPaymentPlan}
-                finalPayable={calculateOverallDiscountSummary(calculateQuoteTotals(itemsDraft), quote ? quote.overallDiscountPercent : draftOverallDiscountPercent).grandTotal}
+              <PaymentPlanEditor rows={paymentPlanRows}
+                finalPayable={paymentPlanFinalPayable}
                 disabled={!canEdit || !isDraft || isLockedForReview}
                 onChange={paymentPlan => {
                   quoteContentRevisionRef.current += 1;
