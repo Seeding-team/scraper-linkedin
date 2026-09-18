@@ -6475,6 +6475,11 @@
    * Workspace bao gia full-screen tren mobile, z-index 100200/100210) - day
    * la 1 dropdown dung chung, khong duoc phep bi che khuat boi modal cha. */
   z-index: 100220;
+  /* Khai bao lai nen dac (khong chi dua vao .crm-action-menu-list) de menu
+   * portal luon che kin noi dung phia sau (vd header dinh cua bang trong
+   * CatalogPickerModal) - bug that da gap qua screenshot: chu header lo
+   * xuyen qua menu. */
+  background: #ffffff;
 }
 
 .crm-action-menu-item {

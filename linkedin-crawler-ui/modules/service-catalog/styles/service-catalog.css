@@ -2241,6 +2241,15 @@ a.sc-btn {
   flex: 1;
   overflow-y: auto;
   overflow-x: auto;
+}
+
+/* Padding phai nam o div con nay, KHONG duoc dat truc tiep len
+ * .cp-content-scroll (phan tu overflow:auto) - Chromium co bug that (da
+ * repro qua test co lap): position:sticky cua <th> trong <table> bi lech,
+ * de dong tbody da cuon qua "lo" len tren header dinh, NEU chinh phan tu
+ * overflow:auto co padding. Bo padding khoi day, doi sang div con la het
+ * bug ma khong doi hanh vi UI (padding nhin y het). */
+.cp-content-scroll-inner {
   padding: 20px 24px;
 }
 
@@ -2248,15 +2257,6 @@ a.sc-btn {
   width: 100%;
   border-collapse: separate;
   border-spacing: 0;
-}
-
-.cp-compact-table thead {
-  /* Chromium co the "ve de" noi dung dong tbody phia tren len tren cell
-   * sticky cua thead trong <table> that (khac hanh vi voi flex/grid) neu
-   * thead khong tu tao stacking context rieng - isolation: isolate ep
-   * z-index cua cac th ben trong so sanh dung pham vi, tranh bi dong ben
-   * tren "loi" qua header khi cuon (bug that da gap qua repro). */
-  isolation: isolate;
 }
 
 .cp-compact-table th {
@@ -2412,6 +2412,14 @@ a.sc-btn {
   justify-content: flex-end;
 }
 
+/* Nut hanh dong (Sua/3 cham) trong the Goi Combo o CatalogPickerModal - dung
+ * class rieng thay vi tai su dung .cp-row-actions vi class do co
+ * "flex: 0 0 190px" (danh cho cot "Thao tac" cua bang san pham le) khien
+ * hop nut o day bi ep rong co dinh 190px du chi co 1-2 icon, de lo khoang
+ * trong thua (bug that da gap qua screenshot). */
+.cp-bundle-row-actions {
+  flex: 0 0 auto;
+}
 
 .cp-compact-table {
   table-layout: fixed;
