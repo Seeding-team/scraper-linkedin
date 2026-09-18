@@ -2163,6 +2163,21 @@
  * thuong cua .qc-workspace-card. */
 .qc-workspace-collapsible-card:not([open]) { padding-top: 8px; padding-bottom: 8px; }
 
+/* "Kế hoạch thanh toán" nổi hơn các card phụ khác (yeu cau rieng "đang chìm
+ * quá, nhìn như accordion phụ nên Sale dễ bỏ qua") - border/nen nhe theo
+ * trang thai, badge luon hien trong summary du dong/mo. */
+.qc-payment-plan-card {
+  border-color: #e6ebf2;
+}
+.qc-payment-plan-card--warning {
+  border-color: #f5cf87;
+  background: #fffaf0;
+}
+.qc-payment-plan-card--complete {
+  border-color: #bfe3d3;
+  background: #f3fbf7;
+}
+
 /* Rule card - compact, khong tao scrollbar rieng (yeu cau "Card phai compact
  * giong HTML... Khong tao scrollbar rieng"). */
 .qc-rule-card { padding: 12px 14px; }
