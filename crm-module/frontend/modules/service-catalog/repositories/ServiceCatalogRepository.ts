@@ -42,7 +42,16 @@ async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
 }
 
 function toItemPayload(input: ServiceCatalogItemInput) {
-  return {
+  const optionalFields = [
+    'brand', 'part_number', 'product_type', 'internal_note',
+    'supplier_currency', 'supplier_list_price', 'supplier_discount_percent',
+    'supplier_net_price', 'supplier_exchange_rate', 'supplier_converted_price',
+    'supplier_vendor_id', 'supplier_quote_ref', 'supplier_quote_source',
+    'supplier_quote_date', 'supplier_valid_until', 'shipping_cost',
+    'import_fee', 'other_cost', 'pricing_policy'
+  ];
+  
+  const payload: Record<string, unknown> = {
     item_type: input.itemType,
     parent_id: input.parentId,
     sku: input.sku,
@@ -83,26 +92,37 @@ function toItemPayload(input: ServiceCatalogItemInput) {
     spec_unit_label: input.specUnitLabel,
     note: input.note,
     status: input.status,
-    brand: input.brand,
-    part_number: input.partNumber,
-    product_type: input.productType,
-    internal_note: input.internalNote,
-    supplier_currency: input.supplierCurrency,
-    supplier_list_price: input.supplierListPrice,
-    supplier_discount_percent: input.supplierDiscountPercent,
-    supplier_net_price: input.supplierNetPrice,
-    supplier_exchange_rate: input.supplierExchangeRate,
-    supplier_converted_price: input.supplierConvertedPrice,
-    supplier_vendor_id: input.supplierVendorId,
-    supplier_quote_ref: input.supplierQuoteRef,
-    supplier_quote_source: input.supplierQuoteSource,
-    supplier_quote_date: input.supplierQuoteDate,
-    supplier_valid_until: input.supplierValidUntil,
-    shipping_cost: input.shippingCost,
-    import_fee: input.importFee,
-    other_cost: input.otherCost,
-    pricing_policy: input.pricingPolicy,
   };
+  
+  // Only include optional fields with non-empty values (for databases that may not have migration 127 applied)
+  for (const [key, snakeKey] of [
+    ['brand', 'brand'],
+    ['partNumber', 'part_number'],
+    ['productType', 'product_type'],
+    ['internalNote', 'internal_note'],
+    ['supplierCurrency', 'supplier_currency'],
+    ['supplierListPrice', 'supplier_list_price'],
+    ['supplierDiscountPercent', 'supplier_discount_percent'],
+    ['supplierNetPrice', 'supplier_net_price'],
+    ['supplierExchangeRate', 'supplier_exchange_rate'],
+    ['supplierConvertedPrice', 'supplier_converted_price'],
+    ['supplierVendorId', 'supplier_vendor_id'],
+    ['supplierQuoteRef', 'supplier_quote_ref'],
+    ['supplierQuoteSource', 'supplier_quote_source'],
+    ['supplierQuoteDate', 'supplier_quote_date'],
+    ['supplierValidUntil', 'supplier_valid_until'],
+    ['shippingCost', 'shipping_cost'],
+    ['importFee', 'import_fee'],
+    ['otherCost', 'other_cost'],
+    ['pricingPolicy', 'pricing_policy'],
+  ] as const) {
+    const value = input[key as keyof ServiceCatalogItemInput];
+    if (value !== '' && value !== null && value !== undefined) {
+      payload[snakeKey] = value;
+    }
+  }
+  
+  return payload;
 }
 
 export interface ServiceCatalogListOptions {

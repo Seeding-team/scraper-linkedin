@@ -265,38 +265,43 @@ def create_service_catalog_item(payload: dict, created_by: str | None) -> dict:
         "sort_order": next_order,
         "created_by": created_by,
         "updated_by": created_by,
-        "brand": payload.get("brand"),
-        "part_number": payload.get("part_number"),
-        "product_type": payload.get("product_type"),
-        "internal_note": payload.get("internal_note"),
     }
+    # Only include optional fields if they have values (for compatibility with databases that may not have migration 127 applied)
+    for field in ["brand", "part_number", "product_type", "internal_note"]:
+        if payload.get(field) is not None:
+            insert_data[field] = payload.get(field)
+    
     result = supabase.table(ITEMS_TABLE).insert(insert_data).execute()
     item = result.data[0]
 
-    # Also upsert pricing if provided
-    upsert_service_catalog_item_pricing(
-        item_id=item["id"],
-        issuer_company_id=None,
-        cost_price_vnd=payload.get("default_cost_price_vnd"),
-        markup_percent=payload.get("default_markup_percent"),
-        customer_price_vnd=payload.get("default_customer_price_vnd"),
-        pricing_input_mode=payload.get("pricing_input_mode") or "cost",
-        supplier_currency=payload.get("supplier_currency"),
-        supplier_list_price=payload.get("supplier_list_price"),
-        supplier_discount_percent=payload.get("supplier_discount_percent"),
-        supplier_net_price=payload.get("supplier_net_price"),
-        supplier_exchange_rate=payload.get("supplier_exchange_rate"),
-        supplier_converted_price=payload.get("supplier_converted_price"),
-        supplier_vendor_id=payload.get("supplier_vendor_id"),
-        supplier_quote_ref=payload.get("supplier_quote_ref"),
-        supplier_quote_source=payload.get("supplier_quote_source"),
-        supplier_quote_date=payload.get("supplier_quote_date"),
-        supplier_valid_until=payload.get("supplier_valid_until"),
-        shipping_cost=payload.get("shipping_cost"),
-        import_fee=payload.get("import_fee"),
-        other_cost=payload.get("other_cost"),
-        pricing_policy=payload.get("pricing_policy"),
-    )
+    # Also upsert pricing if provided (only if at least one core pricing field has a non-None value)
+    # Note: pricing_input_mode alone is not enough - we need at least one actual price value
+    core_pricing_fields = ["default_cost_price_vnd", "default_markup_percent", "default_customer_price_vnd"]
+
+    if any(payload.get(k) is not None for k in core_pricing_fields):
+        upsert_service_catalog_item_pricing(
+            item_id=item["id"],
+            issuer_company_id=None,
+            cost_price_vnd=payload.get("default_cost_price_vnd"),
+            markup_percent=payload.get("default_markup_percent"),
+            customer_price_vnd=payload.get("default_customer_price_vnd"),
+            pricing_input_mode=payload.get("pricing_input_mode") or "cost",
+            supplier_currency=payload.get("supplier_currency"),
+            supplier_list_price=payload.get("supplier_list_price"),
+            supplier_discount_percent=payload.get("supplier_discount_percent"),
+            supplier_net_price=payload.get("supplier_net_price"),
+            supplier_exchange_rate=payload.get("supplier_exchange_rate"),
+            supplier_converted_price=payload.get("supplier_converted_price"),
+            supplier_vendor_id=payload.get("supplier_vendor_id"),
+            supplier_quote_ref=payload.get("supplier_quote_ref"),
+            supplier_quote_source=payload.get("supplier_quote_source"),
+            supplier_quote_date=payload.get("supplier_quote_date"),
+            supplier_valid_until=payload.get("supplier_valid_until"),
+            shipping_cost=payload.get("shipping_cost"),
+            import_fee=payload.get("import_fee"),
+            other_cost=payload.get("other_cost"),
+            pricing_policy=payload.get("pricing_policy"),
+        )
 
     created_item = _row_to_item(item)
     merge_pricing_into_tree([created_item], resolve_pricing_map([item["id"]], None))
@@ -344,14 +349,11 @@ def update_service_catalog_item(item_id: str, payload: dict, actor_id: str | Non
     if not result.data:
         raise ValueError("Khong tim thay dich vu.")
 
-    # Also upsert pricing if provided
-    if any(k in payload for k in [
-        "default_cost_price_vnd", "default_markup_percent", "default_customer_price_vnd",
-        "supplier_currency", "supplier_list_price", "supplier_discount_percent",
-        "supplier_net_price", "supplier_exchange_rate", "supplier_converted_price",
-        "supplier_vendor_id", "supplier_quote_ref", "supplier_quote_source", "supplier_quote_date",
-        "supplier_valid_until", "shipping_cost", "import_fee", "other_cost", "pricing_policy"
-    ]):
+    # Also upsert pricing if provided (only if at least one core pricing field has a non-None value)
+    # Note: pricing_input_mode alone is not enough - we need at least one actual price value
+    core_pricing_fields = ["default_cost_price_vnd", "default_markup_percent", "default_customer_price_vnd"]
+
+    if any(payload.get(k) is not None for k in core_pricing_fields):
         upsert_service_catalog_item_pricing(
             item_id=item_id,
             issuer_company_id=None,
@@ -405,7 +407,7 @@ def delete_service_catalog_item(item_id: str) -> dict:
             bundle_ids = list({row["bundle_id"] for row in used_in})
             bundles = supabase.table(ITEMS_TABLE).select("name").in_("id", bundle_ids).execute().data or []
             names = ", ".join(b["name"] for b in bundles)
-            raise ValueError(f"Dich vu dang duoc dung trong goi: {names}. Khong the xoa.")
+            raise ValueError(f"Sản phẩm đang được sử dụng trong (các) gói: {names}. Vui lòng xóa sản phẩm khỏi (các) gói trước khi xóa, hoặc chuyển sang trạng thái 'Ngừng kinh doanh'.")
 
     used_in_quotes = (
         supabase.table("quote_items").select("id").eq("catalog_item_id", item_id).limit(1).execute().data or []
@@ -615,22 +617,26 @@ def resolve_pricing_map(item_ids: list[str], issuer_company_id: str | None) -> d
             "cost": _to_decimal(row.get("default_cost_price_vnd")),
             "markup": _to_decimal(row.get("default_markup_percent")),
             "customer": _to_decimal(row.get("default_customer_price_vnd")),
-            "supplierCurrency": row.get("supplier_currency"),
-            "supplierListPrice": _to_decimal(row.get("supplier_list_price")),
-            "supplierDiscountPercent": _to_decimal(row.get("supplier_discount_percent")),
-            "supplierNetPrice": _to_decimal(row.get("supplier_net_price")),
-            "supplierExchangeRate": _to_decimal(row.get("supplier_exchange_rate")),
-            "supplierConvertedPrice": _to_decimal(row.get("supplier_converted_price")),
-            "supplierVendorId": row.get("supplier_vendor_id"),
-            "supplierQuoteRef": row.get("supplier_quote_ref"),
-            "supplierQuoteSource": row.get("supplier_quote_source"),
-            "supplierQuoteDate": row.get("supplier_quote_date"),
-            "supplierValidUntil": row.get("supplier_valid_until"),
-            "shippingCost": _to_decimal(row.get("shipping_cost")),
-            "importFee": _to_decimal(row.get("import_fee")),
-            "otherCost": _to_decimal(row.get("other_cost")),
-            "pricingPolicy": row.get("pricing_policy"),
         }
+        # Only add supplier fields if they exist in the database
+        if has_supplier_columns:
+            entry.update({
+                "supplierCurrency": row.get("supplier_currency"),
+                "supplierListPrice": _to_decimal(row.get("supplier_list_price")),
+                "supplierDiscountPercent": _to_decimal(row.get("supplier_discount_percent")),
+                "supplierNetPrice": _to_decimal(row.get("supplier_net_price")),
+                "supplierExchangeRate": _to_decimal(row.get("supplier_exchange_rate")),
+                "supplierConvertedPrice": _to_decimal(row.get("supplier_converted_price")),
+                "supplierVendorId": row.get("supplier_vendor_id"),
+                "supplierQuoteRef": row.get("supplier_quote_ref"),
+                "supplierQuoteSource": row.get("supplier_quote_source"),
+                "supplierQuoteDate": row.get("supplier_quote_date"),
+                "supplierValidUntil": row.get("supplier_valid_until"),
+                "shippingCost": _to_decimal(row.get("shipping_cost")),
+                "importFee": _to_decimal(row.get("import_fee")),
+                "otherCost": _to_decimal(row.get("other_cost")),
+                "pricingPolicy": row.get("pricing_policy"),
+            })
         if row.get("issuer_company_id") and issuer_company_id and row["issuer_company_id"] == issuer_company_id:
             specific[item_id] = entry
         elif not row.get("issuer_company_id"):
