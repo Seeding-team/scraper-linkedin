@@ -616,25 +616,23 @@ def resolve_pricing_map(item_ids: list[str], issuer_company_id: str | None) -> d
             "markup": _to_decimal(row.get("default_markup_percent")),
             "customer": _to_decimal(row.get("default_customer_price_vnd")),
         }
-        # Only add supplier fields if they exist in the database
-        if has_supplier_columns:
-            entry.update({
-                "supplierCurrency": row.get("supplier_currency"),
-                "supplierListPrice": _to_decimal(row.get("supplier_list_price")),
-                "supplierDiscountPercent": _to_decimal(row.get("supplier_discount_percent")),
-                "supplierNetPrice": _to_decimal(row.get("supplier_net_price")),
-                "supplierExchangeRate": _to_decimal(row.get("supplier_exchange_rate")),
-                "supplierConvertedPrice": _to_decimal(row.get("supplier_converted_price")),
-                "supplierVendorId": row.get("supplier_vendor_id"),
-                "supplierQuoteRef": row.get("supplier_quote_ref"),
-                "supplierQuoteSource": row.get("supplier_quote_source"),
-                "supplierQuoteDate": row.get("supplier_quote_date"),
-                "supplierValidUntil": row.get("supplier_valid_until"),
-                "shippingCost": _to_decimal(row.get("shipping_cost")),
-                "importFee": _to_decimal(row.get("import_fee")),
-                "otherCost": _to_decimal(row.get("other_cost")),
-                "pricingPolicy": row.get("pricing_policy"),
-            })
+        entry.update({
+            "supplierCurrency": row.get("supplier_currency"),
+            "supplierListPrice": _to_decimal(row.get("supplier_list_price")),
+            "supplierDiscountPercent": _to_decimal(row.get("supplier_discount_percent")),
+            "supplierNetPrice": _to_decimal(row.get("supplier_net_price")),
+            "supplierExchangeRate": _to_decimal(row.get("supplier_exchange_rate")),
+            "supplierConvertedPrice": _to_decimal(row.get("supplier_converted_price")),
+            "supplierVendorId": row.get("supplier_vendor_id"),
+            "supplierQuoteRef": row.get("supplier_quote_ref"),
+            "supplierQuoteSource": row.get("supplier_quote_source"),
+            "supplierQuoteDate": row.get("supplier_quote_date"),
+            "supplierValidUntil": row.get("supplier_valid_until"),
+            "shippingCost": _to_decimal(row.get("shipping_cost")),
+            "importFee": _to_decimal(row.get("import_fee")),
+            "otherCost": _to_decimal(row.get("other_cost")),
+            "pricingPolicy": row.get("pricing_policy"),
+        })
         if row.get("issuer_company_id") and issuer_company_id and row["issuer_company_id"] == issuer_company_id:
             specific[item_id] = entry
         elif not row.get("issuer_company_id"):
