@@ -503,7 +503,7 @@ function rowToCustomer(row: CrmCustomerRow): CrmCustomerSummary {
 
 function toCrmCustomerPayload(input: CreateDealInput): Partial<CrmCustomerRow> {
   return {
-    customer_name: input.customerName,
+    customer_name: input.customerProfileName ?? input.customerName,
     company_name: input.companyName,
     position_category_id: input.positionCategoryId,
     phone: input.phone,
@@ -862,10 +862,14 @@ export class SeedingCrmRepository implements CrmRepository {
     return (rows || []).map(rowToCustomer);
   }
 
+  async getCustomerProfile(id: string): Promise<CrmCustomerSummary> {
+    return rowToCustomer(await apiFetch<CrmCustomerRow>(`/api/all-platform/crm/customers/${encodeURIComponent(id)}`));
+  }
+
   /** Danh sach Contact THUOC DUNG 1 Customer - dung cho dropdown "Người liên
    * hệ chính" khi tao/sua Deal (phai loc dung customerId, khong duoc lo
    * Contact cua Customer khac). */
-  async listContacts(customerId: string): Promise<Array<{ id: string; name: string; position_label_snapshot?: string | null; position?: string | null; phone?: string | null }>> {
+  async listContacts(customerId: string): Promise<Array<{ id: string; name: string; position_label_snapshot?: string | null; position?: string | null; phone?: string | null; email?: string | null; is_primary?: boolean }>> {
     return apiFetch(`/api/all-platform/crm/customers/${encodeURIComponent(customerId)}/contacts`);
   }
 }

@@ -353,6 +353,8 @@ export type CreateDealInput = Omit<
 > & {
   customerId?: string;
   updateCustomerProfile?: boolean;
+  /** Customer profile name, distinct from legacy Deal.customerName (deal title). */
+  customerProfileName?: string;
   idempotencyKey?: string;
   contract?: ContractInfo;
   outcome?: OutcomeInfo;
