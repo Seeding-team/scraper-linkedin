@@ -4,7 +4,25 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+
+class PaymentPlanRowInput(BaseModel):
+    id: str
+    phase: str = ""
+    percent: float = Field(default=0, ge=0, le=100, allow_inf_nan=False)
+    condition: str = ""
+    note: str = ""
+
+
+def normalize_quote_data(data):
+    """Keep quote snapshot fields; payment amounts are derived, never persisted."""
+    if data is None or "paymentPlan" not in data:
+        return data
+    if not isinstance(data["paymentPlan"], list):
+        raise ValueError("paymentPlan must be a list")
+    return {**data, "paymentPlan": [PaymentPlanRowInput.model_validate(row).model_dump()
+                                  for row in data["paymentPlan"]]}
 
 
 class QuoteFormCreateRequest(BaseModel):
@@ -71,6 +89,12 @@ class QuoteItemInput(BaseModel):
     row_type: Optional[str] = None
     description: str = ""
     service_description: Optional[str] = None
+    warranty_scope: Optional[str] = None
+    @field_validator("warranty_scope")
+    @classmethod
+    def normalize_warranty_scope(cls, value):
+        return value.strip() or None if value is not None else None
+
     unit: Optional[str] = None
     quantity: float = 0
     unit_price: float = 0
@@ -123,6 +147,8 @@ class QuoteCreateRequest(BaseModel):
     # category_type='crm_quote_type', chon duoc tu Buoc 1 luc tao.
     quote_type_codes: Optional[list[str]] = None
 
+    _normalize_data = field_validator("data")(normalize_quote_data)
+
 
 class QuoteUpdateRequest(BaseModel):
     """status/public_token/public_enabled KHÔNG còn client-settable qua đây -
@@ -143,6 +169,8 @@ class QuoteUpdateRequest(BaseModel):
     # o router (list rong [] la gia tri that su hop le "bo chon het", khac
     # "khong gui gi").
     quote_type_codes: Optional[list[str]] = None
+
+    _normalize_data = field_validator("data")(normalize_quote_data)
 
 
 class QuoteStageUpdateRequest(BaseModel):

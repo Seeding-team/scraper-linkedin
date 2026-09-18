@@ -1,6 +1,7 @@
 'use client';
 
 import { useRef, useState } from 'react';
+import { paymentPlanAmount, paymentPlanPercent, visiblePaymentPlan } from '../utils/paymentPlan';
 import type {
   CustomBlock,
   QuoteData,
@@ -845,6 +846,11 @@ export function QuoteDocumentRenderer({
                             {column.type === 'auto-number' || column.key === 'order'
                               ? row.number
                               : renderCell(row.item, column, index)}
+                            {column.key === (finalColumns.find(c => c.key === 'serviceDescription') || finalColumns.find(c => c.key === 'description') || finalColumns[0])?.key && row.item.warrantyScope?.trim() ? (
+                              <div className="quote-item-warranty"><strong>Phạm vi bảo hành:</strong>
+                                {formatDescriptionLines(row.item.warrantyScope).map((line, i) => <div key={i}>{line}</div>)}
+                              </div>
+                            ) : null}
                           </td>
                         ))}
                       </tr>
@@ -888,6 +894,19 @@ export function QuoteDocumentRenderer({
             </div>
           ) : null}
         </section>
+
+        {schema.enableDynamicPaymentPlan && visiblePaymentPlan(quoteData.paymentPlan).length > 0 ? (
+          <section className="sheet-note sheet-payment-plan">
+            <h3>Kế hoạch thanh toán</h3>
+            <table className="quote-table">
+              <thead><tr><th>Đợt</th><th>Tỷ lệ (%)</th><th>Số tiền</th><th>Điều kiện thanh toán</th><th>Ghi chú</th></tr></thead>
+              <tbody>{visiblePaymentPlan(quoteData.paymentPlan).map((row, i) => <tr key={row.id || i}>
+                <td>{row.phase}</td><td>{row.percent}%</td><td className="money-cell">{formatVnd(paymentPlanAmount(discountSummary.grandTotal, row.percent))}</td><td>{row.condition}</td><td>{row.note}</td>
+              </tr>)}</tbody>
+              <tfoot><tr><th>Tổng</th><th>{paymentPlanPercent(visiblePaymentPlan(quoteData.paymentPlan))}%</th><th>{formatVnd(visiblePaymentPlan(quoteData.paymentPlan).reduce((sum, row) => sum + paymentPlanAmount(discountSummary.grandTotal, row.percent), 0))}</th><td colSpan={2} /></tr></tfoot>
+            </table>
+          </section>
+        ) : null}
 
         {notesRows.length ? (
           <section className="sheet-note sheet-note--terms">

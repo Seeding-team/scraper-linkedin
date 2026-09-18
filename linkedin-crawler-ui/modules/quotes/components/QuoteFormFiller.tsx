@@ -22,11 +22,14 @@ import { CatalogPickerModal, type CatalogPickerListItem } from '../../service-ca
 import { useCatalogItemAdd } from '../../service-catalog/useCatalogItemAdd';
 import { ConfirmModal } from '../../crm/components/ConfirmModal';
 import { CurrencyInput } from '@/components/CurrencyInput';
+import { PaymentPlanEditor } from './PaymentPlanEditor';
+import { calculateOverallDiscountSummary } from '../utils/quoteCalculations';
 
 export interface QuoteFillValue {
   data: QuoteData;
   items: QuoteItem[];
   solutionItems: VillaSolutionItem[];
+  overallDiscountPercent?: number | null;
 }
 
 interface Props {
@@ -188,6 +191,11 @@ export function QuoteFormFiller({ schema, value, onChange, quoteFormId, showTota
           </div>
         </section>
       )}
+      {shouldShowTotals && schema.enableDynamicPaymentPlan && layoutType !== 'villa_solution_package' ? (
+        <PaymentPlanEditor rows={value.data.paymentPlan || []}
+          finalPayable={calculateOverallDiscountSummary(totals, value.overallDiscountPercent).grandTotal}
+          onChange={paymentPlan => setData('paymentPlan', paymentPlan)} />
+      ) : null}
     </div>
   );
 }
@@ -1063,6 +1071,9 @@ function SchemaQuoteItemsTable({
   onRemoveParent: (index: number) => void;
   onRemoveChild: (parentIndex: number, childIndex: number) => void;
 }) {
+  const [detailRow, setDetailRow] = useState<Extract<QuoteItemEditorRow, { kind: 'item' }> | null>(null);
+  const [detailDescription, setDetailDescription] = useState('');
+  const [detailWarranty, setDetailWarranty] = useState('');
   const visibleColumns = columns.filter(column => column.visible !== false);
   const editorColumns = visibleColumns.length ? visibleColumns : QUOTE_ITEM_EDITOR_FALLBACK_COLUMNS;
   let sectionNumber = 0;
@@ -1120,6 +1131,9 @@ function SchemaQuoteItemsTable({
                 </td>
               ))}
               <td className="quote-schema-item-action">
+                <button type="button" aria-label="Chi tiết hạng mục" onClick={() => {
+                  setDetailRow(row); setDetailDescription(row.item.description || ''); setDetailWarranty(row.item.warrantyScope || '');
+                }}>▤</button>
                 <button
                   type="button"
                   onClick={() => row.childIndex === undefined
@@ -1132,6 +1146,27 @@ function SchemaQuoteItemsTable({
           ))}
         </tbody>
       </table>
+      {detailRow ? (
+        <div className="crm-modal-backdrop" onClick={() => setDetailRow(null)}>
+          <div className="crm-modal" role="dialog" aria-modal="true" aria-label="Chi tiết hạng mục" onClick={e => e.stopPropagation()}>
+            <div className="crm-modal-header"><h3>Chi tiết hạng mục</h3></div>
+            <div className="crm-modal-body">
+            <p>{detailRow.item.serviceDescription}</p>
+            <label className="crm-field"><span>Nội dung công việc</span><textarea rows={5} value={detailDescription} onChange={e => setDetailDescription(e.target.value)} /></label>
+            <label className="crm-field"><span>Phạm vi bảo hành</span><textarea rows={5} value={detailWarranty} onChange={e => setDetailWarranty(e.target.value)} /></label>
+            </div>
+            <div className="crm-modal-footer">
+            <button type="button" className="crm-secondary-button" onClick={() => setDetailRow(null)}>Hủy</button>
+            <button type="button" onClick={() => {
+              const patch = { description: detailDescription, warrantyScope: detailWarranty.trim() || null };
+              if (detailRow.childIndex === undefined) onUpdateParent(detailRow.parentIndex, patch);
+              else onUpdateChild(detailRow.parentIndex, detailRow.childIndex, patch);
+              setDetailRow(null);
+            }} className="crm-primary-button">Lưu</button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

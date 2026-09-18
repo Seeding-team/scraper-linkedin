@@ -107,6 +107,7 @@ def _row_to_item(row: dict) -> dict:
         "rowType": row.get("row_type") or "item",
         "description": row.get("description") or "",
         "serviceDescription": row.get("service_description") or "",
+        "warrantyScope": row.get("warranty_scope"),
         # Ghi chu RIENG cho tung hang muc (migration 105, vd "Giảm giá 15%
         # theo chính sách ưu đãi khách hàng đầu tiên") - khac han
         # internalRequestNote/customBlocks (ghi chu CHUNG ca bao gia) - CONG
@@ -401,7 +402,7 @@ def apply_quote_field_permissions(quote: dict, user: dict | None) -> dict:
 # bat ky cot noi bo nao sau nay) MAC DINH KHONG xuat hien tren API cong khai,
 # tru khi co ai do CHU DONG them dung ten vao dict duoi day.
 _PUBLIC_ITEM_KEYS = (
-    "id", "parentItemId", "rowType", "description", "serviceDescription", "note", "unit", "quantity",
+    "id", "parentItemId", "rowType", "description", "serviceDescription", "warrantyScope", "note", "unit", "quantity",
     "unitPrice", "discountPercent", "discountAmount", "amountAfterDiscount", "vatRate",
     "subtotalAmount", "vatAmount", "totalAmount", "sortOrder",
     "catalogItemId", "bundleSnapshot", "listPriceUsd", "unitPriceUsd", "exchangeRate", "unitPriceVnd",
@@ -418,6 +419,7 @@ def _row_to_public_item(row: dict) -> dict:
         "rowType": row.get("row_type") or "item",
         "description": row.get("description") or "",
         "serviceDescription": row.get("service_description") or "",
+        "warrantyScope": row.get("warranty_scope"),
         # Ghi chu RIENG cho tung hang muc (migration 105, vd "Giảm giá 15%
         # theo chính sách ưu đãi khách hàng đầu tiên") - khac han
         # internalRequestNote/customBlocks (ghi chu CHUNG ca bao gia) - CONG
@@ -483,6 +485,8 @@ def _public_data_allowlist(data: dict, form_snapshot: dict) -> dict:
             if key:
                 schema_keys.add(key)
     allowed = schema_keys | {"customBlocks"}
+    if form_snapshot.get("enableDynamicPaymentPlan"):
+        allowed.add("paymentPlan")
     return {key: value for key, value in (data or {}).items() if key in allowed}
 
 
@@ -1594,6 +1598,7 @@ def create_quote(payload: dict, created_by: str | None) -> dict:
             "row_type": item.get("row_type") or "item",
             "description": item.get("description") or "",
             "service_description": item.get("service_description") or None,
+            "warranty_scope": item.get("warranty_scope") or None,
             "unit": item.get("unit"),
             "quantity": float(item.get("quantity") or 0),
             "unit_price": float(item.get("unit_price") or 0),
@@ -1758,8 +1763,15 @@ def update_quote(quote_id: str, payload: dict, actor_id: str | None) -> dict:
     (vd chi doi `data`/`issuer_company_id`) - VO TINH xoa sach hang muc that
     su cua quote. Gio PHAI truy lai items HIEN CO va truyen nguyen ven cho
     RPC trong truong hop nay, KHONG duoc mac dinh ve []."""
-    _ensure_quote_in_instance(quote_id)
+    current_quote = _ensure_quote_in_instance(quote_id)
     supabase: Client = get_supabase_client()
+    is_villa = current_quote.get("formSnapshot", {}).get("layoutType") == "villa_solution_package"
+    villa_totals = None
+    if is_villa:
+        effective_data = dict(current_quote.get("data") or {})
+        if payload.get("data") is not None:
+            effective_data.update(payload["data"])
+        villa_totals = _calculate_villa_totals(effective_data.get("solutionItems") or [])
     items = payload.get("items")
     items_changed = items is not None
     if items_changed:
@@ -1778,6 +1790,10 @@ def update_quote(quote_id: str, payload: dict, actor_id: str | None) -> dict:
         }).execute()
     except Exception as exc:
         _raise_friendly_rpc_error(exc)
+
+    if villa_totals is not None:
+        subtotal, vat, total = villa_totals
+        supabase.table(QUOTES_TABLE).update({"subtotal_amount": subtotal, "vat_amount": vat, "total_amount": total}).eq("id", quote_id).eq("instance", _crm_instance()).execute()
 
     # Du an + SLA due date (migration 097) - CHUA nam trong RPC quote_update
     # (chi la metadata, khong can recompute gia/VAT nhu cac RPC khac) - update

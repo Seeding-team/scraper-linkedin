@@ -64,6 +64,7 @@ export interface SummaryFieldConfig {
 }
 
 export interface QuoteSchema {
+  enableDynamicPaymentPlan?: boolean;
   version: number;
   layoutType: QuoteLayoutType;
   sections: QuoteSection[];
@@ -159,6 +160,7 @@ export interface BundleSnapshotComponent {
 }
 
 export interface QuoteItem {
+  warrantyScope?: string | null;
   id?: string;
   quoteId?: string;
   parentItemId?: string;
@@ -250,7 +252,16 @@ export interface CustomBlock {
   content: string;
 }
 
+export interface PaymentPlanRow {
+  id: string;
+  phase: string;
+  percent: number;
+  condition: string;
+  note: string;
+}
+
 export interface QuoteData {
+  paymentPlan?: PaymentPlanRow[];
   quoteTitle?: string;
   quoteNumber?: string;
   quoteDate?: string;
