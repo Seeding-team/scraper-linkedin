@@ -571,7 +571,11 @@ function ProjectPicker({
     return <input value="" disabled placeholder="Chọn khách hàng trước" />;
   }
 
-  const options = [{ value: '', label: 'Chưa thuộc dự án' }, ...projects.map(p => ({ value: p.id, label: `${p.projectCode} · ${p.name}` }))];
+  // BUG THAT DA GAP ("2 dong Chua chon trong dropdown"): SearchableSelect da
+  // tu ve san 1 dong "clear" dung `placeholder` khi khong truyen
+  // hideClearOption - options o day KHONG duoc tu them lai 1 dong rong nua,
+  // keo bi trung 2 dong cung text.
+  const options = projects.map(p => ({ value: p.id, label: `${p.projectCode} · ${p.name}` }));
 
   if (locked) {
     const current = projects.find(p => p.id === form.projectId);

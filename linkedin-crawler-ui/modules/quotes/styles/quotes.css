@@ -707,6 +707,140 @@
   color: #64748b;
 }
 
+/* "Kế hoạch thanh toán" polish (yêu cầu "đang chìm quá, nhìn như accordion
+ * phụ nên Sale dễ bỏ qua") - section riêng, nổi hơn quote-section-card mặc
+ * định bằng border/nền theo trạng thái, badge trạng thái luôn hiện ở đầu,
+ * empty-state rõ ràng thay vì bảng rỗng, helper text tách thành info box. */
+.quote-payment-plan--warning {
+  border-color: #f5cf87;
+  background: #fffaf0;
+}
+.quote-payment-plan--complete {
+  border-color: #bfe3d3;
+  background: #f3fbf7;
+}
+.quote-payment-plan-head {
+  align-items: flex-start;
+}
+.quote-payment-plan-heading h4 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 800;
+  color: #0f172a;
+}
+.quote-payment-plan-subtitle {
+  margin: 0.2rem 0 0;
+  font-size: 0.8rem;
+  color: #64748b;
+}
+.quote-payment-plan-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+.quote-payment-plan-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.25rem 0.6rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.quote-payment-plan-badge--neutral {
+  background: #eef1f5;
+  color: #4b5768;
+}
+.quote-payment-plan-badge--warning {
+  background: #fff7e5;
+  color: #bf7810;
+}
+.quote-payment-plan-badge--success {
+  background: #eaf9f2;
+  color: #12845a;
+}
+.quote-payment-plan-head-actions .quote-payment-plan-add-btn {
+  border: 1px solid var(--color-primary, #ba244a);
+  color: var(--color-primary, #ba244a);
+  background: #ffffff;
+  font-weight: 700;
+}
+.quote-payment-plan-head-actions .quote-payment-plan-add-btn:hover:not(:disabled) {
+  background: #fff0f4;
+}
+.quote-payment-plan-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 0.35rem;
+  padding: 1.5rem 1rem;
+  border: 1px dashed #cbd5e1;
+  border-radius: 0.65rem;
+  background: #f8fafc;
+  margin-top: 0.75rem;
+}
+.quote-payment-plan-empty-icon {
+  color: #94a3b8;
+  width: 28px;
+  height: 28px;
+  margin-bottom: 0.2rem;
+}
+.quote-payment-plan-empty-title {
+  margin: 0;
+  font-weight: 700;
+  color: #334155;
+  font-size: 0.9rem;
+}
+.quote-payment-plan-empty-desc {
+  margin: 0;
+  color: #64748b;
+  font-size: 0.8rem;
+  max-width: 26rem;
+}
+.quote-payment-plan-empty-cta {
+  margin-top: 0.5rem;
+  border: 1px solid var(--color-primary, #ba244a);
+  color: var(--color-primary, #ba244a);
+  background: #ffffff;
+  font-weight: 700;
+  border-radius: 0.5rem;
+  padding: 0.55rem 1rem;
+  font-size: 0.85rem;
+}
+.quote-payment-plan-empty-cta:hover:not(:disabled) {
+  background: #fff0f4;
+}
+.quote-payment-plan-warning {
+  margin: 0.5rem 0 0;
+  padding: 0.5rem 0.7rem;
+  border-radius: 0.5rem;
+  background: #fff2d6;
+  color: #8a5a06;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+.quote-payment-plan-info {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.4rem;
+  margin: 0.75rem 0 0;
+  padding: 0.55rem 0.7rem;
+  border-radius: 0.5rem;
+  background: #f1f5f9;
+  color: #475569;
+  font-size: 0.78rem;
+  line-height: 1.4;
+}
+.quote-payment-plan-info svg {
+  flex-shrink: 0;
+  margin-top: 0.15rem;
+  width: 14px;
+  height: 14px;
+  color: #64748b;
+}
+
 .quote-row-actions button {
   border: 1px solid #cbd5e1;
   border-radius: 0.4rem;
