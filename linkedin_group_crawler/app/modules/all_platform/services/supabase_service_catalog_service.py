@@ -102,6 +102,8 @@ def _bundle_component_line(bundle_item_row: dict, component: dict) -> dict:
         "computedQuantity": computed_quantity,
         "displayText": display_text,
         "unitPriceVnd": float(component.get("default_unit_price_vnd") or 0),
+        "monthlyPriceVnd": _float_or_none(component.get("monthly_price_vnd")),
+        "annualCommitMonthlyPriceVnd": _float_or_none(component.get("annual_commit_monthly_price_vnd")),
         "defaultCostPriceVnd": component.get("default_cost_price_vnd"),
         "defaultCustomerPriceVnd": component.get("default_customer_price_vnd"),
         "quota": bundle_item_row.get("quota"),

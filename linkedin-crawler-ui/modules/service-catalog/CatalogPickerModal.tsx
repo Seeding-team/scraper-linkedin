@@ -43,6 +43,8 @@ export interface CatalogPickerListItem {
     defaultCostPriceVnd?: number | null;
     defaultCustomerPriceVnd?: number | null;
     unitPriceVnd?: number | null;
+    monthlyPriceVnd?: number | null;
+    annualCommitMonthlyPriceVnd?: number | null;
     required?: boolean;
     overagePolicy?: string | null;
     showOnQuote?: boolean;
@@ -58,6 +60,22 @@ function foldDiacritics(value: string): string {
     .replace(/[\u0300-\u036f]/g, '')
     .replace(/[đĐ]/g, 'd')
     .toLowerCase();
+}
+
+function firstPositiveNumber(...values: Array<number | null | undefined>): number | null {
+  for (const value of values) {
+    if (typeof value === 'number' && Number.isFinite(value) && value > 0) return value;
+  }
+  return null;
+}
+
+function componentCustomerPrice(component: NonNullable<CatalogPickerListItem['components']>[number]): number | null {
+  return firstPositiveNumber(
+    component.defaultCustomerPriceVnd,
+    component.monthlyPriceVnd,
+    component.annualCommitMonthlyPriceVnd,
+    component.unitPriceVnd
+  ) ?? component.defaultCustomerPriceVnd ?? component.unitPriceVnd ?? null;
 }
 
 export function CatalogPickerModal({
@@ -589,7 +607,7 @@ export function CatalogPickerModal({
                                             <td className="py-2 px-3 bg-white group-hover:bg-slate-50 text-slate-600">{component.unit || '—'}</td>
                                             <td className="py-2 px-3 bg-white group-hover:bg-slate-50 text-slate-500 text-xs italic">Dùng chung</td>
                                             {canViewCost && <td className={`py-2 px-3 bg-white group-hover:bg-slate-50 ${component.defaultCostPriceVnd === undefined ? 'text-red-400' : 'text-slate-700'}`}>{formatCostOrMissing(component.defaultCostPriceVnd)}</td>}
-                                            <td className="py-2 px-3 bg-white group-hover:bg-slate-50 text-slate-700">{formatVnd(component.defaultCustomerPriceVnd ?? component.unitPriceVnd)}</td>
+                                            <td className="py-2 px-3 bg-white group-hover:bg-slate-50 text-slate-700">{formatVnd(componentCustomerPrice(component))}</td>
                                             <td className="py-2 px-3 bg-white group-hover:bg-slate-50 text-center text-slate-500">{component.required !== false ? 'Có' : 'Không'}</td>
                                             <td className="py-2 px-3 bg-white group-hover:bg-slate-50 text-center text-slate-500">{component.overagePolicy === 'charge' ? 'Tính thêm' : 'Không'}</td>
                                             <td className="py-2 px-3 bg-white group-hover:bg-slate-50 text-center text-slate-500">{component.showOnQuote !== false ? 'Có' : 'Không'}</td>
@@ -606,7 +624,7 @@ export function CatalogPickerModal({
                                         <td className="py-2 px-3 bg-white group-hover:bg-slate-50 text-slate-600">{component.unit || '—'}</td>
                                         <td className="py-2 px-3 bg-white group-hover:bg-slate-50 text-slate-900">{component.quota || '—'}</td>
                                         {canViewCost && <td className={`py-2 px-3 bg-white group-hover:bg-slate-50 ${component.defaultCostPriceVnd === undefined ? 'text-red-400' : 'text-slate-700'}`}>{formatCostOrMissing(component.defaultCostPriceVnd)}</td>}
-                                        <td className="py-2 px-3 bg-white group-hover:bg-slate-50 text-slate-700">{formatVnd(component.defaultCustomerPriceVnd ?? component.unitPriceVnd)}</td>
+                                        <td className="py-2 px-3 bg-white group-hover:bg-slate-50 text-slate-700">{formatVnd(componentCustomerPrice(component))}</td>
                                         <td className="py-2 px-3 bg-white group-hover:bg-slate-50 text-center text-slate-500">{component.required !== false ? 'Có' : 'Không'}</td>
                                         <td className="py-2 px-3 bg-white group-hover:bg-slate-50 text-center text-slate-500">{component.overagePolicy === 'charge' ? 'Tính thêm' : 'Không'}</td>
                                         <td className="py-2 px-3 bg-white group-hover:bg-slate-50 text-center text-slate-500">{component.showOnQuote !== false ? 'Có' : 'Không'}</td>

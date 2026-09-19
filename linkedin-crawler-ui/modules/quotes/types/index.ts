@@ -146,6 +146,8 @@ export interface BundleSnapshotComponent {
   computedQuantity: number;
   displayText: string;
   unitPriceVnd: number;
+  monthlyPriceVnd?: number | null;
+  annualCommitMonthlyPriceVnd?: number | null;
   defaultCostPriceVnd?: number | null;
   defaultMarkupPercent?: number | null;
   defaultCustomerPriceVnd?: number | null;

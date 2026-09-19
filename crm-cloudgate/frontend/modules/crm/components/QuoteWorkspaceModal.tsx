@@ -123,7 +123,13 @@ function roundBundlePrice(value: number): number {
 }
 
 function componentCustomerPrice(component: BundleSnapshotComponent): number {
-  return Math.max(0, Number(component.defaultCustomerPriceVnd ?? component.unitPriceVnd ?? 0) || 0);
+  const configured = firstPositiveNumber(
+    component.defaultCustomerPriceVnd,
+    component.monthlyPriceVnd,
+    component.annualCommitMonthlyPriceVnd,
+    component.unitPriceVnd
+  );
+  return Math.max(0, Number(configured ?? component.defaultCustomerPriceVnd ?? component.unitPriceVnd ?? 0) || 0);
 }
 
 function componentCostPrice(component: BundleSnapshotComponent): number | null {
@@ -227,15 +233,17 @@ function bundleComponentsToWorkspaceRows(item: QuoteItem, catalogItems: ServiceC
         ...component,
         defaultCostPriceVnd: component.defaultCostPriceVnd !== undefined ? component.defaultCostPriceVnd : fallback?.defaultCostPriceVnd,
         defaultMarkupPercent: component.defaultMarkupPercent !== undefined ? component.defaultMarkupPercent : fallback?.defaultMarkupPercent,
+        monthlyPriceVnd: component.monthlyPriceVnd !== undefined ? component.monthlyPriceVnd : fallback?.monthlyPriceVnd,
+        annualCommitMonthlyPriceVnd: component.annualCommitMonthlyPriceVnd !== undefined ? component.annualCommitMonthlyPriceVnd : fallback?.annualCommitMonthlyPriceVnd,
         defaultCustomerPriceVnd: component.defaultCustomerPriceVnd !== undefined ? component.defaultCustomerPriceVnd : fallback?.defaultCustomerPriceVnd,
-        unitPriceVnd: component.unitPriceVnd ?? fallback?.unitPriceVnd ?? fallback?.defaultCustomerPriceVnd ?? 0,
+        unitPriceVnd: component.unitPriceVnd ?? fallback?.unitPriceVnd ?? fallback?.monthlyPriceVnd ?? fallback?.annualCommitMonthlyPriceVnd ?? fallback?.defaultCustomerPriceVnd ?? 0,
       };
     })
     .sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
   const renderedPoolKeys = new Set<string>();
   const rows: QuoteItem[] = [];
   components.forEach((component, index) => {
-    const componentCustomerPriceValue = component.defaultCustomerPriceVnd ?? component.unitPriceVnd ?? 0;
+    const componentCustomerPriceValue = componentCustomerPrice(component);
     const componentCost = component.defaultCostPriceVnd ?? null;
     const componentMarkup = component.defaultMarkupPercent ?? (
       componentCost != null && componentCost > 0
@@ -1870,11 +1878,13 @@ export function QuoteWorkspaceModal({
       computedQuantity: component.computedQuantity,
       displayText: component.displayText,
       unitPriceVnd: component.unitPriceVnd,
+      monthlyPriceVnd: component.monthlyPriceVnd,
+      annualCommitMonthlyPriceVnd: component.annualCommitMonthlyPriceVnd,
       defaultCostPriceVnd: component.defaultCostPriceVnd,
-      defaultMarkupPercent: component.defaultCostPriceVnd != null && (component.defaultCustomerPriceVnd ?? component.unitPriceVnd) != null && component.defaultCostPriceVnd > 0
-        ? (((component.defaultCustomerPriceVnd ?? component.unitPriceVnd) - component.defaultCostPriceVnd) / component.defaultCostPriceVnd) * 100
+      defaultMarkupPercent: component.defaultCostPriceVnd != null && firstPositiveNumber(component.defaultCustomerPriceVnd, component.monthlyPriceVnd, component.annualCommitMonthlyPriceVnd, component.unitPriceVnd) != null && component.defaultCostPriceVnd > 0
+        ? ((firstPositiveNumber(component.defaultCustomerPriceVnd, component.monthlyPriceVnd, component.annualCommitMonthlyPriceVnd, component.unitPriceVnd)! - component.defaultCostPriceVnd) / component.defaultCostPriceVnd) * 100
         : null,
-      defaultCustomerPriceVnd: component.defaultCustomerPriceVnd ?? component.unitPriceVnd,
+      defaultCustomerPriceVnd: firstPositiveNumber(component.defaultCustomerPriceVnd, component.monthlyPriceVnd, component.annualCommitMonthlyPriceVnd, component.unitPriceVnd) ?? component.defaultCustomerPriceVnd ?? component.unitPriceVnd,
       quota: component.quota,
       customerDisplayName: component.customerDisplayName,
       crmNote: component.crmNote,
@@ -3856,8 +3866,9 @@ export function QuoteWorkspaceModal({
   const liveCommercialSummary = useMemo(() => {
     const rows = itemsDraft.filter(i => i.rowType !== 'section');
     const costValues = rows.map(resolveQuoteItemCostTotal);
-    const liveHasCostData = rows.length > 0 && costValues.every(value => value != null);
-    const costTotal = liveHasCostData ? costValues.reduce((sum, value) => sum + (value || 0), 0) : 0;
+    const numericCostValues = costValues.filter((value): value is number => value != null);
+    const liveHasCostData = rows.length > 0 && numericCostValues.length > 0;
+    const costTotal = numericCostValues.reduce((sum, value) => sum + value, 0);
     const totals = calculateQuoteTotals(rows);
     const discountSummary = calculateOverallDiscountSummary(totals, quote ? quote.overallDiscountPercent : draftOverallDiscountPercent);
     const netRevenue = discountSummary.subtotalAfterDiscount;
