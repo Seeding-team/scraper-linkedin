@@ -352,10 +352,10 @@ export const ServiceCatalogProductsTable = forwardRef<ServiceCatalogProductsTabl
                       </div>
                     </div>
                     <div className="sc-bundle-card-actions">
-                      {renderRowActions(product)}
                       <button type="button" className="sc-btn" onClick={() => toggleBundleExpanded(product.id)}>
                         {expanded ? 'Ẩn thành phần' : 'Xem thành phần'} ({components.length})
                       </button>
+                      {renderRowActions(product)}
                     </div>
                   </div>
                   {expanded ? (
