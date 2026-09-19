@@ -2431,6 +2431,12 @@ a.sc-btn {
   justify-content: flex-end;
 }
 
+/* Bundle-card actions are inline controls, not the fixed-width table action
+ * column. Keep the three-dot menu compact beside "Xem thành phần". */
+.cp-bundle-row-actions {
+  flex: 0 0 auto;
+}
+
 
 .cp-compact-table {
   table-layout: fixed;

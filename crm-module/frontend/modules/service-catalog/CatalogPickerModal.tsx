@@ -528,7 +528,7 @@ export function CatalogPickerModal({
                                 <button type="button" className="qc-btn bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs px-3 py-1.5 h-8 font-medium border-0" onClick={() => toggleBundleExpanded(item.id)}>
                                   {expanded ? 'Thu gọn' : `Xem thành phần (${components.length})`}
                                 </button>
-                                <div className="cp-row-actions bg-white border border-slate-200 rounded px-1 py-1 flex items-center gap-1 shadow-sm h-8">
+                                <div className="cp-bundle-row-actions bg-white border border-slate-200 rounded px-1 py-1 flex items-center gap-1 shadow-sm h-8">
                                   {onEditItem && (
                                     <button type="button" className="sc-icon-btn p-1 text-slate-400 hover:text-blue-600 rounded hover:bg-slate-50" onClick={(e) => { e.stopPropagation(); onEditItem(item); }} title="Sửa">
                                       <Pencil />
