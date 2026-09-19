@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { API_BASE_URL, API_KEY } from '@/lib/env';
 import { seedingQuoteRepository, QuoteApprovalRequiresExceptionError, QuoteDocumentRenderer } from '@/modules/quotes';
@@ -41,9 +41,9 @@ import { QuoteColumnVisibilityPicker } from '../integrations/quotes/QuoteColumnV
 import type { QuoteDraft } from '../integrations/quotes/types';
 import { CustomBlocksEditor } from '../integrations/quotes/CustomBlocksEditor';
 import { PaymentPlanEditor } from '@/modules/quotes/components/PaymentPlanEditor';
-import { calculateQuoteTotals, calculateOverallDiscountSummary } from '@/modules/quotes/utils/quoteCalculations';
+import { calculateQuoteTotals, calculateOverallDiscountSummary, clampDiscountPercent } from '@/modules/quotes/utils/quoteCalculations';
 import { paymentPlanAmount, paymentPlanPercent } from '@/modules/quotes/utils/paymentPlan';
-import type { CustomBlock, PaymentPlanRow } from '@/modules/quotes/types';
+import type { BundleSnapshotComponent, BundleSnapshotValue, CustomBlock, PaymentPlanRow } from '@/modules/quotes/types';
 
 /** 4 buoc THAT (Yeu cau bao gia/Thong tin ky thuat/Hoan thien gia ban/Cho
  * duyet-Phat hanh) - anh xa dung 1-1 voi `quotes.processing_stage` (migration
@@ -72,6 +72,215 @@ type QuoteCustomerOption = {
   address?: string;
   taxCode?: string;
 };
+
+function appendBundleQuota(label: string, quota?: string | null): string {
+  const cleanQuota = String(quota || '').trim();
+  if (!cleanQuota) return label;
+  if (label.toLowerCase().includes(cleanQuota.toLowerCase())) return label;
+  return `${label} — ${cleanQuota}`;
+}
+
+function bundleSnapshotComponents(item: QuoteItem): BundleSnapshotComponent[] {
+  const snapshot = item.bundleSnapshot as unknown;
+  if (Array.isArray(snapshot)) return snapshot as BundleSnapshotComponent[];
+  if (snapshot && typeof snapshot === 'object' && Array.isArray((snapshot as { components?: unknown }).components)) {
+    return (snapshot as { components: BundleSnapshotComponent[] }).components;
+  }
+  return [];
+}
+
+function bundleSnapshotPricingMode(item: QuoteItem): 'fixed' | 'auto' {
+  const snapshot = item.bundleSnapshot as unknown;
+  if (snapshot && typeof snapshot === 'object' && !Array.isArray(snapshot) && (snapshot as { pricingMode?: unknown }).pricingMode === 'auto') {
+    return 'auto';
+  }
+  return 'fixed';
+}
+
+function bundleSnapshotTargetGm(item: QuoteItem): number {
+  const snapshot = item.bundleSnapshot as unknown;
+  const fromSnapshot = snapshot && typeof snapshot === 'object' && !Array.isArray(snapshot)
+    ? Number((snapshot as { targetGrossMarginPercent?: unknown }).targetGrossMarginPercent)
+    : NaN;
+  if (Number.isFinite(fromSnapshot) && fromSnapshot >= 0 && fromSnapshot < 100) return fromSnapshot;
+  return 30;
+}
+
+function makeBundleSnapshot(item: QuoteItem, components: BundleSnapshotComponent[], patch: Partial<BundleSnapshotValue> = {}): BundleSnapshotValue {
+  const snapshot = item.bundleSnapshot as unknown;
+  const existing = snapshot && typeof snapshot === 'object' && !Array.isArray(snapshot) ? snapshot as Partial<BundleSnapshotValue> : {};
+  return {
+    ...existing,
+    pricingMode: patch.pricingMode ?? existing.pricingMode ?? 'fixed',
+    targetGrossMarginPercent: patch.targetGrossMarginPercent ?? existing.targetGrossMarginPercent ?? 30,
+    components,
+  };
+}
+
+function roundBundlePrice(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.round(value / 1000) * 1000);
+}
+
+function componentCustomerPrice(component: BundleSnapshotComponent): number {
+  return Math.max(0, Number(component.defaultCustomerPriceVnd ?? component.unitPriceVnd ?? 0) || 0);
+}
+
+function componentCostPrice(component: BundleSnapshotComponent): number | null {
+  const cost = component.defaultCostPriceVnd;
+  return cost == null ? null : Math.max(0, Number(cost) || 0);
+}
+
+function componentQuantity(component: BundleSnapshotComponent): number {
+  return Math.max(0, Number(component.computedQuantity || component.quantity || 1) || 0);
+}
+
+function calculateBundleComponentCost(components: BundleSnapshotComponent[]): number | null {
+  let hasCost = false;
+  const countedPoolKeys = new Set<string>();
+  const total = components.reduce((sum, component) => {
+    const poolKey = component.quotaPoolKey?.trim();
+    if (poolKey) {
+      if (countedPoolKeys.has(poolKey)) return sum;
+      countedPoolKeys.add(poolKey);
+    }
+    const cost = componentCostPrice(component);
+    if (cost == null) return sum;
+    hasCost = true;
+    return sum + cost * componentQuantity(component);
+  }, 0);
+  return hasCost ? total : null;
+}
+
+function calculateMarkupFromCostPrice(cost: number | null, price: number): number | null {
+  if (cost == null || cost <= 0) return null;
+  return ((price - cost) / cost) * 100;
+}
+
+function formatPercentFixed2(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return '—';
+  return `${value.toFixed(2)}%`;
+}
+
+function firstPositiveNumber(...values: Array<number | null | undefined>): number | null {
+  for (const value of values) {
+    if (typeof value === 'number' && Number.isFinite(value) && value > 0) return value;
+  }
+  return null;
+}
+
+function resolveCatalogCustomerPrice(item: ServiceCatalogItem): number {
+  const configured = firstPositiveNumber(
+    item.defaultCustomerPriceVnd,
+    item.monthlyPriceVnd,
+    item.annualCommitMonthlyPriceVnd,
+    item.defaultUnitPriceVnd
+  );
+  if (configured != null) return configured;
+  if (
+    item.defaultCostPriceVnd != null &&
+    item.defaultMarkupPercent != null &&
+    Number.isFinite(item.defaultCostPriceVnd) &&
+    Number.isFinite(item.defaultMarkupPercent)
+  ) {
+    return Math.max(0, item.defaultCostPriceVnd * (1 + item.defaultMarkupPercent / 100));
+  }
+  return 0;
+}
+
+function recalculateBundleParent(item: QuoteItem, components: BundleSnapshotComponent[], mode: 'fixed' | 'auto' = bundleSnapshotPricingMode(item), targetGm = bundleSnapshotTargetGm(item)): QuoteItem {
+  const bundleCost = calculateBundleComponentCost(components);
+  let unitPrice = item.unitPrice;
+  if (mode === 'auto' && bundleCost != null) {
+    unitPrice = roundBundlePrice(bundleCost / (1 - targetGm / 100));
+  }
+  return {
+    ...item,
+    costPrice: bundleCost,
+    costNotApplicable: false,
+    unitPrice,
+    markupPercent: calculateMarkupFromCostPrice(bundleCost, unitPrice),
+    bundleSnapshot: makeBundleSnapshot(item, components, { pricingMode: mode, targetGrossMarginPercent: targetGm }),
+  };
+}
+
+function bundleComponentsToWorkspaceRows(item: QuoteItem, catalogItems: ServiceCatalogItem[] = []): QuoteItem[] {
+  const catalogBundle = item.catalogItemId ? catalogItems.find(candidate => candidate.id === item.catalogItemId) : undefined;
+  const fallbackComponentsById = new Map(
+    (catalogBundle?.components || []).map(component => [component.componentId, component])
+  );
+  const components = bundleSnapshotComponents(item)
+    .filter(component => component.showOnQuote !== false)
+    .map(component => {
+      const fallback = fallbackComponentsById.get(component.componentId);
+      return {
+        ...component,
+        defaultCostPriceVnd: component.defaultCostPriceVnd !== undefined ? component.defaultCostPriceVnd : fallback?.defaultCostPriceVnd,
+        defaultMarkupPercent: component.defaultMarkupPercent !== undefined ? component.defaultMarkupPercent : fallback?.defaultMarkupPercent,
+        defaultCustomerPriceVnd: component.defaultCustomerPriceVnd !== undefined ? component.defaultCustomerPriceVnd : fallback?.defaultCustomerPriceVnd,
+        unitPriceVnd: component.unitPriceVnd ?? fallback?.unitPriceVnd ?? fallback?.defaultCustomerPriceVnd ?? 0,
+      };
+    })
+    .sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
+  const renderedPoolKeys = new Set<string>();
+  const rows: QuoteItem[] = [];
+  components.forEach((component, index) => {
+    const componentCustomerPriceValue = component.defaultCustomerPriceVnd ?? component.unitPriceVnd ?? 0;
+    const componentCost = component.defaultCostPriceVnd ?? null;
+    const componentMarkup = component.defaultMarkupPercent ?? (
+      componentCost != null && componentCost > 0
+        ? ((componentCustomerPriceValue - componentCost) / componentCost) * 100
+        : null
+    );
+    const poolKey = component.quotaPoolKey?.trim();
+    if (poolKey) {
+      if (renderedPoolKeys.has(poolKey)) return;
+      renderedPoolKeys.add(poolKey);
+      const poolComponents = components.filter(candidate => candidate.quotaPoolKey?.trim() === poolKey);
+      const technicalPoolName = component.quotaPoolName || '';
+      const label = component.customerDisplayName || (technicalPoolName.toLowerCase() === 'channel quota' ? 'Kênh kết nối' : technicalPoolName) || component.name || 'Kênh kết nối';
+      rows.push({
+        id: `bundle-pool-${poolKey}-${index}`,
+        rowType: 'item',
+        serviceDescription: appendBundleQuota(label, component.quotaPoolQuota || component.quota),
+        description: '',
+        unit: component.unit || '',
+        quantity: 1,
+        unitPrice: componentCustomerPriceValue,
+        costPrice: componentCost,
+        markupPercent: componentMarkup,
+        discountPercent: 0,
+        vatRate: 0,
+        __bundleComponent: true,
+        __bundleComponentIds: poolComponents.map(poolComponent => poolComponent.componentId),
+        __bundlePoolKey: poolKey,
+        __bundleRequired: poolComponents.some(poolComponent => poolComponent.required === true),
+        __bundleCanDeriveCost: poolComponents.some(poolComponent => (poolComponent.sku || '').toUpperCase() !== 'MCHAT-AI-TOKEN' && componentCustomerPrice(poolComponent) > 0),
+      });
+      return;
+    }
+    const label = component.customerDisplayName || component.name || component.displayText || 'Hạng mục';
+    rows.push({
+      id: `bundle-component-${component.componentId}-${index}`,
+      rowType: 'item',
+      serviceDescription: appendBundleQuota(label, component.quota),
+      description: component.description || '',
+      unit: component.unit || '',
+      quantity: component.computedQuantity || component.quantity || 1,
+      unitPrice: componentCustomerPriceValue,
+      costPrice: componentCost,
+      markupPercent: componentMarkup,
+      discountPercent: 0,
+      vatRate: 0,
+      __bundleComponent: true,
+      __bundleComponentIds: [component.componentId],
+      __bundlePoolKey: null,
+      __bundleRequired: component.required === true,
+      __bundleCanDeriveCost: (component.sku || '').toUpperCase() !== 'MCHAT-AI-TOKEN' && componentCustomerPrice(component) > 0,
+    });
+  });
+  return rows;
+}
 
 async function loadQuoteCustomerOptions(): Promise<QuoteCustomerOption[]> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
@@ -577,6 +786,7 @@ export function QuoteWorkspaceModal({
   const [draftQuoteOwnerId, setDraftQuoteOwnerId] = useState('');
   const [draftVisibleColumns, setDraftVisibleColumns] = useState<string[] | undefined>(undefined);
   const [draftVisibleSummaryFields, setDraftVisibleSummaryFields] = useState<string[] | undefined>(undefined);
+  const [draftVisibleCustomerFields, setDraftVisibleCustomerFields] = useState<string[] | undefined>(undefined);
   // BUG THAT DA GAP ("go Chiet khau tong khi chua co quote thi khong co tac
   // dung gi ca"): o quickbar (~4448), onChange goc chi goi
   // setQuote(prev => prev ? {...} : prev) - khi CHUA co `quote` (dang tao moi,
@@ -933,10 +1143,36 @@ export function QuoteWorkspaceModal({
   // (bug thuc te phat hien khi doc lai RPC, khong phai gia dinh).
   const [itemsDraft, setItemsDraft] = useState<QuoteItem[]>([]);
   const [itemsFullscreen, setItemsFullscreen] = useState(false);
+  const [selectedDiscountRowKeys, setSelectedDiscountRowKeys] = useState<Set<string>>(new Set());
+  const [itemDiscountInput, setItemDiscountInput] = useState('');
   useEffect(() => {
     setItemsDraft(quote?.items ? flattenItemTree(quote.items) : []);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [quote?.id]);
+
+  function discountRowKey(row: QuoteItem, index: number) {
+    return row.id || `draft-${index}`;
+  }
+
+  const selectableDiscountRowKeys = useMemo(
+    () => itemsDraft
+      .map((row, index) => (row.rowType === 'section' ? null : discountRowKey(row, index)))
+      .filter((key): key is string => Boolean(key)),
+    [itemsDraft]
+  );
+
+  const selectedDiscountCount = useMemo(
+    () => selectableDiscountRowKeys.filter(key => selectedDiscountRowKeys.has(key)).length,
+    [selectableDiscountRowKeys, selectedDiscountRowKeys]
+  );
+
+  useEffect(() => {
+    setSelectedDiscountRowKeys(prev => {
+      const allowed = new Set(selectableDiscountRowKeys);
+      const next = new Set([...prev].filter(key => allowed.has(key)));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [selectableDiscountRowKeys]);
 
   useEffect(() => {
     if (!itemsFullscreen) return;
@@ -968,6 +1204,38 @@ export function QuoteWorkspaceModal({
 
   function updateRow(index: number, patch: Partial<QuoteItem>) {
     setItemsDraft(prev => prev.map((row, i) => (i === index ? { ...row, ...patch } : row)));
+  }
+
+  function toggleDiscountRowSelection(key: string, checked: boolean) {
+    setSelectedDiscountRowKeys(prev => {
+      const next = new Set(prev);
+      if (checked) next.add(key);
+      else next.delete(key);
+      return next;
+    });
+  }
+
+  function applyItemDiscount(scope: 'selected' | 'all') {
+    const normalized = itemDiscountInput.trim().replace(',', '.');
+    const rawValue = normalized === '' ? 0 : Number(normalized);
+    if (!Number.isFinite(rawValue)) {
+      window.alert('Chiết khấu phải là một số từ 0% đến 100%.');
+      return;
+    }
+    const discountPercent = clampDiscountPercent(rawValue);
+    if (scope === 'selected' && selectedDiscountCount === 0) {
+      window.alert('Chọn ít nhất một hạng mục để áp chiết khấu.');
+      return;
+    }
+    const targetKeys = scope === 'all' ? new Set(selectableDiscountRowKeys) : selectedDiscountRowKeys;
+    const nextItems = itemsDraft.map((row, index) => {
+      if (row.rowType === 'section') return row;
+      const key = discountRowKey(row, index);
+      return targetKeys.has(key) ? { ...row, discountPercent } : row;
+    });
+    setItemsDraft(nextItems);
+    if (quote) void persistQuote({ items: nextItems }, { silent: true });
+    showToast(true, scope === 'all' ? 'Đã áp chiết khấu cho tất cả hạng mục.' : `Đã áp chiết khấu cho ${selectedDiscountCount} hạng mục.`);
   }
 
   // Ca 3 handler duoi day PHAI khong bao gio tao ra NaN/Infinity du nguoi
@@ -1084,6 +1352,83 @@ export function QuoteWorkspaceModal({
         return { ...row, unitPrice: price, markupPercent: ((price - row.costPrice) / row.costPrice) * 100 };
       })
     );
+  }
+
+  function updateBundleComponents(parentIndex: number, componentIds: string[], patcher: (component: BundleSnapshotComponent) => BundleSnapshotComponent) {
+    const targetIds = new Set(componentIds);
+    const nextItems = itemsDraft.map((row, i) => {
+      if (i !== parentIndex) return row;
+      const currentComponents = bundleSnapshotComponents(row);
+      if (currentComponents.length === 0) return row;
+      const nextComponents = currentComponents.map(component => (targetIds.has(component.componentId) ? patcher(component) : component));
+      return recalculateBundleParent(row, nextComponents);
+    });
+    setItemsDraft(nextItems);
+    if (quote) void persistQuote({ items: nextItems }, { silent: true });
+  }
+
+  function setBundleComponentCost(parentIndex: number, componentIds: string[], value: number | null) {
+    const cost = toSafeNonNegative(value);
+    updateBundleComponents(parentIndex, componentIds, component => {
+      const price = componentCustomerPrice(component);
+      return {
+        ...component,
+        defaultCostPriceVnd: cost,
+        defaultMarkupPercent: calculateMarkupFromCostPrice(cost, price),
+      };
+    });
+  }
+
+  function setBundleComponentPrice(parentIndex: number, componentIds: string[], value: number | null) {
+    const price = toSafeNonNegative(value) ?? 0;
+    updateBundleComponents(parentIndex, componentIds, component => {
+      const cost = componentCostPrice(component);
+      return {
+        ...component,
+        unitPriceVnd: price,
+        defaultCustomerPriceVnd: price,
+        defaultMarkupPercent: calculateMarkupFromCostPrice(cost, price),
+      };
+    });
+  }
+
+  function deriveBundleComponentCost(parentIndex: number, componentIds: string[]) {
+    updateBundleComponents(parentIndex, componentIds, component => {
+      if (component.defaultCostPriceVnd != null) return component;
+      if ((component.sku || '').toUpperCase() === 'MCHAT-AI-TOKEN') return component;
+      const basis = Number(component.defaultCustomerPriceVnd ?? component.unitPriceVnd ?? 0) || 0;
+      const derivedCost = basis > 0 ? roundBundlePrice(basis * 0.7) : null;
+      return {
+        ...component,
+        defaultCostPriceVnd: derivedCost,
+        defaultMarkupPercent: calculateMarkupFromCostPrice(derivedCost, componentCustomerPrice(component)),
+      };
+    });
+  }
+
+  function toggleBundleAutoPricing(parentIndex: number, auto: boolean) {
+    const nextItems = itemsDraft.map((row, i) => {
+      if (i !== parentIndex) return row;
+      return recalculateBundleParent(row, bundleSnapshotComponents(row), auto ? 'auto' : 'fixed', bundleSnapshotTargetGm(row));
+    });
+    setItemsDraft(nextItems);
+    if (quote) void persistQuote({ items: nextItems }, { silent: true });
+  }
+
+  function removeBundleComponent(parentIndex: number, child: QuoteItem) {
+    if (child.__bundleRequired) return;
+    const componentIds = child.__bundleComponentIds || [];
+    if (componentIds.length === 0) return;
+    const label = child.serviceDescription || 'thành phần';
+    if (typeof window !== 'undefined' && !window.confirm(`Bỏ ${label} khỏi gói Combo này?`)) return;
+    const targetIds = new Set(componentIds);
+    const nextItems = itemsDraft.map((row, i) => {
+      if (i !== parentIndex) return row;
+      const nextComponents = bundleSnapshotComponents(row).filter(component => !targetIds.has(component.componentId));
+      return recalculateBundleParent(row, nextComponents);
+    });
+    setItemsDraft(nextItems);
+    if (quote) void persistQuote({ items: nextItems }, { silent: true });
   }
 
   // "Dien xuong" Gia von/Markup (yeu cau chung - KHONG phai autofill tu danh
@@ -1505,15 +1850,44 @@ export function QuoteWorkspaceModal({
 
   /** Mapping khi them tu danh muc: snapshot day du ma/ten, mo ta, don vi, VAT, SL, gia von, markup va Gia khach mac dinh tu catalog. Quyen sua o tren UI/backend van theo role + buoc hien tai. */
   function catalogItemToQuoteItem(item: ServiceCatalogItem): QuoteItem {
+    const bundleSnapshot = (item.components || []).map(component => ({
+      componentId: component.componentId,
+      sku: component.sku,
+      name: component.name,
+      description: component.description,
+      unit: component.unit,
+      quantity: component.quantity,
+      computedQuantity: component.computedQuantity,
+      displayText: component.displayText,
+      unitPriceVnd: component.unitPriceVnd,
+      defaultCostPriceVnd: component.defaultCostPriceVnd,
+      defaultMarkupPercent: component.defaultCostPriceVnd != null && (component.defaultCustomerPriceVnd ?? component.unitPriceVnd) != null && component.defaultCostPriceVnd > 0
+        ? (((component.defaultCustomerPriceVnd ?? component.unitPriceVnd) - component.defaultCostPriceVnd) / component.defaultCostPriceVnd) * 100
+        : null,
+      defaultCustomerPriceVnd: component.defaultCustomerPriceVnd ?? component.unitPriceVnd,
+      quota: component.quota,
+      customerDisplayName: component.customerDisplayName,
+      crmNote: component.crmNote,
+      quotaPoolKey: component.quotaPoolKey,
+      quotaPoolName: component.quotaPoolName,
+      quotaPoolQuota: component.quotaPoolQuota,
+      quotaPoolLimit: component.quotaPoolLimit,
+      required: component.required,
+      overagePolicy: component.overagePolicy,
+      showOnQuote: component.showOnQuote,
+      sortOrder: component.sortOrder,
+    }));
+    const defaultUnitPrice = resolveCatalogCustomerPrice(item);
+    const defaultCostPrice = item.itemType === 'bundle' ? calculateBundleComponentCost(bundleSnapshot) : (item.defaultCostPriceVnd ?? null);
     return {
-      description: item.description || item.name,
-      serviceDescription: item.sku ? `${item.sku} - ${item.name}` : item.name,
+      description: item.quoteDescription || item.description || item.name,
+      serviceDescription: item.quoteDisplayName || (item.sku ? `${item.sku} - ${item.name}` : item.name),
       unit: item.unit || '',
       quantity: item.specQuantityPerUnit || 1,
       // Uu tien Gia khach da cau hinh o Bo gia mac dinh (migration 107) -
       // fallback ve Don gia Sale cu (default_unit_price_vnd) cho san pham
       // CHUA duoc cau hinh bo gia moi, tranh Gia khach ve 0 vo ly.
-      unitPrice: item.defaultCustomerPriceVnd ?? item.defaultUnitPriceVnd ?? 0,
+      unitPrice: defaultUnitPrice,
       discountPercent: item.defaultDiscountPercent || 0,
       vatRate: item.defaultVatRate ?? 10,
       // Bo gia MAC DINH cua danh muc chung (migration 107,
@@ -1523,7 +1897,7 @@ export function QuoteWorkspaceModal({
       // the la `undefined` (khong du quyen xem, API da loai han field) hoac
       // `null` (du quyen nhung chua cau hinh) - ca 2 truong hop deu quy ve
       // costPrice=null, KHONG bia so 0.
-      costPrice: costViewAllowed ? (item.defaultCostPriceVnd ?? null) : null,
+      costPrice: costViewAllowed ? defaultCostPrice : null,
       // BUG THAT DA GAP: markupPercent truoc day gate theo canEditCostCells
       // (chi yeu cau stage != 'request') nhung backend coi markupPercent la
       // field PRICING (_PRICING_ITEM_FIELD_PAIRS trong quote.py), CHI duoc
@@ -1532,8 +1906,13 @@ export function QuoteWorkspaceModal({
       // "Markup/Giá khách chỉ được nhập ở Bước 3" du costPrice hoan toan hop
       // le, khien hang muc KHONG luu duoc. Doi sang canEditPricingCells cho
       // dung phan loai field cua backend.
-      markupPercent: item.defaultMarkupPercent ?? null,
+      markupPercent: item.itemType === 'bundle'
+        ? calculateMarkupFromCostPrice(costViewAllowed ? defaultCostPrice : null, defaultUnitPrice)
+        : item.defaultMarkupPercent ?? null,
       catalogItemId: item.id,
+      bundleSnapshot: item.itemType === 'bundle'
+        ? { pricingMode: 'fixed', targetGrossMarginPercent: item.targetGrossMarginPercent ?? 30, components: bundleSnapshot }
+        : undefined,
     };
   }
 
@@ -1702,12 +2081,15 @@ export function QuoteWorkspaceModal({
         sku: item.sku,
         name: item.name,
         description: item.description,
+        quoteDisplayName: item.quoteDisplayName,
+        quoteDescription: item.quoteDescription,
+        quoteCta: item.quoteCta,
         groupName: item.groupName,
         unit: item.unit,
         vatRate: item.defaultVatRate,
         costPriceVnd: item.defaultCostPriceVnd,
         markupPercent: item.defaultMarkupPercent,
-        customerPriceVnd: item.defaultCustomerPriceVnd ?? item.defaultUnitPriceVnd ?? 0,
+        customerPriceVnd: resolveCatalogCustomerPrice(item),
         monthlyPriceVnd: item.monthlyPriceVnd,
         annualCommitMonthlyPriceVnd: item.annualCommitMonthlyPriceVnd,
         annualTotalPriceVnd: item.annualTotalPriceVnd,
@@ -1755,6 +2137,20 @@ export function QuoteWorkspaceModal({
   // "+ Nhóm sản phẩm" - nhom tao xong: lam moi cay + tu dong loc sang dung
   // nhom vua tao (rong, chua co san pham nao) de Sale "chuyển sang nhóm vừa
   // tạo và thêm sản phẩm ngay" nhu yeu cau, khong bat thoat popup.
+  useEffect(() => {
+    const needsBundlePricing = itemsDraft.some(item =>
+      item.catalogItemId &&
+      bundleSnapshotComponents(item).some(component =>
+        component.showOnQuote !== false &&
+        (component.defaultCostPriceVnd === undefined || component.defaultMarkupPercent === undefined || component.defaultCustomerPriceVnd === undefined)
+      )
+    );
+    if (!needsBundlePricing) return;
+    if (catalogTree && catalogTreeQuoteId === (quote?.id ?? null)) return;
+    void refreshCatalogTree();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [itemsDraft, catalogTree, catalogTreeQuoteId, quote?.id]);
+
   async function handleGroupCreated(created: ServiceCatalogItem) {
     await refreshCatalogTree();
     setPickerGroupFilter(created.name);
@@ -2608,6 +3004,7 @@ export function QuoteWorkspaceModal({
           paymentPlan: draftPaymentPlan,
           ...(draftVisibleColumns ? { visibleColumns: draftVisibleColumns } : {}),
           ...(draftVisibleSummaryFields ? { visibleSummaryFields: draftVisibleSummaryFields } : {}),
+          ...(draftVisibleCustomerFields ? { visibleCustomerFields: draftVisibleCustomerFields } : {}),
           // Field noi bo rieng cho luong "Yeu cau ho tro bao gia" - KHONG phai
           // customBlocks (customBlocks la du lieu hien cho khach qua public
           // link/PDF) - luu truc tiep vao `data` (JSONB schema-less, khong can
@@ -3368,6 +3765,7 @@ export function QuoteWorkspaceModal({
       paymentPlan: draftPaymentPlan,
       ...(draftVisibleColumns ? { visibleColumns: draftVisibleColumns } : {}),
       ...(draftVisibleSummaryFields ? { visibleSummaryFields: draftVisibleSummaryFields } : {}),
+      ...(draftVisibleCustomerFields ? { visibleCustomerFields: draftVisibleCustomerFields } : {}),
       ...(deal || customerRecord
         ? {
             customerRecipient: displayName || undefined,
@@ -3380,7 +3778,7 @@ export function QuoteWorkspaceModal({
           }
         : {}),
     };
-  }, [deal, draftCustomerId, customers, draftTitle, draftScope, draftPaymentTermsDays, draftExtraTerms, draftCustomBlocks, draftPaymentPlan, draftVisibleColumns, draftVisibleSummaryFields]);
+  }, [deal, draftCustomerId, customers, draftTitle, draftScope, draftPaymentTermsDays, draftExtraTerms, draftCustomBlocks, draftPaymentPlan, draftVisibleColumns, draftVisibleSummaryFields, draftVisibleCustomerFields]);
   const columnVisibilitySchema = quote?.formSnapshot || draftSelectedForm?.schemaJson;
   // "Kế hoạch thanh toán" dang chim qua trong 1 accordion phang - badge trang
   // thai + tom tat khi dong de Sale khong bo qua (yeu cau rieng, xem
@@ -3420,13 +3818,15 @@ export function QuoteWorkspaceModal({
     }
     const visibleColumns = next.data.visibleColumns;
     const visibleSummaryFields = next.data.visibleSummaryFields;
+    const visibleCustomerFields = next.data.visibleCustomerFields;
     if (quote) {
-      const nextData = { ...quote.data, visibleColumns, visibleSummaryFields };
+      const nextData = { ...quote.data, visibleColumns, visibleSummaryFields, visibleCustomerFields };
       setQuote(current => (current ? { ...current, data: nextData } : current));
       void persistQuote({ data: nextData }, { silent: true });
     } else {
       setDraftVisibleColumns(Array.isArray(visibleColumns) ? visibleColumns : undefined);
       setDraftVisibleSummaryFields(Array.isArray(visibleSummaryFields) ? visibleSummaryFields : undefined);
+      setDraftVisibleCustomerFields(Array.isArray(visibleCustomerFields) ? visibleCustomerFields : undefined);
     }
   }
   // Tinh tam TU itemsDraft (chi de xem truoc, KHONG phai so luu that) - khop
@@ -4157,10 +4557,10 @@ export function QuoteWorkspaceModal({
                     <col style={{ width: '64px' }} />
                     <col style={{ width: '104px' }} />
                     <col style={{ width: '104px' }} />
-                    <col style={{ width: '70px' }} />
+                    <col style={{ width: '76px' }} />
                     <col style={{ width: '104px' }} />
                     <col style={{ width: '104px' }} />
-                    <col style={{ width: '66px' }} />
+                    <col style={{ width: '82px' }} />
                     {canEdit && isDraft && !isLockedForReview ? <col style={{ width: '44px' }} /> : null}
                   </colgroup>
                   <thead>
@@ -4269,7 +4669,13 @@ export function QuoteWorkspaceModal({
                         const costTotal = item.costPrice != null ? item.costPrice * item.quantity : null;
                         const editableTechnicalCells = canEditCostCells;
                         const editableCells = canEditPricingCells;
-                        return (
+                        const bundleChildRows = bundleComponentsToWorkspaceRows(item, catalogFlatItems);
+                        const isBundleRow = bundleChildRows.length > 0;
+                        const bundleMode = bundleSnapshotPricingMode(item);
+                        const bundleTargetGm = bundleSnapshotTargetGm(item);
+                        const discountKey = discountRowKey(item, index);
+                        const discountSelected = selectedDiscountRowKeys.has(discountKey);
+                        const mainRow = (
                           <tr
                             key={item.id || index}
                             className={[
@@ -4285,6 +4691,16 @@ export function QuoteWorkspaceModal({
                               <span className="qc-workspace-item-name-cell">
                                 <span className="qc-workspace-item-no-col">
                                   {canDragRows ? <span className="qc-workspace-drag-handle" title="Kéo để sắp xếp">⠿</span> : null}
+                                  {canEditPricingCells && isDraft && !isLockedForReview ? (
+                                    <input
+                                      type="checkbox"
+                                      className="qc-workspace-item-select"
+                                      checked={discountSelected}
+                                      title="Chọn hạng mục để áp chiết khấu"
+                                      aria-label="Chọn hạng mục để áp chiết khấu"
+                                      onChange={event => toggleDiscountRowSelection(discountKey, event.target.checked)}
+                                    />
+                                  ) : null}
                                   <span className="qc-workspace-item-no">{displayNo}</span>
                                 </span>
                                 <span className="qc-workspace-item-name-col">
@@ -4404,6 +4820,26 @@ export function QuoteWorkspaceModal({
                                       </button>
                                     </span>
                                   ) : null}
+                                  {isBundleRow ? (
+                                    <span className="qc-bundle-pricing-mode">
+                                      <span className={`qc-bundle-pricing-chip qc-bundle-pricing-chip--${bundleMode}`}>
+                                        {bundleMode === 'auto' ? `Tự tính theo GM ${formatPercentTrim(bundleTargetGm)}` : 'Giữ giá gói cố định'}
+                                      </span>
+                                      {canEdit && isDraft && !isLockedForReview && editableCells ? (
+                                        <button
+                                          type="button"
+                                          className="qc-bundle-pricing-toggle"
+                                          onClick={() => toggleBundleAutoPricing(index, bundleMode !== 'auto')}
+                                          title={bundleMode === 'auto' ? 'Tắt tự tính giá gói, giữ giá Combo hiện tại' : 'Bật tự tính giá gói theo cost và GM mục tiêu'}
+                                        >
+                                          {bundleMode === 'auto' ? 'Tắt tự tính' : 'Tự tính giá gói'}
+                                        </button>
+                                      ) : null}
+                                    </span>
+                                  ) : null}
+                                  {(item.discountPercent ?? 0) > 0 ? (
+                                    <span className="qc-line-discount-chip">CK dòng {formatPercentTrim(item.discountPercent)}</span>
+                                  ) : null}
                                 </span>
                               </span>
                             </td>
@@ -4464,7 +4900,7 @@ export function QuoteWorkspaceModal({
                                     <span className="qc-row-sub">Không có quyền xem</span>
                                   ) : editableCells ? (
                                     <input type="number" step="0.01" className="qc-cell-input qc-cell-input-money" value={item.markupPercent != null ? Number(item.markupPercent.toFixed(2)) : ''} placeholder="—" disabled={item.costPrice == null} onChange={e => handleMarkupChange(index, e.target.value)} onBlur={() => void persistQuote({}, { silent: true })} />
-                                  ) : formatPercentTrim(item.markupPercent)}
+                                  ) : formatPercentFixed2(item.markupPercent)}
                                 </span>
                                 {renderFillDownIcon(index, 'markupPercent')}
                               </span>
@@ -4481,7 +4917,7 @@ export function QuoteWorkspaceModal({
                             </td>
                             <td className="qc-cell-money" data-label="Thành tiền">{formatMoney(item.totalAmount || item.quantity * item.unitPrice || 0)}</td>
                             <td className={`qc-cell-money qc-th-margin-col ${margin != null && margin >= 20 ? 'qc-cell-margin-good' : margin != null ? 'qc-cell-margin-warn' : ''}`} style={{ position: 'relative' }} data-label="Margin">
-                              {!profitabilityViewAllowed ? <span className="qc-row-sub">Không có quyền xem</span> : formatPercentTrim(margin)}
+                              {!profitabilityViewAllowed ? <span className="qc-row-sub">Không có quyền xem</span> : formatPercentFixed2(margin)}
                             </td>
                             {canEdit && isDraft && !isLockedForReview ? (
                               <td className="qc-cell-actions qc-cell-actions--menu" data-label="Thao tác">
@@ -4528,6 +4964,86 @@ export function QuoteWorkspaceModal({
                               </td>
                             ) : null}
                           </tr>
+                        );
+                        return (
+                          <Fragment key={`item-with-bundle-${item.id || index}`}>
+                            {mainRow}
+                            {bundleChildRows.map(child => (
+                              (() => {
+                                const childCostTotal = child.costPrice != null ? child.costPrice * (child.quantity || 1) : null;
+                                const childTotal = child.unitPrice * (child.quantity || 1);
+                                const childMargin = child.costPrice != null && child.unitPrice > 0 ? ((child.unitPrice - child.costPrice) / child.unitPrice) * 100 : null;
+                                return (
+                                  <tr key={child.id} className="qc-workspace-item-row--bundle-child">
+                                    <td data-label="Hạng mục">
+                                      <span className="qc-workspace-item-name-cell">
+                                        <span className="qc-workspace-item-no-col" />
+                                        <span className="qc-workspace-item-name-col">
+                                          <span className="qc-workspace-item-name-clamp" title={[child.serviceDescription, child.description].filter(Boolean).join(' — ') || ''}>
+                                            {child.serviceDescription || '—'}
+                                          </span>
+                                        </span>
+                                      </span>
+                                    </td>
+                                    <td className="qc-cell-unit" data-label="ĐVT">{child.unit || '—'}</td>
+                                    <td className="qc-cell-money qc-cell-qty" data-label="SL">{child.quantity || '—'}</td>
+                                    <td className="qc-cell-money qc-cell-cost" data-label="Giá vốn/ĐV">
+                                      {!costViewAllowed ? (
+                                        <span className="qc-row-sub">Không có quyền xem</span>
+                                      ) : editableTechnicalCells ? (
+                                        <span className="qc-bundle-child-edit">
+                                          <CurrencyInput
+                                            className="qc-cell-input qc-cell-input-money"
+                                            value={child.costPrice ?? null}
+                                            placeholder="Chưa có giá"
+                                            onChange={value => setBundleComponentCost(index, child.__bundleComponentIds || [], value)}
+                                          />
+                                          {child.costPrice == null && child.__bundleCanDeriveCost ? (
+                                            <button type="button" className="qc-bundle-child-inline-action" onClick={() => deriveBundleComponentCost(index, child.__bundleComponentIds || [])}>
+                                              Tự tính
+                                            </button>
+                                          ) : null}
+                                        </span>
+                                      ) : child.costPrice != null ? formatMoney(child.costPrice) : 'Chưa có giá'}
+                                    </td>
+                                    <td className="qc-cell-money qc-cell-cost" data-label="Cost tổng">
+                                      {!costViewAllowed ? <span className="qc-row-sub">Không có quyền xem</span> : childCostTotal != null ? formatMoney(childCostTotal) : '—'}
+                                    </td>
+                                    <td className="qc-cell-money qc-cell-markup" data-label="Markup">{formatPercentFixed2(child.markupPercent)}</td>
+                                    <td className="qc-cell-money qc-cell-markup" data-label="Giá khách/ĐV">
+                                      {!pricingViewAllowed ? (
+                                        <span className="qc-row-sub">Không có quyền xem</span>
+                                      ) : editableCells ? (
+                                        <CurrencyInput
+                                          className="qc-cell-input qc-cell-input-money"
+                                          value={child.unitPrice ?? null}
+                                          onChange={value => setBundleComponentPrice(index, child.__bundleComponentIds || [], value)}
+                                        />
+                                      ) : child.unitPrice ? formatMoney(child.unitPrice) : '—'}
+                                    </td>
+                                    <td className="qc-cell-money" data-label="Thành tiền">{childTotal ? formatMoney(childTotal) : '—'}</td>
+                                    <td className={`qc-cell-money qc-th-margin-col ${childMargin != null && childMargin >= 20 ? 'qc-cell-margin-good' : childMargin != null ? 'qc-cell-margin-warn' : ''}`} data-label="Margin">
+                                      {formatPercentFixed2(childMargin)}
+                                    </td>
+                                    {canEdit && isDraft && !isLockedForReview ? (
+                                      <td className="qc-cell-actions qc-cell-actions--menu" data-label="Thao tác">
+                                        <button
+                                          type="button"
+                                          className="qc-mini-btn-icon qc-bundle-child-remove-btn"
+                                          disabled={child.__bundleRequired}
+                                          title={child.__bundleRequired ? 'Đây là thành phần bắt buộc của gói.' : 'Xoá khỏi gói Combo này'}
+                                          aria-label="Xoá khỏi gói Combo"
+                                          onClick={() => removeBundleComponent(index, child)}
+                                        >
+                                          <Trash2 className="qc-inline-icon" />
+                                        </button>
+                                      </td>
+                                    ) : null}
+                                  </tr>
+                                );
+                              })()
+                            ))}
+                          </Fragment>
                         );
                         });
                       })()
@@ -4579,7 +5095,7 @@ export function QuoteWorkspaceModal({
                   {/* Sua o "Chiết khấu tổng" tren quickbar (canh Markup nhanh) -
                    * day chi con la HIEN THI (khong sua thang o day nua), tranh
                    * 2 o edit cung 1 field gay hieu nham co 2 co che rieng. */}
-                  <span className="qc-workspace-info-label">Giảm giá tổng (%)</span>
+                  <span className="qc-workspace-info-label">Giảm giá toàn báo giá (%)</span>
                   <strong>{quote?.overallDiscountPercent != null ? `${quote.overallDiscountPercent}%` : 'Không giảm'}</strong>
                 </div>
                 {profitabilityViewAllowed && quote?.overallDiscountPercent != null ? (() => {
@@ -4611,8 +5127,30 @@ export function QuoteWorkspaceModal({
                * termNotePopoverOpen...), chi doi vi tri render. */}
               {canEditPricingCells && isDraft ? (
                 <div className="qc-workspace-commercial-row">
-                  <label className="qc-workspace-quickbar-field" title="Chỉ giảm trên tổng tiền cuối báo giá">
-                    Chiết khấu tổng
+                  <div className="qc-item-discount-tools" title="Áp chiết khấu cho từng hạng mục thật; thành phần con của Combo chỉ để hiển thị nên không bị tính lần 2.">
+                    <span className="qc-workspace-quickbar-field">
+                      Chiết khấu hạng mục
+                      <input
+                        type="number"
+                        min={0}
+                        max={100}
+                        className="qc-workspace-quickbar-input qc-qb-discount-input"
+                        value={itemDiscountInput}
+                        placeholder="0"
+                        onChange={event => setItemDiscountInput(event.target.value)}
+                      />
+                      %
+                    </span>
+                    <button type="button" className="qc-mini-btn" onClick={() => applyItemDiscount('selected')}>
+                      Áp hạng mục được chọn ({selectedDiscountCount})
+                    </button>
+                    <button type="button" className="qc-mini-btn" onClick={() => applyItemDiscount('all')}>
+                      Áp tất cả hạng mục
+                    </button>
+                  </div>
+                  <span className="qc-workspace-quickbar-sep" aria-hidden="true" />
+                  <label className="qc-workspace-quickbar-field" title="Áp dụng cho tổng báo giá sau khi đã tính các hạng mục; không tự ghi đè chiết khấu riêng từng dòng.">
+                    Chiết khấu toàn báo giá
                     <input
                       type="number"
                       min={0}

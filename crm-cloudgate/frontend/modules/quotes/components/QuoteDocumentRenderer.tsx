@@ -4,6 +4,7 @@ import { useRef, useState } from 'react';
 import { paymentPlanAmount, paymentPlanPercent, visiblePaymentPlan } from '../utils/paymentPlan';
 import type {
   CustomBlock,
+  BundleSnapshotComponent,
   QuoteData,
   QuoteField,
   QuoteItem,
@@ -28,7 +29,11 @@ import {
 function formatVnd(value: unknown): string {
   return formatVndRaw(value).replace(/\s*đ$/, '');
 }
-import { resolveQuoteItemColumns, resolveToggleableColumns } from '../utils/quoteColumns';
+import { resolveDefaultVisibleColumnKeys, resolveQuoteItemColumns, resolveToggleableColumns } from '../utils/quoteColumns';
+import {
+  getCustomerDisplayFields,
+  resolveVisibleCustomerFieldKeys,
+} from '../utils/quoteCustomerFields';
 import { resolveVisibleSummaryFieldKeys } from '../utils/quoteSummaryFields';
 
 interface Totals {
@@ -205,6 +210,90 @@ function formatDescriptionLines(raw: unknown): string[] {
     .filter(Boolean);
 }
 
+const MONEY_COLUMN_KEYS = [
+  'unitPrice',
+  'subtotal',
+  'vatAmount',
+  'total',
+  'amountAfterDiscount',
+  'listPriceUsd',
+  'unitPriceUsd',
+  'unitPriceVnd',
+];
+
+function normalizeQuoteColumnLabel(column: QuoteField): string {
+  if (column.key === 'amountAfterDiscount') return 'Thành tiền (Chưa VAT)';
+  if (column.key === 'total') return 'Thành tiền (gồm VAT)';
+  return column.label;
+}
+
+function bundleSnapshotComponents(item: QuoteItem): BundleSnapshotComponent[] {
+  const snapshot = item.bundleSnapshot as unknown;
+  if (Array.isArray(snapshot)) return snapshot as BundleSnapshotComponent[];
+  if (snapshot && typeof snapshot === 'object' && Array.isArray((snapshot as { components?: unknown }).components)) {
+    return (snapshot as { components: BundleSnapshotComponent[] }).components;
+  }
+  return [];
+}
+
+function appendQuota(label: string, quota?: string | null): string {
+  const cleanQuota = String(quota || '').trim();
+  if (!cleanQuota) return label;
+  if (label.toLowerCase().includes(cleanQuota.toLowerCase())) return label;
+  return `${label} — ${cleanQuota}`;
+}
+
+function bundleComponentToDisplayItem(component: BundleSnapshotComponent, suffix: string): QuoteItem {
+  const label = component.customerDisplayName || component.name || component.displayText || 'Hạng mục';
+  const serviceDescription = appendQuota(label, component.quota);
+  return {
+    id: `bundle-component-${component.componentId}-${suffix}`,
+    rowType: 'item',
+    serviceDescription,
+    description: component.description || '',
+    unit: component.unit || '',
+    quantity: component.computedQuantity || component.quantity || 1,
+    unitPrice: component.unitPriceVnd || 0,
+    discountPercent: 0,
+    vatRate: 0,
+    __bundleComponent: true,
+  };
+}
+
+function bundleComponentsToDisplayItems(item: QuoteItem): QuoteItem[] {
+  const components = bundleSnapshotComponents(item)
+    .filter(component => component.showOnQuote !== false)
+    .sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
+  const renderedPoolKeys = new Set<string>();
+  const rows: QuoteItem[] = [];
+
+  components.forEach((component, index) => {
+    const poolKey = component.quotaPoolKey?.trim();
+    if (poolKey) {
+      if (renderedPoolKeys.has(poolKey)) return;
+      renderedPoolKeys.add(poolKey);
+      const technicalPoolName = component.quotaPoolName || '';
+      const name = component.customerDisplayName || (technicalPoolName.toLowerCase() === 'channel quota' ? 'Kênh kết nối' : technicalPoolName) || component.name || 'Kênh kết nối';
+      rows.push({
+        id: `bundle-pool-${poolKey}-${index}`,
+        rowType: 'item',
+        serviceDescription: appendQuota(name, component.quotaPoolQuota || component.quota),
+        description: '',
+        unit: '',
+        quantity: 1,
+        unitPrice: component.unitPriceVnd || 0,
+        discountPercent: 0,
+        vatRate: 0,
+        __bundleComponent: true,
+      });
+      return;
+    }
+    rows.push(bundleComponentToDisplayItem(component, String(index)));
+  });
+
+  return rows;
+}
+
 export function QuoteDocumentRenderer({
   schemaSnapshot,
   quoteData = {},
@@ -284,6 +373,8 @@ export function QuoteDocumentRenderer({
     return findField(key).defaultValue || '';
   };
   const renderCell = (item: QuoteItem, column: QuoteField, index: number) => {
+    if (item.__bundleComponent && column.key === 'discountPercent') return '';
+    if (item.__bundleComponent && column.key === 'vatRate') return '';
     if (column.type === 'auto-number' || column.key === 'order') return String(index + 1);
     if (column.key === 'subtotal') return formatVnd(calculateItemSubtotal(item));
     if (column.key === 'vatAmount') return formatVnd(calculateItemVat(item));
@@ -375,13 +466,18 @@ export function QuoteDocumentRenderer({
     return String(value ?? '');
   };
 
-  const customerRows = findSection('customer')
-    .fields.filter(field => field.visible !== false)
+  const customerDisplayFields = getCustomerDisplayFields(schema);
+  const visibleCustomerFieldKeys = new Set(resolveVisibleCustomerFieldKeys(schema, quoteData.visibleCustomerFields));
+  const customerRows = customerDisplayFields
+    .filter(field => visibleCustomerFieldKeys.has(field.key))
     .map(field => ({
       key: field.key,
       label: field.label,
-      value: textValue(fieldValue(field.key)),
-      placeholder: `[${field.label}]`,
+      value: textValue(
+        field.key === 'customerRecipient'
+          ? fieldValue('customerRecipient') || fieldValue('customerContactName') || fieldValue('customerCompanyName')
+          : fieldValue(field.key)
+      ),
     }));
   const validUntil = textValue(fieldValue('offerExpiryDate'))
     ? formatDateVN(fieldValue('offerExpiryDate'))
@@ -445,12 +541,17 @@ export function QuoteDocumentRenderer({
   // hang can thay) - chi hien khi admin CHU DONG tick chung vao "Cột hiển
   // thị" (customerVisibleColumns thuc su chua key do).
   const DEFAULT_HIDDEN_FROM_CUSTOMER_KEYS = ['listPriceUsd', 'unitPriceUsd', 'unitPriceVnd'];
+  const defaultVisibleCustomerColumnKeys = resolveDefaultVisibleColumnKeys(schema, quoteItems);
   const finalColumns = applyCustomerColumnFilter
     ? customerVisibleColumns
       ? standardColumns.filter(
           column => !TOGGLEABLE_COLUMN_KEYS.includes(column.key) || customerVisibleColumns.includes(column.key)
         )
-      : standardColumns.filter(column => !DEFAULT_HIDDEN_FROM_CUSTOMER_KEYS.includes(column.key))
+      : standardColumns.filter(
+          column =>
+            (!TOGGLEABLE_COLUMN_KEYS.includes(column.key) || defaultVisibleCustomerColumnKeys.includes(column.key)) &&
+            !DEFAULT_HIDDEN_FROM_CUSTOMER_KEYS.includes(column.key)
+        )
     : standardColumns;
   // Resize cot kieu Excel chi bat o man hinh noi bo (nguoi TAO/xem chi tiet
   // bao gia) - khong bat cho 'public' (khach nhan bao gia khong can/khong nen
@@ -484,14 +585,28 @@ export function QuoteDocumentRenderer({
     if (item.rowType === 'section') {
       sectionCounter += 1;
       const sectionRow = { item, number: toRomanNumeral(sectionCounter), isChild: false, isSection: true as const };
-      const childRows = (item.children || []).map(child => {
+      const childRows = (item.children || []).flatMap(child => {
         itemCounter += 1;
-        return { item: child, number: String(itemCounter).padStart(2, '0'), isChild: true, isSection: false as const };
+        const childRow = { item: child, number: String(itemCounter).padStart(2, '0'), isChild: true, isSection: false as const };
+        const bundleRows = bundleComponentsToDisplayItems(child).map(componentItem => ({
+          item: componentItem,
+          number: '',
+          isChild: true,
+          isSection: false as const,
+        }));
+        return [childRow, ...bundleRows];
       });
       return [sectionRow, ...childRows];
     }
     itemCounter += 1;
-    return [{ item, number: String(itemCounter).padStart(2, '0'), isChild: false, isSection: false as const }];
+    const parentRow = { item, number: String(itemCounter).padStart(2, '0'), isChild: false, isSection: false as const };
+    const bundleRows = bundleComponentsToDisplayItems(item).map(componentItem => ({
+      item: componentItem,
+      number: '',
+      isChild: true,
+      isSection: false as const,
+    }));
+    return [parentRow, ...bundleRows];
   });
 
   if (layoutType === 'villa_solution_package') {
@@ -526,7 +641,7 @@ export function QuoteDocumentRenderer({
               <thead>
                 <tr>
                   {finalColumns.map(column => (
-                    <th key={column.key}>{column.label}</th>
+                    <th key={column.key}>{normalizeQuoteColumnLabel(column)}</th>
                   ))}
                 </tr>
               </thead>
@@ -794,7 +909,7 @@ export function QuoteDocumentRenderer({
                           : undefined
                       }
                     >
-                      {column.label}
+                      {normalizeQuoteColumnLabel(column)}
                       {allowColumnResize ? (
                         <span
                           className="quote-col-resize-handle"
@@ -821,11 +936,11 @@ export function QuoteDocumentRenderer({
                         </td>
                       </tr>
                     ) : (
-                      <tr key={row.item.id || `${row.number}-${index}`} className={row.isChild ? 'quote-item-row quote-item-row--child' : 'quote-item-row quote-item-row--parent'}>
+                      <tr key={`${row.item.id || row.number}-${index}`} className={row.isChild ? 'quote-item-row quote-item-row--child' : 'quote-item-row quote-item-row--parent'}>
                         {finalColumns.map(column => (
                           <td
                             key={column.key}
-                            data-label={column.label}
+                            data-label={normalizeQuoteColumnLabel(column)}
                             className={
                               column.type === 'currency' ||
                               // BUG THAT DA GAP ("Thành tiền chưa VAT bị rớt
@@ -836,7 +951,7 @@ export function QuoteDocumentRenderer({
                               // roi vao rule chung overflow-wrap:anywhere, cat
                               // giua so tien. Bo sung du cac key tien te khac
                               // (calculated) vao danh sach.
-                              ['unitPrice', 'subtotal', 'vatAmount', 'total', 'amountAfterDiscount', 'listPriceUsd', 'unitPriceUsd', 'unitPriceVnd'].includes(column.key)
+                              MONEY_COLUMN_KEYS.includes(column.key)
                                 ? 'money-cell'
                                 : column.key === 'unit'
                                   ? 'unit-cell'

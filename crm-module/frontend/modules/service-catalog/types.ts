@@ -13,6 +13,7 @@ export interface BundleComponentLine {
   displayText: string;
   unitPriceVnd: number;
   defaultCostPriceVnd?: number | null;
+  defaultMarkupPercent?: number | null;
   defaultCustomerPriceVnd?: number | null;
   quota?: string | null;
   customerDisplayName?: string | null;

@@ -146,7 +146,26 @@ export interface BundleSnapshotComponent {
   computedQuantity: number;
   displayText: string;
   unitPriceVnd: number;
+  defaultCostPriceVnd?: number | null;
+  defaultMarkupPercent?: number | null;
+  defaultCustomerPriceVnd?: number | null;
+  quota?: string | null;
+  customerDisplayName?: string | null;
+  crmNote?: string | null;
+  quotaPoolKey?: string | null;
+  quotaPoolName?: string | null;
+  quotaPoolQuota?: string | null;
+  quotaPoolLimit?: number | null;
+  required?: boolean;
+  overagePolicy?: string | null;
+  showOnQuote?: boolean;
   sortOrder?: number;
+}
+
+export interface BundleSnapshotValue {
+  pricingMode?: 'fixed' | 'auto';
+  targetGrossMarginPercent?: number | null;
+  components: BundleSnapshotComponent[];
 }
 
 export interface QuoteItem {
@@ -176,7 +195,12 @@ export interface QuoteItem {
   children?: QuoteItem[];
   /** Danh mục dịch vụ: truy vết + snapshot USD/VND/tỷ giá đông cứng lúc chọn dịch vụ. */
   catalogItemId?: string;
-  bundleSnapshot?: BundleSnapshotComponent[];
+  bundleSnapshot?: BundleSnapshotComponent[] | BundleSnapshotValue;
+  __bundleComponent?: boolean;
+  __bundleComponentIds?: string[];
+  __bundlePoolKey?: string | null;
+  __bundleRequired?: boolean;
+  __bundleCanDeriveCost?: boolean;
   listPriceUsd?: number;
   unitPriceUsd?: number;
   exchangeRate?: number;
@@ -265,8 +289,11 @@ export interface QuoteData {
   /** Trường "Tổng hợp giá" hiện cho KHÁCH (5 dòng khối tổng tiền) - áp dụng ở
    * MỌI mode (preview/detail/public/print), KHÁC với visibleColumns (chỉ lọc ở
    * public/print/preview, mode='detail' luôn hiện đủ cột bảng). Xem
-   * quoteSummaryFields.ts. */
+  * quoteSummaryFields.ts. */
   visibleSummaryFields?: string[];
+  /** Truong thong tin khach hang hien cho KHACH (public/PDF/preview khach).
+   * undefined = dung mac dinh: Kinh gui + Khach hang + SDT lien he + Email. */
+  visibleCustomerFields?: string[];
   customBlocks?: CustomBlock[];
   [key: string]: unknown;
 }

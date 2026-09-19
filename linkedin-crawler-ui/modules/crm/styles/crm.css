@@ -1206,6 +1206,34 @@
   font-size: 0.8rem;
   font-weight: 600;
 }
+.crm-quote-filter-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-left: auto;
+}
+.crm-quote-status-select {
+  height: 2rem;
+  min-width: 13rem;
+  border: 1px solid #c7d2fe;
+  border-radius: 0.5rem;
+  background: #ffffff;
+  color: #1e1b4b;
+  font-size: 0.78rem;
+  font-weight: 700;
+  padding: 0 0.65rem;
+}
+.crm-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
 
 .crm-customer-combobox {
   position: relative;
@@ -5658,31 +5686,59 @@
   position: absolute;
   right: 0;
   top: calc(100% + 6px);
-  width: 260px;
+  width: min(360px, calc(100vw - 32px));
+  max-height: 70vh;
   background: #ffffff;
   border: 1px solid #dfe4eb;
   border-radius: 12px;
   box-shadow: 0 16px 35px rgba(38, 51, 75, 0.15);
-  padding: 12px;
+  padding: 0;
   z-index: 20;
+  overflow: hidden;
 }
 
-.crm-quote-column-menu > p {
+.crm-quote-column-menu-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 10px 12px;
+  background: #ffffff;
+  border-bottom: 1px solid #eef2f7;
+  font-size: 0.86rem;
+  color: #26364f;
+}
+
+.crm-quote-column-menu-body {
+  max-height: calc(70vh - 43px);
+  overflow-y: auto;
+  padding: 8px 10px 10px;
+}
+
+.crm-quote-column-menu-note {
   font-size: 0.7rem;
   line-height: 1.4;
   color: #7a8494;
-  margin: 0 0 0.6rem;
+  margin: 0 0 0.45rem;
 }
 
 .crm-quote-column-option {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 3px;
+  min-height: 32px;
+  padding: 4px 2px;
   border-top: 1px solid #f0f2f5;
   font-size: 0.78rem;
   font-weight: 600;
   color: #4f5a6c;
+}
+
+.crm-quote-column-option input {
+  flex: 0 0 auto;
 }
 
 .crm-quote-column-menu-foot {
@@ -5707,18 +5763,71 @@
    duy nhat - 2 khoi tach roi, moi khoi tu dem rieng so dang bat (KHONG gop
    chung vao 1 con so o badge nut chinh). */
 .crm-quote-column-group + .crm-quote-column-group {
-  margin-top: 10px;
-  padding-top: 10px;
-  border-top: 1px dashed #e2e8f0;
+  margin-top: 6px;
 }
 
 .crm-quote-column-group-title {
-  margin: 0 0 4px;
+  width: 100%;
+  min-height: 36px;
+  margin: 0;
+  padding: 0 2px;
+  border: 0;
+  border-top: 1px solid #eef2f7;
+  background: transparent;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
   font-size: 0.68rem;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.02em;
   color: #94a3b8;
+  cursor: pointer;
+  text-align: left;
+}
+
+.crm-quote-column-group:first-of-type .crm-quote-column-group-title {
+  border-top: 0;
+}
+
+.crm-quote-column-group-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-left: auto;
+}
+
+.crm-quote-column-chevron {
+  color: #64748b;
+  font-size: 0.8rem;
+  line-height: 1;
+}
+
+.crm-quote-column-group-body {
+  padding-bottom: 6px;
+}
+
+.crm-quote-column-section-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  min-height: 26px;
+  margin: -2px 0 2px;
+}
+
+.crm-quote-column-section-actions button {
+  border: 0;
+  background: transparent;
+  color: #64748b;
+  font-size: 0.7rem;
+  font-weight: 700;
+  cursor: pointer;
+  padding: 2px 0;
+}
+
+.crm-quote-column-section-actions button:hover {
+  color: #be1e4b;
 }
 
 /* Khoi "Cot hien thi" khi mau khong co cot tuy chon nao (vd layout villa)

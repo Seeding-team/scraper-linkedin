@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 import re
 import secrets
+import copy
 from datetime import datetime, timedelta, timezone
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import Any
@@ -72,8 +73,26 @@ def _count_fields(sections: list[dict]) -> int:
     return total
 
 
+def _normalize_quote_schema(schema: dict | None) -> dict:
+    """Normalize legacy display labels without mutating the DB row payload."""
+    normalized = copy.deepcopy(schema or {})
+    for section in normalized.get("sections") or []:
+        for field in section.get("fields") or []:
+            if field.get("key") == "amountAfterDiscount":
+                field["label"] = "Thành tiền (Chưa VAT)"
+            elif field.get("key") == "total":
+                field["label"] = "Thành tiền (gồm VAT)"
+            config = field.get("config") or {}
+            for column in config.get("columns") or []:
+                if column.get("key") == "amountAfterDiscount":
+                    column["label"] = "Thành tiền (Chưa VAT)"
+                elif column.get("key") == "total":
+                    column["label"] = "Thành tiền (gồm VAT)"
+    return normalized
+
+
 def _row_to_form(row: dict) -> dict:
-    schema_json = row.get("schema_json") or {}
+    schema_json = _normalize_quote_schema(row.get("schema_json") or {})
     sections = schema_json.get("sections") or []
     return {
         "id": row["id"],
@@ -227,7 +246,7 @@ def _row_to_quote(row: dict, items: list[dict] | None = None) -> dict:
         "quoteNumber": row["quote_number"],
         "status": row["status"],
         "formSchemaVersion": row["form_schema_version"],
-        "formSnapshot": row.get("form_snapshot") or {},
+        "formSnapshot": _normalize_quote_schema(row.get("form_snapshot") or {}),
         "data": row.get("data") or {},
         "items": _quote_item_tree(items or []),
         "subtotalAmount": float(row.get("subtotal_amount") or 0),
@@ -484,7 +503,7 @@ def _public_data_allowlist(data: dict, form_snapshot: dict) -> dict:
             key = field.get("key")
             if key:
                 schema_keys.add(key)
-    allowed = schema_keys | {"customBlocks"}
+    allowed = schema_keys | {"customBlocks", "visibleColumns", "visibleSummaryFields", "visibleCustomerFields"}
     if form_snapshot.get("enableDynamicPaymentPlan"):
         allowed.add("paymentPlan")
     return {key: value for key, value in (data or {}).items() if key in allowed}
@@ -497,7 +516,7 @@ def _row_to_public_quote(row: dict, raw_items: list[dict] | None = None) -> dict
     vay se vo tinh ke thua moi field noi bo _row_to_quote co the them trong
     tuong lai (processingStage/technicalOwnerId/quoteOwnerId da la vi du
     thuc te)."""
-    form_snapshot = row.get("form_snapshot") or {}
+    form_snapshot = _normalize_quote_schema(row.get("form_snapshot") or {})
     return {
         "id": row.get("id"),
         "dealId": row.get("deal_id"),
@@ -741,6 +760,9 @@ def _bundle_snapshot_from_catalog_components(components: list[dict]) -> list[dic
             "computedQuantity": component.get("computedQuantity"),
             "displayText": component.get("displayText"),
             "unitPriceVnd": component.get("unitPriceVnd"),
+            "defaultCostPriceVnd": component.get("defaultCostPriceVnd"),
+            "defaultMarkupPercent": component.get("defaultMarkupPercent"),
+            "defaultCustomerPriceVnd": component.get("defaultCustomerPriceVnd"),
             "quota": component.get("quota"),
             "customerDisplayName": component.get("customerDisplayName"),
             "crmNote": component.get("crmNote"),

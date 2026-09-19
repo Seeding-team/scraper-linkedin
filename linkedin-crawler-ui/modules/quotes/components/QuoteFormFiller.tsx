@@ -387,6 +387,11 @@ function bundleToQuoteItem(bundle: ServiceCatalogItem): QuoteItem {
     computedQuantity: component.computedQuantity,
     displayText: component.displayText,
     unitPriceVnd: component.unitPriceVnd,
+    defaultCostPriceVnd: component.defaultCostPriceVnd,
+    defaultMarkupPercent: component.defaultCostPriceVnd != null && (component.defaultCustomerPriceVnd ?? component.unitPriceVnd) != null && component.defaultCostPriceVnd > 0
+      ? (((component.defaultCustomerPriceVnd ?? component.unitPriceVnd) - component.defaultCostPriceVnd) / component.defaultCostPriceVnd) * 100
+      : null,
+    defaultCustomerPriceVnd: component.defaultCustomerPriceVnd ?? component.unitPriceVnd,
     quota: component.quota,
     customerDisplayName: component.customerDisplayName,
     crmNote: component.crmNote,

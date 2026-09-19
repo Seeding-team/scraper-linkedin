@@ -2328,6 +2328,79 @@
 .qc-workspace-item-row--nested td:first-child {
   padding-left: 28px;
 }
+
+.qc-workspace-item-row--bundle-child td {
+  background: #f8fafc;
+  color: #475569;
+  font-size: 12px;
+}
+
+.qc-workspace-item-row--bundle-child .qc-workspace-item-name-col {
+  padding-left: 18px;
+  position: relative;
+}
+
+.qc-workspace-item-row--bundle-child .qc-workspace-item-name-col::before {
+  content: "";
+  position: absolute;
+  left: 4px;
+  top: 50%;
+  width: 7px;
+  height: 1px;
+  background: #94a3b8;
+}
+
+.qc-bundle-pricing-mode {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+}
+
+.qc-bundle-pricing-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 700;
+  border: 1px solid #dbe4f0;
+  color: #52627a;
+  background: #f8fafc;
+}
+
+.qc-bundle-pricing-chip--auto {
+  color: #047857;
+  border-color: #a7f3d0;
+  background: #ecfdf5;
+}
+
+.qc-bundle-pricing-toggle,
+.qc-bundle-child-inline-action {
+  border: 0;
+  background: transparent;
+  color: #ba244a;
+  font-size: 11px;
+  font-weight: 750;
+  padding: 0;
+  cursor: pointer;
+}
+
+.qc-bundle-child-edit {
+  display: grid;
+  gap: 4px;
+}
+
+.qc-bundle-child-edit .qc-cell-input {
+  min-width: 92px;
+}
+
+.qc-bundle-child-remove-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
 /* "batch" cac dong vua them cung luc tu Danh muc (yeu cau rieng "giữ trạng
  * thái được chọn") - vien trai mau brand + nen nhat de nguoi dung nhan ra
  * nhom nay van dang "active" cho thao tac dien Gia von hang loat, KHONG dung
@@ -2363,6 +2436,13 @@
   justify-content: center;
   gap: 2px;
   height: 100%;
+}
+.qc-workspace-item-select {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: #be1e4a;
+  cursor: pointer;
 }
 .qc-workspace-item-name-col {
   display: flex;
@@ -2932,6 +3012,24 @@
   padding: 12px 0 9px;
   border-top: 1px solid #edf0f4;
   border-bottom: 1px solid #edf0f4;
+}
+.qc-item-discount-tools {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.qc-line-discount-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: #fff7ed;
+  color: #9a3412;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
 }
 
 .qc-workspace-preview-sidebar-btn {

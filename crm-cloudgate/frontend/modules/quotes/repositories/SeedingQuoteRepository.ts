@@ -70,7 +70,7 @@ type QuoteItemPayload = {
   vat_rate: number;
   children: QuoteItemPayload[];
   catalog_item_id?: string | null;
-  bundle_snapshot?: unknown[] | null;
+  bundle_snapshot?: unknown | null;
   list_price_usd?: number | null;
   unit_price_usd?: number | null;
   exchange_rate?: number | null;

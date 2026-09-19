@@ -1,8 +1,9 @@
 import type { IssuerCompany, Quote, QuoteData, QuoteForm, QuoteItem, VillaSolutionItem } from '@/modules/quotes';
-import { resolveToggleableColumns } from '@/modules/quotes/utils/quoteColumns';
+import { resolveDefaultVisibleColumnKeys, resolveToggleableColumns } from '@/modules/quotes/utils/quoteColumns';
+import { resolveVisibleCustomerFieldKeys } from '@/modules/quotes/utils/quoteCustomerFields';
 import { resolveToggleableSummaryFields } from '@/modules/quotes/utils/quoteSummaryFields';
 import type { DealFormState } from '../../components/DealFormFields';
-import { loadVisibleColumnsDraft, loadVisibleSummaryFieldsDraft } from './quoteColumnsDraft';
+import { loadVisibleColumnsDraft, loadVisibleCustomerFieldsDraft, loadVisibleSummaryFieldsDraft } from './quoteColumnsDraft';
 
 export type WizardStep = 1 | 2 | 3 | 4;
 
@@ -52,7 +53,7 @@ export function quoteDraftFromForm(form: QuoteForm, dealDraft?: DealFormState, i
     // schema sau khi luu nhap), rong thi coi nhu khong co nhap hop le, dung
     // mac dinh hien tat ca.
     const draftColumns = loadVisibleColumnsDraft(form.id)?.filter(key => toggleableKeys.includes(key));
-    data.visibleColumns = draftColumns && draftColumns.length ? draftColumns : toggleableKeys;
+    data.visibleColumns = draftColumns && draftColumns.length ? draftColumns : resolveDefaultVisibleColumnKeys(form.schemaJson, quoteItems);
   }
   if (!data.visibleSummaryFields) {
     // Seed mac dinh "Tong hop gia" - mirror y het cach visibleColumns dang seed
@@ -61,6 +62,12 @@ export function quoteDraftFromForm(form: QuoteForm, dealDraft?: DealFormState, i
     const toggleableSummaryKeys: string[] = resolveToggleableSummaryFields(form.schemaJson).map(field => field.key);
     const draftSummaryFields = loadVisibleSummaryFieldsDraft(form.id)?.filter(key => toggleableSummaryKeys.includes(key));
     data.visibleSummaryFields = draftSummaryFields && draftSummaryFields.length ? draftSummaryFields : toggleableSummaryKeys;
+  }
+  if (!data.visibleCustomerFields) {
+    const draftCustomerFields = loadVisibleCustomerFieldsDraft(form.id);
+    data.visibleCustomerFields = draftCustomerFields && draftCustomerFields.length
+      ? resolveVisibleCustomerFieldKeys(form.schemaJson, draftCustomerFields)
+      : resolveVisibleCustomerFieldKeys(form.schemaJson, null);
   }
 
   if (dealDraft) {
@@ -105,12 +112,15 @@ export function quoteDraftFromExistingQuote(quote: Quote): QuoteDraft {
   // trong data da luu - mac dinh hien du (khop hanh vi cu, khong bi rot cot),
   // tinh theo dung cot cua mau bao gia nay (khong phai danh sach co dinh).
   if (!data.visibleColumns) {
-    data.visibleColumns = resolveToggleableColumns(quote.formSnapshot, quote.items || []).map(column => column.key);
+    data.visibleColumns = resolveDefaultVisibleColumnKeys(quote.formSnapshot, quote.items || []);
   } else if (Array.isArray(data.visibleColumns) && !data.visibleColumns.includes('vatRate')) {
     // "vatRate" moi them vao danh sach toggle - bao gia da luu visibleColumns
     // TRUOC do khong biet field nay, phai tu bo sung de checkbox VAT hien dung
     // trang thai (truoc day VAT luon hien, khong toggle duoc).
     data.visibleColumns = [...data.visibleColumns, 'vatRate'];
+  }
+  if (!data.visibleCustomerFields) {
+    data.visibleCustomerFields = resolveVisibleCustomerFieldKeys(quote.formSnapshot, null);
   }
   return {
     data,

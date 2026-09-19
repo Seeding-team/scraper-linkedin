@@ -156,6 +156,7 @@ const STATUS_BADGE_CLASS: Record<string, string> = {
 };
 
 type RelatedQuoteRow = NonNullable<RelatedPayload['quotes']>[number];
+type QuoteStatusFilter = 'active' | 'all' | 'cancelled' | 'presale' | 'pricing' | 'review' | 'ready' | 'sent';
 
 // Cung DUNG 1 thu tu uu tien voi _derive_quote_phase() (backend,
 // supabase_quote_service.py) va phaseCellLabel() (QuoteCenterPage.tsx) -
@@ -170,6 +171,26 @@ function quoteChainPhaseLabel(row: RelatedQuoteRow): string {
   if (row.processing_stage === 'pricing') return 'Sale markup';
   return 'Presale';
 }
+
+function quoteChainPhaseKey(row: RelatedQuoteRow): QuoteStatusFilter {
+  if (row.deleted_at || row.status === 'cancelled') return 'cancelled';
+  if (row.sent_at) return 'sent';
+  if (row.published_at || row.processing_stage === 'published' || row.status === 'approved' || row.approved_at) return 'ready';
+  if (row.processing_stage === 'review') return 'review';
+  if (row.processing_stage === 'pricing') return 'pricing';
+  return 'presale';
+}
+
+const QUOTE_STATUS_FILTER_LABELS: Record<QuoteStatusFilter, string> = {
+  active: 'Đang hoạt động',
+  all: 'Tất cả báo giá',
+  cancelled: 'Đã huỷ',
+  presale: 'Presale',
+  pricing: 'Sale markup',
+  review: 'Admin review',
+  ready: 'Sẵn sàng gửi',
+  sent: 'Đã gửi',
+};
 
 const PROJECT_STATUS_LABELS: Record<string, string> = {
   planning: 'Lên kế hoạch',
@@ -609,10 +630,26 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
       return { current: sorted[0], versionCount: list.length };
     });
   }, [data?.quotes]);
+  const [quoteStatusFilter, setQuoteStatusFilter] = useState<QuoteStatusFilter>('active');
   const quoteChains = useMemo(
-    () => (quoteProjectFilter ? allQuoteChains.filter(c => c.current.project_id === quoteProjectFilter) : allQuoteChains),
+    () => {
+      const scoped = quoteProjectFilter ? allQuoteChains.filter(c => c.current.project_id === quoteProjectFilter) : allQuoteChains;
+      if (quoteStatusFilter === 'all') return scoped;
+      if (quoteStatusFilter === 'active') return scoped.filter(c => quoteChainPhaseKey(c.current) !== 'cancelled');
+      return scoped.filter(c => quoteChainPhaseKey(c.current) === quoteStatusFilter);
+    },
+    [allQuoteChains, quoteProjectFilter, quoteStatusFilter]
+  );
+  const hiddenCancelledQuoteCount = useMemo(
+    () => {
+      const scoped = quoteProjectFilter ? allQuoteChains.filter(c => c.current.project_id === quoteProjectFilter) : allQuoteChains;
+      return scoped.filter(c => quoteChainPhaseKey(c.current) === 'cancelled').length;
+    },
     [allQuoteChains, quoteProjectFilter]
   );
+  const quoteStatusFilterSummary = quoteStatusFilter === 'active'
+    ? `Đang ẩn báo giá đã huỷ${hiddenCancelledQuoteCount ? ` (${hiddenCancelledQuoteCount})` : ''}`
+    : `Đang lọc: ${QUOTE_STATUS_FILTER_LABELS[quoteStatusFilter]}`;
 
   useEffect(() => {
     let alive = true;
@@ -1066,6 +1103,33 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
 
               {tab === 'quotes' ? (
                 <>
+                  <div className="crm-quote-filter-pill" style={{ justifyContent: 'space-between' }}>
+                    <span className="crm-sr-only">
+                      {quoteStatusFilter === 'active'
+                        ? `Đang ẩn báo giá đã huỷ${hiddenCancelledQuoteCount ? ` (${hiddenCancelledQuoteCount})` : ''}`
+                        : 'Đang hiển thị tất cả báo giá, gồm cả đã huỷ'}
+                    </span>
+                    <span>{quoteStatusFilterSummary}</span>
+                    <div className="crm-quote-filter-controls">
+                      <select
+                        className="crm-quote-status-select"
+                        value={quoteStatusFilter}
+                        aria-label="Lọc trạng thái báo giá"
+                        onChange={event => setQuoteStatusFilter(event.target.value as QuoteStatusFilter)}
+                      >
+                        {(['active', 'presale', 'pricing', 'review', 'ready', 'sent', 'cancelled', 'all'] as QuoteStatusFilter[]).map(option => (
+                          <option key={option} value={option}>{QUOTE_STATUS_FILTER_LABELS[option]}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <button
+                      type="button"
+                      className="crm-inline-link-btn"
+                      onClick={() => setQuoteStatusFilter(prev => (prev === 'active' ? 'all' : 'active'))}
+                    >
+                      {quoteStatusFilter === 'active' ? 'Hiện cả đã huỷ' : 'Ẩn đã huỷ'}
+                    </button>
+                  </div>
                   {quoteProjectFilter ? (
                     <div className="crm-quote-filter-pill">
                       <span>Đang lọc theo dự án: {projectLabel(quoteProjectFilter)}</span>

@@ -104,7 +104,7 @@ class QuoteItemInput(BaseModel):
     # Danh mục dịch vụ: truy vết + snapshot USD/VND/tỷ giá tại thời điểm chọn dịch vụ.
     # Đông cứng ngay khi tạo/sửa báo giá - sửa catalog sau này không ảnh hưởng số liệu cũ.
     catalog_item_id: Optional[str] = None
-    bundle_snapshot: Optional[list[dict[str, Any]]] = None
+    bundle_snapshot: Optional[list[dict[str, Any]] | dict[str, Any]] = None
     list_price_usd: Optional[float] = None
     unit_price_usd: Optional[float] = None
     exchange_rate: Optional[float] = None

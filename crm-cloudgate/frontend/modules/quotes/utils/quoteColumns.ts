@@ -131,3 +131,9 @@ export function resolveToggleableColumns(schema: QuoteSchema, quoteItems: QuoteI
       column.type !== 'calculated'
   );
 }
+
+export function resolveDefaultVisibleColumnKeys(schema: QuoteSchema, quoteItems: QuoteItem[] = []): string[] {
+  return resolveToggleableColumns(schema, quoteItems)
+    .filter(column => column.key !== 'discountPercent')
+    .map(column => column.key);
+}

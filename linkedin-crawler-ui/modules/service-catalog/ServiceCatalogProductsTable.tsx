@@ -27,6 +27,32 @@ function formatQuotaPoolName(poolKey?: string | null, poolName?: string | null):
   return poolName || 'Nhóm quota';
 }
 
+function firstPositiveNumber(...values: Array<number | null | undefined>): number | null {
+  for (const value of values) {
+    if (typeof value === 'number' && Number.isFinite(value) && value > 0) return value;
+  }
+  return null;
+}
+
+function resolvedCustomerPrice(product: FlatProduct): number | null {
+  const configured = firstPositiveNumber(
+    product.defaultCustomerPriceVnd,
+    product.monthlyPriceVnd,
+    product.annualCommitMonthlyPriceVnd,
+    product.defaultUnitPriceVnd
+  );
+  if (configured != null) return configured;
+  if (
+    product.defaultCostPriceVnd != null &&
+    product.defaultMarkupPercent != null &&
+    Number.isFinite(product.defaultCostPriceVnd) &&
+    Number.isFinite(product.defaultMarkupPercent)
+  ) {
+    return Math.max(0, product.defaultCostPriceVnd * (1 + product.defaultMarkupPercent / 100));
+  }
+  return product.defaultCustomerPriceVnd ?? null;
+}
+
 /** Bang "Sản phẩm & dịch vụ" (danh sách + drawer thêm/sửa/xoá/bộ giá) - tach
  * rieng ra khoi ServiceCatalogPage.tsx cu (truoc day la 1 tab noi bo) de
  * DUNG CHUNG cho ca 2 noi: trang goc (chua dung nua sau khi tai cau truc
@@ -98,6 +124,7 @@ export const ServiceCatalogProductsTable = forwardRef<ServiceCatalogProductsTabl
 
   const standaloneProducts = useMemo(() => products.filter(product => product.itemType !== 'bundle'), [products]);
   const bundleProducts = useMemo(() => products.filter(product => product.itemType === 'bundle'), [products]);
+  const productsById = useMemo(() => new Map(products.map(product => [product.id, product])), [products]);
   const hasBundles = bundleProducts.length > 0;
 
   useEffect(() => {
@@ -222,6 +249,12 @@ export const ServiceCatalogProductsTable = forwardRef<ServiceCatalogProductsTabl
       pool.components.push(component);
     }
     return rows;
+  }
+
+  function displayBundleComponentCustomerPrice(component: BundleComponentLine): number | null {
+    const canonical = productsById.get(component.componentId);
+    if (canonical) return resolvedCustomerPrice(canonical);
+    return firstPositiveNumber(component.defaultCustomerPriceVnd, component.unitPriceVnd) ?? component.defaultCustomerPriceVnd ?? component.unitPriceVnd ?? null;
   }
 
   const productColSpan = fixedGroupId ? 11 : 12;
@@ -376,7 +409,7 @@ export const ServiceCatalogProductsTable = forwardRef<ServiceCatalogProductsTabl
                                       <span>{component.unit || '—'}</span>
                                       <span>{component.quota || component.displayText || 'Dùng chung'}</span>
                                       <span>{formatVndOrMissing(component.defaultCostPriceVnd)}</span>
-                                      <span>{formatVndOrMissing(component.defaultCustomerPriceVnd ?? component.unitPriceVnd)}</span>
+                                      <span>{formatVndOrMissing(displayBundleComponentCustomerPrice(component))}</span>
                                       <span>{component.required === false ? 'Không' : 'Có'}</span>
                                       <span>{component.overagePolicy === 'charge' ? 'Có' : 'Không'}</span>
                                     </div>
@@ -393,7 +426,7 @@ export const ServiceCatalogProductsTable = forwardRef<ServiceCatalogProductsTabl
                                 <span>{component.unit || '—'}</span>
                                 <span>{component.quota || component.displayText || '—'}</span>
                                 <span>{formatVndOrMissing(component.defaultCostPriceVnd)}</span>
-                                <span>{formatVndOrMissing(component.defaultCustomerPriceVnd ?? component.unitPriceVnd)}</span>
+                                <span>{formatVndOrMissing(displayBundleComponentCustomerPrice(component))}</span>
                                 <span>{component.required === false ? 'Không' : 'Có'}</span>
                                 <span>{component.overagePolicy === 'charge' ? 'Có' : 'Không'}</span>
                               </div>
@@ -457,7 +490,7 @@ export const ServiceCatalogProductsTable = forwardRef<ServiceCatalogProductsTabl
                       </td>
                       <td>{formatVndOrMissing(product.monthlyPriceVnd)}</td>
                       <td>{formatVndOrMissing(product.annualCommitMonthlyPriceVnd)}</td>
-                      <td>{formatVndOrMissing(product.defaultCustomerPriceVnd)}</td>
+                      <td>{formatVndOrMissing(resolvedCustomerPrice(product))}</td>
                     <td>{product.defaultVatRate != null ? `${product.defaultVatRate}%` : '—'}</td>
                     <td>
                       <span className={`sc-badge ${product.status === 'inactive' ? 'sc-badge-inactive' : 'sc-badge-active'}`}>
@@ -486,7 +519,7 @@ export const ServiceCatalogProductsTable = forwardRef<ServiceCatalogProductsTabl
               <div className="sc-product-card-price-row"><span>Giá vốn</span><span>{formatVndOrMissing(product.defaultCostPriceVnd)}</span></div>
               <div className="sc-product-card-price-row"><span>Giá tháng</span><span>{formatVndOrMissing(product.monthlyPriceVnd)}</span></div>
               <div className="sc-product-card-price-row"><span>Giá trả năm/tháng</span><span>{formatVndOrMissing(product.annualCommitMonthlyPriceVnd)}</span></div>
-              <div className="sc-product-card-price-row"><span>Giá khách mặc định</span><span>{formatVndOrMissing(product.defaultCustomerPriceVnd)}</span></div>
+              <div className="sc-product-card-price-row"><span>Giá khách mặc định</span><span>{formatVndOrMissing(resolvedCustomerPrice(product))}</span></div>
             </div>
             <span className={`sc-badge ${product.status === 'inactive' ? 'sc-badge-inactive' : 'sc-badge-active'}`} style={{ alignSelf: 'flex-start' }}>
               {product.status === 'inactive' ? 'Ngừng kinh doanh' : 'Đang kinh doanh'}

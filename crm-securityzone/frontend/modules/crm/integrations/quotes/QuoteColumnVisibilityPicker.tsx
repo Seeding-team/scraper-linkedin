@@ -2,7 +2,11 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { QuoteSchema } from '@/modules/quotes';
-import { getLockedColumnKeys, resolveQuoteItemColumns, resolveToggleableColumns } from '@/modules/quotes/utils/quoteColumns';
+import { getLockedColumnKeys, resolveDefaultVisibleColumnKeys, resolveQuoteItemColumns, resolveToggleableColumns } from '@/modules/quotes/utils/quoteColumns';
+import {
+  getCustomerDisplayFields,
+  resolveVisibleCustomerFieldKeys,
+} from '@/modules/quotes/utils/quoteCustomerFields';
 import {
   getLockedSummaryFieldKeys,
   getSupportedSummaryFields,
@@ -11,8 +15,10 @@ import {
 } from '@/modules/quotes/utils/quoteSummaryFields';
 import {
   loadVisibleColumnsDraft,
+  loadVisibleCustomerFieldsDraft,
   loadVisibleSummaryFieldsDraft,
   saveVisibleColumnsDraft,
+  saveVisibleCustomerFieldsDraft,
   saveVisibleSummaryFieldsDraft,
 } from './quoteColumnsDraft';
 import type { QuoteDraft } from './types';
@@ -31,6 +37,7 @@ export function QuoteColumnVisibilityPicker({
   readOnly?: boolean;
 }) {
   const [columnMenuOpen, setColumnMenuOpen] = useState(false);
+  const [openSection, setOpenSection] = useState<'customer' | 'columns' | 'summary' | null>('customer');
   const schemaInvalid = !schema || !Array.isArray(schema.sections);
   const allColumns = useMemo(
     () => (schemaInvalid ? [] : resolveQuoteItemColumns(schema, draft.items)),
@@ -50,7 +57,7 @@ export function QuoteColumnVisibilityPicker({
   );
   const optionalColumnKeys = useMemo(() => optionalColumns.map(column => column.key), [optionalColumns]);
   const savedVisibleColumns = Array.isArray(draft.data.visibleColumns) ? draft.data.visibleColumns : null;
-  const visibleColumns = (savedVisibleColumns || optionalColumnKeys).filter(key => optionalColumnKeys.includes(key));
+  const visibleColumns = (savedVisibleColumns || resolveDefaultVisibleColumnKeys(schema, draft.items)).filter(key => optionalColumnKeys.includes(key));
   const visibleCount = visibleColumns.length;
   const optionalTotal = optionalColumnKeys.length;
 
@@ -148,7 +155,50 @@ export function QuoteColumnVisibilityPicker({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [quoteFormId, schemaInvalid, readOnly]);
 
-  const canOpenMenu = optionalTotal > 0 || summaryOptionalTotal > 0;
+  const customerFields = useMemo(
+    () => (schemaInvalid ? [] : getCustomerDisplayFields(schema)),
+    [schema, schemaInvalid]
+  );
+  const customerFieldKeys = useMemo(() => customerFields.map(field => field.key), [customerFields]);
+  const customerKeysSignature = customerFieldKeys.join('|');
+  const savedVisibleCustomerFields = Array.isArray(draft.data.visibleCustomerFields) ? draft.data.visibleCustomerFields : null;
+  const visibleCustomerFields = schemaInvalid
+    ? []
+    : resolveVisibleCustomerFieldKeys(schema, savedVisibleCustomerFields);
+  const customerVisibleCount = visibleCustomerFields.length;
+  const customerTotal = customerFieldKeys.length;
+
+  function setVisibleCustomerFields(next: string[]) {
+    if (readOnly) return;
+    onChange({ ...draft, data: { ...draft.data, visibleCustomerFields: next } });
+    saveVisibleCustomerFieldsDraft(quoteFormId, next);
+  }
+
+  function toggleCustomerField(key: string) {
+    setVisibleCustomerFields(
+      visibleCustomerFields.includes(key)
+        ? visibleCustomerFields.filter(item => item !== key)
+        : [...visibleCustomerFields, key]
+    );
+  }
+
+  const restoredCustomerForFormId = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (readOnly || !quoteFormId || schemaInvalid) return;
+    if (restoredCustomerForFormId.current === quoteFormId) return;
+    restoredCustomerForFormId.current = quoteFormId;
+    if (savedVisibleCustomerFields) return;
+    const draftFields = loadVisibleCustomerFieldsDraft(quoteFormId);
+    if (!draftFields) return;
+    const reconciled = draftFields.filter(key => customerFieldKeys.includes(key));
+    if (reconciled.length) setVisibleCustomerFields(reconciled);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [quoteFormId, schemaInvalid, readOnly, customerKeysSignature]);
+
+  const canOpenMenu = optionalTotal > 0 || summaryOptionalTotal > 0 || customerTotal > 0;
+  const toggleSection = (section: 'customer' | 'columns' | 'summary') => {
+    setOpenSection(current => (current === section ? null : section));
+  };
 
   return (
     <div className="crm-quote-column-picker">
@@ -172,79 +222,132 @@ export function QuoteColumnVisibilityPicker({
           ) : null}
           {columnMenuOpen && canOpenMenu ? (
             <div className="crm-quote-column-menu">
-              <p>Chỉ ảnh hưởng bản gửi khách, không xoá dữ liệu nội bộ.</p>
+              <div className="crm-quote-column-menu-head">
+                <strong>Cột hiển thị</strong>
+                <span className="crm-quote-column-count">{optionalTotal === 0 ? '—' : `${visibleCount}/${optionalTotal}`}</span>
+              </div>
+              <div className="crm-quote-column-menu-body">
+                <p className="crm-quote-column-menu-note">Chỉ ảnh hưởng bản gửi khách, không xoá dữ liệu nội bộ.</p>
 
-              {optionalTotal > 0 ? (
-                <div className="crm-quote-column-group">
-                  <p className="crm-quote-column-group-title">
-                    Cột bảng hạng mục <span className="crm-quote-column-count">{visibleCount}/{optionalTotal}</span>
-                  </p>
-                  {requiredColumns.map(option => (
-                    <label key={option.key} className="crm-quote-column-option crm-quote-column-option--locked">
-                      <input type="checkbox" checked disabled />
-                      🔒 {option.label} <span className="crm-quote-column-required-badge">Bắt buộc</span>
-                    </label>
-                  ))}
-                  {optionalColumns.map(option => (
-                    <label key={option.key} className="crm-quote-column-option">
-                      <input
-                        type="checkbox"
-                        checked={visibleColumns.includes(option.key)}
-                        disabled={readOnly}
-                        onChange={() => toggleColumn(option.key)}
-                      />
-                      {option.label}
-                    </label>
-                  ))}
-                  <div className="crm-quote-column-menu-foot">
-                    <button type="button" disabled={readOnly} onClick={() => setVisibleColumns([...optionalColumnKeys])}>
-                      Hiện tất cả
+                {customerTotal > 0 ? (
+                  <section className="crm-quote-column-group">
+                    <button type="button" className="crm-quote-column-group-title" onClick={() => toggleSection('customer')}>
+                      <span>Thông tin khách hàng</span>
+                      <span className="crm-quote-column-group-meta">
+                        <span className="crm-quote-column-count">{customerVisibleCount}/{customerTotal}</span>
+                        <span className="crm-quote-column-chevron">{openSection === 'customer' ? '▾' : '▸'}</span>
+                      </span>
                     </button>
-                    <button
-                      type="button"
-                      disabled={readOnly}
-                      onClick={() =>
-                        setVisibleColumns(
-                          optionalColumns.filter(column => column.type !== 'number' && column.type !== 'currency').map(column => column.key)
-                        )
-                      }
-                    >
-                      Ẩn thông tin giá
-                    </button>
-                  </div>
-                </div>
-              ) : null}
+                    {openSection === 'customer' ? (
+                      <div className="crm-quote-column-group-body">
+                        <div className="crm-quote-column-section-actions">
+                          <button type="button" disabled={readOnly} onClick={() => setVisibleCustomerFields([...customerFieldKeys])}>
+                            Hiện tất cả
+                          </button>
+                        </div>
+                        {customerFields.map(field => (
+                          <label key={field.key} className="crm-quote-column-option">
+                            <input
+                              type="checkbox"
+                              checked={visibleCustomerFields.includes(field.key)}
+                              disabled={readOnly}
+                              onChange={() => toggleCustomerField(field.key)}
+                            />
+                            {field.label}
+                          </label>
+                        ))}
+                      </div>
+                    ) : null}
+                  </section>
+                ) : null}
 
-              {summaryOptionalTotal > 0 ? (
-                <div className="crm-quote-column-group crm-quote-column-group--summary">
-                  <p className="crm-quote-column-group-title">
-                    Tổng hợp giá{' '}
-                    <span className="crm-quote-column-count">{summaryVisibleCount}/{summaryOptionalTotal}</span>
-                  </p>
-                  {summaryRequiredFields.map(field => (
-                    <label key={field.key} className="crm-quote-column-option crm-quote-column-option--locked">
-                      <input type="checkbox" checked disabled />
-                      🔒 {field.label} <span className="crm-quote-column-required-badge">Bắt buộc</span>
-                    </label>
-                  ))}
-                  {summaryOptionalFields.map(field => (
-                    <label key={field.key} className="crm-quote-column-option">
-                      <input
-                        type="checkbox"
-                        checked={visibleSummaryFields.includes(field.key)}
-                        disabled={readOnly}
-                        onChange={() => toggleSummaryField(field.key)}
-                      />
-                      {field.label}
-                    </label>
-                  ))}
-                  <div className="crm-quote-column-menu-foot">
-                    <button type="button" disabled={readOnly} onClick={() => setVisibleSummaryFields([...summaryOptionalKeys])}>
-                      Hiện tất cả
+                {optionalTotal > 0 ? (
+                  <section className="crm-quote-column-group">
+                    <button type="button" className="crm-quote-column-group-title" onClick={() => toggleSection('columns')}>
+                      <span>Cột bảng hạng mục</span>
+                      <span className="crm-quote-column-group-meta">
+                        <span className="crm-quote-column-count">{visibleCount}/{optionalTotal}</span>
+                        <span className="crm-quote-column-chevron">{openSection === 'columns' ? '▾' : '▸'}</span>
+                      </span>
                     </button>
-                  </div>
-                </div>
-              ) : null}
+                    {openSection === 'columns' ? (
+                      <div className="crm-quote-column-group-body">
+                        <div className="crm-quote-column-section-actions">
+                          <button type="button" disabled={readOnly} onClick={() => setVisibleColumns([...optionalColumnKeys])}>
+                            Hiện tất cả
+                          </button>
+                          <button
+                            type="button"
+                            disabled={readOnly}
+                            onClick={() =>
+                              setVisibleColumns(
+                                optionalColumns.filter(column => column.type !== 'number' && column.type !== 'currency').map(column => column.key)
+                              )
+                            }
+                          >
+                            Ẩn thông tin giá
+                          </button>
+                        </div>
+                        {requiredColumns.map(option => (
+                          <label key={option.key} className="crm-quote-column-option crm-quote-column-option--locked">
+                            <input type="checkbox" checked disabled />
+                            🔒 {option.label} <span className="crm-quote-column-required-badge">Bắt buộc</span>
+                          </label>
+                        ))}
+                        {optionalColumns.map(option => (
+                          <label key={option.key} className="crm-quote-column-option">
+                            <input
+                              type="checkbox"
+                              checked={visibleColumns.includes(option.key)}
+                              disabled={readOnly}
+                              onChange={() => toggleColumn(option.key)}
+                            />
+                            {option.label}
+                          </label>
+                        ))}
+                      </div>
+                    ) : null}
+                  </section>
+                ) : null}
+
+                {summaryOptionalTotal > 0 ? (
+                  <section className="crm-quote-column-group crm-quote-column-group--summary">
+                    <button type="button" className="crm-quote-column-group-title" onClick={() => toggleSection('summary')}>
+                      <span>Tổng hợp giá</span>
+                      <span className="crm-quote-column-group-meta">
+                        <span className="crm-quote-column-count">{summaryVisibleCount}/{summaryOptionalTotal}</span>
+                        <span className="crm-quote-column-chevron">{openSection === 'summary' ? '▾' : '▸'}</span>
+                      </span>
+                    </button>
+                    {openSection === 'summary' ? (
+                      <div className="crm-quote-column-group-body">
+                        <div className="crm-quote-column-section-actions">
+                          <button type="button" disabled={readOnly} onClick={() => setVisibleSummaryFields([...summaryOptionalKeys])}>
+                            Hiện tất cả
+                          </button>
+                        </div>
+                        {summaryRequiredFields.map(field => (
+                          <label key={field.key} className="crm-quote-column-option crm-quote-column-option--locked">
+                            <input type="checkbox" checked disabled />
+                            🔒 {field.label} <span className="crm-quote-column-required-badge">Bắt buộc</span>
+                          </label>
+                        ))}
+                        {summaryOptionalFields.map(field => (
+                          <label key={field.key} className="crm-quote-column-option">
+                            <input
+                              type="checkbox"
+                              checked={visibleSummaryFields.includes(field.key)}
+                              disabled={readOnly}
+                              onChange={() => toggleSummaryField(field.key)}
+                            />
+                            {field.label}
+                          </label>
+                        ))}
+                      </div>
+                    ) : null}
+                  </section>
+                ) : null}
+              </div>
             </div>
           ) : null}
         </>
