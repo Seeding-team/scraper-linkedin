@@ -2264,6 +2264,11 @@ a.sc-btn {
   flex: 1;
   overflow-y: auto;
   overflow-x: auto;
+}
+
+/* Padding must live inside the scroll container, not on the overflow element.
+ * Chromium can otherwise let sticky table headers overlap scrolled rows. */
+.cp-content-scroll-inner {
   padding: 20px 24px;
 }
 
@@ -2271,15 +2276,6 @@ a.sc-btn {
   width: 100%;
   border-collapse: separate;
   border-spacing: 0;
-}
-
-.cp-compact-table thead {
-  /* Chromium co the "ve de" noi dung dong tbody phia tren len tren cell
-   * sticky cua thead trong <table> that (khac hanh vi voi flex/grid) neu
-   * thead khong tu tao stacking context rieng - isolation: isolate ep
-   * z-index cua cac th ben trong so sanh dung pham vi, tranh bi dong ben
-   * tren "loi" qua header khi cuon (bug that da gap qua repro). */
-  isolation: isolate;
 }
 
 .cp-compact-table th {

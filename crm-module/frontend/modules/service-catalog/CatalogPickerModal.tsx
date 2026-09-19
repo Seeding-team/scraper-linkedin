@@ -396,6 +396,7 @@ export function CatalogPickerModal({
             </div>
             
             <div className="cp-content-scroll">
+            <div className="cp-content-scroll-inner">
               {loading ? (
                 <p className="qc-workspace-note">Đang tải danh mục...</p>
               ) : displayedItems.length === 0 ? (
@@ -620,6 +621,7 @@ export function CatalogPickerModal({
                       );                  })}
                 </div>
               )}
+            </div>
             </div>
           </div>
         </div>
