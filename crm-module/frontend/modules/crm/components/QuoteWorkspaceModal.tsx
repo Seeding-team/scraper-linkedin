@@ -162,6 +162,16 @@ function formatPercentFixed2(value: number | null | undefined): string {
   return `${value.toFixed(2)}%`;
 }
 
+function resolveQuoteItemCostTotal(item: Partial<QuoteItem>): number | null {
+  if (item.costNotApplicable) return 0;
+  if (item.costTotal != null && Number.isFinite(Number(item.costTotal))) return Math.max(0, Number(item.costTotal));
+  if (item.costPrice != null && Number.isFinite(Number(item.costPrice))) {
+    const quantity = Number.isFinite(Number(item.quantity)) ? Math.max(0, Number(item.quantity)) : 0;
+    return Math.max(0, Number(item.costPrice)) * quantity;
+  }
+  return null;
+}
+
 function firstPositiveNumber(...values: Array<number | null | undefined>): number | null {
   for (const value of values) {
     if (typeof value === 'number' && Number.isFinite(value) && value > 0) return value;
@@ -3843,6 +3853,39 @@ export function QuoteWorkspaceModal({
     return { subtotalAmount, totalVatAmount, totalAmount: subtotalAmount + totalVatAmount };
   }, [itemsDraft]);
 
+  const liveCommercialSummary = useMemo(() => {
+    const rows = itemsDraft.filter(i => i.rowType !== 'section');
+    const costValues = rows.map(resolveQuoteItemCostTotal);
+    const liveHasCostData = rows.length > 0 && costValues.every(value => value != null);
+    const costTotal = liveHasCostData ? costValues.reduce((sum, value) => sum + (value || 0), 0) : 0;
+    const totals = calculateQuoteTotals(rows);
+    const discountSummary = calculateOverallDiscountSummary(totals, quote ? quote.overallDiscountPercent : draftOverallDiscountPercent);
+    const netRevenue = discountSummary.subtotalAfterDiscount;
+    const grossProfit = liveHasCostData ? netRevenue - costTotal : null;
+    const grossMarginPercent = liveHasCostData && netRevenue > 0 && grossProfit != null ? (grossProfit / netRevenue) * 100 : null;
+    const ratePercent = liveHasCostData && costTotal > 0 ? (netRevenue / costTotal) * 100 - 100 : null;
+    return {
+      hasRows: rows.length > 0,
+      hasCostData: liveHasCostData,
+      costTotal,
+      netRevenue,
+      totalAmount: discountSummary.grandTotal,
+      grossProfit,
+      grossMarginPercent,
+      ratePercent,
+      overallDiscountPercent: quote ? quote.overallDiscountPercent : draftOverallDiscountPercent,
+    };
+  }, [itemsDraft, quote, draftOverallDiscountPercent]);
+
+  const summaryHasCostData = liveCommercialSummary.hasCostData || hasCostData;
+  const summaryCostTotal = liveCommercialSummary.hasCostData ? liveCommercialSummary.costTotal : (quote?.costTotal || 0);
+  const summaryNetRevenue = liveCommercialSummary.hasRows ? liveCommercialSummary.netRevenue : (quote?.netRevenue || 0);
+  const summaryTotalAmount = liveCommercialSummary.hasRows ? liveCommercialSummary.totalAmount : (quote?.totalAmount || 0);
+  const summaryGrossProfit = liveCommercialSummary.hasCostData ? liveCommercialSummary.grossProfit : (quote?.grossProfit ?? null);
+  const summaryGrossMarginPercent = liveCommercialSummary.hasCostData ? liveCommercialSummary.grossMarginPercent : (quote?.grossMarginPercent ?? null);
+  const summaryRatePercent = liveCommercialSummary.hasCostData ? liveCommercialSummary.ratePercent : (summaryCostTotal > 0 ? (summaryNetRevenue / summaryCostTotal) * 100 - 100 : null);
+  const summaryOverallDiscountPercent = liveCommercialSummary.overallDiscountPercent;
+
   // "Gui khach hang" - LUON hien, ly do disable phai phan biet dung tung
   // tinh huong that (khong gop chung 1 cau chung chung) - dung DUNG thu tu
   // uu tien nhu spec: chua duyet > chua phat hanh > kenh mail chua san sang.
@@ -3863,7 +3906,7 @@ export function QuoteWorkspaceModal({
   // tinh CK truoc, VAT tren phan sau CK, KHONG lay tong da gom VAT de suy
   // nguoc). Khi da co quote that thi dung so THAT tu quote (khong tinh lai
   // o FE de tranh lech lam tron voi server).
-  const marginBelowThreshold = Boolean(hasCostData && quote?.grossMarginPercent != null && quote.grossMarginPercent < 20);
+  const marginBelowThreshold = Boolean(summaryHasCostData && summaryGrossMarginPercent != null && summaryGrossMarginPercent < 20);
 
   const previewTotals = quote
     ? { subtotal: quote.subtotalAmount, vat: quote.vatAmount, total: quote.totalAmount }
@@ -5067,28 +5110,28 @@ export function QuoteWorkspaceModal({
               <div className="qc-workspace-totals">
                 <div>
                   <span className="qc-workspace-info-label">Tổng giá vốn</span>
-                  <strong>{!costViewAllowed ? 'Không có quyền xem' : hasCostData ? formatMoney(quote!.costTotal || 0) : 'Chưa có dữ liệu giá vốn'}</strong>
+                  <strong>{!costViewAllowed ? 'Không có quyền xem' : summaryHasCostData ? formatMoney(summaryCostTotal) : 'Chưa có dữ liệu giá vốn'}</strong>
                 </div>
                 <div>
                   <span className="qc-workspace-info-label">Giá khách sau CK</span>
-                  <strong>{quote ? formatMoney(quote.totalAmount) : '0 đ'}</strong>
+                  <strong>{formatMoney(summaryTotalAmount)}</strong>
                 </div>
                 <div>
                   <span className="qc-workspace-info-label">Lợi nhuận gộp</span>
-                  <strong className={hasCostData ? 'qc-cell-margin-good' : 'qc-workspace-muted'}>
-                    {!profitabilityViewAllowed ? 'Không có quyền xem' : hasCostData ? formatMoney(quote!.grossProfit || 0) : 'Chưa có dữ liệu'}
+                  <strong className={summaryHasCostData ? 'qc-cell-margin-good' : 'qc-workspace-muted'}>
+                    {!profitabilityViewAllowed ? 'Không có quyền xem' : summaryHasCostData && summaryGrossProfit != null ? formatMoney(summaryGrossProfit) : 'Chưa có dữ liệu'}
                   </strong>
                 </div>
                 <div>
                   <span className="qc-workspace-info-label">Gross margin</span>
-                  <strong className={hasCostData ? 'qc-cell-margin-good' : 'qc-workspace-muted'}>
-                    {!profitabilityViewAllowed ? 'Không có quyền xem' : hasCostData && quote!.grossMarginPercent != null ? formatPercentTrim(quote!.grossMarginPercent) : 'Chưa có dữ liệu'}
+                  <strong className={summaryHasCostData ? 'qc-cell-margin-good' : 'qc-workspace-muted'}>
+                    {!profitabilityViewAllowed ? 'Không có quyền xem' : summaryHasCostData && summaryGrossMarginPercent != null ? formatPercentTrim(summaryGrossMarginPercent) : 'Chưa có dữ liệu'}
                   </strong>
                 </div>
-                {profitabilityViewAllowed && hasCostData && quote?.costTotal ? (
+                {profitabilityViewAllowed && summaryHasCostData && summaryCostTotal > 0 && summaryRatePercent != null ? (
                   <div>
                     <span className="qc-workspace-info-label">Rate tổng</span>
-                    <strong>{formatPercentTrim(((quote!.netRevenue || 0) / quote!.costTotal!) * 100 - 100)}</strong>
+                    <strong>{formatPercentTrim(summaryRatePercent)}</strong>
                   </div>
                 ) : null}
                 <div>
@@ -5096,12 +5139,11 @@ export function QuoteWorkspaceModal({
                    * day chi con la HIEN THI (khong sua thang o day nua), tranh
                    * 2 o edit cung 1 field gay hieu nham co 2 co che rieng. */}
                   <span className="qc-workspace-info-label">Giảm giá toàn báo giá (%)</span>
-                  <strong>{quote?.overallDiscountPercent != null ? `${quote.overallDiscountPercent}%` : 'Không giảm'}</strong>
+                  <strong>{summaryOverallDiscountPercent != null ? `${summaryOverallDiscountPercent}%` : 'Không giảm'}</strong>
                 </div>
-                {profitabilityViewAllowed && quote?.overallDiscountPercent != null ? (() => {
-                  const amountAfterDiscount = quote.totalAmount * (1 - quote.overallDiscountPercent / 100);
-                  const incomeAfterDiscount = hasCostData ? amountAfterDiscount - (quote.costTotal || 0) : null;
-                  const marginAfterDiscount = incomeAfterDiscount != null && amountAfterDiscount ? (incomeAfterDiscount / amountAfterDiscount) * 100 : null;
+                {profitabilityViewAllowed && summaryOverallDiscountPercent != null ? (() => {
+                  const amountAfterDiscount = summaryTotalAmount;
+                  const marginAfterDiscount = summaryGrossMarginPercent;
                   return (
                     <>
                       <div>
