@@ -139,6 +139,11 @@ export const Pencil = makeIcon([
   { d: 'M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z' },
   { d: 'm15 5 4 4' },
 ]);
+export const Printer = makeIcon([
+  { d: 'M6 9V2h12v7' },
+  { d: 'M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2' },
+  { tag: 'rect', x: 6, y: 14, width: 12, height: 8 },
+]);
 export const Link2 = makeIcon([
   { d: 'M9 17H7A5 5 0 0 1 7 7h2' },
   { d: 'M15 7h2a5 5 0 1 1 0 10h-2' },

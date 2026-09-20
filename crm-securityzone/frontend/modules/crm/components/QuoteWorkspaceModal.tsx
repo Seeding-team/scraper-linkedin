@@ -27,7 +27,7 @@ import {
   quoteDisplayStatus,
   relativeTime,
 } from '../utils/quoteDisplay';
-import { ArrowDownToLine, CheckCircle2, ChevronDown, ChevronUp, Eye, FileText, GitBranchPlus, History, LayoutGrid, Link2, Maximize2, Minimize2, Plus, Send, Trash2, X } from './icons';
+import { ArrowDownToLine, CheckCircle2, ChevronDown, ChevronUp, Eye, FileText, GitBranchPlus, History, LayoutGrid, Link2, Maximize2, Minimize2, Plus, Printer, Send, Trash2, X } from './icons';
 import { usersService, projectsService, allPlatformCategoriesService, type QuoteBusinessRoleUser, type Project } from '@/services/all-platform.service';
 import { computeQuoteSla } from '../utils/quoteSla';
 import { SearchableSelect } from './SearchableSelect';
@@ -3670,6 +3670,20 @@ export function QuoteWorkspaceModal({
     showToast(true, 'Đã sao chép link báo giá.');
   }
 
+  /** "Thêm nút In PDF kế bên Sao chép link ở bước 3" (yeu cau rieng) - mo
+   * DUNG trang cong khai voi ?print=true (co san san, la duong PDF THAT da
+   * dung cho gui Telegram - xem quote_telegram_service.py) trong tab moi,
+   * KHONG tu ve renderer/print rieng trong modal - tranh lap lai dung bug da
+   * gap truoc day ("bấm Preview... ra 11 trang, lặp letterhead" - xem nut Xem
+   * bản khách hàng o duoi, phan preview modal DA CO GHI CHU BO nut in vi ly
+   * do nay). Trang public tu dong goi window.print() sau khi tai xong (xem
+   * PublicQuotePage.tsx, effect doc query 'print').
+   */
+  function printPublicQuotePdf() {
+    if (!quote!.publicUrl) return;
+    window.open(`${window.location.origin}${quote!.publicUrl}?print=true`, '_blank', 'noopener,noreferrer');
+  }
+
   // "Khoá link báo giá" - yeu cau rieng "gui khach xong lam sao khoa link lai
   // duoc" (endpoint /revoke-public da co san o backend/repository tu truoc,
   // dung o menu "..." tren trang Danh sach bao gia - nhung CHUA co trong
@@ -6117,6 +6131,9 @@ export function QuoteWorkspaceModal({
                         <>
                           <button type="button" className="qc-btn" onClick={() => void copyPublicLink()}>
                             <Link2 className="qc-icon" /> Sao chép link báo giá
+                          </button>
+                          <button type="button" className="qc-btn" onClick={printPublicQuotePdf}>
+                            <Printer className="qc-icon" /> In PDF
                           </button>
                           <button type="button" className="qc-btn" disabled={busy} onClick={() => void revokePublicLinkFromWorkspace()}>
                             Khoá link

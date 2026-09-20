@@ -780,7 +780,7 @@ export function QuoteDocumentRenderer({
           @page DUY NHAT (khong dat ten) hoat dong moi luc in - an toan, da
           test that khong con mat noi dung. */}
       {usesLandscapePrint ? (
-        <style>{'@media print { @page { size: A4 landscape; margin: 10mm 12mm; } }'}</style>
+        <style>{'@media print { @page { size: A4 landscape; margin: 7mm 12mm; } }'}</style>
       ) : null}
       <section className={`quote-sheet quote-sheet--standard${usesLandscapePrint ? ' quote-sheet--print-landscape' : ''}`}>
         <header className="sheet-company sheet-company--standard">
