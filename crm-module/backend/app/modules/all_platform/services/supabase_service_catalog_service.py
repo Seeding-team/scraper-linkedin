@@ -1,7 +1,7 @@
 ﻿"""Danh mục dịch vụ (Service Catalog): group/component/bundle dùng chung cho các
 Mẫu báo giá. Bundle (gói/combo, vd SZ-VPS) tổ hợp nhiều component qua
 service_catalog_bundle_items — khi chọn 1 bundle lúc điền báo giá, hệ thống ghép
-Description Items từ các thành phần và chỉ sinh ÄÃšNG 1 dòng quote_item.
+Description Items từ các thành phần và chỉ sinh ĐÚNG 1 dòng quote_item.
 """
 
 from __future__ import annotations
