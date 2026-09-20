@@ -185,7 +185,7 @@ export interface QuoteItem {
   serviceDescription?: string;
   unit?: string;
   quantity: number;
-  unitPrice: number;
+  unitPrice: number | null;
   discountPercent?: number;
   discountAmount?: number;
   amountAfterDiscount?: number;

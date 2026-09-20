@@ -2741,6 +2741,8 @@ export function QuoteWorkspaceModal({
   function nameFor(id?: string | null): string {
     if (!id) return 'Chưa gán';
     if (id === user?.id && user?.name) return repairUtf8Mojibake(user.name);
+    const roleUser = businessRoleUsersById.get(id);
+    if (roleUser) return ownerOptionLabel(roleUser);
     const agentName = agentsById.get(id);
     return agentName ? repairUtf8Mojibake(agentName) : 'Không rõ';
   }

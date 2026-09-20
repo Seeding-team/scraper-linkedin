@@ -97,7 +97,7 @@ class QuoteItemInput(BaseModel):
 
     unit: Optional[str] = None
     quantity: float = 0
-    unit_price: float = 0
+    unit_price: Optional[float] = Field(default=None, ge=0)
     discount_percent: float = Field(default=0, ge=0, le=100)
     vat_rate: float = Field(default=0, ge=0, le=100)
     children: list["QuoteItemInput"] = Field(default_factory=list)

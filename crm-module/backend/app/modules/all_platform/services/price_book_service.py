@@ -141,11 +141,14 @@ def compute_item_pricing(
 
     override_price = _to_decimal(unit_price_override)
     rate_pct = _to_decimal(rate_percent)
+    if rate_pct is not None and rate_pct >= 100:
+        raise ValueError("Markup phải nhỏ hơn 100%.")
     if override_price is not None:
         unit_price = override_price
-        rate_pct = _safe_div(unit_price - cost_unit, cost_unit) * 100 if cost_unit else None
+        rate_pct = _safe_div(unit_price - cost_unit, unit_price) * 100 if (cost_unit is not None and unit_price > 0) else None
     elif cost_unit is not None and rate_pct is not None:
-        unit_price = cost_unit * (1 + rate_pct / 100)
+        divisor = Decimal(1) - rate_pct / Decimal(100)
+        unit_price = (cost_unit / divisor) if divisor > 0 else None
     else:
         unit_price = None
 
@@ -168,9 +171,9 @@ def compute_item_pricing(
         margin_ratio = _safe_div(profit_before_vat, amount_before_vat)
         margin_percent = margin_ratio * 100 if margin_ratio is not None else None
     rate_total_percent = None
-    if amount_before_vat is not None and cost_total:
-        ratio = _safe_div(amount_before_vat, cost_total)
-        rate_total_percent = (ratio - 1) * 100 if ratio is not None else None
+    if profit_before_vat is not None and amount_before_vat and amount_before_vat > 0:
+        ratio = _safe_div(profit_before_vat, amount_before_vat)
+        rate_total_percent = ratio * 100 if ratio is not None else None
 
     ref_price = _to_decimal(reference_price)
     reference_diff_percent = None

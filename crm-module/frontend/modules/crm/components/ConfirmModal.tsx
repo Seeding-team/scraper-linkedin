@@ -20,12 +20,14 @@ export function ConfirmModal({
   actions,
   onClose,
   elevated,
+  cancelLabel,
 }: {
   open: boolean;
   title: string;
   message: string;
   actions: ConfirmModalAction[];
   onClose: () => void;
+  cancelLabel?: string;
   /** BUG THAT DA GAP ("không bấm tick được" - Cột hiển thị trong popup
    * preview): .crm-modal-backdrop mac dinh z-index:100000, THAP HON
    * .qc-modal-backdrop--nested (100210, popup preview dang mo) - ConfirmModal
@@ -51,7 +53,7 @@ export function ConfirmModal({
         </div>
         <footer className="crm-modal-footer">
           <div className="crm-deal-footer-actions">
-            <button type="button" className="crm-cancel-button" onClick={onClose}>Huỷ</button>
+            <button type="button" className="crm-cancel-button" onClick={onClose}>{cancelLabel || 'Huỷ'}</button>
             {actions.map((action, index) => (
               <button
                 key={index}

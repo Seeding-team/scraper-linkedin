@@ -9,6 +9,7 @@ import { serviceCatalogRepository } from './repositories/ServiceCatalogRepositor
 import type { BundleComponentInput, ServiceCatalogItem, ServiceCatalogItemInput, ServiceCatalogUnit, ServiceCatalogVatRate } from './types';
 import { usePricingLogic } from './usePricingLogic';
 import { emptyProductForm, formatSkuName, parseNullableNumber } from './catalog-form-utils';
+import { targetGrossMarginFromCustomerPrice } from './pricing-math';
 import './styles/service-catalog.css';
 import '@/modules/crm/styles/quote-center.css';
 import { SearchableSelect } from '@/modules/crm/components/SearchableSelect';
@@ -280,7 +281,7 @@ export function QuickAddProductModal({
         otherCost: 0,
         pricingPolicy: 'catalog_default',
         costPriceVnd: initialCost,
-        markupPercent: initialCost > 0 && initialPrice > 0 ? ((initialPrice - initialCost) / initialCost) * 100 : 0,
+        markupPercent: targetGrossMarginFromCustomerPrice(initialCost, initialPrice) ?? 0,
         customerPriceVnd: initialPrice,
       }));
     }
@@ -381,7 +382,7 @@ export function QuickAddProductModal({
     const errs: Record<string, string> = {};
     if (!parentId) errs.parentId = 'Vui lòng chọn nhóm sản phẩm.';
     if (!nameInput.trim()) errs.name = 'Vui lòng nhập tên sản phẩm.';
-    if (pricing.markupPercent < -100) errs.markup = 'Markup không hợp lệ.';
+    if (pricing.markupPercent >= 100) errs.markup = 'Markup phải nhỏ hơn 100%.';
     return errs;
   }
 

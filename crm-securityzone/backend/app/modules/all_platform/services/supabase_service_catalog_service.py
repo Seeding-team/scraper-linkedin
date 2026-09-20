@@ -753,46 +753,46 @@ def upsert_service_catalog_item_pricing(
     client gui cho field KHONG phai field dieu khien (dung yeu cau audit:
     "backend phai dam bao 3 gia tri luon nhat quan"). Field duoc TINH LAI
     (khong tin nguyen so client gui) tuy `pricing_input_mode`:
-      - mode='markup': cost + markup la input, customer = cost * (1 +
-        markup/100). cost=None -> customer=None (khong tinh duoc).
+      - mode='markup': cost + markup_percent la input, nhung theo nghiep vu
+        field nay la Target Gross Margin, customer = cost / (1 - GM/100).
       - mode='customer_price' (alias 'price'): cost + customer la input,
-        cost=None HOAC cost==0 -> KHONG chia (tranh ZeroDivisionError/suy
-        nguoc vo nghia), markup tra ve None. Nguoc lai markup = customer/cost - 1.
+        customer<=0 -> KHONG chia (gia 0 hop le nhung khong suy duoc GM),
+        markup tra ve None. Nguoc lai GM = (customer-cost)/customer.
       - mode='cost': markup + customer la input (nguoc voi mode='markup') -
-        cost = customer / (1 + markup/100). markup<=-100% (divisor<=0) hoac
-        thieu 1 trong 2 gia tri -> cost=None, khong chia/suy nguoc vo nghia.
-    Validate: cost/customer khong am (< 0 -> ValueError). Markup kep toi
-    thieu -100% (gia khach toi thieu = 0, giong dung cach da lam cho
-    markup hang muc bao gia - khong co nguong tren nghiep vu nao dung chung
-    cho danh muc mac dinh nen khong bia them gioi han tren)."""
+        cost = customer * (1 - GM/100). GM>=100% hoac thieu 1 trong 2 gia
+        tri -> cost=None, khong suy nguoc vo nghia.
+    Validate: cost/customer khong am (< 0 -> ValueError). GM muc tieu phai
+    nho hon 100% neu dung de tinh gia ban."""
     if cost_price_vnd is not None and cost_price_vnd < 0:
         raise ValueError("Giá vốn không được âm.")
     if customer_price_vnd is not None and customer_price_vnd < 0:
         raise ValueError("Giá khách không được âm.")
+    if pricing_input_mode == "markup" and markup_percent is not None and markup_percent < 0:
+        raise ValueError("Markup phải từ 0% đến dưới 100%.")
+    if markup_percent is not None and markup_percent >= 100:
+        raise ValueError("Markup phải nhỏ hơn 100%.")
 
     if pricing_input_mode == "markup":
-        markup = None if markup_percent is None else max(Decimal("-100"), markup_percent)
+        markup = markup_percent
         if cost_price_vnd is None or markup is None:
             customer = None
         else:
-            customer = cost_price_vnd * (Decimal("1") + markup / Decimal("100"))
+            divisor = Decimal("1") - markup / Decimal("100")
+            customer = cost_price_vnd / divisor if divisor > 0 else None
         cost, resolved_markup, resolved_customer = cost_price_vnd, markup, customer
     elif pricing_input_mode in ("price", "customer_price"):
-        if cost_price_vnd is None or cost_price_vnd == 0 or customer_price_vnd is None:
+        if cost_price_vnd is None or customer_price_vnd is None or customer_price_vnd <= 0:
             resolved_markup = None
         else:
-            resolved_markup = (customer_price_vnd / cost_price_vnd - Decimal("1")) * Decimal("100")
+            resolved_markup = ((customer_price_vnd - cost_price_vnd) / customer_price_vnd) * Decimal("100")
         cost, resolved_customer = cost_price_vnd, customer_price_vnd
     elif pricing_input_mode == "cost":
-        # Suy nguoc Gia von tu Markup + Gia khach (nguoc voi mode='markup').
-        # divisor <= 0 (markup <= -100%) -> khong chia duoc, tra ve cost=None
-        # thay vi ZeroDivisionError/so am vo nghia.
-        markup = None if markup_percent is None else max(Decimal("-100"), markup_percent)
-        divisor = None if markup is None else (Decimal("1") + markup / Decimal("100"))
-        if divisor is None or divisor <= 0 or customer_price_vnd is None:
+        markup = markup_percent
+        multiplier = None if markup is None else (Decimal("1") - markup / Decimal("100"))
+        if multiplier is None or multiplier < 0 or customer_price_vnd is None:
             cost = None
         else:
-            cost = customer_price_vnd / divisor
+            cost = customer_price_vnd * multiplier
         resolved_markup, resolved_customer = markup, customer_price_vnd
     else:
         cost, resolved_markup, resolved_customer = cost_price_vnd, markup_percent, customer_price_vnd

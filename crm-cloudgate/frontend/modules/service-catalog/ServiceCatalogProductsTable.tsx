@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { Fragment, forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useState } from 'react';
 import { ConfirmModal } from '@/modules/crm/components/ConfirmModal';
@@ -11,6 +11,7 @@ import {
   formatSkuName,
   type FlatProduct,
 } from './catalog-form-utils';
+import { customerPriceFromTargetGrossMargin } from './pricing-math';
 
 type PriceFilter = '' | 'configured' | 'unconfigured';
 
@@ -48,7 +49,7 @@ function resolvedCustomerPrice(product: FlatProduct): number | null {
     Number.isFinite(product.defaultCostPriceVnd) &&
     Number.isFinite(product.defaultMarkupPercent)
   ) {
-    return Math.max(0, product.defaultCostPriceVnd * (1 + product.defaultMarkupPercent / 100));
+    return customerPriceFromTargetGrossMargin(product.defaultCostPriceVnd, product.defaultMarkupPercent);
   }
   return product.defaultCustomerPriceVnd ?? null;
 }
