@@ -6,7 +6,7 @@ import { useMembers } from '@/hooks/useMembers';
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
 import { PositionSelect } from './PositionSelect';
 import { MemberSearchSelect } from './MemberSearchSelect';
-import { CrmCategoryCodeSelect } from './CrmCategorySelect';
+import { CrmCategoryCodeSelect, fetchCrmCategoryIdOptions } from './CrmCategorySelect';
 import { mapLead, LEAD_STATUS_LABEL } from './LeadsDirectory';
 import { ChevronDown, ChevronUp, Loader2, X } from './icons';
 import type { AppUser } from '@/types/unified.types';
@@ -63,6 +63,39 @@ function isAdminOrLeader(user: AppUser | null) {
 // ban rule-based dau tien (khong goi AI/backend), theo dung yeu cau spec.
 const PHONE_RE = /(?:\+?84|0)(?:\d[\s.-]?){9,10}\b/;
 const EMAIL_RE = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/;
+// "Lỗi không nhập công ty với chức vụ nhanh" (yeu cau rieng, kem screenshot QA
+// that): handleParsePaste() TRUOC DAY chi doan duoc SDT/Email/Ten/Nguon, hoan
+// toan bo qua Cong ty va Chuc vu du 2 truong nay THUONG xuat hien ngay canh
+// ten nguoi trong 1 dong dan vao dien hinh (vd "Anh Nam, Giám đốc kinh doanh
+// công ty TNHH ABC Solutions"). Bat tu khoa cong ty/tap doan/doanh nghiep den
+// het dong (hoac den dau phay ke tiep) - du hep hon NLP that su nhung an toan,
+// khong doan mo ho (giong dung tinh than detectSourceFromPaste ben tren).
+const COMPANY_RE = /(công\s*ty|tập\s*đoàn|doanh\s*nghiệp|cty)\b[^\n,]*/i;
+
+/** Doan Chuc vu tu van ban dan vao bang cach doi chieu voi CHINH danh muc
+ * "crm_position" that (khong bia them 1 danh sach cung cung) - chon nhan dai
+ * NHAT khop lam substring cua van ban (khong phan biet hoa/thuong) de uu tien
+ * nhan cu the hon nhan chung chung neu ca 2 cung xuat hien (vd "Giám đốc kinh
+ * doanh" thay vi chi "Giám đốc"). Tra ve null neu khong khop nhan nao ca -
+ * KHONG tu bia 1 gia tri khong co trong danh muc (vi form luu id tham chieu
+ * that, khong phai text tu do). */
+async function detectPositionFromPaste(text: string): Promise<{ id: string; label: string } | null> {
+  try {
+    const options = await fetchCrmCategoryIdOptions('crm_position');
+    const lower = text.toLowerCase();
+    let best: { id: string; label: string } | null = null;
+    for (const option of options) {
+      const label = option.label?.trim();
+      if (!label) continue;
+      if (lower.includes(label.toLowerCase()) && (!best || label.length > best.label.length)) {
+        best = { id: option.value, label };
+      }
+    }
+    return best;
+  } catch {
+    return null;
+  }
+}
 
 /** Nhan dien "Nguon" tu noi dung dan vao (yeu cau rieng - "chỗ nguồn lead vẫn
  * chưa feed") - TRUOC DAY handleParsePaste() chi doan duoc SDT/Email/Ten,
@@ -324,6 +357,24 @@ export function LeadFormDrawer({
     if (form.source === 'Manual') {
       const detected = detectSourceFromPaste(text);
       if (detected) setValue('source', detected);
+    }
+    // Cong ty/To chuc - xem COMPANY_RE o tren, CHI dien khi truong dang trong
+    // (khong ghi de gia tri nguoi dung da tu nhap/sua truoc do).
+    if (!form.companyName.trim()) {
+      const companyMatch = text.match(COMPANY_RE);
+      if (companyMatch) {
+        const raw = companyMatch[0].trim();
+        const normalized = raw.charAt(0).toUpperCase() + raw.slice(1);
+        handleCompanyNameChange(normalized);
+      }
+    }
+    // Chuc vu - doi chieu bat dong bo voi danh muc crm_position that (xem
+    // detectPositionFromPaste), CHI dien khi truong dang trong.
+    if (!form.positionCategoryId) {
+      void detectPositionFromPaste(text).then(detected => {
+        if (!detected) return;
+        setForm(prev => (prev.positionCategoryId ? prev : { ...prev, positionCategoryId: detected.id, positionLabel: detected.label }));
+      });
     }
   }
 

@@ -292,17 +292,24 @@ def list_customers(
 
     contact_customer_ids: set[str] = set()
     if search:
-        # Tim theo ten Contact (crm_contacts.name) KHONG the gop vao 1 .or_()
-        # cung bang crm_customers (khac bang) - chay query rieng lay
-        # customer_id cua cac contact khop, roi gop nhung khach hang CHUA co
-        # trong `rows` (tranh trung), ap lai dung cac filter status/source/
-        # owner_id thu cong vi query nay bo qua chung. Cach nay khong "dep"
-        # nhung dung, dung nhu huong dan task cho phep khi chua co pattern
-        # OR-cross-table san co trong codebase.
+        # Tim theo Contact (ten/SDT/email) KHONG the gop vao 1 .or_() cung
+        # bang crm_customers (khac bang) - chay query rieng lay customer_id
+        # cua cac contact khop, roi gop nhung khach hang CHUA co trong `rows`
+        # (tranh trung), ap lai dung cac filter status/source/owner_id thu
+        # cong vi query nay bo qua chung. Cach nay khong "dep" nhung dung,
+        # dung nhu huong dan task cho phep khi chua co pattern OR-cross-table
+        # san co trong codebase.
+        # BUG THAT DA GAP ("Tìm theo SĐT của Contact phụ -> Không có hồ sơ phù
+        # hợp" du SDT do thuoc dung 1 Contact nam trong 1 Customer that): truoc
+        # day query nay CHI khop theo "name", bo sot han "phone"/"email" cua
+        # Contact - vi vay tim theo SDT/email cua BAT KY contact phu nao (khong
+        # phai contact chinh dang luu truc tiep tren crm_customers.phone) deu
+        # tra ve rong. Bo sung ca phone/email vao cung 1 .or_(), dung tinh than
+        # voi cach crm_customers da lam o base_query() ben tren.
         contact_res = execute_supabase_query(
             lambda: supabase.table("crm_contacts")
             .select("customer_id")
-            .ilike("name", f"%{search}%")
+            .or_(f"name.ilike.%{search}%,phone.ilike.%{search}%,email.ilike.%{search}%")
             .eq("instance", settings.crm_instance)
             .execute()
         )

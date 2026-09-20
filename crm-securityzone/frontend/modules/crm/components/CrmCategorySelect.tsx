@@ -148,6 +148,34 @@ export function fetchCrmCategoryCodeOptions(categoryType: CategoryType): Promise
   return promise;
 }
 
+const cachedIdOptions = new Map<string, CrmCategoryOption[]>();
+const cachedIdPromises = new Map<string, Promise<CrmCategoryOption[]>>();
+
+/** Dung cho tinh nang "Phan tich noi dung" cua LeadFormDrawer/CustomerAddDrawer
+ * (tu dong doan Chuc vu tu van ban dan vao) - can id THAT (positionCategoryId)
+ * chu khong phai code/label, vi form luu id truc tiep (xem PositionSelect ->
+ * CrmCategoryIdSelect). Tach ham rieng thay vi tai dung
+ * fetchCrmCategoryCodeOptions vi 2 cache khac muc dich (id != code). */
+export function fetchCrmCategoryIdOptions(categoryType: CategoryType): Promise<CrmCategoryOption[]> {
+  const cached = cachedIdOptions.get(categoryType);
+  if (cached) return Promise.resolve(cached);
+  let promise = cachedIdPromises.get(categoryType);
+  if (!promise) {
+    promise = fetchCrmCategoryRows(categoryType, true)
+      .then(rows => {
+        const options = rows.map(row => getCategoryOption(row, 'id')).filter((row): row is CrmCategoryOption => Boolean(row));
+        cachedIdOptions.set(categoryType, options);
+        return options;
+      })
+      .catch(() => {
+        cachedIdPromises.delete(categoryType);
+        return [] as CrmCategoryOption[];
+      });
+    cachedIdPromises.set(categoryType, promise);
+  }
+  return promise;
+}
+
 export function invalidateCrmCategoryCache(categoryType?: CategoryType) {
   if (categoryType) {
     for (const suffix of ['active', 'all']) cachedRows.delete(`${categoryType}:${suffix}`);
@@ -157,6 +185,8 @@ export function invalidateCrmCategoryCache(categoryType?: CategoryType) {
     cachedPromises.delete(categoryType);
     cachedCodeOptions.delete(categoryType);
     cachedCodePromises.delete(categoryType);
+    cachedIdOptions.delete(categoryType);
+    cachedIdPromises.delete(categoryType);
     invalidateTaxonomyCache(`categories:${categoryType}:active`);
     invalidateTaxonomyCache(`categories:${categoryType}:all`);
     return;
@@ -167,6 +197,8 @@ export function invalidateCrmCategoryCache(categoryType?: CategoryType) {
   cachedPromises.clear();
   cachedCodeOptions.clear();
   cachedCodePromises.clear();
+  cachedIdOptions.clear();
+  cachedIdPromises.clear();
   invalidateTaxonomyCache();
 }
 

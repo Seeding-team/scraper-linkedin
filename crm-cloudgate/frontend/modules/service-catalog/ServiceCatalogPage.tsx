@@ -267,7 +267,7 @@ export function ServiceCatalogPage() {
                       </div>
                       {group.description ? <p className="sc-group-card-desc">{group.description}</p> : null}
                       <div className="sc-group-card-meta">
-                        <span className="sc-group-card-count">{(group.children || []).length} sản phẩm</span>
+                        <span className="sc-group-card-count">{(group.children || []).filter(c => c.status === 'active').length} sản phẩm</span>
                         <span className={`sc-badge ${group.status === 'inactive' ? 'sc-badge-inactive' : 'sc-badge-active'}`}>
                           {group.status === 'inactive' ? 'Ngừng sử dụng' : 'Đang sử dụng'}
                         </span>
@@ -307,7 +307,7 @@ export function ServiceCatalogPage() {
                       </td>
                       <td>
                         <Link href={`/all-platform/service-catalog/groups/${group.id}`} className="sc-row-link">
-                          {(group.children || []).length} sản phẩm
+                          {(group.children || []).filter(c => c.status === 'active').length} sản phẩm
                         </Link>
                       </td>
                       <td>
