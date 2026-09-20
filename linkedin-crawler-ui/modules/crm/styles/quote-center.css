@@ -2444,6 +2444,20 @@
   accent-color: #be1e4a;
   cursor: pointer;
 }
+.qc-workspace-th-name-content {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.qc-mini-btn-danger {
+  color: #be1e4a;
+  border-color: #f3b7c7;
+  background: #fff5f8;
+}
+.qc-mini-btn-danger:hover {
+  border-color: #be1e4a;
+  background: #ffe8ef;
+}
 .qc-workspace-item-name-col {
   display: flex;
   align-items: center;
@@ -2837,6 +2851,10 @@
 .qc-workspace-items-table--unified .qc-cell-markup,
 .qc-workspace-items-table--unified .qc-th-markup {
   background: #fffaf0;
+  min-width: 96px;
+  white-space: nowrap;
+  overflow: visible;
+  text-overflow: clip;
 }
 /* "Điền xuống" icon + popover (yeu cau rieng: khong hien chu "Điền xuống",
  * chi icon nho + tooltip, bam mo popover chon pham vi) - dat position:

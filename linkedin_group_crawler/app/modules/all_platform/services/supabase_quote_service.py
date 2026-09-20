@@ -135,7 +135,7 @@ def _row_to_item(row: dict) -> dict:
         "note": row.get("note") or "",
         "unit": row.get("unit"),
         "quantity": float(row.get("quantity") or 0),
-        "unitPrice": float(row.get("unit_price") or 0),
+        "unitPrice": (float(row["unit_price"]) if row.get("unit_price") is not None else None),
         "discountPercent": float(row.get("discount_percent") or 0),
         "discountAmount": float(row.get("discount_amount") or 0),
         "amountAfterDiscount": float(row.get("amount_after_discount") or 0),
@@ -823,10 +823,11 @@ def _enrich_bundle_catalog_quote_item(item: dict) -> dict:
         next_item["cost_not_applicable"] = False
     if next_item.get("markup_percent") is None and catalog_item.get("defaultMarkupPercent") is not None:
         next_item["markup_percent"] = catalog_item.get("defaultMarkupPercent")
-    if (not next_item.get("unit_price")) and catalog_item.get("defaultCustomerPriceVnd") is not None:
+    if next_item.get("unit_price") is None and catalog_item.get("defaultCustomerPriceVnd") is not None:
         next_item["unit_price"] = catalog_item.get("defaultCustomerPriceVnd")
-    if (not next_item.get("unit_price")) and next_item.get("cost_price") is not None and next_item.get("markup_percent") is not None:
-        next_item["unit_price"] = float(next_item["cost_price"]) * (1 + float(next_item["markup_percent"]) / 100)
+    if next_item.get("unit_price") is None and next_item.get("cost_price") is not None and next_item.get("markup_percent") is not None:
+        divisor = 1 - float(next_item["markup_percent"]) / 100
+        next_item["unit_price"] = float(next_item["cost_price"]) / divisor if divisor > 0 else 0
     return next_item
 
 
@@ -894,6 +895,12 @@ def _flatten_computed_items(raw_items: list[dict]) -> tuple[list[dict], float, f
             append_item(child, parent_flat_index, child_index)
 
     return flattened, subtotal, vat, total
+
+
+def _nullable_float(value: Any) -> float | None:
+    if value is None or value == "":
+        return None
+    return float(value)
 
 
 def _clamp_discount_percent(value: Any) -> float:
@@ -1632,7 +1639,7 @@ def create_quote(payload: dict, created_by: str | None) -> dict:
             "warranty_scope": item.get("warranty_scope") or None,
             "unit": item.get("unit"),
             "quantity": float(item.get("quantity") or 0),
-            "unit_price": float(item.get("unit_price") or 0),
+            "unit_price": _nullable_float(item.get("unit_price")),
             "discount_percent": item["discount_percent"],
             "discount_amount": item["discount"],
             "amount_after_discount": item["after_discount"],
@@ -1691,8 +1698,8 @@ _RPC_ERROR_MESSAGES = {
     "quote_item_invalid_cost_price": "Có hạng mục với giá vốn không hợp lệ (không được âm).",
     "quote_item_missing_cost_price": "Có hạng mục chưa nhập giá vốn — nhập giá vốn hoặc đánh dấu \"Không áp dụng giá vốn\" trước khi bàn giao.",
     "quote_handoff_checklist_incomplete": "Checklist bàn giao (Scope/Cost/Timeline/Assumption) chưa đủ 4 mục.",
-    "quote_item_invalid_unit_price": "Có hạng mục với giá bán không hợp lệ (phải > 0).",
-    "quote_item_invalid_markup": "Có hạng mục với markup không hợp lệ (thấp hơn -100%).",
+    "quote_item_invalid_unit_price": "Có hạng mục với giá bán không hợp lệ (không được âm hoặc để trống).",
+    "quote_item_invalid_markup": "Có hạng mục với Markup không hợp lệ (nếu nhập thì không được thấp hơn -100%).",
     "quote_missing_payment_terms": "Chưa chọn Điều khoản thanh toán — vào mục \"Thanh toán\" (dropdown số ngày) để chọn, không phải \"+ Ghi chú bổ sung\".",
     "quote_invalid_total_amount": "Tổng tiền tính lại không hợp lệ.",
     "quote_not_published": "Báo giá chưa từng được phát hành, không thể mở lại link — hãy Phát hành trước.",

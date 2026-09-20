@@ -1,5 +1,10 @@
 import type { ServiceCatalogItem, ServiceCatalogItemInput } from './types';
 import { formatCurrencyDisplay } from '@/lib/currency';
+import {
+  costFromTargetGrossMarginAndCustomer,
+  customerPriceFromTargetGrossMargin,
+  targetGrossMarginFromCustomerPrice,
+} from './pricing-math';
 
 /** Helper dung chung cho form Nhom/San pham + tinh toan bo gia mac dinh
  * (Gia von/Markup/Gia khach) - tach rieng ra khoi ServiceCatalogPage.tsx cu
@@ -170,23 +175,16 @@ export function formatMarkupOrMissing(value: number | undefined | null): string 
 }
 
 export function computeCustomerFromMarkup(cost: number | null, markup: number | null): number | null {
-  if (cost == null || markup == null) return null;
-  return cost * (1 + markup / 100);
+  return customerPriceFromTargetGrossMargin(cost, markup);
 }
 
 export function computeMarkupFromCustomer(cost: number | null, customer: number | null): number | null {
-  if (cost == null || cost === 0 || customer == null) return null;
-  return (customer / cost - 1) * 100;
+  return targetGrossMarginFromCustomerPrice(cost, customer);
 }
 
-/** Nguoc voi computeCustomerFromMarkup: suy Gia von tu Markup + Gia khach.
- * divisor <= 0 (markup <= -100%) -> khong chia duoc, tra ve null thay vi
- * so am/Infinity vo nghia. */
+/** Nguoc voi computeCustomerFromMarkup: suy Gia von tu GM muc tieu + Gia khach. */
 export function computeCostFromMarkupAndCustomer(markup: number | null, customer: number | null): number | null {
-  if (markup == null || customer == null) return null;
-  const divisor = 1 + markup / 100;
-  if (divisor <= 0) return null;
-  return customer / divisor;
+  return costFromTargetGrossMarginAndCustomer(markup, customer);
 }
 
 export function parseNullableNumber(raw: string): number | null {

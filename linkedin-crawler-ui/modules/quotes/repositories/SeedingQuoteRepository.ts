@@ -65,7 +65,7 @@ type QuoteItemPayload = {
   warranty_scope: string | null;
   unit?: string;
   quantity: number;
-  unit_price: number;
+  unit_price: number | null;
   discount_percent: number;
   vat_rate: number;
   children: QuoteItemPayload[];
@@ -208,7 +208,7 @@ function toQuoteItemPayload(item: NonNullable<CreateQuoteInput['items']>[number]
     warranty_scope: item.warrantyScope?.trim() || null,
     unit: item.unit,
     quantity: item.quantity,
-    unit_price: item.unitPrice,
+    unit_price: item.unitPrice ?? null,
     discount_percent: item.discountPercent ?? 0,
     vat_rate: item.vatRate,
     children: (item.children || []).map(toQuoteItemPayload),
