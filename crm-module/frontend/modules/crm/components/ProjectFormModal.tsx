@@ -273,7 +273,15 @@ export function ProjectFormModal({
             <div className="crm-form-grid">
               <Field label="Người liên hệ chính" hint={initialContactId ? "đã khóa" : undefined}>
                 {initialContactId ? (
-                  <input value={initialContactName || 'Người liên hệ hiện tại'} disabled readOnly />
+                  <input
+                    value={
+                      initialContactName ||
+                      contacts.find(c => c.id === initialContactId)?.name ||
+                      (contactsLoading ? 'Đang tải...' : '')
+                    }
+                    disabled
+                    readOnly
+                  />
                 ) : (
                   <select
                     value={primaryContactId}

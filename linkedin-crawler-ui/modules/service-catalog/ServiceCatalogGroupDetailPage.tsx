@@ -42,10 +42,23 @@ export function ServiceCatalogGroupDetailPage({ groupId }: { groupId: string }) 
 
   const activeCount = useMemo(() => products.filter(p => p.status === 'active').length, [products]);
 
+  // BUG THAT DA GAP ("sao đang có 1 mà hiện tổng là 2"): `products` la TAT
+  // CA con cua nhom (group.children tu backend KHONG loc status - xem
+  // list_service_catalog_items), gom ca san pham da bi chuyen "Ngừng kinh
+  // doanh" (vd do bi tu dong deactivate khi xoa 1 san pham dang duoc bao gia
+  // tham chieu - xem handleConfirmDelete o ServiceCatalogProductsTable.tsx).
+  // Bang phia duoi mac dinh CHI hien status='active' (statusFilter mac dinh
+  // 'active'), nen truoc day "Tổng X sản phẩm" tinh tren CA nhom (ke ca
+  // inactive) trong khi bang chi hien so it hon - nhin nhu mat du lieu/loi
+  // hien thi. Doi sang chi dem tren san pham active, KHOP DUNG voi nhung gi
+  // bang dang hien mac dinh (nguoi dung doi sang bo loc "Tất cả trạng thái"
+  // se van thay day du san pham, chi la khong con bi lech so voi so dem nua).
+  const activeProducts = useMemo(() => products.filter(p => p.status === 'active'), [products]);
+
   const priceConfigCounts = useMemo(() => {
-    const configured = products.filter(p => p.defaultCostPriceVnd != null).length;
-    return { total: products.length, configured, unconfigured: products.length - configured };
-  }, [products]);
+    const configured = activeProducts.filter(p => p.defaultCostPriceVnd != null).length;
+    return { total: activeProducts.length, configured, unconfigured: activeProducts.length - configured };
+  }, [activeProducts]);
 
   useEffect(() => {
     const editId = searchParams.get('edit');

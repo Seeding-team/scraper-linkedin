@@ -27,7 +27,7 @@ import {
   quoteDisplayStatus,
   relativeTime,
 } from '../utils/quoteDisplay';
-import { ArrowDownToLine, CheckCircle2, ChevronDown, ChevronUp, Eye, FileText, GitBranchPlus, History, LayoutGrid, Link2, Maximize2, Minimize2, Plus, Send, Trash2, X } from './icons';
+import { ArrowDownToLine, CheckCircle2, ChevronDown, ChevronUp, Eye, FileText, GitBranchPlus, History, LayoutGrid, Link2, Maximize2, Minimize2, Plus, Printer, Send, Trash2, X } from './icons';
 import { usersService, projectsService, allPlatformCategoriesService, type QuoteBusinessRoleUser, type Project } from '@/services/all-platform.service';
 import { computeQuoteSla } from '../utils/quoteSla';
 import { SearchableSelect } from './SearchableSelect';
@@ -355,7 +355,7 @@ async function loadQuoteCustomerOptions(): Promise<QuoteCustomerOption[]> {
   }>;
   return items.map(row => ({
     id: row.id,
-    label: `${row.customer_name || 'KhÃ¡ch hÃ ng chÆ°a tÃªn'}${row.company_name ? ' Â· ' + row.company_name : ''}`,
+    label: `${row.customer_name || 'Khách hàng chưa tên'}${row.company_name ? ' · ' + row.company_name : ''}`,
     name: row.customer_name,
     companyName: row.company_name,
     phone: row.phone,
@@ -382,7 +382,7 @@ async function loadQuoteCustomerOption(customerId: string): Promise<QuoteCustome
   };
   return {
     id: row.id,
-    label: `${row.customer_name || 'KhÃ¡ch hÃ ng chÆ°a tÃªn'}${row.company_name ? ' Â· ' + row.company_name : ''}`,
+    label: `${row.customer_name || 'Khách hàng chưa tên'}${row.company_name ? ' · ' + row.company_name : ''}`,
     name: row.customer_name,
     companyName: row.company_name,
     phone: row.phone,
@@ -3670,6 +3670,11 @@ export function QuoteWorkspaceModal({
     showToast(true, 'Đã sao chép link báo giá.');
   }
 
+  function printPublicQuotePdf() {
+    if (!quote!.publicUrl) return;
+    window.open(`${window.location.origin}${quote!.publicUrl}?print=true`, '_blank', 'noopener,noreferrer');
+  }
+
   // "Khoá link báo giá" - yeu cau rieng "gui khach xong lam sao khoa link lai
   // duoc" (endpoint /revoke-public da co san o backend/repository tu truoc,
   // dung o menu "..." tren trang Danh sach bao gia - nhung CHUA co trong
@@ -6117,6 +6122,9 @@ export function QuoteWorkspaceModal({
                         <>
                           <button type="button" className="qc-btn" onClick={() => void copyPublicLink()}>
                             <Link2 className="qc-icon" /> Sao chép link báo giá
+                          </button>
+                          <button type="button" className="qc-btn" onClick={printPublicQuotePdf}>
+                            <Printer className="qc-icon" /> In PDF
                           </button>
                           <button type="button" className="qc-btn" disabled={busy} onClick={() => void revokePublicLinkFromWorkspace()}>
                             Khoá link

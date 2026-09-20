@@ -194,7 +194,7 @@ export class ServiceCatalogRepository {
     });
   }
 
-  async delete(id: string): Promise<{ deleted: boolean }> {
+  async delete(id: string): Promise<{ deleted: boolean; deactivated?: boolean }> {
     return apiFetch(`/api/all-platform/service-catalog/delete?id=${encodeURIComponent(id)}`, {
       method: 'DELETE',
     });

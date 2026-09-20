@@ -221,6 +221,14 @@ const MONEY_COLUMN_KEYS = [
   'unitPriceVnd',
 ];
 
+/** Cot so NGAN (SL/VAT%/Giam gia%) - yeu cau rieng "chữ Số lượng bị rớt chữ
+ * g xuống" (kem anh chup ban in that): cac cot nay TRUOC DAY khong co class
+ * rieng, roi vao nhom "con lai chia deu" cung voi 2 cot tien it hon ~5-7%,
+ * qua hep cho tieu de "SỐ LƯỢNG"/"THUẾ VAT" nen bi ngat GIUA tu (vd
+ * "LƯỢN"+"G" tach roi 2 dong) thay vi ngat dung o khoang trang. Dat rieng
+ * class de co the danh mot % vua du (xem .num-cell trong quotes.css). */
+const SHORT_NUMBER_COLUMN_KEYS = ['quantity', 'vatRate', 'discountPercent'];
+
 function normalizeQuoteColumnLabel(column: QuoteField): string {
   if (column.key === 'amountAfterDiscount') return 'Thành tiền (Chưa VAT)';
   if (column.key === 'total') return 'Thành tiền (gồm VAT)';
@@ -558,19 +566,17 @@ export function QuoteDocumentRenderer({
   // co UI keo cot) va khong lien quan ban in (ban in doc theo @media print,
   // khong doc prop mode nay).
   const allowColumnResize = mode === 'preview' || mode === 'detail';
-  // Bang qua nhieu cot (vd mau "chuan" 9 cot: STT/Ten dich vu/Mo ta/DVT/So
-  // luong/Don gia/Giam gia/VAT/Thanh tien) khong the nen vua khong gian A4 du
-  // da nong cot Mo ta/Ten dich vu - cac cot so con lai bi ep qua hep gay
-  // chong chit/tran mep (QA thuc te + nguoi dung bao cao qua screenshot man
-  // hinh XEM, khong chi ban in). Tu 7 cot tro len, chuyen sang A4 NGANG cho
-  // CA man hinh xem (class .quote-sheet--print-landscape trong quotes.css)
-  // LAN ban in/PDF (the <style> chen duoi day, KHONG dung CSS "named page" -
-  // xem giai thich trong quotes.css, muc @page - da xac nhan Chromium bi 1
-  // loi that lam mat noi dung cuoi tai lieu voi named page). Bang van la
-  // <table> that, chi chia lai % cot rong rai hon, khong doi sang dang the
-  // xep doc/thu nho.
-  const LANDSCAPE_PRINT_COLUMN_THRESHOLD = 7;
-  const usesLandscapePrint = finalColumns.length >= LANDSCAPE_PRINT_COLUMN_THRESHOLD;
+  // BO HAN co che tu chuyen A4 NGANG khi nhieu cot (tung dung truoc day de
+  // tranh cot so bi ep chat) - yeu cau ro rang moi nhat (kem file spec PDF):
+  // "Khổ A4 portrait... Không cố nhồi nhiều sản phẩm bằng cách làm chữ nhỏ...
+  // Nếu báo giá dài → giữ nguyên kích thước chữ và tự động sang trang 2, 3".
+  // Tuc la LUON A4 DOC khi in/PDF, KHONG doi huong giay/thu nho chu de nen -
+  // bang nhieu cot gio dua vao typography Times New Roman + % cot rieng cho
+  // in (xem quotes.css, khoi "@media print" cuoi file) de vua vung in duoc,
+  // chu khong con doi sang ngang nua. Giu lai bien nay (luon false) thay vi
+  // xoa han de khong phai dong lai moi noi da doc no (className, <style>
+  // @page ben duoi...).
+  const usesLandscapePrint = false;
   // Muc cha (Section)/hang muc con - migration 104. 1 dong goc rowType=
   // 'section' la TIEU DE NHOM thuan tuy (khong tinh tien) - hien rieng 1 hang
   // noi bat chiem het cac cot, DUNG so La Ma (I, II, III...) rieng, KHONG
@@ -780,7 +786,7 @@ export function QuoteDocumentRenderer({
           @page DUY NHAT (khong dat ten) hoat dong moi luc in - an toan, da
           test that khong con mat noi dung. */}
       {usesLandscapePrint ? (
-        <style>{'@media print { @page { size: A4 landscape; margin: 10mm 12mm; } }'}</style>
+        <style>{'@media print { @page { size: A4 landscape; margin: 7mm 12mm; } }'}</style>
       ) : null}
       <section className={`quote-sheet quote-sheet--standard${usesLandscapePrint ? ' quote-sheet--print-landscape' : ''}`}>
         <header className="sheet-company sheet-company--standard">
@@ -902,7 +908,15 @@ export function QuoteDocumentRenderer({
                   {finalColumns.map(column => (
                     <th
                       key={column.key}
-                      className={column.key === 'unit' ? 'unit-cell' : undefined}
+                      className={
+                        column.type === 'currency' || MONEY_COLUMN_KEYS.includes(column.key)
+                          ? 'money-cell'
+                          : column.key === 'unit'
+                            ? 'unit-cell'
+                            : SHORT_NUMBER_COLUMN_KEYS.includes(column.key)
+                              ? 'num-cell'
+                              : undefined
+                      }
                       style={
                         allowColumnResize && resizedColumnWidths?.[column.key]
                           ? { width: resizedColumnWidths[column.key], minWidth: resizedColumnWidths[column.key] }
@@ -955,7 +969,9 @@ export function QuoteDocumentRenderer({
                                 ? 'money-cell'
                                 : column.key === 'unit'
                                   ? 'unit-cell'
-                                  : undefined
+                                  : SHORT_NUMBER_COLUMN_KEYS.includes(column.key)
+                                    ? 'num-cell'
+                                    : undefined
                             }
                           >
                             {column.type === 'auto-number' || column.key === 'order'

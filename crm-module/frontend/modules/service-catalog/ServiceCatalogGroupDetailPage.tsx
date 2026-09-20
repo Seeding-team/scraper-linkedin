@@ -1,7 +1,8 @@
 'use client';
 
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
 import { useServiceCatalog } from './use-service-catalog';
 import { ServiceCatalogProductsTable, type ServiceCatalogProductsTableHandle } from './ServiceCatalogProductsTable';
 import type { FlatProduct } from './catalog-form-utils';
@@ -26,6 +27,8 @@ import './styles/service-catalog.css';
 export function ServiceCatalogGroupDetailPage({ groupId }: { groupId: string }) {
   const { items, isLoaded, error, createItem, updateItem, deleteItem, refresh } = useServiceCatalog();
   const tableRef = useRef<ServiceCatalogProductsTableHandle>(null);
+  const openedEditRef = useRef<string | null>(null);
+  const searchParams = useSearchParams();
 
   const group = useMemo(
     () => items.find(item => item.itemType === 'group' && item.id === groupId),
@@ -37,10 +40,33 @@ export function ServiceCatalogGroupDetailPage({ groupId }: { groupId: string }) 
     return (group.children || []).map(child => ({ ...child, groupName: group.name }));
   }, [group]);
 
+  const activeCount = useMemo(() => products.filter(p => p.status === 'active').length, [products]);
+
+  // BUG THAT DA GAP ("sao đang có 1 mà hiện tổng là 2"): `products` la TAT
+  // CA con cua nhom (group.children tu backend KHONG loc status - xem
+  // list_service_catalog_items), gom ca san pham da bi chuyen "Ngừng kinh
+  // doanh" (vd do bi tu dong deactivate khi xoa 1 san pham dang duoc bao gia
+  // tham chieu - xem handleConfirmDelete o ServiceCatalogProductsTable.tsx).
+  // Bang phia duoi mac dinh CHI hien status='active' (statusFilter mac dinh
+  // 'active'), nen truoc day "Tổng X sản phẩm" tinh tren CA nhom (ke ca
+  // inactive) trong khi bang chi hien so it hon - nhin nhu mat du lieu/loi
+  // hien thi. Doi sang chi dem tren san pham active, KHOP DUNG voi nhung gi
+  // bang dang hien mac dinh (nguoi dung doi sang bo loc "Tất cả trạng thái"
+  // se van thay day du san pham, chi la khong con bi lech so voi so dem nua).
+  const activeProducts = useMemo(() => products.filter(p => p.status === 'active'), [products]);
+
   const priceConfigCounts = useMemo(() => {
-    const configured = products.filter(p => p.defaultCostPriceVnd != null).length;
-    return { total: products.length, configured, unconfigured: products.length - configured };
-  }, [products]);
+    const configured = activeProducts.filter(p => p.defaultCostPriceVnd != null).length;
+    return { total: activeProducts.length, configured, unconfigured: activeProducts.length - configured };
+  }, [activeProducts]);
+
+  useEffect(() => {
+    const editId = searchParams.get('edit');
+    if (!editId || openedEditRef.current === editId || products.length === 0) return;
+    if (!products.some(product => product.id === editId)) return;
+    openedEditRef.current = editId;
+    tableRef.current?.openEditById(editId);
+  }, [searchParams, products]);
 
   const [editingGroup, setEditingGroup] = useState(false);
   const [editName, setEditName] = useState('');
@@ -107,7 +133,7 @@ export function ServiceCatalogGroupDetailPage({ groupId }: { groupId: string }) 
             <span className={`sc-badge ${group.status === 'inactive' ? 'sc-badge-inactive' : 'sc-badge-active'}`}>
               {group.status === 'inactive' ? 'Ngừng sử dụng' : 'Đang sử dụng'}
             </span>
-            <span className="sc-group-count">{products.length} sản phẩm</span>
+            <span className="sc-group-count">{activeCount} sản phẩm đang kinh doanh</span>
             <div className="sc-group-header-actions">
               <button type="button" className="sc-btn" onClick={openEditGroup}>
                 <Pencil className="qc-inline-icon" /> Sửa thông tin nhóm

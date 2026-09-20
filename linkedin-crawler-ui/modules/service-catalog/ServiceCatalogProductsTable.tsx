@@ -174,10 +174,26 @@ export const ServiceCatalogProductsTable = forwardRef<ServiceCatalogProductsTabl
     }
   }
 
+  // BUG THAT DA GAP ("Sản phẩm đã được tham chiếu mà vẫn xóa được, xóa xong
+  // bị lỗi"): backend (delete_service_catalog_item) da co san co che bao ve
+  // dung - sản phẩm dang duoc 1 bao gia tham chieu (quote_items) se KHONG bi
+  // hard-delete, chi chuyen status sang 'inactive' va tra ve HTTP 200 voi
+  // {deleted:false, deactivated:true} (khong throw loi). TRUOC DAY code o day
+  // chi bat loi THROW (vd nhom con con/dang dung trong goi) va IM LANG hoan
+  // toan voi truong hop deactivate - modal dong lai y het nhu xoa thanh cong
+  // that. Vi bang mac dinh loc status='active', san pham vua bi an mat khoi
+  // danh sach (du van con trong tong so "Tổng X sản phẩm" khong loc theo
+  // status) - nguoi dung tuong nham la bug/mat du lieu. Them thong bao ro
+  // rang cho dung truong hop nay.
   async function handleConfirmDelete() {
     if (!confirmDeleteTarget) return;
     try {
-      await deleteItem(confirmDeleteTarget.id);
+      const result = await deleteItem(confirmDeleteTarget.id);
+      if ((result as { deactivated?: boolean } | undefined)?.deactivated) {
+        window.alert(
+          `Sản phẩm "${confirmDeleteTarget.name}" đang được tham chiếu trong (các) báo giá đã tạo nên không thể xóa hẳn - hệ thống đã tự chuyển sang trạng thái "Ngừng kinh doanh" thay vì xóa. Đổi bộ lọc trạng thái để xem lại sản phẩm này.`
+        );
+      }
     } catch (err) {
       window.alert(err instanceof Error ? err.message : 'Không xoá được sản phẩm.');
     } finally {

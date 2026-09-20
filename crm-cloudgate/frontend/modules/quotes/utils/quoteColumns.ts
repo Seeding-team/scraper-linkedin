@@ -62,11 +62,17 @@ export function resolveQuoteItemColumns(schema: QuoteSchema, _quoteItems: QuoteI
   // nay hay khong. DA BO HAN buoc chen nay - `baseColumns` (tu chinh
   // config.columns cua mau) la nguon DUY NHAT, mau nao khai bao 3 cot nay
   // that su thi chung da nam san trong baseColumns roi, khong can chen tay.
+  // BUG THAT DA GAP ("Thành tiền (chưa VAT) biến mất khỏi bảng dù mẫu khai
+  // báo rõ ràng"): dong nay TRUOC DAY con 1 buoc loc bo cung them ca 'subtotal'
+  // (KHONG chi 'vatAmount') khoi columns, BAT KE cot 'subtotal' co duoc mau
+  // khai bao visible hay khong - vi pham dung nguyen tac "mẫu báo giá quyết
+  // định cột nào được phép xuất hiện" da neu ngay phia tren. 'vatAmount' luon
+  // duoc chinh standard_schema() khai visible=False san (xem
+  // seed_quote_forms.py) nen da bi loai o dong loc "visible !== false" ngay
+  // tren roi - filter 'subtotal'/'vatAmount' o day thua/sai, XOA HAN.
   const baseColumns = itemField?.config?.columns?.filter(column => column.visible !== false) || [];
 
-  const columns = (baseColumns.length ? [...baseColumns] : [...FALLBACK_COLUMNS]).filter(
-    column => !['subtotal', 'vatAmount'].includes(column.key)
-  );
+  const columns = baseColumns.length ? [...baseColumns] : [...FALLBACK_COLUMNS];
   if (!columns.some(column => column.key === 'order' || column.type === 'auto-number')) {
     columns.unshift({ key: 'order', label: 'STT', type: 'auto-number' });
   }
