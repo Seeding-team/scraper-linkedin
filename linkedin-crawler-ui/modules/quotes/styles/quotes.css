@@ -2312,8 +2312,9 @@ select.quote-compact-vat:hover {
 .sheet-doc-code em {
   display: block;
   margin-top: 0.3rem;
-  color: #6b7280;
-  font-size: 9px;
+  color: #475569;
+  font-size: 11px;
+  font-weight: 600;
   font-style: normal;
 }
 
@@ -2978,7 +2979,7 @@ select.quote-compact-vat:hover {
  * 12-14mm yeu cau). */
 @page {
   size: A4 portrait;
-  margin: 10mm;
+  margin: 13mm;
 }
 
 @media print {
@@ -3493,13 +3494,22 @@ select.quote-compact-vat:hover {
 
 /* ============================================================
  * TYPOGRAPHY CHUAN CHO PRINT/PDF BAO GIA/HOP DONG (yeu cau rieng,
- * kem file spec PDF): Times New Roman, co chu theo pt (khong dung
- * rem/em nua o day - "px cho chuan" nhung ban in that su do bang
- * pt, xem quy doi trong tung comment), KHONG scale()/zoom/JS thu
- * nho. A4 portrait la mac dinh (nguoi dung co the tu doi sang ngang
- * o man "Xem truoc khi in", xem usesLandscapePrint trong
- * QuoteDocumentRenderer.tsx + @page o tren - da doi margin ve 13mm
- * dong bo voi khoi nay).
+ * kem bang spec typography moi nhat - CHOT LAI 2026-09-22): Times New
+ * Roman, co chu theo pt (khong dung rem/em nua o day), KHONG scale()/
+ * zoom/JS thu nho. A4 portrait mac dinh, le 13mm deu 4 canh (giua khoang
+ * 12-15mm yeu cau, khop @page o tren) -> chieu rong content ~184mm (trong
+ * khoang 180-186mm yeu cau).
+ * UU TIEN DOC DUOC, KHONG uu tien nhet du 1 trang: body toi thieu ~11pt,
+ * bang toi thieu ~10pt, heading section 11-13pt, tieu de 16-18pt,
+ * line-height 1.3-1.45, cho phep page-break tu nhien giua cac hang muc
+ * (chi tranh CAT DOI 1 hang - page-break-inside:avoid tren <tr>, khong
+ * ep ca tai lieu vao 1 trang). Header/footer/chu ky KHONG duoc nho hon
+ * chu trong bang - ngoai le CO Y: cac nhan viet hoa nho (BAO GIA/eyebrow/
+ * section label, 8pt) va so tien gach ngang truoc giam gia (8.5pt) van
+ * giu nho hon vi la caption/annotation phu, khong phai noi dung chinh.
+ * Portrait/landscape dung CHUNG toan bo typography nay, chi doi @page
+ * size + margin rieng cho ngang (xem usesLandscapePrint trong
+ * QuoteDocumentRenderer.tsx).
  * Dat CUOI FILE (thay vi sua rai rac tung selector cu) de LUON
  * thang the (source order + !important) truoc moi rule print cu
  * hon phia tren - khong can doi tung noi, de doi chieu/rollback
@@ -3512,7 +3522,7 @@ select.quote-compact-vat:hover {
    * cac muc duoc ghi de rieng ben duoi. */
   .quote-document-renderer {
     font-family: 'Times New Roman', Times, serif !important;
-    font-size: 10pt !important;
+    font-size: 11pt !important;
     line-height: 1.4 !important;
     /* Tieng Viet co dau ro net, khong mong: Times New Roman la font he
        thong (khong phai webfont tai ve) nen Chromium in dung hinting
@@ -3542,6 +3552,14 @@ select.quote-compact-vat:hover {
     font-size: 11pt !important;
   }
 
+  /* Ngay bao gia canh so bao gia - "header khong duoc nho hon table text"
+   * (yeu cau rieng chot lai typography) - bump tiep tu 9pt len bang san
+   * table (10pt). */
+  .sheet-doc-code em {
+    font-size: 10pt !important;
+    font-weight: 600 !important;
+  }
+
   /* Tieu de tung muc (THONG TIN KHACH HANG / NGUOI PHU TRACH / BANG DICH
    * VU...). */
   .sheet-parties h3,
@@ -3549,7 +3567,7 @@ select.quote-compact-vat:hover {
   .sheet-insights h3,
   .villa-commitments h3,
   .villa-totals h3 {
-    font-size: 10.5pt !important;
+    font-size: 12pt !important;
     font-weight: 700 !important;
   }
 
@@ -3574,46 +3592,46 @@ select.quote-compact-vat:hover {
   .sheet-insight-item p,
   .villa-footer p,
   .villa-list li {
-    font-size: 10pt !important;
+    font-size: 10.5pt !important;
     line-height: 1.45 !important;
     margin: 2px 0 !important;
   }
 
-  /* Thong tin cong ty phat hanh (dia chi/SDT/email duoi ten cong ty) - tach
-   * rieng khoi .sheet-parties p vi spec quy dinh khac muc: "Thông tin công
-   * ty: 8.5–9pt" (nho hon THONG TIN KHACH HANG mot chut, cung tier voi
-   * META ben duoi). */
+  /* Thong tin cong ty phat hanh (dia chi/SDT/email duoi ten cong ty) -
+   * "Header/footer/signature khong duoc nho hon table text" (yeu cau rieng
+   * chot lai typography) - truoc day 9pt, thap hon san table (10pt) nen
+   * bump len bang muc san toi thieu do. */
   .sheet-company p {
-    font-size: 9pt !important;
+    font-size: 10pt !important;
     margin: 1.5px 0 !important;
   }
 
-  /* Meta line (villa template - .sheet-quote-meta cu da bo, ngay bao gia
-   * gio nam trong .sheet-doc-code em) - "THÔNG TIN PHỤ / META: 8.5–9pt". */
+  /* Meta line (villa template) - cung san "khong nho hon table text". */
   .villa-meta {
-    font-size: 9pt !important;
+    font-size: 10pt !important;
   }
 
-  /* Bang san pham/dich vu - "Bảng sản phẩm: 9.5pt" cho noi dung o,
-   * "Header bảng: 9pt bold" rieng cho <th>. Ghi de ca 2 lop (bang +
-   * o) vi .sheet-items-table dang co 1 rule print cu hon o tren dat
-   * font-size chung cho ca bang (0.68rem/10px) - khoi nay o CUOI FILE
-   * nen thang the, khong can sua/xoa rule cu do. */
+  /* Bang san pham/dich vu - "Font bảng 9.5–10.5pt, tối thiểu ~10pt" (yeu
+   * cau rieng chot lai typography, uu tien doc duoc hon nhet vua 1 trang -
+   * truoc day 9/9.5pt). Ghi de ca 2 lop (bang + o) vi .sheet-items-table
+   * dang co 1 rule print cu hon o tren dat font-size chung cho ca bang
+   * (0.68rem/10px) - khoi nay o CUOI FILE nen thang the, khong can sua/xoa
+   * rule cu do. */
   .sheet-items-table,
   .villa-table {
     font-family: 'Times New Roman', Times, serif !important;
-    font-size: 9.5pt !important;
+    font-size: 10pt !important;
   }
 
   .sheet-items-table th,
   .villa-table th {
-    font-size: 9pt !important;
+    font-size: 10pt !important;
     font-weight: 700 !important;
   }
 
   .sheet-items-table td,
   .villa-table td {
-    font-size: 9.5pt !important;
+    font-size: 10pt !important;
   }
 
   .quote-price-stack s {
@@ -3630,17 +3648,18 @@ select.quote-compact-vat:hover {
     break-inside: avoid !important;
   }
 
-  /* Tong tien / ghi chu / chu ky - "Tổng tiền / ghi chú: 9–10pt", han
-   * che bi chia doi giua trang (rule page-break-inside:avoid cho 3 khoi
-   * nay da co san o tren, giu nguyen). */
+  /* Tong tien / ghi chu / chu ky - "Tổng tiền / ghi chú: tối thiểu 10pt"
+   * (yeu cau rieng chot lai typography, uu tien doc duoc), han che bi chia
+   * doi giua trang (rule page-break-inside:avoid cho 3 khoi nay da co san o
+   * tren, giu nguyen). */
   .sheet-total-row,
   .villa-total-row {
-    font-size: 9.5pt !important;
+    font-size: 10pt !important;
   }
 
   .sheet-total-row--grand,
   .villa-total-row--grand {
-    font-size: 10pt !important;
+    font-size: 11pt !important;
     font-weight: 700 !important;
   }
 
@@ -3648,7 +3667,7 @@ select.quote-compact-vat:hover {
   .sheet-note p,
   .sheet-note--terms li,
   .villa-total-sub {
-    font-size: 9.5pt !important;
+    font-size: 10pt !important;
   }
 
   /* Ghi chu THAT SU render qua <ul><li> (khong phai <p> nhu nham tuong ban
