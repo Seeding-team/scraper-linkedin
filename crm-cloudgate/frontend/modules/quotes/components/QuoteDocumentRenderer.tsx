@@ -29,7 +29,7 @@ import {
 function formatVnd(value: unknown): string {
   return formatVndRaw(value).replace(/\s*đ$/, '');
 }
-import { resolveDefaultVisibleColumnKeys, resolveQuoteItemColumns, resolveToggleableColumns } from '../utils/quoteColumns';
+import { filterRedundantAmountAfterDiscountColumn, normalizeQuoteColumnLabel, resolveDefaultVisibleColumnKeys, resolveQuoteItemColumns, resolveToggleableColumns } from '../utils/quoteColumns';
 import {
   getCustomerDisplayFields,
   resolveVisibleCustomerFieldKeys,
@@ -228,12 +228,6 @@ const MONEY_COLUMN_KEYS = [
  * "LƯỢN"+"G" tach roi 2 dong) thay vi ngat dung o khoang trang. Dat rieng
  * class de co the danh mot % vua du (xem .num-cell trong quotes.css). */
 const SHORT_NUMBER_COLUMN_KEYS = ['quantity', 'vatRate', 'discountPercent'];
-
-function normalizeQuoteColumnLabel(column: QuoteField): string {
-  if (column.key === 'amountAfterDiscount') return 'Thành tiền (Chưa VAT)';
-  if (column.key === 'total') return 'Thành tiền (gồm VAT)';
-  return column.label;
-}
 
 function bundleSnapshotComponents(item: QuoteItem): BundleSnapshotComponent[] {
   const snapshot = item.bundleSnapshot as unknown;
@@ -550,17 +544,20 @@ export function QuoteDocumentRenderer({
   // thị" (customerVisibleColumns thuc su chua key do).
   const DEFAULT_HIDDEN_FROM_CUSTOMER_KEYS = ['listPriceUsd', 'unitPriceUsd', 'unitPriceVnd'];
   const defaultVisibleCustomerColumnKeys = resolveDefaultVisibleColumnKeys(schema, quoteItems);
-  const finalColumns = applyCustomerColumnFilter
-    ? customerVisibleColumns
-      ? standardColumns.filter(
-          column => !TOGGLEABLE_COLUMN_KEYS.includes(column.key) || customerVisibleColumns.includes(column.key)
-        )
-      : standardColumns.filter(
-          column =>
-            (!TOGGLEABLE_COLUMN_KEYS.includes(column.key) || defaultVisibleCustomerColumnKeys.includes(column.key)) &&
-            !DEFAULT_HIDDEN_FROM_CUSTOMER_KEYS.includes(column.key)
-        )
-    : standardColumns;
+  const finalColumns = filterRedundantAmountAfterDiscountColumn(
+    applyCustomerColumnFilter
+      ? customerVisibleColumns
+        ? standardColumns.filter(
+            column => !TOGGLEABLE_COLUMN_KEYS.includes(column.key) || customerVisibleColumns.includes(column.key)
+          )
+        : standardColumns.filter(
+            column =>
+              (!TOGGLEABLE_COLUMN_KEYS.includes(column.key) || defaultVisibleCustomerColumnKeys.includes(column.key)) &&
+              !DEFAULT_HIDDEN_FROM_CUSTOMER_KEYS.includes(column.key)
+          )
+      : standardColumns,
+    quoteItems
+  );
   // Resize cot kieu Excel chi bat o man hinh noi bo (nguoi TAO/xem chi tiet
   // bao gia) - khong bat cho 'public' (khach nhan bao gia khong can/khong nen
   // co UI keo cot) va khong lien quan ban in (ban in doc theo @media print,
