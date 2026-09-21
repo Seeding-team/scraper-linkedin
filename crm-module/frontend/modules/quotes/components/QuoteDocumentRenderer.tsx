@@ -36,7 +36,7 @@ import {
 } from '../utils/quoteCustomerFields';
 import { resolveVisibleSummaryFieldKeys } from '../utils/quoteSummaryFields';
 
-interface Totals {
+export interface Totals {
   subtotalAmount: number;
   /** Tiền giảm giá (đã tính sẵn = subtotalAmount * discountPercent / 100) - optional
    * để không phá các nơi gọi cũ (villa layout, quote đã lưu trước khi có tính năng
@@ -79,6 +79,17 @@ interface Props {
    * totals truyen vao (totals van la so goc, phep tinh chiet khau chi xay ra o
    * tang hien thi trong component nay). */
   overallDiscountPercent?: number | null;
+  /** Bật khi renderer đang hiển thị với toolbar "chỉnh xoay ngang/dọc, căn
+   * chỉnh cột" luôn hiện sẵn (PublicQuotePage/QuoteDetailPage/QuoteWorkspaceModal)
+   * - cho phép kéo giãn cột NGAY CẢ ở mode 'public' (khách/PDF), không chỉ
+   * 'preview'/'detail' như mặc định (xem allowColumnResize), VÀ mang độ rộng đã
+   * kéo vào bản in thật (mặc định resize chỉ là tiện ích xem màn hình, xem
+   * resizedColumnWidths + rule --col-print-w trong quotes.css). */
+  printPreviewMode?: boolean;
+  /** Hướng giấy khi in - mặc định 'portrait' (giữ nguyên yêu cầu cũ "luôn A4
+   * dọc, không tự đổi hướng"). Người dùng chọn 'landscape' ở màn Xem trước khi
+   * in (xem usesLandscapePrint bên dưới - trước đây luôn hardcode false). */
+  printOrientation?: 'portrait' | 'landscape';
 }
 
 function emptySchema(): QuoteSchema {
@@ -219,6 +230,11 @@ const MONEY_COLUMN_KEYS = [
   'listPriceUsd',
   'unitPriceUsd',
   'unitPriceVnd',
+  // "Giảm giá/Tiết kiệm" (Mẫu ưu đãi combo Markee, xem quoteConfig.ts
+  // promoBundleColumns) - BUG THAT DA GAP: thieu key nay trong danh sach nen
+  // khong duoc white-space:nowrap, chu bi be doc tung ky tu khi cot qua hep
+  // (bang nhieu cot, xem them fix o minWidth ben duoi).
+  'discountAmount',
 ];
 
 /** Cot so NGAN (SL/VAT%/Giam gia%) - yeu cau rieng "chữ Số lượng bị rớt chữ
@@ -307,6 +323,8 @@ export function QuoteDocumentRenderer({
   isPublished = false,
   quoteNumber,
   overallDiscountPercent = null,
+  printPreviewMode = false,
+  printOrientation = 'portrait',
 }: Props) {
   // Resize cot bang hang muc kieu Excel - CHI cho man hinh xem truoc/chi tiet
   // noi bo (mode 'preview'/'detail', xem allowColumnResize ben duoi), KHONG
@@ -398,6 +416,13 @@ export function QuoteDocumentRenderer({
     if (column.key === 'quantity') return String(item.quantity || '');
     if (column.key === 'discountPercent') return item.discountPercent ? `${item.discountPercent}%` : '';
     if (column.key === 'amountAfterDiscount') return formatVnd(calculateItemAfterDiscount(item));
+    // "Giảm giá/Tiết kiệm" (so tien, KHAC voi 'discountPercent' o tren chi
+    // hien %) - dung cho mau "Mẫu ưu đãi combo (Markee)" (xem promoBundleColumns
+    // trong quoteConfig.ts).
+    if (column.key === 'discountAmount') {
+      const discount = calculateItemDiscount(item);
+      return discount ? `-${formatVnd(discount)}` : formatVnd(0);
+    }
     if (column.key === 'vatRate') return item.vatRate ? `${item.vatRate}%` : '';
     // "Mô tả" luôn qua tách dòng theo "•" (kể cả du lieu moi da co serviceDescription
     // rieng) - phai xu ly TRUOC fallback chung ben duoi, khong thi item.description
@@ -558,22 +583,22 @@ export function QuoteDocumentRenderer({
       : standardColumns,
     quoteItems
   );
-  // Resize cot kieu Excel chi bat o man hinh noi bo (nguoi TAO/xem chi tiet
-  // bao gia) - khong bat cho 'public' (khach nhan bao gia khong can/khong nen
-  // co UI keo cot) va khong lien quan ban in (ban in doc theo @media print,
-  // khong doc prop mode nay).
-  const allowColumnResize = mode === 'preview' || mode === 'detail';
-  // BO HAN co che tu chuyen A4 NGANG khi nhieu cot (tung dung truoc day de
-  // tranh cot so bi ep chat) - yeu cau ro rang moi nhat (kem file spec PDF):
-  // "Khổ A4 portrait... Không cố nhồi nhiều sản phẩm bằng cách làm chữ nhỏ...
-  // Nếu báo giá dài → giữ nguyên kích thước chữ và tự động sang trang 2, 3".
-  // Tuc la LUON A4 DOC khi in/PDF, KHONG doi huong giay/thu nho chu de nen -
-  // bang nhieu cot gio dua vao typography Times New Roman + % cot rieng cho
-  // in (xem quotes.css, khoi "@media print" cuoi file) de vua vung in duoc,
-  // chu khong con doi sang ngang nua. Giu lai bien nay (luon false) thay vi
-  // xoa han de khong phai dong lai moi noi da doc no (className, <style>
-  // @page ben duoi...).
-  const usesLandscapePrint = false;
+  // Resize cot kieu Excel: mac dinh chi bat o man hinh noi bo (nguoi TAO/xem
+  // chi tiet bao gia), khong bat cho 'public' (khach nhan bao gia khong
+  // can/khong nen co UI keo cot) va khong lien quan ban in (ban in doc theo
+  // @media print, khong doc prop mode nay) - TRU KHI toolbar chinh in dang
+  // hien san (printPreviewMode=true, xem PublicQuotePage/QuoteDetailPage/
+  // QuoteWorkspaceModal.tsx), noi nguoi dung CHU DONG can keo cot va IN LUON tu do (ke ca ban 'public' gui
+  // khach), nen bat resize bat ke mode.
+  const allowColumnResize = printPreviewMode || mode === 'preview' || mode === 'detail';
+  // Kho giay khi in: mac dinh 'portrait' (A4 doc) theo yeu cau cu ("Khổ A4
+  // portrait... Không cố nhồi nhiều sản phẩm bằng cách làm chữ nhỏ... Nếu báo
+  // giá dài → tự động sang trang 2, 3" - tuc KHONG tu dong doi ngang/thu nho
+  // chu de nen). Yeu cau moi hon ("Xem truoc khi in" co the chon doc/ngang)
+  // cho phep NGUOI DUNG tu chon qua prop printOrientation thay vi component
+  // tu quyet dinh - portrait van la mac dinh khi khong truyen gi (giu dung
+  // hanh vi cu cho moi noi goi chua cap nhat).
+  const usesLandscapePrint = printOrientation === 'landscape';
   // Muc cha (Section)/hang muc con - migration 104. 1 dong goc rowType=
   // 'section' la TIEU DE NHOM thuan tuy (khong tinh tien) - hien rieng 1 hang
   // noi bat chiem het cac cot, DUNG so La Ma (I, II, III...) rieng, KHONG
@@ -786,6 +811,13 @@ export function QuoteDocumentRenderer({
         <style>{'@media print { @page { size: A4 landscape; margin: 7mm 12mm; } }'}</style>
       ) : null}
       <section className={`quote-sheet quote-sheet--standard${usesLandscapePrint ? ' quote-sheet--print-landscape' : ''}`}>
+        {/* Banner marketing (anh tinh, URL dan san qua field "bannerImageUrl") -
+         * chi dung cho "Mẫu ưu đãi combo (Markee)" (xem quoteConfig.ts), CO
+         * DIEU KIEN nen KHONG anh huong mau standard/villa cu (field nay
+         * khong ton tai/rong o cac schema khac). */}
+        {fieldValue('bannerImageUrl') ? (
+          <img className="sheet-marketing-banner" src={String(fieldValue('bannerImageUrl'))} alt="" />
+        ) : null}
         <header className="sheet-company sheet-company--standard">
           <div className="sheet-brand-block">
             {fieldValue('sellerLogo') ? (
@@ -887,7 +919,7 @@ export function QuoteDocumentRenderer({
                 bot cot khac), header duoc phep xuong dong (xem quotes.css) nen
                 khong can cot rong toi thieu lon nhu truoc. */}
             <table
-              className={`sheet-items-table${usesLandscapePrint ? ' sheet-items-table--print-landscape' : ''}${allowColumnResize ? ' sheet-items-table--resizable' : ''}`}
+              className={`sheet-items-table${usesLandscapePrint ? ' sheet-items-table--print-landscape' : ''}${allowColumnResize ? ' sheet-items-table--resizable' : ''}${printPreviewMode && resizedColumnWidths ? ' sheet-items-table--custom-print-widths' : ''}`}
               style={
                 // Da resize it nhat 1 cot: dat width = TONG cac cot (co the
                 // vuot 100% wrapper) de bang tu gian rong ra that su thay vi
@@ -897,7 +929,13 @@ export function QuoteDocumentRenderer({
                 // khac). Chua resize: giu nguyen minWidth mac dinh nhu cu.
                 allowColumnResize && resizedColumnWidths
                   ? { width: Object.values(resizedColumnWidths).reduce((sum, w) => sum + w, 0) }
-                  : { minWidth: Math.min(760, Math.max(420, finalColumns.length * 70)) }
+                  // BUG THAT DA GAP ("Mẫu ưu đãi combo Markee" 12 cot, chu bi
+                  // be/chong nhau): tran 760px cu THAP HON ca gia tri tinh ra
+                  // (12*70=840) cho bang nhieu cot - vo tinh EP bang HEP HON
+                  // muc can thiet du cong thuc tren da tinh dung. Nang tran
+                  // len 1400 (chi anh huong bang >10 cot, <=10 cot van y het
+                  // truoc gio vi 10*70=700 <760, khong bao gio cham tran).
+                  : { minWidth: Math.min(1400, Math.max(420, finalColumns.length * 70)) }
               }
             >
               <thead>
@@ -916,7 +954,15 @@ export function QuoteDocumentRenderer({
                       }
                       style={
                         allowColumnResize && resizedColumnWidths?.[column.key]
-                          ? { width: resizedColumnWidths[column.key], minWidth: resizedColumnWidths[column.key] }
+                          ? ({
+                              width: resizedColumnWidths[column.key],
+                              minWidth: resizedColumnWidths[column.key],
+                              // Doc lai o quotes.css (".sheet-items-table--custom-print-widths th")
+                              // KHI printPreviewMode - cho phep do rong da keo tay
+                              // "song" qua luc in that (@media print binh thuong ep
+                              // width:auto/% qua !important, xem comment o quotes.css).
+                              ...(printPreviewMode ? { '--col-print-w': `${resizedColumnWidths[column.key]}px` } : {}),
+                            } as React.CSSProperties)
                           : undefined
                       }
                     >
@@ -1033,6 +1079,21 @@ export function QuoteDocumentRenderer({
               </tr>)}</tbody>
               <tfoot><tr><th>Tổng</th><th>{paymentPlanPercent(visiblePaymentPlan(quoteData.paymentPlan))}%</th><th>{formatVnd(visiblePaymentPlan(quoteData.paymentPlan).reduce((sum, row) => sum + paymentPlanAmount(discountSummary.grandTotal, row.percent), 0))}</th><td colSpan={2} /></tr></tfoot>
             </table>
+          </section>
+        ) : null}
+
+        {/* "Cam kết & bảo hành" - dung DUNG field "commitments" + bien
+         * commitmentRows da tinh san (xem dong 476, villa dang dung chung bien
+         * nay) - CO DIEU KIEN nen KHONG anh huong cac mau khac (field nay
+         * trong/khong ton tai o schema standard/villa cu). */}
+        {commitmentRows.length ? (
+          <section className="sheet-note sheet-commitments">
+            <h3>Cam kết & bảo hành</h3>
+            <ul>
+              {commitmentRows.map((item, index) => (
+                <li key={`${item}-${index}`}>{item}</li>
+              ))}
+            </ul>
           </section>
         ) : null}
 

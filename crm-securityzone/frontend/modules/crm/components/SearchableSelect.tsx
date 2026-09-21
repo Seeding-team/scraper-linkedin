@@ -212,9 +212,37 @@ export function SearchableSelect({
     ...visibleOptions.map(o => ({ value: optionValue(o), disabled: optionDisabled(o) })),
   ];
 
+  const clearOptionIndex = showCreateOption ? 1 : 0;
+
+  /**
+   * [CHỨC NĂNG: Chuẩn hóa UX Highlight & Hover Dropdown cho Lead, Khách Hàng, Cơ Hội, Báo Giá]
+   * - Mặc định khi chưa chọn giá trị: Nền đỏ (highlight) nằm ở nút `-- Chọn --` (clearOptionIndex).
+   * - Khi đã chọn giá trị: Nền đỏ nằm tại đúng mục được chọn (isSelected / foundIdx), nút `-- Chọn --` không bị đỏ.
+   * - Khi tìm kiếm (search): Tự động highlight mục khớp đầu tiên hoặc nút tạo mới.
+   */
+  function getDefaultHighlightIndex(): number {
+    if (trimmedSearch.length > 0) {
+      if (showCreateOption) return 0;
+      if (visibleOptions.length > 0) {
+        const foundVisibleIdx = visibleOptions.findIndex(o => optionValue(o) === value);
+        const firstOptionIdx = (showCreateOption ? 1 : 0) + (hideClearOption ? 0 : 1);
+        if (foundVisibleIdx !== -1) {
+          return firstOptionIdx + foundVisibleIdx;
+        }
+        return firstOptionIdx;
+      }
+    }
+    const targetValue = value ?? '';
+    const foundIdx = keyboardItems.findIndex(item => !item.isCreate && item.value === targetValue);
+    if (foundIdx !== -1) return foundIdx;
+    return hideClearOption ? 0 : clearOptionIndex;
+  }
+
   useEffect(() => {
-    setHighlightedIndex(0);
-  }, [search, isOpen]);
+    if (isOpen) {
+      setHighlightedIndex(getDefaultHighlightIndex());
+    }
+  }, [search, isOpen, value]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -271,12 +299,20 @@ export function SearchableSelect({
                 placeholder={searchPlaceholder}
                 className="crm-searchable-select-input"
               />
-              <div className="crm-searchable-select-list" ref={listRef}>
+              {/* [CHỨC NĂNG: Hover theo chuột & Trả về vị trí đã chọn]
+                  - onMouseEnter trên từng option: Nền đỏ bám theo con trỏ chuột đến đúng mục đang trỏ.
+                  - onMouseLeave trên danh sách: Khi chuột rời khỏi menu, nền đỏ tự động trở về mục đã chọn ban đầu (getDefaultHighlightIndex). */}
+              <div
+                className="crm-searchable-select-list"
+                ref={listRef}
+                onMouseLeave={() => setHighlightedIndex(getDefaultHighlightIndex())}
+              >
                 {showCreateOption ? (
                   <button
                     type="button"
                     data-highlighted={highlightedIndex === 0}
                     className={`crm-searchable-select-option crm-searchable-select-action--add ${highlightedIndex === 0 ? 'is-highlighted' : ''}`}
+                    onMouseEnter={() => setHighlightedIndex(0)}
                     onClick={() => { onCreateOption?.(trimmedSearch); setIsOpen(false); setSearch(''); }}
                   >
                     + Tạo mới &quot;{trimmedSearch}&quot;
@@ -285,8 +321,9 @@ export function SearchableSelect({
                 {hideClearOption ? null : (
                   <button
                     type="button"
-                    data-highlighted={highlightedIndex === (showCreateOption ? 1 : 0)}
-                    className={`crm-searchable-select-option ${highlightedIndex === (showCreateOption ? 1 : 0) ? 'is-highlighted' : ''}`}
+                    data-highlighted={highlightedIndex === clearOptionIndex}
+                    className={`crm-searchable-select-option ${!value ? 'is-selected' : ''} ${highlightedIndex === clearOptionIndex ? 'is-highlighted' : ''}`}
+                    onMouseEnter={() => setHighlightedIndex(clearOptionIndex)}
                     onClick={() => { onChange(''); setIsOpen(false); setSearch(''); }}
                   >
                     {placeholder}
@@ -294,13 +331,20 @@ export function SearchableSelect({
                 )}
                 {!loading && visibleOptions.map((option, index) => {
                   const keyboardIndex = (showCreateOption ? 1 : 0) + (hideClearOption ? 0 : 1) + index;
+                  const isSelected = value === optionValue(option);
+                  const isHighlighted = highlightedIndex === keyboardIndex;
                   return (
                     <button
                       key={optionValue(option)}
                       type="button"
                       disabled={optionDisabled(option)}
-                      data-highlighted={highlightedIndex === keyboardIndex}
-                      className={`crm-searchable-select-option ${value === optionValue(option) ? 'is-selected' : ''} ${highlightedIndex === keyboardIndex ? 'is-highlighted' : ''}`}
+                      data-highlighted={isHighlighted}
+                      className={`crm-searchable-select-option ${isSelected ? 'is-selected' : ''} ${isHighlighted ? 'is-highlighted' : ''}`}
+                      onMouseEnter={() => {
+                        if (!optionDisabled(option)) {
+                          setHighlightedIndex(keyboardIndex);
+                        }
+                      }}
                       onClick={() => { if (optionDisabled(option)) return; onChange(optionValue(option)); setIsOpen(false); setSearch(''); }}
                     >
                       {optionRichLabel(option)}

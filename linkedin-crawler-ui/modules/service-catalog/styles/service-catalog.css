@@ -267,14 +267,24 @@
   font-weight: 500;
 }
 
+/* BUG THAT DA GAP ("mô tả hiện có 1 nửa rồi mất"): table dung table-layout
+ * auto (mac dinh) + cot Mo ta KHONG co width/min-width nao, nen thuat toan
+ * auto-layout co the ep cot nay hep toi muc chi con 1 tu/dong, khien
+ * -webkit-line-clamp:2 chi con hien duoc vai chu + 1 dong thu 3 bi cat dang
+ * do line-height khong khop khit voi chieu cao box clamp. Them min-width co
+ * dinh (khop voi .sc-th-desc) de cot luon co du cho hien 2 dong ro rang. */
 .sc-cell-desc {
   max-width: 320px;
+  min-width: 180px;
   overflow: hidden;
   color: #475467;
   text-overflow: ellipsis;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
+}
+.sc-th-desc {
+  min-width: 180px;
 }
 
 .sc-cell-title-text {
