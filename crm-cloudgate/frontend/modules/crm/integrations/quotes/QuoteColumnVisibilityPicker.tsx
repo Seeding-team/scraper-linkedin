@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { QuoteSchema } from '@/modules/quotes';
-import { getLockedColumnKeys, resolveDefaultVisibleColumnKeys, resolveQuoteItemColumns, resolveToggleableColumns } from '@/modules/quotes/utils/quoteColumns';
+import { getLockedColumnKeys, normalizeQuoteColumnLabel, resolveDefaultVisibleColumnKeys, resolveQuoteItemColumns, resolveToggleableColumns } from '@/modules/quotes/utils/quoteColumns';
 import {
   getCustomerDisplayFields,
   resolveVisibleCustomerFieldKeys,
@@ -291,7 +291,7 @@ export function QuoteColumnVisibilityPicker({
                         {requiredColumns.map(option => (
                           <label key={option.key} className="crm-quote-column-option crm-quote-column-option--locked">
                             <input type="checkbox" checked disabled />
-                            🔒 {option.label} <span className="crm-quote-column-required-badge">Bắt buộc</span>
+                            🔒 {normalizeQuoteColumnLabel(option)} <span className="crm-quote-column-required-badge">Bắt buộc</span>
                           </label>
                         ))}
                         {optionalColumns.map(option => (
@@ -302,7 +302,7 @@ export function QuoteColumnVisibilityPicker({
                               disabled={readOnly}
                               onChange={() => toggleColumn(option.key)}
                             />
-                            {option.label}
+                            {normalizeQuoteColumnLabel(option)}
                           </label>
                         ))}
                       </div>

@@ -484,7 +484,7 @@ export function CreateQuoteModal({
     }
 
     if (!initializedDraftRef.current) {
-      setQuoteDraft(quoteDraftFromForm(selectedForm, activeCustomer, selectedIssuerCompany));
+      setQuoteDraft(quoteDraftFromForm(selectedForm, activeCustomer, selectedIssuerCompany, currentUser?.name));
       initializedDraftRef.current = true;
     } else {
       setQuoteDraft(current => {
