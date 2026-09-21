@@ -465,7 +465,7 @@ export const ServiceCatalogProductsTable = forwardRef<ServiceCatalogProductsTabl
           <thead>
             <tr>
               <th>Mã/Sản phẩm</th>
-              <th>Mô tả</th>
+              <th className="sc-th-desc">Mô tả</th>
               {fixedGroupId ? null : <th>Nhóm</th>}
               <th>ĐVT</th>
               <th>Giá vốn</th>
