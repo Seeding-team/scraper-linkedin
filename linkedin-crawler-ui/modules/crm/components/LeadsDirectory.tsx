@@ -185,6 +185,12 @@ export function LeadsDirectory() {
   const canCopyInstance = user?.role === 'admin';
   const copyReady = copyLeadIds.length > 0 && copyLeadIds.every(id => copyTargets[id]);
 
+  // Chức năng: Thao tác xóa hàng loạt Lead (Bulk Delete).
+  // Quản lý trạng thái mở modal xác nhận, trạng thái loading khi gọi API và thông báo lỗi.
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+  const [bulkDeleting, setBulkDeleting] = useState(false);
+  const [bulkDeleteError, setBulkDeleteError] = useState('');
+
   // Lead da convert khong the copy (backend cung chan) - loai khoi danh sach
   // chon duoc de tranh chon nham roi bi bao loi.
   const selectableItems = useMemo(
@@ -276,6 +282,63 @@ export function LeadsDirectory() {
       setCopyError(err instanceof Error ? err.message : 'Không sao chép được sang workspace khác.');
     } finally {
       setCopying(false);
+    }
+  }
+
+  /**
+   * Chức năng: Xử lý gọi API xóa hàng loạt (Bulk Delete) các Lead đã được tick chọn.
+   * Thay đổi:
+   * - Gọi POST /api/all-platform/crm/leads/bulk-delete với danh sách ID đã chọn.
+   * - Sau khi xóa thành công: cập nhật state items, giảm số lượng total, xóa ID khỏi selectedIds.
+   * - Tự động reload lại dữ liệu và đồng bộ chỉ số KPI qua setReloadTick.
+   * - Đóng modal xác nhận và thông báo chi tiết nếu có Lead không thể xóa.
+   */
+  async function confirmBulkDelete() {
+    if (selectedIds.size === 0 || bulkDeleting) return;
+    setBulkDeleting(true);
+    setBulkDeleteError('');
+    const targetIds = Array.from(selectedIds);
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/all-platform/crm/leads/bulk-delete`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: headers(),
+        body: JSON.stringify({ lead_ids: targetIds }),
+      });
+      const body = await res.json();
+      if (!res.ok || body.success === false) {
+        throw new Error(body?.message || `Không thể xóa các Lead đã chọn (lỗi ${res.status}).`);
+      }
+
+      const deletedIds = (body.data?.deleted_ids || targetIds) as string[];
+      const deletedSet = new Set(deletedIds);
+
+      // Cập nhật ngay danh sách Lead trên giao diện người dùng
+      setItems(current => current.filter(row => !deletedSet.has(row.id)));
+      setTotal(current => Math.max(0, current - deletedIds.length));
+
+      // Xóa các ID đã xóa thành công khỏi tập hợp selectedIds
+      setSelectedIds(prev => {
+        const next = new Set(prev);
+        deletedIds.forEach(id => next.delete(id));
+        return next;
+      });
+
+      // Đóng modal xác nhận xóa
+      setBulkDeleteOpen(false);
+
+      // Nếu có lead lỗi không xóa được (do đã convert hoặc không đủ quyền), thông báo cho người dùng
+      const failed = body.data?.failed as Array<{ lead_id: string; message: string }> | undefined;
+      if (failed && failed.length > 0) {
+        alert(`Đã xóa ${deletedIds.length} Lead. Có ${failed.length} Lead không thể xóa do đã chuyển đổi hoặc thiếu quyền.`);
+      }
+
+      // Kích hoạt reload để đồng bộ lại KPI và số liệu tổng
+      setReloadTick(tick => tick + 1);
+    } catch (err) {
+      setBulkDeleteError(err instanceof Error ? err.message : 'Không thể xóa các Lead đã chọn.');
+    } finally {
+      setBulkDeleting(false);
     }
   }
 
@@ -584,7 +647,7 @@ export function LeadsDirectory() {
                 options={sdrFilterOptions.map(([id, name]) => ({ value: id, label: name }))}
               />
             </div>
-            <div className="crm-icon-action-group" style={{ justifyContent: 'flex-start', gap: '0.5rem' }}>
+            <div className="crm-icon-action-group" style={{ gap: '0.5rem' }}>
               {hasFilters ? (
                 <button type="button" className="crm-secondary-button crm-filter-reset" onClick={resetFilters}>
                   <RotateCcw className="crm-button-icon" /> Xóa lọc
@@ -600,19 +663,42 @@ export function LeadsDirectory() {
           </div>
         </section>
 
-        {canCopyInstance && selectedIds.size > 0 ? (
+        {/* 
+          Chức năng: Thanh công cụ thao tác hàng loạt trên các Lead được chọn.
+          Thay đổi:
+          - Hiển thị khi có ít nhất 1 dòng Lead được tick chọn ở bảng dưới (selectedIds.size > 0).
+          - Nút "Xóa những cái đã chọn" nằm ở GIỮA nút "Bỏ chọn" và nút "Sao chép sang workspace khác".
+          - Nút "Xóa những cái đã chọn" sử dụng cùng class CSS 'crm-primary-button' với nút "Sao chép sang workspace khác".
+        */}
+        {selectedIds.size > 0 ? (
           <div
             className="crm-filter-card"
             style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem' }}
           >
             <span style={{ fontWeight: 600 }}>Đã chọn {selectedIds.size} Lead</span>
             <div className="crm-icon-action-group" style={{ gap: '0.5rem' }}>
+              {/* Nút 1: Bỏ chọn */}
               <button type="button" className="crm-secondary-button" onClick={() => setSelectedIds(new Set())}>
                 Bỏ chọn
               </button>
-              <button type="button" className="crm-primary-button" onClick={openCopyModalForSelection}>
-                Sao chép sang workspace khác
+              {/* Nút 2: Xóa những cái đã chọn (nằm ở giữa, dùng class crm-primary-button) */}
+              <button
+                type="button"
+                className="crm-primary-button"
+                disabled={bulkDeleting}
+                onClick={() => {
+                  setBulkDeleteError('');
+                  setBulkDeleteOpen(true);
+                }}
+              >
+                Xóa những cái đã chọn
               </button>
+              {/* Nút 3: Sao chép sang workspace khác (chỉ hiển thị cho Admin) */}
+              {canCopyInstance ? (
+                <button type="button" className="crm-primary-button" onClick={openCopyModalForSelection}>
+                  Sao chép sang workspace khác
+                </button>
+              ) : null}
             </div>
           </div>
         ) : null}
@@ -1010,6 +1096,66 @@ export function LeadsDirectory() {
               >
                 {deleting ? <Loader2 className="crm-save-spinner" /> : null}
                 {deleting ? 'Đang xóa...' : 'Xóa Lead'}
+              </button>
+            </footer>
+          </div>
+        </div>
+      ) : null}
+
+      {/* 
+        Chức năng: Modal xác nhận xóa hàng loạt Lead (Bulk Delete Confirm Modal).
+        Thay đổi:
+        - Hiển thị khi người dùng bấm nút "Xóa những cái đã chọn".
+        - Báo rõ số lượng Lead sắp xóa ({selectedIds.size} Lead) và cảnh báo không thể hoàn tác.
+        - Có nút Hủy và nút Xóa Lead đã chọn (crm-danger-button), hiển thị trạng thái xoay spinner khi đang xóa.
+      */}
+      {bulkDeleteOpen ? (
+        <div
+          className="crm-modal-backdrop crm-modal-backdrop--confirm"
+          onClick={() => (bulkDeleting ? undefined : setBulkDeleteOpen(false))}
+        >
+          <div
+            className="crm-modal crm-modal--confirm"
+            role="dialog"
+            aria-modal="true"
+            data-testid="lead-bulk-delete-confirm"
+            onClick={event => event.stopPropagation()}
+          >
+            <header className="crm-modal-header">
+              <div>
+                <p className="crm-modal-title">Xóa {selectedIds.size} Lead đã chọn</p>
+                <p className="crm-modal-subtitle">Hành động này không thể hoàn tác.</p>
+              </div>
+            </header>
+            <div className="crm-modal-body">
+              {bulkDeleteError ? <p className="crm-error" data-testid="lead-bulk-delete-error">{bulkDeleteError}</p> : null}
+              <p>
+                Bạn có chắc chắn muốn xóa <b>{selectedIds.size} Lead</b> đã chọn? Dữ liệu sẽ bị xóa hoàn toàn khỏi hệ thống.
+              </p>
+              <p className="crm-ai-fill-hint">
+                Nếu chỉ muốn ngừng theo dõi, hãy chuyển trạng thái sang &quot;Theo dõi
+                sau&quot; hoặc &quot;Không phù hợp&quot; thay vì xóa hẳn.
+              </p>
+            </div>
+            <footer className="crm-modal-footer">
+              <button
+                type="button"
+                className="crm-cancel-button"
+                data-testid="lead-bulk-delete-cancel"
+                disabled={bulkDeleting}
+                onClick={() => setBulkDeleteOpen(false)}
+              >
+                Hủy
+              </button>
+              <button
+                type="button"
+                className="crm-danger-button"
+                data-testid="lead-bulk-delete-confirm-btn"
+                disabled={bulkDeleting}
+                onClick={() => void confirmBulkDelete()}
+              >
+                {bulkDeleting ? <Loader2 className="crm-save-spinner" /> : null}
+                {bulkDeleting ? 'Đang xóa...' : 'Xóa Lead đã chọn'}
               </button>
             </footer>
           </div>

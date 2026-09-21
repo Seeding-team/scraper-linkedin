@@ -505,6 +505,28 @@ def delete_lead(lead_id: str, user: dict[str, Any]) -> None:
     execute_supabase_query(lambda: supabase.table("crm_leads").delete().eq("id", lead_id).eq("instance", settings.crm_instance).execute())
 
 
+def delete_leads_bulk(lead_ids: list[str], user: dict[str, Any]) -> dict[str, Any]:
+    """
+    Chức năng: Xóa hàng loạt Lead (Bulk Delete) được tick chọn từ danh sách.
+    Thay đổi: Bổ sung phương thức xóa theo lô, xử lý an toàn từng Lead qua delete_lead().
+    - Kiểm tra đúng quyền hạn người dùng (can_write_lead) và chặn các Lead đã chuyển đổi (LeadLinkedError).
+    - Áp dụng nguyên tắc: Lỗi ở 1 Lead không làm gián đoạn việc xóa các Lead hợp lệ còn lại.
+    - Trả về danh sách deleted_ids (thành công) và failed (thất bại kèm lý do).
+    """
+    deleted_ids: list[str] = []
+    failed: list[dict[str, Any]] = []
+    for lead_id in lead_ids:
+        lead_id_str = str(lead_id or "").strip()
+        if not lead_id_str:
+            continue
+        try:
+            delete_lead(lead_id_str, user)
+            deleted_ids.append(lead_id_str)
+        except Exception as exc:
+            failed.append({"lead_id": lead_id_str, "message": str(exc)})
+    return {"deleted_ids": deleted_ids, "failed": failed}
+
+
 def copy_lead_to_instance(lead_id: str, target_instance: str, user: dict[str, Any]) -> dict[str, Any]:
     """Admin-only: TAO 1 BAN SAO cua 1 Lead (dau moi tho, CHUA convert) sang 1
     clone CRM doc lap khac (cloudgate/SECURITYZONE) - Lead GOC van giu nguyen

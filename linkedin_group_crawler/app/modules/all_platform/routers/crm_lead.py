@@ -32,6 +32,7 @@ from app.modules.all_platform.services.crm_lead_service import (
     copy_leads_to_instance,
     create_lead,
     delete_lead,
+    delete_leads_bulk,
     duplicate_check,
     get_lead,
     list_leads,
@@ -171,6 +172,34 @@ def leads_copy_instance_bulk(payload: dict, user: dict[str, Any] = Depends(get_c
         failed_count = len(data.get("failed") or [])
         copied_count = len(data.get("copied") or [])
         message = f"Đã sao chép {copied_count} Lead" + (f", {failed_count} lỗi" if failed_count else "")
+        return BaseResponse(success=True, message=message, data=data)
+    except Exception as exc:
+        return _error(exc)
+
+
+@router.post("/bulk-delete")
+def leads_delete_bulk(payload: dict, user: dict[str, Any] = Depends(get_current_user)) -> BaseResponse:
+    """
+    Chức năng: Xóa hàng loạt Lead được tick chọn trên giao diện bảng danh sách Lead.
+    Thay đổi: Bổ sung endpoint POST /crm/leads/bulk-delete nhận payload {"lead_ids": ["uuid-1", "uuid-2", ...]}.
+    - Kiểm tra danh sách ID hợp lệ.
+    - Gọi delete_leads_bulk(lead_ids, user) để duyệt qua từng Lead, áp dụng đúng quyền (can_write_lead) và chặn lead đã convert.
+    - Trả về BaseResponse với số lượng Lead đã xóa thành công và danh sách lỗi nếu có.
+    """
+    try:
+        lead_ids = payload.get("lead_ids")
+        if not lead_ids or not isinstance(lead_ids, list):
+            return BaseResponse(success=False, message="Danh sách lead_ids không hợp lệ.")
+        data = delete_leads_bulk(lead_ids, user)
+        deleted_count = len(data.get("deleted_ids") or [])
+        failed_count = len(data.get("failed") or [])
+        if deleted_count == 0 and failed_count > 0:
+            return BaseResponse(
+                success=False,
+                message=f"Không thể xóa {failed_count} Lead đã chọn: {data['failed'][0]['message']}",
+                data=data,
+            )
+        message = f"Đã xóa {deleted_count} Lead" + (f", {failed_count} không thể xóa" if failed_count else "")
         return BaseResponse(success=True, message=message, data=data)
     except Exception as exc:
         return _error(exc)
