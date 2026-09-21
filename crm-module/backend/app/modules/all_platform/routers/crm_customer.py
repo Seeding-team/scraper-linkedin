@@ -54,6 +54,7 @@ def customers_list(
     source: str | None = Query(None),
     owner_id: str | None = Query(None),
     sale_manager_id: str | None = Query(None),
+    team: str | None = Query(None),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
     user: dict[str, Any] = Depends(get_current_user),
@@ -63,7 +64,7 @@ def customers_list(
             success=True,
             data=list_customers(
                 user, search=search, status=status, source=source,
-                owner_id=owner_id, sale_manager_id=sale_manager_id, page=page, page_size=page_size,
+                owner_id=owner_id, sale_manager_id=sale_manager_id, team=team, page=page, page_size=page_size,
             ),
         )
     except Exception as exc:

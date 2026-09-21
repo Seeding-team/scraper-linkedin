@@ -14,6 +14,10 @@ from app.modules.all_platform.services.crm_permission_service import can_edit_co
 from app.modules.all_platform.services.supabase_categories_service import get_categories_by_type
 from app.modules.all_platform.services.crm_position_service import apply_position_category
 from app.modules.all_platform.services.crm_city_normalizer import normalize_city_fields, normalize_vietnam_city
+# "Team" o day la phong ban THAT trong `members` (HR roster), dung LAI DUNG
+# nguon/quy tac da chot cho module Quan ly tien do (chi tinh nguoi "duoc gan
+# team + app_users con active") - khong tu suy dien/tao nguon rieng.
+from app.modules.all_platform.services.progress_service import _user_department_map
 
 CUSTOMER_COLUMNS = (
     "id, customer_name, company_name, position, position_category_id, "
@@ -261,6 +265,7 @@ def list_customers(
     source: str | None = None,
     owner_id: str | None = None,
     sale_manager_id: str | None = None,
+    team: str | None = None,
     page: int = 1,
     page_size: int = 50,
 ) -> dict[str, Any]:
@@ -326,6 +331,10 @@ def list_customers(
     if visible is not None:
         rows = [row for row in rows if row.get("id") in visible]
 
+    if team:
+        dept_map = _user_department_map()
+        rows = [row for row in rows if dept_map.get(str(row.get("owner_id") or "")) == team]
+
     # KPI (dem theo tung tab trang thai) phai luon tinh tren TOAN BO tap hop
     # khop search/source/owner_id, KHONG bi gioi han theo `status` dang chon -
     # neu khong, bam vao 1 tab se lam cac tab con lai hien 0 (bug thuc te nguoi
@@ -351,6 +360,9 @@ def list_customers(
                 kpi_rows = kpi_rows + [normalize_city_fields(row) for row in (extra_kpi_res.data or [])]
         if visible is not None:
             kpi_rows = [row for row in kpi_rows if row.get("id") in visible]
+        if team:
+            dept_map = _user_department_map()
+            kpi_rows = [row for row in kpi_rows if dept_map.get(str(row.get("owner_id") or "")) == team]
     else:
         kpi_rows = rows
 

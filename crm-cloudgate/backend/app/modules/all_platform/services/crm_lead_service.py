@@ -22,6 +22,9 @@ from app.modules.all_platform.services.crm_permission_service import (
     has_full_crm_access,
 )
 from app.modules.all_platform.services.crm_position_service import apply_position_category
+# "Team" = phong ban THAT trong `members` (HR roster) - dung LAI DUNG nguon
+# da chot cho module Quan ly tien do, khong tu tao nguon rieng.
+from app.modules.all_platform.services.progress_service import _user_department_map
 
 logger = logging.getLogger(__name__)
 
@@ -191,6 +194,7 @@ def list_leads(
     status: str | None = None,
     source: str | None = None,
     sdr_id: str | None = None,
+    team: str | None = None,
     page: int = 1,
     page_size: int = 50,
 ) -> dict[str, Any]:
@@ -214,6 +218,10 @@ def list_leads(
     visible = _visible_lead_ids(user)
     if visible is not None:
         rows = [row for row in rows if row.get("id") in visible]
+
+    if team:
+        dept_map = _user_department_map()
+        rows = [row for row in rows if dept_map.get(str(row.get("sdr_id") or "")) == team]
 
     total = len(rows)
     start = (page - 1) * page_size

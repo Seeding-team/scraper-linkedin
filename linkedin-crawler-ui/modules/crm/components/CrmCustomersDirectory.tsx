@@ -142,6 +142,14 @@ export function CrmCustomersDirectory() {
   const [status, setStatus] = useState('');
   const [ownerId, setOwnerId] = useState('');
   const [saleManagerId, setSaleManagerId] = useState('');
+  const [team, setTeam] = useState('');
+  // "Team" = phong ban that trong members (HR roster) - dung LAI DUNG nguon
+  // da chot cho Quan ly tien do (khong tao nguon rieng), loc theo team cua
+  // NGUOI PHU TRACH (owner_id) tren backend.
+  const teamOptions = useMemo(
+    () => Array.from(new Set(members.map(m => m.team).filter(Boolean))) as string[],
+    [members]
+  );
   const [saleManagerOptions, setSaleManagerOptions] = useState<QuoteBusinessRoleUser[]>([]);
   useEffect(() => {
     let alive = true;
@@ -187,7 +195,7 @@ export function CrmCustomersDirectory() {
     return () => window.clearTimeout(timer);
   }, [searchInput]);
 
-  useEffect(() => { setPage(1); }, [status, ownerId, saleManagerId]);
+  useEffect(() => { setPage(1); }, [status, ownerId, saleManagerId, team]);
 
   const load = useCallback(() => {
     let alive = true;
@@ -196,6 +204,7 @@ export function CrmCustomersDirectory() {
     if (status) params.set('status', status);
     if (ownerId) params.set('owner_id', ownerId);
     if (saleManagerId) params.set('sale_manager_id', saleManagerId);
+    if (team) params.set('team', team);
     setLoading(true);
     fetch(`${API_BASE_URL}/api/all-platform/crm/customers?${params.toString()}`, {
       credentials: 'include',
@@ -228,7 +237,7 @@ export function CrmCustomersDirectory() {
         if (alive) setLoading(false);
       });
     return () => { alive = false; };
-  }, [page, search, status, ownerId, saleManagerId]);
+  }, [page, search, status, ownerId, saleManagerId, team]);
 
   useEffect(() => {
     const cleanup = load();
@@ -255,7 +264,7 @@ export function CrmCustomersDirectory() {
   }, [members]);
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
-  const hasFilters = Boolean(search || ownerId || saleManagerId);
+  const hasFilters = Boolean(search || ownerId || saleManagerId || team);
   // "Doanh nghiệp" + "Hành động" luon hien (khong dua vao preference) + so cot
   // tuy chon dang bat - dung de colSpan cho hang loading/empty khop dung so
   // cot that su dang render.
@@ -266,6 +275,7 @@ export function CrmCustomersDirectory() {
     setSearch('');
     setOwnerId('');
     setSaleManagerId('');
+    setTeam('');
     setPage(1);
   }
 
@@ -427,6 +437,14 @@ export function CrmCustomersDirectory() {
                 onChange={setOwnerId}
                 placeholder="Tất cả người phụ trách"
                 options={ownerFilterOptions.map(([id, name]) => ({ value: id, label: name }))}
+              />
+            </div>
+            <div className="crm-filter-select-wrap">
+              <SearchableSelect
+                value={team}
+                onChange={setTeam}
+                placeholder="Tất cả Team"
+                options={teamOptions.map(t => ({ value: t, label: t }))}
               />
             </div>
             <div className="crm-icon-action-group" style={{ gap: '0.5rem' }}>

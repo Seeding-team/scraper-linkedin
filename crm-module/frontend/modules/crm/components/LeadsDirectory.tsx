@@ -166,6 +166,14 @@ export function LeadsDirectory() {
   const [status, setStatus] = useState('');
   const [source, setSource] = useState('');
   const [sdrId, setSdrId] = useState('');
+  const [team, setTeam] = useState('');
+  // "Team" = phong ban that trong members (HR roster) - dung LAI DUNG nguon
+  // da chot cho Quan ly tien do, loc theo team cua SDR phu trach (sdr_id)
+  // tren backend.
+  const teamOptions = useMemo(
+    () => Array.from(new Set(members.map(m => m.team).filter(Boolean))) as string[],
+    [members]
+  );
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [reloadTick, setReloadTick] = useState(0);
@@ -383,11 +391,11 @@ export function LeadsDirectory() {
     return () => window.clearTimeout(timer);
   }, [searchInput]);
 
-  useEffect(() => { setPage(1); }, [status, source, sdrId]);
+  useEffect(() => { setPage(1); }, [status, source, sdrId, team]);
 
   useEffect(() => {
     setSelectedIds(new Set());
-  }, [page, search, status, source, sdrId]);
+  }, [page, search, status, source, sdrId, team]);
 
   const load = useCallback(() => {
     let alive = true;
@@ -396,6 +404,7 @@ export function LeadsDirectory() {
     if (status) params.set('status', status);
     if (source) params.set('source', source);
     if (sdrId) params.set('sdr_id', sdrId);
+    if (team) params.set('team', team);
     setLoading(true);
     fetch(`${API_BASE_URL}/api/all-platform/crm/leads?${params.toString()}`, {
       credentials: 'include',
@@ -429,7 +438,7 @@ export function LeadsDirectory() {
         if (alive) setLoading(false);
       });
     return () => { alive = false; };
-  }, [page, search, status, source, sdrId]);
+  }, [page, search, status, source, sdrId, team]);
 
   useEffect(() => {
     const cleanup = load();
@@ -464,7 +473,7 @@ export function LeadsDirectory() {
   ];
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
-  const hasFilters = Boolean(search || status || source || sdrId);
+  const hasFilters = Boolean(search || status || source || sdrId || team);
 
   function resetFilters() {
     setSearchInput('');
@@ -472,6 +481,7 @@ export function LeadsDirectory() {
     setStatus('');
     setSource('');
     setSdrId('');
+    setTeam('');
     setPage(1);
   }
 
@@ -678,6 +688,14 @@ export function LeadsDirectory() {
                 onChange={setSdrId}
                 placeholder="Tất cả SDR phụ trách"
                 options={sdrFilterOptions.map(([id, name]) => ({ value: id, label: name }))}
+              />
+            </div>
+            <div className="crm-filter-select-wrap">
+              <SearchableSelect
+                value={team}
+                onChange={setTeam}
+                placeholder="Tất cả Team"
+                options={teamOptions.map(t => ({ value: t, label: t }))}
               />
             </div>
             <div className="crm-icon-action-group" style={{ gap: '0.5rem' }}>

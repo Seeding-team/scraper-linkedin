@@ -10,6 +10,7 @@ import { CrmCategoryCodeSelect } from './CrmCategorySelect';
 import { mapLead } from './LeadsDirectory';
 import { Loader2, X } from './icons';
 import { hasFullCrmAccess } from '../constants/crmConfig';
+import { usersService } from '@/services/all-platform.service';
 import type { AppUser } from '@/types/unified.types';
 import type { CrmLeadRow, CrmLeadStatus } from '../types';
 
@@ -43,6 +44,10 @@ type EditFormState = {
   email: string;
   source: string;
   sdrId: string;
+  /** "Sale phụ trách" (qualification_ae_id) - dung LAI DUNG cot da co san
+   * (chi truoc day gan duoc luc Qualify), yeu cau rieng cho sua duoc luon
+   * o day de nhat quan voi form tao. */
+  aeId: string;
   status: CrmLeadStatus;
   zalo: string;
   facebook: string;
@@ -61,6 +66,7 @@ function formFromLead(lead: CrmLeadRow): EditFormState {
     email: lead.email || '',
     source: lead.source || '',
     sdrId: lead.sdrId || '',
+    aeId: lead.qualificationAeId || '',
     status: lead.status,
     zalo: lead.zalo || '',
     facebook: lead.facebook || '',
@@ -129,6 +135,24 @@ export function LeadEditDrawer({
     return sdrOptions.find(m => selectionKeyOf(m) === form.sdrId)?.display_name || 'Chưa gán';
   }, [form?.sdrId, sdrOptions, currentUser]);
 
+  // "Sale phụ trách" - dung LAI DUNG nguon quote_business_role=sale (giong
+  // LeadFormDrawer.tsx/CrmCustomersDirectory.tsx), khong tu tao nguon rieng.
+  const [saleUsers, setSaleUsers] = useState<Array<{ id: string; name: string }>>([]);
+  useEffect(() => {
+    let alive = true;
+    usersService
+      .getUsersByQuoteBusinessRole('sale')
+      .then(res => {
+        if (alive) setSaleUsers(res.success ? (res.data || []).map(u => ({ id: u.id, name: u.name })) : []);
+      })
+      .catch(() => {
+        if (alive) setSaleUsers([]);
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
   if (!open || !lead || !form) return null;
 
   const canWrite = Boolean(lead.canWrite);
@@ -176,6 +200,7 @@ export function LeadEditDrawer({
       // hạ cấp trạng thái của 1 Lead đã sinh Cơ hội cũng là sai nghiệp vụ).
       if (!isConverted) payload.status = form.status;
       if (canPickOwner) payload.sdr_id = form.sdrId || null;
+      payload.qualification_ae_id = form.aeId || null;
 
       const res = await fetch(`${API_BASE_URL}/api/all-platform/crm/leads/${encodeURIComponent(lead.id)}`, {
         method: 'PUT',
@@ -300,6 +325,15 @@ export function LeadEditDrawer({
                     <input data-testid="edit-sdr" value={ownerLabel} disabled readOnly />
                   </Field>
                 )}
+                <Field label="Người phụ trách Sale">
+                  <MemberSearchSelect
+                    value={form.aeId}
+                    onChange={value => setValue('aeId', value)}
+                    placeholder="-- Chưa gán --"
+                    showAvatar={false}
+                    members={saleUsers.map(u => ({ id: u.id, displayName: u.name }))}
+                  />
+                </Field>
                 <Field label="Trạng thái">
                   {isConverted ? (
                     <input data-testid="edit-status" value="Đã tạo cơ hội" disabled readOnly />

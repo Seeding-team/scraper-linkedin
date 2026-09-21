@@ -69,3 +69,195 @@
     height: 48px;
   }
 }
+
+/* ===== Redesign "Issuer Management" (yeu cau rieng) ===== */
+
+.issuer-page-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.issuer-page-title {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 700;
+  color: #101828;
+}
+
+.issuer-page-subtitle {
+  margin: 0.25rem 0 0;
+  color: #667085;
+  font-size: 13px;
+}
+
+.issuer-status-filter {
+  min-width: 10rem;
+}
+
+/* BUG THAT DA GAP ("dữ liệu lệch cột"): khong co table-layout:fixed nen
+ * trinh duyet tu tinh do rong theo noi dung dai nhat MOI cot - cot "Đơn vị
+ * phát hành" (logo+ten phap ly dai) chiem het khong gian, day cac cot con
+ * lai (Mã/Thông tin liên hệ/Mẫu báo giá) bi bop/wrap lech khoi vi tri header
+ * (khong phai bug thieu <td>, DOM van dung 6-6, chi la do rong that su bi
+ * lech). Co dinh % cho DUNG 6 cot + table-layout:fixed de header/data luon
+ * thang hang bat ke do dai ten cong ty. */
+.issuer-table {
+  table-layout: fixed;
+}
+
+.issuer-table th:nth-child(1),
+.issuer-table td:nth-child(1) {
+  width: 32%;
+}
+
+.issuer-table th:nth-child(2),
+.issuer-table td:nth-child(2) {
+  width: 10%;
+}
+
+.issuer-table th:nth-child(3),
+.issuer-table td:nth-child(3) {
+  width: 28%;
+}
+
+.issuer-table th:nth-child(4),
+.issuer-table td:nth-child(4) {
+  width: 12%;
+}
+
+.issuer-table th:nth-child(5),
+.issuer-table td:nth-child(5) {
+  width: 14%;
+}
+
+.issuer-table th:last-child,
+.issuer-table td:last-child {
+  width: 2.75rem;
+}
+
+.issuer-row {
+  cursor: pointer;
+}
+
+.issuer-row:hover {
+  background: #fff7fa;
+}
+
+.issuer-name-cell {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  min-width: 0;
+}
+
+/* Wrapper ten/ten phap ly - PHAI co min-width:0 THAT (khong phai class
+ * Tailwind "min-w-0" khong ton tai trong repo nay, do la nguyen nhan goc cua
+ * bug lech cot o tren) de flex item nay CHIU CO LAI theo do rong cot da co
+ * dinh %, khong ep to Đơn vị phát hành rong ra chiem het cho cac cot khac. */
+.issuer-name-text {
+  min-width: 0;
+  flex: 1;
+}
+
+.issuer-name-text .sc-cell-title,
+.issuer-name-text .sc-cell-desc {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.issuer-status-dot-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 12.5px;
+  color: #344054;
+}
+
+.issuer-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  flex-shrink: 0;
+}
+
+.issuer-status-dot--active {
+  background: #12b76a;
+}
+
+.issuer-status-dot--inactive {
+  background: #98a2b3;
+}
+
+.issuer-actions-cell {
+  text-align: right;
+}
+
+.issuer-modal {
+  width: min(800px, 100%);
+}
+
+.issuer-drawer-header-main {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex: 1;
+  min-width: 0;
+}
+
+.issuer-drawer-header-text {
+  min-width: 0;
+}
+
+.issuer-drawer-header-text h2,
+.issuer-drawer-header-text p {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.issuer-drawer-logo {
+  width: 56px;
+  height: 40px;
+  object-fit: contain;
+  border-radius: 8px;
+  background: #f9fafb;
+  border: 1px solid #e4e7ec;
+  flex-shrink: 0;
+}
+
+.issuer-drawer-logo--placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #94a3b8;
+  font-weight: 700;
+  font-size: 14px;
+}
+
+.issuer-form-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.issuer-form-list a {
+  display: block;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  color: #101828;
+  font-size: 13px;
+  text-decoration: none;
+}
+
+.issuer-form-list a:hover {
+  border-color: #f3b3c3;
+  background: #fff7fa;
+}

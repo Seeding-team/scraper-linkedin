@@ -9,6 +9,7 @@ import { MemberSearchSelect } from './MemberSearchSelect';
 import { CrmCategoryCodeSelect, fetchCrmCategoryIdOptions } from './CrmCategorySelect';
 import { mapLead, LEAD_STATUS_LABEL } from './LeadsDirectory';
 import { ChevronDown, ChevronUp, Loader2, X } from './icons';
+import { usersService } from '@/services/all-platform.service';
 import type { AppUser } from '@/types/unified.types';
 import type { CrmLeadRow } from '../types';
 
@@ -26,6 +27,11 @@ type FormState = {
   source: string;
   sdrId: string;
   sdrLabel: string;
+  /** "Sale phụ trách" (quality_ae_id / "Sale nhận bàn giao" o buoc qualify) -
+   * yeu cau rieng "cho thêm ng phụ trách sale kế bên phụ trách lead": truoc
+   * day CHI gan duoc luc Qualify Lead (LeadDetailDrawer.tsx), gio cho gan
+   * NGAY luc tao/sua Lead, cung 1 cot DB that (khong them cot moi). */
+  aeId: string;
   note: string;
 };
 
@@ -44,6 +50,7 @@ function emptyForm(currentUser: AppUser | null): FormState {
     source: 'Manual',
     sdrId: currentUser?.id || '',
     sdrLabel: currentUser?.name || currentUser?.email || '',
+    aeId: '',
     note: '',
   };
 }
@@ -243,6 +250,26 @@ export function LeadFormDrawer({
     return map;
   }, [members, currentUser]);
 
+  // "Sale phụ trách" (qualification_ae_id) - yeu cau rieng "ai có role sale
+  // thì hiện trong dropdown", dung LAI DUNG nguon "quote_business_role=sale"
+  // da co san (giong CrmCustomersDirectory.tsx saleManagerOptions, LeadDetailDrawer.tsx
+  // aeOptions), khong tu tao nguon rieng.
+  const [saleUsers, setSaleUsers] = useState<Array<{ id: string; name: string }>>([]);
+  useEffect(() => {
+    let alive = true;
+    usersService
+      .getUsersByQuoteBusinessRole('sale')
+      .then(res => {
+        if (alive) setSaleUsers(res.success ? (res.data || []).map(u => ({ id: u.id, name: u.name })) : []);
+      })
+      .catch(() => {
+        if (alive) setSaleUsers([]);
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
   // Auto-check trung khi SDT/Email hop le - debounce 400ms, huy neu component
   // unmount hoac gia tri lai doi truoc khi ket qua ve (dung effect-cleanup
   // pattern giong CustomerAddDrawer.tsx). Vi paste-extraction cung ghi vao
@@ -401,6 +428,7 @@ export function LeadFormDrawer({
       source: form.source || null,
       status: 'new_lead',
       sdr_id: canPickOwner ? (form.sdrId || null) : (currentUser?.id || null),
+      qualification_ae_id: form.aeId || null,
       note: form.note.trim() || null,
       // Backend is the final dedup gate.  This flag is only sent after the
       // user explicitly chose the existing manual-flow override.
@@ -779,6 +807,14 @@ export function LeadFormDrawer({
                       <input value={currentUser?.name || currentUser?.email || 'Bạn'} disabled readOnly />
                     </Field>
                   )}
+                  <Field label="Người phụ trách Sale">
+                    <MemberSearchSelect
+                      value={form.aeId}
+                      onChange={value => setValue('aeId', value)}
+                      showAvatar={false}
+                      members={saleUsers.map(u => ({ id: u.id, displayName: u.name }))}
+                    />
+                  </Field>
                   <Field label="Trạng thái">
                     <input value="Lead mới" disabled readOnly />
                   </Field>
