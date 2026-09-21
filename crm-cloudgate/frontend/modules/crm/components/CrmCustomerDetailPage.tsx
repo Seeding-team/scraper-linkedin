@@ -825,6 +825,10 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
         </div>
 
         <section className="crm-content-section">
+          {/* [CHỨC NĂNG: Thanh menu điều hướng tab hồ sơ khách hàng]
+              - Gồm 7 tab: Tổng quan, Hoạt động, Người liên hệ, Dự án, Cơ hội, Báo giá, Hợp đồng.
+              - Đã cấu hình class .crm-customer-tabs (flex: 1) để kéo giãn đều 100% toàn chiều rộng,
+                ngang hàng cân xứng với bảng bên dưới mà không ảnh hưởng tới menu con. */}
           <div className="crm-segment crm-customer-tabs">
             <button type="button" className={`crm-segment-button ${tab === 'overview' ? 'crm-segment-button--active' : ''}`} onClick={() => setTab('overview')}>
               Tổng quan
@@ -910,33 +914,84 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
             ) : null
           )}
 
+          {/* [CHỨC NĂNG: Giao diện Tab Hoạt Động (Activity Tab) chuẩn hóa theo tab Người liên hệ]
+              - Mục đích: Thay thế danh sách hoạt động trần trụi trước đây bằng giao diện chuẩn chỉnh.
+              - Thay đổi:
+                1. Khung panel bao ngoài: .crm-contacts-panel .crm-activity-panel viền bo tròn 0.85rem, nền trắng sạch sẽ.
+                2. Header: Tiêu đề .crm-section-title "Hoạt động (N)" kèm mô tả phạm vi hoạt động bán hàng.
+                3. Từng dòng hoạt động là một bảng/khung thẻ riêng biệt (.crm-activity-row):
+                   - Nền xám nhạt #f8fafc, viền 1px solid #e2e8f0, bo góc 0.6rem, padding 0.75rem 0.9rem, hover đổi màu nhẹ.
+                   - Luồng giai đoạn: Hiển thị thẻ pill màu sắc tương ứng theo stage meta (ví dụ: Đang deal → Lên Proposal).
+                   - Người thực hiện: Badge pill actor_name nổi bật.
+                   - Ghi chú: Khung riêng biệt nền trắng có viền và ngắt dòng rõ ràng.
+                   - Thời gian: Căn lề trên phải, hiển thị định dạng ngày giờ tiếng Việt (vi-VN). */}
           {tab === 'activity' && (
-            <div>
-              <p className="text-[11px] text-slate-400" style={{ marginBottom: '0.5rem' }}>
-                Hoạt động bán hàng — gộp từ các Cơ hội của khách hàng này. Chưa gồm hoạt động Báo giá/Hợp đồng/Khách hàng riêng (Activity Timeline hợp nhất là việc của phase sau).
-              </p>
+            <section className="crm-contacts-panel crm-activity-panel">
+              <div className="crm-contacts-panel-head">
+                <div>
+                  <p className="crm-section-title">Hoạt động ({activityItems.length})</p>
+                  <p className="crm-small crm-muted" style={{ marginTop: '0.2rem' }}>
+                    Hoạt động bán hàng — gộp từ các Cơ hội của khách hàng này.
+                  </p>
+                </div>
+              </div>
+
+              {activityError ? <p className="crm-error">{activityError}</p> : null}
+
               {activityLoading ? (
-                <p className="crm-muted">Đang tải…</p>
-              ) : activityError ? (
-                <p className="crm-error">{activityError}</p>
-              ) : activityItems.length === 0 ? (
-                <p className="crm-muted">Chưa có hoạt động nào.</p>
+                <p className="crm-small"><Loader2 className="crm-spin-icon" /> Đang tải hoạt động...</p>
+              ) : activityItems.length ? (
+                <div className="crm-contacts-list crm-activity-list">
+                  {activityItems.map(entry => {
+                    const fromMeta = entry.from_stage ? getStageMeta(entry.from_stage as DealStage) : null;
+                    const toMeta = entry.to_stage ? getStageMeta(entry.to_stage as DealStage) : null;
+
+                    return (
+                       <div key={entry.id} className="crm-contact-row crm-activity-row">
+                        <div className="crm-activity-row-main">
+                          <div className="crm-activity-row-header">
+                            {entry.from_stage && entry.to_stage ? (
+                              <span className="crm-activity-stage-flow">
+                                <span
+                                  className="crm-activity-stage-pill"
+                                  style={{ borderColor: fromMeta?.color, color: fromMeta?.color }}
+                                >
+                                  {fromMeta?.label || entry.from_stage}
+                                </span>
+                                <span className="crm-activity-stage-arrow">→</span>
+                                <span
+                                  className="crm-activity-stage-pill"
+                                  style={{ borderColor: toMeta?.color, color: toMeta?.color }}
+                                >
+                                  {toMeta?.label || entry.to_stage}
+                                </span>
+                              </span>
+                            ) : (
+                              <span className="crm-activity-action-name">{entry.action}</span>
+                            )}
+                            {entry.actor_name ? (
+                              <span className="crm-activity-actor-badge">
+                                {entry.actor_name}
+                              </span>
+                            ) : null}
+                          </div>
+                          {entry.note ? (
+                            <p className="crm-activity-note">{entry.note}</p>
+                          ) : null}
+                        </div>
+                        <div className="crm-activity-row-meta">
+                          <span className="crm-small crm-muted">
+                            {new Date(entry.created_at).toLocaleString('vi-VN')}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
               ) : (
-                <ol style={{ listStyle: 'none', padding: 0, margin: 0 }}>
-                  {activityItems.map(entry => (
-                    <li key={entry.id} style={{ borderBottom: '1px solid #eef0f2', padding: '0.5rem 0' }}>
-                      <div className="text-[11px] text-slate-400">
-                        {new Date(entry.created_at).toLocaleString('vi-VN')}{entry.actor_name ? ` · ${entry.actor_name}` : ''}
-                      </div>
-                      <div className="text-sm text-slate-700">
-                        {entry.from_stage && entry.to_stage ? `${entry.from_stage} → ${entry.to_stage}` : entry.action}
-                      </div>
-                      {entry.note ? <p className="text-xs text-slate-500">{entry.note}</p> : null}
-                    </li>
-                  ))}
-                </ol>
+                <p className="crm-small crm-muted">Chưa có hoạt động nào.</p>
               )}
-            </div>
+            </section>
           )}
 
           {tab === 'projects' ? (
@@ -1121,14 +1176,19 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
                           <option key={option} value={option}>{QUOTE_STATUS_FILTER_LABELS[option]}</option>
                         ))}
                       </select>
+                      {/* [FIX UI UX] Chuyển đổi từ text link đơn sơ sang Nút bấm cố định (Fixed Button):
+                          1. Gom nút vào bên trong cụm controls bên phải (.crm-quote-filter-controls) để căn lề sát phải cùng dropdown.
+                          2. Cố định kích thước (width: 8rem, min-width: 8rem) để khi bấm thay đổi văn bản giữa "Hiện cả đã huỷ"
+                             và "Ẩn đã huỷ", vị trí nút và dropdown hoàn toàn cố định, không bị xê dịch hay nhảy vị trí. */}
+                      <button
+                        type="button"
+                        className="crm-quote-toggle-cancelled-btn"
+                        onClick={() => setQuoteStatusFilter(prev => (prev === 'active' ? 'all' : 'active'))}
+                        title={quoteStatusFilter === 'active' ? 'Hiện cả các báo giá đã huỷ' : 'Ẩn các báo giá đã huỷ'}
+                      >
+                        {quoteStatusFilter === 'active' ? 'Hiện cả đã huỷ' : 'Ẩn đã huỷ'}
+                      </button>
                     </div>
-                    <button
-                      type="button"
-                      className="crm-inline-link-btn"
-                      onClick={() => setQuoteStatusFilter(prev => (prev === 'active' ? 'all' : 'active'))}
-                    >
-                      {quoteStatusFilter === 'active' ? 'Hiện cả đã huỷ' : 'Ẩn đã huỷ'}
-                    </button>
                   </div>
                   {quoteProjectFilter ? (
                     <div className="crm-quote-filter-pill">
@@ -1211,15 +1271,19 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
 
               {tab === 'contracts' ? (
                 <>
-                  <div className="crm-quote-filter-pill" style={{ justifyContent: 'space-between' }}>
+                  <div className="crm-quote-filter-pill" style={{ justifyContent: 'space-between', flexWrap: 'wrap' }}>
                     <span>Hợp đồng có thể tạo trực tiếp trong CRM hoặc ghi nhận từ hợp đồng đã ký bên ngoài — cùng 1 danh sách với tab Hợp đồng trong Deal Workspace.</span>
+                    {/* [CHỨC NĂNG: Chuyển đổi thao tác hợp đồng từ Text Link sang Button]
+                        - Mục đích: Nâng cao UX, làm cho 2 hành động tạo/ghi nhận hợp đồng nổi bật và dễ bấm hơn.
+                        - Thay đổi: Thay link chữ mờ bằng Button thực thụ .crm-btn--blue (nền xanh dương #2563eb,
+                          chữ trắng, bo góc 0.45rem, hover #1d4ed8), giữ nguyên logic mở modal. */}
                     <div className="flex items-center gap-2" style={{ flexShrink: 0 }}>
-                      <button type="button" className="crm-inline-link-btn" onClick={() => setManualContractOpen(true)}>
+                      <button type="button" className="crm-btn--blue" onClick={() => setManualContractOpen(true)}>
                         + Tạo hợp đồng
                       </button>
                       <button
                         type="button"
-                        className="crm-inline-link-btn"
+                        className="crm-btn--blue"
                         disabled={registerContractLoading}
                         onClick={() => void openRegisterContractForActiveDeal()}
                       >

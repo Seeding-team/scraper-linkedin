@@ -429,7 +429,7 @@ export function CrmCustomersDirectory() {
                 options={ownerFilterOptions.map(([id, name]) => ({ value: id, label: name }))}
               />
             </div>
-            <div className="crm-icon-action-group" style={{ justifyContent: 'flex-start', gap: '0.5rem' }}>
+            <div className="crm-icon-action-group" style={{ gap: '0.5rem' }}>
               {hasFilters ? (
                 <button type="button" className="crm-secondary-button crm-filter-reset" onClick={resetFilters}>
                   <RotateCcw className="crm-button-icon" /> Xóa lọc
