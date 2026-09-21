@@ -27,7 +27,7 @@ import {
   quoteDisplayStatus,
   relativeTime,
 } from '../utils/quoteDisplay';
-import { ArrowDownToLine, CheckCircle2, ChevronDown, ChevronUp, Eye, FileText, GitBranchPlus, History, LayoutGrid, Link2, Maximize2, Minimize2, Plus, Printer, Send, Trash2, X } from './icons';
+import { ArrowDownToLine, CheckCircle2, ChevronDown, ChevronUp, Eye, FileText, GitBranchPlus, History, LayoutGrid, Link2, Maximize2, Minimize2, Plus, Printer, RectangleHorizontal, RectangleVertical, RotateCcw, Send, Trash2, X } from './icons';
 import { usersService, projectsService, allPlatformCategoriesService, type QuoteBusinessRoleUser, type Project } from '@/services/all-platform.service';
 import { computeQuoteSla } from '../utils/quoteSla';
 import { SearchableSelect } from './SearchableSelect';
@@ -355,7 +355,7 @@ async function loadQuoteCustomerOptions(): Promise<QuoteCustomerOption[]> {
   }>;
   return items.map(row => ({
     id: row.id,
-    label: `${row.customer_name || 'KhÃ¡ch hÃ ng chÆ°a tÃªn'}${row.company_name ? ' Â· ' + row.company_name : ''}`,
+    label: `${row.customer_name || 'Khách hàng chưa tên'}${row.company_name ? ' · ' + row.company_name : ''}`,
     name: row.customer_name,
     companyName: row.company_name,
     phone: row.phone,
@@ -382,7 +382,7 @@ async function loadQuoteCustomerOption(customerId: string): Promise<QuoteCustome
   };
   return {
     id: row.id,
-    label: `${row.customer_name || 'KhÃ¡ch hÃ ng chÆ°a tÃªn'}${row.company_name ? ' Â· ' + row.company_name : ''}`,
+    label: `${row.customer_name || 'Khách hàng chưa tên'}${row.company_name ? ' · ' + row.company_name : ''}`,
     name: row.customer_name,
     companyName: row.company_name,
     phone: row.phone,
@@ -968,17 +968,22 @@ export function QuoteWorkspaceModal({
   // ro rang; dong khong luu se phuc hoi lai dung snapshot nay).
   const [itemDetailDrawerSnapshot, setItemDetailDrawerSnapshot] = useState<QuoteItem | null>(null);
   const [costOverrideModal, setCostOverrideModal] = useState<{ index: number; reason: string; value: number | null } | null>(null);
-  // "Chỉnh Mô tả hạng mục" (popover rieng, KHONG them cot vao bang) - luu
-  // vao DUNG field quote_item.description da co san (KHONG dung ten field
-  // moi "featuresIncluded"/tao field DB moi). readOnly khi quote da khoa/
-  // khong con quyen sua (Buoc 3/da duyet) - van xem duoc, chi khong sua.
+  // "Chỉnh Phạm vi bảo hành & Ghi chú/Khuyến mãi" (popover rieng, KHONG them
+  // cot vao bang) - luu vao DUNG field quote_item.warrantyScope + quote_item.note
+  // da co san (note dung cho "Mẫu ưu đãi combo (Markee)", xem quoteConfig.ts).
+  // readOnly khi quote da khoa/khong con quyen sua (Buoc 3/da duyet) - van xem
+  // duoc, chi khong sua. "Nội dung công việc" (quote_item.description) TRUOC
+  // DAY cung sua o day - da chuyen ra textarea sua truc tiep ngay duoi ten
+  // hang muc trong bang (yeu cau ro rang "chỉnh được ở đây luôn, không cần
+  // bấm vào chỉnh nữa"), popover nay gio giu "Phạm vi bảo hành" + "Ghi chú/
+  // Khuyến mãi".
   const [descriptionPopoverIndex, setDescriptionPopoverIndex] = useState<number | null>(null);
-  const [descriptionDraftText, setDescriptionDraftText] = useState('');
   const [warrantyDraftText, setWarrantyDraftText] = useState('');
+  const [noteDraftText, setNoteDraftText] = useState('');
   function openDescriptionPopover(index: number) {
     setDescriptionPopoverIndex(index);
-    setDescriptionDraftText(itemsDraft[index]?.description || '');
     setWarrantyDraftText(itemsDraft[index]?.warrantyScope || '');
+    setNoteDraftText(itemsDraft[index]?.note || '');
   }
   function saveDescriptionPopover() {
     if (descriptionPopoverIndex == null) return;
@@ -989,12 +994,20 @@ export function QuoteWorkspaceModal({
     // da co san o applyFillDown/doApplyQuickMarkup: tinh mang MOI truoc, set
     // state VA truyen thang mang do vao persistQuote({ items: next }) thay
     // vi de no tu doc itemsDraft.
-    const next = itemsDraft.map((row, i) => (i === idx ? { ...row, description: descriptionDraftText, warrantyScope: warrantyDraftText.trim() || null } : row));
+    const next = itemsDraft.map((row, i) => (i === idx ? { ...row, warrantyScope: warrantyDraftText.trim() || null, note: noteDraftText.trim() || null } : row));
     setItemsDraft(next);
     if (quote) void persistQuote({ items: next }, { silent: true });
     setDescriptionPopoverIndex(null);
   }
   const [previewModalOpen, setPreviewModalOpen] = useState(false);
+  // "chỉnh xoay ngang, xoay dọc, căn chỉnh cột ở đây luôn" - toolbar Dọc/Ngang
+  // + kéo độ rộng cột nằm NGAY TRONG popup "Bản xem trước cho khách hàng"
+  // (khong con phai bam THEM 1 nut "Xem trước khi in" de mo 1 lop modal khac
+  // nua - da bo QuotePrintPreviewModal, dieu khien TRUC TIEP renderer duy
+  // nhat cua popup nay qua printPreviewMode/printOrientation, dung y het
+  // PublicQuotePage.tsx/QuoteDetailPage.tsx).
+  const [printOrientation, setPrintOrientation] = useState<'portrait' | 'landscape'>('portrait');
+  const [printResetKey, setPrintResetKey] = useState(0);
   const [sendModalOpen, setSendModalOpen] = useState(false);
   const [approveModalOpen, setApproveModalOpen] = useState(false);
   // Section 5 - Admin duyet ngoai le theo version: modal RIENG, chi mo khi
@@ -4922,6 +4935,7 @@ export function QuoteWorkspaceModal({
                                   <span className="qc-workspace-item-no">{displayNo}</span>
                                 </span>
                                 <span className="qc-workspace-item-name-col">
+                                <span className="qc-workspace-item-name-row">
                                   {(editableTechnicalCells || editableCells) ? (
                                     <textarea
                                       className="qc-cell-input qc-cell-textarea"
@@ -5001,17 +5015,21 @@ export function QuoteWorkspaceModal({
                                       <Plus className="qc-inline-icon" />
                                     </button>
                                   )}
-                                  {/* "Chỉnh Mô tả hạng mục" - icon RIENG, KHONG
-                                   * them cot vao bang (yeu cau ro rang). Trang
-                                   * thai icon khac han khi DA CO mo ta (dam,
-                                   * to mau) vs CHUA CO (nhat) de de nhan biet -
-                                   * bam mo popover ca 2 truong hop, CHI khac o
-                                   * quyen sua (readOnly khi khoa/Buoc 3). */}
+                                  {/* "Chỉnh Phạm vi bảo hành & Ghi chú/Khuyến mãi" -
+                                   * icon RIENG, KHONG them cot vao bang. "Nội dung
+                                   * công việc" da chuyen ra textarea sua truc tiep
+                                   * ngay duoi ten (xem ben tren), popover nay gio
+                                   * giu "Phạm vi bảo hành" + "Ghi chú/Khuyến mãi"
+                                   * (dung cho "Mẫu ưu đãi combo (Markee)"). Trang
+                                   * thai icon khac han khi DA CO gia tri (dam, to
+                                   * mau) vs CHUA CO (nhat) de de nhan biet - bam mo
+                                   * popover ca 2 truong hop, CHI khac o quyen sua
+                                   * (readOnly khi khoa/Buoc 3). */}
                                   <button
                                     type="button"
-                                    className={`qc-workspace-item-desc-btn${item.description ? ' qc-workspace-item-desc-btn--filled' : ''}`}
-                                    title="Chỉnh sửa mô tả hạng mục"
-                                    aria-label="Chỉnh sửa mô tả hạng mục"
+                                    className={`qc-workspace-item-desc-btn${item.warrantyScope || item.note ? ' qc-workspace-item-desc-btn--filled' : ''}`}
+                                    title="Chỉnh sửa phạm vi bảo hành & ghi chú/khuyến mãi"
+                                    aria-label="Chỉnh sửa phạm vi bảo hành & ghi chú/khuyến mãi"
                                     onClick={() => openDescriptionPopover(index)}
                                   >
                                     <FileText className="qc-inline-icon" />
@@ -5059,6 +5077,24 @@ export function QuoteWorkspaceModal({
                                     <span className="qc-line-discount-chip">CK dòng {formatPercentTrim(item.discountPercent)}</span>
                                   ) : null}
                                 </span>
+                                {/* "Nội dung công việc" - TRUOC DAY chi sua duoc qua
+                                 * popover rieng (bam icon FileText moi mo), yeu cau ro
+                                 * rang "chỉnh được ở đây luôn, không cần bấm vào chỉnh
+                                 * nữa" - chuyen thanh textarea sua TRUC TIEP ngay duoi
+                                 * ten hang muc, cung field quote_item.description nhu
+                                 * popover cu dung (KHONG doi field DB). Popover
+                                 * (descriptionPopoverIndex) gio CHI con giu "Phạm vi
+                                 * bảo hành". */}
+                                <textarea
+                                  className="qc-cell-input qc-workspace-item-desc-inline"
+                                  rows={2}
+                                  value={item.description || ''}
+                                  disabled={!(editableTechnicalCells || editableCells)}
+                                  onChange={e => updateRow(index, { description: e.target.value })}
+                                  onBlur={() => void persistQuote({}, { silent: true })}
+                                  placeholder={(editableTechnicalCells || editableCells) ? 'Mô tả / nội dung công việc...' : 'Chưa có mô tả.'}
+                                />
+                              </span>
                               </span>
                             </td>
                             <td className="qc-cell-unit" data-label="ĐVT">
@@ -6359,6 +6395,7 @@ export function QuoteWorkspaceModal({
         // khong co (chua chon mau nao ca) moi roi ve ban rut gon cu.
         const previewSchema = quote?.formSnapshot || draftSelectedForm?.schemaJson;
         return (
+      <>
       <div className="qc-modal-backdrop qc-modal-backdrop--nested" onMouseDown={event => { if (event.target === event.currentTarget) setPreviewModalOpen(false); }}>
           <div className={`qc-workspace-preview-modal${previewSchema ? ' qc-workspace-preview-modal--doc' : ''}`}>
             <div className="qc-workspace-modal-head">
@@ -6382,12 +6419,47 @@ export function QuoteWorkspaceModal({
                     readOnly={!isDraft || isLockedForReview}
                   />
                 ) : null}
-                {/* Yeu cau rieng "xóa nút In/Tải chỗ bản xem trước đi" - bug
-                 * phan trang khi in tu modal nay (11 trang, lap letterhead)
-                 * chua sua trietj de duoc, bo han nut de tranh nguoi dung
-                 * dung nham duong hong loi. In/Tai PDF that van dung duoc
-                 * qua trang chi tiet bao gia (/all-platform/quotes/[id]) hoac
-                 * link cong khai gui khach - 2 noi do khong qua modal nay. */}
+                {/* "chỉnh xoay ngang, xoay dọc, căn chỉnh cột ở đây luôn" -
+                 * toolbar Dọc/Ngang + Đặt lại độ rộng cột + In/Tải PDF nam
+                 * TRUC TIEP trong header popup nay (khong con nut "Xem trước
+                 * khi in" mo THEM 1 lop modal rieng nhu truoc - bug tung gap
+                 * "In/Tải trực tiếp tại đây" (phân trang "11 trang, lặp
+                 * letterhead") da duoc fix rieng qua cac rule position:static
+                 * !important cho .qc-modal-backdrop/.qc-workspace-preview-
+                 * modal, xem quotes.css, nen gio in thang tu day an toan). */}
+                {previewSchema ? (
+                  <div className="quote-print-preview-orientation-group" role="group" aria-label="Hướng giấy">
+                    <button
+                      type="button"
+                      className={`quote-print-preview-btn${printOrientation === 'portrait' ? ' is-active' : ''}`}
+                      onClick={() => setPrintOrientation('portrait')}
+                    >
+                      <RectangleVertical className="quote-print-preview-icon" /> Dọc
+                    </button>
+                    <button
+                      type="button"
+                      className={`quote-print-preview-btn${printOrientation === 'landscape' ? ' is-active' : ''}`}
+                      onClick={() => setPrintOrientation('landscape')}
+                    >
+                      <RectangleHorizontal className="quote-print-preview-icon" /> Ngang
+                    </button>
+                  </div>
+                ) : null}
+                {previewSchema ? (
+                  <button
+                    type="button"
+                    className="qc-mini-btn"
+                    title="Kéo viền phải mỗi cột trong bảng để chỉnh độ rộng, sau đó bấm In"
+                    onClick={() => setPrintResetKey(key => key + 1)}
+                  >
+                    <RotateCcw className="qc-icon" /> Đặt lại độ rộng cột
+                  </button>
+                ) : null}
+                {previewSchema ? (
+                  <button type="button" className="qc-mini-btn qc-mini-btn-brand" onClick={() => window.print()}>
+                    <Printer className="qc-icon" /> In / Tải PDF
+                  </button>
+                ) : null}
                 <button type="button" className="crm-icon-action" aria-label="Đóng" onClick={() => setPreviewModalOpen(false)}>
                   <X className="qc-inline-icon" />
                 </button>
@@ -6417,6 +6489,7 @@ export function QuoteWorkspaceModal({
               // height:0 - xem quote-center.css).
               <div className="quote-print-root qc-workspace-preview-modal-body qc-workspace-preview-modal-body--doc">
                 <QuoteDocumentRenderer
+                  key={printResetKey}
                   schemaSnapshot={previewSchema}
                   quoteData={quote ? quote.data : draftPreviewData}
                   quoteItems={itemsDraft}
@@ -6430,6 +6503,8 @@ export function QuoteWorkspaceModal({
                   isPublished={quote ? quote.processingStage === 'published' : false}
                   quoteNumber={quote?.quoteNumber}
                   overallDiscountPercent={quote ? quote.overallDiscountPercent ?? null : draftOverallDiscountPercent ?? null}
+                  printPreviewMode
+                  printOrientation={printOrientation}
                 />
               </div>
             ) : (
@@ -6493,6 +6568,7 @@ export function QuoteWorkspaceModal({
             )}
           </div>
         </div>
+      </>
         );
       })() : null}
 
@@ -7077,11 +7153,17 @@ export function QuoteWorkspaceModal({
         );
       })() : null}
 
-      {/* Popover "Chỉnh sửa mô tả hạng mục" - NHO gon (khong phai drawer to),
-       * gom: Ten hang muc (chi doc) + Textarea "Mô tả hạng mục" + Huỷ/Lưu.
-       * Luu vao DUNG quote_item.description (KHONG dung featuresIncluded,
-       * KHONG tao field DB moi) - dung DUNG persistQuote({items:next}) de
-       * tranh doc lai itemsDraft cu (xem giai thich o saveDescriptionPopover). */}
+      {/* Popover "Chỉnh sửa phạm vi bảo hành & ghi chú/khuyến mãi hạng mục" -
+       * NHO gon (khong phai drawer to), gom: Ten hang muc (chi doc) + Textarea
+       * "Phạm vi bảo hành" + Textarea "Ghi chú/Khuyến mãi" + Huỷ/Lưu. "Nội
+       * dung công việc" (quote_item.description) da CHUYEN ra textarea sua
+       * truc tiep ngay duoi ten hang muc trong bang (khong con o popover nay -
+       * yeu cau ro rang "chỉnh được ở đây luôn, không cần bấm vào chỉnh nữa").
+       * "Ghi chú/Khuyến mãi" (quote_item.note) them cho "Mẫu ưu đãi combo
+       * (Markee)" - field nay khach SE NHIN THAY (public), khac warrantyScope
+       * cung public nhung khac muc dich. Luu vao DUNG quote_item.warrantyScope
+       * + quote_item.note - dung DUNG persistQuote({items:next}) de tranh doc
+       * lai itemsDraft cu (xem giai thich o saveDescriptionPopover). */}
       {descriptionPopoverIndex != null && itemsDraft[descriptionPopoverIndex] ? (() => {
         const descItem = itemsDraft[descriptionPopoverIndex];
         const canEditDescription = canEdit && isDraft && !isLockedForReview;
@@ -7089,7 +7171,7 @@ export function QuoteWorkspaceModal({
           <div className="qc-modal-backdrop qc-modal-backdrop--nested" onMouseDown={event => { if (event.target === event.currentTarget) setDescriptionPopoverIndex(null); }}>
             <div className="qc-workspace-preview-modal" style={{ maxWidth: 460 }}>
               <div className="qc-workspace-modal-head">
-                <h3>Mô tả hạng mục</h3>
+                <h3>Phạm vi bảo hành & ghi chú hạng mục</h3>
                 <button type="button" className="crm-icon-action" aria-label="Đóng" onClick={() => setDescriptionPopoverIndex(null)}>
                   <X className="qc-inline-icon" />
                 </button>
@@ -7100,20 +7182,14 @@ export function QuoteWorkspaceModal({
                   <p>{descItem.serviceDescription || '—'}</p>
                 </div>
                 <label className="qc-workspace-drawer-field">
-                  <span className="qc-workspace-info-label">Nội dung công việc</span>
-                  <textarea
-                    className="qc-cell-input"
-                    rows={5}
-                    value={descriptionDraftText}
-                    disabled={!canEditDescription}
-                    placeholder={canEditDescription ? 'Nhập mô tả hạng mục...' : 'Chưa có mô tả.'}
-                    onChange={e => setDescriptionDraftText(e.target.value)}
-                  />
+                  <span className="qc-workspace-info-label">Phạm vi bảo hành</span>
+                  <textarea className="qc-cell-input" rows={4} value={warrantyDraftText} disabled={!canEditDescription}
+                    placeholder="Nhập phạm vi bảo hành riêng cho hạng mục..." onChange={e => setWarrantyDraftText(e.target.value)} />
                 </label>
                 <label className="qc-workspace-drawer-field">
-                  <span className="qc-workspace-info-label">Phạm vi bảo hành</span>
-                  <textarea className="qc-cell-input" rows={5} value={warrantyDraftText} disabled={!canEditDescription}
-                    placeholder="Nhập phạm vi bảo hành riêng cho hạng mục..." onChange={e => setWarrantyDraftText(e.target.value)} />
+                  <span className="qc-workspace-info-label">Ghi chú/Khuyến mãi</span>
+                  <textarea className="qc-cell-input" rows={3} value={noteDraftText} disabled={!canEditDescription}
+                    placeholder="Ví dụ: Giảm giá 15% cho khách hàng đầu tiên khi order trước ngày..." onChange={e => setNoteDraftText(e.target.value)} />
                 </label>
               </div>
               <div className="qc-workspace-modal-actions">
