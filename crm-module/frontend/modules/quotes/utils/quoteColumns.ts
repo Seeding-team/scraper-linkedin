@@ -143,3 +143,24 @@ export function resolveDefaultVisibleColumnKeys(schema: QuoteSchema, quoteItems:
     .filter(column => column.key !== 'discountPercent')
     .map(column => column.key);
 }
+
+/** Nhãn cột THẬT SẼ hiển thị trên bảng gửi khách/bản in - dùng CHUNG cho cả
+ * QuoteDocumentRenderer (lúc render) và QuoteColumnVisibilityPicker (lúc
+ * hiện checkbox "Cột hiển thị"), tránh lệch nhãn giữa 2 nơi.
+ *
+ * BUG THAT DA GAP ("2 cột 'Thành tiền trước VAT' giống hệt nhau trên bản
+ * in"): picker TRUOC DAY hiện đúng label thô trong schema ("Sau giảm giá"
+ * cho cột amountAfterDiscount), trong khi QuoteDocumentRenderer lại tự đổi
+ * tên cột này thành "Thành tiền (Chưa VAT)" lúc render — người tạo báo giá
+ * tick "Sau giảm giá" tưởng là 1 cột khác, không ngờ nó in ra thành cột
+ * "Thành tiền (Chưa VAT)" đứng sát cạnh "Thành tiền trước VAT" (cột
+ * `subtotal`), trùng giá trị hệt nhau khi dòng hàng không có % giảm giá
+ * riêng (không có cách nào đoán trước hậu quả này chỉ nhìn tên "Sau giảm
+ * giá" trong picker). Dùng chung 1 hàm nhãn ở cả 2 nơi để picker phản ánh
+ * ĐÚNG nhãn sẽ in ra, người dùng thấy rõ đang bật thêm 1 cột "trước VAT" nữa
+ * trước khi tick. */
+export function normalizeQuoteColumnLabel(column: QuoteField): string {
+  if (column.key === 'amountAfterDiscount') return 'Thành tiền (Chưa VAT)';
+  if (column.key === 'total') return 'Thành tiền (gồm VAT)';
+  return column.label;
+}

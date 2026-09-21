@@ -29,7 +29,7 @@ import {
 function formatVnd(value: unknown): string {
   return formatVndRaw(value).replace(/\s*đ$/, '');
 }
-import { resolveDefaultVisibleColumnKeys, resolveQuoteItemColumns, resolveToggleableColumns } from '../utils/quoteColumns';
+import { normalizeQuoteColumnLabel, resolveDefaultVisibleColumnKeys, resolveQuoteItemColumns, resolveToggleableColumns } from '../utils/quoteColumns';
 import {
   getCustomerDisplayFields,
   resolveVisibleCustomerFieldKeys,
@@ -228,12 +228,6 @@ const MONEY_COLUMN_KEYS = [
  * "LƯỢN"+"G" tach roi 2 dong) thay vi ngat dung o khoang trang. Dat rieng
  * class de co the danh mot % vua du (xem .num-cell trong quotes.css). */
 const SHORT_NUMBER_COLUMN_KEYS = ['quantity', 'vatRate', 'discountPercent'];
-
-function normalizeQuoteColumnLabel(column: QuoteField): string {
-  if (column.key === 'amountAfterDiscount') return 'Thành tiền (Chưa VAT)';
-  if (column.key === 'total') return 'Thành tiền (gồm VAT)';
-  return column.label;
-}
 
 function bundleSnapshotComponents(item: QuoteItem): BundleSnapshotComponent[] {
   const snapshot = item.bundleSnapshot as unknown;
