@@ -44,6 +44,17 @@ export function hasFullCrmAccess(user: AppUser | null | undefined): boolean {
   );
 }
 
+/** Mirror của progress_scope() (backend progress_service.py) cho submenu
+ * "Quản lý tiến độ" — CỐ Ý hẹp hơn hasFullCrmAccess(): chỉ role admin/leader,
+ * KHÔNG mở rộng cho Sale/quote_business_role như CRM/Phân tích CRM (đã chốt
+ * riêng với user: "Member chưa có quyền vào submenu này", không phải "member
+ * có full CRM access"). Chỉ ẩn/hiện UI — backend luôn tự chặn lại thật qua
+ * `require_admin_or_leader` + `progress_scope()`, ham nay khong phai lop bao mat. */
+export function hasProgressAccess(user: AppUser | null | undefined): boolean {
+  if (!user) return false;
+  return user.role === 'admin' || user.role === 'leader';
+}
+
 /** Mirror cua crm_permission_service.can_edit_technical_quote (backend) - CHI
  * dung de khoa/mo cell Giá vốn tren FE cho dung UX (bang hang muc thong nhat,
  * Section 4). Backend van la lop chan THAT (_check_item_field_level_permission),

@@ -30,6 +30,7 @@ from app.modules.all_platform.services import (
     refine_contract_draft,
     get_contract_template,
     get_quote,
+    list_contract_activity_log,
 )
 from app.modules.all_platform.services.crm_permission_service import can_edit_contract
 from app.modules.all_platform.services.customer_lead_service import get_customer_lead_by_id
@@ -70,6 +71,17 @@ def contracts_get(contract_id: str, user: dict = Depends(get_current_user)) -> B
         if not can_edit_contract(user, contract, lead):
             return BaseResponse(success=False, message="Không có quyền xem hợp đồng này")
         return BaseResponse(success=True, data=contract)
+    except Exception as e:
+        return BaseResponse(success=False, message=str(e))
+
+
+@contracts_router.get("/{contract_id}/activity-log")
+def contracts_activity_log(contract_id: str, user: dict = Depends(get_current_user)) -> BaseResponse:
+    try:
+        contract, lead = _load_contract_and_lead(contract_id)
+        if not can_edit_contract(user, contract, lead):
+            return BaseResponse(success=False, message="Không có quyền xem lịch sử hợp đồng này")
+        return BaseResponse(success=True, data=list_contract_activity_log(contract_id))
     except Exception as e:
         return BaseResponse(success=False, message=str(e))
 

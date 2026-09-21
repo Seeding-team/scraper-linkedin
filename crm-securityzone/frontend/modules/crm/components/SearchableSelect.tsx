@@ -140,7 +140,13 @@ export function SearchableSelect({
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
-      const target = event.target as Node;
+      // event.target khong phai luon la Node - vd click xuyen qua portal/iframe
+      // hoac node da bi go khoi DOM giua luc event bubble len (bug that gap:
+      // "Failed to execute 'contains' on 'Node': parameter 1 is not of type
+      // 'Node'") - Node.prototype.contains throw thay vi tra false trong
+      // truong hop nay, nen phai guard truoc khi goi.
+      const target = event.target;
+      if (!(target instanceof Node)) return;
       if (containerRef.current?.contains(target)) return;
       if (menuRef.current?.contains(target)) return;
       setIsOpen(false);
@@ -159,7 +165,8 @@ export function SearchableSelect({
     // se dong menu ngay lap tuc (bug that da gap: "cuon khong duoc" vi menu
     // tu dong tat truoc khi nguoi dung kip thay noi dung cuon).
     const handleReposition = (event: Event) => {
-      if (menuRef.current?.contains(event.target as Node)) return;
+      const target = event.target;
+      if (target instanceof Node && menuRef.current?.contains(target)) return;
       setIsOpen(false);
     };
     document.addEventListener('mousedown', handleClickOutside);

@@ -42,7 +42,8 @@ export function ServiceCatalogConfigPage() {
   const vatUsageCount = useMemo(() => {
     const map = new Map<number, number>();
     for (const product of products) {
-      const key = product.defaultVatRate || 0;
+      if (product.defaultVatRate == null) continue;
+      const key = product.defaultVatRate;
       map.set(key, (map.get(key) || 0) + 1);
     }
     return map;

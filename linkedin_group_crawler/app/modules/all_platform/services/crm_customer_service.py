@@ -512,10 +512,27 @@ def related_records(customer_id: str, user: dict[str, Any]) -> dict[str, Any]:
         logger.exception("related_records: failed to load contracts for customer %s", customer_id)
         contracts = []
 
+    # Du an (projects.customer_id) - truoc ban vá nay related_records() hoan
+    # toan khong tra Project (khong o dau ca), khien Customer 360/CRM Records
+    # khong biet duoc khach hang nay co du an dang trien khai hay khong.
+    # can_view_project() la quyen "xem" rong (bat ky ai dang login) - phu hop
+    # boi context o day (nguoi goi related_records() da qua can_view_customer()
+    # roi), khong can loc them theo owner/team nhu deal/quote/contract.
+    projects: list[dict[str, Any]] = []
+    try:
+        project_res = execute_supabase_query(
+            lambda: supabase.table("projects").select("*").eq("instance", settings.crm_instance).eq("customer_id", customer_id).execute()
+        )
+        projects = project_res.data or []
+    except Exception:
+        logger.exception("related_records: failed to load projects for customer %s", customer_id)
+        projects = []
+
     total_value = sum(float(deal.get("estimated_budget") or deal.get("lifetime_value") or 0) for deal in deals)
     return {
         "customer": customer,
         "deals": deals,
+        "projects": projects,
         "quotes": quotes,
         "contracts": contracts,
         "kpi": {"deal_count": len(deals), "quote_count": len(quotes), "contract_count": len(contracts), "total_value": total_value},

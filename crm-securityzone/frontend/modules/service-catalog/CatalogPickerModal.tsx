@@ -586,48 +586,48 @@ export function CatalogPickerModal({
                                   <tbody className="divide-y divide-slate-100">
                                     {Array.from(pools.values()).map(pool => (
                                       <Fragment key={pool.key}>
-                                        <tr className="bg-blue-50/30">
-                                          <td colSpan={2} className="py-2 px-3">
+                                        <tr>
+                                          <td colSpan={2} className="py-2 px-3 bg-blue-50">
                                             <div className="font-semibold text-slate-800 flex items-center gap-1.5"><span className="text-blue-500 font-bold">▣</span> Nhóm quota: {pool.name}</div>
                                           </td>
-                                          <td className="py-2 px-3"></td>
-                                          <td className="py-2 px-3 font-medium text-slate-900">{pool.quota}</td>
-                                          {canViewCost && <td className="py-2 px-3"></td>}
-                                          <td className="py-2 px-3"></td>
-                                          <td className="py-2 px-3"></td>
-                                          <td className="py-2 px-3"></td>
-                                          <td className="py-2 px-3"></td>
+                                          <td className="py-2 px-3 bg-blue-50"></td>
+                                          <td className="py-2 px-3 bg-blue-50 font-medium text-slate-900">{pool.quota}</td>
+                                          {canViewCost && <td className="py-2 px-3 bg-blue-50"></td>}
+                                          <td className="py-2 px-3 bg-blue-50"></td>
+                                          <td className="py-2 px-3 bg-blue-50"></td>
+                                          <td className="py-2 px-3 bg-blue-50"></td>
+                                          <td className="py-2 px-3 bg-blue-50"></td>
                                         </tr>
                                         {pool.items.map((component: any) => (
-                                          <tr key={component.componentId} className="hover:bg-slate-50 group">
-                                            <td className="py-2 px-3 font-mono text-xs text-slate-500 pl-6 border-l-2 border-blue-200">{component.sku || component.componentId.slice(0, 8)}</td>
-                                            <td className="py-2 px-3">
+                                          <tr key={component.componentId} className="group">
+                                            <td className="py-2 px-3 bg-white group-hover:bg-slate-50 font-mono text-xs text-slate-500 pl-6 border-l-2 border-blue-200">{component.sku || component.componentId.slice(0, 8)}</td>
+                                            <td className="py-2 px-3 bg-white group-hover:bg-slate-50">
                                               <div className="font-medium text-slate-700 truncate" title={component.customerDisplayName || component.name}>{component.customerDisplayName || component.name || '—'}</div>
                                             </td>
-                                            <td className="py-2 px-3 text-slate-600">{component.unit || '—'}</td>
-                                            <td className="py-2 px-3 text-slate-500 text-xs italic">Dùng chung</td>
-                                            {canViewCost && <td className={`py-2 px-3 ${component.defaultCostPriceVnd === undefined ? 'text-red-400' : 'text-slate-700'}`}>{formatCostOrMissing(component.defaultCostPriceVnd)}</td>}
-                                            <td className="py-2 px-3 text-slate-700">{formatVnd(componentCustomerPrice(component))}</td>
-                                            <td className="py-2 px-3 text-center text-slate-500">{component.required !== false ? 'Có' : 'Không'}</td>
-                                            <td className="py-2 px-3 text-center text-slate-500">{component.overagePolicy === 'charge' ? 'Tính thêm' : 'Không'}</td>
-                                            <td className="py-2 px-3 text-center text-slate-500">{component.showOnQuote !== false ? 'Có' : 'Không'}</td>
+                                            <td className="py-2 px-3 bg-white group-hover:bg-slate-50 text-slate-600">{component.unit || '—'}</td>
+                                            <td className="py-2 px-3 bg-white group-hover:bg-slate-50 text-slate-500 text-xs italic">Dùng chung</td>
+                                            {canViewCost && <td className={`py-2 px-3 bg-white group-hover:bg-slate-50 ${component.defaultCostPriceVnd === undefined ? 'text-red-400' : 'text-slate-700'}`}>{formatCostOrMissing(component.defaultCostPriceVnd)}</td>}
+                                            <td className="py-2 px-3 bg-white group-hover:bg-slate-50 text-slate-700">{formatVnd(componentCustomerPrice(component))}</td>
+                                            <td className="py-2 px-3 bg-white group-hover:bg-slate-50 text-center text-slate-500">{component.required !== false ? 'Có' : 'Không'}</td>
+                                            <td className="py-2 px-3 bg-white group-hover:bg-slate-50 text-center text-slate-500">{component.overagePolicy === 'charge' ? 'Tính thêm' : 'Không'}</td>
+                                            <td className="py-2 px-3 bg-white group-hover:bg-slate-50 text-center text-slate-500">{component.showOnQuote !== false ? 'Có' : 'Không'}</td>
                                           </tr>
                                         ))}
                                       </Fragment>
                                     ))}
                                     {standaloneComponents.map((component: any) => (
-                                      <tr key={component.componentId} className="hover:bg-slate-50">
-                                        <td className="py-2 px-3 font-mono text-xs text-slate-500">{component.sku || component.componentId.slice(0, 8)}</td>
-                                        <td className="py-2 px-3">
+                                      <tr key={component.componentId} className="group">
+                                        <td className="py-2 px-3 bg-white group-hover:bg-slate-50 font-mono text-xs text-slate-500">{component.sku || component.componentId.slice(0, 8)}</td>
+                                        <td className="py-2 px-3 bg-white group-hover:bg-slate-50">
                                           <div className="font-medium text-slate-900 truncate" title={component.customerDisplayName || component.name}>{component.customerDisplayName || component.name || '—'}</div>
                                         </td>
-                                        <td className="py-2 px-3 text-slate-600">{component.unit || '—'}</td>
-                                        <td className="py-2 px-3 text-slate-900">{component.quota || '—'}</td>
-                                        {canViewCost && <td className={`py-2 px-3 ${component.defaultCostPriceVnd === undefined ? 'text-red-400' : 'text-slate-700'}`}>{formatCostOrMissing(component.defaultCostPriceVnd)}</td>}
-                                        <td className="py-2 px-3 text-slate-700">{formatVnd(componentCustomerPrice(component))}</td>
-                                        <td className="py-2 px-3 text-center text-slate-500">{component.required !== false ? 'Có' : 'Không'}</td>
-                                        <td className="py-2 px-3 text-center text-slate-500">{component.overagePolicy === 'charge' ? 'Tính thêm' : 'Không'}</td>
-                                        <td className="py-2 px-3 text-center text-slate-500">{component.showOnQuote !== false ? 'Có' : 'Không'}</td>
+                                        <td className="py-2 px-3 bg-white group-hover:bg-slate-50 text-slate-600">{component.unit || '—'}</td>
+                                        <td className="py-2 px-3 bg-white group-hover:bg-slate-50 text-slate-900">{component.quota || '—'}</td>
+                                        {canViewCost && <td className={`py-2 px-3 bg-white group-hover:bg-slate-50 ${component.defaultCostPriceVnd === undefined ? 'text-red-400' : 'text-slate-700'}`}>{formatCostOrMissing(component.defaultCostPriceVnd)}</td>}
+                                        <td className="py-2 px-3 bg-white group-hover:bg-slate-50 text-slate-700">{formatVnd(componentCustomerPrice(component))}</td>
+                                        <td className="py-2 px-3 bg-white group-hover:bg-slate-50 text-center text-slate-500">{component.required !== false ? 'Có' : 'Không'}</td>
+                                        <td className="py-2 px-3 bg-white group-hover:bg-slate-50 text-center text-slate-500">{component.overagePolicy === 'charge' ? 'Tính thêm' : 'Không'}</td>
+                                        <td className="py-2 px-3 bg-white group-hover:bg-slate-50 text-center text-slate-500">{component.showOnQuote !== false ? 'Có' : 'Không'}</td>
                                       </tr>
                                     ))}
                                   </tbody>

@@ -99,6 +99,33 @@ def _log_activity(contract_id: str, actor_id: str | None, action: str, changes: 
     }).execute()
 
 
+def _row_to_activity(row: dict) -> dict:
+    return {
+        "id": row["id"],
+        "contractId": row.get("contract_id"),
+        "actorId": row.get("actor_id"),
+        "action": row.get("action"),
+        "changes": row.get("changes"),
+        "createdAt": row.get("created_at"),
+    }
+
+
+def list_contract_activity_log(contract_id: str) -> list[dict]:
+    """Lich su hoat dong THAT cua 1 hop dong (created/updated/status_changed:<status>) -
+    mirror y het list_quote_activity_log() (supabase_quote_service.py) - bang
+    da co san, chi truoc day khong co route GET nao doc lai. Actor chi tra id,
+    FE tu resolve ten (giong quote), khong join o backend."""
+    supabase: Client = get_supabase_client()
+    result = (
+        supabase.table(ACTIVITY_LOG_TABLE)
+        .select("*")
+        .eq("contract_id", contract_id)
+        .order("created_at", desc=True)
+        .execute()
+    )
+    return [_row_to_activity(row) for row in (result.data or [])]
+
+
 def _serialize_clauses(clauses: list[Any] | None) -> list[dict]:
     if not clauses:
         return []

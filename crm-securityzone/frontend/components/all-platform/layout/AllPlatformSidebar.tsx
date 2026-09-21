@@ -154,6 +154,23 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, _workspaceTab:
           },
         ] as NavLeafItem[])
       : []),
+    // "Quản lý tiến độ" — dashboard ĐỌC (không phải giao việc), theo dõi Lead/
+    // Khách hàng/Cơ hội/Dự án/Báo giá/Hợp đồng theo Team/Thành viên. CỐ Ý hẹp
+    // hơn "Phân tích CRM" ở trên (không mở cho isSale) - đã chốt riêng với
+    // user "Member chưa có quyền vào submenu này", khớp progress_scope()
+    // backend (chỉ role admin/leader, không tính Sale/quote_business_role).
+    ...(isAdmin || isLeader
+      ? ([
+          {
+            type: "item",
+            id: "crm-progress",
+            href: "/all-platform/crm/progress",
+            icon: "track_changes",
+            label: "Quản lý tiến độ",
+            matchStartsWith: ["/all-platform/crm/progress"],
+          },
+        ] as NavLeafItem[])
+      : []),
     {
       type: "item",
       id: "quote-history",

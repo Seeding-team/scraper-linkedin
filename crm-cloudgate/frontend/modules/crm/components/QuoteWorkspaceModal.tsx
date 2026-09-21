@@ -355,7 +355,7 @@ async function loadQuoteCustomerOptions(): Promise<QuoteCustomerOption[]> {
   }>;
   return items.map(row => ({
     id: row.id,
-    label: `${row.customer_name || 'KhÃ¡ch hÃ ng chÆ°a tÃªn'}${row.company_name ? ' Â· ' + row.company_name : ''}`,
+    label: `${row.customer_name || 'Khách hàng chưa tên'}${row.company_name ? ' · ' + row.company_name : ''}`,
     name: row.customer_name,
     companyName: row.company_name,
     phone: row.phone,
@@ -382,7 +382,7 @@ async function loadQuoteCustomerOption(customerId: string): Promise<QuoteCustome
   };
   return {
     id: row.id,
-    label: `${row.customer_name || 'KhÃ¡ch hÃ ng chÆ°a tÃªn'}${row.company_name ? ' Â· ' + row.company_name : ''}`,
+    label: `${row.customer_name || 'Khách hàng chưa tên'}${row.company_name ? ' · ' + row.company_name : ''}`,
     name: row.customer_name,
     companyName: row.company_name,
     phone: row.phone,

@@ -328,7 +328,7 @@ export function DealDetailDrawer({ customer, open, onClose, onRequestTransition,
                     <div className="mt-0.5 truncate font-medium text-slate-700">{customer.decision_maker}</div>
                   </div>
                 )}
-                {customer.estimated_budget ? (
+                {customer.estimated_budget != null ? (
                   <div className="rounded-md border border-slate-200 bg-white px-3 py-2">
                     <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-wider text-slate-500">
                       <Wallet className="size-3" /> Ngân sách
