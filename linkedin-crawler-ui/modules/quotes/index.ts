@@ -6,6 +6,7 @@ export { QuoteDetailPage } from './components/QuoteDetailPage';
 export { PublicQuoteFormPage } from './components/PublicQuoteFormPage';
 export { PublicQuotePage } from './components/PublicQuotePage';
 export { QuoteDocumentRenderer } from './components/QuoteDocumentRenderer';
+export type { Totals as QuoteDocumentTotals } from './components/QuoteDocumentRenderer';
 export { QuoteFormFiller } from './components/QuoteFormFiller';
 export { TelegramSendButton } from './components/TelegramSendButton';
 export { IssuerCompanyAdminPage } from './components/IssuerCompanyAdminPage';

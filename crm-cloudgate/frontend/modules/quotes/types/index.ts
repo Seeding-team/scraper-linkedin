@@ -3,6 +3,7 @@ export type QuoteStatus = 'draft' | 'confirmed' | 'approved' | 'cancelled';
 export type QuoteLayoutType =
   | 'cloudgate_standard_quote'
   | 'villa_solution_package'
+  | 'markee_promo_bundle'
   | 'blank_quote';
 
 export type QuoteFieldType =
@@ -189,6 +190,11 @@ export interface QuoteItem {
   discountPercent?: number;
   discountAmount?: number;
   amountAfterDiscount?: number;
+  /** Ghi chú/Khuyến mãi rieng cho tung dong hang muc (public, khach xem duoc -
+   * KHAC voi warrantyScope). Da co san o DB/backend (quote_items.note), chua
+   * tung duoc khai bao rieng o day (roi vao index signature) - khai bao ro de
+   * co type-safety, theo dung tien le VillaSolutionItem.note. */
+  note?: string | null;
   vatRate: number;
   subtotalAmount?: number;
   vatAmount?: number;

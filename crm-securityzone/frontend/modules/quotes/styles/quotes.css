@@ -2249,6 +2249,18 @@ select.quote-compact-vat:hover {
   margin-bottom: 0.5rem;
 }
 
+/* Banner marketing dau trang - "Mẫu ưu đãi combo (Markee)" (xem
+ * quoteConfig.ts field bannerImageUrl) - anh tinh full-width, gioi han chieu
+ * cao de khong lam trang bao gia qua dai/le xau khi in A4. */
+.sheet-marketing-banner {
+  display: block;
+  width: 100%;
+  max-height: 140px;
+  object-fit: cover;
+  border-radius: 8px;
+  margin-bottom: 1rem;
+}
+
 .sheet-brand-mark {
   margin: 0 0 0.35rem;
   color: #111827;
@@ -2508,9 +2520,14 @@ select.quote-compact-vat:hover {
  * len cot ben canh. Ap dung y het ty le da tinh cho ban in, KHONG rieng
  * @media print nua - vua sua dut diem loi tran chu tren man hinh, vua giu
  * man hinh xem va PDF in luon dong bo (WYSIWYG), khong con lech nhau. */
+/* BUG THAT DA GAP ("STT 01/02 bị rớt xuống 2 dòng, tách "0"/"1" riêng"):
+ * 4% qua hep cho 2 ky tu so ("01".."99") + padding cua o - da du tren man
+ * hinh THUONG (khong phai @media print, xem rule 5%/6% rieng o duoi) tu khi
+ * bang co them cot "Mô tả"/"Tính năng bao gồm" rieng (chiem bot khong gian
+ * cac cot khac). Tang len 6%. */
 .sheet-items-table th:first-child,
 .sheet-items-table td:first-child {
-  width: 4%;
+  width: 6%;
 }
 
 .sheet-items-table th.money-cell,
@@ -2612,8 +2629,18 @@ select.quote-compact-vat:hover {
   width: 20%;
 }
 
+/* BUG THAT DA GAP LAI (yeu cau ro rang "chỉ nên in đậm tên cột, nội dung ở
+ * dưới không cần in đậm"): rule nay TRUOC DAY la font-weight:700 - da tung
+ * bi bao loi y het cho ban in that (@media print da fix rieng ve 400, xem
+ * comment o do) nhung CHUA BAO GIO sua o day (rule goc, ap dung man hinh
+ * THUONG) nen man "Xem trước khi in"/"Bản xem trước cho khách hàng" (mockup
+ * WYSIWYG tren man hinh, KHONG chay qua @media print) van hien toan bo noi
+ * dung hang muc (STT/Mo ta/Don gia...) dam het, khong chi ten - dung y het
+ * bug cu, chi khac o "man hinh xem" thay vi "ban in that". Dat thang 400 o
+ * day luon (khong con can rule rieng @media print nua) de dong bo man hinh
+ * va ban in (WYSIWYG that su). */
 .quote-item-row--parent td {
-  font-weight: 700;
+  font-weight: 400;
 }
 
 .quote-item-row--child td {
@@ -2961,10 +2988,14 @@ select.quote-compact-vat:hover {
  * bo het overflow:hidden lien quan - loi nay lap lai y het du thu nhieu
  * huong sua khac nhau, nen ket luan la han che/bug that su cua Chromium voi
  * named page, khong phai loi CSS cua repo. CHI 1 @page DUY NHAT nay hoat
- * dong cho MOI bao gia/hop dong - yeu cau ro rang moi nhat (kem spec PDF):
- * "Khổ A4 portrait 210x297mm, lề khoảng 12-14mm" - KHONG con doi sang ngang
- * nua (xem usesLandscapePrint trong QuoteDocumentRenderer.tsx, gio luon
- * false). Le 13mm deu 4 canh (giua khoang 12-14mm yeu cau). */
+ * dong cho MOI bao gia/hop dong - yeu cau ro rang (kem spec PDF): "Khổ A4
+ * portrait 210x297mm, lề khoảng 12-14mm". @page nay la mac dinh khi mo trang
+ * (chua chon huong) - toolbar chinh in luon hien san tren trang (xem
+ * PublicQuotePage/QuoteDetailPage/QuoteWorkspaceModal.tsx) cho phep nguoi
+ * dung tu doi sang A4 ngang, luc do 1 the <style> rieng se CHEN
+ * DE (xem usesLandscapePrint trong QuoteDocumentRenderer.tsx) voi @page
+ * margin 7mm/12mm rieng cho ngang. Le 13mm deu 4 canh cho doc (giua khoang
+ * 12-14mm yeu cau). */
 @page {
   size: A4 portrait;
   margin: 10mm;
@@ -3063,12 +3094,14 @@ select.quote-compact-vat:hover {
   }
 
   /* Neu ai do bam in truc tiep tu trang chi tiet noi bo (mode='detail', co
-   * the da resize cot tren man hinh truoc do bang do rong px inline) - rule
-   * "width:auto !important" chung o duoi (.sheet-items-table th/td) va cac
-   * rule % rieng theo nth-child da co san (cung specificity/!important,
-   * dung sau trong file nen thang) tu dong ghi de het do rong px do, luon
-   * quay ve chia % chuan khi in - resize chi la tien ich xem man hinh,
-   * khong can xu ly gi them o day. */
+   * the da resize cot tren man hinh truoc do bang do rong px inline) MA
+   * KHONG qua man "Xem truoc khi in" - rule "width:auto !important" chung o
+   * duoi (.sheet-items-table th/td) va cac rule % rieng theo nth-child da co
+   * san tu dong ghi de het do rong px do, luon quay ve chia % chuan khi in -
+   * resize chi la tien ich xem man hinh trong truong hop nay. RIENG khi den
+   * tu man "Xem truoc khi in" (printPreviewMode=true, class
+   * .sheet-items-table--custom-print-widths), cac rule % o tren da tu loai
+   * minh ra qua :not() - xem rule --col-print-w cuoi khoi @media print nay. */
 
   .quote-page,
   .quote-builder,
@@ -3277,22 +3310,29 @@ select.quote-compact-vat:hover {
   .sheet-items-table td {
     padding: 0.5px 4px !important;
     min-width: 0 !important;
-    width: auto !important;
     overflow-wrap: anywhere !important;
     line-height: 1.3 !important;
+  }
+
+  /* width:auto rieng (tach khoi khoi tren) - :not() de KHONG ghi de do rong
+   * cot nguoi dung da tu keo tay va chon mang vao ban in that o man "Xem
+   * truoc khi in" (xem sheet-items-table--custom-print-widths cuoi file). */
+  .sheet-items-table:not(.sheet-items-table--custom-print-widths) th,
+  .sheet-items-table:not(.sheet-items-table--custom-print-widths) td {
+    width: auto !important;
   }
 
   /* Yeu cau rieng "cột Đơn vị giảm lại, chỗ giá tiền bị hẹp quá": ĐVT chi
    * can vai ky tu ngan (Gói/Tháng/Tác vụ/Video) - danh rieng % nho hon han
    * muc auto-chia-deu ~7% truoc day, nhuong lai cho cac cot tien (Đơn giá/
    * Thành tiền trước VAT/Thành tiền) qua rule .money-cell duoi day. */
-  .sheet-items-table th.unit-cell,
-  .sheet-items-table td.unit-cell {
+  .sheet-items-table:not(.sheet-items-table--custom-print-widths) th.unit-cell,
+  .sheet-items-table:not(.sheet-items-table--custom-print-widths) td.unit-cell {
     width: 6% !important;
   }
 
-  .sheet-items-table td.money-cell,
-  .sheet-items-table th.money-cell {
+  .sheet-items-table:not(.sheet-items-table--custom-print-widths) td.money-cell,
+  .sheet-items-table:not(.sheet-items-table--custom-print-widths) th.money-cell {
     width: 11% !important;
   }
 
@@ -3309,8 +3349,8 @@ select.quote-compact-vat:hover {
    * class rieng, roi vao nhom "con lai chia deu" ~4-5%, qua hep cho tieu de
    * "SỐ LƯỢNG"/"THUẾ VAT" nen bi ngat GIUA tu (vd "LƯỢN"+"G" tach 2 dong)
    * thay vi dung o khoang trang. */
-  .sheet-items-table th.num-cell,
-  .sheet-items-table td.num-cell {
+  .sheet-items-table:not(.sheet-items-table--custom-print-widths) th.num-cell,
+  .sheet-items-table:not(.sheet-items-table--custom-print-widths) td.num-cell {
     width: 9% !important;
     text-align: center !important;
   }
@@ -3331,13 +3371,13 @@ select.quote-compact-vat:hover {
    * ban in/PDF van bi chia deu nhu moi cot khac, cot Mo ta qua hep khien chu
    * tach roi tung tu 1 dong, day chieu cao bang len rat nhieu (bug that gay
    * bao gia dai toi 11 trang thay vi ~2-3 trang, phat hien qua QA thuc te). */
-  .sheet-items-table th:nth-child(2),
-  .sheet-items-table td:nth-child(2) {
+  .sheet-items-table:not(.sheet-items-table--custom-print-widths) th:nth-child(2),
+  .sheet-items-table:not(.sheet-items-table--custom-print-widths) td:nth-child(2) {
     width: 14% !important;
   }
 
-  .sheet-items-table th:nth-child(3),
-  .sheet-items-table td:nth-child(3) {
+  .sheet-items-table:not(.sheet-items-table--custom-print-widths) th:nth-child(3),
+  .sheet-items-table:not(.sheet-items-table--custom-print-widths) td:nth-child(3) {
     width: 22% !important;
     min-width: 0 !important;
   }
@@ -3347,10 +3387,13 @@ select.quote-compact-vat:hover {
    * moi cot khac (fixed layout mac dinh se chia deu neu khong ghi width).
    * 22px (con tu luc header con nowrap) qua hep cho chu "STT" khi header duoc
    * phep xuong dong (xem rule th o tren) - moi chu bi tach rieng 1 dong
-   * (S/T/T). Tang len 5% de "STT" du cho tren 1 dong. */
-  .sheet-items-table th:first-child,
-  .sheet-items-table td:first-child {
-    width: 5% !important;
+   * (S/T/T). Tang len 5% de "STT" du cho tren 1 dong. BUG THAT DA GAP THEM
+   * (rieng NOI DUNG so "01".."99" van bi tach "0"/"1" ra 2 dong o bang nhieu
+   * cot, sau khi them cot "Mô tả"/"Tính năng bao gồm" rieng chiem bot khong
+   * gian): tang tiep len 6%. */
+  .sheet-items-table:not(.sheet-items-table--custom-print-widths) th:first-child,
+  .sheet-items-table:not(.sheet-items-table--custom-print-widths) td:first-child {
+    width: 6% !important;
   }
 
   /* Cot tien cuoi cung (Thanh tien...) luon la 2 dong gia stack qua
@@ -3358,8 +3401,8 @@ select.quote-compact-vat:hover {
    * can rieng 1 khoang du vi day la chuoi so DAI NHAT trong hang (vd
    * "2.200.000 d"), qua hep se bi tran het ra ngoai mep phai trang in (QA
    * thuc te xac nhan) thay vi xuong dong gon nhu cac cot so ngan khac. */
-  .sheet-items-table th:last-child,
-  .sheet-items-table td:last-child {
+  .sheet-items-table:not(.sheet-items-table--custom-print-widths) th:last-child,
+  .sheet-items-table:not(.sheet-items-table--custom-print-widths) td:last-child {
     width: 13% !important;
   }
 
@@ -3423,23 +3466,27 @@ select.quote-compact-vat:hover {
    * rong cot theo grid, nhung chu khong bi cat/wrap se ve de len o ben canh -
    * chong chit chu, dung y het bug da gap truoc do voi cot Mo ta). Header van
    * duoc phep xuong dong (rule chung .sheet-items-table th o tren). */
-  .sheet-items-table--print-landscape th:first-child,
-  .sheet-items-table--print-landscape td:first-child {
-    width: 4% !important;
+  /* BUG THAT DA GAP THEM (sau khi them cot "Mô tả"/"Tính năng bao gồm" rieng):
+   * 4% qua hep cho NOI DUNG so "01".."99", khong chi rieng chu "STT" o header -
+   * tang len 6%, 2% chenh lech duoc 5 cot giua (width:auto) tu dong bu lai
+   * qua table-layout:fixed, khong can sua tay tung cot con lai. */
+  .sheet-items-table--print-landscape:not(.sheet-items-table--custom-print-widths) th:first-child,
+  .sheet-items-table--print-landscape:not(.sheet-items-table--custom-print-widths) td:first-child {
+    width: 6% !important;
   }
 
-  .sheet-items-table--print-landscape th:nth-child(2),
-  .sheet-items-table--print-landscape td:nth-child(2) {
+  .sheet-items-table--print-landscape:not(.sheet-items-table--custom-print-widths) th:nth-child(2),
+  .sheet-items-table--print-landscape:not(.sheet-items-table--custom-print-widths) td:nth-child(2) {
     width: 12% !important;
   }
 
-  .sheet-items-table--print-landscape th:nth-child(3),
-  .sheet-items-table--print-landscape td:nth-child(3) {
+  .sheet-items-table--print-landscape:not(.sheet-items-table--custom-print-widths) th:nth-child(3),
+  .sheet-items-table--print-landscape:not(.sheet-items-table--custom-print-widths) td:nth-child(3) {
     width: 20% !important;
   }
 
-  .sheet-items-table--print-landscape th:last-child,
-  .sheet-items-table--print-landscape td:last-child {
+  .sheet-items-table--print-landscape:not(.sheet-items-table--custom-print-widths) th:last-child,
+  .sheet-items-table--print-landscape:not(.sheet-items-table--custom-print-widths) td:last-child {
     width: 24% !important;
   }
 
@@ -3447,10 +3494,25 @@ select.quote-compact-vat:hover {
    * (100-4-12-20-24=40% / 5 = 8% moi cot) qua table-layout:fixed tu nhien
    * (khong ghi width rieng tung cot vi thu tu/so luong co the khac nhau giua
    * cac mau bao gia - chi ep 3 cot dau + cot cuoi la du, cot giua tu gian). */
-  .sheet-items-table--print-landscape th:not(:first-child):not(:nth-child(2)):not(:nth-child(3)):not(:last-child),
-  .sheet-items-table--print-landscape td:not(:first-child):not(:nth-child(2)):not(:nth-child(3)):not(:last-child) {
+  .sheet-items-table--print-landscape:not(.sheet-items-table--custom-print-widths) th:not(:first-child):not(:nth-child(2)):not(:nth-child(3)):not(:last-child),
+  .sheet-items-table--print-landscape:not(.sheet-items-table--custom-print-widths) td:not(:first-child):not(:nth-child(2)):not(:nth-child(3)):not(:last-child) {
     width: auto !important;
     text-align: right !important;
+  }
+
+  /* Nguoi dung tu keo gian cot (toolbar chinh in luon hien san, printPreviewMode=true,
+   * xem PublicQuotePage/QuoteDetailPage/QuoteWorkspaceModal.tsx) - doc bien
+   * --col-print-w gan inline tren tung <th> (px, xem
+   * QuoteDocumentRenderer.tsx). table-layout:fixed lay do rong hang dau
+   * (thead) lam chuan cho ca cot ben duoi nen khong can lap lai tren <td>.
+   * Dat SAU cung (ca sau khoi portrait lan landscape o tren) de source order
+   * + specificity (1 class + 1 element, dong deu voi cac rule ".sheet-items-
+   * table th" khac) khong bi cac rule :not() specificity cao hon o tren de
+   * (rule o tren da tu loai minh ra qua :not(.sheet-items-table--custom-
+   * print-widths) nen khong con canh tranh nua). */
+  .sheet-items-table--custom-print-widths th {
+    width: var(--col-print-w) !important;
+    min-width: var(--col-print-w) !important;
   }
 }
 
@@ -3459,9 +3521,10 @@ select.quote-compact-vat:hover {
  * kem file spec PDF): Times New Roman, co chu theo pt (khong dung
  * rem/em nua o day - "px cho chuan" nhung ban in that su do bang
  * pt, xem quy doi trong tung comment), KHONG scale()/zoom/JS thu
- * nho. A4 portrait luon luon (xem usesLandscapePrint trong
- * QuoteDocumentRenderer.tsx - da bo han co che chuyen ngang, xem
- * @page o tren - da doi margin ve 13mm dong bo voi khoi nay).
+ * nho. A4 portrait la mac dinh (nguoi dung co the tu doi sang ngang
+ * o man "Xem truoc khi in", xem usesLandscapePrint trong
+ * QuoteDocumentRenderer.tsx + @page o tren - da doi margin ve 13mm
+ * dong bo voi khoi nay).
  * Dat CUOI FILE (thay vi sua rai rac tung selector cu) de LUON
  * thang the (source order + !important) truoc moi rule print cu
  * hon phia tren - khong can doi tung noi, de doi chieu/rollback
@@ -3680,4 +3743,100 @@ select.quote-compact-vat:hover {
     overflow-wrap: anywhere !important;
     text-align: right !important;
   }
+}
+
+/* ============================================================
+ * TOOLBAR "CHỈNH XOAY NGANG/DỌC, CĂN CHỈNH CỘT" (PublicQuotePage.tsx/
+ * QuoteDetailPage.tsx/QuoteWorkspaceModal.tsx) - LUON hien san ngay tren
+ * trang/popup xem báo giá (yeu cau ro rang "chỉnh xoay ngang, xoay dọc, căn
+ * chỉnh cột ở đây luôn", khong con qua modal "Xem trước khi in" rieng nua -
+ * modal do tung bi che khuat boi popup cha do bug z-index, xem lich su commit).
+ * Toolbar + hint deu la .no-print (da co san rule an .no-print khi in o tren)
+ * nen KHONG lot vao ban in that; .quote-print-root bao ngoai renderer de tai
+ * dung "co che in bulletproof" da co san (visibility:hidden ca trang, chi
+ * hien dung khoi nay). */
+.quote-print-preview-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* Toolbar nay LUON hien san tren trang cong khai/chi tiet (khong con nam
+ * trong modal "Xem trước khi in" rieng) - can them khoang cach voi noi dung
+ * ben duoi vi khong con nam trong ".quote-print-preview-head" co san
+ * padding/border-bottom cua modal. */
+.quote-print-preview-toolbar--inline {
+  margin-bottom: 0.75rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.quote-print-preview-orientation-group {
+  display: flex;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.quote-print-preview-orientation-group .quote-print-preview-btn {
+  border: 0;
+  border-radius: 0;
+}
+
+.quote-print-preview-orientation-group .quote-print-preview-btn:first-child {
+  border-right: 1px solid #cbd5e1;
+}
+
+.quote-print-preview-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #fff;
+  color: #334155;
+  padding: 7px 12px;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.quote-print-preview-btn:hover {
+  background: #f8fafc;
+}
+
+.quote-print-preview-btn.is-active {
+  background: #eff6ff;
+  color: #1d4ed8;
+  border-color: #93c5fd;
+}
+
+.quote-print-preview-btn--primary {
+  background: #2563eb;
+  border-color: #2563eb;
+  color: #fff;
+}
+
+.quote-print-preview-btn--primary:hover {
+  background: #1d4ed8;
+}
+
+.quote-print-preview-btn--icon {
+  padding: 7px;
+}
+
+.quote-print-preview-icon {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+
+.quote-print-preview-hint {
+  margin: 0 0 0.75rem;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #64748b;
 }

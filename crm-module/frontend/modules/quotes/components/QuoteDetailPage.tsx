@@ -1,5 +1,6 @@
 'use client';
 
+import { Columns3, Printer, RectangleHorizontal, RectangleVertical, RotateCcw } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useEffect, useState } from 'react';
@@ -20,6 +21,12 @@ export function QuoteDetailPage({ quoteId }: Props) {
   const [creatingVersion, setCreatingVersion] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  // "chỉnh xoay ngang, xoay dọc, căn chỉnh cột ở đây luôn" - toolbar LUON hien
+  // san ngay tren trang (khong con modal "Xem trước khi in" rieng), dieu
+  // khien TRUC TIEP renderer duy nhat ben duoi (xem PublicQuotePage.tsx -
+  // dung y het co che).
+  const [printOrientation, setPrintOrientation] = useState<'portrait' | 'landscape'>('portrait');
+  const [printResetKey, setPrintResetKey] = useState(0);
   // Trang này thường mở từ nút "Mở báo giá" trong Drawer chi tiết deal (CRM) -
   // giữ dealId trên URL để "Quay lại" mở đúng lại drawer deal đó, thay vì về
   // trang danh sách báo giá chung chung (mất hết ngữ cảnh đang xem deal nào).
@@ -66,12 +73,9 @@ export function QuoteDetailPage({ quoteId }: Props) {
     await navigator.clipboard.writeText(`${window.location.origin}${quote.publicUrl}`);
   }
 
-  function downloadPDF() {
-    if (quote?.publicUrl) {
-      window.open(`${quote.publicUrl}?print=true`, '_blank', 'noopener');
-      return;
-    }
-    window.print();
+  function openPublicLink() {
+    if (!quote?.publicUrl) return;
+    window.open(quote.publicUrl, '_blank', 'noopener');
   }
 
   if (loading) return <main className="quote-page"><section className="quote-state">Đang tải...</section></main>;
@@ -93,7 +97,7 @@ export function QuoteDetailPage({ quoteId }: Props) {
           {quote.status === 'approved' || quote.status === 'confirmed' ? (
             <>
               <button type="button" className="quote-button quote-button--secondary" onClick={() => void copyLink()}>Copy Link</button>
-              <button type="button" className="quote-button quote-button--primary" onClick={downloadPDF}>Tải PDF</button>
+              <button type="button" className="quote-button quote-button--secondary" onClick={openPublicLink}>Mở bản khách hàng</button>
             </>
           ) : (
             <span className="quote-badge status-draft">Chưa có link công khai gửi khách</span>
@@ -106,6 +110,41 @@ export function QuoteDetailPage({ quoteId }: Props) {
           <TelegramSendButton quoteId={quote.id} status={quote.status} />
         </div>
       </header>
+      {/* "chỉnh xoay ngang, xoay dọc, căn chỉnh cột ở đây luôn" - toolbar LUON
+       * hien san (xem giai thich day du trong PublicQuotePage.tsx). */}
+      <div className="quote-print-preview-toolbar quote-print-preview-toolbar--inline no-print">
+        <div className="quote-print-preview-orientation-group" role="group" aria-label="Hướng giấy">
+          <button
+            type="button"
+            className={`quote-print-preview-btn${printOrientation === 'portrait' ? ' is-active' : ''}`}
+            onClick={() => setPrintOrientation('portrait')}
+          >
+            <RectangleVertical className="quote-print-preview-icon" /> Dọc
+          </button>
+          <button
+            type="button"
+            className={`quote-print-preview-btn${printOrientation === 'landscape' ? ' is-active' : ''}`}
+            onClick={() => setPrintOrientation('landscape')}
+          >
+            <RectangleHorizontal className="quote-print-preview-icon" /> Ngang
+          </button>
+        </div>
+        <button
+          type="button"
+          className="quote-print-preview-btn"
+          title="Kéo viền phải mỗi cột trong bảng để chỉnh độ rộng, sau đó bấm In"
+          onClick={() => setPrintResetKey(key => key + 1)}
+        >
+          <RotateCcw className="quote-print-preview-icon" /> Đặt lại độ rộng cột
+        </button>
+        <button type="button" className="quote-print-preview-btn quote-print-preview-btn--primary" onClick={() => window.print()}>
+          <Printer className="quote-print-preview-icon" /> In / Tải PDF
+        </button>
+      </div>
+      <p className="quote-print-preview-hint no-print">
+        <Columns3 className="quote-print-preview-icon" /> Rê chuột tới viền phải tiêu đề cột rồi kéo để chỉnh độ rộng — độ rộng này sẽ
+        được giữ nguyên khi in/tải PDF (căn như nào thì in ra như thế).
+      </p>
       {quote.status === 'approved' || quote.status === 'confirmed' ? (
         <p className="quote-print-hint no-print">
           Mẹo: trong hộp thoại in, bấm "Xem thêm cài đặt" và tắt "Tiêu đề và chân trang"
@@ -135,6 +174,7 @@ export function QuoteDetailPage({ quoteId }: Props) {
       ) : null}
       <div className="quote-print-root">
         <QuoteDocumentRenderer
+          key={printResetKey}
           schemaSnapshot={quote.formSnapshot}
           quoteData={quote.data}
           quoteItems={quote.items}
@@ -148,6 +188,8 @@ export function QuoteDetailPage({ quoteId }: Props) {
           isPublished={quote.processingStage === 'published'}
           quoteNumber={quote.quoteNumber}
           overallDiscountPercent={quote.overallDiscountPercent}
+          printPreviewMode
+          printOrientation={printOrientation}
         />
       </div>
     </main>

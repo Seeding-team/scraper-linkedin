@@ -23,7 +23,7 @@ export function emptyQuoteDraft(): QuoteDraft {
   return { data: {}, items: [], solutionItems: [] };
 }
 
-export function quoteDraftFromForm(form: QuoteForm, dealDraft?: DealFormState, issuerCompany?: IssuerCompany): QuoteDraft {
+export function quoteDraftFromForm(form: QuoteForm, dealDraft?: DealFormState, issuerCompany?: IssuerCompany, creatorName?: string): QuoteDraft {
   const fields = form.schemaJson.sections.flatMap(section => section.fields);
   const data: QuoteData = {};
   fields.forEach(field => {
@@ -84,19 +84,28 @@ export function quoteDraftFromForm(form: QuoteForm, dealDraft?: DealFormState, i
 
   if (issuerCompany) applyIssuerCompanySnapshot(data, issuerCompany);
 
+  // "Người liên hệ" (sellerContactName, hien tren PDF o khoi "Người phụ
+  // trách") PHAI la nguoi THAT SU dang tao bao gia nay, KHONG phai contact
+  // mac dinh cua cong ty phat hanh (issuerCompany.contactName, truoc day de
+  // "Lan Anh") - de sau khi applyIssuerCompanySnapshot() (co the vua ghi de
+  // bang contact cua cong ty) de luon uu tien ten nguoi tao neu co.
+  if (creatorName) data.sellerContactName = creatorName;
+
   return { data, items: quoteItems, solutionItems };
 }
 
 /** Đơn vị phát hành báo giá (bên bán) - SNAPSHOT thẳng vào data (mutate in place),
  * không lưu tham chiếu sống. Sửa công ty trong danh mục sau này không ảnh hưởng
  * báo giá đã tạo/sửa từ snapshot này. Dùng cả lúc dựng QuoteDraft mới
- * (quoteDraftFromForm) lẫn khi đổi công ty phát hành ở chế độ sửa (Bước 1). */
+ * (quoteDraftFromForm) lẫn khi đổi công ty phát hành ở chế độ sửa (Bước 1).
+ * KHONG dong den sellerContactName - field do la "Nguoi lien he"/nguoi tao
+ * bao gia (xem quoteDraftFromForm), khong phai contact cua cong ty, doi cong
+ * ty phat hanh khong duoc phep ghi de mat ten nguoi tao da dien. */
 export function applyIssuerCompanySnapshot(data: QuoteData, issuerCompany: IssuerCompany): void {
   Object.assign(data, {
     sellerCompanyName: issuerCompany.legalName,
     sellerTaxCode: issuerCompany.taxCode || '',
     sellerAddress: issuerCompany.address || '',
-    sellerContactName: issuerCompany.contactName || '',
     sellerPhone: issuerCompany.phone || '',
     sellerEmail: issuerCompany.email || '',
     sellerWebsite: issuerCompany.website || '',
