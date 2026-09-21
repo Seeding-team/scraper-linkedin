@@ -164,3 +164,34 @@ export function normalizeQuoteColumnLabel(column: QuoteField): string {
   if (column.key === 'total') return 'Thành tiền (gồm VAT)';
   return column.label;
 }
+
+/** true nếu có ÍT NHẤT 1 dòng hàng (kể cả dòng con trong nhóm/section) thực
+ * sự có % giảm giá > 0 - đệ quy qua `children` vì giảm giá có thể nằm ở dòng
+ * con (xem "hỗ trợ giảm giá theo dòng cha/con"). Component bung ra từ 1 bundle
+ * (`__bundleComponent`) LUÔN có discountPercent = 0 cứng (xem
+ * bundleComponentToDisplayItem trong QuoteDocumentRenderer.tsx) nên không cần
+ * xử lý riêng - some() vẫn duyệt qua nhưng luôn false, không ảnh hưởng kết quả. */
+function hasAnyLineItemDiscount(items: QuoteItem[]): boolean {
+  return items.some(
+    item => (item.discountPercent || 0) > 0 || (item.children ? hasAnyLineItemDiscount(item.children) : false)
+  );
+}
+
+/** Cột "Sau giảm giá" (`amountAfterDiscount`) CHỈ có ý nghĩa khi có dòng hàng
+ * thực sự bị giảm giá - nếu không, nó luôn bằng hệt cột `subtotal` ("Thành
+ * tiền trước VAT") vì subtotal - 0% = subtotal, tạo ra 2 cột "trước VAT" trùng
+ * số nhau trên bảng in dù người tạo có tick hiển thị cột này hay không.
+ *
+ * BUG THAT DA GAP ("báo giá không có giảm giá vẫn hiện 2 cột thành tiền
+ * trước VAT/chưa VAT giống hệt nhau"): TRUOC DAY viec cot nay hien hay an CHI
+ * phu thuoc "Cot hien thi" nguoi tao tick (xem quoteData.visibleColumns) -
+ * BAT KE bang hang muc co dong nao That su duoc giam gia hay khong. Ap dung
+ * o CA finalColumns (KHONG chi filter theo TOGGLEABLE_COLUMN_KEYS nhu truoc)
+ * de an cot nay o MOI mode (kha ca noi bo 'detail') khi khong co giam gia
+ * that - day la loai bo 1 cot KHONG mang thong tin gi them, khac voi
+ * "Cot hien thi" (an du lieu that theo y muon nguoi tao) nen khong can tuan
+ * theo gioi han "khong anh huong mode='detail'" cua co che do. */
+export function filterRedundantAmountAfterDiscountColumn(columns: QuoteField[], items: QuoteItem[]): QuoteField[] {
+  if (hasAnyLineItemDiscount(items)) return columns;
+  return columns.filter(column => column.key !== 'amountAfterDiscount');
+}
