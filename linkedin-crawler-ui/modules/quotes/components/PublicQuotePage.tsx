@@ -229,6 +229,7 @@ export function PublicQuotePage({ token }: Props) {
           overallDiscountPercent={quote.overallDiscountPercent}
           printPreviewMode
           printOrientation={printOrientation}
+          contactPersonName={quote.quoteOwnerName}
         />
       </div>
     </main>

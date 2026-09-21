@@ -90,6 +90,15 @@ interface Props {
    * dọc, không tự đổi hướng"). Người dùng chọn 'landscape' ở màn Xem trước khi
    * in (xem usesLandscapePrint bên dưới - trước đây luôn hardcode false). */
   printOrientation?: 'portrait' | 'landscape';
+  /** "Người liên hệ" trong khối "Người phụ trách" PHẢI là Sale đang được gán
+   * (quote.quoteOwnerId), KHÔNG dùng field tự do sellerContactName nữa (field
+   * đó có defaultValue cứng "Lan Anh" - đúng bug "tên mặc định" người dùng
+   * báo). Truyền tên Sale ĐÃ RESOLVE (display name thật) từ nơi gọi - canonical
+   * renderer này không tự query user, chỉ hiển thị đúng theo props để mọi nơi
+   * gọi (preview draft/detail/public/PDF) đều đi qua CÙNG 1 cơ chế, không tự
+   * suy luận riêng. undefined/null = quote thật sự chưa có Sale -> fallback
+   * về fieldValue('sellerContactName') cũ (field tự do/default). */
+  contactPersonName?: string | null;
 }
 
 function emptySchema(): QuoteSchema {
@@ -325,6 +334,7 @@ export function QuoteDocumentRenderer({
   overallDiscountPercent = null,
   printPreviewMode = false,
   printOrientation = 'portrait',
+  contactPersonName,
 }: Props) {
   // Resize cot bang hang muc kieu Excel - CHI cho man hinh xem truoc/chi tiet
   // noi bo (mode 'preview'/'detail', xem allowColumnResize ben duoi), KHONG
@@ -858,8 +868,12 @@ export function QuoteDocumentRenderer({
          * ung rong het. */}
         {(() => {
           const filledCustomerRows = customerRows.filter(row => row.value);
+          // "Người liên hệ" = Sale dang duoc gan (quote_owner_id), KHONG con
+          // dung field tu do/default cu - chi fallback ve fieldValue khi quote
+          // THAT SU chua co Sale (contactPersonName undefined/null/rong).
+          const resolvedContactName = contactPersonName || String(fieldValue('sellerContactName') || '');
           const sellerContactRows = [
-            { key: 'sellerContactName', label: findField('sellerContactName').label, value: String(fieldValue('sellerContactName') || '') },
+            { key: 'sellerContactName', label: findField('sellerContactName').label, value: resolvedContactName },
             { key: 'sellerPhone', label: findField('sellerPhone').label, value: String(fieldValue('sellerPhone') || '') },
             { key: 'sellerEmail', label: findField('sellerEmail').label, value: String(fieldValue('sellerEmail') || '') },
           ].filter(row => row.value);

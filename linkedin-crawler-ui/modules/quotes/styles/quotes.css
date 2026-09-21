@@ -2714,11 +2714,11 @@ select.quote-compact-vat:hover {
 }
 
 .sheet-note {
-  margin-top: 1.2rem;
+  margin-top: 15px;
   border: 1px dashed #cbd5e1;
   border-radius: 0.5rem;
   background: #fdfbf7;
-  padding: 0.9rem;
+  padding: 13px 15px;
 }
 
 .sheet-note--terms {
@@ -2727,7 +2727,7 @@ select.quote-compact-vat:hover {
 }
 
 .sheet-note--terms h3 {
-  margin: 0 0 0.55rem;
+  margin: 0 0 6px;
   color: #111827;
   font-size: 12px;
   font-weight: 700;
@@ -2749,7 +2749,7 @@ select.quote-compact-vat:hover {
  * .sheet-note--terms (do khong phai <ul>/<li>, chi <h3>+<p>) nen can style rieng
  * cho h3/p ngay trong .sheet-note, khop dung gia tri da dung o --terms cho dong bo. */
 .sheet-note h3 {
-  margin: 0 0 0.55rem;
+  margin: 0 0 6px;
   color: #111827;
   font-size: 12px;
   font-weight: 700;
@@ -2783,7 +2783,7 @@ select.quote-compact-vat:hover {
 }
 
 .sheet-signatures {
-  margin-top: 2.2rem;
+  margin-top: 25px;
 }
 
 .sheet-signatures > div {
@@ -2969,17 +2969,17 @@ select.quote-compact-vat:hover {
  * bo het overflow:hidden lien quan - loi nay lap lai y het du thu nhieu
  * huong sua khac nhau, nen ket luan la han che/bug that su cua Chromium voi
  * named page, khong phai loi CSS cua repo. CHI 1 @page DUY NHAT nay hoat
- * dong cho MOI bao gia/hop dong - yeu cau ro rang (kem spec PDF): "Khổ A4
- * portrait 210x297mm, lề khoảng 12-14mm". @page nay la mac dinh khi mo trang
- * (chua chon huong) - toolbar chinh in luon hien san tren trang (xem
+ * dong cho MOI bao gia/hop dong - yeu cau ro rang (kem spec PDF, CHOT LAI
+ * 2026-09-22 sau khi test ban in giay that): "Khổ A4 portrait 210x297mm, lề
+ * an toan 15mm tren/16mm trai-phai/16mm duoi". @page nay la mac dinh khi mo
+ * trang (chua chon huong) - toolbar chinh in luon hien san tren trang (xem
  * PublicQuotePage/QuoteDetailPage/QuoteWorkspaceModal.tsx) cho phep nguoi
  * dung tu doi sang A4 ngang, luc do 1 the <style> rieng se CHEN
  * DE (xem usesLandscapePrint trong QuoteDocumentRenderer.tsx) voi @page
- * margin 7mm/12mm rieng cho ngang. Le 13mm deu 4 canh cho doc (giua khoang
- * 12-14mm yeu cau). */
+ * margin rieng cho ngang. */
 @page {
   size: A4 portrait;
-  margin: 13mm;
+  margin: 15mm 16mm 16mm;
 }
 
 @media print {
@@ -3113,18 +3113,15 @@ select.quote-compact-vat:hover {
     box-sizing: border-box !important;
   }
 
-  /* Thu gon phan dau tai lieu de bang hang muc bat dau SOM HON tren trang 1
-   * (yeu cau thuc te: "14 hang muc con khoang 3 trang" - phan header/meta/
-   * thong tin khach hang truoc do chiem qua nhieu khoang trang doc, day bang
-   * xuong thap, lam so trang tang len khong can thiet). CHI giam khoang cach
-   * dung (margin/padding doc) luc in, KHONG dong vao man hinh xem (rule nay
-   * nam trong @media print, cac gia tri man hinh o rule goc ngoai @media giu
-   * nguyen). Van du "de doc" - chi bot khoang trang thua, khong doi font/bo
-   * noi dung nao. Padding gan ve 0 (thay vi 1.1rem/1.5rem cu) vi @page da
-   * co san margin 13mm rieng (xem @page o tren) - giu ca 2 lop se thanh
-   * "le kep" (13mm + padding), vuot qua muc 12-14mm yeu cau. */
+  /* CHOT LAI 2026-09-22 (test ban in giay that): padding:0 truoc day lam
+   * header/bang/chu ky nam SAT DUNG bien @page margin, khong con khoang tho
+   * nao rieng - "header đang trải quá sát hai mép" (yeu cau rieng). Uu tien
+   * doc duoc/an toan khi in hon la nhet vua 1 trang (chinh sach da chot) -
+   * phuc hoi mot khoang tho ngang ~7mm (trong khoang 6-8mm yeu cau) + mot it
+   * tho phia tren cho header, KHONG dung 0 nua. @page da co margin 15/16/16mm
+   * rieng, khoang tho nay la LOP THU 2 (bo sung, khong thay the). */
   .quote-sheet--standard {
-    padding: 0 !important;
+    padding: 6mm 7mm 0 7mm !important;
   }
 
   /* Cung bug voi .sheet-parties o duoi: letterhead (logo/ten cong ty + so bao
@@ -3196,38 +3193,71 @@ select.quote-compact-vat:hover {
     page-break-after: avoid;
   }
 
+  /* CHOT LAI 2026-09-22 (yeu cau rieng "không để các block dính sát"):
+   * margin/padding gan bang 0 truoc day (di san chinh sach cu "nhet vua 1
+   * trang") lam Tong tien/Điều khoản/Chữ ký dinh sat nhau khi in that. Doi
+   * sang don vi mm (yeu cau ro rang "Print CSS dùng đơn vị mm tương ứng")
+   * cho khoang cach GIUA cac khoi, giu px cho spacing NHO trong 1 khoi (dong
+   * bang). Khong tang qua da - van trong nguong yeu cau, khong lang phi A4. */
   .sheet-total-block {
     margin-top: 3px !important;
   }
 
-  /* Moi dong Tong tien (0.7rem/0.9rem padding man hinh - qua rong cho ban
-   * in, la 1 trong nhung nguyen nhan chinh khien 8 hang muc du con thua
-   * cho van bi day sang trang 2 - xem yeu cau rieng "kiem tra page-break
-   * that ky, khong phai do noi dung dai"). */
+  /* CHOT LAI LAN 2 (yeu cau rieng, kem screenshot bug that): break-after:
+   * avoid tren .sheet-total-block o ban truoc VO TINH gop chung Tong tien +
+   * Điều khoản thanh liền 1 cum "khong duoc tach", cong don voi min-height
+   * lon o .sheet-signatures ben duoi khien CA CUM 3 khoi (Tong tien/Điều
+   * khoan/Chu ky) bi day nguyen cum xuong trang sau moi khi khong vua het ca
+   * cum o cuoi trang - tao khoang trang lon vo ly cuoi trang truoc. BO HAN
+   * break-after nay - moi block (.sheet-total-block/.sheet-note/
+   * .sheet-signatures) CHI con break-inside:avoid RIENG LE (khong cat doi 1
+   * block), KHONG co rang buoc "phai di lien nhau" giua cac block - block
+   * nao con vua cuoi trang thi o lai, block nao khong vua moi rot xuong
+   * trang sau (dung yeu cau "Nếu trang hiện tại còn đủ chỗ cho Totals +
+   * Payment terms thì phải đặt chúng ngay tại trang đó"). KHONG co wrapper
+   * DOM nao boc chung ca 3 khoi ca (da audit lai JSX - la 3 section/footer
+   * NGANG HANG, khong long trong 1 div/section chung) nen khong co gi de
+   * "thao" o cap wrapper - van de nam o 2 rang buoc them nay, da bo. */
+
+  /* Moi dong Tong tien - giu gon (0.7rem/0.9rem man hinh qua rong cho ban
+   * in), nhung KHONG con ep sat 1px nhu truoc. */
   .sheet-total-row {
-    padding: 1px 5px !important;
+    padding: 3px 5px !important;
   }
 
+  /* Khoang cach Tong tien -> Điều khoản/Kế hoạch thanh toán: 14-16px man
+   * hinh -> ~4mm in giay that. Padding trong khoi: doc 12-14px (~3.5mm),
+   * ngang 14-16px (~4mm) - dung yeu cau. */
   .sheet-note {
-    margin-top: 1px !important;
-    padding: 2px 5px !important;
+    margin-top: 4mm !important;
+    padding: 3.5mm 4mm !important;
   }
 
   .sheet-note p {
     margin: 1.5px 0 !important;
   }
 
+  /* Khoang cach Điều khoản -> khu chu ky: giam ve muc AN TOAN cho page-break
+   * (yeu cau rieng lan 2 "không có margin-top lớn ép block xuống trang
+   * sau") - 6mm (~22.7px, van o CANH DUOI nguong 22-28px yeu cau lan truoc,
+   * khong con o muc cao 7mm nua) de khong cong don qua nhieu voi min-height
+   * ben duoi. */
   .sheet-signatures {
-    margin-top: 1px !important;
+    margin-top: 6mm !important;
     line-height: 1.15 !important;
   }
 
+  /* Chua khoang trong duoi ten 2 ben de ky/dong dau - GIAM tu 20mm xuong
+   * 10mm (yeu cau rieng lan 2: min-height lon la NGUYEN NHAN CHINH day ca
+   * cum Tong tien/Điều khoản/Chữ ký xuong trang sau, tao khoang trang lon
+   * vo ly). 10mm (~28px) van con chut khoang thu cho dau/ky, uu tien
+   * "không để khoảng trắng lớn vô lý cuối trang" hon la muc 60-80px cu. */
   .sheet-signatures > div {
-    min-height: 10px !important;
+    min-height: 10mm !important;
   }
 
   .sheet-signatures span {
-    margin-top: 1px !important;
+    margin-top: 3mm !important;
   }
 
   /* .quote-sheet--standard co san "overflow:hidden" (dung cho man hinh, che
@@ -3279,15 +3309,22 @@ select.quote-compact-vat:hover {
   .sheet-items-table {
     table-layout: fixed !important;
     width: 100% !important;
-    font-size: 10px !important;
   }
 
+  /* CHOT LAI 2026-09-22: padding 0.5px doc truoc day gan nhu bang 0 (di san
+   * chinh sach cu "nhet vua 1 trang"), qua chat so voi font da tang (10.5pt).
+   * Uu tien doc duoc - giam padding NGANG (khong phai doc) de bu lai phan
+   * font tang, dung nhu yeu cau "Giảm padding ngang của cell nếu cần để bù
+   * cho việc tăng font" - font-size thuc te da do .sheet-items-table
+   * th/td font-size:10.5pt !important o khoi @media print CUOI FILE (source
+   * order sau khoi nay nen thang the), khong con set 10px o day nua (tranh 2
+   * nguon xung dot). */
   .sheet-items-table th,
   .sheet-items-table td {
-    padding: 0.5px 4px !important;
+    padding: 5px 5px !important;
     min-width: 0 !important;
     overflow-wrap: anywhere !important;
-    line-height: 1.3 !important;
+    line-height: 1.35 !important;
   }
 
   /* width:auto rieng (tach khoi khoi tren) - :not() de KHONG ghi de do rong
@@ -3424,6 +3461,7 @@ select.quote-compact-vat:hover {
   .sheet-note,
   .sheet-signatures {
     page-break-inside: avoid;
+    break-inside: avoid;
   }
 
   /* Bang qua nhieu cot (>=7, xem LANDSCAPE_PRINT_COLUMN_THRESHOLD trong
@@ -3522,7 +3560,7 @@ select.quote-compact-vat:hover {
    * cac muc duoc ghi de rieng ben duoi. */
   .quote-document-renderer {
     font-family: 'Times New Roman', Times, serif !important;
-    font-size: 11pt !important;
+    font-size: 11.5pt !important;
     line-height: 1.4 !important;
     /* Tieng Viet co dau ro net, khong mong: Times New Roman la font he
        thong (khong phai webfont tai ve) nen Chromium in dung hinting
@@ -3534,7 +3572,7 @@ select.quote-compact-vat:hover {
    * 15–16pt bold". */
   .sheet-title-block h1,
   .villa-title {
-    font-size: 16pt !important;
+    font-size: 17pt !important;
     font-weight: 700 !important;
     line-height: 1.25 !important;
   }
@@ -3553,10 +3591,10 @@ select.quote-compact-vat:hover {
   }
 
   /* Ngay bao gia canh so bao gia - "header khong duoc nho hon table text"
-   * (yeu cau rieng chot lai typography) - bump tiep tu 9pt len bang san
-   * table (10pt). */
+   * (yeu cau rieng chot lai typography) - dong bo voi muc "Thong tin khach
+   * hang/nguoi phu trach" (11pt) o duoi, khong con nho hon bang. */
   .sheet-doc-code em {
-    font-size: 10pt !important;
+    font-size: 11pt !important;
     font-weight: 600 !important;
   }
 
@@ -3592,23 +3630,22 @@ select.quote-compact-vat:hover {
   .sheet-insight-item p,
   .villa-footer p,
   .villa-list li {
-    font-size: 10.5pt !important;
+    font-size: 11pt !important;
     line-height: 1.45 !important;
     margin: 2px 0 !important;
   }
 
   /* Thong tin cong ty phat hanh (dia chi/SDT/email duoi ten cong ty) -
-   * "Header/footer/signature khong duoc nho hon table text" (yeu cau rieng
-   * chot lai typography) - truoc day 9pt, thap hon san table (10pt) nen
-   * bump len bang muc san toi thieu do. */
+   * "Header/footer/signature khong duoc nho hon table text" - dong bo voi
+   * muc "Thong tin khach hang" (11pt) o tren. */
   .sheet-company p {
-    font-size: 10pt !important;
+    font-size: 11pt !important;
     margin: 1.5px 0 !important;
   }
 
   /* Meta line (villa template) - cung san "khong nho hon table text". */
   .villa-meta {
-    font-size: 10pt !important;
+    font-size: 11pt !important;
   }
 
   /* Bang san pham/dich vu - "Font bảng 9.5–10.5pt, tối thiểu ~10pt" (yeu
@@ -3620,18 +3657,18 @@ select.quote-compact-vat:hover {
   .sheet-items-table,
   .villa-table {
     font-family: 'Times New Roman', Times, serif !important;
-    font-size: 10pt !important;
+    font-size: 10.5pt !important;
   }
 
   .sheet-items-table th,
   .villa-table th {
-    font-size: 10pt !important;
-    font-weight: 700 !important;
+    font-size: 10.5pt !important;
+    font-weight: 600 !important;
   }
 
   .sheet-items-table td,
   .villa-table td {
-    font-size: 10pt !important;
+    font-size: 10.5pt !important;
   }
 
   .quote-price-stack s {
@@ -3654,12 +3691,12 @@ select.quote-compact-vat:hover {
    * tren, giu nguyen). */
   .sheet-total-row,
   .villa-total-row {
-    font-size: 10pt !important;
+    font-size: 11pt !important;
   }
 
   .sheet-total-row--grand,
   .villa-total-row--grand {
-    font-size: 11pt !important;
+    font-size: 12pt !important;
     font-weight: 700 !important;
   }
 
@@ -3667,7 +3704,7 @@ select.quote-compact-vat:hover {
   .sheet-note p,
   .sheet-note--terms li,
   .villa-total-sub {
-    font-size: 10pt !important;
+    font-size: 10.5pt !important;
   }
 
   /* Ghi chu THAT SU render qua <ul><li> (khong phai <p> nhu nham tuong ban
@@ -3686,18 +3723,18 @@ select.quote-compact-vat:hover {
 
   .sheet-note h3,
   .sheet-note--terms h3 {
-    font-size: 10pt !important;
+    font-size: 10.5pt !important;
     font-weight: 700 !important;
     margin: 0 0 1.5px !important;
   }
 
-  /* Chu ky - "CHỮ KÝ: 10pt" (khong duoc thu nho). */
+  /* Chu ky - "CHỮ KÝ: 11pt" (khong duoc thu nho). */
   .sheet-signatures {
-    font-size: 10pt !important;
+    font-size: 11pt !important;
   }
 
   .sheet-signatures span {
-    font-size: 10pt !important;
+    font-size: 11pt !important;
   }
 
   /* Yeu cau rieng "ở hạng mục, bỏ in đậm đi" (kem screenshot ban cu lam

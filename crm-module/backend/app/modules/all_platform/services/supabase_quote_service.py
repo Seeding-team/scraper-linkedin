@@ -279,6 +279,11 @@ def _row_to_quote(row: dict, items: list[dict] | None = None) -> dict:
         "processingStage": row.get("processing_stage") or "request",
         "technicalOwnerId": row.get("technical_owner_id"),
         "quoteOwnerId": row.get("quote_owner_id"),
+        # "Người liên hệ" tren tai lieu bao gia PHAI la ten Sale dang duoc gan
+        # (khong phai field tu do sellerContactName voi defaultValue cung "Lan
+        # Anh" - dung bug "ten mac dinh" nguoi dung bao). Tra ten THAT qua
+        # embed, KHONG bat FE tu query rieng (tranh 2 nguon lech nhau).
+        "quoteOwnerName": (row.get("quote_owner") or {}).get("name"),
         # Phase 1/3 lifecycle that (migration 087) - noi bo, khong bao gio
         # loi qua _row_to_public_quote.
         "deletedAt": row.get("deleted_at"),
@@ -543,6 +548,10 @@ def _row_to_public_quote(row: dict, raw_items: list[dict] | None = None) -> dict
         "versionChainId": row.get("version_chain_id"),
         "versionNumber": row.get("version_number") or 1,
         "parentQuoteId": row.get("parent_quote_id"),
+        # Chi ten Sale (khong phai id noi bo) - an toan de lo cho khach, dung
+        # de hien "Người liên hệ" tren ban cong khai/PDF (xem QuoteDocumentRenderer
+        # contactPersonName). KHONG dua quoteOwnerId vao day (id noi bo).
+        "quoteOwnerName": (row.get("quote_owner") or {}).get("name"),
     }
 
 
@@ -1428,7 +1437,12 @@ def get_quote(quote_id: str, include_deleted: bool = False) -> dict:
     CHI loi zero-rows (PGRST116) moi duoc map sang QuoteNotFoundError - loi
     ket noi/permission/DB khac deu duoc RE-RAISE nguyen ven, khong nuot."""
     supabase: Client = get_supabase_client()
-    query = supabase.table(QUOTES_TABLE).select("*").eq("id", quote_id).eq("instance", _crm_instance())
+    query = (
+        supabase.table(QUOTES_TABLE)
+        .select("*, quote_owner:quote_owner_id(name)")
+        .eq("id", quote_id)
+        .eq("instance", _crm_instance())
+    )
     if not include_deleted:
         query = query.is_("deleted_at", "null")
     try:
@@ -1486,7 +1500,7 @@ def get_public_quote(token: str, email: str | None = None, phone: str | None = N
     supabase: Client = get_supabase_client()
     result = (
         supabase.table(QUOTES_TABLE)
-        .select("*")
+        .select("*, quote_owner:quote_owner_id(name)")
         .eq("public_token", token)
         .eq("instance", _crm_instance())
         .is_("deleted_at", "null")

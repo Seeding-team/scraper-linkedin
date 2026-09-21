@@ -354,6 +354,11 @@ export interface Quote {
   processingStage?: QuoteProcessingStage;
   technicalOwnerId?: string;
   quoteOwnerId?: string;
+  /** Ten hien thi that cua Sale dang duoc gan (quote_owner_id) - backend tra
+   * san qua embed, dung de hien "Người liên hệ" tren tai lieu bao gia (xem
+   * QuoteDocumentRenderer contactPersonName) thay vi field tu do
+   * sellerContactName. null/undefined = quote chua co Sale. */
+  quoteOwnerName?: string | null;
   /** Gia von/loi nhuan (migration 086) - tinh THAT o backend tu cost_price
    * tung dong (khong tin so tong tu FE). hasCostData=false khi CHUA co dong
    * nao nhap cost_price - UI phai hien "Chua co du lieu gia von", KHONG bia

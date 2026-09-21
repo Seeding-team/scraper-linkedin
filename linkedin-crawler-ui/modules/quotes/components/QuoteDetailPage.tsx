@@ -190,6 +190,7 @@ export function QuoteDetailPage({ quoteId }: Props) {
           overallDiscountPercent={quote.overallDiscountPercent}
           printPreviewMode
           printOrientation={printOrientation}
+          contactPersonName={quote.quoteOwnerName}
         />
       </div>
     </main>

@@ -1122,6 +1122,18 @@ export function QuoteWorkspaceModal({
     const agentName = agentsById.get(id);
     return agentName ? repairUtf8Mojibake(agentName) : 'Không rõ (đã bỏ vai trò báo giá)';
   }
+  /** Chi TEN THUAN (khong kem "· Leader · Presale & Sale" nhu ownerNameFor -
+   * cai do danh cho label dropdown, KHONG phai de hien tren tai lieu bao gia
+   * "Người liên hệ") - yeu cau rieng "hiển thị tên thôi k hiện Leader/
+   * Presale & Sale". */
+  function plainNameFor(id?: string | null): string | undefined {
+    if (!id) return undefined;
+    if (id === user?.id && user?.name) return repairUtf8Mojibake(user.name);
+    const found = businessRoleUsersById.get(id);
+    if (found) return repairUtf8Mojibake(found.name);
+    const agentName = agentsById.get(id);
+    return agentName ? repairUtf8Mojibake(agentName) : undefined;
+  }
   // `action` tuy chon - yeu cau rieng "cho + sp và dv ở đâu luôn bro nếu
   // quên sao": toast bao "Báo giá đã khoá..." truoc day CHI la text, nguoi
   // dung phai tu nho di bam "Tạo phiên bản mới" o dau khac - gio toast co
@@ -6504,6 +6516,7 @@ export function QuoteWorkspaceModal({
                   overallDiscountPercent={quote ? quote.overallDiscountPercent ?? null : draftOverallDiscountPercent ?? null}
                   printPreviewMode
                   printOrientation={printOrientation}
+                  contactPersonName={plainNameFor(quote ? quote.quoteOwnerId : draftQuoteOwnerId)}
                 />
               </div>
             ) : (
