@@ -4766,6 +4766,7 @@ export function QuoteWorkspaceModal({
                    * "vua khit" % duoc gan tren th/td nua. */}
                   <colgroup>
                     <col />
+                    <col />
                     <col style={{ width: '92px' }} />
                     <col style={{ width: '64px' }} />
                     <col style={{ width: '104px' }} />
@@ -4796,6 +4797,7 @@ export function QuoteWorkspaceModal({
                           <span>Hạng mục</span>
                         </span>
                       </th>
+                      <th className="qc-th-desc">Mô tả</th>
                       <th className="qc-th-unit">ĐVT</th>
                       <th className="qc-th-money qc-th-qty">SL</th>
                       <th className="qc-th-money qc-th-cost">Giá vốn/ĐV</th>
@@ -4810,7 +4812,7 @@ export function QuoteWorkspaceModal({
                   <tbody>
                     {itemsDraft.length === 0 ? (
                       <tr>
-                        <td colSpan={9} className="qc-empty qc-workspace-items-empty-cell">
+                        <td colSpan={10} className="qc-empty qc-workspace-items-empty-cell">
                           {/* CHOT LAI (yeu cau moi nhat "Trả các nút thêm hạng
                            * mục xuống dưới bảng"): 3 nut Chọn từ danh mục/
                            * Thêm hạng mục/+ Mục cha da chuyen XUONG DUOI bang
@@ -4854,8 +4856,8 @@ export function QuoteWorkspaceModal({
                                 onDragOver={canDragRows ? event => event.preventDefault() : undefined}
                                 onDrop={canDragRows ? () => handleRowDrop(index, true) : undefined}
                               >
-                                {/* Nine data columns, plus the separate action cell when editable. */}
-                                <td colSpan={9}>
+                                {/* Ten data columns (them "Mô tả"), plus the separate action cell when editable. */}
+                                <td colSpan={10}>
                                   {canDragRows ? <span className="qc-workspace-drag-handle" title="Kéo để sắp xếp">⠿</span> : null}
                                   {/* Roman numeral (I/II/III...) dat TRUOC ten muc (ben trai) thay vi
                                    * sau nhu cu - o kich thuoc nho, badge "I" dat SAU chu de bi doc
@@ -5077,25 +5079,26 @@ export function QuoteWorkspaceModal({
                                     <span className="qc-line-discount-chip">CK dòng {formatPercentTrim(item.discountPercent)}</span>
                                   ) : null}
                                 </span>
-                                {/* "Nội dung công việc" - TRUOC DAY chi sua duoc qua
-                                 * popover rieng (bam icon FileText moi mo), yeu cau ro
-                                 * rang "chỉnh được ở đây luôn, không cần bấm vào chỉnh
-                                 * nữa" - chuyen thanh textarea sua TRUC TIEP ngay duoi
-                                 * ten hang muc, cung field quote_item.description nhu
-                                 * popover cu dung (KHONG doi field DB). Popover
-                                 * (descriptionPopoverIndex) gio CHI con giu "Phạm vi
-                                 * bảo hành". */}
-                                <textarea
-                                  className="qc-cell-input qc-workspace-item-desc-inline"
-                                  rows={2}
-                                  value={item.description || ''}
-                                  disabled={!(editableTechnicalCells || editableCells)}
-                                  onChange={e => updateRow(index, { description: e.target.value })}
-                                  onBlur={() => void persistQuote({}, { silent: true })}
-                                  placeholder={(editableTechnicalCells || editableCells) ? 'Mô tả / nội dung công việc...' : 'Chưa có mô tả.'}
-                                />
                               </span>
                               </span>
+                            </td>
+                            <td className="qc-cell-desc" data-label="Mô tả">
+                              {/* Yeu cau rieng "tách cột Mô tả riêng" (giong bang
+                               * Sản phẩm & dịch vụ, xem sc-cell-desc) - truoc day mo
+                               * ta nam LONG duoi ten hang muc trong CUNG 1 cot, gio
+                               * tach thanh cot doc lap. Van dung chung field
+                               * quote_item.description, van la textarea sua TRUC
+                               * TIEP (yeu cau cu "chỉnh được ở đây luôn" - KHONG quay
+                               * lai popover, popover chi con giu Phạm vi bảo hành). */}
+                              <textarea
+                                className="qc-cell-input qc-workspace-item-desc-inline"
+                                rows={2}
+                                value={item.description || ''}
+                                disabled={!(editableTechnicalCells || editableCells)}
+                                onChange={e => updateRow(index, { description: e.target.value })}
+                                onBlur={() => void persistQuote({}, { silent: true })}
+                                placeholder={(editableTechnicalCells || editableCells) ? 'Mô tả / nội dung công việc...' : 'Chưa có mô tả.'}
+                              />
                             </td>
                             <td className="qc-cell-unit" data-label="ĐVT">
                               {editableTechnicalCells ? (
@@ -5240,6 +5243,7 @@ export function QuoteWorkspaceModal({
                                         </span>
                                       </span>
                                     </td>
+                                    <td className="qc-cell-desc" data-label="Mô tả" title={child.description || undefined}>{child.description || '—'}</td>
                                     <td className="qc-cell-unit" data-label="ĐVT">{child.unit || '—'}</td>
                                     <td className="qc-cell-money qc-cell-qty" data-label="SL">{child.quantity || '—'}</td>
                                     <td className="qc-cell-money qc-cell-cost" data-label="Giá vốn/ĐV">
