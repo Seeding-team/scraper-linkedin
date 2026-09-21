@@ -506,11 +506,6 @@ export function QuoteDocumentRenderer({
           : fieldValue(field.key)
       ),
     }));
-  const validUntil = textValue(fieldValue('offerExpiryDate'))
-    ? formatDateVN(fieldValue('offerExpiryDate'))
-    : textValue(fieldValue('validityDays'))
-      ? `${textValue(fieldValue('validityDays'))} ngày kể từ ngày báo giá`
-      : '';
   const insightRows = [
     ['customerNeed', 'Nhu cầu khách hàng'],
     ['customerRequirement', 'Yêu cầu chính'],
@@ -819,37 +814,39 @@ export function QuoteDocumentRenderer({
           <img className="sheet-marketing-banner" src={String(fieldValue('bannerImageUrl'))} alt="" />
         ) : null}
         <header className="sheet-company sheet-company--standard">
+          {/* Logo nam NGANG song song voi thong tin cong ty (yeu cau rieng
+           * "thông tin nằm ngang song song logo") - truoc day logo/ten/dia
+           * chi/sdt xep CHONG doc trong cung 1 div, gio logo la 1 flex item
+           * rieng, phan text ben canh (xem .sheet-brand-block trong
+           * quotes.css). */}
           <div className="sheet-brand-block">
             {fieldValue('sellerLogo') ? (
               <img className="sheet-brand-logo" src={String(fieldValue('sellerLogo'))} alt={String(fieldValue('sellerCompanyName') || '')} />
             ) : null}
-            <div className="sheet-brand-mark">{String(fieldValue('sellerCompanyName') || 'MARKEE')}</div>
-            <p>{String(fieldValue('sellerAddress'))}</p>
-            <p>
-              {String(fieldValue('sellerPhone'))}
-              {fieldValue('sellerEmail') ? ` · ${String(fieldValue('sellerEmail'))}` : ''}
-              {fieldValue('sellerWebsite') ? ` · ${String(fieldValue('sellerWebsite'))}` : ''}
-            </p>
+            <div className="sheet-brand-text">
+              <div className="sheet-brand-mark">{String(fieldValue('sellerCompanyName') || 'MARKEE')}</div>
+              <p>{String(fieldValue('sellerAddress'))}</p>
+              <p>
+                {String(fieldValue('sellerPhone'))}
+                {fieldValue('sellerEmail') ? ` · ${String(fieldValue('sellerEmail'))}` : ''}
+                {fieldValue('sellerWebsite') ? ` · ${String(fieldValue('sellerWebsite'))}` : ''}
+              </p>
+            </div>
           </div>
           <div className="sheet-doc-code">
             <span>BÁO GIÁ</span>
             <strong>{quoteNumber || String(fieldValue('quoteNumber') || '[Số báo giá]')}</strong>
+            {/* Ngay bao gia chuyen LEN NGANG voi Ma bao gia (yeu cau rieng
+             * "bỏ ngày báo giá lên trang ngang mã báo giá") - Hiệu lực/Tiền
+             * tệ bo hoan toan (khong con hien o dau tai lieu nua). Van giu
+             * dung rule cu "chỉ hiển thị khi bấm phát hành". */}
+            {isPublished ? <em>{formatDateVN(fieldValue('quoteDate')) || ''}</em> : null}
           </div>
         </header>
 
         <section className="sheet-title-block sheet-title-block--standard">
           <p className="sheet-eyebrow">Đề xuất thương mại</p>
           <h1>{String(fieldValue('quoteTitle') || 'Bảng báo giá')}</h1>
-          <div className="sheet-quote-meta sheet-quote-meta--cards">
-            {/* "Ngày báo giá chỉ hiển thị khi bấm phát hành" - truoc khi
-             * published, ngay nay chua chinh thuc/co the con doi, an han
-             * ca nhan lan gia tri (khong hien placeholder "[Ngày báo giá]"). */}
-            {isPublished ? (
-              <span><b>Ngày báo giá</b>{formatDateVN(fieldValue('quoteDate')) || ''}</span>
-            ) : null}
-            <span><b>Hiệu lực</b>{validUntil || '[Thời hạn hiệu lực]'}</span>
-            <span><b>Tiền tệ</b>{String(fieldValue('currency') || 'VND')}</span>
-          </div>
         </section>
 
         {/* CHOT LAI ("field không có dữ liệu thì ẩn hoàn toàn cả nhãn lẫn

@@ -6459,11 +6459,6 @@ export function QuoteWorkspaceModal({
                     <RotateCcw className="qc-icon" /> Đặt lại độ rộng cột
                   </button>
                 ) : null}
-                {previewSchema ? (
-                  <button type="button" className="qc-mini-btn qc-mini-btn-brand" onClick={() => window.print()}>
-                    <Printer className="qc-icon" /> In / Tải PDF
-                  </button>
-                ) : null}
                 <button type="button" className="crm-icon-action" aria-label="Đóng" onClick={() => setPreviewModalOpen(false)}>
                   <X className="qc-inline-icon" />
                 </button>

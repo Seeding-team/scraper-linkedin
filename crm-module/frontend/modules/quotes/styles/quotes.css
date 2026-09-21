@@ -2238,15 +2238,26 @@ select.quote-compact-vat:hover {
   padding-bottom: 1.15rem;
 }
 
+/* Logo nam NGANG song song voi thong tin cong ty (yeu cau rieng "thông tin
+ * nằm ngang song song logo") - truoc day logo/ten/dia chi/sdt xep CHONG doc
+ * trong 1 cot; gio logo la flex item rieng ben trai, phan text (.sheet-
+ * brand-text) ben phai, cung 1 hang ngang. */
 .sheet-brand-block {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
   max-width: 80%;
 }
 
 .sheet-brand-logo {
-  max-width: 140px;
-  max-height: 56px;
+  max-width: 120px;
+  max-height: 48px;
   object-fit: contain;
-  margin-bottom: 0.5rem;
+  flex: 0 0 auto;
+}
+
+.sheet-brand-text {
+  min-width: 0;
 }
 
 /* Banner marketing dau trang - "Mẫu ưu đãi combo (Markee)" (xem
@@ -2293,6 +2304,17 @@ select.quote-compact-vat:hover {
   color: #111827;
   font-size: 13px;
   font-weight: 700;
+}
+
+/* Ngay bao gia - chuyen len ngang voi Ma bao gia (yeu cau rieng "bỏ ngày
+ * báo giá lên trang ngang mã báo giá"), thay cho khoi .sheet-quote-meta cu
+ * duoi tieu de (da bo hoan toan cung Hieu luc/Tien te). */
+.sheet-doc-code em {
+  display: block;
+  margin-top: 0.3rem;
+  color: #6b7280;
+  font-size: 9px;
+  font-style: normal;
 }
 
 .sheet-company h2 {
@@ -2358,48 +2380,6 @@ select.quote-compact-vat:hover {
   color: #0f172a;
   font-size: 20px;
   font-weight: 700;
-}
-
-.sheet-quote-meta {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 0.65rem;
-  margin-top: 0.7rem;
-  color: #475569;
-  font-size: 11px;
-  font-weight: 700;
-}
-
-.sheet-quote-meta--cards {
-  align-items: center;
-  gap: 0;
-  border-top: 1px solid #e5e7eb;
-  border-bottom: 1px solid #e5e7eb;
-  padding: 0.6rem 0;
-}
-
-.sheet-quote-meta--cards span {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 0.35rem;
-  color: #111827;
-  padding: 0 0.9rem;
-  text-align: left;
-  border-left: 1px solid #e5e7eb;
-}
-
-.sheet-quote-meta--cards span:first-child {
-  border-left: none;
-  padding-left: 0;
-}
-
-.sheet-quote-meta--cards b {
-  color: #6b7280;
-  font-size: 9px;
-  font-weight: 700;
-  letter-spacing: 0.07em;
-  text-transform: uppercase;
 }
 
 .sheet-parties--standard {
@@ -3163,11 +3143,6 @@ select.quote-compact-vat:hover {
     margin-top: 2px !important;
   }
 
-  .sheet-quote-meta--cards {
-    margin-top: 2px !important;
-    padding: 1px 0 !important;
-  }
-
   .sheet-parties--standard {
     margin-top: 3px !important;
   }
@@ -3613,15 +3588,10 @@ select.quote-compact-vat:hover {
     margin: 1.5px 0 !important;
   }
 
-  /* Meta line (NGAY BAO GIA | HIEU LUC | TIEN TE duoi tieu de) - "THÔNG TIN
-   * PHỤ / META: 8.5–9pt", tach rieng khoi THONG TIN KHACH HANG (10pt). */
-  .sheet-quote-meta,
+  /* Meta line (villa template - .sheet-quote-meta cu da bo, ngay bao gia
+   * gio nam trong .sheet-doc-code em) - "THÔNG TIN PHỤ / META: 8.5–9pt". */
   .villa-meta {
     font-size: 9pt !important;
-  }
-
-  .sheet-quote-meta--cards b {
-    font-size: 8pt !important;
   }
 
   /* Bang san pham/dich vu - "Bảng sản phẩm: 9.5pt" cho noi dung o,

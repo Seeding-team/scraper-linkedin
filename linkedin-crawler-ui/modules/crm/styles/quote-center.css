@@ -2486,6 +2486,7 @@
   width: 100%;
   resize: none;
   font-size: 11.5px;
+  font-weight: 500;
   color: #5b6576;
   line-height: 1.35;
   padding: 4px 6px;
@@ -2507,6 +2508,7 @@
   padding-top: 8px;
   color: #5b6576;
   font-size: 11.5px;
+  font-weight: 500;
   line-height: 1.35;
 }
 .qc-workspace-item-desc-inline:disabled {
