@@ -2285,7 +2285,11 @@ export default function InternalEngagementPage() {
               <div className="p-5">
                 {(() => {
                   const modalIsLinkedIn = modalPost.platform === "linkedin";
-                  const ready = modalIsLinkedIn ? isLiExtensionReady : isExtensionReady;
+                  // Gui comment that di qua comment-extension (isExtensionReady) - extension
+                  // LinkedIn rieng (isLiExtensionReady) chi phuc vu cao metric, khong lien quan
+                  // luong comment nay. Chap nhan 1 trong 2 de tranh khoa nham nut Gui khi
+                  // comment-extension da san sang nhung nguoi dung chua cai extension kia.
+                  const ready = modalIsLinkedIn ? (isLiExtensionReady || isExtensionReady) : isExtensionReady;
                   return (
                     <div
                       className={`p-3 rounded-xl border text-[12px] mb-4 flex items-center justify-between gap-2 ${ready ? "bg-green-50 border-green-200 text-green-700" : "bg-amber-50 border-amber-200 text-amber-700"
@@ -2298,7 +2302,7 @@ export default function InternalEngagementPage() {
                       </span>
                       {!ready && modalIsLinkedIn ? (
                         <a
-                          href="/linkedin-group-crawler-extension.zip"
+                          href="/comment-extension.zip"
                           download
                           className="shrink-0 inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-amber-300 bg-white hover:bg-amber-100 text-amber-800 text-[11px] font-bold whitespace-nowrap"
                         >
@@ -2391,7 +2395,7 @@ export default function InternalEngagementPage() {
                   type="button"
                   className="bg-[#c71f4d] text-white border border-[#c71f4d] rounded-xl px-4 py-2 font-extrabold disabled:opacity-50"
                   onClick={sendComment}
-                  disabled={isRunning || !(modalPost.platform === "linkedin" ? isLiExtensionReady : isExtensionReady) || !commentText.trim()}
+                  disabled={isRunning || !(modalPost.platform === "linkedin" ? (isLiExtensionReady || isExtensionReady) : isExtensionReady) || !commentText.trim()}
                 >
                   {isRunning ? "Đang gửi..." : "Gửi comment qua Extension"}
                 </button>
