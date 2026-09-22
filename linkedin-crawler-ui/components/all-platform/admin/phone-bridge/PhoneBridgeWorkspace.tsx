@@ -13,6 +13,7 @@ import {
 
 import { PhoneBridgeChatPanel } from "./PhoneBridgeChatPanel";
 import { PhoneBridgeFacebookPanel } from "./PhoneBridgeFacebookPanel";
+import { PhoneBridgeProxyPanel } from "./PhoneBridgeProxyPanel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -352,10 +353,11 @@ export function PhoneBridgeWorkspace() {
 
       {selectedSerial ? (
         <Tabs defaultValue="messenger" className="gap-4">
-          <TabsList className="grid h-auto w-full grid-cols-3 sm:w-fit">
+          <TabsList className="grid h-auto w-full grid-cols-4 sm:w-fit">
             <TabsTrigger value="messenger">Messenger</TabsTrigger>
             <TabsTrigger value="zalo">Zalo</TabsTrigger>
             <TabsTrigger value="facebook">Facebook</TabsTrigger>
+            <TabsTrigger value="proxy">Proxy &amp; SMS</TabsTrigger>
           </TabsList>
           <TabsContent value="messenger">
             <PhoneBridgeChatPanel
@@ -374,6 +376,12 @@ export function PhoneBridgeWorkspace() {
           <TabsContent value="facebook">
             <PhoneBridgeFacebookPanel
               key={`${selectedSerial}-facebook`}
+              serial={selectedSerial}
+            />
+          </TabsContent>
+          <TabsContent value="proxy">
+            <PhoneBridgeProxyPanel
+              key={`${selectedSerial}-proxy`}
               serial={selectedSerial}
             />
           </TabsContent>
