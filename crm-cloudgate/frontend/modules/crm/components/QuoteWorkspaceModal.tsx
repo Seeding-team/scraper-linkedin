@@ -6993,7 +6993,7 @@ export function QuoteWorkspaceModal({
                   key={printResetKey}
                   schemaSnapshot={previewSchema}
                   quoteData={quote ? quote.data : draftPreviewData}
-                  quoteItems={itemsDraft}
+                  quoteItems={buildItemTree(itemsDraft)}
                   solutionItems={quote ? quote.data?.solutionItems : undefined}
                   totals={previewSchema.layoutType === 'villa_solution_package' && quote ? {
                     subtotalAmount: quote.subtotalAmount ?? 0,

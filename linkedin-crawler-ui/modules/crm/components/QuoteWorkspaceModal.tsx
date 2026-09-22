@@ -6993,7 +6993,19 @@ export function QuoteWorkspaceModal({
                   key={printResetKey}
                   schemaSnapshot={previewSchema}
                   quoteData={quote ? quote.data : draftPreviewData}
-                  quoteItems={itemsDraft}
+                  // BUG THAT DA GAP ("Mục cha hiện Thành tiền = 0 dù các hàng
+                  // muc con ben duoi co gia tri dung"): itemsDraft LUON o dang
+                  // PHANG (xem comment flattenItemTree/buildItemTree o tren -
+                  // khong dung `children` long nhau de de sua/keo-tha), trong
+                  // khi QuoteDocumentRenderer tinh Tong tien section bang
+                  // calculateSectionTotal(item.children || []) - doc thang
+                  // `item.children`. Truyen thang itemsDraft (moi item.children
+                  // deu undefined) khien tong section LUON ra 0, dung 1 ham
+                  // buildItemTree() da co san (dung de gui du lieu len BE truoc
+                  // luc luu, xem buildItemsPayload) de gop lai thanh cay CHI o
+                  // tang hien thi cho renderer nay - khong doi itemsDraft/state
+                  // edit, khong anh huong luu/gui BE.
+                  quoteItems={buildItemTree(itemsDraft)}
                   solutionItems={quote ? quote.data?.solutionItems : undefined}
                   totals={previewSchema.layoutType === 'villa_solution_package' && quote ? {
                     subtotalAmount: quote.subtotalAmount ?? 0,
