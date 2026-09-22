@@ -476,7 +476,7 @@ def _public_item_tree(rows: list[dict]) -> list[dict]:
     co the trung lap logic voi ham noi bo, CHU Y: co tinh, de nhanh public
     khong bao gio phu thuoc vao nhanh noi bo (sua/them field o _row_to_item
     khong the vo tinh lam lo field moi qua duong nay)."""
-    mapped = [_row_to_public_item(row) for row in rows]
+    mapped = _infer_missing_parent_ids([_row_to_public_item(row) for row in rows])
     by_id = {item["id"]: item for item in mapped if item.get("id")}
     roots: list[dict] = []
     for item in mapped:
@@ -636,8 +636,35 @@ def _quote_items(quote_id: str) -> list[dict]:
     return result.data or []
 
 
+def _infer_missing_parent_ids(mapped: list[dict]) -> list[dict]:
+    """Doc-time normalize cho hang muc CU luu tu TRUOC khi FE co fix
+    trailingParentItemId() (xem comment tren `normalizeLoadedParentIds()` trong
+    QuoteWorkspaceModal.tsx - day la ban tuong duong o phia backend, cho 2
+    duong render KHONG di qua itemsDraft cua FE: PublicQuotePage/QuoteDetailPage/
+    PDF, von lay `items` dang cay THANG tu day (_quote_item_tree/_public_item_tree)
+    ma khong bao gio load qua QuoteWorkspaceModal). Cac hang muc nay co
+    parent_item_id=NULL trong DB nhung NAM DUNG VI TRI (theo sort_order) ngay
+    sau 1 Section - _quote_item_tree() truoc day loc CHINH XAC theo
+    parentItemId nen coi nham la hang muc DOC LAP (root), lam Section do
+    tong tien = 0 tren ca Preview/Public/PDF giong het bug o FE. Suy luan
+    THUAN DOC (khong ghi DB) - danh sach `rows` da duoc goi noi (.order(
+    "sort_order")) truoc do nen chi can quet xuoi 1 lan, gan lai parentItemId
+    cho hang muc dang thieu bang parentItemId cua Section/hang muc LIEN KE
+    truoc no gan nhat - dung nguyen tac voi trailingParentItemId() ben FE."""
+    current_section_id: str | None = None
+    for item in mapped:
+        if item.get("rowType") == "section":
+            current_section_id = item.get("id")
+            continue
+        if not item.get("parentItemId") and current_section_id:
+            item["parentItemId"] = current_section_id
+        # Hang muc CO san parentItemId (kha nang do 1 lan luu that su co gia
+        # tri khac 0) giu nguyen, khong ghi de - tranh sai du lieu dung.
+    return mapped
+
+
 def _quote_item_tree(rows: list[dict]) -> list[dict]:
-    mapped = [_row_to_item(row) for row in rows]
+    mapped = _infer_missing_parent_ids([_row_to_item(row) for row in rows])
     by_id = {item["id"]: item for item in mapped if item.get("id")}
     roots: list[dict] = []
     for item in mapped:

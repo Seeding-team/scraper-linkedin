@@ -566,6 +566,62 @@ function recomputeParentIds(items: QuoteItem[]): QuoteItem[] {
   });
 }
 
+/** BUG THAT DA GAP ("mục tổng chưa cộng các hạng mục con"): cac ham them
+ * hang muc THEO VI TRI CUOI MANG (nut "Thêm hạng mục"/"Chọn từ danh mục"
+ * duoi bang khi khong chon truoc 1 Muc cha cu the) truoc day LUON append
+ * voi parentItemId=undefined, BAT KE dong cuoi cung hien tai co phai la 1
+ * Section (hoac 1 hang muc DA thuoc 1 Section) hay khong. Hau qua: tao 1
+ * Section moi (rong) roi bam "Thêm hạng mục" de dien hang muc vao NGAY -
+ * hang muc moi nam DUNG VI TRI ngay sau Section (nhin nhu da thuoc nhom) tren
+ * man hinh, nhung parentItemId that su la undefined != section.id nen bi
+ * calculateSectionTotal() (loc theo parentItemId === section.id, xem
+ * qc-workspace-section-row ben duoi) coi la KHONG PHAI hang muc con - tong
+ * tien/ty trong cua Section do dung o "0 đ"/"0.00%" mai mai, du dien gia bao
+ * nhieu cung khong tinh lai (khong phai loi cong thuc calculateSectionTotal,
+ * cung khong phai do/lag autosave - day la loi hang muc bi loai hoan toan
+ * khoi phep cong tu dau). Ham nay suy ra parentItemId DUNG theo VI TRI cuoi
+ * mang hien tai (giong nguyen tac recomputeParentIds() o tren) de hang muc
+ * moi luon "thuoc" dung Section ma no nam ngay sau, khop voi nhung gi nguoi
+ * dung nhin thay tren man hinh. */
+function trailingParentItemId(items: QuoteItem[]): string | undefined {
+  const last = items[items.length - 1];
+  if (!last) return undefined;
+  return last.rowType === 'section' ? last.id : last.parentItemId;
+}
+
+/** BUG THAT DA GAP #2 - "bao gia CU (tao truoc khi co fix trailingParentItemId
+ * o tren) van hien tong Muc cha = 0đ du code moi da deploy": fix
+ * trailingParentItemId() o tren chi sua duong THEM DONG MOI, khong sua lai du
+ * lieu CU da luu san trong DB tu truoc - 1 hang muc da luu voi
+ * parentItemId=null nhung nam DUNG VI TRI ngay sau 1 Section van giu nguyen
+ * parentItemId=null vinh vien moi lan load lai, vi khong co buoc nao doc lai
+ * du lieu cu va suy luan lai theo vi tri ca. Ham nay chay 1 LAN moi khi NAP
+ * `quote.items` tu server vao `itemsDraft` (xem useEffect [quote?.id] ben
+ * duoi) - quet XUOI, hang muc nao dang co parentItemId rong (falsy) thi suy
+ * ra parentItemId DUNG bang chinh trailingParentItemId() ap vao PHAN MANG DA
+ * XU LY TRUOC DO (out), y het nguyen tac trailingParentItemId dung cho hang
+ * muc MOI them - chi khac la ap dung cho hang muc CU ngay luc doc, khong doi
+ * nguoi dung phai keo-tha/them dong moi thi moi tu sua. Hang muc nao DA CO
+ * san parentItemId (kha nang do 1 lan sua/di chuyen truoc do da ghi dung) thi
+ * GIU NGUYEN, khong ghi de - tranh lam sai du lieu that su co gia tri khac 0.
+ * Day la suy luan THUAN CLIENT, CHI anh huong itemsDraft trong bo nho (hien
+ * thi Section total dung ngay khi mo lai) - KHONG tu dong luu len server;
+ * parentItemId suy ra duoc chi thuc su ghi xuong DB vao lan Luu THAT TIEP
+ * THEO cua chinh nguoi dung (tu "chua lanh" du lieu cu 1 cach tu nhien, dung
+ * dan la item nay VON DI thuoc Section do, chi la lien ket bi thieu tu truoc). */
+function normalizeLoadedParentIds(items: QuoteItem[]): QuoteItem[] {
+  const out: QuoteItem[] = [];
+  for (const item of items) {
+    if (item.rowType !== 'section' && !item.parentItemId) {
+      const inferredParentId = trailingParentItemId(out);
+      out.push(inferredParentId ? { ...item, parentItemId: inferredParentId } : item);
+    } else {
+      out.push(item);
+    }
+  }
+  return out;
+}
+
 /** [start, end) cua 1 "khoi" bat dau tu `index` - neu la 1 hang muc thuong
  * (rowType='item') thi khoi chi co dung 1 dong; neu la Muc cha (Section) thi
  * khoi gom CA dong Section VA toan bo hang muc con lien tiep ngay sau no
@@ -1519,7 +1575,7 @@ export function QuoteWorkspaceModal({
     });
   }
   useEffect(() => {
-    const nextItems = quote?.items ? sanitizeDraftQuoteItems(flattenItemTree(quote.items)) : [];
+    const nextItems = quote?.items ? normalizeLoadedParentIds(sanitizeDraftQuoteItems(flattenItemTree(quote.items))) : [];
     setItemsDraft(nextItems);
     persistedItemsDraftRef.current = cloneQuoteItems(nextItems);
     persistedQuoteDataRef.current = quote?.data ? deepClone(quote.data) : quote?.data;
@@ -2130,7 +2186,7 @@ export function QuoteWorkspaceModal({
     clearRequiredError('items');
     setItemsDraft(prev => [
       ...prev,
-      { description: '', quantity: 1, unitPrice: 0, vatRate: 10, discountPercent: 0, costPrice: null, markupPercent: null },
+      { description: '', quantity: 1, unitPrice: 0, vatRate: 10, discountPercent: 0, costPrice: null, markupPercent: null, parentItemId: trailingParentItemId(prev) },
     ]);
   }
 
@@ -2284,10 +2340,12 @@ export function QuoteWorkspaceModal({
           ...next.slice(insertAt),
         ];
       } else {
-        next = [...next, ...items];
+        const parentItemId = trailingParentItemId(next);
+        next = [...next, ...items.map(item => ({ ...item, parentItemId }))];
       }
     } else {
-      next = [...next, ...items];
+      const parentItemId = trailingParentItemId(next);
+      next = [...next, ...items.map(item => ({ ...item, parentItemId }))];
     }
     setItemsDraft(next);
     if (quote) void persistQuote({ items: next }, { silent: true });
@@ -5628,7 +5686,19 @@ export function QuoteWorkspaceModal({
                                 />
                               ) : formatMoney(item.unitPrice ?? 0)}
                             </td>
-                            <td className="qc-cell-money" data-label="Thành tiền">{formatMoney(item.totalAmount || item.quantity * (item.unitPrice ?? 0) || 0)}</td>
+                            {/* Dung calculateItemTotal(item) (tinh TUOI moi
+                             * lan render tu quantity/unitPrice/discountPercent/
+                             * vatRate hien co trong itemsDraft) thay vi doc
+                             * item.totalAmount (chi duoc BE tra ve SAU khi luu
+                             * qua persistQuote khong-silent) - dam bao o nay
+                             * cap nhat NGAY khi go Gia khach/SL/..., cung 1 co
+                             * so voi cot Tỷ trọng cua chinh dong nay va voi
+                             * Tổng tiền cua Mục cha (qc-workspace-section-row,
+                             * xem calculateSectionTotal ben tren) thay vi 2 noi
+                             * lech cong thuc nhau (fallback cu KHONG co VAT/
+                             * chiet khau, item.totalAmount tri hoan toi luc
+                             * luu that su). */}
+                            <td className="qc-cell-money" data-label="Thành tiền">{formatMoney(calculateItemTotal(item))}</td>
                             <td className={`qc-cell-money qc-th-margin-col ${margin != null && margin >= 20 ? 'qc-cell-margin-good' : margin != null ? 'qc-cell-margin-warn' : ''}`} style={{ position: 'relative' }} data-label="Margin">
                               {!profitabilityViewAllowed ? <span className="qc-row-sub">Không có quyền xem</span> : formatPercentFixed2(margin)}
                             </td>
