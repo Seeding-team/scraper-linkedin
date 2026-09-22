@@ -148,6 +148,45 @@ function delay(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+function isNoReceiverError(message) {
+    return typeof message === "string" && /Receiving end does not exist|Could not establish connection/i.test(message);
+}
+
+function sendExecuteCommentOnce(tabId, url, text) {
+    return new Promise((resolve) => {
+        chrome.tabs.sendMessage(tabId, {
+            action: "EXECUTE_COMMENT",
+            payload: { url, text }
+        }, response => {
+            if (chrome.runtime.lastError) {
+                resolve({ success: false, error: chrome.runtime.lastError.message });
+            } else if (!response) {
+                resolve({ success: false, error: "No response from content script." });
+            } else {
+                resolve(response);
+            }
+        });
+    });
+}
+
+// Cac trang nhu LinkedIn hay dieu huong THEM 1 lan nua (authwall/locale/rut gon lnkd.in)
+// SAU KHI tab da bao "complete" lan dau - content script cua lan dieu huong truoc bi huy,
+// con lan sau chua kip dang ky listener, nen sendMessage bao "Receiving end does not exist"
+// dung luc do. Thu lai vai lan thay vi bao loi ngay khi gap dung loai loi nay.
+async function sendExecuteCommentWithRetry(tabId, url, text, maxAttempts = 5, retryDelayMs = 1500) {
+    let lastResult = null;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        lastResult = await sendExecuteCommentOnce(tabId, url, text);
+        if (lastResult.success || !isNoReceiverError(lastResult.error)) {
+            return lastResult;
+        }
+        if (attempt < maxAttempts) {
+            await delay(retryDelayMs);
+        }
+    }
+    return lastResult;
+}
+
 async function waitForTabLoad(tabId, timeoutMs = 10000) {
     return new Promise(resolve => {
         let isResolved = false;
@@ -218,20 +257,7 @@ async function runBulkComment(payload, uiTabId, postsToRun) {
                 }).catch(() => {});
             }
 
-            const result = await new Promise((resolve) => {
-                chrome.tabs.sendMessage(tab.id, {
-                    action: "EXECUTE_COMMENT",
-                    payload: { url, text }
-                }, response => {
-                    if (chrome.runtime.lastError) {
-                        resolve({ success: false, error: chrome.runtime.lastError.message });
-                    } else if (!response) {
-                        resolve({ success: false, error: "No response from content script." });
-                    } else {
-                        resolve(response);
-                    }
-                });
-            });
+            const result = await sendExecuteCommentWithRetry(tab.id, url, text);
 
             currentProgress = { current: i + 1, total: postsToRun.length, url, status: result.success ? "Thành công" : `Lỗi: ${result.error}`, result };
             persistState();
