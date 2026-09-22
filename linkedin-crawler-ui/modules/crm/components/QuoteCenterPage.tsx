@@ -792,7 +792,7 @@ export function QuoteCenterPage() {
     const message = isApprovedLike(current, deal)
       ? `Báo giá ${current.quoteNumber} này đã duyệt, bạn có chắc muốn xóa${versionText}?`
       : `Xoá báo giá ${current.quoteNumber}${versionText}?`;
-    if (!window.confirm(`${message}\nBáo giá sẽ chuyển sang trạng thái đã xoá (ẩn khỏi danh sách), Admin có thể khôi phục nếu cần.`)) return;
+    if (!window.confirm(`${message}\nBạn chấp nhận mất báo giá này? (Báo giá bị ẩn khỏi danh sách, Admin có thể khôi phục nếu cần.)`)) return;
     try {
       const result = await seedingQuoteRepository.bulkDeleteQuotes([current.id], true);
       if (result.failed.length) window.alert(`Không xoá được ${result.failed.length} phiên bản: ${result.failed[0].message}`);
@@ -810,7 +810,7 @@ export function QuoteCenterPage() {
     const message = isApprovedLike(version)
       ? `Phiên bản ${label} đã duyệt, bạn có chắc muốn xóa?`
       : `Xoá phiên bản ${label}?`;
-    if (!window.confirm(`${message}\nCác phiên bản khác của báo giá được giữ nguyên. Phiên bản bị xoá chuyển sang trạng thái đã xoá, Admin có thể khôi phục nếu cần.`)) return;
+    if (!window.confirm(`${message}\nBạn chấp nhận mất phiên bản này? Các phiên bản khác được giữ nguyên. (Admin có thể khôi phục nếu cần.)`)) return;
     try {
       await seedingQuoteRepository.bulkDeleteQuotes([version.id], false);
       setVersionHistory(h => ({ ...h, versions: h.versions.filter(v => v.id !== version.id) }));
@@ -828,7 +828,7 @@ export function QuoteCenterPage() {
     const lines = [
       `Xoá ${rows.length} báo giá đã chọn${versionTotal > rows.length ? ` (tổng ${versionTotal} phiên bản)` : ''}?`,
       approvedCount ? `Trong đó ${approvedCount} báo giá đã duyệt — bạn có chắc muốn xóa?` : '',
-      'Báo giá sẽ chuyển sang trạng thái đã xoá (ẩn khỏi danh sách), Admin có thể khôi phục nếu cần.',
+      'Bạn chấp nhận mất các báo giá này? (Báo giá bị ẩn khỏi danh sách, Admin có thể khôi phục nếu cần.)',
     ].filter(Boolean);
     if (!window.confirm(lines.join('\n'))) return;
     setBulkDeleting(true);
@@ -994,9 +994,10 @@ export function QuoteCenterPage() {
     // Feedback 2026-09-23: "Không cần khóa quyền xóa chỉ vì báo giá đã duyệt"
     // - moi trang thai deu xoa duoc (xoa MEM ca chuoi version), chi hoi xac
     // nhan ro rang hon voi ban da duyet (xem deleteChainNow).
-    const deleteItem: ActionMenuItem[] = canEdit
-      ? [{ key: 'delete', label: 'Xoá báo giá', icon: Trash2, group: 3, danger: true, onSelect: () => void deleteChainNow(row) }]
-      : [];
+    // "ai muốn xóa thì xóa" - khong gate theo quyen, chi hoi xac nhan.
+    const deleteItem: ActionMenuItem[] = [
+      { key: 'delete', label: 'Xoá báo giá', icon: Trash2, group: 3, danger: true, onSelect: () => void deleteChainNow(row) },
+    ];
 
     if (status.key === 'lost') {
       return [openItem, historyItem, ...deleteItem];
@@ -1093,22 +1094,19 @@ export function QuoteCenterPage() {
     const margin = current.hasCostData ? marginTone(current.grossMarginPercent) : 'neutral';
     const sla = computeQuoteSla({ slaDueAt: current.slaDueAt, completedAt: current.completedAt, sentAt: current.sentAt });
     const expanded = expandedVersions[current.id];
-    const canSelect = canWriteDeal(user, deal) || canApproveQuote(user);
     return (
       <Fragment key={current.id}>
       <tr className="qc-row-compact qc-row-clickable" onClick={event => handleRowClick(event, current.id)} data-testid="qc-chain-row">
         <td data-label="Báo giá / Cơ hội · Version" className="qc-cell-quote">
           <div className="qc-cell-quote-line1">
             <span className="qc-cell-quote-lead">
-            {canSelect ? (
-              <input
-                type="checkbox"
-                className="qc-row-select"
-                checked={selectedQuoteIds.has(current.id)}
-                onChange={() => toggleSelectQuote(current.id)}
-                aria-label={`Chọn báo giá ${current.quoteNumber}`}
-              />
-            ) : null}
+            <input
+              type="checkbox"
+              className="qc-row-select"
+              checked={selectedQuoteIds.has(current.id)}
+              onChange={() => toggleSelectQuote(current.id)}
+              aria-label={`Chọn báo giá ${current.quoteNumber}`}
+            />
             {versionCount > 1 ? (
               <button
                 type="button"
@@ -1231,7 +1229,6 @@ export function QuoteCenterPage() {
   /** Cac version cu gom ngay DUOI dong version hien tai (feedback muc 1).
    * Click dong -> mo thang version do; xoa rieng tung version. */
   function renderOlderVersionRows(row: QuoteChainRow, expanded: { loading: boolean; versions: Quote[]; error?: string }) {
-    const canDelete = canWriteDeal(user, row.deal) || canApproveQuote(user);
     if (expanded.loading || expanded.error || expanded.versions.length === 0) {
       return (
         <tr className="qc-row-version-old">
@@ -1273,16 +1270,14 @@ export function QuoteCenterPage() {
           <td />
           <td />
           <td className="qc-cell-actions">
-            {canDelete ? (
-              <button
-                type="button"
-                className="qc-mini-btn qc-mini-btn-danger"
-                title="Xoá riêng phiên bản này"
-                onClick={() => void deleteVersionNow(version)}
-              >
-                <Trash2 className="qc-icon" /> Xoá
-              </button>
-            ) : null}
+            <button
+              type="button"
+              className="qc-mini-btn qc-mini-btn-danger"
+              title="Xoá riêng phiên bản này"
+              onClick={() => void deleteVersionNow(version)}
+            >
+              <Trash2 className="qc-icon" /> Xoá
+            </button>
           </td>
         </tr>
       );
@@ -1312,15 +1307,13 @@ export function QuoteCenterPage() {
       <div key={current.id} className="qc-quote-card">
         <div className="qc-quote-card-head">
           <div>
-            {canWriteDeal(user, deal) || canApproveQuote(user) ? (
-              <input
-                type="checkbox"
-                className="qc-row-select"
-                checked={selectedQuoteIds.has(current.id)}
-                onChange={() => toggleSelectQuote(current.id)}
-                aria-label={`Chọn báo giá ${current.quoteNumber}`}
-              />
-            ) : null}
+            <input
+              type="checkbox"
+              className="qc-row-select"
+              checked={selectedQuoteIds.has(current.id)}
+              onChange={() => toggleSelectQuote(current.id)}
+              aria-label={`Chọn báo giá ${current.quoteNumber}`}
+            />
             <button type="button" className="qc-row-link qc-row-link-btn" onClick={() => openQuoteWorkspace(current.id)}>
               {current.quoteNumber}
             </button>
@@ -1407,11 +1400,9 @@ export function QuoteCenterPage() {
                     ↳ V{version.versionNumber || 1} · {version.quoteNumber}
                   </button>
                   <span className="qc-row-sub">{quoteDisplayStatus(version, deal).label}</span>
-                  {canWriteDeal(user, deal) || canApproveQuote(user) ? (
-                    <button type="button" className="qc-mini-btn qc-mini-btn-danger" onClick={() => void deleteVersionNow(version)}>
-                      Xoá
-                    </button>
-                  ) : null}
+                  <button type="button" className="qc-mini-btn qc-mini-btn-danger" onClick={() => void deleteVersionNow(version)}>
+                    Xoá
+                  </button>
                 </div>
               ))
             )}
@@ -1849,7 +1840,7 @@ export function QuoteCenterPage() {
               <tr>
                 <th>
                   {(() => {
-                    const selectable = chainRows.filter(row => canWriteDeal(user, row.deal) || canApproveQuote(user));
+                    const selectable = chainRows;
                     const allSelected = selectable.length > 0 && selectable.every(row => selectedQuoteIds.has(row.current.id));
                     return (
                       <input

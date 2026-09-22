@@ -11,7 +11,7 @@ from app.core.supabase_client import execute_supabase_query, get_supabase_client
 from app.modules.all_platform.services.customer_lead_service import BASE_COLUMNS, _normalize_row
 from app.modules.all_platform.services.supabase_quote_service import apply_quote_field_permissions
 from app.modules.all_platform.services.crm_permission_service import can_edit_contract, has_full_crm_access
-from app.modules.all_platform.services.crm_delete_cascade_service import CascadeConfirmRequired, delete_customer_cascade
+from app.modules.all_platform.services.crm_delete_cascade_service import CascadeConfirmRequired, delete_customer_cascade, get_in_tenant
 from app.modules.all_platform.services.supabase_categories_service import get_categories_by_type
 from app.modules.all_platform.services.crm_position_service import apply_position_category
 from app.modules.all_platform.services.crm_city_normalizer import normalize_city_fields, normalize_vietnam_city
@@ -443,15 +443,16 @@ def update_customer(customer_id: str, payload: dict[str, Any], user: dict[str, A
 
 
 def delete_customer(customer_id: str, user: dict[str, Any], confirm_cascade: bool = False) -> dict[str, Any]:
-    """Xoa Khach hang. Con du lieu lien quan (Deal/Lead/Contact/Du an/Bao
-    gia/Hop dong) va confirm_cascade=False -> raise CustomerLinkedError kem so
-    dem, KHONG xoa gi. confirm_cascade=True -> xoa toan bo (gate quyen + hop
-    dong da ky trong delete_customer_cascade)."""
-    current = get_customer(customer_id, user)
-    if not can_edit_customer(user, current):
-        raise PermissionError("Khong co quyen xoa ho so khach hang nay.")
+    """Xoa Khach hang. KHONG chan quyen (feedback 2026-09-23: "ai muốn xóa thì
+    xóa, nhớ hỏi trước khi xóa") - chi gioi han trong tenant hien tai. Con du
+    lieu lien quan (Co hoi/Lead/Contact/Du an/Bao gia/Hop dong) va
+    confirm_cascade=False -> raise CustomerLinkedError kem so dem, KHONG xoa
+    gi; confirm_cascade=True -> xoa toan bo (delete_customer_cascade)."""
+    current = get_in_tenant("crm_customers", customer_id, "id, customer_name")
+    if not current:
+        raise CustomerNotFoundError("Khong tim thay ho so khach hang.")
     try:
-        return delete_customer_cascade(current, user, confirm_cascade)
+        return delete_customer_cascade(current, user.get("id"), confirm_cascade)
     except CascadeConfirmRequired as exc:
         raise CustomerLinkedError(str(exc), exc.summary) from exc
 

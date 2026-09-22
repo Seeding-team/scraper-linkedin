@@ -49,7 +49,7 @@ def _error(exc: Exception) -> BaseResponse:
         # Khong con la loi chan cung: requiresCascadeConfirm de FE hoi lai roi
         # goi lai voi confirm_cascade=true. links van tra kem de UI dan nguoi
         # dung sang ho so downstream neu can.
-        return BaseResponse(success=False, message=str(exc), data={"requiresCascadeConfirm": True, "links": exc.links})
+        return BaseResponse(success=False, message=str(exc), data={"requiresCascadeConfirm": True, "links": exc.links, **exc.summary})
     if isinstance(exc, PermissionError):
         return BaseResponse(success=False, message=str(exc))
     return BaseResponse(success=False, message=str(exc))

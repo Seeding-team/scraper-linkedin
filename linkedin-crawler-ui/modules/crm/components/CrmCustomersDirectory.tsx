@@ -18,7 +18,7 @@ import { CustomerColumnVisibilityMenu } from './CustomerColumnVisibilityMenu';
 import { useCustomerColumnPreferences } from '../hooks/useCustomerColumnPreferences';
 import { Loader2, Plus, RotateCcw } from './icons';
 import type { CrmCustomerKpi, CrmCustomerRow } from '../types';
-import { describeCascadeSummary, type CascadeSummary } from '../utils/cascadeDelete';
+import { cascadeLossText, describeCascadeSummary, sumCascadeSummaries, type CascadeSummary } from '../utils/cascadeDelete';
 
 /**
  * Tab -> status mapping (quyet dinh cuoi cung, xem bao cao task):
@@ -180,11 +180,7 @@ export function CrmCustomersDirectory() {
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState('');
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [cascadeStep, setCascadeStep] = useState<{
-    ids: string[];
-    summary: CascadeSummary;
-    blocked: Array<{ name: string; message: string }>;
-  } | null>(null);
+  const [cascadeStep, setCascadeStep] = useState<{ ids: string[]; summary: CascadeSummary } | null>(null);
 
   // Preference "cot nao hien" rieng theo workspace+user (khong phai key
   // global) - workspace = API_BASE_URL (moi deployment/clone co gia tri rieng
@@ -411,23 +407,11 @@ export function CrmCustomersDirectory() {
       }
       const nameOf = (id: string) => targets.find(t => t.id === id)?.customerName || id;
       const needConfirm = confirmCascade ? [] : failed.filter(f => f.requiresCascadeConfirm && f.summary);
-      const blocked = needConfirm.filter(f => (f.summary?.blocked_contracts || []).length);
-      const confirmable = needConfirm.filter(f => !(f.summary?.blocked_contracts || []).length);
       const otherFailed = failed.filter(f => confirmCascade || !f.requiresCascadeConfirm);
-      if (confirmable.length || blocked.length) {
-        const total: CascadeSummary = {};
-        for (const f of confirmable) {
-          for (const key of ['deal_count', 'lead_count', 'contact_count', 'project_count', 'quote_count', 'contract_count'] as const) {
-            total[key] = (total[key] || 0) + Number(f.summary?.[key] || 0);
-          }
-        }
+      if (needConfirm.length) {
         setCascadeStep({
-          ids: confirmable.map(f => f.customer_id),
-          summary: total,
-          blocked: blocked.map(f => ({
-            name: nameOf(f.customer_id),
-            message: `còn ${(f.summary?.blocked_contracts || []).length} hợp đồng đã ký/đang thực hiện — không được xoá`,
-          })),
+          ids: needConfirm.map(f => f.customer_id),
+          summary: sumCascadeSummaries(needConfirm.map(f => f.summary || {})),
         });
         if (otherFailed.length) setDeleteError(otherFailed.map(f => `${nameOf(f.customer_id)}: ${f.message}`).join(' · '));
         return;
@@ -446,7 +430,8 @@ export function CrmCustomersDirectory() {
     }
   }
 
-  const selectableCustomers = items.filter(customer => customer.canEdit);
+  // "ai muốn xóa thì xóa" - moi khach hang deu chon duoc de xoa.
+  const selectableCustomers = items;
   const allOnPageSelected = selectableCustomers.length > 0 && selectableCustomers.every(customer => selectedIds.has(customer.id));
   function toggleSelect(id: string) {
     setSelectedIds(prev => {
@@ -472,9 +457,11 @@ export function CrmCustomersDirectory() {
    * sửa lẫn xóa). Còn dữ liệu liên quan thì backend yêu cầu xác nhận xoá kèm
    * (bước 2 của modal), không chặn cứng. */
   function secondaryActionsOf(customer: CrmCustomerRow): ActionMenuItem[] {
-    if (!customer.canEdit) return [];
+    // Sua van theo quyen; Xoa mo cho moi nguoi (chi hoi xac nhan).
     return [
-      { key: 'edit', label: 'Sửa', onSelect: () => { setEditingCustomer(customer); setFormOpen(true); } },
+      ...(customer.canEdit
+        ? [{ key: 'edit', label: 'Sửa', onSelect: () => { setEditingCustomer(customer); setFormOpen(true); } }]
+        : []),
       {
         key: 'delete',
         label: 'Xóa',
@@ -659,14 +646,12 @@ export function CrmCustomersDirectory() {
                         style={{ cursor: 'pointer' }}
                       >
                         <td className="crm-td" onClick={event => event.stopPropagation()}>
-                          {customer.canEdit ? (
-                            <input
-                              type="checkbox"
-                              checked={selectedIds.has(customer.id)}
-                              onChange={() => toggleSelect(customer.id)}
-                              aria-label={`Chọn ${customer.customerName}`}
-                            />
-                          ) : null}
+                          <input
+                            type="checkbox"
+                            checked={selectedIds.has(customer.id)}
+                            onChange={() => toggleSelect(customer.id)}
+                            aria-label={`Chọn ${customer.customerName}`}
+                          />
                         </td>
                         <td className="crm-td">
                           <Link
@@ -778,16 +763,14 @@ export function CrmCustomersDirectory() {
                   style={{ cursor: 'pointer' }}
                 >
                   <div className="crm-customer-card-head">
-                    {customer.canEdit ? (
-                      <input
-                        type="checkbox"
-                        checked={selectedIds.has(customer.id)}
-                        onClick={event => event.stopPropagation()}
-                        onChange={() => toggleSelect(customer.id)}
-                        aria-label={`Chọn ${customer.customerName}`}
-                        style={{ marginTop: 4 }}
-                      />
-                    ) : null}
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.has(customer.id)}
+                      onClick={event => event.stopPropagation()}
+                      onChange={() => toggleSelect(customer.id)}
+                      aria-label={`Chọn ${customer.customerName}`}
+                      style={{ marginTop: 4 }}
+                    />
                     <div className="crm-customer-card-identity">
                       <Link
                         href={`/all-platform/crm/customers/${customer.id}`}
@@ -915,27 +898,17 @@ export function CrmCustomersDirectory() {
               {deleteError ? <p className="crm-error" data-testid="customer-delete-error">{deleteError}</p> : null}
               {cascadeStep ? (
                 <>
-                  {cascadeStep.ids.length ? (
-                    <div className="crm-lead-check-banner crm-lead-check-banner--warning" data-testid="customer-delete-cascade-warning">
-                      <b>
-                        {cascadeStep.ids.length === 1 && deleteTargets.length === 1
-                          ? `Khách hàng “${deleteTargets[0].customerName}” còn dữ liệu liên quan`
-                          : `${cascadeStep.ids.length} khách hàng còn dữ liệu liên quan`}
-                      </b>
-                      <span>
-                        Sẽ bị xoá kèm: <b>{describeCascadeSummary(cascadeStep.summary)}</b>. Báo giá chuyển sang trạng thái
-                        đã xoá (Admin khôi phục được); cơ hội, lead, người liên hệ, dự án và hợp đồng nháp bị xoá vĩnh viễn.
-                      </span>
-                    </div>
-                  ) : null}
-                  {cascadeStep.blocked.length ? (
-                    <div className="crm-lead-check-banner crm-lead-check-banner--warning" data-testid="customer-delete-blocked">
-                      <b>Không thể xoá {cascadeStep.blocked.length} khách hàng</b>
-                      {cascadeStep.blocked.map(item => (
-                        <span key={item.name}>{item.name}: {item.message}. Hãy xử lý hợp đồng trước.</span>
-                      ))}
-                    </div>
-                  ) : null}
+                  <div className="crm-lead-check-banner crm-lead-check-banner--warning" data-testid="customer-delete-cascade-warning">
+                    <b>
+                      {cascadeStep.ids.length === 1 && deleteTargets.length === 1
+                        ? `Khách hàng “${deleteTargets[0].customerName}” còn dữ liệu liên quan`
+                        : `${cascadeStep.ids.length} khách hàng còn dữ liệu liên quan`}
+                    </b>
+                    <span>
+                      Sẽ bị xoá kèm: <b>{describeCascadeSummary(cascadeStep.summary)}</b>. {cascadeLossText(cascadeStep.summary)}
+                    </span>
+                    <span>Bạn có chấp nhận mất toàn bộ dữ liệu này và xoá không?</span>
+                  </div>
                 </>
               ) : (
                 <>
@@ -962,10 +935,9 @@ export function CrmCustomersDirectory() {
                 disabled={deleting}
                 onClick={closeDelete}
               >
-                {cascadeStep && !cascadeStep.ids.length ? 'Đóng' : 'Hủy'}
+                Hủy
               </button>
-              {cascadeStep && !cascadeStep.ids.length ? null : (
-                <button
+              <button
                   type="button"
                   className="crm-danger-button"
                   data-testid="customer-delete-confirm-btn"
@@ -973,9 +945,8 @@ export function CrmCustomersDirectory() {
                   onClick={() => void confirmDelete(Boolean(cascadeStep))}
                 >
                   {deleting ? <Loader2 className="crm-save-spinner" /> : null}
-                  {deleting ? 'Đang xóa...' : cascadeStep ? 'Xóa toàn bộ' : deleteTargets.length === 1 ? 'Xóa khách hàng' : 'Xóa khách hàng đã chọn'}
+                  {deleting ? 'Đang xóa...' : cascadeStep ? 'Chấp nhận mất & xóa toàn bộ' : deleteTargets.length === 1 ? 'Xóa khách hàng' : 'Xóa khách hàng đã chọn'}
                 </button>
-              )}
             </footer>
           </div>
         </div>

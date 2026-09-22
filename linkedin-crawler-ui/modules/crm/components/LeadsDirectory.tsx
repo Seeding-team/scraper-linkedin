@@ -13,6 +13,7 @@ import { SearchableSelect } from './SearchableSelect';
 import { useCrmCategoryCodeOptions } from './CrmCategorySelect';
 import { Loader2, Plus, RotateCcw } from './icons';
 import type { CrmLeadKpi, CrmLeadRow, CrmLeadStatus } from '../types';
+import { cascadeLossText, cascadeSummaryFromBody, describeCascadeSummary, sumCascadeSummaries, type CascadeSummary } from '../utils/cascadeDelete';
 
 // Main la CRM markee CO DINH (khong co /auth/workspaces/switcher nhu 3
 // clone) - danh sach workspace dich khi sao chep Lead CHI CO 2 clone doc
@@ -198,16 +199,18 @@ export function LeadsDirectory() {
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
   const [bulkDeleting, setBulkDeleting] = useState(false);
   const [bulkDeleteError, setBulkDeleteError] = useState('');
-  // Buoc 2 cua xoa hang loat: id cac Lead da convert can xac nhan rieng.
+  // Buoc 2 cua xoa hang loat: id cac Lead con du lieu lien quan + tong so se mat.
   const [bulkCascadeIds, setBulkCascadeIds] = useState<string[]>([]);
-  // Buoc 2 cua xoa 1 Lead: Lead da convert, can xac nhan rieng.
-  const [deleteCascadeConfirm, setDeleteCascadeConfirm] = useState(false);
+  const [bulkCascadeSummary, setBulkCascadeSummary] = useState<CascadeSummary | null>(null);
+  // Buoc 2 cua xoa 1 Lead: so du lieu lien quan se bi xoa kem (null = buoc 1).
+  const [deleteCascadeSummary, setDeleteCascadeSummary] = useState<CascadeSummary | null>(null);
+  const deleteCascadeConfirm = deleteCascadeSummary !== null;
 
   // Chon nhieu de XOA (feedback 2026-09-23: "select 1 hoặc nhiều -> Xóa") -
   // moi Lead nguoi dung co quyen ghi deu chon duoc, ke ca Lead da convert
   // (backend se hoi xac nhan rieng). Sao chep workspace van loai Lead da
   // convert (backend chan) - loc o openCopyModalForSelection().
-  const selectableItems = useMemo(() => items.filter(lead => lead.canWrite), [items]);
+  const selectableItems = items;
   const isConvertedLead = (lead: CrmLeadRow) => lead.status === 'converted' || Boolean(lead.convertedCustomerId);
   const allOnPageSelected = selectableItems.length > 0 && selectableItems.every(lead => selectedIds.has(lead.id));
 
@@ -324,7 +327,7 @@ export function LeadsDirectory() {
       const body = await res.json();
       if (!res.ok) throw new Error(body?.message || body?.detail || `Không thể xóa các Lead đã chọn (lỗi ${res.status}).`);
       const deletedIds = (body.data?.deleted_ids || []) as string[];
-      const failed = (body.data?.failed || []) as Array<{ lead_id: string; message: string; requiresCascadeConfirm?: boolean }>;
+      const failed = (body.data?.failed || []) as Array<{ lead_id: string; message: string; requiresCascadeConfirm?: boolean; summary?: CascadeSummary | null }>;
       const deletedSet = new Set(deletedIds);
       if (deletedIds.length) {
         // Cập nhật ngay danh sách Lead trên giao diện người dùng
@@ -340,10 +343,12 @@ export function LeadsDirectory() {
       }
       // Lead da convert: KHONG chan cung nua - chuyen modal sang buoc 2 hoi
       // xac nhan rieng cho dung cac Lead nay (feedback 2026-09-23).
-      const cascadeIds = confirmCascade ? [] : failed.filter(f => f.requiresCascadeConfirm).map(f => f.lead_id);
+      const needConfirm = confirmCascade ? [] : failed.filter(f => f.requiresCascadeConfirm);
+      const cascadeIds = needConfirm.map(f => f.lead_id);
       const otherFailed = failed.filter(f => confirmCascade || !f.requiresCascadeConfirm);
       if (cascadeIds.length) {
         setBulkCascadeIds(cascadeIds);
+        setBulkCascadeSummary(sumCascadeSummaries(needConfirm.map(f => f.summary || {})));
         if (otherFailed.length) setBulkDeleteError(`${otherFailed.length} Lead không xóa được: ${otherFailed[0].message}`);
         return;
       }
@@ -351,6 +356,7 @@ export function LeadsDirectory() {
         throw new Error(body?.message || otherFailed[0].message || 'Không thể xóa các Lead đã chọn.');
       }
       setBulkCascadeIds([]);
+      setBulkCascadeSummary(null);
       setBulkDeleteOpen(false);
       if (otherFailed.length) {
         alert(`Đã xóa ${deletedIds.length} Lead. Có ${otherFailed.length} Lead không thể xóa do thiếu quyền hoặc lỗi khác.`);
@@ -539,8 +545,9 @@ export function LeadsDirectory() {
       const body = await res.json();
       if (!res.ok || body.success === false) {
         // Lead da convert: hoi xac nhan rieng thay vi chan (feedback 2026-09-23).
-        if (!confirmCascade && body?.data?.requiresCascadeConfirm) {
-          setDeleteCascadeConfirm(true);
+        const summary = confirmCascade ? null : cascadeSummaryFromBody(body);
+        if (summary) {
+          setDeleteCascadeSummary(summary);
           return;
         }
         throw new Error(body?.message || body?.detail || `Không xóa được Lead (lỗi ${res.status}).`);
@@ -554,7 +561,7 @@ export function LeadsDirectory() {
         return next;
       });
       setDeleteTarget(null);
-      setDeleteCascadeConfirm(false);
+      setDeleteCascadeSummary(null);
       if (detailLead?.id === target.id) setDetailLead(null);
       if (editLead?.id === target.id) setEditLead(null);
       setReloadTick(tick => tick + 1);
@@ -639,18 +646,17 @@ export function LeadsDirectory() {
             onSelect: () => openCopyModal(lead),
           }]
         : []),
-      ...(lead.canWrite
-        ? [{
-            key: 'delete',
-            label: 'Xóa Lead',
-            danger: true,
-            onSelect: () => {
-              setDeleteError('');
-              setDeleteCascadeConfirm(false);
-              setDeleteTarget(lead);
-            },
-          }]
-        : []),
+      // Xoa mo cho moi nguoi, chi hoi xac nhan (feedback 2026-09-23).
+      {
+        key: 'delete',
+        label: 'Xóa Lead',
+        danger: true,
+        onSelect: () => {
+          setDeleteError('');
+          setDeleteCascadeSummary(null);
+          setDeleteTarget(lead);
+        },
+      },
     ];
   }
 
@@ -753,6 +759,7 @@ export function LeadsDirectory() {
                 onClick={() => {
                   setBulkDeleteError('');
                   setBulkCascadeIds([]);
+                  setBulkCascadeSummary(null);
                   setBulkDeleteOpen(true);
                 }}
               >
@@ -811,14 +818,12 @@ export function LeadsDirectory() {
                     items.map(lead => (
                       <tr key={lead.id} className="crm-row">
                         <td className="crm-td" onClick={event => event.stopPropagation()}>
-                          {lead.canWrite ? (
-                            <input
-                              type="checkbox"
-                              checked={selectedIds.has(lead.id)}
-                              onChange={() => toggleSelect(lead.id)}
-                              aria-label={`Chọn ${lead.leadName}`}
-                            />
-                          ) : null}
+                          <input
+                            type="checkbox"
+                            checked={selectedIds.has(lead.id)}
+                            onChange={() => toggleSelect(lead.id)}
+                            aria-label={`Chọn ${lead.leadName}`}
+                          />
                         </td>
                         <td className="crm-td">
                           <button type="button" className="crm-customer-name-link crm-lead-name-btn" title={lead.leadName} onClick={() => openRow(lead)}>
@@ -907,15 +912,13 @@ export function LeadsDirectory() {
               items.map(lead => (
                 <div key={lead.id} className="crm-customer-card crm-lead-card">
                   <div className="crm-customer-card-head">
-                    {lead.canWrite ? (
-                      <input
-                        type="checkbox"
-                        checked={selectedIds.has(lead.id)}
-                        onChange={() => toggleSelect(lead.id)}
-                        aria-label={`Chọn ${lead.leadName}`}
-                        style={{ marginTop: 4 }}
-                      />
-                    ) : null}
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.has(lead.id)}
+                      onChange={() => toggleSelect(lead.id)}
+                      aria-label={`Chọn ${lead.leadName}`}
+                      style={{ marginTop: 4 }}
+                    />
                     <div className="crm-customer-card-identity">
                       <button type="button" className="crm-customer-name-link crm-lead-name-btn" title={lead.leadName} onClick={() => openRow(lead)}>
                         {lead.leadName}
@@ -1145,11 +1148,11 @@ export function LeadsDirectory() {
               </p>
               {deleteCascadeConfirm ? (
                 <div className="crm-lead-check-banner crm-lead-check-banner--warning" data-testid="lead-delete-cascade-warning">
-                  <b>Lead này đã được chuyển đổi thành Cơ hội/Khách hàng</b>
+                  <b>Lead này còn dữ liệu liên quan</b>
                   <span>
-                    Nếu xóa, Khách hàng/Liên hệ/Cơ hội đã tạo từ Lead này vẫn được giữ nguyên, chỉ mất liên kết ngược về
-                    Lead gốc. Bạn có chắc muốn xóa?
+                    Sẽ bị xoá kèm: <b>{describeCascadeSummary(deleteCascadeSummary || {})}</b>. {cascadeLossText(deleteCascadeSummary || {})}
                   </span>
+                  <span>Bạn có chấp nhận mất toàn bộ dữ liệu này và xoá không?</span>
                 </div>
               ) : (
                 <p className="crm-ai-fill-hint">
@@ -1164,7 +1167,7 @@ export function LeadsDirectory() {
                 className="crm-cancel-button"
                 data-testid="lead-delete-cancel"
                 disabled={deleting}
-                onClick={() => { setDeleteTarget(null); setDeleteCascadeConfirm(false); }}
+                onClick={() => { setDeleteTarget(null); setDeleteCascadeSummary(null); }}
               >
                 Hủy
               </button>
@@ -1176,7 +1179,7 @@ export function LeadsDirectory() {
                 onClick={() => void confirmDelete(deleteCascadeConfirm)}
               >
                 {deleting ? <Loader2 className="crm-save-spinner" /> : null}
-                {deleting ? 'Đang xóa...' : deleteCascadeConfirm ? 'Vẫn xóa Lead' : 'Xóa Lead'}
+                {deleting ? 'Đang xóa...' : deleteCascadeConfirm ? 'Chấp nhận mất & xóa toàn bộ' : 'Xóa Lead'}
               </button>
             </footer>
           </div>
@@ -1212,11 +1215,11 @@ export function LeadsDirectory() {
               {bulkDeleteError ? <p className="crm-error" data-testid="lead-bulk-delete-error">{bulkDeleteError}</p> : null}
               {bulkCascadeIds.length ? (
                 <div className="crm-lead-check-banner crm-lead-check-banner--warning" data-testid="lead-bulk-delete-cascade-warning">
-                  <b>Còn {bulkCascadeIds.length} Lead đã được chuyển đổi thành Cơ hội/Khách hàng</b>
+                  <b>Còn {bulkCascadeIds.length} Lead có dữ liệu liên quan</b>
                   <span>
-                    Nếu xóa, Khách hàng/Liên hệ/Cơ hội đã tạo từ các Lead này vẫn được giữ nguyên, chỉ mất liên kết ngược
-                    về Lead gốc. Bạn có chắc muốn xóa cả {bulkCascadeIds.length} Lead này?
+                    Sẽ bị xoá kèm: <b>{describeCascadeSummary(bulkCascadeSummary || {})}</b>. {cascadeLossText(bulkCascadeSummary || {})}
                   </span>
+                  <span>Bạn có chấp nhận mất toàn bộ dữ liệu này và xoá cả {bulkCascadeIds.length} Lead không?</span>
                 </div>
               ) : (
                 <>
@@ -1236,7 +1239,7 @@ export function LeadsDirectory() {
                 className="crm-cancel-button"
                 data-testid="lead-bulk-delete-cancel"
                 disabled={bulkDeleting}
-                onClick={() => { setBulkDeleteOpen(false); setBulkCascadeIds([]); }}
+                onClick={() => { setBulkDeleteOpen(false); setBulkCascadeIds([]); setBulkCascadeSummary(null); }}
               >
                 Hủy
               </button>
@@ -1248,7 +1251,7 @@ export function LeadsDirectory() {
                 onClick={() => void confirmBulkDelete(bulkCascadeIds.length > 0)}
               >
                 {bulkDeleting ? <Loader2 className="crm-save-spinner" /> : null}
-                {bulkDeleting ? 'Đang xóa...' : bulkCascadeIds.length ? `Vẫn xóa ${bulkCascadeIds.length} Lead đã chuyển đổi` : 'Xóa Lead đã chọn'}
+                {bulkDeleting ? 'Đang xóa...' : bulkCascadeIds.length ? 'Chấp nhận mất & xóa toàn bộ' : 'Xóa Lead đã chọn'}
               </button>
             </footer>
           </div>

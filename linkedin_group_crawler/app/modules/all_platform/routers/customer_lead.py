@@ -374,11 +374,8 @@ def delete_customer_lead(
     current_user: Any = Depends(get_current_user),
 ):
     try:
-        existing = customer_lead_service.get_customer_lead_by_id(lead_id)
-        if not existing:
-            return BaseResponse(success=False, message="Không tìm thấy cơ hội này.")
-        if not can_write_deal(current_user, existing):
-            return BaseResponse(success=False, message="Bạn không có quyền xóa deal này — chỉ deal do mình tạo hoặc được giao mới xóa được")
+        # Khong chan quyen xoa (feedback 2026-09-23) - chi hoi xac nhan; tim
+        # theo tenant hien tai trong delete_customer_lead().
         customer_lead_service.delete_customer_lead(lead_id, current_user, confirm_cascade=confirm_cascade)
         return BaseResponse(success=True, message="Deleted successfully")
     except CascadeConfirmRequired as e:

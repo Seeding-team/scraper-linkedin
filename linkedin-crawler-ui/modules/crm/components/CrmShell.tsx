@@ -25,7 +25,7 @@ import { teamsService, type TeamRow } from '@/services/all-platform.service';
 import { seedingQuoteRepository } from '@/modules/quotes';
 import type { Quote } from '@/modules/quotes';
 import { useAppAuth } from '@/contexts/AppAuthContext';
-import { CascadeConfirmRequiredError, blockedContractsMessage, cascadeWarningText } from '../utils/cascadeDelete';
+import { CascadeConfirmRequiredError, cascadeWarningText } from '../utils/cascadeDelete';
 
 type FilterState = {
   search: string;
@@ -295,11 +295,6 @@ export function CrmShell() {
       } catch (err) {
         // Deal con Bao gia/Hop dong: hoi ro truoc khi xoa kem (feedback 2026-09-23).
         if (!(err instanceof CascadeConfirmRequiredError)) throw err;
-        const blocked = blockedContractsMessage(err.summary);
-        if (blocked) {
-          window.alert(blocked);
-          return;
-        }
         if (!window.confirm(cascadeWarningText('Cơ hội này', err.summary))) return;
         await deleteDeal(deal.id, true);
       }
@@ -402,7 +397,9 @@ export function CrmShell() {
 
   async function handleDeleteQuote(deal: Deal) {
     if (!deal.quote?.id) return;
-    if (!window.confirm(`Xoá báo giá ${deal.quote.number || ''} khỏi deal "${deal.customerName}"? Báo giá sẽ chuyển sang trạng thái đã xoá (ẩn khỏi danh sách), Admin có thể khôi phục nếu cần.`)) return;
+    const approvedText = deal.quote.status === 'approved' ? ' Báo giá này đã duyệt, bạn có chắc muốn xóa?' : '';
+    if (!window.confirm(`Xoá báo giá ${deal.quote.number || ''} khỏi deal "${deal.customerName}"?${approvedText}
+Bạn chấp nhận mất báo giá này? (Báo giá bị ẩn khỏi danh sách, Admin có thể khôi phục nếu cần.)`)) return;
     try {
       await seedingQuoteRepository.deleteQuote(deal.quote.id);
       await refreshDealAfterQuoteChange(deal.id);

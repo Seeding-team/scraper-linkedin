@@ -1,30 +1,23 @@
-"""Xoa Khach hang / Deal KEM du lieu lien quan - co HOI XAC NHAN truoc.
+"""Xoa Khach hang / Co hoi / Lead KEM du lieu lien quan - HOI XAC NHAN truoc.
 
-Feedback (2026-09-23): "Nếu xóa Customer mà Customer đang có dữ liệu liên quan
-thì phải hỏi rõ trước khi xóa luôn các dữ liệu liên quan, đặc biệt Lead/Deal/
-Báo giá và các relation khác; không cascade âm thầm."
+Feedback 2026-09-23 (chot voi user): "hỏi chấp nhận mất [dữ liệu] thì mới ok,
+không cần chặn quyền xóa", "ai muốn xóa thì xóa", "khi bấm xóa khách hàng, nếu
+khách hàng có báo giá cơ hội thì cũng cho hỏi rồi xóa tất cả liên quan [...]
+tương tự lead và cái nào nó liên quan nữa", "mấy cái xóa đang chặn quyền đó cho
+mở hết đi, nhớ hỏi trước khi xóa là được".
 
-Quy uoc 2 buoc (dung chung cho Customer va Deal):
-  1. Goi lan dau confirm_cascade=False: neu CO du lieu lien quan -> KHONG xoa
-     gi ca, raise CascadeConfirmRequired kem `summary` (so dem tung loai) de
-     FE dung popup liet ke ro se mat gi.
-  2. Nguoi dung xac nhan -> goi lai confirm_cascade=True -> xoa that.
+=> KHONG chan quyen, KHONG chan theo trang thai (bao gia da duyet, hop dong da
+ky deu xoa duoc). Gate DUY NHAT la xac nhan 2 buoc:
+  1. confirm_cascade=False: con du lieu lien quan -> KHONG xoa gi, raise
+     CascadeConfirmRequired kem `summary` (so dem tung loai) de FE liet ke ro
+     se mat gi.
+  2. Nguoi dung xac nhan -> confirm_cascade=True -> xoa that.
+Tenant (`instance`) van loc o MOI query - khong bao gio cham du lieu tenant khac.
 
-Gate bat buoc truoc khi xoa that (backend, khong dua vao FE):
-  - Hop dong da ky/dang thuc hien (status ngoai draft/pending_legal) KHONG
-    duoc xoa - dung guard san co cua supabase_contract_service.delete_contract
-    (rule: khong force-delete vuot guard). Co hop dong nhu vay -> dung lai,
-    bao ro hop dong nao.
-  - Moi ban ghi con (Deal/Bao gia/Hop dong/Du an/Lead) phai qua DUNG helper
-    quyen san co cua loai do (can_write_deal/can_edit_quote/can_edit_contract/
-    can_manage_project/can_write_lead). Thieu quyen tren bat ky ban ghi nao ->
-    PermissionError, khong xoa gi.
-
-Thu tu xoa: Bao gia soft-delete -> Du an (projects.customer_id la ON DELETE
-RESTRICT, phai xoa truoc Customer; buoc de loi nhat nen lam som, loi thi khoi
-phuc lai bao gia vua xoa mem va dung - chua mat gi vinh vien) -> Hop dong nhap
--> Lead da convert -> Nguoi lien he -> Deal -> Customer. Moi query deu loc
-`instance` (tenant)."""
+Thu tu xoa: Bao gia soft-delete (khoi phuc duoc) -> Du an (projects.customer_id
+ON DELETE RESTRICT, phai xoa truoc Customer; buoc de loi nhat nen lam som, loi
+thi khoi phuc lai bao gia vua xoa mem roi dung - chua mat gi vinh vien) -> Hop
+dong -> Lead -> Nguoi lien he -> Co hoi -> Khach hang."""
 
 from __future__ import annotations
 
@@ -33,36 +26,30 @@ from typing import Any
 
 from app.core.config import settings
 from app.core.supabase_client import execute_supabase_query, get_supabase_client
-from app.modules.all_platform.services.crm_permission_service import (
-    can_edit_contract,
-    can_edit_quote,
-    can_manage_project,
-    can_write_deal,
-    can_write_lead,
-)
 from app.modules.all_platform.services.supabase_quote_service import restore_quote, soft_delete_quote
 
 logger = logging.getLogger(__name__)
 
-# Dung dung tap trang thai ma delete_contract() cho phep xoa.
-DELETABLE_CONTRACT_STATUSES = ("draft", "pending_legal")
+# Hop dong o trang thai nay la "chua ky" - con lai (da ky/dang thuc hien...)
+# chi dung de CANH BAO ro trong popup, KHONG con chan xoa.
+UNSIGNED_CONTRACT_STATUSES = ("draft", "pending_legal")
+
+_COUNT_LABELS = (
+    ("customer_count", "khách hàng"),
+    ("deal_count", "cơ hội"),
+    ("lead_count", "lead"),
+    ("contact_count", "người liên hệ"),
+    ("project_count", "dự án"),
+    ("quote_count", "báo giá"),
+    ("contract_count", "hợp đồng"),
+)
 
 
 class CascadeConfirmRequired(ValueError):
     """Con du lieu lien quan - can nguoi dung xac nhan truoc khi xoa toan bo."""
 
     def __init__(self, entity_label: str, summary: dict[str, Any]) -> None:
-        parts = []
-        for key, label in (
-            ("deal_count", "cơ hội"),
-            ("lead_count", "lead"),
-            ("contact_count", "người liên hệ"),
-            ("project_count", "dự án"),
-            ("quote_count", "báo giá"),
-            ("contract_count", "hợp đồng"),
-        ):
-            if summary.get(key):
-                parts.append(f"{summary[key]} {label}")
+        parts = [f"{summary[key]} {label}" for key, label in _COUNT_LABELS if summary.get(key)]
         super().__init__(
             f"{entity_label} còn {', '.join(parts)} liên quan — cần xác nhận trước khi xoá toàn bộ."
         )
@@ -88,6 +75,13 @@ def _select_in(table: str, columns: str, field: str, values: list[str], extra=No
     return rows
 
 
+def _select_eq(table: str, columns: str, field: str, value: str) -> list[dict[str, Any]]:
+    supabase = get_supabase_client()
+    return execute_supabase_query(
+        lambda: supabase.table(table).select(columns).eq("instance", settings.crm_instance).eq(field, value).execute()
+    ).data or []
+
+
 def _dedupe(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     seen: dict[str, dict[str, Any]] = {}
     for row in rows:
@@ -96,145 +90,93 @@ def _dedupe(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return list(seen.values())
 
 
-def _collect(deals: list[dict[str, Any]], customer_id: str | None) -> dict[str, Any]:
-    """Gom toan bo ban ghi lien quan (tenant hien tai) cua 1 tap Deal va (neu
-    co) 1 Customer."""
-    supabase = get_supabase_client()
-    deal_ids = [str(d["id"]) for d in deals if d.get("id")]
+def _active_quote(query):
+    return query.is_("deleted_at", "null")
 
-    projects: list[dict[str, Any]] = []
-    contacts: list[dict[str, Any]] = []
-    leads: list[dict[str, Any]] = []
-    direct_contracts: list[dict[str, Any]] = []
-    if customer_id:
-        projects = execute_supabase_query(
-            lambda: supabase.table("projects").select("id, name, created_by, manager_id")
-            .eq("instance", settings.crm_instance).eq("customer_id", customer_id).execute()
-        ).data or []
-        contacts = execute_supabase_query(
-            lambda: supabase.table("crm_contacts").select("id")
-            .eq("instance", settings.crm_instance).eq("customer_id", customer_id).execute()
-        ).data or []
-        leads = execute_supabase_query(
-            lambda: supabase.table("crm_leads").select("id, sdr_id")
-            .eq("instance", settings.crm_instance).eq("converted_customer_id", customer_id).execute()
-        ).data or []
-        direct_contracts = execute_supabase_query(
-            lambda: supabase.table("contracts").select("id, contract_number, title, status, created_by, deal_id")
-            .eq("instance", settings.crm_instance).eq("customer_id", customer_id).execute()
-        ).data or []
 
+_QUOTE_COLS = "id, quote_number, deal_id"
+_CONTRACT_COLS = "id, contract_number, title, status, deal_id"
+
+
+def _empty_related() -> dict[str, list[dict[str, Any]]]:
+    return {"customers": [], "deals": [], "projects": [], "contacts": [], "leads": [], "quotes": [], "contracts": []}
+
+
+def _collect_customer(customer_id: str) -> dict[str, Any]:
+    """Toan bo ban ghi lien quan (tenant hien tai) cua 1 Khach hang."""
+    deals = _select_eq("customer_leads", "id, customer_name", "customer_id", customer_id)
+    deal_ids = [str(d["id"]) for d in deals]
+    projects = _select_eq("projects", "id, name", "customer_id", customer_id)
     project_ids = [str(p["id"]) for p in projects]
-    active_quote = lambda q: q.is_("deleted_at", "null")  # noqa: E731
-    quotes = _dedupe(
-        _select_in("quotes", "id, quote_number, created_by, deal_id", "deal_id", deal_ids, active_quote)
-        + _select_in("quotes", "id, quote_number, created_by, deal_id", "project_id", project_ids, active_quote)
-    )
-    contracts = _dedupe(
-        _select_in("contracts", "id, contract_number, title, status, created_by, deal_id", "deal_id", deal_ids)
-        + direct_contracts
-    )
-    return {
+    related = _empty_related()
+    related.update({
         "deals": deals,
         "projects": projects,
-        "contacts": contacts,
-        "leads": leads,
-        "quotes": quotes,
-        "contracts": contracts,
-    }
+        "contacts": _select_eq("crm_contacts", "id", "customer_id", customer_id),
+        "leads": _select_eq("crm_leads", "id", "converted_customer_id", customer_id),
+        "quotes": _dedupe(
+            _select_in("quotes", _QUOTE_COLS, "deal_id", deal_ids, _active_quote)
+            + _select_in("quotes", _QUOTE_COLS, "project_id", project_ids, _active_quote)
+        ),
+        "contracts": _dedupe(
+            _select_in("contracts", _CONTRACT_COLS, "deal_id", deal_ids)
+            + _select_eq("contracts", _CONTRACT_COLS, "customer_id", customer_id)
+        ),
+    })
+    return related
 
 
-def _summary(related: dict[str, Any], deals_counted: bool = True) -> dict[str, Any]:
-    blocked = [
-        {
-            "id": c["id"],
-            "contract_number": c.get("contract_number"),
-            "title": c.get("title"),
-            "status": c.get("status"),
-        }
+def _collect_deals(deal_ids: list[str]) -> dict[str, Any]:
+    related = _empty_related()
+    related["quotes"] = _select_in("quotes", _QUOTE_COLS, "deal_id", deal_ids, _active_quote)
+    related["contracts"] = _select_in("contracts", _CONTRACT_COLS, "deal_id", deal_ids)
+    return related
+
+
+def _summary(related: dict[str, Any], *, count_deals: bool = True) -> dict[str, Any]:
+    signed = [
+        {"id": c["id"], "contract_number": c.get("contract_number"), "title": c.get("title"), "status": c.get("status")}
         for c in related["contracts"]
-        if c.get("status") not in DELETABLE_CONTRACT_STATUSES
+        if c.get("status") not in UNSIGNED_CONTRACT_STATUSES
     ]
     return {
-        "deal_count": len(related["deals"]) if deals_counted else 0,
+        "customer_count": len(related["customers"]),
+        "deal_count": len(related["deals"]) if count_deals else 0,
         "lead_count": len(related["leads"]),
         "contact_count": len(related["contacts"]),
         "project_count": len(related["projects"]),
         "quote_count": len(related["quotes"]),
         "contract_count": len(related["contracts"]),
-        "blocked_contracts": blocked,
+        # Chi de popup canh bao ro "trong do N hop dong da ky" - KHONG chan.
+        "signed_contracts": signed,
     }
 
 
 def _has_related(summary: dict[str, Any]) -> bool:
-    return any(
-        summary.get(key)
-        for key in ("deal_count", "lead_count", "contact_count", "project_count", "quote_count", "contract_count")
-    )
+    return any(summary.get(key) for key, _ in _COUNT_LABELS)
 
 
-def _check_permissions(user: dict[str, Any], related: dict[str, Any]) -> None:
-    deals_by_id = {str(d["id"]): d for d in related["deals"]}
-    denied: list[str] = []
-    n = sum(1 for d in related["deals"] if not can_write_deal(user, d))
-    if n:
-        denied.append(f"{n} cơ hội")
-    n = sum(
-        1 for q in related["quotes"]
-        if not can_edit_quote(user, q, deals_by_id.get(str(q.get("deal_id") or "")))
-    )
-    if n:
-        denied.append(f"{n} báo giá")
-    n = sum(
-        1 for c in related["contracts"]
-        if not can_edit_contract(user, {**c, "createdById": c.get("created_by")}, deals_by_id.get(str(c.get("deal_id") or "")))
-    )
-    if n:
-        denied.append(f"{n} hợp đồng")
-    n = sum(1 for p in related["projects"] if not can_manage_project(user, p))
-    if n:
-        denied.append(f"{n} dự án")
-    n = sum(1 for lead in related["leads"] if not can_write_lead(user, lead))
-    if n:
-        denied.append(f"{n} lead")
-    if denied:
-        raise PermissionError(
-            "Bạn không có quyền xoá " + ", ".join(denied)
-            + " thuộc người khác phụ trách — cần Admin/Leader thực hiện thao tác xoá này."
-        )
-
-
-def _ensure_no_blocked_contracts(summary: dict[str, Any]) -> None:
-    blocked = summary.get("blocked_contracts") or []
-    if blocked:
-        names = ", ".join(str(c.get("contract_number") or c.get("title") or c["id"]) for c in blocked[:5])
-        raise ValueError(
-            f"Không thể xoá: còn {len(blocked)} hợp đồng đã ký/đang thực hiện ({names}). "
-            "Hợp đồng ở trạng thái này không được xoá — hãy xử lý hợp đồng trước."
-        )
-
-
-def _execute(user: dict[str, Any], related: dict[str, Any], customer_id: str | None, reason: str) -> None:
+def _delete_ids(table: str, ids: list[str]) -> None:
     supabase = get_supabase_client()
-    instance = settings.crm_instance
-    actor_id = user.get("id")
+    for chunk in _in_chunks(ids):
+        execute_supabase_query(
+            lambda chunk=chunk: supabase.table(table).delete().eq("instance", settings.crm_instance).in_("id", chunk).execute()
+        )
 
-    # 1) Bao gia: soft-delete (khoi phuc duoc).
+
+def _execute(actor_id: str | None, related: dict[str, Any], reason: str) -> None:
+    ids = {key: [str(row["id"]) for row in rows] for key, rows in related.items()}
+
+    # 1) Bao gia: soft-delete (khoi phuc duoc qua Admin).
     soft_deleted: list[str] = []
     try:
-        for quote in related["quotes"]:
-            soft_delete_quote(str(quote["id"]), actor_id, reason)
-            soft_deleted.append(str(quote["id"]))
-
-        # 2) Du an TRUOC cac buoc xoa cung khac: day la buoc de loi nhat (Du an
-        # chua co luong hard-delete rieng, co the con FK ngoai migration tro
-        # toi). Loi o day -> khoi phuc lai cac bao gia vua xoa mem roi dung,
-        # chua co ban ghi nao bi xoa vinh vien.
-        project_ids = [str(p["id"]) for p in related["projects"]]
-        for chunk in _in_chunks(project_ids):
-            execute_supabase_query(
-                lambda chunk=chunk: supabase.table("projects").delete().eq("instance", instance).in_("id", chunk).execute()
-            )
+        for quote_id in ids["quotes"]:
+            soft_delete_quote(quote_id, actor_id, reason)
+            soft_deleted.append(quote_id)
+        # 2) Du an truoc moi buoc xoa cung (de loi nhat: chua co luong
+        # hard-delete rieng, co the con FK ngoai migration). Loi -> khoi phuc
+        # lai bao gia vua xoa mem roi dung, chua mat gi vinh vien.
+        _delete_ids("projects", ids["projects"])
     except Exception:
         for quote_id in soft_deleted:
             try:
@@ -243,59 +185,83 @@ def _execute(user: dict[str, Any], related: dict[str, Any], customer_id: str | N
                 logger.exception("cascade rollback: khong khoi phuc duoc quote %s", quote_id)
         raise
 
-    contract_ids = [str(c["id"]) for c in related["contracts"]]
-    for chunk in _in_chunks(contract_ids):
-        execute_supabase_query(
-            lambda chunk=chunk: supabase.table("contracts").delete().eq("instance", instance)
-            .in_("id", chunk).in_("status", list(DELETABLE_CONTRACT_STATUSES)).execute()
-        )
-    lead_ids = [str(lead["id"]) for lead in related["leads"]]
-    for chunk in _in_chunks(lead_ids):
-        execute_supabase_query(
-            lambda chunk=chunk: supabase.table("crm_leads").delete().eq("instance", instance).in_("id", chunk).execute()
-        )
-    if customer_id:
-        execute_supabase_query(
-            lambda: supabase.table("crm_contacts").delete().eq("instance", instance).eq("customer_id", customer_id).execute()
-        )
-    deal_ids = [str(d["id"]) for d in related["deals"]]
-    for chunk in _in_chunks(deal_ids):
-        execute_supabase_query(
-            lambda chunk=chunk: supabase.table("customer_leads").delete().eq("instance", instance).in_("id", chunk).execute()
-        )
-    if customer_id:
-        execute_supabase_query(
-            lambda: supabase.table("crm_customers").delete().eq("instance", instance).eq("id", customer_id).execute()
-        )
+    _delete_ids("contracts", ids["contracts"])
+    _delete_ids("crm_leads", ids["leads"])
+    _delete_ids("crm_contacts", ids["contacts"])
+    _delete_ids("customer_leads", ids["deals"])
+    _delete_ids("crm_customers", ids["customers"])
 
 
-def delete_customer_cascade(customer: dict[str, Any], user: dict[str, Any], confirm_cascade: bool) -> dict[str, Any]:
-    """Nguoi goi da kiem tra can_edit_customer(). Tra ve summary da xoa."""
-    supabase = get_supabase_client()
+def delete_customer_cascade(customer: dict[str, Any], actor_id: str | None, confirm_cascade: bool) -> dict[str, Any]:
     customer_id = str(customer["id"])
-    deals = execute_supabase_query(
-        lambda: supabase.table("customer_leads").select("id, leaded_by, sdr_id, customer_name")
-        .eq("instance", settings.crm_instance).eq("customer_id", customer_id).execute()
-    ).data or []
-    related = _collect(deals, customer_id)
+    related = _collect_customer(customer_id)
     summary = _summary(related)
     if _has_related(summary) and not confirm_cascade:
         raise CascadeConfirmRequired("Khách hàng này", summary)
-    _ensure_no_blocked_contracts(summary)
-    _check_permissions(user, related)
-    _execute(user, related, customer_id, f"Xoá cùng Khách hàng {customer.get('customer_name') or customer_id} (đã xác nhận xoá toàn bộ dữ liệu liên quan)")
+    related["customers"] = [customer]
+    _execute(actor_id, related, f"Xoá cùng Khách hàng {customer.get('customer_name') or customer_id} (đã xác nhận xoá toàn bộ dữ liệu liên quan)")
     return summary
 
 
-def delete_deal_cascade(deal: dict[str, Any], user: dict[str, Any], confirm_cascade: bool) -> dict[str, Any]:
-    """Nguoi goi da kiem tra can_write_deal(). Deal chi keo theo Bao gia/Hop
-    dong cua chinh no (Customer/Contact/Project thuoc Customer, khong xoa)."""
-    related = _collect([deal], None)
-    related["deals"] = [deal]
-    summary = _summary(related, deals_counted=False)
+def delete_deal_cascade(deal: dict[str, Any], actor_id: str | None, confirm_cascade: bool) -> dict[str, Any]:
+    """Co hoi keo theo Bao gia/Hop dong cua chinh no (Khach hang/Contact/Du an
+    thuoc Khach hang, khong xoa)."""
+    related = _collect_deals([str(deal["id"])])
+    summary = _summary(related)
     if _has_related(summary) and not confirm_cascade:
         raise CascadeConfirmRequired("Cơ hội này", summary)
-    _ensure_no_blocked_contracts(summary)
-    _check_permissions(user, related)
-    _execute(user, related, None, f"Xoá cùng Cơ hội {deal.get('customer_name') or deal.get('id')} (đã xác nhận xoá toàn bộ dữ liệu liên quan)")
+    related["deals"] = [deal]
+    _execute(actor_id, related, f"Xoá cùng Cơ hội {deal.get('customer_name') or deal.get('id')} (đã xác nhận xoá toàn bộ dữ liệu liên quan)")
     return summary
+
+
+def _lead_related(lead: dict[str, Any]) -> dict[str, Any]:
+    """Du lieu sinh ra tu 1 Lead da convert: Co hoi (converted_deal_id) + Bao
+    gia/Hop dong cua Co hoi do + Nguoi lien he (converted_contact_id). Khach
+    hang (converted_customer_id) CHI bi xoa theo neu sau khi xoa cac ban ghi
+    tren no khong con du lieu nao khac (tuc KH chi sinh ra tu chinh Lead nay)
+    - khach hang dang co co hoi/lien he/du an/bao gia/hop dong/lead khac thi
+    GIU NGUYEN, khong xoa lan du lieu khong lien quan toi Lead."""
+    related = _empty_related()
+    deal_id = str(lead.get("converted_deal_id") or "")
+    contact_id = str(lead.get("converted_contact_id") or "")
+    customer_id = str(lead.get("converted_customer_id") or "")
+    if deal_id:
+        related["deals"] = _select_eq("customer_leads", "id, customer_name", "id", deal_id)
+        if related["deals"]:
+            deal_related = _collect_deals([deal_id])
+            related["quotes"] = deal_related["quotes"]
+            related["contracts"] = deal_related["contracts"]
+    if contact_id:
+        related["contacts"] = _select_eq("crm_contacts", "id", "id", contact_id)
+    if customer_id:
+        customer_rows = _select_eq("crm_customers", "id, customer_name", "id", customer_id)
+        if customer_rows:
+            cust_related = _collect_customer(customer_id)
+            removing = {key: {str(r["id"]) for r in rows} for key, rows in related.items()}
+            removing["leads"] = {str(lead["id"])}
+            leftover = any(
+                str(row["id"]) not in removing.get(key, set())
+                for key, rows in cust_related.items()
+                for row in rows
+            )
+            if not leftover:
+                related["customers"] = customer_rows
+    return related
+
+
+def delete_lead_cascade(lead: dict[str, Any], actor_id: str | None, confirm_cascade: bool) -> dict[str, Any]:
+    related = _lead_related(lead)
+    summary = _summary(related)
+    if _has_related(summary) and not confirm_cascade:
+        raise CascadeConfirmRequired("Lead này", summary)
+    related["leads"] = [lead]
+    _execute(actor_id, related, f"Xoá cùng Lead {lead.get('lead_name') or lead.get('id')} (đã xác nhận xoá toàn bộ dữ liệu liên quan)")
+    return summary
+
+
+def get_in_tenant(table: str, record_id: str, columns: str = "*") -> dict[str, Any] | None:
+    """Doc 1 ban ghi theo id, CHI trong tenant hien tai (khong kiem tra quyen -
+    xoa khong con chan quyen, nhung KHONG BAO GIO cham tenant khac)."""
+    rows = _select_eq(table, columns, "id", record_id)
+    return rows[0] if rows else None

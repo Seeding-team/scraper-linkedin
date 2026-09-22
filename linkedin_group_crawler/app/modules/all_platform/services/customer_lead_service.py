@@ -738,20 +738,17 @@ def get_activity_log(
 
 
 def delete_customer_lead(lead_id: str, user: Dict[str, Any] | None = None, confirm_cascade: bool = False) -> bool:
-    """Xoa 1 Deal. Feedback 2026-09-23: khong con chan cung khi Deal da co
-    Bao gia/Hop dong - thay bang HOI XAC NHAN: confirm_cascade=False ma con
-    du lieu lien quan -> raise CascadeConfirmRequired (kem summary so dem),
-    KHONG xoa gi; confirm_cascade=True -> xoa Deal kem Bao gia (soft-delete)
-    va Hop dong nhap (hop dong da ky van bi chan, dung guard delete_contract).
-    Quyen tren tung ban ghi con kiem tra trong crm_delete_cascade_service.
-    Nguoi goi da kiem tra can_write_deal() tren chinh Deal nay."""
+    """Xoa 1 Co hoi. Feedback 2026-09-23: khong chan quyen/khong chan vi da co
+    Bao gia/Hop dong - chi HOI XAC NHAN: confirm_cascade=False ma con du lieu
+    lien quan -> raise CascadeConfirmRequired (kem so dem), KHONG xoa gi;
+    confirm_cascade=True -> xoa Co hoi kem Bao gia (xoa mem) va Hop dong."""
     # Import tre de tranh vong import (cascade service -> supabase_quote_service).
     from app.modules.all_platform.services.crm_delete_cascade_service import delete_deal_cascade
 
     deal = get_customer_lead_by_id(lead_id)
     if not deal:
         raise ValueError("Không tìm thấy cơ hội này.")
-    delete_deal_cascade(deal, user or {}, confirm_cascade)
+    delete_deal_cascade(deal, (user or {}).get("id"), confirm_cascade)
     return True
 
 

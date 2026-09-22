@@ -1,8 +1,9 @@
 /** Xoa Khach hang / Co hoi / Lead kem du lieu lien quan - HOI XAC NHAN truoc.
  *
- * Feedback 2026-09-23: "Nếu xóa Customer mà Customer đang có dữ liệu liên quan
- * thì phải hỏi rõ trước khi xóa luôn các dữ liệu liên quan, đặc biệt
- * Lead/Deal/Báo giá và các relation khác; không cascade âm thầm."
+ * Feedback 2026-09-23: "hỏi chấp nhận mất [dữ liệu] thì mới ok, không cần
+ * chặn quyền xóa", "khi bấm xóa khách hàng, nếu khách hàng có báo giá cơ hội
+ * thì cũng cho hỏi rồi xóa tất cả liên quan [...] tương tự lead", "nhớ hỏi
+ * trước khi xóa là được".
  *
  * Backend (crm_delete_cascade_service.py) tra success:false +
  * data.requiresCascadeConfirm + so dem khi con du lieu lien quan va chua gui
@@ -10,14 +11,20 @@
  * liet ke ro se mat gi, roi goi lai voi confirm_cascade=true. */
 
 export type CascadeSummary = {
+  customer_count?: number;
   deal_count?: number;
   lead_count?: number;
   contact_count?: number;
   project_count?: number;
   quote_count?: number;
   contract_count?: number;
-  blocked_contracts?: Array<{ id: string; contract_number?: string | null; title?: string | null; status?: string | null }>;
+  /** Hop dong da ky/dang thuc hien trong so se bi xoa - chi de canh bao ro. */
+  signed_contracts?: Array<{ id: string; contract_number?: string | null; title?: string | null; status?: string | null }>;
 };
+
+export const CASCADE_COUNT_KEYS = [
+  'customer_count', 'deal_count', 'lead_count', 'contact_count', 'project_count', 'quote_count', 'contract_count',
+] as const;
 
 export class CascadeConfirmRequiredError extends Error {
   summary: CascadeSummary;
@@ -34,41 +41,46 @@ export function cascadeSummaryFromBody(body: unknown): CascadeSummary | null {
   return data && data.requiresCascadeConfirm ? data : null;
 }
 
-const PARTS: Array<[keyof CascadeSummary, string]> = [
-  ['deal_count', 'cơ hội'],
-  ['lead_count', 'lead'],
-  ['contact_count', 'người liên hệ'],
-  ['project_count', 'dự án'],
-  ['quote_count', 'báo giá'],
-  ['contract_count', 'hợp đồng'],
-];
+const LABELS: Record<(typeof CASCADE_COUNT_KEYS)[number], string> = {
+  customer_count: 'khách hàng',
+  deal_count: 'cơ hội',
+  lead_count: 'lead',
+  contact_count: 'người liên hệ',
+  project_count: 'dự án',
+  quote_count: 'báo giá',
+  contract_count: 'hợp đồng',
+};
+
+/** Cong don so dem cua nhieu ban ghi (xoa hang loat). */
+export function sumCascadeSummaries(summaries: CascadeSummary[]): CascadeSummary {
+  const total: CascadeSummary = { signed_contracts: [] };
+  for (const summary of summaries) {
+    for (const key of CASCADE_COUNT_KEYS) total[key] = (total[key] || 0) + Number(summary[key] || 0);
+    total.signed_contracts = [...(total.signed_contracts || []), ...(summary.signed_contracts || [])];
+  }
+  return total;
+}
 
 /** "2 cơ hội, 1 người liên hệ và 3 báo giá" - chi liet ke loai co so > 0. */
 export function describeCascadeSummary(summary: CascadeSummary): string {
-  const parts = PARTS.map(([key, label]) => {
+  const parts = CASCADE_COUNT_KEYS.map(key => {
     const count = Number(summary[key] || 0);
-    return count > 0 ? `${count} ${label}` : '';
+    return count > 0 ? `${count} ${LABELS[key]}` : '';
   }).filter(Boolean);
   if (parts.length <= 1) return parts[0] || '';
   return `${parts.slice(0, -1).join(', ')} và ${parts[parts.length - 1]}`;
 }
 
-/** Hop dong da ky/dang thuc hien chan viec xoa (guard delete_contract o
- * backend, khong force-delete vuot guard). Tra ve thong bao neu co, null neu
- * khong - FE hien thong bao nay THAY cho nut "Xoá toàn bộ". */
-export function blockedContractsMessage(summary: CascadeSummary): string | null {
-  const blocked = summary.blocked_contracts || [];
-  if (!blocked.length) return null;
-  const names = blocked.slice(0, 5).map(c => c.contract_number || c.title || c.id).join(', ');
-  return `Không thể xoá: còn ${blocked.length} hợp đồng đã ký/đang thực hiện (${names}). Hợp đồng ở trạng thái này không được xoá — hãy xử lý hợp đồng trước.`;
+/** Cau canh bao "se mat gi" cho popup xac nhan buoc 2. */
+export function cascadeLossText(summary: CascadeSummary): string {
+  const signed = summary.signed_contracts?.length || 0;
+  return [
+    'Nếu tiếp tục, TOÀN BỘ dữ liệu liên quan trên sẽ bị xoá theo: báo giá chuyển sang trạng thái đã xoá (Admin khôi phục được); cơ hội, lead, người liên hệ, dự án, hợp đồng và khách hàng bị xoá vĩnh viễn.',
+    signed ? `Trong đó có ${signed} hợp đồng đã ký/đang thực hiện.` : '',
+  ].filter(Boolean).join(' ');
 }
 
-/** Cau canh bao day du cho popup xac nhan buoc 2. entityLabel vd "Khách hàng
- * này" / "Cơ hội này". */
+/** Cau hoi day du cho window.confirm. entityLabel vd "Khách hàng này". */
 export function cascadeWarningText(entityLabel: string, summary: CascadeSummary): string {
-  return [
-    `${entityLabel} còn liên kết ${describeCascadeSummary(summary)}.`,
-    'Nếu tiếp tục, TOÀN BỘ dữ liệu liên quan trên sẽ bị xoá theo: báo giá chuyển sang trạng thái đã xoá (Admin khôi phục được); cơ hội, lead, người liên hệ, dự án và hợp đồng nháp bị xoá vĩnh viễn.',
-    'Bạn có chắc muốn xoá toàn bộ?',
-  ].join(' ');
+  return `${entityLabel} còn liên kết ${describeCascadeSummary(summary)}. ${cascadeLossText(summary)} Bạn có chấp nhận mất toàn bộ dữ liệu này và xoá không?`;
 }

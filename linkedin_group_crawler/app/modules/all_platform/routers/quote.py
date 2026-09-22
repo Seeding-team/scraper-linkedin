@@ -585,9 +585,9 @@ def quotes_delete(quote_id: str, user: dict = Depends(get_current_user)) -> Base
     ghi quote_deletion_audit TRUOC khi xoa) - khong doi, khong lien quan sua
     lan nay."""
     try:
-        quote, lead = _load_quote_and_lead(quote_id)
-        if not can_edit_quote(user, quote, lead):
-            return BaseResponse(success=False, message="Không có quyền xoá báo giá này")
+        # Feedback 2026-09-23: khong chan quyen xoa ("ai muốn xóa thì xóa") -
+        # FE hoi xac nhan truoc; _load_quote_and_lead van chi tim trong tenant.
+        _load_quote_and_lead(quote_id)
         soft_delete_quote(quote_id, user.get("id"), "Xoá báo giá qua thao tác thường")
         return BaseResponse(success=True)
     except ValueError as e:
@@ -600,8 +600,9 @@ def quotes_delete(quote_id: str, user: dict = Depends(get_current_user)) -> Base
 def quotes_delete_bulk(payload: dict, user: dict = Depends(get_current_user)) -> BaseResponse:
     """Feedback 2026-09-23 "select 1 hoặc nhiều báo giá -> Xóa", "không cần khóa
     quyền xóa chỉ vì báo giá đã duyệt" (FE hoi xac nhan rieng cho ban da duyet).
-    Xoa MEM (soft_delete_quote - Admin khoi phuc duoc), CUNG quyen voi DELETE
-    /{quote_id} (can_edit_quote tren tung ban ghi, khong phu thuoc status).
+    Xoa MEM (soft_delete_quote - Admin khoi phuc duoc). KHONG chan quyen,
+    KHONG chan theo trang thai ("ai muốn xóa thì xóa") - FE hoi xac nhan truoc.
+    Chi tim trong tenant hien tai.
 
     payload: {"quote_ids": [...], "include_versions": bool}
       include_versions=true: xoa CA CHUOI version cua moi quote (thao tac "Xoá
@@ -620,7 +621,7 @@ def quotes_delete_bulk(payload: dict, user: dict = Depends(get_current_user)) ->
         if not quote_id or quote_id in seen:
             continue
         try:
-            quote, lead = _load_quote_and_lead(quote_id)
+            quote, _lead = _load_quote_and_lead(quote_id)
             targets = [quote]
             if include_versions and quote.get("versionChainId"):
                 targets = list_quote_versions(quote["versionChainId"]) or [quote]
@@ -629,9 +630,6 @@ def quotes_delete_bulk(payload: dict, user: dict = Depends(get_current_user)) ->
                 if target_id in seen:
                     continue
                 seen.add(target_id)
-                if not can_edit_quote(user, target, lead):
-                    failed.append({"quote_id": target_id, "message": "Không có quyền xoá báo giá này"})
-                    continue
                 soft_delete_quote(target_id, user.get("id"), "Xoá báo giá qua danh sách (đã xác nhận)")
                 deleted_ids.append(target_id)
         except QuoteNotFoundError as e:
@@ -886,9 +884,8 @@ def quotes_soft_delete(quote_id: str, payload: QuoteSoftDeleteRequest, user: dic
     (xem list_quotes/get_quote/get_public_quote/list_quote_versions), khoi
     phuc duoc qua /restore."""
     try:
-        quote, lead = _load_quote_and_lead(quote_id)
-        if not can_edit_quote(user, quote, lead):
-            return BaseResponse(success=False, message="Không có quyền xoá báo giá này")
+        # Khong chan quyen xoa (feedback 2026-09-23) - xem quotes_delete.
+        _load_quote_and_lead(quote_id)
         data = soft_delete_quote(quote_id, user.get("id"), payload.reason)
         return BaseResponse(success=True, message="Đã xoá báo giá (có thể khôi phục)", data=data)
     except QuoteNotFoundError as e:

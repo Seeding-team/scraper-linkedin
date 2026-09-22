@@ -333,7 +333,7 @@ export function CrmContactsPanel({
   const unlocked = Boolean(editing) || dupView === 'clean' || overrideCreate;
 
   async function handleDelete(contact: ApiContact) {
-    if (!window.confirm(`Xóa contact "${contact.name}"?`)) return;
+    if (!window.confirm(`Xóa contact "${contact.name}"? Bạn chấp nhận mất người liên hệ này?`)) return;
     try {
       const res = await fetch(
         `${API_BASE_URL}/api/all-platform/crm/customers/${encodeURIComponent(customerId)}/contacts/${encodeURIComponent(contact.id)}`,
@@ -437,15 +437,14 @@ export function CrmContactsPanel({
                 {onCreateProject && (
                   <button type="button" className="crm-btn crm-btn--outline crm-btn--small" onClick={() => onCreateProject(contact.id)}>+ Dự án</button>
                 )}
-                {canEdit && (
-                  <ActionMenu
-                    label="Thao tác contact"
-                    items={[
-                      { key: 'edit', label: 'Sửa', onSelect: () => openEdit(contact) },
-                      { key: 'delete', label: 'Xóa', danger: true, onSelect: () => void handleDelete(contact) },
-                    ]}
-                  />
-                )}
+                {/* Sua theo quyen; Xoa mo cho moi nguoi, chi hoi xac nhan (feedback 2026-09-23). */}
+                <ActionMenu
+                  label="Thao tác contact"
+                  items={[
+                    ...(canEdit ? [{ key: 'edit', label: 'Sửa', onSelect: () => openEdit(contact) }] : []),
+                    { key: 'delete', label: 'Xóa', danger: true, onSelect: () => void handleDelete(contact) },
+                  ]}
+                />
               </div>
             </div>
           ))}

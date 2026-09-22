@@ -212,9 +212,9 @@ def update_contact(customer_id: str, contact_id: str, payload: dict[str, Any], u
 
 
 def delete_contact(customer_id: str, contact_id: str, user: dict[str, Any]) -> None:
-    customer = get_customer(customer_id, user)
-    if not can_edit_customer(user, customer):
-        raise PermissionError("Khong co quyen xoa lien he cua khach hang nay.")
+    # Khong chan quyen xoa (feedback 2026-09-23: "ai muốn xóa thì xóa, nhớ hỏi
+    # trước khi xóa" - FE hoi xac nhan). _get_contact chi tim trong tenant hien
+    # tai va van bat buoc contact thuoc dung khach hang tren URL.
     contact = _get_contact(contact_id)
     if str(contact.get("customer_id")) != str(customer_id):
         raise ValueError("Lien he khong thuoc khach hang nay.")
