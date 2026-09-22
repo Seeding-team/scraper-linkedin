@@ -43,6 +43,13 @@ window.addEventListener("message", function(event) {
             if (response && response.success) {
                 window.postMessage({ action: "BULK_COMMENT_STARTED", success: true }, "*");
                 window.postMessage({ action: "LI_COMMENT_STARTED", success: true }, "*");
+            } else {
+                // Truoc day nhanh nay KHONG lam gi ca khi background tu choi (vd dang co
+                // tien trinh khac chua xong) hoac khong tra loi gi - trang web im re khong
+                // biet gi, giong het "bam nut Gui khong co phan hoi gi ca".
+                const errMsg = (response && response.error) || "Không nhận được phản hồi từ Extension.";
+                window.postMessage({ action: "BULK_COMMENT_FAILED_TO_START", error: errMsg }, "*");
+                window.postMessage({ action: "LI_COMMENT_FAILED_TO_START", error: errMsg }, "*");
             }
         });
     } else if (action === "SYNC_ACTIVE_MEMBER" || event.data.type === "SYNC_ACTIVE_MEMBER") {
