@@ -351,6 +351,16 @@ export function QuoteDocumentRenderer({
   onColumnWidthsChange,
   contactPersonName,
 }: Props) {
+  // BUG THAT DA GAP (2026-09-22): trang /baogia/{token} crash trang ("This
+  // page couldn't load") khi backend tra ve quoteItems/solutionItems la
+  // `null` THAT SU (khong phai []) - default param `= []` o tren CHI ap
+  // dung khi gia tri la `undefined`, KHONG ap dung cho `null` (dac diem cua
+  // JS/TS default parameter). Nhieu cho ben duoi (quoteItems.flatMap,
+  // filterRedundantAmountAfterDiscountColumn -> .some, v.v.) doc thang
+  // quoteItems ma khong tu guard rieng - chan 1 lan duy nhat o day thay vi
+  // sua tung noi goi rai rac, tranh sot.
+  quoteItems = quoteItems || [];
+  solutionItems = solutionItems || [];
   // Resize cot bang hang muc kieu Excel - CHI cho man hinh xem truoc/chi tiet
   // noi bo (mode 'preview'/'detail', xem allowColumnResize ben duoi), KHONG
   // anh huong ban in/PDF (@media print da ep width qua !important nen inline
