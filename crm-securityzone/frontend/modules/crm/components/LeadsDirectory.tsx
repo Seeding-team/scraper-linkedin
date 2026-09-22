@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { API_BASE_URL, API_KEY } from '@/lib/env';
 import { useAppAuth } from '@/contexts/AppAuthContext';
 import { useMembers } from '@/hooks/useMembers';
@@ -155,8 +155,8 @@ export function mapLead(row: ApiLeadRow): CrmLeadRow {
 }
 
 export function LeadsDirectory() {
-  const { user } = useAppAuth();
-  const { members } = useMembers();
+  const { user, isLoading: authLoading } = useAppAuth();
+  const { members, loading: membersLoading } = useMembers();
   const [items, setItems] = useState<CrmLeadRow[]>([]);
   const [total, setTotal] = useState(0);
   const [kpi, setKpi] = useState<CrmLeadKpi>({ total: 0, mql: 0, sql: 0, nurturing: 0, unqualified: 0 });
@@ -388,6 +388,21 @@ export function LeadsDirectory() {
     return () => window.clearTimeout(timer);
   }, [searchInput]);
 
+  // Mac dinh loc "cua toi + team cua toi" khi vao trang (thay vi "Tat ca") -
+  // xem giai thich chi tiet o CrmCustomersDirectory.tsx (cung 1 rule, chi
+  // doi ownerId/owner_id -> sdrId/sdr_id). Rule tim team CHINH XAC khop
+  // _user_department_map() o backend: chi xet members.linked_user_id.
+  const defaultFilterAppliedRef = useRef(false);
+  useEffect(() => {
+    if (defaultFilterAppliedRef.current) return;
+    if (authLoading || membersLoading) return;
+    if (!user?.id) return;
+    defaultFilterAppliedRef.current = true;
+    setSdrId(user.id);
+    const myMember = members.find(m => m.linked_user_id === user.id);
+    if (myMember?.team) setTeam(myMember.team);
+  }, [authLoading, membersLoading, user, members]);
+
   useEffect(() => { setPage(1); }, [status, source, sdrId, team]);
 
   useEffect(() => {
@@ -458,8 +473,12 @@ export function LeadsDirectory() {
       const key = m.linked_user_id || m.linked_user_id_2;
       if (key) seen.set(key, m.display_name);
     });
+    // Dam bao option "chinh minh" luon co trong dropdown ke ca khi user hien
+    // tai khong co dong trong `members` - xem giai thich o
+    // CrmCustomersDirectory.tsx (ownerFilterOptions).
+    if (user?.id && !seen.has(user.id)) seen.set(user.id, user.name || user.email);
     return [...seen.entries()].sort((a, b) => a[1].localeCompare(b[1]));
-  }, [members]);
+  }, [members, user]);
 
   const kpiCards = [
     { label: 'Tổng Lead', value: kpi.total, tone: 'total' },

@@ -18,6 +18,7 @@ import {
   calculateItemTotal,
   calculateItemVat,
   calculateOverallDiscountSummary,
+  calculateSectionTotal,
   formatVnd as formatVndRaw,
 } from '../utils/quoteCalculations';
 
@@ -397,10 +398,28 @@ export function QuoteDocumentRenderer({
       visible: true,
       editable: true,
     };
+  // Email cong ty cu "hello@markeeai.com" (default field cu trong
+  // seed_quote_forms.py, da doi thanh admin@markee.vn - xem comment o script
+  // do) van con "ket cung" trong 2 noi KHONG the sua bang cach doi 1 dong
+  // script: (1) data.sellerEmail cua CAC BAO GIA DA TAO TRUOC DAY (snapshot
+  // luc tao, khong duoc ghi de hang loat theo nguyen tac K), (2) defaultValue
+  // luu san trong CAC quote_form_schema DA TON TAI (script seed chi anh huong
+  // lan seed MOI, khong tu doi row schema cu trong DB). Loc o dung 1 diem
+  // fieldValue() (moi cho goi qua header/footer/villa deu di qua day) de AN
+  // gia tri legacy nay khoi hien thi cho MOI bao gia (cu lan moi), khong xoa/
+  // ghi de du lieu that nao ca - thuan tuy derived/display filter, dung tinh
+  // than "K" (thay doi trinh bay ap dung tu dong cho bao gia cu).
+  const LEGACY_HIDDEN_FIELD_VALUES: Record<string, string[]> = {
+    sellerEmail: ['hello@markeeai.com'],
+  };
   const fieldValue = (key: string) => {
     const value = quoteData[key];
-    if (value !== undefined && value !== null && value !== '') return value;
-    return findField(key).defaultValue || '';
+    const resolved = value !== undefined && value !== null && value !== '' ? value : findField(key).defaultValue || '';
+    const hiddenValues = LEGACY_HIDDEN_FIELD_VALUES[key];
+    if (hiddenValues && typeof resolved === 'string' && hiddenValues.some(hidden => hidden.toLowerCase() === resolved.trim().toLowerCase())) {
+      return '';
+    }
+    return resolved;
   };
   const renderCell = (item: QuoteItem, column: QuoteField, index: number) => {
     if (item.__bundleComponent && column.key === 'discountPercent') return '';
@@ -573,18 +592,32 @@ export function QuoteDocumentRenderer({
   // hang can thay) - chi hien khi admin CHU DONG tick chung vao "Cột hiển
   // thị" (customerVisibleColumns thuc su chua key do).
   const DEFAULT_HIDDEN_FROM_CUSTOMER_KEYS = ['listPriceUsd', 'unitPriceUsd', 'unitPriceVnd'];
+  // "Thành tiền trước VAT" (`subtotal`) - cot TRUNG LAP THAT SU voi cap
+  // "Thành tiền (Chưa VAT)" (amountAfterDiscount) + "Thành tiền (gồm VAT)"
+  // (total) da dung o ban khach. `subtotal` co type 'calculated' nen KHONG
+  // nam trong TOGGLEABLE_COLUMN_KEYS (xem resolveToggleableColumns loc bo
+  // type 'calculated') - dieu nay khien dieu kien loc customer o duoi
+  // (`!TOGGLEABLE_COLUMN_KEYS.includes(...)`) LUON danh gia true cho no, tuc
+  // no bi coi la cot "khong the tat", hien BAT KE quoteData.visibleColumns da
+  // luu gi. Loai HAN khoi ban khach o day (khac DEFAULT_HIDDEN_FROM_CUSTOMER_KEYS
+  // - key do CHI an khi CHUA tuy chinh gi, con day phai an TUYET DOI, ke ca
+  // bao gia cu lo luu 'subtotal' trong visibleColumns tu truoc). Van tinh
+  // toan noi bo (calculateItemSubtotal) binh thuong, chi bo o tang hien thi
+  // khach hang - khong dung mode='detail' (noi bo van thay du neu mau khai).
+  const ALWAYS_HIDDEN_FROM_CUSTOMER_KEYS = ['subtotal'];
   const defaultVisibleCustomerColumnKeys = resolveDefaultVisibleColumnKeys(schema, quoteItems);
   const finalColumns = filterRedundantAmountAfterDiscountColumn(
     applyCustomerColumnFilter
-      ? customerVisibleColumns
-        ? standardColumns.filter(
-            column => !TOGGLEABLE_COLUMN_KEYS.includes(column.key) || customerVisibleColumns.includes(column.key)
-          )
-        : standardColumns.filter(
-            column =>
-              (!TOGGLEABLE_COLUMN_KEYS.includes(column.key) || defaultVisibleCustomerColumnKeys.includes(column.key)) &&
-              !DEFAULT_HIDDEN_FROM_CUSTOMER_KEYS.includes(column.key)
-          )
+      ? (customerVisibleColumns
+          ? standardColumns.filter(
+              column => !TOGGLEABLE_COLUMN_KEYS.includes(column.key) || customerVisibleColumns.includes(column.key)
+            )
+          : standardColumns.filter(
+              column =>
+                (!TOGGLEABLE_COLUMN_KEYS.includes(column.key) || defaultVisibleCustomerColumnKeys.includes(column.key)) &&
+                !DEFAULT_HIDDEN_FROM_CUSTOMER_KEYS.includes(column.key)
+            )
+        ).filter(column => !ALWAYS_HIDDEN_FROM_CUSTOMER_KEYS.includes(column.key))
       : standardColumns,
     quoteItems
   );
@@ -617,7 +650,16 @@ export function QuoteDocumentRenderer({
   const displayedQuoteRows = quoteItems.flatMap(item => {
     if (item.rowType === 'section') {
       sectionCounter += 1;
-      const sectionRow = { item, number: toRomanNumeral(sectionCounter), isChild: false, isSection: true as const };
+      const sectionRow = {
+        item,
+        number: toRomanNumeral(sectionCounter),
+        isChild: false,
+        isSection: true as const,
+        // Tong tien section (B) - CHI cong truc tiep cac hang muc con (khong
+        // de quy sau hon), dung chung 1 ham voi Workspace - xem
+        // calculateSectionTotal trong quoteCalculations.ts.
+        sectionTotal: calculateSectionTotal(item.children || []),
+      };
       const childRows = (item.children || []).flatMap(child => {
         itemCounter += 1;
         const childRow = { item: child, number: String(itemCounter).padStart(2, '0'), isChild: true, isSection: false as const };
@@ -787,7 +829,7 @@ export function QuoteDocumentRenderer({
             <div className="villa-footer-col">
               <h4>Liên hệ</h4>
               <p>Zalo: {String(fieldValue('sellerZalo'))}</p>
-              <p>Email: {String(fieldValue('sellerEmail'))}</p>
+              {fieldValue('sellerEmail') ? <p>Email: {String(fieldValue('sellerEmail'))}</p> : null}
             </div>
             <div className="villa-footer-col">
               <h4>Hiệu lực</h4>
@@ -855,7 +897,6 @@ export function QuoteDocumentRenderer({
         </header>
 
         <section className="sheet-title-block sheet-title-block--standard">
-          <p className="sheet-eyebrow">Đề xuất thương mại</p>
           <h1>{String(fieldValue('quoteTitle') || 'Bảng báo giá')}</h1>
         </section>
 
@@ -890,7 +931,7 @@ export function QuoteDocumentRenderer({
               ) : null}
               {sellerContactRows.length ? (
                 <div>
-                  <h3>Người phụ trách</h3>
+                  <h3>Người liên hệ</h3>
                   {sellerContactRows.map(row => (
                     <p key={row.key}><strong>{row.label}:</strong> {row.value}</p>
                   ))}
@@ -996,14 +1037,37 @@ export function QuoteDocumentRenderer({
                     </td>
                   </tr>
                 ) : (
-                  displayedQuoteRows.map((row, index) =>
-                    row.isSection ? (
-                      <tr key={row.item.id || `section-${row.number}-${index}`} className="quote-item-row quote-item-row--section">
-                        <td colSpan={Math.max(finalColumns.length, 1)}>
-                          <strong>{row.number} — {stripLeadingRomanPrefix(String(row.item.description || row.item.serviceDescription || ''), row.number)}</strong>
-                        </td>
-                      </tr>
-                    ) : (
+                  displayedQuoteRows.map((row, index) => {
+                    if (row.isSection) {
+                      // Tong tien section (B) - hien BOLD, can PHAI, thang
+                      // hang duoi dung cot "Thành tiền" (`total`) - neu mau
+                      // KHONG khai bao cot `total` (hiem, vd solutionItems)
+                      // thi khong co cot nao de can theo, gop chung vao 1 o
+                      // ten section nhu cu (khong hien so).
+                      const totalColIndex = finalColumns.findIndex(column => column.key === 'total');
+                      if (totalColIndex < 0) {
+                        return (
+                          <tr key={row.item.id || `section-${row.number}-${index}`} className="quote-item-row quote-item-row--section">
+                            <td colSpan={Math.max(finalColumns.length, 1)}>
+                              <strong>{row.number} — {stripLeadingRomanPrefix(String(row.item.description || row.item.serviceDescription || ''), row.number)}</strong>
+                            </td>
+                          </tr>
+                        );
+                      }
+                      const trailingColSpan = finalColumns.length - totalColIndex - 1;
+                      return (
+                        <tr key={row.item.id || `section-${row.number}-${index}`} className="quote-item-row quote-item-row--section">
+                          <td colSpan={Math.max(totalColIndex, 1)}>
+                            <strong>{row.number} — {stripLeadingRomanPrefix(String(row.item.description || row.item.serviceDescription || ''), row.number)}</strong>
+                          </td>
+                          <td className="money-cell quote-section-total-cell">
+                            <strong>{formatVnd(row.sectionTotal)}</strong>
+                          </td>
+                          {trailingColSpan > 0 ? <td colSpan={trailingColSpan} /> : null}
+                        </tr>
+                      );
+                    }
+                    return (
                       <tr key={`${row.item.id || row.number}-${index}`} className={row.isChild ? 'quote-item-row quote-item-row--child' : 'quote-item-row quote-item-row--parent'}>
                         {finalColumns.map(column => (
                           <td
@@ -1039,8 +1103,8 @@ export function QuoteDocumentRenderer({
                           </td>
                         ))}
                       </tr>
-                    )
-                  )
+                    );
+                  })
                 )}
               </tbody>
             </table>

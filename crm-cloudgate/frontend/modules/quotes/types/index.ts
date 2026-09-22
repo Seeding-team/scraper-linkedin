@@ -135,6 +135,10 @@ export interface IssuerCompany {
   logoUrl?: string;
   defaultQuoteFormId?: string;
   status: 'active' | 'inactive';
+  /** (I) Điều khoản thanh toán MẶC ĐỊNH của đơn vị phát hành này - SNAPSHOT
+   * 1 LẦN vào custom block 'payment_terms' của báo giá lúc tạo mới (nếu block
+   * đó đang trống) - sửa ở đây KHÔNG đổi báo giá đã tạo trước đó. */
+  paymentTerms?: string;
 }
 
 export interface BundleSnapshotComponent {
@@ -303,6 +307,12 @@ export interface QuoteData {
    * undefined = dung mac dinh: Kinh gui + Khach hang + SDT lien he + Email. */
   visibleCustomerFields?: string[];
   customBlocks?: CustomBlock[];
+  /** (D) id crm_contacts cua "Người liên hệ" da chon luc tao/sua bao gia nay -
+   * CHI la tham chieu snapshot-tai-thoi-diem (khong doc song tu crm_contacts),
+   * cac gia tri hien thi THAT su van la customerRecipient/customerPhone/
+   * customerEmail o cung object nay - xem quoteDraftFromForm trong
+   * modules/crm/integrations/quotes/types.ts. */
+  customerContactId?: string;
   [key: string]: unknown;
 }
 
@@ -532,6 +542,7 @@ export interface CreateIssuerCompanyInput {
   defaultQuoteFormId?: string;
   status?: 'active' | 'inactive';
   sortOrder?: number;
+  paymentTerms?: string;
 }
 
 export type UpdateIssuerCompanyInput = Partial<CreateIssuerCompanyInput>;

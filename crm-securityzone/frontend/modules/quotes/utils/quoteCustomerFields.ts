@@ -5,10 +5,14 @@ export interface CustomerDisplayField {
   label: string;
 }
 
+// Mac dinh 3 truong (Kinh gui/Khach hang/Email) - da BO customerPhone khoi
+// mac dinh (yeu cau "3+3 field") - CHI anh huong bao gia/mau MOI chua tung
+// luu visibleCustomerFields; bao gia/mau da luu lua chon rieng van giu
+// nguyen qua resolveVisibleCustomerFieldKeys (doc `saved` truoc, chi fallback
+// ve day khi saved null/undefined).
 export const DEFAULT_VISIBLE_CUSTOMER_FIELD_KEYS = [
   'customerRecipient',
   'customerCompanyName',
-  'customerPhone',
   'customerEmail',
 ];
 

@@ -4,7 +4,9 @@ import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { API_BASE_URL, API_KEY } from '@/lib/env';
 import { seedingQuoteRepository, QuoteApprovalRequiresExceptionError, QuoteDocumentRenderer } from '@/modules/quotes';
-import type { Quote, QuoteActivityLogEntry, QuoteHandoffChecklist, QuoteItem, QuoteProcessingStage, QuoteApprovalRuleSet, QuoteApprovalRuleType, QuoteRuleEvaluation, QuoteDeliveryLogEntry, QuoteForm } from '@/modules/quotes';
+import type { Quote, QuoteActivityLogEntry, QuoteHandoffChecklist, QuoteItem, QuoteProcessingStage, QuoteApprovalRuleSet, QuoteApprovalRuleType, QuoteRuleEvaluation, QuoteDeliveryLogEntry, QuoteForm, QuoteData, IssuerCompany } from '@/modules/quotes';
+import type { ContactOption } from './dealHydration';
+import { applyIssuerCompanySnapshot, applyIssuerPaymentTermsSnapshot } from '../integrations/quotes/types';
 import type { AppUser } from '@/types/unified.types';
 import { canApproveQuote, canEditQuoteCost, canEditQuotePricingFields, canWriteDeal, getPackageText, getServicePackageText, SOURCE_OPTIONS, SERVICE_PACKAGE_OPTIONS, CRM_PACKAGE_OPTIONS, INDUSTRY_OPTIONS } from '../constants/crmConfig';
 import { CurrencyInput } from '@/components/CurrencyInput';
@@ -42,7 +44,7 @@ import { QuoteColumnVisibilityPicker } from '../integrations/quotes/QuoteColumnV
 import type { QuoteDraft } from '../integrations/quotes/types';
 import { CustomBlocksEditor } from '../integrations/quotes/CustomBlocksEditor';
 import { PaymentPlanEditor } from '@/modules/quotes/components/PaymentPlanEditor';
-import { calculateQuoteTotals, calculateOverallDiscountSummary, clampDiscountPercent } from '@/modules/quotes/utils/quoteCalculations';
+import { calculateQuoteTotals, calculateOverallDiscountSummary, clampDiscountPercent, calculateItemTotal, calculateSectionTotal } from '@/modules/quotes/utils/quoteCalculations';
 import { paymentPlanAmount, paymentPlanPercent } from '@/modules/quotes/utils/paymentPlan';
 import type { BundleSnapshotComponent, BundleSnapshotValue, CustomBlock, PaymentPlanRow } from '@/modules/quotes/types';
 
@@ -176,6 +178,17 @@ function isValidTargetMarginPercent(value: number): boolean {
 function formatPercentFixed2(value: number | null | undefined): string {
   if (value == null || !Number.isFinite(value)) return '—';
   return `${value.toFixed(2)}%`;
+}
+
+/** "TỶ TRỌNG" (C, cot noi bo) = amount / quoteTotal * 100 - dung CHUNG cong
+ * thuc voi calculateQuoteTotals (ca 2 deu cong tren calculateItemTotal) de
+ * tu so/mau so luon cung 1 co so "Thành tiền" gồm VAT, khong bao gio lech
+ * nhau. quoteTotal <= 0 (bao gia rong/loi) tra ve "—" thay vi chia cho 0
+ * (NaN/Infinity) - formatPercentFixed2 da lo sẵn Number.isFinite nhung van
+ * chan tu day cho ro rang y do. */
+function formatWeightPercent(amount: number, quoteTotal: number): string {
+  if (!quoteTotal || !Number.isFinite(quoteTotal)) return '—';
+  return formatPercentFixed2((amount / quoteTotal) * 100);
 }
 
 const MOJIBAKE_HINT_RE = /[\u00c2\u00c3\u00c4\u00c6]|\u00e1[\u00ba\u00bb]/;
@@ -603,6 +616,101 @@ const VERSION_REASONS = [
   { value: 'other', label: 'Khác' },
 ];
 
+type RecipientSnapshot = { customerRecipient: string; customerPhone: string; customerEmail: string };
+
+/** Card preview gon "Thông tin hiển thị trên báo giá" - thay the 3 o input tho
+ * luon hien truoc day (D2). CHI hien READ-ONLY summary + 1 nut "Chỉnh thông
+ * tin hiển thị" o goc tren phai; bam moi mo popover nho neo ngay canh nut do
+ * voi 3 o nhap that. Luu popover goi thang `onSave` (caller quyet dinh ghi
+ * vao state local (che do tao moi) hay persistRecipientField len server
+ * (quote da ton tai) - component nay khong biet/khong can biet dang o che do
+ * nao, chi lam UI thuan tuy dung yeu cau "snapshot only, khong dong crm_contacts". */
+function RecipientInfoCard({
+  recipient,
+  editable,
+  onSave,
+}: {
+  recipient: RecipientSnapshot;
+  editable: boolean;
+  onSave: (next: RecipientSnapshot) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [draft, setDraft] = useState<RecipientSnapshot>(recipient);
+
+  function openPopover() {
+    setDraft(recipient);
+    setOpen(true);
+  }
+
+  return (
+    <div className="qc-workspace-recipient-card">
+      <div className="qc-workspace-recipient-card-head">
+        <span className="qc-workspace-info-label">Thông tin hiển thị trên báo giá</span>
+        {editable ? (
+          <button type="button" className="crm-secondary-inline" onClick={() => (open ? setOpen(false) : openPopover())}>
+            Chỉnh thông tin hiển thị
+          </button>
+        ) : null}
+      </div>
+      <div className="qc-workspace-recipient-preview">
+        <div className="qc-workspace-recipient-preview-line">
+          <span>Kính gửi</span>
+          <strong>{recipient.customerRecipient || '—'}</strong>
+        </div>
+        <div className="qc-workspace-recipient-preview-line">
+          <span>SĐT</span>
+          <strong>{recipient.customerPhone || '—'}</strong>
+          <span>Email</span>
+          <strong>{recipient.customerEmail || '—'}</strong>
+        </div>
+      </div>
+      {open ? (
+        <div className="qc-workspace-recipient-popover">
+          <label className="crm-field">
+            <span>Kính gửi</span>
+            <input
+              className="crm-input"
+              autoFocus
+              value={draft.customerRecipient}
+              onChange={event => setDraft(prev => ({ ...prev, customerRecipient: event.target.value }))}
+              placeholder="Tên người nhận báo giá"
+            />
+          </label>
+          <label className="crm-field">
+            <span>SĐT liên hệ</span>
+            <input
+              className="crm-input"
+              value={draft.customerPhone}
+              onChange={event => setDraft(prev => ({ ...prev, customerPhone: event.target.value }))}
+            />
+          </label>
+          <label className="crm-field">
+            <span>Email liên hệ</span>
+            <input
+              className="crm-input"
+              value={draft.customerEmail}
+              onChange={event => setDraft(prev => ({ ...prev, customerEmail: event.target.value }))}
+            />
+          </label>
+          <div className="qc-workspace-recipient-popover-actions">
+            <button type="button" className="qc-btn" onClick={() => setOpen(false)}>Huỷ</button>
+            <button
+              type="button"
+              className="qc-btn qc-btn-primary"
+              onClick={() => {
+                onSave(draft);
+                setOpen(false);
+              }}
+            >
+              Lưu
+            </button>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export function QuoteWorkspaceModal({
   quoteId,
   deals,
@@ -714,6 +822,138 @@ export function QuoteWorkspaceModal({
   const [draftCustomerId, setDraftCustomerId] = useState(initialCustomerId || '');
   const [customers, setCustomers] = useState<QuoteCustomerOption[]>([]);
   const [customerDrawerOpen, setCustomerDrawerOpen] = useState(false);
+  // "Người liên hệ" (redesign Buoc 1) - danh sach Contact THAT cua DUNG
+  // draftCustomerId dang chon, CHI tai/hien khi con o che do tao moi (!quote -
+  // quote da ton tai giu nguyen snapshot cu, khong doi Contact nua). Dung lai
+  // dung API (seedingCrmRepository.listContacts) + 3 quy tac auto-chon
+  // (chinh -> tu chon; dung 1 -> tu chon; nhieu khong ai chinh -> de trong;
+  // 0 -> de trong) GIONG HET SelectCustomerStep.tsx (luong tao bao gia tu
+  // Deal), khong bia lai logic rieng.
+  const [draftContactId, setDraftContactId] = useState('');
+  const [contacts, setContacts] = useState<ContactOption[]>([]);
+  const [contactsLoadedFor, setContactsLoadedFor] = useState('');
+  const [contactsLoading, setContactsLoading] = useState(false);
+  // Tai danh sach Contact cua 1 customerId + ap dung dung 3 quy tac auto-chon
+  // (chinh -> tu chon; dung 1 -> tu chon; nhieu/0 -> de trong) - tach thanh
+  // ham rieng (thay vi chi nam trong useEffect) de DUNG LAI DUOC sau khi tao
+  // Contact moi tai cho (xem submitCreateContact ben duoi), khong copy logic
+  // 2 lan. `preferContactId` (tuy chon) = ep chon dung ID nay thay vi tu suy
+  // theo quy tac (vd Contact VUA tao xong, du no khong phai contact chinh/
+  // khong phai contact duy nhat).
+  async function refreshContacts(customerId: string, preferContactId?: string) {
+    setContactsLoading(true);
+    try {
+      const list = await seedingCrmRepository.listContacts(customerId);
+      setContacts(list);
+      setContactsLoadedFor(customerId);
+      const preferred = preferContactId ? list.find(c => c.id === preferContactId) : undefined;
+      const primary = list.find(c => c.is_primary);
+      const autoSelected = preferred || primary || (list.length === 1 ? list[0] : null);
+      setDraftContactId(autoSelected?.id || '');
+      // Kinh gui/SDT/Email preview PHAI dong bo NGAY theo Contact vua tu
+      // chon (hoac de trong neu khong Contact nao) - KHONG fallback ve ten
+      // Khach hang/cong ty (dung yeu cau D, xem SelectCustomerStep.tsx).
+      setDraftRecipientFields({
+        customerRecipient: autoSelected?.name || '',
+        customerPhone: autoSelected?.phone || '',
+        customerEmail: autoSelected?.email || '',
+      });
+      return list;
+    } catch {
+      setContacts([]);
+      setContactsLoadedFor(customerId);
+      return [];
+    } finally {
+      setContactsLoading(false);
+    }
+  }
+  useEffect(() => {
+    if (quote) return; // Quote da ton tai - giu nguyen snapshot Contact cu, khong tai lai/doi.
+    if (!draftCustomerId) {
+      setContacts([]);
+      setContactsLoadedFor('');
+      setDraftContactId('');
+      return;
+    }
+    let alive = true;
+    void refreshContacts(draftCustomerId).then(() => {
+      if (!alive) return;
+    });
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draftCustomerId, quote]);
+  function selectDraftContact(contactId: string) {
+    const found = contacts.find(c => c.id === contactId);
+    setDraftContactId(contactId);
+    if (contactId) clearRequiredError('contact');
+    setDraftRecipientFields({
+      customerRecipient: found?.name || '',
+      customerPhone: found?.phone || '',
+      customerEmail: found?.email || '',
+    });
+  }
+  // "+ Tạo người liên hệ mới" ngay trong dropdown Người liên hệ - GIONG HET
+  // pattern "+ Tạo khách hàng mới" cua dropdown Khach hang o tren (yeu cau
+  // rieng "cho tạo người liên hệ tại chỗ tương tự mấy dropdown kia") - CHI
+  // POST thang API contact CRM co san (/crm/customers/{id}/contacts, dung
+  // API voi CrmContactsPanel.tsx tren trang 360 khach hang), KHONG tao rieng
+  // 1 modal CRUD Contact day du (form nay CHI can du de tao nhanh 1 Contact
+  // moi roi tu chon lai, khong phai thay the trang quan ly Contact).
+  const [createContactOpen, setCreateContactOpen] = useState(false);
+  const [createContactBusy, setCreateContactBusy] = useState(false);
+  const [createContactError, setCreateContactError] = useState('');
+  const [createContactName, setCreateContactName] = useState('');
+  const [createContactPhone, setCreateContactPhone] = useState('');
+  const [createContactEmail, setCreateContactEmail] = useState('');
+  function openCreateContact() {
+    setCreateContactName('');
+    setCreateContactPhone('');
+    setCreateContactEmail('');
+    setCreateContactError('');
+    setCreateContactOpen(true);
+  }
+  async function submitCreateContact() {
+    if (!draftCustomerId) return;
+    if (!createContactName.trim()) {
+      setCreateContactError('Vui lòng nhập họ tên.');
+      return;
+    }
+    setCreateContactBusy(true);
+    setCreateContactError('');
+    try {
+      const headersInit: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (API_KEY) headersInit['X-API-Key'] = API_KEY;
+      const res = await fetch(`${API_BASE_URL}/api/all-platform/crm/customers/${encodeURIComponent(draftCustomerId)}/contacts`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: headersInit,
+        body: JSON.stringify({
+          name: createContactName.trim(),
+          phone: createContactPhone.trim() || null,
+          email: createContactEmail.trim() || null,
+          is_primary: false,
+        }),
+      });
+      const body = await res.json();
+      if (!res.ok || body.success === false) throw new Error(body.message || 'Không tạo được người liên hệ.');
+      const createdId = body.data?.id as string | undefined;
+      await refreshContacts(draftCustomerId, createdId);
+      if (createdId) clearRequiredError('contact');
+      setCreateContactOpen(false);
+    } catch (err) {
+      setCreateContactError(err instanceof Error ? err.message : 'Không tạo được người liên hệ.');
+    } finally {
+      setCreateContactBusy(false);
+    }
+  }
+  // "Đơn vị phát hành" (redesign Buoc 1) - override tuy chon TREN NEN gia tri
+  // mac dinh suy tu mau bao gia dang chon (draftCatalogIssuerCompanyId, dinh
+  // nghia o duoi) - '' = chua override, dung nguyen mac dinh cua mau.
+  const [issuerCompanies, setIssuerCompanies] = useState<IssuerCompany[]>([]);
+  const [draftIssuerCompanyIdOverride, setDraftIssuerCompanyIdOverride] = useState('');
+  useEffect(() => {
+    void seedingQuoteRepository.getIssuerCompanies().then(setIssuerCompanies).catch(() => setIssuerCompanies([]));
+  }, []);
   const [draftDealId, setDraftDealId] = useState('');
   // "+ Tạo cơ hội mới" ngay trong dropdown - BUG THAT DA GAP (gap that su,
   // khong phai gia dinh): khach hang chua co Cơ hội nao thi dropdown chi
@@ -830,6 +1070,26 @@ export function QuoteWorkspaceModal({
   function quoteTypeLabel(code: string): string {
     return quoteTypeOptions.find(o => o.value === code)?.label || code;
   }
+  // (D2) Sua truc tiep 3 truong snapshot "Kính gửi"/"SĐT liên hệ"/"Email liên
+  // hệ" (quote.data.customerRecipient/customerPhone/customerEmail) ngay trong
+  // Workspace, khi bao gia con o trang thai sua duoc (draft, chua khoa
+  // review) - CHI sua field snapshot trong `data` (JSON tai-thoi-diem cua
+  // CHINH bao gia nay), KHONG dong den crm_contacts master. Dong bo lai tu
+  // `quote` moi lan doi phien ban/tai lai (xem effect ben duoi), tranh giu
+  // gia tri cu cua 1 bao gia/version khac.
+  const [draftRecipientFields, setDraftRecipientFields] = useState({ customerRecipient: '', customerPhone: '', customerEmail: '' });
+  useEffect(() => {
+    setDraftRecipientFields({
+      customerRecipient: typeof quote?.data?.customerRecipient === 'string' ? quote.data.customerRecipient : '',
+      customerPhone: typeof quote?.data?.customerPhone === 'string' ? quote.data.customerPhone : '',
+      customerEmail: typeof quote?.data?.customerEmail === 'string' ? quote.data.customerEmail : '',
+    });
+  }, [quote?.id, quote?.versionNumber]);
+  function persistRecipientField(key: 'customerRecipient' | 'customerPhone' | 'customerEmail', value: string) {
+    if (!quote) return;
+    if ((quote.data?.[key] as string | undefined) === value) return;
+    void persistQuote({ data: { ...quote.data, [key]: value, customerContactName: key === 'customerRecipient' ? value : quote.data?.customerContactName } }, { silent: true });
+  }
   const [draftTitle, setDraftTitle] = useState('');
   const [draftScope, setDraftScope] = useState('');
   const [draftCustomBlocks, setDraftCustomBlocks] = useState<CustomBlock[]>([]);
@@ -882,6 +1142,15 @@ export function QuoteWorkspaceModal({
     const slaDueAt = existingQuote?.slaDueAt || datetimeLocalValueToIso(draftSlaDueAt);
     const realItems = itemsDraft.filter(item => item.rowType !== 'section');
     if (!customerId) errors.customer = 'Vui lòng chọn khách hàng.';
+    // "Người liên hệ"/"Đơn vị phát hành" (redesign Buoc 1) - CHI bat buoc o
+    // che do TAO MOI (!existingQuote). Bao gia CU (da ton tai truoc khi co
+    // tinh nang nay) co the chua tung co Contact/Issuer duoc chon that su -
+    // khong ep buoc validate lai o day (vd luc chuyen buoc "Gửi yêu cầu xử
+    // lý") de tranh chan cung nhung bao gia cu hop le truoc do.
+    if (!existingQuote) {
+      if (!draftContactId) errors.contact = 'Vui lòng chọn người liên hệ.';
+      if (!effectiveIssuerCompanyId) errors.issuerCompany = 'Vui lòng chọn đơn vị phát hành.';
+    }
     if (!selectedDealId) errors.deal = 'Vui lòng chọn cơ hội CRM.';
     if (!formId) errors.form = 'Vui lòng chọn mẫu báo giá.';
     if (!technicalOwnerId) errors.presale = 'Vui lòng chọn Presale.';
@@ -2151,6 +2420,15 @@ export function QuoteWorkspaceModal({
   // extraToolbar neu muon).
   const draftCatalogIssuerCompanyId =
     quote?.issuerCompanyId ?? quoteForms.find(form => form.id === (draftFormId || defaultFormId))?.issuerCompanyId ?? null;
+  // "Đơn vị phát hành" THAT SU se duoc dung (che do tao moi, !quote) - mac
+  // dinh la draftCatalogIssuerCompanyId (suy tu mau bao gia), Sale van doi
+  // duoc qua dropdown moi (draftIssuerCompanyIdOverride) ma khong mat mac
+  // dinh ban dau. Quote da ton tai (co quote) van giu nguyen issuerCompanyId
+  // da luu, KHONG bi override nay anh huong.
+  const effectiveIssuerCompanyId = quote
+    ? quote.issuerCompanyId ?? null
+    : draftIssuerCompanyIdOverride || draftCatalogIssuerCompanyId;
+  const effectiveIssuerCompany = issuerCompanies.find(company => company.id === effectiveIssuerCompanyId) || null;
 
   async function openCatalogPicker(target?: { sectionId?: string; afterIndex?: number }) {
     setCatalogHydrationError(null);
@@ -3165,58 +3443,85 @@ export function QuoteWorkspaceModal({
         ...draftExtraTerms.map(t => ({ id: t.id, kind: 'custom_field' as const, title: t.title, content: t.content })),
       ];
       const customBlocks = [...legacyBlocks.filter(block => !draftCustomBlocks.some(b => b.kind !== 'custom_field' && b.kind === block.kind)), ...draftCustomBlocks].filter(b => b.content.trim());
+      const createData: QuoteData = {
+        quoteTitle: draftTitle.trim() || 'Yêu cầu hỗ trợ báo giá',
+        customBlocks,
+        paymentPlan: draftPaymentPlan,
+        ...(draftVisibleColumns ? { visibleColumns: draftVisibleColumns } : {}),
+        ...(draftVisibleSummaryFields ? { visibleSummaryFields: draftVisibleSummaryFields } : {}),
+        ...(draftVisibleCustomerFields ? { visibleCustomerFields: draftVisibleCustomerFields } : {}),
+        // Field noi bo rieng cho luong "Yeu cau ho tro bao gia" - KHONG phai
+        // customBlocks (customBlocks la du lieu hien cho khach qua public
+        // link/PDF) - luu truc tiep vao `data` (JSONB schema-less, khong can
+        // migration) de khong bao gio lo ra ban khach hang.
+        requestSummary: draftSummary.trim() || undefined,
+        expectedProducts: draftExpectedProducts.trim() || undefined,
+        internalRequestNote: draftInternalNote.trim() || undefined,
+        // BUG that da fix: khoi "THONG TIN KHACH HANG" tren ban khach truoc
+        // day luon rong ([Kinh gui]/[Khach hang]...) du da chon dung Khach
+        // hang/Co hoi o tren, vi day la field text tu do rieng cua tung
+        // quote (data.customerRecipient...), KHONG tu dong lay tu ho so CRM
+        // - copy san tu `deal`/Khach hang da chon luc tao, Sale van sua lai
+        // duoc binh thuong neu can khac di.
+        // BUG THAT DA GAP LAN 2 ("autofill thi bien mat"): `deal` (Co hoi,
+        // bang customer_leads) chi la ban ghi pipeline, cot phone/email/
+        // tax_code cua no THUONG XUYEN de trong (Sale khong nhap lai) - chi
+        // co address la hay duoc dien. Ho so Khach hang that (crm_customers,
+        // tim qua `customers` da fetch o tren) moi la noi luu day du SDT/
+        // Email/MST/Dia chi that su - uu tien ho so Khach hang lam nguon
+        // chinh, CHI fallback ve field cua deal khi Khach hang khong co du
+        // lieu (vd deal.address con nhap tay rieng khac dia chi ho so).
+        ...(() => {
+          const customerId = deal?.customerId || draftCustomerId;
+          const customerRecord = customerId ? customers.find(c => c.id === customerId) : undefined;
+          if (!deal && !customerRecord) return {};
+          // (Redesign Buoc 1) "Kính gửi"/SĐT/Email UU TIEN snapshot tu Contact
+          // THAT da chon o dropdown "Người liên hệ" (draftRecipientFields, tu
+          // dong dien theo Contact hoac sua tay qua popover "Chỉnh thông tin
+          // hiển thị") - CHI fallback ve ten Khach hang/Deal khi chua co
+          // Contact nao duoc chon (vd khach hang chua co Contact nao trong
+          // CRM) - KHONG con luon uu tien ten ho so Khach hang nhu truoc day
+          // (bug that da gap, xem quoteDraftFromForm.ts).
+          const displayName = draftRecipientFields.customerRecipient.trim() || customerRecord?.name || deal?.customerName;
+          return {
+            customerRecipient: displayName || undefined,
+            customerCompanyName: customerRecord?.companyName || deal?.companyName || undefined,
+            customerContactName: displayName || undefined,
+            customerAddress: customerRecord?.address || deal?.address || undefined,
+            customerPhone: draftRecipientFields.customerPhone.trim() || customerRecord?.phone || deal?.phone || undefined,
+            customerEmail: draftRecipientFields.customerEmail.trim() || customerRecord?.email || deal?.email || undefined,
+            customerTaxCode: customerRecord?.taxCode || deal?.taxCode || undefined,
+            // Snapshot id Contact THAT (crm_contacts.id) da chon luc tao bao
+            // gia nay - CHI de tham chieu/debug, KHONG dung de doc lai song
+            // (mirror dung pattern quoteDraftFromForm.ts).
+            customerContactId: draftContactId || undefined,
+          };
+        })(),
+      };
+      // "Đơn vị phát hành" (redesign Buoc 1) - snapshot THONG TIN cong ty ban
+      // (sellerCompanyName/...) + Dieu khoan thanh toan mac dinh cua don vi do
+      // (chi ap dung neu block 'payment_terms' con RONG - applyIssuerPaymentTermsSnapshot
+      // tu tra ve som neu legacyBlocks o tren da dien san noi dung) - dung
+      // LAI 2 helper co san (types.ts), KHONG viet lai logic snapshot rieng.
+      if (effectiveIssuerCompany) {
+        applyIssuerCompanySnapshot(createData, effectiveIssuerCompany);
+        applyIssuerPaymentTermsSnapshot(createData, effectiveIssuerCompany);
+      }
       const created = await seedingQuoteRepository.createQuote({
         dealId: draftDealId,
         // Da validate o tren (!draftFormId && !defaultFormId -> return som) -
         // toi day chac chan co 1 trong 2 gia tri, an toan non-null assert.
         quoteFormId: (draftFormId || defaultFormId)!,
+        // BUG THAT DA GAP: truoc day KHONG gui issuer_company_id luc tao quote
+        // (backend create_quote() luu thang payload.get("issuer_company_id"),
+        // KHONG tu suy tu mau bao gia) - moi bao gia tao qua Workspace nay bi
+        // issuer_company_id=NULL vinh vien, ban PDF/khach mat het thong tin
+        // cong ty phat hanh (sellerCompanyName...) du da "chon" o dropdown moi.
+        issuerCompanyId: effectiveIssuerCompanyId || undefined,
         projectId: draftProjectId || null,
         slaDueAt: datetimeLocalValueToIso(draftSlaDueAt),
         quoteTypeCodes: draftQuoteTypeCodes,
-        data: {
-          quoteTitle: draftTitle.trim() || 'Yêu cầu hỗ trợ báo giá',
-          customBlocks,
-          paymentPlan: draftPaymentPlan,
-          ...(draftVisibleColumns ? { visibleColumns: draftVisibleColumns } : {}),
-          ...(draftVisibleSummaryFields ? { visibleSummaryFields: draftVisibleSummaryFields } : {}),
-          ...(draftVisibleCustomerFields ? { visibleCustomerFields: draftVisibleCustomerFields } : {}),
-          // Field noi bo rieng cho luong "Yeu cau ho tro bao gia" - KHONG phai
-          // customBlocks (customBlocks la du lieu hien cho khach qua public
-          // link/PDF) - luu truc tiep vao `data` (JSONB schema-less, khong can
-          // migration) de khong bao gio lo ra ban khach hang.
-          requestSummary: draftSummary.trim() || undefined,
-          expectedProducts: draftExpectedProducts.trim() || undefined,
-          internalRequestNote: draftInternalNote.trim() || undefined,
-          // BUG that da fix: khoi "THONG TIN KHACH HANG" tren ban khach truoc
-          // day luon rong ([Kinh gui]/[Khach hang]...) du da chon dung Khach
-          // hang/Co hoi o tren, vi day la field text tu do rieng cua tung
-          // quote (data.customerRecipient...), KHONG tu dong lay tu ho so CRM
-          // - copy san tu `deal`/Khach hang da chon luc tao, Sale van sua lai
-          // duoc binh thuong neu can khac di.
-          // BUG THAT DA GAP LAN 2 ("autofill thi bien mat"): `deal` (Co hoi,
-          // bang customer_leads) chi la ban ghi pipeline, cot phone/email/
-          // tax_code cua no THUONG XUYEN de trong (Sale khong nhap lai) - chi
-          // co address la hay duoc dien. Ho so Khach hang that (crm_customers,
-          // tim qua `customers` da fetch o tren) moi la noi luu day du SDT/
-          // Email/MST/Dia chi that su - uu tien ho so Khach hang lam nguon
-          // chinh, CHI fallback ve field cua deal khi Khach hang khong co du
-          // lieu (vd deal.address con nhap tay rieng khac dia chi ho so).
-          ...(() => {
-            const customerId = deal?.customerId || draftCustomerId;
-            const customerRecord = customerId ? customers.find(c => c.id === customerId) : undefined;
-            if (!deal && !customerRecord) return {};
-            const displayName = customerRecord?.name || deal?.customerName;
-            return {
-              customerRecipient: displayName || undefined,
-              customerCompanyName: customerRecord?.companyName || deal?.companyName || undefined,
-              customerContactName: displayName || undefined,
-              customerAddress: customerRecord?.address || deal?.address || undefined,
-              customerPhone: customerRecord?.phone || deal?.phone || undefined,
-              customerEmail: customerRecord?.email || deal?.email || undefined,
-              customerTaxCode: customerRecord?.taxCode || deal?.taxCode || undefined,
-            };
-          })(),
-        },
+        data: createData,
         // Hang muc da nhap truoc khi quote that ton tai (che do tao moi) -
         // gui luon cung luc tao, KHONG bat nguoi dung phai luu roi moi duoc
         // nhap hang muc (yeu cau da xac nhan).
@@ -4279,6 +4584,7 @@ export function QuoteWorkspaceModal({
         </div>
 
         <div className="qc-workspace-info-strip">
+        <div className="qc-workspace-info-strip-row">
           <div data-qc-required="customer">
             <span className="qc-workspace-info-label">Khách hàng <span className="qc-required-mark">*</span></span>
             {!quote && lockCustomer ? (
@@ -4301,15 +4607,75 @@ export function QuoteWorkspaceModal({
               // hien nhu 1 nhan chu thuong bi khoa cung) de giao dien nhat
               // quan - dung SearchableSelect disabled voi 1 option duy nhat
               // la gia tri hien tai.
+              // BUG THAT DA GAP (audit thuc te tren du lieu that, quote
+              // 202609220703 "Unifarm"): truoc day o day doc thang
+              // deal?.customerName - field nay o customer_leads la TEN
+              // NGUOI/contact-style (vd "Phương Uyển"), KHONG phai ten cong
+              // ty (xem comment o dau file/CLAUDE.md ve domain quirk nay) -
+              // hien no o o "Khách hàng" (dung de la CONG TY) lam nguoc voi
+              // "Người liên hệ" ben canh khi 2 field nay tinh co khac nhau.
+              // Uu tien snapshot cong ty THAT da luu tren chinh quote
+              // (data.customerCompanyName, dien tu luc tao - xem createRequest)
+              // roi moi fallback deal.companyName/deal.customerName.
               <SearchableSelect
                 value="current"
                 onChange={() => {}}
-                options={[{ value: 'current', label: deal?.customerName || 'Chưa gắn cơ hội' }]}
+                options={[{ value: 'current', label: (quote?.data?.customerCompanyName as string | undefined) || deal?.companyName || deal?.customerName || 'Chưa gắn cơ hội' }]}
                 disabled
               />
             )}
             {requiredFieldErrors.customer ? <p className="qc-field-error">{requiredFieldErrors.customer}</p> : null}
           </div>
+          <div data-qc-required="contact">
+            <span className="qc-workspace-info-label">Người liên hệ <span className="qc-required-mark">*</span></span>
+            {!quote ? (
+              <SearchableSelect
+                value={draftContactId}
+                onChange={selectDraftContact}
+                disabled={!draftCustomerId || contactsLoading}
+                loading={contactsLoading}
+                options={contacts.map(c => ({
+                  value: c.id,
+                  label: `${c.name}${c.is_primary ? ' · Chính' : ''}${c.position || c.position_label_snapshot ? ` (${c.position || c.position_label_snapshot})` : ''}`,
+                }))}
+                placeholder={!draftCustomerId ? 'Chọn khách hàng trước' : contactsLoadedFor === draftCustomerId && contacts.length === 0 ? 'Khách hàng chưa có người liên hệ' : 'Chọn người liên hệ...'}
+                emptyText="Khách hàng này chưa có Người liên hệ nào."
+                actions={draftCustomerId ? [
+                  { key: 'create-contact', label: '+ Tạo người liên hệ mới', onSelect: openCreateContact, type: 'add' },
+                ] : []}
+              />
+            ) : (
+              <SearchableSelect
+                value="current"
+                onChange={() => {}}
+                options={[{ value: 'current', label: draftRecipientFields.customerRecipient || 'Đã lưu' }]}
+                disabled
+              />
+            )}
+            {requiredFieldErrors.contact ? <p className="qc-field-error">{requiredFieldErrors.contact}</p> : null}
+          </div>
+          <div data-qc-required="issuerCompany">
+            <span className="qc-workspace-info-label">Đơn vị phát hành <span className="qc-required-mark">*</span></span>
+            {!quote ? (
+              <SearchableSelect
+                value={draftIssuerCompanyIdOverride || draftCatalogIssuerCompanyId || ''}
+                onChange={value => { setDraftIssuerCompanyIdOverride(value); if (value) clearRequiredError('issuerCompany'); }}
+                options={issuerCompanies.map(company => ({ value: company.id, label: company.brandName || company.legalName }))}
+                placeholder="Chọn đơn vị phát hành..."
+                hideClearOption
+              />
+            ) : (
+              <SearchableSelect
+                value="current"
+                onChange={() => {}}
+                options={[{ value: 'current', label: effectiveIssuerCompany?.brandName || effectiveIssuerCompany?.legalName || 'Chưa chọn' }]}
+                disabled
+              />
+            )}
+            {requiredFieldErrors.issuerCompany ? <p className="qc-field-error">{requiredFieldErrors.issuerCompany}</p> : null}
+          </div>
+        </div>
+        <div className="qc-workspace-info-strip-row">
           <div>
             <span className="qc-workspace-info-label">Dự án</span>
             {!quote && lockProject ? (
@@ -4500,6 +4866,7 @@ export function QuoteWorkspaceModal({
               <strong>{formatDate(quote.validUntil)}</strong>
             </div>
           ) : null}
+        </div>
         </div>
 
         <div className="qc-workspace-body" ref={workspaceBodyRef}>
@@ -4751,6 +5118,29 @@ export function QuoteWorkspaceModal({
               </div>
               {requiredFieldErrors.items ? <p className="qc-field-error qc-field-error--card">{requiredFieldErrors.items}</p> : null}
 
+              {/* (Redesign Buoc 1) Preview gon "Thông tin hiển thị trên báo
+               * giá" - thay 3 o input tho truoc day (D2). Che do TAO MOI
+               * (!quote): sua qua popover chi ghi local state (draftRecipientFields),
+               * chua co quote that de goi persistRecipientField. Bao gia DA
+               * TON TAI: van hien + sua duoc CHI khi con o trang thai sua duoc
+               * (draft, chua khoa review) - giu dung dieu kien khoa cu (canEdit
+               * && isDraft && !isLockedForReview); da duyet/khoa thi AN HAN
+               * (giu nguyen snapshot cu, giong hanh vi truoc day). */}
+              {!quote || (canEdit && isDraft && !isLockedForReview) ? (
+                <RecipientInfoCard
+                  recipient={draftRecipientFields}
+                  editable
+                  onSave={next => {
+                    setDraftRecipientFields(next);
+                    if (quote) {
+                      (Object.keys(next) as Array<keyof RecipientSnapshot>).forEach(key => {
+                        if (next[key] !== draftRecipientFields[key]) persistRecipientField(key, next[key]);
+                      });
+                    }
+                  }}
+                />
+              ) : null}
+
               {canEditCostCells && isDraft && itemsDraft.length > 0 && itemsMissingCost.length > 0 ? (
                 <div className="qc-workspace-warning-banner">
                   Còn {itemsMissingCost.length}/{itemsDraft.length} hạng mục chưa nhập giá vốn hoặc chưa đánh dấu &quot;Không áp dụng giá vốn&quot; — cần bổ sung trước khi bàn giao.
@@ -4775,10 +5165,27 @@ export function QuoteWorkspaceModal({
                    * KHONG khai bao width - day la cach table-layout:fixed
                    * tin cay nhat (dung chuan CSS: cot khong khai bao width se
                    * tu chia het phan con lai), khong con phu thuoc content
-                   * "vua khit" % duoc gan tren th/td nua. */}
+                   * "vua khit" % duoc gan tren th/td nua.
+                   * (A1, phien sau) "Hạng mục"/"Mô tả" van qua hep de doc noi
+                   * dung dai that (yeu cau rieng) - chuyen 2 cot nay SANG PX
+                   * CO DINH luon (thay vi de trong/tu chia deu nhu truoc),
+                   * dung nguyen tac PX co dinh CHUNG voi cac cot con lai o
+                   * tren, tranh 2 cot bi chia deu 50/50 khong theo y muon.
+                   * qc-workspace-items-table--unified.min-width (quote-center.css)
+                   * da tang tuong ung theo tong 12 cot moi (bao gom TỶ TRỌNG).
+                   * (Fix lech cot Hạng mục, phien sau A1): 210px la TONG ca
+                   * cot 1 bao gom ca vung drag-handle/checkbox/STT (grid
+                   * "60px 1fr" trong .qc-workspace-item-name-cell) - vung
+                   * CHU THAT SU con lai chi ~146px, qua hep so voi yeu cau
+                   * rieng "220px la vung noi dung ten, khong tinh drag/
+                   * checkbox/STT/action". Tang tong cot len 330px (60px
+                   * control + ~266px cho ten, du > 220px yeu cau) - chi doi
+                   * o day, KHONG doi grid-template-columns cua
+                   * .qc-workspace-item-name-cell (van "60px 1fr", 1fr tu
+                   * dong nhan them do rong moi). */}
                   <colgroup>
-                    <col />
-                    <col />
+                    <col style={{ width: '330px' }} />
+                    <col style={{ width: '300px' }} />
                     <col style={{ width: '92px' }} />
                     <col style={{ width: '64px' }} />
                     <col style={{ width: '104px' }} />
@@ -4787,6 +5194,7 @@ export function QuoteWorkspaceModal({
                     <col style={{ width: '104px' }} />
                     <col style={{ width: '104px' }} />
                     <col style={{ width: '82px' }} />
+                    <col style={{ width: '88px' }} />
                     {canEdit && isDraft && !isLockedForReview ? <col style={{ width: '44px' }} /> : null}
                   </colgroup>
                   <thead>
@@ -4818,13 +5226,18 @@ export function QuoteWorkspaceModal({
                       <th className="qc-th-money qc-th-markup">Giá khách/ĐV</th>
                       <th className="qc-th-money qc-th-total">Thành tiền</th>
                       <th className="qc-th-money qc-th-margin-col">Margin</th>
+                      {profitabilityViewAllowed ? (
+                        <th className="qc-th-money qc-th-weight" title="Tỷ trọng hạng mục trên tổng giá trị báo giá">TỶ TRỌNG</th>
+                      ) : (
+                        <th className="qc-th-money qc-th-weight" title="Tỷ trọng hạng mục trên tổng giá trị báo giá" />
+                      )}
                       {canEdit && isDraft && !isLockedForReview ? <th className="qc-th-actions qc-cell-actions--menu" aria-label="Thao tác" /> : null}
                     </tr>
                   </thead>
                   <tbody>
                     {itemsDraft.length === 0 ? (
                       <tr>
-                        <td colSpan={10} className="qc-empty qc-workspace-items-empty-cell">
+                        <td colSpan={11} className="qc-empty qc-workspace-items-empty-cell">
                           {/* CHOT LAI (yeu cau moi nhat "Trả các nút thêm hạng
                            * mục xuống dưới bảng"): 3 nut Chọn từ danh mục/
                            * Thêm hạng mục/+ Mục cha da chuyen XUONG DUOI bang
@@ -4855,10 +5268,22 @@ export function QuoteWorkspaceModal({
                         let sectionCounter = 0;
                         let itemCounter = 0;
                         const canDragRows = canEdit && isDraft && !isLockedForReview;
+                        // (B)/(C) mau so chung cho ca Tong tien section VA Ty
+                        // trong - dung calculateQuoteTotals (cong tren
+                        // calculateItemTotal) de luon cung 1 co so voi tu so
+                        // (calculateItemTotal/calculateSectionTotal), khong
+                        // lech nhau du hang muc nao thay doi.
+                        const workspaceQuoteTotal = calculateQuoteTotals(itemsDraft).totalAmount;
                         return itemsDraft.map((item, index) => {
                           if (item.rowType === 'section') {
                             sectionCounter += 1;
                             const roman = toRomanNumeral(sectionCounter);
+                            // (B) Tong tien truc tiep cac hang muc con cua
+                            // section nay (parentItemId === item.id) - KHONG
+                            // de quy sau hon, dung chung 1 ham voi
+                            // QuoteDocumentRenderer (xem calculateSectionTotal).
+                            const sectionChildren = itemsDraft.filter(row => row.parentItemId === item.id);
+                            const sectionTotal = calculateSectionTotal(sectionChildren);
                             return (
                               <tr
                                 key={item.id || index}
@@ -4869,7 +5294,7 @@ export function QuoteWorkspaceModal({
                                 onDrop={canDragRows ? () => handleRowDrop(index, true) : undefined}
                               >
                                 {/* Ten data columns (them "Mô tả"), plus the separate action cell when editable. */}
-                                <td colSpan={10}>
+                                <td colSpan={8}>
                                   {canDragRows ? <span className="qc-workspace-drag-handle" title="Kéo để sắp xếp">⠿</span> : null}
                                   {/* Roman numeral (I/II/III...) dat TRUOC ten muc (ben trai) thay vi
                                    * sau nhu cu - o kich thuoc nho, badge "I" dat SAU chu de bi doc
@@ -4891,6 +5316,15 @@ export function QuoteWorkspaceModal({
                                    * ca - 2 icon "+"/"danh mục" chuyen het xuong
                                    * TUNG dong hang muc con (cot Thao tac) thay vi
                                    * dat rieng tren hang Muc cha. */}
+                                </td>
+                                <td className="qc-cell-money" data-label="Thành tiền"><strong>{formatMoney(sectionTotal)}</strong></td>
+                                <td className="qc-cell-money qc-th-margin-col" data-label="Margin" />
+                                <td className="qc-cell-money qc-th-weight" data-label="Tỷ trọng">
+                                  {!profitabilityViewAllowed ? (
+                                    <span className="qc-row-sub">—</span>
+                                  ) : (
+                                    <strong>{formatWeightPercent(sectionTotal, workspaceQuoteTotal)}</strong>
+                                  )}
                                 </td>
                                 {canEdit && isDraft && !isLockedForReview ? (
                                   <td className="qc-cell-actions qc-cell-actions--menu">
@@ -5188,6 +5622,13 @@ export function QuoteWorkspaceModal({
                             <td className={`qc-cell-money qc-th-margin-col ${margin != null && margin >= 20 ? 'qc-cell-margin-good' : margin != null ? 'qc-cell-margin-warn' : ''}`} style={{ position: 'relative' }} data-label="Margin">
                               {!profitabilityViewAllowed ? <span className="qc-row-sub">Không có quyền xem</span> : formatPercentFixed2(margin)}
                             </td>
+                            <td className="qc-cell-money qc-th-weight" data-label="Tỷ trọng">
+                              {!profitabilityViewAllowed ? (
+                                <span className="qc-row-sub">Không có quyền xem</span>
+                              ) : (
+                                formatWeightPercent(calculateItemTotal(item), workspaceQuoteTotal)
+                              )}
+                            </td>
                             {canEdit && isDraft && !isLockedForReview ? (
                               <td className="qc-cell-actions qc-cell-actions--menu" data-label="Thao tác">
                                 {/* BUG THAT DA GAP: 2 icon nhanh rieng (Plus/LayoutGrid)
@@ -5295,6 +5736,13 @@ export function QuoteWorkspaceModal({
                                     <td className="qc-cell-money" data-label="Thành tiền">{childTotal ? formatMoney(childTotal) : '—'}</td>
                                     <td className={`qc-cell-money qc-th-margin-col ${childMargin != null && childMargin >= 20 ? 'qc-cell-margin-good' : childMargin != null ? 'qc-cell-margin-warn' : ''}`} data-label="Margin">
                                       {formatPercentFixed2(childMargin)}
+                                    </td>
+                                    <td className="qc-cell-money qc-th-weight" data-label="Tỷ trọng">
+                                      {!profitabilityViewAllowed ? (
+                                        <span className="qc-row-sub">Không có quyền xem</span>
+                                      ) : (
+                                        formatWeightPercent(childTotal, workspaceQuoteTotal)
+                                      )}
                                     </td>
                                     {canEdit && isDraft && !isLockedForReview ? (
                                       <td className="qc-cell-actions qc-cell-actions--menu" data-label="Thao tác">
@@ -6330,6 +6778,48 @@ export function QuoteWorkspaceModal({
         onClose={() => setCustomerDrawerOpen(false)}
         onCreated={customerId => void handleCustomerCreated(customerId)}
       />
+
+      {/* "+ Tạo người liên hệ mới" tại chỗ tu dropdown "Người liên hệ" - form
+       * nho gon (chi Ho ten, SDT, Email, du de tao nhanh 1 Contact roi tu
+       * chon lai ngay), KHONG phai ban sao trang quan ly Contact day du
+       * (CrmContactsPanel.tsx) - dung LAI dung endpoint API cua trang do. */}
+      {createContactOpen ? (
+        <div className="crm-modal-backdrop" onClick={() => !createContactBusy && setCreateContactOpen(false)}>
+          <div className="crm-modal" onClick={event => event.stopPropagation()}>
+            <header className="crm-modal-header">
+              <h2 className="crm-modal-title">Tạo người liên hệ mới</h2>
+              <button type="button" className="crm-modal-close" onClick={() => setCreateContactOpen(false)} aria-label="Đóng">×</button>
+            </header>
+            <form
+              id="qcCreateContactForm"
+              className="crm-modal-body"
+              onSubmit={event => { event.preventDefault(); void submitCreateContact(); }}
+            >
+              {createContactError ? <p className="crm-error">{createContactError}</p> : null}
+              <div className="crm-form-grid">
+                <label className="crm-field">
+                  <span>Họ tên <b>*</b></span>
+                  <input autoFocus value={createContactName} onChange={e => setCreateContactName(e.target.value)} />
+                </label>
+                <label className="crm-field">
+                  <span>Số điện thoại</span>
+                  <input value={createContactPhone} onChange={e => setCreateContactPhone(e.target.value)} type="tel" />
+                </label>
+                <label className="crm-field">
+                  <span>Email</span>
+                  <input value={createContactEmail} onChange={e => setCreateContactEmail(e.target.value)} type="email" />
+                </label>
+              </div>
+            </form>
+            <footer className="crm-modal-footer">
+              <button type="button" className="crm-cancel-button" onClick={() => setCreateContactOpen(false)} disabled={createContactBusy}>Hủy</button>
+              <button type="submit" form="qcCreateContactForm" className="crm-save-button" disabled={createContactBusy}>
+                {createContactBusy ? 'Đang lưu...' : 'Lưu'}
+              </button>
+            </footer>
+          </div>
+        </div>
+      ) : null}
 
       {quoteTypeQuickAddOpen ? (
         <CrmCategoryQuickModal

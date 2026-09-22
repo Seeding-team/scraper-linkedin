@@ -35,6 +35,7 @@ function emptyForm(): CreateIssuerCompanyInput {
     defaultQuoteFormId: '',
     status: 'active',
     sortOrder: 0,
+    paymentTerms: '',
   };
 }
 
@@ -53,6 +54,7 @@ function companyToForm(company: IssuerCompany): CreateIssuerCompanyInput {
     defaultQuoteFormId: company.defaultQuoteFormId || '',
     status: company.status,
     sortOrder: 0,
+    paymentTerms: company.paymentTerms || '',
   };
 }
 
@@ -428,6 +430,18 @@ export function IssuerCompanyAdminPage() {
                         <option value="active">Đang dùng</option>
                         <option value="inactive">Ngừng dùng</option>
                       </select>
+                    </Field>
+                    {/* (I) Snapshot 1 LAN vao custom block 'payment_terms' cua
+                     * bao gia MOI luc tao (neu block do dang trong) - sua o
+                     * day KHONG doi bao gia da tao truoc do (xem
+                     * applyIssuerPaymentTermsSnapshot). */}
+                    <Field label="Điều khoản thanh toán mặc định" full>
+                      <textarea
+                        rows={3}
+                        value={form.paymentTerms || ''}
+                        onChange={e => setForm({ ...form, paymentTerms: e.target.value })}
+                        placeholder="vd: Thanh toán 100% giá trị hợp đồng trong vòng 7 ngày kể từ ngày ký..."
+                      />
                     </Field>
                   </div>
                 </div>

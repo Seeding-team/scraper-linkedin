@@ -570,6 +570,7 @@ def _row_to_issuer_company(row: dict) -> dict:
         "logoUrl": row.get("logo_url"),
         "defaultQuoteFormId": row.get("default_quote_form_id"),
         "status": row.get("status") or "active",
+        "paymentTerms": row.get("payment_terms"),
     }
 
 
@@ -601,6 +602,7 @@ def create_issuer_company(payload: dict) -> dict:
         "default_quote_form_id": payload.get("default_quote_form_id"),
         "status": payload.get("status") or "active",
         "sort_order": payload.get("sort_order") or 0,
+        "payment_terms": payload.get("payment_terms"),
     }
     result = supabase.table(ISSUER_COMPANIES_TABLE).insert(insert_data).execute()
     return _row_to_issuer_company(result.data[0])
@@ -613,7 +615,7 @@ def update_issuer_company(company_id: str, payload: dict) -> dict:
         "address": "address", "contact_name": "contact_name", "phone": "phone",
         "email": "email", "website": "website", "tax_code": "tax_code",
         "logo_url": "logo_url", "default_quote_form_id": "default_quote_form_id",
-        "status": "status", "sort_order": "sort_order",
+        "status": "status", "sort_order": "sort_order", "payment_terms": "payment_terms",
     }
     update_data = {field_map[k]: v for k, v in payload.items() if k in field_map and v is not None}
     # logo_url/website/... rong "" (xoa logo/field) van phai ap dung duoc - chi

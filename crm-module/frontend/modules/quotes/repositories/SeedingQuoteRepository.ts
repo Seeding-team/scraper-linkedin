@@ -160,6 +160,7 @@ function toIssuerCompanyPayload(input: CreateIssuerCompanyInput | UpdateIssuerCo
     default_quote_form_id: input.defaultQuoteFormId,
     status: input.status,
     sort_order: input.sortOrder,
+    payment_terms: input.paymentTerms,
   };
 }
 

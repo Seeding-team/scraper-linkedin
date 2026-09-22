@@ -1,4 +1,4 @@
-import type { IssuerCompany, Quote, QuoteData, QuoteForm, QuoteItem, VillaSolutionItem } from '@/modules/quotes';
+import type { CustomBlock, IssuerCompany, Quote, QuoteData, QuoteForm, QuoteItem, VillaSolutionItem } from '@/modules/quotes';
 import { resolveDefaultVisibleColumnKeys, resolveToggleableColumns } from '@/modules/quotes/utils/quoteColumns';
 import { resolveVisibleCustomerFieldKeys } from '@/modules/quotes/utils/quoteCustomerFields';
 import { resolveToggleableSummaryFields } from '@/modules/quotes/utils/quoteSummaryFields';
@@ -71,18 +71,40 @@ export function quoteDraftFromForm(form: QuoteForm, dealDraft?: DealFormState, i
   }
 
   if (dealDraft) {
+    // BUG THAT DA GAP (D, xem CLAUDE.md fact #5): TRUOC DAY 2 dong duoi hardcode
+    // ve dealDraft.customerName (ten tren HO SO Customer, khong phai Contact
+    // THAT dang lien he) cho ca "Kính gửi" lan "Người liên hệ" - khach hang
+    // nhieu Contact/da doi nguoi lien he van bi in nham ten cu. Uu tien
+    // dealDraft.contactName (Contact THAT chon o Buoc 1 qua danh sach
+    // crm_contacts, xem SelectCustomerStep.tsx) - dealDraft.customerName van
+    // giu lam fallback CUOI CUNG (khong phai companyName) vi 2 field nay luon
+    // duoc SelectCustomerStep dong bo gia tri voi nhau (xem comment o do), chi
+    // khac nhau khi dealDraft đến tu 1 nguon CU chua qua flow Contact moi
+    // (vd lockedDealForStep1 fallback trong CreateQuoteModal.tsx) - KHONG bao
+    // gio fallback ve companyName/ten cong ty (yeu cau ro "không fallback về
+    // customerName [cua Customer/cong ty]" - de trong con hon in nham ten).
+    const recipientName = dealDraft.contactName || dealDraft.customerName || '';
     Object.assign(data, {
-      customerRecipient: dealDraft.customerName || dealDraft.companyName,
+      customerRecipient: recipientName,
       customerCompanyName: dealDraft.companyName || dealDraft.customerName,
-      customerContactName: dealDraft.customerName,
+      customerContactName: recipientName,
       customerAddress: dealDraft.address,
       customerPhone: dealDraft.phone,
       customerEmail: dealDraft.email,
       customerTaxCode: dealDraft.taxCode,
+      // (D) Snapshot id Contact THAT (crm_contacts.id) da chon luc tao bao gia
+      // nay - CHI de tham chieu/debug (vd sau nay muon biet bao gia nay gan
+      // voi Contact nao), KHONG dung de doc lai song (moi gia tri hien thi
+      // van la 3 field snapshot phia tren, dung nguyen tac "data la JSON diem-
+      // thoi-gian" chung cua ca file nay).
+      customerContactId: dealDraft.primaryContactId || undefined,
     });
   }
 
-  if (issuerCompany) applyIssuerCompanySnapshot(data, issuerCompany);
+  if (issuerCompany) {
+    applyIssuerCompanySnapshot(data, issuerCompany);
+    applyIssuerPaymentTermsSnapshot(data, issuerCompany);
+  }
 
   // "Người liên hệ" (sellerContactName, hien tren PDF o khoi "Người phụ
   // trách") PHAI la nguoi THAT SU dang tao bao gia nay, KHONG phai contact
@@ -111,6 +133,32 @@ export function applyIssuerCompanySnapshot(data: QuoteData, issuerCompany: Issue
     sellerWebsite: issuerCompany.website || '',
     sellerLogo: issuerCompany.logoUrl || '',
   });
+}
+
+/** (I) "Điều khoản thanh toán" mặc định của Đơn vị phát hành - SNAPSHOT 1 LẦN
+ * vào custom block 'payment_terms' của báo giá - CHỈ gọi trong
+ * quoteDraftFromForm (tạo báo giá MỚI hoàn toàn), KHÔNG gọi cùng
+ * applyIssuerCompanySnapshot ở CreateQuoteModal.tsx (2 chỗ re-apply khi đổi
+ * công ty phát hành ở Bước 2 sau khi đã khởi tạo/đang sửa quote đã tồn tại) -
+ * tránh ghi đè nội dung Sale đã tự gõ tay hoặc snapshot cũ của báo giá đã
+ * duyệt trước đó. Không làm gì nếu issuer không có payment_terms, hoặc quote
+ * đã có sẵn 1 block 'payment_terms' CÓ nội dung (tôn trọng nội dung đã có,
+ * dù đến từ đâu). */
+export function applyIssuerPaymentTermsSnapshot(data: QuoteData, issuerCompany: IssuerCompany): void {
+  const defaultTerms = issuerCompany.paymentTerms?.trim();
+  if (!defaultTerms) return;
+  const blocks = Array.isArray(data.customBlocks) ? data.customBlocks : [];
+  const existing = blocks.find(block => block.kind === 'payment_terms');
+  if (existing && existing.content.trim()) return;
+  const seededBlock: CustomBlock = {
+    id: existing?.id || `custom-${Date.now()}-payment_terms`,
+    kind: 'payment_terms',
+    title: existing?.title || 'Điều khoản thanh toán',
+    content: defaultTerms,
+  };
+  data.customBlocks = existing
+    ? blocks.map(block => (block.kind === 'payment_terms' ? seededBlock : block))
+    : [...blocks, seededBlock];
 }
 
 /** Dựng lại QuoteDraft từ 1 báo giá đã tồn tại (chế độ sửa) - để prefill wizard

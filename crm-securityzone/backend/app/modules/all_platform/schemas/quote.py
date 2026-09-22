@@ -59,6 +59,11 @@ class IssuerCompanyCreateRequest(BaseModel):
     default_quote_form_id: Optional[str] = None
     status: str = "active"
     sort_order: int = 0
+    # (I) "Điều khoản thanh toán" mac dinh cua don vi phat hanh - SNAPSHOT 1 lan
+    # vao custom block 'payment_terms' cua bao gia luc tao (xem
+    # apply_issuer_payment_terms_snapshot trong supabase_quote_service.py),
+    # KHONG doc song - sua o day chi anh huong bao gia MOI tao sau do.
+    payment_terms: Optional[str] = None
 
 
 class IssuerCompanyUpdateRequest(BaseModel):
@@ -75,6 +80,7 @@ class IssuerCompanyUpdateRequest(BaseModel):
     default_quote_form_id: Optional[str] = None
     status: Optional[str] = None
     sort_order: Optional[int] = None
+    payment_terms: Optional[str] = None
 
 
 class QuoteItemInput(BaseModel):

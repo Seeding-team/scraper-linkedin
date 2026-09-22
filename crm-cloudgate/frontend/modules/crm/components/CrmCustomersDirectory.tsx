@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { API_BASE_URL, API_KEY } from '@/lib/env';
 import { useAppAuth } from '@/contexts/AppAuthContext';
 import { useMembers } from '@/hooks/useMembers';
@@ -131,8 +131,8 @@ function mapCustomer(row: ApiCustomerRow): CrmCustomerRow {
 
 export function CrmCustomersDirectory() {
   const router = useRouter();
-  const { user } = useAppAuth();
-  const { members } = useMembers();
+  const { user, isLoading: authLoading } = useAppAuth();
+  const { members, loading: membersLoading } = useMembers();
   const [items, setItems] = useState<CrmCustomerRow[]>([]);
   const [total, setTotal] = useState(0);
   const [kpi, setKpi] = useState<CrmCustomerKpi>({ total: 0, new_lead: 0, following: 0, current_customer: 0, not_fit: 0 });
@@ -194,6 +194,25 @@ export function CrmCustomersDirectory() {
     }, 300);
     return () => window.clearTimeout(timer);
   }, [searchInput]);
+
+  // Mac dinh loc "cua toi + team cua toi" khi vao trang (thay vi "Tat ca") -
+  // chi ap dung DUNG 1 LAN sau khi ca auth + members da tai xong, dung
+  // ref de khong ghi de lai lua chon thu cong cua nguoi dung sau do (vd sau
+  // khi ho tu doi sang "Tat ca" hoac 1 owner/team khac). Rule tim team CUA
+  // CHINH NGUOI DANG DANG NHAP phai khop CHINH XAC voi _user_department_map()
+  // o backend (progress_service.py): CHI xet members.linked_user_id (KHONG
+  // xet linked_user_id_2) + phai co team - nguoi dang dang nhap chac chan la
+  // active (dang co session hop le) nen bo qua kiem tra app_users.is_active.
+  const defaultFilterAppliedRef = useRef(false);
+  useEffect(() => {
+    if (defaultFilterAppliedRef.current) return;
+    if (authLoading || membersLoading) return;
+    if (!user?.id) return;
+    defaultFilterAppliedRef.current = true;
+    setOwnerId(user.id);
+    const myMember = members.find(m => m.linked_user_id === user.id);
+    if (myMember?.team) setTeam(myMember.team);
+  }, [authLoading, membersLoading, user, members]);
 
   useEffect(() => { setPage(1); }, [status, ownerId, saleManagerId, team]);
 
@@ -260,8 +279,14 @@ export function CrmCustomersDirectory() {
       const key = m.linked_user_id || m.linked_user_id_2;
       if (key) seen.set(key, m.display_name);
     });
+    // Dam bao option "chinh minh" luon co trong dropdown ke ca khi user hien
+    // tai khong co dong trong `members` (vd tai khoan admin/moi chua duoc
+    // gan HR roster) - neu khong, dropdown se hien placeholder rong dù
+    // ownerId da duoc mac dinh = user.id (vi pham yeu cau "gia tri ap dung
+    // phai hien ro tren dropdown").
+    if (user?.id && !seen.has(user.id)) seen.set(user.id, user.name || user.email);
     return [...seen.entries()].sort((a, b) => a[1].localeCompare(b[1]));
-  }, [members]);
+  }, [members, user]);
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const hasFilters = Boolean(search || ownerId || saleManagerId || team);

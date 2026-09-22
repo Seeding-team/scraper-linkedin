@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { emptyDealForm } from '../../components/DealFormFields';
 import type { DealFormState } from '../../components/DealFormFields';
+import type { ContactOption } from '../../components/dealHydration';
 import { seedingCrmRepository } from '../../repositories/SeedingCrmRepository';
 import type { CrmCustomerSummary, CrmUserOption, Deal } from '../../types';
 import type { Quote } from '@/modules/quotes';
@@ -68,6 +69,18 @@ export function SelectCustomerStep({
   const [dealPickerOpen, setDealPickerOpen] = useState(false);
   const [dealPickerQuery, setDealPickerQuery] = useState('');
 
+  // (D) "Người liên hệ" - danh sach Contact THAT SU cua DUNG customer dang
+  // chon (khong phai ten/SDT/email cua chinh ho so Customer nhu truoc day -
+  // xem bug that da gap o quoteDraftFromForm.ts). Dung lai
+  // seedingCrmRepository.listContacts (da co san, cung ham DealFormFields.tsx
+  // dung cho ContactPicker cua form Deal chinh) - server da tra ve DUNG thu
+  // tu "is_primary desc, created_at asc" (xem crm_contact_service.py
+  // list_contacts) nen contacts[0] la primary neu co, hoac Contact tao SOM
+  // NHAT neu khong ai la primary.
+  const [contacts, setContacts] = useState<ContactOption[]>([]);
+  const [contactsLoadedFor, setContactsLoadedFor] = useState('');
+  const [contactsLoading, setContactsLoading] = useState(false);
+
   const searchQueryReady = searchOpen && search.trim().length >= 2;
 
   useEffect(() => {
@@ -119,10 +132,17 @@ export function SelectCustomerStep({
     onChangeCustomer({
       ...emptyDealForm(),
       customerId: found.id,
-      customerName: found.customerName || '',
+      // "Người nhận báo giá"/SĐT/Email KHONG con lay tam tu ho so Customer
+      // (found.customerName/phone/email) nua - BUG THAT DA GAP: found.customerName
+      // la ten TREN HO SO KHACH HANG (co the la nguoi khac/da nghi/khong con
+      // lien he), khong phai Contact THAT dang lien he. De trong, cho effect
+      // load Contact (contactsLoadedFor) tu dong dien theo dung quy tac (D).
+      customerName: '',
+      contactName: '',
+      primaryContactId: '',
       companyName: found.companyName || '',
-      phone: found.phone || '',
-      email: found.email || '',
+      phone: '',
+      email: '',
       sourcePlatform: found.source || 'Manual',
     });
     setPickedCustomer(found);
@@ -134,9 +154,72 @@ export function SelectCustomerStep({
   function startNewCustomer() {
     onChangeCustomer(emptyDealForm());
     setPickedCustomer(null);
+    setContacts([]);
+    setContactsLoadedFor('');
     setSearch('');
     setSearchOpen(false);
     setEditingFields(false);
+  }
+
+  // (D) Tai lai danh sach Contact moi khi doi sang 1 customer THAT khac (hoac
+  // gan Deal khoa san co customerId - lockedDeal) - ap dung dung 1 quy tac:
+  // co Contact chinh (is_primary) -> tu chon; khong co chinh nhung DUNG 1
+  // Contact -> tu chon no; nhieu Contact khong ai la chinh -> de trong cho
+  // nguoi dung tu chon (KHONG doan); khong Contact nao -> "Kính gửi" de
+  // trong (KHONG fallback ve ten Customer/cong ty - dung yeu cau D).
+  useEffect(() => {
+    if (!referenceCustomerId) {
+      setContacts([]);
+      setContactsLoadedFor('');
+      return;
+    }
+    let alive = true;
+    setContactsLoading(true);
+    void seedingCrmRepository.listContacts(referenceCustomerId)
+      .then(list => {
+        if (!alive) return;
+        setContacts(list);
+        setContactsLoadedFor(referenceCustomerId);
+        const primary = list.find(c => c.is_primary);
+        const autoSelected = primary || (list.length === 1 ? list[0] : null);
+        onChangeCustomer({
+          ...customer,
+          primaryContactId: autoSelected?.id || '',
+          // "customerName" duoc GIU DONG BO voi "contactName" (thay vi tach
+          // rieng hoan toan) - nhieu noi khac trong wizard (validate buoc 1,
+          // recap ten khach, tao Du an moi...) van doc customer.customerName
+          // lam "ten nguoi nhan bao gia" - mirror 2 field nay de KHONG pha vo
+          // cac cho goi cu do, trong khi nguon THAT SU (Contact CRM) van la
+          // contactName/primaryContactId moi vua them (D).
+          contactName: autoSelected?.name || '',
+          customerName: autoSelected?.name || '',
+          phone: autoSelected?.phone || '',
+          email: autoSelected?.email || '',
+        });
+      })
+      .catch(() => {
+        if (alive) {
+          setContacts([]);
+          setContactsLoadedFor(referenceCustomerId);
+        }
+      })
+      .finally(() => {
+        if (alive) setContactsLoading(false);
+      });
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [referenceCustomerId]);
+
+  function chooseContact(contactId: string) {
+    const found = contacts.find(c => c.id === contactId);
+    onChangeCustomer({
+      ...customer,
+      primaryContactId: found?.id || '',
+      contactName: found?.name || '',
+      customerName: found?.name || '',
+      phone: found?.phone || '',
+      email: found?.email || '',
+    });
   }
 
   const hasCustomer = Boolean(customer.customerName.trim() || customer.phone.trim() || customer.email.trim());
@@ -297,9 +380,35 @@ export function SelectCustomerStep({
             <span>Địa chỉ</span>
             <input value={customer.address} onChange={event => onChangeCustomer({ ...customer, address: event.target.value })} />
           </label>
+          {pickedExisting ? (
+            <label className="crm-field">
+              <span>Người liên hệ{contactsLoading ? ' (đang tải...)' : ''}</span>
+              <select
+                value={contactsLoadedFor === referenceCustomerId ? customer.primaryContactId : ''}
+                onChange={event => chooseContact(event.target.value)}
+                disabled={contactsLoading || contactsLoadedFor !== referenceCustomerId}
+              >
+                <option value="">-- Chưa chọn --</option>
+                {contacts.map(contact => (
+                  <option key={contact.id} value={contact.id}>
+                    {contact.name}
+                    {contact.is_primary ? ' · Chính' : ''}
+                    {contact.position || contact.position_label_snapshot ? ` (${contact.position || contact.position_label_snapshot})` : ''}
+                  </option>
+                ))}
+              </select>
+              {contactsLoadedFor === referenceCustomerId && contacts.length === 0 ? (
+                <small className="crm-field-hint">Khách hàng này chưa có Người liên hệ nào — vào &quot;Quản lý khách hàng&quot; để thêm.</small>
+              ) : null}
+            </label>
+          ) : null}
           <label className="crm-field">
             <span>Người nhận báo giá *</span>
-            <input value={customer.customerName} onChange={event => onChangeCustomer({ ...customer, customerName: event.target.value })} />
+            <input
+              value={customer.contactName || customer.customerName}
+              onChange={event => onChangeCustomer({ ...customer, contactName: event.target.value, customerName: event.target.value })}
+              placeholder={pickedExisting ? 'Chọn Người liên hệ ở trên hoặc nhập tay' : ''}
+            />
           </label>
           <label className="crm-field">
             <span>SĐT</span>

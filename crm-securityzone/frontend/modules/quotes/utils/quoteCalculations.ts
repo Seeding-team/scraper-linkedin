@@ -119,6 +119,22 @@ export const calculateOverallDiscountSummary = (
   };
 };
 
+/** Tong tien 1 "mục cha"/section = SUM("Thành tiền" gồm VAT, tuc
+ * calculateItemTotal) cua CAC HANG MUC CON TRUC TIEP (khong de quy sau hon 1
+ * cap - section chi co 1 tang con duy nhat trong model hien tai, xem
+ * QuoteItem.parentItemId/rowType o types/index.ts). Dung CHUNG 1 ham nay o
+ * ca QuoteWorkspaceModal.tsx (loc children theo parentItemId === section.id
+ * trong mang phang itemsDraft) VA QuoteDocumentRenderer.tsx (children la
+ * item.children, da dung san cau truc long nhau) - tranh 2 noi tu tinh rieng
+ * co the lech nhau. KHONG cong them cac dong bundle-component hien thi rieng
+ * (__bundleComponent) cua tung child - cac dong do CHI la hien thi phu, gia
+ * tri cua chung da nam TRONG unitPrice*quantity cua chinh item cha (bundle)
+ * roi, cong them se bi tinh 2 lan. Chi la gia tri HIEN THI (khong luu DB),
+ * tinh lai moi lan render tu du lieu hien tai - dung duoc cho ca bao gia cu
+ * (khong can migrate/backfill gi ca). */
+export const calculateSectionTotal = (children: Partial<QuoteItem>[] = []) =>
+  children.reduce((sum, child) => sum + calculateItemTotal(child), 0);
+
 // Wrapper mong quanh formatCurrencyDisplay() dung chung (lib/currency.ts) -
 // giu nguyen dinh dang output cu ("5.000.000 đ"), khong tu goi toLocaleString
 // rieng nua.
