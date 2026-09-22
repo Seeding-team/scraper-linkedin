@@ -24,7 +24,7 @@ import { FillQuoteStep } from './FillQuoteStep';
 import { IssuerCompanySection } from './IssuerCompanySection';
 import { ReviewQuoteStep } from './ReviewQuoteStep';
 import { SelectCustomerStep } from './SelectCustomerStep';
-import { applyIssuerCompanySnapshot, emptyQuoteDraft, quoteDraftFromExistingQuote, quoteDraftFromForm } from './types';
+import { applyIssuerCompanySnapshot, applyIssuerPaymentTermsSnapshot, emptyQuoteDraft, quoteDraftFromExistingQuote, quoteDraftFromForm } from './types';
 import type { QuoteDraft } from './types';
 import { clearVisibleColumnsDraft } from './quoteColumnsDraft';
 
@@ -470,6 +470,8 @@ export function CreateQuoteModal({
       setQuoteDraft(current => {
         const nextData = { ...current.data };
         applyIssuerCompanySnapshot(nextData, selectedIssuerCompany);
+        // Doi issuer -> dieu khoan thanh toan cung doi theo (feedback 2026-09-23 muc 3).
+        applyIssuerPaymentTermsSnapshot(nextData, selectedIssuerCompany, issuerCompanies);
         return { ...current, data: nextData };
       });
       setStep(3);
@@ -490,6 +492,8 @@ export function CreateQuoteModal({
       setQuoteDraft(current => {
         const nextData = { ...current.data };
         applyIssuerCompanySnapshot(nextData, selectedIssuerCompany);
+        // Doi issuer -> dieu khoan thanh toan cung doi theo (feedback 2026-09-23 muc 3).
+        applyIssuerPaymentTermsSnapshot(nextData, selectedIssuerCompany, issuerCompanies);
         return { ...current, data: nextData };
       });
     }

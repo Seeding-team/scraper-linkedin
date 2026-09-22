@@ -466,53 +466,54 @@ def update_lead(lead_id: str, payload: dict[str, Any], user: dict[str, Any]) -> 
 
 
 class LeadLinkedError(ValueError):
-    """Lead khong duoc phep xoa vi da sinh ra ho so downstream (Khach hang /
-    Lien he / Co hoi). Tach rieng khoi ValueError thuong de router/frontend co
-    the doi xu khac (goi y luu tru thay vi bao loi chung chung)."""
+    """Lead da sinh ra du lieu downstream (Co hoi/Bao gia/Hop dong/Lien he/
+    Khach hang) - KHONG con chan xoa (feedback 2026-09-23), chi la tin hieu
+    "can hoi xac nhan truoc". summary = so dem tung loai se bi xoa kem."""
 
-    def __init__(self, message: str, links: dict[str, Any]) -> None:
+    def __init__(self, message: str, links: dict[str, Any], summary: dict[str, Any] | None = None) -> None:
         super().__init__(message)
         self.links = links
+        self.summary = summary or {}
 
 
-def delete_lead(lead_id: str, user: dict[str, Any]) -> None:
-    """Xoa han 1 Lead. Cung khuon voi delete_contact() trong
-    crm_contact_service.py: nap ban ghi qua getter (da kiem tra quyen xem), roi
-    kiem tra quyen ghi bang DUNG helper co san can_write_lead() - khong dat ra
-    quy tac phan quyen moi.
+def delete_lead(lead_id: str, user: dict[str, Any], confirm_cascade: bool = False) -> None:
+    """Xoa 1 Lead. KHONG chan quyen (feedback 2026-09-23: "ai muốn xóa thì
+    xóa, nhớ hỏi trước khi xóa") - chi gioi han trong tenant hien tai.
 
-    Chan xoa khi Lead da convert. Khong co FK nao tro NGUOC ve crm_leads
-    (migration 078: cac cot converted_* nam TREN crm_leads va deu la ON DELETE
-    SET NULL), nghia la DB se vui ve xoa mat ban ghi goc cua 1 Khach
-    hang/Co hoi da ton tai ma khong bao loi gi. Vi vay chan o day la quy tac
-    NGHIEP VU that su, khong phai chi de dep loi FK."""
-    current = get_lead(lead_id, user)
-    if not can_write_lead(user, current):
-        raise PermissionError("Không có quyền xóa Lead này.")
+    Lead da convert: "tương tự lead và cái nào nó liên quan" - xoa KEM du lieu
+    sinh ra tu Lead (Co hoi + Bao gia/Hop dong cua no, Nguoi lien he; Khach
+    hang chi xoa neu khong con du lieu nao khac - xem
+    crm_delete_cascade_service._lead_related). confirm_cascade=False ma con du
+    lieu lien quan -> raise LeadLinkedError kem summary, KHONG xoa gi."""
+    # Import tre de tranh vong import (cascade service -> supabase_quote_service).
+    from app.modules.all_platform.services.crm_delete_cascade_service import (
+        CascadeConfirmRequired,
+        delete_lead_cascade,
+        get_in_tenant,
+    )
 
+    current = get_in_tenant(
+        "crm_leads", lead_id,
+        "id, lead_name, status, converted_customer_id, converted_contact_id, converted_deal_id",
+    )
+    if not current:
+        raise ValueError("Khong tim thay lead.")
     links = {
         "customer_id": current.get("converted_customer_id") or None,
         "contact_id": current.get("converted_contact_id") or None,
         "deal_id": current.get("converted_deal_id") or None,
     }
-    if current.get("status") == "converted" or any(links.values()):
-        raise LeadLinkedError(
-            "Không thể xóa Lead đã được chuyển đổi thành Cơ hội/Khách hàng — "
-            "dữ liệu Khách hàng, Liên hệ và Cơ hội đã tạo từ Lead này sẽ mất "
-            "nguồn gốc. Hãy chuyển Lead sang \"Theo dõi sau\" hoặc \"Không phù "
-            "hợp\" để lưu trữ thay vì xóa.",
-            links,
-        )
-
-    supabase = get_supabase_client()
-    execute_supabase_query(lambda: supabase.table("crm_leads").delete().eq("id", lead_id).eq("instance", settings.crm_instance).execute())
+    try:
+        delete_lead_cascade(current, user.get("id"), confirm_cascade)
+    except CascadeConfirmRequired as exc:
+        raise LeadLinkedError(str(exc), links, exc.summary) from exc
 
 
-def delete_leads_bulk(lead_ids: list[str], user: dict[str, Any]) -> dict[str, Any]:
+def delete_leads_bulk(lead_ids: list[str], user: dict[str, Any], confirm_cascade: bool = False) -> dict[str, Any]:
     """
     Chức năng: Xóa hàng loạt Lead (Bulk Delete) được tick chọn từ danh sách.
     Thay đổi: Bổ sung phương thức xóa theo lô, xử lý an toàn từng Lead qua delete_lead().
-    - Kiểm tra đúng quyền hạn người dùng (can_write_lead) và chặn các Lead đã chuyển đổi (LeadLinkedError).
+    - Không chặn quyền; Lead còn dữ liệu liên quan cần confirm_cascade=True (FE đã hỏi xác nhận).
     - Áp dụng nguyên tắc: Lỗi ở 1 Lead không làm gián đoạn việc xóa các Lead hợp lệ còn lại.
     - Trả về danh sách deleted_ids (thành công) và failed (thất bại kèm lý do).
     """
@@ -523,10 +524,15 @@ def delete_leads_bulk(lead_ids: list[str], user: dict[str, Any]) -> dict[str, An
         if not lead_id_str:
             continue
         try:
-            delete_lead(lead_id_str, user)
+            delete_lead(lead_id_str, user, confirm_cascade=confirm_cascade)
             deleted_ids.append(lead_id_str)
         except Exception as exc:
-            failed.append({"lead_id": lead_id_str, "message": str(exc)})
+            failed.append({
+                "lead_id": lead_id_str,
+                "message": str(exc),
+                "requiresCascadeConfirm": isinstance(exc, LeadLinkedError),
+                "summary": exc.summary if isinstance(exc, LeadLinkedError) else None,
+            })
     return {"deleted_ids": deleted_ids, "failed": failed}
 
 

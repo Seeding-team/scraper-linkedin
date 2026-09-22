@@ -33,6 +33,7 @@ export interface QuoteRepository {
   createQuote(input: CreateQuoteInput): Promise<Quote>;
   updateQuote(id: string, input: UpdateQuoteInput): Promise<Quote>;
   deleteQuote(id: string): Promise<void>;
+  bulkDeleteQuotes(ids: string[], includeVersions: boolean): Promise<{ deletedIds: string[]; failed: Array<{ quoteId: string; message: string }> }>;
   /** Duyệt báo giá — khoá chỉnh sửa vĩnh viễn, sinh public link. */
   approveQuote(id: string, exceptionReason?: string): Promise<Quote>;
   /** Lưu thay đổi cuối + duyệt atomic (dùng khi bấm "Duyệt báo giá" trong modal đang sửa). */
