@@ -362,6 +362,17 @@ export function QuoteDocumentRenderer({
   );
   const headerRowRef = useRef<HTMLTableRowElement | null>(null);
   const resizeDragRef = useRef<{ key: string; startX: number; startWidth: number } | null>(null);
+  // BUG THAT DA GAP (React canh bao "Cannot update a component while
+  // rendering a different component"): handleMouseUp truoc day goi
+  // onColumnWidthsChange(current) (cap nhat STATE CUA COMPONENT CHA -
+  // PublicQuotePage/QuoteDetailPage) NGAY BEN TRONG callback updater cua
+  // chinh setResizedColumnWidths o day - vi pham nguyen tac updater phai
+  // THUAN (khong side-effect/khong goi setState khac). Sua: giu 1 ref luon
+  // dong bo VOI GIA TRI MOI NHAT cua resizedColumnWidths (cap nhat cung luc
+  // voi moi lan setResizedColumnWidths, khong doi re-render), roi
+  // handleMouseUp chi DOC thang tu ref nay va goi onColumnWidthsChange BEN
+  // NGOAI moi updater - khong con setState long nhau.
+  const latestWidthsRef = useRef<Record<string, number> | null>(resizedColumnWidths);
 
   const beginColumnResize = (columnKey: string, columns: QuoteField[]) => (event: React.MouseEvent) => {
     event.preventDefault();
@@ -377,6 +388,7 @@ export function QuoteDocumentRenderer({
         const th = ths[index] as HTMLElement | undefined;
         widths![column.key] = th ? Math.round(th.getBoundingClientRect().width) : 120;
       });
+      latestWidthsRef.current = widths;
       setResizedColumnWidths(widths);
     }
     resizeDragRef.current = {
@@ -388,20 +400,19 @@ export function QuoteDocumentRenderer({
       const drag = resizeDragRef.current;
       if (!drag) return;
       const nextWidth = Math.max(40, drag.startWidth + (moveEvent.clientX - drag.startX));
-      setResizedColumnWidths(prev => ({ ...(prev || {}), [drag.key]: nextWidth }));
+      const next = { ...(latestWidthsRef.current || {}), [drag.key]: nextWidth };
+      latestWidthsRef.current = next;
+      setResizedColumnWidths(next);
     };
     const handleMouseUp = () => {
       resizeDragRef.current = null;
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
-      // Bao cho cha biet ban nhap moi nhat NGAY khi tha chuot (khong doi re-render
-      // tiep theo) - doc thang tu state qua updater rong de luon lay dung gia tri
-      // cuoi cung, tranh closure resizedColumnWidths cu tu luc beginColumnResize.
-      if (onColumnWidthsChange) {
-        setResizedColumnWidths(current => {
-          if (current) onColumnWidthsChange(current);
-          return current;
-        });
+      // Bao cho cha biet ban nhap moi nhat NGAY khi tha chuot - doc thang tu
+      // ref (luon la gia tri MOI NHAT, khong bi closure cu) THAY VI long ben
+      // trong updater cua setResizedColumnWidths nhu truoc.
+      if (onColumnWidthsChange && latestWidthsRef.current) {
+        onColumnWidthsChange(latestWidthsRef.current);
       }
     };
     window.addEventListener('mousemove', handleMouseMove);

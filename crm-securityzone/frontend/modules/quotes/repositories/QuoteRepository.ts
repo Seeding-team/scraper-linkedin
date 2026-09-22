@@ -100,6 +100,12 @@ export interface QuoteRepository {
     orientation: 'portrait' | 'landscape',
     columnWidths: Record<string, number>
   ): Promise<Quote>;
+  /** Chỉ đọc quyền SỬA báo giá này cho người đang đăng nhập — dùng bởi trang
+   * công khai /baogia/{token} để quyết định CÓ HIỆN nút "Lưu" tuỳ chỉnh in
+   * hay không (vd Sale mở lại chính link của mình). CHỈ là lớp hiển thị —
+   * quyền THẬT vẫn do updatePrintLayoutPrefs() (can_edit_quote) tự kiểm tra
+   * lại phía backend, không tin kết quả gọi này. */
+  getQuoteEditPermission(quoteId: string): Promise<{ canEdit: boolean }>;
   /** Xoá mềm — khôi phục được qua restoreQuote(). */
   softDeleteQuote(quoteId: string, reason?: string): Promise<Quote>;
   restoreQuote(quoteId: string): Promise<Quote>;

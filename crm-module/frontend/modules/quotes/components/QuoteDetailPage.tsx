@@ -1,6 +1,6 @@
 'use client';
 
-import { Columns3, Printer, RectangleHorizontal, RectangleVertical, RotateCcw, Save } from 'lucide-react';
+import { Columns3, Printer, RectangleHorizontal, RectangleVertical, RotateCcw } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useEffect, useState } from 'react';
@@ -9,6 +9,7 @@ import { seedingQuoteRepository } from '../repositories/SeedingQuoteRepository';
 import type { Quote } from '../types';
 import { buildPublicQuoteUrl } from '../utils/publicQuoteUrl';
 import { QuoteDocumentRenderer } from './QuoteDocumentRenderer';
+import { QuotePrintLayoutSaveButton } from './QuotePrintLayoutSaveButton';
 import { TelegramSendButton } from './TelegramSendButton';
 
 interface Props {
@@ -35,7 +36,6 @@ export function QuoteDetailPage({ quoteId }: Props) {
   // null = chưa từng resize (dùng % mặc định, không có gì để lưu ngoài
   // orientation).
   const [columnWidthsDraft, setColumnWidthsDraft] = useState<Record<string, number> | null>(null);
-  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   // Trang này thường mở từ nút "Mở báo giá" trong Drawer chi tiết deal (CRM) -
   // giữ dealId trên URL để "Quay lại" mở đúng lại drawer deal đó, thay vì về
   // trang danh sách báo giá chung chung (mất hết ngữ cảnh đang xem deal nào).
@@ -67,21 +67,6 @@ export function QuoteDetailPage({ quoteId }: Props) {
   function resetColumnWidths() {
     setColumnWidthsDraft(null);
     setPrintResetKey(key => key + 1);
-    setSaveStatus('idle');
-  }
-
-  async function savePrintLayoutPrefs() {
-    if (!quote) return;
-    setSaveStatus('saving');
-    try {
-      const updated = await seedingQuoteRepository.updatePrintLayoutPrefs(quote.id, printOrientation, columnWidthsDraft || {});
-      setQuote(updated);
-      setSaveStatus('saved');
-      setTimeout(() => setSaveStatus(current => (current === 'saved' ? 'idle' : current)), 2000);
-    } catch (err) {
-      setSaveStatus('error');
-      window.alert(err instanceof Error ? err.message : 'Không lưu được tuỳ chỉnh in.');
-    }
   }
 
   async function createVersion() {
@@ -156,20 +141,14 @@ export function QuoteDetailPage({ quoteId }: Props) {
           <button
             type="button"
             className={`quote-print-preview-btn${printOrientation === 'portrait' ? ' is-active' : ''}`}
-            onClick={() => {
-              setPrintOrientation('portrait');
-              setSaveStatus('idle');
-            }}
+            onClick={() => setPrintOrientation('portrait')}
           >
             <RectangleVertical className="quote-print-preview-icon" /> Dọc
           </button>
           <button
             type="button"
             className={`quote-print-preview-btn${printOrientation === 'landscape' ? ' is-active' : ''}`}
-            onClick={() => {
-              setPrintOrientation('landscape');
-              setSaveStatus('idle');
-            }}
+            onClick={() => setPrintOrientation('landscape')}
           >
             <RectangleHorizontal className="quote-print-preview-icon" /> Ngang
           </button>
@@ -185,16 +164,12 @@ export function QuoteDetailPage({ quoteId }: Props) {
         <button type="button" className="quote-print-preview-btn quote-print-preview-btn--primary" onClick={() => window.print()}>
           <Printer className="quote-print-preview-icon" /> In / Tải PDF
         </button>
-        <button
-          type="button"
-          className="quote-print-preview-btn quote-print-preview-btn--primary"
-          disabled={saveStatus === 'saving'}
-          title="Lưu hướng giấy + độ rộng cột hiện tại để lần in/tải PDF sau (kể cả người khác mở lại link) dùng đúng bản đã chỉnh"
-          onClick={() => void savePrintLayoutPrefs()}
-        >
-          <Save className="quote-print-preview-icon" />
-          {saveStatus === 'saving' ? 'Đang lưu...' : saveStatus === 'saved' ? 'Đã lưu' : 'Lưu'}
-        </button>
+        <QuotePrintLayoutSaveButton
+          quoteId={quote.id}
+          printOrientation={printOrientation}
+          columnWidthsDraft={columnWidthsDraft}
+          onSaved={setQuote}
+        />
       </div>
       <p className="quote-print-preview-hint no-print">
         <Columns3 className="quote-print-preview-icon" /> Rê chuột tới viền phải tiêu đề cột rồi kéo để chỉnh độ rộng — độ rộng này sẽ
@@ -248,7 +223,6 @@ export function QuoteDetailPage({ quoteId }: Props) {
           initialColumnWidths={columnWidthsDraft}
           onColumnWidthsChange={widths => {
             setColumnWidthsDraft(widths);
-            setSaveStatus('idle');
           }}
           contactPersonName={quote.quoteOwnerName}
         />

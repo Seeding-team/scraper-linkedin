@@ -9,6 +9,7 @@ export { QuoteDocumentRenderer } from './components/QuoteDocumentRenderer';
 export type { Totals as QuoteDocumentTotals } from './components/QuoteDocumentRenderer';
 export { QuoteFormFiller } from './components/QuoteFormFiller';
 export { TelegramSendButton } from './components/TelegramSendButton';
+export { QuotePrintLayoutSaveButton } from './components/QuotePrintLayoutSaveButton';
 export { IssuerCompanyAdminPage } from './components/IssuerCompanyAdminPage';
 export type { QuoteFillValue } from './components/QuoteFormFiller';
 export { seedingQuoteRepository, QuoteApprovalRequiresExceptionError } from './repositories/SeedingQuoteRepository';

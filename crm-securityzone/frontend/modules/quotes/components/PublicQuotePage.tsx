@@ -2,10 +2,12 @@
 
 import { Columns3, Printer, RectangleHorizontal, RectangleVertical, RotateCcw } from 'lucide-react';
 import { useEffect, useState } from 'react';
+import { useAppAuth } from '@/contexts/AppAuthContext';
 import { QUOTE_STATUS_LABELS } from '../constants/quoteConfig';
 import { QuotePublicVerificationRequiredError, seedingQuoteRepository } from '../repositories/SeedingQuoteRepository';
 import type { Quote } from '../types';
 import { QuoteDocumentRenderer } from './QuoteDocumentRenderer';
+import { QuotePrintLayoutSaveButton } from './QuotePrintLayoutSaveButton';
 
 /** "Giới hạn xem link báo giá bằng Email hoặc Số điện thoại" (migration 118) -
  * giá trị xác minh đúng được nhớ theo TỪNG token + method (mỗi báo giá 1 link
@@ -60,13 +62,19 @@ export function PublicQuotePage({ token }: Props) {
   // thich --col-print-w trong QuoteDocumentRenderer.tsx/quotes.css).
   const [printOrientation, setPrintOrientation] = useState<'portrait' | 'landscape'>('portrait');
   const [printResetKey, setPrintResetKey] = useState(0);
-  // Khach khong co nut "Luu" (trang public khong xac thuc - xem thao luan o
-  // nut "Luu" tren QuoteDetailPage, trang NOI BO, ve ly do khong dat write o
-  // day) NHUNG van GIEO SAN huong giay + do rong cot ma Sale da "Luu" truoc
-  // do (quote.data.printLayoutPrefs) lam mac dinh khi khach mo link - dam
-  // bao ban PDF khach tu in/tai ra dung nhu Sale da can chinh san, khach van
-  // co the tu chinh tiep trong PHIEN xem cua rieng minh (khong ghi lai).
+  // Khach vang lai (khong dang nhap) KHONG co nut "Luu" - trang nay VAN GIEO
+  // SAN huong giay + do rong cot ma Sale da "Luu" truoc do
+  // (quote.data.printLayoutPrefs) lam mac dinh khi mo link - dam bao ban PDF
+  // in/tai ra dung nhu Sale da can chinh san. Rieng CHINH Sale (hoac ai co
+  // quyen sua bao gia nay) mo lai DUNG link nay bang phien dang nhap cua ho
+  // thi THAY nut "Luu" that (xem canEditPrintLayout/useAppAuth ben duoi) de
+  // chinh lai truoc khi gui khach, khong can mo rieng trang noi bo
+  // /all-platform/quotes/[id]. Khach that (khong session) khong bao gio thay
+  // nut nay - server (PUT print-layout-prefs) van tu kiem tra lai can_edit_quote,
+  // khong tin ket qua check quyen o client.
   const [columnWidthsDraft, setColumnWidthsDraft] = useState<Record<string, number> | null>(null);
+  const { isAuthenticated, isLoading: authLoading } = useAppAuth();
+  const [canEditPrintLayout, setCanEditPrintLayout] = useState(false);
 
   // KHONG con doan "doc cache truoc, gui len ngay" nhu ban cu (chi ho tro
   // email) - vi luc dau trang KHONG biet quote dang bat che do nao (co the
@@ -119,6 +127,31 @@ export function PublicQuotePage({ token }: Props) {
     loadQuote();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
+
+  // "Sale mo lai chinh link cong khai cua minh" - CHI check quyen sua khi da
+  // co quote (biet id THAT) VA da xac dinh xong trang thai dang nhap (khong
+  // goi som luc authLoading con true, tranh goi API roi lai goi lai). Khach
+  // vang lai (khong session) -> authService.me() (ben trong useAppAuth) tra
+  // ve khong dang nhap -> KHONG goi getQuoteEditPermission luon, y het hanh
+  // vi "khong lo dau hieu gi ve viec co the sua" cho khach that.
+  useEffect(() => {
+    if (!quote || authLoading || !isAuthenticated) {
+      setCanEditPrintLayout(false);
+      return;
+    }
+    let alive = true;
+    seedingQuoteRepository
+      .getQuoteEditPermission(quote.id)
+      .then(res => {
+        if (alive) setCanEditPrintLayout(Boolean(res.canEdit));
+      })
+      .catch(() => {
+        if (alive) setCanEditPrintLayout(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [quote, authLoading, isAuthenticated]);
 
   function submitVerifyGate() {
     if (!verifyGate) return;
@@ -214,6 +247,18 @@ export function PublicQuotePage({ token }: Props) {
         <button type="button" className="quote-print-preview-btn quote-print-preview-btn--primary" onClick={() => window.print()}>
           <Printer className="quote-print-preview-icon" /> In / Tải PDF
         </button>
+        {canEditPrintLayout ? (
+          <QuotePrintLayoutSaveButton
+            quoteId={quote.id}
+            printOrientation={printOrientation}
+            columnWidthsDraft={columnWidthsDraft}
+            // Khong ghi de `quote` (shape cong khai da qua allowlist) bang
+            // quote NOI BO tra ve tu endpoint luu (apply_quote_field_permissions)
+            // - chi component nay tu quan ly trang thai "Da luu", khong can
+            // cap nhat lai toan bo trang.
+            onSaved={() => {}}
+          />
+        ) : null}
       </div>
       <p className="quote-print-preview-hint no-print">
         <Columns3 className="quote-print-preview-icon" /> Rê chuột tới viền phải tiêu đề cột rồi kéo để chỉnh độ rộng — độ rộng này sẽ

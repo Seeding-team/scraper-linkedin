@@ -367,6 +367,12 @@ export class SeedingQuoteRepository implements QuoteRepository {
     });
   }
 
+  /** Nút "Lưu" trên trang public /baogia/{token} (PublicQuotePage) - chỉ đọc
+   * quyền, xem QuoteRepository.ts. */
+  async getQuoteEditPermission(quoteId: string): Promise<{ canEdit: boolean }> {
+    return apiFetch<{ canEdit: boolean }>(`/api/all-platform/quotes/${encodeURIComponent(quoteId)}/edit-permission`);
+  }
+
   async createQuote(input: CreateQuoteInput): Promise<Quote> {
     return apiFetch<Quote>('/api/all-platform/quotes', {
       method: 'POST',

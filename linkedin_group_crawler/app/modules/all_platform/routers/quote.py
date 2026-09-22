@@ -338,6 +338,25 @@ def quotes_update_print_layout_prefs(
         return BaseResponse(success=False, message=friendly_supabase_error_message(e))
 
 
+@quotes_router.get("/{quote_id}/edit-permission")
+def quotes_get_edit_permission(quote_id: str, user: dict = Depends(get_current_user)) -> BaseResponse:
+    """Chi doc quyen SUA bao gia nay cho nguoi dang dang nhap - dung boi trang
+    cong khai /baogia/{token} (PublicQuotePage.tsx) de QUYET DINH CO HIEN nut
+    "Luu" tuy chinh in hay khong (vd Sale mo lai chinh link cua minh de chinh
+    huong giay/do rong cot truoc khi gui khach). Endpoint nay CHI la lop
+    hien-thi (client dung de an/hien nut) - quyen THAT SU van duoc chinh
+    PUT /{quote_id}/print-layout-prefs tu kiem tra lai bang can_edit_quote,
+    khong tin ket qua GET nay. 401 neu khong co session hop le (get_current_user)
+    - dung y het hanh vi "khach vang lai khong thay nut" mac dinh."""
+    try:
+        quote, lead = _load_quote_and_lead(quote_id)
+        return BaseResponse(success=True, data={"canEdit": can_edit_quote(user, quote, lead)})
+    except QuoteNotFoundError as e:
+        return _not_found_response(e)
+    except Exception as e:
+        return BaseResponse(success=False, message=friendly_supabase_error_message(e))
+
+
 @quotes_router.get("/service-catalog-options")
 def quotes_service_catalog_options(form_id: str = Query(..., alias="formId"), _user: dict = Depends(get_current_user)) -> BaseResponse:
     """Danh sách gói (bundle) + dịch vụ thành phần (component) khả dụng cho 1 mẫu
