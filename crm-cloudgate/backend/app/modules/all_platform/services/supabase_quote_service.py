@@ -475,7 +475,33 @@ def _public_item_tree(rows: list[dict]) -> list[dict]:
     """Ban sao doc lap cua _quote_item_tree() nhung dung _row_to_public_item -
     co the trung lap logic voi ham noi bo, CHU Y: co tinh, de nhanh public
     khong bao gio phu thuoc vao nhanh noi bo (sua/them field o _row_to_item
-    khong the vo tinh lam lo field moi qua duong nay)."""
+    khong the vo tinh lam lo field moi qua duong nay).
+
+    BUG THAT DA GAP (2026-09-22, user bao cao "Chưa có hạng mục báo giá"
+    du bao gia co tong tien > 0): than ham nay bi tach doi trong 1 lan sua
+    truoc - phan logic that (mapped/by_id/roots/return) bi lac xuong duoi,
+    nam SAU return cua _infer_missing_parent_ids() (dead code khong bao gio
+    chay, chi la trung indent nen khong loi cu phap), khien ham nay chi con
+    docstring -> Python tu tra ve None ngam dinh. API public
+    (get_public_quote) tra thang "items": None cho MOI bao gia, FE phai tu
+    ve chan (xem QuoteDocumentRenderer.tsx) nhung khach hang mat het bang
+    hang muc that. Ghep lai dung logic (giong het cau truc
+    _quote_item_tree() ben duoi, chi khac _row_to_public_item thay
+    _row_to_item)."""
+    mapped = _infer_missing_parent_ids([_row_to_public_item(row) for row in rows])
+    by_id = {item["id"]: item for item in mapped if item.get("id")}
+    roots: list[dict] = []
+    for item in mapped:
+        parent_id = item.get("parentItemId")
+        if parent_id and parent_id in by_id:
+            by_id[parent_id].setdefault("children", []).append(item)
+        else:
+            roots.append(item)
+    for item in mapped:
+        item["children"] = sorted(item.get("children") or [], key=lambda child: child.get("sortOrder") or 0)
+    return sorted(roots, key=lambda item: item.get("sortOrder") or 0)
+
+
 def _infer_missing_parent_ids(mapped: list[dict]) -> list[dict]:
     """Doc-time normalize cho hang muc CU luu tu TRUOC khi FE co fix
     trailingParentItemId() (xem comment tren `normalizeLoadedParentIds()` trong
@@ -501,20 +527,6 @@ def _infer_missing_parent_ids(mapped: list[dict]) -> list[dict]:
         # Hang muc CO san parentItemId (kha nang do 1 lan luu that su co gia
         # tri khac 0) giu nguyen, khong ghi de - tranh sai du lieu dung.
     return mapped
-
-
-    mapped = _infer_missing_parent_ids([_row_to_public_item(row) for row in rows])
-    by_id = {item["id"]: item for item in mapped if item.get("id")}
-    roots: list[dict] = []
-    for item in mapped:
-        parent_id = item.get("parentItemId")
-        if parent_id and parent_id in by_id:
-            by_id[parent_id].setdefault("children", []).append(item)
-        else:
-            roots.append(item)
-    for item in mapped:
-        item["children"] = sorted(item.get("children") or [], key=lambda child: child.get("sortOrder") or 0)
-    return sorted(roots, key=lambda item: item.get("sortOrder") or 0)
 
 
 def _public_data_allowlist(data: dict, form_snapshot: dict) -> dict:
