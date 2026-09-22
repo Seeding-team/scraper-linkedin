@@ -7,7 +7,7 @@ import { createPortal } from 'react-dom';
 import type { ReactNode } from 'react';
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
 import type { IssuerCompany, QuoteForm } from '@/modules/quotes';
-import { seedingQuoteRepository, TelegramSendButton } from '@/modules/quotes';
+import { seedingQuoteRepository, TelegramSendButton, buildPublicQuoteUrl } from '@/modules/quotes';
 import type { Quote } from '@/modules/quotes';
 import { buildDealPayload, dealFormFromDeal, emptyDealForm } from '../../components/DealFormFields';
 import type { DealFormState } from '../../components/DealFormFields';
@@ -992,15 +992,16 @@ function QuoteSuccessPanel({
   onApproveNow: () => void;
 }) {
   const isApproved = quote.status === 'approved' && Boolean(quote.publicUrl);
-  const publicFullUrl = quote.publicUrl && typeof window !== 'undefined' ? `${window.location.origin}${quote.publicUrl}` : '';
+  const publicFullUrl = buildPublicQuoteUrl(quote.publicUrl) || '';
 
   async function copyLink() {
     if (!publicFullUrl) return;
     await navigator.clipboard.writeText(publicFullUrl);
   }
   function openPdf() {
-    if (!publicFullUrl) return;
-    window.open(`${publicFullUrl}?print=true`, '_blank', 'noopener');
+    const printUrl = buildPublicQuoteUrl(quote.publicUrl, { print: true });
+    if (!printUrl) return;
+    window.open(printUrl, '_blank', 'noopener');
   }
   const mailtoHref = publicFullUrl
     ? `mailto:${customerEmail || ''}?subject=${encodeURIComponent(`Báo giá ${quote.quoteNumber}`)}&body=${encodeURIComponent(`Kính gửi Quý khách,\n\nMời Quý khách xem báo giá tại: ${publicFullUrl}\n\nTrân trọng.`)}`

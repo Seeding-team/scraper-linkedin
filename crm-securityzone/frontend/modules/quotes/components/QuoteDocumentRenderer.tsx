@@ -91,6 +91,18 @@ interface Props {
    * dọc, không tự đổi hướng"). Người dùng chọn 'landscape' ở màn Xem trước khi
    * in (xem usesLandscapePrint bên dưới - trước đây luôn hardcode false). */
   printOrientation?: 'portrait' | 'landscape';
+  /** Do rong cot da LUU truoc do (quoteData.printLayoutPrefs.columnWidths,
+   * nut "Lưu" tren QuoteDetailPage) - dung lam gia tri KHOI TAO cho
+   * resizedColumnWidths thay vi luon bat dau lai tu null (mac dinh %) moi
+   * lan mo trang. Chi doc 1 LAN luc mount (component nay khong tu dong
+   * "nhay" lai theo prop thay doi sau do - doi voi cha muon reset ve gia tri
+   * moi thi remount qua `key`, giong het co che printResetKey da co). */
+  initialColumnWidths?: Record<string, number> | null;
+  /** Bao cho noi goi biet resizedColumnWidths vua doi (moi lan keo xong 1
+   * cot, tren mouseup) - dung de cha giu ban nhap moi nhat, phuc vu nut
+   * "Lưu" (persist xuong DB) tren QuoteDetailPage. KHONG tu goi luc mount
+   * neu chua ai resize. */
+  onColumnWidthsChange?: (widths: Record<string, number>) => void;
   /** "Người liên hệ" trong khối "Người phụ trách" PHẢI là Sale đang được gán
    * (quote.quoteOwnerId), KHÔNG dùng field tự do sellerContactName nữa (field
    * đó có defaultValue cứng "Lan Anh" - đúng bug "tên mặc định" người dùng
@@ -335,14 +347,19 @@ export function QuoteDocumentRenderer({
   overallDiscountPercent = null,
   printPreviewMode = false,
   printOrientation = 'portrait',
+  initialColumnWidths = null,
+  onColumnWidthsChange,
   contactPersonName,
 }: Props) {
   // Resize cot bang hang muc kieu Excel - CHI cho man hinh xem truoc/chi tiet
   // noi bo (mode 'preview'/'detail', xem allowColumnResize ben duoi), KHONG
   // anh huong ban in/PDF (@media print da ep width qua !important nen inline
   // style o day luon bi ghi de luc in, xem quotes.css) va KHONG hien cho
-  // khach (mode 'public'). null = chua ai resize, dung CSS mac dinh (%).
-  const [resizedColumnWidths, setResizedColumnWidths] = useState<Record<string, number> | null>(null);
+  // khach (mode 'public'). null = chua ai resize, dung CSS mac dinh (%) - tru
+  // khi da co initialColumnWidths luu tu truoc (nut "Lưu").
+  const [resizedColumnWidths, setResizedColumnWidths] = useState<Record<string, number> | null>(
+    initialColumnWidths && Object.keys(initialColumnWidths).length ? initialColumnWidths : null
+  );
   const headerRowRef = useRef<HTMLTableRowElement | null>(null);
   const resizeDragRef = useRef<{ key: string; startX: number; startWidth: number } | null>(null);
 
@@ -377,6 +394,15 @@ export function QuoteDocumentRenderer({
       resizeDragRef.current = null;
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
+      // Bao cho cha biet ban nhap moi nhat NGAY khi tha chuot (khong doi re-render
+      // tiep theo) - doc thang tu state qua updater rong de luon lay dung gia tri
+      // cuoi cung, tranh closure resizedColumnWidths cu tu luc beginColumnResize.
+      if (onColumnWidthsChange) {
+        setResizedColumnWidths(current => {
+          if (current) onColumnWidthsChange(current);
+          return current;
+        });
+      }
     };
     window.addEventListener('mousemove', handleMouseMove);
     window.addEventListener('mouseup', handleMouseUp);

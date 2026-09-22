@@ -135,21 +135,39 @@ export function applyIssuerCompanySnapshot(data: QuoteData, issuerCompany: Issue
   });
 }
 
-/** (I) "Điều khoản thanh toán" mặc định của Đơn vị phát hành - SNAPSHOT 1 LẦN
- * vào custom block 'payment_terms' của báo giá - CHỈ gọi trong
- * quoteDraftFromForm (tạo báo giá MỚI hoàn toàn), KHÔNG gọi cùng
- * applyIssuerCompanySnapshot ở CreateQuoteModal.tsx (2 chỗ re-apply khi đổi
- * công ty phát hành ở Bước 2 sau khi đã khởi tạo/đang sửa quote đã tồn tại) -
- * tránh ghi đè nội dung Sale đã tự gõ tay hoặc snapshot cũ của báo giá đã
- * duyệt trước đó. Không làm gì nếu issuer không có payment_terms, hoặc quote
- * đã có sẵn 1 block 'payment_terms' CÓ nội dung (tôn trọng nội dung đã có,
- * dù đến từ đâu). */
+// BUG THAT DA GAP (fix 2026-09-22): QuoteWorkspaceModal.createRequest() (va
+// draftPreviewData) LUON tu seed san 1 block 'payment_terms' voi noi dung
+// dang "Thanh toán trong {N} ngày kể từ ngày duyệt báo giá." (N tu dropdown
+// "Thanh toán" 15/30/45/60, mac dinh '30') NGAY LUC TAO quote, KE CA khi
+// Sale chua he dung toi dropdown do - tuc MOI quote tao qua Workspace deu co
+// san 1 block "co noi dung" truoc khi applyIssuerPaymentTermsSnapshot() duoc
+// goi. Guard cu `if (existing && existing.content.trim()) return;` vi vay
+// LUON đúng => Điều khoản thanh toán mặc định của Đơn vị phát hành KHONG BAO
+// GIO duoc ap dung duoc trong thuc te (nguoi dung bao "thêm đk thanh toán
+// rồi mà trong báo giá chưa hiện" - day chinh la nguyen nhan, khong phai do
+// timing tao quote truoc/sau khi set payment_terms). Sua: chi coi la "Sale
+// da tu go/tuy chinh that" (KHONG duoc ghi de) neu noi dung KHONG khop dung
+// mau tu-dong-sinh boi dropdown o tren - mau boilerplate nay khong phai
+// "noi dung nguoi dung nhap", nen an toan de ghi de bang Dieu khoan mac dinh
+// that su cua issuer.
+const AUTO_GENERATED_PAYMENT_TERMS_PATTERN = /^Thanh toán trong \d+ ngày kể từ ngày duyệt báo giá\.$/;
+
+/** (I) "Điều khoản thanh toán" mặc định của Đơn vị phát hành - SNAPSHOT vào
+ * custom block 'payment_terms' của báo giá. Goi khi: (1) tao quote MOI
+ * (quoteDraftFromForm, QuoteWorkspaceModal.createRequest), (2) Sale
+ * chon/doi Đơn vị phát hành cho 1 quote DA TON TAI (updateQuoteIssuerCompany
+ * trong QuoteWorkspaceModal.tsx) - CA 2 truong hop deu an toan nho guard
+ * ben duoi: KHONG lam gi neu issuer khong co payment_terms, hoac quote đã có
+ * sẵn 1 block 'payment_terms' co noi dung THAT SU do Sale tu go (khac mau
+ * tu-dong-sinh o tren) - tôn trọng nội dung Sale đã tự nhập/snapshot cũ của
+ * báo giá đã duyệt trước đó, dù đến từ đâu). */
 export function applyIssuerPaymentTermsSnapshot(data: QuoteData, issuerCompany: IssuerCompany): void {
   const defaultTerms = issuerCompany.paymentTerms?.trim();
   if (!defaultTerms) return;
   const blocks = Array.isArray(data.customBlocks) ? data.customBlocks : [];
   const existing = blocks.find(block => block.kind === 'payment_terms');
-  if (existing && existing.content.trim()) return;
+  const existingContent = existing?.content.trim() || '';
+  if (existingContent && !AUTO_GENERATED_PAYMENT_TERMS_PATTERN.test(existingContent)) return;
   const seededBlock: CustomBlock = {
     id: existing?.id || `custom-${Date.now()}-payment_terms`,
     kind: 'payment_terms',

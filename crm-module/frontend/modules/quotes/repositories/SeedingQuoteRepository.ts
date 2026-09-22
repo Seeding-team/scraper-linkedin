@@ -354,6 +354,19 @@ export class SeedingQuoteRepository implements QuoteRepository {
     });
   }
 
+  /** Nút "Lưu" ở toolbar in trên QuoteDetailPage (trang nội bộ đã đăng nhập)
+   * - xem QuoteRepository.ts. */
+  async updatePrintLayoutPrefs(
+    quoteId: string,
+    orientation: 'portrait' | 'landscape',
+    columnWidths: Record<string, number>
+  ): Promise<Quote> {
+    return apiFetch<Quote>(`/api/all-platform/quotes/${encodeURIComponent(quoteId)}/print-layout-prefs`, {
+      method: 'PUT',
+      body: JSON.stringify({ orientation, column_widths: columnWidths }),
+    });
+  }
+
   async createQuote(input: CreateQuoteInput): Promise<Quote> {
     return apiFetch<Quote>('/api/all-platform/quotes', {
       method: 'POST',

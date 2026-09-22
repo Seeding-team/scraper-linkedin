@@ -80,6 +80,7 @@ from app.modules.all_platform.services.supabase_quote_service import (
     revoke_public_quote,
     enable_public_quote,
     set_public_access_restriction,
+    set_print_layout_prefs,
     PublicQuoteVerificationRequiredError,
     soft_delete_quote,
     restore_quote,

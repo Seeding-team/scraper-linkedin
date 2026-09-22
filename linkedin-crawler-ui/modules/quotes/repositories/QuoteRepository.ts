@@ -92,6 +92,14 @@ export interface QuoteRepository {
     allowedEmails: string[],
     allowedPhones: string[]
   ): Promise<Quote>;
+  /** Nút "Lưu" ở toolbar in (hướng giấy + độ rộng cột đã kéo tay) trên
+   * QuoteDetailPage — trang NỘI BỘ đã đăng nhập. Chỉ ghi đúng 1 khoá
+   * `data.printLayoutPrefs`, không đụng giá/khách hàng/hạng mục. */
+  updatePrintLayoutPrefs(
+    quoteId: string,
+    orientation: 'portrait' | 'landscape',
+    columnWidths: Record<string, number>
+  ): Promise<Quote>;
   /** Xoá mềm — khôi phục được qua restoreQuote(). */
   softDeleteQuote(quoteId: string, reason?: string): Promise<Quote>;
   restoreQuote(quoteId: string): Promise<Quote>;

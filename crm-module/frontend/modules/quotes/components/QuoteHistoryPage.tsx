@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react';
 import { seedingQuoteRepository } from '../repositories/SeedingQuoteRepository';
 import { internalQuoteStatusClass, internalQuoteStatusLabel } from '../constants/quoteConfig';
 import { formatVnd } from '../utils/quoteCalculations';
+import { buildPublicQuoteUrl } from '../utils/publicQuoteUrl';
 import type { Quote } from '../types';
 import { ActionMenu } from '../../crm/components/ActionMenu';
 
@@ -59,9 +60,7 @@ export function QuoteHistoryPage() {
   }, []);
 
   async function copyLink(quote: Quote) {
-    const link = quote.publicUrl
-      ? `${window.location.origin}${quote.publicUrl}`
-      : `${window.location.origin}/all-platform/quotes/${quote.id}`;
+    const link = buildPublicQuoteUrl(quote.publicUrl) || `${window.location.origin}/all-platform/quotes/${quote.id}`;
     await navigator.clipboard.writeText(link);
   }
 

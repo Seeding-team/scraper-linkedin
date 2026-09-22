@@ -61,6 +61,7 @@ from app.modules.all_platform.schemas.quote import (
     QuoteRequestChangesRequest,
     QuoteApproveRequest,
     QuotePublicAccessRestrictionUpdateRequest,
+    QuotePrintLayoutPrefsUpdateRequest,
     IssuerCompanyCreateRequest,
     IssuerCompanyUpdateRequest,
 )

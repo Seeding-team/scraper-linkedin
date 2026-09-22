@@ -219,6 +219,19 @@ class QuotePublicAccessRestrictionUpdateRequest(BaseModel):
     allowed_phones: list[str] = []
 
 
+class QuotePrintLayoutPrefsUpdateRequest(BaseModel):
+    """Nut "Lưu" o toolbar in (huong giay + do rong cot da keo tay) tren
+    QuoteDetailPage - trang NOI BO da dang nhap (KHONG phai trang public
+    khong xac thuc /baogia/[token] - xem thao luan trong PublicQuotePage.tsx).
+    Endpoint chi ghi DUNG 1 khoa `data.printLayoutPrefs`, khong dung RPC
+    quote_update (RPC do recompute lai toan bo p_items/tong tien, thua va co
+    rui ro cho thao tac chi luu 1 tuy chinh hien thi nay) - xem
+    set_print_layout_prefs. `column_widths`: map { columnKey: widthPx }."""
+
+    orientation: str
+    column_widths: dict[str, float] = {}
+
+
 class QuoteHardDeleteRequest(BaseModel):
     """Xac nhan hard-delete - client PHAI gui lai quote_number that (backend
     doi chieu voi ban ghi that truoc khi xoa, khong chi tin ID)."""

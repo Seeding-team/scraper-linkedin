@@ -29,6 +29,7 @@ from app.modules.all_platform.schemas import (
     QuoteRequestChangesRequest,
     QuoteApproveRequest,
     QuotePublicAccessRestrictionUpdateRequest,
+    QuotePrintLayoutPrefsUpdateRequest,
     QuoteFormCatalogLinksSetRequest,
     IssuerCompanyCreateRequest,
     IssuerCompanyUpdateRequest,
@@ -41,6 +42,7 @@ from app.modules.all_platform.services import (
     revoke_public_quote,
     enable_public_quote,
     set_public_access_restriction,
+    set_print_layout_prefs,
     PublicQuoteVerificationRequiredError,
     soft_delete_quote,
     restore_quote,
@@ -302,6 +304,32 @@ def quotes_update_public_access_restriction(
             quote_id, user.get("id"), payload.mode, payload.allowed_emails, payload.allowed_phones
         )
         return BaseResponse(success=True, message="Đã lưu cấu hình giới hạn xem link", data=data)
+    except QuoteNotFoundError as e:
+        return _not_found_response(e)
+    except ValueError as e:
+        return BaseResponse(success=False, message=str(e))
+    except Exception as e:
+        return BaseResponse(success=False, message=friendly_supabase_error_message(e))
+
+
+@quotes_router.put("/{quote_id}/print-layout-prefs")
+def quotes_update_print_layout_prefs(
+    quote_id: str, payload: QuotePrintLayoutPrefsUpdateRequest, user: dict = Depends(get_current_user)
+) -> BaseResponse:
+    """Nut "Lưu" o toolbar in (huong giay doc/ngang + do rong cot da keo tay)
+    tren QuoteDetailPage - trang NOI BO da dang nhap (KHONG phai trang public
+    khong xac thuc /baogia/[token] - xem thao luan trong PublicQuotePage.tsx
+    ve ly do KHONG dat nut Luu o do). Dung cung quyen voi cac thao tac sua
+    bao gia khac (can_edit_quote) - endpoint nay CHI ghi dung 1 khoa
+    `data.printLayoutPrefs` (xem set_print_layout_prefs), KHONG the dung de
+    sua gia/khach hang/hang muc/duyet du payload co gui them field nao khac
+    (QuotePrintLayoutPrefsUpdateRequest chi khai bao dung 2 field)."""
+    try:
+        quote, lead = _load_quote_and_lead(quote_id)
+        if not can_edit_quote(user, quote, lead):
+            return BaseResponse(success=False, message="Không có quyền sửa báo giá này")
+        data = set_print_layout_prefs(quote_id, user.get("id"), payload.orientation, payload.column_widths)
+        return BaseResponse(success=True, message="Đã lưu tùy chỉnh in", data=apply_quote_field_permissions(data, user))
     except QuoteNotFoundError as e:
         return _not_found_response(e)
     except ValueError as e:

@@ -6,7 +6,7 @@ import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { useAppAuth } from '@/contexts/AppAuthContext';
 import { teamsService, type TeamRow, projectsService, type Project, usersService, type QuoteBusinessRoleUser, allPlatformCategoriesService } from '@/services/all-platform.service';
 import { computeQuoteSla } from '../utils/quoteSla';
-import { seedingQuoteRepository } from '@/modules/quotes';
+import { seedingQuoteRepository, buildPublicQuoteUrl } from '@/modules/quotes';
 import type { IssuerCompany, Quote, QuoteForm, QuotePhase, QuotesByPhaseResult } from '@/modules/quotes';
 import { seedingContractRepository } from '@/modules/contracts';
 import type { Contract } from '@/modules/contracts';
@@ -781,8 +781,9 @@ export function QuoteCenterPage() {
   }
 
   async function copyPublicLink(row: QuoteChainRow) {
-    if (!row.current.publicUrl) return;
-    await navigator.clipboard.writeText(`${window.location.origin}${row.current.publicUrl}`);
+    const url = buildPublicQuoteUrl(row.current.publicUrl);
+    if (!url) return;
+    await navigator.clipboard.writeText(url);
   }
 
   const [versionHistory, setVersionHistory] = useState<{ open: boolean; loading: boolean; quoteNumber: string; versions: Quote[] }>({

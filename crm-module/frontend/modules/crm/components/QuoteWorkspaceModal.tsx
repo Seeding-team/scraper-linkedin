@@ -3,7 +3,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { API_BASE_URL, API_KEY } from '@/lib/env';
-import { seedingQuoteRepository, QuoteApprovalRequiresExceptionError, QuoteDocumentRenderer } from '@/modules/quotes';
+import { seedingQuoteRepository, QuoteApprovalRequiresExceptionError, QuoteDocumentRenderer, buildPublicQuoteUrl } from '@/modules/quotes';
 import type { Quote, QuoteActivityLogEntry, QuoteHandoffChecklist, QuoteItem, QuoteProcessingStage, QuoteApprovalRuleSet, QuoteApprovalRuleType, QuoteRuleEvaluation, QuoteDeliveryLogEntry, QuoteForm, QuoteData, IssuerCompany } from '@/modules/quotes';
 import type { ContactOption } from './dealHydration';
 import { applyIssuerCompanySnapshot, applyIssuerPaymentTermsSnapshot } from '../integrations/quotes/types';
@@ -2128,7 +2128,15 @@ export function QuoteWorkspaceModal({
 
   async function persistQuote(overrides: { data?: Quote['data']; items?: QuoteItem[]; overallDiscountPercent?: number | null; quoteTypeCodes?: string[] }, opts?: { silent?: boolean }) {
     if (!quote) return;
-    if (opts?.silent) return;
+    // BUG THAT DA GAP (fix 2026-09-22, xem commit e38f1635 "stabilize pricing
+    // draft behavior" 2026-09-20): 1 dong `if (opts?.silent) return;` bi
+    // chen NHAM ngay truoc check dung ben duoi, khien MOI cuoc goi silent
+    // (autosave ngam onBlur cua Mo ta/SL/Gia von/Markup/keo-tha hang muc/sua
+    // Custom block/doi Du an...) tren TOAN BO Workspace bi no-op tu do den
+    // gio - go/sua xong roi rot khoi o KHONG con luu xuong DB nua (chi con
+    // luu duoc khi bam nut "Lưu thay đổi" chinh, la nut goi persistQuote()
+    // KHONG silent). Da xoa dong thua, chi giu lai check dung ben duoi (chan
+    // rieng truong hop dang co "y dinh dong modal").
     // BUG THAT DA GAP ("sua nham 1 o roi bam X dong luon van bi luu"): moi o
     // sua trong bang hang muc (Markup/Gia von/Gia khach/Mo ta/SL...) deu
     // auto-save NGAM qua onBlur - khi bam nut Dong (X)/Huy/"← Danh sách", trinh
@@ -3840,6 +3848,40 @@ export function QuoteWorkspaceModal({
     }
   }
 
+  // BUG THAT DA GAP (fix 2026-09-22): "Đơn vị phát hành" tren 1 quote DA TON
+  // TAI truoc gio LUON bi khoa (dropdown disabled) - ke ca khi quote chua he
+  // co issuer nao (tao TRUOC khi tinh nang nay ton tai, issuerCompanyId
+  // NULL) - nguoi dung KHONG CO CACH nao gan issuer cho cac quote cu nay.
+  // Mirror dung pattern updateQuoteProject() o tren (cho phep sua khi
+  // `isDraft && canEdit`, xem cho goi ham nay trong JSX ben duoi). Luon ap
+  // lai applyIssuerCompanySnapshot + applyIssuerPaymentTermsSnapshot moi lan
+  // chon/doi issuer - AN TOAN du quote da co issuer khac tu truoc, vi
+  // applyIssuerPaymentTermsSnapshot() (types.ts) CHI ghi de block
+  // 'payment_terms' khi no dang RONG hoac dang la mau tu-dong-sinh boi
+  // dropdown "Thanh toán X ngày" (khong phai noi dung Sale tu go that su).
+  async function updateQuoteIssuerCompany(issuerCompanyId: string) {
+    setBusy(true);
+    try {
+      const company = issuerCompanies.find(c => c.id === issuerCompanyId) || null;
+      let dataOverride: Quote['data'] | undefined;
+      if (company) {
+        const nextData = deepClone(quote!.data) || {};
+        applyIssuerCompanySnapshot(nextData, company);
+        applyIssuerPaymentTermsSnapshot(nextData, company);
+        dataOverride = nextData;
+      }
+      await seedingQuoteRepository.updateQuote(quote!.id, {
+        issuerCompanyId,
+        ...(dataOverride ? { data: dataOverride } : {}),
+      });
+      await reload();
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : 'Không gán được đơn vị phát hành.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function updateQuoteProject(projectId: string) {
     setBusy(true);
     try {
@@ -4064,14 +4106,16 @@ export function QuoteWorkspaceModal({
   }
 
   async function copyPublicLink() {
-    if (!quote!.publicUrl) return;
-    await navigator.clipboard.writeText(`${window.location.origin}${quote!.publicUrl}`);
+    const url = buildPublicQuoteUrl(quote!.publicUrl);
+    if (!url) return;
+    await navigator.clipboard.writeText(url);
     showToast(true, 'Đã sao chép link báo giá.');
   }
 
   function printPublicQuotePdf() {
-    if (!quote!.publicUrl) return;
-    window.open(`${window.location.origin}${quote!.publicUrl}?print=true`, '_blank', 'noopener,noreferrer');
+    const url = buildPublicQuoteUrl(quote!.publicUrl, { print: true });
+    if (!url) return;
+    window.open(url, '_blank', 'noopener,noreferrer');
   }
 
   // "Khoá link báo giá" - yeu cau rieng "gui khach xong lam sao khoa link lai
@@ -4729,6 +4773,14 @@ export function QuoteWorkspaceModal({
               <SearchableSelect
                 value={draftIssuerCompanyIdOverride || draftCatalogIssuerCompanyId || ''}
                 onChange={value => { setDraftIssuerCompanyIdOverride(value); if (value) clearRequiredError('issuerCompany'); }}
+                options={issuerCompanies.map(company => ({ value: company.id, label: company.brandName || company.legalName }))}
+                placeholder="Chọn đơn vị phát hành..."
+                hideClearOption
+              />
+            ) : isDraft && canEdit ? (
+              <SearchableSelect
+                value={quote.issuerCompanyId || ''}
+                onChange={value => { if (value) void updateQuoteIssuerCompany(value); }}
                 options={issuerCompanies.map(company => ({ value: company.id, label: company.brandName || company.legalName }))}
                 placeholder="Chọn đơn vị phát hành..."
                 hideClearOption
@@ -7196,7 +7248,7 @@ export function QuoteWorkspaceModal({
 
                 <div className="qc-workspace-preview-modal-row">
                   <span className="qc-workspace-info-label">Public link</span>
-                  <a href={quote.publicUrl || '#'} target="_blank" rel="noreferrer">{quote.publicUrl}</a>
+                  <a href={buildPublicQuoteUrl(quote.publicUrl) || '#'} target="_blank" rel="noreferrer">{buildPublicQuoteUrl(quote.publicUrl)}</a>
                 </div>
 
                 <label className="qc-workspace-checklist-item" style={{ marginTop: 8 }}>
@@ -7348,7 +7400,7 @@ export function QuoteWorkspaceModal({
             <div className="qc-workspace-preview-modal-row">
               <span className="qc-workspace-info-label">Public link</span>
               {quote.publicUrl ? (
-                <strong>Đã bật — {window.location.origin}{quote.publicUrl}</strong>
+                <strong>Đã bật — {buildPublicQuoteUrl(quote.publicUrl)}</strong>
               ) : (
                 <strong>Chưa bật</strong>
               )}

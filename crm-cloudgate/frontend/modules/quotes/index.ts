@@ -24,4 +24,5 @@ export type {
   QuoteRuleEvaluation,
 } from './repositories/QuoteRepository';
 export { calculateQuoteTotals, calculateVillaTotals, calculateOverallDiscountSummary } from './utils/quoteCalculations';
+export { buildPublicQuoteUrl, extractPublicQuoteToken, PUBLIC_QUOTE_BASE_URL, CRM_INSTANCE } from './utils/publicQuoteUrl';
 export type * from './types';

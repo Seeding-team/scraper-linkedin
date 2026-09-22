@@ -60,6 +60,13 @@ export function PublicQuotePage({ token }: Props) {
   // thich --col-print-w trong QuoteDocumentRenderer.tsx/quotes.css).
   const [printOrientation, setPrintOrientation] = useState<'portrait' | 'landscape'>('portrait');
   const [printResetKey, setPrintResetKey] = useState(0);
+  // Khach khong co nut "Luu" (trang public khong xac thuc - xem thao luan o
+  // nut "Luu" tren QuoteDetailPage, trang NOI BO, ve ly do khong dat write o
+  // day) NHUNG van GIEO SAN huong giay + do rong cot ma Sale da "Luu" truoc
+  // do (quote.data.printLayoutPrefs) lam mac dinh khi khach mo link - dam
+  // bao ban PDF khach tu in/tai ra dung nhu Sale da can chinh san, khach van
+  // co the tu chinh tiep trong PHIEN xem cua rieng minh (khong ghi lai).
+  const [columnWidthsDraft, setColumnWidthsDraft] = useState<Record<string, number> | null>(null);
 
   // KHONG con doan "doc cache truoc, gui len ngay" nhu ban cu (chi ho tro
   // email) - vi luc dau trang KHONG biet quote dang bat che do nao (co the
@@ -81,6 +88,11 @@ export function PublicQuotePage({ token }: Props) {
         setError('');
         if (explicit) writeCachedVerification(token, explicit.method, explicit.value);
         document.title = row.quoteNumber ? `Bao-gia-${row.quoteNumber}` : 'Báo giá';
+        const prefs = row.data.printLayoutPrefs;
+        if (prefs) {
+          setPrintOrientation(prefs.orientation);
+          setColumnWidthsDraft(prefs.columnWidths && Object.keys(prefs.columnWidths).length ? prefs.columnWidths : null);
+        }
       })
       .catch(err => {
         if (err instanceof QuotePublicVerificationRequiredError) {
@@ -192,7 +204,10 @@ export function PublicQuotePage({ token }: Props) {
           type="button"
           className="quote-print-preview-btn"
           title="Kéo viền phải mỗi cột trong bảng để chỉnh độ rộng, sau đó bấm In"
-          onClick={() => setPrintResetKey(key => key + 1)}
+          onClick={() => {
+            setColumnWidthsDraft(null);
+            setPrintResetKey(key => key + 1);
+          }}
         >
           <RotateCcw className="quote-print-preview-icon" /> Đặt lại độ rộng cột
         </button>
@@ -229,6 +244,8 @@ export function PublicQuotePage({ token }: Props) {
           overallDiscountPercent={quote.overallDiscountPercent}
           printPreviewMode
           printOrientation={printOrientation}
+          initialColumnWidths={columnWidthsDraft}
+          onColumnWidthsChange={setColumnWidthsDraft}
           contactPersonName={quote.quoteOwnerName}
         />
       </div>

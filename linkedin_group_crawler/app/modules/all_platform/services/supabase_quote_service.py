@@ -508,7 +508,17 @@ def _public_data_allowlist(data: dict, form_snapshot: dict) -> dict:
             key = field.get("key")
             if key:
                 schema_keys.add(key)
-    allowed = schema_keys | {"customBlocks", "visibleColumns", "visibleSummaryFields", "visibleCustomerFields"}
+    # "printLayoutPrefs" (huong giay + do rong cot da "Luu" tu QuoteDetailPage
+    # noi bo) la thuan tuy hien thi/in an - khong chua gia/khach hang/margin
+    # gi - an toan cho qua de trang public /baogia/[token] gieo san dung ban
+    # Sale da can chinh khi khach mo link (xem PublicQuotePage.tsx).
+    allowed = schema_keys | {
+        "customBlocks",
+        "visibleColumns",
+        "visibleSummaryFields",
+        "visibleCustomerFields",
+        "printLayoutPrefs",
+    }
     if form_snapshot.get("enableDynamicPaymentPlan"):
         allowed.add("paymentPlan")
     return {key: value for key, value in (data or {}).items() if key in allowed}
@@ -1604,6 +1614,51 @@ def set_public_access_restriction(
         "action": "public_access_restriction_updated",
         "changes": {"mode": mode, "allowed_emails": normalized_emails, "allowed_phones": normalized_phones},
     }).execute()
+    return get_quote(quote_id)
+
+
+def set_print_layout_prefs(
+    quote_id: str,
+    actor_id: str | None,
+    orientation: str,
+    column_widths: dict[str, float] | None,
+) -> dict:
+    """Nut "Lưu" o toolbar in (huong giay + do rong cot keo tay) tren
+    QuoteDetailPage - trang NOI BO da dang nhap, router da gac quyen bang
+    can_edit_quote truoc khi goi ham nay (khong danh cho trang public khong
+    xac thuc /baogia/[token], xem thao luan trong PublicQuotePage.tsx).
+    MERGE PATCH DUY NHAT 1 khoa `data.printLayoutPrefs` - UPDATE THANG cot
+    `data` (khong qua RPC quote_update, RPC do luon recompute lai toan bo
+    p_items/tong tien tu p_items nen dung cho thao tac chi luu 1 tuy chinh
+    hien thi nay la thua va co nguy co dung sai items neu quen truyen lai
+    items hien co - giong het ly do set_public_access_restriction ben tren
+    cung khong di qua RPC)."""
+    if orientation not in ("portrait", "landscape"):
+        raise ValueError("Hướng giấy không hợp lệ (phải là portrait/landscape).")
+    supabase: Client = get_supabase_client()
+    try:
+        current = (
+            supabase.table(QUOTES_TABLE)
+            .select("data")
+            .eq("id", quote_id)
+            .eq("instance", _crm_instance())
+            .is_("deleted_at", "null")
+            .single()
+            .execute()
+            .data
+        )
+    except APIError as exc:
+        if _is_zero_rows_error(exc):
+            raise QuoteNotFoundError("Không tìm thấy báo giá.") from exc
+        raise
+    new_data = dict((current or {}).get("data") or {})
+    new_data["printLayoutPrefs"] = {
+        "orientation": orientation,
+        "columnWidths": column_widths or {},
+    }
+    supabase.table(QUOTES_TABLE).update({"data": new_data, "updated_by": actor_id}).eq(
+        "id", quote_id
+    ).eq("instance", _crm_instance()).execute()
     return get_quote(quote_id)
 
 

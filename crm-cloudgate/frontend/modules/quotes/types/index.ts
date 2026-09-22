@@ -313,6 +313,16 @@ export interface QuoteData {
    * customerEmail o cung object nay - xem quoteDraftFromForm trong
    * modules/crm/integrations/quotes/types.ts. */
   customerContactId?: string;
+  /** Huong giay + do rong cot da keo tay o toolbar in, luu qua nut "Lưu"
+   * tren QuoteDetailPage (trang noi bo da dang nhap) - xem
+   * SeedingQuoteRepository.updatePrintLayoutPrefs + backend
+   * set_print_layout_prefs. columnWidths key la QuoteItemColumn['key']. KHONG
+   * duoc set tu trang public /baogia/[token] (khong xac thuc) - xem thao
+   * luan trong PublicQuotePage.tsx. */
+  printLayoutPrefs?: {
+    orientation: 'portrait' | 'landscape';
+    columnWidths?: Record<string, number>;
+  };
   [key: string]: unknown;
 }
 
