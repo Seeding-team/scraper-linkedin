@@ -913,10 +913,17 @@ export function QuoteDocumentRenderer({
           // dung field tu do/default cu - chi fallback ve fieldValue khi quote
           // THAT SU chua co Sale (contactPersonName undefined/null/rong).
           const resolvedContactName = contactPersonName || String(fieldValue('sellerContactName') || '');
+          // Rieng khoi "Người liên hệ" nay (KHONG phai header cong ty ben tren,
+          // chi o day) - fallback ve admin@markee.vn khi email rong/da bi an
+          // (legacy hello@markeeai.com) de khong bo trong 1 dong lien he quan
+          // trong; header/villa footer KHONG doi (van dung nguyen fieldValue()
+          // goc, tiep tuc an hoan toan neu rong - yeu cau rieng "khong muon
+          // hien o do"). Khong ghi de sellerEmail THAT (khac rong) cua bao gia.
+          const sellerContactEmail = String(fieldValue('sellerEmail') || '') || 'admin@markee.vn';
           const sellerContactRows = [
             { key: 'sellerContactName', label: findField('sellerContactName').label, value: resolvedContactName },
             { key: 'sellerPhone', label: findField('sellerPhone').label, value: String(fieldValue('sellerPhone') || '') },
-            { key: 'sellerEmail', label: findField('sellerEmail').label, value: String(fieldValue('sellerEmail') || '') },
+            { key: 'sellerEmail', label: findField('sellerEmail').label, value: sellerContactEmail },
           ].filter(row => row.value);
           if (!filledCustomerRows.length && !sellerContactRows.length) return null;
           return (
