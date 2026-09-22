@@ -21,6 +21,7 @@ export type MaterialSymbolName =
   | "shield_person"
   | "error"
   | "settings_input_component"
+  | "cell_tower"
   | "monitoring"
   | "file_download"
   | "code"
