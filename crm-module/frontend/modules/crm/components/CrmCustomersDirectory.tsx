@@ -18,6 +18,7 @@ import { CustomerColumnVisibilityMenu } from './CustomerColumnVisibilityMenu';
 import { useCustomerColumnPreferences } from '../hooks/useCustomerColumnPreferences';
 import { Loader2, Plus, RotateCcw } from './icons';
 import type { CrmCustomerKpi, CrmCustomerRow } from '../types';
+import { cascadeLossText, describeCascadeSummary, sumCascadeSummaries, type CascadeSummary } from '../utils/cascadeDelete';
 
 /**
  * Tab -> status mapping (quyet dinh cuoi cung, xem bao cao task):
@@ -172,9 +173,14 @@ export function CrmCustomersDirectory() {
   const [editingCustomer, setEditingCustomer] = useState<CrmCustomerRow | null>(null);
   const [addDrawerOpen, setAddDrawerOpen] = useState(false);
   const [opportunityCustomer, setOpportunityCustomer] = useState<CrmCustomerRow | null>(null);
-  const [deleteTarget, setDeleteTarget] = useState<CrmCustomerRow | null>(null);
+  // Xoa 1 hoac NHIEU khach hang (feedback 2026-09-23: "select 1 hoặc nhiều ->
+  // Xóa", dung chung 1 modal). Buoc 2 (cascade): khach con du lieu lien quan
+  // -> liet ke ro so luong se bi xoa kem, nguoi dung xac nhan moi xoa.
+  const [deleteTargets, setDeleteTargets] = useState<CrmCustomerRow[] | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState('');
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [cascadeStep, setCascadeStep] = useState<{ ids: string[]; summary: CascadeSummary } | null>(null);
 
   // Preference "cot nao hien" rieng theo workspace+user (khong phai key
   // global) - workspace = API_BASE_URL (moi deployment/clone co gia tri rieng
@@ -293,7 +299,7 @@ export function CrmCustomersDirectory() {
   // "Doanh nghiệp" + "Hành động" luon hien (khong dua vao preference) + so cot
   // tuy chon dang bat - dung de colSpan cho hang loading/empty khop dung so
   // cot that su dang render.
-  const visibleColumnCount = 2 + visibleColumns.size;
+  const visibleColumnCount = 3 + visibleColumns.size; // + cot checkbox chon nhieu
 
   function resetFilters() {
     setSearchInput('');
@@ -347,23 +353,76 @@ export function CrmCustomersDirectory() {
     router.push(`/all-platform/crm?openDeal=${encodeURIComponent(dealId)}`);
   }
 
-  async function confirmDelete() {
-    const target = deleteTarget;
-    if (!target || deleting) return;
+  function openDelete(targets: CrmCustomerRow[]) {
+    if (!targets.length) return;
+    setDeleteError('');
+    setCascadeStep(null);
+    setDeleteTargets(targets);
+  }
+
+  function closeDelete() {
+    if (deleting) return;
+    setDeleteTargets(null);
+    setCascadeStep(null);
+    setDeleteError('');
+  }
+
+  /** Buoc 1 (confirmCascade=false): gui toan bo id da chon. Khach khong con
+   * du lieu lien quan -> xoa luon; khach con du lieu -> backend tra ve trong
+   * `failed` kem summary, chuyen modal sang buoc 2 liet ke tong so se mat.
+   * Buoc 2 (confirmCascade=true): CHI gui id cua cac khach can xac nhan. */
+  async function confirmDelete(confirmCascade = false) {
+    const targets = deleteTargets;
+    if (!targets || deleting) return;
+    const ids = confirmCascade && cascadeStep ? cascadeStep.ids : targets.map(t => t.id);
+    if (!ids.length) return;
     setDeleting(true);
     setDeleteError('');
     try {
-      const res = await fetch(`${API_BASE_URL}/api/all-platform/crm/customers/${encodeURIComponent(target.id)}`, {
-        method: 'DELETE',
+      const res = await fetch(`${API_BASE_URL}/api/all-platform/crm/customers/bulk-delete`, {
+        method: 'POST',
         credentials: 'include',
         headers: headers(),
+        body: JSON.stringify({ customer_ids: ids, confirm_cascade: confirmCascade }),
       });
       const body = await res.json();
-      if (!res.ok || body.success === false) throw new Error(body?.message || `Không xóa được khách hàng (lỗi ${res.status}).`);
-      setItems(current => current.filter(row => row.id !== target.id));
-      setTotal(current => Math.max(0, current - 1));
-      setDeleteTarget(null);
-      setReloadTick(tick => tick + 1);
+      if (!res.ok) throw new Error(body?.message || body?.detail || `Không xóa được khách hàng (lỗi ${res.status}).`);
+      const deletedIds = (body.data?.deleted_ids || []) as string[];
+      const failed = (body.data?.failed || []) as Array<{
+        customer_id: string;
+        message: string;
+        requiresCascadeConfirm?: boolean;
+        summary?: CascadeSummary;
+      }>;
+      if (deletedIds.length) {
+        const deletedSet = new Set(deletedIds);
+        setItems(current => current.filter(row => !deletedSet.has(row.id)));
+        setTotal(current => Math.max(0, current - deletedIds.length));
+        setSelectedIds(prev => {
+          const next = new Set(prev);
+          deletedIds.forEach(id => next.delete(id));
+          return next;
+        });
+        setReloadTick(tick => tick + 1);
+      }
+      const nameOf = (id: string) => targets.find(t => t.id === id)?.customerName || id;
+      const needConfirm = confirmCascade ? [] : failed.filter(f => f.requiresCascadeConfirm && f.summary);
+      const otherFailed = failed.filter(f => confirmCascade || !f.requiresCascadeConfirm);
+      if (needConfirm.length) {
+        setCascadeStep({
+          ids: needConfirm.map(f => f.customer_id),
+          summary: sumCascadeSummaries(needConfirm.map(f => f.summary || {})),
+        });
+        if (otherFailed.length) setDeleteError(otherFailed.map(f => `${nameOf(f.customer_id)}: ${f.message}`).join(' · '));
+        return;
+      }
+      if (otherFailed.length) {
+        setCascadeStep(null);
+        setDeleteError(otherFailed.map(f => `${nameOf(f.customer_id)}: ${f.message}`).join(' · '));
+        return;
+      }
+      setDeleteTargets(null);
+      setCascadeStep(null);
     } catch (err) {
       setDeleteError(err instanceof Error ? err.message : 'Không xóa được khách hàng.');
     } finally {
@@ -371,22 +430,43 @@ export function CrmCustomersDirectory() {
     }
   }
 
+  // "ai muốn xóa thì xóa" - moi khach hang deu chon duoc de xoa.
+  const selectableCustomers = items;
+  const allOnPageSelected = selectableCustomers.length > 0 && selectableCustomers.every(customer => selectedIds.has(customer.id));
+  function toggleSelect(id: string) {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+  function toggleSelectAllOnPage() {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (allOnPageSelected) selectableCustomers.forEach(customer => next.delete(customer.id));
+      else selectableCustomers.forEach(customer => next.add(customer.id));
+      return next;
+    });
+  }
+
+
   /** Dùng chung cho cả bảng desktop lẫn card mobile — tránh 2 bản danh sách
    * hành động lệch nhau. "Xóa" chỉ hiện với người có quyền sửa hồ sơ (đúng
    * quyền `can_edit_customer` backend đã kiểm — canEdit dùng chung cho cả
-   * sửa lẫn xóa), backend tự chặn nếu còn deal/contact liên kết. */
+   * sửa lẫn xóa). Còn dữ liệu liên quan thì backend yêu cầu xác nhận xoá kèm
+   * (bước 2 của modal), không chặn cứng. */
   function secondaryActionsOf(customer: CrmCustomerRow): ActionMenuItem[] {
-    if (!customer.canEdit) return [];
+    // Sua van theo quyen; Xoa mo cho moi nguoi (chi hoi xac nhan).
     return [
-      { key: 'edit', label: 'Sửa', onSelect: () => { setEditingCustomer(customer); setFormOpen(true); } },
+      ...(customer.canEdit
+        ? [{ key: 'edit', label: 'Sửa', onSelect: () => { setEditingCustomer(customer); setFormOpen(true); } }]
+        : []),
       {
         key: 'delete',
         label: 'Xóa',
         danger: true,
-        onSelect: () => {
-          setDeleteError('');
-          setDeleteTarget(customer);
-        },
+        onSelect: () => openDelete([customer]),
       },
     ];
   }
@@ -491,11 +571,35 @@ export function CrmCustomersDirectory() {
           </div>
         </section>
 
+        {selectedIds.size > 0 ? (
+          <div
+            className="crm-filter-card"
+            data-testid="customer-bulk-bar"
+            style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem' }}
+          >
+            <span style={{ fontWeight: 600 }}>Đã chọn {selectedIds.size} khách hàng</span>
+            <div className="crm-icon-action-group" style={{ gap: '0.5rem' }}>
+              <button type="button" className="crm-secondary-button" onClick={() => setSelectedIds(new Set())}>
+                Bỏ chọn
+              </button>
+              <button
+                type="button"
+                className="crm-primary-button"
+                data-testid="customer-bulk-delete-btn"
+                onClick={() => openDelete(items.filter(customer => selectedIds.has(customer.id)))}
+              >
+                Xóa những khách hàng đã chọn
+              </button>
+            </div>
+          </div>
+        ) : null}
+
         <section className="crm-content-section">
           <div className="crm-table-card crm-customer-table-card--desktop">
             <div className="crm-table-scroll">
               <table className="crm-table crm-customer-directory-table crm-customer-directory-table--v2">
                 <colgroup>
+                  <col style={{ width: 40 }} />
                   <col className="crm-col-cust-name-v2" />
                   {visibleColumns.has('primaryContact') ? <col className="crm-col-cust-contact-name" /> : null}
                   {visibleColumns.has('phone') ? <col className="crm-col-cust-contact-phone" /> : null}
@@ -509,6 +613,15 @@ export function CrmCustomersDirectory() {
                 </colgroup>
                 <thead>
                   <tr>
+                    <th className="crm-th">
+                      <input
+                        type="checkbox"
+                        checked={allOnPageSelected}
+                        disabled={selectableCustomers.length === 0}
+                        onChange={toggleSelectAllOnPage}
+                        aria-label="Chọn tất cả khách hàng trên trang này"
+                      />
+                    </th>
                     <th className="crm-th">Doanh nghiệp</th>
                     {visibleColumns.has('primaryContact') ? <th className="crm-th">Người liên hệ chính</th> : null}
                     {visibleColumns.has('phone') ? <th className="crm-th">SĐT</th> : null}
@@ -532,6 +645,14 @@ export function CrmCustomersDirectory() {
                         onClick={() => goToDetail(customer.id)}
                         style={{ cursor: 'pointer' }}
                       >
+                        <td className="crm-td" onClick={event => event.stopPropagation()}>
+                          <input
+                            type="checkbox"
+                            checked={selectedIds.has(customer.id)}
+                            onChange={() => toggleSelect(customer.id)}
+                            aria-label={`Chọn ${customer.customerName}`}
+                          />
+                        </td>
                         <td className="crm-td">
                           <Link
                             href={`/all-platform/crm/customers/${customer.id}`}
@@ -642,6 +763,14 @@ export function CrmCustomersDirectory() {
                   style={{ cursor: 'pointer' }}
                 >
                   <div className="crm-customer-card-head">
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.has(customer.id)}
+                      onClick={event => event.stopPropagation()}
+                      onChange={() => toggleSelect(customer.id)}
+                      aria-label={`Chọn ${customer.customerName}`}
+                      style={{ marginTop: 4 }}
+                    />
                     <div className="crm-customer-card-identity">
                       <Link
                         href={`/all-platform/crm/customers/${customer.id}`}
@@ -748,11 +877,8 @@ export function CrmCustomersDirectory() {
         onCreatedAndOpen={handleOpportunityCreatedAndOpen}
       />
 
-      {deleteTarget ? (
-        <div
-          className="crm-modal-backdrop crm-modal-backdrop--confirm"
-          onClick={() => (deleting ? undefined : setDeleteTarget(null))}
-        >
+      {deleteTargets ? (
+        <div className="crm-modal-backdrop crm-modal-backdrop--confirm" onClick={closeDelete}>
           <div
             className="crm-modal crm-modal--confirm"
             role="dialog"
@@ -762,19 +888,44 @@ export function CrmCustomersDirectory() {
           >
             <header className="crm-modal-header">
               <div>
-                <p className="crm-modal-title">Xóa khách hàng</p>
+                <p className="crm-modal-title">
+                  {deleteTargets.length === 1 ? 'Xóa khách hàng' : `Xóa ${deleteTargets.length} khách hàng`}
+                </p>
                 <p className="crm-modal-subtitle">Hành động này không thể hoàn tác.</p>
               </div>
             </header>
             <div className="crm-modal-body">
               {deleteError ? <p className="crm-error" data-testid="customer-delete-error">{deleteError}</p> : null}
-              <p>
-                Xóa khách hàng <b>&ldquo;{deleteTarget.customerName}&rdquo;</b>? Hành động này không thể hoàn tác.
-              </p>
-              <p className="crm-ai-fill-hint">
-                Nếu khách hàng còn deal hoặc người liên hệ, thao tác sẽ bị chặn — hãy chuyển
-                trạng thái sang &quot;Ngừng hoạt động&quot; thay vì xóa hẳn.
-              </p>
+              {cascadeStep ? (
+                <>
+                  <div className="crm-lead-check-banner crm-lead-check-banner--warning" data-testid="customer-delete-cascade-warning">
+                    <b>
+                      {cascadeStep.ids.length === 1 && deleteTargets.length === 1
+                        ? `Khách hàng “${deleteTargets[0].customerName}” còn dữ liệu liên quan`
+                        : `${cascadeStep.ids.length} khách hàng còn dữ liệu liên quan`}
+                    </b>
+                    <span>
+                      Sẽ bị xoá kèm: <b>{describeCascadeSummary(cascadeStep.summary)}</b>. {cascadeLossText(cascadeStep.summary)}
+                    </span>
+                    <span>Bạn có chấp nhận mất toàn bộ dữ liệu này và xoá không?</span>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <p>
+                    {deleteTargets.length === 1 ? (
+                      <>Xóa khách hàng <b>&ldquo;{deleteTargets[0].customerName}&rdquo;</b>?</>
+                    ) : (
+                      <>Xóa <b>{deleteTargets.length} khách hàng</b> đã chọn?</>
+                    )}{' '}
+                    Hành động này không thể hoàn tác.
+                  </p>
+                  <p className="crm-ai-fill-hint">
+                    Nếu khách hàng còn cơ hội, lead, người liên hệ, dự án, báo giá hoặc hợp đồng, hệ thống sẽ liệt kê rõ và
+                    hỏi lại trước khi xoá kèm — không xoá âm thầm.
+                  </p>
+                </>
+              )}
             </div>
             <footer className="crm-modal-footer">
               <button
@@ -782,20 +933,20 @@ export function CrmCustomersDirectory() {
                 className="crm-cancel-button"
                 data-testid="customer-delete-cancel"
                 disabled={deleting}
-                onClick={() => setDeleteTarget(null)}
+                onClick={closeDelete}
               >
                 Hủy
               </button>
               <button
-                type="button"
-                className="crm-danger-button"
-                data-testid="customer-delete-confirm-btn"
-                disabled={deleting}
-                onClick={() => void confirmDelete()}
-              >
-                {deleting ? <Loader2 className="crm-save-spinner" /> : null}
-                {deleting ? 'Đang xóa...' : 'Xóa khách hàng'}
-              </button>
+                  type="button"
+                  className="crm-danger-button"
+                  data-testid="customer-delete-confirm-btn"
+                  disabled={deleting}
+                  onClick={() => void confirmDelete(Boolean(cascadeStep))}
+                >
+                  {deleting ? <Loader2 className="crm-save-spinner" /> : null}
+                  {deleting ? 'Đang xóa...' : cascadeStep ? 'Chấp nhận mất & xóa toàn bộ' : deleteTargets.length === 1 ? 'Xóa khách hàng' : 'Xóa khách hàng đã chọn'}
+                </button>
             </footer>
           </div>
         </div>
