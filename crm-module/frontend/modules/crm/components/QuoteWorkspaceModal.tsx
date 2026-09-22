@@ -1088,7 +1088,17 @@ export function QuoteWorkspaceModal({
   function persistRecipientField(key: 'customerRecipient' | 'customerPhone' | 'customerEmail', value: string) {
     if (!quote) return;
     if ((quote.data?.[key] as string | undefined) === value) return;
-    void persistQuote({ data: { ...quote.data, [key]: value, customerContactName: key === 'customerRecipient' ? value : quote.data?.customerContactName } }, { silent: true });
+    // BUG THAT DA GAP ("đổi rồi mà Bản xem trước/PDF không đổi"): persistQuote()
+    // co dong `if (opts?.silent) return;` (them tu commit "stabilize pricing
+    // draft behavior" 2026-09-20, CO Y bien MOI cuoc goi silent:true thanh
+    // no-op de tranh autosave tung phim go Markup/Gia von gay race condition) -
+    // ham nay bi goi voi silent:true nen KHONG BAO GIO thuc su luu len server,
+    // chi cap nhat UI cuc bo (draftRecipientFields) roi dung im, khien
+    // quote.data (nguon du lieu THAT cua Preview/Public/PDF/Detail) khong bao
+    // gio doi. Nut "Lưu" trong popover la HANH DONG TUONG MINH cua nguoi dung
+    // (khong phai autosave go phim), nen goi persistQuote KHONG silent o day
+    // la dung/an toan - luu that su, cap nhat quote.data ngay.
+    void persistQuote({ data: { ...quote.data, [key]: value, customerContactName: key === 'customerRecipient' ? value : quote.data?.customerContactName } });
   }
   const [draftTitle, setDraftTitle] = useState('');
   const [draftScope, setDraftScope] = useState('');
