@@ -192,6 +192,13 @@ function hasAnyLineItemDiscount(items: QuoteItem[]): boolean {
  * "Cot hien thi" (an du lieu that theo y muon nguoi tao) nen khong can tuan
  * theo gioi han "khong anh huong mode='detail'" cua co che do. */
 export function filterRedundantAmountAfterDiscountColumn(columns: QuoteField[], items: QuoteItem[]): QuoteField[] {
-  if (hasAnyLineItemDiscount(items)) return columns;
+  // BUG THAT DA GAP (2026-09-22): trang /baogia/{token} crash trang ("This
+  // page couldn't load") vi backend tra ve `items: null` (khong phai [])
+  // cho 1 so bao gia - `items` truyen thang tu quote.items khong qua guard
+  // nao truoc khi toi day. hasAnyLineItemDiscount() goi .some() ngay tren
+  // tham so nay -> TypeError "Cannot read properties of null (reading
+  // 'some')" ngay khi render, JS crash lam ca trang trang. Chan null/undefined
+  // ngay tai day (diem duy nhat thuc su doc `items`).
+  if (hasAnyLineItemDiscount(items || [])) return columns;
   return columns.filter(column => column.key !== 'amountAfterDiscount');
 }
