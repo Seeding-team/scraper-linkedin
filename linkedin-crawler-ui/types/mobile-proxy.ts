@@ -8,14 +8,6 @@ export interface MobileProxyNode {
   port?: number;
 }
 
-export interface MobileProxyConfigResponse {
-  enabled: boolean;
-  consoleConfigured?: boolean;
-  nodes: MobileProxyNode[];
-  live?: MobileProxyLiveStatus | null;
-  liveError?: string | null;
-}
-
 export interface MobileProxyLiveStatus {
   directMobileIp?: string | null;
   egressIp?: string | null;
@@ -31,6 +23,21 @@ export interface MobileProxyLiveStatus {
   };
 }
 
+export interface MobileProxyLiveEntry {
+  id: string;
+  label: string;
+  data: MobileProxyLiveStatus | null;
+  error: string | null;
+}
+
+export interface MobileProxyConfigResponse {
+  enabled: boolean;
+  consoleConfigured?: boolean;
+  nodes: MobileProxyNode[];
+  live?: MobileProxyLiveEntry[];
+  liveError?: string | null;
+}
+
 export interface MobileProxySmsMessage {
   id: string;
   from: string;
@@ -39,15 +46,20 @@ export interface MobileProxySmsMessage {
 }
 
 export interface MobileProxySmsResponse {
-  messages?: MobileProxySmsMessage[];
-  cached?: MobileProxySmsMessage[];
+  messages: MobileProxySmsMessage[];
+  byNode?: { id: string; label: string; data: unknown; error: string | null }[];
   error?: string;
+}
+
+export interface MobileProxyRotateNodeResult {
+  id: string;
+  label: string;
+  data: { ok?: boolean; directMobileIp?: string; egressIp?: string; steps?: string[] } | null;
+  error: string | null;
 }
 
 export interface MobileProxyRotateResponse {
   ok: boolean;
-  directMobileIp?: string;
-  egressIp?: string;
+  results: MobileProxyRotateNodeResult[];
   error?: string;
-  steps?: string[];
 }

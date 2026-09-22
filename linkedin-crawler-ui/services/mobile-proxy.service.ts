@@ -30,7 +30,11 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const mobileProxyService = {
   getStatus: () => request<MobileProxyConfigResponse>("/status"),
-  rotate: () =>
-    request<MobileProxyRotateResponse>("/rotate", { method: "POST", body: "{}" }),
-  getSms: () => request<MobileProxySmsResponse>("/sms"),
+  rotate: (nodeId?: string) =>
+    request<MobileProxyRotateResponse>(
+      `/rotate${nodeId ? `?node_id=${encodeURIComponent(nodeId)}` : ""}`,
+      { method: "POST", body: "{}" },
+    ),
+  getSms: (nodeId?: string) =>
+    request<MobileProxySmsResponse>(`/sms${nodeId ? `?node_id=${encodeURIComponent(nodeId)}` : ""}`),
 };

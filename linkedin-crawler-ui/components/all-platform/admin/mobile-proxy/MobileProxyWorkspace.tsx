@@ -5,7 +5,12 @@ import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { mobileProxyService } from "@/services/mobile-proxy.service";
-import type { MobileProxyConfigResponse, MobileProxySmsMessage } from "@/types/mobile-proxy";
+import type {
+  MobileProxyConfigResponse,
+  MobileProxyLiveEntry,
+  MobileProxyNode,
+  MobileProxySmsMessage,
+} from "@/types/mobile-proxy";
 
 function CopyField({ label, value }: { label: string; value: string }) {
   return (
@@ -29,28 +34,68 @@ function CopyField({ label, value }: { label: string; value: string }) {
   );
 }
 
+function NodeCard({
+  node,
+  live,
+  onRotate,
+  rotating,
+}: {
+  node: MobileProxyNode;
+  live?: MobileProxyLiveEntry;
+  onRotate: () => void;
+  rotating: boolean;
+}) {
+  const status = live?.data;
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>{node.label}</CardTitle>
+        <CardDescription>
+          ADB: {status?.adb?.serial ? `${status.adb.serial} (${status.adb.state})` : "—"}
+          {live?.error ? ` · ${live.error}` : ""}
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <p className="text-lg font-semibold text-emerald-700">
+          IP mobile: {status?.directMobileIp ?? "—"}
+        </p>
+        <p className="text-sm text-muted-foreground">
+          IP qua SOCKS5: {status?.egressIp ?? "—"}
+          {status?.proxy?.hint ? ` · ${status.proxy.hint}` : ""}
+        </p>
+        <div className="grid gap-3 sm:grid-cols-1">
+          <CopyField label="PC cắm USB (máy đang cắm phone)" value={node.socksUrlLocalPc ?? ""} />
+          <CopyField label="Office LAN (Wi‑Fi phone)" value={node.socksUrlOffice ?? ""} />
+          <CopyField label="VPS (sau tunnel — dùng cho tool công ty)" value={node.socksUrlVps ?? ""} />
+          <CopyField label="Proxy đang live trên console" value={status?.proxy?.url ?? ""} />
+        </div>
+        <Button type="button" onClick={onRotate} disabled={rotating}>
+          {rotating ? "Đang xoay IP…" : "Xoay IP (airplane)"}
+        </Button>
+      </CardContent>
+    </Card>
+  );
+}
+
 export function MobileProxyWorkspace() {
   const [data, setData] = useState<MobileProxyConfigResponse | null>(null);
   const [sms, setSms] = useState<MobileProxySmsMessage[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [rotating, setRotating] = useState(false);
+  const [rotatingId, setRotatingId] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     try {
       setError(null);
       const status = await mobileProxyService.getStatus();
       setData(status);
-      try {
-        const inbox = await mobileProxyService.getSms();
-        setSms(inbox.messages ?? inbox.cached ?? []);
-      } catch (smsErr) {
-        setSms([]);
-        if (!status.liveError) {
-          setError(smsErr instanceof Error ? smsErr.message : String(smsErr));
-        }
-      }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+    }
+    try {
+      const inbox = await mobileProxyService.getSms();
+      setSms(inbox.messages ?? []);
+    } catch {
+      setSms([]);
     }
   }, []);
 
@@ -60,74 +105,64 @@ export function MobileProxyWorkspace() {
     return () => clearInterval(t);
   }, [refresh]);
 
-  const node = data?.nodes?.[0];
-  const live = data?.live;
-
-  async function handleRotate() {
-    setRotating(true);
+  async function handleRotate(nodeId: string) {
+    setRotatingId(nodeId);
     try {
-      await mobileProxyService.rotate();
+      await mobileProxyService.rotate(nodeId);
       await refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
-      setRotating(false);
+      setRotatingId(null);
     }
   }
+
+  const nodes = data?.nodes ?? [];
+  const liveById = new Map((data?.live ?? []).map((entry) => [entry.id, entry]));
 
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-4 p-4 md:p-6">
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Mobile proxy (SIM)</h1>
         <p className="text-sm text-muted-foreground">
-          PC cắm phone chạy console :4320. Tool/scraper copy URL SOCKS bên dưới. Cty sau này chỉ đổi env
-          VPS/LAN.
+          Mỗi phone/SIM chạy 1 mobile-proxy-console trên PC cắm USB. Thêm phone mới: cấu hình
+          MOBILE_PROXY_NODES trên backend — không cần đổi code.
         </p>
       </div>
 
-      {(error || data?.liveError) && (
+      {error && (
         <p className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-          {error || data?.liveError}
+          {error}
         </p>
+      )}
+      {data?.liveError && (
+        <p className="rounded-md border border-amber-400/40 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+          {data.liveError}
+        </p>
+      )}
+
+      {nodes.length === 0 ? (
+        <Card>
+          <CardContent className="py-6 text-sm text-muted-foreground">
+            Chưa có node nào. Set MOBILE_PROXY_CONSOLE_URL (và các biến MOBILE_PROXY_SOCKS_*) trên
+            backend.
+          </CardContent>
+        </Card>
+      ) : (
+        nodes.map((node) => (
+          <NodeCard
+            key={node.id}
+            node={node}
+            live={liveById.get(node.id)}
+            onRotate={() => void handleRotate(node.id)}
+            rotating={rotatingId === node.id}
+          />
+        ))
       )}
 
       <Card>
         <CardHeader>
-          <CardTitle>Trạng thái SIM</CardTitle>
-          <CardDescription>
-            ADB: {live?.adb?.serial ? `${live.adb.serial} (${live.adb.state})` : "—"}
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <p className="text-lg font-semibold text-emerald-700">
-            IP mobile: {live?.directMobileIp ?? "—"}
-          </p>
-          <p className="text-sm text-muted-foreground">
-            IP qua SOCKS5: {live?.egressIp ?? "—"}
-            {live?.proxy?.hint ? ` · ${live.proxy.hint}` : ""}
-          </p>
-          <Button type="button" onClick={() => void handleRotate()} disabled={rotating}>
-            {rotating ? "Đang xoay IP…" : "Xoay IP (airplane)"}
-          </Button>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>URL cho tool / nhân viên</CardTitle>
-          <CardDescription>{node?.label ?? "SIM-01"}</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <CopyField label="PC cắm USB (máy nhà / RDP host)" value={node?.socksUrlLocalPc ?? ""} />
-          <CopyField label="Office LAN (Wi‑Fi phone — sau khi lên cty)" value={node?.socksUrlOffice ?? ""} />
-          <CopyField label="VPS (sau tunnel)" value={node?.socksUrlVps ?? ""} />
-          <CopyField label="Proxy đang live trên console" value={live?.proxy?.url ?? ""} />
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>SMS / OTP</CardTitle>
+          <CardTitle>SMS / OTP (mọi SIM)</CardTitle>
         </CardHeader>
         <CardContent className="max-h-80 space-y-2 overflow-y-auto">
           {sms.length === 0 ? (
