@@ -1,10 +1,13 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import Link from 'next/link';
 import { API_BASE_URL, API_KEY } from '@/lib/env';
+import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
 import { ActionMenu } from './ActionMenu';
 import { PositionSelect } from './PositionSelect';
-import { Loader2, Plus } from './icons';
+import { fetchCrmCategoryIdOptions } from './CrmCategorySelect';
+import { ChevronDown, ChevronUp, Loader2, Plus, X } from './icons';
 
 function headers() {
   const value: Record<string, string> = { 'Content-Type': 'application/json' };
@@ -23,8 +26,16 @@ type ApiContact = {
   email?: string | null;
   zalo?: string | null;
   facebook?: string | null;
+  telegram?: string | null;
+  website?: string | null;
   is_primary?: boolean | null;
   note?: string | null;
+};
+
+type DuplicateContact = ApiContact & {
+  customer_name?: string | null;
+  same_customer?: boolean;
+  match_reasons?: string[];
 };
 
 type ContactFormState = {
@@ -35,11 +46,19 @@ type ContactFormState = {
   email: string;
   zalo: string;
   facebook: string;
+  telegram: string;
+  website: string;
+  note: string;
   isPrimary: boolean;
 };
 
+type DupState = 'idle' | 'checking' | 'clean' | 'duplicate' | 'error';
+
 function emptyForm(): ContactFormState {
-  return { name: '', positionCategoryId: '', positionLabel: '', phone: '', email: '', zalo: '', facebook: '', isPrimary: false };
+  return {
+    name: '', positionCategoryId: '', positionLabel: '', phone: '', email: '',
+    zalo: '', facebook: '', telegram: '', website: '', note: '', isPrimary: false,
+  };
 }
 
 function formFromContact(contact: ApiContact): ContactFormState {
@@ -51,8 +70,58 @@ function formFromContact(contact: ApiContact): ContactFormState {
     email: contact.email || '',
     zalo: contact.zalo || '',
     facebook: contact.facebook || '',
+    telegram: contact.telegram || '',
+    website: contact.website || '',
+    note: contact.note || '',
     isPrimary: Boolean(contact.is_primary),
   };
+}
+
+// Cung heuristic voi LeadFormDrawer.tsx - chi de quyet dinh co tu dong goi
+// duplicate-check hay khong, chuan hoa that van o backend.
+const PHONE_RE = /(?:\+?84|0)(?:\d[\s.-]?){9,10}\b/;
+const EMAIL_RE = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/;
+function looksLikePhone(value: string): boolean {
+  const digits = value.replace(/\D/g, '');
+  return digits.length >= 9 && digits.length <= 12;
+}
+function looksLikeEmail(value: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/i.test(value.trim());
+}
+
+/** Tach link mang xa hoi/website tu noi dung dan vao - chi nhan dien khi co
+ * dau hieu RO RANG (domain), khong doan mo ho. */
+function detectLinksFromPaste(text: string): Partial<Pick<ContactFormState, 'zalo' | 'facebook' | 'telegram' | 'website'>> {
+  const urls = text.match(/(?:https?:\/\/|www\.)[^\s,]+/gi) || [];
+  const out: Partial<Pick<ContactFormState, 'zalo' | 'facebook' | 'telegram' | 'website'>> = {};
+  for (const url of urls) {
+    const lower = url.toLowerCase();
+    if (/zalo\.me/.test(lower)) out.zalo = out.zalo || url;
+    else if (/facebook\.com|fb\.com|m\.me\//.test(lower)) out.facebook = out.facebook || url;
+    else if (/t\.me\/|telegram\.me/.test(lower)) out.telegram = out.telegram || url;
+    else out.website = out.website || url;
+  }
+  const tg = text.match(/(?:telegram|tele)\s*[:\-]?\s*(@[a-z0-9_]{4,})/i);
+  if (tg && !out.telegram) out.telegram = tg[1];
+  return out;
+}
+
+async function detectPositionFromPaste(text: string): Promise<{ id: string; label: string } | null> {
+  try {
+    const options = await fetchCrmCategoryIdOptions('crm_position');
+    const lower = text.toLowerCase();
+    let best: { id: string; label: string } | null = null;
+    for (const option of options) {
+      const label = option.label?.trim();
+      if (!label) continue;
+      if (lower.includes(label.toLowerCase()) && (!best || label.length > best.label.length)) {
+        best = { id: option.value, label };
+      }
+    }
+    return best;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -60,6 +129,11 @@ function formFromContact(contact: ApiContact): ContactFormState {
  * CrmCustomerDetailPage.tsx. Goi that /crm/customers/{id}/contacts, khong
  * mockup. canEdit dieu khien co hien nut Sua/Xoa/+ Them hay khong (server van
  * tu kiem tra lai qua can_edit_customer()).
+ *
+ * Form Them/Sua Contact dung DUNG khuon form "Thêm Lead nhanh" (feedback
+ * 2026-09-23: "chỗ thêm contact này chỉ lại form lấy tt như thằng lead đó, nó
+ * thiếu tt"): cot trai kiem tra trung SĐT/Email (trong tenant) + dan noi dung
+ * de dien nhanh, cot phai thong tin day du (them Telegram/Website/Ghi chu).
  */
 export function CrmContactsPanel({
   customerId,
@@ -85,6 +159,17 @@ export function CrmContactsPanel({
   const [form, setForm] = useState<ContactFormState>(emptyForm);
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState('');
+
+  const [checkPhone, setCheckPhone] = useState('');
+  const [checkEmail, setCheckEmail] = useState('');
+  const [dupState, setDupState] = useState<DupState>('idle');
+  const [duplicates, setDuplicates] = useState<DuplicateContact[]>([]);
+  const [overrideCreate, setOverrideCreate] = useState(false);
+  const [pasteOpen, setPasteOpen] = useState(false);
+  const [pasteText, setPasteText] = useState('');
+  const [extraOpen, setExtraOpen] = useState(false);
+  const checkSeqRef = useRef(0);
+  useBodyScrollLock(formOpen);
 
   useEffect(() => {
     let alive = true;
@@ -114,18 +199,138 @@ export function CrmContactsPanel({
     return () => { alive = false; };
   }, [customerId, reloadTick]);
 
+  // Tu dong kiem tra trung khi SDT/Email hop le (debounce 400ms, chong race
+  // bang so dem - cung co che voi LeadFormDrawer.tsx).
+  // Trang thai hien thi: SDT/Email chua hop le -> luon 'idle' (tinh luc render,
+  // khong setState dong bo trong effect).
+  const checkable = looksLikePhone(checkPhone.trim()) || looksLikeEmail(checkEmail.trim());
+  const dupView: DupState = checkable ? dupState : 'idle';
+
+  /** Doi o kiem tra -> dat 'checking' ngay tai handler (khong trong effect). */
+  function updateCheckInput(kind: 'phone' | 'email', value: string) {
+    const phone = kind === 'phone' ? value : checkPhone;
+    const email = kind === 'email' ? value : checkEmail;
+    if (kind === 'phone') setCheckPhone(value);
+    else setCheckEmail(value);
+    setDupState(looksLikePhone(phone.trim()) || looksLikeEmail(email.trim()) ? 'checking' : 'idle');
+  }
+
+  useEffect(() => {
+    if (!formOpen) return;
+    const phone = checkPhone.trim();
+    const email = checkEmail.trim();
+    if (!looksLikePhone(phone) && !looksLikeEmail(email)) return;
+    let alive = true;
+    const seq = ++checkSeqRef.current;
+    const timer = window.setTimeout(() => {
+      const params = new URLSearchParams();
+      if (phone) params.set('phone', phone);
+      if (email) params.set('email', email);
+      if (editing) params.set('exclude_contact_id', editing.id);
+      fetch(`${API_BASE_URL}/api/all-platform/crm/customers/${encodeURIComponent(customerId)}/contacts/duplicate-check?${params.toString()}`, {
+        credentials: 'include',
+        headers: headers(),
+      })
+        .then(res => res.json())
+        .then(body => {
+          if (!alive || seq !== checkSeqRef.current) return;
+          if (body.success === false) {
+            setDupState('error');
+            return;
+          }
+          const rows = (body.data?.matches || []) as DuplicateContact[];
+          setDuplicates(rows);
+          if (rows.length) {
+            setDupState('duplicate');
+          } else {
+            setDupState('clean');
+            setForm(current => ({
+              ...current,
+              phone: current.phone.trim() ? current.phone : phone,
+              email: current.email.trim() ? current.email : email,
+            }));
+          }
+        })
+        .catch(() => {
+          if (!alive || seq !== checkSeqRef.current) return;
+          setDupState('error');
+        });
+    }, 400);
+    return () => {
+      alive = false;
+      window.clearTimeout(timer);
+    };
+  }, [checkPhone, checkEmail, formOpen, customerId, editing]);
+
+  function resetCheck(phone = '', email = '') {
+    setCheckPhone(phone);
+    setCheckEmail(email);
+    setDupState('idle');
+    setDuplicates([]);
+    setOverrideCreate(false);
+    setPasteOpen(false);
+    setPasteText('');
+    checkSeqRef.current += 1;
+  }
+
   function openCreate() {
     setEditing(null);
     setForm(emptyForm());
     setFormError('');
+    setExtraOpen(false);
+    resetCheck();
     setFormOpen(true);
   }
   function openEdit(contact: ApiContact) {
     setEditing(contact);
     setForm(formFromContact(contact));
     setFormError('');
+    setExtraOpen(Boolean(contact.zalo || contact.facebook || contact.telegram || contact.website || contact.note));
+    resetCheck(contact.phone || '', contact.email || '');
     setFormOpen(true);
   }
+  function closeForm() {
+    if (saving) return;
+    setFormOpen(false);
+  }
+
+  function setValue<K extends keyof ContactFormState>(key: K, value: ContactFormState[K]) {
+    setForm(current => ({ ...current, [key]: value }));
+  }
+
+  function handleParsePaste() {
+    const text = pasteText;
+    const phoneMatch = text.match(PHONE_RE);
+    const emailMatch = text.match(EMAIL_RE);
+    if (phoneMatch && !checkPhone.trim()) updateCheckInput('phone', phoneMatch[0].replace(/[\s.-]/g, ''));
+    if (emailMatch && !checkEmail.trim()) updateCheckInput('email', emailMatch[0]);
+    if (!form.name.trim()) {
+      const firstLine = text.split(/\n/)[0] || '';
+      const namePart = firstLine.split(/[-,]/)[0].trim();
+      if (namePart && !PHONE_RE.test(namePart) && !EMAIL_RE.test(namePart) && namePart.length < 60) {
+        setValue('name', namePart);
+      }
+    }
+    const links = detectLinksFromPaste(text);
+    setForm(current => ({
+      ...current,
+      zalo: current.zalo || links.zalo || '',
+      facebook: current.facebook || links.facebook || '',
+      telegram: current.telegram || links.telegram || '',
+      website: current.website || links.website || '',
+    }));
+    if (links.zalo || links.facebook || links.telegram || links.website) setExtraOpen(true);
+    if (!form.positionCategoryId) {
+      void detectPositionFromPaste(text).then(detected => {
+        if (!detected) return;
+        setForm(prev => (prev.positionCategoryId ? prev : { ...prev, positionCategoryId: detected.id, positionLabel: detected.label }));
+      });
+    }
+  }
+
+  // Them moi: khoa cot phai cho toi khi kiem tra trung xong (khong trung hoac
+  // nguoi dung chon "Vẫn thêm Contact mới") - dung nhu form Lead. Sua: luon mo.
+  const unlocked = Boolean(editing) || dupView === 'clean' || overrideCreate;
 
   async function handleDelete(contact: ApiContact) {
     if (!window.confirm(`Xóa contact "${contact.name}"?`)) return;
@@ -142,10 +347,14 @@ export function CrmContactsPanel({
     }
   }
 
-  async function handleSubmit(event: React.FormEvent) {
-    event.preventDefault();
+  async function handleSubmit(event?: React.FormEvent) {
+    event?.preventDefault();
     if (!form.name.trim()) {
       setFormError('Vui lòng nhập họ tên.');
+      return;
+    }
+    if (!editing && !form.phone.trim() && !form.email.trim()) {
+      setFormError('Cần nhập số điện thoại hoặc email.');
       return;
     }
     setSaving(true);
@@ -158,6 +367,9 @@ export function CrmContactsPanel({
         email: form.email.trim() || null,
         zalo: form.zalo.trim() || null,
         facebook: form.facebook.trim() || null,
+        telegram: form.telegram.trim() || null,
+        website: form.website.trim() || null,
+        note: form.note.trim() || null,
         is_primary: form.isPrimary,
       };
       const url = editing
@@ -243,70 +455,275 @@ export function CrmContactsPanel({
       )}
 
       {formOpen ? (
-        <div className="crm-modal-backdrop" onClick={() => setFormOpen(false)}>
-          <div className="crm-modal" onClick={event => event.stopPropagation()}>
-            <header className="crm-modal-header">
-              <h2 className="crm-modal-title">{editing ? 'Sửa Contact' : 'Thêm Contact'}</h2>
-              <button type="button" className="crm-modal-close" onClick={() => setFormOpen(false)} aria-label="Đóng">×</button>
+        <div className="crm-drawer-backdrop" onClick={closeForm}>
+          <aside
+            className="crm-drawer crm-lead-drawer crm-lead-drawer--quick"
+            data-testid="contact-form-drawer"
+            onClick={event => event.stopPropagation()}
+          >
+            <header className="crm-lead-drawer-header">
+              <div>
+                <h2>{editing ? 'Sửa Contact' : 'Thêm Contact'}</h2>
+                <p>Nhập SĐT hoặc Email để kiểm tra trùng trước khi hoàn thiện thông tin.</p>
+              </div>
+              <button type="button" className="crm-drawer-close" onClick={closeForm} aria-label="Đóng">
+                <X className="crm-icon" />
+              </button>
             </header>
-            <form id="crmContactForm" className="crm-modal-body" onSubmit={handleSubmit}>
+
+            <form id="crmContactForm" className="crm-drawer-body crm-lead-drawer-body" onSubmit={handleSubmit}>
               {formError ? <p className="crm-error">{formError}</p> : null}
-              <div className="crm-form-grid">
-                <label className="crm-field">
-                  <span>Họ tên <b>*</b></span>
-                  <input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} />
-                </label>
-                <label className="crm-field">
-                  <span>Chức vụ</span>
-                  <PositionSelect
-                    value={form.positionCategoryId}
-                    labelSnapshot={form.positionLabel}
-                    onChange={(id, label) => setForm(f => ({ ...f, positionCategoryId: id, positionLabel: label }))}
-                  />
-                </label>
-                <label className="crm-field">
-                  <span>Số điện thoại</span>
-                  <input value={form.phone} onChange={e => setForm(f => ({ ...f, phone: e.target.value }))} type="tel" />
-                </label>
-                <label className="crm-field">
-                  <span>Email</span>
-                  <input value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} type="email" />
-                </label>
-                <label className="crm-field">
-                  <span>Zalo</span>
-                  <input value={form.zalo} onChange={e => setForm(f => ({ ...f, zalo: e.target.value }))} />
-                </label>
-                <label className="crm-field">
-                  <span>Facebook</span>
-                  <input value={form.facebook} onChange={e => setForm(f => ({ ...f, facebook: e.target.value }))} />
-                </label>
-                <div className="crm-switch-row">
-                  <div className="crm-switch-row-text">
-                    <span className="crm-switch-row-label">Liên hệ chính</span>
-                    <span className="crm-switch-row-hint">Người liên hệ chính của khách hàng này</span>
+
+              <div className="crm-lead-quickadd-grid">
+                {/* ---- Cot trai: 1. Kiem tra Contact ---- */}
+                <section className="crm-form-section crm-lead-check-col">
+                  <p className="crm-form-title">1. Kiểm tra Contact</p>
+                  <p className="crm-lead-check-subtitle">Nhập ít nhất SĐT hoặc Email</p>
+                  <div className="crm-form-grid">
+                    <Field label="Số điện thoại">
+                      <input
+                        name="crm-contact-form-check-phone"
+                        value={checkPhone}
+                        onChange={e => updateCheckInput('phone', e.target.value)}
+                        type="tel"
+                        placeholder="VD: 0903 037 911"
+                        autoComplete="off"
+                      />
+                    </Field>
+                    <Field label="Email">
+                      <input
+                        name="crm-contact-form-check-email"
+                        value={checkEmail}
+                        onChange={e => updateCheckInput('email', e.target.value)}
+                        type="email"
+                        placeholder="VD: tien@abc.vn"
+                        autoComplete="off"
+                      />
+                    </Field>
                   </div>
-                  <button
-                    type="button"
-                    role="switch"
-                    aria-checked={form.isPrimary}
-                    className={`crm-switch ${form.isPrimary ? 'crm-switch--on' : ''}`}
-                    onClick={() => setForm(f => ({ ...f, isPrimary: !f.isPrimary }))}
-                  >
-                    <span className="crm-switch-thumb" />
+
+                  {dupView === 'checking' ? (
+                    <p className="crm-lead-check-status crm-lead-check-status--checking">
+                      <Loader2 className="crm-spin-icon" /> Đang kiểm tra trùng...
+                    </p>
+                  ) : null}
+                  {dupView === 'clean' ? (
+                    <div className="crm-lead-check-banner crm-lead-check-banner--success" data-testid="contact-dup-clean">
+                      <b>✓ Không tìm thấy Contact trùng</b>
+                      <span>SĐT / Email đã được tự động điền sang form.</span>
+                    </div>
+                  ) : null}
+                  {dupView === 'error' ? (
+                    <div className="crm-lead-check-banner crm-lead-check-banner--warning">
+                      <b>Không kiểm tra được trùng lúc này</b>
+                      <span>Có thể thử lại bằng cách sửa nhẹ SĐT/Email, hoặc bấm &quot;Vẫn thêm Contact mới&quot; nếu chắc chắn.</span>
+                    </div>
+                  ) : null}
+                  {dupView === 'error' && !overrideCreate && !editing ? (
+                    <button type="button" className="crm-ghost-button crm-button-sm" onClick={() => setOverrideCreate(true)}>
+                      Vẫn thêm Contact mới
+                    </button>
+                  ) : null}
+                  {overrideCreate ? (
+                    <div className="crm-lead-check-banner crm-lead-check-banner--warning">
+                      <b>Đã bỏ qua cảnh báo trùng</b>
+                      <span>Bạn đang thêm Contact dù hệ thống tìm thấy Contact trùng — vui lòng kiểm tra kỹ.</span>
+                    </div>
+                  ) : null}
+                  {dupView === 'duplicate' && !overrideCreate ? (
+                    <div className="crm-lead-duplicate-cards" data-testid="contact-dup-list">
+                      {duplicates.map(dup => (
+                        <div key={dup.id} className="crm-lead-duplicate-card">
+                          <div className="crm-lead-duplicate-card-head">
+                            <div>
+                              <b>{dup.name}</b>
+                              <span>{dup.same_customer ? 'Đã là người liên hệ của khách hàng này' : `Thuộc khách hàng: ${dup.customer_name || 'khác'}`}</span>
+                            </div>
+                          </div>
+                          <div className="crm-lead-duplicate-card-meta">
+                            <div>Điện thoại: <b>{dup.phone || 'Chưa có'}</b></div>
+                            <div>Email: <b>{dup.email || 'Chưa có'}</b></div>
+                            <div>Chức vụ: <b>{dup.position_label_snapshot || dup.position || 'Chưa có'}</b></div>
+                            <div>Trùng theo: <b>{(dup.match_reasons || []).map(r => (r === 'phone' ? 'SĐT' : 'Email')).join(', ') || '—'}</b></div>
+                          </div>
+                          <div className="crm-lead-duplicate-card-actions">
+                            {dup.same_customer && onOpenContact ? (
+                              <button
+                                type="button"
+                                className="crm-primary-button crm-button-sm"
+                                onClick={() => { setFormOpen(false); onOpenContact(dup.id); }}
+                              >
+                                Mở Contact
+                              </button>
+                            ) : !dup.same_customer ? (
+                              <Link className="crm-primary-button crm-button-sm" href={`/all-platform/crm/customers/${dup.customer_id}`}>
+                                Mở khách hàng
+                              </Link>
+                            ) : null}
+                            {!editing ? (
+                              <button type="button" className="crm-ghost-button crm-button-sm" onClick={() => setOverrideCreate(true)}>
+                                Vẫn thêm Contact mới
+                              </button>
+                            ) : null}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+
+                  <button type="button" className="crm-lead-paste-toggle" onClick={() => setPasteOpen(v => !v)}>
+                    {pasteOpen ? <ChevronUp className="crm-inline-icon" /> : <ChevronDown className="crm-inline-icon" />}
+                    ✨ Dán nội dung để điền nhanh
                   </button>
-                </div>
+                  {pasteOpen ? (
+                    <div className="crm-ai-fill crm-lead-paste-box">
+                      <div className="crm-ai-fill-row">
+                        <textarea
+                          name="crm-contact-form-paste-text"
+                          className="crm-ai-fill-textarea"
+                          value={pasteText}
+                          onChange={event => setPasteText(event.target.value)}
+                          placeholder="Dán chữ ký email/tin nhắn có tên, SĐT, email, link Zalo/Facebook..., hệ thống tự tách ra ô tương ứng..."
+                          rows={4}
+                        />
+                        <button type="button" className="crm-ai-fill-btn" disabled={!pasteText.trim()} onClick={handleParsePaste}>
+                          Phân tích nội dung
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
+                  <p className="crm-lead-check-hint">Hệ thống tự kiểm tra khi dữ liệu hợp lệ.</p>
+                </section>
+
+                {/* ---- Cot phai: 2. Thong tin Contact ---- */}
+                <section className={`crm-form-section crm-lead-info-col ${unlocked ? '' : 'crm-lead-info-col--locked'}`}>
+                  <div className="crm-lead-info-col-head">
+                    <div>
+                      <p className="crm-form-title">2. Thông tin Contact</p>
+                      <p className="crm-lead-check-subtitle">SĐT / Email tự động điền; hoàn thiện các trường còn lại.</p>
+                    </div>
+                    <span className={`crm-lead-lock-badge ${unlocked ? 'crm-lead-lock-badge--open' : ''}`}>
+                      {unlocked ? '🔓 Đã mở khóa' : '🔒 Đang khóa'}
+                    </span>
+                  </div>
+                  {!unlocked ? (
+                    <p className="crm-lead-lock-message">
+                      Form đang chờ kết quả kiểm tra trùng ở cột bên trái. Khi không trùng (hoặc bạn chọn &quot;Vẫn thêm Contact mới&quot;), form sẽ tự mở.
+                    </p>
+                  ) : null}
+
+                  <fieldset className="crm-lead-info-fieldset" disabled={!unlocked}>
+                    <div className="crm-form-grid">
+                      <Field label="Họ và tên" required>
+                        <input value={form.name} onChange={e => setValue('name', e.target.value)} placeholder="Nguyễn Văn A" />
+                      </Field>
+                      <Field label="Chức vụ">
+                        <PositionSelect
+                          value={form.positionCategoryId}
+                          labelSnapshot={form.positionLabel}
+                          onChange={(id, label) => setForm(f => ({ ...f, positionCategoryId: id, positionLabel: label }))}
+                        />
+                      </Field>
+                      <Field label="Số điện thoại" hint="cần SĐT hoặc email">
+                        <input value={form.phone} onChange={e => setValue('phone', e.target.value)} type="tel" placeholder="Autofill từ kiểm tra trùng" />
+                      </Field>
+                      <Field label="Email" hint="cần SĐT hoặc email">
+                        <input value={form.email} onChange={e => setValue('email', e.target.value)} type="email" placeholder="Autofill từ kiểm tra trùng" />
+                      </Field>
+                    </div>
+                    <div className="crm-switch-row" style={{ marginTop: '0.75rem' }}>
+                      <div className="crm-switch-row-text">
+                        <span className="crm-switch-row-label">Liên hệ chính</span>
+                        <span className="crm-switch-row-hint">Người liên hệ chính của khách hàng này</span>
+                      </div>
+                      <button
+                        type="button"
+                        role="switch"
+                        aria-checked={form.isPrimary}
+                        className={`crm-switch ${form.isPrimary ? 'crm-switch--on' : ''}`}
+                        onClick={() => setForm(f => ({ ...f, isPrimary: !f.isPrimary }))}
+                      >
+                        <span className="crm-switch-thumb" />
+                      </button>
+                    </div>
+
+                    <div className="crm-lead-extra-section">
+                      <button type="button" className="crm-lead-extra-toggle" onClick={() => setExtraOpen(v => !v)}>
+                        {extraOpen ? <ChevronUp className="crm-inline-icon" /> : <ChevronDown className="crm-inline-icon" />}
+                        ▾ Thông tin bổ sung
+                        <em className="crm-optional-hint">Zalo, Facebook, Telegram, Website, ghi chú</em>
+                      </button>
+                      {extraOpen ? (
+                        <div className="crm-form-grid" style={{ marginTop: '0.75rem' }}>
+                          <Field label="Zalo">
+                            <input value={form.zalo} onChange={e => setValue('zalo', e.target.value)} placeholder="Số/link Zalo" />
+                          </Field>
+                          <Field label="Facebook">
+                            <input value={form.facebook} onChange={e => setValue('facebook', e.target.value)} placeholder="Link Facebook" />
+                          </Field>
+                          <Field label="Telegram">
+                            <input value={form.telegram} onChange={e => setValue('telegram', e.target.value)} placeholder="@username hoặc link" />
+                          </Field>
+                          <Field label="Website">
+                            <input value={form.website} onChange={e => setValue('website', e.target.value)} placeholder="https://..." />
+                          </Field>
+                          <Field full label="Ghi chú">
+                            <textarea value={form.note} onChange={e => setValue('note', e.target.value)} placeholder="Ghi chú nội bộ..." />
+                          </Field>
+                        </div>
+                      ) : null}
+                    </div>
+                  </fieldset>
+                </section>
               </div>
             </form>
-            <footer className="crm-modal-footer">
-              <button type="button" className="crm-cancel-button" onClick={() => setFormOpen(false)} disabled={saving}>Hủy</button>
-              <button type="submit" form="crmContactForm" className="crm-save-button" disabled={saving}>
-                {saving ? <Loader2 className="crm-save-spinner" /> : null}
-                {saving ? 'Đang lưu...' : 'Lưu'}
+
+            <footer className="crm-drawer-footer crm-lead-drawer-footer">
+              <button type="button" className="crm-cancel-button" onClick={closeForm} disabled={saving}>
+                Hủy
               </button>
+              <div className="crm-lead-drawer-footer-center">
+                {unlocked && !editing ? <span className="crm-lead-footer-check-ok">✓ Đã kiểm tra trùng</span> : null}
+              </div>
+              <div className="crm-lead-drawer-footer-actions">
+                <button
+                  type="submit"
+                  form="crmContactForm"
+                  className="crm-save-button"
+                  disabled={saving || !unlocked}
+                  title={unlocked ? undefined : 'Cần kiểm tra trùng SĐT/Email trước'}
+                >
+                  {saving ? <Loader2 className="crm-save-spinner" /> : null}
+                  {saving ? 'Đang lưu...' : editing ? 'Lưu' : 'Thêm Contact'}
+                </button>
+              </div>
             </footer>
-          </div>
+          </aside>
         </div>
       ) : null}
     </section>
+  );
+}
+
+function Field({
+  label,
+  hint,
+  required,
+  full,
+  children,
+}: {
+  label: string;
+  hint?: string;
+  required?: boolean;
+  full?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <label className={`crm-field ${full ? 'crm-field--full' : ''}`}>
+      <span>
+        {label} {hint ? <em>({hint})</em> : null} {required ? <b>*</b> : null}
+      </span>
+      {children}
+    </label>
   );
 }

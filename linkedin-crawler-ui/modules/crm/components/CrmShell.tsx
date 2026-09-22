@@ -25,6 +25,7 @@ import { teamsService, type TeamRow } from '@/services/all-platform.service';
 import { seedingQuoteRepository } from '@/modules/quotes';
 import type { Quote } from '@/modules/quotes';
 import { useAppAuth } from '@/contexts/AppAuthContext';
+import { CascadeConfirmRequiredError, blockedContractsMessage, cascadeWarningText } from '../utils/cascadeDelete';
 
 type FilterState = {
   search: string;
@@ -289,7 +290,19 @@ export function CrmShell() {
   async function handleDelete(deal: Deal) {
     if (!window.confirm(`Xóa deal "${deal.customerName}"?`)) return;
     try {
-      await deleteDeal(deal.id);
+      try {
+        await deleteDeal(deal.id);
+      } catch (err) {
+        // Deal con Bao gia/Hop dong: hoi ro truoc khi xoa kem (feedback 2026-09-23).
+        if (!(err instanceof CascadeConfirmRequiredError)) throw err;
+        const blocked = blockedContractsMessage(err.summary);
+        if (blocked) {
+          window.alert(blocked);
+          return;
+        }
+        if (!window.confirm(cascadeWarningText('Cơ hội này', err.summary))) return;
+        await deleteDeal(deal.id, true);
+      }
       setDetailOpen(false);
       setSelectedDeal(null);
     } catch (err) {

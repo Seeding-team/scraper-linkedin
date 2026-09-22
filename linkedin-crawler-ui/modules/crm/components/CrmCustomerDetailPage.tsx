@@ -29,6 +29,7 @@ import { customerLeadService, type Customer as LiveDealRow, type DealStage as Li
 import { ManualContractModal } from '@/modules/contracts/components/ManualContractModal';
 import { RegisterExternalContractModal } from '@/components/all-platform/customers/RegisterExternalContractModal';
 import { contractStatusLabel } from '@/modules/contracts/constants/contractConfig';
+import { blockedContractsMessage, cascadeSummaryFromBody, cascadeWarningText } from '../utils/cascadeDelete';
 
 function formatContractDate(value?: string | null): string {
   if (!value) return '';
@@ -523,7 +524,18 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
   async function deleteOpenDeal(c: LiveDealRow) {
     if (!confirm(`Xóa cơ hội "${c.customer_name}"?\nHành động này không thể hoàn tác.`)) return;
     try {
-      const res = await customerLeadService.delete(c.id);
+      let res = await customerLeadService.delete(c.id);
+      // Co hoi con Bao gia/Hop dong: hoi ro truoc khi xoa kem (feedback 2026-09-23).
+      const summary = cascadeSummaryFromBody(res);
+      if (summary) {
+        const blocked = blockedContractsMessage(summary);
+        if (blocked) {
+          window.alert(blocked);
+          return;
+        }
+        if (!confirm(cascadeWarningText('Cơ hội này', summary))) return;
+        res = await customerLeadService.delete(c.id, true);
+      }
       if (res?.success === false) throw new Error(res?.message || 'Xóa thất bại');
       setOpenDeal(null);
       setReloadTick(t => t + 1);

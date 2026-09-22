@@ -13,6 +13,7 @@ from app.modules.all_platform.schemas.customer_lead import (
 from app.modules.all_platform.services import customer_lead_service, decode_token, get_user_by_id, can_write_deal
 from app.core.supabase_client import friendly_supabase_error_message
 from app.modules.all_platform.services.customer_lead_service import TransitionError
+from app.modules.all_platform.services.crm_delete_cascade_service import CascadeConfirmRequired
 from app.modules.all_platform.services.crm_attachment_service import (
     upload_attachment,
     allowed_mime,
@@ -367,12 +368,20 @@ def update_customer_lead(
 
 
 @router.delete("/{lead_id}", response_model=BaseResponse)
-def delete_customer_lead(lead_id: str, current_user: Any = Depends(get_current_user)):
+def delete_customer_lead(
+    lead_id: str,
+    confirm_cascade: bool = Query(False, description="True sau khi nguoi dung da xac nhan xoa kem Bao gia/Hop dong lien quan."),
+    current_user: Any = Depends(get_current_user),
+):
     try:
         existing = customer_lead_service.get_customer_lead_by_id(lead_id)
+        if not existing:
+            return BaseResponse(success=False, message="Không tìm thấy cơ hội này.")
         if not can_write_deal(current_user, existing):
             return BaseResponse(success=False, message="Bạn không có quyền xóa deal này — chỉ deal do mình tạo hoặc được giao mới xóa được")
-        customer_lead_service.delete_customer_lead(lead_id)
+        customer_lead_service.delete_customer_lead(lead_id, current_user, confirm_cascade=confirm_cascade)
         return BaseResponse(success=True, message="Deleted successfully")
+    except CascadeConfirmRequired as e:
+        return BaseResponse(success=False, message=str(e), data={"requiresCascadeConfirm": True, **e.summary})
     except Exception as e:
         return BaseResponse(success=False, message=str(e))

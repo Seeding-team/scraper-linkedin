@@ -11,6 +11,7 @@ from app.core.supabase_client import execute_supabase_query, get_supabase_client
 from app.modules.all_platform.services.customer_lead_service import BASE_COLUMNS, _normalize_row
 from app.modules.all_platform.services.supabase_quote_service import apply_quote_field_permissions
 from app.modules.all_platform.services.crm_permission_service import can_edit_contract, has_full_crm_access
+from app.modules.all_platform.services.crm_delete_cascade_service import CascadeConfirmRequired, delete_customer_cascade
 from app.modules.all_platform.services.supabase_categories_service import get_categories_by_type
 from app.modules.all_platform.services.crm_position_service import apply_position_category
 from app.modules.all_platform.services.crm_city_normalizer import normalize_city_fields, normalize_vietnam_city
@@ -40,20 +41,16 @@ class CustomerNotFoundError(ValueError):
 
 
 class CustomerLinkedError(ValueError):
-    """Chan xoa Khach hang con lien ket deal/contact - customer_leads.customer_id
-    la ON DELETE SET NULL va crm_contacts.customer_id la ON DELETE CASCADE
-    (078_crm_leads_contacts.sql), xoa thang se lam mat lien ket deal hoac xoa
-    am tham toan bo contact. Doi voi tinh huong nay nen chuyen status sang
-    'not_fit' (Ngung hoat dong) thay vi xoa han."""
+    """Con du lieu lien quan - KHONG con la loi chan cung (feedback
+    2026-09-23: "hỏi rõ trước khi xóa luôn các dữ liệu liên quan"). Router tra
+    ve data={requiresCascadeConfirm, ...summary} de FE hoi xac nhan roi goi lai
+    voi confirm_cascade=true. Xem crm_delete_cascade_service."""
 
-    def __init__(self, deal_count: int, contact_count: int) -> None:
-        super().__init__(
-            f"Khach hang nay con {deal_count} deal va {contact_count} nguoi lien he "
-            "lien ket - khong the xoa. Hay chuyen trang thai sang \"Ngung hoat dong\" "
-            "thay vi xoa han."
-        )
-        self.deal_count = deal_count
-        self.contact_count = contact_count
+    def __init__(self, message: str, summary: dict[str, Any]) -> None:
+        super().__init__(message)
+        self.summary = summary
+        self.deal_count = summary.get("deal_count", 0)
+        self.contact_count = summary.get("contact_count", 0)
 
 
 def _is_admin_or_leader(user: dict[str, Any] | None) -> bool:
@@ -445,23 +442,39 @@ def update_customer(customer_id: str, payload: dict[str, Any], user: dict[str, A
     return normalize_city_fields(res.data[0])
 
 
-def delete_customer(customer_id: str, user: dict[str, Any]) -> dict[str, Any]:
+def delete_customer(customer_id: str, user: dict[str, Any], confirm_cascade: bool = False) -> dict[str, Any]:
+    """Xoa Khach hang. Con du lieu lien quan (Deal/Lead/Contact/Du an/Bao
+    gia/Hop dong) va confirm_cascade=False -> raise CustomerLinkedError kem so
+    dem, KHONG xoa gi. confirm_cascade=True -> xoa toan bo (gate quyen + hop
+    dong da ky trong delete_customer_cascade)."""
     current = get_customer(customer_id, user)
     if not can_edit_customer(user, current):
         raise PermissionError("Khong co quyen xoa ho so khach hang nay.")
-    supabase = get_supabase_client()
-    deal_res = execute_supabase_query(
-        lambda: supabase.table("customer_leads").select("id", count="exact").eq("customer_id", customer_id).eq("instance", settings.crm_instance).execute()
-    )
-    contact_res = execute_supabase_query(
-        lambda: supabase.table("crm_contacts").select("id", count="exact").eq("customer_id", customer_id).eq("instance", settings.crm_instance).execute()
-    )
-    deal_count = deal_res.count or 0
-    contact_count = contact_res.count or 0
-    if deal_count or contact_count:
-        raise CustomerLinkedError(deal_count, contact_count)
-    execute_supabase_query(lambda: supabase.table("crm_customers").delete().eq("id", customer_id).eq("instance", settings.crm_instance).execute())
-    return {}
+    try:
+        return delete_customer_cascade(current, user, confirm_cascade)
+    except CascadeConfirmRequired as exc:
+        raise CustomerLinkedError(str(exc), exc.summary) from exc
+
+
+def delete_customers_bulk(customer_ids: list[str], user: dict[str, Any], confirm_cascade: bool = False) -> dict[str, Any]:
+    """Xoa nhieu Khach hang (chon nhieu o danh sach). Tung khach xu ly doc lap
+    qua delete_customer() - loi 1 khach khong chan cac khach con lai. Khach con
+    du lieu lien quan ma chua confirm -> nam trong `failed` voi
+    requiresCascadeConfirm + summary de FE hoi lai 1 lan cho ca nhom."""
+    deleted_ids: list[str] = []
+    failed: list[dict[str, Any]] = []
+    for raw_id in customer_ids:
+        customer_id = str(raw_id or "").strip()
+        if not customer_id:
+            continue
+        try:
+            delete_customer(customer_id, user, confirm_cascade=confirm_cascade)
+            deleted_ids.append(customer_id)
+        except CustomerLinkedError as exc:
+            failed.append({"customer_id": customer_id, "message": str(exc), "requiresCascadeConfirm": True, "summary": exc.summary})
+        except Exception as exc:  # noqa: BLE001 - tra loi tung dong cho FE
+            failed.append({"customer_id": customer_id, "message": str(exc), "requiresCascadeConfirm": False})
+    return {"deleted_ids": deleted_ids, "failed": failed}
 
 
 def related_records(customer_id: str, user: dict[str, Any]) -> dict[str, Any]:

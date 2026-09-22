@@ -26,8 +26,8 @@ class ContactNotFoundError(ValueError):
 CONTACT_COLUMNS = (
     "id, customer_id, name, position, position_category_id, "
     "position_label_snapshot, phone, phone_normalized, email, "
-    "email_normalized, zalo, facebook, is_primary, note, created_by, "
-    "created_at, updated_at"
+    "email_normalized, zalo, facebook, telegram, website, is_primary, note, "
+    "created_by, created_at, updated_at"
 )
 logger = logging.getLogger(__name__)
 
@@ -99,6 +99,65 @@ def create_contact(customer_id: str, payload: dict[str, Any], user: dict[str, An
     supabase = get_supabase_client()
     res = execute_supabase_query(lambda: supabase.table("crm_contacts").insert(data).execute())
     return res.data[0]
+
+
+def find_duplicate_contacts(
+    customer_id: str,
+    user: dict[str, Any],
+    phone: str | None = None,
+    email: str | None = None,
+    exclude_contact_id: str | None = None,
+) -> list[dict[str, Any]]:
+    """Kiem tra trung Contact theo SDT/Email (da chuan hoa) truoc khi them -
+    feedback 2026-09-23: form Them Contact phai "lay tt nhu thang lead" (buoc
+    Kiem tra trung cua form Lead). Dedup CHI trong tenant hien tai (rule:
+    khong match record tenant khac). Tra ve ca contact cua khach hang khac
+    (kem ten khach hang) de nguoi dung biet nguoi nay da ton tai o dau."""
+    get_customer(customer_id, user)
+    phone_normalized = normalize_phone(phone)
+    email_normalized = normalize_email(email)
+    if not phone_normalized and not email_normalized:
+        return []
+    supabase = get_supabase_client()
+    filters = []
+    if phone_normalized:
+        filters.append(f"phone_normalized.eq.{phone_normalized}")
+    if email_normalized:
+        filters.append(f"email_normalized.eq.{email_normalized}")
+    res = execute_supabase_query(
+        lambda: supabase.table("crm_contacts")
+        .select(CONTACT_COLUMNS)
+        .eq("instance", settings.crm_instance)
+        .or_(",".join(filters))
+        .limit(10)
+        .execute()
+    )
+    rows = [row for row in (res.data or []) if str(row.get("id")) != str(exclude_contact_id or "")]
+    customer_ids = sorted({str(row["customer_id"]) for row in rows if row.get("customer_id")})
+    names: dict[str, str] = {}
+    if customer_ids:
+        cust_res = execute_supabase_query(
+            lambda: supabase.table("crm_customers").select("id, customer_name, company_name")
+            .eq("instance", settings.crm_instance).in_("id", customer_ids).execute()
+        )
+        names = {
+            str(c["id"]): c.get("company_name") or c.get("customer_name") or ""
+            for c in (cust_res.data or [])
+        }
+    out = []
+    for row in rows:
+        reasons = []
+        if phone_normalized and row.get("phone_normalized") == phone_normalized:
+            reasons.append("phone")
+        if email_normalized and row.get("email_normalized") == email_normalized:
+            reasons.append("email")
+        out.append({
+            **row,
+            "customer_name": names.get(str(row.get("customer_id")), ""),
+            "same_customer": str(row.get("customer_id")) == str(customer_id),
+            "match_reasons": reasons,
+        })
+    return out
 
 
 def _get_contact(contact_id: str) -> dict[str, Any]:
