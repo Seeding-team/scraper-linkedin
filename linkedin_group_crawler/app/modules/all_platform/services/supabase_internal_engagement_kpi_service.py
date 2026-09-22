@@ -927,6 +927,72 @@ def fetch_linkedin_post_metadata(url: str) -> dict[str, str]:
         return {"author_name": "", "content": ""}
 
 
+def extract_threads_metadata(data: dict | str) -> dict[str, str]:
+    """Trích xuất author_name và content từ metadata bài Threads (threads.net).
+    BEST-EFFORT (chưa verify với site thật): cấu trúc kỳ vọng dựa theo OG tag chuẩn
+    - title chứa: "<Tên người đăng> (@handle) on Threads" / "... trên Threads"
+    - description chứa nội dung bài viết thật.
+    Nếu Threads render OG tags qua JS (fetch tĩnh không thấy được) thì hàm này trả
+    rỗng, caller tự fallback về placeholder "Bài viết Threads - Cần tương tác" giống
+    hệt cách Facebook/LinkedIn/YouTube fallback khi cào không ra gì.
+    """
+    if not data:
+        return {"author_name": "", "content": ""}
+
+    if isinstance(data, str):
+        try:
+            data = json.loads(data)
+        except Exception:
+            data = {"description": data}
+
+    raw_desc = data.get("description") if isinstance(data, dict) else ""
+    content = str(raw_desc).strip() if raw_desc else ""
+
+    raw_title = (data.get("page_title") or data.get("title") or "") if isinstance(data, dict) else ""
+    full_title = str(raw_title).strip() if raw_title else ""
+
+    author_name = ""
+    for marker in (" on Threads", " trên Threads"):
+        if marker in full_title:
+            author_name = full_title.split(marker)[0].strip()
+            break
+    if "(@" in author_name:
+        author_name = author_name.split("(@")[0].strip()
+
+    return {"author_name": author_name, "content": content}
+
+
+def fetch_threads_post_metadata(url: str) -> dict[str, str]:
+    """Cào metadata bài viết Threads từ HTML thô (og:title/og:description) — BEST-EFFORT,
+    chưa test với threads.net thật. Không raise lỗi khi cào rỗng, chỉ trả về rỗng để
+    caller tự fallback placeholder (giống fetch_linkedin_post_metadata)."""
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept-Language": "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7",
+    }
+    try:
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, timeout=10) as response:
+            html_content = response.read().decode("utf-8", errors="ignore")
+
+        meta_title_match = re.search(r'<meta\s+property=["\']og:title["\']\s+content=["\']([^"\']+)["\']', html_content, re.IGNORECASE) or \
+                           re.search(r'<title[^>]*>(.*?)</title>', html_content, re.IGNORECASE | re.DOTALL)
+        page_title = html.unescape(meta_title_match.group(1)).strip() if meta_title_match and meta_title_match.group(1) else ""
+
+        meta_desc_match = re.search(r'<meta\s+property=["\']og:description["\']\s+content=["\']([^"\']+)["\']', html_content, re.IGNORECASE) or \
+                          re.search(r'<meta\s+name=["\']description["\']\s+content=["\']([^"\']+)["\']', html_content, re.IGNORECASE)
+        description = html.unescape(meta_desc_match.group(1)).strip() if meta_desc_match and meta_desc_match.group(1) else ""
+
+        return extract_threads_metadata({
+            "page_title": page_title,
+            "title": page_title,
+            "description": description,
+        })
+    except Exception as e:
+        logger.error(f"Lỗi khi cào metadata Threads: {e}")
+        return {"author_name": "", "content": ""}
+
+
 async def add_custom_post(
     email_member: str,
     link_post: str,
@@ -954,19 +1020,34 @@ async def add_custom_post(
         platform == "linkedin"
         or "linkedin.com" in link_post.lower()
     )
+    is_threads = (
+        platform == "threads"
+        or "threads.net" in link_post.lower()
+        or "threads.com" in link_post.lower()
+    )
     is_youtube = (
         platform == "youtube"
         or "youtube.com" in link_post.lower()
         or "youtu.be" in link_post.lower()
     )
-    final_platform = "linkedin" if is_linkedin else ("youtube" if is_youtube else "facebook")
+    final_platform = (
+        "linkedin" if is_linkedin
+        else "threads" if is_threads
+        else "youtube" if is_youtube
+        else "facebook"
+    )
 
     li_meta = {}
+    th_meta = {}
     yt_meta = {}
     if is_linkedin:
         final_clean_url = clean_url(link_post)
         li_meta = fetch_linkedin_post_metadata(final_clean_url)
         scraped_content = content or li_meta.get("content") or "Bài viết LinkedIn - Cần tương tác"
+    elif is_threads:
+        final_clean_url = clean_url(link_post)
+        th_meta = fetch_threads_post_metadata(final_clean_url)
+        scraped_content = content or th_meta.get("content") or "Bài viết Threads - Cần tương tác"
     elif is_youtube:
         final_clean_url = clean_url(link_post)
         yt_meta = fetch_youtube_post_metadata(final_clean_url)
@@ -987,12 +1068,15 @@ async def add_custom_post(
             raise HTTPException(status_code=400, detail="Bài viết này đã tồn tại trong hệ thống!")
 
     meta = {}
-    if not is_linkedin and not is_youtube and (not content or not fanpage_name or not media_urls):
+    if not is_linkedin and not is_threads and not is_youtube and (not content or not fanpage_name or not media_urls):
         meta = fetch_facebook_post_metadata(final_clean_url, cookie=cookie)
 
     if is_linkedin:
         final_fanpage_name = fanpage_name or li_meta.get("author_name") or "Thành viên LinkedIn"
         auto_content = li_meta.get("content") or ""
+    elif is_threads:
+        final_fanpage_name = fanpage_name or th_meta.get("author_name") or "Thành viên Threads"
+        auto_content = th_meta.get("content") or ""
     elif is_youtube:
         final_fanpage_name = fanpage_name or yt_meta.get("channel_name") or "Kênh YouTube"
         auto_content = yt_meta.get("title") or yt_meta.get("description") or ""
@@ -1001,7 +1085,7 @@ async def add_custom_post(
         auto_content = clean_facebook_content(meta, final_fanpage_name)
 
     final_content = content or auto_content or scraped_content
-    placeholder_texts = {"Bài viết Facebook - Cần tương tác", "Bài viết LinkedIn - Cần tương tác", "Video YouTube - Cần tương tác"}
+    placeholder_texts = {"Bài viết Facebook - Cần tương tác", "Bài viết LinkedIn - Cần tương tác", "Bài viết Threads - Cần tương tác", "Video YouTube - Cần tương tác"}
     if not final_content or final_content in placeholder_texts:
         raw_desc = meta.get("description") or meta.get("og:description") or yt_meta.get("description") or ""
         if raw_desc:
@@ -1011,7 +1095,12 @@ async def add_custom_post(
                 final_content = unescaped_desc
 
     if not final_content:
-        final_content = "Bài viết LinkedIn - Cần tương tác" if is_linkedin else ("Video YouTube - Cần tương tác" if is_youtube else "Bài viết Facebook - Cần tương tác")
+        final_content = (
+            "Bài viết LinkedIn - Cần tương tác" if is_linkedin
+            else "Bài viết Threads - Cần tương tác" if is_threads
+            else "Video YouTube - Cần tương tác" if is_youtube
+            else "Bài viết Facebook - Cần tương tác"
+        )
 
     # Dọn dẹp Content: Gọt bỏ Tên Fanpage nếu nó bị dính ở đầu Caption
     if final_fanpage_name and final_content:
@@ -1834,6 +1923,23 @@ def extract_facebook_post_engagement_stats(meta: dict) -> dict:
                 stats["shares"] = parse_formatted_number(share_matches[-1])
 
     return stats
+
+
+def get_custom_post_platform_db(post_id: str) -> str:
+    """Trả platform ('facebook'|'linkedin'|'threads') của 1 bài custom-post — dùng để
+    router quyết định gọi service sync-playwright nào (mặc định 'facebook' nếu không
+    tìm thấy bài hoặc dữ liệu cũ trước migration 054 chưa có cột platform)."""
+    supabase: Client = get_supabase_client()
+    res = (
+        supabase.table("internal_engagement_custom_posts")
+        .select("platform")
+        .eq("id", post_id)
+        .limit(1)
+        .execute()
+    )
+    if res.data:
+        return res.data[0].get("platform") or "facebook"
+    return "facebook"
 
 
 def sync_linkedin_post_engagement_db(

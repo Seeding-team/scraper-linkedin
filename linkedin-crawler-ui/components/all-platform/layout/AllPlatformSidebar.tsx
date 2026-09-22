@@ -81,15 +81,12 @@ export function getInitials(name?: string) {
 }
 
 /** Trang chủ đúng theo role — dùng chung cho sidebar (mục "Trang chủ") lẫn
- * redirect ngay sau khi đăng nhập (AuthPage.tsx), để admin/leader không bị
- * đưa nhầm về post-feed (trang chủ của member) sau khi đăng nhập. */
+ * redirect ngay sau khi đăng nhập (AuthPage.tsx). Từ 2026-09-22, trang chủ
+ * của CẢ 3 role là "Tương tác nội bộ" (thay vì dashboard riêng của
+ * admin/leader hay Dashboard Pipeline của member) — dashboard riêng vẫn còn,
+ * truy cập được qua các mục khác trong sidebar, chỉ không còn là mặc định. */
 export function getDashboardHrefForRole(role?: string | null): string {
-  if (role === "admin") return "/all-platform/admin/dashboard";
-  if (role === "leader") return "/all-platform/leader/dashboard";
-  // Member: trang chủ giờ là Dashboard Pipeline cá nhân (số liệu deal/phase/
-  // trễ hạn...) thay vì post-feed — post-feed vẫn còn, chỉ không còn là
-  // trang chủ mặc định (vẫn truy cập được qua mục "Sản xuất nội dung").
-  return "/all-platform/crm/my-dashboard";
+  return "/all-platform/internal-engagement";
 }
 
 export function buildEntries(isAdmin: boolean, isLeader: boolean, workspaceTab: "personal" | "team", isSale: boolean = false): SidebarEntry[] {
@@ -541,8 +538,8 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, workspaceTab: 
   if (workspaceTab === "personal") {
     return [
       homeEntry,
-      ...(isAdmin ? [phoneBridgeEntry] : []),
       contentGroup,
+      ...(isAdmin ? [phoneBridgeEntry] : []),
       channelGroup,
       ...crmEntries,
       {
@@ -559,6 +556,7 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, workspaceTab: 
 
   return [
     homeEntry,
+    contentGroup,
     ...(isAdmin ? [phoneBridgeEntry] : []),
     {
       type: "group",
@@ -567,7 +565,6 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, workspaceTab: 
       label: "Quản lý",
       items: managementItems,
     },
-    contentGroup,
     channelGroupTeam,
     ...crmEntries,
     ...(isAdmin || isLeader

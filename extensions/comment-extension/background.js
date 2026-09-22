@@ -249,8 +249,10 @@ async function runBulkComment(payload, uiTabId, postsToRun) {
                         ? result.platform
                         : ((url && (url.includes("youtube.com") || url.includes("youtu.be")))
                             ? "youtube"
-                            : ((url && (url.includes("linkedin.com") || url.includes("lnkd.in"))) ? "linkedin" : "facebook"));
-                    const platformId = detectedPlatform === "youtube" ? 2 : (detectedPlatform === "linkedin" ? 3 : 1);
+                            : ((url && (url.includes("linkedin.com") || url.includes("lnkd.in")))
+                                ? "linkedin"
+                                : ((url && url.includes("threads.")) ? "threads" : "facebook")));
+                    const platformId = detectedPlatform === "youtube" ? 2 : (detectedPlatform === "linkedin" ? 3 : (detectedPlatform === "threads" ? 4 : 1));
 
                     if (verifyConfig.mode === "internal_engagement") {
                         // Trang Tương tác nội bộ — lưu vào bảng KPI riêng, không đụng

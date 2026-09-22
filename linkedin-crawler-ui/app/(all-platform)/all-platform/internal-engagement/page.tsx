@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { FaFacebook, FaLinkedin, FaYoutube, FaTiktok, FaLink } from "react-icons/fa6";
+import { FaFacebook, FaLinkedin, FaThreads, FaYoutube, FaTiktok, FaLink } from "react-icons/fa6";
 import { useAppAuth } from "@/contexts/AppAuthContext";
 import { API_BASE_URL } from "@/lib/env";
 import {
@@ -42,6 +42,13 @@ const getPlatformIcon = (url?: string) => {
       </div>
     );
   }
+  if (lowerUrl.includes("threads.net") || lowerUrl.includes("threads.com")) {
+    return (
+      <div className="w-8 h-8 rounded-full bg-black text-white grid place-items-center shrink-0 shadow-xs" title="Threads">
+        <FaThreads className="w-4 h-4" />
+      </div>
+    );
+  }
   if (lowerUrl.includes("youtube.com") || lowerUrl.includes("youtu.be")) {
     return (
       <div className="w-8 h-8 rounded-full bg-[#ff0000] text-white grid place-items-center shrink-0 shadow-xs" title="YouTube">
@@ -64,6 +71,7 @@ const getPlatformIcon = (url?: string) => {
 };
 
 const isLinkedInUrl = (url: string): boolean => /linkedin\.com|lnkd\.in/i.test(url);
+const isThreadsUrl = (url: string): boolean => /threads\.net|threads\.com/i.test(url);
 
 function fmtRelativeTime(iso?: string): string {
   if (!iso) return "";
@@ -1002,7 +1010,7 @@ export default function InternalEngagementPage() {
   }, [taskLink, isCreateTaskModalOpen]);
 
   const handleCreateTaskSubmit = async () => {
-    const socialRegex = /^(https?:\/\/)?([\w-]+\.)*(facebook\.com|fb\.com|fb\.watch|youtube\.com|youtu\.be|tiktok\.com|linkedin\.com|lnkd\.in)\/.+$/i;
+    const socialRegex = /^(https?:\/\/)?([\w-]+\.)*(facebook\.com|fb\.com|fb\.watch|youtube\.com|youtu\.be|tiktok\.com|linkedin\.com|lnkd\.in|threads\.net|threads\.com)\/.+$/i;
 
     const rawLink = taskLink.trim();
     if (!rawLink) {
@@ -1010,7 +1018,7 @@ export default function InternalEngagementPage() {
     }
 
     if (!socialRegex.test(rawLink)) {
-      return showToast("Vui lòng nhập đường link hợp lệ (Facebook, YouTube, TikTok, LinkedIn).", "error");
+      return showToast("Vui lòng nhập đường link hợp lệ (Facebook, YouTube, TikTok, LinkedIn, Threads).", "error");
     }
 
     if (taskAssignedTeams.length === 0) {
@@ -1030,6 +1038,7 @@ export default function InternalEngagementPage() {
     }
 
     const isLinkedInLink = isLinkedInUrl(rawLink);
+    const isThreadsLink = !isLinkedInLink && isThreadsUrl(rawLink);
     const finalCleanLink = isLinkedInLink ? sanitizeLinkedInUrl(rawLink) : rawLink;
 
     if (isLinkedInLink && liAutoFetchStatus === "fetching") {
@@ -1056,7 +1065,7 @@ export default function InternalEngagementPage() {
       const payload = {
         link: finalCleanLink,
         email: user.email,
-        platform: isLinkedInLink ? "linkedin" : "facebook",
+        platform: isLinkedInLink ? "linkedin" : isThreadsLink ? "threads" : "facebook",
         content: isLinkedInLink ? taskLinkedInContent.trim() : undefined,
         fanpage_name: isLinkedInLink ? taskLinkedInAuthor.trim() || undefined : undefined,
         likes: isLinkedInLink ? taskLinkedInMetricsRef.current.likes : undefined,
@@ -1468,7 +1477,13 @@ export default function InternalEngagementPage() {
           ],
           verifyConfig: {
             ...buildVerifyConfig(),
-            id_platform: isLinkedIn ? 3 : ((modalPost as any).platform === "youtube" ? 2 : 1),
+            id_platform: isLinkedIn
+              ? 3
+              : (modalPost as any).platform === "youtube"
+                ? 2
+                : (modalPost as any).platform === "threads"
+                  ? 4
+                  : 1,
           },
         },
       },
@@ -2259,7 +2274,9 @@ export default function InternalEngagementPage() {
                   <div className="text-[12px] text-[#777] mt-1">
                     {modalPost.platform === "linkedin"
                       ? "Thực hiện qua LinkedIn Extension trên tài khoản LinkedIn đang đăng nhập"
-                      : "Thực hiện qua Chrome Extension trên tài khoản Facebook đang đăng nhập"}
+                      : modalPost.platform === "threads"
+                        ? "Thực hiện qua Chrome Extension trên tài khoản Threads đang đăng nhập"
+                        : "Thực hiện qua Chrome Extension trên tài khoản Facebook đang đăng nhập"}
                   </div>
                 </div>
                 <button type="button" className="border-0 bg-[#f2f3f6] rounded-lg px-2.5 py-1.75" onClick={closeModal} aria-label="close">✕</button>
@@ -2294,7 +2311,7 @@ export default function InternalEngagementPage() {
 
                 <div className="text-[13px] text-[#5d616c] mb-3 line-clamp-3">{modalPost.content}</div>
 
-                {socialAccounts.length > 0 && modalPost.platform !== "linkedin" ? (
+                {socialAccounts.length > 0 && (modalPost.platform || "facebook") === "facebook" ? (
                   <div className="mb-3">
                     <label className="text-[12px] font-extrabold block mb-2">Tài khoản Facebook dùng để comment:</label>
                     <select
@@ -2939,7 +2956,7 @@ export default function InternalEngagementPage() {
                     onChange={(e) => setTaskLink(e.target.value)}
                     disabled={isSubmittingTask}
                     className="w-full border border-gray-200 rounded-xl px-3.5 py-2 text-sm outline-none focus:border-rose-500"
-                    placeholder="Dán link bài viết (Facebook, YouTube, TikTok, LinkedIn...)"
+                    placeholder="Dán link bài viết (Facebook, YouTube, TikTok, LinkedIn, Threads...)"
                   />
                 </div>
 
