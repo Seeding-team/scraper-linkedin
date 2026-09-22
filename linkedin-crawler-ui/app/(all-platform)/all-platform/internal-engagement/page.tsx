@@ -1371,6 +1371,12 @@ export default function InternalEngagementPage() {
         setIsRunning(false);
         setRunProgress(null);
         showToast("Extension vừa được cập nhật/cài lại — vui lòng tải lại trang (F5) để kết nối lại rồi thử gửi comment lại.", "error");
+      } else if (action === "BULK_COMMENT_FAILED_TO_START" || action === "LI_COMMENT_FAILED_TO_START") {
+        // Background tu choi ngay lap tuc (vd dang tuong nham co 1 tien trinh khac
+        // chua xong) - truoc day bi im lang hoan toan, gio bao ro cho nguoi dung.
+        setIsRunning(false);
+        setRunProgress(null);
+        showToast(`Không gửi được comment: ${event.data?.error || "Lỗi không xác định"}`, "error");
       } else if (action === "LI_COMMENT_STARTED") {
         setIsRunning(true);
         setRunProgress("Đang mở bài viết LinkedIn...");

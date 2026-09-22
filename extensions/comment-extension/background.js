@@ -28,6 +28,17 @@ async function clearPersistedState() {
 
 getPersistedState();
 
+// Neu vi 1 ly do nao do (loi cu truoc khi co fix nay, extension bi tat dot ngot...)
+// isCommenting bi ket o "true" trong chrome.storage.session, no se KET MAI - session
+// storage khong tu xoa khi cap nhat/reload extension, chi mat khi dong HET trinh duyet.
+// Reset sach moi lan extension duoc cai lai/cap nhat de chac chan khong bi "ket" nua.
+chrome.runtime.onInstalled.addListener(() => {
+    isCommenting = false;
+    shouldStop = false;
+    currentProgress = null;
+    clearPersistedState();
+});
+
 let activeTargetTabId = null;
 let activeTargetConfig = null;
 let syncTimestamp = 0;
@@ -214,6 +225,13 @@ async function waitForTabLoad(tabId, timeoutMs = 10000) {
 async function runBulkComment(payload, uiTabId, postsToRun) {
     const { text, verifyConfig } = payload;
 
+    // Toan bo vong lap boc trong try/finally - truoc day neu co loi bat ngo nao
+    // thoat ra ngoai vong lap (khong duoc bat trong try/catch tung buoc ben duoi),
+    // isCommenting se ket cung o "true" MAI MAI (ke ca sau khi service worker restart,
+    // vi da persist qua chrome.storage.session) - moi lan bam "Gui" sau do bi background
+    // tu choi ngay lap tuc voi loi "Dang co 1 tien trinh dang chay" MA KHONG AI BAO CHO
+    // NGUOI DUNG BIET (xem fix o bridge.js) => giong het trieu chung "bam khong ra gi ca".
+    try {
     for (let i = 0; i < postsToRun.length; i++) {
         if (shouldStop) break;
 
@@ -398,16 +416,17 @@ async function runBulkComment(payload, uiTabId, postsToRun) {
             await delay(5000);
         }
     }
-
-    isCommenting = false;
-    shouldStop = false;
-    currentProgress = null;
-    clearPersistedState();
-    if (uiTabId) {
-        chrome.tabs.sendMessage(uiTabId, {
-            action: "BULK_COMMENT_DONE",
-            payload: { total: postsToRun.length, stopped: shouldStop }
-        }).catch(() => {});
+    } finally {
+        isCommenting = false;
+        shouldStop = false;
+        currentProgress = null;
+        clearPersistedState();
+        if (uiTabId) {
+            chrome.tabs.sendMessage(uiTabId, {
+                action: "BULK_COMMENT_DONE",
+                payload: { total: postsToRun.length, stopped: shouldStop }
+            }).catch(() => {});
+        }
     }
 }
 
