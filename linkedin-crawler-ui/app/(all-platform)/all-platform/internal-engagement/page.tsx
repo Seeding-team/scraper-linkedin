@@ -1361,6 +1361,16 @@ export default function InternalEngagementPage() {
         setIsExtensionReady(true);
       } else if (action === "LI_EXTENSION_READY") {
         setIsLiExtensionReady(true);
+      } else if (action === "COMMENT_EXTENSION_INVALIDATED" || action === "LI_EXTENSION_INVALIDATED") {
+        // Extension vua duoc cai lai/cap nhat trong khi tab nay da mo tu truoc -> ket noi
+        // cu (bridge.js dang chay tren trang) bi vo hieu, moi lenh gui di deu roi vao im
+        // lang (khong loi, khong toast) - dung y het trieu chung "bam Gui khong ra gi ca".
+        // Bao ro cho nguoi dung thay vi de im lang, va tat trang thai "san sang" gia.
+        setIsExtensionReady(false);
+        setIsLiExtensionReady(false);
+        setIsRunning(false);
+        setRunProgress(null);
+        showToast("Extension vừa được cập nhật/cài lại — vui lòng tải lại trang (F5) để kết nối lại rồi thử gửi comment lại.", "error");
       } else if (action === "LI_COMMENT_STARTED") {
         setIsRunning(true);
         setRunProgress("Đang mở bài viết LinkedIn...");
