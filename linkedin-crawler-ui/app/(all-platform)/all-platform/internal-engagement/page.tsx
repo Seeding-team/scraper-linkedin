@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { FaFacebook, FaLinkedin, FaYoutube, FaTiktok, FaLink } from "react-icons/fa6";
+import { FaFacebook, FaLinkedin, FaThreads, FaYoutube, FaTiktok, FaLink } from "react-icons/fa6";
 import { useAppAuth } from "@/contexts/AppAuthContext";
 import { API_BASE_URL } from "@/lib/env";
 import {
@@ -42,6 +42,13 @@ const getPlatformIcon = (url?: string) => {
       </div>
     );
   }
+  if (lowerUrl.includes("threads.net") || lowerUrl.includes("threads.com")) {
+    return (
+      <div className="w-8 h-8 rounded-full bg-black text-white grid place-items-center shrink-0 shadow-xs" title="Threads">
+        <FaThreads className="w-4 h-4" />
+      </div>
+    );
+  }
   if (lowerUrl.includes("youtube.com") || lowerUrl.includes("youtu.be")) {
     return (
       <div className="w-8 h-8 rounded-full bg-[#ff0000] text-white grid place-items-center shrink-0 shadow-xs" title="YouTube">
@@ -64,6 +71,7 @@ const getPlatformIcon = (url?: string) => {
 };
 
 const isLinkedInUrl = (url: string): boolean => /linkedin\.com|lnkd\.in/i.test(url);
+const isThreadsUrl = (url: string): boolean => /threads\.net|threads\.com/i.test(url);
 
 function fmtRelativeTime(iso?: string): string {
   if (!iso) return "";
@@ -1002,7 +1010,7 @@ export default function InternalEngagementPage() {
   }, [taskLink, isCreateTaskModalOpen]);
 
   const handleCreateTaskSubmit = async () => {
-    const socialRegex = /^(https?:\/\/)?([\w-]+\.)*(facebook\.com|fb\.com|fb\.watch|youtube\.com|youtu\.be|tiktok\.com|linkedin\.com|lnkd\.in)\/.+$/i;
+    const socialRegex = /^(https?:\/\/)?([\w-]+\.)*(facebook\.com|fb\.com|fb\.watch|youtube\.com|youtu\.be|tiktok\.com|linkedin\.com|lnkd\.in|threads\.net|threads\.com)\/.+$/i;
 
     const rawLink = taskLink.trim();
     if (!rawLink) {
@@ -1010,7 +1018,7 @@ export default function InternalEngagementPage() {
     }
 
     if (!socialRegex.test(rawLink)) {
-      return showToast("Vui lòng nhập đường link hợp lệ (Facebook, YouTube, TikTok, LinkedIn).", "error");
+      return showToast("Vui lòng nhập đường link hợp lệ (Facebook, YouTube, TikTok, LinkedIn, Threads).", "error");
     }
 
     if (taskAssignedTeams.length === 0) {
@@ -1030,6 +1038,7 @@ export default function InternalEngagementPage() {
     }
 
     const isLinkedInLink = isLinkedInUrl(rawLink);
+    const isThreadsLink = !isLinkedInLink && isThreadsUrl(rawLink);
     const finalCleanLink = isLinkedInLink ? sanitizeLinkedInUrl(rawLink) : rawLink;
 
     if (isLinkedInLink && liAutoFetchStatus === "fetching") {
@@ -1056,7 +1065,7 @@ export default function InternalEngagementPage() {
       const payload = {
         link: finalCleanLink,
         email: user.email,
-        platform: isLinkedInLink ? "linkedin" : "facebook",
+        platform: isLinkedInLink ? "linkedin" : isThreadsLink ? "threads" : "facebook",
         content: isLinkedInLink ? taskLinkedInContent.trim() : undefined,
         fanpage_name: isLinkedInLink ? taskLinkedInAuthor.trim() || undefined : undefined,
         likes: isLinkedInLink ? taskLinkedInMetricsRef.current.likes : undefined,
@@ -1352,6 +1361,16 @@ export default function InternalEngagementPage() {
         setIsExtensionReady(true);
       } else if (action === "LI_EXTENSION_READY") {
         setIsLiExtensionReady(true);
+      } else if (action === "COMMENT_EXTENSION_INVALIDATED" || action === "LI_EXTENSION_INVALIDATED") {
+        // Extension vua duoc cai lai/cap nhat trong khi tab nay da mo tu truoc -> ket noi
+        // cu (bridge.js dang chay tren trang) bi vo hieu, moi lenh gui di deu roi vao im
+        // lang (khong loi, khong toast) - dung y het trieu chung "bam Gui khong ra gi ca".
+        // Bao ro cho nguoi dung thay vi de im lang, va tat trang thai "san sang" gia.
+        setIsExtensionReady(false);
+        setIsLiExtensionReady(false);
+        setIsRunning(false);
+        setRunProgress(null);
+        showToast("Extension vừa được cập nhật/cài lại — vui lòng tải lại trang (F5) để kết nối lại rồi thử gửi comment lại.", "error");
       } else if (action === "LI_COMMENT_STARTED") {
         setIsRunning(true);
         setRunProgress("Đang mở bài viết LinkedIn...");
@@ -1468,7 +1487,13 @@ export default function InternalEngagementPage() {
           ],
           verifyConfig: {
             ...buildVerifyConfig(),
-            id_platform: isLinkedIn ? 3 : ((modalPost as any).platform === "youtube" ? 2 : 1),
+            id_platform: isLinkedIn
+              ? 3
+              : (modalPost as any).platform === "youtube"
+                ? 2
+                : (modalPost as any).platform === "threads"
+                  ? 4
+                  : 1,
           },
         },
       },
@@ -2259,7 +2284,9 @@ export default function InternalEngagementPage() {
                   <div className="text-[12px] text-[#777] mt-1">
                     {modalPost.platform === "linkedin"
                       ? "Thực hiện qua LinkedIn Extension trên tài khoản LinkedIn đang đăng nhập"
-                      : "Thực hiện qua Chrome Extension trên tài khoản Facebook đang đăng nhập"}
+                      : modalPost.platform === "threads"
+                        ? "Thực hiện qua Chrome Extension trên tài khoản Threads đang đăng nhập"
+                        : "Thực hiện qua Chrome Extension trên tài khoản Facebook đang đăng nhập"}
                   </div>
                 </div>
                 <button type="button" className="border-0 bg-[#f2f3f6] rounded-lg px-2.5 py-1.75" onClick={closeModal} aria-label="close">✕</button>
@@ -2268,7 +2295,11 @@ export default function InternalEngagementPage() {
               <div className="p-5">
                 {(() => {
                   const modalIsLinkedIn = modalPost.platform === "linkedin";
-                  const ready = modalIsLinkedIn ? isLiExtensionReady : isExtensionReady;
+                  // Gui comment that di qua comment-extension (isExtensionReady) - extension
+                  // LinkedIn rieng (isLiExtensionReady) chi phuc vu cao metric, khong lien quan
+                  // luong comment nay. Chap nhan 1 trong 2 de tranh khoa nham nut Gui khi
+                  // comment-extension da san sang nhung nguoi dung chua cai extension kia.
+                  const ready = modalIsLinkedIn ? (isLiExtensionReady || isExtensionReady) : isExtensionReady;
                   return (
                     <div
                       className={`p-3 rounded-xl border text-[12px] mb-4 flex items-center justify-between gap-2 ${ready ? "bg-green-50 border-green-200 text-green-700" : "bg-amber-50 border-amber-200 text-amber-700"
@@ -2281,7 +2312,7 @@ export default function InternalEngagementPage() {
                       </span>
                       {!ready && modalIsLinkedIn ? (
                         <a
-                          href="/linkedin-group-crawler-extension.zip"
+                          href="/comment-extension.zip"
                           download
                           className="shrink-0 inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-amber-300 bg-white hover:bg-amber-100 text-amber-800 text-[11px] font-bold whitespace-nowrap"
                         >
@@ -2294,7 +2325,7 @@ export default function InternalEngagementPage() {
 
                 <div className="text-[13px] text-[#5d616c] mb-3 line-clamp-3">{modalPost.content}</div>
 
-                {socialAccounts.length > 0 && modalPost.platform !== "linkedin" ? (
+                {socialAccounts.length > 0 && (modalPost.platform || "facebook") === "facebook" ? (
                   <div className="mb-3">
                     <label className="text-[12px] font-extrabold block mb-2">Tài khoản Facebook dùng để comment:</label>
                     <select
@@ -2374,7 +2405,7 @@ export default function InternalEngagementPage() {
                   type="button"
                   className="bg-[#c71f4d] text-white border border-[#c71f4d] rounded-xl px-4 py-2 font-extrabold disabled:opacity-50"
                   onClick={sendComment}
-                  disabled={isRunning || !(modalPost.platform === "linkedin" ? isLiExtensionReady : isExtensionReady) || !commentText.trim()}
+                  disabled={isRunning || !(modalPost.platform === "linkedin" ? (isLiExtensionReady || isExtensionReady) : isExtensionReady) || !commentText.trim()}
                 >
                   {isRunning ? "Đang gửi..." : "Gửi comment qua Extension"}
                 </button>
@@ -2939,7 +2970,7 @@ export default function InternalEngagementPage() {
                     onChange={(e) => setTaskLink(e.target.value)}
                     disabled={isSubmittingTask}
                     className="w-full border border-gray-200 rounded-xl px-3.5 py-2 text-sm outline-none focus:border-rose-500"
-                    placeholder="Dán link bài viết (Facebook, YouTube, TikTok, LinkedIn...)"
+                    placeholder="Dán link bài viết (Facebook, YouTube, TikTok, LinkedIn, Threads...)"
                   />
                 </div>
 

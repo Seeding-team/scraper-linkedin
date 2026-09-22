@@ -4,7 +4,7 @@
 /* Unified TypeScript types for the All-Platform (Tổng hợp) page.
    These types mirror the Supabase database schema. */
 
-export type FeedPlatform = "facebook" | "linkedin";
+export type FeedPlatform = "facebook" | "linkedin" | "threads";
 export type CategoryType = "intent" | "industry" | "tier" | "team" | "icp" | "content_type" | "product_seeding" | "crm_source" | "crm_service_package" | "crm_package" | "crm_industry" | "crm_position" | "crm_city" | "crm_expected_timeline" | "crm_next_step" | "crm_nurture_reason" | "crm_follow_up_channel" | "crm_unqualified_reason" | "crm_quote_type" | "crm_contract_status" | "crm_payment_status" | "crm_billing_type" | "crm_won_reason" | "crm_lost_reason" | "crm_outcome_confidence" | "crm_outcome_trigger" | "crm_outcome_objection" | "crm_kb_reuse_level" | "crm_kb_owner" | "crm_kb_status";
 export type VerifyStatus = "pending" | "yes" | "no";
 export type UserRole = "member" | "leader" | "admin";
