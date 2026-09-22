@@ -46,6 +46,18 @@ const nextConfig: NextConfig = {
           },
         ],
       },
+      // Fonts/JS/CSS o /_next/static duoc trang /baogia/{token} tren domain
+      // chinh (markee.vn) tai TUYET DOI tu day (xem assetPrefix o tren).
+      // Next.js tu gan crossorigin="" cho <link rel="preload" as="font">
+      // -> trinh duyet BAT BUOC response co Access-Control-Allow-Origin moi
+      // dung duoc font, du HTTP van tra 200 (loi thuc te da gap: font bi
+      // CORS chan -> page crash "Cannot read properties of null"). Asset
+      // build tinh, cong khai, khong co cookie/du lieu nhay cam nen an toan
+      // cho phep moi origin (giong CDN).
+      {
+        source: "/_next/static/:path*",
+        headers: [{ key: "Access-Control-Allow-Origin", value: "*" }],
+      },
     ];
   },
 };
