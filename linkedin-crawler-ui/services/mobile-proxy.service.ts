@@ -37,4 +37,9 @@ export const mobileProxyService = {
     ),
   getSms: (nodeId?: string) =>
     request<MobileProxySmsResponse>(`/sms${nodeId ? `?node_id=${encodeURIComponent(nodeId)}` : ""}`),
+  setLabel: (nodeId: string, label: string) =>
+    request<MobileProxyConfigResponse>(`/nodes/${encodeURIComponent(nodeId)}/label`, {
+      method: "PATCH",
+      body: JSON.stringify({ label }),
+    }),
 };
