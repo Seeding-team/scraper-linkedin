@@ -391,6 +391,20 @@ export class SeedingQuoteRepository implements QuoteRepository {
     await apiFetch<unknown>(`/api/all-platform/quotes/${encodeURIComponent(id)}`, { method: 'DELETE' });
   }
 
+  /** Xoa MEM nhieu bao gia 1 lan (Admin khoi phuc duoc). includeVersions=true:
+   * xoa ca chuoi version cua moi id (thao tac "Xoá báo giá" o danh sach);
+   * false: chi xoa dung id (xoa rieng 1 version). */
+  async bulkDeleteQuotes(ids: string[], includeVersions: boolean): Promise<{ deletedIds: string[]; failed: Array<{ quoteId: string; message: string }> }> {
+    const data = await apiFetch<{ deleted_ids?: string[]; failed?: Array<{ quote_id: string; message: string }> }>(
+      '/api/all-platform/quotes/bulk-delete',
+      { method: 'POST', body: JSON.stringify({ quote_ids: ids, include_versions: includeVersions }) },
+    );
+    return {
+      deletedIds: data?.deleted_ids || [],
+      failed: (data?.failed || []).map(f => ({ quoteId: f.quote_id, message: f.message })),
+    };
+  }
+
   async approveQuote(id: string, exceptionReason?: string): Promise<Quote> {
     return apiFetch<Quote>(`/api/all-platform/quotes/${encodeURIComponent(id)}/approve`, {
       method: 'POST',

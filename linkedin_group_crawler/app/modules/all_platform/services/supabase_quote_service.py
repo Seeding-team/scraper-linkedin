@@ -609,7 +609,9 @@ def create_issuer_company(payload: dict) -> dict:
         "website": payload.get("website"),
         "tax_code": payload.get("tax_code"),
         "logo_url": payload.get("logo_url"),
-        "default_quote_form_id": payload.get("default_quote_form_id"),
+        # FE gui "" khi chua chon mau mac dinh - cot UUID khong nhan "" (loi
+        # 22P02 lam form Don vi phat hanh khong luu duoc), luu NULL.
+        "default_quote_form_id": payload.get("default_quote_form_id") or None,
         "status": payload.get("status") or "active",
         "sort_order": payload.get("sort_order") or 0,
         "payment_terms": payload.get("payment_terms"),
@@ -630,6 +632,10 @@ def update_issuer_company(company_id: str, payload: dict) -> dict:
     update_data = {field_map[k]: v for k, v in payload.items() if k in field_map and v is not None}
     # logo_url/website/... rong "" (xoa logo/field) van phai ap dung duoc - chi
     # loai None (khong gui field do len), khong loai chuoi rong.
+    # Rieng default_quote_form_id la cot UUID: "" (bo chon mau mac dinh) phai
+    # thanh NULL, neu khong DB bao 22P02 va form Don vi phat hanh khong luu duoc.
+    if update_data.get("default_quote_form_id") == "":
+        update_data["default_quote_form_id"] = None
     result = supabase.table(ISSUER_COMPANIES_TABLE).update(update_data).eq("id", company_id).execute()
     return _row_to_issuer_company(result.data[0])
 

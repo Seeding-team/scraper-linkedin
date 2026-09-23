@@ -126,12 +126,21 @@ export function quoteDraftFromForm(form: QuoteForm, dealDraft?: DealFormState, i
 export function applyIssuerCompanySnapshot(data: QuoteData, issuerCompany: IssuerCompany): void {
   Object.assign(data, {
     sellerCompanyName: issuerCompany.legalName,
+    // Mau villa hien sellerBrandName o header - truoc day KHONG duoc snapshot
+    // nen doi issuer van hien brand cua mau/issuer cu (feedback 2026-09-23).
+    sellerBrandName: issuerCompany.brandName || issuerCompany.legalName,
     sellerTaxCode: issuerCompany.taxCode || '',
     sellerAddress: issuerCompany.address || '',
     sellerPhone: issuerCompany.phone || '',
     sellerEmail: issuerCompany.email || '',
     sellerWebsite: issuerCompany.website || '',
     sellerLogo: issuerCompany.logoUrl || '',
+    // Dau hieu "cac field seller* o tren la snapshot tu Don vi phat hanh" -
+    // QuoteDocumentRenderer dung co nay de KHONG roi ve defaultValue cua mau
+    // bao gia khi issuer moi de trong 1 field (vd khong co logo). Truoc day
+    // fieldValue() thay '' la lay default cua mau -> doi Markee sang CloudGate
+    // van hien logo/dia chi Markee cua mau (feedback 2026-09-23 muc 3).
+    issuerSnapshotCompanyId: issuerCompany.id,
   });
 }
 
@@ -161,13 +170,40 @@ const AUTO_GENERATED_PAYMENT_TERMS_PATTERN = /^Thanh toán trong \d+ ngày kể 
  * sẵn 1 block 'payment_terms' co noi dung THAT SU do Sale tu go (khac mau
  * tu-dong-sinh o tren) - tôn trọng nội dung Sale đã tự nhập/snapshot cũ của
  * báo giá đã duyệt trước đó, dù đến từ đâu. */
-export function applyIssuerPaymentTermsSnapshot(data: QuoteData, issuerCompany: IssuerCompany): void {
-  const defaultTerms = issuerCompany.paymentTerms?.trim();
-  if (!defaultTerms) return;
+export function applyIssuerPaymentTermsSnapshot(
+  data: QuoteData,
+  issuerCompany: IssuerCompany,
+  knownIssuerCompanies: IssuerCompany[] = [],
+): void {
+  // Feedback 2026-09-23 muc 3: doi Don vi phat hanh thi dieu khoan thanh toan
+  // cung phai doi theo - truoc day block da co noi dung (chinh la dieu khoan
+  // mac dinh cua issuer CU) bi coi la "Sale tu go" nen KHONG BAO GIO duoc
+  // thay. Gio coi la "chua tuy chinh" (duoc thay) neu noi dung: rong, la mau
+  // tu-dong-sinh, bang dung snapshot dieu khoan lan truoc (issuerPaymentTermsSnapshot),
+  // hoac bang dieu khoan mac dinh cua 1 issuer bat ky trong danh muc (bao gia
+  // cu chua co marker). Noi dung Sale tu go that su van giu nguyen.
+  const defaultTerms = issuerCompany.paymentTerms?.trim() || '';
   const blocks = Array.isArray(data.customBlocks) ? data.customBlocks : [];
   const existing = blocks.find(block => block.kind === 'payment_terms');
   const existingContent = existing?.content.trim() || '';
-  if (existingContent && !AUTO_GENERATED_PAYMENT_TERMS_PATTERN.test(existingContent)) return;
+  const previousSnapshot = typeof data.issuerPaymentTermsSnapshot === 'string' ? data.issuerPaymentTermsSnapshot.trim() : '';
+  const knownTerms = knownIssuerCompanies.map(company => company.paymentTerms?.trim() || '').filter(Boolean);
+  const isUntouched =
+    !existingContent ||
+    AUTO_GENERATED_PAYMENT_TERMS_PATTERN.test(existingContent) ||
+    (previousSnapshot !== '' && existingContent === previousSnapshot) ||
+    knownTerms.includes(existingContent);
+  if (!isUntouched) return;
+  if (!defaultTerms) {
+    // Issuer moi khong co dieu khoan mac dinh: go dieu khoan cua issuer cu
+    // (neu block dang la dieu khoan do), khong de sot sang issuer moi. Mau
+    // tu-dong-sinh "Thanh toán trong N ngày" van giu (khong thuoc issuer nao).
+    if (existing && existingContent && !AUTO_GENERATED_PAYMENT_TERMS_PATTERN.test(existingContent)) {
+      data.customBlocks = blocks.filter(block => block.kind !== 'payment_terms');
+    }
+    data.issuerPaymentTermsSnapshot = '';
+    return;
+  }
   const seededBlock: CustomBlock = {
     id: existing?.id || `custom-${Date.now()}-payment_terms`,
     kind: 'payment_terms',
@@ -177,6 +213,7 @@ export function applyIssuerPaymentTermsSnapshot(data: QuoteData, issuerCompany: 
   data.customBlocks = existing
     ? blocks.map(block => (block.kind === 'payment_terms' ? seededBlock : block))
     : [...blocks, seededBlock];
+  data.issuerPaymentTermsSnapshot = defaultTerms;
 }
 
 /** Dựng lại QuoteDraft từ 1 báo giá đã tồn tại (chế độ sửa) - để prefill wizard

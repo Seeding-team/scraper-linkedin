@@ -4046,3 +4046,85 @@
   .qc-workspace-checklist { grid-template-columns: 1fr 1fr; }
   .qc-workspace-info-strip-row { grid-template-columns: 1fr; }
 }
+
+/* ---- Feedback 2026-09-23: version gom duoi dong hien tai, click dong mo
+ * bao gia, chon nhieu de xoa (QuoteCenterPage.tsx). Checkbox/mui ten nam
+ * TRONG o dau tien (khong them cot) de khong lech nth-child cua bang. ---- */
+.qc-row-clickable { cursor: pointer; }
+.qc-row-clickable:hover td { background: #fafbfd; }
+.qc-row-select {
+  width: 14px;
+  height: 14px;
+  margin: 0 6px 0 0;
+  vertical-align: middle;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.qc-version-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  margin-right: 4px;
+  padding: 0;
+  border: 1px solid #dfe3ea;
+  border-radius: 5px;
+  background: #fff;
+  color: #5b6576;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.qc-version-toggle:hover { border-color: var(--color-primary, #ba244a); color: var(--color-primary, #ba244a); }
+.qc-version-toggle .qc-icon { width: 12px; height: 12px; }
+.qc-row-version-old td { background: #f8f9fb; }
+.qc-row-version-old.qc-row-clickable:hover td { background: #f1f3f7; }
+.qc-version-old-line { padding-left: 22px; }
+.qc-version-old-branch { color: #98a1b2; margin-right: 6px; }
+.qc-bulk-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 8px 0;
+  padding: 8px 12px;
+  border: 1px solid #f1d3dc;
+  border-radius: 10px;
+  background: #fff7f9;
+  font-size: 13px;
+}
+.qc-bulk-bar-actions { display: flex; gap: 8px; }
+.qc-btn-danger {
+  background: #b3261e;
+  border-color: #b3261e;
+  color: #fff;
+}
+.qc-btn-danger:hover:not(:disabled) { background: #9a1f18; }
+.qc-quote-card-versions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border-radius: 8px;
+  background: #f8f9fb;
+}
+.qc-quote-card-version-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.qc-version-history-item { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.qc-version-history-link { flex: 1; min-width: 0; display: flex; flex-direction: column; color: inherit; text-decoration: none; }
+/* Checkbox + mui ten + ma bao gia luon cung 1 dong (khong roi tung dong khi
+ * cot hep) - ma dai qua thi cat "…", badge version van duoc xuong dong nhu cu. */
+.qc-cell-quote-lead {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  max-width: 100%;
+  flex-wrap: nowrap;
+}
+.qc-cell-quote-lead .qc-row-link-btn {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.qc-version-old-line { padding-left: 16px; }
