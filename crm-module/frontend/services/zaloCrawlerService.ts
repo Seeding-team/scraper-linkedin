@@ -259,9 +259,28 @@ async function requestJson<TResponse>(
     if (timeoutId) globalThis.clearTimeout(timeoutId);
   }
 
-  const payload = (await response.json()) as TResponse;
+  // Không được gọi thẳng response.json() — khi backend crash trước khi kịp trả JSON
+  // (vd bảng DB chưa tồn tại, proxy/nginx chèn trang lỗi) response body là text thô
+  // ("Internal Server Error") chứ không phải JSON, .json() sẽ throw SyntaxError
+  // ("Unexpected token 'I'...") làm lộ lỗi khó hiểu ra UI thay vì thông báo rõ ràng.
+  // Đọc text trước rồi mới thử parse, có gì sai thì rơi về throw Error dễ đọc bên dưới.
+  const rawText = await response.text();
+  let payload: TResponse | undefined;
+  let parseError: unknown = null;
+  if (rawText) {
+    try {
+      payload = JSON.parse(rawText) as TResponse;
+    } catch (err) {
+      parseError = err;
+    }
+  }
 
   if (!response.ok) {
+    if (parseError || payload === undefined) {
+      throw new Error(
+        `API ${response.status}: ${rawText.trim().slice(0, 200) || response.statusText || "Lỗi không xác định"}`,
+      );
+    }
     const errorPayload = payload as
       | { message?: unknown; detail?: unknown }
       | undefined;
@@ -290,6 +309,10 @@ async function requestJson<TResponse>(
         ? `API ${response.status}: ${backendMessage}`
         : `API ${response.status}: ${response.statusText}`,
     );
+  }
+
+  if (parseError || payload === undefined) {
+    throw new Error(`API ${response.status}: phản hồi không phải JSON hợp lệ.`);
   }
 
   return payload;
