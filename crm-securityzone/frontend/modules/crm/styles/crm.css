@@ -2568,8 +2568,19 @@
   border-color: #ba244a;
   color: #ba244a;
 }
+/* Feedback (2026-09-24): dong nay gio hien du cot nhu dong hien tai (xem
+ * CrmCustomerDetailPage.tsx) - them vien dut + accent trai (dong bo voi
+ * .qc-row-version-old o quote-center.css) de nhin ro day la dong "con". */
 .crm-row--version-old td {
   background: #f8f9fb;
+  border-top: 1px dashed #e4e7ed;
+  font-size: 12.5px;
+}
+.crm-row--version-old:hover td {
+  background: #f1f3f7;
+}
+.crm-row--version-old td:first-child {
+  border-left: 2px solid #dfe3ea;
 }
 
 /* Select gan nhanh "Người liên hệ chính" ngay trong o Thao tac cua bang

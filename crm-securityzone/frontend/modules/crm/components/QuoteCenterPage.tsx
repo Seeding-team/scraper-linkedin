@@ -1238,8 +1238,22 @@ export function QuoteCenterPage() {
         </tr>
       );
     }
+    // Feedback (2026-09-24): dong version cu phai hien DU thong tin nhu dong
+    // version hien tai (Khach hang/Du an/Phase/Phu trach/Margin/SLA), khong
+    // chi so bao gia + trang thai + gia - backend list_quote_versions() da
+    // duoc sua de embed project/technicalOwner/quoteOwner + tinh du
+    // hasCostData/costTotal/grossMarginPercent cho tung version (thay vi
+    // luon rong nhu truoc), nen o day chi can tinh lai giong het
+    // renderChainRow() cho `version` thay vi `current`. Deal dung chung
+    // `row.deal` (1 chuoi version luon thuoc DUNG 1 Deal, khong doi giua cac
+    // version). Nut Xoa doi sang ActionMenu (giong dong hien tai) vi nut rieng
+    // "Xoá" full-text de bi tran o cot hep (feedback UI).
     return expanded.versions.map(version => {
-      const status = quoteDisplayStatus(version, row.deal);
+      const phase = phaseCellLabel(version, row.deal);
+      const techName = version.technicalOwner?.name || row.deal?.assignment.leadName || null;
+      const saleOwnerName = version.quoteOwner?.name || row.deal?.assignment.sdrName || null;
+      const margin = version.hasCostData ? marginTone(version.grossMarginPercent) : 'neutral';
+      const sla = computeQuoteSla({ slaDueAt: version.slaDueAt, completedAt: version.completedAt, sentAt: version.sentAt });
       return (
         <tr
           key={version.id}
@@ -1259,25 +1273,74 @@ export function QuoteCenterPage() {
             </div>
             <div className="qc-row-sub">cập nhật {relativeTime(version.updatedAt || version.createdAt)}</div>
           </td>
-          <td />
-          <td />
-          <td><span className="qc-badge">{status.label}</span></td>
-          <td />
+          <td>
+            {row.deal ? (
+              row.deal.customerId ? (
+                <Link href={`/all-platform/crm/customers/${row.deal.customerId}`} className="qc-row-link" onClick={event => event.stopPropagation()}>
+                  {row.deal.customerName}
+                </Link>
+              ) : (
+                <span>{row.deal.customerName}</span>
+              )
+            ) : (
+              <span className="qc-row-sub">Chưa gắn cơ hội</span>
+            )}
+          </td>
+          <td>
+            {version.project ? (
+              <span>{version.project.code ? `${version.project.code} · ${version.project.name}` : version.project.name}</span>
+            ) : (
+              <span className="qc-row-sub">Chưa thuộc dự án</span>
+            )}
+          </td>
+          <td><span className={`qc-badge qc-badge-${phase.tone}`} style={{ whiteSpace: 'normal' }}>{phase.label}</span></td>
+          <td>
+            <div className="qc-sale-cell qc-sale-cell--stacked">
+              <div className="qc-owner-row"><span className="qc-owner-role">Presale:</span> <span title={techName || 'Chưa gán'}>{techName || 'Chưa gán'}</span></div>
+              <div className="qc-owner-row"><span className="qc-owner-role">Sale:</span> <span title={saleOwnerName || 'Chưa gán'}>{saleOwnerName || 'Chưa gán'}</span></div>
+            </div>
+          </td>
           <td className="qc-cell-money">
-            {version.costViewAllowed === false ? '' : version.hasCostData ? formatMoney(version.costTotal || 0) : ''}
+            {version.costViewAllowed === false ? (
+              <span className="qc-row-sub" title="Chỉ Presale/Sale được phân công hoặc Admin mới xem được giá vốn">Không có quyền xem</span>
+            ) : version.hasCostData ? (
+              formatMoney(version.costTotal || 0)
+            ) : (
+              <span className="qc-row-sub">Chưa có</span>
+            )}
           </td>
           <td className="qc-cell-money">{formatMoney(version.customerPriceBeforeVat ?? version.totalAmount ?? 0)}</td>
-          <td />
-          <td />
+          <td>
+            {version.profitabilityViewAllowed === false ? (
+              <span className="qc-row-sub" title="Chỉ Sale phụ trách hoặc Admin mới xem được margin">Không có quyền xem</span>
+            ) : version.hasCostData && version.grossMarginPercent !== null && version.grossMarginPercent !== undefined ? (
+              <span className={`qc-badge qc-badge-${margin}`}>{version.grossMarginPercent.toFixed(1)}%</span>
+            ) : (
+              <span className="qc-row-sub">Chưa tính</span>
+            )}
+          </td>
+          <td>
+            {sla.status === 'not_set' ? (
+              <span className="qc-row-sub">{sla.label}</span>
+            ) : (
+              <>
+                <span
+                  className="qc-badge"
+                  style={{ color: sla.tone === 'danger' ? '#b3261e' : sla.tone === 'warning' ? '#8a6416' : sla.tone === 'success' ? '#148e61' : undefined }}
+                >
+                  {sla.label}
+                </span>
+                {sla.relativeText ? <div className="qc-row-sub">{sla.relativeText}</div> : null}
+              </>
+            )}
+          </td>
           <td className="qc-cell-actions">
-            <button
-              type="button"
-              className="qc-mini-btn qc-mini-btn-danger"
-              title="Xoá riêng phiên bản này"
-              onClick={() => void deleteVersionNow(version)}
-            >
-              <Trash2 className="qc-icon" /> Xoá
-            </button>
+            <ActionMenu
+              items={[
+                { key: 'open', label: 'Mở', icon: FileText, group: 1, onSelect: () => openQuoteWorkspace(version.id) },
+                { key: 'delete', label: 'Xoá riêng phiên bản này', icon: Trash2, group: 2, danger: true, onSelect: () => void deleteVersionNow(version) },
+              ] satisfies ActionMenuItem[]}
+            />
           </td>
         </tr>
       );

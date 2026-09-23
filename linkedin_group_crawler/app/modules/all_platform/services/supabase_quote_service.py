@@ -2239,7 +2239,16 @@ def create_quote_version(clicked_quote_id: str, actor_id: str | None) -> dict:
 
 def list_quote_versions(chain_id: str) -> list[dict]:
     """Toàn bộ phiên bản (V1..Vn) của 1 chuỗi báo giá, mới nhất trước - dùng cho
-    khối "Lịch sử phiên bản" (QuoteDetailPage) và mini-card Deal drawer."""
+    khối "Lịch sử phiên bản" (QuoteDetailPage), mini-card Deal drawer, VÀ
+    dropdown "xem phiên bản cũ" ở Quote Center + trang Khách hàng
+    (toggleExpandVersions/renderOlderVersionRows, toggleExpandQuoteVersions).
+
+    Feedback (2026-09-24): dropdown phiên bản cũ phải hiện ĐỦ thông tin như
+    phiên bản hiện tại (Dự án/Presale/Sale/giá vốn/margin), KHÔNG chỉ số báo
+    giá + trạng thái - nên embed project/technicalOwner/quoteOwner + load
+    items thật (để hasCostData/costTotal/grossMarginPercent tính đúng, thay
+    vì luôn rỗng do truyền items=[] như code cũ) - đúng pattern đã dùng ở
+    list_quotes_by_phase() (Quote Center danh sách chính)."""
     supabase: Client = get_supabase_client()
     result = (
         supabase.table(QUOTES_TABLE)
@@ -2250,7 +2259,46 @@ def list_quote_versions(chain_id: str) -> list[dict]:
         .order("version_number", desc=True)
         .execute()
     )
-    return [_row_to_quote(row, []) for row in (result.data or [])]
+    rows = result.data or []
+    if not rows:
+        return []
+
+    project_ids = list({row["project_id"] for row in rows if row.get("project_id")})
+    projects_by_id: dict[str, dict] = {}
+    if project_ids:
+        proj_result = (
+            supabase.table("projects")
+            .select("id, project_code, name, status")
+            .in_("id", project_ids)
+            .execute()
+        )
+        projects_by_id = {p["id"]: p for p in (proj_result.data or [])}
+
+    owner_ids = list(
+        {row["technical_owner_id"] for row in rows if row.get("technical_owner_id")}
+        | {row["quote_owner_id"] for row in rows if row.get("quote_owner_id")}
+    )
+    owners_by_id: dict[str, dict] = {}
+    if owner_ids:
+        owner_result = supabase.table("app_users").select("id, name").in_("id", owner_ids).execute()
+        owners_by_id = {u["id"]: u for u in (owner_result.data or [])}
+
+    quotes: list[dict] = []
+    for row in rows:
+        quote = _row_to_quote(row, _quote_items(row["id"]))
+        quote["customerPriceBeforeVat"] = quote.get("netRevenue")
+        project_row = projects_by_id.get(row.get("project_id")) if row.get("project_id") else None
+        quote["project"] = (
+            {"id": project_row["id"], "code": project_row.get("project_code"), "name": project_row.get("name"), "status": project_row.get("status")}
+            if project_row
+            else None
+        )
+        tech_owner = owners_by_id.get(row.get("technical_owner_id")) if row.get("technical_owner_id") else None
+        quote["technicalOwner"] = {"id": tech_owner["id"], "name": tech_owner.get("name")} if tech_owner else None
+        quote_owner_row = owners_by_id.get(row.get("quote_owner_id")) if row.get("quote_owner_id") else None
+        quote["quoteOwner"] = {"id": quote_owner_row["id"], "name": quote_owner_row.get("name")} if quote_owner_row else None
+        quotes.append(quote)
+    return quotes
 
 
 HANDOFF_TABLE = "quote_handoff_checklist"
