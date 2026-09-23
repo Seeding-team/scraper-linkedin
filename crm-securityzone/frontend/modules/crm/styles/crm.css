@@ -2545,6 +2545,33 @@
   color: #dc2626;
 }
 
+/* Nut mui ten mo rong danh sach phien ban cu ngay tai bang Bao gia (giong
+ * .qc-version-toggle o quote-center.css) - dung chung 1 kieu voi trang Bao
+ * gia de dong bo UI. */
+.crm-version-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  margin-right: 4px;
+  padding: 0;
+  border: 1px solid #dfe3ea;
+  border-radius: 5px;
+  background: #fff;
+  color: #5b6576;
+  cursor: pointer;
+  flex-shrink: 0;
+  vertical-align: middle;
+}
+.crm-version-toggle:hover {
+  border-color: #ba244a;
+  color: #ba244a;
+}
+.crm-row--version-old td {
+  background: #f8f9fb;
+}
+
 /* Select gan nhanh "Người liên hệ chính" ngay trong o Thao tac cua bang
  * Cơ hội/Báo giá/Hợp đồng (Customer 360) - thay the tam thoi cho nut
  * .crm-row-action luc dang chinh sua, gon bang kich thuoc voi cac nut hang

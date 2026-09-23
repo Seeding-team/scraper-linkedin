@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
-import { useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import { API_BASE_URL, API_KEY } from '@/lib/env';
 import { useAppAuth } from '@/contexts/AppAuthContext';
 import { formatVND, getStageMeta, SOURCE_OPTIONS, SERVICE_PACKAGE_OPTIONS, CRM_PACKAGE_OPTIONS, INDUSTRY_OPTIONS } from '../constants/crmConfig';
@@ -12,7 +12,7 @@ import { CrmContactsPanel } from './CrmContactsPanel';
 import { ProjectFormModal } from './ProjectFormModal';
 import { DealFormModal, clearDealDraft } from './DealFormModal';
 import { mergeCategoryOptions } from '../hooks/useCrm';
-import { Loader2, Plus, Pencil, Trash2 } from './icons';
+import { Loader2, Plus, Pencil, Trash2, ChevronDown, ChevronUp } from './icons';
 import { ActionMenu, type ActionMenuItem } from './ActionMenu';
 import type { CrmCustomerRow } from '../types';
 import { customerProjectsSummaryService, allPlatformCategoriesService, projectsService, type CustomerProjectsSummary, type Project } from '@/services/all-platform.service';
@@ -21,6 +21,7 @@ import { useMembers } from '@/hooks/useMembers';
 import { QuoteWorkspaceModal } from './QuoteWorkspaceModal';
 import { CreateQuoteModal } from '../integrations/quotes/CreateQuoteModal';
 import { seedingQuoteRepository } from '@/modules/quotes';
+import type { Quote } from '@/modules/quotes';
 import { seedingCrmRepository } from '../repositories/SeedingCrmRepository';
 import type { Deal } from '../types';
 import { DealDetailDrawer } from '@/components/all-platform/customers/DealDetailDrawer';
@@ -618,6 +619,69 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
     } finally {
       setQuoteDeleteBusy(null);
     }
+  }
+
+  // Dropdown xem phien ban cu ngay tai bang Bao gia (giong trang
+  // /all-platform/quote-center - toggleExpandVersions/renderOlderVersionRows)
+  // - bam mui ten canh "V{n} · X version" de mo rong danh sach cac version cu
+  // hon cua CHINH chuoi bao gia do, khong can nhay sang trang Bao gia rieng.
+  const [expandedQuoteVersions, setExpandedQuoteVersions] = useState<
+    Record<string, { loading: boolean; versions: Quote[]; error?: string }>
+  >({});
+  async function toggleExpandQuoteVersions(row: RelatedQuoteRow) {
+    const key = row.id;
+    if (expandedQuoteVersions[key]) {
+      setExpandedQuoteVersions(prev => {
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      });
+      return;
+    }
+    setExpandedQuoteVersions(prev => ({ ...prev, [key]: { loading: true, versions: [] } }));
+    try {
+      const versions = await seedingQuoteRepository.getQuoteVersions(key);
+      setExpandedQuoteVersions(prev =>
+        prev[key] ? { ...prev, [key]: { loading: false, versions: versions.filter(v => v.id !== key) } } : prev
+      );
+    } catch (err) {
+      setExpandedQuoteVersions(prev =>
+        prev[key]
+          ? { ...prev, [key]: { loading: false, versions: [], error: err instanceof Error ? err.message : 'Không tải được phiên bản cũ.' } }
+          : prev
+      );
+    }
+  }
+  /** Xoa RIENG 1 version cu (giu nguyen cac version khac trong chuoi) - dung
+   * pattern deleteVersionNow() cua QuoteCenterPage.tsx. */
+  async function deleteQuoteVersionOnCustomerPage(version: Quote) {
+    const label = `V${version.versionNumber || 1} (${version.quoteNumber})`;
+    if (!window.confirm(`Xoá riêng ${label}? Các phiên bản khác trong chuỗi vẫn giữ nguyên.`)) return;
+    try {
+      const result = await seedingQuoteRepository.bulkDeleteQuotes([version.id], false);
+      if (result.failed.length) {
+        window.alert(result.failed[0].message || 'Không xoá được phiên bản này.');
+        return;
+      }
+      setExpandedQuoteVersions(prev => {
+        const next = { ...prev };
+        for (const key of Object.keys(next)) {
+          next[key] = { ...next[key], versions: next[key].versions.filter(v => v.id !== version.id) };
+        }
+        return next;
+      });
+      setReloadTick(t => t + 1);
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : 'Không xoá được phiên bản này.');
+    }
+  }
+  function quoteVersionStatusLabel(version: Quote): string {
+    if (version.deletedAt || version.status === 'cancelled') return 'Đã huỷ';
+    if (version.sentAt) return 'Đã gửi';
+    if (version.publishedAt || version.processingStage === 'published' || version.status === 'approved' || version.approvedAt) return 'Sẵn sàng gửi';
+    if (version.processingStage === 'review') return 'Admin review';
+    if (version.processingStage === 'pricing') return 'Sale markup';
+    return 'Presale';
   }
 
   // "Tạo yêu cầu báo giá" tren Project card - mo QuoteWorkspaceModal o CHE DO
@@ -1261,9 +1325,22 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
                           const quotePrimaryContactName = relatedDeal?.primary_contact_id
                             ? allContacts.find(c => c.id === relatedDeal.primary_contact_id)?.name || 'Liên hệ ẩn'
                             : 'Chưa có';
+                          const expanded = expandedQuoteVersions[current.id];
                           return (
-                            <tr key={current.version_chain_id || current.id} className="crm-row">
+                            <Fragment key={current.version_chain_id || current.id}>
+                            <tr className="crm-row">
                               <td className="crm-td">
+                                {versionCount > 1 ? (
+                                  <button
+                                    type="button"
+                                    className="crm-version-toggle"
+                                    aria-expanded={Boolean(expanded)}
+                                    title={expanded ? 'Thu gọn phiên bản cũ' : `Mở rộng ${versionCount - 1} phiên bản cũ`}
+                                    onClick={() => void toggleExpandQuoteVersions(current)}
+                                  >
+                                    {expanded ? <ChevronUp className="crm-inline-icon" /> : <ChevronDown className="crm-inline-icon" />}
+                                  </button>
+                                ) : null}
                                 {current.quote_number || current.id}
                                 <div className="crm-row-sub">V{current.version_number || 1} · {versionCount} version</div>
                               </td>
@@ -1314,6 +1391,36 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
                                 </div>
                               </td>
                             </tr>
+                            {expanded ? (
+                              expanded.loading || expanded.error || expanded.versions.length === 0 ? (
+                                <tr className="crm-row crm-row--version-old">
+                                  <td colSpan={10} className="crm-empty-cell">
+                                    {expanded.loading ? 'Đang tải phiên bản cũ…' : expanded.error || 'Không có phiên bản cũ nào khác.'}
+                                  </td>
+                                </tr>
+                              ) : (
+                                expanded.versions.map(version => (
+                                  <tr key={version.id} className="crm-row crm-row--version-old">
+                                    <td className="crm-td">
+                                      ↳ {version.quoteNumber}
+                                      <div className="crm-row-sub">V{version.versionNumber || 1} · {quoteVersionStatusLabel(version)}</div>
+                                    </td>
+                                    <td className="crm-td" colSpan={7} />
+                                    <td className="crm-td crm-td--right">
+                                      <div className="crm-row-actions">
+                                        <ActionMenu
+                                          items={[
+                                            { key: 'open', label: 'Mở', icon: Pencil, group: 1, onSelect: () => void viewQuoteInNewWorkspace({ ...current, id: version.id }) },
+                                            { key: 'delete', label: 'Xóa', icon: Trash2, group: 2, danger: true, onSelect: () => void deleteQuoteVersionOnCustomerPage(version) },
+                                          ] satisfies ActionMenuItem[]}
+                                        />
+                                      </div>
+                                    </td>
+                                  </tr>
+                                ))
+                              )
+                            ) : null}
+                            </Fragment>
                           );
                         })
                       ) : (
