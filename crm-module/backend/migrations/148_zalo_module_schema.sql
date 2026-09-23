@@ -40,6 +40,7 @@ CREATE TABLE IF NOT EXISTS public.zalo_module_accounts (
     status              text NOT NULL DEFAULT 'unknown',
     is_active           boolean NOT NULL DEFAULT true,
     is_shared_with_all  boolean NOT NULL DEFAULT true,
+    instance            text NOT NULL DEFAULT 'markee',
     last_seen_at        timestamptz,
     last_login_at       timestamptz,
     created_at          timestamptz NOT NULL DEFAULT now(),
@@ -48,6 +49,17 @@ CREATE TABLE IF NOT EXISTS public.zalo_module_accounts (
 
 COMMENT ON COLUMN public.zalo_module_accounts.is_shared_with_all IS
     'true = mọi nhân viên đều xem/gửi được tài khoản Zalo này (bỏ qua kiểm tra owner/leader/share theo hội thoại). Default true (khác app gốc, nơi lịch sử default đổi false→true qua 2 migration riêng).';
+
+-- 2026-09-23: DB self-host này dùng CHUNG cho cả 3 deploy CRM module
+-- (crm-module/crm-cloudgate/crm-securityzone, xem crm_leads.instance ở
+-- migration 138 làm mẫu). zalo_module_groups/messages/... KHÔNG cần cột
+-- instance riêng vì luôn được truy vấn qua account_id — chỉ cần chặn ở gốc
+-- (bảng accounts) là đủ cô lập toàn bộ dữ liệu con theo brand.
+COMMENT ON COLUMN public.zalo_module_accounts.instance IS
+    'Brand sở hữu tài khoản Zalo này (markee/cloudgate/SECURITYZONE...) — lọc theo settings.crm_instance ở mọi list/get/delete, stamp lúc create/update. zalo_module_groups/messages KHÔNG có cột này, chỉ dựa vào account_id (con luôn đi qua cha).';
+
+CREATE INDEX IF NOT EXISTS idx_zalo_module_accounts_instance
+    ON public.zalo_module_accounts (instance);
 
 CREATE TABLE IF NOT EXISTS public.zalo_module_users (
     user_id             text PRIMARY KEY,

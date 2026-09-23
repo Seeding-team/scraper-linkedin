@@ -12,6 +12,7 @@ from loguru import logger
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, UploadFile, File, Form, BackgroundTasks
 from pydantic import BaseModel, Field
 
+from app.core.config import settings as crm_settings
 from app.modules.all_platform.auth_deps import get_authenticated_caller_email
 from app.modules.all_platform.zalo.api.security import verify_zalo_api_key
 from app.modules.all_platform.zalo.schemas.library import (
@@ -102,16 +103,23 @@ async def check_caller_conversation_access(
     caller_user_id = str(caller_user.get("id"))
     caller_role = str(caller_user.get("role") or "").strip().lower()
 
-    # 2. Tìm chủ sở hữu của tài khoản Zalo (owner_id trong zalo_module_accounts)
+    # 2. Tìm chủ sở hữu của tài khoản Zalo (owner_id trong zalo_module_accounts).
+    # Lọc theo instance HIỆN TẠI — DB self-host dùng chung cho cả 3 deploy CRM
+    # (markee/cloudgate/SECURITYZONE), account_id của brand khác phải coi như
+    # không tồn tại (account_rows rỗng) chứ không được lộ owner_id/is_shared
+    # thật của brand đó ra ngoài.
     account_rows = await _rest(
         "GET",
         "zalo_module_accounts",
         params={
             "select": "owner_id,is_shared_with_all",
             "account_id": f"eq.{account_id}",
+            "instance": f"eq.{crm_settings.crm_instance}",
             "limit": "1",
         },
     )
+    if not account_rows:
+        raise HTTPException(status_code=404, detail="Không tìm thấy tài khoản Zalo này.")
     owner_user_id = None
     if account_rows:
         owner_user_id = str(account_rows[0].get("owner_id") or "")
