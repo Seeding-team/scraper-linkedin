@@ -498,6 +498,14 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, workspaceTab: 
     label: "Phone Bridge",
     matchStartsWith: ["/all-platform/admin/phone-bridge"],
   };
+  const mobileProxyEntry: NavLeafItem = {
+    type: "item",
+    id: "admin-mobile-proxy",
+    href: "/all-platform/admin/mobile-proxy",
+    icon: "cell_tower",
+    label: "Mobile proxy",
+    matchStartsWith: ["/all-platform/admin/mobile-proxy"],
+  };
   const contentGroup: SidebarEntry = {
     type: "group",
     id: "content",
@@ -539,7 +547,7 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, workspaceTab: 
     return [
       homeEntry,
       contentGroup,
-      ...(isAdmin ? [phoneBridgeEntry] : []),
+      ...(isAdmin ? [phoneBridgeEntry, mobileProxyEntry] : []),
       channelGroup,
       ...crmEntries,
       {
@@ -557,7 +565,7 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, workspaceTab: 
   return [
     homeEntry,
     contentGroup,
-    ...(isAdmin ? [phoneBridgeEntry] : []),
+    ...(isAdmin ? [phoneBridgeEntry, mobileProxyEntry] : []),
     {
       type: "group",
       id: "management",
