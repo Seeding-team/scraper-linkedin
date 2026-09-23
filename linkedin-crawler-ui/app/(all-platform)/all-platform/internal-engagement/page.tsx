@@ -2288,7 +2288,7 @@ export default function InternalEngagementPage() {
                 <div>
                   <b className="text-base">Comment vào bài viết</b>
                   <div className="text-[12px] text-[#777] mt-1">
-                    {modalPost.platform === "linkedin"
+                    {modalPost.platform === "linkedin" || isLinkedInUrl(modalPost.permalink_url || (modalPost as any).link_post || "")
                       ? "Thực hiện qua LinkedIn Extension trên tài khoản LinkedIn đang đăng nhập"
                       : modalPost.platform === "threads"
                         ? "Thực hiện qua Chrome Extension trên tài khoản Threads đang đăng nhập"
@@ -2300,7 +2300,12 @@ export default function InternalEngagementPage() {
 
               <div className="p-5">
                 {(() => {
-                  const modalIsLinkedIn = modalPost.platform === "linkedin";
+                  // Nhieu bai LinkedIn tu do (khong gan chien dich) tung bi backend tra ve
+                  // `platform` khac "linkedin" (null/facebook do du lieu cu hoac endpoint
+                  // /custom-posts fallback sai) -> check strict truoc day khoa nham nut Gui
+                  // vinh vien (nut disabled khong bao gio nhan click). Luon fallback theo URL
+                  // giong het logic da dung o sendComment()/danh sach bai viet ben tren.
+                  const modalIsLinkedIn = modalPost.platform === "linkedin" || isLinkedInUrl(modalPost.permalink_url || (modalPost as any).link_post || "");
                   // Gui comment that di qua comment-extension (isExtensionReady) - extension
                   // LinkedIn rieng (isLiExtensionReady) chi phuc vu cao metric, khong lien quan
                   // luong comment nay. Chap nhan 1 trong 2 de tranh khoa nham nut Gui khi
@@ -2411,7 +2416,15 @@ export default function InternalEngagementPage() {
                   type="button"
                   className="bg-[#c71f4d] text-white border border-[#c71f4d] rounded-xl px-4 py-2 font-extrabold disabled:opacity-50"
                   onClick={sendComment}
-                  disabled={isRunning || !(modalPost.platform === "linkedin" ? (isLiExtensionReady || isExtensionReady) : isExtensionReady) || !commentText.trim()}
+                  disabled={
+                    isRunning ||
+                    !(
+                      modalPost.platform === "linkedin" || isLinkedInUrl(modalPost.permalink_url || (modalPost as any).link_post || "")
+                        ? isLiExtensionReady || isExtensionReady
+                        : isExtensionReady
+                    ) ||
+                    !commentText.trim()
+                  }
                 >
                   {isRunning ? "Đang gửi..." : "Gửi comment qua Extension"}
                 </button>

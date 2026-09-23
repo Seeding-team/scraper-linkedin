@@ -6,6 +6,13 @@ extension/websocket/admin/phone-bridge — sẽ kéo theo toàn bộ Playwright/
 gspread/asyncssh không cần thiết cho 1 service chỉ-CRM).
 
 Giữ nguyên prefix/tag y hệt app gốc để frontend không cần đổi 1 dòng path nào.
+
+2026-09-23: thêm `fb`/`fb_inbox_accounts` (Inbox FB) + Zalo Chat/Inbox Zalo
+Admin CORE (đồng bộ từ crm-module) — CHỈ mount auth/accounts/conversations/
+events/listener/inbox_share/maintenance, KHÔNG mount forward_rules/bulk_jobs/
+campaigns/broadcasts (5 công cụ Zalo nâng cao, chưa cần cho module này).
+`fb.py` chỉ là proxy httpx sang service Markee ngoài (MARKEE_FB_BASE_URL),
+không tự crawl / không cần Playwright.
 """
 
 from __future__ import annotations
@@ -31,6 +38,15 @@ from app.modules.all_platform.routers.service_catalog import router as service_c
 from app.modules.all_platform.routers.sales_asset import router as sales_asset_router
 from app.modules.all_platform.routers.vendor_imports import router as vendor_imports_router
 from app.modules.all_platform.routers.vendors import router as vendors_router
+from app.modules.all_platform.routers.fb import router as fb_automation_router
+from app.modules.all_platform.routers.fb_inbox_accounts import router as fb_inbox_accounts_router
+from app.modules.all_platform.zalo.api.routes.auth import router as zalo_auth_router
+from app.modules.all_platform.zalo.api.routes.accounts import router as zalo_accounts_router
+from app.modules.all_platform.zalo.api.routes.conversations import router as zalo_conversations_router
+from app.modules.all_platform.zalo.api.routes.events import router as zalo_events_router
+from app.modules.all_platform.zalo.api.routes.listener import router as zalo_listener_router
+from app.modules.all_platform.zalo.api.routes.inbox_share import router as zalo_inbox_share_router
+from app.modules.all_platform.zalo.api.routes.maintenance import router as zalo_maintenance_router
 
 all_platform_router = APIRouter()
 
@@ -103,3 +119,16 @@ all_platform_router.include_router(vendors_router, prefix="/crm/vendors", tags=[
 
 # ── Tài liệu bán hàng (Sales Assets) ───────────────────────────────────────────
 all_platform_router.include_router(sales_asset_router, prefix="/sales-assets", tags=["All-Platform Sales Assets"])
+
+# ── Inbox FB (proxy httpx sang Markee ngoài, không Playwright) ─────────────────
+all_platform_router.include_router(fb_automation_router, prefix="/fb", tags=["All-Platform Facebook Automation"])
+all_platform_router.include_router(fb_inbox_accounts_router, tags=["All-Platform FB Inbox Accounts"])
+
+# ── Zalo Chat + Inbox Zalo Admin (core - khong gom 5 cong cu nang cao) ─────────
+all_platform_router.include_router(zalo_auth_router, prefix="/zalo", tags=["Zalo Auth"])
+all_platform_router.include_router(zalo_accounts_router, prefix="/zalo", tags=["Zalo Accounts"])
+all_platform_router.include_router(zalo_conversations_router, prefix="/zalo", tags=["Zalo Conversations"])
+all_platform_router.include_router(zalo_events_router, prefix="/zalo", tags=["Zalo Events"])
+all_platform_router.include_router(zalo_listener_router, prefix="/zalo", tags=["Zalo Listener"])
+all_platform_router.include_router(zalo_inbox_share_router, prefix="/zalo", tags=["Zalo Inbox Share"])
+all_platform_router.include_router(zalo_maintenance_router, prefix="/zalo", tags=["Zalo Maintenance"])

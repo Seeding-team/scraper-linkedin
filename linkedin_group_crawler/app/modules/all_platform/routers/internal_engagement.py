@@ -252,7 +252,7 @@ def list_custom_posts(page: int = 1, page_size: int = 20) -> BaseResponse:
 
             items.append({
                 "id": str(p["id"]),
-                "platform": p.get("platform", "facebook"),
+                "platform": p.get("platform") or "facebook",
                 "fanpage_id": "custom",
                 "fanpage_name": fanpage_name,
                 "page_name": fanpage_name,

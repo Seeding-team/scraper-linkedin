@@ -252,6 +252,33 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, _workspaceTab:
   // "Quản lý CRM" nữa — mỗi mục trước đây là sub-menu giờ lên thẳng thành 1
   // menu cấp cao nhất trong sidebar, cộng thêm "Cài đặt kết nối" ở cuối.
   return [
+    // Inbox FB (2026-09-23) - dong bo tu crm-module - khong khoa rieng role,
+    // giong dung cach ban chinh (linkedin-crawler-ui) hien muc nay cho tat ca.
+    {
+      type: "item",
+      id: "inbox",
+      href: "/all-platform/inbox",
+      icon: "inbox",
+      label: "Inbox FB",
+      matchStartsWith: ["/all-platform/inbox"],
+    },
+    // Zalo Chat + Inbox Zalo Admin (2026-09-23) - dong bo tu crm-module.
+    {
+      type: "item",
+      id: "zalo-accounts",
+      href: "/all-platform/tai-khoan",
+      icon: "chat",
+      label: "Zalo Chat",
+      matchStartsWith: ["/all-platform/tai-khoan"],
+    },
+    {
+      type: "item",
+      id: "zalo-inbox-admin",
+      href: "/all-platform/zalo-inbox",
+      icon: "verified_user",
+      label: "Inbox Zalo Admin",
+      matchStartsWith: ["/all-platform/zalo-inbox"],
+    },
     ...crmChildren,
     // "Quản lý thành viên" - port tu ban chinh (linkedin-crawler-ui): bang
     // clone da co san backend (routers/users.py) + frontend service

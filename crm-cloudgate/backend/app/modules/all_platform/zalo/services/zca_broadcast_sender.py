@@ -1,0 +1,129 @@
+from __future__ import annotations
+
+from typing import Any, Awaitable, Callable, Dict, List, Optional
+import asyncio
+import mimetypes
+import os
+import tempfile
+
+import httpx
+from loguru import logger
+
+from app.modules.all_platform.zalo.services.supabase_service import download_asset_bytes, resolve_thread_type
+from app.modules.all_platform.zalo.services.zca_api_bridge import send_zca_images, send_zca_message
+
+
+def _uploaded_assets(message: Dict[str, Any]) -> List[Dict[str, Any]]:
+    return [
+        asset
+        for asset in (message.get("assets") or [])
+        if asset.get("status") == "uploaded" and (asset.get("storage_path") or asset.get("storage_url"))
+    ]
+
+
+async def _asset_to_temp_file(asset: Dict[str, Any]) -> str:
+    """Tải bytes ảnh về file tạm — asset đã lưu Library dùng `storage_path` (Supabase
+    Storage nội bộ); asset "gõ trực tiếp" (Zalo tập trung, không qua Library) chỉ có
+    `storage_url` (URL công khai bất kỳ) — tải thẳng qua httpx thay vì Supabase Storage API."""
+    storage_path = asset.get("storage_path")
+    if storage_path:
+        content, _content_type, ext = await download_asset_bytes(storage_path)
+    else:
+        url = asset["storage_url"]
+        async with httpx.AsyncClient(timeout=60, follow_redirects=True) as client:
+            response = await client.get(url)
+        response.raise_for_status()
+        content_type = response.headers.get("content-type", "").split(";")[0].strip() or "application/octet-stream"
+        ext = mimetypes.guess_extension(content_type) or ".jpg"
+        content = response.content
+    fd, path = tempfile.mkstemp(prefix="zalo-zca-send-", suffix=ext or ".jpg")
+    with os.fdopen(fd, "wb") as tmp:
+        tmp.write(content)
+    return path
+
+
+async def send_zca_broadcast_to_targets(
+    auth: Dict[str, Any],
+    user_id: str,
+    campaign_id: str,
+    messages: List[Dict[str, Any]],
+    targets: List[Dict[str, Any]],
+    content_mode: str,
+    delay_seconds: float,
+    log_callback: Callable[[str, str, str, Optional[str], Optional[str]], Awaitable[None]],
+) -> None:
+    for target in targets:
+        group_name = target["group_name"]
+        group_id = target.get("group_id")
+        
+        if not group_id and group_name:
+            # Try to resolve group_id from Supabase zalo_groups by name
+            try:
+                from app.modules.all_platform.zalo.services.supabase_service import _rest
+                rows = await _rest(
+                    "GET",
+                    "zalo_module_groups",
+                    params={
+                        "select": "group_id",
+                        "user_id": f"eq.{user_id}",
+                        "group_name": f"eq.{group_name}",
+                        "limit": "1"
+                    }
+                )
+                if rows and rows[0].get("group_id"):
+                    group_id = rows[0]["group_id"]
+                else:
+                    # Case-insensitive check
+                    rows = await _rest(
+                        "GET",
+                        "zalo_module_groups",
+                        params={
+                            "select": "group_id",
+                            "user_id": f"eq.{user_id}",
+                            "group_name": f"ilike.{group_name}",
+                            "limit": "1"
+                        }
+                    )
+                    if rows and rows[0].get("group_id"):
+                        group_id = rows[0]["group_id"]
+            except Exception as e:
+                logger.warning(f"Could not resolve group_id from name '{group_name}' in Supabase: {e}")
+
+        if not group_id:
+            await log_callback(campaign_id, group_name, "failed", "Missing group_id for ZCA send", None)
+            continue
+
+        thread_type = await resolve_thread_type(user_id, group_id)
+        await log_callback(campaign_id, group_name, "opened", f"Using ZCA API target (thread_type={thread_type})")
+        for message in messages:
+            message_id = message["id"]
+            send_text = content_mode in {"text", "both"} and bool((message.get("content") or "").strip())
+            send_images = content_mode in {"image", "both"}
+            temp_files: List[str] = []
+            try:
+                if send_text:
+                    await send_zca_message(auth, group_id, message["content"], thread_type=thread_type)
+                    await log_callback(campaign_id, group_name, "sent", "Text sent by ZCA API", message_id)
+                    await asyncio.sleep(max(0.5, delay_seconds))
+
+                if send_images:
+                    assets = _uploaded_assets(message)
+                    if assets:
+                        for asset in assets:
+                            temp_files.append(await _asset_to_temp_file(asset))
+                        await send_zca_images(auth, group_id, temp_files, thread_type=thread_type)
+                        await log_callback(campaign_id, group_name, "sent", "Images sent by ZCA API", message_id)
+                        await asyncio.sleep(max(0.5, delay_seconds))
+
+                if not send_text and not (send_images and temp_files):
+                    await log_callback(campaign_id, group_name, "skipped", "No selected content to send", message_id)
+            except Exception as exc:
+                logger.warning(f"ZCA broadcast failed for message {message_id} to {group_name}: {exc}")
+                await log_callback(campaign_id, group_name, "failed", str(exc), message_id)
+            finally:
+                for path in temp_files:
+                    try:
+                        os.remove(path)
+                    except OSError:
+                        pass
+

@@ -1,15 +1,21 @@
 """FastAPI entrypoint cho module CRM độc lập.
 
 Rút gọn từ `linkedin_group_crawler/app/main.py` gốc: giữ nguyên middleware CORS
-tuỳ biến + endpoint /health + exception handler (đều không phụ thuộc crawler),
-bỏ hẳn lifespan (không scheduler, không Playwright warmup, không ZCA listener —
-module này không cào dữ liệu gì cả, chỉ phục vụ CRUD CRM qua Supabase).
+tuỳ biến + endpoint /health + exception handler (đều không phụ thuộc crawler).
+
+2026-09-23: thêm lại lifespan CHỈ để auto-start ZCA persistent listener (Zalo
+Chat/Inbox Zalo Admin, phần tiếp theo của module "Quản lý kênh & CSKH" đang
+được gộp dần vào — xem router.py) — copy nguyên từ zalo-module/backend/app/main.py.
+Vẫn KHÔNG có scheduler/Playwright warmup nào khác, module này không tự cào dữ
+liệu gì ngoài Zalo.
 """
 
 from __future__ import annotations
 
+import asyncio
 import os
 import sys
+from contextlib import asynccontextmanager
 
 if sys.platform == "win32":
     # Ép UTF-8 cho console Windows để tránh lỗi encode khi log tiếng Việt.
@@ -33,10 +39,55 @@ from app.modules.all_platform.schemas.common import BaseResponse
 setup_logging()
 logger = get_logger(__name__)
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Auto-start ZCA persistent listeners cho mọi account đã có auth file trên
+    # disk (artifacts/zca-auth/*.json) — không có hook này thì listener chỉ
+    # được start khi user import session mới, và sau khi backend restart sẽ
+    # không có realtime push cho tới khi ai đó đăng nhập lại.
+    zca_listeners_task: asyncio.Task | None = None
+
+    async def _start_zca_listeners_background() -> None:
+        try:
+            from app.modules.all_platform.zalo.services.zca_persistent_listener import (
+                start_persisted_listeners,
+            )
+            await start_persisted_listeners()
+            logger.info("ZCA persistent listeners auto-start finished")
+        except Exception:
+            logger.exception(
+                "ZCA persistent listeners auto-start failed — sẽ thử lại khi user login lại",
+            )
+
+    if os.getenv("DISABLE_ZCA_LISTENERS", "").strip().lower() in {"1", "true", "yes"}:
+        logger.warning("DISABLE_ZCA_LISTENERS enabled -> not auto-starting ZCA persistent listeners.")
+    else:
+        zca_listeners_task = asyncio.create_task(_start_zca_listeners_background())
+
+    try:
+        yield
+    finally:
+        if zca_listeners_task is not None and not zca_listeners_task.done():
+            zca_listeners_task.cancel()
+            try:
+                await zca_listeners_task
+            except asyncio.CancelledError:
+                pass
+        try:
+            from app.modules.all_platform.zalo.services.zca_persistent_listener import (
+                shutdown_persistent_listeners,
+            )
+            await shutdown_persistent_listeners()
+        except Exception:
+            logger.exception("ZCA persistent listeners shutdown failed")
+
+
 app = FastAPI(
     title="CRM Module API",
     version="1.0.0",
     description="Module CRM đa brand (Leads/Khách hàng/Cơ hội/Báo giá/Hợp đồng/Sản phẩm & dịch vụ) — dùng chung DB self-host với app seeding, 1 process phục vụ nhiều domain/brand (xem instance_domain_map trong app/core/config.py).",
+    lifespan=lifespan,
 )
 
 
