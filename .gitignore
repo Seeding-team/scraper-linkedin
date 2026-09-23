@@ -192,6 +192,8 @@ crm-securityzone/backend/.env.local
 crm-securityzone/backend/.venv
 crm-securityzone/backend/__pycache__
 crm-securityzone/backend/**/__pycache__
+crm-securityzone/backend/artifacts
+crm-securityzone/backend/node_modules
 crm-securityzone/frontend/.env*
 crm-securityzone/frontend/node_modules
 crm-securityzone/frontend/.next
@@ -204,6 +206,8 @@ crm-module/backend/.env.local
 crm-module/backend/.venv
 crm-module/backend/__pycache__
 crm-module/backend/**/__pycache__
+crm-module/backend/artifacts
+crm-module/backend/node_modules
 crm-module/frontend/.env*
 crm-module/frontend/node_modules
 crm-module/frontend/.next
@@ -216,6 +220,8 @@ crm-cloudgate/backend/.env.local
 crm-cloudgate/backend/.venv
 crm-cloudgate/backend/__pycache__
 crm-cloudgate/backend/**/__pycache__
+crm-cloudgate/backend/artifacts
+crm-cloudgate/backend/node_modules
 crm-cloudgate/frontend/.env*
 crm-cloudgate/frontend/node_modules
 crm-cloudgate/frontend/.next
@@ -237,6 +243,23 @@ zalo-module/frontend/node_modules
 zalo-module/frontend/.next
 zalo-module/frontend/nextdev.log
 zalo-module/frontend/npm-install.log
+
+# ---- facebook-module (module cao bai viet Facebook + comment tu dong doc lap) ----
+facebook-module/.env
+facebook-module/docker-compose.override.yml
+facebook-module/backend/.env
+facebook-module/backend/.env.local
+facebook-module/backend/.venv
+facebook-module/backend/__pycache__
+facebook-module/backend/**/__pycache__
+facebook-module/backend/artifacts
+facebook-module/backend/temp_otp
+facebook-module/frontend/.env*
+facebook-module/frontend/node_modules
+facebook-module/frontend/.next
+facebook-module/frontend/nextdev.log
+facebook-module/frontend/npm-install.log
+
 crm-cloudgate/frontend/.next
 
 

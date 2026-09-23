@@ -54,6 +54,7 @@ import { useCrmCategoryCodeOptions, useCrmCategoryLabels } from "@/modules/crm/c
 import { useCrm } from "@/modules/crm/hooks/useCrm";
 import type { CreateDealInput } from "@/modules/crm/types";
 import { useAppAuth } from "@/contexts/AppAuthContext";
+import { cascadeSummaryFromBody, cascadeWarningText } from "@/modules/crm/utils/cascadeDelete";
 
 type ViewMode = "kanban" | "table";
 
@@ -401,7 +402,13 @@ export default function CrmCustomersPage() {
   async function confirmDelete() {
     if (!deleteId) return;
     try {
-      const res = await customerLeadService.delete(deleteId);
+      let res = await customerLeadService.delete(deleteId);
+      // Co hoi con Bao gia/Hop dong: hoi ro truoc khi xoa kem (feedback 2026-09-23).
+      const summary = cascadeSummaryFromBody(res);
+      if (summary) {
+        if (!window.confirm(cascadeWarningText("Cơ hội này", summary))) return;
+        res = await customerLeadService.delete(deleteId, true);
+      }
       if (res?.success) {
         toast.success("Đã xóa khách hàng");
         setDeleteId(null);

@@ -46,9 +46,10 @@ def _error(exc: Exception) -> BaseResponse:
     if isinstance(exc, DuplicateLeadError):
         return BaseResponse(success=False, message=str(exc), data={"duplicates": exc.matches})
     if isinstance(exc, LeadLinkedError):
-        # Tra kem id ho so downstream de UI co the dan nguoi dung sang do thay
-        # vi chi bao "khong xoa duoc".
-        return BaseResponse(success=False, message=str(exc), data={"links": exc.links})
+        # Khong con la loi chan cung: requiresCascadeConfirm de FE hoi lai roi
+        # goi lai voi confirm_cascade=true. links van tra kem de UI dan nguoi
+        # dung sang ho so downstream neu can.
+        return BaseResponse(success=False, message=str(exc), data={"requiresCascadeConfirm": True, "links": exc.links, **exc.summary})
     if isinstance(exc, PermissionError):
         return BaseResponse(success=False, message=str(exc))
     return BaseResponse(success=False, message=str(exc))
@@ -191,7 +192,7 @@ def leads_delete_bulk(payload: dict, user: dict[str, Any] = Depends(get_current_
         lead_ids = payload.get("lead_ids")
         if not lead_ids or not isinstance(lead_ids, list):
             return BaseResponse(success=False, message="Danh sách lead_ids không hợp lệ.")
-        data = delete_leads_bulk(lead_ids, user)
+        data = delete_leads_bulk(lead_ids, user, confirm_cascade=bool(payload.get("confirm_cascade")))
         deleted_count = len(data.get("deleted_ids") or [])
         failed_count = len(data.get("failed") or [])
         if deleted_count == 0 and failed_count > 0:
@@ -227,9 +228,13 @@ def leads_update(lead_id: str, payload: CrmLeadUpdate, user: dict[str, Any] = De
 
 
 @router.delete("/{lead_id}")
-def leads_delete(lead_id: str, user: dict[str, Any] = Depends(get_current_user)) -> BaseResponse:
+def leads_delete(
+    lead_id: str,
+    confirm_cascade: bool = Query(False, description="True sau khi nguoi dung da xac nhan xoa Lead da convert."),
+    user: dict[str, Any] = Depends(get_current_user),
+) -> BaseResponse:
     try:
-        delete_lead(lead_id, user)
+        delete_lead(lead_id, user, confirm_cascade=confirm_cascade)
         return BaseResponse(success=True, message="Đã xóa Lead")
     except Exception as exc:
         return _error(exc)

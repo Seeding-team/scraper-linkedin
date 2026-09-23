@@ -31,6 +31,8 @@ services:
       TZ: Asia/Ho_Chi_Minh
     expose:
       - "8000"
+    volumes:
+      - backend-artifacts:/app/artifacts
     networks:
       crm-net:
         aliases: [backend]
@@ -52,3 +54,6 @@ services:
 
 networks:
   crm-net:
+
+volumes:
+  backend-artifacts:

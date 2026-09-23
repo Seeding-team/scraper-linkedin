@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.modules.all_platform.auth_deps import get_current_user
 from app.modules.all_platform.schemas import BaseResponse
@@ -11,6 +11,7 @@ from app.modules.all_platform.services.crm_contact_service import (
     ContactNotFoundError,
     create_contact,
     delete_contact,
+    find_duplicate_contacts,
     get_contact,
     get_contact_activity,
     get_contact_related,
@@ -37,6 +38,21 @@ def _error(exc: Exception) -> BaseResponse:
 def contacts_list(customer_id: str, user: dict[str, Any] = Depends(get_current_user)) -> BaseResponse:
     try:
         return BaseResponse(success=True, data=list_contacts(customer_id, user))
+    except Exception as exc:
+        return _error(exc)
+
+
+@router.get("/duplicate-check")
+def contacts_duplicate_check(
+    customer_id: str,
+    phone: str | None = Query(None),
+    email: str | None = Query(None),
+    exclude_contact_id: str | None = Query(None),
+    user: dict[str, Any] = Depends(get_current_user),
+) -> BaseResponse:
+    try:
+        matches = find_duplicate_contacts(customer_id, user, phone=phone, email=email, exclude_contact_id=exclude_contact_id)
+        return BaseResponse(success=True, data={"matches": matches})
     except Exception as exc:
         return _error(exc)
 

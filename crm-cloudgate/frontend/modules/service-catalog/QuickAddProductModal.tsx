@@ -673,6 +673,13 @@ export function QuickAddProductModal({
                         <input className="w-full h-9 px-3 border border-slate-300 rounded-md text-sm focus:border-[#c2185b] focus:ring-1 focus:ring-[#c2185b]" placeholder="Nhập tên sản phẩm" value={nameInput} onChange={e => setNameInput(e.target.value)} />
                         {fieldErrors.name && <div className="text-[#c2185b] text-xs mt-1">{fieldErrors.name}</div>}
                       </div>
+                      {/* Feedback 2026-09-23: "cho mô tả chi tiết lên trên dưới tên sản
+                          phẩm" - chuyển từ khối "Thông tin mở rộng" (thu gọn, hay bị
+                          bỏ sót) lên ngay dưới Tên sản phẩm. */}
+                      <div className="col-span-2">
+                        <label className="block text-sm font-medium text-slate-700 mb-1.5">Mô tả chi tiết</label>
+                        <textarea className="w-full p-3 border border-slate-300 rounded-md text-sm focus:border-[#c2185b] min-h-[80px]" placeholder="Nhập mô tả sản phẩm..." value={description} onChange={e => setDescription(e.target.value)} />
+                      </div>
                       <div>
                         <label className="block text-sm font-medium text-slate-700 mb-1.5">Hãng </label>
                         <input className="w-full h-9 px-3 border border-slate-300 rounded-md text-sm focus:border-[#c2185b] focus:ring-1 focus:ring-[#c2185b] bg-slate-50" placeholder="vd: Dell, HP..." value={brand} onChange={e => setBrand(e.target.value)} />
@@ -775,10 +782,6 @@ export function QuickAddProductModal({
                           <div>
                             <label className="block text-sm font-medium text-slate-700 mb-1.5">Loại sản phẩm </label>
                             <input className="w-full h-9 px-3 border border-slate-300 rounded-md text-sm focus:border-[#c2185b] bg-slate-50" value={productType} onChange={e => setProductType(e.target.value)} />
-                          </div>
-                          <div className="col-span-2">
-                            <label className="block text-sm font-medium text-slate-700 mb-1.5">Mô tả chi tiết</label>
-                            <textarea className="w-full p-3 border border-slate-300 rounded-md text-sm focus:border-[#c2185b] min-h-[80px]" placeholder="Nhập mô tả sản phẩm..." value={description} onChange={e => setDescription(e.target.value)} />
                           </div>
                           <div className="col-span-2">
                             <label className="block text-sm font-medium text-slate-700 mb-1.5">Ghi chú nội bộ</label>

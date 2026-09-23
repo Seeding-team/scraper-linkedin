@@ -642,8 +642,11 @@ export const customerLeadService = {
     });
   },
 
-  delete: async (id: string): Promise<any> => {
-    return apiFetch(`/api/all-platform/customer-leads/${id}`, {
+  /** confirmCascade=true CHI gui sau khi nguoi dung da xac nhan xoa kem Bao
+   * gia/Hop dong lien quan - lan goi dau con lien ket thi backend tra
+   * success:false + data.requiresCascadeConfirm (xem utils/cascadeDelete.ts). */
+  delete: async (id: string, confirmCascade: boolean = false): Promise<{ success?: boolean; message?: string; data?: unknown }> => {
+    return apiFetch(`/api/all-platform/customer-leads/${id}${confirmCascade ? "?confirm_cascade=true" : ""}`, {
       method: "DELETE",
     });
   },
