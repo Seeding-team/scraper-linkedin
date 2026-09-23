@@ -489,9 +489,28 @@ async function cmdSendMessage(api, args, payload) {
   // mentions: [{pos,uid,len}] cho @tag/@All — xem Mục 3.3.5 + Mục 4.6 (mentionUtils)
   // của ZALO_CENTRALIZED_MODULE_GUIDE.md. Đến từ payload (không phải args) vì là mảng object.
   const mentions = (payload || {}).mentions;
-  const messageContent = Array.isArray(mentions) && mentions.length
-    ? { msg: text, mentions }
-    : { msg: text };
+  const quoteIn = (payload || {}).quote;
+  const messageContent = { msg: text };
+  if (Array.isArray(mentions) && mentions.length) {
+    messageContent.mentions = mentions;
+  }
+  if (quoteIn && quoteIn.msgId) {
+    // Tinh nang "Tra loi tin nhan" - dung dung shape SendMessageQuote cua zca-js
+    // (node_modules/zca-js/dist/apis/sendMessage.d.ts): {content, msgType, uidFrom,
+    // msgId, cliMsgId, ts, ttl}. Co tinh bo qua propertyExt (khong bat buoc o runtime
+    // du type khai la required) va ep content ve string, giong cach lam da duoc kiem
+    // chung o project tham khao (tranh dung loi zca-js throw voi content khong phai
+    // string + msgType "webchat").
+    messageContent.quote = {
+      content: String(quoteIn.content || ""),
+      msgType: "webchat",
+      uidFrom: quoteIn.uidFrom != null ? String(quoteIn.uidFrom) : "",
+      msgId: String(quoteIn.msgId),
+      cliMsgId: quoteIn.cliMsgId != null ? String(quoteIn.cliMsgId) : "",
+      ts: quoteIn.ts != null ? String(quoteIn.ts) : "",
+      ttl: 0,
+    };
+  }
   const response = await api.sendMessage(messageContent, String(threadId), threadType);
   // QUAN TRỌNG: key PHẢI là "response" (khớp với zca_api_bridge.js's
   // `emitAndExit({ ok: true, response })`) — Python (_persist_outgoing_message

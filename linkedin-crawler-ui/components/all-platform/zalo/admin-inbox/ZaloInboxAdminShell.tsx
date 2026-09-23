@@ -17,6 +17,8 @@ import { cn } from "@/lib/utils";
 import { ZaloStickerPicker } from "../centralized-shared/ZaloStickerPicker";
 import { ZaloReactionQuickPicker, ZaloReactionBadges } from "../centralized-shared/ZaloReactionPicker";
 import { ZaloMessageSearchPanel } from "../centralized-shared/ZaloMessageSearchPanel";
+import { ZaloForwardModal } from "../centralized-shared/ZaloForwardModal";
+import { ZaloNewChatModal } from "../dashboard/ZaloNewChatModal";
 import type { ZaloConversationSummary, ZaloLibraryMessage } from "@/types/zalo-api";
 import {
   restartZaloAccountListener,
@@ -184,6 +186,16 @@ function ZaloMessageAssetView({ asset, message }: { asset: NonNullable<ZaloLibra
   );
 }
 
+// Heuristic nhận diện "trông giống SĐT VN" cho ô tìm kiếm hội thoại - không cần
+// chính xác tuyệt đối (BE tự chuẩn hoá/validate thật khi gọi /users/find), chỉ
+// cần đủ tốt để không bật gợi ý "Tìm trên Zalo" với 1 cái tên toàn số ngẫu nhiên.
+// Giữ y hệt logic bên ZaloChatView.tsx (không import chéo qua đó, tự định nghĩa
+// lại vì đây là 2 codebase tách biệt).
+function looksLikeVnPhoneQuery(raw: string): boolean {
+  const digits = raw.replace(/[\s.\-()]/g, "");
+  return /^(\+?84|0)\d{8,10}$/.test(digits);
+}
+
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export function ZaloInboxAdminShell() {
@@ -283,6 +295,13 @@ export function ZaloInboxAdminShell() {
   const [reactionPickerFor, setReactionPickerFor] = useState<string | null>(null);
   const [showSearchPanel, setShowSearchPanel] = useState(false);
 
+  // Chuyển tiếp 1 tin nhắn sang N hội thoại khác (ZaloForwardModal, dùng chung
+  // với ZaloChatView) + "Tìm trên Zalo theo SĐT" khi ô tìm hội thoại gõ giống
+  // SĐT nhưng không khớp hội thoại nào đang có (ZaloNewChatModal, dùng chung).
+  const [forwardingMessage, setForwardingMessage] = useState<ZaloLibraryMessage | null>(null);
+  const [newChatModalOpen, setNewChatModalOpen] = useState(false);
+  const [phoneSearchQuery, setPhoneSearchQuery] = useState<string | undefined>(undefined);
+
   // Mẫu nhắn nhanh tự soạn (migration 139) — "giữ tin nhắn mời mua hàng lại"
   // để dùng nhiều lần, cạnh các mẫu QUICK_REPLY_GROUPS hardcode ở trên.
   const [customQuickReplies, setCustomQuickReplies] = useState<ZaloQuickReply[]>([]);
@@ -347,6 +366,23 @@ export function ZaloInboxAdminShell() {
     el.classList.add("ring-2", "ring-[#E3000F]", "ring-offset-2");
     setTimeout(() => el.classList.remove("ring-2", "ring-[#E3000F]", "ring-offset-2"), 1600);
     return true;
+  };
+
+  // Tra ngược tin đang được trích dẫn TRONG danh sách đã tải sẵn (không gọi
+  // API mới) — nếu tin gốc nằm ngoài phạm vi trang hiện tại, trả về undefined
+  // và UI tự hiện fallback "Tin nhắn gốc" không nội dung.
+  const findQuotedMessage = (replyToId: string | null | undefined) => {
+    if (!replyToId) return undefined;
+    return inbox.messages.find((m) => m.source_message_id === replyToId);
+  };
+
+  const handleCopyMessage = (message: ZaloLibraryMessage) => {
+    const text = (message.content || "").trim();
+    if (!text) return;
+    navigator.clipboard
+      .writeText(text)
+      .then(() => inbox.showToast("Đã copy tin nhắn", true))
+      .catch(() => inbox.showToast("Không thể copy — trình duyệt chặn quyền clipboard", false));
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -961,6 +997,31 @@ export function ZaloInboxAdminShell() {
                 {inbox.loadingConvs ? "Đang cập nhật..." : `${inbox.filtered.length} hội thoại`}
               </p>
             </div>
+            <div className="relative">
+              <MaterialIcon name="search" className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-[13px] text-[#A0A0A0]" />
+              <input
+                type="text"
+                value={inbox.searchQuery}
+                onChange={(e) => inbox.setSearchQuery(e.target.value)}
+                placeholder="Tìm theo tên hoặc SĐT..."
+                className="h-8 w-full rounded-lg border border-[#E5E5E5] bg-white pl-7 pr-2 text-xs outline-none focus:border-[#E3000F]"
+              />
+            </div>
+            {/* Tìm theo SĐT: query giống SĐT VN nhưng không hội thoại nào khớp
+                -> gợi ý tìm thẳng trên Zalo (mở ZaloNewChatModal điền sẵn SĐT này). */}
+            {looksLikeVnPhoneQuery(inbox.searchQuery) && inbox.filtered.length === 0 && (
+              <button
+                type="button"
+                onClick={() => {
+                  setPhoneSearchQuery(inbox.searchQuery.trim());
+                  setNewChatModalOpen(true);
+                }}
+                className="flex w-full items-center gap-1.5 rounded-lg border border-[#E3000F]/30 bg-[#FFF5F5] px-2.5 py-1.5 text-left text-[11px] font-semibold text-[#E3000F] transition hover:bg-[#FFEAEA]"
+              >
+                <MaterialIcon name="person_search" className="shrink-0 text-[13px]" />
+                <span className="truncate">Không có hội thoại nào — Tìm &quot;{inbox.searchQuery.trim()}&quot; trên Zalo</span>
+              </button>
+            )}
             <div>
               <select
                 value={inbox.filter}
@@ -1370,6 +1431,27 @@ export function ZaloInboxAdminShell() {
                                 )}
                               </div>
                             )}
+                            {!msg.is_deleted && msg.reply_to_id && (() => {
+                              const quoted = findQuotedMessage(msg.reply_to_id);
+                              return (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    if (quoted) handleJumpToSearchedMessage(quoted);
+                                  }}
+                                  className={cn(
+                                    "block w-full text-left mb-1 px-2 py-1 rounded-lg border-l-2 text-[10.5px] truncate",
+                                    isSent
+                                      ? "bg-white/10 border-white/40 text-white/85"
+                                      : "bg-white border-[#E5E5E5] text-[#5a5f68]"
+                                  )}
+                                  title={quoted ? "Đi tới tin nhắn gốc" : undefined}
+                                >
+                                  <span className="font-semibold">{quoted ? (quoted.sender_name || (quoted.is_sent ? "Bạn" : "Khách")) : "Tin nhắn gốc"}: </span>
+                                  {quoted?.content || (quoted ? "📷 Ảnh đính kèm" : "(không tải được nội dung gốc)")}
+                                </button>
+                              );
+                            })()}
                             {msg.content && (
                               <div
                                 className={cn(
@@ -1403,6 +1485,9 @@ export function ZaloInboxAdminShell() {
                             {(() => {
                               const msgKey = msg.source_message_id || msg.id || String(index);
                               const canReact = !msg.is_deleted && msg.source_message_id && (msg as unknown as { cli_msg_id?: string }).cli_msg_id;
+                              // Trả lời/copy/chuyển tiếp: mọi tin có source_message_id (kể cả
+                              // của đối phương) — KHÁC thu hồi (chỉ tin chính mình gửi + cli_msg_id).
+                              const canActOnMessage = !msg.is_deleted && !!msg.source_message_id;
                               return (
                                 <div className="relative mt-0.5 flex items-center gap-1 px-1" style={{ justifyContent: isSent ? "flex-end" : "flex-start" }}>
                                   {time && <span className="text-[9px] text-[#A0A0A0]">{time}</span>}
@@ -1416,6 +1501,36 @@ export function ZaloInboxAdminShell() {
                                       className="opacity-0 group-hover:opacity-100 transition-opacity text-[#A0A0A0] hover:text-brand"
                                     >
                                       <MaterialIcon name="mood" className="text-[11px]" />
+                                    </button>
+                                  )}
+                                  {canActOnMessage && (
+                                    <button
+                                      type="button"
+                                      onClick={() => inbox.setReplyingTo(msg)}
+                                      title="Trả lời"
+                                      className="opacity-0 group-hover:opacity-100 transition-opacity text-[#A0A0A0] hover:text-brand"
+                                    >
+                                      <MaterialIcon name="reply" className="text-[11px]" />
+                                    </button>
+                                  )}
+                                  {canActOnMessage && msg.content?.trim() && (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleCopyMessage(msg)}
+                                      title="Copy"
+                                      className="opacity-0 group-hover:opacity-100 transition-opacity text-[#A0A0A0] hover:text-brand"
+                                    >
+                                      <MaterialIcon name="content_copy" className="text-[11px]" />
+                                    </button>
+                                  )}
+                                  {canActOnMessage && (msg.content?.trim() || (msg.assets ?? []).some((a) => a.storage_url)) && (
+                                    <button
+                                      type="button"
+                                      onClick={() => setForwardingMessage(msg)}
+                                      title="Chuyển tiếp"
+                                      className="opacity-0 group-hover:opacity-100 transition-opacity text-[#A0A0A0] hover:text-brand"
+                                    >
+                                      <MaterialIcon name="forward" className="text-[11px]" />
                                     </button>
                                   )}
                                   {/* Thu hồi tin nhắn thật (api.undo) — chỉ khả dụng cho tin CHÍNH
@@ -1499,6 +1614,29 @@ export function ZaloInboxAdminShell() {
                 ))}
               </div>
             </div>
+
+            {/* Đang trả lời 1 tin nhắn cụ thể — huỷ được, tự xoá sau khi gửi (xem sendMessage trong hook) */}
+            {inbox.replyingTo && (
+              <div className="mb-2 flex items-center gap-2 rounded-lg border border-[#E3000F]/20 bg-[#FFF5F5] px-3 py-2">
+                <MaterialIcon name="reply" className="shrink-0 text-base text-[#E3000F]" />
+                <div className="min-w-0 flex-1">
+                  <div className="text-[11px] font-bold text-[#E3000F]">
+                    Trả lời {inbox.replyingTo.is_sent ? "chính mình" : inbox.replyingTo.sender_name || "Khách"}
+                  </div>
+                  <div className="truncate text-[11.5px] text-[#5a5f68]">
+                    {inbox.replyingTo.content || ((inbox.replyingTo.assets?.length ?? 0) > 0 ? "📷 Ảnh đính kèm" : "Tin nhắn")}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => inbox.setReplyingTo(null)}
+                  className="shrink-0 rounded-full p-1 hover:bg-white"
+                  title="Huỷ trả lời"
+                >
+                  <MaterialIcon name="close" className="text-sm text-[#A0A0A0]" />
+                </button>
+              </div>
+            )}
 
             {/* Selected files preview */}
             {selectedFiles.length > 0 && (
@@ -2358,6 +2496,33 @@ export function ZaloInboxAdminShell() {
         defaultConvId={inbox.openConv || undefined}
         defaultCustomerName={selectedName || undefined}
         defaultSourcePlatform="Zalo"
+      />
+
+      {/* Modal chuyển tiếp tin nhắn — dùng chung với ZaloChatView */}
+      <ZaloForwardModal
+        open={!!forwardingMessage}
+        accountId={inbox.selectedAccountId || ""}
+        sourceConversationId={inbox.openConv || ""}
+        message={forwardingMessage}
+        conversations={inbox.conversations}
+        onClose={() => setForwardingMessage(null)}
+      />
+
+      {/* Modal nhắn tin cho người lạ (SĐT / username) — dùng chung với ZaloChatView */}
+      <ZaloNewChatModal
+        open={newChatModalOpen}
+        accountId={inbox.selectedAccountId || ""}
+        initialQuery={phoneSearchQuery}
+        onClose={() => {
+          setNewChatModalOpen(false);
+          setPhoneSearchQuery(undefined);
+        }}
+        onChatReady={(conversationId) => {
+          void inbox.refreshConversations();
+          inbox.openChat(conversationId);
+        }}
+        onError={(msg) => inbox.showToast(msg, false)}
+        onSuccess={(name) => inbox.showToast(`Đã mở chat với ${name}`, true)}
       />
     </div>
   );

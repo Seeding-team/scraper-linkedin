@@ -129,7 +129,11 @@ export type MaterialSymbolName =
   // /all-platform/crm từ "CRM" sang "Cơ hội" kèm icon phễu, phân biệt với
   // "Leads" (person_add) và các icon còn lại trong nhóm Quản lý CRM.
   | "filter_alt"
-  | "bookmark_add";
+  | "bookmark_add"
+  // Zalo chat: trả lời / chuyển tiếp tin nhắn + huỷ kết quả chuyển tiếp thất bại.
+  | "reply"
+  | "forward"
+  | "cancel";
 
 export interface MaterialIconProps {
   name: MaterialSymbolName;

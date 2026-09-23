@@ -21,6 +21,7 @@ import {
   sendZaloSticker,
   reactToZaloMessage,
   type BuildZaloRealtimeStreamOptions,
+  type ZaloReplyToPayload,
 } from "@/services/zaloCrawlerService";
 import { allPlatformKpiService, zaloInboxShareService } from "@/services/all-platform.service";
 import type {
@@ -831,29 +832,51 @@ export function useZaloAdminInbox() {
     }
   }, [reply, loadMessages]);
 
+  // "Trả lời tin nhắn" — áp dụng cho CẢ tin của mình lẫn của đối phương (khác
+  // recall, chỉ cho tin mình gửi). Preview hiện phía trên ô nhập (do shell tự
+  // render dựa vào replyingTo), huỷ được, tự xoá ngay khi bắt đầu gửi (optimistic)
+  // và được phục hồi lại nếu gửi lỗi để không mất ngữ cảnh đang trả lời.
+  const [replyingTo, setReplyingTo] = useState<ZaloLibraryMessage | null>(null);
+
   const sendMessage = useCallback(async (text: string, files?: File[]) => {
     const accId = selectedAccountIdRef.current;
     const convId = selectedConvIdRef.current;
     if (!accId || !convId) return;
     setIsSending(true);
     setSendError(null);
+    // Chỉ áp dụng quote cho tin text đi qua /send (media dùng /send-media, BE
+    // chưa hỗ trợ quote ở đó). message_id là bắt buộc, các field còn lại bỏ
+    // qua nếu thiếu thay vì gửi null/undefined tường minh.
+    const capturedReplyingTo = replyingTo;
+    const replyTo: ZaloReplyToPayload | undefined =
+      capturedReplyingTo?.source_message_id && !(files && files.length > 0)
+        ? {
+            message_id: capturedReplyingTo.source_message_id,
+            cli_msg_id: capturedReplyingTo.cli_msg_id || undefined,
+            sender_id: capturedReplyingTo.sender_id || undefined,
+            content: capturedReplyingTo.content || undefined,
+            ts: capturedReplyingTo.ts || undefined,
+          }
+        : undefined;
+    setReplyingTo(null);
     try {
       if (files && files.length > 0) {
         await sendZaloMessageWithFiles(accId, convId, text, files);
       } else if (pendingMentions.length > 0) {
         // Tin có @tag/@All — dùng route riêng hỗ trợ mentions (Mục 3.3.5 guide).
-        await sendZaloMessageWithMentions(accId, convId, text, pendingMentions);
+        await sendZaloMessageWithMentions(accId, convId, text, pendingMentions, replyTo);
       } else {
-        await sendZaloMessage(accId, convId, { text });
+        await sendZaloMessage(accId, convId, { text, reply_to: replyTo });
       }
       setPendingMentions([]);
       await loadMessages(accId, convId, true);
     } catch (e) {
       setSendError(e instanceof Error ? e.message : "Gửi tin nhắn thất bại");
+      if (replyTo) setReplyingTo(capturedReplyingTo);
     } finally {
       setIsSending(false);
     }
-  }, [loadMessages, pendingMentions]);
+  }, [loadMessages, pendingMentions, replyingTo]);
 
   // ─────────────────────────────────────────────────────────────────────────────
   // Thu hồi tin nhắn thật (api.undo) — chỉ khả dụng cho tin do chính mình gửi,
@@ -869,7 +892,7 @@ export function useZaloAdminInbox() {
       return;
     }
     try {
-      await recallZaloMessage(accId, convId, { msg_id: msgId, cli_msg_id: cliMsgId });
+      await recallZaloMessage(accId, convId, { source_message_id: msgId });
       setMessages((prev) => prev.map((m) => (m.id === message.id ? { ...m, is_deleted: true } : m)));
       showToast("Đã thu hồi tin nhắn", true);
     } catch (e) {
@@ -1124,6 +1147,7 @@ export function useZaloAdminInbox() {
     setSearchQuery,
 
     // Conversations lists
+    conversations, // raw ZaloConversationSummary[] - dùng cho ZaloForwardModal (props đúng shape này)
     activeConvs,
     filtered,
     archives,
@@ -1171,6 +1195,8 @@ export function useZaloAdminInbox() {
     pendingMentions,
     setPendingMentions,
     recallMessage,
+    replyingTo,
+    setReplyingTo,
     friendStatus,
     loadingFriendStatus,
     friendActionLoading,

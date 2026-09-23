@@ -29,7 +29,9 @@ import {
   getZaloQuickReplies,
   createZaloQuickReply,
   deleteZaloQuickReply,
+  forwardZaloMessage,
   type ZaloQuickReply,
+  type ZaloReplyToPayload,
 } from "@/services/zaloCrawlerService";
 import type {
   ZaloConversationSummary,
@@ -48,6 +50,7 @@ import { ZaloKpiPanel } from "./ZaloKpiPanel";
 import { ZaloStickerPicker } from "../centralized-shared/ZaloStickerPicker";
 import { ZaloReactionQuickPicker, ZaloReactionBadges } from "../centralized-shared/ZaloReactionPicker";
 import { ZaloMessageSearchPanel } from "../centralized-shared/ZaloMessageSearchPanel";
+import { ZaloForwardModal } from "../centralized-shared/ZaloForwardModal";
 
 const REFRESH_INTERVAL_MS = 2000;
 const MESSAGE_PAGE_SIZE = 50;
@@ -193,6 +196,14 @@ function messageRenderKey(message: ZaloLibraryMessage) {
   return `${message.group_id || "unknown"}-${messageKey(message)}-${stableHash(suffix)}`;
 }
 
+// Heuristic nhận diện "trông giống SĐT VN" cho ô tìm kiếm chính — không cần
+// chính xác tuyệt đối (BE tự chuẩn hoá/validate thật khi gọi /users/find),
+// chỉ cần đủ tốt để không bật gợi ý "Tìm trên Zalo" với 1 cái tên toàn số ngẫu nhiên.
+function looksLikeVnPhoneQuery(raw: string): boolean {
+  const digits = raw.replace(/[\s.\-()]/g, "");
+  return /^(\+?84|0)\d{8,10}$/.test(digits);
+}
+
 function isNearBottom(element: HTMLDivElement | null) {
   if (!element) return true;
   return element.scrollHeight - element.scrollTop - element.clientHeight <= BOTTOM_THRESHOLD_PX;
@@ -304,6 +315,10 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
   const [avatarErrors, setAvatarErrors] = useState<Record<string, boolean>>({});
   const [newChatModalOpen, setNewChatModalOpen] = useState(false);
   const [newChatToast, setNewChatToast] = useState<string | null>(null);
+  // Tìm theo SĐT ngay từ ô tìm kiếm chính — khi query giống SĐT VN và không
+  // khớp hội thoại nào đang có, cho phép mở luôn ZaloNewChatModal với query
+  // này điền sẵn thay vì bắt gõ lại ở modal riêng.
+  const [phoneSearchQuery, setPhoneSearchQuery] = useState<string | undefined>(undefined);
 
   // Custom Status Tags & Filtering — lưu server-side (zalo_groups.tag, migration
   // 139), đồng bộ giữa các nhân viên cùng quản lý 1 tài khoản Zalo tập trung
@@ -1321,6 +1336,21 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
     setDirectSendError(null);
     setIsSendingDirect(true);
 
+    // "Trả lời tin nhắn" — chỉ áp dụng cho tin text đi qua /send (media dùng
+    // /send-media, chưa hỗ trợ quote ở BE). message_id là bắt buộc; các field
+    // còn lại bỏ qua nếu thiếu thay vì gửi null/undefined tường minh.
+    const replyToSend: ZaloReplyToPayload | undefined =
+      replyingTo?.source_message_id && mediaToSend.length === 0
+        ? {
+            message_id: replyingTo.source_message_id,
+            cli_msg_id: replyingTo.cli_msg_id || undefined,
+            sender_id: replyingTo.sender_id || undefined,
+            content: replyingTo.content || undefined,
+            ts: replyingTo.ts || undefined,
+          }
+        : undefined;
+    setReplyingTo(null);
+
     try {
       if (mediaToSend.length > 0) {
         const filesOnly = mediaToSend.map((m) => m.file);
@@ -1331,10 +1361,11 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
           filesOnly
         );
       } else if (mentionsToSend.length > 0) {
-        await sendZaloMessageWithMentions(flow.userId, conversationIdToSend, textToSend, mentionsToSend);
+        await sendZaloMessageWithMentions(flow.userId, conversationIdToSend, textToSend, mentionsToSend, replyToSend);
       } else {
         await sendZaloMessage(flow.userId, conversationIdToSend, {
           text: textToSend,
+          reply_to: replyToSend,
         });
       }
       mediaToSend.forEach((m) => {
@@ -1354,6 +1385,7 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
       setInputText(textToSend);
       setPendingMentions(mentionsToSend);
       setSelectedMedia(mediaToSend);
+      if (replyToSend) setReplyingTo(replyingTo);
     } finally {
       setIsSendingDirect(false);
     }
@@ -1365,8 +1397,7 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
     if (!selectedConversationId || !message.source_message_id || !message.cli_msg_id) return;
     try {
       await recallZaloMessage(flow.userId, selectedConversationId, {
-        msg_id: message.source_message_id,
-        cli_msg_id: message.cli_msg_id,
+        source_message_id: message.source_message_id,
       });
       setMessages((prev) =>
         prev.map((m) => (messageKey(m) === messageKey(message) ? { ...m, is_deleted: true, content: null } : m)),
@@ -1383,6 +1414,39 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
   const myZaloUid = useMemo(() => messages.find((m) => m.is_sent && m.sender_id)?.sender_id || null, [messages]);
 
   const [reactionPickerFor, setReactionPickerFor] = useState<string | null>(null);
+
+  // Trả lời/trích dẫn 1 tin nhắn cụ thể — áp dụng cho CẢ tin của mình lẫn của
+  // đối phương (khác recall, chỉ cho tin mình gửi). Preview hiện phía trên ô
+  // nhập, huỷ được, tự xoá sau khi gửi thành công.
+  const [replyingTo, setReplyingTo] = useState<ZaloLibraryMessage | null>(null);
+  // Chuyển tiếp 1 tin nhắn sang N hội thoại khác — mở ZaloForwardModal.
+  const [forwardingMessage, setForwardingMessage] = useState<ZaloLibraryMessage | null>(null);
+
+  const handleCopyMessage = useCallback((message: ZaloLibraryMessage) => {
+    const text = (message.content || "").trim();
+    if (!text) return;
+    navigator.clipboard
+      .writeText(text)
+      .then(() => {
+        setNewChatToast("Đã copy tin nhắn");
+        window.setTimeout(() => setNewChatToast(null), 2000);
+      })
+      .catch(() => {
+        setNewChatToast("Không thể copy — trình duyệt chặn quyền clipboard");
+        window.setTimeout(() => setNewChatToast(null), 3000);
+      });
+  }, []);
+
+  // Tra ngược tin đang được trích dẫn TRONG danh sách đã tải sẵn (không gọi
+  // API mới) — nếu tin gốc nằm ngoài phạm vi trang hiện tại (lịch sử cũ hơn),
+  // trả về undefined và UI tự hiện fallback "Tin nhắn gốc" không nội dung.
+  const findQuotedMessage = useCallback(
+    (replyToId: string | null | undefined) => {
+      if (!replyToId) return undefined;
+      return messages.find((m) => m.source_message_id === replyToId);
+    },
+    [messages],
+  );
 
   // Thả cảm xúc — CHỈ gửi lên Zalo thật (backend không tự ghi DB, xem comment
   // route /react), nên tự hiện tạm (optimistic) ngay bằng myZaloUid nếu đã
@@ -1790,6 +1854,22 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
               </div>
             </div>
 
+            {/* Tìm theo SĐT: query giống SĐT VN nhưng không hội thoại nào khớp
+                -> gợi ý tìm thẳng trên Zalo (mở ZaloNewChatModal điền sẵn SĐT này). */}
+            {looksLikeVnPhoneQuery(searchQuery) && filteredConversations.length === 0 && (
+              <button
+                type="button"
+                onClick={() => {
+                  setPhoneSearchQuery(searchQuery.trim());
+                  setNewChatModalOpen(true);
+                }}
+                className="w-full flex items-center gap-2 px-3 py-2 text-[11.5px] font-semibold text-primary bg-primary/5 hover:bg-primary/10 border border-primary/20 rounded-lg transition text-left"
+              >
+                <MaterialIcon name="person_search" className="text-sm shrink-0" />
+                <span className="truncate">Không có hội thoại nào — Tìm "{searchQuery.trim()}" trên Zalo</span>
+              </button>
+            )}
+
             {/* [P3.2] Segmented Pill Button Tabs for Filter */}
             <div className="flex p-0.5 bg-surface-container-low rounded-lg text-[11px] font-semibold text-on-surface-variant">
               <button
@@ -2101,9 +2181,12 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
                           } ${isSelected ? 'ring-2 ring-red-500 ring-offset-2' : ''}`}>
 
                             {/* Zalo tập trung: toolbar hover — thả cảm xúc (mọi tin, kể cả
-                                người khác gửi, giống Zalo thật) + thu hồi (chỉ tin CHÍNH
-                                MÌNH gửi và có đủ source_message_id + cli_msg_id). */}
-                            {!message.is_deleted && message.source_message_id && message.cli_msg_id && (
+                                người khác gửi, giống Zalo thật), trả lời/copy/chuyển tiếp
+                                (mọi tin có source_message_id) + thu hồi (chỉ tin CHÍNH MÌNH
+                                gửi và có đủ source_message_id + cli_msg_id — KHÁC reply, vẫn
+                                giữ nguyên gating cũ, chỉ tách riêng ra khỏi điều kiện chung
+                                của cả toolbar để copy/reply/forward không bị ẩn theo). */}
+                            {!message.is_deleted && message.source_message_id && (
                               <div
                                 data-zalo-reaction-ui
                                 className={`absolute -top-7 ${isSentByMe ? "right-0" : "left-0"} flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition z-20`}
@@ -2116,7 +2199,35 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
                                 >
                                   <MaterialIcon name="mood" className="text-[14px]" />
                                 </button>
-                                {isSentByMe && (
+                                <button
+                                  type="button"
+                                  onClick={() => setReplyingTo(message)}
+                                  className="rounded-full bg-surface border border-outline-variant p-1 text-on-surface-variant hover:text-primary shadow-sm"
+                                  title="Trả lời"
+                                >
+                                  <MaterialIcon name="reply" className="text-[13px]" />
+                                </button>
+                                {message.content?.trim() && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleCopyMessage(message)}
+                                    className="rounded-full bg-surface border border-outline-variant p-1 text-on-surface-variant hover:text-primary shadow-sm"
+                                    title="Copy"
+                                  >
+                                    <MaterialIcon name="content_copy" className="text-[13px]" />
+                                  </button>
+                                )}
+                                {(message.content?.trim() || assets.length > 0) && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setForwardingMessage(message)}
+                                    className="rounded-full bg-surface border border-outline-variant p-1 text-on-surface-variant hover:text-primary shadow-sm"
+                                    title="Chuyển tiếp"
+                                  >
+                                    <MaterialIcon name="forward" className="text-[13px]" />
+                                  </button>
+                                )}
+                                {isSentByMe && message.cli_msg_id && (
                                   <button
                                     type="button"
                                     onClick={() => void handleRecallMessage(message)}
@@ -2136,6 +2247,27 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
                                 />
                               </div>
                             )}
+
+                            {!message.is_deleted && message.reply_to_id && (() => {
+                              const quoted = findQuotedMessage(message.reply_to_id);
+                              return (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    if (quoted) handleJumpToSearchedMessage(quoted);
+                                  }}
+                                  className={`block w-full text-left mb-1 px-2 py-1 rounded-lg border-l-2 text-[11.5px] truncate ${
+                                    isSentByMe
+                                      ? "bg-white/10 border-white/40 text-white/85"
+                                      : "bg-surface-container-low border-outline-variant text-on-surface-variant"
+                                  }`}
+                                  title={quoted ? "Đi tới tin nhắn gốc" : undefined}
+                                >
+                                  <span className="font-semibold">{quoted ? (quoted.sender_name || (quoted.is_sent ? "Bạn" : "Khách")) : "Tin nhắn gốc"}: </span>
+                                  {quoted?.content || (quoted ? "📷 Ảnh đính kèm" : "(không tải được nội dung gốc)")}
+                                </button>
+                              );
+                            })()}
 
                             {message.is_deleted ? (
                               <p className={`italic text-[12.5px] ${isSentByMe ? 'text-white/70' : 'text-on-surface-variant'}`}>
@@ -2517,6 +2649,29 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
                 )}
 
                 {/* Direct Send Error - tam an banner loi ky thuat (yeu cau Thanh, dang test) */}
+
+                {/* Đang trả lời 1 tin nhắn cụ thể — huỷ được, tự xoá sau khi gửi (xem handleSingleSend) */}
+                {replyingTo && (
+                  <div className="flex items-center gap-2 px-3 py-2 mb-2 rounded-lg border border-primary/20 bg-primary/5">
+                    <MaterialIcon name="reply" className="text-primary text-base shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <div className="text-[11px] font-bold text-primary">
+                        Trả lời {replyingTo.is_sent ? "chính mình" : replyingTo.sender_name || "Khách"}
+                      </div>
+                      <div className="text-[11.5px] text-on-surface-variant truncate">
+                        {replyingTo.content || (replyingTo.assets?.length ? "📷 Ảnh đính kèm" : "Tin nhắn")}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setReplyingTo(null)}
+                      className="p-1 rounded-full hover:bg-surface-container-low shrink-0"
+                      title="Huỷ trả lời"
+                    >
+                      <MaterialIcon name="close" className="text-sm text-on-surface-variant" />
+                    </button>
+                  </div>
+                )}
 
                 {/* Selected Media Previews */}
                 {selectedMedia.length > 0 && (
@@ -3011,11 +3166,25 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
         )}
       </div>
 
+      {/* Modal chuyển tiếp tin nhắn */}
+      <ZaloForwardModal
+        open={!!forwardingMessage}
+        accountId={flow.userId}
+        sourceConversationId={selectedConversationId || ""}
+        message={forwardingMessage}
+        conversations={conversations}
+        onClose={() => setForwardingMessage(null)}
+      />
+
       {/* Modal nhắn tin cho người lạ (SĐT / username) */}
       <ZaloNewChatModal
         open={newChatModalOpen}
         accountId={flow.userId}
-        onClose={() => setNewChatModalOpen(false)}
+        initialQuery={phoneSearchQuery}
+        onClose={() => {
+          setNewChatModalOpen(false);
+          setPhoneSearchQuery(undefined);
+        }}
         onChatReady={handleNewChatReady}
         onError={(msg) => {
           setNewChatToast(msg);
