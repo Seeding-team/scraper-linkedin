@@ -12,7 +12,9 @@ from __future__ import annotations
 
 import os
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import quote, unquote, urlparse
+
+from app.modules.all_platform.mobile_proxy import labels_store
 
 
 def _env(name: str) -> str | None:
@@ -50,8 +52,32 @@ def _socks_url(host: str, port: str, user: str | None, password: str | None) -> 
     return f"socks5://{auth}{host}:{port}"
 
 
+def _parse_socks(url: str | None) -> dict[str, Any] | None:
+    """Break a socks5://user:pass@host:port URL into raw (non-encoded) parts
+    so the UI can show the real password (e.g. "Poptech@123") instead of the
+    URL-escaped form (e.g. "Poptech%40123") when copying into apps like
+    AdsPower that take host/port/user/pass as separate fields."""
+    if not url:
+        return None
+    try:
+        parsed = urlparse(url)
+    except ValueError:
+        return None
+    return {
+        "url": url,
+        "host": parsed.hostname,
+        "port": parsed.port,
+        "user": unquote(parsed.username) if parsed.username else None,
+        "pass": unquote(parsed.password) if parsed.password else None,
+    }
+
+
 def _build_one_node(node_id: str, single_node: bool) -> dict[str, Any]:
-    label = _node_env(node_id, "LABEL", single_node) or node_id.upper()
+    label = (
+        labels_store.get_label(node_id)
+        or _node_env(node_id, "LABEL", single_node)
+        or node_id.upper()
+    )
     port = _node_env(node_id, "SOCKS_PORT", single_node) or "1081"
     user = _node_env(node_id, "SOCKS_USER", single_node)
     password = _node_env(node_id, "SOCKS_PASS", single_node)
@@ -77,6 +103,13 @@ def _build_one_node(node_id: str, single_node: bool) -> dict[str, Any]:
         "consoleUrl": console_url,
         "_consoleApiKey": console_api_key,  # stripped before returning to client
         "port": int(port) if port.isdigit() else port,
+        # Raw (non URL-encoded) breakdown per environment, for pasting into
+        # tools with separate host/port/user/password fields (e.g. AdsPower).
+        "proxies": {
+            "vps": _parse_socks(vps_url),
+            "office": _parse_socks(office_url),
+            "localPc": _parse_socks(local_pc_url),
+        },
     }
 
 
@@ -94,6 +127,15 @@ def build_node_config() -> dict[str, Any]:
         "consoleConfigured": console_on,
         "nodes": public_nodes,
     }
+
+
+def set_node_label(node_id: str, label: str) -> bool:
+    """Persist a new phone-number/label for an already-configured node.
+    Returns False if node_id isn't one of the configured MOBILE_PROXY_NODES."""
+    if node_id not in _node_ids():
+        return False
+    labels_store.set_label(node_id, label)
+    return True
 
 
 def node_console_targets() -> list[dict[str, Any]]:
