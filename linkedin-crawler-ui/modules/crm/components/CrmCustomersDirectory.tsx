@@ -210,15 +210,34 @@ export function CrmCustomersDirectory() {
   // xet linked_user_id_2) + phai co team - nguoi dang dang nhap chac chan la
   // active (dang co session hop le) nen bo qua kiem tra app_users.is_active.
   const defaultFilterAppliedRef = useRef(false);
+  const applyDefaultOwnerFilter = useCallback(() => {
+    if (!user?.id) return;
+    setOwnerId(user.id);
+    const myMember = members.find(m => m.linked_user_id === user.id);
+    setTeam(myMember?.team || '');
+  }, [user, members]);
   useEffect(() => {
     if (defaultFilterAppliedRef.current) return;
     if (authLoading || membersLoading) return;
     if (!user?.id) return;
     defaultFilterAppliedRef.current = true;
-    setOwnerId(user.id);
-    const myMember = members.find(m => m.linked_user_id === user.id);
-    if (myMember?.team) setTeam(myMember.team);
-  }, [authLoading, membersLoading, user, members]);
+    applyDefaultOwnerFilter();
+  }, [authLoading, membersLoading, user, members, applyDefaultOwnerFilter]);
+
+  // BUG THAT DA GAP (feedback nguoi dung): Next.js App Router giu nguyen
+  // state cu (ke ca bo loc da "Xoa loc") khi bam nut Back/Forward cua trinh
+  // duyet thay vi mount lai component tu dau - effect "ap dung 1 lan" o tren
+  // vi vay KHONG chay lai, khien "quay ve trang Khach hang" van thay bo loc
+  // rong da xoa truoc do. Nghe rieng popstate (bam Back/Forward) de CHU DONG
+  // ap lai bo loc "cua toi" moi lan quay ve trang nay qua duong nay, khong
+  // phu thuoc vao vong doi mount/unmount cua component.
+  useEffect(() => {
+    function handlePopState() {
+      applyDefaultOwnerFilter();
+    }
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, [applyDefaultOwnerFilter]);
 
   useEffect(() => { setPage(1); }, [status, ownerId, saleManagerId, team]);
 
