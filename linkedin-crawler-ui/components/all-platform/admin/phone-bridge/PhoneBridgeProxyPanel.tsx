@@ -1,13 +1,16 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Loader2, RefreshCw, Wifi } from "lucide-react";
+import { Loader2, Pencil, RefreshCw, Wifi } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { mobileProxyService } from "@/services/mobile-proxy.service";
 import type {
   MobileProxyLiveEntry,
   MobileProxyNode,
+  MobileProxyRawEndpoint,
   MobileProxySmsMessage,
 } from "@/types/mobile-proxy";
 
@@ -35,6 +38,60 @@ function CopyRow({ label, value }: { label: string; value: string }) {
         </Button>
       </div>
     </div>
+  );
+}
+
+function EndpointFields({ endpoint }: { endpoint: MobileProxyRawEndpoint | null | undefined }) {
+  if (!endpoint) {
+    return <p className="text-sm text-muted-foreground">Chưa cấu hình.</p>;
+  }
+  return (
+    <div className="grid gap-3 sm:grid-cols-2">
+      <CopyRow label="Host / IP" value={endpoint.host ?? ""} />
+      <CopyRow label="Port" value={endpoint.port ? String(endpoint.port) : ""} />
+      <CopyRow label="Username" value={endpoint.user ?? ""} />
+      <CopyRow label="Password" value={endpoint.pass ?? ""} />
+    </div>
+  );
+}
+
+function PhoneNumberEditor({ value, onSave }: { value: string; onSave: (next: string) => Promise<void> }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(value);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => setDraft(value), [value]);
+
+  if (!editing) {
+    return (
+      <button
+        type="button"
+        onClick={() => setEditing(true)}
+        className="group flex items-center gap-1.5 text-sm font-medium text-foreground hover:text-primary"
+      >
+        {value || "Chưa đặt số"}
+        <Pencil className="size-3 opacity-0 transition group-hover:opacity-60" />
+      </button>
+    );
+  }
+
+  return (
+    <form
+      className="flex items-center gap-2"
+      onSubmit={(e) => {
+        e.preventDefault();
+        setSaving(true);
+        void onSave(draft).finally(() => {
+          setSaving(false);
+          setEditing(false);
+        });
+      }}
+    >
+      <Input autoFocus value={draft} onChange={(e) => setDraft(e.target.value)} className="h-7 w-36 text-xs" />
+      <Button type="submit" size="sm" disabled={saving}>
+        {saving ? "..." : "Lưu"}
+      </Button>
+    </form>
   );
 }
 
@@ -93,6 +150,16 @@ export function PhoneBridgeProxyPanel({ serial }: PhoneBridgeProxyPanelProps) {
     }
   }
 
+  async function handleRename(next: string) {
+    if (!live) return;
+    try {
+      await mobileProxyService.setLabel(live.id, next);
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
   if (loading && !live && !notFound) {
     return (
       <div className="flex items-center gap-2 rounded-lg border border-dashed border-border p-8 text-sm text-muted-foreground">
@@ -122,9 +189,7 @@ export function PhoneBridgeProxyPanel({ serial }: PhoneBridgeProxyPanelProps) {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
-          <p className="text-sm font-medium text-foreground">
-            SĐT / nhãn: <span className="text-primary">{node?.label ?? live?.label}</span>
-          </p>
+          <PhoneNumberEditor value={node?.label ?? live?.label ?? ""} onSave={handleRename} />
           {live?.error ? <p className="text-xs text-destructive">{live.error}</p> : null}
         </div>
         <Button variant="outline" size="sm" disabled={loading} onClick={() => void refresh()}>
@@ -153,15 +218,30 @@ export function PhoneBridgeProxyPanel({ serial }: PhoneBridgeProxyPanelProps) {
       </div>
 
       <div className="space-y-3 rounded-lg border p-3">
-        <p className="flex items-center gap-2 text-sm font-medium">
-          <Wifi className="size-4 text-primary" /> Thông tin proxy (dùng như proxy đi mua)
-        </p>
-        <CopyRow label="PC cắm USB (dùng ngay tại máy đó)" value={node?.socksUrlLocalPc ?? ""} />
-        <CopyRow label="LAN / Wi-Fi văn phòng" value={node?.socksUrlOffice ?? ""} />
-        <CopyRow label="Dùng ở bất kỳ đâu (qua VPS/tunnel)" value={node?.socksUrlVps ?? ""} />
-        <Button type="button" onClick={() => void handleRotate()} disabled={rotating}>
-          {rotating ? "Đang xoay IP..." : "Xoay IP (đổi IP mobile mới)"}
-        </Button>
+        <div className="flex items-center justify-between">
+          <p className="flex items-center gap-2 text-sm font-medium">
+            <Wifi className="size-4 text-primary" /> Thông tin proxy
+          </p>
+          <Button type="button" size="sm" onClick={() => void handleRotate()} disabled={rotating}>
+            {rotating ? "Đang xoay..." : "Xoay IP"}
+          </Button>
+        </div>
+        <Tabs defaultValue="vps">
+          <TabsList>
+            <TabsTrigger value="vps">Dùng mọi nơi</TabsTrigger>
+            <TabsTrigger value="office">Wi-Fi văn phòng</TabsTrigger>
+            <TabsTrigger value="localPc">PC cắm USB</TabsTrigger>
+          </TabsList>
+          <TabsContent value="vps">
+            <EndpointFields endpoint={node?.proxies?.vps} />
+          </TabsContent>
+          <TabsContent value="office">
+            <EndpointFields endpoint={node?.proxies?.office} />
+          </TabsContent>
+          <TabsContent value="localPc">
+            <EndpointFields endpoint={node?.proxies?.localPc} />
+          </TabsContent>
+        </Tabs>
       </div>
 
       <div className="space-y-2 rounded-lg border p-3">

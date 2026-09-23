@@ -1,3 +1,11 @@
+export interface MobileProxyRawEndpoint {
+  url: string;
+  host: string | null;
+  port: number | null;
+  user: string | null;
+  pass: string | null;
+}
+
 export interface MobileProxyNode {
   id: string;
   label: string;
@@ -6,6 +14,11 @@ export interface MobileProxyNode {
   socksUrlLocalPc?: string | null;
   consoleUrl?: string | null;
   port?: number;
+  proxies?: {
+    vps: MobileProxyRawEndpoint | null;
+    office: MobileProxyRawEndpoint | null;
+    localPc: MobileProxyRawEndpoint | null;
+  };
 }
 
 export interface MobileProxyLiveStatus {
