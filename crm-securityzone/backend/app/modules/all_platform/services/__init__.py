@@ -49,6 +49,7 @@ from app.modules.all_platform.services.supabase_members_service import (
     parse_excel_rows,
     import_members_from_rows,
     sync_members_from_list,
+    sync_members_from_recruitment,
 )
 from app.modules.all_platform.services.supabase_quick_comment_service import (
     get_all_quick_comments,
@@ -160,6 +161,8 @@ from app.modules.all_platform.services.supabase_user_service import (
     update_user_allowed_instances,
     update_user_quote_approver,
     update_user_quote_business_role,
+    admin_update_account,
+    admin_delete_account,
     list_users_by_quote_business_role,
     get_team_members,
     add_team_member,

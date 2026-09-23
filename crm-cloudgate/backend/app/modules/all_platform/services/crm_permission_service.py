@@ -72,6 +72,56 @@ def is_sale_member(user_id: str | None) -> bool:
     return _SALE_TEAM_TYPE in get_user_team_types(user_id)
 
 
+# Danh ba HR (`members`, migration 043) - TEN team la text tu do (khac han
+# `teams.team_type` o tren, doc lap hoan toan). Tai khoan co Member lien ket
+# (linked_user_id) thuoc team "Sale" thi full CRM access BAT KE role he thong
+# - quyet dinh rieng cua user (2026-09), khong lien quan gi toi co che
+# teams/team_type='sale' da co san. Team "Marketing": CHI Leader duoc nang
+# (da co san qua role=="leader"), Member Marketing KHONG tu dong duoc full
+# access - phai duoc admin cap tay quote_business_role thi moi co (di qua
+# nhanh has_quote_business_role o duoi).
+_FULL_ACCESS_MEMBER_TEAMS = {"Sale"}
+
+_MEMBER_TEAM_CACHE_TTL_SECONDS = 60.0
+_MEMBER_TEAM_CACHE: dict[str, tuple[float, str | None]] = {}
+
+
+def get_linked_member_team(user_id: str | None) -> str | None:
+    """Team (text tu do trong bang `members`) cua Member dang lien ket voi
+    tai khoan dang nhap user_id nay, neu co. None neu chua lien ket/khong co
+    team. Cache ngan (60s) - cung nhip voi get_user_team_types o tren."""
+    if not user_id:
+        return None
+
+    now = time.monotonic()
+    cached = _MEMBER_TEAM_CACHE.get(user_id)
+    if cached and cached[0] > now:
+        return cached[1]
+
+    try:
+        supabase = get_supabase_client()
+        result = execute_supabase_query(
+            lambda: supabase.table("members").select("team").eq("linked_user_id", user_id).limit(1).execute()
+        )
+        rows = result.data or []
+        team = (rows[0].get("team") or None) if rows else None
+    except Exception:
+        team = None
+
+    _MEMBER_TEAM_CACHE[user_id] = (now + _MEMBER_TEAM_CACHE_TTL_SECONDS, team)
+    if len(_MEMBER_TEAM_CACHE) > 1000:
+        for key in list(_MEMBER_TEAM_CACHE.keys())[:-1000]:
+            _MEMBER_TEAM_CACHE.pop(key, None)
+    return team
+
+
+def clear_member_team_cache(user_id: str | None = None) -> None:
+    if user_id:
+        _MEMBER_TEAM_CACHE.pop(user_id, None)
+    else:
+        _MEMBER_TEAM_CACHE.clear()
+
+
 def has_quote_business_role(user: dict[str, Any] | None, target: str) -> bool:
     """True neu user da duoc gan vai tro nghiep vu bao gia `target`
     ('presale'/'sale'). `both` hop le cho ca hai vai tro, doc lap voi system
@@ -84,9 +134,11 @@ def has_quote_business_role(user: dict[str, Any] | None, target: str) -> bool:
 
 def has_full_crm_access(user: dict[str, Any] | None) -> bool:
     """True neu user duoc xem/sua toan bo CRM: admin, leader, thanh vien
-    team_type='sale', hoac user da duoc gan vai tro nghiep vu bao gia
-    (presale/sale/both). Quote business role la nguon quyen CRM chung moi,
-    khong bat buoc phai nam trong team sale."""
+    team_type='sale', da duoc gan vai tro nghiep vu bao gia (presale/sale/
+    both), hoac Member lien ket thuoc team "Sale"/"Marketing" (danh ba HR,
+    xem _FULL_ACCESS_MEMBER_TEAMS - luat rieng, khong lien quan teams/
+    team_type). Quote business role la nguon quyen CRM chung, khong bat
+    buoc phai nam trong team sale."""
     if not user:
         return False
     role = str(user.get("role") or "").strip().lower()
@@ -94,7 +146,9 @@ def has_full_crm_access(user: dict[str, Any] | None) -> bool:
         return True
     if has_quote_business_role(user, "sale") or has_quote_business_role(user, "presale"):
         return True
-    return is_sale_member(user.get("id"))
+    if is_sale_member(user.get("id")):
+        return True
+    return get_linked_member_team(user.get("id")) in _FULL_ACCESS_MEMBER_TEAMS
 
 
 def can_write_deal(user: dict[str, Any] | None, lead: dict[str, Any] | None) -> bool:
