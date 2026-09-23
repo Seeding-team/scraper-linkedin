@@ -270,6 +270,22 @@
   background: transparent;
 }
 
+/* "Cân lại UI báo giá" (feedback) - truoc day header/toolbar/hint tren trang
+ * cong khai keo dai HET chieu rong trang (padding 1.5rem cua .quote-public-page)
+ * trong khi ban than to bao gia (.quote-sheet) chi rong 210mm va tu can giua -
+ * tren man hinh rong tao cam giac lech/khong can doi ro ret (toolbar sat 2
+ * bien, sheet noi giua co khoang trong 2 ben khong deu voi phan tren). Ep
+ * CUNG max-width 210mm + tu can giua cho toan bo khoi phia tren to bao gia
+ * de thang hang DUNG voi mep trai/phai cua .quote-sheet ben duoi - CHI doi
+ * layout/spacing, khong doi noi dung/logic gi. */
+.quote-public-page .quote-public-toolbar,
+.quote-public-page .quote-print-preview-toolbar,
+.quote-public-page .quote-print-preview-hint {
+  max-width: 210mm;
+  margin-left: auto;
+  margin-right: auto;
+}
+
 .quote-version-history {
   padding: 1rem 0;
   border-bottom: 1px solid #e2e8f0;
