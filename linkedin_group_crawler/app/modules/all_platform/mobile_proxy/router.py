@@ -9,11 +9,16 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, Field
 
 from app.modules.all_platform.auth_deps import require_admin
 from app.modules.all_platform.mobile_proxy.client import console_request, is_mobile_proxy_console_enabled
-from app.modules.all_platform.mobile_proxy.config import build_node_config, node_console_targets
+from app.modules.all_platform.mobile_proxy.config import (
+    build_node_config,
+    node_console_targets,
+    set_node_label,
+)
 
 
 router = APIRouter()
@@ -21,6 +26,21 @@ router = APIRouter()
 
 @router.get("/config")
 def mobile_proxy_config(_admin: dict[str, Any] = Depends(require_admin)) -> dict[str, Any]:
+    return build_node_config()
+
+
+class SetLabelBody(BaseModel):
+    label: str = Field(min_length=1, max_length=64)
+
+
+@router.patch("/nodes/{node_id}/label")
+def mobile_proxy_set_label(
+    node_id: str,
+    body: SetLabelBody,
+    _admin: dict[str, Any] = Depends(require_admin),
+) -> dict[str, Any]:
+    if not set_node_label(node_id, body.label):
+        raise HTTPException(status_code=404, detail=f"Unknown node '{node_id}'.")
     return build_node_config()
 
 
