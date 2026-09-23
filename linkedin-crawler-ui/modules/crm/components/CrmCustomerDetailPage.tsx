@@ -19,6 +19,7 @@ import { formatMoney, relativeTime } from '../utils/quoteDisplay';
 import { useMembers } from '@/hooks/useMembers';
 import { QuoteWorkspaceModal } from './QuoteWorkspaceModal';
 import { CreateQuoteModal } from '../integrations/quotes/CreateQuoteModal';
+import { seedingQuoteRepository } from '@/modules/quotes';
 import { seedingCrmRepository } from '../repositories/SeedingCrmRepository';
 import type { Deal } from '../types';
 import { DealDetailDrawer } from '@/components/all-platform/customers/DealDetailDrawer';
@@ -592,6 +593,32 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
     }
   }
 
+  // "Sửa"/"Xóa" đầy đủ ở tab Báo giá (feedback) - "Sửa" mo dung workspace
+  // (QuoteWorkspaceModal tu quyet dinh editable/read-only theo quyen that
+  // cua nguoi dang nhap, khong can man rieng). "Xóa" dung dung pattern +
+  // message xac nhan "chấp nhận mất" da ap dung o QuoteCenterPage.tsx
+  // (deleteChainNow) - khong chan quyen/khong chan da duyet, chi hoi xac
+  // nhan (user decision 2026-09-23) - xoa CA chuoi version (includeVersions=true).
+  const [quoteDeleteBusy, setQuoteDeleteBusy] = useState<string | null>(null);
+  async function deleteQuoteChainOnCustomerPage(row: RelatedQuoteRow, versionCount: number) {
+    const versionText = versionCount > 1 ? ` (gồm ${versionCount} phiên bản)` : '';
+    const isApprovedLike = row.status === 'approved' || row.status === 'confirmed' || Boolean(row.approved_at);
+    const message = isApprovedLike
+      ? `Báo giá ${row.quote_number || row.id} này đã duyệt, bạn có chắc muốn xóa${versionText}?`
+      : `Xoá báo giá ${row.quote_number || row.id}${versionText}?`;
+    if (!window.confirm(`${message}\nBạn chấp nhận mất báo giá này? (Báo giá bị ẩn khỏi danh sách, Admin có thể khôi phục nếu cần.)`)) return;
+    setQuoteDeleteBusy(row.id);
+    try {
+      const result = await seedingQuoteRepository.bulkDeleteQuotes([row.id], true);
+      if (result.failed.length) window.alert(`Không xoá được ${result.failed.length} phiên bản: ${result.failed[0].message}`);
+      setReloadTick(t => t + 1);
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : 'Không xoá được báo giá.');
+    } finally {
+      setQuoteDeleteBusy(null);
+    }
+  }
+
   // "Tạo yêu cầu báo giá" tren Project card - mo QuoteWorkspaceModal o CHE DO
   // TAO MOI (quoteId=null), khoa san Khach hang + Du an theo dung project vua
   // bam, khong can chon lai.
@@ -748,15 +775,6 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
   // crm_permission_service.py) - server van tu enforce lai khi POST.
   const canManageProject = Boolean(user && isAdminOrLeader(user.role));
 
-  // "+ Tạo báo giá" o header - CHI mang customerId (khong projectId, Du an
-  // se cho chon tu do trong workspace vi day la muc header cua ca Ho so,
-  // khong phai cua 1 Project cu the - khac voi nut tren tung Project card).
-  const quoteLink = useMemo(() => {
-    if (!customer) return '/all-platform/quote-center';
-    const params = new URLSearchParams({ openQuote: 'new', customerId: customer.id });
-    return `/all-platform/quote-center?${params.toString()}`;
-  }, [customer]);
-
   if (loading && !data) {
     return (
       <div className="crm-shell">
@@ -825,9 +843,22 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
             <button type="button" className="crm-secondary-button" onClick={() => setDealModal({ open: true, project: null, contactId: null })}>
               + Tạo cơ hội
             </button>
-            <Link href={quoteLink} className="crm-primary-button">
+            {/* "Luồng từ Khách hàng → Báo giá" (feedback): truoc day la <Link>
+             * dieu huong sang /all-platform/quote-center, roi khoi han trang
+             * chi tiet khach hang. Gio mo THANG QuoteWorkspaceModal ngay tai
+             * day (giong "Tạo yêu cầu báo giá" tren Project card), tu chuyen
+             * sang tab "Báo giá" truoc - tao xong VAN o lai đúng tab nay, vi
+             * modal chi la 1 overlay tren cung trang, khong navigate di dau. */}
+            <button
+              type="button"
+              className="crm-primary-button"
+              onClick={() => {
+                setTab('quotes');
+                setQuoteWorkspace({ quoteId: null, deal: null });
+              }}
+            >
               + Tạo báo giá
-            </Link>
+            </button>
           </div>
         </div>
 
@@ -1256,6 +1287,22 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
                                     onClick={() => void viewQuoteInNewWorkspace(current)}
                                   >
                                     Xem
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="crm-row-action"
+                                    disabled={quoteWorkspaceLoading}
+                                    onClick={() => void viewQuoteInNewWorkspace(current)}
+                                  >
+                                    Sửa
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="crm-row-action crm-row-action--delete"
+                                    disabled={quoteDeleteBusy === current.id}
+                                    onClick={() => void deleteQuoteChainOnCustomerPage(current, versionCount)}
+                                  >
+                                    {quoteDeleteBusy === current.id ? 'Đang xoá...' : 'Xóa'}
                                   </button>
                                   <ContactAssignCell
                                     dealId={current.deal_id}
