@@ -18,6 +18,7 @@ from app.modules.all_platform.services.crm_customer_service import (
     create_customer,
     create_customer_with_deal,
     delete_customer,
+    delete_customers_bulk,
     get_customer,
     list_customers,
     quick_search_customers,
@@ -38,7 +39,7 @@ def _error(exc: Exception) -> BaseResponse:
         return BaseResponse(
             success=False,
             message=str(exc),
-            data={"deal_count": exc.deal_count, "contact_count": exc.contact_count},
+            data={"requiresCascadeConfirm": True, **exc.summary},
         )
     if isinstance(exc, CustomerNotFoundError):
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -101,6 +102,24 @@ def customers_create_with_deal(payload: CrmCustomerWithDealCreate, user: dict[st
         return _error(exc)
 
 
+@router.post("/bulk-delete")
+def customers_delete_bulk(payload: dict, user: dict[str, Any] = Depends(get_current_user)) -> BaseResponse:
+    """Xoa nhieu Khach hang da chon. confirm_cascade=true CHI gui sau khi nguoi
+    dung da xac nhan xoa toan bo du lieu lien quan (xem delete_customers_bulk)."""
+    try:
+        customer_ids = payload.get("customer_ids")
+        if not customer_ids or not isinstance(customer_ids, list):
+            return BaseResponse(success=False, message="Danh sách customer_ids không hợp lệ.")
+        data = delete_customers_bulk(customer_ids, user, confirm_cascade=bool(payload.get("confirm_cascade")))
+        deleted = len(data["deleted_ids"])
+        failed = len(data["failed"])
+        if deleted == 0 and failed > 0:
+            return BaseResponse(success=False, message=f"Không xoá được khách hàng nào ({failed} khách hàng cần xác nhận hoặc bị từ chối).", data=data)
+        return BaseResponse(success=True, message=f"Đã xoá {deleted} khách hàng" + (f", {failed} khách hàng chưa xoá" if failed else ""), data=data)
+    except Exception as exc:
+        return _error(exc)
+
+
 @router.get("/{customer_id}")
 def customers_get(customer_id: str, user: dict[str, Any] = Depends(get_current_user)) -> BaseResponse:
     try:
@@ -122,9 +141,13 @@ def customers_update(customer_id: str, payload: CrmCustomerUpdate, user: dict[st
 
 
 @router.delete("/{customer_id}")
-def customers_delete(customer_id: str, user: dict[str, Any] = Depends(get_current_user)) -> BaseResponse:
+def customers_delete(
+    customer_id: str,
+    confirm_cascade: bool = Query(False, description="True sau khi nguoi dung da xac nhan xoa toan bo du lieu lien quan."),
+    user: dict[str, Any] = Depends(get_current_user),
+) -> BaseResponse:
     try:
-        delete_customer(customer_id, user)
+        delete_customer(customer_id, user, confirm_cascade=confirm_cascade)
         return BaseResponse(success=True, message="Da xoa ho so khach hang")
     except Exception as exc:
         return _error(exc)

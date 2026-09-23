@@ -3581,7 +3581,7 @@ export function QuoteWorkspaceModal({
       // LAI 2 helper co san (types.ts), KHONG viet lai logic snapshot rieng.
       if (effectiveIssuerCompany) {
         applyIssuerCompanySnapshot(createData, effectiveIssuerCompany);
-        applyIssuerPaymentTermsSnapshot(createData, effectiveIssuerCompany);
+        applyIssuerPaymentTermsSnapshot(createData, effectiveIssuerCompany, issuerCompanies);
       }
       const created = await seedingQuoteRepository.createQuote({
         dealId: draftDealId,
@@ -3878,7 +3878,7 @@ export function QuoteWorkspaceModal({
       if (company) {
         const nextData = deepClone(quote!.data) || {};
         applyIssuerCompanySnapshot(nextData, company);
-        applyIssuerPaymentTermsSnapshot(nextData, company);
+        applyIssuerPaymentTermsSnapshot(nextData, company, issuerCompanies);
         dataOverride = nextData;
       }
       await seedingQuoteRepository.updateQuote(quote!.id, {
@@ -4356,7 +4356,7 @@ export function QuoteWorkspaceModal({
       ...draftExtraTerms.map(t => ({ id: t.id, kind: 'custom_field' as const, title: t.title, content: t.content })),
     ];
     const customBlocks = [...legacyBlocks.filter(block => !draftCustomBlocks.some(b => b.kind !== 'custom_field' && b.kind === block.kind)), ...draftCustomBlocks].filter(b => b.content.trim());
-    return {
+    const previewData: QuoteData = {
       quoteTitle: draftTitle.trim() || 'Yêu cầu hỗ trợ báo giá',
       customBlocks,
       paymentPlan: draftPaymentPlan,
@@ -4375,7 +4375,15 @@ export function QuoteWorkspaceModal({
           }
         : {}),
     };
-  }, [deal, draftCustomerId, customers, draftTitle, draftScope, draftPaymentTermsDays, draftExtraTerms, draftCustomBlocks, draftPaymentPlan, draftVisibleColumns, draftVisibleSummaryFields, draftVisibleCustomerFields]);
+    // Xem truoc phai hien DUNG Don vi phat hanh dang chon (logo/thong tin/
+    // dieu khoan) - cung snapshot ma createRequest() se luu (feedback
+    // 2026-09-23 muc 3), khong phai default cua mau bao gia.
+    if (effectiveIssuerCompany) {
+      applyIssuerCompanySnapshot(previewData, effectiveIssuerCompany);
+      applyIssuerPaymentTermsSnapshot(previewData, effectiveIssuerCompany, issuerCompanies);
+    }
+    return previewData;
+  }, [deal, draftCustomerId, customers, draftTitle, draftScope, draftPaymentTermsDays, draftExtraTerms, draftCustomBlocks, draftPaymentPlan, draftVisibleColumns, draftVisibleSummaryFields, draftVisibleCustomerFields, effectiveIssuerCompany, issuerCompanies]);
   const columnVisibilitySchema = quote?.formSnapshot || draftSelectedForm?.schemaJson;
   // "Kế hoạch thanh toán" dang chim qua trong 1 accordion phang - badge trang
   // thai + tom tat khi dong de Sale khong bo qua (yeu cau rieng, xem

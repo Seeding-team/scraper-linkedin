@@ -585,15 +585,61 @@ def quotes_delete(quote_id: str, user: dict = Depends(get_current_user)) -> Base
     ghi quote_deletion_audit TRUOC khi xoa) - khong doi, khong lien quan sua
     lan nay."""
     try:
-        quote, lead = _load_quote_and_lead(quote_id)
-        if not can_edit_quote(user, quote, lead):
-            return BaseResponse(success=False, message="Không có quyền xoá báo giá này")
-        soft_delete_quote(quote_id, user.get("id"), "Xoá báo giá (nháp) qua thao tác thường")
+        # Feedback 2026-09-23: khong chan quyen xoa ("ai muốn xóa thì xóa") -
+        # FE hoi xac nhan truoc; _load_quote_and_lead van chi tim trong tenant.
+        _load_quote_and_lead(quote_id)
+        soft_delete_quote(quote_id, user.get("id"), "Xoá báo giá qua thao tác thường")
         return BaseResponse(success=True)
     except ValueError as e:
         return BaseResponse(success=False, message=str(e))
     except Exception as e:
         return BaseResponse(success=False, message=friendly_supabase_error_message(e))
+
+
+@quotes_router.post("/bulk-delete")
+def quotes_delete_bulk(payload: dict, user: dict = Depends(get_current_user)) -> BaseResponse:
+    """Feedback 2026-09-23 "select 1 hoặc nhiều báo giá -> Xóa", "không cần khóa
+    quyền xóa chỉ vì báo giá đã duyệt" (FE hoi xac nhan rieng cho ban da duyet).
+    Xoa MEM (soft_delete_quote - Admin khoi phuc duoc). KHONG chan quyen,
+    KHONG chan theo trang thai ("ai muốn xóa thì xóa") - FE hoi xac nhan truoc.
+    Chi tim trong tenant hien tai.
+
+    payload: {"quote_ids": [...], "include_versions": bool}
+      include_versions=true: xoa CA CHUOI version cua moi quote (thao tac "Xoá
+      báo giá" o bang chinh = xoa ca bao gia nghiep vu). false: chi xoa dung
+      id duoc gui (xoa rieng 1 version).
+    """
+    quote_ids = payload.get("quote_ids")
+    if not quote_ids or not isinstance(quote_ids, list):
+        return BaseResponse(success=False, message="Danh sách quote_ids không hợp lệ.")
+    include_versions = bool(payload.get("include_versions"))
+    deleted_ids: list[str] = []
+    failed: list[dict] = []
+    seen: set[str] = set()
+    for raw_id in quote_ids:
+        quote_id = str(raw_id or "").strip()
+        if not quote_id or quote_id in seen:
+            continue
+        try:
+            quote, _lead = _load_quote_and_lead(quote_id)
+            targets = [quote]
+            if include_versions and quote.get("versionChainId"):
+                targets = list_quote_versions(quote["versionChainId"]) or [quote]
+            for target in targets:
+                target_id = str(target["id"])
+                if target_id in seen:
+                    continue
+                seen.add(target_id)
+                soft_delete_quote(target_id, user.get("id"), "Xoá báo giá qua danh sách (đã xác nhận)")
+                deleted_ids.append(target_id)
+        except QuoteNotFoundError as e:
+            failed.append({"quote_id": quote_id, "message": str(e)})
+        except Exception as e:  # noqa: BLE001 - tra loi tung dong cho FE
+            failed.append({"quote_id": quote_id, "message": friendly_supabase_error_message(e)})
+    data = {"deleted_ids": deleted_ids, "failed": failed}
+    if not deleted_ids and failed:
+        return BaseResponse(success=False, message=failed[0]["message"], data=data)
+    return BaseResponse(success=True, message=f"Đã xoá {len(deleted_ids)} báo giá", data=data)
 
 
 def _guard_exception_approval(quote_id: str, user: dict, exception_reason: str | None) -> BaseResponse | None:
@@ -838,9 +884,8 @@ def quotes_soft_delete(quote_id: str, payload: QuoteSoftDeleteRequest, user: dic
     (xem list_quotes/get_quote/get_public_quote/list_quote_versions), khoi
     phuc duoc qua /restore."""
     try:
-        quote, lead = _load_quote_and_lead(quote_id)
-        if not can_edit_quote(user, quote, lead):
-            return BaseResponse(success=False, message="Không có quyền xoá báo giá này")
+        # Khong chan quyen xoa (feedback 2026-09-23) - xem quotes_delete.
+        _load_quote_and_lead(quote_id)
         data = soft_delete_quote(quote_id, user.get("id"), payload.reason)
         return BaseResponse(success=True, message="Đã xoá báo giá (có thể khôi phục)", data=data)
     except QuoteNotFoundError as e:

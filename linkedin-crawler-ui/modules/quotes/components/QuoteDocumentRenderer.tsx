@@ -200,6 +200,19 @@ function splitLegacyServiceText(raw: unknown): { name: string; rest: string } {
   return { name: match[1].trim(), rest: match[2].trim() };
 }
 
+/** Field nhan dien ben ban duoc snapshot tu Don vi phat hanh (xem
+ * applyIssuerCompanySnapshot trong crm/integrations/quotes/types.ts). */
+const ISSUER_SNAPSHOT_FIELD_KEYS = new Set([
+  'sellerCompanyName',
+  'sellerBrandName',
+  'sellerTaxCode',
+  'sellerAddress',
+  'sellerPhone',
+  'sellerEmail',
+  'sellerWebsite',
+  'sellerLogo',
+]);
+
 const COMPACT_BLOCK_CHAR_LIMIT = 500; // uoc luong noi dung con vua 1 trang A4
 const COMPACT_BLOCK_LINE_LIMIT = 8;   // 500 ky tu nhung xuong dong nhieu van co the rat dai
 
@@ -449,8 +462,17 @@ export function QuoteDocumentRenderer({
   const LEGACY_HIDDEN_FIELD_VALUES: Record<string, string[]> = {
     sellerEmail: ['hello@markeeai.com'],
   };
+  // Bao gia da snapshot Don vi phat hanh (issuerSnapshotCompanyId) - cac field
+  // nhan dien ben ban CHI lay dung snapshot cua issuer do, KHONG roi ve
+  // defaultValue cua mau bao gia khi issuer de trong (feedback 2026-09-23:
+  // doi issuer nhung logo/dia chi van cua issuer cu, vi mau luu default cua
+  // 1 cong ty khac). Moi version giu snapshot rieng trong data cua chinh no.
+  const hasIssuerSnapshot = Boolean(quoteData.issuerSnapshotCompanyId);
   const fieldValue = (key: string) => {
     const value = quoteData[key];
+    if (hasIssuerSnapshot && ISSUER_SNAPSHOT_FIELD_KEYS.has(key)) {
+      return value !== undefined && value !== null ? value : '';
+    }
     const resolved = value !== undefined && value !== null && value !== '' ? value : findField(key).defaultValue || '';
     const hiddenValues = LEGACY_HIDDEN_FIELD_VALUES[key];
     if (hiddenValues && typeof resolved === 'string' && hiddenValues.some(hidden => hidden.toLowerCase() === resolved.trim().toLowerCase())) {
@@ -916,10 +938,14 @@ export function QuoteDocumentRenderer({
               <div className="sheet-brand-mark">{String(fieldValue('sellerCompanyName') || 'MARKEE')}</div>
               <p>{String(fieldValue('sellerAddress'))}</p>
               <p>
-                {String(fieldValue('sellerPhone'))}
-                {fieldValue('sellerEmail') ? ` · ${String(fieldValue('sellerEmail'))}` : ''}
-                {fieldValue('sellerWebsite') ? ` · ${String(fieldValue('sellerWebsite'))}` : ''}
+                {/* Chi noi bang " · " cac gia tri CO that - issuer thieu SDT khong
+                    con dau " · " thua dau dong. */}
+                {[fieldValue('sellerPhone'), fieldValue('sellerEmail'), fieldValue('sellerWebsite')]
+                  .map(value => String(value || '').trim())
+                  .filter(Boolean)
+                  .join(' · ')}
               </p>
+              {fieldValue('sellerTaxCode') ? <p>MST: {String(fieldValue('sellerTaxCode'))}</p> : null}
             </div>
           </div>
           <div className="sheet-doc-code">

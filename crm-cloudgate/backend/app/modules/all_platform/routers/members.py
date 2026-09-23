@@ -23,6 +23,7 @@ from app.modules.all_platform.services import (
     delete_skill,
     parse_excel_rows,
     import_members_from_rows,
+    sync_members_from_recruitment,
 )
 
 router = APIRouter()
@@ -73,6 +74,18 @@ def members_delete(id: str = Query(...), _admin=Depends(require_admin_or_leader)
     try:
         data = delete_member(id)
         return BaseResponse(success=True, message="Đã xóa thành viên", data=data)
+    except Exception as e:
+        return BaseResponse(success=False, message=str(e))
+
+
+@router.post("/sync-from-recruitment")
+def members_sync_from_recruitment(_admin=Depends(require_admin)) -> BaseResponse:
+    """Đồng bộ ứng viên status=accepted từ hệ thống tuyển dụng (cv.markeeai.com)
+    vào danh bạ `members` — upsert theo email/display_name, KHÔNG ghi đè
+    team/department đã có sẵn. Trả summary created/updated/skipped."""
+    try:
+        data = sync_members_from_recruitment()
+        return BaseResponse(success=True, message="Đã đồng bộ từ hệ thống tuyển dụng", data=data)
     except Exception as e:
         return BaseResponse(success=False, message=str(e))
 

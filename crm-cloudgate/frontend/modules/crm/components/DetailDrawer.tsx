@@ -280,7 +280,8 @@ export function DetailDrawer({
                         Chỉnh sửa
                       </button>
                     ) : null}
-                    {deal.quote.id && !isApproved && canEditThisQuote ? (
+                    {/* Xoa bao gia mo cho moi nguoi, ke ca da duyet - chi hoi xac nhan (feedback 2026-09-23). */}
+                    {deal.quote.id ? (
                       <button
                         type="button"
                         className="crm-quote-btn crm-quote-btn--danger"
@@ -475,11 +476,10 @@ export function DetailDrawer({
                 <UserCog className="crm-line-icon" /> Sửa thông tin
               </button>
             ) : null}
-            {canWrite ? (
-              <button type="button" className="crm-footer-button crm-footer-button--delete" onClick={() => onDelete(deal)}>
-                <Trash2 className="crm-line-icon" /> Xóa
-              </button>
-            ) : null}
+            {/* Xoa mo cho moi nguoi, chi hoi xac nhan (feedback 2026-09-23). */}
+            <button type="button" className="crm-footer-button crm-footer-button--delete" onClick={() => onDelete(deal)}>
+              <Trash2 className="crm-line-icon" /> Xóa
+            </button>
           </div>
           <button type="button" className="crm-close-button" onClick={onClose}>Đóng</button>
         </footer>

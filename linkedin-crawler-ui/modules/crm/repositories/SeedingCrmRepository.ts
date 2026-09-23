@@ -1,4 +1,5 @@
 import { API_BASE_URL, API_KEY } from '@/lib/env';
+import { CascadeConfirmRequiredError, cascadeSummaryFromBody } from '../utils/cascadeDelete';
 import {
   CRM_PACKAGE_OPTIONS,
   getContractStatusForStage,
@@ -718,10 +719,20 @@ export class SeedingCrmRepository implements CrmRepository {
     return rowToDeal(row);
   }
 
-  async deleteDeal(id: string): Promise<void> {
-    await apiFetch<unknown>(`/api/all-platform/customer-leads/${encodeURIComponent(id)}`, {
+  /** confirmCascade=true CHI gui sau khi nguoi dung da xac nhan xoa kem Bao
+   * gia/Hop dong lien quan. Lan goi dau (false) ma Deal con du lieu lien quan
+   * -> nem CascadeConfirmRequiredError (kem so dem) de UI hoi lai. */
+  async deleteDeal(id: string, confirmCascade = false): Promise<void> {
+    const query = confirmCascade ? '?confirm_cascade=true' : '';
+    const res = await fetch(`${API_BASE_URL}/api/all-platform/customer-leads/${encodeURIComponent(id)}${query}`, {
       method: 'DELETE',
+      credentials: 'include',
+      headers: getDefaultHeaders(),
     });
+    const body = (await res.json()) as ApiResponse<unknown>;
+    const summary = cascadeSummaryFromBody(body);
+    if (summary) throw new CascadeConfirmRequiredError(body.message || 'Cơ hội còn dữ liệu liên quan.', summary);
+    if (!res.ok || body.success === false) throw new Error(body.message || `Lỗi máy chủ (${res.status})`);
   }
 
   /** true nếu backend đã cấu hình AI thật (OPENAI_API_KEY) — gọi 1 lần lúc mount để quyết

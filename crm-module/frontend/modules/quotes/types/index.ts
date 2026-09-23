@@ -307,6 +307,10 @@ export interface QuoteData {
    * undefined = dung mac dinh: Kinh gui + Khach hang + SDT lien he + Email. */
   visibleCustomerFields?: string[];
   customBlocks?: CustomBlock[];
+  /** Id Don vi phat hanh da snapshot vao cac field seller* (applyIssuerCompanySnapshot). */
+  issuerSnapshotCompanyId?: string;
+  /** Dieu khoan thanh toan mac dinh cua issuer da snapshot lan gan nhat (applyIssuerPaymentTermsSnapshot). */
+  issuerPaymentTermsSnapshot?: string;
   /** (D) id crm_contacts cua "Người liên hệ" da chon luc tao/sua bao gia nay -
    * CHI la tham chieu snapshot-tai-thoi-diem (khong doc song tu crm_contacts),
    * cac gia tri hien thi THAT su van la customerRecipient/customerPhone/

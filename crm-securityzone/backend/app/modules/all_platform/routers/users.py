@@ -18,6 +18,8 @@ from app.modules.all_platform.services import (
     update_user_allowed_instances,
     update_user_quote_approver,
     update_user_quote_business_role,
+    admin_update_account,
+    admin_delete_account,
     list_users_by_quote_business_role,
     get_member_options,
     get_team_members,
@@ -152,6 +154,52 @@ def users_update_quote_business_role(payload: dict, _caller: dict = Depends(get_
             return BaseResponse(success=False, message="quote_business_role phải là presale/sale/both hoặc null")
         data = update_user_quote_business_role(email, quote_business_role)
         return BaseResponse(success=True, message="Đã cập nhật vai trò báo giá", data=data)
+    except Exception as e:
+        return BaseResponse(success=False, message=str(e))
+
+
+@router.post("/update-profile-admin")
+def users_update_profile_admin(payload: dict, _caller: dict = Depends(get_current_user)) -> BaseResponse:
+    """CHI Admin THAT (giong pattern update-quote-business-role): sua ho so 1
+    tai khoan DA TON TAI o tab Quan ly tai khoan - doi email, ho ten, va
+    gan/go Member lien ket - giong nut "Sua" that cua pm-new
+    (accounts.py:update_account). Khong dung ten `update-profile` (da co san
+    1 endpoint khac o auth router cho nguoi dung tu sua TEN cua chinh minh)."""
+    role = str(_caller.get("role") or "").strip().lower()
+    if role != "admin":
+        raise HTTPException(status_code=403, detail="Chỉ Admin mới được sửa tài khoản")
+    try:
+        email = payload.get("email")
+        if not email:
+            return BaseResponse(success=False, message="email is required")
+        updates = {
+            k: payload[k] for k in ("new_email", "full_name", "member_id") if k in payload
+        }
+        data = admin_update_account(email, updates)
+        return BaseResponse(success=True, message="Đã cập nhật tài khoản", data=data)
+    except ValueError as e:
+        return BaseResponse(success=False, message=str(e))
+    except Exception as e:
+        return BaseResponse(success=False, message=str(e))
+
+
+@router.post("/delete-admin")
+def users_delete_admin(payload: dict, _caller: dict = Depends(get_current_user)) -> BaseResponse:
+    """CHI Admin THAT: xoa HAN 1 tai khoan dang nhap (Member lien ket KHONG bi
+    xoa, chi tu dong go lien ket qua ON DELETE SET NULL) - giong nut "Xoa"
+    that cua pm-new (accounts.py:delete_account, gom ca 2 guard: khong tu xoa
+    chinh minh, khong xoa admin cuoi cung)."""
+    role = str(_caller.get("role") or "").strip().lower()
+    if role != "admin":
+        raise HTTPException(status_code=403, detail="Chỉ Admin mới được xóa tài khoản")
+    try:
+        email = payload.get("email")
+        if not email:
+            return BaseResponse(success=False, message="email is required")
+        admin_delete_account(email, caller_id=_caller.get("id"))
+        return BaseResponse(success=True, message="Đã xóa tài khoản")
+    except ValueError as e:
+        return BaseResponse(success=False, message=str(e))
     except Exception as e:
         return BaseResponse(success=False, message=str(e))
 
