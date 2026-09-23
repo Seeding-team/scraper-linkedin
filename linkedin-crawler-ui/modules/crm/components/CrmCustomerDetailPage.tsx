@@ -12,7 +12,7 @@ import { CrmContactsPanel } from './CrmContactsPanel';
 import { ProjectFormModal } from './ProjectFormModal';
 import { DealFormModal, clearDealDraft } from './DealFormModal';
 import { mergeCategoryOptions } from '../hooks/useCrm';
-import { Loader2, Plus, Eye, Pencil, Trash2 } from './icons';
+import { Loader2, Plus, Pencil, Trash2 } from './icons';
 import { ActionMenu, type ActionMenuItem } from './ActionMenu';
 import type { CrmCustomerRow } from '../types';
 import { customerProjectsSummaryService, allPlatformCategoriesService, projectsService, type CustomerProjectsSummary, type Project } from '@/services/all-platform.service';
@@ -1289,7 +1289,10 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
                                 <div className="crm-row-actions">
                                   <ActionMenu
                                     items={[
-                                      { key: 'view', label: 'Xem', icon: Eye, group: 1, onSelect: () => void viewQuoteInNewWorkspace(current) },
+                                      // Feedback goc chi yeu cau "nut sua xoa" - gop
+                                      // "Xem" vao chung "Sua" (modal tu quyet dinh
+                                      // editable/read-only theo quyen), khong tach
+                                      // rieng 2 nut trung hanh vi nhu truoc.
                                       { key: 'edit', label: 'Sửa', icon: Pencil, group: 1, onSelect: () => void viewQuoteInNewWorkspace(current) },
                                       {
                                         key: 'delete',
