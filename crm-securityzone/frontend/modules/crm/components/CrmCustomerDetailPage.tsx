@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
-import { useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import { API_BASE_URL, API_KEY } from '@/lib/env';
 import { useAppAuth } from '@/contexts/AppAuthContext';
 import { formatVND, getStageMeta, SOURCE_OPTIONS, SERVICE_PACKAGE_OPTIONS, CRM_PACKAGE_OPTIONS, INDUSTRY_OPTIONS } from '../constants/crmConfig';
@@ -12,13 +12,16 @@ import { CrmContactsPanel } from './CrmContactsPanel';
 import { ProjectFormModal } from './ProjectFormModal';
 import { DealFormModal, clearDealDraft } from './DealFormModal';
 import { mergeCategoryOptions } from '../hooks/useCrm';
-import { Loader2, Plus } from './icons';
+import { Loader2, Plus, Pencil, Trash2, ChevronDown, ChevronUp } from './icons';
+import { ActionMenu, type ActionMenuItem } from './ActionMenu';
 import type { CrmCustomerRow } from '../types';
 import { customerProjectsSummaryService, allPlatformCategoriesService, projectsService, type CustomerProjectsSummary, type Project } from '@/services/all-platform.service';
 import { formatMoney, relativeTime } from '../utils/quoteDisplay';
 import { useMembers } from '@/hooks/useMembers';
 import { QuoteWorkspaceModal } from './QuoteWorkspaceModal';
 import { CreateQuoteModal } from '../integrations/quotes/CreateQuoteModal';
+import { seedingQuoteRepository } from '@/modules/quotes';
+import type { Quote } from '@/modules/quotes';
 import { seedingCrmRepository } from '../repositories/SeedingCrmRepository';
 import type { Deal } from '../types';
 import { DealDetailDrawer } from '@/components/all-platform/customers/DealDetailDrawer';
@@ -592,6 +595,95 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
     }
   }
 
+  // "Sửa"/"Xóa" đầy đủ ở tab Báo giá (feedback) - "Sửa" mo dung workspace
+  // (QuoteWorkspaceModal tu quyet dinh editable/read-only theo quyen that
+  // cua nguoi dang nhap, khong can man rieng). "Xóa" dung dung pattern +
+  // message xac nhan "chấp nhận mất" da ap dung o QuoteCenterPage.tsx
+  // (deleteChainNow) - khong chan quyen/khong chan da duyet, chi hoi xac
+  // nhan (user decision 2026-09-23) - xoa CA chuoi version (includeVersions=true).
+  const [quoteDeleteBusy, setQuoteDeleteBusy] = useState<string | null>(null);
+  async function deleteQuoteChainOnCustomerPage(row: RelatedQuoteRow, versionCount: number) {
+    const versionText = versionCount > 1 ? ` (gồm ${versionCount} phiên bản)` : '';
+    const isApprovedLike = row.status === 'approved' || row.status === 'confirmed' || Boolean(row.approved_at);
+    const message = isApprovedLike
+      ? `Báo giá ${row.quote_number || row.id} này đã duyệt, bạn có chắc muốn xóa${versionText}?`
+      : `Xoá báo giá ${row.quote_number || row.id}${versionText}?`;
+    if (!window.confirm(`${message}\nBạn chấp nhận mất báo giá này? (Báo giá bị ẩn khỏi danh sách, Admin có thể khôi phục nếu cần.)`)) return;
+    setQuoteDeleteBusy(row.id);
+    try {
+      const result = await seedingQuoteRepository.bulkDeleteQuotes([row.id], true);
+      if (result.failed.length) window.alert(`Không xoá được ${result.failed.length} phiên bản: ${result.failed[0].message}`);
+      setReloadTick(t => t + 1);
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : 'Không xoá được báo giá.');
+    } finally {
+      setQuoteDeleteBusy(null);
+    }
+  }
+
+  // Dropdown xem phien ban cu ngay tai bang Bao gia (giong trang
+  // /all-platform/quote-center - toggleExpandVersions/renderOlderVersionRows)
+  // - bam mui ten canh "V{n} · X version" de mo rong danh sach cac version cu
+  // hon cua CHINH chuoi bao gia do, khong can nhay sang trang Bao gia rieng.
+  const [expandedQuoteVersions, setExpandedQuoteVersions] = useState<
+    Record<string, { loading: boolean; versions: Quote[]; error?: string }>
+  >({});
+  async function toggleExpandQuoteVersions(row: RelatedQuoteRow) {
+    const key = row.id;
+    if (expandedQuoteVersions[key]) {
+      setExpandedQuoteVersions(prev => {
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      });
+      return;
+    }
+    setExpandedQuoteVersions(prev => ({ ...prev, [key]: { loading: true, versions: [] } }));
+    try {
+      const versions = await seedingQuoteRepository.getQuoteVersions(key);
+      setExpandedQuoteVersions(prev =>
+        prev[key] ? { ...prev, [key]: { loading: false, versions: versions.filter(v => v.id !== key) } } : prev
+      );
+    } catch (err) {
+      setExpandedQuoteVersions(prev =>
+        prev[key]
+          ? { ...prev, [key]: { loading: false, versions: [], error: err instanceof Error ? err.message : 'Không tải được phiên bản cũ.' } }
+          : prev
+      );
+    }
+  }
+  /** Xoa RIENG 1 version cu (giu nguyen cac version khac trong chuoi) - dung
+   * pattern deleteVersionNow() cua QuoteCenterPage.tsx. */
+  async function deleteQuoteVersionOnCustomerPage(version: Quote) {
+    const label = `V${version.versionNumber || 1} (${version.quoteNumber})`;
+    if (!window.confirm(`Xoá riêng ${label}? Các phiên bản khác trong chuỗi vẫn giữ nguyên.`)) return;
+    try {
+      const result = await seedingQuoteRepository.bulkDeleteQuotes([version.id], false);
+      if (result.failed.length) {
+        window.alert(result.failed[0].message || 'Không xoá được phiên bản này.');
+        return;
+      }
+      setExpandedQuoteVersions(prev => {
+        const next = { ...prev };
+        for (const key of Object.keys(next)) {
+          next[key] = { ...next[key], versions: next[key].versions.filter(v => v.id !== version.id) };
+        }
+        return next;
+      });
+      setReloadTick(t => t + 1);
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : 'Không xoá được phiên bản này.');
+    }
+  }
+  function quoteVersionStatusLabel(version: Quote): string {
+    if (version.deletedAt || version.status === 'cancelled') return 'Đã huỷ';
+    if (version.sentAt) return 'Đã gửi';
+    if (version.publishedAt || version.processingStage === 'published' || version.status === 'approved' || version.approvedAt) return 'Sẵn sàng gửi';
+    if (version.processingStage === 'review') return 'Admin review';
+    if (version.processingStage === 'pricing') return 'Sale markup';
+    return 'Presale';
+  }
+
   // "Tạo yêu cầu báo giá" tren Project card - mo QuoteWorkspaceModal o CHE DO
   // TAO MOI (quoteId=null), khoa san Khach hang + Du an theo dung project vua
   // bam, khong can chon lai.
@@ -748,15 +840,6 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
   // crm_permission_service.py) - server van tu enforce lai khi POST.
   const canManageProject = Boolean(user && isAdminOrLeader(user.role));
 
-  // "+ Tạo báo giá" o header - CHI mang customerId (khong projectId, Du an
-  // se cho chon tu do trong workspace vi day la muc header cua ca Ho so,
-  // khong phai cua 1 Project cu the - khac voi nut tren tung Project card).
-  const quoteLink = useMemo(() => {
-    if (!customer) return '/all-platform/quote-center';
-    const params = new URLSearchParams({ openQuote: 'new', customerId: customer.id });
-    return `/all-platform/quote-center?${params.toString()}`;
-  }, [customer]);
-
   if (loading && !data) {
     return (
       <div className="crm-shell">
@@ -825,9 +908,22 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
             <button type="button" className="crm-secondary-button" onClick={() => setDealModal({ open: true, project: null, contactId: null })}>
               + Tạo cơ hội
             </button>
-            <Link href={quoteLink} className="crm-primary-button">
+            {/* "Luồng từ Khách hàng → Báo giá" (feedback): truoc day la <Link>
+             * dieu huong sang /all-platform/quote-center, roi khoi han trang
+             * chi tiet khach hang. Gio mo THANG QuoteWorkspaceModal ngay tai
+             * day (giong "Tạo yêu cầu báo giá" tren Project card), tu chuyen
+             * sang tab "Báo giá" truoc - tao xong VAN o lai đúng tab nay, vi
+             * modal chi la 1 overlay tren cung trang, khong navigate di dau. */}
+            <button
+              type="button"
+              className="crm-primary-button"
+              onClick={() => {
+                setTab('quotes');
+                setQuoteWorkspace({ quoteId: null, deal: null });
+              }}
+            >
               + Tạo báo giá
-            </Link>
+            </button>
           </div>
         </div>
 
@@ -1229,9 +1325,22 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
                           const quotePrimaryContactName = relatedDeal?.primary_contact_id
                             ? allContacts.find(c => c.id === relatedDeal.primary_contact_id)?.name || 'Liên hệ ẩn'
                             : 'Chưa có';
+                          const expanded = expandedQuoteVersions[current.id];
                           return (
-                            <tr key={current.version_chain_id || current.id} className="crm-row">
+                            <Fragment key={current.version_chain_id || current.id}>
+                            <tr className="crm-row">
                               <td className="crm-td">
+                                {versionCount > 1 ? (
+                                  <button
+                                    type="button"
+                                    className="crm-version-toggle"
+                                    aria-expanded={Boolean(expanded)}
+                                    title={expanded ? 'Thu gọn phiên bản cũ' : `Mở rộng ${versionCount - 1} phiên bản cũ`}
+                                    onClick={() => void toggleExpandQuoteVersions(current)}
+                                  >
+                                    {expanded ? <ChevronUp className="crm-inline-icon" /> : <ChevronDown className="crm-inline-icon" />}
+                                  </button>
+                                ) : null}
                                 {current.quote_number || current.id}
                                 <div className="crm-row-sub">V{current.version_number || 1} · {versionCount} version</div>
                               </td>
@@ -1248,15 +1357,31 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
                               <td className="crm-td crm-td--right crm-muted" title="Chưa có dữ liệu giá vốn ở tab này">—</td>
                               <td className="crm-td crm-muted">{current.sla_due_at ? relativeTime(current.sla_due_at) : 'Chưa đặt SLA'}</td>
                               <td className="crm-td crm-td--right">
+                                {/* BUG THAT DA GAP: nhoi 4 nut thang vao o "Thao
+                                 * tac" (table-layout:fixed, cot hep) khien Xem/Sua
+                                 * tran ra ngoai va bi .crm-table-card{overflow:hidden}
+                                 * cat mat, chi con thay Xoa/Doi lien he - dung
+                                 * ActionMenu (Portal, khong bi cat) nhu moi bang
+                                 * khac trong CRM thay vi nut roi. */}
                                 <div className="crm-row-actions">
-                                  <button
-                                    type="button"
-                                    className="crm-row-action"
-                                    disabled={quoteWorkspaceLoading}
-                                    onClick={() => void viewQuoteInNewWorkspace(current)}
-                                  >
-                                    Xem
-                                  </button>
+                                  <ActionMenu
+                                    items={[
+                                      // Feedback goc chi yeu cau "nut sua xoa" - gop
+                                      // "Xem" vao chung "Sua" (modal tu quyet dinh
+                                      // editable/read-only theo quyen), khong tach
+                                      // rieng 2 nut trung hanh vi nhu truoc.
+                                      { key: 'edit', label: 'Sửa', icon: Pencil, group: 1, onSelect: () => void viewQuoteInNewWorkspace(current) },
+                                      {
+                                        key: 'delete',
+                                        label: quoteDeleteBusy === current.id ? 'Đang xoá...' : 'Xóa',
+                                        icon: Trash2,
+                                        group: 2,
+                                        danger: true,
+                                        disabled: quoteDeleteBusy === current.id,
+                                        onSelect: () => void deleteQuoteChainOnCustomerPage(current, versionCount),
+                                      },
+                                    ] satisfies ActionMenuItem[]}
+                                  />
                                   <ContactAssignCell
                                     dealId={current.deal_id}
                                     currentContactId={relatedDeal?.primary_contact_id}
@@ -1266,6 +1391,36 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
                                 </div>
                               </td>
                             </tr>
+                            {expanded ? (
+                              expanded.loading || expanded.error || expanded.versions.length === 0 ? (
+                                <tr className="crm-row crm-row--version-old">
+                                  <td colSpan={10} className="crm-empty-cell">
+                                    {expanded.loading ? 'Đang tải phiên bản cũ…' : expanded.error || 'Không có phiên bản cũ nào khác.'}
+                                  </td>
+                                </tr>
+                              ) : (
+                                expanded.versions.map(version => (
+                                  <tr key={version.id} className="crm-row crm-row--version-old">
+                                    <td className="crm-td">
+                                      ↳ {version.quoteNumber}
+                                      <div className="crm-row-sub">V{version.versionNumber || 1} · {quoteVersionStatusLabel(version)}</div>
+                                    </td>
+                                    <td className="crm-td" colSpan={7} />
+                                    <td className="crm-td crm-td--right">
+                                      <div className="crm-row-actions">
+                                        <ActionMenu
+                                          items={[
+                                            { key: 'open', label: 'Mở', icon: Pencil, group: 1, onSelect: () => void viewQuoteInNewWorkspace({ ...current, id: version.id }) },
+                                            { key: 'delete', label: 'Xóa', icon: Trash2, group: 2, danger: true, onSelect: () => void deleteQuoteVersionOnCustomerPage(version) },
+                                          ] satisfies ActionMenuItem[]}
+                                        />
+                                      </div>
+                                    </td>
+                                  </tr>
+                                ))
+                              )
+                            ) : null}
+                            </Fragment>
                           );
                         })
                       ) : (

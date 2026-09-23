@@ -12,6 +12,7 @@ from urllib.parse import quote
 import httpx
 from loguru import logger
 
+from app.core.config import settings as crm_settings
 from app.modules.all_platform.zalo.config import settings
 from app.modules.all_platform.zalo.schemas.job import JobData
 from app.modules.all_platform.zalo.schemas.message import Message
@@ -528,6 +529,10 @@ async def upsert_zalo_account(
         "avatar_url": avatar_url,
         "status": status,
         "is_active": is_active,
+        # DB self-host này dùng chung cho cả 3 deploy CRM (markee/cloudgate/
+        # SECURITYZONE) — luôn stamp theo instance đang phục vụ request HIỆN
+        # TẠI (giống crm_leads.instance), không cho client tự truyền.
+        "instance": crm_settings.crm_instance,
         "last_seen_at": now,
         "updated_at": now,
     }
@@ -557,7 +562,18 @@ async def get_zalo_account_by_id(account_id: str) -> Optional[Dict[str, Any]]:
     if not is_supabase_configured():
         return None
     try:
-        rows = await _rest("GET", "zalo_module_accounts", params={"account_id": f"eq.{account_id}", "limit": "1"})
+        # instance filter: 1 account_id thuộc brand khác coi như không tồn tại
+        # với caller hiện tại — chặn dò/đọc/sửa/xoá chéo brand qua account_id
+        # (DB self-host dùng chung cho cả 3 deploy CRM, xem upsert_zalo_account).
+        rows = await _rest(
+            "GET",
+            "zalo_module_accounts",
+            params={
+                "account_id": f"eq.{account_id}",
+                "instance": f"eq.{crm_settings.crm_instance}",
+                "limit": "1",
+            },
+        )
         return rows[0] if rows else None
     except Exception as exc:
         logger.warning(f"Could not get zalo_account {account_id}: {exc}")
@@ -571,7 +587,12 @@ async def list_zalo_accounts(
     if not is_supabase_configured():
         return []
 
-    params: Dict[str, Any] = {"select": "*", "is_active": "eq.true", "order": "updated_at.desc"}
+    params: Dict[str, Any] = {
+        "select": "*",
+        "is_active": "eq.true",
+        "instance": f"eq.{crm_settings.crm_instance}",
+        "order": "updated_at.desc",
+    }
 
     # id_member có thể là string (1 user) hoặc list[str] (leader + team members).
     # owner_id là fallback cho các account cũ chưa có id_member.
@@ -599,7 +620,12 @@ async def delete_zalo_account(account_id: str) -> None:
     if not is_supabase_configured():
         return
     try:
-        await _rest("PATCH", "zalo_module_accounts", params={"account_id": f"eq.{account_id}"}, json={"is_active": False, "updated_at": datetime.utcnow().isoformat()})
+        await _rest(
+            "PATCH",
+            "zalo_module_accounts",
+            params={"account_id": f"eq.{account_id}", "instance": f"eq.{crm_settings.crm_instance}"},
+            json={"is_active": False, "updated_at": datetime.utcnow().isoformat()},
+        )
     except RuntimeError as exc:
         if "zalo_module_accounts" in str(exc):
             return

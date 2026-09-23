@@ -4775,34 +4775,52 @@ export function QuoteWorkspaceModal({
             )}
             {requiredFieldErrors.contact ? <p className="qc-field-error">{requiredFieldErrors.contact}</p> : null}
           </div>
-          <div data-qc-required="issuerCompany">
-            <span className="qc-workspace-info-label">Đơn vị phát hành <span className="qc-required-mark">*</span></span>
-            {!quote ? (
-              <SearchableSelect
-                value={draftIssuerCompanyIdOverride || draftCatalogIssuerCompanyId || ''}
-                onChange={value => { setDraftIssuerCompanyIdOverride(value); if (value) clearRequiredError('issuerCompany'); }}
-                options={issuerCompanies.map(company => ({ value: company.id, label: company.brandName || company.legalName }))}
-                placeholder="Chọn đơn vị phát hành..."
-                hideClearOption
-              />
-            ) : isDraft && canEdit ? (
-              <SearchableSelect
-                value={quote.issuerCompanyId || ''}
-                onChange={value => { if (value) void updateQuoteIssuerCompany(value); }}
-                options={issuerCompanies.map(company => ({ value: company.id, label: company.brandName || company.legalName }))}
-                placeholder="Chọn đơn vị phát hành..."
-                hideClearOption
-              />
-            ) : (
+          {/* "Presale không làm phần thương mại" (feedback) - Đơn vị phát
+           * hành la field THUONG MAI, CHI Sale duoc chon/doi (stage
+           * 'pricing'/'review', dung chung dieu kien voi canEditPricingCells
+           * qua pricingStageOk). Luc Presale tao yeu cau (!quote) hoac con o
+           * Buoc 1/2 (request/technical) - AN han dropdown nay, dung ngam
+           * dinh suy tu mau bao gia mac dinh (draftCatalogIssuerCompanyId) -
+           * KHONG bat Presale phai tu chon, Sale se xac nhan/doi lai sau. */}
+          {!quote ? (
+            // Luc tao yeu cau, Presale KHONG chon Don vi phat hanh - chi hien
+            // TOM TAT mac dinh (suy tu mau bao gia mac dinh) de biet truoc,
+            // Sale se xac nhan/doi lai o Buoc 3. Van giu data-qc-required de
+            // focusFirstRequiredError con cho de cuon toi neu he thong thieu
+            // cau hinh mac dinh (khong co Don vi phat hanh/mau nao ca).
+            <div data-qc-required="issuerCompany">
+              <span className="qc-workspace-info-label">Đơn vị phát hành</span>
               <SearchableSelect
                 value="current"
                 onChange={() => {}}
-                options={[{ value: 'current', label: effectiveIssuerCompany?.brandName || effectiveIssuerCompany?.legalName || 'Chưa chọn' }]}
+                options={[{ value: 'current', label: effectiveIssuerCompany?.brandName || effectiveIssuerCompany?.legalName || 'Chưa có mẫu mặc định' }]}
                 disabled
               />
-            )}
-            {requiredFieldErrors.issuerCompany ? <p className="qc-field-error">{requiredFieldErrors.issuerCompany}</p> : null}
-          </div>
+              <p className="qc-row-sub">Sale sẽ xác nhận/đổi đơn vị phát hành ở bước hoàn thiện giá.</p>
+              {requiredFieldErrors.issuerCompany ? <p className="qc-field-error">{requiredFieldErrors.issuerCompany}</p> : null}
+            </div>
+          ) : (
+            <div data-qc-required="issuerCompany">
+              <span className="qc-workspace-info-label">Đơn vị phát hành <span className="qc-required-mark">*</span></span>
+              {isDraft && canEdit && pricingStageOk ? (
+                <SearchableSelect
+                  value={quote.issuerCompanyId || ''}
+                  onChange={value => { if (value) void updateQuoteIssuerCompany(value); }}
+                  options={issuerCompanies.map(company => ({ value: company.id, label: company.brandName || company.legalName }))}
+                  placeholder="Chọn đơn vị phát hành..."
+                  hideClearOption
+                />
+              ) : (
+                <SearchableSelect
+                  value="current"
+                  onChange={() => {}}
+                  options={[{ value: 'current', label: effectiveIssuerCompany?.brandName || effectiveIssuerCompany?.legalName || 'Chưa chọn' }]}
+                  disabled
+                />
+              )}
+              {requiredFieldErrors.issuerCompany ? <p className="qc-field-error">{requiredFieldErrors.issuerCompany}</p> : null}
+            </div>
+          )}
         </div>
         <div className="qc-workspace-info-strip-row">
           <div>
@@ -4903,15 +4921,18 @@ export function QuoteWorkspaceModal({
             ) : null}
             {requiredFieldErrors.deal ? <p className="qc-field-error">{requiredFieldErrors.deal}</p> : null}
           </div>
-          {!quote && quoteForms.length > 0 ? (
+          {/* "Presale không làm phần thương mại" (feedback) - Mẫu báo giá
+           * cung la field thuong mai, AN het khoi Presale luc tao yeu cau
+           * (!quote) - draftFormId van tu dien ngam qua defaultFormId (xem
+           * effect dong ~1070), Sale doi lai duoc sau qua "Đơn vị phát hành"
+           * o Buoc 3 (doi cong ty se doi ca cong ty so huu mau theo no).
+           * Van giu 1 khung "form" cho focusFirstRequiredError neu he thong
+           * chua cau hinh mau mac dinh nao (loi that, khong phai Presale
+           * quen chon). */}
+          {!quote && quoteForms.length > 0 && !draftFormId && !defaultFormId ? (
             <div data-qc-required="form">
-              <span className="qc-workspace-info-label">Mẫu báo giá <span className="qc-required-mark">*</span></span>
-              <SearchableSelect
-                value={draftFormId}
-                onChange={value => { setDraftFormId(value); if (value) clearRequiredError('form'); }}
-                options={quoteForms.map(f => ({ value: f.id, label: f.name }))}
-                placeholder="Chọn mẫu báo giá..."
-              />
+              <span className="qc-workspace-info-label">Mẫu báo giá</span>
+              <p className="qc-field-error">Hệ thống chưa có mẫu báo giá mặc định — liên hệ Admin cấu hình trước khi tạo yêu cầu.</p>
               {requiredFieldErrors.form ? <p className="qc-field-error">{requiredFieldErrors.form}</p> : null}
             </div>
           ) : null}
@@ -6018,6 +6039,30 @@ export function QuoteWorkspaceModal({
                     />
                     %
                   </label>
+                  <span className="qc-workspace-quickbar-sep" aria-hidden="true" />
+                  {/* "Tiêu đề báo giá" (feedback "Presale không làm phần
+                   * thương mại") - CHUYEN sang cho Sale dien o day (khoi nay
+                   * chi hien khi canEditPricingCells, tuc DUNG luc Sale duoc
+                   * sua - xem dieu kien bao ngoai). Truoc day field nay CHI
+                   * co the dat 1 LAN luc Presale tao yeu cau (draftTitle) roi
+                   * khong ai sua lai duoc nua - gio Sale sua/ghi de o day,
+                   * luu qua persistQuote() giong Chiet khau/Thanh toan. */}
+                  {quote ? (
+                    <label className="qc-workspace-quickbar-field qc-workspace-quickbar-field--title">
+                      Tiêu đề báo giá
+                      <input
+                        type="text"
+                        className="qc-workspace-quickbar-input"
+                        placeholder="Tiêu đề báo giá..."
+                        value={typeof quote.data?.quoteTitle === 'string' ? quote.data.quoteTitle : ''}
+                        onChange={event => {
+                          const value = event.target.value;
+                          setQuote(prev => (prev ? { ...prev, data: { ...prev.data, quoteTitle: value } } : prev));
+                        }}
+                        onBlur={() => quote && void persistQuote({ data: quote.data }, { silent: true })}
+                      />
+                    </label>
+                  ) : null}
                   <span className="qc-workspace-quickbar-sep" aria-hidden="true" />
                   <label className="qc-workspace-quickbar-field">
                     Thanh toán

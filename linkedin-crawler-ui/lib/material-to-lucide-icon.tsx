@@ -28,6 +28,7 @@ import {
   FileSignature,
   Funnel,
   UserPlus,
+  Antenna,
   type LucideIcon,
 } from "lucide-react";
 import type { MaterialSymbolName } from "@/components/ui";
@@ -71,6 +72,7 @@ const MAP: Partial<Record<MaterialSymbolName, LucideIcon>> = {
   // MAP này đang dùng Funnel/UserPlus.
   filter_alt: Funnel,
   person_add: UserPlus,
+  cell_tower: Antenna,
 };
 
 export function materialToLucideIcon(name: MaterialSymbolName): LucideIcon {

@@ -279,7 +279,16 @@ async def update_account(
     caller_email: Optional[str] = Depends(get_authenticated_caller_email),
 ):
     safe_account_id = _normalize_id(account_id)
-    existing = await get_zalo_account_by_id(safe_account_id) or {}
+    # get_zalo_account_by_id lọc theo instance — account_id của brand khác trả
+    # về None. Phải fail closed (404) TRƯỚC khi check quyền: nếu để existing={}
+    # rơi xuống dưới, 1 admin/leader của brand A có thể sửa account_id thật của
+    # brand B (role check ở _require_admin_leader_or_self pass ngay vì họ LÀ
+    # admin/leader — chỉ không phải của account này), và upsert_zalo_account()
+    # sẽ tự stamp instance=crm_settings.crm_instance -> "cướp" account đó sang
+    # brand A luôn (đổi cả hàng brand B thành brand A).
+    existing = await get_zalo_account_by_id(safe_account_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="Không tìm thấy tài khoản Zalo này.")
     # Chủ sở hữu HIỆN TẠI (không phải body.owner_id — đó là giá trị caller MUỐN
     # đổi thành, không phải quyền sở hữu thật để authorize hành động này).
     await _require_admin_leader_or_self(
@@ -339,11 +348,19 @@ async def remove_account(
     # CLIENT tự gửi, và chỉ áp dụng "requester != 'default'" — bỏ trống cả 2 là
     # bypass hoàn toàn (mặc định "default", điều kiện luôn sai). Giờ luôn check
     # bằng identity đã xác thực từ JWT, không có đường bypass qua thiếu tham số.
-    if existing:
-        await _require_admin_leader_or_self(
-            caller_email,
-            existing.get("id_member") or existing.get("owner_id"),
-        )
+    #
+    # get_zalo_account_by_id giờ lọc theo instance — "không tìm thấy" giờ CŨNG
+    # có nghĩa là "account này thuộc brand khác". Phải fail closed (404) thay vì
+    # coi như account thật sự không tồn tại rồi tiếp tục xoá/stop listener —
+    # nếu không, 1 caller đoán trúng account_id của brand khác có thể xoá sạch
+    # dữ liệu/đăng xuất tài khoản Zalo của brand đó mà không qua check quyền gì.
+    if not existing:
+        raise HTTPException(status_code=404, detail="Không tìm thấy tài khoản Zalo này.")
+
+    await _require_admin_leader_or_self(
+        caller_email,
+        existing.get("id_member") or existing.get("owner_id"),
+    )
 
     await stop_listener(safe_account_id)
     
