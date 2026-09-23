@@ -1957,6 +1957,26 @@ export const usersService = {
   getUsersByQuoteBusinessRole: (role: "presale" | "sale"): Promise<ApiResponse<QuoteBusinessRoleUser[]>> => {
     return requestJson(`${BASE}/users/by-quote-business-role?role=${encodeURIComponent(role)}`);
   },
+  /** Admin-ONLY: sửa hồ sơ 1 tài khoản đã tồn tại (đổi email, họ tên, gán/gỡ
+   * Member liên kết) — giống nút "Sửa" của pm-new. `member_id: null` = gỡ
+   * liên kết hẳn; bỏ field này ra khỏi payload = không đụng tới liên kết. */
+  updateAccountProfile: (
+    email: string,
+    updates: { new_email?: string; full_name?: string; member_id?: string | null }
+  ): Promise<ApiResponse<AppUserProfile>> => {
+    return requestJson(`${BASE}/users/update-profile-admin`, {
+      method: "POST",
+      body: JSON.stringify({ email, ...updates }),
+    });
+  },
+  /** Admin-ONLY: xóa HẲN 1 tài khoản đăng nhập (Member liên kết không bị xóa,
+   * chỉ tự gỡ liên kết) — giống nút "Xóa" của pm-new. */
+  deleteAccount: (email: string): Promise<ApiResponse<null>> => {
+    return requestJson(`${BASE}/users/delete-admin`, {
+      method: "POST",
+      body: JSON.stringify({ email }),
+    });
+  },
 };
 
 export interface MemberOption {

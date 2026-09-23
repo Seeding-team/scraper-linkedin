@@ -208,6 +208,65 @@ export function MemberManagementContent() {
     setShowCreateAccountModal(true);
   }
 
+  // Sửa/Xóa 1 tài khoản đã tồn tại — giống đúng nút "Sửa"/"Xóa" của pm-new
+  // (accounts/page.tsx), thiếu ở lần port trước (chỉ có select/checkbox
+  // inline, không sửa được email/họ tên/đổi Member liên kết, và không xóa
+  // hẳn được — chỉ khóa/mở qua Switch).
+  const [editAccountTarget, setEditAccountTarget] = useState<AppUserProfile | null>(null);
+  const [editAccountForm, setEditAccountForm] = useState({ email: "", full_name: "", member_id: "" });
+  const [savingEditAccount, setSavingEditAccount] = useState(false);
+  const [editAccountError, setEditAccountError] = useState<string | null>(null);
+
+  function openEditAccountModal(account: AppUserProfile) {
+    const linked = memberByLinkedUserId.get(account.id);
+    setEditAccountForm({ email: account.email, full_name: account.name || "", member_id: linked?.id || "" });
+    setEditAccountError(null);
+    setEditAccountTarget(account);
+  }
+
+  async function handleEditAccountSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!editAccountTarget) return;
+    const email = editAccountForm.email.trim();
+    if (!email) {
+      setEditAccountError("Email không được để trống.");
+      return;
+    }
+    setEditAccountError(null);
+    setSavingEditAccount(true);
+    try {
+      const updates: { new_email?: string; full_name?: string; member_id?: string | null } = {
+        full_name: editAccountForm.full_name.trim(),
+        member_id: editAccountForm.member_id || null,
+      };
+      if (email.toLowerCase() !== editAccountTarget.email.toLowerCase()) {
+        updates.new_email = email;
+      }
+      const res = await usersService.updateAccountProfile(editAccountTarget.email, updates);
+      if (!res.success) throw new Error(res.message || "Không cập nhật được tài khoản");
+      setEditAccountTarget(null);
+      await Promise.all([loadAppUsers(), loadMembers()]);
+    } catch (err) {
+      setEditAccountError(err instanceof Error ? err.message : "Lỗi khi cập nhật tài khoản");
+    } finally {
+      setSavingEditAccount(false);
+    }
+  }
+
+  async function handleDeleteAccount(account: AppUserProfile) {
+    if (!confirm(`Bạn có chắc muốn xóa tài khoản "${account.email}"?\nThành viên liên kết sẽ KHÔNG bị ảnh hưởng.`)) return;
+    setSavingUserId(account.id);
+    try {
+      const res = await usersService.deleteAccount(account.email);
+      if (!res.success) throw new Error(res.message || "Lỗi xóa tài khoản");
+      await Promise.all([loadAppUsers(), loadMembers()]);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Lỗi xóa tài khoản");
+    } finally {
+      setSavingUserId(null);
+    }
+  }
+
   async function handleCreateNewAccount(e: React.FormEvent) {
     e.preventDefault();
     const email = newAccountForm.email.trim();
@@ -755,7 +814,17 @@ export function MemberManagementContent() {
                             </span>
                           </td>
                           <td className="py-3 px-4">
-                            <div className="flex items-center justify-center">
+                            <div className="flex items-center justify-center gap-2">
+                              {isAdmin && (
+                                <button
+                                  type="button"
+                                  onClick={() => openEditAccountModal(account)}
+                                  className="p-1.5 hover:bg-surface-container-low rounded-lg transition"
+                                  title="Sửa"
+                                >
+                                  <MaterialIcon name="edit" className="text-base" />
+                                </button>
+                              )}
                               <Switch
                                 checked={account.is_active !== false}
                                 disabled={savingUserId === account.id}
@@ -763,6 +832,17 @@ export function MemberManagementContent() {
                                 className="data-[state=checked]:bg-green-500 data-[state=unchecked]:bg-slate-300"
                                 title={account.is_active !== false ? "Bấm để vô hiệu hóa" : "Bấm để kích hoạt lại"}
                               />
+                              {isAdmin && (
+                                <button
+                                  type="button"
+                                  onClick={() => void handleDeleteAccount(account)}
+                                  disabled={savingUserId === account.id || currentUser?.id === account.id}
+                                  className="p-1.5 text-red-600 hover:bg-red-50 rounded-lg transition disabled:opacity-40 disabled:cursor-not-allowed"
+                                  title={currentUser?.id === account.id ? "Không thể tự xóa tài khoản đang đăng nhập" : "Xóa"}
+                                >
+                                  <MaterialIcon name="delete" className="text-base" />
+                                </button>
+                              )}
                             </div>
                           </td>
                         </tr>
@@ -980,6 +1060,48 @@ export function MemberManagementContent() {
                 </button>
                 <button type="submit" disabled={creatingAccount} className="flex-1 bg-primary hover:bg-on-primary-fixed-variant text-white font-bold py-2 rounded-xl text-xs transition shadow-sm disabled:opacity-60">
                   {creatingAccount ? "Đang tạo..." : "Tạo tài khoản"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {editAccountTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-[1px]">
+          <div style={{ width: "100%", maxWidth: "420px" }} className="bg-surface rounded-xl border border-outline-variant shadow-2xl overflow-hidden">
+            <div className="px-6 py-4 border-b border-outline-variant flex justify-between items-center bg-surface-container-low">
+              <h3 className="font-bold text-on-surface">Sửa tài khoản</h3>
+              <button type="button" onClick={() => setEditAccountTarget(null)} className="p-1.5 rounded-lg hover:bg-surface-container-low">
+                <MaterialIcon name="close" className="text-xl" />
+              </button>
+            </div>
+            <form onSubmit={e => void handleEditAccountSubmit(e)} className="p-6 space-y-4">
+              {editAccountError && (
+                <div className="p-2.5 bg-red-50 border border-red-200 text-red-600 rounded-xl text-xs font-medium">{editAccountError}</div>
+              )}
+              <Field label="Email" required>
+                <input type="email" value={editAccountForm.email} onChange={e => setEditAccountForm(f => ({ ...f, email: e.target.value }))} placeholder="email@company.com" />
+              </Field>
+              <Field label="Họ tên">
+                <input value={editAccountForm.full_name} onChange={e => setEditAccountForm(f => ({ ...f, full_name: e.target.value }))} placeholder="Nguyễn Văn A" />
+              </Field>
+              <Field label="Liên kết thành viên" hint="tùy chọn">
+                <SearchableSelect
+                  value={editAccountForm.member_id}
+                  onChange={v => setEditAccountForm(f => ({ ...f, member_id: v }))}
+                  placeholder="-- Không liên kết thành viên --"
+                  options={members
+                    .filter(m => !m.linked_user_id || m.linked_user_id === editAccountTarget.id)
+                    .map(m => ({ value: m.id, label: `${m.display_name} — ${m.full_name}` }))}
+                />
+              </Field>
+              <div className="flex gap-3 pt-2">
+                <button type="button" onClick={() => setEditAccountTarget(null)} className="flex-1 border border-outline-variant hover:bg-surface-container-low text-on-surface font-bold py-2 rounded-xl text-xs transition">
+                  Hủy
+                </button>
+                <button type="submit" disabled={savingEditAccount} className="flex-1 bg-primary hover:bg-on-primary-fixed-variant text-white font-bold py-2 rounded-xl text-xs transition shadow-sm disabled:opacity-60">
+                  {savingEditAccount ? "Đang lưu..." : "Lưu thay đổi"}
                 </button>
               </div>
             </form>

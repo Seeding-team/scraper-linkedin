@@ -228,6 +228,148 @@ def update_user_active_status(email: str, is_active: bool) -> dict:
     return result.data[0] if result.data else {}
 
 
+def admin_update_account(email: str, updates: dict) -> dict:
+    """Admin-only: sửa hồ sơ 1 tài khoản ĐÃ TỒN TẠI ở tab Quản lý tài khoản
+    (giống nút "Sửa" của pm-new, accounts.py:update_account) — đổi email,
+    họ tên, và gán/gỡ Member liên kết. KHÁC TÊN với update_user_profile() ở
+    auth_service.py (hàm đó là tự người dùng sửa TÊN của chính mình, không
+    đổi được email/member liên kết).
+
+    Gán/gỡ Member liên kết đi THEO ĐÚNG HƯỚNG dữ liệu thật của bảng `members`
+    (members.linked_user_id trỏ TỚI app_users.id) — ngược với pm-new (nơi
+    users.member_id trỏ tới member). Nên khi đổi Member liên kết, phải:
+    tự tìm + gỡ (set NULL) Member CŨ đang trỏ vào account này (nếu có, và
+    khác Member mới), rồi mới gán Member MỚI (nếu có) trỏ vào account này."""
+    supabase: Client = get_supabase_client()
+
+    account_res = (
+        supabase.table("app_users")
+        .select("id, email")
+        .eq("email", email.lower().strip())
+        .limit(1)
+        .execute()
+    )
+    if not account_res.data:
+        raise ValueError(f"Không tìm thấy tài khoản: {email}")
+    account = account_res.data[0]
+    account_id = account["id"]
+
+    profile_update: dict[str, Any] = {"updated_at": "now()"}
+    new_email_raw = updates.get("new_email")
+    if new_email_raw:
+        new_email = str(new_email_raw).strip().lower()
+        if "@" not in new_email:
+            raise ValueError("Email không hợp lệ.")
+        dup = (
+            supabase.table("app_users")
+            .select("id")
+            .eq("email", new_email)
+            .neq("id", account_id)
+            .limit(1)
+            .execute()
+        )
+        if dup.data:
+            raise ValueError("Email đã tồn tại.")
+        profile_update["email"] = new_email
+    if "full_name" in updates:
+        profile_update["name"] = str(updates.get("full_name") or "").strip() or None
+
+    if len(profile_update) > 1:
+        supabase.table("app_users").update(profile_update).eq("id", account_id).execute()
+
+    if "member_id" in updates:
+        new_member_id = updates.get("member_id") or None
+        if new_member_id:
+            target = (
+                supabase.table("members")
+                .select("id, linked_user_id")
+                .eq("id", new_member_id)
+                .limit(1)
+                .execute()
+            )
+            if not target.data:
+                raise ValueError("Không tìm thấy thành viên.")
+            existing_link = target.data[0].get("linked_user_id")
+            if existing_link and str(existing_link) != str(account_id):
+                raise ValueError("Thành viên này đã được liên kết với tài khoản khác.")
+        # Go bat ky Member CU nao dang tro vao account nay (tru chinh Member
+        # moi, tranh set roi lai xoa ngay trong cung 1 lan sua).
+        old_links = (
+            supabase.table("members")
+            .select("id")
+            .eq("linked_user_id", account_id)
+            .execute()
+        )
+        for row in (old_links.data or []):
+            if str(row["id"]) != str(new_member_id):
+                supabase.table("members").update(
+                    {"linked_user_id": None, "updated_at": "now()"}
+                ).eq("id", row["id"]).execute()
+        if new_member_id:
+            supabase.table("members").update(
+                {"linked_user_id": account_id, "updated_at": "now()"}
+            ).eq("id", new_member_id).execute()
+
+    _clear_people_caches()
+    _clear_auth_cache(email=account["email"])
+    if profile_update.get("email"):
+        _clear_auth_cache(email=profile_update["email"])
+
+    result = (
+        supabase.table("app_users")
+        .select(_SAFE_USER_COLUMNS)
+        .eq("id", account_id)
+        .limit(1)
+        .execute()
+    )
+    return result.data[0] if result.data else {}
+
+
+def admin_delete_account(email: str, caller_id: str | None = None) -> None:
+    """Admin-only: xóa HẲN 1 tài khoản đăng nhập (giống nút "Xóa" của pm-new,
+    accounts.py:delete_account) — Member liên kết KHÔNG bị xóa, chỉ tự động
+    gỡ liên kết (members.linked_user_id/linked_user_id_2 khai báo ON DELETE
+    SET NULL ở migration 043/044, không cần tự tay dọn ở đây). Chặn tự xóa
+    chính mình và xóa admin cuối cùng, giống đúng 2 guard thật của pm-new."""
+    supabase: Client = get_supabase_client()
+
+    account_res = (
+        supabase.table("app_users")
+        .select("id, email, role")
+        .eq("email", email.lower().strip())
+        .limit(1)
+        .execute()
+    )
+    if not account_res.data:
+        raise ValueError(f"Không tìm thấy tài khoản: {email}")
+    account = account_res.data[0]
+    account_id = account["id"]
+
+    if caller_id and str(caller_id) == str(account_id):
+        raise ValueError("Bạn không thể tự xóa tài khoản đang đăng nhập.")
+
+    if str(account.get("role") or "").strip().lower() == "admin":
+        admin_count_res = (
+            supabase.table("app_users")
+            .select("id", count="exact")
+            .eq("role", "admin")
+            .execute()
+        )
+        if (admin_count_res.count or 0) <= 1:
+            raise ValueError("Không thể xóa admin cuối cùng của hệ thống.")
+
+    try:
+        supabase.table("app_users").delete().eq("id", account_id).execute()
+    except Exception as exc:
+        raise ValueError(
+            "Không thể xóa: tài khoản này còn được tham chiếu ở nơi khác trong hệ thống "
+            "(báo giá/lead/dự án...). Hãy khóa (vô hiệu hóa) tài khoản thay vì xóa."
+        ) from exc
+
+    _clear_people_caches()
+    _clear_auth_cache(user_id=account_id, email=account["email"])
+
+
 def get_team_members(leader_id: str) -> list[dict]:
     """Get all members of a leader's team by leader user id."""
     cache_key = str(leader_id)
