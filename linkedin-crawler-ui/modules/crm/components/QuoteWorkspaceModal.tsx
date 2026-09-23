@@ -1424,6 +1424,18 @@ export function QuoteWorkspaceModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [presaleUsers, user?.id, quote]);
 
+  // Card "Phan cong & SLA" (CHI o day thoi, khong dung o bat ky owner-picker
+  // nao khac trong file nay) - gop chung Presale+Sale thanh 1 danh sach duy
+  // nhat, hien CA 2 dropdown Presale va Sale deu thay het nhung ai co
+  // quote_business_role la presale/sale/both - thay vi loc rieng tung ben
+  // nhu truoc (presaleUsers chi Presale/Both, saleUsers chi Sale/Both).
+  const businessRoleUsers = useMemo(() => {
+    const map = new Map<string, QuoteBusinessRoleUser>();
+    for (const u of presaleUsers || []) map.set(u.id, u);
+    for (const u of saleUsers || []) map.set(u.id, u);
+    return Array.from(map.values());
+  }, [presaleUsers, saleUsers]);
+
   function businessRoleLabel(role?: string | null): string {
     if (role === 'presale') return 'Presale';
     if (role === 'sale') return 'Sale';
@@ -6350,15 +6362,15 @@ export function QuoteWorkspaceModal({
                 <div data-qc-required="presale">
                   <span className="qc-workspace-info-label">Presale <span className="qc-required-mark">*</span></span>
                   {!quote || (isDraft && canEdit) ? (
-                    presaleUsers === null ? (
+                    presaleUsers === null || saleUsers === null ? (
                       <span className="qc-workspace-muted" style={{ fontSize: 12 }}>Đang tải danh sách Presale…</span>
-                    ) : presaleUsers.length === 0 ? (
+                    ) : businessRoleUsers.length === 0 ? (
                       <NoStaffConfigured isAdminOrLeader={isAdminOrLeader} />
                     ) : (
                       <SearchableSelect
                         value={quote ? quote.technicalOwnerId || '' : draftTechnicalOwnerId}
                         onChange={value => { if (value) clearRequiredError('presale'); quote ? void assignOwner('technicalOwnerId', value) : setDraftTechnicalOwnerId(value); }}
-                        options={presaleUsers.map(a => ({ value: a.id, label: ownerOptionLabel(a) }))}
+                        options={businessRoleUsers.map(a => ({ value: a.id, label: ownerOptionLabel(a) }))}
                         placeholder="Chưa gán"
                       />
                     )
@@ -6370,15 +6382,15 @@ export function QuoteWorkspaceModal({
                 <div data-qc-required="sale">
                    <span className="qc-workspace-info-label">Sale <span className="qc-required-mark">*</span></span>
                   {!quote || (isDraft && canEdit) ? (
-                    saleUsers === null ? (
+                    presaleUsers === null || saleUsers === null ? (
                       <span className="qc-workspace-muted" style={{ fontSize: 12 }}>Đang tải danh sách Sale…</span>
-                    ) : saleUsers.length === 0 ? (
+                    ) : businessRoleUsers.length === 0 ? (
                       <NoStaffConfigured isAdminOrLeader={isAdminOrLeader} />
                     ) : (
                       <SearchableSelect
                         value={quote ? quote.quoteOwnerId || '' : draftQuoteOwnerId}
                         onChange={value => { if (value) clearRequiredError('sale'); quote ? void assignOwner('quoteOwnerId', value) : setDraftQuoteOwnerId(value); }}
-                        options={saleUsers.map(a => ({ value: a.id, label: ownerOptionLabel(a) }))}
+                        options={businessRoleUsers.map(a => ({ value: a.id, label: ownerOptionLabel(a) }))}
                         placeholder="Chưa gán"
                       />
                     )
