@@ -12,7 +12,8 @@ import { CrmContactsPanel } from './CrmContactsPanel';
 import { ProjectFormModal } from './ProjectFormModal';
 import { DealFormModal, clearDealDraft } from './DealFormModal';
 import { mergeCategoryOptions } from '../hooks/useCrm';
-import { Loader2, Plus } from './icons';
+import { Loader2, Plus, Eye, Pencil, Trash2 } from './icons';
+import { ActionMenu, type ActionMenuItem } from './ActionMenu';
 import type { CrmCustomerRow } from '../types';
 import { customerProjectsSummaryService, allPlatformCategoriesService, projectsService, type CustomerProjectsSummary, type Project } from '@/services/all-platform.service';
 import { formatMoney, relativeTime } from '../utils/quoteDisplay';
@@ -1279,31 +1280,28 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
                               <td className="crm-td crm-td--right crm-muted" title="Chưa có dữ liệu giá vốn ở tab này">—</td>
                               <td className="crm-td crm-muted">{current.sla_due_at ? relativeTime(current.sla_due_at) : 'Chưa đặt SLA'}</td>
                               <td className="crm-td crm-td--right">
+                                {/* BUG THAT DA GAP: nhoi 4 nut thang vao o "Thao
+                                 * tac" (table-layout:fixed, cot hep) khien Xem/Sua
+                                 * tran ra ngoai va bi .crm-table-card{overflow:hidden}
+                                 * cat mat, chi con thay Xoa/Doi lien he - dung
+                                 * ActionMenu (Portal, khong bi cat) nhu moi bang
+                                 * khac trong CRM thay vi nut roi. */}
                                 <div className="crm-row-actions">
-                                  <button
-                                    type="button"
-                                    className="crm-row-action"
-                                    disabled={quoteWorkspaceLoading}
-                                    onClick={() => void viewQuoteInNewWorkspace(current)}
-                                  >
-                                    Xem
-                                  </button>
-                                  <button
-                                    type="button"
-                                    className="crm-row-action"
-                                    disabled={quoteWorkspaceLoading}
-                                    onClick={() => void viewQuoteInNewWorkspace(current)}
-                                  >
-                                    Sửa
-                                  </button>
-                                  <button
-                                    type="button"
-                                    className="crm-row-action crm-row-action--delete"
-                                    disabled={quoteDeleteBusy === current.id}
-                                    onClick={() => void deleteQuoteChainOnCustomerPage(current, versionCount)}
-                                  >
-                                    {quoteDeleteBusy === current.id ? 'Đang xoá...' : 'Xóa'}
-                                  </button>
+                                  <ActionMenu
+                                    items={[
+                                      { key: 'view', label: 'Xem', icon: Eye, group: 1, onSelect: () => void viewQuoteInNewWorkspace(current) },
+                                      { key: 'edit', label: 'Sửa', icon: Pencil, group: 1, onSelect: () => void viewQuoteInNewWorkspace(current) },
+                                      {
+                                        key: 'delete',
+                                        label: quoteDeleteBusy === current.id ? 'Đang xoá...' : 'Xóa',
+                                        icon: Trash2,
+                                        group: 2,
+                                        danger: true,
+                                        disabled: quoteDeleteBusy === current.id,
+                                        onSelect: () => void deleteQuoteChainOnCustomerPage(current, versionCount),
+                                      },
+                                    ] satisfies ActionMenuItem[]}
+                                  />
                                   <ContactAssignCell
                                     dealId={current.deal_id}
                                     currentContactId={relatedDeal?.primary_contact_id}
