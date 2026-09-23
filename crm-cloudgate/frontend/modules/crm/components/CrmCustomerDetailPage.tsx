@@ -12,8 +12,9 @@ import { CrmContactsPanel } from './CrmContactsPanel';
 import { ProjectFormModal } from './ProjectFormModal';
 import { DealFormModal, clearDealDraft } from './DealFormModal';
 import { mergeCategoryOptions } from '../hooks/useCrm';
-import { Loader2, Plus, Pencil, Trash2, ChevronDown, ChevronUp } from './icons';
+import { Loader2, Plus, Pencil, Trash2, ChevronDown, ChevronUp, UserCog, X } from './icons';
 import { ActionMenu, type ActionMenuItem } from './ActionMenu';
+import { SearchableSelect } from './SearchableSelect';
 import type { CrmCustomerRow } from '../types';
 import { customerProjectsSummaryService, allPlatformCategoriesService, projectsService, type CustomerProjectsSummary, type Project } from '@/services/all-platform.service';
 import { formatMoney, relativeTime } from '../utils/quoteDisplay';
@@ -618,6 +619,39 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
       window.alert(err instanceof Error ? err.message : 'Không xoá được báo giá.');
     } finally {
       setQuoteDeleteBusy(null);
+    }
+  }
+
+  // Feedback (2026-09-24): "Đổi liên hệ" o tab Bao gia gop VAO trong menu
+  // "⋯" (ActionMenu) thay vi 1 nut/select roi nam canh no (nhu ContactAssignCell
+  // cu, van con dung nguyen o tab Co hoi/Hop dong) - dung 1 modal nho rieng
+  // (dung y het pattern .crm-modal-backdrop/.crm-modal cua ConfirmModal) vi
+  // ActionMenu item chi la nut bam don, khong nhung duoc <select> ben trong.
+  const [contactAssignTarget, setContactAssignTarget] = useState<{ dealId: string; quoteNumber: string } | null>(null);
+  const [contactAssignValue, setContactAssignValue] = useState('');
+  const [contactAssignSaving, setContactAssignSaving] = useState(false);
+  function openContactAssignModal(dealId: string, quoteNumber: string, currentContactId?: string | null) {
+    setContactAssignTarget({ dealId, quoteNumber });
+    setContactAssignValue(currentContactId || '');
+  }
+  async function saveContactAssign() {
+    if (!contactAssignTarget) return;
+    setContactAssignSaving(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/all-platform/customer-leads/${encodeURIComponent(contactAssignTarget.dealId)}`, {
+        method: 'PUT',
+        credentials: 'include',
+        headers: headers(),
+        body: JSON.stringify({ primary_contact_id: contactAssignValue || null }),
+      });
+      const body = await res.json();
+      if (!res.ok || body?.success === false) throw new Error(body?.message || 'Không gán được liên hệ chính.');
+      setReloadTick(t => t + 1);
+      setContactAssignTarget(null);
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : 'Không gán được liên hệ chính.');
+    } finally {
+      setContactAssignSaving(false);
     }
   }
 
@@ -1371,6 +1405,21 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
                                       // editable/read-only theo quyen), khong tach
                                       // rieng 2 nut trung hanh vi nhu truoc.
                                       { key: 'edit', label: 'Sửa', icon: Pencil, group: 1, onSelect: () => void viewQuoteInNewWorkspace(current) },
+                                      // Feedback (2026-09-24): gop "Đổi liên hệ" VAO
+                                      // menu "⋯" thay vi 1 nut/select rieng nam canh
+                                      // no (ContactAssignCell cu, van con dung o tab
+                                      // Co hoi/Hop dong) - chi hien khi quote da co
+                                      // deal_id (giong dieu kien "return — " cu cua
+                                      // ContactAssignCell khi chua co deal).
+                                      ...(current.deal_id
+                                        ? [{
+                                            key: 'contact',
+                                            label: relatedDeal?.primary_contact_id ? 'Đổi liên hệ' : '+ Liên hệ chính',
+                                            icon: UserCog,
+                                            group: 1,
+                                            onSelect: () => openContactAssignModal(current.deal_id!, current.quote_number || current.id, relatedDeal?.primary_contact_id),
+                                          } satisfies ActionMenuItem]
+                                        : []),
                                       {
                                         key: 'delete',
                                         label: quoteDeleteBusy === current.id ? 'Đang xoá...' : 'Xóa',
@@ -1381,12 +1430,6 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
                                         onSelect: () => void deleteQuoteChainOnCustomerPage(current, versionCount),
                                       },
                                     ] satisfies ActionMenuItem[]}
-                                  />
-                                  <ContactAssignCell
-                                    dealId={current.deal_id}
-                                    currentContactId={relatedDeal?.primary_contact_id}
-                                    contacts={allContacts}
-                                    onAssigned={() => setReloadTick(t => t + 1)}
                                   />
                                 </div>
                               </td>
@@ -1399,25 +1442,48 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
                                   </td>
                                 </tr>
                               ) : (
-                                expanded.versions.map(version => (
-                                  <tr key={version.id} className="crm-row crm-row--version-old">
-                                    <td className="crm-td">
-                                      ↳ {version.quoteNumber}
-                                      <div className="crm-row-sub">V{version.versionNumber || 1} · {quoteVersionStatusLabel(version)}</div>
-                                    </td>
-                                    <td className="crm-td" colSpan={7} />
-                                    <td className="crm-td crm-td--right">
-                                      <div className="crm-row-actions">
-                                        <ActionMenu
-                                          items={[
-                                            { key: 'open', label: 'Mở', icon: Pencil, group: 1, onSelect: () => void viewQuoteInNewWorkspace({ ...current, id: version.id }) },
-                                            { key: 'delete', label: 'Xóa', icon: Trash2, group: 2, danger: true, onSelect: () => void deleteQuoteVersionOnCustomerPage(version) },
-                                          ] satisfies ActionMenuItem[]}
-                                        />
-                                      </div>
-                                    </td>
-                                  </tr>
-                                ))
+                                expanded.versions.map(version => {
+                                  // Feedback (2026-09-24): phien ban cu phai hien DU thong
+                                  // tin nhu phien ban hien tai (Du an/Co hoi/Lien he/Phase/
+                                  // Presale->Sale/Gia khach/SLA), khong chi trong trong -
+                                  // deal cua version co the khac deal cua `current` (hiem
+                                  // nhung co the xay ra), nen tra rieng theo version.dealId
+                                  // thay vi dung lai relatedDeal cua dong hien tai.
+                                  const versionDeal = version.dealId ? data?.deals?.find(d => d.id === version.dealId) : null;
+                                  const versionContactName = versionDeal?.primary_contact_id
+                                    ? allContacts.find(c => c.id === versionDeal.primary_contact_id)?.name || 'Liên hệ ẩn'
+                                    : 'Chưa có';
+                                  return (
+                                    <tr key={version.id} className="crm-row crm-row--version-old">
+                                      <td className="crm-td">
+                                        ↳ {version.quoteNumber}
+                                        <div className="crm-row-sub">V{version.versionNumber || 1} · cập nhật {relativeTime(version.updatedAt || version.createdAt)}</div>
+                                      </td>
+                                      <td className="crm-td crm-muted">{projectLabel(version.projectId)}</td>
+                                      <td className="crm-td crm-muted">{versionDeal?.customer_name || (version.dealId ? 'Đang tải…' : 'Chưa gắn cơ hội')}</td>
+                                      <td className="crm-td crm-muted">{versionContactName}</td>
+                                      <td className="crm-td"><span className="crm-source-badge">{quoteVersionStatusLabel(version)}</span></td>
+                                      <td className="crm-td crm-muted">
+                                        {version.technicalOwnerId ? memberName(version.technicalOwnerId) : versionDeal?.leader_name || 'Chưa gán'}
+                                        {' → '}
+                                        {version.quoteOwnerId ? memberName(version.quoteOwnerId) : versionDeal?.sdr_name || 'Chưa gán'}
+                                      </td>
+                                      <td className="crm-td crm-td--right crm-budget">{formatVND(Number(version.customerPriceBeforeVat ?? version.totalAmount ?? 0)) || '0 đ'}</td>
+                                      <td className="crm-td crm-td--right crm-muted" title="Chưa có dữ liệu giá vốn ở tab này">—</td>
+                                      <td className="crm-td crm-muted">{version.slaDueAt ? relativeTime(version.slaDueAt) : 'Chưa đặt SLA'}</td>
+                                      <td className="crm-td crm-td--right">
+                                        <div className="crm-row-actions">
+                                          <ActionMenu
+                                            items={[
+                                              { key: 'open', label: 'Mở', icon: Pencil, group: 1, onSelect: () => void viewQuoteInNewWorkspace({ ...current, id: version.id }) },
+                                              { key: 'delete', label: 'Xóa', icon: Trash2, group: 2, danger: true, onSelect: () => void deleteQuoteVersionOnCustomerPage(version) },
+                                            ] satisfies ActionMenuItem[]}
+                                          />
+                                        </div>
+                                      </td>
+                                    </tr>
+                                  );
+                                })
                               )
                             ) : null}
                             </Fragment>
@@ -1528,6 +1594,38 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
         onClose={() => setEditOpen(false)}
         onSaved={() => { setEditOpen(false); setReloadTick(t => t + 1); }}
       />
+      {contactAssignTarget ? (
+        <div className="crm-modal-backdrop" onClick={() => !contactAssignSaving && setContactAssignTarget(null)}>
+          <div className="crm-modal crm-modal--confirm" onClick={event => event.stopPropagation()}>
+            <header className="crm-modal-header">
+              <h2 className="crm-modal-title">Đổi liên hệ chính</h2>
+              <button type="button" className="crm-modal-close" onClick={() => !contactAssignSaving && setContactAssignTarget(null)} aria-label="Đóng">
+                <X className="crm-icon" />
+              </button>
+            </header>
+            <div className="crm-modal-body">
+              <p className="crm-row-sub" style={{ marginTop: 0 }}>Báo giá {contactAssignTarget.quoteNumber}</p>
+              <label className="crm-field">
+                <span>Người liên hệ chính</span>
+                <SearchableSelect
+                  value={contactAssignValue}
+                  onChange={setContactAssignValue}
+                  options={allContacts.map(c => ({ value: c.id, label: c.name }))}
+                  placeholder="— Chưa gán —"
+                />
+              </label>
+            </div>
+            <footer className="crm-modal-footer">
+              <div className="crm-deal-footer-actions">
+                <button type="button" className="crm-cancel-button" disabled={contactAssignSaving} onClick={() => setContactAssignTarget(null)}>Huỷ</button>
+                <button type="button" className="crm-save-button" disabled={contactAssignSaving} onClick={() => void saveContactAssign()}>
+                  {contactAssignSaving ? 'Đang lưu...' : 'Lưu'}
+                </button>
+              </div>
+            </footer>
+          </div>
+        </div>
+      ) : null}
       <ManualContractModal
         open={manualContractOpen}
         onClose={() => setManualContractOpen(false)}
