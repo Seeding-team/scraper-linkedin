@@ -49,6 +49,7 @@ from app.modules.all_platform.services.supabase_members_service import (
     parse_excel_rows,
     import_members_from_rows,
     sync_members_from_list,
+    sync_members_from_recruitment,
 )
 from app.modules.all_platform.services.supabase_quick_comment_service import (
     get_all_quick_comments,

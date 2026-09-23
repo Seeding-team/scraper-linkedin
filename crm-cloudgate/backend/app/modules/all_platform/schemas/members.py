@@ -21,6 +21,10 @@ class MemberCreateRequest(BaseModel):
     linked_user_id: Optional[str] = None
     linked_user_id_2: Optional[str] = None
     skill_ids: Optional[List[str]] = None
+    leader_name: Optional[str] = None
+    leader_email: Optional[str] = None
+    cv_link: Optional[str] = None
+    employment_status: Optional[str] = None
 
 
 class MemberUpdateRequest(BaseModel):
@@ -39,6 +43,10 @@ class MemberUpdateRequest(BaseModel):
     linked_user_id: Optional[str] = None
     linked_user_id_2: Optional[str] = None
     skill_ids: Optional[List[str]] = None
+    leader_name: Optional[str] = None
+    leader_email: Optional[str] = None
+    cv_link: Optional[str] = None
+    employment_status: Optional[str] = None
 
 
 class MemberDeleteRequest(BaseModel):

@@ -544,9 +544,9 @@ def copy_lead_to_instance(lead_id: str, target_instance: str, user: dict[str, An
     if target_instance == settings.crm_instance:
         raise ValueError("Không thể sao chép sang chính workspace hiện tại.")
     current = get_lead(lead_id, user)
-    if current.get("status") == "converted" or current.get("converted_customer_id"):
+    if current.get("status") == "sql" or current.get("converted_customer_id"):
         raise ValueError(
-            "Lead này đã được chuyển đổi thành Khách hàng - không thể sao chép sang workspace khác."
+            "Lead đã ở giai đoạn SQL (đã qualify) hoặc đã chuyển đổi thành Khách hàng - không thể sao chép sang workspace khác."
         )
     supabase = get_supabase_client()
     # Lay lai dong RAW (khong qua _normalize_lead_status trong get_lead() -

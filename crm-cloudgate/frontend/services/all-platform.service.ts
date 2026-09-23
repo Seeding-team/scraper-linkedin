@@ -1397,6 +1397,10 @@ export const allPlatformMembersService = {
     return requestJson<Skill[]>(`${BASE}/members/skills`);
   },
 
+  syncFromRecruitment: (): Promise<ApiResponse<{ created: number; updated: number; deleted: number; locked: number; unlocked: number; skipped: Array<{ row: string; reason: string }> }>> => {
+    return requestJson(`${BASE}/members/sync-from-recruitment`, { method: "POST" });
+  },
+
   addSkill: (name: string, category?: string): Promise<ApiResponse<Skill>> => {
     return requestJson(`${BASE}/members/skills/add`, {
       method: "POST",

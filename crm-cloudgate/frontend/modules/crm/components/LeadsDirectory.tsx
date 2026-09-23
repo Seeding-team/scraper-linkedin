@@ -232,7 +232,7 @@ export function LeadsDirectory() {
   // Lead da convert khong the copy (backend cung chan) - loai khoi danh sach
   // chon duoc de tranh chon nham roi bi bao loi.
   const selectableItems = useMemo(
-    () => items.filter(lead => lead.status !== 'converted' && !lead.convertedCustomerId),
+    () => items.filter(lead => lead.status !== 'sql' && !lead.convertedCustomerId),
     [items],
   );
   const allOnPageSelected = selectableItems.length > 0 && selectableItems.every(lead => selectedIds.has(lead.id));
@@ -636,7 +636,7 @@ export function LeadsDirectory() {
             },
           }]
         : []),
-      ...(canCopyInstance && lead.status !== 'converted' && !lead.convertedCustomerId
+      ...(canCopyInstance && lead.status !== 'sql' && !lead.convertedCustomerId
         ? [{
             key: 'copy-instance',
             label: 'Sao chép sang workspace khác',
@@ -815,7 +815,7 @@ export function LeadsDirectory() {
                       <tr key={lead.id} className="crm-row">
                         {canCopyInstance ? (
                           <td className="crm-td" onClick={event => event.stopPropagation()}>
-                            {lead.status === 'converted' || lead.convertedCustomerId ? null : (
+                            {lead.status === 'sql' || lead.convertedCustomerId ? null : (
                               <input
                                 type="checkbox"
                                 checked={selectedIds.has(lead.id)}

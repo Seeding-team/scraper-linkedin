@@ -175,6 +175,12 @@ export interface MemberProfile {
   experience_year?: number | null;
   linked_user_id?: string | null;
   linked_user_id_2?: string | null;
+  leader_name?: string | null;
+  leader_email?: string | null;
+  cv_link?: string | null;
+  employment_status?: string | null;
+  off_effective_at?: string | null;
+  is_recruitment_synced?: boolean | null;
   skill_ids?: string[];
   skills?: Skill[];
   created_at?: string;
