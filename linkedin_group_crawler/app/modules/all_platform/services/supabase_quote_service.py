@@ -1961,6 +1961,24 @@ def update_quote(quote_id: str, payload: dict, actor_id: str | None) -> dict:
         direct_fields["sla_due_at"] = payload.get("sla_due_at")
     if "overall_discount_percent" in payload:
         direct_fields["overall_discount_percent"] = payload.get("overall_discount_percent")
+    # "Mẫu ăn theo Đơn vị phát hành" (feedback 2026-09-24, "chọn Markee thì mẫu
+    # báo giá auto fill mẫu thuộc đơn vị phát hành đó") - truoc gio quote_form_id
+    # CHI gan duoc luc TAO (create_quote), khong co cach doi lai sau khi quote da
+    # ton tai. Them o day theo DUNG pattern project_id/sla_due_at (update THANG
+    # vao bang quotes, KHONG qua RPC quote_update - form chi la metadata tro
+    # schema, khong can recompute gia/VAT). Doi ca form_schema_version +
+    # form_snapshot cung luc (giong het create_quote()) - form_snapshot la BAN
+    # SNAPSHOT dung de RENDER (PDF/public/bang hang muc), khong doi no thi doi
+    # quote_form_id se chi doi "nhan", giao dien van hien schema mau CU.
+    if "quote_form_id" in payload:
+        new_form_id = payload.get("quote_form_id")
+        if new_form_id and new_form_id != current_quote.get("quoteFormId"):
+            form = supabase.table(FORMS_TABLE).select("*").eq("id", new_form_id).single().execute().data
+            if not form or form["status"] != "active":
+                raise ValueError("Mẫu báo giá không còn hoạt động.")
+            direct_fields["quote_form_id"] = form["id"]
+            direct_fields["form_schema_version"] = form["schema_version"]
+            direct_fields["form_snapshot"] = form["schema_json"]
     quote_type_changed = False
     old_quote_type_codes: list[str] = []
     if "quote_type_codes" in payload:
@@ -2407,10 +2425,20 @@ def assign_quote_owner(
     phan biet "khong gui field nay" voi "gui gia tri None de bo gan" (giong
     han che cua issuer company nullable field truoc do)."""
     _ensure_quote_in_instance(quote_id)
+    # BUG THAT DA GAP (feedback 2026-09-24, kem screenshot "không qua được
+    # bước 2" - alert "Người phụ trách báo giá phải có vai trò báo giá phù
+    # hợp"): commit d326cf10 (2026-09-23) da GOP dropdown Presale/Sale o card
+    # "Phân công & SLA" thanh 1 danh sach hop nhat - CHO PHEP chon bat ky ai
+    # co quote_business_role presale/sale/both vao CA 2 o (xem comment
+    # businessRoleUsers, QuoteWorkspaceModal.tsx) - nhung validate o day VAN
+    # con GIU NGUYEN rieng ("presale","both") cho ky thuat / ("sale","both")
+    # cho bao gia tu TRUOC khi gop, nen chon 1 nguoi CHI co role Presale vao o
+    # Sale (dung nhu FE cho phep) bi tu choi ngay khi bam "Bàn giao" - Update
+    # ca 2 thanh CUNG 1 tap hop day du, khop dung voi FE da cho phep.
     if assign_technical:
-        _validate_quote_owner_assignment(technical_owner_id, ("presale", "both"), "Người phụ trách kỹ thuật")
+        _validate_quote_owner_assignment(technical_owner_id, ("presale", "sale", "both"), "Người phụ trách kỹ thuật")
     if assign_quote_owner_field:
-        _validate_quote_owner_assignment(quote_owner_id, ("sale", "both"), "Người phụ trách báo giá")
+        _validate_quote_owner_assignment(quote_owner_id, ("presale", "sale", "both"), "Người phụ trách báo giá")
     supabase: Client = get_supabase_client()
     update_data: dict = {"updated_by": actor_id}
     if assign_technical:
