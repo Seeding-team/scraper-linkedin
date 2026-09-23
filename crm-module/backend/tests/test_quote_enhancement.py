@@ -35,6 +35,18 @@ def test_legacy_villa_and_null_update_unchanged():
     assert QuoteUpdateRequest().data is None
 
 
+def test_quote_update_quote_form_id_round_trips():
+    """"Mẫu ăn theo Đơn vị phát hành" (feedback 2026-09-24) - quote_form_id
+    phai co mat trong dump khi client THAT SU gui (khong dung exclude_none nhu
+    cac field khac o day, vi doi mau la gia tri THAT SU chu khong phai "bo gan"),
+    va PHAI vang mat khi client khong gui gi (khong lam quote_update() vo tinh
+    doi mau ve None moi lan luu hang muc/gia)."""
+    dump_with_form = QuoteUpdateRequest(quote_form_id="form-abc").model_dump(exclude_none=True)
+    assert dump_with_form["quote_form_id"] == "form-abc"
+    dump_without_form = QuoteUpdateRequest(data={"requestSummary": "x"}).model_dump(exclude_none=True)
+    assert "quote_form_id" not in dump_without_form
+
+
 @pytest.mark.parametrize("value", [None, {}, "invalid"])
 def test_payment_plan_must_be_list(value):
     with pytest.raises(ValidationError):
