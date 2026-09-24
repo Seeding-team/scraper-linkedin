@@ -1369,6 +1369,21 @@ export default function InternalEngagementPage() {
   }, []);
 
   const lastResultRef = useRef<{ success: boolean; error?: string } | null>(null);
+  // Watchdog cho sendComment(): bridge.js co the "tuong nhu san sang" (da tra
+  // loi PING) nhung khong thuc su xu ly START_BULK_COMMENT (context bi
+  // invalidate giua chung, background.js crash, hoac message that lac) - khi
+  // do KHONG CO event LI_COMMENT_STARTED/BULK_COMMENT_STARTED/*_FAILED_TO_START
+  // nao ban ve ca, UI dung im mai mai (khong toast, khong doi text nut) dung y
+  // het trieu chung "bam Gui khong an gi". Dat 1 timeout ngan sau khi gui -
+  // neu khong nhan duoc phan hoi nao thi tu bao loi ro rang cho nguoi dung.
+  const sendCommentWatchdogRef = useRef<number | null>(null);
+
+  const clearSendCommentWatchdog = () => {
+    if (sendCommentWatchdogRef.current !== null) {
+      window.clearTimeout(sendCommentWatchdogRef.current);
+      sendCommentWatchdogRef.current = null;
+    }
+  };
 
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
@@ -1382,6 +1397,7 @@ export default function InternalEngagementPage() {
         // cu (bridge.js dang chay tren trang) bi vo hieu, moi lenh gui di deu roi vao im
         // lang (khong loi, khong toast) - dung y het trieu chung "bam Gui khong ra gi ca".
         // Bao ro cho nguoi dung thay vi de im lang, va tat trang thai "san sang" gia.
+        clearSendCommentWatchdog();
         setIsExtensionReady(false);
         setIsLiExtensionReady(false);
         setIsRunning(false);
@@ -1390,10 +1406,13 @@ export default function InternalEngagementPage() {
       } else if (action === "BULK_COMMENT_FAILED_TO_START" || action === "LI_COMMENT_FAILED_TO_START") {
         // Background tu choi ngay lap tuc (vd dang tuong nham co 1 tien trinh khac
         // chua xong) - truoc day bi im lang hoan toan, gio bao ro cho nguoi dung.
+        clearSendCommentWatchdog();
         setIsRunning(false);
         setRunProgress(null);
+        console.error("[internal-engagement] Comment failed to start:", event.data);
         showToast(`Không gửi được comment: ${event.data?.error || "Lỗi không xác định"}`, "error");
       } else if (action === "LI_COMMENT_STARTED") {
+        clearSendCommentWatchdog();
         setIsRunning(true);
         setRunProgress("Đang mở bài viết LinkedIn...");
         lastResultRef.current = null;
@@ -1412,6 +1431,7 @@ export default function InternalEngagementPage() {
         }
         loadPosts();
       } else if (action === "BULK_COMMENT_STARTED") {
+        clearSendCommentWatchdog();
         setIsRunning(true);
         setRunProgress("Đang mở bài viết...");
         lastResultRef.current = null;
@@ -1468,6 +1488,7 @@ export default function InternalEngagementPage() {
 
   const closeModal = () => {
     if (isRunning) return;
+    clearSendCommentWatchdog();
     setModalPost(null);
   };
 
@@ -1480,29 +1501,40 @@ export default function InternalEngagementPage() {
   });
 
   const sendComment = () => {
-    // Truoc day chi check modalPost?.permalink_url va return IM LANG (khong
-    // toast) neu thieu - trong khi disabled-check cua nut va "Xem bai viet
-    // goc" deu da fallback ca link_post. Vai bai (dac biet bai them qua tab
-    // "Seeding ben ngoai"/custom-post cu) co the chi co link_post ma khong co
-    // permalink_url -> nut trong VAN sang/khong disabled (dung fallback o
-    // disabled-check) nhung bam vao roi vao day thi return im lang - dung y
-    // trieu chung "bam khong ra gi ca". Dong bo lai fallback + luon bao ro
-    // bang toast thay vi im lang.
-    const rawPostLink = modalPost?.permalink_url || (modalPost as any)?.link_post || (modalPost as any)?.link;
-    if (!rawPostLink) return showToast("Không tìm thấy link bài viết để gửi comment.");
-    if (!commentText.trim()) return showToast("Vui lòng nhập nội dung comment.");
-    if (!user?.email) {
-      return showToast("Chưa xác định được tài khoản đăng nhập — tải lại trang trước khi comment (nếu không KPI sẽ không được ghi nhận).");
-    }
+    console.log("[internal-engagement] sendComment() clicked", {
+      modalPostId: modalPost?.id,
+      isExtensionReady,
+      isLiExtensionReady,
+    });
+    try {
+      // Truoc day chi check modalPost?.permalink_url va return IM LANG (khong
+      // toast) neu thieu - trong khi disabled-check cua nut va "Xem bai viet
+      // goc" deu da fallback ca link_post. Vai bai (dac biet bai them qua tab
+      // "Seeding ben ngoai"/custom-post cu) co the chi co link_post ma khong co
+      // permalink_url -> nut trong VAN sang/khong disabled (dung fallback o
+      // disabled-check) nhung bam vao roi vao day thi return im lang - dung y
+      // trieu chung "bam khong ra gi ca". Dong bo lai fallback + luon bao ro
+      // bang toast thay vi im lang.
+      const rawPostLink = modalPost?.permalink_url || (modalPost as any)?.link_post || (modalPost as any)?.link;
+      if (!rawPostLink) {
+        console.warn("[internal-engagement] sendComment: khong co link bai viet", modalPost);
+        return showToast("Không tìm thấy link bài viết để gửi comment.");
+      }
+      if (!commentText.trim()) return showToast("Vui lòng nhập nội dung comment.");
+      if (!user?.email) {
+        return showToast("Chưa xác định được tài khoản đăng nhập — tải lại trang trước khi comment (nếu không KPI sẽ không được ghi nhận).");
+      }
 
-    const isLinkedIn = modalPost!.platform === "linkedin" || isLinkedInUrl(rawPostLink);
-    const isReady = isLinkedIn ? (isLiExtensionReady || isExtensionReady) : isExtensionReady;
-    if (!isReady) return showToast("Chưa kết nối được Extension. Vui lòng cài đặt và tải lại trang.");
+      const isLinkedIn = modalPost!.platform === "linkedin" || isLinkedInUrl(rawPostLink);
+      const isReady = isLinkedIn ? (isLiExtensionReady || isExtensionReady) : isExtensionReady;
+      if (!isReady) {
+        console.warn("[internal-engagement] sendComment: extension chua ready", { isLinkedIn, isExtensionReady, isLiExtensionReady });
+        return showToast("Chưa kết nối được Extension. Vui lòng cài đặt và tải lại trang.");
+      }
 
-    const targetLink = isLinkedIn ? sanitizeLinkedInUrl(rawPostLink) : rawPostLink;
+      const targetLink = isLinkedIn ? sanitizeLinkedInUrl(rawPostLink) : rawPostLink;
 
-    window.postMessage(
-      {
+      const payload = {
         action: "START_BULK_COMMENT",
         payload: {
           url: targetLink,
@@ -1526,9 +1558,32 @@ export default function InternalEngagementPage() {
                   : 1,
           },
         },
-      },
-      "*",
-    );
+      };
+
+      console.log("[internal-engagement] sendComment: postMessage START_BULK_COMMENT", payload);
+      window.postMessage(payload, "*");
+
+      // Watchdog: neu sau 5s khong nhan duoc BAT KY phan hoi nao tu extension
+      // (STARTED / FAILED_TO_START / INVALIDATED) thi tu bao loi ro rang -
+      // truoc day UI se dung im mai mai trong truong hop nay, dung y het
+      // trieu chung "bam Gui khong an gi ca" nguoi dung bao lai nhieu lan.
+      clearSendCommentWatchdog();
+      sendCommentWatchdogRef.current = window.setTimeout(() => {
+        sendCommentWatchdogRef.current = null;
+        console.error(
+          "[internal-engagement] sendComment: KHONG nhan duoc phan hoi nao tu Extension sau 5s (khong co STARTED/FAILED_TO_START). " +
+            "Extension co the da bi 'chet' ngam (background service worker sleep/crash) du bridge.js van bao ready. " +
+            "Hay thu: 1) mo chrome://extensions, bam nut reload (vong tron) tren 'Bulk Comment Extension', 2) F5 lai trang nay, 3) thu gui lai.",
+        );
+        showToast(
+          "Extension không phản hồi sau 5 giây (có thể đã bị treo ngầm). Hãy vào chrome://extensions, bấm reload extension rồi F5 lại trang này và thử lại.",
+          "error",
+        );
+      }, 5000);
+    } catch (err) {
+      console.error("[internal-engagement] sendComment: exception", err);
+      showToast(`Lỗi khi gửi comment: ${err instanceof Error ? err.message : String(err)}`, "error");
+    }
   };
 
   const toggleSelected = (postId: string) => {
