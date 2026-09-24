@@ -3,7 +3,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { API_BASE_URL, API_KEY } from '@/lib/env';
-import { seedingQuoteRepository, QuoteApprovalRequiresExceptionError, QuoteDocumentRenderer, buildPublicQuoteUrl } from '@/modules/quotes';
+import { seedingQuoteRepository, QuoteApprovalRequiresExceptionError, QuoteDocumentRenderer, QuotePrintLayoutSaveButton, buildPublicQuoteUrl } from '@/modules/quotes';
 import type { Quote, QuoteActivityLogEntry, QuoteHandoffChecklist, QuoteItem, QuoteProcessingStage, QuoteApprovalRuleSet, QuoteApprovalRuleType, QuoteRuleEvaluation, QuoteDeliveryLogEntry, QuoteForm, QuoteData, IssuerCompany } from '@/modules/quotes';
 import type { ContactOption } from './dealHydration';
 import { applyIssuerCompanySnapshot, applyIssuerPaymentTermsSnapshot } from '../integrations/quotes/types';
@@ -1355,6 +1355,20 @@ export function QuoteWorkspaceModal({
   // PublicQuotePage.tsx/QuoteDetailPage.tsx).
   const [printOrientation, setPrintOrientation] = useState<'portrait' | 'landscape'>('portrait');
   const [printResetKey, setPrintResetKey] = useState(0);
+  // Nut "Lưu" trong popup (y het toolbar in o QuoteDetailPage/PDF chinh
+  // thuc): do rong cot keo tay moi nhat tu QuoteDocumentRenderer. Quote da
+  // ton tai -> QuotePrintLayoutSaveButton goi thang /print-layout-prefs; CHUA
+  // tao (Buoc 1 tao moi) -> giu o draftPrintLayoutPrefs, gui kem
+  // data.printLayoutPrefs luc createRequest().
+  const [printColumnWidths, setPrintColumnWidths] = useState<Record<string, number> | null>(null);
+  const [draftPrintLayoutPrefs, setDraftPrintLayoutPrefs] = useState<{ orientation: 'portrait' | 'landscape'; columnWidths: Record<string, number> } | null>(null);
+  useEffect(() => {
+    const prefs = quote?.data?.printLayoutPrefs;
+    setPrintOrientation(prefs?.orientation || 'portrait');
+    setPrintColumnWidths(prefs?.columnWidths && Object.keys(prefs.columnWidths).length ? prefs.columnWidths : null);
+    setPrintResetKey(key => key + 1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [quote?.id]);
   const [sendModalOpen, setSendModalOpen] = useState(false);
   const [approveModalOpen, setApproveModalOpen] = useState(false);
   // Section 5 - Admin duyet ngoai le theo version: modal RIENG, chi mo khi
@@ -3108,9 +3122,16 @@ export function QuoteWorkspaceModal({
     // gia tri falsy) mac dinh hien 'phone' thay vi 'none' - Sale van doi
     // duoc sang 3 che do binh thuong qua radio ben duoi, quote DA TUNG luu
     // 'none' ro rang truoc do (that su ="Không giới hạn") KHONG bi doi lai.
+    // (Cot DB luon NOT NULL - mac dinh 'phone' + backfill quote cu nam o
+    // migration 149, fallback `|| 'phone'` chi con la luoi an toan.)
     setAccessMode(quote?.publicAccessMode || 'phone');
     setAccessEmailsText((quote?.publicAllowedEmails || []).join('\n'));
-    setAccessPhonesText((quote?.publicAllowedPhones || []).join('\n'));
+    // Danh sach SDT rong o che do 'phone' -> backend get_public_quote() dung
+    // SDT khach hang tren bao gia (data.customerPhone) de doi chieu, hien san
+    // dung so do o day de Sale thay dung so dang duoc phep xem.
+    const storedPhones = (quote?.publicAllowedPhones || []).join('\n');
+    const fallbackPhone = typeof quote?.data?.customerPhone === 'string' ? quote.data.customerPhone.trim() : '';
+    setAccessPhonesText(storedPhones || fallbackPhone);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [quote?.id]);
 
@@ -3570,6 +3591,7 @@ export function QuoteWorkspaceModal({
         ...(draftVisibleColumns ? { visibleColumns: draftVisibleColumns } : {}),
         ...(draftVisibleSummaryFields ? { visibleSummaryFields: draftVisibleSummaryFields } : {}),
         ...(draftVisibleCustomerFields ? { visibleCustomerFields: draftVisibleCustomerFields } : {}),
+        ...(draftPrintLayoutPrefs ? { printLayoutPrefs: draftPrintLayoutPrefs } : {}),
         // Field noi bo rieng cho luong "Yeu cau ho tro bao gia" - KHONG phai
         // customBlocks (customBlocks la du lieu hien cho khach qua public
         // link/PDF) - luu truc tiep vao `data` (JSONB schema-less, khong can
@@ -4404,9 +4426,13 @@ export function QuoteWorkspaceModal({
   // KHONG bat buoc phai co Deal (bao gia co the dung doc lap, khong gan Deal
   // van la 1 trang thai that). Rieng CREATE-MODE moi bat buoc them dieu
   // kien "da chon khach hang/co hoi" vi luc nay chua co gi ngoai draft.
-  const canPreview = quote ? itemsDraft.length > 0 : Boolean(draftDealId) && itemsDraft.length > 0;
+  // "ở bước 1 vẫn được xem bản xem trước" (feedback 2026-09-24): KHONG con
+  // bat buoc co hang muc (bang rong van xem duoc bo cuc/header/thong tin
+  // khach) va o create-mode chi can chon Khach hang HOAC Co hoi - luong
+  // Khach hang -> Bao gia thuong chua gan Co hoi nao o Buoc 1.
+  const canPreview = quote ? true : Boolean(draftDealId || draftCustomerId);
   const previewDisabledReason = !canPreview
-    ? 'Thêm thông tin khách hàng và hạng mục để xem bản khách hàng'
+    ? 'Chọn khách hàng để xem bản khách hàng'
     : undefined;
 
   // BUG THAT DA GAP ("bấm Preview khách hàng ở bước 1 ra bảng cũ chứ không
@@ -7272,10 +7298,30 @@ export function QuoteWorkspaceModal({
                     type="button"
                     className="qc-mini-btn"
                     title="Kéo viền phải mỗi cột trong bảng để chỉnh độ rộng, sau đó bấm In"
-                    onClick={() => setPrintResetKey(key => key + 1)}
+                    onClick={() => {
+                      setPrintColumnWidths(null);
+                      setPrintResetKey(key => key + 1);
+                    }}
                   >
                     <RotateCcw className="qc-icon" /> Đặt lại độ rộng cột
                   </button>
+                ) : null}
+                {/* Nut "Lưu" giong het toolbar ban PDF chinh thuc
+                 * (QuoteDetailPage) - luu huong giay + do rong cot de lan
+                 * in/tai PDF sau dung dung ban da chinh. */}
+                {previewSchema ? (
+                  <QuotePrintLayoutSaveButton
+                    quoteId={quote?.id ?? null}
+                    printOrientation={printOrientation}
+                    columnWidthsDraft={printColumnWidths}
+                    // CHI cap nhat dung khoa printLayoutPrefs - khong ghi de
+                    // ca `quote` (tranh dung cham state dang sua do).
+                    onSaved={updated => setQuote(prev => (prev ? { ...prev, data: { ...prev.data, printLayoutPrefs: updated.data?.printLayoutPrefs } } : prev))}
+                    onSaveLocal={prefs => {
+                      setDraftPrintLayoutPrefs(prefs);
+                      showToast(true, 'Đã lưu hướng giấy + độ rộng cột, sẽ áp dụng khi tạo báo giá.');
+                    }}
+                  />
                 ) : null}
                 <button type="button" className="crm-icon-action" aria-label="Đóng" onClick={() => setPreviewModalOpen(false)}>
                   <X className="qc-inline-icon" />
@@ -7322,6 +7368,8 @@ export function QuoteWorkspaceModal({
                   overallDiscountPercent={quote ? quote.overallDiscountPercent ?? null : draftOverallDiscountPercent ?? null}
                   printPreviewMode
                   printOrientation={printOrientation}
+                  initialColumnWidths={printColumnWidths}
+                  onColumnWidthsChange={setPrintColumnWidths}
                   contactPersonName={plainNameFor(quote ? quote.quoteOwnerId : draftQuoteOwnerId)}
                 />
               </div>
@@ -7332,7 +7380,7 @@ export function QuoteWorkspaceModal({
               <div className="qc-workspace-preview-modal-body">
                 <div className="qc-workspace-preview-modal-row">
                   <span className="qc-workspace-info-label">Khách hàng</span>
-                  <strong>{deal?.customerName || 'Chưa gắn cơ hội'}</strong>
+                  <strong>{deal?.customerName || (!quote && typeof draftPreviewData.customerRecipient === 'string' ? draftPreviewData.customerRecipient : '') || 'Chưa gắn cơ hội'}</strong>
                 </div>
                 <table className="qc-linked-table qc-linked-table--preview4col">
                   <thead>
