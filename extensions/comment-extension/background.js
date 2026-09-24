@@ -39,6 +39,22 @@ chrome.runtime.onInstalled.addListener(() => {
     clearPersistedState();
 });
 
+// Manifest V3: service worker nay bi Chrome tu dong "ngu" sau ~30s khong hoat
+// dong, roi Chrome PHAI tu wake lai khi co message/event moi - nhung tren
+// thuc te co truong hop wake khong thanh cong (bug/edge-case da biet cua
+// Chrome), khien chrome.runtime.sendMessage() ben content script KHONG BAO
+// GIO nhan duoc callback (khong loi, khong gi ca) - dung y trieu chung "bam
+// Gui khong ra gi ca" ma xac nhan qua watchdog phia web app. Dat 1 alarm
+// dinh ky de "danh thuc" service worker thuong xuyen hon, giam kha nang bi
+// ngu sau qua lau dan toi truong hop nay.
+chrome.alarms.create("keepAlive", { periodInMinutes: 0.4 });
+chrome.alarms.onAlarm.addListener((alarm) => {
+    if (alarm.name === "keepAlive") {
+        // Khong can lam gi - chi viec listener nay ton tai da du de Chrome
+        // tinh la "co hoat dong", tranh service worker bi terminate hoan toan.
+    }
+});
+
 let activeTargetTabId = null;
 let activeTargetConfig = null;
 let syncTimestamp = 0;

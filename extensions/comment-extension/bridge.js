@@ -4,14 +4,41 @@
 // Bridge between Web App window.postMessage and Extension chrome.runtime.sendMessage
 // -----------------------------------------------------------------------------
 
-function safeSendMessage(message, callback) {
+// Truoc day KHONG check chrome.runtime.lastError va KHONG co timeout gi ca -
+// neu background service worker (Manifest V3) bi treo/crash/khong wake len
+// duoc de xu ly message, chrome.runtime.sendMessage co the KHONG BAO GIO goi
+// callback (khong throw, khong loi, khong gi ca) - trang web dung im mai mai,
+// dung y het trieu chung "bam Gui khong ra gi ca" (xac nhan qua watchdog phia
+// FE). Them timeout 4s + luon check lastError de callback CHAC CHAN duoc goi.
+function safeSendMessage(message, callback, timeoutMs) {
     try {
         if (!chrome.runtime?.id) {
             window.postMessage({ action: "COMMENT_EXTENSION_INVALIDATED" }, "*");
             window.postMessage({ action: "LI_EXTENSION_INVALIDATED" }, "*");
             return;
         }
-        chrome.runtime.sendMessage(message, callback);
+        let settled = false;
+        const timeoutId = setTimeout(() => {
+            if (settled) return;
+            settled = true;
+            console.warn("[Bridge] chrome.runtime.sendMessage khong nhan duoc phan hoi trong " + (timeoutMs || 4000) + "ms — background service worker co the da bi treo/crash.");
+            callback({
+                success: false,
+                error: "Background service worker của Extension không phản hồi (có thể đã bị treo/crash). Hãy vào chrome://extensions, bấm reload (vòng tròn) trên extension rồi F5 lại trang này.",
+            });
+        }, timeoutMs || 4000);
+
+        chrome.runtime.sendMessage(message, (response) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timeoutId);
+            if (chrome.runtime.lastError) {
+                console.warn("[Bridge] chrome.runtime.sendMessage lastError:", chrome.runtime.lastError.message);
+                callback({ success: false, error: chrome.runtime.lastError.message || "Lỗi kết nối tới Extension background." });
+                return;
+            }
+            callback(response);
+        });
     } catch (e) {
         window.postMessage({ action: "COMMENT_EXTENSION_INVALIDATED" }, "*");
         window.postMessage({ action: "LI_EXTENSION_INVALIDATED" }, "*");
