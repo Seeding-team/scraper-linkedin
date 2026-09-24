@@ -18,6 +18,7 @@ export function ProgressRightDrawer({
   breadcrumb,
   onBreadcrumbClick,
   width = 640,
+  hideHeader = false,
 }: {
   eyebrow?: string;
   title: string;
@@ -28,12 +29,14 @@ export function ProgressRightDrawer({
   breadcrumb?: string[];
   onBreadcrumbClick?: (index: number) => void;
   width?: number;
+  hideHeader?: boolean;
 }) {
   return (
     <>
       <div className="progress-drawer-backdrop" onClick={onClose} />
       <aside className="progress-drawer" style={{ width: `min(${width}px, 96vw)` }}>
-        <header className="progress-drawer-header">
+        {!hideHeader && (
+          <header className="progress-drawer-header">
           <div className="min-w-0" style={{ flex: 1 }}>
             {breadcrumb && breadcrumb.length > 1 ? (
               <nav className="progress-drawer-breadcrumb">
@@ -66,7 +69,10 @@ export function ProgressRightDrawer({
             <X className="crm-icon" />
           </button>
         </header>
-        <div className="progress-drawer-body">{children}</div>
+        )}
+        <div className="progress-drawer-body" style={hideHeader ? { padding: 0 } : undefined}>
+          {children}
+        </div>
       </aside>
     </>
   );

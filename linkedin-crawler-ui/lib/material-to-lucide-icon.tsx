@@ -29,6 +29,15 @@ import {
   Funnel,
   UserPlus,
   Antenna,
+  Target,
+  SlidersHorizontal,
+  LayoutList,
+  TrendingUp,
+  MessageSquare,
+  ArrowRight,
+  Share2,
+  FolderArchive,
+  LineChart,
   type LucideIcon,
 } from "lucide-react";
 import type { MaterialSymbolName } from "@/components/ui";
@@ -65,14 +74,19 @@ const MAP: Partial<Record<MaterialSymbolName, LucideIcon>> = {
   person_search: FileSearch,
   description: FileSignature,
   history: History,
-  // Leads/Cơ hội (2026-08-29) — "filter_alt"/"person_add" mới thêm vào
-  // MaterialSymbolName union chưa có map ở đây thì rơi về FileText mặc định,
-  // đụng luôn icon "article" (Sản xuất nội dung) — đúng kiểu bug "history"
-  // ghi trong docstring trên. Ánh xạ tường minh, không icon nào khác trong
-  // MAP này đang dùng Funnel/UserPlus.
   filter_alt: Funnel,
   person_add: UserPlus,
   cell_tower: Antenna,
+  // Bổ sung các icon đặc trưng tránh trùng lặp:
+  track_changes: Target,
+  tune: SlidersHorizontal,
+  list_alt: LayoutList,
+  trending_up: TrendingUp,
+  chat_bubble: MessageSquare,
+  arrow_forward: ArrowRight,
+  share: Share2,
+  folder_shared: FolderArchive,
+  analytics: LineChart,
 };
 
 export function materialToLucideIcon(name: MaterialSymbolName): LucideIcon {
