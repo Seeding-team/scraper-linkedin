@@ -1480,17 +1480,25 @@ export default function InternalEngagementPage() {
   });
 
   const sendComment = () => {
-    if (!modalPost?.permalink_url) return;
+    // Truoc day chi check modalPost?.permalink_url va return IM LANG (khong
+    // toast) neu thieu - trong khi disabled-check cua nut va "Xem bai viet
+    // goc" deu da fallback ca link_post. Vai bai (dac biet bai them qua tab
+    // "Seeding ben ngoai"/custom-post cu) co the chi co link_post ma khong co
+    // permalink_url -> nut trong VAN sang/khong disabled (dung fallback o
+    // disabled-check) nhung bam vao roi vao day thi return im lang - dung y
+    // trieu chung "bam khong ra gi ca". Dong bo lai fallback + luon bao ro
+    // bang toast thay vi im lang.
+    const rawPostLink = modalPost?.permalink_url || (modalPost as any)?.link_post || (modalPost as any)?.link;
+    if (!rawPostLink) return showToast("Không tìm thấy link bài viết để gửi comment.");
     if (!commentText.trim()) return showToast("Vui lòng nhập nội dung comment.");
     if (!user?.email) {
       return showToast("Chưa xác định được tài khoản đăng nhập — tải lại trang trước khi comment (nếu không KPI sẽ không được ghi nhận).");
     }
 
-    const isLinkedIn = modalPost.platform === "linkedin" || Boolean(modalPost.permalink_url && (modalPost.permalink_url.includes("linkedin.com") || modalPost.permalink_url.includes("lnkd.in")));
+    const isLinkedIn = modalPost!.platform === "linkedin" || isLinkedInUrl(rawPostLink);
     const isReady = isLinkedIn ? (isLiExtensionReady || isExtensionReady) : isExtensionReady;
     if (!isReady) return showToast("Chưa kết nối được Extension. Vui lòng cài đặt và tải lại trang.");
 
-    const rawPostLink = modalPost.permalink_url || (modalPost as any).link_post;
     const targetLink = isLinkedIn ? sanitizeLinkedInUrl(rawPostLink) : rawPostLink;
 
     window.postMessage(
