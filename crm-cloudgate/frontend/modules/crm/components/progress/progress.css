@@ -1993,14 +1993,17 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 20px;
+  gap: 16px;
   background: #fff;
   border: 1px solid #f1f5f9;
   border-radius: 12px;
-  padding: 14px 20px;
+  padding: 14px 18px;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);
   transition: all 0.18s ease;
   cursor: pointer;
+  overflow: hidden;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 
 .progress-team-card-row:hover {
@@ -2018,14 +2021,14 @@
 .progress-team-card-left {
   display: flex;
   align-items: center;
-  gap: 14px;
-  min-width: 250px;
-  flex-shrink: 0;
+  gap: 12px;
+  min-width: 170px;
+  flex: 0 1 auto;
 }
 
 .progress-team-icon-box {
-  width: 44px;
-  height: 44px;
+  width: 42px;
+  height: 42px;
   border-radius: 10px;
   display: grid;
   place-items: center;
@@ -2040,52 +2043,31 @@
 .progress-team-meta {
   display: flex;
   flex-direction: column;
+  min-width: 0;
 }
 
 .progress-team-name {
   margin: 0;
-  font-size: 15.5px;
+  font-size: 15px;
   font-weight: 800;
   color: #0f172a;
   letter-spacing: -0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .progress-team-leader {
   margin: 2px 0 0;
   font-size: 12.5px;
   color: #64748b;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .progress-team-avatar-stack {
-  display: flex;
-  align-items: center;
-  margin-top: 5px;
-}
-
-.progress-team-avatar-circle {
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  border: 2px solid #fff;
-  margin-left: -5px;
-  font-size: 9.5px;
-  font-weight: 700;
-  color: #fff;
-  display: grid;
-  place-items: center;
-  text-transform: uppercase;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
-}
-
-.progress-team-avatar-circle:first-child {
-  margin-left: 0;
-}
-
-.progress-team-avatar-pill {
-  font-size: 10.5px;
-  font-weight: 600;
-  color: #64748b;
-  margin-left: 5px;
+  display: none;
 }
 
 /* Card Right: 9 Stats Columns */
@@ -2093,19 +2075,21 @@
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 20px;
-  flex: 1;
+  gap: 12px;
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .progress-team-stat-col {
   display: flex;
   flex-direction: column;
   align-items: center;
-  min-width: 48px;
+  min-width: 36px;
+  flex-shrink: 0;
 }
 
 .progress-team-stat-val {
-  font-size: 15px;
+  font-size: 14.5px;
   font-weight: 700;
   color: #0f172a;
   line-height: 1.2;
@@ -2119,9 +2103,9 @@
 }
 
 .progress-team-sla-badge {
-  font-size: 12.5px;
+  font-size: 12px;
   font-weight: 800;
-  padding: 2px 10px;
+  padding: 2px 8px;
   border-radius: 6px;
   line-height: 1.2;
 }
@@ -2137,12 +2121,13 @@
 }
 
 .progress-team-pipeline-col {
-  min-width: 96px;
+  min-width: 90px;
   align-items: flex-end;
+  flex-shrink: 0;
 }
 
 .progress-team-stat-val.pipeline-val {
-  font-size: 14px;
+  font-size: 13.5px;
   font-weight: 800;
   color: #0f172a;
   white-space: nowrap;
@@ -2170,7 +2155,7 @@
 }
 
 /* Responsive adjustments for Teams view */
-@media (max-width: 1024px) {
+@media (max-width: 900px) {
   .progress-team-card-row {
     flex-direction: column;
     align-items: stretch;

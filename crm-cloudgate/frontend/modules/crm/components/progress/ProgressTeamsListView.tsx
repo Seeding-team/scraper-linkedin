@@ -13,7 +13,6 @@ import {
   Code2,
   Building2,
   UserCheck,
-  User,
   ChevronLeft,
   ChevronRight,
 } from 'lucide-react';
@@ -104,9 +103,6 @@ export function formatPipelineCompact(val: number | null | undefined): string {
   if (!val || val <= 0) return '0 đ';
   return `${val.toLocaleString('vi-VN')} đ`;
 }
-
-// Sample avatar color palettes for the avatar stack
-const AVATAR_BG_COLORS = ['#fda4af', '#93c5fd', '#86efac', '#c4b5fd', '#fcd34d', '#67e8f9'];
 
 export function ProgressTeamsListView({
   teams,
@@ -213,11 +209,6 @@ export function ProgressTeamsListView({
             const Icon = theme.icon;
             const isSelected = selectedTeamId === team.teamId;
 
-            // Render actual member avatars or count bubbles
-            const hasMembers = actualMembers.length > 0;
-            const avatarCount = hasMembers ? Math.min(4, actualMembers.length) : Math.min(4, Math.max(1, team.memberCount));
-            const remainingCount = (hasMembers ? actualMembers.length : team.memberCount) > 4 ? (hasMembers ? actualMembers.length : team.memberCount) - 4 : 0;
-
             return (
               <div
                 key={team.teamId}
@@ -239,54 +230,6 @@ export function ProgressTeamsListView({
                   <div className="progress-team-meta">
                     <h3 className="progress-team-name">{teamName}</h3>
                     <p className="progress-team-leader">Leader: {leader}</p>
-
-                    <div className="progress-team-avatar-stack">
-                      {hasMembers
-                        ? actualMembers.slice(0, 4).map((m, aIdx) => {
-                            const avatarUrl = (m as any).avatarUrl || (m as any).avatar || (m as any).avatar_url;
-                            if (avatarUrl) {
-                              return (
-                                <img
-                                  key={m.userId}
-                                  src={avatarUrl}
-                                  alt={m.userName || ''}
-                                  className="progress-team-avatar-circle"
-                                  style={{ objectFit: 'cover' }}
-                                  title={m.userName || 'Thành viên'}
-                                />
-                              );
-                            }
-                            return (
-                              <span
-                                key={m.userId}
-                                className="progress-team-avatar-circle"
-                                style={{
-                                  backgroundColor: AVATAR_BG_COLORS[(idx * 2 + aIdx) % AVATAR_BG_COLORS.length],
-                                }}
-                                title={m.userName || 'Thành viên'}
-                              >
-                                {(m.userName || '?').trim().slice(0, 1).toUpperCase()}
-                              </span>
-                            );
-                          })
-                        : Array.from({ length: avatarCount }).map((_, aIdx) => (
-                            <span
-                              key={aIdx}
-                              className="progress-team-avatar-circle"
-                              style={{
-                                backgroundColor: AVATAR_BG_COLORS[(idx + aIdx) % AVATAR_BG_COLORS.length],
-                              }}
-                              title={`Thành viên ${aIdx + 1}`}
-                            >
-                              <User size={11} strokeWidth={2.5} />
-                            </span>
-                          ))}
-                      {remainingCount > 0 && (
-                        <span className="progress-team-avatar-pill">
-                          +{remainingCount}
-                        </span>
-                      )}
-                    </div>
                   </div>
                 </div>
 

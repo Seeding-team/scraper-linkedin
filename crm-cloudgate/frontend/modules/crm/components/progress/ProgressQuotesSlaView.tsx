@@ -458,12 +458,6 @@ export function ProgressQuotesSlaView({
                         {/* Presale Profile */}
                         <td>
                           <div className="quote-person-cell" title={`Presale: ${presaleName}`}>
-                            <span
-                              className="quote-person-avatar"
-                              style={{ backgroundColor: presaleBg }}
-                            >
-                              {presaleInitial}
-                            </span>
                             <span className="quote-person-name">
                               {presaleName}
                             </span>
@@ -473,12 +467,6 @@ export function ProgressQuotesSlaView({
                         {/* Sale Profile */}
                         <td>
                           <div className="quote-person-cell" title={`Sale: ${saleName}`}>
-                            <span
-                              className="quote-person-avatar"
-                              style={{ backgroundColor: saleBg }}
-                            >
-                              {saleInitial}
-                            </span>
                             <span className="quote-person-name">
                               {saleName}
                             </span>
