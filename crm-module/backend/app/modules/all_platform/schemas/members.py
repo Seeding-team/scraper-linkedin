@@ -25,6 +25,7 @@ class MemberCreateRequest(BaseModel):
     leader_email: Optional[str] = None
     cv_link: Optional[str] = None
     employment_status: Optional[str] = None
+    level: Optional[str] = None
 
 
 class MemberUpdateRequest(BaseModel):
@@ -47,6 +48,7 @@ class MemberUpdateRequest(BaseModel):
     leader_email: Optional[str] = None
     cv_link: Optional[str] = None
     employment_status: Optional[str] = None
+    level: Optional[str] = None
 
 
 class MemberDeleteRequest(BaseModel):

@@ -194,6 +194,12 @@ function toUpdateQuotePayload(input: UpdateQuoteInput) {
     items: input.items?.map(toQuoteItemPayload),
     issuer_company_id: input.issuerCompanyId ?? null,
   };
+  // "Mẫu ăn theo Đơn vị phát hành" (feedback 2026-09-24) - CHI gui khi caller
+  // that su truyen quoteFormId (doi mau that su), KHONG dung `?? null` nhu
+  // issuer_company_id o tren vi backend (QuoteUpdateRequest) dung exclude_none
+  // mac dinh - gui null se bi bo qua (khong doi), khong can tri-state nhu
+  // project_id/sla_due_at.
+  if (input.quoteFormId) payload.quote_form_id = input.quoteFormId;
   if ('projectId' in input) payload.project_id = input.projectId ?? null;
   if ('overallDiscountPercent' in input) payload.overall_discount_percent = input.overallDiscountPercent ?? null;
   if ('slaDueAt' in input) payload.sla_due_at = input.slaDueAt ?? null;

@@ -181,6 +181,7 @@ export interface MemberProfile {
   employment_status?: string | null;
   off_effective_at?: string | null;
   is_recruitment_synced?: boolean | null;
+  level?: string | null;
   skill_ids?: string[];
   skills?: Skill[];
   created_at?: string;

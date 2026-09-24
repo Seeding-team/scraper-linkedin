@@ -1961,6 +1961,24 @@ def update_quote(quote_id: str, payload: dict, actor_id: str | None) -> dict:
         direct_fields["sla_due_at"] = payload.get("sla_due_at")
     if "overall_discount_percent" in payload:
         direct_fields["overall_discount_percent"] = payload.get("overall_discount_percent")
+    # "Mẫu ăn theo Đơn vị phát hành" (feedback 2026-09-24, "chọn Markee thì mẫu
+    # báo giá auto fill mẫu thuộc đơn vị phát hành đó") - truoc gio quote_form_id
+    # CHI gan duoc luc TAO (create_quote), khong co cach doi lai sau khi quote da
+    # ton tai. Them o day theo DUNG pattern project_id/sla_due_at (update THANG
+    # vao bang quotes, KHONG qua RPC quote_update - form chi la metadata tro
+    # schema, khong can recompute gia/VAT). Doi ca form_schema_version +
+    # form_snapshot cung luc (giong het create_quote()) - form_snapshot la BAN
+    # SNAPSHOT dung de RENDER (PDF/public/bang hang muc), khong doi no thi doi
+    # quote_form_id se chi doi "nhan", giao dien van hien schema mau CU.
+    if "quote_form_id" in payload:
+        new_form_id = payload.get("quote_form_id")
+        if new_form_id and new_form_id != current_quote.get("quoteFormId"):
+            form = supabase.table(FORMS_TABLE).select("*").eq("id", new_form_id).single().execute().data
+            if not form or form["status"] != "active":
+                raise ValueError("Mẫu báo giá không còn hoạt động.")
+            direct_fields["quote_form_id"] = form["id"]
+            direct_fields["form_schema_version"] = form["schema_version"]
+            direct_fields["form_snapshot"] = form["schema_json"]
     quote_type_changed = False
     old_quote_type_codes: list[str] = []
     if "quote_type_codes" in payload:
@@ -2239,7 +2257,16 @@ def create_quote_version(clicked_quote_id: str, actor_id: str | None) -> dict:
 
 def list_quote_versions(chain_id: str) -> list[dict]:
     """Toàn bộ phiên bản (V1..Vn) của 1 chuỗi báo giá, mới nhất trước - dùng cho
-    khối "Lịch sử phiên bản" (QuoteDetailPage) và mini-card Deal drawer."""
+    khối "Lịch sử phiên bản" (QuoteDetailPage), mini-card Deal drawer, VÀ
+    dropdown "xem phiên bản cũ" ở Quote Center + trang Khách hàng
+    (toggleExpandVersions/renderOlderVersionRows, toggleExpandQuoteVersions).
+
+    Feedback (2026-09-24): dropdown phiên bản cũ phải hiện ĐỦ thông tin như
+    phiên bản hiện tại (Dự án/Presale/Sale/giá vốn/margin), KHÔNG chỉ số báo
+    giá + trạng thái - nên embed project/technicalOwner/quoteOwner + load
+    items thật (để hasCostData/costTotal/grossMarginPercent tính đúng, thay
+    vì luôn rỗng do truyền items=[] như code cũ) - đúng pattern đã dùng ở
+    list_quotes_by_phase() (Quote Center danh sách chính)."""
     supabase: Client = get_supabase_client()
     result = (
         supabase.table(QUOTES_TABLE)
@@ -2250,7 +2277,46 @@ def list_quote_versions(chain_id: str) -> list[dict]:
         .order("version_number", desc=True)
         .execute()
     )
-    return [_row_to_quote(row, []) for row in (result.data or [])]
+    rows = result.data or []
+    if not rows:
+        return []
+
+    project_ids = list({row["project_id"] for row in rows if row.get("project_id")})
+    projects_by_id: dict[str, dict] = {}
+    if project_ids:
+        proj_result = (
+            supabase.table("projects")
+            .select("id, project_code, name, status")
+            .in_("id", project_ids)
+            .execute()
+        )
+        projects_by_id = {p["id"]: p for p in (proj_result.data or [])}
+
+    owner_ids = list(
+        {row["technical_owner_id"] for row in rows if row.get("technical_owner_id")}
+        | {row["quote_owner_id"] for row in rows if row.get("quote_owner_id")}
+    )
+    owners_by_id: dict[str, dict] = {}
+    if owner_ids:
+        owner_result = supabase.table("app_users").select("id, name").in_("id", owner_ids).execute()
+        owners_by_id = {u["id"]: u for u in (owner_result.data or [])}
+
+    quotes: list[dict] = []
+    for row in rows:
+        quote = _row_to_quote(row, _quote_items(row["id"]))
+        quote["customerPriceBeforeVat"] = quote.get("netRevenue")
+        project_row = projects_by_id.get(row.get("project_id")) if row.get("project_id") else None
+        quote["project"] = (
+            {"id": project_row["id"], "code": project_row.get("project_code"), "name": project_row.get("name"), "status": project_row.get("status")}
+            if project_row
+            else None
+        )
+        tech_owner = owners_by_id.get(row.get("technical_owner_id")) if row.get("technical_owner_id") else None
+        quote["technicalOwner"] = {"id": tech_owner["id"], "name": tech_owner.get("name")} if tech_owner else None
+        quote_owner_row = owners_by_id.get(row.get("quote_owner_id")) if row.get("quote_owner_id") else None
+        quote["quoteOwner"] = {"id": quote_owner_row["id"], "name": quote_owner_row.get("name")} if quote_owner_row else None
+        quotes.append(quote)
+    return quotes
 
 
 HANDOFF_TABLE = "quote_handoff_checklist"
@@ -2359,10 +2425,20 @@ def assign_quote_owner(
     phan biet "khong gui field nay" voi "gui gia tri None de bo gan" (giong
     han che cua issuer company nullable field truoc do)."""
     _ensure_quote_in_instance(quote_id)
+    # BUG THAT DA GAP (feedback 2026-09-24, kem screenshot "không qua được
+    # bước 2" - alert "Người phụ trách báo giá phải có vai trò báo giá phù
+    # hợp"): commit d326cf10 (2026-09-23) da GOP dropdown Presale/Sale o card
+    # "Phân công & SLA" thanh 1 danh sach hop nhat - CHO PHEP chon bat ky ai
+    # co quote_business_role presale/sale/both vao CA 2 o (xem comment
+    # businessRoleUsers, QuoteWorkspaceModal.tsx) - nhung validate o day VAN
+    # con GIU NGUYEN rieng ("presale","both") cho ky thuat / ("sale","both")
+    # cho bao gia tu TRUOC khi gop, nen chon 1 nguoi CHI co role Presale vao o
+    # Sale (dung nhu FE cho phep) bi tu choi ngay khi bam "Bàn giao" - Update
+    # ca 2 thanh CUNG 1 tap hop day du, khop dung voi FE da cho phep.
     if assign_technical:
-        _validate_quote_owner_assignment(technical_owner_id, ("presale", "both"), "Người phụ trách kỹ thuật")
+        _validate_quote_owner_assignment(technical_owner_id, ("presale", "sale", "both"), "Người phụ trách kỹ thuật")
     if assign_quote_owner_field:
-        _validate_quote_owner_assignment(quote_owner_id, ("sale", "both"), "Người phụ trách báo giá")
+        _validate_quote_owner_assignment(quote_owner_id, ("presale", "sale", "both"), "Người phụ trách báo giá")
     supabase: Client = get_supabase_client()
     update_data: dict = {"updated_by": actor_id}
     if assign_technical:

@@ -35,10 +35,19 @@ type MemberFormState = {
   linked_user_id_2: string;
   leader_name: string;
   leader_email: string;
+  level: string;
   skill_ids: string[];
 };
 
 type MemberTab = "accounts" | "members";
+
+// Khop dung LEVEL_MAP that cua pm-new — Level la khai niem RIENG, KHONG
+// lien quan Team (vi tri/phong ban). Lay tu currentLevel ben he tuyen dung
+// khi dong bo, hoac admin tu chon tay khi Them/Sua thanh vien.
+const LEVEL_OPTIONS = [
+  "Intern LV1", "Intern LV2", "Intern LV3", "Fresher",
+  "Core Team", "Presales", "Sales", "Leader",
+];
 
 // Main la CRM markee co dinh, khong co endpoint /auth/workspaces (khong co
 // workspace switcher o Main) - danh sach 3 workspace/clone doc lap dung
@@ -91,6 +100,7 @@ function emptyMemberForm(): MemberFormState {
     linked_user_id_2: "",
     leader_name: "",
     leader_email: "",
+    level: "",
     skill_ids: [],
   };
 }
@@ -113,6 +123,7 @@ function memberToForm(m: MemberProfile): MemberFormState {
     linked_user_id_2: m.linked_user_id_2 || "",
     leader_name: m.leader_name || "",
     leader_email: m.leader_email || "",
+    level: m.level || "",
     skill_ids: m.skill_ids || [],
   };
 }
@@ -485,6 +496,7 @@ export function MemberManagementContent() {
         linked_user_id_2: form.linked_user_id_2 || undefined,
         leader_name: form.leader_name.trim() || undefined,
         leader_email: form.leader_email.trim() || undefined,
+        level: form.level || undefined,
         skill_ids: form.skill_ids,
       };
       const res =
@@ -942,23 +954,25 @@ export function MemberManagementContent() {
                     <th className="py-3 px-4">STT</th>
                     <th className="py-3 px-4">Display Name</th>
                     <th className="py-3 px-4">Họ và tên</th>
+                    <th className="py-3 px-4">Level</th>
                     <th className="py-3 px-4">Team</th>
                     <th className="py-3 px-4">Kỹ năng</th>
                     <th className="py-3 px-4">Telegram</th>
                     <th className="py-3 px-4">Email</th>
                     <th className="py-3 px-4">Leader</th>
                     <th className="py-3 px-4">Tài Khoản</th>
+                    <th className="py-3 px-4">Cấp quyền</th>
                     <th className="py-3 px-4">Trạng thái</th>
                     <th className="py-3 px-4 text-center">Hành động</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-outline-variant text-on-surface-variant">
                   {loading ? (
-                    <tr><td colSpan={10} className="py-12 text-center">Đang tải danh sách thành viên...</td></tr>
+                    <tr><td colSpan={12} className="py-12 text-center">Đang tải danh sách thành viên...</td></tr>
                   ) : membersError ? (
-                    <tr><td colSpan={10} className="py-12 text-center text-red-600 font-medium">{membersError}</td></tr>
+                    <tr><td colSpan={12} className="py-12 text-center text-red-600 font-medium">{membersError}</td></tr>
                   ) : filteredMembers.length === 0 ? (
-                    <tr><td colSpan={10} className="py-12 text-center italic">Chưa có thành viên nào.</td></tr>
+                    <tr><td colSpan={12} className="py-12 text-center italic">Chưa có thành viên nào.</td></tr>
                   ) : (
                     filteredMembers.map((m, index) => {
                       const account = m.linked_user_id ? appUsersById.get(m.linked_user_id) : undefined;
@@ -969,6 +983,7 @@ export function MemberManagementContent() {
                           <td className="py-3 px-4 text-on-surface-variant">{index + 1}</td>
                           <td className="py-3 px-4 font-semibold text-on-surface">{m.display_name}</td>
                           <td className="py-3 px-4">{m.full_name}</td>
+                          <td className="py-3 px-4">{m.level || "—"}</td>
                           <td className="py-3 px-4">{m.team || "—"}</td>
                           <td className="py-3 px-4 max-w-[200px] truncate" title={skillNames.join(", ")}>
                             {skillNames.length ? skillNames.join(", ") : "—"}
@@ -981,6 +996,15 @@ export function MemberManagementContent() {
                               <span className="text-on-surface-variant">OFF</span>
                             ) : account ? (
                               <span className="text-emerald-600 font-bold">Có</span>
+                            ) : (
+                              <span className="text-amber-600">Chưa có</span>
+                            )}
+                          </td>
+                          <td className="py-3 px-4">
+                            {isOff ? (
+                              <span className="text-on-surface-variant">OFF</span>
+                            ) : account ? (
+                              <span className="text-emerald-600 font-bold">Đã có</span>
                             ) : (
                               <span className="text-amber-600">Chưa có</span>
                             )}
@@ -1160,6 +1184,12 @@ export function MemberManagementContent() {
               <section className="space-y-3">
                 <h4 className="text-[10px] font-bold uppercase tracking-wide text-on-surface-variant border-b border-outline-variant pb-1">Thông tin tổ chức</h4>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <Field label="Level">
+                    <select value={form.level} onChange={e => setForm({ ...form, level: e.target.value })}>
+                      <option value="">-- Chưa có --</option>
+                      {LEVEL_OPTIONS.map(lv => <option key={lv} value={lv}>{lv}</option>)}
+                    </select>
+                  </Field>
                   <Field label="Team" required>
                     <input value={form.team} onChange={e => setForm({ ...form, team: e.target.value })} placeholder="Vd: Sales" list="member-team-options" />
                     <datalist id="member-team-options">

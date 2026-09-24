@@ -26,7 +26,7 @@ _MEMBER_FIELDS = (
     "id, display_name, full_name, email, telegram_username, phone, birth_date, "
     "gender, team, position, department, experience_year, linked_user_id, "
     "linked_user_id_2, employment_status, off_effective_at, leader_name, "
-    "leader_email, cv_link, is_recruitment_synced, created_at, updated_at"
+    "leader_email, cv_link, is_recruitment_synced, level, created_at, updated_at"
 )
 
 # Nhúng thẳng skills qua embed resource của PostgREST thay vì truy vấn riêng
@@ -337,46 +337,71 @@ def import_members_from_rows(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
 # ── Đồng bộ từ hệ thống tuyển dụng (cv.markeeai.com) ─────────────────────────
 
 # Nhom vi tri ung tuyen -> team, port tu TEAM_POSITIONS cua pm-new (cung 1
-# nguon tuyen dung) - doi ten nhom "Sales/Customer Care" -> "Sale" va
-# "Dev/DevOps" -> "Dev" cho khop dung chu "Sale"/"Marketing" ma luat full CRM
-# access + auto quote_business_role dang so sanh (xem crm_permission_service.
-# has_full_crm_access). KHONG port logic phan cap Intern L1/L2 cua pm-new -
-# do la he thong danh gia thuc tap sinh rieng cua pm-new, khong ap dung o day.
-_RECRUITMENT_TEAM_POSITIONS: dict[str, tuple[str, ...]] = {
-    "Infrastructure": (
-        "Network Engineer", "System Administrator", "IT Support/Helpdesk",
-        "Cybersecurity Specialist", "Network Team", "System Team", "Security Team",
-        "Hội nghị & Tổng đài", "Cloud & Datacenter",
-    ),
-    "Dev": (
-        "Product Manager", "UI/UX Designer", "Business Analyst",
-        "Bridge Software Engineer (BrSE)", "Tester/QC",
-        "Frontend Developer", "Backend Developer", "Mobile Developer",
-        "Fullstack Developer", "DevOps Engineer", "BA", "Full-stack Developer",
-        "DevOps / Platform", "DevOps", "Video Editor", "Graphic Designer",
-        "Motion Designer", "Photographer",
-    ),
-    "AI": (
-        "AI / ML Engineer", "Data Scientist", "Data Engineer",
-        "Computer Vision Engineer", "NLP Engineer", "Data Analyst / Engineer",
-        "AI Product / Research",
-    ),
-    "Marketing": (
-        "Content Creator", "SEO Specialist", "Digital Marketer",
-        "Media Designer", "Copywriter", "Content & Social",
-        "Performance & Acquisition", "Marketing Ops",
-    ),
-    "Sale": (
-        "Account Executive", "Sales Consultant",
-        "Customer Support Representative", "Telemarketer", "B2B Sales",
-        "Business Development", "Customer Success", "Sales/Customer Care",
-    ),
+# doi ten "Sales"->"Sale" va "Dev/DevOps"->"Dev" cho khop dung chu
+# "Sale"/"Marketing" ma luat full CRM access + auto quote_business_role dang
+# so sanh (xem crm_permission_service.has_full_crm_access). KHONG port logic
+# phan cap Intern L1/L2 cua pm-new - he thong danh gia thuc tap sinh rieng
+# cua pm-new, khong ap dung o day.
+_RECRUITMENT_TEAM_RENAME = {"Sales": "Sale", "Dev/DevOps": "Dev"}
+
+# Khop dung LEVEL_MAP that cua pm-new (members.py:68-77 ben pm-new) - Level
+# la KHAI NIEM RIENG, KHONG lien quan Team (vi tri/phong ban) - lay tu
+# `currentLevel` trong RECRUITMENT_META (admin_notes cua ung vien).
+_LEVEL_MAP = {
+    "lv1": "Intern LV1",
+    "lv2": "Intern LV2",
+    "lv3": "Intern LV3",
+    "fresher": "Fresher",
+    "core": "Core Team",
+    "presales": "Presales",
+    "sales": "Sales",
+    "leader": "Leader",
 }
 
 
-def _recruitment_primary_team(positions: list[Any]) -> Optional[str]:
-    for team, team_positions in _RECRUITMENT_TEAM_POSITIONS.items():
-        if any(pos in team_positions for pos in positions):
+def _fetch_recruitment_position_team_map(headers: Dict[str, str], base: str) -> Dict[str, str]:
+    """Doc TRUC TIEP bang `recruitment_positions` cua he tuyen dung
+    (ai-marketing, supabase/schema.sql:210-272 - admin tu them/sua vi tri qua
+    UI, KHONG hardcode) thay vi 1 dict tinh cung cap trong code - dict cu
+    port tu TEAM_POSITIONS cua pm-new da LOI THOI so voi danh sach vi tri
+    THAT dang dung (thieu han "Network Team", "Content & Social", "B2B
+    Sales"... them thua nhieu vi tri khong con ton tai), gay loi khong bat
+    duoc Team cho da so ung vien that. Tra ve map {label vi tri (career_
+    journey) -> ten Team da doi ten theo _RECRUITMENT_TEAM_RENAME}."""
+    try:
+        resp = requests.get(
+            f"{base}/rest/v1/recruitment_positions?select=label,team",
+            headers=headers,
+            timeout=30,
+        )
+        resp.raise_for_status()
+        rows = resp.json() or []
+    except Exception:
+        logger.warning("sync_members_from_recruitment: khong tai duoc recruitment_positions, dung map rong")
+        return {}
+    result: Dict[str, str] = {}
+    for row in rows:
+        label = str(row.get("label") or "").strip()
+        team = str(row.get("team") or "").strip()
+        if not label or not team:
+            continue
+        result[label] = _RECRUITMENT_TEAM_RENAME.get(team, team)
+    return result
+
+
+def _recruitment_primary_team(positions: list[Any], position_team_map: Dict[str, str]) -> Optional[str]:
+    """Khop CHINH XAC tung vi tri trong career_journey voi position_team_map
+    (tu _fetch_recruitment_position_team_map, doc song tu DB tuyen dung) -
+    KHONG fallback ve vi tri tho (khac pm-new, noi Team chi la hien thi tham
+    khao) vi Team ben nay la dieu kien so sanh CHINH XAC cho luat phan quyen
+    full CRM access/vai tro bao gia mac dinh (has_full_crm_access,
+    defaultQuoteBusinessRole) - 1 gia tri "la" lot vao se khong khop bat ky
+    luat nao (vo hai ve quyen) nhung lam bang Quan ly thanh vien loan gia
+    tri, khong nhat quan. Khong khop bucket nao -> None (o trong), admin tu
+    dien tay neu can."""
+    for pos in positions:
+        team = position_team_map.get(str(pos).strip())
+        if team:
             return team
     return None
 
@@ -446,6 +471,7 @@ def sync_members_from_recruitment() -> Dict[str, Any]:
     except Exception:
         leaders_list = []
     leaders_map = {str(row.get("id") or "").strip().lower(): row for row in leaders_list if row.get("id")}
+    position_team_map = _fetch_recruitment_position_team_map(headers, base)
 
     # resigned nhap truoc, accepted de sau -> accepted duoc uu tien neu trung
     # email (giong het thu tu cua pm-new).
@@ -505,10 +531,9 @@ def sync_members_from_recruitment() -> Dict[str, Any]:
         phone = str(candidate.get("phone") or "").strip() or None
         positions = candidate.get("career_journey") or []
         position = str(positions[0]).strip() if positions else None
-        # Fallback y het pm-new: khong bat duoc bucket nao thi dung luon
-        # position tho lam Team, thay vi de trong (xem members.py dong 1177
-        # ben pm-new: `department = primary_team or position`).
-        team = _recruitment_primary_team(positions) or position
+        # KHONG fallback ve vi tri tho (khac pm-new) - xem docstring
+        # _recruitment_primary_team(). Khong khop bucket nao -> None.
+        team = _recruitment_primary_team(positions, position_team_map)
         cv_link = str(candidate.get("cv") or "").strip() or None
 
         birth_date: Optional[str] = None
@@ -518,6 +543,8 @@ def sync_members_from_recruitment() -> Dict[str, Any]:
 
         meta = _recruitment_meta(candidate.get("admin_notes"))
         telegram_username = str(meta.get("telegram") or "").strip() or None
+        current_level_raw = str(meta.get("currentLevel") or "").strip().lower()
+        level = _LEVEL_MAP.get(current_level_raw, meta.get("currentLevel")) if current_level_raw else None
 
         leader_data = meta.get("leader")
         leader_id = ""
@@ -560,6 +587,11 @@ def sync_members_from_recruitment() -> Dict[str, Any]:
                     update_data["telegram_username"] = telegram_username
                 if team:
                     update_data["team"] = team
+                elif existing.get("is_recruitment_synced"):
+                    # Don sach gia tri "la" tu ban fallback cu (vd "Quan tri",
+                    # "Sales", "Dev/DevOps" tu vi tri tho) - chi lam voi Member
+                    # do CHINH dong bo nay quan ly, khong dung tay admin tao.
+                    update_data["team"] = None
                 if position:
                     update_data["position"] = position
                 if birth_date:
@@ -570,6 +602,14 @@ def sync_members_from_recruitment() -> Dict[str, Any]:
                     update_data["leader_name"] = leader_name
                 if leader_email:
                     update_data["leader_email"] = leader_email
+                if level:
+                    update_data["level"] = level
+                if not existing.get("is_recruitment_synced"):
+                    # Member co tu truoc (tao tay/import) nhung gio khop that
+                    # voi 1 ung vien dang active trong he tuyen dung - tu day
+                    # coi la do dong bo nay quan ly, de co che tu xoa khi ho
+                    # roi khoi he tuyen dung hoat dong dung.
+                    update_data["is_recruitment_synced"] = True
 
                 old_status = existing.get("employment_status") or "ON"
                 update_data["employment_status"] = employment_status
@@ -616,6 +656,7 @@ def sync_members_from_recruitment() -> Dict[str, Any]:
                     "cv_link": cv_link,
                     "leader_name": leader_name,
                     "leader_email": leader_email,
+                    "level": level,
                     "is_recruitment_synced": True,
                     "employment_status": employment_status,
                     "off_effective_at": now_iso if employment_status == "OFF" else None,

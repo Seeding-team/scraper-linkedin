@@ -29,7 +29,7 @@ import {
   quoteDisplayStatus,
   relativeTime,
 } from '../utils/quoteDisplay';
-import { ArrowDownToLine, CheckCircle2, ChevronDown, ChevronUp, Eye, FileText, GitBranchPlus, History, LayoutGrid, Link2, Maximize2, Minimize2, Plus, Printer, RectangleHorizontal, RectangleVertical, RotateCcw, Send, Trash2, X } from './icons';
+import { ArrowDownToLine, CheckCircle2, ChevronDown, ChevronUp, Eye, FileText, GitBranchPlus, History, LayoutGrid, Link2, Mail, Maximize2, Minimize2, Pencil, Phone, Plus, Printer, RectangleHorizontal, RectangleVertical, RotateCcw, Send, Trash2, User, X } from './icons';
 import { usersService, projectsService, allPlatformCategoriesService, type QuoteBusinessRoleUser, type Project } from '@/services/all-platform.service';
 import { computeQuoteSla } from '../utils/quoteSla';
 import { SearchableSelect } from './SearchableSelect';
@@ -702,23 +702,34 @@ function RecipientInfoCard({
   return (
     <div className="qc-workspace-recipient-card">
       <div className="qc-workspace-recipient-card-head">
-        <span className="qc-workspace-info-label">Thông tin hiển thị trên báo giá</span>
+        <span className="qc-workspace-recipient-card-title">Thông tin hiển thị trên báo giá</span>
         {editable ? (
-          <button type="button" className="crm-secondary-inline" onClick={() => (open ? setOpen(false) : openPopover())}>
-            Chỉnh thông tin hiển thị
+          <button type="button" className="qc-mini-btn" onClick={() => (open ? setOpen(false) : openPopover())}>
+            <Pencil className="qc-icon" /> Chỉnh thông tin hiển thị
           </button>
         ) : null}
       </div>
       <div className="qc-workspace-recipient-preview">
-        <div className="qc-workspace-recipient-preview-line">
-          <span>Kính gửi</span>
-          <strong>{recipient.customerRecipient || '—'}</strong>
+        <div className="qc-workspace-recipient-preview-item">
+          <User className="qc-workspace-recipient-preview-icon" />
+          <div>
+            <span className="qc-workspace-recipient-preview-label">Kính gửi</span>
+            <strong>{recipient.customerRecipient || 'Chưa có'}</strong>
+          </div>
         </div>
-        <div className="qc-workspace-recipient-preview-line">
-          <span>SĐT</span>
-          <strong>{recipient.customerPhone || '—'}</strong>
-          <span>Email</span>
-          <strong>{recipient.customerEmail || '—'}</strong>
+        <div className="qc-workspace-recipient-preview-item">
+          <Phone className="qc-workspace-recipient-preview-icon" />
+          <div>
+            <span className="qc-workspace-recipient-preview-label">SĐT</span>
+            <strong>{recipient.customerPhone || 'Chưa có'}</strong>
+          </div>
+        </div>
+        <div className="qc-workspace-recipient-preview-item">
+          <Mail className="qc-workspace-recipient-preview-icon" />
+          <div>
+            <span className="qc-workspace-recipient-preview-label">Email</span>
+            <strong>{recipient.customerEmail || 'Chưa có'}</strong>
+          </div>
         </div>
       </div>
       {open ? (
@@ -1424,6 +1435,18 @@ export function QuoteWorkspaceModal({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [presaleUsers, user?.id, quote]);
+
+  // Card "Phan cong & SLA" (CHI o day thoi, khong dung o bat ky owner-picker
+  // nao khac trong file nay) - gop chung Presale+Sale thanh 1 danh sach duy
+  // nhat, hien CA 2 dropdown Presale va Sale deu thay het nhung ai co
+  // quote_business_role la presale/sale/both - thay vi loc rieng tung ben
+  // nhu truoc (presaleUsers chi Presale/Both, saleUsers chi Sale/Both).
+  const businessRoleUsers = useMemo(() => {
+    const map = new Map<string, QuoteBusinessRoleUser>();
+    for (const u of presaleUsers || []) map.set(u.id, u);
+    for (const u of saleUsers || []) map.set(u.id, u);
+    return Array.from(map.values());
+  }, [presaleUsers, saleUsers]);
 
   function businessRoleLabel(role?: string | null): string {
     if (role === 'presale') return 'Presale';
@@ -2505,7 +2528,15 @@ export function QuoteWorkspaceModal({
   const effectiveIssuerCompanyId = quote
     ? quote.issuerCompanyId ?? null
     : draftIssuerCompanyIdOverride || draftCatalogIssuerCompanyId;
-  const effectiveIssuerCompany = issuerCompanies.find(company => company.id === effectiveIssuerCompanyId) || null;
+  // "Mặc định luôn hiện Markee" (feedback 2026-09-24): quote DA TON TAI ma
+  // chua tung gan issuerCompanyId (tao truoc khi tinh nang nay co, hoac Presale
+  // tao yeu cau chua dung toi Buoc thuong mai) - hien "MARKEE AI" (code 'MK',
+  // xem migration 069_quote_issuer_companies.sql) lam mac dinh thay vi de
+  // trong "Chưa chọn" - CHI ap dung cho quote da ton tai, khong dung anh
+  // huong luong tao moi (co logic default rieng o CreateQuoteModal/QuoteCenterPage).
+  const effectiveIssuerCompany =
+    issuerCompanies.find(company => company.id === effectiveIssuerCompanyId) ||
+    (quote ? issuerCompanies.find(company => company.code === 'MK') || null : null);
 
   async function openCatalogPicker(target?: { sectionId?: string; afterIndex?: number }) {
     setCatalogHydrationError(null);
@@ -3072,7 +3103,12 @@ export function QuoteWorkspaceModal({
     setSummaryItemsCardOpen(false);
     const currentPaymentPlan = quote?.data.paymentPlan || draftPaymentPlan;
     setPaymentPlanCardOpen(currentPaymentPlan.length === 0 || paymentPlanPercent(currentPaymentPlan) !== 100);
-    setAccessMode(quote?.publicAccessMode || 'none');
+    // "set mặc định sẵn chọn Giới hạn theo Số điện thoại trước" (feedback
+    // 2026-09-24) - quote CHUA TUNG luu publicAccessMode (chua ai chon gi ca,
+    // gia tri falsy) mac dinh hien 'phone' thay vi 'none' - Sale van doi
+    // duoc sang 3 che do binh thuong qua radio ben duoi, quote DA TUNG luu
+    // 'none' ro rang truoc do (that su ="Không giới hạn") KHONG bi doi lai.
+    setAccessMode(quote?.publicAccessMode || 'phone');
     setAccessEmailsText((quote?.publicAllowedEmails || []).join('\n'));
     setAccessPhonesText((quote?.publicAllowedPhones || []).join('\n'));
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -3335,12 +3371,6 @@ export function QuoteWorkspaceModal({
   const businessCode = deal ? dealBusinessCode(deal) : null;
   const opportunityName = deal ? getServicePackageText(deal.servicePackage) || getPackageText(deal.package) : '';
   const stage = quote?.processingStage || 'request';
-  // "Loai bao gia" (yeu cau rieng): sua duoc o Buoc 1 (request/technical, da
-  // gop UI thanh "Bàn giao") + Buoc 2 (pricing) - CHI KHOA khi sang Buoc 3
-  // "Chờ duyệt" (review); tra ve Buoc 1/2 thi sua lai duoc. Dung quyen chinh
-  // bao gia CHUNG (canEdit) - KHONG phu thuoc canEditCostCells/
-  // canEditPricingCells (2 quyen do rieng cho Gia von/Gia ban, khac pham vi).
-  const canEditQuoteType = canEdit && stage !== 'review';
   const isDraft = quote ? quote.status === 'draft' : true;
   const isCancelled = quote ? status.key === 'lost' : false;
   const hasCostData = Boolean(quote?.hasCostData);
@@ -3381,6 +3411,19 @@ export function QuoteWorkspaceModal({
   const pricingStageOk = stage === 'pricing' || isVersionedQuote;
   const canEditCostCells = canEdit && isDraft && !isLockedForReview && canEditQuoteCost(user, quote) && costStageOk;
   const canEditPricingCells = canEdit && isDraft && !isLockedForReview && canEditQuotePricingFields(user, quote) && pricingStageOk;
+  // "Loai bao gia" (yeu cau rieng, sua lai 2026-09-24): truoc day chi khoa o
+  // stage 'review' nen Presale VAN sua duoc luc con o Buoc 1 (bug nguoi dung
+  // phat hien qua screenshot thuc te) - day la phan loai thuong mai giong
+  // Don vi phat hanh/Du an ("Presale không làm phần thương mại"), doi sang
+  // dung chung pricingStageOk voi cac field thuong mai khac, chi Sale sua
+  // duoc tu Buoc 2 tro di.
+  const canEditQuoteType = canEdit && !isLockedForReview && pricingStageOk;
+  // "Presale không làm phần thương mại" (feedback 2026-09-24) - cac khoi
+  // thuong mai (Dự án/Kế hoạch thanh toán...) chi hien tu Buoc 2 (pricing)
+  // tro di, AN het khoi Presale luc con o Buoc 1 (request/technical) hoac
+  // dang tao yeu cau (!quote). isVersionedQuote van cho hien (giong
+  // pricingStageOk) vi tao V2+ la Sale lam lai tu dau, khong qua lai Buoc 1.
+  const beyondStep1 = Boolean(quote) && (stage !== 'request' && stage !== 'technical' || isVersionedQuote);
   // BUG THAT DA GAP: zonePickerItems truoc day khai bao O TREN (gan
   // catalogPickerItems, ~dong 1248) - nhung lai doc canEditCostCells (khai
   // bao O DUOI, dong nay) ngay trong THAN useMemo, chay NGAY LUC RENDER nen
@@ -3870,9 +3913,18 @@ export function QuoteWorkspaceModal({
         applyIssuerPaymentTermsSnapshot(nextData, company, issuerCompanies);
         dataOverride = nextData;
       }
+      // "Mẫu ăn theo Đơn vị phát hành" (feedback 2026-09-24, "chọn Markee thì
+      // mẫu báo giá auto fill mẫu thuộc đơn vị phát hành đó") - doi Don vi
+      // phat hanh se tu dong doi luon Mau bao gia sang company.defaultQuoteFormId
+      // (dung DUNG pattern CreateQuoteModal.tsx dang dung luc TAO moi, gio ap
+      // dung them cho SUA 1 quote da ton tai o Buoc 2/3) - chi doi khi cong ty
+      // MOI thuc su co gan san 1 mau mac dinh rieng, KHONG dung gi neu chua
+      // cau hinh (giu nguyen mau dang dung).
+      const nextQuoteFormId = company?.defaultQuoteFormId || undefined;
       await seedingQuoteRepository.updateQuote(quote!.id, {
         issuerCompanyId,
         ...(dataOverride ? { data: dataOverride } : {}),
+        ...(nextQuoteFormId ? { quoteFormId: nextQuoteFormId } : {}),
       });
       await reload();
     } catch (err) {
@@ -3894,6 +3946,23 @@ export function QuoteWorkspaceModal({
     }
   }
 
+  // "Sale vẫn chọn được mẫu báo giá chứ" (feedback 2026-09-24) - doi Mau bao
+  // gia THU CONG, doc lap voi auto-fill "an theo" Don vi phat hanh o
+  // updateQuoteIssuerCompany() - 2 duong deu cung goi updateQuote({quoteFormId})
+  // nen deu dong bo lai form_snapshot/form_schema_version o backend (xem
+  // update_quote(), supabase_quote_service.py), khong bi lech schema render.
+  async function updateQuoteFormId(quoteFormId: string) {
+    setBusy(true);
+    try {
+      await seedingQuoteRepository.updateQuote(quote!.id, { quoteFormId });
+      await reload();
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : 'Không đổi được mẫu báo giá.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function advanceStage(target: QuoteProcessingStage) {
     // Chi con dung cho 'review' (Hoan tat phan gia ban) - hop request-
     // >technical->pricing gio di qua handoffStep1ToPricing() rieng (nut
@@ -3909,6 +3978,22 @@ export function QuoteWorkspaceModal({
       setBusy(false);
       setActiveAction(null);
     }
+  }
+
+  /** Bam "Hoàn tất phần giá bán" (Buoc 2 -> Buoc 3 review) - feedback
+   * 2026-09-24: Dự án bat buoc (*) phai duoc chon TRUOC khi gui duyet, chua
+   * chon phai chan lai + hien thong bao ro rang (toast + field error ngay
+   * tai o Dự án), khong chi am tham disable nut. */
+  function handoffPricingToReview() {
+    if (!quote) return;
+    if (!quote.projectId) {
+      const errors = { project: 'Vui lòng chọn dự án.' };
+      setRequiredFieldErrors(current => ({ ...current, ...errors }));
+      focusFirstRequiredError(errors);
+      showToast(false, 'Vui lòng chọn dự án trước khi gửi duyệt.');
+      return;
+    }
+    void advanceStage('review');
   }
 
   async function saveChecklist() {
@@ -4533,6 +4618,62 @@ export function QuoteWorkspaceModal({
     );
   }
 
+  // "Cơ hội CRM" (data-qc-required="deal") - dung CHUNG 1 JSX cho ca 2 vi tri:
+  // hang 1 (chung voi Khach hang/Nguoi lien he) luc con o Buoc 1, roi TRA VE
+  // hang 2 (chung voi Du an/Loai bao gia, dung bo cuc 3+3 GOC) tu Buoc 2
+  // (beyondStep1) tro di - feedback "check lai xem buoc 2 co ve dung thu tu
+  // cu khong" (2026-09-24, sau khi da gop 3 truong Buoc 1 vao 1 hang).
+  const dealField = (
+    <div data-qc-required="deal">
+      <span className="qc-workspace-info-label">Cơ hội CRM <span className="qc-required-mark">*</span></span>
+      {!quote ? (
+        <SearchableSelect
+          value={draftDealId}
+          onChange={handleSelectDeal}
+          options={[
+            { value: CREATE_NEW_DEAL_OPTION, label: '+ Tạo cơ hội mới…' },
+            ...effectiveDeals
+              .filter(d => !draftCustomerId || d.customerId === draftCustomerId)
+              // Toi tu 1 Project card cu the (lockProject) - Co hoi CHI
+              // hien dung cua Project do, khong phai moi Co hoi cua Khach hang.
+              .filter(d => !lockProject || !draftProjectId || d.projectId === draftProjectId)
+              .map(d => ({ value: d.id, label: `${d.customerName}${d.companyName ? ' · ' + d.companyName : ''}` })),
+          ]}
+          placeholder="Chọn cơ hội..."
+          hideClearOption
+        />
+      ) : null}
+      {!quote && draftDealId ? (
+        <div className="qc-row-sub">
+          Mã cơ hội: {businessCode || 'Chưa có mã'}
+          {deal?.estimatedBudget ? ` · Giá trị dự kiến: ${formatMoney(deal.estimatedBudget)}` : ''}
+        </div>
+      ) : null}
+      {quote ? (
+        <>
+          {/* Tuong tu Khach hang o tren - khong con doi Co hoi duoc
+           * that su sau khi quote da tao, nhung van hien dang box
+           * SearchableSelect disabled cho nhat quan giao dien, khong
+           * hien nhu nhan chu bi khoa cung. */}
+          <SearchableSelect
+            value="current"
+            onChange={() => {}}
+            options={[{ value: 'current', label: businessCode || (deal ? 'Cơ hội chưa có mã' : 'Chưa gắn cơ hội') }]}
+            disabled
+          />
+          <div className="qc-row-sub">
+            {/* opportunityName muon tu ten goi dich vu, KHONG phai "ten
+             * co hoi" that (Deal khong co field nay) - ghi nhan ro
+             * nguon that de khong trinh bay nhu du lieu that khac. */}
+            {opportunityName ? `Gói dịch vụ: ${opportunityName}` : deal ? 'Chưa có gói dịch vụ' : ''}
+            {deal?.estimatedBudget ? ` · Giá trị dự kiến: ${formatMoney(deal.estimatedBudget)}` : ''}
+          </div>
+        </>
+      ) : null}
+      {requiredFieldErrors.deal ? <p className="qc-field-error">{requiredFieldErrors.deal}</p> : null}
+    </div>
+  );
+
   return (
     <div className="qc-modal-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) requestWorkspaceClose(); }}>
       <div className="qc-workspace">
@@ -4583,15 +4724,18 @@ export function QuoteWorkspaceModal({
                 </div>
               </>
             ) : (
+              // "Presale không làm phần thương mại" (feedback 2026-09-24, kem
+              // screenshot) - "Tiêu đề báo giá" (draftTitle -> data.quoteTitle,
+              // xem createRequest()) la field THUONG MAI, da co quyet dinh
+              // truoc do (xem comment o quickbar "Tiêu đề báo giá" phia duoi)
+              // la CHUYEN sang cho Sale dien o Buoc 2 - nhung o day (luc tao
+              // yeu cau, !quote) van con sot 1 input cu cho Presale tu go -
+              // AN HOAN TOAN input nay (khong phai khoa/disabled), Sale se dat
+              // tieu de that o quickbar Buoc 2, draftTitle rong van hop le
+              // (createRequest() tu fallback "Yêu cầu hỗ trợ báo giá").
               <div className="qc-workspace-header-title qc-workspace-header-title--create">
                 <span className={`qc-badge ${status.className}`}>{status.label}</span>
-                <input
-                  type="text"
-                  className="qc-workspace-title-input"
-                  placeholder="Tiêu đề yêu cầu hỗ trợ báo giá..."
-                  value={draftTitle}
-                  onChange={event => setDraftTitle(event.target.value)}
-                />
+                <span className="qc-workspace-muted" style={{ fontSize: 13 }}>Yêu cầu hỗ trợ báo giá</span>
               </div>
             )}
           </div>
@@ -4775,36 +4919,26 @@ export function QuoteWorkspaceModal({
             )}
             {requiredFieldErrors.contact ? <p className="qc-field-error">{requiredFieldErrors.contact}</p> : null}
           </div>
-          {/* "Presale không làm phần thương mại" (feedback) - Đơn vị phát
-           * hành la field THUONG MAI, CHI Sale duoc chon/doi (stage
-           * 'pricing'/'review', dung chung dieu kien voi canEditPricingCells
-           * qua pricingStageOk). Luc Presale tao yeu cau (!quote) hoac con o
-           * Buoc 1/2 (request/technical) - AN han dropdown nay, dung ngam
-           * dinh suy tu mau bao gia mac dinh (draftCatalogIssuerCompanyId) -
-           * KHONG bat Presale phai tu chon, Sale se xac nhan/doi lai sau. */}
-          {!quote ? (
-            // Luc tao yeu cau, Presale KHONG chon Don vi phat hanh - chi hien
-            // TOM TAT mac dinh (suy tu mau bao gia mac dinh) de biet truoc,
-            // Sale se xac nhan/doi lai o Buoc 3. Van giu data-qc-required de
-            // focusFirstRequiredError con cho de cuon toi neu he thong thieu
-            // cau hinh mac dinh (khong co Don vi phat hanh/mau nao ca).
-            <div data-qc-required="issuerCompany">
-              <span className="qc-workspace-info-label">Đơn vị phát hành</span>
-              <SearchableSelect
-                value="current"
-                onChange={() => {}}
-                options={[{ value: 'current', label: effectiveIssuerCompany?.brandName || effectiveIssuerCompany?.legalName || 'Chưa có mẫu mặc định' }]}
-                disabled
-              />
-              <p className="qc-row-sub">Sale sẽ xác nhận/đổi đơn vị phát hành ở bước hoàn thiện giá.</p>
-              {requiredFieldErrors.issuerCompany ? <p className="qc-field-error">{requiredFieldErrors.issuerCompany}</p> : null}
-            </div>
-          ) : (
+          {!beyondStep1 ? dealField : null}
+          {/* "Presale không làm phần thương mại" (feedback 2026-09-24, kem
+           * screenshot - "ẩn đi luôn, không xem được, KHÔNG phải khoá"): Đơn
+           * vị phát hành CHI hien tu Buoc 2 (Sale, pricingStageOk) tro di -
+           * AN HOAN TOAN (khong render, khong phai disabled) luc Presale tao
+           * yeu cau hoac con o Buoc 1 (request/technical), dung chung
+           * beyondStep1 voi Dự án/Loại báo giá/Kế hoạch thanh toán. TRUOC DAY
+           * co hien 1 tom tat disabled cho ca 2 truong hop nay - da bo, vi
+           * yeu cau ro rang la AN, khong phai khoa+hien preview. */}
+          {beyondStep1 ? (
             <div data-qc-required="issuerCompany">
               <span className="qc-workspace-info-label">Đơn vị phát hành <span className="qc-required-mark">*</span></span>
               {isDraft && canEdit && pricingStageOk ? (
                 <SearchableSelect
-                  value={quote.issuerCompanyId || ''}
+                  // Mac dinh hien "MARKEE AI" (effectiveIssuerCompany, xem noi
+                  // dinh nghia) khi quote chua tung gan issuerCompanyId - CHI
+                  // la mac dinh HIEN THI, chua ghi xuong DB cho toi khi Sale
+                  // thuc su bam chon (onChange) - tranh am tham gan issuer
+                  // ma khong ai bam gi ca.
+                  value={quote?.issuerCompanyId || effectiveIssuerCompany?.id || ''}
                   onChange={value => { if (value) void updateQuoteIssuerCompany(value); }}
                   options={issuerCompanies.map(company => ({ value: company.id, label: company.brandName || company.legalName }))}
                   placeholder="Chọn đơn vị phát hành..."
@@ -4820,115 +4954,87 @@ export function QuoteWorkspaceModal({
               )}
               {requiredFieldErrors.issuerCompany ? <p className="qc-field-error">{requiredFieldErrors.issuerCompany}</p> : null}
             </div>
-          )}
+          ) : null}
         </div>
+        {/* Hang 2 (Du an/Mau bao gia loi/Loai bao gia/Hieu luc den) - o Buoc 1
+         * (Presale, chua beyondStep1) hang nay thuong RONG hoan toan (moi field
+         * deu an) - bo qua render de khong con 1 khoang gap 6px thua giua 2
+         * hang (feedback "3 cai de chung 1 hang, dung de duoi vay nua"). */}
+        {(!quote && lockProject) || Boolean(quote) || (!quote && quoteForms.length > 0 && !draftFormId && !defaultFormId) || quote?.validUntil ? (
         <div className="qc-workspace-info-strip-row">
-          <div>
-            <span className="qc-workspace-info-label">Dự án</span>
-            {!quote && lockProject ? (
-              <strong>
-                {(() => {
-                  const found = (projects || []).find(p => p.id === draftProjectId);
-                  return found ? `${found.projectCode} · ${found.name}` : 'Đang tải…';
-                })()}
-              </strong>
-            ) : !quote || (isDraft && canEdit) ? (
-              !effectiveCustomerIdForProjects ? (
-                <span className="qc-workspace-muted" style={{ fontSize: 12 }}>
-                  {quote ? 'Cơ hội chưa gắn hồ sơ khách hàng' : 'Chọn khách hàng trước'}
-                </span>
-              ) : projects === null ? (
-                <span className="qc-workspace-muted" style={{ fontSize: 12 }}>Đang tải…</span>
+          {/* "Presale không làm phần thương mại" (feedback 2026-09-24, kem
+           * screenshot - "ẩn đi luôn, không xem được, KHÔNG phải khoá"): Dự
+           * án CHI hien tu Buoc 2 (Sale, beyondStep1) tro di - AN HOAN TOAN
+           * (khong render) luc Presale tao yeu cau hoac con o Buoc 1. Truong
+           * hop lockProject (tao tu Project card) van hien READ-ONLY - do la
+           * NGU CANH duoc chon san TRUOC khi Presale bat dau, khong phai
+           * Presale tu chon nen khong thuoc dien phai an. Bat buoc (*) +
+           * validate truoc khi gui duyet - xem requiredFieldErrors.project va
+           * handoffPricingToReview(). */}
+          {(!quote && lockProject) || beyondStep1 ? (
+            <div data-qc-required="project">
+              <span className="qc-workspace-info-label">Dự án <span className="qc-required-mark">*</span></span>
+              {!quote && lockProject ? (
+                <strong>
+                  {(() => {
+                    const found = (projects || []).find(p => p.id === draftProjectId);
+                    return found ? `${found.projectCode} · ${found.name}` : 'Đang tải…';
+                  })()}
+                </strong>
+              ) : isDraft && canEdit && pricingStageOk ? (
+                !effectiveCustomerIdForProjects ? (
+                  <span className="qc-workspace-muted" style={{ fontSize: 12 }}>Cơ hội chưa gắn hồ sơ khách hàng</span>
+                ) : projects === null ? (
+                  <span className="qc-workspace-muted" style={{ fontSize: 12 }}>Đang tải…</span>
+                ) : (
+                  <SearchableSelect
+                    value={quote?.projectId || ''}
+                    onChange={value => {
+                      if (value === CREATE_NEW_PROJECT_OPTION) {
+                        setProjectModalOpen(true);
+                        return;
+                      }
+                      if (value) clearRequiredError('project');
+                      void updateQuoteProject(value);
+                    }}
+                    // BUG THAT DA GAP ("lặp 2 chữ Chưa thuộc dự án"): SearchableSelect
+                    // TU render san 1 nut "clear" o dau danh sach dung chinh
+                    // `placeholder` lam nhan (xem SearchableSelect.tsx) - truoc day
+                    // options con khai bao THEM 1 dong { value: '', label: 'Chưa
+                    // thuộc dự án' } giong het, thanh ra hien 2 dong trung nhau.
+                    // Chi can placeholder, KHONG khai bao lai value='' trong options.
+                    options={[
+                      { value: CREATE_NEW_PROJECT_OPTION, label: '+ Tạo dự án mới…' },
+                      ...projects.map(p => ({ value: p.id, label: `${p.projectCode} · ${p.name}` })),
+                    ]}
+                    placeholder="Chưa thuộc dự án"
+                    hideClearOption
+                  />
+                )
               ) : (
-                <SearchableSelect
-                  value={quote ? quote.projectId || '' : draftProjectId}
-                  onChange={value => {
-                    if (value === CREATE_NEW_PROJECT_OPTION) {
-                      setProjectModalOpen(true);
-                      return;
-                    }
-                    if (quote) void updateQuoteProject(value);
-                    else setDraftProjectId(value);
-                  }}
-                  // BUG THAT DA GAP ("lặp 2 chữ Chưa thuộc dự án"): SearchableSelect
-                  // TU render san 1 nut "clear" o dau danh sach dung chinh
-                  // `placeholder` lam nhan (xem SearchableSelect.tsx) - truoc day
-                  // options con khai bao THEM 1 dong { value: '', label: 'Chưa
-                  // thuộc dự án' } giong het, thanh ra hien 2 dong trung nhau.
-                  // Chi can placeholder, KHONG khai bao lai value='' trong options.
-                  options={[
-                    { value: CREATE_NEW_PROJECT_OPTION, label: '+ Tạo dự án mới…' },
-                    ...projects.map(p => ({ value: p.id, label: `${p.projectCode} · ${p.name}` })),
-                  ]}
-                  placeholder="Chưa thuộc dự án"
-                  hideClearOption
-                />
-              )
-            ) : (
-              <strong>
-                {(() => {
-                  const found = (projects || []).find(p => p.id === quote.projectId);
-                  return found ? `${found.projectCode} · ${found.name}` : quote.projectId ? 'Đang tải…' : 'Chưa thuộc dự án';
-                })()}
-              </strong>
-            )}
-          </div>
-          <div data-qc-required="deal">
-            <span className="qc-workspace-info-label">Cơ hội CRM <span className="qc-required-mark">*</span></span>
-            {!quote ? (
-              <SearchableSelect
-                value={draftDealId}
-                onChange={handleSelectDeal}
-                options={[
-                  { value: CREATE_NEW_DEAL_OPTION, label: '+ Tạo cơ hội mới…' },
-                  ...effectiveDeals
-                    .filter(d => !draftCustomerId || d.customerId === draftCustomerId)
-                    // Toi tu 1 Project card cu the (lockProject) - Co hoi CHI
-                    // hien dung cua Project do, khong phai moi Co hoi cua Khach hang.
-                    .filter(d => !lockProject || !draftProjectId || d.projectId === draftProjectId)
-                    .map(d => ({ value: d.id, label: `${d.customerName}${d.companyName ? ' · ' + d.companyName : ''}` })),
-                ]}
-                placeholder="Chọn cơ hội..."
-                hideClearOption
-              />
-            ) : null}
-            {!quote && draftDealId ? (
-              <div className="qc-row-sub">
-                Mã cơ hội: {businessCode || 'Chưa có mã'}
-                {deal?.estimatedBudget ? ` · Giá trị dự kiến: ${formatMoney(deal.estimatedBudget)}` : ''}
-              </div>
-            ) : null}
-            {quote ? (
-              <>
-                {/* Tuong tu Khach hang o tren - khong con doi Co hoi duoc
-                 * that su sau khi quote da tao, nhung van hien dang box
-                 * SearchableSelect disabled cho nhat quan giao dien, khong
-                 * hien nhu nhan chu bi khoa cung. */}
                 <SearchableSelect
                   value="current"
                   onChange={() => {}}
-                  options={[{ value: 'current', label: businessCode || (deal ? 'Cơ hội chưa có mã' : 'Chưa gắn cơ hội') }]}
+                  options={[{
+                    value: 'current',
+                    label: (() => {
+                      const found = (projects || []).find(p => p.id === quote?.projectId);
+                      return found ? `${found.projectCode} · ${found.name}` : quote?.projectId ? 'Đang tải…' : 'Chưa chọn';
+                    })(),
+                  }]}
                   disabled
                 />
-                <div className="qc-row-sub">
-                  {/* opportunityName muon tu ten goi dich vu, KHONG phai "ten
-                   * co hoi" that (Deal khong co field nay) - ghi nhan ro
-                   * nguon that de khong trinh bay nhu du lieu that khac. */}
-                  {opportunityName ? `Gói dịch vụ: ${opportunityName}` : deal ? 'Chưa có gói dịch vụ' : ''}
-                  {deal?.estimatedBudget ? ` · Giá trị dự kiến: ${formatMoney(deal.estimatedBudget)}` : ''}
-                </div>
-              </>
-            ) : null}
-            {requiredFieldErrors.deal ? <p className="qc-field-error">{requiredFieldErrors.deal}</p> : null}
-          </div>
+              )}
+              {requiredFieldErrors.project ? <p className="qc-field-error">{requiredFieldErrors.project}</p> : null}
+            </div>
+          ) : null}
+          {beyondStep1 ? dealField : null}
           {/* "Presale không làm phần thương mại" (feedback) - Mẫu báo giá
            * cung la field thuong mai, AN het khoi Presale luc tao yeu cau
            * (!quote) - draftFormId van tu dien ngam qua defaultFormId (xem
-           * effect dong ~1070), Sale doi lai duoc sau qua "Đơn vị phát hành"
-           * o Buoc 3 (doi cong ty se doi ca cong ty so huu mau theo no).
-           * Van giu 1 khung "form" cho focusFirstRequiredError neu he thong
-           * chua cau hinh mau mac dinh nao (loi that, khong phai Presale
-           * quen chon). */}
+           * effect dong ~1070). Van giu 1 khung "form" cho focusFirstRequiredError
+           * neu he thong chua cau hinh mau mac dinh nao (loi that, khong phai
+           * Presale quen chon). */}
           {!quote && quoteForms.length > 0 && !draftFormId && !defaultFormId ? (
             <div data-qc-required="form">
               <span className="qc-workspace-info-label">Mẫu báo giá</span>
@@ -4936,6 +5042,40 @@ export function QuoteWorkspaceModal({
               {requiredFieldErrors.form ? <p className="qc-field-error">{requiredFieldErrors.form}</p> : null}
             </div>
           ) : null}
+          {/* "Sale vẫn chọn được mẫu báo giá chứ, ... vẫn có thể đổi được"
+           * (feedback 2026-09-24) - quote DA TON TAI (Buoc 2/3) truoc gio
+           * KHONG hien ten mau bao gia dang dung o dau ca. Gio hien 1 dropdown
+           * THAT SU chon duoc tu do (updateQuoteFormId, doc lap voi auto-fill
+           * "an theo" Don vi phat hanh o updateQuoteIssuerCompany) - auto-fill
+           * chi la GOI Y mac dinh luc doi issuer, Sale van doi tay lai duoc
+           * sang bat ky mau nao khac binh thuong. */}
+          {quote ? (
+            <div data-qc-required="quoteForm">
+              <span className="qc-workspace-info-label">Mẫu báo giá</span>
+              {isDraft && canEdit && pricingStageOk ? (
+                <SearchableSelect
+                  value={quote.quoteFormId || ''}
+                  onChange={value => { if (value) void updateQuoteFormId(value); }}
+                  options={quoteForms.map(f => ({ value: f.id, label: f.name }))}
+                  placeholder="Chọn mẫu báo giá..."
+                  hideClearOption
+                />
+              ) : (
+                <SearchableSelect
+                  value="current"
+                  onChange={() => {}}
+                  options={[{ value: 'current', label: quoteForms.find(f => f.id === quote.quoteFormId)?.name || 'Không rõ mẫu' }]}
+                  disabled
+                />
+              )}
+            </div>
+          ) : null}
+          {/* "Presale không làm phần thương mại" (feedback 2026-09-24, kem
+           * screenshot - "ẩn đi luôn, không xem được, KHÔNG phải khoá"): AN
+           * HOAN TOAN khoi Presale (khong render) luc tao yeu cau hoac con o
+           * Buoc 1, dung chung beyondStep1 voi Dự án/Đơn vị phát hành/Kế
+           * hoạch thanh toán - CHI hien tu Buoc 2 (Sale) tro di. */}
+          {beyondStep1 ? (
           <div
             tabIndex={-1}
             onBlur={e => {
@@ -5005,6 +5145,7 @@ export function QuoteWorkspaceModal({
               </div>
             ) : null}
           </div>
+          ) : null}
           {/* Presale/Sale/SLA DA CHUYEN sang sidebar (card "Phân công & SLA",
            * xem <aside className="qc-workspace-side"> ben duoi) theo yeu cau
            * rieng "Phân công & SLA để bên sidebar luôn" - KHONG con nam
@@ -5017,6 +5158,7 @@ export function QuoteWorkspaceModal({
             </div>
           ) : null}
         </div>
+        ) : null}
         </div>
 
         <div className="qc-workspace-body" ref={workspaceBodyRef}>
@@ -6126,7 +6268,7 @@ export function QuoteWorkspaceModal({
               </div>
             ) : null}
 
-            {columnVisibilitySchema?.enableDynamicPaymentPlan && columnVisibilitySchema.layoutType !== 'villa_solution_package' ? (
+            {beyondStep1 && columnVisibilitySchema?.enableDynamicPaymentPlan && columnVisibilitySchema.layoutType !== 'villa_solution_package' ? (
               <details className={`qc-workspace-card qc-workspace-collapsible-card qc-payment-plan-card${paymentPlanIsComplete ? ' qc-payment-plan-card--complete' : paymentPlanIsEmpty ? '' : ' qc-payment-plan-card--warning'}`} data-testid="qc-payment-plan-card"
                 open={paymentPlanCardOpen} onToggle={event => setPaymentPlanCardOpen((event.target as HTMLDetailsElement).open)}>
                 <summary className="qc-workspace-card-head qc-workspace-collapsible-summary">
@@ -6339,15 +6481,15 @@ export function QuoteWorkspaceModal({
                 <div data-qc-required="presale">
                   <span className="qc-workspace-info-label">Presale <span className="qc-required-mark">*</span></span>
                   {!quote || (isDraft && canEdit) ? (
-                    presaleUsers === null ? (
+                    presaleUsers === null || saleUsers === null ? (
                       <span className="qc-workspace-muted" style={{ fontSize: 12 }}>Đang tải danh sách Presale…</span>
-                    ) : presaleUsers.length === 0 ? (
+                    ) : businessRoleUsers.length === 0 ? (
                       <NoStaffConfigured isAdminOrLeader={isAdminOrLeader} />
                     ) : (
                       <SearchableSelect
                         value={quote ? quote.technicalOwnerId || '' : draftTechnicalOwnerId}
                         onChange={value => { if (value) clearRequiredError('presale'); quote ? void assignOwner('technicalOwnerId', value) : setDraftTechnicalOwnerId(value); }}
-                        options={presaleUsers.map(a => ({ value: a.id, label: ownerOptionLabel(a) }))}
+                        options={businessRoleUsers.map(a => ({ value: a.id, label: ownerOptionLabel(a) }))}
                         placeholder="Chưa gán"
                       />
                     )
@@ -6359,15 +6501,15 @@ export function QuoteWorkspaceModal({
                 <div data-qc-required="sale">
                    <span className="qc-workspace-info-label">Sale <span className="qc-required-mark">*</span></span>
                   {!quote || (isDraft && canEdit) ? (
-                    saleUsers === null ? (
+                    presaleUsers === null || saleUsers === null ? (
                       <span className="qc-workspace-muted" style={{ fontSize: 12 }}>Đang tải danh sách Sale…</span>
-                    ) : saleUsers.length === 0 ? (
+                    ) : businessRoleUsers.length === 0 ? (
                       <NoStaffConfigured isAdminOrLeader={isAdminOrLeader} />
                     ) : (
                       <SearchableSelect
                         value={quote ? quote.quoteOwnerId || '' : draftQuoteOwnerId}
                         onChange={value => { if (value) clearRequiredError('sale'); quote ? void assignOwner('quoteOwnerId', value) : setDraftQuoteOwnerId(value); }}
-                        options={saleUsers.map(a => ({ value: a.id, label: ownerOptionLabel(a) }))}
+                        options={businessRoleUsers.map(a => ({ value: a.id, label: ownerOptionLabel(a) }))}
                         placeholder="Chưa gán"
                       />
                     )
@@ -6891,8 +7033,8 @@ export function QuoteWorkspaceModal({
                     className="qc-btn qc-btn-primary"
                     disabled={busy || !canReadyForApproval}
                     aria-busy={busy && activeAction === 'reviewPricing'}
-                    title={!canReadyForApproval ? 'Cần ít nhất 1 hạng mục và tổng tiền > 0 trước khi gửi duyệt' : undefined}
-                    onClick={() => void advanceStage('review')}
+                    title={!canReadyForApproval ? 'Cần ít nhất 1 hạng mục và tổng tiền > 0 trước khi gửi duyệt' : !quote?.projectId ? 'Cần chọn Dự án trước khi gửi duyệt' : undefined}
+                    onClick={handoffPricingToReview}
                   >
                     {actionButtonContent('reviewPricing', 'Hoàn tất phần giá bán')}
                   </button>

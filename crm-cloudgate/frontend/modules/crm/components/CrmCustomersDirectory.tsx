@@ -202,12 +202,11 @@ export function CrmCustomersDirectory() {
   }, [searchInput]);
 
   // Mac dinh loc "cua toi + team cua toi" khi vao trang (thay vi "Tat ca") -
-  // chi ap dung DUNG 1 LAN sau khi ca auth + members da tai xong, dung
-  // ref de khong ghi de lai lua chon thu cong cua nguoi dung sau do (vd sau
-  // khi ho tu doi sang "Tat ca" hoac 1 owner/team khac). Rule tim team CUA
-  // CHINH NGUOI DANG DANG NHAP phai khop CHINH XAC voi _user_department_map()
-  // o backend (progress_service.py): CHI xet members.linked_user_id (KHONG
-  // xet linked_user_id_2) + phai co team - nguoi dang dang nhap chac chan la
+  // chi ap dung khi CHUA co lich su tim kiem nao luu trong sessionStorage
+  // (lan dau ghe trang trong tab nay). Rule tim team CUA CHINH NGUOI DANG
+  // DANG NHAP phai khop CHINH XAC voi _user_department_map() o backend
+  // (progress_service.py): CHI xet members.linked_user_id (KHONG xet
+  // linked_user_id_2) + phai co team - nguoi dang dang nhap chac chan la
   // active (dang co session hop le) nen bo qua kiem tra app_users.is_active.
   const defaultFilterAppliedRef = useRef(false);
   const applyDefaultOwnerFilter = useCallback(() => {
@@ -216,28 +215,63 @@ export function CrmCustomersDirectory() {
     const myMember = members.find(m => m.linked_user_id === user.id);
     setTeam(myMember?.team || '');
   }, [user, members]);
+
+  // Feedback nguoi dung (2026-09-24): quay lai trang Khach hang (Back, hoac
+  // dieu huong sang trang khac roi vao lai) phai hien DUNG lich su tim kiem/
+  // loc gan nhat cua chinh minh trong tab nay - ke ca da bam "Xoa loc" (hien
+  // tat ca) hoac doi sang loc 1 nguoi khac - khong ep ve lai "cua toi" nua.
+  // Dung sessionStorage (khong phai chi dua vao Next.js router cache, vi
+  // cache co the bi evict) de robust hon; scope theo user.id de tranh lay
+  // nham lich su cua nguoi khac neu dang xuat/dang nhap tai khoan khac trong
+  // cung tab. Chi khi CHUA co lich su nao (lan dau ghe trang trong session)
+  // moi ap dung mac dinh "cua toi + team cua toi".
+  type StoredCustomerFilters = {
+    userId: string;
+    search: string;
+    status: string;
+    ownerId: string;
+    saleManagerId: string;
+    team: string;
+  };
+  const FILTERS_STORAGE_KEY = 'crm-customers-filters';
+
   useEffect(() => {
     if (defaultFilterAppliedRef.current) return;
     if (authLoading || membersLoading) return;
     if (!user?.id) return;
     defaultFilterAppliedRef.current = true;
+
+    let stored: StoredCustomerFilters | null = null;
+    try {
+      const raw = window.sessionStorage.getItem(FILTERS_STORAGE_KEY);
+      stored = raw ? (JSON.parse(raw) as StoredCustomerFilters) : null;
+    } catch {
+      stored = null;
+    }
+
+    if (stored && stored.userId === user.id) {
+      setSearchInput(stored.search);
+      setSearch(stored.search);
+      setStatus(stored.status);
+      setOwnerId(stored.ownerId);
+      setSaleManagerId(stored.saleManagerId);
+      setTeam(stored.team);
+      return;
+    }
+
     applyDefaultOwnerFilter();
   }, [authLoading, membersLoading, user, members, applyDefaultOwnerFilter]);
 
-  // BUG THAT DA GAP (feedback nguoi dung): Next.js App Router giu nguyen
-  // state cu (ke ca bo loc da "Xoa loc") khi bam nut Back/Forward cua trinh
-  // duyet thay vi mount lai component tu dau - effect "ap dung 1 lan" o tren
-  // vi vay KHONG chay lai, khien "quay ve trang Khach hang" van thay bo loc
-  // rong da xoa truoc do. Nghe rieng popstate (bam Back/Forward) de CHU DONG
-  // ap lai bo loc "cua toi" moi lan quay ve trang nay qua duong nay, khong
-  // phu thuoc vao vong doi mount/unmount cua component.
   useEffect(() => {
-    function handlePopState() {
-      applyDefaultOwnerFilter();
+    if (!user?.id) return;
+    if (!defaultFilterAppliedRef.current) return; // chua khoi tao xong (dang doi auth/members) - tranh ghi de bang state rong luc mount
+    try {
+      const payload: StoredCustomerFilters = { userId: user.id, search, status, ownerId, saleManagerId, team };
+      window.sessionStorage.setItem(FILTERS_STORAGE_KEY, JSON.stringify(payload));
+    } catch {
+      // sessionStorage khong kha dung (che do an danh...) - bo qua, khong chan UI
     }
-    window.addEventListener('popstate', handlePopState);
-    return () => window.removeEventListener('popstate', handlePopState);
-  }, [applyDefaultOwnerFilter]);
+  }, [user, search, status, ownerId, saleManagerId, team]);
 
   useEffect(() => { setPage(1); }, [status, ownerId, saleManagerId, team]);
 
@@ -312,6 +346,19 @@ export function CrmCustomersDirectory() {
     if (user?.id && !seen.has(user.id)) seen.set(user.id, user.name || user.email);
     return [...seen.entries()].sort((a, b) => a[1].localeCompare(b[1]));
   }, [members, user]);
+
+  // Feedback (2026-09-24): chon "Người phụ trách" thi tu dong loc luon Team
+  // cua chinh nguoi do (vd chon thanh vien A cua team B -> Team tu hien
+  // "B") - dung chung key "linked_user_id || linked_user_id_2" voi
+  // ownerFilterOptions o tren de khop DUNG voi nguoi vua chon trong dropdown
+  // (KHONG dung applyDefaultOwnerFilter/linked_user_id rieng - do la rule
+  // rieng cho "mac dinh cua toi" khop backend _user_department_map()).
+  // Owner khong co Team (hoac bo chon ve "Tat ca") -> Team cung ve rong.
+  function handleOwnerFilterChange(value: string) {
+    setOwnerId(value);
+    const match = members.find(m => (m.linked_user_id || m.linked_user_id_2) === value);
+    setTeam(match?.team || '');
+  }
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const hasFilters = Boolean(search || ownerId || saleManagerId || team);
@@ -558,7 +605,7 @@ export function CrmCustomersDirectory() {
             <div className="crm-filter-select-wrap">
               <SearchableSelect
                 value={ownerId}
-                onChange={setOwnerId}
+                onChange={handleOwnerFilterChange}
                 placeholder="Tất cả người phụ trách"
                 options={ownerFilterOptions.map(([id, name]) => ({ value: id, label: name }))}
               />
