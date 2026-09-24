@@ -6,7 +6,9 @@ import { seedingQuoteRepository } from '../repositories/SeedingQuoteRepository';
 import type { Quote } from '../types';
 
 interface Props {
-  quoteId: string;
+  /** null = báo giá CHƯA được tạo (popup xem trước ở Bước 1, chế độ tạo mới)
+   * - không có gì để gọi API, bắt buộc truyền `onSaveLocal`. */
+  quoteId: string | null;
   printOrientation: 'portrait' | 'landscape';
   columnWidthsDraft: Record<string, number> | null;
   /** Goi sau khi luu thanh cong voi quote MOI NHAT tra ve tu backend (shape
@@ -15,7 +17,11 @@ interface Props {
    * PublicQuotePage (trang cong khai) nen truyen 1 no-op de KHONG ghi de
    * quote da tai bang shape noi bo (co the lo field khong nam trong
    * allowlist cong khai vao state dang render cho ca khach vang lai). */
-  onSaved: (quote: Quote) => void;
+  onSaved?: (quote: Quote) => void;
+  /** Chỉ dùng khi quoteId === null: giữ tuỳ chỉnh ở state của form tạo mới,
+   * gửi kèm `data.printLayoutPrefs` lúc tạo báo giá (xem QuoteWorkspaceModal
+   * createRequest). */
+  onSaveLocal?: (prefs: { orientation: 'portrait' | 'landscape'; columnWidths: Record<string, number> }) => void;
 }
 
 /** Nút "Lưu" ở toolbar in (hướng giấy + độ rộng cột đã kéo tay) — dùng chung
@@ -24,7 +30,7 @@ interface Props {
  * VÀ có quyền sửa đúng báo giá này — xem getQuoteEditPermission()). Tách ra
  * đây để 2 nơi dùng CHUNG đúng 1 logic gọi API + trạng thái hiển thị, không
  * để lệch nhau theo thời gian. */
-export function QuotePrintLayoutSaveButton({ quoteId, printOrientation, columnWidthsDraft, onSaved }: Props) {
+export function QuotePrintLayoutSaveButton({ quoteId, printOrientation, columnWidthsDraft, onSaved, onSaveLocal }: Props) {
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   // Bo qua lan render dau (mount) - chi reset ve 'idle' khi huong giay/do
   // rong cot THAY DOI SAU KHI da mount (nguoi dung tu chinh tiep sau khi da
@@ -43,8 +49,12 @@ export function QuotePrintLayoutSaveButton({ quoteId, printOrientation, columnWi
   async function save() {
     setSaveStatus('saving');
     try {
-      const updated = await seedingQuoteRepository.updatePrintLayoutPrefs(quoteId, printOrientation, columnWidthsDraft || {});
-      onSaved(updated);
+      if (quoteId) {
+        const updated = await seedingQuoteRepository.updatePrintLayoutPrefs(quoteId, printOrientation, columnWidthsDraft || {});
+        onSaved?.(updated);
+      } else {
+        onSaveLocal?.({ orientation: printOrientation, columnWidths: columnWidthsDraft || {} });
+      }
       setSaveStatus('saved');
       setTimeout(() => setSaveStatus(current => (current === 'saved' ? 'idle' : current)), 2000);
     } catch (err) {

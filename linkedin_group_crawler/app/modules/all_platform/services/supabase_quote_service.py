@@ -1474,6 +1474,37 @@ def list_quotes_by_phase(
     }
 
 
+def _apply_default_phone_access(row: dict) -> dict:
+    """"báo giá cũ chưa được set mặc định giới hạn SĐT" (feedback 2026-09-24):
+    ap DUNG quy tac cua migration 149 ngay luc doc - khong phai cho migration
+    duoc chay tay len DB. Quote dang 'none' ma Sale CHUA TUNG chu dong chon
+    "Không giới hạn" (khong co log public_access_restriction_updated voi
+    mode='none') va CO SDT de doi chieu (danh sach da luu hoac
+    data.customerPhone) -> coi nhu 'phone'. Quote khong co SDT nao giu 'none'
+    de khong khoa han link da gui khach. Sau khi migration 149 chay, cot da la
+    'phone' nen ham nay khong con doi gi."""
+    if (row.get("public_access_mode") or "none") != "none":
+        return row
+    has_phone = bool(row.get("public_allowed_phones")) or bool(
+        str((row.get("data") or {}).get("customerPhone") or "").strip()
+    )
+    if not has_phone or not row.get("id"):
+        return row
+    logs = (
+        get_supabase_client()
+        .table("quote_activity_log")
+        .select("changes")
+        .eq("quote_id", row["id"])
+        .eq("action", "public_access_restriction_updated")
+        .execute()
+        .data
+        or []
+    )
+    if any(((log.get("changes") or {}).get("mode")) == "none" for log in logs):
+        return row
+    return {**row, "public_access_mode": "phone"}
+
+
 def get_quote(quote_id: str, include_deleted: bool = False) -> dict:
     """Xoa mem (deleted_at khong NULL) mac dinh KHONG duoc coi la quote dang
     hoat dong - endpoint thuong (khong truyen include_deleted=True) se nhan
@@ -1496,7 +1527,7 @@ def get_quote(quote_id: str, include_deleted: bool = False) -> dict:
         if _is_zero_rows_error(exc):
             raise QuoteNotFoundError("Không tìm thấy báo giá.") from exc
         raise
-    return _row_to_quote(row, _quote_items(quote_id))
+    return _row_to_quote(_apply_default_phone_access(row), _quote_items(quote_id))
 
 
 class PublicQuoteVerificationRequiredError(Exception):
@@ -1563,6 +1594,7 @@ def get_public_quote(token: str, email: str | None = None, phone: str | None = N
     if row.get("status") not in ("approved", "confirmed"):
         raise ValueError("Báo giá chưa được phát hành.")
 
+    row = _apply_default_phone_access(row)
     access_mode = row.get("public_access_mode") or "none"
     if access_mode == "email":
         allowed = {normalize_public_access_email(e) for e in (row.get("public_allowed_emails") or []) if e}
@@ -1573,6 +1605,13 @@ def get_public_quote(token: str, email: str | None = None, phone: str | None = N
             raise PublicQuoteVerificationRequiredError(method="email", invalid=True)
     elif access_mode == "phone":
         allowed_phones = {normalize_public_access_phone(p) for p in (row.get("public_allowed_phones") or []) if p}
+        # Mac dinh 'phone' tu migration 149 - quote Sale chua tung tu nhap
+        # danh sach SDT thi dung SDT khach hang dang hien tren bao gia
+        # (data.customerPhone), khong khoa han link voi 1 danh sach rong.
+        if not allowed_phones:
+            customer_phone = str((row.get("data") or {}).get("customerPhone") or "").strip()
+            if customer_phone:
+                allowed_phones = {normalize_public_access_phone(customer_phone)}
         normalized_phone = normalize_public_access_phone(phone or "") if phone else ""
         if not normalized_phone:
             raise PublicQuoteVerificationRequiredError(method="phone", invalid=False)

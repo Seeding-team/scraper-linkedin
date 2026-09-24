@@ -41,12 +41,24 @@ REACTION_LABELS = {
 
 
 def _get_member_id(email: str) -> Optional[str]:
+    """Tra ve id_member dung de INSERT vao internal_engagement_kpi/
+    internal_engagement_custom_posts — CA HAI BANG NAY co FK id_member
+    REFERENCES app_users(id) (xem migration 039, 053), KHONG PHAI members(id).
+
+    Truoc day check bang `members` TRUOC roi moi fallback app_users - neu 1
+    email ton tai o CA HAI bang nhung voi id KHAC NHAU (du lieu cu tu truoc
+    khi app_users la nguon that, chua duoc dong bo lai), ham se tra ve
+    members.id — id nay KHONG ton tai trong app_users, lam INSERT loi
+    "violates foreign key constraint ..._id_member_fkey" (loi that da gap).
+    Doi lai uu tien app_users (dung nguon FK yeu cau), members chi la fallback
+    cuoi cung cho user cu chua co trong app_users.
+    """
     supabase: Client = get_supabase_client()
-    res = supabase.table("members").select("id").eq("email", email).limit(1).execute()
-    if res.data:
-        return res.data[0].get("id")
     res_app = supabase.table("app_users").select("id").eq("email", email).limit(1).execute()
-    return res_app.data[0].get("id") if res_app.data else None
+    if res_app.data:
+        return res_app.data[0].get("id")
+    res = supabase.table("members").select("id").eq("email", email).limit(1).execute()
+    return res.data[0].get("id") if res.data else None
 
 
 def record_action(payload: dict) -> dict:

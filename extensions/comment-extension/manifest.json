@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Facebook, YouTube, LinkedIn & Threads Bulk Comment Extension",
-  "version": "1.4",
+  "version": "1.5",
   "description": "Seeding Comment hàng loạt trên Facebook, YouTube, LinkedIn và Threads",
   "permissions": [
     "activeTab",
