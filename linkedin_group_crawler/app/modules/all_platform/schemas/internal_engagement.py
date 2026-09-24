@@ -118,6 +118,9 @@ class AddCustomPostRequest(BaseModel):
     likes: int | None = None
     comments: int | None = None
     shares: int | None = None
+    # "internal" (mac dinh, bai cua chinh cong ty) | "external" (bai cua
+    # doi tac/khach hang/nguon ngoai - tab "Seeding ben ngoai").
+    scope: str | None = None
 
 
 class DebugFetchMetaRequest(BaseModel):

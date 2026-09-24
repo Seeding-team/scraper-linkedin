@@ -244,6 +244,7 @@ async def handle_cors_middleware(request: Request, call_next):
         "http://localhost:8000",
         "http://127.0.0.1:8000",
         "https://seeding.markeeai.com",
+        "https://seeding.markee.vn",
         "https://facebook.com",
         "https://www.facebook.com",
         "https://web.facebook.com",

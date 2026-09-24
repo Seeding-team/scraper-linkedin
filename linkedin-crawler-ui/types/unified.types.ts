@@ -217,6 +217,10 @@ export interface InternalEngagementPost {
   deadline?: string;
   target_comments?: number;
   assigned_team_ids?: string[];
+  /** "internal" (mặc định, bài của chính công ty) | "external" (bài của nguồn
+   * bên ngoài) — chỉ có ở bài custom-post, quyết định hiện ở tab "Seeding nội
+   * bộ" hay "Seeding bên ngoài" trên trang internal-engagement. */
+  scope?: "internal" | "external";
 }
 
 export type InternalEngagementMarkStatus = "need" | "received" | "completed";

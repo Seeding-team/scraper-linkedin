@@ -212,6 +212,7 @@ async def create_custom_post(payload: AddCustomPostRequest) -> BaseResponse:
             likes=payload.likes,
             comments=payload.comments,
             shares=payload.shares,
+            scope=payload.scope,
         )
         debug_msg = data.pop("_debug_info", None) if isinstance(data, dict) else None
         return BaseResponse(success=True, message=debug_msg or "Tạo bài viết Seeding thành công!", data=data)
@@ -253,6 +254,7 @@ def list_custom_posts(page: int = 1, page_size: int = 20) -> BaseResponse:
             items.append({
                 "id": str(p["id"]),
                 "platform": p.get("platform") or "facebook",
+                "scope": p.get("scope") or "internal",
                 "fanpage_id": "custom",
                 "fanpage_name": fanpage_name,
                 "page_name": fanpage_name,

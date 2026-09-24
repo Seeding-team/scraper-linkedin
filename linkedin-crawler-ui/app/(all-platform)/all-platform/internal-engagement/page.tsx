@@ -158,8 +158,10 @@ export default function InternalEngagementPage() {
   const { user } = useAppAuth();
   const [toast, setToast] = useState<ToastMessage | null>(null);
 
-  // Tabs
-  const [mainTab, setMainTab] = useState<"overview" | "feed">("overview");
+  // Tabs — thứ tự hiển thị: Seeding nội bộ -> Seeding bên ngoài -> Tổng quan báo cáo.
+  // Mặc định "feed" (Seeding nội bộ) - đây là trang landing chính khi vào app
+  // (xem getDashboardHrefForRole trong AllPlatformSidebar.tsx).
+  const [mainTab, setMainTab] = useState<"overview" | "feed" | "external">("feed");
   const [tab, setTab] = useState<TaskStatusTab>("all");
   const [sourceTab, setSourceTab] = useState<SourceTab>("markee");
   const [search, setSearch] = useState("");
@@ -1076,6 +1078,9 @@ export default function InternalEngagementPage() {
         deadline: taskDeadline ? new Date(taskDeadline).toISOString() : undefined,
         target_comments: targetComm,
         assigned_team_ids: resolvedTeamUUIDs,
+        // Bài tạo từ tab "Seeding bên ngoài" đánh dấu external để hiện đúng
+        // tab, không lẫn vào "Seeding nội bộ" (xem scopedPosts).
+        scope: (mainTab === "external" ? "external" : "internal") as "internal" | "external",
       };
 
       const res = await internalEngagementService.addCustomPost(payload);
@@ -1157,6 +1162,17 @@ export default function InternalEngagementPage() {
     });
   }, [posts, customPosts]);
 
+  // Tab "Seeding nội bộ" vs "Seeding bên ngoài": bài markee-sourced (auto kéo
+  // từ MarkeeAI) luôn là nội bộ (không có field scope). Bài custom-post mặc
+  // định "internal" trừ khi tạo từ tab "Seeding bên ngoài" (xem
+  // handleCreateTaskSubmit). Tab "Tổng quan báo cáo" KHÔNG lọc — gộp cả 2.
+  const scopedPosts = useMemo(() => {
+    if (mainTab === "external") {
+      return allCombinedPosts.filter((post) => (post as any).scope === "external");
+    }
+    return allCombinedPosts.filter((post) => (post as any).scope !== "external");
+  }, [allCombinedPosts, mainTab]);
+
   const realStats = useMemo(() => {
     // 1. Total Seeders: Total active members across all teams in company (always 20)
     const totalSeeder = dbTeams.reduce((sum, t) => sum + (t.member_count || 0), 0) || (membersCount > 0 ? membersCount : 20);
@@ -1206,7 +1222,7 @@ export default function InternalEngagementPage() {
 
   // Unified multi-filter algorithm: Search, Campaign, Team, Status
   const filteredPosts = useMemo(() => {
-    return allCombinedPosts.filter((post) => {
+    return scopedPosts.filter((post) => {
       // 1. Search Query Filter
       if (search.trim()) {
         const q = search.toLowerCase();
@@ -1254,15 +1270,15 @@ export default function InternalEngagementPage() {
 
       return true;
     });
-  }, [allCombinedPosts, search, selectedCampaignId, selectedTeamFilter, tab, dbTeams, teamCounts]);
+  }, [scopedPosts, search, selectedCampaignId, selectedTeamFilter, tab, dbTeams, teamCounts]);
 
   const tabCounts = useMemo(() => {
-    let all = allCombinedPosts.length;
+    let all = scopedPosts.length;
     let need = 0;
     let completed = 0;
     let overdue = 0;
 
-    allCombinedPosts.forEach((post) => {
+    scopedPosts.forEach((post) => {
       const rawTarget = (post as any).target_comments || (post as any).targetComments;
       const targetTotal = Number(rawTarget) > 0 ? Number(rawTarget) : 32;
       const postTeamStats = teamCounts[post.id] || [];
@@ -1276,7 +1292,7 @@ export default function InternalEngagementPage() {
     });
 
     return { all, need, completed, overdue, received: need };
-  }, [allCombinedPosts, teamCounts]);
+  }, [scopedPosts, teamCounts]);
 
   // Admin/leader: badge "Team X: N tương tác" hiển thị dưới mỗi bài.
   useEffect(() => {
@@ -1438,7 +1454,7 @@ export default function InternalEngagementPage() {
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [tab, search, sourceTab]);
+  }, [tab, search, sourceTab, mainTab]);
 
   const pagedPosts = useMemo(() => {
     const start = (currentPage - 1) * PAGE_SIZE;
@@ -1628,8 +1644,30 @@ export default function InternalEngagementPage() {
             </div>
           ) : null}
 
-          {/* MAIN TABS SWITCHER */}
+          {/* MAIN TABS SWITCHER - thứ tự: Seeding nội bộ -> Seeding bên ngoài -> Tổng quan báo cáo */}
           <div className="flex items-center gap-2 border-b border-gray-200 mb-6 bg-white p-2.5 rounded-2xl shadow-xs">
+            <button
+              type="button"
+              onClick={() => setMainTab("feed")}
+              className={`px-5 py-2.5 text-xs font-extrabold rounded-xl transition cursor-pointer flex items-center gap-2 ${
+                mainTab === "feed"
+                  ? "bg-[#be123c] text-white shadow-sm"
+                  : "text-gray-600 hover:bg-gray-100 hover:text-gray-900"
+              }`}
+            >
+              <span>⚡</span> Seeding nội bộ
+            </button>
+            <button
+              type="button"
+              onClick={() => setMainTab("external")}
+              className={`px-5 py-2.5 text-xs font-extrabold rounded-xl transition cursor-pointer flex items-center gap-2 ${
+                mainTab === "external"
+                  ? "bg-[#be123c] text-white shadow-sm"
+                  : "text-gray-600 hover:bg-gray-100 hover:text-gray-900"
+              }`}
+            >
+              <span>🌐</span> Seeding bên ngoài
+            </button>
             <button
               type="button"
               onClick={() => setMainTab("overview")}
@@ -1640,17 +1678,6 @@ export default function InternalEngagementPage() {
               }`}
             >
               <span>📊</span> Tổng quan báo cáo
-            </button>
-            <button
-              type="button"
-              onClick={() => setMainTab("feed")}
-              className={`px-5 py-2.5 text-xs font-extrabold rounded-xl transition cursor-pointer flex items-center gap-2 ${
-                mainTab === "feed"
-                  ? "bg-[#be123c] text-white shadow-sm"
-                  : "text-gray-600 hover:bg-gray-100 hover:text-gray-900"
-              }`}
-            >
-              <span>⚡</span> Hoạt động seeding
             </button>
           </div>
 

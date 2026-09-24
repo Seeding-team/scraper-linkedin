@@ -1009,12 +1009,15 @@ async def add_custom_post(
     likes: Optional[int] = None,
     comments: Optional[int] = None,
     shares: Optional[int] = None,
+    scope: Optional[str] = None,
 ) -> dict:
     supabase: Client = get_supabase_client()
     user_id = _get_member_id(email_member)
 
     if not user_id:
         raise Exception("Không tìm thấy thông tin user.")
+
+    final_scope = scope if scope in ("internal", "external") else "internal"
 
     is_linkedin = (
         platform == "linkedin"
@@ -1149,6 +1152,7 @@ async def add_custom_post(
             "target_comments": target_comments,
             "assigned_team_ids": assigned_team_ids or [],
             "platform": final_platform,
+            "scope": final_scope,
         }
         if likes is not None or comments is not None or shares is not None:
             update_payload["fb_total_likes"] = likes or 0
@@ -1181,6 +1185,7 @@ async def add_custom_post(
         "target_comments": target_comments,
         "assigned_team_ids": assigned_team_ids or [],
         "platform": final_platform,
+        "scope": final_scope,
     }
     if likes is not None or comments is not None or shares is not None:
         data["fb_total_likes"] = likes or 0
@@ -1206,6 +1211,7 @@ async def add_custom_post(
             "target_comments": target_comments,
             "assigned_team_ids": assigned_team_ids or [],
             "platform": final_platform,
+            "scope": final_scope,
         }
         res = supabase.table("internal_engagement_custom_posts").insert(fallback_data).execute()
         item = res.data[0] if res.data else {}
