@@ -23,12 +23,22 @@ export interface NavLeafItem {
   exactMatch?: boolean;
 }
 
+export interface NavSubGroupItem {
+  type: "subgroup";
+  id: string;
+  icon: MaterialSymbolName;
+  label: string;
+  items: NavLeafItem[];
+}
+
+export type NavGroupChild = NavLeafItem | NavSubGroupItem;
+
 export interface NavGroupItem {
   type: "group";
   id: string;
   icon: MaterialSymbolName;
   label: string;
-  items: NavLeafItem[];
+  items: NavGroupChild[];
   // True = dong header (icon + label, giong het "Quan ly kenh & CSKH") KHONG
   // BAO GIO to active du co muc con dang active hay khong - dung cho "Quan ly
   // CRM": ban than dong header khong dieu huong di dau (khong Link, khong
@@ -320,8 +330,14 @@ export function findCurrentPageLabel(entries: SidebarEntry[], pathname: string):
     if (entry.type === "item") {
       if (isLeafActive(pathname, entry)) return entry.label;
     } else if (entry.type === "group") {
-      const child = entry.items.find((item) => isLeafActive(pathname, item));
-      if (child) return child.label;
+      for (const child of entry.items) {
+        if (child.type === "item") {
+          if (isLeafActive(pathname, child)) return child.label;
+        } else if (child.type === "subgroup") {
+          const sub = child.items.find((item) => isLeafActive(pathname, item));
+          if (sub) return sub.label;
+        }
+      }
     }
   }
   return undefined;
@@ -381,7 +397,11 @@ function SidebarGroup({
   onNavigate?: () => void;
   homeHref?: string;
 }) {
-  const hasActiveChild = entry.items.some((item) => item.href !== homeHref && isLeafActive(pathname, item));
+  const hasActiveChild = entry.items.some((item) =>
+    item.type === "item"
+      ? item.href !== homeHref && isLeafActive(pathname, item)
+      : item.items.some((sub) => sub.href !== homeHref && isLeafActive(pathname, sub))
+  );
   const [isOpen, setIsOpen] = useState(hasActiveChild);
 
   useEffect(() => {
@@ -389,12 +409,14 @@ function SidebarGroup({
   }, [hasActiveChild]);
 
   if (collapsed) {
+    const firstChild = entry.items[0];
+    const firstHref = firstChild?.type === "item" ? firstChild.href : firstChild?.items[0]?.href;
     return (
       <SidebarLink
         item={{
           type: "item",
           id: entry.id,
-          href: entry.items[0]?.href || "/all-platform/post-feed",
+          href: firstHref || "/all-platform/post-feed",
           icon: entry.icon,
           label: entry.label,
         }}
@@ -433,15 +455,38 @@ function SidebarGroup({
         )}
       >
         <div className="ml-5 min-h-0 space-y-1 border-l border-outline-variant pl-3">
-          {entry.items.map((item) => (
-            <SidebarLink
-              key={item.id}
-              item={item}
-              active={isLeafActive(pathname, item)}
-              indented
-              onNavigate={onNavigate}
-            />
-          ))}
+          {entry.items.map((child) => {
+            if (child.type === "item") {
+              return (
+                <SidebarLink
+                  key={child.id}
+                  item={child}
+                  active={isLeafActive(pathname, child)}
+                  indented
+                  onNavigate={onNavigate}
+                />
+              );
+            }
+            return (
+              <div key={child.id} className="mt-1 space-y-1">
+                <div className="flex items-center gap-2 px-2 py-1 text-xs font-semibold text-on-surface-variant">
+                  <MaterialIcon name={child.icon} className="text-[16px]" />
+                  <span>{child.label}</span>
+                </div>
+                <div className="ml-3 space-y-1 border-l border-outline-variant/60 pl-2">
+                  {child.items.map((subItem) => (
+                    <SidebarLink
+                      key={subItem.id}
+                      item={subItem}
+                      active={isLeafActive(pathname, subItem)}
+                      indented
+                      onNavigate={onNavigate}
+                    />
+                  ))}
+                </div>
+              </div>
+            );
+          })}
         </div>
       </div>
     </div>
