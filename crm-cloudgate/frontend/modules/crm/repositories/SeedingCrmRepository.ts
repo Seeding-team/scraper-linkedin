@@ -59,6 +59,10 @@ type CustomerLeadRow = {
   team_type?: string | null;
   /** Du an that (migration 097) - null = Co hoi chua gan Du an nao. */
   project_id?: string | null;
+  /** Ten Du an MOI go tay (khong kem project_id) - backend tu tao Du an that
+   * tu ten nay (xem CreateDealInput.projectName). CHI dung o request GUI,
+   * server khong bao gio tra field nay lai. */
+  project_name?: string | null;
   /** Nguoi lien he chinh (migration 134/135) - null = chua chon. */
   primary_contact_id?: string | null;
   status?: 'pending' | 'closed' | 'rejected' | string | null;
@@ -524,6 +528,7 @@ function toCustomerPayload(input: CreateDealInput | UpdateDealInput): Partial<Cu
   // nay chay o CA 2 truong hop tao moi VA sua - gui project_id=null RO
   // RANG khi bo gan (khong duoc IM LANG bo qua project_id nhu bug cu).
   if ('projectId' in input) payload.project_id = input.projectId || null;
+  if ('projectName' in input && !input.projectId) payload.project_name = input.projectName || null;
   if ('primaryContactId' in input) payload.primary_contact_id = input.primaryContactId || null;
   if ('customerName' in input) payload.customer_name = input.customerName;
   if ('companyName' in input) payload.company_name = input.companyName;

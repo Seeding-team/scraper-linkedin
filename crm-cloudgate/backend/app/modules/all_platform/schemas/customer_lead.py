@@ -75,6 +75,11 @@ class CustomerLeadCreate(BaseModel):
     customer_id: Optional[str] = None
     # Du an that (migration 097) - null = Co hoi chua gan Du an.
     project_id: Optional[str] = None
+    # Feedback 2026-09-25: "Cơ hội" khong con nhap ten rieng - lay theo ten Du
+    # an. Neu FE gui project_name (khong kem project_id) -> tao Du an moi ngay
+    # trong luong tao deal nay (xem create_customer_lead()), KHONG doi Sale
+    # phai co quyen can_manage_project() rieng cho POST /projects.
+    project_name: Optional[str] = None
     # Nguoi lien he chinh (migration 134/135) - null = chua chon.
     primary_contact_id: Optional[str] = None
 
@@ -168,6 +173,10 @@ class CustomerLeadUpdate(BaseModel):
     # RO RANG (khong phai bo qua key) = bo gan Du an that su (xem router
     # update_customer_lead() - PHAI dung exclude_unset de phan biet 2 truong hop nay).
     project_id: Optional[str] = None
+    # Cung co che voi create (xem CustomerLeadCreate.project_name) - go ten Du
+    # an MOI luc SUA deal cung tu tao Du an that, khong bat phai co project_id
+    # san.
+    project_name: Optional[str] = None
     # Nguoi lien he chinh (migration 134/135) - cung quy tac exclude_unset nhu project_id.
     primary_contact_id: Optional[str] = None
     company_name: Optional[str] = None

@@ -401,6 +401,23 @@ def validate_deal_assignment_fields(actor: Dict[str, Any] | None, payload: Dict[
 
 def create_customer_lead(data: Dict[str, Any], actor: Dict[str, Any] | None = None) -> Optional[Dict[str, Any]]:
     try:
+        # Feedback 2026-09-25: "Cơ hội" khong con nhap ten rieng - lay theo Du
+        # an da chon. FE gui project_name (khong kem project_id) khi nguoi tao
+        # deal go ten Du an MOI chua co trong dropdown -> tu tao Du an that
+        # ngay tai day (goi thang service, KHONG qua router/can_manage_project()
+        # - da xac nhan voi nguoi dung: noi rong quyen tao Du an CHI trong
+        # luong tao deal, khong mo POST /projects cho moi nguoi). Can co
+        # customer_id THAT (Du an bat buoc thuoc 1 Customer) - neu chua co
+        # customer_id thi bo qua, de validate_deal_relations ben duoi bao loi
+        # binh thuong nhu cu.
+        project_name = (data.pop("project_name", None) or "").strip()
+        if project_name and not data.get("project_id") and data.get("customer_id"):
+            from app.modules.all_platform.services.supabase_project_service import create_project
+            new_project = create_project(
+                {"name": project_name, "customer_id": data["customer_id"]},
+                actor.get("id") if actor else None,
+            )
+            data["project_id"] = new_project["id"]
         from app.modules.all_platform.services.deal_relation_service import validate_deal_relations
         validate_deal_relations(data, actor)
         validate_deal_assignment_fields(actor, data, existing=None)
@@ -466,6 +483,18 @@ def update_customer_lead(lead_id: str, data: Dict[str, Any], actor: Dict[str, An
         validate_deal_assignment_fields(actor, data, existing=existing_for_assignment)
         supabase = get_supabase_client()
         safe_data = dict(data)
+        # Cung logic voi create_customer_lead(): go ten Du an moi (chua co
+        # project_id) -> tu tao Du an that, gan project_id vao deal.
+        project_name = (safe_data.pop("project_name", None) or "").strip()
+        if project_name and not safe_data.get("project_id"):
+            customer_id = safe_data.get("customer_id") or existing_for_assignment.get("customer_id")
+            if customer_id:
+                from app.modules.all_platform.services.supabase_project_service import create_project
+                new_project = create_project(
+                    {"name": project_name, "customer_id": customer_id},
+                    actor.get("id") if actor else None,
+                )
+                safe_data["project_id"] = new_project["id"]
         if "city" in safe_data:
             safe_data["city"] = normalize_vietnam_city(safe_data.get("city"))
         from app.modules.all_platform.services.deal_relation_service import validate_deal_relations

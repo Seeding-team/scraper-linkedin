@@ -496,7 +496,7 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
    * mở - KHÔNG tái dùng state `openDeal` (Deal Workspace) để tránh mở nhầm. */
   async function openRegisterContractForActiveDeal() {
     if (!activeDeal) {
-      window.alert('Khách hàng này chưa có Cơ hội nào — cần ít nhất 1 Cơ hội để ghi nhận hợp đồng đã ký bên ngoài.');
+      window.alert('Khách hàng này chưa có Dự án CRM nào — cần ít nhất 1 Dự án CRM để ghi nhận hợp đồng đã ký bên ngoài.');
       return;
     }
     setRegisterContractLoading(true);
@@ -526,13 +526,13 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
   }
 
   async function deleteOpenDeal(c: LiveDealRow) {
-    if (!confirm(`Xóa cơ hội "${c.customer_name}"?\nHành động này không thể hoàn tác.`)) return;
+    if (!confirm(`Xóa dự án CRM "${c.customer_name}"?\nHành động này không thể hoàn tác.`)) return;
     try {
       let res = await customerLeadService.delete(c.id);
       // Co hoi con Bao gia/Hop dong: hoi ro truoc khi xoa kem (feedback 2026-09-23).
       const summary = cascadeSummaryFromBody(res);
       if (summary) {
-        if (!confirm(cascadeWarningText('Cơ hội này', summary))) return;
+        if (!confirm(cascadeWarningText('Dự án CRM này', summary))) return;
         res = await customerLeadService.delete(c.id, true);
       }
       if (res?.success === false) throw new Error(res?.message || 'Xóa thất bại');
@@ -732,7 +732,7 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
   async function openQuickQuoteForProject(projectId: string) {
     const candidate = data?.deals?.find(d => d.project_id === projectId) || activeDeal;
     if (!candidate) {
-      window.alert('Khách hàng chưa có Cơ hội (Deal) nào để tạo báo giá nhanh. Hãy tạo Cơ hội trước.');
+      window.alert('Khách hàng chưa có Dự án CRM (Deal) nào để tạo báo giá nhanh. Hãy tạo Dự án CRM trước.');
       return;
     }
     setQuickQuoteLoading(true);
@@ -740,7 +740,7 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
       const deal = await seedingCrmRepository.getDeal(candidate.id);
       setQuickQuoteDeal(deal);
     } catch {
-      window.alert('Không tải được thông tin Cơ hội để tạo báo giá nhanh.');
+      window.alert('Không tải được thông tin Dự án CRM để tạo báo giá nhanh.');
     } finally {
       setQuickQuoteLoading(false);
     }
@@ -940,7 +940,7 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
               </button>
             ) : null}
             <button type="button" className="crm-secondary-button" onClick={() => setDealModal({ open: true, project: null, contactId: null })}>
-              + Tạo cơ hội
+              + Tạo dự án CRM
             </button>
             {/* "Luồng từ Khách hàng → Báo giá" (feedback): truoc day la <Link>
              * dieu huong sang /all-platform/quote-center, roi khoi han trang
@@ -980,7 +980,7 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
               Dự án ({projectsSummary?.projectCount || 0})
             </button>
             <button type="button" className={`crm-segment-button ${tab === 'deals' ? 'crm-segment-button--active' : ''}`} onClick={() => setTab('deals')}>
-              Cơ hội ({data?.deals?.length || 0})
+              Dự án CRM ({data?.deals?.length || 0})
             </button>
             <button
               type="button"
@@ -1006,7 +1006,7 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
               {activeDeal ? (
                 <section className="crm-detail-info-grid">
                   <h4 className="mb-1 text-xs font-bold uppercase tracking-wider text-slate-500" style={{ gridColumn: '1 / -1' }}>
-                    Cơ hội đang xử lý
+                    Dự án CRM đang xử lý
                   </h4>
                   <InfoItem label="Deal" value={activeDeal.customer_name || activeDeal.id} />
                   <InfoItem label="Dự án" value={projectLabel(activeDeal.project_id)} />
@@ -1068,7 +1068,7 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
                 <div>
                   <p className="crm-section-title">Hoạt động ({activityItems.length})</p>
                   <p className="crm-small crm-muted" style={{ marginTop: '0.2rem' }}>
-                    Hoạt động bán hàng — gộp từ các Cơ hội của khách hàng này.
+                    Hoạt động bán hàng — gộp từ các Dự án CRM của khách hàng này.
                   </p>
                 </div>
               </div>
@@ -1136,7 +1136,7 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
               <div className="crm-projects-tab-head">
                 <div>
                   <h3>Dự án của khách hàng</h3>
-                  <p>Dự án là lớp quản lý giữa Khách hàng và Cơ hội/Báo giá.</p>
+                  <p>Dự án là lớp quản lý giữa Khách hàng và Dự án CRM/Báo giá.</p>
                 </div>
                 {canManageProject ? (
                   <button type="button" className="crm-primary-button" onClick={() => setProjectModal({ open: true, project: null })}>
@@ -1166,7 +1166,7 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
                     <div className="crm-stat-card"><p className="crm-stat-label">Tổng dự án</p><p className="crm-stat-value">{projectsSummary.projectCount}</p></div>
                     <div className="crm-stat-card"><p className="crm-stat-label">Đang hoạt động</p><p className="crm-stat-value">{projectsSummary.activeProjectCount}</p></div>
                     <div className="crm-stat-card"><p className="crm-stat-label">Quote Cases</p><p className="crm-stat-value">{projectsSummary.quoteCaseCount}</p></div>
-                    <div className="crm-stat-card"><p className="crm-stat-label">Cơ hội CRM</p><p className="crm-stat-value">{projectsSummary.opportunityCount}</p></div>
+                    <div className="crm-stat-card"><p className="crm-stat-label">Dự án CRM</p><p className="crm-stat-value">{projectsSummary.opportunityCount}</p></div>
                     <div className="crm-stat-card"><p className="crm-stat-label">Giá trị quote hiện tại</p><p className="crm-stat-value">{formatMoney(projectsSummary.currentQuoteValue)}</p></div>
                   </div>
 
@@ -1207,7 +1207,7 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
                             {quickQuoteLoading ? 'Đang tải...' : 'Tạo báo giá nhanh'}
                           </button>
                           <button type="button" className="crm-secondary-button" onClick={() => setDealModal({ open: true, project, contactId: null })}>
-                            Tạo cơ hội
+                            Tạo dự án CRM
                           </button>
                           {canManageProject ? (
                             <button type="button" className="crm-secondary-button" onClick={() => setProjectModal({ open: true, project })}>
@@ -1235,7 +1235,7 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
                 <table className="crm-table">
                   <thead>
                     <tr>
-                      <th className="crm-th">Tên cơ hội</th>
+                      <th className="crm-th">Tên dự án CRM</th>
                       <th className="crm-th">Liên hệ chính</th>
                       <th className="crm-th">Dự án</th>
                       <th className="crm-th">Giai đoạn</th>
@@ -1340,7 +1340,7 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
                       <tr>
                         <th className="crm-th">Báo giá / Version</th>
                         <th className="crm-th">Dự án</th>
-                        <th className="crm-th">Cơ hội</th>
+                        <th className="crm-th">Dự án CRM</th>
                         <th className="crm-th">Liên hệ chính</th>
                         <th className="crm-th">Phase</th>
                         <th className="crm-th">Presale → Sale</th>
