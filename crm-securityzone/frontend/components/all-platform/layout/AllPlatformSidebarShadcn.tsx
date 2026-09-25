@@ -21,6 +21,7 @@ import {
   type NavLeafItem,
   type NavSectionItem,
 } from "./AllPlatformSidebar";
+import { WorkspaceSwitcherShadcn } from "./WorkspaceSwitcherShadcn";
 import {
   Sidebar,
   SidebarContent,
@@ -345,6 +346,7 @@ export function AllPlatformSidebarShadcn() {
         <div className="px-1 py-1 group-data-[collapsible=icon]:px-0">
           <SidebarLogoHeader />
         </div>
+        {isAdmin || (user?.allowedInstances?.length ?? 0) > 1 ? <WorkspaceSwitcherShadcn /> : null}
 
         <div className="flex items-center gap-1 rounded-full bg-sidebar-accent p-1 group-data-[collapsible=icon]:hidden">
           <button
