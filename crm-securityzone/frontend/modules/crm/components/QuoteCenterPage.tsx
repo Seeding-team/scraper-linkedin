@@ -1679,7 +1679,7 @@ export function QuoteCenterPage() {
               Tạo báo giá nhanh
             </button>
             <button type="button" className="qc-btn qc-btn-soft" onClick={openDealPicker}>
-              Tạo từ dự án CRM →
+              Tạo từ cơ hội CRM →
             </button>
           </div>
         </div>
@@ -2066,7 +2066,7 @@ export function QuoteCenterPage() {
       {dealPickerOpen ? (
         <div className="qc-modal-backdrop" onClick={closeDealPicker}>
           <div className="qc-deal-picker" onClick={event => event.stopPropagation()}>
-            <h3>Chọn dự án CRM</h3>
+            <h3>Chọn cơ hội CRM</h3>
             <input
               autoFocus
               type="search"

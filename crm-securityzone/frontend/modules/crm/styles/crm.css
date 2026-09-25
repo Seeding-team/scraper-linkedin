@@ -6238,6 +6238,15 @@
   padding: 0.85rem 0.95rem;
 }
 
+.crm-row--clickable {
+  cursor: pointer;
+  transition: background-color 0.18s ease;
+}
+
+.crm-row--clickable:hover {
+  background: #f8fafc;
+}
+
 .crm-customer-card-head {
   display: flex;
   align-items: flex-start;
@@ -6691,6 +6700,20 @@
   justify-content: center;
 }
 
+/* Nut xoa doc lap thay ActionMenu ⋯ khi menu phu chi con dung 1 muc "Xoa"
+ * (LeadsDirectory.tsx renderSecondaryActions) - tai dung khung
+ * .crm-row-action-primary/.crm-row-action-icon, chi doi mau sang do. */
+.crm-row-action-danger {
+  color: #be1e4b;
+  border-color: #f3c6d3;
+}
+
+.crm-row-action-danger:hover {
+  background: #fff1f2;
+  border-color: #be1e4b;
+  color: #9f1239;
+}
+
 /* Ngay/gio trong bang khong duoc xuong dong - bug thuc te thay qua anh chup
  * ("28/8/202" + "6" tach 2 dong) vi .crm-td khong co nowrap mac dinh. */
 .crm-td--nowrap {
@@ -6876,6 +6899,52 @@
   border: 0;
   background: transparent;
   padding: 0;
+}
+
+/* Nut "Sửa khách hàng" chuyen tu header xuong cuoi tab Tổng quan
+ * (feedback 2026-09-25) - can 1 khoang cach nho voi grid thong tin phia tren. */
+.crm-overview-edit-action {
+  margin-top: 1rem;
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* Tab "Dự án" - 1 vai KPI trong dashboard tong quan (crm-projects-summary-grid)
+ * doi thanh nut dieu huong thang sang tab tuong ung (feedback 2026-09-25:
+ * "muon kieu cam quan, tong quat nhu dashboard", KHONG phai khoi folder rieng
+ * tach biet nhu ban truoc) - tai dung nguyen .crm-stat-card, chi them bien
+ * the clickable + 1 dong hint nho o cuoi label. */
+.crm-stat-card--clickable {
+  cursor: pointer;
+  text-align: left;
+  display: block;
+  width: 100%;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  transition: border-color 0.16s ease, background 0.16s ease, transform 0.16s ease;
+}
+
+.crm-stat-card--clickable:hover {
+  border-color: #be1e4b;
+  background: #fff1f2;
+  transform: translateY(-1px);
+}
+
+.crm-stat-card-nav-hint {
+  margin-left: 0.3rem;
+  font-weight: 600;
+  color: #be1e4b;
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+/* Nut "+ Tạo báo giá" doi tu header trang xuong dau noi dung tab Báo giá
+ * (feedback 2026-09-25, PDF muc 5). */
+.crm-quotes-tab-head {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 0.75rem;
 }
 
 .crm-detail-info-item--full {
