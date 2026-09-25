@@ -1231,7 +1231,7 @@ export function QuoteWorkspaceModal({
     // rieng cua ho, khong con validate cung o day (mirror dung nguyen tac cu
     // "bao gia cu co the chua tung co Contact/Issuer" - gio ap dung ca cho
     // luong tao moi).
-    if (!selectedDealId) errors.deal = beyondStep1 ? 'Vui lòng chọn cơ hội CRM.' : 'Vui lòng chọn dự án.';
+    if (!selectedDealId) errors.deal = beyondStep1 ? 'Vui lòng chọn dự án CRM.' : 'Vui lòng chọn dự án.';
     if (!formId) errors.form = 'Vui lòng chọn mẫu báo giá.';
     if (!technicalOwnerId) errors.presale = 'Vui lòng chọn Presale.';
     if (!quoteOwnerId) errors.sale = 'Vui lòng chọn Sale.';
@@ -4645,24 +4645,24 @@ export function QuoteWorkspaceModal({
     );
   }
 
-  // "Cơ hội CRM" (data-qc-required="deal") - dung CHUNG 1 JSX cho ca 2 vi tri:
+  // "Dự án CRM" (data-qc-required="deal") - dung CHUNG 1 JSX cho ca 2 vi tri:
   // hang 1 (chung voi Khach hang/Nguoi lien he) luc con o Buoc 1, roi TRA VE
   // hang 2 (chung voi Du an/Loai bao gia, dung bo cuc 3+3 GOC) tu Buoc 2
   // (beyondStep1) tro di - feedback "check lai xem buoc 2 co ve dung thu tu
   // cu khong" (2026-09-24, sau khi da gop 3 truong Buoc 1 vao 1 hang).
   const dealField = (
     <div data-qc-required="deal">
-      {/* Chi doi CHU hien thi tu "Cơ hội CRM" sang "Dự án" (feedback
-       * 2026-09-25) - VAN chon tu bang Deal/pipeline (customer_leads) nhu
-       * cu, KHONG doi sang bang Project rieng (da xac nhan voi nguoi dung,
-       * "chỉ đổi chữ hiển thị") - moi bien/state (deal, draftDealId,
-       * requiredFieldErrors.deal...) giu nguyen ten cu, chi la label. CHI
-       * doi chu luc con o Buoc 1 (!beyondStep1, o day la field DUY NHAT
-       * Presale thay) - tu Buoc 2 field nay TRA VE hang 2, dung CHUNG hang
-       * voi field "Dự án" THAT (data-qc-required="project", khac bang
-       * Project) - giu nguyen "Cơ hội CRM" o do de khong lap 2 nhan "Dự án"
-       * cung 1 hang (2 field khac nhau, 2 gia tri khac nhau). */}
-      <span className="qc-workspace-info-label">{beyondStep1 ? 'Cơ hội CRM' : 'Dự án'} <span className="qc-required-mark">*</span></span>
+      {/* Doi CHU hien thi tu "Cơ hội CRM" sang "Dự án CRM" (feedback
+       * 2026-09-25, sau khi doi tu "Cơ hội CRM" -> "Dự án" gay lan voi field
+       * "Dự án" THAT) - VAN chon tu bang Deal/pipeline (customer_leads) nhu
+       * cu, KHONG doi sang bang Project rieng - moi bien/state (deal,
+       * draftDealId, requiredFieldErrors.deal...) giu nguyen ten cu, chi la
+       * label. CHI doi chu luc con o Buoc 1 (!beyondStep1, o day la field DUY
+       * NHAT Presale thay) - tu Buoc 2 field nay TRA VE hang 2, dung CHUNG
+       * hang voi field "Dự án" THAT (data-qc-required="project", khac bang
+       * Project) - giu "Dự án CRM" o do de khong lap 2 nhan "Dự án" cung 1
+       * hang (2 field khac nhau, 2 gia tri khac nhau). */}
+      <span className="qc-workspace-info-label">{beyondStep1 ? 'Dự án CRM' : 'Dự án'} <span className="qc-required-mark">*</span></span>
       {!quote ? (
         <SearchableSelect
           value={draftDealId}
@@ -5303,7 +5303,7 @@ export function QuoteWorkspaceModal({
                         <div className="qc-summary-grid">
                           <div><span className="qc-workspace-info-label">Khách hàng</span><strong>{deal?.customerName || 'Chưa gắn khách hàng'}</strong></div>
                           <div><span className="qc-workspace-info-label">Dự án</span><strong>{project ? `${project.projectCode} · ${project.name}` : 'Chưa thuộc dự án'}</strong></div>
-                          <div><span className="qc-workspace-info-label">Cơ hội CRM</span><strong>{businessCode || (deal ? 'Cơ hội chưa có mã' : 'Chưa gắn cơ hội')}</strong></div>
+                          <div><span className="qc-workspace-info-label">Dự án CRM</span><strong>{businessCode || (deal ? 'Cơ hội chưa có mã' : 'Chưa gắn cơ hội')}</strong></div>
                           <div><span className="qc-workspace-info-label">Presale phụ trách</span><strong>{techName || 'Chưa gán'}</strong></div>
                           <div><span className="qc-workspace-info-label">Sale phụ trách</span><strong>{saleName || 'Chưa gán'}</strong></div>
                           <div><span className="qc-workspace-info-label">SLA</span><strong>{quote.slaDueAt ? formatDate(quote.slaDueAt) : 'Chưa đặt SLA'}</strong></div>
@@ -7515,7 +7515,7 @@ export function QuoteWorkspaceModal({
                 />
                 {sendRecipientSource ? (
                   <p className="qc-workspace-muted" style={{ fontSize: 12, margin: '2px 0 0' }}>
-                    Nguồn email: {sendRecipientSource === 'deal_contact' ? 'Cơ hội CRM' : sendRecipientSource === 'crm_customer' ? 'Hồ sơ khách hàng' : 'Nhập tay'}
+                    Nguồn email: {sendRecipientSource === 'deal_contact' ? 'Dự án CRM' : sendRecipientSource === 'crm_customer' ? 'Hồ sơ khách hàng' : 'Nhập tay'}
                   </p>
                 ) : null}
 
