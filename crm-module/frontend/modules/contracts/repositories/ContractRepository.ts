@@ -9,7 +9,7 @@ import type {
 } from '../types';
 
 export interface ContractRepository {
-  getContracts(params?: { dealId?: string; status?: string }): Promise<Contract[]>;
+  getContracts(params?: { dealId?: string; status?: string; quoteId?: string }): Promise<Contract[]>;
   getContract(id: string): Promise<Contract>;
   getDashboardStats(): Promise<ContractDashboardStats>;
   createContract(input: CreateContractInput): Promise<Contract>;

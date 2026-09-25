@@ -23,6 +23,7 @@ import { toast } from "sonner";
 import { customerLeadService, type Customer } from "@/services/customer-lead.service";
 import { seedingContractRepository } from "@/modules/contracts/repositories/SeedingContractRepository";
 import { CONTRACT_STATUS_LABELS } from "@/modules/contracts/constants/contractConfig";
+import { CurrencyInput } from "@/components/CurrencyInput";
 import type { Contract, ContractStatus } from "@/modules/contracts";
 
 interface DealOption {
@@ -57,17 +58,25 @@ interface Props {
   contactOptions?: Array<{ id: string; name: string }>;
   /** Danh sach Du an cua Khach hang (Customer 360 da fetch san qua
    * projectsSummary.projects) - dropdown moi, cung vai tro loc "Cơ hội" nhu
-   * Lien he o tren (giao 2 dieu kien loc). */
+   * Lien he o tren (giao 2 dieu kien loc). Contract KHONG co cot project_id
+   * rieng - field nay CHI dung de loc "Cơ hội", khong luu them gi khac. */
   projectOptions?: Array<{ id: string; projectCode: string; name: string }>;
+  /** "Thuộc báo giá nào" (feedback 2026-09-25, PDF mục 7) - danh sách Báo giá
+   * của khách hàng (Customer 360 đã fetch sẵn qua allQuoteChains). Chọn 1 báo
+   * giá sẽ ghi vào `quote_id` của hợp đồng (đã có sẵn trong CreateContractInput/
+   * Contract type, chỉ chưa từng được set từ UI này) - khi báo giá đó đã
+   * duyệt xong, hợp đồng sẽ tự hiện trong "Bản tóm tắt báo giá" của báo giá đó. */
+  quoteOptions?: Array<{ id: string; label: string; dealId?: string | null }>;
 }
 
 const STATUS_OPTIONS: ContractStatus[] = ["signed", "active", "completed", "draft", "pending_signature", "terminated"];
 const ALL = "__all__";
+const NONE_QUOTE = "__none__";
 
-export function RegisterExternalContractModal({ open, deal, onClose, onCreated, customerLabel, dealOptions, contactOptions, projectOptions }: Props) {
+export function RegisterExternalContractModal({ open, deal, onClose, onCreated, customerLabel, dealOptions, contactOptions, projectOptions, quoteOptions }: Props) {
   const [title, setTitle] = useState("");
   const [contractNumber, setContractNumber] = useState("");
-  const [contractValue, setContractValue] = useState("");
+  const [contractValue, setContractValue] = useState<number | null>(null);
   const [status, setStatus] = useState<ContractStatus>("signed");
   const [signedAt, setSignedAt] = useState("");
   const [endDate, setEndDate] = useState("");
@@ -80,12 +89,13 @@ export function RegisterExternalContractModal({ open, deal, onClose, onCreated, 
   const [selectedDealId, setSelectedDealId] = useState(deal.id);
   const [activeContactId, setActiveContactId] = useState(deal.primary_contact_id || ALL);
   const [activeProjectId, setActiveProjectId] = useState(deal.project_id || ALL);
+  const [selectedQuoteId, setSelectedQuoteId] = useState(NONE_QUOTE);
 
   useEffect(() => {
     if (!open) return;
     setTitle("");
     setContractNumber("");
-    setContractValue("");
+    setContractValue(null);
     setStatus("signed");
     setSignedAt("");
     setEndDate("");
@@ -96,7 +106,24 @@ export function RegisterExternalContractModal({ open, deal, onClose, onCreated, 
     setSelectedDealId(deal.id);
     setActiveContactId(deal.primary_contact_id || ALL);
     setActiveProjectId(deal.project_id || ALL);
+    setSelectedQuoteId(NONE_QUOTE);
   }, [open, deal.id, deal.primary_contact_id, deal.project_id]);
+
+  // Chi goi y bao gia THUOC dung Co hoi dang chon (giong cach loc Cơ hội theo
+  // Lien he/Du an o tren) - neu doi Cơ hội sang cai khac, bao gia da chon (neu
+  // khong thuoc Cơ hội moi) se bi bo chon lai o effect ben duoi thay vi gui
+  // nham quote_id cua 1 Cơ hội khac.
+  const filteredQuotes = useMemo(
+    () => (quoteOptions || []).filter(q => !q.dealId || q.dealId === selectedDealId),
+    [quoteOptions, selectedDealId]
+  );
+
+  useEffect(() => {
+    if (!open) return;
+    if (selectedQuoteId !== NONE_QUOTE && !filteredQuotes.some(q => q.id === selectedQuoteId)) {
+      setSelectedQuoteId(NONE_QUOTE);
+    }
+  }, [open, filteredQuotes, selectedQuoteId]);
 
   // Danh sach Cơ hội hien theo dung 2 bo loc Lien he/Du an dang chon (giao 2
   // dieu kien) - "Tất cả" (ALL) o 1 hoac ca 2 bo loc thi coi nhu khong loc
@@ -158,11 +185,12 @@ export function RegisterExternalContractModal({ open, deal, onClose, onCreated, 
     try {
       const contract = await seedingContractRepository.createContract({
         dealId: selectedDealId,
+        quoteId: selectedQuoteId === NONE_QUOTE ? undefined : selectedQuoteId,
         contractNumber: contractNumber.trim() || undefined,
         title: title.trim(),
         status,
         signedAt: signedAt || undefined,
-        contractValue: contractValue ? Number(contractValue) : 0,
+        contractValue: contractValue ?? 0,
         endDate: endDate || undefined,
         source: "external",
         fileUrl: fileUrl || linkInput.trim() || undefined,
@@ -198,26 +226,9 @@ export function RegisterExternalContractModal({ open, deal, onClose, onCreated, 
 
           {error ? <p className="text-red-600">{error}</p> : null}
 
-          <label className="block">
-            <span className="mb-1 block text-xs font-semibold text-slate-600">Tên hợp đồng *</span>
-            <input
-              value={title}
-              onChange={e => setTitle(e.target.value)}
-              className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-              placeholder="Hợp đồng triển khai..."
-            />
-          </label>
-
-          <label className="block">
-            <span className="mb-1 block text-xs font-semibold text-slate-600">Số hợp đồng</span>
-            <input
-              value={contractNumber}
-              onChange={e => setContractNumber(e.target.value)}
-              className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-              placeholder="HD-2025-021"
-            />
-          </label>
-
+          {/* Nhóm field đã có sẵn giá trị mặc định (feedback 2026-09-25, PDF
+           * mục 7: "những phần được set là điền mặc định, sẽ cho lên hàng
+           * trên hết") - đứng trước nhóm phải nhập tay bên dưới. */}
           <label className="block">
             <span className="mb-1 block text-xs font-semibold text-slate-600">Khách hàng</span>
             <input value={customerLabel || deal.customer_name || deal.company_name || ""} disabled readOnly className="w-full rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-500" />
@@ -277,26 +288,67 @@ export function RegisterExternalContractModal({ open, deal, onClose, onCreated, 
             </label>
           ) : null}
 
-          <div className="grid grid-cols-2 gap-3">
+          {/* "Thuộc báo giá nào" (feedback 2026-09-25, PDF mục 7) - tuỳ chọn,
+           * khi chọn 1 báo giá đã duyệt xong, hợp đồng này sẽ tự hiện trong
+           * "Bản tóm tắt báo giá" của báo giá đó (xem QuoteWorkspaceModal.tsx). */}
+          {quoteOptions && quoteOptions.length > 0 ? (
             <label className="block">
-              <span className="mb-1 block text-xs font-semibold text-slate-600">Giá trị hợp đồng</span>
-              <input
-                type="number"
-                value={contractValue}
-                onChange={e => setContractValue(e.target.value)}
+              <span className="mb-1 block text-xs font-semibold text-slate-600">Thuộc báo giá nào</span>
+              <select
+                value={selectedQuoteId}
+                onChange={e => setSelectedQuoteId(e.target.value)}
                 className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-                placeholder="0"
-              />
-            </label>
-            <label className="block">
-              <span className="mb-1 block text-xs font-semibold text-slate-600">Trạng thái</span>
-              <select value={status} onChange={e => setStatus(e.target.value as ContractStatus)} className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm">
-                {STATUS_OPTIONS.map(s => (
-                  <option key={s} value={s}>{CONTRACT_STATUS_LABELS[s]}</option>
+              >
+                <option value={NONE_QUOTE}>Không gắn báo giá</option>
+                {filteredQuotes.map(q => (
+                  <option key={q.id} value={q.id}>{q.label}</option>
                 ))}
               </select>
             </label>
-          </div>
+          ) : null}
+
+          <label className="block">
+            <span className="mb-1 block text-xs font-semibold text-slate-600">Trạng thái</span>
+            <select value={status} onChange={e => setStatus(e.target.value as ContractStatus)} className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm">
+              {STATUS_OPTIONS.map(s => (
+                <option key={s} value={s}>{CONTRACT_STATUS_LABELS[s]}</option>
+              ))}
+            </select>
+          </label>
+
+          {/* Nhóm field phải nhập tay (feedback 2026-09-25, PDF mục 7). */}
+          <label className="block">
+            <span className="mb-1 block text-xs font-semibold text-slate-600">Tên hợp đồng *</span>
+            <input
+              value={title}
+              onChange={e => setTitle(e.target.value)}
+              className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+              placeholder="Hợp đồng triển khai..."
+            />
+          </label>
+
+          <label className="block">
+            <span className="mb-1 block text-xs font-semibold text-slate-600">Số hợp đồng</span>
+            <input
+              value={contractNumber}
+              onChange={e => setContractNumber(e.target.value)}
+              className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+              placeholder="HD-2025-021"
+            />
+          </label>
+
+          <label className="block">
+            <span className="mb-1 block text-xs font-semibold text-slate-600">Giá trị hợp đồng</span>
+            {/* CurrencyInput: tu dong them dau cham ngan 3 so luc go (feedback
+             * 2026-09-25) - day la tien VND, dung chung component format tien
+             * da co san trong app thay vi input number tho. */}
+            <CurrencyInput
+              value={contractValue}
+              onChange={setContractValue}
+              className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+              placeholder="0"
+            />
+          </label>
 
           <div className="grid grid-cols-2 gap-3">
             <label className="block">
