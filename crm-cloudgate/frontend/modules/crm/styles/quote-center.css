@@ -1669,6 +1669,19 @@
   min-width: 0;
 }
 
+/* Tên báo giá hiện to, nổi bật ở đầu form (feedback 2026-09-25, PDF mục 6) -
+ * đứng trên dòng mã báo giá/badge. */
+.qc-workspace-header-quote-title {
+  font-size: 19px;
+  font-weight: 800;
+  color: #14181f;
+  margin: 0 0 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
 .qc-workspace-header-title {
   display: flex;
   align-items: center;
@@ -1841,6 +1854,48 @@
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: 6px 14px;
+}
+
+/* Layout 2 cot Presale (trái) / Sale (phải) tu Buoc 2 tro di (feedback
+ * 2026-09-25, PDF muc 6) - .qc-workspace-info-strip-left/-right chi la
+ * wrapper vi tri, KHONG doi grid noi bo cua tung .qc-workspace-info-strip-row
+ * ben trong (van giu nguyen y het truoc gio). O Buoc 1 (khong co class
+ * --split) 2 wrapper nay khong co style gi, layout van la 1 cot doc nhu cu. */
+.qc-workspace-info-strip--split {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) 1px minmax(0, 2fr);
+  gap: 0 16px;
+  align-items: start;
+}
+.qc-workspace-info-strip--split::before {
+  content: '';
+  grid-column: 2;
+  grid-row: 1;
+  align-self: stretch;
+  background: #e5e9f0;
+}
+.qc-workspace-info-strip--split .qc-workspace-info-strip-left {
+  grid-column: 1;
+  grid-row: 1;
+}
+.qc-workspace-info-strip--split .qc-workspace-info-strip-right {
+  grid-column: 3;
+  grid-row: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+@media (max-width: 767px) {
+  .qc-workspace-info-strip--split {
+    grid-template-columns: 1fr;
+  }
+  .qc-workspace-info-strip--split::before {
+    display: none;
+  }
+  .qc-workspace-info-strip--split .qc-workspace-info-strip-left,
+  .qc-workspace-info-strip--split .qc-workspace-info-strip-right {
+    grid-column: 1;
+  }
 }
 .qc-workspace-info-strip div { min-width: 0; }
 /* Yeu cau rieng "khúc này vẫn to" - thu gon rieng CHI khoi thong tin
@@ -3627,6 +3682,92 @@
   border-radius: 8px;
   padding: 10px;
   margin: 8px 0;
+}
+
+/* Nut xem hop dong gan voi bao gia (trong "Bản tóm tắt báo giá") - rut gon
+ * nhan + doi sang mau do chinh cua app (--color-primary, giong .qc-btn-primary)
+ * thay vi xanh duong (feedback 2026-09-25 "thu gọn lại, để màu đỏ tone màu
+ * chính app dùng"). width:auto (khong con full width) vi nhan da ngan. */
+.qc-inline-link-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: auto;
+  height: auto;
+  white-space: normal;
+  border: 1px solid var(--color-primary, #ba244a);
+  background: #fff;
+  border-radius: 10px;
+  padding: 8px 14px;
+  color: var(--color-primary, #ba244a);
+  font-weight: 700;
+  text-align: left;
+  cursor: pointer;
+}
+
+.qc-inline-link-btn:hover {
+  background: var(--color-primary, #ba244a);
+  color: #fff;
+}
+
+.qc-inline-link-btn .qc-icon {
+  flex-shrink: 0;
+}
+
+/* Modal xem hop dong tu "Bản tóm tắt báo giá" (feedback 2026-09-25, giong
+ * "Xem bản khách hàng") - overlay don gian, tai dung nguyen ContractDetailPage. */
+.qc-contract-preview-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.55);
+  z-index: 10050;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.qc-contract-preview-panel {
+  position: relative;
+  background: #fff;
+  border-radius: 12px;
+  width: min(1100px, 100%);
+  max-height: 90vh;
+  overflow-y: auto;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+}
+
+/* Nut dong dang icon "X" o goc phai tren modal (feedback 2026-09-25 - thay
+ * cho nut chu "← Đóng" cu). */
+.qc-contract-preview-close {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  border: 0;
+  border-radius: 999px;
+  background: #f1f5f9;
+  color: #475569;
+  cursor: pointer;
+  z-index: 2;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.qc-contract-preview-close:hover {
+  background: #e2e8f0;
+  color: #0f172a;
+}
+
+/* .contract-detail-page vien nguyen la 1 trang day (min-height:100vh) - trong
+ * modal chi can cao vua noi dung, them padding-top de khong bi nut X de len
+ * tieu de hop dong. */
+.qc-contract-preview-panel .contract-detail-page {
+  min-height: 0;
+  padding-top: 3rem;
 }
 
 /* "Hoàn tác ngay sau autofill" (yeu cau rieng) - banner nho tren bang, tu
