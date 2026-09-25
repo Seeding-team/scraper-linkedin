@@ -232,7 +232,7 @@ export function getSourceLabel(sourcePlatform: string) {
 }
 
 export function validateDealForm(form: DealFormState): string | null {
-  if (!form.dealName.trim()) return 'Vui lòng nhập tên cơ hội.';
+  if (!form.dealName.trim()) return 'Vui lòng chọn hoặc nhập tên dự án.';
   if (!form.customerName.trim()) return 'Vui lòng nhập tên khách hàng.';
   if (!form.email.trim() && !form.phone.trim()) return 'Cần nhập email hoặc số điện thoại để tạo contact.';
   if (!form.servicePackage.trim()) return 'Vui lòng chọn sản phẩm/dịch vụ.';
@@ -309,6 +309,12 @@ export function buildDealPayload(form: DealFormState, _agents: CrmUserOption[] =
   return {
     customerId: form.customerId || undefined,
     projectId: form.projectId || null,
+    // "Cơ hội" khong con nhap ten rieng - lay theo Du an da chon (feedback
+    // 2026-09-25). form.dealName vua la ten hien thi cua deal (cot
+    // customer_name legacy) VUA la ten Du an dang go/da chon (xem
+    // ProjectPicker). Neu chua co projectId (Du an MOI go tay, chua tung
+    // luu) thi gui projectName de backend tu tao Du an that.
+    projectName: !form.projectId ? (form.dealName.trim() || undefined) : undefined,
     primaryContactId: form.primaryContactId || null,
     updateCustomerProfile: form.updateCustomerProfile,
     customerName: form.dealName.trim(),
@@ -463,6 +469,7 @@ export function CustomerProfileCombobox({
     if (form.customerId) {
       setValue('customerId', '');
       setValue('projectId', ''); // doi Customer -> Project cu (thuoc Customer khac) khong con hop le
+      setValue('dealName', ''); // Ten co hoi lay theo Du an - Du an cu cung khong con hop le
       setValue('primaryContactId', ''); // Contact cu thuoc Customer khac, khong con hop le
       setValue('updateCustomerProfile', false);
       setValue('customerProfileCanEdit', false);
@@ -480,6 +487,7 @@ export function CustomerProfileCombobox({
     clearAutofilledContact();
     setValue('customerId', customer.id);
     setValue('projectId', ''); // Customer moi -> Project cu (neu co) thuoc Customer khac, khong con hop le
+    setValue('dealName', ''); // Ten co hoi lay theo Du an - Du an cu cung khong con hop le
     if (!form.primaryContactLocked) setValue('primaryContactId', ''); // Customer moi -> Contact cu (neu co) thuoc Customer khac, khong con hop le
     setValue('customerProfileCanEdit', Boolean(customer.canEdit));
     setValue('updateCustomerProfile', false);
@@ -501,6 +509,7 @@ export function CustomerProfileCombobox({
       !window.confirm('Đổi khách hàng sẽ xóa thông tin liên hệ đã sửa tay. Tiếp tục?')) return;
     setValue('customerId', '');
     setValue('projectId', '');
+    setValue('dealName', ''); // Ten co hoi lay theo Du an - Du an cu cung khong con hop le
     setValue('primaryContactId', '');
     setValue('updateCustomerProfile', false);
     setValue('customerProfileCanEdit', false);
@@ -592,10 +601,11 @@ export function CustomerProfileCombobox({
   );
 }
 
-/** Dropdown "Dự án" cua Co hoi (Block 1) - CHI hien Project THUOC DUNG
- * Customer dang chon (khong cho chon Project cua Customer khac). Rong khi
- * chua chon Customer. Luon co option "Chưa thuộc dự án" (project_id=null
- * that su, khong phai bo qua). */
+/** "Dự án" cua Co hoi (Block 1) - feedback 2026-09-25: khong con o "Tên cơ
+ * hội" rieng, deal LAY TEN THEO DU AN - combobox nay VUA chon Du an co san
+ * (thuoc DUNG Customer dang chon) VUA cho go ten de TAO Du an moi (backend
+ * tu tao khi luu deal, xem buildDealPayload() projectName). Rong/khoa khi
+ * chua chon Customer. */
 function ProjectPicker({
   form,
   setValue,
@@ -608,6 +618,9 @@ function ProjectPicker({
   const [projects, setProjects] = useState<Project[]>([]);
   const [projectsCustomerId, setProjectsCustomerId] = useState('');
   const [loading, setLoading] = useState(false);
+  const [query, setQuery] = useState('');
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!form.customerId) {
@@ -625,34 +638,89 @@ function ProjectPicker({
     return () => { alive = false; window.clearTimeout(timer); };
   }, [form.customerId]);
 
+  // Khoa (mo tu Project card, vd "Tạo cơ hội") - projectId da co san nhung ten
+  // chi biet duoc SAU KHI danh sach projects tai xong - tu dien dealName ngay
+  // luc do (chi khi dealName con rong, khong ghi de deal dang sua).
+  useEffect(() => {
+    if (!locked || !form.projectId || form.dealName) return;
+    const current = projects.find(p => p.id === form.projectId);
+    if (current) setValue('dealName', current.name);
+  }, [locked, form.projectId, form.dealName, projects]);
+
+  useEffect(() => {
+    if (!open) return;
+    function handlePointerDown(event: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(event.target as Node)) setOpen(false);
+    }
+    document.addEventListener('mousedown', handlePointerDown);
+    return () => document.removeEventListener('mousedown', handlePointerDown);
+  }, [open]);
+
   if (!form.customerId) {
     return <input value="" disabled placeholder="Chọn khách hàng trước" />;
   }
 
-  // BUG THAT DA GAP ("2 dong Chua chon trong dropdown"): SearchableSelect da
-  // tu ve san 1 dong "clear" dung `placeholder` khi khong truyen
-  // hideClearOption - options o day KHONG duoc tu them lai 1 dong rong nua,
-  // keo bi trung 2 dong cung text.
-  const options = (projectsCustomerId === form.customerId ? projects : []).map(p => ({ value: p.id, label: `${p.projectCode} · ${p.name}` }));
+  const options = projectsCustomerId === form.customerId ? projects : [];
 
   if (locked) {
-    const current = projects.find(p => p.id === form.projectId);
-    return (
-      <input
-        value={form.projectId ? (current ? `${current.projectCode} · ${current.name}` : 'Dự án đã chọn') : 'Chưa thuộc dự án'}
-        disabled
-        readOnly
-      />
-    );
+    const current = options.find(p => p.id === form.projectId);
+    return <input value={form.dealName || current?.name || 'Dự án đã chọn'} disabled readOnly />;
+  }
+
+  const keyword = query.trim().toLowerCase();
+  const filtered = keyword
+    ? options.filter(p => p.name.toLowerCase().includes(keyword) || p.projectCode.toLowerCase().includes(keyword))
+    : options;
+  const exactMatch = options.some(p => p.name.trim().toLowerCase() === query.trim().toLowerCase());
+
+  function pick(project: Project) {
+    setValue('projectId', project.id);
+    setValue('dealName', project.name);
+    setQuery('');
+    setOpen(false);
+  }
+
+  function createNew() {
+    const name = query.trim();
+    if (!name) return;
+    setValue('projectId', '');
+    setValue('dealName', name);
+    setOpen(false);
   }
 
   return (
-    <SearchableSelect
-      value={form.projectId}
-      onChange={value => { if (!value || projectsCustomerId === form.customerId) setValue('projectId', value); }}
-      options={options}
-      placeholder={loading ? 'Đang tải dự án...' : 'Chưa thuộc dự án'}
-    />
+    <div className="crm-customer-combobox" ref={containerRef}>
+      <input
+        value={open ? query : form.dealName}
+        onFocus={() => { setQuery(form.dealName); setOpen(true); }}
+        onChange={event => {
+          setQuery(event.target.value);
+          setOpen(true);
+          setValue('projectId', '');
+          setValue('dealName', event.target.value);
+        }}
+        placeholder={loading ? 'Đang tải dự án...' : 'Chọn dự án có sẵn hoặc gõ tên dự án mới'}
+        autoComplete="off"
+        role="combobox"
+        aria-expanded={open}
+      />
+      {open ? (
+        <div className="crm-customer-combobox-menu">
+          {filtered.map(project => (
+            <button type="button" key={project.id} onMouseDown={event => event.preventDefault()} onClick={() => pick(project)}>
+              <strong>{project.name}</strong>
+              <span>{project.projectCode}</span>
+            </button>
+          ))}
+          {query.trim() && !exactMatch ? (
+            <button type="button" onMouseDown={event => event.preventDefault()} onClick={createNew}>
+              + Tạo dự án mới: “{query.trim()}”
+            </button>
+          ) : null}
+          {!filtered.length && !query.trim() ? <p>Chưa có dự án nào — gõ để tạo dự án mới</p> : null}
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -978,13 +1046,10 @@ export function DealFormFields({
       <section className="crm-form-section">
         <h3 className="crm-form-title">1. Khách hàng &amp; Cơ hội</h3>
         <div className="crm-form-grid">
-          <Field label="Tên cơ hội" required>
-            <input value={form.dealName} onChange={e => setValue('dealName', e.target.value)} placeholder="Ví dụ: Website Unifarm..." />
-          </Field>
           <Field label="Customer / Công ty" required>
             <CustomerProfileCombobox form={form} setValue={setValue} locked={form.customerLocked} />
           </Field>
-          <Field label="Dự án" hint={form.projectLocked ? undefined : 'tùy chọn'}>
+          <Field label="Dự án" required hint={form.projectLocked ? undefined : 'chọn có sẵn hoặc gõ tên mới — cơ hội lấy tên theo dự án'}>
             <ProjectPicker form={form} setValue={setValue} locked={form.projectLocked} />
           </Field>
           <Field label="Người liên hệ chính" hint={form.primaryContactLocked ? undefined : 'tùy chọn'}>
