@@ -11,7 +11,7 @@ import { LeadEditDrawer } from './LeadEditDrawer';
 import { LeadImportDialog } from './LeadImportDialog';
 import { SearchableSelect } from './SearchableSelect';
 import { useCrmCategoryCodeOptions } from './CrmCategorySelect';
-import { Loader2, Plus, RotateCcw } from './icons';
+import { Loader2, Plus, RotateCcw, Trash2 } from './icons';
 import type { CrmLeadKpi, CrmLeadRow, CrmLeadStatus } from '../types';
 import { cascadeLossText, cascadeSummaryFromBody, describeCascadeSummary, sumCascadeSummaries, type CascadeSummary } from '../utils/cascadeDelete';
 
@@ -389,15 +389,66 @@ export function LeadsDirectory() {
   // doi ownerId/owner_id -> sdrId/sdr_id). Rule tim team CHINH XAC khop
   // _user_department_map() o backend: chi xet members.linked_user_id.
   const defaultFilterAppliedRef = useRef(false);
+  const applyDefaultOwnerFilter = useCallback(() => {
+    if (!user?.id) return;
+    setSdrId(user.id);
+    const myMember = members.find(m => m.linked_user_id === user.id);
+    setTeam(myMember?.team || '');
+  }, [user, members]);
+
+  // Feedback nguoi dung (2026-09-25): quay lai trang Leads (Back, hoac dieu
+  // huong sang trang khac roi vao lai) phai hien DUNG lich su tim kiem/loc
+  // gan nhat cua chinh minh trong tab nay, giong het co che da lam cho trang
+  // Khach hang (CrmCustomersDirectory.tsx) - dung sessionStorage, scope theo
+  // user.id, chi ap dung default "cua toi + team cua toi" khi CHUA co lich
+  // su nao trong session.
+  type StoredLeadFilters = {
+    userId: string;
+    search: string;
+    status: string;
+    source: string;
+    sdrId: string;
+    team: string;
+  };
+  const FILTERS_STORAGE_KEY = 'crm-leads-filters';
+
   useEffect(() => {
     if (defaultFilterAppliedRef.current) return;
     if (authLoading || membersLoading) return;
     if (!user?.id) return;
     defaultFilterAppliedRef.current = true;
-    setSdrId(user.id);
-    const myMember = members.find(m => m.linked_user_id === user.id);
-    if (myMember?.team) setTeam(myMember.team);
-  }, [authLoading, membersLoading, user, members]);
+
+    let stored: StoredLeadFilters | null = null;
+    try {
+      const raw = window.sessionStorage.getItem(FILTERS_STORAGE_KEY);
+      stored = raw ? (JSON.parse(raw) as StoredLeadFilters) : null;
+    } catch {
+      stored = null;
+    }
+
+    if (stored && stored.userId === user.id) {
+      setSearchInput(stored.search);
+      setSearch(stored.search);
+      setStatus(stored.status);
+      setSource(stored.source);
+      setSdrId(stored.sdrId);
+      setTeam(stored.team);
+      return;
+    }
+
+    applyDefaultOwnerFilter();
+  }, [authLoading, membersLoading, user, members, applyDefaultOwnerFilter]);
+
+  useEffect(() => {
+    if (!user?.id) return;
+    if (!defaultFilterAppliedRef.current) return; // chua khoi tao xong (dang doi auth/members) - tranh ghi de bang state rong luc mount
+    try {
+      const payload: StoredLeadFilters = { userId: user.id, search, status, source, sdrId, team };
+      window.sessionStorage.setItem(FILTERS_STORAGE_KEY, JSON.stringify(payload));
+    } catch {
+      // sessionStorage khong kha dung (che do an danh...) - bo qua, khong chan UI
+    }
+  }, [user, search, status, source, sdrId, team]);
 
   useEffect(() => { setPage(1); }, [status, source, sdrId, team]);
 
@@ -610,7 +661,18 @@ export function LeadsDirectory() {
       case 'sql':
       case 'qualified':
       case 'converted':
+        if (lead.convertedCustomerId) {
+          const customerId = lead.convertedCustomerId;
+          return {
+            label: 'Xem khách hàng',
+            run: () => {
+              window.location.href = `/all-platform/crm/customers/${customerId}`;
+            },
+          };
+        }
         if (lead.convertedDealId) {
+          // Fallback: chua co lien ket khach hang nhung da co Deal - giu hanh
+          // vi cu (mo thang Deal) de khong mat chuc nang khi du lieu thieu.
           const dealId = lead.convertedDealId;
           return {
             label: 'Mở Deal',
@@ -630,22 +692,15 @@ export function LeadsDirectory() {
     }
   }
 
-  /** Hành động phụ trong menu "⋯": "Sửa nhanh" nay mở FORM SỬA thật
-   * (LeadEditDrawer) thay vì drawer xác minh; lối vào tạo cơ hội cho lead chưa
-   * convert; và "Xóa Lead" (đỏ, luôn ở cuối) — chỉ hiện với người có quyền ghi
-   * Lead đó, tức đúng `can_write` mà backend trả về từ can_write_lead(). */
+  /** Hành động phụ: "Sửa nhanh"/"Xem khách hàng" đã bị bỏ khỏi đây (2026-09-25)
+   * — click cả dòng giờ mở thẳng LeadEditDrawer, và "Xem khách hàng" đã lên
+   * làm nút hành động chính (xem primaryActionOf) — chỉ còn "Sao chép sang
+   * workspace khác" (tuỳ điều kiện) và "Xóa Lead" (đỏ, luôn ở cuối, mở cho
+   * mọi người, chỉ hỏi xác nhận — feedback 2026-09-23). Khi danh sách chỉ còn
+   * đúng "Xóa Lead", UI render 1 nút xóa trực tiếp thay vì dropdown ⋯ (xem
+   * chỗ dùng `secondaryActionsOf` bên dưới). */
   function secondaryActionsOf(lead: CrmLeadRow): ActionMenuItem[] {
     return [
-      { key: 'edit', label: 'Sửa nhanh', onSelect: () => openEdit(lead) },
-      ...((lead.status === 'converted' || lead.status === 'sql') && lead.convertedCustomerId
-        ? [{
-            key: 'customer',
-            label: 'Xem khách hàng',
-            onSelect: () => {
-              window.location.href = `/all-platform/crm/customers/${lead.convertedCustomerId}`;
-            },
-          }]
-        : []),
       ...(canCopyInstance && lead.status !== 'sql' && !lead.convertedCustomerId
         ? [{
             key: 'copy-instance',
@@ -653,7 +708,6 @@ export function LeadsDirectory() {
             onSelect: () => openCopyModal(lead),
           }]
         : []),
-      // Xoa mo cho moi nguoi, chi hoi xac nhan (feedback 2026-09-23).
       {
         key: 'delete',
         label: 'Xóa Lead',
@@ -665,6 +719,35 @@ export function LeadsDirectory() {
         },
       },
     ];
+  }
+
+  /** Xoa Lead truc tiep (dung khi menu phu chi con dung 1 muc "Xoa Lead" -
+   * thay vi bat mo dropdown ⋯ chi de chon 1 lua chon duy nhat). */
+  function requestDeleteLead(lead: CrmLeadRow) {
+    setDeleteError('');
+    setDeleteCascadeSummary(null);
+    setDeleteTarget(lead);
+  }
+
+  /** Khi menu phu chi con dung 1 hanh dong ("Xoa Lead") thi hien thang 1 nut
+   * xoa co icon thay vi bat mo dropdown ⋯ chi de chon 1 lua chon duy nhat;
+   * neu con hanh dong khac (vd "Sao chep sang workspace khac") thi van giu
+   * dropdown ActionMenu nhu cu. */
+  function renderSecondaryActions(lead: CrmLeadRow) {
+    const actions = secondaryActionsOf(lead);
+    if (actions.length === 1 && actions[0].key === 'delete') {
+      return (
+        <button
+          type="button"
+          className="crm-row-action-primary crm-row-action-icon crm-row-action-danger"
+          title="Xóa Lead"
+          onClick={() => requestDeleteLead(lead)}
+        >
+          <Trash2 className="crm-button-icon" />
+        </button>
+      );
+    }
+    return <ActionMenu label="Thao tác khác" items={actions} />;
   }
 
   return (
@@ -823,7 +906,11 @@ export function LeadsDirectory() {
                     <tr><td colSpan={9} className="crm-empty-cell"><Loader2 className="crm-spin-icon" /> Đang tải...</td></tr>
                   ) : items.length ? (
                     items.map(lead => (
-                      <tr key={lead.id} className="crm-row">
+                      <tr
+                        key={lead.id}
+                        className="crm-row crm-row--clickable"
+                        onClick={() => openEdit(lead)}
+                      >
                         <td className="crm-td" onClick={event => event.stopPropagation()}>
                           <input
                             type="checkbox"
@@ -832,7 +919,7 @@ export function LeadsDirectory() {
                             aria-label={`Chọn ${lead.leadName}`}
                           />
                         </td>
-                        <td className="crm-td">
+                        <td className="crm-td" onClick={event => event.stopPropagation()}>
                           <button type="button" className="crm-customer-name-link crm-lead-name-btn" title={lead.leadName} onClick={() => openRow(lead)}>
                             {lead.leadName}
                           </button>
@@ -840,7 +927,7 @@ export function LeadsDirectory() {
                             {lead.companyName || 'Chưa có công ty'}
                           </div>
                         </td>
-                        <td className="crm-td crm-contact-cell">
+                        <td className="crm-td crm-contact-cell" onClick={event => event.stopPropagation()}>
                           {lead.phone ? (
                             <a className="crm-contact-link" href={`tel:${lead.phone.replace(/[^\d+]/g, '')}`}>{lead.phone}</a>
                           ) : <div className="crm-small">-</div>}
@@ -857,7 +944,7 @@ export function LeadsDirectory() {
                         </td>
                         <td className="crm-td crm-small">{sdrName.get(lead.sdrId || '') || 'Chưa gán'}</td>
                         <td className="crm-td crm-muted crm-truncate" title={lead.nextStep || ''}>{lead.nextStep || '-'}</td>
-                        <td className="crm-td crm-td--actions-col">
+                        <td className="crm-td crm-td--actions-col" onClick={event => event.stopPropagation()}>
                           <div className="crm-row-actions">
                             {(() => {
                               const action = primaryActionOf(lead);
@@ -872,7 +959,7 @@ export function LeadsDirectory() {
                                 </button>
                               );
                             })()}
-                            <ActionMenu label="Thao tác khác" items={secondaryActionsOf(lead)} />
+                            {renderSecondaryActions(lead)}
                           </div>
                         </td>
                       </tr>
@@ -917,17 +1004,22 @@ export function LeadsDirectory() {
               <div className="crm-empty-cell"><Loader2 className="crm-spin-icon" /> Đang tải...</div>
             ) : items.length ? (
               items.map(lead => (
-                <div key={lead.id} className="crm-customer-card crm-lead-card">
+                <div
+                  key={lead.id}
+                  className="crm-customer-card crm-lead-card crm-row--clickable"
+                  onClick={() => openEdit(lead)}
+                >
                   <div className="crm-customer-card-head">
                     <input
                       type="checkbox"
                       checked={selectedIds.has(lead.id)}
                       onChange={() => toggleSelect(lead.id)}
+                      onClick={event => event.stopPropagation()}
                       aria-label={`Chọn ${lead.leadName}`}
                       style={{ marginTop: 4 }}
                     />
                     <div className="crm-customer-card-identity">
-                      <button type="button" className="crm-customer-name-link crm-lead-name-btn" title={lead.leadName} onClick={() => openRow(lead)}>
+                      <button type="button" className="crm-customer-name-link crm-lead-name-btn" title={lead.leadName} onClick={event => { event.stopPropagation(); openRow(lead); }}>
                         {lead.leadName}
                       </button>
                       <div className="crm-customer-company" title={lead.companyName || 'Chưa có công ty'}>
@@ -938,7 +1030,7 @@ export function LeadsDirectory() {
                       {LEAD_STATUS_LABEL[lead.status] || lead.status}
                     </span>
                   </div>
-                  <div className="crm-customer-card-contact">
+                  <div className="crm-customer-card-contact" onClick={event => event.stopPropagation()}>
                     {lead.phone ? (
                       <a className="crm-contact-link" href={`tel:${lead.phone.replace(/[^\d+]/g, '')}`}>{lead.phone}</a>
                     ) : null}
@@ -954,7 +1046,7 @@ export function LeadsDirectory() {
                     <span>Score: {lead.score == null ? '-' : lead.score}</span>
                     <span className="crm-muted crm-truncate">{lead.nextStep || 'Chưa có việc tiếp theo'}</span>
                   </div>
-                  <div className="crm-customer-card-actions">
+                  <div className="crm-customer-card-actions" onClick={event => event.stopPropagation()}>
                     {(() => {
                       const action = primaryActionOf(lead);
                       return (
@@ -963,7 +1055,7 @@ export function LeadsDirectory() {
                         </button>
                       );
                     })()}
-                    <ActionMenu label="Thao tác khác" items={secondaryActionsOf(lead)} />
+                    {renderSecondaryActions(lead)}
                   </div>
                 </div>
               ))
