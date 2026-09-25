@@ -466,7 +466,7 @@ export function SelectCustomerStep({
 
       <div className="crm-quote-opportunity-card">
         <div className="crm-quote-opportunity-body">
-          <span className="crm-quote-opportunity-label">Liên kết cơ hội CRM</span>
+          <span className="crm-quote-opportunity-label">Liên kết dự án CRM</span>
           {activeLinkedDeal ? (
             <strong>{activeLinkedDeal.customerName}{activeLinkedDeal.companyName ? ` · ${activeLinkedDeal.companyName}` : ''}</strong>
           ) : (
