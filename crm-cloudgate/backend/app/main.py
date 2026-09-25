@@ -170,4 +170,41 @@ async def request_validation_exception_handler(_, exc: RequestValidationError) -
     )
 
 
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(_, exc: Exception) -> JSONResponse:
+    """Safety net cho loi chua bat: FastAPI/Starlette tu uu tien handler cu
+    the hon (HTTPException/RequestValidationError da dang ky o tren) truoc
+    khi roi xuong day, nen handler nay CHI nhan cac exception thuc su chua
+    bat o dau ca. BUG THAT DA GAP: 1 so call site Supabase (auth, quote,
+    project, members...) goi `.execute()` truc tiep, khong qua wrapper
+    `execute_supabase_query()` - khi PostgREST self-host tra ve 502/503/504
+    (OpenResty/Kong gap su co), `postgrest.exceptions.APIError` thoat nguyen
+    dang (dict Python: `{'message': 'JSON could not be generated', 'code':
+    502, ...}`) toi tan response cho FE neu co code nao do lam `str(exc)`.
+    Bat toan bo o day de KHONG bao gio lo raw dict/HTML nhu vay ra ngoai."""
+    from app.core.supabase_client import (
+        friendly_supabase_error_message,
+        is_transient_supabase_error,
+    )
+
+    logger.exception("Unhandled exception: %s", exc)
+    if is_transient_supabase_error(exc):
+        return JSONResponse(
+            status_code=503,
+            content={
+                "success": False,
+                "message": friendly_supabase_error_message(exc),
+                "data": None,
+            },
+        )
+    return JSONResponse(
+        status_code=500,
+        content={
+            "success": False,
+            "message": "Đã có lỗi xảy ra, vui lòng thử lại.",
+            "data": None,
+        },
+    )
+
+
 app.include_router(all_platform_router, prefix="/api/all-platform")
