@@ -640,9 +640,17 @@ def create_customer_with_deal(payload: dict[str, Any], user: dict[str, Any]) -> 
     partial = False
     partial_message = None
 
+    # Feedback 2026-09-25: "Cơ hội" khong con nhap ten rieng - lay theo Du an
+    # da chon. FE gui project_name (khong kem project_id) khi go ten Du an MOI
+    # chua co trong dropdown. Neu Customer da co san (customer_id) thi tao Du
+    # an ngay o day (truoc RPC); neu Customer CUNG dang duoc tao moi trong
+    # chinh request nay (chua co customer_id) thi phai doi RPC tra ve
+    # customer_id that roi moi tao Du an duoc - xem doan follow-up ben duoi.
+    project_name = _clean_text(deal.pop("project_name", None))
+
     if not deal.get("leaded_by"):
         deal["leaded_by"] = actor_id
-    idempotency_key = _clean_text(payload.get("idempotency_key")) or _request_hash({"customer": customer, "deal": deal, "actor": actor_id})
+    idempotency_key = _clean_text(payload.get("idempotency_key")) or _request_hash({"customer": customer, "deal": deal, "actor": actor_id, "project_name": project_name})
 
     # Kiem tra replay TRUOC duplicate-check va truoc RPC - xem docstring
     # _idempotent_replay(). Phai dat truoc ca nhanh customer_id/duplicate o
@@ -664,6 +672,10 @@ def create_customer_with_deal(payload: dict[str, Any], user: dict[str, Any]) -> 
         from app.modules.all_platform.services.customer_lead_service import validate_contact_belongs_to_customer
 
         validate_contact_belongs_to_customer(deal.get("primary_contact_id"), customer_id)
+        if project_name and not deal.get("project_id"):
+            from app.modules.all_platform.services.supabase_project_service import create_project as _create_project
+
+            deal["project_id"] = _create_project({"name": project_name, "customer_id": customer_id}, actor_id)["id"]
     else:
         # Customer moi tao trong chinh request nay chua the co san Contact
         # nao ca - bo qua primary_contact_id neu client lo gui len (khong co
@@ -736,4 +748,20 @@ def create_customer_with_deal(payload: dict[str, Any], user: dict[str, Any]) -> 
             .eq("instance", settings.crm_instance)
             .execute()
         )
+    # Customer MOI tao trong chinh request nay (nhanh else o tren, chua co
+    # customer_id that de tao Du an truoc RPC) - gio da co new_customer_id,
+    # tao Du an that + gan lai project_id cho deal vua tao.
+    if not customer_id and project_name and new_deal_id and new_customer_id:
+        from app.modules.all_platform.services.supabase_project_service import create_project as _create_project
+
+        new_project = _create_project({"name": project_name, "customer_id": new_customer_id}, actor_id)
+        execute_supabase_query(
+            lambda: supabase.table("customer_leads")
+            .update({"project_id": new_project["id"]})
+            .eq("id", new_deal_id)
+            .eq("instance", settings.crm_instance)
+            .execute()
+        )
+        if data.get("deal"):
+            data["deal"]["project_id"] = new_project["id"]
     return data
