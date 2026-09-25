@@ -17,8 +17,32 @@ import { ContactSummaryBadge } from './ContactSummaryPopover';
 import { CustomerColumnVisibilityMenu } from './CustomerColumnVisibilityMenu';
 import { useCustomerColumnPreferences } from '../hooks/useCustomerColumnPreferences';
 import { Loader2, Plus, RotateCcw } from './icons';
+import { ChevronLeft, ChevronRight, Building2, Phone, Mail } from 'lucide-react';
 import type { CrmCustomerKpi, CrmCustomerRow } from '../types';
 import { cascadeLossText, describeCascadeSummary, sumCascadeSummaries, type CascadeSummary } from '../utils/cascadeDelete';
+
+const AVATAR_COLORS = [
+  { bg: '#eff6ff', text: '#2563eb' },
+  { bg: '#fdf2f8', text: '#db2777' },
+  { bg: '#f0fdf4', text: '#16a34a' },
+  { bg: '#fffbeb', text: '#d97706' },
+  { bg: '#faf5ff', text: '#9333ea' },
+  { bg: '#f0fdfa', text: '#0d9488' },
+];
+
+function getAvatarColor(name: string) {
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
+  const index = Math.abs(hash) % AVATAR_COLORS.length;
+  return AVATAR_COLORS[index];
+}
+
+function getInitials(name: string) {
+  if (!name) return 'C';
+  const parts = name.trim().split(/\s+/);
+  if (parts.length === 1) return parts[0].charAt(0).toUpperCase();
+  return (parts[0].charAt(0) + parts[parts.length - 1].charAt(0)).toUpperCase();
+}
 
 /**
  * Tab -> status mapping (quyet dinh cuoi cung, xem bao cao task):
@@ -62,8 +86,6 @@ const PRIMARY_ACTION_LABEL: Record<string, string> = {
   following: '+ Deal',
   current_customer: '+ Upsell',
 };
-
-const PAGE_SIZE = 20;
 
 type ApiCustomerRow = {
   id: string;
@@ -138,6 +160,7 @@ export function CrmCustomersDirectory() {
   const [total, setTotal] = useState(0);
   const [kpi, setKpi] = useState<CrmCustomerKpi>({ total: 0, new_lead: 0, following: 0, current_customer: 0, not_fit: 0 });
   const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState('');
@@ -277,7 +300,7 @@ export function CrmCustomersDirectory() {
 
   const load = useCallback(() => {
     let alive = true;
-    const params = new URLSearchParams({ page: String(page), page_size: String(PAGE_SIZE) });
+    const params = new URLSearchParams({ page: String(page), page_size: String(pageSize) });
     if (search) params.set('search', search);
     if (status) params.set('status', status);
     if (ownerId) params.set('owner_id', ownerId);
@@ -315,7 +338,7 @@ export function CrmCustomersDirectory() {
         if (alive) setLoading(false);
       });
     return () => { alive = false; };
-  }, [page, search, status, ownerId, saleManagerId, team]);
+  }, [page, pageSize, search, status, ownerId, saleManagerId, team]);
 
   useEffect(() => {
     const cleanup = load();
@@ -360,7 +383,23 @@ export function CrmCustomersDirectory() {
     setTeam(match?.team || '');
   }
 
-  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const currentSafePage = Math.min(page, totalPages);
+  const startRecord = total === 0 ? 0 : (currentSafePage - 1) * pageSize + 1;
+  const endRecord = Math.min(currentSafePage * pageSize, total);
+
+  function getPageNumbers(): (number | string)[] {
+    if (totalPages <= 7) {
+      return Array.from({ length: totalPages }, (_, i) => i + 1);
+    }
+    if (currentSafePage <= 4) {
+      return [1, 2, 3, 4, 5, '...', totalPages];
+    }
+    if (currentSafePage >= totalPages - 3) {
+      return [1, '...', totalPages - 4, totalPages - 3, totalPages - 2, totalPages - 1, totalPages];
+    }
+    return [1, '...', currentSafePage - 1, currentSafePage, currentSafePage + 1, '...', totalPages];
+  }
   const hasFilters = Boolean(search || ownerId || saleManagerId || team);
   // "Doanh nghiệp" + "Hành động" luon hien (khong dua vao preference) + so cot
   // tuy chon dang bat - dung de colSpan cho hang loading/empty khop dung so
@@ -660,7 +699,16 @@ export function CrmCustomersDirectory() {
           </div>
         ) : null}
 
-        <section className="crm-content-section">
+        <section className="crm-directory-list-box">
+          <div className="crm-directory-list-top">
+            <div>
+              <h2 className="crm-directory-list-heading">Danh sách khách hàng</h2>
+              <p className="crm-directory-list-sub">
+                Tổng {total} khách hàng · Click vào khách hàng để xem chi tiết và lịch sử giao dịch
+              </p>
+            </div>
+          </div>
+
           <div className="crm-table-card crm-customer-table-card--desktop">
             <div className="crm-table-scroll">
               <table className="crm-table crm-customer-directory-table crm-customer-directory-table--v2">
@@ -704,52 +752,99 @@ export function CrmCustomersDirectory() {
                   {loading ? (
                     <tr><td colSpan={visibleColumnCount} className="crm-empty-cell"><Loader2 className="crm-spin-icon" /> Đang tải...</td></tr>
                   ) : items.length ? (
-                    items.map(customer => (
-                      <tr
-                        key={customer.id}
-                        className="crm-row crm-row--clickable"
-                        onClick={() => goToDetail(customer.id)}
-                        style={{ cursor: 'pointer' }}
-                      >
-                        <td className="crm-td" onClick={event => event.stopPropagation()}>
-                          <input
-                            type="checkbox"
-                            checked={selectedIds.has(customer.id)}
-                            onChange={() => toggleSelect(customer.id)}
-                            aria-label={`Chọn ${customer.customerName}`}
-                          />
-                        </td>
-                        <td className="crm-td">
-                          <Link
-                            href={`/all-platform/crm/customers/${customer.id}`}
-                            className="crm-customer-name-link"
-                            title={customer.customerName}
-                            onClick={event => event.stopPropagation()}
-                          >
-                            {customer.customerName}
-                          </Link>
-                          {(customer.city || customer.website) ? (
-                            <div className="crm-customer-company" title={[customer.city, customer.website].filter(Boolean).join(' · ')}>
-                              {[customer.city, customer.website].filter(Boolean).join(' · ')}
-                            </div>
-                          ) : customer.companyName && customer.companyName !== customer.customerName ? (
-                            <div className="crm-customer-company" title={customer.companyName}>
-                              {customer.companyName}
-                            </div>
-                          ) : null}
-                        </td>
-                        {visibleColumns.has('primaryContact') ? (
+                    items.map(customer => {
+                      const avatarColor = getAvatarColor(customer.customerName);
+                      const initials = getInitials(customer.customerName);
+                      return (
+                        <tr
+                          key={customer.id}
+                          className="crm-row crm-row--clickable"
+                          onClick={() => goToDetail(customer.id)}
+                          style={{ cursor: 'pointer' }}
+                        >
+                          <td className="crm-td" onClick={event => event.stopPropagation()}>
+                            <input
+                              type="checkbox"
+                              checked={selectedIds.has(customer.id)}
+                              onChange={() => toggleSelect(customer.id)}
+                              aria-label={`Chọn ${customer.customerName}`}
+                            />
+                          </td>
                           <td className="crm-td">
-                            <div className="crm-customer-contact-name-cell">
-                              <span title={customer.primaryContact?.name || undefined}>{customer.primaryContact?.name || '-'}</span>
-                              {(customer.contactCount || 0) > 1 ? (
-                                <ContactSummaryBadge customerId={customer.id} extraCount={(customer.contactCount || 0) - 1} />
-                              ) : null}
+                            <div className="crm-lead-identity">
+                              <div
+                                className="crm-avatar-bubble"
+                                style={{ backgroundColor: avatarColor.bg, color: avatarColor.text }}
+                              >
+                                {initials}
+                              </div>
+                              <div className="crm-lead-identity-text">
+                                <Link
+                                  href={`/all-platform/crm/customers/${customer.id}`}
+                                  className="crm-customer-name-link"
+                                  title={customer.customerName}
+                                  onClick={event => event.stopPropagation()}
+                                >
+                                  {customer.customerName}
+                                </Link>
+                                {(customer.city || customer.website) ? (
+                                  <div className="crm-sub-text" title={[customer.city, customer.website].filter(Boolean).join(' · ')}>
+                                    <Building2 size={12} className="shrink-0 text-gray-400" />
+                                    <span className="truncate">{[customer.city, customer.website].filter(Boolean).join(' · ')}</span>
+                                  </div>
+                                ) : customer.companyName && customer.companyName !== customer.customerName ? (
+                                  <div className="crm-sub-text" title={customer.companyName}>
+                                    <Building2 size={12} className="shrink-0 text-gray-400" />
+                                    <span className="truncate">{customer.companyName}</span>
+                                  </div>
+                                ) : null}
+                              </div>
                             </div>
                           </td>
-                        ) : null}
-                        {visibleColumns.has('phone') ? <td className="crm-td crm-muted">{customer.primaryContact?.phone || '-'}</td> : null}
-                        {visibleColumns.has('email') ? <td className="crm-td crm-muted">{customer.primaryContact?.email || '-'}</td> : null}
+                          {visibleColumns.has('primaryContact') ? (
+                            <td className="crm-td">
+                              <div className="crm-customer-contact-name-cell">
+                                <span title={customer.primaryContact?.name || undefined}>{customer.primaryContact?.name || '-'}</span>
+                                {(customer.contactCount || 0) > 1 ? (
+                                  <ContactSummaryBadge customerId={customer.id} extraCount={(customer.contactCount || 0) - 1} />
+                                ) : null}
+                              </div>
+                            </td>
+                          ) : null}
+                          {visibleColumns.has('phone') ? (
+                            <td className="crm-td crm-contact-cell">
+                              {customer.primaryContact?.phone ? (
+                                <a
+                                  className="crm-contact-chip"
+                                  href={`tel:${customer.primaryContact.phone.replace(/[^\d+]/g, '')}`}
+                                  title={customer.primaryContact.phone}
+                                  onClick={e => e.stopPropagation()}
+                                >
+                                  <Phone size={12} />
+                                  <span>{customer.primaryContact.phone}</span>
+                                </a>
+                              ) : (
+                                <div className="crm-small text-gray-400">-</div>
+                              )}
+                            </td>
+                          ) : null}
+                          {visibleColumns.has('email') ? (
+                            <td className="crm-td crm-contact-cell">
+                              {customer.primaryContact?.email ? (
+                                <a
+                                  className="crm-contact-chip crm-muted"
+                                  title={customer.primaryContact.email}
+                                  href={`mailto:${customer.primaryContact.email}`}
+                                  onClick={e => e.stopPropagation()}
+                                >
+                                  <Mail size={12} />
+                                  <span className="crm-truncate max-w-[140px]">{customer.primaryContact.email}</span>
+                                </a>
+                              ) : (
+                                <div className="crm-muted text-gray-400">-</div>
+                              )}
+                            </td>
+                          ) : null}
                         {visibleColumns.has('taxCode') ? <td className="crm-td crm-muted">{customer.taxCode || '-'}</td> : null}
                         {visibleColumns.has('dealCount') ? <td className="crm-td crm-td--right">{customer.dealCount || 0}</td> : null}
                         {visibleColumns.has('pipelineValue') ? (
@@ -775,7 +870,8 @@ export function CrmCustomersDirectory() {
                           </div>
                         </td>
                       </tr>
-                    ))
+                    );
+                  })
                   ) : (
                     <tr>
                       <td colSpan={visibleColumnCount}>
@@ -902,17 +998,69 @@ export function CrmCustomersDirectory() {
           </div>
 
           {total > 0 ? (
-            <div className="crm-pagination">
-              <span className="crm-pagination-info">
-                Trang {page}/{totalPages} · {total} hồ sơ
-              </span>
-              <div className="crm-pagination-actions">
-                <button type="button" className="crm-secondary-button" disabled={page <= 1 || loading} onClick={() => setPage(p => Math.max(1, p - 1))}>
-                  Trước
+            <div className="crm-progress-pagination">
+              <div className="crm-progress-pagination-info">
+                Hiển thị {startRecord} - {endRecord} trên {total} Khách hàng
+              </div>
+
+              <div className="crm-progress-pagination-pages">
+                <button
+                  type="button"
+                  className="crm-progress-pagination-btn"
+                  disabled={currentSafePage <= 1 || loading}
+                  onClick={() => setPage(p => Math.max(1, p - 1))}
+                  aria-label="Trang trước"
+                >
+                  <ChevronLeft size={16} />
                 </button>
-                <button type="button" className="crm-secondary-button" disabled={page >= totalPages || loading} onClick={() => setPage(p => Math.min(totalPages, p + 1))}>
-                  Sau
+
+                {getPageNumbers().map((p, idx) => {
+                  if (typeof p === 'string') {
+                    return (
+                      <span key={`ellipsis-${idx}`} className="crm-progress-pagination-ellipsis">
+                        ...
+                      </span>
+                    );
+                  }
+                  return (
+                    <button
+                      key={p}
+                      type="button"
+                      className={`crm-progress-pagination-btn${p === currentSafePage ? ' active' : ''}`}
+                      disabled={loading}
+                      onClick={() => setPage(p)}
+                    >
+                      {p}
+                    </button>
+                  );
+                })}
+
+                <button
+                  type="button"
+                  className="crm-progress-pagination-btn"
+                  disabled={currentSafePage >= totalPages || loading}
+                  onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+                  aria-label="Trang sau"
+                >
+                  <ChevronRight size={16} />
                 </button>
+              </div>
+
+              <div className="crm-progress-pagination-size">
+                <select
+                  value={pageSize}
+                  onChange={e => {
+                    const newSize = Number(e.target.value);
+                    setPageSize(newSize);
+                    setPage(1);
+                  }}
+                  className="progress-pagination-select"
+                >
+                  <option value={10}>Hiển thị 10 / trang</option>
+                  <option value={20}>Hiển thị 20 / trang</option>
+                  <option value={50}>Hiển thị 50 / trang</option>
+                  <option value={100}>Hiển thị 100 / trang</option>
+                </select>
               </div>
             </div>
           ) : null}

@@ -12,24 +12,61 @@ import { LeadEditDrawer } from './LeadEditDrawer';
 import { LeadImportDialog } from './LeadImportDialog';
 import { SearchableSelect } from './SearchableSelect';
 import { useCrmCategoryCodeOptions } from './CrmCategorySelect';
+<<<<<<< HEAD
+import { Loader2 } from './icons';
+import {
+  Users,
+  Sparkles,
+  CheckCircle2,
+  HeartHandshake,
+  XCircle,
+  Search,
+  Building2,
+  Phone,
+  Mail,
+  FileSpreadsheet,
+  Plus,
+  RotateCcw,
+  ChevronLeft,
+  ChevronRight,
+  Target,
+} from 'lucide-react';
+=======
 import { Loader2, Plus, RotateCcw, Trash2 } from './icons';
+>>>>>>> origin/main
 import type { CrmLeadKpi, CrmLeadRow, CrmLeadStatus } from '../types';
 import { cascadeLossText, cascadeSummaryFromBody, describeCascadeSummary, sumCascadeSummaries, type CascadeSummary } from '../utils/cascadeDelete';
 
-// Cung 1 bang nhan voi WorkspaceSwitcherShadcn.tsx/MemberManagementContent.tsx
-// - instance code khong dong bo chu hoa/thuong giua cac site (vd
-// "SECURITYZONE" viet hoa het trong khi "markee"/"cloudgate" viet thuong,
-// xem config.py), phai hien thi qua bang nhan nay thay vi in thang gia tri
-// tho de UI nhat quan.
-const WORKSPACE_LABELS: Record<string, string> = {
-  markee: 'Markee',
-  cloudgate: 'CloudGate',
-  SECURITYZONE: 'SecurityZone',
-};
+const AVATAR_COLORS = [
+  { bg: '#eff6ff', text: '#2563eb' },
+  { bg: '#fdf2f8', text: '#db2777' },
+  { bg: '#f0fdf4', text: '#16a34a' },
+  { bg: '#fffbeb', text: '#d97706' },
+  { bg: '#faf5ff', text: '#9333ea' },
+  { bg: '#f0fdfa', text: '#0d9488' },
+];
 
-function workspaceLabel(instance: string): string {
-  return WORKSPACE_LABELS[instance] || instance;
+function getAvatarColor(name: string) {
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
+  const index = Math.abs(hash) % AVATAR_COLORS.length;
+  return AVATAR_COLORS[index];
 }
+
+function getInitials(name: string) {
+  if (!name) return 'L';
+  const parts = name.trim().split(/\s+/);
+  if (parts.length === 1) return parts[0].charAt(0).toUpperCase();
+  return (parts[0].charAt(0) + parts[parts.length - 1].charAt(0)).toUpperCase();
+}
+
+// Main la CRM markee CO DINH (khong co /auth/workspaces/switcher nhu 3
+// clone) - danh sach workspace dich khi sao chep Lead CHI CO 2 clone doc
+// lap con lai, khai bao TINH tai day thay vi goi API.
+const COPY_TARGET_OPTIONS: { instance: string; label: string }[] = [
+  { instance: 'cloudgate', label: 'CloudGate' },
+  { instance: 'SECURITYZONE', label: 'SecurityZone' },
+];
 
 const STATUS_OPTIONS: Array<{ value: CrmLeadStatus | ''; label: string }> = [
   { value: '', label: 'Tất cả trạng thái' },
@@ -162,6 +199,7 @@ export function LeadsDirectory() {
   const [total, setTotal] = useState(0);
   const [kpi, setKpi] = useState<CrmLeadKpi>({ total: 0, mql: 0, sql: 0, nurturing: 0, unqualified: 0 });
   const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState('');
@@ -188,13 +226,9 @@ export function LeadsDirectory() {
   const [deleteError, setDeleteError] = useState('');
   const { options: sourceOptions } = useCrmCategoryCodeOptions('crm_source');
 
-  // Chuyen workspace: Lead chua convert thi chi la du lieu tho, chua co
-  // Khach hang/Deal gan voi no - chuyen chi can doi instance cua dung dong
-  // Lead nay (khong cascade gi ca, khac han chuyen Khach hang). Chi Admin
-  // THAT moi thay/dung duoc (backend cung chan y het). Day la SAO CHEP
-  // (copy) - Lead goc van giu nguyen o workspace hien tai, chi tao them 1
-  // ban ghi moi o workspace dich (khong phai "chuyen han" lam mat ban goc).
-  const [workspaceOptions, setWorkspaceOptions] = useState<Array<{ instance: string; url: string }>>([]);
+  // Sao chep Lead (chua convert) sang 1 trong 2 clone CRM doc lap con lai -
+  // Lead goc van giu nguyen o Main (khong phai "chuyen han"). Chi Admin
+  // THAT moi thay/dung duoc (backend cung chan y het).
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [copyLeadIds, setCopyLeadIds] = useState<string[]>([]);
   // Moi Lead trong copyLeadIds duoc chon 1 workspace dich RIENG (khong bat
@@ -203,20 +237,7 @@ export function LeadsDirectory() {
   const [copying, setCopying] = useState(false);
   const [copyError, setCopyError] = useState('');
   const [copyFailures, setCopyFailures] = useState<Array<{ lead_id: string; message: string }>>([]);
-  const canCopyInstance = user?.role === 'admin' && workspaceOptions.length > 0;
-  const copyReady = copyLeadIds.length > 0 && copyLeadIds.every(id => copyTargets[id]);
-
-  // Chức năng: Thao tác xóa hàng loạt Lead (Bulk Delete).
-  // Quản lý trạng thái mở modal xác nhận, trạng thái loading khi gọi API và thông báo lỗi.
-  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
-  const [bulkDeleting, setBulkDeleting] = useState(false);
-  const [bulkDeleteError, setBulkDeleteError] = useState('');
-  // Buoc 2 cua xoa hang loat: id cac Lead con du lieu lien quan + tong so se mat.
-  const [bulkCascadeIds, setBulkCascadeIds] = useState<string[]>([]);
-  const [bulkCascadeSummary, setBulkCascadeSummary] = useState<CascadeSummary | null>(null);
-  // Buoc 2 cua xoa 1 Lead: so du lieu lien quan se bi xoa kem (null = buoc 1).
-  const [deleteCascadeSummary, setDeleteCascadeSummary] = useState<CascadeSummary | null>(null);
-  const deleteCascadeConfirm = deleteCascadeSummary !== null;
+  const [workspaceOptions, setWorkspaceOptions] = useState<Array<{ instance: string; url: string }>>([]);
 
   useEffect(() => {
     if (user?.role !== 'admin') return;
@@ -235,6 +256,20 @@ export function LeadsDirectory() {
       alive = false;
     };
   }, [user?.role]);
+  const canCopyInstance = user?.role === 'admin' && workspaceOptions.length > 0;
+  const copyReady = copyLeadIds.length > 0 && copyLeadIds.every(id => copyTargets[id]);
+
+  // Chức năng: Thao tác xóa hàng loạt Lead (Bulk Delete).
+  // Quản lý trạng thái mở modal xác nhận, trạng thái loading khi gọi API và thông báo lỗi.
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+  const [bulkDeleting, setBulkDeleting] = useState(false);
+  const [bulkDeleteError, setBulkDeleteError] = useState('');
+  // Buoc 2 cua xoa hang loat: id cac Lead con du lieu lien quan + tong so se mat.
+  const [bulkCascadeIds, setBulkCascadeIds] = useState<string[]>([]);
+  const [bulkCascadeSummary, setBulkCascadeSummary] = useState<CascadeSummary | null>(null);
+  // Buoc 2 cua xoa 1 Lead: so du lieu lien quan se bi xoa kem (null = buoc 1).
+  const [deleteCascadeSummary, setDeleteCascadeSummary] = useState<CascadeSummary | null>(null);
+  const deleteCascadeConfirm = deleteCascadeSummary !== null;
 
   // Chon nhieu de XOA (feedback 2026-09-23: "select 1 hoặc nhiều -> Xóa") -
   // moi Lead nguoi dung co quyen ghi deu chon duoc, ke ca Lead da convert
@@ -325,9 +360,6 @@ export function LeadsDirectory() {
       if (!res.ok || body.success === false) throw new Error(body?.message || 'Không sao chép được sang workspace khác.');
       const failures = (body.data?.failed || []) as Array<{ lead_id: string; message: string }>;
       if (failures.length > 0) {
-        // Con Lead loi - giu modal mo de hien chi tiet, chi giu lai cac Lead
-        // LOI trong selection/copyLeadIds (Lead da copy thanh cong thi bo ra),
-        // giu nguyen workspace dich da chon cho tung Lead loi de de sua/thu lai.
         setCopyFailures(failures);
         const failedIds = new Set(failures.map(f => f.lead_id));
         setSelectedIds(prev => new Set([...prev].filter(id => failedIds.has(id))));
@@ -483,15 +515,15 @@ export function LeadsDirectory() {
     }
   }, [user, search, status, source, sdrId, team]);
 
-  useEffect(() => { setPage(1); }, [status, source, sdrId, team]);
+  useEffect(() => { setPage(1); }, [pageSize, status, source, sdrId, team]);
 
   useEffect(() => {
     setSelectedIds(new Set());
-  }, [page, search, status, source, sdrId, team]);
+  }, [page, pageSize, search, status, source, sdrId, team]);
 
   const load = useCallback(() => {
     let alive = true;
-    const params = new URLSearchParams({ page: String(page), page_size: String(PAGE_SIZE) });
+    const params = new URLSearchParams({ page: String(page), page_size: String(pageSize) });
     if (search) params.set('search', search);
     if (status) params.set('status', status);
     if (source) params.set('source', source);
@@ -530,7 +562,7 @@ export function LeadsDirectory() {
         if (alive) setLoading(false);
       });
     return () => { alive = false; };
-  }, [page, search, status, source, sdrId, team]);
+  }, [page, pageSize, search, status, source, sdrId, team]);
 
   useEffect(() => {
     const cleanup = load();
@@ -561,14 +593,74 @@ export function LeadsDirectory() {
   }, [members, user]);
 
   const kpiCards = [
-    { label: 'Tổng Lead', value: kpi.total, tone: 'total' },
-    { label: 'MQL', value: kpi.mql, tone: 'open' },
-    { label: 'SQL', value: kpi.sql, tone: 'won' },
-    { label: 'Nuôi dưỡng', value: kpi.nurturing, tone: 'won-value' },
-    { label: 'Không đạt chuẩn', value: kpi.unqualified, tone: 'lost' },
+    {
+      id: '',
+      label: 'Tổng Lead',
+      value: kpi.total,
+      icon: Users,
+      tone: 'tone-slate',
+      pct: null,
+      isActive: !status,
+    },
+    {
+      id: 'mql',
+      label: 'MQL (Tiềm năng)',
+      value: kpi.mql,
+      icon: Sparkles,
+      tone: 'tone-blue',
+      pct: kpi.total > 0 ? `${Math.round((kpi.mql / kpi.total) * 100)}%` : null,
+      isActive: status === 'mql',
+    },
+    {
+      id: 'sql',
+      label: 'SQL (Đạt chuẩn)',
+      value: kpi.sql,
+      icon: CheckCircle2,
+      tone: 'tone-green',
+      pct: kpi.total > 0 ? `${Math.round((kpi.sql / kpi.total) * 100)}%` : null,
+      isActive: status === 'sql',
+    },
+    {
+      id: 'nurturing',
+      label: 'Đang nuôi dưỡng',
+      value: kpi.nurturing,
+      icon: HeartHandshake,
+      tone: 'tone-amber',
+      pct: kpi.total > 0 ? `${Math.round((kpi.nurturing / kpi.total) * 100)}%` : null,
+      isActive: status === 'nurturing',
+    },
+    {
+      id: 'unqualified',
+      label: 'Không đạt chuẩn',
+      value: kpi.unqualified,
+      icon: XCircle,
+      tone: 'tone-rose',
+      pct: kpi.total > 0 ? `${Math.round((kpi.unqualified / kpi.total) * 100)}%` : null,
+      isActive: status === 'unqualified',
+    },
   ];
 
-  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const currentSafePage = Math.min(page, totalPages);
+  const startRecord = total > 0 ? (currentSafePage - 1) * pageSize + 1 : 0;
+  const endRecord = Math.min(currentSafePage * pageSize, total);
+
+  const getPageNumbers = () => {
+    const pages: (number | string)[] = [];
+    if (totalPages <= 7) {
+      for (let i = 1; i <= totalPages; i++) pages.push(i);
+    } else {
+      if (currentSafePage <= 4) {
+        pages.push(1, 2, 3, 4, 5, '...', totalPages);
+      } else if (currentSafePage >= totalPages - 3) {
+        pages.push(1, '...', totalPages - 4, totalPages - 3, totalPages - 2, totalPages - 1, totalPages);
+      } else {
+        pages.push(1, '...', currentSafePage - 1, currentSafePage, currentSafePage + 1, '...', totalPages);
+      }
+    }
+    return pages;
+  };
+
   const hasFilters = Boolean(search || status || source || sdrId || team);
 
   function resetFilters() {
@@ -788,26 +880,72 @@ export function LeadsDirectory() {
       <section className="crm-page-card crm-leads-page-shell">
         {error ? <p className="crm-error">{error}</p> : null}
 
-        <div className="crm-stat-grid crm-stat-grid--4">
-          {kpiCards.map(card => (
-            <div key={card.label} className={`crm-stat-card crm-stat-card--${card.tone}`}>
-              <p className="crm-stat-label">{card.label}</p>
-              <p className="crm-stat-value">{card.value}</p>
-            </div>
-          ))}
+        <div className="crm-directory-header">
+          <div className="crm-directory-title-wrap">
+            <h1>
+              <Target className="text-[#be1e4b] shrink-0" size={24} />
+              <span>Leads (Đầu mối tiềm năng)</span>
+            </h1>
+            <p>Thu thập, phân loại MQL/SQL và chuyển đổi lead thành cơ hội kinh doanh</p>
+          </div>
+          <div className="crm-directory-actions">
+            <button type="button" className="crm-secondary-button" onClick={() => setImportOpen(true)}>
+              <FileSpreadsheet size={15} />
+              <span>Import Excel</span>
+            </button>
+            <button type="button" className="crm-primary-button" onClick={openLeadFormDrawer}>
+              <Plus size={15} />
+              <span>Thêm Lead</span>
+            </button>
+          </div>
         </div>
 
-        <section className="crm-filter-card">
+        <div className="crm-modern-kpi-grid">
+          {kpiCards.map(card => {
+            const IconComponent = card.icon;
+            return (
+              <div
+                key={card.label}
+                className={`crm-modern-kpi-card ${card.isActive ? 'active' : ''}`}
+                onClick={() => {
+                  if (card.id === '') {
+                    setStatus('');
+                  } else {
+                    setStatus(status === card.id ? '' : (card.id as CrmLeadStatus));
+                  }
+                  setPage(1);
+                }}
+                title={`Lọc theo ${card.label}`}
+              >
+                <div className={`crm-modern-kpi-icon ${card.tone}`}>
+                  <IconComponent size={20} />
+                </div>
+                <div className="crm-modern-kpi-content">
+                  <p className="crm-modern-kpi-label">{card.label}</p>
+                  <div className="crm-modern-kpi-val-row">
+                    <span className="crm-modern-kpi-value">{card.value}</span>
+                    {card.pct ? <span className="crm-modern-kpi-pct">{card.pct}</span> : null}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        <section className="crm-modern-filter-card">
           <div className="crm-filter-grid crm-filter-grid--leads">
-            <input
-              type="search"
-              name="crm-leads-directory-search"
-              value={searchInput}
-              onChange={event => setSearchInput(event.target.value)}
-              className="crm-input"
-              placeholder="Tìm tên, công ty, SĐT, email..."
-              autoComplete="off"
-            />
+            <div className="crm-search-box">
+              <Search size={16} className="crm-search-icon" />
+              <input
+                type="search"
+                name="crm-leads-directory-search"
+                value={searchInput}
+                onChange={event => setSearchInput(event.target.value)}
+                className="crm-input"
+                placeholder="Tìm tên, công ty, SĐT, email..."
+                autoComplete="off"
+              />
+            </div>
             <div className="crm-filter-select-wrap">
               <SearchableSelect
                 value={status}
@@ -840,19 +978,13 @@ export function LeadsDirectory() {
                 options={teamOptions.map(t => ({ value: t, label: t }))}
               />
             </div>
-            <div className="crm-icon-action-group" style={{ gap: '0.5rem' }}>
-              {hasFilters ? (
+            {hasFilters ? (
+              <div className="crm-icon-action-group">
                 <button type="button" className="crm-secondary-button crm-filter-reset" onClick={resetFilters}>
-                  <RotateCcw className="crm-button-icon" /> Xóa lọc
+                  <RotateCcw size={14} className="crm-button-icon" /> Xóa lọc
                 </button>
-              ) : null}
-              <button type="button" className="crm-secondary-button" onClick={() => setImportOpen(true)}>
-                Import Excel
-              </button>
-              <button type="button" className="crm-primary-button" onClick={openLeadFormDrawer}>
-                <Plus className="crm-button-icon" /> Thêm Lead
-              </button>
-            </div>
+              </div>
+            ) : null}
           </div>
         </section>
 
@@ -898,7 +1030,16 @@ export function LeadsDirectory() {
           </div>
         ) : null}
 
-        <section className="crm-content-section">
+        <section className="crm-directory-list-box">
+          <div className="crm-directory-list-top">
+            <div>
+              <h2 className="crm-directory-list-heading">Danh sách Lead</h2>
+              <p className="crm-directory-list-sub">
+                Tổng {total} lead · Click vào lead để xem chi tiết và cập nhật tiến độ
+              </p>
+            </div>
+          </div>
+
           <div className="crm-table-card crm-lead-table-card--desktop">
             <div className="crm-table-scroll">
               <table className="crm-table crm-lead-directory-table">
@@ -938,6 +1079,30 @@ export function LeadsDirectory() {
                   {loading ? (
                     <tr><td colSpan={9} className="crm-empty-cell"><Loader2 className="crm-spin-icon" /> Đang tải...</td></tr>
                   ) : items.length ? (
+<<<<<<< HEAD
+                    items.map(lead => {
+                      const avatarColor = getAvatarColor(lead.leadName);
+                      const initials = getInitials(lead.leadName);
+                      return (
+                        <tr key={lead.id} className="crm-row">
+                          <td className="crm-td" onClick={event => event.stopPropagation()}>
+                            <input
+                              type="checkbox"
+                              checked={selectedIds.has(lead.id)}
+                              onChange={() => toggleSelect(lead.id)}
+                              aria-label={`Chọn ${lead.leadName}`}
+                            />
+                          </td>
+                          <td className="crm-td">
+                            <div className="crm-lead-identity">
+                              <div
+                                className="crm-avatar-bubble"
+                                style={{ backgroundColor: avatarColor.bg, color: avatarColor.text }}
+                              >
+                                {initials}
+                              </div>
+                              <div className="crm-lead-identity-text">
+=======
                     items.map(lead => (
                       <tr
                         key={lead.id}
@@ -982,14 +1147,109 @@ export function LeadsDirectory() {
                             {(() => {
                               const action = primaryActionOf(lead);
                               return (
+>>>>>>> origin/main
                                 <button
                                   type="button"
-                                  className="crm-row-action-primary crm-lead-row-action"
-                                  title={action.label}
-                                  onClick={action.run}
+                                  className="crm-lead-name-btn"
+                                  title={lead.leadName}
+                                  onClick={() => openRow(lead)}
                                 >
-                                  {action.label}
+                                  {lead.leadName}
                                 </button>
+<<<<<<< HEAD
+                                <div className="crm-sub-text" title={lead.companyName || 'Chưa có công ty'}>
+                                  <Building2 size={12} className="shrink-0 text-gray-400" />
+                                  <span className="truncate">{lead.companyName || 'Chưa có công ty'}</span>
+                                </div>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="crm-td crm-contact-cell">
+                            {lead.phone ? (
+                              <a
+                                className="crm-contact-chip"
+                                href={`tel:${lead.phone.replace(/[^\d+]/g, '')}`}
+                                title={lead.phone}
+                              >
+                                <Phone size={12} />
+                                <span>{lead.phone}</span>
+                              </a>
+                            ) : (
+                              <div className="crm-small text-gray-400">-</div>
+                            )}
+                            {lead.email ? (
+                              <a
+                                className="crm-contact-chip crm-muted"
+                                title={lead.email}
+                                href={`mailto:${lead.email}`}
+                              >
+                                <Mail size={12} />
+                                <span className="crm-truncate max-w-[140px]">{lead.email}</span>
+                              </a>
+                            ) : (
+                              <div className="crm-muted text-gray-400">-</div>
+                            )}
+                          </td>
+                          <td className="crm-td">
+                            <span className="crm-modern-source-pill">{lead.source || 'Manual'}</span>
+                          </td>
+                          <td className="crm-td crm-td--right">
+                            {lead.score == null ? (
+                              <span className="text-gray-400 text-xs">-</span>
+                            ) : (
+                              <span
+                                className={`crm-score-badge ${
+                                  lead.score >= 70 ? 'score-high' : lead.score >= 40 ? 'score-mid' : 'score-low'
+                                }`}
+                              >
+                                {lead.score}
+                              </span>
+                            )}
+                          </td>
+                          <td className="crm-td">
+                            <span className={`crm-lead-status-badge ${STATUS_BADGE_CLASS[lead.status] || ''}`}>
+                              <span
+                                className="crm-status-dot"
+                                style={{
+                                  backgroundColor:
+                                    lead.status === 'sql'
+                                      ? '#16a34a'
+                                      : lead.status === 'mql'
+                                      ? '#2563eb'
+                                      : lead.status === 'nurturing'
+                                      ? '#d97706'
+                                      : '#dc2626',
+                                }}
+                              />
+                              <span>{LEAD_STATUS_LABEL[lead.status] || lead.status}</span>
+                            </span>
+                          </td>
+                          <td className="crm-td crm-small">{sdrName.get(lead.sdrId || '') || 'Chưa gán'}</td>
+                          <td className="crm-td crm-muted crm-truncate" title={lead.nextStep || ''}>
+                            {lead.nextStep || '-'}
+                          </td>
+                          <td className="crm-td crm-td--actions-col">
+                            <div className="crm-row-actions">
+                              {(() => {
+                                const action = primaryActionOf(lead);
+                                return (
+                                  <button
+                                    type="button"
+                                    className="crm-row-action-primary crm-lead-row-action"
+                                    title={action.label}
+                                    onClick={action.run}
+                                  >
+                                    {action.label}
+                                  </button>
+                                );
+                              })()}
+                              <ActionMenu label="Thao tác khác" items={secondaryActionsOf(lead)} />
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })
+=======
                               );
                             })()}
                             {renderSecondaryActions(lead)}
@@ -997,6 +1257,7 @@ export function LeadsDirectory() {
                         </td>
                       </tr>
                     ))
+>>>>>>> origin/main
                   ) : (
                     <tr>
                       <td colSpan={9}>
@@ -1030,6 +1291,8 @@ export function LeadsDirectory() {
             </div>
           </div>
 
+<<<<<<< HEAD
+=======
           {/* Card list cho man hep - cung ly do voi CrmCustomersDirectory.tsx
            * (bang 8 cot ep table-layout:fixed khong doc noi duoi 900px). */}
           <div className="crm-lead-card-list">
@@ -1113,18 +1376,70 @@ export function LeadsDirectory() {
             )}
           </div>
 
+>>>>>>> origin/main
           {total > 0 ? (
-            <div className="crm-pagination">
-              <span className="crm-pagination-info">
-                Trang {page}/{totalPages} · {total} Lead
-              </span>
-              <div className="crm-pagination-actions">
-                <button type="button" className="crm-secondary-button" disabled={page <= 1 || loading} onClick={() => setPage(p => Math.max(1, p - 1))}>
-                  Trước
+            <div className="crm-progress-pagination">
+              <div className="crm-progress-pagination-info">
+                Hiển thị {startRecord} - {endRecord} trên {total} Lead
+              </div>
+
+              <div className="crm-progress-pagination-pages">
+                <button
+                  type="button"
+                  className="crm-progress-pagination-btn"
+                  disabled={currentSafePage <= 1 || loading}
+                  onClick={() => setPage(p => Math.max(1, p - 1))}
+                  aria-label="Trang trước"
+                >
+                  <ChevronLeft size={16} />
                 </button>
-                <button type="button" className="crm-secondary-button" disabled={page >= totalPages || loading} onClick={() => setPage(p => Math.min(totalPages, p + 1))}>
-                  Sau
+
+                {getPageNumbers().map((p, idx) => {
+                  if (typeof p === 'string') {
+                    return (
+                      <span key={`ellipsis-${idx}`} className="crm-progress-pagination-ellipsis">
+                        ...
+                      </span>
+                    );
+                  }
+                  return (
+                    <button
+                      key={p}
+                      type="button"
+                      className={`crm-progress-pagination-btn${p === currentSafePage ? ' active' : ''}`}
+                      disabled={loading}
+                      onClick={() => setPage(p)}
+                    >
+                      {p}
+                    </button>
+                  );
+                })}
+
+                <button
+                  type="button"
+                  className="crm-progress-pagination-btn"
+                  disabled={currentSafePage >= totalPages || loading}
+                  onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+                  aria-label="Trang tiếp"
+                >
+                  <ChevronRight size={16} />
                 </button>
+              </div>
+
+              <div className="crm-progress-pagination-size">
+                <select
+                  value={pageSize}
+                  onChange={e => {
+                    setPageSize(Number(e.target.value));
+                    setPage(1);
+                  }}
+                  className="progress-pagination-select"
+                >
+                  <option value={10}>Hiển thị 10 / trang</option>
+                  <option value={20}>Hiển thị 20 / trang</option>
+                  <option value={50}>Hiển thị 50 / trang</option>
+                  <option value={100}>Hiển thị 100 / trang</option>
+                </select>
               </div>
             </div>
           ) : null}
@@ -1189,8 +1504,8 @@ export function LeadsDirectory() {
                 <p className="crm-modal-title">Sao chép sang workspace khác</p>
                 <p className="crm-modal-subtitle">
                   {copyLeadIds.length > 1
-                    ? `Chọn workspace đích riêng cho từng Lead (${copyLeadIds.length} Lead) — Lead gốc vẫn giữ nguyên ở workspace hiện tại.`
-                    : `Tạo 1 bản sao của Lead "${items.find(l => l.id === copyLeadIds[0])?.leadName || ''}" ở workspace khác — Lead gốc vẫn giữ nguyên ở workspace hiện tại.`}
+                    ? `Chọn workspace đích riêng cho từng Lead (${copyLeadIds.length} Lead) — Lead gốc vẫn giữ nguyên ở Main.`
+                    : `Tạo 1 bản sao của Lead "${items.find(l => l.id === copyLeadIds[0])?.leadName || ''}" ở workspace khác — Lead gốc vẫn giữ nguyên ở Main.`}
                 </p>
               </div>
             </header>
@@ -1206,42 +1521,36 @@ export function LeadsDirectory() {
                   </ul>
                 </div>
               ) : null}
-              {workspaceOptions.length ? (
-                <>
-                  {copyLeadIds.length > 1 ? (
-                    <div style={{ marginBottom: '0.75rem' }}>
-                      <SearchableSelect
-                        value=""
-                        onChange={applyTargetToAll}
-                        placeholder="Áp dụng 1 workspace cho tất cả (tuỳ chọn)"
-                        options={workspaceOptions.map(option => ({ value: option.instance, label: workspaceLabel(option.instance) }))}
-                      />
+              {copyLeadIds.length > 1 ? (
+                <div style={{ marginBottom: '0.75rem' }}>
+                  <SearchableSelect
+                    value=""
+                    onChange={applyTargetToAll}
+                    placeholder="Áp dụng 1 workspace cho tất cả (tuỳ chọn)"
+                    options={COPY_TARGET_OPTIONS.map(option => ({ value: option.instance, label: option.label }))}
+                  />
+                </div>
+              ) : null}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', maxHeight: 260, overflowY: 'auto' }}>
+                {copyLeadIds.map(leadId => {
+                  const lead = items.find(l => l.id === leadId);
+                  return (
+                    <div key={leadId} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <span className="crm-truncate" style={{ flex: 1, minWidth: 0 }} title={lead?.leadName || leadId}>
+                        {lead?.leadName || leadId}
+                      </span>
+                      <div style={{ width: 200, flexShrink: 0 }}>
+                        <SearchableSelect
+                          value={copyTargets[leadId] || ''}
+                          onChange={value => setCopyTargetFor(leadId, value)}
+                          placeholder="Chọn workspace"
+                          options={COPY_TARGET_OPTIONS.map(option => ({ value: option.instance, label: option.label }))}
+                        />
+                      </div>
                     </div>
-                  ) : null}
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', maxHeight: 260, overflowY: 'auto' }}>
-                    {copyLeadIds.map(leadId => {
-                      const lead = items.find(l => l.id === leadId);
-                      return (
-                        <div key={leadId} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                          <span className="crm-truncate" style={{ flex: 1, minWidth: 0 }} title={lead?.leadName || leadId}>
-                            {lead?.leadName || leadId}
-                          </span>
-                          <div style={{ width: 200, flexShrink: 0 }}>
-                            <SearchableSelect
-                              value={copyTargets[leadId] || ''}
-                              onChange={value => setCopyTargetFor(leadId, value)}
-                              placeholder="Chọn workspace"
-                              options={workspaceOptions.map(option => ({ value: option.instance, label: workspaceLabel(option.instance) }))}
-                            />
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </>
-              ) : (
-                <p className="crm-muted">Không có workspace nào khác được cấu hình.</p>
-              )}
+                  );
+                })}
+              </div>
             </div>
             <footer className="crm-modal-footer">
               <button type="button" className="crm-cancel-button" disabled={copying} onClick={closeCopyModal}>
