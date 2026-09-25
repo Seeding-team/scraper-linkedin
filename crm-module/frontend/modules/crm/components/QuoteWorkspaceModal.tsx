@@ -1218,23 +1218,25 @@ export function QuoteWorkspaceModal({
     const technicalOwnerId = existingQuote?.technicalOwnerId || draftTechnicalOwnerId;
     const quoteOwnerId = existingQuote?.quoteOwnerId || draftQuoteOwnerId;
     const slaDueAt = existingQuote?.slaDueAt || datetimeLocalValueToIso(draftSlaDueAt);
-    const realItems = itemsDraft.filter(item => item.rowType !== 'section');
     if (!customerId) errors.customer = 'Vui lòng chọn khách hàng.';
-    // "Người liên hệ"/"Đơn vị phát hành" (redesign Buoc 1) - CHI bat buoc o
-    // che do TAO MOI (!existingQuote). Bao gia CU (da ton tai truoc khi co
-    // tinh nang nay) co the chua tung co Contact/Issuer duoc chon that su -
-    // khong ep buoc validate lai o day (vd luc chuyen buoc "Gửi yêu cầu xử
-    // lý") de tranh chan cung nhung bao gia cu hop le truoc do.
-    if (!existingQuote) {
-      if (!draftContactId) errors.contact = 'Vui lòng chọn người liên hệ.';
-      if (!effectiveIssuerCompanyId) errors.issuerCompany = 'Vui lòng chọn đơn vị phát hành.';
-    }
-    if (!selectedDealId) errors.deal = 'Vui lòng chọn cơ hội CRM.';
+    // "Người liên hệ"/"Đơn vị phát hành"/"Hạng mục & cấu trúc giá" la phan
+    // thuong mai cua Sale (feedback 2026-09-25 "presale bỏ luôn chỗ người
+    // liên hệ, này phase của sale... hạng mục & cấu trúc giá cho nằm bên sale
+    // luôn") - KHONG con bat buoc o Buoc 1 (beyondStep1=false, Presale tao
+    // yeu cau/Bàn giao) nua, ke ca luc tao moi. Field/UI tuong ung cung da AN
+    // khoi Buoc 1 (xem beyondStep1 o Nguoi lien he/Don vi phat hanh, o day
+    // CHI can dong bo lai validate cho KHOP - truoc day van bat buoc luc tao
+    // (!existingQuote) du field da bi an, khien Presale KHONG THE Luu/Bàn
+    // giao duoc (bug that da gap, "ở bước 1 đang không lưu, bàn giao cũng
+    // không được"). Tu Buoc 2 (beyondStep1) Sale se tu dien 3 muc nay qua UI
+    // rieng cua ho, khong con validate cung o day (mirror dung nguyen tac cu
+    // "bao gia cu co the chua tung co Contact/Issuer" - gio ap dung ca cho
+    // luong tao moi).
+    if (!selectedDealId) errors.deal = beyondStep1 ? 'Vui lòng chọn cơ hội CRM.' : 'Vui lòng chọn dự án.';
     if (!formId) errors.form = 'Vui lòng chọn mẫu báo giá.';
     if (!technicalOwnerId) errors.presale = 'Vui lòng chọn Presale.';
     if (!quoteOwnerId) errors.sale = 'Vui lòng chọn Sale.';
     if (!slaDueAt || new Date(slaDueAt).getTime() <= Date.now()) errors.sla = 'Vui lòng chọn hạn hoàn tất trong tương lai.';
-    if (realItems.length === 0) errors.items = 'Vui lòng thêm ít nhất một hạng mục.';
     setRequiredFieldErrors(errors);
     focusFirstRequiredError(errors);
     return Object.keys(errors).length === 0;
@@ -4651,7 +4653,17 @@ export function QuoteWorkspaceModal({
   // cu khong" (2026-09-24, sau khi da gop 3 truong Buoc 1 vao 1 hang).
   const dealField = (
     <div data-qc-required="deal">
-      <span className="qc-workspace-info-label">Cơ hội CRM <span className="qc-required-mark">*</span></span>
+      {/* Chi doi CHU hien thi tu "Cơ hội CRM" sang "Dự án" (feedback
+       * 2026-09-25) - VAN chon tu bang Deal/pipeline (customer_leads) nhu
+       * cu, KHONG doi sang bang Project rieng (da xac nhan voi nguoi dung,
+       * "chỉ đổi chữ hiển thị") - moi bien/state (deal, draftDealId,
+       * requiredFieldErrors.deal...) giu nguyen ten cu, chi la label. CHI
+       * doi chu luc con o Buoc 1 (!beyondStep1, o day la field DUY NHAT
+       * Presale thay) - tu Buoc 2 field nay TRA VE hang 2, dung CHUNG hang
+       * voi field "Dự án" THAT (data-qc-required="project", khac bang
+       * Project) - giu nguyen "Cơ hội CRM" o do de khong lap 2 nhan "Dự án"
+       * cung 1 hang (2 field khac nhau, 2 gia tri khac nhau). */}
+      <span className="qc-workspace-info-label">{beyondStep1 ? 'Cơ hội CRM' : 'Dự án'} <span className="qc-required-mark">*</span></span>
       {!quote ? (
         <SearchableSelect
           value={draftDealId}
@@ -4665,13 +4677,13 @@ export function QuoteWorkspaceModal({
               .filter(d => !lockProject || !draftProjectId || d.projectId === draftProjectId)
               .map(d => ({ value: d.id, label: `${d.customerName}${d.companyName ? ' · ' + d.companyName : ''}` })),
           ]}
-          placeholder="Chọn cơ hội..."
+          placeholder={beyondStep1 ? 'Chọn cơ hội...' : 'Chọn dự án...'}
           hideClearOption
         />
       ) : null}
       {!quote && draftDealId ? (
         <div className="qc-row-sub">
-          Mã cơ hội: {businessCode || 'Chưa có mã'}
+          {beyondStep1 ? 'Mã cơ hội' : 'Mã dự án'}: {businessCode || 'Chưa có mã'}
           {deal?.estimatedBudget ? ` · Giá trị dự kiến: ${formatMoney(deal.estimatedBudget)}` : ''}
         </div>
       ) : null}
@@ -4684,7 +4696,7 @@ export function QuoteWorkspaceModal({
           <SearchableSelect
             value="current"
             onChange={() => {}}
-            options={[{ value: 'current', label: businessCode || (deal ? 'Cơ hội chưa có mã' : 'Chưa gắn cơ hội') }]}
+            options={[{ value: 'current', label: businessCode || (deal ? (beyondStep1 ? 'Cơ hội chưa có mã' : 'Dự án chưa có mã') : (beyondStep1 ? 'Chưa gắn cơ hội' : 'Chưa gắn dự án')) }]}
             disabled
           />
           <div className="qc-row-sub">
@@ -4917,6 +4929,13 @@ export function QuoteWorkspaceModal({
             )}
             {requiredFieldErrors.customer ? <p className="qc-field-error">{requiredFieldErrors.customer}</p> : null}
           </div>
+          {/* "Người liên hệ" la thong tin hien tren ban khach (PDF) - thuoc
+           * phase thuong mai cua Sale, KHONG con la trach nhiem Presale luc
+           * tao yeu cau (feedback 2026-09-25 "presale bỏ luôn chỗ người liên
+           * hệ, này phase của sale") - AN HOAN TOAN khoi Buoc 1 (khong render,
+           * khong con bat buoc), CHI hien tu Buoc 2 (Sale, beyondStep1) tro
+           * di, dung chung dieu kien voi Đơn vị phát hành ngay ben duoi. */}
+          {beyondStep1 ? (
           <div data-qc-required="contact">
             <span className="qc-workspace-info-label">Người liên hệ <span className="qc-required-mark">*</span></span>
             {!quote ? (
@@ -4945,6 +4964,7 @@ export function QuoteWorkspaceModal({
             )}
             {requiredFieldErrors.contact ? <p className="qc-field-error">{requiredFieldErrors.contact}</p> : null}
           </div>
+          ) : null}
           {!beyondStep1 ? dealField : null}
           {/* "Presale không làm phần thương mại" (feedback 2026-09-24, kem
            * screenshot - "ẩn đi luôn, không xem được, KHÔNG phải khoá"): Đơn
@@ -5443,8 +5463,12 @@ export function QuoteWorkspaceModal({
                * TON TAI: van hien + sua duoc CHI khi con o trang thai sua duoc
                * (draft, chua khoa review) - giu dung dieu kien khoa cu (canEdit
                * && isDraft && !isLockedForReview); da duyet/khoa thi AN HAN
-               * (giu nguyen snapshot cu, giong hanh vi truoc day). */}
-              {!quote || (canEdit && isDraft && !isLockedForReview) ? (
+               * (giu nguyen snapshot cu, giong hanh vi truoc day).
+               * Feedback 2026-09-25 "chuyển qua bước 2 mới làm được, ẩn cái
+               * ở bước 1 đi" - AN HOAN TOAN o Buoc 1 (!beyondStep1, ke ca
+               * !quote luc tao moi), dung chung dieu kien voi Nguoi lien
+               * he/Don vi phat hanh (phase thuong mai cua Sale). */}
+              {beyondStep1 && canEdit && isDraft && !isLockedForReview ? (
                 <RecipientInfoCard
                   recipient={draftRecipientFields}
                   editable
