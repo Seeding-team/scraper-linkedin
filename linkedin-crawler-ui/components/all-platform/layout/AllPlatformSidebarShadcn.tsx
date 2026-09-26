@@ -207,7 +207,7 @@ function GroupLinks({
                           type="button"
                           onClick={() => toggleSubgroup(child.id, isSubOpen)}
                           className={cn(
-                            "flex w-full items-center justify-between gap-1.5 rounded-md px-2 py-1.5 text-xs font-semibold tracking-wide transition-colors outline-none",
+                            "flex w-full items-center justify-between gap-1.5 rounded-md px-2 py-1.5 text-sm font-medium transition-colors outline-none",
                             subHasActiveChild
                               ? "text-sidebar-primary bg-sidebar-primary/10 font-bold"
                               : "text-sidebar-foreground/75 hover:bg-sidebar-accent hover:text-sidebar-foreground",
@@ -231,15 +231,15 @@ function GroupLinks({
                             isSubOpen ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0 pointer-events-none",
                           )}
                         >
-                          <div className="min-h-0 space-y-1 border-l border-sidebar-border/70 ml-2 pl-2 my-0.5">
+                          <ul className="min-h-0 space-y-1 border-l border-sidebar-border/70 ml-2 pl-2 my-0.5">
                             {child.items.map((subItem) => {
                               const SubItemIcon = materialToLucideIcon(subItem.icon);
                               const subActive = isLeafActive(pathname, subItem);
                               return (
                                 <SidebarMenuSubItem key={subItem.id}>
-                                  <SidebarMenuSubButton asChild isActive={subActive} size="sm">
-                                    <Link href={subItem.href} className="text-xs">
-                                      <SubItemIcon className="size-3.5" />
+                                  <SidebarMenuSubButton asChild isActive={subActive}>
+                                    <Link href={subItem.href}>
+                                      <SubItemIcon className="size-4" />
                                       <span>{subItem.label}</span>
                                       {subItem.badge !== undefined ? (
                                         <span className="ml-auto text-[9px] font-bold text-sidebar-primary">
@@ -251,7 +251,7 @@ function GroupLinks({
                                 </SidebarMenuSubItem>
                               );
                             })}
-                          </div>
+                          </ul>
                         </div>
                       </li>
                     );

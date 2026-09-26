@@ -21,6 +21,7 @@ import {
   type NavLeafItem,
   type NavSectionItem,
 } from "./AllPlatformSidebar";
+import { WorkspaceSwitcherShadcn } from "./WorkspaceSwitcherShadcn";
 import {
   Sidebar,
   SidebarContent,
@@ -136,179 +137,167 @@ function GroupLinks({
       : child.items.some((sub) => isLeafActive(pathname, sub)),
   );
 
-  // Nhóm cha mặc định mở (true) trừ khi người dùng click đóng; nếu có trang con active thì luôn mở
-  const isGroupOpen = hasActiveChild || (openGroups[entry.id] ?? true);
+  const isGroupOpen = openGroups[entry.id] ?? hasActiveChild;
 
   return (
-    <SidebarGroup className="py-1">
-      <SidebarGroupLabel className="flex items-center justify-between">
-        <span>{entry.label}</span>
-      </SidebarGroupLabel>
-      <SidebarGroupContent>
-        <SidebarMenu>
-          <SidebarMenuItem>
-            <SidebarMenuButton
-              type="button"
-              onClick={() => toggleGroup(entry.id, isGroupOpen)}
-              isActive={entry.headerNeverActive ? false : hasActiveChild}
-              tooltip={entry.label}
-              className="justify-between"
-            >
-              <span className="flex items-center gap-2 min-w-0">
-                <Icon />
-                <span className="truncate">{entry.label}</span>
-              </span>
-              <ChevronRight
-                className={cn(
-                  "size-4 shrink-0 transition-transform duration-200 text-sidebar-foreground/50",
-                  isGroupOpen && "rotate-90",
-                )}
-              />
-            </SidebarMenuButton>
+    <SidebarMenuItem>
+      <SidebarMenuButton
+        type="button"
+        onClick={() => toggleGroup(entry.id, isGroupOpen)}
+        isActive={entry.headerNeverActive ? false : hasActiveChild}
+        tooltip={entry.label}
+        className="justify-between font-semibold"
+      >
+        <span className="flex items-center gap-2 min-w-0">
+          <Icon className="size-4 shrink-0" />
+          <span className="truncate">{entry.label}</span>
+        </span>
+        <ChevronRight
+          className={cn(
+            "size-4 shrink-0 transition-transform duration-200 text-sidebar-foreground/50",
+            isGroupOpen && "rotate-90",
+          )}
+        />
+      </SidebarMenuButton>
 
-            <div
-              className={cn(
-                "grid overflow-hidden transition-all duration-200 ease-in-out",
-                isGroupOpen ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0 pointer-events-none",
-              )}
-            >
-              <div className="min-h-0">
-                <SidebarMenuSub>
-                  {entry.items.map((child) => {
-                    if (child.type === "item") {
-                      const ItemIcon = materialToLucideIcon(child.icon);
-                      const active = isLeafActive(pathname, child);
-                      return (
-                        <SidebarMenuSubItem key={child.id}>
-                          <SidebarMenuSubButton asChild isActive={active}>
-                            <Link href={child.href}>
-                              <ItemIcon className="size-4" />
-                              <span>{child.label}</span>
-                              {child.badge !== undefined ? (
-                                <span className="ml-auto text-[10px] font-bold text-sidebar-primary">
-                                  {child.badge}
-                                </span>
-                              ) : null}
-                            </Link>
-                          </SidebarMenuSubButton>
-                        </SidebarMenuSubItem>
-                      );
-                    }
-
-                    // child.type === "subgroup"
-                    const SubIcon = materialToLucideIcon(child.icon);
-                    const subHasActiveChild = child.items.some((sub) => isLeafActive(pathname, sub));
-                    // Menu con mặc định MỞ (true), giữ nguyên mở trừ khi đóng/đăng xuất; nếu có trang con active thì luôn mở
-                    const isSubOpen = subHasActiveChild || (openSubgroups[child.id] ?? true);
-
-                    return (
-                      <li key={child.id} className="mt-1 list-none space-y-1">
-                        <button
-                          type="button"
-                          onClick={() => toggleSubgroup(child.id, isSubOpen)}
-                          className={cn(
-                            "flex w-full items-center justify-between gap-1.5 rounded-md px-2 py-1.5 text-xs font-semibold tracking-wide transition-colors outline-none",
-                            subHasActiveChild
-                              ? "text-sidebar-primary bg-sidebar-primary/10 font-bold"
-                              : "text-sidebar-foreground/75 hover:bg-sidebar-accent hover:text-sidebar-foreground",
-                          )}
-                        >
-                          <span className="flex min-w-0 items-center gap-1.5 truncate">
-                            <SubIcon className="size-3.5 shrink-0 opacity-80" />
-                            <span className="truncate">{child.label}</span>
+      <div
+        className={cn(
+          "grid overflow-hidden transition-all duration-200 ease-in-out",
+          isGroupOpen ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0 pointer-events-none",
+        )}
+      >
+        <div className="min-h-0">
+          <SidebarMenuSub className="my-0.5 ml-3 space-y-0.5 border-l border-sidebar-border/60 pl-2">
+            {entry.items.map((child) => {
+              if (child.type === "item") {
+                const ItemIcon = materialToLucideIcon(child.icon);
+                const active = isLeafActive(pathname, child);
+                return (
+                  <SidebarMenuSubItem key={child.id}>
+                    <SidebarMenuSubButton asChild isActive={active}>
+                      <Link href={child.href}>
+                        <ItemIcon className="size-4" />
+                        <span>{child.label}</span>
+                        {child.badge !== undefined ? (
+                          <span className="ml-auto text-[10px] font-bold text-sidebar-primary">
+                            {child.badge}
                           </span>
-                          <ChevronRight
-                            className={cn(
-                              "size-3.5 shrink-0 transition-transform duration-200 text-sidebar-foreground/40",
-                              isSubOpen && "rotate-90 text-sidebar-primary",
-                            )}
-                          />
-                        </button>
-
-                        <div
-                          className={cn(
-                            "grid overflow-hidden transition-all duration-200 ease-in-out",
-                            isSubOpen ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0 pointer-events-none",
-                          )}
-                        >
-                          <div className="min-h-0 space-y-1 border-l border-sidebar-border/70 ml-2 pl-2 my-0.5">
-                            {child.items.map((subItem) => {
-                              const SubItemIcon = materialToLucideIcon(subItem.icon);
-                              const subActive = isLeafActive(pathname, subItem);
-                              return (
-                                <SidebarMenuSubItem key={subItem.id}>
-                                  <SidebarMenuSubButton asChild isActive={subActive} size="sm">
-                                    <Link href={subItem.href} className="text-xs">
-                                      <SubItemIcon className="size-3.5" />
-                                      <span>{subItem.label}</span>
-                                      {subItem.badge !== undefined ? (
-                                        <span className="ml-auto text-[9px] font-bold text-sidebar-primary">
-                                          {subItem.badge}
-                                        </span>
-                                      ) : null}
-                                    </Link>
-                                  </SidebarMenuSubButton>
-                                </SidebarMenuSubItem>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      </li>
-                    );
-                  })}
-                </SidebarMenuSub>
-              </div>
-            </div>
-          </SidebarMenuItem>
-        </SidebarMenu>
-      </SidebarGroupContent>
-    </SidebarGroup>
-  );
-}
-
-function SectionLinks({ entry }: { entry: NavSectionItem }) {
-  return (
-    <SidebarGroup className="py-1">
-      <SidebarGroupLabel>{entry.label}</SidebarGroupLabel>
-    </SidebarGroup>
+                        ) : null}
+                      </Link>
+                    </SidebarMenuSubButton>
+                  </SidebarMenuSubItem>
+                );
+              }
+              const SubIcon = materialToLucideIcon(child.icon);
+              const subHasActiveChild = child.items.some((sub) => isLeafActive(pathname, sub));
+              const isSubOpen = subHasActiveChild || (openSubgroups[child.id] ?? true);
+              return (
+                <li key={child.id} className="mt-1 list-none space-y-1">
+                  <button
+                    type="button"
+                    onClick={() => toggleSubgroup(child.id, isSubOpen)}
+                    className={cn(
+                      "flex w-full items-center justify-between gap-1.5 rounded-md px-2 py-1.5 text-sm font-medium transition-colors outline-none",
+                      subHasActiveChild
+                        ? "text-sidebar-primary bg-sidebar-primary/10 font-bold"
+                        : "text-sidebar-foreground/75 hover:bg-sidebar-accent hover:text-sidebar-foreground",
+                    )}
+                  >
+                    <span className="flex min-w-0 items-center gap-1.5 truncate">
+                      <SubIcon className="size-3.5 shrink-0 opacity-80" />
+                      <span className="truncate">{child.label}</span>
+                    </span>
+                    <ChevronRight
+                      className={cn(
+                        "size-3.5 shrink-0 transition-transform duration-200 text-sidebar-foreground/40",
+                        isSubOpen && "rotate-90 text-sidebar-primary",
+                      )}
+                    />
+                  </button>
+                  <div
+                    className={cn(
+                      "grid overflow-hidden transition-all duration-200 ease-in-out",
+                      isSubOpen ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0 pointer-events-none",
+                    )}
+                  >
+                    <ul className="min-h-0 space-y-1 border-l border-sidebar-border/70 ml-2 pl-2 my-0.5">
+                      {child.items.map((subItem) => {
+                        const SubItemIcon = materialToLucideIcon(subItem.icon);
+                        const subActive = isLeafActive(pathname, subItem);
+                        return (
+                          <SidebarMenuSubItem key={subItem.id}>
+                            <SidebarMenuSubButton asChild isActive={subActive}>
+                              <Link href={subItem.href}>
+                                <SubItemIcon className="size-4" />
+                                <span>{subItem.label}</span>
+                                {subItem.badge !== undefined ? (
+                                  <span className="ml-auto text-[9px] font-bold text-sidebar-primary">
+                                    {subItem.badge}
+                                  </span>
+                                ) : null}
+                              </Link>
+                            </SidebarMenuSubButton>
+                          </SidebarMenuSubItem>
+                        );
+                      })}
+                    </ul>
+                  </div>
+                </li>
+              );
+            })}
+          </SidebarMenuSub>
+        </div>
+      </div>
+    </SidebarMenuItem>
   );
 }
 
 export function AllPlatformSidebarShadcn() {
   const { user, logout } = useAppAuth();
   const router = useRouter();
-  const [workspaceTab, setWorkspaceTab] = React.useState<"personal" | "team">("personal");
+  const pathname = usePathname();
   const [showProfileMenu, setShowProfileMenu] = React.useState(false);
 
   const [openSubgroups, setOpenSubgroups] = React.useState<Record<string, boolean>>({});
   const [openGroups, setOpenGroups] = React.useState<Record<string, boolean>>({});
 
+  const isAdmin = user?.role === "admin";
+  const isLeader = user?.role === "leader";
+  const isSale = Boolean(user?.is_sale);
+  const entries = React.useMemo(
+    () => buildEntries(isAdmin, isLeader, undefined, isSale),
+    [isAdmin, isLeader, isSale],
+  );
+
   React.useEffect(() => {
     try {
       const savedSubgroups = sessionStorage.getItem(SUBGROUPS_STORAGE_KEY);
-      if (savedSubgroups) {
-        setOpenSubgroups(JSON.parse(savedSubgroups));
-      }
+      setOpenSubgroups(savedSubgroups ? JSON.parse(savedSubgroups) : {});
       const savedGroups = sessionStorage.getItem(GROUPS_STORAGE_KEY);
+      let parsed: Record<string, boolean> = {};
       if (savedGroups) {
-        setOpenGroups(JSON.parse(savedGroups));
+        parsed = JSON.parse(savedGroups);
+      }
+      let changed = false;
+      for (const entry of entries) {
+        if (entry.type === "group") {
+          const hasActive = entry.items.some((child) =>
+            child.type === "item" ? isLeafActive(pathname, child) : false
+          );
+          if (hasActive && parsed[entry.id] === undefined) {
+            parsed[entry.id] = true;
+            changed = true;
+          }
+        }
+      }
+      setOpenGroups(parsed);
+      if (changed) {
+        sessionStorage.setItem(GROUPS_STORAGE_KEY, JSON.stringify(parsed));
       }
     } catch (e) {
       console.warn("Failed to load sidebar state from sessionStorage", e);
     }
-  }, []);
-
-  const toggleSubgroup = React.useCallback((id: string, currentState: boolean) => {
-    setOpenSubgroups((prev) => {
-      const next = { ...prev, [id]: !currentState };
-      try {
-        sessionStorage.setItem(SUBGROUPS_STORAGE_KEY, JSON.stringify(next));
-      } catch (e) {
-        console.warn("Failed to save subgroup state to sessionStorage", e);
-      }
-      return next;
-    });
-  }, []);
+  }, [pathname, entries]);
 
   const toggleGroup = React.useCallback((id: string, currentState: boolean) => {
     setOpenGroups((prev) => {
@@ -322,13 +311,17 @@ export function AllPlatformSidebarShadcn() {
     });
   }, []);
 
-  const isAdmin = user?.role === "admin";
-  const isLeader = user?.role === "leader";
-  const isSale = Boolean(user?.is_sale);
-  const entries = React.useMemo(
-    () => buildEntries(isAdmin, isLeader, workspaceTab, isSale),
-    [isAdmin, isLeader, isSale, workspaceTab],
-  );
+  const toggleSubgroup = React.useCallback((id: string, currentState: boolean) => {
+    setOpenSubgroups((prev) => {
+      const next = { ...prev, [id]: !currentState };
+      try {
+        sessionStorage.setItem(SUBGROUPS_STORAGE_KEY, JSON.stringify(next));
+      } catch (e) {
+        console.warn("Failed to save subgroup state to sessionStorage", e);
+      }
+      return next;
+    });
+  }, []);
 
   const handleLogout = async () => {
     try {
@@ -345,58 +338,39 @@ export function AllPlatformSidebarShadcn() {
         <div className="px-1 py-1 group-data-[collapsible=icon]:px-0">
           <SidebarLogoHeader />
         </div>
-
-        <div className="flex items-center gap-1 rounded-full bg-sidebar-accent p-1 group-data-[collapsible=icon]:hidden">
-          <button
-            type="button"
-            onClick={() => setWorkspaceTab("personal")}
-            className={
-              "flex-1 rounded-full px-2.5 py-1 text-xs font-semibold transition " +
-              (workspaceTab === "personal"
-                ? "bg-sidebar-primary text-sidebar-primary-foreground shadow-sm"
-                : "text-sidebar-foreground/60 hover:text-sidebar-foreground")
-            }
-          >
-            Cá nhân
-          </button>
-          <button
-            type="button"
-            onClick={() => setWorkspaceTab("team")}
-            className={
-              "flex-1 rounded-full px-2.5 py-1 text-xs font-semibold transition " +
-              (workspaceTab === "team"
-                ? "bg-sidebar-primary text-sidebar-primary-foreground shadow-sm"
-                : "text-sidebar-foreground/60 hover:text-sidebar-foreground")
-            }
-          >
-            Nhóm
-          </button>
-        </div>
+        {isAdmin || (user?.allowedInstances?.length ?? 0) > 1 ? <WorkspaceSwitcherShadcn /> : null}
       </SidebarHeader>
 
       <SidebarContent>
-        {entries.map((entry) =>
-          entry.type === "section" ? (
-            <SectionLinks key={entry.id} entry={entry} />
-          ) : entry.type === "item" ? (
-            <SidebarGroup key={entry.id} className="py-0">
-              <SidebarGroupContent>
-                <SidebarMenu>
-                  <LeafLink item={entry} />
-                </SidebarMenu>
-              </SidebarGroupContent>
-            </SidebarGroup>
-          ) : (
-            <GroupLinks
-              key={entry.id}
-              entry={entry}
-              openSubgroups={openSubgroups}
-              toggleSubgroup={toggleSubgroup}
-              openGroups={openGroups}
-              toggleGroup={toggleGroup}
-            />
-          ),
-        )}
+        <SidebarGroup className="px-2 py-1">
+          <SidebarMenu className="gap-1">
+            {entries.map((entry) => {
+              if (entry.type === "section") {
+                return (
+                  <SidebarGroupLabel
+                    key={entry.id}
+                    className="px-2 pt-3 pb-1 text-[11px] font-bold uppercase tracking-wider text-sidebar-foreground/50 first:pt-1"
+                  >
+                    {entry.label}
+                  </SidebarGroupLabel>
+                );
+              }
+              if (entry.type === "item") {
+                return <LeafLink key={entry.id} item={entry} />;
+              }
+              return (
+                <GroupLinks
+                  key={entry.id}
+                  entry={entry}
+                  openSubgroups={openSubgroups}
+                  toggleSubgroup={toggleSubgroup}
+                  openGroups={openGroups}
+                  toggleGroup={toggleGroup}
+                />
+              );
+            })}
+          </SidebarMenu>
+        </SidebarGroup>
       </SidebarContent>
 
       <SidebarFooter>
@@ -419,7 +393,6 @@ export function AllPlatformSidebarShadcn() {
               <>
                 <div className="fixed inset-0 z-40" onClick={() => setShowProfileMenu(false)} />
                 <div className="absolute bottom-full left-0 z-50 mb-2 w-56 overflow-hidden rounded-xl border border-sidebar-border bg-popover text-popover-foreground shadow-lg">
-                  
                   <button
                     type="button"
                     onClick={() => void handleLogout()}

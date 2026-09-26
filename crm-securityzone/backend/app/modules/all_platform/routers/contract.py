@@ -48,10 +48,11 @@ def _load_contract_and_lead(contract_id: str) -> tuple[dict, dict | None]:
 def contracts_list(
     deal_id: str | None = Query(None),
     status: str | None = Query(None),
+    quote_id: str | None = Query(None),
     _user: dict = Depends(get_current_user),
 ) -> BaseResponse:
     try:
-        return BaseResponse(success=True, data=list_contracts(deal_id, status))
+        return BaseResponse(success=True, data=list_contracts(deal_id, status, quote_id))
     except Exception as e:
         return BaseResponse(success=False, message=str(e))
 

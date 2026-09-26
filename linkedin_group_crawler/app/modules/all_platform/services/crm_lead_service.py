@@ -642,7 +642,11 @@ def convert_lead(lead_id: str, payload: dict[str, Any], user: dict[str, Any]) ->
         customer = _normalize_payload(dict(customer), actor_id=actor_id)
         apply_position_category(customer)
     deal = dict(payload.get("deal") or {})
-    deal["deal_stage"] = "dealing"
+    # Truoc day hard-code "dealing", bo qua FE gui gi (feedback WIP full-flow:
+    # them field "Giai đoạn" cho SDR chon truoc khi tao Deal) - gio ton trong
+    # gia tri FE gui (da khoa trong 1 dropdown PIPELINE_COLUMNS hop le o FE),
+    # chi fallback "dealing" khi thieu/rong dung nhu truoc.
+    deal["deal_stage"] = deal.get("deal_stage") or "dealing"
     apply_position_category(deal)
     contact = payload.get("contact")
     if contact:

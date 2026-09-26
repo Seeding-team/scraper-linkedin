@@ -97,6 +97,25 @@
   min-width: 10rem;
 }
 
+.issuer-page-header {
+  display: none;
+}
+
+.sc-toolbar .sc-search {
+  flex: 0 1 360px;
+  max-width: 420px;
+}
+
+.issuer-toolbar {
+  width: fit-content;
+  max-width: 100%;
+}
+
+.issuer-add-btn {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
 /* BUG THAT DA GAP ("dữ liệu lệch cột"): khong co table-layout:fixed nen
  * trinh duyet tu tinh do rong theo noi dung dai nhat MOI cot - cot "Đơn vị
  * phát hành" (logo+ten phap ly dai) chiem het khong gian, day cac cot con

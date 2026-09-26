@@ -149,6 +149,12 @@ export const Link2 = makeIcon([
   { d: 'M15 7h2a5 5 0 1 1 0 10h-2' },
   { d: 'M8 12h8' },
 ]);
+export const HelpCircle = makeIcon([
+  { tag: 'circle', cx: 12, cy: 12, r: 10 },
+  { d: 'M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3' },
+  { d: 'M12 17h.01' },
+]);
+
 export const History = makeIcon([
   { d: 'M3 12a9 9 0 1 0 2.6-6.3L3 8' },
   { d: 'M3 3v5h5' },

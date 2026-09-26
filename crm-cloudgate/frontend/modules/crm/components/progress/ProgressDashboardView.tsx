@@ -74,8 +74,8 @@ const SLA_FILTER_OPTIONS = [
   { value: 'not_set', label: 'Chưa thiết lập' },
 ];
 
-const TIME_FILTER_OPTIONS = [
-  { value: '', label: 'Thời gian: Tất cả' },
+const TIME_FILTER_TABS = [
+  { value: '', label: 'Tất cả' },
   { value: 'week', label: 'Tuần này' },
   { value: 'month', label: 'Tháng này' },
   { value: 'quarter', label: 'Quý này' },
@@ -120,6 +120,8 @@ export function ProgressDashboardView() {
   const [teamFilter, setTeamFilter] = useState('');
   const [memberFilter, setMemberFilter] = useState('');
   const [timeFilter, setTimeFilter] = useState('');
+  const [customStartDate, setCustomStartDate] = useState('2026-09-01');
+  const [customEndDate, setCustomEndDate] = useState('2026-09-21');
   const [recordTypeFilter, setRecordTypeFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [teamLeaderFilter, setTeamLeaderFilter] = useState('');
@@ -517,7 +519,7 @@ export function ProgressDashboardView() {
     if (search.trim()) return true;
     if (teamFilter) return true;
     if (tab === 'overview') {
-      return Boolean(memberFilter || timeFilter || recordTypeFilter || statusFilter);
+      return Boolean(memberFilter || timeFilter || recordTypeFilter || statusFilter || customStartDate !== '2026-09-01' || customEndDate !== '2026-09-21');
     }
     if (tab === 'teams') {
       return Boolean(teamLeaderFilter);
@@ -535,6 +537,8 @@ export function ProgressDashboardView() {
     tab,
     memberFilter,
     timeFilter,
+    customStartDate,
+    customEndDate,
     recordTypeFilter,
     statusFilter,
     teamLeaderFilter,
@@ -550,6 +554,8 @@ export function ProgressDashboardView() {
     setTeamFilter('');
     setMemberFilter('');
     setTimeFilter('');
+    setCustomStartDate('2026-09-01');
+    setCustomEndDate('2026-09-21');
     setRecordTypeFilter('');
     setStatusFilter('');
     setTeamLeaderFilter('');
@@ -573,27 +579,6 @@ export function ProgressDashboardView() {
 
   return (
     <div className="qc-page progress-page">
-      <header className="progress-header">
-        <div>
-          <h1>Quản lý tiến độ</h1>
-          <p>Theo dõi tiến độ Lead → Khách hàng → Cơ hội → Dự án → Báo giá → Hợp đồng theo Team và Thành viên.</p>
-        </div>
-        <div className="progress-header-right">
-          <div className="progress-date-pill" title="Dashboard hiển thị trạng thái hiện tại">
-            {timeFilter === 'week' ? 'Tuần này (Hiện tại)' : timeFilter === 'month' ? 'Tháng này (01/09 - 30/09/2026)' : timeFilter === 'quarter' ? 'Quý 3/2026' : '01/09/2026 - 21/09/2026'}
-          </div>
-          <button
-            type="button"
-            className="progress-export-btn"
-            onClick={() => {
-              if (typeof window !== 'undefined') window.print();
-            }}
-          >
-            <FileSpreadsheet size={15} /> Xuất báo cáo
-          </button>
-        </div>
-      </header>
-
       <div className="progress-toolbar-controls">
         <div className="progress-global-search">
           <input
@@ -630,8 +615,40 @@ export function ProgressDashboardView() {
             <div className="progress-select">
               <SearchableSelect value={memberFilter} onChange={setMemberFilter} options={memberOptions} placeholder="Tất cả thành viên" hideClearOption />
             </div>
-            <div className="progress-select">
-              <SearchableSelect value={timeFilter} onChange={setTimeFilter} options={TIME_FILTER_OPTIONS} placeholder="Thời gian" hideClearOption />
+            <div className="progress-time-filter-row">
+              <div className="progress-time-tabs" aria-label="Bộ lọc thời gian">
+                {TIME_FILTER_TABS.map(option => (
+                  <button
+                    key={option.value || 'all'}
+                    type="button"
+                    className={timeFilter === option.value ? 'active' : ''}
+                    onClick={() => setTimeFilter(option.value)}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+              <div className="progress-date-range-control" title="Khoảng thời gian tùy chỉnh">
+                <input
+                  type="date"
+                  value={customStartDate}
+                  onChange={event => {
+                    setCustomStartDate(event.target.value);
+                    setTimeFilter('custom');
+                  }}
+                  aria-label="Từ ngày"
+                />
+                <span>-</span>
+                <input
+                  type="date"
+                  value={customEndDate}
+                  onChange={event => {
+                    setCustomEndDate(event.target.value);
+                    setTimeFilter('custom');
+                  }}
+                  aria-label="Đến ngày"
+                />
+              </div>
             </div>
           </>
         )}
@@ -689,6 +706,15 @@ export function ProgressDashboardView() {
         >
           <RotateCcw size={14} />
           <span>Đặt lại</span>
+        </button>
+        <button
+          type="button"
+          className="progress-export-btn"
+          onClick={() => {
+            if (typeof window !== 'undefined') window.print();
+          }}
+        >
+          <FileSpreadsheet size={15} /> Xuất báo cáo
         </button>
       </div>
 

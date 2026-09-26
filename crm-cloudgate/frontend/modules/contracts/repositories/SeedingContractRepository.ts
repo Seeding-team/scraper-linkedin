@@ -93,10 +93,11 @@ function toUpdatePayload(input: UpdateContractInput) {
 }
 
 export class SeedingContractRepository implements ContractRepository {
-  async getContracts(params?: { dealId?: string; status?: string }): Promise<Contract[]> {
+  async getContracts(params?: { dealId?: string; status?: string; quoteId?: string }): Promise<Contract[]> {
     const q = new URLSearchParams();
     if (params?.dealId) q.set('deal_id', params.dealId);
     if (params?.status) q.set('status', params.status);
+    if (params?.quoteId) q.set('quote_id', params.quoteId);
     const qs = q.toString() ? `?${q.toString()}` : '';
     return apiFetch<Contract[]>(`/api/all-platform/contracts${qs}`);
   }

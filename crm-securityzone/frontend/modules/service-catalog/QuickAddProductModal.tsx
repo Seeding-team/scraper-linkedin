@@ -482,7 +482,15 @@ export function QuickAddProductModal({
             maxSaleDiscountPercent: parseNullableNumber(bundleDiscount),
             defaultCostPriceVnd: parseNullableNumber(bundleCostPrice),
             defaultCustomerPriceVnd: parseNullableNumber(bundleMonthlyPrice),
-            pricingInputMode: 'cost',
+            // BUG THAT DA GAP (feedback 2026-09-25): pricingInputMode='cost' o
+            // backend (upsert_service_catalog_item_pricing) KHONG co nghia "gia
+            // von la input" nhu ten goi - no nghia LA "markup+customer la input,
+            // TU TINH LAI cost, bo qua cost_price_vnd client gui". Bundle KHONG
+            // co truong markup (chi nhap tay Gia von + Gia ban), nen cost luon bi
+            // ghi de thanh NULL du da go "Giá vốn target". Dung dung mode
+            // 'price' (alias 'customer_price' o backend) - GIU NGUYEN cost/
+            // customer nhu client gui, tu tinh markup tu 2 so do.
+            pricingInputMode: 'price',
           }
         : {
             ...emptyProductForm(),
