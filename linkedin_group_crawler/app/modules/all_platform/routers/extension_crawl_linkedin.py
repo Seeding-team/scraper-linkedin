@@ -25,6 +25,13 @@ router = APIRouter()
 EXTENSION_API_KEY = "markee-extension-key-2024"
 
 
+class LinkedInExtensionCommentItem(BaseModel):
+    author_name: Optional[str] = ""
+    author_url: Optional[str] = ""
+    content: Optional[str] = ""
+    likes: Optional[int] = 0
+
+
 class LinkedInExtensionPost(BaseModel):
     post_url: str
     author: Optional[str] = ""
@@ -35,6 +42,8 @@ class LinkedInExtensionPost(BaseModel):
     reposts: Optional[int] = None
     shares: Optional[int] = None
     crawled_at: Optional[str] = None
+    comments_list: Optional[List[LinkedInExtensionCommentItem]] = None
+    likers: Optional[List[str]] = None
 
 
 class LinkedInExtensionCrawlRequest(BaseModel):
@@ -68,6 +77,8 @@ async def save_posts(
             "likes": p.likes,
             "comments": p.comments,
             "shares": (p.reposts if p.reposts is not None else p.shares) or 0,
+            "comments_detail": [c.model_dump() for c in (p.comments_list or [])],
+            "likers": p.likers or [],
         }
         for p in payload.posts
     ]

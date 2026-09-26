@@ -208,6 +208,8 @@ def save_extension_crawl_batch(
                     "id_group": id_group,
                     "id_account_crawl": id_account_crawl,
                     "id_member": id_member or None,
+                    "comments_detail": p.get("comments_detail") or [],
+                    "likers": p.get("likers") or [],
                 }
             )
         try:

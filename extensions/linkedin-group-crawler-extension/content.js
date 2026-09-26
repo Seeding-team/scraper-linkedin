@@ -7,6 +7,7 @@
   window.__liCrawlerInjected = true;
 
   const POST_SELECTORS = [
+    'div[componentkey^="update-card-focus"]',
     'div[data-id^="urn:li:activity"]',
     'article[data-urn*="urn:li:activity"]',
     "article.feed-shared-update-v2",
@@ -18,7 +19,11 @@
     ".feed-shared-actor__name",
     'a[href*="/in/"] span[aria-hidden="true"]',
   ];
+  // "[data-testid=expandable-text-box]" đã xác minh thật (2026-09-26, HTML người dùng gửi)
+  // là testid LinkedIn dùng chung cho cả nội dung bài viết LẪN nội dung từng comment —
+  // ưu tiên selector này, các class cũ (đã xác nhận chết ở comment-extension) giữ làm fallback.
   const CONTENT_SELECTORS = [
+    '[data-testid="expandable-text-box"]',
     ".update-components-text",
     ".feed-shared-text",
     '[data-test-id="main-feed-activity-card__commentary"]',
@@ -57,6 +62,148 @@
     'a[aria-label="Original Post"]',
   ];
   const SEE_MORE_RE = /^(…|\.\.\.)?\s*(see more|xem thêm)$/i;
+
+  // --- Bình luận + danh sách người react (xác minh 1 phần qua HTML thật 2026-09-26) ---
+  // Đã xác minh thật: mỗi khối comment có id dạng
+  // "replaceableComment_urn:li:comment:(activity:...,commentId:...)".
+  const COMMENT_BLOCK_SELECTOR = 'div[id^="replaceableComment_urn:li:comment:"]';
+  // Đã xác minh thật: ảnh đại diện luôn có alt="View <Tên>'s profile..." — dùng chung
+  // cho cả tên tác giả bài viết, tác giả comment, và (best-effort) người react.
+  const PROFILE_NAME_RE = /^View (.+?)(?:&#39;|'|’)s profile/i;
+  const MAX_COMMENTS_PER_POST = 20;
+  const MAX_LIKERS_PER_POST = 30;
+
+  function nameFromProfileImg(root) {
+    try {
+      const imgs = root.querySelectorAll('img[alt^="View "]');
+      for (const img of imgs) {
+        const m = (img.getAttribute("alt") || "").match(PROFILE_NAME_RE);
+        if (m) return m[1].trim();
+      }
+    } catch (e) {}
+    return "";
+  }
+
+  function extractCommentLikes(commentNode) {
+    try {
+      const icon = commentNode.querySelector('svg[id*="thumbs-up" i], svg[class*="thumbs-up" i]');
+      if (icon) {
+        const container = icon.closest("button") || icon.parentElement;
+        if (container) return extractNumber((container.innerText || container.textContent || "").trim());
+      }
+    } catch (e) {}
+    return 0;
+  }
+
+  // Chỉ đọc các khối comment ĐANG có sẵn trong DOM (đã mở qua expandComments()) —
+  // không tự suy đoán cấu trúc container bọc ngoài (chưa có HTML mẫu), chỉ dựa vào
+  // pattern id đã xác minh của từng khối comment riêng lẻ.
+  function extractComments(block) {
+    const out = [];
+    try {
+      const nodes = Array.from(block.querySelectorAll(COMMENT_BLOCK_SELECTOR));
+      for (const node of nodes) {
+        if (out.length >= MAX_COMMENTS_PER_POST) break;
+        const author_name = nameFromProfileImg(node);
+        const linkEl = node.querySelector('a[href*="/in/"]');
+        const author_url = linkEl && linkEl.href ? linkEl.href.split("?")[0] : "";
+        const contentEl = node.querySelector('[data-testid="expandable-text-box"]');
+        const content = contentEl ? (contentEl.innerText || contentEl.textContent || "").trim() : "";
+        const likes = extractCommentLikes(node);
+        if (author_name || content) {
+          out.push({ author_name, author_url, content, likes });
+        }
+      }
+    } catch (e) {}
+    return out;
+  }
+
+  // Mở khung bình luận nếu chưa mở (bấm đúng 1 lần vào nút/đếm số comment đã có sẵn
+  // trong COMMENT_SELECTORS) rồi đợi khối comment đầu tiên xuất hiện. Best-effort —
+  // im lặng bỏ qua nếu không tìm được nút hoặc không có comment nào để mở.
+  async function expandComments(block, commentsCount) {
+    if (!commentsCount || commentsCount <= 0) return;
+    if (block.querySelector(COMMENT_BLOCK_SELECTOR)) return;
+    let trigger = null;
+    for (const sel of COMMENT_SELECTORS) {
+      try {
+        const el = block.querySelector(sel);
+        if (el) {
+          trigger = el;
+          break;
+        }
+      } catch (e) {}
+    }
+    if (!trigger) return;
+    try {
+      trigger.click();
+    } catch (e) {
+      return;
+    }
+    const start = Date.now();
+    while (Date.now() - start < 4000) {
+      if (block.querySelector(COMMENT_BLOCK_SELECTOR)) return;
+      await sleep(300);
+    }
+  }
+
+  // CHƯA xác minh bằng HTML thật của popup "ai đã react" (đang chờ người dùng gửi thêm) —
+  // best-effort: bấm vào phần tử đếm reaction (REACTION_SELECTORS, đã xác minh), tìm
+  // dialog mở ra bằng thuộc tính chuẩn ARIA role="dialog" (không đoán class hash), rồi
+  // đọc tên qua đúng pattern alt ảnh đại diện đã xác minh ở trên. Luôn đóng lại popup và
+  // không bao giờ throw — nếu cấu trúc thật khác, chỉ đơn giản trả về mảng rỗng.
+  async function extractLikersBestEffort(block) {
+    const names = [];
+    let trigger = null;
+    for (const sel of REACTION_SELECTORS) {
+      try {
+        const el = block.querySelector(sel);
+        if (el) {
+          trigger = el;
+          break;
+        }
+      } catch (e) {}
+    }
+    if (!trigger) return names;
+    try {
+      trigger.click();
+    } catch (e) {
+      return names;
+    }
+
+    let dialog = null;
+    const start = Date.now();
+    while (Date.now() - start < 3000) {
+      dialog = document.querySelector('div[role="dialog"]');
+      if (dialog) break;
+      await sleep(200);
+    }
+
+    if (dialog) {
+      try {
+        const imgs = Array.from(dialog.querySelectorAll('img[alt^="View "]'));
+        for (const img of imgs) {
+          if (names.length >= MAX_LIKERS_PER_POST) break;
+          const m = (img.getAttribute("alt") || "").match(PROFILE_NAME_RE);
+          if (m) {
+            const name = m[1].trim();
+            if (name && !names.includes(name)) names.push(name);
+          }
+        }
+      } catch (e) {}
+      try {
+        const closeBtn = dialog.querySelector(
+          'button[aria-label*="dismiss" i], button[aria-label*="close" i], button[aria-label*="đóng" i]'
+        );
+        if (closeBtn) closeBtn.click();
+        else
+          document.dispatchEvent(
+            new KeyboardEvent("keydown", { key: "Escape", code: "Escape", keyCode: 27, which: 27, bubbles: true })
+          );
+      } catch (e) {}
+    }
+    return names;
+  }
 
   function sleep(ms) {
     return new Promise((r) => setTimeout(r, ms));
@@ -156,14 +303,30 @@
     const post_url = resolvePostUrl(block);
     if (!post_url) return null;
 
+    // Đọc nội dung/tác giả bài viết TRƯỚC khi mở khung comment — tránh trường hợp
+    // querySelector CONTENT_SELECTORS (dùng chung testid với comment) lỡ khớp nhầm
+    // vào 1 comment thay vì nội dung bài viết sau khi khung comment đã mở ra.
+    const author = firstMatchText(block, AUTHOR_SELECTORS) || "";
+    const content = firstMatchText(block, CONTENT_SELECTORS) || "";
+    const posted_at_raw = firstMatchText(block, TIME_SELECTORS) || "";
+    const likes = extractStatNumber(block, REACTION_SELECTORS);
+    const commentsCount = extractStatNumber(block, COMMENT_SELECTORS);
+    const reposts = extractStatNumber(block, REPOST_SELECTORS);
+
+    await expandComments(block, commentsCount);
+    const comments_list = extractComments(block);
+    const likers = await extractLikersBestEffort(block);
+
     return {
       post_url,
-      author: firstMatchText(block, AUTHOR_SELECTORS) || "",
-      content: firstMatchText(block, CONTENT_SELECTORS) || "",
-      posted_at_raw: firstMatchText(block, TIME_SELECTORS) || "",
-      likes: extractStatNumber(block, REACTION_SELECTORS),
-      comments: extractStatNumber(block, COMMENT_SELECTORS),
-      reposts: extractStatNumber(block, REPOST_SELECTORS),
+      author,
+      content,
+      posted_at_raw,
+      likes,
+      comments: commentsCount,
+      reposts,
+      comments_list,
+      likers,
       group_url: groupUrl,
       group_name: groupName,
       crawled_at: new Date().toISOString(),
@@ -266,6 +429,8 @@
       likes: post.likes,
       comments: post.comments,
       shares: post.reposts,
+      comments_list: post.comments_list,
+      likers: post.likers,
       permalink_url: post.post_url,
     };
   }
@@ -395,6 +560,11 @@
         let newFound = 0;
         for (const block of blocks) {
           if (!this.running || this.postsCount >= this.maxPosts) break;
+          // Lọc nhanh theo post_url TRƯỚC khi gọi extractPost (giờ có thao tác nặng:
+          // bấm mở khung comment + popup reaction) — tránh bấm lặp lại vào 1 bài đã
+          // cào rồi mỗi lần nó còn nằm trong viewport qua các vòng lặp cuộn tiếp theo.
+          const quickUrl = resolvePostUrl(block);
+          if (!quickUrl || this.seenUrls.has(quickUrl)) continue;
           const post = await extractPost(block, groupUrl, groupName);
           if (!post || this.seenUrls.has(post.post_url)) continue;
           this.seenUrls.add(post.post_url);
