@@ -1236,7 +1236,7 @@ export function QuoteWorkspaceModal({
     // rieng cua ho, khong con validate cung o day (mirror dung nguyen tac cu
     // "bao gia cu co the chua tung co Contact/Issuer" - gio ap dung ca cho
     // luong tao moi).
-    if (!selectedDealId) errors.deal = beyondStep1 ? 'Vui lòng chọn cơ hội CRM.' : 'Vui lòng chọn dự án.';
+    if (beyondStep1 && !selectedDealId) errors.deal = 'Vui lòng chọn cơ hội CRM.';
     if (!formId) errors.form = 'Vui lòng chọn mẫu báo giá.';
     if (!technicalOwnerId) errors.presale = 'Vui lòng chọn Presale.';
     if (!quoteOwnerId) errors.sale = 'Vui lòng chọn Sale.';
@@ -4686,7 +4686,9 @@ export function QuoteWorkspaceModal({
        * voi field "Dự án" THAT (data-qc-required="project", khac bang
        * Project) - giu "Cơ hội CRM" o do de khong lap 2 nhan "Dự án" cung 1
        * hang (2 field khac nhau, 2 gia tri khac nhau). */}
-      <span className="qc-workspace-info-label">{beyondStep1 ? 'Cơ hội CRM' : 'Dự án'} <span className="qc-required-mark">*</span></span>
+      <span className="qc-workspace-info-label">
+        {beyondStep1 ? 'Cơ hội CRM' : 'Dự án'} {beyondStep1 ? <span className="qc-required-mark">*</span> : null}
+      </span>
       {!quote ? (
         <SearchableSelect
           value={draftDealId}
@@ -6840,11 +6842,11 @@ export function QuoteWorkspaceModal({
                 </div>
                 <div className="qc-workspace-summary-row">
                   <span>Dự án</span>
-                  <strong>{(projects || []).find(p => p.id === (quote ? quote.projectId : draftProjectId))?.name || 'Chưa thuộc dự án'}</strong>
+                  <strong>{(projects || []).find(p => p.id === (quote ? quote.projectId : draftProjectId))?.name || 'Bổ sung ở bước 2'}</strong>
                 </div>
                 <div className="qc-workspace-summary-row">
                   <span>Cơ hội</span>
-                  <strong>{businessCode || (deal ? 'Chưa có mã' : 'Chưa gắn cơ hội')}</strong>
+                  <strong>{businessCode || 'Bổ sung ở bước 2'}</strong>
                 </div>
                 <div className="qc-workspace-summary-row">
                   <span>SLA</span>
@@ -6852,7 +6854,7 @@ export function QuoteWorkspaceModal({
                 </div>
                 <div className="qc-workspace-summary-row">
                   <span>Loại báo giá</span>
-                  <strong>{currentQuoteTypeCodes.length > 0 ? currentQuoteTypeCodes.map(quoteTypeLabel).join(', ') : 'Chưa chọn'}</strong>
+                  <strong>{currentQuoteTypeCodes.length > 0 ? currentQuoteTypeCodes.map(quoteTypeLabel).join(', ') : 'Bổ sung ở bước 2'}</strong>
                 </div>
               </div>
             ) : null}

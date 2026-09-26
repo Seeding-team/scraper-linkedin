@@ -564,7 +564,7 @@ export function LeadDetailDrawer({
   const selectedMatch = companyMatches.find(m => m.id === customerChoice);
   return (
     <>
-      <div className="crm-drawer-backdrop" onClick={onClose} />
+      <div className="crm-drawer-backdrop crm-lead-verify-backdrop" onClick={onClose} />
       <aside className="crm-drawer crm-lead-detail-drawer crm-verify-drawer">
         <header className="crm-lead-drawer-header crm-verify-header">
           <div className="crm-verify-header-text">

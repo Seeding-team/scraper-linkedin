@@ -859,7 +859,9 @@ export function LeadsDirectory() {
         <div className="crm-directory-header">
           <div className="crm-directory-title-wrap">
             <h1>
-              <Target className="text-[#be1e4b] shrink-0" size={24} />
+              <span className="crm-directory-title-icon">
+                <Target size={19} />
+              </span>
               <span>Leads (Đầu mối tiềm năng)</span>
             </h1>
             <p>Thu thập, phân loại MQL/SQL và chuyển đổi lead thành cơ hội kinh doanh</p>

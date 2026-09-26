@@ -118,10 +118,14 @@ function LeafLink({ item }: { item: NavLeafItem }) {
 
 function GroupLinks({
   entry,
+  openSubgroups,
+  toggleSubgroup,
   openGroups,
   toggleGroup,
 }: {
   entry: NavGroupItem;
+  openSubgroups: Record<string, boolean>;
+  toggleSubgroup: (id: string, current: boolean) => void;
   openGroups: Record<string, boolean>;
   toggleGroup: (id: string, current: boolean) => void;
 }) {
@@ -170,9 +174,9 @@ function GroupLinks({
                 const active = isLeafActive(pathname, child);
                 return (
                   <SidebarMenuSubItem key={child.id}>
-                    <SidebarMenuSubButton asChild isActive={active} size="sm">
-                      <Link href={child.href} className="text-xs">
-                        <ItemIcon className="size-3.5" />
+                    <SidebarMenuSubButton asChild isActive={active}>
+                      <Link href={child.href}>
+                        <ItemIcon className="size-4" />
                         <span>{child.label}</span>
                         {child.badge !== undefined ? (
                           <span className="ml-auto text-[10px] font-bold text-sidebar-primary">
@@ -184,7 +188,62 @@ function GroupLinks({
                   </SidebarMenuSubItem>
                 );
               }
-              return null;
+              const SubIcon = materialToLucideIcon(child.icon);
+              const subHasActiveChild = child.items.some((sub) => isLeafActive(pathname, sub));
+              const isSubOpen = subHasActiveChild || (openSubgroups[child.id] ?? true);
+              return (
+                <li key={child.id} className="mt-1 list-none space-y-1">
+                  <button
+                    type="button"
+                    onClick={() => toggleSubgroup(child.id, isSubOpen)}
+                    className={cn(
+                      "flex w-full items-center justify-between gap-1.5 rounded-md px-2 py-1.5 text-sm font-medium transition-colors outline-none",
+                      subHasActiveChild
+                        ? "text-sidebar-primary bg-sidebar-primary/10 font-bold"
+                        : "text-sidebar-foreground/75 hover:bg-sidebar-accent hover:text-sidebar-foreground",
+                    )}
+                  >
+                    <span className="flex min-w-0 items-center gap-1.5 truncate">
+                      <SubIcon className="size-3.5 shrink-0 opacity-80" />
+                      <span className="truncate">{child.label}</span>
+                    </span>
+                    <ChevronRight
+                      className={cn(
+                        "size-3.5 shrink-0 transition-transform duration-200 text-sidebar-foreground/40",
+                        isSubOpen && "rotate-90 text-sidebar-primary",
+                      )}
+                    />
+                  </button>
+                  <div
+                    className={cn(
+                      "grid overflow-hidden transition-all duration-200 ease-in-out",
+                      isSubOpen ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0 pointer-events-none",
+                    )}
+                  >
+                    <ul className="min-h-0 space-y-1 border-l border-sidebar-border/70 ml-2 pl-2 my-0.5">
+                      {child.items.map((subItem) => {
+                        const SubItemIcon = materialToLucideIcon(subItem.icon);
+                        const subActive = isLeafActive(pathname, subItem);
+                        return (
+                          <SidebarMenuSubItem key={subItem.id}>
+                            <SidebarMenuSubButton asChild isActive={subActive}>
+                              <Link href={subItem.href}>
+                                <SubItemIcon className="size-4" />
+                                <span>{subItem.label}</span>
+                                {subItem.badge !== undefined ? (
+                                  <span className="ml-auto text-[9px] font-bold text-sidebar-primary">
+                                    {subItem.badge}
+                                  </span>
+                                ) : null}
+                              </Link>
+                            </SidebarMenuSubButton>
+                          </SidebarMenuSubItem>
+                        );
+                      })}
+                    </ul>
+                  </div>
+                </li>
+              );
             })}
           </SidebarMenuSub>
         </div>
@@ -199,6 +258,7 @@ export function AllPlatformSidebarShadcn() {
   const pathname = usePathname();
   const [showProfileMenu, setShowProfileMenu] = React.useState(false);
 
+  const [openSubgroups, setOpenSubgroups] = React.useState<Record<string, boolean>>({});
   const [openGroups, setOpenGroups] = React.useState<Record<string, boolean>>({});
 
   const isAdmin = user?.role === "admin";
@@ -211,6 +271,8 @@ export function AllPlatformSidebarShadcn() {
 
   React.useEffect(() => {
     try {
+      const savedSubgroups = sessionStorage.getItem(SUBGROUPS_STORAGE_KEY);
+      setOpenSubgroups(savedSubgroups ? JSON.parse(savedSubgroups) : {});
       const savedGroups = sessionStorage.getItem(GROUPS_STORAGE_KEY);
       let parsed: Record<string, boolean> = {};
       if (savedGroups) {
@@ -244,6 +306,18 @@ export function AllPlatformSidebarShadcn() {
         sessionStorage.setItem(GROUPS_STORAGE_KEY, JSON.stringify(next));
       } catch (e) {
         console.warn("Failed to save group state to sessionStorage", e);
+      }
+      return next;
+    });
+  }, []);
+
+  const toggleSubgroup = React.useCallback((id: string, currentState: boolean) => {
+    setOpenSubgroups((prev) => {
+      const next = { ...prev, [id]: !currentState };
+      try {
+        sessionStorage.setItem(SUBGROUPS_STORAGE_KEY, JSON.stringify(next));
+      } catch (e) {
+        console.warn("Failed to save subgroup state to sessionStorage", e);
       }
       return next;
     });
@@ -288,6 +362,8 @@ export function AllPlatformSidebarShadcn() {
                 <GroupLinks
                   key={entry.id}
                   entry={entry}
+                  openSubgroups={openSubgroups}
+                  toggleSubgroup={toggleSubgroup}
                   openGroups={openGroups}
                   toggleGroup={toggleGroup}
                 />

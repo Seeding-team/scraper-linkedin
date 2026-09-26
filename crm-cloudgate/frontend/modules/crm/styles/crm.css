@@ -7383,6 +7383,16 @@
   width: min(980px, 100%);
 }
 
+.crm-lead-quickadd-backdrop {
+  background: rgba(15, 23, 42, 0.16);
+  backdrop-filter: none;
+}
+
+.crm-lead-verify-backdrop {
+  background: rgba(15, 23, 42, 0.16);
+  backdrop-filter: none;
+}
+
 .crm-lead-quickadd-grid {
   display: grid;
   grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.3fr);
@@ -7593,6 +7603,26 @@
   border-radius: 0.6rem;
   font-size: 0.75rem;
   color: #64748b;
+}
+
+.crm-lead-source-default-row {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 0.35rem;
+}
+
+.crm-lead-source-default-row .crm-link-button {
+  border: 0;
+  background: transparent;
+  color: #be1e4b;
+  font-size: 0.76rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.crm-lead-source-default-row .crm-link-button:disabled {
+  color: #64748b;
+  cursor: default;
 }
 
 .crm-lead-info-fieldset {
@@ -9084,14 +9114,27 @@
 }
 
 .crm-directory-title-wrap h1 {
-  font-size: 1.5rem;
+  font-size: 1.42rem;
   font-weight: 800;
   color: #0f172a;
-  letter-spacing: -0.02em;
+  letter-spacing: 0;
   margin: 0;
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: 0.65rem;
+}
+
+.crm-directory-title-icon {
+  width: 2.2rem;
+  height: 2.2rem;
+  border-radius: 0.7rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: #be1e4b;
+  background: #fff1f2;
+  box-shadow: inset 0 0 0 1px rgba(190, 30, 75, 0.12);
 }
 
 .crm-directory-title-wrap p {
@@ -9130,12 +9173,12 @@
 .crm-modern-kpi-card {
   background: #ffffff;
   border: 1px solid #e2e8f0;
-  border-radius: 12px;
-  padding: 0.85rem 1rem;
+  border-radius: 10px;
+  padding: 0.9rem 1rem;
   display: flex;
   align-items: center;
   gap: 0.85rem;
-  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
   transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
   cursor: pointer;
   user-select: none;
@@ -9146,7 +9189,7 @@
 
 .crm-modern-kpi-card:hover {
   transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.08);
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.07);
   border-color: #cbd5e1;
 }
 
@@ -9167,9 +9210,9 @@
 }
 
 .crm-modern-kpi-icon {
-  width: 40px;
-  height: 40px;
-  border-radius: 10px;
+  width: 42px;
+  height: 42px;
+  border-radius: 11px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -9231,10 +9274,10 @@
 /* Modern Filter Card */
 .crm-modern-filter-card {
   border: 1px solid #e2e8f0;
-  border-radius: 12px;
+  border-radius: 10px;
   background: #ffffff;
-  padding: 0.85rem 1rem;
-  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
+  padding: 0.95rem 1rem;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
   margin-bottom: 1.25rem;
 }
 

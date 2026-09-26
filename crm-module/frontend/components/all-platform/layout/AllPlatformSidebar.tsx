@@ -168,6 +168,30 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, _workspaceTab?
           exactMatch: true,
         },
         {
+          type: "subgroup",
+          id: "crm-sub-progress-analytics",
+          icon: "analytics",
+          label: "Tiến độ & Phân tích",
+          items: [
+            {
+              type: "item",
+              id: "crm-progress",
+              href: "/all-platform/crm/progress",
+              icon: "track_changes",
+              label: "Quản lý tiến độ",
+              matchStartsWith: ["/all-platform/crm/progress"],
+            },
+            {
+              type: "item",
+              id: "crm-analytics",
+              href: "/all-platform/crm/analytics",
+              icon: "analytics",
+              label: "Phân tích CRM",
+              matchStartsWith: ["/all-platform/crm/analytics"],
+            },
+          ],
+        },
+        {
           type: "item",
           id: "quote-center",
           href: "/all-platform/quote-center",

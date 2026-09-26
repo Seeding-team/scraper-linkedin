@@ -35,7 +35,29 @@ type FormState = {
   note: string;
 };
 
-function emptyForm(currentUser: AppUser | null): FormState {
+function leadSourceDefaultStorageKey(user: AppUser | null) {
+  return `crm:lead-default-source:v1:${user?.id || user?.email || 'anonymous'}`;
+}
+
+function readLeadSourceDefault(currentUser: AppUser | null): string {
+  if (typeof window === 'undefined') return 'Manual';
+  try {
+    return window.localStorage.getItem(leadSourceDefaultStorageKey(currentUser)) || 'Manual';
+  } catch {
+    return 'Manual';
+  }
+}
+
+function saveLeadSourceDefault(currentUser: AppUser | null, source: string) {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(leadSourceDefaultStorageKey(currentUser), source || 'Manual');
+  } catch {
+    // localStorage can be blocked/full; default preference is only a UX helper.
+  }
+}
+
+function emptyForm(currentUser: AppUser | null, defaultSource = 'Manual'): FormState {
   return {
     leadName: '',
     companyName: '',
@@ -47,7 +69,7 @@ function emptyForm(currentUser: AppUser | null): FormState {
     facebook: '',
     telegram: '',
     website: '',
-    source: 'Manual',
+    source: defaultSource || 'Manual',
     sdrId: currentUser?.id || '',
     sdrLabel: currentUser?.name || currentUser?.email || '',
     aeId: '',
@@ -179,6 +201,7 @@ export function LeadFormDrawer({
   const [pasteText, setPasteText] = useState('');
 
   const [form, setForm] = useState<FormState>(() => emptyForm(currentUser));
+  const [defaultLeadSource, setDefaultLeadSource] = useState('Manual');
   const [saving, setSaving] = useState<'create' | 'create-next' | 'create-qualify' | null>(null);
   const [error, setError] = useState('');
   const [extraOpen, setExtraOpen] = useState(false);
@@ -221,7 +244,9 @@ export function LeadFormDrawer({
     setPasteText('');
     setCompanyMatches([]);
     setMatchedCustomerId('');
-    setForm(emptyForm(currentUser));
+    const storedDefaultSource = readLeadSourceDefault(currentUser);
+    setDefaultLeadSource(storedDefaultSource);
+    setForm(emptyForm(currentUser, storedDefaultSource));
     setExtraOpen(false);
     setInteractionForId('');
     setInteractionNote('');
@@ -231,6 +256,12 @@ export function LeadFormDrawer({
 
   function setValue<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm(current => ({ ...current, [key]: value }));
+  }
+
+  function setCurrentSourceAsDefault() {
+    const next = form.source || 'Manual';
+    saveLeadSourceDefault(currentUser, next);
+    setDefaultLeadSource(next);
   }
 
   const canPickOwner = isAdminOrLeader(currentUser);
@@ -546,7 +577,7 @@ export function LeadFormDrawer({
   if (!open) return null;
 
   return (
-    <div className="crm-drawer-backdrop" onClick={onClose}>
+    <div className="crm-drawer-backdrop crm-lead-quickadd-backdrop" onClick={onClose}>
       <aside className="crm-drawer crm-lead-drawer crm-lead-drawer--quick" onClick={event => event.stopPropagation()}>
         <header className="crm-lead-drawer-header">
           <div>
@@ -780,6 +811,16 @@ export function LeadFormDrawer({
                       value={form.source}
                       onChange={value => setValue('source', value)}
                     />
+                    <div className="crm-lead-source-default-row">
+                      <button
+                        type="button"
+                        className="crm-link-button"
+                        onClick={setCurrentSourceAsDefault}
+                        disabled={(form.source || 'Manual') === defaultLeadSource}
+                      >
+                        {(form.source || 'Manual') === defaultLeadSource ? 'Đang là mặc định của bạn' : 'Đặt làm mặc định'}
+                      </button>
+                    </div>
                   </Field>
                   {canPickOwner ? (
                     <Field label="Người phụ trách Lead" required>
