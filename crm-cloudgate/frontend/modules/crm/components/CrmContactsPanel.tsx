@@ -8,6 +8,10 @@ import { ActionMenu } from './ActionMenu';
 import { PositionSelect } from './PositionSelect';
 import { fetchCrmCategoryIdOptions } from './CrmCategorySelect';
 import { ChevronDown, ChevronUp, Loader2, Plus, X } from './icons';
+import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Users, Phone, Mail, AlertCircle, UserCheck } from 'lucide-react';
 
 function headers() {
   const value: Record<string, string> = { 'Content-Type': 'application/json' };
@@ -393,65 +397,133 @@ export function CrmContactsPanel({
   }
 
   return (
-    <section className="crm-contacts-panel">
-      <div className="crm-contacts-panel-head">
-        <p className="crm-section-title">Người liên hệ ({contacts.length})</p>
-        {canEdit ? (
-          <button type="button" className="crm-secondary-button crm-contacts-add-btn" onClick={openCreate}>
-            <Plus className="crm-button-icon" /> Thêm Contact
-          </button>
-        ) : null}
-      </div>
-
-      {error ? <p className="crm-error">{error}</p> : null}
-
-      {loading ? (
-        <p className="crm-small"><Loader2 className="crm-spin-icon" /> Đang tải...</p>
-      ) : contacts.length ? (
-        <div className="crm-contacts-list">
-          {contacts.map(contact => (
-            <div
-              key={contact.id}
-              className={`crm-contact-row ${onOpenContact ? 'crm-contact-row--clickable' : ''}`}
-              onClick={onOpenContact ? () => onOpenContact(contact.id) : undefined}
-              role={onOpenContact ? 'button' : undefined}
-              tabIndex={onOpenContact ? 0 : undefined}
-            >
-              <div className="crm-contact-row-main">
-                <span className="crm-contact-row-name">
-                  {contact.name}
-                  {contact.is_primary ? <span className="crm-contact-primary-badge">Chính</span> : null}
-                </span>
-                {(contact.position_label_snapshot || contact.position) ? (
-                  <span className="crm-small">{contact.position_label_snapshot || contact.position}</span>
-                ) : null}
-              </div>
-              <div className="crm-contact-row-info" onClick={event => event.stopPropagation()}>
-                {contact.phone ? <a className="crm-contact-link" href={`tel:${contact.phone.replace(/[^\d+]/g, '')}`}>{contact.phone}</a> : null}
-                {contact.email ? <a className="crm-contact-link crm-muted" href={`mailto:${contact.email}`}>{contact.email}</a> : null}
-              </div>
-              <div className="crm-contact-row-actions" onClick={event => event.stopPropagation()} style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                {onCreateDeal && (
-                  <button type="button" className="crm-btn crm-btn--outline crm-btn--small" onClick={() => onCreateDeal(contact.id)}>+ Cơ hội</button>
-                )}
-                {onCreateProject && (
-                  <button type="button" className="crm-btn crm-btn--outline crm-btn--small" onClick={() => onCreateProject(contact.id)}>+ Dự án</button>
-                )}
-                {/* Sua theo quyen; Xoa mo cho moi nguoi, chi hoi xac nhan (feedback 2026-09-23). */}
-                <ActionMenu
-                  label="Thao tác contact"
-                  items={[
-                    ...(canEdit ? [{ key: 'edit', label: 'Sửa', onSelect: () => openEdit(contact) }] : []),
-                    { key: 'delete', label: 'Xóa', danger: true, onSelect: () => void handleDelete(contact) },
-                  ]}
-                />
-              </div>
-            </div>
-          ))}
+    <>
+      <Card className="bg-card shadow-xs border border-border/80 overflow-hidden">
+      <CardHeader className="py-4 px-6 border-b border-border/60 flex flex-row items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Users className="size-4.5 text-primary" />
+          <CardTitle className="text-base font-semibold text-foreground">Người liên hệ</CardTitle>
+          <Badge variant="secondary" className="text-xs px-2 py-0.5 font-bold">
+            {contacts.length}
+          </Badge>
         </div>
-      ) : (
-        <p className="crm-small crm-muted">Chưa có người liên hệ nào.</p>
-      )}
+        {canEdit ? (
+          <Button
+            size="sm"
+            className="gap-1.5 shadow-xs"
+            onClick={openCreate}
+          >
+            <Plus className="size-3.5" />
+            <span>Thêm Contact</span>
+          </Button>
+        ) : null}
+      </CardHeader>
+
+      <CardContent className="p-6">
+        {error ? (
+          <div className="p-3 rounded-lg bg-destructive/10 border border-destructive/20 text-destructive text-xs mb-4 flex items-start gap-2">
+            <AlertCircle className="size-4 shrink-0 mt-0.5" />
+            <span>{error}</span>
+          </div>
+        ) : null}
+
+        {loading ? (
+          <div className="py-8 flex items-center justify-center gap-2 text-xs text-muted-foreground">
+            <Loader2 className="size-4 animate-spin text-primary" />
+            <span>Đang tải danh sách liên hệ...</span>
+          </div>
+        ) : contacts.length ? (
+          <div className="space-y-2.5">
+            {contacts.map(contact => (
+              <div
+                key={contact.id}
+                className={`p-3.5 rounded-xl border border-border/70 bg-card hover:border-primary/40 hover:shadow-xs transition-all flex flex-wrap items-center justify-between gap-3 ${onOpenContact ? 'cursor-pointer' : ''}`}
+                onClick={onOpenContact ? () => onOpenContact(contact.id) : undefined}
+                role={onOpenContact ? 'button' : undefined}
+                tabIndex={onOpenContact ? 0 : undefined}
+              >
+                <div className="flex items-center gap-3">
+                  <div className="size-9 rounded-full bg-primary/10 text-primary font-bold text-xs flex items-center justify-center shrink-0">
+                    {contact.name ? contact.name.trim().charAt(0).toUpperCase() : '?'}
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="font-semibold text-xs text-foreground">{contact.name}</span>
+                      {contact.is_primary ? (
+                        <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/40 dark:text-blue-400 text-[10px] font-semibold px-2 py-0">
+                          Chính
+                        </Badge>
+                      ) : null}
+                    </div>
+                    {(contact.position_label_snapshot || contact.position) ? (
+                      <span className="text-[11px] text-muted-foreground">{contact.position_label_snapshot || contact.position}</span>
+                    ) : null}
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-3 text-xs" onClick={event => event.stopPropagation()}>
+                  {contact.phone ? (
+                    <a
+                      className="inline-flex items-center gap-1 font-medium text-foreground hover:text-primary transition-colors"
+                      href={`tel:${contact.phone.replace(/[^\d+]/g, '')}`}
+                    >
+                      <Phone className="size-3 text-muted-foreground" />
+                      <span>{contact.phone}</span>
+                    </a>
+                  ) : null}
+                  {contact.email ? (
+                    <a
+                      className="inline-flex items-center gap-1 text-muted-foreground hover:text-primary transition-colors"
+                      href={`mailto:${contact.email}`}
+                    >
+                      <Mail className="size-3 text-muted-foreground" />
+                      <span>{contact.email}</span>
+                    </a>
+                  ) : null}
+                </div>
+
+                <div className="flex items-center gap-1.5" onClick={event => event.stopPropagation()}>
+                  {onCreateDeal && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-7 text-xs px-2.5"
+                      onClick={() => onCreateDeal(contact.id)}
+                    >
+                      + Cơ hội
+                    </Button>
+                  )}
+                  {onCreateProject && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-7 text-xs px-2.5"
+                      onClick={() => onCreateProject(contact.id)}
+                    >
+                      + Dự án
+                    </Button>
+                  )}
+                  <ActionMenu
+                    label="Thao tác contact"
+                    items={[
+                      ...(canEdit ? [{ key: 'edit', label: 'Sửa', onSelect: () => openEdit(contact) }] : []),
+                      { key: 'delete', label: 'Xóa', danger: true, onSelect: () => void handleDelete(contact) },
+                    ]}
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="py-12 text-center text-xs text-muted-foreground flex flex-col items-center gap-2">
+            <Users className="size-8 text-muted-foreground/30 stroke-1" />
+            <span>Chưa có người liên hệ nào.</span>
+          </div>
+        )}
+      </CardContent>
+    </Card>
 
       {formOpen ? (
         <div className="crm-drawer-backdrop" onClick={closeForm}>
@@ -700,7 +772,7 @@ export function CrmContactsPanel({
           </aside>
         </div>
       ) : null}
-    </section>
+    </>
   );
 }
 
