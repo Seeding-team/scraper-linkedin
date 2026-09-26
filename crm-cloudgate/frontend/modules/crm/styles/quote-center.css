@@ -4270,25 +4270,25 @@
   cursor: pointer;
   flex-shrink: 0;
 }
+/* Feedback (2026-09-26): ban icon-vuong-don van "quá xấu"/kho nhan biet du da
+ * doi mau nen truoc do - doi han sang pill CO CHU ("N phiên bản" + mui ten),
+ * dong bo voi .crm-version-toggle (crm.css). */
 .qc-version-toggle {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  margin-right: 4px;
-  padding: 0;
+  gap: 4px;
+  padding: 3px 9px 3px 7px;
   border: 1px solid #d5dae3;
-  border-radius: 6px;
-  /* Nen xam nhat, dong bo voi .crm-version-toggle (crm.css) - feedback "nhìn
-   * khó để nhận biết quá" khi nut cung mau trang voi nen bang. */
+  border-radius: 999px;
   background: #eef1f6;
   color: #435269;
+  font-size: 11px;
+  font-weight: 700;
   cursor: pointer;
   flex-shrink: 0;
 }
 .qc-version-toggle:hover { border-color: var(--color-primary, #ba244a); background: #fdecf1; color: var(--color-primary, #ba244a); }
-.qc-version-toggle .qc-icon { width: 12px; height: 12px; }
+.qc-version-toggle .qc-icon { width: 13px; height: 13px; }
 /* Feedback (2026-09-24): dong version cu truoc day gan nhu trong (chi so bao
  * gia + gia), nhin "xau"/thieu phan cap - gio hien du cot nhu dong hien tai
  * (xem renderOlderVersionRows) nen chi can them vien dut + accent trai de

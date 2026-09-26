@@ -282,6 +282,57 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, _workspaceTab?
       id: "section-admin",
       label: "Quản trị",
     },
+    // Group "Danh mục & cấu hình" (WIP full-flow, prototype
+    // markee_crm_v26_compact_opportunity_name.html). "Danh mục CRM" GIU
+    // NGUYEN o group "Hỗ trợ Bán Hàng" nhu cu (khong duplicate) - o day CHI
+    // them 4 muc THAT SU chua co: Dieu kien phan loai Lead (da lam that,
+    // "chỉ có admin mới được tick chọn" nen an het khoi nay neu khong phai
+    // Admin) + Muc do quan tam/Giai doan co hoi/Team Sale (placeholder "Đang
+    // phát triển", CHUA co cau hinh that nao trong app).
+    ...(isAdmin
+      ? ([
+          {
+            type: "group",
+            id: "crm-config-group",
+            icon: "list_alt",
+            label: "Danh mục & cấu hình",
+            items: [
+              {
+                type: "item",
+                id: "crm-lead-rules",
+                href: "/all-platform/crm/lead-rules",
+                icon: "assignment",
+                label: "Điều kiện phân loại Lead",
+                matchStartsWith: ["/all-platform/crm/lead-rules"],
+              },
+              {
+                type: "item",
+                id: "crm-interest-levels",
+                href: "/all-platform/crm/interest-levels",
+                icon: "trending_up",
+                label: "Mức độ quan tâm",
+                matchStartsWith: ["/all-platform/crm/interest-levels"],
+              },
+              {
+                type: "item",
+                id: "crm-deal-stages",
+                href: "/all-platform/crm/deal-stages",
+                icon: "filter_alt",
+                label: "Giai đoạn cơ hội",
+                matchStartsWith: ["/all-platform/crm/deal-stages"],
+              },
+              {
+                type: "item",
+                id: "crm-sale-teams",
+                href: "/all-platform/crm/sale-teams",
+                icon: "group",
+                label: "Team Sale",
+                matchStartsWith: ["/all-platform/crm/sale-teams"],
+              },
+            ],
+          },
+        ] as SidebarEntry[])
+      : []),
     ...(isAdmin || isLeader
       ? ([
           {

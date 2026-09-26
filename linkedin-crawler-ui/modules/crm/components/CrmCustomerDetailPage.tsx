@@ -2162,19 +2162,22 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
                                 title="Mở báo giá"
                               >
                                 <td className="crm-td">
+                                  <div className="crm-quote-cell-head">
+                                    <span>{current.quote_number || current.id}</span>
+                                    <span className="qc-badge qc-badge-version">V{current.version_number || 1} hiện tại</span>
+                                  </div>
                                   {versionCount > 1 ? (
                                     <button
                                       type="button"
                                       className="crm-version-toggle"
                                       aria-expanded={Boolean(expanded)}
-                                      title={expanded ? 'Thu gọn phiên bản cũ' : `Mở rộng ${versionCount - 1} phiên bản cũ`}
+                                      title={expanded ? 'Thu gọn phiên bản cũ' : `Xem ${versionCount - 1} phiên bản cũ`}
                                       onClick={event => { event.stopPropagation(); void toggleExpandQuoteVersions(current); }}
                                     >
                                       {expanded ? <ChevronUp className="crm-inline-icon" /> : <ChevronDown className="crm-inline-icon" />}
+                                      {versionCount} phiên bản
                                     </button>
                                   ) : null}
-                                  {current.quote_number || current.id}
-                                  <div className="crm-row-sub">V{current.version_number || 1} · {versionCount} version</div>
                                 </td>
                                 <td className="crm-td crm-muted">{projectLabel(current.project_id)}</td>
                                 <td className="crm-td crm-muted">{relatedDeal?.customer_name || (current.deal_id ? 'Đang tải…' : 'Chưa gắn cơ hội')}</td>
@@ -2189,9 +2192,26 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
                                 <td className="crm-td crm-td--right crm-muted" title="Chưa có dữ liệu giá vốn ở tab này">—</td>
                                 <td className="crm-td crm-muted">{current.sla_due_at ? relativeTime(current.sla_due_at) : 'Chưa đặt SLA'}</td>
                                 <td className="crm-td crm-td--right" onClick={event => event.stopPropagation()}>
+                                  {/* BUG THAT DA GAP: nhoi 4 nut thang vao o "Thao
+                                   * tac" (table-layout:fixed, cot hep) khien Xem/Sua
+                                   * tran ra ngoai va bi .crm-table-card{overflow:hidden}
+                                   * cat mat, chi con thay Xoa/Doi lien he - dung
+                                   * ActionMenu (Portal, khong bi cat) nhu moi bang
+                                   * khac trong CRM thay vi nut roi. */}
                                   <div className="crm-row-actions">
                                     <ActionMenu
                                       items={[
+                                        // "Sửa" bi bo khoi menu nay (feedback 2026-09-25,
+                                        // sau khi them click-ca-dong mo thang
+                                        // viewQuoteInNewWorkspace - xem onClick cua <tr>
+                                        // ben tren) - giu lai trong menu se trung lap 100%
+                                        // hanh vi voi click dong.
+                                        // Feedback (2026-09-24): gop "Đổi liên hệ" VAO
+                                        // menu "⋯" thay vi 1 nut/select rieng nam canh
+                                        // no (ContactAssignCell cu, van con dung o tab
+                                        // Co hoi/Hop dong) - chi hien khi quote da co
+                                        // deal_id (giong dieu kien "return — " cu cua
+                                        // ContactAssignCell khi chua co deal).
                                         ...(current.deal_id
                                           ? [{
                                             key: 'contact',

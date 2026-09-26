@@ -106,6 +106,52 @@ type VerifyForm = {
  * PIPELINE THAT (khong gom on_hold/lost, khong hop ly cho 1 co hoi vua tao). */
 const DEAL_STAGE_OPTIONS = PIPELINE_COLUMNS.map(stage => ({ value: stage, label: DEAL_STAGE_META[stage].label }));
 
+type LeadRuleFields = {
+  has_product: boolean;
+  has_interest_level: boolean;
+  has_value: boolean;
+  has_team: boolean;
+  has_next: boolean;
+  has_follow: boolean;
+  has_contact: boolean;
+  fit_unfit: boolean;
+  fit_known: boolean;
+};
+
+/** Ban mirror THUAN JS cua evaluate_lead_conditions() (backend,
+ * crm_lead_rule_service.py, migration 151 "Điều kiện phân loại Lead") - dung
+ * de TU DONG chon san 1 trong 3 radio "Kết quả xác minh" theo dung rule Admin
+ * da cau hinh, SDR van bam doi tay duoc (xem `outcomeTouched` o component).
+ * Day la goi y client-side, KHONG phai nguon su that - luc "Lưu xác minh"
+ * that van chi luu dung 1 trong 3 gia tri `verificationOutcome` hien co, y
+ * het truoc day. */
+function evaluateLeadConditions(fields: LeadRuleFields, c: Record<string, boolean>): { outcome: VerificationOutcome; reason: string } {
+  const invalidChecks: boolean[] = [];
+  if (c.inv_fit) invalidChecks.push(fields.fit_unfit);
+  if (c.inv_no_contact) invalidChecks.push(!fields.has_contact);
+  const isInvalid = invalidChecks.some(Boolean);
+
+  const sqlChecks: boolean[] = [];
+  if (c.sql_product) sqlChecks.push(fields.has_product);
+  if (c.sql_interest) sqlChecks.push(fields.has_interest_level);
+  if (c.sql_value) sqlChecks.push(fields.has_value);
+  if (c.sql_team) sqlChecks.push(fields.has_team);
+  if (c.sql_next) sqlChecks.push(fields.has_next);
+  if (c.sql_follow) sqlChecks.push(fields.has_follow);
+  if (c.sql_fit) sqlChecks.push(!fields.fit_unfit);
+  const isSql = sqlChecks.length ? sqlChecks.every(Boolean) : false;
+
+  if (isInvalid) return { outcome: 'unqualified', reason: 'Lead thỏa điều kiện loại trong cấu hình.' };
+  if (isSql) return { outcome: 'sql', reason: 'Đủ điều kiện SQL theo cấu hình hiện tại.' };
+
+  const reasons: string[] = [];
+  if (c.nur_missing_value && !fields.has_value) reasons.push('thiếu giá trị dự kiến');
+  if (c.nur_missing_handoff && !(fields.has_team && fields.has_next && fields.has_follow)) reasons.push('thiếu thông tin bàn giao');
+  if (c.nur_unknown_fit && !fields.fit_known) reasons.push('chưa xác định nhóm khách hàng');
+  const reason = reasons.length ? `Nuôi dưỡng vì ${reasons.join(', ')}.` : 'Chưa đủ điều kiện SQL.';
+  return { outcome: 'nurturing', reason };
+}
+
 /**
  * Drawer "Xác minh Lead" — 1 luồng có dẫn dắt thay cho 3 khối rời rạc trước đây
  * (xem/sửa + form Qualification thô + nút Convert nổi). Vẫn thao tác trên đúng
@@ -168,6 +214,13 @@ export function LeadDetailDrawer({
   const [converting, setConverting] = useState(false);
   const [convertError, setConvertError] = useState('');
   const [verificationOutcome, setVerificationOutcome] = useState<VerificationOutcome>('sql');
+  // "Điều kiện phân loại Lead" (migration 151) - tai 1 lan, chi doc (GET mo
+  // cho moi nguoi dang nhap, sua rule la trang rieng chi Admin). `outcomeTouched`
+  // = SDR da tu tay doi radio "Kết quả xác minh" it nhat 1 lan -> ngung tu
+  // dong ghi de nua (giong het pattern `dealNameTouched` o CreateOpportunityDrawer).
+  const [ruleConditions, setRuleConditions] = useState<Record<string, boolean> | null>(null);
+  const [outcomeTouched, setOutcomeTouched] = useState(false);
+  const [autoOutcomeReason, setAutoOutcomeReason] = useState('');
   const [nurtureReason, setNurtureReason] = useState('');
   const [unqualifiedReason, setUnqualifiedReason] = useState('');
   const idempotencyKeyRef = useRef<string>('');
@@ -200,6 +253,8 @@ export function LeadDetailDrawer({
     setVerificationOutcome('sql');
     setNurtureReason('');
     setUnqualifiedReason('');
+    setOutcomeTouched(false);
+    setAutoOutcomeReason('');
     setForm({
       interest: lead.qualificationNeed || '',
       interestLevel: interestLevelFromScore(lead.score),
@@ -272,6 +327,47 @@ export function LeadDetailDrawer({
       alive = false;
     };
   }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    let alive = true;
+    fetch(`${API_BASE_URL}/api/all-platform/crm/leads/classification-rules`, { credentials: 'include', headers: headers() })
+      .then(res => res.json())
+      .then(body => {
+        if (!alive || body.success === false) return;
+        setRuleConditions((body.data?.conditions as Record<string, boolean>) || null);
+      })
+      .catch(() => {
+        // Im lang - khong co rule thi giu hanh vi cu (SDR tu chon tay), khong
+        // chan luong xac minh chinh vi 1 API phu khong tai duoc.
+      });
+    return () => { alive = false; };
+  }, [open]);
+
+  // Tu dong chon san radio "Kết quả xác minh" theo dung rule Admin da cau
+  // hinh (evaluateLeadConditions, mirror JS cua backend) - CHI khi SDR CHUA
+  // tu tay doi radio nao (!outcomeTouched). Khong chan/khong bat buoc - SDR
+  // luon doi tay duoc, dieu do se tat auto-compute cho den khi mo Lead khac.
+  useEffect(() => {
+    if (!ruleConditions || outcomeTouched) return;
+    const fields: LeadRuleFields = {
+      has_product: Boolean(form.interest.trim()),
+      has_interest_level: Boolean(form.interestLevel),
+      has_value: form.estimatedValue != null,
+      has_team: Boolean(form.aeId),
+      has_next: Boolean(form.nextStep.trim()),
+      has_follow: Boolean(form.nextStepAt),
+      has_contact: Boolean(contact.phone.trim() || contact.email.trim()),
+      fit_unfit: form.icpFit === 'unfit',
+      fit_known: form.icpFit !== 'unknown',
+    };
+    const computed = evaluateLeadConditions(fields, ruleConditions);
+    setVerificationOutcome(computed.outcome);
+    setAutoOutcomeReason(computed.reason);
+  }, [
+    ruleConditions, outcomeTouched, form.interest, form.interestLevel, form.estimatedValue,
+    form.aeId, form.nextStep, form.nextStepAt, form.icpFit, contact.phone, contact.email,
+  ]);
 
   const aeOptions = useMemo(
     () => saleOptions.map(user => ({ value: user.id, label: user.name })),
@@ -959,18 +1055,35 @@ export function LeadDetailDrawer({
                     <span>Kết quả xác minh</span>
                     <div className="crm-verify-result-options crm-verify-result-options--compact" role="radiogroup" aria-label="Kết quả xác minh">
                       <label className={`crm-verify-result-option ${verificationOutcome === 'sql' ? 'is-selected' : ''}`}>
-                        <input type="radio" name="verificationOutcome" value="sql" checked={verificationOutcome === 'sql'} onChange={() => setVerificationOutcome('sql')} />
+                        <input type="radio" name="verificationOutcome" value="sql" checked={verificationOutcome === 'sql'} onChange={() => { setVerificationOutcome('sql'); setOutcomeTouched(true); }} />
                         <span>Đạt chuẩn SQL</span>
                       </label>
                       <label className={`crm-verify-result-option ${verificationOutcome === 'nurturing' ? 'is-selected' : ''}`}>
-                        <input type="radio" name="verificationOutcome" value="nurturing" checked={verificationOutcome === 'nurturing'} onChange={() => setVerificationOutcome('nurturing')} />
+                        <input type="radio" name="verificationOutcome" value="nurturing" checked={verificationOutcome === 'nurturing'} onChange={() => { setVerificationOutcome('nurturing'); setOutcomeTouched(true); }} />
                         <span>Nuôi dưỡng</span>
                       </label>
                       <label className={`crm-verify-result-option ${verificationOutcome === 'unqualified' ? 'is-selected' : ''}`}>
-                        <input type="radio" name="verificationOutcome" value="unqualified" checked={verificationOutcome === 'unqualified'} onChange={() => setVerificationOutcome('unqualified')} />
+                        <input type="radio" name="verificationOutcome" value="unqualified" checked={verificationOutcome === 'unqualified'} onChange={() => { setVerificationOutcome('unqualified'); setOutcomeTouched(true); }} />
                         <span>Không đạt chuẩn</span>
                       </label>
                     </div>
+                    {ruleConditions ? (
+                      <p className="crm-ai-fill-hint">
+                        {outcomeTouched
+                          ? 'Bạn đã tự chọn kết quả này.'
+                          : `Tự động theo Điều kiện phân loại Lead: ${autoOutcomeReason}`}
+                        {outcomeTouched ? (
+                          <button
+                            type="button"
+                            className="crm-inline-link-btn"
+                            style={{ marginLeft: '0.4rem' }}
+                            onClick={() => setOutcomeTouched(false)}
+                          >
+                            Tính lại tự động
+                          </button>
+                        ) : null}
+                      </p>
+                    ) : null}
                   </div>
 
                   {nextStepWarning ? (

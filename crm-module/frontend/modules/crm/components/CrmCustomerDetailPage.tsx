@@ -2162,19 +2162,22 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
                                 title="Mở báo giá"
                               >
                                 <td className="crm-td">
+                                  <div className="crm-quote-cell-head">
+                                    <span>{current.quote_number || current.id}</span>
+                                    <span className="qc-badge qc-badge-version">V{current.version_number || 1} hiện tại</span>
+                                  </div>
                                   {versionCount > 1 ? (
                                     <button
                                       type="button"
                                       className="crm-version-toggle"
                                       aria-expanded={Boolean(expanded)}
-                                      title={expanded ? 'Thu gọn phiên bản cũ' : `Mở rộng ${versionCount - 1} phiên bản cũ`}
+                                      title={expanded ? 'Thu gọn phiên bản cũ' : `Xem ${versionCount - 1} phiên bản cũ`}
                                       onClick={event => { event.stopPropagation(); void toggleExpandQuoteVersions(current); }}
                                     >
                                       {expanded ? <ChevronUp className="crm-inline-icon" /> : <ChevronDown className="crm-inline-icon" />}
+                                      {versionCount} phiên bản
                                     </button>
                                   ) : null}
-                                  {current.quote_number || current.id}
-                                  <div className="crm-row-sub">V{current.version_number || 1} · {versionCount} version</div>
                                 </td>
                                 <td className="crm-td crm-muted">{projectLabel(current.project_id)}</td>
                                 <td className="crm-td crm-muted">{relatedDeal?.customer_name || (current.deal_id ? 'Đang tải…' : 'Chưa gắn cơ hội')}</td>

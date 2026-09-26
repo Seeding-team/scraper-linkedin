@@ -21,6 +21,15 @@ _USER_CACHE_TTL_SECONDS = 30.0
 _USER_BY_ID_CACHE: dict[str, tuple[float, dict]] = {}
 _USER_BY_EMAIL_CACHE: dict[str, tuple[float, dict]] = {}
 
+# Cache du phong, song lau hon nhieu (10 phut) - CHI dung khi query Supabase
+# that su loi (network/DB chop nhoang), de tranh 1 request bat ky nao do trung
+# dung luc DB "khung" (ngoai cua so cache 30s o tren) bi fail cung ca 503 "Auth
+# service temporarily unavailable" - bug da xac nhan gay loi luu Lead ngau
+# nhien, F5 lai thi duoc (F5 xong thi cache 30s lai duoc lam moi tu /auth/me).
+_USER_FALLBACK_TTL_SECONDS = 600.0
+_USER_BY_ID_FALLBACK_CACHE: dict[str, tuple[float, dict]] = {}
+_USER_BY_EMAIL_FALLBACK_CACHE: dict[str, tuple[float, dict]] = {}
+
 
 def _copy_user(user: dict) -> dict:
     clean = dict(user)
@@ -31,18 +40,27 @@ def _copy_user(user: dict) -> dict:
 def _cache_user(user: dict) -> dict:
     clean = _copy_user(user)
     expires_at = time.monotonic() + _USER_CACHE_TTL_SECONDS
+    fallback_expires_at = time.monotonic() + _USER_FALLBACK_TTL_SECONDS
     user_id = str(clean.get("id") or "")
     email = str(clean.get("email") or "").lower().strip()
     if user_id:
         _USER_BY_ID_CACHE[user_id] = (expires_at, clean)
+        _USER_BY_ID_FALLBACK_CACHE[user_id] = (fallback_expires_at, clean)
     if email:
         _USER_BY_EMAIL_CACHE[email] = (expires_at, clean)
+        _USER_BY_EMAIL_FALLBACK_CACHE[email] = (fallback_expires_at, clean)
     if len(_USER_BY_ID_CACHE) > 1000:
         for key in list(_USER_BY_ID_CACHE.keys())[:-1000]:
             _USER_BY_ID_CACHE.pop(key, None)
     if len(_USER_BY_EMAIL_CACHE) > 1000:
         for key in list(_USER_BY_EMAIL_CACHE.keys())[:-1000]:
             _USER_BY_EMAIL_CACHE.pop(key, None)
+    if len(_USER_BY_ID_FALLBACK_CACHE) > 1000:
+        for key in list(_USER_BY_ID_FALLBACK_CACHE.keys())[:-1000]:
+            _USER_BY_ID_FALLBACK_CACHE.pop(key, None)
+    if len(_USER_BY_EMAIL_FALLBACK_CACHE) > 1000:
+        for key in list(_USER_BY_EMAIL_FALLBACK_CACHE.keys())[:-1000]:
+            _USER_BY_EMAIL_FALLBACK_CACHE.pop(key, None)
     return dict(clean)
 
 
@@ -57,11 +75,27 @@ def _cached_user(cache: dict[str, tuple[float, dict]], key: str) -> Optional[dic
     return dict(user)
 
 
+def _fallback_cached_user(cache: dict[str, tuple[float, dict]], key: str) -> Optional[dict]:
+    """Nhu `_cached_user` nhung doc tu cache du phong song lau hon, KHONG tu
+    xoa entry het han o day (de _cache_user tu ghi de khi co ban moi) - chi
+    dung khi query Supabase that su bi loi, khong dung cho duong di binh
+    thuong."""
+    cached = cache.get(key)
+    if not cached:
+        return None
+    expires_at, user = cached
+    if expires_at <= time.monotonic():
+        return None
+    return dict(user)
+
+
 def clear_user_cache(user_id: str | None = None, email: str | None = None) -> None:
     if user_id:
         _USER_BY_ID_CACHE.pop(str(user_id), None)
+        _USER_BY_ID_FALLBACK_CACHE.pop(str(user_id), None)
     if email:
         _USER_BY_EMAIL_CACHE.pop(str(email).lower().strip(), None)
+        _USER_BY_EMAIL_FALLBACK_CACHE.pop(str(email).lower().strip(), None)
 
 
 def _hash_password(password: str) -> str:
@@ -413,9 +447,15 @@ def get_user_by_id(user_id: str) -> Optional[dict]:
     cached = _cached_user(_USER_BY_ID_CACHE, user_key)
     if cached:
         return cached
-    result = execute_supabase_query(
-        lambda: get_supabase_client().table("app_users").select(_USER_PUBLIC_FIELDS).eq("id", user_key).execute()
-    )
+    try:
+        result = execute_supabase_query(
+            lambda: get_supabase_client().table("app_users").select(_USER_PUBLIC_FIELDS).eq("id", user_key).execute()
+        )
+    except Exception:
+        fallback = _fallback_cached_user(_USER_BY_ID_FALLBACK_CACHE, user_key)
+        if fallback is not None:
+            return fallback
+        raise
     if result.data:
         return _cache_user(result.data[0])
     return None
@@ -427,9 +467,15 @@ def get_user_by_email(email: str) -> Optional[dict]:
     cached = _cached_user(_USER_BY_EMAIL_CACHE, email_key)
     if cached:
         return cached
-    result = execute_supabase_query(
-        lambda: get_supabase_client().table("app_users").select(_USER_PUBLIC_FIELDS).eq("email", email_key).execute()
-    )
+    try:
+        result = execute_supabase_query(
+            lambda: get_supabase_client().table("app_users").select(_USER_PUBLIC_FIELDS).eq("email", email_key).execute()
+        )
+    except Exception:
+        fallback = _fallback_cached_user(_USER_BY_EMAIL_FALLBACK_CACHE, email_key)
+        if fallback is not None:
+            return fallback
+        raise
     if result.data:
         return _cache_user(result.data[0])
     return None

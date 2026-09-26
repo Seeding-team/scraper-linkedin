@@ -91,6 +91,20 @@ function isAdminOrLeader(user: AppUser | null) {
 // Regex don gian cho SDT VN (10 so, bat dau 0, hoac +84) va email - du dung cho
 // ban rule-based dau tien (khong goi AI/backend), theo dung yeu cau spec.
 const PHONE_RE = /(?:\+?84|0)(?:\d[\s.-]?){9,10}\b/;
+
+// Chuan hoa ky tu so Unicode (full-width, Arabic-Indic...) ve ASCII 0-9 ngay
+// khi go/paste. Ban phim ao / IME tren mobile doi khi chen cac ky tu so nay -
+// nhin giong het so ASCII nhung backend (Python \D Unicode-aware) khong strip
+// duoc, gay loi "SDT khong hop le" chi tren mobile voi cung 1 so nhu desktop.
+function normalizePhoneInput(value: string): string {
+  return value.replace(/[^\d+\s().-]/g, ch => {
+    const code = ch.codePointAt(0) ?? 0;
+    if (code >= 0xff10 && code <= 0xff19) return String(code - 0xff10); // fullwidth 0-9
+    if (code >= 0x0660 && code <= 0x0669) return String(code - 0x0660); // Arabic-Indic
+    if (code >= 0x06f0 && code <= 0x06f9) return String(code - 0x06f0); // Extended Arabic-Indic
+    return ch;
+  });
+}
 const EMAIL_RE = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/;
 // "Lỗi không nhập công ty với chức vụ nhanh" (yeu cau rieng, kem screenshot QA
 // that): handleParsePaste() TRUOC DAY chi doan duoc SDT/Email/Ten/Nguon, hoan
@@ -607,7 +621,7 @@ export function LeadFormDrawer({
                   <input
                     name="crm-lead-form-check-phone"
                     value={checkPhone}
-                    onChange={e => setCheckPhone(e.target.value)}
+                    onChange={e => setCheckPhone(normalizePhoneInput(e.target.value))}
                     type="tel"
                     placeholder="VD: 0903 037 911"
                     autoComplete="off"
@@ -794,7 +808,7 @@ export function LeadFormDrawer({
                     <input value={form.companyName} onChange={e => handleCompanyNameChange(e.target.value)} placeholder="Công ty TNHH ABC" />
                   </Field>
                   <Field label="Số điện thoại" hint="cần SĐT hoặc email">
-                    <input value={form.phone} onChange={e => setValue('phone', e.target.value)} type="tel" placeholder="Autofill từ kiểm tra trùng" />
+                    <input value={form.phone} onChange={e => setValue('phone', normalizePhoneInput(e.target.value))} type="tel" placeholder="Autofill từ kiểm tra trùng" />
                   </Field>
                   <Field label="Email" hint="cần SĐT hoặc email">
                     <input value={form.email} onChange={e => setValue('email', e.target.value)} type="email" placeholder="Autofill từ kiểm tra trùng" />

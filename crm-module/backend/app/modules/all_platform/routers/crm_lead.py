@@ -23,6 +23,8 @@ from app.modules.all_platform.services.crm_lead_import_service import (
     preview_import,
     revalidate_rows,
 )
+from app.modules.all_platform.services import crm_lead_rule_service
+from app.modules.all_platform.services.crm_permission_service import can_manage_lead_classification_rules
 from app.modules.all_platform.services.crm_lead_service import (
     DuplicateLeadError,
     LeadLinkedError,
@@ -203,6 +205,33 @@ def leads_delete_bulk(payload: dict, user: dict[str, Any] = Depends(get_current_
             )
         message = f"Đã xóa {deleted_count} Lead" + (f", {failed_count} không thể xóa" if failed_count else "")
         return BaseResponse(success=True, message=message, data=data)
+    except Exception as exc:
+        return _error(exc)
+
+
+@router.get("/classification-rules")
+def leads_get_classification_rules(user: dict[str, Any] = Depends(get_current_user)) -> BaseResponse:
+    """Doc rule dang ap dung ("Dieu kien phan loai Lead") - moi nguoi da
+    dang nhap deu xem duoc (Member/Leader chi xem, khong sua). PHAI dat
+    TRUOC route /{lead_id} ben duoi (path tinh vs path dong cung 1 segment -
+    FastAPI khop theo thu tu dang ky, dat sau se bi /{lead_id} "nuot" mat)."""
+    try:
+        return BaseResponse(success=True, data=crm_lead_rule_service.get_rule_set())
+    except Exception as exc:
+        return _error(exc)
+
+
+@router.put("/classification-rules")
+def leads_save_classification_rules(payload: dict[str, Any], user: dict[str, Any] = Depends(get_current_user)) -> BaseResponse:
+    """Sua rule - CHI Admin (yeu cau rieng "chỉ có admin mới được tick chọn")."""
+    if not can_manage_lead_classification_rules(user):
+        return BaseResponse(success=False, message="Chỉ Admin mới được cấu hình Điều kiện phân loại Lead")
+    try:
+        conditions = payload.get("conditions") or {}
+        data = crm_lead_rule_service.save_rule_set(conditions, user.get("id"))
+        return BaseResponse(success=True, message="Đã lưu Điều kiện phân loại Lead", data=data)
+    except crm_lead_rule_service.RuleValidationError as exc:
+        return BaseResponse(success=False, message=str(exc))
     except Exception as exc:
         return _error(exc)
 
