@@ -208,7 +208,7 @@ export function RegisterExternalContractModal({ open, deal, onClose, onCreated, 
   return (
     <>
       <div onClick={onClose} className="fixed inset-0 z-[99984] bg-black/40 backdrop-blur-sm" />
-      <aside className="fixed right-0 top-0 z-[99985] flex h-screen w-full max-w-[30rem] flex-col border-l border-slate-200 bg-white shadow-2xl">
+      <aside className="fixed right-0 top-0 z-[99985] flex h-screen w-full max-w-[36rem] flex-col border-l border-slate-200 bg-white shadow-2xl">
         <header className="flex shrink-0 items-start justify-between border-b border-slate-200 px-5 py-4">
           <div>
             <h2 className="text-lg font-bold text-slate-800">Ghi nhận hợp đồng có sẵn</h2>
@@ -307,14 +307,29 @@ export function RegisterExternalContractModal({ open, deal, onClose, onCreated, 
             </label>
           ) : null}
 
-          <label className="block">
-            <span className="mb-1 block text-xs font-semibold text-slate-600">Trạng thái</span>
-            <select value={status} onChange={e => setStatus(e.target.value as ContractStatus)} className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm">
-              {STATUS_OPTIONS.map(s => (
-                <option key={s} value={s}>{CONTRACT_STATUS_LABELS[s]}</option>
-              ))}
-            </select>
-          </label>
+          {/* "Trạng thái" + "Số hợp đồng" deu ngan (feedback 2026-09-26: "có
+           * những dropdown không cần thiết phải dài như vậy... cho 1 hàng 2
+           * dropdown cho đẹp") - ghep chung 1 hang, khac voi "Tên hợp đồng"/
+           * "Giá trị hợp đồng" giu full-width vi noi dung dai/quan trong hon. */}
+          <div className="grid grid-cols-2 gap-3">
+            <label className="block">
+              <span className="mb-1 block text-xs font-semibold text-slate-600">Trạng thái</span>
+              <select value={status} onChange={e => setStatus(e.target.value as ContractStatus)} className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm">
+                {STATUS_OPTIONS.map(s => (
+                  <option key={s} value={s}>{CONTRACT_STATUS_LABELS[s]}</option>
+                ))}
+              </select>
+            </label>
+            <label className="block">
+              <span className="mb-1 block text-xs font-semibold text-slate-600">Số hợp đồng</span>
+              <input
+                value={contractNumber}
+                onChange={e => setContractNumber(e.target.value)}
+                className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                placeholder="HD-2025-021"
+              />
+            </label>
+          </div>
 
           {/* Nhóm field phải nhập tay (feedback 2026-09-25, PDF mục 7). */}
           <label className="block">
@@ -324,16 +339,6 @@ export function RegisterExternalContractModal({ open, deal, onClose, onCreated, 
               onChange={e => setTitle(e.target.value)}
               className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
               placeholder="Hợp đồng triển khai..."
-            />
-          </label>
-
-          <label className="block">
-            <span className="mb-1 block text-xs font-semibold text-slate-600">Số hợp đồng</span>
-            <input
-              value={contractNumber}
-              onChange={e => setContractNumber(e.target.value)}
-              className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-              placeholder="HD-2025-021"
             />
           </label>
 

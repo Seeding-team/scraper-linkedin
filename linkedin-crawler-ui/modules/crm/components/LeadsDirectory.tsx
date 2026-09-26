@@ -251,14 +251,6 @@ export function LeadsDirectory() {
   // (backend se hoi xac nhan rieng). Sao chep workspace van loai Lead da
   // convert (backend chan) - loc o openCopyModalForSelection().
   const selectableItems = items;
-  // BUG THAT DA GAP (fix 9cd93003, ap dung lai o day sau khi merge nhanh
-  // feat/crm-quote-feedback-main-first): backend chuan hoa lead.status ve
-  // vocab hien thi (mql/sql/nurturing/unqualified) TRUOC KHI tra ve frontend
-  // (_normalize_lead_status, LEAD_STATUS_MAP: 'converted' -> 'sql') - frontend
-  // KHONG BAO GIO thay gia tri tho 'converted', nen check "=== 'converted'"
-  // la dead code (luon false). Dung 'sql' + convertedCustomerId (field that,
-  // luon duoc set that su khi convert) de nhan dien dung."
-  const isConvertedLead = (lead: CrmLeadRow) => lead.status === 'sql' || Boolean(lead.convertedCustomerId);
   const allOnPageSelected = selectableItems.length > 0 && selectableItems.every(lead => selectedIds.has(lead.id));
 
   function toggleSelect(id: string) {
@@ -279,12 +271,12 @@ export function LeadsDirectory() {
     });
   }
 
+  // Feedback 2026-09-26: bo gioi han "da convert thi khong sao chep duoc" -
+  // dong bo voi secondaryActionsOf() (menu ⋯ tung dong) da bo dieu kien nay,
+  // backend copy_lead_to_instance() da tu loai converted_*_id khoi ban sao.
   function openCopyModalForSelection() {
-    const copyable = items.filter(lead => selectedIds.has(lead.id) && !isConvertedLead(lead)).map(lead => lead.id);
-    if (copyable.length === 0) {
-      window.alert('Các Lead đã chọn đều đã chuyển đổi — không sao chép được sang workspace khác.');
-      return;
-    }
+    const copyable = items.filter(lead => selectedIds.has(lead.id)).map(lead => lead.id);
+    if (copyable.length === 0) return;
     setCopyLeadIds(copyable);
     setCopyTargets({});
     setCopyError('');
@@ -798,10 +790,18 @@ export function LeadsDirectory() {
    * workspace khác" (tuỳ điều kiện) và "Xóa Lead" (đỏ, luôn ở cuối, mở cho
    * mọi người, chỉ hỏi xác nhận — feedback 2026-09-23). Khi danh sách chỉ còn
    * đúng "Xóa Lead", UI render 1 nút xóa trực tiếp thay vì dropdown ⋯ (xem
-   * chỗ dùng `secondaryActionsOf` bên dưới). */
+   * chỗ dùng `secondaryActionsOf` bên dưới).
+   *
+   * Feedback 2026-09-26: TRƯỚC ĐÂY chỉ hiện "Sao chép sang workspace khác"
+   * cho Lead CHƯA convert (status !== 'sql' && !convertedCustomerId) - bỏ
+   * điều kiện đó, hiện cho MỌI Lead kể cả đã "Xem khách hàng". An toàn vì
+   * backend copy_lead_to_instance() đã tự loại bỏ converted_customer_id/
+   * converted_contact_id/converted_deal_id/converted_by/converted_at khỏi
+   * bản sao (crm_lead_service.py) - Lead copy sang workspace khác luôn ở
+   * trạng thái CHƯA convert tại nơi đến, không kéo theo Customer/Deal gốc. */
   function secondaryActionsOf(lead: CrmLeadRow): ActionMenuItem[] {
     return [
-      ...(canCopyInstance && lead.status !== 'sql' && !lead.convertedCustomerId
+      ...(canCopyInstance
         ? [{
             key: 'copy-instance',
             label: 'Sao chép sang workspace khác',

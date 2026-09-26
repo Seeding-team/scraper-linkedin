@@ -1683,6 +1683,31 @@
   max-width: 100%;
 }
 
+/* Sale sua ten bao gia truc tiep tai day (feedback 2026-09-26: "không cần có
+ * box hay có ghi tiêu đề gì đâu, để vậy cho sale nhập") - reset toan bo dang
+ * input mac dinh, giu y het font/mau cua h2 tinh o tren de khong lo chuyen o
+ * dang view -> edit. */
+.qc-workspace-header-quote-title--input {
+  display: block;
+  width: 100%;
+  border: none;
+  background: transparent;
+  padding: 0;
+  outline: none;
+  font-family: inherit;
+  border-radius: 4px;
+}
+
+.qc-workspace-header-quote-title--input::placeholder {
+  color: #9099a7;
+  font-weight: 700;
+}
+
+.qc-workspace-header-quote-title--input:hover,
+.qc-workspace-header-quote-title--input:focus {
+  background: #f5f6f8;
+}
+
 .qc-workspace-header-title {
   display: flex;
   align-items: center;
@@ -4249,18 +4274,20 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 20px;
+  width: 22px;
+  height: 22px;
   margin-right: 4px;
   padding: 0;
-  border: 1px solid #dfe3ea;
-  border-radius: 5px;
-  background: #fff;
-  color: #5b6576;
+  border: 1px solid #d5dae3;
+  border-radius: 6px;
+  /* Nen xam nhat, dong bo voi .crm-version-toggle (crm.css) - feedback "nhìn
+   * khó để nhận biết quá" khi nut cung mau trang voi nen bang. */
+  background: #eef1f6;
+  color: #435269;
   cursor: pointer;
   flex-shrink: 0;
 }
-.qc-version-toggle:hover { border-color: var(--color-primary, #ba244a); color: var(--color-primary, #ba244a); }
+.qc-version-toggle:hover { border-color: var(--color-primary, #ba244a); background: #fdecf1; color: var(--color-primary, #ba244a); }
 .qc-version-toggle .qc-icon { width: 12px; height: 12px; }
 /* Feedback (2026-09-24): dong version cu truoc day gan nhu trong (chi so bao
  * gia + gia), nhin "xau"/thieu phan cap - gio hien du cot nhu dong hien tai
