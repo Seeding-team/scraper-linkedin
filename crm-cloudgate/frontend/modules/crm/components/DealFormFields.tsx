@@ -23,6 +23,7 @@ import type { AppUser } from '@/types/unified.types';
 import { CurrencyInput } from '@/components/CurrencyInput';
 import { formatCurrencyDisplay, parseCurrencyInput } from '@/lib/currency';
 import { aiMayFill, contactValues, hydrationConflicts, type ContactOption, type EditableIdentity } from './dealHydration';
+import { CheckCircle2, XCircle } from './icons';
 
 const DEFAULT_INDUSTRY_OPTIONS = INDUSTRY_OPTIONS.map(value => ({ value, label: value }));
 
@@ -1014,6 +1015,30 @@ export function DealFormFields({
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const dealHealth = computeDealHealth(form);
 
+  // "Tóm tắt quyết định" cho luc TAO NHANH (isCreate) - cung mau UI/logic voi
+  // crm-verify-readiness-panel cua LeadDetailDrawer (Xac minh Lead) va
+  // CreateOpportunityDrawer (Tao co hoi). Cac dieu kien nay CHINH LA dieu
+  // kien cua validateDealForm() o tren (khong doi logic that, chi tach thanh
+  // mang de render checklist) - CHI dung cho nhanh isCreate, KHONG anh huong
+  // man Sua deal (isCreate=false van giu nguyen layout/section cu ben duoi).
+  const createReviewChecks = [
+    { key: 'name', label: 'Tên dự án / cơ hội', value: form.dealName || '—', ok: Boolean(form.dealName.trim()) },
+    { key: 'customer', label: 'Tên khách hàng', value: form.customerName || '—', ok: Boolean(form.customerName.trim()) },
+    {
+      key: 'contact',
+      label: 'SĐT hoặc Email',
+      value: [form.phone, form.email].filter(Boolean).join(' · ') || '—',
+      ok: Boolean(form.phone.trim() || form.email.trim()),
+    },
+    { key: 'product', label: 'Sản phẩm / dịch vụ', value: servicePackageOptions.find(o => o.value === form.servicePackage)?.label || form.servicePackage || '—', ok: Boolean(form.servicePackage.trim()) },
+    { key: 'next', label: 'Next step', value: form.nextStep || '—', ok: Boolean(form.nextStep.trim()) },
+    { key: 'follow', label: 'Hạn follow-up', value: form.followUpDate ? form.followUpDate.replace('T', ' ') : '—', ok: Boolean(form.followUpDate.trim()) },
+  ];
+  const createReviewOkCount = createReviewChecks.filter(c => c.ok).length;
+  const createReviewReady = createReviewOkCount === createReviewChecks.length;
+  const createReadinessLabel = createReviewReady ? 'Sẵn sàng tạo deal' : createReviewOkCount >= 4 ? 'Cần bổ sung thêm' : 'Chưa sẵn sàng';
+  const createReadinessTone = createReviewReady ? 'ready' : createReviewOkCount >= 4 ? 'partial' : 'blocked';
+
   // Next step: dropdown gợi ý thao tác phổ biến, vẫn cho gõ tự do — bắt đầu ở chế độ tuỳ
   // chỉnh nếu giá trị đang có (vd deal cũ) không khớp preset nào.
   return (
@@ -1043,115 +1068,230 @@ export function DealFormFields({
         </section>
       ) : null}
 
-      <section className="crm-form-section">
-        <h3 className="crm-form-title">1. Khách hàng &amp; Cơ hội</h3>
-        <div className="crm-form-grid">
-          <Field label="Customer / Công ty" required>
-            <CustomerProfileCombobox form={form} setValue={setValue} locked={form.customerLocked} />
-          </Field>
-          <Field label="Dự án" required hint={form.projectLocked ? undefined : 'chọn có sẵn hoặc gõ tên mới — cơ hội lấy tên theo dự án'}>
-            <ProjectPicker form={form} setValue={setValue} locked={form.projectLocked} />
-          </Field>
-          <Field label="Người liên hệ chính" hint={form.primaryContactLocked ? undefined : 'tùy chọn'}>
-            <ContactPicker form={form} setValue={setValue} locked={form.primaryContactLocked} />
-          </Field>
-          <Field label="Công ty" hint="tùy chọn">
-            <input value={form.companyName} onChange={event => editIdentity('companyName', event.target.value)} placeholder="Công ty TNHH ABC" />
-          </Field>
-          <Field label="Tên người liên hệ" hint={form.primaryContactId ? 'từ Contact đã chọn; không sửa hồ sơ CRM' : 'tùy chọn'}>
-            <input value={form.contactName} readOnly placeholder="Chọn Contact để lấy tên người liên hệ" />
-          </Field>
-          <Field full label="Liên hệ" required hint="chỉ cần SĐT hoặc Email">
-            <div className="crm-inline-pair">
-              <input value={form.phone} onChange={event => editIdentity('phone', event.target.value)} type="tel" placeholder="Số điện thoại" />
-              <input value={form.email} onChange={event => editIdentity('email', event.target.value)} type="email" placeholder="Email" />
-            </div>
-          </Field>
-          <Field label="Sản phẩm / dịch vụ" required>
-            <CrmCategoryCodeSelect categoryType="crm_service_package" value={form.servicePackage} onChange={value => setValue('servicePackage', value)} fallbackOptions={servicePackageOptions} placeholder="-- Chọn --" />
-          </Field>
-          <Field label="Giá trị ước tính (VND)">
-            <CurrencyInput
-              value={parseCurrencyInput(form.estimatedBudget)}
-              onChange={value => setValue('estimatedBudget', value != null ? String(value) : '')}
-              placeholder="VD: 50.000.000"
-            />
-          </Field>
-        </div>
-      </section>
-
-      <section className="crm-form-section">
-        <h3 className="crm-form-title">2. Deal đang ở đâu?</h3>
-        <div className="crm-form-grid">
-          {isCreate ? (
-            <Field full label="Giai đoạn" required>
-              <div className="crm-stage-filter">
-                {CREATE_STAGE_CHIPS.map(stage => {
-                  const selected = form.stage === stage;
-                  return (
-                    <button
-                      type="button"
-                      key={stage}
-                      className={`crm-stage-pill ${selected ? 'crm-stage-pill--selected' : 'crm-stage-pill--idle'}`}
-                      style={selected ? { background: DEAL_STAGE_META[stage].color, borderColor: DEAL_STAGE_META[stage].color, color: '#fff' } : undefined}
-                      onClick={() => setValue('stage', stage)}
-                    >
-                      {CREATE_STAGE_LABELS[stage]}
-                    </button>
-                  );
-                })}
+      {isCreate ? (
+        <>
+          {/* Layout "Tao co hoi nhanh" - cung khuon crm-verify-compact-grid 3
+           * panel + panel "Tom tat quyet dinh" nhu CreateOpportunityDrawer (Tao
+           * co hoi) va LeadDetailDrawer (Xac minh Lead), theo yeu cau leader
+           * dung chung form/kieu cho de dung. Field/logic GIU NGUYEN 100% -
+           * chi doi cach nhom/hien thi. Nhanh isCreate=false (Sua deal) ben
+           * duoi KHONG doi gi ca. */}
+          <div className="crm-verify-compact-grid">
+            <section className="crm-form-section crm-verify-section crm-verify-panel" id="crm-deal-create-customer">
+              <p className="crm-form-title">Khách hàng &amp; liên hệ</p>
+              <div className="crm-verify-compact-fields">
+                <Field label="Customer / Công ty" required>
+                  <CustomerProfileCombobox form={form} setValue={setValue} locked={form.customerLocked} />
+                </Field>
+                <Field label="Dự án" required hint={form.projectLocked ? undefined : 'chọn có sẵn hoặc gõ tên mới'}>
+                  <ProjectPicker form={form} setValue={setValue} locked={form.projectLocked} />
+                </Field>
+                <Field label="Người liên hệ chính" hint={form.primaryContactLocked ? undefined : 'tùy chọn'}>
+                  <ContactPicker form={form} setValue={setValue} locked={form.primaryContactLocked} />
+                </Field>
+                <Field label="Công ty" hint="tùy chọn">
+                  <input value={form.companyName} onChange={event => editIdentity('companyName', event.target.value)} placeholder="Công ty TNHH ABC" />
+                </Field>
+                <div className="crm-inline-pair">
+                  <Field label="SĐT" required hint="chỉ cần SĐT hoặc Email">
+                    <input value={form.phone} onChange={event => editIdentity('phone', event.target.value)} type="tel" placeholder="Số điện thoại" />
+                  </Field>
+                  <Field label="Email">
+                    <input value={form.email} onChange={event => editIdentity('email', event.target.value)} type="email" placeholder="Email" />
+                  </Field>
+                </div>
               </div>
-            </Field>
-          ) : (
-            <Field full label="Giai đoạn deal">
-              <select value={form.stage} onChange={event => setValue('stage', event.target.value as Deal['stage'])}>
-                {DEAL_STAGES.map(stage => (
-                  <option key={stage} value={stage}>
-                    {DEAL_STAGE_META[stage].label} - {DEAL_STAGE_META[stage].description}
-                  </option>
-                ))}
-              </select>
-            </Field>
-          )}
-          <Field label="Next step" required>
-            <CrmCategorySelect categoryType="crm_next_step" value={form.nextStep} onChange={value => setValue('nextStep', value)} placeholder="-- Chọn --" excludeLabels={["Khác", "Khac"]} />
-          </Field>
-          <Field label="Hạn follow-up" required>
-            <input value={form.followUpDate} onChange={event => setValue('followUpDate', event.target.value)} type="datetime-local" />
-          </Field>
-          {form.stage === 'on_hold' ? (
-            <Field full label="Lý do tạm dừng">
-              <textarea value={form.pauseReason} onChange={event => setValue('pauseReason', event.target.value)} placeholder="Ghi rõ lý do deal bị tạm dừng..." />
-            </Field>
-          ) : null}
-        </div>
+            </section>
 
-        <div className="crm-deal-cards">
-          <div className={`crm-deal-card crm-deal-card--health-${dealHealth.level}`}>
-            <span className="crm-deal-card-label">Deal Health – tự tính để manager đánh giá chất lượng</span>
-            <strong className="crm-deal-card-score">{dealHealth.score}/100 · {dealHealth.label}</strong>
-            <p className="crm-deal-card-desc">{dealHealth.description}</p>
+            <section className="crm-form-section crm-verify-section crm-verify-panel" id="crm-deal-create-opportunity">
+              <p className="crm-form-title">Cơ hội &amp; giai đoạn</p>
+              <div className="crm-verify-compact-fields">
+                <Field label="Sản phẩm / dịch vụ" required>
+                  <CrmCategoryCodeSelect categoryType="crm_service_package" value={form.servicePackage} onChange={value => setValue('servicePackage', value)} fallbackOptions={servicePackageOptions} placeholder="-- Chọn --" />
+                </Field>
+                <Field label="Giá trị ước tính (VND)">
+                  <CurrencyInput
+                    value={parseCurrencyInput(form.estimatedBudget)}
+                    onChange={value => setValue('estimatedBudget', value != null ? String(value) : '')}
+                    placeholder="VD: 50.000.000"
+                  />
+                </Field>
+                <Field full label="Giai đoạn" required>
+                  <div className="crm-stage-filter">
+                    {CREATE_STAGE_CHIPS.map(stage => {
+                      const selected = form.stage === stage;
+                      return (
+                        <button
+                          type="button"
+                          key={stage}
+                          className={`crm-stage-pill ${selected ? 'crm-stage-pill--selected' : 'crm-stage-pill--idle'}`}
+                          style={selected ? { background: DEAL_STAGE_META[stage].color, borderColor: DEAL_STAGE_META[stage].color, color: '#fff' } : undefined}
+                          onClick={() => setValue('stage', stage)}
+                        >
+                          {CREATE_STAGE_LABELS[stage]}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </Field>
+                {form.stage === 'on_hold' ? (
+                  <Field full label="Lý do tạm dừng">
+                    <textarea value={form.pauseReason} onChange={event => setValue('pauseReason', event.target.value)} placeholder="Ghi rõ lý do deal bị tạm dừng..." />
+                  </Field>
+                ) : null}
+                <div className="crm-inline-pair">
+                  <Field label="Next step" required>
+                    <CrmCategorySelect categoryType="crm_next_step" value={form.nextStep} onChange={value => setValue('nextStep', value)} placeholder="-- Chọn --" excludeLabels={["Khác", "Khac"]} />
+                  </Field>
+                  <Field label="Hạn follow-up" required>
+                    <input value={form.followUpDate} onChange={event => setValue('followUpDate', event.target.value)} type="datetime-local" />
+                  </Field>
+                </div>
+                <Field label="Người phụ trách">
+                  <MemberSearchSelect
+                    placeholder="-- Chưa giao --"
+                    showAvatar={false}
+                    value={sdrSelectionKey}
+                    onChange={value => handlePick(value, 'sdrId', 'sdrNameHint')}
+                    members={[
+                      ...(currentUserMissingFromMembers && currentUser
+                        ? [{ id: currentUser.id, displayName: currentUser.name || currentUser.email || 'Bạn', email: currentUser.email }]
+                        : []),
+                      ...assignableMembers
+                        .filter(m => selectionKeyOf(m) === sdrSelectionKey || (selectionKeyOf(m) !== leadedBySelectionKey && isAssignmentEligible(m)))
+                        .map(m => ({ id: selectionKeyOf(m), displayName: m.display_name, email: m.email })),
+                    ]}
+                  />
+                  <p className="crm-customer-form-hint">Tự động lấy sale đang đăng nhập. Manager có thể đổi sau.</p>
+                </Field>
+              </div>
+            </section>
+
+            <section className="crm-form-section crm-verify-section crm-verify-panel crm-verify-readiness-panel" id="crm-deal-create-readiness">
+              <div className="crm-verify-suggest-head">
+                <p className="crm-form-title">Tóm tắt quyết định</p>
+                <span className={`crm-verify-readiness-pill crm-verify-readiness-pill--${createReadinessTone}`}>{createReadinessLabel}</span>
+              </div>
+              <ul className="crm-verify-checklist">
+                {createReviewChecks.map(row => (
+                  <li key={row.key} className={row.ok ? 'is-ok' : ''}>
+                    {row.ok ? <CheckCircle2 className="crm-line-icon" /> : <XCircle className="crm-line-icon" />}
+                    <span>{row.label}</span>
+                    <b className="crm-verify-check-value">{row.value}</b>
+                  </li>
+                ))}
+              </ul>
+              <div className={`crm-deal-card crm-deal-card--health-${dealHealth.level}`} style={{ marginTop: '0.6rem' }}>
+                <span className="crm-deal-card-label">Deal Health</span>
+                <strong className="crm-deal-card-score">{dealHealth.score}/100 · {dealHealth.label}</strong>
+                <p className="crm-deal-card-desc">{dealHealth.description}</p>
+              </div>
+              <div className="crm-verify-readiness-summary">
+                <div>
+                  <span>Đã đạt</span>
+                  <b>{createReviewOkCount}/{createReviewChecks.length} tiêu chí</b>
+                </div>
+                {!createReviewReady ? (
+                  <p>Còn thiếu: {createReviewChecks.filter(c => !c.ok).map(c => c.label).join(', ')}</p>
+                ) : (
+                  <p>Đủ điều kiện để tạo deal.</p>
+                )}
+              </div>
+            </section>
           </div>
-          <div className="crm-deal-card">
-            <span className="crm-deal-card-label">Người phụ trách</span>
-            <MemberSearchSelect
-              placeholder="-- Chưa giao --"
-              showAvatar={false}
-              value={sdrSelectionKey}
-              onChange={value => handlePick(value, 'sdrId', 'sdrNameHint')}
-              members={[
-                ...(currentUserMissingFromMembers && currentUser
-                  ? [{ id: currentUser.id, displayName: currentUser.name || currentUser.email || 'Bạn', email: currentUser.email }]
-                  : []),
-                ...assignableMembers
-                  .filter(m => selectionKeyOf(m) === sdrSelectionKey || (selectionKeyOf(m) !== leadedBySelectionKey && isAssignmentEligible(m)))
-                  .map(m => ({ id: selectionKeyOf(m), displayName: m.display_name, email: m.email })),
-              ]}
-            />
-            <p className="crm-deal-card-desc">Tự động lấy sale đang đăng nhập. Manager có thể đổi sau.</p>
-          </div>
-        </div>
-      </section>
+        </>
+      ) : (
+        <>
+          <section className="crm-form-section">
+            <h3 className="crm-form-title">1. Khách hàng &amp; Cơ hội</h3>
+            <div className="crm-form-grid">
+              <Field label="Customer / Công ty" required>
+                <CustomerProfileCombobox form={form} setValue={setValue} locked={form.customerLocked} />
+              </Field>
+              <Field label="Dự án" required hint={form.projectLocked ? undefined : 'chọn có sẵn hoặc gõ tên mới — cơ hội lấy tên theo dự án'}>
+                <ProjectPicker form={form} setValue={setValue} locked={form.projectLocked} />
+              </Field>
+              <Field label="Người liên hệ chính" hint={form.primaryContactLocked ? undefined : 'tùy chọn'}>
+                <ContactPicker form={form} setValue={setValue} locked={form.primaryContactLocked} />
+              </Field>
+              <Field label="Công ty" hint="tùy chọn">
+                <input value={form.companyName} onChange={event => editIdentity('companyName', event.target.value)} placeholder="Công ty TNHH ABC" />
+              </Field>
+              <Field label="Tên người liên hệ" hint={form.primaryContactId ? 'từ Contact đã chọn; không sửa hồ sơ CRM' : 'tùy chọn'}>
+                <input value={form.contactName} readOnly placeholder="Chọn Contact để lấy tên người liên hệ" />
+              </Field>
+              <Field full label="Liên hệ" required hint="chỉ cần SĐT hoặc Email">
+                <div className="crm-inline-pair">
+                  <input value={form.phone} onChange={event => editIdentity('phone', event.target.value)} type="tel" placeholder="Số điện thoại" />
+                  <input value={form.email} onChange={event => editIdentity('email', event.target.value)} type="email" placeholder="Email" />
+                </div>
+              </Field>
+              <Field label="Sản phẩm / dịch vụ" required>
+                <CrmCategoryCodeSelect categoryType="crm_service_package" value={form.servicePackage} onChange={value => setValue('servicePackage', value)} fallbackOptions={servicePackageOptions} placeholder="-- Chọn --" />
+              </Field>
+              <Field label="Giá trị ước tính (VND)">
+                <CurrencyInput
+                  value={parseCurrencyInput(form.estimatedBudget)}
+                  onChange={value => setValue('estimatedBudget', value != null ? String(value) : '')}
+                  placeholder="VD: 50.000.000"
+                />
+              </Field>
+            </div>
+          </section>
+
+          <section className="crm-form-section">
+            <h3 className="crm-form-title">2. Deal đang ở đâu?</h3>
+            <div className="crm-form-grid">
+              <Field full label="Giai đoạn deal">
+                <select value={form.stage} onChange={event => setValue('stage', event.target.value as Deal['stage'])}>
+                  {DEAL_STAGES.map(stage => (
+                    <option key={stage} value={stage}>
+                      {DEAL_STAGE_META[stage].label} - {DEAL_STAGE_META[stage].description}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="Next step" required>
+                <CrmCategorySelect categoryType="crm_next_step" value={form.nextStep} onChange={value => setValue('nextStep', value)} placeholder="-- Chọn --" excludeLabels={["Khác", "Khac"]} />
+              </Field>
+              <Field label="Hạn follow-up" required>
+                <input value={form.followUpDate} onChange={event => setValue('followUpDate', event.target.value)} type="datetime-local" />
+              </Field>
+              {form.stage === 'on_hold' ? (
+                <Field full label="Lý do tạm dừng">
+                  <textarea value={form.pauseReason} onChange={event => setValue('pauseReason', event.target.value)} placeholder="Ghi rõ lý do deal bị tạm dừng..." />
+                </Field>
+              ) : null}
+            </div>
+
+            <div className="crm-deal-cards">
+              <div className={`crm-deal-card crm-deal-card--health-${dealHealth.level}`}>
+                <span className="crm-deal-card-label">Deal Health – tự tính để manager đánh giá chất lượng</span>
+                <strong className="crm-deal-card-score">{dealHealth.score}/100 · {dealHealth.label}</strong>
+                <p className="crm-deal-card-desc">{dealHealth.description}</p>
+              </div>
+              <div className="crm-deal-card">
+                <span className="crm-deal-card-label">Người phụ trách</span>
+                <MemberSearchSelect
+                  placeholder="-- Chưa giao --"
+                  showAvatar={false}
+                  value={sdrSelectionKey}
+                  onChange={value => handlePick(value, 'sdrId', 'sdrNameHint')}
+                  members={[
+                    ...(currentUserMissingFromMembers && currentUser
+                      ? [{ id: currentUser.id, displayName: currentUser.name || currentUser.email || 'Bạn', email: currentUser.email }]
+                      : []),
+                    ...assignableMembers
+                      .filter(m => selectionKeyOf(m) === sdrSelectionKey || (selectionKeyOf(m) !== leadedBySelectionKey && isAssignmentEligible(m)))
+                      .map(m => ({ id: selectionKeyOf(m), displayName: m.display_name, email: m.email })),
+                  ]}
+                />
+                <p className="crm-deal-card-desc">Tự động lấy sale đang đăng nhập. Manager có thể đổi sau.</p>
+              </div>
+            </div>
+          </section>
+        </>
+      )}
 
       <section className="crm-advanced">
         <button type="button" className="crm-advanced-toggle" onClick={() => setAdvancedOpen(open => !open)}>

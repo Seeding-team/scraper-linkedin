@@ -7,7 +7,6 @@ import { parseCurrencyInput } from '@/lib/currency';
 import { useMembers } from '@/hooks/useMembers';
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
 import { allPlatformCategoriesService } from '@/services/all-platform.service';
-import { formatVND } from '../constants/crmConfig';
 import {
   CustomerProfileCombobox,
   emptyDealForm,
@@ -20,7 +19,7 @@ import { DEAL_STAGE_META } from '../constants/crmConfig';
 import { CrmContactsPanel } from './CrmContactsPanel';
 import { SearchableSelect } from './SearchableSelect';
 import { CrmCategoryCodeSelect, CrmCategorySelect } from './CrmCategorySelect';
-import { Loader2, X } from './icons';
+import { CheckCircle2, HelpCircle, Loader2, X, XCircle } from './icons';
 import { seedingCrmRepository } from '../repositories/SeedingCrmRepository';
 import type { CreateDealInput, CrmCustomerRow } from '../types';
 import type { AppUser } from '@/types/unified.types';
@@ -34,6 +33,11 @@ function headers() {
 function isAdminOrLeader(user: AppUser | null) {
   const role = String(user?.role || '').toLowerCase();
   return role === 'admin' || role === 'leader';
+}
+
+function initialOf(name: string): string {
+  const trimmed = (name || '').trim();
+  return trimmed ? trimmed[0].toUpperCase() : '?';
 }
 
 type ApiContact = {
@@ -254,14 +258,36 @@ export function CreateOpportunityDrawer({
   }, [dealNameTouched, productValue, productOptions, customerForm.companyName, customerForm.customerName]);
 
   const selectedContact = contacts.find(c => c.id === selectedContactId) || null;
-  const stageProbability = STAGE_PROBABILITY[customerForm.stage] ?? 0;
 
-  const reviewReady =
-    Boolean(customerForm.customerId) &&
-    Boolean(productValue) &&
-    Boolean(dealName.trim()) &&
-    Boolean(customerForm.followUpDate) &&
-    Boolean(customerForm.nextStep.trim());
+  // "Tóm tắt quyết định" - cung mau UI/logic voi crm-verify-readiness-panel cua
+  // LeadDetailDrawer (Xac minh Lead), 5 dieu kien nay CHINH LA dieu kien cua
+  // reviewReady cu (khong doi logic, chi tach thanh mang de render checklist).
+  const reviewChecks = [
+    {
+      key: 'customer',
+      label: 'Đã chọn khách hàng',
+      value: customerForm.companyName || customerForm.customerName || '—',
+      ok: Boolean(customerForm.customerId),
+    },
+    {
+      key: 'product',
+      label: 'Sản phẩm / dịch vụ',
+      value: productOptions.find(p => p.value === productValue)?.label || productValue || '—',
+      ok: Boolean(productValue),
+    },
+    { key: 'name', label: 'Tên cơ hội', value: dealName || '—', ok: Boolean(dealName.trim()) },
+    { key: 'next', label: 'Việc tiếp theo', value: customerForm.nextStep || '—', ok: Boolean(customerForm.nextStep.trim()) },
+    {
+      key: 'follow',
+      label: 'Ngày follow-up',
+      value: customerForm.followUpDate ? customerForm.followUpDate.replace('T', ' ') : '—',
+      ok: Boolean(customerForm.followUpDate),
+    },
+  ];
+  const reviewOkCount = reviewChecks.filter(c => c.ok).length;
+  const reviewReady = reviewOkCount === reviewChecks.length;
+  const readinessLabel = reviewReady ? 'Sẵn sàng tạo cơ hội' : reviewOkCount >= 3 ? 'Cần bổ sung thêm' : 'Chưa sẵn sàng';
+  const readinessTone = reviewReady ? 'ready' : reviewOkCount >= 3 ? 'partial' : 'blocked';
 
   function validate(): string | null {
     if (!customerForm.customerId) return 'Vui lòng chọn khách hàng.';
@@ -324,59 +350,90 @@ export function CreateOpportunityDrawer({
   if (!open || !customer) return null;
 
   return (
-    <div className="crm-drawer-backdrop" onClick={onClose}>
-      <div className="crm-customer-drawer" onClick={event => event.stopPropagation()}>
-        <header className="crm-customer-drawer-header">
-          <div>
-            <h2>Tạo cơ hội bán hàng</h2>
-            <p style={{ margin: '0.25rem 0 0', fontSize: '0.8rem', color: '#64748b', maxWidth: '38rem' }}>
-              Chọn khách hàng → chọn sản phẩm → xác nhận việc tiếp theo. Phần còn lại hệ thống tự điền.
-            </p>
+    <>
+      {/* Cung khuon UI voi crm-verify-drawer cua LeadDetailDrawer (Xac minh
+       * Lead) - leader yeu cau Tao co hoi dung chung form/kieu voi Xac minh
+       * Lead de de dung, chi giu dung field da co san cua Tao co hoi, khong
+       * them field lead-only (ICP fit, AI score...) vi Co hoi da co san Khach
+       * hang, khong can lai. */}
+      <div className="crm-drawer-backdrop crm-lead-verify-backdrop" onClick={onClose} />
+      <aside className="crm-drawer crm-lead-detail-drawer crm-verify-drawer">
+        <header className="crm-lead-drawer-header crm-verify-header">
+          <div className="crm-verify-header-text">
+            <h2>
+              Tạo cơ hội bán hàng
+              <span
+                className="crm-help-icon"
+                tabIndex={0}
+                title="Chọn khách hàng → chọn sản phẩm → xác nhận việc tiếp theo. Phần còn lại hệ thống tự điền."
+              >
+                <HelpCircle className="crm-icon" />
+              </span>
+            </h2>
           </div>
-          <button type="button" className="crm-drawer-close" onClick={onClose} aria-label="Đóng">
-            <X className="crm-icon" />
-          </button>
+          <div className="crm-lead-drawer-header-actions">
+            <button type="button" className="crm-drawer-close" onClick={onClose} aria-label="Đóng">
+              <X className="crm-icon" />
+            </button>
+          </div>
         </header>
 
-        <div className="crm-drawer-body">
-          {error ? <p className="crm-error crm-customer-form-error">{error}</p> : null}
+        <div className="crm-drawer-body crm-lead-drawer-body crm-verify-body">
+          {error ? <p className="crm-error">{error}</p> : null}
 
-          <section className="crm-form-section">
-            <p className="crm-form-title">1. Khách hàng / Công ty</p>
-            <div className="crm-opportunity-summary-card">
-              <span><strong>{customerForm.companyName || customerForm.customerName || 'Chưa chọn'}</strong></span>
-              <span>MST: {customerForm.taxCode || '—'}</span>
-              <span>{contactCount} contact</span>
-              <span>{dealCount} deal</span>
-              <span>Owner: {ownerNameHint || 'Chưa gán'}</span>
+          <section className="crm-verify-summary">
+            <span className="crm-verify-avatar" aria-hidden>{initialOf(customerForm.companyName || customerForm.customerName)}</span>
+            <div className="crm-verify-summary-main">
+              <p className="crm-verify-name">{customerForm.companyName || customerForm.customerName || 'Chưa chọn khách hàng'}</p>
+              <p className="crm-verify-sub">MST: {customerForm.taxCode || '—'}</p>
+              <p className="crm-verify-sub">
+                {customerForm.phone ? <a href={`tel:${customerForm.phone}`}>{customerForm.phone}</a> : <span>Chưa có SĐT</span>}
+                <span className="crm-verify-dot">·</span>
+                {customerForm.email ? <a href={`mailto:${customerForm.email}`}>{customerForm.email}</a> : <span>Chưa có email</span>}
+              </p>
+              <div style={{ marginTop: '0.45rem' }}>
+                <CustomerProfileCombobox form={customerForm} setValue={setCustomerFormValue} disabled={!canSwitchCustomer} />
+                {!canSwitchCustomer ? (
+                  <p className="crm-customer-form-hint">Chỉ admin/leader mới đổi được sang khách hàng khác.</p>
+                ) : null}
+              </div>
             </div>
-            <CustomerProfileCombobox form={customerForm} setValue={setCustomerFormValue} disabled={!canSwitchCustomer} />
-            {!canSwitchCustomer ? (
-              <p className="crm-customer-form-hint">Chỉ admin/leader mới đổi được sang khách hàng khác.</p>
-            ) : null}
+            <div className="crm-verify-score">
+              <b>{dealCount}</b>
+              <span>CƠ HỘI HIỆN CÓ</span>
+            </div>
           </section>
 
-          <section className="crm-form-section">
-            <p className="crm-form-title">2. Người liên hệ</p>
+          <div className="crm-verify-kpi-strip">
+            <div><span>Contact</span><b>{contactCount}</b></div>
+            <div><span>Owner</span><b>{ownerNameHint || 'Chưa gán'}</b></div>
+            <div><span>Nguồn cơ hội</span><b>{oppSource}</b></div>
+            <div><span>Dự kiến chốt</span><b>{closeDate || 'Chưa đặt'}</b></div>
+          </div>
+
+          <section className="crm-form-section crm-verify-section crm-verify-panel" id="crm-opportunity-contacts">
+            <p className="crm-form-title">Người liên hệ</p>
             {contactsLoading ? (
               <p className="crm-small"><Loader2 className="crm-spin-icon" /> Đang tải danh sách liên hệ...</p>
             ) : contacts.length ? (
-              <div className="crm-form-grid">
-                <Field label="Liên hệ">
-                  <select value={selectedContactId} onChange={e => setSelectedContactId(e.target.value)}>
-                    <option value="">-- Chưa chọn --</option>
-                    {contacts.map(c => (
-                      <option key={c.id} value={c.id}>
-                        {c.name}{c.position || c.position_label_snapshot ? ` (${c.position_label_snapshot || c.position})` : ''}
-                      </option>
-                    ))}
-                  </select>
-                </Field>
-                <Field label="Vai trò trong quyết định mua">
-                  <select value={contactRole} onChange={e => setContactRole(e.target.value)}>
-                    {CONTACT_ROLE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-                  </select>
-                </Field>
+              <div className="crm-verify-compact-fields">
+                <div className="crm-inline-pair">
+                  <Field label="Liên hệ">
+                    <select value={selectedContactId} onChange={e => setSelectedContactId(e.target.value)}>
+                      <option value="">-- Chưa chọn --</option>
+                      {contacts.map(c => (
+                        <option key={c.id} value={c.id}>
+                          {c.name}{c.position || c.position_label_snapshot ? ` (${c.position_label_snapshot || c.position})` : ''}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                  <Field label="Vai trò trong quyết định mua">
+                    <select value={contactRole} onChange={e => setContactRole(e.target.value)}>
+                      {CONTACT_ROLE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                    </select>
+                  </Field>
+                </div>
               </div>
             ) : (
               <div className="crm-opportunity-empty-contacts">
@@ -395,122 +452,132 @@ export function CreateOpportunityDrawer({
             ) : null}
           </section>
 
-          <section className="crm-form-section">
-            <p className="crm-form-title">3. Khách đang quan tâm gì</p>
-            <div className="crm-form-grid">
-              <Field label="Sản phẩm / dịch vụ" required>
-                <CrmCategoryCodeSelect categoryType="crm_service_package" value={productValue} onChange={setProductValue} placeholder="-- Chọn --" />
-              </Field>
-              <Field label="Tên cơ hội" required>
-                <input
-                  value={dealName}
-                  onChange={e => { setDealName(e.target.value); setDealNameTouched(true); }}
-                  placeholder="VD: Công ty ABC - Markee CRM"
-                />
-              </Field>
-              <Field label="Giá trị ước tính (VND)" hint="danh mục sản phẩm chưa có giá niêm yết, nhập tay">
-                <CurrencyInput
-                  value={parseCurrencyInput(estimatedBudget)}
-                  onChange={value => setEstimatedBudget(value != null ? String(value) : '')}
-                  placeholder="VD: 50.000.000"
-                />
-              </Field>
-            </div>
-          </section>
+          <div className="crm-verify-compact-grid">
+            <section className="crm-form-section crm-verify-section crm-verify-panel" id="crm-opportunity-info">
+              <p className="crm-form-title">Cơ hội</p>
+              <div className="crm-verify-compact-fields">
+                <Field label="Sản phẩm / dịch vụ" required>
+                  <CrmCategoryCodeSelect categoryType="crm_service_package" value={productValue} onChange={setProductValue} placeholder="-- Chọn --" />
+                </Field>
+                <Field label="Tên cơ hội" required>
+                  <input
+                    value={dealName}
+                    onChange={e => { setDealName(e.target.value); setDealNameTouched(true); }}
+                    placeholder="VD: Công ty ABC - Markee CRM"
+                  />
+                </Field>
+                <Field label="Giá trị ước tính (VND)" hint="danh mục sản phẩm chưa có giá niêm yết, nhập tay">
+                  <CurrencyInput
+                    value={parseCurrencyInput(estimatedBudget)}
+                    onChange={value => setEstimatedBudget(value != null ? String(value) : '')}
+                    placeholder="VD: 50.000.000"
+                  />
+                </Field>
+                <Field label="Nguồn cơ hội">
+                  <CrmCategoryCodeSelect
+                    categoryType="crm_source"
+                    value={oppSource}
+                    onChange={setOppSource}
+                  />
+                </Field>
+              </div>
+            </section>
 
-          <section className="crm-form-section">
-            <p className="crm-form-title">4. Bước bán hàng và người phụ trách</p>
-            <div className="crm-form-grid">
-              <Field full label="Giai đoạn" required>
-                <div className="crm-stage-filter">
-                  {CREATE_STAGE_CHIPS.map(stage => {
-                    const selected = customerForm.stage === stage;
-                    return (
-                      <button
-                        type="button"
-                        key={stage}
-                        className={`crm-stage-pill ${selected ? 'crm-stage-pill--selected' : 'crm-stage-pill--idle'}`}
-                        style={selected ? { background: DEAL_STAGE_META[stage].color, borderColor: DEAL_STAGE_META[stage].color, color: '#fff' } : undefined}
-                        onClick={() => setCustomerFormValue('stage', stage)}
-                      >
-                        {CREATE_STAGE_LABELS[stage]} · {STAGE_PROBABILITY[stage] ?? 0}%
-                      </button>
-                    );
-                  })}
+            <section className="crm-form-section crm-verify-section crm-verify-panel" id="crm-opportunity-handoff">
+              <p className="crm-form-title">Bàn giao & giai đoạn</p>
+              <div className="crm-verify-compact-fields">
+                <Field full label="Giai đoạn" required>
+                  <div className="crm-stage-filter">
+                    {CREATE_STAGE_CHIPS.map(stage => {
+                      const selected = customerForm.stage === stage;
+                      return (
+                        <button
+                          type="button"
+                          key={stage}
+                          className={`crm-stage-pill ${selected ? 'crm-stage-pill--selected' : 'crm-stage-pill--idle'}`}
+                          style={selected ? { background: DEAL_STAGE_META[stage].color, borderColor: DEAL_STAGE_META[stage].color, color: '#fff' } : undefined}
+                          onClick={() => setCustomerFormValue('stage', stage)}
+                        >
+                          {CREATE_STAGE_LABELS[stage]} · {STAGE_PROBABILITY[stage] ?? 0}%
+                        </button>
+                      );
+                    })}
+                  </div>
+                </Field>
+                <div className="crm-inline-pair">
+                  <Field label="Người phụ trách">
+                    <select
+                      value={customerForm.sdrId}
+                      disabled={!canPickOwner}
+                      onChange={e => {
+                        const value = e.target.value;
+                        const match = members.find(m => (m.linked_user_id || m.linked_user_id_2) === value);
+                        setCustomerFormValue('sdrId', value);
+                        setCustomerFormValue('sdrNameHint', match ? match.display_name : '');
+                      }}
+                    >
+                      <option value="">-- Chưa giao --</option>
+                      {members.filter(m => m.linked_user_id || m.linked_user_id_2).map(m => (
+                        <option key={m.id} value={m.linked_user_id || m.linked_user_id_2 || ''}>{m.display_name}</option>
+                      ))}
+                    </select>
+                    {!canPickOwner ? <p className="crm-customer-form-hint">Mặc định theo Owner của khách hàng — chỉ admin/leader đổi được.</p> : null}
+                  </Field>
+                  <Field label="Dự kiến chốt">
+                    <input value={closeDate} onChange={e => setCloseDate(e.target.value)} type="date" />
+                  </Field>
                 </div>
-              </Field>
-              <Field label="Người phụ trách">
-                <select
-                  value={customerForm.sdrId}
-                  disabled={!canPickOwner}
-                  onChange={e => {
-                    const value = e.target.value;
-                    const match = members.find(m => (m.linked_user_id || m.linked_user_id_2) === value);
-                    setCustomerFormValue('sdrId', value);
-                    setCustomerFormValue('sdrNameHint', match ? match.display_name : '');
-                  }}
-                >
-                  <option value="">-- Chưa giao --</option>
-                  {members.filter(m => m.linked_user_id || m.linked_user_id_2).map(m => (
-                    <option key={m.id} value={m.linked_user_id || m.linked_user_id_2 || ''}>{m.display_name}</option>
-                  ))}
-                </select>
-                {!canPickOwner ? <p className="crm-customer-form-hint">Mặc định theo Owner của khách hàng — chỉ admin/leader đổi được.</p> : null}
-              </Field>
-              <Field label="Dự kiến chốt">
-                <input value={closeDate} onChange={e => setCloseDate(e.target.value)} type="date" />
-              </Field>
-              <Field label="Nguồn cơ hội">
-                <CrmCategoryCodeSelect
-                  categoryType="crm_source"
-                  value={oppSource}
-                  onChange={setOppSource}
-                />
-              </Field>
-            </div>
-          </section>
+                <div className="crm-inline-pair">
+                  <Field label="Việc cần làm" required>
+                    <CrmCategorySelect
+                      categoryType="crm_next_step"
+                      value={customerForm.nextStep}
+                      onChange={value => setCustomerFormValue('nextStep', value)}
+                      placeholder="-- Chọn --"
+                      excludeLabels={["Khác", "Khac"]}
+                    />
+                  </Field>
+                  <Field label="Ngày follow-up" required>
+                    <input value={customerForm.followUpDate} onChange={e => setCustomerFormValue('followUpDate', e.target.value)} type="datetime-local" />
+                  </Field>
+                </div>
+              </div>
+            </section>
 
-          <section className="crm-form-section">
-            <p className="crm-form-title">5. Việc tiếp theo <b>*</b></p>
-            <div className="crm-form-grid">
-              <Field label="Việc cần làm" required>
-                <CrmCategorySelect
-                  categoryType="crm_next_step"
-                  value={customerForm.nextStep}
-                  onChange={value => setCustomerFormValue('nextStep', value)}
-                  placeholder="-- Chọn --"
-                  excludeLabels={["Khác", "Khac"]}
-                />
-              </Field>
-              <Field label="Ngày follow-up" required>
-                <input value={customerForm.followUpDate} onChange={e => setCustomerFormValue('followUpDate', e.target.value)} type="datetime-local" />
-              </Field>
-            </div>
-          </section>
-
-          <section className="crm-form-section">
-            <p className="crm-form-title">6. Kiểm tra trước khi tạo</p>
-            <div className="crm-opportunity-review-list">
-              <div className="crm-opportunity-review-row"><span>Khách hàng</span><span>{customerForm.companyName || customerForm.customerName || '—'}</span></div>
-              <div className="crm-opportunity-review-row"><span>Liên hệ</span><span>{selectedContact ? `${selectedContact.name} (${contactRole})` : 'Chưa chọn'}</span></div>
-              <div className="crm-opportunity-review-row"><span>Sản phẩm</span><span>{productOptions.find(p => p.value === productValue)?.label || productValue || '—'}</span></div>
-              <div className="crm-opportunity-review-row"><span>Tên cơ hội</span><span>{dealName || '—'}</span></div>
-              <div className="crm-opportunity-review-row"><span>Giai đoạn</span><span>{CREATE_STAGE_LABELS[customerForm.stage] || customerForm.stage} ({stageProbability}%)</span></div>
-              <div className="crm-opportunity-review-row"><span>Giá trị ước tính</span><span>{estimatedBudget ? formatVND(Number(estimatedBudget.replace(/[^0-9]/g, '')) || 0) : '—'}</span></div>
-              <div className="crm-opportunity-review-row"><span>Người phụ trách</span><span>{ownerNameHint || 'Chưa gán'}</span></div>
-              <div className="crm-opportunity-review-row"><span>Việc tiếp theo</span><span>{customerForm.nextStep || '—'}{customerForm.followUpDate ? ` · ${customerForm.followUpDate.replace('T', ' ')}` : ''}</span></div>
-            </div>
-            {!reviewReady ? <p className="crm-customer-form-hint">Điền đủ các mục bắt buộc (*) ở trên để có thể tạo cơ hội.</p> : null}
-          </section>
+            <section className="crm-form-section crm-verify-section crm-verify-panel crm-verify-readiness-panel" id="crm-opportunity-readiness">
+              <div className="crm-verify-suggest-head">
+                <p className="crm-form-title">Tóm tắt quyết định</p>
+                <span className={`crm-verify-readiness-pill crm-verify-readiness-pill--${readinessTone}`}>{readinessLabel}</span>
+              </div>
+              <ul className="crm-verify-checklist">
+                {reviewChecks.map(row => (
+                  <li key={row.key} className={row.ok ? 'is-ok' : ''}>
+                    {row.ok ? <CheckCircle2 className="crm-line-icon" /> : <XCircle className="crm-line-icon" />}
+                    <span>{row.label}</span>
+                    <b className="crm-verify-check-value">{row.value}</b>
+                  </li>
+                ))}
+              </ul>
+              <div className="crm-verify-readiness-summary">
+                <div>
+                  <span>Đã đạt</span>
+                  <b>{reviewOkCount}/{reviewChecks.length} tiêu chí</b>
+                </div>
+                {!reviewReady ? (
+                  <p>Còn thiếu: {reviewChecks.filter(c => !c.ok).map(c => c.label).join(', ')}</p>
+                ) : (
+                  <p>Đủ điều kiện để tạo cơ hội.</p>
+                )}
+              </div>
+            </section>
+          </div>
         </div>
 
-        <footer className="crm-drawer-footer crm-customer-drawer-footer">
-          <div className="crm-customer-drawer-nav">
-            <button type="button" className="crm-cancel-button" onClick={onClose} disabled={saving !== ''}>
+        <footer className="crm-drawer-footer crm-verify-footer">
+          <div className="crm-footer-actions">
+            <button type="button" className="crm-secondary-button" onClick={onClose} disabled={saving !== ''}>
               Hủy
             </button>
-          </div>
-          <div className="crm-footer-actions">
             <button type="button" className="crm-secondary-button" disabled={!reviewReady || saving !== ''} onClick={() => void handleCreate('stay')}>
               {saving === 'stay' ? <Loader2 className="crm-save-spinner" /> : null}
               Tạo cơ hội
@@ -525,14 +592,14 @@ export function CreateOpportunityDrawer({
               {saving === 'calendar' ? <Loader2 className="crm-save-spinner" /> : null}
               Tạo và mở lịch
             </button>
-            <button type="button" className="crm-save-button" disabled={!reviewReady || saving !== ''} onClick={() => void handleCreate('deal')}>
+            <button type="button" className="crm-primary-button" disabled={!reviewReady || saving !== ''} onClick={() => void handleCreate('deal')}>
               {saving === 'deal' ? <Loader2 className="crm-save-spinner" /> : null}
               Tạo và mở Deal
             </button>
           </div>
         </footer>
-      </div>
-    </div>
+      </aside>
+    </>
   );
 }
 

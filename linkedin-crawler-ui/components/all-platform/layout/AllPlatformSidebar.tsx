@@ -368,13 +368,67 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, workspaceTab: 
           : []),
       ],
     },
+    // Sub-group Cấp 2: "Danh mục & cấu hình" (WIP full-flow, prototype
+    // markee_crm_v26_compact_opportunity_name.html). Feedback (2026-09-27):
+    // "cái gì có rồi ở danh mục CRM rồi thì bỏ về lại, chỉ thêm những cái
+    // chưa có thôi" - 3 muc "Sản phẩm & dịch vụ"/"Việc tiếp theo"/"Nguồn
+    // Lead" DA CO SAN trong trang "Danh mục CRM" (mot muc duy nhat, KHONG
+    // tach rieng nua) - CHI them 4 muc THAT SU chua co: Dieu kien phan loai
+    // Lead (da lam that) + Muc do quan tam/Giai doan co hoi/Team Sale (placeholder
+    // "Đang phát triển", CHUA co cau hinh that nao trong app).
     {
-      type: "item",
-      id: "crm-categories",
-      href: "/all-platform/crm/categories",
+      type: "subgroup",
+      id: "crm-sub-categories",
       icon: "list_alt",
-      label: "Danh mục CRM",
-      matchStartsWith: ["/all-platform/crm/categories"],
+      label: "Danh mục & cấu hình",
+      items: [
+        // "Điều kiện phân loại Lead" - "chỉ có admin mới được tick chọn" nên
+        // ẩn hẳn khỏi sidebar với người không phải Admin.
+        ...(isAdmin
+          ? ([
+              {
+                type: "item",
+                id: "crm-lead-rules",
+                href: "/all-platform/crm/lead-rules",
+                icon: "assignment",
+                label: "Điều kiện phân loại Lead",
+                matchStartsWith: ["/all-platform/crm/lead-rules"],
+              },
+            ] as NavLeafItem[])
+          : []),
+        {
+          type: "item",
+          id: "crm-categories",
+          href: "/all-platform/crm/categories",
+          icon: "list_alt",
+          label: "Danh mục CRM",
+          matchStartsWith: ["/all-platform/crm/categories"],
+        },
+        {
+          type: "item",
+          id: "crm-interest-levels",
+          href: "/all-platform/crm/interest-levels",
+          icon: "trending_up",
+          label: "Mức độ quan tâm",
+          matchStartsWith: ["/all-platform/crm/interest-levels"],
+        },
+        {
+          type: "item",
+          id: "crm-deal-stages",
+          href: "/all-platform/crm/deal-stages",
+          icon: "filter_alt",
+          label: "Giai đoạn cơ hội",
+          matchStartsWith: ["/all-platform/crm/deal-stages"],
+        },
+        {
+          type: "item",
+          id: "crm-sale-teams",
+          href: "/all-platform/crm/sale-teams",
+          icon: "group",
+          label: "Team Sale",
+          matchStartsWith: ["/all-platform/crm/sale-teams"],
+        },
+      ],
     },
   ];
   const crmEntries: SidebarEntry[] = [

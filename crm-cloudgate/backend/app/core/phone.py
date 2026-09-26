@@ -13,6 +13,22 @@ E.164 VN:
 from __future__ import annotations
 
 import re
+import unicodedata
+
+
+def _ascii_digits(s: str) -> str:
+    """Doi cac ky tu so Unicode (full-width, Arabic-Indic...) ve ASCII 0-9.
+
+    Ban phim ao / IME tren mobile doi khi chen ky tu so khong phai ASCII (vd
+    full-width "０-９"). re.sub(r"\\D", ...) ben duoi la Unicode-aware nen KHONG
+    loai duoc cac ky tu nay (chung duoc coi la \\d), khien SDT bi sai dinh
+    dang ma khong bi strip - gay loi "khong hop le" chi tren mobile du nguoi
+    dung go/nhin thay cung 1 so nhu tren may tinh.
+    """
+    return "".join(
+        str(unicodedata.digit(ch)) if unicodedata.category(ch) == "Nd" else ch
+        for ch in s
+    )
 
 
 def vn_phone_to_e164(value: str | None) -> str | None:
@@ -34,7 +50,7 @@ def vn_phone_to_e164(value: str | None) -> str | None:
     if not value:
         return None
 
-    s = str(value).strip()
+    s = _ascii_digits(str(value).strip())
     if not s:
         return None
 

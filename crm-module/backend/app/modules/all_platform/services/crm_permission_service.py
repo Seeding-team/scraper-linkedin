@@ -465,6 +465,18 @@ def can_manage_quote_approval_rules(user: dict[str, Any] | None) -> bool:
     return role == "admin"
 
 
+def can_manage_lead_classification_rules(user: dict[str, Any] | None) -> bool:
+    """Dieu kien phan loai Lead (SQL/Nuoi duong/Khong dat chuan, migration 152)
+    - "chỉ có admin mới được tick chọn" (yeu cau rieng cua leader) - CHI role
+    == admin, dung cung pattern voi can_manage_quote_approval_rules(). GET
+    khong can ham nay - moi nguoi dang nhap deu xem duoc rule dang ap dung;
+    CHI PUT/sua rule moi bat buoc admin."""
+    if not user:
+        return False
+    role = str(user.get("role") or "").strip().lower()
+    return role == "admin"
+
+
 def can_manage_price_book(user: dict[str, Any] | None) -> bool:
     """Bang gia VPS Zone - CRUD Draft/publish version cho Admin VA Leader
     (yeu cau rieng, mo rong tu ban dau CHI Admin - Leader cung duoc quan ly

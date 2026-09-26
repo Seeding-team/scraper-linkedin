@@ -1107,22 +1107,23 @@ export function QuoteCenterPage() {
               onChange={() => toggleSelectQuote(current.id)}
               aria-label={`Chọn báo giá ${current.quoteNumber}`}
             />
-            {versionCount > 1 ? (
-              <button
-                type="button"
-                className="qc-version-toggle"
-                aria-expanded={Boolean(expanded)}
-                title={expanded ? 'Thu gọn phiên bản cũ' : `Mở rộng ${versionCount - 1} phiên bản cũ`}
-                onClick={() => void toggleExpandVersions(row)}
-              >
-                {expanded ? <ChevronUp className="qc-icon" /> : <ChevronDown className="qc-icon" />}
-              </button>
-            ) : null}
             <button type="button" className="qc-row-link qc-row-link-btn" title={current.quoteNumber} onClick={() => openQuoteWorkspace(current.id)}>
               {current.quoteNumber}
             </button>
             </span>
             <span className="qc-badge qc-badge-version">V{current.versionNumber || 1} hiện tại</span>
+            {versionCount > 1 ? (
+              <button
+                type="button"
+                className="qc-version-toggle"
+                aria-expanded={Boolean(expanded)}
+                title={expanded ? 'Thu gọn phiên bản cũ' : `Xem ${versionCount - 1} phiên bản cũ`}
+                onClick={() => void toggleExpandVersions(row)}
+              >
+                {expanded ? <ChevronUp className="qc-icon" /> : <ChevronDown className="qc-icon" />}
+                {versionCount} phiên bản
+              </button>
+            ) : null}
           </div>
           {typeof current.data?.quoteTitle === 'string' && current.data.quoteTitle ? (
             <div className="qc-cell-quote-title" title={current.data.quoteTitle}>
