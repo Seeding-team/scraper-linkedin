@@ -1398,6 +1398,7 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
+  justify-content: flex-end;
   gap: 0.6rem;
   margin: 0.9rem 0 1rem;
 }
@@ -8446,9 +8447,9 @@
  * thanh Sheet noi (khong con chiem cho co dinh) nen @media ben duoi van giu
  * 100vw nhu cu. */
 .crm-verify-drawer {
-  width: calc(100vw - 16rem);
+  width: min(1080px, calc(100vw - 16rem));
   min-width: 0;
-  max-width: calc(100vw - 16rem);
+  max-width: min(1080px, calc(100vw - 16rem));
 }
 
 .crm-verify-header {
@@ -8501,13 +8502,11 @@
   gap: 0.45rem;
   overflow-x: hidden;
   padding-bottom: 0.25rem;
-  /* Giong dung bo cuc file mau (markee_crm_v26...html: .container{max-width:
-   * 1240px;margin:auto}) - drawer gio 100vw nhung noi dung van gioi han
-   * chieu rong, canh giua, tranh cac field/dropdown keo dai qua muc tren man
-   * hinh sieu rong. */
-  max-width: 1400px;
+  /* Drawer da duoc canh theo viewport ben phai; noi dung phai an het chieu
+   * ngang ben trong drawer, khong canh giua bang max-width/margin auto nua. */
+  max-width: none;
   width: 100%;
-  margin: 0 auto;
+  margin: 0;
 }
 
 .crm-verify-ok {
@@ -8748,8 +8747,8 @@
 
 .crm-verify-interest-level-chips {
   display: flex;
-  flex-wrap: wrap;
-  gap: 0.35rem;
+  flex-wrap: nowrap;
+  gap: 0.3rem;
 }
 
 .crm-verify-compact-fields .crm-verify-interest-level-chip,
@@ -8762,7 +8761,10 @@
   cursor: pointer;
   font-size: 0.72rem;
   font-weight: 700;
-  padding: 0.25rem 0.65rem;
+  line-height: 1.1;
+  padding: 0.25rem 0.55rem;
+  white-space: nowrap;
+  width: auto;
 }
 
 .crm-verify-interest-level-chip:hover:not(:disabled) {

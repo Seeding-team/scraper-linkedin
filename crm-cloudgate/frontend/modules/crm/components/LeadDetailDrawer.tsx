@@ -654,9 +654,8 @@ export function LeadDetailDrawer({
   const selectedMatch = companyMatches.find(m => m.id === customerChoice);
   return (
     <>
-      {/* Feedback 2026-09-26: chi dong bang nut X, bam ra ngoai backdrop
-       * KHONG duoc dong (tranh mat du lieu xac minh dang nhap do bam nham). */}
-      <div className="crm-drawer-backdrop crm-lead-verify-backdrop" />
+      {/* Click vao backdrop de dong drawer; click trong form khong bi anh huong. */}
+      <div className="crm-drawer-backdrop crm-lead-verify-backdrop" onClick={onClose} />
       <aside className="crm-drawer crm-lead-detail-drawer crm-verify-drawer">
         <header className="crm-lead-drawer-header crm-verify-header">
           <div className="crm-verify-header-text">
@@ -836,7 +835,7 @@ export function LeadDetailDrawer({
                         onChange={label => setField('interest', label)}
                       />
                     </Field>
-                    <div className="crm-inline-pair">
+                    <>
                       <Field label="Giá trị ước tính (VND)" hint="Tự thêm dấu chấm ngăn nghìn khi gõ.">
                         <CurrencyInput
                           disabled={!canWrite}
@@ -861,7 +860,7 @@ export function LeadDetailDrawer({
                           ))}
                         </div>
                       </div>
-                    </div>
+                    </>
                     <div className="crm-inline-pair">
                       <Field label="Dự kiến triển khai">
                         <CrmCategorySelect
