@@ -79,6 +79,32 @@ class ProgressPermissionError(PermissionError):
     Tách riêng khỏi PermissionError chung để không vô tình bắt nhầm lỗi khác."""
 
 
+# Bug that da gap tren production (workspace nhieu du lieu that, vd
+# securityzone): .in_("col", ids) voi ids qua nhieu phan tu (vai tram+) lam
+# URL gui len Supabase REST qua dai, vuot gioi han cho phep cua reverse proxy
+# truoc Supabase (Kong/openresty) -> Supabase tu tra ve 502 Bad Gateway (KHONG
+# phai loi backend cua chinh minh, backend van song binh thuong cho cac
+# request khac). Fix: chia nho ids thanh nhieu lo <= _IN_BATCH_SIZE, goi
+# nhieu lan roi gop ket qua - khong doi ket qua tra ve, chi tranh URL qua dai.
+_IN_BATCH_SIZE = 150
+
+
+def _query_in_batches(build_query, ids: list[str], batch_size: int = _IN_BATCH_SIZE) -> list[dict[str, Any]]:
+    """`build_query(batch_ids)` phai tra ve 1 supabase query builder (CHUA goi
+    .execute()) da co san .in_(cot, batch_ids) + moi filter/select khac can
+    thiet. Ham nay tu chia `ids` thanh cac lo <= batch_size, thuc thi tung lo
+    roi gop `.data` lai thanh 1 list duy nhat."""
+    unique_ids = list(dict.fromkeys(ids))
+    if not unique_ids:
+        return []
+    rows: list[dict[str, Any]] = []
+    for i in range(0, len(unique_ids), batch_size):
+        batch = unique_ids[i : i + batch_size]
+        result = execute_supabase_query(lambda b=batch: build_query(b).execute())
+        rows.extend(result.data or [])
+    return rows
+
+
 # ── Scope helpers ────────────────────────────────────────────────────────────
 
 def progress_scope(user: dict[str, Any] | None) -> dict[str, Any]:
@@ -109,10 +135,11 @@ def _team_member_ids(team_ids: list[str]) -> set[str]:
     if not team_ids:
         return set()
     supabase = get_supabase_client()
-    result = execute_supabase_query(
-        lambda: supabase.table("member_of_teams").select("id_member").in_("id_teams", team_ids).execute()
+    rows = _query_in_batches(
+        lambda batch: supabase.table("member_of_teams").select("id_member").in_("id_teams", batch),
+        team_ids,
     )
-    return {r["id_member"] for r in (result.data or []) if r.get("id_member")}
+    return {r["id_member"] for r in rows if r.get("id_member")}
 
 
 def _assert_member_visible(scope: dict[str, Any], caller_id: str, member_id: str) -> None:
@@ -149,12 +176,11 @@ def _user_department_map() -> dict[str, str]:
         lambda: supabase.table("members").select("linked_user_id, team").not_.is_("linked_user_id", "null").not_.is_("team", "null").execute()
     )
     candidate_ids = list({r["linked_user_id"] for r in (members_res.data or []) if r.get("linked_user_id")})
-    active_ids: set[str] = set()
-    if candidate_ids:
-        active_res = execute_supabase_query(
-            lambda: supabase.table("app_users").select("id").in_("id", candidate_ids).eq("is_active", True).execute()
-        )
-        active_ids = {r["id"] for r in (active_res.data or [])}
+    active_rows = _query_in_batches(
+        lambda batch: supabase.table("app_users").select("id").in_("id", batch).eq("is_active", True),
+        candidate_ids,
+    )
+    active_ids = {r["id"] for r in active_rows}
     out: dict[str, str] = {}
     for row in members_res.data or []:
         uid = row.get("linked_user_id")
@@ -190,15 +216,15 @@ def _leads_since_map(leads: list[dict[str, Any]]) -> dict[str, str]:
     if not ids_with_status:
         return {}
     supabase = get_supabase_client()
-    result = execute_supabase_query(
-        lambda: supabase.table("crm_lead_activity_log")
+    rows = _query_in_batches(
+        lambda batch: supabase.table("crm_lead_activity_log")
         .select("lead_id, to_status, created_at")
-        .in_("lead_id", list(ids_with_status.keys()))
-        .order("created_at", desc=True)
-        .execute()
+        .in_("lead_id", batch)
+        .order("created_at", desc=True),
+        list(ids_with_status.keys()),
     )
     out: dict[str, str] = {}
-    for row in result.data or []:
+    for row in rows:
         lid = row.get("lead_id")
         if lid in out or lid not in ids_with_status:
             continue
@@ -212,16 +238,16 @@ def _quotes_since_map(quotes: list[dict[str, Any]]) -> dict[str, str]:
     if not ids_with_stage:
         return {}
     supabase = get_supabase_client()
-    result = execute_supabase_query(
-        lambda: supabase.table("quote_activity_log")
+    rows = _query_in_batches(
+        lambda batch: supabase.table("quote_activity_log")
         .select("quote_id, changes, created_at")
         .eq("action", "stage_changed")
-        .in_("quote_id", list(ids_with_stage.keys()))
-        .order("created_at", desc=True)
-        .execute()
+        .in_("quote_id", batch)
+        .order("created_at", desc=True),
+        list(ids_with_stage.keys()),
     )
     out: dict[str, str] = {}
-    for row in result.data or []:
+    for row in rows:
         qid = row.get("quote_id")
         if qid in out or qid not in ids_with_stage:
             continue
@@ -236,15 +262,15 @@ def _contracts_since_map(contracts: list[dict[str, Any]]) -> dict[str, str]:
     if not ids_with_status:
         return {}
     supabase = get_supabase_client()
-    result = execute_supabase_query(
-        lambda: supabase.table("contract_activity_log")
+    rows = _query_in_batches(
+        lambda batch: supabase.table("contract_activity_log")
         .select("contract_id, action, created_at")
-        .in_("contract_id", list(ids_with_status.keys()))
-        .order("created_at", desc=True)
-        .execute()
+        .in_("contract_id", batch)
+        .order("created_at", desc=True),
+        list(ids_with_status.keys()),
     )
     out: dict[str, str] = {}
-    for row in result.data or []:
+    for row in rows:
         cid = row.get("contract_id")
         if cid in out or cid not in ids_with_status:
             continue
@@ -487,10 +513,11 @@ def get_progress_team_detail(user: dict[str, Any], team_id: str) -> dict[str, An
 
     members = []
     if member_ids:
-        users_res = execute_supabase_query(
-            lambda: get_supabase_client().table("app_users").select("id, name, role, quote_business_role").in_("id", list(member_ids)).execute()
+        member_rows = _query_in_batches(
+            lambda batch: get_supabase_client().table("app_users").select("id, name, role, quote_business_role").in_("id", batch),
+            list(member_ids),
         )
-        for u in users_res.data or []:
+        for u in member_rows:
             members.append(_member_summary_row(u["id"], u.get("name"), u.get("role"), u.get("quote_business_role")))
 
     team_row = _department_summary(department, member_ids)
@@ -642,15 +669,15 @@ def list_member_customers(user: dict[str, Any], member_id: str) -> dict[str, Any
 
     customer_ids = [c["id"] for c in customers]
     supabase = get_supabase_client()
-    deal_res = execute_supabase_query(
-        lambda: supabase.table("customer_leads")
+    deal_rows = _query_in_batches(
+        lambda batch: supabase.table("customer_leads")
         .select("customer_id, deal_stage, estimated_budget")
-        .in_("customer_id", customer_ids)
-        .eq("instance", _crm_instance())
-        .execute()
+        .in_("customer_id", batch)
+        .eq("instance", _crm_instance()),
+        customer_ids,
     )
     deals_by_customer: dict[str, list[dict]] = {}
-    for row in deal_res.data or []:
+    for row in deal_rows:
         deals_by_customer.setdefault(row["customer_id"], []).append(row)
 
     items = []
@@ -999,10 +1026,11 @@ def search_progress(user: dict[str, Any], query: str) -> dict[str, Any]:
     scoped_member_ids = set(dept_map.keys()) if scope["role"] == "admin" else set(dept_map.keys()) & _team_member_ids(scope.get("teamIds") or [])
     members: list[dict[str, Any]] = []
     if scoped_member_ids:
-        users_res = execute_supabase_query(
-            lambda: get_supabase_client().table("app_users").select("id, name").in_("id", list(scoped_member_ids)).execute()
+        scoped_user_rows = _query_in_batches(
+            lambda batch: get_supabase_client().table("app_users").select("id, name").in_("id", batch),
+            list(scoped_member_ids),
         )
-        for u in users_res.data or []:
+        for u in scoped_user_rows:
             if hit(u.get("name")):
                 members.append({"userId": u["id"], "userName": u.get("name"), "teamName": dept_map.get(u["id"])})
     members = members[:LIMIT]
