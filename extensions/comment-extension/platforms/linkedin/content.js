@@ -274,26 +274,46 @@
       };
     }
 
-    // 3. Tìm nút Submit — thử selector trước, KHÔNG thấy thì tìm theo TEXT
-    // hiển thị ("Post"/"Comment"/"Gửi"/"Đăng"...) ngay trong khu vực gần ô
-    // nhập (khu vực nhỏ hơn document để tránh trùng nút "Comment" mở khung ở
-    // trên hoặc nút khác cùng tên ở chỗ khác trang). Đợi nó hết "disabled"
-    // (LinkedIn tự validate nội dung trước khi mở khóa nút — xem waitUntilEnabled)
-    // rồi mới bấm.
+    // 3. Tìm nút Submit — thử phạm vi hẹp (quanh ô nhập) trước, rồi RỘNG RA TOÀN
+    // TRANG cho cùng bộ selector đó nếu không thấy. Lý do bắt buộc phải có bước
+    // rộng ra document: `box.closest("form")` gần như luôn null (LinkedIn không
+    // dùng thẻ <form> thật), nên submitSearchRoot rơi vào nhánh
+    // `box.parentElement?.parentElement` — CHỈ ĐÚNG 2 CẤP cha, một khoảng cách
+    // ĐOÁN MÒ có thể KHÔNG bao gồm div bọc nút Gửi (`commentButtonSection`) nếu
+    // Tiptap editor lồng sâu hơn — và vì DOM element luôn "truthy" nên `||
+    // document` KHÔNG BAO GIỜ thực sự được dùng tới, dù trông như có fallback.
+    // Đây là nghi vấn nguyên nhân khiến bản 1.6 (thêm đúng selector nhưng vẫn
+    // tìm trong phạm vi hẹp này) có thể vẫn không bấm được nút. Selector
+    // `div[id*="commentButtonSection"] button` tự nó đã đủ đặc thù (id gắn
+    // theo urn bài viết) nên rộng ra document là an toàn, không lo trùng nút
+    // của bài khác.
     const submitSearchRoot = box.closest("form") || box.parentElement?.parentElement || document;
-    const submitBtn =
-      (await waitForElementIn(submitSearchRoot, LI_COMMENT_SUBMIT_SELECTORS, 2000)) ||
-      (await waitForButtonByText(submitSearchRoot, LI_COMMENT_SUBMIT_TEXTS, 2000));
+    console.log("[LinkedIn Extension] Tìm nút Gửi — submitSearchRoot:", submitSearchRoot);
+    let submitBtn = await waitForElementIn(submitSearchRoot, LI_COMMENT_SUBMIT_SELECTORS, 2000);
+    if (!submitBtn) {
+      console.log("[LinkedIn Extension] Không thấy nút Gửi trong phạm vi hẹp — thử lại trên toàn trang (document).");
+      submitBtn = await waitForElementIn(document, LI_COMMENT_SUBMIT_SELECTORS, 1500);
+    }
+    if (!submitBtn) {
+      submitBtn =
+        (await waitForButtonByText(submitSearchRoot, LI_COMMENT_SUBMIT_TEXTS, 1500)) ||
+        (await waitForButtonByText(document, LI_COMMENT_SUBMIT_TEXTS, 1500));
+    }
+    console.log("[LinkedIn Extension] Nút Gửi tìm được:", submitBtn);
     let clickedSubmit = false;
 
     if (submitBtn) {
       const becameEnabled = await waitUntilEnabled(submitBtn, 3000);
+      console.log("[LinkedIn Extension] Nút Gửi becameEnabled =", becameEnabled, "disabled =", submitBtn.disabled);
       if (becameEnabled) {
         submitBtn.click();
         clickedSubmit = true;
+        console.log("[LinkedIn Extension] Đã bấm nút Gửi.");
       } else {
         console.warn("[LinkedIn Extension] Nút Gửi vẫn bị disabled sau khi nhập nội dung — LinkedIn có thể chưa nhận diện được nội dung đã nhập.");
       }
+    } else {
+      console.warn("[LinkedIn Extension] KHÔNG tìm thấy nút Gửi bằng bất kỳ selector/text nào — sẽ dùng fallback Enter.");
     }
 
     if (!clickedSubmit) {
