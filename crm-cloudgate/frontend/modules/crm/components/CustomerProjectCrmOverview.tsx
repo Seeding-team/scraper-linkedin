@@ -6,15 +6,12 @@ import {
   FileText,
   ChevronRight,
   ArrowRight,
-  ExternalLink,
   ChevronDown,
   Layers,
-  CircleDot,
-  CheckCircle2,
-  XCircle,
-  Clock,
-  Send,
+  FolderKanban,
+  Target,
   AlertCircle,
+  Filter,
 } from 'lucide-react';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -60,9 +57,23 @@ export interface OverviewQuoteItem {
   updated_at?: string | null;
 }
 
+export interface OverviewProjectItem {
+  id: string;
+  name: string;
+  projectCode?: string | null;
+  status?: string | null;
+  description?: string | null;
+  createdAt?: string | null;
+  opportunityCount?: number | null;
+  quoteCaseCount?: number | null;
+  versionCount?: number | null;
+  currentQuoteValue?: number | null;
+}
+
 interface CustomerProjectCrmOverviewProps {
   deals: OverviewDealItem[];
   quotes: OverviewQuoteItem[];
+  projects?: OverviewProjectItem[];
   onNavigateTab: (tab: 'deals' | 'quotes') => void;
   onOpenDeal: (dealId: string) => void;
   onOpenQuote: (quote: OverviewQuoteItem) => void;
@@ -82,6 +93,7 @@ function getPipelineStageKey(stage?: string | null): PipelineStageKey {
   return 'evaluating';
 }
 
+// Bảng màu giai đoạn Pipeline trên Stepper: Nền màu đặc tươi sáng (Solid 500) và Chữ màu trắng tinh
 const PIPELINE_STAGES: Array<{
   key: PipelineStageKey;
   label: string;
@@ -89,13 +101,51 @@ const PIPELINE_STAGES: Array<{
   textColor: string;
   countColor: string;
 }> = [
-  { key: 'potential', label: 'Tiềm năng', bgColor: 'bg-slate-100 dark:bg-slate-800', textColor: 'text-slate-600 dark:text-slate-300', countColor: 'text-slate-600 dark:text-slate-400' },
-  { key: 'evaluating', label: 'Đánh giá', bgColor: 'bg-blue-100/90 dark:bg-blue-950/60', textColor: 'text-blue-700 dark:text-blue-300', countColor: 'text-blue-600 dark:text-blue-400 font-bold' },
-  { key: 'quote', label: 'Báo giá', bgColor: 'bg-purple-100/80 dark:bg-purple-950/60', textColor: 'text-purple-700 dark:text-purple-300', countColor: 'text-purple-600 dark:text-purple-400' },
-  { key: 'negotiation', label: 'Đàm phán', bgColor: 'bg-amber-100/90 dark:bg-amber-950/60', textColor: 'text-amber-800 dark:text-amber-300', countColor: 'text-amber-600 dark:text-amber-400 font-bold' },
-  { key: 'won', label: 'Thắng', bgColor: 'bg-emerald-100/90 dark:bg-emerald-950/60', textColor: 'text-emerald-800 dark:text-emerald-300', countColor: 'text-emerald-600 dark:text-emerald-400' },
-  { key: 'lost', label: 'Thua', bgColor: 'bg-rose-100/90 dark:bg-rose-950/60', textColor: 'text-rose-800 dark:text-rose-300', countColor: 'text-rose-600 dark:text-rose-400' },
+  { key: 'potential', label: 'Tiềm năng', bgColor: 'bg-slate-500', textColor: 'text-white', countColor: 'text-slate-600 font-bold' },
+  { key: 'evaluating', label: 'Đánh giá', bgColor: 'bg-blue-500', textColor: 'text-white', countColor: 'text-blue-600 font-bold' },
+  { key: 'quote', label: 'Báo giá', bgColor: 'bg-purple-500', textColor: 'text-white', countColor: 'text-purple-600 font-bold' },
+  { key: 'negotiation', label: 'Đàm phán', bgColor: 'bg-orange-500', textColor: 'text-white', countColor: 'text-orange-600 font-bold' },
+  { key: 'won', label: 'Thắng', bgColor: 'bg-green-500', textColor: 'text-white', countColor: 'text-green-600 font-bold' },
+  { key: 'lost', label: 'Thua', bgColor: 'bg-red-500', textColor: 'text-white', countColor: 'text-red-600 font-bold' },
 ];
+
+// Cấu hình màu sắc giai đoạn với Nền đặc 500 và Chữ trắng tinh (White text)
+const STAGE_BRIGHT_CONFIG: Record<PipelineStageKey, {
+  label: string;
+  badgeClass: string;
+  dotClass: string;
+}> = {
+  potential: {
+    label: 'Tiềm năng',
+    badgeClass: 'bg-slate-500 text-white border-transparent',
+    dotClass: 'bg-white',
+  },
+  evaluating: {
+    label: 'Đánh giá',
+    badgeClass: 'bg-blue-500 text-white border-transparent',
+    dotClass: 'bg-white',
+  },
+  quote: {
+    label: 'Báo giá',
+    badgeClass: 'bg-purple-500 text-white border-transparent',
+    dotClass: 'bg-white',
+  },
+  negotiation: {
+    label: 'Đàm phán',
+    badgeClass: 'bg-orange-500 text-white border-transparent font-semibold',
+    dotClass: 'bg-white',
+  },
+  won: {
+    label: 'Thắng',
+    badgeClass: 'bg-green-500 text-white border-transparent font-semibold',
+    dotClass: 'bg-white',
+  },
+  lost: {
+    label: 'Thua',
+    badgeClass: 'bg-red-500 text-white border-transparent',
+    dotClass: 'bg-white',
+  },
+};
 
 function formatShortCurrency(value: number): string {
   if (!value || value === 0) return '0 đ';
@@ -123,32 +173,36 @@ function formatDateDisplay(dateStr?: string | null): string {
 
 function getQuoteStatusBadge(q: OverviewQuoteItem) {
   if (q.deleted_at || q.status === 'cancelled') {
-    return <Badge variant="outline" className="text-[11px] bg-destructive/10 text-destructive border-destructive/20 font-medium">Đã huỷ</Badge>;
+    return <Badge className="text-[11px] bg-red-500 text-white border-transparent font-medium">Đã huỷ</Badge>;
   }
   if (q.sent_at || q.status === 'sent') {
-    return <Badge variant="outline" className="text-[11px] bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/40 dark:text-blue-300 font-medium">Đã gửi</Badge>;
+    return <Badge className="text-[11px] bg-blue-500 text-white border-transparent font-medium">Đã gửi</Badge>;
   }
   if (q.status === 'accepted' || q.status === 'confirmed') {
-    return <Badge variant="outline" className="text-[11px] bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 font-medium">Đã chấp nhận</Badge>;
+    return <Badge className="text-[11px] bg-green-500 text-white border-transparent font-medium">Đã chấp nhận</Badge>;
   }
   if (q.status === 'approved' || q.approved_at || q.published_at || q.processing_stage === 'published') {
-    return <Badge variant="outline" className="text-[11px] bg-indigo-50 text-indigo-700 border-indigo-200 dark:bg-indigo-950/40 dark:text-indigo-300 font-medium">Sẵn sàng gửi</Badge>;
+    return <Badge className="text-[11px] bg-purple-500 text-white border-transparent font-medium">Sẵn sàng gửi</Badge>;
   }
   if (q.processing_stage === 'review') {
-    return <Badge variant="outline" className="text-[11px] bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 font-medium">Admin review</Badge>;
+    return <Badge className="text-[11px] bg-orange-500 text-white border-transparent font-medium">Admin review</Badge>;
   }
   if (q.processing_stage === 'pricing') {
-    return <Badge variant="outline" className="text-[11px] bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 font-medium">Sale markup</Badge>;
+    return <Badge className="text-[11px] bg-orange-500 text-white border-transparent font-medium">Sale markup</Badge>;
   }
-  return <Badge variant="outline" className="text-[11px] bg-muted text-muted-foreground border-border font-medium">Đang soạn</Badge>;
+  return <Badge className="text-[11px] bg-slate-500 text-white border-transparent font-medium">Đang soạn</Badge>;
 }
 
-function getDealStageBadge(stage?: string | null) {
+// Badge giai đoạn với Solid Bright Background và White Text
+function getBrightDealStageBadge(stage?: string | null) {
   const key = getPipelineStageKey(stage);
-  const match = PIPELINE_STAGES.find(p => p.key === key) || PIPELINE_STAGES[0];
+  const match = STAGE_BRIGHT_CONFIG[key] || STAGE_BRIGHT_CONFIG.evaluating;
   return (
-    <Badge variant="outline" className={`text-[11px] ${match.bgColor} ${match.textColor} border-transparent font-medium`}>
-      {match.label}
+    <Badge
+      className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium shadow-xs text-white ${match.badgeClass}`}
+    >
+      <span className={`size-1.5 rounded-full ${match.dotClass} shrink-0`} />
+      <span className="text-white">{match.label}</span>
     </Badge>
   );
 }
@@ -156,13 +210,87 @@ function getDealStageBadge(stage?: string | null) {
 export function CustomerProjectCrmOverview({
   deals,
   quotes,
+  projects = [],
   onNavigateTab,
   onOpenDeal,
   onOpenQuote,
 }: CustomerProjectCrmOverviewProps) {
   const [filterMode, setFilterMode] = useState<'status' | 'all'>('status');
+  // State phân tầng theo Dự án (all = Tất cả, unassigned = Chưa gán, projectId = Dự án cụ thể)
+  const [selectedProjectId, setSelectedProjectId] = useState<string>('all');
+  // State quản lý các dropdown xổ xuống của từng dự án trong mục Phân tầng dự án
+  const [expandedProjectIds, setExpandedProjectIds] = useState<Set<string>>(new Set());
 
-  // 1. Phân loại Pipeline Cơ hội
+  const toggleExpandProject = (id: string, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    setExpandedProjectIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  // 1. Phân tầng Dự án (Hierarchy mapping: Số dự án, mỗi cái có bao nhiêu cơ hội và bao nhiêu báo giá)
+  const projectHierarchy = useMemo(() => {
+    const list = projects.map(p => {
+      const pDeals = deals.filter(d => d.project_id === p.id);
+      const pQuotes = quotes.filter(q => q.project_id === p.id);
+      const dealCount = pDeals.length > 0 ? pDeals.length : (p.opportunityCount || 0);
+      const quoteCount = pQuotes.length > 0 ? pQuotes.length : (p.quoteCaseCount || 0);
+      const dealsBudget = pDeals.reduce((sum, d) => sum + Number(d.estimated_budget || d.lifetime_value || 0), 0);
+      const quoteAmount = pQuotes.reduce((sum, q) => sum + Number(q.total_amount || 0), 0) || (p.currentQuoteValue || 0);
+
+      return {
+        id: p.id,
+        name: p.name,
+        projectCode: p.projectCode,
+        status: p.status,
+        description: p.description,
+        createdAt: p.createdAt,
+        dealCount,
+        quoteCount,
+        dealsBudget,
+        quoteAmount,
+        deals: pDeals,
+        quotes: pQuotes,
+      };
+    });
+
+    const assignedProjectIds = new Set(projects.map(p => p.id));
+    const unassignedDeals = deals.filter(d => !d.project_id || !assignedProjectIds.has(d.project_id));
+    const unassignedQuotes = quotes.filter(q => !q.project_id || !assignedProjectIds.has(q.project_id));
+    const unassignedBudget = unassignedDeals.reduce((sum, d) => sum + Number(d.estimated_budget || d.lifetime_value || 0), 0);
+    const unassignedQuoteAmount = unassignedQuotes.reduce((sum, q) => sum + Number(q.total_amount || 0), 0);
+
+    return {
+      projects: list,
+      totalProjects: list.length,
+      unassigned: {
+        dealCount: unassignedDeals.length,
+        quoteCount: unassignedQuotes.length,
+        dealsBudget: unassignedBudget,
+        quoteAmount: unassignedQuoteAmount,
+        deals: unassignedDeals,
+        quotes: unassignedQuotes,
+      },
+    };
+  }, [projects, deals, quotes]);
+
+  // 2. Dữ liệu lọc theo Phân tầng Dự án đã chọn
+  const activeDeals = useMemo(() => {
+    if (selectedProjectId === 'all') return deals;
+    if (selectedProjectId === 'unassigned') return projectHierarchy.unassigned.deals;
+    return deals.filter(d => d.project_id === selectedProjectId);
+  }, [deals, selectedProjectId, projectHierarchy]);
+
+  const activeQuotes = useMemo(() => {
+    if (selectedProjectId === 'all') return quotes;
+    if (selectedProjectId === 'unassigned') return projectHierarchy.unassigned.quotes;
+    return quotes.filter(q => q.project_id === selectedProjectId);
+  }, [quotes, selectedProjectId, projectHierarchy]);
+
+  // 3. Phân loại Pipeline Cơ hội (theo phân tầng đang chọn)
   const pipelineCounts = useMemo(() => {
     const counts: Record<PipelineStageKey, number> = {
       potential: 0,
@@ -172,14 +300,14 @@ export function CustomerProjectCrmOverview({
       won: 0,
       lost: 0,
     };
-    for (const d of deals) {
+    for (const d of activeDeals) {
       const key = getPipelineStageKey(d.deal_stage);
       counts[key] = (counts[key] || 0) + 1;
     }
     return counts;
-  }, [deals]);
+  }, [activeDeals]);
 
-  // 2. Thống kê Giá trị Báo giá (Donut Chart)
+  // 4. Thống kê Giá trị Báo giá (Donut Chart theo phân tầng đang chọn)
   const quoteMetrics = useMemo(() => {
     let sentCount = 0;
     let sentAmount = 0;
@@ -190,7 +318,7 @@ export function CustomerProjectCrmOverview({
     let rejectedCount = 0;
     let rejectedAmount = 0;
 
-    for (const q of quotes) {
+    for (const q of activeQuotes) {
       const amount = Number(q.total_amount || 0);
       if (q.deleted_at || q.status === 'cancelled' || q.status === 'rejected') {
         rejectedCount++;
@@ -221,9 +349,9 @@ export function CustomerProjectCrmOverview({
       totalAmount,
       totalCount,
     };
-  }, [quotes]);
+  }, [activeQuotes]);
 
-  // 3. Tính toán đường tròn Donut SVG
+  // 5. Tính toán đường tròn Donut SVG
   const radius = 56;
   const strokeWidth = 18;
   const circumference = 2 * Math.PI * radius; // ~351.86
@@ -255,28 +383,117 @@ export function CustomerProjectCrmOverview({
     });
   }, [quoteMetrics, circumference]);
 
-  // 4. Danh sách Cơ hội & Báo giá mới nhất (tối đa 5 dòng)
+  // 6. Danh sách Cơ hội & Báo giá mới nhất (theo phân tầng)
   const recentDeals = useMemo(() => {
-    return [...deals]
+    return [...activeDeals]
       .sort((a, b) => new Date(b.updated_at || b.created_at || 0).getTime() - new Date(a.updated_at || a.created_at || 0).getTime())
       .slice(0, 5);
-  }, [deals]);
+  }, [activeDeals]);
 
   const recentQuotes = useMemo(() => {
-    return [...quotes]
+    return [...activeQuotes]
       .sort((a, b) => new Date(b.updated_at || 0).getTime() - new Date(a.updated_at || 0).getTime())
       .slice(0, 5);
-  }, [quotes]);
+  }, [activeQuotes]);
 
   return (
     <div className="space-y-5">
-      {/* ── KHỐI 1: PIPELINE CƠ HỘI & GIÁ TRỊ BÁO GIÁ ── */}
+      {/* ── BỘ ĐIỀU HƯỚNG PHÂN TẦNG DỰ ÁN (HIERARCHY FILTER PILLS) ── */}
+      {(projectHierarchy.totalProjects > 0 || projectHierarchy.unassigned.dealCount > 0 || projectHierarchy.unassigned.quoteCount > 0) && (
+        <div className="flex flex-wrap items-center gap-2 p-2.5 rounded-xl bg-muted/40 border border-border/70 text-xs">
+          <div className="flex items-center gap-2 px-2 shrink-0 font-medium text-foreground">
+            {/* Icon phân tầng: Nền trắng, nổi bật */}
+            <div className="size-6 rounded-lg bg-white border border-gray-100 shadow-sm flex items-center justify-center text-indigo-500">
+              <Filter className="size-3.5" />
+            </div>
+            <span>Phân tầng:</span>
+          </div>
+
+          {/* Nút Xem tất cả dự án */}
+          <Button
+            type="button"
+            variant={selectedProjectId === 'all' ? 'default' : 'outline'}
+            size="sm"
+            onClick={() => setSelectedProjectId('all')}
+            className={`h-7 text-xs rounded-lg gap-1.5 transition-all ${
+              selectedProjectId === 'all'
+                ? 'bg-indigo-500 text-white shadow-xs font-semibold hover:bg-indigo-600'
+                : 'bg-white hover:bg-slate-50 text-slate-700 border-border/80'
+            }`}
+          >
+            <span>Tất cả</span>
+            <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-medium ${
+              selectedProjectId === 'all' ? 'bg-white/25 text-white' : 'bg-slate-500 text-white'
+            }`}>
+              {projectHierarchy.totalProjects} DA · {deals.length} CH · {quotes.length} BG
+            </span>
+          </Button>
+
+          {/* Nút từng Dự án cụ thể */}
+          {projectHierarchy.projects.map(p => (
+            <Button
+              key={p.id}
+              type="button"
+              variant={selectedProjectId === p.id ? 'default' : 'outline'}
+              size="sm"
+              onClick={() => setSelectedProjectId(p.id)}
+              className={`h-7 text-xs rounded-lg gap-1.5 transition-all max-w-[240px] ${
+                selectedProjectId === p.id
+                  ? 'bg-indigo-500 text-white shadow-xs font-semibold hover:bg-indigo-600'
+                  : 'bg-white hover:bg-slate-50 text-slate-700 border-border/80'
+              }`}
+            >
+              <span className="truncate">{p.name}</span>
+              <span className={`text-[10px] px-1.5 py-0.2 rounded-full shrink-0 font-medium ${
+                selectedProjectId === p.id ? 'bg-white/25 text-white' : 'bg-slate-500 text-white'
+              }`}>
+                {p.dealCount} CH · {p.quoteCount} BG
+              </span>
+            </Button>
+          ))}
+
+          {/* Nút Chưa gán dự án (nếu có deals/quotes mồ côi) */}
+          {(projectHierarchy.unassigned.dealCount > 0 || projectHierarchy.unassigned.quoteCount > 0) && (
+            <Button
+              type="button"
+              variant={selectedProjectId === 'unassigned' ? 'default' : 'outline'}
+              size="sm"
+              onClick={() => setSelectedProjectId('unassigned')}
+              className={`h-7 text-xs rounded-lg gap-1.5 transition-all ${
+                selectedProjectId === 'unassigned'
+                  ? 'bg-indigo-500 text-white shadow-xs font-semibold hover:bg-indigo-600'
+                  : 'bg-white hover:bg-slate-50 text-slate-700 border-border/80'
+              }`}
+            >
+              <span>Chưa thuộc DA</span>
+              <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-medium ${
+                selectedProjectId === 'unassigned' ? 'bg-white/25 text-white' : 'bg-slate-500 text-white'
+              }`}>
+                {projectHierarchy.unassigned.dealCount} CH · {projectHierarchy.unassigned.quoteCount} BG
+              </span>
+            </Button>
+          )}
+        </div>
+      )}
+
+      {/* ── KHỐI 1: CƠ HỘI & BÁO GIÁ (GIỮ THIẾT KẾ ĐẶC TRƯNG) ── */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {/* CARD TRÁI: Pipeline Cơ hội */}
+        {/* CARD TRÁI: CƠ HỘI (Đổi từ 'Pipeline cơ hội') */}
         <Card className="bg-card border border-border/80 shadow-xs flex flex-col justify-between">
           <CardHeader className="pb-3 pt-5 px-5">
             <CardTitle className="text-base font-bold text-foreground tracking-tight flex items-center justify-between">
-              <span>Pipeline cơ hội</span>
+              <div className="flex items-center gap-2.5">
+                {/* Icon Cơ hội: Nền trắng, làm sáng và nổi bật màu Icon lên */}
+                <div className="size-8 rounded-xl bg-white border border-gray-100 shadow-sm flex items-center justify-center text-orange-500">
+                  <TrendingUp className="size-4.5" />
+                </div>
+                <span>Cơ hội</span>
+                {selectedProjectId !== 'all' && (
+                  <Badge className="text-[10px] font-medium py-0 bg-orange-500 text-white border-transparent">
+                    Đang lọc phân tầng
+                  </Badge>
+                )}
+              </div>
               <Button
                 variant="ghost"
                 size="sm"
@@ -294,7 +511,6 @@ export function CustomerProjectCrmOverview({
               {PIPELINE_STAGES.map((stage, idx) => {
                 const count = pipelineCounts[stage.key];
                 const isFirst = idx === 0;
-                const isLast = idx === PIPELINE_STAGES.length - 1;
                 // Clip path đa giác mũi tên chuẩn
                 const clipStyle = isFirst
                   ? 'polygon(0% 0%, calc(100% - 10px) 0%, 100% 50%, calc(100% - 10px) 100%, 0% 100%)'
@@ -307,7 +523,7 @@ export function CustomerProjectCrmOverview({
                     className="flex-1 min-w-[72px] flex flex-col items-center group cursor-pointer"
                     title={`Xem cơ hội giai đoạn ${stage.label}`}
                   >
-                    {/* Thanh chevron mũi tên */}
+                    {/* Thanh chevron mũi tên với màu sáng thanh thoát */}
                     <div
                       style={{ clipPath: clipStyle }}
                       className={`w-full h-11 flex items-center justify-center px-2.5 transition-all duration-200 group-hover:brightness-95 ${stage.bgColor} ${!isFirst ? '-ml-1.5' : ''}`}
@@ -330,16 +546,25 @@ export function CustomerProjectCrmOverview({
           </CardContent>
         </Card>
 
-        {/* CARD PHẢI: Giá trị Báo giá */}
+        {/* CARD PHẢI: BÁO GIÁ (Đổi từ 'Giá trị báo giá') */}
         <Card className="bg-card border border-border/80 shadow-xs">
           <CardHeader className="pb-2 pt-5 px-5 flex flex-row items-center justify-between">
-            <CardTitle className="text-base font-bold text-foreground tracking-tight">
-              Giá trị báo giá
+            <CardTitle className="text-base font-bold text-foreground tracking-tight flex items-center gap-2.5">
+              {/* Icon Báo giá: Nền trắng, làm sáng và nổi bật màu Icon lên */}
+              <div className="size-8 rounded-xl bg-white border border-gray-100 shadow-sm flex items-center justify-center text-blue-500">
+                <FileText className="size-4.5" />
+              </div>
+              <span>Báo giá</span>
+              {selectedProjectId !== 'all' && (
+                <Badge className="text-[10px] font-medium py-0 bg-blue-500 text-white border-transparent">
+                  Đang lọc phân tầng
+                </Badge>
+              )}
             </CardTitle>
             <div className="relative">
               <select
                 value={filterMode}
-                onChange={e => setFilterMode(e.target.value as any)}
+                onChange={e => setFilterMode(e.target.value as 'status' | 'all')}
                 className="appearance-none text-xs text-muted-foreground bg-muted/40 hover:bg-muted/70 border border-border/70 rounded-lg px-2.5 py-1 pr-6 cursor-pointer focus:outline-hidden"
               >
                 <option value="status">Theo trạng thái</option>
@@ -419,18 +644,509 @@ export function CustomerProjectCrmOverview({
         </Card>
       </div>
 
+      {/* ── KHỐI PHÂN TẦNG DỰ ÁN CHI TIẾT (HIERARCHY BREAKDOWN CARD) ── */}
+      <Card className="bg-card border border-border/80 shadow-xs">
+        <CardHeader className="py-3 px-5 border-b border-border/60 flex flex-row items-center justify-between">
+          <div className="flex items-center gap-2.5">
+            {/* Icon Dự án: Nền trắng, làm sáng và nổi bật màu Icon lên */}
+            <div className="size-8 rounded-xl bg-white border border-gray-100 shadow-sm flex items-center justify-center text-indigo-500">
+              <FolderKanban className="size-4.5" />
+            </div>
+            <div>
+              <CardTitle className="text-sm font-semibold text-foreground flex items-center gap-2">
+                <span>Phân tầng dự án</span>
+                <Badge className="text-[11px] font-medium px-2 py-0 bg-indigo-500 text-white border-transparent">
+                  {projectHierarchy.totalProjects} dự án
+                </Badge>
+              </CardTitle>
+              <p className="text-[11px] text-muted-foreground">
+                Thống kê số lượng cơ hội và báo giá được phân bổ trên từng dự án
+              </p>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="p-0">
+          {projectHierarchy.projects.length === 0 ? (
+            <div className="py-8 text-center text-xs text-muted-foreground flex flex-col items-center gap-2">
+              <AlertCircle className="size-6 text-muted-foreground/30 stroke-1" />
+              <span>Khách hàng chưa có dự án nào. Cơ hội và báo giá hiện thuộc nhóm chung.</span>
+            </div>
+          ) : (
+            <div className="divide-y divide-border/50 text-xs">
+              {projectHierarchy.projects.map((p) => {
+                const isExpanded = expandedProjectIds.has(p.id);
+                return (
+                  <div key={p.id} className="transition-colors">
+                    {/* Hàng tiêu đề Dự án */}
+                    <div
+                      onClick={() => toggleExpandProject(p.id)}
+                      className={`flex flex-col sm:flex-row sm:items-center justify-between p-4 gap-3 cursor-pointer transition-colors ${
+                        isExpanded
+                          ? 'bg-muted/40 border-l-4 border-l-indigo-500'
+                          : 'hover:bg-muted/30'
+                      }`}
+                    >
+                      {/* Cột 1: Thông tin nhận diện dự án */}
+                      <div className="flex items-start gap-3 min-w-[200px]">
+                        <div className="size-8 rounded-lg bg-white border border-gray-100 shadow-sm flex items-center justify-center text-indigo-500 shrink-0 mt-0.5">
+                          <FolderKanban className="size-4" />
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="font-semibold text-foreground text-sm hover:text-primary transition-colors">
+                              {p.name}
+                            </span>
+                            {p.projectCode && (
+                              <Badge className="font-mono text-[10px] px-1.5 py-0 bg-slate-500 text-white border-transparent">
+                                {p.projectCode}
+                              </Badge>
+                            )}
+                          </div>
+                          <p className="text-[11px] text-muted-foreground mt-0.5">
+                            Trạng thái: <span className="text-foreground">{p.status === 'active' ? 'Đang hoạt động' : p.status === 'completed' ? 'Hoàn thành' : 'Khác'}</span>
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Cột 2 & 3: Thống kê Cơ hội & Báo giá + Dropdown Trigger */}
+                      <div className="flex flex-wrap items-center gap-3 sm:gap-6">
+                        {/* Số Cơ hội */}
+                        <div className="flex items-center gap-2 bg-orange-500 text-white px-3 py-1.5 rounded-lg shadow-2xs">
+                          <Target className="size-3.5 text-white shrink-0" />
+                          <div>
+                            <div className="flex items-center gap-1.5">
+                              <span className="font-bold text-white">{p.dealCount}</span>
+                              <span className="text-white/90 text-[11px]">Cơ hội</span>
+                            </div>
+                            {p.dealsBudget > 0 && (
+                              <span className="text-[10px] text-white/95 block font-medium">
+                                {formatVND(p.dealsBudget)}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Số Báo giá */}
+                        <div className="flex items-center gap-2 bg-blue-500 text-white px-3 py-1.5 rounded-lg shadow-2xs">
+                          <FileText className="size-3.5 text-white shrink-0" />
+                          <div>
+                            <div className="flex items-center gap-1.5">
+                              <span className="font-bold text-white">{p.quoteCount}</span>
+                              <span className="text-white/90 text-[11px]">Báo giá</span>
+                            </div>
+                            {p.quoteAmount > 0 && (
+                              <span className="text-[10px] text-white/95 block font-medium">
+                                {formatVND(p.quoteAmount)}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Dropdown Button (Xổ xuống / Thu gọn) */}
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={(e) => toggleExpandProject(p.id, e)}
+                          className={`text-xs h-7 px-2.5 gap-1.5 shrink-0 ml-auto sm:ml-0 transition-all ${
+                            isExpanded
+                              ? 'bg-indigo-500 text-white border-indigo-500 shadow-xs hover:bg-indigo-600 hover:text-white'
+                              : 'bg-white hover:bg-slate-50 text-slate-700 border-border/80'
+                          }`}
+                        >
+                          <span>{isExpanded ? 'Thu gọn' : 'Chi tiết'}</span>
+                          <ChevronDown className={`size-3 transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`} />
+                        </Button>
+                      </div>
+                    </div>
+
+                    {/* DROPDOWN XỔ XUỐNG: THÔNG TIN CƠ HỘI, BÁO GIÁ VÀ LIÊN QUAN DỰ ÁN TỪ DB */}
+                    {isExpanded && (
+                      <div className="bg-slate-100/70 border-t border-border/70 p-4 sm:p-5 space-y-4 animate-in fade-in-50 duration-200">
+                        {/* 1. Thông tin liên quan dự án (Lấy từ DB - Nền trắng tinh) */}
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 p-3.5 rounded-xl bg-white border border-gray-200/90 shadow-xs">
+                          <div>
+                            <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider block">Mã dự án</span>
+                            <span className="font-mono text-xs font-bold text-slate-900">
+                              {p.projectCode || 'Chưa đặt mã'}
+                            </span>
+                          </div>
+                          <div>
+                            <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider block">Trạng thái</span>
+                            <Badge
+                              className={`text-[10px] font-semibold text-white border-transparent ${
+                                p.status === 'active'
+                                  ? 'bg-green-500'
+                                  : p.status === 'completed'
+                                  ? 'bg-blue-500'
+                                  : p.status === 'cancelled'
+                                  ? 'bg-red-500'
+                                  : 'bg-slate-500'
+                              }`}
+                            >
+                              {p.status === 'active' ? 'Đang hoạt động' : p.status === 'completed' ? 'Hoàn thành' : p.status === 'cancelled' ? 'Đã hủy' : (p.status || 'Khác')}
+                            </Badge>
+                          </div>
+                          <div>
+                            <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider block">Tổng ngân sách cơ hội</span>
+                            <span className="text-xs font-bold text-orange-600">
+                              {formatVND(p.dealsBudget) || '0 đ'}
+                            </span>
+                          </div>
+                          <div>
+                            <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider block">Tổng giá trị báo giá</span>
+                            <span className="text-xs font-bold text-blue-600">
+                              {formatVND(p.quoteAmount) || '0 đ'}
+                            </span>
+                          </div>
+                          {p.description && (
+                            <div className="sm:col-span-2 lg:col-span-4 pt-2 border-t border-border/40">
+                              <span className="text-[11px] font-semibold text-slate-500 block mb-0.5">Mô tả dự án:</span>
+                              <p className="text-xs text-slate-900 whitespace-pre-line leading-relaxed">
+                                {p.description}
+                              </p>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* 2. Hai cột: Danh sách Cơ hội & Danh sách Báo giá của dự án */}
+                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                          {/* Cột Cơ hội (Nền trắng) */}
+                          <div className="space-y-2.5">
+                            <div className="flex items-center justify-between pb-1 border-b border-border/50">
+                              <div className="flex items-center gap-2">
+                                <Target className="size-4 text-orange-500" />
+                                <span className="font-semibold text-xs text-slate-900">Cơ hội thuộc dự án</span>
+                                <Badge className="text-[10px] font-semibold px-1.5 py-0 bg-orange-500 text-white border-transparent">
+                                  {p.deals.length}
+                                </Badge>
+                              </div>
+                              {p.deals.length > 0 && (
+                                <span className="text-[11px] text-slate-500">
+                                  Tổng: <b className="text-slate-900">{formatVND(p.dealsBudget)}</b>
+                                </span>
+                              )}
+                            </div>
+
+                            {p.deals.length === 0 ? (
+                              <div className="py-6 text-center text-xs text-slate-500 bg-white rounded-xl border border-dashed border-gray-200 flex flex-col items-center gap-1.5 shadow-2xs">
+                                <Target className="size-5 text-slate-400 stroke-1" />
+                                <span>Chưa có cơ hội nào gắn với dự án này.</span>
+                              </div>
+                            ) : (
+                              <div className="space-y-2 max-h-[260px] overflow-y-auto pr-1">
+                                {p.deals.map((deal) => (
+                                  <div
+                                    key={deal.id}
+                                    className="p-3 rounded-xl bg-white border border-gray-200/80 hover:border-orange-500/50 hover:shadow-xs transition-all flex items-center justify-between gap-2.5"
+                                  >
+                                    <div className="min-w-0 flex-1">
+                                      <div className="flex items-center gap-2 flex-wrap">
+                                        <span className="font-semibold text-xs text-slate-900 truncate max-w-[200px]" title={deal.customer_name || deal.id}>
+                                          {deal.customer_name || deal.id}
+                                        </span>
+                                        {getBrightDealStageBadge(deal.deal_stage)}
+                                      </div>
+                                      <div className="text-[11px] text-slate-500 mt-1 flex items-center gap-2">
+                                        <span>Kỳ vọng: <b className="text-orange-600">{formatVND(Number(deal.estimated_budget || deal.lifetime_value || 0))}</b></span>
+                                        {deal.leader_name && <span>· Phụ trách: {deal.leader_name}</span>}
+                                      </div>
+                                    </div>
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      size="sm"
+                                      className="h-7 text-xs px-2 text-primary hover:text-primary hover:bg-slate-100 gap-1 shrink-0"
+                                      onClick={() => onOpenDeal(deal.id)}
+                                    >
+                                      <span>Xem</span>
+                                      <ArrowRight className="size-3" />
+                                    </Button>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Cột Báo giá (Nền trắng) */}
+                          <div className="space-y-2.5">
+                            <div className="flex items-center justify-between pb-1 border-b border-border/50">
+                              <div className="flex items-center gap-2">
+                                <FileText className="size-4 text-blue-500" />
+                                <span className="font-semibold text-xs text-slate-900">Báo giá thuộc dự án</span>
+                                <Badge className="text-[10px] font-semibold px-1.5 py-0 bg-blue-500 text-white border-transparent">
+                                  {p.quotes.length}
+                                </Badge>
+                              </div>
+                              {p.quotes.length > 0 && (
+                                <span className="text-[11px] text-slate-500">
+                                  Tổng: <b className="text-slate-900">{formatVND(p.quoteAmount)}</b>
+                                </span>
+                              )}
+                            </div>
+
+                            {p.quotes.length === 0 ? (
+                              <div className="py-6 text-center text-xs text-slate-500 bg-white rounded-xl border border-dashed border-gray-200 flex flex-col items-center gap-1.5 shadow-2xs">
+                                <FileText className="size-5 text-slate-400 stroke-1" />
+                                <span>Chưa có báo giá nào gắn với dự án này.</span>
+                              </div>
+                            ) : (
+                              <div className="space-y-2 max-h-[260px] overflow-y-auto pr-1">
+                                {p.quotes.map((quote) => (
+                                  <div
+                                    key={quote.id}
+                                    className="p-3 rounded-xl bg-white border border-gray-200/80 hover:border-blue-500/50 hover:shadow-xs transition-all flex items-center justify-between gap-2.5"
+                                  >
+                                    <div className="min-w-0 flex-1">
+                                      <div className="flex items-center gap-2 flex-wrap">
+                                        <span className="font-mono font-semibold text-xs text-slate-900">
+                                          {quote.quote_number || 'Báo giá'}
+                                        </span>
+                                        {getQuoteStatusBadge(quote)}
+                                      </div>
+                                      <div className="text-[11px] text-slate-500 mt-1 flex items-center gap-2">
+                                        <span>Giá trị: <b className="text-blue-600">{formatVND(Number(quote.total_amount || 0))}</b></span>
+                                        {quote.version_number && <span>· Phiên bản v{quote.version_number}</span>}
+                                      </div>
+                                    </div>
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      size="sm"
+                                      className="h-7 text-xs px-2 text-primary hover:text-primary hover:bg-slate-100 gap-1 shrink-0"
+                                      onClick={() => onOpenQuote(quote)}
+                                    >
+                                      <span>Mở</span>
+                                      <ArrowRight className="size-3" />
+                                    </Button>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+
+              {/* Nhóm Chưa gán dự án */}
+              {(projectHierarchy.unassigned.dealCount > 0 || projectHierarchy.unassigned.quoteCount > 0) && (() => {
+                const isUnassignedExpanded = expandedProjectIds.has('unassigned');
+                return (
+                  <div className="transition-colors">
+                    <div
+                      onClick={() => toggleExpandProject('unassigned')}
+                      className={`flex flex-col sm:flex-row sm:items-center justify-between p-4 gap-3 cursor-pointer transition-colors ${
+                        isUnassignedExpanded
+                          ? 'bg-muted/40 border-l-4 border-l-slate-600'
+                          : 'hover:bg-muted/30'
+                      }`}
+                    >
+                      <div className="flex items-start gap-3 min-w-[200px]">
+                        <div className="size-8 rounded-lg bg-white border border-gray-100 shadow-sm flex items-center justify-center text-slate-500 shrink-0 mt-0.5">
+                          <Layers className="size-4" />
+                        </div>
+                        <div>
+                          <span className="font-semibold text-foreground text-sm">
+                            Chưa thuộc dự án
+                          </span>
+                          <p className="text-[11px] text-muted-foreground mt-0.5">
+                            Các cơ hội và báo giá độc lập chưa gắn vào dự án cụ thể nào
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-3 sm:gap-6">
+                        <div className="flex items-center gap-2 bg-muted/60 px-3 py-1.5 rounded-lg border border-border/70">
+                          <Target className="size-3.5 text-muted-foreground shrink-0" />
+                          <span className="font-bold text-foreground">{projectHierarchy.unassigned.dealCount}</span>
+                          <span className="text-muted-foreground text-[11px]">Cơ hội</span>
+                        </div>
+
+                        <div className="flex items-center gap-2 bg-muted/60 px-3 py-1.5 rounded-lg border border-border/70">
+                          <FileText className="size-3.5 text-muted-foreground shrink-0" />
+                          <span className="font-bold text-foreground">{projectHierarchy.unassigned.quoteCount}</span>
+                          <span className="text-muted-foreground text-[11px]">Báo giá</span>
+                        </div>
+
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={(e) => toggleExpandProject('unassigned', e)}
+                          className={`text-xs h-7 px-2.5 gap-1.5 shrink-0 ml-auto sm:ml-0 transition-all ${
+                            isUnassignedExpanded
+                              ? 'bg-slate-700 text-white border-slate-700 shadow-xs hover:bg-slate-800 hover:text-white'
+                              : 'bg-white hover:bg-slate-50 text-slate-700 border-border/80'
+                          }`}
+                        >
+                          <span>{isUnassignedExpanded ? 'Thu gọn' : 'Chi tiết'}</span>
+                          <ChevronDown className={`size-3 transition-transform duration-200 ${isUnassignedExpanded ? 'rotate-180' : ''}`} />
+                        </Button>
+                      </div>
+                    </div>
+
+                    {/* DROPDOWN XỔ XUỐNG: CƠ HỘI VÀ BÁO GIÁ CHƯA THUỘC DỰ ÁN (Nền trắng) */}
+                    {isUnassignedExpanded && (
+                      <div className="bg-slate-100/70 border-t border-border/70 p-4 sm:p-5 space-y-4 animate-in fade-in-50 duration-200">
+                        {/* Khung Phân loại & Tổng ngân sách độc lập (Nền trắng tinh) */}
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3.5 rounded-xl bg-white border border-gray-200/90 shadow-xs">
+                          <div>
+                            <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider block">Phân loại</span>
+                            <span className="text-xs font-bold text-slate-900">
+                              Chưa gắn vào dự án cụ thể nào
+                            </span>
+                          </div>
+                          <div>
+                            <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider block">Tổng ngân sách độc lập</span>
+                            <span className="text-xs font-bold text-slate-900">
+                              {formatVND(projectHierarchy.unassigned.dealsBudget + projectHierarchy.unassigned.quoteAmount)}
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                          {/* Cột Cơ hội chưa gán (Nền trắng) */}
+                          <div className="space-y-2.5">
+                            <div className="flex items-center justify-between pb-1 border-b border-border/50">
+                              <div className="flex items-center gap-2">
+                                <Target className="size-4 text-orange-500" />
+                                <span className="font-semibold text-xs text-slate-900">Cơ hội độc lập</span>
+                                <Badge className="text-[10px] font-semibold px-1.5 py-0 bg-orange-500 text-white border-transparent">
+                                  {projectHierarchy.unassigned.deals.length}
+                                </Badge>
+                              </div>
+                              {projectHierarchy.unassigned.deals.length > 0 && (
+                                <span className="text-[11px] text-slate-500">
+                                  Tổng: <b className="text-slate-900">{formatVND(projectHierarchy.unassigned.dealsBudget)}</b>
+                                </span>
+                              )}
+                            </div>
+
+                            {projectHierarchy.unassigned.deals.length === 0 ? (
+                              <div className="py-6 text-center text-xs text-slate-500 bg-white rounded-xl border border-dashed border-gray-200 flex flex-col items-center gap-1.5 shadow-2xs">
+                                <Target className="size-5 text-slate-400 stroke-1" />
+                                <span>Không có cơ hội độc lập.</span>
+                              </div>
+                            ) : (
+                              <div className="space-y-2 max-h-[260px] overflow-y-auto pr-1">
+                                {projectHierarchy.unassigned.deals.map((deal) => (
+                                  <div
+                                    key={deal.id}
+                                    className="p-3 rounded-xl bg-white border border-gray-200/80 hover:border-orange-500/50 hover:shadow-xs transition-all flex items-center justify-between gap-2.5"
+                                  >
+                                    <div className="min-w-0 flex-1">
+                                      <div className="flex items-center gap-2 flex-wrap">
+                                        <span className="font-semibold text-xs text-slate-900 truncate max-w-[200px]" title={deal.customer_name || deal.id}>
+                                          {deal.customer_name || deal.id}
+                                        </span>
+                                        {getBrightDealStageBadge(deal.deal_stage)}
+                                      </div>
+                                      <div className="text-[11px] text-slate-500 mt-1 flex items-center gap-2">
+                                        <span>Kỳ vọng: <b className="text-orange-600">{formatVND(Number(deal.estimated_budget || deal.lifetime_value || 0))}</b></span>
+                                        {deal.leader_name && <span>· Phụ trách: {deal.leader_name}</span>}
+                                      </div>
+                                    </div>
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      size="sm"
+                                      className="h-7 text-xs px-2 text-primary hover:text-primary hover:bg-slate-100 gap-1 shrink-0"
+                                      onClick={() => onOpenDeal(deal.id)}
+                                    >
+                                      <span>Xem</span>
+                                      <ArrowRight className="size-3" />
+                                    </Button>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Cột Báo giá chưa gán (Nền trắng) */}
+                          <div className="space-y-2.5">
+                            <div className="flex items-center justify-between pb-1 border-b border-border/50">
+                              <div className="flex items-center gap-2">
+                                <FileText className="size-4 text-blue-500" />
+                                <span className="font-semibold text-xs text-slate-900">Báo giá độc lập</span>
+                                <Badge className="text-[10px] font-semibold px-1.5 py-0 bg-blue-500 text-white border-transparent">
+                                  {projectHierarchy.unassigned.quotes.length}
+                                </Badge>
+                              </div>
+                              {projectHierarchy.unassigned.quotes.length > 0 && (
+                                <span className="text-[11px] text-slate-500">
+                                  Tổng: <b className="text-slate-900">{formatVND(projectHierarchy.unassigned.quoteAmount)}</b>
+                                </span>
+                              )}
+                            </div>
+
+                            {projectHierarchy.unassigned.quotes.length === 0 ? (
+                              <div className="py-6 text-center text-xs text-slate-500 bg-white rounded-xl border border-dashed border-gray-200 flex flex-col items-center gap-1.5 shadow-2xs">
+                                <FileText className="size-5 text-slate-400 stroke-1" />
+                                <span>Không có báo giá độc lập.</span>
+                              </div>
+                            ) : (
+                              <div className="space-y-2 max-h-[260px] overflow-y-auto pr-1">
+                                {projectHierarchy.unassigned.quotes.map((quote) => (
+                                  <div
+                                    key={quote.id}
+                                    className="p-3 rounded-xl bg-white border border-gray-200/80 hover:border-blue-500/50 hover:shadow-xs transition-all flex items-center justify-between gap-2.5"
+                                  >
+                                    <div className="min-w-0 flex-1">
+                                      <div className="flex items-center gap-2 flex-wrap">
+                                        <span className="font-mono font-semibold text-xs text-slate-900">
+                                          {quote.quote_number || 'Báo giá'}
+                                        </span>
+                                        {getQuoteStatusBadge(quote)}
+                                      </div>
+                                      <div className="text-[11px] text-slate-500 mt-1 flex items-center gap-2">
+                                        <span>Giá trị: <b className="text-blue-600">{formatVND(Number(quote.total_amount || 0))}</b></span>
+                                        {quote.version_number && <span>· Phiên bản v{quote.version_number}</span>}
+                                      </div>
+                                    </div>
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      size="sm"
+                                      className="h-7 text-xs px-2 text-primary hover:text-primary hover:bg-slate-100 gap-1 shrink-0"
+                                      onClick={() => onOpenQuote(quote)}
+                                    >
+                                      <span>Mở</span>
+                                      <ArrowRight className="size-3" />
+                                    </Button>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
       {/* ── KHỐI 2: CÁC BẢNG CƠ HỘI VÀ BÁO GIÁ MỚI NHẤT ── */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {/* BẢNG 1: Cơ hội mới nhất */}
         <Card className="bg-card border border-border/80 shadow-xs flex flex-col">
           <CardHeader className="py-3 px-5 border-b border-border/60 flex flex-row items-center justify-between">
-            <div className="flex items-center gap-2">
-              <TrendingUp className="size-4 text-primary" />
+            <div className="flex items-center gap-2.5">
+              {/* Icon Cơ hội mới nhất: Nền trắng, làm sáng và nổi bật màu Icon lên */}
+              <div className="size-7 rounded-lg bg-white border border-gray-100 shadow-sm flex items-center justify-center text-orange-500">
+                <TrendingUp className="size-4" />
+              </div>
               <CardTitle className="text-sm font-semibold text-foreground">
                 Cơ hội mới nhất
               </CardTitle>
-              <Badge variant="secondary" className="text-[11px] font-normal px-2 py-0">
-                {deals.length}
+              <Badge className="text-[11px] font-medium px-2 py-0 bg-orange-500 text-white border-transparent">
+                {activeDeals.length}
               </Badge>
             </div>
             <Button
@@ -447,7 +1163,7 @@ export function CustomerProjectCrmOverview({
             {recentDeals.length === 0 ? (
               <div className="py-12 text-center text-xs text-muted-foreground flex flex-col items-center gap-2">
                 <AlertCircle className="size-6 text-muted-foreground/30 stroke-1" />
-                <span>Khách hàng chưa có cơ hội nào.</span>
+                <span>Không có cơ hội nào trong phạm vi đang chọn.</span>
               </div>
             ) : (
               <div className="overflow-x-auto">
@@ -474,7 +1190,8 @@ export function CustomerProjectCrmOverview({
                           {d.customer_name || d.id}
                         </TableCell>
                         <TableCell>
-                          {getDealStageBadge(d.deal_stage)}
+                          {/* Render màu giai đoạn với độ sáng cao hơn (High Luminosity) */}
+                          {getBrightDealStageBadge(d.deal_stage)}
                         </TableCell>
                         <TableCell className="text-xs text-right font-semibold text-foreground">
                           {formatVND(Number(d.estimated_budget || d.lifetime_value || 0)) || '0 đ'}
@@ -497,13 +1214,16 @@ export function CustomerProjectCrmOverview({
         {/* BẢNG 2: Báo giá mới nhất */}
         <Card className="bg-card border border-border/80 shadow-xs flex flex-col">
           <CardHeader className="py-3 px-5 border-b border-border/60 flex flex-row items-center justify-between">
-            <div className="flex items-center gap-2">
-              <FileText className="size-4 text-primary" />
+            <div className="flex items-center gap-2.5">
+              {/* Icon Báo giá mới nhất: Nền trắng, làm sáng và nổi bật màu Icon lên */}
+              <div className="size-7 rounded-lg bg-white border border-gray-100 shadow-sm flex items-center justify-center text-blue-500">
+                <FileText className="size-4" />
+              </div>
               <CardTitle className="text-sm font-semibold text-foreground">
                 Báo giá mới nhất
               </CardTitle>
-              <Badge variant="secondary" className="text-[11px] font-normal px-2 py-0">
-                {quotes.length}
+              <Badge className="text-[11px] font-medium px-2 py-0 bg-blue-500 text-white border-transparent">
+                {activeQuotes.length}
               </Badge>
             </div>
             <Button
@@ -520,7 +1240,7 @@ export function CustomerProjectCrmOverview({
             {recentQuotes.length === 0 ? (
               <div className="py-12 text-center text-xs text-muted-foreground flex flex-col items-center gap-2">
                 <AlertCircle className="size-6 text-muted-foreground/30 stroke-1" />
-                <span>Khách hàng chưa có báo giá nào.</span>
+                <span>Không có báo giá nào trong phạm vi đang chọn.</span>
               </div>
             ) : (
               <div className="overflow-x-auto">

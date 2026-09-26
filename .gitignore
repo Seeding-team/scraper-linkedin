@@ -270,3 +270,9 @@ Reports
 docker-compose.local-test.yml
 scripts/init-local-test-db.sql
 scripts/local-test/
+
+# ---- Local Mock Seed for QA/Testing (NEVER push to Production) ----
+supabase/local_mock.sql
+linkedin_group_crawler/supabase/local_mock.sql
+scripts/local-mock-seed.*
+local_mock.sql

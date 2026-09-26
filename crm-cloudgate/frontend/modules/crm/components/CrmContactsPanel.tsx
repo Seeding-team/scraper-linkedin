@@ -11,7 +11,7 @@ import { ChevronDown, ChevronUp, Loader2, Plus, X } from './icons';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Users, Phone, Mail, AlertCircle, UserCheck } from 'lucide-react';
+import { Users, Phone, Mail, AlertCircle } from 'lucide-react';
 
 function headers() {
   const value: Record<string, string> = { 'Content-Type': 'application/json' };
@@ -177,6 +177,7 @@ export function CrmContactsPanel({
 
   useEffect(() => {
     let alive = true;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true);
     fetch(`${API_BASE_URL}/api/all-platform/crm/customers/${encodeURIComponent(customerId)}/contacts`, {
       credentials: 'include',
@@ -403,7 +404,7 @@ export function CrmContactsPanel({
         <div className="flex items-center gap-2">
           <Users className="size-4.5 text-primary" />
           <CardTitle className="text-base font-semibold text-foreground">Người liên hệ</CardTitle>
-          <Badge variant="secondary" className="text-xs px-2 py-0.5 font-bold">
+          <Badge className="text-xs px-2 py-0.5 font-bold bg-blue-500 text-white border-transparent">
             {contacts.length}
           </Badge>
         </div>
@@ -450,10 +451,14 @@ export function CrmContactsPanel({
                     <div className="flex items-center gap-2">
                       <span className="font-semibold text-xs text-foreground">{contact.name}</span>
                       {contact.is_primary ? (
-                        <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/40 dark:text-blue-400 text-[10px] font-semibold px-2 py-0">
+                        <Badge className="bg-blue-500 text-white border-transparent text-[10px] font-semibold px-2 py-0">
                           Chính
                         </Badge>
-                      ) : null}
+                      ) : (
+                        <Badge className="bg-slate-500 text-white border-transparent text-[10px] font-semibold px-2 py-0">
+                          Phụ
+                        </Badge>
+                      )}
                     </div>
                     {(contact.position_label_snapshot || contact.position) ? (
                       <span className="text-[11px] text-muted-foreground">{contact.position_label_snapshot || contact.position}</span>
