@@ -317,6 +317,12 @@ async function runBulkComment(payload, uiTabId, postsToRun) {
                     if (verifyConfig.mode === "internal_engagement") {
                         // Trang Tương tác nội bộ — lưu vào bảng KPI riêng, không đụng
                         // vào bảng seeding_content_kpi của tính năng seeding nhóm cũ.
+                        // profile_id: danh tinh tai khoan THAT SU dang bam comment (khac
+                        // email_member la tai khoan dang nhap he thong noi bo) - Facebook
+                        // da co san (uid so tu token trang), LinkedIn dang cho HTML mau
+                        // khu vuc avatar "Me" de trich xuat tuong tu (xem account_name/
+                        // account_url tra ve tu doPostComment cua tung platform).
+                        const posterAccount = result.account_name || result.account_url || result.uid || undefined;
                         const kpiResp = await fetch(`${apiBase}/api/all-platform/internal-engagement/kpi/record`, {
                             method: "POST",
                             headers: { "Content-Type": "application/json" },
@@ -329,6 +335,7 @@ async function runBulkComment(payload, uiTabId, postsToRun) {
                                 facebook_post_id: currentPost.id_post || currentPost.facebook_post_id || "unknown",
                                 action_type: "comment",
                                 content: text,
+                                profile_id: posterAccount,
                                 status: result.success ? "success" : "failed",
                                 error_message: result.success ? undefined : result.error,
                             }),
