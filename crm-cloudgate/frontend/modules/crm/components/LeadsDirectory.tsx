@@ -12,28 +12,16 @@ import { LeadEditDrawer } from './LeadEditDrawer';
 import { LeadImportDialog } from './LeadImportDialog';
 import { SearchableSelect } from './SearchableSelect';
 import { useCrmCategoryCodeOptions } from './CrmCategorySelect';
-<<<<<<< HEAD
-import { Loader2 } from './icons';
+import { Loader2, Plus, RotateCcw, Trash2, Building2, CheckCircle2, Mail, Phone, Sparkles, XCircle } from './icons';
 import {
   Users,
-  Sparkles,
-  CheckCircle2,
   HeartHandshake,
-  XCircle,
   Search,
-  Building2,
-  Phone,
-  Mail,
   FileSpreadsheet,
-  Plus,
-  RotateCcw,
   ChevronLeft,
   ChevronRight,
   Target,
 } from 'lucide-react';
-=======
-import { Loader2, Plus, RotateCcw, Trash2 } from './icons';
->>>>>>> origin/main
 import type { CrmLeadKpi, CrmLeadRow, CrmLeadStatus } from '../types';
 import { cascadeLossText, cascadeSummaryFromBody, describeCascadeSummary, sumCascadeSummaries, type CascadeSummary } from '../utils/cascadeDelete';
 
@@ -1079,7 +1067,6 @@ export function LeadsDirectory() {
                   {loading ? (
                     <tr><td colSpan={9} className="crm-empty-cell"><Loader2 className="crm-spin-icon" /> Đang tải...</td></tr>
                   ) : items.length ? (
-<<<<<<< HEAD
                     items.map(lead => {
                       const avatarColor = getAvatarColor(lead.leadName);
                       const initials = getInitials(lead.leadName);
@@ -1102,52 +1089,6 @@ export function LeadsDirectory() {
                                 {initials}
                               </div>
                               <div className="crm-lead-identity-text">
-=======
-                    items.map(lead => (
-                      <tr
-                        key={lead.id}
-                        className="crm-row crm-row--clickable"
-                        onClick={() => openEdit(lead)}
-                      >
-                        <td className="crm-td" onClick={event => event.stopPropagation()}>
-                          <input
-                            type="checkbox"
-                            checked={selectedIds.has(lead.id)}
-                            onChange={() => toggleSelect(lead.id)}
-                            aria-label={`Chọn ${lead.leadName}`}
-                          />
-                        </td>
-                        <td className="crm-td" onClick={event => event.stopPropagation()}>
-                          <button type="button" className="crm-customer-name-link crm-lead-name-btn" title={lead.leadName} onClick={() => openRow(lead)}>
-                            {lead.leadName}
-                          </button>
-                          <div className="crm-customer-company" title={lead.companyName || 'Chưa có công ty'}>
-                            {lead.companyName || 'Chưa có công ty'}
-                          </div>
-                        </td>
-                        <td className="crm-td crm-contact-cell" onClick={event => event.stopPropagation()}>
-                          {lead.phone ? (
-                            <a className="crm-contact-link" href={`tel:${lead.phone.replace(/[^\d+]/g, '')}`}>{lead.phone}</a>
-                          ) : <div className="crm-small">-</div>}
-                          {lead.email ? (
-                            <a className="crm-contact-link crm-muted crm-truncate" title={lead.email} href={`mailto:${lead.email}`}>{lead.email}</a>
-                          ) : <div className="crm-muted crm-truncate">-</div>}
-                        </td>
-                        <td className="crm-td"><span className="crm-source-badge">{lead.source || 'Manual'}</span></td>
-                        <td className="crm-td crm-td--right">{lead.score == null ? '-' : lead.score}</td>
-                        <td className="crm-td">
-                          <span className={`crm-lead-status-badge ${STATUS_BADGE_CLASS[lead.status] || ''}`}>
-                            {LEAD_STATUS_LABEL[lead.status] || lead.status}
-                          </span>
-                        </td>
-                        <td className="crm-td crm-small">{sdrName.get(lead.sdrId || '') || 'Chưa gán'}</td>
-                        <td className="crm-td crm-muted crm-truncate" title={lead.nextStep || ''}>{lead.nextStep || '-'}</td>
-                        <td className="crm-td crm-td--actions-col" onClick={event => event.stopPropagation()}>
-                          <div className="crm-row-actions">
-                            {(() => {
-                              const action = primaryActionOf(lead);
-                              return (
->>>>>>> origin/main
                                 <button
                                   type="button"
                                   className="crm-lead-name-btn"
@@ -1156,7 +1097,6 @@ export function LeadsDirectory() {
                                 >
                                   {lead.leadName}
                                 </button>
-<<<<<<< HEAD
                                 <div className="crm-sub-text" title={lead.companyName || 'Chưa có công ty'}>
                                   <Building2 size={12} className="shrink-0 text-gray-400" />
                                   <span className="truncate">{lead.companyName || 'Chưa có công ty'}</span>
@@ -1249,15 +1189,6 @@ export function LeadsDirectory() {
                         </tr>
                       );
                     })
-=======
-                              );
-                            })()}
-                            {renderSecondaryActions(lead)}
-                          </div>
-                        </td>
-                      </tr>
-                    ))
->>>>>>> origin/main
                   ) : (
                     <tr>
                       <td colSpan={9}>
@@ -1291,8 +1222,6 @@ export function LeadsDirectory() {
             </div>
           </div>
 
-<<<<<<< HEAD
-=======
           {/* Card list cho man hep - cung ly do voi CrmCustomersDirectory.tsx
            * (bang 8 cot ep table-layout:fixed khong doc noi duoi 900px). */}
           <div className="crm-lead-card-list">
@@ -1376,7 +1305,6 @@ export function LeadsDirectory() {
             )}
           </div>
 
->>>>>>> origin/main
           {total > 0 ? (
             <div className="crm-progress-pagination">
               <div className="crm-progress-pagination-info">
