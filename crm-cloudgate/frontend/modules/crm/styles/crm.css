@@ -480,6 +480,15 @@
   box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
 }
 
+.crm-searchable-select-trigger:focus,
+.crm-searchable-select-trigger:focus-visible,
+.crm-searchable-select-option:focus,
+.crm-searchable-select-option:focus-visible,
+.crm-searchable-select-action:focus,
+.crm-searchable-select-action:focus-visible {
+  outline: none !important;
+}
+
 .crm-searchable-select-trigger:hover:not(:disabled) {
   border-color: #94a3b8;
   background: #f8fafc;
@@ -602,9 +611,14 @@
 }
 
 .crm-searchable-select-search-wrap .crm-searchable-select-input:focus {
+  outline: none !important;
   border-color: #be1e4b;
   background: #ffffff;
   box-shadow: 0 0 0 2.5px rgba(190, 30, 75, 0.1);
+}
+
+.crm-searchable-select-search-wrap .crm-searchable-select-input:focus-visible {
+  outline: none !important;
 }
 
 .crm-searchable-select-search-clear {
@@ -8403,7 +8417,9 @@
  * =========================================================== */
 
 .crm-verify-drawer {
-  width: min(760px, 100%);
+  width: min(1040px, 60vw);
+  min-width: 0;
+  max-width: 60vw;
 }
 
 .crm-verify-header {
@@ -8419,11 +8435,9 @@
 .crm-verify-body {
   display: flex;
   flex-direction: column;
-  gap: 1rem;
+  gap: 0.45rem;
   overflow-x: hidden;
-  /* Chua san cho footer dinh + vung an toan tren mobile, de o cuoi cung khong
-   * bao gio bi footer che. */
-  padding-bottom: 1.5rem;
+  padding-bottom: 0.25rem;
 }
 
 .crm-verify-ok {
@@ -8431,8 +8445,8 @@
   border-radius: 0.6rem;
   background: #f0fdf4;
   color: #15803d;
-  font-size: 0.82rem;
-  padding: 0.55rem 0.75rem;
+  font-size: 0.78rem;
+  padding: 0.4rem 0.6rem;
 }
 
 /* ---- The tom tat Lead ---- */
@@ -8441,22 +8455,23 @@
   align-items: flex-start;
   gap: 0.85rem;
   border: 1px solid #e2e8f0;
-  border-radius: 0.85rem;
-  background: #f8fafc;
-  padding: 0.9rem;
+  border-radius: 0.75rem;
+  background: #ffffff;
+  min-height: 94px;
+  padding: 0.82rem 0.9rem 0.9rem;
 }
 
 .crm-verify-avatar {
   display: inline-flex;
-  width: 2.6rem;
-  height: 2.6rem;
+  width: 2.35rem;
+  height: 2.35rem;
   flex: 0 0 auto;
   align-items: center;
   justify-content: center;
   border-radius: 50%;
   background: #be1e4b;
   color: #ffffff;
-  font-size: 1.05rem;
+  font-size: 0.98rem;
   font-weight: 700;
 }
 
@@ -8467,15 +8482,17 @@
 
 .crm-verify-name {
   color: #0f172a;
-  font-size: 0.98rem;
+  font-size: 1rem;
   font-weight: 700;
+  line-height: 1.25;
   overflow-wrap: anywhere;
 }
 
 .crm-verify-sub {
   color: #64748b;
-  font-size: 0.78rem;
-  margin-top: 0.15rem;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  margin-top: 0.16rem;
   overflow-wrap: anywhere;
 }
 
@@ -8494,19 +8511,19 @@
   flex-direction: column;
   align-items: center;
   border-left: 1px solid #e2e8f0;
-  padding-left: 0.85rem;
+  padding-left: 0.65rem;
 }
 
 .crm-verify-score b {
   color: #be1e4b;
-  font-size: 1.6rem;
+  font-size: 1.35rem;
   font-weight: 800;
   line-height: 1.1;
 }
 
 .crm-verify-score span {
   color: #94a3b8;
-  font-size: 0.62rem;
+  font-size: 0.58rem;
   font-weight: 700;
   letter-spacing: 0.04em;
 }
@@ -8514,17 +8531,23 @@
 /* ---- Khoi goi y ---- */
 .crm-verify-suggest {
   border: 1px solid #e2e8f0;
-  border-radius: 0.85rem;
+  border-radius: 0.65rem;
   background: #ffffff;
-  padding: 0.9rem;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.45rem 0.75rem;
+  align-items: center;
+  padding: 0.48rem 0.65rem;
 }
 
 .crm-verify-suggest-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 0.6rem;
-  flex-wrap: wrap;
+  gap: 0.4rem;
+  grid-column: 1 / 2;
+  flex-wrap: nowrap;
+  justify-content: flex-start;
 }
 
 .crm-verify-suggest-pill {
@@ -8532,9 +8555,9 @@
   border-radius: 999px;
   background: #f1f5f9;
   color: #64748b;
-  font-size: 0.7rem;
+  font-size: 0.66rem;
   font-weight: 700;
-  padding: 0.2rem 0.6rem;
+  padding: 0.16rem 0.5rem;
   white-space: nowrap;
 }
 
@@ -8546,20 +8569,151 @@
 
 .crm-verify-suggest-text {
   color: #475569;
-  font-size: 0.8rem;
-  margin-top: 0.4rem;
+  grid-column: 1 / 2;
+  font-size: 0.72rem;
+  margin-top: -0.15rem;
 }
 
 .crm-verify-suggest-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.5rem;
-  margin-top: 0.7rem;
+  grid-column: 2 / 3;
+  grid-row: 1 / 3;
+  gap: 0.35rem;
+  margin-top: 0;
+}
+
+.crm-verify-kpi-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.65rem;
+}
+
+.crm-verify-kpi-strip > div {
+  min-width: 0;
+  border: 1px solid #e2e8f0;
+  min-height: 50px;
+  border-radius: 0.55rem;
+  background: #ffffff;
+  padding: 0.42rem 0.55rem;
+}
+
+.crm-verify-kpi-strip span {
+  display: block;
+  color: #94a3b8;
+  font-size: 0.6rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.crm-verify-kpi-strip b {
+  display: block;
+  color: #0f172a;
+  font-size: 0.8rem;
+  margin-top: 0.1rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.crm-verify-compact-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr) minmax(280px, 300px);
+  gap: 0.75rem;
+  align-items: stretch;
+}
+
+.crm-verify-readiness-panel {
+  max-width: 300px;
+  justify-self: stretch;
+}
+
+.crm-verify-panel {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.crm-verify-compact-fields {
+  display: grid;
+  gap: 0.42rem;
+  margin-top: 0.45rem;
+}
+
+.crm-verify-handoff-extra {
+  margin-top: 0.55rem;
+  padding-top: 0.55rem;
+  border-top: 1px solid #edf2f7;
+}
+
+.crm-verify-compact-fields .crm-field {
+  gap: 0.18rem;
+}
+
+.crm-verify-compact-fields .crm-field label,
+.crm-verify-section .crm-form-title {
+  font-size: 0.72rem;
+}
+
+.crm-verify-compact-fields input,
+.crm-verify-compact-fields select,
+.crm-verify-compact-fields textarea,
+.crm-verify-compact-fields button,
+.crm-verify-compact-fields .crm-select-trigger,
+.crm-verify-compact-fields [role="combobox"] {
+  min-height: 36px;
+}
+
+.crm-verify-interest-level {
+  display: grid;
+  gap: 0.3rem;
+}
+
+.crm-verify-interest-level > span {
+  color: #64748b;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.crm-verify-interest-level-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.crm-verify-compact-fields .crm-verify-interest-level-chip,
+.crm-verify-interest-level-chip {
+  min-height: 30px;
+  border: 1px solid #cbd5e1;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #334155;
+  cursor: pointer;
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 0.25rem 0.65rem;
+}
+
+.crm-verify-interest-level-chip:hover:not(:disabled) {
+  border-color: #be1e4b;
+  color: #be1e4b;
+}
+
+.crm-verify-interest-level-chip.is-selected {
+  border-color: #f43f5e;
+  background: #fff1f5;
+  color: #be123c;
+}
+
+.crm-verify-interest-level-chip:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
 }
 
 .crm-ghost-button {
   display: inline-flex;
-  min-height: 2.3rem;
+  min-height: 2rem;
   align-items: center;
   gap: 0.35rem;
   border: 1px solid transparent;
@@ -8567,9 +8721,9 @@
   background: none;
   color: #64748b;
   cursor: pointer;
-  font-size: 0.82rem;
+  font-size: 0.76rem;
   font-weight: 600;
-  padding: 0.4rem 0.75rem;
+  padding: 0.3rem 0.6rem;
 }
 
 .crm-ghost-button:hover:not(:disabled) {
@@ -8647,8 +8801,8 @@
 /* ---- Cac section form ---- */
 .crm-verify-section {
   border: 1px solid #e2e8f0;
-  border-radius: 0.85rem;
-  padding: 0.9rem;
+  border-radius: 0.65rem;
+  padding: 0.58rem 0.65rem;
 }
 
 .crm-verify-hint {
@@ -8665,9 +8819,9 @@
   border-radius: 0.6rem;
   background: #fffbeb;
   color: #b45309;
-  font-size: 0.78rem;
-  margin-top: 0.7rem;
-  padding: 0.5rem 0.7rem;
+  font-size: 0.72rem;
+  margin-top: 0.45rem;
+  padding: 0.35rem 0.5rem;
 }
 
 .crm-verify-result {
@@ -8679,20 +8833,26 @@
 .crm-verify-result-options {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 0.5rem;
+  gap: 0.38rem;
+}
+
+.crm-verify-result-options--compact {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-top: 0.45rem;
 }
 
 .crm-verify-result-option {
   display: flex;
   align-items: center;
-  gap: 0.45rem;
+  gap: 0.32rem;
   min-width: 0;
   border: 1px solid #dbe3ef;
-  border-radius: 0.7rem;
+  border-radius: 0.5rem;
   background: #ffffff;
-  padding: 0.55rem 0.65rem;
+  min-height: 36px;
+  padding: 0.32rem 0.45rem;
   color: #334155;
-  font-size: 0.82rem;
+  font-size: 0.74rem;
   font-weight: 700;
 }
 
@@ -8715,9 +8875,9 @@
 /* ---- Checklist san sang Convert ---- */
 .crm-verify-readiness-pill {
   border-radius: 999px;
-  font-size: 0.72rem;
+  font-size: 0.66rem;
   font-weight: 700;
-  padding: 0.22rem 0.65rem;
+  padding: 0.16rem 0.55rem;
   white-space: nowrap;
 }
 
@@ -8738,22 +8898,23 @@
 
 .crm-verify-checklist {
   display: grid;
-  gap: 0.4rem;
+  gap: 0.28rem;
   list-style: none;
-  margin: 0.7rem 0 0;
+  margin: 0.45rem 0 0;
   padding: 0;
 }
 
 .crm-verify-checklist li {
   display: flex;
   align-items: center;
-  gap: 0.45rem;
+  gap: 0.34rem;
   border: 1px solid #e2e8f0;
-  border-radius: 0.55rem;
+  min-height: 31px;
+  border-radius: 0.45rem;
   background: #f8fafc;
   color: #64748b;
-  font-size: 0.8rem;
-  padding: 0.45rem 0.6rem;
+  font-size: 0.72rem;
+  padding: 0.24rem 0.44rem;
 }
 
 .crm-verify-checklist li.is-ok {
@@ -8766,12 +8927,61 @@
   flex: 0 0 auto;
 }
 
+.crm-verify-readiness-summary {
+  display: grid;
+  gap: 0.42rem;
+  margin-top: auto;
+  padding-top: 0.6rem;
+}
+
+.crm-verify-readiness-summary > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  border-top: 1px solid #e2e8f0;
+  padding-top: 0.42rem;
+}
+
+.crm-verify-readiness-summary span {
+  color: #94a3b8;
+  font-size: 0.66rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.crm-verify-readiness-summary b {
+  color: #0f172a;
+  font-size: 0.74rem;
+  text-align: right;
+}
+
+.crm-verify-readiness-summary p {
+  border-radius: 0.5rem;
+  background: #f8fafc;
+  color: #475569;
+  font-size: 0.7rem;
+  line-height: 1.35;
+  margin: 0;
+  padding: 0.42rem 0.5rem;
+}
+
 /* ---- Footer dinh, dung 3 hanh dong ---- */
 .crm-verify-footer {
   position: sticky;
   bottom: 0;
   z-index: 2;
   flex-wrap: wrap;
+  padding-top: 0.45rem;
+  padding-bottom: 0.45rem;
+}
+
+.crm-verify-footer .crm-footer-actions {
+  gap: 0.45rem;
+}
+
+.crm-verify-footer .crm-footer-actions > button {
+  min-height: 38px;
 }
 
 .crm-verify-footer-nurture {
@@ -8790,8 +9000,14 @@
 }
 
 @media (max-width: 900px) {
-  .crm-verify-stepper {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+  .crm-verify-drawer {
+    width: 100vw;
+    min-width: 0;
+    max-width: 100vw;
+  }
+  .crm-verify-kpi-strip,
+  .crm-verify-compact-grid {
+    grid-template-columns: 1fr;
   }
 }
 

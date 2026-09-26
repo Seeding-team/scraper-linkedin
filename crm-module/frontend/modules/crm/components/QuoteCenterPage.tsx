@@ -1506,10 +1506,6 @@ export function QuoteCenterPage() {
   return (
     <div className="qc-page">
       <header className="qc-header">
-        <div>
-          <h1>Trung tâm báo giá</h1>
-          <p>Tạo, gửi và theo dõi báo giá liên kết trực tiếp với CRM</p>
-        </div>
         <div className="qc-header-actions">
           <button type="button" className="qc-btn qc-btn-primary" onClick={openRequestWorkspace} title="Mở workspace xử lý báo giá — chọn khách hàng/cơ hội và người phụ trách ngay trong workspace">
             <Plus className="qc-icon" />

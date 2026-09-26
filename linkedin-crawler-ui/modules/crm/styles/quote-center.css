@@ -11,7 +11,7 @@
 .qc-header {
   display: flex;
   align-items: flex-start;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 16px;
   flex-wrap: wrap;
 }
@@ -33,6 +33,7 @@
 .qc-header-actions {
   display: flex;
   gap: 10px;
+  margin-left: auto;
 }
 
 .qc-icon {

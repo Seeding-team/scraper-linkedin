@@ -24,7 +24,8 @@
   font-size: 13px;
 }
 
-.progress-date-pill {
+.progress-date-pill,
+.progress-date-range-control {
   height: 36px;
   border: 1px solid #d8dce5;
   border-radius: 8px;
@@ -35,6 +36,72 @@
   color: #344054;
   font-size: 12.5px;
   white-space: nowrap;
+}
+
+.progress-date-range-control {
+  gap: 6px;
+  padding: 0 7px;
+}
+
+.progress-date-range-control input {
+  width: 108px;
+  height: 28px;
+  border: 0;
+  background: transparent;
+  color: #344054;
+  font: inherit;
+  outline: none;
+  padding: 0;
+}
+
+.progress-date-range-control input:focus,
+.progress-date-range-control input:focus-visible,
+.progress-time-tabs button:focus,
+.progress-time-tabs button:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+
+.progress-time-filter-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: 2 1 500px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.progress-time-tabs {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  border: 1px solid #d8dce5;
+  border-radius: 8px;
+  background: #fff;
+  padding: 2px;
+}
+
+.progress-time-tabs button {
+  height: 30px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #475467;
+  cursor: pointer;
+  font-size: 12.5px;
+  font-weight: 700;
+  padding: 0 10px;
+  white-space: nowrap;
+}
+
+.progress-time-tabs button.active {
+  background: #ffe4e6;
+  color: #c2185b;
+}
+
+.progress-date-pill--custom,
+.progress-date-range-control {
+  flex: 0 0 auto;
 }
 
 .progress-toolbar {
@@ -895,7 +962,7 @@
 }
 
 .progress-export-btn {
-  height: 36px;
+  height: 38px;
   border: 0;
   border-radius: 8px;
   background: #c2185b;
@@ -920,7 +987,7 @@
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  align-items: center;
+  align-items: flex-start;
   margin-bottom: 14px;
 }
 

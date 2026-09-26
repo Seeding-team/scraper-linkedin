@@ -27,7 +27,6 @@ import {
   RotateCcw,
   ChevronLeft,
   ChevronRight,
-  Target,
 } from 'lucide-react';
 import type { CrmLeadKpi, CrmLeadRow, CrmLeadStatus } from '../types';
 import { cascadeLossText, cascadeSummaryFromBody, describeCascadeSummary, sumCascadeSummaries, type CascadeSummary } from '../utils/cascadeDelete';
@@ -856,28 +855,6 @@ export function LeadsDirectory() {
       <section className="crm-page-card crm-leads-page-shell">
         {error ? <p className="crm-error">{error}</p> : null}
 
-        <div className="crm-directory-header">
-          <div className="crm-directory-title-wrap">
-            <h1>
-              <span className="crm-directory-title-icon">
-                <Target size={19} />
-              </span>
-              <span>Leads (Đầu mối tiềm năng)</span>
-            </h1>
-            <p>Thu thập, phân loại MQL/SQL và chuyển đổi lead thành cơ hội kinh doanh</p>
-          </div>
-          <div className="crm-directory-actions">
-            <button type="button" className="crm-secondary-button" onClick={() => setImportOpen(true)}>
-              <FileSpreadsheet size={15} />
-              <span>Import Excel</span>
-            </button>
-            <button type="button" className="crm-primary-button" onClick={openLeadFormDrawer}>
-              <Plus size={15} />
-              <span>Thêm Lead</span>
-            </button>
-          </div>
-        </div>
-
         <div className="crm-modern-kpi-grid">
           {kpiCards.map(card => {
             const IconComponent = card.icon;
@@ -1015,6 +992,16 @@ export function LeadsDirectory() {
               <p className="crm-directory-list-sub">
                 Tổng {total} lead · Click vào lead để xem chi tiết và cập nhật tiến độ
               </p>
+            </div>
+            <div className="crm-directory-actions">
+              <button type="button" className="crm-secondary-button" onClick={() => setImportOpen(true)}>
+                <FileSpreadsheet size={15} />
+                <span>Import Excel</span>
+              </button>
+              <button type="button" className="crm-primary-button" onClick={openLeadFormDrawer}>
+                <Plus size={15} />
+                <span>Thêm Lead</span>
+              </button>
             </div>
           </div>
 
