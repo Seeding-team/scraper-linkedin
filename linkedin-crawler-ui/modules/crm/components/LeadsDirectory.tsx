@@ -11,12 +11,20 @@ import { LeadEditDrawer } from './LeadEditDrawer';
 import { LeadImportDialog } from './LeadImportDialog';
 import { SearchableSelect } from './SearchableSelect';
 import { useCrmCategoryCodeOptions } from './CrmCategorySelect';
-import { Loader2, Plus, RotateCcw, Trash2, Building2, CheckCircle2, Mail, Phone, Sparkles, XCircle } from './icons';
+import { Loader2, Trash2 } from './icons';
 import {
   Users,
+  Sparkles,
+  CheckCircle2,
   HeartHandshake,
+  XCircle,
   Search,
+  Building2,
+  Phone,
+  Mail,
   FileSpreadsheet,
+  Plus,
+  RotateCcw,
   ChevronLeft,
   ChevronRight,
   Target,
