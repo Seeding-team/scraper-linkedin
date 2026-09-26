@@ -50,15 +50,17 @@
     'div[contenteditable="true"][role="textbox"]',
   ];
 
-  // Nut Gui that (xuat hien sau khi go noi dung — KHONG co trong HTML luc o
-  // nhap con rong nen chua xac nhan duoc chinh xac markup) rat co the CUNG
-  // dung he class hash moi giong het cac nut khac tren trang (xac nhan qua
-  // HTML that: KHONG CON class "artdeco-button--primary" nao tren toan bo
-  // trang nua — selector do gio chet hoan toan). Giu lai cac phuong an
-  // aria-label/class de tuong thich nguoc, nhung buoc BAT BUOC la tim theo
-  // TEXT hien thi cua nut (xem findButtonByText trong doPostComment) vi day
-  // la cach duy nhat khong phu thuoc class hash co the doi bat ky luc nao.
+  // Nut Gui that: xac nhan qua HTML that (2026-09-26, khung comment da go noi
+  // dung) - nam RIENG trong 1 div bao ngoai co id chua substring co dinh
+  // "commentButtonSection" (vd "...commentButtonSectionj2TL8...FeedType_FEED_DETAIL"),
+  // tach biet hoan toan voi div chua nut Emoji/GIF/Share photo. Day la selector
+  // DUY NHAT khong bi nhap nhang - ban than nut Gui KHONG CO aria-label, class
+  // hash rieng, VA hien thi cung dung chu "Comment" giong het nut Trigger mo
+  // khung o tren -> tim theo TEXT (LI_COMMENT_SUBMIT_TEXTS) co the vo tinh khop
+  // NHAM nut Trigger cu neu no van con trong pham vi tim kiem. Uu tien tuyet doi
+  // selector nay truoc khi rot xuong cac phuong an cu/tim theo text.
   const LI_COMMENT_SUBMIT_SELECTORS = [
+    'div[id*="commentButtonSection"] button',
     'button[class*="comments-comment-box__submit-button"]',
     'button[aria-label*="Post comment" i]',
     'button[aria-label*="Đăng bình luận" i]',
@@ -272,26 +274,46 @@
       };
     }
 
-    // 3. Tìm nút Submit — thử selector trước, KHÔNG thấy thì tìm theo TEXT
-    // hiển thị ("Post"/"Comment"/"Gửi"/"Đăng"...) ngay trong khu vực gần ô
-    // nhập (khu vực nhỏ hơn document để tránh trùng nút "Comment" mở khung ở
-    // trên hoặc nút khác cùng tên ở chỗ khác trang). Đợi nó hết "disabled"
-    // (LinkedIn tự validate nội dung trước khi mở khóa nút — xem waitUntilEnabled)
-    // rồi mới bấm.
+    // 3. Tìm nút Submit — thử phạm vi hẹp (quanh ô nhập) trước, rồi RỘNG RA TOÀN
+    // TRANG cho cùng bộ selector đó nếu không thấy. Lý do bắt buộc phải có bước
+    // rộng ra document: `box.closest("form")` gần như luôn null (LinkedIn không
+    // dùng thẻ <form> thật), nên submitSearchRoot rơi vào nhánh
+    // `box.parentElement?.parentElement` — CHỈ ĐÚNG 2 CẤP cha, một khoảng cách
+    // ĐOÁN MÒ có thể KHÔNG bao gồm div bọc nút Gửi (`commentButtonSection`) nếu
+    // Tiptap editor lồng sâu hơn — và vì DOM element luôn "truthy" nên `||
+    // document` KHÔNG BAO GIỜ thực sự được dùng tới, dù trông như có fallback.
+    // Đây là nghi vấn nguyên nhân khiến bản 1.6 (thêm đúng selector nhưng vẫn
+    // tìm trong phạm vi hẹp này) có thể vẫn không bấm được nút. Selector
+    // `div[id*="commentButtonSection"] button` tự nó đã đủ đặc thù (id gắn
+    // theo urn bài viết) nên rộng ra document là an toàn, không lo trùng nút
+    // của bài khác.
     const submitSearchRoot = box.closest("form") || box.parentElement?.parentElement || document;
-    const submitBtn =
-      (await waitForElementIn(submitSearchRoot, LI_COMMENT_SUBMIT_SELECTORS, 2000)) ||
-      (await waitForButtonByText(submitSearchRoot, LI_COMMENT_SUBMIT_TEXTS, 2000));
+    console.log("[LinkedIn Extension] Tìm nút Gửi — submitSearchRoot:", submitSearchRoot);
+    let submitBtn = await waitForElementIn(submitSearchRoot, LI_COMMENT_SUBMIT_SELECTORS, 2000);
+    if (!submitBtn) {
+      console.log("[LinkedIn Extension] Không thấy nút Gửi trong phạm vi hẹp — thử lại trên toàn trang (document).");
+      submitBtn = await waitForElementIn(document, LI_COMMENT_SUBMIT_SELECTORS, 1500);
+    }
+    if (!submitBtn) {
+      submitBtn =
+        (await waitForButtonByText(submitSearchRoot, LI_COMMENT_SUBMIT_TEXTS, 1500)) ||
+        (await waitForButtonByText(document, LI_COMMENT_SUBMIT_TEXTS, 1500));
+    }
+    console.log("[LinkedIn Extension] Nút Gửi tìm được:", submitBtn);
     let clickedSubmit = false;
 
     if (submitBtn) {
       const becameEnabled = await waitUntilEnabled(submitBtn, 3000);
+      console.log("[LinkedIn Extension] Nút Gửi becameEnabled =", becameEnabled, "disabled =", submitBtn.disabled);
       if (becameEnabled) {
         submitBtn.click();
         clickedSubmit = true;
+        console.log("[LinkedIn Extension] Đã bấm nút Gửi.");
       } else {
         console.warn("[LinkedIn Extension] Nút Gửi vẫn bị disabled sau khi nhập nội dung — LinkedIn có thể chưa nhận diện được nội dung đã nhập.");
       }
+    } else {
+      console.warn("[LinkedIn Extension] KHÔNG tìm thấy nút Gửi bằng bất kỳ selector/text nào — sẽ dùng fallback Enter.");
     }
 
     if (!clickedSubmit) {

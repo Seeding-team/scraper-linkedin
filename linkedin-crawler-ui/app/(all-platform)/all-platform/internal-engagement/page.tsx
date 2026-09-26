@@ -20,6 +20,7 @@ import type {
 } from "@/types/unified.types";
 import { useQuickCommentLibrary } from "@/components/all-platform/components/use-quick-comment-library";
 import { TeamPerformancePanel } from "@/components/all-platform/internal-engagement/TeamPerformancePanel";
+import { UnifiedDashboardHomeContent } from "@/components/features/dashboard/UnifiedDashboardHomeContent";
 import { pingLiExtension, fetchLinkedInPostInfo } from "@/lib/li-ext-bridge";
 import { extractLinkedInMetadata, sanitizeLinkedInUrl } from "@/lib/linkedin-metadata";
 
@@ -1677,28 +1678,30 @@ export default function InternalEngagementPage() {
                 Theo dõi thành viên đã nhận bài, đã tương tác, làm thiếu và quá hạn.
               </p>
             </div>
-            <div className="flex items-center gap-3">
-              <a
-                href="/all-platform/quick-comments"
-                className="px-4 py-2.5 border border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 rounded-xl text-[13px] font-bold shadow-sm transition flex items-center gap-2"
-              >
-                <span>📚</span> Thư viện mẫu câu
-              </a>
-              <button
-                type="button"
-                onClick={() => setIsCampaignModalOpen(true)}
-                className="px-4 py-2.5 border border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100 rounded-xl text-[13px] font-bold shadow-sm transition flex items-center gap-2"
-              >
-                <span>🚩</span> Tạo chiến dịch seeding
-              </button>
-              <button
-                type="button"
-                onClick={openCreateTaskModal}
-                className="px-4 py-2.5 bg-[#be123c] hover:bg-[#9f1239] text-white rounded-xl text-[13px] font-bold shadow-sm transition flex items-center gap-2 cursor-pointer"
-              >
-                <span className="text-base font-bold">+</span> Thêm bài viết Seeding
-              </button>
-            </div>
+            {mainTab !== "external" ? (
+              <div className="flex items-center gap-3">
+                <a
+                  href="/all-platform/quick-comments"
+                  className="px-4 py-2.5 border border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 rounded-xl text-[13px] font-bold shadow-sm transition flex items-center gap-2"
+                >
+                  <span>📚</span> Thư viện mẫu câu
+                </a>
+                <button
+                  type="button"
+                  onClick={() => setIsCampaignModalOpen(true)}
+                  className="px-4 py-2.5 border border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100 rounded-xl text-[13px] font-bold shadow-sm transition flex items-center gap-2"
+                >
+                  <span>🚩</span> Tạo chiến dịch seeding
+                </button>
+                <button
+                  type="button"
+                  onClick={openCreateTaskModal}
+                  className="px-4 py-2.5 bg-[#be123c] hover:bg-[#9f1239] text-white rounded-xl text-[13px] font-bold shadow-sm transition flex items-center gap-2 cursor-pointer"
+                >
+                  <span className="text-base font-bold">+</span> Thêm bài viết Seeding
+                </button>
+              </div>
+            ) : null}
           </div>
 
           {loadError ? (
@@ -1923,6 +1926,12 @@ export default function InternalEngagementPage() {
 
               {canSeeTeamInteractions ? <TeamPerformancePanel email={user?.email} /> : null}
             </div>
+          ) : mainTab === "external" ? (
+            /* TAB 2: SEEDING BÊN NGOÀI — gom nguyên trang /all-platform/post-feed cũ
+            (UnifiedDashboardHomeContent: crawl + seeding bài viết từ nhóm LinkedIn/
+            Facebook bên ngoài) vào đây theo yêu cầu user, không còn trang/menu
+            "Post feed" riêng nữa (đã bỏ khỏi sidebar — xem AllPlatformSidebar.tsx). */
+            <UnifiedDashboardHomeContent hideHeader />
           ) : (
             /* TAB 2: HOẠT ĐỘNG SEEDING (POST FEED) */
             <div>

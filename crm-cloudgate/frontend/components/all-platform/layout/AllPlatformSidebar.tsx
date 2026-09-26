@@ -398,7 +398,7 @@ function SidebarGroup({
         item={{
           type: "item",
           id: entry.id,
-          href: firstHref || "/all-platform/post-feed",
+          href: firstHref || "/all-platform/internal-engagement",
           icon: entry.icon,
           label: entry.label,
         }}
@@ -558,7 +558,7 @@ export function AllPlatformSidebar({
             ) : null}
             {isCollapsed ? (
               <Link
-                href="/all-platform/post-feed"
+                href="/all-platform/internal-engagement"
                 onClick={onClose}
                 className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl md:hidden"
               >
@@ -566,7 +566,7 @@ export function AllPlatformSidebar({
               </Link>
             ) : (
               <Link
-                href="/all-platform/post-feed"
+                href="/all-platform/internal-engagement"
                 onClick={onClose}
                 className="flex min-w-0 items-center gap-3 rounded-lg p-1 transition hover:bg-surface-container-low active:scale-[0.98]"
               >

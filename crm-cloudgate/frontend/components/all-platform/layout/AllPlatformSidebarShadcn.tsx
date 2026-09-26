@@ -74,7 +74,7 @@ function SidebarLogoHeader() {
 
   return (
     <div className="flex w-full items-center gap-2">
-      <Link href="/all-platform/post-feed" className="flex min-w-0 flex-1 items-center gap-2">
+      <Link href="/all-platform/internal-engagement" className="flex min-w-0 flex-1 items-center gap-2">
         <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground text-base font-bold">
           M
         </div>
