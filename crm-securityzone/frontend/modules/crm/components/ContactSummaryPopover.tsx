@@ -139,7 +139,11 @@ export function ContactSummaryBadge({ customerId, extraCount }: { customerId: st
                     <li key={contact.id} className="crm-contact-summary-popover-item">
                       <div className="crm-contact-summary-popover-name">
                         {contact.name}
-                        {contact.is_primary ? <span className="crm-contact-primary-badge">Chính</span> : null}
+                        {contact.is_primary ? (
+                          <span className="crm-contact-primary-badge">Chính</span>
+                        ) : (
+                          <span className="crm-contact-secondary-badge">Phụ</span>
+                        )}
                       </div>
                       <div className="crm-contact-summary-popover-detail">{contact.phone || '-'}</div>
                       <div className="crm-contact-summary-popover-detail">{contact.email || '-'}</div>

@@ -164,6 +164,11 @@ class QuoteUpdateRequest(BaseModel):
     data: Optional[dict[str, Any]] = None
     items: Optional[list[QuoteItemInput]] = None
     issuer_company_id: Optional[str] = None
+    # "Mẫu ăn theo Đơn vị phát hành" (feedback 2026-09-24) - CHI dung de DOI
+    # sang 1 mau khac (gia tri that su, khong co y nghia "bo gan" nhu project_id/
+    # sla_due_at), nen KHONG can model_fields_set o router - exclude_none=True
+    # mac dinh (payload.model_dump()) la du: khong gui/gui null = khong doi.
+    quote_form_id: Optional[str] = None
     project_id: Optional[str] = None
     sla_due_at: Optional[str] = None
     # Giam gia tong cap quote (migration 106, muc 6.9) - None co y nghia THAT

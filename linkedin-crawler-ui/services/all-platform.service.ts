@@ -284,6 +284,7 @@ export const internalEngagementService = {
     likes?: number;
     comments?: number;
     shares?: number;
+    scope?: "internal" | "external";
   }, emailParam?: string): Promise<ApiResponse<any>> => {
     const payload = typeof linkOrPayload === "string"
       ? { link: linkOrPayload, email: emailParam || "" }
@@ -309,6 +310,7 @@ export const internalEngagementService = {
         likes: payload.likes,
         comments: payload.comments,
         shares: payload.shares,
+        scope: payload.scope,
       }),
     });
   },

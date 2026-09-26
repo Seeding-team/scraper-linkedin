@@ -138,13 +138,18 @@ def _serialize_clauses(clauses: list[Any] | None) -> list[dict]:
 
 # ── Contracts CRUD ───────────────────────────────────────────────────────────
 
-def list_contracts(deal_id: str | None = None, status: str | None = None) -> list[dict]:
+def list_contracts(deal_id: str | None = None, status: str | None = None, quote_id: str | None = None) -> list[dict]:
     supabase: Client = get_supabase_client()
     query = supabase.table(CONTRACTS_TABLE).select(LIST_SELECT).eq("instance", settings.crm_instance)
     if deal_id:
         query = query.eq("deal_id", deal_id)
     if status:
         query = query.eq("status", status)
+    if quote_id:
+        # "Ghi nhận hợp đồng có sẵn" cho chon "Thuộc báo giá nào" (feedback
+        # 2026-09-25, PDF muc 7) - dung filter nay de hien hop dong da gan
+        # trong "Bản tóm tắt báo giá" cua chinh bao gia do khi da duyet xong.
+        query = query.eq("quote_id", quote_id)
     result = query.order("created_at", desc=True).execute()
     return [_row_to_contract(row) for row in (result.data or [])]
 
@@ -201,12 +206,12 @@ def create_contract(payload: dict, created_by: str | None) -> dict:
         "ai_risk_score": payload.get("ai_risk_score"),
         "ai_review": payload.get("ai_review"),
         "ai_prompt": payload.get("ai_prompt"),
-        "created_by": created_by,
-        "updated_by": created_by,
-        "instance": settings.crm_instance,
         "source": payload.get("source") or "crm",
         "file_url": payload.get("file_url"),
         "note": payload.get("note"),
+        "created_by": created_by,
+        "updated_by": created_by,
+        "instance": settings.crm_instance,
     }
     row = supabase.table(CONTRACTS_TABLE).insert(insert_data).execute().data[0]
     _log_activity(row["id"], created_by, "created")

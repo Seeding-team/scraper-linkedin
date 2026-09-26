@@ -219,22 +219,12 @@ export function IssuerCompanyAdminPage() {
 
   return (
     <div className="sc-page">
-      <div className="issuer-page-header">
-        <div>
-          <h1 className="issuer-page-title">Đơn vị phát hành</h1>
-          <p className="issuer-page-subtitle">Quản lý pháp nhân, thương hiệu và thông tin hiển thị trên báo giá.</p>
-        </div>
-        <button type="button" className="sc-btn sc-btn-primary" onClick={openAdd}>
-          + Thêm đơn vị phát hành
-        </button>
-      </div>
-
       {error ? <div className="sc-error">{error}</div> : null}
       {loading ? <div>Đang tải...</div> : null}
 
       {!loading ? (
         <div className="sc-tab-panel">
-          <div className="sc-toolbar">
+          <div className="sc-toolbar issuer-toolbar">
             <input
               type="text"
               className="sc-search"
@@ -251,6 +241,9 @@ export function IssuerCompanyAdminPage() {
                 hideClearOption
               />
             </div>
+            <button type="button" className="sc-btn sc-btn-primary issuer-add-btn" onClick={openAdd}>
+              + Thêm đơn vị phát hành
+            </button>
           </div>
 
           <div className="sc-table-wrap">

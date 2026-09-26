@@ -67,7 +67,7 @@ function downloadContractPdf(contract: Contract) {
   URL.revokeObjectURL(url);
 }
 
-export function ContractDetailPage({ contractId }: { contractId: string }) {
+export function ContractDetailPage({ contractId, onClose }: { contractId: string; onClose?: () => void }) {
   const router = useRouter();
   const [contract, setContract] = useState<Contract | null>(null);
   const [clauses, setClauses] = useState<ContractClause[]>([]);
@@ -181,9 +181,22 @@ export function ContractDetailPage({ contractId }: { contractId: string }) {
     <main className="contract-detail-page">
       <header className="contract-detail-header">
         <div>
-          <button type="button" className="contract-button contract-button--secondary" onClick={() => router.push('/all-platform/contracts')} style={{ marginBottom: '0.6rem' }}>
-            ← Danh sách hợp đồng
-          </button>
+          {/* Mo trong modal (xem "Bản tóm tắt báo giá" cua QuoteWorkspaceModal,
+           * feedback 2026-09-25 "xem hợp đồng ở cửa sổ, giống xem bản khách
+           * hàng") - nut dong dang icon "X" o goc phai tren cua modal (xem
+           * .qc-contract-preview-panel-close trong QuoteWorkspaceModal.tsx),
+           * KHONG con nut "← Đóng" o day nua. Khong truyen onClose (trang
+           * day du /all-platform/contracts/[id]) van giu nguyen hanh vi cu. */}
+          {!onClose ? (
+            <button
+              type="button"
+              className="contract-button contract-button--secondary"
+              onClick={() => router.push('/all-platform/contracts')}
+              style={{ marginBottom: '0.6rem' }}
+            >
+              ← Danh sách hợp đồng
+            </button>
+          ) : null}
           <h1>{contract.contractNumber}</h1>
           <p>
             {contract.title} · {formatVnd(contract.contractValue)}

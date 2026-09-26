@@ -577,6 +577,7 @@ export interface UpdateQuoteInput {
   data?: QuoteData;
   items?: QuoteItem[];
   issuerCompanyId?: string;
+  quoteFormId?: string;
   projectId?: string | null;
   slaDueAt?: string | null;
   overallDiscountPercent?: number | null;

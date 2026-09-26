@@ -2,16 +2,17 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { API_BASE_URL, API_KEY } from '@/lib/env';
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
 import { usersService, type QuoteBusinessRoleUser } from '@/services/all-platform.service';
-import { formatVND, parseMoney } from '../constants/crmConfig';
+import { formatVND, parseMoney, PIPELINE_COLUMNS, DEAL_STAGE_META } from '../constants/crmConfig';
 import { CurrencyInput } from '@/components/CurrencyInput';
 import { mapLead } from './LeadsDirectory';
 import { PositionSelect } from './PositionSelect';
 import { CrmCategorySelect } from './CrmCategorySelect';
 import { SearchableSelect } from './SearchableSelect';
-import { AlertTriangle, CheckCircle2, Loader2, X, XCircle } from './icons';
+import { AlertTriangle, CheckCircle2, HelpCircle, Loader2, X, XCircle } from './icons';
 import type { AppUser } from '@/types/unified.types';
 import type { CrmLeadRow } from '../types';
 
@@ -31,6 +32,22 @@ type CompanyMatchRow = {
 
 type IcpFit = 'unknown' | 'fit' | 'unfit';
 type VerificationOutcome = 'sql' | 'nurturing' | 'unqualified';
+type InterestLevel = 'reference' | 'need' | 'evaluating' | 'quote';
+
+const INTEREST_LEVEL_OPTIONS: Array<{ value: InterestLevel; label: string; score: number }> = [
+  { value: 'reference', label: 'Tham khảo', score: 25 },
+  { value: 'need', label: 'Có nhu cầu', score: 55 },
+  { value: 'evaluating', label: 'Đang đánh giá', score: 75 },
+  { value: 'quote', label: 'Cần báo giá', score: 90 },
+];
+
+function interestLevelFromScore(score: number | null | undefined): InterestLevel | '' {
+  if (score == null || Number.isNaN(Number(score))) return '';
+  if (score >= 85) return 'quote';
+  if (score >= 65) return 'evaluating';
+  if (score >= 40) return 'need';
+  return 'reference';
+}
 
 /** 3 lua chon "Co dung nhom khach hang muc tieu?".
  *
@@ -56,11 +73,6 @@ function icpToApi(value: IcpFit): boolean | null {
   return null;
 }
 
-/** Dung khi category_type='crm_next_step' chua co dong nao (migration 080 chua
- * duoc ap dung o moi truong dang chay) — dropdown "Viec tiep theo" khong bao
- * gio duoc rong/chet. Co du lieu that thi danh sach nay khong duoc dung den. */
-const STEPS = ['Khách quan tâm gì', 'Có phù hợp', 'Việc tiếp theo', 'Bàn giao Sale'];
-
 function toDatetimeLocal(value?: string | null): string {
   if (!value) return '';
   const date = new Date(value);
@@ -76,6 +88,8 @@ function initialOf(name: string): string {
 
 type VerifyForm = {
   interest: string;
+  interestLevel: InterestLevel | '';
+  score: number | null;
   icpFit: IcpFit;
   timeline: string;
   estimatedValue: number | null;
@@ -84,7 +98,13 @@ type VerifyForm = {
   aeId: string;
   note: string;
   followUpChannel: string;
+  dealStage: string;
 };
+
+/** "Giai đoạn" cho Deal SAP tao (feedback WIP full-flow, mucE.2 "Bàn giao
+ * Sale": layout `Giai đoạn | Kết quả Lead`) - chi cho chon trong cac stage
+ * PIPELINE THAT (khong gom on_hold/lost, khong hop ly cho 1 co hoi vua tao). */
+const DEAL_STAGE_OPTIONS = PIPELINE_COLUMNS.map(stage => ({ value: stage, label: DEAL_STAGE_META[stage].label }));
 
 /**
  * Drawer "Xác minh Lead" — 1 luồng có dẫn dắt thay cho 3 khối rời rạc trước đây
@@ -120,9 +140,12 @@ export function LeadDetailDrawer({
   onEdit?: (lead: CrmLeadRow) => void;
 }) {
   useBodyScrollLock(open);
+  const router = useRouter();
   const [saleOptions, setSaleOptions] = useState<QuoteBusinessRoleUser[]>([]);
   const [form, setForm] = useState<VerifyForm>({
     interest: '',
+    interestLevel: '',
+    score: null,
     icpFit: 'unknown',
     timeline: '',
     estimatedValue: null,
@@ -131,6 +154,7 @@ export function LeadDetailDrawer({
     aeId: '',
     note: '',
     followUpChannel: '',
+    dealStage: 'dealing',
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -178,6 +202,8 @@ export function LeadDetailDrawer({
     setUnqualifiedReason('');
     setForm({
       interest: lead.qualificationNeed || '',
+      interestLevel: interestLevelFromScore(lead.score),
+      score: lead.score ?? null,
       icpFit: icpFromApi(lead.qualificationIcpFit),
       timeline: lead.qualificationExpectedTimeline || '',
       estimatedValue: lead.qualificationEstimatedValue ?? null,
@@ -186,6 +212,7 @@ export function LeadDetailDrawer({
       aeId: lead.qualificationAeId || '',
       note: lead.note || '',
       followUpChannel: '',
+      dealStage: 'dealing',
     });
     setContact({
       name: lead.leadName || '',
@@ -269,11 +296,10 @@ export function LeadDetailDrawer({
   }, [form, dupChecked]);
 
   const okCount = checks.filter(c => c.ok).length;
+  const missingChecks = checks.filter(c => !c.ok);
   const isReady = okCount === checks.length;
   const readinessLabel = isReady ? 'Sẵn sàng tạo cơ hội' : okCount >= 3 ? 'Cần xác minh thêm' : 'Chưa sẵn sàng';
   const readinessTone = isReady ? 'ready' : okCount >= 3 ? 'partial' : 'blocked';
-
-  const currentStep = !checks[0].ok ? 1 : !checks[1].ok ? 2 : !checks[2].ok ? 3 : 4;
 
   const nextStepWarning = verificationOutcome === 'sql' && (Boolean(form.nextStep.trim()) !== Boolean(form.nextStepAt) || (!form.nextStep.trim() && !form.nextStepAt));
 
@@ -290,6 +316,7 @@ export function LeadDetailDrawer({
   if (!open || !lead) return null;
   const canWrite = Boolean(lead.canWrite);
   const isConverted = lead.status === 'sql' || lead.status === 'converted';
+  const displayScore = form.score ?? lead.score ?? null;
 
   /** "Dùng gợi ý" — suy ra giá trị từ CHÍNH dữ liệu Lead đang có (ghi chú,
    * nguồn, công ty). Đây là gợi ý theo quy tắc, KHÔNG phải AI: khối này không
@@ -318,6 +345,10 @@ export function LeadDetailDrawer({
         when.setHours(9, 0, 0, 0);
         next.nextStepAt = toDatetimeLocal(when.toISOString());
       }
+      if (!next.interestLevel && next.score == null) {
+        next.interestLevel = 'need';
+        next.score = 55;
+      }
       if (!next.aeId) next.aeId = lead?.qualificationAeId || lead?.sdrId || currentUser?.id || '';
       return next;
     });
@@ -328,6 +359,8 @@ export function LeadDetailDrawer({
     if (!lead) return;
     setForm({
       interest: lead.qualificationNeed || '',
+      interestLevel: interestLevelFromScore(lead.score),
+      score: lead.score ?? null,
       icpFit: icpFromApi(lead.qualificationIcpFit),
       timeline: lead.qualificationExpectedTimeline || '',
       estimatedValue: lead.qualificationEstimatedValue ?? null,
@@ -336,12 +369,23 @@ export function LeadDetailDrawer({
       aeId: lead.qualificationAeId || '',
       note: lead.note || '',
       followUpChannel: '',
+      dealStage: 'dealing',
     });
     setSuggestionUsed(false);
   }
 
+  function setInterestLevel(value: InterestLevel) {
+    const option = INTEREST_LEVEL_OPTIONS.find(item => item.value === value);
+    setForm(prev => ({
+      ...prev,
+      interestLevel: value,
+      score: option?.score ?? prev.score,
+    }));
+  }
+
   function buildQualificationPayload(): Record<string, unknown> {
     return {
+      score: form.score ?? null,
       qualification_need: form.interest.trim() || null,
       qualification_icp_fit: icpToApi(form.icpFit),
       qualification_estimated_value: form.estimatedValue ?? null,
@@ -456,7 +500,7 @@ export function LeadDetailDrawer({
     setConvertError('');
     try {
       const dealPayload: Record<string, unknown> = {};
-      dealPayload.deal_stage = 'dealing';
+      dealPayload.deal_stage = form.dealStage || 'dealing';
       if (form.aeId) dealPayload.sdr_id = form.aeId;
       if (form.nextStep.trim()) dealPayload.next_step = form.nextStep.trim();
       if (form.nextStepAt) dealPayload.follow_up_date = new Date(form.nextStepAt).toISOString();
@@ -510,14 +554,23 @@ export function LeadDetailDrawer({
       const body = await res.json();
       if (!res.ok || body.success === false) throw new Error(body?.message || 'Tạo cơ hội thất bại.');
       const result = body.data || {};
+      const newCustomerId = result.customer?.id || result.customer_id || '';
       onSaved({
         ...lead,
         status: 'sql',
-        convertedCustomerId: result.customer?.id || result.customer_id || '',
+        convertedCustomerId: newCustomerId,
         convertedContactId: result.contact?.id || result.contact_id || '',
         convertedDealId: result.deal?.id || result.deal_id || '',
       });
       setConvertOpen(false);
+      // Feedback 2026-09-26: "xác minh lead xong thì tự trỏ về đúng trang chi
+      // tiết khách hàng" - truoc day chi hien man "Da tao co hoi" tinh, phai
+      // tu bam link "Xem Khách hàng" moi qua duoc. Dong drawer + dieu huong
+      // thang, khong can cho user bam them.
+      if (newCustomerId) {
+        onClose();
+        router.push(`/all-platform/crm/customers/${newCustomerId}?tab=deals`);
+      }
     } catch (err) {
       setConvertError(err instanceof Error ? err.message : 'Tạo cơ hội thất bại.');
     } finally {
@@ -561,15 +614,61 @@ export function LeadDetailDrawer({
         ? 'Lưu vào Nuôi dưỡng'
         : 'Xác nhận không đạt chuẩn';
 
+  // "Tóm tắt quyết định" — cot phai KHONG con la checklist ky thuat (chi
+  // dung/sai) ma hien gia tri that de SDR/Sale ra quyet dinh nhanh, dung thu
+  // tu da chot: Nhu cau -> Gia tri -> ICP -> Thoi gian trien khai -> Viec tiep
+  // theo -> Sale nhan ban giao -> Check trung.
+  const decisionRows = [
+    { key: 'need', label: 'Nhu cầu', value: form.interest.trim() || '—', ok: Boolean(form.interest.trim()) },
+    {
+      key: 'value',
+      label: 'Giá trị ước tính',
+      value: form.estimatedValue != null ? (formatVND(form.estimatedValue) || String(form.estimatedValue)) : '—',
+      ok: form.estimatedValue != null,
+    },
+    {
+      key: 'icp',
+      label: 'ICP',
+      value: ICP_OPTIONS.find(o => o.value === form.icpFit)?.label || '—',
+      ok: form.icpFit !== 'unknown',
+    },
+    { key: 'timeline', label: 'Thời gian triển khai', value: form.timeline || '—', ok: Boolean(form.timeline) },
+    {
+      key: 'next',
+      label: 'Việc tiếp theo',
+      value: form.nextStep.trim()
+        ? `${form.nextStep}${form.nextStepAt ? ' · ' + new Date(form.nextStepAt).toLocaleString('vi-VN') : ''}`
+        : '—',
+      ok: Boolean(form.nextStep.trim()) && Boolean(form.nextStepAt),
+    },
+    { key: 'ae', label: 'Sale nhận bàn giao', value: form.aeId ? aeName(form.aeId) : '—', ok: Boolean(form.aeId) },
+    { key: 'stage', label: 'Giai đoạn', value: DEAL_STAGE_META[form.dealStage as keyof typeof DEAL_STAGE_META]?.label || form.dealStage, ok: true },
+    {
+      key: 'dup',
+      label: 'Check trùng doanh nghiệp',
+      value: dupChecked ? (companyMatches.length ? `${companyMatches.length} khả năng trùng` : 'Không trùng') : 'Chưa kiểm tra',
+      ok: dupChecked,
+    },
+  ];
+
   const selectedMatch = companyMatches.find(m => m.id === customerChoice);
   return (
     <>
-      <div className="crm-drawer-backdrop" onClick={onClose} />
+      {/* Click vao backdrop de dong drawer; click trong form khong bi anh huong. */}
+      <div className="crm-drawer-backdrop crm-lead-verify-backdrop" onClick={onClose} />
       <aside className="crm-drawer crm-lead-detail-drawer crm-verify-drawer">
         <header className="crm-lead-drawer-header crm-verify-header">
           <div className="crm-verify-header-text">
-            <h2>Xác minh Lead</h2>
-            <p>SDR chỉ cần xác nhận vài thông tin then chốt — hệ thống tự chấm điểm và chuẩn bị dữ liệu bàn giao cho Sale.</p>
+            <h2>
+              Xác minh Lead
+              <span
+                className="crm-help-icon"
+                tabIndex={0}
+                title="SDR chỉ cần xác nhận vài thông tin then chốt. Hệ thống tự chấm điểm Lead và dùng nội dung trao đổi, nguồn Lead, thông tin doanh nghiệp để gợi ý nhu cầu, mức phù hợp, giá trị và việc tiếp theo."
+              >
+                <HelpCircle className="crm-icon" />
+              </span>
+            </h2>
           </div>
           <div className="crm-lead-drawer-header-actions">
             {onEdit ? (
@@ -607,7 +706,7 @@ export function LeadDetailDrawer({
               <p className="crm-verify-sub">Công ty: {lead.companyName || 'Chưa có'} <span className="crm-verify-dot">·</span> SDR: {aeName(lead.sdrId)}</p>
             </div>
             <div className="crm-verify-score">
-              <b>{lead.score == null ? '—' : lead.score}</b>
+              <b>{displayScore == null ? '—' : displayScore}</b>
               <span>ĐIỂM LEAD</span>
             </div>
           </section>
@@ -664,6 +763,8 @@ export function LeadDetailDrawer({
                   <b>Deal sẽ được tạo với:</b>
                   <ul>
                     <li>Sale nhận bàn giao: {aeName(form.aeId || lead.sdrId)}</li>
+                    <li>Người liên hệ: {contact.name || lead.leadName}</li>
+                    <li>Giai đoạn: {DEAL_STAGE_META[form.dealStage as keyof typeof DEAL_STAGE_META]?.label || form.dealStage}</li>
                     <li>Nhu cầu: {form.interest || 'Chưa có'}</li>
                     <li>Giá trị dự kiến: {form.estimatedValue != null ? (formatVND(form.estimatedValue) || String(form.estimatedValue)) : 'Chưa có'}</li>
                     <li>Việc tiếp theo: {form.nextStep || 'Chưa có'}</li>
@@ -685,15 +786,20 @@ export function LeadDetailDrawer({
             <>
               <section className="crm-verify-suggest">
                 <div className="crm-verify-suggest-head">
-                  <p className="crm-form-title">Gợi ý từ dữ liệu Lead</p>
+                  <p className="crm-form-title">
+                    Gợi ý từ dữ liệu Lead
+                    <span
+                      className="crm-help-icon"
+                      tabIndex={0}
+                      title="Gợi ý theo quy tắc từ ghi chú, nguồn Lead và công ty đang có — không phải AI. Chỉ điền vào ô đang trống, không ghi đè dữ liệu SDR đã nhập."
+                    >
+                      <HelpCircle className="crm-icon" />
+                    </span>
+                  </p>
                   <span className={`crm-verify-suggest-pill ${suggestionUsed ? 'is-used' : ''}`}>
                     {suggestionUsed ? 'Đã dùng gợi ý' : 'Chưa dùng gợi ý'}
                   </span>
                 </div>
-                <p className="crm-verify-suggest-text">
-                  CRM có thể dùng nội dung trao đổi, nguồn Lead và công ty để gợi ý nhu cầu, mức độ phù hợp, giá trị
-                  và việc tiếp theo. SDR chỉ cần kiểm tra lại.
-                </p>
                 <div className="crm-verify-suggest-actions">
                   <button type="button" className="crm-secondary-button" disabled={!canWrite} onClick={applySuggestion}>
                     Dùng gợi ý
@@ -704,197 +810,188 @@ export function LeadDetailDrawer({
                 </div>
               </section>
 
-              <ol className="crm-verify-stepper">
-                {STEPS.map((step, index) => (
-                  <li
-                    key={step}
-                    className={`crm-verify-step ${index + 1 === currentStep ? 'is-current' : ''} ${index + 1 < currentStep ? 'is-done' : ''}`}
-                  >
-                    <span className="crm-verify-step-index">{index + 1}</span>
-                    <span className="crm-verify-step-label">{step}</span>
-                  </li>
-                ))}
-              </ol>
+              <div className="crm-verify-kpi-strip">
+                <div><span>Nguồn Lead</span><b>{lead.source || 'Manual'}</b></div>
+                <div><span>Trạng thái</span><b>{lead.status || 'MQL'}</b></div>
+                <div><span>Owner</span><b>{aeName(lead.sdrId)}</b></div>
+                <div><span>Gợi ý</span><b>{suggestionUsed ? 'Đã dùng' : 'Chưa dùng'}</b></div>
+              </div>
 
-              <section className="crm-form-section crm-verify-section" id="crm-verify-quick">
-                <p className="crm-form-title">Xác nhận nhanh</p>
-                <div className="crm-form-grid">
-                  <Field full label="Khách đang quan tâm gì?" hint="Chọn từ danh mục Sản phẩm/Dịch vụ (Danh mục CRM → Danh mục sản phẩm).">
-                    <CrmCategorySelect
-                      categoryType="crm_service_package"
-                      value={form.interest}
-                      disabled={!canWrite}
-                      placeholder="-- Chọn sản phẩm/dịch vụ --"
-                      onChange={label => setField('interest', label)}
-                    />
-                  </Field>
-                  <Field label="Có đúng nhóm khách hàng mục tiêu?">
-                    <select disabled={!canWrite} value={form.icpFit} onChange={e => setField('icpFit', e.target.value as IcpFit)}>
-                      {ICP_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-                    </select>
-                  </Field>
-                  <Field label="Dự kiến triển khai khi nào?">
-                    <CrmCategorySelect
-                      categoryType="crm_expected_timeline"
-                      value={form.timeline}
-                      disabled={!canWrite}
-                      placeholder="-- Chọn thời gian --"
-                      onChange={label => setField('timeline', label)}
-                    />
-                  </Field>
-                  <Field full label="Giá trị ước tính (VND)" hint="Tự thêm dấu chấm ngăn nghìn khi gõ.">
-                    <CurrencyInput
-                      disabled={!canWrite}
-                      value={form.estimatedValue}
-                      onChange={value => setField('estimatedValue', value)}
-                      placeholder="VD: 50.000.000"
-                    />
-                  </Field>
-                </div>
-              </section>
-
-              <section className="crm-form-section crm-verify-section" id="crm-verify-handoff">
-                <p className="crm-form-title">Bước 4 — Kết quả & bàn giao</p>
-                <div className="crm-verify-result">
-                  <p className="crm-form-title">Kết quả xác minh</p>
-                  <div className="crm-verify-result-options" role="radiogroup" aria-label="Kết quả xác minh">
-                    <label className={`crm-verify-result-option ${verificationOutcome === 'sql' ? 'is-selected' : ''}`}>
-                      <input
-                        type="radio"
-                        name="verificationOutcome"
-                        value="sql"
-                        checked={verificationOutcome === 'sql'}
-                        onChange={() => setVerificationOutcome('sql')}
-                      />
-                      <span>Đạt chuẩn (SQL)</span>
-                    </label>
-                    <label className={`crm-verify-result-option ${verificationOutcome === 'nurturing' ? 'is-selected' : ''}`}>
-                      <input
-                        type="radio"
-                        name="verificationOutcome"
-                        value="nurturing"
-                        checked={verificationOutcome === 'nurturing'}
-                        onChange={() => setVerificationOutcome('nurturing')}
-                      />
-                      <span>Nuôi dưỡng</span>
-                    </label>
-                    <label className={`crm-verify-result-option ${verificationOutcome === 'unqualified' ? 'is-selected' : ''}`}>
-                      <input
-                        type="radio"
-                        name="verificationOutcome"
-                        value="unqualified"
-                        checked={verificationOutcome === 'unqualified'}
-                        onChange={() => setVerificationOutcome('unqualified')}
-                      />
-                      <span>Không đạt chuẩn</span>
-                    </label>
-                  </div>
-                </div>
-
-                {verificationOutcome === 'sql' ? (
-                  <div className="crm-form-grid">
-                    <Field label="Sale nhận bàn giao">
-                      <SearchableSelect
-                        disabled={!canWrite}
-                        value={form.aeId}
-                        onChange={value => setField('aeId', value)}
-                        options={aeOptions}
-                        placeholder="-- Chưa chọn --"
-                      />
-                    </Field>
-                    <Field label="SDR/Sale cần làm gì tiếp">
+              <div className="crm-verify-compact-grid">
+                <section className="crm-form-section crm-verify-section crm-verify-panel" id="crm-verify-quick">
+                  <p className="crm-form-title">Thông tin then chốt</p>
+                  {/* Thu tu + ghep cap da chot (feedback WIP xac minh Lead,
+                   * "Layout đã thống nhất"): Giá trị dự kiến | Mức độ quan
+                   * tâm, roi Dự kiến triển khai | ICP - "Mức độ quan tâm" va
+                   * "Ghi chú" chuyen tu panel "Kết quả xác minh & bàn giao"
+                   * len day cho dung nhom "thong tin ve nhu cau Lead". */}
+                  <div className="crm-verify-compact-fields">
+                    <Field label="Khách đang quan tâm gì?" hint="Chọn từ danh mục Sản phẩm/Dịch vụ.">
                       <CrmCategorySelect
-                        categoryType="crm_next_step"
-                        value={form.nextStep}
+                        categoryType="crm_service_package"
+                        value={form.interest}
                         disabled={!canWrite}
-                        placeholder="-- Chọn việc tiếp theo --"
-                        excludeLabels={['Khác']}
-                        onChange={label => setField('nextStep', label)}
+                        placeholder="-- Chọn sản phẩm/dịch vụ --"
+                        onChange={label => setField('interest', label)}
                       />
                     </Field>
-                    <Field label="Khi nào làm">
-                      <input
-                        disabled={!canWrite}
-                        type="datetime-local"
-                        value={form.nextStepAt}
-                        onChange={e => setField('nextStepAt', e.target.value)}
-                      />
-                    </Field>
+                    <>
+                      <Field label="Giá trị ước tính (VND)" hint="Tự thêm dấu chấm ngăn nghìn khi gõ.">
+                        <CurrencyInput
+                          disabled={!canWrite}
+                          value={form.estimatedValue}
+                          onChange={value => setField('estimatedValue', value)}
+                          placeholder="VD: 50.000.000"
+                        />
+                      </Field>
+                      <div className="crm-verify-interest-level">
+                        <span>Mức độ quan tâm</span>
+                        <div className="crm-verify-interest-level-chips">
+                          {INTEREST_LEVEL_OPTIONS.map(option => (
+                            <button
+                              key={option.value}
+                              type="button"
+                              className={`crm-verify-interest-level-chip ${form.interestLevel === option.value ? 'is-selected' : ''}`}
+                              disabled={!canWrite}
+                              onClick={() => setInterestLevel(option.value)}
+                            >
+                              {option.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </>
+                    <div className="crm-inline-pair">
+                      <Field label="Dự kiến triển khai">
+                        <CrmCategorySelect
+                          categoryType="crm_expected_timeline"
+                          value={form.timeline}
+                          disabled={!canWrite}
+                          placeholder="-- Chọn thời gian --"
+                          onChange={label => setField('timeline', label)}
+                        />
+                      </Field>
+                      <Field label="Đúng nhóm khách hàng?" hint="ICP.">
+                        <select disabled={!canWrite} value={form.icpFit} onChange={e => setField('icpFit', e.target.value as IcpFit)}>
+                          {ICP_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                        </select>
+                      </Field>
+                    </div>
                     <Field label="Ghi chú ngắn">
                       <input disabled={!canWrite} value={form.note} onChange={e => setField('note', e.target.value)} placeholder="VD: khách đang so sánh 2 nhà cung cấp" />
                     </Field>
                   </div>
-                ) : null}
+                </section>
 
-                {verificationOutcome === 'nurturing' ? (
-                  <div className="crm-form-grid">
-                    <Field label="Lý do nuôi dưỡng" required>
-                      <CrmCategorySelect
-                        categoryType="crm_nurture_reason"
-                        value={nurtureReason}
-                        disabled={!canWrite}
-                        placeholder="-- Chọn lý do --"
-                        onChange={setNurtureReason}
-                      />
-                    </Field>
-                    <Field label="Ngày chăm sóc lại" required>
-                      <input
-                        disabled={!canWrite}
-                        type="datetime-local"
-                        value={form.nextStepAt}
-                        onChange={e => setField('nextStepAt', e.target.value)}
-                      />
-                    </Field>
-                    <Field label="Kênh chăm sóc">
-                      <CrmCategorySelect
-                        categoryType="crm_follow_up_channel"
-                        value={form.followUpChannel}
-                        disabled={!canWrite}
-                        placeholder="-- Không chọn --"
-                        onChange={label => setField('followUpChannel', label)}
-                      />
-                    </Field>
-                    <Field label="Ghi chú">
-                      <input disabled={!canWrite} value={form.note} onChange={e => setField('note', e.target.value)} placeholder="VD: chăm sóc lại khi khách có ngân sách" />
-                    </Field>
-                  </div>
-                ) : null}
+                <section className="crm-form-section crm-verify-section crm-verify-panel" id="crm-verify-handoff">
+                  <p className="crm-form-title">Kết quả xác minh & bàn giao</p>
 
-                {verificationOutcome === 'unqualified' ? (
-                    <div className="crm-form-grid">
-                      <Field label="Lý do không đạt chuẩn" required>
-                        <CrmCategorySelect
-                          categoryType="crm_unqualified_reason"
-                          value={unqualifiedReason}
-                          disabled={!canWrite}
-                          placeholder="-- Chọn lý do --"
-                          onChange={setUnqualifiedReason}
-                        />
-                      </Field>
-                      <Field label="Ghi chú">
-                        <input disabled={!canWrite} value={form.note} onChange={e => setField('note', e.target.value)} placeholder="VD: dữ liệu không phù hợp" />
+                  {verificationOutcome === 'sql' ? (
+                    <div className="crm-verify-compact-fields">
+                      {/* Layout da chot (feedback WIP full-flow, muc E.2 "Bàn
+                       * giao Sale"): Team Sale | Người liên hệ, Việc tiếp
+                       * theo | Hạn follow-up, Giai đoạn. "Người liên hệ" dung
+                       * lai dung state `contact.name` (truoc day chi sua o
+                       * buoc xac nhan Convert) - he thong da chon mac dinh
+                       * theo ten Lead, SDR co the doi som hon o day. */}
+                      <div className="crm-inline-pair">
+                        <Field label="Sale nhận bàn giao">
+                          <SearchableSelect disabled={!canWrite} value={form.aeId} onChange={value => setField('aeId', value)} options={aeOptions} placeholder="-- Chưa chọn --" />
+                        </Field>
+                        <Field label="Người liên hệ">
+                          <input
+                            disabled={!canWrite}
+                            value={contact.name}
+                            onChange={e => setContact(c => ({ ...c, name: e.target.value }))}
+                            placeholder="Tên người liên hệ"
+                          />
+                        </Field>
+                      </div>
+                      <div className="crm-inline-pair">
+                        <Field label="SDR/Sale cần làm gì tiếp">
+                          <CrmCategorySelect
+                            categoryType="crm_next_step"
+                            value={form.nextStep}
+                            disabled={!canWrite}
+                            placeholder="-- Chọn việc tiếp theo --"
+                            excludeLabels={['Khác']}
+                            onChange={label => setField('nextStep', label)}
+                          />
+                        </Field>
+                        <Field label="Khi nào làm">
+                          <input disabled={!canWrite} type="datetime-local" value={form.nextStepAt} onChange={e => setField('nextStepAt', e.target.value)} />
+                        </Field>
+                      </div>
+                      <Field label="Giai đoạn">
+                        <select disabled={!canWrite} value={form.dealStage} onChange={e => setField('dealStage', e.target.value)}>
+                          {DEAL_STAGE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                        </select>
                       </Field>
                     </div>
-                ) : null}
-                {nextStepWarning ? (
-                  <p className="crm-verify-warning">
-                    <AlertTriangle className="crm-line-icon" />
-                    Deal không nên được tạo nếu chưa có Việc tiếp theo.
-                  </p>
-                ) : null}
-              </section>
+                  ) : null}
 
-              {verificationOutcome === 'sql' ? (
-                <section className="crm-form-section crm-verify-section" id="crm-verify-readiness" ref={readinessRef}>
+                  {verificationOutcome === 'nurturing' ? (
+                    <div className="crm-verify-compact-fields">
+                      <Field label="Lý do nuôi dưỡng" required>
+                        <CrmCategorySelect categoryType="crm_nurture_reason" value={nurtureReason} disabled={!canWrite} placeholder="-- Chọn lý do --" onChange={setNurtureReason} />
+                      </Field>
+                      <Field label="Ngày chăm sóc lại" required>
+                        <input disabled={!canWrite} type="datetime-local" value={form.nextStepAt} onChange={e => setField('nextStepAt', e.target.value)} />
+                      </Field>
+                      <Field label="Kênh chăm sóc">
+                        <CrmCategorySelect categoryType="crm_follow_up_channel" value={form.followUpChannel} disabled={!canWrite} placeholder="-- Không chọn --" onChange={label => setField('followUpChannel', label)} />
+                      </Field>
+                    </div>
+                  ) : null}
+
+                  {verificationOutcome === 'unqualified' ? (
+                    <div className="crm-verify-compact-fields">
+                      <Field label="Lý do không đạt chuẩn" required>
+                        <CrmCategorySelect categoryType="crm_unqualified_reason" value={unqualifiedReason} disabled={!canWrite} placeholder="-- Chọn lý do --" onChange={setUnqualifiedReason} />
+                      </Field>
+                    </div>
+                  ) : null}
+                  {/* "Mức độ quan tâm" + "Ghi chú ngắn" da chuyen len panel
+                   * "Thông tin then chốt" (feedback WIP xac minh Lead, layout
+                   * da chot ghep cap voi Gia tri du kien/Du kien trien khai) -
+                   * KHONG con o day nua, tranh nhap/xem trung. */}
+                  <div className="crm-verify-handoff-extra crm-verify-interest-level">
+                    <span>Kết quả xác minh</span>
+                    <div className="crm-verify-result-options crm-verify-result-options--compact" role="radiogroup" aria-label="Kết quả xác minh">
+                      <label className={`crm-verify-result-option ${verificationOutcome === 'sql' ? 'is-selected' : ''}`}>
+                        <input type="radio" name="verificationOutcome" value="sql" checked={verificationOutcome === 'sql'} onChange={() => setVerificationOutcome('sql')} />
+                        <span>Đạt chuẩn SQL</span>
+                      </label>
+                      <label className={`crm-verify-result-option ${verificationOutcome === 'nurturing' ? 'is-selected' : ''}`}>
+                        <input type="radio" name="verificationOutcome" value="nurturing" checked={verificationOutcome === 'nurturing'} onChange={() => setVerificationOutcome('nurturing')} />
+                        <span>Nuôi dưỡng</span>
+                      </label>
+                      <label className={`crm-verify-result-option ${verificationOutcome === 'unqualified' ? 'is-selected' : ''}`}>
+                        <input type="radio" name="verificationOutcome" value="unqualified" checked={verificationOutcome === 'unqualified'} onChange={() => setVerificationOutcome('unqualified')} />
+                        <span>Không đạt chuẩn</span>
+                      </label>
+                    </div>
+                  </div>
+
+                  {nextStepWarning ? (
+                    <p className="crm-verify-warning">
+                      <AlertTriangle className="crm-line-icon" />
+                      Deal không nên được tạo nếu chưa có Việc tiếp theo.
+                    </p>
+                  ) : null}
+                </section>
+
+                <section className="crm-form-section crm-verify-section crm-verify-panel crm-verify-readiness-panel" id="crm-verify-readiness" ref={readinessRef}>
                   <div className="crm-verify-suggest-head">
-                    <p className="crm-form-title">Mức sẵn sàng tạo cơ hội</p>
+                    <p className="crm-form-title">Tóm tắt quyết định</p>
                     <span className={`crm-verify-readiness-pill crm-verify-readiness-pill--${readinessTone}`}>{readinessLabel}</span>
                   </div>
                   <ul className="crm-verify-checklist">
-                    {checks.map(check => (
-                      <li key={check.key} className={check.ok ? 'is-ok' : ''}>
-                        {check.ok ? <CheckCircle2 className="crm-line-icon" /> : <XCircle className="crm-line-icon" />}
-                        <span>{check.label}</span>
+                    {decisionRows.map(row => (
+                      <li key={row.key} className={row.ok ? 'is-ok' : ''}>
+                        {row.ok ? <CheckCircle2 className="crm-line-icon" /> : <XCircle className="crm-line-icon" />}
+                        <span>{row.label}</span>
+                        <b className="crm-verify-check-value">{row.value}</b>
                       </li>
                     ))}
                   </ul>
@@ -903,8 +1000,23 @@ export function LeadDetailDrawer({
                       Tìm thấy {companyMatches.length} doanh nghiệp có thể trùng — chọn liên kết ở bước xác nhận thay vì tạo mới.
                     </p>
                   ) : null}
+                  <div className="crm-verify-readiness-summary">
+                    <div>
+                      <span>Đã đạt</span>
+                      <b>{okCount}/{checks.length} tiêu chí</b>
+                    </div>
+                    <div>
+                      <span>Trạng thái</span>
+                      <b>{readinessLabel}</b>
+                    </div>
+                    {missingChecks.length ? (
+                      <p>Còn thiếu: {missingChecks.map(check => check.label).join(', ')}</p>
+                    ) : (
+                      <p>Đủ điều kiện để tạo cơ hội và bàn giao Sale.</p>
+                    )}
+                  </div>
                 </section>
-              ) : null}
+              </div>
             </>
           )}
         </div>
@@ -913,7 +1025,7 @@ export function LeadDetailDrawer({
           <footer className="crm-drawer-footer crm-verify-footer">
             <div className="crm-footer-actions">
               <button type="button" className="crm-secondary-button" disabled={saving} onClick={() => void saveVerification()}>
-                {saving ? <Loader2 className="crm-save-spinner" /> : null} Lưu xác minh
+                {saving ? <Loader2 className="crm-save-spinner" /> : null} Lưu nháp
               </button>
               <button
                 type="button"

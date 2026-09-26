@@ -134,7 +134,8 @@ export type MaterialSymbolName =
   // Zalo chat: trả lời / chuyển tiếp tin nhắn + huỷ kết quả chuyển tiếp thất bại.
   | "reply"
   | "forward"
-  | "cancel";
+  | "cancel"
+  | "folder_shared";
 
 export interface MaterialIconProps {
   name: MaterialSymbolName;

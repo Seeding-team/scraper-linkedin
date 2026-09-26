@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "LinkedIn Group Post Crawler",
-  "version": "1.4.0",
-  "description": "Cào bài viết từ LinkedIn Group + lấy info/comment 1 bài viết cho dashboard (DOM-scraping, dùng session đăng nhập sẵn có của trình duyệt)",
+  "version": "1.5.0",
+  "description": "Cào bài viết từ LinkedIn Group (kèm nội dung comment, số comment, số like, danh sách người đã like) + lấy info/comment 1 bài viết cho dashboard (DOM-scraping, dùng session đăng nhập sẵn có của trình duyệt)",
   "permissions": ["activeTab", "scripting", "tabs", "storage"],
   "host_permissions": [
     "*://*.linkedin.com/*",

@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import io
+import base64
 import pdfplumber
 import httpx
 import re
@@ -402,6 +403,64 @@ class VendorAIParsingService:
             raise ValueError(f"AI Normalize failed: {e}")
 
     @staticmethod
+    async def extract_items_from_image(file_bytes: bytes, ext: str) -> list:
+        """Vision OCR cho file anh (PNG/JPG) - cung SYSTEM_PROMPT/JSON shape
+        voi normalize_text_with_llm()."""
+        mime = "image/png" if ext == ".png" else "image/jpeg"
+        prompt = "Trich xuat JSON cac mat hang tu anh bao gia sau."
+        try:
+            if settings.gemini_api_key:
+                model = genai.GenerativeModel('gemini-1.5-flash', system_instruction=SYSTEM_PROMPT)
+                response = model.generate_content(
+                    [{"mime_type": mime, "data": file_bytes}, prompt],
+                    generation_config={"temperature": 0.1},
+                )
+                resp_text = response.text.strip()
+            elif settings.openai_api_key:
+                url = f"{settings.openai_base_url}/chat/completions"
+                headers = {"Authorization": f"Bearer {settings.openai_api_key}", "Content-Type": "application/json"}
+                data_url = f"data:{mime};base64,{base64.b64encode(file_bytes).decode()}"
+                body = {
+                    "model": settings.ai_model,
+                    "messages": [
+                        {"role": "system", "content": SYSTEM_PROMPT + '\nTra ve dang {"items": [...]}.'},
+                        {"role": "user", "content": [
+                            {"type": "text", "text": prompt},
+                            {"type": "image_url", "image_url": {"url": data_url}},
+                        ]},
+                    ],
+                    "temperature": 0.1,
+                    "max_tokens": 4000,
+                    "response_format": {"type": "json_object"},
+                }
+                async with httpx.AsyncClient(timeout=120.0) as client:
+                    resp = await client.post(url, json=body, headers=headers)
+                    resp.raise_for_status()
+                resp_text = resp.json()["choices"][0]["message"]["content"].strip()
+            else:
+                raise ValueError("Chưa cấu hình AI (OPENAI_API_KEY/GEMINI_API_KEY) nên không đọc được file ảnh - hãy tải lên file PDF/Excel.")
+        except ValueError:
+            raise
+        except Exception as e:
+            logger.error(f"Vision OCR failed: {e}")
+            raise ValueError(f"Không đọc được ảnh bằng AI: {e}")
+
+        if resp_text.startswith("```json"): resp_text = resp_text[7:]
+        if resp_text.startswith("```"): resp_text = resp_text[3:]
+        if resp_text.endswith("```"): resp_text = resp_text[:-3]
+        try:
+            parsed = json.loads(resp_text.strip())
+        except Exception as e:
+            logger.error(f"Vision OCR JSON parse error: {e}")
+            raise ValueError("AI trả về dữ liệu không hợp lệ khi đọc ảnh, hãy thử lại.")
+        if isinstance(parsed, dict):
+            parsed = parsed.get("items") or []
+        items = [row for row in parsed if isinstance(row, dict)] if isinstance(parsed, list) else []
+        if not items:
+            raise ValueError("Không tìm thấy sản phẩm nào trong ảnh - hãy dùng ảnh rõ nét, chụp thẳng bảng giá.")
+        return items
+
+    @staticmethod
     async def parse_file(file_bytes: bytes, file_type: str, file_name: str) -> list:
         ext = os.path.splitext(file_name)[1].lower()
         raw_text = ""
@@ -424,8 +483,10 @@ class VendorAIParsingService:
         elif ext in ['.xlsx', '.xls']:
             raw_text = VendorAIParsingService.extract_from_excel(file_bytes)
         elif ext in ['.jpg', '.jpeg', '.png']:
-            # Fallback to Vision if needed, but for now we just throw error as it's advanced
-            raise ValueError("Vision OCR cho hình ảnh đang được phát triển.")
+            # Anh chup/scan bao gia: khong co text de pdfplumber doc -> gui
+            # thang anh cho model vision (gpt-4o / gemini deu nhan anh).
+            items = await VendorAIParsingService.extract_items_from_image(file_bytes, ext)
+            return items, f"[Ảnh] {file_name}"
         else:
             raise ValueError(f"Định dạng file {ext} chưa được hỗ trợ.")
 

@@ -355,6 +355,10 @@ export type CreateDealInput = Omit<
   updateCustomerProfile?: boolean;
   /** Customer profile name, distinct from legacy Deal.customerName (deal title). */
   customerProfileName?: string;
+  /** Ten Du an MOI go tay (chua co projectId) - feedback 2026-09-25: "Cơ hội"
+   * khong con nhap ten rieng, lay theo Du an. Backend tu tao Du an that tu
+   * ten nay khi projectId rong. */
+  projectName?: string;
   idempotencyKey?: string;
   contract?: ContractInfo;
   outcome?: OutcomeInfo;

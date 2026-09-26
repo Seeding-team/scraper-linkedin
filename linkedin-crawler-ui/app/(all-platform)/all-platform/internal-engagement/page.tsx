@@ -20,6 +20,7 @@ import type {
 } from "@/types/unified.types";
 import { useQuickCommentLibrary } from "@/components/all-platform/components/use-quick-comment-library";
 import { TeamPerformancePanel } from "@/components/all-platform/internal-engagement/TeamPerformancePanel";
+import { UnifiedDashboardHomeContent } from "@/components/features/dashboard/UnifiedDashboardHomeContent";
 import { pingLiExtension, fetchLinkedInPostInfo } from "@/lib/li-ext-bridge";
 import { extractLinkedInMetadata, sanitizeLinkedInUrl } from "@/lib/linkedin-metadata";
 
@@ -158,8 +159,10 @@ export default function InternalEngagementPage() {
   const { user } = useAppAuth();
   const [toast, setToast] = useState<ToastMessage | null>(null);
 
-  // Tabs
-  const [mainTab, setMainTab] = useState<"overview" | "feed">("overview");
+  // Tabs — thứ tự hiển thị: Seeding nội bộ -> Seeding bên ngoài -> Tổng quan báo cáo.
+  // Mặc định "feed" (Seeding nội bộ) - đây là trang landing chính khi vào app
+  // (xem getDashboardHrefForRole trong AllPlatformSidebar.tsx).
+  const [mainTab, setMainTab] = useState<"overview" | "feed" | "external">("feed");
   const [tab, setTab] = useState<TaskStatusTab>("all");
   const [sourceTab, setSourceTab] = useState<SourceTab>("markee");
   const [search, setSearch] = useState("");
@@ -1076,6 +1079,9 @@ export default function InternalEngagementPage() {
         deadline: taskDeadline ? new Date(taskDeadline).toISOString() : undefined,
         target_comments: targetComm,
         assigned_team_ids: resolvedTeamUUIDs,
+        // Bài tạo từ tab "Seeding bên ngoài" đánh dấu external để hiện đúng
+        // tab, không lẫn vào "Seeding nội bộ" (xem scopedPosts).
+        scope: (mainTab === "external" ? "external" : "internal") as "internal" | "external",
       };
 
       const res = await internalEngagementService.addCustomPost(payload);
@@ -1157,6 +1163,17 @@ export default function InternalEngagementPage() {
     });
   }, [posts, customPosts]);
 
+  // Tab "Seeding nội bộ" vs "Seeding bên ngoài": bài markee-sourced (auto kéo
+  // từ MarkeeAI) luôn là nội bộ (không có field scope). Bài custom-post mặc
+  // định "internal" trừ khi tạo từ tab "Seeding bên ngoài" (xem
+  // handleCreateTaskSubmit). Tab "Tổng quan báo cáo" KHÔNG lọc — gộp cả 2.
+  const scopedPosts = useMemo(() => {
+    if (mainTab === "external") {
+      return allCombinedPosts.filter((post) => (post as any).scope === "external");
+    }
+    return allCombinedPosts.filter((post) => (post as any).scope !== "external");
+  }, [allCombinedPosts, mainTab]);
+
   const realStats = useMemo(() => {
     // 1. Total Seeders: Total active members across all teams in company (always 20)
     const totalSeeder = dbTeams.reduce((sum, t) => sum + (t.member_count || 0), 0) || (membersCount > 0 ? membersCount : 20);
@@ -1206,7 +1223,7 @@ export default function InternalEngagementPage() {
 
   // Unified multi-filter algorithm: Search, Campaign, Team, Status
   const filteredPosts = useMemo(() => {
-    return allCombinedPosts.filter((post) => {
+    return scopedPosts.filter((post) => {
       // 1. Search Query Filter
       if (search.trim()) {
         const q = search.toLowerCase();
@@ -1254,15 +1271,15 @@ export default function InternalEngagementPage() {
 
       return true;
     });
-  }, [allCombinedPosts, search, selectedCampaignId, selectedTeamFilter, tab, dbTeams, teamCounts]);
+  }, [scopedPosts, search, selectedCampaignId, selectedTeamFilter, tab, dbTeams, teamCounts]);
 
   const tabCounts = useMemo(() => {
-    let all = allCombinedPosts.length;
+    let all = scopedPosts.length;
     let need = 0;
     let completed = 0;
     let overdue = 0;
 
-    allCombinedPosts.forEach((post) => {
+    scopedPosts.forEach((post) => {
       const rawTarget = (post as any).target_comments || (post as any).targetComments;
       const targetTotal = Number(rawTarget) > 0 ? Number(rawTarget) : 32;
       const postTeamStats = teamCounts[post.id] || [];
@@ -1276,7 +1293,7 @@ export default function InternalEngagementPage() {
     });
 
     return { all, need, completed, overdue, received: need };
-  }, [allCombinedPosts, teamCounts]);
+  }, [scopedPosts, teamCounts]);
 
   // Admin/leader: badge "Team X: N tương tác" hiển thị dưới mỗi bài.
   useEffect(() => {
@@ -1353,6 +1370,21 @@ export default function InternalEngagementPage() {
   }, []);
 
   const lastResultRef = useRef<{ success: boolean; error?: string } | null>(null);
+  // Watchdog cho sendComment(): bridge.js co the "tuong nhu san sang" (da tra
+  // loi PING) nhung khong thuc su xu ly START_BULK_COMMENT (context bi
+  // invalidate giua chung, background.js crash, hoac message that lac) - khi
+  // do KHONG CO event LI_COMMENT_STARTED/BULK_COMMENT_STARTED/*_FAILED_TO_START
+  // nao ban ve ca, UI dung im mai mai (khong toast, khong doi text nut) dung y
+  // het trieu chung "bam Gui khong an gi". Dat 1 timeout ngan sau khi gui -
+  // neu khong nhan duoc phan hoi nao thi tu bao loi ro rang cho nguoi dung.
+  const sendCommentWatchdogRef = useRef<number | null>(null);
+
+  const clearSendCommentWatchdog = () => {
+    if (sendCommentWatchdogRef.current !== null) {
+      window.clearTimeout(sendCommentWatchdogRef.current);
+      sendCommentWatchdogRef.current = null;
+    }
+  };
 
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
@@ -1366,6 +1398,7 @@ export default function InternalEngagementPage() {
         // cu (bridge.js dang chay tren trang) bi vo hieu, moi lenh gui di deu roi vao im
         // lang (khong loi, khong toast) - dung y het trieu chung "bam Gui khong ra gi ca".
         // Bao ro cho nguoi dung thay vi de im lang, va tat trang thai "san sang" gia.
+        clearSendCommentWatchdog();
         setIsExtensionReady(false);
         setIsLiExtensionReady(false);
         setIsRunning(false);
@@ -1374,10 +1407,13 @@ export default function InternalEngagementPage() {
       } else if (action === "BULK_COMMENT_FAILED_TO_START" || action === "LI_COMMENT_FAILED_TO_START") {
         // Background tu choi ngay lap tuc (vd dang tuong nham co 1 tien trinh khac
         // chua xong) - truoc day bi im lang hoan toan, gio bao ro cho nguoi dung.
+        clearSendCommentWatchdog();
         setIsRunning(false);
         setRunProgress(null);
+        console.error("[internal-engagement] Comment failed to start:", event.data);
         showToast(`Không gửi được comment: ${event.data?.error || "Lỗi không xác định"}`, "error");
       } else if (action === "LI_COMMENT_STARTED") {
+        clearSendCommentWatchdog();
         setIsRunning(true);
         setRunProgress("Đang mở bài viết LinkedIn...");
         lastResultRef.current = null;
@@ -1396,6 +1432,7 @@ export default function InternalEngagementPage() {
         }
         loadPosts();
       } else if (action === "BULK_COMMENT_STARTED") {
+        clearSendCommentWatchdog();
         setIsRunning(true);
         setRunProgress("Đang mở bài viết...");
         lastResultRef.current = null;
@@ -1438,7 +1475,7 @@ export default function InternalEngagementPage() {
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [tab, search, sourceTab]);
+  }, [tab, search, sourceTab, mainTab]);
 
   const pagedPosts = useMemo(() => {
     const start = (currentPage - 1) * PAGE_SIZE;
@@ -1452,6 +1489,7 @@ export default function InternalEngagementPage() {
 
   const closeModal = () => {
     if (isRunning) return;
+    clearSendCommentWatchdog();
     setModalPost(null);
   };
 
@@ -1464,21 +1502,40 @@ export default function InternalEngagementPage() {
   });
 
   const sendComment = () => {
-    if (!modalPost?.permalink_url) return;
-    if (!commentText.trim()) return showToast("Vui lòng nhập nội dung comment.");
-    if (!user?.email) {
-      return showToast("Chưa xác định được tài khoản đăng nhập — tải lại trang trước khi comment (nếu không KPI sẽ không được ghi nhận).");
-    }
+    console.log("[internal-engagement] sendComment() clicked", {
+      modalPostId: modalPost?.id,
+      isExtensionReady,
+      isLiExtensionReady,
+    });
+    try {
+      // Truoc day chi check modalPost?.permalink_url va return IM LANG (khong
+      // toast) neu thieu - trong khi disabled-check cua nut va "Xem bai viet
+      // goc" deu da fallback ca link_post. Vai bai (dac biet bai them qua tab
+      // "Seeding ben ngoai"/custom-post cu) co the chi co link_post ma khong co
+      // permalink_url -> nut trong VAN sang/khong disabled (dung fallback o
+      // disabled-check) nhung bam vao roi vao day thi return im lang - dung y
+      // trieu chung "bam khong ra gi ca". Dong bo lai fallback + luon bao ro
+      // bang toast thay vi im lang.
+      const rawPostLink = modalPost?.permalink_url || (modalPost as any)?.link_post || (modalPost as any)?.link;
+      if (!rawPostLink) {
+        console.warn("[internal-engagement] sendComment: khong co link bai viet", modalPost);
+        return showToast("Không tìm thấy link bài viết để gửi comment.");
+      }
+      if (!commentText.trim()) return showToast("Vui lòng nhập nội dung comment.");
+      if (!user?.email) {
+        return showToast("Chưa xác định được tài khoản đăng nhập — tải lại trang trước khi comment (nếu không KPI sẽ không được ghi nhận).");
+      }
 
-    const isLinkedIn = modalPost.platform === "linkedin" || Boolean(modalPost.permalink_url && (modalPost.permalink_url.includes("linkedin.com") || modalPost.permalink_url.includes("lnkd.in")));
-    const isReady = isLinkedIn ? (isLiExtensionReady || isExtensionReady) : isExtensionReady;
-    if (!isReady) return showToast("Chưa kết nối được Extension. Vui lòng cài đặt và tải lại trang.");
+      const isLinkedIn = modalPost!.platform === "linkedin" || isLinkedInUrl(rawPostLink);
+      const isReady = isLinkedIn ? (isLiExtensionReady || isExtensionReady) : isExtensionReady;
+      if (!isReady) {
+        console.warn("[internal-engagement] sendComment: extension chua ready", { isLinkedIn, isExtensionReady, isLiExtensionReady });
+        return showToast("Chưa kết nối được Extension. Vui lòng cài đặt và tải lại trang.");
+      }
 
-    const rawPostLink = modalPost.permalink_url || (modalPost as any).link_post;
-    const targetLink = isLinkedIn ? sanitizeLinkedInUrl(rawPostLink) : rawPostLink;
+      const targetLink = isLinkedIn ? sanitizeLinkedInUrl(rawPostLink) : rawPostLink;
 
-    window.postMessage(
-      {
+      const payload = {
         action: "START_BULK_COMMENT",
         payload: {
           url: targetLink,
@@ -1502,9 +1559,32 @@ export default function InternalEngagementPage() {
                   : 1,
           },
         },
-      },
-      "*",
-    );
+      };
+
+      console.log("[internal-engagement] sendComment: postMessage START_BULK_COMMENT", payload);
+      window.postMessage(payload, "*");
+
+      // Watchdog: neu sau 5s khong nhan duoc BAT KY phan hoi nao tu extension
+      // (STARTED / FAILED_TO_START / INVALIDATED) thi tu bao loi ro rang -
+      // truoc day UI se dung im mai mai trong truong hop nay, dung y het
+      // trieu chung "bam Gui khong an gi ca" nguoi dung bao lai nhieu lan.
+      clearSendCommentWatchdog();
+      sendCommentWatchdogRef.current = window.setTimeout(() => {
+        sendCommentWatchdogRef.current = null;
+        console.error(
+          "[internal-engagement] sendComment: KHONG nhan duoc phan hoi nao tu Extension sau 5s (khong co STARTED/FAILED_TO_START). " +
+            "Extension co the da bi 'chet' ngam (background service worker sleep/crash) du bridge.js van bao ready. " +
+            "Hay thu: 1) mo chrome://extensions, bam nut reload (vong tron) tren 'Bulk Comment Extension', 2) F5 lai trang nay, 3) thu gui lai.",
+        );
+        showToast(
+          "Extension không phản hồi sau 5 giây (có thể đã bị treo ngầm). Hãy vào chrome://extensions, bấm reload extension rồi F5 lại trang này và thử lại.",
+          "error",
+        );
+      }, 5000);
+    } catch (err) {
+      console.error("[internal-engagement] sendComment: exception", err);
+      showToast(`Lỗi khi gửi comment: ${err instanceof Error ? err.message : String(err)}`, "error");
+    }
   };
 
   const toggleSelected = (postId: string) => {
@@ -1598,28 +1678,30 @@ export default function InternalEngagementPage() {
                 Theo dõi thành viên đã nhận bài, đã tương tác, làm thiếu và quá hạn.
               </p>
             </div>
-            <div className="flex items-center gap-3">
-              <a
-                href="/all-platform/quick-comments"
-                className="px-4 py-2.5 border border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 rounded-xl text-[13px] font-bold shadow-sm transition flex items-center gap-2"
-              >
-                <span>📚</span> Thư viện mẫu câu
-              </a>
-              <button
-                type="button"
-                onClick={() => setIsCampaignModalOpen(true)}
-                className="px-4 py-2.5 border border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100 rounded-xl text-[13px] font-bold shadow-sm transition flex items-center gap-2"
-              >
-                <span>🚩</span> Tạo chiến dịch seeding
-              </button>
-              <button
-                type="button"
-                onClick={openCreateTaskModal}
-                className="px-4 py-2.5 bg-[#be123c] hover:bg-[#9f1239] text-white rounded-xl text-[13px] font-bold shadow-sm transition flex items-center gap-2 cursor-pointer"
-              >
-                <span className="text-base font-bold">+</span> Thêm bài viết Seeding
-              </button>
-            </div>
+            {mainTab !== "external" ? (
+              <div className="flex items-center gap-3">
+                <a
+                  href="/all-platform/quick-comments"
+                  className="px-4 py-2.5 border border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 rounded-xl text-[13px] font-bold shadow-sm transition flex items-center gap-2"
+                >
+                  <span>📚</span> Thư viện mẫu câu
+                </a>
+                <button
+                  type="button"
+                  onClick={() => setIsCampaignModalOpen(true)}
+                  className="px-4 py-2.5 border border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100 rounded-xl text-[13px] font-bold shadow-sm transition flex items-center gap-2"
+                >
+                  <span>🚩</span> Tạo chiến dịch seeding
+                </button>
+                <button
+                  type="button"
+                  onClick={openCreateTaskModal}
+                  className="px-4 py-2.5 bg-[#be123c] hover:bg-[#9f1239] text-white rounded-xl text-[13px] font-bold shadow-sm transition flex items-center gap-2 cursor-pointer"
+                >
+                  <span className="text-base font-bold">+</span> Thêm bài viết Seeding
+                </button>
+              </div>
+            ) : null}
           </div>
 
           {loadError ? (
@@ -1628,8 +1710,30 @@ export default function InternalEngagementPage() {
             </div>
           ) : null}
 
-          {/* MAIN TABS SWITCHER */}
+          {/* MAIN TABS SWITCHER - thứ tự: Seeding nội bộ -> Seeding bên ngoài -> Tổng quan báo cáo */}
           <div className="flex items-center gap-2 border-b border-gray-200 mb-6 bg-white p-2.5 rounded-2xl shadow-xs">
+            <button
+              type="button"
+              onClick={() => setMainTab("feed")}
+              className={`px-5 py-2.5 text-xs font-extrabold rounded-xl transition cursor-pointer flex items-center gap-2 ${
+                mainTab === "feed"
+                  ? "bg-[#be123c] text-white shadow-sm"
+                  : "text-gray-600 hover:bg-gray-100 hover:text-gray-900"
+              }`}
+            >
+              <span>⚡</span> Seeding nội bộ
+            </button>
+            <button
+              type="button"
+              onClick={() => setMainTab("external")}
+              className={`px-5 py-2.5 text-xs font-extrabold rounded-xl transition cursor-pointer flex items-center gap-2 ${
+                mainTab === "external"
+                  ? "bg-[#be123c] text-white shadow-sm"
+                  : "text-gray-600 hover:bg-gray-100 hover:text-gray-900"
+              }`}
+            >
+              <span>🌐</span> Seeding bên ngoài
+            </button>
             <button
               type="button"
               onClick={() => setMainTab("overview")}
@@ -1640,17 +1744,6 @@ export default function InternalEngagementPage() {
               }`}
             >
               <span>📊</span> Tổng quan báo cáo
-            </button>
-            <button
-              type="button"
-              onClick={() => setMainTab("feed")}
-              className={`px-5 py-2.5 text-xs font-extrabold rounded-xl transition cursor-pointer flex items-center gap-2 ${
-                mainTab === "feed"
-                  ? "bg-[#be123c] text-white shadow-sm"
-                  : "text-gray-600 hover:bg-gray-100 hover:text-gray-900"
-              }`}
-            >
-              <span>⚡</span> Hoạt động seeding
             </button>
           </div>
 
@@ -1833,6 +1926,12 @@ export default function InternalEngagementPage() {
 
               {canSeeTeamInteractions ? <TeamPerformancePanel email={user?.email} /> : null}
             </div>
+          ) : mainTab === "external" ? (
+            /* TAB 2: SEEDING BÊN NGOÀI — gom nguyên trang /all-platform/post-feed cũ
+            (UnifiedDashboardHomeContent: crawl + seeding bài viết từ nhóm LinkedIn/
+            Facebook bên ngoài) vào đây theo yêu cầu user, không còn trang/menu
+            "Post feed" riêng nữa (đã bỏ khỏi sidebar — xem AllPlatformSidebar.tsx). */
+            <UnifiedDashboardHomeContent hideHeader />
           ) : (
             /* TAB 2: HOẠT ĐỘNG SEEDING (POST FEED) */
             <div>

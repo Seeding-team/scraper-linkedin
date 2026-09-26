@@ -41,12 +41,24 @@ REACTION_LABELS = {
 
 
 def _get_member_id(email: str) -> Optional[str]:
+    """Tra ve id_member dung de INSERT vao internal_engagement_kpi/
+    internal_engagement_custom_posts — CA HAI BANG NAY co FK id_member
+    REFERENCES app_users(id) (xem migration 039, 053), KHONG PHAI members(id).
+
+    Truoc day check bang `members` TRUOC roi moi fallback app_users - neu 1
+    email ton tai o CA HAI bang nhung voi id KHAC NHAU (du lieu cu tu truoc
+    khi app_users la nguon that, chua duoc dong bo lai), ham se tra ve
+    members.id — id nay KHONG ton tai trong app_users, lam INSERT loi
+    "violates foreign key constraint ..._id_member_fkey" (loi that da gap).
+    Doi lai uu tien app_users (dung nguon FK yeu cau), members chi la fallback
+    cuoi cung cho user cu chua co trong app_users.
+    """
     supabase: Client = get_supabase_client()
-    res = supabase.table("members").select("id").eq("email", email).limit(1).execute()
-    if res.data:
-        return res.data[0].get("id")
     res_app = supabase.table("app_users").select("id").eq("email", email).limit(1).execute()
-    return res_app.data[0].get("id") if res_app.data else None
+    if res_app.data:
+        return res_app.data[0].get("id")
+    res = supabase.table("members").select("id").eq("email", email).limit(1).execute()
+    return res.data[0].get("id") if res.data else None
 
 
 def record_action(payload: dict) -> dict:
@@ -1009,12 +1021,15 @@ async def add_custom_post(
     likes: Optional[int] = None,
     comments: Optional[int] = None,
     shares: Optional[int] = None,
+    scope: Optional[str] = None,
 ) -> dict:
     supabase: Client = get_supabase_client()
     user_id = _get_member_id(email_member)
 
     if not user_id:
         raise Exception("Không tìm thấy thông tin user.")
+
+    final_scope = scope if scope in ("internal", "external") else "internal"
 
     is_linkedin = (
         platform == "linkedin"
@@ -1132,17 +1147,70 @@ async def add_custom_post(
 
     message_debug = f"TITLE: {title_debug} | META: {meta_debug} | JSON_CHECK: {json_debug} | SNIPPET: {raw_html[:3000]}"
 
+    def _write_tolerating_missing_scope(write_fn):
+        """Chạy write_fn() (insert/update) — nếu lỗi vì cột `scope` CHƯA tồn tại
+        trên DB (migration 148_internal_engagement_custom_posts_scope.sql chưa
+        áp dụng), tự bỏ field `scope` ra khỏi payload rồi thử lại 1 lần, thay vì
+        làm hỏng toàn bộ luồng "Thêm bài viết Seeding" (nội bộ lẫn bên ngoài)
+        cho tới khi migration được áp."""
+        try:
+            return write_fn(with_scope=True)
+        except Exception as exc:
+            if "scope" in str(exc).lower():
+                logger.warning(f"Cột 'scope' chưa tồn tại trên DB (migration 148 chưa áp) — ghi lại không kèm scope: {exc}")
+                return write_fn(with_scope=False)
+            raise
+
     if existing_res.data and existing_post.get("is_deleted"):
-        update_payload = {
-            "is_deleted": False,
-            "deleted_at": None,
-            "deleted_by": None,
+        def _do_update(with_scope: bool):
+            update_payload = {
+                "is_deleted": False,
+                "deleted_at": None,
+                "deleted_by": None,
+                "fanpage_name": final_fanpage_name,
+                "content": final_content,
+                "media_urls": final_media_urls,
+                "published_at": now_iso,
+                "updated_at": now_iso,
+                "updated_by": user_id,
+                "campaign_id": campaign_id,
+                "campaign_name": campaign_name,
+                "deadline": default_deadline,
+                "target_comments": target_comments,
+                "assigned_team_ids": assigned_team_ids or [],
+                "platform": final_platform,
+            }
+            if with_scope:
+                update_payload["scope"] = final_scope
+            if likes is not None or comments is not None or shares is not None:
+                update_payload["fb_total_likes"] = likes or 0
+                update_payload["fb_total_comments"] = comments or 0
+                update_payload["fb_total_shares"] = shares or 0
+                update_payload["last_synced_at"] = now_iso
+            return (
+                supabase.table("internal_engagement_custom_posts")
+                .update(update_payload)
+                .eq("id", existing_post["id"])
+                .execute()
+            )
+
+        res = _write_tolerating_missing_scope(_do_update)
+        item = res.data[0] if res.data else existing_post
+        item["platform"] = final_platform
+        item["scope"] = final_scope
+        item["_debug_info"] = message_debug
+        return item
+
+    def _do_insert(with_scope: bool):
+        data = {
+            "link_post": final_clean_url,
+            "id_member": user_id,
             "fanpage_name": final_fanpage_name,
             "content": final_content,
             "media_urls": final_media_urls,
+            "created_at": now_iso,
             "published_at": now_iso,
-            "updated_at": now_iso,
-            "updated_by": user_id,
+            "is_deleted": False,
             "campaign_id": campaign_id,
             "campaign_name": campaign_name,
             "deadline": default_deadline,
@@ -1150,66 +1218,45 @@ async def add_custom_post(
             "assigned_team_ids": assigned_team_ids or [],
             "platform": final_platform,
         }
+        if with_scope:
+            data["scope"] = final_scope
         if likes is not None or comments is not None or shares is not None:
-            update_payload["fb_total_likes"] = likes or 0
-            update_payload["fb_total_comments"] = comments or 0
-            update_payload["fb_total_shares"] = shares or 0
-            update_payload["last_synced_at"] = now_iso
-        res = (
-            supabase.table("internal_engagement_custom_posts")
-            .update(update_payload)
-            .eq("id", existing_post["id"])
-            .execute()
-        )
-        item = res.data[0] if res.data else existing_post
-        item["platform"] = final_platform
-        item["_debug_info"] = message_debug
-        return item
-
-    data = {
-        "link_post": final_clean_url,
-        "id_member": user_id,
-        "fanpage_name": final_fanpage_name,
-        "content": final_content,
-        "media_urls": final_media_urls,
-        "created_at": now_iso,
-        "published_at": now_iso,
-        "is_deleted": False,
-        "campaign_id": campaign_id,
-        "campaign_name": campaign_name,
-        "deadline": default_deadline,
-        "target_comments": target_comments,
-        "assigned_team_ids": assigned_team_ids or [],
-        "platform": final_platform,
-    }
-    if likes is not None or comments is not None or shares is not None:
-        data["fb_total_likes"] = likes or 0
-        data["fb_total_comments"] = comments or 0
-        data["fb_total_shares"] = shares or 0
-        data["last_synced_at"] = now_iso
+            data["fb_total_likes"] = likes or 0
+            data["fb_total_comments"] = comments or 0
+            data["fb_total_shares"] = shares or 0
+            data["last_synced_at"] = now_iso
+        return supabase.table("internal_engagement_custom_posts").insert(data).execute()
 
     try:
-        res = supabase.table("internal_engagement_custom_posts").insert(data).execute()
+        res = _write_tolerating_missing_scope(_do_insert)
         item = res.data[0] if res.data else {}
         item["platform"] = final_platform
+        item["scope"] = final_scope
         item["_debug_info"] = message_debug
         return item
     except Exception as err:
         logger.error(f"Lỗi khi insert full data vào internal_engagement_custom_posts: {err}")
-        fallback_data = {
-            "link_post": final_clean_url,
-            "id_member": user_id,
-            "is_deleted": False,
-            "campaign_id": campaign_id,
-            "campaign_name": campaign_name,
-            "deadline": default_deadline,
-            "target_comments": target_comments,
-            "assigned_team_ids": assigned_team_ids or [],
-            "platform": final_platform,
-        }
-        res = supabase.table("internal_engagement_custom_posts").insert(fallback_data).execute()
+
+        def _do_fallback_insert(with_scope: bool):
+            fallback_data = {
+                "link_post": final_clean_url,
+                "id_member": user_id,
+                "is_deleted": False,
+                "campaign_id": campaign_id,
+                "campaign_name": campaign_name,
+                "deadline": default_deadline,
+                "target_comments": target_comments,
+                "assigned_team_ids": assigned_team_ids or [],
+                "platform": final_platform,
+            }
+            if with_scope:
+                fallback_data["scope"] = final_scope
+            return supabase.table("internal_engagement_custom_posts").insert(fallback_data).execute()
+
+        res = _write_tolerating_missing_scope(_do_fallback_insert)
         item = res.data[0] if res.data else {}
         item["platform"] = final_platform
+        item["scope"] = final_scope
         item["_debug_info"] = message_debug
         return item
 

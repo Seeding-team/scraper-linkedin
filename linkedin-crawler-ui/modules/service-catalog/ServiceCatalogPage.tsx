@@ -150,10 +150,6 @@ export function ServiceCatalogPage() {
   return (
     <div className="sc-page">
       <div className="sc-header">
-        <div>
-          <h1>Sản phẩm &amp; dịch vụ</h1>
-          <p className="sc-header-desc">Quản lý sản phẩm theo từng nhóm dịch vụ</p>
-        </div>
         <div className="sc-header-actions">
           <Link href="/all-platform/service-catalog/config" className="sc-btn">
             Cấu hình ĐVT &amp; VAT

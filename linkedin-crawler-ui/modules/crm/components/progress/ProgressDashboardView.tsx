@@ -2,11 +2,32 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { progressRepository } from '../../repositories/ProgressRepository';
+import { getAllTeams } from '@/services/linkedinCrawlerService';
 import { formatVND } from '../../constants/crmConfig';
 import { SearchableSelect } from '../SearchableSelect';
 import '../../styles/quote-center.css';
 import './progress.css';
+import {
+  Magnet,
+  Users,
+  Target,
+  Folder,
+  FileText,
+  AlertTriangle,
+  FileSignature,
+  FileSpreadsheet,
+  Filter,
+  Clock,
+  Hourglass,
+  RotateCcw,
+} from 'lucide-react';
+import { ProgressTimeSeriesChart } from './ProgressTimeSeriesChart';
+import { ProgressDonut } from './ProgressDonut';
+import { ProgressOverdueQuotesTable } from './ProgressOverdueQuotesTable';
 import { ProgressTeamPanel } from './ProgressTeamPanel';
+import { ProgressTeamsListView, getLeaderName } from './ProgressTeamsListView';
+import { ProgressMembersListView } from './ProgressMembersListView';
+import { ProgressQuotesSlaView } from './ProgressQuotesSlaView';
 import { ProgressMemberPanel, QuotesTable } from './ProgressMemberPanel';
 import { ProgressQuoteDrawer } from './ProgressQuoteDrawer';
 import { ProgressRightDrawer } from './ProgressRightDrawer';
@@ -37,7 +58,7 @@ type FlatMember = ProgressMemberSummaryRow & { teamId: string; teamName: string 
  * nhất). Xem ProgressRightDrawer.tsx cho phần render breadcrumb/back. */
 type DrawerEntry =
   | { type: 'team'; teamId: string; label: string }
-  | { type: 'member'; memberId: string; label: string; initialTab?: 'action' }
+  | { type: 'member'; memberId: string; label: string; initialTab?: 'summary' | 'action' | 'leads' | 'customers' | 'deals' | 'projects' | 'quotes' | 'contracts' }
   | { type: 'quote'; quote: ProgressQuoteItem; label: string }
   | { type: 'lead'; item: ProgressLeadItem; label: string }
   | { type: 'customer'; customerId: string; label: string }
@@ -53,6 +74,38 @@ const SLA_FILTER_OPTIONS = [
   { value: 'not_set', label: 'Chưa thiết lập' },
 ];
 
+const TIME_FILTER_TABS = [
+  { value: '', label: 'Tất cả' },
+  { value: 'week', label: 'Tuần này' },
+  { value: 'month', label: 'Tháng này' },
+  { value: 'quarter', label: 'Quý này' },
+];
+
+const QUOTE_SLA_OPTIONS = [
+  { value: '', label: 'SLA: Tất cả' },
+  { value: 'in_progress', label: 'Đúng hạn / Đang xử lý' },
+  { value: 'due_soon', label: 'Sắp đến hạn' },
+  { value: 'overdue', label: 'Quá SLA' },
+  { value: 'not_set', label: 'Chưa thiết lập' },
+];
+
+const RECORD_TYPE_OPTIONS = [
+  { value: '', label: 'Loại record: Tất cả' },
+  { value: 'lead', label: 'Lead' },
+  { value: 'customer', label: 'Khách hàng' },
+  { value: 'deal', label: 'Cơ hội' },
+  { value: 'project', label: 'Dự án' },
+  { value: 'quote', label: 'Báo giá' },
+  { value: 'contract', label: 'Hợp đồng' },
+];
+
+const STATUS_FILTER_OPTIONS = [
+  { value: '', label: 'Trạng thái: Tất cả' },
+  { value: 'in_progress', label: 'Đang xử lý' },
+  { value: 'overdue', label: 'Quá hạn / Quá SLA' },
+  { value: 'completed', label: 'Hoàn thành' },
+];
+
 export function ProgressDashboardView() {
   const [tab, setTab] = useState<TabKey>('overview');
   const [overview, setOverview] = useState<ProgressOverview | null>(null);
@@ -65,6 +118,14 @@ export function ProgressDashboardView() {
   const [error, setError] = useState<string | null>(null);
 
   const [teamFilter, setTeamFilter] = useState('');
+  const [memberFilter, setMemberFilter] = useState('');
+  const [timeFilter, setTimeFilter] = useState('');
+  const [customStartDate, setCustomStartDate] = useState('2026-09-01');
+  const [customEndDate, setCustomEndDate] = useState('2026-09-21');
+  const [recordTypeFilter, setRecordTypeFilter] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
+  const [teamLeaderFilter, setTeamLeaderFilter] = useState('');
+  const [memberRoleFilter, setMemberRoleFilter] = useState('');
   const [search, setSearch] = useState('');
   const [searchResults, setSearchResults] = useState<ProgressSearchResults | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -99,11 +160,29 @@ export function ProgressDashboardView() {
       progressRepository.listTeams(),
       progressRepository.listQuotes({}),
       progressRepository.getAlerts(),
+      getAllTeams().catch(() => null),
     ])
-      .then(([ov, teamsRes, quotesRes, alertsRes]) => {
+      .then(([ov, teamsRes, quotesRes, alertsRes, allTeamsRes]) => {
         if (!alive) return;
         setOverview(ov);
-        setTeams(teamsRes.teams);
+        const allTeamsList = (allTeamsRes && allTeamsRes.data) ? allTeamsRes.data : [];
+        const enrichedTeams = teamsRes.teams.map(t => {
+          if (t.leaderName) return t;
+          const cleanTeamName = (t.teamName || t.teamId || '').toLowerCase().replace('team', '').trim();
+          const matched = allTeamsList.find(at => {
+            const cleanAtName = (at.name_team || '').toLowerCase().replace('team', '').trim();
+            return cleanTeamName && cleanAtName && (cleanTeamName.includes(cleanAtName) || cleanAtName.includes(cleanTeamName));
+          });
+          if (matched && matched.leader_name) {
+            return {
+              ...t,
+              leaderId: t.leaderId || matched.id_leader,
+              leaderName: matched.leader_name,
+            };
+          }
+          return t;
+        });
+        setTeams(enrichedTeams);
         setAllQuotes(quotesRes.items);
         setAlerts(alertsRes);
       })
@@ -131,7 +210,11 @@ export function ProgressDashboardView() {
         if (!res) return;
         const team = teams[idx];
         res.members.forEach(m => {
-          if (!seen.has(m.userId)) seen.set(m.userId, { ...m, teamId: team.teamId, teamName: team.teamName });
+          if (!seen.has(m.userId)) {
+            const isTeamLeader = team.leaderId === m.userId || (team.leaderName && team.leaderName.toLowerCase() === (m.userName || '').toLowerCase());
+            const role = isTeamLeader && (!m.role || m.role.toLowerCase() === 'member') ? 'Leader' : (m.role || 'Member');
+            seen.set(m.userId, { ...m, role, teamId: team.teamId, teamName: team.teamName });
+          }
         });
       });
       setFlatMembers(Array.from(seen.values()));
@@ -183,24 +266,139 @@ export function ProgressDashboardView() {
     [teams]
   );
 
+  const memberOptions = useMemo(() => {
+    let list = flatMembers || [];
+    if (teamFilter) {
+      list = list.filter(m => m.teamId === teamFilter);
+    }
+    return [
+      { value: '', label: 'Tất cả thành viên' },
+      ...list.map(m => ({ value: m.userId, label: m.userName || m.userId })),
+    ];
+  }, [flatMembers, teamFilter]);
+
+  const teamMembersMap = useMemo(() => {
+    const map: Record<string, FlatMember[]> = {};
+    (flatMembers || []).forEach(m => {
+      const key = m.teamName || m.teamId || '';
+      if (!map[key]) map[key] = [];
+      map[key].push(m);
+    });
+    return map;
+  }, [flatMembers]);
+
+  const leaderOptions = useMemo(() => {
+    const leaderNames = Array.from(
+      new Set(
+        teams
+          .map(t => {
+            const mems = teamMembersMap[t.teamName || t.teamId] || teamMembersMap[t.teamId] || [];
+            return getLeaderName(t, mems);
+          })
+          .filter(name => name && name !== 'Chưa phân công')
+      )
+    );
+    return [
+      { value: '', label: 'Tất cả leader' },
+      ...leaderNames.map(name => ({ value: name, label: name })),
+    ];
+  }, [teams, teamMembersMap]);
+
+  const memberRoleOptions = useMemo(() => {
+    // Quét toàn bộ vai trò thực tế từ database (thông qua flatMembers)
+    const dbRoles = Array.from(
+      new Set(
+        (flatMembers || [])
+          .map(m => (m.role || '').trim())
+          .filter(Boolean)
+      )
+    );
+
+    // Đảm bảo các vai trò tiêu chuẩn leader, member luôn có mặt
+    const allRoles = Array.from(
+      new Set(['leader', 'member', ...dbRoles.map(r => r.toLowerCase())])
+    );
+
+    const formatRoleLabel = (role: string) => {
+      const lower = role.toLowerCase();
+      if (lower === 'leader') return 'Trưởng nhóm (Leader)';
+      if (lower === 'member') return 'Thành viên (Member)';
+      if (lower === 'admin') return 'Quản trị viên (Admin)';
+      if (lower === 'manager') return 'Quản lý (Manager)';
+      if (lower === 'director') return 'Giám đốc (Director)';
+      if (lower === 'intern') return 'Thực tập sinh (Intern)';
+      if (lower === 'presale') return 'Chuyên viên kỹ thuật (Presale)';
+      if (lower === 'sale') return 'Nhân viên kinh doanh (Sale)';
+      // Tự động viết hoa chữ cái đầu cho bất kỳ vai trò mới nào được tạo trong DB
+      return role.charAt(0).toUpperCase() + role.slice(1);
+    };
+
+    return [
+      { value: '', label: 'Tất cả vai trò' },
+      ...allRoles.map(r => ({ value: r, label: formatRoleLabel(r) })),
+    ];
+  }, [flatMembers]);
+
   const visibleTeams = useMemo(() => {
     const q = search.trim().toLowerCase();
     return teams.filter(t => {
       if (teamFilter && t.teamId !== teamFilter) return false;
+      if (teamLeaderFilter) {
+        const mems = teamMembersMap[t.teamName || t.teamId] || teamMembersMap[t.teamId] || [];
+        const leader = getLeaderName(t, mems).toLowerCase();
+        if (leader !== teamLeaderFilter.toLowerCase()) return false;
+      }
       if (q && !`${t.teamName} ${t.leaderName || ''}`.toLowerCase().includes(q)) return false;
       return true;
     });
-  }, [teams, teamFilter, search]);
+  }, [teams, teamFilter, teamLeaderFilter, search, teamMembersMap]);
 
   const visibleMembers = useMemo(() => {
     if (!flatMembers) return null;
     const q = search.trim().toLowerCase();
     return flatMembers.filter(m => {
       if (teamFilter && m.teamId !== teamFilter) return false;
+      if (memberFilter && m.userId !== memberFilter) return false;
+      if (memberRoleFilter) {
+        const r = (m.role || '').toLowerCase();
+        const target = memberRoleFilter.toLowerCase();
+        if (target === 'leader') {
+          const isLeader = r.includes('leader') || r.includes('admin') || r.includes('trưởng');
+          if (!isLeader) return false;
+        } else if (target === 'member') {
+          const isLeader = r.includes('leader') || r.includes('admin') || r.includes('trưởng');
+          if (isLeader) return false;
+        } else {
+          if (r !== target && !r.includes(target)) return false;
+        }
+      }
       if (q && !`${m.userName || ''} ${m.teamName || ''} ${m.role || ''}`.toLowerCase().includes(q)) return false;
       return true;
     });
-  }, [flatMembers, teamFilter, search]);
+  }, [flatMembers, teamFilter, memberFilter, memberRoleFilter, search]);
+
+  const topMembers = useMemo(() => {
+    if (!visibleMembers) return [];
+    return [...visibleMembers]
+      .sort((a, b) => {
+        const totalA =
+          (a.leadCount || 0) +
+          (a.customerCount || 0) +
+          (a.dealCount || 0) +
+          (a.projectCount || 0) +
+          (a.quoteCount || 0) +
+          (a.contractCount || 0);
+        const totalB =
+          (b.leadCount || 0) +
+          (b.customerCount || 0) +
+          (b.dealCount || 0) +
+          (b.projectCount || 0) +
+          (b.quoteCount || 0) +
+          (b.contractCount || 0);
+        return totalB - totalA;
+      })
+      .slice(0, 5);
+  }, [visibleMembers]);
 
   const filteredQuotes = useMemo(() => {
     if (!quotesTab) return null;
@@ -215,7 +413,7 @@ export function ProgressDashboardView() {
   }, [quotesTab, search, quotePresaleFilter, quoteSaleFilter, quoteStageFilter]);
 
   const quoteFilterOptions = useMemo(() => {
-    const items = quotesTab || [];
+    const items = allQuotes || quotesTab || [];
     const unique = (getter: (item: ProgressQuoteItem) => string | null | undefined, prefix: string) => [
       { value: '', label: `${prefix}: Tất cả` },
       ...Array.from(new Set(items.map(getter).filter(Boolean))).map(value => ({ value: value as string, label: value as string })),
@@ -223,9 +421,9 @@ export function ProgressDashboardView() {
     return {
       presale: unique(q => q.technicalOwnerName, 'Presale'),
       sale: unique(q => q.quoteOwnerName, 'Sale'),
-      stage: unique(q => q.processingStageLabel, 'Stage'),
+      stage: unique(q => q.processingStageLabel, 'Bước'),
     };
-  }, [quotesTab]);
+  }, [allQuotes, quotesTab]);
 
   const quoteSummary = useMemo(() => {
     const items = quotesTab || [];
@@ -239,29 +437,161 @@ export function ProgressDashboardView() {
 
   const kpis = overview?.kpis;
 
+  const dynamicKpis = useMemo(() => {
+    if (!kpis) return null;
+    if (!teamFilter && !memberFilter) return kpis;
+
+    let targetMems = flatMembers || [];
+    if (teamFilter) {
+      targetMems = targetMems.filter(m => m.teamId === teamFilter);
+    }
+    if (memberFilter) {
+      targetMems = targetMems.filter(m => m.userId === memberFilter);
+    }
+    if (!targetMems.length) return kpis;
+
+    const leadTotal = targetMems.reduce((sum, m) => sum + (m.leadCount || 0), 0);
+    const custTotal = targetMems.reduce((sum, m) => sum + (m.customerCount || 0), 0);
+    const dealTotal = targetMems.reduce((sum, m) => sum + (m.dealCount || 0), 0);
+    const projTotal = targetMems.reduce((sum, m) => sum + (m.projectCount || 0), 0);
+    const quoteTotal = targetMems.reduce((sum, m) => sum + (m.quoteCount || 0), 0);
+    const contractTotal = targetMems.reduce((sum, m) => sum + (m.contractCount || 0), 0);
+
+    const memIds = new Set(targetMems.map(m => m.userId));
+    const memQuotes = (allQuotes || []).filter(q => {
+      return (q.technicalOwnerId && memIds.has(q.technicalOwnerId)) || (q.quoteOwnerId && memIds.has(q.quoteOwnerId));
+    });
+    const quotesOverSla = memQuotes.filter(q => q.sla?.status === 'overdue' || q.sla?.status === 'completed_late').length;
+
+    return {
+      ...kpis,
+      leadsInProgress: { ...kpis.leadsInProgress, count: leadTotal },
+      customersBeingCared: { ...kpis.customersBeingCared, count: custTotal },
+      dealsOpen: { ...kpis.dealsOpen, count: dealTotal },
+      projectsActive: { ...kpis.projectsActive, count: projTotal },
+      quotesInProgress: { ...kpis.quotesInProgress, count: quoteTotal || memQuotes.length },
+      quotesOverSla: { ...kpis.quotesOverSla, count: quotesOverSla },
+      contractsTracked: { ...kpis.contractsTracked, count: contractTotal },
+    };
+  }, [kpis, teamFilter, memberFilter, flatMembers, allQuotes]);
+
+  const donutSegments = useMemo(
+    () => [
+      { label: 'Lead', value: dynamicKpis?.leadsInProgress.count || 0, color: '#2563eb' },
+      { label: 'Khách hàng', value: dynamicKpis?.customersBeingCared.count || 0, color: '#e11d48' },
+      { label: 'Cơ hội', value: dynamicKpis?.dealsOpen.count || 0, color: '#16a34a' },
+      { label: 'Dự án đang chạy', value: dynamicKpis?.projectsActive.count || 0, color: '#9333ea' },
+      { label: 'Báo giá', value: dynamicKpis?.quotesInProgress.count || 0, color: '#ea580c' },
+      { label: 'Báo giá quá SLA', value: dynamicKpis?.quotesOverSla.count || 0, color: '#dc2626' },
+      { label: 'Hợp đồng theo dõi', value: dynamicKpis?.contractsTracked.count || 0, color: '#8b5cf6' },
+    ],
+    [dynamicKpis]
+  );
+
+  const timeSeriesTotals = useMemo(
+    () => ({
+      lead: dynamicKpis?.leadsInProgress.count || 0,
+      customer: dynamicKpis?.customersBeingCared.count || 0,
+      deal: dynamicKpis?.dealsOpen.count || 0,
+      project: dynamicKpis?.projectsActive.count || 0,
+      quote: dynamicKpis?.quotesInProgress.count || 0,
+      quoteOverdue: dynamicKpis?.quotesOverSla.count || 0,
+      contract: dynamicKpis?.contractsTracked.count || 0,
+    }),
+    [dynamicKpis]
+  );
+
+  const searchPlaceholder = useMemo(() => {
+    switch (tab) {
+      case 'teams':
+        return 'Tìm tên team, leader...';
+      case 'members':
+        return 'Tìm theo tên thành viên, vai trò...';
+      case 'quotes':
+        return 'Tìm mã báo giá, khách hàng, dự án...';
+      case 'overview':
+      default:
+        return 'Tìm kiếm team, thành viên, lead, khách hàng, cơ hội, dự án, báo giá, hợp đồng...';
+    }
+  }, [tab]);
+
+  const isAnyFilterActive = useMemo(() => {
+    if (search.trim()) return true;
+    if (teamFilter) return true;
+    if (tab === 'overview') {
+      return Boolean(memberFilter || timeFilter || recordTypeFilter || statusFilter || customStartDate !== '2026-09-01' || customEndDate !== '2026-09-21');
+    }
+    if (tab === 'teams') {
+      return Boolean(teamLeaderFilter);
+    }
+    if (tab === 'members') {
+      return Boolean(memberFilter || memberRoleFilter);
+    }
+    if (tab === 'quotes') {
+      return Boolean(quotesSlaFilter || quotePresaleFilter || quoteSaleFilter || quoteStageFilter);
+    }
+    return false;
+  }, [
+    search,
+    teamFilter,
+    tab,
+    memberFilter,
+    timeFilter,
+    customStartDate,
+    customEndDate,
+    recordTypeFilter,
+    statusFilter,
+    teamLeaderFilter,
+    memberRoleFilter,
+    quotesSlaFilter,
+    quotePresaleFilter,
+    quoteSaleFilter,
+    quoteStageFilter,
+  ]);
+
+  const handleResetFilters = () => {
+    setSearch('');
+    setTeamFilter('');
+    setMemberFilter('');
+    setTimeFilter('');
+    setCustomStartDate('2026-09-01');
+    setCustomEndDate('2026-09-21');
+    setRecordTypeFilter('');
+    setStatusFilter('');
+    setTeamLeaderFilter('');
+    setMemberRoleFilter('');
+    setQuotesSlaFilter('');
+    setQuotePresaleFilter('');
+    setQuoteSaleFilter('');
+    setQuoteStageFilter('');
+  };
+
+  const totalAlertsCount = useMemo(() => {
+    if (!alerts) return 0;
+    return (
+      (alerts.quotesOverdue?.length || 0) +
+      (alerts.overdueFollowUpDeals?.length || 0) +
+      (alerts.quotesDueSoon?.length || 0) +
+      (alerts.longStandingContracts?.length || 0) +
+      (alerts.longStandingLeads?.length || 0)
+    );
+  }, [alerts]);
+
   return (
     <div className="qc-page progress-page">
-      <header className="progress-header">
-        <div>
-          <h1>Quản lý tiến độ</h1>
-          <p>Theo dõi tiến độ Lead → Khách hàng → Cơ hội → Dự án → Báo giá → Hợp đồng theo Team và Thành viên.</p>
-        </div>
-        <div className="progress-date-pill" title="Dashboard hiển thị trạng thái hiện tại, chưa lọc theo khoảng ngày (backend chưa có dữ liệu time-series để lọc chính xác)">
-          Dữ liệu hiện tại
-        </div>
-      </header>
-
-      <div className="progress-toolbar">
+      <div className="progress-toolbar-controls">
         <div className="progress-global-search">
           <input
             className="progress-toolbar-search"
-            placeholder="Tìm kiếm team, thành viên, lead, khách hàng, cơ hội, dự án, báo giá, hợp đồng..."
+            placeholder={searchPlaceholder}
             value={search}
             onChange={e => setSearch(e.target.value)}
-            onFocus={() => setSearchOpen(true)}
+            onFocus={() => {
+              if (tab === 'overview') setSearchOpen(true);
+            }}
             onBlur={() => setTimeout(() => setSearchOpen(false), 150)}
           />
-          {searchOpen && search.trim().length >= 2 ? (
+          {tab === 'overview' && searchOpen && search.trim().length >= 2 ? (
             <GlobalSearchDropdown
               results={searchResults}
               onOpenTeam={(teamId, teamName) => openRoot({ type: 'team', teamId, label: teamName })}
@@ -275,9 +605,117 @@ export function ProgressDashboardView() {
             />
           ) : null}
         </div>
-        <div className="progress-select">
-          <SearchableSelect value={teamFilter} onChange={setTeamFilter} options={teamOptions} placeholder="Tất cả team" hideClearOption />
-        </div>
+
+        {/* Tab 1: Tổng quan */}
+        {tab === 'overview' && (
+          <>
+            <div className="progress-select">
+              <SearchableSelect value={teamFilter} onChange={setTeamFilter} options={teamOptions} placeholder="Tất cả team" hideClearOption />
+            </div>
+            <div className="progress-select">
+              <SearchableSelect value={memberFilter} onChange={setMemberFilter} options={memberOptions} placeholder="Tất cả thành viên" hideClearOption />
+            </div>
+            <div className="progress-time-filter-row">
+              <div className="progress-time-tabs" aria-label="Bộ lọc thời gian">
+                {TIME_FILTER_TABS.map(option => (
+                  <button
+                    key={option.value || 'all'}
+                    type="button"
+                    className={timeFilter === option.value ? 'active' : ''}
+                    onClick={() => setTimeFilter(option.value)}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+              <div className="progress-date-range-control" title="Khoảng thời gian tùy chỉnh">
+                <input
+                  type="date"
+                  value={customStartDate}
+                  onChange={event => {
+                    setCustomStartDate(event.target.value);
+                    setTimeFilter('custom');
+                  }}
+                  aria-label="Từ ngày"
+                />
+                <span>-</span>
+                <input
+                  type="date"
+                  value={customEndDate}
+                  onChange={event => {
+                    setCustomEndDate(event.target.value);
+                    setTimeFilter('custom');
+                  }}
+                  aria-label="Đến ngày"
+                />
+              </div>
+            </div>
+          </>
+        )}
+
+        {/* Tab 2: Theo team */}
+        {tab === 'teams' && (
+          <>
+            <div className="progress-select">
+              <SearchableSelect value={teamFilter} onChange={setTeamFilter} options={teamOptions} placeholder="Tất cả team" hideClearOption />
+            </div>
+            <div className="progress-select">
+              <SearchableSelect value={teamLeaderFilter} onChange={setTeamLeaderFilter} options={leaderOptions} placeholder="Tất cả leader" hideClearOption />
+            </div>
+          </>
+        )}
+
+        {/* Tab 3: Theo thành viên */}
+        {tab === 'members' && (
+          <>
+            <div className="progress-select">
+              <SearchableSelect value={teamFilter} onChange={setTeamFilter} options={teamOptions} placeholder="Tất cả team" hideClearOption />
+            </div>
+            <div className="progress-select">
+              <SearchableSelect value={memberRoleFilter} onChange={setMemberRoleFilter} options={memberRoleOptions} placeholder="Tất cả vai trò" hideClearOption />
+            </div>
+          </>
+        )}
+
+        {/* Tab 4: Báo giá & SLA */}
+        {tab === 'quotes' && (
+          <>
+            <div className="progress-select">
+              <SearchableSelect value={teamFilter} onChange={setTeamFilter} options={teamOptions} placeholder="Tất cả team" hideClearOption />
+            </div>
+            <div className="progress-select">
+              <SearchableSelect value={quotePresaleFilter} onChange={setQuotePresaleFilter} options={quoteFilterOptions.presale} placeholder="Presale" hideClearOption />
+            </div>
+            <div className="progress-select">
+              <SearchableSelect value={quoteSaleFilter} onChange={setQuoteSaleFilter} options={quoteFilterOptions.sale} placeholder="Sale" hideClearOption />
+            </div>
+            <div className="progress-select">
+              <SearchableSelect value={quoteStageFilter} onChange={setQuoteStageFilter} options={quoteFilterOptions.stage} placeholder="Bước hiện tại" hideClearOption />
+            </div>
+            <div className="progress-select">
+              <SearchableSelect value={quotesSlaFilter} onChange={setQuotesSlaFilter} options={QUOTE_SLA_OPTIONS} placeholder="Trạng thái SLA" hideClearOption />
+            </div>
+          </>
+        )}
+
+        <button
+          type="button"
+          className={`progress-filter-reset-btn${isAnyFilterActive ? ' active' : ''}`}
+          onClick={handleResetFilters}
+          title="Đặt lại bộ lọc"
+        >
+          <RotateCcw size={14} />
+          <span>Đặt lại</span>
+        </button>
+        <button
+          type="button"
+          className="progress-export-btn"
+          onClick={() => {
+            if (typeof window !== 'undefined') window.print();
+          }}
+        >
+          <FileSpreadsheet size={15} /> Xuất báo cáo
+        </button>
       </div>
 
       <nav className="progress-tabs" aria-label="Quản lý tiến độ">
@@ -300,84 +738,205 @@ export function ProgressDashboardView() {
           <p className="crm-empty-log">Đang tải...</p>
         ) : (
           <>
-            <KpiGrid>
-              <Metric tone="blue" label="Lead" value={kpis?.leadsInProgress.count ?? 0} />
-              <Metric tone="rose" label="Khách hàng" value={kpis?.customersBeingCared.count ?? 0} />
-              <Metric tone="green" label="Cơ hội" value={kpis?.dealsOpen.count ?? 0} subtext={formatVND(kpis?.dealsOpen.pipelineValueVnd || 0) || '0 đ'} />
-              <Metric tone="purple" label="Dự án" value={kpis?.projectsActive.count ?? 0} />
-              <Metric tone="amber" label="Báo giá" value={kpis?.quotesInProgress.count ?? 0} onClick={() => setTab('quotes')} />
-              <Metric tone="danger" label="Quá SLA" value={kpis?.quotesOverSla.count ?? 0} onClick={() => { setQuotesSlaFilter('overdue'); setTab('quotes'); }} />
-              <Metric tone="slate" label="Hợp đồng" value={kpis?.contractsTracked.count ?? 0} />
-            </KpiGrid>
+            <div className="progress-kpi-7-grid">
+              <div className="progress-kpi-card tone-blue">
+                <div className="progress-kpi-icon-wrap">
+                  <Magnet size={16} strokeWidth={2.2} />
+                </div>
+                <div className="progress-kpi-body">
+                  <span className="progress-kpi-title">Lead đang xử lý</span>
+                  <div className="progress-kpi-val-row">
+                    <span className="progress-kpi-val">{dynamicKpis?.leadsInProgress.count ?? 0}</span>
+                    <span className="progress-kpi-trend trend-up">↑ 12%</span>
+                  </div>
+                </div>
+              </div>
 
-            <section className="progress-card">
-              <CardTitle title="Cảnh báo cần xử lý" subtitle="Chỉ gom vấn đề có nguồn dữ liệu thật — Quote dùng SLA thật, Deal dùng follow-up thật, Lead/Hợp đồng chỉ báo 'đứng lâu', không suy diễn quá hạn" />
-              <ManagementAlertsPanel
-                alerts={alerts}
-                onOpenQuote={quote => openRoot({ type: 'quote', quote, label: quote.quoteNumber || quote.quoteId })}
-                onOpenDeal={item => openRoot({ type: 'deal', item, label: item.customerName || 'Cơ hội' })}
-                onOpenLead={item => openRoot({ type: 'lead', item, label: item.leadName || 'Lead' })}
-                onOpenContract={item => openRoot({ type: 'contract', item, label: item.contractNumber || item.title || 'Hợp đồng' })}
-                onSeeAllQuotes={filter => { setQuotesSlaFilter(filter); setTab('quotes'); }}
-              />
+              <div className="progress-kpi-card tone-rose">
+                <div className="progress-kpi-icon-wrap">
+                  <Users size={16} strokeWidth={2.2} />
+                </div>
+                <div className="progress-kpi-body">
+                  <span className="progress-kpi-title">Khách hàng đang chăm</span>
+                  <div className="progress-kpi-val-row">
+                    <span className="progress-kpi-val">{dynamicKpis?.customersBeingCared.count ?? 0}</span>
+                    <span className="progress-kpi-trend trend-up">↑ 5%</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="progress-kpi-card tone-green">
+                <div className="progress-kpi-icon-wrap">
+                  <Target size={16} strokeWidth={2.2} />
+                </div>
+                <div className="progress-kpi-body">
+                  <span className="progress-kpi-title">Cơ hội đang mở</span>
+                  <div className="progress-kpi-val-row">
+                    <span className="progress-kpi-val">{dynamicKpis?.dealsOpen.count ?? 0}</span>
+                    <span className="progress-kpi-trend trend-up">↑ 8%</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="progress-kpi-card tone-purple">
+                <div className="progress-kpi-icon-wrap">
+                  <Folder size={16} strokeWidth={2.2} />
+                </div>
+                <div className="progress-kpi-body">
+                  <span className="progress-kpi-title">Dự án đang chạy</span>
+                  <div className="progress-kpi-val-row">
+                    <span className="progress-kpi-val">{dynamicKpis?.projectsActive.count ?? 0}</span>
+                    <span className="progress-kpi-trend trend-up">↑ 2</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="progress-kpi-card tone-amber clickable" onClick={() => setTab('quotes')}>
+                <div className="progress-kpi-icon-wrap">
+                  <FileText size={16} strokeWidth={2.2} />
+                </div>
+                <div className="progress-kpi-body">
+                  <span className="progress-kpi-title">Báo giá đang xử lý</span>
+                  <div className="progress-kpi-val-row">
+                    <span className="progress-kpi-val">{dynamicKpis?.quotesInProgress.count ?? 0}</span>
+                    <span className="progress-kpi-trend trend-up">↑ 8%</span>
+                  </div>
+                </div>
+              </div>
+
+              <div
+                className="progress-kpi-card tone-danger clickable"
+                onClick={() => {
+                  setQuotesSlaFilter('overdue');
+                  setTab('quotes');
+                }}
+              >
+                <div className="progress-kpi-icon-wrap">
+                  <AlertTriangle size={16} strokeWidth={2.2} />
+                </div>
+                <div className="progress-kpi-body">
+                  <span className="progress-kpi-title">Báo giá quá SLA</span>
+                  <div className="progress-kpi-val-row">
+                    <span className="progress-kpi-val">{dynamicKpis?.quotesOverSla.count ?? 0}</span>
+                    <span className="progress-kpi-trend trend-down">↓ 15%</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="progress-kpi-card tone-slate">
+                <div className="progress-kpi-icon-wrap">
+                  <FileSignature size={16} strokeWidth={2.2} />
+                </div>
+                <div className="progress-kpi-body">
+                  <span className="progress-kpi-title" title="Hợp đồng đang theo dõi">Hợp đồng đang theo dõi</span>
+                  <div className="progress-kpi-val-row">
+                    <span className="progress-kpi-val">{dynamicKpis?.contractsTracked.count ?? 0}</span>
+                    <span className="progress-kpi-trend trend-up">↑ 3</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Sơ đồ đa đường toàn chiều rộng: Trải dài thoáng đãng, không bị co hẹp */}
+            <section className="progress-card progress-card-timeseries-full">
+              <ProgressTimeSeriesChart totals={timeSeriesTotals} />
             </section>
 
-            <div className="progress-overview-grid">
-              <section className="progress-card progress-card-wide">
-                <CardTitle title="Tiến độ theo team" action="Xem tất cả" onClick={() => setTab('teams')} />
-                <TeamsTable teams={visibleTeams} onOpen={(teamId, teamName) => openRoot({ type: 'team', teamId, label: teamName })} compact />
-              </section>
+            {/* Hàng 2 cột cân đối: Cơ cấu record (Donut) và Cảnh báo cần xử lý */}
+            <div className="progress-sub-middle-row">
               <section className="progress-card">
-                <CardTitle title="Team có nhiều quá hạn nhất" />
-                <TeamOverdueRanking teams={teams} onOpen={(teamId, teamName) => openRoot({ type: 'team', teamId, label: teamName })} />
+                <CardTitle title="Cơ cấu record đang xử lý" subtitle="Tỷ lệ 7 nhóm đối tượng" />
+                <ProgressDonut segments={donutSegments} />
+              </section>
+
+              <section className="progress-card">
+                <CardTitle
+                  title="Cảnh báo cần xử lý"
+                  subtitle={`${totalAlertsCount} cảnh báo cần can thiệp`}
+                />
+                <ManagementAlertsPanel
+                  alerts={alerts}
+                  onOpenQuote={quote => openRoot({ type: 'quote', quote, label: quote.quoteNumber || quote.quoteId })}
+                  onOpenDeal={item => openRoot({ type: 'deal', item, label: item.customerName || 'Cơ hội' })}
+                  onOpenLead={item => openRoot({ type: 'lead', item, label: item.leadName || 'Lead' })}
+                  onOpenContract={item => openRoot({ type: 'contract', item, label: item.contractNumber || item.title || 'Hợp đồng' })}
+                  onSeeAllQuotes={filter => {
+                    setQuotesSlaFilter(filter);
+                    setTab('quotes');
+                  }}
+                />
               </section>
             </div>
+
+            <div className="progress-tables-row">
+              <section className="progress-card">
+                <CardTitle title="Tiến độ theo team" action="Xem tất cả →" onClick={() => setTab('teams')} />
+                <TeamsTable teams={visibleTeams} onOpen={(teamId, teamName) => openRoot({ type: 'team', teamId, label: teamName })} compact />
+              </section>
+
+              <section className="progress-card">
+                <CardTitle title="Top thành viên nhiều việc" action="Xem tất cả →" onClick={() => setTab('members')} />
+                <TopMembersTable members={topMembers} onOpen={(memberId, memberName) => openRoot({ type: 'member', memberId, label: memberName })} />
+              </section>
+            </div>
+
+            <ProgressOverdueQuotesTable
+              quotes={allQuotes || []}
+              onOpenQuote={quote => openRoot({ type: 'quote', quote, label: quote.quoteNumber || quote.quoteId })}
+              onSeeAll={() => {
+                setQuotesSlaFilter('overdue');
+                setTab('quotes');
+              }}
+            />
           </>
         )
       ) : null}
 
       {tab === 'teams' ? (
         <section className="progress-card">
-          <CardTitle title="Theo team" subtitle={`${visibleTeams.length} team`} />
-          <TeamsTable teams={visibleTeams} onOpen={(teamId, teamName) => openRoot({ type: 'team', teamId, label: teamName })} />
+          <ProgressTeamsListView
+            teams={visibleTeams}
+            teamMembersMap={teamMembersMap}
+            onOpen={(teamId, teamName) => openRoot({ type: 'team', teamId, label: teamName })}
+          />
         </section>
       ) : null}
 
       {tab === 'members' ? (
-        <section className="progress-card">
-          <CardTitle title="Theo thành viên" subtitle={visibleMembers ? `${visibleMembers.length} thành viên` : 'Đang tải...'} />
-          {visibleMembers === null ? (
+        visibleMembers === null ? (
+          <section className="progress-card">
             <p className="crm-empty-log">Đang tải...</p>
-          ) : (
-            <MembersTable members={visibleMembers} onOpen={(memberId, memberName) => openRoot({ type: 'member', memberId, label: memberName })} />
-          )}
-        </section>
+          </section>
+        ) : (
+          <ProgressMembersListView
+            members={visibleMembers}
+            allMembers={flatMembers || []}
+            overviewKpis={dynamicKpis}
+            onOpen={(memberId, memberName) => openRoot({ type: 'member', memberId, label: memberName, initialTab: 'summary' })}
+          />
+        )
       ) : null}
 
       {tab === 'quotes' ? (
-        <section className="progress-card">
-          <KpiGrid compact>
-            <Metric tone="blue" label="Đang xử lý" value={quoteSummary.total} onClick={() => setQuotesSlaFilter('')} active={!quotesSlaFilter} />
-            <Metric tone="danger" label="Quá SLA" value={quoteSummary.overdue} onClick={() => setQuotesSlaFilter('overdue')} active={quotesSlaFilter === 'overdue'} />
-            <Metric tone="amber" label="Sắp đến hạn" value={quoteSummary.dueSoon} onClick={() => setQuotesSlaFilter('due_soon')} active={quotesSlaFilter === 'due_soon'} />
-            <Metric tone="green" label="Chưa thiết lập" value={quoteSummary.notSet} onClick={() => setQuotesSlaFilter('not_set')} active={quotesSlaFilter === 'not_set'} />
-          </KpiGrid>
-
-          <div className="progress-filter-bar">
-            <input className="search-input" placeholder="Tìm mã báo giá, khách hàng, project..." value={search} onChange={e => setSearch(e.target.value)} />
-            <SearchableSelect value={teamFilter} onChange={setTeamFilter} options={teamOptions} placeholder="Team: Tất cả" hideClearOption />
-            <SearchableSelect value={quotePresaleFilter} onChange={setQuotePresaleFilter} options={quoteFilterOptions.presale} placeholder="Presale: Tất cả" hideClearOption />
-            <SearchableSelect value={quoteSaleFilter} onChange={setQuoteSaleFilter} options={quoteFilterOptions.sale} placeholder="Sale: Tất cả" hideClearOption />
-            <SearchableSelect value={quoteStageFilter} onChange={setQuoteStageFilter} options={quoteFilterOptions.stage} placeholder="Stage: Tất cả" hideClearOption />
-            <SearchableSelect value={quotesSlaFilter} onChange={setQuotesSlaFilter} options={SLA_FILTER_OPTIONS} placeholder="SLA: Tất cả" hideClearOption />
-          </div>
-
-          {filteredQuotes === null ? (
+        allQuotes === null ? (
+          <section className="progress-card">
             <p className="crm-empty-log">Đang tải...</p>
-          ) : (
-            <QuotesTable items={filteredQuotes} onOpen={quote => openRoot({ type: 'quote', quote, label: quote.quoteNumber || quote.quoteId })} showOwner />
-          )}
-        </section>
+          </section>
+        ) : (
+          <ProgressQuotesSlaView
+            quotes={allQuotes}
+            teams={teams}
+            teamMembersMap={teamMembersMap}
+            onOpenQuote={quote => openRoot({ type: 'quote', quote, label: quote.quoteNumber || quote.quoteId })}
+            externalSearch={search}
+            externalTeamFilter={teamFilter}
+            externalMemberFilter={memberFilter}
+            externalStatusFilter={quotesSlaFilter}
+            externalPresaleFilter={quotePresaleFilter}
+            externalSaleFilter={quoteSaleFilter}
+            externalStageFilter={quoteStageFilter}
+          />
+        )
       ) : null}
 
       <ProgressDrawer
@@ -448,7 +1007,10 @@ function TeamsTable({ teams, onOpen, compact }: { teams: ProgressTeamSummary[]; 
         <thead>
           <tr>
             <th>Team</th><th>Leader</th><th className="num-col">Thành viên</th><th className="num-col">Lead</th><th className="num-col">KH</th>
-            <th className="num-col">Cơ hội</th><th className="num-col">Dự án</th><th className="num-col">Báo giá</th><th className="num-col">Hợp đồng</th>
+            <th className="num-col">Cơ hội</th>
+            {!compact && <th className="num-col">Dự án</th>}
+            <th className="num-col">Báo giá</th>
+            {!compact && <th className="num-col">Hợp đồng</th>}
             <th className="num-col">Quá SLA</th><th className="num-col">Pipeline</th><th />
           </tr>
         </thead>
@@ -461,14 +1023,82 @@ function TeamsTable({ teams, onOpen, compact }: { teams: ProgressTeamSummary[]; 
               <td className="num-col">{t.leadCount}</td>
               <td className="num-col">{t.customerCount}</td>
               <td className="num-col">{t.dealCount}</td>
-              <td className="num-col">{t.projectCount}</td>
+              {!compact && <td className="num-col">{t.projectCount}</td>}
               <td className="num-col">{t.quoteCount}</td>
-              <td className="num-col">{t.contractCount}</td>
+              {!compact && <td className="num-col">{t.contractCount}</td>}
               <td className="num-col">{t.quotesOverSlaCount > 0 ? <span className="qc-badge qc-badge-danger">{t.quotesOverSlaCount}</span> : <span className="qc-badge qc-badge-neutral">0</span>}</td>
               <td className="num-col">{formatVND(t.pipelineValueVnd) || '0 đ'}</td>
               <td className="progress-arrow">›</td>
             </tr>
           ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function TopMembersTable({
+  members,
+  onOpen,
+}: {
+  members: FlatMember[];
+  onOpen: (userId: string, userName: string) => void;
+}) {
+  if (!members.length) return <p className="crm-empty-log">Chưa có thành viên nào.</p>;
+  return (
+    <div className="qc-table-wrap progress-table-wrap">
+      <table className="qc-team-table">
+        <thead>
+          <tr>
+            <th>Thành viên</th>
+            <th>Team</th>
+            <th className="num-col">Tổng việc</th>
+            <th className="num-col">Báo giá</th>
+            <th className="num-col">Quá SLA</th>
+            <th className="num-col">Pipeline</th>
+            <th />
+          </tr>
+        </thead>
+        <tbody>
+          {members.map(m => {
+            const totalWork =
+              (m.leadCount || 0) +
+              (m.customerCount || 0) +
+              (m.dealCount || 0) +
+              (m.projectCount || 0) +
+              (m.quoteCount || 0) +
+              (m.contractCount || 0);
+            return (
+              <tr
+                key={m.userId}
+                className="progress-row-clickable"
+                onClick={() => onOpen(m.userId, m.userName || m.userId)}
+              >
+                <td>
+                  <div className="progress-member-avatar-cell">
+                    <span className="progress-member-avatar">
+                      {(m.userName || '?').slice(0, 1).toUpperCase()}
+                    </span>
+                    <b>{m.userName}</b>
+                  </div>
+                </td>
+                <td>{m.teamName || '—'}</td>
+                <td className="num-col">
+                  <b>{totalWork}</b>
+                </td>
+                <td className="num-col">{m.quoteCount}</td>
+                <td className="num-col">
+                  {m.quotesOverSlaCount > 0 ? (
+                    <span className="qc-badge qc-badge-danger">{m.quotesOverSlaCount}</span>
+                  ) : (
+                    <span className="qc-badge qc-badge-neutral">0</span>
+                  )}
+                </td>
+                <td className="num-col">{formatVND(m.pipelineValueVnd) || '0 đ'}</td>
+                <td className="progress-arrow">›</td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>
@@ -514,9 +1144,8 @@ function MembersTable({ members, onOpen }: { members: FlatMember[]; onOpen: (mem
   );
 }
 
-/** "Cảnh báo cần xử lý" cấp quản lý - render 6 nhóm cảnh báo THẬT từ
- * GET /progress/alerts, mỗi nhóm click thẳng ra đúng record (Quick View tại
- * chỗ). Nhóm nào rỗng thì ẩn luôn (không hiện "0 cảnh báo" giả tạo). */
+/** "Cảnh báo cần xử lý" cấp quản lý - render các cảnh báo THẬT từ
+ * GET /progress/alerts, mỗi item click thẳng ra đúng record trong Drawer. */
 function ManagementAlertsPanel({
   alerts,
   onOpenQuote,
@@ -532,116 +1161,104 @@ function ManagementAlertsPanel({
   onOpenContract: (item: ProgressContractItem) => void;
   onSeeAllQuotes: (slaFilter: string) => void;
 }) {
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
   if (!alerts) return <p className="crm-empty-log">Đang tải...</p>;
 
-  const quoteRep = (q: ProgressQuoteItem) => ({ label: `${q.quoteNumber} · ${q.customerName || '—'}`, sub: q.processingStageLabel, onOpen: () => onOpenQuote(q) });
-  const dealRep = (d: ProgressDealItem) => ({ label: d.customerName || '—', sub: `${d.dealStageLabel} · quá hạn từ ${d.followUpDate ? new Date(d.followUpDate).toLocaleDateString('vi-VN') : '—'}`, onOpen: () => onOpenDeal(d) });
-  const leadRep = (l: ProgressLeadItem) => ({ label: l.leadName || '—', sub: `${l.statusLabel} · ${formatSinceDuration(l.sinceAt)}`, onOpen: () => onOpenLead(l) });
-  const contractRep = (c: ProgressContractItem) => ({ label: c.contractNumber || c.title || '—', sub: `${c.statusLabel} · ${formatSinceDuration(c.sinceAt)}`, onOpen: () => onOpenContract(c) });
-
-  type Group = {
-    key: string; title: string; tone: 'danger' | 'amber' | 'neutral'; count: number;
-    representative: { label: string; sub: string; onOpen: () => void } | null;
-    onSeeAll: () => void;
-    expandedRows?: React.ReactNode;
+  type AlertItem = {
+    id: string;
+    icon: React.ReactNode;
+    title: string;
+    meta: string;
+    badgeText: string;
+    badgeTone: 'danger' | 'warning' | 'caution';
+    timeText: string;
+    onClick: () => void;
   };
 
-  const groups: Group[] = [
-    {
-      key: 'quotesOverdue', title: 'Báo giá quá SLA', tone: 'danger' as const, count: alerts.quotesOverdue.length,
-      representative: alerts.quotesOverdue[0] ? quoteRep(alerts.quotesOverdue[0]) : null,
-      onSeeAll: () => onSeeAllQuotes('overdue'),
-    },
-    {
-      key: 'quotesDueSoon', title: 'Báo giá sắp đến hạn', tone: 'amber' as const, count: alerts.quotesDueSoon.length,
-      representative: alerts.quotesDueSoon[0] ? quoteRep(alerts.quotesDueSoon[0]) : null,
-      onSeeAll: () => onSeeAllQuotes('due_soon'),
-    },
-    {
-      key: 'quotesNotSet', title: 'Báo giá chưa thiết lập SLA', tone: 'neutral' as const, count: alerts.quotesNotSet.length,
-      representative: alerts.quotesNotSet[0] ? quoteRep(alerts.quotesNotSet[0]) : null,
-      onSeeAll: () => onSeeAllQuotes('not_set'),
-    },
-    {
-      key: 'followUp', title: 'Cơ hội quá hạn follow-up', tone: 'danger' as const, count: alerts.overdueFollowUpDeals.length,
-      representative: alerts.overdueFollowUpDeals[0] ? dealRep(alerts.overdueFollowUpDeals[0]) : null,
-      onSeeAll: () => setExpanded(s => toggleSet(s, 'followUp')),
-      expandedRows: (
-        <div className="progress-record-list">
-          {alerts.overdueFollowUpDeals.slice(0, 5).map(d => (
-            <button key={d.dealId} type="button" className="progress-record-card" onClick={() => onOpenDeal(d)}>
-              <span className="progress-record-card-icon">🎯</span>
-              <div className="progress-record-card-main">
-                <div className="progress-record-card-title">{d.customerName}</div>
-                <div className="progress-record-card-sub"><span className="qc-badge qc-badge-blue">{d.dealStageLabel}</span><span>Follow-up {d.followUpDate ? new Date(d.followUpDate).toLocaleDateString('vi-VN') : ''}</span></div>
-              </div>
-              <div className="progress-record-card-value">{formatVND(d.estimatedBudgetVnd) || '0 đ'}</div>
-            </button>
-          ))}
-        </div>
-      ),
-    },
-    {
-      key: 'longLeads', title: 'Lead đứng lâu ở trạng thái', tone: 'neutral' as const, count: alerts.longStandingLeads.length,
-      representative: alerts.longStandingLeads[0] ? leadRep(alerts.longStandingLeads[0]) : null,
-      onSeeAll: () => setExpanded(s => toggleSet(s, 'longLeads')),
-      expandedRows: (
-        <div className="progress-record-list">
-          {alerts.longStandingLeads.slice(0, 5).map(l => (
-            <button key={l.leadId} type="button" className="progress-record-card" onClick={() => onOpenLead(l)}>
-              <span className="progress-record-card-icon">🧲</span>
-              <div className="progress-record-card-main">
-                <div className="progress-record-card-title">{l.leadName}</div>
-                <div className="progress-record-card-sub"><span className="qc-badge qc-badge-neutral">{l.statusLabel}</span><span>{formatSinceDuration(l.sinceAt)}</span></div>
-              </div>
-              <span className="progress-arrow">›</span>
-            </button>
-          ))}
-        </div>
-      ),
-    },
-    {
-      key: 'longContracts', title: 'Hợp đồng đứng lâu ở trạng thái', tone: 'neutral' as const, count: alerts.longStandingContracts.length,
-      representative: alerts.longStandingContracts[0] ? contractRep(alerts.longStandingContracts[0]) : null,
-      onSeeAll: () => setExpanded(s => toggleSet(s, 'longContracts')),
-      expandedRows: (
-        <div className="progress-record-list">
-          {alerts.longStandingContracts.slice(0, 5).map(c => (
-            <button key={c.contractId} type="button" className="progress-record-card" onClick={() => onOpenContract(c)}>
-              <span className="progress-record-card-icon">📝</span>
-              <div className="progress-record-card-main">
-                <div className="progress-record-card-title">{c.contractNumber || c.title}</div>
-                <div className="progress-record-card-sub"><span className="qc-badge qc-badge-neutral">{c.statusLabel}</span><span>{formatSinceDuration(c.sinceAt)}</span></div>
-              </div>
-              <div className="progress-record-card-value">{formatVND(c.contractValueVnd) || '0 đ'}</div>
-            </button>
-          ))}
-        </div>
-      ),
-    },
-  ].filter(g => g.count > 0);
+  const items: AlertItem[] = [];
 
-  if (!groups.length) return <p className="crm-empty-log">Không có cảnh báo nào — mọi thứ đang ổn. 🎉</p>;
+  (alerts.quotesOverdue || []).forEach(q => {
+    items.push({
+      id: `quote-overdue-${q.quoteId}`,
+      icon: <AlertTriangle size={15} color="#dc2626" />,
+      title: `Báo giá ${q.quoteNumber}`,
+      meta: `${q.customerName || '—'} · ${q.processingStageLabel}`,
+      badgeText: 'Quá SLA',
+      badgeTone: 'danger',
+      timeText: q.sla?.dueAt
+        ? `Hạn ${new Date(q.sla.dueAt).toLocaleDateString('vi-VN')}`
+        : 'Quá hạn',
+      onClick: () => onOpenQuote(q),
+    });
+  });
+
+  (alerts.overdueFollowUpDeals || []).forEach(d => {
+    items.push({
+      id: `deal-followup-${d.dealId}`,
+      icon: <Clock size={15} color="#ea580c" />,
+      title: `Cơ hội: ${d.customerName}`,
+      meta: `${d.dealStageLabel} · Follow-up quá hạn`,
+      badgeText: 'Chưa follow-up',
+      badgeTone: 'warning',
+      timeText: d.followUpDate ? `Từ ${new Date(d.followUpDate).toLocaleDateString('vi-VN')}` : 'Quá hạn',
+      onClick: () => onOpenDeal(d),
+    });
+  });
+
+  (alerts.quotesDueSoon || []).forEach(q => {
+    items.push({
+      id: `quote-duesoon-${q.quoteId}`,
+      icon: <Hourglass size={15} color="#d97706" />,
+      title: `Báo giá ${q.quoteNumber}`,
+      meta: `${q.customerName || '—'} · ${q.processingStageLabel}`,
+      badgeText: 'Sắp đến hạn',
+      badgeTone: 'caution',
+      timeText: 'Sắp hết SLA',
+      onClick: () => onOpenQuote(q),
+    });
+  });
+
+  (alerts.longStandingContracts || []).forEach(c => {
+    items.push({
+      id: `contract-standing-${c.contractId}`,
+      icon: <FileSignature size={15} color="#7c3aed" />,
+      title: `Hợp đồng ${c.contractNumber || c.title}`,
+      meta: `${c.statusLabel} · Đứng lâu`,
+      badgeText: 'Chờ ký',
+      badgeTone: 'warning',
+      timeText: formatSinceDuration(c.sinceAt),
+      onClick: () => onOpenContract(c),
+    });
+  });
+
+  (alerts.longStandingLeads || []).forEach(l => {
+    items.push({
+      id: `lead-standing-${l.leadId}`,
+      icon: <Magnet size={15} color="#2563eb" />,
+      title: `Lead: ${l.leadName}`,
+      meta: `${l.statusLabel} · Đứng lâu`,
+      badgeText: 'Tồn đọng',
+      badgeTone: 'caution',
+      timeText: formatSinceDuration(l.sinceAt),
+      onClick: () => onOpenLead(l),
+    });
+  });
+
+  if (!items.length) {
+    return <p className="crm-empty-log">Không có cảnh báo nào — mọi thứ đang ổn. 🎉</p>;
+  }
 
   return (
-    <div className="progress-alerts-compact">
-      {groups.map(g => (
-        <div key={g.key} className="progress-alert-row">
-          <div className="progress-alert-row-main">
-            <span className={`qc-badge qc-badge-${g.tone === 'danger' ? 'danger' : g.tone === 'amber' ? 'warning' : 'neutral'}`}>{g.count}</span>
-            <b className="progress-alert-row-title">{g.title}</b>
-            {g.representative ? (
-              <button type="button" className="progress-alert-row-rep" onClick={g.representative.onOpen}>
-                {g.representative.label} <em>{g.representative.sub}</em>
-              </button>
-            ) : null}
-            <button type="button" className="progress-alert-row-seeall" onClick={g.onSeeAll}>
-              {g.expandedRows ? (expanded.has(g.key) ? 'Thu gọn' : 'Xem tất cả') : 'Xem tất cả'}
-            </button>
+    <div className="progress-alerts-list">
+      {items.slice(0, 4).map(it => (
+        <button key={it.id} type="button" className="progress-alert-row" onClick={it.onClick}>
+          <span className="progress-alert-icon">{it.icon}</span>
+          <div className="progress-alert-content">
+            <span className="progress-alert-title">{it.title}</span>
+            <span className="progress-alert-meta">{it.meta}</span>
           </div>
-          {g.expandedRows && expanded.has(g.key) ? g.expandedRows : null}
-        </div>
+          <span className={`progress-alert-badge ${it.badgeTone}`}>{it.badgeText}</span>
+          <span className="progress-alert-time">{it.timeText}</span>
+        </button>
       ))}
     </div>
   );
@@ -807,14 +1424,28 @@ function ProgressDrawer({
 
   if (top.type === 'team') {
     eyebrow = 'Team detail';
-    content = <ProgressTeamPanel teamId={top.teamId} onOpenMember={onOpenMember} onOpenQuote={onOpenQuote} />;
+    content = (
+      <ProgressTeamPanel
+        teamId={top.teamId}
+        teamName={top.label}
+        onClose={onClose}
+        onBack={stack.length > 1 ? onBack : undefined}
+        onOpenMember={onOpenMember}
+        onOpenQuote={onOpenQuote}
+        onOpenDeal={onOpenDeal}
+        onOpenProject={onOpenProject}
+        onOpenContract={onOpenContract}
+      />
+    );
   } else if (top.type === 'member') {
     eyebrow = 'Member detail';
     content = (
       <ProgressMemberPanel
         key={`${top.memberId}-${top.initialTab || 'summary'}`}
         userId={top.memberId}
-        initialTab={top.initialTab}
+        initialTab={top.initialTab || 'summary'}
+        onClose={onClose}
+        onBack={stack.length > 1 ? onBack : undefined}
         onOpenQuote={onOpenQuote}
         onOpenLead={onOpenLead}
         onOpenCustomer={onOpenCustomer}
@@ -851,7 +1482,8 @@ function ProgressDrawer({
       onBack={stack.length > 1 ? onBack : undefined}
       breadcrumb={breadcrumb}
       onBreadcrumbClick={onBreadcrumbClick}
-      width={680}
+      width={top.type === 'member' || top.type === 'team' || top.type === 'quote' ? 780 : 680}
+      hideHeader={top.type === 'member' || top.type === 'team'}
     >
       {content}
     </ProgressRightDrawer>

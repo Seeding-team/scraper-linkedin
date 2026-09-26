@@ -1,0 +1,13 @@
+{
+  "compilerOptions": {
+    "composite": true,
+    "skipLibCheck": true
+  },
+  "files": [],
+  "references": [
+    { "path": "./linkedin-crawler-ui" },
+    { "path": "./crm-cloudgate/frontend" },
+    { "path": "./crm-module/frontend" },
+    { "path": "./crm-securityzone/frontend" }
+  ]
+}
