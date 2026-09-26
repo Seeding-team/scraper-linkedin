@@ -576,8 +576,12 @@ export function LeadFormDrawer({
 
   if (!open) return null;
 
+  // Feedback 2026-09-26: chi cho dong bang nut X, bam ra ngoai backdrop
+  // KHONG duoc dong nua (tranh mat du lieu dang nhap do bam nham ra ngoai) -
+  // bo onClick={onClose} khoi backdrop, giu nguyen stopPropagation o <aside>
+  // (khong con can thiet nhung khong hai gi neu giu).
   return (
-    <div className="crm-drawer-backdrop crm-lead-quickadd-backdrop" onClick={onClose}>
+    <div className="crm-drawer-backdrop crm-lead-quickadd-backdrop">
       <aside className="crm-drawer crm-lead-drawer crm-lead-drawer--quick" onClick={event => event.stopPropagation()}>
         <header className="crm-lead-drawer-header">
           <div>

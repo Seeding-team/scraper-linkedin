@@ -1391,6 +1391,17 @@
   cursor: not-allowed;
 }
 
+/* Hang nut dau tab "Báo giá"/"Cơ hội" trong Ho so khach hang - chua co style
+ * rieng truoc day nen nut sat table, khong co khoang ho (feedback: "chỉnh sửa
+ * lại phần nút cho đẹp, margin top,bot cho nó có khoảng hở tí"). */
+.crm-quotes-tab-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+  margin: 0.9rem 0 1rem;
+}
+
 .crm-quote-filter-pill {
   display: flex;
   align-items: center;
@@ -2699,20 +2710,24 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 20px;
+  width: 22px;
+  height: 22px;
   margin-right: 4px;
   padding: 0;
-  border: 1px solid #dfe3ea;
-  border-radius: 5px;
-  background: #fff;
-  color: #5b6576;
+  border: 1px solid #d5dae3;
+  border-radius: 6px;
+  /* Nen xam nhat (thay vi trang trung voi nen bang) - feedback "nhìn khó để
+   * nhận biết quá": nut truoc day cung mau trang voi hang nen nen gan nhu vo
+   * hinh khi khong hover. */
+  background: #eef1f6;
+  color: #435269;
   cursor: pointer;
   flex-shrink: 0;
   vertical-align: middle;
 }
 .crm-version-toggle:hover {
   border-color: #ba244a;
+  background: #fdecf1;
   color: #ba244a;
 }
 /* Feedback (2026-09-24): dong nay gio hien du cot nhu dong hien tai (xem
@@ -8416,10 +8431,24 @@
  * nhung van cuon duoc — cung ky thuat da dung cho .crm-lead-drawer-body).
  * =========================================================== */
 
+/* Phong to het co (feedback 2026-09-26: "làm như file html luôn, sẽ phóng to
+ * ra hết cỡ như vậy luôn nha", doi chieu markee_crm_v26_compact_opportunity_
+ * name.html - man Xac minh Lead o do la 1 trang full-width). NHUNG file mau
+ * chi "tràn màn TRONG" (khu vuc noi dung ben phai sidebar), sidebar trai VAN
+ * hien nguyen (feedback tiep theo, kem screenshot so sanh) - .crm-verify-
+ * drawer la position:fixed;right:0 (ke thua tu .crm-drawer) nen KHONG the
+ * dung 100vw (se de len ca sidebar that cua app, khac gi mockup tinh - o do
+ * sidebar/content la 2 cot tinh, khong co element fixed nao de len tren ca
+ * 2). Dung calc() tru di dung 16rem = --sidebar-width that cua
+ * SidebarProvider (components/ui/sidebar.tsx) o trang thai mo rong (mac
+ * dinh) - khi sidebar thu gon con icon (~3rem) se con du 1 khoang trong nho
+ * ben trai, KHONG BAO GIO de len sidebar that. Duoi 900px sidebar chuyen
+ * thanh Sheet noi (khong con chiem cho co dinh) nen @media ben duoi van giu
+ * 100vw nhu cu. */
 .crm-verify-drawer {
-  width: min(1040px, 60vw);
+  width: calc(100vw - 16rem);
   min-width: 0;
-  max-width: 60vw;
+  max-width: calc(100vw - 16rem);
 }
 
 .crm-verify-header {
@@ -8432,12 +8461,53 @@
   min-width: 0;
 }
 
+.crm-verify-header-text h2 {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.crm-help-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.1rem;
+  height: 1.1rem;
+  border-radius: 999px;
+  color: #94a3b8;
+  cursor: help;
+  flex: 0 0 auto;
+}
+
+.crm-help-icon:hover,
+.crm-help-icon:focus-visible {
+  color: #475569;
+  outline: none;
+}
+
+.crm-help-icon .crm-icon {
+  width: 100%;
+  height: 100%;
+}
+
+.crm-form-title .crm-help-icon {
+  margin-left: 0.3rem;
+  vertical-align: -2px;
+}
+
 .crm-verify-body {
   display: flex;
   flex-direction: column;
   gap: 0.45rem;
   overflow-x: hidden;
   padding-bottom: 0.25rem;
+  /* Giong dung bo cuc file mau (markee_crm_v26...html: .container{max-width:
+   * 1240px;margin:auto}) - drawer gio 100vw nhung noi dung van gioi han
+   * chieu rong, canh giua, tranh cac field/dropdown keo dai qua muc tren man
+   * hinh sieu rong. */
+  max-width: 1400px;
+  width: 100%;
+  margin: 0 auto;
 }
 
 .crm-verify-ok {
@@ -8457,8 +8527,15 @@
   border: 1px solid #e2e8f0;
   border-radius: 0.75rem;
   background: #ffffff;
-  min-height: 94px;
-  padding: 0.82rem 0.9rem 0.9rem;
+  /* Lead co du 4 dong (ten, chuc vu, SDT/email, Công ty/SDR) bi cat/vuot qua
+   * vien duoi cua box (feedback 2026-09-26, kem 2 lan screenshot xac nhan van
+   * con sau khi tang padding). Tang han min-height + them height:auto va
+   * flex-shrink:0 tuong minh (box nay la flex-item trong .crm-verify-body,
+   * de phong flexbox tu dong co lai duoi muc noi dung that su can). */
+  min-height: 100px;
+  height: auto;
+  flex-shrink: 0;
+  padding: 0.9rem 0.9rem 1.1rem;
 }
 
 .crm-verify-avatar {
@@ -8565,13 +8642,6 @@
   border-color: #bbf7d0;
   background: #f0fdf4;
   color: #15803d;
-}
-
-.crm-verify-suggest-text {
-  color: #475569;
-  grid-column: 1 / 2;
-  font-size: 0.72rem;
-  margin-top: -0.15rem;
 }
 
 .crm-verify-suggest-actions {
@@ -8915,6 +8985,25 @@
   color: #64748b;
   font-size: 0.72rem;
   padding: 0.24rem 0.44rem;
+}
+
+.crm-verify-checklist li span {
+  flex: 1 1 auto;
+}
+
+.crm-verify-check-value {
+  flex: 0 1 auto;
+  max-width: 55%;
+  color: #0f172a;
+  font-size: 0.72rem;
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.crm-verify-checklist li.is-ok .crm-verify-check-value {
+  color: #15803d;
 }
 
 .crm-verify-checklist li.is-ok {

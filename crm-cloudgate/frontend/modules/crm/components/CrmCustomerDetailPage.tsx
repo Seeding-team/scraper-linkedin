@@ -185,6 +185,22 @@ function quoteChainPhaseKey(row: RelatedQuoteRow): QuoteStatusFilter {
   return 'presale';
 }
 
+// Mau badge cot "Phase" (feedback "ở cột phase thì nút cho có màu giống như
+// bên trang báo giá vậy") - dung dung bang mau qc-badge-<tone> ma
+// phaseCellLabel() o QuoteCenterPage.tsx dang dung, chi khac o day khoa theo
+// quoteChainPhaseKey (6 trang thai) thay vi tinh lai tu dau.
+const QUOTE_PHASE_TONE: Partial<Record<QuoteStatusFilter, string>> = {
+  cancelled: 'danger',
+  sent: 'success',
+  ready: 'teal',
+  review: 'purple',
+  pricing: 'amber',
+  presale: 'blue',
+};
+function quotePhaseBadgeClass(key: QuoteStatusFilter): string {
+  return `qc-badge qc-badge-${QUOTE_PHASE_TONE[key] || 'neutral'}`;
+}
+
 const QUOTE_STATUS_FILTER_LABELS: Record<QuoteStatusFilter, string> = {
   active: 'Đang hoạt động',
   all: 'Tất cả báo giá',
@@ -744,6 +760,27 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
     }
   }
 
+  // "Báo giá nhanh" o dau tab "Báo giá" (feedback "tạo thêm 1 nút báo giá
+  // nhanh, nút màu trắng") - khong gan voi 1 project cu the nhu ban tren
+  // Project card, nen lay activeDeal cua Customer (fallback Deal dau tien neu
+  // chua co activeDeal) lam Deal de mo CreateQuoteModal.
+  async function openQuickQuoteForCustomer() {
+    const candidate = activeDeal || data?.deals?.[0];
+    if (!candidate) {
+      window.alert('Khách hàng chưa có Cơ hội (Deal) nào để tạo báo giá nhanh. Hãy tạo Cơ hội trước.');
+      return;
+    }
+    setQuickQuoteLoading(true);
+    try {
+      const deal = await seedingCrmRepository.getDeal(candidate.id);
+      setQuickQuoteDeal(deal);
+    } catch {
+      window.alert('Không tải được thông tin Cơ hội để tạo báo giá nhanh.');
+    } finally {
+      setQuickQuoteLoading(false);
+    }
+  }
+
   // Bao gia tab: gom theo version_chain_id (fallback ve id neu chua co
   // chuoi), CHI giu ban CURRENT (version_number lon nhat) trong moi chuoi -
   // dung nguyen tac da dung o get_customer_projects_summary() backend.
@@ -1234,7 +1271,23 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
           <div className="crm-table-card">
             <div className="crm-table-scroll">
               {tab === 'deals' ? (
-                <table className="crm-table">
+                <>
+                  {/* "+ Tạo cơ hội" o dau tab (feedback "trước đó có làm nhưng
+                   * giờ bỏ rồi, giờ thêm lại") - da bo o header trang tu
+                   * 2026-09-25 vi tuong tu da co ben trong tab "Dự án", nhung
+                   * user van muon co ngay trong tab "Cơ hội" - dung lai dung
+                   * DealFormModal/dealModal da co san (project: null giong
+                   * het nut "Tạo cơ hội" o tab Nguoi lien he). */}
+                  <div className="crm-quotes-tab-head">
+                    <button
+                      type="button"
+                      className="crm-primary-button"
+                      onClick={() => setDealModal({ open: true, project: null, contactId: null })}
+                    >
+                      + Tạo cơ hội
+                    </button>
+                  </div>
+                  <table className="crm-table">
                   <thead>
                     <tr>
                       <th className="crm-th">Tên cơ hội</th>
@@ -1293,6 +1346,7 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
                     )}
                   </tbody>
                 </table>
+                </>
               ) : null}
 
               {tab === 'quotes' ? (
@@ -1308,6 +1362,14 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
                       onClick={() => setQuoteWorkspace({ quoteId: null, deal: null })}
                     >
                       + Tạo báo giá
+                    </button>
+                    <button
+                      type="button"
+                      className="crm-secondary-button"
+                      disabled={quickQuoteLoading}
+                      onClick={() => void openQuickQuoteForCustomer()}
+                    >
+                      {quickQuoteLoading ? 'Đang tải...' : 'Báo giá nhanh'}
                     </button>
                   </div>
                   <div className="crm-quote-filter-pill" style={{ justifyContent: 'space-between' }}>
@@ -1401,7 +1463,7 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
                               <td className="crm-td crm-muted">{projectLabel(current.project_id)}</td>
                               <td className="crm-td crm-muted">{relatedDeal?.customer_name || (current.deal_id ? 'Đang tải…' : 'Chưa gắn cơ hội')}</td>
                               <td className="crm-td crm-muted">{quotePrimaryContactName}</td>
-                              <td className="crm-td"><span className="crm-source-badge">{quoteChainPhaseLabel(current)}</span></td>
+                              <td className="crm-td"><span className={quotePhaseBadgeClass(quoteChainPhaseKey(current))}>{quoteChainPhaseLabel(current)}</span></td>
                               <td className="crm-td crm-muted">
                                 {current.technical_owner_id ? memberName(current.technical_owner_id) : relatedDeal?.leader_name || 'Chưa gán'}
                                 {' → '}
@@ -1488,7 +1550,11 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
                                       <td className="crm-td crm-muted">{projectLabel(version.projectId)}</td>
                                       <td className="crm-td crm-muted">{versionDeal?.customer_name || (version.dealId ? 'Đang tải…' : 'Chưa gắn cơ hội')}</td>
                                       <td className="crm-td crm-muted">{versionContactName}</td>
-                                      <td className="crm-td"><span className="crm-source-badge">{quoteVersionStatusLabel(version)}</span></td>
+                                      {/* Version cu luon xam (feedback "các version cũ thì
+                                       * set màu xám như vậy") - khong tinh lai tone that vi
+                                       * day la ban ghi lich su, khong phai trang thai dang
+                                       * xu ly. */}
+                                      <td className="crm-td"><span className="qc-badge qc-badge-neutral">{quoteVersionStatusLabel(version)}</span></td>
                                       <td className="crm-td crm-muted">
                                         {version.technicalOwnerId ? memberName(version.technicalOwnerId) : versionDeal?.leader_name || 'Chưa gán'}
                                         {' → '}

@@ -4802,13 +4802,30 @@ export function QuoteWorkspaceModal({
           <div className="qc-workspace-header-main">
             {quote ? (
               <>
-                {/* Tên báo giá chuyển lên hiện to, nổi bật ở đầu form (feedback
-                 * 2026-09-25, PDF mục 6) - trước đây chỉ hiện nhỏ ở dòng sub
-                 * bên dưới. Vẫn chỉ SỬA được từ Bước 2 trở đi (canEditPricingCells,
-                 * xem quickbar "Tiêu đề báo giá") - đây chỉ đổi chỗ HIỂN THỊ. */}
-                <h2 className="qc-workspace-header-quote-title">
-                  {typeof quote.data?.quoteTitle === 'string' && quote.data.quoteTitle ? quote.data.quoteTitle : 'Chưa có tiêu đề báo giá'}
-                </h2>
+                {/* Tên báo giá hien to, noi bat o dau form, va gio SUA TRUC
+                 * TIEP ngay tai day (feedback 2026-09-26: "bỏ cái tiêu đề báo
+                 * giá ở dưới đi, bỏ lên chỗ đó luôn, không cần có box") - bo
+                 * han o input rieng trong quickbar Buoc 2 (tung o day, xem
+                 * git history), gop lam 1 cho o dung vi tri hien thi. Van gate
+                 * dung quyen canEditPricingCells nhu truoc (chi Sale duoc sua,
+                 * dung luc Buoc 2 nhap gia). */}
+                {canEditPricingCells && isDraft ? (
+                  <input
+                    type="text"
+                    className="qc-workspace-header-quote-title qc-workspace-header-quote-title--input"
+                    placeholder="Vui lòng nhập tên báo giá"
+                    value={typeof quote.data?.quoteTitle === 'string' ? quote.data.quoteTitle : ''}
+                    onChange={event => {
+                      const value = event.target.value;
+                      setQuote(prev => (prev ? { ...prev, data: { ...prev.data, quoteTitle: value } } : prev));
+                    }}
+                    onBlur={() => quote && void persistQuote({ data: quote.data }, { silent: true })}
+                  />
+                ) : (
+                  <h2 className="qc-workspace-header-quote-title">
+                    {typeof quote.data?.quoteTitle === 'string' && quote.data.quoteTitle ? quote.data.quoteTitle : 'Vui lòng nhập tên báo giá'}
+                  </h2>
+                )}
                 <div className="qc-workspace-header-title">
                   <strong>{quote.quoteNumber}</strong>
                   <span className="qc-workspace-version-badge">V{quote.versionNumber || 1}</span>
@@ -6341,31 +6358,11 @@ export function QuoteWorkspaceModal({
                     />
                     %
                   </label>
-                  <span className="qc-workspace-quickbar-sep" aria-hidden="true" />
-                  {/* "Tiêu đề báo giá" (feedback "Presale không làm phần
-                   * thương mại") - CHUYEN sang cho Sale dien o day (khoi nay
-                   * chi hien khi canEditPricingCells, tuc DUNG luc Sale duoc
-                   * sua - xem dieu kien bao ngoai). Truoc day field nay CHI
-                   * co the dat 1 LAN luc Presale tao yeu cau (draftTitle) roi
-                   * khong ai sua lai duoc nua - gio Sale sua/ghi de o day,
-                   * luu qua persistQuote() giong Chiet khau/Thanh toan. */}
-                  {quote ? (
-                    <label className="qc-workspace-quickbar-field qc-workspace-quickbar-field--title">
-                      Tiêu đề báo giá
-                      <input
-                        type="text"
-                        className="qc-workspace-quickbar-input"
-                        placeholder="Tiêu đề báo giá..."
-                        value={typeof quote.data?.quoteTitle === 'string' ? quote.data.quoteTitle : ''}
-                        onChange={event => {
-                          const value = event.target.value;
-                          setQuote(prev => (prev ? { ...prev, data: { ...prev.data, quoteTitle: value } } : prev));
-                        }}
-                        onBlur={() => quote && void persistQuote({ data: quote.data }, { silent: true })}
-                      />
-                    </label>
-                  ) : null}
-                  <span className="qc-workspace-quickbar-sep" aria-hidden="true" />
+                  {/* "Tiêu đề báo giá" KHONG con o quickbar nay (feedback
+                   * 2026-09-26: "bỏ cái tiêu đề báo giá ở dưới đi, bỏ lên chỗ
+                   * đó luôn") - da chuyen thanh input sua truc tiep tren
+                   * header (qc-workspace-header-quote-title--input phia
+                   * tren), gate quyen giong het (canEditPricingCells). */}
                   <label className="qc-workspace-quickbar-field">
                     Thanh toán
                     <select
