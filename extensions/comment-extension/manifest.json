@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Facebook, YouTube, LinkedIn & Threads Bulk Comment Extension",
-  "version": "1.5",
+  "version": "1.6",
   "description": "Seeding Comment hàng loạt trên Facebook, YouTube, LinkedIn và Threads",
   "permissions": [
     "activeTab",
@@ -20,7 +20,9 @@
     "http://localhost:*/*",
     "http://127.0.0.1:*/*",
     "*://seeding.markeeai.com/*",
-    "*://*.seeding.markeeai.com/*"
+    "*://*.seeding.markeeai.com/*",
+    "*://seeding.markee.vn/*",
+    "*://*.seeding.markee.vn/*"
   ],
   "background": {
     "service_worker": "background.js"
@@ -65,11 +67,13 @@
     },
     {
       "matches": [
-        "http://localhost:*/*", 
+        "http://localhost:*/*",
         "http://127.0.0.1:*/*",
         "*://*.vercel.app/*",
         "*://seeding.markeeai.com/*",
-        "*://*.seeding.markeeai.com/*"
+        "*://*.seeding.markeeai.com/*",
+        "*://seeding.markee.vn/*",
+        "*://*.seeding.markee.vn/*"
       ],
       "js": ["bridge.js"],
       "run_at": "document_idle"

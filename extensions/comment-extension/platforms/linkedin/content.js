@@ -50,15 +50,17 @@
     'div[contenteditable="true"][role="textbox"]',
   ];
 
-  // Nut Gui that (xuat hien sau khi go noi dung — KHONG co trong HTML luc o
-  // nhap con rong nen chua xac nhan duoc chinh xac markup) rat co the CUNG
-  // dung he class hash moi giong het cac nut khac tren trang (xac nhan qua
-  // HTML that: KHONG CON class "artdeco-button--primary" nao tren toan bo
-  // trang nua — selector do gio chet hoan toan). Giu lai cac phuong an
-  // aria-label/class de tuong thich nguoc, nhung buoc BAT BUOC la tim theo
-  // TEXT hien thi cua nut (xem findButtonByText trong doPostComment) vi day
-  // la cach duy nhat khong phu thuoc class hash co the doi bat ky luc nao.
+  // Nut Gui that: xac nhan qua HTML that (2026-09-26, khung comment da go noi
+  // dung) - nam RIENG trong 1 div bao ngoai co id chua substring co dinh
+  // "commentButtonSection" (vd "...commentButtonSectionj2TL8...FeedType_FEED_DETAIL"),
+  // tach biet hoan toan voi div chua nut Emoji/GIF/Share photo. Day la selector
+  // DUY NHAT khong bi nhap nhang - ban than nut Gui KHONG CO aria-label, class
+  // hash rieng, VA hien thi cung dung chu "Comment" giong het nut Trigger mo
+  // khung o tren -> tim theo TEXT (LI_COMMENT_SUBMIT_TEXTS) co the vo tinh khop
+  // NHAM nut Trigger cu neu no van con trong pham vi tim kiem. Uu tien tuyet doi
+  // selector nay truoc khi rot xuong cac phuong an cu/tim theo text.
   const LI_COMMENT_SUBMIT_SELECTORS = [
+    'div[id*="commentButtonSection"] button',
     'button[class*="comments-comment-box__submit-button"]',
     'button[aria-label*="Post comment" i]',
     'button[aria-label*="Đăng bình luận" i]',
