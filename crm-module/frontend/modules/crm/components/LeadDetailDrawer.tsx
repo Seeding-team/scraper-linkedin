@@ -569,7 +569,7 @@ export function LeadDetailDrawer({
       // thang, khong can cho user bam them.
       if (newCustomerId) {
         onClose();
-        router.push(`/all-platform/crm/customers/${newCustomerId}`);
+        router.push(`/all-platform/crm/customers/${newCustomerId}?tab=deals`);
       }
     } catch (err) {
       setConvertError(err instanceof Error ? err.message : 'Tạo cơ hội thất bại.');
