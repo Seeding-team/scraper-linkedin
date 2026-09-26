@@ -7605,13 +7605,15 @@
   color: #64748b;
 }
 
-.crm-lead-source-default-row {
+.crm-lead-source-default-row,
+.crm-customer-source-default-row {
   display: flex;
   justify-content: flex-end;
   margin-top: 0.35rem;
 }
 
-.crm-lead-source-default-row .crm-link-button {
+.crm-lead-source-default-row .crm-link-button,
+.crm-customer-source-default-row .crm-link-button {
   border: 0;
   background: transparent;
   color: #be1e4b;
@@ -7620,7 +7622,8 @@
   cursor: pointer;
 }
 
-.crm-lead-source-default-row .crm-link-button:disabled {
+.crm-lead-source-default-row .crm-link-button:disabled,
+.crm-customer-source-default-row .crm-link-button:disabled {
   color: #64748b;
   cursor: default;
 }
