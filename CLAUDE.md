@@ -25,6 +25,13 @@ Dữ Liệu" của Facebook. Threads không có group -> tìm theo **từ khoá*
   tìm trên threads.com thật -> lưu DB. CHƯA verify được luồng khi ĐÃ đăng nhập Threads
   (cuộn thêm trang/tab "Gần đây") vì không có tài khoản test; chưa đăng nhập thì mỗi từ khoá
   chỉ ~20 bài "nổi bật" (nhiều bài cũ).
+- Đã merge `main` mới nhất, push nhánh `claude/seeding-thread-scraping-850d5f`, mở PR
+  Seeding-team/scraper-linkedin#95 vào `main` (chưa merge/deploy).
+- **VIỆC CÒN DANG DỞ**: migration `154_threads_posts.sql` **CHƯA áp lên DB thật** — máy dev
+  này không có kênh nào tới DB production (không có script SSH/`docs/INFRASTRUCTURE.md`, không
+  có SUPABASE_URL/SERVICE_ROLE_KEY production trong `.env` nào, repo không có workflow chạy
+  migration). Chưa áp thì tab Threads báo lỗi khi tải/lưu bài (FB/LinkedIn không ảnh hưởng).
+  Đã áp lên Supabase local (`supabase_db_linkedin_group_crawler`, lúc đó file còn tên 153).
 
 # Tiến độ phiên làm việc (2026-09-05) — tách tính năng chat Zalo thành module độc lập (`zalo-module/`)
 
