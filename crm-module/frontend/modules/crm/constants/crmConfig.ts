@@ -224,6 +224,15 @@ export const DEAL_STAGE_META: Record<
   },
 };
 
+/** "Lead_Convert"/"Existing_Customer"/"Upsell" - 3 gia tri he thong trong
+ * chung danh muc crm_source (migration 081), chi mang y nghia "Deal nay tao
+ * ra tu dau" (Deal tu convert 1 Lead / da la khach hang / upsell) - KHONG
+ * phai nguon Lead that su, khong dung cho nguoi dung TU CHON o form Lead
+ * (bug that: chon nham "Lead Convert" o dropdown Nguon lam sai du lieu Lead
+ * that, 2026-09-27). Dung o moi CrmCategoryCodeSelect categoryType=
+ * "crm_source" cua man Lead (Them/Sua/danh sach) qua prop excludeValues. */
+export const LEAD_SOURCE_EXCLUDED_VALUES = ['Existing_Customer', 'Lead_Convert', 'Upsell'];
+
 export const SOURCE_OPTIONS = [
   { value: 'Manual', label: 'Nhập tay' },
   { value: 'FB_Inbox', label: 'FB Inbox' },

@@ -7,6 +7,7 @@ import { contractStatusClass, contractStatusLabel, CONTRACT_STATUS_TRANSITIONS, 
 import { formatVnd } from '@/modules/quotes/utils/quoteCalculations';
 import type { Contract, ContractClause } from '../types';
 import { CurrencyInput } from '@/components/CurrencyInput';
+import { seedingQuoteRepository } from '@/modules/quotes';
 
 function pdfSafe(value?: string | number | null) {
   return String(value ?? '')
@@ -81,6 +82,7 @@ export function ContractDetailPage({ contractId, onClose }: { contractId: string
   const [contractValue, setContractValue] = useState<number | null>(0);
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
+  const [quoteNumber, setQuoteNumber] = useState<string | null>(null);
 
   async function load() {
     setLoading(true);
@@ -105,6 +107,20 @@ export function ContractDetailPage({ contractId, onClose }: { contractId: string
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [contractId]);
+
+  // "Báo giá" - Contract chi luu quoteId, khong co san quoteNumber de hien
+  // thi (feedback leader 2026-09-27: form hop dong thieu muc bao gia).
+  useEffect(() => {
+    if (!contract?.quoteId) {
+      setQuoteNumber(null);
+      return;
+    }
+    let alive = true;
+    seedingQuoteRepository.getQuote(contract.quoteId)
+      .then(quote => { if (alive) setQuoteNumber(quote.quoteNumber); })
+      .catch(() => { if (alive) setQuoteNumber(null); });
+    return () => { alive = false; };
+  }, [contract?.quoteId]);
 
   function updateClause(index: number, field: 'title' | 'body', value: string) {
     setClauses(current => current.map((c, i) => (i === index ? { ...c, [field]: value } : c)));
@@ -233,7 +249,11 @@ export function ContractDetailPage({ contractId, onClose }: { contractId: string
             />
             {!contract.quoteId ? (
               <small style={{ color: '#bf7810', display: 'block', marginTop: '0.2rem' }}>Không gắn báo giá — sửa tay giá trị thật ở đây.</small>
-            ) : null}
+            ) : (
+              <small style={{ color: '#64748b', display: 'block', marginTop: '0.2rem' }}>
+                Báo giá: {quoteNumber || 'Đang tải...'}
+              </small>
+            )}
           </div>
         </article>
         <article className="contract-stat">

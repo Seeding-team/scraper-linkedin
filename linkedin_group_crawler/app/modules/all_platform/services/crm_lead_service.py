@@ -42,7 +42,7 @@ LEAD_COLUMNS = (
 
 # sdr_id/qualification_ae_id la UUID nullable - frontend co the gui "" thay vi
 # null (cung ly do voi _NULLABLE_UUID_COLUMNS trong customer_lead_service.py).
-_NULLABLE_UUID_COLUMNS = ("sdr_id", "qualification_ae_id")
+_NULLABLE_UUID_COLUMNS = ("sdr_id", "qualification_ae_id", "created_by")
 
 LEAD_STATUS_MAP = {
     "new_lead": "mql",
@@ -454,9 +454,15 @@ def update_lead(lead_id: str, payload: dict[str, Any], user: dict[str, Any]) -> 
         data["status"] = _STATUS_DISPLAY_TO_INTERNAL_MAP.get(raw_status, raw_status)
     if not (has_full_crm_access(user) and "sdr_id" in data):
         data.pop("sdr_id", None)
+    # "Marketing" (cot created_by, hien o LeadsDirectory) - cho phep doi TAY
+    # sau khi tao (feedback leader 2026-09-27: "cho thêm marketing cũng đổi
+    # được"), cung 1 rule quyen voi sdr_id o tren - CHI full CRM access moi
+    # doi duoc. Luc TAO Lead (create_lead/_normalize_payload) van luon ep
+    # created_by = actor_id that, khong an huong boi thay doi nay.
+    if not (has_full_crm_access(user) and "created_by" in data):
+        data.pop("created_by", None)
 
     data.pop("id", None)
-    data.pop("created_by", None)
     data.pop("converted_customer_id", None)
     data.pop("converted_contact_id", None)
     data.pop("converted_deal_id", None)
