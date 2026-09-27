@@ -90,22 +90,32 @@ function isAdminOrLeader(user: AppUser | null) {
   return role === 'admin' || role === 'leader';
 }
 
-// Regex don gian cho SDT VN (10 so, bat dau 0, hoac +84) va email - du dung cho
-// ban rule-based dau tien (khong goi AI/backend), theo dung yeu cau spec.
-const PHONE_RE = /(?:\+?84|0)(?:\d[\s.-]?){9,10}\b/;
+// Bat phone tu noi dung dan vao: chap nhan format VN pho bien, co khoang trang,
+// dau cham/gach/ngoac va dau so +84/84/0084.
+const PHONE_RE = /(?:\+?84|0084|0)(?:\D*\d){8,10}\b/;
 
-// Chuan hoa ky tu so Unicode (full-width, Arabic-Indic...) ve ASCII 0-9 ngay
-// khi go/paste. Ban phim ao / IME tren mobile doi khi chen cac ky tu so nay -
-// nhin giong het so ASCII nhung backend (Python \D Unicode-aware) khong strip
-// duoc, gay loi "SDT khong hop le" chi tren mobile voi cung 1 so nhu desktop.
+function normalizePhoneDigits(value: string): string {
+  return value
+    .normalize('NFKC')
+    .replace(/[\u200b-\u200f\u202a-\u202e\u2060\ufeff]/g, '')
+    .replace(/[^\d+]/g, ch => {
+      const code = ch.codePointAt(0) ?? 0;
+      if (code >= 0xff10 && code <= 0xff19) return String(code - 0xff10);
+      if (code >= 0x0660 && code <= 0x0669) return String(code - 0x0660);
+      if (code >= 0x06f0 && code <= 0x06f9) return String(code - 0x06f0);
+      return '';
+    });
+}
+
 function normalizePhoneInput(value: string): string {
-  return value.replace(/[^\d+\s().-]/g, ch => {
-    const code = ch.codePointAt(0) ?? 0;
-    if (code >= 0xff10 && code <= 0xff19) return String(code - 0xff10); // fullwidth 0-9
-    if (code >= 0x0660 && code <= 0x0669) return String(code - 0x0660); // Arabic-Indic
-    if (code >= 0x06f0 && code <= 0x06f9) return String(code - 0x06f0); // Extended Arabic-Indic
-    return ch;
-  });
+  let raw = normalizePhoneDigits(value);
+  const hasLeadingPlus = raw.trim().startsWith('+');
+  raw = `${hasLeadingPlus ? '+' : ''}${raw.replace(/\+/g, '')}`;
+
+  if (raw.startsWith('+84')) return `0${raw.slice(3)}`;
+  if (raw.startsWith('0084')) return `0${raw.slice(4)}`;
+  if (raw.startsWith('84') && raw.length >= 10 && raw.length <= 12) return `0${raw.slice(2)}`;
+  return raw;
 }
 const EMAIL_RE = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/;
 // "Lỗi không nhập công ty với chức vụ nhanh" (yeu cau rieng, kem screenshot QA
@@ -165,8 +175,11 @@ function detectSourceFromPaste(text: string): string | null {
 // dong goi API duplicate-check hay khong (UX), khong thay the chuan hoa that
 // o backend (vn_phone_to_e164 / normalize_email trong crm_lead_service.py).
 function looksLikePhone(value: string): boolean {
-  const digits = value.replace(/\D/g, '');
-  return digits.length >= 9 && digits.length <= 12;
+  const phone = normalizePhoneInput(value);
+  const digits = phone.replace(/\D/g, '');
+  if (phone.startsWith('+')) return digits.length >= 8 && digits.length <= 15;
+  if (phone.startsWith('0')) return digits.length >= 9 && digits.length <= 11;
+  return digits.length >= 8 && digits.length <= 15;
 }
 function looksLikeEmail(value: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/i.test(value.trim());
@@ -323,7 +336,7 @@ export function LeadFormDrawer({
   // checkPhone/checkEmail nen dan noi dung se TU DONG kich hoat check nay,
   // khong bao gio bo qua buoc kiem tra trung sau khi paste.
   useEffect(() => {
-    const phone = checkPhone.trim();
+    const phone = normalizePhoneInput(checkPhone);
     const email = checkEmail.trim();
     if (!looksLikePhone(phone) && !looksLikeEmail(email)) {
       setDupState('idle');
@@ -335,7 +348,7 @@ export function LeadFormDrawer({
     setDupState('checking');
     const timer = window.setTimeout(() => {
       const params = new URLSearchParams();
-      if (phone) params.set('phone', phone);
+      if (looksLikePhone(phone)) params.set('phone', phone);
       if (email) params.set('email', email);
       fetch(`${API_BASE_URL}/api/all-platform/crm/leads/duplicate-check?${params.toString()}`, {
         credentials: 'include',
@@ -364,7 +377,7 @@ export function LeadFormDrawer({
             // de khong ghi de gia tri nguoi dung da sua tay ben phai.
             setForm(current => ({
               ...current,
-              phone: current.phone.trim() ? current.phone : phone,
+              phone: current.phone.trim() ? current.phone : (looksLikePhone(phone) ? phone : ''),
               email: current.email.trim() ? current.email : email,
             }));
           }
@@ -412,7 +425,7 @@ export function LeadFormDrawer({
     const phoneMatch = text.match(PHONE_RE);
     const emailMatch = text.match(EMAIL_RE);
     if (phoneMatch && !checkPhone.trim()) {
-      setCheckPhone(phoneMatch[0].replace(/[\s.-]/g, ''));
+      setCheckPhone(normalizePhoneInput(phoneMatch[0]));
     }
     if (emailMatch && !checkEmail.trim()) {
       setCheckEmail(emailMatch[0]);
@@ -457,16 +470,20 @@ export function LeadFormDrawer({
   // duoc autofill).
   function validate(): string | null {
     if (!form.leadName.trim()) return 'Vui lòng nhập tên khách hàng.';
-    if (!form.phone.trim() && !form.email.trim()) return 'Cần nhập số điện thoại hoặc email.';
+    const phone = normalizePhoneInput(form.phone);
+    const email = form.email.trim();
+    if (form.phone.trim() && !looksLikePhone(phone)) return 'Số điện thoại không hợp lệ.';
+    if (!phone && !email) return 'Cần nhập số điện thoại hoặc email.';
     return null;
   }
 
   function buildPayload() {
+    const phone = normalizePhoneInput(form.phone);
     return {
       lead_name: form.leadName.trim(),
       company_name: form.companyName.trim() || null,
       position_category_id: form.positionCategoryId || null,
-      phone: form.phone.trim() || null,
+      phone: phone || null,
       email: form.email.trim() || null,
       zalo: form.zalo.trim() || null,
       facebook: form.facebook.trim() || null,
@@ -555,9 +572,10 @@ export function LeadFormDrawer({
 
   function handleForceCreate() {
     setOverrideCreate(true);
+    const phone = normalizePhoneInput(checkPhone);
     setForm(current => ({
       ...current,
-      phone: current.phone.trim() ? current.phone : checkPhone.trim(),
+      phone: current.phone.trim() ? current.phone : (looksLikePhone(phone) ? phone : ''),
       email: current.email.trim() ? current.email : checkEmail.trim(),
     }));
     window.setTimeout(() => leadNameRef.current?.focus(), 0);
@@ -625,8 +643,9 @@ export function LeadFormDrawer({
                     value={checkPhone}
                     onChange={e => setCheckPhone(normalizePhoneInput(e.target.value))}
                     type="tel"
+                    inputMode="tel"
                     placeholder="VD: 0903 037 911"
-                    autoComplete="off"
+                    autoComplete="tel"
                   />
                 </Field>
                 <Field label="Email">
@@ -635,8 +654,9 @@ export function LeadFormDrawer({
                     value={checkEmail}
                     onChange={e => setCheckEmail(e.target.value)}
                     type="email"
+                    inputMode="email"
                     placeholder="VD: tien@abc.vn"
-                    autoComplete="off"
+                    autoComplete="email"
                   />
                 </Field>
               </div>
@@ -810,7 +830,7 @@ export function LeadFormDrawer({
                     <input value={form.companyName} onChange={e => handleCompanyNameChange(e.target.value)} placeholder="Công ty TNHH ABC" />
                   </Field>
                   <Field label="Số điện thoại" hint="cần SĐT hoặc email">
-                    <input value={form.phone} onChange={e => setValue('phone', normalizePhoneInput(e.target.value))} type="tel" placeholder="Autofill từ kiểm tra trùng" />
+                    <input value={form.phone} onChange={e => setValue('phone', normalizePhoneInput(e.target.value))} type="tel" inputMode="tel" autoComplete="tel" placeholder="Autofill từ kiểm tra trùng" />
                   </Field>
                   <Field label="Email" hint="cần SĐT hoặc email">
                     <input value={form.email} onChange={e => setValue('email', e.target.value)} type="email" placeholder="Autofill từ kiểm tra trùng" />
