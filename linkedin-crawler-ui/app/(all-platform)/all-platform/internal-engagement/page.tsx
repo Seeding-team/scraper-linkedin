@@ -172,6 +172,7 @@ export default function InternalEngagementPage() {
   const [posts, setPosts] = useState<InternalEngagementPost[]>([]);
   const [customPosts, setCustomPosts] = useState<InternalEngagementPost[]>([]);
   const [marks, setMarks] = useState<Record<string, InternalEngagementMarkStatus>>({});
+  const [myComments, setMyComments] = useState<Record<string, string>>({});
   const [dbTeams, setDbTeams] = useState<Array<{ id: string; name_team: string; member_count: number }>>([]);
   const [selectedTeamFilter, setSelectedTeamFilter] = useState<string>("all");
 
@@ -232,6 +233,10 @@ export default function InternalEngagementPage() {
   const [isLiExtensionReady, setIsLiExtensionReady] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
   const [runProgress, setRunProgress] = useState<string | null>(null);
+  // Hien thi tam trang thai "Ban da comment thanh cong" tren nut Gui truoc khi
+  // dong modal (thay vi dong modal ngay lap tuc nhu truoc, khien nguoi dung
+  // khong kip thay xac nhan da thanh cong).
+  const [justSentSuccess, setJustSentSuccess] = useState(false);
 
   // Bulk multi-select
   const [selectMode, setSelectMode] = useState(false);
@@ -725,6 +730,7 @@ export default function InternalEngagementPage() {
           const marksRes = await internalEngagementService.getMyMarks(user.email, allLinks);
           if (marksRes.success && marksRes.data) {
             setMarks(marksRes.data.marks || {});
+            setMyComments(marksRes.data.my_comments || {});
           }
         }
       }
@@ -1420,6 +1426,15 @@ export default function InternalEngagementPage() {
   }, []);
 
   const lastResultRef = useRef<{ success: boolean; error?: string } | null>(null);
+  // handleMessage() ben duoi nam trong useEffect voi dependency array KHONG co
+  // modalPost (chi [isExtensionReady, isLiExtensionReady]) - doc truc tiep state
+  // modalPost trong closure se bi "stale" (luon thay gia tri luc effect dang ky,
+  // gan nhu luon la null) giong dung ly do lastResultRef ton tai. Dung ref de
+  // luon doc duoc gia tri modalPost MOI NHAT.
+  const modalPostRef = useRef<InternalEngagementPost | null>(null);
+  useEffect(() => {
+    modalPostRef.current = modalPost;
+  }, [modalPost]);
   // Watchdog cho sendComment(): bridge.js co the "tuong nhu san sang" (da tra
   // loi PING) nhung khong thuc su xu ly START_BULK_COMMENT (context bi
   // invalidate giua chung, background.js crash, hoac message that lac) - khi
@@ -1473,12 +1488,23 @@ export default function InternalEngagementPage() {
         const result = event.data.payload?.result;
         setIsRunning(false);
         setRunProgress(null);
-        setModalPost(null);
-        setCommentText("");
         if (result && result.success === false) {
+          setModalPost(null);
+          setCommentText("");
           showToast(`Comment thất bại: ${result.error || "Lỗi không xác định"}`);
         } else {
           showToast("Đã gửi comment thành công. Hệ thống đã ghi nhận KPI.");
+          if (modalPostRef.current) {
+            setJustSentSuccess(true);
+            window.setTimeout(() => {
+              setJustSentSuccess(false);
+              setModalPost(null);
+              setCommentText("");
+            }, 1500);
+          } else {
+            setModalPost(null);
+            setCommentText("");
+          }
         }
         loadPosts();
       } else if (action === "BULK_COMMENT_STARTED") {
@@ -1492,15 +1518,26 @@ export default function InternalEngagementPage() {
       } else if (action === "BULK_COMMENT_DONE") {
         setIsRunning(false);
         setRunProgress(null);
-        setModalPost(null);
-        setCommentText("");
         setBulkCommentText("");
         setSelectMode(false);
         setSelectedIds(new Set());
         if (lastResultRef.current && lastResultRef.current.success === false) {
+          setModalPost(null);
+          setCommentText("");
           showToast(`Comment thất bại: ${lastResultRef.current.error || "Lỗi không xác định"}`);
         } else {
           showToast("Đã gửi comment thành công. Hệ thống đã ghi nhận KPI.");
+          if (modalPostRef.current) {
+            setJustSentSuccess(true);
+            window.setTimeout(() => {
+              setJustSentSuccess(false);
+              setModalPost(null);
+              setCommentText("");
+            }, 1500);
+          } else {
+            setModalPost(null);
+            setCommentText("");
+          }
         }
         loadPosts();
       }
@@ -1541,6 +1578,7 @@ export default function InternalEngagementPage() {
     if (isRunning) return;
     clearSendCommentWatchdog();
     setModalPost(null);
+    setJustSentSuccess(false);
   };
 
   const buildVerifyConfig = () => ({
@@ -2108,6 +2146,7 @@ export default function InternalEngagementPage() {
               ) : (
                 pagedPosts.map((post) => {
                   const status = marks[post.permalink_url || ""] || "need";
+                  const myComment = myComments[post.permalink_url || ""] || "";
                   const isSelected = selectedIds.has(post.id);
 
                   // BẮT CẢ SNAKE LẪN CAMEL CASE
@@ -2342,6 +2381,14 @@ export default function InternalEngagementPage() {
                           </div>
                         </div>
 
+                        {/* Noi dung comment CUA CHINH MINH da dang tren bai nay (neu da hoan thanh) */}
+                        {status === "completed" && myComment ? (
+                          <div className="mb-3.5 p-2.5 rounded-xl bg-emerald-50 border border-emerald-200 text-[12px] text-emerald-800">
+                            <div className="font-bold mb-0.5">✓ Bạn đã comment thành công:</div>
+                            <div className="line-clamp-2">{myComment}</div>
+                          </div>
+                        ) : null}
+
                         {/* BỐ CỤC FOOTER ACTION BUTTONS */}
                         <div className="flex items-center justify-between gap-3 pt-2.5 border-t border-gray-100 flex-wrap">
                           <button
@@ -2565,9 +2612,14 @@ export default function InternalEngagementPage() {
                 </button>
                 <button
                   type="button"
-                  className="bg-[#c71f4d] text-white border border-[#c71f4d] rounded-xl px-4 py-2 font-extrabold disabled:opacity-50"
+                  className={`rounded-xl px-4 py-2 font-extrabold disabled:opacity-50 ${
+                    justSentSuccess
+                      ? "bg-emerald-600 text-white border border-emerald-600"
+                      : "bg-[#c71f4d] text-white border border-[#c71f4d]"
+                  }`}
                   onClick={sendComment}
                   disabled={
+                    justSentSuccess ||
                     isRunning ||
                     !(
                       modalPost.platform === "linkedin" || isLinkedInUrl(modalPost.permalink_url || (modalPost as any).link_post || "")
@@ -2577,7 +2629,7 @@ export default function InternalEngagementPage() {
                     !commentText.trim()
                   }
                 >
-                  {isRunning ? "Đang gửi..." : "Gửi comment qua Extension"}
+                  {justSentSuccess ? "✓ Bạn đã comment thành công" : isRunning ? "Đang gửi..." : "Gửi comment qua Extension"}
                 </button>
               </div>
             </div>
@@ -2709,7 +2761,14 @@ export default function InternalEngagementPage() {
 
                           return filteredRoster.map((m, idx) => (
                             <tr key={m.id_member || idx} className="hover:bg-gray-50/80">
-                              <td className="py-3 font-bold text-gray-900">{m.name}</td>
+                              <td className="py-3 font-bold text-gray-900">
+                                {m.name}
+                                {m.comment_content ? (
+                                  <div className="mt-0.5 text-[11px] font-medium text-gray-500 italic line-clamp-2 max-w-[220px]" title={m.comment_content}>
+                                    💬 "{m.comment_content}"
+                                  </div>
+                                ) : null}
+                              </td>
                               <td className="py-3 text-gray-500">
                                 {dbTeams.find((t) => t.id === m.team_id || t.name_team.toLowerCase() === (m.team || "").toLowerCase())?.name_team || m.team || "Team"}
                               </td>

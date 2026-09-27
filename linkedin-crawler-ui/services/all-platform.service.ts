@@ -25,6 +25,7 @@ import type {
   InternalEngagementPostInteractionsData,
   InternalEngagementTeamTrendData,
   InternalEngagementTeamTotalsData,
+  PostSeedingRosterData,
 } from "@/types/unified.types";
 import { API_BASE_URL, API_KEY } from "@/lib/env";
 
@@ -403,7 +404,7 @@ export const internalEngagementService = {
     });
   },
 
-  getMyMarks: (emailMember: string, linkPosts: string[]): Promise<ApiResponse<{ marks: Record<string, InternalEngagementMarkStatus> }>> => {
+  getMyMarks: (emailMember: string, linkPosts: string[]): Promise<ApiResponse<{ marks: Record<string, InternalEngagementMarkStatus>; my_comments?: Record<string, string> }>> => {
     return requestJson(`${BASE}/internal-engagement/my-marks`, {
       method: "POST",
       body: JSON.stringify({ email_member: emailMember, link_posts: linkPosts }),
@@ -1300,6 +1301,17 @@ export const allPlatformPostsService = {
     return requestJson(`${BASE}/${platform}/posts/sync-progress`, {
       method: "POST",
       body: JSON.stringify({ email, posts }),
+    });
+  },
+
+  /**
+   * "Xem seeding theo team" (Seeding bên ngoài, admin/leader) — toàn bộ roster
+   * thành viên team sở hữu group của bài viết, kèm ai đã/chưa seeding.
+   */
+  getPostSeedingRoster: (email: string, postId: string, platform: string): Promise<ApiResponse<PostSeedingRosterData>> => {
+    return requestJson(`${BASE}/unified/posts/seeding-roster`, {
+      method: "POST",
+      body: JSON.stringify({ email, post_id: postId, platform }),
     });
   },
 };

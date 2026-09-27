@@ -31,7 +31,12 @@ type CompanyMatchRow = {
 };
 
 type IcpFit = 'unknown' | 'fit' | 'unfit';
-type VerificationOutcome = 'sql' | 'nurturing' | 'unqualified';
+/** 'pending' = chưa đủ dữ liệu để phân loại (không SQL, không Invalid, không
+ * rơi vào điều kiện Nuôi dưỡng nào) - KHÁC với 'nurturing' thật (rơi đúng 1
+ * trong 3 điều kiện Nuôi dưỡng của WIP). Trước đây 2 trường hợp này bị gộp
+ * chung thành 'nurturing' (fallback ngầm định) - feedback leader: tách riêng
+ * để không kết luận nhầm "Nuôi dưỡng" khi Lead chỉ đơn giản là chưa điền đủ. */
+type VerificationOutcome = 'sql' | 'nurturing' | 'unqualified' | 'pending';
 type InterestLevel = 'reference' | 'need' | 'evaluating' | 'quote';
 
 const INTEREST_LEVEL_OPTIONS: Array<{ value: InterestLevel; label: string; score: number }> = [
@@ -99,6 +104,12 @@ type VerifyForm = {
   note: string;
   followUpChannel: string;
   dealStage: string;
+  /** "Dự án (tùy chọn)" - feedback leader + WIP full-flow, section A "Thông
+   * tin then chốt". Chỉ gõ TÊN (chưa có ProjectPicker chọn Dự án có sẵn ở
+   * màn Xác minh Lead - Customer thường CHƯA xác định lúc này) - backend
+   * (crm_lead_service.convert_lead) tự tạo Dự án THẬT sau khi convert xong,
+   * gắn vào Deal vừa tạo (migration 153 + supabase_project_service). */
+  project: string;
 };
 
 /** "Giai đoạn" cho Deal SAP tao (feedback WIP full-flow, mucE.2 "Bàn giao
@@ -118,38 +129,92 @@ type LeadRuleFields = {
   fit_known: boolean;
 };
 
+/** Nhan hien thi cho tung dieu kien SQL khi con thieu (Section 9/10 mockup
+ * leader: "Còn thiếu: • Team Sale • Việc tiếp theo • Hạn follow-up") - CHI
+ * dung de hien thi, khong anh huong logic (logic van doc key sql_* nhu cu). */
+const SQL_FIELD_LABELS: Record<string, string> = {
+  sql_product: 'Sản phẩm / dịch vụ',
+  sql_interest: 'Mức độ quan tâm',
+  sql_value: 'Giá trị dự kiến',
+  sql_team: 'Sale nhận bàn giao',
+  sql_next: 'Việc tiếp theo',
+  sql_follow: 'Hạn follow-up',
+  sql_fit: 'ICP phù hợp',
+};
+
+type LeadEvaluation = {
+  outcome: VerificationOutcome;
+  reason: string;
+  /** Ly do cu the (Nuoi duong/Khong dat) de render bullet list - rong voi sql/pending. */
+  reasons: string[];
+  /** Ten field SQL dang bat nhung chua thoa - de render "Còn thiếu" luc pending. */
+  missing: string[];
+  sqlOk: number;
+  sqlTotal: number;
+};
+
 /** Ban mirror THUAN JS cua evaluate_lead_conditions() (backend,
- * crm_lead_rule_service.py, migration 151 "Điều kiện phân loại Lead") - dung
- * de TU DONG chon san 1 trong 3 radio "Kết quả xác minh" theo dung rule Admin
- * da cau hinh, SDR van bam doi tay duoc (xem `outcomeTouched` o component).
- * Day la goi y client-side, KHONG phai nguon su that - luc "Lưu xác minh"
- * that van chi luu dung 1 trong 3 gia tri `verificationOutcome` hien co, y
- * het truoc day. */
-function evaluateLeadConditions(fields: LeadRuleFields, c: Record<string, boolean>): { outcome: VerificationOutcome; reason: string } {
-  const invalidChecks: boolean[] = [];
-  if (c.inv_fit) invalidChecks.push(fields.fit_unfit);
-  if (c.inv_no_contact) invalidChecks.push(!fields.has_contact);
-  const isInvalid = invalidChecks.some(Boolean);
+ * crm_lead_rule_service.py, migration 151 "Điều kiện phân loại Lead") - hien
+ * thi "Kết quả Lead" trong drawer duoi dang OUTPUT CARD read-only (feedback
+ * leader: "User khong duoc tu chon/override ket qua Lead", bo han radio).
+ *
+ * Thu tu uu tien: Khong dat chuan (OR) > Nuoi duong (OR, co the override ca
+ * khi da du SQL) > SQL (AND) > 'pending' ("chưa đủ dữ liệu") neu khong khop
+ * dieu kien nao trong 3 nhom tren - KHAC voi `!isSql -> nurturing`: 1 Lead
+ * chi don gian chua dien du KHONG duoc mac dinh ket luan la Nuoi duong that
+ * (Nuoi duong phai khop dung 1 trong 3 ly do rieng cua WIP). */
+function evaluateLeadConditions(fields: LeadRuleFields, c: Record<string, boolean>): LeadEvaluation {
+  const invalidReasons: string[] = [];
+  if (c.inv_fit && fields.fit_unfit) invalidReasons.push('Không phù hợp ICP');
+  if (c.inv_no_contact && !fields.has_contact) invalidReasons.push('Không có thông tin liên hệ hợp lệ');
+  const isInvalid = invalidReasons.length > 0;
 
-  const sqlChecks: boolean[] = [];
-  if (c.sql_product) sqlChecks.push(fields.has_product);
-  if (c.sql_interest) sqlChecks.push(fields.has_interest_level);
-  if (c.sql_value) sqlChecks.push(fields.has_value);
-  if (c.sql_team) sqlChecks.push(fields.has_team);
-  if (c.sql_next) sqlChecks.push(fields.has_next);
-  if (c.sql_follow) sqlChecks.push(fields.has_follow);
-  if (c.sql_fit) sqlChecks.push(!fields.fit_unfit);
-  const isSql = sqlChecks.length ? sqlChecks.every(Boolean) : false;
+  const sqlChecks: Array<{ key: keyof typeof SQL_FIELD_LABELS; ok: boolean }> = [];
+  if (c.sql_product) sqlChecks.push({ key: 'sql_product', ok: fields.has_product });
+  if (c.sql_interest) sqlChecks.push({ key: 'sql_interest', ok: fields.has_interest_level });
+  if (c.sql_value) sqlChecks.push({ key: 'sql_value', ok: fields.has_value });
+  if (c.sql_team) sqlChecks.push({ key: 'sql_team', ok: fields.has_team });
+  if (c.sql_next) sqlChecks.push({ key: 'sql_next', ok: fields.has_next });
+  if (c.sql_follow) sqlChecks.push({ key: 'sql_follow', ok: fields.has_follow });
+  if (c.sql_fit) sqlChecks.push({ key: 'sql_fit', ok: !fields.fit_unfit });
+  const sqlTotal = sqlChecks.length;
+  const sqlOk = sqlChecks.filter(x => x.ok).length;
+  const isSql = sqlTotal > 0 && sqlOk === sqlTotal;
+  const missing = sqlChecks.filter(x => !x.ok).map(x => SQL_FIELD_LABELS[x.key]);
 
-  if (isInvalid) return { outcome: 'unqualified', reason: 'Lead thỏa điều kiện loại trong cấu hình.' };
-  if (isSql) return { outcome: 'sql', reason: 'Đủ điều kiện SQL theo cấu hình hiện tại.' };
+  // "Near-miss": 1 dieu kien Nuoi duong CHI duoc tinh la khop khi TAT CA cac
+  // dieu kien SQL dang bat KHAC (ngoai dung field ma dieu kien nay nham toi)
+  // da thoa - tuc Lead gan nhu du SQL, chi vuong dung 1 cho. Neu Lead con
+  // thieu nhieu thu khac nua thi van la "pending" ("chưa đủ dữ liệu"), KHONG
+  // phai Nuoi duong (feedback leader, doi chieu vi du muc 4 + Test A/D: Lead
+  // moi mo/dien mot phan KHONG duoc tu dong ket luan la Nuoi duong chi vi 1
+  // field dang trong - phai gan nhu hoan chinh moi tinh).
+  const othersOk = (excludeKeys: Array<keyof typeof SQL_FIELD_LABELS>) =>
+    sqlChecks.filter(x => !excludeKeys.includes(x.key)).every(x => x.ok);
 
-  const reasons: string[] = [];
-  if (c.nur_missing_value && !fields.has_value) reasons.push('thiếu giá trị dự kiến');
-  if (c.nur_missing_handoff && !(fields.has_team && fields.has_next && fields.has_follow)) reasons.push('thiếu thông tin bàn giao');
-  if (c.nur_unknown_fit && !fields.fit_known) reasons.push('chưa xác định nhóm khách hàng');
-  const reason = reasons.length ? `Nuôi dưỡng vì ${reasons.join(', ')}.` : 'Chưa đủ điều kiện SQL.';
-  return { outcome: 'nurturing', reason };
+  const nurtureReasons: string[] = [];
+  if (c.nur_missing_value && !fields.has_value && othersOk(['sql_value'])) {
+    nurtureReasons.push('Thiếu giá trị dự kiến');
+  }
+  if (c.nur_missing_handoff && !(fields.has_team && fields.has_next && fields.has_follow) &&
+    othersOk(['sql_team', 'sql_next', 'sql_follow'])) {
+    nurtureReasons.push('Thiếu thông tin bàn giao Sale');
+  }
+  if (c.nur_unknown_fit && !fields.fit_known && othersOk(['sql_fit'])) {
+    nurtureReasons.push('Chưa xác định nhóm khách hàng');
+  }
+  const isNurtureForced = nurtureReasons.length > 0;
+
+  if (isInvalid) {
+    return { outcome: 'unqualified', reason: `Không đạt chuẩn: ${invalidReasons.join(', ')}.`, reasons: invalidReasons, missing, sqlOk, sqlTotal };
+  }
+  if (isNurtureForced) {
+    return { outcome: 'nurturing', reason: `Nuôi dưỡng vì ${nurtureReasons.join(', ').toLowerCase()}.`, reasons: nurtureReasons, missing, sqlOk, sqlTotal };
+  }
+  if (isSql) {
+    return { outcome: 'sql', reason: 'Đủ điều kiện SQL theo cấu hình hiện tại.', reasons: [], missing, sqlOk, sqlTotal };
+  }
+  return { outcome: 'pending', reason: 'Chưa đủ dữ liệu để phân loại.', reasons: [], missing, sqlOk, sqlTotal };
 }
 
 /**
@@ -201,6 +266,7 @@ export function LeadDetailDrawer({
     note: '',
     followUpChannel: '',
     dealStage: 'dealing',
+    project: '',
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -213,14 +279,16 @@ export function LeadDetailDrawer({
   const [contact, setContact] = useState({ name: '', phone: '', email: '', positionCategoryId: '', positionLabel: '' });
   const [converting, setConverting] = useState(false);
   const [convertError, setConvertError] = useState('');
-  const [verificationOutcome, setVerificationOutcome] = useState<VerificationOutcome>('sql');
+  const [verificationOutcome, setVerificationOutcome] = useState<VerificationOutcome>('pending');
   // "Điều kiện phân loại Lead" (migration 151) - tai 1 lan, chi doc (GET mo
-  // cho moi nguoi dang nhap, sua rule la trang rieng chi Admin). `outcomeTouched`
-  // = SDR da tu tay doi radio "Kết quả xác minh" it nhat 1 lan -> ngung tu
-  // dong ghi de nua (giong het pattern `dealNameTouched` o CreateOpportunityDrawer).
+  // cho moi nguoi dang nhap, sua rule la trang rieng chi Admin). Ket qua
+  // xac minh CHI do rule engine tinh (evaluateLeadConditions), KHONG cho
+  // SDR tu chon/override (feedback leader) - da bo state `outcomeTouched`
+  // truoc day dung de tam dung auto-tinh khi SDR bam tay 1 radio.
   const [ruleConditions, setRuleConditions] = useState<Record<string, boolean> | null>(null);
-  const [outcomeTouched, setOutcomeTouched] = useState(false);
-  const [autoOutcomeReason, setAutoOutcomeReason] = useState('');
+  const [outcomeReasons, setOutcomeReasons] = useState<string[]>([]);
+  const [outcomeMissing, setOutcomeMissing] = useState<string[]>([]);
+  const [sqlProgress, setSqlProgress] = useState<{ ok: number; total: number }>({ ok: 0, total: 0 });
   const [nurtureReason, setNurtureReason] = useState('');
   const [unqualifiedReason, setUnqualifiedReason] = useState('');
   const idempotencyKeyRef = useRef<string>('');
@@ -250,11 +318,12 @@ export function LeadDetailDrawer({
     setConvertError('');
     setSuggestionUsed(false);
     setConvertOpen(initialMode === 'convert');
-    setVerificationOutcome('sql');
+    setVerificationOutcome('pending');
     setNurtureReason('');
     setUnqualifiedReason('');
-    setOutcomeTouched(false);
-    setAutoOutcomeReason('');
+    setOutcomeReasons([]);
+    setOutcomeMissing([]);
+    setSqlProgress({ ok: 0, total: 0 });
     setForm({
       interest: lead.qualificationNeed || '',
       interestLevel: interestLevelFromScore(lead.score),
@@ -268,6 +337,7 @@ export function LeadDetailDrawer({
       note: lead.note || '',
       followUpChannel: '',
       dealStage: 'dealing',
+      project: '',
     });
     setContact({
       name: lead.leadName || '',
@@ -344,12 +414,12 @@ export function LeadDetailDrawer({
     return () => { alive = false; };
   }, [open]);
 
-  // Tu dong chon san radio "Kết quả xác minh" theo dung rule Admin da cau
-  // hinh (evaluateLeadConditions, mirror JS cua backend) - CHI khi SDR CHUA
-  // tu tay doi radio nao (!outcomeTouched). Khong chan/khong bat buoc - SDR
-  // luon doi tay duoc, dieu do se tat auto-compute cho den khi mo Lead khac.
+  // Tu dong tinh "Kết quả xác minh" theo dung rule Admin da cau hinh
+  // (evaluateLeadConditions, mirror JS cua backend) - LUON chay lai moi khi
+  // form doi, KHONG co co che tam dung/override nao nua (feedback leader:
+  // "User khong duoc tu chon/override ket qua Lead").
   useEffect(() => {
-    if (!ruleConditions || outcomeTouched) return;
+    if (!ruleConditions) return;
     const fields: LeadRuleFields = {
       has_product: Boolean(form.interest.trim()),
       has_interest_level: Boolean(form.interestLevel),
@@ -363,9 +433,11 @@ export function LeadDetailDrawer({
     };
     const computed = evaluateLeadConditions(fields, ruleConditions);
     setVerificationOutcome(computed.outcome);
-    setAutoOutcomeReason(computed.reason);
+    setOutcomeReasons(computed.reasons);
+    setOutcomeMissing(computed.missing);
+    setSqlProgress({ ok: computed.sqlOk, total: computed.sqlTotal });
   }, [
-    ruleConditions, outcomeTouched, form.interest, form.interestLevel, form.estimatedValue,
+    ruleConditions, form.interest, form.interestLevel, form.estimatedValue,
     form.aeId, form.nextStep, form.nextStepAt, form.icpFit, contact.phone, contact.email,
   ]);
 
@@ -466,6 +538,7 @@ export function LeadDetailDrawer({
       note: lead.note || '',
       followUpChannel: '',
       dealStage: 'dealing',
+      project: '',
     });
     setSuggestionUsed(false);
   }
@@ -601,6 +674,10 @@ export function LeadDetailDrawer({
       if (form.nextStep.trim()) dealPayload.next_step = form.nextStep.trim();
       if (form.nextStepAt) dealPayload.follow_up_date = new Date(form.nextStepAt).toISOString();
       if (form.estimatedValue != null) dealPayload.estimated_budget = form.estimatedValue;
+      // "Dự án" (feedback leader) - go TEN moi, backend tu tao Project that
+      // sau khi convert xong (xem crm_lead_service.convert_lead(), migration
+      // 153). Man Xac minh Lead chua co ProjectPicker chon Du an co san.
+      if (form.project.trim()) dealPayload.project_name = form.project.trim();
 
       const payload: Record<string, unknown> = {
         deal: dealPayload,
@@ -692,6 +769,10 @@ export function LeadDetailDrawer({
   }
 
   async function submitFinalOutcome() {
+    // 'pending' = chua du du lieu de he thong ket luan - nut submit da bi
+    // disable o footer, day chi la guard phong thu (khong duoc rot vao
+    // nhanh Khong dat chuan mac dinh nhu truoc khi tach rieng 'pending').
+    if (verificationOutcome === 'pending') return;
     if (verificationOutcome === 'sql') {
       await openConvertConfirm();
       return;
@@ -708,7 +789,9 @@ export function LeadDetailDrawer({
       ? 'Tạo cơ hội & bàn giao Sale'
       : verificationOutcome === 'nurturing'
         ? 'Lưu vào Nuôi dưỡng'
-        : 'Xác nhận không đạt chuẩn';
+        : verificationOutcome === 'unqualified'
+          ? 'Xác nhận không đạt chuẩn'
+          : 'Chưa đủ dữ liệu để lưu kết quả';
 
   // "Tóm tắt quyết định" — cot phai KHONG con la checklist ky thuat (chi
   // dung/sai) ma hien gia tri that de SDR/Sale ra quyet dinh nhanh, dung thu
@@ -973,6 +1056,14 @@ export function LeadDetailDrawer({
                         </select>
                       </Field>
                     </div>
+                    <Field label="Dự án" hint="tùy chọn">
+                      <input
+                        disabled={!canWrite}
+                        value={form.project}
+                        onChange={e => setField('project', e.target.value)}
+                        placeholder="VD: Website 2026"
+                      />
+                    </Field>
                     <Field label="Ghi chú ngắn">
                       <input disabled={!canWrite} value={form.note} onChange={e => setField('note', e.target.value)} placeholder="VD: khách đang so sánh 2 nhà cung cấp" />
                     </Field>
@@ -980,54 +1071,56 @@ export function LeadDetailDrawer({
                 </section>
 
                 <section className="crm-form-section crm-verify-section crm-verify-panel" id="crm-verify-handoff">
-                  <p className="crm-form-title">Kết quả xác minh & bàn giao</p>
-
-                  {verificationOutcome === 'sql' ? (
-                    <div className="crm-verify-compact-fields">
-                      {/* Layout da chot (feedback WIP full-flow, muc E.2 "Bàn
-                       * giao Sale"): Team Sale | Người liên hệ, Việc tiếp
-                       * theo | Hạn follow-up, Giai đoạn. "Người liên hệ" dung
-                       * lai dung state `contact.name` (truoc day chi sua o
-                       * buoc xac nhan Convert) - he thong da chon mac dinh
-                       * theo ten Lead, SDR co the doi som hon o day. */}
-                      <div className="crm-inline-pair">
-                        <Field label="Sale nhận bàn giao">
-                          <SearchableSelect disabled={!canWrite} value={form.aeId} onChange={value => setField('aeId', value)} options={aeOptions} placeholder="-- Chưa chọn --" />
-                        </Field>
-                        <Field label="Người liên hệ">
-                          <input
-                            disabled={!canWrite}
-                            value={contact.name}
-                            onChange={e => setContact(c => ({ ...c, name: e.target.value }))}
-                            placeholder="Tên người liên hệ"
-                          />
-                        </Field>
-                      </div>
-                      <div className="crm-inline-pair">
-                        <Field label="SDR/Sale cần làm gì tiếp">
-                          <CrmCategorySelect
-                            categoryType="crm_next_step"
-                            value={form.nextStep}
-                            disabled={!canWrite}
-                            placeholder="-- Chọn việc tiếp theo --"
-                            excludeLabels={['Khác']}
-                            onChange={label => setField('nextStep', label)}
-                          />
-                        </Field>
-                        <Field label="Khi nào làm">
-                          <input disabled={!canWrite} type="datetime-local" value={form.nextStepAt} onChange={e => setField('nextStepAt', e.target.value)} />
-                        </Field>
-                      </div>
-                      <Field label="Giai đoạn">
-                        <select disabled={!canWrite} value={form.dealStage} onChange={e => setField('dealStage', e.target.value)}>
-                          {DEAL_STAGE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-                        </select>
+                  {/* Feedback leader: KHONG con if/else theo outcome de an/hien
+                   * form nghiep vu ("if outcome===SQL thi hien form SQL...").
+                   * 5 field Ban giao Sale LUON hien thi, bat ke Ket qua Lead
+                   * dang la gi - dung layout da chot (feedback WIP full-flow,
+                   * muc E.2 "Bàn giao Sale"): Team Sale | Người liên hệ, Việc
+                   * tiếp theo | Hạn follow-up, Giai đoạn. */}
+                  <p className="crm-form-title">Bàn giao Sale</p>
+                  <div className="crm-verify-compact-fields">
+                    <div className="crm-inline-pair">
+                      <Field label="Sale nhận bàn giao" required>
+                        <SearchableSelect disabled={!canWrite} value={form.aeId} onChange={value => setField('aeId', value)} options={aeOptions} placeholder="-- Chưa chọn --" />
+                      </Field>
+                      <Field label="Người liên hệ">
+                        <input
+                          disabled={!canWrite}
+                          value={contact.name}
+                          onChange={e => setContact(c => ({ ...c, name: e.target.value }))}
+                          placeholder="Tên người liên hệ"
+                        />
                       </Field>
                     </div>
-                  ) : null}
+                    <div className="crm-inline-pair">
+                      <Field label="Việc tiếp theo" required>
+                        <CrmCategorySelect
+                          categoryType="crm_next_step"
+                          value={form.nextStep}
+                          disabled={!canWrite}
+                          placeholder="-- Chọn việc tiếp theo --"
+                          excludeLabels={['Khác']}
+                          onChange={label => setField('nextStep', label)}
+                        />
+                      </Field>
+                      <Field label="Hạn follow-up" required>
+                        <input disabled={!canWrite} type="datetime-local" value={form.nextStepAt} onChange={e => setField('nextStepAt', e.target.value)} />
+                      </Field>
+                    </div>
+                    <Field label="Giai đoạn" required>
+                      <select disabled={!canWrite} value={form.dealStage} onChange={e => setField('dealStage', e.target.value)}>
+                        {DEAL_STAGE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                      </select>
+                    </Field>
+                  </div>
 
+                  {/* 2 field nay KHONG phai input cua rule engine (khong anh
+                   * huong SQL/Nuoi duong/Khong dat) - la ghi chu SDR bo sung
+                   * SAU KHI he thong da ket luan, chi hien khi lien quan tru
+                   * tiep toi ket qua hien tai de tranh nhoi field khong dung
+                   * luc (KHAC voi 5 field Ban giao Sale phia tren, luon hien). */}
                   {verificationOutcome === 'nurturing' ? (
-                    <div className="crm-verify-compact-fields">
+                    <div className="crm-verify-compact-fields" style={{ marginTop: '0.7rem' }}>
                       <Field label="Lý do nuôi dưỡng" required>
                         <CrmCategorySelect categoryType="crm_nurture_reason" value={nurtureReason} disabled={!canWrite} placeholder="-- Chọn lý do --" onChange={setNurtureReason} />
                       </Field>
@@ -1041,49 +1134,52 @@ export function LeadDetailDrawer({
                   ) : null}
 
                   {verificationOutcome === 'unqualified' ? (
-                    <div className="crm-verify-compact-fields">
+                    <div className="crm-verify-compact-fields" style={{ marginTop: '0.7rem' }}>
                       <Field label="Lý do không đạt chuẩn" required>
                         <CrmCategorySelect categoryType="crm_unqualified_reason" value={unqualifiedReason} disabled={!canWrite} placeholder="-- Chọn lý do --" onChange={setUnqualifiedReason} />
                       </Field>
                     </div>
                   ) : null}
-                  {/* "Mức độ quan tâm" + "Ghi chú ngắn" da chuyen len panel
-                   * "Thông tin then chốt" (feedback WIP xac minh Lead, layout
-                   * da chot ghep cap voi Gia tri du kien/Du kien trien khai) -
-                   * KHONG con o day nua, tranh nhap/xem trung. */}
+
+                  {/* KẾT QUẢ LEAD - output card, KHONG phai input. He thong tu
+                   * tinh (evaluateLeadConditions), SDR khong bam chon duoc. */}
                   <div className="crm-verify-handoff-extra crm-verify-interest-level">
-                    <span>Kết quả xác minh</span>
-                    <div className="crm-verify-result-options crm-verify-result-options--compact" role="radiogroup" aria-label="Kết quả xác minh">
-                      <label className={`crm-verify-result-option ${verificationOutcome === 'sql' ? 'is-selected' : ''}`}>
-                        <input type="radio" name="verificationOutcome" value="sql" checked={verificationOutcome === 'sql'} onChange={() => { setVerificationOutcome('sql'); setOutcomeTouched(true); }} />
-                        <span>Đạt chuẩn SQL</span>
-                      </label>
-                      <label className={`crm-verify-result-option ${verificationOutcome === 'nurturing' ? 'is-selected' : ''}`}>
-                        <input type="radio" name="verificationOutcome" value="nurturing" checked={verificationOutcome === 'nurturing'} onChange={() => { setVerificationOutcome('nurturing'); setOutcomeTouched(true); }} />
-                        <span>Nuôi dưỡng</span>
-                      </label>
-                      <label className={`crm-verify-result-option ${verificationOutcome === 'unqualified' ? 'is-selected' : ''}`}>
-                        <input type="radio" name="verificationOutcome" value="unqualified" checked={verificationOutcome === 'unqualified'} onChange={() => { setVerificationOutcome('unqualified'); setOutcomeTouched(true); }} />
-                        <span>Không đạt chuẩn</span>
-                      </label>
+                    <span>Kết quả Lead</span>
+                    <div className={`crm-verify-outcome-card crm-verify-outcome-card--${verificationOutcome}`} role="status" aria-live="polite">
+                      <div className="crm-verify-outcome-head">
+                        <span className="crm-verify-outcome-dot" />
+                        {verificationOutcome === 'sql' && 'Đạt chuẩn — SQL'}
+                        {verificationOutcome === 'nurturing' && 'Nuôi dưỡng'}
+                        {verificationOutcome === 'unqualified' && 'Không đạt chuẩn'}
+                        {verificationOutcome === 'pending' && 'Chưa đủ dữ liệu'}
+                      </div>
+
+                      {verificationOutcome === 'sql' ? (
+                        <p className="crm-verify-outcome-sub">Đã đủ điều kiện tạo cơ hội và bàn giao Sale.</p>
+                      ) : null}
+
+                      {verificationOutcome === 'pending' && outcomeMissing.length ? (
+                        <>
+                          <p className="crm-verify-outcome-list-title">Còn thiếu:</p>
+                          <ul className="crm-verify-outcome-list">
+                            {outcomeMissing.map(m => <li key={m}>{m}</li>)}
+                          </ul>
+                        </>
+                      ) : null}
+
+                      {(verificationOutcome === 'nurturing' || verificationOutcome === 'unqualified') && outcomeReasons.length ? (
+                        <>
+                          <p className="crm-verify-outcome-list-title">Lý do:</p>
+                          <ul className="crm-verify-outcome-list">
+                            {outcomeReasons.map(r => <li key={r}>{r}</li>)}
+                          </ul>
+                        </>
+                      ) : null}
+
+                      {ruleConditions ? (
+                        <p className="crm-verify-outcome-progress">{sqlProgress.ok}/{sqlProgress.total} điều kiện SQL</p>
+                      ) : null}
                     </div>
-                    {ruleConditions ? (
-                      <p className="crm-ai-fill-hint">
-                        {outcomeTouched
-                          ? 'Bạn đã tự chọn kết quả này.'
-                          : `Tự động theo Điều kiện phân loại Lead: ${autoOutcomeReason}`}
-                        {outcomeTouched ? (
-                          <button
-                            type="button"
-                            className="crm-inline-link-btn"
-                            style={{ marginLeft: '0.4rem' }}
-                            onClick={() => setOutcomeTouched(false)}
-                          >
-                            Tính lại tự động
-                          </button>
-                        ) : null}
-                      </p>
-                    ) : null}
                   </div>
 
                   {nextStepWarning ? (
@@ -1143,8 +1239,14 @@ export function LeadDetailDrawer({
               <button
                 type="button"
                 className="crm-primary-button"
-                disabled={saving}
-                title={verificationOutcome === 'sql' && !isReady ? 'Hoàn tất checklist "Mức sẵn sàng tạo cơ hội" trước' : undefined}
+                disabled={saving || verificationOutcome === 'pending'}
+                title={
+                  verificationOutcome === 'pending'
+                    ? 'Hệ thống chưa đủ dữ liệu để phân loại Lead này — bổ sung thêm thông tin bên trên.'
+                    : verificationOutcome === 'sql' && !isReady
+                      ? 'Hoàn tất checklist "Mức sẵn sàng tạo cơ hội" trước'
+                      : undefined
+                }
                 onClick={() => void submitFinalOutcome()}
               >
                 {finalSubmitLabel}

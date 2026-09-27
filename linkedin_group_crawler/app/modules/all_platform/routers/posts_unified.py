@@ -16,12 +16,14 @@ from app.modules.all_platform.schemas import BaseResponse
 from app.modules.all_platform.schemas.posts import (
     UnifiedPostsRequest,
     UnifiedFilterRequest,
+    PostSeedingRosterRequest,
 )
 from app.modules.all_platform.services.unified_posts_service import (
     get_unified_posts,
     filter_unified_posts,
     get_unified_stats,
     get_unified_daily_trend,
+    get_post_seeding_roster,
 )
 
 router = APIRouter()
@@ -135,6 +137,19 @@ def unified_get_daily_trend(payload: UnifiedPostsRequest) -> BaseResponse:
         data = get_unified_daily_trend(
             email=payload.email,
             platform=payload.platform,
+        )
+        return BaseResponse(success=True, data=data)
+    except Exception as e:
+        return _fail(e)
+
+
+@router.post("/posts/seeding-roster")
+def unified_post_seeding_roster(payload: PostSeedingRosterRequest) -> BaseResponse:
+    """'Xem seeding theo team' modal (Seeding bên ngoài, admin/leader) — toàn bộ
+    roster thành viên team sở hữu group của bài viết, kèm ai đã/chưa seeding."""
+    try:
+        data = get_post_seeding_roster(
+            post_id=payload.post_id, platform=payload.platform, email=payload.email
         )
         return BaseResponse(success=True, data=data)
     except Exception as e:

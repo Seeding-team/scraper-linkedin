@@ -113,6 +113,8 @@ export function DealDetailDrawer({ customer, open, onClose, onRequestTransition,
   const [reviewOpen, setReviewOpen] = useState(false);
   const [reviewDraft, setReviewDraft] = useState<ReviewResult>("Chua_xem_xet");
   const [savingReview, setSavingReview] = useState(false);
+  const [noteDraft, setNoteDraft] = useState("");
+  const [savingNote, setSavingNote] = useState(false);
   const { options: lostReasonOptions } = useCrmCategoryCodeOptions("crm_lost_reason", LOST_REASON_OPTIONS);
 
   const stage = useMemo(() => (customer ? getCurrentStage(customer) : null), [customer]);
@@ -132,18 +134,39 @@ export function DealDetailDrawer({ customer, open, onClose, onRequestTransition,
     setTab("overview");
   }, [customer?.id]);
 
+  function refetchLog(customerId: string) {
+    setLoadingLog(true);
+    return customerLeadService
+      .getActivityLog(customerId, { limit: 100 })
+      .then((res) => setLog(res.items ?? []))
+      .catch(() => setLog([]))
+      .finally(() => setLoadingLog(false));
+  }
+
   useEffect(() => {
+    setNoteDraft("");
     if (!open || !customer) {
       setLog([]);
       return;
     }
-    setLoadingLog(true);
-    customerLeadService
-      .getActivityLog(customer.id, { limit: 100 })
-      .then((res) => setLog(res.items ?? []))
-      .catch(() => setLog([]))
-      .finally(() => setLoadingLog(false));
+    void refetchLog(customer.id);
   }, [open, customer?.id]);
+
+  async function handleAddNote() {
+    if (!customer || !noteDraft.trim() || savingNote) return;
+    setSavingNote(true);
+    try {
+      const res = await customerLeadService.addNote(customer.id, noteDraft.trim());
+      if (res?.success === false) throw new Error(res?.message || "Không lưu được ghi chú");
+      setNoteDraft("");
+      toast.success("Đã thêm ghi chú");
+      await refetchLog(customer.id);
+    } catch (err: any) {
+      toast.error(err?.message || "Không lưu được ghi chú");
+    } finally {
+      setSavingNote(false);
+    }
+  }
 
   // Đồng bộ dropdown với deal đang mở — customer đổi (chuyển sang deal khác)
   // hoặc load lại sau update thì phải nạp lại giá trị hiện tại.
@@ -476,6 +499,28 @@ export function DealDetailDrawer({ customer, open, onClose, onRequestTransition,
 
           {tab === "activity" && (
             <section>
+              <div className="mb-3 flex gap-2">
+                <input
+                  value={noteDraft}
+                  onChange={(e) => setNoteDraft(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      void handleAddNote();
+                    }
+                  }}
+                  placeholder="Thêm ghi chú cho deal này..."
+                  className="flex-1 rounded-md border border-slate-300 px-3 py-1.5 text-sm"
+                  disabled={savingNote}
+                />
+                <button
+                  onClick={() => void handleAddNote()}
+                  disabled={savingNote || !noteDraft.trim()}
+                  className="inline-flex shrink-0 items-center gap-1 rounded-md bg-primary px-3 py-1.5 text-xs font-semibold text-white transition hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {savingNote ? <Loader2 className="size-3.5 animate-spin" /> : null} + Thêm
+                </button>
+              </div>
               <h4 className="mb-2 text-xs font-bold uppercase tracking-wider text-slate-500">
                 Lịch sử thay đổi stage
               </h4>
@@ -509,7 +554,13 @@ export function DealDetailDrawer({ customer, open, onClose, onRequestTransition,
                           </span>
                         </div>
                       ) : (
-                        <div className="mt-0.5 text-sm text-slate-700">{entry.action}</div>
+                        <div className="mt-0.5 text-sm text-slate-700">
+                          {entry.action === "note_added"
+                            ? "Ghi chú mới"
+                            : entry.action === "created"
+                            ? "Tạo deal"
+                            : entry.action}
+                        </div>
                       )}
                       {entry.note && (
                         <p className="mt-1 rounded-md bg-slate-50 px-2 py-1 text-xs text-slate-600">

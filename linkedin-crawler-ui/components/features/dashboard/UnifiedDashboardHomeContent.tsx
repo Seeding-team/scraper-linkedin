@@ -4,6 +4,7 @@ import { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from "recharts";
 import { createPortal } from "react-dom";
 import { cn } from "@/lib/utils";
+import { FiExternalLink } from "react-icons/fi";
 import { ApiExtensionLauncher } from "@/components/all-platform/components/api-extension-launcher";
 import { useAppAuth } from "@/contexts/AppAuthContext";
 import { FilterBar, type FilterState } from "@/components/all-platform/components/filter-bar";
@@ -21,7 +22,7 @@ import { ScheduleCommentModal } from "@/components/all-platform/feed/ScheduleCom
 import { ScheduledCommentsPanel } from "@/components/all-platform/feed/ScheduledCommentsPanel";
 import { PostFeedSkeleton } from "@/components/all-platform/feed/PostFeedSkeleton";
 import { allPlatformPostsService, allPlatformCategoriesService, teamsService, socialAccountsService } from "@/services/all-platform.service";
-import type { UnifiedPost, UnifiedStats, Category, FeedPlatform, SocialAccount } from "@/types/unified.types";
+import type { UnifiedPost, UnifiedStats, Category, FeedPlatform, SocialAccount, PostSeedingRosterData } from "@/types/unified.types";
 
 // â”€â”€â”€ Retry helper â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 async function fetchWithRetry<T>(
@@ -239,6 +240,12 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
   const [scheduleModalPost, setScheduleModalPost] = useState<UnifiedPost | null>(null);
   const [scheduleRefreshKey, setScheduleRefreshKey] = useState(0);
   const [socialAccounts, setSocialAccounts] = useState<SocialAccount[]>([]);
+
+  // "Xem seeding theo team" (admin/leader) — roster toàn bộ team sở hữu group
+  // của 1 bài viết, kèm ai đã/chưa seeding + nội dung.
+  const [seedingRosterPost, setSeedingRosterPost] = useState<UnifiedPost | null>(null);
+  const [seedingRosterData, setSeedingRosterData] = useState<PostSeedingRosterData | null>(null);
+  const [isLoadingSeedingRoster, setIsLoadingSeedingRoster] = useState(false);
 
   // Result Modals
   const [showCrawlResultModal, setShowCrawlResultModal] = useState(false);
@@ -596,6 +603,32 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
     [posts, totalCount],
   );
 
+  const openSeedingRosterModal = useCallback(
+    async (post: UnifiedPost) => {
+      if (!post.id) return;
+      setSeedingRosterPost(post);
+      setSeedingRosterData(null);
+      setIsLoadingSeedingRoster(true);
+      try {
+        const res = await allPlatformPostsService.getPostSeedingRoster(CURRENT_USER_EMAIL, post.id, post.platform || feedPlatform);
+        if (res.success && res.data) {
+          setSeedingRosterData(res.data);
+        } else {
+          toast.error(res.message || "Không tải được danh sách seeding theo team.");
+        }
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "Không tải được danh sách seeding theo team.");
+      } finally {
+        setIsLoadingSeedingRoster(false);
+      }
+    },
+    [CURRENT_USER_EMAIL, feedPlatform],
+  );
+
+  const closeSeedingRosterModal = useCallback(() => {
+    setSeedingRosterPost(null);
+    setSeedingRosterData(null);
+  }, []);
 
   // Loc client-side theo mang dich vu da chon (xem SERVICE_AREA_TABS o dau
   // file) - khong doi lai backend/pagination, chi an/hien trong trang hien
@@ -606,9 +639,39 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
     [posts, serviceArea],
   );
 
+  // Tach rieng khoi khoi tieu de (!hideHeader) - day la CONTROL chuc nang
+  // (chuyen Facebook/LinkedIn), khong phai trang tri. Bug da gap: khi nhung
+  // trang "Seeding ben ngoai" render component nay voi hideHeader (gom vao
+  // tab noi bo, khong can lai tieu de "Unified Post Feed"), toan bo switcher
+  // nay bi an theo luon -> feedPlatform ket cung o "facebook" mac dinh, tab
+  // "Seeding ben ngoai" khong co cach nao xem duoc bai LinkedIn du logic cao/
+  // luu du lieu LinkedIn da chay va co du lieu that trong linkedin_posts.
+  const platformTabs = (
+    <div className="bg-muted p-0.5 rounded-lg flex gap-0.5">
+      {([
+        { key: "facebook", label: "Facebook" },
+        { key: "linkedin", label: "LinkedIn" },
+      ] as const).map((t) => (
+        <button
+          key={t.key}
+          type="button"
+          onClick={() => { setFeedPlatform(t.key); setPage(1); }}
+          className={cn(
+            "px-4 py-1 rounded-md text-xs font-semibold transition-all cursor-pointer",
+            feedPlatform === t.key
+              ? "bg-white text-foreground shadow-sm"
+              : "text-muted-foreground hover:text-foreground hover:bg-accent",
+          )}
+        >
+          {t.label}
+        </button>
+      ))}
+    </div>
+  );
+
   return (
     <div className="w-full space-y-6">
-      {!hideHeader && (
+      {!hideHeader ? (
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
           <div className="space-y-1">
             <h1 className="text-2xl font-bold text-foreground tracking-tight">Unified Post Feed</h1>
@@ -618,27 +681,12 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
           </div>
 
           <div className="flex flex-wrap items-center gap-3 shrink-0">
-            <div className="bg-muted p-0.5 rounded-lg flex gap-0.5">
-              {([
-                { key: "facebook", label: "Facebook" },
-                { key: "linkedin", label: "LinkedIn" },
-              ] as const).map((t) => (
-                <button
-                  key={t.key}
-                  type="button"
-                  onClick={() => { setFeedPlatform(t.key); setPage(1); }}
-                  className={cn(
-                    "px-4 py-1 rounded-md text-xs font-semibold transition-all cursor-pointer",
-                    feedPlatform === t.key
-                      ? "bg-white text-foreground shadow-sm"
-                      : "text-muted-foreground hover:text-foreground hover:bg-accent",
-                  )}
-                >
-                  {t.label}
-                </button>
-              ))}
-            </div>
+            {platformTabs}
           </div>
+        </div>
+      ) : (
+        <div className="flex items-center justify-end">
+          {platformTabs}
         </div>
       )}
 
@@ -860,6 +908,7 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
                   onSchedule={(post) => setScheduleModalPost(post)}
                   onViewDetail={(post) => setDetailModalPost(post)}
                   onDelete={(p) => void handleDeletePost(p)}
+                  onViewSeedingRoster={(p) => void openSeedingRosterModal(p)}
                 />
             ))}
           </div>
@@ -918,6 +967,86 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
         socialAccounts={socialAccounts}
         onScheduled={() => setScheduleRefreshKey((k) => k + 1)}
       />
+
+      {/* MODAL "Xem seeding theo team" (admin/leader) */}
+      {seedingRosterPost && typeof document !== "undefined" && createPortal(
+        <div
+          className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) closeSeedingRosterModal();
+          }}
+        >
+          <div className="w-[min(640px,100%)] max-h-[85vh] bg-card rounded-2xl shadow-xl overflow-hidden flex flex-col">
+            <div className="flex justify-between items-start p-5 border-b border-border">
+              <div>
+                <h3 className="text-base font-bold text-foreground">Seeding theo team</h3>
+                <div className="text-xs text-muted-foreground mt-0.5 line-clamp-1">
+                  {seedingRosterData?.team_name ? `Team: ${seedingRosterData.team_name} · ` : ""}
+                  Bài: {seedingRosterPost.content || "(Bài viết không có nội dung văn bản)"}
+                </div>
+              </div>
+              <button
+                type="button"
+                className="w-8 h-8 rounded-full hover:bg-muted flex items-center justify-center text-muted-foreground font-bold shrink-0"
+                onClick={closeSeedingRosterModal}
+                aria-label="Đóng"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="p-4 overflow-y-auto flex-1">
+              {isLoadingSeedingRoster ? (
+                <div className="p-8 text-center text-muted-foreground text-sm">Đang tải danh sách seeding theo team...</div>
+              ) : !seedingRosterData || seedingRosterData.items.length === 0 ? (
+                <div className="p-8 text-center text-muted-foreground text-sm">
+                  {seedingRosterData?.team_name
+                    ? "Team này chưa có thành viên nào."
+                    : "Bài viết này chưa xác định được team sở hữu (nhóm crawl chưa gán team)."}
+                </div>
+              ) : (
+                <div className="flex flex-col gap-2">
+                  {seedingRosterData.items.map((m) => (
+                    <div
+                      key={m.id_member}
+                      className={cn(
+                        "px-3 py-2 rounded-lg border flex flex-col gap-1",
+                        m.has_seeded ? "bg-emerald-50/50 border-emerald-100" : "bg-muted/40 border-border",
+                      )}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-sm font-bold text-foreground">{m.name}</span>
+                        {m.has_seeded ? (
+                          <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-700 shrink-0">
+                            ✓ Đã seeding
+                          </span>
+                        ) : (
+                          <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-700 shrink-0">
+                            Chưa seeding
+                          </span>
+                        )}
+                      </div>
+                      {m.has_seeded && m.content ? (
+                        <p className="text-sm text-muted-foreground line-clamp-2">
+                          <span className="text-emerald-500 font-serif font-bold text-lg leading-none mr-1">"</span>
+                          {m.content}
+                          <span className="text-emerald-500 font-serif font-bold text-lg leading-none ml-1">"</span>
+                        </p>
+                      ) : null}
+                      {m.link_comment ? (
+                        <a href={m.link_comment} target="_blank" rel="noopener noreferrer" className="text-[11px] font-medium text-blue-600 hover:underline inline-flex items-center gap-1 w-fit">
+                          Xem bình luận <FiExternalLink className="w-3 h-3" />
+                        </a>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>,
+        document.body,
+      )}
 
       {/* MODAL KẾT QUẢ CÀO */}
       {showCrawlResultModal && typeof document !== "undefined" && createPortal(

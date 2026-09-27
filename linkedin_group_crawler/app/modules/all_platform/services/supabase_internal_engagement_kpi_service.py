@@ -124,6 +124,37 @@ def get_marks_by_links(email_member: str, link_posts: list[str]) -> dict[str, st
     return {link: best_status.get(link, "need") for link in link_posts}
 
 
+def get_my_comments_by_links(email_member: str, link_posts: list[str]) -> dict[str, str]:
+    """Nội dung comment (bản thân người gọi) đã đăng thành công trên mỗi bài, để hiển
+    thị lại trên card bài viết trang Seeding nội bộ (khác get_post_interactions —
+    hàm đó cho modal roster nhiều người, hàm này chỉ trả về của chính email_member)."""
+    if not link_posts:
+        return {}
+
+    supabase: Client = get_supabase_client()
+    id_member = _get_member_id(email_member)
+    if not id_member:
+        return {}
+
+    result = (
+        supabase.table("internal_engagement_kpi")
+        .select("link_post, content, created_at")
+        .eq("id_member", id_member)
+        .eq("action_type", "comment")
+        .eq("status", "success")
+        .in_("link_post", link_posts)
+        .order("created_at", desc=True)
+        .execute()
+    )
+
+    comments: dict[str, str] = {}
+    for row in result.data or []:
+        link = row.get("link_post")
+        if link and link not in comments:
+            comments[link] = row.get("content") or ""
+    return comments
+
+
 def get_action_summary(
     email_member: str,
     date_from: Optional[str] = None,
@@ -1619,13 +1650,57 @@ def get_seeder_leaderboard_db() -> list[dict]:
 
 
 def get_post_interactions(link_post: str, email: str, team_id: Optional[str] = None) -> dict:
-    """Chi tiết tương tác: Lấy chuẩn theo Cầu nối linked_user_id."""
-    teams, role = resolve_team_scope(email, team_id)
-    if not teams:
-        return {"role": role, "teams": [], "items": []}
+    """Chi tiết tương tác: Lấy chuẩn theo Cầu nối linked_user_id.
 
+    Phân quyền xem nội dung comment (2026-09-27): admin thấy nội dung comment
+    của TẤT CẢ thành viên, leader thấy nội dung comment của mình + toàn bộ
+    member trong (các) team mình quản lý — không lọc gì thêm, dùng nguyên
+    `valid_teams`/`member_team` như code cũ. Member thì KHÔNG được đi qua
+    `resolve_team_scope` (hàm đó trả `teams=[]` cho role member — chặn hoàn
+    toàn) mà tự dựng 1 "team giả" chỉ gồm đúng bản thân, để tái dùng nguyên
+    logic KPI/deadline/status bên dưới nhưng kết quả chỉ có đúng 1 dòng của
+    chính họ — không phải lọc field, mà đơn giản là danh sách items không hề
+    chứa dòng của người khác.
+    """
     supabase: Client = get_supabase_client()
-    
+
+    user = get_user(email)
+    role = user.get("role", "member")
+    if role == "member":
+        own_app_user_id = str(user.get("id") or "")
+        if not own_app_user_id:
+            return {"role": role, "teams": [], "items": []}
+        # QUAN TRONG: member_of_teams.id_member tro theo members.id (bang roster
+        # "thanh vien", KHAC voi app_users.id la id tai khoan dang nhap) - phai
+        # tra nguoc qua members.linked_user_id de lay dung id, neu khong query
+        # member_of_teams se khong khop dong nao (giong cach `_load_all_teams`/
+        # `original_to_linked` xu ly ben duoi). Fallback ve chinh no neu khong
+        # co row members tuong ung (mot so tai khoan dung chung 1 id ca 2 bang).
+        own_member_res = (
+            supabase.table("members").select("id").eq("linked_user_id", own_app_user_id).limit(1).execute()
+        ).data or []
+        own_member_id = own_member_res[0]["id"] if own_member_res else own_app_user_id
+        mot_res = (
+            supabase.table("member_of_teams")
+            .select("id_teams, teams!inner(id, name_team)")
+            .eq("id_member", own_member_id)
+            .limit(1)
+            .execute()
+        ).data or []
+        team_info = (mot_res[0].get("teams") or {}) if mot_res else {}
+        teams = [
+            {
+                "id": team_info.get("id"),
+                "name_team": team_info.get("name_team") or "Team",
+                "members": [{"id": own_member_id}],
+            }
+        ]
+    else:
+        teams, role = resolve_team_scope(email, team_id)
+        if not teams:
+            return {"role": role, "teams": [], "items": []}
+
+
     post_res = supabase.table("internal_engagement_custom_posts").select("deadline, assigned_team_ids").eq("link_post", link_post).execute()
     post_data = post_res.data[0] if post_res.data else {}
     deadline_str = post_data.get("deadline")
@@ -1709,6 +1784,11 @@ def get_post_interactions(link_post: str, email: str, team_id: Optional[str] = N
             ts_key = f"{action_type}_time"
             if ts_key not in kpi_by_member[m_id]:
                 kpi_by_member[m_id][ts_key] = row.get("created_at")
+            # Nội dung comment thật đã đăng — kpi_rows đã order created_at desc
+            # nên dòng ĐẦU TIÊN gặp cho mỗi member ở action_type comment chính
+            # là lần comment gần nhất (không cần so sánh thời gian lại).
+            if action_type == "comment" and "comment_content" not in kpi_by_member[m_id]:
+                kpi_by_member[m_id]["comment_content"] = row.get("content") or ""
             # latest_row: dùng để tính "thời gian gần nhất" cho cột Thời gian
             existing_latest = kpi_by_member[m_id].get("latest_row")
             if not existing_latest:
@@ -1776,6 +1856,7 @@ def get_post_interactions(link_post: str, email: str, team_id: Optional[str] = N
             "like_time": m_kpi_actions.get("like_time"),
             "comment_time": m_kpi_actions.get("comment_time"),
             "share_time": m_kpi_actions.get("share_time"),
+            "comment_content": m_kpi_actions.get("comment_content") or "",
             "time": time_str,
             "raw_created_at": raw_created_at,
         })
