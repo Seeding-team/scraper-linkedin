@@ -60,11 +60,7 @@
   font-size: 0.83rem;
   font-weight: 700;
   padding: 0 0.85rem;
-  transition:
-    background 0.16s ease,
-    border-color 0.16s ease,
-    color 0.16s ease,
-    transform 0.16s ease;
+  transition: background 0.16s ease, border-color 0.16s ease, color 0.16s ease, transform 0.16s ease;
 }
 
 .crm-back-button:hover {
@@ -197,31 +193,13 @@
   font-weight: 700;
 }
 
-.crm-stat-card--total .crm-stat-label {
-  color: #64748b;
-}
-.crm-stat-card--open {
-  border-color: #bfdbfe;
-  background: #eff6ff;
-  color: #1d4ed8;
-}
-.crm-stat-card--won {
-  border-color: #86efac;
-  background: #ecfdf5;
-  color: #047857;
-}
-.crm-stat-card--won-value {
-  border-color: #fcd34d;
-  background: #fffbeb;
-  color: #b45309;
-}
+.crm-stat-card--total .crm-stat-label { color: #64748b; }
+.crm-stat-card--open { border-color: #bfdbfe; background: #eff6ff; color: #1d4ed8; }
+.crm-stat-card--won { border-color: #86efac; background: #ecfdf5; color: #047857; }
+.crm-stat-card--won-value { border-color: #fcd34d; background: #fffbeb; color: #b45309; }
 
 /* Tab "Du an" trong Ho so khach hang (Checkpoint C) */
-.crm-projects-tab {
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-}
+.crm-projects-tab { display: flex; flex-direction: column; gap: 1rem; }
 .crm-projects-tab-head {
   display: flex;
   align-items: flex-start;
@@ -229,18 +207,9 @@
   gap: 1rem;
   flex-wrap: wrap;
 }
-.crm-projects-tab-head h3 {
-  margin: 0;
-  font-size: 1rem;
-}
-.crm-projects-tab-head p {
-  margin: 0.2rem 0 0;
-  font-size: 0.82rem;
-  color: #64748b;
-}
-.crm-projects-summary-grid {
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-}
+.crm-projects-tab-head h3 { margin: 0; font-size: 1rem; }
+.crm-projects-tab-head p { margin: 0.2rem 0 0; font-size: 0.82rem; color: #64748b; }
+.crm-projects-summary-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); }
 .crm-projects-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -260,10 +229,7 @@
   justify-content: space-between;
   gap: 0.5rem;
 }
-.crm-project-card-head h4 {
-  margin: 0.1rem 0 0;
-  font-size: 0.95rem;
-}
+.crm-project-card-head h4 { margin: 0.1rem 0 0; font-size: 0.95rem; }
 .crm-project-code {
   font-size: 0.7rem;
   font-weight: 700;
@@ -278,22 +244,10 @@
   border-radius: 999px;
   white-space: nowrap;
 }
-.crm-project-status--planning {
-  background: #eef2ff;
-  color: #4338ca;
-}
-.crm-project-status--active {
-  background: #eaf9f2;
-  color: #12845a;
-}
-.crm-project-status--completed {
-  background: #f1f5f9;
-  color: #475569;
-}
-.crm-project-status--cancelled {
-  background: #fdeaec;
-  color: #b3261e;
-}
+.crm-project-status--planning { background: #eef2ff; color: #4338ca; }
+.crm-project-status--active { background: #eaf9f2; color: #12845a; }
+.crm-project-status--completed { background: #f1f5f9; color: #475569; }
+.crm-project-status--cancelled { background: #fdeaec; color: #b3261e; }
 .crm-project-card-meta {
   display: flex;
   flex-wrap: wrap;
@@ -309,12 +263,8 @@
 }
 
 @media (max-width: 900px) {
-  .crm-projects-grid {
-    grid-template-columns: 1fr;
-  }
-  .crm-projects-summary-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
+  .crm-projects-grid { grid-template-columns: 1fr; }
+  .crm-projects-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 .crm-filter-card {
@@ -328,10 +278,7 @@
 
 .crm-filter-grid {
   display: grid;
-  grid-template-columns: minmax(18rem, 1fr) minmax(10rem, 12rem) minmax(
-      12rem,
-      14rem
-    ) minmax(14rem, 18rem) auto;
+  grid-template-columns: minmax(18rem, 1fr) minmax(10rem, 12rem) minmax(12rem, 14rem) minmax(14rem, 18rem) auto;
   gap: 0.65rem;
   align-items: stretch;
 }
@@ -427,7 +374,7 @@
   top: 50%;
   width: 0.52rem;
   height: 0.52rem;
-  content: "";
+  content: '';
   border-right: 2px solid #64748b;
   border-bottom: 2px solid #64748b;
   transform: translateY(-65%) rotate(45deg);
@@ -480,8 +427,7 @@
 }
 
 .crm-filter-select-menu:hover .crm-filter-select-option.is-selected:not(:hover),
-.crm-analytics-filter-menu:hover
-  .crm-analytics-filter-option.is-selected:not(:hover) {
+.crm-analytics-filter-menu:hover .crm-analytics-filter-option.is-selected:not(:hover) {
   background: transparent;
   color: #0f172a;
   font-weight: 600;
@@ -576,9 +522,7 @@
 }
 
 .crm-select-chevron {
-  transition:
-    transform 0.22s cubic-bezier(0.4, 0, 0.2, 1),
-    color 0.18s ease;
+  transition: transform 0.22s cubic-bezier(0.4, 0, 0.2, 1), color 0.18s ease;
 }
 
 .crm-searchable-select-trigger:hover .crm-select-chevron {
@@ -599,9 +543,7 @@
   border: 1px solid #e2e8f0;
   border-radius: 0.8rem;
   background: #ffffff;
-  box-shadow:
-    0 14px 34px -4px rgba(15, 23, 42, 0.12),
-    0 4px 12px -2px rgba(15, 23, 42, 0.06);
+  box-shadow: 0 14px 34px -4px rgba(15, 23, 42, 0.12), 0 4px 12px -2px rgba(15, 23, 42, 0.06);
   padding: 0.45rem;
   animation: crmDropdownSlideIn 0.16s cubic-bezier(0.16, 1, 0.3, 1);
 }
@@ -737,9 +679,7 @@
   padding: 0.45rem 0.65rem;
   text-align: left;
   cursor: pointer;
-  transition:
-    background 0.12s ease,
-    color 0.12s ease;
+  transition: background 0.12s ease, color 0.12s ease;
 }
 
 .crm-searchable-select-option-text {
@@ -774,15 +714,12 @@
   font-weight: 600;
 }
 
-.crm-searchable-select-list:hover
-  .crm-searchable-select-option.is-selected:not(:hover):not(.is-highlighted) {
+.crm-searchable-select-list:hover .crm-searchable-select-option.is-selected:not(:hover):not(.is-highlighted) {
   background: transparent;
   color: #1e293b;
 }
 
-.crm-searchable-select-list:hover
-  .crm-searchable-select-option.is-selected:not(:hover):not(.is-highlighted)
-  .crm-searchable-select-check {
+.crm-searchable-select-list:hover .crm-searchable-select-option.is-selected:not(:hover):not(.is-highlighted) .crm-searchable-select-check {
   color: #be1e4b;
 }
 
@@ -1076,56 +1013,16 @@
   color: #64748b;
 }
 
-.stage-badge-blue {
-  border-color: #bfdbfe;
-  background: #eff6ff;
-  color: #1d4ed8;
-}
-.stage-badge-cyan {
-  border-color: #a5f3fc;
-  background: #ecfeff;
-  color: #0e7490;
-}
-.stage-badge-violet {
-  border-color: #ddd6fe;
-  background: #f5f3ff;
-  color: #6d28d9;
-}
-.stage-badge-fuchsia {
-  border-color: #f5d0fe;
-  background: #fdf4ff;
-  color: #a21caf;
-}
-.stage-badge-amber {
-  border-color: #fde68a;
-  background: #fffbeb;
-  color: #b45309;
-}
-.stage-badge-orange {
-  border-color: #fed7aa;
-  background: #fff7ed;
-  color: #c2410c;
-}
-.stage-badge-rose {
-  border-color: #fecdd3;
-  background: #fff1f2;
-  color: #be123c;
-}
-.stage-badge-slate {
-  border-color: #cbd5e1;
-  background: #f8fafc;
-  color: #475569;
-}
-.stage-badge-emerald {
-  border-color: #a7f3d0;
-  background: #ecfdf5;
-  color: #047857;
-}
-.stage-badge-red {
-  border-color: #fecaca;
-  background: #fef2f2;
-  color: #b91c1c;
-}
+.stage-badge-blue { border-color: #bfdbfe; background: #eff6ff; color: #1d4ed8; }
+.stage-badge-cyan { border-color: #a5f3fc; background: #ecfeff; color: #0e7490; }
+.stage-badge-violet { border-color: #ddd6fe; background: #f5f3ff; color: #6d28d9; }
+.stage-badge-fuchsia { border-color: #f5d0fe; background: #fdf4ff; color: #a21caf; }
+.stage-badge-amber { border-color: #fde68a; background: #fffbeb; color: #b45309; }
+.stage-badge-orange { border-color: #fed7aa; background: #fff7ed; color: #c2410c; }
+.stage-badge-rose { border-color: #fecdd3; background: #fff1f2; color: #be123c; }
+.stage-badge-slate { border-color: #cbd5e1; background: #f8fafc; color: #475569; }
+.stage-badge-emerald { border-color: #a7f3d0; background: #ecfdf5; color: #047857; }
+.stage-badge-red { border-color: #fecaca; background: #fef2f2; color: #b91c1c; }
 
 /* Chip "đã chọn" — dùng ở picker Giai đoạn của popup "Thêm deal" nhanh (khác .crm-stage-pill
  * mặc định/--idle dùng cho bộ lọc, ở đây là 1 LỰA CHỌN đơn, không phải filter). Màu nền lấy
@@ -1772,18 +1669,10 @@
   color: #0f172a;
   cursor: pointer;
 }
-.crm-deal-card--health-good .crm-deal-card-score {
-  color: #047857;
-}
-.crm-deal-card--health-fair .crm-deal-card-score {
-  color: #1d4ed8;
-}
-.crm-deal-card--health-warning .crm-deal-card-score {
-  color: #b45309;
-}
-.crm-deal-card--health-risk .crm-deal-card-score {
-  color: #b91c1c;
-}
+.crm-deal-card--health-good .crm-deal-card-score { color: #047857; }
+.crm-deal-card--health-fair .crm-deal-card-score { color: #1d4ed8; }
+.crm-deal-card--health-warning .crm-deal-card-score { color: #b45309; }
+.crm-deal-card--health-risk .crm-deal-card-score { color: #b91c1c; }
 
 .crm-ai-fill {
   margin-bottom: 1.35rem;
@@ -2125,10 +2014,7 @@
   background: #ffffff;
   padding: 0.72rem;
   box-shadow: 0 1px 4px rgba(15, 23, 42, 0.12);
-  transition:
-    border-color 0.18s ease,
-    box-shadow 0.18s ease,
-    transform 0.18s ease;
+  transition: border-color 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease;
 }
 
 /* Ribbon góc — kiểu tag mã giảm giá Shopee, không chiếm chỗ trong nội dung card. */
@@ -2232,18 +2118,9 @@
   overflow-wrap: anywhere;
 }
 
-.crm-service-tag--category {
-  background: #ecfdf5;
-  color: #047857;
-}
-.crm-service-tag--package {
-  background: #eff6ff;
-  color: #1d4ed8;
-}
-.crm-service-tag--team {
-  background: #fdf2f8;
-  color: #a21caf;
-}
+.crm-service-tag--category { background: #ecfdf5; color: #047857; }
+.crm-service-tag--package { background: #eff6ff; color: #1d4ed8; }
+.crm-service-tag--team { background: #fdf2f8; color: #a21caf; }
 
 .crm-contact-actions {
   display: grid;
@@ -2270,36 +2147,12 @@
   cursor: pointer;
 }
 
-.crm-contact-action--phone {
-  border-color: #bbf7d0;
-  background: #ecfdf5;
-  color: #059669;
-}
-.crm-contact-action--zalo {
-  border-color: #bfdbfe;
-  background: #eff6ff;
-  color: #0068ff;
-}
-.crm-contact-action--facebook {
-  border-color: #bfdbfe;
-  background: #eff6ff;
-  color: #1877f2;
-}
-.crm-contact-action--telegram {
-  border-color: #bae6fd;
-  background: #f0f9ff;
-  color: #229ed9;
-}
-.crm-contact-action--quote {
-  border-color: #fbcfe8;
-  background: #fdf2f8;
-  color: #be1e4b;
-}
-.crm-contact-action--email {
-  border-color: #fecdd3;
-  background: #fff1f2;
-  color: #e11d48;
-}
+.crm-contact-action--phone { border-color: #bbf7d0; background: #ecfdf5; color: #059669; }
+.crm-contact-action--zalo { border-color: #bfdbfe; background: #eff6ff; color: #0068ff; }
+.crm-contact-action--facebook { border-color: #bfdbfe; background: #eff6ff; color: #1877f2; }
+.crm-contact-action--telegram { border-color: #bae6fd; background: #f0f9ff; color: #229ed9; }
+.crm-contact-action--quote { border-color: #fbcfe8; background: #fdf2f8; color: #be1e4b; }
+.crm-contact-action--email { border-color: #fecdd3; background: #fff1f2; color: #e11d48; }
 
 .crm-line-icon {
   width: 0.85rem;
@@ -2499,14 +2352,8 @@
   font-weight: 700;
 }
 
-.crm-owner-avatar {
-  background: #ffe4ec;
-  color: #be1e4b;
-}
-.crm-owner-empty {
-  background: #f1f5f9;
-  color: #64748b;
-}
+.crm-owner-avatar { background: #ffe4ec; color: #be1e4b; }
+.crm-owner-empty { background: #f1f5f9; color: #64748b; }
 
 .crm-terminal-divider {
   display: flex;
@@ -2545,9 +2392,7 @@
   border-radius: 1rem;
   padding: 1.5rem;
   text-align: center;
-  transition:
-    transform 0.18s ease,
-    box-shadow 0.18s ease;
+  transition: transform 0.18s ease, box-shadow 0.18s ease;
 }
 
 .crm-terminal-zone--active,
@@ -2681,36 +2526,16 @@
   table-layout: fixed;
 }
 
-.crm-col-customer {
-  width: 16%;
-}
-.crm-col-contact {
-  width: 12%;
-}
-.crm-col-source {
-  width: 7%;
-}
-.crm-col-stage {
-  width: 11%;
-}
-.crm-col-budget {
-  width: 9%;
-}
-.crm-col-decision {
-  width: 10%;
-}
-.crm-col-contract {
-  width: 10%;
-}
-.crm-col-follow {
-  width: 8%;
-}
-.crm-col-created {
-  width: 7%;
-}
-.crm-col-actions {
-  width: 10%;
-}
+.crm-col-customer { width: 16%; }
+.crm-col-contact { width: 12%; }
+.crm-col-source { width: 7%; }
+.crm-col-stage { width: 11%; }
+.crm-col-budget { width: 9%; }
+.crm-col-decision { width: 10%; }
+.crm-col-contract { width: 10%; }
+.crm-col-follow { width: 8%; }
+.crm-col-created { width: 7%; }
+.crm-col-actions { width: 10%; }
 
 .crm-table thead tr {
   border-bottom: 1px solid #e2e8f0;
@@ -3038,12 +2863,12 @@
   align-items: center;
   list-style: none;
   flex-shrink: 0;
-  margin-top: 0.4rem;
+  margin-top: .4rem;
 }
 .crm-lead-import-step {
   display: flex;
   align-items: center;
-  gap: 0.45rem;
+  gap: .45rem;
 }
 .crm-lead-import-step-circle {
   display: inline-flex;
@@ -3055,11 +2880,11 @@
   border-radius: 999px;
   background: #e2e8f0;
   color: #94a3b8;
-  font-size: 0.7rem;
+  font-size: .7rem;
   font-weight: 700;
 }
 .crm-lead-import-step-label {
-  font-size: 0.78rem;
+  font-size: .78rem;
   font-weight: 600;
   color: #94a3b8;
   white-space: nowrap;
@@ -3067,42 +2892,27 @@
 .crm-lead-import-step-connector {
   width: 1.5rem;
   height: 2px;
-  margin: 0 0.5rem;
+  margin: 0 .5rem;
   flex-shrink: 0;
   background: #e2e8f0;
 }
-.crm-lead-import-step-connector.is-filled {
-  background: #f0b5c8;
-}
-.crm-lead-import-step.is-active .crm-lead-import-step-circle {
-  background: #be1e4b;
-  color: #fff;
-}
-.crm-lead-import-step.is-active .crm-lead-import-step-label {
-  color: #0f172a;
-}
-.crm-lead-import-step.is-done .crm-lead-import-step-circle {
-  background: #fbdce6;
-  color: #be1e4b;
-}
-.crm-lead-import-step.is-done .crm-lead-import-step-label {
-  color: #64748b;
-}
+.crm-lead-import-step-connector.is-filled { background: #f0b5c8; }
+.crm-lead-import-step.is-active .crm-lead-import-step-circle { background: #be1e4b; color: #fff; }
+.crm-lead-import-step.is-active .crm-lead-import-step-label { color: #0f172a; }
+.crm-lead-import-step.is-done .crm-lead-import-step-circle { background: #fbdce6; color: #be1e4b; }
+.crm-lead-import-step.is-done .crm-lead-import-step-label { color: #64748b; }
 
 @media (max-width: 900px) {
-  .crm-lead-import-header-steps {
-    width: 100%;
-    margin-left: 0;
-  }
+  .crm-lead-import-header-steps { width: 100%; margin-left: 0; }
 }
 
 .crm-lead-import-notice {
   margin-bottom: 1rem;
   border: 1px solid #bae6fd;
-  border-radius: 0.7rem;
+  border-radius: .7rem;
   background: #f0f9ff;
   color: #075985;
-  padding: 0.75rem 1rem;
+  padding: .75rem 1rem;
 }
 
 .crm-lead-import-filebar,
@@ -3111,7 +2921,7 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.65rem;
+  gap: .65rem;
   margin-bottom: 1rem;
 }
 
@@ -3120,35 +2930,26 @@
   border-radius: 999px;
   background: #f1f5f9;
   color: #475569;
-  font-size: 0.75rem;
-  padding: 0.3rem 0.65rem;
+  font-size: .75rem;
+  padding: .3rem .65rem;
 }
 
-.crm-lead-import-summary .is-valid {
-  background: #dcfce7;
-  color: #166534;
-}
-.crm-lead-import-summary .is-duplicate {
-  background: #fef3c7;
-  color: #92400e;
-}
-.crm-lead-import-summary .is-error {
-  background: #fee2e2;
-  color: #991b1b;
-}
+.crm-lead-import-summary .is-valid { background: #dcfce7; color: #166534; }
+.crm-lead-import-summary .is-duplicate { background: #fef3c7; color: #92400e; }
+.crm-lead-import-summary .is-error { background: #fee2e2; color: #991b1b; }
 .crm-lead-import-table-wrap {
   max-height: min(48vh, 32rem);
   overflow: auto;
   overscroll-behavior: contain;
   border: 1px solid #e2e8f0;
-  border-radius: 0.7rem;
+  border-radius: .7rem;
 }
 .crm-lead-import-table th,
 .crm-lead-import-table td {
-  padding: 0.65rem 0.75rem;
+  padding: .65rem .75rem;
   text-align: left;
   vertical-align: top;
-  font-size: 0.75rem;
+  font-size: .75rem;
   line-height: 1.5;
   white-space: normal;
   overflow-wrap: anywhere;
@@ -3159,37 +2960,25 @@
   z-index: 1;
   background: #f8fafc;
 }
-.crm-lead-import-table input[type="checkbox"] {
-  display: block;
-  margin: 0.15rem auto;
-}
-.crm-lead-import-table tr.is-duplicate td {
-  background: #fffbeb;
-}
-.crm-lead-import-table tr.is-error td {
-  background: #fff1f2;
-}
-.crm-lead-import-table td:last-child div {
-  margin-top: 0.2rem;
-  color: #b91c1c;
-}
+.crm-lead-import-table input[type="checkbox"] { display: block; margin: .15rem auto; }
+.crm-lead-import-table tr.is-duplicate td { background: #fffbeb; }
+.crm-lead-import-table tr.is-error td { background: #fff1f2; }
+.crm-lead-import-table td:last-child div { margin-top: .2rem; color: #b91c1c; }
 
 /* "Xem thêm cột" mo rong ngang (khong tang chieu cao row) - Checkbox+Ho ten
  * ghim trai, Trang thai ghim phai, cuon ngang o giua khi bat cot phu. */
 .crm-lead-import-columns-toggle {
   margin-left: auto;
   border: 1px solid #cbd5e1;
-  border-radius: 0.5rem;
+  border-radius: .5rem;
   background: #fff;
   color: #2563eb;
-  font-size: 0.75rem;
+  font-size: .75rem;
   font-weight: 600;
-  padding: 0.35rem 0.75rem;
+  padding: .35rem .75rem;
   white-space: nowrap;
 }
-.crm-lead-import-columns-toggle:hover {
-  background: #f8fafc;
-}
+.crm-lead-import-columns-toggle:hover { background: #f8fafc; }
 
 .crm-lead-import-table th:nth-child(1),
 .crm-lead-import-table td:nth-child(1) {
@@ -3212,38 +3001,19 @@
 }
 .crm-lead-import-table th:nth-child(1),
 .crm-lead-import-table th:nth-child(2),
-.crm-lead-import-table th:last-child {
-  z-index: 2;
-}
+.crm-lead-import-table th:last-child { z-index: 2; }
 .crm-lead-import-table td:nth-child(1),
 .crm-lead-import-table td:nth-child(2),
-.crm-lead-import-table td:last-child {
-  z-index: 1;
-  background: #fff;
-}
+.crm-lead-import-table td:last-child { z-index: 1; background: #fff; }
 .crm-lead-import-table tr.is-duplicate td:nth-child(1),
 .crm-lead-import-table tr.is-duplicate td:nth-child(2),
-.crm-lead-import-table tr.is-duplicate td:last-child {
-  background: #fffbeb;
-}
+.crm-lead-import-table tr.is-duplicate td:last-child { background: #fffbeb; }
 .crm-lead-import-table tr.is-error td:nth-child(1),
 .crm-lead-import-table tr.is-error td:nth-child(2),
-.crm-lead-import-table tr.is-error td:last-child {
-  background: #fff1f2;
-}
-.crm-lead-import-result {
-  border-radius: 0.8rem;
-  background: #f0fdf4;
-  color: #166534;
-  padding: 1.25rem;
-}
-.crm-lead-import-result h3 {
-  margin-bottom: 0.5rem;
-  font-size: 1.05rem;
-}
-.crm-lead-import-result ul {
-  margin: 0.75rem 0 0 1.25rem;
-}
+.crm-lead-import-table tr.is-error td:last-child { background: #fff1f2; }
+.crm-lead-import-result { border-radius: .8rem; background: #f0fdf4; color: #166534; padding: 1.25rem; }
+.crm-lead-import-result h3 { margin-bottom: .5rem; font-size: 1.05rem; }
+.crm-lead-import-result ul { margin: .75rem 0 0 1.25rem; }
 
 /* O bang bam-vao-de-sua (EditableTextCell) trong Preview Import Lead. */
 .crm-lead-import-cell-display {
@@ -3251,28 +3021,25 @@
   width: 100%;
   min-height: 1.6rem;
   border: 1px dashed transparent;
-  border-radius: 0.4rem;
+  border-radius: .4rem;
   background: transparent;
   color: inherit;
   font: inherit;
   text-align: left;
-  padding: 0.15rem 0.3rem;
+  padding: .15rem .3rem;
 }
-.crm-lead-import-cell-display:hover {
-  border-color: #cbd5e1;
-  background: #f8fafc;
-}
+.crm-lead-import-cell-display:hover { border-color: #cbd5e1; background: #f8fafc; }
 .crm-lead-import-cell-input {
   width: 100%;
   border: 1px solid #2563eb;
-  border-radius: 0.4rem;
-  padding: 0.25rem 0.4rem;
+  border-radius: .4rem;
+  padding: .25rem .4rem;
   font: inherit;
   color: inherit;
 }
 
 .crm-lead-import-pending-create {
-  margin-top: 0.2rem;
+  margin-top: .2rem;
   color: #1d4ed8;
 }
 
@@ -3282,15 +3049,15 @@
 .crm-lead-import-pending-option {
   display: inline-flex;
   align-items: center;
-  gap: 0.35rem;
+  gap: .35rem;
 }
 .crm-lead-import-pending-badge {
   border-radius: 999px;
   background: #dbeafe;
   color: #1d4ed8;
-  font-size: 0.65rem;
+  font-size: .65rem;
   font-weight: 700;
-  padding: 0.1rem 0.45rem;
+  padding: .1rem .45rem;
   white-space: nowrap;
 }
 
@@ -3597,12 +3364,8 @@
   padding: 0.4rem 0.75rem;
 }
 
-.crm-review-badge--won {
-  background: #16a34a;
-}
-.crm-review-badge--lost {
-  background: #dc2626;
-}
+.crm-review-badge--won { background: #16a34a; }
+.crm-review-badge--lost { background: #dc2626; }
 
 .crm-review-section {
   padding: 1.1rem 1.25rem;
@@ -3854,21 +3617,9 @@
   padding: 0.75rem;
 }
 
-.crm-terminal-note--won {
-  border: 1px solid #86efac;
-  background: #ecfdf5;
-  color: #047857;
-}
-.crm-terminal-note--lost {
-  border: 1px solid #fecaca;
-  background: #fef2f2;
-  color: #b91c1c;
-}
-.crm-terminal-note--hold {
-  border: 1px solid #fcd34d;
-  background: #fffbeb;
-  color: #92400e;
-}
+.crm-terminal-note--won { border: 1px solid #86efac; background: #ecfdf5; color: #047857; }
+.crm-terminal-note--lost { border: 1px solid #fecaca; background: #fef2f2; color: #b91c1c; }
+.crm-terminal-note--hold { border: 1px solid #fcd34d; background: #fffbeb; color: #92400e; }
 
 .crm-meta-grid {
   display: grid;
@@ -5049,30 +4800,12 @@
   white-space: nowrap;
 }
 
-.crm-kpi-card--slate .crm-kpi-icon {
-  background: #f1f5f9;
-  color: #475569;
-}
-.crm-kpi-card--blue .crm-kpi-icon {
-  background: #dbeafe;
-  color: #2563eb;
-}
-.crm-kpi-card--green .crm-kpi-icon {
-  background: #dcfce7;
-  color: #16a34a;
-}
-.crm-kpi-card--teal .crm-kpi-icon {
-  background: #ccfbf1;
-  color: #0f766e;
-}
-.crm-kpi-card--amber .crm-kpi-icon {
-  background: #fef3c7;
-  color: #d97706;
-}
-.crm-kpi-card--violet .crm-kpi-icon {
-  background: #ede9fe;
-  color: #7c3aed;
-}
+.crm-kpi-card--slate .crm-kpi-icon { background: #f1f5f9; color: #475569; }
+.crm-kpi-card--blue .crm-kpi-icon { background: #dbeafe; color: #2563eb; }
+.crm-kpi-card--green .crm-kpi-icon { background: #dcfce7; color: #16a34a; }
+.crm-kpi-card--teal .crm-kpi-icon { background: #ccfbf1; color: #0f766e; }
+.crm-kpi-card--amber .crm-kpi-icon { background: #fef3c7; color: #d97706; }
+.crm-kpi-card--violet .crm-kpi-icon { background: #ede9fe; color: #7c3aed; }
 
 .crm-analytics-main-grid,
 .crm-bottom-grid {
@@ -5128,10 +4861,7 @@
 .crm-revenue-row {
   display: grid;
   min-width: 0;
-  grid-template-columns: minmax(6.5rem, 0.8fr) minmax(7rem, 1.2fr) minmax(
-      5.5rem,
-      0.8fr
-    ) 3.5rem;
+  grid-template-columns: minmax(6.5rem, 0.8fr) minmax(7rem, 1.2fr) minmax(5.5rem, 0.8fr) 3.5rem;
   gap: 0.75rem;
   align-items: center;
 }
@@ -5191,13 +4921,7 @@
   border-radius: 999px;
   background:
     radial-gradient(circle, #ffffff 0 48%, transparent 49%),
-    conic-gradient(
-      var(--donut-color) 0 42%,
-      #3b82f6 42% 69%,
-      #f59e0b 69% 84%,
-      #a855f7 84% 92%,
-      #14b8a6 92% 100%
-    );
+    conic-gradient(var(--donut-color) 0 42%, #3b82f6 42% 69%, #f59e0b 69% 84%, #a855f7 84% 92%, #14b8a6 92% 100%);
 }
 
 .crm-donut span {
@@ -5302,7 +5026,7 @@
 }
 
 .crm-tip-card p::before {
-  content: "";
+  content: '';
   position: absolute;
   left: 0;
   top: 0.55rem;
@@ -6156,9 +5880,7 @@
   justify-content: center;
   border-radius: 0.6rem;
   color: #334155;
-  transition:
-    background 0.15s ease,
-    color 0.15s ease;
+  transition: background 0.15s ease, color 0.15s ease;
 }
 
 .crm-wizard-modal .crm-modal-close:hover {
@@ -6188,11 +5910,7 @@
 
 .crm-wizard-modal .crm-wizard-body {
   background:
-    radial-gradient(
-      circle at 14% 0%,
-      rgba(190, 30, 75, 0.06),
-      transparent 22rem
-    ),
+    radial-gradient(circle at 14% 0%, rgba(190, 30, 75, 0.06), transparent 22rem),
     #f6f8fb;
   padding: 1rem 1.25rem 1.4rem;
 }
@@ -6539,10 +6257,7 @@
 }
 
 .crm-filter-grid--customers {
-  grid-template-columns: minmax(16rem, 1.4fr) minmax(10rem, 1fr) minmax(
-      10rem,
-      1fr
-    ) minmax(12rem, 1fr) auto;
+  grid-template-columns: minmax(16rem, 1.4fr) minmax(10rem, 1fr) minmax(10rem, 1fr) minmax(12rem, 1fr) auto;
 }
 
 .crm-customer-status-badge {
@@ -6558,26 +6273,10 @@
   white-space: nowrap;
 }
 
-.crm-customer-status--new {
-  border-color: #bfdbfe;
-  background: #eff6ff;
-  color: #1d4ed8;
-}
-.crm-customer-status--following {
-  border-color: #fde68a;
-  background: #fffbeb;
-  color: #b45309;
-}
-.crm-customer-status--current {
-  border-color: #a7f3d0;
-  background: #ecfdf5;
-  color: #047857;
-}
-.crm-customer-status--not-fit {
-  border-color: #cbd5e1;
-  background: #f8fafc;
-  color: #64748b;
-}
+.crm-customer-status--new { border-color: #bfdbfe; background: #eff6ff; color: #1d4ed8; }
+.crm-customer-status--following { border-color: #fde68a; background: #fffbeb; color: #b45309; }
+.crm-customer-status--current { border-color: #a7f3d0; background: #ecfdf5; color: #047857; }
+.crm-customer-status--not-fit { border-color: #cbd5e1; background: #f8fafc; color: #64748b; }
 
 .crm-customer-directory-table {
   min-width: 1100px;
@@ -6886,11 +6585,7 @@
   white-space: nowrap;
 }
 
-.crm-badge--neutral {
-  border-color: #cbd5e1;
-  background: #f8fafc;
-  color: #475569;
-}
+.crm-badge--neutral { border-color: #cbd5e1; background: #f8fafc; color: #475569; }
 
 /* Ma/code danh muc: text thuong (mono nhe), KHONG con la pill mau to nhu
  * truoc — Ten moi la trong tam hien thi, Ma chi la thong tin phu. */
@@ -6900,26 +6595,10 @@
   font-family: "SFMono-Regular", Consolas, monospace;
   font-size: 0.74rem;
 }
-.crm-badge--info {
-  border-color: #bfdbfe;
-  background: #eff6ff;
-  color: #1d4ed8;
-}
-.crm-badge--success {
-  border-color: #a7f3d0;
-  background: #ecfdf5;
-  color: #047857;
-}
-.crm-badge--warning {
-  border-color: #fde68a;
-  background: #fffbeb;
-  color: #b45309;
-}
-.crm-badge--danger {
-  border-color: #fecaca;
-  background: #fef2f2;
-  color: #b91c1c;
-}
+.crm-badge--info { border-color: #bfdbfe; background: #eff6ff; color: #1d4ed8; }
+.crm-badge--success { border-color: #a7f3d0; background: #ecfdf5; color: #047857; }
+.crm-badge--warning { border-color: #fde68a; background: #fffbeb; color: #b45309; }
+.crm-badge--danger { border-color: #fecaca; background: #fef2f2; color: #b91c1c; }
 
 /* Nút hành động icon trong bảng (Sửa/Xóa/Xem...) — luôn kèm title=. */
 .crm-icon-action {
@@ -6933,9 +6612,7 @@
   background: transparent;
   color: #64748b;
   cursor: pointer;
-  transition:
-    background-color 0.15s ease,
-    color 0.15s ease;
+  transition: background-color 0.15s ease, color 0.15s ease;
 }
 
 .crm-icon-action:hover {
@@ -7087,48 +6764,28 @@
   min-width: 0;
 }
 
-.crm-col-cust-name {
-  width: 14%;
-}
-.crm-col-cust-contact {
-  width: 12%;
-}
+.crm-col-cust-name { width: 14%; }
+.crm-col-cust-contact { width: 12%; }
 /* Du cho nhan dai nhat "FB_Inbox" khong bi cat chu - do DOM xac nhan thieu
  * ~7px o 8%, tang len 9%. */
-.crm-col-cust-source {
-  width: 9%;
-}
+.crm-col-cust-source { width: 9%; }
 /* Du cho nhan dai nhat "Khong phu hop"/"Dang cham soc" khong bi cat chu - do
  * DOM xac nhan thieu ~4px o 13%, tang len 14%. */
-.crm-col-cust-status {
-  width: 14%;
-}
+.crm-col-cust-status { width: 14%; }
 /* Nhan header rut gon "Phu trach" (thay vi "Nguoi phu trach") + du rong hon
  * de khong bi header ellipsis "NGUOI PH...". */
-.crm-col-cust-owner {
-  width: 9%;
-}
-.crm-col-cust-deals {
-  width: 5%;
-}
+.crm-col-cust-owner { width: 9%; }
+.crm-col-cust-deals { width: 5%; }
 /* Du rong hon de so tien lon (vd "850.000.000 d") khong bi xuong dong o
  * 1280px (bug thuc te thay qua anh chup). */
-.crm-col-cust-value {
-  width: 11%;
-}
+.crm-col-cust-value { width: 11%; }
 /* Du rong de ngay dang "28/8/2026" khong bi xuong dong, va header "Gan nhat"
  * khong bi ellipsis (do DOM xac nhan van cat o 8%). */
-.crm-col-cust-lastdeal {
-  width: 9%;
-}
-.crm-col-cust-updated {
-  width: 8%;
-}
+.crm-col-cust-lastdeal { width: 9%; }
+.crm-col-cust-updated { width: 8%; }
 /* Xem gio la nut icon-only (vuong ~1.85rem) thay vi chu "Xem" - cot Thao tac
  * co the hep lai tuong ung, van du cho icon Xem + nut menu ⋯. */
-.crm-col-cust-actions {
-  width: 5.6rem;
-}
+.crm-col-cust-actions { width: 5.6rem; }
 
 /* Cot Thao tac luon nhin thay tron ven, khong bi noi dung ben trai de len -
  * sticky ben phai + nen trang rieng (ke ca khi khong thuc su can cuon ngang,
@@ -7538,65 +7195,83 @@
   white-space: nowrap;
 }
 
-.crm-lead-status--new {
-  border-color: #bfdbfe;
-  background: #eff6ff;
-  color: #1d4ed8;
-}
-.crm-lead-status--qualifying {
-  border-color: #fde68a;
-  background: #fffbeb;
-  color: #b45309;
-}
-.crm-lead-status--qualified {
-  border-color: #a7f3d0;
-  background: #ecfdf5;
-  color: #047857;
-}
-.crm-lead-status--nurture {
-  border-color: #ddd6fe;
-  background: #f5f3ff;
-  color: #6d28d9;
-}
-.crm-lead-status--converted {
-  border-color: #86efac;
-  background: #ecfdf5;
-  color: #15803d;
-}
-.crm-lead-status--disqualified {
-  border-color: #cbd5e1;
-  background: #f8fafc;
-  color: #64748b;
-}
+.crm-lead-status--new { border-color: #bfdbfe; background: #eff6ff; color: #1d4ed8; }
+.crm-lead-status--qualifying { border-color: #fde68a; background: #fffbeb; color: #b45309; }
+.crm-lead-status--qualified { border-color: #a7f3d0; background: #ecfdf5; color: #047857; }
+.crm-lead-status--nurture { border-color: #fed7aa; background: #fff7ed; color: #c2410c; }
+.crm-lead-status--converted { border-color: #86efac; background: #ecfdf5; color: #15803d; }
+.crm-lead-status--disqualified { border-color: #cbd5e1; background: #f8fafc; color: #64748b; }
 
 .crm-lead-directory-table {
   min-width: 1050px;
 }
 
-.crm-col-lead-name {
-  width: 16%;
+/* "Chỉnh sửa" inline tren danh sach Lead (2026-09-27) - CrmCategorySelect/
+ * CrmCategoryCodeSelect/native <select> dung lai NGUYEN VEN component that,
+ * chi thu gon rieng trong pham vi bang Lead (khong dung .crm-searchable-
+ * select mac dinh toan app) de khop chieu cao hang, tranh vo dong/phinh to. */
+.crm-inline-edit-cell {
+  /* KHONG ep min-width - cot Nguon/Nhu cau hep hon 84px nen truoc day bi
+   * tran de len cot ben canh (bug thuc te gap, 2026-09-27). De o tu co gian
+   * theo dung do rong cot that (width:100% cua select/trigger ben duoi). */
+  width: 100%;
+  min-width: 0;
 }
-.crm-col-lead-contact {
-  width: 16%;
+/* Vien/nen ro rang hon (vien cu qua nhat, lan vao nen trang) + chu nho lai
+ * cho gon, do bi cat chu trong cot hep. Padding/font-size doi sang px cho
+ * de doc/de chinh thay vi rem. */
+.crm-inline-edit-cell .crm-searchable-select-trigger {
+  min-height: 30px;
+  padding: 3px 6px;
+  font-size: 11px;
+  border-radius: 6px;
+  border-color: #94a3b8 !important;
+  background: #f8fafc !important;
+  box-shadow: none !important;
 }
-.crm-col-lead-source {
-  width: 10%;
+/* Nhan gia tri dang chon trong trigger la 1 <span> KHONG co class rieng
+ * (xem SearchableSelect.tsx dong ~283) - phai nham dung the con dau tien
+ * cua trigger, kem min-width:0 (bat buoc de ellipsis hoat dong trong flex
+ * row) thi moi het vo dong "Nhập" xuong dong "tay" nhu bug thuc te gap. */
+.crm-inline-edit-cell .crm-searchable-select-trigger > span:first-child {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: left;
 }
-.crm-col-lead-score {
-  width: 8%;
+.crm-inline-edit-cell select {
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  appearance: none;
+  width: 100%;
+  min-height: 30px;
+  padding: 3px 18px 3px 6px;
+  font-size: 11px;
+  border: 1px solid #94a3b8;
+  border-radius: 6px;
+  background-color: #f8fafc;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath fill='%2364748b' d='M6 8.2 1.6 3.8l.9-.9L6 6.4l3.5-3.5.9.9z'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 6px center;
+  background-size: 10px;
+  color: #0f172a;
 }
-.crm-col-lead-status {
-  width: 14%;
+.crm-inline-edit-cell select:disabled,
+.crm-inline-edit-cell .crm-searchable-select-trigger:disabled {
+  opacity: 0.55;
 }
-.crm-col-lead-sdr {
-  width: 12%;
-}
-.crm-col-lead-nextstep {
-  width: 16%;
-}
-.crm-col-lead-actions {
-  width: 8%;
-}
+
+.crm-col-lead-name { width: 20%; }
+.crm-col-lead-source { width: 9%; }
+.crm-col-lead-need { width: 13%; }
+.crm-col-lead-score { width: 8%; }
+.crm-col-lead-marketing { width: 10%; }
+.crm-col-lead-status { width: 11%; }
+.crm-col-lead-sdr { width: 8%; }
+.crm-col-lead-nextstep { width: 13%; }
+.crm-col-lead-actions { width: 8%; }
 
 /* Mac dinh an card list (chi dung duoi 900px). PHAI khai bao TRUOC media query
  * ben duoi: truoc day rule nay nam SAU media query nen cung do uu tien lai
@@ -8207,56 +7882,28 @@
   min-width: 0;
 }
 
-.crm-col-cust-name-v2 {
-  width: 23%;
-}
-.crm-col-cust-taxcode {
-  width: 12%;
-}
+.crm-col-cust-name-v2 { width: 23%; }
+.crm-col-cust-taxcode { width: 12%; }
 /* "SO CONTA..." bi cat chu o 1280px voi 9% - do DOM xac nhan tang len 11%. */
-.crm-col-cust-contacts {
-  width: 11%;
-}
-.crm-col-cust-value {
-  width: 13%;
-}
-.crm-col-cust-owner {
-  width: 11%;
-}
+.crm-col-cust-contacts { width: 11%; }
+.crm-col-cust-value { width: 13%; }
+.crm-col-cust-owner { width: 11%; }
 /* "SO DEAL" can rong hon 5% mac dinh (ke thua tu ban cu 1 tu "Deal") de
  * khong bi ellipsis header thanh "SO D..." (xac nhan qua screenshot 1440px). */
-.crm-customer-directory-table--v2 .crm-col-cust-deals {
-  width: 8%;
-}
+.crm-customer-directory-table--v2 .crm-col-cust-deals { width: 8%; }
 
 /* Contact 360 tren bang Khach hang: cot "So nguoi lien he" (dem) doi thanh 3
  * cot "Nguoi lien he chinh"/"SDT"/"Email" - thu hep name-v2/taxcode/value de
  * co cho, .crm-col-cust-contacts giu lai o tren nhung khong con dung o
  * colgroup nua (khong xoa - tranh vo lien ket neu con noi khac tham chieu). */
-.crm-col-cust-name-v2 {
-  width: 18%;
-}
-.crm-col-cust-taxcode {
-  width: 7%;
-}
-.crm-col-cust-value {
-  width: 10%;
-}
-.crm-col-cust-owner {
-  width: 9%;
-}
-.crm-customer-directory-table--v2 .crm-col-cust-deals {
-  width: 6%;
-}
-.crm-col-cust-contact-name {
-  width: 13%;
-}
-.crm-col-cust-contact-phone {
-  width: 9%;
-}
-.crm-col-cust-contact-email {
-  width: 13%;
-}
+.crm-col-cust-name-v2 { width: 18%; }
+.crm-col-cust-taxcode { width: 7%; }
+.crm-col-cust-value { width: 10%; }
+.crm-col-cust-owner { width: 9%; }
+.crm-customer-directory-table--v2 .crm-col-cust-deals { width: 6%; }
+.crm-col-cust-contact-name { width: 13%; }
+.crm-col-cust-contact-phone { width: 9%; }
+.crm-col-cust-contact-email { width: 13%; }
 
 .crm-customer-contact-name-cell {
   display: flex;
@@ -8705,9 +8352,7 @@
 
 .crm-contact-row--clickable {
   cursor: pointer;
-  transition:
-    border-color 0.15s ease,
-    background 0.15s ease;
+  transition: border-color 0.15s ease, background 0.15s ease;
 }
 
 .crm-contact-row--clickable:hover {
@@ -8776,9 +8421,7 @@
   border-radius: 0.6rem;
   background: #f8fafc;
   padding: 0.75rem 0.9rem;
-  transition:
-    border-color 0.15s ease,
-    background 0.15s ease;
+  transition: border-color 0.15s ease, background 0.15s ease;
 }
 
 .crm-activity-row:hover {
@@ -8865,6 +8508,7 @@
   color: #64748b;
   padding-top: 0.15rem;
 }
+
 
 /* Fix UX "checkbox + label bi tach roi, trong nhu bi loi" trong form Sua/
  * Them Contact - gop lai thanh 1 hang gon gang (label+switch cung 1 khoi),
@@ -9214,10 +8858,12 @@
   grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr) minmax(280px, 300px);
   gap: 0.75rem;
   align-items: stretch;
+  min-width: 0;
 }
 
 .crm-verify-readiness-panel {
   max-width: 300px;
+  min-width: 0;
   justify-self: stretch;
 }
 
@@ -9477,22 +9123,10 @@
   padding: 0.7rem 0.85rem;
   margin-top: 0.45rem;
 }
-.crm-verify-outcome-card--pending {
-  border-left-color: #d97706;
-  background: #fffbeb;
-}
-.crm-verify-outcome-card--nurturing {
-  border-left-color: #d97706;
-  background: #fffbeb;
-}
-.crm-verify-outcome-card--sql {
-  border-left-color: #16a34a;
-  background: #f0fdf4;
-}
-.crm-verify-outcome-card--unqualified {
-  border-left-color: #dc2626;
-  background: #fef2f2;
-}
+.crm-verify-outcome-card--pending { border-left-color: #d97706; background: #fffbeb; }
+.crm-verify-outcome-card--nurturing { border-left-color: #d97706; background: #fffbeb; }
+.crm-verify-outcome-card--sql { border-left-color: #16a34a; background: #f0fdf4; }
+.crm-verify-outcome-card--unqualified { border-left-color: #dc2626; background: #fef2f2; }
 .crm-verify-outcome-head {
   display: flex;
   align-items: center;
@@ -9508,19 +9142,18 @@
   flex: 0 0 auto;
 }
 .crm-verify-outcome-card--pending .crm-verify-outcome-dot,
-.crm-verify-outcome-card--nurturing .crm-verify-outcome-dot {
-  background: #d97706;
-}
-.crm-verify-outcome-card--sql .crm-verify-outcome-dot {
-  background: #16a34a;
-}
-.crm-verify-outcome-card--unqualified .crm-verify-outcome-dot {
-  background: #dc2626;
-}
+.crm-verify-outcome-card--nurturing .crm-verify-outcome-dot { background: #d97706; }
+.crm-verify-outcome-card--sql .crm-verify-outcome-dot { background: #16a34a; }
+.crm-verify-outcome-card--unqualified .crm-verify-outcome-dot { background: #dc2626; }
 .crm-verify-outcome-sub {
   margin: 0.3rem 0 0;
   font-size: 0.76rem;
   color: #475569;
+}
+.crm-verify-outcome-detail {
+  margin-top: 0.5rem;
+  padding-top: 0.5rem;
+  border-top: 1px dashed #e2e8f0;
 }
 .crm-verify-outcome-list-title {
   margin: 0.45rem 0 0.15rem;
@@ -9581,6 +9214,7 @@
   display: flex;
   align-items: center;
   gap: 0.34rem;
+  min-width: 0;
   border: 1px solid #e2e8f0;
   min-height: 31px;
   border-radius: 0.45rem;
@@ -9592,10 +9226,15 @@
 
 .crm-verify-checklist li span {
   flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .crm-verify-check-value {
-  flex: 0 1 auto;
+  flex: 1 1 42%;
+  min-width: 0;
   max-width: 55%;
   color: #0f172a;
   font-size: 0.72rem;
@@ -10135,30 +9774,12 @@
   transform: scale(1.08);
 }
 
-.crm-modern-kpi-icon.tone-slate {
-  background: #f1f5f9;
-  color: #475569;
-}
-.crm-modern-kpi-icon.tone-blue {
-  background: #eff6ff;
-  color: #2563eb;
-}
-.crm-modern-kpi-icon.tone-green {
-  background: #f0fdf4;
-  color: #16a34a;
-}
-.crm-modern-kpi-icon.tone-amber {
-  background: #fffbeb;
-  color: #d97706;
-}
-.crm-modern-kpi-icon.tone-rose {
-  background: #fff1f2;
-  color: #e11d48;
-}
-.crm-modern-kpi-icon.tone-purple {
-  background: #faf5ff;
-  color: #9333ea;
-}
+.crm-modern-kpi-icon.tone-slate { background: #f1f5f9; color: #475569; }
+.crm-modern-kpi-icon.tone-blue { background: #eff6ff; color: #2563eb; }
+.crm-modern-kpi-icon.tone-green { background: #f0fdf4; color: #16a34a; }
+.crm-modern-kpi-icon.tone-amber { background: #fffbeb; color: #d97706; }
+.crm-modern-kpi-icon.tone-rose { background: #fff1f2; color: #e11d48; }
+.crm-modern-kpi-icon.tone-purple { background: #faf5ff; color: #9333ea; }
 
 .crm-modern-kpi-content {
   min-width: 0;
@@ -10481,16 +10102,12 @@
 
 .crm-card-row-item:hover {
   border-color: #fda4af;
-  box-shadow:
-    0 6px 16px -2px rgba(244, 63, 94, 0.1),
-    0 2px 6px rgba(0, 0, 0, 0.04);
+  box-shadow: 0 6px 16px -2px rgba(244, 63, 94, 0.1), 0 2px 6px rgba(0, 0, 0, 0.04);
 }
 
 .crm-card-row-item.active {
   border-color: #f43f5e;
-  box-shadow:
-    0 0 0 1px #f43f5e,
-    0 6px 16px -2px rgba(244, 63, 94, 0.12);
+  box-shadow: 0 0 0 1px #f43f5e, 0 6px 16px -2px rgba(244, 63, 94, 0.12);
 }
 
 .crm-card-row-left {
@@ -10687,3 +10304,4 @@
   cursor: pointer;
   outline: none;
 }
+
