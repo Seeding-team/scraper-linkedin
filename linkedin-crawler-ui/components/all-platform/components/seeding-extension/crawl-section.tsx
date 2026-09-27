@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { cn } from "@/lib/utils";
 import { allPlatformGroupsService } from "@/services/all-platform.service";
 import { useAppAuth } from "@/contexts/AppAuthContext";
-import type { CrawlGroupInput, CrawlRuntime, ExtensionPlatform } from "./use-seeding-extension";
+import type { CrawlGroupInput, CrawlRuntime, GroupPlatform } from "./use-seeding-extension";
 
 interface GroupOption {
   id: string;
@@ -13,7 +13,7 @@ interface GroupOption {
 }
 
 interface CrawlSectionProps {
-  platform: ExtensionPlatform;
+  platform: GroupPlatform;
   isReady: boolean;
   runtime: CrawlRuntime;
   onStart: (groups: CrawlGroupInput[], config: Record<string, unknown>) => void;

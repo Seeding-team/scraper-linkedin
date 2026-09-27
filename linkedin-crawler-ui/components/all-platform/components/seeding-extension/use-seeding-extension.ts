@@ -4,10 +4,15 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { scheduledCommentService } from "@/services/scheduled-comment.service";
 import { API_BASE_URL } from "@/lib/env";
 
-export type ExtensionPlatform = "facebook" | "linkedin";
+export type ExtensionPlatform = "facebook" | "linkedin" | "threads";
+/** Nền tảng cào/bình luận theo NHÓM (Threads không có nhóm - tìm theo từ khoá). */
+export type GroupPlatform = Exclude<ExtensionPlatform, "threads">;
 
 /** Phiên bản tối thiểu của "Markee Seeding Extension" (extensions/comment-extension) có lệnh cào gộp. */
 export const REQUIRED_EXTENSION_VERSION = "2.0";
+
+/** Phiên bản đầu tiên có lệnh cào Threads theo từ khoá (MK_TH_CRAWL_*, feature "th_crawl"). */
+export const THREADS_CRAWL_EXTENSION_VERSION = "2.1";
 
 export type ExtensionStatus = "checking" | "ready" | "outdated" | "missing" | "invalidated";
 
@@ -25,6 +30,7 @@ function postToExtension(action: string, payload?: unknown) {
 export function useSeedingExtensionStatus() {
   const [status, setStatus] = useState<ExtensionStatus>("checking");
   const [version, setVersion] = useState("");
+  const [features, setFeatures] = useState<string[]>([]);
 
   useEffect(() => {
     let ready = false;
@@ -37,6 +43,7 @@ export function useSeedingExtensionStatus() {
       if (action === "MK_EXTENSION_READY") {
         ready = true;
         setVersion(event.data.payload?.version || "");
+        setFeatures(Array.isArray(event.data.payload?.features) ? event.data.payload.features : []);
         setStatus("ready");
       } else if (action === "COMMENT_EXTENSION_READY") {
         legacySeen = true;
@@ -66,7 +73,7 @@ export function useSeedingExtensionStatus() {
     };
   }, []);
 
-  return { status, version, isReady: status === "ready" };
+  return { status, version, features, isReady: status === "ready" };
 }
 
 // ── Cào bài (Facebook + LinkedIn) ───────────────────────────────────────────
@@ -88,7 +95,7 @@ export interface CrawlRuntime {
 }
 
 const EMPTY_RUNTIME: CrawlRuntime = { running: false, done: false, logs: [], groupIndex: 0, totalGroups: 0, posts: 0, saved: 0 };
-const PREFIX: Record<ExtensionPlatform, string> = { facebook: "MK_FB_CRAWL_", linkedin: "MK_LI_CRAWL_" };
+const PREFIX: Record<ExtensionPlatform, string> = { facebook: "MK_FB_CRAWL_", linkedin: "MK_LI_CRAWL_", threads: "MK_TH_CRAWL_" };
 
 export interface CrawlGroupInput {
   id?: string;
@@ -107,10 +114,11 @@ export function useExtensionCrawl({ onSaved, onDone }: UseExtensionCrawlOptions 
   const [runtime, setRuntime] = useState<Record<ExtensionPlatform, CrawlRuntime>>({
     facebook: EMPTY_RUNTIME,
     linkedin: EMPTY_RUNTIME,
+    threads: EMPTY_RUNTIME,
   });
   const onSavedRef = useRef(onSaved);
   const onDoneRef = useRef(onDone);
-  const startTimeoutRef = useRef<Record<ExtensionPlatform, number | null>>({ facebook: null, linkedin: null });
+  const startTimeoutRef = useRef<Record<ExtensionPlatform, number | null>>({ facebook: null, linkedin: null, threads: null });
   useEffect(() => {
     onSavedRef.current = onSaved;
     onDoneRef.current = onDone;
@@ -140,7 +148,9 @@ export function useExtensionCrawl({ onSaved, onDone }: UseExtensionCrawlOptions 
         ? "facebook"
         : action.startsWith(PREFIX.linkedin)
           ? "linkedin"
-          : null;
+          : action.startsWith(PREFIX.threads)
+            ? "threads"
+            : null;
       if (!platform) return;
       const kind = action.slice(PREFIX[platform].length);
       const p = event.data.payload || {};
@@ -178,25 +188,39 @@ export function useExtensionCrawl({ onSaved, onDone }: UseExtensionCrawlOptions 
     // Trang vừa mở lại giữa lúc extension đang cào (F5) -> vẫn hiện đúng trạng thái "đang chạy".
     postToExtension("MK_FB_CRAWL_STATUS");
     postToExtension("MK_LI_CRAWL_STATUS");
+    postToExtension("MK_TH_CRAWL_STATUS");
     return () => window.removeEventListener("message", onMessage);
   }, [addLog, update]);
 
-  const start = useCallback(
-    (platform: ExtensionPlatform, groups: CrawlGroupInput[], config: Record<string, unknown>) => {
+  const sendStart = useCallback(
+    (platform: ExtensionPlatform, total: number, unit: string, payload: Record<string, unknown>, minVersion: string) => {
       setRuntime((prev) => ({
         ...prev,
-        [platform]: { ...EMPTY_RUNTIME, running: true, totalGroups: groups.length, logs: [{ level: "info", message: `Đang gửi lệnh cào ${groups.length} nhóm tới Extension...`, at: Date.now() }] },
+        [platform]: { ...EMPTY_RUNTIME, running: true, totalGroups: total, logs: [{ level: "info", message: `Đang gửi lệnh cào ${total} ${unit} tới Extension...`, at: Date.now() }] },
       }));
-      postToExtension(PREFIX[platform] + "START", { groups, config: { apiBase: extensionApiBase(), ...config } });
+      postToExtension(PREFIX[platform] + "START", payload);
       const existing = startTimeoutRef.current[platform];
       if (existing) window.clearTimeout(existing);
       startTimeoutRef.current[platform] = window.setTimeout(() => {
         startTimeoutRef.current[platform] = null;
         update(platform, (r) => ({ ...r, running: false }));
-        addLog(platform, "error", "Extension không phản hồi lệnh cào sau 8 giây. Kiểm tra đã cài đúng Markee Seeding Extension 2.0, rồi F5 lại trang.");
+        addLog(platform, "error", `Extension không phản hồi lệnh cào sau 8 giây. Kiểm tra đã cài đúng Markee Seeding Extension ${minVersion}, rồi F5 lại trang.`);
       }, 8000);
     },
     [addLog, update],
+  );
+
+  const start = useCallback(
+    (platform: ExtensionPlatform, groups: CrawlGroupInput[], config: Record<string, unknown>) =>
+      sendStart(platform, groups.length, "nhóm", { groups, config: { apiBase: extensionApiBase(), ...config } }, REQUIRED_EXTENSION_VERSION),
+    [sendStart],
+  );
+
+  /** Threads không có group: gửi danh sách TỪ KHOÁ (extension mở trang tìm kiếm cho từng từ khoá). */
+  const startKeywords = useCallback(
+    (keywords: string[], config: Record<string, unknown>) =>
+      sendStart("threads", keywords.length, "từ khoá", { keywords, config: { apiBase: extensionApiBase(), ...config } }, THREADS_CRAWL_EXTENSION_VERSION),
+    [sendStart],
   );
 
   const stop = useCallback(
@@ -209,7 +233,7 @@ export function useExtensionCrawl({ onSaved, onDone }: UseExtensionCrawlOptions 
 
   const reset = useCallback((platform: ExtensionPlatform) => update(platform, () => EMPTY_RUNTIME), [update]);
 
-  return { runtime, start, stop, reset };
+  return { runtime, start, startKeywords, stop, reset };
 }
 
 // ── Bình luận hàng loạt (Facebook + LinkedIn) + hẹn giờ Facebook ─────────────
@@ -234,7 +258,8 @@ interface UseBulkCommentOptions {
   onComplete?: (seededUrls: string[]) => void;
 }
 
-export const PLATFORM_DB_ID: Record<ExtensionPlatform, number> = { facebook: 1, linkedin: 2 };
+// Chỉ Facebook/LinkedIn có bình luận hàng loạt từ trang này (Threads mới có cào).
+export const PLATFORM_DB_ID: Record<GroupPlatform, number> = { facebook: 1, linkedin: 2 };
 
 export function useBulkCommentRuntime({ isReady, email, onComplete }: UseBulkCommentOptions) {
   const [isCommenting, setIsCommenting] = useState(false);

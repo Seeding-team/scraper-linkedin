@@ -6,10 +6,10 @@ import type { SocialAccount, UnifiedPost } from "@/types/unified.types";
 import { socialAccountsService } from "@/services/all-platform.service";
 import { scheduledCommentService } from "@/services/scheduled-comment.service";
 import { useQuickCommentLibrary } from "../use-quick-comment-library";
-import { PLATFORM_DB_ID, type CommentPostInput, type CommentProgress, type ExtensionPlatform } from "./use-seeding-extension";
+import { PLATFORM_DB_ID, type CommentPostInput, type CommentProgress, type GroupPlatform } from "./use-seeding-extension";
 
 interface CommentSectionProps {
-  platform: ExtensionPlatform;
+  platform: GroupPlatform;
   posts: UnifiedPost[];
   isReady: boolean;
   isCommenting: boolean;

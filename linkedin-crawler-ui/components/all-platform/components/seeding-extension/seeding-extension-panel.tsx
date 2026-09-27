@@ -6,6 +6,7 @@ import type { UnifiedPost } from "@/types/unified.types";
 import { useAppAuth } from "@/contexts/AppAuthContext";
 import { CrawlSection } from "./crawl-section";
 import { CommentSection } from "./comment-section";
+import { ThreadsCrawlSection } from "./threads-crawl-section";
 import {
   REQUIRED_EXTENSION_VERSION,
   useBulkCommentRuntime,
@@ -26,17 +27,23 @@ type PanelTab = "crawl" | "comment";
 
 const OLD_EXTENSIONS = "FB API Crawler, LinkedIn Group Post Crawler, Bulk Comment Extension (bản cũ)";
 
+const PLATFORM_LABEL: Record<ExtensionPlatform, string> = { facebook: "Facebook", linkedin: "LinkedIn", threads: "Threads" };
+
 export function SeedingExtensionPanel({ platform, posts, onCrawlSaved, onCrawlDone, onCommentDone }: SeedingExtensionPanelProps) {
   const { user } = useAppAuth();
   const [tab, setTab] = useState<PanelTab | null>(null);
-  const { status, version, isReady } = useSeedingExtensionStatus();
+  const { status, version, features, isReady } = useSeedingExtensionStatus();
   const crawl = useExtensionCrawl({ onSaved: onCrawlSaved, onDone: onCrawlDone });
   const comment = useBulkCommentRuntime({ isReady, email: user?.email, onComplete: onCommentDone });
 
-  const platformLabel = platform === "facebook" ? "Facebook" : "LinkedIn";
+  const platformLabel = PLATFORM_LABEL[platform];
+  const isThreads = platform === "threads";
   const runtime = crawl.runtime[platform];
-  const anyCrawlRunning = crawl.runtime.facebook.running || crawl.runtime.linkedin.running;
-  const openTab = tab ?? (runtime.running ? "crawl" : comment.isCommenting ? "comment" : null);
+  const otherRunning = (Object.keys(PLATFORM_LABEL) as ExtensionPlatform[]).find((p) => p !== platform && crawl.runtime[p].running);
+  // Threads chỉ có cào (tìm theo từ khoá) - chưa có bình luận hàng loạt từ trang này.
+  const openTab = isThreads
+    ? (tab === "comment" ? "crawl" : tab ?? (runtime.running ? "crawl" : null))
+    : tab ?? (runtime.running ? "crawl" : comment.isCommenting ? "comment" : null);
 
   return (
     <div className="bg-card rounded-2xl border border-border shadow-sm overflow-hidden w-full">
@@ -51,7 +58,9 @@ export function SeedingExtensionPanel({ platform, posts, onCrawlSaved, onCrawlDo
               <StatusChip status={status} version={version} />
             </div>
             <p className="text-xs text-muted-foreground leading-tight mt-0.5">
-              1 extension duy nhất: cào bài viết và bình luận hàng loạt cho Facebook &amp; LinkedIn, chạy ngầm trên trình duyệt.
+              {isThreads
+                ? "1 extension duy nhất: tìm bài Threads theo từ khoá và lưu về hệ thống, chạy ngầm trên trình duyệt."
+                : "1 extension duy nhất: cào bài viết và bình luận hàng loạt cho Facebook & LinkedIn, chạy ngầm trên trình duyệt."}
             </p>
           </div>
         </div>
@@ -82,8 +91,8 @@ export function SeedingExtensionPanel({ platform, posts, onCrawlSaved, onCrawlDo
 
       <div className="flex gap-1 px-4 pt-3 border-b border-border">
         {([
-          { key: "crawl", label: "Cào bài viết", icon: "travel_explore", busy: runtime.running },
-          { key: "comment", label: "Bình luận hàng loạt", icon: "forum", busy: comment.isCommenting },
+          { key: "crawl", label: isThreads ? "Tìm bài theo từ khoá" : "Cào bài viết", icon: "travel_explore", busy: runtime.running },
+          ...(isThreads ? [] : [{ key: "comment", label: "Bình luận hàng loạt", icon: "forum", busy: comment.isCommenting }] as const),
         ] as const).map((t) => (
           <button
             key={t.key}
@@ -99,16 +108,25 @@ export function SeedingExtensionPanel({ platform, posts, onCrawlSaved, onCrawlDo
             {t.busy ? <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" aria-label="đang chạy" /> : null}
           </button>
         ))}
-        {anyCrawlRunning && !runtime.running ? (
+        {otherRunning && !runtime.running ? (
           <span className="ml-auto self-center text-[11px] text-muted-foreground">
-            Đang cào {crawl.runtime.facebook.running ? "Facebook" : "LinkedIn"} ở tab còn lại
+            Đang cào {PLATFORM_LABEL[otherRunning]} ở tab nền tảng khác
           </span>
         ) : null}
       </div>
 
       {openTab ? (
         <div className="p-4">
-          {openTab === "crawl" ? (
+          {openTab === "crawl" && platform === "threads" ? (
+            <ThreadsCrawlSection
+              isReady={isReady}
+              needsUpdate={isReady && !features.includes("th_crawl")}
+              runtime={runtime}
+              onStart={(keywords, config) => crawl.startKeywords(keywords, config)}
+              onStop={() => crawl.stop(platform)}
+              onReset={() => crawl.reset(platform)}
+            />
+          ) : platform === "threads" ? null : openTab === "crawl" ? (
             <CrawlSection
               key={platform}
               platform={platform}

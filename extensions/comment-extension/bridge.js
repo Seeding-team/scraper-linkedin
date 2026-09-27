@@ -7,7 +7,7 @@
 const MK_EXTENSION_INFO = (() => {
     let version = "";
     try { version = chrome.runtime.getManifest().version; } catch (e) {}
-    return { version, features: ["fb_crawl", "fb_comment", "li_crawl", "li_comment"] };
+    return { version, features: ["fb_crawl", "fb_comment", "li_crawl", "li_comment", "th_crawl"] };
 })();
 
 // Truoc day KHONG check chrome.runtime.lastError va KHONG co timeout gi ca -
@@ -115,9 +115,18 @@ window.addEventListener("message", function(event) {
         }, response => {
             window.postMessage({ action: resultAction, payload: response || { success: false, error: "Không nhận được phản hồi từ Extension." } }, "*");
         });
-    } else if (action === "MK_FB_CRAWL_STOP" || action === "MK_LI_CRAWL_STOP") {
+    } else if (action === "MK_TH_CRAWL_START") {
+        // Threads không có group: web app gửi danh sách TỪ KHOÁ thay cho danh sách nhóm.
+        safeSendMessage({
+            action,
+            keywords: payload?.keywords || [],
+            config: payload?.config || {},
+        }, response => {
+            window.postMessage({ action: "MK_TH_CRAWL_START_RESULT", payload: response || { success: false, error: "Không nhận được phản hồi từ Extension." } }, "*");
+        });
+    } else if (action === "MK_FB_CRAWL_STOP" || action === "MK_LI_CRAWL_STOP" || action === "MK_TH_CRAWL_STOP") {
         safeSendMessage({ action }, () => {});
-    } else if (action === "MK_FB_CRAWL_STATUS" || action === "MK_LI_CRAWL_STATUS") {
+    } else if (action === "MK_FB_CRAWL_STATUS" || action === "MK_LI_CRAWL_STATUS" || action === "MK_TH_CRAWL_STATUS") {
         safeSendMessage({ action }, response => {
             window.postMessage({ action: action + "_RESULT", payload: response }, "*");
         });
@@ -135,7 +144,7 @@ window.addEventListener("message", function(event) {
 
 // Lắng nghe tiến trình từ background và relay xuống Web App UI
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-    if (typeof request.action === "string" && (request.action.startsWith("MK_FB_CRAWL_") || request.action.startsWith("MK_LI_CRAWL_"))) {
+    if (typeof request.action === "string" && (request.action.startsWith("MK_FB_CRAWL_") || request.action.startsWith("MK_LI_CRAWL_") || request.action.startsWith("MK_TH_CRAWL_"))) {
         const { action, ...rest } = request;
         window.postMessage({ action, payload: rest }, "*");
         return;

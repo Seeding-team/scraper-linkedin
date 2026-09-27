@@ -1,3 +1,38 @@
+# Tiến độ phiên làm việc (2026-09-27) — "Siêu Tốc Cào Dữ Liệu" cho Threads (tab Seeding bên ngoài)
+
+Mentor yêu cầu: tab "Seeding bên ngoài" duyệt Threads để tìm bài viết, giống "Siêu Tốc Cào
+Dữ Liệu" của Facebook. Threads không có group -> tìm theo **từ khoá** (threads.com/search).
+
+- Cào Threads nằm trong **extension chung "Markee Seeding Extension"** (`extensions/comment-extension`,
+  bản **2.1**, feature `th_crawl`) — cùng khuôn với cào FB/LinkedIn mà `main` vừa gộp (commit
+  `14ef7a95`): `bg/threads-crawl.js` (lệnh `MK_TH_CRAWL_START/STOP/STATUS`, báo về web
+  `MK_TH_CRAWL_LOG/PROGRESS/SAVED/DONE`), `platforms/threads/crawl.js` + `crawl-sniffer.js`
+  (lấy bài từ JSON nhúng trong trang + GraphQL khi cuộn, DOM chỉ dự phòng). Lúc đầu làm
+  extension riêng `api-threads-get-extension` nhưng đã bỏ khi merge `main` để không phải cài 2 extension.
+- Backend: bảng mới `threads_posts` (migration **`154_threads_posts.sql`** — số 153 đã bị
+  `153_crm_convert_lead_project_id.sql` của `main` dùng), endpoint
+  `POST /api/all-platform/extension/threads/save-posts` (x-api-key như FB; lọc trùng, lọc
+  bài cũ theo `max_age_days`, ưu tiên tương tác, cắt `post_limit`), `unified_posts_service`
+  nhận `platform="threads"` (feed/stats/trend; KPI/seeding Threads tra `platforms` theo tên,
+  chưa có dòng Threads thì = 0), `DELETE /api/all-platform/unified/posts/threads`.
+  Platform `"all"` và Facebook/LinkedIn KHÔNG đổi hành vi (đã test so với bản cũ).
+- FE: switcher Facebook/LinkedIn/Threads (khung nổi bật khi ở tab Seeding bên ngoài);
+  `SeedingExtensionPanel` có Threads (chỉ tab "Tìm bài theo từ khoá" — `threads-crawl-section.tsx`,
+  chưa có bình luận hàng loạt cho Threads). Bài Threads ẩn "Lên lịch", "Xem seeding theo team",
+  nút xác minh seeding (chưa hỗ trợ Threads).
+- Đã verify: Postgres+PostgREST thật qua Docker (migration chạy 2 lần OK), test service +
+  HTTP, E2E nạp extension chung 2.1 thật vào Chromium (FB/LinkedIn vẫn phản hồi STATUS) ->
+  tìm trên threads.com thật -> lưu DB. CHƯA verify được luồng khi ĐÃ đăng nhập Threads
+  (cuộn thêm trang/tab "Gần đây") vì không có tài khoản test; chưa đăng nhập thì mỗi từ khoá
+  chỉ ~20 bài "nổi bật" (nhiều bài cũ).
+- Đã merge `main` mới nhất, push nhánh `claude/seeding-thread-scraping-850d5f`, mở PR
+  Seeding-team/scraper-linkedin#95 vào `main` (chưa merge/deploy).
+- **VIỆC CÒN DANG DỞ**: migration `154_threads_posts.sql` **CHƯA áp lên DB thật** — máy dev
+  này không có kênh nào tới DB production (không có script SSH/`docs/INFRASTRUCTURE.md`, không
+  có SUPABASE_URL/SERVICE_ROLE_KEY production trong `.env` nào, repo không có workflow chạy
+  migration). Chưa áp thì tab Threads báo lỗi khi tải/lưu bài (FB/LinkedIn không ảnh hưởng).
+  Đã áp lên Supabase local (`supabase_db_linkedin_group_crawler`, lúc đó file còn tên 153).
+
 # Tiến độ phiên làm việc (2026-09-05) — tách tính năng chat Zalo thành module độc lập (`zalo-module/`)
 
 User yêu cầu clone tính năng chat Zalo (nhắn/nhận tin, nhắn người lạ, extension
