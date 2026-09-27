@@ -1,0 +1,23 @@
+name: Ops CRM Markee Diagnose
+
+on:
+  workflow_dispatch:
+
+jobs:
+  diagnose:
+    runs-on: [self-hosted, app]
+    steps:
+      - name: Inspect Markee containers
+        run: |
+          set +e
+          docker ps -a --filter "name=crm-module" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+          echo "---- router curl ----"
+          curl -v --max-time 8 http://localhost:18090/api/all-platform/auth/me
+          echo
+          echo "---- backend direct curl ----"
+          docker exec crm-module-backend sh -lc 'curl -v --max-time 8 http://127.0.0.1:8000/api/all-platform/auth/me'
+          echo
+          echo "---- backend logs ----"
+          docker logs --tail 220 crm-module-backend
+          echo "---- router logs ----"
+          docker logs --tail 120 crm-module-router
