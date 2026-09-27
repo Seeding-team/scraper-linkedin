@@ -5,12 +5,14 @@
 
 ALTER TABLE public.internal_engagement_custom_posts
     DROP CONSTRAINT IF EXISTS internal_engagement_custom_posts_platform_check;
+-- GIỮ 'youtube': DB thật đã có dữ liệu youtube (constraint được nới trực tiếp trên DB, không
+-- qua migration) — bỏ đi thì ADD CONSTRAINT lỗi vì dòng cũ vi phạm, và chặn luôn YouTube.
 ALTER TABLE public.internal_engagement_custom_posts
     ADD CONSTRAINT internal_engagement_custom_posts_platform_check
-    CHECK (platform IN ('facebook', 'linkedin', 'threads'));
+    CHECK (platform IN ('facebook', 'linkedin', 'youtube', 'threads'));
 
 ALTER TABLE public.internal_engagement_kpi
     DROP CONSTRAINT IF EXISTS internal_engagement_kpi_platform_check;
 ALTER TABLE public.internal_engagement_kpi
     ADD CONSTRAINT internal_engagement_kpi_platform_check
-    CHECK (platform IN ('facebook', 'linkedin', 'threads'));
+    CHECK (platform IN ('facebook', 'linkedin', 'youtube', 'threads', 'FACEBOOK', 'LINKEDIN', 'YOUTUBE', 'THREADS'));
