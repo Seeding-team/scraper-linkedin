@@ -23,6 +23,7 @@ import { TeamPerformancePanel } from "@/components/all-platform/internal-engagem
 import { UnifiedDashboardHomeContent } from "@/components/features/dashboard/UnifiedDashboardHomeContent";
 import { pingLiExtension, fetchLinkedInPostInfo } from "@/lib/li-ext-bridge";
 import { extractLinkedInMetadata, sanitizeLinkedInUrl } from "@/lib/linkedin-metadata";
+import { extractThreadsMetadata, sanitizeThreadsUrl } from "@/lib/threads-metadata";
 
 type TaskStatusTab = "all" | "need" | "received" | "completed";
 type SourceTab = "markee" | "custom";
@@ -207,6 +208,8 @@ export default function InternalEngagementPage() {
   const [taskLink, setTaskLink] = useState("");
   const [taskLinkedInContent, setTaskLinkedInContent] = useState("");
   const [taskLinkedInAuthor, setTaskLinkedInAuthor] = useState("");
+  // Ảnh bài viết tự cào được (hiện chỉ dùng cho Threads — og:image) -> gửi kèm media_urls.
+  const [taskFetchedImage, setTaskFetchedImage] = useState("");
   const [isFetchingLiInfo, setIsFetchingLiInfo] = useState(false);
   // 'idle': chưa thử | 'fetching': đang cào ngầm | 'success': đã tự lấy được, không cần hiện bảng
   // nhập tay | 'failed': tự cào lỗi (thường do chưa đăng nhập LinkedIn) -> hiện bảng nhập tay.
@@ -288,6 +291,28 @@ export default function InternalEngagementPage() {
     } catch (err: any) {
       const errorMsg = err?.response?.data?.message || err?.message || "Có lỗi xảy ra khi đồng bộ bài viết Facebook.";
       showToast(errorMsg, "error");
+    } finally {
+      setSyncingPostId(null);
+    }
+  };
+
+  // Threads: backend tự đọc số liệu công khai của bài (không cần đăng nhập/Extension),
+  // dùng chung endpoint sync-playwright — backend tự rẽ nhánh theo platform của bài.
+  const handleSyncThreadsMetrics = async (post: InternalEngagementPost) => {
+    setSyncingPostId(post.id);
+    try {
+      const res = await internalEngagementService.syncLinkedInPlaywright(post.id);
+      if (res && res.success) {
+        const { newLikes, newComments, newShares } = applyMetricsToState(post.id, res.data);
+        showToast(
+          `Đã đồng bộ chỉ số Threads thành công! (${formatCompactNumber(newLikes)} Likes, ${formatCompactNumber(newComments)} Trả lời, ${formatCompactNumber(newShares)} Đăng lại)`,
+          "success"
+        );
+      } else {
+        showToast(res?.message || "Không đọc được số liệu bài viết Threads này.", "error");
+      }
+    } catch (err: any) {
+      showToast(err?.message || "Có lỗi xảy ra khi đồng bộ bài viết Threads.", "error");
     } finally {
       setSyncingPostId(null);
     }
@@ -587,7 +612,10 @@ export default function InternalEngagementPage() {
       },
     }, "*");
 
-    setTimeout(() => { window.open(postUrl, "_blank"); }, 200);
+    // Link lưu thiếu giao thức (vd "threads.com/@user/post/..") sẽ bị window.open hiểu
+    // là đường dẫn tương đối trong app -> luôn bổ sung https:// trước khi mở.
+    const absoluteUrl = /^https?:\/\//i.test(postUrl) ? postUrl : `https://${postUrl.replace(/^\/+/, "")}`;
+    setTimeout(() => { window.open(absoluteUrl, "_blank", "noopener,noreferrer"); }, 200);
   };
 
   const handleOpenOriginalPost = (post: InternalEngagementPost) => {
@@ -612,7 +640,10 @@ export default function InternalEngagementPage() {
       },
     }, "*");
 
-    setTimeout(() => { window.open(postUrl, "_blank"); }, 200);
+    // Link lưu thiếu giao thức (vd "threads.com/@user/post/..") sẽ bị window.open hiểu
+    // là đường dẫn tương đối trong app -> luôn bổ sung https:// trước khi mở.
+    const absoluteUrl = /^https?:\/\//i.test(postUrl) ? postUrl : `https://${postUrl.replace(/^\/+/, "")}`;
+    setTimeout(() => { window.open(absoluteUrl, "_blank", "noopener,noreferrer"); }, 200);
   };
 
   const commentTemplateGroups = useMemo(() => {
@@ -867,6 +898,7 @@ export default function InternalEngagementPage() {
     setTaskLink("");
     setTaskLinkedInContent("");
     setTaskLinkedInAuthor("");
+    setTaskFetchedImage("");
     setLiAutoFetchStatus("idle");
     lastAutoFetchedLiLinkRef.current = null;
     taskLinkedInMetricsRef.current = {};
@@ -958,23 +990,37 @@ export default function InternalEngagementPage() {
   const lastAutoFetchedLiLinkRef = useRef<string | null>(null);
   const taskLinkedInMetricsRef = useRef<{ likes?: number; comments?: number; shares?: number }>({});
 
+  // Tự lấy nội dung bài khi dán link — dùng chung cho LinkedIn và Threads (cùng endpoint
+  // debug-fetch, backend tự chọn cách cào theo domain).
+  const sanitizeTaskLink = (link: string) => (isThreadsUrl(link) ? sanitizeThreadsUrl(link) : sanitizeLinkedInUrl(link));
+
   const autoFetchLiInfo = async (link: string, opts?: { silent?: boolean }) => {
-    const cleanLink = sanitizeLinkedInUrl(link);
+    const isThreads = isThreadsUrl(link);
+    const platformLabel = isThreads ? "Threads" : "LinkedIn";
+    const cleanLink = sanitizeTaskLink(link);
     const isStale = () => lastAutoFetchedLiLinkRef.current !== link && lastAutoFetchedLiLinkRef.current !== cleanLink;
 
     setIsFetchingLiInfo(true);
     setLiAutoFetchStatus("fetching");
+    setTaskLinkedInContent("");
+    setTaskLinkedInAuthor("");
+    setTaskFetchedImage("");
     try {
       const res = await internalEngagementService.debugFetchMeta(cleanLink);
       if (isStale()) return;
 
-      if (res && res.success && res.data) {
-        const extracted = extractLinkedInMetadata(res.data);
+      const extracted = res && res.success && res.data
+        ? (isThreads ? extractThreadsMetadata(res.data) : extractLinkedInMetadata(res.data))
+        : null;
+      // Threads: link sai/bài riêng tư vẫn trả 200 nhưng không có OG tag -> coi là thất bại.
+      if (extracted && (!isThreads || extracted.content || extracted.author_name)) {
         if (extracted.content) setTaskLinkedInContent(extracted.content);
         if (extracted.author_name) setTaskLinkedInAuthor(extracted.author_name);
+        const fetchedImage = (extracted as { image?: string }).image;
+        if (fetchedImage) setTaskFetchedImage(fetchedImage);
         setLiAutoFetchStatus("success");
         if (!opts?.silent) {
-          showToast("Đã tự động lấy nội dung bài viết LinkedIn thành công!", "success");
+          showToast(`Đã tự động lấy nội dung bài viết ${platformLabel} thành công!`, "success");
         }
       } else {
         setLiAutoFetchStatus("failed");
@@ -989,18 +1035,19 @@ export default function InternalEngagementPage() {
   };
 
   const handleAutoFetchLiInfo = () => {
-    const trimmed = sanitizeLinkedInUrl(taskLink.trim());
-    if (!trimmed) return showToast("Vui lòng dán link bài viết LinkedIn trước.", "error");
+    const trimmed = sanitizeTaskLink(taskLink.trim());
+    if (!trimmed) return showToast("Vui lòng dán link bài viết LinkedIn/Threads trước.", "error");
     lastAutoFetchedLiLinkRef.current = trimmed;
     autoFetchLiInfo(trimmed);
   };
 
-  // Tự động lấy nội dung ngay khi dán/gõ xong link LinkedIn — debounce 600ms, chỉ chạy lại khi link thực sự đổi.
+  // Tự động lấy nội dung ngay khi dán/gõ xong link LinkedIn/Threads — debounce 600ms, chỉ chạy lại khi link thực sự đổi.
   useEffect(() => {
     if (!isCreateTaskModalOpen) return;
-    const trimmed = sanitizeLinkedInUrl(taskLink.trim());
-    const isLinkedIn = isLinkedInUrl(trimmed);
-    if (!isLinkedIn || !trimmed) return;
+    const rawTrimmed = taskLink.trim();
+    if (!rawTrimmed || !(isLinkedInUrl(rawTrimmed) || isThreadsUrl(rawTrimmed))) return;
+    const trimmed = sanitizeTaskLink(rawTrimmed);
+    if (!trimmed) return;
     if (lastAutoFetchedLiLinkRef.current === trimmed) return;
 
     const timer = window.setTimeout(() => {
@@ -1042,9 +1089,10 @@ export default function InternalEngagementPage() {
 
     const isLinkedInLink = isLinkedInUrl(rawLink);
     const isThreadsLink = !isLinkedInLink && isThreadsUrl(rawLink);
-    const finalCleanLink = isLinkedInLink ? sanitizeLinkedInUrl(rawLink) : rawLink;
+    const finalCleanLink = isLinkedInLink ? sanitizeLinkedInUrl(rawLink) : isThreadsLink ? sanitizeThreadsUrl(rawLink) : rawLink;
+    const usesAutoFetchedInfo = isLinkedInLink || isThreadsLink;
 
-    if (isLinkedInLink && liAutoFetchStatus === "fetching") {
+    if (usesAutoFetchedInfo && liAutoFetchStatus === "fetching") {
       return showToast("Đang tự động lấy nội dung bài viết, vui lòng đợi vài giây...", "error");
     }
 
@@ -1069,8 +1117,9 @@ export default function InternalEngagementPage() {
         link: finalCleanLink,
         email: user.email,
         platform: isLinkedInLink ? "linkedin" : isThreadsLink ? "threads" : "facebook",
-        content: isLinkedInLink ? taskLinkedInContent.trim() : undefined,
-        fanpage_name: isLinkedInLink ? taskLinkedInAuthor.trim() || undefined : undefined,
+        content: usesAutoFetchedInfo ? taskLinkedInContent.trim() || undefined : undefined,
+        fanpage_name: usesAutoFetchedInfo ? taskLinkedInAuthor.trim() || undefined : undefined,
+        media_urls: isThreadsLink && taskFetchedImage ? [taskFetchedImage] : undefined,
         likes: isLinkedInLink ? taskLinkedInMetricsRef.current.likes : undefined,
         comments: isLinkedInLink ? taskLinkedInMetricsRef.current.comments : undefined,
         shares: isLinkedInLink ? taskLinkedInMetricsRef.current.shares : undefined,
@@ -1092,6 +1141,7 @@ export default function InternalEngagementPage() {
         setTaskLink("");
         setTaskLinkedInContent("");
         setTaskLinkedInAuthor("");
+        setTaskFetchedImage("");
         setLiAutoFetchStatus("idle");
         lastAutoFetchedLiLinkRef.current = null;
     taskLinkedInMetricsRef.current = {};
@@ -2103,6 +2153,7 @@ export default function InternalEngagementPage() {
                   const postUrl = post.permalink_url || (post as any).link_post || (post as any).link || "";
                   const isLinkedInPost = post.platform === "linkedin" || Boolean(postUrl && (postUrl.includes('linkedin.com') || postUrl.includes('lnkd.in')));
                   const isFacebookPost = !isLinkedInPost && Boolean(postUrl && (postUrl.includes('facebook.com') || postUrl.includes('fb.watch') || postUrl.includes('fb.com')));
+                  const isThreadsPost = !isLinkedInPost && !isFacebookPost && (post.platform === "threads" || isThreadsUrl(postUrl));
 
                   return (
                     <article
@@ -2200,7 +2251,7 @@ export default function InternalEngagementPage() {
                         </div>
 
                         {/* KHỐI TƯƠNG TÁC BÀI GỐC (PUBLIC METRICS BOX) - Facebook hoặc LinkedIn */}
-                        {isFacebookPost || isLinkedInPost ? (
+                        {isFacebookPost || isLinkedInPost || isThreadsPost ? (
                           <div className="mb-3.5 p-3 border border-dashed border-gray-200 rounded-2xl bg-white flex flex-wrap sm:flex-nowrap items-center justify-between gap-2.5 text-xs">
                             {/* Thông số bên trái */}
                             <div className="flex items-center gap-2.5 flex-wrap sm:flex-nowrap text-gray-700">
@@ -2232,7 +2283,7 @@ export default function InternalEngagementPage() {
                                     <path strokeLinecap="round" strokeLinejoin="round" d="M12 20.25c4.97 0 9-3.694 9-8.25s-4.03-8.25-9-8.25S3 7.444 3 12c0 2.104.859 4.023 2.273 5.48.432.447.74 1.04.586 1.641a4.483 4.483 0 0 1-.923 1.785A5.969 5.969 0 0 0 6 21c1.282 0 2.47-.402 3.445-1.087.51-.358 1.155-.41 1.705-.224A8.948 8.948 0 0 0 12 20.25z" />
                                   </svg>
                                   <span className="font-bold text-gray-900">{formatCompactNumber((post as any).public_comments ?? (post as any).fb_total_comments ?? (post as any).comments_count ?? 0)}</span>
-                                  <span className="text-gray-400 text-[11px]">bình luận</span>
+                                  <span className="text-gray-400 text-[11px]">{isThreadsPost ? "trả lời" : "bình luận"}</span>
                                 </div>
 
                                 <span className="text-gray-300">|</span>
@@ -2243,7 +2294,7 @@ export default function InternalEngagementPage() {
                                     <path strokeLinecap="round" strokeLinejoin="round" d="M9 8.25H7.5a2.25 2.25 0 0 0-2.25 2.25v9a2.25 2.25 0 0 0 2.25 2.25h9a2.25 2.25 0 0 0 2.25-2.25v-9a2.25 2.25 0 0 0-2.25-2.25H15m0-3-3-3m0 0-3 3m3-3V15" />
                                   </svg>
                                   <span className="font-bold text-gray-900">{formatCompactNumber((post as any).public_shares ?? (post as any).fb_total_shares ?? (post as any).shares_count ?? 0)}</span>
-                                  <span className="text-gray-400 text-[11px]">chia sẻ</span>
+                                  <span className="text-gray-400 text-[11px]">{isThreadsPost ? "đăng lại" : "chia sẻ"}</span>
                                 </div>
                               </div>
                             </div>
@@ -2253,7 +2304,7 @@ export default function InternalEngagementPage() {
                               <span className="text-gray-400 text-[11px]">Cập nhật {fmtRelativeTime((post as any).synced_at ?? (post as any).last_synced_at ?? (post as any).updated_at ?? post.created_at)}</span>
                               <button
                                 type="button"
-                                onClick={() => (isLinkedInPost ? handleSyncLinkedInMetrics(post) : handleSyncPostMetrics(post))}
+                                onClick={() => (isLinkedInPost ? handleSyncLinkedInMetrics(post) : isThreadsPost ? handleSyncThreadsMetrics(post) : handleSyncPostMetrics(post))}
                                 disabled={syncingPostId === post.id}
                                 className="flex items-center gap-1 px-3 py-1 border border-gray-300 rounded-full text-xs font-semibold text-gray-700 hover:bg-gray-50 transition bg-white shadow-2xs cursor-pointer"
                               >
@@ -2420,7 +2471,8 @@ export default function InternalEngagementPage() {
                           ? `Extension${modalIsLinkedIn ? " LinkedIn" : ""} đã sẵn sàng.`
                           : `Đang chờ kết nối ${modalIsLinkedIn ? "LinkedIn " : ""}Extension. Vui lòng cài đặt và F5 lại trang.`}
                       </span>
-                      {!ready && modalIsLinkedIn ? (
+                      {/* Moi nen tang (FB/LinkedIn/Threads/YouTube) dung chung 1 comment-extension. */}
+                      {!ready ? (
                         <a
                           href="/comment-extension.zip"
                           download
@@ -3094,8 +3146,31 @@ export default function InternalEngagementPage() {
 
                 {(() => {
                   const isLinkedInTaskLink = isLinkedInUrl(taskLink.trim());
+                  const isThreadsTaskLink = !isLinkedInTaskLink && isThreadsUrl(taskLink.trim());
                   return (
                     <>
+                      {isThreadsTaskLink && liAutoFetchStatus === "fetching" ? (
+                        <p className="text-[11px] text-gray-900 font-semibold">⏳ Đang tự động lấy nội dung bài viết Threads...</p>
+                      ) : null}
+
+                      {isThreadsTaskLink && liAutoFetchStatus === "failed" ? (
+                        <p className="text-[11px] text-amber-700 font-semibold">⚠ Không lấy được nội dung bài Threads (link sai hoặc bài riêng tư) — vẫn có thể tạo bài, nội dung sẽ để mặc định.</p>
+                      ) : null}
+
+                      {isThreadsTaskLink && liAutoFetchStatus === "success" ? (
+                        <div className="flex gap-3 p-3 border border-gray-200 rounded-xl bg-gray-50">
+                          {taskFetchedImage ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img src={taskFetchedImage} alt="" referrerPolicy="no-referrer" className="w-14 h-14 rounded-lg object-cover shrink-0" />
+                          ) : null}
+                          <div className="min-w-0">
+                            <p className="text-[11px] text-green-700 font-semibold">✓ Đã tự động lấy nội dung bài viết Threads.</p>
+                            {taskLinkedInAuthor ? <p className="text-xs font-bold text-gray-900 truncate">{taskLinkedInAuthor}</p> : null}
+                            {taskLinkedInContent ? <p className="text-xs text-gray-600 line-clamp-2">{taskLinkedInContent}</p> : null}
+                          </div>
+                        </div>
+                      ) : null}
+
                       {isLinkedInTaskLink && liAutoFetchStatus === "fetching" ? (
                         <p className="text-[11px] text-[#0a66c2] font-semibold">⏳ Đang tự động lấy nội dung bài viết LinkedIn...</p>
                       ) : null}

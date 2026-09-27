@@ -622,6 +622,9 @@ def clean_url(url: str) -> str:
     if "linkedin.com" in cleaned.lower():
         cleaned = sanitize_linkedin_url(cleaned)
 
+    if is_threads_url(cleaned):
+        return sanitize_threads_url(cleaned)
+
     if "share_url=" in cleaned:
         try:
             parsed = urlparse(cleaned)
@@ -974,35 +977,113 @@ def extract_threads_metadata(data: dict | str) -> dict[str, str]:
     return {"author_name": author_name, "content": content}
 
 
-def fetch_threads_post_metadata(url: str) -> dict[str, str]:
-    """Cào metadata bài viết Threads từ HTML thô (og:title/og:description) — BEST-EFFORT,
-    chưa test với threads.net thật. Không raise lỗi khi cào rỗng, chỉ trả về rỗng để
-    caller tự fallback placeholder (giống fetch_linkedin_post_metadata)."""
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept-Language": "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7",
+# Threads (Meta) CHỈ trả OG tag (og:title/og:description/og:image) cho crawler của
+# Meta — giống cách Facebook tạo preview link. Fetch bằng UA Chrome thường nhận về
+# 1 trang SPA rỗng (không có og:*), đã verify với threads.com thật 2026-09-27.
+_THREADS_FETCH_HEADERS = {
+    "User-Agent": "facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)",
+    "Accept": "text/html,application/xhtml+xml",
+    "Accept-Language": "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7",
+}
+
+_THREADS_POST_PATH_RE = re.compile(r"^/(@[^/]+)/post/([A-Za-z0-9_-]+)", re.IGNORECASE)
+
+
+def is_threads_url(url: str) -> bool:
+    lowered = (url or "").lower()
+    return "threads.net" in lowered or "threads.com" in lowered
+
+
+def sanitize_threads_url(url: str) -> str:
+    """Chuẩn hoá link bài Threads về dạng https://www.threads.com/@user/post/CODE —
+    bỏ query tracking (?xmt=, ?igshid=...), bỏ slug phía sau mã bài, đổi threads.net
+    -> threads.com — để 1 bài dán bằng nhiều kiểu link khác nhau vẫn khớp 1 bản ghi."""
+    raw = (url or "").strip()
+    if not raw:
+        return ""
+    if not raw.lower().startswith(("http://", "https://")):
+        raw = "https://" + raw
+    try:
+        parsed = urlparse(raw)
+    except Exception:
+        return raw
+    match = _THREADS_POST_PATH_RE.match(parsed.path or "")
+    if not match:
+        return raw.rstrip("/#")
+    return f"https://www.threads.com/{match.group(1)}/post/{match.group(2)}"
+
+
+def _find_meta_content(page: str, key: str) -> str:
+    """Đọc <meta property|name="key" content="..."> — chấp nhận cả 2 thứ tự thuộc tính."""
+    esc = re.escape(key)
+    m = re.search(rf'<meta\s+(?:property|name)=["\']{esc}["\']\s+content=["\']([^"\']*)["\']', page, re.IGNORECASE) or \
+        re.search(rf'<meta\s+content=["\']([^"\']*)["\']\s+(?:property|name)=["\']{esc}["\']', page, re.IGNORECASE)
+    return html.unescape(m.group(1)).strip() if m else ""
+
+
+def fetch_threads_post_raw_metadata(url: str) -> dict:
+    """Cào OG metadata thô của 1 bài Threads. Trả về cùng shape với
+    debug_fetch_facebook_post_metadata (page_title + metadata{title, description,
+    image, site_name}) để FE dùng chung 1 luồng tự điền nội dung."""
+    target = sanitize_threads_url(url)
+    info: dict = {
+        "target_url": target,
+        "final_url": None,
+        "http_status": None,
+        "error": None,
+        "page_title": None,
+        # Link bài chuẩn /@user/post/CODE — khác target_url khi người dùng dán link
+        # chia sẻ (threads.com/share/XXX, tự chuyển hướng về bài thật).
+        "canonical_url": target if "/post/" in target else None,
+        "metadata": {"title": None, "description": None, "image": None, "site_name": "Threads"},
     }
     try:
-        req = urllib.request.Request(url, headers=headers)
-        with urllib.request.urlopen(req, timeout=10) as response:
-            html_content = response.read().decode("utf-8", errors="ignore")
-
-        meta_title_match = re.search(r'<meta\s+property=["\']og:title["\']\s+content=["\']([^"\']+)["\']', html_content, re.IGNORECASE) or \
-                           re.search(r'<title[^>]*>(.*?)</title>', html_content, re.IGNORECASE | re.DOTALL)
-        page_title = html.unescape(meta_title_match.group(1)).strip() if meta_title_match and meta_title_match.group(1) else ""
-
-        meta_desc_match = re.search(r'<meta\s+property=["\']og:description["\']\s+content=["\']([^"\']+)["\']', html_content, re.IGNORECASE) or \
-                          re.search(r'<meta\s+name=["\']description["\']\s+content=["\']([^"\']+)["\']', html_content, re.IGNORECASE)
-        description = html.unescape(meta_desc_match.group(1)).strip() if meta_desc_match and meta_desc_match.group(1) else ""
-
-        return extract_threads_metadata({
-            "page_title": page_title,
-            "title": page_title,
-            "description": description,
+        with httpx.Client(follow_redirects=True, timeout=10.0) as client:
+            res = client.get(target, headers=_THREADS_FETCH_HEADERS)
+        info["http_status"] = res.status_code
+        info["final_url"] = str(res.url)
+        page = res.text
+        for candidate in (_find_meta_content(page, "og:url"), str(res.url)):
+            canonical = sanitize_threads_url(candidate) if candidate else ""
+            if "/post/" in canonical:
+                info["canonical_url"] = canonical
+                break
+        title = _find_meta_content(page, "og:title") or _find_meta_content(page, "twitter:title")
+        description = _find_meta_content(page, "og:description") or _find_meta_content(page, "description")
+        image = _find_meta_content(page, "og:image") or _find_meta_content(page, "twitter:image")
+        info["page_title"] = title or None
+        info["metadata"].update({
+            "title": title or None,
+            "description": description or None,
+            "image": image or None,
         })
     except Exception as e:
         logger.error(f"Lỗi khi cào metadata Threads: {e}")
-        return {"author_name": "", "content": ""}
+        info["error"] = str(e)
+    return info
+
+
+def fetch_threads_post_metadata(url: str) -> dict[str, str]:
+    """Bóc author_name + content + image của 1 bài Threads. Không raise khi cào rỗng,
+    chỉ trả về rỗng để caller tự fallback placeholder (giống fetch_linkedin_post_metadata)."""
+    raw = fetch_threads_post_raw_metadata(url)
+    meta = raw.get("metadata") or {}
+    extracted = extract_threads_metadata({
+        "page_title": meta.get("title") or "",
+        "description": meta.get("description") or "",
+    })
+    extracted["image"] = meta.get("image") or ""
+    extracted["canonical_url"] = raw.get("canonical_url") or ""
+    return extracted
+
+
+def resolve_threads_post_url(url: str) -> str:
+    """Trả link bài chuẩn /@user/post/CODE; link chia sẻ (/share/XXX) được mở ra để
+    lấy link thật. Không resolve được thì trả link đã chuẩn hoá như cũ."""
+    clean = sanitize_threads_url(url)
+    if "/post/" in clean:
+        return clean
+    return fetch_threads_post_raw_metadata(clean).get("canonical_url") or clean
 
 
 async def add_custom_post(
@@ -1060,8 +1141,10 @@ async def add_custom_post(
         li_meta = fetch_linkedin_post_metadata(final_clean_url)
         scraped_content = content or li_meta.get("content") or "Bài viết LinkedIn - Cần tương tác"
     elif is_threads:
-        final_clean_url = clean_url(link_post)
-        th_meta = fetch_threads_post_metadata(final_clean_url)
+        th_meta = fetch_threads_post_metadata(clean_url(link_post))
+        # Lưu link bài chuẩn (không lưu link /share/) để đồng bộ số liệu, chống trùng
+        # và gọi API comment đều dùng được mã bài.
+        final_clean_url = th_meta.get("canonical_url") or clean_url(link_post)
         scraped_content = content or th_meta.get("content") or "Bài viết Threads - Cần tương tác"
     elif is_youtube:
         final_clean_url = clean_url(link_post)
@@ -1129,7 +1212,8 @@ async def add_custom_post(
                 while final_content and final_content[0] in ("-", "|", ":", ".", "–", "\n", "\r"):
                     final_content = final_content[1:].strip()
 
-    final_media_urls = media_urls or ([meta["image"]] if meta.get("image") else [])
+    auto_image = meta.get("image") or th_meta.get("image") or ""
+    final_media_urls = media_urls or ([auto_image] if auto_image else [])
     now_iso = datetime.now(timezone.utc).isoformat()
     default_deadline = deadline
 
