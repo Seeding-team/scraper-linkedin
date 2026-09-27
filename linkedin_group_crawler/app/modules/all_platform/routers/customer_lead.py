@@ -181,6 +181,38 @@ def get_activity_log(
         return BaseResponse(success=False, message=str(e))
 
 
+class AddNoteRequest(BaseModel):
+    note: str
+
+
+@router.post("/{lead_id}/notes", response_model=BaseResponse)
+def add_note(
+    lead_id: str,
+    payload: AddNoteRequest,
+    current_user: Any = Depends(get_current_user),
+):
+    """Them 1 ghi chu doc lap vao "Hoat dong" cua deal - KHONG gan voi doi
+    stage (feedback leader: man Sua co hoi truoc day chi cho them note kem
+    theo doi stage, khong co cach ghi chu doc lap bat cu luc nao)."""
+    try:
+        existing = customer_lead_service.get_customer_lead_by_id(lead_id)
+        if not existing:
+            return BaseResponse(success=False, message="Không tìm thấy deal")
+        if not can_write_deal(current_user, existing):
+            return BaseResponse(success=False, message="Bạn không có quyền ghi chú deal này")
+        customer_lead_service.add_note(
+            lead_id=lead_id,
+            note=payload.note,
+            actor=current_user.get("id"),
+            actor_name=current_user.get("name") or current_user.get("email"),
+        )
+        return BaseResponse(success=True, message="Đã thêm ghi chú")
+    except ValueError as ve:
+        return BaseResponse(success=False, message=str(ve))
+    except Exception as e:
+        return BaseResponse(success=False, message=str(e))
+
+
 # ---------------------------------------------------------------------------
 # Attachment upload (lên Supabase Storage bucket `crm-attachments`)
 # ---------------------------------------------------------------------------

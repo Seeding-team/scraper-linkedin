@@ -727,6 +727,30 @@ def _write_activity_log(
         logger.warning(f"Failed to write activity log for {customer_id}: {e}")
 
 
+def add_note(
+    lead_id: str,
+    note: str,
+    actor: Optional[str] = None,
+    actor_name: Optional[str] = None,
+) -> None:
+    """Them 1 ghi chu doc lap (khong gan voi doi stage) vao activity log cua
+    deal - feedback leader ve man "Sua co hoi" (DealDetailDrawer.tsx, tab
+    "Hoat dong"): truoc day note CHI duoc ghi kem theo luc transition_stage,
+    khong co cach nao them ghi chu doc lap bat cu luc nao. Dung lai dung
+    _write_activity_log() (action="note_added") - KHONG doi schema/logic
+    stage_change hien co."""
+    note = (note or "").strip()
+    if not note:
+        raise ValueError("Ghi chú không được để trống")
+    _write_activity_log(
+        customer_id=lead_id,
+        action="note_added",
+        actor=actor,
+        actor_name=actor_name,
+        note=note,
+    )
+
+
 def get_activity_log(
     lead_id: str,
     limit: int = 100,

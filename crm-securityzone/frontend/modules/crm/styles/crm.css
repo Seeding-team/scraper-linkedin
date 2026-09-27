@@ -8964,6 +8964,66 @@
   }
 }
 
+/* ---- "Kết quả Lead" - output card system-calculated (feedback leader: bo
+   radio, khong cho SDR tu chon) ---- */
+.crm-verify-outcome-card {
+  border: 1px solid #dbe3ef;
+  border-left-width: 4px;
+  border-radius: 0.65rem;
+  background: #f8fafc;
+  padding: 0.7rem 0.85rem;
+  margin-top: 0.45rem;
+}
+.crm-verify-outcome-card--pending { border-left-color: #d97706; background: #fffbeb; }
+.crm-verify-outcome-card--nurturing { border-left-color: #d97706; background: #fffbeb; }
+.crm-verify-outcome-card--sql { border-left-color: #16a34a; background: #f0fdf4; }
+.crm-verify-outcome-card--unqualified { border-left-color: #dc2626; background: #fef2f2; }
+.crm-verify-outcome-head {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.86rem;
+  font-weight: 800;
+  color: #1e293b;
+}
+.crm-verify-outcome-dot {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 999px;
+  flex: 0 0 auto;
+}
+.crm-verify-outcome-card--pending .crm-verify-outcome-dot,
+.crm-verify-outcome-card--nurturing .crm-verify-outcome-dot { background: #d97706; }
+.crm-verify-outcome-card--sql .crm-verify-outcome-dot { background: #16a34a; }
+.crm-verify-outcome-card--unqualified .crm-verify-outcome-dot { background: #dc2626; }
+.crm-verify-outcome-sub {
+  margin: 0.3rem 0 0;
+  font-size: 0.76rem;
+  color: #475569;
+}
+.crm-verify-outcome-list-title {
+  margin: 0.45rem 0 0.15rem;
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: #64748b;
+}
+.crm-verify-outcome-list {
+  margin: 0;
+  padding-left: 1.05rem;
+  font-size: 0.78rem;
+  color: #334155;
+  display: grid;
+  gap: 0.15rem;
+}
+.crm-verify-outcome-progress {
+  margin-top: 0.35rem;
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: #94a3b8;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
 /* ---- Checklist san sang Convert ---- */
 .crm-verify-readiness-pill {
   border-radius: 999px;
