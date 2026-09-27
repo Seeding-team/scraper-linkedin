@@ -49,6 +49,7 @@ from app.modules.all_platform.services.supabase_internal_engagement_kpi_service 
     get_custom_posts_db,
     get_markee_overrides_db,
     get_marks_by_links,
+    get_my_comments_by_links,
     get_post_interactions,
     get_post_team_counts,
     get_seeder_leaderboard_db,
@@ -352,10 +353,12 @@ def sync_post_metrics_playwright_endpoint(post_id: str) -> BaseResponse:
 @router.post("/my-marks", response_model=BaseResponse)
 def my_marks(payload: MyMarksRequest) -> BaseResponse:
     """Bucket a list of post permalinks into need/received/completed for one employee,
-    from the dedicated internal_engagement_kpi table."""
+    from the dedicated internal_engagement_kpi table. Also returns each link's own
+    posted comment content (my_comments) to display back on the post card."""
     try:
         marks = get_marks_by_links(payload.email_member, payload.link_posts)
-        return BaseResponse(success=True, data={"marks": marks})
+        my_comments = get_my_comments_by_links(payload.email_member, payload.link_posts)
+        return BaseResponse(success=True, data={"marks": marks, "my_comments": my_comments})
     except Exception as e:
         return BaseResponse(success=False, message=str(e))
 

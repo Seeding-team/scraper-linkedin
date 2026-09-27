@@ -247,6 +247,7 @@ export interface InternalEngagementInteraction {
   summary: string;
   created_at: string;
   raw_created_at?: string | null;
+  comment_content?: string;
 }
 
 export interface InternalEngagementPostInteractionsData {

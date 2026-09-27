@@ -403,7 +403,7 @@ export const internalEngagementService = {
     });
   },
 
-  getMyMarks: (emailMember: string, linkPosts: string[]): Promise<ApiResponse<{ marks: Record<string, InternalEngagementMarkStatus> }>> => {
+  getMyMarks: (emailMember: string, linkPosts: string[]): Promise<ApiResponse<{ marks: Record<string, InternalEngagementMarkStatus>; my_comments?: Record<string, string> }>> => {
     return requestJson(`${BASE}/internal-engagement/my-marks`, {
       method: "POST",
       body: JSON.stringify({ email_member: emailMember, link_posts: linkPosts }),
