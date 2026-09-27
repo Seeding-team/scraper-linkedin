@@ -5,6 +5,8 @@ import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContai
 import { createPortal } from "react-dom";
 import { cn } from "@/lib/utils";
 import { FiExternalLink } from "react-icons/fi";
+import { FaFacebook, FaLinkedin } from "react-icons/fa";
+import { FaThreads } from "react-icons/fa6";
 import { SeedingExtensionPanel } from "@/components/all-platform/components/seeding-extension/seeding-extension-panel";
 import { useAppAuth } from "@/contexts/AppAuthContext";
 import { FilterBar, type FilterState } from "@/components/all-platform/components/filter-bar";
@@ -586,7 +588,9 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
       setTotalCount((c) => Math.max(0, c - 1));
 
       try {
-        const res = await allPlatformPostsDeleteService.deleteFacebookPost({ id: post.id });
+        const res = post.platform === "threads"
+          ? await allPlatformPostsDeleteService.deleteThreadsPost({ id: post.id })
+          : await allPlatformPostsDeleteService.deleteFacebookPost({ id: post.id });
         if (!res?.success) {
           throw new Error(res?.message || "Xóa thất bại");
         }
@@ -639,34 +643,46 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
   );
 
   // Tach rieng khoi khoi tieu de (!hideHeader) - day la CONTROL chuc nang
-  // (chuyen Facebook/LinkedIn), khong phai trang tri. Bug da gap: khi nhung
+  // (chuyen Facebook/LinkedIn/Threads), khong phai trang tri. Bug da gap: khi nhung
   // trang "Seeding ben ngoai" render component nay voi hideHeader (gom vao
   // tab noi bo, khong can lai tieu de "Unified Post Feed"), toan bo switcher
   // nay bi an theo luon -> feedPlatform ket cung o "facebook" mac dinh, tab
   // "Seeding ben ngoai" khong co cach nao xem duoc bai LinkedIn du logic cao/
   // luu du lieu LinkedIn da chay va co du lieu that trong linkedin_posts.
+  // Threads khong co group - bai duoc tim theo tu khoa (extension, lenh MK_TH_CRAWL_*).
   const platformTabs = (
-    <div className="bg-muted p-0.5 rounded-lg flex gap-0.5">
+    <div className="bg-muted p-1 rounded-xl inline-flex flex-wrap gap-1" role="tablist" aria-label="Nền tảng">
       {([
-        { key: "facebook", label: "Facebook" },
-        { key: "linkedin", label: "LinkedIn" },
+        { key: "facebook", label: "Facebook", icon: <FaFacebook className="text-blue-600" /> },
+        { key: "linkedin", label: "LinkedIn", icon: <FaLinkedin className="text-blue-700" /> },
+        { key: "threads", label: "Threads", icon: <FaThreads /> },
       ] as const).map((t) => (
         <button
           key={t.key}
           type="button"
+          role="tab"
+          aria-selected={feedPlatform === t.key}
           onClick={() => { setFeedPlatform(t.key); setPage(1); }}
           className={cn(
-            "px-4 py-1 rounded-md text-xs font-semibold transition-all cursor-pointer",
+            "flex items-center gap-2 px-4 py-1.5 rounded-lg text-sm font-bold transition-all cursor-pointer",
             feedPlatform === t.key
-              ? "bg-white text-foreground shadow-sm"
+              ? "bg-white text-foreground shadow-md"
               : "text-muted-foreground hover:text-foreground hover:bg-accent",
           )}
         >
+          {t.icon}
           {t.label}
         </button>
       ))}
     </div>
   );
+
+  const platformHint =
+    feedPlatform === "threads"
+      ? "Đang xem Threads — tìm bài theo từ khoá."
+      : feedPlatform === "linkedin"
+        ? "Đang xem LinkedIn — cào theo nhóm đã thêm."
+        : "Đang xem Facebook — cào theo nhóm đã thêm.";
 
   return (
     <div className="w-full space-y-6">
@@ -684,8 +700,14 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
           </div>
         </div>
       ) : (
-        <div className="flex items-center justify-end">
+        /* Tab "Seeding bên ngoài": làm nổi bật hẳn (khung viền + icon + mô tả) vì đây là
+           lựa chọn quan trọng nhất của trang - 3 nút nhỏ canh phải rất dễ bị lướt qua. */
+        <div className="flex flex-col sm:flex-row sm:items-center gap-3 rounded-2xl border-2 border-primary/30 bg-gradient-to-r from-primary/5 to-transparent p-3 sm:p-4">
+          <span className="text-xs font-bold text-muted-foreground uppercase tracking-wide shrink-0">
+            Chọn nền tảng
+          </span>
           {platformTabs}
+          <span className="text-xs text-muted-foreground sm:ml-auto">{platformHint}</span>
         </div>
       )}
 
@@ -805,14 +827,22 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
       )}
       {/* 1 extension gộp (Markee Seeding Extension): cào bài + bình luận hàng loạt cho cả
           Facebook và LinkedIn, theo tab nền tảng đang chọn — thay cho 2 launcher riêng
-          "Siêu Tốc Cào Dữ Liệu" + "Seeding Comment Hàng Loạt" trước đây (chỉ có ở tab Facebook). */}
-      {CURRENT_USER_EMAIL && (feedPlatform === "facebook" || feedPlatform === "linkedin") && (
+          "Siêu Tốc Cào Dữ Liệu" + "Seeding Comment Hàng Loạt" trước đây (chỉ có ở tab Facebook).
+          Threads: chỉ cào (tìm theo từ khoá), feed/xu hướng tải lại mỗi khi lưu xong 1 từ khoá. */}
+      {CURRENT_USER_EMAIL && (
         <SeedingExtensionPanel
           platform={feedPlatform}
           posts={posts}
-          onCrawlDone={(_platform, data) => {
+          onCrawlSaved={(platform, data) => {
+            if (platform === "threads" && data.count > 0) {
+              fetchPosts();
+              fetchDailyTrend();
+            }
+          }}
+          onCrawlDone={(platform, data) => {
             fetchPosts();
             fetchStats();
+            if (platform === "threads") fetchDailyTrend();
             setCrawlResultsSummary((prev) => ({ ...prev, totalPosts: data.totalSaved }));
             setShowCrawlResultModal(true);
           }}
@@ -886,10 +916,10 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
                   verifyStatus={post.verify_status as "pending" | "yes" | "no"}
                   onSeeding={() => {}}
                   onVerify={() => {}}
-                  onSchedule={(post) => setScheduleModalPost(post)}
+                  onSchedule={post.platform === "threads" ? undefined : (post) => setScheduleModalPost(post)}
                   onViewDetail={(post) => setDetailModalPost(post)}
                   onDelete={(p) => void handleDeletePost(p)}
-                  onViewSeedingRoster={(p) => void openSeedingRosterModal(p)}
+                  onViewSeedingRoster={post.platform === "threads" ? undefined : (p) => void openSeedingRosterModal(p)}
                 />
             ))}
           </div>
@@ -924,7 +954,8 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
         post={detailModalPost}
         isOpen={!!detailModalPost}
         onClose={() => setDetailModalPost(null)}
-        onVerify={(post) => {
+        // Xác minh seeding (chọn tài khoản FB/LinkedIn) chưa hỗ trợ bài Threads.
+        onVerify={detailModalPost?.platform === "threads" ? undefined : (post) => {
           setVerifyModalPost(post);
         }}
         verifyStatus={detailModalPost?.verify_status as any}

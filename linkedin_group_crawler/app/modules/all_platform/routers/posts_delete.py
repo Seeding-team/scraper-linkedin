@@ -88,3 +88,33 @@ def delete_facebook_post(
     except Exception as e:
         return BaseResponse(success=False, message=str(e))
 
+
+
+@router.delete("/posts/threads")
+def delete_threads_post(
+    payload: DeleteFacebookPostRequest,
+    authorization: str | None = Header(None),
+):
+    """Xoá bài Threads (bảng threads_posts) — cùng quy tắc phân quyền với bài Facebook ở trên."""
+    try:
+        if not payload.id and not payload.post_url:
+            raise HTTPException(status_code=400, detail="Missing id or post_url")
+
+        user = _get_user_from_header(authorization, None)
+        user_id = user.get("id")
+        role = user.get("role")
+
+        q = get_supabase_client().table("threads_posts").delete()
+        if role not in ("admin", "leader"):
+            q = q.eq("id_member", user_id)
+
+        if payload.id:
+            q.eq("id", payload.id).execute()
+        else:
+            q.eq("post_url", payload.post_url).execute()
+
+        return BaseResponse(success=True, data={"deleted": True})
+    except HTTPException as e:
+        return BaseResponse(success=False, message=e.detail)
+    except Exception as e:
+        return BaseResponse(success=False, message=str(e))

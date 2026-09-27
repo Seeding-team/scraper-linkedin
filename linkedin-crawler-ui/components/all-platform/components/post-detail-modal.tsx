@@ -2,6 +2,7 @@
 
 import React from "react";
 import { FaFacebook, FaLinkedin } from "react-icons/fa";
+import { FaThreads } from "react-icons/fa6";
 import { FiExternalLink } from "react-icons/fi";
 import { cn } from "@/lib/utils";
 import { useMemo } from "react";
@@ -73,6 +74,8 @@ export function PostDetailModal({
           <h2 className="text-lg font-bold text-foreground flex items-center gap-2">
             {post.platform === "facebook" ? (
               <FaFacebook className="text-blue-600" />
+            ) : post.platform === "threads" ? (
+              <FaThreads className="text-foreground" />
             ) : (
               <FaLinkedin className="text-blue-700" />
             )}

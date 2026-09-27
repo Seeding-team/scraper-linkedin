@@ -1,6 +1,7 @@
-// Module cào bài Facebook + LinkedIn (gộp từ 2 extension cũ). Mỗi file tự bọc IIFE và tự
-// đăng ký chrome.runtime.onMessage riêng cho lệnh MK_FB_CRAWL_* / MK_LI_CRAWL_*.
-importScripts("bg/fb-crawl.js", "bg/li-crawl.js");
+// Module cào bài Facebook + LinkedIn (gộp từ 2 extension cũ) + Threads (tìm theo từ khoá).
+// Mỗi file tự bọc IIFE và tự đăng ký chrome.runtime.onMessage riêng cho lệnh
+// MK_FB_CRAWL_* / MK_LI_CRAWL_* / MK_TH_CRAWL_*.
+importScripts("bg/fb-crawl.js", "bg/li-crawl.js", "bg/threads-crawl.js");
 
 let isCommenting = false;
 let currentProgress = null;
