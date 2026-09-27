@@ -4,9 +4,10 @@ checkbox - migration 151 (`crm_lead_classification_rules`, 1 dong duy nhat).
 Theo dung feedback WIP full-flow (markee_crm_v26_compact_opportunity_name.html,
 man "Danh muc & cau hinh -> Dieu kien phan loai Lead"):
   - Nhom "Dat chuan (SQL)": AND - TAT CA dieu kien duoc tick phai thoa.
-  - Nhom "Nuoi duong": chi la ly do hien thi (khong gate ket qua that,
-    giong dung logic JS `computeResult()` cua prototype - xem
-    evaluate_lead_conditions() ben duoi).
+  - Nhom "Nuoi duong": OR - CHI CAN 1 dieu kien duoc tick la thoa, GATE that
+    su ket qua (co the override ca khi da du dieu kien SQL) - da sua theo
+    feedback leader (truoc day chi la ly do hien thi, khong co tac dung
+    logic that - xem evaluate_lead_conditions() ben duoi).
   - Nhom "Khong dat chuan": OR - CHI CAN 1 dieu kien duoc tick la thoa.
 
 Thiet ke giong dung `quote_rule_evaluation_service.py`: 1 ham thuan
@@ -67,53 +68,92 @@ def _normalize_conditions(raw: dict[str, Any] | None) -> dict[str, bool]:
 
 def evaluate_lead_conditions(fields: dict[str, Any], conditions: dict[str, bool] | None = None) -> dict[str, Any]:
     """Ham THUAN, khong dung DB - nhan vao tin hieu thuc te cua 1 Lead va bo
-    dieu kien dang bat, tra ve outcome + ly do. Dich 1-1 tu computeResult()
-    (JS) trong prototype V26 - KHONG doi logic, chi doi ngon ngu.
+    dieu kien dang bat, tra ve dict {outcome, reason, reasons, missing,
+    sql_ok, sql_total}. Mirror 1-1 voi evaluateLeadConditions() (JS,
+    LeadDetailDrawer.tsx) - noi SDR THUC SU dung ket qua nay, KHONG duoc tu
+    chon/override (feedback leader). `reasons` la list ly do cu the (Nuoi
+    duong/Khong dat, rong voi sql/pending); `missing` la list ten field SQL
+    dang bat nhung chua thoa (dung cho card "pending"); sql_ok/sql_total la
+    tien do dieu kien SQL dang bat (KHONG hard-code "X/Y").
+
+    Thu tu uu tien: Khong dat chuan (OR) > Nuoi duong (OR, co the override
+    ca khi da du SQL) > SQL (AND) > "pending" ("chua du du lieu") neu khong
+    khop dieu kien nao trong 3 nhom tren - KHAC voi truoc day (mac dinh ket
+    luan la "nurturing" du chi la fallback ngam dinh, khong phai Nuoi duong
+    that theo dung 3 dieu kien rieng cua WIP).
 
     `fields` (tat ca la bool, tinh san o phia goi):
       has_product, has_interest_level, has_value, has_team, has_next,
-      has_follow, has_contact, fit_unfit (True neu ICP = "Chưa phù hợp").
+      has_follow, has_contact, fit_unfit (True neu ICP = "Chưa phù hợp"),
+      fit_known (True neu da xac dinh ICP, khac "Chưa xác định").
     """
     c = _normalize_conditions(conditions if conditions is not None else DEFAULT_CONDITIONS)
 
-    invalid_checks: list[bool] = []
-    if c["inv_fit"]:
-        invalid_checks.append(bool(fields.get("fit_unfit")))
-    if c["inv_no_contact"]:
-        invalid_checks.append(not bool(fields.get("has_contact")))
-    is_invalid = any(invalid_checks)
+    invalid_reasons: list[str] = []
+    if c["inv_fit"] and bool(fields.get("fit_unfit")):
+        invalid_reasons.append("Không phù hợp ICP")
+    if c["inv_no_contact"] and not bool(fields.get("has_contact")):
+        invalid_reasons.append("Không có thông tin liên hệ hợp lệ")
+    is_invalid = bool(invalid_reasons)
 
-    sql_checks: list[bool] = []
-    if c["sql_product"]:
-        sql_checks.append(bool(fields.get("has_product")))
-    if c["sql_interest"]:
-        sql_checks.append(bool(fields.get("has_interest_level")))
-    if c["sql_value"]:
-        sql_checks.append(bool(fields.get("has_value")))
-    if c["sql_team"]:
-        sql_checks.append(bool(fields.get("has_team")))
-    if c["sql_next"]:
-        sql_checks.append(bool(fields.get("has_next")))
-    if c["sql_follow"]:
-        sql_checks.append(bool(fields.get("has_follow")))
-    if c["sql_fit"]:
-        sql_checks.append(not bool(fields.get("fit_unfit")))
-    is_sql = all(sql_checks) if sql_checks else False
+    sql_field_labels = {
+        "sql_product": "Sản phẩm / dịch vụ",
+        "sql_interest": "Mức độ quan tâm",
+        "sql_value": "Giá trị dự kiến",
+        "sql_team": "Sale nhận bàn giao",
+        "sql_next": "Việc tiếp theo",
+        "sql_follow": "Hạn follow-up",
+        "sql_fit": "ICP phù hợp",
+    }
+    sql_field_values = {
+        "sql_product": bool(fields.get("has_product")),
+        "sql_interest": bool(fields.get("has_interest_level")),
+        "sql_value": bool(fields.get("has_value")),
+        "sql_team": bool(fields.get("has_team")),
+        "sql_next": bool(fields.get("has_next")),
+        "sql_follow": bool(fields.get("has_follow")),
+        "sql_fit": not bool(fields.get("fit_unfit")),
+    }
+    sql_enabled_keys = [key for key in sql_field_labels if c[key]]
+    sql_checks = [sql_field_values[key] for key in sql_enabled_keys]
+    sql_total = len(sql_checks)
+    sql_ok = sum(1 for ok in sql_checks if ok)
+    is_sql = sql_total > 0 and sql_ok == sql_total
+    missing = [label for key, label in sql_field_labels.items() if c[key] and not sql_field_values[key]]
 
+    # "Near-miss": 1 dieu kien Nuoi duong CHI duoc tinh la khop khi TAT CA cac
+    # dieu kien SQL dang bat KHAC (ngoai dung field ma dieu kien nay nham toi)
+    # da thoa - tuc Lead gan nhu du SQL, chi vuong dung 1 cho. Neu Lead con
+    # thieu nhieu thu khac nua thi van la "pending", KHONG phai Nuoi duong
+    # (feedback leader, doi chieu vi du: Lead moi mo/dien mot phan KHONG duoc
+    # tu dong ket luan la Nuoi duong chi vi 1 field dang trong).
+    def others_ok(exclude_keys: set[str]) -> bool:
+        return all(sql_field_values[key] for key in sql_enabled_keys if key not in exclude_keys)
+
+    nurture_reasons = []
+    if c["nur_missing_value"] and not fields.get("has_value") and others_ok({"sql_value"}):
+        nurture_reasons.append("Thiếu giá trị dự kiến")
+    if (
+        c["nur_missing_handoff"]
+        and not (fields.get("has_team") and fields.get("has_next") and fields.get("has_follow"))
+        and others_ok({"sql_team", "sql_next", "sql_follow"})
+    ):
+        nurture_reasons.append("Thiếu thông tin bàn giao Sale")
+    if c["nur_unknown_fit"] and not fields.get("fit_known") and others_ok({"sql_fit"}):
+        nurture_reasons.append("Chưa xác định nhóm khách hàng")
+    is_nurture_forced = bool(nurture_reasons)
+
+    base = {"missing": missing, "sql_ok": sql_ok, "sql_total": sql_total}
     if is_invalid:
-        return {"outcome": "unqualified", "reason": "Lead thỏa điều kiện loại trong cấu hình."}
+        return {**base, "outcome": "unqualified", "reason": f"Không đạt chuẩn: {', '.join(invalid_reasons)}.", "reasons": invalid_reasons}
+    if is_nurture_forced:
+        # Dieu kien Nuoi duong dang bat GATE that su - co the override ca khi
+        # cac dieu kien SQL con lai da du (feedback leader: "sao chi la text
+        # duoc?" - khong con la ly do hien thi don thuan nhu truoc).
+        return {**base, "outcome": "nurturing", "reason": f"Nuôi dưỡng vì {', '.join(nurture_reasons).lower()}.", "reasons": nurture_reasons}
     if is_sql:
-        return {"outcome": "sql", "reason": "Đủ điều kiện SQL theo cấu hình hiện tại."}
-
-    reasons = []
-    if c["nur_missing_value"] and not fields.get("has_value"):
-        reasons.append("thiếu giá trị dự kiến")
-    if c["nur_missing_handoff"] and not (fields.get("has_team") and fields.get("has_next") and fields.get("has_follow")):
-        reasons.append("thiếu thông tin bàn giao")
-    if c["nur_unknown_fit"] and not fields.get("fit_known"):
-        reasons.append("chưa xác định nhóm khách hàng")
-    reason = f"Nuôi dưỡng vì {', '.join(reasons)}." if reasons else "Chưa đủ điều kiện SQL."
-    return {"outcome": "nurturing", "reason": reason}
+        return {**base, "outcome": "sql", "reason": "Đủ điều kiện SQL theo cấu hình hiện tại.", "reasons": []}
+    return {**base, "outcome": "pending", "reason": "Chưa đủ dữ liệu để phân loại.", "reasons": []}
 
 
 def rule_summary_text(conditions: dict[str, bool]) -> str:

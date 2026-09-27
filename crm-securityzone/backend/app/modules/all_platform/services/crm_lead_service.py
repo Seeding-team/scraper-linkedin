@@ -643,6 +643,14 @@ def convert_lead(lead_id: str, payload: dict[str, Any], user: dict[str, Any]) ->
     # gia tri FE gui (da khoa trong 1 dropdown PIPELINE_COLUMNS hop le o FE),
     # chi fallback "dealing" khi thieu/rong dung nhu truoc.
     deal["deal_stage"] = deal.get("deal_stage") or "dealing"
+    # "Dự án" (feedback leader, WIP full-flow man Xac minh Lead) - FE go ten
+    # Du an MOI (chua co project_id) qua field "project_name". Customer o day
+    # co the la KHACH HANG MOI (chua co id truoc khi RPC crm_convert_lead
+    # chay xong) nen KHONG the tao Project truoc nhu create_customer_lead() -
+    # phai doi RPC tra ve customer_id THAT roi moi tao Project + patch nguoc
+    # vao Deal (xem doan sau _write follow-up ben duoi, cung mau voi
+    # position_category_id migration 079).
+    project_name = (deal.pop("project_name", None) or "").strip()
     apply_position_category(deal)
     contact = payload.get("contact")
     if contact:
@@ -688,6 +696,25 @@ def convert_lead(lead_id: str, payload: dict[str, Any], user: dict[str, Any]) ->
     # stamped when this call actually created/updated it (mirrors the RPC's
     # own "leave existing profile alone unless p_update_customer" rule).
     new_deal_id = (data.get("deal") or {}).get("id")
+    new_customer_id_for_project = (data.get("customer") or {}).get("id")
+    # "Dự án" go ten moi (project_name, xem chu thich o tren) - tao THAT sau
+    # khi biet customer_id (co the la khach hang vua tao trong chinh RPC nay),
+    # roi patch project_id nguoc vao Deal. project_id CO SAN (chon tu du an
+    # da co) da duoc RPC (migration 153) tu xu ly + validate ben trong roi,
+    # nen o day CHI xu ly truong hop go ten MOI.
+    if project_name and not deal.get("project_id") and new_customer_id_for_project:
+        from app.modules.all_platform.services.supabase_project_service import create_project
+
+        new_project = create_project({"name": project_name, "customer_id": new_customer_id_for_project}, actor_id)
+        if new_deal_id and new_project.get("id"):
+            execute_supabase_query(
+                lambda: supabase.table("customer_leads")
+                .update({"project_id": new_project["id"]})
+                .eq("id", new_deal_id)
+                .eq("instance", settings.crm_instance)
+                .execute()
+            )
+            data["deal"]["project_id"] = new_project["id"]
     if new_deal_id and deal.get("position_category_id"):
         execute_supabase_query(
             lambda: supabase.table("customer_leads")
