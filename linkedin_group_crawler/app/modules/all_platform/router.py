@@ -28,6 +28,7 @@ from app.modules.all_platform.routers.linkedin_legacy import router as linkedin_
 from app.modules.all_platform.routers.crawl_facebook import crawl_facebook_router
 from app.modules.all_platform.routers.extension_crawl import router as extension_crawl_router
 from app.modules.all_platform.routers.extension_crawl_linkedin import router as extension_crawl_linkedin_router
+from app.modules.all_platform.routers.extension_crawl_threads import router as extension_crawl_threads_router
 from app.modules.all_platform.routers.crawl_queue import router as crawl_queue_router
 from app.modules.all_platform.routers.fb_account_pool import router as fb_account_pool_router
 from app.modules.all_platform.routers.fb import router as fb_automation_router
@@ -102,6 +103,11 @@ all_platform_router.include_router(
     extension_crawl_linkedin_router,
     prefix="/extension/linkedin",
     tags=["All-Platform Extension LinkedIn Crawl"],
+)
+all_platform_router.include_router(
+    extension_crawl_threads_router,
+    prefix="/extension/threads",
+    tags=["All-Platform Extension Threads Crawl"],
 )
 all_platform_router.include_router(
     crawl_queue_router,

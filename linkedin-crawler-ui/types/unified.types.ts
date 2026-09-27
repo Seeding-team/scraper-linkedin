@@ -53,6 +53,8 @@ export interface UnifiedPost {
   crawler_name?: string;
   crawler_team?: string;
   all_seedings?: UnifiedSeedingInfo[];
+  /** Chỉ bài Threads: từ khoá tìm kiếm đã tìm ra bài (Threads không có group). */
+  search_keyword?: string;
 }
 
 export interface GetAllPostsRequest {

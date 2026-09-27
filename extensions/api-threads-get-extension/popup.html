@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Threads API Crawler</title>
+  <style>
+    body { font-family: system-ui, -apple-system, sans-serif; width: 380px; padding: 16px; margin: 0; background: #f5f5f5; }
+    .card { background: #fff; border-radius: 8px; padding: 16px; box-shadow: 0 1px 2px rgba(0,0,0,0.1); }
+    h2 { margin: 0 0 8px; font-size: 18px; color: #101010; }
+    p { font-size: 12px; color: #555; margin: 0 0 12px; }
+    #status { font-size: 13px; font-weight: 600; margin-bottom: 8px; }
+    button { background: #e4405f; color: #fff; border: none; padding: 8px 14px; border-radius: 6px; font-weight: bold; cursor: pointer; }
+    button:disabled { background: #ddd; color: #999; cursor: not-allowed; }
+    #logPanel { height: 220px; overflow-y: auto; background: #282c34; color: #abb2bf; font-family: monospace; font-size: 11px; padding: 8px; border-radius: 4px; white-space: pre-wrap; margin-top: 10px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h2>🧵 Threads API Crawler</h2>
+    <p>Bấm "Siêu Tốc Cào Dữ Liệu" ở tab Threads, trang "Seeding bên ngoài" của web Markee để bắt đầu. Đăng nhập threads.com trên Chrome này để lấy được nhiều bài hơn.</p>
+    <div id="status">Đang kiểm tra...</div>
+    <button id="btnStop" disabled>🛑 Dừng</button>
+    <div id="logPanel"></div>
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>

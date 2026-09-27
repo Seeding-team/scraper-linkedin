@@ -1,0 +1,50 @@
+{
+  "manifest_version": 3,
+  "name": "Threads API Crawler",
+  "version": "1.0",
+  "description": "Tìm và lấy bài viết Threads theo từ khoá siêu tốc (Seeding bên ngoài - Markee)",
+  "permissions": [
+    "tabs",
+    "scripting",
+    "storage",
+    "cookies"
+  ],
+  "host_permissions": [
+    "*://*.threads.com/*",
+    "*://*.threads.net/*",
+    "http://localhost/*",
+    "http://127.0.0.1/*",
+    "*://*.seeding.markeeai.com/*",
+    "*://*.zenithglobal.dev/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["*://*.threads.com/*", "*://*.threads.net/*"],
+      "js": ["sniffer.js"],
+      "world": "MAIN",
+      "run_at": "document_start"
+    },
+    {
+      "matches": ["*://*.threads.com/*", "*://*.threads.net/*"],
+      "js": ["content.js"],
+      "run_at": "document_start"
+    },
+    {
+      "matches": [
+        "*://localhost/*",
+        "*://127.0.0.1/*",
+        "*://*.vercel.app/*",
+        "*://*.seeding.markeeai.com/*",
+        "*://*.zenithglobal.dev/*"
+      ],
+      "js": ["bridge.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

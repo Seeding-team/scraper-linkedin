@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import { FaFacebook, FaLinkedin } from "react-icons/fa";
+import { FaThreads } from "react-icons/fa6";
 import { FiExternalLink } from "react-icons/fi";
 import { cn } from "@/lib/utils";
 import type { UnifiedPost, FeedPlatform } from "@/types/unified.types";
@@ -25,6 +26,9 @@ interface PostCardProps {
 function PlatformIcon({ platform }: { platform: FeedPlatform }) {
   if (platform === "facebook") {
     return <FaFacebook className="text-blue-600 shrink-0" />;
+  }
+  if (platform === "threads") {
+    return <FaThreads className="text-foreground shrink-0" />;
   }
   return <FaLinkedin className="text-blue-700 shrink-0" />;
 }
@@ -106,6 +110,11 @@ export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onVi
               {post.group_name || "Unknown Group"}
             </a>
 
+            {post.platform === "threads" && post.search_keyword && (
+              <span className="shrink-0 rounded bg-neutral-100 px-2 py-0.5 text-[10px] font-bold text-neutral-700" title="Từ khoá đã tìm ra bài này">
+                🔎 {post.search_keyword}
+              </span>
+            )}
             {post.intent && (
               <span className="shrink-0 rounded bg-purple-50 px-2 py-0.5 text-[10px] font-bold text-purple-600">
                 {post.intent}
@@ -282,13 +291,15 @@ export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onVi
               Xem chi tiết
             </button>
 
-            <button
-              type="button"
-              onClick={() => onSchedule?.(post)}
-              className="px-3 py-2 bg-card border border-amber-300 text-amber-600 hover:bg-amber-50 rounded-lg text-sm font-semibold transition shadow-sm cursor-pointer"
-            >
-              Lên lịch
-            </button>
+            {onSchedule && (
+              <button
+                type="button"
+                onClick={() => onSchedule(post)}
+                className="px-3 py-2 bg-card border border-amber-300 text-amber-600 hover:bg-amber-50 rounded-lg text-sm font-semibold transition shadow-sm cursor-pointer"
+              >
+                Lên lịch
+              </button>
+            )}
 
 
 

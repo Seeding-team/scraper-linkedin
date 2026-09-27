@@ -5,7 +5,10 @@ import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContai
 import { createPortal } from "react-dom";
 import { cn } from "@/lib/utils";
 import { FiExternalLink } from "react-icons/fi";
+import { FaFacebook } from "react-icons/fa";
+import { FaThreads } from "react-icons/fa6";
 import { ApiExtensionLauncher } from "@/components/all-platform/components/api-extension-launcher";
+import { ThreadsExtensionLauncher } from "@/components/all-platform/components/threads-extension-launcher";
 import { useAppAuth } from "@/contexts/AppAuthContext";
 import { FilterBar, type FilterState } from "@/components/all-platform/components/filter-bar";
 import { PostCard } from "@/components/all-platform/components/post-card";
@@ -587,7 +590,9 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
       setTotalCount((c) => Math.max(0, c - 1));
 
       try {
-        const res = await allPlatformPostsDeleteService.deleteFacebookPost({ id: post.id });
+        const res = post.platform === "threads"
+          ? await allPlatformPostsDeleteService.deleteThreadsPost({ id: post.id })
+          : await allPlatformPostsDeleteService.deleteFacebookPost({ id: post.id });
         if (!res?.success) {
           throw new Error(res?.message || "Xóa thất bại");
         }
@@ -655,6 +660,7 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
               {([
                 { key: "facebook", label: "Facebook" },
                 { key: "linkedin", label: "LinkedIn" },
+                { key: "threads", label: "Threads" },
               ] as const).map((t) => (
                 <button
                   key={t.key}
@@ -672,6 +678,46 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
               ))}
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Tab "Seeding bên ngoài" (hideHeader): chọn nguồn bài Facebook hoặc Threads.
+          Threads không có group - bài được tìm theo từ khoá qua extension Threads.
+          Làm nổi bật hẳn (khung viền + icon + mô tả) vì đây là lựa chọn quan trọng
+          nhất của trang - trước đó chỉ là 2 nút nhỏ rất dễ bị lướt qua. */}
+      {hideHeader && (
+        <div className="flex flex-col sm:flex-row sm:items-center gap-3 rounded-2xl border-2 border-primary/30 bg-gradient-to-r from-primary/5 to-transparent p-3 sm:p-4">
+          <span className="text-xs font-bold text-muted-foreground uppercase tracking-wide shrink-0">
+            Chọn nền tảng
+          </span>
+          <div className="bg-muted p-1 rounded-xl inline-flex gap-1" role="tablist" aria-label="Nền tảng">
+            {([
+              { key: "facebook", label: "Facebook", icon: <FaFacebook className="text-blue-600" /> },
+              { key: "threads", label: "Threads", icon: <FaThreads /> },
+            ] as const).map((t) => (
+              <button
+                key={t.key}
+                type="button"
+                role="tab"
+                aria-selected={feedPlatform === t.key}
+                onClick={() => { setFeedPlatform(t.key); setPage(1); }}
+                className={cn(
+                  "flex items-center gap-2 px-5 py-2 rounded-lg text-sm font-bold transition-all cursor-pointer",
+                  feedPlatform === t.key
+                    ? "bg-white text-foreground shadow-md scale-[1.03]"
+                    : "text-muted-foreground hover:text-foreground hover:bg-accent",
+                )}
+              >
+                {t.icon}
+                {t.label}
+              </button>
+            ))}
+          </div>
+          <span className="text-xs text-muted-foreground sm:ml-auto">
+            {feedPlatform === "threads"
+              ? "Đang xem Threads — tìm bài theo từ khoá."
+              : "Đang xem Facebook — cào theo nhóm đã thêm."}
+          </span>
         </div>
       )}
 
@@ -792,6 +838,21 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
       {/* Phase 6: Siêu Tốc Cào Dữ Liệu + Bulk Comment — hiển thị cho cả 3 role
           (admin/leader/member) khi đang ở tab Facebook. SeedingActivityPanel
           vẫn chỉ admin/leader vì là panel tổng quan nhóm. */}
+      {/* Siêu Tốc Cào Dữ Liệu cho Threads: tìm bài theo từ khoá qua extension
+          Threads API Crawler. Tải lại feed/số liệu mỗi khi extension lưu xong 1 từ khoá. */}
+      {CURRENT_USER_EMAIL && feedPlatform === "threads" && (
+        <ThreadsExtensionLauncher
+          onSaved={() => {
+            fetchPosts();
+            fetchDailyTrend();
+          }}
+          onComplete={() => {
+            fetchPosts();
+            fetchStats();
+            fetchDailyTrend();
+          }}
+        />
+      )}
       {CURRENT_USER_EMAIL && feedPlatform === "facebook" && (
         <>
           <ApiExtensionLauncher
@@ -890,10 +951,10 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
                   verifyStatus={post.verify_status as "pending" | "yes" | "no"}
                   onSeeding={() => {}}
                   onVerify={() => {}}
-                  onSchedule={(post) => setScheduleModalPost(post)}
+                  onSchedule={post.platform === "threads" ? undefined : (post) => setScheduleModalPost(post)}
                   onViewDetail={(post) => setDetailModalPost(post)}
                   onDelete={(p) => void handleDeletePost(p)}
-                  onViewSeedingRoster={(p) => void openSeedingRosterModal(p)}
+                  onViewSeedingRoster={post.platform === "threads" ? undefined : (p) => void openSeedingRosterModal(p)}
                 />
             ))}
           </div>
@@ -928,7 +989,8 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
         post={detailModalPost}
         isOpen={!!detailModalPost}
         onClose={() => setDetailModalPost(null)}
-        onVerify={(post) => {
+        // Xác minh seeding (chọn tài khoản FB/LinkedIn) chưa hỗ trợ bài Threads.
+        onVerify={detailModalPost?.platform === "threads" ? undefined : (post) => {
           setVerifyModalPost(post);
         }}
         verifyStatus={detailModalPost?.verify_status as any}

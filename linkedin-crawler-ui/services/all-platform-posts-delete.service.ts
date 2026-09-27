@@ -28,6 +28,12 @@ export const allPlatformPostsDeleteService = {
       body: JSON.stringify(payload),
     });
   },
+  deleteThreadsPost: async (payload: { id?: string; post_url?: string }) => {
+    return requestJson(`${BASE}/unified/posts/threads`, {
+      method: "DELETE",
+      body: JSON.stringify(payload),
+    });
+  },
 };
 
 

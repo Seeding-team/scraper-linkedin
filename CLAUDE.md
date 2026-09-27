@@ -1,3 +1,29 @@
+# Tiến độ phiên làm việc (2026-09-27) — "Siêu Tốc Cào Dữ Liệu" cho Threads (tab Seeding bên ngoài)
+
+Mentor yêu cầu: tab "Seeding bên ngoài" duyệt Threads để tìm bài viết, giống "Siêu Tốc Cào
+Dữ Liệu" của Facebook. Threads không có group -> tìm theo **từ khoá** (threads.com/search).
+
+- Extension MỚI, tách riêng `extensions/api-threads-get-extension/` (không sửa extension FB;
+  message đều có tiền tố `THREADS_API_*` để cài chung với extension FB không đụng nhau).
+  Lấy bài từ JSON nhúng trong trang + GraphQL khi cuộn (sniffer.js), DOM chỉ là dự phòng.
+  Zip ở `linkedin-crawler-ui/public/api-threads-get-extension.zip` (đã thêm vào
+  `scripts/build-extension-zips.mjs`).
+- Backend: bảng mới `threads_posts` (migration `153_threads_posts.sql`), endpoint
+  `POST /api/all-platform/extension/threads/save-posts` (x-api-key như FB; lọc trùng, lọc
+  bài cũ theo `max_age_days`, ưu tiên tương tác, cắt `post_limit`), `unified_posts_service`
+  nhận `platform="threads"` (feed/stats/trend; KPI/seeding Threads tra `platforms` theo tên,
+  chưa có dòng Threads thì = 0), `DELETE /api/all-platform/unified/posts/threads`.
+  Platform `"all"` và Facebook/LinkedIn KHÔNG đổi hành vi (đã test so với bản cũ).
+- FE: tab Seeding bên ngoài có bộ chuyển Facebook/Threads; `ThreadsExtensionLauncher`.
+  Bài Threads ẩn "Lên lịch", "Xem seeding theo team", nút xác minh seeding (chưa hỗ trợ Threads).
+- Đã verify: Postgres+PostgREST thật qua Docker (migration chạy 2 lần OK), test service +
+  HTTP, E2E nạp extension thật vào Chromium -> tìm trên threads.com thật -> lưu DB.
+  CHƯA verify được luồng khi ĐÃ đăng nhập Threads (cuộn thêm trang/tab "Gần đây") vì không
+  có tài khoản test; chưa đăng nhập thì mỗi từ khoá chỉ ~20 bài "nổi bật" (nhiều bài cũ).
+- **VIỆC CÒN DANG DỞ**: migration 153 **CHƯA áp lên DB thật** `seeding.db.markeeai.com`
+  (dùng chung dev + prod) — chưa áp thì tab Threads báo lỗi khi tải bài/lưu bài. Chưa
+  commit/merge/deploy.
+
 # Tiến độ phiên làm việc (2026-09-05) — tách tính năng chat Zalo thành module độc lập (`zalo-module/`)
 
 User yêu cầu clone tính năng chat Zalo (nhắn/nhận tin, nhắn người lạ, extension
