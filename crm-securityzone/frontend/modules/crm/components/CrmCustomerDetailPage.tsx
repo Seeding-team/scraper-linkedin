@@ -1,5 +1,11 @@
 'use client';
 
+import { CustomerProjectsTab } from './CustomerProjectsTab';
+import { CustomerQuotesTab } from './CustomerQuotesTab';
+import { CustomerContractsTab } from './CustomerContractsTab';
+import { CustomerActivityTab } from './CustomerActivityTab';
+
+
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { Fragment, useEffect, useMemo, useState } from 'react';
@@ -37,6 +43,8 @@ import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { CustomerProjectCrmOverview } from './CustomerProjectCrmOverview';
+import { CustomerDealSplitTab } from './CustomerDealSplitTab';
+import { CustomerOverviewTab } from './CustomerOverviewTab';
 import {
   Briefcase,
   TrendingUp,
@@ -60,9 +68,11 @@ import {
   Layers,
   CheckCircle2,
   Calendar,
+  MoreHorizontal,
+  MessageCircle,
 } from 'lucide-react';
 
-function formatContractDate(value?: string | null): string {
+export function formatContractDate(value?: string | null): string {
   if (!value) return '';
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return '';
@@ -73,7 +83,7 @@ function formatContractDate(value?: string | null): string {
 // Workspace, DealWorkspaceTabs.tsx) - "Hợp đồng" o Customer 360 va o Deal
 // Workspace phai hien THONG NHAT vi cung 1 bang `contracts` (Phase 1: hop
 // dong resolve qua deal_id HOAC customer_id truc tiep).
-function contractSourceBadge(source?: 'crm' | 'external' | null) {
+export function contractSourceBadge(source?: 'crm' | 'external' | null) {
   return source === 'external' ? (
     <span className="rounded-full bg-slate-500 px-2 py-0.5 text-[10px] font-semibold text-white">Bên ngoài</span>
   ) : (
@@ -81,7 +91,7 @@ function contractSourceBadge(source?: 'crm' | 'external' | null) {
   );
 }
 
-function getStageSolidBgClass(stage?: string | null): string {
+export function getStageSolidBgClass(stage?: string | null): string {
   if (!stage) return 'bg-slate-500';
   const s = stage.toLowerCase();
   if (s === 'new_lead' || s === 'lead' || s === 'potential' || s === 'tiem_nang') return 'bg-slate-500';
@@ -93,7 +103,7 @@ function getStageSolidBgClass(stage?: string | null): string {
   return 'bg-blue-500';
 }
 
-type CustomerActivityEntry = {
+export type CustomerActivityEntry = {
   id: string;
   action: string;
   from_stage?: string | null;
@@ -103,7 +113,7 @@ type CustomerActivityEntry = {
   created_at: string;
 };
 
-type RelatedPayload = {
+export type RelatedPayload = {
   customer?: {
     id: string;
     customer_name?: string | null;
@@ -231,9 +241,9 @@ const QUOTE_PHASE_COLOR: Record<QuoteStatusFilter, string> = {
   ready: 'bg-green-500 text-white',
   review: 'bg-purple-500 text-white',
   pricing: 'bg-orange-500 text-white',
-  presale: 'bg-slate-500 text-white',
+  presale: 'bg-indigo-600 text-white',
   active: 'bg-blue-500 text-white',
-  all: 'bg-slate-500 text-white',
+  all: 'bg-indigo-600 text-white',
 };
 function quotePhaseBadgeClass(key: QuoteStatusFilter): string {
   return `inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold ${QUOTE_PHASE_COLOR[key] || 'bg-slate-500 text-white'}`;
@@ -271,7 +281,7 @@ function headers() {
  * ca Deal Workspace). Bao giá can Người liên hệ chính vi yeu cau nghiep vu
  * "tao bao gia phai co lien he chinh". An han neu row nay khong co dealId
  * that (vd 1 Contract tao truc tiep tren Customer, khong qua Deal nao). */
-function ContactAssignCell({
+export function ContactAssignCell({
   dealId,
   currentContactId,
   contacts,
@@ -381,7 +391,7 @@ function toCustomerRow(customer: RelatedPayload['customer']): CrmCustomerRow | n
   };
 }
 
-type Tab = 'overview' | 'activity' | 'contacts' | 'projects' | 'deals' | 'quotes' | 'contracts';
+type Tab = 'overview' | 'activity' | 'contacts' | 'projects' | 'deals' | 'quotes' | 'contracts' | 'documents';
 
 export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
   const { user } = useAppAuth();
@@ -396,10 +406,26 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
   // thuong cua nguoi dung, khong bi query string cu ghi de lai.
   const initialTabParam = searchParams.get('tab');
   const initialTab: Tab =
-    initialTabParam === 'quotes' || initialTabParam === 'deals' || initialTabParam === 'contracts' || initialTabParam === 'projects' || initialTabParam === 'activity' || initialTabParam === 'contacts'
-      ? initialTabParam
+    initialTabParam === 'quotes' || initialTabParam === 'deals' || initialTabParam === 'contracts' || initialTabParam === 'projects' || initialTabParam === 'activity' || initialTabParam === 'contacts' || initialTabParam === 'documents'
+      ? (initialTabParam as Tab)
       : 'overview';
-  const [tab, setTab] = useState<Tab>(initialTab);
+  
+  const [tab, setTabState] = useState<Tab>(initialTab);
+
+  useEffect(() => {
+    setTabState(initialTab);
+  }, [customerId, initialTabParam]);
+
+  const setTab = (newTab: Tab) => {
+    setTabState(newTab);
+    if (typeof window !== 'undefined') {
+      try {
+        const url = new URL(window.location.href);
+        url.searchParams.set('tab', newTab);
+        window.history.replaceState({}, '', url.toString());
+      } catch (e) {}
+    }
+  };
   const [editOpen, setEditOpen] = useState(false);
   const [reloadTick, setReloadTick] = useState(0);
 
@@ -881,6 +907,10 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
   }, [customerId]);
 
   useEffect(() => {
+    setOpenDeal(null);
+  }, [tab]);
+
+  useEffect(() => {
     let alive = true;
     setLoading(true);
     // Đồng thời tải contacts để hiện tên Người liên hệ chính trong bảng Deal.
@@ -994,613 +1024,100 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
 
   return (
     <div className="crm-shell">
-      <section className="crm-page-card crm-customers-page-shell">
-        <Link href="/all-platform/crm/customers" className="crm-back-button crm-customer-detail-back">
-          ← Hồ sơ khách hàng
-        </Link>
-        <div className="crm-header">
-          <div className="crm-customer-detail-header">
-            <span className="crm-customer-avatar" aria-hidden="true">{initial}</span>
-            <div className="crm-customer-detail-title">
-              <h1>{customer?.customer_name || 'Khách hàng chưa tên'}</h1>
-              <div className="crm-customer-detail-meta">
-                <span>{[customer?.company_name, customer?.phone, customer?.email].filter(Boolean).join(' · ') || 'Chưa có thông tin liên hệ'}</span>
-                {customer?.status ? (
-                  <span className={`crm-customer-status-badge ${STATUS_BADGE_CLASS[customer.status] || ''}`}>
-                    {STATUS_LABEL[customer.status] || customer.status}
-                  </span>
-                ) : null}
+      <section className="crm-page-card crm-customers-page-shell bg-slate-50/70">
+        <div className="bg-white border-b border-slate-200 mb-4">
+          <div className="px-4 pt-3 text-xs text-slate-500">
+            <Link href="/all-platform/crm" className="hover:text-[#c2185b]">CRM</Link>
+            <span className="mx-1.5">/</span>
+            <Link href="/all-platform/crm/customers" className="hover:text-[#c2185b]">Khách hàng</Link>
+            <span className="mx-1.5">/</span>
+            <span>{customer?.customer_name || 'Khách hàng chưa tên'}</span>
+          </div>
+
+          <div className="px-4 py-4 flex items-center justify-between">
+            <div className="flex items-center gap-3.5 min-w-0">
+              <span className="size-11 rounded-full bg-rose-100 text-[#c2185b] flex items-center justify-center text-lg font-bold uppercase shrink-0" aria-hidden="true">
+                {initial}
+              </span>
+              <div className="min-w-0">
+                <div className="flex items-center gap-2 mb-1">
+                  <h1 className="text-xl font-bold text-slate-900 truncate">{customer?.customer_name || 'Khách hàng chưa tên'}</h1>
+                  {customer?.status ? (
+                    <span className="px-2.5 py-0.5 rounded bg-blue-50 text-blue-700 text-xs font-semibold">
+                      {STATUS_LABEL[customer.status] || customer.status}
+                    </span>
+                  ) : null}
+                </div>
+                <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
+                  {customer?.phone ? <span>{customer.phone}</span> : null}
+                  {customer?.phone && customer?.source ? <span>•</span> : null}
+                  {customer?.source ? <span>{customer.source}</span> : null}
+                  <span>•</span>
+                  <span>Owner: {memberName(customer?.owner_id)}</span>
+                </div>
+                {error ? <p className="crm-error mt-2">{error}</p> : null}
               </div>
-              {error ? <p className="crm-error">{error}</p> : null}
             </div>
           </div>
-          {/* "Sửa khách hàng" chuyển vào cuối tab Tổng quan, "+ Tạo dự án" /
-           * "+ Tạo cơ hội" bị xoá khỏi day vi da co nut tuong duong ben
-           * trong tab "Dự án" ("+ Tạo dự án mới" + "Tạo cơ hội" tren tung
-           * project-card), "+ Tạo báo giá" chuyen vao dau noi dung tab "Báo
-           * giá" - xem cac vi tri moi (feedback 2026-09-25, PDF muc 3/4/5). */}
+
+          <div className="px-4 border-t border-slate-100">
+            <div className="flex items-center gap-6 overflow-x-auto">
+              {[
+                { id: 'overview', label: 'Tổng quan', icon: LayoutDashboard },
+                { id: 'contacts', label: 'Người liên hệ', icon: Users, count: contactCountOverride ?? customer?.contact_count ?? 0 },
+                { id: 'projects', label: 'Dự án', icon: FolderKanban, count: projectsSummary?.projectCount || 0 },
+                { id: 'deals', label: 'Cơ hội', icon: Target, count: data?.deals?.length || 0 },
+                { id: 'quotes', label: 'Báo giá', icon: FileText, count: allQuoteChains.length },
+                { id: 'contracts', label: 'Hợp đồng', icon: FileCheck, count: data?.contracts?.length || 0 },
+                { id: 'activity', label: 'Hoạt động', icon: Activity, count: activityItems.length },
+                { id: 'documents', label: 'Tài liệu', icon: FileText, count: 0 },
+              ].map(item => {
+                const Icon = item.icon;
+                const active = tab === item.id;
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => {
+                      setOpenDeal(null);
+                      setTab(item.id as Tab);
+                      if (item.id === 'quotes') setQuoteProjectFilter(null);
+                    }}
+                    className={`relative h-14 inline-flex items-center gap-2 text-sm font-semibold whitespace-nowrap transition-colors ${
+                      active ? 'text-[#c2185b]' : 'text-slate-500 hover:text-slate-800'
+                    }`}
+                  >
+                    <Icon className="size-4" />
+                    <span>{item.label}</span>
+                    {item.count !== undefined ? (
+                      <span className={`min-w-5 h-5 px-1.5 rounded-full text-[11px] inline-flex items-center justify-center ${
+                        active ? 'bg-rose-100 text-[#c2185b]' : 'bg-slate-200 text-slate-600'
+                      }`}>
+                        {item.count}
+                      </span>
+                    ) : null}
+                    {active ? <span className="absolute left-0 right-0 bottom-0 h-0.5 rounded-t-full bg-[#c2185b]" /> : null}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
         </div>
 
-        <section className="crm-content-section">
-          {/* [CHỨC NĂNG: Thanh menu điều hướng tab hồ sơ khách hàng hiện đại]
-              - Gồm 7 tab: Tổng quan, Người liên hệ, Dự án, Cơ hội, Báo giá, Hợp đồng, Hoạt động.
-              - Căn đều 100% toàn chiều rộng (flex-1 cho từng tab), căn giữa nội dung.
-              - Tự động bật cuộn ngang (overflow-x-auto) khi kích thước màn hình nhỏ. */}
-          <div className="w-full bg-muted/70 p-1.5 rounded-2xl border border-border/80 flex items-center gap-1.5 overflow-x-auto shadow-xs backdrop-blur-md mb-6 scroll-smooth">
-            <button
-              type="button"
-              onClick={() => setTab('overview')}
-              className={`flex-1 min-w-[110px] inline-flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl text-xs font-medium transition-all duration-200 select-none whitespace-nowrap ${tab === 'overview'
-                  ? 'bg-card text-foreground shadow-xs font-semibold ring-1 ring-border/80'
-                  : 'text-muted-foreground hover:text-foreground hover:bg-card/50'
-                }`}
-            >
-              <LayoutDashboard className={`size-3.5 transition-colors shrink-0 ${tab === 'overview' ? 'text-primary' : 'text-muted-foreground'}`} />
-              <span>Tổng quan</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setTab('contacts')}
-              className={`flex-1 min-w-[125px] inline-flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl text-xs font-medium transition-all duration-200 select-none whitespace-nowrap ${tab === 'contacts'
-                  ? 'bg-card text-foreground shadow-xs font-semibold ring-1 ring-border/80'
-                  : 'text-muted-foreground hover:text-foreground hover:bg-card/50'
-                }`}
-            >
-              <Users className={`size-3.5 transition-colors shrink-0 ${tab === 'contacts' ? 'text-primary' : 'text-muted-foreground'}`} />
-              <span>Người liên hệ</span>
-              <span
-                className={`px-2 py-0.5 text-[11px] font-semibold rounded-full leading-tight transition-colors shrink-0 text-white ${tab === 'contacts'
-                    ? 'bg-primary'
-                    : 'bg-slate-500'
-                  }`}
-              >
-                {contactCountOverride ?? customer?.contact_count ?? 0}
-              </span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setTab('projects')}
-              className={`flex-1 min-w-[110px] inline-flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl text-xs font-medium transition-all duration-200 select-none whitespace-nowrap ${tab === 'projects'
-                  ? 'bg-card text-foreground shadow-xs font-semibold ring-1 ring-border/80'
-                  : 'text-muted-foreground hover:text-foreground hover:bg-card/50'
-                }`}
-            >
-              <FolderKanban className={`size-3.5 transition-colors shrink-0 ${tab === 'projects' ? 'text-primary' : 'text-muted-foreground'}`} />
-              <span>Dự án</span>
-              <span
-                className={`px-2 py-0.5 text-[11px] font-semibold rounded-full leading-tight transition-colors shrink-0 text-white ${tab === 'projects'
-                    ? 'bg-primary'
-                    : 'bg-slate-500'
-                  }`}
-              >
-                {projectsSummary?.projectCount || 0}
-              </span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setTab('deals')}
-              className={`flex-1 min-w-[110px] inline-flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl text-xs font-medium transition-all duration-200 select-none whitespace-nowrap ${tab === 'deals'
-                  ? 'bg-card text-foreground shadow-xs font-semibold ring-1 ring-border/80'
-                  : 'text-muted-foreground hover:text-foreground hover:bg-card/50'
-                }`}
-            >
-              <Target className={`size-3.5 transition-colors shrink-0 ${tab === 'deals' ? 'text-primary' : 'text-muted-foreground'}`} />
-              <span>Cơ hội</span>
-              <span
-                className={`px-2 py-0.5 text-[11px] font-semibold rounded-full leading-tight transition-colors shrink-0 text-white ${tab === 'deals'
-                    ? 'bg-primary'
-                    : 'bg-slate-500'
-                  }`}
-              >
-                {data?.deals?.length || 0}
-              </span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => { setTab('quotes'); setQuoteProjectFilter(null); }}
-              className={`flex-1 min-w-[110px] inline-flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl text-xs font-medium transition-all duration-200 select-none whitespace-nowrap ${tab === 'quotes'
-                  ? 'bg-card text-foreground shadow-xs font-semibold ring-1 ring-border/80'
-                  : 'text-muted-foreground hover:text-foreground hover:bg-card/50'
-                }`}
-            >
-              <FileText className={`size-3.5 transition-colors shrink-0 ${tab === 'quotes' ? 'text-primary' : 'text-muted-foreground'}`} />
-              <span>Báo giá</span>
-              <span
-                className={`px-2 py-0.5 text-[11px] font-semibold rounded-full leading-tight transition-colors shrink-0 text-white ${tab === 'quotes'
-                    ? 'bg-primary'
-                    : 'bg-slate-500'
-                  }`}
-              >
-                {allQuoteChains.length}
-              </span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setTab('contracts')}
-              className={`flex-1 min-w-[110px] inline-flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl text-xs font-medium transition-all duration-200 select-none whitespace-nowrap ${tab === 'contracts'
-                  ? 'bg-card text-foreground shadow-xs font-semibold ring-1 ring-border/80'
-                  : 'text-muted-foreground hover:text-foreground hover:bg-card/50'
-                }`}
-            >
-              <FileCheck className={`size-3.5 transition-colors shrink-0 ${tab === 'contracts' ? 'text-primary' : 'text-muted-foreground'}`} />
-              <span>Hợp đồng</span>
-              <span
-                className={`px-2 py-0.5 text-[11px] font-semibold rounded-full leading-tight transition-colors shrink-0 text-white ${tab === 'contracts'
-                    ? 'bg-primary'
-                    : 'bg-slate-500'
-                  }`}
-              >
-                {data?.contracts?.length || 0}
-              </span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setTab('activity')}
-              className={`flex-1 min-w-[110px] inline-flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl text-xs font-medium transition-all duration-200 select-none whitespace-nowrap ${tab === 'activity'
-                  ? 'bg-card text-foreground shadow-xs font-semibold ring-1 ring-border/80'
-                  : 'text-muted-foreground hover:text-foreground hover:bg-card/50'
-                }`}
-            >
-              <Activity className={`size-3.5 transition-colors shrink-0 ${tab === 'activity' ? 'text-primary' : 'text-muted-foreground'}`} />
-              <span>Hoạt động</span>
-              <span
-                className={`px-2 py-0.5 text-[11px] font-semibold rounded-full leading-tight transition-colors shrink-0 text-white ${tab === 'activity'
-                    ? 'bg-primary'
-                    : 'bg-slate-500'
-                  }`}
-              >
-                {activityItems.length}
-              </span>
-            </button>
-          </div>
+        <section className="crm-content-section !p-0 !border-0 !bg-transparent !shadow-none">
 
           {tab === 'overview' && (
-            <div className="space-y-6 pt-2">
-              {/* 1. BỘ 4 THẺ CHỈ SỐ HERO METRICS (TƯƠNG TÁC ĐƯỢC) */}
-              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-                <Card
-                  onClick={() => setTab('projects')}
-                  className="p-4 cursor-pointer transition-all duration-200 hover:shadow-md hover:border-primary/30 group bg-card"
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground group-hover:text-primary transition-colors">
-                      Dự án
-                    </span>
-                    <div className="size-9 rounded-xl bg-white border border-gray-100 shadow-sm text-indigo-500 flex items-center justify-center transition-transform group-hover:scale-105">
-                      <Briefcase className="size-4.5" />
-                    </div>
-                  </div>
-                  <div className="mt-3">
-                    <div className="text-2xl font-bold tracking-tight text-foreground">
-                      {projectsSummary?.projectCount ?? 0}
-                    </div>
-                    <p className="mt-1 text-xs text-muted-foreground flex items-center gap-1">
-                      <span>{projectsSummary?.activeProjectCount ?? 0} đang hoạt động</span>
-                      <ArrowRight className="size-3 opacity-0 -translate-x-1 group-hover:opacity-100 group-hover:translate-x-0 transition-all text-primary ml-auto" />
-                    </p>
-                  </div>
-                </Card>
-
-                <Card
-                  onClick={() => setTab('deals')}
-                  className="p-4 cursor-pointer transition-all duration-200 hover:shadow-md hover:border-primary/30 group bg-card"
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground group-hover:text-primary transition-colors">
-                      Cơ hội
-                    </span>
-                    <div className="size-9 rounded-xl bg-white border border-gray-100 shadow-sm text-orange-500 flex items-center justify-center transition-transform group-hover:scale-105">
-                      <TrendingUp className="size-4.5" />
-                    </div>
-                  </div>
-                  <div className="mt-3">
-                    <div className="text-2xl font-bold tracking-tight text-foreground">
-                      {data?.deals?.length ?? data?.kpi?.deal_count ?? 0}
-                    </div>
-                    <p className="mt-1 text-xs text-muted-foreground flex items-center gap-1 truncate">
-                      <span>Tổng: {formatVND(totalDealsBudget)}</span>
-                      <ArrowRight className="size-3 opacity-0 -translate-x-1 group-hover:opacity-100 group-hover:translate-x-0 transition-all text-primary ml-auto" />
-                    </p>
-                  </div>
-                </Card>
-
-                <Card
-                  onClick={() => { setTab('quotes'); setQuoteProjectFilter(null); }}
-                  className="p-4 cursor-pointer transition-all duration-200 hover:shadow-md hover:border-primary/30 group bg-card"
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground group-hover:text-primary transition-colors">
-                      Hồ sơ báo giá
-                    </span>
-                    <div className="size-9 rounded-xl bg-white border border-gray-100 shadow-sm text-blue-500 flex items-center justify-center transition-transform group-hover:scale-105">
-                      <FileText className="size-4.5" />
-                    </div>
-                  </div>
-                  <div className="mt-3">
-                    <div className="text-2xl font-bold tracking-tight text-foreground">
-                      {projectsSummary?.quoteCaseCount ?? data?.kpi?.quote_count ?? allQuoteChains.length}
-                    </div>
-                    <p className="mt-1 text-xs text-muted-foreground flex items-center gap-1">
-                      <span>{allQuoteChains.length} chuỗi báo giá</span>
-                      <ArrowRight className="size-3 opacity-0 -translate-x-1 group-hover:opacity-100 group-hover:translate-x-0 transition-all text-primary ml-auto" />
-                    </p>
-                  </div>
-                </Card>
-
-                <Card
-                  onClick={() => setTab('contracts')}
-                  className="p-4 cursor-pointer transition-all duration-200 hover:shadow-md hover:border-primary/30 group bg-card"
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground group-hover:text-primary transition-colors">
-                      Giá trị đang báo giá
-                    </span>
-                    <div className="size-9 rounded-xl bg-white border border-gray-100 shadow-sm text-emerald-500 flex items-center justify-center transition-transform group-hover:scale-105">
-                      <Banknote className="size-4.5" />
-                    </div>
-                  </div>
-                  <div className="mt-3">
-                    <div className="text-2xl font-bold tracking-tight text-foreground truncate">
-                      {formatVND(projectsSummary?.currentQuoteValue || data?.kpi?.total_value || 0) || '0 đ'}
-                    </div>
-                    <p className="mt-1 text-xs text-muted-foreground flex items-center gap-1">
-                      <span>{data?.contracts?.length ?? data?.kpi?.contract_count ?? 0} hợp đồng</span>
-                      <ArrowRight className="size-3 opacity-0 -translate-x-1 group-hover:opacity-100 group-hover:translate-x-0 transition-all text-primary ml-auto" />
-                    </p>
-                  </div>
-                </Card>
-              </div>
-
-              {/* 2. CƠ HỘI ĐANG XÚC TIẾN (ACTIVE DEAL SPOTLIGHT) */}
-              {activeDeal ? (
-                <Card className="border-primary/20 bg-linear-to-r from-card to-primary/[0.02] shadow-xs">
-                  <CardHeader className="py-4 px-6 border-b border-border/60 flex flex-row items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <div className="size-8 rounded-xl bg-white border border-gray-100 shadow-sm text-primary flex items-center justify-center">
-                        <Sparkles className="size-4" />
-                      </div>
-                      <div>
-                        <CardTitle className="text-sm font-semibold text-foreground">
-                          Cơ hội đang xúc tiến
-                        </CardTitle>
-                        <p className="text-xs text-muted-foreground">Cơ hội đang được xử lý gần nhất của khách hàng</p>
-                      </div>
-                    </div>
-                    {(() => {
-                      const meta = getStageMeta((activeDeal.deal_stage as DealStage) || 'new_lead');
-                      return (
-                        <Badge
-                          className={`font-semibold px-2.5 py-0.5 text-white border-transparent ${getStageSolidBgClass(activeDeal.deal_stage)}`}
-                        >
-                          {meta.label}
-                        </Badge>
-                      );
-                    })()}
-                  </CardHeader>
-                  <CardContent className="py-4 px-6">
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 items-center">
-                      <div>
-                        <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground block mb-0.5">
-                          Tên cơ hội
-                        </span>
-                        <p className="text-sm font-semibold text-foreground truncate" title={activeDeal.customer_name || activeDeal.id}>
-                          {activeDeal.customer_name || activeDeal.id}
-                        </p>
-                      </div>
-                      <div>
-                        <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground block mb-0.5">
-                          Dự án liên kết
-                        </span>
-                        <p className="text-sm text-foreground truncate" title={projectLabel(activeDeal.project_id)}>
-                          {projectLabel(activeDeal.project_id)}
-                        </p>
-                      </div>
-                      <div>
-                        <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground block mb-0.5">
-                          Giá trị kỳ vọng
-                        </span>
-                        <p className="text-sm font-bold text-emerald-600 dark:text-emerald-400">
-                          {formatVND(Number(activeDeal.estimated_budget || activeDeal.lifetime_value || 0)) || '0 đ'}
-                        </p>
-                      </div>
-                      <div className="flex sm:justify-end">
-                        <Button
-                          variant="default"
-                          size="sm"
-                          onClick={() => openDealWorkspace(activeDeal.id)}
-                          className="w-full sm:w-auto gap-1.5 shadow-xs"
-                        >
-                          <span>Mở không gian cơ hội</span>
-                          <ExternalLink className="size-3.5" />
-                        </Button>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              ) : null}
-
-              {/* 3. THÔNG TIN KHÁCH HÀNG 360 (BỐ CỤC 2 CỘT HIỆN ĐẠI) */}
-              {customer ? (
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                  {/* Cột 1: Thông tin Doanh nghiệp & Pháp lý */}
-                  <Card className="bg-card shadow-xs">
-                    <CardHeader className="py-3.5 px-5 border-b border-border/60 flex flex-row items-center gap-2">
-                      <Building2 className="size-4 text-primary" />
-                      <CardTitle className="text-sm font-semibold text-foreground">
-                        Thông tin doanh nghiệp & Pháp lý
-                      </CardTitle>
-                    </CardHeader>
-                    <CardContent className="p-5 space-y-3.5 text-sm">
-                      <div className="flex items-center justify-between pb-2 border-b border-border/40">
-                        <span className="text-xs font-medium text-muted-foreground">Tên công ty</span>
-                        <span className="font-medium text-foreground text-right">{customer.company_name || '—'}</span>
-                      </div>
-                      <div className="flex items-center justify-between pb-2 border-b border-border/40">
-                        <span className="text-xs font-medium text-muted-foreground">Mã số thuế</span>
-                        <span className="font-mono text-xs font-medium text-foreground text-right">{customer.tax_code || '—'}</span>
-                      </div>
-                      <div className="flex items-center justify-between pb-2 border-b border-border/40">
-                        <span className="text-xs font-medium text-muted-foreground">Lĩnh vực</span>
-                        <span>
-                          {customer.industry ? (
-                            <Badge variant="secondary" className="font-normal text-xs">{customer.industry}</Badge>
-                          ) : '—'}
-                        </span>
-                      </div>
-                      <div className="flex items-center justify-between pb-2 border-b border-border/40">
-                        <span className="text-xs font-medium text-muted-foreground">Thành phố</span>
-                        <span className="text-foreground text-right">{customer.city || '—'}</span>
-                      </div>
-                      <div className="flex items-start justify-between pb-2 border-b border-border/40">
-                        <span className="text-xs font-medium text-muted-foreground">Địa chỉ</span>
-                        <span className="text-foreground text-right max-w-[65%]">{customer.address || '—'}</span>
-                      </div>
-                      <div className="flex items-center justify-between pb-2 border-b border-border/40">
-                        <span className="text-xs font-medium text-muted-foreground">Website</span>
-                        <span>
-                          {customer.website ? (
-                            <a
-                              href={customer.website.startsWith('http') ? customer.website : `https://${customer.website}`}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="text-primary hover:underline font-medium inline-flex items-center gap-1"
-                            >
-                              {customer.website} <ExternalLink className="size-3" />
-                            </a>
-                          ) : '—'}
-                        </span>
-                      </div>
-                      {customer.note ? (
-                        <div className="pt-1">
-                          <span className="text-xs font-medium text-muted-foreground block mb-1">Ghi chú nội bộ</span>
-                          <div className="p-3 bg-muted/50 rounded-lg text-xs text-muted-foreground whitespace-pre-line border border-border/50">
-                            {customer.note}
-                          </div>
-                        </div>
-                      ) : null}
-                    </CardContent>
-                  </Card>
-
-                  {/* Cột 2: Phụ trách & Kênh liên lạc */}
-                  <Card className="bg-card shadow-xs">
-                    <CardHeader className="py-3.5 px-5 border-b border-border/60 flex flex-row items-center gap-2">
-                      <UserCheck className="size-4 text-primary" />
-                      <CardTitle className="text-sm font-semibold text-foreground">
-                        Nhân sự phụ trách & Kênh kết nối
-                      </CardTitle>
-                    </CardHeader>
-                    <CardContent className="p-5 space-y-3.5 text-sm">
-                      <div className="flex items-center justify-between pb-2 border-b border-border/40">
-                        <span className="text-xs font-medium text-muted-foreground">Người phụ trách</span>
-                        <div className="flex items-center gap-2">
-                          {customer.owner_id ? (
-                            <>
-                              <span className="size-6 rounded-full bg-primary/10 text-primary text-xs flex items-center justify-center font-bold">
-                                {memberName(customer.owner_id).charAt(0).toUpperCase()}
-                              </span>
-                              <span className="font-medium text-foreground">{memberName(customer.owner_id)}</span>
-                            </>
-                          ) : (
-                            <span className="text-muted-foreground italic">Chưa phân công</span>
-                          )}
-                        </div>
-                      </div>
-                      <div className="flex items-center justify-between pb-2 border-b border-border/40">
-                        <span className="text-xs font-medium text-muted-foreground">Chức vụ</span>
-                        <span className="text-foreground">{customer.position || '—'}</span>
-                      </div>
-                      <div className="flex items-center justify-between pb-2 border-b border-border/40">
-                        <span className="text-xs font-medium text-muted-foreground">Số điện thoại</span>
-                        <span>
-                          {customer.phone ? (
-                            <a href={`tel:${customer.phone}`} className="inline-flex items-center gap-1.5 font-medium text-foreground hover:text-primary transition-colors">
-                              <Phone className="size-3.5 text-muted-foreground" />
-                              {customer.phone}
-                            </a>
-                          ) : '—'}
-                        </span>
-                      </div>
-                      <div className="flex items-center justify-between pb-2 border-b border-border/40">
-                        <span className="text-xs font-medium text-muted-foreground">Email</span>
-                        <span>
-                          {customer.email ? (
-                            <a href={`mailto:${customer.email}`} className="inline-flex items-center gap-1.5 text-foreground hover:text-primary transition-colors">
-                              <Mail className="size-3.5 text-muted-foreground" />
-                              {customer.email}
-                            </a>
-                          ) : '—'}
-                        </span>
-                      </div>
-                      <div className="flex items-center justify-between pb-2 border-b border-border/40">
-                        <span className="text-xs font-medium text-muted-foreground">Nguồn khách hàng</span>
-                        <span>
-                          {customer.source ? (
-                            <Badge variant="outline" className="font-normal text-xs">{customer.source}</Badge>
-                          ) : '—'}
-                        </span>
-                      </div>
-                      <div className="flex items-center justify-between pb-2 border-b border-border/40">
-                        <span className="text-xs font-medium text-muted-foreground">Zalo</span>
-                        <span className="text-foreground">{customer.zalo || '—'}</span>
-                      </div>
-                      <div className="flex items-center justify-between pb-2 border-b border-border/40">
-                        <span className="text-xs font-medium text-muted-foreground">Facebook</span>
-                        <span>
-                          {customer.facebook ? (
-                            <a
-                              href={customer.facebook.startsWith('http') ? customer.facebook : `https://${customer.facebook}`}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="text-blue-600 hover:underline font-medium inline-flex items-center gap-1"
-                            >
-                              Mở trang cá nhân <ExternalLink className="size-3" />
-                            </a>
-                          ) : '—'}
-                        </span>
-                      </div>
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs font-medium text-muted-foreground">Telegram</span>
-                        <span className="text-foreground">{customer.telegram || '—'}</span>
-                      </div>
-                    </CardContent>
-                  </Card>
-                </div>
-              ) : null}
-
-              {/* 4. KHỐI TÓM TẮT DỰ ÁN & BÁO GIÁ GẦN NHẤT (KHÔNG BIỂU ĐỒ) */}
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                {/* Danh sách Dự án gần đây */}
-                <Card className="bg-card shadow-xs">
-                  <CardHeader className="py-3 px-5 border-b border-border/60 flex flex-row items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <FolderKanban className="size-4 text-primary" />
-                      <CardTitle className="text-sm font-semibold text-foreground">
-                        Dự án gần đây
-                      </CardTitle>
-                    </div>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => setTab('projects')}
-                      className="text-xs h-7 text-primary hover:text-primary gap-1"
-                    >
-                      Xem tất cả ({projectsSummary?.projectCount || 0}) <ArrowRight className="size-3" />
-                    </Button>
-                  </CardHeader>
-                  <CardContent className="p-4">
-                    {recentProjects.length > 0 ? (
-                      <div className="space-y-2.5">
-                        {recentProjects.map(p => (
-                          <div
-                            key={p.id}
-                            onClick={() => { setQuoteProjectFilter(p.id); setTab('quotes'); }}
-                            className="p-3 rounded-lg border border-border/60 hover:border-primary/30 hover:bg-muted/30 transition-all cursor-pointer flex items-center justify-between"
-                          >
-                            <div className="min-w-0 mr-3">
-                              <div className="flex items-center gap-2">
-                                <span className="font-mono text-xs font-semibold text-primary">{p.projectCode}</span>
-                                <span className="text-sm font-medium text-foreground truncate">{p.name}</span>
-                              </div>
-                              <p className="text-xs text-muted-foreground mt-0.5">
-                                {p.quoteCaseCount} Quote case · {p.opportunityCount} cơ hội
-                              </p>
-                            </div>
-                            <Badge variant="outline" className="text-[11px] shrink-0">
-                              {PROJECT_STATUS_LABELS[p.status] || p.status}
-                            </Badge>
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <div className="py-6 text-center text-xs text-muted-foreground">
-                        Khách hàng chưa có dự án nào
-                      </div>
-                    )}
-                  </CardContent>
-                </Card>
-
-                {/* Danh sách Báo giá gần nhất */}
-                <Card className="bg-card shadow-xs">
-                  <CardHeader className="py-3 px-5 border-b border-border/60 flex flex-row items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <FileText className="size-4 text-primary" />
-                      <CardTitle className="text-sm font-semibold text-foreground">
-                        Báo giá gần nhất
-                      </CardTitle>
-                    </div>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => { setTab('quotes'); setQuoteProjectFilter(null); }}
-                      className="text-xs h-7 text-primary hover:text-primary gap-1"
-                    >
-                      Xem tất cả ({allQuoteChains.length}) <ArrowRight className="size-3" />
-                    </Button>
-                  </CardHeader>
-                  <CardContent className="p-4">
-                    {recentQuotes.length > 0 ? (
-                      <div className="space-y-2.5">
-                        {recentQuotes.map(({ current, versionCount }) => (
-                          <div
-                            key={current.id}
-                            onClick={() => viewQuoteInNewWorkspace(current)}
-                            className="p-3 rounded-lg border border-border/60 hover:border-primary/30 hover:bg-muted/30 transition-all cursor-pointer flex items-center justify-between"
-                          >
-                            <div className="min-w-0 mr-3">
-                              <div className="flex items-center gap-2">
-                                <span className="font-mono text-xs font-semibold text-foreground">
-                                  {current.quote_number || 'Báo giá'}
-                                </span>
-                                {versionCount > 1 ? (
-                                  <span className="text-[10px] bg-muted px-1.5 py-0.5 rounded text-muted-foreground">
-                                    {versionCount} versions
-                                  </span>
-                                ) : null}
-                              </div>
-                              <p className="text-xs text-muted-foreground mt-0.5">
-                                Cập nhật: {current.updated_at ? relativeTime(current.updated_at) : '—'}
-                              </p>
-                            </div>
-                            <div className="text-right shrink-0">
-                              <div className="text-xs font-bold text-foreground">
-                                {formatVND(Number(current.total_amount || 0)) || '0 đ'}
-                              </div>
-                              <span className="text-[10px] text-muted-foreground">
-                                {quoteChainPhaseLabel(current)}
-                              </span>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <div className="py-6 text-center text-xs text-muted-foreground">
-                        Chưa có báo giá nào được tạo
-                      </div>
-                    )}
-                  </CardContent>
-                </Card>
-              </div>
-
-              {/* 5. NÚT CHỈNH SỬA KHÁCH HÀNG */}
-              {canEdit ? (
-                <div className="flex justify-end pt-2">
-                  <Button
-                    variant="outline"
-                    onClick={() => setEditOpen(true)}
-                    className="gap-2 shadow-xs"
-                  >
-                    <Edit3 className="size-3.5" />
-                    <span>Sửa thông tin khách hàng</span>
-                  </Button>
-                </div>
-              ) : null}
-            </div>
+            <CustomerOverviewTab
+              data={data}
+              customerId={customerId}
+              allContacts={allContacts}
+              members={members}
+              projectsSummary={projectsSummary}
+              activityItems={activityItems}
+              setTab={setTab}
+              onCreateDeal={() => setDealModal({ open: true, project: null, contactId: null })}
+              onEditCustomer={() => setEditOpen(true)}
+            />
           )}
 
           {tab === 'contacts' && (
@@ -1616,769 +1133,116 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
             ) : null
           )}
 
-          {/* [CHỨC NĂNG: Giao diện Tab Hoạt Động (Activity Tab) chuẩn hóa theo tab Người liên hệ]
-              - Mục đích: Thay thế danh sách hoạt động trần trụi trước đây bằng giao diện chuẩn chỉnh.
-              - Thay đổi:
-                1. Khung panel bao ngoài: .crm-contacts-panel .crm-activity-panel viền bo tròn 0.85rem, nền trắng sạch sẽ.
-                2. Header: Tiêu đề .crm-section-title "Hoạt động (N)" kèm mô tả phạm vi hoạt động bán hàng.
-                3. Từng dòng hoạt động là một bảng/khung thẻ riêng biệt (.crm-activity-row):
-                   - Nền xám nhạt #f8fafc, viền 1px solid #e2e8f0, bo góc 0.6rem, padding 0.75rem 0.9rem, hover đổi màu nhẹ.
-                   - Luồng giai đoạn: Hiển thị thẻ pill màu sắc tương ứng theo stage meta (ví dụ: Đang deal → Lên Proposal).
-                   - Người thực hiện: Badge pill actor_name nổi bật.
-                   - Ghi chú: Khung riêng biệt nền trắng có viền và ngắt dòng rõ ràng.
-                   - Thời gian: Căn lề trên phải, hiển thị định dạng ngày giờ tiếng Việt (vi-VN). */}
+          {tab === 'projects' && (
+            <CustomerProjectsTab
+              deals={data?.deals || []}
+              quotes={allQuoteChains.map(c => c.current)}
+              contracts={data?.contracts || []}
+              projectsSummary={projectsSummary}
+              projectsLoading={projectsLoading}
+              projectsError={projectsError}
+              canManageProject={canManageProject}
+              setTab={setTab}
+              openDealWorkspace={openDealWorkspace}
+              viewQuoteInNewWorkspace={viewQuoteInNewWorkspace}
+              setProjectModal={setProjectModal}
+              setDealModal={setDealModal}
+              memberName={memberName}
+              allContacts={allContacts}
+              activityItems={activityItems}
+            />
+          )}
+
+          {tab === 'deals' && (
+            <CustomerDealSplitTab
+              deals={data?.deals || []}
+              customerId={customerId}
+              customerName={customer?.company_name || customer?.customer_name || ''}
+              allContacts={allContacts}
+              members={members}
+              projectsSummary={projectsSummary}
+              quotes={data?.quotes || []}
+              activityItems={activityItems}
+              onCreateDeal={() => setDealModal({ open: true, project: null, contactId: null })}
+              onCreateQuote={(dealId: string) => {
+                const deal = data?.deals?.find(item => item.id === dealId) || null;
+                setQuoteWorkspace({ quoteId: null, deal: deal as unknown as Deal | null });
+              }}
+              onOpenQuote={(quoteId: string, dealId: string) => {
+                const deal = data?.deals?.find(item => item.id === dealId) || null;
+                setQuoteWorkspace({ quoteId, deal: deal as unknown as Deal | null });
+              }}
+              onEditDeal={deal => setEditingDealRow(deal)}
+              onChanged={() => setReloadTick(t => t + 1)}
+            />
+          )}
+
+          {tab === 'quotes' && (
+            <CustomerQuotesTab
+              customerName={customer?.company_name || customer?.customer_name || ''}
+              projectsSummary={projectsSummary}
+              members={members}
+              allQuoteChains={allQuoteChains}
+              quoteChains={quoteChains}
+              deals={data?.deals || []}
+              allContacts={allContacts}
+              loading={loading}
+              quickQuoteLoading={quickQuoteLoading}
+              quoteStatusFilter={quoteStatusFilter}
+              quoteStatusFilterSummary={quoteStatusFilterSummary}
+              quoteProjectFilter={quoteProjectFilter}
+              expandedQuoteVersions={expandedQuoteVersions}
+              quoteDeleteBusy={quoteDeleteBusy}
+              QUOTE_STATUS_FILTER_LABELS={QUOTE_STATUS_FILTER_LABELS}
+              setQuoteWorkspace={setQuoteWorkspace}
+              openQuickQuoteForCustomer={openQuickQuoteForCustomer}
+              setQuoteStatusFilter={setQuoteStatusFilter}
+              projectLabel={projectLabel}
+              setQuoteProjectFilter={setQuoteProjectFilter}
+              viewQuoteInNewWorkspace={viewQuoteInNewWorkspace}
+              toggleExpandQuoteVersions={toggleExpandQuoteVersions}
+              quoteChainPhaseKey={quoteChainPhaseKey}
+              quoteChainPhaseBadgeClass={quotePhaseBadgeClass}
+              quoteChainPhaseLabel={quoteChainPhaseLabel}
+              memberName={memberName}
+              formatVND={formatVND}
+              relativeTime={relativeTime}
+              openContactAssignModal={openContactAssignModal}
+              deleteQuoteChainOnCustomerPage={deleteQuoteChainOnCustomerPage}
+              quoteVersionStatusLabel={quoteVersionStatusLabel}
+              deleteQuoteVersionOnCustomerPage={deleteQuoteVersionOnCustomerPage}
+            />
+          )}
+
+          {tab === 'contracts' && (
+            <CustomerContractsTab
+              data={data}
+              loading={loading}
+              allContacts={allContacts}
+              registerContractLoading={registerContractLoading}
+              openRegisterContractForActiveDeal={openRegisterContractForActiveDeal}
+              setReloadTick={setReloadTick}
+            />
+          )}
+
           {tab === 'activity' && (
-            <Card className="bg-card shadow-xs">
-              <CardHeader className="py-4 px-6 border-b border-border/60 flex flex-row items-center justify-between">
-                <div>
-                  <CardTitle className="text-base font-semibold text-foreground flex items-center gap-2">
-                    <Activity className="size-4.5 text-primary" />
-                    <span>Hoạt động bán hàng</span>
-                    <Badge variant="secondary" className="text-xs px-2 py-0.5 font-bold">
-                      {activityItems.length}
-                    </Badge>
-                  </CardTitle>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    Nhật ký hoạt động — gộp từ tất cả các Cơ hội của khách hàng này.
-                  </p>
-                </div>
-              </CardHeader>
-
-              <CardContent className="p-6">
-                {activityError ? (
-                  <div className="p-3 rounded-lg bg-destructive/10 border border-destructive/20 text-destructive text-xs mb-4">
-                    {activityError}
-                  </div>
-                ) : null}
-
-                {activityLoading ? (
-                  <div className="py-8 flex items-center justify-center gap-2 text-xs text-muted-foreground">
-                    <Loader2 className="size-4 animate-spin text-primary" />
-                    <span>Đang tải nhật ký hoạt động...</span>
-                  </div>
-                ) : activityItems.length ? (
-                  <div className="space-y-3">
-                    {activityItems.map(entry => {
-                      const fromMeta = entry.from_stage ? getStageMeta(entry.from_stage as DealStage) : null;
-                      const toMeta = entry.to_stage ? getStageMeta(entry.to_stage as DealStage) : null;
-
-                      return (
-                        <div
-                          key={entry.id}
-                          className="p-4 rounded-xl border border-border/70 bg-muted/20 hover:bg-card hover:border-primary/30 transition-all shadow-2xs space-y-2.5"
-                        >
-                          <div className="flex flex-wrap items-center justify-between gap-2">
-                            <div className="flex items-center gap-2 flex-wrap">
-                              {entry.from_stage && entry.to_stage ? (
-                                <div className="inline-flex items-center gap-1.5 text-xs font-medium">
-                                  <span
-                                    className={`px-2 py-0.5 rounded-full text-[11px] font-semibold text-white ${getStageSolidBgClass(entry.from_stage)}`}
-                                  >
-                                    {fromMeta?.label || entry.from_stage}
-                                  </span>
-                                  <ArrowRight className="size-3 text-muted-foreground" />
-                                  <span
-                                    className={`px-2 py-0.5 rounded-full text-[11px] font-semibold text-white ${getStageSolidBgClass(entry.to_stage)}`}
-                                  >
-                                    {toMeta?.label || entry.to_stage}
-                                  </span>
-                                </div>
-                              ) : (
-                                <span className="font-semibold text-xs text-foreground">{entry.action}</span>
-                              )}
-
-                              {entry.actor_name ? (
-                                <Badge variant="outline" className="text-[11px] font-normal gap-1 bg-background text-muted-foreground">
-                                  <UserCheck className="size-3 text-primary" />
-                                  <span>{entry.actor_name}</span>
-                                </Badge>
-                              ) : null}
-                            </div>
-
-                            <span className="text-xs text-muted-foreground flex items-center gap-1">
-                              <Clock className="size-3" />
-                              {new Date(entry.created_at).toLocaleString('vi-VN')}
-                            </span>
-                          </div>
-
-                          {entry.note ? (
-                            <div className="text-xs text-foreground bg-background/80 p-2.5 rounded-lg border border-border/60 leading-relaxed font-sans">
-                              {entry.note}
-                            </div>
-                          ) : null}
-                        </div>
-                      );
-                    })}
-                  </div>
-                ) : (
-                  <div className="py-12 text-center text-xs text-muted-foreground flex flex-col items-center gap-2">
-                    <Activity className="size-8 text-muted-foreground/30 stroke-1" />
-                    <span>Chưa có hoạt động bán hàng nào được ghi nhận.</span>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
+            <CustomerActivityTab
+              activityItems={activityItems}
+              activityLoading={activityLoading}
+              activityError={activityError}
+            />
           )}
 
-          {tab === 'projects' ? (
-            <div className="space-y-6">
-              {/* Tổng quan Cơ hội & Báo giá (vị trí giữa thanh điều hướng và khung tạo dự án mới) */}
-              <CustomerProjectCrmOverview
-                deals={data?.deals || []}
-                quotes={allQuoteChains.map(c => c.current)}
-                projects={projectsSummary?.projects || []}
-                onNavigateTab={(targetTab) => {
-                  if (targetTab === 'quotes') setQuoteProjectFilter(null);
-                  setTab(targetTab);
-                }}
-                onOpenDeal={(dealId) => {
-                  void openDealWorkspace(dealId);
-                }}
-                onOpenQuote={(quoteRow) => {
-                  void viewQuoteInNewWorkspace(quoteRow);
-                }}
-              />
-
-              {/* Header Tab Dự án */}
-              <div className="flex flex-wrap items-center justify-between gap-4 p-4 rounded-2xl bg-card border border-border/80 shadow-xs">
-                <div className="flex items-center gap-3">
-                  <div className="size-8 rounded-xl bg-white border border-gray-100 shadow-sm flex items-center justify-center text-indigo-500 shrink-0">
-                    <FolderKanban className="size-4.5" />
-                  </div>
-                  <div>
-                    <h3 className="text-base font-bold text-foreground">
-                      <span>Dự án của khách hàng</span>
-                    </h3>
-                    <p className="text-xs text-muted-foreground mt-0.5">
-                      Lớp quản lý gắn kết giữa Khách hàng và các Cơ hội/Báo giá dự án.
-                    </p>
-                  </div>
-                </div>
-                {canManageProject ? (
-                  <Button
-                    size="sm"
-                    className="gap-1.5 shadow-xs"
-                    onClick={() => setProjectModal({ open: true, project: null })}
-                  >
-                    <Plus className="size-3.5" />
-                    <span>Tạo dự án mới</span>
-                  </Button>
-                ) : null}
-              </div>
-
-              {projectsLoading ? (
-                <div className="py-12 flex items-center justify-center gap-2 text-xs text-muted-foreground">
-                  <Loader2 className="size-4 animate-spin text-primary" />
-                  <span>Đang tải dữ liệu dự án...</span>
-                </div>
-              ) : projectsError ? (
-                <div className="p-4 rounded-xl bg-destructive/10 border border-destructive/20 text-destructive text-xs">
-                  {projectsError}
-                </div>
-              ) : !projectsSummary || projectsSummary.projectCount === 0 ? (
-                <div className="py-16 text-center rounded-2xl bg-card border border-border/80 shadow-xs flex flex-col items-center gap-3">
-                  <FolderKanban className="size-10 text-muted-foreground/30 stroke-1" />
-                  <div className="text-sm font-medium text-foreground">Khách hàng này chưa có dự án nào</div>
-                  <p className="text-xs text-muted-foreground max-w-sm">Tạo dự án đầu tiên để theo dõi cơ hội và quy trình báo giá cho khách hàng.</p>
-                  {canManageProject ? (
-                    <Button
-                      size="sm"
-                      className="mt-2 gap-1.5"
-                      onClick={() => setProjectModal({ open: true, project: null })}
-                    >
-                      <Plus className="size-3.5" /> Tạo dự án đầu tiên
-                    </Button>
-                  ) : null}
-                </div>
-              ) : (
-                <>
-                  {/* Dashboard 5 chỉ số tóm tắt dự án */}
-                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
-                    <Card className="p-3.5 bg-card shadow-xs">
-                      <p className="text-xs font-medium text-muted-foreground">Tổng dự án</p>
-                      <p className="text-xl font-bold text-foreground mt-1">{projectsSummary.projectCount}</p>
-                    </Card>
-
-                    <Card className="p-3.5 bg-card shadow-xs">
-                      <p className="text-xs font-medium text-muted-foreground">Đang hoạt động</p>
-                      <p className="text-xl font-bold text-emerald-600 dark:text-emerald-400 mt-1">{projectsSummary.activeProjectCount}</p>
-                    </Card>
-
-                    <Card
-                      onClick={() => { setQuoteProjectFilter(null); setTab('quotes'); }}
-                      className="p-3.5 bg-card shadow-xs cursor-pointer hover:border-primary/40 hover:shadow-md transition-all group"
-                    >
-                      <div className="flex items-center justify-between text-xs font-medium text-muted-foreground group-hover:text-primary transition-colors">
-                        <span>Hồ sơ báo giá</span>
-                        <ArrowRight className="size-3 opacity-0 group-hover:opacity-100 transition-opacity" />
-                      </div>
-                      <p className="text-xl font-bold text-foreground mt-1">{projectsSummary.quoteCaseCount}</p>
-                    </Card>
-
-                    <Card
-                      onClick={() => setTab('deals')}
-                      className="p-3.5 bg-card shadow-xs cursor-pointer hover:border-primary/40 hover:shadow-md transition-all group"
-                    >
-                      <div className="flex items-center justify-between text-xs font-medium text-muted-foreground group-hover:text-primary transition-colors">
-                        <span>Cơ hội CRM</span>
-                        <ArrowRight className="size-3 opacity-0 group-hover:opacity-100 transition-opacity" />
-                      </div>
-                      <p className="text-xl font-bold text-foreground mt-1">{projectsSummary.opportunityCount}</p>
-                    </Card>
-
-                    <Card className="p-3.5 bg-card shadow-xs col-span-2 sm:col-span-1">
-                      <p className="text-xs font-medium text-muted-foreground">Giá trị báo giá</p>
-                      <p className="text-xl font-bold text-primary mt-1">{formatMoney(projectsSummary.currentQuoteValue)}</p>
-                    </Card>
-                  </div>
-
-                  {/* Lưới thẻ dự án */}
-                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                    {projectsSummary.projects.map(project => (
-                      <Card key={project.id} className="bg-card shadow-xs hover:shadow-md hover:border-primary/40 transition-all p-5 flex flex-col justify-between">
-                        <div>
-                          <div className="flex items-start justify-between gap-3 pb-3 border-b border-border/50">
-                            <div>
-                              <Badge variant="outline" className="font-mono text-[10px] mb-1.5 bg-muted/50">
-                                {project.projectCode}
-                              </Badge>
-                              <h4 className="text-base font-bold text-foreground">{project.name}</h4>
-                            </div>
-                            <Badge
-                              className={`text-xs font-semibold shrink-0 text-white border-transparent ${project.status === 'active'
-                                  ? 'bg-green-500'
-                                  : project.status === 'completed'
-                                    ? 'bg-blue-500'
-                                    : project.status === 'cancelled'
-                                      ? 'bg-red-500'
-                                      : 'bg-slate-500'
-                                }`}
-                            >
-                              {PROJECT_STATUS_LABELS[project.status] || project.status}
-                            </Badge>
-                          </div>
-
-                          <div className="py-3.5 space-y-2.5 text-xs text-muted-foreground">
-                            <div className="flex items-center justify-between">
-                              <span className="flex items-center gap-2">
-                                <span className="size-5 rounded-md bg-white border border-gray-100 shadow-sm flex items-center justify-center text-blue-500 shrink-0">
-                                  <UserCheck className="size-3" />
-                                </span>
-                                <span>Phụ trách:</span>
-                              </span>
-                              <span className="font-medium text-foreground">{memberName(project.managerId)}</span>
-                            </div>
-                            <div className="flex items-center justify-between">
-                              <span className="flex items-center gap-2">
-                                <span className="size-5 rounded-md bg-white border border-gray-100 shadow-sm flex items-center justify-center text-orange-500 shrink-0">
-                                  <Target className="size-3" />
-                                </span>
-                                <span>Cơ hội:</span>
-                              </span>
-                              <span className="font-medium text-foreground">{project.opportunityCount} cơ hội</span>
-                            </div>
-                            <div className="flex items-center justify-between">
-                              <span className="flex items-center gap-2">
-                                <span className="size-5 rounded-md bg-white border border-gray-100 shadow-sm flex items-center justify-center text-blue-500 shrink-0">
-                                  <FileText className="size-3" />
-                                </span>
-                                <span>Báo giá & Version:</span>
-                              </span>
-                              <span className="font-medium text-foreground">{project.quoteCaseCount} Hồ sơ · {project.versionCount} version</span>
-                            </div>
-                            <div className="flex items-center justify-between">
-                              <span className="flex items-center gap-2">
-                                <span className="size-5 rounded-md bg-white border border-gray-100 shadow-sm flex items-center justify-center text-indigo-500 shrink-0">
-                                  <Sparkles className="size-3" />
-                                </span>
-                                <span>Đang xử lý:</span>
-                              </span>
-                              <span className="font-medium text-foreground">{project.processingCount} case</span>
-                            </div>
-                            <div className="flex items-center justify-between pt-1 border-t border-border/40">
-                              <span className="flex items-center gap-2 font-medium text-foreground">
-                                <span className="size-5 rounded-md bg-white border border-gray-100 shadow-sm flex items-center justify-center text-emerald-500 shrink-0">
-                                  <Banknote className="size-3" />
-                                </span>
-                                <span>Giá báo giá hiện tại:</span>
-                              </span>
-                              <span className="text-sm font-bold text-foreground">{formatMoney(project.currentQuoteValue)}</span>
-                            </div>
-                          </div>
-                        </div>
-
-                        <div className="flex flex-wrap items-center gap-1.5 pt-3 border-t border-border/60">
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="text-xs h-8"
-                            onClick={() => { setQuoteProjectFilter(project.id); setTab('quotes'); }}
-                          >
-                            Xem báo giá
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="text-xs h-8"
-                            onClick={() => openQuoteRequestForProject(project.id)}
-                          >
-                            Tạo yêu cầu báo giá
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="text-xs h-8"
-                            disabled={quickQuoteLoading}
-                            onClick={() => void openQuickQuoteForProject(project.id)}
-                          >
-                            {quickQuoteLoading ? 'Đang tải...' : 'Báo giá nhanh'}
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="text-xs h-8"
-                            onClick={() => setDealModal({ open: true, project, contactId: null })}
-                          >
-                            Tạo cơ hội
-                          </Button>
-                          {canManageProject ? (
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              className="text-xs h-8"
-                              onClick={() => setProjectModal({ open: true, project })}
-                            >
-                              Sửa
-                            </Button>
-                          ) : null}
-                          {canManageProject && project.status !== 'cancelled' ? (
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              className="text-xs h-8 text-destructive hover:bg-destructive/10 hover:text-destructive ml-auto"
-                              onClick={() => void cancelProject(project)}
-                            >
-                              Hủy
-                            </Button>
-                          ) : null}
-                        </div>
-                      </Card>
-                    ))}
-                  </div>
-                </>
-              )}
+          {tab === 'documents' && (
+            <div className="bg-white border border-slate-200 rounded-xl p-12 text-center text-slate-400">
+              <FileText className="size-10 mx-auto mb-3 text-slate-300 stroke-1" />
+              <h3 className="font-bold text-sm text-slate-700">Chưa có tài liệu</h3>
+              <p className="text-xs text-slate-400 mt-1">API quản lý tài liệu chưa được triển khai.</p>
             </div>
-          ) : null}
-
-          {tab === 'projects' || tab === 'overview' || tab === 'activity' ? null : (
-            <Card className="bg-card shadow-xs border border-border/80 overflow-hidden">
-              <div className="crm-table-scroll">
-                {tab === 'deals' ? (
-                <div>
-                  <div className="py-3 px-5 border-b border-border/60 flex items-center justify-between bg-muted/20">
-                    <div className="flex items-center gap-2">
-                      <Target className="size-4 text-primary" />
-                      <span className="font-semibold text-sm text-foreground">Danh sách Cơ hội</span>
-                      <Badge variant="secondary" className="text-xs font-bold px-2 py-0.5">
-                        {data?.deals?.length || 0}
-                      </Badge>
-                    </div>
-                    <Button
-                      size="sm"
-                      className="gap-1.5 shadow-xs"
-                      onClick={() => setDealModal({ open: true, project: null, contactId: null })}
-                    >
-                      <Plus className="size-3.5" />
-                      <span>Tạo cơ hội</span>
-                    </Button>
-                  </div>
-                  <table className="crm-table">
-                    <thead>
-                      <tr>
-                        <th className="crm-th">Tên cơ hội</th>
-                        <th className="crm-th">Liên hệ chính</th>
-                        <th className="crm-th">Dự án</th>
-                        <th className="crm-th">Giai đoạn</th>
-                        <th className="crm-th crm-th--right">Giá trị</th>
-                        <th className="crm-th">Cập nhật</th>
-                        <th className="crm-th crm-th--right">Thao tác</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {loading ? (
-                        <tr><td colSpan={7} className="crm-empty-cell">Đang tải...</td></tr>
-                      ) : data?.deals?.length ? (
-                        data.deals.map(deal => {
-                          const primaryContactName = deal.primary_contact_id
-                            ? allContacts.find(c => c.id === deal.primary_contact_id)?.name || 'Liên hệ ẩn'
-                            : 'Chưa có';
-                          return (
-                            <tr
-                              key={deal.id}
-                              className="crm-row hover:bg-muted/30 transition-colors"
-                              style={{ cursor: 'pointer' }}
-                              onClick={() => openDealWorkspace(deal.id)}
-                              title="Mở Deal Workspace"
-                            >
-                              <td className="crm-td"><strong>{deal.customer_name || deal.id}</strong></td>
-                              <td className="crm-td crm-muted">{primaryContactName}</td>
-                              <td className="crm-td crm-muted">{projectLabel(deal.project_id)}</td>
-                              <td className="crm-td">
-                                {(() => {
-                                  const meta = getStageMeta((deal.deal_stage as DealStage) || 'new_lead');
-                                  return (
-                                    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-semibold text-white ${getStageSolidBgClass(deal.deal_stage)}`}>{meta.label}</span>
-                                  );
-                                })()}
-                              </td>
-                              <td className="crm-td crm-td--right font-semibold text-emerald-600 dark:text-emerald-400">{formatVND(Number(deal.estimated_budget || deal.lifetime_value || 0)) || '0 đ'}</td>
-                              <td className="crm-td crm-muted crm-time-cell">
-                                {relativeTime(deal.updated_at || deal.created_at || undefined)}
-                              </td>
-                              <td className="crm-td crm-td--right" onClick={event => event.stopPropagation()}>
-                                <ContactAssignCell
-                                  dealId={deal.id}
-                                  currentContactId={deal.primary_contact_id}
-                                  contacts={allContacts}
-                                  onAssigned={() => setReloadTick(t => t + 1)}
-                                />
-                              </td>
-                            </tr>
-                          );
-                        })
-                      ) : (
-                        <tr><td colSpan={7} className="crm-empty-cell">Chưa có cơ hội nào.</td></tr>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              ) : null}
-
-                {tab === 'quotes' ? (
-                <div className="p-4 space-y-4">
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div className="flex items-center gap-2">
-                      <FileText className="size-4 text-primary" />
-                      <span className="font-semibold text-sm text-foreground">Danh sách Báo giá & Phiên bản</span>
-                      <Badge variant="secondary" className="text-xs font-bold px-2 py-0.5">
-                        {allQuoteChains.length}
-                      </Badge>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Button
-                        size="sm"
-                        className="gap-1.5 shadow-xs"
-                        onClick={() => setQuoteWorkspace({ quoteId: null, deal: null })}
-                      >
-                        <Plus className="size-3.5" />
-                        <span>Tạo báo giá</span>
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        className="gap-1.5 shadow-xs bg-background"
-                        disabled={quickQuoteLoading}
-                        onClick={() => void openQuickQuoteForCustomer()}
-                      >
-                        {quickQuoteLoading ? 'Đang tải...' : 'Báo giá nhanh'}
-                      </Button>
-                    </div>
-                  </div>
-
-                  <div className="p-3 rounded-xl bg-muted/40 border border-border/70 flex flex-wrap items-center justify-between gap-3 text-xs">
-                    <span className="text-muted-foreground font-medium">{quoteStatusFilterSummary}</span>
-                    <div className="flex items-center gap-2">
-                      <select
-                        className="h-8 px-2.5 rounded-lg border border-border/80 bg-background text-xs text-foreground focus:ring-1 focus:ring-primary outline-hidden"
-                        value={quoteStatusFilter}
-                        aria-label="Lọc trạng thái báo giá"
-                        onChange={event => setQuoteStatusFilter(event.target.value as QuoteStatusFilter)}
-                      >
-                        {(['active', 'presale', 'pricing', 'review', 'ready', 'sent', 'cancelled', 'all'] as QuoteStatusFilter[]).map(option => (
-                          <option key={option} value={option}>{QUOTE_STATUS_FILTER_LABELS[option]}</option>
-                        ))}
-                      </select>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        className="h-8 text-xs font-medium"
-                        onClick={() => setQuoteStatusFilter(prev => (prev === 'active' ? 'all' : 'active'))}
-                        title={quoteStatusFilter === 'active' ? 'Hiện cả các báo giá đã huỷ' : 'Ẩn các báo giá đã huỷ'}
-                      >
-                        {quoteStatusFilter === 'active' ? 'Hiện cả đã huỷ' : 'Ẩn đã huỷ'}
-                      </Button>
-                    </div>
-                  </div>
-
-                  {quoteProjectFilter ? (
-                  <div className="p-2.5 rounded-lg bg-primary/10 border border-primary/20 text-primary flex items-center justify-between gap-2 text-xs">
-                    <span>Đang lọc theo dự án: <b>{projectLabel(quoteProjectFilter)}</b></span>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      className="h-6 text-xs text-primary hover:bg-primary/20 px-2"
-                      onClick={() => setQuoteProjectFilter(null)}
-                    >
-                      Bỏ lọc — xem tất cả báo giá
-                    </Button>
-                  </div>
-                ) : null}
-
-                <div className="rounded-xl border border-border/70 overflow-hidden">
-                  <table className="crm-table">
-                    <thead>
-                      <tr>
-                        <th className="crm-th">Báo giá / Version</th>
-                        <th className="crm-th">Dự án</th>
-                        <th className="crm-th">Cơ hội</th>
-                        <th className="crm-th">Liên hệ chính</th>
-                        <th className="crm-th">Phase</th>
-                        <th className="crm-th">Presale → Sale</th>
-                        <th className="crm-th crm-th--right">Giá khách</th>
-                        <th className="crm-th crm-th--right">Margin</th>
-                        <th className="crm-th">SLA</th>
-                        <th className="crm-th crm-th--right">Thao tác</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {loading ? (
-                        <tr><td colSpan={10} className="crm-empty-cell">Đang tải...</td></tr>
-                      ) : quoteChains.length ? (
-                        quoteChains.map(({ current, versionCount }) => {
-                          const relatedDeal = data?.deals?.find(d => d.id === current.deal_id);
-                          const quotePrimaryContactName = relatedDeal?.primary_contact_id
-                            ? allContacts.find(c => c.id === relatedDeal.primary_contact_id)?.name || 'Liên hệ ẩn'
-                            : 'Chưa có';
-                          const expanded = expandedQuoteVersions[current.id];
-                          return (
-                            <Fragment key={current.version_chain_id || current.id}>
-                              <tr
-                                className="crm-row hover:bg-muted/30 transition-colors"
-                                style={{ cursor: 'pointer' }}
-                                onClick={() => void viewQuoteInNewWorkspace(current)}
-                                title="Mở báo giá"
-                              >
-                                <td className="crm-td">
-                                  <div className="crm-quote-cell-head">
-                                    <span>{current.quote_number || current.id}</span>
-                                    <span className="qc-badge qc-badge-version">V{current.version_number || 1} hiện tại</span>
-                                  </div>
-                                  {versionCount > 1 ? (
-                                    <button
-                                      type="button"
-                                      className="crm-version-toggle"
-                                      aria-expanded={Boolean(expanded)}
-                                      title={expanded ? 'Thu gọn phiên bản cũ' : `Xem ${versionCount - 1} phiên bản cũ`}
-                                      onClick={event => { event.stopPropagation(); void toggleExpandQuoteVersions(current); }}
-                                    >
-                                      {expanded ? <ChevronUp className="crm-inline-icon" /> : <ChevronDown className="crm-inline-icon" />}
-                                      {versionCount} phiên bản
-                                    </button>
-                                  ) : null}
-                                </td>
-                                <td className="crm-td crm-muted">{projectLabel(current.project_id)}</td>
-                                <td className="crm-td crm-muted">{relatedDeal?.customer_name || (current.deal_id ? 'Đang tải…' : 'Chưa gắn cơ hội')}</td>
-                                <td className="crm-td crm-muted">{quotePrimaryContactName}</td>
-                                <td className="crm-td"><span className={quotePhaseBadgeClass(quoteChainPhaseKey(current))}>{quoteChainPhaseLabel(current)}</span></td>
-                                <td className="crm-td crm-muted">
-                                  {current.technical_owner_id ? memberName(current.technical_owner_id) : relatedDeal?.leader_name || 'Chưa gán'}
-                                  {' → '}
-                                  {current.quote_owner_id ? memberName(current.quote_owner_id) : relatedDeal?.sdr_name || 'Chưa gán'}
-                                </td>
-                                <td className="crm-td crm-td--right font-semibold text-emerald-600 dark:text-emerald-400">{formatVND(Number(current.total_amount || 0)) || '0 đ'}</td>
-                                <td className="crm-td crm-td--right crm-muted" title="Chưa có dữ liệu giá vốn ở tab này">—</td>
-                                <td className="crm-td crm-muted">{current.sla_due_at ? relativeTime(current.sla_due_at) : 'Chưa đặt SLA'}</td>
-                                <td className="crm-td crm-td--right" onClick={event => event.stopPropagation()}>
-                                  <div className="crm-row-actions">
-                                    <ActionMenu
-                                      items={[
-                                        ...(current.deal_id
-                                          ? [{
-                                            key: 'contact',
-                                            label: relatedDeal?.primary_contact_id ? 'Đổi liên hệ' : '+ Liên hệ chính',
-                                            icon: UserCog,
-                                            group: 1,
-                                            onSelect: () => openContactAssignModal(current.deal_id!, current.quote_number || current.id, relatedDeal?.primary_contact_id),
-                                          } satisfies ActionMenuItem]
-                                          : []),
-                                        {
-                                          key: 'delete',
-                                          label: quoteDeleteBusy === current.id ? 'Đang xoá...' : 'Xóa',
-                                          icon: Trash2,
-                                          group: 2,
-                                          danger: true,
-                                          disabled: quoteDeleteBusy === current.id,
-                                          onSelect: () => void deleteQuoteChainOnCustomerPage(current, versionCount),
-                                        },
-                                      ] satisfies ActionMenuItem[]}
-                                    />
-                                  </div>
-                                </td>
-                              </tr>
-                              {expanded ? (
-                                expanded.loading || expanded.error || expanded.versions.length === 0 ? (
-                                  <tr className="crm-row crm-row--version-old">
-                                    <td colSpan={10} className="crm-empty-cell">
-                                      {expanded.loading ? 'Đang tải phiên bản cũ…' : expanded.error || 'Không có phiên bản cũ nào khác.'}
-                                    </td>
-                                  </tr>
-                                ) : (
-                                  expanded.versions.map(version => {
-                                    const versionDeal = version.dealId ? data?.deals?.find(d => d.id === version.dealId) : null;
-                                    const versionContactName = versionDeal?.primary_contact_id
-                                      ? allContacts.find(c => c.id === versionDeal.primary_contact_id)?.name || 'Liên hệ ẩn'
-                                      : 'Chưa có';
-                                    return (
-                                      <tr
-                                        key={version.id}
-                                        className="crm-row crm-row--version-old hover:bg-muted/30 transition-colors"
-                                        style={{ cursor: 'pointer' }}
-                                        onClick={() => void viewQuoteInNewWorkspace({ ...current, id: version.id })}
-                                        title="Mở báo giá"
-                                      >
-                                        <td className="crm-td">
-                                          ↳ {version.quoteNumber}
-                                          <div className="crm-row-sub">V{version.versionNumber || 1} · cập nhật {relativeTime(version.updatedAt || version.createdAt)}</div>
-                                        </td>
-                                        <td className="crm-td crm-muted">{projectLabel(version.projectId)}</td>
-                                        <td className="crm-td crm-muted">{versionDeal?.customer_name || (version.dealId ? 'Đang tải…' : 'Chưa gắn cơ hội')}</td>
-                                        <td className="crm-td crm-muted">{versionContactName}</td>
-                                        <td className="crm-td"><span className="qc-badge qc-badge-neutral">{quoteVersionStatusLabel(version)}</span></td>
-                                        <td className="crm-td crm-muted">
-                                          {version.technicalOwnerId ? memberName(version.technicalOwnerId) : versionDeal?.leader_name || 'Chưa gán'}
-                                          {' → '}
-                                          {version.quoteOwnerId ? memberName(version.quoteOwnerId) : versionDeal?.sdr_name || 'Chưa gán'}
-                                        </td>
-                                        <td className="crm-td crm-td--right font-semibold text-emerald-600 dark:text-emerald-400">{formatVND(Number(version.customerPriceBeforeVat ?? version.totalAmount ?? 0)) || '0 đ'}</td>
-                                        <td className="crm-td crm-td--right crm-muted" title="Chưa có dữ liệu giá vốn ở tab này">—</td>
-                                        <td className="crm-td crm-muted">{version.slaDueAt ? relativeTime(version.slaDueAt) : 'Chưa đặt SLA'}</td>
-                                        <td className="crm-td crm-td--right" onClick={event => event.stopPropagation()}>
-                                          <div className="crm-row-actions">
-                                            <button
-                                              type="button"
-                                              className="crm-row-action-primary crm-row-action-icon crm-row-action-danger"
-                                              title="Xóa"
-                                              onClick={() => void deleteQuoteVersionOnCustomerPage(version)}
-                                            >
-                                              <Trash2 className="crm-button-icon" />
-                                            </button>
-                                          </div>
-                                        </td>
-                                      </tr>
-                                    );
-                                  })
-                                )
-                              ) : null}
-                            </Fragment>
-                          );
-                        })
-                      ) : (
-                        <tr><td colSpan={10} className="crm-empty-cell">{quoteProjectFilter ? 'Dự án này chưa có báo giá nào.' : 'Chưa có báo giá liên quan.'}</td></tr>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-
-          ) : null}
-
-          {tab === 'contracts' ? (
-            <div className="p-4 space-y-4">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div className="flex items-center gap-2">
-                  <FileCheck className="size-4 text-primary" />
-                  <span className="font-semibold text-sm text-foreground">Danh sách Hợp đồng</span>
-                  <Badge variant="secondary" className="text-xs font-bold px-2 py-0.5">
-                    {data?.contracts?.length || 0}
-                  </Badge>
-                </div>
-                <Button
-                  size="sm"
-                  className="gap-1.5 shadow-xs"
-                  disabled={registerContractLoading}
-                  onClick={() => void openRegisterContractForActiveDeal()}
-                >
-                  <Plus className="size-3.5" />
-                  <span>{registerContractLoading ? 'Đang tải...' : 'Ghi nhận hợp đồng có sẵn'}</span>
-                </Button>
-              </div>
-
-              <p className="text-xs text-muted-foreground bg-muted/30 p-2.5 rounded-lg border border-border/50">
-                Hợp đồng có thể tạo trực tiếp trong CRM hoặc ghi nhận từ hợp đồng đã ký bên ngoài — đồng bộ cùng danh sách với tab Hợp đồng trong Deal Workspace.
-              </p>
-
-              <div className="rounded-xl border border-border/70 overflow-hidden">
-                <table className="crm-table">
-                  <thead>
-                    <tr>
-                      <th className="crm-th">Hợp đồng</th>
-                      <th className="crm-th">Nguồn</th>
-                      <th className="crm-th">Trạng thái</th>
-                      <th className="crm-th">Liên hệ chính</th>
-                      <th className="crm-th crm-th--right">Giá trị</th>
-                      <th className="crm-th">Ngày ký</th>
-                      <th className="crm-th crm-th--right">Thao tác</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {loading ? (
-                      <tr><td colSpan={7} className="crm-empty-cell">Đang tải...</td></tr>
-                    ) : data?.contracts?.length ? (
-                      data.contracts.map(contract => {
-                        const contractDeal = data?.deals?.find(d => d.id === contract.deal_id);
-                        const contractPrimaryContactName = contractDeal?.primary_contact_id
-                          ? allContacts.find(c => c.id === contractDeal.primary_contact_id)?.name || 'Liên hệ ẩn'
-                          : 'Chưa có';
-                        return (
-                          <tr key={contract.id} className="crm-row hover:bg-muted/30 transition-colors">
-                            <td className="crm-td">
-                              <strong>{contract.title || contract.contract_number || contract.id}</strong>
-                              {contract.contract_number ? <div className="crm-row-sub">{contract.contract_number}</div> : null}
-                            </td>
-                            <td className="crm-td">{contractSourceBadge(contract.source)}</td>
-                            <td className="crm-td">
-                              <Badge
-                                className="bg-green-500 text-white border-transparent text-[10px] font-semibold"
-                              >
-                                {contractStatusLabel(contract.status || '')}
-                              </Badge>
-                            </td>
-                            <td className="crm-td crm-muted">{contractPrimaryContactName}</td>
-                            <td className="crm-td crm-td--right font-semibold text-emerald-600 dark:text-emerald-400">{formatVND(Number(contract.contract_value || 0)) || '0 đ'}</td>
-                            <td className="crm-td crm-muted crm-time-cell">{contract.signed_at ? formatContractDate(contract.signed_at) : '—'}</td>
-                            <td className="crm-td crm-td--right">
-                              <div className="crm-row-actions">
-                                <Link className="crm-row-action" href={`/all-platform/contracts/${contract.id}`}>Xem</Link>
-                                {contract.file_url ? (
-                                  <a className="crm-row-action" href={contract.file_url} target="_blank" rel="noreferrer">
-                                    {contract.source === 'external' ? 'File/link' : 'File'}
-                                  </a>
-                                ) : null}
-                                <ContactAssignCell
-                                  dealId={contract.deal_id}
-                                  currentContactId={contractDeal?.primary_contact_id}
-                                  contacts={allContacts}
-                                  onAssigned={() => setReloadTick(t => t + 1)}
-                                />
-                              </div>
-                            </td>
-                          </tr>
-                        );
-                      })
-                    ) : (
-                      <tr><td colSpan={7} className="crm-empty-cell">Chưa có hợp đồng nào được ghi nhận trong CRM.</td></tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          ) : null}
-              </div>
-            </Card>
           )}
+
+
+
         </section>
       </section>
 
@@ -2529,7 +1393,7 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
         onClose={() => setEditingDealRow(null)}
         onSuccess={updated => {
           setEditingDealRow(null);
-          setOpenDeal(updated);
+          setOpenDeal(prev => (prev ? updated : null));
           setReloadTick(t => t + 1);
         }}
       />
@@ -2555,3 +1419,5 @@ function InfoItem({ label, value, full }: { label: string; value: string; full?:
     </div>
   );
 }
+
+// HMR Touch 1790529193.9471252
