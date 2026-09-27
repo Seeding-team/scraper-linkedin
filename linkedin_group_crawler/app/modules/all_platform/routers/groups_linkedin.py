@@ -48,12 +48,18 @@ router = APIRouter()
 def li_groups_get_all(
     request: Request,
     status: str | None = Query(None),
+    for_extension: bool = Query(False),
     authorization: str | None = Header(None),
 ) -> BaseResponse:
     """Get all LinkedIn groups."""
     try:
         user = _get_user_from_header(authorization, request)
-        id_member = None if user.get("role") in ("admin", "leader") else user["id"]
+        # for_extension: giống /facebook/groups — extension chỉ cào nhóm của CHÍNH người dùng
+        # (bài lưu về gắn id_member của họ), kể cả admin/leader.
+        if for_extension:
+            id_member = user["id"]
+        else:
+            id_member = None if user.get("role") in ("admin", "leader") else user["id"]
         data = get_linkedin_groups(status=status, id_member=id_member)
         return BaseResponse(success=True, data=data)
     except HTTPException as e:

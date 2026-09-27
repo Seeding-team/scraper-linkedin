@@ -1526,8 +1526,8 @@ export const allPlatformGroupsService = {
    * Lấy groups cho Extension Launcher.
    * Backend tự động filter theo id_member từ auth token.
    */
-  getForExtension: (): Promise<ApiResponse<FacebookGroup[]>> => {
-    return requestJson(`${BASE}/facebook/groups?for_extension=true`);
+  getForExtension: (platform: "facebook" | "linkedin" = "facebook"): Promise<ApiResponse<(FacebookGroup | LinkedInGroup)[]>> => {
+    return requestJson(`${BASE}/${platform}/groups?for_extension=true`);
   },
 
   add: (payload: Record<string, unknown>, platform: string): Promise<ApiResponse<FacebookGroup | LinkedInGroup>> => {

@@ -83,8 +83,10 @@ function showToastNotification(msg) {
 // 1. Tự động xóa config trong bộ nhớ session & local ngay khi người dùng đóng tab Facebook
 window.addEventListener("beforeunload", () => {
   try {
+    // Content script mặc định KHÔNG có quyền chrome.storage.session -> promise reject
+    // "Access to storage is not allowed from this context" thành lỗi unhandled trên trang.
     if (chrome.storage && chrome.storage.session) {
-      chrome.storage.session.clear();
+      chrome.storage.session.clear().catch(() => {});
     }
     chrome.storage.local.remove(["markee_verify_config", "markee_email_member"]);
   } catch (e) {}

@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Facebook, YouTube, LinkedIn & Threads Bulk Comment Extension",
-  "version": "1.11",
-  "description": "Seeding Comment hàng loạt trên Facebook, YouTube, LinkedIn và Threads",
+  "name": "Markee Seeding Extension",
+  "version": "2.1",
+  "description": "Gộp 1 extension: cào bài + bình luận Facebook & LinkedIn (kèm comment YouTube, Threads) cho Markee Seeding",
   "permissions": [
     "activeTab",
     "scripting",
@@ -28,18 +28,26 @@
     "service_worker": "background.js"
   },
   "action": {
-    "default_title": "Bulk Comment Extension"
+    "default_title": "Markee Seeding Extension"
   },
   "content_scripts": [
     {
-      "matches": ["*://*.facebook.com/*"],
-      "js": ["graphql-sniffer.js"],
+      "matches": [
+        "*://*.facebook.com/*"
+      ],
+      "js": [
+        "graphql-sniffer.js"
+      ],
       "world": "MAIN",
       "run_at": "document_start"
     },
     {
-      "matches": ["*://*.facebook.com/*"],
-      "js": ["content.js"],
+      "matches": [
+        "*://*.facebook.com/*"
+      ],
+      "js": [
+        "content.js"
+      ],
       "run_at": "document_idle"
     },
     {
@@ -47,14 +55,19 @@
         "*://*.youtube.com/*",
         "*://youtube.com/*"
       ],
-      "js": ["platforms/youtube/youtube-handler.js"],
+      "js": [
+        "platforms/youtube/youtube-handler.js"
+      ],
       "run_at": "document_idle"
     },
     {
       "matches": [
         "*://*.linkedin.com/*"
       ],
-      "js": ["platforms/linkedin/content.js"],
+      "js": [
+        "platforms/linkedin/content.js",
+        "platforms/linkedin/crawler.js"
+      ],
       "run_at": "document_idle"
     },
     {
@@ -62,7 +75,9 @@
         "*://*.threads.net/*",
         "*://*.threads.com/*"
       ],
-      "js": ["platforms/threads/content.js"],
+      "js": [
+        "platforms/threads/content.js"
+      ],
       "run_at": "document_idle"
     },
     {
@@ -75,7 +90,9 @@
         "*://seeding.markee.vn/*",
         "*://*.seeding.markee.vn/*"
       ],
-      "js": ["bridge.js"],
+      "js": [
+        "bridge.js"
+      ],
       "run_at": "document_idle"
     }
   ]

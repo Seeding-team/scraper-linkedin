@@ -384,23 +384,15 @@ def delete_linkedin_group(group_id: str) -> dict:
     """Delete a LinkedIn group and all its posts."""
     supabase: Client = get_supabase_client()
 
-    group_res = (
-        supabase.table("linkedin_groups")
-        .select("group_url")
-        .eq("id", group_id)
+    # linkedin_posts gắn group qua FK id_group (bảng KHÔNG có cột group_url — lọc theo
+    # group_url trước đây luôn lỗi 42703, khiến mọi thao tác xoá group LinkedIn đều hỏng).
+    posts_res = (
+        supabase.table("linkedin_posts")
+        .delete()
+        .eq("id_group", group_id)
         .execute()
     )
-    deleted_posts = 0
-    if group_res.data:
-        group_url = group_res.data[0].get("group_url")
-        if group_url:
-            posts_res = (
-                supabase.table("linkedin_posts")
-                .delete()
-                .eq("group_url", group_url)
-                .execute()
-            )
-            deleted_posts = len(posts_res.data) if posts_res.data else 0
+    deleted_posts = len(posts_res.data) if posts_res.data else 0
 
     result = (
         supabase.table("linkedin_groups")

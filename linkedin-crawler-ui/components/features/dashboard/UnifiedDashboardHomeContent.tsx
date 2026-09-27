@@ -5,7 +5,7 @@ import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContai
 import { createPortal } from "react-dom";
 import { cn } from "@/lib/utils";
 import { FiExternalLink } from "react-icons/fi";
-import { ApiExtensionLauncher } from "@/components/all-platform/components/api-extension-launcher";
+import { SeedingExtensionPanel } from "@/components/all-platform/components/seeding-extension/seeding-extension-panel";
 import { useAppAuth } from "@/contexts/AppAuthContext";
 import { FilterBar, type FilterState } from "@/components/all-platform/components/filter-bar";
 import { PostCard } from "@/components/all-platform/components/post-card";
@@ -16,7 +16,6 @@ import { PostDetailModal } from "@/components/all-platform/components/post-detai
 import { VerifyAccountModal } from "@/components/all-platform/components/verify-account-modal";
 import { KpiProgressCard } from "@/components/all-platform/components/kpi-progress-card";
 import { MemberKpiRewardOverview } from "@/components/all-platform/kpi-rewards/KpiRewardSections";
-import { BulkCommentLauncher } from "@/components/all-platform/components/bulk-comment-launcher";
 import { SeedingActivityPanel } from "@/components/all-platform/feed/SeedingActivityPanel";
 import { ScheduleCommentModal } from "@/components/all-platform/feed/ScheduleCommentModal";
 import { ScheduledCommentsPanel } from "@/components/all-platform/feed/ScheduledCommentsPanel";
@@ -804,44 +803,26 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
       {CURRENT_USER_EMAIL && (
         <ScheduledCommentsPanel refreshKey={scheduleRefreshKey} />
       )}
-      {/* Phase 6: Siêu Tốc Cào Dữ Liệu + Bulk Comment — hiển thị cho cả 3 role
-          (admin/leader/member) khi đang ở tab Facebook. SeedingActivityPanel
-          vẫn chỉ admin/leader vì là panel tổng quan nhóm. */}
-      {CURRENT_USER_EMAIL && feedPlatform === "facebook" && (
-        <>
-          <ApiExtensionLauncher
-            onComplete={(totalPosts) => {
-              fetchPosts();
-              fetchStats();
-              setCrawlResultsSummary(prev => {
-                const realTotal = prev.groups.reduce((sum, g) => sum + g.count, 0);
-                return { ...prev, totalPosts: realTotal > 0 ? realTotal : (totalPosts || 0) };
-              });
-              setShowCrawlResultModal(true);
-            }}
-            onCrawlSaved={(data) => {
-              setCrawlResultsSummary(prev => {
-                const exists = prev.groups.find(g => g.groupUrl === data.groupUrl);
-                let newGroups = prev.groups;
-                if (exists) {
-                  newGroups = prev.groups.map(g => g.groupUrl === data.groupUrl ? { ...g, count: g.count + data.count } : g);
-                } else {
-                  newGroups = [...prev.groups, { groupUrl: data.groupUrl, count: data.count }];
-                }
-                return { ...prev, groups: newGroups };
-              });
-            }}
-          />
-          <BulkCommentLauncher
-            posts={posts}
-            onComplete={(seededUrls) => {
-              fetchPosts();
-              fetchStats();
-              if (seededUrls) setRecentlySeededUrls(seededUrls);
-              setShowSeedingResultModal(true);
-            }}
-          />
-        </>
+      {/* 1 extension gộp (Markee Seeding Extension): cào bài + bình luận hàng loạt cho cả
+          Facebook và LinkedIn, theo tab nền tảng đang chọn — thay cho 2 launcher riêng
+          "Siêu Tốc Cào Dữ Liệu" + "Seeding Comment Hàng Loạt" trước đây (chỉ có ở tab Facebook). */}
+      {CURRENT_USER_EMAIL && (feedPlatform === "facebook" || feedPlatform === "linkedin") && (
+        <SeedingExtensionPanel
+          platform={feedPlatform}
+          posts={posts}
+          onCrawlDone={(_platform, data) => {
+            fetchPosts();
+            fetchStats();
+            setCrawlResultsSummary((prev) => ({ ...prev, totalPosts: data.totalSaved }));
+            setShowCrawlResultModal(true);
+          }}
+          onCommentDone={(seededUrls) => {
+            fetchPosts();
+            fetchStats();
+            if (seededUrls) setRecentlySeededUrls(seededUrls);
+            setShowSeedingResultModal(true);
+          }}
+        />
       )}
 
       {/* Menu doc lap theo mang dich vu (2026-07-04) — loc theo industry, xem
@@ -1062,10 +1043,10 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
               </p>
 
               <button
-                onClick={() => window.location.reload()}
+                onClick={() => setShowCrawlResultModal(false)}
                 className="w-full py-3 bg-primary hover:bg-primary/90 text-white rounded-xl font-bold shadow-md transition-all active:scale-95"
               >
-                Đồng ý & Tải lại trang
+                Đồng ý
               </button>
             </div>
           </div>
@@ -1087,10 +1068,10 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
               </p>
               
               <button
-                onClick={() => window.location.reload()}
+                onClick={() => setShowSeedingResultModal(false)}
                 className="w-full py-3 bg-primary hover:bg-primary/90 text-white rounded-xl font-bold shadow-md transition-all active:scale-95"
               >
-                Đồng ý & Tải lại trang
+                Đồng ý
               </button>
             </div>
           </div>

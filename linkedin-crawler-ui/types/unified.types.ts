@@ -53,6 +53,17 @@ export interface UnifiedPost {
   crawler_name?: string;
   crawler_team?: string;
   all_seedings?: UnifiedSeedingInfo[];
+  /** Bình luận cào được từ bài (LinkedIn, extension >= 2.0) — cần migration 151. */
+  comments_detail?: UnifiedCrawledComment[];
+  /** Tên người đã react bài (LinkedIn, best-effort). */
+  likers?: string[];
+}
+
+export interface UnifiedCrawledComment {
+  author_name?: string;
+  author_url?: string;
+  content?: string;
+  likes?: number;
 }
 
 export interface GetAllPostsRequest {
