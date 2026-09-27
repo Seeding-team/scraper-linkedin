@@ -21,29 +21,6 @@ import { ChevronLeft, ChevronRight, Building2, Phone, Mail } from 'lucide-react'
 import type { CrmCustomerKpi, CrmCustomerRow } from '../types';
 import { cascadeLossText, describeCascadeSummary, sumCascadeSummaries, type CascadeSummary } from '../utils/cascadeDelete';
 
-const AVATAR_COLORS = [
-  { bg: '#eff6ff', text: '#2563eb' },
-  { bg: '#fdf2f8', text: '#db2777' },
-  { bg: '#f0fdf4', text: '#16a34a' },
-  { bg: '#fffbeb', text: '#d97706' },
-  { bg: '#faf5ff', text: '#9333ea' },
-  { bg: '#f0fdfa', text: '#0d9488' },
-];
-
-function getAvatarColor(name: string) {
-  let hash = 0;
-  for (let i = 0; i < name.length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
-  const index = Math.abs(hash) % AVATAR_COLORS.length;
-  return AVATAR_COLORS[index];
-}
-
-function getInitials(name: string) {
-  if (!name) return 'C';
-  const parts = name.trim().split(/\s+/);
-  if (parts.length === 1) return parts[0].charAt(0).toUpperCase();
-  return (parts[0].charAt(0) + parts[parts.length - 1].charAt(0)).toUpperCase();
-}
-
 /**
  * Tab -> status mapping (quyet dinh cuoi cung, xem bao cao task):
  *   Tat ca            -> '' (khong loc)
@@ -452,12 +429,6 @@ export function CrmCustomersDirectory() {
     setReloadTick(tick => tick + 1);
   }
 
-  function handleOpportunityCreatedAndOpen(dealId: string) {
-    setOpportunityCustomer(null);
-    setReloadTick(tick => tick + 1);
-    router.push(`/all-platform/crm?openDeal=${encodeURIComponent(dealId)}`);
-  }
-
   function openDelete(targets: CrmCustomerRow[]) {
     if (!targets.length) return;
     setDeleteError('');
@@ -753,8 +724,6 @@ export function CrmCustomersDirectory() {
                     <tr><td colSpan={visibleColumnCount} className="crm-empty-cell"><Loader2 className="crm-spin-icon" /> Đang tải...</td></tr>
                   ) : items.length ? (
                     items.map(customer => {
-                      const avatarColor = getAvatarColor(customer.customerName);
-                      const initials = getInitials(customer.customerName);
                       return (
                         <tr
                           key={customer.id}
@@ -772,12 +741,6 @@ export function CrmCustomersDirectory() {
                           </td>
                           <td className="crm-td">
                             <div className="crm-lead-identity">
-                              <div
-                                className="crm-avatar-bubble"
-                                style={{ backgroundColor: avatarColor.bg, color: avatarColor.text }}
-                              >
-                                {initials}
-                              </div>
                               <div className="crm-lead-identity-text">
                                 <Link
                                   href={`/all-platform/crm/customers/${customer.id}`}
@@ -1088,7 +1051,6 @@ export function CrmCustomersDirectory() {
         currentUser={user}
         onClose={() => setOpportunityCustomer(null)}
         onCreated={handleOpportunityCreated}
-        onCreatedAndOpen={handleOpportunityCreatedAndOpen}
       />
 
       {deleteTargets ? (

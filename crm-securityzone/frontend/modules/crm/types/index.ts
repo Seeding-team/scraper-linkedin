@@ -427,6 +427,10 @@ export interface CrmLeadRow {
   qualificationDecisionMaker?: string;
   qualificationExpectedTimeline?: string;
   qualificationAeId?: string;
+  /** Team Sale bàn giao (crm_leads.team_id, migration 154) - thay cho chọn 1
+   * cá nhân cụ thể (qualificationAeId, để nguyên trong schema nhưng ngưng
+   * dùng ở form Xác minh Lead - feedback leader 2026-09-27). */
+  teamId?: string;
   nextStep?: string;
   followUpDate?: string;
   convertedCustomerId?: string;

@@ -9,7 +9,7 @@ import { MemberSearchSelect } from './MemberSearchSelect';
 import { CrmCategoryCodeSelect } from './CrmCategorySelect';
 import { mapLead } from './LeadsDirectory';
 import { Loader2, X } from './icons';
-import { hasFullCrmAccess } from '../constants/crmConfig';
+import { hasFullCrmAccess, LEAD_SOURCE_EXCLUDED_VALUES } from '../constants/crmConfig';
 import { usersService } from '@/services/all-platform.service';
 import type { AppUser } from '@/types/unified.types';
 import type { CrmLeadRow, CrmLeadStatus } from '../types';
@@ -300,6 +300,7 @@ export function LeadEditDrawer({
                   <CrmCategoryCodeSelect
                     categoryType="crm_source"
                     value={form.source}
+                    excludeValues={LEAD_SOURCE_EXCLUDED_VALUES}
                     onChange={value => setValue('source', value)}
                     placeholder="-- Chưa chọn --"
                   />

@@ -290,22 +290,24 @@ export function RegisterExternalContractModal({ open, deal, onClose, onCreated, 
 
           {/* "Thuộc báo giá nào" (feedback 2026-09-25, PDF mục 7) - tuỳ chọn,
            * khi chọn 1 báo giá đã duyệt xong, hợp đồng này sẽ tự hiện trong
-           * "Bản tóm tắt báo giá" của báo giá đó (xem QuoteWorkspaceModal.tsx). */}
-          {quoteOptions && quoteOptions.length > 0 ? (
-            <label className="block">
-              <span className="mb-1 block text-xs font-semibold text-slate-600">Thuộc báo giá nào</span>
-              <select
-                value={selectedQuoteId}
-                onChange={e => setSelectedQuoteId(e.target.value)}
-                className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-              >
-                <option value={NONE_QUOTE}>Không gắn báo giá</option>
-                {filteredQuotes.map(q => (
-                  <option key={q.id} value={q.id}>{q.label}</option>
-                ))}
-              </select>
-            </label>
-          ) : null}
+           * "Bản tóm tắt báo giá" của báo giá đó (xem QuoteWorkspaceModal.tsx).
+           * LUON hien field nay (kem khi Khach hang chua co Bao gia nao) -
+           * truoc day an han khi quoteOptions rong khien nguoi dung tuong
+           * tinh nang bi thieu (feedback thuc te 2026-09-27: "báo giá đâu?"). */}
+          <label className="block">
+            <span className="mb-1 block text-xs font-semibold text-slate-600">Thuộc báo giá nào</span>
+            <select
+              value={selectedQuoteId}
+              onChange={e => setSelectedQuoteId(e.target.value)}
+              disabled={!filteredQuotes.length}
+              className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm disabled:bg-slate-50 disabled:text-slate-400"
+            >
+              <option value={NONE_QUOTE}>{filteredQuotes.length ? 'Không gắn báo giá' : 'Khách hàng chưa có báo giá nào'}</option>
+              {filteredQuotes.map(q => (
+                <option key={q.id} value={q.id}>{q.label}</option>
+              ))}
+            </select>
+          </label>
 
           {/* "Trạng thái" + "Số hợp đồng" deu ngan (feedback 2026-09-26: "có
            * những dropdown không cần thiết phải dài như vậy... cho 1 hàng 2

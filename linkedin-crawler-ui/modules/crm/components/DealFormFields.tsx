@@ -363,6 +363,7 @@ export function CustomerProfileCombobox({
   setValue,
   disabled = false,
   locked = false,
+  hideProfileUpdateToggle = false,
 }: {
   form: DealFormState;
   setValue: <K extends keyof DealFormState>(key: K, value: DealFormState[K]) => void;
@@ -370,6 +371,12 @@ export function CustomerProfileCombobox({
   /** Block 1: mo tu "Tạo cơ hội" o Ho so khach hang/Project card - Customer
    * PHAI tu dien va khoa, an nut "Đổi" (khong cho doi sang khach khac). */
   locked?: boolean;
+  /** An han checkbox "Cập nhật thông tin này vào hồ sơ khách hàng" - dung cho
+   * CreateOpportunityDrawer (feedback leader 2026-09-27: "mặc định cập nhật
+   * vào hồ sơ đi, không cần chọn tick") - luon cap nhat, khong can nguoi
+   * dung tu bat. Man sua Deal (DealFormFields chinh) VAN giu checkbox nhu
+   * cu, khong doi hanh vi o do. */
+  hideProfileUpdateToggle?: boolean;
 }) {
   const [query, setQuery] = useState(form.customerName);
   const [open, setOpen] = useState(false);
@@ -456,7 +463,7 @@ export function CustomerProfileCombobox({
       setValue('customerId', '');
       setValue('projectId', ''); // doi Customer -> Project cu (thuoc Customer khac) khong con hop le
       setValue('dealName', ''); // Ten co hoi lay theo Du an - Du an cu cung khong con hop le
-      setValue('updateCustomerProfile', false);
+      setValue('updateCustomerProfile', hideProfileUpdateToggle);
       setValue('customerProfileCanEdit', false);
       clearAutofilledContact();
     }
@@ -474,7 +481,7 @@ export function CustomerProfileCombobox({
     setValue('projectId', ''); // Customer moi -> Project cu (neu co) thuoc Customer khac, khong con hop le
     setValue('dealName', ''); // Ten co hoi lay theo Du an - Du an cu cung khong con hop le
     setValue('customerProfileCanEdit', Boolean(customer.canEdit));
-    setValue('updateCustomerProfile', false);
+    setValue('updateCustomerProfile', hideProfileUpdateToggle);
     setValue('customerName', customer.customerName || '');
     setValue('companyName', next.companyName);
     setValue('positionCategoryId', customer.positionCategoryId || '');
@@ -569,7 +576,7 @@ export function CustomerProfileCombobox({
           ))}
         </div>
       ) : null}
-      {form.customerId ? (
+      {form.customerId && !hideProfileUpdateToggle ? (
         <label className={`crm-customer-profile-checkbox ${!form.customerProfileCanEdit ? 'is-disabled' : ''}`}>
           <input
             type="checkbox"

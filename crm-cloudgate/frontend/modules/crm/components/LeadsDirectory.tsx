@@ -10,7 +10,9 @@ import { LeadDetailDrawer } from './LeadDetailDrawer';
 import { LeadEditDrawer } from './LeadEditDrawer';
 import { LeadImportDialog } from './LeadImportDialog';
 import { SearchableSelect } from './SearchableSelect';
-import { useCrmCategoryCodeOptions } from './CrmCategorySelect';
+import { useCrmCategoryCodeOptions, CrmCategorySelect, CrmCategoryCodeSelect } from './CrmCategorySelect';
+import { getSourceLabel } from './DealFormFields';
+import { LEAD_SOURCE_EXCLUDED_VALUES } from '../constants/crmConfig';
 import { Loader2, Trash2 } from './icons';
 import {
   Users,
@@ -27,32 +29,11 @@ import {
   RotateCcw,
   ChevronLeft,
   ChevronRight,
+  Pencil,
 } from 'lucide-react';
 import type { CrmLeadKpi, CrmLeadRow, CrmLeadStatus } from '../types';
 import { cascadeLossText, cascadeSummaryFromBody, describeCascadeSummary, sumCascadeSummaries, type CascadeSummary } from '../utils/cascadeDelete';
-
-const AVATAR_COLORS = [
-  { bg: '#eff6ff', text: '#2563eb' },
-  { bg: '#fdf2f8', text: '#db2777' },
-  { bg: '#f0fdf4', text: '#16a34a' },
-  { bg: '#fffbeb', text: '#d97706' },
-  { bg: '#faf5ff', text: '#9333ea' },
-  { bg: '#f0fdfa', text: '#0d9488' },
-];
-
-function getAvatarColor(name: string) {
-  let hash = 0;
-  for (let i = 0; i < name.length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
-  const index = Math.abs(hash) % AVATAR_COLORS.length;
-  return AVATAR_COLORS[index];
-}
-
-function getInitials(name: string) {
-  if (!name) return 'L';
-  const parts = name.trim().split(/\s+/);
-  if (parts.length === 1) return parts[0].charAt(0).toUpperCase();
-  return (parts[0].charAt(0) + parts[parts.length - 1].charAt(0)).toUpperCase();
-}
+import { evaluateLeadConditions, icpFromApi, interestLevelFromScore, type LeadRuleFields } from '../utils/leadQualificationRules';
 
 // Main la CRM markee CO DINH (khong co /auth/workspaces/switcher nhu 3
 // clone) - danh sach workspace dich khi sao chep Lead CHI CO 2 clone doc
@@ -122,6 +103,7 @@ type ApiLeadRow = {
   qualification_decision_maker?: string | null;
   qualification_expected_timeline?: string | null;
   qualification_ae_id?: string | null;
+  team_id?: string | null;
   next_step?: string | null;
   follow_up_date?: string | null;
   converted_customer_id?: string | null;
@@ -173,6 +155,7 @@ export function mapLead(row: ApiLeadRow): CrmLeadRow {
     qualificationDecisionMaker: row.qualification_decision_maker || '',
     qualificationExpectedTimeline: row.qualification_expected_timeline || '',
     qualificationAeId: row.qualification_ae_id || '',
+    teamId: row.team_id || '',
     nextStep: row.next_step || '',
     followUpDate: row.follow_up_date || '',
     convertedCustomerId: row.converted_customer_id || '',
@@ -535,6 +518,83 @@ export function LeadsDirectory() {
     const cleanup = load();
     return cleanup;
   }, [load, reloadTick]);
+
+  // "Điều kiện phân loại Lead" (migration 151/152) - fetch 1 lần cho CẢ trang,
+  // dùng để tự tính lại trạng thái hiển thị (displayStatusOf) cho các Lead
+  // CHƯA chốt kết quả (mql/new_lead/qualifying) - feedback leader 2026-09-27:
+  // "dù sau có chỉnh lại điều kiện... thì nó vẫn phải hiện đúng theo trạng
+  // thái đó" - tức danh sách phải phản ánh ĐÚNG luật hiện hành, không phải
+  // status cũ đã lưu lúc trước khi luật đổi. Lead đã CHỐT (sql/converted/
+  // nurturing/unqualified) là quyết định thật của SDR, KHÔNG bị ghi đè.
+  const [ruleConditions, setRuleConditions] = useState<Record<string, boolean> | null>(null);
+  useEffect(() => {
+    let alive = true;
+    fetch(`${API_BASE_URL}/api/all-platform/crm/leads/classification-rules`, { credentials: 'include', headers: headers() })
+      .then(res => res.json())
+      .then(body => {
+        if (!alive || body.success === false) return;
+        setRuleConditions((body.data?.conditions as Record<string, boolean>) || null);
+      })
+      .catch(() => {
+        // Im lang - khong co rule thi hien nguyen status da luu.
+      });
+    return () => { alive = false; };
+  }, []);
+
+  const UNRESOLVED_STATUSES = useMemo(() => new Set(['mql', 'new_lead', 'qualifying']), []);
+
+  function displayStatusOf(lead: CrmLeadRow): string {
+    if (!ruleConditions || !UNRESOLVED_STATUSES.has(lead.status)) return lead.status;
+    const fields: LeadRuleFields = {
+      has_product: Boolean(lead.qualificationNeed?.trim()),
+      has_interest_level: Boolean(interestLevelFromScore(lead.score)),
+      has_value: lead.qualificationEstimatedValue != null,
+      has_team: Boolean(lead.qualificationAeId),
+      has_next: Boolean(lead.nextStep?.trim()),
+      has_follow: Boolean(lead.followUpDate),
+      has_contact: Boolean(lead.phone?.trim() || lead.email?.trim()),
+      fit_unfit: icpFromApi(lead.qualificationIcpFit) === 'unfit',
+      fit_known: icpFromApi(lead.qualificationIcpFit) !== 'unknown',
+    };
+    const computed = evaluateLeadConditions(fields, ruleConditions).outcome;
+    // 'pending' (chua du du lieu) khong phai 1 status that trong DB - giu
+    // nguyen nhan MQL cho truong hop nay, khong co gia tri hien thi rieng.
+    if (computed === 'pending') return lead.status;
+    return computed;
+  }
+
+  // "Chỉnh sửa" ngoài danh sách - sửa THẬT qua đúng PUT /leads/{id} đã dùng ở
+  // LeadEditDrawer, không phải giả lập. Mỗi cột bật sửa hiện dropdown giống
+  // hệt component dùng trong form Thêm Lead (CrmCategoryCodeSelect/
+  // CrmCategorySelect) - feedback leader 2026-09-27. KHÔNG cho sửa "Trạng
+  // thái"/"AI Score" (do rule engine tự tính, SDR không được tự chọn/override
+  // - xem LeadDetailDrawer) hay "Marketing" (created_by - dữ kiện lịch sử,
+  // không phải field nghiệp vụ để sửa tay).
+  const [editMode, setEditMode] = useState(false);
+  const [savingCellKey, setSavingCellKey] = useState<string | null>(null);
+  const [inlineEditError, setInlineEditError] = useState('');
+
+  async function updateLeadField(lead: CrmLeadRow, field: string, value: string) {
+    const key = `${lead.id}:${field}`;
+    setSavingCellKey(key);
+    setInlineEditError('');
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/all-platform/crm/leads/${encodeURIComponent(lead.id)}`, {
+        method: 'PUT',
+        credentials: 'include',
+        headers: headers(),
+        body: JSON.stringify({ [field]: value || null }),
+      });
+      const body = await res.json();
+      if (!res.ok || body.success === false) throw new Error(body?.message || 'Không lưu được thay đổi.');
+      const updated = mapLead(body.data);
+      setItems(current => current.map(row => (row.id === lead.id ? updated : row)));
+    } catch (err) {
+      setInlineEditError(err instanceof Error ? err.message : 'Không lưu được thay đổi.');
+    } finally {
+      setSavingCellKey(null);
+    }
+  }
 
   const sdrName = useMemo(() => {
     const map = new Map<string, string>();
@@ -994,6 +1054,14 @@ export function LeadsDirectory() {
               </p>
             </div>
             <div className="crm-directory-actions">
+              <button
+                type="button"
+                className={editMode ? 'crm-primary-button' : 'crm-secondary-button'}
+                onClick={() => setEditMode(prev => !prev)}
+              >
+                <Pencil size={15} />
+                <span>{editMode ? 'Xong' : 'Chỉnh sửa'}</span>
+              </button>
               <button type="button" className="crm-secondary-button" onClick={() => setImportOpen(true)}>
                 <FileSpreadsheet size={15} />
                 <span>Import Excel</span>
@@ -1004,6 +1072,7 @@ export function LeadsDirectory() {
               </button>
             </div>
           </div>
+          {editMode && inlineEditError ? <p className="crm-error" style={{ margin: '0 0 0.6rem' }}>{inlineEditError}</p> : null}
 
           <div className="crm-table-card crm-lead-table-card--desktop">
             <div className="crm-table-scroll">
@@ -1011,9 +1080,10 @@ export function LeadsDirectory() {
                 <colgroup>
                   <col style={{ width: 40 }} />
                   <col className="crm-col-lead-name" />
-                  <col className="crm-col-lead-contact" />
                   <col className="crm-col-lead-source" />
+                  <col className="crm-col-lead-need" />
                   <col className="crm-col-lead-score" />
+                  <col className="crm-col-lead-marketing" />
                   <col className="crm-col-lead-status" />
                   <col className="crm-col-lead-sdr" />
                   <col className="crm-col-lead-nextstep" />
@@ -1031,9 +1101,10 @@ export function LeadsDirectory() {
                       />
                     </th>
                     <th className="crm-th">Lead</th>
-                    <th className="crm-th">Liên hệ</th>
                     <th className="crm-th">Nguồn</th>
-                    <th className="crm-th crm-th--right">Score</th>
+                    <th className="crm-th">Nhu cầu</th>
+                    <th className="crm-th crm-th--right">AI Score</th>
+                    <th className="crm-th">Marketing</th>
                     <th className="crm-th">Trạng thái</th>
                     <th className="crm-th">SDR</th>
                     <th className="crm-th">Việc tiếp theo</th>
@@ -1042,11 +1113,9 @@ export function LeadsDirectory() {
                 </thead>
                 <tbody>
                   {loading ? (
-                    <tr><td colSpan={9} className="crm-empty-cell"><Loader2 className="crm-spin-icon" /> Đang tải...</td></tr>
+                    <tr><td colSpan={10} className="crm-empty-cell"><Loader2 className="crm-spin-icon" /> Đang tải...</td></tr>
                   ) : items.length ? (
                     items.map(lead => {
-                      const avatarColor = getAvatarColor(lead.leadName);
-                      const initials = getInitials(lead.leadName);
                       return (
                         <tr key={lead.id} className="crm-row">
                           <td className="crm-td" onClick={event => event.stopPropagation()}>
@@ -1059,12 +1128,6 @@ export function LeadsDirectory() {
                           </td>
                           <td className="crm-td">
                             <div className="crm-lead-identity">
-                              <div
-                                className="crm-avatar-bubble"
-                                style={{ backgroundColor: avatarColor.bg, color: avatarColor.text }}
-                              >
-                                {initials}
-                              </div>
                               <div className="crm-lead-identity-text">
                                 <button
                                   type="button"
@@ -1078,37 +1141,52 @@ export function LeadsDirectory() {
                                   <Building2 size={12} className="shrink-0 text-gray-400" />
                                   <span className="truncate">{lead.companyName || 'Chưa có công ty'}</span>
                                 </div>
+                                {lead.phone || lead.email ? (
+                                  <div className="crm-sub-text">
+                                    {lead.phone ? <Phone size={12} className="shrink-0 text-gray-400" /> : <Mail size={12} className="shrink-0 text-gray-400" />}
+                                    {lead.phone ? (
+                                      <a className="crm-contact-link truncate" href={`tel:${lead.phone.replace(/[^\d+]/g, '')}`} title={lead.phone} onClick={event => event.stopPropagation()}>
+                                        {lead.phone}
+                                      </a>
+                                    ) : (
+                                      <a className="crm-contact-link truncate" href={`mailto:${lead.email}`} title={lead.email || ''} onClick={event => event.stopPropagation()}>
+                                        {lead.email}
+                                      </a>
+                                    )}
+                                  </div>
+                                ) : null}
                               </div>
                             </div>
                           </td>
-                          <td className="crm-td crm-contact-cell">
-                            {lead.phone ? (
-                              <a
-                                className="crm-contact-chip"
-                                href={`tel:${lead.phone.replace(/[^\d+]/g, '')}`}
-                                title={lead.phone}
-                              >
-                                <Phone size={12} />
-                                <span>{lead.phone}</span>
-                              </a>
+                          <td className="crm-td" onClick={event => editMode && event.stopPropagation()}>
+                            {editMode ? (
+                              <div className="crm-inline-edit-cell">
+                                <CrmCategoryCodeSelect
+                                  categoryType="crm_source"
+                                  value={lead.source || 'Manual'}
+                                  excludeValues={LEAD_SOURCE_EXCLUDED_VALUES}
+                                  disabled={savingCellKey === `${lead.id}:source`}
+                                  onChange={value => void updateLeadField(lead, 'source', value)}
+                                />
+                              </div>
                             ) : (
-                              <div className="crm-small text-gray-400">-</div>
-                            )}
-                            {lead.email ? (
-                              <a
-                                className="crm-contact-chip crm-muted"
-                                title={lead.email}
-                                href={`mailto:${lead.email}`}
-                              >
-                                <Mail size={12} />
-                                <span className="crm-truncate max-w-[140px]">{lead.email}</span>
-                              </a>
-                            ) : (
-                              <div className="crm-muted text-gray-400">-</div>
+                              <span className="crm-modern-source-pill">{getSourceLabel(lead.source || 'Manual')}</span>
                             )}
                           </td>
-                          <td className="crm-td">
-                            <span className="crm-modern-source-pill">{lead.source || 'Manual'}</span>
+                          <td className={editMode ? 'crm-td' : 'crm-td crm-muted crm-truncate'} title={editMode ? undefined : (lead.qualificationNeed || '')} onClick={event => editMode && event.stopPropagation()}>
+                            {editMode ? (
+                              <div className="crm-inline-edit-cell">
+                                <CrmCategorySelect
+                                  categoryType="crm_service_package"
+                                  value={lead.qualificationNeed || ''}
+                                  disabled={savingCellKey === `${lead.id}:qualification_need`}
+                                  placeholder="-- Chọn --"
+                                  onChange={value => void updateLeadField(lead, 'qualification_need', value)}
+                                />
+                              </div>
+                            ) : (
+                              lead.qualificationNeed || '-'
+                            )}
                           </td>
                           <td className="crm-td crm-td--right">
                             {lead.score == null ? (
@@ -1123,27 +1201,61 @@ export function LeadsDirectory() {
                               </span>
                             )}
                           </td>
+                          <td className="crm-td crm-small" onClick={event => editMode && event.stopPropagation()}>
+                            {editMode ? (
+                              <div className="crm-inline-edit-cell">
+                                <select
+                                  value={lead.createdBy || ''}
+                                  disabled={savingCellKey === `${lead.id}:created_by`}
+                                  onChange={event => void updateLeadField(lead, 'created_by', event.target.value)}
+                                >
+                                  <option value="">-- Chưa gán --</option>
+                                  {sdrFilterOptions.map(([id, name]) => (
+                                    <option key={id} value={id}>{name}</option>
+                                  ))}
+                                </select>
+                              </div>
+                            ) : (
+                              sdrName.get(lead.createdBy || '') || '-'
+                            )}
+                          </td>
                           <td className="crm-td">
-                            <span className={`crm-lead-status-badge ${STATUS_BADGE_CLASS[lead.status] || ''}`}>
-                              <span
-                                className="crm-status-dot"
-                                style={{
-                                  backgroundColor:
-                                    lead.status === 'sql'
-                                      ? '#16a34a'
-                                      : lead.status === 'mql'
-                                      ? '#2563eb'
-                                      : lead.status === 'nurturing'
-                                      ? '#d97706'
-                                      : '#dc2626',
-                                }}
-                              />
-                              <span>{LEAD_STATUS_LABEL[lead.status] || lead.status}</span>
+                            <span className={`crm-lead-status-badge ${STATUS_BADGE_CLASS[displayStatusOf(lead)] || ''}`}>
+                              {LEAD_STATUS_LABEL[displayStatusOf(lead)] || displayStatusOf(lead)}
                             </span>
                           </td>
-                          <td className="crm-td crm-small">{sdrName.get(lead.sdrId || '') || 'Chưa gán'}</td>
-                          <td className="crm-td crm-muted crm-truncate" title={lead.nextStep || ''}>
-                            {lead.nextStep || '-'}
+                          <td className="crm-td crm-small" onClick={event => editMode && event.stopPropagation()}>
+                            {editMode ? (
+                              <div className="crm-inline-edit-cell">
+                                <select
+                                  value={lead.sdrId || ''}
+                                  disabled={savingCellKey === `${lead.id}:sdr_id`}
+                                  onChange={event => void updateLeadField(lead, 'sdr_id', event.target.value)}
+                                >
+                                  <option value="">-- Chưa gán --</option>
+                                  {sdrFilterOptions.map(([id, name]) => (
+                                    <option key={id} value={id}>{name}</option>
+                                  ))}
+                                </select>
+                              </div>
+                            ) : (
+                              sdrName.get(lead.sdrId || '') || 'Chưa gán'
+                            )}
+                          </td>
+                          <td className={editMode ? 'crm-td' : 'crm-td crm-muted crm-truncate'} title={editMode ? undefined : (lead.nextStep || '')} onClick={event => editMode && event.stopPropagation()}>
+                            {editMode ? (
+                              <div className="crm-inline-edit-cell">
+                                <CrmCategorySelect
+                                  categoryType="crm_next_step"
+                                  value={lead.nextStep || ''}
+                                  disabled={savingCellKey === `${lead.id}:next_step`}
+                                  placeholder="-- Chọn --"
+                                  onChange={value => void updateLeadField(lead, 'next_step', value)}
+                                />
+                              </div>
+                            ) : (
+                              lead.nextStep || '-'
+                            )}
                           </td>
                           <td className="crm-td crm-td--actions-col">
                             <div className="crm-row-actions">
@@ -1168,7 +1280,7 @@ export function LeadsDirectory() {
                     })
                   ) : (
                     <tr>
-                      <td colSpan={9}>
+                      <td colSpan={10}>
                         <div className="crm-empty-state">
                           <span className="crm-empty-state-icon">
                             <Plus className="crm-button-icon" />
@@ -1228,8 +1340,8 @@ export function LeadsDirectory() {
                         {lead.companyName || 'Chưa có công ty'}
                       </div>
                     </div>
-                    <span className={`crm-lead-status-badge ${STATUS_BADGE_CLASS[lead.status] || ''}`}>
-                      {LEAD_STATUS_LABEL[lead.status] || lead.status}
+                    <span className={`crm-lead-status-badge ${STATUS_BADGE_CLASS[displayStatusOf(lead)] || ''}`}>
+                      {LEAD_STATUS_LABEL[displayStatusOf(lead)] || displayStatusOf(lead)}
                     </span>
                   </div>
                   <div className="crm-customer-card-contact" onClick={event => event.stopPropagation()}>
@@ -1241,11 +1353,12 @@ export function LeadsDirectory() {
                     ) : null}
                   </div>
                   <div className="crm-customer-card-meta">
-                    <span className="crm-source-badge">{lead.source || 'Manual'}</span>
+                    <span className="crm-source-badge">{getSourceLabel(lead.source || 'Manual')}</span>
                     <span className="crm-small">{sdrName.get(lead.sdrId || '') || 'Chưa gán'}</span>
                   </div>
                   <div className="crm-customer-card-metrics">
                     <span>Score: {lead.score == null ? '-' : lead.score}</span>
+                    <span className="crm-muted crm-truncate">{lead.qualificationNeed || 'Chưa có nhu cầu'}</span>
                     <span className="crm-muted crm-truncate">{lead.nextStep || 'Chưa có việc tiếp theo'}</span>
                   </div>
                   <div className="crm-customer-card-actions" onClick={event => event.stopPropagation()}>

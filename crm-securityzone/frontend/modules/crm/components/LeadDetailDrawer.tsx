@@ -6,13 +6,22 @@ import { useRouter } from 'next/navigation';
 import { API_BASE_URL, API_KEY } from '@/lib/env';
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
 import { usersService, type QuoteBusinessRoleUser } from '@/services/all-platform.service';
-import { formatVND, parseMoney, PIPELINE_COLUMNS, DEAL_STAGE_META } from '../constants/crmConfig';
-import { CurrencyInput } from '@/components/CurrencyInput';
+import { parseMoney, DEAL_STAGE_META } from '../constants/crmConfig';
 import { mapLead } from './LeadsDirectory';
-import { PositionSelect } from './PositionSelect';
-import { CrmCategorySelect } from './CrmCategorySelect';
-import { SearchableSelect } from './SearchableSelect';
-import { AlertTriangle, CheckCircle2, HelpCircle, Loader2, X, XCircle } from './icons';
+import { CheckCircle2, HelpCircle, Loader2, X } from './icons';
+import { LeadDealQualificationPanel, formatEstimatedValue } from './LeadDealQualificationPanel';
+import { getSourceLabel } from './DealFormFields';
+import { useLeadQualificationEngine } from '../hooks/useLeadQualificationEngine';
+import {
+  ICP_OPTIONS,
+  INTEREST_LEVEL_OPTIONS,
+  icpFromApi,
+  icpToApi,
+  interestLevelFromScore,
+  toDatetimeLocal,
+  type IcpFit,
+  type InterestLevel,
+} from '../utils/leadQualificationRules';
 import type { AppUser } from '@/types/unified.types';
 import type { CrmLeadRow } from '../types';
 
@@ -29,62 +38,6 @@ type CompanyMatchRow = {
   website?: string | null;
   match_reason?: string;
 };
-
-type IcpFit = 'unknown' | 'fit' | 'unfit';
-/** 'pending' = chưa đủ dữ liệu để phân loại (không SQL, không Invalid, không
- * rơi vào điều kiện Nuôi dưỡng nào) - KHÁC với 'nurturing' thật (rơi đúng 1
- * trong 3 điều kiện Nuôi dưỡng của WIP). Trước đây 2 trường hợp này bị gộp
- * chung thành 'nurturing' (fallback ngầm định) - feedback leader: tách riêng
- * để không kết luận nhầm "Nuôi dưỡng" khi Lead chỉ đơn giản là chưa điền đủ. */
-type VerificationOutcome = 'sql' | 'nurturing' | 'unqualified' | 'pending';
-type InterestLevel = 'reference' | 'need' | 'evaluating' | 'quote';
-
-const INTEREST_LEVEL_OPTIONS: Array<{ value: InterestLevel; label: string; score: number }> = [
-  { value: 'reference', label: 'Tham khảo', score: 25 },
-  { value: 'need', label: 'Có nhu cầu', score: 55 },
-  { value: 'evaluating', label: 'Đang đánh giá', score: 75 },
-  { value: 'quote', label: 'Cần báo giá', score: 90 },
-];
-
-function interestLevelFromScore(score: number | null | undefined): InterestLevel | '' {
-  if (score == null || Number.isNaN(Number(score))) return '';
-  if (score >= 85) return 'quote';
-  if (score >= 65) return 'evaluating';
-  if (score >= 40) return 'need';
-  return 'reference';
-}
-
-/** 3 lua chon "Co dung nhom khach hang muc tieu?".
- *
- * Anh xa thang vao cot `crm_leads.qualification_icp_fit` (BOOLEAN NULLABLE, da
- * co tu migration 078) — KHONG can migration moi: NULL = chua ro, true = phu
- * hop, false = khong phu hop. Truoc day UI chi co 1 checkbox nen ep NULL ve
- * false ("chua xac dinh / khong phu hop" gop lam mot); tach lai dung 3 trang
- * thai chi la doc/ghi dung kieu du lieu von co cua cot. */
-const ICP_OPTIONS: Array<{ value: IcpFit; label: string }> = [
-  { value: 'unknown', label: 'Chưa rõ' },
-  { value: 'fit', label: 'Phù hợp' },
-  { value: 'unfit', label: 'Không phù hợp' },
-];
-
-function icpFromApi(value: boolean | null | undefined): IcpFit {
-  if (value === true) return 'fit';
-  if (value === false) return 'unfit';
-  return 'unknown';
-}
-function icpToApi(value: IcpFit): boolean | null {
-  if (value === 'fit') return true;
-  if (value === 'unfit') return false;
-  return null;
-}
-
-function toDatetimeLocal(value?: string | null): string {
-  if (!value) return '';
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return '';
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
-}
 
 function initialOf(name: string): string {
   const trimmed = (name || '').trim();
@@ -111,111 +64,6 @@ type VerifyForm = {
    * gắn vào Deal vừa tạo (migration 153 + supabase_project_service). */
   project: string;
 };
-
-/** "Giai đoạn" cho Deal SAP tao (feedback WIP full-flow, mucE.2 "Bàn giao
- * Sale": layout `Giai đoạn | Kết quả Lead`) - chi cho chon trong cac stage
- * PIPELINE THAT (khong gom on_hold/lost, khong hop ly cho 1 co hoi vua tao). */
-const DEAL_STAGE_OPTIONS = PIPELINE_COLUMNS.map(stage => ({ value: stage, label: DEAL_STAGE_META[stage].label }));
-
-type LeadRuleFields = {
-  has_product: boolean;
-  has_interest_level: boolean;
-  has_value: boolean;
-  has_team: boolean;
-  has_next: boolean;
-  has_follow: boolean;
-  has_contact: boolean;
-  fit_unfit: boolean;
-  fit_known: boolean;
-};
-
-/** Nhan hien thi cho tung dieu kien SQL khi con thieu (Section 9/10 mockup
- * leader: "Còn thiếu: • Team Sale • Việc tiếp theo • Hạn follow-up") - CHI
- * dung de hien thi, khong anh huong logic (logic van doc key sql_* nhu cu). */
-const SQL_FIELD_LABELS: Record<string, string> = {
-  sql_product: 'Sản phẩm / dịch vụ',
-  sql_interest: 'Mức độ quan tâm',
-  sql_value: 'Giá trị dự kiến',
-  sql_team: 'Sale nhận bàn giao',
-  sql_next: 'Việc tiếp theo',
-  sql_follow: 'Hạn follow-up',
-  sql_fit: 'ICP phù hợp',
-};
-
-type LeadEvaluation = {
-  outcome: VerificationOutcome;
-  reason: string;
-  /** Ly do cu the (Nuoi duong/Khong dat) de render bullet list - rong voi sql/pending. */
-  reasons: string[];
-  /** Ten field SQL dang bat nhung chua thoa - de render "Còn thiếu" luc pending. */
-  missing: string[];
-  sqlOk: number;
-  sqlTotal: number;
-};
-
-/** Ban mirror THUAN JS cua evaluate_lead_conditions() (backend,
- * crm_lead_rule_service.py, migration 151 "Điều kiện phân loại Lead") - hien
- * thi "Kết quả Lead" trong drawer duoi dang OUTPUT CARD read-only (feedback
- * leader: "User khong duoc tu chon/override ket qua Lead", bo han radio).
- *
- * Thu tu uu tien: Khong dat chuan (OR) > Nuoi duong (OR, co the override ca
- * khi da du SQL) > SQL (AND) > 'pending' ("chưa đủ dữ liệu") neu khong khop
- * dieu kien nao trong 3 nhom tren - KHAC voi `!isSql -> nurturing`: 1 Lead
- * chi don gian chua dien du KHONG duoc mac dinh ket luan la Nuoi duong that
- * (Nuoi duong phai khop dung 1 trong 3 ly do rieng cua WIP). */
-function evaluateLeadConditions(fields: LeadRuleFields, c: Record<string, boolean>): LeadEvaluation {
-  const invalidReasons: string[] = [];
-  if (c.inv_fit && fields.fit_unfit) invalidReasons.push('Không phù hợp ICP');
-  if (c.inv_no_contact && !fields.has_contact) invalidReasons.push('Không có thông tin liên hệ hợp lệ');
-  const isInvalid = invalidReasons.length > 0;
-
-  const sqlChecks: Array<{ key: keyof typeof SQL_FIELD_LABELS; ok: boolean }> = [];
-  if (c.sql_product) sqlChecks.push({ key: 'sql_product', ok: fields.has_product });
-  if (c.sql_interest) sqlChecks.push({ key: 'sql_interest', ok: fields.has_interest_level });
-  if (c.sql_value) sqlChecks.push({ key: 'sql_value', ok: fields.has_value });
-  if (c.sql_team) sqlChecks.push({ key: 'sql_team', ok: fields.has_team });
-  if (c.sql_next) sqlChecks.push({ key: 'sql_next', ok: fields.has_next });
-  if (c.sql_follow) sqlChecks.push({ key: 'sql_follow', ok: fields.has_follow });
-  if (c.sql_fit) sqlChecks.push({ key: 'sql_fit', ok: !fields.fit_unfit });
-  const sqlTotal = sqlChecks.length;
-  const sqlOk = sqlChecks.filter(x => x.ok).length;
-  const isSql = sqlTotal > 0 && sqlOk === sqlTotal;
-  const missing = sqlChecks.filter(x => !x.ok).map(x => SQL_FIELD_LABELS[x.key]);
-
-  // "Near-miss": 1 dieu kien Nuoi duong CHI duoc tinh la khop khi TAT CA cac
-  // dieu kien SQL dang bat KHAC (ngoai dung field ma dieu kien nay nham toi)
-  // da thoa - tuc Lead gan nhu du SQL, chi vuong dung 1 cho. Neu Lead con
-  // thieu nhieu thu khac nua thi van la "pending" ("chưa đủ dữ liệu"), KHONG
-  // phai Nuoi duong (feedback leader, doi chieu vi du muc 4 + Test A/D: Lead
-  // moi mo/dien mot phan KHONG duoc tu dong ket luan la Nuoi duong chi vi 1
-  // field dang trong - phai gan nhu hoan chinh moi tinh).
-  const othersOk = (excludeKeys: Array<keyof typeof SQL_FIELD_LABELS>) =>
-    sqlChecks.filter(x => !excludeKeys.includes(x.key)).every(x => x.ok);
-
-  const nurtureReasons: string[] = [];
-  if (c.nur_missing_value && !fields.has_value && othersOk(['sql_value'])) {
-    nurtureReasons.push('Thiếu giá trị dự kiến');
-  }
-  if (c.nur_missing_handoff && !(fields.has_team && fields.has_next && fields.has_follow) &&
-    othersOk(['sql_team', 'sql_next', 'sql_follow'])) {
-    nurtureReasons.push('Thiếu thông tin bàn giao Sale');
-  }
-  if (c.nur_unknown_fit && !fields.fit_known && othersOk(['sql_fit'])) {
-    nurtureReasons.push('Chưa xác định nhóm khách hàng');
-  }
-  const isNurtureForced = nurtureReasons.length > 0;
-
-  if (isInvalid) {
-    return { outcome: 'unqualified', reason: `Không đạt chuẩn: ${invalidReasons.join(', ')}.`, reasons: invalidReasons, missing, sqlOk, sqlTotal };
-  }
-  if (isNurtureForced) {
-    return { outcome: 'nurturing', reason: `Nuôi dưỡng vì ${nurtureReasons.join(', ').toLowerCase()}.`, reasons: nurtureReasons, missing, sqlOk, sqlTotal };
-  }
-  if (isSql) {
-    return { outcome: 'sql', reason: 'Đủ điều kiện SQL theo cấu hình hiện tại.', reasons: [], missing, sqlOk, sqlTotal };
-  }
-  return { outcome: 'pending', reason: 'Chưa đủ dữ liệu để phân loại.', reasons: [], missing, sqlOk, sqlTotal };
-}
 
 /**
  * Drawer "Xác minh Lead" — 1 luồng có dẫn dắt thay cho 3 khối rời rạc trước đây
@@ -279,16 +127,6 @@ export function LeadDetailDrawer({
   const [contact, setContact] = useState({ name: '', phone: '', email: '', positionCategoryId: '', positionLabel: '' });
   const [converting, setConverting] = useState(false);
   const [convertError, setConvertError] = useState('');
-  const [verificationOutcome, setVerificationOutcome] = useState<VerificationOutcome>('pending');
-  // "Điều kiện phân loại Lead" (migration 151) - tai 1 lan, chi doc (GET mo
-  // cho moi nguoi dang nhap, sua rule la trang rieng chi Admin). Ket qua
-  // xac minh CHI do rule engine tinh (evaluateLeadConditions), KHONG cho
-  // SDR tu chon/override (feedback leader) - da bo state `outcomeTouched`
-  // truoc day dung de tam dung auto-tinh khi SDR bam tay 1 radio.
-  const [ruleConditions, setRuleConditions] = useState<Record<string, boolean> | null>(null);
-  const [outcomeReasons, setOutcomeReasons] = useState<string[]>([]);
-  const [outcomeMissing, setOutcomeMissing] = useState<string[]>([]);
-  const [sqlProgress, setSqlProgress] = useState<{ ok: number; total: number }>({ ok: 0, total: 0 });
   const [nurtureReason, setNurtureReason] = useState('');
   const [unqualifiedReason, setUnqualifiedReason] = useState('');
   const idempotencyKeyRef = useRef<string>('');
@@ -318,12 +156,8 @@ export function LeadDetailDrawer({
     setConvertError('');
     setSuggestionUsed(false);
     setConvertOpen(initialMode === 'convert');
-    setVerificationOutcome('pending');
     setNurtureReason('');
     setUnqualifiedReason('');
-    setOutcomeReasons([]);
-    setOutcomeMissing([]);
-    setSqlProgress({ ok: 0, total: 0 });
     setForm({
       interest: lead.qualificationNeed || '',
       interestLevel: interestLevelFromScore(lead.score),
@@ -398,48 +232,19 @@ export function LeadDetailDrawer({
     };
   }, [open]);
 
-  useEffect(() => {
-    if (!open) return;
-    let alive = true;
-    fetch(`${API_BASE_URL}/api/all-platform/crm/leads/classification-rules`, { credentials: 'include', headers: headers() })
-      .then(res => res.json())
-      .then(body => {
-        if (!alive || body.success === false) return;
-        setRuleConditions((body.data?.conditions as Record<string, boolean>) || null);
-      })
-      .catch(() => {
-        // Im lang - khong co rule thi giu hanh vi cu (SDR tu chon tay), khong
-        // chan luong xac minh chinh vi 1 API phu khong tai duoc.
-      });
-    return () => { alive = false; };
-  }, [open]);
-
-  // Tu dong tinh "Kết quả xác minh" theo dung rule Admin da cau hinh
-  // (evaluateLeadConditions, mirror JS cua backend) - LUON chay lai moi khi
-  // form doi, KHONG co co che tam dung/override nao nua (feedback leader:
-  // "User khong duoc tu chon/override ket qua Lead").
-  useEffect(() => {
-    if (!ruleConditions) return;
-    const fields: LeadRuleFields = {
-      has_product: Boolean(form.interest.trim()),
-      has_interest_level: Boolean(form.interestLevel),
-      has_value: form.estimatedValue != null,
-      has_team: Boolean(form.aeId),
-      has_next: Boolean(form.nextStep.trim()),
-      has_follow: Boolean(form.nextStepAt),
-      has_contact: Boolean(contact.phone.trim() || contact.email.trim()),
-      fit_unfit: form.icpFit === 'unfit',
-      fit_known: form.icpFit !== 'unknown',
-    };
-    const computed = evaluateLeadConditions(fields, ruleConditions);
-    setVerificationOutcome(computed.outcome);
-    setOutcomeReasons(computed.reasons);
-    setOutcomeMissing(computed.missing);
-    setSqlProgress({ ok: computed.sqlOk, total: computed.sqlTotal });
-  }, [
-    ruleConditions, form.interest, form.interestLevel, form.estimatedValue,
-    form.aeId, form.nextStep, form.nextStepAt, form.icpFit, contact.phone, contact.email,
-  ]);
+  const {
+    ruleConditions, verificationOutcome, outcomeReasons, outcomeMissing, sqlProgress,
+  } = useLeadQualificationEngine({
+    open,
+    hasProduct: Boolean(form.interest.trim()),
+    hasInterestLevel: Boolean(form.interestLevel),
+    hasValue: form.estimatedValue != null,
+    hasTeam: Boolean(form.aeId),
+    hasNext: Boolean(form.nextStep.trim()),
+    hasFollow: Boolean(form.nextStepAt),
+    hasContact: Boolean(contact.phone.trim() || contact.email.trim()),
+    icpFit: form.icpFit,
+  });
 
   const aeOptions = useMemo(
     () => saleOptions.map(user => ({ value: user.id, label: user.name })),
@@ -464,10 +269,9 @@ export function LeadDetailDrawer({
   }, [form, dupChecked]);
 
   const okCount = checks.filter(c => c.ok).length;
-  const missingChecks = checks.filter(c => !c.ok);
   const isReady = okCount === checks.length;
   const readinessLabel = isReady ? 'Sẵn sàng tạo cơ hội' : okCount >= 3 ? 'Cần xác minh thêm' : 'Chưa sẵn sàng';
-  const readinessTone = isReady ? 'ready' : okCount >= 3 ? 'partial' : 'blocked';
+  const readinessTone: 'ready' | 'partial' | 'blocked' = isReady ? 'ready' : okCount >= 3 ? 'partial' : 'blocked';
 
   const nextStepWarning = verificationOutcome === 'sql' && (Boolean(form.nextStep.trim()) !== Boolean(form.nextStepAt) || (!form.nextStep.trim() && !form.nextStepAt));
 
@@ -802,7 +606,7 @@ export function LeadDetailDrawer({
     {
       key: 'value',
       label: 'Giá trị ước tính',
-      value: form.estimatedValue != null ? (formatVND(form.estimatedValue) || String(form.estimatedValue)) : '—',
+      value: formatEstimatedValue(form.estimatedValue),
       ok: form.estimatedValue != null,
     },
     {
@@ -830,7 +634,6 @@ export function LeadDetailDrawer({
     },
   ];
 
-  const selectedMatch = companyMatches.find(m => m.id === customerChoice);
   return (
     <>
       {/* Click vao backdrop de dong drawer; click trong form khong bi anh huong. */}
@@ -905,50 +708,43 @@ export function LeadDetailDrawer({
               <p className="crm-form-title">Xác nhận tạo cơ hội &amp; bàn giao Sale</p>
               <div className="crm-lead-convert-confirm">
                 {convertError ? <p className="crm-error">{convertError}</p> : null}
-                <div className="crm-lead-convert-row">
-                  <b>Doanh nghiệp:</b>
-                  {companyMatches.length ? (
-                    <select value={customerChoice} onChange={e => setCustomerChoice(e.target.value)}>
-                      <option value="new">Tạo doanh nghiệp mới ({lead.companyName || lead.leadName})</option>
-                      {companyMatches.map(match => (
-                        <option key={match.id} value={match.id}>
-                          Liên kết: {match.customer_name || match.company_name} ({match.match_reason})
-                        </option>
-                      ))}
-                    </select>
-                  ) : (
-                    <span>Tạo doanh nghiệp mới — {lead.companyName || lead.leadName}</span>
-                  )}
-                </div>
-                {selectedMatch ? <p className="crm-ai-fill-hint">Deal/Customer sẽ gắn vào hồ sơ đã có, không tạo trùng.</p> : null}
-
-                <div className="crm-lead-convert-row crm-lead-convert-contact">
-                  <b>Contact (tạo mới, có thể sửa):</b>
-                  <div className="crm-form-grid">
-                    <Field label="Tên"><input value={contact.name} onChange={e => setContact(c => ({ ...c, name: e.target.value }))} /></Field>
-                    <Field label="Chức vụ">
-                      <PositionSelect
-                        value={contact.positionCategoryId}
-                        labelSnapshot={contact.positionLabel}
-                        onChange={(id, label) => setContact(c => ({ ...c, positionCategoryId: id, positionLabel: label }))}
-                      />
-                    </Field>
-                    <Field label="SĐT"><input value={contact.phone} onChange={e => setContact(c => ({ ...c, phone: e.target.value }))} /></Field>
-                    <Field label="Email"><input value={contact.email} onChange={e => setContact(c => ({ ...c, email: e.target.value }))} /></Field>
-                  </div>
-                </div>
 
                 <div className="crm-lead-convert-summary">
                   <b>Deal sẽ được tạo với:</b>
-                  <ul>
-                    <li>Sale nhận bàn giao: {aeName(form.aeId || lead.sdrId)}</li>
-                    <li>Người liên hệ: {contact.name || lead.leadName}</li>
-                    <li>Giai đoạn: {DEAL_STAGE_META[form.dealStage as keyof typeof DEAL_STAGE_META]?.label || form.dealStage}</li>
-                    <li>Nhu cầu: {form.interest || 'Chưa có'}</li>
-                    <li>Giá trị dự kiến: {form.estimatedValue != null ? (formatVND(form.estimatedValue) || String(form.estimatedValue)) : 'Chưa có'}</li>
-                    <li>Việc tiếp theo: {form.nextStep || 'Chưa có'}</li>
-                    <li>Khi nào làm: {form.nextStepAt ? new Date(form.nextStepAt).toLocaleString('vi-VN') : 'Chưa có'}</li>
-                  </ul>
+                  <div className="crm-convert-kpi-grid">
+                    <div className="crm-convert-kpi-card">
+                      <span>Tên cơ hội</span>
+                      <b>{[lead.companyName || lead.leadName, form.interest].filter(Boolean).join(' - ')}</b>
+                    </div>
+                    <div className="crm-convert-kpi-card">
+                      <span>Giá trị dự kiến</span>
+                      <b>{formatEstimatedValue(form.estimatedValue)}</b>
+                    </div>
+                    <div className="crm-convert-kpi-card">
+                      <span>Giai đoạn</span>
+                      <b>{DEAL_STAGE_META[form.dealStage as keyof typeof DEAL_STAGE_META]?.label || form.dealStage}</b>
+                    </div>
+                    <div className="crm-convert-kpi-card">
+                      <span>Mức quan tâm</span>
+                      <b>{INTEREST_LEVEL_OPTIONS.find(o => o.value === form.interestLevel)?.label || 'Chưa có'}</b>
+                    </div>
+                  </div>
+                  <div className="crm-convert-columns">
+                    <div className="crm-convert-column">
+                      <p className="crm-convert-column-title">Sale cần xử lý</p>
+                      <div className="crm-convert-row"><span>Sale nhận bàn giao</span><b>{aeName(form.aeId || lead.sdrId)}</b></div>
+                      <div className="crm-convert-row"><span>Việc tiếp theo</span><b>{form.nextStep || 'Chưa có'}</b></div>
+                      <div className="crm-convert-row"><span>Hạn follow-up</span><b>{form.nextStepAt ? new Date(form.nextStepAt).toLocaleString('vi-VN') : 'Chưa có'}</b></div>
+                      <div className="crm-convert-row"><span>Người liên hệ</span><b>{contact.name || lead.leadName}</b></div>
+                    </div>
+                    <div className="crm-convert-column">
+                      <p className="crm-convert-column-title">Khách hàng</p>
+                      <div className="crm-convert-row"><span>Tên khách hàng</span><b>{lead.companyName || lead.leadName}</b></div>
+                      <div className="crm-convert-row"><span>SĐT</span><b>{lead.phone || 'Chưa có'}</b></div>
+                      <div className="crm-convert-row"><span>Nguồn</span><b>{getSourceLabel(lead.source || 'Manual')}</b></div>
+                      <div className="crm-convert-row"><span>Marketing</span><b>{aeName(lead.createdBy)}</b></div>
+                    </div>
+                  </div>
                 </div>
 
                 <div className="crm-lead-qualification-actions">
@@ -990,242 +786,61 @@ export function LeadDetailDrawer({
               </section>
 
               <div className="crm-verify-kpi-strip">
-                <div><span>Nguồn Lead</span><b>{lead.source || 'Manual'}</b></div>
+                <div><span>Nguồn Lead</span><b>{getSourceLabel(lead.source || 'Manual')}</b></div>
                 <div><span>Trạng thái</span><b>{lead.status || 'MQL'}</b></div>
                 <div><span>Owner</span><b>{aeName(lead.sdrId)}</b></div>
                 <div><span>Gợi ý</span><b>{suggestionUsed ? 'Đã dùng' : 'Chưa dùng'}</b></div>
               </div>
 
-              <div className="crm-verify-compact-grid">
-                <section className="crm-form-section crm-verify-section crm-verify-panel" id="crm-verify-quick">
-                  <p className="crm-form-title">Thông tin then chốt</p>
-                  {/* Thu tu + ghep cap da chot (feedback WIP xac minh Lead,
-                   * "Layout đã thống nhất"): Giá trị dự kiến | Mức độ quan
-                   * tâm, roi Dự kiến triển khai | ICP - "Mức độ quan tâm" va
-                   * "Ghi chú" chuyen tu panel "Kết quả xác minh & bàn giao"
-                   * len day cho dung nhom "thong tin ve nhu cau Lead". */}
-                  <div className="crm-verify-compact-fields">
-                    <Field label="Khách đang quan tâm gì?" hint="Chọn từ danh mục Sản phẩm/Dịch vụ.">
-                      <CrmCategorySelect
-                        categoryType="crm_service_package"
-                        value={form.interest}
-                        disabled={!canWrite}
-                        placeholder="-- Chọn sản phẩm/dịch vụ --"
-                        onChange={label => setField('interest', label)}
-                      />
-                    </Field>
-                    <>
-                      <Field label="Giá trị ước tính (VND)" hint="Tự thêm dấu chấm ngăn nghìn khi gõ.">
-                        <CurrencyInput
-                          disabled={!canWrite}
-                          value={form.estimatedValue}
-                          onChange={value => setField('estimatedValue', value)}
-                          placeholder="VD: 50.000.000"
-                        />
-                      </Field>
-                      <div className="crm-verify-interest-level">
-                        <span>Mức độ quan tâm</span>
-                        <div className="crm-verify-interest-level-chips">
-                          {INTEREST_LEVEL_OPTIONS.map(option => (
-                            <button
-                              key={option.value}
-                              type="button"
-                              className={`crm-verify-interest-level-chip ${form.interestLevel === option.value ? 'is-selected' : ''}`}
-                              disabled={!canWrite}
-                              onClick={() => setInterestLevel(option.value)}
-                            >
-                              {option.label}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    </>
-                    <div className="crm-inline-pair">
-                      <Field label="Dự kiến triển khai">
-                        <CrmCategorySelect
-                          categoryType="crm_expected_timeline"
-                          value={form.timeline}
-                          disabled={!canWrite}
-                          placeholder="-- Chọn thời gian --"
-                          onChange={label => setField('timeline', label)}
-                        />
-                      </Field>
-                      <Field label="Đúng nhóm khách hàng?" hint="ICP.">
-                        <select disabled={!canWrite} value={form.icpFit} onChange={e => setField('icpFit', e.target.value as IcpFit)}>
-                          {ICP_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-                        </select>
-                      </Field>
-                    </div>
-                    <Field label="Dự án" hint="tùy chọn">
-                      <input
-                        disabled={!canWrite}
-                        value={form.project}
-                        onChange={e => setField('project', e.target.value)}
-                        placeholder="VD: Website 2026"
-                      />
-                    </Field>
-                    <Field label="Ghi chú ngắn">
-                      <input disabled={!canWrite} value={form.note} onChange={e => setField('note', e.target.value)} placeholder="VD: khách đang so sánh 2 nhà cung cấp" />
-                    </Field>
-                  </div>
-                </section>
-
-                <section className="crm-form-section crm-verify-section crm-verify-panel" id="crm-verify-handoff">
-                  {/* Feedback leader: KHONG con if/else theo outcome de an/hien
-                   * form nghiep vu ("if outcome===SQL thi hien form SQL...").
-                   * 5 field Ban giao Sale LUON hien thi, bat ke Ket qua Lead
-                   * dang la gi - dung layout da chot (feedback WIP full-flow,
-                   * muc E.2 "Bàn giao Sale"): Team Sale | Người liên hệ, Việc
-                   * tiếp theo | Hạn follow-up, Giai đoạn. */}
-                  <p className="crm-form-title">Bàn giao Sale</p>
-                  <div className="crm-verify-compact-fields">
-                    <div className="crm-inline-pair">
-                      <Field label="Sale nhận bàn giao" required>
-                        <SearchableSelect disabled={!canWrite} value={form.aeId} onChange={value => setField('aeId', value)} options={aeOptions} placeholder="-- Chưa chọn --" />
-                      </Field>
-                      <Field label="Người liên hệ">
-                        <input
-                          disabled={!canWrite}
-                          value={contact.name}
-                          onChange={e => setContact(c => ({ ...c, name: e.target.value }))}
-                          placeholder="Tên người liên hệ"
-                        />
-                      </Field>
-                    </div>
-                    <div className="crm-inline-pair">
-                      <Field label="Việc tiếp theo" required>
-                        <CrmCategorySelect
-                          categoryType="crm_next_step"
-                          value={form.nextStep}
-                          disabled={!canWrite}
-                          placeholder="-- Chọn việc tiếp theo --"
-                          excludeLabels={['Khác']}
-                          onChange={label => setField('nextStep', label)}
-                        />
-                      </Field>
-                      <Field label="Hạn follow-up" required>
-                        <input disabled={!canWrite} type="datetime-local" value={form.nextStepAt} onChange={e => setField('nextStepAt', e.target.value)} />
-                      </Field>
-                    </div>
-                    <Field label="Giai đoạn" required>
-                      <select disabled={!canWrite} value={form.dealStage} onChange={e => setField('dealStage', e.target.value)}>
-                        {DEAL_STAGE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-                      </select>
-                    </Field>
-                  </div>
-
-                  {/* 2 field nay KHONG phai input cua rule engine (khong anh
-                   * huong SQL/Nuoi duong/Khong dat) - la ghi chu SDR bo sung
-                   * SAU KHI he thong da ket luan, chi hien khi lien quan tru
-                   * tiep toi ket qua hien tai de tranh nhoi field khong dung
-                   * luc (KHAC voi 5 field Ban giao Sale phia tren, luon hien). */}
-                  {verificationOutcome === 'nurturing' ? (
-                    <div className="crm-verify-compact-fields" style={{ marginTop: '0.7rem' }}>
-                      <Field label="Lý do nuôi dưỡng" required>
-                        <CrmCategorySelect categoryType="crm_nurture_reason" value={nurtureReason} disabled={!canWrite} placeholder="-- Chọn lý do --" onChange={setNurtureReason} />
-                      </Field>
-                      <Field label="Ngày chăm sóc lại" required>
-                        <input disabled={!canWrite} type="datetime-local" value={form.nextStepAt} onChange={e => setField('nextStepAt', e.target.value)} />
-                      </Field>
-                      <Field label="Kênh chăm sóc">
-                        <CrmCategorySelect categoryType="crm_follow_up_channel" value={form.followUpChannel} disabled={!canWrite} placeholder="-- Không chọn --" onChange={label => setField('followUpChannel', label)} />
-                      </Field>
-                    </div>
-                  ) : null}
-
-                  {verificationOutcome === 'unqualified' ? (
-                    <div className="crm-verify-compact-fields" style={{ marginTop: '0.7rem' }}>
-                      <Field label="Lý do không đạt chuẩn" required>
-                        <CrmCategorySelect categoryType="crm_unqualified_reason" value={unqualifiedReason} disabled={!canWrite} placeholder="-- Chọn lý do --" onChange={setUnqualifiedReason} />
-                      </Field>
-                    </div>
-                  ) : null}
-
-                  {/* KẾT QUẢ LEAD - output card, KHONG phai input. He thong tu
-                   * tinh (evaluateLeadConditions), SDR khong bam chon duoc. */}
-                  <div className="crm-verify-handoff-extra crm-verify-interest-level">
-                    <span>Kết quả Lead</span>
-                    <div className={`crm-verify-outcome-card crm-verify-outcome-card--${verificationOutcome}`} role="status" aria-live="polite">
-                      <div className="crm-verify-outcome-head">
-                        <span className="crm-verify-outcome-dot" />
-                        {verificationOutcome === 'sql' && 'Đạt chuẩn — SQL'}
-                        {verificationOutcome === 'nurturing' && 'Nuôi dưỡng'}
-                        {verificationOutcome === 'unqualified' && 'Không đạt chuẩn'}
-                        {verificationOutcome === 'pending' && 'Chưa đủ dữ liệu'}
-                      </div>
-
-                      {verificationOutcome === 'sql' ? (
-                        <p className="crm-verify-outcome-sub">Đã đủ điều kiện tạo cơ hội và bàn giao Sale.</p>
-                      ) : null}
-
-                      {verificationOutcome === 'pending' && outcomeMissing.length ? (
-                        <>
-                          <p className="crm-verify-outcome-list-title">Còn thiếu:</p>
-                          <ul className="crm-verify-outcome-list">
-                            {outcomeMissing.map(m => <li key={m}>{m}</li>)}
-                          </ul>
-                        </>
-                      ) : null}
-
-                      {(verificationOutcome === 'nurturing' || verificationOutcome === 'unqualified') && outcomeReasons.length ? (
-                        <>
-                          <p className="crm-verify-outcome-list-title">Lý do:</p>
-                          <ul className="crm-verify-outcome-list">
-                            {outcomeReasons.map(r => <li key={r}>{r}</li>)}
-                          </ul>
-                        </>
-                      ) : null}
-
-                      {ruleConditions ? (
-                        <p className="crm-verify-outcome-progress">{sqlProgress.ok}/{sqlProgress.total} điều kiện SQL</p>
-                      ) : null}
-                    </div>
-                  </div>
-
-                  {nextStepWarning ? (
-                    <p className="crm-verify-warning">
-                      <AlertTriangle className="crm-line-icon" />
-                      Deal không nên được tạo nếu chưa có Việc tiếp theo.
-                    </p>
-                  ) : null}
-                </section>
-
-                <section className="crm-form-section crm-verify-section crm-verify-panel crm-verify-readiness-panel" id="crm-verify-readiness" ref={readinessRef}>
-                  <div className="crm-verify-suggest-head">
-                    <p className="crm-form-title">Tóm tắt quyết định</p>
-                    <span className={`crm-verify-readiness-pill crm-verify-readiness-pill--${readinessTone}`}>{readinessLabel}</span>
-                  </div>
-                  <ul className="crm-verify-checklist">
-                    {decisionRows.map(row => (
-                      <li key={row.key} className={row.ok ? 'is-ok' : ''}>
-                        {row.ok ? <CheckCircle2 className="crm-line-icon" /> : <XCircle className="crm-line-icon" />}
-                        <span>{row.label}</span>
-                        <b className="crm-verify-check-value">{row.value}</b>
-                      </li>
-                    ))}
-                  </ul>
-                  {companyMatches.length ? (
-                    <p className="crm-ai-fill-hint">
-                      Tìm thấy {companyMatches.length} doanh nghiệp có thể trùng — chọn liên kết ở bước xác nhận thay vì tạo mới.
-                    </p>
-                  ) : null}
-                  <div className="crm-verify-readiness-summary">
-                    <div>
-                      <span>Đã đạt</span>
-                      <b>{okCount}/{checks.length} tiêu chí</b>
-                    </div>
-                    <div>
-                      <span>Trạng thái</span>
-                      <b>{readinessLabel}</b>
-                    </div>
-                    {missingChecks.length ? (
-                      <p>Còn thiếu: {missingChecks.map(check => check.label).join(', ')}</p>
-                    ) : (
-                      <p>Đủ điều kiện để tạo cơ hội và bàn giao Sale.</p>
-                    )}
-                  </div>
-                </section>
-              </div>
+              <LeadDealQualificationPanel
+                canWrite={canWrite}
+                interest={form.interest}
+                onInterestChange={value => setField('interest', value)}
+                estimatedValue={form.estimatedValue}
+                onEstimatedValueChange={value => setField('estimatedValue', value)}
+                interestLevel={form.interestLevel}
+                onInterestLevelChange={setInterestLevel}
+                timeline={form.timeline}
+                onTimelineChange={value => setField('timeline', value)}
+                icpFit={form.icpFit}
+                onIcpFitChange={value => setField('icpFit', value)}
+                project={form.project}
+                onProjectChange={value => setField('project', value)}
+                note={form.note}
+                onNoteChange={value => setField('note', value)}
+                aeId={form.aeId}
+                onAeIdChange={value => setField('aeId', value)}
+                aeOptions={aeOptions}
+                contactName={contact.name}
+                onContactNameChange={value => setContact(c => ({ ...c, name: value }))}
+                nextStep={form.nextStep}
+                onNextStepChange={value => setField('nextStep', value)}
+                nextStepAt={form.nextStepAt}
+                onNextStepAtChange={value => setField('nextStepAt', value)}
+                dealStage={form.dealStage}
+                onDealStageChange={value => setField('dealStage', value)}
+                verificationOutcome={verificationOutcome}
+                ruleConditions={ruleConditions}
+                outcomeReasons={outcomeReasons}
+                outcomeMissing={outcomeMissing}
+                sqlProgress={sqlProgress}
+                nurtureReason={nurtureReason}
+                onNurtureReasonChange={setNurtureReason}
+                unqualifiedReason={unqualifiedReason}
+                onUnqualifiedReasonChange={setUnqualifiedReason}
+                followUpChannel={form.followUpChannel}
+                onFollowUpChannelChange={value => setField('followUpChannel', value)}
+                nextStepWarning={nextStepWarning}
+                decisionRows={decisionRows}
+                readinessLabel={readinessLabel}
+                readinessTone={readinessTone}
+                extraHint={companyMatches.length ? (
+                  <p className="crm-ai-fill-hint">
+                    Tìm thấy {companyMatches.length} doanh nghiệp có thể trùng — hệ thống vẫn sẽ tạo doanh nghiệp mới khi bấm xác nhận.
+                  </p>
+                ) : null}
+                readinessRef={readinessRef}
+              />
             </>
           )}
         </div>

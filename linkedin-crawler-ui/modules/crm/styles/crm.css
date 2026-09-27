@@ -7198,7 +7198,7 @@
 .crm-lead-status--new { border-color: #bfdbfe; background: #eff6ff; color: #1d4ed8; }
 .crm-lead-status--qualifying { border-color: #fde68a; background: #fffbeb; color: #b45309; }
 .crm-lead-status--qualified { border-color: #a7f3d0; background: #ecfdf5; color: #047857; }
-.crm-lead-status--nurture { border-color: #ddd6fe; background: #f5f3ff; color: #6d28d9; }
+.crm-lead-status--nurture { border-color: #fed7aa; background: #fff7ed; color: #c2410c; }
 .crm-lead-status--converted { border-color: #86efac; background: #ecfdf5; color: #15803d; }
 .crm-lead-status--disqualified { border-color: #cbd5e1; background: #f8fafc; color: #64748b; }
 
@@ -7206,13 +7206,71 @@
   min-width: 1050px;
 }
 
-.crm-col-lead-name { width: 16%; }
-.crm-col-lead-contact { width: 16%; }
-.crm-col-lead-source { width: 10%; }
+/* "Chỉnh sửa" inline tren danh sach Lead (2026-09-27) - CrmCategorySelect/
+ * CrmCategoryCodeSelect/native <select> dung lai NGUYEN VEN component that,
+ * chi thu gon rieng trong pham vi bang Lead (khong dung .crm-searchable-
+ * select mac dinh toan app) de khop chieu cao hang, tranh vo dong/phinh to. */
+.crm-inline-edit-cell {
+  /* KHONG ep min-width - cot Nguon/Nhu cau hep hon 84px nen truoc day bi
+   * tran de len cot ben canh (bug thuc te gap, 2026-09-27). De o tu co gian
+   * theo dung do rong cot that (width:100% cua select/trigger ben duoi). */
+  width: 100%;
+  min-width: 0;
+}
+/* Vien/nen ro rang hon (vien cu qua nhat, lan vao nen trang) + chu nho lai
+ * cho gon, do bi cat chu trong cot hep. Padding/font-size doi sang px cho
+ * de doc/de chinh thay vi rem. */
+.crm-inline-edit-cell .crm-searchable-select-trigger {
+  min-height: 30px;
+  padding: 3px 6px;
+  font-size: 11px;
+  border-radius: 6px;
+  border-color: #94a3b8 !important;
+  background: #f8fafc !important;
+  box-shadow: none !important;
+}
+/* Nhan gia tri dang chon trong trigger la 1 <span> KHONG co class rieng
+ * (xem SearchableSelect.tsx dong ~283) - phai nham dung the con dau tien
+ * cua trigger, kem min-width:0 (bat buoc de ellipsis hoat dong trong flex
+ * row) thi moi het vo dong "Nhập" xuong dong "tay" nhu bug thuc te gap. */
+.crm-inline-edit-cell .crm-searchable-select-trigger > span:first-child {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: left;
+}
+.crm-inline-edit-cell select {
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  appearance: none;
+  width: 100%;
+  min-height: 30px;
+  padding: 3px 18px 3px 6px;
+  font-size: 11px;
+  border: 1px solid #94a3b8;
+  border-radius: 6px;
+  background-color: #f8fafc;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath fill='%2364748b' d='M6 8.2 1.6 3.8l.9-.9L6 6.4l3.5-3.5.9.9z'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 6px center;
+  background-size: 10px;
+  color: #0f172a;
+}
+.crm-inline-edit-cell select:disabled,
+.crm-inline-edit-cell .crm-searchable-select-trigger:disabled {
+  opacity: 0.55;
+}
+
+.crm-col-lead-name { width: 20%; }
+.crm-col-lead-source { width: 9%; }
+.crm-col-lead-need { width: 13%; }
 .crm-col-lead-score { width: 8%; }
-.crm-col-lead-status { width: 14%; }
-.crm-col-lead-sdr { width: 12%; }
-.crm-col-lead-nextstep { width: 16%; }
+.crm-col-lead-marketing { width: 10%; }
+.crm-col-lead-status { width: 11%; }
+.crm-col-lead-sdr { width: 8%; }
+.crm-col-lead-nextstep { width: 13%; }
 .crm-col-lead-actions { width: 8%; }
 
 /* Mac dinh an card list (chi dung duoi 900px). PHAI khai bao TRUOC media query
@@ -7386,7 +7444,7 @@
   gap: 0.85rem;
   border: 1px solid #e2e8f0;
   border-radius: 0.75rem;
-  background: #f8fafc;
+  background: #ffffff;
   padding: 0.9rem;
 }
 
@@ -7407,6 +7465,95 @@
   color: #334155;
   font-size: 0.82rem;
   list-style: disc;
+}
+
+/* Man "Xac nhan tao co hoi & ban giao Sale" - khop layout mockup HTML leader
+ * (KPI card + 2 cot "Sale can xu ly"/"Khach hang"), du lieu that toan bo -
+ * feedback leader 2026-09-27. */
+.crm-convert-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.6rem;
+  margin-top: 0.6rem;
+}
+.crm-convert-kpi-card {
+  border: 1px solid #e2e8f0;
+  border-radius: 0.6rem;
+  padding: 0.6rem 0.7rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-width: 0;
+  background: #ffffff;
+}
+.crm-convert-kpi-card span {
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: #94a3b8;
+}
+.crm-convert-kpi-card b {
+  font-size: 0.92rem;
+  color: #0f172a;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.crm-convert-columns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.8rem;
+  margin-top: 0.7rem;
+}
+.crm-convert-column {
+  border: 1px solid #e2e8f0;
+  border-radius: 0.6rem;
+  padding: 0.7rem 0.8rem;
+  background: #ffffff;
+}
+.crm-convert-column-title {
+  margin: 0 0 0.5rem;
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: #0f172a;
+}
+.crm-convert-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.6rem;
+  padding: 0.5rem 0;
+  font-size: 0.85rem;
+  border-top: 1px solid #f1f5f9;
+}
+.crm-convert-row:first-of-type {
+  border-top: none;
+}
+.crm-convert-row span {
+  color: #64748b;
+}
+.crm-convert-row b {
+  color: #0f172a;
+  text-align: right;
+}
+@media (max-width: 640px) {
+  .crm-convert-kpi-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .crm-convert-columns {
+    grid-template-columns: 1fr;
+  }
+}
+
+.crm-lead-convert-confirm .crm-lead-qualification-actions {
+  margin-top: 1rem;
+  gap: 0.75rem;
+  flex-wrap: nowrap;
+}
+.crm-lead-convert-confirm .crm-lead-qualification-actions button {
+  flex: 1;
+  justify-content: center;
+  padding: 0.75rem 1rem;
 }
 
 @media (max-width: 640px) {
@@ -9000,6 +9147,11 @@
   margin: 0.3rem 0 0;
   font-size: 0.76rem;
   color: #475569;
+}
+.crm-verify-outcome-detail {
+  margin-top: 0.5rem;
+  padding-top: 0.5rem;
+  border-top: 1px dashed #e2e8f0;
 }
 .crm-verify-outcome-list-title {
   margin: 0.45rem 0 0.15rem;

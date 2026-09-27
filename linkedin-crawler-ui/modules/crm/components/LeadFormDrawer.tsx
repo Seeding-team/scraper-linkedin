@@ -8,6 +8,8 @@ import { PositionSelect } from './PositionSelect';
 import { MemberSearchSelect } from './MemberSearchSelect';
 import { CrmCategoryCodeSelect, fetchCrmCategoryIdOptions } from './CrmCategorySelect';
 import { mapLead, LEAD_STATUS_LABEL } from './LeadsDirectory';
+import { getSourceLabel } from './DealFormFields';
+import { LEAD_SOURCE_EXCLUDED_VALUES } from '../constants/crmConfig';
 import { ChevronDown, ChevronUp, Loader2, X } from './icons';
 import { usersService } from '@/services/all-platform.service';
 import type { AppUser } from '@/types/unified.types';
@@ -681,7 +683,7 @@ export function LeadFormDrawer({
                         <div>Email: <b>{dup.email || 'Chưa có'}</b></div>
                         <div>Phụ trách: <b>{memberName.get(dup.sdrId || '') || 'Chưa gán'}</b></div>
                         <div>Trạng thái: <b>{LEAD_STATUS_LABEL[dup.status] || dup.status}</b></div>
-                        <div>Nguồn: <b>{dup.source || 'Manual'}</b></div>
+                        <div>Nguồn: <b>{getSourceLabel(dup.source || 'Manual')}</b></div>
                         <div>
                           Cập nhật gần nhất: <b>{formatDateTime(dup.updatedAt) || 'chưa có hoạt động'}</b>
                         </div>
@@ -827,6 +829,7 @@ export function LeadFormDrawer({
                     <CrmCategoryCodeSelect
                       categoryType="crm_source"
                       value={form.source}
+                      excludeValues={LEAD_SOURCE_EXCLUDED_VALUES}
                       onChange={value => setValue('source', value)}
                     />
                     <div className="crm-lead-source-default-row">
