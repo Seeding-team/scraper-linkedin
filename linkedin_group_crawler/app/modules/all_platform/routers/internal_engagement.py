@@ -34,14 +34,16 @@ from app.modules.all_platform.services.internal_engagement_linkedin_sync_service
     sync_linkedin_post_engagement_via_playwright,
 )
 from app.modules.all_platform.services.internal_engagement_threads_sync_service import (
-    NoThreadsAccountError,
-    sync_threads_post_engagement_via_playwright,
+    ThreadsSyncError,
+    sync_threads_post_engagement,
 )
 from app.modules.all_platform.services.markeeai_account_links_service import resolve_markeeai_credentials
 from app.modules.all_platform.services.supabase_internal_engagement_kpi_service import (
     add_custom_post,
     create_seeding_campaign_db,
     debug_fetch_facebook_post_metadata,
+    fetch_threads_post_raw_metadata,
+    is_threads_url,
     delete_custom_post_db,
     delete_seeding_campaign_db,
     get_action_summary,
@@ -230,7 +232,11 @@ async def create_custom_post(payload: AddCustomPostRequest) -> BaseResponse:
 def debug_fetch_meta(payload: DebugFetchMetaRequest) -> BaseResponse:
     """Endpoint dùng cho Postman / Dev test cào OpenGraph metadata từ link Facebook"""
     try:
-        data = debug_fetch_facebook_post_metadata(payload.url, cookie=payload.cookie)
+        if is_threads_url(payload.url):
+            # Threads chỉ trả OG tag cho crawler của Meta -> luồng cào riêng.
+            data = fetch_threads_post_raw_metadata(payload.url)
+        else:
+            data = debug_fetch_facebook_post_metadata(payload.url, cookie=payload.cookie)
         return BaseResponse(success=True, data=data)
     except Exception as e:
         return BaseResponse(success=False, message=str(e))
@@ -326,14 +332,14 @@ def sync_post_metrics_endpoint(
 def sync_post_metrics_playwright_endpoint(post_id: str) -> BaseResponse:
     """Đồng bộ Like/Comment/Share hoàn toàn server-side qua Playwright, không cần
     browser extension. LinkedIn: dùng account LinkedIn đã đăng ký của người tạo bài.
-    Threads: CHƯA có hạ tầng đăng nhập server-side, luôn trả error_code=
-    NO_THREADS_AUTO_SYNC. FE nên tự fallback sang luồng extension (endpoint /sync ở
-    trên) nếu gọi API này trả về error_code=NO_LINKEDIN_ACCOUNT/NO_THREADS_AUTO_SYNC
-    hoặc thất bại vì lý do khác."""
+    Threads: không cần đăng nhập — đọc số liệu công khai của bài qua HTTP (xem
+    internal_engagement_threads_sync_service), lỗi trả error_code=THREADS_SYNC_FAILED.
+    FE nên tự fallback sang luồng extension (endpoint /sync ở trên) nếu LinkedIn trả
+    về error_code=NO_LINKEDIN_ACCOUNT hoặc thất bại vì lý do khác."""
     try:
         platform = get_custom_post_platform_db(post_id)
         if platform == "threads":
-            data = sync_threads_post_engagement_via_playwright(post_id)
+            data = sync_threads_post_engagement(post_id)
         else:
             data = sync_linkedin_post_engagement_via_playwright(post_id)
         return BaseResponse(
@@ -341,8 +347,8 @@ def sync_post_metrics_playwright_endpoint(post_id: str) -> BaseResponse:
             message="Đồng bộ (tự động, không cần Extension) thành công!",
             data=data,
         )
-    except NoThreadsAccountError as e:
-        return BaseResponse(success=False, message=str(e), data={"error_code": "NO_THREADS_AUTO_SYNC"})
+    except ThreadsSyncError as e:
+        return BaseResponse(success=False, message=str(e), data={"error_code": "THREADS_SYNC_FAILED"})
     except NoLinkedInAccountError as e:
         return BaseResponse(success=False, message=str(e), data={"error_code": "NO_LINKEDIN_ACCOUNT"})
     except Exception as e:

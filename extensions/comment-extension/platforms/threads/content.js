@@ -1,13 +1,15 @@
 // -----------------------------------------------------------------------------
 // THREADS AUTOMATION CONTENT SCRIPT (platforms/threads/content.js)
-// Xu ly Auto-Comment cho Threads (threads.net) - mirror cua platforms/linkedin/content.js
+// Xu ly Auto-Comment cho Threads (threads.com / threads.net).
 //
-// !!! CANH BAO: SELECTOR BEN DUOI LA BEST-EFFORT, CHUA TUNG TEST TREN THREADS.NET
-// THAT (moi truong build khong co trinh duyet). Threads khong co API comment cong
-// khai nen phai automation DOM giong LinkedIn - nhung cau truc DOM cua Threads
-// (React/Instagram web) co the da doi so voi luc viet file nay. Sau khi cai
-// extension va thu that, neu bam khong ra hoac bao loi "Khong tim thay...", chi
-// can sua cac mang *_SELECTORS ngay duoi day, KHONG can dong gi den phan con lai.
+// 2 cach, chay theo thu tu:
+//   1. API noi bo cua Threads (giong Facebook goi GraphQL) - xem postReplyViaApi.
+//   2. Fallback bam DOM (Reply -> nhap -> Post) neu API bi tu choi.
+//
+// !!! CANH BAO: CA 2 CACH DEU CHUA TEST VOI TAI KHOAN THREADS THAT (may build
+// khong dang nhap Threads). Neu API bao "API Threads tu choi" -> xem log console
+// cua tab Threads de sua tham so; neu DOM bao "Khong tim thay..." -> chi can sua
+// cac mang *_SELECTORS ngay duoi day.
 // -----------------------------------------------------------------------------
 
 (function () {
@@ -23,14 +25,11 @@
     "article",
   ];
 
-  // Nut/icon "Tra loi" (Reply) de mo o nhap binh luan - Threads dung div[role="button"]
-  // boc 1 svg co aria-label, khong phai <button> nhu LinkedIn.
-  const THREADS_REPLY_TRIGGER_SELECTORS = [
-    'div[role="button"]:has(svg[aria-label="Reply" i])',
-    'div[role="button"]:has(svg[aria-label="Trả lời" i])',
-    'svg[aria-label="Reply" i]',
-    'svg[aria-label="Trả lời" i]',
-  ];
+  // Nut mo o binh luan tren thanh hanh dong cua bai. DOM that (kiem tra threads.com
+  // 2026-09-27): div[role="button"] boc <svg><title>Comment</title>...</svg> - ten icon
+  // nam trong <title> (KHONG phai aria-label), tieng Anh la "Comment" (khong phai
+  // "Reply"). Doi chieu khong phan biet hoa thuong voi <title> hoac aria-label.
+  const THREADS_REPLY_TRIGGER_LABELS = ["comment", "reply", "bình luận", "trả lời"];
 
   // O nhap binh luan (contenteditable) - thuong nam trong 1 dialog moi mo ra
   // sau khi bam Reply.
@@ -131,31 +130,193 @@
     return false;
   }
 
+  function iconLabel(svg) {
+    const title = svg.querySelector("title");
+    return ((title && title.textContent) || svg.getAttribute("aria-label") || "").trim().toLowerCase();
+  }
+
+  function findReplyTrigger(block, timeoutMs) {
+    return new Promise((resolve) => {
+      const start = Date.now();
+      (function poll() {
+        const svgs = Array.from(block.querySelectorAll("svg"));
+        const icon = svgs.find((svg) => THREADS_REPLY_TRIGGER_LABELS.includes(iconLabel(svg)));
+        if (icon) return resolve(icon);
+        if (Date.now() - start > timeoutMs) return resolve(null);
+        setTimeout(poll, 300);
+      })();
+    });
+  }
+
   function clickReplyTrigger(trigger) {
-    // Trigger co the la <svg> (khi chi svg[aria-label] match) - can click vao
-    // div[role="button"] cha gan nhat de kich hoat dung.
-    const clickable = trigger.closest('div[role="button"]') || trigger;
+    // Trigger la <svg> - click vao div[role="button"] cha gan nhat de kich hoat dung.
+    const clickable = trigger.closest('div[role="button"], button') || trigger;
     clickable.click();
   }
 
+  // ---------------------------------------------------------------------------
+  // CACH 1 (UU TIEN): GOI THANG API NOI BO CUA THREADS - giong cach Facebook
+  // (content.js goc goi GraphQL bang fb_dtsg lay tu trang). Threads cung la Meta
+  // (nen tang Instagram): dang reply = POST /api/v1/media/configure_text_only_post/
+  // kem reply_id = media pk cua bai goc, xac thuc bang cookie phien dang nhap san
+  // co trong trinh duyet + header x-csrftoken / x-ig-app-id. Neu API bi tu choi
+  // (Meta doi tham so/endpoint) -> tu dong fallback sang CACH 2 (bam DOM) ben duoi.
+  // ---------------------------------------------------------------------------
+  const THREADS_WEB_APP_ID = "238260118697367";
+  const THREADS_ASBD_ID = "129477";
+  const SHORTCODE_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+
+  // Ma bai trong link (/post/C-srcchPpp7) la shortcode base64 cua media pk (giong
+  // Instagram) - da doi chieu voi pk that trong HTML threads.com.
+  function shortcodeToMediaPk(code) {
+    let n = BigInt(0);
+    for (const ch of code) {
+      const idx = SHORTCODE_ALPHABET.indexOf(ch);
+      if (idx < 0) return null;
+      n = n * BigInt(64) + BigInt(idx);
+    }
+    return n.toString();
+  }
+
+  function readCookie(name) {
+    const m = document.cookie.match(new RegExp("(?:^|;\\s*)" + name + "=([^;]+)"));
+    return m ? decodeURIComponent(m[1]) : "";
+  }
+
+  function readPageToken(patterns) {
+    const html = document.documentElement.innerHTML;
+    for (const re of patterns) {
+      const m = html.match(re);
+      if (m) return m[1];
+    }
+    return "";
+  }
+
+  function getThreadsSessionTokens() {
+    const csrftoken =
+      readCookie("csrftoken") || readPageToken([/"csrf_token":"([^"]+)"/, /"csrftoken":"([^"]+)"/]);
+    const lsd = readPageToken([/"LSD",\[\],\{"token":"([^"]+)"/, /"lsd":"([^"]+)"/]);
+    const viewerId = readCookie("ds_user_id") || readPageToken([/"viewerId":"(\d+)"/, /"user_id":"(\d+)"/]);
+    return { csrftoken, lsd, viewerId };
+  }
+
+  // Tai khoan Threads dang dang nhap (username) - lay tu link "Profile" tren thanh
+  // dieu huong (href="/@username"). Dung de ghi KPI dung danh tinh nguoi comment.
+  function getLoggedInUsername() {
+    const navLinks = Array.from(document.querySelectorAll('nav a[href^="/@"], a[role="link"][href^="/@"]'));
+    const profileLink = navLinks.find((a) =>
+      Array.from(a.querySelectorAll("svg")).some((svg) => ["profile", "trang cá nhân"].includes(iconLabel(svg))),
+    );
+    const href = (profileLink || navLinks[0])?.getAttribute("href") || "";
+    const m = href.match(/^\/@([^/?#]+)/);
+    return m ? m[1] : "";
+  }
+
+  async function postReplyViaApi(url, text) {
+    // Link chia se (/share/XXX) khong co ma bai - tab da tu chuyen huong ve link bai
+    // that nen lay ma tu dia chi hien tai cua tab.
+    const code = extractPostId(url) || extractPostId(location.href);
+    if (!code) return { success: false, error: "Link Threads không có mã bài (/post/...).", platform: "threads" };
+    const replyId = shortcodeToMediaPk(code);
+    if (!replyId) return { success: false, error: "Mã bài Threads không hợp lệ.", platform: "threads" };
+
+    const tokens = getThreadsSessionTokens();
+    if (!tokens.csrftoken) {
+      return {
+        success: false,
+        error: "Không lấy được phiên đăng nhập Threads (csrftoken) — hãy đăng nhập threads.com trên trình duyệt này.",
+        platform: "threads",
+      };
+    }
+
+    const body = new URLSearchParams({
+      audience: "default",
+      caption: text,
+      publish_mode: "text_post",
+      text_post_app_info: JSON.stringify({ reply_control: 0, reply_id: replyId }),
+      upload_id: String(Date.now()),
+    });
+
+    const headers = {
+      "content-type": "application/x-www-form-urlencoded",
+      "x-csrftoken": tokens.csrftoken,
+      "x-ig-app-id": THREADS_WEB_APP_ID,
+      "x-asbd-id": THREADS_ASBD_ID,
+      "x-requested-with": "XMLHttpRequest",
+    };
+    if (tokens.lsd) headers["x-fb-lsd"] = tokens.lsd;
+
+    let resp;
+    try {
+      resp = await fetch(`${location.origin}/api/v1/media/configure_text_only_post/`, {
+        method: "POST",
+        credentials: "include",
+        headers,
+        body: body.toString(),
+      });
+    } catch (e) {
+      return { success: false, error: `Lỗi mạng khi gọi API Threads: ${e.message}`, platform: "threads" };
+    }
+
+    const raw = await resp.text().catch(() => "");
+    let json = null;
+    try { json = JSON.parse(raw); } catch (e) { /* Threads tra HTML khi bi chan */ }
+
+    if (!resp.ok || !json || json.status !== "ok" || !json.media) {
+      const reason = (json && (json.message || json.error_title)) || `HTTP ${resp.status}`;
+      console.warn("[Threads Extension] API reply bị từ chối:", resp.status, raw.slice(0, 300));
+      return { success: false, error: `API Threads từ chối: ${reason}`, platform: "threads", apiRejected: true };
+    }
+
+    const username = json.media.user?.username || getLoggedInUsername();
+    const replyUrl = json.media.code && username
+      ? `https://www.threads.com/@${username}/post/${json.media.code}`
+      : url;
+    return {
+      success: true,
+      url: replyUrl,
+      platform: "threads",
+      method: "api",
+      uid: json.media.user?.pk ? String(json.media.user.pk) : tokens.viewerId || undefined,
+      account_name: username || undefined,
+      account_url: username ? `https://www.threads.com/@${username}` : undefined,
+    };
+  }
+
   async function doPostComment(url, text) {
-    console.log("[Threads Extension] Bắt đầu Auto-Comment cho Threads...");
+    console.log("[Threads Extension] Bắt đầu Auto-Comment cho Threads (thử API trước)...");
+    const apiResult = await postReplyViaApi(url, text);
+    if (apiResult.success) {
+      console.log("[Threads Extension] Đã comment qua API:", apiResult.url);
+      return apiResult;
+    }
+    // Chua dang nhap thi DOM cung khong lam duoc gi -> tra loi ro rang luon.
+    if (!apiResult.apiRejected && /đăng nhập/i.test(apiResult.error || "")) return apiResult;
+    console.warn("[Threads Extension] API thất bại, chuyển sang bấm giao diện:", apiResult.error);
+    const domResult = await doPostCommentViaDom(url, text);
+    if (!domResult.success) {
+      domResult.error = `${domResult.error} (API trước đó: ${apiResult.error})`;
+    }
+    return domResult;
+  }
+
+  async function doPostCommentViaDom(url, text) {
     const found = await waitForFeed(10000);
     if (!found) {
       return { success: false, error: "Không tìm thấy bài viết trên trang Threads.", platform: "threads" };
     }
 
-    const block = findMatchingBlock(url);
+    const block = findMatchingBlock(extractPostId(url) ? url : location.href);
     if (!block) {
       return { success: false, error: "Không tìm thấy bài viết để comment.", platform: "threads" };
     }
 
     // 1. Click trigger "Reply" de mo dialog/o nhap binh luan.
-    const trigger = await waitForElementIn(block, THREADS_REPLY_TRIGGER_SELECTORS, 5000);
+    const trigger = await findReplyTrigger(block, 5000);
     if (!trigger) {
       return {
         success: false,
-        error: "Không tìm thấy nút Reply trên Threads (selector có thể đã thay đổi, cần cập nhật THREADS_REPLY_TRIGGER_SELECTORS).",
+        error: "Không tìm thấy nút Reply trên Threads (selector có thể đã thay đổi, cần cập nhật THREADS_REPLY_TRIGGER_LABELS).",
         platform: "threads",
       };
     }
@@ -204,8 +365,16 @@
     }
 
     await sleep(2500);
-    console.log("[Threads Extension] Đã gửi comment Threads thành công!");
-    return { success: true, url, platform: "threads" };
+    console.log("[Threads Extension] Đã gửi comment Threads thành công (qua giao diện)!");
+    const username = getLoggedInUsername();
+    return {
+      success: true,
+      url,
+      platform: "threads",
+      method: "dom",
+      account_name: username || undefined,
+      account_url: username ? `https://www.threads.com/@${username}` : undefined,
+    };
   }
 
   // Bo lang nghe tin nhan EXECUTE_COMMENT tu Background Script - cung contract
