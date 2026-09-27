@@ -16,6 +16,7 @@ interface PostCardProps {
   onSchedule?: (post: UnifiedPost) => void;
   onViewDetail?: (post: UnifiedPost) => void;
   onDelete?: (post: UnifiedPost) => void | Promise<void>;
+  onViewSeedingRoster?: (post: UnifiedPost) => void;
   seeded?: boolean;
   verifyStatus?: "pending" | "yes" | "no";
 }
@@ -28,7 +29,7 @@ function PlatformIcon({ platform }: { platform: FeedPlatform }) {
   return <FaLinkedin className="text-blue-700 shrink-0" />;
 }
 
-export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onViewDetail, onDelete, seeded, verifyStatus }: PostCardProps) {
+export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onViewDetail, onDelete, onViewSeedingRoster, seeded, verifyStatus }: PostCardProps) {
   const [isInboxOpen, setIsInboxOpen] = useState(false);
   const inboxRef = useRef<HTMLDivElement>(null);
 
@@ -230,6 +231,17 @@ export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onVi
           </div>
 
           <div className="flex items-center gap-2">
+            {(userRole === "admin" || userRole === "leader") && onViewSeedingRoster && post.id && (
+              <button
+                type="button"
+                onClick={() => onViewSeedingRoster(post)}
+                className="px-3 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded-lg text-sm font-semibold transition shadow-sm cursor-pointer"
+                aria-label="Xem seeding theo team"
+              >
+                👥 Xem seeding theo team
+              </button>
+            )}
+
             {(userRole === "admin" || userRole === "leader") && onDelete && post.id && (
               <button
                 type="button"

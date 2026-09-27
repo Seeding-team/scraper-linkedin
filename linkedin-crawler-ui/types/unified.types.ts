@@ -256,6 +256,22 @@ export interface InternalEngagementPostInteractionsData {
   items: InternalEngagementInteraction[];
 }
 
+export interface PostSeedingRosterItem {
+  id_member: string;
+  name: string;
+  has_seeded: boolean;
+  content: string;
+  verify_status?: string | null;
+  link_comment?: string | null;
+  created_at?: string | null;
+}
+
+export interface PostSeedingRosterData {
+  role: string;
+  team_name: string | null;
+  items: PostSeedingRosterItem[];
+}
+
 export interface InternalEngagementPostTeamCount {
   team_id: string;
   team_name: string;

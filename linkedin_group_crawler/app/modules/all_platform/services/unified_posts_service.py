@@ -1024,3 +1024,84 @@ def get_unified_daily_trend(
         {"date": day, "posts": v["posts"], "comments": v["comments"], "inbox": v["inbox"]}
         for day, v in sorted(buckets.items())
     ]
+
+
+def get_post_seeding_roster(post_id: str, platform: str, email: str) -> dict:
+    """Toàn bộ roster thành viên của team sở hữu group chứa bài viết này, kèm
+    trạng thái/nội dung đã seeding (nếu có) — cho modal "Xem seeding theo team"
+    ở trang Seeding bên ngoài (admin/leader). Khác get_post_interactions bên
+    module internal_engagement: bài ở đây KHÔNG có khái niệm "giao theo team"
+    (assigned_team_ids) — team roster được suy ra từ facebook_groups/
+    linkedin_groups.id_team (team sở hữu nhóm crawl), giống hệt cách team/
+    allowed_member_ids đã được tính trong _fetch_posts_from_table() ở trên.
+    """
+    sb = _supabase()
+
+    user_res = sb.table("app_users").select("id, role").eq("email", (email or "").strip().lower()).limit(1).execute()
+    if not user_res.data:
+        return {"role": "member", "team_name": None, "items": []}
+    caller_id = user_res.data[0]["id"]
+    role = user_res.data[0].get("role", "member")
+    if role not in ("admin", "leader"):
+        return {"role": role, "team_name": None, "items": []}
+
+    table = "facebook_posts" if platform == "facebook" else "linkedin_posts"
+    group_fk = "facebook_groups" if platform == "facebook" else "linkedin_groups"
+
+    post_res = (
+        sb.table(table).select(f"id, {group_fk}(id_team, group_name)").eq("id", post_id).limit(1).execute()
+    )
+    if not post_res.data:
+        return {"role": role, "team_name": None, "items": []}
+    grp = post_res.data[0].get(group_fk) or {}
+    id_team = grp.get("id_team")
+    if not id_team:
+        return {"role": role, "team_name": None, "items": []}
+
+    if role == "leader":
+        leader_teams = sb.table("teams").select("id").eq("id_leader", caller_id).execute().data or []
+        if id_team not in {t["id"] for t in leader_teams}:
+            return {"role": role, "team_name": None, "items": []}
+
+    team_res = sb.table("teams").select("id, name_team").eq("id", id_team).limit(1).execute()
+    team_name = team_res.data[0].get("name_team") if team_res.data else "Team"
+
+    mot_res = sb.table("member_of_teams").select("id_member").eq("id_teams", id_team).execute().data or []
+    member_ids = list({m["id_member"] for m in mot_res if m.get("id_member")})
+    if not member_ids:
+        return {"role": role, "team_name": team_name, "items": []}
+
+    users_res = sb.table("app_users").select("id, name, email").in_("id", member_ids).execute().data or []
+    user_map = {u["id"]: u for u in users_res}
+
+    kpi_res = (
+        sb.table("seeding_content_kpi")
+        .select("id_member, content, verify, link_comment, created_at")
+        .eq("id_post", post_id)
+        .in_("id_member", member_ids)
+        .order("created_at", desc=True)
+        .execute()
+    ).data or []
+    kpi_by_member: dict[str, dict] = {}
+    for row in kpi_res:
+        mid = row.get("id_member")
+        if mid and mid not in kpi_by_member:
+            kpi_by_member[mid] = row
+
+    items = []
+    for mid in member_ids:
+        u = user_map.get(mid, {})
+        kpi = kpi_by_member.get(mid)
+        name = u.get("name") or (u.get("email") or "").split("@")[0] or "Thành viên ẩn"
+        items.append({
+            "id_member": mid,
+            "name": name,
+            "has_seeded": bool(kpi),
+            "content": (kpi or {}).get("content") or "",
+            "verify_status": (kpi or {}).get("verify"),
+            "link_comment": (kpi or {}).get("link_comment"),
+            "created_at": (kpi or {}).get("created_at"),
+        })
+
+    items.sort(key=lambda it: (0 if it["has_seeded"] else 1, it["name"]))
+    return {"role": role, "team_name": team_name, "items": items}
