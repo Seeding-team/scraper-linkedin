@@ -340,7 +340,7 @@ def _fetch_threads_posts(
     page: int,
     page_size: int,
 ) -> tuple[list[dict], int]:
-    """Bài Threads (bảng threads_posts, cào qua extension "Threads API Crawler").
+    """Bài Threads (bảng threads_posts, cào qua "Markee Seeding Extension", lệnh MK_TH_CRAWL_*).
 
     Threads không có group -> không có taxonomy (intent/industry/team...): khi FE lọc
     theo taxonomy thì không bài Threads nào khớp -> trả rỗng (không lờ bộ lọc đi).

@@ -35,7 +35,10 @@ function PlatformIcon({ platform }: { platform: FeedPlatform }) {
 
 export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onViewDetail, onDelete, onViewSeedingRoster, seeded, verifyStatus }: PostCardProps) {
   const [isInboxOpen, setIsInboxOpen] = useState(false);
+  const [showAllCrawledComments, setShowAllCrawledComments] = useState(false);
   const inboxRef = useRef<HTMLDivElement>(null);
+  const crawledComments = (post.comments_detail || []).filter((c) => c && (c.content || c.author_name));
+  const visibleCrawledComments = showAllCrawledComments ? crawledComments : crawledComments.slice(0, 2);
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
@@ -214,6 +217,34 @@ export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onVi
                 Bị từ chối / Lỗi
               </span>
             )}
+          </div>
+        ) : null}
+
+        {/* Bình luận cào được từ chính bài viết (LinkedIn, extension >= 2.0) */}
+        {crawledComments.length > 0 ? (
+          <div className="mb-3 px-3 py-2 bg-muted/50 border border-border rounded-lg flex flex-col gap-1.5">
+            <div className="text-[10px] font-bold text-muted-foreground">
+              💬 Bình luận trên bài ({crawledComments.length}
+              {post.likers && post.likers.length > 0 ? ` · ${post.likers.length} người đã react` : ""})
+            </div>
+            {visibleCrawledComments.map((c, idx) => (
+              <div key={idx} className="text-xs leading-relaxed">
+                {c.author_url ? (
+                  <a href={c.author_url} target="_blank" rel="noopener noreferrer" className="font-bold text-foreground hover:underline">
+                    {c.author_name || "Ẩn danh"}
+                  </a>
+                ) : (
+                  <span className="font-bold text-foreground">{c.author_name || "Ẩn danh"}</span>
+                )}
+                <span className="text-muted-foreground">: {c.content}</span>
+                {c.likes ? <span className="ml-1 text-[10px] text-amber-700">👍 {c.likes}</span> : null}
+              </div>
+            ))}
+            {crawledComments.length > 2 ? (
+              <button type="button" onClick={() => setShowAllCrawledComments((v) => !v)} className="self-start text-[11px] font-semibold text-primary hover:underline">
+                {showAllCrawledComments ? "Thu gọn" : `Xem tất cả ${crawledComments.length} bình luận`}
+              </button>
+            ) : null}
           </div>
         ) : null}
 

@@ -30,7 +30,6 @@ const publicDir = path.join(root, "public");
 const MANAGED_EXTENSIONS = [
   "comment-extension",
   "api-facebook-get-extension",
-  "api-threads-get-extension",
   "extension-login-zalo",
   "linkedin-group-crawler-extension",
 ];

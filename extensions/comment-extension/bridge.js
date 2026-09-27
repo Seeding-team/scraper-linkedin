@@ -4,6 +4,12 @@
 // Bridge between Web App window.postMessage and Extension chrome.runtime.sendMessage
 // -----------------------------------------------------------------------------
 
+const MK_EXTENSION_INFO = (() => {
+    let version = "";
+    try { version = chrome.runtime.getManifest().version; } catch (e) {}
+    return { version, features: ["fb_crawl", "fb_comment", "li_crawl", "li_comment", "th_crawl"] };
+})();
+
 // Truoc day KHONG check chrome.runtime.lastError va KHONG co timeout gi ca -
 // neu background service worker (Manifest V3) bi treo/crash/khong wake len
 // duoc de xu ly message, chrome.runtime.sendMessage co the KHONG BAO GIO goi
@@ -95,11 +101,54 @@ window.addEventListener("message", function(event) {
         safeSendMessage({ action: "GET_STATUS" }, response => {
             window.postMessage({ action: "STATUS_RESPONSE", payload: response }, "*");
         });
+    } else if (action === "MK_PING") {
+        window.postMessage({ action: "MK_EXTENSION_READY", payload: MK_EXTENSION_INFO }, "*");
+    } else if (action === "MK_FB_CRAWL_START" || action === "MK_LI_CRAWL_START") {
+        // Tên lệnh cào MỚI (MK_*) cố ý khác API_LAUNCH_FROM_APP của extension cũ
+        // "FB API Crawler": nếu người dùng chưa gỡ extension cũ, 2 extension sẽ
+        // không cùng nhận 1 lệnh rồi mở 2 tiến trình cào song song.
+        const resultAction = action === "MK_FB_CRAWL_START" ? "MK_FB_CRAWL_START_RESULT" : "MK_LI_CRAWL_START_RESULT";
+        safeSendMessage({
+            action,
+            groups: payload?.groups || [],
+            config: payload?.config || {},
+        }, response => {
+            window.postMessage({ action: resultAction, payload: response || { success: false, error: "Không nhận được phản hồi từ Extension." } }, "*");
+        });
+    } else if (action === "MK_TH_CRAWL_START") {
+        // Threads không có group: web app gửi danh sách TỪ KHOÁ thay cho danh sách nhóm.
+        safeSendMessage({
+            action,
+            keywords: payload?.keywords || [],
+            config: payload?.config || {},
+        }, response => {
+            window.postMessage({ action: "MK_TH_CRAWL_START_RESULT", payload: response || { success: false, error: "Không nhận được phản hồi từ Extension." } }, "*");
+        });
+    } else if (action === "MK_FB_CRAWL_STOP" || action === "MK_LI_CRAWL_STOP" || action === "MK_TH_CRAWL_STOP") {
+        safeSendMessage({ action }, () => {});
+    } else if (action === "MK_FB_CRAWL_STATUS" || action === "MK_LI_CRAWL_STATUS" || action === "MK_TH_CRAWL_STATUS") {
+        safeSendMessage({ action }, response => {
+            window.postMessage({ action: action + "_RESULT", payload: response }, "*");
+        });
+    } else if (action === "LI_FETCH_POST_INFO") {
+        // Tương thích luồng "Thêm bài viết" LinkedIn ở trang Tương tác nội bộ (lib/li-ext-bridge.ts),
+        // trước đây chỉ extension "LinkedIn Group Post Crawler" riêng mới xử lý được.
+        safeSendMessage({ type: "LI_FETCH_POST_INFO", url: payload?.url }, response => {
+            window.postMessage({
+                action: "LI_FETCH_POST_INFO_RESULT",
+                payload: response || { success: false, error: "Không nhận được phản hồi từ Extension." },
+            }, "*");
+        }, 60000);
     }
 });
 
 // Lắng nghe tiến trình từ background và relay xuống Web App UI
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+    if (typeof request.action === "string" && (request.action.startsWith("MK_FB_CRAWL_") || request.action.startsWith("MK_LI_CRAWL_") || request.action.startsWith("MK_TH_CRAWL_"))) {
+        const { action, ...rest } = request;
+        window.postMessage({ action, payload: rest }, "*");
+        return;
+    }
     if (request.action === "BULK_COMMENT_PROGRESS") {
         window.postMessage({ action: "BULK_COMMENT_PROGRESS", payload: request.payload }, "*");
         window.postMessage({ action: "LI_COMMENT_PROGRESS", payload: request.payload }, "*");
@@ -113,3 +162,4 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 // Gửi tín hiệu sẵn sàng khi vừa load bridge.js
 window.postMessage({ action: "COMMENT_EXTENSION_READY" }, "*");
 window.postMessage({ action: "LI_EXTENSION_READY" }, "*");
+window.postMessage({ action: "MK_EXTENSION_READY", payload: MK_EXTENSION_INFO }, "*");

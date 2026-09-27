@@ -55,6 +55,17 @@ export interface UnifiedPost {
   all_seedings?: UnifiedSeedingInfo[];
   /** Chỉ bài Threads: từ khoá tìm kiếm đã tìm ra bài (Threads không có group). */
   search_keyword?: string;
+  /** Bình luận cào được từ bài (LinkedIn, extension >= 2.0) — cần migration 151. */
+  comments_detail?: UnifiedCrawledComment[];
+  /** Tên người đã react bài (LinkedIn, best-effort). */
+  likers?: string[];
+}
+
+export interface UnifiedCrawledComment {
+  author_name?: string;
+  author_url?: string;
+  content?: string;
+  likes?: number;
 }
 
 export interface GetAllPostsRequest {

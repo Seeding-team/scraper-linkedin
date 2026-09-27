@@ -1,4 +1,4 @@
-"""Lưu bài viết Threads cào từ extension "Threads API Crawler" vào bảng `threads_posts`.
+"""Lưu bài viết Threads cào bằng "Markee Seeding Extension" (lệnh MK_TH_CRAWL_*) vào bảng `threads_posts`.
 
 Tính năng "Siêu Tốc Cào Dữ Liệu" cho Threads (tab "Seeding bên ngoài"), tương tự
 luồng Facebook (`routers/extension_crawl.py`) nhưng Threads không có "group": extension

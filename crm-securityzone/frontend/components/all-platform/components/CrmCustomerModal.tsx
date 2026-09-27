@@ -21,6 +21,7 @@ import { toast } from "sonner";
 import { CurrencyInput } from "@/components/CurrencyInput";
 import { useCrmCategoryCodeOptions, useCrmCategoryLabels } from "@/modules/crm/components/CrmCategorySelect";
 import { seedingCrmRepository } from "@/modules/crm/repositories/SeedingCrmRepository";
+import { projectsService, type Project } from "@/services/all-platform.service";
 
 interface CrmCustomerModalProps {
   isOpen: boolean;
@@ -161,6 +162,17 @@ export function CrmCustomerModal({
   // key = `${field}-${index}` của dòng hợp đồng/báo giá đang upload (Vấn đề 2).
   const [uploadingLinkKey, setUploadingLinkKey] = useState<string | null>(null);
   const [contacts, setContacts] = useState<Array<{ id: string; name: string }>>([]);
+  // "Dự án" (feedback leader, WIP full-flow man Xac minh Lead + man nay) -
+  // truoc day modal nay hoan toan khong co field Du an nao du Customer.project_id
+  // da ton tai san trong type/backend. `projects` = danh sach Du an co san
+  // CUA DUNG khach hang nay (dropdown chon lai); `newProjectName` = go TEN
+  // MOI khi chon "+ Tạo dự án mới…" (backend tu tao that, xem
+  // customer_lead_service.create_customer_lead/update - da co san logic nay
+  // tu truoc, chi modal nay chua tung gui project_name len).
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [creatingNewProject, setCreatingNewProject] = useState(false);
+  const [newProjectName, setNewProjectName] = useState("");
+  const CREATE_NEW_PROJECT_VALUE = "__create_new__";
   const { options: sourceOptions } = useCrmCategoryCodeOptions("crm_source", SOURCE_PLATFORM_OPTIONS);
   const { labels: cityOptions } = useCrmCategoryLabels("crm_city", CITY_OPTIONS);
   const { options: industryOptions } = useCrmCategoryCodeOptions(
@@ -210,6 +222,26 @@ export function CrmCustomerModal({
       .catch(() => { if (alive) setContacts([]); });
     return () => { alive = false; };
   }, [isOpen, customer?.customer_id]);
+
+  // Danh sach Du an CUA DUNG khach hang nay (dropdown "Dự án") - cung dieu
+  // kien loc voi Contact o tren (chua co Customer canonical thi chua co Du
+  // an nao de chon).
+  useEffect(() => {
+    if (!isOpen || !customer?.customer_id) {
+      setProjects([]);
+      return;
+    }
+    let alive = true;
+    projectsService
+      .list(customer.customer_id)
+      .then(res => { if (alive && res.success && res.data) setProjects(res.data); })
+      .catch(() => { if (alive) setProjects([]); });
+    return () => { alive = false; };
+  }, [isOpen, customer?.customer_id]);
+
+  useEffect(() => {
+    if (isOpen) { setNewProjectName(""); setCreatingNewProject(false); }
+  }, [isOpen, customer?.id]);
 
   if (!isOpen) return null;
 
@@ -297,7 +329,7 @@ export function CrmCustomerModal({
     try {
       // CHỈ gửi các field có trong form. Tránh ghi đè các trường cũ (service_package,
       // tags, contract_*, ...) về null/empty khi user chỉnh sửa thông tin lead.
-      const payload: Partial<Customer> = {
+      const payload: Partial<Customer> & { project_name?: string } = {
         customer_name: formData.customer_name?.trim(),
         company_name: formData.company_name?.trim() || null,
         phone: formData.phone?.trim() || null,
@@ -335,6 +367,10 @@ export function CrmCustomerModal({
         // THUOC DUNG khach hang nay, server tu kiem tra lai (xem
         // validate_contact_belongs_to_customer o customer_lead_service.py).
         primary_contact_id: formData.primary_contact_id || null,
+        // "Dự án" - hoac gan lai Du an co san (project_id), hoac go ten Du an
+        // MOI (project_name, backend tu tao that). Khong gui ca 2 cung luc.
+        project_id: formData.project_id || null,
+        ...(newProjectName.trim() ? { project_name: newProjectName.trim() } : {}),
         leaded_by: (formData.leaded_by?.trim() || resolvedLeaderId || "") || null,
         sdr_id: (formData.sdr_id?.trim() || resolvedSdrId || "") || null,
         is_assigned: !!(formData.sdr_id?.trim() || resolvedSdrId),
@@ -623,6 +659,55 @@ export function CrmCustomerModal({
                   {!customer?.customer_id ? (
                     <p className="mt-1 text-[10px] text-slate-400">
                       Khách hàng này chưa liên kết hồ sơ CRM chính thức nên chưa có Người liên hệ để chọn.
+                    </p>
+                  ) : null}
+                </div>
+
+                {/* "Dự án" (tùy chọn) - feedback leader: field nay truoc day
+                    hoan toan khong co trong modal, du Customer.project_id da
+                    ton tai san. Chi liet ke Du an THUOC DUNG khach hang canonical
+                    (xem effect fetch projects o tren) - "+ Tạo dự án mới…" cho
+                    go ten, backend tu tao that (project_name, da co san logic
+                    o customer_lead_service.py). */}
+                <div className="col-span-2">
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">
+                    Dự án <span className="text-slate-400 font-normal">(tùy chọn)</span>
+                  </label>
+                  <select
+                    value={formData.project_id ? formData.project_id : creatingNewProject ? CREATE_NEW_PROJECT_VALUE : ""}
+                    onChange={(e) => {
+                      const value = e.target.value;
+                      if (value === CREATE_NEW_PROJECT_VALUE) {
+                        set("project_id", null);
+                        setCreatingNewProject(true);
+                      } else {
+                        set("project_id", value || null);
+                        setCreatingNewProject(false);
+                        setNewProjectName("");
+                      }
+                    }}
+                    disabled={!customer?.customer_id}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500 text-sm bg-white disabled:bg-slate-50 disabled:text-slate-400"
+                  >
+                    <option value="">— Chưa gắn dự án —</option>
+                    {projects.map((p) => (
+                      <option key={p.id} value={p.id}>{p.name}</option>
+                    ))}
+                    <option value={CREATE_NEW_PROJECT_VALUE}>+ Tạo dự án mới…</option>
+                  </select>
+                  {creatingNewProject ? (
+                    <input
+                      type="text"
+                      autoFocus
+                      value={newProjectName}
+                      onChange={(e) => setNewProjectName(e.target.value)}
+                      className="mt-1.5 w-full px-3 py-2 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500 text-sm"
+                      placeholder="VD: Website 2026"
+                    />
+                  ) : null}
+                  {!customer?.customer_id ? (
+                    <p className="mt-1 text-[10px] text-slate-400">
+                      Khách hàng này chưa liên kết hồ sơ CRM chính thức nên chưa có Dự án để chọn.
                     </p>
                   ) : null}
                 </div>

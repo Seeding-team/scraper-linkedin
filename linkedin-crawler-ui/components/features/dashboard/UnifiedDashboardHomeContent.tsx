@@ -5,10 +5,9 @@ import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContai
 import { createPortal } from "react-dom";
 import { cn } from "@/lib/utils";
 import { FiExternalLink } from "react-icons/fi";
-import { FaFacebook } from "react-icons/fa";
+import { FaFacebook, FaLinkedin } from "react-icons/fa";
 import { FaThreads } from "react-icons/fa6";
-import { ApiExtensionLauncher } from "@/components/all-platform/components/api-extension-launcher";
-import { ThreadsExtensionLauncher } from "@/components/all-platform/components/threads-extension-launcher";
+import { SeedingExtensionPanel } from "@/components/all-platform/components/seeding-extension/seeding-extension-panel";
 import { useAppAuth } from "@/contexts/AppAuthContext";
 import { FilterBar, type FilterState } from "@/components/all-platform/components/filter-bar";
 import { PostCard } from "@/components/all-platform/components/post-card";
@@ -19,7 +18,6 @@ import { PostDetailModal } from "@/components/all-platform/components/post-detai
 import { VerifyAccountModal } from "@/components/all-platform/components/verify-account-modal";
 import { KpiProgressCard } from "@/components/all-platform/components/kpi-progress-card";
 import { MemberKpiRewardOverview } from "@/components/all-platform/kpi-rewards/KpiRewardSections";
-import { BulkCommentLauncher } from "@/components/all-platform/components/bulk-comment-launcher";
 import { SeedingActivityPanel } from "@/components/all-platform/feed/SeedingActivityPanel";
 import { ScheduleCommentModal } from "@/components/all-platform/feed/ScheduleCommentModal";
 import { ScheduledCommentsPanel } from "@/components/all-platform/feed/ScheduledCommentsPanel";
@@ -644,9 +642,51 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
     [posts, serviceArea],
   );
 
+  // Tach rieng khoi khoi tieu de (!hideHeader) - day la CONTROL chuc nang
+  // (chuyen Facebook/LinkedIn/Threads), khong phai trang tri. Bug da gap: khi nhung
+  // trang "Seeding ben ngoai" render component nay voi hideHeader (gom vao
+  // tab noi bo, khong can lai tieu de "Unified Post Feed"), toan bo switcher
+  // nay bi an theo luon -> feedPlatform ket cung o "facebook" mac dinh, tab
+  // "Seeding ben ngoai" khong co cach nao xem duoc bai LinkedIn du logic cao/
+  // luu du lieu LinkedIn da chay va co du lieu that trong linkedin_posts.
+  // Threads khong co group - bai duoc tim theo tu khoa (extension, lenh MK_TH_CRAWL_*).
+  const platformTabs = (
+    <div className="bg-muted p-1 rounded-xl inline-flex flex-wrap gap-1" role="tablist" aria-label="Nền tảng">
+      {([
+        { key: "facebook", label: "Facebook", icon: <FaFacebook className="text-blue-600" /> },
+        { key: "linkedin", label: "LinkedIn", icon: <FaLinkedin className="text-blue-700" /> },
+        { key: "threads", label: "Threads", icon: <FaThreads /> },
+      ] as const).map((t) => (
+        <button
+          key={t.key}
+          type="button"
+          role="tab"
+          aria-selected={feedPlatform === t.key}
+          onClick={() => { setFeedPlatform(t.key); setPage(1); }}
+          className={cn(
+            "flex items-center gap-2 px-4 py-1.5 rounded-lg text-sm font-bold transition-all cursor-pointer",
+            feedPlatform === t.key
+              ? "bg-white text-foreground shadow-md"
+              : "text-muted-foreground hover:text-foreground hover:bg-accent",
+          )}
+        >
+          {t.icon}
+          {t.label}
+        </button>
+      ))}
+    </div>
+  );
+
+  const platformHint =
+    feedPlatform === "threads"
+      ? "Đang xem Threads — tìm bài theo từ khoá."
+      : feedPlatform === "linkedin"
+        ? "Đang xem LinkedIn — cào theo nhóm đã thêm."
+        : "Đang xem Facebook — cào theo nhóm đã thêm.";
+
   return (
     <div className="w-full space-y-6">
-      {!hideHeader && (
+      {!hideHeader ? (
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
           <div className="space-y-1">
             <h1 className="text-2xl font-bold text-foreground tracking-tight">Unified Post Feed</h1>
@@ -656,68 +696,18 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
           </div>
 
           <div className="flex flex-wrap items-center gap-3 shrink-0">
-            <div className="bg-muted p-0.5 rounded-lg flex gap-0.5">
-              {([
-                { key: "facebook", label: "Facebook" },
-                { key: "linkedin", label: "LinkedIn" },
-                { key: "threads", label: "Threads" },
-              ] as const).map((t) => (
-                <button
-                  key={t.key}
-                  type="button"
-                  onClick={() => { setFeedPlatform(t.key); setPage(1); }}
-                  className={cn(
-                    "px-4 py-1 rounded-md text-xs font-semibold transition-all cursor-pointer",
-                    feedPlatform === t.key
-                      ? "bg-white text-foreground shadow-sm"
-                      : "text-muted-foreground hover:text-foreground hover:bg-accent",
-                  )}
-                >
-                  {t.label}
-                </button>
-              ))}
-            </div>
+            {platformTabs}
           </div>
         </div>
-      )}
-
-      {/* Tab "Seeding bên ngoài" (hideHeader): chọn nguồn bài Facebook hoặc Threads.
-          Threads không có group - bài được tìm theo từ khoá qua extension Threads.
-          Làm nổi bật hẳn (khung viền + icon + mô tả) vì đây là lựa chọn quan trọng
-          nhất của trang - trước đó chỉ là 2 nút nhỏ rất dễ bị lướt qua. */}
-      {hideHeader && (
+      ) : (
+        /* Tab "Seeding bên ngoài": làm nổi bật hẳn (khung viền + icon + mô tả) vì đây là
+           lựa chọn quan trọng nhất của trang - 3 nút nhỏ canh phải rất dễ bị lướt qua. */
         <div className="flex flex-col sm:flex-row sm:items-center gap-3 rounded-2xl border-2 border-primary/30 bg-gradient-to-r from-primary/5 to-transparent p-3 sm:p-4">
           <span className="text-xs font-bold text-muted-foreground uppercase tracking-wide shrink-0">
             Chọn nền tảng
           </span>
-          <div className="bg-muted p-1 rounded-xl inline-flex gap-1" role="tablist" aria-label="Nền tảng">
-            {([
-              { key: "facebook", label: "Facebook", icon: <FaFacebook className="text-blue-600" /> },
-              { key: "threads", label: "Threads", icon: <FaThreads /> },
-            ] as const).map((t) => (
-              <button
-                key={t.key}
-                type="button"
-                role="tab"
-                aria-selected={feedPlatform === t.key}
-                onClick={() => { setFeedPlatform(t.key); setPage(1); }}
-                className={cn(
-                  "flex items-center gap-2 px-5 py-2 rounded-lg text-sm font-bold transition-all cursor-pointer",
-                  feedPlatform === t.key
-                    ? "bg-white text-foreground shadow-md scale-[1.03]"
-                    : "text-muted-foreground hover:text-foreground hover:bg-accent",
-                )}
-              >
-                {t.icon}
-                {t.label}
-              </button>
-            ))}
-          </div>
-          <span className="text-xs text-muted-foreground sm:ml-auto">
-            {feedPlatform === "threads"
-              ? "Đang xem Threads — tìm bài theo từ khoá."
-              : "Đang xem Facebook — cào theo nhóm đã thêm."}
-          </span>
+          {platformTabs}
+          <span className="text-xs text-muted-foreground sm:ml-auto">{platformHint}</span>
         </div>
       )}
 
@@ -835,59 +825,34 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
       {CURRENT_USER_EMAIL && (
         <ScheduledCommentsPanel refreshKey={scheduleRefreshKey} />
       )}
-      {/* Phase 6: Siêu Tốc Cào Dữ Liệu + Bulk Comment — hiển thị cho cả 3 role
-          (admin/leader/member) khi đang ở tab Facebook. SeedingActivityPanel
-          vẫn chỉ admin/leader vì là panel tổng quan nhóm. */}
-      {/* Siêu Tốc Cào Dữ Liệu cho Threads: tìm bài theo từ khoá qua extension
-          Threads API Crawler. Tải lại feed/số liệu mỗi khi extension lưu xong 1 từ khoá. */}
-      {CURRENT_USER_EMAIL && feedPlatform === "threads" && (
-        <ThreadsExtensionLauncher
-          onSaved={() => {
-            fetchPosts();
-            fetchDailyTrend();
+      {/* 1 extension gộp (Markee Seeding Extension): cào bài + bình luận hàng loạt cho cả
+          Facebook và LinkedIn, theo tab nền tảng đang chọn — thay cho 2 launcher riêng
+          "Siêu Tốc Cào Dữ Liệu" + "Seeding Comment Hàng Loạt" trước đây (chỉ có ở tab Facebook).
+          Threads: chỉ cào (tìm theo từ khoá), feed/xu hướng tải lại mỗi khi lưu xong 1 từ khoá. */}
+      {CURRENT_USER_EMAIL && (
+        <SeedingExtensionPanel
+          platform={feedPlatform}
+          posts={posts}
+          onCrawlSaved={(platform, data) => {
+            if (platform === "threads" && data.count > 0) {
+              fetchPosts();
+              fetchDailyTrend();
+            }
           }}
-          onComplete={() => {
+          onCrawlDone={(platform, data) => {
             fetchPosts();
             fetchStats();
-            fetchDailyTrend();
+            if (platform === "threads") fetchDailyTrend();
+            setCrawlResultsSummary((prev) => ({ ...prev, totalPosts: data.totalSaved }));
+            setShowCrawlResultModal(true);
+          }}
+          onCommentDone={(seededUrls) => {
+            fetchPosts();
+            fetchStats();
+            if (seededUrls) setRecentlySeededUrls(seededUrls);
+            setShowSeedingResultModal(true);
           }}
         />
-      )}
-      {CURRENT_USER_EMAIL && feedPlatform === "facebook" && (
-        <>
-          <ApiExtensionLauncher
-            onComplete={(totalPosts) => {
-              fetchPosts();
-              fetchStats();
-              setCrawlResultsSummary(prev => {
-                const realTotal = prev.groups.reduce((sum, g) => sum + g.count, 0);
-                return { ...prev, totalPosts: realTotal > 0 ? realTotal : (totalPosts || 0) };
-              });
-              setShowCrawlResultModal(true);
-            }}
-            onCrawlSaved={(data) => {
-              setCrawlResultsSummary(prev => {
-                const exists = prev.groups.find(g => g.groupUrl === data.groupUrl);
-                let newGroups = prev.groups;
-                if (exists) {
-                  newGroups = prev.groups.map(g => g.groupUrl === data.groupUrl ? { ...g, count: g.count + data.count } : g);
-                } else {
-                  newGroups = [...prev.groups, { groupUrl: data.groupUrl, count: data.count }];
-                }
-                return { ...prev, groups: newGroups };
-              });
-            }}
-          />
-          <BulkCommentLauncher
-            posts={posts}
-            onComplete={(seededUrls) => {
-              fetchPosts();
-              fetchStats();
-              if (seededUrls) setRecentlySeededUrls(seededUrls);
-              setShowSeedingResultModal(true);
-            }}
-          />
-        </>
       )}
 
       {/* Menu doc lap theo mang dich vu (2026-07-04) — loc theo industry, xem
@@ -1109,10 +1074,10 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
               </p>
 
               <button
-                onClick={() => window.location.reload()}
+                onClick={() => setShowCrawlResultModal(false)}
                 className="w-full py-3 bg-primary hover:bg-primary/90 text-white rounded-xl font-bold shadow-md transition-all active:scale-95"
               >
-                Đồng ý & Tải lại trang
+                Đồng ý
               </button>
             </div>
           </div>
@@ -1134,10 +1099,10 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
               </p>
               
               <button
-                onClick={() => window.location.reload()}
+                onClick={() => setShowSeedingResultModal(false)}
                 className="w-full py-3 bg-primary hover:bg-primary/90 text-white rounded-xl font-bold shadow-md transition-all active:scale-95"
               >
-                Đồng ý & Tải lại trang
+                Đồng ý
               </button>
             </div>
           </div>

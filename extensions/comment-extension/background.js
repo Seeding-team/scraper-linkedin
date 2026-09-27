@@ -1,3 +1,8 @@
+// Module cào bài Facebook + LinkedIn (gộp từ 2 extension cũ) + Threads (tìm theo từ khoá).
+// Mỗi file tự bọc IIFE và tự đăng ký chrome.runtime.onMessage riêng cho lệnh
+// MK_FB_CRAWL_* / MK_LI_CRAWL_* / MK_TH_CRAWL_*.
+importScripts("bg/fb-crawl.js", "bg/li-crawl.js", "bg/threads-crawl.js");
+
 let isCommenting = false;
 let currentProgress = null;
 let shouldStop = false;
@@ -312,7 +317,10 @@ async function runBulkComment(payload, uiTabId, postsToRun) {
                             : ((url && (url.includes("linkedin.com") || url.includes("lnkd.in")))
                                 ? "linkedin"
                                 : ((url && url.includes("threads.")) ? "threads" : "facebook")));
-                    const platformId = detectedPlatform === "youtube" ? 2 : (detectedPlatform === "linkedin" ? 3 : (detectedPlatform === "threads" ? 4 : 1));
+                    // Theo bảng platforms thật trên DB: 1 = Facebook, 2 = LinkedIn. Trước đây
+                    // LinkedIn bị gán 3 (không tồn tại) -> seeding_content_kpi.id_platform vi
+                    // phạm khoá ngoại, verify thất bại im lặng, comment LinkedIn không được ghi nhận.
+                    const platformId = detectedPlatform === "linkedin" ? 2 : (detectedPlatform === "youtube" ? 2 : (detectedPlatform === "threads" ? 4 : 1));
 
                     if (verifyConfig.mode === "internal_engagement") {
                         // Trang Tương tác nội bộ — lưu vào bảng KPI riêng, không đụng
@@ -374,6 +382,17 @@ async function runBulkComment(payload, uiTabId, postsToRun) {
                                 headers: { "Content-Type": "application/json" },
                                 body: JSON.stringify(verifyBody)
                             });
+                            if (vResp.ok && detectedPlatform !== "youtube") {
+                                // Backend trả HTTP 200 kèm success:false khi lỗi DB (vd khoá ngoại) —
+                                // trước đây không đọc body nên lỗi lưu seeding bị nuốt mất.
+                                const vJson = await vResp.clone().json().catch(() => null);
+                                if (vJson && vJson.success === false) {
+                                    console.error("[Comment Extension] Lưu seeding thất bại:", vJson.message);
+                                    result.kpiSaveError = vJson.message || "Lưu seeding thất bại";
+                                }
+                            } else if (!vResp.ok && detectedPlatform !== "youtube") {
+                                result.kpiSaveError = `HTTP ${vResp.status}`;
+                            }
                             if (!vResp.ok && detectedPlatform === "youtube") {
                                 await fetch(`${apiBase}/api/all-platform/facebook/seeding-mark/verify`, {
                                     method: "POST",

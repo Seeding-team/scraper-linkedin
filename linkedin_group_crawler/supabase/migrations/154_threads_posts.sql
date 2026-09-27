@@ -1,5 +1,5 @@
--- Bang luu bai viet Threads (threads.com) cao qua extension
--- "Threads API Crawler" (extensions/api-threads-get-extension) — tinh nang
+-- Bang luu bai viet Threads (threads.com) cao qua "Markee Seeding Extension"
+-- (extensions/comment-extension, lenh MK_TH_CRAWL_*, bg/threads-crawl.js) — tinh nang
 -- "Sieu Toc Cao Du Lieu" cho Threads o tab "Seeding ben ngoai", tuong tu
 -- facebook_posts cua Facebook.
 --

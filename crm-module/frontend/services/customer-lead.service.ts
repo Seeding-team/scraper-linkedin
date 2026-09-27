@@ -712,5 +712,15 @@ export const customerLeadService = {
     const data = await apiFetch(`/api/all-platform/customer-leads/${id}/activity-log${qs}`);
     return data?.data ?? { items: [], total: 0 };
   },
+
+  /** Thêm 1 ghi chú độc lập vào activity log — không gắn với đổi stage
+   * (feedback leader: man "Sửa cơ hội" trước đây chỉ ghi note kèm theo lúc
+   * chuyển stage, không có cách ghi chú độc lập bất cứ lúc nào). */
+  addNote: async (id: string, note: string): Promise<{ success: boolean; message?: string }> => {
+    return apiFetch(`/api/all-platform/customer-leads/${id}/notes`, {
+      method: "POST",
+      body: JSON.stringify({ note }),
+    });
+  },
 };
 

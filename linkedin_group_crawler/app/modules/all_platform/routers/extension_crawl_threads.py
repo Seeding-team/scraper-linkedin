@@ -1,4 +1,4 @@
-"""Extension crawl router (Threads) — nhận bài viết cào từ extension "Threads API Crawler".
+"""Extension crawl router (Threads) — nhận bài viết cào bằng "Markee Seeding Extension" (lệnh MK_TH_CRAWL_*).
 
 Auth bằng `x-api-key` giống hệt Facebook/LinkedIn (`extension_crawl.py`,
 `extension_crawl_linkedin.py`). Mỗi request = kết quả tìm kiếm của đúng 1 từ khoá.

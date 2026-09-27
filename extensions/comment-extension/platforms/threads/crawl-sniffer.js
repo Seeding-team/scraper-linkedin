@@ -1,13 +1,13 @@
-// Chạy trong MAIN world của trang Threads (document_start) để bắt response GraphQL mà
+// platforms/threads/crawl-sniffer.js - chạy trong MAIN world của trang Threads (document_start) để bắt response GraphQL mà
 // chính JS của Threads gọi khi cuộn trang kết quả tìm kiếm (trang đầu nằm sẵn trong
 // JSON nhúng của HTML, các trang sau mới tải qua /graphql). Chỉ ĐỌC bản sao response
-// (clone) rồi chuyển nguyên văn sang content.js (world cô lập) qua window.postMessage —
+// (clone) rồi chuyển nguyên văn sang platforms/threads/crawl.js (world cô lập) qua window.postMessage —
 // không sửa request/response gốc, lỗi gì cũng nuốt để không làm hỏng trang Threads.
 (function () {
-    if (window.__markeeThreadsSnifferInstalled) return;
-    window.__markeeThreadsSnifferInstalled = true;
+    if (window.__mkThreadsCrawlSnifferInstalled) return;
+    window.__mkThreadsCrawlSnifferInstalled = true;
 
-    const SOURCE = 'markee-threads-sniffer';
+    const SOURCE = 'mk-threads-crawl-sniffer';
 
     function isWatched(url) {
         return typeof url === 'string' && url.indexOf('graphql') !== -1;

@@ -1,16 +1,18 @@
-// content.js - chạy trên trang Threads (world cô lập), gom bài viết từ 3 nguồn:
+// platforms/threads/crawl.js - cào bài Threads (world cô lập), gom bài viết từ 3 nguồn:
 //   1. JSON nhúng sẵn trong HTML (<script type="application/json">) - trang kết quả đầu tiên.
-//   2. Response GraphQL do sniffer.js (MAIN world) chuyển sang - các trang sau khi cuộn.
+//   2. Response GraphQL do crawl-sniffer.js (MAIN world) chuyển sang - các trang sau khi cuộn.
 //   3. DOM (dự phòng) - chỉ cho những bài hiển thị trên trang mà 2 nguồn trên không có.
 // Dữ liệu bài Threads có dạng { code, taken_at, user: { username, full_name }, caption,
 // like_count, text_post_app_info: { direct_reply_count, repost_count, quote_count } }.
 // Tìm theo "hình dạng" object thay vì đường dẫn cố định để không gãy khi Threads đổi
 // cấu trúc bọc ngoài (thread_items / edges / node...).
+// Chạy chung tab với platforms/threads/content.js (bình luận) - lệnh riêng MK_TH_COLLECT_POSTS,
+// không đụng EXECUTE_COMMENT của file đó.
 (function () {
-    if (window.__markeeThreadsContentInstalled) return;
-    window.__markeeThreadsContentInstalled = true;
+    if (window.__mkThreadsCrawlInstalled) return;
+    window.__mkThreadsCrawlInstalled = true;
 
-    const SNIFFER_SOURCE = 'markee-threads-sniffer';
+    const SNIFFER_SOURCE = 'mk-threads-crawl-sniffer';
     const USERNAME_RE = /^[A-Za-z0-9._]+$/;
     const CODE_RE = /^[A-Za-z0-9_-]+$/;
 
@@ -192,7 +194,7 @@
     }
 
     chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-        if (msg && msg.action === 'THREADS_COLLECT_POSTS') {
+        if (msg && msg.action === 'MK_TH_COLLECT_POSTS') {
             const target = Math.max(1, Number(msg.targetCount) || 60);
             const maxScrolls = Math.max(0, Number(msg.maxScrolls) || 15);
             collect(target, maxScrolls)
