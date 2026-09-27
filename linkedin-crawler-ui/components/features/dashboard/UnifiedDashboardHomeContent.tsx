@@ -639,9 +639,39 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
     [posts, serviceArea],
   );
 
+  // Tach rieng khoi khoi tieu de (!hideHeader) - day la CONTROL chuc nang
+  // (chuyen Facebook/LinkedIn), khong phai trang tri. Bug da gap: khi nhung
+  // trang "Seeding ben ngoai" render component nay voi hideHeader (gom vao
+  // tab noi bo, khong can lai tieu de "Unified Post Feed"), toan bo switcher
+  // nay bi an theo luon -> feedPlatform ket cung o "facebook" mac dinh, tab
+  // "Seeding ben ngoai" khong co cach nao xem duoc bai LinkedIn du logic cao/
+  // luu du lieu LinkedIn da chay va co du lieu that trong linkedin_posts.
+  const platformTabs = (
+    <div className="bg-muted p-0.5 rounded-lg flex gap-0.5">
+      {([
+        { key: "facebook", label: "Facebook" },
+        { key: "linkedin", label: "LinkedIn" },
+      ] as const).map((t) => (
+        <button
+          key={t.key}
+          type="button"
+          onClick={() => { setFeedPlatform(t.key); setPage(1); }}
+          className={cn(
+            "px-4 py-1 rounded-md text-xs font-semibold transition-all cursor-pointer",
+            feedPlatform === t.key
+              ? "bg-white text-foreground shadow-sm"
+              : "text-muted-foreground hover:text-foreground hover:bg-accent",
+          )}
+        >
+          {t.label}
+        </button>
+      ))}
+    </div>
+  );
+
   return (
     <div className="w-full space-y-6">
-      {!hideHeader && (
+      {!hideHeader ? (
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
           <div className="space-y-1">
             <h1 className="text-2xl font-bold text-foreground tracking-tight">Unified Post Feed</h1>
@@ -651,27 +681,12 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
           </div>
 
           <div className="flex flex-wrap items-center gap-3 shrink-0">
-            <div className="bg-muted p-0.5 rounded-lg flex gap-0.5">
-              {([
-                { key: "facebook", label: "Facebook" },
-                { key: "linkedin", label: "LinkedIn" },
-              ] as const).map((t) => (
-                <button
-                  key={t.key}
-                  type="button"
-                  onClick={() => { setFeedPlatform(t.key); setPage(1); }}
-                  className={cn(
-                    "px-4 py-1 rounded-md text-xs font-semibold transition-all cursor-pointer",
-                    feedPlatform === t.key
-                      ? "bg-white text-foreground shadow-sm"
-                      : "text-muted-foreground hover:text-foreground hover:bg-accent",
-                  )}
-                >
-                  {t.label}
-                </button>
-              ))}
-            </div>
+            {platformTabs}
           </div>
+        </div>
+      ) : (
+        <div className="flex items-center justify-end">
+          {platformTabs}
         </div>
       )}
 
