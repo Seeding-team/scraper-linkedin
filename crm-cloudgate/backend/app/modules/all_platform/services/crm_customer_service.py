@@ -115,6 +115,10 @@ def _resolve_source(source: str | None, *, allow_legacy_value: str | None = None
     raise ValueError("Nguon khach hang khong nam trong danh muc crm_source.")
 
 
+def _validate_source(source: str | None) -> None:
+    _resolve_source(source)
+
+
 def _duplicate_query(email_normalized: str | None, phone_normalized: str | None, exclude_id: str | None = None) -> list[dict[str, Any]]:
     supabase = get_supabase_client()
     matches: dict[str, dict[str, Any]] = {}
