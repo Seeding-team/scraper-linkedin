@@ -729,8 +729,24 @@ export function CustomerDealSplitTab({
   const contactPhone = primaryContact?.phone || (currentDisplayDeal as any)?.phone || (currentDisplayDeal as any)?.zalo || '';
   const contactEmail = primaryContact?.email || (currentDisplayDeal as any)?.email || '';
 
+  function handleDealSplitPointerDown(event: React.PointerEvent<HTMLDivElement>) {
+    if (!selectedDealId) return;
+    const target = event.target as HTMLElement | null;
+    if (!target) return;
+    if (target.closest('[data-crm-deal-workspace="true"]')) return;
+    if (target.closest('[data-crm-customer-deal-row="true"]')) return;
+    if (
+      target.closest(
+        'button,a,input,select,textarea,[role="button"],[role="menu"],[role="dialog"],.crm-modal-backdrop,.qc-modal-backdrop'
+      )
+    ) {
+      return;
+    }
+    setSelectedDealId(null);
+  }
+
   return (
-    <div className="space-y-6 w-full relative">
+    <div className="space-y-6 w-full relative" onPointerDownCapture={handleDealSplitPointerDown}>
       
       {/* Top Header Toolbar */}
       <div className="flex flex-wrap items-center justify-between gap-4 pb-4 border-b border-slate-200">
@@ -886,6 +902,7 @@ export function CustomerDealSplitTab({
                 return (
                   <tr 
                     key={deal.id} 
+                    data-crm-customer-deal-row="true"
                     onClick={() => setSelectedDealId(deal.id)}
                     className={`cursor-pointer transition-colors group ${
                       isSelected ? 'bg-rose-50/40 font-medium' : 'hover:bg-slate-50/80 bg-white'
@@ -1008,7 +1025,7 @@ export function CustomerDealSplitTab({
 
       {/* FLOATING SIDE PANEL / WORKSPACE (NO BACKDROP, STAYS OPEN & UPDATES DATA SMOOTHLY) */}
       {selectedDealId && (
-        <aside className="fixed right-0 top-0 bottom-0 z-[9990] w-full max-w-[950px] bg-white shadow-2xl flex flex-col border-l border-slate-200 h-screen overflow-hidden">
+        <aside data-crm-deal-workspace="true" className="fixed right-0 top-0 bottom-0 z-[9990] w-full max-w-[950px] bg-white shadow-2xl flex flex-col border-l border-slate-200 h-screen overflow-hidden">
           
           {loadingDetail && !currentDisplayDeal ? (
             <div className="absolute inset-0 z-20 bg-white/60 backdrop-blur-2xs flex items-center justify-center">
