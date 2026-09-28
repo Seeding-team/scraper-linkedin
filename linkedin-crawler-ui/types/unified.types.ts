@@ -469,6 +469,12 @@ export interface AppUser {
    * được dù cờ này false. */
   can_approve_quotes?: boolean;
   quote_business_role?: "presale" | "sale" | "both" | null;
+  /** "Nhom quyen" CRM (migration 155) - module duoc phep vao (Lead/Customer/
+   * Deal/Quote/Product/Report/Account/Setting). `null` = CHUA duoc gan Nhom
+   * quyen nao (opt-in) - khong gioi han gi, sidebar hien day du nhu hien tai.
+   * Mang RONG (`[]`, khac `null`) nghia la DA gan nhom nhung khong module nao
+   * duoc phep. */
+  effective_modules?: string[] | null;
 }
 
 export interface AuthLoginResponse {

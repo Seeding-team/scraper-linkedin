@@ -11,6 +11,7 @@ from app.modules.all_platform.schemas.customer_lead import (
     DEAL_STAGES,
 )
 from app.modules.all_platform.services import customer_lead_service, decode_token, get_user_by_id, can_write_deal
+from app.modules.all_platform.services.crm_permission_service import has_module_access
 from app.core.supabase_client import friendly_supabase_error_message
 from app.modules.all_platform.services.customer_lead_service import TransitionError
 from app.modules.all_platform.services.crm_delete_cascade_service import CascadeConfirmRequired
@@ -69,6 +70,8 @@ def get_customer_leads(
     page_size: int = Query(50, ge=1, le=500),
     current_user: Any = Depends(get_current_user),
 ):
+    if not has_module_access(current_user, "Deal"):
+        return BaseResponse(success=False, message="Forbidden: không có quyền truy cập module Deal")
     try:
         result = customer_lead_service.get_all_customer_leads(
             current_user=current_user,

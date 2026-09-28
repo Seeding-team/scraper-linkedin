@@ -10,7 +10,11 @@ from app.core.phone import vn_phone_to_e164
 from app.core.supabase_client import execute_supabase_query, get_supabase_client
 from app.modules.all_platform.services.customer_lead_service import BASE_COLUMNS, _normalize_row
 from app.modules.all_platform.services.supabase_quote_service import apply_quote_field_permissions
-from app.modules.all_platform.services.crm_permission_service import can_edit_contract, has_full_crm_access
+from app.modules.all_platform.services.crm_permission_service import (
+    can_edit_contract,
+    has_full_crm_access,
+    get_scope_visible_user_ids,
+)
 from app.modules.all_platform.services.crm_delete_cascade_service import CascadeConfirmRequired, delete_customer_cascade, get_in_tenant
 from app.modules.all_platform.services.supabase_categories_service import get_categories_by_type
 from app.modules.all_platform.services.crm_position_service import apply_position_category
@@ -148,25 +152,31 @@ def _duplicate_query(email_normalized: str | None, phone_normalized: str | None,
 
 
 def _customer_ids_visible_to(user: dict[str, Any]) -> set[str] | None:
-    if _is_admin_or_leader(user):
+    """"Nhom quyen"/Team CRM (migration 155, OPT-IN theo tung user): neu user
+    da duoc gan Nhom quyen VA scope hieu luc la 'personal'/'team', owner_ids
+    duoi day mo rong tu [uid] thanh ca Team CRM cua user do - KHONG doi gi
+    neu user chua duoc gan Nhom quyen nao (van la [uid] nhu truoc gio)."""
+    scope_user_ids = get_scope_visible_user_ids(user)
+    if _is_admin_or_leader(user) and scope_user_ids is None:
         return None
 
     uid = str(user.get("id") or "")
-    if not uid:
+    owner_ids = list(scope_user_ids) if scope_user_ids is not None else ([uid] if uid else [])
+    if not owner_ids:
         return set()
 
     supabase = get_supabase_client()
     visible: set[str] = set()
     owned = execute_supabase_query(
-        lambda: supabase.table("crm_customers").select("id").eq("owner_id", uid).eq("instance", settings.crm_instance).execute()
+        lambda: supabase.table("crm_customers").select("id").in_("owner_id", owner_ids).eq("instance", settings.crm_instance).execute()
     )
     visible.update(row["id"] for row in owned.data or [] if row.get("id"))
 
     by_leaded = execute_supabase_query(
-        lambda: supabase.table("customer_leads").select("customer_id").eq("leaded_by", uid).eq("instance", settings.crm_instance).execute()
+        lambda: supabase.table("customer_leads").select("customer_id").in_("leaded_by", owner_ids).eq("instance", settings.crm_instance).execute()
     )
     by_sdr = execute_supabase_query(
-        lambda: supabase.table("customer_leads").select("customer_id").eq("sdr_id", uid).eq("instance", settings.crm_instance).execute()
+        lambda: supabase.table("customer_leads").select("customer_id").in_("sdr_id", owner_ids).eq("instance", settings.crm_instance).execute()
     )
     for row in (by_leaded.data or []) + (by_sdr.data or []):
         if row.get("customer_id"):

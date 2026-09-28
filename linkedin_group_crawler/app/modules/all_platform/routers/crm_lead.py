@@ -24,7 +24,10 @@ from app.modules.all_platform.services.crm_lead_import_service import (
     revalidate_rows,
 )
 from app.modules.all_platform.services import crm_lead_rule_service
-from app.modules.all_platform.services.crm_permission_service import can_manage_lead_classification_rules
+from app.modules.all_platform.services.crm_permission_service import (
+    can_manage_lead_classification_rules,
+    has_module_access,
+)
 from app.modules.all_platform.services.crm_lead_service import (
     DuplicateLeadError,
     LeadLinkedError,
@@ -68,6 +71,10 @@ def leads_list(
     page_size: int = Query(50, ge=1, le=200),
     user: dict[str, Any] = Depends(get_current_user),
 ) -> BaseResponse:
+    # "Nhom quyen" (migration 155, OPT-IN): user chua duoc gan Nhom quyen nao
+    # thi has_module_access luon True (khong doi hanh vi cu).
+    if not has_module_access(user, "Lead"):
+        return BaseResponse(success=False, message="Forbidden: không có quyền truy cập module Lead")
     try:
         return BaseResponse(
             success=True,

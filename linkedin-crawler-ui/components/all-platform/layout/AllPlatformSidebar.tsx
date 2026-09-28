@@ -99,6 +99,59 @@ export function getDashboardHrefForRole(role?: string | null): string {
   return "/all-platform/internal-engagement";
 }
 
+// "Nhom quyen" CRM (migration 155, OPT-IN theo tung user) - id cua tung muc
+// nav ung voi 1 module. Lead/Customer/Deal/Quote: BACKEND da gate that o
+// endpoint list (has_module_access() trong crm_permission_service.py) - an
+// sidebar khop dung voi API that.
+// Product/Report/Account/Setting: CHI an sidebar, KHONG gate API - vi 3
+// endpoint dung chung o day (getAllProfiles cho "members", service-catalog
+// GET "" con dung boi quote_picker khi tao bao gia, categories/dashboard
+// khong co 1 list endpoint duy nhat) deu la endpoint DUNG CHUNG voi nhieu
+// tinh nang khac ngoai pham vi module nay (vd CrmTeamsShell/AdminTeamModal
+// deu goi getAllProfiles de chon Leader/thanh vien) - gate nham se lam gay
+// nhung tinh nang khong lien quan. Ai goi thang API van khong bi chan (khac
+// Lead/Customer/Deal/Quote).
+const MODULE_NAV_ITEM_IDS: Record<string, string> = {
+  "crm-leads": "Lead",
+  "crm-customers": "Customer",
+  crm: "Deal",
+  "service-catalog": "Product",
+  members: "Account",
+};
+const MODULE_NAV_SUBGROUP_IDS: Record<string, string> = {
+  "crm-sub-quotes": "Quote",
+  "crm-sub-progress-analytics": "Report",
+  "crm-sub-categories": "Setting",
+};
+
+function filterNavChildByModules(child: NavGroupChild, effectiveModules: string[] | null): NavGroupChild | null {
+  if (effectiveModules === null) return child;
+  if (child.type === "subgroup") {
+    const requiredModule = MODULE_NAV_SUBGROUP_IDS[child.id];
+    if (requiredModule && !effectiveModules.includes(requiredModule)) return null;
+    return child;
+  }
+  const requiredModule = MODULE_NAV_ITEM_IDS[child.id];
+  if (requiredModule && !effectiveModules.includes(requiredModule)) return null;
+  return child;
+}
+
+/** Loc bot muc nav theo `effective_modules` cua user hien tai (tra ve tu
+ * `/auth/me`, xem AppAuthContext) - `null` = user chua duoc gan Nhom quyen
+ * nao (opt-in), KHONG loc gi ca, sidebar day du nhu hien tai. */
+export function filterEntriesByEffectiveModules(entries: SidebarEntry[], effectiveModules: string[] | null): SidebarEntry[] {
+  if (effectiveModules === null) return entries;
+  return entries.map(entry => {
+    if (entry.type !== "group") return entry;
+    return {
+      ...entry,
+      items: entry.items
+        .map(child => filterNavChildByModules(child, effectiveModules))
+        .filter((child): child is NavGroupChild => child !== null),
+    };
+  });
+}
+
 export function buildEntries(isAdmin: boolean, isLeader: boolean, workspaceTab: "personal" | "team", isSale: boolean = false): SidebarEntry[] {
   const dashboardHref = getDashboardHrefForRole(isAdmin ? "admin" : isLeader ? "leader" : "member");
   const teamHref = isAdmin
@@ -833,7 +886,11 @@ export function AllPlatformSidebar({
   const isAdmin = user?.role === "admin";
   const isLeader = user?.role === "leader";
   const isSale = Boolean(user?.is_sale);
-  const entries = useMemo(() => buildEntries(isAdmin, isLeader, workspaceTab, isSale), [isAdmin, isLeader, workspaceTab, isSale]);
+  const effectiveModules = user?.effective_modules ?? null;
+  const entries = useMemo(
+    () => filterEntriesByEffectiveModules(buildEntries(isAdmin, isLeader, workspaceTab, isSale), effectiveModules),
+    [isAdmin, isLeader, workspaceTab, isSale, effectiveModules],
+  );
 
   const handleLogout = async () => {
     await logout();

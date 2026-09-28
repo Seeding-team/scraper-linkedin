@@ -52,7 +52,11 @@ def _is_transient_supabase_error(exc: Exception) -> bool:
     return any(part in msg for part in ("server disconnected", "remoteprotocolerror", "timed out", "timeout"))
 
 
-_SAFE_USER_COLUMNS = "id, email, name, role, is_active, can_approve_quotes, quote_business_role, created_at, updated_at, allowed_instances"
+_SAFE_USER_COLUMNS = (
+    "id, email, name, role, is_active, can_approve_quotes, quote_business_role, created_at, updated_at, "
+    "allowed_instances, permission_group_id, data_scope, permission_override, permission_overrides, "
+    "crm_status, crm_note"
+)
 
 
 def get_user(email: str) -> dict:
@@ -322,6 +326,74 @@ def admin_update_account(email: str, updates: dict) -> dict:
         .limit(1)
         .execute()
     )
+    return result.data[0] if result.data else {}
+
+
+def update_user_crm_permission(email: str, updates: dict) -> dict:
+    """Admin-only: gán Nhóm quyền / Team CRM / Phạm vi dữ liệu / override quyền
+    riêng / trạng thái CRM cho 1 tài khoản, từ drawer "Chỉnh quyền user" ở tab
+    Tài khoản CRM (`/all-platform/admin/quan-ly-thanh-vien`) — mirror
+    `admin_update_account` ở trên nhưng tách riêng vì đây là 1 nhóm field
+    hoàn toàn khác (quyền CRM, không phải hồ sơ/định danh tài khoản).
+
+    `crm_status='locked'` luôn kéo theo `is_active=False` (khoá đăng nhập THẬT
+    ngay, không phải chỉ đổi nhãn hiển thị) — mọi giá trị khác của
+    `crm_status` kéo theo `is_active=True`. Đây là control DUY NHẤT cho trạng
+    thái tài khoản trong drawer mới (không có toggle is_active rời như trang
+    cũ) để tránh 2 nguồn khoá lệch nhau.
+
+    `crm_team_id` (nếu có trong `updates`) ghi qua bảng `crm_team_members`
+    riêng (1 user chỉ thuộc đúng 1 Team CRM - xoá liên kết cũ trước khi gán
+    liên kết mới, hoặc chỉ xoá nếu truyền `None`/rỗng)."""
+    supabase: Client = get_supabase_client()
+
+    account_res = (
+        supabase.table("app_users").select("id, email").eq("email", email.lower().strip()).limit(1).execute()
+    )
+    if not account_res.data:
+        raise ValueError(f"Không tìm thấy tài khoản: {email}")
+    account_id = account_res.data[0]["id"]
+
+    profile_update: dict[str, Any] = {"updated_at": "now()"}
+    if "permission_group_id" in updates:
+        profile_update["permission_group_id"] = updates.get("permission_group_id") or None
+    if "data_scope" in updates:
+        profile_update["data_scope"] = updates.get("data_scope") or None
+    if "permission_override" in updates:
+        profile_update["permission_override"] = bool(updates.get("permission_override"))
+    if "permission_overrides" in updates:
+        overrides = updates.get("permission_overrides")
+        profile_update["permission_overrides"] = [str(m) for m in overrides] if overrides else []
+    if "crm_note" in updates:
+        profile_update["crm_note"] = str(updates.get("crm_note") or "").strip() or None
+    if "crm_status" in updates:
+        crm_status = updates.get("crm_status") or "active"
+        if crm_status not in ("active", "pending_review", "locked"):
+            raise ValueError(f"crm_status không hợp lệ: {crm_status!r}")
+        profile_update["crm_status"] = crm_status
+        profile_update["is_active"] = crm_status != "locked"
+
+    if len(profile_update) > 1:
+        supabase.table("app_users").update(profile_update).eq("id", account_id).execute()
+
+    if "crm_team_id" in updates:
+        supabase.table("crm_team_members").delete().eq("user_id", account_id).execute()
+        new_team_id = updates.get("crm_team_id") or None
+        if new_team_id:
+            supabase.table("crm_team_members").insert(
+                {"crm_team_id": new_team_id, "user_id": account_id}
+            ).execute()
+
+    _clear_people_caches()
+    _clear_auth_cache(user_id=account_id, email=email.lower().strip())
+    try:
+        from app.modules.all_platform.services.crm_permission_service import clear_crm_permission_enforcement_cache
+
+        clear_crm_permission_enforcement_cache()
+    except Exception:
+        pass
+
+    result = supabase.table("app_users").select(_SAFE_USER_COLUMNS).eq("id", account_id).limit(1).execute()
     return result.data[0] if result.data else {}
 
 

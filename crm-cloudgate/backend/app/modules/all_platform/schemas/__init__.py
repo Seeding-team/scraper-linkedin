@@ -30,6 +30,15 @@ from app.modules.all_platform.schemas.categories import (
     CategoryUpdateRequest,
     CategoryDeleteRequest,
 )
+from app.modules.all_platform.schemas.crm_permission_group import (
+    CrmPermissionGroupCreateRequest,
+    CrmPermissionGroupUpdateRequest,
+)
+from app.modules.all_platform.schemas.crm_team import (
+    CrmTeamCreateRequest,
+    CrmTeamUpdateRequest,
+    CrmTeamMemberAddRequest,
+)
 from app.modules.all_platform.schemas.members import (
     MemberCreateRequest,
     MemberUpdateRequest,

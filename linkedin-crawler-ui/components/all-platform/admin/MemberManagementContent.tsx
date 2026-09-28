@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { MaterialIcon } from "@/components/ui";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
@@ -17,6 +17,10 @@ import {
   PlatformStatsRow,
 } from "@/components/features/shared/PlatformStatCard";
 import { SearchableSelect } from "@/modules/crm/components/SearchableSelect";
+import { CrmPermissionModal } from "./CrmPermissionModal";
+import { CrmPermissionGroupsTab } from "./CrmPermissionGroupsTab";
+import { crmPermissionGroupsService, type CrmPermissionGroup, type CrmDataScope } from "@/services/all-platform.service";
+import { CRM_MODULE_DEFS, CRM_SCOPE_LABELS } from "@/modules/crm/constants/crmPermissionLabels";
 
 type MemberFormState = {
   id?: string;
@@ -39,7 +43,7 @@ type MemberFormState = {
   skill_ids: string[];
 };
 
-type MemberTab = "accounts" | "members";
+type MemberTab = "accounts" | "members" | "permission_groups";
 
 // Khop dung LEVEL_MAP that cua pm-new — Level la khai niem RIENG, KHONG
 // lien quan Team (vi tri/phong ban). Lay tu currentLevel ben he tuyen dung
@@ -49,25 +53,44 @@ const LEVEL_OPTIONS = [
   "Core Team", "Presales", "Sales", "Leader",
 ];
 
-// Main la CRM markee co dinh, khong co endpoint /auth/workspaces (khong co
-// workspace switcher o Main) - danh sach 3 workspace/clone doc lap dung
-// chung bang app_users nay phai khai bao TINH tai day (chi dung de Admin gan
-// quyen dang nhap o "Quan ly thanh vien", khac voi cac clone crm-module/
-// crm-cloudgate/crm-securityzone lay danh sach dong tu authService.listWorkspaces()).
-const WORKSPACE_OPTIONS: { instance: string }[] = [
-  { instance: "markee" },
-  { instance: "cloudgate" },
-  { instance: "SECURITYZONE" },
-];
+// Badge mau cho bang "Tai khoan CRM" - bam sat prototype
+// markee_crm_account_permission_prototype_v4_full_flow.html (helper `badge()`
+// trong JS: do=Admin, xanh duong=Leader/Sale, xanh la=Presale/Dang hoat dong,
+// tim=Presale & Sale, cam=Chua gan/Cho ra soat/Tam khoa).
+function Badge({ tone, children }: { tone: "red" | "blue" | "green" | "purple" | "orange" | "gray"; children: ReactNode }) {
+  const toneClass: Record<typeof tone, string> = {
+    red: "bg-red-100 text-red-700",
+    blue: "bg-blue-100 text-blue-700",
+    green: "bg-green-100 text-green-700",
+    purple: "bg-purple-100 text-purple-700",
+    orange: "bg-orange-100 text-orange-700",
+    gray: "bg-surface-container-low text-on-surface-variant border border-outline-variant",
+  };
+  return <span className={`inline-block px-2.5 py-1 rounded-full text-[10px] font-bold ${toneClass[tone]}`}>{children}</span>;
+}
 
-const WORKSPACE_LABELS: Record<string, string> = {
-  markee: "Markee",
-  cloudgate: "CloudGate",
-  SECURITYZONE: "SecurityZone",
-};
+function roleBadgeTone(role?: string): "red" | "blue" | "gray" {
+  if (role === "admin") return "red";
+  if (role === "leader") return "blue";
+  return "gray";
+}
 
-function workspaceLabel(instance: string): string {
-  return WORKSPACE_LABELS[instance] || instance;
+function quoteRoleLabelAndTone(role?: string | null): { label: string; tone: "orange" | "blue" | "green" | "purple" } {
+  if (role === "sale") return { label: "Sale", tone: "blue" };
+  if (role === "presale") return { label: "Presale", tone: "green" };
+  if (role === "both") return { label: "Presale & Sale", tone: "purple" };
+  return { label: "Chưa gán", tone: "orange" };
+}
+
+function crmStatusLabelAndTone(status?: string): { label: string; tone: "green" | "orange" | "red" } {
+  if (status === "locked") return { label: "Tạm khóa", tone: "red" };
+  if (status === "pending_review") return { label: "Chờ rà soát", tone: "orange" };
+  return { label: "Đang hoạt động", tone: "green" };
+}
+
+function scopeLabel(account: AppUserProfile, group: CrmPermissionGroup | undefined): string {
+  const scope = (account.data_scope || group?.default_scope) as CrmDataScope | undefined;
+  return scope ? CRM_SCOPE_LABELS[scope] : "—";
 }
 
 // Gia tri MAC DINH luc TAO/GAN tai khoan (khong khoa cung - admin van doi
@@ -216,8 +239,13 @@ export function MemberManagementContent() {
   const [creatingAccount, setCreatingAccount] = useState(false);
   const [createAccountError, setCreateAccountError] = useState<string | null>(null);
 
-  function openCreateAccountModal() {
-    setNewAccountForm({ email: "", full_name: "", role: "member", member_id: "" });
+  function openCreateAccountModal(prefillMember?: MemberProfile) {
+    setNewAccountForm({
+      email: prefillMember?.email || "",
+      full_name: prefillMember?.full_name || "",
+      role: "member",
+      member_id: prefillMember?.id || "",
+    });
     setCreateAccountError(null);
     setShowCreateAccountModal(true);
   }
@@ -230,6 +258,23 @@ export function MemberManagementContent() {
   const [editAccountForm, setEditAccountForm] = useState({ email: "", full_name: "", member_id: "" });
   const [savingEditAccount, setSavingEditAccount] = useState(false);
   const [editAccountError, setEditAccountError] = useState<string | null>(null);
+
+  // "Nhom quyen"/Team CRM (migration 155) - modal rieng cho drawer "Chinh
+  // quyen CRM" (khac han modal "Sua" o tren - do la sua ho so/dinh danh).
+  const [crmPermissionTarget, setCrmPermissionTarget] = useState<AppUserProfile | null>(null);
+  // Danh sach Nhom quyen - chi de TRA TEN hien thi badge "Nhom quyen" trong
+  // bang (khong dung de sua o day - sua that nam trong CrmPermissionModal).
+  const [permissionGroups, setPermissionGroups] = useState<CrmPermissionGroup[]>([]);
+  useEffect(() => {
+    void crmPermissionGroupsService.list().then(res => {
+      if (res.success) setPermissionGroups(res.data || []);
+    });
+  }, []);
+  const permissionGroupsById = useMemo(() => {
+    const map = new Map<string, CrmPermissionGroup>();
+    for (const g of permissionGroups) map.set(g.id, g);
+    return map;
+  }, [permissionGroups]);
 
   function openEditAccountModal(account: AppUserProfile) {
     const linked = memberByLinkedUserId.get(account.id);
@@ -314,66 +359,6 @@ export function MemberManagementContent() {
       setCreateAccountError(err instanceof Error ? err.message : "Lỗi khi tạo tài khoản");
     } finally {
       setCreatingAccount(false);
-    }
-  }
-
-  async function handleRowRoleChange(account: AppUserProfile, role: string) {
-    if (!isAdmin) return; // /update-role: chỉ admin
-    setSavingUserId(account.id);
-    try {
-      const res = await usersService.updateRole(account.email, role);
-      if (!res.success) throw new Error(res.message || "Không đổi được role");
-      await loadAppUsers();
-    } catch (err) {
-      alert(err instanceof Error ? err.message : "Không đổi được role");
-    } finally {
-      setSavingUserId(null);
-    }
-  }
-
-  async function handleRowToggleQuoteApprover(account: AppUserProfile, canApprove: boolean) {
-    if (!isAdmin) return; // /update-quote-approver: chỉ admin
-    setSavingUserId(account.id);
-    try {
-      const res = await usersService.updateQuoteApprover(account.email, canApprove);
-      if (!res.success) throw new Error(res.message || "Không cập nhật được quyền duyệt báo giá");
-      await loadAppUsers();
-    } catch (err) {
-      alert(err instanceof Error ? err.message : "Không cập nhật được quyền duyệt báo giá");
-    } finally {
-      setSavingUserId(null);
-    }
-  }
-
-  async function handleRowChangeBusinessRole(account: AppUserProfile, value: string) {
-    if (!isAdmin) return; // /update-quote-business-role: CHI admin (backend cung tu choi 403 that neu goi thang)
-    const nextRole = value === "" ? null : (value as "presale" | "sale" | "both");
-    setSavingUserId(account.id);
-    try {
-      const res = await usersService.updateQuoteBusinessRole(account.email, nextRole);
-      if (!res.success) throw new Error(res.message || "Không cập nhật được vai trò báo giá");
-      await loadAppUsers();
-    } catch (err) {
-      alert(err instanceof Error ? err.message : "Không cập nhật được vai trò báo giá");
-    } finally {
-      setSavingUserId(null);
-    }
-  }
-
-  async function handleRowToggleWorkspace(account: AppUserProfile, instance: string, checked: boolean) {
-    if (!isAdmin) return; // /update-allowed-instances: chỉ admin
-    const current = new Set(account.allowed_instances || []);
-    if (checked) current.add(instance);
-    else current.delete(instance);
-    setSavingUserId(account.id);
-    try {
-      const res = await usersService.updateAllowedInstances(account.email, Array.from(current));
-      if (!res.success) throw new Error(res.message || "Không cập nhật được workspace");
-      await loadAppUsers();
-    } catch (err) {
-      alert(err instanceof Error ? err.message : "Không cập nhật được workspace");
-    } finally {
-      setSavingUserId(null);
     }
   }
 
@@ -588,7 +573,21 @@ export function MemberManagementContent() {
         >
           Quản lý thành viên
         </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab("permission_groups")}
+          className={cn(
+            "px-4 py-2.5 text-xs font-bold uppercase tracking-wide border-b-2 -mb-px transition",
+            activeTab === "permission_groups"
+              ? "border-primary text-primary"
+              : "border-transparent text-on-surface-variant hover:text-on-background"
+          )}
+        >
+          Nhóm quyền
+        </button>
       </div>
+
+      {activeTab === "permission_groups" && <CrmPermissionGroupsTab />}
 
       {activeTab === "accounts" && (
         <>
@@ -696,7 +695,7 @@ export function MemberManagementContent() {
               {isAdmin && (
                 <button
                   type="button"
-                  onClick={openCreateAccountModal}
+                  onClick={() => openCreateAccountModal()}
                   className="flex items-center justify-center gap-1.5 whitespace-nowrap bg-primary hover:bg-on-primary-fixed-variant text-white px-4 py-2 rounded-xl text-xs font-bold transition shadow-sm"
                 >
                   <MaterialIcon name="add" className="text-base" /> Tạo tài khoản mới
@@ -705,17 +704,17 @@ export function MemberManagementContent() {
             </div>
 
             <div className="overflow-x-auto rounded-xl border border-outline-variant bg-surface shadow-sm">
-              <table className="w-full min-w-[1080px] border-collapse text-left text-xs">
+              <table className="w-full min-w-[1200px] border-collapse text-left text-xs">
                 <thead className="bg-surface-container-low border-b border-outline-variant text-[10px] font-bold text-on-surface-variant uppercase">
                   <tr>
-                    <th className="py-3 px-4">Email</th>
-                    <th className="py-3 px-4">Họ tên</th>
-                    <th className="py-3 px-4">Thành viên liên kết</th>
+                    <th className="py-3 px-4">Tài khoản</th>
                     <th className="py-3 px-4">Team</th>
-                    <th className="py-3 px-4">Role</th>
+                    <th className="py-3 px-4">Nhóm quyền</th>
+                    <th className="py-3 px-4">Role hệ thống</th>
                     <th className="py-3 px-4">Vai trò báo giá</th>
-                    <th className="py-3 px-4">Workspace</th>
-                    <th className="py-3 px-4">Trạng thái</th>
+                    <th className="py-3 px-4">Phạm vi dữ liệu</th>
+                    <th className="py-3 px-4">Quyền riêng</th>
+                    <th className="py-3 px-4">Trạng thái CRM</th>
                     <th className="py-3 px-4 text-center">Hành động</th>
                   </tr>
                 </thead>
@@ -725,119 +724,73 @@ export function MemberManagementContent() {
                   ) : (
                     filteredAccounts.map(account => {
                       const linkedMember = memberByLinkedUserId.get(account.id);
+                      const group = account.permission_group_id ? permissionGroupsById.get(account.permission_group_id) : undefined;
+                      const quoteRole = quoteRoleLabelAndTone(account.quote_business_role);
+                      const crmStatus = crmStatusLabelAndTone(account.crm_status);
+                      const effectiveModules = account.permission_override
+                        ? (account.permission_overrides as string[] | undefined) || []
+                        : group?.modules || [];
                       return (
                         <tr key={account.id} className="hover:bg-surface-container-low transition">
-                          <td className="py-3 px-4 font-semibold text-on-surface">{account.email}</td>
-                          <td className="py-3 px-4">{account.name || "—"}</td>
                           <td className="py-3 px-4">
-                            {linkedMember ? linkedMember.display_name : <span className="italic text-on-surface-variant">Chưa liên kết</span>}
+                            <div className="font-semibold text-on-surface">{account.name || account.email}</div>
+                            <div className="text-[10px] text-on-surface-variant">{account.email}</div>
                           </td>
                           <td className="py-3 px-4">{linkedMember?.team || "—"}</td>
                           <td className="py-3 px-4">
-                            <div className="flex flex-col gap-1.5">
-                              <select
-                                value={account.role || "member"}
-                                disabled={!isAdmin || savingUserId === account.id}
-                                onChange={e => handleRowRoleChange(account, e.target.value)}
-                                className="px-2 py-1 bg-surface-container-low border border-outline-variant rounded-lg text-xs cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
-                                title={isAdmin ? undefined : "Chỉ admin mới đổi role tài khoản có sẵn"}
-                              >
-                                <option value="member">member</option>
-                                <option value="leader">leader</option>
-                                <option value="admin">admin</option>
-                              </select>
-                              <label
-                                className="flex items-center gap-1.5 text-[10px] text-on-surface-variant cursor-pointer disabled:cursor-not-allowed"
-                                title={isAdmin ? "Cho phép tài khoản này duyệt Báo giá (admin luôn duyệt được dù không bật)" : "Chỉ admin mới đổi được quyền này"}
-                              >
-                                <input
-                                  type="checkbox"
-                                  checked={Boolean(account.can_approve_quotes) || account.role === "admin"}
-                                  disabled={!isAdmin || savingUserId === account.id || account.role === "admin"}
-                                  onChange={e => handleRowToggleQuoteApprover(account, e.target.checked)}
-                                />
-                                Được duyệt báo giá
-                              </label>
+                            {group ? <Badge tone="blue">{group.name}</Badge> : <span className="text-on-surface-variant">—</span>}
+                          </td>
+                          <td className="py-3 px-4">
+                            <Badge tone={roleBadgeTone(account.role)}>{account.role || "member"}</Badge>
+                          </td>
+                          <td className="py-3 px-4">
+                            <Badge tone={quoteRole.tone}>{quoteRole.label}</Badge>
+                          </td>
+                          <td className="py-3 px-4">{scopeLabel(account, group)}</td>
+                          <td className="py-3 px-4">
+                            <div className="flex flex-col gap-1 items-start">
+                              <Badge tone={account.permission_override ? "orange" : "green"}>
+                                {account.permission_override ? "Có override" : "Theo nhóm"}
+                              </Badge>
+                              {effectiveModules.length > 0 && (
+                                <div className="flex flex-wrap gap-1">
+                                  {effectiveModules.slice(0, 4).map(m => (
+                                    <span key={m} className="px-1.5 py-0.5 rounded bg-surface-container-low text-[9px]">
+                                      {CRM_MODULE_DEFS.find(d => d.key === m)?.label || m}
+                                    </span>
+                                  ))}
+                                  {effectiveModules.length > 4 && (
+                                    <span className="px-1.5 py-0.5 rounded bg-surface-container-low text-[9px]">
+                                      +{effectiveModules.length - 4}
+                                    </span>
+                                  )}
+                                </div>
+                              )}
                             </div>
                           </td>
                           <td className="py-3 px-4">
-                            {isAdmin ? (
-                              <select
-                                value={account.quote_business_role || ""}
-                                disabled={savingUserId === account.id}
-                                onChange={e => handleRowChangeBusinessRole(account, e.target.value)}
-                                className="px-2 py-1 bg-surface-container-low border border-outline-variant rounded-lg text-xs cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
-                                title="Vai trò nghiệp vụ báo giá (Presale/Sale) — tách biệt với Role hệ thống, chỉ Admin gán được"
-                              >
-                                <option value="">Không tham gia báo giá</option>
-                                <option value="presale">Presale</option>
-                                <option value="sale">Sale</option>
-                              </select>
-                            ) : (
-                              // Leader/Member: CHI xem badge, khong sua duoc (dung yeu cau
-                              // "Leader chi xem badge, khong co select editable" - backend
-                              // van tu choi 403 that neu Leader co goi thang API).
-                              <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-surface-container-low text-on-surface-variant border border-outline-variant">
-                                {account.quote_business_role === "presale"
-                                  ? "Presale"
-                                  : account.quote_business_role === "sale"
-                                    ? "Sale"
-                                    : account.quote_business_role === "both"
-                                      ? "Presale & Sale"
-                                      : "Không tham gia"}
-                              </span>
-                            )}
-                          </td>
-                          <td className="py-3 px-4">
-                            {account.role === "admin" ? (
-                              <span
-                                className="px-2 py-0.5 rounded-full text-[9px] font-bold border border-outline-variant bg-surface-container-low text-on-surface-variant"
-                                title="Admin luôn vào được mọi workspace, không giới hạn"
-                              >
-                                Tất cả
-                              </span>
-                            ) : (
-                              <div className="flex flex-col gap-1">
-                                {WORKSPACE_OPTIONS.map(w => (
-                                  <label key={w.instance} className="flex items-center gap-1.5 text-[10px] text-on-surface-variant cursor-pointer disabled:cursor-not-allowed">
-                                    <input
-                                      type="checkbox"
-                                      checked={(account.allowed_instances || []).includes(w.instance)}
-                                      disabled={!isAdmin || savingUserId === account.id}
-                                      onChange={e => handleRowToggleWorkspace(account, w.instance, e.target.checked)}
-                                    />
-                                    {workspaceLabel(w.instance)}
-                                  </label>
-                                ))}
-                                {!account.allowed_instances?.length && (
-                                  <span className="text-[9px] italic text-on-surface-variant">
-                                    Mặc định: chỉ site đã đăng ký
-                                  </span>
-                                )}
-                              </div>
-                            )}
-                          </td>
-                          <td className="py-3 px-4">
-                            <span
-                              className={`px-2.5 py-1 rounded-full text-[10px] font-bold ${
-                                account.is_active !== false
-                                  ? "bg-green-100 text-green-700"
-                                  : "bg-red-100 text-red-700"
-                              }`}
-                            >
-                              {account.is_active !== false ? "Đang hoạt động" : "Đã vô hiệu hóa"}
-                            </span>
+                            <Badge tone={crmStatus.tone}>{crmStatus.label}</Badge>
                           </td>
                           <td className="py-3 px-4">
                             <div className="flex items-center justify-center gap-2">
                               {isAdmin && (
                                 <button
                                   type="button"
+                                  onClick={() => setCrmPermissionTarget(account)}
+                                  className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[10px] font-bold border border-outline-variant hover:bg-surface-container-low transition"
+                                  title="Chỉnh quyền CRM"
+                                >
+                                  <MaterialIcon name="edit" className="text-sm" /> Chỉnh quyền
+                                </button>
+                              )}
+                              {isAdmin && (
+                                <button
+                                  type="button"
                                   onClick={() => openEditAccountModal(account)}
                                   className="p-1.5 hover:bg-surface-container-low rounded-lg transition"
-                                  title="Sửa"
+                                  title="Sửa hồ sơ (email/họ tên/liên kết thành viên)"
                                 >
-                                  <MaterialIcon name="edit" className="text-base" />
+                                  <MaterialIcon name="account_circle" className="text-base" />
                                 </button>
                               )}
                               <Switch
@@ -961,18 +914,19 @@ export function MemberManagementContent() {
                     <th className="py-3 px-4">Email</th>
                     <th className="py-3 px-4">Leader</th>
                     <th className="py-3 px-4">Tài Khoản</th>
-                    <th className="py-3 px-4">Cấp quyền</th>
+                    <th className="py-3 px-4">Trạng thái CRM</th>
+                    <th className="py-3 px-4">Cấp CRM</th>
                     <th className="py-3 px-4">Trạng thái</th>
                     <th className="py-3 px-4 text-center">Hành động</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-outline-variant text-on-surface-variant">
                   {loading ? (
-                    <tr><td colSpan={12} className="py-12 text-center">Đang tải danh sách thành viên...</td></tr>
+                    <tr><td colSpan={14} className="py-12 text-center">Đang tải danh sách thành viên...</td></tr>
                   ) : membersError ? (
-                    <tr><td colSpan={12} className="py-12 text-center text-red-600 font-medium">{membersError}</td></tr>
+                    <tr><td colSpan={14} className="py-12 text-center text-red-600 font-medium">{membersError}</td></tr>
                   ) : filteredMembers.length === 0 ? (
-                    <tr><td colSpan={12} className="py-12 text-center italic">Chưa có thành viên nào.</td></tr>
+                    <tr><td colSpan={14} className="py-12 text-center italic">Chưa có thành viên nào.</td></tr>
                   ) : (
                     filteredMembers.map((m, index) => {
                       const account = m.linked_user_id ? appUsersById.get(m.linked_user_id) : undefined;
@@ -1001,12 +955,31 @@ export function MemberManagementContent() {
                             )}
                           </td>
                           <td className="py-3 px-4">
-                            {isOff ? (
-                              <span className="text-on-surface-variant">OFF</span>
-                            ) : account ? (
-                              <span className="text-emerald-600 font-bold">Đã có</span>
+                            {/* "Trạng thái CRM" - Đã cấp CRM = co tai khoan dang nhap lien ket
+                                (khop dung binh quyet dinh nhi phan cua prototype v4: u.crm
+                                truthy/false), khong lien quan permission_group_id/crm_status
+                                chi tiet hon (cai do xem trong badge o tab "Quan ly tai khoan"). */}
+                            <Badge tone={account ? "green" : "gray"}>{account ? "Đã cấp CRM" : "Chưa cấp CRM"}</Badge>
+                          </td>
+                          <td className="py-3 px-4">
+                            {account ? (
+                              <button
+                                type="button"
+                                onClick={() => setCrmPermissionTarget(account)}
+                                className="px-2.5 py-1.5 rounded-lg text-[10px] font-bold border border-outline-variant hover:bg-surface-container-low transition"
+                              >
+                                Chỉnh quyền
+                              </button>
+                            ) : isAdmin ? (
+                              <button
+                                type="button"
+                                onClick={() => openCreateAccountModal(m)}
+                                className="px-2.5 py-1.5 rounded-lg text-[10px] font-bold bg-primary text-white hover:bg-on-primary-fixed-variant transition"
+                              >
+                                + Cấp CRM
+                              </button>
                             ) : (
-                              <span className="text-amber-600">Chưa có</span>
+                              <span className="text-on-surface-variant">—</span>
                             )}
                           </td>
                           <td className="py-3 px-4">
@@ -1134,6 +1107,17 @@ export function MemberManagementContent() {
             </form>
           </div>
         </div>
+      )}
+
+      {crmPermissionTarget && (
+        <CrmPermissionModal
+          account={crmPermissionTarget}
+          linkedMember={memberByLinkedUserId.get(crmPermissionTarget.id)}
+          onClose={() => setCrmPermissionTarget(null)}
+          onSaved={updated => {
+            setAppUsers(current => current.map(u => (u.id === updated.id ? { ...u, ...updated } : u)));
+          }}
+        />
       )}
 
       {modalMode && (

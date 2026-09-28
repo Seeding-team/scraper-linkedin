@@ -162,6 +162,7 @@ from app.modules.all_platform.services.supabase_user_service import (
     update_user_quote_approver,
     update_user_quote_business_role,
     admin_update_account,
+    update_user_crm_permission,
     admin_delete_account,
     list_users_by_quote_business_role,
     get_team_members,
@@ -242,6 +243,27 @@ from app.modules.all_platform.services.crm_permission_service import (
     is_sale_member,
     has_full_crm_access,
     can_write_deal,
+    get_effective_permissions,
+)
+from app.modules.all_platform.services.crm_permission_group_service import (
+    list_permission_groups,
+    get_permission_group,
+    create_permission_group,
+    update_permission_group,
+    clone_permission_group,
+    delete_permission_group,
+    list_users_of_permission_group,
+)
+from app.modules.all_platform.services.crm_team_service import (
+    list_teams,
+    get_team,
+    get_team_id_for_user as get_crm_team_id_for_user_lookup,
+    create_team as create_crm_team,
+    update_team as update_crm_team,
+    delete_team as delete_crm_team,
+    add_team_member as add_crm_team_member,
+    remove_team_member as remove_crm_team_member,
+    suggest_team_code,
 )
 from app.modules.all_platform.services.supabase_project_service import (
     list_projects,

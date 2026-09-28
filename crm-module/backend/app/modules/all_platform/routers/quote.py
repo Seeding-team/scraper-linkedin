@@ -92,6 +92,8 @@ from app.modules.all_platform.services.crm_permission_service import (
     can_send_quote_email,
     can_manage_quote_approval_rules,
     can_manage_shared_master_data,
+    has_module_access,
+    get_scope_visible_user_ids,
 )
 from app.modules.all_platform.services import quote_rule_evaluation_service
 from app.modules.all_platform.services.customer_lead_service import get_customer_lead_by_id
@@ -240,7 +242,17 @@ def quotes_list_by_phase(
     processing_stage/status/sent_at that. TOAN BO filter (customer/project/
     owner/team/mine/thoi gian/tim kiem/sla) ap dung o day TRUOC pagination -
     khong con filter tren du lieu 1 trang da tra ve."""
+    if not has_module_access(_user, "Quote"):
+        return BaseResponse(success=False, message="Forbidden: không có quyền truy cập module Quote")
     try:
+        # "Nhom quyen" (migration 155, OPT-IN theo tung user): user da duoc
+        # gan Nhom quyen VA scope hieu luc la 'personal'/'deal_assigned'/
+        # 'team' se bi gioi han THEM theo dung tap user_id duoc phep xem
+        # (`get_scope_visible_user_ids`, dung LAI cung ham voi Lead/Customer/
+        # Deal) - ap dung DOC LAP voi filter `mine` client tu chon (khong the
+        # bypass bang cach bo tick `mine`). None = user chua duoc gan Nhom
+        # quyen nao, hoac scope 'system'/'workspace' - khong gioi han them.
+        scope_user_ids = get_scope_visible_user_ids(_user)
         result = list_quotes_by_phase(
             phase=phase,
             search=search,
@@ -250,6 +262,7 @@ def quotes_list_by_phase(
             quote_owner_id=quote_owner_id,
             owner_id=owner_id,
             mine_user_id=_user.get("id") if mine else None,
+            scope_user_ids=scope_user_ids,
             team_id=team_id,
             date_from=date_from,
             date_to=date_to,
