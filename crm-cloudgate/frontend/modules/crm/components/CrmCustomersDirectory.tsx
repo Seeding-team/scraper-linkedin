@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { API_BASE_URL, API_KEY } from '@/lib/env';
 import { useAppAuth } from '@/contexts/AppAuthContext';
 import { useMembers } from '@/hooks/useMembers';
@@ -15,11 +15,13 @@ import { ActionMenu, type ActionMenuItem } from './ActionMenu';
 import { SearchableSelect } from './SearchableSelect';
 import { ContactSummaryBadge } from './ContactSummaryPopover';
 import { CustomerColumnVisibilityMenu } from './CustomerColumnVisibilityMenu';
+import { CustomerQuickViewPanel } from './CustomerQuickViewPanel';
 import { useCustomerColumnPreferences } from '../hooks/useCustomerColumnPreferences';
 import { Loader2, Plus, RotateCcw } from './icons';
-import { ChevronLeft, ChevronRight, Building2, Phone, Mail } from 'lucide-react';
+import { AlertTriangle, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Building2, Clock3, ListTodo, Phone, Mail } from 'lucide-react';
 import type { CrmCustomerKpi, CrmCustomerRow } from '../types';
 import { cascadeLossText, describeCascadeSummary, sumCascadeSummaries, type CascadeSummary } from '../utils/cascadeDelete';
+import { relativeTime } from '../utils/quoteDisplay';
 
 /**
  * Tab -> status mapping (quyet dinh cuoi cung, xem bao cao task):
@@ -173,6 +175,10 @@ export function CrmCustomersDirectory() {
   const [editingCustomer, setEditingCustomer] = useState<CrmCustomerRow | null>(null);
   const [addDrawerOpen, setAddDrawerOpen] = useState(false);
   const [opportunityCustomer, setOpportunityCustomer] = useState<CrmCustomerRow | null>(null);
+  const [quickViewCustomer, setQuickViewCustomer] = useState<CrmCustomerRow | null>(null);
+  const restoringQuickCustomerRef = useRef('');
+  const [myWorkExpanded, setMyWorkExpanded] = useState(true);
+  const [attentionExpanded, setAttentionExpanded] = useState(true);
   // Xoa 1 hoac NHIEU khach hang (feedback 2026-09-23: "select 1 hoặc nhiều ->
   // Xóa", dung chung 1 modal). Buoc 2 (cascade): khach con du lieu lien quan
   // -> liet ke ro so luong se bi xoa kem, nguoi dung xac nhan moi xoa.
@@ -322,6 +328,42 @@ export function CrmCustomersDirectory() {
     return cleanup;
   }, [load, reloadTick]);
 
+  useEffect(() => {
+    const customerId = new URLSearchParams(window.location.search).get('quickCustomer') || '';
+    if (!customerId) {
+      restoringQuickCustomerRef.current = '';
+      return;
+    }
+    if (quickViewCustomer?.id === customerId) return;
+
+    const listedCustomer = items.find(customer => customer.id === customerId);
+    if (listedCustomer) {
+      restoringQuickCustomerRef.current = customerId;
+      setQuickViewCustomer(listedCustomer);
+      return;
+    }
+    if (loading || restoringQuickCustomerRef.current === customerId) return;
+
+    restoringQuickCustomerRef.current = customerId;
+    let alive = true;
+    fetch(`${API_BASE_URL}/api/all-platform/crm/customers/${encodeURIComponent(customerId)}`, {
+      credentials: 'include',
+      headers: headers(),
+    })
+      .then(async res => {
+        const body = await res.json();
+        if (!res.ok || body.success === false) throw new Error(body.message || 'Không tải được khách hàng.');
+        return body.data as ApiCustomerRow;
+      })
+      .then(customer => {
+        if (alive) setQuickViewCustomer(mapCustomer(customer));
+      })
+      .catch(() => {
+        if (alive) restoringQuickCustomerRef.current = '';
+      });
+    return () => { alive = false; };
+  }, [items, loading, quickViewCustomer?.id]);
+
   const ownerName = useMemo(() => {
     const map = new Map<string, string>();
     members.forEach(m => {
@@ -346,6 +388,46 @@ export function CrmCustomersDirectory() {
     if (user?.id && !seen.has(user.id)) seen.set(user.id, user.name || user.email);
     return [...seen.entries()].sort((a, b) => a[1].localeCompare(b[1]));
   }, [members, user]);
+
+  const myWorkCustomers = useMemo(() => {
+    if (!user?.id) return [];
+    return items
+      .filter(customer => customer.ownerId === user.id && customer.status !== 'not_fit')
+      .sort((a, b) => {
+        const aTime = new Date(a.lastDealAt || a.updatedAt || 0).getTime();
+        const bTime = new Date(b.lastDealAt || b.updatedAt || 0).getTime();
+        return bTime - aTime;
+      })
+      .slice(0, 3);
+  }, [items, user?.id]);
+
+  const attentionItems = useMemo(() => {
+    const now = Date.now();
+    return items
+      .filter(customer => customer.status !== 'not_fit')
+      .map(customer => {
+        const activityAt = customer.lastDealAt || customer.updatedAt;
+        const activityTime = activityAt ? new Date(activityAt).getTime() : 0;
+        const inactiveDays = activityTime > 0 ? Math.floor((now - activityTime) / 86_400_000) : null;
+
+        if (inactiveDays !== null && inactiveDays >= 7) {
+          return { customer, message: `Không có hoạt động ${inactiveDays} ngày`, severity: 'high' as const, priority: 4 };
+        }
+        if (!customer.primaryContact) {
+          return { customer, message: 'Thiếu người liên hệ chính', severity: 'medium' as const, priority: 3 };
+        }
+        if (!customer.dealCount) {
+          return { customer, message: 'Chưa có cơ hội bán hàng', severity: 'medium' as const, priority: 2 };
+        }
+        if (customer.status === 'new_lead') {
+          return { customer, message: 'Tiềm năng cần cập nhật bước tiếp theo', severity: 'medium' as const, priority: 1 };
+        }
+        return null;
+      })
+      .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry))
+      .sort((a, b) => b.priority - a.priority || (b.customer.totalValue || 0) - (a.customer.totalValue || 0))
+      .slice(0, 3);
+  }, [items]);
 
   // Feedback (2026-09-24): chon "Người phụ trách" thi tu dong loc luon Team
   // cua chinh nguoi do (vd chon thanh vien A cua team B -> Team tu hien
@@ -420,26 +502,46 @@ export function CrmCustomersDirectory() {
     router.push(`/all-platform/crm/customers/${customerId}`);
   }
 
-  function goToDetail(customerId: string) {
-    router.push(`/all-platform/crm/customers/${customerId}`);
-  }
-
   function openCustomerRow(customer: CrmCustomerRow) {
     if (opportunityCustomer) {
       setOpportunityCustomer(customer);
       return;
     }
-    goToDetail(customer.id);
+    setQuickViewCustomer(customer);
+    syncQuickViewUrl(customer.id);
   }
 
-  function handleCustomerNameClick(event: ReactMouseEvent<HTMLAnchorElement>, customer: CrmCustomerRow) {
-    if (!opportunityCustomer) {
-      event.stopPropagation();
-      return;
-    }
-    event.preventDefault();
-    event.stopPropagation();
-    setOpportunityCustomer(customer);
+  function syncQuickViewUrl(customerId?: string) {
+    const url = new URL(window.location.href);
+    if (customerId) url.searchParams.set('quickCustomer', customerId);
+    else url.searchParams.delete('quickCustomer');
+    window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}${url.hash}`);
+  }
+
+  function closeQuickView() {
+    setQuickViewCustomer(null);
+    syncQuickViewUrl();
+  }
+
+  function quickViewReturnUrl(customerId: string) {
+    const url = new URL(window.location.href);
+    url.searchParams.set('quickCustomer', customerId);
+    const returnUrl = `${url.pathname}${url.search}${url.hash}`;
+    window.history.replaceState(window.history.state, '', returnUrl);
+    return returnUrl;
+  }
+
+  function openQuoteFromQuickView(quoteId: string, customerId: string) {
+    const params = new URLSearchParams({
+      customerId,
+      returnUrl: quickViewReturnUrl(customerId),
+    });
+    router.push(`/all-platform/crm/quotes/${encodeURIComponent(quoteId)}?${params.toString()}`);
+  }
+
+  function openContractFromQuickView(contractId: string, customerId: string) {
+    const params = new URLSearchParams({ returnUrl: quickViewReturnUrl(customerId) });
+    router.push(`/all-platform/contracts/${encodeURIComponent(contractId)}?${params.toString()}`);
   }
 
   function handleOpportunityCreated() {
@@ -704,12 +806,108 @@ export function CrmCustomersDirectory() {
           </div>
         ) : null}
 
+        <div className={`crm-customer-workspace${!myWorkExpanded && !attentionExpanded ? ' is-work-collapsed' : ''}`}>
+        <aside className="crm-customer-side-rail" aria-label="Công việc và cảnh báo khách hàng">
+        <section className={`crm-my-work${myWorkExpanded ? ' is-expanded' : ' is-collapsed'}`} aria-labelledby="crm-my-work-title">
+          <div className="crm-my-work-header">
+            <div>
+              <span className="crm-my-work-icon" aria-hidden="true"><ListTodo size={18} /></span>
+              <div>
+                <h2 id="crm-my-work-title">Việc của tôi hôm nay</h2>
+                <p>{myWorkCustomers.length ? `${myWorkCustomers.length} khách hàng cần theo dõi trên trang này` : 'Chưa có khách hàng cần theo dõi trên trang này'}</p>
+              </div>
+            </div>
+            <button
+              type="button"
+              className="crm-my-work-toggle"
+              onClick={() => setMyWorkExpanded(value => !value)}
+              aria-expanded={myWorkExpanded}
+              aria-label={myWorkExpanded ? 'Thu gọn việc của tôi' : 'Mở việc của tôi'}
+              title={myWorkExpanded ? 'Thu gọn' : 'Mở rộng'}
+            >
+              {myWorkExpanded ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
+            </button>
+          </div>
+          {myWorkExpanded ? (
+            <div className="crm-my-work-list">
+              {myWorkCustomers.length ? myWorkCustomers.map(customer => (
+                <button
+                  key={customer.id}
+                  type="button"
+                  className={`crm-my-work-item${quickViewCustomer?.id === customer.id ? ' is-active' : ''}`}
+                  onClick={() => openCustomerRow(customer)}
+                >
+                  <span className="crm-my-work-item-main">
+                    <strong>{customer.customerName}</strong>
+                    <small>
+                      {customer.status === 'new_lead'
+                        ? 'Xác minh nhu cầu và cập nhật bước tiếp theo'
+                        : customer.status === 'current_customer'
+                          ? 'Chăm sóc khách hàng và rà soát cơ hội'
+                          : 'Theo dõi cơ hội đang bán'}
+                    </small>
+                  </span>
+                  <span className="crm-my-work-item-meta">
+                    <span><Clock3 size={13} /> {relativeTime(customer.lastDealAt || customer.updatedAt) || 'Chưa cập nhật'}</span>
+                    <b>{formatVND(customer.totalValue || 0) || '0 đ'}</b>
+                  </span>
+                </button>
+              )) : (
+                <div className="crm-my-work-empty">Không có việc cần ưu tiên trong danh sách hiện tại.</div>
+              )}
+            </div>
+          ) : null}
+        </section>
+
+        <section className={`crm-attention${attentionExpanded ? ' is-expanded' : ' is-collapsed'}`} aria-labelledby="crm-attention-title">
+          <div className="crm-my-work-header">
+            <div>
+              <span className="crm-attention-icon" aria-hidden="true"><AlertTriangle size={18} /></span>
+              <div>
+                <h2 id="crm-attention-title">Cần chú ý</h2>
+                <p>{attentionItems.length ? `${attentionItems.length} hồ sơ cần kiểm tra` : 'Không có cảnh báo trên trang này'}</p>
+              </div>
+            </div>
+            <button
+              type="button"
+              className="crm-my-work-toggle"
+              onClick={() => setAttentionExpanded(value => !value)}
+              aria-expanded={attentionExpanded}
+              aria-label={attentionExpanded ? 'Thu gọn cần chú ý' : 'Mở cần chú ý'}
+              title={attentionExpanded ? 'Thu gọn' : 'Mở rộng'}
+            >
+              {attentionExpanded ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
+            </button>
+          </div>
+          {attentionExpanded ? (
+            <div className="crm-attention-list">
+              {attentionItems.length ? attentionItems.map(entry => (
+                <button
+                  key={entry.customer.id}
+                  type="button"
+                  className="crm-attention-item"
+                  onClick={() => openCustomerRow(entry.customer)}
+                >
+                  <span>
+                    <strong>{entry.customer.customerName}</strong>
+                    <small>{entry.message} · {formatVND(entry.customer.totalValue || 0) || '0 đ'}</small>
+                  </span>
+                  <b className={`crm-attention-level is-${entry.severity}`}>{entry.severity === 'high' ? 'Cao' : 'TB'}</b>
+                </button>
+              )) : (
+                <div className="crm-my-work-empty">Không có hồ sơ cần chú ý trong danh sách hiện tại.</div>
+              )}
+            </div>
+          ) : null}
+        </section>
+        </aside>
+
         <section className="crm-directory-list-box">
           <div className="crm-directory-list-top">
             <div>
               <h2 className="crm-directory-list-heading">Danh sách khách hàng</h2>
               <p className="crm-directory-list-sub">
-                Tổng {total} khách hàng · Click vào khách hàng để xem chi tiết và lịch sử giao dịch
+                Tổng {total} khách hàng · Click vào khách hàng để mở hồ sơ chi tiết
               </p>
             </div>
           </div>
@@ -761,7 +959,7 @@ export function CrmCustomersDirectory() {
                       return (
                         <tr
                           key={customer.id}
-                          className="crm-row crm-row--clickable"
+                          className={`crm-row crm-row--clickable${quickViewCustomer?.id === customer.id ? ' is-quickview-selected' : ''}`}
                           data-crm-customer-row="true"
                           onClick={() => openCustomerRow(customer)}
                           style={{ cursor: 'pointer' }}
@@ -781,7 +979,7 @@ export function CrmCustomersDirectory() {
                                   href={`/all-platform/crm/customers/${customer.id}`}
                                   className="crm-customer-name-link"
                                   title={customer.customerName}
-                                  onClick={event => handleCustomerNameClick(event, customer)}
+                                  onClick={event => event.stopPropagation()}
                                 >
                                   {customer.customerName}
                                 </Link>
@@ -918,7 +1116,7 @@ export function CrmCustomersDirectory() {
               items.map(customer => (
                 <div
                   key={customer.id}
-                  className="crm-customer-card"
+                  className={`crm-customer-card${quickViewCustomer?.id === customer.id ? ' is-quickview-selected' : ''}`}
                   data-crm-customer-row="true"
                   onClick={() => openCustomerRow(customer)}
                   style={{ cursor: 'pointer' }}
@@ -937,7 +1135,7 @@ export function CrmCustomersDirectory() {
                         href={`/all-platform/crm/customers/${customer.id}`}
                         className="crm-customer-name-link"
                         title={customer.customerName}
-                        onClick={event => handleCustomerNameClick(event, customer)}
+                        onClick={event => event.stopPropagation()}
                       >
                         {customer.customerName}
                       </Link>
@@ -1064,7 +1262,19 @@ export function CrmCustomersDirectory() {
             </div>
           ) : null}
         </section>
+        </div>
       </section>
+
+      <CustomerQuickViewPanel
+        open={Boolean(quickViewCustomer)}
+        customer={quickViewCustomer}
+        ownerName={ownerName.get(quickViewCustomer?.ownerId || '') || 'Chưa gán'}
+        onClose={closeQuickView}
+        onCreateOpportunity={customer => setOpportunityCustomer(customer)}
+        onOpenDetail={customerId => router.push(`/all-platform/crm/customers/${customerId}`)}
+        onOpenQuote={openQuoteFromQuickView}
+        onOpenContract={openContractFromQuickView}
+      />
 
       <CustomerFormModal
         open={formOpen}

@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { seedingContractRepository } from '../repositories/SeedingContractRepository';
 import { contractStatusClass, contractStatusLabel, CONTRACT_STATUS_TRANSITIONS, extractPaymentTermsFromClauses } from '../constants/contractConfig';
 import { formatVnd } from '@/modules/quotes/utils/quoteCalculations';
@@ -70,6 +70,9 @@ function downloadContractPdf(contract: Contract) {
 
 export function ContractDetailPage({ contractId, onClose }: { contractId: string; onClose?: () => void }) {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const rawReturnUrl = searchParams.get('returnUrl');
+  const returnUrl = rawReturnUrl?.startsWith('/all-platform/') ? rawReturnUrl : null;
   const [contract, setContract] = useState<Contract | null>(null);
   const [clauses, setClauses] = useState<ContractClause[]>([]);
   const [activeClauseIndex, setActiveClauseIndex] = useState(0);
@@ -83,6 +86,14 @@ export function ContractDetailPage({ contractId, onClose }: { contractId: string
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [quoteNumber, setQuoteNumber] = useState<string | null>(null);
+
+  function handleBack() {
+    if (returnUrl) {
+      router.replace(returnUrl);
+      return;
+    }
+    router.push('/all-platform/contracts');
+  }
 
   async function load() {
     setLoading(true);
@@ -207,10 +218,10 @@ export function ContractDetailPage({ contractId, onClose }: { contractId: string
             <button
               type="button"
               className="contract-button contract-button--secondary"
-              onClick={() => router.push('/all-platform/contracts')}
+              onClick={handleBack}
               style={{ marginBottom: '0.6rem' }}
             >
-              ← Danh sách hợp đồng
+              {returnUrl ? '← Quay lại khách hàng' : '← Danh sách hợp đồng'}
             </button>
           ) : null}
           <h1>{contract.contractNumber}</h1>
