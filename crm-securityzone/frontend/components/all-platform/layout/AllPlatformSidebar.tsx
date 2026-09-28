@@ -98,6 +98,62 @@ export function getDashboardHrefForRole(_role?: string | null): string {
   return "/all-platform/crm";
 }
 
+// "Nhom quyen" CRM (migration 155, OPT-IN theo tung user) - id cua tung muc
+// nav ung voi 1 module. Lead/Customer/Deal/Quote: BACKEND da gate that o
+// endpoint list (has_module_access() trong crm_permission_service.py) - an
+// sidebar khop dung voi API that.
+// Product/Report/Account/Setting: CHI an sidebar, KHONG gate API - vi cac
+// endpoint dung chung o day (getAllProfiles cho "members", service-catalog
+// GET "" con dung boi quote_picker khi tao bao gia) deu la endpoint DUNG
+// CHUNG voi nhieu tinh nang khac ngoai pham vi module nay - gate nham se lam
+// gay nhung tinh nang khong lien quan. Ai goi thang API van khong bi chan
+// (khac Lead/Customer/Deal/Quote).
+// Module nay (clone) khong co subgroup nhu app goc (crm-sub-quotes/...) - tat
+// ca muc nav lien quan Quote/Report/Setting deu la item PHANG, nen chi can
+// MODULE_NAV_ITEM_IDS, khong dung subgroup map.
+const MODULE_NAV_ITEM_IDS: Record<string, string> = {
+  "crm-leads": "Lead",
+  "crm-customers": "Customer",
+  crm: "Deal",
+  "quote-center": "Quote",
+  "quote-history": "Quote",
+  "issuer-companies": "Quote",
+  quotes: "Quote",
+  "quote-settings": "Quote",
+  "crm-progress": "Report",
+  "crm-analytics": "Report",
+  "service-catalog": "Product",
+  "crm-categories": "Setting",
+  "crm-lead-rules": "Setting",
+  "crm-interest-levels": "Setting",
+  "crm-deal-stages": "Setting",
+  "crm-sale-teams": "Setting",
+  members: "Account",
+};
+
+function filterNavChildByModules(child: NavGroupChild, effectiveModules: string[] | null): NavGroupChild | null {
+  if (effectiveModules === null) return child;
+  const requiredModule = MODULE_NAV_ITEM_IDS[child.id];
+  if (requiredModule && !effectiveModules.includes(requiredModule)) return null;
+  return child;
+}
+
+/** Loc bot muc nav theo `effective_modules` cua user hien tai (tra ve tu
+ * `/auth/me`, xem AppAuthContext) - `null` = user chua duoc gan Nhom quyen
+ * nao (opt-in), KHONG loc gi ca, sidebar day du nhu hien tai. */
+export function filterEntriesByEffectiveModules(entries: SidebarEntry[], effectiveModules: string[] | null): SidebarEntry[] {
+  if (effectiveModules === null) return entries;
+  return entries.map(entry => {
+    if (entry.type !== "group") return entry;
+    return {
+      ...entry,
+      items: entry.items
+        .map(child => filterNavChildByModules(child, effectiveModules))
+        .filter((child): child is NavGroupChild => child !== null),
+    };
+  });
+}
+
 export function buildEntries(isAdmin: boolean, isLeader: boolean, _workspaceTab?: "personal" | "team", _isSale: boolean = false): SidebarEntry[] {
   return [
     {
@@ -553,7 +609,11 @@ export function AllPlatformSidebar({
   const isAdmin = user?.role === "admin";
   const isLeader = user?.role === "leader";
   const isSale = Boolean(user?.is_sale);
-  const entries = useMemo(() => buildEntries(isAdmin, isLeader, undefined, isSale), [isAdmin, isLeader, isSale]);
+  const effectiveModules = user?.effective_modules ?? null;
+  const entries = useMemo(
+    () => filterEntriesByEffectiveModules(buildEntries(isAdmin, isLeader, undefined, isSale), effectiveModules),
+    [isAdmin, isLeader, isSale, effectiveModules],
+  );
 
   const handleLogout = async () => {
     await logout();

@@ -44,6 +44,7 @@ from app.modules.all_platform.services import (
     reset_password_without_old,
     get_user_by_email,
     is_sale_member,
+    get_effective_permissions,
 )
 
 router = APIRouter()
@@ -297,6 +298,12 @@ def auth_me(request: Request, authorization: str | None = Header(None)) -> BaseR
             authz = f"Bearer {cookie_token}"
 
         user = _get_user_from_header(authz)
+        # "Nhom quyen" (migration 155, OPT-IN theo tung user): modules=None
+        # (user CHUA duoc gan Nhom quyen) -> FE hieu la "khong gioi han them"
+        # (giu nguyen sidebar day du nhu hien tai). Chi khi co gia tri that
+        # (list, co the rong) FE moi an bot muc nav theo dung module.
+        effective = get_effective_permissions(user)
+        effective_modules = sorted(effective["modules"]) if effective["modules"] is not None else None
         return BaseResponse(success=True, data={
             "id": user.get("id"),
             "email": user.get("email"),
@@ -306,6 +313,7 @@ def auth_me(request: Request, authorization: str | None = Header(None)) -> BaseR
             "created_at": user.get("created_at"),
             "is_sale": is_sale_member(user.get("id")),
             "can_approve_quotes": bool(user.get("can_approve_quotes")),
+            "effective_modules": effective_modules,
             "allowedInstances": user.get("allowed_instances"),
             # Port tu Main: thieu field nay khien FE khong biet Sale/Presale/
             # Both cua chinh user dang dang nhap (dung xuyen suot he thong

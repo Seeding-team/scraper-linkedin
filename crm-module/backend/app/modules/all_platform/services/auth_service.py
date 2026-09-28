@@ -16,7 +16,11 @@ from app.core.config import settings
 from app.core.supabase_client import execute_supabase_query, get_supabase_client
 from app.modules.all_platform.services.crm_permission_service import is_sale_member
 
-_USER_PUBLIC_FIELDS = "id, email, name, role, is_active, can_approve_quotes, quote_business_role, created_at, updated_at, home_instance, allowed_instances"
+_USER_PUBLIC_FIELDS = (
+    "id, email, name, role, is_active, can_approve_quotes, quote_business_role, created_at, updated_at, "
+    "home_instance, allowed_instances, "
+    "permission_group_id, data_scope, permission_override, permission_overrides, crm_status, crm_note"
+)
 _USER_CACHE_TTL_SECONDS = 30.0
 _USER_BY_ID_CACHE: dict[str, tuple[float, dict]] = {}
 _USER_BY_EMAIL_CACHE: dict[str, tuple[float, dict]] = {}
@@ -224,7 +228,7 @@ def login_user(email: str, password: str) -> dict:
     result = execute_supabase_query(
         lambda: get_supabase_client()
         .table("app_users")
-        .select("id, email, name, role, is_active, can_approve_quotes, quote_business_role, password, home_instance, allowed_instances")
+        .select(_USER_PUBLIC_FIELDS + ", password")
         .eq("email", email.lower().strip())
         .execute()
     )
@@ -356,7 +360,7 @@ def login_with_google(id_token_str: str) -> dict:
     result = execute_supabase_query(
         lambda: get_supabase_client()
         .table("app_users")
-        .select("id, email, name, role, is_active, can_approve_quotes, quote_business_role, home_instance, allowed_instances")
+        .select(_USER_PUBLIC_FIELDS)
         .eq("email", email)
         .execute()
     )

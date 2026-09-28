@@ -20,6 +20,7 @@ from app.modules.all_platform.services.crm_permission_service import (
     can_view_lead,
     can_write_lead,
     has_full_crm_access,
+    get_scope_visible_user_ids,
 )
 from app.modules.all_platform.services.crm_position_service import apply_position_category
 # "Team" = phong ban THAT trong `members` (HR roster) - dung LAI DUNG nguon
@@ -147,26 +148,38 @@ def _visible_lead_ids(user: dict[str, Any]) -> set[str] | None:
     nhan deal tu 1 lead van can xem lai lead goc.
 
     Ap dung dong nhat cho list_leads/company_match/KPI (yeu cau nghiep vu:
-    "khong lam lo du lieu team khac qua search, KPI hoac company matching")."""
-    if has_full_crm_access(user):
+    "khong lam lo du lieu team khac qua search, KPI hoac company matching").
+
+    "Nhom quyen"/Team CRM (migration 155, OPT-IN theo tung user - xem
+    crm_permission_service.get_scope_visible_user_ids): neu user da duoc gan
+    Nhom quyen VA scope hieu luc la 'personal'/'team', owner_ids duoi day mo
+    rong tu [uid] thanh ca Team CRM cua user do (KHONG doi gi neu user chua
+    duoc gan Nhom quyen nao - van la [uid] nhu truoc gio)."""
+    scope_user_ids = get_scope_visible_user_ids(user)
+    if has_full_crm_access(user) and scope_user_ids is None:
         return None
     uid = str(user.get("id") or "")
-    if not uid:
+    owner_ids = list(scope_user_ids) if scope_user_ids is not None else ([uid] if uid else [])
+    if not owner_ids:
         return set()
 
     supabase = get_supabase_client()
     visible: set[str] = set()
+    own_filter = ",".join(
+        [f"sdr_id.eq.{o}" for o in owner_ids] + [f"qualification_ae_id.eq.{o}" for o in owner_ids]
+    )
     own = execute_supabase_query(
         lambda: supabase.table("crm_leads")
         .select("id")
         .eq("instance", settings.crm_instance)
-        .or_(f"sdr_id.eq.{uid},qualification_ae_id.eq.{uid}")
+        .or_(own_filter)
         .execute()
     )
     visible.update(row["id"] for row in own.data or [] if row.get("id"))
 
+    deal_filter = ",".join([f"leaded_by.eq.{o}" for o in owner_ids] + [f"sdr_id.eq.{o}" for o in owner_ids])
     deal_res = execute_supabase_query(
-        lambda: supabase.table("customer_leads").select("id").eq("instance", settings.crm_instance).or_(f"leaded_by.eq.{uid},sdr_id.eq.{uid}").execute()
+        lambda: supabase.table("customer_leads").select("id").eq("instance", settings.crm_instance).or_(deal_filter).execute()
     )
     deal_ids = [row["id"] for row in deal_res.data or [] if row.get("id")]
     if deal_ids:

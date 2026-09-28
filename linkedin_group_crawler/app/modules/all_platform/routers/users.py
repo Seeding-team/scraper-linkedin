@@ -19,6 +19,7 @@ from app.modules.all_platform.services import (
     update_user_quote_approver,
     update_user_quote_business_role,
     admin_update_account,
+    update_user_crm_permission,
     admin_delete_account,
     list_users_by_quote_business_role,
     get_member_options,
@@ -113,6 +114,26 @@ def users_set_active(payload: dict, _admin: dict = Depends(require_admin_or_lead
             return BaseResponse(success=False, message="email and is_active are required")
         data = update_user_active_status(email, bool(is_active))
         return BaseResponse(success=True, message="Đã cập nhật trạng thái", data=data)
+    except Exception as e:
+        return BaseResponse(success=False, message=str(e))
+
+
+@router.post("/update-crm-permission")
+def users_update_crm_permission(payload: dict, _admin: dict = Depends(require_admin)) -> BaseResponse:
+    """Admin-only: gán Nhóm quyền/Team CRM/Phạm vi dữ liệu/override quyền
+    riêng/trạng thái CRM cho 1 tài khoản, từ drawer "Chỉnh quyền user" ở tab
+    Tài khoản CRM (`/all-platform/admin/quan-ly-thanh-vien`). Payload:
+    `email` (bắt buộc) + bất kỳ tổ hợp `permission_group_id`, `crm_team_id`,
+    `data_scope`, `permission_override`, `permission_overrides`, `crm_status`,
+    `crm_note` — field nào không có trong payload thì giữ nguyên giá trị cũ."""
+    try:
+        email = payload.get("email")
+        if not email:
+            return BaseResponse(success=False, message="email is required")
+        data = update_user_crm_permission(email, payload)
+        return BaseResponse(success=True, message="Đã cập nhật quyền CRM", data=data)
+    except ValueError as e:
+        return BaseResponse(success=False, message=str(e))
     except Exception as e:
         return BaseResponse(success=False, message=str(e))
 

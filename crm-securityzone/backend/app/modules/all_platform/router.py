@@ -28,6 +28,8 @@ from app.modules.all_platform.routers.crm_customer import router as crm_customer
 from app.modules.all_platform.routers.crm_lead import router as crm_lead_router
 from app.modules.all_platform.routers.crm_contact import router as crm_contact_router
 from app.modules.all_platform.routers.crm_contact import detail_router as crm_contact_detail_router
+from app.modules.all_platform.routers.crm_permission_group import router as crm_permission_group_router
+from app.modules.all_platform.routers.crm_team import router as crm_team_router
 from app.modules.all_platform.routers.crm_sync import router as crm_sync_router
 from app.modules.all_platform.routers.quote import (
     quote_forms_router,
@@ -83,6 +85,8 @@ all_platform_router.include_router(
     prefix="/crm/contacts",
     tags=["All-Platform CRM Contacts"],
 )
+all_platform_router.include_router(crm_permission_group_router, prefix="/crm/permission-groups", tags=["All-Platform CRM Permission Groups"])
+all_platform_router.include_router(crm_team_router, prefix="/crm/teams", tags=["All-Platform CRM Teams"])
 
 # ── Sync (he thong ngoai, vd Tech Support, PULL khach hang da mua + contact) ──
 # Auth rieng (require_sync_api_key), KHONG dung JWT app_users nhu cac router

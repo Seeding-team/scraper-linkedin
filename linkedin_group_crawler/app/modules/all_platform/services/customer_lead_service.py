@@ -9,6 +9,7 @@ from app.modules.all_platform.services.crm_position_service import apply_positio
 from app.modules.all_platform.services.crm_city_normalizer import normalize_vietnam_city
 from app.modules.all_platform.services.supabase_user_service import get_member_option_by_id
 from app.modules.all_platform.services.supabase_members_service import get_member_by_display_name
+from app.modules.all_platform.services.crm_permission_service import get_scope_visible_user_ids
 
 logger = logging.getLogger(__name__)
 
@@ -210,6 +211,22 @@ def get_all_customer_leads(
             # transition), xem can_write_deal() trong crm_permission_service.py.
             # (Truoc day co self-scope leaded_by/sdr_id==uid cho non-admin/leader,
             # da bo theo yeu cau "Member duoc xem Pipeline cua minh va team khac".)
+            #
+            # "Nhom quyen"/Team CRM (migration 155, OPT-IN theo tung user): CHI
+            # ap dung khi user do da duoc admin gan Nhom quyen qua man hinh moi
+            # (`get_scope_visible_user_ids` tra ve None cho toan bo user CHUA
+            # duoc gan - universal nhu tren khong doi gi). Khi co, gioi han
+            # them theo leaded_by/sdr_id thuoc dung tap user_id duoc phep xem
+            # (ca nhan hoac ca Team CRM).
+            scope_user_ids = get_scope_visible_user_ids(current_user)
+            if scope_user_ids is not None:
+                ids_list = list(scope_user_ids)
+                if not ids_list:
+                    query = query.eq("id", "00000000-0000-0000-0000-000000000000")
+                else:
+                    query = query.or_(
+                        ",".join([f"leaded_by.eq.{o}" for o in ids_list] + [f"sdr_id.eq.{o}" for o in ids_list])
+                    )
 
             # Sắp xếp theo stage_entered_at DESC — deal mới nhất lên đầu trong cột
             query = (

@@ -1237,6 +1237,7 @@ def list_quotes_by_phase(
     quote_owner_id: str | None = None,
     owner_id: str | None = None,
     mine_user_id: str | None = None,
+    scope_user_ids: set[str] | None = None,
     team_id: str | None = None,
     date_from: str | None = None,
     date_to: str | None = None,
@@ -1299,7 +1300,7 @@ def list_quotes_by_phase(
     # thua khi khong loc gi ca. (Da REVERT viec fetch luon de sap xep theo
     # customerId - xem ghi chu o sort ben duoi.)
     deals_by_id: dict[str, dict] = {}
-    if customer_id or team_id or mine_user_id:
+    if customer_id or team_id or mine_user_id or scope_user_ids is not None:
         deal_ids = list({r["deal_id"] for r in current_rows if r.get("deal_id")})
         if deal_ids:
             deal_result = (
@@ -1362,6 +1363,19 @@ def list_quotes_by_phase(
                 if deal.get("sdr_id") != mine_user_id and deal.get("leaded_by") != mine_user_id:
                     return False
             elif row.get("created_by") != mine_user_id:
+                return False
+        # "Nhom quyen" (migration 155, OPT-IN theo tung user): gioi han THEM
+        # theo Team CRM/Ca nhan cua nguoi goi - dung CHINH xac cung tieu chi
+        # voi mine_user_id o tren (deal.sdr_id/leaded_by, hoac created_by neu
+        # bao gia chua gan deal nao) nhung kiem tra thuoc 1 TAP nhieu user_id
+        # (Team CRM) thay vi 1 id duy nhat. None = khong gioi han them (user
+        # chua duoc gan Nhom quyen nao, hoac scope hieu luc la 'system'/
+        # 'workspace' - giu nguyen hanh vi cu).
+        if scope_user_ids is not None:
+            if deal:
+                if deal.get("sdr_id") not in scope_user_ids and deal.get("leaded_by") not in scope_user_ids:
+                    return False
+            elif row.get("created_by") not in scope_user_ids:
                 return False
         date_key = _quote_row_date_key(row)
         if date_from and (not date_key or date_key < date_from):

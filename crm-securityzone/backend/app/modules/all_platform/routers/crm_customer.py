@@ -27,7 +27,7 @@ from app.modules.all_platform.services.crm_customer_service import (
     update_customer,
 )
 from app.modules.all_platform.services.supabase_project_service import get_customer_projects_summary
-from app.modules.all_platform.services.crm_permission_service import can_view_project
+from app.modules.all_platform.services.crm_permission_service import can_view_project, has_module_access
 
 router = APIRouter()
 
@@ -60,6 +60,8 @@ def customers_list(
     page_size: int = Query(50, ge=1, le=200),
     user: dict[str, Any] = Depends(get_current_user),
 ) -> BaseResponse:
+    if not has_module_access(user, "Customer"):
+        return BaseResponse(success=False, message="Forbidden: không có quyền truy cập module Customer")
     try:
         return BaseResponse(
             success=True,
