@@ -296,7 +296,7 @@ function Field({
 }) {
   return (
     <label className={`crm-field ${full ? 'crm-field--full' : ''}`}>
-      <span>{label}{required ? ' *' : ''}</span>
+      <span>{label}{required ? <> <b>*</b></> : null}</span>
       {children}
       {hint ? <small className="crm-verify-hint">{hint}</small> : null}
     </label>
