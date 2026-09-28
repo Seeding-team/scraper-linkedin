@@ -199,7 +199,7 @@ function GroupLinks({
                     const SubIcon = materialToLucideIcon(child.icon);
                     const subHasActiveChild = child.items.some((sub) => isLeafActive(pathname, sub));
                     // Menu con mặc định MỞ (true), giữ nguyên mở trừ khi đóng/đăng xuất; nếu có trang con active thì luôn mở
-                    const isSubOpen = subHasActiveChild || (openSubgroups[child.id] ?? true);
+                    const isSubOpen = subHasActiveChild || (openSubgroups[child.id] ?? child.defaultOpen ?? true);
 
                     return (
                       <li key={child.id} className="mt-1 list-none space-y-1">
@@ -207,10 +207,10 @@ function GroupLinks({
                           type="button"
                           onClick={() => toggleSubgroup(child.id, isSubOpen)}
                           className={cn(
-                            "flex w-full items-center justify-between gap-1.5 rounded-md px-2 py-1.5 text-sm font-medium transition-colors outline-none",
+                            "flex w-full items-center justify-between gap-1.5 rounded-md px-2 py-1 text-xs font-semibold uppercase tracking-wide transition-colors outline-none",
                             subHasActiveChild
-                              ? "text-sidebar-primary bg-sidebar-primary/10 font-bold"
-                              : "text-sidebar-foreground/75 hover:bg-sidebar-accent hover:text-sidebar-foreground",
+                              ? "text-sidebar-primary bg-sidebar-primary/5"
+                              : "text-sidebar-foreground/60 hover:bg-sidebar-accent hover:text-sidebar-foreground",
                           )}
                         >
                           <span className="flex min-w-0 items-center gap-1.5 truncate">
@@ -231,7 +231,7 @@ function GroupLinks({
                             isSubOpen ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0 pointer-events-none",
                           )}
                         >
-                          <ul className="min-h-0 space-y-1 border-l border-sidebar-border/70 ml-2 pl-2 my-0.5">
+                          <ul className="min-h-0 space-y-0.5 border-l border-sidebar-border/70 ml-2 pl-2 my-0.5">
                             {child.items.map((subItem) => {
                               const SubItemIcon = materialToLucideIcon(subItem.icon);
                               const subActive = isLeafActive(pathname, subItem);
@@ -374,7 +374,7 @@ export function AllPlatformSidebarShadcn() {
         </div>
       </SidebarHeader>
 
-      <SidebarContent>
+      <SidebarContent className="[scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         {entries.map((entry) =>
           entry.type === "section" ? (
             <SectionLinks key={entry.id} entry={entry} />

@@ -18,7 +18,7 @@ import { CustomerColumnVisibilityMenu } from './CustomerColumnVisibilityMenu';
 import { CustomerQuickViewPanel } from './CustomerQuickViewPanel';
 import { useCustomerColumnPreferences } from '../hooks/useCustomerColumnPreferences';
 import { Loader2, Plus, RotateCcw } from './icons';
-import { AlertTriangle, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Building2, Clock3, ListTodo, Phone, Mail } from 'lucide-react';
+import { AlertTriangle, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Clock3, ListTodo } from 'lucide-react';
 import type { CrmCustomerKpi, CrmCustomerRow } from '../types';
 import { cascadeLossText, describeCascadeSummary, sumCascadeSummaries, type CascadeSummary } from '../utils/cascadeDelete';
 import { relativeTime } from '../utils/quoteDisplay';
@@ -177,8 +177,10 @@ export function CrmCustomersDirectory() {
   const [opportunityCustomer, setOpportunityCustomer] = useState<CrmCustomerRow | null>(null);
   const [quickViewCustomer, setQuickViewCustomer] = useState<CrmCustomerRow | null>(null);
   const restoringQuickCustomerRef = useRef('');
-  const [myWorkExpanded, setMyWorkExpanded] = useState(true);
-  const [attentionExpanded, setAttentionExpanded] = useState(true);
+  // 1 state DUY NHAT dieu khien ca 2 section "Viec cua toi hom nay" + "Can
+  // chu y" cung luc (yeu cau: bo 2 nut mui ten rieng, gop lai 1 nut "Mo
+  // nhanh"/"Thu gon" chung, mac dinh DONG khi vao trang).
+  const [workSectionsExpanded, setWorkSectionsExpanded] = useState(false);
   // Xoa 1 hoac NHIEU khach hang (feedback 2026-09-23: "select 1 hoặc nhiều ->
   // Xóa", dung chung 1 modal). Buoc 2 (cascade): khach con du lieu lien quan
   // -> liet ke ro so luong se bi xoa kem, nguoi dung xac nhan moi xoa.
@@ -374,6 +376,32 @@ export function CrmCustomersDirectory() {
     return map;
   }, [members, user]);
 
+  const ownerTeamName = useMemo(() => {
+    const map = new Map<string, string>();
+    members.forEach(m => {
+      const key = m.linked_user_id || m.linked_user_id_2;
+      if (key && m.team) map.set(key, m.team);
+    });
+    return map;
+  }, [members]);
+
+  function nextActionOf(customer: CrmCustomerRow) {
+    if (customer.status === 'new_lead') return 'Xác minh nhu cầu';
+    if (customer.status === 'following') return 'Theo dõi cơ hội';
+    if (customer.status === 'current_customer') return 'Chăm sóc / upsell';
+    if (customer.status === 'not_fit') return 'Không còn theo dõi';
+    return 'Cập nhật hồ sơ';
+  }
+
+  function customerDueState(customer: CrmCustomerRow) {
+    const activityAt = customer.lastDealAt || customer.updatedAt;
+    const activityTime = activityAt ? new Date(activityAt).getTime() : 0;
+    if (!activityTime || Number.isNaN(activityTime)) return { label: 'Chưa có hạn', overdue: false };
+    const inactiveDays = Math.floor((Date.now() - activityTime) / 86_400_000);
+    if (inactiveDays >= 14) return { label: `${inactiveDays} ngày chưa cập nhật`, overdue: true };
+    return { label: 'Chưa có hạn', overdue: false };
+  }
+
   const ownerFilterOptions = useMemo(() => {
     const seen = new Map<string, string>();
     members.forEach(m => {
@@ -463,7 +491,7 @@ export function CrmCustomersDirectory() {
   // "Doanh nghiệp" + "Hành động" luon hien (khong dua vao preference) + so cot
   // tuy chon dang bat - dung de colSpan cho hang loading/empty khop dung so
   // cot that su dang render.
-  const visibleColumnCount = 3 + visibleColumns.size; // + cot checkbox chon nhieu
+  const visibleColumnCount = 10; // checkbox + compact customer columns + existing action column
 
   function resetFilters() {
     setSearchInput('');
@@ -522,6 +550,22 @@ export function CrmCustomersDirectory() {
     setQuickViewCustomer(null);
     syncQuickViewUrl();
   }
+
+  useEffect(() => {
+    if (!quickViewCustomer) return;
+
+    const handleDocumentPointerDown = (event: PointerEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (!target) return;
+      if (target.closest('[data-crm-customer-quickview="true"]')) return;
+      if (target.closest('[data-crm-customer-row="true"]')) return;
+      if (target.closest('[role="dialog"],.crm-modal,.crm-modal-backdrop,.crm-verify-drawer,.crm-action-menu')) return;
+      closeQuickView();
+    };
+
+    document.addEventListener('pointerdown', handleDocumentPointerDown, true);
+    return () => document.removeEventListener('pointerdown', handleDocumentPointerDown, true);
+  }, [quickViewCustomer]);
 
   function quickViewReturnUrl(customerId: string) {
     const url = new URL(window.location.href);
@@ -806,9 +850,21 @@ export function CrmCustomersDirectory() {
           </div>
         ) : null}
 
-        <div className={`crm-customer-workspace${!myWorkExpanded && !attentionExpanded ? ' is-work-collapsed' : ''}`}>
+        <div className={`crm-customer-workspace${!workSectionsExpanded ? ' is-work-collapsed' : ''}`}>
         <aside className="crm-customer-side-rail" aria-label="Công việc và cảnh báo khách hàng">
-        <section className={`crm-my-work${myWorkExpanded ? ' is-expanded' : ' is-collapsed'}`} aria-labelledby="crm-my-work-title">
+        <div className="crm-work-sections-toggle-row">
+          <button
+            type="button"
+            className="crm-work-sections-toggle"
+            onClick={() => setWorkSectionsExpanded(value => !value)}
+            aria-expanded={workSectionsExpanded}
+            aria-label={workSectionsExpanded ? 'Thu gọn' : 'Mở nhanh'}
+            title={workSectionsExpanded ? 'Thu gọn' : 'Mở nhanh'}
+          >
+            {workSectionsExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+          </button>
+        </div>
+        <section className={`crm-my-work${workSectionsExpanded ? ' is-expanded' : ' is-collapsed'}`} aria-labelledby="crm-my-work-title">
           <div className="crm-my-work-header">
             <div>
               <span className="crm-my-work-icon" aria-hidden="true"><ListTodo size={18} /></span>
@@ -817,18 +873,8 @@ export function CrmCustomersDirectory() {
                 <p>{myWorkCustomers.length ? `${myWorkCustomers.length} khách hàng cần theo dõi trên trang này` : 'Chưa có khách hàng cần theo dõi trên trang này'}</p>
               </div>
             </div>
-            <button
-              type="button"
-              className="crm-my-work-toggle"
-              onClick={() => setMyWorkExpanded(value => !value)}
-              aria-expanded={myWorkExpanded}
-              aria-label={myWorkExpanded ? 'Thu gọn việc của tôi' : 'Mở việc của tôi'}
-              title={myWorkExpanded ? 'Thu gọn' : 'Mở rộng'}
-            >
-              {myWorkExpanded ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
-            </button>
           </div>
-          {myWorkExpanded ? (
+          {workSectionsExpanded ? (
             <div className="crm-my-work-list">
               {myWorkCustomers.length ? myWorkCustomers.map(customer => (
                 <button
@@ -859,7 +905,7 @@ export function CrmCustomersDirectory() {
           ) : null}
         </section>
 
-        <section className={`crm-attention${attentionExpanded ? ' is-expanded' : ' is-collapsed'}`} aria-labelledby="crm-attention-title">
+        <section className={`crm-attention${workSectionsExpanded ? ' is-expanded' : ' is-collapsed'}`} aria-labelledby="crm-attention-title">
           <div className="crm-my-work-header">
             <div>
               <span className="crm-attention-icon" aria-hidden="true"><AlertTriangle size={18} /></span>
@@ -868,18 +914,8 @@ export function CrmCustomersDirectory() {
                 <p>{attentionItems.length ? `${attentionItems.length} hồ sơ cần kiểm tra` : 'Không có cảnh báo trên trang này'}</p>
               </div>
             </div>
-            <button
-              type="button"
-              className="crm-my-work-toggle"
-              onClick={() => setAttentionExpanded(value => !value)}
-              aria-expanded={attentionExpanded}
-              aria-label={attentionExpanded ? 'Thu gọn cần chú ý' : 'Mở cần chú ý'}
-              title={attentionExpanded ? 'Thu gọn' : 'Mở rộng'}
-            >
-              {attentionExpanded ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
-            </button>
           </div>
-          {attentionExpanded ? (
+          {workSectionsExpanded ? (
             <div className="crm-attention-list">
               {attentionItems.length ? attentionItems.map(entry => (
                 <button
@@ -917,15 +953,14 @@ export function CrmCustomersDirectory() {
               <table className="crm-table crm-customer-directory-table crm-customer-directory-table--v2">
                 <colgroup>
                   <col style={{ width: 40 }} />
-                  <col className="crm-col-cust-name-v2" />
-                  {visibleColumns.has('primaryContact') ? <col className="crm-col-cust-contact-name" /> : null}
-                  {visibleColumns.has('phone') ? <col className="crm-col-cust-contact-phone" /> : null}
-                  {visibleColumns.has('email') ? <col className="crm-col-cust-contact-email" /> : null}
-                  {visibleColumns.has('taxCode') ? <col className="crm-col-cust-taxcode" /> : null}
-                  {visibleColumns.has('dealCount') ? <col className="crm-col-cust-deals" /> : null}
-                  {visibleColumns.has('pipelineValue') ? <col className="crm-col-cust-value" /> : null}
-                  {visibleColumns.has('status') ? <col className="crm-col-cust-status" /> : null}
-                  {visibleColumns.has('owner') ? <col className="crm-col-cust-owner" /> : null}
+                  <col className="crm-col-customer-compact-main" />
+                  <col className="crm-col-customer-compact-owner" />
+                  <col className="crm-col-customer-compact-count" />
+                  <col className="crm-col-customer-compact-money" />
+                  <col className="crm-col-customer-compact-stage" />
+                  <col className="crm-col-customer-compact-next" />
+                  <col className="crm-col-customer-compact-due" />
+                  <col className="crm-col-customer-compact-activity" />
                   <col className="crm-col-cust-actions" />
                 </colgroup>
                 <thead>
@@ -939,15 +974,14 @@ export function CrmCustomersDirectory() {
                         aria-label="Chọn tất cả khách hàng trên trang này"
                       />
                     </th>
-                    <th className="crm-th">Doanh nghiệp</th>
-                    {visibleColumns.has('primaryContact') ? <th className="crm-th">Người liên hệ chính</th> : null}
-                    {visibleColumns.has('phone') ? <th className="crm-th">SĐT</th> : null}
-                    {visibleColumns.has('email') ? <th className="crm-th">Email</th> : null}
-                    {visibleColumns.has('taxCode') ? <th className="crm-th">MST</th> : null}
-                    {visibleColumns.has('dealCount') ? <th className="crm-th crm-th--right">Cơ hội</th> : null}
-                    {visibleColumns.has('pipelineValue') ? <th className="crm-th crm-th--right">Giá trị Pipeline</th> : null}
-                    {visibleColumns.has('status') ? <th className="crm-th">Trạng thái</th> : null}
-                    {visibleColumns.has('owner') ? <th className="crm-th">Owner</th> : null}
+                    <th className="crm-th">Khách hàng</th>
+                    <th className="crm-th">Team / Owner</th>
+                    <th className="crm-th crm-th--right">Cơ hội mở</th>
+                    <th className="crm-th crm-th--right">Pipeline</th>
+                    <th className="crm-th">Giai đoạn</th>
+                    <th className="crm-th">Việc tiếp theo</th>
+                    <th className="crm-th">Hạn</th>
+                    <th className="crm-th">Last activity</th>
                     <th className="crm-th crm-th--right crm-th--actions-col">Hành động</th>
                   </tr>
                 </thead>
@@ -956,10 +990,17 @@ export function CrmCustomersDirectory() {
                     <tr><td colSpan={visibleColumnCount} className="crm-empty-cell"><Loader2 className="crm-spin-icon" /> Đang tải...</td></tr>
                   ) : items.length ? (
                     items.map(customer => {
+                      const primaryContactName = customer.primaryContact?.name || customer.companyName || 'Chưa có liên hệ';
+                      const primaryPhone = customer.primaryContact?.phone || customer.phone || '';
+                      const owner = ownerName.get(customer.ownerId || '') || 'Chưa gán';
+                      const teamName = ownerTeamName.get(customer.ownerId || '') || 'Chưa có team';
+                      const dueState = customerDueState(customer);
+                      const activityLabel = relativeTime(customer.lastDealAt || customer.updatedAt) || 'Chưa cập nhật';
+                      const isActiveCustomer = quickViewCustomer?.id === customer.id || opportunityCustomer?.id === customer.id;
                       return (
                         <tr
                           key={customer.id}
-                          className={`crm-row crm-row--clickable${quickViewCustomer?.id === customer.id ? ' is-quickview-selected' : ''}`}
+                          className={`crm-row crm-row--clickable crm-customer-compact-row${isActiveCustomer ? ' is-quickview-selected' : ''}`}
                           data-crm-customer-row="true"
                           onClick={() => openCustomerRow(customer)}
                           style={{ cursor: 'pointer' }}
@@ -972,90 +1013,51 @@ export function CrmCustomersDirectory() {
                               aria-label={`Chọn ${customer.customerName}`}
                             />
                           </td>
-                          <td className="crm-td">
-                            <div className="crm-lead-identity">
-                              <div className="crm-lead-identity-text">
-                                <Link
-                                  href={`/all-platform/crm/customers/${customer.id}`}
-                                  className="crm-customer-name-link"
-                                  title={customer.customerName}
-                                  onClick={event => event.stopPropagation()}
-                                >
-                                  {customer.customerName}
-                                </Link>
-                                {(customer.city || customer.website) ? (
-                                  <div className="crm-sub-text" title={[customer.city, customer.website].filter(Boolean).join(' · ')}>
-                                    <Building2 size={12} className="shrink-0 text-gray-400" />
-                                    <span className="truncate">{[customer.city, customer.website].filter(Boolean).join(' · ')}</span>
-                                  </div>
-                                ) : customer.companyName && customer.companyName !== customer.customerName ? (
-                                  <div className="crm-sub-text" title={customer.companyName}>
-                                    <Building2 size={12} className="shrink-0 text-gray-400" />
-                                    <span className="truncate">{customer.companyName}</span>
-                                  </div>
+                          <td className="crm-td crm-customer-compact-main-cell">
+                            <div className="crm-customer-compact-identity">
+                              <Link
+                                href={`/all-platform/crm/customers/${customer.id}`}
+                                className="crm-customer-compact-name"
+                                title={customer.customerName}
+                                onClick={event => event.stopPropagation()}
+                              >
+                                {customer.customerName}
+                              </Link>
+                              <div className="crm-customer-compact-sub" title={[primaryContactName, primaryPhone].filter(Boolean).join(' · ')}>
+                                <span>{primaryContactName}</span>
+                                {primaryPhone ? <span>·</span> : null}
+                                {primaryPhone ? (
+                                  <a href={`tel:${primaryPhone.replace(/[^\d+]/g, '')}`} onClick={event => event.stopPropagation()}>
+                                    {primaryPhone}
+                                  </a>
                                 ) : null}
-                              </div>
-                            </div>
-                          </td>
-                          {visibleColumns.has('primaryContact') ? (
-                            <td className="crm-td">
-                              <div className="crm-customer-contact-name-cell">
-                                <span title={customer.primaryContact?.name || undefined}>{customer.primaryContact?.name || '-'}</span>
                                 {(customer.contactCount || 0) > 1 ? (
                                   <ContactSummaryBadge customerId={customer.id} extraCount={(customer.contactCount || 0) - 1} />
                                 ) : null}
                               </div>
-                            </td>
-                          ) : null}
-                          {visibleColumns.has('phone') ? (
-                            <td className="crm-td crm-contact-cell">
-                              {customer.primaryContact?.phone ? (
-                                <a
-                                  className="crm-contact-chip"
-                                  href={`tel:${customer.primaryContact.phone.replace(/[^\d+]/g, '')}`}
-                                  title={customer.primaryContact.phone}
-                                  onClick={e => e.stopPropagation()}
-                                >
-                                  <Phone size={12} />
-                                  <span>{customer.primaryContact.phone}</span>
-                                </a>
-                              ) : (
-                                <div className="crm-small text-gray-400">-</div>
-                              )}
-                            </td>
-                          ) : null}
-                          {visibleColumns.has('email') ? (
-                            <td className="crm-td crm-contact-cell">
-                              {customer.primaryContact?.email ? (
-                                <a
-                                  className="crm-contact-chip crm-muted"
-                                  title={customer.primaryContact.email}
-                                  href={`mailto:${customer.primaryContact.email}`}
-                                  onClick={e => e.stopPropagation()}
-                                >
-                                  <Mail size={12} />
-                                  <span className="crm-truncate max-w-[140px]">{customer.primaryContact.email}</span>
-                                </a>
-                              ) : (
-                                <div className="crm-muted text-gray-400">-</div>
-                              )}
-                            </td>
-                          ) : null}
-                        {visibleColumns.has('taxCode') ? <td className="crm-td crm-muted">{customer.taxCode || '-'}</td> : null}
-                        {visibleColumns.has('dealCount') ? <td className="crm-td crm-td--right">{customer.dealCount || 0}</td> : null}
-                        {visibleColumns.has('pipelineValue') ? (
-                          <td className="crm-td crm-td--right crm-budget">{formatVND(customer.totalValue || 0) || '0 đ'}</td>
-                        ) : null}
-                        {visibleColumns.has('status') ? (
+                            </div>
+                          </td>
+                          <td className="crm-td crm-customer-compact-stack">
+                            <strong title={teamName}>{teamName}</strong>
+                            <span title={owner}>{owner}</span>
+                          </td>
+                          <td className="crm-td crm-td--right crm-customer-compact-count">{customer.dealCount || 0}</td>
+                          <td className="crm-td crm-td--right">
+                            <span className="crm-customer-compact-money">{formatVND(customer.totalValue || 0) || '0 đ'}</span>
+                          </td>
                           <td className="crm-td">
                             <span className={`crm-customer-status-badge ${STATUS_BADGE_CLASS[customer.status || ''] || ''}`}>
                               {STATUS_LABEL[customer.status || ''] || 'Chưa phân loại'}
                             </span>
                           </td>
-                        ) : null}
-                        {visibleColumns.has('owner') ? (
-                          <td className="crm-td crm-small">{ownerName.get(customer.ownerId || '') || 'Chưa gán'}</td>
-                        ) : null}
+                          <td className="crm-td crm-customer-compact-stack">
+                            <strong title={nextActionOf(customer)}>{nextActionOf(customer)}</strong>
+                            <span>{customer.dealCount ? `${customer.dealCount} cơ hội` : 'Chưa có cơ hội'}</span>
+                          </td>
+                          <td className="crm-td">
+                            <span className={`crm-customer-compact-due${dueState.overdue ? ' is-overdue' : ''}`}>{dueState.label}</span>
+                          </td>
+                          <td className="crm-td crm-small crm-customer-compact-activity" title={activityLabel}>{activityLabel}</td>
                         <td className="crm-td crm-td--actions-col" onClick={event => event.stopPropagation()}>
                           <div className="crm-row-actions">
                             {renderPrimaryAction(customer)}
@@ -1116,7 +1118,7 @@ export function CrmCustomersDirectory() {
               items.map(customer => (
                 <div
                   key={customer.id}
-                  className={`crm-customer-card${quickViewCustomer?.id === customer.id ? ' is-quickview-selected' : ''}`}
+                  className={`crm-customer-card${quickViewCustomer?.id === customer.id || opportunityCustomer?.id === customer.id ? ' is-quickview-selected' : ''}`}
                   data-crm-customer-row="true"
                   onClick={() => openCustomerRow(customer)}
                   style={{ cursor: 'pointer' }}
@@ -1271,7 +1273,7 @@ export function CrmCustomersDirectory() {
         ownerName={ownerName.get(quickViewCustomer?.ownerId || '') || 'Chưa gán'}
         onClose={closeQuickView}
         onCreateOpportunity={customer => setOpportunityCustomer(customer)}
-        onOpenDetail={customerId => router.push(`/all-platform/crm/customers/${customerId}`)}
+        onOpenDetail={(customerId, tab) => router.push(`/all-platform/crm/customers/${customerId}${tab ? `?tab=${tab}` : ''}`)}
         onOpenQuote={openQuoteFromQuickView}
         onOpenContract={openContractFromQuickView}
       />

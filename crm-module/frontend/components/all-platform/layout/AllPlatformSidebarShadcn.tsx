@@ -17,9 +17,9 @@ import {
   buildEntries,
   isLeafActive,
   getInitials,
+  DEFAULT_OPEN_GROUP_IDS,
   type NavGroupItem,
   type NavLeafItem,
-  type NavSectionItem,
 } from "./AllPlatformSidebar";
 import { WorkspaceSwitcherShadcn } from "./WorkspaceSwitcherShadcn";
 import {
@@ -137,32 +137,42 @@ function GroupLinks({
       : child.items.some((sub) => isLeafActive(pathname, sub)),
   );
 
-  const isGroupOpen = openGroups[entry.id] ?? hasActiveChild;
+  const isGroupOpen = openGroups[entry.id] ?? (hasActiveChild || DEFAULT_OPEN_GROUP_IDS.has(entry.id));
 
   return (
     <SidebarMenuItem>
-      <SidebarMenuButton
+      {/* Tieu de 1 trong 6 nhom phang — chu nho, in hoa, mau nhat, KHONG
+          nen/khung bao quanh (khac voi 1 menu item thuong su dung
+          SidebarMenuButton to nen khi active). Ban than nut nay vua la
+          label vua la toggle mo/dong (chevron). */}
+      <button
         type="button"
         onClick={() => toggleGroup(entry.id, isGroupOpen)}
-        isActive={entry.headerNeverActive ? false : hasActiveChild}
-        tooltip={entry.label}
-        className="justify-between font-semibold"
+        className={cn(
+          "flex w-full items-center justify-between gap-2 rounded-md px-2 py-1 text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-sidebar-ring",
+          "group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0",
+          hasActiveChild
+            ? "text-sidebar-primary"
+            : "text-sidebar-foreground/60 hover:bg-sidebar-accent hover:text-sidebar-foreground",
+        )}
       >
-        <span className="flex items-center gap-2 min-w-0">
+        <span className="flex min-w-0 items-center gap-2">
           <Icon className="size-4 shrink-0" />
-          <span className="truncate">{entry.label}</span>
+          <span className="truncate text-[11px] font-semibold uppercase tracking-wider group-data-[collapsible=icon]:hidden">
+            {entry.label}
+          </span>
         </span>
         <ChevronRight
           className={cn(
-            "size-4 shrink-0 transition-transform duration-200 text-sidebar-foreground/50",
+            "size-3.5 shrink-0 transition-transform duration-200 opacity-70 group-data-[collapsible=icon]:hidden",
             isGroupOpen && "rotate-90",
           )}
         />
-      </SidebarMenuButton>
+      </button>
 
       <div
         className={cn(
-          "grid overflow-hidden transition-all duration-200 ease-in-out",
+          "grid overflow-hidden transition-all duration-200 ease-in-out group-data-[collapsible=icon]:hidden",
           isGroupOpen ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0 pointer-events-none",
         )}
       >
@@ -341,9 +351,12 @@ export function AllPlatformSidebarShadcn() {
         {isAdmin || (user?.allowedInstances?.length ?? 0) > 1 ? <WorkspaceSwitcherShadcn /> : null}
       </SidebarHeader>
 
-      <SidebarContent>
+      {/* Container cuon DUY NHAT cho toan bo khu vuc menu (SidebarContent da
+          overflow-auto san) — them scrollbar-none de an thanh cuon nhung van
+          cuon duoc binh thuong. */}
+      <SidebarContent className="scrollbar-none">
         <SidebarGroup className="px-2 py-1">
-          <SidebarMenu className="gap-1">
+          <SidebarMenu className="gap-0.5">
             {entries.map((entry) => {
               if (entry.type === "section") {
                 return (

@@ -7,7 +7,7 @@ import { CustomerActivityTab } from './CustomerActivityTab';
 
 
 import Link from 'next/link';
-import { useSearchParams } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { Fragment, useEffect, useMemo, useState } from 'react';
 import { API_BASE_URL, API_KEY } from '@/lib/env';
 import { useAppAuth } from '@/contexts/AppAuthContext';
@@ -58,6 +58,7 @@ import {
   Mail,
   Edit3,
   ArrowRight,
+  ArrowLeft,
   FolderKanban,
   LayoutDashboard,
   Users,
@@ -395,6 +396,7 @@ type Tab = 'overview' | 'activity' | 'contacts' | 'projects' | 'deals' | 'quotes
 
 export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
   const { user } = useAppAuth();
+  const router = useRouter();
   const searchParams = useSearchParams();
   const [data, setData] = useState<RelatedPayload | null>(null);
   const [loading, setLoading] = useState(true);
@@ -411,6 +413,14 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
       : 'overview';
   
   const [tab, setTabState] = useState<Tab>(initialTab);
+
+  const goBack = () => {
+    if (typeof window !== 'undefined' && window.history.length > 1) {
+      router.back();
+      return;
+    }
+    router.push('/all-platform/crm/customers');
+  };
 
   useEffect(() => {
     setTabState(initialTab);
@@ -1020,25 +1030,21 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
     );
   }
 
-  const initial = (customer?.customer_name || '?').trim().charAt(0).toUpperCase() || '?';
-
   return (
     <div className="crm-shell">
       <section className="crm-page-card crm-customers-page-shell bg-slate-50/70">
         <div className="bg-white border-b border-slate-200 mb-4">
           <div className="px-4 pt-3 text-xs text-slate-500">
-            <Link href="/all-platform/crm" className="hover:text-[#c2185b]">CRM</Link>
-            <span className="mx-1.5">/</span>
-            <Link href="/all-platform/crm/customers" className="hover:text-[#c2185b]">Khách hàng</Link>
+            <button type="button" onClick={goBack} className="inline-flex items-center gap-1 hover:text-[#c2185b]">
+              <ArrowLeft className="size-3.5" />
+              Khách hàng
+            </button>
             <span className="mx-1.5">/</span>
             <span>{customer?.customer_name || 'Khách hàng chưa tên'}</span>
           </div>
 
           <div className="px-4 py-4 flex items-center justify-between">
             <div className="flex items-center gap-3.5 min-w-0">
-              <span className="size-11 rounded-full bg-rose-100 text-[#c2185b] flex items-center justify-center text-lg font-bold uppercase shrink-0" aria-hidden="true">
-                {initial}
-              </span>
               <div className="min-w-0">
                 <div className="flex items-center gap-2 mb-1">
                   <h1 className="text-xl font-bold text-slate-900 truncate">{customer?.customer_name || 'Khách hàng chưa tên'}</h1>

@@ -4,7 +4,7 @@ import { CurrencyInput } from '@/components/CurrencyInput';
 import { formatVND, PIPELINE_COLUMNS, DEAL_STAGE_META } from '../constants/crmConfig';
 import { CrmCategorySelect } from './CrmCategorySelect';
 import { CrmProductMultiSelect } from './CrmProductMultiSelect';
-import { SearchableSelect } from './SearchableSelect';
+import { SearchableSelect, type SelectAction } from './SearchableSelect';
 import { AlertTriangle, CheckCircle2, XCircle } from './icons';
 import {
   INTEREST_LEVEL_OPTIONS,
@@ -45,6 +45,19 @@ export function LeadDealQualificationPanel(props: {
   onProjectChange: (value: string) => void;
   note: string;
   onNoteChange: (value: string) => void;
+
+  /** "Team Sale" - filter cascading CHỈ dùng để thu hẹp "Sale phụ trách" theo
+   * Team CRM (crm_team_service/crm_teams) - KHÔNG có cột lưu riêng nào trên
+   * Lead/Deal, chỉ chọn cá nhân (aeId) mới thực sự được lưu. Cha tự fetch
+   * danh sách Team + thành viên Team, panel này chỉ nhận input/callback. */
+  teamId: string;
+  onTeamIdChange: (value: string) => void;
+  teamOptions: Array<{ value: string; label: string }>;
+  /** "+ Thêm Team mới" (và tuỳ chọn khác) trong dropdown "Team Sale" - cùng
+   * quy ước `actions` của SearchableSelect (xem CrmVendorSelect.tsx). Không
+   * bắt buộc - cha nào không truyền thì dropdown không có action nào (hành vi
+   * cũ, không đổi). */
+  teamActions?: SelectAction[];
 
   aeId: string;
   onAeIdChange: (value: string) => void;
@@ -164,9 +177,7 @@ export function LeadDealQualificationPanel(props: {
         <div className="crm-verify-compact-fields">
           <div className="crm-inline-pair">
             <Field label="Team Sale" required>
-              <select disabled={!canWrite} value="" onChange={() => {}}>
-                <option value="">-- Chọn --</option>
-              </select>
+              <SearchableSelect disabled={!canWrite} value={props.teamId} onChange={props.onTeamIdChange} options={props.teamOptions} placeholder="-- Chọn --" actions={props.teamActions} />
             </Field>
             <Field label="Sale phụ trách">
               <SearchableSelect disabled={!canWrite} value={props.aeId} onChange={props.onAeIdChange} options={props.aeOptions} placeholder="Chờ phân công" />

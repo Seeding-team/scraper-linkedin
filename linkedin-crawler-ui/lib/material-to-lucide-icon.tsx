@@ -38,6 +38,15 @@ import {
   Share2,
   FolderArchive,
   LineChart,
+  FolderKanban,
+  Package,
+  Library,
+  Files,
+  GitBranch,
+  Plug,
+  Gauge,
+  Wallet,
+  ListFilter,
   type LucideIcon,
 } from "lucide-react";
 import type { MaterialSymbolName } from "@/components/ui";
@@ -87,6 +96,15 @@ const MAP: Partial<Record<MaterialSymbolName, LucideIcon>> = {
   share: Share2,
   folder_shared: FolderArchive,
   analytics: LineChart,
+  folder_kanban: FolderKanban,
+  package: Package,
+  library_books: Library,
+  folder_copy: Files,
+  account_tree: GitBranch,
+  plug: Plug,
+  speed: Gauge,
+  account_balance_wallet: Wallet,
+  filter_list: ListFilter,
 };
 
 export function materialToLucideIcon(name: MaterialSymbolName): LucideIcon {

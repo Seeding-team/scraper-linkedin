@@ -20,7 +20,7 @@ import {
 import { API_BASE_URL, API_KEY } from '@/lib/env';
 import { formatVND } from '../constants/crmConfig';
 import type { CrmCustomerRow } from '../types';
-import { initialsOf, relativeTime } from '../utils/quoteDisplay';
+import { relativeTime } from '../utils/quoteDisplay';
 
 type RelatedDeal = {
   id: string;
@@ -86,7 +86,7 @@ type CustomerQuickViewPanelProps = {
   ownerName: string;
   onClose: () => void;
   onCreateOpportunity: (customer: CrmCustomerRow) => void;
-  onOpenDetail: (customerId: string) => void;
+  onOpenDetail: (customerId: string, tab?: 'deals' | 'quotes' | 'contracts' | 'activity') => void;
   onOpenQuote: (quoteId: string, customerId: string) => void;
   onOpenContract: (contractId: string, customerId: string) => void;
 };
@@ -311,15 +311,13 @@ export function CustomerQuickViewPanel({
   return (
     <aside
       className={`crm-customer-quickview${open && customer ? ' is-open' : ''}`}
+      data-crm-customer-quickview="true"
       aria-hidden={!open || !customer}
       aria-label={customer ? `Xem nhanh khách hàng ${customer.customerName}` : 'Xem nhanh khách hàng'}
     >
       {customer ? (
         <>
           <header className="crm-customer-quickview-header">
-            <div className="crm-customer-quickview-avatar" aria-hidden="true">
-              {initialsOf(customer.customerName)}
-            </div>
             <div className="crm-customer-quickview-heading">
               <span>Khách hàng</span>
               <h2>{customer.customerName}</h2>
@@ -329,6 +327,11 @@ export function CustomerQuickViewPanel({
                   {STATUS_LABEL[customer.status || ''] || 'Chưa phân loại'}
                 </span>
                 {customer.source ? <span className="crm-customer-quickview-source">{customer.source}</span> : null}
+              </div>
+              <div className="crm-customer-quickview-meta" aria-label="Thông tin liên hệ nhanh">
+                <span><Phone size={16} /> {phone || 'Chưa có số điện thoại'}</span>
+                <span><Mail size={16} /> {email || 'Chưa có email'}</span>
+                {customer.city ? <span>{customer.city}</span> : null}
               </div>
             </div>
             <button type="button" className="crm-customer-quickview-close" onClick={onClose} aria-label="Đóng xem nhanh" title="Đóng">
@@ -398,7 +401,7 @@ export function CustomerQuickViewPanel({
             <section className="crm-customer-quickview-section">
               <div className="crm-customer-quickview-section-title">
                 <h3>Cơ hội đang mở</h3>
-                <button type="button" onClick={() => onOpenDetail(customer.id)}>Xem tất cả</button>
+                <button type="button" onClick={() => onOpenDetail(customer.id, 'deals')}>Xem tất cả</button>
               </div>
               {loading ? (
                 <div className="crm-customer-quickview-loading">Đang tải cơ hội...</div>
@@ -407,7 +410,7 @@ export function CustomerQuickViewPanel({
               ) : openDeals.length ? (
                 <div className="crm-customer-opportunity-list">
                   {openDeals.slice(0, 3).map(deal => (
-                    <button key={deal.id} type="button" onClick={() => onOpenDetail(customer.id)}>
+                    <button key={deal.id} type="button" onClick={() => onOpenDetail(customer.id, 'deals')}>
                       <span className="crm-customer-opportunity-icon"><BriefcaseBusiness size={16} /></span>
                       <span className="crm-customer-opportunity-main">
                         <strong>{deal.customer_name || deal.company_name || customer.customerName}</strong>
@@ -426,7 +429,7 @@ export function CustomerQuickViewPanel({
             <section className="crm-customer-quickview-section">
               <div className="crm-customer-quickview-section-title">
                 <h3>Báo giá cần chú ý</h3>
-                <button type="button" onClick={() => onOpenDetail(customer.id)}>Xem tất cả</button>
+                <button type="button" onClick={() => onOpenDetail(customer.id, 'quotes')}>Xem tất cả</button>
               </div>
               {loading ? (
                 <div className="crm-customer-quickview-loading">Đang tải báo giá...</div>
@@ -452,7 +455,7 @@ export function CustomerQuickViewPanel({
             <section className="crm-customer-quickview-section">
               <div className="crm-customer-quickview-section-title">
                 <h3>Hợp đồng / doanh thu</h3>
-                <button type="button" onClick={() => onOpenDetail(customer.id)}>Xem tất cả</button>
+                <button type="button" onClick={() => onOpenDetail(customer.id, 'contracts')}>Xem tất cả</button>
               </div>
               {loading ? (
                 <div className="crm-customer-quickview-loading">Đang tải hợp đồng...</div>
@@ -478,7 +481,7 @@ export function CustomerQuickViewPanel({
             <section className="crm-customer-quickview-section">
               <div className="crm-customer-quickview-section-title">
                 <h3>Hoạt động gần nhất</h3>
-                <button type="button" onClick={() => onOpenDetail(customer.id)}>Xem lịch sử</button>
+                <button type="button" onClick={() => onOpenDetail(customer.id, 'activity')}>Xem lịch sử</button>
               </div>
               {activityLoading ? (
                 <div className="crm-customer-quickview-loading">Đang tải hoạt động...</div>
@@ -520,7 +523,7 @@ export function CustomerQuickViewPanel({
                 <Plus size={17} /> Cơ hội
               </button>
             ) : null}
-            <button type="button" className="crm-customer-quickview-secondary" onClick={() => onOpenDetail(customer.id)}>
+            <button type="button" className="crm-customer-quickview-secondary" onClick={() => onOpenDetail(customer.id, 'activity')}>
               <Activity size={17} /> Hoạt động
             </button>
             <button type="button" className="crm-customer-quickview-primary" onClick={() => onOpenDetail(customer.id)}>

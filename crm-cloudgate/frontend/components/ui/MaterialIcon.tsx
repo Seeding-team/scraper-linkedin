@@ -130,7 +130,19 @@ export type MaterialSymbolName =
   // "Leads" (person_add) và các icon còn lại trong nhóm Quản lý CRM.
   | "filter_alt"
   | "bookmark_add"
-  | "folder_shared";
+  | "folder_shared"
+  // Sidebar CRM redesign (6 nhom phang: Giao tiep / Ban hang / Theo doi & phan
+  // tich / Tai nguyen ban hang / Cau hinh CRM / Quan tri) — icon moi bo sung
+  // cho cac muc/nhom chua co ten Material Symbol tuong ung truoc do.
+  | "schema"
+  | "account_tree"
+  | "inventory_2"
+  | "folder_copy"
+  | "account_balance"
+  | "local_library"
+  | "settings_applications"
+  | "power"
+  | "bar_chart";
 
 export interface MaterialIconProps {
   name: MaterialSymbolName;

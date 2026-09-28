@@ -106,7 +106,6 @@ export function LeadEditDrawer({
   const [form, setForm] = useState<EditFormState | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
-  const [savedOk, setSavedOk] = useState('');
 
   useEffect(() => {
     if (!open || !lead) {
@@ -115,10 +114,9 @@ export function LeadEditDrawer({
     }
     setForm(formFromLead(lead));
     setError('');
-    setSavedOk('');
-    // Nạp lại form theo lead.id (không theo tham chiếu object) — sau khi lưu,
-    // LeadsDirectory đẩy xuống 1 object mới cho CÙNG lead, nếu chạy lại theo
-    // tham chiếu thì thông báo "Đã lưu" vừa hiện sẽ bị xoá ngay lập tức.
+    // Nạp lại form theo lead.id (không theo tham chiếu object) — tránh chạy
+    // lại effect này khi LeadsDirectory chỉ đẩy xuống 1 object mới cho CÙNG
+    // lead (vd sau khi lưu ở nơi khác).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, lead?.id]);
 
@@ -176,12 +174,10 @@ export function LeadEditDrawer({
     const validationError = validate(form);
     if (validationError) {
       setError(validationError);
-      setSavedOk('');
       return;
     }
     setSaving(true);
     setError('');
-    setSavedOk('');
     try {
       const payload: Record<string, unknown> = {
         lead_name: form.leadName.trim(),
@@ -211,7 +207,7 @@ export function LeadEditDrawer({
       const body = await res.json();
       if (!res.ok || body.success === false) throw new Error(body?.message || `Không lưu được thay đổi (lỗi ${res.status}).`);
       onSaved(mapLead(body.data));
-      setSavedOk('Đã lưu thay đổi.');
+      onClose();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Không lưu được thay đổi.');
     } finally {
@@ -235,7 +231,6 @@ export function LeadEditDrawer({
 
         <div className="crm-drawer-body crm-lead-drawer-body">
           {error ? <p className="crm-error" data-testid="lead-edit-error">{error}</p> : null}
-          {savedOk ? <p className="crm-verify-ok" data-testid="lead-edit-ok">{savedOk}</p> : null}
           {!canWrite ? (
             <p className="crm-lead-lock-message">Bạn không có quyền sửa Lead này — chỉ xem.</p>
           ) : null}

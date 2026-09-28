@@ -56,7 +56,7 @@ export interface NavSectionItem {
 export type SidebarEntry = NavLeafItem | NavGroupItem | NavSectionItem;
 
 const navBaseClass =
-  "group relative flex min-h-[36px] items-center gap-2.5 overflow-hidden rounded-xl px-2.5 py-1.5 text-sm font-medium leading-relaxed transition-colors outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-markee-primary)]/40";
+  "group relative flex min-h-[32px] items-center gap-2.5 overflow-hidden rounded-lg px-2.5 py-1 text-sm font-medium leading-relaxed transition-colors outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-markee-primary)]/40";
 const navActiveClass = "rounded-md bg-[var(--color-markee-primary)]/10 text-[var(--color-markee-primary)] font-semibold";
 const navActiveIndentedClass = "-ml-3 rounded-none border-l-2 border-[var(--color-markee-primary)] pl-5 text-[var(--color-markee-primary)] font-semibold";
 const navIdleClass = "text-on-surface hover:bg-surface-container-low";
@@ -108,9 +108,12 @@ export function getDashboardHrefForRole(_role?: string | null): string {
 // CHUNG voi nhieu tinh nang khac ngoai pham vi module nay - gate nham se lam
 // gay nhung tinh nang khong lien quan. Ai goi thang API van khong bi chan
 // (khac Lead/Customer/Deal/Quote).
-// Module nay (clone) khong co subgroup nhu app goc (crm-sub-quotes/...) - tat
-// ca muc nav lien quan Quote/Report/Setting deu la item PHANG, nen chi can
-// MODULE_NAV_ITEM_IDS, khong dung subgroup map.
+// Sidebar redesign (2026-09-29) da doi "crm-lead-rules"/"crm-interest-levels"/
+// "crm-deal-stages"/"crm-sale-teams" tu item phang sang nam trong 1 subgroup
+// moi "crm-config-group" ("Danh mục CRM") - ca 4 muc nay deu chung 1 module
+// "Setting" nen gate nguyen ca subgroup (MODULE_NAV_SUBGROUP_IDS) thay vi
+// tung item, dung dung tinh than MODULE_NAV_SUBGROUP_IDS ben ban goc (app
+// chinh) da dung cho cac subgroup tuong tu (crm-sub-quotes/...).
 const MODULE_NAV_ITEM_IDS: Record<string, string> = {
   "crm-leads": "Lead",
   "crm-customers": "Customer",
@@ -124,15 +127,19 @@ const MODULE_NAV_ITEM_IDS: Record<string, string> = {
   "crm-analytics": "Report",
   "service-catalog": "Product",
   "crm-categories": "Setting",
-  "crm-lead-rules": "Setting",
-  "crm-interest-levels": "Setting",
-  "crm-deal-stages": "Setting",
-  "crm-sale-teams": "Setting",
   members: "Account",
+};
+const MODULE_NAV_SUBGROUP_IDS: Record<string, string> = {
+  "crm-config-group": "Setting",
 };
 
 function filterNavChildByModules(child: NavGroupChild, effectiveModules: string[] | null): NavGroupChild | null {
   if (effectiveModules === null) return child;
+  if (child.type === "subgroup") {
+    const requiredModule = MODULE_NAV_SUBGROUP_IDS[child.id];
+    if (requiredModule && !effectiveModules.includes(requiredModule)) return null;
+    return child;
+  }
   const requiredModule = MODULE_NAV_ITEM_IDS[child.id];
   if (requiredModule && !effectiveModules.includes(requiredModule)) return null;
   return child;
@@ -154,42 +161,55 @@ export function filterEntriesByEffectiveModules(entries: SidebarEntry[], effecti
   });
 }
 
+// Sidebar CRM redesign (2026-09-29): 6 nhom phang cap cao nhat (khong con
+// wrapper "section" nhu truoc) - Giao tiep / Ban hang / Theo doi & phan tich /
+// Tai nguyen ban hang / Cau hinh CRM / Quan tri. Giu NGUYEN toan bo route +
+// dieu kien phan quyen (isAdmin/isLeader) cua tung muc cu, chi doi cach gom
+// nhom + nhan + icon hien thi. Luu y 2 muc "Danh mục CRM" TRUNG TEN nhung
+// KHAC route trong ban cu (leaf /all-platform/crm/categories vs subgroup
+// admin-only "Danh mục & cấu hình") - o day doi ten leaf cu thanh "Nguồn &
+// gói sản phẩm" (dung noi dung trang - xem CategoryManagementContent.tsx) de
+// tranh trung nhan voi subgroup moi dung dung cai ten "Danh mục CRM" ma yeu
+// cau thiet ke chi dinh.
 export function buildEntries(isAdmin: boolean, isLeader: boolean, _workspaceTab?: "personal" | "team", _isSale: boolean = false): SidebarEntry[] {
   return [
     {
-      type: "section",
-      id: "section-main",
-      label: "Làm việc chính",
-    },
-    {
       type: "group",
-      id: "customer-messages",
+      id: "communication",
       icon: "chat",
-      label: "Tin nhắn khách hàng",
+      label: "Giao tiếp",
       items: [
         {
-          type: "item",
-          id: "inbox",
-          href: "/all-platform/inbox",
-          icon: "inbox",
-          label: "Inbox FB",
-          matchStartsWith: ["/all-platform/inbox"],
-        },
-        {
-          type: "item",
-          id: "zalo-accounts",
-          href: "/all-platform/tai-khoan",
-          icon: "chat",
-          label: "Zalo Chat",
-          matchStartsWith: ["/all-platform/tai-khoan"],
-        },
-        {
-          type: "item",
-          id: "zalo-inbox-admin",
-          href: "/all-platform/zalo-inbox",
-          icon: "verified_user",
-          label: "Inbox Admin",
-          matchStartsWith: ["/all-platform/zalo-inbox"],
+          type: "subgroup",
+          id: "customer-messages",
+          icon: "forum",
+          label: "Tin nhắn khách hàng",
+          items: [
+            {
+              type: "item",
+              id: "inbox",
+              href: "/all-platform/inbox",
+              icon: "inbox",
+              label: "Inbox Facebook",
+              matchStartsWith: ["/all-platform/inbox"],
+            },
+            {
+              type: "item",
+              id: "zalo-accounts",
+              href: "/all-platform/tai-khoan",
+              icon: "chat",
+              label: "Zalo Chat",
+              matchStartsWith: ["/all-platform/tai-khoan"],
+            },
+            {
+              type: "item",
+              id: "zalo-inbox-admin",
+              href: "/all-platform/zalo-inbox",
+              icon: "verified_user",
+              label: "Inbox Admin",
+              matchStartsWith: ["/all-platform/zalo-inbox"],
+            },
+          ],
         },
       ],
     },
@@ -211,7 +231,7 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, _workspaceTab?
           type: "item",
           id: "crm-customers",
           href: "/all-platform/crm/customers",
-          icon: "person_search",
+          icon: "domain",
           label: "Khách Hàng",
           matchStartsWith: ["/all-platform/crm/customers"],
         },
@@ -219,7 +239,7 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, _workspaceTab?
           type: "item",
           id: "crm",
           href: "/all-platform/crm",
-          icon: "filter_alt",
+          icon: "track_changes",
           label: "Cơ Hội",
           exactMatch: true,
         },
@@ -227,7 +247,7 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, _workspaceTab?
           type: "item",
           id: "quote-center",
           href: "/all-platform/quote-center",
-          icon: "request_quote",
+          icon: "article",
           label: "Báo Giá",
           matchStartsWith: ["/all-platform/quote-center"],
         },
@@ -241,11 +261,11 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, _workspaceTab?
         },
         {
           type: "item",
-          id: "issuer-companies",
-          href: "/all-platform/issuer-companies",
-          icon: "domain",
-          label: "Đơn vị phát hành",
-          matchStartsWith: ["/all-platform/issuer-companies"],
+          id: "contracts",
+          href: "/all-platform/contracts",
+          icon: "description",
+          label: "Hợp đồng",
+          matchStartsWith: ["/all-platform/contracts"],
         },
       ],
     },
@@ -253,13 +273,13 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, _workspaceTab?
       type: "group",
       id: "progress-analytics",
       icon: "analytics",
-      label: "Tiến độ & Phân tích",
+      label: "Theo dõi & phân tích",
       items: [
         {
           type: "item",
           id: "crm-progress",
           href: "/all-platform/crm/progress",
-          icon: "track_changes",
+          icon: "speed",
           label: "Quản lý tiến độ",
           matchStartsWith: ["/all-platform/crm/progress"],
         },
@@ -267,7 +287,7 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, _workspaceTab?
           type: "item",
           id: "crm-analytics",
           href: "/all-platform/crm/analytics",
-          icon: "analytics",
+          icon: "bar_chart",
           label: "Phân tích CRM",
           matchStartsWith: ["/all-platform/crm/analytics"],
         },
@@ -275,34 +295,42 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, _workspaceTab?
     },
     {
       type: "group",
-      id: "sales-support",
-      icon: "support_agent",
-      label: "Hỗ trợ Bán Hàng",
+      id: "sales-resources",
+      icon: "local_library",
+      label: "Tài nguyên bán hàng",
       items: [
         {
           type: "item",
-          id: "contracts",
-          href: "/all-platform/contracts",
-          icon: "description",
-          label: "Hợp đồng",
-          matchStartsWith: ["/all-platform/contracts"],
+          id: "service-catalog",
+          href: "/all-platform/service-catalog",
+          icon: "inventory_2",
+          label: "Sản phẩm và dịch vụ",
+          matchStartsWith: ["/all-platform/service-catalog"],
         },
         {
           type: "item",
           id: "sales-assets",
           href: "/all-platform/sales-assets",
-          icon: "campaign",
+          icon: "folder_copy",
           label: "Tài liệu bán hàng",
           matchStartsWith: ["/all-platform/sales-assets"],
         },
         {
           type: "item",
-          id: "service-catalog",
-          href: "/all-platform/service-catalog",
-          icon: "category",
-          label: "Sản phẩm và dịch vụ",
-          matchStartsWith: ["/all-platform/service-catalog"],
+          id: "issuer-companies",
+          href: "/all-platform/issuer-companies",
+          icon: "account_balance",
+          label: "Đơn vị phát hành",
+          matchStartsWith: ["/all-platform/issuer-companies"],
         },
+      ],
+    },
+    {
+      type: "group",
+      id: "crm-config",
+      icon: "settings_applications",
+      label: "Cấu hình CRM",
+      items: [
         ...(isAdmin || isLeader
           ? ([
               {
@@ -327,90 +355,98 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, _workspaceTab?
           type: "item",
           id: "crm-categories",
           href: "/all-platform/crm/categories",
-          icon: "list_alt",
-          label: "Danh mục CRM",
+          icon: "category",
+          label: "Nguồn & gói sản phẩm",
           matchStartsWith: ["/all-platform/crm/categories"],
         },
+        // Group con "Danh mục CRM" (WIP full-flow, prototype
+        // markee_crm_v26_compact_opportunity_name.html) - 4 muc: Dieu kien
+        // phan loai Lead (da lam that, "chỉ có admin mới được tick chọn" nen
+        // an het khoi nay neu khong phai Admin) + Muc do quan tam/Giai doan
+        // co hoi/Team Sale (placeholder "Đang phát triển", CHUA co cau hinh
+        // that nao trong app).
+        ...(isAdmin
+          ? ([
+              {
+                type: "subgroup",
+                id: "crm-config-group",
+                icon: "schema",
+                label: "Danh mục CRM",
+                items: [
+                  {
+                    type: "item",
+                    id: "crm-lead-rules",
+                    href: "/all-platform/crm/lead-rules",
+                    icon: "filter_list",
+                    label: "Điều kiện phân loại Lead",
+                    matchStartsWith: ["/all-platform/crm/lead-rules"],
+                  },
+                  {
+                    type: "item",
+                    id: "crm-interest-levels",
+                    href: "/all-platform/crm/interest-levels",
+                    icon: "monitoring",
+                    label: "Mức độ quan tâm",
+                    matchStartsWith: ["/all-platform/crm/interest-levels"],
+                  },
+                  {
+                    type: "item",
+                    id: "crm-deal-stages",
+                    href: "/all-platform/crm/deal-stages",
+                    icon: "account_tree",
+                    label: "Giai đoạn cơ hội",
+                    matchStartsWith: ["/all-platform/crm/deal-stages"],
+                  },
+                  {
+                    type: "item",
+                    id: "crm-sale-teams",
+                    href: "/all-platform/crm/sale-teams",
+                    icon: "group",
+                    label: "Team Sale",
+                    matchStartsWith: ["/all-platform/crm/sale-teams"],
+                  },
+                ],
+              },
+            ] as NavGroupChild[])
+          : []),
       ],
     },
     {
-      type: "section",
-      id: "section-admin",
+      type: "group",
+      id: "admin",
+      icon: "shield",
       label: "Quản trị",
-    },
-    // Group "Danh mục & cấu hình" (WIP full-flow, prototype
-    // markee_crm_v26_compact_opportunity_name.html). "Danh mục CRM" GIU
-    // NGUYEN o group "Hỗ trợ Bán Hàng" nhu cu (khong duplicate) - o day CHI
-    // them 4 muc THAT SU chua co: Dieu kien phan loai Lead (da lam that,
-    // "chỉ có admin mới được tick chọn" nen an het khoi nay neu khong phai
-    // Admin) + Muc do quan tam/Giai doan co hoi/Team Sale (placeholder "Đang
-    // phát triển", CHUA co cau hinh that nao trong app).
-    ...(isAdmin
-      ? ([
-          {
-            type: "group",
-            id: "crm-config-group",
-            icon: "list_alt",
-            label: "Danh mục & cấu hình",
-            items: [
+      items: [
+        ...(isAdmin || isLeader
+          ? ([
               {
                 type: "item",
-                id: "crm-lead-rules",
-                href: "/all-platform/crm/lead-rules",
-                icon: "assignment",
-                label: "Điều kiện phân loại Lead",
-                matchStartsWith: ["/all-platform/crm/lead-rules"],
+                id: "members",
+                href: "/all-platform/admin/quan-ly-thanh-vien",
+                icon: "groups",
+                label: "Quản lý thành viên",
+                matchStartsWith: ["/all-platform/admin/quan-ly-thanh-vien"],
               },
-              {
-                type: "item",
-                id: "crm-interest-levels",
-                href: "/all-platform/crm/interest-levels",
-                icon: "trending_up",
-                label: "Mức độ quan tâm",
-                matchStartsWith: ["/all-platform/crm/interest-levels"],
-              },
-              {
-                type: "item",
-                id: "crm-deal-stages",
-                href: "/all-platform/crm/deal-stages",
-                icon: "filter_alt",
-                label: "Giai đoạn cơ hội",
-                matchStartsWith: ["/all-platform/crm/deal-stages"],
-              },
-              {
-                type: "item",
-                id: "crm-sale-teams",
-                href: "/all-platform/crm/sale-teams",
-                icon: "group",
-                label: "Team Sale",
-                matchStartsWith: ["/all-platform/crm/sale-teams"],
-              },
-            ],
-          },
-        ] as SidebarEntry[])
-      : []),
-    ...(isAdmin || isLeader
-      ? ([
-          {
-            type: "item",
-            id: "members",
-            href: "/all-platform/admin/quan-ly-thanh-vien",
-            icon: "manage_accounts",
-            label: "Quản lý thành viên",
-            matchStartsWith: ["/all-platform/admin/quan-ly-thanh-vien"],
-          },
-        ] as NavLeafItem[])
-      : []),
-    {
-      type: "item",
-      id: "settings",
-      href: "/all-platform/profile",
-      icon: "settings",
-      label: "Cài đặt kết nối",
-      matchStartsWith: ["/all-platform/profile"],
+            ] as NavLeafItem[])
+          : []),
+        {
+          type: "item",
+          id: "settings",
+          href: "/all-platform/profile",
+          icon: "power",
+          label: "Cài đặt kết nối",
+          matchStartsWith: ["/all-platform/profile"],
+        },
+      ],
     },
   ];
 }
+
+// Nhom nao mac dinh MO san khi vao trang (truoc khi biet route dang active) -
+// "Bán hàng" la nhom dung nhieu nhat nen luon mo; cac nhom con lai mac dinh
+// dong de sidebar gon, se tu mo neu co muc con dang active (xem hasActiveChild
+// o SidebarGroup/GroupLinks).
+export const DEFAULT_OPEN_GROUP_IDS = new Set<string>(["sales"]);
 
 // Tra ten trang hien tai tu pathname, dung chung 1 nguon du lieu voi menu (entries) -
 // tranh phai duy tri rieng 1 bang ten trang khac de rendera thanh tieu de o dau khung noi dung.
@@ -491,7 +527,7 @@ function SidebarGroup({
       ? item.href !== homeHref && isLeafActive(pathname, item)
       : item.items.some((sub) => sub.href !== homeHref && isLeafActive(pathname, sub))
   );
-  const [isOpen, setIsOpen] = useState(hasActiveChild);
+  const [isOpen, setIsOpen] = useState(hasActiveChild || DEFAULT_OPEN_GROUP_IDS.has(entry.id));
 
   useEffect(() => {
     if (hasActiveChild) setIsOpen(true);
@@ -517,23 +553,27 @@ function SidebarGroup({
   }
 
   return (
-    <div className="space-y-1">
+    <div className="space-y-0.5">
+      {/* Tieu de nhom = nut toggle luon (chu nho, in hoa, mau nhat, KHONG
+          nen/khung) - gop chung header + chevron mo/dong lam mot, khong phai
+          1 pill lien ket to nhu muc menu thuong. */}
       <button
         type="button"
         onClick={() => setIsOpen((current) => !current)}
         className={cn(
-          navBaseClass,
-          "w-full justify-between",
-          hasActiveChild ? "bg-[var(--color-markee-primary)]/10 text-[var(--color-markee-primary)] font-semibold" : navIdleClass,
+          "flex min-h-[30px] w-full items-center justify-between gap-2 rounded-lg px-2.5 py-1 text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-[var(--color-markee-primary)]/40",
+          hasActiveChild
+            ? "text-[var(--color-markee-primary)]"
+            : "text-on-surface-variant hover:bg-surface-container-low hover:text-on-surface",
         )}
       >
-        <span className="flex min-w-0 items-center gap-2.5">
-          <MaterialIcon name={entry.icon} className={iconClass} />
-          <span className="truncate">{entry.label}</span>
+        <span className="flex min-w-0 items-center gap-2">
+          <MaterialIcon name={entry.icon} className="shrink-0 text-[16px]" />
+          <span className="truncate text-[11px] font-semibold uppercase tracking-wider">{entry.label}</span>
         </span>
         <MaterialIcon
           name="chevron_right"
-          className={cn("shrink-0 text-[18px] transition-transform", isOpen && "rotate-90")}
+          className={cn("shrink-0 text-[14px] opacity-70 transition-transform", isOpen && "rotate-90")}
         />
       </button>
 
@@ -543,7 +583,7 @@ function SidebarGroup({
           isOpen ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0",
         )}
       >
-        <div className="ml-5 min-h-0 space-y-1 border-l border-outline-variant pl-3">
+        <div className="ml-4 min-h-0 space-y-0.5 border-l border-outline-variant pl-3">
           {entry.items.map((child) => {
             if (child.type === "item") {
               return (
@@ -557,23 +597,7 @@ function SidebarGroup({
               );
             }
             return (
-              <div key={child.id} className="mt-1 space-y-1">
-                <div className="flex items-center gap-2 px-2 py-1 text-xs font-semibold text-on-surface-variant">
-                  <MaterialIcon name={child.icon} className="text-[16px]" />
-                  <span>{child.label}</span>
-                </div>
-                <div className="ml-3 space-y-1 border-l border-outline-variant/60 pl-2">
-                  {child.items.map((subItem) => (
-                    <SidebarLink
-                      key={subItem.id}
-                      item={subItem}
-                      active={isLeafActive(pathname, subItem)}
-                      indented
-                      onNavigate={onNavigate}
-                    />
-                  ))}
-                </div>
-              </div>
+              <SidebarSubGroup key={child.id} entry={child} pathname={pathname} onNavigate={onNavigate} />
             );
           })}
         </div>
@@ -582,11 +606,70 @@ function SidebarGroup({
   );
 }
 
+// Nhom con cap 2 (vd "Tin nhắn khách hàng", "Danh mục CRM") - cung co the
+// thu gon/mo rong rieng, giu dung hanh vi voi ban GroupLinks cua
+// AllPlatformSidebarShadcn.tsx (subgroup mac dinh mo neu co muc active).
+function SidebarSubGroup({
+  entry,
+  pathname,
+  onNavigate,
+}: {
+  entry: NavSubGroupItem;
+  pathname: string;
+  onNavigate?: () => void;
+}) {
+  const hasActiveChild = entry.items.some((sub) => isLeafActive(pathname, sub));
+  const [isOpen, setIsOpen] = useState(true);
+  const open = hasActiveChild || isOpen;
+
+  return (
+    <div className="mt-0.5 space-y-0.5">
+      <button
+        type="button"
+        onClick={() => setIsOpen((current) => !current)}
+        className={cn(
+          "flex w-full items-center justify-between gap-2 rounded-md px-2 py-1 text-left text-xs font-semibold outline-none transition-colors",
+          hasActiveChild ? "text-[var(--color-markee-primary)]" : "text-on-surface-variant hover:text-on-surface",
+        )}
+      >
+        <span className="flex min-w-0 items-center gap-2">
+          <MaterialIcon name={entry.icon} className="shrink-0 text-[15px]" />
+          <span className="truncate">{entry.label}</span>
+        </span>
+        <MaterialIcon
+          name="chevron_right"
+          className={cn("shrink-0 text-[13px] opacity-70 transition-transform", open && "rotate-90")}
+        />
+      </button>
+      <div
+        className={cn(
+          "grid overflow-hidden transition-all duration-200",
+          open ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0",
+        )}
+      >
+        <div className="ml-3 min-h-0 space-y-0.5 border-l border-outline-variant/60 pl-2">
+          {entry.items.map((subItem) => (
+            <SidebarLink
+              key={subItem.id}
+              item={subItem}
+              active={isLeafActive(pathname, subItem)}
+              indented
+              onNavigate={onNavigate}
+            />
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Tieu de nhom (6 nhom phang) — chu nho, in hoa, mau nhat, KHONG nen/khung
+// bao quanh (dung y giong nav group label cua app.markeeai.com production).
 function SectionLabel({ children, collapsed }: { children: React.ReactNode; collapsed?: boolean }) {
   if (collapsed) return null;
   return (
-    <div className="flex items-center justify-between px-2 pt-2">
-      <h3 className="text-sm font-semibold tracking-wider text-on-surface-variant">{children}</h3>
+    <div className="flex items-center justify-between px-2.5 pb-1 pt-3 first:pt-1">
+      <h3 className="text-[11px] font-semibold uppercase tracking-wider text-on-surface-variant/70">{children}</h3>
     </div>
   );
 }
@@ -710,9 +793,11 @@ export function AllPlatformSidebar({
           </div>
         </div>
 
-        <nav className="flex-1 space-y-2 overflow-y-auto overflow-x-hidden px-2 pb-2">
-          <SectionLabel collapsed={isCollapsed}>Tác vụ của tôi</SectionLabel>
-          <ul className="space-y-1">
+        {/* Container cuon DUY NHAT cho toan bo khu vuc menu — an scrollbar
+            bang class .scrollbar-none (globals.css) nhung van cuon duoc binh
+            thuong bang chuot/touch. */}
+        <nav className="scrollbar-none flex-1 space-y-1 overflow-y-auto overflow-x-hidden px-2 pb-2">
+          <ul className="space-y-0.5">
             {entries.map((entry) => (
               <li key={entry.id}>
                 {entry.type === "section" ? (

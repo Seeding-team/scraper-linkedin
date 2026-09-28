@@ -1143,10 +1143,11 @@ export function LeadsDirectory() {
                     <tr><td colSpan={10} className="crm-empty-cell"><Loader2 className="crm-spin-icon" /> Đang tải...</td></tr>
                   ) : items.length ? (
                     items.map(lead => {
+                      const isActiveLead = detailLead?.id === lead.id || editLead?.id === lead.id;
                       return (
                         <tr
                           key={lead.id}
-                          className="crm-row crm-row--clickable"
+                          className={`crm-row crm-row--clickable${isActiveLead ? ' is-quickview-selected' : ''}`}
                           data-crm-lead-row="true"
                           onClick={() => openRow(lead)}
                         >
@@ -1349,10 +1350,12 @@ export function LeadsDirectory() {
             {loading ? (
               <div className="crm-empty-cell"><Loader2 className="crm-spin-icon" /> Đang tải...</div>
             ) : items.length ? (
-              items.map(lead => (
+              items.map(lead => {
+                const isActiveLead = detailLead?.id === lead.id || editLead?.id === lead.id;
+                return (
                 <div
                   key={lead.id}
-                  className="crm-customer-card crm-lead-card crm-row--clickable"
+                  className={`crm-customer-card crm-lead-card crm-row--clickable${isActiveLead ? ' is-quickview-selected' : ''}`}
                   data-crm-lead-row="true"
                   onClick={() => openRow(lead)}
                 >
@@ -1406,7 +1409,8 @@ export function LeadsDirectory() {
                     {renderSecondaryActions(lead)}
                   </div>
                 </div>
-              ))
+              );
+              })
             ) : (
               <div className="crm-empty-state">
                 <span className="crm-empty-state-icon">

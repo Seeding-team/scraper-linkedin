@@ -10,6 +10,7 @@
 import { useEffect, useState } from 'react';
 import { MaterialIcon } from '@/components/ui';
 import { SearchableSelect } from './SearchableSelect';
+import { CrmTeamFormModal, CRM_TEAM_SEGMENT_OPTIONS as SEGMENT_OPTIONS, CRM_TEAM_FUNCTION_AREA_OPTIONS as FUNCTION_AREA_OPTIONS } from './CrmTeamFormModal';
 import {
   crmTeamsService,
   usersService,
@@ -17,44 +18,11 @@ import {
   type CrmTeam,
 } from '@/services/all-platform.service';
 
-const SEGMENT_OPTIONS: { value: string; label: string }[] = [
-  { value: 'enterprise', label: 'Enterprise' },
-  { value: 'smb', label: 'SMB' },
-  { value: 'mid_market', label: 'Mid-Market' },
-  { value: 'government', label: 'Government' },
-  { value: 'mixed', label: 'Mixed' },
-];
-
-const FUNCTION_AREA_OPTIONS: { value: string; label: string }[] = [
-  { value: 'sales', label: 'Sales' },
-  { value: 'marketing', label: 'Marketing' },
-  { value: 'presale', label: 'Presale' },
-  { value: 'infrastructure', label: 'Infrastructure' },
-  { value: 'software', label: 'Software' },
-  { value: 'security', label: 'Security' },
-  { value: 'finance', label: 'Finance' },
-  { value: 'operations', label: 'Operations' },
-];
-
 function segmentLabel(value?: string | null): string {
   return SEGMENT_OPTIONS.find(o => o.value === value)?.label || '—';
 }
 function functionAreaLabel(value?: string | null): string {
   return FUNCTION_AREA_OPTIONS.find(o => o.value === value)?.label || '—';
-}
-
-function emptyForm(): Partial<CrmTeam> {
-  return {
-    name: '',
-    code: '',
-    leader_user_id: '',
-    status: 'active',
-    segment: null,
-    function_area: null,
-    industry: '',
-    region: '',
-    description: '',
-  };
 }
 
 export function CrmTeamsShell() {
@@ -67,9 +35,9 @@ export function CrmTeamsShell() {
 
   const [modalOpen, setModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [form, setForm] = useState<Partial<CrmTeam>>(emptyForm());
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  // Snapshot cua Team dang sua - truyen xuong CrmTeamFormModal (da tach ra
+  // file rieng) lam `initialTeam`; null luc tao moi.
+  const [editingTeam, setEditingTeam] = useState<CrmTeam | null>(null);
 
   const [detailTeam, setDetailTeam] = useState<CrmTeam | null>(null);
   const [allUsers, setAllUsers] = useState<AppUserProfile[]>([]);
@@ -106,52 +74,14 @@ export function CrmTeamsShell() {
 
   function openCreate() {
     setEditingId(null);
-    setForm(emptyForm());
-    setError(null);
+    setEditingTeam(null);
     setModalOpen(true);
   }
 
   function openEdit(team: CrmTeam) {
     setEditingId(team.id);
-    setForm({ ...team });
-    setError(null);
+    setEditingTeam(team);
     setModalOpen(true);
-  }
-
-  async function handleLeaderChange(leaderUserId: string) {
-    setForm(f => ({ ...f, leader_user_id: leaderUserId }));
-    if (!editingId && leaderUserId) {
-      const leader = leaders.find(l => l.id === leaderUserId);
-      if (leader) {
-        setForm(f => ({ ...f, leader_user_id: leaderUserId, name: f.name?.trim() ? f.name : `Team ${leader.name || leader.email}` }));
-        const suggestRes = await crmTeamsService.suggestCode(leader.name || leader.email);
-        if (suggestRes.success) {
-          setForm(f => (f.code?.trim() ? f : { ...f, code: suggestRes.data?.code }));
-        }
-      }
-    }
-  }
-
-  async function handleSave() {
-    if (!form.name?.trim() && !form.leader_user_id) {
-      setError('Cần chọn Leader hoặc nhập tên Team');
-      return;
-    }
-    setSaving(true);
-    setError(null);
-    try {
-      const res = editingId ? await crmTeamsService.update(editingId, form) : await crmTeamsService.create(form);
-      if (!res.success) {
-        setError(res.message || 'Lưu thất bại.');
-        return;
-      }
-      setModalOpen(false);
-      loadTeams();
-    } catch {
-      setError('Có lỗi xảy ra, thử lại sau.');
-    } finally {
-      setSaving(false);
-    }
   }
 
   async function handleDelete(team: CrmTeam) {
@@ -283,132 +213,17 @@ export function CrmTeamsShell() {
         </table>
       </div>
 
-      {modalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setModalOpen(false)}>
-          <div className="w-full max-w-xl max-h-[90vh] overflow-y-auto rounded-2xl bg-surface shadow-xl" onClick={e => e.stopPropagation()}>
-            <div className="flex items-center justify-between gap-3 border-b border-outline-variant p-5">
-              <div className="text-body-lg font-bold text-on-background">{editingId ? 'Sửa Team CRM' : 'Tạo Team CRM'}</div>
-              <button type="button" onClick={() => setModalOpen(false)} className="p-1.5 hover:bg-surface-container-low rounded-lg transition">
-                <MaterialIcon name="close" className="text-base" />
-              </button>
-            </div>
-            <div className="p-5 space-y-4">
-              {error && <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700">{error}</div>}
-              <div>
-                <label className="block text-xs font-bold text-on-surface-variant mb-1.5">Leader</label>
-                <SearchableSelect
-                  value={form.leader_user_id || ''}
-                  onChange={value => void handleLeaderChange(value)}
-                  options={leaders.map(l => ({ value: l.id, label: l.name || l.email }))}
-                  placeholder="— Chọn Leader —"
-                  searchPlaceholder="Tìm Leader..."
-                />
-                <p className="mt-1 text-[10px] text-on-surface-variant">Chọn Leader trước để tự sinh tên Team + gợi ý mã.</p>
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-bold text-on-surface-variant mb-1.5">Tên Team</label>
-                  <input
-                    type="text"
-                    value={form.name || ''}
-                    onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
-                    placeholder="Team Nguyễn Minh Anh"
-                    className="w-full px-3 py-2 bg-surface-container-low border border-outline-variant rounded-lg text-xs"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-on-surface-variant mb-1.5">Mã Team</label>
-                  <input
-                    type="text"
-                    value={form.code || ''}
-                    onChange={e => setForm(f => ({ ...f, code: e.target.value }))}
-                    className="w-full px-3 py-2 bg-surface-container-low border border-outline-variant rounded-lg text-xs"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-on-surface-variant mb-1.5">Trạng thái</label>
-                  <select
-                    value={form.status || 'active'}
-                    onChange={e => setForm(f => ({ ...f, status: e.target.value as CrmTeam['status'] }))}
-                    className="w-full px-3 py-2 bg-surface-container-low border border-outline-variant rounded-lg text-xs"
-                  >
-                    <option value="active">Hoạt động</option>
-                    <option value="inactive">Ngừng hoạt động</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-on-surface-variant mb-1.5">Phân khúc khách hàng</label>
-                  <select
-                    value={form.segment || ''}
-                    onChange={e => setForm(f => ({ ...f, segment: (e.target.value || null) as CrmTeam['segment'] }))}
-                    className="w-full px-3 py-2 bg-surface-container-low border border-outline-variant rounded-lg text-xs"
-                  >
-                    <option value="">— Chưa rõ —</option>
-                    {SEGMENT_OPTIONS.map(o => (
-                      <option key={o.value} value={o.value}>{o.label}</option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-on-surface-variant mb-1.5">Khối / chuyên môn</label>
-                  <select
-                    value={form.function_area || ''}
-                    onChange={e => setForm(f => ({ ...f, function_area: (e.target.value || null) as CrmTeam['function_area'] }))}
-                    className="w-full px-3 py-2 bg-surface-container-low border border-outline-variant rounded-lg text-xs"
-                  >
-                    <option value="">— Chưa rõ —</option>
-                    {FUNCTION_AREA_OPTIONS.map(o => (
-                      <option key={o.value} value={o.value}>{o.label}</option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-on-surface-variant mb-1.5">Ngành phụ trách</label>
-                  <input
-                    type="text"
-                    value={form.industry || ''}
-                    onChange={e => setForm(f => ({ ...f, industry: e.target.value }))}
-                    placeholder="VD: Năng lượng, Bank, FSI..."
-                    className="w-full px-3 py-2 bg-surface-container-low border border-outline-variant rounded-lg text-xs"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-on-surface-variant mb-1.5">Khu vực / thị trường</label>
-                  <input
-                    type="text"
-                    value={form.region || ''}
-                    onChange={e => setForm(f => ({ ...f, region: e.target.value }))}
-                    placeholder="VD: Miền Nam, Toàn quốc..."
-                    className="w-full px-3 py-2 bg-surface-container-low border border-outline-variant rounded-lg text-xs"
-                  />
-                </div>
-                <div className="sm:col-span-2">
-                  <label className="block text-xs font-bold text-on-surface-variant mb-1.5">Mô tả thêm</label>
-                  <textarea
-                    rows={2}
-                    value={form.description || ''}
-                    onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
-                    className="w-full px-3 py-2 bg-surface-container-low border border-outline-variant rounded-lg text-xs"
-                  />
-                </div>
-              </div>
-            </div>
-            <div className="flex items-center justify-end gap-2 border-t border-outline-variant p-4">
-              <button type="button" onClick={() => setModalOpen(false)} className="px-4 py-2 rounded-xl text-xs font-bold border border-outline-variant hover:bg-surface-container-low transition">
-                Hủy
-              </button>
-              <button
-                type="button"
-                onClick={() => void handleSave()}
-                disabled={saving}
-                className="px-4 py-2 rounded-xl text-xs font-bold bg-primary text-white hover:bg-on-primary-fixed-variant transition disabled:opacity-60"
-              >
-                {saving ? 'Đang lưu...' : 'Lưu Team CRM'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <CrmTeamFormModal
+        open={modalOpen}
+        editingId={editingId}
+        initialTeam={editingTeam}
+        leaders={leaders}
+        onClose={() => setModalOpen(false)}
+        onSaved={() => {
+          setModalOpen(false);
+          loadTeams();
+        }}
+      />
 
       {detailTeam && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setDetailTeam(null)}>

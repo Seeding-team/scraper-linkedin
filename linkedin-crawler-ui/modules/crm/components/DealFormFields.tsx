@@ -2,11 +2,12 @@
 
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { useMembers } from '@/hooks/useMembers';
-import { teamsService, projectsService, type TeamRow, type Project } from '@/services/all-platform.service';
-import { SearchableSelect } from './SearchableSelect';
+import { teamsService, projectsService, crmTeamsService, usersService, type TeamRow, type Project, type CrmTeam, type AppUserProfile } from '@/services/all-platform.service';
+import { SearchableSelect, type SelectAction } from './SearchableSelect';
 import { PositionSelect } from './PositionSelect';
 import { CrmCategoryCodeSelect, CrmCategorySelect, useCrmCategoryLabels } from './CrmCategorySelect';
 import { LeadDealQualificationPanel, formatEstimatedValue } from './LeadDealQualificationPanel';
+import { CrmTeamFormModal } from './CrmTeamFormModal';
 import { useLeadQualificationEngine } from '../hooks/useLeadQualificationEngine';
 import { ICP_OPTIONS, type InterestLevel } from '../utils/leadQualificationRules';
 import type { MemberProfile } from '@/types/unified.types';
@@ -86,6 +87,14 @@ export type DealFormState = {
   sdrId: string;
   sdrNameHint: string;
   teamId: string;
+  /** "Team Sale" (Team CRM - crm_teams) - filter cascading rieng cho "Sale
+   * phu trach" (KHAC HAN `teamId` o tren la Team KPI/seeding noi bo qua
+   * teamsService). Chi dung de loc UI, KHONG co cot rieng nao luu gia tri
+   * nay - lay ra khoi payload o buildDealPayload(). Dat trong DealFormState
+   * (thay vi local state rieng trong DealFormFields) de DealFormModal (cha)
+   * doc duoc, dung lam dieu kien bat buoc luc "Tạo cơ hội nhanh" (feedback
+   * leader 2026-09-29: "những cái dấu sao đỏ là bắt buộc á"). */
+  crmTeamId: string;
 };
 
 export function emptyDealForm(): DealFormState {
@@ -147,6 +156,7 @@ export function emptyDealForm(): DealFormState {
     sdrId: '',
     sdrNameHint: '',
     teamId: '',
+    crmTeamId: '',
   };
 }
 
@@ -212,6 +222,11 @@ export function dealFormFromDeal(deal: Deal): DealFormState {
     sdrId: deal.assignment.sdrId || '',
     sdrNameHint: deal.assignment.sdrNameHint || deal.assignment.sdrName || '',
     teamId: deal.teamId || '',
+    // Luon bat dau rong - khong co cot rieng nao tren Deal luu "Team Sale",
+    // hieu ung auto-load (suy nguoc tu sdrId da luu qua
+    // crmTeamsService.getTeamIdForUser) se tu dien lai dung Team ngay sau khi
+    // form nay mount (xem effect trong DealFormFields).
+    crmTeamId: '',
   };
 }
 
@@ -219,13 +234,23 @@ export function getSourceLabel(sourcePlatform: string) {
   return SOURCE_OPTIONS.find(option => option.value === sourcePlatform)?.label || sourcePlatform;
 }
 
-export function validateDealForm(form: DealFormState): string | null {
+export function validateDealForm(form: DealFormState, opts?: { requireTeamSale?: boolean }): string | null {
   if (!form.dealName.trim()) return 'Vui lòng chọn hoặc nhập tên dự án.';
   if (!form.customerName.trim()) return 'Vui lòng nhập tên khách hàng.';
   if (!form.email.trim() && !form.phone.trim()) return 'Cần nhập email hoặc số điện thoại để tạo contact.';
   if (!form.servicePackage.trim()) return 'Vui lòng chọn sản phẩm/dịch vụ.';
   if (!form.nextStep.trim()) return 'Vui lòng nhập Next step (việc cần làm tiếp theo).';
   if (!form.followUpDate.trim()) return 'Vui lòng chọn hạn follow-up.';
+  // "Team Sale" + "Sale phụ trách" bắt buộc CHỈ ở nhánh "Tạo cơ hội nhanh"
+  // (isCreate) - feedback leader 2026-09-29: "áp dụng cùng flow Team Sale ->
+  // Sale phụ trách như 2 form còn lại... những cái dấu sao đỏ là bắt buộc
+  // á". Nhánh Sửa deal (isCreate=false) và DealQuoteWizard (khong truyen cờ
+  // này) KHÔNG bắt buộc - Team Sale ở đó chỉ là bộ lọc UI, không phải field
+  // nghiệp vụ mới bắt buộc phải chọn.
+  if (opts?.requireTeamSale) {
+    if (!form.crmTeamId.trim()) return 'Vui lòng chọn Team Sale.';
+    if (!form.sdrId.trim()) return 'Vui lòng chọn Sale phụ trách.';
+  }
   return null;
 }
 
@@ -824,6 +849,7 @@ export function DealFormFields({
   industryOptions = DEFAULT_INDUSTRY_OPTIONS,
   isCreate = false,
   currentUser = null,
+  showTeamSaleInEditBranch = false,
 }: {
   form: DealFormState;
   setValue: <K extends keyof DealFormState>(key: K, value: DealFormState[K]) => void;
@@ -839,6 +865,12 @@ export function DealFormFields({
    * DEAL_STAGES (kể cả on_hold/won/lost) như hành vi cũ. */
   isCreate?: boolean;
   currentUser?: AppUser | null;
+  /** true = cũng bật "Team Sale" (Team CRM) ở nhánh SỬA deal (isCreate=false)
+   * — dropdown lọc "Người phụ trách" + auto-load Team từ sdrId đã lưu, giống
+   * hệt luồng lúc "Tạo cơ hội nhanh". Mặc định false để KHÔNG đổi hành vi của
+   * các nơi khác đang dùng chung DealFormFields ở nhánh sửa (vd
+   * DealQuoteWizard) — chỉ DealFormModal (form "Sửa deal" thật) bật cờ này. */
+  showTeamSaleInEditBranch?: boolean;
 }) {
   // Nguồn dữ liệu DUY NHẤT cho dropdown Quản lý/Phụ trách — GET /members,
   // không hard-code / không tự tạo danh sách riêng. Chọn tự do trên toàn bộ
@@ -857,6 +889,64 @@ export function DealFormFields({
     });
     return () => { alive = false; };
   }, []);
+  // "Team Sale" (Team CRM - crm_teams, KHAC HAN "Team" o tren dung teamsService
+  // KPI noi bo) - filter cascading rieng cho "Sale phu trach" trong panel
+  // LeadDealQualificationPanel (luc isCreate) + (khi showTeamSaleInEditBranch)
+  // trong nhanh Sua deal - khong luu cot rieng nao, chi filter danh sach hien
+  // thi. Gia tri dang chon nam trong form.crmTeamId (KHONG phai local state
+  // rieng) de DealFormModal (cha) doc duoc, dung lam dieu kien bat buoc luc
+  // "Tạo cơ hội nhanh".
+  const enableCrmTeamSale = isCreate || showTeamSaleInEditBranch;
+  const [crmTeamOptions, setCrmTeamOptions] = useState<CrmTeam[]>([]);
+  const crmTeamId = form.crmTeamId;
+  const [crmTeamMembers, setCrmTeamMembers] = useState<AppUserProfile[] | null>(null);
+  // "+ Thêm Team mới" trong dropdown Team Sale (feedback leader 2026-09-29:
+  // "tái sử dụng lại bên chỗ team crm") - tai su dung CHINH modal tao/sua
+  // Team CRM da tach ra CrmTeamFormModal.tsx (dung chung voi CrmTeamsShell).
+  const [addTeamOpen, setAddTeamOpen] = useState(false);
+  const [crmTeamLeaders, setCrmTeamLeaders] = useState<AppUserProfile[]>([]);
+  const [crmAllUsers, setCrmAllUsers] = useState<AppUserProfile[]>([]);
+  useEffect(() => {
+    if (!enableCrmTeamSale) return;
+    let alive = true;
+    usersService.getAllProfiles().then(res => {
+      if (!alive || !res.success) return;
+      const rows = res.data || [];
+      setCrmTeamLeaders(rows.filter(u => u.role === 'leader' || u.role === 'admin'));
+      setCrmAllUsers(rows);
+    });
+    return () => { alive = false; };
+  }, [enableCrmTeamSale]);
+  useEffect(() => {
+    let alive = true;
+    crmTeamsService.list()
+      .then(res => {
+        if (!alive) return;
+        const rows = res.success ? res.data || [] : [];
+        setCrmTeamOptions(rows.filter(t => t.status === 'active'));
+      })
+      .catch(() => {
+        if (alive) setCrmTeamOptions([]);
+      });
+    return () => { alive = false; };
+  }, []);
+  useEffect(() => {
+    if (!crmTeamId) {
+      setCrmTeamMembers(null);
+      return;
+    }
+    let alive = true;
+    crmTeamsService.get(crmTeamId)
+      .then(res => {
+        if (!alive) return;
+        setCrmTeamMembers(res.success ? res.data?.members || [] : []);
+      })
+      .catch(() => {
+        if (alive) setCrmTeamMembers([]);
+      });
+    return () => { alive = false; };
+  }, [crmTeamId]);
+
   const assignableMembers = [...members].sort((a, b) => a.display_name.localeCompare(b.display_name));
 
   // Value trên <option> phải LUÔN duy nhất (kể cả người chưa liên kết) —
@@ -940,6 +1030,48 @@ export function DealFormFields({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isCreate, currentUser?.id, assignableMembers.length]);
 
+  // "Auto-load" Team Sale khi da co Sale duoc gan san (vd default currentUser
+  // luc tao moi, hoac sdrId da luu san tren 1 Deal dang mo sua khi
+  // showTeamSaleInEditBranch) - CHI khi crmTeamId con rong (khong ghi de luc
+  // nguoi dung tu chon Team qua handleCrmTeamIdChange, vi luc do sdrId da bi
+  // reset ve rong nen effect nay khong chay lai). Guard "tra loi tre": effect
+  // deps gom form.sdrId nen moi lan sdrId doi (vd mo sang 1 Deal khac), cleanup
+  // (alive=false) tu dong huy ket qua cua request cu truoc khi request moi
+  // chay - khong can ref rieng vi crmTeamId gio nam trong `form` (tu reset ve
+  // rong moi lan dealFormFromDeal() nap 1 Deal khac).
+  useEffect(() => {
+    if (!enableCrmTeamSale || !form.sdrId || crmTeamId) return;
+    let alive = true;
+    crmTeamsService.getTeamIdForUser(form.sdrId)
+      .then(res => {
+        if (!alive) return;
+        const foundTeamId = res.success ? res.data?.crm_team_id : null;
+        if (foundTeamId) setValue('crmTeamId', foundTeamId);
+      })
+      .catch(() => { /* khong co Team CRM cho nguoi nay - bo qua */ });
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enableCrmTeamSale, form.sdrId]);
+
+  /** Doi Team do NGUOI DUNG tu bam trong panel - reset Sale phu trach dang
+   * chon (khac voi auto-load o tren) vi co the khong con thuoc Team moi. */
+  function handleCrmTeamIdChange(value: string) {
+    setValue('crmTeamId', value);
+    handlePick('', 'sdrId', 'sdrNameHint');
+  }
+
+  // Chua chon Team CRM -> khong loc them (giu nguyen exclusion cu); da chon ->
+  // CHI giu thanh vien thuoc Team do (hoac dang duoc chon - tranh mat lua chon
+  // hien tai khoi danh sach). Thanh vien chua lien ket tai khoan dang nhap tu
+  // nhien bi loai khi da chon Team (dung, khong phai bug - crm_team_members
+  // tham chieu app_users.id).
+  const crmTeamMemberIds = crmTeamId ? new Set((crmTeamMembers || []).map(u => u.id)) : null;
+  const isInCrmTeamScope = (m: MemberProfile) => {
+    if (!crmTeamMemberIds) return true;
+    if (selectionKeyOf(m) === sdrSelectionKey) return true;
+    return crmTeamMemberIds.has(m.linked_user_id || '') || crmTeamMemberIds.has(m.linked_user_id_2 || '');
+  };
+
   function editIdentity(field: EditableIdentity, value: string) {
     setValue(field, value);
     setValue('manuallyEditedIdentity', [...new Set([...form.manuallyEditedIdentity, field])]);
@@ -981,7 +1113,7 @@ export function DealFormFields({
       searchText: [currentUser.name, currentUser.email].filter(Boolean).join(' '),
     }] : []),
     ...assignableMembers
-      .filter(m => selectionKeyOf(m) === sdrSelectionKey || selectionKeyOf(m) !== leadedBySelectionKey)
+      .filter(m => (selectionKeyOf(m) === sdrSelectionKey || selectionKeyOf(m) !== leadedBySelectionKey) && isInCrmTeamScope(m))
       .map(m => {
         return {
           value: selectionKeyOf(m),
@@ -990,6 +1122,13 @@ export function DealFormFields({
         };
       }),
   ];
+  const crmTeamOptionsForSelect = crmTeamOptions.map(team => ({ value: team.id, label: team.name }));
+  // "+ Thêm Team mới" trong dropdown Team Sale - mo CrmTeamFormModal, chon
+  // luon Team vua tao khi tao xong (handleCrmTeamIdChange reset sdrId, dung
+  // vi Team moi chua co thanh vien nao tu truoc).
+  const crmTeamActions: SelectAction[] = enableCrmTeamSale
+    ? [{ key: 'add-team', label: '+ Thêm Team mới', type: 'add', onSelect: () => setAddTeamOpen(true) }]
+    : [];
 
   // "Tóm tắt quyết định" cho luc TAO NHANH (isCreate) - cung mau UI/logic voi
   // crm-verify-readiness-panel cua LeadDetailDrawer (Xac minh Lead) va
@@ -1003,6 +1142,11 @@ export function DealFormFields({
     { key: 'product', label: 'Sản phẩm / dịch vụ', ok: Boolean(form.servicePackage.trim()) },
     { key: 'next', label: 'Tiếp theo', ok: Boolean(form.nextStep.trim()) },
     { key: 'follow', label: 'Hạn follow-up', ok: Boolean(form.followUpDate.trim()) },
+    // "Team Sale"/"Sale phụ trách" bắt buộc (feedback leader 2026-09-29) -
+    // thêm vào đây để "Tóm tắt quyết định" phản ánh đúng, dù gate thật sự
+    // nằm ở validateDealForm({ requireTeamSale: isCreate }) trong DealFormModal.
+    { key: 'team', label: 'Team Sale', ok: Boolean(form.crmTeamId) },
+    { key: 'ae', label: 'Sale phụ trách', ok: Boolean(sdrSelectionKey) },
   ];
   const createReviewOkCount = createReviewChecks.filter(c => c.ok).length;
   const createReviewReady = createReviewOkCount === createReviewChecks.length;
@@ -1058,6 +1202,10 @@ export function DealFormFields({
             onProjectChange={value => { setValue('projectId', ''); setValue('dealName', value); }}
             note={form.note}
             onNoteChange={value => setValue('note', value)}
+            teamId={crmTeamId}
+            onTeamIdChange={handleCrmTeamIdChange}
+            teamOptions={crmTeamOptionsForSelect}
+            teamActions={crmTeamActions}
             aeId={sdrSelectionKey}
             onAeIdChange={value => handlePick(value, 'sdrId', 'sdrNameHint')}
             aeOptions={aeOptionsForPanel}
@@ -1155,6 +1303,19 @@ export function DealFormFields({
                 <strong className="crm-deal-card-score">{dealHealth.score}/100 · {dealHealth.label}</strong>
                 <p className="crm-deal-card-desc">{dealHealth.description}</p>
               </div>
+              {showTeamSaleInEditBranch ? (
+                <div className="crm-deal-card">
+                  <span className="crm-deal-card-label">Team Sale</span>
+                  <SearchableSelect
+                    value={crmTeamId}
+                    onChange={handleCrmTeamIdChange}
+                    options={crmTeamOptionsForSelect}
+                    actions={crmTeamActions}
+                    placeholder="-- Chọn --"
+                  />
+                  <p className="crm-deal-card-desc">Lọc "Người phụ trách" bên dưới theo đúng Team đã chọn.</p>
+                </div>
+              ) : null}
               <div className="crm-deal-card">
                 <span className="crm-deal-card-label">Người phụ trách</span>
                 <select
@@ -1167,7 +1328,7 @@ export function DealFormFields({
                     <option value={currentUser.id}>{currentUser.name || currentUser.email}</option>
                   ) : null}
                   {assignableMembers
-                    .filter(m => selectionKeyOf(m) === sdrSelectionKey || selectionKeyOf(m) !== leadedBySelectionKey)
+                    .filter(m => (selectionKeyOf(m) === sdrSelectionKey || selectionKeyOf(m) !== leadedBySelectionKey) && isInCrmTeamScope(m))
                     .map(m => {
                       const linked = !!(m.linked_user_id || m.linked_user_id_2);
                       return (
@@ -1367,6 +1528,23 @@ export function DealFormFields({
           </div>
         ) : null}
       </section>
+
+      {enableCrmTeamSale ? (
+        <CrmTeamFormModal
+          open={addTeamOpen}
+          editingId={null}
+          initialTeam={null}
+          leaders={crmTeamLeaders}
+          allUsers={crmAllUsers}
+          allowAddMembersAfterCreate
+          onClose={() => setAddTeamOpen(false)}
+          onSaved={newTeam => {
+            setAddTeamOpen(false);
+            setCrmTeamOptions(prev => [...prev, newTeam]);
+            handleCrmTeamIdChange(newTeam.id);
+          }}
+        />
+      ) : null}
     </>
   );
 }

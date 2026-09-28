@@ -486,6 +486,39 @@ def update_lead(lead_id: str, payload: dict[str, Any], user: dict[str, Any]) -> 
     res = execute_supabase_query(lambda: supabase.table("crm_leads").update(data).eq("id", lead_id).eq("instance", settings.crm_instance).execute())
     if not res.data:
         raise ValueError("Khong tim thay lead.")
+
+    # Dong bo sang Co hoi (Deal) da duoc convert tu Lead nay, neu co - chi update
+    # cac truong "xac minh" tuong ung, KHONG bao gio doi deal_stage/status (xem
+    # docstring update_customer_lead: "Update thong thuong, khong phai stage
+    # change"). Chi map truong nao THAT SU co trong payload goc de tranh 1 lan
+    # save chi doi 1 truong lai ghi de cac truong khac cua Deal bang gia tri cu/
+    # None. Import tre giong delete_lead() o duoi de tranh vong import.
+    converted_deal_id = current.get("converted_deal_id")
+    if converted_deal_id:
+        _LEAD_TO_DEAL_FIELD_MAP = {
+            "qualification_need": "service_package",
+            "qualification_estimated_value": "estimated_budget",
+            "next_step": "next_step",
+            "follow_up_date": "follow_up_date",
+            "qualification_ae_id": "sdr_id",
+        }
+        deal_updates = {
+            deal_field: data[lead_field]
+            for lead_field, deal_field in _LEAD_TO_DEAL_FIELD_MAP.items()
+            if lead_field in data
+        }
+        if deal_updates:
+            try:
+                from app.modules.all_platform.services.customer_lead_service import update_customer_lead
+                update_customer_lead(converted_deal_id, deal_updates, actor=user)
+            except Exception:
+                logger.warning(
+                    "Khong the dong bo Lead %s sang Deal %s sau khi luu xac minh (bo qua, Lead da luu thanh cong).",
+                    lead_id,
+                    converted_deal_id,
+                    exc_info=True,
+                )
+
     return get_lead(lead_id, user)
 
 

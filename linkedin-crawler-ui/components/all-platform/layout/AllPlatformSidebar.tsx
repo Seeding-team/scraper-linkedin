@@ -29,6 +29,7 @@ export interface NavSubGroupItem {
   icon: MaterialSymbolName;
   label: string;
   items: NavLeafItem[];
+  defaultOpen?: boolean;
 }
 
 export type NavGroupChild = NavLeafItem | NavSubGroupItem;
@@ -181,7 +182,7 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, workspaceTab: 
             type: "item",
             id: "kpi-summary",
             href: "/all-platform/admin/teams-management/kpi-summary",
-            icon: "monitoring",
+            icon: "analytics",
             label: "Tổng hợp KPI & Thưởng",
             matchStartsWith: ["/all-platform/admin/teams-management/kpi-summary"],
           },
@@ -284,6 +285,13 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, workspaceTab: 
   // - Cấp 1 Cấu hình: Danh mục CRM
   const crmChildren: NavGroupChild[] = [
     {
+      type: "subgroup",
+      id: "crm-sub-main",
+      icon: "trending_up",
+      label: "Nhóm chính",
+      defaultOpen: true,
+      items: [
+    {
       type: "item",
       id: "crm-leads",
       href: "/all-platform/crm/leads",
@@ -295,7 +303,7 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, workspaceTab: 
       type: "item",
       id: "crm-customers",
       href: "/all-platform/crm/customers",
-      icon: "person_search",
+      icon: "domain",
       label: "Khách hàng",
       matchStartsWith: ["/all-platform/crm/customers"],
     },
@@ -303,7 +311,7 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, workspaceTab: 
       type: "item",
       id: "crm",
       href: "/all-platform/crm",
-      icon: "filter_alt",
+      icon: "track_changes",
       label: "Cơ hội",
       exactMatch: true,
     },
@@ -319,7 +327,7 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, workspaceTab: 
       type: "item",
       id: "sales-assets",
       href: "/all-platform/sales-assets",
-      icon: "folder_shared",
+      icon: "folder_copy",
       label: "Tài liệu bán hàng",
       matchStartsWith: ["/all-platform/sales-assets"],
     },
@@ -327,9 +335,11 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, workspaceTab: 
       type: "item",
       id: "service-catalog",
       href: "/all-platform/service-catalog",
-      icon: "category",
+      icon: "package",
       label: "Sản phẩm & dịch vụ",
       matchStartsWith: ["/all-platform/service-catalog"],
+    },
+      ],
     },
     // Sub-group Cấp 2: Tiến độ & Phân tích
     ...(isAdmin || isLeader || isSale
@@ -337,7 +347,8 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, workspaceTab: 
           {
             type: "subgroup",
             id: "crm-sub-progress-analytics",
-            icon: "monitoring",
+            icon: "analytics",
+            defaultOpen: false,
             label: "Tiến độ & Phân tích",
             items: [
               ...(isAdmin || isLeader
@@ -346,7 +357,7 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, workspaceTab: 
                       type: "item",
                       id: "crm-progress",
                       href: "/all-platform/crm/progress",
-                      icon: "track_changes",
+                      icon: "speed",
                       label: "Quản lý tiến độ",
                       matchStartsWith: ["/all-platform/crm/progress"],
                     },
@@ -358,7 +369,7 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, workspaceTab: 
                       type: "item",
                       id: "crm-analytics",
                       href: "/all-platform/crm/analytics",
-                      icon: "analytics",
+                      icon: "monitoring",
                       label: "Phân tích CRM",
                       matchStartsWith: ["/all-platform/crm/analytics"],
                     },
@@ -373,6 +384,7 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, workspaceTab: 
       type: "subgroup",
       id: "crm-sub-quotes",
       icon: "request_quote",
+      defaultOpen: false,
       label: "Quản lý Báo giá",
       items: [
         {
@@ -403,7 +415,7 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, workspaceTab: 
           type: "item",
           id: "issuer-companies",
           href: "/all-platform/issuer-companies",
-          icon: "domain",
+          icon: "account_balance_wallet",
           label: "Đơn vị phát hành",
           matchStartsWith: ["/all-platform/issuer-companies"],
         },
@@ -432,7 +444,8 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, workspaceTab: 
     {
       type: "subgroup",
       id: "crm-sub-categories",
-      icon: "list_alt",
+      icon: "settings",
+      defaultOpen: false,
       label: "Danh mục & cấu hình",
       items: [
         // "Điều kiện phân loại Lead" - "chỉ có admin mới được tick chọn" nên
@@ -443,7 +456,7 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, workspaceTab: 
                 type: "item",
                 id: "crm-lead-rules",
                 href: "/all-platform/crm/lead-rules",
-                icon: "assignment",
+                icon: "filter_list",
                 label: "Điều kiện phân loại Lead",
                 matchStartsWith: ["/all-platform/crm/lead-rules"],
               },
@@ -461,7 +474,7 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, workspaceTab: 
           type: "item",
           id: "crm-interest-levels",
           href: "/all-platform/crm/interest-levels",
-          icon: "trending_up",
+          icon: "monitoring",
           label: "Mức độ quan tâm",
           matchStartsWith: ["/all-platform/crm/interest-levels"],
         },
@@ -469,7 +482,7 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, workspaceTab: 
           type: "item",
           id: "crm-deal-stages",
           href: "/all-platform/crm/deal-stages",
-          icon: "filter_alt",
+          icon: "account_tree",
           label: "Giai đoạn cơ hội",
           matchStartsWith: ["/all-platform/crm/deal-stages"],
         },
@@ -1018,7 +1031,7 @@ export function AllPlatformSidebar({
           </div>
         ) : null}
 
-        <nav className="flex-1 space-y-2 overflow-y-auto overflow-x-hidden px-2 pb-2">
+        <nav className="scrollbar-none flex-1 space-y-2 overflow-y-auto overflow-x-hidden px-2 pb-2">
           <SectionLabel collapsed={isCollapsed}>Tác vụ của tôi</SectionLabel>
           <ul className="space-y-1">
             {entries.map((entry) => (

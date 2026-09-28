@@ -4,11 +4,13 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { API_BASE_URL, API_KEY } from '@/lib/env';
-import { usersService, type QuoteBusinessRoleUser } from '@/services/all-platform.service';
+import { usersService, crmTeamsService, type QuoteBusinessRoleUser, type CrmTeam, type AppUserProfile } from '@/services/all-platform.service';
 import { parseMoney, DEAL_STAGE_META } from '../constants/crmConfig';
 import { mapLead } from './LeadsDirectory';
 import { CheckCircle2, HelpCircle, Loader2, X } from './icons';
 import { LeadDealQualificationPanel, formatEstimatedValue } from './LeadDealQualificationPanel';
+import { CrmTeamFormModal } from './CrmTeamFormModal';
+import type { SelectAction } from './SearchableSelect';
 import { getSourceLabel } from './DealFormFields';
 import { useCrmCategoryLabels } from './CrmCategorySelect';
 import { useLeadQualificationEngine } from '../hooks/useLeadQualificationEngine';
@@ -97,6 +99,19 @@ export function LeadDetailDrawer({
 }) {
   const router = useRouter();
   const [saleOptions, setSaleOptions] = useState<QuoteBusinessRoleUser[]>([]);
+  // "Team Sale" - filter cascading rieng, KHONG luu vao lead (chi aeId moi
+  // luu that). teamOptions fetch 1 lan/moi lan mo (giong pattern saleOptions
+  // ben duoi); teamMembers fetch lai moi khi doi teamId, thay THANG cho
+  // saleOptions he thong (feedback: "CHỈ xổ các thành viên thuộc Team đó").
+  const [teamOptions, setTeamOptions] = useState<CrmTeam[]>([]);
+  const [teamId, setTeamId] = useState('');
+  const [teamMembers, setTeamMembers] = useState<AppUserProfile[] | null>(null);
+  // "+ Thêm Team mới" trong dropdown Team Sale (feedback leader 2026-09-29:
+  // "tái sử dụng lại bên chỗ team crm") - tai su dung CrmTeamFormModal (dung
+  // chung voi CrmTeamsShell/trang Team CRM).
+  const [addTeamOpen, setAddTeamOpen] = useState(false);
+  const [teamLeaders, setTeamLeaders] = useState<AppUserProfile[]>([]);
+  const [teamAllUsers, setTeamAllUsers] = useState<AppUserProfile[]>([]);
   const [form, setForm] = useState<VerifyForm>({
     interest: '',
     interestLevel: '',
@@ -149,6 +164,10 @@ export function LeadDetailDrawer({
   useEffect(() => {
     if (!open || !lead) {
       initializedLeadRef.current = '';
+      // Dong khong dung backdrop cua CrmTeamFormModal (vd dong ca drawer Lead
+      // ngoai cung) van phai reset - state nay khong tu mat vi component
+      // KHONG unmount giua cac lan mo/dong drawer (chi an/hien qua CSS).
+      setAddTeamOpen(false);
       return;
     }
     if (initializedLeadRef.current === lead.id) return;
@@ -161,6 +180,7 @@ export function LeadDetailDrawer({
     setNurtureReason('');
     setUnqualifiedReason('');
     setQualificationEditOpen(false);
+    setAddTeamOpen(false);
     setForm({
       interest: lead.qualificationNeed || '',
       interestLevel: interestLevelFromScore(lead.score),
@@ -186,6 +206,23 @@ export function LeadDetailDrawer({
     idempotencyKeyRef.current = (typeof crypto !== 'undefined' && crypto.randomUUID)
       ? crypto.randomUUID()
       : `lead-convert-${lead.id}-${Date.now()}`;
+
+    // Auto-load Team Sale tu Sale da luu san (lead.qualificationAeId) - CHI
+    // suy nguoc de hien dung Team dang gan, KHONG reset lai aeId vua nap o
+    // tren (reset aeId chi xay ra khi NGUOI DUNG tu doi Team - handleTeamIdChange).
+    setTeamId('');
+    setTeamMembers(null);
+    const initialAeId = lead.qualificationAeId || '';
+    if (initialAeId) {
+      const leadIdAtRequest = lead.id;
+      crmTeamsService.getTeamIdForUser(initialAeId)
+        .then(res => {
+          if (initializedLeadRef.current !== leadIdAtRequest) return; // lead da doi, bo ket qua cu
+          const foundTeamId = res.success ? res.data?.crm_team_id : null;
+          if (foundTeamId) setTeamId(foundTeamId);
+        })
+        .catch(() => { /* khong co Team CRM cho nguoi nay - bo qua, giu teamId rong */ });
+    }
 
     // Check trùng doanh nghiệp — đúng endpoint company-match đã dùng từ trước.
     // Khi lead không có công ty/website thì lùi về duplicate-check theo
@@ -234,6 +271,59 @@ export function LeadDetailDrawer({
     };
   }, [open]);
 
+  useEffect(() => {
+    if (!open) return;
+    let alive = true;
+    crmTeamsService.list()
+      .then(res => {
+        if (!alive) return;
+        const rows = res.success ? res.data || [] : [];
+        setTeamOptions(rows.filter(t => t.status === 'active'));
+      })
+      .catch(() => {
+        if (alive) setTeamOptions([]);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [open]);
+
+  // Danh sach Leader/user cho modal "+ Thêm Team mới" (CrmTeamFormModal).
+  useEffect(() => {
+    if (!open) return;
+    let alive = true;
+    usersService.getAllProfiles().then(res => {
+      if (!alive || !res.success) return;
+      const rows = res.data || [];
+      setTeamLeaders(rows.filter(u => u.role === 'leader' || u.role === 'admin'));
+      setTeamAllUsers(rows);
+    });
+    return () => { alive = false; };
+  }, [open]);
+
+  // Doi Team -> tai lai thanh vien Team do, thay THANG cho danh sach Sale he
+  // thong (yeu cau "CHI xo cac thanh vien thuoc Team do"). teamId rong -> giu
+  // teamMembers = null de aeOptions lui ve saleOptions toan he thong (fallback
+  // UX truoc khi chon Team, xem aeOptions ben duoi).
+  useEffect(() => {
+    if (!teamId) {
+      setTeamMembers(null);
+      return;
+    }
+    let alive = true;
+    crmTeamsService.get(teamId)
+      .then(res => {
+        if (!alive) return;
+        setTeamMembers(res.success ? res.data?.members || [] : []);
+      })
+      .catch(() => {
+        if (alive) setTeamMembers([]);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [teamId]);
+
   const { labels: knownProductLabels } = useCrmCategoryLabels('crm_service_package');
 
   const {
@@ -250,14 +340,37 @@ export function LeadDetailDrawer({
     hasContact: Boolean(contact.phone.trim() || contact.email.trim()),
   });
 
+  // Chua chon Team -> giu danh sach Sale toan he thong nhu cu (fallback UX);
+  // da chon Team -> THAY THANG bang dung thanh vien Team do (khong hoi cu).
   const aeOptions = useMemo(
-    () => saleOptions.map(user => ({ value: user.id, label: user.name })),
-    [saleOptions],
+    () => teamId
+      ? (teamMembers || []).map(user => ({ value: user.id, label: user.name || user.email }))
+      : saleOptions.map(user => ({ value: user.id, label: user.name })),
+    [teamId, teamMembers, saleOptions],
   );
+  const teamOptionsForSelect = useMemo(
+    () => teamOptions.map(team => ({ value: team.id, label: team.name })),
+    [teamOptions],
+  );
+  const teamActions: SelectAction[] = useMemo(
+    () => [{ key: 'add-team', label: '+ Thêm Team mới', type: 'add', onSelect: () => setAddTeamOpen(true) }],
+    [],
+  );
+  /** Doi Team do NGUOI DUNG tu bam (khac voi auto-load luc mo lead) - phai
+   * reset aeId dang chon vi Sale cu co the khong con thuoc Team moi. */
+  function handleTeamIdChange(value: string) {
+    setTeamId(value);
+    setField('aeId', '');
+  }
   const aeName = (id?: string) => {
     if (!id) return 'Chưa gán';
     if (id === currentUser?.id) return currentUser?.name || currentUser?.email || 'Bạn';
-    return saleOptions.find(user => user.id === id)?.name || 'Chưa gán';
+    // Tim ca trong saleOptions (he thong) lan teamMembers (dang loc theo Team)
+    // - aeId da luu co the thuoc Team dang chon nhung khong nam trong danh
+    // sach vai tro "sale" he thong (vd Leader/Presale duoc bo sung vao Team).
+    return saleOptions.find(user => user.id === id)?.name
+      || (teamMembers || []).find(user => user.id === id)?.name
+      || 'Chưa gán';
   };
 
   // ---- Mức sẵn sàng Convert: tính hoàn toàn client-side từ 5 điều kiện thật.
@@ -566,6 +679,10 @@ export function LeadDetailDrawer({
       readinessRef.current?.scrollIntoView({ block: 'start', behavior: 'smooth' });
       return;
     }
+    if (!teamId) {
+      setError('SQL bắt buộc chọn Team Sale.');
+      return;
+    }
     if (!form.aeId) {
       setError('SQL bắt buộc chọn Sale nhận bàn giao.');
       return;
@@ -672,7 +789,7 @@ export function LeadDetailDrawer({
                 data-testid="lead-detail-edit"
                 onClick={() => onEdit(lead)}
               >
-                Chỉnh sửa
+                Sửa thông tin Lead
               </button>
             ) : null}
             <button type="button" className="crm-drawer-close" onClick={onClose} aria-label="Đóng">
@@ -831,6 +948,10 @@ export function LeadDetailDrawer({
                 onProjectChange={value => setField('project', value)}
                 note={form.note}
                 onNoteChange={value => setField('note', value)}
+                teamId={teamId}
+                onTeamIdChange={handleTeamIdChange}
+                teamOptions={teamOptionsForSelect}
+                teamActions={teamActions}
                 aeId={form.aeId}
                 onAeIdChange={value => setField('aeId', value)}
                 aeOptions={aeOptions}
@@ -919,6 +1040,21 @@ export function LeadDetailDrawer({
           </footer>
         ) : null}
       </aside>
+
+      <CrmTeamFormModal
+        open={addTeamOpen}
+        editingId={null}
+        initialTeam={null}
+        leaders={teamLeaders}
+        allUsers={teamAllUsers}
+        allowAddMembersAfterCreate
+        onClose={() => setAddTeamOpen(false)}
+        onSaved={newTeam => {
+          setAddTeamOpen(false);
+          setTeamOptions(prev => [...prev, newTeam]);
+          handleTeamIdChange(newTeam.id);
+        }}
+      />
     </>
   );
 }

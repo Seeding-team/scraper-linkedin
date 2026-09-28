@@ -138,7 +138,7 @@ export function DealFormModal({
 
   function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
-    const validationError = validateDealForm(form);
+    const validationError = validateDealForm(form, { requireTeamSale: isCreate });
     if (validationError) {
       window.alert(validationError);
       return;
@@ -160,7 +160,7 @@ export function DealFormModal({
 
   async function handleSaveAndContinue() {
     if (!onCreateAndContinue || savingContinue || loading) return;
-    const validationError = validateDealForm(form);
+    const validationError = validateDealForm(form, { requireTeamSale: isCreate });
     if (validationError) {
       window.alert(validationError);
       return;
@@ -275,6 +275,7 @@ export function DealFormModal({
             industryOptions={industryOptions}
             isCreate={isCreate}
             currentUser={currentUser}
+            showTeamSaleInEditBranch
           />
         </form>
 

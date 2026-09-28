@@ -1,12 +1,12 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { API_BASE_URL, API_KEY } from '@/lib/env';
 import { parseCurrencyInput } from '@/lib/currency';
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
 import { useMembers } from '@/hooks/useMembers';
-import { allPlatformCategoriesService, usersService, type QuoteBusinessRoleUser } from '@/services/all-platform.service';
+import { allPlatformCategoriesService, usersService, crmTeamsService, type QuoteBusinessRoleUser, type CrmTeam, type AppUserProfile } from '@/services/all-platform.service';
 import { DEAL_STAGE_META } from '../constants/crmConfig';
 import {
   CustomerProfileCombobox,
@@ -17,6 +17,8 @@ import {
 } from './DealFormFields';
 import { HelpCircle, Loader2, X } from './icons';
 import { LeadDealQualificationPanel, formatEstimatedValue } from './LeadDealQualificationPanel';
+import { CrmTeamFormModal } from './CrmTeamFormModal';
+import type { SelectAction } from './SearchableSelect';
 import { useCrmCategoryLabels } from './CrmCategorySelect';
 import { useLeadQualificationEngine } from '../hooks/useLeadQualificationEngine';
 import { ICP_OPTIONS, INTEREST_LEVEL_OPTIONS, type InterestLevel } from '../utils/leadQualificationRules';
@@ -106,6 +108,19 @@ export function CreateOpportunityDrawer({
   const [nurtureReason, setNurtureReason] = useState('');
   const [unqualifiedReason, setUnqualifiedReason] = useState('');
   const [aeOptions, setAeOptions] = useState<QuoteBusinessRoleUser[]>([]);
+  // "Team Sale" - filter cascading rieng (khong luu vao Lead/Deal, chi filter
+  // "Sale phu trach"), cung pattern voi LeadDetailDrawer.
+  const [teamOptions, setTeamOptions] = useState<CrmTeam[]>([]);
+  const [teamId, setTeamId] = useState('');
+  const [teamMembers, setTeamMembers] = useState<AppUserProfile[] | null>(null);
+  // "+ Thêm Team mới" trong dropdown Team Sale (feedback leader 2026-09-29) -
+  // tai su dung CrmTeamFormModal (dung chung voi CrmTeamsShell/trang Team CRM).
+  const [addTeamOpen, setAddTeamOpen] = useState(false);
+  const [teamLeaders, setTeamLeaders] = useState<AppUserProfile[]>([]);
+  const [teamAllUsers, setTeamAllUsers] = useState<AppUserProfile[]>([]);
+  // Guard chong "tra loi tre" (stale response) khi doi Customer nhanh - fetch
+  // getTeamIdForUser cu tra ve sau khi Customer da doi khong duoc ghi de teamId.
+  const teamAutoLoadTargetRef = useRef('');
 
   const [saving, setSaving] = useState<'' | 'stay' | 'deal'>('');
   const [error, setError] = useState('');
@@ -133,6 +148,25 @@ export function CreateOpportunityDrawer({
     setError('');
     setSaving('');
     setConfirmOpen(false);
+    // Component KHONG unmount that su khi open=false (chi return null) nen
+    // addTeamOpen (modal "+ Thêm Team mới") khong tu mat - phai reset tay o
+    // day, tranh loi mo lai drawer van con thay modal tao Team cua lan truoc.
+    setAddTeamOpen(false);
+
+    // Auto-load Team Sale tu Owner da co san (KHONG reset lai sdrId vua nap o
+    // customerRowToForm) - chi suy nguoc de hien dung Team dang gan.
+    setTeamId('');
+    setTeamMembers(null);
+    teamAutoLoadTargetRef.current = customer.id;
+    if (ownerId) {
+      crmTeamsService.getTeamIdForUser(ownerId)
+        .then(res => {
+          if (teamAutoLoadTargetRef.current !== customer.id) return;
+          const foundTeamId = res.success ? res.data?.crm_team_id : null;
+          if (foundTeamId) setTeamId(foundTeamId);
+        })
+        .catch(() => { /* khong co Team CRM cho nguoi nay - bo qua */ });
+    }
   }, [open, customer?.id]);
 
   useEffect(() => {
@@ -149,6 +183,54 @@ export function CreateOpportunityDrawer({
       });
     return () => { alive = false; };
   }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    let alive = true;
+    crmTeamsService.list()
+      .then(res => {
+        if (!alive) return;
+        const rows = res.success ? res.data || [] : [];
+        setTeamOptions(rows.filter(t => t.status === 'active'));
+      })
+      .catch(() => {
+        if (alive) setTeamOptions([]);
+      });
+    return () => { alive = false; };
+  }, [open]);
+
+  // Danh sach Leader/user cho modal "+ Thêm Team mới" (CrmTeamFormModal).
+  useEffect(() => {
+    if (!open) return;
+    let alive = true;
+    usersService.getAllProfiles().then(res => {
+      if (!alive || !res.success) return;
+      const rows = res.data || [];
+      setTeamLeaders(rows.filter(u => u.role === 'leader' || u.role === 'admin'));
+      setTeamAllUsers(rows);
+    });
+    return () => { alive = false; };
+  }, [open]);
+
+  // Doi Team -> tai lai thanh vien Team do, THAY THANG cho danh sach Sale he
+  // thong (yeu cau "CHI xo cac thanh vien thuoc Team do"). teamId rong -> lui
+  // ve danh sach he thong (aeOptionsForSelect ben duoi).
+  useEffect(() => {
+    if (!teamId) {
+      setTeamMembers(null);
+      return;
+    }
+    let alive = true;
+    crmTeamsService.get(teamId)
+      .then(res => {
+        if (!alive) return;
+        setTeamMembers(res.success ? res.data?.members || [] : []);
+      })
+      .catch(() => {
+        if (alive) setTeamMembers([]);
+      });
+    return () => { alive = false; };
+  }, [teamId]);
 
   // Ten hien thi Owner - tra cuu qua useMembers (cung nguon voi cac noi khac trong CRM).
   useEffect(() => {
@@ -178,7 +260,22 @@ export function CreateOpportunityDrawer({
       .then(data => {
         if (!alive) return;
         setDealCount(Number(data.deal_count || 0));
-        if (!customerForm.sdrId && data.owner_id) setCustomerFormValue('sdrId', data.owner_id);
+        if (!customerForm.sdrId && data.owner_id) {
+          setCustomerFormValue('sdrId', data.owner_id);
+          // Owner that vua tai lai (khach hang doi qua combobox "Doi") - suy
+          // Team tuong tu buoc mo drawer, CHI khi nguoi dung CHUA tu chon Team.
+          if (!teamId) {
+            const ownerIdAtRequest = data.owner_id;
+            teamAutoLoadTargetRef.current = customerForm.customerId;
+            crmTeamsService.getTeamIdForUser(ownerIdAtRequest)
+              .then(teamRes => {
+                if (teamAutoLoadTargetRef.current !== customerForm.customerId) return;
+                const foundTeamId = teamRes.success ? teamRes.data?.crm_team_id : null;
+                if (foundTeamId) setTeamId(foundTeamId);
+              })
+              .catch(() => { /* khong co Team CRM cho nguoi nay - bo qua */ });
+          }
+        }
       })
       .catch(() => {
         /* im lang - khong chan luong chinh vi 1 so lieu phu tai khong duoc */
@@ -200,10 +297,29 @@ export function CreateOpportunityDrawer({
     return () => { alive = false; };
   }, [open]);
 
+  // Chua chon Team -> giu danh sach Sale toan he thong nhu cu; da chon Team ->
+  // THAY THANG bang dung thanh vien Team do.
   const aeOptionsForSelect = useMemo(
-    () => aeOptions.map(user => ({ value: user.id, label: user.name })),
-    [aeOptions],
+    () => teamId
+      ? (teamMembers || []).map(user => ({ value: user.id, label: user.name || user.email }))
+      : aeOptions.map(user => ({ value: user.id, label: user.name })),
+    [teamId, teamMembers, aeOptions],
   );
+  const teamOptionsForSelect = useMemo(
+    () => teamOptions.map(team => ({ value: team.id, label: team.name })),
+    [teamOptions],
+  );
+  const teamActions: SelectAction[] = useMemo(
+    () => [{ key: 'add-team', label: '+ Thêm Team mới', type: 'add', onSelect: () => setAddTeamOpen(true) }],
+    [],
+  );
+  /** Doi Team do NGUOI DUNG tu bam - reset Sale phu trach dang chon vi co the
+   * khong con thuoc Team moi (khac voi auto-load luc mo drawer/doi khach hang). */
+  function handleTeamIdChange(value: string) {
+    setTeamId(value);
+    setCustomerFormValue('sdrId', '');
+    setCustomerFormValue('sdrNameHint', '');
+  }
 
   const { labels: knownProductLabels } = useCrmCategoryLabels('crm_service_package');
 
@@ -241,6 +357,12 @@ export function CreateOpportunityDrawer({
       label: 'Ngày follow-up',
       value: customerForm.followUpDate ? customerForm.followUpDate.replace('T', ' ') : '—',
       ok: Boolean(customerForm.followUpDate),
+    },
+    {
+      key: 'team',
+      label: 'Team Sale',
+      value: teamOptionsForSelect.find(o => o.value === teamId)?.label || '—',
+      ok: Boolean(teamId),
     },
     {
       key: 'ae',
@@ -448,11 +570,18 @@ export function CreateOpportunityDrawer({
                 onProjectChange={setProject}
                 note={note}
                 onNoteChange={setNote}
+                teamId={teamId}
+                onTeamIdChange={handleTeamIdChange}
+                teamOptions={teamOptionsForSelect}
+                teamActions={teamActions}
                 aeId={customerForm.sdrId}
                 onAeIdChange={value => {
-                  const match = aeOptions.find(user => user.id === value);
+                  const nameHint = teamId
+                    ? (teamMembers || []).find(user => user.id === value)?.name
+                      || (teamMembers || []).find(user => user.id === value)?.email
+                    : aeOptions.find(user => user.id === value)?.name;
                   setCustomerFormValue('sdrId', value);
-                  setCustomerFormValue('sdrNameHint', match ? match.name : '');
+                  setCustomerFormValue('sdrNameHint', nameHint || '');
                 }}
                 aeOptions={aeOptionsForSelect}
                 contactName={contactName}
@@ -516,6 +645,21 @@ export function CreateOpportunityDrawer({
           </footer>
         )}
       </aside>
+
+      <CrmTeamFormModal
+        open={addTeamOpen}
+        editingId={null}
+        initialTeam={null}
+        leaders={teamLeaders}
+        allUsers={teamAllUsers}
+        allowAddMembersAfterCreate
+        onClose={() => setAddTeamOpen(false)}
+        onSaved={newTeam => {
+          setAddTeamOpen(false);
+          setTeamOptions(prev => [...prev, newTeam]);
+          handleTeamIdChange(newTeam.id);
+        }}
+      />
     </>
   );
 }
