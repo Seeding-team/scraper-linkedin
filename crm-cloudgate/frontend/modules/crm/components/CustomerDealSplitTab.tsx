@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import Link from 'next/link';
 import { Target, X, Search, Filter, Plus, ChevronRight, Briefcase, UserCheck, Calendar, Clock, AlertCircle, Phone, Mail, FileText, Activity, MoreHorizontal, LayoutGrid, CheckCircle2, Sparkles, MessageCircle, Trash2 } from 'lucide-react';
 import { customerLeadService, type ActivityLogEntry, type Customer as LiveDealRow, type StageTransitionPayload } from '@/services/customer-lead.service';
@@ -195,6 +195,30 @@ export function CustomerDealSplitTab({
       }
     }
   };
+
+  const previousCustomerIdRef = useRef(customerId);
+  useEffect(() => {
+    const previousCustomerId = previousCustomerIdRef.current;
+    if (previousCustomerId === customerId) return;
+    previousCustomerIdRef.current = customerId;
+    setSelectedDealIdState(null);
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem(`crm_selected_deal_${previousCustomerId}`);
+      localStorage.removeItem(`crm_selected_deal_${customerId}`);
+      try {
+        const url = new URL(window.location.href);
+        url.searchParams.delete('dealId');
+        window.history.replaceState({}, '', url.toString());
+      } catch (e) {}
+    }
+  }, [customerId]);
+
+  useEffect(() => {
+    if (!selectedDealId) return;
+    if (!deals.some(deal => deal.id === selectedDealId)) {
+      setSelectedDealId(null);
+    }
+  }, [deals, selectedDealId]);
 
   const [detailDeal, setDetailDeal] = useState<LiveDealRow | null>(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
@@ -744,6 +768,28 @@ export function CustomerDealSplitTab({
     }
     setSelectedDealId(null);
   }
+
+  useEffect(() => {
+    if (!selectedDealId) return;
+
+    const handleDocumentPointerDown = (event: PointerEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (!target) return;
+      if (target.closest('[data-crm-deal-workspace="true"]')) return;
+      if (target.closest('[data-crm-customer-deal-row="true"]')) return;
+      if (
+        target.closest(
+          'button,a,input,select,textarea,[role="button"],[role="menu"],[role="dialog"],.crm-modal-backdrop,.qc-modal-backdrop'
+        )
+      ) {
+        return;
+      }
+      setSelectedDealId(null);
+    };
+
+    document.addEventListener('pointerdown', handleDocumentPointerDown, true);
+    return () => document.removeEventListener('pointerdown', handleDocumentPointerDown, true);
+  }, [selectedDealId]);
 
   return (
     <div className="space-y-6 w-full relative" onPointerDownCapture={handleDealSplitPointerDown}>
