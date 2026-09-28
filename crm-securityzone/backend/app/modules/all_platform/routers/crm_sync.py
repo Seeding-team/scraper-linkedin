@@ -26,8 +26,8 @@ def sync_customers_list(
     page_size: int = Query(200, ge=1, le=200),
     _caller: str = Depends(require_sync_api_key),
 ) -> BaseResponse:
-    """Danh sach crm_customers.status == 'current_customer' (Da mua/chot).
-    KHONG tra ve customer o cac status khac (new_lead/following/not_fit)."""
+    """Danh sach crm_customers (Bao gom ca Tiềm năng, Đã mua, v.v.).
+    Tra ve toan bo customer bat ke status nao de dong bo sang Tech Support."""
     return BaseResponse(
         success=True,
         data=list_purchased_customers_for_sync(

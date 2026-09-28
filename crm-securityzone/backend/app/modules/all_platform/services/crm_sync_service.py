@@ -35,7 +35,6 @@ def list_purchased_customers_for_sync(
         supabase.table("crm_customers")
         .select(CUSTOMER_COLUMNS)
         .eq("instance", settings.crm_instance)
-        .eq("status", PURCHASED_STATUS)
     )
     if updated_after:
         query = query.gte("updated_at", updated_after)
