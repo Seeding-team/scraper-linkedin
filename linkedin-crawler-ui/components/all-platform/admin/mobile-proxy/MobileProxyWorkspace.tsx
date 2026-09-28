@@ -50,6 +50,13 @@ function EndpointFields({ endpoint }: { endpoint: MobileProxyRawEndpoint | null 
   if (!endpoint) {
     return <p className="text-sm text-muted-foreground">Chưa cấu hình.</p>;
   }
+  const rawAuth = endpoint.user
+    ? `${endpoint.user}:${endpoint.pass ?? ""}@`
+    : "";
+  const rawUrl =
+    endpoint.host && endpoint.port
+      ? `socks5://${rawAuth}${endpoint.host}:${endpoint.port}`
+      : endpoint.url;
   return (
     <div className="space-y-3">
       <div className="grid gap-3 sm:grid-cols-2">
@@ -58,7 +65,7 @@ function EndpointFields({ endpoint }: { endpoint: MobileProxyRawEndpoint | null 
         <CopyField label="Username" value={endpoint.user ?? ""} />
         <CopyField label="Password" value={endpoint.pass ?? ""} />
       </div>
-      <CopyField label="Chuỗi kết nối đầy đủ" value={endpoint.url} />
+      <CopyField label="Chuỗi kết nối đầy đủ" value={rawUrl} />
     </div>
   );
 }
