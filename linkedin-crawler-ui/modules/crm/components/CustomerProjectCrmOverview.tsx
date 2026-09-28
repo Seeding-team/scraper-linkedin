@@ -176,19 +176,19 @@ function getQuoteStatusBadge(q: OverviewQuoteItem) {
     return <Badge className="text-[11px] bg-red-500 text-white border-transparent font-medium">Đã huỷ</Badge>;
   }
   if (q.sent_at || q.status === 'sent') {
-    return <Badge className="text-[11px] bg-blue-500 text-white border-transparent font-medium">Đã gửi</Badge>;
+    return <Badge className="text-[11px] bg-emerald-600 text-white border-transparent font-medium">Đã gửi</Badge>;
   }
   if (q.status === 'accepted' || q.status === 'confirmed') {
     return <Badge className="text-[11px] bg-green-500 text-white border-transparent font-medium">Đã chấp nhận</Badge>;
   }
   if (q.status === 'approved' || q.approved_at || q.published_at || q.processing_stage === 'published') {
-    return <Badge className="text-[11px] bg-purple-500 text-white border-transparent font-medium">Sẵn sàng gửi</Badge>;
+    return <Badge className="text-[11px] bg-teal-500 text-white border-transparent font-medium">Sẵn sàng gửi</Badge>;
   }
   if (q.processing_stage === 'review') {
-    return <Badge className="text-[11px] bg-orange-500 text-white border-transparent font-medium">Admin review</Badge>;
+    return <Badge className="text-[11px] bg-rose-500 text-white border-transparent font-medium">Admin review</Badge>;
   }
   if (q.processing_stage === 'pricing') {
-    return <Badge className="text-[11px] bg-orange-500 text-white border-transparent font-medium">Sale markup</Badge>;
+    return <Badge className="text-[11px] bg-amber-500 text-white border-transparent font-medium">Sale markup</Badge>;
   }
   return <Badge className="text-[11px] bg-slate-500 text-white border-transparent font-medium">Đang soạn</Badge>;
 }

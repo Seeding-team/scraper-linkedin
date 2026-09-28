@@ -237,12 +237,12 @@ function quoteChainPhaseKey(row: RelatedQuoteRow): QuoteStatusFilter {
 
 const QUOTE_PHASE_COLOR: Record<QuoteStatusFilter, string> = {
   cancelled: 'bg-red-500 text-white',
-  sent: 'bg-blue-500 text-white',
-  ready: 'bg-green-500 text-white',
-  review: 'bg-purple-500 text-white',
-  pricing: 'bg-orange-500 text-white',
-  presale: 'bg-indigo-600 text-white',
-  active: 'bg-blue-500 text-white',
+  sent: 'bg-emerald-600 text-white',
+  ready: 'bg-teal-500 text-white',
+  review: 'bg-rose-500 text-white',
+  pricing: 'bg-amber-500 text-white',
+  presale: 'bg-blue-500 text-white',
+  active: 'bg-slate-500 text-white',
   all: 'bg-indigo-600 text-white',
 };
 function quotePhaseBadgeClass(key: QuoteStatusFilter): string {

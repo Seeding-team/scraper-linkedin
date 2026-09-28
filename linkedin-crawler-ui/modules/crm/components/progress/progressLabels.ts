@@ -75,10 +75,10 @@ export function dealStageLabel(stage: string | null | undefined): string {
 }
 
 export const QUOTE_PHASE_TONE: Record<string, string> = {
-  presale: 'qc-badge-neutral',
-  sale_markup: 'qc-badge-blue',
-  admin_review: 'qc-badge-amber',
-  ready_to_send: 'qc-badge-purple',
+  presale: 'qc-badge-blue',
+  sale_markup: 'qc-badge-amber',
+  admin_review: 'qc-badge-rose',
+  ready_to_send: 'qc-badge-teal',
   sent: 'qc-badge-success',
 };
 

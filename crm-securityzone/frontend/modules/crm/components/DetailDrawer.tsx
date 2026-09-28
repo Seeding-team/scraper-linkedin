@@ -131,7 +131,7 @@ export function DetailDrawer({
 
   return (
     <>
-      <div className="crm-drawer-backdrop" onClick={onClose} />
+      <div className="crm-drawer-backdrop crm-drawer-backdrop--passive" />
       <aside className="crm-drawer">
         <header className="crm-drawer-header" style={{ backgroundColor: stageMeta.color }}>
           <div className="min-w-0">

@@ -260,10 +260,10 @@ export function ProgressQuotesSlaView({
     });
 
     const STAGE_BAR_COLORS: Record<string, string> = {
-      'Sẵn sàng gửi': '#8b5cf6',
-      'Admin review': '#f59e0b',
-      'Sale markup': '#3b82f6',
-      'Presale': '#6366f1',
+      'Sẵn sàng gửi': '#14b8a6',
+      'Admin review': '#e11d48',
+      'Sale markup': '#f59e0b',
+      'Presale': '#3b82f6',
       'Hoàn thiện giá': '#ec4899',
       'Kỹ thuật': '#94a3b8',
     };

@@ -91,7 +91,7 @@ export function CrmTableView({
           </thead>
           <tbody>
             {sortedDeals.map(deal => (
-              <tr key={deal.id} className="crm-row" onClick={() => onCardClick(deal)}>
+              <tr key={deal.id} className="crm-row" data-crm-deal-row="true" onClick={() => onCardClick(deal)}>
                 <td className="crm-td">
                   <div className="crm-customer-name">
                     {deal.position ? `${deal.customerName} - ${deal.position}` : deal.customerName}

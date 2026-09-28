@@ -126,20 +126,20 @@ const PROJECT_STATUS_LABELS: Record<string, string> = {
  * status='approved' KHONG BAO GIO duoc ghi de sent/published - test rieng
  * o test_quote_phase_mapping.py (backend) cho tinh huong nay. */
 /** 5 mau RIENG cho DUNG 5 phase tab that (Presale=blue/Sale markup=amber/
- * Admin review=purple/Sẵn sàng gửi=teal/Đã gửi=success) - bug thuc te da
+ * Admin review=amber/Sẵn sàng gửi=teal/Đã gửi=success) - bug thuc te da
  * bao "trùng màu nhãn, 5 mục 5 màu" (truoc day 'neutral' dung chung cho ca
  * Presale lan Sale markup, 'warning' dung chung HEX voi 'Sẵn sàng gửi' cu).
  * 'Đã chốt'/'Đã huỷ'/'Đã duyệt · Chờ phát hành' la override theo KET QUA
  * DEAL (won/lost) hoac trang thai du lieu cu, KHONG phai 1 trong 5 tab -
  * giu rieng success/danger, khong can phan biet voi 5 mau tab o tren. */
-function phaseCellLabel(quote: Quote, deal?: Deal): { label: string; tone: 'neutral' | 'success' | 'warning' | 'danger' | 'blue' | 'amber' | 'purple' | 'teal' } {
+function phaseCellLabel(quote: Quote, deal?: Deal): { label: string; tone: 'neutral' | 'success' | 'warning' | 'danger' | 'blue' | 'amber' | 'purple' | 'teal' | 'rose' } {
   if (isWonDeal(deal)) return { label: 'Đã chốt', tone: 'success' };
   if (isLostDeal(deal) || quote.status === 'cancelled') return { label: 'Đã huỷ', tone: 'danger' };
   if (quote.sentAt) return { label: 'Đã gửi khách', tone: 'success' };
   if (quote.publishedAt || quote.processingStage === 'published') return { label: 'Sẵn sàng gửi', tone: 'teal' };
   if (quote.status === 'approved' || quote.approvedAt) return { label: 'Đã duyệt · Chờ phát hành', tone: 'success' };
   const stage = quote.processingStage || 'request';
-  if (stage === 'review') return { label: 'Chờ Admin duyệt', tone: 'purple' };
+  if (stage === 'review') return { label: 'Chờ Admin duyệt', tone: 'rose' };
   if (stage === 'pricing') return { label: 'Chờ Sale markup', tone: 'amber' };
   if (stage === 'ready_to_publish') return { label: 'Đã duyệt · Chờ phát hành', tone: 'success' };
   return { label: 'Chờ Presale input', tone: 'blue' };

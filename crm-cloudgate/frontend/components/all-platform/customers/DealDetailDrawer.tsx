@@ -206,13 +206,13 @@ export function DealDetailDrawer({ customer, open, onClose, onRequestTransition,
     <>
       {/* Backdrop */}
       <div
-        onClick={onClose}
-        className={`fixed inset-0 z-[99990] bg-black/40 backdrop-blur-sm transition-opacity ${
-          open ? "opacity-100" : "pointer-events-none opacity-0"
+        className={`pointer-events-none fixed inset-0 z-[99990] bg-transparent transition-opacity ${
+          open ? "opacity-100" : "opacity-0"
         }`}
       />
       {/* Drawer */}
       <aside
+        data-crm-deal-workspace="true"
         className={`fixed right-0 top-0 z-[99991] flex h-screen w-full max-w-[42rem] flex-col border-l border-slate-200 bg-white shadow-2xl transition-transform duration-300 ${
           open ? "translate-x-0" : "translate-x-full"
         }`}

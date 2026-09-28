@@ -2813,6 +2813,12 @@
   z-index: 99990;
 }
 
+.crm-drawer-backdrop--passive {
+  background: transparent;
+  backdrop-filter: none;
+  pointer-events: none;
+}
+
 .crm-modal,
 .crm-stage-modal {
   display: flex;
@@ -7578,6 +7584,11 @@
 .crm-lead-verify-backdrop {
   background: rgba(15, 23, 42, 0.16);
   backdrop-filter: none;
+}
+
+.crm-lead-verify-backdrop--passive {
+  background: transparent;
+  pointer-events: none;
 }
 
 .crm-lead-quickadd-grid {

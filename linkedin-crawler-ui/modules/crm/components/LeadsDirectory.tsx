@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { API_BASE_URL, API_KEY } from '@/lib/env';
 import { useAppAuth } from '@/contexts/AppAuthContext';
 import { useMembers } from '@/hooks/useMembers';
@@ -198,6 +198,7 @@ export function LeadsDirectory() {
   const [detailLead, setDetailLead] = useState<CrmLeadRow | null>(null);
   const [detailMode, setDetailMode] = useState<'view' | 'qualify' | 'convert'>('view');
   const [editLead, setEditLead] = useState<CrmLeadRow | null>(null);
+  const shellRef = useRef<HTMLDivElement>(null);
   const [deleteTarget, setDeleteTarget] = useState<CrmLeadRow | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState('');
@@ -721,6 +722,7 @@ export function LeadsDirectory() {
   }
 
   function openView(lead: CrmLeadRow) {
+    setEditLead(null);
     setDetailLead(lead);
     setDetailMode('view');
   }
@@ -729,6 +731,7 @@ export function LeadsDirectory() {
    * menu "⋯" lẫn nút "Chỉnh sửa" trong drawer "Xác minh Lead" đều gọi hàm
    * này — không có bản form sửa thứ hai ở đâu khác. */
   function openEdit(lead: CrmLeadRow) {
+    setDetailLead(null);
     setEditLead(lead);
   }
 
@@ -783,8 +786,32 @@ export function LeadsDirectory() {
   }
 
   function openQualifyForNewLead(lead: CrmLeadRow) {
+    setEditLead(null);
     setDetailLead(lead);
     setDetailMode('qualify');
+  }
+
+  function closeLeadSidePanels() {
+    setDetailLead(null);
+    setEditLead(null);
+  }
+
+  function handleShellPointerDown(event: ReactPointerEvent<HTMLDivElement>) {
+    if (!detailLead && !editLead) return;
+    const target = event.target as HTMLElement | null;
+    if (!target) return;
+
+    if (target.closest('.crm-lead-detail-drawer, .crm-lead-edit-drawer')) return;
+    if (target.closest('[data-crm-lead-row="true"]')) return;
+    if (
+      target.closest(
+        'button, a, input, select, textarea, [role="button"], [role="combobox"], .crm-select-trigger, .crm-action-menu, .crm-modal, .crm-drawer',
+      )
+    ) {
+      return;
+    }
+
+    closeLeadSidePanels();
   }
 
   /** Bấm vào tên Lead / dòng Lead mở ĐÚNG cùng 1 drawer "Xác minh Lead" như
@@ -911,7 +938,7 @@ export function LeadsDirectory() {
   }
 
   return (
-    <div className="crm-shell">
+    <div className="crm-shell" ref={shellRef} onPointerDownCapture={handleShellPointerDown}>
       <section className="crm-page-card crm-leads-page-shell">
         {error ? <p className="crm-error">{error}</p> : null}
 
@@ -1117,7 +1144,12 @@ export function LeadsDirectory() {
                   ) : items.length ? (
                     items.map(lead => {
                       return (
-                        <tr key={lead.id} className="crm-row">
+                        <tr
+                          key={lead.id}
+                          className="crm-row crm-row--clickable"
+                          data-crm-lead-row="true"
+                          onClick={() => openRow(lead)}
+                        >
                           <td className="crm-td" onClick={event => event.stopPropagation()}>
                             <input
                               type="checkbox"
@@ -1133,7 +1165,7 @@ export function LeadsDirectory() {
                                   type="button"
                                   className="crm-lead-name-btn"
                                   title={lead.leadName}
-                                  onClick={() => openRow(lead)}
+                                  onClick={event => { event.stopPropagation(); openRow(lead); }}
                                 >
                                   {lead.leadName}
                                 </button>
@@ -1258,7 +1290,7 @@ export function LeadsDirectory() {
                             )}
                           </td>
                           <td className="crm-td crm-td--actions-col">
-                            <div className="crm-row-actions">
+                            <div className="crm-row-actions" onClick={event => event.stopPropagation()}>
                               {(() => {
                                 const action = primaryActionOf(lead);
                                 return (
@@ -1321,7 +1353,8 @@ export function LeadsDirectory() {
                 <div
                   key={lead.id}
                   className="crm-customer-card crm-lead-card crm-row--clickable"
-                  onClick={() => openEdit(lead)}
+                  data-crm-lead-row="true"
+                  onClick={() => openRow(lead)}
                 >
                   <div className="crm-customer-card-head">
                     <input

@@ -4,7 +4,6 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { API_BASE_URL, API_KEY } from '@/lib/env';
-import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
 import { usersService, type QuoteBusinessRoleUser } from '@/services/all-platform.service';
 import { parseMoney, DEAL_STAGE_META } from '../constants/crmConfig';
 import { mapLead } from './LeadsDirectory';
@@ -98,7 +97,6 @@ export function LeadDetailDrawer({
    * nên chỉ tồn tại duy nhất 1 bản form sửa Lead trong toàn bộ ứng dụng. */
   onEdit?: (lead: CrmLeadRow) => void;
 }) {
-  useBodyScrollLock(open);
   const router = useRouter();
   const [saleOptions, setSaleOptions] = useState<QuoteBusinessRoleUser[]>([]);
   const [form, setForm] = useState<VerifyForm>({
@@ -636,8 +634,8 @@ export function LeadDetailDrawer({
 
   return (
     <>
-      {/* Click vao backdrop de dong drawer; click trong form khong bi anh huong. */}
-      <div className="crm-drawer-backdrop crm-lead-verify-backdrop" onClick={onClose} />
+      {/* Visual-only layer: LeadsDirectory handles click-away so the lead list stays interactive. */}
+      <div className="crm-drawer-backdrop crm-lead-verify-backdrop crm-lead-verify-backdrop--passive" />
       <aside className="crm-drawer crm-lead-detail-drawer crm-verify-drawer">
         <header className="crm-lead-drawer-header crm-verify-header">
           <div className="crm-verify-header-text">

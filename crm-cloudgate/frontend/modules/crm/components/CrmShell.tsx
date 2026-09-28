@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
 import { ContractDetailModal } from './ContractDetailModal';
@@ -83,6 +83,7 @@ export function CrmShell() {
   // "Lich su phien ban" - deal.quote.id (van la ban DA DUYET) khong doi khi
   // tao ban nhap moi nen khong the dung no lam dependency duy nhat.
   const [quoteVersionsRefreshKey, setQuoteVersionsRefreshKey] = useState(0);
+  const shellRef = useRef<HTMLDivElement>(null);
 
   // Toast tự ẩn sau vài giây — không dùng window.alert() cho việc báo thành công
   // vì alert chặn thao tác tiếp theo, gây khó chịu cho hành động vốn đã ổn.
@@ -98,7 +99,7 @@ export function CrmShell() {
   // trong chinh no roi - khong dua lai vao day, tranh 2 noi doc lap cung khoa
   // 1 tai nguyen (bug thuc te gap phai: body ket o overflow:hidden vinh vien
   // vi thu tu cleanup cua 2 effect rieng biet khong dong bo voi nhau).
-  const anyOverlayOpen = detailOpen || Boolean(contractDeal) || quoteModal.open || Boolean(stageData) || Boolean(reviewData);
+  const anyOverlayOpen = Boolean(contractDeal) || quoteModal.open || Boolean(stageData) || Boolean(reviewData);
   useBodyScrollLock(anyOverlayOpen);
 
   const sourceOptions = useMemo(() => {
@@ -202,6 +203,28 @@ export function CrmShell() {
     } catch {
       setSelectedDeal(deal);
     }
+  }
+
+  function closeDealSidePanels() {
+    setDetailOpen(false);
+  }
+
+  function handleShellPointerDown(event: ReactPointerEvent<HTMLDivElement>) {
+    if (!detailOpen) return;
+    const target = event.target as HTMLElement | null;
+    if (!target) return;
+
+    if (target.closest('.crm-drawer')) return;
+    if (target.closest('[data-crm-deal-row="true"]')) return;
+    if (
+      target.closest(
+        'button, a, input, select, textarea, [role="button"], [role="combobox"], .crm-filter-select-menu, .crm-modal, .crm-stage-modal',
+      )
+    ) {
+      return;
+    }
+
+    closeDealSidePanels();
   }
 
   // Chỉ có id (chưa có object Deal đầy đủ) - dùng khi quay lại từ trang chi
@@ -422,7 +445,7 @@ Bạn chấp nhận mất báo giá này? (Báo giá bị ẩn khỏi danh sách
   }
 
   return (
-    <div className="crm-shell">
+    <div className="crm-shell" ref={shellRef} onPointerDownCapture={handleShellPointerDown}>
       <section className="crm-page-card">
         <div className="crm-header">
           <div>

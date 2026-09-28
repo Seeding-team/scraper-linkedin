@@ -18,7 +18,7 @@
  *   - Kết quả — Won + Lost tách riêng.
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import {
   LayoutGrid,
   Table as TableIcon,
@@ -280,6 +280,7 @@ export default function CrmCustomersPage() {
   } | null>(null);
 
   const [detailCustomer, setDetailCustomer] = useState<Customer | null>(null);
+  const shellRef = useRef<HTMLDivElement>(null);
 
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [quickChat, setQuickChat] = useState<Customer | null>(null);
@@ -426,6 +427,24 @@ export default function CrmCustomersPage() {
     setDetailCustomer(c);
   }
 
+  function handleShellPointerDown(event: ReactPointerEvent<HTMLDivElement>) {
+    if (!detailCustomer) return;
+    const target = event.target as HTMLElement | null;
+    if (!target) return;
+
+    if (target.closest('[data-crm-customer-row="true"]')) return;
+    if (target.closest('[data-crm-deal-workspace="true"]')) return;
+    if (
+      target.closest(
+        'button, a, input, select, textarea, [role="button"], [role="combobox"], [role="menu"], [role="dialog"]',
+      )
+    ) {
+      return;
+    }
+
+    setDetailCustomer(null);
+  }
+
   function requestMove(c: Customer, to: DealStage) {
     const fromStage = getCurrentStage(c);
     if (fromStage === to) {
@@ -479,7 +498,7 @@ export default function CrmCustomersPage() {
   }
 
   return (
-    <div className="min-h-screen w-full min-w-0 bg-white">
+    <div className="min-h-screen w-full min-w-0 bg-white" ref={shellRef} onPointerDownCapture={handleShellPointerDown}>
       {/* Header */}
       <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
         <div>

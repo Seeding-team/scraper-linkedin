@@ -529,9 +529,9 @@ export function ProgressTeamPanel({
     const counts = [
       { key: 'request', label: 'Request', count: 0, color: '#94a3b8' },
       { key: 'technical', label: 'Kỹ thuật', count: 0, color: '#6366f1' },
-      { key: 'sale_markup', label: 'Sale markup', count: 0, color: '#3b82f6' },
-      { key: 'admin_review', label: 'Admin review', count: 0, color: '#f59e0b' },
-      { key: 'ready_to_send', label: 'Sẵn sàng gửi', count: 0, color: '#a855f7' },
+      { key: 'sale_markup', label: 'Sale markup', count: 0, color: '#f59e0b' },
+      { key: 'admin_review', label: 'Admin review', count: 0, color: '#e11d48' },
+      { key: 'ready_to_send', label: 'Sẵn sàng gửi', count: 0, color: '#14b8a6' },
       { key: 'sent', label: 'Đã gửi', count: 0, color: '#10b981' },
     ];
 

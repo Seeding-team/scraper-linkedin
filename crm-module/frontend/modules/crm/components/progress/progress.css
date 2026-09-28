@@ -1842,10 +1842,18 @@
 }
 
 /* Stage badges */
-.qc-badge-ready { background: #ede9fe; color: #6d28d9; }
-.qc-badge-review { background: #fef3c7; color: #b45309; }
-.qc-badge-pricing { background: #e0f2fe; color: #0369a1; }
-.qc-badge-presale { background: #dcfce7; color: #15803d; }
+.qc-badge-neutral { background: #eef1f5; color: #4b5768; }
+.qc-badge-blue { background: #edf5ff; color: #3674c7; }
+.qc-badge-amber { background: #fff7e5; color: #bf7810; }
+.qc-badge-rose { background: #fff0f4; color: #ba244a; }
+.qc-badge-teal { background: #e6fbf8; color: #0f8b8d; }
+.qc-badge-success { background: #eaf9f2; color: #12845a; }
+.qc-badge-warning { background: #fff7e5; color: #bf7810; }
+.qc-badge-danger { background: #fdeaec; color: #b3261e; }
+.qc-badge-ready { background: #e6fbf8; color: #0f8b8d; }
+.qc-badge-review { background: #fff0f4; color: #ba244a; }
+.qc-badge-pricing { background: #fff7e5; color: #bf7810; }
+.qc-badge-presale { background: #edf5ff; color: #3674c7; }
 
 /* Responsive Breakpoints */
 @media (max-width: 1180px) {
