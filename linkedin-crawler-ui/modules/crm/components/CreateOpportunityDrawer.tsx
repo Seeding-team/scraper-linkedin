@@ -17,8 +17,9 @@ import {
 } from './DealFormFields';
 import { HelpCircle, Loader2, X } from './icons';
 import { LeadDealQualificationPanel, formatEstimatedValue } from './LeadDealQualificationPanel';
+import { useCrmCategoryLabels } from './CrmCategorySelect';
 import { useLeadQualificationEngine } from '../hooks/useLeadQualificationEngine';
-import { ICP_OPTIONS, INTEREST_LEVEL_OPTIONS, type IcpFit, type InterestLevel } from '../utils/leadQualificationRules';
+import { ICP_OPTIONS, INTEREST_LEVEL_OPTIONS, type InterestLevel } from '../utils/leadQualificationRules';
 import { seedingCrmRepository } from '../repositories/SeedingCrmRepository';
 import type { CreateDealInput, CrmCustomerRow } from '../types';
 import type { AppUser } from '@/types/unified.types';
@@ -99,7 +100,6 @@ export function CreateOpportunityDrawer({
   // (interestLevel/score, icpFit, timeline, project) - gop vao dau `note` luc
   // submit thay vi fabricate migration moi cho field UI-only.
   const [interestLevel, setInterestLevel] = useState<InterestLevel | ''>('');
-  const [icpFit, setIcpFit] = useState<IcpFit>('unknown');
   const [timeline, setTimeline] = useState('');
   const [project, setProject] = useState('');
   const [note, setNote] = useState('');
@@ -125,7 +125,6 @@ export function CreateOpportunityDrawer({
     setProductValue('');
     setEstimatedBudget('');
     setInterestLevel('');
-    setIcpFit('unknown');
     setTimeline('');
     setProject('');
     setNote('');
@@ -206,18 +205,20 @@ export function CreateOpportunityDrawer({
     [aeOptions],
   );
 
+  const { labels: knownProductLabels } = useCrmCategoryLabels('crm_service_package');
+
   const {
-    ruleConditions, verificationOutcome, outcomeReasons, outcomeMissing, sqlProgress,
+    ruleConditions, verificationOutcome, outcomeReasons, outcomeMissing, sqlProgress, icpFit,
   } = useLeadQualificationEngine({
     open,
-    hasProduct: Boolean(productValue),
+    productValue,
+    knownProductLabels,
     hasInterestLevel: Boolean(interestLevel),
     hasValue: Boolean(estimatedBudget),
     hasTeam: Boolean(customerForm.sdrId),
     hasNext: Boolean(customerForm.nextStep.trim()),
     hasFollow: Boolean(customerForm.followUpDate),
     hasContact: Boolean(customerForm.phone?.trim() || customerForm.email?.trim()),
-    icpFit,
   });
   const nextStepWarning = verificationOutcome === 'sql' &&
     (Boolean(customerForm.nextStep.trim()) !== Boolean(customerForm.followUpDate) ||
@@ -234,7 +235,7 @@ export function CreateOpportunityDrawer({
       value: customerForm.companyName || customerForm.customerName || '—',
       ok: Boolean(customerForm.customerId),
     },
-    { key: 'next', label: 'Việc tiếp theo', value: customerForm.nextStep || '—', ok: Boolean(customerForm.nextStep.trim()) },
+    { key: 'next', label: 'Tiếp theo', value: customerForm.nextStep || '—', ok: Boolean(customerForm.nextStep.trim()) },
     {
       key: 'follow',
       label: 'Ngày follow-up',
@@ -443,8 +444,6 @@ export function CreateOpportunityDrawer({
                 onInterestLevelChange={setInterestLevel}
                 timeline={timeline}
                 onTimelineChange={setTimeline}
-                icpFit={icpFit}
-                onIcpFitChange={setIcpFit}
                 project={project}
                 onProjectChange={setProject}
                 note={note}

@@ -3,12 +3,11 @@
 import { CurrencyInput } from '@/components/CurrencyInput';
 import { formatVND, PIPELINE_COLUMNS, DEAL_STAGE_META } from '../constants/crmConfig';
 import { CrmCategorySelect } from './CrmCategorySelect';
+import { CrmProductMultiSelect } from './CrmProductMultiSelect';
 import { SearchableSelect } from './SearchableSelect';
 import { AlertTriangle, CheckCircle2, XCircle } from './icons';
 import {
-  ICP_OPTIONS,
   INTEREST_LEVEL_OPTIONS,
-  type IcpFit,
   type InterestLevel,
   type VerificationOutcome,
 } from '../utils/leadQualificationRules';
@@ -31,11 +30,8 @@ const DEAL_STAGE_OPTIONS = PIPELINE_COLUMNS.map(stage => ({ value: stage, label:
 export function LeadDealQualificationPanel(props: {
   canWrite: boolean;
 
-  /** Deal (CreateOpportunityDrawer) đã có sẵn field "Sản phẩm / dịch vụ"
-   * riêng ở section "Cơ hội" (dùng CrmCategoryCodeSelect, khác kiểu value với
-   * CrmCategorySelect ở đây) - ẩn field "interest" ở panel này để tránh 2 ô
-   * chọn sản phẩm trùng nhau, `hasProduct` vẫn được cha truyền vào để tính
-   * rule engine dùng chung. */
+  /** Cho phép cha ẩn field "Khách đang quan tâm gì?" nếu tự dựng ô chọn sản
+   * phẩm riêng - mặc định hiện (khác `false` mới ẩn). */
   showProductField?: boolean;
   interest: string;
   onInterestChange: (value: string) => void;
@@ -45,8 +41,6 @@ export function LeadDealQualificationPanel(props: {
   onInterestLevelChange: (value: InterestLevel) => void;
   timeline: string;
   onTimelineChange: (value: string) => void;
-  icpFit: IcpFit;
-  onIcpFitChange: (value: IcpFit) => void;
   project: string;
   onProjectChange: (value: string) => void;
   note: string;
@@ -64,6 +58,10 @@ export function LeadDealQualificationPanel(props: {
   onNextStepAtChange: (value: string) => void;
   dealStage: string;
   onDealStageChange: (value: string) => void;
+  /** Cho phép cha ẩn field "Dự án" tự do nhập tay nếu đã có picker Dự án THẬT
+   * riêng (vd DealFormModal đã có ProjectPicker chọn/tạo Dự án thật ở panel
+   * "Khách hàng & liên hệ") - mặc định hiện (khác `false` mới ẩn). */
+  showProjectField?: boolean;
 
   verificationOutcome: VerificationOutcome;
   ruleConditions: Record<string, boolean> | null;
@@ -89,14 +87,19 @@ export function LeadDealQualificationPanel(props: {
     <div className="crm-verify-compact-grid">
       <section className="crm-form-section crm-verify-section crm-verify-panel" id="crm-verify-quick">
         <p className="crm-form-title">Thông tin then chốt</p>
+        {/* Hint giai thich vi sao khong con field ICP thu cong o day (dung
+         * NGUYEN VAN mockup markee_crm_v38_icp_rule_and_summary.html: "ICP /
+         * đúng nhóm khách hàng được hệ thống tự đánh giá theo rule cấu
+         * hình.") - feedback leader khoanh do phan nay, truoc day moi CHI co
+         * comment code, chua hien thi that len UI. */}
+        <p className="crm-verify-section-hint">ICP / đúng nhóm khách hàng được hệ thống tự đánh giá theo rule cấu hình.</p>
         <div className="crm-verify-compact-fields">
           {props.showProductField !== false ? (
             <Field label="Khách đang quan tâm gì?" required>
-              <CrmCategorySelect
-                categoryType="crm_service_package"
+              <CrmProductMultiSelect
                 value={props.interest}
                 disabled={!canWrite}
-                placeholder="-- Chọn sản phẩm/dịch vụ --"
+                placeholder="-- Chọn sản phẩm / dịch vụ --"
                 onChange={props.onInterestChange}
               />
             </Field>
@@ -119,6 +122,15 @@ export function LeadDealQualificationPanel(props: {
               </select>
             </Field>
           </div>
+          {/* "Đúng nhóm khách hàng?" (ICP) đã bỏ dropdown thủ công - hệ thống
+           * tự đánh giá từ sản phẩm/dịch vụ đang chọn theo rule cấu hình ở
+           * "Điều kiện phân loại Lead" (feedback leader, PDF góp ý màn Xác
+           * minh Lead), hiển thị kết quả ở "Tóm tắt quyết định" bên dưới
+           * thay vì cho SDR tự chọn - ô "Dự kiến triển khai | Giai đoạn"
+           * thay vào đúng chỗ ICP cũ, cùng hàng (feedback: "thay chỗ này
+           * bằng cái dropdown giai đoạn"; bố cục "Thông tin then chốt" gồm
+           * Giai đoạn - KHÔNG phải "Bàn giao Sale" - đã được chốt qua 2 bản
+           * feedback/wip liên tiếp). */}
           <div className="crm-inline-pair">
             <Field label="Dự kiến triển khai">
               <CrmCategorySelect
@@ -129,9 +141,9 @@ export function LeadDealQualificationPanel(props: {
                 onChange={props.onTimelineChange}
               />
             </Field>
-            <Field label="Đúng nhóm khách hàng?">
-              <select disabled={!canWrite} value={props.icpFit} onChange={e => props.onIcpFitChange(e.target.value as IcpFit)}>
-                {ICP_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+            <Field label="Giai đoạn" required>
+              <select disabled={!canWrite} value={props.dealStage} onChange={e => props.onDealStageChange(e.target.value)}>
+                {DEAL_STAGE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
               </select>
             </Field>
           </div>
@@ -157,11 +169,11 @@ export function LeadDealQualificationPanel(props: {
               </select>
             </Field>
             <Field label="Sale phụ trách">
-              <SearchableSelect disabled={!canWrite} value={props.aeId} onChange={props.onAeIdChange} options={props.aeOptions} placeholder="Chờ Sales Manager phân" />
+              <SearchableSelect disabled={!canWrite} value={props.aeId} onChange={props.onAeIdChange} options={props.aeOptions} placeholder="Chờ phân công" />
             </Field>
           </div>
           <div className="crm-inline-pair">
-            <Field label="Việc tiếp theo" required>
+            <Field label="Tiếp theo" required>
               <CrmCategorySelect
                 categoryType="crm_next_step"
                 value={props.nextStep}
@@ -175,12 +187,7 @@ export function LeadDealQualificationPanel(props: {
               <input disabled={!canWrite} type="datetime-local" value={props.nextStepAt} onChange={e => props.onNextStepAtChange(e.target.value)} />
             </Field>
           </div>
-          <div className="crm-inline-pair">
-            <Field label="Giai đoạn" required>
-              <select disabled={!canWrite} value={props.dealStage} onChange={e => props.onDealStageChange(e.target.value)}>
-                {DEAL_STAGE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-              </select>
-            </Field>
+          {props.showProjectField !== false ? (
             <Field label="Dự án" hint="tùy chọn">
               <input
                 disabled={!canWrite}
@@ -189,7 +196,7 @@ export function LeadDealQualificationPanel(props: {
                 placeholder="VD: Website 2026"
               />
             </Field>
-          </div>
+          ) : null}
         </div>
 
         {props.verificationOutcome === 'nurturing' ? (
@@ -244,13 +251,28 @@ export function LeadDealQualificationPanel(props: {
          * 2026-09-27), kem chi tiet Con thieu/Ly do/tien do SQL di theo ngay
          * duoi (truoc day la 1 card rieng trong "Bàn giao Sale"). */}
         <div className={`crm-verify-outcome-card crm-verify-outcome-card--${props.verificationOutcome}`} role="status" aria-live="polite">
+          {/* Thanh 3 buoc MQL -> Nuôi dưỡng -> SQL (dung nguyen bo cuc
+           * markee_crm_v38_icp_rule_and_summary.html ".lead-level", feedback
+           * leader khoanh do doan nay) - "Không đạt chuẩn" la nhanh loai
+           * rieng, highlight do luon o buoc MQL thay vi them 1 buoc thu 4. */}
+          <div className="crm-verify-level-bar">
+            <span className={`crm-verify-level-step ${props.verificationOutcome === 'pending' ? 'crm-verify-level-step--active-mql' : props.verificationOutcome === 'unqualified' ? 'crm-verify-level-step--active-invalid' : ''}`}>MQL</span>
+            <span className={`crm-verify-level-step ${props.verificationOutcome === 'nurturing' ? 'crm-verify-level-step--active-nurture' : ''}`}>Nuôi dưỡng</span>
+            <span className={`crm-verify-level-step ${props.verificationOutcome === 'sql' ? 'crm-verify-level-step--active-sql' : ''}`}>SQL</span>
+          </div>
           <div className="crm-verify-outcome-head">
             <span className="crm-verify-outcome-dot" />
             {props.verificationOutcome === 'sql' && 'Đạt chuẩn — SQL'}
             {props.verificationOutcome === 'nurturing' && 'Nuôi dưỡng'}
             {props.verificationOutcome === 'unqualified' && 'Không đạt chuẩn'}
-            {props.verificationOutcome === 'pending' && 'Chưa đủ dữ liệu'}
+            {props.verificationOutcome === 'pending' && 'MQL'}
           </div>
+          <p className="crm-verify-outcome-sub">
+            {props.verificationOutcome === 'sql' && 'Đủ điều kiện tạo Cơ hội và bàn giao Sale.'}
+            {props.verificationOutcome === 'nurturing' && 'Đã vượt MQL nhưng chưa đủ điều kiện SQL.'}
+            {props.verificationOutcome === 'unqualified' && 'Lead thỏa điều kiện loại trong cấu hình.'}
+            {props.verificationOutcome === 'pending' && 'Lead đang ở mức mặc định. Bổ sung thông tin để hệ thống tự nâng trạng thái.'}
+          </p>
 
           {props.verificationOutcome === 'pending' && props.outcomeMissing.length ? (
             <>

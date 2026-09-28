@@ -25,12 +25,15 @@ export function interestLevelFromScore(score: number | null | undefined): Intere
   return 'reference';
 }
 
-/** 3 lua chon "Co dung nhom khach hang muc tieu?".
+/** 3 gia tri hien thi ket qua ICP (feedback: "ICP: Phù hợp / ICP: Chưa xác
+ * định / sau này có thể có ICP: Không phù hợp") - dung DUNG CHU "Chưa xác
+ * định" theo feedback, KHONG phai "Chưa rõ" (nham voi TRIGGER_OPTIONS o
+ * StageModal.tsx, 1 danh sach khac khong lien quan ICP).
  *
  * Anh xa thang vao cot `crm_leads.qualification_icp_fit` (BOOLEAN NULLABLE, da
  * co tu migration 078). */
 export const ICP_OPTIONS: Array<{ value: IcpFit; label: string }> = [
-  { value: 'unknown', label: 'Chưa rõ' },
+  { value: 'unknown', label: 'Chưa xác định' },
   { value: 'fit', label: 'Phù hợp' },
   { value: 'unfit', label: 'Không phù hợp' },
 ];
@@ -44,6 +47,59 @@ export function icpToApi(value: IcpFit): boolean | null {
   if (value === 'fit') return true;
   if (value === 'unfit') return false;
   return null;
+}
+
+/** "Khách đang quan tâm gì?" giờ cho chọn NHIỀU sản phẩm/dịch vụ + "Khác"
+ * nhập tay (feedback leader, PDF góp ý màn Xác minh Lead) - vẫn lưu vào ĐÚNG
+ * cột TEXT cũ `qualification_need` (migration 078, không phải mảng), dạng
+ * "Markee CRM, Website doanh nghiệp, Khác: Zalo OA" giống hệt cách
+ * markee_crm_v38_icp_rule_and_summary.html nối chuỗi - không cần migration
+ * DB mới. */
+export const OTHER_PRODUCT_PREFIX = 'Khác: ';
+export const OTHER_PRODUCT_LABEL = 'Khác';
+
+export function parseProductList(value: string): string[] {
+  return (value || '').split(',').map(item => item.trim()).filter(Boolean);
+}
+
+export function hasAnyProduct(value: string): boolean {
+  return parseProductList(value).length > 0;
+}
+
+/** Phần "Đúng nhóm khách hàng?" trước đây là dropdown SDR tự chọn - leader
+ * yêu cầu bỏ hẳn, ICP giờ hệ thống TỰ đánh giá theo rule cấu hình được ở
+ * "Điều kiện phân loại Lead" (LeadClassificationRuleSettings.tsx, 2 checkbox
+ * `icp_product_in_catalog`/`icp_other_unknown` - cùng JSONB `conditions` với
+ * rule SQL/Nuôi dưỡng/Không đạt sẵn có, không cần bảng/endpoint riêng).
+ *
+ * Rule 2 la dieu kien THAT (feedback: "nếu CHỈ chọn Khác và nhập tay → ICP =
+ * Chưa xác định") - truoc day bi lam sai thanh nhanh "else" vo dieu kien,
+ * khien checkbox icp_other_unknown tat/bat nhu nhau (khong dung y). Gio tách
+ * rõ "chỉ chọn Khác" (onlyOther, khong co san pham nao trong danh muc) thanh
+ * 1 nhanh rieng: BAT (mac dinh) -> "Chưa xác định" (cho Lead huong loi,
+ * dung y "Không tự loại Lead khi sản phẩm chưa có trong danh mục"); TAT ->
+ * "Không phù hợp" (Admin muon loai thang, day la duong DUY NHAT sinh ra
+ * 'unfit' - truoc day "sau này có thể có ICP: Không phù hợp" khong bao gio
+ * dat toi duoc vi thieu dung nhanh nay). */
+export function evaluateIcpFitAuto(
+  productValue: string,
+  knownProductLabels: string[],
+  ruleConditions: Record<string, boolean> | null,
+): IcpFit {
+  const items = parseProductList(productValue);
+  if (!items.length) return 'unknown';
+  const knownSet = new Set(knownProductLabels);
+  const hasKnownProduct = items.some(item => knownSet.has(item));
+  // Chưa tải được rule (vd network chậm) -> tạm coi như bật, khớp hành vi
+  // DEFAULT_CONDITIONS bên backend (crm_lead_rule_service.py).
+  const productInCatalogEnabled = ruleConditions ? Boolean(ruleConditions.icp_product_in_catalog) : true;
+  const otherUnknownEnabled = ruleConditions ? Boolean(ruleConditions.icp_other_unknown) : true;
+
+  if (productInCatalogEnabled && hasKnownProduct) return 'fit';
+
+  const onlyOther = !hasKnownProduct;
+  if (onlyOther) return otherUnknownEnabled ? 'unknown' : 'unfit';
+  return 'unknown';
 }
 
 export function toDatetimeLocal(value?: string | null): string {

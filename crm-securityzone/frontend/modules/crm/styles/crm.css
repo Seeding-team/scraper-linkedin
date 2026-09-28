@@ -598,11 +598,21 @@
   pointer-events: none;
 }
 
-.crm-searchable-select-search-wrap .crm-searchable-select-input {
+/* Sửa bug "viền đen đậm" trên MỌI ô search của dropdown CRM (feedback,
+ * kèm ảnh chụp ô "Tìm..." trong form báo giá): 3 rule này trước đây bị scope
+ * dưới `.crm-searchable-select-search-wrap` - class đó KHÔNG hề tồn tại
+ * trong DOM thật (SearchableSelect.tsx render input tìm kiếm trực tiếp
+ * trong `.crm-searchable-select-menu`, không bọc thêm wrapper nào), nên cả 3
+ * rule chưa từng khớp - input rơi về outline focus mặc định của trình duyệt
+ * (viền đen). Bỏ hẳn tiền tố wrapper để áp đúng lên input thật. */
+.crm-searchable-select-input {
   width: 100%;
   border: 1px solid #e2e8f0;
   border-radius: 0.55rem;
-  padding: 0.48rem 1.8rem 0.48rem 2rem;
+  /* Không có icon search thật trong input này (SearchableSelect.tsx không
+   * render icon) - dùng padding đối xứng thay vì chừa chỗ 2rem bên trái cho
+   * 1 icon không tồn tại. */
+  padding: 0.48rem 0.7rem;
   font-size: 0.82rem;
   background: #f8fafc;
   color: #0f172a;
@@ -610,14 +620,14 @@
   transition: all 0.15s ease;
 }
 
-.crm-searchable-select-search-wrap .crm-searchable-select-input:focus {
+.crm-searchable-select-input:focus {
+  /* Chỉ bỏ viền đen mặc định của trình duyệt lúc focus - KHÔNG thêm màu viền
+   * nổi bật khác thay vào (feedback: "chỉ nói bỏ viền đen đậm, không nói
+   * thay bằng màu khác") - giữ nguyên border/background như lúc chưa focus. */
   outline: none !important;
-  border-color: #be1e4b;
-  background: #ffffff;
-  box-shadow: 0 0 0 2.5px rgba(190, 30, 75, 0.1);
 }
 
-.crm-searchable-select-search-wrap .crm-searchable-select-input:focus-visible {
+.crm-searchable-select-input:focus-visible {
   outline: none !important;
 }
 
@@ -693,6 +703,197 @@
 .crm-searchable-select-check {
   flex-shrink: 0;
   color: #be1e4b;
+}
+
+/* CrmProductMultiSelect - "Khách đang quan tâm gì?" cho chọn NHIỀU sản
+ * phẩm/dịch vụ + "Khác" nhập tay (feedback leader, PDF góp ý màn Xác minh
+ * Lead), cùng tông màu/kích thước với .crm-searchable-select-trigger ở trên
+ * để không lệch giao diện với các dropdown CRM khác. */
+.crm-product-multi {
+  position: relative;
+  width: 100%;
+}
+
+.crm-product-multi-trigger {
+  display: flex;
+  width: 100%;
+  min-height: 2.8rem;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 0.65rem;
+  background: #ffffff;
+  color: #64748b;
+  font-size: 0.86rem;
+  padding: 0.5rem 0.85rem;
+  text-align: left;
+  cursor: pointer;
+  transition: all 0.18s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.crm-product-multi-trigger:hover:not(:disabled) {
+  border-color: #94a3b8;
+  background: #f8fafc;
+}
+
+.crm-product-multi-trigger.is-open {
+  border-color: #be1e4b;
+  background: #ffffff;
+  box-shadow: 0 0 0 3px rgba(190, 30, 75, 0.12);
+}
+
+.crm-product-multi-trigger:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+
+.crm-product-multi-chips {
+  display: flex;
+  flex: 1;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  min-width: 0;
+}
+
+.crm-product-chip {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid #dce5f0;
+  border-radius: 999px;
+  background: #f4f7fb;
+  color: #31445d;
+  font-size: 0.74rem;
+  font-weight: 700;
+  padding: 0.2rem 0.55rem;
+}
+
+.crm-product-multi-placeholder {
+  color: #92a0b3;
+}
+
+.crm-product-multi-menu {
+  position: absolute;
+  z-index: 40;
+  top: calc(100% + 0.35rem);
+  left: 0;
+  right: 0;
+  border: 1px solid #dbe3ee;
+  border-radius: 0.75rem;
+  background: #ffffff;
+  box-shadow: 0 18px 40px rgba(15, 23, 42, 0.14);
+  padding: 0.6rem;
+}
+
+.crm-product-multi-search {
+  width: 100%;
+  border: 1px solid #cbd5e1;
+  border-radius: 0.55rem;
+  padding: 0.5rem 0.65rem;
+  font-size: 0.82rem;
+  margin-bottom: 0.5rem;
+  outline: none;
+}
+
+.crm-product-multi-search:focus {
+  outline: none;
+}
+
+.crm-product-multi-options {
+  display: grid;
+  gap: 0.15rem;
+  max-height: 12rem;
+  overflow-y: auto;
+}
+
+.crm-product-multi-option {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  border-radius: 0.55rem;
+  padding: 0.4rem 0.5rem;
+  font-size: 0.82rem;
+  color: #1e293b;
+  cursor: pointer;
+}
+
+.crm-product-multi-option:hover {
+  background: #f8fafc;
+}
+
+.crm-product-multi-option input {
+  width: 15px;
+  height: 15px;
+  accent-color: #be1e4b;
+  flex-shrink: 0;
+  outline: none !important;
+  box-shadow: none !important;
+}
+
+.crm-product-multi-option input:focus,
+.crm-product-multi-option input:focus-visible,
+.crm-product-multi-option input:active {
+  outline: none !important;
+  box-shadow: none !important;
+}
+
+.crm-product-multi-empty {
+  padding: 0.5rem;
+  font-size: 0.8rem;
+  color: #94a3b8;
+}
+
+/* "+ Thêm sản phẩm/dịch vụ" / "Quản lý sản phẩm/dịch vụ" (feedback: "trước
+ * đây có 2 nút ở dưới đâu rồi?" - giống CrmCategorySelect bản cũ, chỉ Admin/
+ * Leader/Sale/Presale mới thấy, xem resolveCanManageCategories()). */
+.crm-product-multi-actions {
+  border-top: 1px solid #e2e8f0;
+  margin-top: 0.3rem;
+  padding-top: 0.3rem;
+}
+.crm-product-multi-actions button {
+  display: flex;
+  width: 100%;
+  min-height: 2.1rem;
+  align-items: center;
+  border: 0;
+  border-radius: 0.5rem;
+  background: transparent;
+  color: #475569;
+  font-size: 0.84rem;
+  font-weight: 500;
+  padding: 0.45rem 0.65rem;
+  text-align: left;
+  cursor: pointer;
+}
+.crm-product-multi-actions button:hover {
+  background: #f8fafc;
+}
+.crm-product-multi-actions button:first-child {
+  /* feedback: "sao để màu xanh kì vậy?" - doi ve dung tong do/hong thuong
+   * hieu chinh cua app (#be1e4b, giong .crm-searchable-select-trigger.is-open,
+   * .crm-primary-button...), truoc do lo lay nham mau xanh #2563eb tu 1 cho
+   * khac trong code cu. */
+  color: #be1e4b;
+  font-weight: 600;
+}
+.crm-product-multi-actions button:first-child:hover {
+  background: #fff1f2;
+}
+
+.crm-product-multi-other-input {
+  width: 100%;
+  margin-top: 0.5rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 0.55rem;
+  padding: 0.5rem 0.65rem;
+  font-size: 0.82rem;
+  outline: none;
+}
+
+.crm-product-multi-other-input:focus {
+  border-color: #be1e4b;
+  box-shadow: 0 0 0 3px rgba(190, 30, 75, 0.12);
 }
 
 /* [CHỨC NĂNG: Chuẩn hóa UX Highlight & Hover Dropdown CRM cho Lead, Khách Hàng, Cơ Hội, Báo Giá]
@@ -866,15 +1067,35 @@
   margin-top: 0.9rem;
 }
 
+/* feedback: "chỉnh lại cho đầy màn đi, để hở vậy xấu" - khung nay dung chung
+ * `.qc-modal-backdrop` (center bang flex + padding 24px cho MOI modal khac),
+ * nen truoc day no thanh 1 the noi giua man hinh, ho ca 4 phia thay vi 1
+ * drawer ep sat canh phai/cao het man nhu thiet ke ban dau (border-radius
+ * chi bo tron 2 goc TRAI). Dung :has() de CHI ghi de dung luc backdrop nay
+ * dang chua drawer nay, khong anh huong cac modal khac cung dung
+ * `.qc-modal-backdrop` (theo dung pattern da co san o quote-center.css). */
+.qc-modal-backdrop:has(> .crm-category-manage-drawer) {
+  padding: 0;
+  align-items: stretch;
+  justify-content: flex-end;
+}
+
 .crm-category-manage-drawer {
   width: min(760px, 100vw);
-  max-width: calc(100vw - 28px);
-  height: min(760px, calc(100vh - 32px));
+  height: 100vh;
+  max-height: 100vh;
   margin-left: auto;
   border-radius: 0.75rem 0 0 0.75rem;
   padding: 1rem;
   display: flex;
   flex-direction: column;
+}
+
+@media (max-width: 767px) {
+  .crm-category-manage-drawer {
+    width: 100vw;
+    border-radius: 0;
+  }
 }
 
 .crm-category-manage-toolbar {
@@ -912,6 +1133,13 @@
 }
 
 .crm-category-manage-list {
+  /* feedback: "để hở vậy xấu" - truoc day khong co flex:1 nen khi danh sach
+   * ngan (vd 1 dong), khung ngoai `.crm-category-manage-drawer` (height co
+   * dinh min(760px,...)) de lo hang trong RONG o duoi khung bo vien, nhin
+   * nhu bi "hut". Cho list gian het chieu cao con lai cua drawer - khoang
+   * trong (neu co) gio nam BEN TRONG khung bo vien, nhin day va co chu dich
+   * hon la 1 khoang trang thua ngoai khung. */
+  flex: 1;
   min-height: 0;
   overflow: auto;
   border: 1px solid #e2e8f0;
@@ -3158,6 +3386,16 @@
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
+}
+
+.crm-verify-section-hint {
+  margin: -0.5rem 0 0.65rem;
+  font-size: 0.68rem;
+  font-weight: 500;
+  color: #8a99ad;
+  line-height: 1.45;
+  text-transform: none;
+  letter-spacing: normal;
 }
 
 .crm-form-grid {
@@ -9188,6 +9426,34 @@
   text-transform: uppercase;
   letter-spacing: 0.03em;
 }
+
+/* Thanh 3 buoc "MQL | Nuôi dưỡng | SQL" (đúng bố cục
+ * markee_crm_v38_icp_rule_and_summary.html, mục leader khoanh đỏ trong PDF
+ * feedback: ".lead-level"/".level-step") - hien truoc dong trang thai chinh
+ * trong card "Kết quả Lead" de SDR thay ro Lead dang o muc nao trong
+ * progression MQL -> Nuôi dưỡng -> SQL, "Không đạt chuẩn" la nhanh loai rieng
+ * (highlight do ngay tren o MQL, khong phai 1 o thu 4). */
+.crm-verify-level-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-bottom: 0.55rem;
+}
+.crm-verify-level-step {
+  flex: 1;
+  text-align: center;
+  padding: 0.4rem 0.35rem;
+  border: 1px solid #dbe3ef;
+  border-radius: 0.55rem;
+  background: #fff;
+  color: #8a99ad;
+  font-size: 0.68rem;
+  font-weight: 800;
+}
+.crm-verify-level-step--active-mql { background: #eef4ff; border-color: #cfe0ff; color: #2f65c9; }
+.crm-verify-level-step--active-nurture { background: #fffbeb; border-color: #f0d18b; color: #b45309; }
+.crm-verify-level-step--active-sql { background: #f0fdf4; border-color: #cfeedd; color: #16a34a; }
+.crm-verify-level-step--active-invalid { background: #fef2f2; border-color: #f0cbd1; color: #dc2626; }
 
 /* ---- Checklist san sang Convert ---- */
 .crm-verify-readiness-pill {

@@ -98,7 +98,7 @@ async function fetchCrmCategoryRows(categoryType: CategoryType, activeOnly: bool
   return promise;
 }
 
-async function resolveCanManageCategories(): Promise<boolean> {
+export async function resolveCanManageCategories(): Promise<boolean> {
   if (!categoryManagePermissionPromise) {
     categoryManagePermissionPromise = authService
       .me()

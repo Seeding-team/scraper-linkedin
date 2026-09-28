@@ -14,6 +14,14 @@ function headers() {
 // PHAI khop CHINH XAC voi SQL_AND_LABELS/NURTURE_LABELS/UNQUALIFIED_OR_LABELS
 // (backend, crm_lead_rule_service.py) - nhan hien thi lay tu day, key la
 // nguon su that duy nhat dung o ca 2 phia.
+// "Đánh giá ICP" - thay dropdown "Đúng nhóm khách hàng?" SDR tự chọn tay
+// trước đây, ICP giờ hệ thống TỰ đánh giá từ sản phẩm/dịch vụ đang chọn
+// (feedback leader, PDF góp ý màn Xác minh Lead) - PHẢI khớp CHÍNH XÁC với
+// ICP_AUTO_LABELS (backend, crm_lead_rule_service.py).
+const ICP_AUTO_ITEMS: Array<{ key: string; label: string; hint: string }> = [
+  { key: 'icp_product_in_catalog', label: 'Sản phẩm/dịch vụ quan tâm có trong danh mục', hint: 'Nếu Lead quan tâm ít nhất một sản phẩm/dịch vụ đã có trong danh mục CRM thì đánh giá ICP = Phù hợp.' },
+  { key: 'icp_other_unknown', label: '"Khác" nhập tay = Chưa xác định', hint: 'Bật: không tự loại Lead khi chỉ chọn "Khác", chờ Marketing/Admin kiểm tra thêm. Tắt: Lead chỉ chọn "Khác" bị đánh giá ICP = Không phù hợp.' },
+];
 const SQL_AND_ITEMS: Array<{ key: string; label: string; hint: string }> = [
   { key: 'sql_product', label: 'Có sản phẩm / dịch vụ', hint: 'Khách đã xác định nhu cầu chính.' },
   { key: 'sql_interest', label: 'Có mức độ quan tâm', hint: 'Marketing đã xác định mức độ quan tâm.' },
@@ -134,6 +142,14 @@ export function LeadClassificationRuleSettings() {
       {error ? <p className="crm-error">{error}</p> : null}
       {notice ? <p className="crm-verify-ok">{notice}</p> : null}
 
+      <RuleCard
+        title="Đánh giá ICP"
+        mode="AUTO"
+        description="Hệ thống tự đánh giá ICP từ dữ liệu Lead. User không cần chọn thủ công."
+        items={ICP_AUTO_ITEMS}
+        conditions={conditions}
+        onToggle={toggle}
+      />
       <RuleCard title="Đạt chuẩn (SQL)" mode="AND" description="Tất cả điều kiện được tick phải thỏa." items={SQL_AND_ITEMS} conditions={conditions} onToggle={toggle} />
       <RuleCard title="Nuôi dưỡng" mode="FALLBACK" description="Chỉ áp dụng khi chưa đạt SQL và không rơi vào điều kiện loại — chỉ ảnh hưởng lý do hiển thị." items={NURTURE_ITEMS} conditions={conditions} onToggle={toggle} />
       <RuleCard title="Không đạt chuẩn" mode="OR" description="Chỉ cần thỏa một điều kiện được tick là Lead bị loại." items={UNQUALIFIED_OR_ITEMS} conditions={conditions} onToggle={toggle} />

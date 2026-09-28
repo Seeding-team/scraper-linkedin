@@ -4679,14 +4679,15 @@ export function QuoteWorkspaceModal({
        * mục 8, đảo ngược rename tạm thời của commit 4d5b6927) - VAN chon tu
        * bang Deal/pipeline (customer_leads) nhu cu, KHONG doi sang bang
        * Project rieng - moi bien/state (deal, draftDealId,
-       * requiredFieldErrors.deal...) giu nguyen ten cu, chi la label. CHI
-       * doi chu luc con o Buoc 1 (!beyondStep1, o day la field DUY NHAT
-       * Presale thay) - tu Buoc 2 field nay TRA VE hang 2, dung CHUNG hang
-       * voi field "Dự án" THAT (data-qc-required="project", khac bang
-       * Project) - giu "Cơ hội CRM" o do de khong lap 2 nhan "Dự án" cung 1
-       * hang (2 field khac nhau, 2 gia tri khac nhau). */}
+       * requiredFieldErrors.deal...) giu nguyen ten cu, chi la label. Truoc
+       * day CHI doi chu tu Buoc 2 (beyondStep1), Buoc 1 con hien nham "Dự
+       * án" du field nay luon la Cơ hội (feedback kem anh chup, "chưa chỉnh
+       * dự án về lại cơ hội crm") - gio hien "Cơ hội CRM" o CA 2 buoc. Buoc 1
+       * khong dung field "Dự án" THAT (data-qc-required="project", khac
+       * bang Project, bi an hoan toan luc Presale) nen khong con lo lap
+       * nhan nua. */}
       <span className="qc-workspace-info-label">
-        {beyondStep1 ? 'Cơ hội CRM' : 'Dự án'} {beyondStep1 ? <span className="qc-required-mark">*</span> : null}
+        Cơ hội CRM {beyondStep1 ? <span className="qc-required-mark">*</span> : null}
       </span>
       {!quote ? (
         <SearchableSelect
@@ -4701,13 +4702,13 @@ export function QuoteWorkspaceModal({
               .filter(d => !lockProject || !draftProjectId || d.projectId === draftProjectId)
               .map(d => ({ value: d.id, label: `${d.customerName}${d.companyName ? ' · ' + d.companyName : ''}` })),
           ]}
-          placeholder={beyondStep1 ? 'Chọn cơ hội...' : 'Chọn dự án...'}
+          placeholder="Chọn cơ hội..."
           hideClearOption
         />
       ) : null}
       {!quote && draftDealId ? (
         <div className="qc-row-sub">
-          {beyondStep1 ? 'Mã cơ hội' : 'Mã dự án'}: {businessCode || 'Chưa có mã'}
+          Mã cơ hội: {businessCode || 'Chưa có mã'}
           {deal?.estimatedBudget ? ` · Giá trị dự kiến: ${formatMoney(deal.estimatedBudget)}` : ''}
         </div>
       ) : null}
@@ -4720,7 +4721,7 @@ export function QuoteWorkspaceModal({
           <SearchableSelect
             value="current"
             onChange={() => {}}
-            options={[{ value: 'current', label: businessCode || (deal ? (beyondStep1 ? 'Cơ hội chưa có mã' : 'Dự án chưa có mã') : (beyondStep1 ? 'Chưa gắn cơ hội' : 'Chưa gắn dự án')) }]}
+            options={[{ value: 'current', label: businessCode || (deal ? 'Cơ hội chưa có mã' : 'Chưa gắn cơ hội') }]}
             disabled
           />
           <div className="qc-row-sub">

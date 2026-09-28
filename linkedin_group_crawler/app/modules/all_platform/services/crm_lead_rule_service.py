@@ -41,7 +41,18 @@ UNQUALIFIED_OR_LABELS: dict[str, str] = {
     "inv_fit": "Đúng nhóm khách hàng = “Chưa phù hợp”",
     "inv_no_contact": "Không có thông tin liên hệ hợp lệ",
 }
-ALL_CONDITION_KEYS = set(SQL_AND_LABELS) | set(NURTURE_LABELS) | set(UNQUALIFIED_OR_LABELS)
+# "Đánh giá ICP" (feedback leader, PDF gop y man Xac minh Lead: bo han dropdown
+# "Dung nhom khach hang?" SDR tu chon, ICP gio HE THONG TU danh gia tu san
+# pham/dich vu dang chon) - CHI dung o FE (evaluateIcpFitAuto(),
+# leadQualificationRules.ts) de tinh icp_fit truoc khi goi
+# evaluate_lead_conditions(), khong anh huong logic Python o duoi (fit_unfit/
+# fit_known van la input co san nhu cu) - gop chung 1 JSONB `conditions` voi
+# rule SQL/Nuoi duong/Khong dat de dung 1 endpoint/1 man cau hinh duy nhat.
+ICP_AUTO_LABELS: dict[str, str] = {
+    "icp_product_in_catalog": "Sản phẩm/dịch vụ quan tâm có trong danh mục",
+    "icp_other_unknown": "“Khác” nhập tay = Chưa xác định",
+}
+ALL_CONDITION_KEYS = set(SQL_AND_LABELS) | set(NURTURE_LABELS) | set(UNQUALIFIED_OR_LABELS) | set(ICP_AUTO_LABELS)
 
 # PHAI khop CHINH XAC voi seed cua migration 152 (co assert luc import module
 # de 2 noi khong bao gio lech nhau).
@@ -50,6 +61,7 @@ DEFAULT_CONDITIONS: dict[str, bool] = {
     "sql_team": True, "sql_next": True, "sql_follow": True, "sql_fit": True,
     "nur_missing_value": True, "nur_missing_handoff": True, "nur_unknown_fit": False,
     "inv_fit": True, "inv_no_contact": False,
+    "icp_product_in_catalog": True, "icp_other_unknown": True,
 }
 assert set(DEFAULT_CONDITIONS) == ALL_CONDITION_KEYS, "DEFAULT_CONDITIONS phai khop du ALL_CONDITION_KEYS"
 
@@ -58,12 +70,25 @@ class RuleValidationError(Exception):
     """Payload luu rule khong hop le (key la, thieu key)."""
 
 
-def _normalize_conditions(raw: dict[str, Any] | None) -> dict[str, bool]:
-    """Ep ve dung du 12 key, gia tri bool - dieu kien thieu trong payload
+def _normalize_conditions(raw: dict[str, Any] | None, *, fallback: dict[str, bool] | None = None) -> dict[str, bool]:
+    """Ep ve dung du cac key, gia tri bool - dieu kien thieu trong payload
     duoc coi la False (tat) thay vi giu nguyen gia tri cu, tranh 1 checkbox
-    an bi FE quen gui van "am tham" giu gia tri True cu."""
+    an bi FE quen gui van "am tham" giu gia tri True cu.
+
+    `fallback` (mac dinh None = giu nguyen hanh vi cu, ve False) CHI truyen o
+    duong doc DB (_row_to_api, xem get_rule_set) - bug THAT DA GAP: dong
+    `crm_lead_classification_rules` da ton tai TRUOC KHI 2 key
+    icp_product_in_catalog/icp_other_unknown duoc them vao code, nen khi doc
+    len 2 key nay "thieu trong payload" theo dung nghia GOC (chua bao gio
+    duoc luu, KHONG PHAI Admin tu tay tat) - mac dinh ve False lam ICP auto-
+    fit bi tat am tham tren MOI DB cu (kem ca production sau nay khi deploy),
+    trong khi dung ra phai mac dinh dung nhu DEFAULT_CONDITIONS. Duong luu
+    (save_rule_set) VAN giu nguyen mac dinh False (khong truyen fallback) -
+    payload tu FE thieu key nghia la SDR/Admin THAT SU bo tick, khong duoc tu
+    "nho" gia tri cu."""
     raw = raw or {}
-    return {key: bool(raw.get(key, False)) for key in ALL_CONDITION_KEYS}
+    defaults = fallback or {}
+    return {key: bool(raw.get(key, defaults.get(key, False))) for key in ALL_CONDITION_KEYS}
 
 
 def evaluate_lead_conditions(fields: dict[str, Any], conditions: dict[str, bool] | None = None) -> dict[str, Any]:
@@ -165,7 +190,7 @@ def rule_summary_text(conditions: dict[str, bool]) -> str:
 
 
 def _row_to_api(row: dict[str, Any]) -> dict[str, Any]:
-    conditions = _normalize_conditions(row.get("conditions"))
+    conditions = _normalize_conditions(row.get("conditions"), fallback=DEFAULT_CONDITIONS)
     return {
         "conditions": conditions,
         "summary": rule_summary_text(conditions),

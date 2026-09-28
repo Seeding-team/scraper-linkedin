@@ -10,15 +10,14 @@ import { mapLead } from './LeadsDirectory';
 import { CheckCircle2, HelpCircle, Loader2, X } from './icons';
 import { LeadDealQualificationPanel, formatEstimatedValue } from './LeadDealQualificationPanel';
 import { getSourceLabel } from './DealFormFields';
+import { useCrmCategoryLabels } from './CrmCategorySelect';
 import { useLeadQualificationEngine } from '../hooks/useLeadQualificationEngine';
 import {
   ICP_OPTIONS,
   INTEREST_LEVEL_OPTIONS,
-  icpFromApi,
   icpToApi,
   interestLevelFromScore,
   toDatetimeLocal,
-  type IcpFit,
   type InterestLevel,
 } from '../utils/leadQualificationRules';
 import type { AppUser } from '@/types/unified.types';
@@ -47,7 +46,6 @@ type VerifyForm = {
   interest: string;
   interestLevel: InterestLevel | '';
   score: number | null;
-  icpFit: IcpFit;
   timeline: string;
   estimatedValue: number | null;
   nextStep: string;
@@ -103,7 +101,6 @@ export function LeadDetailDrawer({
     interest: '',
     interestLevel: '',
     score: null,
-    icpFit: 'unknown',
     timeline: '',
     estimatedValue: null,
     nextStep: '',
@@ -127,6 +124,13 @@ export function LeadDetailDrawer({
   const [convertError, setConvertError] = useState('');
   const [nurtureReason, setNurtureReason] = useState('');
   const [unqualifiedReason, setUnqualifiedReason] = useState('');
+  // Lead da convert - panel Thong tin then chot/Ban giao Sale mac dinh khoa
+  // (read-only), nut "Chỉnh sửa" o day de MO KHOA lai (feedback: "hiện tại
+  // đang có 1 nút chỉnh sửa thông tin lead, giờ cho thêm 1 nút... chỉnh sửa
+  // phần này"). Bam Luu chi PUT thuong vao dung Lead (saveVerification(),
+  // KHONG dung submitFinalOutcome/handleConvert) - tuyet doi khong tao lai
+  // Customer/Deal moi hay doi status.
+  const [qualificationEditOpen, setQualificationEditOpen] = useState(false);
   const idempotencyKeyRef = useRef<string>('');
   const bodyRef = useRef<HTMLDivElement>(null);
   const readinessRef = useRef<HTMLElement>(null);
@@ -156,11 +160,11 @@ export function LeadDetailDrawer({
     setConvertOpen(initialMode === 'convert');
     setNurtureReason('');
     setUnqualifiedReason('');
+    setQualificationEditOpen(false);
     setForm({
       interest: lead.qualificationNeed || '',
       interestLevel: interestLevelFromScore(lead.score),
       score: lead.score ?? null,
-      icpFit: icpFromApi(lead.qualificationIcpFit),
       timeline: lead.qualificationExpectedTimeline || '',
       estimatedValue: lead.qualificationEstimatedValue ?? null,
       nextStep: lead.nextStep || '',
@@ -230,18 +234,20 @@ export function LeadDetailDrawer({
     };
   }, [open]);
 
+  const { labels: knownProductLabels } = useCrmCategoryLabels('crm_service_package');
+
   const {
-    ruleConditions, verificationOutcome, outcomeReasons, outcomeMissing, sqlProgress,
+    ruleConditions, verificationOutcome, outcomeReasons, outcomeMissing, sqlProgress, icpFit,
   } = useLeadQualificationEngine({
     open,
-    hasProduct: Boolean(form.interest.trim()),
+    productValue: form.interest,
+    knownProductLabels,
     hasInterestLevel: Boolean(form.interestLevel),
     hasValue: form.estimatedValue != null,
     hasTeam: Boolean(form.aeId),
     hasNext: Boolean(form.nextStep.trim()),
     hasFollow: Boolean(form.nextStepAt),
     hasContact: Boolean(contact.phone.trim() || contact.email.trim()),
-    icpFit: form.icpFit,
   });
 
   const aeOptions = useMemo(
@@ -259,12 +265,12 @@ export function LeadDetailDrawer({
     const nextStepOk = Boolean(form.nextStep.trim()) && Boolean(form.nextStepAt);
     return [
       { key: 'need', label: 'Nhu cầu đã xác định', ok: Boolean(form.interest.trim()) },
-      { key: 'icp', label: 'ICP đã xác định', ok: form.icpFit !== 'unknown' },
+      { key: 'icp', label: 'ICP đã xác định', ok: icpFit !== 'unknown' },
       { key: 'next', label: 'Việc tiếp theo đã có', ok: nextStepOk },
       { key: 'dup', label: 'Doanh nghiệp đã được check trùng', ok: dupChecked },
       { key: 'ae', label: 'Sale nhận bàn giao đã chọn', ok: Boolean(form.aeId) },
     ];
-  }, [form, dupChecked]);
+  }, [form, dupChecked, icpFit]);
 
   const okCount = checks.filter(c => c.ok).length;
   const isReady = okCount === checks.length;
@@ -298,7 +304,6 @@ export function LeadDetailDrawer({
     setForm(prev => {
       const next = { ...prev };
       if (!next.interest.trim() && lead?.qualificationNeed) next.interest = lead.qualificationNeed;
-      if (next.icpFit === 'unknown' && lead?.companyName) next.icpFit = 'fit';
       if (!next.timeline) {
         if (/(gấp|ngay|asap|luôn)/.test(haystack)) next.timeline = 'Ngay';
         else if (/(tháng này|trong tháng|1 tháng)/.test(haystack)) next.timeline = 'Trong 1 tháng';
@@ -331,7 +336,6 @@ export function LeadDetailDrawer({
       interest: lead.qualificationNeed || '',
       interestLevel: interestLevelFromScore(lead.score),
       score: lead.score ?? null,
-      icpFit: icpFromApi(lead.qualificationIcpFit),
       timeline: lead.qualificationExpectedTimeline || '',
       estimatedValue: lead.qualificationEstimatedValue ?? null,
       nextStep: lead.nextStep || '',
@@ -358,7 +362,7 @@ export function LeadDetailDrawer({
     return {
       score: form.score ?? null,
       qualification_need: form.interest.trim() || null,
-      qualification_icp_fit: icpToApi(form.icpFit),
+      qualification_icp_fit: icpToApi(icpFit),
       qualification_estimated_value: form.estimatedValue ?? null,
       qualification_expected_timeline: form.timeline || null,
       qualification_ae_id: form.aeId || null,
@@ -610,13 +614,13 @@ export function LeadDetailDrawer({
     {
       key: 'icp',
       label: 'ICP',
-      value: ICP_OPTIONS.find(o => o.value === form.icpFit)?.label || '—',
-      ok: form.icpFit !== 'unknown',
+      value: ICP_OPTIONS.find(o => o.value === icpFit)?.label || '—',
+      ok: icpFit !== 'unknown',
     },
     { key: 'timeline', label: 'Thời gian triển khai', value: form.timeline || '—', ok: Boolean(form.timeline) },
     {
       key: 'next',
-      label: 'Việc tiếp theo',
+      label: 'Tiếp theo',
       value: form.nextStep.trim()
         ? `${form.nextStep}${form.nextStepAt ? ' · ' + new Date(form.nextStepAt).toLocaleString('vi-VN') : ''}`
         : '—',
@@ -651,6 +655,16 @@ export function LeadDetailDrawer({
             </h2>
           </div>
           <div className="crm-lead-drawer-header-actions">
+            {isConverted && canWrite ? (
+              <button
+                type="button"
+                className="crm-secondary-button crm-button-sm"
+                data-testid="lead-detail-edit-qualification"
+                onClick={() => setQualificationEditOpen(open => !open)}
+              >
+                {qualificationEditOpen ? 'Xem (khoá sửa)' : 'Chỉnh sửa thông tin xác minh'}
+              </button>
+            ) : null}
             {onEdit ? (
               <button
                 type="button"
@@ -701,7 +715,9 @@ export function LeadDetailDrawer({
                 ) : null}
               </div>
             </section>
-          ) : convertOpen ? (
+          ) : null}
+
+          {convertOpen ? (
             <section className="crm-form-section crm-lead-convert-section" id="crm-lead-convert">
               <p className="crm-form-title">Xác nhận tạo cơ hội &amp; bàn giao Sale</p>
               <div className="crm-lead-convert-confirm">
@@ -757,41 +773,52 @@ export function LeadDetailDrawer({
             </section>
           ) : (
             <>
-              <section className="crm-verify-suggest">
-                <div className="crm-verify-suggest-head">
-                  <p className="crm-form-title">
-                    Gợi ý từ dữ liệu Lead
-                    <span
-                      className="crm-help-icon"
-                      tabIndex={0}
-                      title="Gợi ý theo quy tắc từ ghi chú, nguồn Lead và công ty đang có — không phải AI. Chỉ điền vào ô đang trống, không ghi đè dữ liệu SDR đã nhập."
-                    >
-                      <HelpCircle className="crm-icon" />
-                    </span>
-                  </p>
-                  <span className={`crm-verify-suggest-pill ${suggestionUsed ? 'is-used' : ''}`}>
-                    {suggestionUsed ? 'Đã dùng gợi ý' : 'Chưa dùng gợi ý'}
-                  </span>
-                </div>
-                <div className="crm-verify-suggest-actions">
-                  <button type="button" className="crm-secondary-button" disabled={!canWrite} onClick={applySuggestion}>
-                    Dùng gợi ý
-                  </button>
-                  <button type="button" className="crm-ghost-button" disabled={!canWrite} onClick={resetSuggestion}>
-                    Đặt lại
-                  </button>
-                </div>
-              </section>
+              {!isConverted ? (
+                <>
+                  <section className="crm-verify-suggest">
+                    <div className="crm-verify-suggest-head">
+                      <p className="crm-form-title">
+                        Gợi ý từ dữ liệu Lead
+                        <span
+                          className="crm-help-icon"
+                          tabIndex={0}
+                          title="Gợi ý theo quy tắc từ ghi chú, nguồn Lead và công ty đang có — không phải AI. Chỉ điền vào ô đang trống, không ghi đè dữ liệu SDR đã nhập."
+                        >
+                          <HelpCircle className="crm-icon" />
+                        </span>
+                      </p>
+                      <span className={`crm-verify-suggest-pill ${suggestionUsed ? 'is-used' : ''}`}>
+                        {suggestionUsed ? 'Đã dùng gợi ý' : 'Chưa dùng gợi ý'}
+                      </span>
+                    </div>
+                    <div className="crm-verify-suggest-actions">
+                      <button type="button" className="crm-secondary-button" disabled={!canWrite} onClick={applySuggestion}>
+                        Dùng gợi ý
+                      </button>
+                      <button type="button" className="crm-ghost-button" disabled={!canWrite} onClick={resetSuggestion}>
+                        Đặt lại
+                      </button>
+                    </div>
+                  </section>
 
-              <div className="crm-verify-kpi-strip">
-                <div><span>Nguồn Lead</span><b>{getSourceLabel(lead.source || 'Manual')}</b></div>
-                <div><span>Trạng thái</span><b>{lead.status || 'MQL'}</b></div>
-                <div><span>Owner</span><b>{aeName(lead.sdrId)}</b></div>
-                <div><span>Gợi ý</span><b>{suggestionUsed ? 'Đã dùng' : 'Chưa dùng'}</b></div>
-              </div>
+                  <div className="crm-verify-kpi-strip">
+                    <div><span>Nguồn Lead</span><b>{getSourceLabel(lead.source || 'Manual')}</b></div>
+                    <div><span>Trạng thái</span><b>{lead.status || 'MQL'}</b></div>
+                    <div><span>Owner</span><b>{aeName(lead.sdrId)}</b></div>
+                    <div><span>Gợi ý</span><b>{suggestionUsed ? 'Đã dùng' : 'Chưa dùng'}</b></div>
+                  </div>
+                </>
+              ) : null}
 
+              {/* Lead đã convert - hiện lại đủ 3 khối Thông tin then chốt/
+               * Bàn giao Sale/Tóm tắt quyết định ở dạng READ-ONLY (feedback:
+               * "cái này cho hiển thị full... phần này chưa làm này" - trước
+               * đây bị ẩn trắng hết, chỉ còn mỗi banner xanh) - canWrite ép
+               * về false dù lead.canWrite là gì, vì sửa ở đây KHÔNG tự đồng
+               * bộ ngược lại Deal/Khách hàng thật đã tạo (muốn sửa thật phải
+               * qua đúng trang Khách hàng/Cơ hội). */}
               <LeadDealQualificationPanel
-                canWrite={canWrite}
+                canWrite={canWrite && (!isConverted || qualificationEditOpen)}
                 interest={form.interest}
                 onInterestChange={value => setField('interest', value)}
                 estimatedValue={form.estimatedValue}
@@ -800,8 +827,6 @@ export function LeadDetailDrawer({
                 onInterestLevelChange={setInterestLevel}
                 timeline={form.timeline}
                 onTimelineChange={value => setField('timeline', value)}
-                icpFit={form.icpFit}
-                onIcpFitChange={value => setField('icpFit', value)}
                 project={form.project}
                 onProjectChange={value => setField('project', value)}
                 note={form.note}
@@ -863,6 +888,32 @@ export function LeadDetailDrawer({
                 onClick={() => void submitFinalOutcome()}
               >
                 {finalSubmitLabel}
+              </button>
+            </div>
+          </footer>
+        ) : null}
+
+        {/* Lead da convert, dang mo khoa sua (qualificationEditOpen) - CHI
+         * Luu thay doi thuong vao dung Lead (saveVerification(), giong het
+         * nut "Lưu nháp" cua nhanh chua convert) - KHONG dung
+         * submitFinalOutcome/handleConvert o day vi se tao trung Deal/
+         * Customer moi hoac doi status ngoai y muon. */}
+        {isConverted && canWrite && qualificationEditOpen ? (
+          <footer className="crm-drawer-footer crm-verify-footer">
+            <div className="crm-footer-actions">
+              <button type="button" className="crm-secondary-button" disabled={saving} onClick={() => setQualificationEditOpen(false)}>
+                Huỷ
+              </button>
+              <button
+                type="button"
+                className="crm-primary-button"
+                disabled={saving}
+                onClick={async () => {
+                  const ok = await saveVerification();
+                  if (ok) setQualificationEditOpen(false);
+                }}
+              >
+                {saving ? <Loader2 className="crm-save-spinner" /> : null} Lưu thay đổi
               </button>
             </div>
           </footer>

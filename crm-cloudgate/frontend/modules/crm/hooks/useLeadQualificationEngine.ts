@@ -1,9 +1,11 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { API_BASE_URL, API_KEY } from '@/lib/env';
 import {
+  evaluateIcpFitAuto,
   evaluateLeadConditions,
+  hasAnyProduct,
   type IcpFit,
   type LeadRuleFields,
   type VerificationOutcome,
@@ -21,14 +23,17 @@ function headers() {
  * thật để phân loại (tự tính như 1 Lead ảo, theo đúng feedback leader). */
 export function useLeadQualificationEngine(params: {
   open: boolean;
-  hasProduct: boolean;
+  /** "Khách đang quan tâm gì?" - chuỗi nhiều sản phẩm/dịch vụ nối bằng ", "
+   * (xem CrmProductMultiSelect) - dùng để tính CẢ has_product LẪN ICP tự
+   * động, thay cho `icpFit` cố định SDR chọn tay trước đây. */
+  productValue: string;
+  knownProductLabels: string[];
   hasInterestLevel: boolean;
   hasValue: boolean;
   hasTeam: boolean;
   hasNext: boolean;
   hasFollow: boolean;
   hasContact: boolean;
-  icpFit: IcpFit;
 }) {
   const [ruleConditions, setRuleConditions] = useState<Record<string, boolean> | null>(null);
   const [verificationOutcome, setVerificationOutcome] = useState<VerificationOutcome>('pending');
@@ -51,18 +56,23 @@ export function useLeadQualificationEngine(params: {
     return () => { alive = false; };
   }, [params.open]);
 
+  const icpFit: IcpFit = useMemo(
+    () => evaluateIcpFitAuto(params.productValue, params.knownProductLabels, ruleConditions),
+    [params.productValue, params.knownProductLabels, ruleConditions],
+  );
+
   useEffect(() => {
     if (!ruleConditions) return;
     const fields: LeadRuleFields = {
-      has_product: params.hasProduct,
+      has_product: hasAnyProduct(params.productValue),
       has_interest_level: params.hasInterestLevel,
       has_value: params.hasValue,
       has_team: params.hasTeam,
       has_next: params.hasNext,
       has_follow: params.hasFollow,
       has_contact: params.hasContact,
-      fit_unfit: params.icpFit === 'unfit',
-      fit_known: params.icpFit !== 'unknown',
+      fit_unfit: icpFit === 'unfit',
+      fit_known: icpFit !== 'unknown',
     };
     const computed = evaluateLeadConditions(fields, ruleConditions);
     setVerificationOutcome(computed.outcome);
@@ -70,9 +80,9 @@ export function useLeadQualificationEngine(params: {
     setOutcomeMissing(computed.missing);
     setSqlProgress({ ok: computed.sqlOk, total: computed.sqlTotal });
   }, [
-    ruleConditions, params.hasProduct, params.hasInterestLevel, params.hasValue,
-    params.hasTeam, params.hasNext, params.hasFollow, params.hasContact, params.icpFit,
+    ruleConditions, params.productValue, params.hasInterestLevel, params.hasValue,
+    params.hasTeam, params.hasNext, params.hasFollow, params.hasContact, icpFit,
   ]);
 
-  return { ruleConditions, verificationOutcome, outcomeReasons, outcomeMissing, sqlProgress };
+  return { ruleConditions, verificationOutcome, outcomeReasons, outcomeMissing, sqlProgress, icpFit };
 }
