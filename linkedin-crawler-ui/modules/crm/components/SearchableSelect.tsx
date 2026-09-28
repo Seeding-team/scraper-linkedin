@@ -280,7 +280,7 @@ export function SearchableSelect({
         onClick={() => !disabled && setIsOpen(open => !open)}
         disabled={disabled}
       >
-        <span>{selectedLabel ? optionRichLabel(selectedLabel) : placeholder}</span>
+        <span className="crm-searchable-select-label">{selectedLabel ? optionRichLabel(selectedLabel) : placeholder}</span>
         <span aria-hidden>▾</span>
       </button>
       {isOpen && !disabled && menuStyle

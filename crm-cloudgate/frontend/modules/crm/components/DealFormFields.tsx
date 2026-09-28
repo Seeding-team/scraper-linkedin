@@ -1026,12 +1026,19 @@ export function DealFormFields({
   // THAT) khi thay MemberSearchSelect bang LeadDealQualificationPanel (chi
   // doi widget hien thi, khong doi logic loc).
   const aeOptionsForPanel = [
-    ...(currentUserMissingFromMembers && currentUser ? [{ value: currentUser.id, label: currentUser.name || currentUser.email || '' }] : []),
+    ...(currentUserMissingFromMembers && currentUser ? [{
+      value: currentUser.id,
+      label: currentUser.name || currentUser.email || '',
+      searchText: [currentUser.name, currentUser.email].filter(Boolean).join(' '),
+    }] : []),
     ...assignableMembers
       .filter(m => selectionKeyOf(m) === sdrSelectionKey || (selectionKeyOf(m) !== leadedBySelectionKey && isAssignmentEligible(m)))
       .map(m => {
-        const linked = !!(m.linked_user_id || m.linked_user_id_2);
-        return { value: selectionKeyOf(m), label: linked ? `${m.display_name}${m.email ? ` (${m.email})` : ''}` : m.display_name };
+        return {
+          value: selectionKeyOf(m),
+          label: m.display_name,
+          searchText: [m.display_name, m.email].filter(Boolean).join(' '),
+        };
       }),
   ];
 
@@ -1071,6 +1078,7 @@ export function DealFormFields({
     },
     { key: 'ae', label: 'Sale nhận bàn giao', value: form.sdrNameHint || '—', ok: Boolean(sdrSelectionKey) },
     { key: 'stage', label: 'Giai đoạn', value: DEAL_STAGE_META[form.stage]?.label || form.stage, ok: true },
+    { key: 'ai_score', label: 'AI score', value: `${dealHealth.score}/100 · ${dealHealth.label}`, ok: dealHealth.score >= 60 },
   ];
 
   // Next step: dropdown gợi ý thao tác phổ biến, vẫn cho gõ tự do — bắt đầu ở chế độ tuỳ
@@ -1126,13 +1134,6 @@ export function DealFormFields({
             decisionRows={decisionRows}
             readinessLabel={createReadinessLabel}
             readinessTone={createReadinessTone}
-            extraHint={
-              <div className={`crm-deal-card crm-deal-card--health-${dealHealth.level}`} style={{ marginBottom: '0.6rem' }}>
-                <span className="crm-deal-card-label">Deal Health</span>
-                <strong className="crm-deal-card-score">{dealHealth.score}/100 · {dealHealth.label}</strong>
-                <p className="crm-deal-card-desc">{dealHealth.description}</p>
-              </div>
-            }
           />
         </>
       ) : (
