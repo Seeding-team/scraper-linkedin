@@ -9,6 +9,7 @@
 
 import { useEffect, useState } from 'react';
 import { MaterialIcon } from '@/components/ui';
+import { SearchableSelect } from './SearchableSelect';
 import {
   crmTeamsService,
   usersService,
@@ -162,13 +163,17 @@ export function CrmTeamsShell() {
   async function openDetail(team: CrmTeam) {
     const res = await crmTeamsService.get(team.id);
     setDetailTeam(res.success ? res.data || team : team);
+    setMemberToAdd('');
   }
+
+  const [memberToAdd, setMemberToAdd] = useState('');
 
   async function handleAddMember(userId: string) {
     if (!detailTeam || !userId) return;
     await crmTeamsService.addMember(detailTeam.id, userId);
     const res = await crmTeamsService.get(detailTeam.id);
     if (res.success) setDetailTeam(res.data || null);
+    setMemberToAdd('');
     loadTeams();
   }
 
@@ -291,16 +296,13 @@ export function CrmTeamsShell() {
               {error && <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700">{error}</div>}
               <div>
                 <label className="block text-xs font-bold text-on-surface-variant mb-1.5">Leader</label>
-                <select
+                <SearchableSelect
                   value={form.leader_user_id || ''}
-                  onChange={e => void handleLeaderChange(e.target.value)}
-                  className="w-full px-3 py-2 bg-surface-container-low border border-outline-variant rounded-lg text-xs"
-                >
-                  <option value="">— Chọn Leader —</option>
-                  {leaders.map(l => (
-                    <option key={l.id} value={l.id}>{l.name || l.email}</option>
-                  ))}
-                </select>
+                  onChange={value => void handleLeaderChange(value)}
+                  options={leaders.map(l => ({ value: l.id, label: l.name || l.email }))}
+                  placeholder="— Chọn Leader —"
+                  searchPlaceholder="Tìm Leader..."
+                />
                 <p className="mt-1 text-[10px] text-on-surface-variant">Chọn Leader trước để tự sinh tên Team + gợi ý mã.</p>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -420,19 +422,16 @@ export function CrmTeamsShell() {
             <div className="p-5 space-y-4">
               <div>
                 <label className="block text-xs font-bold text-on-surface-variant mb-1.5">Thêm thành viên</label>
-                <select
-                  defaultValue=""
-                  onChange={e => {
-                    void handleAddMember(e.target.value);
-                    e.target.value = '';
+                <SearchableSelect
+                  value={memberToAdd}
+                  onChange={value => {
+                    setMemberToAdd(value);
+                    void handleAddMember(value);
                   }}
-                  className="w-full px-3 py-2 bg-surface-container-low border border-outline-variant rounded-lg text-xs"
-                >
-                  <option value="">— Chọn user —</option>
-                  {availableUsers.map(u => (
-                    <option key={u.id} value={u.id}>{u.name || u.email}</option>
-                  ))}
-                </select>
+                  options={availableUsers.map(u => ({ value: u.id, label: u.name || u.email }))}
+                  placeholder="— Chọn user —"
+                  searchPlaceholder="Tìm user..."
+                />
               </div>
               <div>
                 <div className="text-xs font-bold text-on-surface-variant mb-1.5">
