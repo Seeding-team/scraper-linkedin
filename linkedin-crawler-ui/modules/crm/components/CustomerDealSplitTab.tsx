@@ -680,6 +680,23 @@ export function CustomerDealSplitTab({
     return presaleMembers.map(m => ({ id: memberUserId(m), label: formatMemberName(m) })).filter(o => Boolean(o.id));
   }, [presaleRoleUsers, presaleMembers]);
 
+  function mergeSelectedAssigneeOption(options: Array<{ id: string; label: string }>, selectedId?: string | null) {
+    if (!selectedId || options.some(option => option.id === selectedId)) return options;
+    const label = memberName(selectedId);
+    return [{ id: selectedId, label }, ...options];
+  }
+
+  const saleOwnerId = (currentDisplayDeal as any)?.quote_owner_id || (currentDisplayDeal as any)?.owner_id || (currentDisplayDeal as any)?.sdr_id || '';
+  const presaleOwnerId = primaryAssigneeId(currentDisplayDeal) || '';
+  const saleAssigneeDisplayOptions = useMemo(
+    () => mergeSelectedAssigneeOption(saleAssigneeOptions, saleOwnerId),
+    [saleAssigneeOptions, saleOwnerId, roleUsersById, members],
+  );
+  const presaleAssigneeDisplayOptions = useMemo(
+    () => mergeSelectedAssigneeOption(presaleAssigneeOptions, presaleOwnerId),
+    [presaleAssigneeOptions, presaleOwnerId, roleUsersById, members],
+  );
+
   const dealAiContext = useMemo<DealAiContext | null>(() => {
     if (!currentDisplayDeal) return null;
     const products = productLabels(currentDisplayDeal);
@@ -1374,14 +1391,14 @@ export function CustomerDealSplitTab({
                               <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1 block">SALE OWNER</label>
                               <select 
                                 className="w-full text-xs font-medium text-slate-800 bg-white border border-slate-200 rounded-lg p-1.5 focus:ring-1 focus:ring-[#c2185b]"
-                                value={(currentDisplayDeal as any).quote_owner_id || (currentDisplayDeal as any).owner_id || ''}
+                                value={saleOwnerId}
                                 onChange={async (e) => {
                                   const val = e.target.value;
                                   await updateCurrentDeal({ quote_owner_id: val } as any);
                                 }}
                               >
                                 <option value="">-- Chưa phân công --</option>
-                                {saleAssigneeOptions.map(option => (
+                                {saleAssigneeDisplayOptions.map(option => (
                                   <option key={option.id} value={option.id}>
                                     {option.label}
                                   </option>
@@ -1393,14 +1410,14 @@ export function CustomerDealSplitTab({
                               <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1 block">PRESALE</label>
                               <select 
                                 className="w-full text-xs font-medium text-slate-800 bg-white border border-slate-200 rounded-lg p-1.5 focus:ring-1 focus:ring-[#c2185b]"
-                                value={primaryAssigneeId(currentDisplayDeal) || ''}
+                                value={presaleOwnerId}
                                 onChange={async (e) => {
                                   const val = e.target.value;
                                   await updateCurrentDeal({ sdr_id: val });
                                 }}
                               >
                                 <option value="">+ Phân công</option>
-                                {presaleAssigneeOptions.map(option => (
+                                {presaleAssigneeDisplayOptions.map(option => (
                                   <option key={option.id} value={option.id}>
                                     {option.label}
                                   </option>
@@ -1432,14 +1449,14 @@ export function CustomerDealSplitTab({
                             <div className="flex justify-between items-center">
                               <span className="text-slate-400 font-medium">Sale owner</span>
                               <span className="font-semibold text-slate-800 truncate max-w-[170px] text-right">
-                                {memberName((currentDisplayDeal as any).quote_owner_id || currentDisplayDeal.owner_id || (currentDisplayDeal as any).sdr_id)}
+                                {memberName(saleOwnerId)}
                               </span>
                             </div>
 
                             <div className="flex justify-between items-center">
                               <span className="text-slate-400 font-medium">Presale</span>
                               <span className="font-semibold text-slate-800 truncate max-w-[170px] text-right">
-                                {primaryAssigneeId(currentDisplayDeal) ? memberName(primaryAssigneeId(currentDisplayDeal)) : 'Chưa phân công'}
+                                {presaleOwnerId ? memberName(presaleOwnerId) : 'Chưa phân công'}
                               </span>
                             </div>
 
