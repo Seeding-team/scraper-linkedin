@@ -91,7 +91,7 @@ export function LeadDealQualificationPanel(props: {
         <p className="crm-form-title">Thông tin then chốt</p>
         <div className="crm-verify-compact-fields">
           {props.showProductField !== false ? (
-            <Field label="Khách đang quan tâm gì?" hint="Chọn từ danh mục Sản phẩm/Dịch vụ.">
+            <Field label="Khách đang quan tâm gì?" required>
               <CrmCategorySelect
                 categoryType="crm_service_package"
                 value={props.interest}
@@ -102,7 +102,7 @@ export function LeadDealQualificationPanel(props: {
             </Field>
           ) : null}
           <div className="crm-inline-pair">
-            <Field label="Giá trị ước tính (VND)" hint="Tự thêm dấu chấm ngăn nghìn khi gõ.">
+            <Field label="Giá trị dự kiến">
               <CurrencyInput
                 disabled={!canWrite}
                 value={props.estimatedValue}
@@ -110,7 +110,7 @@ export function LeadDealQualificationPanel(props: {
                 placeholder="VD: 50.000.000"
               />
             </Field>
-            <Field label="Mức độ quan tâm">
+            <Field label="Mức độ quan tâm" required>
               <select disabled={!canWrite} value={props.interestLevel} onChange={e => props.onInterestLevelChange(e.target.value as InterestLevel)}>
                 <option value="">-- Chọn --</option>
                 {INTEREST_LEVEL_OPTIONS.map(option => (
@@ -129,20 +129,12 @@ export function LeadDealQualificationPanel(props: {
                 onChange={props.onTimelineChange}
               />
             </Field>
-            <Field label="Đúng nhóm khách hàng?" hint="ICP.">
+            <Field label="Đúng nhóm khách hàng?">
               <select disabled={!canWrite} value={props.icpFit} onChange={e => props.onIcpFitChange(e.target.value as IcpFit)}>
                 {ICP_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
               </select>
             </Field>
           </div>
-          <Field label="Dự án" hint="tùy chọn">
-            <input
-              disabled={!canWrite}
-              value={props.project}
-              onChange={e => props.onProjectChange(e.target.value)}
-              placeholder="VD: Website 2026"
-            />
-          </Field>
           <Field label="Ghi chú" full>
             <textarea
               disabled={!canWrite}
@@ -159,16 +151,13 @@ export function LeadDealQualificationPanel(props: {
         <p className="crm-form-title">Bàn giao Sale</p>
         <div className="crm-verify-compact-fields">
           <div className="crm-inline-pair">
-            <Field label="Sale nhận bàn giao" required>
-              <SearchableSelect disabled={!canWrite} value={props.aeId} onChange={props.onAeIdChange} options={props.aeOptions} placeholder="-- Chưa chọn --" />
+            <Field label="Team Sale" required>
+              <select disabled={!canWrite} value="" onChange={() => {}}>
+                <option value="">-- Chọn --</option>
+              </select>
             </Field>
-            <Field label="Người liên hệ">
-              <input
-                disabled={!canWrite || props.contactNameDisabled}
-                value={props.contactName}
-                onChange={e => props.onContactNameChange?.(e.target.value)}
-                placeholder="Tên người liên hệ"
-              />
+            <Field label="Sale phụ trách">
+              <SearchableSelect disabled={!canWrite} value={props.aeId} onChange={props.onAeIdChange} options={props.aeOptions} placeholder="Chờ Sales Manager phân" />
             </Field>
           </div>
           <div className="crm-inline-pair">
@@ -186,11 +175,21 @@ export function LeadDealQualificationPanel(props: {
               <input disabled={!canWrite} type="datetime-local" value={props.nextStepAt} onChange={e => props.onNextStepAtChange(e.target.value)} />
             </Field>
           </div>
-          <Field label="Giai đoạn" required>
-            <select disabled={!canWrite} value={props.dealStage} onChange={e => props.onDealStageChange(e.target.value)}>
-              {DEAL_STAGE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-            </select>
-          </Field>
+          <div className="crm-inline-pair">
+            <Field label="Giai đoạn" required>
+              <select disabled={!canWrite} value={props.dealStage} onChange={e => props.onDealStageChange(e.target.value)}>
+                {DEAL_STAGE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </select>
+            </Field>
+            <Field label="Dự án" hint="tùy chọn">
+              <input
+                disabled={!canWrite}
+                value={props.project}
+                onChange={e => props.onProjectChange(e.target.value)}
+                placeholder="VD: Website 2026"
+              />
+            </Field>
+          </div>
         </div>
 
         {props.verificationOutcome === 'nurturing' ? (

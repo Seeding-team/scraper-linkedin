@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import { API_BASE_URL, API_KEY } from '@/lib/env';
 import { useAppAuth } from '@/contexts/AppAuthContext';
 import { useMembers } from '@/hooks/useMembers';
@@ -424,9 +424,43 @@ export function CrmCustomersDirectory() {
     router.push(`/all-platform/crm/customers/${customerId}`);
   }
 
+  function openCustomerRow(customer: CrmCustomerRow) {
+    if (opportunityCustomer) {
+      setOpportunityCustomer(customer);
+      return;
+    }
+    goToDetail(customer.id);
+  }
+
+  function handleCustomerNameClick(event: ReactMouseEvent<HTMLAnchorElement>, customer: CrmCustomerRow) {
+    if (!opportunityCustomer) {
+      event.stopPropagation();
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    setOpportunityCustomer(customer);
+  }
+
   function handleOpportunityCreated() {
     setOpportunityCustomer(null);
     setReloadTick(tick => tick + 1);
+  }
+
+  function handleShellPointerDown(event: ReactPointerEvent<HTMLDivElement>) {
+    if (!opportunityCustomer) return;
+    const target = event.target as HTMLElement | null;
+    if (!target) return;
+    if (target.closest('.crm-verify-drawer')) return;
+    if (target.closest('[data-crm-customer-row="true"]')) return;
+    if (
+      target.closest(
+        'button,a,input,select,textarea,[role="button"],[role="menu"],[role="dialog"],.crm-action-menu,.crm-filter-card,.crm-page-tabs'
+      )
+    ) {
+      return;
+    }
+    setOpportunityCustomer(null);
   }
 
   function openDelete(targets: CrmCustomerRow[]) {
@@ -565,7 +599,7 @@ export function CrmCustomersDirectory() {
   }
 
   return (
-    <div className="crm-shell">
+    <div className="crm-shell" onPointerDownCapture={handleShellPointerDown}>
       <section className="crm-page-card crm-customers-page-shell">
         {error ? <p className="crm-error">{error}</p> : null}
 
@@ -728,7 +762,8 @@ export function CrmCustomersDirectory() {
                         <tr
                           key={customer.id}
                           className="crm-row crm-row--clickable"
-                          onClick={() => goToDetail(customer.id)}
+                          data-crm-customer-row="true"
+                          onClick={() => openCustomerRow(customer)}
                           style={{ cursor: 'pointer' }}
                         >
                           <td className="crm-td" onClick={event => event.stopPropagation()}>
@@ -746,7 +781,7 @@ export function CrmCustomersDirectory() {
                                   href={`/all-platform/crm/customers/${customer.id}`}
                                   className="crm-customer-name-link"
                                   title={customer.customerName}
-                                  onClick={event => event.stopPropagation()}
+                                  onClick={event => handleCustomerNameClick(event, customer)}
                                 >
                                   {customer.customerName}
                                 </Link>
@@ -884,7 +919,8 @@ export function CrmCustomersDirectory() {
                 <div
                   key={customer.id}
                   className="crm-customer-card"
-                  onClick={() => goToDetail(customer.id)}
+                  data-crm-customer-row="true"
+                  onClick={() => openCustomerRow(customer)}
                   style={{ cursor: 'pointer' }}
                 >
                   <div className="crm-customer-card-head">
@@ -901,7 +937,7 @@ export function CrmCustomersDirectory() {
                         href={`/all-platform/crm/customers/${customer.id}`}
                         className="crm-customer-name-link"
                         title={customer.customerName}
-                        onClick={event => event.stopPropagation()}
+                        onClick={event => handleCustomerNameClick(event, customer)}
                       >
                         {customer.customerName}
                       </Link>

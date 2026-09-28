@@ -334,8 +334,8 @@ export function CreateOpportunityDrawer({
        * Lead de de dung, chi giu dung field da co san cua Tao co hoi, khong
        * them field lead-only (ICP fit, AI score...) vi Co hoi da co san Khach
        * hang, khong can lai. */}
-      <div className="crm-drawer-backdrop crm-lead-verify-backdrop" onClick={onClose} />
-      <aside className="crm-drawer crm-lead-detail-drawer crm-verify-drawer">
+      <div className="crm-drawer-backdrop crm-lead-verify-backdrop crm-lead-verify-backdrop--passive" />
+      <aside className="crm-drawer crm-lead-detail-drawer crm-verify-drawer" data-crm-create-opportunity-drawer="true">
         <header className="crm-lead-drawer-header crm-verify-header">
           <div className="crm-verify-header-text">
             <h2>
