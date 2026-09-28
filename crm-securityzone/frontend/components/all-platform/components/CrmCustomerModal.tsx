@@ -63,6 +63,10 @@ const emptyForm = (): Partial<Customer> => ({
   note: "",
   // CRM pipeline
   deal_stage: "new_lead",
+  interest_level: "Bình thường",
+  implementation_timeline: "Chưa xác định",
+  expected_close_date: null,
+  customer_fit: "Phù hợp",
   // Phân công
   leaded_by: "",
   sdr_id: "",
@@ -345,6 +349,10 @@ export function CrmCustomerModal({
         decision_maker: formData.decision_maker?.trim() || null,
         estimated_budget: formData.estimated_budget ? Number(formData.estimated_budget) : 0,
         follow_up_date: formData.follow_up_date || null,
+        interest_level: (formData as any).interest_level || null,
+        implementation_timeline: (formData as any).implementation_timeline || null,
+        expected_close_date: (formData as any).expected_close_date || null,
+        customer_fit: (formData as any).customer_fit || null,
         // Optional — chỉ gửi khi user đã chọn, tránh ghi đè deal cũ về null
         service_package: formData.service_package || null,
         lifetime_value: formData.lifetime_value ? Number(formData.lifetime_value) : 0,
@@ -762,6 +770,63 @@ export function CrmCustomerModal({
                   <p className="mt-1 text-[10px] text-slate-400">
                     Bắt buộc khi chuyển sang On Hold. Có thể đặt trước để nhắc nhở.
                   </p>
+                </div>
+
+                {/* Mức độ quan tâm */}
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">Mức độ quan tâm</label>
+                  <select
+                    value={(formData as any).interest_level ?? "Bình thường"}
+                    onChange={(e) => set("interest_level" as any, e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500 text-sm bg-white"
+                  >
+                    <option value="Bình thường">Bình thường</option>
+                    <option value="🔥 Cao">🔥 Cao</option>
+                    <option value="Rất cao">Rất cao</option>
+                    <option value="Thấp">Thấp</option>
+                  </select>
+                </div>
+
+                {/* Dự kiến triển khai */}
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">Dự kiến triển khai</label>
+                  <select
+                    value={(formData as any).implementation_timeline ?? "Chưa xác định"}
+                    onChange={(e) => set("implementation_timeline" as any, e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500 text-sm bg-white"
+                  >
+                    <option value="Chưa xác định">Chưa xác định</option>
+                    <option value="Ngay lập tức">Ngay lập tức</option>
+                    <option value="Trong 1 tháng">Trong 1 tháng</option>
+                    <option value="1-3 tháng">1-3 tháng</option>
+                    <option value="3-6 tháng">3-6 tháng</option>
+                  </select>
+                </div>
+
+                {/* Dự kiến chốt */}
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">Dự kiến chốt</label>
+                  <input
+                    type="date"
+                    value={dateInputValue((formData as any).expected_close_date)}
+                    onChange={(e) => set("expected_close_date" as any, toIsoDate(e.target.value))}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500 text-sm"
+                  />
+                </div>
+
+                {/* Fit khách hàng */}
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">Fit khách hàng</label>
+                  <select
+                    value={(formData as any).customer_fit ?? "Phù hợp"}
+                    onChange={(e) => set("customer_fit" as any, e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500 text-sm bg-white"
+                  >
+                    <option value="Phù hợp">Phù hợp</option>
+                    <option value="Rất phù hợp">Rất phù hợp</option>
+                    <option value="Chưa phù hợp">Chưa phù hợp</option>
+                    <option value="Không phù hợp">Không phù hợp</option>
+                  </select>
                 </div>
 
                 {/* ── Hợp đồng & báo giá (Vấn đề 2): tách Phase 1 mua / Phase 2 bán,

@@ -8858,10 +8858,12 @@
   grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr) minmax(280px, 300px);
   gap: 0.75rem;
   align-items: stretch;
+  min-width: 0;
 }
 
 .crm-verify-readiness-panel {
   max-width: 300px;
+  min-width: 0;
   justify-self: stretch;
 }
 
@@ -9212,6 +9214,7 @@
   display: flex;
   align-items: center;
   gap: 0.34rem;
+  min-width: 0;
   border: 1px solid #e2e8f0;
   min-height: 31px;
   border-radius: 0.45rem;
@@ -9223,10 +9226,15 @@
 
 .crm-verify-checklist li span {
   flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .crm-verify-check-value {
-  flex: 0 1 auto;
+  flex: 1 1 42%;
+  min-width: 0;
   max-width: 55%;
   color: #0f172a;
   font-size: 0.72rem;

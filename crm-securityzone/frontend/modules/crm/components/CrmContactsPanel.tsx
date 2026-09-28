@@ -8,10 +8,23 @@ import { ActionMenu } from './ActionMenu';
 import { PositionSelect } from './PositionSelect';
 import { fetchCrmCategoryIdOptions } from './CrmCategorySelect';
 import { ChevronDown, ChevronUp, Loader2, Plus, X } from './icons';
-import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Users, Phone, Mail, AlertCircle } from 'lucide-react';
+import { 
+  Users, 
+  Phone, 
+  Mail, 
+  AlertCircle, 
+  Eye, 
+  Edit3, 
+  Trash2, 
+  FolderPlus, 
+  Sparkles, 
+  Search, 
+  Target, 
+  Folder, 
+  UserCheck
+} from 'lucide-react';
 
 function headers() {
   const value: Record<string, string> = { 'Content-Type': 'application/json' };
@@ -34,6 +47,8 @@ type ApiContact = {
   website?: string | null;
   is_primary?: boolean | null;
   note?: string | null;
+  deal_count?: number;
+  project_count?: number;
 };
 
 type DuplicateContact = ApiContact & {
@@ -81,8 +96,6 @@ function formFromContact(contact: ApiContact): ContactFormState {
   };
 }
 
-// Cung heuristic voi LeadFormDrawer.tsx - chi de quyet dinh co tu dong goi
-// duplicate-check hay khong, chuan hoa that van o backend.
 const PHONE_RE = /(?:\+?84|0)(?:\d[\s.-]?){9,10}\b/;
 const EMAIL_RE = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/;
 function looksLikePhone(value: string): boolean {
@@ -93,8 +106,6 @@ function looksLikeEmail(value: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/i.test(value.trim());
 }
 
-/** Tach link mang xa hoi/website tu noi dung dan vao - chi nhan dien khi co
- * dau hieu RO RANG (domain), khong doan mo ho. */
 function detectLinksFromPaste(text: string): Partial<Pick<ContactFormState, 'zalo' | 'facebook' | 'telegram' | 'website'>> {
   const urls = text.match(/(?:https?:\/\/|www\.)[^\s,]+/gi) || [];
   const out: Partial<Pick<ContactFormState, 'zalo' | 'facebook' | 'telegram' | 'website'>> = {};
@@ -128,17 +139,6 @@ async function detectPositionFromPaste(text: string): Promise<{ id: string; labe
   }
 }
 
-/**
- * Danh sách + CRUD Contact (nguoi lien he) cua 1 ho so khach hang - hien tren
- * CrmCustomerDetailPage.tsx. Goi that /crm/customers/{id}/contacts, khong
- * mockup. canEdit dieu khien co hien nut Sua/Xoa/+ Them hay khong (server van
- * tu kiem tra lai qua can_edit_customer()).
- *
- * Form Them/Sua Contact dung DUNG khuon form "Thêm Lead nhanh" (feedback
- * 2026-09-23: "chỗ thêm contact này chỉ lại form lấy tt như thằng lead đó, nó
- * thiếu tt"): cot trai kiem tra trung SĐT/Email (trong tenant) + dan noi dung
- * de dien nhanh, cot phai thong tin day du (them Telegram/Website/Ghi chu).
- */
 export function CrmContactsPanel({
   customerId,
   canEdit,
@@ -177,7 +177,6 @@ export function CrmContactsPanel({
 
   useEffect(() => {
     let alive = true;
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true);
     fetch(`${API_BASE_URL}/api/all-platform/crm/customers/${encodeURIComponent(customerId)}/contacts`, {
       credentials: 'include',
@@ -204,14 +203,9 @@ export function CrmContactsPanel({
     return () => { alive = false; };
   }, [customerId, reloadTick]);
 
-  // Tu dong kiem tra trung khi SDT/Email hop le (debounce 400ms, chong race
-  // bang so dem - cung co che voi LeadFormDrawer.tsx).
-  // Trang thai hien thi: SDT/Email chua hop le -> luon 'idle' (tinh luc render,
-  // khong setState dong bo trong effect).
   const checkable = looksLikePhone(checkPhone.trim()) || looksLikeEmail(checkEmail.trim());
   const dupView: DupState = checkable ? dupState : 'idle';
 
-  /** Doi o kiem tra -> dat 'checking' ngay tai handler (khong trong effect). */
   function updateCheckInput(kind: 'phone' | 'email', value: string) {
     const phone = kind === 'phone' ? value : checkPhone;
     const email = kind === 'email' ? value : checkEmail;
@@ -333,8 +327,6 @@ export function CrmContactsPanel({
     }
   }
 
-  // Them moi: khoa cot phai cho toi khi kiem tra trung xong (khong trung hoac
-  // nguoi dung chon "Vẫn thêm Contact mới") - dung nhu form Lead. Sua: luon mo.
   const unlocked = Boolean(editing) || dupView === 'clean' || overrideCreate;
 
   async function handleDelete(contact: ApiContact) {
@@ -397,139 +389,222 @@ export function CrmContactsPanel({
     }
   }
 
+  const [search, setSearch] = useState('');
+  const [roleFilter, setRoleFilter] = useState('all');
+
+  const filteredContacts = contacts.filter(c => {
+    const s = search.toLowerCase();
+    const matchSearch = !search || (c.name || '').toLowerCase().includes(s) || (c.phone || '').includes(s) || (c.email || '').toLowerCase().includes(s);
+    const matchRole = roleFilter === 'all' || (roleFilter === 'primary' && c.is_primary) || (roleFilter === 'secondary' && !c.is_primary);
+    return matchSearch && matchRole;
+  });
+
   return (
-    <>
-      <Card className="bg-card shadow-xs border border-border/80 overflow-hidden">
-      <CardHeader className="py-4 px-6 border-b border-border/60 flex flex-row items-center justify-between">
-        <div className="flex items-center gap-2">
-          <Users className="size-4.5 text-primary" />
-          <CardTitle className="text-base font-semibold text-foreground">Người liên hệ</CardTitle>
-          <Badge className="text-xs px-2 py-0.5 font-bold bg-blue-500 text-white border-transparent">
-            {contacts.length}
-          </Badge>
+    <div className="space-y-6 bg-white py-1">
+      {/* Workspace Header Toolbar matching mockup */}
+      <div className="flex flex-wrap items-center justify-between gap-4 pb-4 border-b border-slate-200">
+        <div>
+          <div className="flex items-center gap-2">
+            <Users className="size-5 text-[#c2185b]" />
+            <h2 className="text-base font-bold text-slate-900">
+              Người liên hệ
+              <span className="ml-2 inline-flex items-center justify-center size-5 rounded-full bg-rose-100 text-[#c2185b] text-xs font-bold">
+                {contacts.length}
+              </span>
+            </h2>
+          </div>
+          <p className="text-xs text-slate-400 mt-0.5">Quản lý các đầu mối liên hệ của khách hàng</p>
         </div>
-        {canEdit ? (
-          <Button
-            size="sm"
-            className="gap-1.5 shadow-xs"
-            onClick={openCreate}
+        
+        <div className="flex items-center gap-2.5">
+          <div className="relative w-64">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-slate-400" />
+            <input 
+              type="text" 
+              placeholder="Tìm tên, SĐT, email..." 
+              className="w-full h-8 pl-8 pr-3 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-[#c2185b]"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+            />
+          </div>
+
+          <select 
+            className="h-8 px-3 text-xs border border-slate-200 rounded-lg bg-white text-slate-700 font-medium outline-none focus:ring-1 focus:ring-[#c2185b]"
+            value={roleFilter}
+            onChange={e => setRoleFilter(e.target.value)}
           >
-            <Plus className="size-3.5" />
-            <span>Thêm Contact</span>
-          </Button>
-        ) : null}
-      </CardHeader>
+            <option value="all">Tất cả vai trò</option>
+            <option value="primary">Liên hệ chính</option>
+            <option value="secondary">Liên hệ phụ</option>
+          </select>
 
-      <CardContent className="p-6">
-        {error ? (
-          <div className="p-3 rounded-lg bg-destructive/10 border border-destructive/20 text-destructive text-xs mb-4 flex items-start gap-2">
-            <AlertCircle className="size-4 shrink-0 mt-0.5" />
-            <span>{error}</span>
-          </div>
-        ) : null}
+          {canEdit ? (
+            <Button
+              size="sm"
+              className="gap-1 text-xs h-8 bg-[#c2185b] hover:bg-[#a91549] text-white shadow-2xs font-medium px-3 rounded-lg"
+              onClick={openCreate}
+            >
+              <Plus className="size-3.5" />
+              <span>Thêm liên hệ</span>
+            </Button>
+          ) : null}
+        </div>
+      </div>
 
-        {loading ? (
-          <div className="py-8 flex items-center justify-center gap-2 text-xs text-muted-foreground">
-            <Loader2 className="size-4 animate-spin text-primary" />
-            <span>Đang tải danh sách liên hệ...</span>
-          </div>
-        ) : contacts.length ? (
-          <div className="space-y-2.5">
-            {contacts.map(contact => (
-              <div
-                key={contact.id}
-                className={`p-3.5 rounded-xl border border-border/70 bg-card hover:border-primary/40 hover:shadow-xs transition-all flex flex-wrap items-center justify-between gap-3 ${onOpenContact ? 'cursor-pointer' : ''}`}
-                onClick={onOpenContact ? () => onOpenContact(contact.id) : undefined}
-                role={onOpenContact ? 'button' : undefined}
-                tabIndex={onOpenContact ? 0 : undefined}
-              >
-                <div className="flex items-center gap-3">
-                  <div className="size-9 rounded-full bg-primary/10 text-primary font-bold text-xs flex items-center justify-center shrink-0">
-                    {contact.name ? contact.name.trim().charAt(0).toUpperCase() : '?'}
-                  </div>
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <span className="font-semibold text-xs text-foreground">{contact.name}</span>
-                      {contact.is_primary ? (
-                        <Badge className="bg-blue-500 text-white border-transparent text-[10px] font-semibold px-2 py-0">
-                          Chính
-                        </Badge>
-                      ) : (
-                        <Badge className="bg-slate-500 text-white border-transparent text-[10px] font-semibold px-2 py-0">
-                          Phụ
-                        </Badge>
-                      )}
-                    </div>
-                    {(contact.position_label_snapshot || contact.position) ? (
-                      <span className="text-[11px] text-muted-foreground">{contact.position_label_snapshot || contact.position}</span>
+      {error ? (
+        <div className="p-3 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 text-xs mb-3 flex items-start gap-2">
+          <AlertCircle className="size-4 shrink-0 mt-0.5" />
+          <span>{error}</span>
+        </div>
+      ) : null}
+
+      {/* Contacts Card Row List matching mockup */}
+      {loading ? (
+        <div className="py-12 flex items-center justify-center gap-2 text-xs text-slate-500">
+          <Loader2 className="size-4 animate-spin text-[#c2185b]" />
+          <span>Đang tải danh sách liên hệ...</span>
+        </div>
+      ) : filteredContacts.length ? (
+        <div className="space-y-3">
+          {filteredContacts.map(contact => (
+            <div
+              key={contact.id}
+              className={`p-4 rounded-xl border border-slate-200/90 bg-white hover:border-slate-300 transition-all flex flex-wrap items-center justify-between gap-4 ${
+                onOpenContact ? 'cursor-pointer' : ''
+              }`}
+              onClick={onOpenContact ? () => onOpenContact(contact.id) : undefined}
+            >
+              {/* Column 1: Avatar + Name + Primary Badge + Position */}
+              <div className="flex items-center gap-3.5 min-w-[220px]">
+                <div className="size-11 rounded-full bg-rose-100 text-[#c2185b] font-bold text-base flex items-center justify-center shrink-0">
+                  {contact.name ? contact.name.trim().charAt(0).toUpperCase() : '?'}
+                </div>
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="font-bold text-sm text-slate-900 truncate">{contact.name}</span>
+                    {contact.is_primary ? (
+                      <Badge className="bg-rose-50 text-rose-600 border border-rose-100 shadow-none font-semibold text-[10px] px-2 py-0.5 rounded-full shrink-0">
+                        Liên hệ chính
+                      </Badge>
                     ) : null}
                   </div>
-                </div>
-
-                <div className="flex items-center gap-3 text-xs" onClick={event => event.stopPropagation()}>
-                  {contact.phone ? (
-                    <a
-                      className="inline-flex items-center gap-1 font-medium text-foreground hover:text-primary transition-colors"
-                      href={`tel:${contact.phone.replace(/[^\d+]/g, '')}`}
-                    >
-                      <Phone className="size-3 text-muted-foreground" />
-                      <span>{contact.phone}</span>
-                    </a>
-                  ) : null}
-                  {contact.email ? (
-                    <a
-                      className="inline-flex items-center gap-1 text-muted-foreground hover:text-primary transition-colors"
-                      href={`mailto:${contact.email}`}
-                    >
-                      <Mail className="size-3 text-muted-foreground" />
-                      <span>{contact.email}</span>
-                    </a>
-                  ) : null}
-                </div>
-
-                <div className="flex items-center gap-1.5" onClick={event => event.stopPropagation()}>
-                  {onCreateDeal && (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="h-7 text-xs px-2.5"
-                      onClick={() => onCreateDeal(contact.id)}
-                    >
-                      + Cơ hội
-                    </Button>
-                  )}
-                  {onCreateProject && (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="h-7 text-xs px-2.5"
-                      onClick={() => onCreateProject(contact.id)}
-                    >
-                      + Dự án
-                    </Button>
-                  )}
-                  <ActionMenu
-                    label="Thao tác contact"
-                    items={[
-                      ...(canEdit ? [{ key: 'edit', label: 'Sửa', onSelect: () => openEdit(contact) }] : []),
-                      { key: 'delete', label: 'Xóa', danger: true, onSelect: () => void handleDelete(contact) },
-                    ]}
-                  />
+                  <div className="text-xs text-slate-500 font-medium truncate mt-0.5">
+                    {contact.position_label_snapshot || contact.position || 'Chưa đặt chức vụ'}
+                  </div>
                 </div>
               </div>
-            ))}
-          </div>
-        ) : (
-          <div className="py-12 text-center text-xs text-muted-foreground flex flex-col items-center gap-2">
-            <Users className="size-8 text-muted-foreground/30 stroke-1" />
-            <span>Chưa có người liên hệ nào.</span>
-          </div>
-        )}
-      </CardContent>
-    </Card>
 
+              {/* Column 2: Phone & Email */}
+              <div className="border-l border-slate-100 pl-6 space-y-1 text-xs shrink-0 min-w-[180px]" onClick={e => e.stopPropagation()}>
+                <div className="flex items-center gap-2 text-slate-700">
+                  <Phone className="size-3.5 text-slate-400 shrink-0" />
+                  {contact.phone ? (
+                    <a href={`tel:${contact.phone.replace(/\D/g, '')}`} className="font-medium hover:text-[#c2185b] transition-colors">
+                      {contact.phone}
+                    </a>
+                  ) : <span className="text-slate-400 italic">Chưa có SĐT</span>}
+                </div>
+                <div className="flex items-center gap-2 text-slate-700">
+                  <Mail className="size-3.5 text-slate-400 shrink-0" />
+                  {contact.email ? (
+                    <a href={`mailto:${contact.email}`} className="font-medium hover:text-[#c2185b] transition-colors truncate max-w-[150px]">
+                      {contact.email}
+                    </a>
+                  ) : <span className="text-slate-400 italic">Chưa có email</span>}
+                </div>
+              </div>
+
+              {/* Column 3: Associated Deals & Projects */}
+              <div className="border-l border-slate-100 pl-6 space-y-1 text-xs shrink-0 min-w-[140px]" onClick={e => e.stopPropagation()}>
+                <div className="flex items-center gap-2 text-slate-600">
+                  <Target className="size-3.5 text-[#c2185b] shrink-0" />
+                  <span className="font-semibold text-slate-800">{contact.deal_count || 0} Cơ hội</span>
+                </div>
+                <div className="flex items-center gap-2 text-slate-600">
+                  <Folder className="size-3.5 text-blue-600 shrink-0" />
+                  <span className="font-semibold text-slate-800">{contact.project_count || 0} Dự án</span>
+                </div>
+              </div>
+
+              {/* Column 4: Quick Actions & ActionMenu */}
+              <div className="border-l border-slate-100 pl-6 flex items-center gap-2 shrink-0" onClick={e => e.stopPropagation()}>
+                {contact.phone ? (
+                  <a
+                    href={`tel:${contact.phone.replace(/\D/g, '')}`}
+                    className="size-8 rounded-lg border border-slate-200 bg-white text-slate-600 hover:border-[#c2185b] hover:text-[#c2185b] flex items-center justify-center transition-all shadow-2xs"
+                    title="Gọi điện"
+                  >
+                    <Phone className="size-4" />
+                  </a>
+                ) : null}
+                {contact.email ? (
+                  <a
+                    href={`mailto:${contact.email}`}
+                    className="size-8 rounded-lg border border-slate-200 bg-white text-slate-600 hover:border-[#c2185b] hover:text-[#c2185b] flex items-center justify-center transition-all shadow-2xs"
+                    title="Gửi Email"
+                  >
+                    <Mail className="size-4" />
+                  </a>
+                ) : null}
+                
+                <ActionMenu
+                  label="Thao tác contact"
+                  items={[
+                    ...(onOpenContact ? [{ key: 'view', label: 'Xem chi tiết', icon: Eye, onSelect: () => onOpenContact(contact.id) }] : []),
+                    ...(canEdit ? [{ key: 'edit', label: 'Chỉnh sửa', icon: Edit3, onSelect: () => openEdit(contact) }] : []),
+                    ...(onCreateDeal ? [{ key: 'deal', label: 'Tạo cơ hội', icon: Sparkles, onSelect: () => onCreateDeal(contact.id) }] : []),
+                    ...(onCreateProject ? [{ key: 'project', label: 'Gắn vào dự án', icon: FolderPlus, onSelect: () => onCreateProject(contact.id) }] : []),
+                    ...(canEdit ? [{ key: 'delete', label: 'Xóa', icon: Trash2, danger: true, onSelect: () => void handleDelete(contact) }] : []),
+                  ]}
+                />
+              </div>
+            </div>
+          ))}
+
+          {/* Empty State Banner for Additional Contacts matching mockup */}
+          <div className="pt-8 pb-6 text-center border-t border-slate-100 flex flex-col items-center gap-2.5">
+            <div className="size-12 rounded-full bg-rose-50 text-[#c2185b] flex items-center justify-center">
+              <UserCheck className="size-6" />
+            </div>
+            <h3 className="font-bold text-sm text-slate-800">Chưa có người liên hệ khác</h3>
+            <p className="text-xs text-slate-400 max-w-sm">
+              Thêm người liên hệ để quản lý thông tin và theo dõi tương tác.
+            </p>
+            {canEdit ? (
+              <Button
+                size="sm"
+                className="mt-1 gap-1 text-xs h-8 bg-[#c2185b] hover:bg-[#a91549] text-white shadow-2xs font-medium px-4 rounded-lg"
+                onClick={openCreate}
+              >
+                <Plus className="size-3.5" />
+                <span>Thêm liên hệ</span>
+              </Button>
+            ) : null}
+          </div>
+        </div>
+      ) : (
+        <div className="py-12 text-center text-xs text-slate-500 flex flex-col items-center gap-2">
+          <div className="size-12 rounded-full bg-rose-50 text-[#c2185b] flex items-center justify-center">
+            <UserCheck className="size-6" />
+          </div>
+          <h3 className="font-bold text-sm text-slate-800">Chưa có người liên hệ</h3>
+          <p className="text-xs text-slate-400 max-w-sm">
+            Thêm người liên hệ để quản lý thông tin và theo dõi tương tác.
+          </p>
+          {canEdit ? (
+            <Button
+              size="sm"
+              className="mt-2 gap-1 text-xs h-8 bg-[#c2185b] hover:bg-[#a91549] text-white shadow-2xs font-medium px-4 rounded-lg"
+              onClick={openCreate}
+            >
+              <Plus className="size-3.5" />
+              <span>Thêm liên hệ</span>
+            </Button>
+          ) : null}
+        </div>
+      )}
+
+      {/* Slide-over Form Drawer */}
       {formOpen ? (
         <div className="crm-drawer-backdrop" onClick={closeForm}>
           <aside
@@ -551,12 +626,13 @@ export function CrmContactsPanel({
               {formError ? <p className="crm-error">{formError}</p> : null}
 
               <div className="crm-lead-quickadd-grid">
-                {/* ---- Cot trai: 1. Kiem tra Contact ---- */}
+                {/* Cot trai: Kiem tra Contact */}
                 <section className="crm-form-section crm-lead-check-col">
                   <p className="crm-form-title">1. Kiểm tra Contact</p>
                   <p className="crm-lead-check-subtitle">Nhập ít nhất SĐT hoặc Email</p>
                   <div className="crm-form-grid">
-                    <Field label="Số điện thoại">
+                    <div className="crm-field">
+                      <label className="crm-label">Số điện thoại</label>
                       <input
                         name="crm-contact-form-check-phone"
                         value={checkPhone}
@@ -564,9 +640,11 @@ export function CrmContactsPanel({
                         type="tel"
                         placeholder="VD: 0903 037 911"
                         autoComplete="off"
+                        className="crm-input"
                       />
-                    </Field>
-                    <Field label="Email">
+                    </div>
+                    <div className="crm-field">
+                      <label className="crm-label">Email</label>
                       <input
                         name="crm-contact-form-check-email"
                         value={checkEmail}
@@ -574,8 +652,9 @@ export function CrmContactsPanel({
                         type="email"
                         placeholder="VD: tien@abc.vn"
                         autoComplete="off"
+                        className="crm-input"
                       />
-                    </Field>
+                    </div>
                   </div>
 
                   {dupView === 'checking' ? (
@@ -671,7 +750,7 @@ export function CrmContactsPanel({
                   <p className="crm-lead-check-hint">Hệ thống tự kiểm tra khi dữ liệu hợp lệ.</p>
                 </section>
 
-                {/* ---- Cot phai: 2. Thong tin Contact ---- */}
+                {/* Cot phai: Thong tin Contact */}
                 <section className={`crm-form-section crm-lead-info-col ${unlocked ? '' : 'crm-lead-info-col--locked'}`}>
                   <div className="crm-lead-info-col-head">
                     <div>
@@ -690,22 +769,26 @@ export function CrmContactsPanel({
 
                   <fieldset className="crm-lead-info-fieldset" disabled={!unlocked}>
                     <div className="crm-form-grid">
-                      <Field label="Họ và tên" required>
-                        <input value={form.name} onChange={e => setValue('name', e.target.value)} placeholder="Nguyễn Văn A" />
-                      </Field>
-                      <Field label="Chức vụ">
+                      <div className="crm-field">
+                        <label className="crm-label">Họ và tên <span className="text-rose-500">*</span></label>
+                        <input className="crm-input" value={form.name} onChange={e => setValue('name', e.target.value)} placeholder="Nguyễn Văn A" />
+                      </div>
+                      <div className="crm-field">
+                        <label className="crm-label">Chức vụ</label>
                         <PositionSelect
                           value={form.positionCategoryId}
                           labelSnapshot={form.positionLabel}
                           onChange={(id, label) => setForm(f => ({ ...f, positionCategoryId: id, positionLabel: label }))}
                         />
-                      </Field>
-                      <Field label="Số điện thoại" hint="cần SĐT hoặc email">
-                        <input value={form.phone} onChange={e => setValue('phone', e.target.value)} type="tel" placeholder="Autofill từ kiểm tra trùng" />
-                      </Field>
-                      <Field label="Email" hint="cần SĐT hoặc email">
-                        <input value={form.email} onChange={e => setValue('email', e.target.value)} type="email" placeholder="Autofill từ kiểm tra trùng" />
-                      </Field>
+                      </div>
+                      <div className="crm-field">
+                        <label className="crm-label">Số điện thoại</label>
+                        <input className="crm-input" value={form.phone} onChange={e => setValue('phone', e.target.value)} type="tel" placeholder="Autofill từ kiểm tra trùng" />
+                      </div>
+                      <div className="crm-field">
+                        <label className="crm-label">Email</label>
+                        <input className="crm-input" value={form.email} onChange={e => setValue('email', e.target.value)} type="email" placeholder="Autofill từ kiểm tra trùng" />
+                      </div>
                     </div>
                     <div className="crm-switch-row" style={{ marginTop: '0.75rem' }}>
                       <div className="crm-switch-row-text">
@@ -731,21 +814,26 @@ export function CrmContactsPanel({
                       </button>
                       {extraOpen ? (
                         <div className="crm-form-grid" style={{ marginTop: '0.75rem' }}>
-                          <Field label="Zalo">
-                            <input value={form.zalo} onChange={e => setValue('zalo', e.target.value)} placeholder="Số/link Zalo" />
-                          </Field>
-                          <Field label="Facebook">
-                            <input value={form.facebook} onChange={e => setValue('facebook', e.target.value)} placeholder="Link Facebook" />
-                          </Field>
-                          <Field label="Telegram">
-                            <input value={form.telegram} onChange={e => setValue('telegram', e.target.value)} placeholder="@username hoặc link" />
-                          </Field>
-                          <Field label="Website">
-                            <input value={form.website} onChange={e => setValue('website', e.target.value)} placeholder="https://..." />
-                          </Field>
-                          <Field full label="Ghi chú">
-                            <textarea value={form.note} onChange={e => setValue('note', e.target.value)} placeholder="Ghi chú nội bộ..." />
-                          </Field>
+                          <div className="crm-field">
+                            <label className="crm-label">Zalo</label>
+                            <input className="crm-input" value={form.zalo} onChange={e => setValue('zalo', e.target.value)} placeholder="Số/link Zalo" />
+                          </div>
+                          <div className="crm-field">
+                            <label className="crm-label">Facebook</label>
+                            <input className="crm-input" value={form.facebook} onChange={e => setValue('facebook', e.target.value)} placeholder="Link Facebook" />
+                          </div>
+                          <div className="crm-field">
+                            <label className="crm-label">Telegram</label>
+                            <input className="crm-input" value={form.telegram} onChange={e => setValue('telegram', e.target.value)} placeholder="@username hoặc link" />
+                          </div>
+                          <div className="crm-field">
+                            <label className="crm-label">Website</label>
+                            <input className="crm-input" value={form.website} onChange={e => setValue('website', e.target.value)} placeholder="https://..." />
+                          </div>
+                          <div className="crm-field col-span-2">
+                            <label className="crm-label">Ghi chú</label>
+                            <textarea className="crm-input" value={form.note} onChange={e => setValue('note', e.target.value)} placeholder="Ghi chú nội bộ..." />
+                          </div>
                         </div>
                       ) : null}
                     </div>
@@ -777,29 +865,6 @@ export function CrmContactsPanel({
           </aside>
         </div>
       ) : null}
-    </>
-  );
-}
-
-function Field({
-  label,
-  hint,
-  required,
-  full,
-  children,
-}: {
-  label: string;
-  hint?: string;
-  required?: boolean;
-  full?: boolean;
-  children: React.ReactNode;
-}) {
-  return (
-    <label className={`crm-field ${full ? 'crm-field--full' : ''}`}>
-      <span>
-        {label} {hint ? <em>({hint})</em> : null} {required ? <b>*</b> : null}
-      </span>
-      {children}
-    </label>
+    </div>
   );
 }

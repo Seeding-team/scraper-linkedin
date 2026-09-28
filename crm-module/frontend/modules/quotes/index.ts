@@ -3,6 +3,7 @@ export { QuoteHistoryPage } from './components/QuoteHistoryPage';
 export { QuoteFormBuilderPage } from './components/QuoteFormBuilderPage';
 export { QuoteFormPreviewPage } from './components/QuoteFormPreviewPage';
 export { QuoteDetailPage } from './components/QuoteDetailPage';
+export { InternalQuoteWorkspacePage } from './components/InternalQuoteWorkspacePage';
 export { PublicQuoteFormPage } from './components/PublicQuoteFormPage';
 export { PublicQuotePage } from './components/PublicQuotePage';
 export { QuoteDocumentRenderer } from './components/QuoteDocumentRenderer';

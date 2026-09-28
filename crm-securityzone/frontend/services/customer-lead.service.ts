@@ -336,6 +336,14 @@ export interface Customer {
   decision_maker?: string | null;
   /** Ngân sách dự kiến (qualified). */
   estimated_budget?: number | null;
+  /** Mức độ quan tâm. */
+  interest_level?: string | null;
+  /** Dự kiến triển khai. */
+  implementation_timeline?: string | null;
+  /** Dự kiến chốt. */
+  expected_close_date?: string | null;
+  /** Fit khách hàng. */
+  customer_fit?: string | null;
   /** Ngày vào stage hiện tại (track time-in-stage). */
   stage_entered_at?: string | null;
   /** Số ngày đã nằm ở stage hiện tại (server-side tính hoặc fallback client). */

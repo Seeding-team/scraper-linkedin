@@ -87,15 +87,36 @@ def _normalize_payload(payload: dict[str, Any], actor_id: str | None = None) -> 
     return out
 
 
-def _validate_source(source: str | None) -> None:
+def _resolve_source(source: str | None, *, allow_legacy_value: str | None = None) -> str | None:
     if not source:
-        return
+        return None
     try:
         rows = get_categories_by_type("crm_source")
     except Exception:
         rows = []
-    if rows and source not in {row.get("code") for row in rows}:
-        raise ValueError("Nguon khach hang khong nam trong danh muc crm_source.")
+    if not rows:
+        return source
+
+    source_key = source.strip().lower()
+    for row in rows:
+        code = str(row.get("code") or "").strip()
+        name = str(row.get("name") or "").strip()
+        if source == code:
+            return code
+        if source_key and source_key in {code.lower(), name.lower()}:
+            return code
+
+    # Legacy/imported customers can carry raw source labels that no longer
+    # exist in crm_source. Editing an unrelated field must not be blocked just
+    # because the old value is still present in the record.
+    if allow_legacy_value is not None and source == allow_legacy_value:
+        return source
+
+    raise ValueError("Nguon khach hang khong nam trong danh muc crm_source.")
+
+
+def _validate_source(source: str | None) -> None:
+    _resolve_source(source)
 
 
 def _duplicate_query(email_normalized: str | None, phone_normalized: str | None, exclude_id: str | None = None) -> list[dict[str, Any]]:
@@ -398,7 +419,7 @@ def get_customer(customer_id: str, user: dict[str, Any]) -> dict[str, Any]:
 def create_customer(payload: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]:
     actor_id = str(user.get("id") or "")
     data = _normalize_payload(payload, actor_id=actor_id)
-    _validate_source(data.get("source"))
+    data["source"] = _resolve_source(data.get("source"))
     apply_position_category(data)
     matches = _duplicate_query(data.get("email_normalized"), data.get("phone_normalized"))
     if matches:
@@ -426,7 +447,7 @@ def update_customer(customer_id: str, payload: dict[str, Any], user: dict[str, A
     if not can_edit_customer(user, current):
         raise PermissionError("Khong co quyen sua ho so khach hang nay.")
     data = _normalize_payload(payload)
-    _validate_source(data.get("source"))
+    data["source"] = _resolve_source(data.get("source"), allow_legacy_value=current.get("source"))
     apply_position_category(data, current_position_category_id=current.get("position_category_id"))
     matches = _duplicate_query(data.get("email_normalized"), data.get("phone_normalized"), exclude_id=customer_id)
     if matches:
@@ -624,7 +645,7 @@ def create_customer_with_deal(payload: dict[str, Any], user: dict[str, Any]) -> 
     # tu day, khong de lot xuong RPC.
     if not (_is_admin_or_leader(user) and customer.get("owner_id")):
         customer["owner_id"] = actor_id or None
-    _validate_source(customer.get("source"))
+    customer["source"] = _resolve_source(customer.get("source"))
     # migration 079 — resolve + mirror Chuc vu BEFORE the RPC call (both new
     # rows here, so always require an active category). The RPC's INSERT
     # statements (migration 077 SQL, not touched by this migration) only know
