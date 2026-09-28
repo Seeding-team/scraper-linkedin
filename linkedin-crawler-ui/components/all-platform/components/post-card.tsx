@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import { FaFacebook, FaLinkedin } from "react-icons/fa";
-import { FaThreads } from "react-icons/fa6";
+import { FaThreads, FaYoutube } from "react-icons/fa6";
 import { FiExternalLink } from "react-icons/fi";
 import { cn } from "@/lib/utils";
 import type { UnifiedPost, FeedPlatform } from "@/types/unified.types";
@@ -18,6 +18,8 @@ interface PostCardProps {
   onViewDetail?: (post: UnifiedPost) => void;
   onDelete?: (post: UnifiedPost) => void | Promise<void>;
   onViewSeedingRoster?: (post: UnifiedPost) => void;
+  /** YouTube: mở modal gõ comment -> mở video trong tab mới, điền sẵn, tính KPI khi nhân viên bấm Bình luận. */
+  onComment?: (post: UnifiedPost) => void;
   seeded?: boolean;
   verifyStatus?: "pending" | "yes" | "no";
 }
@@ -30,10 +32,14 @@ function PlatformIcon({ platform }: { platform: FeedPlatform }) {
   if (platform === "threads") {
     return <FaThreads className="text-foreground shrink-0" />;
   }
+  if (platform === "youtube") {
+    return <FaYoutube className="text-[#ff0000] shrink-0" />;
+  }
   return <FaLinkedin className="text-blue-700 shrink-0" />;
 }
 
-export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onViewDetail, onDelete, onViewSeedingRoster, seeded, verifyStatus }: PostCardProps) {
+export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onViewDetail, onDelete, onViewSeedingRoster, onComment, seeded, verifyStatus }: PostCardProps) {
+  const isYouTube = post.platform === "youtube";
   const [isInboxOpen, setIsInboxOpen] = useState(false);
   const [showAllCrawledComments, setShowAllCrawledComments] = useState(false);
   const inboxRef = useRef<HTMLDivElement>(null);
@@ -113,10 +119,18 @@ export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onVi
               {post.group_name || "Unknown Group"}
             </a>
 
-            {post.platform === "threads" && post.search_keyword && (
+            {(post.platform === "threads" || isYouTube) && post.search_keyword && (
               <span className="shrink-0 rounded bg-neutral-100 px-2 py-0.5 text-[10px] font-bold text-neutral-700" title="Từ khoá đã tìm ra bài này">
                 🔎 {post.search_keyword}
               </span>
+            )}
+            {isYouTube && post.source === "link" && (
+              <span className="shrink-0 rounded bg-neutral-100 px-2 py-0.5 text-[10px] font-bold text-neutral-700" title="Video do người dùng dán link">
+                🔗 Link thêm tay
+              </span>
+            )}
+            {isYouTube && post.is_short && (
+              <span className="shrink-0 rounded bg-red-50 px-2 py-0.5 text-[10px] font-bold text-red-600">Shorts</span>
             )}
             {post.intent && (
               <span className="shrink-0 rounded bg-purple-50 px-2 py-0.5 text-[10px] font-bold text-purple-600">
@@ -155,9 +169,24 @@ export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onVi
         </div>
 
         {/* Nội dung */}
-        <p className="text-sm text-foreground italic line-clamp-2 leading-relaxed bg-muted px-3 py-2 rounded-lg border border-border mb-3">
-          {post.content || "Nội dung bài viết rỗng hoặc chứa thuần hình ảnh/video."}
-        </p>
+        {isYouTube ? (
+          <a href={post.post_url} target="_blank" rel="noopener noreferrer" className="flex gap-3 items-start bg-muted px-3 py-2 rounded-lg border border-border mb-3 hover:border-primary/30">
+            {post.image_urls?.[0] ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={post.image_urls[0]} alt="" loading="lazy" className="w-32 aspect-video rounded-md object-cover shrink-0 border border-border" />
+            ) : null}
+            <span className="min-w-0">
+              <span className="block text-sm font-semibold text-foreground line-clamp-2">{post.title || "Video YouTube"}</span>
+              <span className="block text-xs text-muted-foreground mt-0.5">
+                {[post.duration_text, post.published_text].filter(Boolean).join(" • ")}
+              </span>
+            </span>
+          </a>
+        ) : (
+          <p className="text-sm text-foreground italic line-clamp-2 leading-relaxed bg-muted px-3 py-2 rounded-lg border border-border mb-3">
+            {post.content || "Nội dung bài viết rỗng hoặc chứa thuần hình ảnh/video."}
+          </p>
+        )}
 
 
         {(userRole === "admin" || userRole === "leader") && post.all_seedings && post.all_seedings.length > 0 ? (
@@ -252,15 +281,23 @@ export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onVi
         <div className="flex items-center justify-between flex-wrap gap-2 pt-1">
 
           <div className="flex items-center gap-2.5 flex-wrap">
-            <span className="flex items-center gap-1.5 px-2.5 py-1 bg-amber-50/60 text-amber-700 rounded-md text-[11px] font-bold border border-amber-100/40" title="Lượt thích/Cảm xúc">
-              👍 {post.reactions?.toLocaleString() || 0}
-            </span>
-            <span className="flex items-center gap-1.5 px-2.5 py-1 bg-muted text-muted-foreground rounded-md text-[11px] font-bold border border-border" title="Lượt bình luận">
-              💬 {post.comments?.toLocaleString() || 0}
-            </span>
-            <span className="flex items-center gap-1.5 px-2.5 py-1 bg-blue-50 text-blue-600 rounded-md text-[11px] font-bold border border-blue-100/50" title="Lượt chia sẻ">
-              🔁 {post.shares?.toLocaleString() || 0}
-            </span>
+            {isYouTube ? (
+              <span className="flex items-center gap-1.5 px-2.5 py-1 bg-muted text-muted-foreground rounded-md text-[11px] font-bold border border-border" title="Lượt xem">
+                👁 {(post.view_count || 0).toLocaleString()} lượt xem
+              </span>
+            ) : (
+              <>
+                <span className="flex items-center gap-1.5 px-2.5 py-1 bg-amber-50/60 text-amber-700 rounded-md text-[11px] font-bold border border-amber-100/40" title="Lượt thích/Cảm xúc">
+                  👍 {post.reactions?.toLocaleString() || 0}
+                </span>
+                <span className="flex items-center gap-1.5 px-2.5 py-1 bg-muted text-muted-foreground rounded-md text-[11px] font-bold border border-border" title="Lượt bình luận">
+                  💬 {post.comments?.toLocaleString() || 0}
+                </span>
+                <span className="flex items-center gap-1.5 px-2.5 py-1 bg-blue-50 text-blue-600 rounded-md text-[11px] font-bold border border-blue-100/50" title="Lượt chia sẻ">
+                  🔁 {post.shares?.toLocaleString() || 0}
+                </span>
+              </>
+            )}
 
             {(userRole === "admin" || userRole === "leader") && post.crawler_name && (
               <span className="flex items-center gap-1.5 px-2.5 py-1 bg-muted text-muted-foreground rounded-md text-[11px] font-medium border border-border">
@@ -321,6 +358,16 @@ export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onVi
             >
               Xem chi tiết
             </button>
+
+            {onComment && (
+              <button
+                type="button"
+                onClick={() => onComment(post)}
+                className="px-3 py-2 bg-[#ff0000] hover:bg-[#d90000] text-white rounded-lg text-sm font-semibold transition shadow-sm cursor-pointer inline-flex items-center gap-1.5"
+              >
+                <FaYoutube /> Bình luận
+              </button>
+            )}
 
             {onSchedule && (
               <button

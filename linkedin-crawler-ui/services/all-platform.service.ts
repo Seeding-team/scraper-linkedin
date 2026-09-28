@@ -1750,6 +1750,35 @@ export const socialAccountsService = {
   },
 };
 
+// ── YouTube Seeding (liên kết kênh + phiên comment tính KPI) ──────────────────
+
+export interface YouTubeCommentSession {
+  token: string;
+  post_url: string;
+  video_id: string;
+  expected_channel: { profile_id: string; handle?: string | null; name?: string | null };
+}
+
+export const youtubeSeedingService = {
+  /** Lưu kênh YouTube (extension nhận diện trên trình duyệt) thành tài khoản seeding của mình. */
+  linkChannel: (payload: { channel_id?: string | null; handle?: string | null; name?: string | null }): Promise<ApiResponse<SocialAccount & { already_linked?: boolean }>> => {
+    return requestJson(`${BASE}/youtube/link-channel`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify(payload),
+    }, 0);
+  },
+
+  /** Token phiên comment cho 1 video + 1 kênh đã liên kết — extension dùng để báo KPI. */
+  createCommentSession: (payload: { post_id: string; id_social_account: string }): Promise<ApiResponse<YouTubeCommentSession>> => {
+    return requestJson(`${BASE}/youtube/comment-session`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify(payload),
+    }, 0);
+  },
+};
+
 // ── LinkedIn Account Management ───────────────────────────────────────────────
 
 export interface LinkedInAccount {
