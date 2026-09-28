@@ -138,7 +138,8 @@ export function InternalQuoteWorkspacePage({ quoteId }: Props) {
   const marginPercent = totalSale > 0 ? ((marginVnd / totalSale) * 100).toFixed(1) : '0';
 
   // Smart Back navigation logic
-  const returnUrl = searchParams.get('returnUrl');
+  const rawReturnUrl = searchParams.get('returnUrl');
+  const returnUrl = rawReturnUrl?.startsWith('/all-platform/') ? rawReturnUrl : null;
   const paramCustomerId = searchParams.get('customerId');
   const customerId = quote?.accountId || (quote?.data as any)?.customerId || paramCustomerId;
 
@@ -152,6 +153,10 @@ export function InternalQuoteWorkspacePage({ quoteId }: Props) {
 
   const handleBack = (e?: React.MouseEvent) => {
     if (e) e.preventDefault();
+    if (returnUrl) {
+      router.replace(returnUrl);
+      return;
+    }
     if (typeof window !== 'undefined' && window.history.length > 1) {
       router.back();
     } else {
