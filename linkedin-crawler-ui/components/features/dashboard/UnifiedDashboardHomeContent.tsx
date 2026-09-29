@@ -19,9 +19,12 @@ import { VerifyAccountModal } from "@/components/all-platform/components/verify-
 import { KpiProgressCard } from "@/components/all-platform/components/kpi-progress-card";
 import { MemberKpiRewardOverview } from "@/components/all-platform/kpi-rewards/KpiRewardSections";
 import { SeedingActivityPanel } from "@/components/all-platform/feed/SeedingActivityPanel";
+import { TeamEfficiencyWidget } from "@/components/all-platform/feed/TeamEfficiencyWidget";
 import { ScheduleCommentModal } from "@/components/all-platform/feed/ScheduleCommentModal";
 import { ScheduledCommentsPanel } from "@/components/all-platform/feed/ScheduledCommentsPanel";
 import { PostFeedSkeleton } from "@/components/all-platform/feed/PostFeedSkeleton";
+import { GroupManagementContent } from "@/components/all-platform/group-management";
+import { CrawlQueueMonitor } from "@/components/all-platform/crawl-queue-monitor";
 import { allPlatformPostsService, allPlatformCategoriesService, teamsService, socialAccountsService } from "@/services/all-platform.service";
 import type { UnifiedPost, UnifiedStats, Category, FeedPlatform, SocialAccount, PostSeedingRosterData } from "@/types/unified.types";
 
@@ -234,6 +237,12 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
 
   const [feedPlatform, setFeedPlatform] = useState<FeedPlatform>("facebook");
   const [serviceArea, setServiceArea] = useState<ServiceAreaKey>("all");
+  // 4 tab phụ theo mockup "Seeding bên ngoài" (markee_seeding_optimized_user_leader_split_v4):
+  // Hoạt động seeding (danh sách bài viết, mặc định) / Dashboard leader (chỉ admin+leader,
+  // giống gate của SeedingActivityPanel) / Kho thư viện Group / Lịch crawl & Hàng đợi.
+  // 2 tab sau tái dùng NGUYÊN trang thật đã có sẵn trong sidebar ("Kho nhóm",
+  // "Giám sát hàng đợi cào") — không xây lại, tránh 2 nơi hiển thị lệch dữ liệu nhau.
+  const [subView, setSubView] = useState<"activity" | "leader" | "library" | "queue">("activity");
   const [showBulkCommentModal, setShowBulkCommentModal] = useState(false);
 
   const [detailModalPost, setDetailModalPost] = useState<UnifiedPost | null>(null);
@@ -684,6 +693,14 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
         ? "Đang xem LinkedIn — cào theo nhóm đã thêm."
         : "Đang xem Facebook — cào theo nhóm đã thêm.";
 
+  const isLeaderOrAdmin = user?.role === "admin" || user?.role === "leader";
+  const SUB_TABS = [
+    { key: "activity" as const, label: "Hoạt động seeding", icon: "bolt" },
+    ...(isLeaderOrAdmin ? [{ key: "leader" as const, label: "Dashboard leader", icon: "leaderboard" }] : []),
+    { key: "library" as const, label: "Kho thư viện Group", icon: "folder_open" },
+    { key: "queue" as const, label: "Lịch crawl & Hàng đợi", icon: "schedule" },
+  ];
+
   return (
     <div className="w-full space-y-6">
       {!hideHeader ? (
@@ -699,7 +716,30 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
             {platformTabs}
           </div>
         </div>
-      ) : (
+      ) : null}
+
+      {/* 4 tab phụ: "Hoạt động seeding" (danh sách bài viết) / "Dashboard leader"
+          (admin+leader) / "Kho thư viện Group" / "Lịch crawl & Hàng đợi". */}
+      <div className="flex gap-1.5 rounded-2xl border border-border bg-card p-1.5 overflow-x-auto">
+        {SUB_TABS.map((t) => (
+          <button
+            key={t.key}
+            type="button"
+            onClick={() => setSubView(t.key)}
+            className={cn(
+              "flex items-center gap-1.5 whitespace-nowrap rounded-xl px-3.5 py-2 text-sm font-bold transition-colors cursor-pointer",
+              subView === t.key
+                ? "bg-primary text-primary-foreground shadow-sm"
+                : "text-muted-foreground hover:bg-accent hover:text-foreground",
+            )}
+          >
+            <span className="material-symbols-outlined text-[16px]">{t.icon}</span>
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {(subView === "activity" || subView === "leader") && (
         /* Tab "Seeding bên ngoài": làm nổi bật hẳn (khung viền + icon + mô tả) vì đây là
            lựa chọn quan trọng nhất của trang - 3 nút nhỏ canh phải rất dễ bị lướt qua. */
         <div className="flex flex-col sm:flex-row sm:items-center gap-3 rounded-2xl border-2 border-primary/30 bg-gradient-to-r from-primary/5 to-transparent p-3 sm:p-4">
@@ -711,244 +751,259 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
         </div>
       )}
 
-      <div className="bg-card border border-border rounded-2xl p-5 mb-4">
-        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-          <StatCard
-            icon="description"
-            label="Tổng bài hôm nay"
-            value={stats.totalPostsToday}
-            trend={{
-              value: Math.abs(fbDiff),
-              isUp: fbDiff >= 0,
-              label: `${fbDiff >= 0 ? "+" : ""}${fbDiff} so với hôm qua`,
-            }}
-            accent="blue"
-          />
-          <StatCard
-            icon="trending_up"
-            label="Tiến độ KPI"
-            value={stats.kpiProgress || 0}
-            progress={{
-              value: stats.kpiProgressPercent || 0,
-              label: `${stats.kpiProgressPercent || 0}% trong tập bài`,
-            }}
-            accent="green"
-          />
-          <StatCard
-            icon="rocket_launch"
-            label="Đã seeded hôm nay"
-            value={stats.seededToday}
-            sub="Ước tính từ batch hôm nay"
-            accent="amber"
-          />
-          <StatCard
-            icon="visibility"
-            label="Tổng bài hiển thị"
-            value={totalCount}
-            sub={`${totalCount} bài trong cơ sở dữ liệu`}
-            accent="indigo"
-          />
-        </div>
-      </div>
-
-      {/* Dashboard xu huong 14 ngay gan nhat (2026-07-04) — theo yeu cau Thanh:
-          4 the o tren chi co so HOM NAY, khong biet cac ngay truoc ra sao.
-          Chart nhe (khong chan trang neu loi/rong), dat ngay sau 4 the so lieu. */}
-      <div className="bg-card border border-border rounded-2xl p-5 mb-4">
-        <div className="mb-3 flex items-center justify-between">
-          <div>
-            <h3 className="text-sm font-bold text-foreground">Xu hướng 14 ngày gần nhất</h3>
-            <p className="text-xs text-muted-foreground">Tổng bài cào được · Comment đã verify · Inbox nhận được, theo từng ngày.</p>
-          </div>
-          {isLoadingTrend && <span className="text-xs text-muted-foreground">Đang tải...</span>}
-        </div>
-        {dailyTrend.length === 0 ? (
-          <div className="flex h-[220px] items-center justify-center text-sm text-muted-foreground">
-            {isLoadingTrend ? "Đang tải dữ liệu xu hướng..." : "Chưa có dữ liệu xu hướng."}
-          </div>
-        ) : (
-          <ResponsiveContainer width="100%" height={220}>
-            <AreaChart data={dailyTrend} margin={{ top: 4, right: 8, left: -20, bottom: 0 }}>
-              <defs>
-                <linearGradient id="colorPosts" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#2563eb" stopOpacity={0.35} />
-                  <stop offset="95%" stopColor="#2563eb" stopOpacity={0} />
-                </linearGradient>
-                <linearGradient id="colorComments" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#16a34a" stopOpacity={0.35} />
-                  <stop offset="95%" stopColor="#16a34a" stopOpacity={0} />
-                </linearGradient>
-                <linearGradient id="colorInbox" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#f59e0b" stopOpacity={0.35} />
-                  <stop offset="95%" stopColor="#f59e0b" stopOpacity={0} />
-                </linearGradient>
-              </defs>
-              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e5e5" />
-              <XAxis
-                dataKey="date"
-                tickFormatter={(d: string) => d.slice(5).replace("-", "/")}
-                tick={{ fontSize: 11, fill: "#737373" }}
-                axisLine={{ stroke: "#e5e5e5" }}
-                tickLine={false}
-              />
-              <YAxis tick={{ fontSize: 11, fill: "#737373" }} axisLine={false} tickLine={false} allowDecimals={false} />
-              <Tooltip
-                labelFormatter={(d) => `Ngày ${String(d ?? "").slice(5).replace("-", "/")}`}
-                contentStyle={{ borderRadius: 8, fontSize: 12, border: "1px solid #e5e5e5" }}
-              />
-              <Legend wrapperStyle={{ fontSize: 12 }} />
-              <Area type="monotone" dataKey="posts" name="Tổng bài" stroke="#2563eb" fill="url(#colorPosts)" strokeWidth={2} />
-              <Area type="monotone" dataKey="comments" name="Comment" stroke="#16a34a" fill="url(#colorComments)" strokeWidth={2} />
-              <Area type="monotone" dataKey="inbox" name="Inbox" stroke="#f59e0b" fill="url(#colorInbox)" strokeWidth={2} />
-            </AreaChart>
-          </ResponsiveContainer>
-        )}
-      </div>
-
-      {/* Phase 6: KPI personal progress — hiển thị cho cả member VÀ leader */}
-      {CURRENT_USER_EMAIL && (user?.role === "member" || user?.role === "leader") && (
-        <KpiProgressCard
-          email={CURRENT_USER_EMAIL}
-          type="comment"
-        />
-      )}
-      {CURRENT_USER_EMAIL && user?.role === "member" && (
-        <MemberKpiRewardOverview />
-      )}
-      {/* Phase 6: "Da seeding ai" - panel cho admin/leader.
-          Dat sau KpiProgressCard, truoc FilterBar de leader/admin
-          thay ngay tong quan seeding ma khong can mo tung PostCard. */}
-      {(user?.role === "admin" || user?.role === "leader") && (
-        <SeedingActivityPanel email={CURRENT_USER_EMAIL} />
-      )}
-
-      {CURRENT_USER_EMAIL && (
-        <ScheduledCommentsPanel refreshKey={scheduleRefreshKey} />
-      )}
-      {/* 1 extension gộp (Markee Seeding Extension): cào bài + bình luận hàng loạt cho cả
-          Facebook và LinkedIn, theo tab nền tảng đang chọn — thay cho 2 launcher riêng
-          "Siêu Tốc Cào Dữ Liệu" + "Seeding Comment Hàng Loạt" trước đây (chỉ có ở tab Facebook).
-          Threads: chỉ cào (tìm theo từ khoá), feed/xu hướng tải lại mỗi khi lưu xong 1 từ khoá. */}
-      {CURRENT_USER_EMAIL && (
-        <SeedingExtensionPanel
-          platform={feedPlatform}
-          posts={posts}
-          onCrawlSaved={(platform, data) => {
-            if (platform === "threads" && data.count > 0) {
-              fetchPosts();
-              fetchDailyTrend();
-            }
-          }}
-          onCrawlDone={(platform, data) => {
-            fetchPosts();
-            fetchStats();
-            if (platform === "threads") fetchDailyTrend();
-            setCrawlResultsSummary((prev) => ({ ...prev, totalPosts: data.totalSaved }));
-            setShowCrawlResultModal(true);
-          }}
-          onCommentDone={(seededUrls) => {
-            fetchPosts();
-            fetchStats();
-            if (seededUrls) setRecentlySeededUrls(seededUrls);
-            setShowSeedingResultModal(true);
-          }}
-        />
-      )}
-
-      {/* Menu doc lap theo mang dich vu (2026-07-04) — loc theo industry, xem
-          ghi chu SERVICE_AREA_TABS o dau file. Tab "Lưu trú / Hotel" hien se
-          rong vi he thong chua co danh muc nao thuoc mang nay - se tu dong
-          co du lieu khi admin them danh muc + co bai crawl thuoc nhom do. */}
-      <div className="flex flex-wrap gap-1.5 rounded-xl border border-border bg-card p-1.5">
-        {SERVICE_AREA_TABS.map((tab) => (
-          <button
-            key={tab.key}
-            type="button"
-            onClick={() => setServiceArea(tab.key)}
-            className={cn(
-              "rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors cursor-pointer",
-              serviceArea === tab.key
-                ? "bg-primary text-primary-foreground shadow-sm"
-                : "text-muted-foreground hover:bg-accent hover:text-foreground",
+      {subView === "leader" && isLeaderOrAdmin && (
+        <div className="space-y-4 mb-4">
+          {/* Dashboard xu huong 14 ngay gan nhat (2026-07-04) — theo yeu cau Thanh:
+              4 the o tren chi co so HOM NAY, khong biet cac ngay truoc ra sao.
+              Chart nhe (khong chan trang neu loi/rong). Chuyen sang tab Dashboard
+              leader (2026-09-29) theo mockup markee_seeding_optimized_user_leader_split_v4 —
+              day la so lieu tong quan cho leader/admin, khong phai viec hang ngay cua user. */}
+          <div className="bg-card border border-border rounded-2xl p-5">
+            <div className="mb-3 flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-bold text-foreground">Xu hướng 14 ngày gần nhất</h3>
+                <p className="text-xs text-muted-foreground">Tổng bài cào được · Comment đã verify · Inbox nhận được, theo từng ngày.</p>
+              </div>
+              {isLoadingTrend && <span className="text-xs text-muted-foreground">Đang tải...</span>}
+            </div>
+            {dailyTrend.length === 0 ? (
+              <div className="flex h-[220px] items-center justify-center text-sm text-muted-foreground">
+                {isLoadingTrend ? "Đang tải dữ liệu xu hướng..." : "Chưa có dữ liệu xu hướng."}
+              </div>
+            ) : (
+              <ResponsiveContainer width="100%" height={220}>
+                <AreaChart data={dailyTrend} margin={{ top: 4, right: 8, left: -20, bottom: 0 }}>
+                  <defs>
+                    <linearGradient id="colorPosts" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#2563eb" stopOpacity={0.35} />
+                      <stop offset="95%" stopColor="#2563eb" stopOpacity={0} />
+                    </linearGradient>
+                    <linearGradient id="colorComments" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#16a34a" stopOpacity={0.35} />
+                      <stop offset="95%" stopColor="#16a34a" stopOpacity={0} />
+                    </linearGradient>
+                    <linearGradient id="colorInbox" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#f59e0b" stopOpacity={0.35} />
+                      <stop offset="95%" stopColor="#f59e0b" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e5e5" />
+                  <XAxis
+                    dataKey="date"
+                    tickFormatter={(d: string) => d.slice(5).replace("-", "/")}
+                    tick={{ fontSize: 11, fill: "#737373" }}
+                    axisLine={{ stroke: "#e5e5e5" }}
+                    tickLine={false}
+                  />
+                  <YAxis tick={{ fontSize: 11, fill: "#737373" }} axisLine={false} tickLine={false} allowDecimals={false} />
+                  <Tooltip
+                    labelFormatter={(d) => `Ngày ${String(d ?? "").slice(5).replace("-", "/")}`}
+                    contentStyle={{ borderRadius: 8, fontSize: 12, border: "1px solid #e5e5e5" }}
+                  />
+                  <Legend wrapperStyle={{ fontSize: 12 }} />
+                  <Area type="monotone" dataKey="posts" name="Tổng bài" stroke="#2563eb" fill="url(#colorPosts)" strokeWidth={2} />
+                  <Area type="monotone" dataKey="comments" name="Comment" stroke="#16a34a" fill="url(#colorComments)" strokeWidth={2} />
+                  <Area type="monotone" dataKey="inbox" name="Inbox" stroke="#f59e0b" fill="url(#colorInbox)" strokeWidth={2} />
+                </AreaChart>
+              </ResponsiveContainer>
             )}
-          >
-            {tab.label}
-          </button>
-        ))}
-      </div>
+          </div>
 
-      <FilterBar
-        intents={intents}
-        industries={industries}
-        teams={teamCategories}
-        tiers={tiers}
-        icps={icps}
-        contentTypes={contentTypes}
-        productSeedings={productSeedings}
-        onFilter={handleFilter}
-        isLoading={isLoadingPosts}
-      />
+          <div className="grid grid-cols-1 xl:grid-cols-3 gap-4 items-start">
+            <div className="xl:col-span-2">
+              <SeedingActivityPanel email={CURRENT_USER_EMAIL} />
+            </div>
+            <TeamEfficiencyWidget email={CURRENT_USER_EMAIL} />
+          </div>
+        </div>
+      )}
 
-      {isLoadingPosts ? (
-        <PostFeedSkeleton />
-      ) : postsError ? (
-        <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
-          {postsError}
-          <button type="button" onClick={fetchPosts} className="ml-3 underline">
-            Thử lại
-          </button>
-        </div>
-      ) : visiblePosts.length === 0 ? (
-        <div className="py-12 text-center text-muted-foreground">
-          {posts.length === 0
-            ? "Không có bài viết nào phù hợp với bộ lọc."
-            : "Không có bài viết nào trong mảng dịch vụ này."}
-        </div>
-      ) : (
+      {subView === "activity" && (
         <>
-          <div className="flex flex-col gap-4">
-            {visiblePosts.map((post) => (
-                <PostCard
-                  key={post.id || post.post_url}
-                  post={post}
-                  userRole={user?.role}
-                  seeded={!!post.verify_status && post.verify_status !== "no"}
-                  verifyStatus={post.verify_status as "pending" | "yes" | "no"}
-                  onSeeding={() => {}}
-                  onVerify={() => {}}
-                  onSchedule={post.platform === "threads" ? undefined : (post) => setScheduleModalPost(post)}
-                  onViewDetail={(post) => setDetailModalPost(post)}
-                  onDelete={(p) => void handleDeletePost(p)}
-                  onViewSeedingRoster={post.platform === "threads" ? undefined : (p) => void openSeedingRosterModal(p)}
-                />
+          <div className="bg-card border border-border rounded-2xl p-5 mb-4">
+            <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+              <StatCard
+                icon="description"
+                label="Tổng bài hôm nay"
+                value={stats.totalPostsToday}
+                trend={{
+                  value: Math.abs(fbDiff),
+                  isUp: fbDiff >= 0,
+                  label: `${fbDiff >= 0 ? "+" : ""}${fbDiff} so với hôm qua`,
+                }}
+                accent="blue"
+              />
+              <StatCard
+                icon="trending_up"
+                label="Tiến độ KPI"
+                value={stats.kpiProgress || 0}
+                progress={{
+                  value: stats.kpiProgressPercent || 0,
+                  label: `${stats.kpiProgressPercent || 0}% trong tập bài`,
+                }}
+                accent="green"
+              />
+              <StatCard
+                icon="rocket_launch"
+                label="Đã seeded hôm nay"
+                value={stats.seededToday}
+                sub="Ước tính từ batch hôm nay"
+                accent="amber"
+              />
+              <StatCard
+                icon="visibility"
+                label="Tổng bài hiển thị"
+                value={totalCount}
+                sub={`${totalCount} bài trong cơ sở dữ liệu`}
+                accent="indigo"
+              />
+            </div>
+          </div>
+
+          {/* Phase 6: KPI personal progress — hiển thị cho cả member VÀ leader */}
+          {CURRENT_USER_EMAIL && (user?.role === "member" || user?.role === "leader") && (
+            <KpiProgressCard
+              email={CURRENT_USER_EMAIL}
+              type="comment"
+            />
+          )}
+          {CURRENT_USER_EMAIL && user?.role === "member" && (
+            <MemberKpiRewardOverview />
+          )}
+
+          {CURRENT_USER_EMAIL && (
+            <ScheduledCommentsPanel refreshKey={scheduleRefreshKey} />
+          )}
+          {/* 1 extension gộp (Markee Seeding Extension): cào bài + bình luận hàng loạt cho cả
+              Facebook và LinkedIn, theo tab nền tảng đang chọn — thay cho 2 launcher riêng
+              "Siêu Tốc Cào Dữ Liệu" + "Seeding Comment Hàng Loạt" trước đây (chỉ có ở tab Facebook).
+              Threads: chỉ cào (tìm theo từ khoá), feed/xu hướng tải lại mỗi khi lưu xong 1 từ khoá. */}
+          {CURRENT_USER_EMAIL && (
+            <SeedingExtensionPanel
+              platform={feedPlatform}
+              posts={posts}
+              onCrawlSaved={(platform, data) => {
+                if (platform === "threads" && data.count > 0) {
+                  fetchPosts();
+                  fetchDailyTrend();
+                }
+              }}
+              onCrawlDone={(platform, data) => {
+                fetchPosts();
+                fetchStats();
+                if (platform === "threads") fetchDailyTrend();
+                setCrawlResultsSummary((prev) => ({ ...prev, totalPosts: data.totalSaved }));
+                setShowCrawlResultModal(true);
+              }}
+              onCommentDone={(seededUrls) => {
+                fetchPosts();
+                fetchStats();
+                if (seededUrls) setRecentlySeededUrls(seededUrls);
+                setShowSeedingResultModal(true);
+              }}
+            />
+          )}
+
+          {/* Menu doc lap theo mang dich vu (2026-07-04) — loc theo industry, xem
+              ghi chu SERVICE_AREA_TABS o dau file. Tab "Lưu trú / Hotel" hien se
+              rong vi he thong chua co danh muc nao thuoc mang nay - se tu dong
+              co du lieu khi admin them danh muc + co bai crawl thuoc nhom do. */}
+          <div className="flex flex-wrap gap-1.5 rounded-xl border border-border bg-card p-1.5">
+            {SERVICE_AREA_TABS.map((tab) => (
+              <button
+                key={tab.key}
+                type="button"
+                onClick={() => setServiceArea(tab.key)}
+                className={cn(
+                  "rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors cursor-pointer",
+                  serviceArea === tab.key
+                    ? "bg-primary text-primary-foreground shadow-sm"
+                    : "text-muted-foreground hover:bg-accent hover:text-foreground",
+                )}
+              >
+                {tab.label}
+              </button>
             ))}
           </div>
 
-          {totalPages > 1 && (
-            <div className="mt-6 flex flex-wrap items-center justify-center gap-2 text-center">
-              <button
-                type="button"
-                onClick={() => setPage((p) => Math.max(1, p - 1))}
-                disabled={page === 1}
-                className="rounded-lg border border-border px-3 py-1.5 text-sm disabled:opacity-50 cursor-pointer whitespace-nowrap"
-              >
-                ‹ Trước
-              </button>
-              <span className="w-full whitespace-nowrap text-sm text-muted-foreground sm:w-auto">
-                Trang {page} / {totalPages} ({totalCount} bài)
-              </span>
-              <button
-                type="button"
-                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                disabled={page === totalPages}
-                className="rounded-lg border border-border px-3 py-1.5 text-sm disabled:opacity-50 cursor-pointer whitespace-nowrap"
-              >
-                Sau ›
+          <FilterBar
+            intents={intents}
+            industries={industries}
+            teams={teamCategories}
+            tiers={tiers}
+            icps={icps}
+            contentTypes={contentTypes}
+            productSeedings={productSeedings}
+            onFilter={handleFilter}
+            isLoading={isLoadingPosts}
+          />
+
+          {isLoadingPosts ? (
+            <PostFeedSkeleton />
+          ) : postsError ? (
+            <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+              {postsError}
+              <button type="button" onClick={fetchPosts} className="ml-3 underline">
+                Thử lại
               </button>
             </div>
+          ) : visiblePosts.length === 0 ? (
+            <div className="py-12 text-center text-muted-foreground">
+              {posts.length === 0
+                ? "Không có bài viết nào phù hợp với bộ lọc."
+                : "Không có bài viết nào trong mảng dịch vụ này."}
+            </div>
+          ) : (
+            <>
+              <div className="flex flex-col gap-4">
+                {visiblePosts.map((post) => (
+                    <PostCard
+                      key={post.id || post.post_url}
+                      post={post}
+                      userRole={user?.role}
+                      seeded={!!post.verify_status && post.verify_status !== "no"}
+                      verifyStatus={post.verify_status as "pending" | "yes" | "no"}
+                      onSeeding={() => {}}
+                      onVerify={() => {}}
+                      onSchedule={post.platform === "threads" ? undefined : (post) => setScheduleModalPost(post)}
+                      onViewDetail={(post) => setDetailModalPost(post)}
+                      onDelete={(p) => void handleDeletePost(p)}
+                      onViewSeedingRoster={post.platform === "threads" ? undefined : (p) => void openSeedingRosterModal(p)}
+                    />
+                ))}
+              </div>
+
+              {totalPages > 1 && (
+                <div className="mt-6 flex flex-wrap items-center justify-center gap-2 text-center">
+                  <button
+                    type="button"
+                    onClick={() => setPage((p) => Math.max(1, p - 1))}
+                    disabled={page === 1}
+                    className="rounded-lg border border-border px-3 py-1.5 text-sm disabled:opacity-50 cursor-pointer whitespace-nowrap"
+                  >
+                    ‹ Trước
+                  </button>
+                  <span className="w-full whitespace-nowrap text-sm text-muted-foreground sm:w-auto">
+                    Trang {page} / {totalPages} ({totalCount} bài)
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                    disabled={page === totalPages}
+                    className="rounded-lg border border-border px-3 py-1.5 text-sm disabled:opacity-50 cursor-pointer whitespace-nowrap"
+                  >
+                    Sau ›
+                  </button>
+                </div>
+              )}
+            </>
           )}
         </>
       )}
+
+      {subView === "library" && <GroupManagementContent />}
+
+      {subView === "queue" && <CrawlQueueMonitor />}
 
       <PostDetailModal
         post={detailModalPost}

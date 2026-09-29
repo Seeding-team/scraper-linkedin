@@ -24,6 +24,7 @@ from app.modules.all_platform.services.unified_posts_service import (
     get_unified_stats,
     get_unified_daily_trend,
     get_post_seeding_roster,
+    get_teams_seeding_efficiency,
 )
 
 router = APIRouter()
@@ -151,6 +152,17 @@ def unified_post_seeding_roster(payload: PostSeedingRosterRequest) -> BaseRespon
         data = get_post_seeding_roster(
             post_id=payload.post_id, platform=payload.platform, email=payload.email
         )
+        return BaseResponse(success=True, data=data)
+    except Exception as e:
+        return _fail(e)
+
+
+@router.post("/teams/seeding-efficiency")
+def unified_teams_seeding_efficiency(payload: UnifiedPostsRequest) -> BaseResponse:
+    """"Hiệu quả theo team" cho Dashboard leader (Seeding bên ngoài) — admin thấy mọi
+    team, leader chỉ thấy team mình quản lý, member không thấy gì."""
+    try:
+        data = get_teams_seeding_efficiency(email=payload.email)
         return BaseResponse(success=True, data=data)
     except Exception as e:
         return _fail(e)

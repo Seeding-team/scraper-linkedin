@@ -1253,3 +1253,88 @@ def get_post_seeding_roster(post_id: str, platform: str, email: str) -> dict:
 
     items.sort(key=lambda it: (0 if it["has_seeded"] else 1, it["name"]))
     return {"role": role, "team_name": team_name, "items": items}
+
+
+def get_teams_seeding_efficiency(email: str) -> dict:
+    """"Hiệu quả theo team" cho Dashboard leader (Seeding bên ngoài) — cho admin thấy
+    TẤT CẢ team, leader chỉ thấy team mình quản lý. Không cần RPC/migration mới: viết
+    bằng supabase-py giống hệt pattern get_post_seeding_roster() ở trên (join thủ công
+    thay vì SQL join phức tạp), chỉ đọc `seeding_content_kpi` của HÔM NAY (giờ VN)
+    giống cách RPC get_unified_feed_overview tính team_kpi cho leader.
+    """
+    sb = _supabase()
+
+    user_res = sb.table("app_users").select("id, role").eq("email", (email or "").strip().lower()).limit(1).execute()
+    if not user_res.data:
+        return {"role": "member", "teams": []}
+    caller_id = user_res.data[0]["id"]
+    role = user_res.data[0].get("role", "member")
+    if role not in ("admin", "leader"):
+        return {"role": role, "teams": []}
+
+    if role == "leader":
+        teams_res = sb.table("teams").select("id, name_team").eq("id_leader", caller_id).execute()
+    else:
+        teams_res = sb.table("teams").select("id, name_team").execute()
+    teams = teams_res.data or []
+    if not teams:
+        return {"role": role, "teams": []}
+    team_ids = [t["id"] for t in teams]
+
+    mot_res = sb.table("member_of_teams").select("id_member, id_teams").in_("id_teams", team_ids).execute()
+    member_to_team: dict[str, str] = {}
+    team_member_count: dict[str, int] = {}
+    for row in mot_res.data or []:
+        mid, tid = row.get("id_member"), row.get("id_teams")
+        if not mid or not tid:
+            continue
+        member_to_team[mid] = tid
+        team_member_count[tid] = team_member_count.get(tid, 0) + 1
+
+    member_ids = list(member_to_team.keys())
+    vn_tz = timezone(timedelta(hours=7))
+    today_start_utc = datetime.now(vn_tz).replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
+
+    kpi_rows: list[dict] = []
+    if member_ids:
+        kpi_res = (
+            sb.table("seeding_content_kpi")
+            .select("id_member, id_post, verify, created_at")
+            .in_("id_member", member_ids)
+            .gte("created_at", today_start_utc.isoformat())
+            .execute()
+        )
+        kpi_rows = kpi_res.data or []
+
+    VERIFIED = {"yes", "đã seeding", "xác minh", "verified"}
+    team_seeded_posts: dict[str, set] = {t["id"]: set() for t in teams}
+    team_verified_count: dict[str, int] = {t["id"]: 0 for t in teams}
+    team_active_members: dict[str, set] = {t["id"]: set() for t in teams}
+    for row in kpi_rows:
+        tid = member_to_team.get(row.get("id_member"))
+        if not tid or tid not in team_seeded_posts:
+            continue
+        team_active_members[tid].add(row["id_member"])
+        is_verified = (row.get("verify") or "").strip().lower() in VERIFIED
+        if is_verified:
+            team_verified_count[tid] += 1
+            if row.get("id_post"):
+                team_seeded_posts[tid].add(row["id_post"])
+
+    result_teams = []
+    for t in teams:
+        tid = t["id"]
+        verified = team_verified_count.get(tid, 0)
+        seeded_posts = len(team_seeded_posts.get(tid, set()))
+        members = team_member_count.get(tid, 0)
+        result_teams.append({
+            "team_id": tid,
+            "team_name": t.get("name_team") or "Team",
+            "total_members": members,
+            "total_seeded_today": seeded_posts,
+            "total_verified_today": verified,
+            "active_members_today": len(team_active_members.get(tid, set())),
+        })
+
+    result_teams.sort(key=lambda x: x["total_verified_today"], reverse=True)
+    return {"role": role, "teams": result_teams}

@@ -26,6 +26,7 @@ import type {
   InternalEngagementTeamTrendData,
   InternalEngagementTeamTotalsData,
   PostSeedingRosterData,
+  TeamsSeedingEfficiencyData,
 } from "@/types/unified.types";
 import { API_BASE_URL, API_KEY } from "@/lib/env";
 
@@ -1312,6 +1313,17 @@ export const allPlatformPostsService = {
     return requestJson(`${BASE}/unified/posts/seeding-roster`, {
       method: "POST",
       body: JSON.stringify({ email, post_id: postId, platform }),
+    });
+  },
+
+  /**
+   * "Hiệu quả theo team" (Dashboard leader, Seeding bên ngoài) — admin thấy mọi team,
+   * leader chỉ thấy team mình quản lý.
+   */
+  getTeamsSeedingEfficiency: (email: string): Promise<ApiResponse<TeamsSeedingEfficiencyData>> => {
+    return requestJson(`${BASE}/unified/teams/seeding-efficiency`, {
+      method: "POST",
+      body: JSON.stringify({ email, platform: "all" }),
     });
   },
 };

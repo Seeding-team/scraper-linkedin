@@ -285,6 +285,20 @@ export interface PostSeedingRosterData {
   items: PostSeedingRosterItem[];
 }
 
+export interface TeamSeedingEfficiency {
+  team_id: string;
+  team_name: string;
+  total_members: number;
+  total_seeded_today: number;
+  total_verified_today: number;
+  active_members_today: number;
+}
+
+export interface TeamsSeedingEfficiencyData {
+  role: string;
+  teams: TeamSeedingEfficiency[];
+}
+
 export interface InternalEngagementPostTeamCount {
   team_id: string;
   team_name: string;
