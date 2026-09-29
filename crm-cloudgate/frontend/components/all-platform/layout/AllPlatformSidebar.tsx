@@ -173,6 +173,11 @@ export function filterEntriesByEffectiveModules(entries: SidebarEntry[], effecti
 // cau thiet ke chi dinh.
 export function buildEntries(isAdmin: boolean, isLeader: boolean, _workspaceTab?: "personal" | "team", _isSale: boolean = false): SidebarEntry[] {
   return [
+    // Section label KHONG click/collapse duoc (chi la text phan khu vuc) -
+    // "Lam viec" (Giao tiep + Ban hang) / "Van hanh" (Theo doi & tai nguyen) /
+    // "He thong" (Cau hinh & quan tri), theo yeu cau thiet ke 2026-09-29
+    // (gop 6 nhom phang cu xuong 4 nhom, nhom trong 3 cum theo section).
+    { type: "section", id: "section-work", label: "Làm việc" },
     {
       type: "group",
       id: "communication",
@@ -269,11 +274,12 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, _workspaceTab?
         },
       ],
     },
+    { type: "section", id: "section-operations", label: "Vận hành" },
     {
       type: "group",
-      id: "progress-analytics",
+      id: "operations-resources",
       icon: "analytics",
-      label: "Theo dõi & phân tích",
+      label: "Theo dõi & tài nguyên",
       items: [
         {
           type: "item",
@@ -291,14 +297,6 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, _workspaceTab?
           label: "Phân tích CRM",
           matchStartsWith: ["/all-platform/crm/analytics"],
         },
-      ],
-    },
-    {
-      type: "group",
-      id: "sales-resources",
-      icon: "local_library",
-      label: "Tài nguyên bán hàng",
-      items: [
         {
           type: "item",
           id: "service-catalog",
@@ -325,11 +323,12 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, _workspaceTab?
         },
       ],
     },
+    { type: "section", id: "section-system", label: "Hệ thống" },
     {
       type: "group",
-      id: "crm-config",
+      id: "config-admin",
       icon: "settings_applications",
-      label: "Cấu hình CRM",
+      label: "Cấu hình & quản trị",
       items: [
         ...(isAdmin || isLeader
           ? ([
@@ -409,14 +408,6 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, _workspaceTab?
               },
             ] as NavGroupChild[])
           : []),
-      ],
-    },
-    {
-      type: "group",
-      id: "admin",
-      icon: "shield",
-      label: "Quản trị",
-      items: [
         ...(isAdmin || isLeader
           ? ([
               {

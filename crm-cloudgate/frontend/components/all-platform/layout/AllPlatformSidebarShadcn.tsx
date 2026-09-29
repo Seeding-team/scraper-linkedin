@@ -158,7 +158,7 @@ function GroupLinks({
       >
         <span className="flex min-w-0 items-center gap-2">
           <Icon className="size-4 shrink-0" />
-          <span className="truncate text-[11px] font-semibold uppercase tracking-wider group-data-[collapsible=icon]:hidden">
+          <span className="truncate text-[13px] font-semibold uppercase tracking-wide group-data-[collapsible=icon]:hidden">
             {entry.label}
           </span>
         </span>
@@ -362,7 +362,7 @@ export function AllPlatformSidebarShadcn() {
                 return (
                   <SidebarGroupLabel
                     key={entry.id}
-                    className="px-2 pt-3 pb-1 text-[11px] font-bold uppercase tracking-wider text-sidebar-foreground/50 first:pt-1"
+                    className="px-2 pt-3 pb-1 text-[11px] font-semibold uppercase tracking-wide text-sidebar-foreground/50 first:pt-1"
                   >
                     {entry.label}
                   </SidebarGroupLabel>
