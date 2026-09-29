@@ -19,7 +19,8 @@ import {
 import { SearchableSelect } from "@/modules/crm/components/SearchableSelect";
 import { CrmPermissionModal } from "./CrmPermissionModal";
 import { CrmPermissionGroupsTab } from "./CrmPermissionGroupsTab";
-import { crmPermissionGroupsService, type CrmPermissionGroup, type CrmDataScope } from "@/services/all-platform.service";
+import { CrmTeamsShell } from "@/modules/crm/components/CrmTeamsShell";
+import { crmPermissionGroupsService, crmTeamsService, type CrmPermissionGroup, type CrmDataScope, type CrmTeam } from "@/services/all-platform.service";
 import { CRM_MODULE_DEFS, CRM_SCOPE_LABELS } from "@/modules/crm/constants/crmPermissionLabels";
 
 type MemberFormState = {
@@ -43,7 +44,7 @@ type MemberFormState = {
   skill_ids: string[];
 };
 
-type MemberTab = "accounts" | "members" | "permission_groups";
+type MemberTab = "accounts" | "members" | "team_sale" | "permission_groups";
 
 // Khop dung LEVEL_MAP that cua pm-new — Level la khai niem RIENG, KHONG
 // lien quan Team (vi tri/phong ban). Lay tu currentLevel ben he tuyen dung
@@ -275,6 +276,37 @@ export function MemberManagementContent() {
     for (const g of permissionGroups) map.set(g.id, g);
     return map;
   }, [permissionGroups]);
+
+  // "Leader / Team" - cot moi hien o ca 2 bang (Tai khoan CRM + Quan ly thanh
+  // vien) VA trong CrmPermissionModal, dung CHUNG 1 nguon crmTeamsService.list()
+  // (co san tu tab "Leader / Team Sale") de khong lech du lieu.
+  // Feedback 2026-09-29 (sau khi test that): dong 1 KHONG duoc lap lai ten
+  // chinh nguoi Leader ("Trần Anh Tiên / Team Trần Anh Tiên" nhin sai/thua) -
+  // phai phan biet 2 truong hop: chinh Leader thi dong 1 = ten Team, dong 2 =
+  // "Leader chính"; con Member thuong thi dong 1 = ten Leader, dong 2 = ten Team.
+  const [crmTeams, setCrmTeams] = useState<CrmTeam[]>([]);
+  useEffect(() => {
+    void crmTeamsService.list().then(res => {
+      if (res.success) setCrmTeams(res.data || []);
+    });
+  }, []);
+  const teamByLeaderId = useMemo(() => {
+    const map = new Map<string, CrmTeam>();
+    for (const t of crmTeams) if (t.leader_user_id) map.set(t.leader_user_id, t);
+    return map;
+  }, [crmTeams]);
+  const teamByMemberId = useMemo(() => {
+    const map = new Map<string, CrmTeam>();
+    for (const t of crmTeams) for (const uid of t.member_ids || []) map.set(uid, t);
+    return map;
+  }, [crmTeams]);
+  function leaderTeamCell(userId: string): { line1: string; line2: string } | null {
+    const leaderOfTeam = teamByLeaderId.get(userId);
+    if (leaderOfTeam) return { line1: leaderOfTeam.name, line2: "Leader chính" };
+    const memberOfTeam = teamByMemberId.get(userId);
+    if (memberOfTeam) return { line1: memberOfTeam.leader_name || "—", line2: memberOfTeam.name };
+    return null;
+  }
 
   function openEditAccountModal(account: AppUserProfile) {
     const linked = memberByLinkedUserId.get(account.id);
@@ -575,6 +607,18 @@ export function MemberManagementContent() {
         </button>
         <button
           type="button"
+          onClick={() => setActiveTab("team_sale")}
+          className={cn(
+            "px-4 py-2.5 text-xs font-bold uppercase tracking-wide border-b-2 -mb-px transition",
+            activeTab === "team_sale"
+              ? "border-primary text-primary"
+              : "border-transparent text-on-surface-variant hover:text-on-background"
+          )}
+        >
+          Leader / Team Sale
+        </button>
+        <button
+          type="button"
           onClick={() => setActiveTab("permission_groups")}
           className={cn(
             "px-4 py-2.5 text-xs font-bold uppercase tracking-wide border-b-2 -mb-px transition",
@@ -588,6 +632,8 @@ export function MemberManagementContent() {
       </div>
 
       {activeTab === "permission_groups" && <CrmPermissionGroupsTab />}
+
+      {activeTab === "team_sale" && <CrmTeamsShell />}
 
       {activeTab === "accounts" && (
         <>
@@ -629,6 +675,7 @@ export function MemberManagementContent() {
                   <tr>
                     <th className="py-3 px-4">Tài khoản</th>
                     <th className="py-3 px-4">Team</th>
+                    <th className="py-3 px-4">Leader / Team CRM</th>
                     <th className="py-3 px-4">Nhóm quyền</th>
                     <th className="py-3 px-4">Role hệ thống</th>
                     <th className="py-3 px-4">Vai trò báo giá</th>
@@ -640,10 +687,11 @@ export function MemberManagementContent() {
                 </thead>
                 <tbody className="divide-y divide-outline-variant text-on-surface-variant">
                   {filteredAccounts.length === 0 ? (
-                    <tr><td colSpan={9} className="py-12 text-center italic">Chưa có tài khoản nào.</td></tr>
+                    <tr><td colSpan={10} className="py-12 text-center italic">Chưa có tài khoản nào.</td></tr>
                   ) : (
                     filteredAccounts.map(account => {
                       const linkedMember = memberByLinkedUserId.get(account.id);
+                      const leaderTeam = leaderTeamCell(account.id);
                       const group = account.permission_group_id ? permissionGroupsById.get(account.permission_group_id) : undefined;
                       const quoteRole = quoteRoleLabelAndTone(account.quote_business_role);
                       const crmStatus = crmStatusLabelAndTone(account.crm_status);
@@ -657,6 +705,16 @@ export function MemberManagementContent() {
                             <div className="text-[10px] text-on-surface-variant">{account.email}</div>
                           </td>
                           <td className="py-3 px-4">{linkedMember?.team || "—"}</td>
+                          <td className="py-3 px-4">
+                            {leaderTeam ? (
+                              <>
+                                <div className="font-semibold text-on-surface">{leaderTeam.line1}</div>
+                                <div className="text-[10px] text-on-surface-variant">{leaderTeam.line2}</div>
+                              </>
+                            ) : (
+                              <span className="text-on-surface-variant">—</span>
+                            )}
+                          </td>
                           <td className="py-3 px-4">
                             {group ? <Badge tone="blue">{group.name}</Badge> : <span className="text-on-surface-variant">—</span>}
                           </td>
@@ -834,6 +892,7 @@ export function MemberManagementContent() {
                     <th className="py-3 px-4">Email</th>
                     <th className="py-3 px-4">Leader</th>
                     <th className="py-3 px-4">Tài Khoản</th>
+                    <th className="py-3 px-4">Leader / Team CRM</th>
                     <th className="py-3 px-4">Trạng thái CRM</th>
                     <th className="py-3 px-4">Cấp CRM</th>
                     <th className="py-3 px-4">Trạng thái</th>
@@ -842,11 +901,11 @@ export function MemberManagementContent() {
                 </thead>
                 <tbody className="divide-y divide-outline-variant text-on-surface-variant">
                   {loading ? (
-                    <tr><td colSpan={14} className="py-12 text-center">Đang tải danh sách thành viên...</td></tr>
+                    <tr><td colSpan={15} className="py-12 text-center">Đang tải danh sách thành viên...</td></tr>
                   ) : membersError ? (
-                    <tr><td colSpan={14} className="py-12 text-center text-red-600 font-medium">{membersError}</td></tr>
+                    <tr><td colSpan={15} className="py-12 text-center text-red-600 font-medium">{membersError}</td></tr>
                   ) : filteredMembers.length === 0 ? (
-                    <tr><td colSpan={14} className="py-12 text-center italic">Chưa có thành viên nào.</td></tr>
+                    <tr><td colSpan={15} className="py-12 text-center italic">Chưa có thành viên nào.</td></tr>
                   ) : (
                     filteredMembers.map((m, index) => {
                       const account = m.linked_user_id ? appUsersById.get(m.linked_user_id) : undefined;
@@ -873,6 +932,18 @@ export function MemberManagementContent() {
                             ) : (
                               <span className="text-amber-600">Chưa có</span>
                             )}
+                          </td>
+                          <td className="py-3 px-4">
+                            {(() => {
+                              const leaderTeam = account ? leaderTeamCell(account.id) : null;
+                              if (!leaderTeam) return <span className="text-on-surface-variant">—</span>;
+                              return (
+                                <>
+                                  <div className="font-semibold text-on-surface">{leaderTeam.line1}</div>
+                                  <div className="text-[10px] text-on-surface-variant">{leaderTeam.line2}</div>
+                                </>
+                              );
+                            })()}
                           </td>
                           <td className="py-3 px-4">
                             {/* "Trạng thái CRM" - Đã cấp CRM = co tai khoan dang nhap lien ket
