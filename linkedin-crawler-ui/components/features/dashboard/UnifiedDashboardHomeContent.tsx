@@ -20,6 +20,7 @@ import { KpiProgressCard } from "@/components/all-platform/components/kpi-progre
 import { MemberKpiRewardOverview } from "@/components/all-platform/kpi-rewards/KpiRewardSections";
 import { SeedingActivityPanel } from "@/components/all-platform/feed/SeedingActivityPanel";
 import { TeamEfficiencyWidget } from "@/components/all-platform/feed/TeamEfficiencyWidget";
+import { MemberOnlineTimeWidget } from "@/components/all-platform/feed/MemberOnlineTimeWidget";
 import { ScheduleCommentModal } from "@/components/all-platform/feed/ScheduleCommentModal";
 import { ScheduledCommentsPanel } from "@/components/all-platform/feed/ScheduledCommentsPanel";
 import { PostFeedSkeleton } from "@/components/all-platform/feed/PostFeedSkeleton";
@@ -815,6 +816,8 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
             </div>
             <TeamEfficiencyWidget email={CURRENT_USER_EMAIL} />
           </div>
+
+          <MemberOnlineTimeWidget email={CURRENT_USER_EMAIL} />
         </div>
       )}
 

@@ -299,6 +299,22 @@ export interface TeamsSeedingEfficiencyData {
   teams: TeamSeedingEfficiency[];
 }
 
+export interface MemberOnlinePresence {
+  id_member: string;
+  name: string;
+  email?: string;
+  today_minutes: number;
+  week_minutes: number;
+  month_minutes: number;
+  is_online: boolean;
+  last_seen_at: string | null;
+}
+
+export interface OnlineSummaryData {
+  role: string;
+  members: MemberOnlinePresence[];
+}
+
 export interface InternalEngagementPostTeamCount {
   team_id: string;
   team_name: string;

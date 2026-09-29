@@ -27,6 +27,7 @@ import type {
   InternalEngagementTeamTotalsData,
   PostSeedingRosterData,
   TeamsSeedingEfficiencyData,
+  OnlineSummaryData,
 } from "@/types/unified.types";
 import { API_BASE_URL, API_KEY } from "@/lib/env";
 
@@ -1601,6 +1602,24 @@ export const allPlatformTeamsService = {
 };
 
 // ── AUTH ────────────────────────────────────────────────────────────────────────
+
+export const presenceService = {
+  /** Heartbeat mỗi ~45s trong lúc tab đang hiển thị — xem AppAuthContext.tsx. */
+  heartbeat: (email: string): Promise<ApiResponse<{ recorded: boolean }>> => {
+    return requestJson(`${BASE}/presence/heartbeat`, {
+      method: "POST",
+      body: JSON.stringify({ email }),
+    });
+  },
+
+  /** "Thời gian online" cho Dashboard leader — admin thấy mọi thành viên, leader chỉ team mình. */
+  getOnlineSummary: (email: string): Promise<ApiResponse<OnlineSummaryData>> => {
+    return requestJson(`${BASE}/presence/online-summary`, {
+      method: "POST",
+      body: JSON.stringify({ email }),
+    });
+  },
+};
 
 export const authService = {
   register: (payload: { email: string; password: string; name?: string }): Promise<ApiResponse<AuthLoginResponse>> => {

@@ -56,6 +56,7 @@ from app.modules.all_platform.routers.kpi_reward import router as kpi_reward_rou
 from app.modules.all_platform.routers.scheduled_comments import router as scheduled_comments_router
 from app.modules.all_platform.routers.posts_delete import router as posts_delete_router
 from app.modules.all_platform.routers.internal_engagement import router as internal_engagement_router
+from app.modules.all_platform.routers.presence import router as presence_router
 from app.modules.all_platform.phone_bridge.router import router as phone_bridge_router
 from app.modules.all_platform.mobile_proxy.router import router as mobile_proxy_router
 
@@ -174,6 +175,13 @@ all_platform_router.include_router(
     unified_posts_router,
     prefix="/unified",
     tags=["All-Platform Unified Posts"],
+)
+
+# ── Presence (thoi gian online thanh vien — Dashboard leader) ─────────────────
+all_platform_router.include_router(
+    presence_router,
+    prefix="/presence",
+    tags=["All-Platform Presence"],
 )
 
 # ── KPI (platform-agnostic) ───────────────────────────────────────────────────
