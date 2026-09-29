@@ -145,5 +145,5 @@ treo; Post Feed chia 2-3 menu độc lập theo mảng dịch vụ.
 - Repo local sửa UI: `C:\Users\opc\code\seeding_markee\scraper-linkedin` (branch `restyle-form`,
   `gh` đã đăng nhập `thnkthuhigh`). Dev server qua `.claude/launch.json` → `dev-with-path.cmd`.
 - Bản tham chiếu design app.markee: `seeding_markee/_markee_design_ref/`.
-- SSH: build VPS `hostserver@10.30.194.50` (pw `1`); dashboard `vmadmin@10.30.50.29`
-  (pw `Poptech@123!`); service `seeding@10.120.80.45` (pw `1`). plink/pscp ở `~/bin/`.
+- SSH: build VPS `hostserver@10.30.194.50` (pw: xem `docs/INFRASTRUCTURE.md` local); dashboard `vmadmin@10.30.50.29`
+  (pw: xem `docs/INFRASTRUCTURE.md` local); service `seeding@10.120.80.45` (pw: xem `docs/INFRASTRUCTURE.md` local). plink/pscp ở `~/bin/`.

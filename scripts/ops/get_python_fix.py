@@ -3,7 +3,7 @@ import base64
 
 HOST = "10.30.50.29"
 USER = "vmadmin"
-PASS = "Poptech@123!"
+PASS = __import__("os").environ["SSH_PASS"]  # đặt biến môi trường SSH_PASS (mật khẩu ở docs/INFRASTRUCTURE.md local, không commit)
 CWD = "/opt/apps/seeding_markeeai/scraper-linkedin"
 
 client = paramiko.SSHClient()

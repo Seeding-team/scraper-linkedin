@@ -1,3 +1,3 @@
 @echo off
-echo Poptech@123!
+echo %SSH_PASS%
 

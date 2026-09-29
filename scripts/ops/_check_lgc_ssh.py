@@ -4,7 +4,7 @@ sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 
 HOST = "10.30.50.29"
 USER = "vmadmin"
-PASS = "Poptech@123!"
+PASS = __import__("os").environ["SSH_PASS"]  # đặt biến môi trường SSH_PASS (mật khẩu ở docs/INFRASTRUCTURE.md local, không commit)
 
 client = paramiko.SSHClient()
 client.set_missing_host_key_policy(paramiko.AutoAddPolicy())

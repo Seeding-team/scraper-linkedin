@@ -54,8 +54,8 @@ def _socks_url(host: str, port: str, user: str | None, password: str | None) -> 
 
 def _parse_socks(url: str | None) -> dict[str, Any] | None:
     """Break a socks5://user:pass@host:port URL into raw (non-encoded) parts
-    so the UI can show the real password (e.g. "Poptech@123") instead of the
-    URL-escaped form (e.g. "Poptech%40123") when copying into apps like
+    so the UI can show the real password (e.g. "p@ss123") instead of the
+    URL-escaped form (e.g. "p%40ss123") when copying into apps like
     AdsPower that take host/port/user/pass as separate fields."""
     if not url:
         return None
