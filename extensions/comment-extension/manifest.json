@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Markee Seeding Extension",
-  "version": "2.1",
-  "description": "Gộp 1 extension: cào bài + bình luận Facebook & LinkedIn, cào bài Threads theo từ khoá (kèm comment YouTube, Threads) cho Markee Seeding",
+  "version": "2.2",
+  "description": "Gộp 1 extension: cào bài + bình luận Facebook & LinkedIn, cào bài Threads theo từ khoá, cào video YouTube (từ khoá hoặc link) + điền sẵn comment YouTube tính KPI cho Markee Seeding",
   "permissions": [
     "activeTab",
     "scripting",
@@ -56,7 +56,9 @@
         "*://youtube.com/*"
       ],
       "js": [
-        "platforms/youtube/youtube-handler.js"
+        "platforms/youtube/youtube-handler.js",
+        "platforms/youtube/crawl.js",
+        "platforms/youtube/assist.js"
       ],
       "run_at": "document_idle"
     },
