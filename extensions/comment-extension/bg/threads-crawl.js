@@ -109,6 +109,7 @@
         let totalPosts = 0;
         let totalSaved = 0;
         let loginHintShown = false;
+        let wasStopped = false;
 
         try {
             log(`Bắt đầu tìm bài Threads cho ${keywords.length} từ khoá (tối đa ${postLimit} bài mới/từ khoá)...`);
@@ -176,15 +177,21 @@
         } catch (e) {
             log(`Lỗi nghiêm trọng: ${e.message}`, "error");
         } finally {
-            const stopped = shouldStop;
+            wasStopped = shouldStop;
             const tabId = crawlTabId;
             running = false;
             shouldStop = false;
             crawlTabId = null;
             if (tabId != null) chrome.tabs.remove(tabId).catch(() => {});
-            notifyApp({ action: "MK_TH_CRAWL_DONE", totalGroups: keywords.length, totalPosts, totalSaved, stopped });
+            notifyApp({ action: "MK_TH_CRAWL_DONE", totalGroups: keywords.length, totalPosts, totalSaved, stopped: wasStopped });
         }
+        return { totalGroups: keywords.length, totalPosts, totalSaved, stopped: wasStopped };
     }
+
+    // Cho phep bg/rotation-crawl.js goi truc tiep va await - xem giai thich o fb-crawl.js.
+    self.__mkStartThreadsCrawl = runCrawl;
+    self.__mkStopThreadsCrawl = () => { if (running) shouldStop = true; };
+    self.__mkThreadsCrawlStatus = () => running;
 
     chrome.tabs.onRemoved.addListener((tabId) => {
         if (running && tabId === crawlTabId) {

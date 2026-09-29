@@ -90,6 +90,7 @@
         const fetchCount = Math.max(1, Math.min(200, parseInt(config.fetchCount, 10) || 100));
         let totalSaved = 0;
         let totalFetched = 0;
+        let wasStopped = false;
 
         log(`Bắt đầu cào ${groups.length} nhóm Facebook...`);
         try {
@@ -149,14 +150,23 @@
         } catch (e) {
             log(`Lỗi nghiêm trọng: ${e.message}`, "error");
         } finally {
-            const stopped = shouldStop;
+            wasStopped = shouldStop;
             isRunning = false;
             shouldStop = false;
             if (crawlTabId != null) chrome.tabs.remove(crawlTabId).catch(() => {});
             crawlTabId = null;
-            notifyApp({ action: "MK_FB_CRAWL_DONE", totalGroups: groups.length, totalFetched, totalSaved, stopped });
+            notifyApp({ action: "MK_FB_CRAWL_DONE", totalGroups: groups.length, totalFetched, totalSaved, stopped: wasStopped });
         }
+        return { totalGroups: groups.length, totalFetched, totalSaved, stopped: wasStopped };
     }
+
+    // Cho phep bg/rotation-crawl.js goi TRUC TIEP (cung 1 global scope qua importScripts,
+    // khong qua chrome.runtime.sendMessage) va await den khi cao HET tat ca group xong -
+    // startCrawl() da la 1 async function tra ve promise dung nhu vay san, khong can sua gi
+    // them ngoai dong export nay.
+    self.__mkStartFbCrawl = startCrawl;
+    self.__mkStopFbCrawl = () => { if (isRunning) shouldStop = true; };
+    self.__mkFbCrawlStatus = () => isRunning;
 
     chrome.tabs.onRemoved.addListener((tabId) => {
         if (tabId === crawlTabId && isRunning) {

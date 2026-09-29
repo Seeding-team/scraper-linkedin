@@ -14,6 +14,9 @@ export const REQUIRED_EXTENSION_VERSION = "2.0";
 /** Phiên bản đầu tiên có lệnh cào Threads theo từ khoá (MK_TH_CRAWL_*, feature "th_crawl"). */
 export const THREADS_CRAWL_EXTENSION_VERSION = "2.1";
 
+/** Phiên bản đầu tiên có lệnh cào xoay vòng cả 3 nền tảng (MK_ROTATE_CRAWL_*, feature "rotate_crawl"). */
+export const ROTATE_CRAWL_EXTENSION_VERSION = "2.2";
+
 export type ExtensionStatus = "checking" | "ready" | "outdated" | "missing" | "invalidated";
 
 export function extensionApiBase(): string {
@@ -234,6 +237,145 @@ export function useExtensionCrawl({ onSaved, onDone }: UseExtensionCrawlOptions 
   const reset = useCallback((platform: ExtensionPlatform) => update(platform, () => EMPTY_RUNTIME), [update]);
 
   return { runtime, start, startKeywords, stop, reset };
+}
+
+// ── Cào xoay vòng liên tục Facebook -> LinkedIn -> Threads -> lặp lại ───────
+// Dành cho acc "seeding-crawl" đăng nhập cố định trên VPS: bấm 1 nút, extension
+// tự cào tuần tự cả 3 nền tảng rồi (nếu bật lặp lại) tự lên lịch vòng kế tiếp
+// sau N giờ - CHỈ chạy tiếp nếu tài khoản vẫn đang online trên app Seeding lúc đó.
+
+export type RotationStage =
+  | "idle"
+  | "starting"
+  | "facebook"
+  | "linkedin"
+  | "threads"
+  | "waiting_interval"
+  | "waiting_online"
+  | "stopped";
+
+export interface RotationState {
+  running: boolean;
+  stopping: boolean;
+  stage: RotationStage;
+  roundNumber: number;
+  nextRoundAt: number | null;
+  logs: CrawlLogLine[];
+  lastRoundSummary: { roundNumber: number; totalSaved: number } | null;
+  lastError: string | null;
+}
+
+const EMPTY_ROTATION: RotationState = {
+  running: false,
+  stopping: false,
+  stage: "idle",
+  roundNumber: 0,
+  nextRoundAt: null,
+  logs: [],
+  lastRoundSummary: null,
+  lastError: null,
+};
+
+export interface RotationGroupInput {
+  id?: string;
+  name?: string;
+  url: string;
+}
+
+export function useRotationCrawl() {
+  const [state, setState] = useState<RotationState>(EMPTY_ROTATION);
+  const startTimeoutRef = useRef<number | null>(null);
+
+  const addLog = useCallback(
+    (level: CrawlLogLine["level"], message: string) =>
+      setState((s) => ({ ...s, logs: [...s.logs, { level, message, at: Date.now() }].slice(-200) })),
+    [],
+  );
+
+  const clearStartTimeout = useCallback(() => {
+    if (startTimeoutRef.current) window.clearTimeout(startTimeoutRef.current);
+    startTimeoutRef.current = null;
+  }, []);
+
+  useEffect(() => {
+    const onMessage = (event: MessageEvent) => {
+      if (event.source !== window || !event.data || typeof event.data.action !== "string") return;
+      const action: string = event.data.action;
+      if (!action.startsWith("MK_ROTATE_CRAWL_")) return;
+      const kind = action.slice("MK_ROTATE_CRAWL_".length);
+      const p = event.data.payload || {};
+
+      if (kind === "START_RESULT") {
+        clearStartTimeout();
+        if (!p.success) {
+          setState((s) => ({ ...s, running: false, lastError: p.error || "Extension từ chối lệnh cào xoay vòng." }));
+          addLog("error", p.error || "Extension từ chối lệnh cào xoay vòng.");
+        }
+      } else if (kind === "STOP_RESULT") {
+        // running=false chính thức đến từ sự kiện DONE (stopped:true) sau khi extension
+        // dừng xong bước hiện tại - ở đây chỉ xác nhận lệnh dừng đã tới nơi.
+      } else if (kind === "STATUS_RESULT") {
+        setState((s) => ({
+          ...s,
+          running: !!p.running,
+          stage: (p.stage as RotationStage) || (p.running ? s.stage : "idle"),
+          roundNumber: typeof p.roundNumber === "number" ? p.roundNumber : s.roundNumber,
+          nextRoundAt: p.nextRoundAt ?? null,
+        }));
+      } else if (kind === "LOG") {
+        addLog((p.level as CrawlLogLine["level"]) || "info", p.message || "");
+      } else if (kind === "STAGE") {
+        setState((s) => ({
+          ...s,
+          running: true,
+          stage: (p.stage as RotationStage) || s.stage,
+          roundNumber: typeof p.roundNumber === "number" ? p.roundNumber : s.roundNumber,
+          nextRoundAt: p.stage === "waiting_online" ? null : (p.nextRoundAt ?? s.nextRoundAt),
+        }));
+      } else if (kind === "ROUND_DONE") {
+        setState((s) => ({
+          ...s,
+          lastRoundSummary: { roundNumber: Number(p.roundNumber) || s.roundNumber, totalSaved: Number(p.totalSaved) || 0 },
+        }));
+      } else if (kind === "DONE") {
+        clearStartTimeout();
+        setState((s) => ({ ...s, running: false, stopping: false, stage: p.stopped ? "stopped" : "idle", nextRoundAt: null }));
+      }
+    };
+
+    window.addEventListener("message", onMessage);
+    postToExtension("MK_ROTATE_CRAWL_STATUS");
+    return () => window.removeEventListener("message", onMessage);
+  }, [addLog, clearStartTimeout]);
+
+  const start = useCallback(
+    (fbGroups: RotationGroupInput[], liGroups: RotationGroupInput[], threadsKeywords: string[], config: Record<string, unknown>) => {
+      setState({
+        ...EMPTY_ROTATION,
+        running: true,
+        stage: "starting",
+        logs: [{ level: "info", message: "Đang gửi lệnh bắt đầu cào xoay vòng tới Extension...", at: Date.now() }],
+      });
+      postToExtension("MK_ROTATE_CRAWL_START", { fbGroups, liGroups, threadsKeywords, config: { apiBase: extensionApiBase(), ...config } });
+      clearStartTimeout();
+      startTimeoutRef.current = window.setTimeout(() => {
+        startTimeoutRef.current = null;
+        setState((s) => ({ ...s, running: false }));
+        addLog("error", `Extension không phản hồi lệnh cào xoay vòng sau 8 giây. Kiểm tra đã cài đúng Markee Seeding Extension bản ${ROTATE_CRAWL_EXTENSION_VERSION}+, rồi F5 lại trang.`);
+      }, 8000);
+    },
+    [addLog, clearStartTimeout],
+  );
+
+  const stop = useCallback(() => {
+    setState((s) => ({ ...s, stopping: true }));
+    postToExtension("MK_ROTATE_CRAWL_STOP");
+    addLog("warn", "Đã gửi lệnh dừng — sẽ dừng ngay sau bước hiện tại (nếu đang giữa 1 vòng) hoặc huỷ vòng kế tiếp đã lên lịch.");
+  }, [addLog]);
+
+  const reset = useCallback(() => setState(EMPTY_ROTATION), []);
+
+  return { state, start, stop, reset };
 }
 
 // ── Bình luận hàng loạt (Facebook + LinkedIn) + hẹn giờ Facebook ─────────────

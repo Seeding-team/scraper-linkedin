@@ -7,7 +7,7 @@
 const MK_EXTENSION_INFO = (() => {
     let version = "";
     try { version = chrome.runtime.getManifest().version; } catch (e) {}
-    return { version, features: ["fb_crawl", "fb_comment", "li_crawl", "li_comment", "th_crawl"] };
+    return { version, features: ["fb_crawl", "fb_comment", "li_crawl", "li_comment", "th_crawl", "rotate_crawl"] };
 })();
 
 // Truoc day KHONG check chrome.runtime.lastError va KHONG co timeout gi ca -
@@ -124,11 +124,26 @@ window.addEventListener("message", function(event) {
         }, response => {
             window.postMessage({ action: "MK_TH_CRAWL_START_RESULT", payload: response || { success: false, error: "Không nhận được phản hồi từ Extension." } }, "*");
         });
-    } else if (action === "MK_FB_CRAWL_STOP" || action === "MK_LI_CRAWL_STOP" || action === "MK_TH_CRAWL_STOP") {
-        safeSendMessage({ action }, () => {});
-    } else if (action === "MK_FB_CRAWL_STATUS" || action === "MK_LI_CRAWL_STATUS" || action === "MK_TH_CRAWL_STATUS") {
+    } else if (action === "MK_FB_CRAWL_STOP" || action === "MK_LI_CRAWL_STOP" || action === "MK_TH_CRAWL_STOP" || action === "MK_ROTATE_CRAWL_STOP") {
+        safeSendMessage({ action }, response => {
+            if (action === "MK_ROTATE_CRAWL_STOP") window.postMessage({ action: "MK_ROTATE_CRAWL_STOP_RESULT", payload: response }, "*");
+        });
+    } else if (action === "MK_FB_CRAWL_STATUS" || action === "MK_LI_CRAWL_STATUS" || action === "MK_TH_CRAWL_STATUS" || action === "MK_ROTATE_CRAWL_STATUS") {
         safeSendMessage({ action }, response => {
             window.postMessage({ action: action + "_RESULT", payload: response }, "*");
+        });
+    } else if (action === "MK_ROTATE_CRAWL_START") {
+        // Cao xoay vong ca 3 nen tang lien tuc: khac MK_FB/LI_CRAWL_START o cho nhan
+        // 3 danh sach rieng (fbGroups/liGroups/threadsKeywords) thay vi 1 "groups" chung,
+        // vi Threads dung tu khoa chu khong phai group.
+        safeSendMessage({
+            action,
+            fbGroups: payload?.fbGroups || [],
+            liGroups: payload?.liGroups || [],
+            threadsKeywords: payload?.threadsKeywords || [],
+            config: payload?.config || {},
+        }, response => {
+            window.postMessage({ action: "MK_ROTATE_CRAWL_START_RESULT", payload: response || { success: false, error: "Không nhận được phản hồi từ Extension." } }, "*");
         });
     } else if (action === "LI_FETCH_POST_INFO") {
         // Tương thích luồng "Thêm bài viết" LinkedIn ở trang Tương tác nội bộ (lib/li-ext-bridge.ts),
@@ -144,7 +159,7 @@ window.addEventListener("message", function(event) {
 
 // Lắng nghe tiến trình từ background và relay xuống Web App UI
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-    if (typeof request.action === "string" && (request.action.startsWith("MK_FB_CRAWL_") || request.action.startsWith("MK_LI_CRAWL_") || request.action.startsWith("MK_TH_CRAWL_"))) {
+    if (typeof request.action === "string" && (request.action.startsWith("MK_FB_CRAWL_") || request.action.startsWith("MK_LI_CRAWL_") || request.action.startsWith("MK_TH_CRAWL_") || request.action.startsWith("MK_ROTATE_CRAWL_"))) {
         const { action, ...rest } = request;
         window.postMessage({ action, payload: rest }, "*");
         return;

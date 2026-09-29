@@ -171,13 +171,21 @@
         state.tabId = null;
         await saveState();
         if (wasTabId != null) chrome.tabs.remove(wasTabId).catch(() => {});
-        notifyApp({
-            action: "MK_LI_CRAWL_DONE",
+        const summary = {
             totalGroups: state.groupQueue.length,
             totalPosts: state.totalPosts,
             totalSaved: state.totalSaved,
             stopped,
-        });
+        };
+        notifyApp({ action: "MK_LI_CRAWL_DONE", ...summary });
+        // bg/rotation-crawl.js cho (neu co) - xem giai thich o fb-crawl.js. LI-crawl la
+        // state machine event-driven (cho content script trong tab LinkedIn bao ve) nen
+        // KHONG the await truc tiep startCrawl() nhu FB/Threads - phai qua hook nay.
+        if (typeof self.__mkLiDoneHook === "function") {
+            const hook = self.__mkLiDoneHook;
+            self.__mkLiDoneHook = null;
+            hook(summary);
+        }
     }
 
     async function handleGroupDone(msg, sender) {
@@ -346,4 +354,14 @@
             }
         }
     });
+
+    // Cho phep bg/rotation-crawl.js goi truc tiep va await den khi cao HET hang doi -
+    // LI-crawl la event-driven (xem finishCrawl()) nen phai boc lai bang 1 Promise qua
+    // hook __mkLiDoneHook thay vi await thang startCrawl() nhu FB/Threads.
+    self.__mkStartLiCrawl = (groups, config) => new Promise((resolve) => {
+        self.__mkLiDoneHook = resolve;
+        startCrawl({ groups, config }, null);
+    });
+    self.__mkStopLiCrawl = stopCrawl;
+    self.__mkLiCrawlStatus = async () => (await getState()).running;
 })();

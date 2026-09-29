@@ -26,6 +26,7 @@ import { ScheduledCommentsPanel } from "@/components/all-platform/feed/Scheduled
 import { PostFeedSkeleton } from "@/components/all-platform/feed/PostFeedSkeleton";
 import { GroupManagementContent } from "@/components/all-platform/group-management";
 import { CrawlQueueMonitor } from "@/components/all-platform/crawl-queue-monitor";
+import { RotationCrawlPanel } from "@/components/all-platform/components/seeding-extension/rotation-crawl-panel";
 import { allPlatformPostsService, allPlatformCategoriesService, teamsService, socialAccountsService } from "@/services/all-platform.service";
 import type { UnifiedPost, UnifiedStats, Category, FeedPlatform, SocialAccount, PostSeedingRosterData } from "@/types/unified.types";
 
@@ -1006,7 +1007,12 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
 
       {subView === "library" && <GroupManagementContent />}
 
-      {subView === "queue" && <CrawlQueueMonitor />}
+      {subView === "queue" && (
+        <div className="flex flex-col gap-6">
+          <RotationCrawlPanel />
+          <CrawlQueueMonitor />
+        </div>
+      )}
 
       <PostDetailModal
         post={detailModalPost}
