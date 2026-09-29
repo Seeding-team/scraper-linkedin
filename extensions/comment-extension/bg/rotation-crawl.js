@@ -218,6 +218,12 @@
             try { self.__mkStopLiCrawl && self.__mkStopLiCrawl(); } catch (e) {}
             try { self.__mkStopThreadsCrawl && self.__mkStopThreadsCrawl(); } catch (e) {}
             getState().then(async (state) => {
+                // "waiting_interval"/"waiting_online" nghia la KHONG co vong nao dang chay luc
+                // nay (dang cho alarm) - runRoundAndScheduleNext (noi phat MK_ROTATE_CRAWL_DONE
+                // khi thay cancelRequested) se KHONG duoc goi lai nua vi da huy alarm ngay ben
+                // duoi, nen phai tu phat DONE ở day, neu khong web app se ket mai o trang thai
+                // "dang chay" (nut Dung khong bao gio bien mat lai thanh nut Bat dau).
+                const noRoundActive = !!state && (state.stage === "waiting_interval" || state.stage === "waiting_online");
                 if (state) {
                     state.running = false;
                     await setState(state);
@@ -225,6 +231,11 @@
                 try { await chrome.alarms.clear(RESUME_ALARM); } catch (e) {}
                 log("Đã nhận lệnh dừng cào xoay vòng — sẽ dừng ngay sau bước hiện tại (nếu đang giữa 1 vòng) hoặc hủy vòng kế tiếp đã lên lịch.", "warn");
                 sendResponse({ success: true });
+                if (noRoundActive) {
+                    await clearState();
+                    stage("stopped");
+                    notifyApp({ action: "MK_ROTATE_CRAWL_DONE", stopped: true });
+                }
             });
             return true;
         }
