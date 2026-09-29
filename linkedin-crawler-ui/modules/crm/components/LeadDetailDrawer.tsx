@@ -314,7 +314,18 @@ export function LeadDetailDrawer({
     crmTeamsService.get(teamId)
       .then(res => {
         if (!alive) return;
-        setTeamMembers(res.success ? res.data?.members || [] : []);
+        const members = res.success ? res.data?.members || [] : [];
+        // Leader KHONG nam trong `members` - nhung van phai chon duoc lam
+        // Sale phu trach (feedback 2026-09-30: "leader cũng làm việc ở đó
+        // thì lúc này không thể chọn leader").
+        const leaderId = res.success ? res.data?.leader_user_id : undefined;
+        const leaderName = res.success ? res.data?.leader_name : undefined;
+        const hasLeader = leaderId && members.some(m => m.id === leaderId);
+        setTeamMembers(
+          leaderId && !hasLeader
+            ? [...members, { id: leaderId, name: leaderName || '', email: '' } as AppUserProfile]
+            : members
+        );
       })
       .catch(() => {
         if (alive) setTeamMembers([]);
