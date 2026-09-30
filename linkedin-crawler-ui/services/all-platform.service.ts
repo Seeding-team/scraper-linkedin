@@ -1909,6 +1909,9 @@ export interface AppUserProfile {
   /** Team CRM đang thuộc về (không có trong app_users — chỉ có khi BE join
    * kèm, dùng cho hiển thị; ghi qua `crm_team_id` trong updateCrmPermission). */
   crm_team_id?: string | null;
+  /** Chỉ có khi BE trả trong `CrmTeam.members` (tab Leader/Team Sale) - số
+   * Deal ĐANG XỬ LÝ (không tính won/lost/post_sale_care) của riêng user này. */
+  active_deal_count?: number;
 }
 
 export type CrmDataScope = "personal" | "team" | "deal_assigned" | "workspace" | "system";
@@ -1944,6 +1947,14 @@ export interface CrmTeam {
   region?: string | null;
   description?: string | null;
   member_count?: number;
+  /** Tong so Deal DANG XU LY (khong tinh won/lost/post_sale_care) cua CAC
+   * MEMBER trong team (KHONG cong Deal rieng cua Leader) - khop dung cach
+   * tinh "Cơ hội đang xử lý" cua tab Leader/Team Sale. */
+  active_deal_count?: number;
+  /** Danh sach user_id thanh vien (chi co trong response cua list(), KHONG
+   * co trong get() - dung de FE tu tinh "tai khoan CRM chua thuoc Leader
+   * nao", tranh phai them 1 API rieng). */
+  member_ids?: string[];
   members?: AppUserProfile[];
   created_at?: string;
   updated_at?: string;

@@ -12,7 +12,9 @@ from typing import Any
 
 from supabase import Client
 
+from app.core.config import settings
 from app.core.supabase_client import get_supabase_client
+from app.modules.all_platform.schemas.customer_lead import TERMINAL_STAGES
 from app.modules.all_platform.services.crm_permission_service import clear_crm_permission_enforcement_cache
 
 _SAFE_TEAM_COLUMNS = (
@@ -32,6 +34,35 @@ def suggest_team_code(leader_name: str) -> str:
     """Ma goi y ngan (vd Leader "Nguyen Minh Anh" -> "NMA") - chi la GOI Y,
     admin sua duoc tu do (cot `code` chi UNIQUE, khong CHECK format)."""
     return _slugify_leader_name(leader_name)
+
+
+def _active_deal_counts_by_owner(owner_ids: list[str]) -> dict[str, int]:
+    """Dem so Deal (`customer_leads`) DANG XU LY (khong tinh terminal: won/
+    lost/post_sale_care - dung y het filter `exclude_terminal` cua
+    customer_lead_service) theo TUNG owner_id (leaded_by HOAC sdr_id) trong
+    danh sach truyen vao. 1 deal co ca 2 truong cung khop 1 owner (hiem, vd
+    leaded_by==sdr_id) van chi tinh 1 lan cho owner do."""
+    if not owner_ids:
+        return {}
+    supabase: Client = get_supabase_client()
+    owner_filter = ",".join(
+        [f"leaded_by.eq.{o}" for o in owner_ids] + [f"sdr_id.eq.{o}" for o in owner_ids]
+    )
+    result = (
+        supabase.table("customer_leads")
+        .select("leaded_by, sdr_id")
+        .eq("instance", settings.crm_instance)
+        .not_.in_("deal_stage", [*TERMINAL_STAGES, "won"])
+        .or_(owner_filter)
+        .execute()
+    )
+    owner_id_set = set(owner_ids)
+    counts: dict[str, int] = {}
+    for row in result.data or []:
+        matched_owners = {row.get("leaded_by"), row.get("sdr_id")} & owner_id_set
+        for owner_id in matched_owners:
+            counts[owner_id] = counts.get(owner_id, 0) + 1
+    return counts
 
 
 def list_teams(segment: str | None = None, function_area: str | None = None, search: str | None = None) -> list[dict]:
@@ -56,19 +87,42 @@ def list_teams(segment: str | None = None, function_area: str | None = None, sea
 
     team_ids = [t["id"] for t in teams]
     member_counts: dict[str, int] = {}
+    # member_ids_by_team: tra ve kem theo tung team (UUID gon nhe) - FE dung
+    # de tinh "tai khoan CRM chua thuoc Leader nao" (hop toan bo member_ids
+    # cua moi team roi doi voi danh sach tat ca user), khong can them 1 API
+    # rieng cho viec nay.
+    member_ids_by_team: dict[str, list[str]] = {}
+    # team_id_by_member: dung de cong don so Deal cua tung member LEN dung
+    # team cua ho (Leader KHONG tinh vao day - khop dung "Member trong Team:
+    # KHONG tinh Leader" cua UI, va khop dung cach tinh "Cơ hội đang xử lý"
+    # cap team = tong Deal cua CAC MEMBER, khong cong them Deal rieng cua Leader).
+    team_id_by_member: dict[str, str] = {}
     if team_ids:
         members_res = (
-            supabase.table("crm_team_members").select("crm_team_id").in_("crm_team_id", team_ids).execute()
+            supabase.table("crm_team_members").select("crm_team_id, user_id").in_("crm_team_id", team_ids).execute()
         )
         for row in members_res.data or []:
             tid = row.get("crm_team_id")
+            uid = row.get("user_id")
             if tid:
                 member_counts[tid] = member_counts.get(tid, 0) + 1
+            if tid and uid:
+                team_id_by_member[uid] = tid
+                member_ids_by_team.setdefault(tid, []).append(uid)
+
+    deal_counts_by_owner = _active_deal_counts_by_owner(list(team_id_by_member.keys()))
+    active_deal_counts: dict[str, int] = {}
+    for owner_id, count in deal_counts_by_owner.items():
+        tid = team_id_by_member.get(owner_id)
+        if tid:
+            active_deal_counts[tid] = active_deal_counts.get(tid, 0) + count
 
     for team in teams:
         leader = leaders_by_id.get(team.get("leader_user_id") or "")
         team["leader_name"] = leader.get("name") or leader.get("email") if leader else None
         team["member_count"] = member_counts.get(team["id"], 0)
+        team["active_deal_count"] = active_deal_counts.get(team["id"], 0)
+        team["member_ids"] = member_ids_by_team.get(team["id"], [])
     return teams
 
 
@@ -103,6 +157,16 @@ def get_team(team_id: str) -> dict | None:
     if member_ids:
         users_res = supabase.table("app_users").select(_MEMBER_USER_COLUMNS).in_("id", member_ids).execute()
         team["members"] = users_res.data or []
+    # BUG THAT (2026-09-29): thieu dong nay lam card "Member CRM" o panel chi
+    # tiet luon hien 0 - chi list_teams() (danh sach) co set field nay, con
+    # get_team() (xem 1 team) thi khong, trong khi FE dung CHUNG 1 key
+    # `member_count` cho ca 2 nguon du lieu.
+    team["member_count"] = len(member_ids)
+
+    deal_counts_by_owner = _active_deal_counts_by_owner(member_ids)
+    for member in team["members"]:
+        member["active_deal_count"] = deal_counts_by_owner.get(member["id"], 0)
+    team["active_deal_count"] = sum(deal_counts_by_owner.values())
     return team
 
 
@@ -159,8 +223,16 @@ def delete_team(team_id: str) -> dict:
 def add_team_member(team_id: str, user_id: str) -> dict:
     """1 user chi thuoc dung 1 Team CRM (UNIQUE user_id tren crm_team_members,
     migration 155) - go lien ket CU (neu co, kha nang o 1 team khac) truoc khi
-    gan lien ket MOI, tranh vi pham UNIQUE constraint."""
+    gan lien ket MOI, tranh vi pham UNIQUE constraint.
+
+    Leader KHONG duoc tu gan lam member cua CHINH team minh dang phu trach
+    (feedback 2026-09-29: "user do la leader thi co can gan user do vao team
+    lam gi" - da xay ra that ngoai UI, lam sai lech "Member CRM"/"Cơ hội đang
+    xử lý" cap team vi 2 chi so nay tinh THEO member, khong tinh Leader)."""
     supabase: Client = get_supabase_client()
+    team_res = supabase.table("crm_teams").select("leader_user_id").eq("id", team_id).limit(1).execute()
+    if team_res.data and team_res.data[0].get("leader_user_id") == user_id:
+        raise ValueError("Leader không cần (và không nên) tự gán làm member của chính team mình.")
     supabase.table("crm_team_members").delete().eq("user_id", user_id).execute()
     result = supabase.table("crm_team_members").insert({"crm_team_id": team_id, "user_id": user_id}).execute()
     clear_crm_permission_enforcement_cache()

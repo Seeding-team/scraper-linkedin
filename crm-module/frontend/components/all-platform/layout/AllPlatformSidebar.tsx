@@ -396,14 +396,6 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, _workspaceTab?
                     label: "Giai đoạn cơ hội",
                     matchStartsWith: ["/all-platform/crm/deal-stages"],
                   },
-                  {
-                    type: "item",
-                    id: "crm-sale-teams",
-                    href: "/all-platform/crm/sale-teams",
-                    icon: "group",
-                    label: "Team Sale",
-                    matchStartsWith: ["/all-platform/crm/sale-teams"],
-                  },
                 ],
               },
             ] as NavGroupChild[])

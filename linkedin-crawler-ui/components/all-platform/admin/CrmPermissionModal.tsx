@@ -17,10 +17,12 @@ import { MaterialIcon } from "@/components/ui";
 import {
   usersService,
   crmPermissionGroupsService,
+  crmTeamsService,
   type AppUserProfile,
   type CrmDataScope,
   type CrmModuleKey,
   type CrmPermissionGroup,
+  type CrmTeam,
 } from "@/services/all-platform.service";
 import { CRM_MODULE_DEFS, CRM_SCOPE_LABELS } from "@/modules/crm/constants/crmPermissionLabels";
 import type { MemberProfile } from "@/types/unified.types";
@@ -53,6 +55,19 @@ export function CrmPermissionModal({
   onSaved: (updated: AppUserProfile) => void;
 }) {
   const [groups, setGroups] = useState<CrmPermissionGroup[]>([]);
+  // "Leader / Team CRM" (feedback 2026-09-29: hien luon trong drawer nay cho
+  // nhanh) - chi de HIEN THI, khong sua o day (sua that o tab "Leader/Team
+  // Sale"). Phan biet 2 truong hop giong het 2 bang o MemberManagementContent:
+  // chinh Leader thi hien ten Team + "Leader chính"; Member thuong thi hien
+  // ten Leader + ten Team (KHONG lap lai ten chinh nguoi Leader).
+  const [crmTeams, setCrmTeams] = useState<CrmTeam[]>([]);
+  const teamAsLeader = crmTeams.find(t => t.leader_user_id === account.id);
+  const teamAsMember = crmTeams.find(t => (t.member_ids || []).includes(account.id));
+  const accountTeamCell = teamAsLeader
+    ? { line1: teamAsLeader.name, line2: "Leader chính" }
+    : teamAsMember
+      ? { line1: teamAsMember.leader_name || "—", line2: teamAsMember.name }
+      : null;
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -72,11 +87,11 @@ export function CrmPermissionModal({
 
   useEffect(() => {
     let alive = true;
-    crmPermissionGroupsService
-      .list()
-      .then(res => {
+    Promise.all([crmPermissionGroupsService.list(), crmTeamsService.list()])
+      .then(([groupsRes, teamsRes]) => {
         if (!alive) return;
-        if (res.success) setGroups(res.data || []);
+        if (groupsRes.success) setGroups(groupsRes.data || []);
+        if (teamsRes.success) setCrmTeams(teamsRes.data || []);
       })
       .catch(() => {
         if (alive) setError("Không tải được danh sách Nhóm quyền.");
@@ -175,6 +190,17 @@ export function CrmPermissionModal({
                 <span className="font-bold text-on-background text-right">{linkedMember?.level || "—"}</span>
                 <span className="text-on-surface-variant">Leader</span>
                 <span className="font-bold text-on-background text-right">{linkedMember?.leader_name || "—"}</span>
+                <span className="text-on-surface-variant">Leader / Team CRM</span>
+                <span className="font-bold text-on-background text-right">
+                  {accountTeamCell ? (
+                    <>
+                      {accountTeamCell.line1}
+                      <span className="block text-[10px] font-normal text-on-surface-variant">{accountTeamCell.line2}</span>
+                    </>
+                  ) : (
+                    "—"
+                  )}
+                </span>
               </div>
             </section>
 

@@ -939,7 +939,18 @@ export function DealFormFields({
     crmTeamsService.get(crmTeamId)
       .then(res => {
         if (!alive) return;
-        setCrmTeamMembers(res.success ? res.data?.members || [] : []);
+        const members = res.success ? res.data?.members || [] : [];
+        // Leader KHONG nam trong `members` - nhung van phai chon duoc lam
+        // Sale phu trach (feedback 2026-09-30: "leader cũng làm việc ở đó
+        // thì lúc này không thể chọn leader").
+        const leaderId = res.success ? res.data?.leader_user_id : undefined;
+        const leaderName = res.success ? res.data?.leader_name : undefined;
+        const hasLeader = leaderId && members.some(u => u.id === leaderId);
+        setCrmTeamMembers(
+          leaderId && !hasLeader
+            ? [...members, { id: leaderId, name: leaderName || '', email: '' } as AppUserProfile]
+            : members
+        );
       })
       .catch(() => {
         if (alive) setCrmTeamMembers([]);
@@ -1060,18 +1071,6 @@ export function DealFormFields({
     handlePick('', 'sdrId', 'sdrNameHint');
   }
 
-  // Chua chon Team CRM -> khong loc them (giu nguyen exclusion cu); da chon ->
-  // CHI giu thanh vien thuoc Team do (hoac dang duoc chon - tranh mat lua chon
-  // hien tai khoi danh sach). Thanh vien chua lien ket tai khoan dang nhap tu
-  // nhien bi loai khi da chon Team (dung, khong phai bug - crm_team_members
-  // tham chieu app_users.id).
-  const crmTeamMemberIds = crmTeamId ? new Set((crmTeamMembers || []).map(u => u.id)) : null;
-  const isInCrmTeamScope = (m: MemberProfile) => {
-    if (!crmTeamMemberIds) return true;
-    if (selectionKeyOf(m) === sdrSelectionKey) return true;
-    return crmTeamMemberIds.has(m.linked_user_id || '') || crmTeamMemberIds.has(m.linked_user_id_2 || '');
-  };
-
   function editIdentity(field: EditableIdentity, value: string) {
     setValue(field, value);
     setValue('manuallyEditedIdentity', [...new Set([...form.manuallyEditedIdentity, field])]);
@@ -1106,22 +1105,37 @@ export function DealFormFields({
     (Boolean(form.nextStep.trim()) !== Boolean(form.followUpDate.trim()) ||
       (!form.nextStep.trim() && !form.followUpDate.trim()));
 
-  const aeOptionsForPanel = [
-    ...(currentUserMissingFromMembers && currentUser ? [{
-      value: currentUser.id,
-      label: currentUser.name || currentUser.email || '',
-      searchText: [currentUser.name, currentUser.email].filter(Boolean).join(' '),
-    }] : []),
-    ...assignableMembers
-      .filter(m => (selectionKeyOf(m) === sdrSelectionKey || selectionKeyOf(m) !== leadedBySelectionKey) && isInCrmTeamScope(m))
-      .map(m => {
-        return {
-          value: selectionKeyOf(m),
-          label: m.display_name,
-          searchText: [m.display_name, m.email].filter(Boolean).join(' '),
-        };
-      }),
-  ];
+  // Khi DA chon Team CRM: lay TRUC TIEP tu `crmTeamMembers` (app_users thuc su
+  // cua Team, da gom Leader - xem fix o tren) THAY VI loc danh ba HR
+  // (assignableMembers) - vi nhieu tai khoan CRM (dac biet tai khoan test)
+  // KHONG co ho so lien ket ben "Quan ly thanh vien" (feedback 2026-09-30:
+  // "member sao ko thay ai trong nay" - dropdown trong rong dù Team co nguoi
+  // that, chi vi loc theo linked_user_id cua ho so HR). Khong chon Team ->
+  // giu nguyen hanh vi cu (toan he thong, loc tu danh ba HR).
+  const aeOptionsForPanel = crmTeamId
+    ? (crmTeamMembers || [])
+        .filter(u => u.id === sdrSelectionKey || u.id !== leadedBySelectionKey)
+        .map(u => ({
+          value: u.id,
+          label: u.name || u.email || '',
+          searchText: [u.name, u.email].filter(Boolean).join(' '),
+        }))
+    : [
+        ...(currentUserMissingFromMembers && currentUser ? [{
+          value: currentUser.id,
+          label: currentUser.name || currentUser.email || '',
+          searchText: [currentUser.name, currentUser.email].filter(Boolean).join(' '),
+        }] : []),
+        ...assignableMembers
+          .filter(m => selectionKeyOf(m) === sdrSelectionKey || selectionKeyOf(m) !== leadedBySelectionKey)
+          .map(m => {
+            return {
+              value: selectionKeyOf(m),
+              label: m.display_name,
+              searchText: [m.display_name, m.email].filter(Boolean).join(' '),
+            };
+          }),
+      ];
   const crmTeamOptionsForSelect = crmTeamOptions.map(team => ({ value: team.id, label: team.name }));
   // "+ Thêm Team mới" trong dropdown Team Sale - mo CrmTeamFormModal, chon
   // luon Team vua tao khi tao xong (handleCrmTeamIdChange reset sdrId, dung
@@ -1324,19 +1338,35 @@ export function DealFormFields({
                   onChange={event => handlePick(event.target.value, 'sdrId', 'sdrNameHint')}
                 >
                   <option value="">-- Chưa giao --</option>
-                  {currentUserMissingFromMembers && currentUser ? (
-                    <option value={currentUser.id}>{currentUser.name || currentUser.email}</option>
-                  ) : null}
-                  {assignableMembers
-                    .filter(m => (selectionKeyOf(m) === sdrSelectionKey || selectionKeyOf(m) !== leadedBySelectionKey) && isInCrmTeamScope(m))
-                    .map(m => {
-                      const linked = !!(m.linked_user_id || m.linked_user_id_2);
-                      return (
-                        <option key={m.id} value={selectionKeyOf(m)}>
-                          {linked ? `${m.display_name}${m.email ? ` (${m.email})` : ''}` : m.display_name}
+                  {/* Da chon Team CRM -> lay TRUC TIEP tu crmTeamMembers (xem
+                      giai thich o aeOptionsForPanel phia tren) thay vi loc
+                      danh ba HR - tranh dropdown trong voi tai khoan CRM
+                      chua co ho so HR lien ket. */}
+                  {crmTeamId ? (
+                    (crmTeamMembers || [])
+                      .filter(u => u.id === sdrSelectionKey || u.id !== leadedBySelectionKey)
+                      .map(u => (
+                        <option key={u.id} value={u.id}>
+                          {u.name ? `${u.name}${u.email ? ` (${u.email})` : ''}` : u.email}
                         </option>
-                      );
-                    })}
+                      ))
+                  ) : (
+                    <>
+                      {currentUserMissingFromMembers && currentUser ? (
+                        <option value={currentUser.id}>{currentUser.name || currentUser.email}</option>
+                      ) : null}
+                      {assignableMembers
+                        .filter(m => selectionKeyOf(m) === sdrSelectionKey || selectionKeyOf(m) !== leadedBySelectionKey)
+                        .map(m => {
+                          const linked = !!(m.linked_user_id || m.linked_user_id_2);
+                          return (
+                            <option key={m.id} value={selectionKeyOf(m)}>
+                              {linked ? `${m.display_name}${m.email ? ` (${m.email})` : ''}` : m.display_name}
+                            </option>
+                          );
+                        })}
+                    </>
+                  )}
                 </select>
                 <p className="crm-deal-card-desc">Tự động lấy sale đang đăng nhập. Manager có thể đổi sau.</p>
               </div>
