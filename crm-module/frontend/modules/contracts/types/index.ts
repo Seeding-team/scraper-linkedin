@@ -79,15 +79,15 @@ export interface ContractDashboardStats {
 }
 
 export interface CreateContractInput {
+  /** Chỉ dùng cho "Ghi nhận hợp đồng có sẵn" (hợp đồng bên ngoài đã có số
+   * riêng) - bỏ trống thì backend tự sinh số như mọi luồng tạo khác. */
+  contractNumber?: string | null;
   dealId?: string | null;
   customerId?: string | null;
   manualCustomerName?: string | null;
   quoteId?: string | null;
   title: string;
   templateType?: ContractTemplateType;
-  /** Chỉ dùng cho "Ghi nhận hợp đồng có sẵn" (hợp đồng bên ngoài đã có số
-   * riêng) - bỏ trống thì backend tự sinh số như mọi luồng tạo khác. */
-  contractNumber?: string | null;
   /** Hợp đồng ngoài thường được ghi lại SAU khi đã ký thật ngoài đời — cho
    * phép chọn trạng thái/ngày ký ngay lúc tạo thay vì luôn mặc định 'draft'. */
   status?: ContractStatus;
@@ -152,4 +152,31 @@ export interface ReviewContractRiskInput {
 export interface ContractRiskReview {
   score: number | null;
   findings: ContractReviewFinding[];
+}
+
+/** "Ghi nhận hợp đồng có sẵn" — đối chiếu file hợp đồng đã upload (OCR/text
+ * extraction best-effort) với số liệu THẬT của báo giá đã chọn. Xem
+ * RegisterExternalContractModal.tsx + contract_ocr_service.py. */
+export interface ContractOcrExtracted {
+  contractNumber: string | null;
+  signedAt: string | null;
+  subtotalAmount: number | null;
+  vatAmount: number | null;
+  totalAmount: number | null;
+  extractionMethod: "ai" | "heuristic";
+  extractable: boolean;
+}
+
+export interface ContractOcrComparisonRow {
+  label: string;
+  contractValue: number | null;
+  quoteValue: number | null;
+  matched: boolean;
+}
+
+export interface ContractOcrReconcileResult {
+  extracted: ContractOcrExtracted;
+  comparison: ContractOcrComparisonRow[];
+  allMatched: boolean;
+  extractable: boolean;
 }

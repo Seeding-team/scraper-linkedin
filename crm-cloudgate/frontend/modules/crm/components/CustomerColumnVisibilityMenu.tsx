@@ -24,16 +24,22 @@ const COLUMN_OPTIONS: Array<{ key: CustomerColumnKey; label: string }> = [
  * khong reload. Portal + position:fixed giong ActionMenu.tsx/
  * ContactSummaryPopover de khong bi .crm-table-card cat mat.
  */
-export function CustomerColumnVisibilityMenu({
+export function CustomerColumnVisibilityMenu<T extends string = CustomerColumnKey>({
   visible,
   onToggle,
   onSelectAll,
   onReset,
+  options,
 }: {
-  visible: Set<CustomerColumnKey>;
-  onToggle: (key: CustomerColumnKey) => void;
+  visible: Set<T>;
+  onToggle: (key: T) => void;
   onSelectAll: () => void;
   onReset: () => void;
+  /** Danh sach cot + nhan hien trong popover - mac dinh la 8 cot cua trang
+   * Khach hang (COLUMN_OPTIONS). Truyen rieng de tai su dung Y HET component
+   * nay cho bang khac (vd 4 cot gia von/loi nhuan cua CustomerQuotesTab.tsx)
+   * thay vi tao 1 component moi. */
+  options?: Array<{ key: T; label: string }>;
 }) {
   const [open, setOpen] = useState(false);
   const [position, setPosition] = useState<{ top: number; left: number } | null>(null);
@@ -113,7 +119,7 @@ export function CustomerColumnVisibilityMenu({
             >
               <p className="crm-column-visibility-title">Cột hiển thị</p>
               <ul className="crm-column-visibility-list">
-                {COLUMN_OPTIONS.map(option => (
+                {(options ?? (COLUMN_OPTIONS as unknown as Array<{ key: T; label: string }>)).map(option => (
                   <li key={option.key}>
                     <label className="crm-column-visibility-item">
                       <input

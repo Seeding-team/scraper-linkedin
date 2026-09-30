@@ -3,6 +3,7 @@ import type {
   Contract,
   ContractClause,
   ContractDashboardStats,
+  ContractOcrReconcileResult,
   ContractRiskReview,
   CreateContractInput,
   GenerateContractDraftInput,
@@ -173,6 +174,54 @@ export class SeedingContractRepository implements ContractRepository {
         findings: input.findings,
       }),
     });
+  }
+
+  async ocrReconcile(file: File, quoteId: string): Promise<ContractOcrReconcileResult> {
+    const fd = new FormData();
+    fd.append('file', file);
+    fd.append('quote_id', quoteId);
+
+    const headers: Record<string, string> = {};
+    if (API_KEY) headers['X-API-Key'] = API_KEY;
+    // QUAN TRỌNG: KHÔNG set Content-Type thủ công cho FormData - giống hệt
+    // customerLeadService.uploadAttachment (browser tự thêm boundary).
+    const res = await fetch(`${API_BASE_URL}/api/all-platform/contracts/ocr-reconcile`, {
+      method: 'POST',
+      credentials: 'include',
+      headers,
+      body: fd,
+    });
+    const body = (await res.json()) as ApiResponse<{
+      extracted: {
+        contract_number: string | null;
+        signed_at: string | null;
+        subtotal_amount: number | null;
+        vat_amount: number | null;
+        total_amount: number | null;
+        extraction_method: 'ai' | 'heuristic';
+        extractable: boolean;
+      };
+      comparison: ContractOcrReconcileResult['comparison'];
+      allMatched: boolean;
+      extractable: boolean;
+    }>;
+    if (!res.ok) throw new Error(body.message || `Lỗi máy chủ (${res.status})`);
+    if (body.success === false) throw new Error(body.message || 'Không đối chiếu được hợp đồng.');
+    const data = body.data!;
+    return {
+      extracted: {
+        contractNumber: data.extracted.contract_number,
+        signedAt: data.extracted.signed_at,
+        subtotalAmount: data.extracted.subtotal_amount,
+        vatAmount: data.extracted.vat_amount,
+        totalAmount: data.extracted.total_amount,
+        extractionMethod: data.extracted.extraction_method,
+        extractable: data.extracted.extractable,
+      },
+      comparison: data.comparison,
+      allMatched: data.allMatched,
+      extractable: data.extractable,
+    };
   }
 }
 

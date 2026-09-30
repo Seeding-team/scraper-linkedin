@@ -1217,6 +1217,8 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
               deleteQuoteChainOnCustomerPage={deleteQuoteChainOnCustomerPage}
               quoteVersionStatusLabel={quoteVersionStatusLabel}
               deleteQuoteVersionOnCustomerPage={deleteQuoteVersionOnCustomerPage}
+              columnWorkspaceId={API_BASE_URL || null}
+              columnUserId={user?.id || null}
             />
           )}
 
@@ -1299,11 +1301,21 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
           dealOptions={data?.deals}
           contactOptions={allContacts}
           projectOptions={projectsSummary?.projects}
-          quoteOptions={allQuoteChains.map(c => ({
-            id: c.current.id,
-            label: c.current.quote_number || c.current.id,
-            dealId: c.current.deal_id,
-          }))}
+          // Bao gia da huy/xoa khong nen hien de gan vao Hop dong (feedback
+          // 2026-10-01: "báo giá đã hủy đã xóa thì k hiển thị trong dropdown")
+          // - dung DUNG dieu kien "cancelled" cua quoteChainPhaseKey (huy
+          // TAY hoac deleted_at), giong nhu quoteChains (tab Bao gia) da loc
+          // mac dinh, chi khac o day KHONG can toggle "Dang hoat dong" vi
+          // day la dropdown chon-de-gan, khong phai bang liet ke.
+          quoteOptions={allQuoteChains
+            .filter(c => quoteChainPhaseKey(c.current) !== 'cancelled')
+            .map(c => ({
+              id: c.current.id,
+              label: c.current.quote_number || c.current.id,
+              dealId: c.current.deal_id,
+              projectId: c.current.project_id,
+              versionCount: c.versionCount,
+            }))}
           onClose={() => setRegisterContractOpen(false)}
           onCreated={() => { setRegisterContractOpen(false); setReloadTick(t => t + 1); }}
         />

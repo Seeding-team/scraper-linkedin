@@ -6,7 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as
 import { API_BASE_URL, API_KEY } from '@/lib/env';
 import { useAppAuth } from '@/contexts/AppAuthContext';
 import { useMembers } from '@/hooks/useMembers';
-import { usersService, type QuoteBusinessRoleUser } from '@/services/all-platform.service';
+import { usersService, crmTeamsService, type QuoteBusinessRoleUser, type CrmTeam } from '@/services/all-platform.service';
 import { formatVND } from '../constants/crmConfig';
 import { CustomerFormModal } from './CustomerFormModal';
 import { CustomerAddDrawer } from './CustomerAddDrawer';
@@ -145,14 +145,28 @@ export function CrmCustomersDirectory() {
   const [status, setStatus] = useState('');
   const [ownerId, setOwnerId] = useState('');
   const [saleManagerId, setSaleManagerId] = useState('');
+  // "Team" = Team CRM THAT (crm_teams/crm_team_members, migration 155) - doi tu HR
+  // roster (feedback 2026-10-01: "đây là danh sách các team như ảnh 2" -
+  // dung dung danh sach Leader/Team hien o trang Quan ly thanh vien > Leader
+  // / Team Sale, khong dung phong ban HR nua). Gia tri `team` la crm_team_id.
   const [team, setTeam] = useState('');
-  // "Team" = phong ban that trong members (HR roster) - dung LAI DUNG nguon
-  // da chot cho Quan ly tien do (khong tao nguon rieng), loc theo team cua
-  // NGUOI PHU TRACH (owner_id) tren backend.
-  const teamOptions = useMemo(
-    () => Array.from(new Set(members.map(m => m.team).filter(Boolean))) as string[],
-    [members]
-  );
+  const [crmTeamOptions, setCrmTeamOptions] = useState<CrmTeam[]>([]);
+  useEffect(() => {
+    let alive = true;
+    crmTeamsService
+      .list()
+      .then(res => {
+        if (!alive) return;
+        const rows = res.success ? res.data || [] : [];
+        setCrmTeamOptions(rows.filter(t => t.status === 'active'));
+      })
+      .catch(() => {
+        if (alive) setCrmTeamOptions([]);
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
   const [saleManagerOptions, setSaleManagerOptions] = useState<QuoteBusinessRoleUser[]>([]);
   useEffect(() => {
     let alive = true;
@@ -211,18 +225,18 @@ export function CrmCustomersDirectory() {
 
   // Mac dinh loc "cua toi + team cua toi" khi vao trang (thay vi "Tat ca") -
   // chi ap dung khi CHUA co lich su tim kiem nao luu trong sessionStorage
-  // (lan dau ghe trang trong tab nay). Rule tim team CUA CHINH NGUOI DANG
-  // DANG NHAP phai khop CHINH XAC voi _user_department_map() o backend
-  // (progress_service.py): CHI xet members.linked_user_id (KHONG xet
-  // linked_user_id_2) + phai co team - nguoi dang dang nhap chac chan la
-  // active (dang co session hop le) nen bo qua kiem tra app_users.is_active.
+  // (lan dau ghe trang trong tab nay). Team CRM cua nguoi dang dang nhap tra
+  // ve tu crmTeamsService.getTeamIdForUser() (crm_team_members) - null neu
+  // chua thuoc Team CRM nao thi giu team rong (khong loi, hien "Tat ca Team").
   const defaultFilterAppliedRef = useRef(false);
   const applyDefaultOwnerFilter = useCallback(() => {
     if (!user?.id) return;
     setOwnerId(user.id);
-    const myMember = members.find(m => m.linked_user_id === user.id);
-    setTeam(myMember?.team || '');
-  }, [user, members]);
+    crmTeamsService
+      .getTeamIdForUser(user.id)
+      .then(res => setTeam((res.success ? res.data?.crm_team_id : null) || ''))
+      .catch(() => setTeam(''));
+  }, [user]);
 
   // Feedback nguoi dung (2026-09-24): quay lai trang Khach hang (Back, hoac
   // dieu huong sang trang khac roi vao lai) phai hien DUNG lich su tim kiem/
@@ -457,17 +471,20 @@ export function CrmCustomersDirectory() {
       .slice(0, 3);
   }, [items]);
 
-  // Feedback (2026-09-24): chon "Người phụ trách" thi tu dong loc luon Team
-  // cua chinh nguoi do (vd chon thanh vien A cua team B -> Team tu hien
-  // "B") - dung chung key "linked_user_id || linked_user_id_2" voi
-  // ownerFilterOptions o tren de khop DUNG voi nguoi vua chon trong dropdown
-  // (KHONG dung applyDefaultOwnerFilter/linked_user_id rieng - do la rule
-  // rieng cho "mac dinh cua toi" khop backend _user_department_map()).
-  // Owner khong co Team (hoac bo chon ve "Tat ca") -> Team cung ve rong.
+  // Feedback (2026-09-24, cap nhat 2026-10-01 sang Team CRM that): chon
+  // "Người phụ trách" thi tu dong loc luon Team CRM cua chinh nguoi do (vd
+  // chon thanh vien A cua Team B -> Team tu hien "B"). Owner khong thuoc
+  // Team CRM nao (hoac bo chon ve "Tat ca") -> Team cung ve rong.
   function handleOwnerFilterChange(value: string) {
     setOwnerId(value);
-    const match = members.find(m => (m.linked_user_id || m.linked_user_id_2) === value);
-    setTeam(match?.team || '');
+    if (!value) {
+      setTeam('');
+      return;
+    }
+    crmTeamsService
+      .getTeamIdForUser(value)
+      .then(res => setTeam((res.success ? res.data?.crm_team_id : null) || ''))
+      .catch(() => setTeam(''));
   }
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
@@ -805,7 +822,7 @@ export function CrmCustomersDirectory() {
                 value={team}
                 onChange={setTeam}
                 placeholder="Tất cả Team"
-                options={teamOptions.map(t => ({ value: t, label: t }))}
+                options={crmTeamOptions.map(t => ({ value: t.id, label: t.name }))}
               />
             </div>
             <div className="crm-icon-action-group" style={{ gap: '0.5rem' }}>

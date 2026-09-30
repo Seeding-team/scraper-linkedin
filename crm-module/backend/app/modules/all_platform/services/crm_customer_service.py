@@ -9,20 +9,22 @@ from app.core.config import settings
 from app.core.phone import vn_phone_to_e164
 from app.core.supabase_client import execute_supabase_query, get_supabase_client
 from app.modules.all_platform.services.customer_lead_service import BASE_COLUMNS, _normalize_row
-from app.modules.all_platform.services.supabase_quote_service import apply_quote_field_permissions
+from app.modules.all_platform.services.supabase_quote_service import apply_quote_field_permissions, _quote_cost_summary
 from app.modules.all_platform.services.crm_permission_service import (
     can_edit_contract,
     has_full_crm_access,
     get_scope_visible_user_ids,
+    # "Team" o day la Team CRM THAT (crm_teams/crm_team_members, migration
+    # 155) - feedback 2026-10-01: doi tu HR roster (members.team, vd
+    # "Dev"/"Sale") sang dung DUNG danh sach Leader/Team hien o trang
+    # "Leader / Team Sale" (Quan ly thanh vien), vi HR roster khong khop voi
+    # to chuc Sale thuc te.
+    get_crm_team_member_ids,
 )
 from app.modules.all_platform.services.crm_delete_cascade_service import CascadeConfirmRequired, delete_customer_cascade, get_in_tenant
 from app.modules.all_platform.services.supabase_categories_service import get_categories_by_type
 from app.modules.all_platform.services.crm_position_service import apply_position_category
 from app.modules.all_platform.services.crm_city_normalizer import normalize_city_fields, normalize_vietnam_city
-# "Team" o day la phong ban THAT trong `members` (HR roster), dung LAI DUNG
-# nguon/quy tac da chot cho module Quan ly tien do (chi tinh nguoi "duoc gan
-# team + app_users con active") - khong tu suy dien/tao nguon rieng.
-from app.modules.all_platform.services.progress_service import _user_department_map
 
 CUSTOMER_COLUMNS = (
     "id, customer_name, company_name, position, position_category_id, "
@@ -360,8 +362,8 @@ def list_customers(
         rows = [row for row in rows if row.get("id") in visible]
 
     if team:
-        dept_map = _user_department_map()
-        rows = [row for row in rows if dept_map.get(str(row.get("owner_id") or "")) == team]
+        crm_team_member_ids = get_crm_team_member_ids(team)
+        rows = [row for row in rows if str(row.get("owner_id") or "") in crm_team_member_ids]
 
     # KPI (dem theo tung tab trang thai) phai luon tinh tren TOAN BO tap hop
     # khop search/source/owner_id, KHONG bi gioi han theo `status` dang chon -
@@ -389,8 +391,8 @@ def list_customers(
         if visible is not None:
             kpi_rows = [row for row in kpi_rows if row.get("id") in visible]
         if team:
-            dept_map = _user_department_map()
-            kpi_rows = [row for row in kpi_rows if dept_map.get(str(row.get("owner_id") or "")) == team]
+            crm_team_member_ids = get_crm_team_member_ids(team)
+            kpi_rows = [row for row in kpi_rows if str(row.get("owner_id") or "") in crm_team_member_ids]
     else:
         kpi_rows = rows
 
@@ -526,11 +528,48 @@ def related_records(customer_id: str, user: dict[str, Any]) -> dict[str, Any]:
         quote_res = execute_supabase_query(
             lambda: supabase.table("quotes").select("*").eq("instance", settings.crm_instance).in_("deal_id", deal_ids).execute()
         )
+        quote_rows = quote_res.data or []
+        # Gia von/Loi nhuan/Margin (costTotal/hasCostData/grossProfit/
+        # grossMarginPercent) KHONG PHAI cot raw tren `quotes` - duoc tinh
+        # THAT tu line item (_quote_cost_summary(), giong het _row_to_quote()
+        # dung cho Quote Center/GET 1 quote) nen phai tu fetch line item va
+        # tu tinh o day, apply_quote_field_permissions() khong the tu suy ra
+        # neu 3 field nay chua ton tai tren row. Fetch 1 lan cho CA quote
+        # (khong N+1) roi group theo quote_id truoc khi tinh tung dong.
+        items_by_quote_id: dict[str, list[dict[str, Any]]] = {}
+        quote_ids = [row["id"] for row in quote_rows]
+        if quote_ids:
+            items_res = execute_supabase_query(
+                lambda: supabase.table("quote_items").select("*").in_("quote_id", quote_ids).execute()
+            )
+            for item_row in items_res.data or []:
+                items_by_quote_id.setdefault(item_row["quote_id"], []).append(item_row)
+        enriched_quote_rows: list[dict[str, Any]] = []
+        for row in quote_rows:
+            enriched = {**row, **_quote_cost_summary(row, items_by_quote_id.get(row["id"]))}
+            # Chiet khau tong cap quote (migration 106, `overall_discount_percent`
+            # - KHAC voi discount_percent/discount_amount cua tung dong hang muc
+            # tren quote_items, `quotes` KHONG co 2 cot do). Alias camelCase cho
+            # FE, KHONG gac quyen rieng - day la so THAT SU xuat hien tren ban
+            # bao gia gui khach (giong nhom C "Customer commercial" trong
+            # apply_quote_field_permissions(), khong lien quan cost/profitability
+            # noi bo) nen ai xem duoc quote deu xem duoc, dung quy uoc da co san
+            # o _row_to_quote()/nhom C thay vi bay ra 1 luat rieng moi.
+            overall_discount_percent = row.get("overall_discount_percent")
+            enriched["discountPercent"] = (
+                float(overall_discount_percent) if overall_discount_percent is not None else None
+            )
+            enriched["discountAmount"] = (
+                float(row.get("subtotal_amount") or 0) * float(overall_discount_percent) / 100
+                if overall_discount_percent is not None
+                else None
+            )
+            enriched_quote_rows.append(enriched)
         # Cung 1 lop loc field-permission (cost/pricing/profitability) ma moi
         # endpoint khac cua Quote da ap dung (xem apply_quote_field_permissions
         # trong routers/quote.py) - truoc ban vá nay related_records() tra
         # nguyen raw row, lam lo cost/pricing cho nguoi khong co quyen xem.
-        quotes = [apply_quote_field_permissions(row, user) for row in (quote_res.data or [])]
+        quotes = [apply_quote_field_permissions(row, user) for row in enriched_quote_rows]
 
     # Hop dong co the tao truc tiep tu Customer (khong qua Deal, xem
     # ManualContractModal + contracts.customer_id, migration 130) nen phai

@@ -2,6 +2,25 @@ import React, { Fragment, useState, useMemo } from 'react';
 import { FileText, Plus, ChevronRight, ChevronDown, UserCog, Trash2, Search, Filter, Folder, Users, Clock, Zap } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ActionMenu, type ActionMenuItem } from './ActionMenu';
+import { CustomerColumnVisibilityMenu } from './CustomerColumnVisibilityMenu';
+import { useQuoteColumnPreferences, type QuoteColumnKey } from '../hooks/useQuoteColumnPreferences';
+
+const QUOTE_COLUMN_OPTIONS: Array<{ key: QuoteColumnKey; label: string }> = [
+  { key: 'costTotal', label: 'Giá vốn' },
+  { key: 'grossProfit', label: 'Lợi nhuận' },
+  { key: 'grossMarginPercent', label: 'Margin' },
+  { key: 'discount', label: 'Chiết khấu' },
+];
+
+/** Mau badge Margin - cung quy uoc voi marginTone() trong QuoteCenterPage.tsx
+ * (CHI phan biet lo/lai, khong bia nguong % cu the) nhung viet lai bang
+ * Tailwind utility (thay vi class .qc-badge-* cua quote-center.css) vi
+ * stylesheet do KHONG duoc import tren trang Customer 360 - tranh phai keo
+ * theo 1 file CSS lon chi de dung 2 class mau. */
+function marginBadgeClass(percent: number | null | undefined): string {
+  if (percent === null || percent === undefined) return 'bg-slate-100 text-slate-600';
+  return percent < 0 ? 'bg-rose-100 text-rose-700' : 'bg-emerald-100 text-emerald-700';
+}
 
 export function CustomerQuotesTab({
   customerName = '',
@@ -36,6 +55,8 @@ export function CustomerQuotesTab({
   deleteQuoteChainOnCustomerPage,
   quoteVersionStatusLabel,
   deleteQuoteVersionOnCustomerPage,
+  columnWorkspaceId = null,
+  columnUserId = null,
 }: {
   customerName?: string;
   projectsSummary?: any;
@@ -69,11 +90,19 @@ export function CustomerQuotesTab({
   deleteQuoteChainOnCustomerPage: (row: any, count: number) => void;
   quoteVersionStatusLabel: (v: any) => string;
   deleteQuoteVersionOnCustomerPage: (v: any) => void;
+  /** Dung de khoa localStorage preference "cot nao hien" theo tung
+   * workspace+user, giong het useCustomerColumnPreferences (trang Khach
+   * hang) - truyen null khi auth con dang load, hook tu dung mac dinh (an
+   * ca 4 cot moi) khong doc/ghi localStorage. */
+  columnWorkspaceId?: string | null;
+  columnUserId?: string | null;
 }) {
   const [search, setSearch] = useState('');
   const [ownerFilter, setOwnerFilter] = useState<string>('all');
   const [pageSize, setPageSize] = useState<number>(20);
   const [page, setPage] = useState<number>(1);
+  const { visible: visibleQuoteColumns, toggle: toggleQuoteColumn, selectAll: selectAllQuoteColumns, resetToDefault: resetQuoteColumnsToDefault } =
+    useQuoteColumnPreferences(columnWorkspaceId, columnUserId);
 
   // Filter quoteChains by search string and ownerFilter
   const filteredChains = useMemo(() => {
@@ -233,6 +262,20 @@ export function CustomerQuotesTab({
             <Users className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-slate-400 pointer-events-none" />
           </div>
 
+          {/* Cot hien thi - reuse CustomerColumnVisibilityMenu.tsx (dung pattern
+              voi trang Khach hang), rieng 4 cot gia von/loi nhuan/margin/chiet
+              khau. Quyen XEM THAT SU da gac o backend (related_records() ->
+              apply_quote_field_permissions) - nut nay chi la preference bat/tat
+              cot tren UI, cell se tu hien "—" neu server tra ve null/khong co
+              quyen, KHONG phai lop bao ve. */}
+          <CustomerColumnVisibilityMenu<QuoteColumnKey>
+            visible={visibleQuoteColumns}
+            onToggle={toggleQuoteColumn}
+            onSelectAll={selectAllQuoteColumns}
+            onReset={resetQuoteColumnsToDefault}
+            options={QUOTE_COLUMN_OPTIONS}
+          />
+
           {/* Action Buttons */}
           <Button
             size="sm"
@@ -271,6 +314,10 @@ export function CustomerQuotesTab({
               <th className="py-3 px-3">PHASE</th>
               <th className="py-3 px-3">PHỤ TRÁCH</th>
               <th className="py-3 px-3 text-right">GIÁ KHÁCH</th>
+              {visibleQuoteColumns.has('costTotal') ? <th className="py-3 px-3 text-right">GIÁ VỐN</th> : null}
+              {visibleQuoteColumns.has('grossProfit') ? <th className="py-3 px-3 text-right">LỢI NHUẬN</th> : null}
+              {visibleQuoteColumns.has('grossMarginPercent') ? <th className="py-3 px-3 text-center">MARGIN</th> : null}
+              {visibleQuoteColumns.has('discount') ? <th className="py-3 px-3 text-right">CHIẾT KHẤU</th> : null}
               <th className="py-3 px-3 text-center">TRẠNG THÁI</th>
               <th className="py-3 px-3">CẬP NHẬT</th>
               <th className="py-3 px-3 text-right">THAO TÁC</th>
@@ -279,13 +326,13 @@ export function CustomerQuotesTab({
           <tbody className="divide-y divide-slate-100">
             {loading ? (
               <tr>
-                <td colSpan={11} className="py-8 text-center text-slate-500 font-medium">
+                <td colSpan={11 + visibleQuoteColumns.size} className="py-8 text-center text-slate-500 font-medium">
                   Đang tải danh sách báo giá...
                 </td>
               </tr>
             ) : filteredChains.length === 0 ? (
               <tr>
-                <td colSpan={11} className="py-8 text-center text-slate-400 font-medium">
+                <td colSpan={11 + visibleQuoteColumns.size} className="py-8 text-center text-slate-400 font-medium">
                   {quoteProjectFilter || search ? 'Không tìm thấy báo giá nào phù hợp với bộ lọc.' : 'Chưa có báo giá liên quan.'}
                 </td>
               </tr>
@@ -431,12 +478,82 @@ export function CustomerQuotesTab({
                         </div>
                       </td>
 
-                      {/* GIÁ KHÁCH Column */}
+                      {/* GIÁ KHÁCH Column - KHONG doi field/logic o day (van
+                          total_amount || customer_price_before_vat nhu cu),
+                          4 cot moi ben duoi CHI ADD THEM, khong dung chung field
+                          nay. */}
                       <td className="py-3 px-3 text-right">
                         <span className="font-bold text-xs text-emerald-600">
                           {formatVND(Number(current.total_amount || current.customer_price_before_vat || 0)) || '0 đ'}
                         </span>
                       </td>
+
+                      {/* GIÁ VỐN Column (costTotal) - backend gac quyen qua
+                          costViewAllowed (apply_quote_field_permissions), false
+                          -> "Không có quyền xem" thay vi so that, khac han
+                          "Chưa có" (chua nhap du cost). */}
+                      {visibleQuoteColumns.has('costTotal') ? (
+                        <td className="py-3 px-3 text-right">
+                          {current.costViewAllowed === false ? (
+                            <span className="text-[11px] text-slate-400" title="Chỉ Presale/Sale được phân công hoặc Admin mới xem được giá vốn">—</span>
+                          ) : current.hasCostData ? (
+                            <span className="font-medium text-xs text-slate-700">{formatVND(Number(current.costTotal || 0))}</span>
+                          ) : (
+                            <span className="text-[11px] text-slate-400">Chưa có</span>
+                          )}
+                        </td>
+                      ) : null}
+
+                      {/* LỢI NHUẬN Column (grossProfit) - gac quyen qua
+                          profitabilityViewAllowed. */}
+                      {visibleQuoteColumns.has('grossProfit') ? (
+                        <td className="py-3 px-3 text-right">
+                          {current.profitabilityViewAllowed === false ? (
+                            <span className="text-[11px] text-slate-400" title="Chỉ Sale phụ trách hoặc Admin mới xem được lợi nhuận">—</span>
+                          ) : current.hasCostData && current.grossProfit !== null && current.grossProfit !== undefined ? (
+                            <span className="font-medium text-xs text-slate-700">{formatVND(Number(current.grossProfit || 0))}</span>
+                          ) : (
+                            <span className="text-[11px] text-slate-400">Chưa tính</span>
+                          )}
+                        </td>
+                      ) : null}
+
+                      {/* MARGIN Column (grossMarginPercent) - cung 1 quy uoc
+                          mau voi marginTone() trong QuoteCenterPage.tsx (chi
+                          phan biet lo/lai). */}
+                      {visibleQuoteColumns.has('grossMarginPercent') ? (
+                        <td className="py-3 px-3 text-center">
+                          {current.profitabilityViewAllowed === false ? (
+                            <span className="text-[11px] text-slate-400" title="Chỉ Sale phụ trách hoặc Admin mới xem được margin">—</span>
+                          ) : current.hasCostData && current.grossMarginPercent !== null && current.grossMarginPercent !== undefined ? (
+                            <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold ${marginBadgeClass(current.grossMarginPercent)}`}>
+                              {Number(current.grossMarginPercent).toFixed(1)}%
+                            </span>
+                          ) : (
+                            <span className="text-[11px] text-slate-400">Chưa tính</span>
+                          )}
+                        </td>
+                      ) : null}
+
+                      {/* CHIẾT KHẤU Column (discountPercent/discountAmount) -
+                          Giam gia tong cap quote (quotes.overall_discount_percent),
+                          KHONG gac quyen rieng (giong nhom "Customer commercial" -
+                          so THAT SU tren ban bao gia gui khach, ai xem duoc quote
+                          deu xem duoc). */}
+                      {visibleQuoteColumns.has('discount') ? (
+                        <td className="py-3 px-3 text-right">
+                          {current.discountPercent !== null && current.discountPercent !== undefined ? (
+                            <>
+                              <div className="font-medium text-xs text-slate-700">{Number(current.discountPercent).toFixed(1)}%</div>
+                              {current.discountAmount ? (
+                                <div className="text-[11px] text-slate-400 font-normal mt-0.5">{formatVND(Number(current.discountAmount))}</div>
+                              ) : null}
+                            </>
+                          ) : (
+                            <span className="text-[11px] text-slate-400">—</span>
+                          )}
+                        </td>
+                      ) : null}
 
                       {/* TRẠNG THÁI Column */}
                       <td className="py-3 px-3 text-center">
@@ -514,7 +631,7 @@ export function CustomerQuotesTab({
                     {expanded ? (
                       expanded.loading || expanded.error || expanded.versions.length === 0 ? (
                         <tr className="bg-slate-50/50">
-                          <td colSpan={11} className="py-3 text-center text-slate-500 text-xs">
+                          <td colSpan={11 + visibleQuoteColumns.size} className="py-3 text-center text-slate-500 text-xs">
                             {expanded.loading ? 'Đang tải phiên bản cũ…' : expanded.error || 'Không có phiên bản cũ nào khác.'}
                           </td>
                         </tr>
@@ -556,6 +673,50 @@ export function CustomerQuotesTab({
                               <td className="py-2.5 px-3 text-right font-bold text-emerald-600 text-xs">
                                 {formatVND(Number(version.customerPriceBeforeVat ?? version.totalAmount ?? 0)) || '0 đ'}
                               </td>
+                              {visibleQuoteColumns.has('costTotal') ? (
+                                <td className="py-2.5 px-3 text-right text-xs">
+                                  {version.costViewAllowed === false ? (
+                                    <span className="text-[11px] text-slate-400">—</span>
+                                  ) : version.hasCostData ? (
+                                    <span className="text-slate-700">{formatVND(Number(version.costTotal || 0))}</span>
+                                  ) : (
+                                    <span className="text-[11px] text-slate-400">Chưa có</span>
+                                  )}
+                                </td>
+                              ) : null}
+                              {visibleQuoteColumns.has('grossProfit') ? (
+                                <td className="py-2.5 px-3 text-right text-xs">
+                                  {version.profitabilityViewAllowed === false ? (
+                                    <span className="text-[11px] text-slate-400">—</span>
+                                  ) : version.hasCostData && version.grossProfit !== null && version.grossProfit !== undefined ? (
+                                    <span className="text-slate-700">{formatVND(Number(version.grossProfit || 0))}</span>
+                                  ) : (
+                                    <span className="text-[11px] text-slate-400">Chưa tính</span>
+                                  )}
+                                </td>
+                              ) : null}
+                              {visibleQuoteColumns.has('grossMarginPercent') ? (
+                                <td className="py-2.5 px-3 text-center text-xs">
+                                  {version.profitabilityViewAllowed === false ? (
+                                    <span className="text-[11px] text-slate-400">—</span>
+                                  ) : version.hasCostData && version.grossMarginPercent !== null && version.grossMarginPercent !== undefined ? (
+                                    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold ${marginBadgeClass(version.grossMarginPercent)}`}>
+                                      {Number(version.grossMarginPercent).toFixed(1)}%
+                                    </span>
+                                  ) : (
+                                    <span className="text-[11px] text-slate-400">Chưa tính</span>
+                                  )}
+                                </td>
+                              ) : null}
+                              {visibleQuoteColumns.has('discount') ? (
+                                <td className="py-2.5 px-3 text-right text-xs">
+                                  {version.overallDiscountPercent !== null && version.overallDiscountPercent !== undefined ? (
+                                    <span className="text-slate-700">{Number(version.overallDiscountPercent).toFixed(1)}%</span>
+                                  ) : (
+                                    <span className="text-[11px] text-slate-400">—</span>
+                                  )}
+                                </td>
+                              ) : null}
                               <td className="py-2.5 px-3 text-center">
                                 {renderStatusBadge(version)}
                               </td>

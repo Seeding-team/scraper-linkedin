@@ -357,7 +357,7 @@ class VendorAIParsingService:
             for chunk in chunks:
                 if not chunk.strip(): continue
                 if settings.gemini_api_key:
-                    model = genai.GenerativeModel('gemini-1.5-flash', system_instruction=SYSTEM_PROMPT)
+                    model = genai.GenerativeModel('gemini-flash-latest', system_instruction=SYSTEM_PROMPT)
                     response = model.generate_content(
                         f"Trich xuat JSON tu du lieu sau:\n\n{chunk}",
                         generation_config={"temperature": 0.1}
@@ -410,7 +410,7 @@ class VendorAIParsingService:
         prompt = "Trich xuat JSON cac mat hang tu anh bao gia sau."
         try:
             if settings.gemini_api_key:
-                model = genai.GenerativeModel('gemini-1.5-flash', system_instruction=SYSTEM_PROMPT)
+                model = genai.GenerativeModel('gemini-flash-latest', system_instruction=SYSTEM_PROMPT)
                 response = model.generate_content(
                     [{"mime_type": mime, "data": file_bytes}, prompt],
                     generation_config={"temperature": 0.1},
