@@ -82,7 +82,9 @@ def _guess_media(message) -> tuple[Optional[str], Optional[Any]]:
     return None, None
 
 
-async def _persist_message(account_id: str, client: TelegramClient, message, *, is_edit: bool = False, publish: bool = True) -> Dict[str, Any]:
+async def _persist_message(
+    account_id: str, client: TelegramClient, message, *, is_edit: bool = False, publish: bool = True, touch_dialog: bool = True
+) -> Dict[str, Any]:
     dialog_id = utils.get_peer_id(message.peer_id)
 
     sender_id = None
@@ -125,31 +127,36 @@ async def _persist_message(account_id: str, client: TelegramClient, message, *, 
     }
     saved = await telegram_repo.upsert_message(row)
 
-    preview = row["text"] or (f"[{media_type}]" if media_type else "")
-    dialog_title = None
-    dialog_type = None
-    try:
-        entity = await message.get_chat()
-        if entity is not None:
-            dialog_title = utils.get_display_name(entity) or getattr(entity, "title", None)
-            dialog_type = (
-                "channel" if getattr(entity, "broadcast", False)
-                else "group" if (getattr(entity, "megagroup", False) or message.is_group)
-                else "bot" if getattr(entity, "bot", False)
-                else "user"
-            )
-    except Exception:
-        pass
+    # Backfill lịch sử (mở 1 hội thoại lần đầu, cache rỗng) không cần cập nhật preview/
+    # unread của dialog cho TỪNG tin nhắn cũ - "hiện" nhất vẫn do sync_dialogs()/handler
+    # realtime lo, làm ở đây chỉ tốn thêm round-trip DB (SELECT+upsert) x N tin nhắn,
+    # là 1 phần lý do chính khiến mở hội thoại lần đầu chậm.
+    if touch_dialog:
+        preview = row["text"] or (f"[{media_type}]" if media_type else "")
+        dialog_title = None
+        dialog_type = None
+        try:
+            entity = await message.get_chat()
+            if entity is not None:
+                dialog_title = utils.get_display_name(entity) or getattr(entity, "title", None)
+                dialog_type = (
+                    "channel" if getattr(entity, "broadcast", False)
+                    else "group" if (getattr(entity, "megagroup", False) or message.is_group)
+                    else "bot" if getattr(entity, "bot", False)
+                    else "user"
+                )
+        except Exception:
+            pass
 
-    await telegram_repo.touch_dialog(
-        account_id,
-        dialog_id,
-        title=dialog_title,
-        dialog_type=dialog_type,
-        last_message_at=row["sent_at"],
-        last_message_preview=preview,
-        increment_unread=(not message.out and not is_edit),
-    )
+        await telegram_repo.touch_dialog(
+            account_id,
+            dialog_id,
+            title=dialog_title,
+            dialog_type=dialog_type,
+            last_message_at=row["sent_at"],
+            last_message_preview=preview,
+            increment_unread=(not message.out and not is_edit),
+        )
 
     if publish:
         await message_events.publish_telegram_event(account_id, {"type": "message", "message": saved})
@@ -158,8 +165,9 @@ async def _persist_message(account_id: str, client: TelegramClient, message, *, 
 
 async def backfill_message(account_id: str, client: TelegramClient, message) -> Dict[str, Any]:
     """Nạp 1 tin nhắn LỊCH SỬ (đọc qua ``client.get_messages`` khi cache DB rỗng) vào
-    DB — KHÔNG phát SSE (không phải tin mới, các client đang mở không cần được báo)."""
-    return await _persist_message(account_id, client, message, publish=False)
+    DB — KHÔNG phát SSE (không phải tin mới, các client đang mở không cần được báo) và
+    KHÔNG cập nhật preview/unread của dialog (xem giải thích ở ``_persist_message``)."""
+    return await _persist_message(account_id, client, message, publish=False, touch_dialog=False)
 
 
 async def record_sent_message(account_id: str, client: TelegramClient, message) -> Dict[str, Any]:

@@ -69,7 +69,8 @@ function AllPlatformShellInner({ children }: { children: React.ReactNode }) {
   // Not authenticated — will redirect, render nothing
   if (!isAuthenticated) return null;
 
-  const isChatPage = pathname === "/zalo-chat" || pathname.startsWith("/zalo-chat");
+  const isChatPage =
+    pathname === "/zalo-chat" || pathname.startsWith("/zalo-chat") || pathname.startsWith("/telegram-chat/");
   const pageTitle = findCurrentPageLabel(ALL_ENTRIES_FOR_TITLE_LOOKUP, pathname) ?? "Marketing Agents";
 
   return (

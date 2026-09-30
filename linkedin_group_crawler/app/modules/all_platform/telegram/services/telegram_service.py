@@ -249,8 +249,18 @@ async def get_messages(
         return []
     entity = await client.get_input_entity(dialog_id)
     messages = await client.get_messages(entity, limit=limit)
-    for m in reversed(list(messages)):
-        await client_manager.backfill_message(account_id, client, m)
+    # Lần đầu mở 1 hội thoại (cache DB rỗng): mỗi tin nhắn cần 1-2 lượt gọi mạng riêng
+    # (get_sender, download_media) - chạy TUẦN TỰ từng tin (await trong for-loop) khiến
+    # tổng thời gian chờ = tổng của MỌI tin nhắn cộng lại (rất chậm khi có media). Chạy
+    # song song (giới hạn 8 cùng lúc, tránh dí quá nhiều request cùng lúc vào Telegram)
+    # để tổng thời gian chờ ~ bằng 1 tin nhắn chậm nhất thay vì cộng dồn.
+    semaphore = asyncio.Semaphore(8)
+
+    async def _backfill_one(m):
+        async with semaphore:
+            await client_manager.backfill_message(account_id, client, m)
+
+    await asyncio.gather(*(_backfill_one(m) for m in messages))
     await telegram_repo.clear_unread(account_id, dialog_id)
     return await telegram_repo.list_messages(account_id, dialog_id, limit=limit)
 

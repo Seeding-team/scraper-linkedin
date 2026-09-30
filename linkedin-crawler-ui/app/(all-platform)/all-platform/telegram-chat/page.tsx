@@ -1,5 +1,5 @@
 import { Metadata } from "next";
-import { TelegramChatShell } from "@/components/all-platform/telegram/TelegramChatShell";
+import { TelegramAccountsPageContent } from "@/components/all-platform/telegram/TelegramAccountsPageContent";
 
 export const metadata: Metadata = {
   title: "Telegram Chat",
@@ -7,9 +7,5 @@ export const metadata: Metadata = {
 };
 
 export default function TelegramChatPage() {
-  return (
-    <div className="flex h-full w-full flex-col">
-      <TelegramChatShell />
-    </div>
-  );
+  return <TelegramAccountsPageContent />;
 }
