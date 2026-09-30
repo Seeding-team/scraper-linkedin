@@ -124,26 +124,31 @@ window.addEventListener("message", function(event) {
         }, response => {
             window.postMessage({ action: "MK_TH_CRAWL_START_RESULT", payload: response || { success: false, error: "Không nhận được phản hồi từ Extension." } }, "*");
         });
-    } else if (action === "MK_FB_CRAWL_STOP" || action === "MK_LI_CRAWL_STOP" || action === "MK_TH_CRAWL_STOP" || action === "MK_ROTATE_CRAWL_STOP") {
-        safeSendMessage({ action }, response => {
-            if (action === "MK_ROTATE_CRAWL_STOP") window.postMessage({ action: "MK_ROTATE_CRAWL_STOP_RESULT", payload: response }, "*");
-        });
-    } else if (action === "MK_FB_CRAWL_STATUS" || action === "MK_LI_CRAWL_STATUS" || action === "MK_TH_CRAWL_STATUS" || action === "MK_ROTATE_CRAWL_STATUS") {
+    } else if (action === "MK_FB_CRAWL_STOP" || action === "MK_LI_CRAWL_STOP" || action === "MK_TH_CRAWL_STOP") {
+        safeSendMessage({ action }, () => {});
+    } else if (action === "MK_FB_CRAWL_STATUS" || action === "MK_LI_CRAWL_STATUS" || action === "MK_TH_CRAWL_STATUS") {
         safeSendMessage({ action }, response => {
             window.postMessage({ action: action + "_RESULT", payload: response }, "*");
         });
-    } else if (action === "MK_ROTATE_CRAWL_START") {
-        // Cao xoay vong ca 3 nen tang lien tuc: khac MK_FB/LI_CRAWL_START o cho nhan
-        // 3 danh sach rieng (fbGroups/liGroups/threadsKeywords) thay vi 1 "groups" chung,
-        // vi Threads dung tu khoa chu khong phai group.
+    } else if (action === "MK_ROTATE_SCHEDULE_LIST" || action === "MK_ROTATE_SCHEDULE_TOGGLE" || action === "MK_ROTATE_SCHEDULE_STOP" || action === "MK_ROTATE_SCHEDULE_DELETE") {
+        // Cac lenh CRUD lich cao xoay vong (nhieu lich doc lap, xem bg/rotation-crawl.js) -
+        // request/response don gian, chi can relay nguyen payload va tra ket qua ve dung khuon.
+        safeSendMessage({ action, ...(payload || {}) }, response => {
+            window.postMessage({ action: action + "_RESULT", payload: response || { success: false, error: "Không nhận được phản hồi từ Extension." } }, "*");
+        });
+    } else if (action === "MK_ROTATE_SCHEDULE_ADD") {
+        // Tao 1 lich cao xoay vong moi: khac MK_FB/LI_CRAWL_START o cho nhan 3 danh sach
+        // rieng (fbGroups/liGroups/threadsKeywords) thay vi 1 "groups" chung, vi Threads
+        // dung tu khoa chu khong phai group.
         safeSendMessage({
             action,
+            label: payload?.label || "",
             fbGroups: payload?.fbGroups || [],
             liGroups: payload?.liGroups || [],
             threadsKeywords: payload?.threadsKeywords || [],
             config: payload?.config || {},
         }, response => {
-            window.postMessage({ action: "MK_ROTATE_CRAWL_START_RESULT", payload: response || { success: false, error: "Không nhận được phản hồi từ Extension." } }, "*");
+            window.postMessage({ action: "MK_ROTATE_SCHEDULE_ADD_RESULT", payload: response || { success: false, error: "Không nhận được phản hồi từ Extension." } }, "*");
         });
     } else if (action === "LI_FETCH_POST_INFO") {
         // Tương thích luồng "Thêm bài viết" LinkedIn ở trang Tương tác nội bộ (lib/li-ext-bridge.ts),
@@ -159,7 +164,7 @@ window.addEventListener("message", function(event) {
 
 // Lắng nghe tiến trình từ background và relay xuống Web App UI
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-    if (typeof request.action === "string" && (request.action.startsWith("MK_FB_CRAWL_") || request.action.startsWith("MK_LI_CRAWL_") || request.action.startsWith("MK_TH_CRAWL_") || request.action.startsWith("MK_ROTATE_CRAWL_"))) {
+    if (typeof request.action === "string" && (request.action.startsWith("MK_FB_CRAWL_") || request.action.startsWith("MK_LI_CRAWL_") || request.action.startsWith("MK_TH_CRAWL_") || request.action.startsWith("MK_ROTATE_SCHEDULE_"))) {
         const { action, ...rest } = request;
         window.postMessage({ action, payload: rest }, "*");
         return;
