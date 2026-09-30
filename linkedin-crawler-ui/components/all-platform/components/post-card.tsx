@@ -8,6 +8,14 @@ import { cn } from "@/lib/utils";
 import type { UnifiedPost, FeedPlatform } from "@/types/unified.types";
 import { useQuickInboxLibrary, composeQuickInboxMessage, type QuickInboxLibraryEntry } from "./use-quick-inbox-library";
 import { useQuickCommentLibrary } from "./use-quick-comment-library";
+import { useAppAuth } from "@/contexts/AppAuthContext";
+import {
+  useSeedingExtensionStatus,
+  useBulkCommentRuntime,
+  PLATFORM_DB_ID,
+  REQUIRED_EXTENSION_VERSION,
+  type GroupPlatform,
+} from "./seeding-extension/use-seeding-extension";
 
 interface PostCardProps {
   post: UnifiedPost;
@@ -312,7 +320,9 @@ export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onVi
 
       </div>
 
-      {isTaskModalOpen && <TaskModal post={post} onClose={() => setIsTaskModalOpen(false)} />}
+      {isTaskModalOpen && (
+        <TaskModal post={post} onClose={() => setIsTaskModalOpen(false)} onCommentSuccess={onSeeding ? () => onSeeding(post) : undefined} />
+      )}
 
       {isMoreMenuOpen && (
         <MoreActionsModal
@@ -327,12 +337,40 @@ export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onVi
   );
 }
 
-function TaskModal({ post, onClose }: { post: UnifiedPost; onClose: () => void }) {
-  const commentPlatform = post.platform === "facebook" || post.platform === "linkedin" ? post.platform : undefined;
+function TaskModal({ post, onClose, onCommentSuccess }: { post: UnifiedPost; onClose: () => void; onCommentSuccess?: () => void }) {
+  const { user } = useAppAuth();
+  const commentPlatform: GroupPlatform | undefined = post.platform === "facebook" || post.platform === "linkedin" ? post.platform : undefined;
   const { libraryItems: commentTemplates } = useQuickCommentLibrary(commentPlatform);
   const [commentText, setCommentText] = useState("");
-  const [copiedComment, setCopiedComment] = useState(false);
   const [copiedInboxId, setCopiedInboxId] = useState<string | null>(null);
+  const [justCommented, setJustCommented] = useState(false);
+
+  // Nhiem vu binh luan: goi TRUC TIEP extension va tien hanh comment that (giong het
+  // luong "Binh luan hang loat" cua tab Cao bai viet) thay vi chi sao chep de nguoi
+  // dung tu dan - tinh la thanh vien nay DA LAM nhiem vu ngay khi extension bao thanh
+  // cong (backend tu ghi seeding-mark/verify voi email_member = nguoi dang dang nhap,
+  // dung nguyen co che da co san cua "Binh luan hang loat", khong can them bang moi).
+  const { isReady } = useSeedingExtensionStatus();
+  const commentRuntime = useBulkCommentRuntime({
+    isReady,
+    email: user?.email,
+    onComplete: (seededUrls) => {
+      if (post.post_url && seededUrls.includes(post.post_url)) {
+        setJustCommented(true);
+        onCommentSuccess?.();
+      }
+    },
+  });
+
+  const handleStartComment = () => {
+    if (!commentPlatform || !commentText.trim() || !post.post_url || commentRuntime.isCommenting) return;
+    setJustCommented(false);
+    commentRuntime.start(
+      [{ url: post.post_url, id_post: post.id, id_platform: PLATFORM_DB_ID[commentPlatform] }],
+      commentText.trim(),
+      { id_platform: PLATFORM_DB_ID[commentPlatform] },
+    );
+  };
 
   const { libraryItems, fallbackItems } = useQuickInboxLibrary();
   const inboxGroups = useMemo(() => {
@@ -345,17 +383,6 @@ function TaskModal({ post, onClose }: { post: UnifiedPost; onClose: () => void }
     });
     return Array.from(groups.values());
   }, [fallbackItems, libraryItems]);
-
-  const platformLabel = post.platform === "facebook" ? "Facebook" : post.platform === "linkedin" ? "LinkedIn" : "Threads";
-
-  const handleCopyComment = async () => {
-    if (!commentText.trim()) return;
-    try {
-      await navigator.clipboard.writeText(commentText);
-    } catch {}
-    setCopiedComment(true);
-    window.open(post.post_url, "_blank");
-  };
 
   const handleCopyInbox = async (template: QuickInboxLibraryEntry) => {
     const message = composeQuickInboxMessage(template, post.content);
@@ -386,9 +413,11 @@ function TaskModal({ post, onClose }: { post: UnifiedPost; onClose: () => void }
           </div>
 
           <div className="rounded-xl border border-primary/20 bg-primary/5 p-3 text-xs text-foreground leading-relaxed">
-            <b>Việc cần làm:</b> Bình luận (comment) theo mẫu bên dưới trên bài viết, và/hoặc nhắn tin (inbox) mời chào tới
-            người đăng bài — chọn 1 mẫu, hệ thống tự sao chép nội dung, bạn chỉ cần dán (Ctrl+V) vào ô bình luận/tin nhắn thật
-            trên {platformLabel}.
+            <b>Việc cần làm:</b> {commentPlatform ? (
+              <>Bình luận (comment) theo mẫu bên dưới — bấm &quot;Bắt đầu bình luận&quot;, hệ thống tự gọi extension để đăng bình luận thật lên bài viết, tính ngay là bạn đã hoàn thành phần này.</>
+            ) : (
+              <>Threads chưa hỗ trợ bình luận tự động qua extension — bạn tự dán vào bình luận thật.</>
+            )} Ngoài ra có thể nhắn tin (inbox) mời chào tới người đăng bài ở mục 2 bên dưới.
           </div>
 
           <div className="flex flex-col gap-2">
@@ -399,11 +428,12 @@ function TaskModal({ post, onClose }: { post: UnifiedPost; onClose: () => void }
                   <button
                     key={t.id}
                     type="button"
+                    disabled={commentRuntime.isCommenting}
                     onClick={() => {
                       setCommentText(t.content);
-                      setCopiedComment(false);
+                      setJustCommented(false);
                     }}
-                    className="px-2.5 py-1 rounded-full border border-border text-[11px] font-semibold text-muted-foreground hover:border-primary hover:text-primary transition"
+                    className="px-2.5 py-1 rounded-full border border-border text-[11px] font-semibold text-muted-foreground hover:border-primary hover:text-primary transition disabled:opacity-50"
                   >
                     {t.title}
                   </button>
@@ -415,19 +445,62 @@ function TaskModal({ post, onClose }: { post: UnifiedPost; onClose: () => void }
               value={commentText}
               onChange={(e) => {
                 setCommentText(e.target.value);
-                setCopiedComment(false);
+                setJustCommented(false);
               }}
+              disabled={commentRuntime.isCommenting}
               placeholder="Chọn mẫu ở trên hoặc tự soạn nội dung bình luận..."
-              className="w-full rounded-xl border border-border bg-background p-2.5 text-sm outline-none focus:border-primary resize-y"
+              className="w-full rounded-xl border border-border bg-background p-2.5 text-sm outline-none focus:border-primary resize-y disabled:opacity-60"
             />
-            <button
-              type="button"
-              onClick={handleCopyComment}
-              disabled={!commentText.trim()}
-              className="self-start px-4 py-2 rounded-xl bg-primary text-white text-sm font-bold disabled:opacity-50"
-            >
-              {copiedComment ? "✓ Đã copy — dán vào bình luận trên tab vừa mở" : "Sao chép & Mở bài viết"}
-            </button>
+
+            {commentPlatform ? (
+              <>
+                {!isReady ? (
+                  <div className="rounded-xl border border-amber-200 bg-amber-50 p-2.5 text-[11px] text-amber-800 leading-relaxed">
+                    Chưa kết nối được Markee Seeding Extension trên trình duyệt này — cài bản {REQUIRED_EXTENSION_VERSION}+ rồi F5 lại trang để bình luận tự động.
+                  </div>
+                ) : null}
+                <button
+                  type="button"
+                  onClick={handleStartComment}
+                  disabled={!isReady || !commentText.trim() || commentRuntime.isCommenting}
+                  className="self-start px-4 py-2 rounded-xl bg-primary text-white text-sm font-bold disabled:opacity-50 inline-flex items-center gap-1.5"
+                >
+                  {commentRuntime.isCommenting ? (
+                    <span className="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full animate-spin" />
+                  ) : (
+                    <span className="material-symbols-outlined text-[16px]">bolt</span>
+                  )}
+                  {commentRuntime.isCommenting ? "Đang bình luận qua Extension..." : "Bắt đầu bình luận qua Extension"}
+                </button>
+                {commentRuntime.isCommenting && commentRuntime.progress ? (
+                  <div className="text-[11px] text-muted-foreground">{commentRuntime.progress.status}</div>
+                ) : null}
+                {commentRuntime.lastError ? (
+                  <div className="rounded-xl border border-red-200 bg-red-50 p-2.5 text-[11px] text-red-700">{commentRuntime.lastError}</div>
+                ) : null}
+                {justCommented ? (
+                  <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-2.5 text-[11px] text-emerald-700 font-semibold flex items-center gap-1.5">
+                    <span className="material-symbols-outlined text-[16px]">check_circle</span>
+                    Đã bình luận thành công — nhiệm vụ này đã tính hoàn thành cho bạn.
+                  </div>
+                ) : null}
+              </>
+            ) : (
+              <button
+                type="button"
+                onClick={async () => {
+                  if (!commentText.trim()) return;
+                  try {
+                    await navigator.clipboard.writeText(commentText);
+                  } catch {}
+                  window.open(post.post_url, "_blank");
+                }}
+                disabled={!commentText.trim()}
+                className="self-start px-4 py-2 rounded-xl bg-primary text-white text-sm font-bold disabled:opacity-50"
+              >
+                Sao chép & Mở bài viết
+              </button>
+            )}
           </div>
 
           {post.author_url && (

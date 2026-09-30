@@ -962,7 +962,14 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
                       userRole={user?.role}
                       seeded={!!post.verify_status && post.verify_status !== "no"}
                       verifyStatus={post.verify_status as "pending" | "yes" | "no"}
-                      onSeeding={() => {}}
+                      onSeeding={() => {
+                        // Nhiem vu binh luan qua Extension trong modal "Lam nhiem vu" vua
+                        // thanh cong - lam moi danh sach de the trang thai/roster cap nhat
+                        // dung ngay (khong doi F5 tay), giong het pattern onCommentDone cua
+                        // SeedingExtensionPanel o tren.
+                        fetchPosts();
+                        fetchStats();
+                      }}
                       onVerify={() => {}}
                       onSchedule={post.platform === "threads" ? undefined : (post) => setScheduleModalPost(post)}
                       onViewDetail={(post) => setDetailModalPost(post)}
