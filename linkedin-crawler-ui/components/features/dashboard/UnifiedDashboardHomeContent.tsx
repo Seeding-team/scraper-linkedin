@@ -26,6 +26,7 @@ import { ScheduledCommentsPanel } from "@/components/all-platform/feed/Scheduled
 import { PostFeedSkeleton } from "@/components/all-platform/feed/PostFeedSkeleton";
 import { GroupManagementContent } from "@/components/all-platform/group-management";
 import { CrawlQueueMonitor } from "@/components/all-platform/crawl-queue-monitor";
+import { SeedingAccountsOverview } from "@/components/all-platform/seeding-accounts-overview";
 import { RotationCrawlPanel } from "@/components/all-platform/components/seeding-extension/rotation-crawl-panel";
 import { allPlatformPostsService, allPlatformCategoriesService, teamsService, socialAccountsService } from "@/services/all-platform.service";
 import type { UnifiedPost, UnifiedStats, Category, FeedPlatform, SocialAccount, PostSeedingRosterData } from "@/types/unified.types";
@@ -203,33 +204,18 @@ function StatCard({
   );
 }
 
-// â”€â”€â”€ Menu doc lap theo mang dich vu (2026-07-04) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-// Yeu cau Thanh: "trong post feed chia làm 2,3 menu độc lập theo từng mảng
-// dịch vụ" (CNTT rieng, luu tru/hotel rieng). Category "industry" hien chi
-// co 4 gia tri (IT & Software, Artificial Intelligence, Finance & Banking,
-// Marketing & Digital) - CHUA co danh muc "luu tru/hotel" nao ca (se rong
-// cho toi khi admin them danh muc + co bai crawl thuoc nhom do). Dung so
-// khop TU KHOA (khong phai danh sach ten co dinh) de tu dong nhan dien danh
-// muc moi duoc them sau nay ma khong can sua code lai.
-type ServiceAreaKey = "all" | "tech" | "hospitality" | "other";
-const SERVICE_AREA_TABS: { key: ServiceAreaKey; label: string; keywords?: string[] }[] = [
-  { key: "all", label: "Tất cả" },
-  { key: "tech", label: "CNTT / Công nghệ", keywords: ["it", "software", "công nghệ", "cong nghe", "ai", "artificial intelligence", "phần mềm", "phan mem", "tech"] },
-  { key: "hospitality", label: "Lưu trú / Hotel", keywords: ["hotel", "khách sạn", "khach san", "lưu trú", "luu tru", "resort", "du lịch", "du lich", "nhà nghỉ", "nha nghi", "homestay"] },
-  { key: "other", label: "Khác" },
-];
+// â”€â”€â”€ Menu doc lap theo TEAM (2026-09-30, sua tu ban cu loc theo mang dich vu) â”€â”€
+// Truoc day loc theo "industry" (CNTT rieng, luu tru/hotel rieng) bang so khop
+// tu khoa mo - doi sang loc THANG theo team that (Team Dev, Team Infra, Team
+// MKT...) dung lai list `teams` (teamsService.getAll(), da fetch san cho
+// FilterBar) va so khop CHINH XAC voi post.team (ten team gan cho bai viet luc
+// crawl), khong con doan/khop tu khoa nua - "cho chuan" dung nghia team that
+// dang co trong he thong, tu dong co tab moi khi admin tao them team.
+type ServiceAreaKey = string; // "all" hoac dung ten team (post.team)
 
-function matchesServiceArea(industry: string | undefined, area: ServiceAreaKey): boolean {
+function matchesServiceArea(team: string | undefined, area: ServiceAreaKey): boolean {
   if (area === "all") return true;
-  const name = (industry || "").toLowerCase();
-  if (area === "other") {
-    // "Khac" = khong khop tech VA khong khop hospitality
-    const techKw = SERVICE_AREA_TABS.find(t => t.key === "tech")?.keywords || [];
-    const hospKw = SERVICE_AREA_TABS.find(t => t.key === "hospitality")?.keywords || [];
-    return !techKw.some(k => name.includes(k)) && !hospKw.some(k => name.includes(k));
-  }
-  const keywords = SERVICE_AREA_TABS.find(t => t.key === area)?.keywords || [];
-  return keywords.some(k => name.includes(k));
+  return (team || "").trim() === area;
 }
 
 // â”€â”€â”€ Main Component â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -245,6 +231,10 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
   // 2 tab sau tái dùng NGUYÊN trang thật đã có sẵn trong sidebar ("Kho nhóm",
   // "Giám sát hàng đợi cào") — không xây lại, tránh 2 nơi hiển thị lệch dữ liệu nhau.
   const [subView, setSubView] = useState<"activity" | "leader" | "library" | "queue">("activity");
+  // 3 tab con trong "Lịch crawl & Hàng đợi" (2026-09-30): "Tài khoản seeding" (mặc định —
+  // bảng thành viên/extension/group/lịch sử cào) / "Lịch cào" (nhiều lịch xoay vòng độc
+  // lập) / "Hàng đợi VPS" (giám sát job đa VPS cào Facebook — trang cũ, không đổi).
+  const [queueSubTab, setQueueSubTab] = useState<"accounts" | "schedule" | "vps">("accounts");
   const [showBulkCommentModal, setShowBulkCommentModal] = useState(false);
 
   const [detailModalPost, setDetailModalPost] = useState<UnifiedPost | null>(null);
@@ -649,8 +639,15 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
   // tai. Neu can loc dung tren toan bo du lieu (khong chi trang dang xem),
   // viec nay nen chuyen xuong backend (them tham so service_area) o phien sau.
   const visiblePosts = useMemo(
-    () => posts.filter(p => matchesServiceArea(p.industry, serviceArea)),
+    () => posts.filter(p => matchesServiceArea(p.team, serviceArea)),
     [posts, serviceArea],
+  );
+
+  // Tab theo team: "Tất cả" + từng team thật đang có trong hệ thống (list `teams`
+  // đã fetch sẵn ở trên cho FilterBar) — tự động có tab mới khi admin tạo thêm team.
+  const serviceAreaTabs = useMemo(
+    () => [{ key: "all", label: "Tất cả" }, ...teams.map((t) => ({ key: t.name, label: t.name }))],
+    [teams],
   );
 
   // Tach rieng khoi khoi tieu de (!hideHeader) - day la CONTROL chuc nang
@@ -908,12 +905,10 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
             />
           )}
 
-          {/* Menu doc lap theo mang dich vu (2026-07-04) — loc theo industry, xem
-              ghi chu SERVICE_AREA_TABS o dau file. Tab "Lưu trú / Hotel" hien se
-              rong vi he thong chua co danh muc nao thuoc mang nay - se tu dong
-              co du lieu khi admin them danh muc + co bai crawl thuoc nhom do. */}
+          {/* Menu độc lập theo TEAM (2026-09-30) — mỗi tab là 1 team thật trong hệ
+              thống, xem ghi chú serviceAreaTabs/matchesServiceArea ở trên. */}
           <div className="flex flex-wrap gap-1.5 rounded-xl border border-border bg-card p-1.5">
-            {SERVICE_AREA_TABS.map((tab) => (
+            {serviceAreaTabs.map((tab) => (
               <button
                 key={tab.key}
                 type="button"
@@ -955,7 +950,7 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
             <div className="py-12 text-center text-muted-foreground">
               {posts.length === 0
                 ? "Không có bài viết nào phù hợp với bộ lọc."
-                : "Không có bài viết nào trong mảng dịch vụ này."}
+                : "Không có bài viết nào của team này."}
             </div>
           ) : (
             <>
@@ -1008,9 +1003,34 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
       {subView === "library" && <GroupManagementContent />}
 
       {subView === "queue" && (
-        <div className="flex flex-col gap-6">
-          <RotationCrawlPanel />
-          <CrawlQueueMonitor />
+        <div className="flex flex-col gap-4">
+          <div className="flex flex-wrap gap-1.5 rounded-xl border border-border bg-card p-1.5">
+            {(
+              [
+                { key: "accounts", label: "Tài khoản seeding" },
+                { key: "schedule", label: "Lịch cào" },
+                { key: "vps", label: "Hàng đợi VPS" },
+              ] as const
+            ).map((tab) => (
+              <button
+                key={tab.key}
+                type="button"
+                onClick={() => setQueueSubTab(tab.key)}
+                className={cn(
+                  "rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors cursor-pointer",
+                  queueSubTab === tab.key
+                    ? "bg-primary text-primary-foreground shadow-sm"
+                    : "text-muted-foreground hover:bg-accent hover:text-foreground",
+                )}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+
+          {queueSubTab === "accounts" && <SeedingAccountsOverview />}
+          {queueSubTab === "schedule" && <RotationCrawlPanel />}
+          {queueSubTab === "vps" && <CrawlQueueMonitor />}
         </div>
       )}
 

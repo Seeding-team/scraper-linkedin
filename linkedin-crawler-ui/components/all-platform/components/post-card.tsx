@@ -1,13 +1,13 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useMemo } from "react";
 import { FaFacebook, FaLinkedin } from "react-icons/fa";
 import { FaThreads } from "react-icons/fa6";
 import { FiExternalLink } from "react-icons/fi";
 import { cn } from "@/lib/utils";
 import type { UnifiedPost, FeedPlatform } from "@/types/unified.types";
-import { useMemo } from "react";
-import { useQuickInboxLibrary, composeQuickInboxMessage } from "./use-quick-inbox-library";
+import { useQuickInboxLibrary, composeQuickInboxMessage, type QuickInboxLibraryEntry } from "./use-quick-inbox-library";
+import { useQuickCommentLibrary } from "./use-quick-comment-library";
 
 interface PostCardProps {
   post: UnifiedPost;
@@ -34,21 +34,11 @@ function PlatformIcon({ platform }: { platform: FeedPlatform }) {
 }
 
 export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onViewDetail, onDelete, onViewSeedingRoster, seeded, verifyStatus }: PostCardProps) {
-  const [isInboxOpen, setIsInboxOpen] = useState(false);
   const [showAllCrawledComments, setShowAllCrawledComments] = useState(false);
-  const inboxRef = useRef<HTMLDivElement>(null);
+  const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
+  const [isMoreMenuOpen, setIsMoreMenuOpen] = useState(false);
   const crawledComments = (post.comments_detail || []).filter((c) => c && (c.content || c.author_name));
   const visibleCrawledComments = showAllCrawledComments ? crawledComments : crawledComments.slice(0, 2);
-
-  useEffect(() => {
-    function handleClickOutside(event: MouseEvent) {
-      if (inboxRef.current && !inboxRef.current.contains(event.target as Node)) {
-        setIsInboxOpen(false);
-      }
-    }
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, []);
 
   const handleView = () => {
     if (onViewDetail) {
@@ -271,34 +261,7 @@ export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onVi
           </div>
 
           <div className="flex items-center gap-2">
-            {(userRole === "admin" || userRole === "leader") && onViewSeedingRoster && post.id && (
-              <button
-                type="button"
-                onClick={() => onViewSeedingRoster(post)}
-                className="px-3 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded-lg text-sm font-semibold transition shadow-sm cursor-pointer"
-                aria-label="Xem seeding theo team"
-              >
-                👥 Xem seeding theo team
-              </button>
-            )}
-
-            {(userRole === "admin" || userRole === "leader") && onDelete && post.id && (
-              <button
-                type="button"
-                onClick={() => {
-                  const ok = window.confirm(`Xóa bài viết này?\n\n${post.group_name || "(không có nhóm)"}`);
-                  if (!ok) return;
-                  void onDelete(post);
-                }}
-                className="px-3 py-2 bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 rounded-lg text-sm font-semibold transition shadow-sm cursor-pointer"
-                aria-label="Xóa bài viết"
-              >
-                Xóa
-              </button>
-            )}
-
             {(verifyStatus === "yes" || verifyStatus === "pending") && isRejected(post.link_comment) ? (
-
               <span className="px-2.5 py-1 rounded-md text-[11px] font-bold border bg-red-100 text-red-700 border-red-200">
                 X Bị từ chối
               </span>
@@ -312,84 +275,270 @@ export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onVi
               </span>
             )}
 
-
-
-            <button
-              type="button"
-              onClick={handleView}
-              className="px-4 py-2 bg-card border border-primary text-primary hover:bg-primary hover:text-primary-foreground rounded-lg text-sm font-semibold transition shadow-sm cursor-pointer"
-            >
-              Xem chi tiết
-            </button>
-
-            {onSchedule && (
+            {/* Nut xem roster: nhan/label theo role — admin xem toan bo team, leader chi
+                xem duoc team/member cua minh (backend tu loc), member khong thay nut nay. */}
+            {userRole !== "member" && onViewSeedingRoster && post.id && (
               <button
                 type="button"
-                onClick={() => onSchedule(post)}
-                className="px-3 py-2 bg-card border border-amber-300 text-amber-600 hover:bg-amber-50 rounded-lg text-sm font-semibold transition shadow-sm cursor-pointer"
+                onClick={() => onViewSeedingRoster(post)}
+                className="px-3 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded-lg text-sm font-semibold transition shadow-sm cursor-pointer"
+                aria-label={userRole === "admin" ? "Xem seeding theo team" : "Xem seeding theo member"}
               >
-                Lên lịch
+                {userRole === "admin" ? "👥 Xem seeding theo team" : "👤 Xem seeding theo member"}
               </button>
             )}
 
+            <button
+              type="button"
+              onClick={() => setIsTaskModalOpen(true)}
+              className="px-3 py-2 bg-primary hover:bg-primary/90 text-primary-foreground rounded-lg text-sm font-semibold transition shadow-sm cursor-pointer"
+            >
+              📋 Làm nhiệm vụ
+            </button>
 
-
-            {/* Inbox ngay */}
-            {post.author_url && (
-              <div className="relative" ref={inboxRef}>
-                <button
-                  type="button"
-                  onClick={() => setIsInboxOpen(!isInboxOpen)}
-                  className="px-3 py-2 bg-primary hover:bg-primary/90 text-primary-foreground rounded-lg text-sm font-semibold transition shadow-sm cursor-pointer flex items-center gap-1"
-                >
-                  Inbox ngay <span className="text-[9px]">▼</span>
-                </button>
-                {isInboxOpen && (
-                  <div className="absolute bottom-full mb-2 right-0 w-[320px] bg-popover border border-border rounded-lg shadow-xl z-50 py-1 overflow-hidden">
-                    <div className="px-3 py-2 text-sm font-semibold text-popover-foreground border-b border-border flex items-center justify-between bg-muted">
-                      <span>Chọn mẫu câu</span>
-                      <span className="text-[10px] font-bold text-primary bg-primary/10 border border-primary/20 px-1.5 py-0.5 rounded">Tự chèn bài khách + Copy</span>
-                    </div>
-                    <div className="max-h-[320px] overflow-y-auto custom-scrollbar">
-                      {inboxGroups.map((group, gIdx) => (
-                        <div key={gIdx}>
-                          <div className="px-3 py-2 text-[10px] font-bold text-muted-foreground bg-muted sticky top-0 border-b border-border backdrop-blur-sm z-10">
-                            {group.category}
-                          </div>
-                          {group.templates.map((template, tIdx) => (
-                            <button
-                              key={template.id || tIdx}
-                              className="w-full text-left px-3 py-3 hover:bg-primary/5 group/item transition border-b border-border last:border-0"
-                              onClick={() => {
-                                const message = composeQuickInboxMessage(template, post.content);
-                                navigator.clipboard.writeText(message).then(() => {
-                                  setIsInboxOpen(false);
-                                  const targetUrl = post.author_url || post.post_url;
-                                  window.open(targetUrl, '_blank');
-                                }).catch(() => {
-                                  setIsInboxOpen(false);
-                                  window.open(post.author_url || post.post_url, '_blank');
-                                });
-                              }}
-                            >
-                              <div className="font-bold text-[11px] text-popover-foreground group-hover/item:text-primary mb-1 transition-colors leading-tight">
-                                {template.title}
-                              </div>
-                              <div className="text-[10px] text-muted-foreground line-clamp-2 leading-relaxed opacity-90">
-                                {composeQuickInboxMessage(template, post.content)}
-                              </div>
-                            </button>
-                          ))}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
+            {/* Cac hanh dong it dung hon (Xem chi tiet / Len lich / Xoa) gom vao 1 modal
+                rieng, mo qua nut 3 cham - giu footer gon, chi con 3 nut chinh o tren. */}
+            <button
+              type="button"
+              onClick={() => setIsMoreMenuOpen(true)}
+              className="px-2.5 py-2 bg-card border border-border text-muted-foreground hover:bg-muted rounded-lg transition shadow-sm cursor-pointer"
+              aria-label="Tùy chọn khác"
+              title="Tùy chọn khác"
+            >
+              <span className="material-symbols-outlined text-[18px] leading-none block">more_horiz</span>
+            </button>
           </div>
         </div>
 
+      </div>
+
+      {isTaskModalOpen && <TaskModal post={post} onClose={() => setIsTaskModalOpen(false)} />}
+
+      {isMoreMenuOpen && (
+        <MoreActionsModal
+          post={post}
+          onClose={() => setIsMoreMenuOpen(false)}
+          onViewDetail={handleView}
+          onSchedule={onSchedule}
+          onDelete={(userRole === "admin" || userRole === "leader") ? onDelete : undefined}
+        />
+      )}
+    </div>
+  );
+}
+
+function TaskModal({ post, onClose }: { post: UnifiedPost; onClose: () => void }) {
+  const commentPlatform = post.platform === "facebook" || post.platform === "linkedin" ? post.platform : undefined;
+  const { libraryItems: commentTemplates } = useQuickCommentLibrary(commentPlatform);
+  const [commentText, setCommentText] = useState("");
+  const [copiedComment, setCopiedComment] = useState(false);
+  const [copiedInboxId, setCopiedInboxId] = useState<string | null>(null);
+
+  const { libraryItems, fallbackItems } = useQuickInboxLibrary();
+  const inboxGroups = useMemo(() => {
+    const templates = libraryItems.length > 0 ? libraryItems : fallbackItems;
+    const groups = new Map<string, { category: string; templates: QuickInboxLibraryEntry[] }>();
+    templates.forEach((item) => {
+      const category = item.label || "Khác";
+      if (!groups.has(category)) groups.set(category, { category, templates: [] });
+      groups.get(category)!.templates.push(item);
+    });
+    return Array.from(groups.values());
+  }, [fallbackItems, libraryItems]);
+
+  const platformLabel = post.platform === "facebook" ? "Facebook" : post.platform === "linkedin" ? "LinkedIn" : "Threads";
+
+  const handleCopyComment = async () => {
+    if (!commentText.trim()) return;
+    try {
+      await navigator.clipboard.writeText(commentText);
+    } catch {}
+    setCopiedComment(true);
+    window.open(post.post_url, "_blank");
+  };
+
+  const handleCopyInbox = async (template: QuickInboxLibraryEntry) => {
+    const message = composeQuickInboxMessage(template, post.content);
+    try {
+      await navigator.clipboard.writeText(message);
+    } catch {}
+    setCopiedInboxId(template.id);
+    window.open(post.author_url || post.post_url, "_blank");
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-card rounded-2xl border border-border shadow-xl w-full max-w-2xl max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+        <div className="p-4 border-b border-border flex items-center justify-between sticky top-0 bg-card z-10">
+          <h3 className="font-bold text-base text-foreground flex items-center gap-2">
+            <span className="material-symbols-outlined text-primary">task_alt</span>
+            Nhiệm vụ của bạn với bài viết này
+          </h3>
+          <button type="button" onClick={onClose} className="p-1.5 rounded-lg hover:bg-muted">
+            <span className="material-symbols-outlined text-[18px]">close</span>
+          </button>
+        </div>
+
+        <div className="p-4 flex flex-col gap-4">
+          <div className="rounded-xl border border-border bg-muted/40 p-3">
+            <div className="text-xs font-bold text-muted-foreground mb-1">{post.group_name || "Bài viết"}</div>
+            <p className="text-sm text-foreground line-clamp-3">{post.content || "(không có nội dung văn bản)"}</p>
+          </div>
+
+          <div className="rounded-xl border border-primary/20 bg-primary/5 p-3 text-xs text-foreground leading-relaxed">
+            <b>Việc cần làm:</b> Bình luận (comment) theo mẫu bên dưới trên bài viết, và/hoặc nhắn tin (inbox) mời chào tới
+            người đăng bài — chọn 1 mẫu, hệ thống tự sao chép nội dung, bạn chỉ cần dán (Ctrl+V) vào ô bình luận/tin nhắn thật
+            trên {platformLabel}.
+          </div>
+
+          <div className="flex flex-col gap-2">
+            <label className="text-sm font-bold text-foreground">1. Bình luận trên bài viết</label>
+            {commentTemplates.length > 0 && (
+              <div className="flex flex-wrap gap-1.5">
+                {commentTemplates.slice(0, 8).map((t) => (
+                  <button
+                    key={t.id}
+                    type="button"
+                    onClick={() => {
+                      setCommentText(t.content);
+                      setCopiedComment(false);
+                    }}
+                    className="px-2.5 py-1 rounded-full border border-border text-[11px] font-semibold text-muted-foreground hover:border-primary hover:text-primary transition"
+                  >
+                    {t.title}
+                  </button>
+                ))}
+              </div>
+            )}
+            <textarea
+              rows={3}
+              value={commentText}
+              onChange={(e) => {
+                setCommentText(e.target.value);
+                setCopiedComment(false);
+              }}
+              placeholder="Chọn mẫu ở trên hoặc tự soạn nội dung bình luận..."
+              className="w-full rounded-xl border border-border bg-background p-2.5 text-sm outline-none focus:border-primary resize-y"
+            />
+            <button
+              type="button"
+              onClick={handleCopyComment}
+              disabled={!commentText.trim()}
+              className="self-start px-4 py-2 rounded-xl bg-primary text-white text-sm font-bold disabled:opacity-50"
+            >
+              {copiedComment ? "✓ Đã copy — dán vào bình luận trên tab vừa mở" : "Sao chép & Mở bài viết"}
+            </button>
+          </div>
+
+          {post.author_url && (
+            <div className="flex flex-col gap-2 border-t border-border pt-4">
+              <label className="text-sm font-bold text-foreground">2. Nhắn tin (Inbox) cho người đăng bài</label>
+              <div className="flex flex-col gap-2 max-h-[260px] overflow-y-auto pr-1">
+                {inboxGroups.map((group, gIdx) => (
+                  <div key={gIdx} className="flex flex-col gap-1">
+                    <div className="text-[10px] font-bold text-muted-foreground uppercase">{group.category}</div>
+                    {group.templates.map((template) => (
+                      <button
+                        key={template.id}
+                        type="button"
+                        onClick={() => void handleCopyInbox(template)}
+                        className="text-left px-3 py-2 rounded-xl border border-border hover:border-primary hover:bg-primary/5 transition"
+                      >
+                        <div className="text-xs font-bold text-foreground">
+                          {template.title}
+                          {copiedInboxId === template.id ? <span className="text-emerald-600"> · ✓ Đã copy — dán vào tin nhắn trên tab vừa mở</span> : null}
+                        </div>
+                        <div className="text-[11px] text-muted-foreground line-clamp-2">{composeQuickInboxMessage(template, post.content)}</div>
+                      </button>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <label className="flex items-start gap-2 text-xs text-foreground border-t border-border pt-4 cursor-pointer">
+            <input type="checkbox" className="mt-0.5 rounded border-border" />
+            <span>Tôi đã hiểu nhiệm vụ cần làm với bài viết này (bình luận và/hoặc inbox mời chào).</span>
+          </label>
+          <button
+            type="button"
+            onClick={onClose}
+            className="self-end px-5 py-2 rounded-xl border border-border text-sm font-bold text-muted-foreground hover:bg-muted"
+          >
+            Đóng
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MoreActionsModal({
+  post,
+  onClose,
+  onViewDetail,
+  onSchedule,
+  onDelete,
+}: {
+  post: UnifiedPost;
+  onClose: () => void;
+  onViewDetail: () => void;
+  onSchedule?: (post: UnifiedPost) => void;
+  onDelete?: (post: UnifiedPost) => void | Promise<void>;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-card rounded-2xl border border-border shadow-xl w-full max-w-sm" onClick={(e) => e.stopPropagation()}>
+        <div className="p-4 border-b border-border flex items-center justify-between">
+          <h3 className="font-bold text-base text-foreground">Tùy chọn khác</h3>
+          <button type="button" onClick={onClose} className="p-1.5 rounded-lg hover:bg-muted">
+            <span className="material-symbols-outlined text-[18px]">close</span>
+          </button>
+        </div>
+        <div className="p-3 flex flex-col gap-1">
+          <button
+            type="button"
+            onClick={() => {
+              onClose();
+              onViewDetail();
+            }}
+            className="text-left px-3 py-2.5 rounded-xl hover:bg-muted flex items-center gap-2 text-sm font-semibold text-foreground"
+          >
+            <span className="material-symbols-outlined text-[18px] text-primary">visibility</span>
+            Xem chi tiết
+          </button>
+
+          {onSchedule && (
+            <button
+              type="button"
+              onClick={() => {
+                onClose();
+                onSchedule(post);
+              }}
+              className="text-left px-3 py-2.5 rounded-xl hover:bg-muted flex items-center gap-2 text-sm font-semibold text-foreground"
+            >
+              <span className="material-symbols-outlined text-[18px] text-amber-600">schedule</span>
+              Lên lịch
+            </button>
+          )}
+
+          {onDelete && post.id && (
+            <button
+              type="button"
+              onClick={() => {
+                const ok = window.confirm(`Xóa bài viết này?\n\n${post.group_name || "(không có nhóm)"}`);
+                if (!ok) return;
+                onClose();
+                void onDelete(post);
+              }}
+              className="text-left px-3 py-2.5 rounded-xl hover:bg-red-50 flex items-center gap-2 text-sm font-semibold text-red-600"
+            >
+              <span className="material-symbols-outlined text-[18px]">delete</span>
+              Xóa bài viết
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );

@@ -1338,3 +1338,147 @@ def get_teams_seeding_efficiency(email: str) -> dict:
 
     result_teams.sort(key=lambda x: x["total_verified_today"], reverse=True)
     return {"role": role, "teams": result_teams}
+
+
+def _resolve_overview_scope(sb, email: str) -> tuple[str, list[dict]]:
+    """Dùng chung cho get_member_seeding_overview/get_member_crawl_history — admin thấy
+    mọi thành viên active, leader chỉ thấy team mình quản lý (+ chính mình)."""
+    user_res = sb.table("app_users").select("id, role").eq("email", (email or "").strip().lower()).limit(1).execute()
+    if not user_res.data:
+        return "member", []
+    caller_id = user_res.data[0]["id"]
+    role = user_res.data[0].get("role", "member")
+    if role not in ("admin", "leader"):
+        return role, []
+    if role == "admin":
+        members = sb.table("app_users").select("id, name, email").eq("is_active", True).execute().data or []
+        return role, members
+    teams_res = sb.table("teams").select("id").eq("id_leader", caller_id).execute()
+    team_ids = [t["id"] for t in (teams_res.data or [])]
+    member_ids_set = {caller_id}
+    if team_ids:
+        mot_res = sb.table("member_of_teams").select("id_member").in_("id_teams", team_ids).execute()
+        member_ids_set.update(m["id_member"] for m in (mot_res.data or []) if m.get("id_member"))
+    members = sb.table("app_users").select("id, name, email").in_("id", list(member_ids_set)).execute().data or []
+    return role, members
+
+
+def get_member_seeding_overview(email: str) -> dict:
+    """Tab phụ "Tài khoản seeding" (Lịch crawl & Hàng đợi) — bảng tổng quan theo từng
+    thành viên: số nhóm Facebook/LinkedIn đang sở hữu, đã kết nối Telegram Chat chưa,
+    tổng số bài đã cào (Facebook — xem ghi chú bên dưới) + lần cào gần nhất. RBAC giống
+    get_teams_seeding_efficiency: admin thấy toàn bộ, leader chỉ thấy team mình quản lý,
+    member không thấy gì (dùng cho quản lý, không phải trang cá nhân của member).
+    """
+    sb = _supabase()
+    role, members = _resolve_overview_scope(sb, email)
+    if role not in ("admin", "leader") or not members:
+        return {"role": role, "accounts": []}
+
+    member_ids = [m["id"] for m in members]
+    fb_groups = sb.table("facebook_groups").select("id, id_member").in_("id_member", member_ids).execute().data or []
+    li_groups = sb.table("linkedin_groups").select("id, id_member").in_("id_member", member_ids).execute().data or []
+    tg_accounts = (
+        sb.table("telegram_accounts")
+        .select("id_member")
+        .in_("id_member", member_ids)
+        .eq("status", "connected")
+        .execute()
+        .data
+        or []
+    )
+    # facebook_posts.id_member co truc tiep tren bang; linkedin_posts KHONG co (phai
+    # join qua linkedin_groups.id_member) - gioi han "lich su cao"/"tong bai cao" o day
+    # trong Facebook de tranh 1 vong join N+1 phuc tap, van du de biet ai dang thuc su
+    # cao (extension FB la kenh cao chinh cua tab nay).
+    fb_posts = (
+        sb.table("facebook_posts")
+        .select("id_member, crawl_date")
+        .in_("id_member", member_ids)
+        .order("crawl_date", desc=True)
+        .limit(5000)
+        .execute()
+        .data
+        or []
+    )
+
+    fb_group_count: dict[str, int] = {}
+    for g in fb_groups:
+        mid = g.get("id_member")
+        if mid:
+            fb_group_count[mid] = fb_group_count.get(mid, 0) + 1
+    li_group_count: dict[str, int] = {}
+    for g in li_groups:
+        mid = g.get("id_member")
+        if mid:
+            li_group_count[mid] = li_group_count.get(mid, 0) + 1
+    tg_connected = {a["id_member"] for a in tg_accounts if a.get("id_member")}
+    post_count: dict[str, int] = {}
+    last_crawled: dict[str, str] = {}
+    for p in fb_posts:
+        mid = p.get("id_member")
+        if not mid:
+            continue
+        post_count[mid] = post_count.get(mid, 0) + 1
+        d = p.get("crawl_date")
+        if d and (mid not in last_crawled or d > last_crawled[mid]):
+            last_crawled[mid] = d
+
+    accounts = []
+    for m in members:
+        mid = m["id"]
+        accounts.append(
+            {
+                "id_member": mid,
+                "name": m.get("name") or (m.get("email") or "").split("@")[0] or "Thành viên",
+                "email": m.get("email"),
+                "fb_groups": fb_group_count.get(mid, 0),
+                "li_groups": li_group_count.get(mid, 0),
+                "telegram_connected": mid in tg_connected,
+                "total_fb_posts_crawled": post_count.get(mid, 0),
+                "last_crawled_at": last_crawled.get(mid),
+            }
+        )
+    accounts.sort(key=lambda a: (-a["total_fb_posts_crawled"], a["name"]))
+    return {"role": role, "accounts": accounts}
+
+
+def get_member_crawl_history(email: str, id_member: str, limit: int = 30) -> dict:
+    """Chi tiết lịch sử cào của 1 thành viên — mở khi bấm vào 1 hàng trong bảng "Tài
+    khoản seeding" (giống style bấm vào 1 lead ở CRM). Chỉ Facebook, xem ghi chú ở
+    get_member_seeding_overview. Raise PermissionError nếu người gọi không có quyền
+    xem thành viên này (router bắt lỗi này trả về 403)."""
+    sb = _supabase()
+    role, members = _resolve_overview_scope(sb, email)
+    allowed_ids = {m["id"] for m in members}
+    if role not in ("admin", "leader") or id_member not in allowed_ids:
+        raise PermissionError("Không có quyền xem thành viên này.")
+
+    groups = (
+        sb.table("facebook_groups").select("id, group_name").eq("id_member", id_member).order("group_name").execute().data
+        or []
+    )
+    posts = (
+        sb.table("facebook_posts")
+        .select("id, content, crawl_date, group_id")
+        .eq("id_member", id_member)
+        .order("crawl_date", desc=True)
+        .limit(limit)
+        .execute()
+        .data
+        or []
+    )
+    group_name_map = {g["id"]: g.get("group_name") for g in groups}
+    history = [
+        {
+            "id": p.get("id"),
+            "group_name": group_name_map.get(p.get("group_id")) or "Không rõ nhóm",
+            "content": (p.get("content") or "")[:200],
+            "crawl_date": p.get("crawl_date"),
+        }
+        for p in posts
+    ]
+    return {
+        "groups": [{"id": g["id"], "name": g.get("group_name") or "Không tên"} for g in groups],
+        "history": history,
+    }

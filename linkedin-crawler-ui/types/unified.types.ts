@@ -299,6 +299,34 @@ export interface TeamsSeedingEfficiencyData {
   teams: TeamSeedingEfficiency[];
 }
 
+export interface MemberSeedingAccount {
+  id_member: string;
+  name: string;
+  email: string;
+  fb_groups: number;
+  li_groups: number;
+  telegram_connected: boolean;
+  total_fb_posts_crawled: number;
+  last_crawled_at: string | null;
+}
+
+export interface MemberSeedingOverviewData {
+  role: string;
+  accounts: MemberSeedingAccount[];
+}
+
+export interface MemberCrawlHistoryItem {
+  id: string;
+  group_name: string;
+  content: string;
+  crawl_date: string | null;
+}
+
+export interface MemberCrawlHistoryData {
+  groups: { id: string; name: string }[];
+  history: MemberCrawlHistoryItem[];
+}
+
 export interface MemberOnlinePresence {
   id_member: string;
   name: string;

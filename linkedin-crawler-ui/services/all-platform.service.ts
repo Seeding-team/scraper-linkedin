@@ -27,6 +27,8 @@ import type {
   InternalEngagementTeamTotalsData,
   PostSeedingRosterData,
   TeamsSeedingEfficiencyData,
+  MemberSeedingOverviewData,
+  MemberCrawlHistoryData,
   OnlineSummaryData,
 } from "@/types/unified.types";
 import { API_BASE_URL, API_KEY } from "@/lib/env";
@@ -1325,6 +1327,23 @@ export const allPlatformPostsService = {
     return requestJson(`${BASE}/unified/teams/seeding-efficiency`, {
       method: "POST",
       body: JSON.stringify({ email, platform: "all" }),
+    });
+  },
+
+  /** Tab phụ "Tài khoản seeding" (Lịch crawl & Hàng đợi) — admin thấy mọi thành viên,
+   * leader chỉ thấy team mình quản lý. */
+  getMemberSeedingOverview: (email: string): Promise<ApiResponse<MemberSeedingOverviewData>> => {
+    return requestJson(`${BASE}/unified/members/seeding-overview`, {
+      method: "POST",
+      body: JSON.stringify({ email, platform: "all" }),
+    });
+  },
+
+  /** Chi tiết lịch sử cào của 1 thành viên (bấm vào 1 hàng trong bảng "Tài khoản seeding"). */
+  getMemberCrawlHistory: (email: string, idMember: string): Promise<ApiResponse<MemberCrawlHistoryData>> => {
+    return requestJson(`${BASE}/unified/members/crawl-history`, {
+      method: "POST",
+      body: JSON.stringify({ email, id_member: idMember }),
     });
   },
 };
