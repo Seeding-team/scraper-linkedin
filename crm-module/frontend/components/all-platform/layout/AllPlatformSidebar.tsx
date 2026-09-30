@@ -208,6 +208,14 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, _workspaceTab?
             },
             {
               type: "item",
+              id: "telegram-chat",
+              href: "/all-platform/telegram-chat",
+              icon: "send",
+              label: "Telegram Chat",
+              matchStartsWith: ["/all-platform/telegram-chat"],
+            },
+            {
+              type: "item",
               id: "zalo-inbox-admin",
               href: "/all-platform/zalo-inbox",
               icon: "verified_user",

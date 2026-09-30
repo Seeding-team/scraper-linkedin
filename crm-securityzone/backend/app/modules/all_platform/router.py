@@ -147,3 +147,16 @@ all_platform_router.include_router(zalo_events_router, prefix="/zalo", tags=["Za
 all_platform_router.include_router(zalo_listener_router, prefix="/zalo", tags=["Zalo Listener"])
 all_platform_router.include_router(zalo_inbox_share_router, prefix="/zalo", tags=["Zalo Inbox Share"])
 all_platform_router.include_router(zalo_maintenance_router, prefix="/zalo", tags=["Zalo Maintenance"])
+
+# ── Telegram Chat (Telethon) ────────────────────────────────────────────────────
+from app.modules.all_platform.telegram.api.routes.auth import router as telegram_auth_router
+from app.modules.all_platform.telegram.api.routes.accounts import router as telegram_accounts_router
+from app.modules.all_platform.telegram.api.routes.conversations import router as telegram_conversations_router
+from app.modules.all_platform.telegram.api.routes.messages import router as telegram_messages_router
+from app.modules.all_platform.telegram.api.routes.events import router as telegram_events_router
+
+all_platform_router.include_router(telegram_auth_router, prefix="/telegram", tags=["Telegram Auth"])
+all_platform_router.include_router(telegram_accounts_router, prefix="/telegram", tags=["Telegram Accounts"])
+all_platform_router.include_router(telegram_conversations_router, prefix="/telegram", tags=["Telegram Conversations"])
+all_platform_router.include_router(telegram_messages_router, prefix="/telegram", tags=["Telegram Messages"])
+all_platform_router.include_router(telegram_events_router, prefix="/telegram", tags=["Telegram Events"])
