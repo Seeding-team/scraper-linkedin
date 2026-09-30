@@ -4,6 +4,14 @@ import { useState } from "react";
 import { cn } from "@/lib/utils";
 import { telegramService } from "@/services/telegramService";
 
+/** Số điện thoại VN người dùng hay quen gõ dạng nội địa (0901234567), quên mã quốc gia
+ * -> tự bỏ số 0 đầu và thêm +84 để Telethon nhận đúng định dạng quốc tế bắt buộc. */
+function normalizeVietnamesePhone(value: string): string {
+  const compact = value.replace(/[\s().-]/g, "");
+  if (compact.startsWith("0")) return "+84" + compact.slice(1);
+  return compact;
+}
+
 export function TelegramConnectFlow({ onDone, onCancel }: { onDone: (accountId: string) => void; onCancel?: () => void }) {
   const [mode, setMode] = useState<"phone" | "bot">("phone");
   const [step, setStep] = useState<"phone" | "code" | "password">("phone");
@@ -27,7 +35,7 @@ export function TelegramConnectFlow({ onDone, onCancel }: { onDone: (accountId: 
   const handleSendCode = async () => {
     setBusy(true);
     setError(null);
-    const res = await telegramService.sendCode(phone.trim());
+    const res = await telegramService.sendCode(normalizeVietnamesePhone(phone));
     setBusy(false);
     if (!res.success || !res.data) {
       setError(res.message || "Không gửi được mã xác thực.");
@@ -131,12 +139,12 @@ export function TelegramConnectFlow({ onDone, onCancel }: { onDone: (accountId: 
         <div className="flex flex-col gap-3">
           {step === "phone" ? (
             <>
-              <label className="text-xs font-bold text-foreground">Số điện thoại (kèm mã quốc gia, VD +84...)</label>
+              <label className="text-xs font-bold text-foreground">Số điện thoại (tự thêm +84 nếu quên mã quốc gia)</label>
               <input
                 type="text"
                 value={phone}
-                onChange={(e) => setPhone(e.target.value)}
-                placeholder="+84901234567"
+                onChange={(e) => setPhone(normalizeVietnamesePhone(e.target.value))}
+                placeholder="+84901234567 hoặc 0901234567"
                 className="w-full rounded-xl border border-border bg-background px-3 py-2.5 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
               />
               <button
