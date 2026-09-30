@@ -45,7 +45,7 @@ export function TelegramChatFullScreen({ accountId }: { accountId: string }) {
 
   if (loadingAccount) {
     return (
-      <div className="h-full w-full flex items-center justify-center">
+      <div className="h-[calc(100vh-3rem)] w-full flex items-center justify-center overflow-hidden">
         <div className="w-8 h-8 border-4 border-border border-t-primary rounded-full animate-spin" />
       </div>
     );
@@ -53,7 +53,7 @@ export function TelegramChatFullScreen({ accountId }: { accountId: string }) {
 
   if (notFound || !account) {
     return (
-      <div className="h-full w-full flex flex-col items-center justify-center gap-3 text-center px-6">
+      <div className="h-[calc(100vh-3rem)] w-full flex flex-col items-center justify-center gap-3 text-center px-6 overflow-hidden">
         <span className="material-symbols-outlined text-[40px] text-muted-foreground">error</span>
         <p className="text-sm text-muted-foreground">Không tìm thấy tài khoản Telegram này hoặc bạn không có quyền truy cập.</p>
         <button
@@ -131,9 +131,9 @@ function ConnectedChat({ account, onBack }: { account: TelegramAccount; onBack: 
   const selectedDialog = dialogs.find((d) => d.dialog_id === selectedDialogId) || null;
 
   return (
-    <div className="h-full w-full flex bg-muted/20">
+    <div className="h-[calc(100vh-3rem)] w-full flex bg-muted/20 overflow-hidden">
       {/* ── Panel hội thoại ── */}
-      <div className="w-[300px] shrink-0 border-r border-border flex flex-col h-full min-h-0 bg-card">
+      <div className="w-[300px] shrink-0 border-r border-border flex flex-col h-full min-h-0 overflow-hidden bg-card">
         <div className="p-3 border-b border-border flex items-center gap-2 shrink-0">
           <button type="button" onClick={onBack} className="p-1.5 rounded-xl hover:bg-muted shrink-0" title="Quay lại danh sách tài khoản">
             <span className="material-symbols-outlined text-[20px] text-muted-foreground">arrow_back</span>
@@ -204,7 +204,7 @@ function ConnectedChat({ account, onBack }: { account: TelegramAccount; onBack: 
       </div>
 
       {/* ── Panel tin nhắn ── */}
-      <div className="flex-1 min-w-0 h-full min-h-0 flex flex-col">
+      <div className="flex-1 min-w-0 h-full min-h-0 flex flex-col overflow-hidden">
         {selectedDialog ? (
           <MessageThread key={selectedDialog.dialog_id} account={account} dialog={selectedDialog} refreshTick={messageRefreshTick} />
         ) : (
@@ -300,7 +300,7 @@ function MessageThread({ account, dialog, refreshTick }: { account: TelegramAcco
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto min-h-0 p-4 flex flex-col gap-2.5 bg-[radial-gradient(circle_at_1px_1px,theme(colors.border)_1px,transparent_0)] [background-size:22px_22px] bg-muted/10">
+      <div className="flex-1 overflow-y-auto min-h-0 p-4 flex flex-col gap-2.5 bg-muted/10">
         {loading ? (
           <div className="flex-1 flex items-center justify-center text-xs text-muted-foreground">Đang tải tin nhắn...</div>
         ) : messages.length === 0 ? (
