@@ -227,6 +227,7 @@ function MessageThread({ account, dialog, refreshTick }: { account: TelegramAcco
   const [sending, setSending] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
 
   const load = useCallback(async () => {
     // Gioi han 30 (thay vi 50+) cho lan mo dau tien de tra ve nhanh hon - lich su cu
@@ -266,15 +267,36 @@ function MessageThread({ account, dialog, refreshTick }: { account: TelegramAcco
     setSending(false);
   };
 
-  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    e.target.value = "";
-    if (!file) return;
+  const sendFile = async (file: File) => {
     setSending(true);
     const res = await telegramService.sendMedia(account.id, dialog.dialog_id, file, { replyTo: replyTo?.message_id });
     if (res.success && res.data) setMessages((prev) => [...prev, res.data!]);
     setReplyTo(null);
     setSending(false);
+  };
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    await sendFile(file);
+  };
+
+  // Dan anh (Ctrl+V) tu clipboard vao o soan tin nhan -> gui NGAY, khong can bam nut
+  // gui hay xac nhan them (giong Telegram/Zalo web) - ngan khong cho ky tu anh linh
+  // tinh rot vao textarea nhu van ban thong thuong.
+  const handlePaste = async (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const items = e.clipboardData?.items;
+    if (!items || sending) return;
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      if (item.type.startsWith("image/")) {
+        e.preventDefault();
+        const file = item.getAsFile();
+        if (file) await sendFile(file);
+        return;
+      }
+    }
   };
 
   const handleDelete = async (m: TelegramMessage) => {
@@ -404,13 +426,25 @@ function MessageThread({ account, dialog, refreshTick }: { account: TelegramAcco
       ) : null}
 
       <div className="p-3 border-t border-border bg-card flex items-end gap-2 shrink-0">
+        {/* accept="image/*" -> tren mobile trinh duyet mo thang Kho anh/Camera (giong
+            Telegram chon anh), KHONG mo trinh chon file/thu muc chung chung. */}
+        <input ref={imageInputRef} type="file" accept="image/*" className="hidden" onChange={handleFileChange} />
         <input ref={fileInputRef} type="file" className="hidden" onChange={handleFileChange} />
+        <button
+          type="button"
+          onClick={() => imageInputRef.current?.click()}
+          disabled={sending}
+          className="p-2.5 rounded-xl hover:bg-muted shrink-0"
+          title="Gửi ảnh (kho ảnh)"
+        >
+          <span className="material-symbols-outlined text-[20px] text-muted-foreground">image</span>
+        </button>
         <button
           type="button"
           onClick={() => fileInputRef.current?.click()}
           disabled={sending}
           className="p-2.5 rounded-xl hover:bg-muted shrink-0"
-          title="Gửi ảnh/tệp"
+          title="Gửi tệp"
         >
           <span className="material-symbols-outlined text-[20px] text-muted-foreground">attach_file</span>
         </button>
@@ -424,7 +458,8 @@ function MessageThread({ account, dialog, refreshTick }: { account: TelegramAcco
               handleSend();
             }
           }}
-          placeholder="Nhập tin nhắn..."
+          onPaste={handlePaste}
+          placeholder="Nhập tin nhắn... (dán ảnh để gửi ngay)"
           className="flex-1 resize-none rounded-2xl border border-border bg-background px-4 py-2.5 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 max-h-28"
         />
         <button
