@@ -116,6 +116,23 @@ async def lifespan(_: FastAPI):
     else:
         zca_listeners_task = asyncio.create_task(_start_zca_listeners_background())
 
+    # ── Auto-start lại các Telegram client (Telethon) đã connected trước khi BE
+    # restart — cùng lý do với ZCA listeners ở trên (không có hook này thì mất realtime
+    # cho tới khi ai đó chủ động mở lại trang Telegram Chat).
+    async def _start_telegram_clients_background() -> None:
+        try:
+            from app.modules.all_platform.telegram.services.client_manager import start_persisted_clients
+            await start_persisted_clients()
+            logger.info("Telegram persistent clients auto-start finished")
+        except Exception:
+            logger.exception("Telegram persistent clients auto-start failed — sẽ thử lại khi user kết nối lại")
+
+    telegram_clients_task: asyncio.Task[None] | None = None
+    if _os.getenv("DISABLE_TELEGRAM_LISTENERS", "").strip().lower() in {"1", "true", "yes"}:
+        logger.warning("DISABLE_TELEGRAM_LISTENERS enabled -> not auto-starting Telegram clients.")
+    else:
+        telegram_clients_task = asyncio.create_task(_start_telegram_clients_background())
+
     # ── Zalo tập trung: 3 background tick loop (forward engine / bulk-send+campaigns /
     # web push) — dịch từ 3 worker Node.js riêng của guide sang asyncio task cùng
     # process, giống pattern zca_listeners_task ở trên. Mỗi task tự bắt Exception
@@ -181,6 +198,17 @@ async def lifespan(_: FastAPI):
             await shutdown_persistent_listeners()
         except Exception:
             logger.exception("ZCA persistent listeners shutdown failed")
+        if telegram_clients_task is not None and not telegram_clients_task.done():
+            telegram_clients_task.cancel()
+            try:
+                await telegram_clients_task
+            except asyncio.CancelledError:
+                pass
+        try:
+            from app.modules.all_platform.telegram.services.client_manager import shutdown_all as shutdown_telegram_clients
+            await shutdown_telegram_clients()
+        except Exception:
+            logger.exception("Telegram clients shutdown failed")
         await asyncio.to_thread(shutdown_playwright_pool)
 
 

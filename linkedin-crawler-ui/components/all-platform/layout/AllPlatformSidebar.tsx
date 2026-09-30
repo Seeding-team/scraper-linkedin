@@ -275,6 +275,14 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, workspaceTab: 
       label: "Zalo Chat",
       matchStartsWith: ["/all-platform/tai-khoan"],
     },
+    {
+      type: "item",
+      id: "telegram-chat",
+      href: "/all-platform/telegram-chat",
+      icon: "send",
+      label: "Telegram Chat",
+      matchStartsWith: ["/all-platform/telegram-chat"],
+    },
   ];
 
   // Space "QUAN LY CRM":
