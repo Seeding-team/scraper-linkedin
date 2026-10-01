@@ -82,8 +82,9 @@ function parseKeywords(input: string): string[] {
 
 function scheduleStatusMeta(s: RotationSchedule): { label: string; color: string } {
   if (s.status === "running") {
-    const stageLabel = s.currentStage === "facebook" ? "Đang cào Facebook..." : s.currentStage === "linkedin" ? "Đang cào LinkedIn..." : s.currentStage === "threads" ? "Đang tìm Threads..." : "Đang chạy...";
-    return { label: stageLabel, color: "bg-blue-50 text-blue-700 border-blue-200" };
+    const stageLabel = s.currentStage === "facebook" ? "Đang cào Facebook" : s.currentStage === "linkedin" ? "Đang cào LinkedIn" : s.currentStage === "threads" ? "Đang tìm Threads" : "Đang chạy";
+    const countSuffix = s.progress && s.progress.totalGroups > 0 ? ` (${s.progress.groupIndex}/${s.progress.totalGroups})` : "...";
+    return { label: `${stageLabel}${countSuffix}`, color: "bg-blue-50 text-blue-700 border-blue-200" };
   }
   if (s.status === "waiting_online") return { label: "Tạm dừng — tab Seeding đã đóng", color: "bg-red-50 text-red-600 border-red-200" };
   if (s.status === "waiting_interval") return { label: "Đang chờ vòng kế tiếp", color: "bg-amber-50 text-amber-700 border-amber-200" };
@@ -241,6 +242,7 @@ function ScheduleCard({
             {nextRunText && schedule.status === "waiting_interval" ? <span>Vòng kế tiếp: {nextRunText}</span> : null}
             {schedule.lastRoundSummary ? <span className="font-semibold text-emerald-600">Lần gần nhất: +{schedule.lastRoundSummary.totalSaved} bài</span> : null}
           </div>
+          {schedule.status === "running" && schedule.progress ? <LiveProgress progress={schedule.progress} /> : null}
         </div>
         <div className="flex items-center gap-1.5 shrink-0">
           <label className="inline-flex items-center cursor-pointer" title={schedule.enabled ? "Đang bật" : "Đang tắt"}>
@@ -264,6 +266,31 @@ function ScheduleCard({
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+const STAGE_UNIT: Record<string, string> = { facebook: "nhóm", linkedin: "nhóm", threads: "từ khoá" };
+const STAGE_LABEL: Record<string, string> = { facebook: "Facebook", linkedin: "LinkedIn", threads: "Threads" };
+
+function LiveProgress({ progress }: { progress: NonNullable<RotationSchedule["progress"]> }) {
+  const unit = (progress.stage && STAGE_UNIT[progress.stage]) || "mục";
+  const stageLabel = (progress.stage && STAGE_LABEL[progress.stage]) || "";
+  const pct = progress.totalGroups > 0 ? Math.min(100, Math.round((progress.groupIndex / progress.totalGroups) * 100)) : 0;
+
+  return (
+    <div className="mt-2 rounded-lg bg-blue-50/60 border border-blue-100 px-2.5 py-2">
+      <div className="flex items-center justify-between gap-2 text-[11px]">
+        <span className="font-semibold text-blue-700">
+          {stageLabel}: {progress.groupIndex}/{progress.totalGroups} {unit}
+        </span>
+        <span className="font-bold text-emerald-600">+{progress.savedSoFar} bài</span>
+      </div>
+      {progress.totalGroups > 0 ? (
+        <div className="mt-1 h-1.5 w-full rounded-full bg-blue-100 overflow-hidden">
+          <div className="h-full rounded-full bg-blue-500 transition-all duration-500" style={{ width: `${pct}%` }} />
+        </div>
+      ) : null}
     </div>
   );
 }

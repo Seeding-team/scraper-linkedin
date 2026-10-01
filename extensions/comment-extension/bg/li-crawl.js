@@ -62,6 +62,14 @@
         notifyApp({ action: "MK_LI_CRAWL_LOG", level, message });
     }
 
+    // Bao tien do chi tiet cho rotation-crawl.js (neu dang chay qua lich xoay vong) theo
+    // doi va hien thi ro rang len UI - xem self.__mkLiProgressHook.
+    function reportProgress(state) {
+        if (typeof self.__mkLiProgressHook === "function") {
+            self.__mkLiProgressHook({ groupIndex: state.currentIndex, totalGroups: state.groupQueue.length, savedSoFar: state.totalSaved });
+        }
+    }
+
     function waitForTabLoad(tabId, timeoutMs) {
         return new Promise((resolve) => {
             let done = false;
@@ -126,6 +134,7 @@
             item.status = "running";
             await saveState();
             notifyApp({ action: "MK_LI_CRAWL_PROGRESS", groupIndex: state.currentIndex, totalGroups: state.groupQueue.length, groupUrl: item.url, posts: 0 });
+            reportProgress(state);
             log(`[${state.currentIndex + 1}/${state.groupQueue.length}] Đang mở nhóm: ${item.name || item.url}`);
 
             try {
@@ -218,6 +227,7 @@
         } else {
             log(`Lỗi lưu bài: ${saveResult.message}`, "error");
         }
+        reportProgress(state);
 
         if (!state.running) return finishCrawl(true);
         if (await advanceQueue(state)) runQueue();

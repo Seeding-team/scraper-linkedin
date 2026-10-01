@@ -115,12 +115,21 @@
         let loginHintShown = false;
         let wasStopped = false;
 
+        // Bao tien do chi tiet cho rotation-crawl.js (neu dang chay qua lich xoay vong)
+        // theo doi va hien thi ro rang len UI - xem self.__mkThreadsProgressHook.
+        const reportProgress = (keywordIndex) => {
+            if (typeof self.__mkThreadsProgressHook === "function") {
+                self.__mkThreadsProgressHook({ groupIndex: keywordIndex, totalGroups: keywords.length, savedSoFar: totalSaved });
+            }
+        };
+
         try {
             log(`Bắt đầu tìm bài Threads cho ${keywords.length} từ khoá (tối đa ${postLimit} bài mới/từ khoá)...`);
             for (let i = 0; i < keywords.length; i++) {
                 if (shouldStop) break;
                 const keyword = keywords[i];
                 notifyApp({ action: "MK_TH_CRAWL_PROGRESS", groupIndex: i, totalGroups: keywords.length, keyword, posts: totalPosts });
+                reportProgress(i);
                 log(`[${i + 1}/${keywords.length}] Đang tìm: "${keyword}"`);
 
                 const url = buildSearchUrl(keyword, sortRecent);
@@ -178,6 +187,7 @@
                 } catch (e) {
                     log(`Lỗi lưu bài cho "${keyword}": ${e.message}`, "error");
                 }
+                reportProgress(i + 1);
                 await sleep(INTER_KEYWORD_DELAY_MS);
             }
             log(shouldStop ? `Đã dừng. Tổng đã lưu: ${totalSaved} bài mới.` : `Hoàn tất! Tổng đã lưu: ${totalSaved} bài mới.`, "success");

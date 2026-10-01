@@ -15,7 +15,7 @@ export const REQUIRED_EXTENSION_VERSION = "2.0";
 export const THREADS_CRAWL_EXTENSION_VERSION = "2.1";
 
 /** Phiên bản đầu tiên có lệnh cào xoay vòng cả 3 nền tảng (MK_ROTATE_CRAWL_*, feature "rotate_crawl"). */
-export const ROTATE_CRAWL_EXTENSION_VERSION = "2.7";
+export const ROTATE_CRAWL_EXTENSION_VERSION = "2.8";
 
 export type ExtensionStatus = "checking" | "ready" | "outdated" | "missing" | "invalidated";
 
@@ -264,6 +264,13 @@ export interface RotationScheduleCfg {
   threadsKeywords: string[];
 }
 
+export interface ScheduleProgress {
+  stage: ScheduleStage;
+  groupIndex: number;
+  totalGroups: number;
+  savedSoFar: number;
+}
+
 export interface RotationSchedule {
   id: string;
   label: string;
@@ -276,6 +283,9 @@ export interface RotationSchedule {
   lastRoundSummary: { roundNumber: number; totalSaved: number; at: number } | null;
   lastError: string | null;
   createdAt: number;
+  /** Tiến độ chi tiết (nhóm/từ khoá thứ mấy, đã lưu bao nhiêu bài) của vòng ĐANG chạy —
+   * chỉ có khi status === "running", tự xoá khi chuyển nền tảng/kết thúc vòng. */
+  progress?: ScheduleProgress | null;
 }
 
 export function useRotationSchedules() {
@@ -309,12 +319,29 @@ export function useRotationSchedules() {
         setSchedules((prev) =>
           prev.map((s) =>
             s.id === p.scheduleId
-              ? { ...s, currentStage: (p.stage as ScheduleStage) ?? s.currentStage, roundNumber: typeof p.roundNumber === "number" ? p.roundNumber : s.roundNumber }
+              ? { ...s, currentStage: (p.stage as ScheduleStage) ?? s.currentStage, roundNumber: typeof p.roundNumber === "number" ? p.roundNumber : s.roundNumber, progress: null }
+              : s,
+          ),
+        );
+      } else if (kind === "PROGRESS") {
+        setSchedules((prev) =>
+          prev.map((s) =>
+            s.id === p.scheduleId
+              ? {
+                  ...s,
+                  progress: {
+                    stage: (p.stage as ScheduleStage) ?? s.currentStage,
+                    groupIndex: typeof p.groupIndex === "number" ? p.groupIndex : 0,
+                    totalGroups: typeof p.totalGroups === "number" ? p.totalGroups : 0,
+                    savedSoFar: typeof p.savedSoFar === "number" ? p.savedSoFar : 0,
+                  },
+                }
               : s,
           ),
         );
       } else if (kind === "ROUND_DONE") {
         addLog("success", `Vòng ${p.roundNumber} hoàn tất — +${p.totalSaved} bài mới.`);
+        setSchedules((prev) => prev.map((s) => (s.id === p.scheduleId ? { ...s, progress: null } : s)));
       }
     };
 

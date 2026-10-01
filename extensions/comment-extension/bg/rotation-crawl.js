@@ -97,6 +97,13 @@
         notifyApp({ action: "MK_ROTATE_SCHEDULE_STAGE", scheduleId, stage: stageName, ...(extra || {}) });
     }
 
+    // Tien do CHI TIET (nhom/tu khoa thu bao nhieu, da luu bao nhieu bai) trong luc 1 nen
+    // tang dang chay - cac module bg/fb-crawl.js, bg/li-crawl.js, bg/threads-crawl.js tu
+    // goi __mk*ProgressHook (gan o duoi) moi khi xong 1 nhom/tu khoa.
+    function progress(scheduleId, stageName, data) {
+        notifyApp({ action: "MK_ROTATE_SCHEDULE_PROGRESS", scheduleId, stage: stageName, ...(data || {}) });
+    }
+
     function hostnameFromUrl(u) {
         try { return new URL(u).hostname.toLowerCase(); } catch (e) { return ""; }
     }
@@ -129,33 +136,42 @@
         if (!isCancelled() && cfg.fbGroups.length > 0) {
             stage(scheduleId, "facebook", { roundNumber });
             log(scheduleId, label, `[Vòng ${roundNumber}] Bắt đầu cào Facebook (${cfg.fbGroups.length} nhóm)...`);
+            self.__mkFbProgressHook = (p) => progress(scheduleId, "facebook", p);
             try {
                 summary.facebook = await self.__mkStartFbCrawl(cfg.fbGroups, { apiBase: cfg.apiBase, idMember: cfg.idMember, fetchCount: 100, dashboardTabId });
                 log(scheduleId, label, `[Vòng ${roundNumber}] Facebook xong: lưu ${summary.facebook.totalSaved} bài mới${summary.facebook.stopped ? " — BỊ DỪNG GIỮA CHỪNG (có thể do tab Facebook bị đóng)" : ""}.`, summary.facebook.stopped ? "warn" : "success");
             } catch (e) {
                 log(scheduleId, label, `[Vòng ${roundNumber}] Lỗi cào Facebook: ${e.message}`, "error");
+            } finally {
+                self.__mkFbProgressHook = null;
             }
         }
 
         if (!isCancelled() && cfg.liGroups.length > 0) {
             stage(scheduleId, "linkedin", { roundNumber });
             log(scheduleId, label, `[Vòng ${roundNumber}] Bắt đầu cào LinkedIn (${cfg.liGroups.length} nhóm)...`);
+            self.__mkLiProgressHook = (p) => progress(scheduleId, "linkedin", p);
             try {
                 summary.linkedin = await self.__mkStartLiCrawl(cfg.liGroups, { apiBase: cfg.apiBase, idMember: cfg.idMember, maxPosts: 40, dashboardTabId });
                 log(scheduleId, label, `[Vòng ${roundNumber}] LinkedIn xong: lưu ${summary.linkedin.totalSaved} bài mới${summary.linkedin.stopped ? " — BỊ DỪNG GIỮA CHỪNG (có thể do tab LinkedIn bị đóng)" : ""}.`, summary.linkedin.stopped ? "warn" : "success");
             } catch (e) {
                 log(scheduleId, label, `[Vòng ${roundNumber}] Lỗi cào LinkedIn: ${e.message}`, "error");
+            } finally {
+                self.__mkLiProgressHook = null;
             }
         }
 
         if (!isCancelled() && cfg.threadsKeywords.length > 0) {
             stage(scheduleId, "threads", { roundNumber });
             log(scheduleId, label, `[Vòng ${roundNumber}] Bắt đầu tìm Threads (${cfg.threadsKeywords.length} từ khoá)...`);
+            self.__mkThreadsProgressHook = (p) => progress(scheduleId, "threads", p);
             try {
                 summary.threads = await self.__mkStartThreadsCrawl(cfg.threadsKeywords, { apiBase: cfg.apiBase, idMember: cfg.idMember, postLimit: 20, dashboardTabId });
                 log(scheduleId, label, `[Vòng ${roundNumber}] Threads xong: lưu ${summary.threads.totalSaved} bài mới${summary.threads.stopped ? " — BỊ DỪNG GIỮA CHỪNG" : ""}.`, summary.threads.stopped ? "warn" : "success");
             } catch (e) {
                 log(scheduleId, label, `[Vòng ${roundNumber}] Lỗi tìm Threads: ${e.message}`, "error");
+            } finally {
+                self.__mkThreadsProgressHook = null;
             }
         }
 

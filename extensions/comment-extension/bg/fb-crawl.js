@@ -108,10 +108,19 @@
             crawlWindowId = win.id;
             crawlTabId = win.tabs && win.tabs[0] ? win.tabs[0].id : null;
 
+            // Bao tien do chi tiet cho rotation-crawl.js (neu dang chay qua lich xoay vong)
+            // theo doi va hien thi ro rang len UI - xem self.__mkFbProgressHook.
+            const reportProgress = (groupIndex) => {
+                if (typeof self.__mkFbProgressHook === "function") {
+                    self.__mkFbProgressHook({ groupIndex, totalGroups: groups.length, savedSoFar: totalSaved });
+                }
+            };
+
             for (let i = 0; i < groups.length; i++) {
                 if (shouldStop) break;
                 const group = groups[i];
                 notifyApp({ action: "MK_FB_CRAWL_PROGRESS", groupIndex: i, totalGroups: groups.length, groupUrl: group.url });
+                reportProgress(i);
                 log(`[${i + 1}/${groups.length}] Đang mở nhóm: ${group.name || group.url}`);
 
                 await chrome.tabs.update(crawlTabId, { url: group.url });
@@ -154,6 +163,7 @@
                 } else {
                     log(`Lỗi lưu bài: ${saved.message}`, "error");
                 }
+                reportProgress(i + 1);
 
                 await sleep(3000);
             }
