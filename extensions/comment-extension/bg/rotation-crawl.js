@@ -97,25 +97,27 @@
         notifyApp({ action: "MK_ROTATE_SCHEDULE_STAGE", scheduleId, stage: stageName, ...(extra || {}) });
     }
 
-    async function checkIsOnline(apiBase, email) {
+    function hostnameFromUrl(u) {
+        try { return new URL(u).hostname.toLowerCase(); } catch (e) { return ""; }
+    }
+
+    // Dieu kien de acc He Thong tiep tuc cao xoay vong: CHI CAN tab trang Seeding con
+    // MO (ke ca dang chay NEN, khong phai tab dang active/hien thi - vd nguoi van hanh
+    // bat tab khac lam viec) - KHONG con doi hoi "online" theo kieu heartbeat cua nhan
+    // vien thuong (MemberOnlineTimeWidget.tsx - can tab o trang thai HIEN THI moi tinh,
+    // dung cho muc dich khac la theo doi gio lam viec nhan vien, khong lien quan o day).
+    // Dung chrome.tabs.query() (local, tuc thi, khong qua mang) thay vi goi backend check
+    // heartbeat - vua dung dung yeu cau "chi can bat tab" vua on dinh hon (khong phu
+    // thuoc TTL 120s + visibilityState cua heartbeat).
+    async function checkAppTabOpen(apiBase) {
         try {
-            // Dung /presence/self-online (khong qua phan quyen team) - KHONG dung
-            // /presence/online-summary vi endpoint do chi tra du lieu cho nguoi goi co
-            // role admin/leader (trả rỗng với role "member"), trong khi acc Seeding he
-            // thong dang dung de cao xoay vong thuong la role "member" -> luon bi bao
-            // "khong online" du dang dang nhap that (bug phat hien 2026-10-01).
-            const res = await fetch(`${apiBase}/api/all-platform/presence/self-online`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ email }),
-            });
-            const data = await res.json();
-            if (!data || !data.success || !data.data) return false;
-            return !!data.data.is_online;
+            const targetHost = hostnameFromUrl(apiBase);
+            if (!targetHost) return true; // khong parse duoc apiBase thi khong chan vo ly do
+            const tabs = await chrome.tabs.query({});
+            return tabs.some((t) => t.url && hostnameFromUrl(t.url) === targetHost);
         } catch (e) {
-            // Loi mang khi kiem tra online KHONG duoc coi la "offline that su" - tranh
-            // dung ca vong lap chi vi 1 lan fetch tam thoi that bai. Coi nhu chua ro,
-            // se thu lai o lan alarm ke tiep.
+            // Loi khi truy van tab KHONG duoc coi la "tab da dong that su" - tranh dung ca
+            // vong lap chi vi 1 lan query tam thoi loi. Coi nhu chua ro, se thu lai sau.
             return { networkError: e.message };
         }
     }
@@ -215,7 +217,7 @@
                 currentStage: null,
                 lastRoundSummary: { roundNumber, totalSaved, at: Date.now() },
             });
-            log(schedule.id, schedule.label, `Đã lên lịch vòng ${roundNumber + 1} lúc ${new Date(nextRunAt).toLocaleString("vi-VN")} (sau ${schedule.cfg.intervalHours} giờ) — CHỈ chạy nếu tài khoản vẫn đang online trên app Seeding lúc đó.`);
+            log(schedule.id, schedule.label, `Đã lên lịch vòng ${roundNumber + 1} lúc ${new Date(nextRunAt).toLocaleString("vi-VN")} (sau ${schedule.cfg.intervalHours} giờ) — CHỈ chạy nếu tab Seeding vẫn còn mở lúc đó.`);
         }
 
         await scheduleNextAlarm();
@@ -236,15 +238,15 @@
             return;
         }
         const schedule = due[0];
-        const online = await checkIsOnline(schedule.cfg.apiBase, schedule.cfg.email);
-        if (online && typeof online === "object" && online.networkError) {
-            log(schedule.id, schedule.label, `Không kiểm tra được trạng thái online (lỗi mạng: ${online.networkError}) — sẽ thử lại sau ${ONLINE_RETRY_MINUTES} phút.`, "warn");
+        const tabOpen = await checkAppTabOpen(schedule.cfg.apiBase);
+        if (tabOpen && typeof tabOpen === "object" && tabOpen.networkError) {
+            log(schedule.id, schedule.label, `Không kiểm tra được tab Seeding (lỗi: ${tabOpen.networkError}) — sẽ thử lại sau ${ONLINE_RETRY_MINUTES} phút.`, "warn");
             await updateSchedule(schedule.id, { nextRunAt: now + ONLINE_RETRY_MINUTES * 60 * 1000 });
             await scheduleNextAlarm();
             return;
         }
-        if (!online) {
-            log(schedule.id, schedule.label, `Đã tới giờ chạy nhưng tài khoản KHÔNG còn online trên app Seeding (có thể đã đóng tab/tắt trình duyệt/mất phiên đăng nhập) — tạm dừng, sẽ tự kiểm tra lại mỗi ${ONLINE_RETRY_MINUTES} phút.`, "warn");
+        if (!tabOpen) {
+            log(schedule.id, schedule.label, `Đã tới giờ chạy nhưng tab trang Seeding đã bị đóng (hoặc trình duyệt đã tắt) — tạm dừng, sẽ tự kiểm tra lại mỗi ${ONLINE_RETRY_MINUTES} phút. Mở lại tab Seeding (không cần để nó hiển thị) để tiếp tục.`, "warn");
             await updateSchedule(schedule.id, { status: "waiting_online", nextRunAt: now + ONLINE_RETRY_MINUTES * 60 * 1000 });
             stage(schedule.id, "waiting_online", { roundNumber: schedule.roundNumber });
             await scheduleNextAlarm();
@@ -275,7 +277,7 @@
                     return;
                 }
                 if (!msg.config || !msg.config.email) {
-                    sendResponse({ success: false, error: "Thiếu email tài khoản — cần để kiểm tra điều kiện 'đang online' trước mỗi vòng lặp lại." });
+                    sendResponse({ success: false, error: "Thiếu email tài khoản — cần để gắn đúng tài khoản cho lịch cào này." });
                     return;
                 }
                 const cfg = {

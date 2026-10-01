@@ -5,7 +5,8 @@
  * phụ "Lịch crawl & Hàng đợi". Dành cho tài khoản seeding-crawl đăng nhập cố định trên VPS:
  * bấm "+ Thêm lịch cào" để tạo 1 lịch mới (nhóm/từ khoá + giờ lặp lại riêng) — extension tự
  * cào tuần tự cả 3 nền tảng rồi (nếu bật "lặp lại") tự lên lịch vòng kế tiếp, CHỈ chạy tiếp
- * nếu tài khoản vẫn đang online trên app Seeding. Chỉ 1 lịch chạy tại 1 thời điểm (đúng tinh
+ * nếu tab Seeding vẫn còn mở (không cần hiển thị/active — chạy nền vẫn tính). Chỉ 1 lịch
+ * chạy tại 1 thời điểm (đúng tinh
  * thần "hàng đợi") — lịch nào đến giờ trước chạy trước, xong tự chạy tiếp lịch kế đến giờ.
  * Bài viết cào được đổ thẳng về tab "Hoạt động seeding".
  */
@@ -84,7 +85,7 @@ function scheduleStatusMeta(s: RotationSchedule): { label: string; color: string
     const stageLabel = s.currentStage === "facebook" ? "Đang cào Facebook..." : s.currentStage === "linkedin" ? "Đang cào LinkedIn..." : s.currentStage === "threads" ? "Đang tìm Threads..." : "Đang chạy...";
     return { label: stageLabel, color: "bg-blue-50 text-blue-700 border-blue-200" };
   }
-  if (s.status === "waiting_online") return { label: "Tạm dừng — tài khoản không online", color: "bg-red-50 text-red-600 border-red-200" };
+  if (s.status === "waiting_online") return { label: "Tạm dừng — tab Seeding đã đóng", color: "bg-red-50 text-red-600 border-red-200" };
   if (s.status === "waiting_interval") return { label: "Đang chờ vòng kế tiếp", color: "bg-amber-50 text-amber-700 border-amber-200" };
   if (s.status === "done") return { label: "Đã hoàn tất (không lặp lại)", color: "bg-slate-50 text-slate-600 border-slate-200" };
   return { label: "Đã dừng", color: "bg-slate-50 text-slate-600 border-slate-200" };
@@ -394,8 +395,7 @@ function AddScheduleModal({
               <ul className="list-disc pl-4 space-y-0.5">
                 <li>Luôn giữ <b>tab trình duyệt mở trang Seeding này</b> (không đóng, không tắt trình duyệt) trong suốt thời gian cào.</li>
                 <li><b>Không đóng tab Facebook/LinkedIn/Threads</b> khi lịch đang chạy — extension tự mở/điều khiển các tab đó, đóng giữa chừng sẽ làm gián đoạn vòng cào.</li>
-                <li>Máy/VPS phải giữ trạng thái đăng nhập tài khoản Seeding — mất phiên đăng nhập thì vòng lặp lại sẽ tự tạm hoãn tới khi online lại.</li>
-                <li>Tab trang Seeding phải ở trạng thái <b>hiển thị</b> (không thu nhỏ cửa sổ trình duyệt, không để tab bị che khuất lâu) — hệ thống chỉ tính "đang online" khi tab đang hiển thị, kể cả không phải tab đang active.</li>
+                <li>Chỉ cần <b>giữ tab Seeding còn mở</b> là đủ — có thể bật tab khác để làm việc, không cần để tab Seeding hiển thị/active, extension vẫn tự chạy nền và vòng cào xoay vòng vẫn tiếp tục bình thường.</li>
               </ul>
             </div>
           </div>
@@ -513,7 +513,7 @@ function AddScheduleModal({
                 disabled={submitting}
                 className="mt-0.5 h-4 w-4 rounded border-border"
               />
-              <span>Tự động lặp lại (chỉ chạy tiếp nếu tài khoản đang online trên app Seeding)</span>
+              <span>Tự động lặp lại (chỉ chạy tiếp nếu tab Seeding vẫn còn mở)</span>
             </label>
           </div>
 
