@@ -27,7 +27,7 @@ def _supabase() -> Client:
 # TẤT CẢ mọi người (kể cả member) để ai cũng tiến hành seeding được, không bị giới hạn
 # theo RBAC thường (member chỉ thấy bài của chính mình). Đây là bypass CÓ PHẠM VI hẹp —
 # chỉ thêm đúng 1 id vào danh sách allowed_member_ids, không gỡ bỏ RBAC chung.
-SEEDING_SYSTEM_MEMBER_ID = "77588ca3-4480-4a27-a002-d7650c5f16c9"
+SEEDING_SYSTEM_MEMBER_ID = "4a15e851-580c-440e-bcf0-a4363a54170f"
 
 
 def _with_seeding_system_visible(allowed_member_ids: Optional[list[str]]) -> Optional[list[str]]:
