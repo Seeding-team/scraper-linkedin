@@ -427,7 +427,7 @@ def sync_process_and_save_posts_db(payload: ExtensionCrawlRequest, legacy: bool)
             inserted_count = len(res.data or [])
             if res.data:
                 inserted_post_urls = [p.get("post_url") for p in res.data if p.get("post_url")]
-                inserted_rows = [{"id": p.get("id"), "content": p.get("content")} for p in res.data if p.get("id")]
+                inserted_rows = [{"id": p.get("id"), "content": p.get("content"), "post_url": p.get("post_url")} for p in res.data if p.get("id")]
         except Exception as e:
             logger.error(f"Error saving to facebook_posts: {e}")
             raise HTTPException(status_code=500, detail=str(e))
@@ -440,7 +440,7 @@ async def process_and_save_posts(payload: ExtensionCrawlRequest, event_name: str
 
     # Cham diem "tiem nang seeding" (LLM) CHAY NEN, khong cho response - xem lead_score_service.py.
     if inserted_rows:
-        asyncio.create_task(score_and_save_posts("facebook_posts", inserted_rows))
+        asyncio.create_task(score_and_save_posts("facebook_posts", inserted_rows, id_member=payload.id_member, group_name=payload.group_name))
 
     if payload.job_id:
         try:

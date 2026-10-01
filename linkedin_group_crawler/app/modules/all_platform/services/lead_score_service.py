@@ -61,6 +61,9 @@ _MAX_CONCURRENT_SCORING = 3
 # feed luon sach, chi con bai dang gia tri xem xet seeding (yeu cau 2026-10-01).
 _DELETE_BELOW_SCORE = 31
 
+# Nguong "diem cao" dung chung voi feed bai viet/group scoring/registry tu khoa Threads.
+_HIGH_SCORE = 70
+
 
 def is_lead_scoring_configured() -> bool:
     return bool(settings.openai_api_key)
@@ -127,12 +130,26 @@ async def score_text_for_lead(content: str) -> Optional[dict[str, Any]]:
     return None
 
 
-async def score_and_save_posts(table: str, rows: list[dict[str, Any]]) -> None:
-    """Chấm điểm + lưu lead_score/lead_score_reason cho các bài vừa insert (`rows` = list
-    {"id", "content"}). Chạy nền sau khi đã trả response cho extension — KHÔNG được raise
-    ra ngoài (gọi qua asyncio.create_task, exception ở đây sẽ chỉ log, không crash gì)."""
+async def score_and_save_posts(
+    table: str,
+    rows: list[dict[str, Any]],
+    *,
+    id_member: Optional[str] = None,
+    group_name: Optional[str] = None,
+) -> dict[str, int]:
+    """Chấm điểm + lưu lead_score/lead_score_reason/lead_need_category cho các bài vừa
+    insert (`rows` = list {"id", "content", "post_url"?}). Thường gọi qua asyncio.create_task
+    (chạy nền, không chặn response trả về extension) — KHÔNG được raise ra ngoài, exception ở
+    đây chỉ log, không crash gì. Trả về {"total", "high", "deleted"} — Threads (keyword
+    registry) AWAIT trực tiếp hàm này để biết kết quả chấm điểm theo từ khoá; FB/LI vẫn dùng
+    kiểu fire-and-forget như cũ, bỏ qua giá trị trả về.
+
+    Với facebook_posts điểm cao (>=70): tự tạo 1 dòng "auto_seeding_comments" (pending) để
+    comment seeding tự động — xem app/modules/all_platform/services/auto_seeding_comment_service.py.
+    """
+    summary = {"total": 0, "high": 0, "deleted": 0}
     if not is_lead_scoring_configured() or not rows:
-        return
+        return summary
 
     semaphore = asyncio.Semaphore(_MAX_CONCURRENT_SCORING)
     supabase = get_supabase_client()
@@ -146,20 +163,42 @@ async def score_and_save_posts(table: str, rows: list[dict[str, Any]]) -> None:
             result = await score_text_for_lead(content)
         if not result:
             return
+        summary["total"] += 1
         try:
             if result["score"] < _DELETE_BELOW_SCORE:
                 # Bai diem thap khong co gia tri cho seeding - xoa luon thay vi chi luu
                 # diem, giu feed sach (yeu cau 2026-10-01).
                 await asyncio.to_thread(lambda: supabase.table(table).delete().eq("id", post_id).execute())
                 logger.info(f"lead_score: xoá bài {table}#{post_id} (điểm {result['score']} - {result['reason']})")
+                summary["deleted"] += 1
             else:
                 await asyncio.to_thread(
                     lambda: supabase.table(table)
-                    .update({"lead_score": result["score"], "lead_score_reason": result["reason"]})
+                    .update({
+                        "lead_score": result["score"],
+                        "lead_score_reason": result["reason"],
+                        "lead_need_category": result.get("need_category"),
+                    })
                     .eq("id", post_id)
                     .execute()
                 )
+                if result["score"] >= _HIGH_SCORE:
+                    summary["high"] += 1
+                if table == "facebook_posts" and result["score"] >= 70:
+                    from app.modules.all_platform.services.auto_seeding_comment_service import (
+                        maybe_create_auto_seeding_comment,
+                    )
+                    await maybe_create_auto_seeding_comment(
+                        id_post_fb=post_id,
+                        post_url=row.get("post_url") or "",
+                        group_name=group_name,
+                        id_member=id_member,
+                        content=content,
+                        lead_score=result["score"],
+                        need_category=result.get("need_category"),
+                    )
         except Exception as exc:
             logger.warning(f"lead_score: lưu/xoá bài {table}#{post_id} thất bại: {exc}")
 
     await asyncio.gather(*(_score_one(r) for r in rows))
+    return summary

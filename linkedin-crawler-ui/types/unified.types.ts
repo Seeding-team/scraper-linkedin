@@ -460,6 +460,11 @@ export interface FacebookGroup {
   assignee_id?: string;
   co_assignee_id?: string;
   id_member?: string;
+  /** Số bài trong nhóm có điểm AI (lead_score) >= 70 — tính on-the-fly, dùng để sắp xếp
+   * nhóm nào đáng seeding nhất lên đầu (yêu cầu 2026-10-02). */
+  high_lead_post_count?: number;
+  /** Điểm AI trung bình các bài trong nhóm đã được chấm (null nếu chưa có bài nào chấm). */
+  avg_lead_score?: number | null;
 }
 
 export interface LinkedInGroup {
@@ -492,6 +497,10 @@ export interface LinkedInGroup {
   assignee_id?: string;
   co_assignee_id?: string;
   id_member?: string;
+  /** Số bài trong nhóm có điểm AI (lead_score) >= 70 — tính on-the-fly (yêu cầu 2026-10-02). */
+  high_lead_post_count?: number;
+  /** Điểm AI trung bình các bài trong nhóm đã được chấm (null nếu chưa có bài nào chấm). */
+  avg_lead_score?: number | null;
 }
 
 // ── Crawl Sessions ─────────────────────────────────────────────────────────────

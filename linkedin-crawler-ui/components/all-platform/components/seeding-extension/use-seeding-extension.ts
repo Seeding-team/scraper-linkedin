@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { scheduledCommentService } from "@/services/scheduled-comment.service";
+import { autoSeedingCommentService } from "@/services/auto-seeding-comment.service";
 import { API_BASE_URL } from "@/lib/env";
 
 export type ExtensionPlatform = "facebook" | "linkedin" | "threads";
@@ -15,7 +16,7 @@ export const REQUIRED_EXTENSION_VERSION = "2.0";
 export const THREADS_CRAWL_EXTENSION_VERSION = "2.1";
 
 /** Phiên bản đầu tiên có lệnh cào xoay vòng cả 3 nền tảng (MK_ROTATE_CRAWL_*, feature "rotate_crawl"). */
-export const ROTATE_CRAWL_EXTENSION_VERSION = "2.8";
+export const ROTATE_CRAWL_EXTENSION_VERSION = "2.9";
 
 export type ExtensionStatus = "checking" | "ready" | "outdated" | "missing" | "invalidated";
 
@@ -430,8 +431,9 @@ export function useBulkCommentRuntime({ isReady, email, onComplete }: UseBulkCom
   const [stopping, setStopping] = useState(false);
   const [lastError, setLastError] = useState<string | null>(null);
   const isCommentingRef = useRef(false);
-  const runRef = useRef<{ kind: "manual" | "scheduled"; urls: string[]; scheduledId?: string } | null>(null);
+  const runRef = useRef<{ kind: "manual" | "scheduled" | "auto_seeding"; urls: string[]; scheduledId?: string } | null>(null);
   const processingScheduledRef = useRef<Set<string>>(new Set());
+  const processingAutoSeedingRef = useRef<Set<string>>(new Set());
   const onCompleteRef = useRef(onComplete);
   useEffect(() => {
     onCompleteRef.current = onComplete;
@@ -455,6 +457,10 @@ export function useBulkCommentRuntime({ isReady, email, onComplete }: UseBulkCom
         const run = runRef.current;
         runRef.current = null;
         if (run?.kind === "scheduled" && run.scheduledId) processingScheduledRef.current.delete(run.scheduledId);
+        if (run?.kind === "auto_seeding" && run.scheduledId) {
+          autoSeedingCommentService.markFailed(run.scheduledId, event.data.error || "Extension từ chối lệnh bình luận.").catch(() => {});
+          processingAutoSeedingRef.current.delete(run.scheduledId);
+        }
         setLastError(event.data.error || "Extension từ chối lệnh bình luận.");
       } else if (action === "BULK_COMMENT_PROGRESS") {
         if (payload) setProgress(payload);
@@ -467,6 +473,10 @@ export function useBulkCommentRuntime({ isReady, email, onComplete }: UseBulkCom
           scheduledCommentService.markPosted(run.scheduledId).catch(() => {});
           processingScheduledRef.current.delete(run.scheduledId);
           setProgress((p) => (p ? { ...p, status: "Đã hoàn tất comment hẹn giờ!" } : null));
+        } else if (run?.kind === "auto_seeding" && run.scheduledId) {
+          autoSeedingCommentService.markPosted(run.scheduledId).catch(() => {});
+          processingAutoSeedingRef.current.delete(run.scheduledId);
+          setProgress((p) => (p ? { ...p, status: "Đã hoàn tất comment seeding tự động!" } : null));
         } else {
           setProgress((p) => (p ? { ...p, status: "Hoàn tất toàn bộ tiến trình!" } : null));
           onCompleteRef.current?.(run?.urls || []);
@@ -542,6 +552,39 @@ export function useBulkCommentRuntime({ isReady, email, onComplete }: UseBulkCom
             apiBase: extensionApiBase(),
             email_member: email,
             id_social_account: item.id_social_account || undefined,
+            id_platform: PLATFORM_DB_ID.facebook,
+          },
+        });
+      } catch {
+        // thử lại ở lượt poll kế tiếp
+      }
+    };
+    const interval = window.setInterval(poll, 10000);
+    return () => window.clearInterval(interval);
+  }, [isReady, email]);
+
+  // Comment seeding TỰ ĐỘNG (Facebook, yêu cầu 2026-10-02): backend tự tạo nhiệm vụ
+  // (auto_seeding_comments) ngay khi 1 bài acc hệ thống cào về được chấm điểm AI cao
+  // (>=70) — hook này poll danh sách chờ mỗi ~10s và tự gọi extension comment thật,
+  // không cần ai bấm, chỉ cần tab Seeding còn mở (giống cơ chế comment hẹn giờ ở trên).
+  useEffect(() => {
+    if (!isReady || !email) return;
+    const poll = async () => {
+      if (isCommentingRef.current) return;
+      try {
+        const res = await autoSeedingCommentService.getPending(50);
+        const due = (res.data || []).filter((c) => !processingAutoSeedingRef.current.has(c.id));
+        if (due.length === 0 || isCommentingRef.current) return;
+        const item = due[0];
+        processingAutoSeedingRef.current.add(item.id);
+        runRef.current = { kind: "auto_seeding", urls: [item.post_url], scheduledId: item.id };
+        setCommenting(true);
+        postToExtension("START_BULK_COMMENT", {
+          posts: [{ url: item.post_url, id_post: item.id_post_fb || undefined, id_platform: PLATFORM_DB_ID.facebook }],
+          text: item.comment_content || "",
+          verifyConfig: {
+            apiBase: extensionApiBase(),
+            email_member: email,
             id_platform: PLATFORM_DB_ID.facebook,
           },
         });

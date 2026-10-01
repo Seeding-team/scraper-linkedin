@@ -54,6 +54,7 @@ from app.modules.all_platform.routers.service_catalog import router as service_c
 from app.modules.all_platform.routers.sales_asset import router as sales_asset_router
 from app.modules.all_platform.routers.kpi_reward import router as kpi_reward_router
 from app.modules.all_platform.routers.scheduled_comments import router as scheduled_comments_router
+from app.modules.all_platform.routers.auto_seeding_comments import router as auto_seeding_comments_router
 from app.modules.all_platform.routers.posts_delete import router as posts_delete_router
 from app.modules.all_platform.routers.internal_engagement import router as internal_engagement_router
 from app.modules.all_platform.routers.presence import router as presence_router
@@ -476,5 +477,12 @@ all_platform_router.include_router(
     scheduled_comments_router,
     prefix="/scheduled-comments",
     tags=["All-Platform Scheduled Comments"],
+)
+
+# ── Auto Seeding Comments (tu dong trigger khi bai Facebook diem AI cao) ────────
+all_platform_router.include_router(
+    auto_seeding_comments_router,
+    prefix="/auto-seeding-comments",
+    tags=["All-Platform Auto Seeding Comments"],
 )
 

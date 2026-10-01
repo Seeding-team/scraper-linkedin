@@ -18,6 +18,7 @@ from app.modules.all_platform.services.supabase_threads_extension_crawl_service 
     save_threads_crawl_batch,
 )
 from app.modules.all_platform.services.lead_score_service import score_and_save_posts
+from app.modules.all_platform.services import threads_keyword_service
 from app.modules.all_platform.websocket import manager
 
 logger = get_logger(__name__)
@@ -25,6 +26,20 @@ logger = get_logger(__name__)
 router = APIRouter()
 
 EXTENSION_API_KEY = "markee-extension-key-2024"
+
+
+@router.get("/keywords")
+async def get_keywords() -> dict:
+    """Danh sách từ khoá/chủ đề Threads đang active (registry tự khám phá, migration 160) —
+    bg/rotation-crawl.js gọi NGAY ĐẦU 1 vòng (song song lúc cào Facebook/LinkedIn, không
+    chặn) để có sẵn danh sách khi tới lượt Threads. Không yêu cầu x-api-key (chỉ đọc, không
+    nhạy cảm) để extension gọi thẳng không cần thêm config."""
+    try:
+        await threads_keyword_service.ensure_daily_expansion()
+    except Exception as e:
+        logger.warning(f"[THREADS-KEYWORDS] ensure_daily_expansion lỗi (bỏ qua): {e}")
+    rows = threads_keyword_service.get_active_keywords()
+    return {"success": True, "data": {"keywords": [r["keyword"] for r in rows if r.get("keyword")]}}
 
 
 class ThreadsExtensionPost(BaseModel):
@@ -73,11 +88,17 @@ async def save_posts(
         logger.exception("[THREADS-EXT] Lỗi lưu bài Threads (keyword=%r)", payload.keyword)
         raise HTTPException(status_code=500, detail=str(e))
 
-    # Cham diem "tiem nang seeding" (LLM) CHAY NEN - xem lead_score_service.py. Field noi
-    # bo, khong duoc tra ve qua HTTP cho extension.
+    # Cham diem "tiem nang seeding" (LLM) - khac FB/LI (fire-and-forget): o day AWAIT truc
+    # tiep de biet duoc KET QUA (bao nhieu bai diem cao) ngay, dung cap nhat hieu qua tu
+    # khoa vao registry (threads_keyword_service.record_keyword_result) - xem module do.
+    # Field noi bo, khong duoc tra ve qua HTTP cho extension.
     inserted_rows = result.pop("_inserted_rows", [])
     if inserted_rows:
-        asyncio.create_task(score_and_save_posts(TABLE, inserted_rows))
+        score_summary = await score_and_save_posts(TABLE, inserted_rows, id_member=payload.id_member)
+        if payload.keyword:
+            threads_keyword_service.record_keyword_result(
+                payload.keyword, score_summary.get("total", 0), score_summary.get("high", 0)
+            )
 
     # involved_users: de GlobalCrawlNotification.tsx chi hien cho dung nguoi dang cao (+
     # admin), khong lam phien cac thanh vien khac dang dung app (bug 2026-10-01).

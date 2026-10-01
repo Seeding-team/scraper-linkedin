@@ -40,6 +40,11 @@ const INTERVAL_STORAGE_KEY = "markee.rotationCrawl.intervalHours";
 const EST_SECONDS_PER_FB_GROUP = 60;
 const EST_SECONDS_PER_LI_GROUP = 120;
 const EST_SECONDS_PER_TH_KEYWORD = 40;
+// Registry tu khoa Threads tu dong kham pha (backend, threads_keyword_service.py) co the
+// dung toi da 50 tu khoa/chu de (MAX_KEYWORDS) - dung con so nay lam uoc tinh AN TOAN cho
+// "lap lai toi thieu" khi bat Threads ma khong go tu khoa tay nao, tranh uoc tinh qua thap
+// roi lich chong vong giua chung khi registry da day len toi da.
+const MAX_AUTO_THREADS_KEYWORDS = 50;
 // Biên an toàn 20% cho thời gian chờ "online"/khởi động tab giữa các nhóm.
 const MIN_INTERVAL_SAFETY_FACTOR = 1.2;
 
@@ -348,8 +353,14 @@ function AddScheduleModal({
 
   const fbCount = enabledPlatforms.has("facebook") ? fb.selectedIds.length : 0;
   const liCount = enabledPlatforms.has("linkedin") ? li.selectedIds.length : 0;
-  const thCount = enabledPlatforms.has("threads") ? keywords.length : 0;
-  const totalSelected = fbCount + liCount + thCount;
+  // Threads giờ có registry từ khoá tự khám phá (backend) — bật nền tảng Threads là ĐỦ để
+  // tạo lịch dù chưa gõ từ khoá tay nào (registry tự cung cấp), không cần ép thCount > 0.
+  const threadsAutoDiscover = enabledPlatforms.has("threads");
+  // Uoc tinh AN TOAN cho thoi gian/lap lai toi thieu: neu dung auto-discover, gia dinh co
+  // the dung toi da MAX_AUTO_THREADS_KEYWORDS (registry se day dan len muc nay theo thoi
+  // gian) thay vi chi tinh theo so tu khoa go tay hien tai.
+  const thCount = enabledPlatforms.has("threads") ? Math.max(keywords.length, threadsAutoDiscover ? MAX_AUTO_THREADS_KEYWORDS : 0) : 0;
+  const totalSelected = fbCount + liCount + keywords.length + (threadsAutoDiscover ? 1 : 0);
 
   // Lặp lại tối thiểu phải đủ để cào XONG HẾT danh sách đã chọn trước khi vòng kế tiếp bắt
   // đầu — không thì vòng lặp lại sẽ "giẫm" lên vòng đang chạy dở. Tự gợi ý mốc tối thiểu khi
@@ -395,6 +406,7 @@ function AddScheduleModal({
       idMember: user.id,
       intervalHours,
       repeatEnabled,
+      threadsAutoDiscover,
     });
     setSubmitting(false);
     if (!res.success) {
@@ -481,7 +493,7 @@ function AddScheduleModal({
             </div>
             <div className={cn("flex flex-col gap-2 min-w-0 transition-opacity", !enabledPlatforms.has("threads") && "opacity-40")}>
               <label htmlFor="rotation-threads-keywords" className="text-sm font-bold text-foreground">
-                Từ khoá Threads ({keywords.length})
+                Từ khoá Threads thêm tay (không bắt buộc) ({keywords.length})
               </label>
               <textarea
                 id="rotation-threads-keywords"
@@ -489,10 +501,12 @@ function AddScheduleModal({
                 value={keywordsInput}
                 onChange={(e) => setKeywordsInput(e.target.value)}
                 disabled={submitting || !enabledPlatforms.has("threads")}
-                placeholder={"Mỗi dòng 1 từ khoá (hoặc cách nhau bởi dấu phẩy)\nVD: thuê làm website, cần agency app"}
+                placeholder={"Để trống cũng được — hệ thống tự đề xuất + khám phá từ khoá mỗi ngày.\nMỗi dòng 1 từ khoá thêm tay nếu muốn, VD: thuê làm website, cần agency app"}
                 className="w-full rounded-xl border border-border bg-background px-3 py-2 text-xs outline-none focus:border-primary disabled:opacity-60"
               />
-              <p className="text-[10px] text-muted-foreground">Threads không có nhóm — tìm theo từ khoá.</p>
+              <p className="text-[10px] text-muted-foreground">
+                🤖 Threads không có nhóm — hệ thống tự dùng AI đề xuất ~20 chủ đề/từ khoá ban đầu, mỗi ngày tự thêm ~5 cái mới, tối đa 50, tự loại bỏ từ khoá kém hiệu quả. Có thể để trống hoàn toàn.
+              </p>
             </div>
           </div>
 

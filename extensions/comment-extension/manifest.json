@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Markee Seeding Extension",
-  "version": "2.8",
+  "version": "2.9",
   "description": "Gộp 1 extension: cào bài + bình luận Facebook & LinkedIn, cào bài Threads theo từ khoá, nhiều lịch cào xoay vòng độc lập cả 3 nền tảng (kèm comment YouTube, Threads) cho Markee Seeding",
   "permissions": [
     "activeTab",

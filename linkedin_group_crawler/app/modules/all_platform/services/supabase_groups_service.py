@@ -9,6 +9,45 @@ from supabase import Client
 from app.core.supabase_client import get_supabase_client
 
 
+# Nguong diem "cao" dung chung voi feed bai viet (unified_posts_service._DEFAULT_MIN_LEAD_SCORE).
+_HIGH_LEAD_SCORE = 70
+
+
+def _attach_group_lead_stats(supabase: Client, rows: list[dict], posts_table: str, group_fk: str) -> list[dict]:
+    """Gắn high_lead_post_count/avg_lead_score cho mỗi nhóm (đếm/trung bình điểm AI các bài
+    thuộc nhóm đó), rồi sắp xếp nhóm nào nhiều bài điểm cao lên đầu (yêu cầu 2026-10-02).
+    Không lưu cột riêng trên bảng groups — tính on-the-fly vì số lượng nhóm/bài còn nhỏ,
+    tránh phải đồng bộ thêm 1 counter mỗi lần chấm điểm/xoá bài."""
+    group_ids = [r["id"] for r in rows if r.get("id")]
+    stats: dict[str, dict[str, float]] = {}
+    if group_ids:
+        posts_res = (
+            supabase.table(posts_table)
+            .select(f"{group_fk}, lead_score")
+            .in_(group_fk, group_ids)
+            .not_.is_("lead_score", "null")
+            .execute()
+        )
+        for p in posts_res.data or []:
+            gid = p.get(group_fk)
+            score = p.get("lead_score")
+            if not gid or score is None:
+                continue
+            s = stats.setdefault(gid, {"count": 0, "high_count": 0, "sum": 0})
+            s["count"] += 1
+            s["sum"] += score
+            if score >= _HIGH_LEAD_SCORE:
+                s["high_count"] += 1
+
+    for r in rows:
+        s = stats.get(r.get("id"), {"count": 0, "high_count": 0, "sum": 0})
+        r["high_lead_post_count"] = int(s["high_count"])
+        r["avg_lead_score"] = round(s["sum"] / s["count"], 1) if s["count"] > 0 else None
+
+    rows.sort(key=lambda r: (r.get("high_lead_post_count") or 0, r.get("avg_lead_score") or 0), reverse=True)
+    return rows
+
+
 def get_facebook_groups(
     id_intent: Optional[str] = None,
     id_team: Optional[str] = None,
@@ -85,7 +124,7 @@ def get_facebook_groups(
             else:
                 r[disp_field] = None
 
-    return rows
+    return _attach_group_lead_stats(supabase, rows, "facebook_posts", "group_id")
 
 
 def _clean_group_payload(payload: dict) -> dict:
@@ -319,7 +358,7 @@ def get_linkedin_groups(status: Optional[str] = None, id_member: Optional[str] =
             else:
                 r[disp_field] = None
 
-    return rows
+    return _attach_group_lead_stats(supabase, rows, "linkedin_posts", "id_group")
 
 
 def add_linkedin_group(payload: dict) -> dict:

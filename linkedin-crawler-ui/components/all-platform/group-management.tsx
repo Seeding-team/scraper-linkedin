@@ -1282,6 +1282,9 @@ export function GroupManagementContent() {
         return matchesSearch && matchesIntent && matchesIndustry && matchesTeam && matchesTier && matchesIcp && matchesMember && matchesContentType && matchesProductSeeding;
       })
       .sort((g1, g2) => {
+        // Nhom nhieu bai diem AI cao len dau truoc tien (yeu cau 2026-10-02, giong post feed).
+        const leadComp = (Number((g2 as any).high_lead_post_count) || 0) - (Number((g1 as any).high_lead_post_count) || 0);
+        if (leadComp !== 0) return leadComp;
         if (isLeader && user) {
           const isLeader1 = String(g1.id_member) === String(user.id);
           const isLeader2 = String(g2.id_member) === String(user.id);
@@ -1342,6 +1345,9 @@ export function GroupManagementContent() {
         return matchesSearch && matchesIntent && matchesIndustry && matchesTeam && matchesTier && matchesIcp && matchesMember && matchesContentType && matchesProductSeeding;
       })
       .sort((g1, g2) => {
+        // Nhom nhieu bai diem AI cao len dau truoc tien (yeu cau 2026-10-02, giong post feed).
+        const leadComp = (Number((g2 as any).high_lead_post_count) || 0) - (Number((g1 as any).high_lead_post_count) || 0);
+        if (leadComp !== 0) return leadComp;
         if (isLeader && user) {
           const isLeader1 = String(g1.id_member) === String(user.id);
           const isLeader2 = String(g2.id_member) === String(user.id);
@@ -1898,6 +1904,14 @@ export function GroupManagementContent() {
                       >
                         {g.group_name || "—"}
                       </a>
+                      {(g as any).high_lead_post_count > 0 && (
+                        <span
+                          title={`Điểm AI trung bình các bài trong nhóm: ${(g as any).avg_lead_score ?? "—"}`}
+                          className="mt-1 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200"
+                        >
+                          🎯 {(g as any).high_lead_post_count} bài điểm cao
+                        </span>
+                      )}
                       {platform === "facebook" && (
                         <div className="mt-1.5 text-xs text-on-surface-variant">
                           Thành viên: <span className="font-semibold text-on-surface">{Number((g as FacebookGroup).members) > 0 ? Number((g as FacebookGroup).members).toLocaleString("vi-VN") : "?"}</span> thành viên

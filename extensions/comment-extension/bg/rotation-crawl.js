@@ -129,9 +129,25 @@
         }
     }
 
+    // Lay danh sach tu khoa/chu de Threads tu dong kham pha (registry backend,
+    // threads_keyword_service.py) - goi NGAY DAU vong (khong await o day) de chay SONG SONG
+    // voi luc dang cao Facebook/LinkedIn, toi luc vao stage Threads thi da co san, khong mat
+    // them thoi gian cho (yeu cau 2026-10-02).
+    async function fetchAutoThreadsKeywords(apiBase) {
+        try {
+            const res = await fetch(`${apiBase}/api/all-platform/extension/threads/keywords`);
+            const data = await res.json();
+            const keywords = data && data.data && Array.isArray(data.data.keywords) ? data.data.keywords : [];
+            return keywords.filter(Boolean);
+        } catch (e) {
+            return [];
+        }
+    }
+
     async function runOneRound(scheduleId, label, cfg, roundNumber) {
         const summary = { roundNumber, facebook: null, linkedin: null, threads: null };
         const isCancelled = () => cancelRequestedIds.has(scheduleId);
+        const autoThreadsKeywordsPromise = cfg.threadsAutoDiscover ? fetchAutoThreadsKeywords(cfg.apiBase) : Promise.resolve([]);
 
         if (!isCancelled() && cfg.fbGroups.length > 0) {
             stage(scheduleId, "facebook", { roundNumber });
@@ -161,12 +177,27 @@
             }
         }
 
-        if (!isCancelled() && cfg.threadsKeywords.length > 0) {
+        // Gop tu khoa tay (neu co) voi tu khoa tu dong kham pha (registry backend) - bo trung
+        // khong phan biet hoa/thuong. autoThreadsKeywordsPromise da chay song song tu dau
+        // vong (luc dang cao FB/LI o tren) nen den day thuong da co san, khong phai cho them.
+        const autoThreadsKeywords = await autoThreadsKeywordsPromise;
+        if (autoThreadsKeywords.length > 0) {
+            log(scheduleId, label, `Registry tự khám phá: ${autoThreadsKeywords.length} từ khoá/chủ đề Threads đang active.`);
+        }
+        const seenKw = new Set();
+        const effectiveThreadsKeywords = [...cfg.threadsKeywords, ...autoThreadsKeywords].filter((k) => {
+            const key = (k || "").trim().toLowerCase();
+            if (!key || seenKw.has(key)) return false;
+            seenKw.add(key);
+            return true;
+        });
+
+        if (!isCancelled() && effectiveThreadsKeywords.length > 0) {
             stage(scheduleId, "threads", { roundNumber });
-            log(scheduleId, label, `[Vòng ${roundNumber}] Bắt đầu tìm Threads (${cfg.threadsKeywords.length} từ khoá)...`);
+            log(scheduleId, label, `[Vòng ${roundNumber}] Bắt đầu tìm Threads (${effectiveThreadsKeywords.length} từ khoá)...`);
             self.__mkThreadsProgressHook = (p) => progress(scheduleId, "threads", p);
             try {
-                summary.threads = await self.__mkStartThreadsCrawl(cfg.threadsKeywords, { apiBase: cfg.apiBase, idMember: cfg.idMember, postLimit: 20, dashboardTabId });
+                summary.threads = await self.__mkStartThreadsCrawl(effectiveThreadsKeywords, { apiBase: cfg.apiBase, idMember: cfg.idMember, postLimit: 20, dashboardTabId });
                 log(scheduleId, label, `[Vòng ${roundNumber}] Threads xong: lưu ${summary.threads.totalSaved} bài mới${summary.threads.stopped ? " — BỊ DỪNG GIỮA CHỪNG" : ""}.`, summary.threads.stopped ? "warn" : "success");
             } catch (e) {
                 log(scheduleId, label, `[Vòng ${roundNumber}] Lỗi tìm Threads: ${e.message}`, "error");
@@ -288,7 +319,10 @@
                 const fbGroups = Array.isArray(msg.fbGroups) ? msg.fbGroups.filter((g) => g && g.url) : [];
                 const liGroups = Array.isArray(msg.liGroups) ? msg.liGroups.filter((g) => g && g.url) : [];
                 const threadsKeywords = Array.isArray(msg.threadsKeywords) ? msg.threadsKeywords.filter(Boolean) : [];
-                if (fbGroups.length === 0 && liGroups.length === 0 && threadsKeywords.length === 0) {
+                // threadsAutoDiscover: nen tang Threads duoc bat du khong go tu khoa tay nao -
+                // dung registry tu khoa tu kham pha o backend (threads_keyword_service.py).
+                const threadsAutoDiscover = !!(msg.config && msg.config.threadsAutoDiscover);
+                if (fbGroups.length === 0 && liGroups.length === 0 && threadsKeywords.length === 0 && !threadsAutoDiscover) {
                     sendResponse({ success: false, error: "Chưa có nhóm Facebook/LinkedIn hoặc từ khoá Threads nào để cào." });
                     return;
                 }
@@ -305,6 +339,7 @@
                     fbGroups,
                     liGroups,
                     threadsKeywords,
+                    threadsAutoDiscover,
                 };
                 const schedule = {
                     id: genId(),
