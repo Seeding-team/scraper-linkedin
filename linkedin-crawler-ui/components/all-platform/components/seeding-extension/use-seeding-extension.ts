@@ -425,6 +425,13 @@ interface UseBulkCommentOptions {
 // Chỉ Facebook/LinkedIn có bình luận hàng loạt từ trang này (Threads mới có cào).
 export const PLATFORM_DB_ID: Record<GroupPlatform, number> = { facebook: 1, linkedin: 2 };
 
+// Tài khoản "hệ thống" DUY NHẤT được phép tự động seeding bình luận không cần người bấm
+// (yêu cầu 2026-10-02: "cấm ảnh hưởng tới các tài khoản member" — trước đó hook auto-seeding
+// chạy bất kỳ khi nào có người mở tab Seeding/TaskModal, dùng nhầm phiên FB của member đó để
+// đăng bình luận seeding). Xem [[seeding-system-account]] — đổi email ở đây nếu tài khoản
+// hệ thống đổi (khớp SEEDING_SYSTEM_MEMBER_ID bên backend, unified_posts_service.py).
+const SEEDING_SYSTEM_ACCOUNT_EMAIL = "seedingsystem@markeeai.com";
+
 export function useBulkCommentRuntime({ isReady, email, onComplete }: UseBulkCommentOptions) {
   const [isCommenting, setIsCommenting] = useState(false);
   const [progress, setProgress] = useState<CommentProgress | null>(null);
@@ -568,7 +575,10 @@ export function useBulkCommentRuntime({ isReady, email, onComplete }: UseBulkCom
   // (>=70) — hook này poll danh sách chờ mỗi ~10s và tự gọi extension comment thật,
   // không cần ai bấm, chỉ cần tab Seeding còn mở (giống cơ chế comment hẹn giờ ở trên).
   useEffect(() => {
-    if (!isReady || !email) return;
+    // CHỈ chạy khi đang đăng nhập bằng đúng tài khoản hệ thống — mọi tài khoản member khác
+    // (kể cả khi họ đang mở tab Seeding/TaskModal) sẽ KHÔNG poll/tự động đăng bình luận gì
+    // cả, tránh dùng nhầm phiên Facebook của member để seeding tự động.
+    if (!isReady || !email || email.toLowerCase() !== SEEDING_SYSTEM_ACCOUNT_EMAIL) return;
     const poll = async () => {
       if (isCommentingRef.current) return;
       try {

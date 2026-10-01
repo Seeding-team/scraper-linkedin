@@ -179,6 +179,31 @@ export function PostDetailModal({
             </div>
           )}
 
+          {post.auto_seeding_comment?.content && (
+            <div className="bg-sky-50/50 rounded-xl border border-sky-100 p-4 mb-6">
+              <div className="flex items-center gap-2 mb-2 flex-wrap">
+                <span className="text-xs font-bold text-sky-700 uppercase bg-sky-100/50 px-2 py-0.5 rounded">🤖 Hệ thống (tự động):</span>
+                {post.auto_seeding_comment.status === "posted" ? (
+                  <span className="px-2 py-0.5 rounded text-[11px] font-bold bg-emerald-100 text-emerald-700">✓ Đã đăng</span>
+                ) : post.auto_seeding_comment.status === "failed" ? (
+                  <span className="px-2 py-0.5 rounded text-[11px] font-bold bg-red-100 text-red-700">Lỗi, chưa đăng được</span>
+                ) : (
+                  <span className="px-2 py-0.5 rounded text-[11px] font-bold bg-amber-100 text-amber-700">Đang chờ đăng</span>
+                )}
+              </div>
+              <p className="text-sm text-foreground whitespace-pre-wrap leading-relaxed italic border-l-4 border-sky-300 pl-3 py-1">
+                {post.auto_seeding_comment.content}
+              </p>
+              {post.auto_seeding_comment.link_comment && !isRejected(post.auto_seeding_comment.link_comment) && (
+                <div className="mt-3">
+                  <a href={post.auto_seeding_comment.link_comment} target="_blank" rel="noopener noreferrer" className="text-sm font-medium text-blue-600 hover:underline inline-flex items-center gap-1.5 bg-card px-3 py-1.5 rounded-lg border border-blue-100 shadow-sm transition hover:shadow">
+                    <FiExternalLink className="w-4 h-4" /> Đi tới bình luận trên Facebook
+                  </a>
+                </div>
+              )}
+            </div>
+          )}
+
           <div className="flex gap-4">
             <span className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-50/60 text-amber-700 rounded-lg text-sm font-bold border border-amber-100/40">
               👍 {post.reactions?.toLocaleString() || 0}

@@ -234,6 +234,35 @@ export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onVi
           </div>
         ) : null}
 
+        {/* Bình luận seeding TỰ ĐỘNG của hệ thống trên bài điểm cao (Facebook, migration
+            160) — hiển thị giống hệt 1 bình luận seeding của member (bong bóng + dấu
+            nháy) nhưng ghi rõ "Hệ thống:" để ai cũng biết đây là máy tự làm (yêu cầu
+            2026-10-02). */}
+        {post.auto_seeding_comment?.content ? (
+          <div className="mb-3 px-3 py-2 bg-sky-50/60 border border-sky-100 rounded-lg flex flex-col gap-1">
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span className="text-[10px] font-bold text-sky-600">🤖 Hệ thống (tự động):</span>
+              {post.auto_seeding_comment.status === "posted" ? (
+                <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-emerald-100 text-emerald-700">✓ Đã đăng</span>
+              ) : post.auto_seeding_comment.status === "failed" ? (
+                <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-red-100 text-red-700">Lỗi, chưa đăng được</span>
+              ) : (
+                <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-amber-100 text-amber-700">Đang chờ đăng</span>
+              )}
+            </div>
+            <p className="text-sm text-muted-foreground line-clamp-3">
+              <span className="text-sky-500 font-serif font-bold text-lg leading-none mr-1">"</span>
+              {post.auto_seeding_comment.content}
+              <span className="text-sky-500 font-serif font-bold text-lg leading-none ml-1">"</span>
+            </p>
+            {post.auto_seeding_comment.link_comment && !isRejected(post.auto_seeding_comment.link_comment) && (
+              <a href={post.auto_seeding_comment.link_comment} target="_blank" rel="noopener noreferrer" className="text-[10px] font-medium text-blue-600 hover:underline inline-flex items-center gap-1 mt-0.5">
+                Xem bình luận <FiExternalLink className="w-3 h-3" />
+              </a>
+            )}
+          </div>
+        ) : null}
+
         {/* Bình luận cào được từ chính bài viết (LinkedIn, extension >= 2.0) */}
         {crawledComments.length > 0 ? (
           <div className="mb-3 px-3 py-2 bg-muted/50 border border-border rounded-lg flex flex-col gap-1.5">

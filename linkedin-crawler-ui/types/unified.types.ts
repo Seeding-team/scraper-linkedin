@@ -64,6 +64,15 @@ export interface UnifiedPost {
   lead_score?: number | null;
   /** Lý do ngắn gọn LLM đưa ra cho lead_score — hiện tooltip. */
   lead_score_reason?: string | null;
+  /** Bình luận seeding tự động hệ thống đã/sẽ đăng cho bài điểm cao (Facebook, migration
+   * 160) — hiển thị ngay trên card như 1 bình luận thật nhưng ghi rõ "Hệ thống:". */
+  auto_seeding_comment?: {
+    content?: string | null;
+    status?: "pending" | "posted" | "failed" | string;
+    posted_at?: string | null;
+    link_comment?: string | null;
+    need_category?: string | null;
+  } | null;
 }
 
 export interface UnifiedCrawledComment {

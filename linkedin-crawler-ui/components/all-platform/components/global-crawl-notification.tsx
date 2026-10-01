@@ -7,7 +7,7 @@ import { API_BASE_URL } from "@/lib/env";
 
 export function GlobalCrawlNotification() {
   const { user } = useAppAuth();
-  const [crawlStatus, setCrawlStatus] = useState<{ message: string; isError?: boolean; isSeeding?: boolean } | null>(null);
+  const [crawlStatus, setCrawlStatus] = useState<{ message: string; isError?: boolean } | null>(null);
 
   useEffect(() => {
     // Determine the proper WebSocket URL using API_BASE_URL
@@ -42,11 +42,6 @@ export function GlobalCrawlNotification() {
         } else if (data.event === "crawl_error") {
           setCrawlStatus({ message: data.message, isError: true });
           setTimeout(() => setCrawlStatus(null), 5000);
-        } else if (data.event === "auto_seeding_comment_posted") {
-          // Thông báo cho cả team biết hệ thống vừa tự động seeding 1 bình luận lên bài
-          // điểm AI cao (yêu cầu 2026-10-02) — không lọc involved_users, ai cũng thấy.
-          setCrawlStatus({ message: data.message, isSeeding: true });
-          setTimeout(() => setCrawlStatus(null), 8000);
         }
       } catch (e) {
         console.error("WebSocket message parse error", e);
@@ -66,15 +61,11 @@ export function GlobalCrawlNotification() {
         className={`w-full px-6 py-4 rounded-xl flex items-center justify-center gap-3 text-sm font-medium border shadow-sm ${
           crawlStatus.isError
             ? "bg-red-50 text-red-700 border-red-200"
-            : crawlStatus.isSeeding
-            ? "bg-emerald-50 text-emerald-700 border-emerald-200"
             : "bg-indigo-50 text-indigo-700 border-indigo-200"
         }`}
       >
         {crawlStatus.isError ? (
           <MaterialIcon name="error_outline" className="text-xl" />
-        ) : crawlStatus.isSeeding ? (
-          <MaterialIcon name="forum" className="text-xl" />
         ) : (
           <div className="w-5 h-5 border-2 border-current border-t-transparent rounded-full animate-spin" />
         )}
