@@ -71,6 +71,8 @@ async def save_posts(
         logger.exception("[THREADS-EXT] Lỗi lưu bài Threads (keyword=%r)", payload.keyword)
         raise HTTPException(status_code=500, detail=str(e))
 
+    # involved_users: de GlobalCrawlNotification.tsx chi hien cho dung nguoi dang cao (+
+    # admin), khong lam phien cac thanh vien khac dang dung app (bug 2026-10-01).
     await manager.broadcast({
         "event": "extension_threads_crawl_saved",
         "platform": "threads",
@@ -78,6 +80,7 @@ async def save_posts(
         "posts_count": result["count"],
         "post_urls": result["post_urls"],
         "message": f"Đã lưu {result['count']} bài Threads cho từ khoá '{payload.keyword or ''}'",
+        "involved_users": [payload.id_member] if payload.id_member else [],
     })
 
     return result

@@ -130,7 +130,7 @@
             stage(scheduleId, "facebook", { roundNumber });
             log(scheduleId, label, `[Vòng ${roundNumber}] Bắt đầu cào Facebook (${cfg.fbGroups.length} nhóm)...`);
             try {
-                summary.facebook = await self.__mkStartFbCrawl(cfg.fbGroups, { apiBase: cfg.apiBase, idMember: cfg.idMember, fetchCount: 100 });
+                summary.facebook = await self.__mkStartFbCrawl(cfg.fbGroups, { apiBase: cfg.apiBase, idMember: cfg.idMember, fetchCount: 100, dashboardTabId });
                 log(scheduleId, label, `[Vòng ${roundNumber}] Facebook xong: lưu ${summary.facebook.totalSaved} bài mới${summary.facebook.stopped ? " — BỊ DỪNG GIỮA CHỪNG (có thể do tab Facebook bị đóng)" : ""}.`, summary.facebook.stopped ? "warn" : "success");
             } catch (e) {
                 log(scheduleId, label, `[Vòng ${roundNumber}] Lỗi cào Facebook: ${e.message}`, "error");
@@ -141,7 +141,7 @@
             stage(scheduleId, "linkedin", { roundNumber });
             log(scheduleId, label, `[Vòng ${roundNumber}] Bắt đầu cào LinkedIn (${cfg.liGroups.length} nhóm)...`);
             try {
-                summary.linkedin = await self.__mkStartLiCrawl(cfg.liGroups, { apiBase: cfg.apiBase, idMember: cfg.idMember, maxPosts: 40 });
+                summary.linkedin = await self.__mkStartLiCrawl(cfg.liGroups, { apiBase: cfg.apiBase, idMember: cfg.idMember, maxPosts: 40, dashboardTabId });
                 log(scheduleId, label, `[Vòng ${roundNumber}] LinkedIn xong: lưu ${summary.linkedin.totalSaved} bài mới${summary.linkedin.stopped ? " — BỊ DỪNG GIỮA CHỪNG (có thể do tab LinkedIn bị đóng)" : ""}.`, summary.linkedin.stopped ? "warn" : "success");
             } catch (e) {
                 log(scheduleId, label, `[Vòng ${roundNumber}] Lỗi cào LinkedIn: ${e.message}`, "error");
@@ -152,7 +152,7 @@
             stage(scheduleId, "threads", { roundNumber });
             log(scheduleId, label, `[Vòng ${roundNumber}] Bắt đầu tìm Threads (${cfg.threadsKeywords.length} từ khoá)...`);
             try {
-                summary.threads = await self.__mkStartThreadsCrawl(cfg.threadsKeywords, { apiBase: cfg.apiBase, idMember: cfg.idMember, postLimit: 20 });
+                summary.threads = await self.__mkStartThreadsCrawl(cfg.threadsKeywords, { apiBase: cfg.apiBase, idMember: cfg.idMember, postLimit: 20, dashboardTabId });
                 log(scheduleId, label, `[Vòng ${roundNumber}] Threads xong: lưu ${summary.threads.totalSaved} bài mới${summary.threads.stopped ? " — BỊ DỪNG GIỮA CHỪNG" : ""}.`, summary.threads.stopped ? "warn" : "success");
             } catch (e) {
                 log(scheduleId, label, `[Vòng ${roundNumber}] Lỗi tìm Threads: ${e.message}`, "error");

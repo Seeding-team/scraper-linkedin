@@ -24,6 +24,7 @@
             apiBase: DEFAULT_API_BASE,
             idMember: null,
             tabId: null,
+            windowId: null,
             dashboardTabId: null,
             totalPosts: 0,
             totalSaved: 0,
@@ -129,8 +130,12 @@
 
             try {
                 if (state.tabId == null) {
-                    const tab = await chrome.tabs.create({ url: item.url, active: true });
-                    state.tabId = tab.id;
+                    // Mo 1 CUA SO RIENG, thu nho/khong focus - khong "boc" tab vao cua so
+                    // hien tai cua nguoi dung (tranh cuop focus, dung tinh than "khong dung
+                    // cham" giua acc he thong cao xoay vong va cac acc/tab khac dang dung).
+                    const win = await chrome.windows.create({ url: item.url, focused: false, state: "minimized", type: "normal" });
+                    state.windowId = win.id;
+                    state.tabId = win.tabs && win.tabs[0] ? win.tabs[0].id : null;
                 } else {
                     await chrome.tabs.update(state.tabId, { url: item.url });
                 }
@@ -166,11 +171,12 @@
 
     async function finishCrawl(stopped = false) {
         const state = await getState();
-        const wasTabId = state.tabId;
+        const wasWindowId = state.windowId;
         state.running = false;
         state.tabId = null;
+        state.windowId = null;
         await saveState();
-        if (wasTabId != null) chrome.tabs.remove(wasTabId).catch(() => {});
+        if (wasWindowId != null) chrome.windows.remove(wasWindowId).catch(() => {});
         const summary = {
             totalGroups: state.groupQueue.length,
             totalPosts: state.totalPosts,
@@ -360,7 +366,10 @@
     // hook __mkLiDoneHook thay vi await thang startCrawl() nhu FB/Threads.
     self.__mkStartLiCrawl = (groups, config) => new Promise((resolve) => {
         self.__mkLiDoneHook = resolve;
-        startCrawl({ groups, config }, null);
+        // dashboardTabId tu config (rotation-crawl.js truyen xuong) - xem giai thich o
+        // fb-crawl.js. Truoc day luon truyen null nen notifyApp() broadcast cho TAT CA
+        // tab dang mo thay vi dung tab so huu lich cao (bug 2026-10-01).
+        startCrawl({ groups, config }, config.dashboardTabId ?? null);
     });
     self.__mkStopLiCrawl = stopCrawl;
     self.__mkLiCrawlStatus = async () => (await getState()).running;

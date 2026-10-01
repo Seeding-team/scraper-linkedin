@@ -446,7 +446,10 @@ async def process_and_save_posts(payload: ExtensionCrawlRequest, event_name: str
         except Exception as e:
             logger.warning(f"[CRAWL-QUEUE] Không đóng được job {payload.job_id}: {e}")
 
-    # Realtime WebSocket Broadcast
+    # Realtime WebSocket Broadcast — "involved_users" để GlobalCrawlNotification.tsx chỉ
+    # hiện cho đúng người đang cào (+ admin), KHÔNG hiện cho mọi người đang mở app (trước
+    # đó thiếu field này nên ai cũng thấy thông báo cào của acc khác, kể cả acc hệ thống
+    # cào xoay vòng làm phiền các thành viên khác đang dùng app — bug 2026-10-01).
     msg_prefix = "Legacy: " if legacy else ""
     await manager.broadcast({
         "event": event_name,
@@ -455,7 +458,8 @@ async def process_and_save_posts(payload: ExtensionCrawlRequest, event_name: str
         "group_name": payload.group_name,
         "posts_count": inserted_count,
         "post_urls": inserted_post_urls,
-        "message": f"{msg_prefix}Đã lưu {inserted_count} bài viết từ {payload.group_name}"
+        "message": f"{msg_prefix}Đã lưu {inserted_count} bài viết từ {payload.group_name}",
+        "involved_users": [payload.id_member] if payload.id_member else [],
     })
 
     return {"success": True, "count": inserted_count, "post_urls": inserted_post_urls}

@@ -15,6 +15,7 @@
     let running = false;
     let shouldStop = false;
     let crawlTabId = null;
+    let crawlWindowId = null;
     let dashboardTabId = null;
 
     function sleep(ms) {
@@ -99,6 +100,9 @@
     }
 
     async function runCrawl(keywords, config) {
+        // Xem giai thich o fb-crawl.js: khi goi truc tiep tu rotation-crawl.js,
+        // dashboardTabId phai duoc truyen qua config, khong de mac dinh null/broadcast-all.
+        if (config.dashboardTabId != null) dashboardTabId = config.dashboardTabId;
         const apiBase = config.apiBase || DEFAULT_API_BASE;
         const postLimit = Number(config.postLimit) > 0 ? Math.min(100, Math.floor(Number(config.postLimit))) : 20;
         const maxAgeDays = Number(config.maxAgeDays) > 0 ? Math.floor(Number(config.maxAgeDays)) : null;
@@ -121,8 +125,11 @@
 
                 const url = buildSearchUrl(keyword, sortRecent);
                 if (crawlTabId == null) {
-                    const tab = await chrome.tabs.create({ url, active: true });
-                    crawlTabId = tab.id;
+                    // Mo 1 cua so rieng, thu nho/khong focus - khong cuop focus cua
+                    // tab/cua so nguoi dung dang dung (xem giai thich o fb-crawl.js).
+                    const win = await chrome.windows.create({ url, focused: false, state: "minimized", type: "normal" });
+                    crawlWindowId = win.id;
+                    crawlTabId = win.tabs && win.tabs[0] ? win.tabs[0].id : null;
                 } else {
                     await chrome.tabs.update(crawlTabId, { url });
                 }
@@ -178,11 +185,12 @@
             log(`Lỗi nghiêm trọng: ${e.message}`, "error");
         } finally {
             wasStopped = shouldStop;
-            const tabId = crawlTabId;
+            const windowId = crawlWindowId;
             running = false;
             shouldStop = false;
             crawlTabId = null;
-            if (tabId != null) chrome.tabs.remove(tabId).catch(() => {});
+            crawlWindowId = null;
+            if (windowId != null) chrome.windows.remove(windowId).catch(() => {});
             notifyApp({ action: "MK_TH_CRAWL_DONE", totalGroups: keywords.length, totalPosts, totalSaved, stopped: wasStopped });
         }
         return { totalGroups: keywords.length, totalPosts, totalSaved, stopped: wasStopped };

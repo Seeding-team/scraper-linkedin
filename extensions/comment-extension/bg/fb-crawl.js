@@ -11,6 +11,7 @@
     let isRunning = false;
     let shouldStop = false;
     let crawlTabId = null;
+    let crawlWindowId = null;
     let dashboardTabId = null;
 
     function sleep(ms) {
@@ -85,6 +86,12 @@
     async function startCrawl(groups, config) {
         isRunning = true;
         shouldStop = false;
+        // Khi bg/rotation-crawl.js goi TRUC TIEP (khong qua chrome.runtime.onMessage),
+        // dashboardTabId KHONG duoc gan tu sender.tab - thieu dong nay thi notifyApp()
+        // se fallback broadcast cho TAT CA tab dang mo (ca tab Seeding cua tai khoan
+        // KHAC dang mo chung trinh duyet/VPS) - dung dashboardTabId rotation-crawl.js
+        // truyen xuong de thong bao dung TOI DUNG tab so huu lich cao nay (bug 2026-10-01).
+        if (config.dashboardTabId != null) dashboardTabId = config.dashboardTabId;
         const idMember = config.idMember || null;
         const apiBase = config.apiBase || DEFAULT_API_BASE;
         const fetchCount = Math.max(1, Math.min(200, parseInt(config.fetchCount, 10) || 100));
@@ -94,8 +101,12 @@
 
         log(`Bắt đầu cào ${groups.length} nhóm Facebook...`);
         try {
-            const tab = await chrome.tabs.create({ url: "https://www.facebook.com/", active: true });
-            crawlTabId = tab.id;
+            // Mo 1 CUA SO RIENG, thu nho/khong focus - khong cuop focus cua tab/cua so
+            // nguoi dung dang dung (acc he thong cao xoay vong khong duoc dung cham tab
+            // cua acc/nguoi khac dang lam viec cung may/trinh duyet).
+            const win = await chrome.windows.create({ url: "https://www.facebook.com/", focused: false, state: "minimized", type: "normal" });
+            crawlWindowId = win.id;
+            crawlTabId = win.tabs && win.tabs[0] ? win.tabs[0].id : null;
 
             for (let i = 0; i < groups.length; i++) {
                 if (shouldStop) break;
@@ -153,8 +164,9 @@
             wasStopped = shouldStop;
             isRunning = false;
             shouldStop = false;
-            if (crawlTabId != null) chrome.tabs.remove(crawlTabId).catch(() => {});
+            if (crawlWindowId != null) chrome.windows.remove(crawlWindowId).catch(() => {});
             crawlTabId = null;
+            crawlWindowId = null;
             notifyApp({ action: "MK_FB_CRAWL_DONE", totalGroups: groups.length, totalFetched, totalSaved, stopped: wasStopped });
         }
         return { totalGroups: groups.length, totalFetched, totalSaved, stopped: wasStopped };
