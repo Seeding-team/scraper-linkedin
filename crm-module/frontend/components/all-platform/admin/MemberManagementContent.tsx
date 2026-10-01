@@ -166,7 +166,7 @@ export function MemberManagementContent() {
   // /account của pm-new. Trước 2026-07-23 app này từng tách y hệt (Quản lý
   // người dùng riêng), sau đó gộp lại — nay tách lại thành 2 tab trên CÙNG 1
   // trang thay vì 2 route riêng, giữ nguyên toàn bộ logic/handler cũ.
-  const [activeTab, setActiveTab] = useState<MemberTab>("accounts");
+  const [activeTab, setActiveTab] = useState<MemberTab>("members");
   const [accountSearch, setAccountSearch] = useState("");
 
   const [modalMode, setModalMode] = useState<"add" | "edit" | null>(null);
@@ -199,6 +199,23 @@ export function MemberManagementContent() {
     skipped: Array<{ row: string; reason: string }>;
   } | null>(null);
   const [syncError, setSyncError] = useState<string | null>(null);
+
+  // Mốc "Đồng bộ gần nhất" ở banner tab Hệ thống thành viên: backend chưa lưu
+  // thời điểm chạy sync riêng, nên lấy updated_at mới nhất của các member có
+  // is_recruitment_synced (sync luôn ghi đè updated_at các dòng nó chạm tới).
+  const lastRecruitmentSyncLabel = useMemo(() => {
+    let latest = 0;
+    for (const m of members) {
+      if (!m.is_recruitment_synced || !m.updated_at) continue;
+      const t = new Date(m.updated_at).getTime();
+      if (Number.isFinite(t) && t > latest) latest = t;
+    }
+    if (!latest) return "chưa đồng bộ";
+    const d = new Date(latest);
+    const time = d.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" });
+    const isToday = d.toDateString() === new Date().toDateString();
+    return isToday ? `${time} hôm nay` : `${time} ${d.toLocaleDateString("vi-VN")}`;
+  }, [members]);
 
   async function loadAppUsers() {
     const res = await usersService.getAllProfiles();
@@ -580,55 +597,40 @@ export function MemberManagementContent() {
         </div>
       </div>
 
-      <div className="flex gap-1 border-b border-outline-variant overflow-x-auto">
-        <button
-          type="button"
-          onClick={() => setActiveTab("accounts")}
-          className={cn(
-            "px-4 py-2.5 text-xs font-bold uppercase tracking-wide border-b-2 -mb-px transition",
-            activeTab === "accounts"
-              ? "border-primary text-primary"
-              : "border-transparent text-on-surface-variant hover:text-on-background"
-          )}
-        >
-          Quản lý tài khoản
-        </button>
-        <button
-          type="button"
-          onClick={() => setActiveTab("members")}
-          className={cn(
-            "px-4 py-2.5 text-xs font-bold uppercase tracking-wide border-b-2 -mb-px transition",
-            activeTab === "members"
-              ? "border-primary text-primary"
-              : "border-transparent text-on-surface-variant hover:text-on-background"
-          )}
-        >
-          Quản lý thành viên
-        </button>
-        <button
-          type="button"
-          onClick={() => setActiveTab("team_sale")}
-          className={cn(
-            "px-4 py-2.5 text-xs font-bold uppercase tracking-wide border-b-2 -mb-px transition",
-            activeTab === "team_sale"
-              ? "border-primary text-primary"
-              : "border-transparent text-on-surface-variant hover:text-on-background"
-          )}
-        >
-          Leader / Team Sale
-        </button>
-        <button
-          type="button"
-          onClick={() => setActiveTab("permission_groups")}
-          className={cn(
-            "px-4 py-2.5 text-xs font-bold uppercase tracking-wide border-b-2 -mb-px transition",
-            activeTab === "permission_groups"
-              ? "border-primary text-primary"
-              : "border-transparent text-on-surface-variant hover:text-on-background"
-          )}
-        >
-          Nhóm quyền
-        </button>
+      <div className="flex border-b border-outline-variant overflow-x-auto">
+        {([
+          { key: "members", label: "Hệ thống thành viên", count: members.length },
+          { key: "accounts", label: "Tất cả Member CRM", count: appUsers.length },
+          { key: "team_sale", label: "Leader / Team Sale", count: crmTeams.length },
+          { key: "permission_groups", label: "Nhóm quyền", count: permissionGroups.length },
+        ] as Array<{ key: MemberTab; label: string; count: number }>).map((tab, index) => {
+          const active = activeTab === tab.key;
+          return (
+            <button
+              key={tab.key}
+              type="button"
+              onClick={() => setActiveTab(tab.key)}
+              className={cn(
+                "flex min-w-[180px] flex-1 flex-col items-center gap-1.5 px-4 pt-3 pb-2.5 border-b-[3px] -mb-px transition",
+                active
+                  ? "border-primary text-primary"
+                  : "border-transparent text-on-surface-variant hover:text-on-background"
+              )}
+            >
+              <span className="whitespace-nowrap text-sm font-bold">
+                {index + 1}. {tab.label}
+              </span>
+              <span
+                className={cn(
+                  "min-w-[26px] rounded-full px-2 py-0.5 text-[11px] font-bold leading-4",
+                  active ? "bg-primary/10 text-primary" : "bg-surface-container-high text-on-surface-variant"
+                )}
+              >
+                {tab.count}
+              </span>
+            </button>
+          );
+        })}
       </div>
 
       {activeTab === "permission_groups" && <CrmPermissionGroupsTab />}
@@ -804,12 +806,54 @@ export function MemberManagementContent() {
 
       {activeTab === "members" && (
         <>
-          <PlatformStatsRow>
-            <PlatformStatCard label="Tổng thành viên" value={members.length} accent="primary" />
-            <PlatformStatCard label="Đã liên kết tài khoản" value={members.filter(m => m.linked_user_id).length} accent="success" />
-            <PlatformStatCard label="Số team" value={teamOptions.length} accent="warning" />
-            <PlatformStatCard label="Kỹ năng đã khai báo" value={skills.length} accent="primary" />
-          </PlatformStatsRow>
+          <div className="flex flex-col gap-3 rounded-2xl border border-outline-variant bg-surface-container-low px-5 py-4 md:flex-row md:items-center">
+            <div className="flex flex-1 items-center gap-4">
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary/10 text-base font-bold text-primary">1</span>
+              <div className="min-w-0">
+                <p className="text-sm font-bold text-on-background">Đồng bộ nhân sự từ CV</p>
+                <p className="text-xs text-on-surface-variant">Danh bạ gốc, trạng thái làm việc và thông tin nhân sự.</p>
+              </div>
+            </div>
+            <MaterialIcon name="arrow_forward" className="hidden text-xl text-on-surface-variant md:block" />
+            <button
+              type="button"
+              onClick={() => setActiveTab("accounts")}
+              className="flex flex-1 items-center gap-4 rounded-xl text-left transition hover:opacity-80"
+              title="Chuyển sang tab Tất cả Member CRM để tạo tài khoản"
+            >
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary/10 text-base font-bold text-primary">2</span>
+              <div className="min-w-0">
+                <p className="text-sm font-bold text-on-background">Cấp quyền sử dụng CRM</p>
+                <p className="text-xs text-on-surface-variant">Chọn member cần dùng CRM rồi tạo tài khoản CRM.</p>
+              </div>
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            {[
+              { label: "Tổng thành viên CV", value: members.length, hint: "Đã đồng bộ về hệ thống" },
+              { label: "Đã có tài khoản CRM", value: members.filter(m => m.linked_user_id).length, hint: "Có thể đăng nhập CRM" },
+              { label: "Chưa cấp CRM", value: members.filter(m => !m.linked_user_id).length, hint: "Có thể cấp ngay từ tab này" },
+              { label: "Đang làm việc", value: members.filter(m => m.employment_status !== "OFF").length, hint: "Theo trạng thái từ CV" },
+            ].map(card => (
+              <div key={card.label} className="rounded-2xl border border-outline-variant bg-surface px-5 py-4">
+                <p className="text-[11px] font-bold uppercase tracking-wide text-on-surface-variant">{card.label}</p>
+                <p className="mt-2 text-3xl font-extrabold leading-none tabular-nums text-on-background">
+                  {card.value.toLocaleString("vi-VN")}
+                </p>
+                <p className="mt-2 text-xs text-on-surface-variant">{card.hint}</p>
+              </div>
+            ))}
+          </div>
+
+          <div className="flex items-start gap-3 rounded-2xl border border-outline-variant bg-surface-container-low px-5 py-3.5 text-xs text-on-surface-variant">
+            <MaterialIcon name="sync" className="mt-0.5 text-base" />
+            <p>
+              <span className="font-bold text-primary">Nguồn: Hệ thống CV</span>
+              {" · "}Đồng bộ gần nhất: {lastRecruitmentSyncLabel}
+              {" · "}Tại đây chỉ chọn ai được cấp tài khoản CRM, không sửa dữ liệu nhân sự gốc.
+            </p>
+          </div>
 
           <div className="rounded-xl border border-outline-variant bg-surface p-6 shadow-sm space-y-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
