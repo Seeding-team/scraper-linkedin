@@ -46,6 +46,11 @@ _SYSTEM_PROMPT = (
 # tinh nang khac (AI comment, AI dien nhanh deal...) khi 1 lo cao tra ve vai chuc bai.
 _MAX_CONCURRENT_SCORING = 5
 
+# Bai diem THAP (< nguong nay) la "khong co gia tri gi" (bai rac/quang cao doi thu/khong
+# lien quan - dung tieu chi trong _SYSTEM_PROMPT) - XOA LUON thay vi chi luu diem thap, de
+# feed luon sach, chi con bai dang gia tri xem xet seeding (yeu cau 2026-10-01).
+_DELETE_BELOW_SCORE = 31
+
 
 def is_lead_scoring_configured() -> bool:
     return bool(settings.openai_api_key)
@@ -111,13 +116,19 @@ async def score_and_save_posts(table: str, rows: list[dict[str, Any]]) -> None:
         if not result:
             return
         try:
-            await asyncio.to_thread(
-                lambda: supabase.table(table)
-                .update({"lead_score": result["score"], "lead_score_reason": result["reason"]})
-                .eq("id", post_id)
-                .execute()
-            )
+            if result["score"] < _DELETE_BELOW_SCORE:
+                # Bai diem thap khong co gia tri cho seeding - xoa luon thay vi chi luu
+                # diem, giu feed sach (yeu cau 2026-10-01).
+                await asyncio.to_thread(lambda: supabase.table(table).delete().eq("id", post_id).execute())
+                logger.info(f"lead_score: xoá bài {table}#{post_id} (điểm {result['score']} - {result['reason']})")
+            else:
+                await asyncio.to_thread(
+                    lambda: supabase.table(table)
+                    .update({"lead_score": result["score"], "lead_score_reason": result["reason"]})
+                    .eq("id", post_id)
+                    .execute()
+                )
         except Exception as exc:
-            logger.warning(f"lead_score: lưu điểm cho {table}#{post_id} thất bại: {exc}")
+            logger.warning(f"lead_score: lưu/xoá bài {table}#{post_id} thất bại: {exc}")
 
     await asyncio.gather(*(_score_one(r) for r in rows))

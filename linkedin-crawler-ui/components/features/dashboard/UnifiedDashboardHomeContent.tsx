@@ -293,7 +293,7 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
     content_type: "",
     product_seeding: "",
     member: "",
-    sort: "latest",
+    sort: "lead_score_high",
     dateRange: "",
     seeding_status: "all",
   });
@@ -521,7 +521,7 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
         if (f.intent) params.set("intent", f.intent);
         if (f.industry) params.set("industry", f.industry);
         if (f.team) params.set("team", f.team);
-        if (f.sort !== "latest") params.set("sort", f.sort);
+        if (f.sort !== "lead_score_high") params.set("sort", f.sort);
         if (f.dateRange) params.set("date", f.dateRange);
         if (f.seeding_status && f.seeding_status !== "all")
           params.set("seeding", f.seeding_status);
@@ -551,7 +551,7 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
       intent: params.get("intent") || "",
       industry: params.get("industry") || "",
       team: params.get("team") || "",
-      sort: (params.get("sort") as typeof prev.sort) || "latest",
+      sort: (params.get("sort") as typeof prev.sort) || "lead_score_high",
       dateRange: params.get("date") || "",
       seeding_status: (params.get("seeding") as typeof prev.seeding_status) || "all",
     }));

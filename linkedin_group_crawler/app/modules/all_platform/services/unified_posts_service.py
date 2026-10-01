@@ -211,7 +211,11 @@ def _fetch_posts(
             query = query.ilike("content", f"%{search}%")
 
     # Sort
-    if sort == "score_high":
+    if sort == "lead_score_high":
+        # Bai diem lead cao len dau (migration 159) - bai chua cham (NULL) xuong cuoi,
+        # cung diem thi bai moi hon len truoc.
+        query = query.order("lead_score", desc=True, nullsfirst=False).order("crawl_date", desc=True, nullsfirst=False)
+    elif sort == "score_high":
         query = query.order("score", desc=True, nullsfirst=False)
     elif sort == "score_low":
         query = query.order("score", desc=False, nullsfirst=False)
@@ -364,7 +368,9 @@ def _fetch_threads_posts(
     if search:
         query = query.ilike("content", f"%{search}%")
 
-    if sort == "score_high":
+    if sort == "lead_score_high":
+        query = query.order("lead_score", desc=True, nullsfirst=False).order("crawl_date", desc=True, nullsfirst=False)
+    elif sort == "score_high":
         query = query.order("score", desc=True, nullsfirst=False)
     elif sort == "score_low":
         query = query.order("score", desc=False, nullsfirst=False)
@@ -769,7 +775,9 @@ def get_unified_posts(
             total_count += count
 
         # Sort the combined list
-        if sort == "score_high":
+        if sort == "lead_score_high":
+            all_posts.sort(key=lambda p: (p.get("lead_score") if p.get("lead_score") is not None else -1, str(p.get("crawl_date") or "")), reverse=True)
+        elif sort == "score_high":
             all_posts.sort(key=lambda p: p.get("score", 0), reverse=True)
         elif sort == "score_low":
             all_posts.sort(key=lambda p: p.get("score", 0), reverse=False)

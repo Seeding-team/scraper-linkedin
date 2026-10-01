@@ -5,7 +5,7 @@ import { FaSearch } from "react-icons/fa";
 import { cn } from "@/lib/utils";
 import type { Category } from "@/types/unified.types";
 
-export type SortOption = "latest" | "score_high" | "score_low" | "comments_high" | "crawler" | "most_seeded" | "verified_first";
+export type SortOption = "lead_score_high" | "latest" | "score_high" | "score_low" | "comments_high" | "crawler" | "most_seeded" | "verified_first";
 
 export type SeedingStatusFilter = "all" | "seeded" | "verified" | "pending" | "rejected";
 
@@ -39,6 +39,7 @@ export interface FilterState {
 }
 
 const SORT_OPTIONS: { value: SortOption; label: string }[] = [
+  { value: "lead_score_high", label: "Điểm tiềm năng cao nhất (mặc định)" },
   { value: "latest", label: "Mới nhất" },
   { value: "score_high", label: "Score cao nhất" },
   { value: "score_low", label: "Score thấp nhất" },
@@ -75,7 +76,7 @@ export function FilterBar({ intents, industries, teams, tiers, icps, contentType
   const [contentType, setContentType] = useState("");
   const [productSeeding, setProductSeeding] = useState("");
   const [member, setMember] = useState("");
-  const [sort, setSort] = useState<SortOption>("latest");
+  const [sort, setSort] = useState<SortOption>("lead_score_high");
   const [dateRange, setDateRange] = useState("");
   // Phase 6: seeding status filter (admin/leader)
   const [seedingStatus, setSeedingStatus] = useState<SeedingStatusFilter>("all");
@@ -120,7 +121,7 @@ export function FilterBar({ intents, industries, teams, tiers, icps, contentType
     setContentType("");
     setProductSeeding("");
     setMember("");
-    setSort("latest");
+    setSort("lead_score_high");
     setDateRange("");
     setSeedingStatus("all");
     onFilter({
@@ -133,7 +134,7 @@ export function FilterBar({ intents, industries, teams, tiers, icps, contentType
       content_type: "",
       product_seeding: "",
       member: "",
-      sort: "latest",
+      sort: "lead_score_high",
       dateRange: "",
       seeding_status: "all",
     });
