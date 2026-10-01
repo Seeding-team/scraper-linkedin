@@ -81,15 +81,9 @@ export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onVi
     return Array.from(groups.values());
   }, [fallbackItems, libraryItems]);
 
-  const score = post.score || 0;
-  let scoreBg = "bg-muted text-muted-foreground border-border";
-
-  if (score >= 85) scoreBg = "bg-primary/10 text-primary border-primary/20";
-  else if (score >= 60) scoreBg = "bg-amber-50 text-amber-600 border-amber-100";
-
-  // Điểm "tiềm năng seeding" do LLM chấm (migration 159, lead_score_service.py) — khác
-  // "AI Score" (score, tính từ tương tác) ở trên: lead_score đo ĐÚNG ý định "đang tìm đơn
-  // vị làm website/app/landing page" để người dùng biết ngay bài nào nên seeding.
+  // Điểm "tiềm năng seeding" do LLM chấm (migration 159, lead_score_service.py) — người
+  // đang tìm đơn vị làm website/app/landing page, để người dùng biết ngay bài nào nên
+  // seeding. (Thay cho khối "AI Score" cũ tính từ tương tác — đã bỏ vì hiển thị xấu/thừa.)
   const leadScore = typeof post.lead_score === "number" ? post.lead_score : null;
   const isHighLead = leadScore !== null && leadScore >= 70;
   const isMidLead = leadScore !== null && leadScore >= 31 && leadScore < 70;
@@ -101,12 +95,6 @@ export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onVi
         isHighLead ? "bg-emerald-50/70 border-emerald-300 ring-1 ring-emerald-200 hover:border-emerald-400" : "bg-card border-border hover:border-primary/30",
       )}
     >
-      {/* KHỐI AI SCORE BÊN TRÁI */}
-      <div className={cn("w-[60px] h-[60px] rounded-lg flex flex-col items-center justify-center shrink-0 border", scoreBg)}>
-        <span className="text-xl font-black leading-tight">{score}</span>
-        <span className="text-[10px] font-semibold mt-0.5 opacity-80">AI Score</span>
-      </div>
-
       {/* NỘI DUNG CHÍNH */}
       <div className="flex-1 flex flex-col justify-between min-w-0">
 
