@@ -158,19 +158,27 @@
         return summary;
     }
 
-    // Tinh moc gio SOM NHAT trong so cac lich con dang bat (enabled) va co nextRunAt, dat
-    // DUY NHAT 1 alarm vao moc do - tranh dat nhieu alarm rieng cho tung lich (gioi han so
-    // luong alarm cua Chrome, va cung khong can thiet vi chi chay duoc 1 lich 1 luc).
+    // Dung 1 alarm LAP LAI MOI PHUT (thay vi dat dung 1 lan vao moc nextRunAt som nhat) khi
+    // con bat ky lich nao dang bat (enabled) - day la LUOI AN TOAN de dam bao "chay lien tuc,
+    // khong bi ngat giua chung": neu service worker bi Chrome tat/crash GIUA LUC dang cao
+    // (lich ket o status "running" nhung bien activeScheduleId trong bo nho da mat vi service
+    // worker restart), KHONG co alarm chinh xac nao con duoc dat de danh thuc lai (alarm cu
+    // chi duoc tao o CUOI 1 vong chay thanh cong) - lich do se "treo" vinh vien cho den khi
+    // co nguoi vo tinh lam service worker thuc day (mo tab, gui message...). Alarm lap moi
+    // phut dam bao toi da 60s sau la tu phat hien qua getSchedules() (tu sua lich ket) va
+    // chay tiep ngay, khong can cho dung chinh xac 1 moc gio nao ca.
     async function scheduleNextAlarm() {
         const list = await getSchedules();
-        const waiting = list.filter((s) => s.enabled && typeof s.nextRunAt === "number");
-        if (waiting.length === 0) {
+        const hasEnabled = list.some((s) => s.enabled);
+        if (!hasEnabled) {
             try { await chrome.alarms.clear(RESUME_ALARM); } catch (e) {}
             return;
         }
-        const earliest = Math.min(...waiting.map((s) => s.nextRunAt));
         try {
-            await chrome.alarms.create(RESUME_ALARM, { when: Math.max(earliest, Date.now() + 1000) });
+            const existing = await chrome.alarms.get(RESUME_ALARM);
+            if (!existing || existing.periodInMinutes !== 1) {
+                await chrome.alarms.create(RESUME_ALARM, { periodInMinutes: 1, when: Date.now() + 1000 });
+            }
         } catch (e) {}
     }
 

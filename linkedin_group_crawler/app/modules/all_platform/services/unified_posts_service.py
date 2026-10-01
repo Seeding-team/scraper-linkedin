@@ -23,6 +23,21 @@ def _supabase() -> Client:
     return get_supabase_client()
 
 
+# Acc seeding hệ thống (VPS, cào xoay vòng): bài do acc này cào về phải hiển thị cho
+# TẤT CẢ mọi người (kể cả member) để ai cũng tiến hành seeding được, không bị giới hạn
+# theo RBAC thường (member chỉ thấy bài của chính mình). Đây là bypass CÓ PHẠM VI hẹp —
+# chỉ thêm đúng 1 id vào danh sách allowed_member_ids, không gỡ bỏ RBAC chung.
+SEEDING_SYSTEM_MEMBER_ID = "77588ca3-4480-4a27-a002-d7650c5f16c9"
+
+
+def _with_seeding_system_visible(allowed_member_ids: Optional[list[str]]) -> Optional[list[str]]:
+    if allowed_member_ids is None:
+        return None
+    if SEEDING_SYSTEM_MEMBER_ID in allowed_member_ids:
+        return allowed_member_ids
+    return [*allowed_member_ids, SEEDING_SYSTEM_MEMBER_ID]
+
+
 # ── Core fetch ──────────────────────────────────────────────────────────────────
 
 from functools import wraps
@@ -143,6 +158,8 @@ def _fetch_posts(
     else:
         # Member role
         allowed_member_ids = [user_id] if user_id else ["00000000-0000-0000-0000-000000000000"]
+
+    allowed_member_ids = _with_seeding_system_visible(allowed_member_ids)
 
     # If id_member is specified, ensure it is within allowed_member_ids
     if id_member:
@@ -555,7 +572,9 @@ def _fetch_stats(
     else:
         # Member role
         allowed_member_ids = [user_id_fetch] if user_id_fetch else ["00000000-0000-0000-0000-000000000000"]
-        
+
+    allowed_member_ids = _with_seeding_system_visible(allowed_member_ids)
+
     group_ids = None
     if table == "linkedin_posts" and allowed_member_ids is not None:
         gq = sb.table("linkedin_groups").select("id").in_("id_member", allowed_member_ids).execute()
@@ -1057,8 +1076,8 @@ def _resolve_member_scope(sb: Client, email: str) -> Optional[list[str]]:
             allowed = [m["id_member"] for m in (mot_res.data or []) if m.get("id_member")]
         if user_id not in allowed:
             allowed.append(user_id)
-        return allowed
-    return [user_id]
+        return _with_seeding_system_visible(allowed)
+    return _with_seeding_system_visible([user_id])
 
 
 @retry_on_winerror

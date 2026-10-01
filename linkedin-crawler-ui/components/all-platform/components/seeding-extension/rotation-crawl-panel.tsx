@@ -248,6 +248,19 @@ function AddScheduleModal({
   const fb = useGroupOptions("facebook");
   const li = useGroupOptions("linkedin");
 
+  // Mặc định chỉ bật Facebook (ưu tiên cào Facebook trước) — bấm chọn thêm
+  // LinkedIn/Threads nếu muốn xoay vòng luôn cả 2 nền tảng kia trong CÙNG 1 lịch.
+  const [enabledPlatforms, setEnabledPlatforms] = useState<Set<"facebook" | "linkedin" | "threads">>(
+    () => new Set(["facebook"]),
+  );
+  const togglePlatform = (p: "facebook" | "linkedin" | "threads") =>
+    setEnabledPlatforms((prev) => {
+      const next = new Set(prev);
+      if (next.has(p)) next.delete(p);
+      else next.add(p);
+      return next;
+    });
+
   const [label, setLabel] = useState("");
   const [keywordsInput, setKeywordsInput] = useState(() => {
     if (typeof window === "undefined") return "";
@@ -275,7 +288,10 @@ function AddScheduleModal({
     return Number.isFinite(v) && v > 0 ? v : 2;
   }, [intervalInput]);
 
-  const totalSelected = fb.selectedIds.length + li.selectedIds.length + keywords.length;
+  const totalSelected =
+    (enabledPlatforms.has("facebook") ? fb.selectedIds.length : 0) +
+    (enabledPlatforms.has("linkedin") ? li.selectedIds.length : 0) +
+    (enabledPlatforms.has("threads") ? keywords.length : 0);
   const canSubmit = totalSelected > 0 && !!user?.id && !!user?.email && !submitting;
 
   const handleSubmit = async () => {
@@ -286,9 +302,14 @@ function AddScheduleModal({
       window.localStorage.setItem(KEYWORDS_STORAGE_KEY, keywordsInput);
       window.localStorage.setItem(INTERVAL_STORAGE_KEY, intervalInput);
     } catch {}
-    const fbGroups: RotationGroupInput[] = fb.groups.filter((g) => fb.selectedIds.includes(g.id)).map((g) => ({ id: g.id, name: g.group_name || g.group_url, url: g.group_url }));
-    const liGroups: RotationGroupInput[] = li.groups.filter((g) => li.selectedIds.includes(g.id)).map((g) => ({ id: g.id, name: g.group_name || g.group_url, url: g.group_url }));
-    const res = await addSchedule(label.trim(), fbGroups, liGroups, keywords, {
+    const fbGroups: RotationGroupInput[] = enabledPlatforms.has("facebook")
+      ? fb.groups.filter((g) => fb.selectedIds.includes(g.id)).map((g) => ({ id: g.id, name: g.group_name || g.group_url, url: g.group_url }))
+      : [];
+    const liGroups: RotationGroupInput[] = enabledPlatforms.has("linkedin")
+      ? li.groups.filter((g) => li.selectedIds.includes(g.id)).map((g) => ({ id: g.id, name: g.group_name || g.group_url, url: g.group_url }))
+      : [];
+    const threadsKeywords = enabledPlatforms.has("threads") ? keywords : [];
+    const res = await addSchedule(label.trim(), fbGroups, liGroups, threadsKeywords, {
       email: user.email,
       idMember: user.id,
       intervalHours,
@@ -336,10 +357,48 @@ function AddScheduleModal({
             />
           </div>
 
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-bold text-foreground">Chọn nền tảng muốn xoay vòng</label>
+            <div className="flex flex-wrap gap-2">
+              {(
+                [
+                  { key: "facebook" as const, label: "Facebook", icon: "📘" },
+                  { key: "linkedin" as const, label: "LinkedIn", icon: "💼" },
+                  { key: "threads" as const, label: "Threads", icon: "🧵" },
+                ]
+              ).map((p) => {
+                const active = enabledPlatforms.has(p.key);
+                return (
+                  <button
+                    key={p.key}
+                    type="button"
+                    disabled={submitting}
+                    onClick={() => togglePlatform(p.key)}
+                    className={cn(
+                      "inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-bold border-2 transition-colors disabled:opacity-60",
+                      active ? "border-primary bg-primary/10 text-primary" : "border-border bg-background text-muted-foreground hover:bg-muted",
+                    )}
+                  >
+                    <span>{p.icon}</span>
+                    {p.label}
+                    {active ? <span className="material-symbols-outlined text-[14px]">check_circle</span> : null}
+                  </button>
+                );
+              })}
+            </div>
+            <p className="text-[10px] text-muted-foreground">
+              Mặc định chỉ bật Facebook (ưu tiên cào Facebook trước) — bấm chọn thêm nền tảng nếu muốn xoay vòng cả Facebook → LinkedIn → Threads trong cùng 1 lịch.
+            </p>
+          </div>
+
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-            <GroupPickList title="Nhóm Facebook" options={fb} disabled={submitting} />
-            <GroupPickList title="Nhóm LinkedIn" options={li} disabled={submitting} />
-            <div className="flex flex-col gap-2 min-w-0">
+            <div className={cn("transition-opacity", !enabledPlatforms.has("facebook") && "opacity-40")}>
+              <GroupPickList title="Nhóm Facebook" options={fb} disabled={submitting || !enabledPlatforms.has("facebook")} />
+            </div>
+            <div className={cn("transition-opacity", !enabledPlatforms.has("linkedin") && "opacity-40")}>
+              <GroupPickList title="Nhóm LinkedIn" options={li} disabled={submitting || !enabledPlatforms.has("linkedin")} />
+            </div>
+            <div className={cn("flex flex-col gap-2 min-w-0 transition-opacity", !enabledPlatforms.has("threads") && "opacity-40")}>
               <label htmlFor="rotation-threads-keywords" className="text-sm font-bold text-foreground">
                 Từ khoá Threads ({keywords.length})
               </label>
@@ -348,7 +407,7 @@ function AddScheduleModal({
                 rows={5}
                 value={keywordsInput}
                 onChange={(e) => setKeywordsInput(e.target.value)}
-                disabled={submitting}
+                disabled={submitting || !enabledPlatforms.has("threads")}
                 placeholder={"Mỗi dòng 1 từ khoá (hoặc cách nhau bởi dấu phẩy)\nVD: thuê làm website, cần agency app"}
                 className="w-full rounded-xl border border-border bg-background px-3 py-2 text-xs outline-none focus:border-primary disabled:opacity-60"
               />

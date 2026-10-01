@@ -368,7 +368,9 @@ def update_linkedin_group(group_id: str, payload: dict) -> dict:
         "id_member_name_hint",
     }
 
-    update_data = {k: v for k, v in cleaned.items() if k in allowed_fields and v is not None}
+    # Giữ cả None (vd bỏ gán assignee_id) — khớp hành vi update_facebook_group(), trước đây
+    # lọc bỏ None khiến gửi "" (dọn assignee_id) bị bỏ qua hoàn toàn, không xoá được.
+    update_data = {k: v for k, v in cleaned.items() if k in allowed_fields}
     update_data["updated_at"] = "now()"
 
     result = (
