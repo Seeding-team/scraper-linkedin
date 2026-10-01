@@ -127,39 +127,15 @@ def _fetch_posts(
     if date_to:
         query = query.lte("crawl_date", date_to)
 
-    # Resolve taxonomy and email filters via groups table
+    # Resolve taxonomy filters via groups table
     group_ids: list[str] | None = None
-    
-    # 1. Resolve user role and scoped member ids
-    user_id = None
-    user_role = "member"
+
+    # Bài viết là tài nguyên dùng chung để seeding — AI CÀO cũng hiển thị cho TẤT CẢ mọi
+    # người xem và tiến hành seeding (yêu cầu 2026-10-01), không còn giới hạn theo
+    # người cào/role nữa (trước đó có resolve role qua email ở đây, đã bỏ vì không còn
+    # dùng). allowed_member_ids chỉ còn thu hẹp khi FE chủ động truyền id_member cụ thể
+    # (vd lọc "chỉ xem bài của 1 member" ở khối ngay dưới đây).
     allowed_member_ids: list[str] | None = None
-
-    if email:
-        user_res = sb.table("app_users").select("id, role").eq("email", email.strip().lower()).limit(1).execute()
-        if user_res.data:
-            user_id = user_res.data[0]["id"]
-            user_role = user_res.data[0].get("role", "member")
-            
-    if user_role == "admin":
-        allowed_member_ids = None  # Admin sees all
-    elif user_role == "leader":
-        if user_id:
-            teams_res = sb.table("teams").select("id").eq("id_leader", user_id).execute()
-            team_ids = [t["id"] for t in (teams_res.data or [])]
-            allowed_member_ids = []
-            if team_ids:
-                mot_res = sb.table("member_of_teams").select("id_member").in_("id_teams", team_ids).execute()
-                allowed_member_ids = [m["id_member"] for m in (mot_res.data or []) if m.get("id_member")]
-            if user_id not in allowed_member_ids:
-                allowed_member_ids.append(user_id)
-        else:
-            allowed_member_ids = ["00000000-0000-0000-0000-000000000000"]
-    else:
-        # Member role
-        allowed_member_ids = [user_id] if user_id else ["00000000-0000-0000-0000-000000000000"]
-
-    allowed_member_ids = _with_seeding_system_visible(allowed_member_ids)
 
     # If id_member is specified, ensure it is within allowed_member_ids
     if id_member:
@@ -367,7 +343,11 @@ def _fetch_threads_posts(
         return [], 0
 
     sb = _supabase()
-    allowed_member_ids = _resolve_member_scope(sb, email)
+    # Bài viết dùng chung để seeding - AI CÀO cũng hiển thị cho TẤT CẢ mọi người (giống
+    # facebook_posts/linkedin_posts ở _fetch_posts() phía trên) - không dùng
+    # _resolve_member_scope() nữa ở đây (hàm đó vẫn giữ nguyên, dùng cho dashboard
+    # xu hướng/overview của admin-leader, nơi phân quyền theo team vẫn còn ý nghĩa).
+    allowed_member_ids = None
     if id_member:
         if allowed_member_ids is None or id_member in allowed_member_ids:
             allowed_member_ids = [id_member]
@@ -544,36 +524,17 @@ def _fetch_stats(
     today = now_vn.date().isoformat()
     yesterday = (now_vn.date() - timedelta(days=1)).isoformat()
 
-    # 1. Resolve user role and scoped member ids
+    # Resolve current user's own id — vẫn cần cho _seeded_today()/_kpi_progress() phía
+    # dưới (KPI CÁ NHÂN, luôn tính theo đúng người đang xem, không đổi). Phần đếm bài
+    # tổng (totalPostsToday/totalPosts/...) thì KHÔNG còn giới hạn theo role nữa — bài
+    # viết dùng chung để seeding, ai cào cũng hiển thị cho tất cả mọi người (2026-10-01).
     user_id_fetch = None
-    user_role = "member"
-    allowed_member_ids: list[str] | None = None
-
     if email:
-        user_res = sb.table("app_users").select("id, role").eq("email", email.strip().lower()).limit(1).execute()
+        user_res = sb.table("app_users").select("id").eq("email", email.strip().lower()).limit(1).execute()
         if user_res.data:
             user_id_fetch = user_res.data[0]["id"]
-            user_role = user_res.data[0].get("role", "member")
-            
-    if user_role == "admin":
-        allowed_member_ids = None  # Admin sees all
-    elif user_role == "leader":
-        if user_id_fetch:
-            teams_res = sb.table("teams").select("id").eq("id_leader", user_id_fetch).execute()
-            team_ids = [t["id"] for t in (teams_res.data or [])]
-            allowed_member_ids = []
-            if team_ids:
-                mot_res = sb.table("member_of_teams").select("id_member").in_("id_teams", team_ids).execute()
-                allowed_member_ids = [m["id_member"] for m in (mot_res.data or []) if m.get("id_member")]
-            if user_id_fetch not in allowed_member_ids:
-                allowed_member_ids.append(user_id_fetch)
-        else:
-            allowed_member_ids = ["00000000-0000-0000-0000-000000000000"]
-    else:
-        # Member role
-        allowed_member_ids = [user_id_fetch] if user_id_fetch else ["00000000-0000-0000-0000-000000000000"]
 
-    allowed_member_ids = _with_seeding_system_visible(allowed_member_ids)
+    allowed_member_ids: list[str] | None = None
 
     group_ids = None
     if table == "linkedin_posts" and allowed_member_ids is not None:
