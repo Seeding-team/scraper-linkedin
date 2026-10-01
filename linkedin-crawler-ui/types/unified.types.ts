@@ -465,6 +465,14 @@ export interface FacebookGroup {
   high_lead_post_count?: number;
   /** Điểm AI trung bình các bài trong nhóm đã được chấm (null nếu chưa có bài nào chấm). */
   avg_lead_score?: number | null;
+  /** Tổng số bài trong nhóm đã được LLM chấm điểm (kể cả điểm thấp). */
+  scored_post_count?: number;
+  /** true nếu đã chấm đủ bài nhưng chưa ra bài điểm cao nào — nhóm này ít/không tạo lead,
+   * KHÔNG tự động xoá, chỉ cảnh báo để người dùng tự quyết định (yêu cầu 2026-10-02). */
+  lead_stats_warning?: boolean;
+  /** true nếu backend không tính được thống kê điểm AI cho nhóm (lỗi tạm thời) — nhóm vẫn
+   * hiển thị đầy đủ, chỉ là chưa có badge điểm. */
+  lead_stats_error?: boolean;
 }
 
 export interface LinkedInGroup {
@@ -501,6 +509,14 @@ export interface LinkedInGroup {
   high_lead_post_count?: number;
   /** Điểm AI trung bình các bài trong nhóm đã được chấm (null nếu chưa có bài nào chấm). */
   avg_lead_score?: number | null;
+  /** Tổng số bài trong nhóm đã được LLM chấm điểm (kể cả điểm thấp). */
+  scored_post_count?: number;
+  /** true nếu đã chấm đủ bài nhưng chưa ra bài điểm cao nào — nhóm này ít/không tạo lead,
+   * KHÔNG tự động xoá, chỉ cảnh báo để người dùng tự quyết định (yêu cầu 2026-10-02). */
+  lead_stats_warning?: boolean;
+  /** true nếu backend không tính được thống kê điểm AI cho nhóm (lỗi tạm thời) — nhóm vẫn
+   * hiển thị đầy đủ, chỉ là chưa có badge điểm. */
+  lead_stats_error?: boolean;
 }
 
 // ── Crawl Sessions ─────────────────────────────────────────────────────────────

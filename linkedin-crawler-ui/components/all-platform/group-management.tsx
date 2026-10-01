@@ -1428,6 +1428,7 @@ export function GroupManagementContent() {
   };
 
   const currentGroups = platform === "facebook" ? filteredFb : filteredLi;
+  const hasLeadStatsError = currentGroups.some((g) => (g as any).lead_stats_error);
   const totalItems = currentGroups.length;
   const totalPages = Math.ceil(totalItems / pageSize);
   const paginatedGroups = currentGroups.slice((page - 1) * pageSize, page * pageSize);
@@ -1824,6 +1825,13 @@ export function GroupManagementContent() {
         </div>
       )}
 
+      {hasLeadStatsError && (
+        <div className="flex items-center gap-2 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs font-medium text-amber-800">
+          <MaterialIcon name="warning" className="text-base text-amber-600" />
+          Không tính được điểm AI (🎯) cho một số nhóm lúc này — danh sách nhóm vẫn đầy đủ, chỉ tạm thời thiếu badge điểm. Không có nhóm nào bị xoá hay ẩn.
+        </div>
+      )}
+
       {/* Groups table */}
       {loading ? (
         <div className="text-center py-16">
@@ -1910,6 +1918,14 @@ export function GroupManagementContent() {
                           className="mt-1 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200"
                         >
                           🎯 {(g as any).high_lead_post_count} bài điểm cao
+                        </span>
+                      )}
+                      {(g as any).lead_stats_warning && (
+                        <span
+                          title={`Đã chấm điểm ${(g as any).scored_post_count ?? 0} bài trong nhóm này nhưng chưa có bài nào điểm cao — nhóm KHÔNG bị xoá tự động, chỉ cảnh báo để bạn tự quyết định (giữ/bỏ/đổi nguồn)`}
+                          className="mt-1 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200"
+                        >
+                          ⚠️ Ít/không ra lead ({(g as any).scored_post_count} bài đã chấm)
                         </span>
                       )}
                       {platform === "facebook" && (

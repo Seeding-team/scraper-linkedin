@@ -6,25 +6,39 @@ from typing import Optional
 
 from supabase import Client
 
+from app.core.logger import get_logger
 from app.core.supabase_client import get_supabase_client
 
+logger = get_logger(__name__)
 
 # Nguong diem "cao" dung chung voi feed bai viet (unified_posts_service._DEFAULT_MIN_LEAD_SCORE).
 _HIGH_LEAD_SCORE = 70
+# So bai da cham diem toi thieu de danh gia 1 nhom la "it/khong ra lead" - tranh gan canh
+# bao cho nhom moi them, chua cao du bai (yeu cau 2026-10-02).
+_MIN_SCORED_FOR_WARNING = 5
 
 
 def _attach_group_lead_stats(supabase: Client, rows: list[dict], posts_table: str, group_fk: str) -> list[dict]:
-    """Gắn high_lead_post_count/avg_lead_score cho mỗi nhóm (đếm/trung bình điểm AI các bài
-    thuộc nhóm đó), rồi sắp xếp nhóm nào nhiều bài điểm cao lên đầu (yêu cầu 2026-10-02).
-    Không lưu cột riêng trên bảng groups — tính on-the-fly vì số lượng nhóm/bài còn nhỏ,
-    tránh phải đồng bộ thêm 1 counter mỗi lần chấm điểm/xoá bài."""
-    group_ids = [r["id"] for r in rows if r.get("id")]
+    """Gắn high_lead_post_count/avg_lead_score/scored_post_count cho mỗi nhóm (đếm/trung bình
+    điểm AI các bài thuộc nhóm đó), rồi sắp xếp nhóm nào nhiều bài điểm cao lên đầu (yêu cầu
+    2026-10-02). Không lưu cột riêng trên bảng groups — tính on-the-fly.
+
+    AN TOÀN (yêu cầu 2026-10-02): nhóm KHÔNG BAO GIỜ được tự động xoá/ẩn chỉ vì ít/không có
+    bài điểm cao - chỉ gắn cờ `lead_stats_warning` để FE hiển thị cảnh báo cho người dùng tự
+    quyết định. Hàm này cũng KHÔNG ĐƯỢC PHÉP làm sập cả danh sách nhóm nếu truy vấn thống kê
+    lỗi (vd trước đây dùng `.in_(group_fk, group_ids)` với >100 id làm URL quá dài, bị gateway
+    self-host trả 502 -> cả API /groups báo "0 nhóm" dù dữ liệu KHÔNG hề mất) - mọi lỗi ở đây
+    chỉ log + gắn cờ `lead_stats_error`, không raise.
+    """
     stats: dict[str, dict[str, float]] = {}
-    if group_ids:
+    stats_error = False
+    try:
+        # KHÔNG lọc theo group_id bằng .in_() - với nhiều nhóm, URL quá dài có thể bị gateway
+        # self-host từ chối (502). Bảng bài đã được giữ gọn nhờ auto-xoá bài điểm thấp nên
+        # quét toàn bộ bài đã chấm điểm của bảng này vẫn nhẹ.
         posts_res = (
             supabase.table(posts_table)
             .select(f"{group_fk}, lead_score")
-            .in_(group_fk, group_ids)
             .not_.is_("lead_score", "null")
             .execute()
         )
@@ -38,13 +52,26 @@ def _attach_group_lead_stats(supabase: Client, rows: list[dict], posts_table: st
             s["sum"] += score
             if score >= _HIGH_LEAD_SCORE:
                 s["high_count"] += 1
+    except Exception as e:
+        logger.warning(
+            f"[GROUP-LEAD-STATS] Lỗi tính điểm AI cho nhóm ({posts_table}), bỏ qua thống kê, "
+            f"KHÔNG xoá/ẩn nhóm nào: {e}"
+        )
+        stats_error = True
 
     for r in rows:
         s = stats.get(r.get("id"), {"count": 0, "high_count": 0, "sum": 0})
         r["high_lead_post_count"] = int(s["high_count"])
         r["avg_lead_score"] = round(s["sum"] / s["count"], 1) if s["count"] > 0 else None
+        r["scored_post_count"] = int(s["count"])
+        r["lead_stats_warning"] = bool(
+            not stats_error and s["count"] >= _MIN_SCORED_FOR_WARNING and s["high_count"] == 0
+        )
+        if stats_error:
+            r["lead_stats_error"] = True
 
-    rows.sort(key=lambda r: (r.get("high_lead_post_count") or 0, r.get("avg_lead_score") or 0), reverse=True)
+    if not stats_error:
+        rows.sort(key=lambda r: (r.get("high_lead_post_count") or 0, r.get("avg_lead_score") or 0), reverse=True)
     return rows
 
 
