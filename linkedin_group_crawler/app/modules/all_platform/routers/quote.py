@@ -8,11 +8,11 @@ from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 
 from app.core.supabase_client import friendly_supabase_error_message
-from app.modules.all_platform.auth_deps import get_current_user
+from app.modules.all_platform.auth_deps import get_current_user, is_web_intake_user
 from app.modules.all_platform.schemas import (
     BaseResponse,
     QuoteCreateRequest,
@@ -99,7 +99,23 @@ from app.modules.all_platform.services import quote_rule_evaluation_service
 from app.modules.all_platform.services.customer_lead_service import get_customer_lead_by_id
 
 quote_forms_router = APIRouter()
-quotes_router = APIRouter()
+def _web_intake_quote_scope(request: Request, user: dict = Depends(get_current_user)) -> None:
+    """Khoá Web Intake chỉ được đụng vào báo giá do CHÍNH user kỹ thuật đó tạo (kể cả đọc báo giá đã duyệt — vốn mọi user
+    đăng nhập đều xem được). JWT người dùng thường không bị ảnh hưởng."""
+    if not is_web_intake_user(user):
+        return
+    quote_id = request.path_params.get("quote_id")
+    if not quote_id:
+        return
+    try:
+        quote = get_quote(quote_id)
+    except Exception:
+        raise HTTPException(status_code=404, detail="Không tìm thấy báo giá.")
+    if str(quote.get("createdById") or "") != str(user.get("id") or ""):
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+
+quotes_router = APIRouter(dependencies=[Depends(_web_intake_quote_scope)])
 
 
 def _require_master_data_manager(user: dict) -> None:
@@ -212,7 +228,10 @@ def quote_forms_set_catalog_links(
 @quotes_router.get("")
 def quotes_list(deal_id: str | None = Query(None), user: dict = Depends(get_current_user)) -> BaseResponse:
     try:
-        data = [apply_quote_field_permissions(quote, user) for quote in list_quotes(deal_id)]
+        rows = list_quotes(deal_id)
+        if is_web_intake_user(user):  # khoá Web Intake chỉ thấy báo giá do chính nó tạo
+            rows = [q for q in rows if str(q.get("createdById") or "") == str(user.get("id") or "")]
+        data = [apply_quote_field_permissions(quote, user) for quote in rows]
         return BaseResponse(success=True, data=data)
     except Exception as e:
         return BaseResponse(success=False, message=friendly_supabase_error_message(e))
@@ -501,7 +520,8 @@ def _check_item_field_level_permission(user: dict, quote: dict, new_items: Optio
 
     is_versioned_quote = (quote.get("versionNumber") or 1) > 1
     stage = quote.get("processingStage") or "request"
-    if not is_versioned_quote and _items_touch_fields(existing_items, new_items, _PRICING_ITEM_FIELD_PAIRS) and stage != "pricing":
+    # Khách web (Web Intake) tự nhập giá ngay ở "Yêu cầu mới" (public flow, nội bộ duyệt/chỉnh giá sau trong CRM) nên không áp khoá bước.
+    if not is_web_intake_user(user) and not is_versioned_quote and _items_touch_fields(existing_items, new_items, _PRICING_ITEM_FIELD_PAIRS) and stage != "pricing":
         return "Markup/Gia khach chi duoc nhap o Buoc 3"
     return None
 

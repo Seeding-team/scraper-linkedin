@@ -12,6 +12,7 @@ from app.modules.all_platform.services.customer_lead_service import BASE_COLUMNS
 from app.modules.all_platform.services.supabase_quote_service import apply_quote_field_permissions, _quote_cost_summary
 from app.modules.all_platform.services.crm_permission_service import (
     can_edit_contract,
+    is_web_intake_user,
     has_full_crm_access,
     get_scope_visible_user_ids,
     # "Team" o day la Team CRM THAT (crm_teams/crm_team_members, migration
@@ -718,7 +719,8 @@ def create_customer_with_deal(payload: dict[str, Any], user: dict[str, Any]) -> 
     # customer_id that roi moi tao Du an duoc - xem doan follow-up ben duoi.
     project_name = _clean_text(deal.pop("project_name", None))
 
-    if not deal.get("leaded_by"):
+    # Khách web (Web Intake): để trống người phụ trách → hiện "Chưa gán", nội bộ tự phân công trong CRM.
+    if not deal.get("leaded_by") and not is_web_intake_user(user):
         deal["leaded_by"] = actor_id
     idempotency_key = _clean_text(payload.get("idempotency_key")) or _request_hash({"customer": customer, "deal": deal, "actor": actor_id, "project_name": project_name})
 
@@ -803,6 +805,17 @@ def create_customer_with_deal(payload: dict[str, Any], user: dict[str, Any]) -> 
             .eq("instance", settings.crm_instance)
             .execute()
         )
+    # Khách web (Web Intake): RPC tự gán người tạo làm người phụ trách deal → gỡ ra để CRM hiện "Chưa gán" và nội bộ phân công.
+    if new_deal_id and is_web_intake_user(user) and not deal.get("leaded_by"):
+        execute_supabase_query(
+            lambda: supabase.table("customer_leads")
+            .update({"leaded_by": None})
+            .eq("id", new_deal_id)
+            .eq("instance", settings.crm_instance)
+            .execute()
+        )
+        if data.get("deal"):
+            data["deal"]["leaded_by"] = None
     new_customer_id = (data.get("customer") or {}).get("id")
     customer_was_written = not customer_id or update_customer_profile
     if new_customer_id and customer_was_written and (

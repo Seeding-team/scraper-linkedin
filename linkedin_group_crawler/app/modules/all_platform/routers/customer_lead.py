@@ -10,6 +10,7 @@ from app.modules.all_platform.schemas.customer_lead import (
     ActivityLogResponse,
     DEAL_STAGES,
 )
+from app.modules.all_platform.auth_deps import is_web_intake_user, resolve_web_intake_user
 from app.modules.all_platform.services import customer_lead_service, decode_token, get_user_by_id, can_write_deal
 from app.modules.all_platform.services.crm_permission_service import has_module_access
 from app.core.supabase_client import friendly_supabase_error_message
@@ -30,6 +31,9 @@ logger = logging.getLogger(__name__)
 
 
 def get_current_user(request: Request, authorization: str | None = Header(None)) -> dict[str, Any]:
+    intake_user = resolve_web_intake_user(request)
+    if intake_user is not None:
+        return intake_user
     if not authorization:
         cookie_token = request.cookies.get("crawlpro_access_token")
         if cookie_token:
@@ -368,7 +372,7 @@ def create_customer_lead(
 ):
     try:
         data_dict = payload.model_dump(exclude_unset=True)
-        if not data_dict.get("leaded_by") and isinstance(current_user, dict) and current_user.get("id"):
+        if not data_dict.get("leaded_by") and isinstance(current_user, dict) and current_user.get("id") and not is_web_intake_user(current_user):
             data_dict["leaded_by"] = current_user.get("id")
             # NOTE: không ghi `leaded_by_name` vào customer_leads — bảng không có cột này
             # (tên leader được JOIN qua `leader:leaded_by(name)` ở SELECT và cache qua

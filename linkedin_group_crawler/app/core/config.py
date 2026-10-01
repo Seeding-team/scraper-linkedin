@@ -311,6 +311,10 @@ class Settings:
     default_scroll_delay_max_ms: int = int(os.getenv("DEFAULT_SCROLL_DELAY_MAX_MS", "2000"))
     default_max_items: int = int(os.getenv("DEFAULT_MAX_ITEMS", "50"))
     api_key: str = os.getenv("API_KEY", "")
+    # Khoá cho web ngoài (Project 2 / Learn) gọi API thay cho đăng nhập bằng mật khẩu tài khoản dịch vụ: gửi header
+    # X-Web-Intake-Key; backend chạy dưới user WEB_INTAKE_USER_ID (nên là user riêng, quyền tối thiểu). Để trống = tắt.
+    web_intake_api_key: str = os.getenv("WEB_INTAKE_API_KEY", "")
+    web_intake_user_id: str = os.getenv("WEB_INTAKE_USER_ID", "")
     render_api_key: str = os.getenv("RENDER_API_KEY", "")
     render_service_id: str = os.getenv("RENDER_SERVICE_ID", "")
     cors_origins: list[str] | None = None
