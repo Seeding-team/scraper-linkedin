@@ -99,17 +99,19 @@
 
     async function checkIsOnline(apiBase, email) {
         try {
-            const res = await fetch(`${apiBase}/api/all-platform/presence/online-summary`, {
+            // Dung /presence/self-online (khong qua phan quyen team) - KHONG dung
+            // /presence/online-summary vi endpoint do chi tra du lieu cho nguoi goi co
+            // role admin/leader (trả rỗng với role "member"), trong khi acc Seeding he
+            // thong dang dung de cao xoay vong thuong la role "member" -> luon bi bao
+            // "khong online" du dang dang nhap that (bug phat hien 2026-10-01).
+            const res = await fetch(`${apiBase}/api/all-platform/presence/self-online`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ email }),
             });
             const data = await res.json();
             if (!data || !data.success || !data.data) return false;
-            const members = data.data.members || [];
-            const target = (email || "").toLowerCase();
-            const me = members.find((m) => (m.email || "").toLowerCase() === target);
-            return !!(me && me.is_online);
+            return !!data.data.is_online;
         } catch (e) {
             // Loi mang khi kiem tra online KHONG duoc coi la "offline that su" - tranh
             // dung ca vong lap chi vi 1 lan fetch tam thoi that bai. Coi nhu chua ro,

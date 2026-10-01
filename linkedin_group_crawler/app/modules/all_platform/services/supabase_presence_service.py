@@ -43,6 +43,43 @@ def record_heartbeat(email: str) -> dict:
     return {"recorded": True}
 
 
+def is_member_online(email: str) -> dict:
+    """Tự kiểm tra ĐÚNG 1 tài khoản (theo email) đang online hay không — KHÔNG qua
+    _resolve_scope()/phân quyền team như get_online_summary() (dành cho acc Seeding hệ
+    thống tự hỏi "chính tôi" đang online chưa trước mỗi vòng cào xoay vòng; acc này
+    role="member" nên get_online_summary() luôn trả về rỗng — xem bg/rotation-crawl.js
+    checkIsOnline(), bug đã gặp ngày 2026-10-01)."""
+    sb: Client = get_supabase_client()
+    id_member = _get_member_id(email)
+    if not id_member:
+        return {"is_online": False, "last_seen_at": None}
+
+    now_utc = datetime.now(timezone.utc)
+    cutoff = now_utc - timedelta(seconds=_ONLINE_STALE_SECONDS)
+    rows = (
+        sb.table("member_online_minutes")
+        .select("minute_bucket")
+        .eq("id_member", id_member)
+        .gte("minute_bucket", cutoff.isoformat())
+        .order("minute_bucket", desc=True)
+        .limit(1)
+        .execute()
+    ).data or []
+    if not rows:
+        return {"is_online": False, "last_seen_at": None}
+
+    raw = rows[0].get("minute_bucket")
+    try:
+        last_seen_at = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except (ValueError, AttributeError):
+        return {"is_online": False, "last_seen_at": None}
+    if last_seen_at.tzinfo is None:
+        last_seen_at = last_seen_at.replace(tzinfo=timezone.utc)
+
+    is_online = (now_utc - last_seen_at).total_seconds() <= _ONLINE_STALE_SECONDS
+    return {"is_online": is_online, "last_seen_at": last_seen_at.isoformat()}
+
+
 def _resolve_scope(email: str) -> tuple[str, list[str]]:
     """Trả về (role, member_ids_được_xem) — admin: None nghĩa 'tất cả' (rỗng đặc biệt xử lý
     riêng ở caller), leader: chỉ members team mình quản lý, member: chặn (rỗng)."""

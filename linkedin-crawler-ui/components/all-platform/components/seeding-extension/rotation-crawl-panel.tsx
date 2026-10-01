@@ -10,7 +10,7 @@
  * Bài viết cào được đổ thẳng về tab "Hoạt động seeding".
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import { useAppAuth } from "@/contexts/AppAuthContext";
 import { allPlatformGroupsService } from "@/services/all-platform.service";
@@ -30,6 +30,36 @@ interface GroupOption {
 
 const KEYWORDS_STORAGE_KEY = "markee.rotationCrawl.keywords";
 const INTERVAL_STORAGE_KEY = "markee.rotationCrawl.intervalHours";
+
+// Ước tính thời gian cào TRUNG BÌNH 1 nhóm/từ khoá (giây) — suy từ các bước cố định trong
+// bg/fb-crawl.js, bg/li-crawl.js, bg/threads-crawl.js (reload trang, settle, cuộn lấy bài,
+// lưu backend...) cộng thêm biên an toàn cho mạng/Facebook-LinkedIn phản hồi chậm hơn bình
+// thường. Dùng để tính mốc "lặp lại tối thiểu" — đảm bảo 1 vòng luôn cào XONG HẾT danh sách
+// đã chọn rồi mới lặp lại, không bị chồng vòng giữa chừng.
+const EST_SECONDS_PER_FB_GROUP = 60;
+const EST_SECONDS_PER_LI_GROUP = 120;
+const EST_SECONDS_PER_TH_KEYWORD = 40;
+// Biên an toàn 20% cho thời gian chờ "online"/khởi động tab giữa các nhóm.
+const MIN_INTERVAL_SAFETY_FACTOR = 1.2;
+
+function estimateRoundSeconds(fbCount: number, liCount: number, thCount: number): number {
+  return fbCount * EST_SECONDS_PER_FB_GROUP + liCount * EST_SECONDS_PER_LI_GROUP + thCount * EST_SECONDS_PER_TH_KEYWORD;
+}
+
+function minIntervalHoursForSeconds(seconds: number): number {
+  const hours = (seconds * MIN_INTERVAL_SAFETY_FACTOR) / 3600;
+  // Làm tròn LÊN tới mốc 0.25 giờ gần nhất, tối thiểu 0.25 giờ.
+  return Math.max(0.25, Math.ceil(hours * 4) / 4);
+}
+
+function formatDuration(seconds: number): string {
+  if (seconds <= 0) return "0 phút";
+  const h = Math.floor(seconds / 3600);
+  const m = Math.round((seconds % 3600) / 60);
+  if (h === 0) return `${m} phút`;
+  if (m === 0) return `${h} giờ`;
+  return `${h} giờ ${m} phút`;
+}
 
 const LOG_COLOR: Record<string, string> = {
   success: "text-emerald-300",
@@ -288,11 +318,34 @@ function AddScheduleModal({
     return Number.isFinite(v) && v > 0 ? v : 2;
   }, [intervalInput]);
 
-  const totalSelected =
-    (enabledPlatforms.has("facebook") ? fb.selectedIds.length : 0) +
-    (enabledPlatforms.has("linkedin") ? li.selectedIds.length : 0) +
-    (enabledPlatforms.has("threads") ? keywords.length : 0);
-  const canSubmit = totalSelected > 0 && !!user?.id && !!user?.email && !submitting;
+  const fbCount = enabledPlatforms.has("facebook") ? fb.selectedIds.length : 0;
+  const liCount = enabledPlatforms.has("linkedin") ? li.selectedIds.length : 0;
+  const thCount = enabledPlatforms.has("threads") ? keywords.length : 0;
+  const totalSelected = fbCount + liCount + thCount;
+
+  // Lặp lại tối thiểu phải đủ để cào XONG HẾT danh sách đã chọn trước khi vòng kế tiếp bắt
+  // đầu — không thì vòng lặp lại sẽ "giẫm" lên vòng đang chạy dở. Tự gợi ý mốc tối thiểu khi
+  // đổi lựa chọn nhóm/từ khoá, nhưng không ép xuống nếu người dùng đã tự đặt cao hơn.
+  const estimatedSeconds = useMemo(() => estimateRoundSeconds(fbCount, liCount, thCount), [fbCount, liCount, thCount]);
+  const minIntervalHours = useMemo(() => minIntervalHoursForSeconds(estimatedSeconds), [estimatedSeconds]);
+  const intervalTooLow = repeatEnabled && totalSelected > 0 && intervalHours < minIntervalHours;
+
+  const lastAutoSuggestedRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (totalSelected === 0) return;
+    const current = Number(intervalInput);
+    // Chỉ tự nâng lên khi ô đang bằng giá trị MÌNH đã tự gợi ý lần trước (hoặc rỗng/0) —
+    // nếu người dùng đã tự tay sửa thành 1 số khác thì tôn trọng lựa chọn đó, không ghi đè.
+    const userOverrode = Number.isFinite(current) && current > 0 && lastAutoSuggestedRef.current !== null && current !== lastAutoSuggestedRef.current;
+    if (userOverrode) return;
+    if (!Number.isFinite(current) || current < minIntervalHours) {
+      setIntervalInput(String(minIntervalHours));
+      lastAutoSuggestedRef.current = minIntervalHours;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [minIntervalHours, totalSelected]);
+
+  const canSubmit = totalSelected > 0 && !!user?.id && !!user?.email && !submitting && !intervalTooLow;
 
   const handleSubmit = async () => {
     if (!canSubmit || !user?.id || !user?.email) return;
@@ -342,6 +395,7 @@ function AddScheduleModal({
                 <li>Luôn giữ <b>tab trình duyệt mở trang Seeding này</b> (không đóng, không tắt trình duyệt) trong suốt thời gian cào.</li>
                 <li><b>Không đóng tab Facebook/LinkedIn/Threads</b> khi lịch đang chạy — extension tự mở/điều khiển các tab đó, đóng giữa chừng sẽ làm gián đoạn vòng cào.</li>
                 <li>Máy/VPS phải giữ trạng thái đăng nhập tài khoản Seeding — mất phiên đăng nhập thì vòng lặp lại sẽ tự tạm hoãn tới khi online lại.</li>
+                <li>Tab trang Seeding phải ở trạng thái <b>hiển thị</b> (không thu nhỏ cửa sổ trình duyệt, không để tab bị che khuất lâu) — hệ thống chỉ tính "đang online" khi tab đang hiển thị, kể cả không phải tab đang active.</li>
               </ul>
             </div>
           </div>
@@ -415,6 +469,18 @@ function AddScheduleModal({
             </div>
           </div>
 
+          {totalSelected > 0 ? (
+            <div className="rounded-xl border border-sky-200 bg-sky-50 p-3 text-xs text-sky-900 leading-relaxed flex items-start gap-2">
+              <span className="material-symbols-outlined text-sky-600 text-[18px] shrink-0">schedule</span>
+              <div>
+                <p>
+                  Ước tính 1 vòng cào hết <b>{fbCount > 0 ? `${fbCount} nhóm Facebook` : ""}{fbCount > 0 && (liCount > 0 || thCount > 0) ? ", " : ""}{liCount > 0 ? `${liCount} nhóm LinkedIn` : ""}{liCount > 0 && thCount > 0 ? ", " : ""}{thCount > 0 ? `${thCount} từ khoá Threads` : ""}</b> mất khoảng <b>{formatDuration(estimatedSeconds)}</b>.
+                </p>
+                <p className="mt-0.5">Lặp lại nên đặt tối thiểu <b>{minIntervalHours} giờ</b> để chắc chắn cào xong hết trước khi vòng kế tiếp bắt đầu.</p>
+              </div>
+            </div>
+          ) : null}
+
           <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4 border-t border-border pt-4">
             <div className="flex flex-col gap-1">
               <label htmlFor="rotation-interval" className="text-xs font-bold text-foreground">
@@ -428,8 +494,16 @@ function AddScheduleModal({
                 value={intervalInput}
                 onChange={(e) => setIntervalInput(e.target.value)}
                 disabled={submitting}
-                className="w-28 rounded-lg border border-border bg-background px-3 py-2 text-xs outline-none focus:border-primary disabled:opacity-60"
+                className={cn(
+                  "w-28 rounded-lg border bg-background px-3 py-2 text-xs outline-none focus:border-primary disabled:opacity-60",
+                  intervalTooLow ? "border-red-300" : "border-border",
+                )}
               />
+              {intervalTooLow ? (
+                <p className="text-[10px] text-red-600 font-semibold max-w-[220px]">
+                  Thấp hơn mức tối thiểu ({minIntervalHours} giờ) cho số nhóm/từ khoá đã chọn — vòng sau có thể bắt đầu khi vòng trước chưa cào xong.
+                </p>
+              ) : null}
             </div>
             <label className="flex items-start gap-2 text-xs text-foreground cursor-pointer mt-1 sm:mt-5">
               <input

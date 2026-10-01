@@ -15,7 +15,7 @@ export const REQUIRED_EXTENSION_VERSION = "2.0";
 export const THREADS_CRAWL_EXTENSION_VERSION = "2.1";
 
 /** Phiên bản đầu tiên có lệnh cào xoay vòng cả 3 nền tảng (MK_ROTATE_CRAWL_*, feature "rotate_crawl"). */
-export const ROTATE_CRAWL_EXTENSION_VERSION = "2.4";
+export const ROTATE_CRAWL_EXTENSION_VERSION = "2.5";
 
 export type ExtensionStatus = "checking" | "ready" | "outdated" | "missing" | "invalidated";
 
