@@ -20,33 +20,35 @@ from app.core.supabase_client import get_supabase_client
 logger = get_logger(__name__)
 
 # Mau cau COMMENT ON DINH theo tung nhu cau (yeu cau 2026-10-02: "van mau on dinh va hay,
-# du thong tin lien he, nhan manh Markee AI, dung nhu cau bai viet can"). Dung template co
-# dinh (khong de LLM tu sang tac noi dung cong khai) de dam bao chat luong/an toan on dinh.
+# du thong tin lien he, nhan manh Markee AI, dung nhu cau bai viet can, tu van nhanh gon,
+# nhan manh gia tot uy tin"). Dung template co dinh (khong de LLM tu sang tac noi dung cong
+# khai) de dam bao chat luong/an toan on dinh.
 _TEMPLATES: dict[str, str] = {
     "website": (
-        "Chào bạn, bên mình là Markee AI — chuyên thiết kế website theo đúng nhu cầu "
-        "(giao diện riêng, chuẩn SEO, tích hợp AI chăm sóc khách tự động). Bạn để lại số "
-        "điện thoại hoặc ghé markee.vn để được tư vấn báo giá nhanh nhé! 🚀"
+        "Chào bạn, bên mình là Markee AI — chuyên thiết kế website theo đúng nhu cầu, giá "
+        "tốt, uy tín, đã triển khai nhiều dự án thực tế (giao diện riêng, chuẩn SEO, tích "
+        "hợp AI chăm sóc khách tự động). Ghé markee.vn hoặc để lại số điện thoại để được tư "
+        "vấn báo giá nhanh gọn nhé! 🚀"
     ),
     "app": (
-        "Chào bạn, Markee AI chuyên phát triển app di động (iOS/Android) theo yêu cầu, có "
-        "tích hợp AI tự động hoá vận hành. Bạn ghé markee.vn hoặc để lại thông tin liên hệ "
-        "để được tư vấn chi tiết nhé! 📱"
+        "Chào bạn, Markee AI chuyên phát triển app di động (iOS/Android) theo đúng yêu cầu, "
+        "giá tốt, uy tín, có tích hợp AI tự động hoá vận hành. Ghé markee.vn hoặc để lại "
+        "thông tin liên hệ để được tư vấn nhanh gọn nhé! 📱"
     ),
     "landing_page": (
-        "Chào bạn, Markee AI chuyên thiết kế landing page tối ưu chuyển đổi, tích hợp AI "
-        "chăm sóc khách hàng tự động 24/7. Ghé markee.vn hoặc để lại thông tin để được tư "
-        "vấn báo giá nhanh nhé! 🎯"
+        "Chào bạn, Markee AI chuyên thiết kế landing page tối ưu chuyển đổi, giá tốt, uy "
+        "tín, tích hợp AI chăm sóc khách hàng tự động 24/7. Ghé markee.vn hoặc để lại thông "
+        "tin để được tư vấn báo giá nhanh gọn nhé! 🎯"
     ),
     "software": (
-        "Chào bạn, Markee AI chuyên phát triển phần mềm/outsource theo yêu cầu, tích hợp AI "
-        "tự động hoá quy trình vận hành. Bạn ghé markee.vn hoặc để lại thông tin liên hệ để "
-        "được tư vấn chi tiết nhé! 💻"
+        "Chào bạn, Markee AI chuyên phát triển phần mềm/outsource theo đúng yêu cầu, giá "
+        "tốt, uy tín, tích hợp AI tự động hoá quy trình vận hành. Ghé markee.vn hoặc để lại "
+        "thông tin liên hệ để được tư vấn nhanh gọn nhé! 💻"
     ),
     "other": (
         "Chào bạn, Markee AI chuyên tư vấn & triển khai giải pháp website/app/phần mềm theo "
-        "đúng nhu cầu, có tích hợp AI tự động hoá. Bạn ghé markee.vn hoặc để lại thông tin "
-        "liên hệ để được tư vấn nhanh nhé! ✨"
+        "đúng nhu cầu, giá tốt, uy tín, có tích hợp AI tự động hoá. Ghé markee.vn hoặc để "
+        "lại thông tin liên hệ để được tư vấn nhanh gọn nhé! ✨"
     ),
 }
 
