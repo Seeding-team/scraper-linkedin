@@ -29,6 +29,7 @@ from app.modules.all_platform.schemas import (
     QuoteRequestChangesRequest,
     QuoteApproveRequest,
     QuotePublicAccessRestrictionUpdateRequest,
+    QuotePrintLayoutPrefsUpdateRequest,
     QuoteFormCatalogLinksSetRequest,
     IssuerCompanyCreateRequest,
     IssuerCompanyUpdateRequest,
@@ -41,6 +42,7 @@ from app.modules.all_platform.services import (
     revoke_public_quote,
     enable_public_quote,
     set_public_access_restriction,
+    set_print_layout_prefs,
     PublicQuoteVerificationRequiredError,
     soft_delete_quote,
     restore_quote,
@@ -90,6 +92,8 @@ from app.modules.all_platform.services.crm_permission_service import (
     can_send_quote_email,
     can_manage_quote_approval_rules,
     can_manage_shared_master_data,
+    has_module_access,
+    get_scope_visible_user_ids,
 )
 from app.modules.all_platform.services import quote_rule_evaluation_service
 from app.modules.all_platform.services.customer_lead_service import get_customer_lead_by_id
@@ -238,7 +242,17 @@ def quotes_list_by_phase(
     processing_stage/status/sent_at that. TOAN BO filter (customer/project/
     owner/team/mine/thoi gian/tim kiem/sla) ap dung o day TRUOC pagination -
     khong con filter tren du lieu 1 trang da tra ve."""
+    if not has_module_access(_user, "Quote"):
+        return BaseResponse(success=False, message="Forbidden: không có quyền truy cập module Quote")
     try:
+        # "Nhom quyen" (migration 155, OPT-IN theo tung user): user da duoc
+        # gan Nhom quyen VA scope hieu luc la 'personal'/'deal_assigned'/
+        # 'team' se bi gioi han THEM theo dung tap user_id duoc phep xem
+        # (`get_scope_visible_user_ids`, dung LAI cung ham voi Lead/Customer/
+        # Deal) - ap dung DOC LAP voi filter `mine` client tu chon (khong the
+        # bypass bang cach bo tick `mine`). None = user chua duoc gan Nhom
+        # quyen nao, hoac scope 'system'/'workspace' - khong gioi han them.
+        scope_user_ids = get_scope_visible_user_ids(_user)
         result = list_quotes_by_phase(
             phase=phase,
             search=search,
@@ -248,6 +262,7 @@ def quotes_list_by_phase(
             quote_owner_id=quote_owner_id,
             owner_id=owner_id,
             mine_user_id=_user.get("id") if mine else None,
+            scope_user_ids=scope_user_ids,
             team_id=team_id,
             date_from=date_from,
             date_to=date_to,
@@ -306,6 +321,51 @@ def quotes_update_public_access_restriction(
         return _not_found_response(e)
     except ValueError as e:
         return BaseResponse(success=False, message=str(e))
+    except Exception as e:
+        return BaseResponse(success=False, message=friendly_supabase_error_message(e))
+
+
+@quotes_router.put("/{quote_id}/print-layout-prefs")
+def quotes_update_print_layout_prefs(
+    quote_id: str, payload: QuotePrintLayoutPrefsUpdateRequest, user: dict = Depends(get_current_user)
+) -> BaseResponse:
+    """Nut "Lưu" o toolbar in (huong giay doc/ngang + do rong cot da keo tay)
+    tren QuoteDetailPage - trang NOI BO da dang nhap (KHONG phai trang public
+    khong xac thuc /baogia/[token] - xem thao luan trong PublicQuotePage.tsx
+    ve ly do KHONG dat nut Luu o do). Dung cung quyen voi cac thao tac sua
+    bao gia khac (can_edit_quote) - endpoint nay CHI ghi dung 1 khoa
+    `data.printLayoutPrefs` (xem set_print_layout_prefs), KHONG the dung de
+    sua gia/khach hang/hang muc/duyet du payload co gui them field nao khac
+    (QuotePrintLayoutPrefsUpdateRequest chi khai bao dung 2 field)."""
+    try:
+        quote, lead = _load_quote_and_lead(quote_id)
+        if not can_edit_quote(user, quote, lead):
+            return BaseResponse(success=False, message="Không có quyền sửa báo giá này")
+        data = set_print_layout_prefs(quote_id, user.get("id"), payload.orientation, payload.column_widths)
+        return BaseResponse(success=True, message="Đã lưu tùy chỉnh in", data=apply_quote_field_permissions(data, user))
+    except QuoteNotFoundError as e:
+        return _not_found_response(e)
+    except ValueError as e:
+        return BaseResponse(success=False, message=str(e))
+    except Exception as e:
+        return BaseResponse(success=False, message=friendly_supabase_error_message(e))
+
+
+@quotes_router.get("/{quote_id}/edit-permission")
+def quotes_get_edit_permission(quote_id: str, user: dict = Depends(get_current_user)) -> BaseResponse:
+    """Chi doc quyen SUA bao gia nay cho nguoi dang dang nhap - dung boi trang
+    cong khai /baogia/{token} (PublicQuotePage.tsx) de QUYET DINH CO HIEN nut
+    "Luu" tuy chinh in hay khong (vd Sale mo lai chinh link cua minh de chinh
+    huong giay/do rong cot truoc khi gui khach). Endpoint nay CHI la lop
+    hien-thi (client dung de an/hien nut) - quyen THAT SU van duoc chinh
+    PUT /{quote_id}/print-layout-prefs tu kiem tra lai bang can_edit_quote,
+    khong tin ket qua GET nay. 401 neu khong co session hop le (get_current_user)
+    - dung y het hanh vi "khach vang lai khong thay nut" mac dinh."""
+    try:
+        quote, lead = _load_quote_and_lead(quote_id)
+        return BaseResponse(success=True, data={"canEdit": can_edit_quote(user, quote, lead)})
+    except QuoteNotFoundError as e:
+        return _not_found_response(e)
     except Exception as e:
         return BaseResponse(success=False, message=friendly_supabase_error_message(e))
 
@@ -538,15 +598,61 @@ def quotes_delete(quote_id: str, user: dict = Depends(get_current_user)) -> Base
     ghi quote_deletion_audit TRUOC khi xoa) - khong doi, khong lien quan sua
     lan nay."""
     try:
-        quote, lead = _load_quote_and_lead(quote_id)
-        if not can_edit_quote(user, quote, lead):
-            return BaseResponse(success=False, message="Không có quyền xoá báo giá này")
-        soft_delete_quote(quote_id, user.get("id"), "Xoá báo giá (nháp) qua thao tác thường")
+        # Feedback 2026-09-23: khong chan quyen xoa ("ai muốn xóa thì xóa") -
+        # FE hoi xac nhan truoc; _load_quote_and_lead van chi tim trong tenant.
+        _load_quote_and_lead(quote_id)
+        soft_delete_quote(quote_id, user.get("id"), "Xoá báo giá qua thao tác thường")
         return BaseResponse(success=True)
     except ValueError as e:
         return BaseResponse(success=False, message=str(e))
     except Exception as e:
         return BaseResponse(success=False, message=friendly_supabase_error_message(e))
+
+
+@quotes_router.post("/bulk-delete")
+def quotes_delete_bulk(payload: dict, user: dict = Depends(get_current_user)) -> BaseResponse:
+    """Feedback 2026-09-23 "select 1 hoặc nhiều báo giá -> Xóa", "không cần khóa
+    quyền xóa chỉ vì báo giá đã duyệt" (FE hoi xac nhan rieng cho ban da duyet).
+    Xoa MEM (soft_delete_quote - Admin khoi phuc duoc). KHONG chan quyen,
+    KHONG chan theo trang thai ("ai muốn xóa thì xóa") - FE hoi xac nhan truoc.
+    Chi tim trong tenant hien tai.
+
+    payload: {"quote_ids": [...], "include_versions": bool}
+      include_versions=true: xoa CA CHUOI version cua moi quote (thao tac "Xoá
+      báo giá" o bang chinh = xoa ca bao gia nghiep vu). false: chi xoa dung
+      id duoc gui (xoa rieng 1 version).
+    """
+    quote_ids = payload.get("quote_ids")
+    if not quote_ids or not isinstance(quote_ids, list):
+        return BaseResponse(success=False, message="Danh sách quote_ids không hợp lệ.")
+    include_versions = bool(payload.get("include_versions"))
+    deleted_ids: list[str] = []
+    failed: list[dict] = []
+    seen: set[str] = set()
+    for raw_id in quote_ids:
+        quote_id = str(raw_id or "").strip()
+        if not quote_id or quote_id in seen:
+            continue
+        try:
+            quote, _lead = _load_quote_and_lead(quote_id)
+            targets = [quote]
+            if include_versions and quote.get("versionChainId"):
+                targets = list_quote_versions(quote["versionChainId"]) or [quote]
+            for target in targets:
+                target_id = str(target["id"])
+                if target_id in seen:
+                    continue
+                seen.add(target_id)
+                soft_delete_quote(target_id, user.get("id"), "Xoá báo giá qua danh sách (đã xác nhận)")
+                deleted_ids.append(target_id)
+        except QuoteNotFoundError as e:
+            failed.append({"quote_id": quote_id, "message": str(e)})
+        except Exception as e:  # noqa: BLE001 - tra loi tung dong cho FE
+            failed.append({"quote_id": quote_id, "message": friendly_supabase_error_message(e)})
+    data = {"deleted_ids": deleted_ids, "failed": failed}
+    if not deleted_ids and failed:
+        return BaseResponse(success=False, message=failed[0]["message"], data=data)
+    return BaseResponse(success=True, message=f"Đã xoá {len(deleted_ids)} báo giá", data=data)
 
 
 def _guard_exception_approval(quote_id: str, user: dict, exception_reason: str | None) -> BaseResponse | None:
@@ -791,9 +897,8 @@ def quotes_soft_delete(quote_id: str, payload: QuoteSoftDeleteRequest, user: dic
     (xem list_quotes/get_quote/get_public_quote/list_quote_versions), khoi
     phuc duoc qua /restore."""
     try:
-        quote, lead = _load_quote_and_lead(quote_id)
-        if not can_edit_quote(user, quote, lead):
-            return BaseResponse(success=False, message="Không có quyền xoá báo giá này")
+        # Khong chan quyen xoa (feedback 2026-09-23) - xem quotes_delete.
+        _load_quote_and_lead(quote_id)
         data = soft_delete_quote(quote_id, user.get("id"), payload.reason)
         return BaseResponse(success=True, message="Đã xoá báo giá (có thể khôi phục)", data=data)
     except QuoteNotFoundError as e:

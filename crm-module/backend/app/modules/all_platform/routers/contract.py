@@ -5,7 +5,7 @@ CRUD nội bộ dùng auth hiện có (get_current_user), theo đúng pattern qu
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 
 from app.modules.all_platform.auth_deps import get_current_user
 from app.modules.all_platform.schemas import (
@@ -30,8 +30,10 @@ from app.modules.all_platform.services import (
     refine_contract_draft,
     get_contract_template,
     get_quote,
+    list_contract_activity_log,
 )
-from app.modules.all_platform.services.crm_permission_service import can_edit_contract
+from app.modules.all_platform.services.contract_ocr_service import compare_to_quote, extract_contract_summary
+from app.modules.all_platform.services.crm_permission_service import can_edit_contract, can_edit_quote
 from app.modules.all_platform.services.customer_lead_service import get_customer_lead_by_id
 
 contracts_router = APIRouter()
@@ -47,10 +49,11 @@ def _load_contract_and_lead(contract_id: str) -> tuple[dict, dict | None]:
 def contracts_list(
     deal_id: str | None = Query(None),
     status: str | None = Query(None),
+    quote_id: str | None = Query(None),
     _user: dict = Depends(get_current_user),
 ) -> BaseResponse:
     try:
-        return BaseResponse(success=True, data=list_contracts(deal_id, status))
+        return BaseResponse(success=True, data=list_contracts(deal_id, status, quote_id))
     except Exception as e:
         return BaseResponse(success=False, message=str(e))
 
@@ -70,6 +73,17 @@ def contracts_get(contract_id: str, user: dict = Depends(get_current_user)) -> B
         if not can_edit_contract(user, contract, lead):
             return BaseResponse(success=False, message="Không có quyền xem hợp đồng này")
         return BaseResponse(success=True, data=contract)
+    except Exception as e:
+        return BaseResponse(success=False, message=str(e))
+
+
+@contracts_router.get("/{contract_id}/activity-log")
+def contracts_activity_log(contract_id: str, user: dict = Depends(get_current_user)) -> BaseResponse:
+    try:
+        contract, lead = _load_contract_and_lead(contract_id)
+        if not can_edit_contract(user, contract, lead):
+            return BaseResponse(success=False, message="Không có quyền xem lịch sử hợp đồng này")
+        return BaseResponse(success=True, data=list_contract_activity_log(contract_id))
     except Exception as e:
         return BaseResponse(success=False, message=str(e))
 
@@ -176,5 +190,55 @@ async def contracts_refine_draft(payload: ContractRefineRequest, _user: dict = D
         return BaseResponse(success=True, data={"clauses": refined})
     except RuntimeError as e:
         return BaseResponse(success=False, message=str(e))
+    except Exception as e:
+        return BaseResponse(success=False, message=str(e))
+
+
+# ── OCR reconciliation ("Ghi nhận hợp đồng có sẵn" - đối chiếu file hợp đồng
+#    đã upload với số liệu THẬT của báo giá đã chọn) ──────────────────────────
+
+@contracts_router.post("/ocr-reconcile")
+async def contracts_ocr_reconcile(
+    file: UploadFile = File(...),
+    quote_id: str = Form(...),
+    user: dict = Depends(get_current_user),
+) -> BaseResponse:
+    """Đọc file hợp đồng vừa upload (PDF/ảnh), trích xuất best-effort số hợp
+    đồng/ngày ký/3 mốc tiền (Trước VAT/VAT/Sau VAT), rồi so với số liệu THẬT
+    của báo giá `quote_id` đã chọn trên form. Dùng lại đúng quyền đọc báo giá
+    đã áp dụng ở GET /quotes/{quote_id} (quotes_get trong quote.py) - báo giá
+    đã duyệt/xác nhận thì ai đăng nhập cũng xem được, chưa duyệt thì phải có
+    quyền sửa báo giá đó (can_edit_quote) mới được đối chiếu.
+
+    KHÔNG bịa dữ liệu: nếu không đọc được nội dung file, trả extractable=False
+    và data.comparison rỗng - FE phải hiển thị honest message, không dựng bảng
+    so sánh giả."""
+    try:
+        quote = get_quote(quote_id)
+    except Exception as e:
+        return BaseResponse(success=False, message=str(e))
+
+    lead = get_customer_lead_by_id(quote["dealId"]) if quote.get("dealId") else None
+    if quote.get("status") not in ("approved", "confirmed") and not can_edit_quote(user, quote, lead):
+        return BaseResponse(success=False, message="Không có quyền xem báo giá này")
+
+    try:
+        file_bytes = await file.read()
+        extracted = await extract_contract_summary(file_bytes, file.filename or "")
+        comparison = compare_to_quote(
+            extracted,
+            quote.get("subtotalAmount"),
+            quote.get("vatAmount"),
+            quote.get("totalAmount"),
+        )
+        return BaseResponse(
+            success=True,
+            data={
+                "extracted": extracted,
+                "comparison": comparison["rows"],
+                "allMatched": comparison["allMatched"],
+                "extractable": extracted.get("extractable", False),
+            },
+        )
     except Exception as e:
         return BaseResponse(success=False, message=str(e))

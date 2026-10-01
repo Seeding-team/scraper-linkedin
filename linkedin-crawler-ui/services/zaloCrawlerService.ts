@@ -760,9 +760,20 @@ export function getZaloBroadcast(
   );
 }
 
+/** "Trả lời tin nhắn" — lấy nguyên field từ tin đã có sẵn trong state cục bộ, KHÔNG
+ * tra lại DB. Áp dụng được cho tin của cả đối phương lẫn của chính mình. */
+export interface ZaloReplyToPayload {
+  message_id: string;
+  cli_msg_id?: string | null;
+  sender_id?: string | null;
+  content?: string | null;
+  ts?: number | null;
+}
+
 export interface ZaloSendMessageRequest {
   text: string;
   thread_type?: number;
+  reply_to?: ZaloReplyToPayload;
 }
 
 export interface ZaloSendMessageResponse {
@@ -912,9 +923,7 @@ export interface ZaloCreateUserThreadRequest {
 export interface ZaloCreateUserThreadResponse {
   ok: boolean;
   conversation_id: string;
-  user_id: string;
-  display_name: string;
-  thread_type: number;
+  group_name: string;
 }
 
 /** Tìm user Zalo (chưa từng chat) theo SĐT VN hoặc username Zalo. */
@@ -935,13 +944,16 @@ export function findZaloUser(
   );
 }
 
-/** Tạo (hoặc upsert) thread chat với user lạ trong zalo_groups, idempotent. */
+/** Tạo (hoặc upsert) thread chat với user lạ trong zalo_groups, idempotent.
+ * LƯU Ý: endpoint thật là POST /conversations/users (KHÔNG phải /users/threads
+ * — đường cũ chưa từng tồn tại ở backend, sửa lại 2026-09-23 cho khớp route
+ * thật vừa được thêm). Response chỉ có {ok, conversation_id, group_name}. */
 export function createZaloUserThread(
   accountId: string,
   payload: ZaloCreateUserThreadRequest,
 ): Promise<ZaloCreateUserThreadResponse> {
   return requestJson<ZaloCreateUserThreadResponse>(
-    "/api/all-platform/zalo/conversations/users/threads",
+    "/api/all-platform/zalo/conversations/users",
     {
       method: "POST",
       headers: buildHeaders({
@@ -1059,11 +1071,42 @@ export function sendZaloMessageWithMentions(
   conversationId: string,
   text: string,
   mentions: ZaloMention[],
+  replyTo?: ZaloReplyToPayload,
 ): Promise<ZaloSendMessageResponse> {
   return requestJson(`/api/all-platform/zalo/conversations/${encodeURIComponent(conversationId)}/send`, {
     method: "POST",
     headers: buildHeaders({ "X-User-ID": accountId }),
-    body: JSON.stringify({ text, mentions }),
+    body: JSON.stringify({ text, mentions, reply_to: replyTo }),
+  });
+}
+
+export interface ZaloForwardMessageRequest {
+  source_message_id: string;
+  target_conversation_ids: string[];
+}
+
+export interface ZaloForwardMessageResult {
+  conversation_id: string;
+  ok: boolean;
+  error?: string | null;
+}
+
+export interface ZaloForwardMessageResponse {
+  ok: boolean;
+  results: ZaloForwardMessageResult[];
+}
+
+/** Chuyển tiếp 1 tin nhắn (chữ hoặc ảnh) sang N hội thoại khác — gửi lại như tin
+ * MỚI ở từng đích (không dùng zca-js forwardMessage() thật, xem BE). */
+export function forwardZaloMessage(
+  accountId: string,
+  conversationId: string,
+  payload: ZaloForwardMessageRequest,
+): Promise<ZaloForwardMessageResponse> {
+  return requestJson(`/api/all-platform/zalo/conversations/${encodeURIComponent(conversationId)}/forward`, {
+    method: "POST",
+    headers: buildHeaders({ "X-User-ID": accountId }),
+    body: JSON.stringify(payload),
   });
 }
 

@@ -672,7 +672,7 @@ export function PriceBookZoneTab() {
               <p className="sc-drawer-section-title">Giá bán (Markup)</p>
               <div className="sc-panel-grid">
                 <label className="sc-field">
-                  <span>Markup (Rate) mặc định (%)</span>
+                  <span>Markup mặc định (%)</span>
                   <input
                     type="number"
                     value={form.defaultRatePercent ?? 0}
@@ -764,15 +764,15 @@ export function PriceBookZoneTab() {
                 </li>
               </ul>
 
-              <h4>Bước 2 — Tính giá bán (mục &quot;Markup (Rate) mặc định&quot;)</h4>
+              <h4>Bước 2 — Tính giá bán (mục &quot;Markup mặc định&quot;)</h4>
               <p>
-                Ở trang này (Bảng giá chuẩn), giá bán luôn tính từ <strong>Markup %</strong> (phần trăm lời thêm vào giá vốn):
+                Ở trang này (Bảng giá chuẩn), giá bán luôn tính từ <strong>Markup %</strong>:
               </p>
-              <p className="sc-row-sub">Giá bán = Giá vốn × (1 + Markup%). Ví dụ: 1.754.891đ × (1 + 34,06%) ≈ 2.352.596đ.</p>
+              <p className="sc-row-sub">Giá bán = Giá vốn / (1 - GM%). Ví dụ: 34.300đ / (1 - 30%) = 49.000đ.</p>
               <p>
                 Markup ở đây chỉ là <strong>mức đề xuất mặc định</strong>. Khi Sale làm báo giá thật cho khách (bên Quote Workspace),
-                Sale có thể đổi cách khác: <strong>gõ thẳng Giá khách</strong> muốn báo, hệ thống sẽ tự tính ngược ra Markup% tương
-                ứng — không ảnh hưởng tới Markup mặc định lưu ở đây.
+                Sale có thể đổi cách khác: <strong>gõ thẳng Giá khách</strong> muốn báo, hệ thống sẽ tự tính ngược ra GM% tương
+                ứng — không ảnh hưởng tới GM mặc định lưu ở đây.
               </p>
 
               <h4>VAT — tính riêng 2 đầu</h4>

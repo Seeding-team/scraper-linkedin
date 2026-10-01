@@ -52,7 +52,11 @@ def _is_transient_supabase_error(exc: Exception) -> bool:
     return any(part in msg for part in ("server disconnected", "remoteprotocolerror", "timed out", "timeout"))
 
 
-_SAFE_USER_COLUMNS = "id, email, name, role, is_active, can_approve_quotes, quote_business_role, created_at, updated_at, home_instance, allowed_instances"
+_SAFE_USER_COLUMNS = (
+    "id, email, name, role, is_active, can_approve_quotes, quote_business_role, created_at, updated_at, "
+    "home_instance, allowed_instances, permission_group_id, data_scope, permission_override, "
+    "permission_overrides, crm_status, crm_note"
+)
 
 
 def get_user(email: str) -> dict:
@@ -224,6 +228,216 @@ def update_user_active_status(email: str, is_active: bool) -> dict:
     _clear_people_caches()
     _clear_auth_cache(email=email)
     return result.data[0] if result.data else {}
+
+
+def admin_update_account(email: str, updates: dict) -> dict:
+    """Admin-only: sửa hồ sơ 1 tài khoản ĐÃ TỒN TẠI ở tab Quản lý tài khoản
+    (giống nút "Sửa" của pm-new, accounts.py:update_account) — đổi email,
+    họ tên, và gán/gỡ Member liên kết. KHÁC TÊN với update_user_profile() ở
+    auth_service.py (hàm đó là tự người dùng sửa TÊN của chính mình, không
+    đổi được email/member liên kết).
+
+    Gán/gỡ Member liên kết đi THEO ĐÚNG HƯỚNG dữ liệu thật của bảng `members`
+    (members.linked_user_id trỏ TỚI app_users.id) — ngược với pm-new (nơi
+    users.member_id trỏ tới member). Nên khi đổi Member liên kết, phải:
+    tự tìm + gỡ (set NULL) Member CŨ đang trỏ vào account này (nếu có, và
+    khác Member mới), rồi mới gán Member MỚI (nếu có) trỏ vào account này."""
+    supabase: Client = get_supabase_client()
+
+    account_res = (
+        supabase.table("app_users")
+        .select("id, email")
+        .eq("email", email.lower().strip())
+        .limit(1)
+        .execute()
+    )
+    if not account_res.data:
+        raise ValueError(f"Không tìm thấy tài khoản: {email}")
+    account = account_res.data[0]
+    account_id = account["id"]
+
+    profile_update: dict[str, Any] = {"updated_at": "now()"}
+    new_email_raw = updates.get("new_email")
+    if new_email_raw:
+        new_email = str(new_email_raw).strip().lower()
+        if "@" not in new_email:
+            raise ValueError("Email không hợp lệ.")
+        dup = (
+            supabase.table("app_users")
+            .select("id")
+            .eq("email", new_email)
+            .neq("id", account_id)
+            .limit(1)
+            .execute()
+        )
+        if dup.data:
+            raise ValueError("Email đã tồn tại.")
+        profile_update["email"] = new_email
+    if "full_name" in updates:
+        profile_update["name"] = str(updates.get("full_name") or "").strip() or None
+
+    if len(profile_update) > 1:
+        supabase.table("app_users").update(profile_update).eq("id", account_id).execute()
+
+    if "member_id" in updates:
+        new_member_id = updates.get("member_id") or None
+        if new_member_id:
+            target = (
+                supabase.table("members")
+                .select("id, linked_user_id")
+                .eq("id", new_member_id)
+                .limit(1)
+                .execute()
+            )
+            if not target.data:
+                raise ValueError("Không tìm thấy thành viên.")
+            existing_link = target.data[0].get("linked_user_id")
+            if existing_link and str(existing_link) != str(account_id):
+                raise ValueError("Thành viên này đã được liên kết với tài khoản khác.")
+        # Go bat ky Member CU nao dang tro vao account nay (tru chinh Member
+        # moi, tranh set roi lai xoa ngay trong cung 1 lan sua).
+        old_links = (
+            supabase.table("members")
+            .select("id")
+            .eq("linked_user_id", account_id)
+            .execute()
+        )
+        for row in (old_links.data or []):
+            if str(row["id"]) != str(new_member_id):
+                supabase.table("members").update(
+                    {"linked_user_id": None, "updated_at": "now()"}
+                ).eq("id", row["id"]).execute()
+        if new_member_id:
+            supabase.table("members").update(
+                {"linked_user_id": account_id, "updated_at": "now()"}
+            ).eq("id", new_member_id).execute()
+
+    _clear_people_caches()
+    _clear_auth_cache(email=account["email"])
+    if profile_update.get("email"):
+        _clear_auth_cache(email=profile_update["email"])
+
+    result = (
+        supabase.table("app_users")
+        .select(_SAFE_USER_COLUMNS)
+        .eq("id", account_id)
+        .limit(1)
+        .execute()
+    )
+    return result.data[0] if result.data else {}
+
+
+def update_user_crm_permission(email: str, updates: dict) -> dict:
+    """Admin-only: gán Nhóm quyền / Team CRM / Phạm vi dữ liệu / override quyền
+    riêng / trạng thái CRM cho 1 tài khoản, từ drawer "Chỉnh quyền user" ở tab
+    Tài khoản CRM (`/all-platform/admin/quan-ly-thanh-vien`) — mirror
+    `admin_update_account` ở trên nhưng tách riêng vì đây là 1 nhóm field
+    hoàn toàn khác (quyền CRM, không phải hồ sơ/định danh tài khoản).
+
+    `crm_status='locked'` luôn kéo theo `is_active=False` (khoá đăng nhập THẬT
+    ngay, không phải chỉ đổi nhãn hiển thị) — mọi giá trị khác của
+    `crm_status` kéo theo `is_active=True`. Đây là control DUY NHẤT cho trạng
+    thái tài khoản trong drawer mới (không có toggle is_active rời như trang
+    cũ) để tránh 2 nguồn khoá lệch nhau.
+
+    `crm_team_id` (nếu có trong `updates`) ghi qua bảng `crm_team_members`
+    riêng (1 user chỉ thuộc đúng 1 Team CRM - xoá liên kết cũ trước khi gán
+    liên kết mới, hoặc chỉ xoá nếu truyền `None`/rỗng)."""
+    supabase: Client = get_supabase_client()
+
+    account_res = (
+        supabase.table("app_users").select("id, email").eq("email", email.lower().strip()).limit(1).execute()
+    )
+    if not account_res.data:
+        raise ValueError(f"Không tìm thấy tài khoản: {email}")
+    account_id = account_res.data[0]["id"]
+
+    profile_update: dict[str, Any] = {"updated_at": "now()"}
+    if "permission_group_id" in updates:
+        profile_update["permission_group_id"] = updates.get("permission_group_id") or None
+    if "data_scope" in updates:
+        profile_update["data_scope"] = updates.get("data_scope") or None
+    if "permission_override" in updates:
+        profile_update["permission_override"] = bool(updates.get("permission_override"))
+    if "permission_overrides" in updates:
+        overrides = updates.get("permission_overrides")
+        profile_update["permission_overrides"] = [str(m) for m in overrides] if overrides else []
+    if "crm_note" in updates:
+        profile_update["crm_note"] = str(updates.get("crm_note") or "").strip() or None
+    if "crm_status" in updates:
+        crm_status = updates.get("crm_status") or "active"
+        if crm_status not in ("active", "pending_review", "locked"):
+            raise ValueError(f"crm_status không hợp lệ: {crm_status!r}")
+        profile_update["crm_status"] = crm_status
+        profile_update["is_active"] = crm_status != "locked"
+
+    if len(profile_update) > 1:
+        supabase.table("app_users").update(profile_update).eq("id", account_id).execute()
+
+    if "crm_team_id" in updates:
+        supabase.table("crm_team_members").delete().eq("user_id", account_id).execute()
+        new_team_id = updates.get("crm_team_id") or None
+        if new_team_id:
+            supabase.table("crm_team_members").insert(
+                {"crm_team_id": new_team_id, "user_id": account_id}
+            ).execute()
+
+    _clear_people_caches()
+    _clear_auth_cache(user_id=account_id, email=email.lower().strip())
+    try:
+        from app.modules.all_platform.services.crm_permission_service import clear_crm_permission_enforcement_cache
+
+        clear_crm_permission_enforcement_cache()
+    except Exception:
+        pass
+
+    result = supabase.table("app_users").select(_SAFE_USER_COLUMNS).eq("id", account_id).limit(1).execute()
+    return result.data[0] if result.data else {}
+
+
+def admin_delete_account(email: str, caller_id: str | None = None) -> None:
+    """Admin-only: xóa HẲN 1 tài khoản đăng nhập (giống nút "Xóa" của pm-new,
+    accounts.py:delete_account) — Member liên kết KHÔNG bị xóa, chỉ tự động
+    gỡ liên kết (members.linked_user_id/linked_user_id_2 khai báo ON DELETE
+    SET NULL ở migration 043/044, không cần tự tay dọn ở đây). Chặn tự xóa
+    chính mình và xóa admin cuối cùng, giống đúng 2 guard thật của pm-new."""
+    supabase: Client = get_supabase_client()
+
+    account_res = (
+        supabase.table("app_users")
+        .select("id, email, role")
+        .eq("email", email.lower().strip())
+        .limit(1)
+        .execute()
+    )
+    if not account_res.data:
+        raise ValueError(f"Không tìm thấy tài khoản: {email}")
+    account = account_res.data[0]
+    account_id = account["id"]
+
+    if caller_id and str(caller_id) == str(account_id):
+        raise ValueError("Bạn không thể tự xóa tài khoản đang đăng nhập.")
+
+    if str(account.get("role") or "").strip().lower() == "admin":
+        admin_count_res = (
+            supabase.table("app_users")
+            .select("id", count="exact")
+            .eq("role", "admin")
+            .execute()
+        )
+        if (admin_count_res.count or 0) <= 1:
+            raise ValueError("Không thể xóa admin cuối cùng của hệ thống.")
+
+    try:
+        supabase.table("app_users").delete().eq("id", account_id).execute()
+    except Exception as exc:
+        raise ValueError(
+            "Không thể xóa: tài khoản này còn được tham chiếu ở nơi khác trong hệ thống "
+            "(báo giá/lead/dự án...). Hãy khóa (vô hiệu hóa) tài khoản thay vì xóa."
+        ) from exc
+
+    _clear_people_caches()
+    _clear_auth_cache(user_id=account_id, email=account["email"])
 
 
 def get_team_members(leader_id: str) -> list[dict]:

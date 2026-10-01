@@ -59,6 +59,11 @@ class IssuerCompanyCreateRequest(BaseModel):
     default_quote_form_id: Optional[str] = None
     status: str = "active"
     sort_order: int = 0
+    # (I) "Điều khoản thanh toán" mac dinh cua don vi phat hanh - SNAPSHOT 1 lan
+    # vao custom block 'payment_terms' cua bao gia luc tao (xem
+    # apply_issuer_payment_terms_snapshot trong supabase_quote_service.py),
+    # KHONG doc song - sua o day chi anh huong bao gia MOI tao sau do.
+    payment_terms: Optional[str] = None
 
 
 class IssuerCompanyUpdateRequest(BaseModel):
@@ -75,6 +80,7 @@ class IssuerCompanyUpdateRequest(BaseModel):
     default_quote_form_id: Optional[str] = None
     status: Optional[str] = None
     sort_order: Optional[int] = None
+    payment_terms: Optional[str] = None
 
 
 class QuoteItemInput(BaseModel):
@@ -97,14 +103,14 @@ class QuoteItemInput(BaseModel):
 
     unit: Optional[str] = None
     quantity: float = 0
-    unit_price: float = 0
+    unit_price: Optional[float] = Field(default=None, ge=0)
     discount_percent: float = Field(default=0, ge=0, le=100)
     vat_rate: float = Field(default=0, ge=0, le=100)
     children: list["QuoteItemInput"] = Field(default_factory=list)
     # Danh mục dịch vụ: truy vết + snapshot USD/VND/tỷ giá tại thời điểm chọn dịch vụ.
     # Đông cứng ngay khi tạo/sửa báo giá - sửa catalog sau này không ảnh hưởng số liệu cũ.
     catalog_item_id: Optional[str] = None
-    bundle_snapshot: Optional[list[dict[str, Any]]] = None
+    bundle_snapshot: Optional[list[dict[str, Any]] | dict[str, Any]] = None
     list_price_usd: Optional[float] = None
     unit_price_usd: Optional[float] = None
     exchange_rate: Optional[float] = None
@@ -158,6 +164,11 @@ class QuoteUpdateRequest(BaseModel):
     data: Optional[dict[str, Any]] = None
     items: Optional[list[QuoteItemInput]] = None
     issuer_company_id: Optional[str] = None
+    # "Mẫu ăn theo Đơn vị phát hành" (feedback 2026-09-24) - CHI dung de DOI
+    # sang 1 mau khac (gia tri that su, khong co y nghia "bo gan" nhu project_id/
+    # sla_due_at), nen KHONG can model_fields_set o router - exclude_none=True
+    # mac dinh (payload.model_dump()) la du: khong gui/gui null = khong doi.
+    quote_form_id: Optional[str] = None
     project_id: Optional[str] = None
     sla_due_at: Optional[str] = None
     # Giam gia tong cap quote (migration 106, muc 6.9) - None co y nghia THAT
@@ -211,6 +222,19 @@ class QuotePublicAccessRestrictionUpdateRequest(BaseModel):
     mode: str
     allowed_emails: list[str] = []
     allowed_phones: list[str] = []
+
+
+class QuotePrintLayoutPrefsUpdateRequest(BaseModel):
+    """Nut "Lưu" o toolbar in (huong giay + do rong cot da keo tay) tren
+    QuoteDetailPage - trang NOI BO da dang nhap (KHONG phai trang public
+    khong xac thuc /baogia/[token] - xem thao luan trong PublicQuotePage.tsx).
+    Endpoint chi ghi DUNG 1 khoa `data.printLayoutPrefs`, khong dung RPC
+    quote_update (RPC do recompute lai toan bo p_items/tong tien, thua va co
+    rui ro cho thao tac chi luu 1 tuy chinh hien thi nay) - xem
+    set_print_layout_prefs. `column_widths`: map { columnKey: widthPx }."""
+
+    orientation: str
+    column_widths: dict[str, float] = {}
 
 
 class QuoteHardDeleteRequest(BaseModel):

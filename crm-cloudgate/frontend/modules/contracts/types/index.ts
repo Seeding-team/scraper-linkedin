@@ -153,3 +153,30 @@ export interface ContractRiskReview {
   score: number | null;
   findings: ContractReviewFinding[];
 }
+
+/** "Ghi nhận hợp đồng có sẵn" — đối chiếu file hợp đồng đã upload (OCR/text
+ * extraction best-effort) với số liệu THẬT của báo giá đã chọn. Xem
+ * RegisterExternalContractModal.tsx + contract_ocr_service.py. */
+export interface ContractOcrExtracted {
+  contractNumber: string | null;
+  signedAt: string | null;
+  subtotalAmount: number | null;
+  vatAmount: number | null;
+  totalAmount: number | null;
+  extractionMethod: "ai" | "heuristic";
+  extractable: boolean;
+}
+
+export interface ContractOcrComparisonRow {
+  label: string;
+  contractValue: number | null;
+  quoteValue: number | null;
+  matched: boolean;
+}
+
+export interface ContractOcrReconcileResult {
+  extracted: ContractOcrExtracted;
+  comparison: ContractOcrComparisonRow[];
+  allMatched: boolean;
+  extractable: boolean;
+}

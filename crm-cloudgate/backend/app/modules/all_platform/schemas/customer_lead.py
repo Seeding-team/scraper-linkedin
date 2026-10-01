@@ -15,6 +15,12 @@ DEAL_STAGES = [
 ]
 TERMINAL_STAGES = ["post_sale_care", "lost"]
 
+
+class ContractLinkItem(BaseModel):
+    """1 dòng hợp đồng/báo giá (Vấn đề 2 — nhiều link mua/bán cho 1 deal)."""
+    name: Optional[str] = None
+    url: str
+
 # Trạng thái thanh toán — dùng để lọc nhanh "khách nào còn nợ tiền".
 PAYMENT_STATUSES = ["unpaid", "partial", "paid"]
 
@@ -69,6 +75,11 @@ class CustomerLeadCreate(BaseModel):
     customer_id: Optional[str] = None
     # Du an that (migration 097) - null = Co hoi chua gan Du an.
     project_id: Optional[str] = None
+    # Feedback 2026-09-25: "Cơ hội" khong con nhap ten rieng - lay theo ten Du
+    # an. Neu FE gui project_name (khong kem project_id) -> tao Du an moi ngay
+    # trong luong tao deal nay (xem create_customer_lead()), KHONG doi Sale
+    # phai co quyen can_manage_project() rieng cho POST /projects.
+    project_name: Optional[str] = None
     # Nguoi lien he chinh (migration 134/135) - null = chua chon.
     primary_contact_id: Optional[str] = None
 
@@ -130,6 +141,11 @@ class CustomerLeadCreate(BaseModel):
     last_attachment_name: Optional[str] = None
     closed_reason: Optional[str] = None
 
+    # Vấn đề 2 (2026-09): hợp đồng/báo giá MUA (Phase 1) / BÁN (Phase 2),
+    # mỗi bên nhiều link — thay cho field đơn last_attachment_url cũ.
+    purchase_contract_links: Optional[List[ContractLinkItem]] = []
+    sale_contract_links: Optional[List[ContractLinkItem]] = []
+
     # crm-next fields (migration 041)
     position: Optional[str] = None
     crm_package: Optional[str] = None
@@ -157,6 +173,10 @@ class CustomerLeadUpdate(BaseModel):
     # RO RANG (khong phai bo qua key) = bo gan Du an that su (xem router
     # update_customer_lead() - PHAI dung exclude_unset de phan biet 2 truong hop nay).
     project_id: Optional[str] = None
+    # Cung co che voi create (xem CustomerLeadCreate.project_name) - go ten Du
+    # an MOI luc SUA deal cung tu tao Du an that, khong bat phai co project_id
+    # san.
+    project_name: Optional[str] = None
     # Nguoi lien he chinh (migration 134/135) - cung quy tac exclude_unset nhu project_id.
     primary_contact_id: Optional[str] = None
     company_name: Optional[str] = None
@@ -216,6 +236,10 @@ class CustomerLeadUpdate(BaseModel):
     last_attachment_name: Optional[str] = None
     closed_reason: Optional[str] = None
 
+    # Vấn đề 2 (2026-09): hợp đồng/báo giá MUA (Phase 1) / BÁN (Phase 2).
+    purchase_contract_links: Optional[List[ContractLinkItem]] = None
+    sale_contract_links: Optional[List[ContractLinkItem]] = None
+
     # crm-next fields (migration 041)
     position: Optional[str] = None
     crm_package: Optional[str] = None
@@ -270,6 +294,10 @@ class CustomerLeadResponse(BaseModel):
     last_attachment_url: Optional[str] = None
     last_attachment_name: Optional[str] = None
     closed_reason: Optional[str] = None
+
+    # Vấn đề 2 (2026-09): hợp đồng/báo giá MUA (Phase 1) / BÁN (Phase 2).
+    purchase_contract_links: Optional[List[ContractLinkItem]] = []
+    sale_contract_links: Optional[List[ContractLinkItem]] = []
 
     customer_since: Optional[datetime] = None
     service_package: Optional[str] = None

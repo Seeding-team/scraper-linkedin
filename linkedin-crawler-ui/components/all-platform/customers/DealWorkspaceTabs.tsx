@@ -26,7 +26,6 @@ import type { Quote } from "@/modules/quotes";
 import { seedingContractRepository } from "@/modules/contracts/repositories/SeedingContractRepository";
 import type { Contract } from "@/modules/contracts";
 import { contractStatusLabel } from "@/modules/contracts/constants/contractConfig";
-import { ManualContractModal } from "@/modules/contracts/components/ManualContractModal";
 import { RegisterExternalContractModal } from "./RegisterExternalContractModal";
 import { CreateQuoteModal } from "@/modules/crm/integrations/quotes";
 import { customerToCrmDeal } from "./dealToCrmDeal";
@@ -314,7 +313,6 @@ export function ContractTab({ customer }: { customer: Customer }) {
   const [contracts, setContracts] = useState<Contract[]>([]);
   const [loading, setLoading] = useState(false);
   const [selected, setSelected] = useState<Contract | null>(null);
-  const [createOpen, setCreateOpen] = useState(false);
   const [registerOpen, setRegisterOpen] = useState(false);
 
   function refresh() {
@@ -328,20 +326,22 @@ export function ContractTab({ customer }: { customer: Customer }) {
 
   useEffect(refresh, [customer.id]);
 
-  const hasLegacy = contracts.length === 0 && LEGACY_CONTRACT_FIELDS.some((f) => Boolean(customer[f]));
+  // Vấn đề 2 (2026-09): purchase/sale_contract_links là mảng — Boolean([]) luôn
+  // true nên không đưa vào LEGACY_CONTRACT_FIELDS, check riêng bằng length.
+  const hasLegacy =
+    contracts.length === 0 &&
+    (LEGACY_CONTRACT_FIELDS.some((f) => Boolean(customer[f])) ||
+      (customer.purchase_contract_links ?? []).some((l) => l?.url) ||
+      (customer.sale_contract_links ?? []).some((l) => l?.url));
 
   return (
     <section className="space-y-3">
       <div className="flex items-center justify-between">
         <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500">Hợp đồng của deal</h4>
         <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => setCreateOpen(true)}
-            className="inline-flex items-center gap-1 rounded-md border border-slate-300 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-600 transition hover:bg-slate-50"
-          >
-            + Tạo hợp đồng
-          </button>
+          {/* "+ Tạo hợp đồng" (ManualContractModal) đã bị bỏ (feedback
+           * 2026-09-25, PDF mục 7) - chỉ còn giữ đúng 1 luồng "Ghi nhận hợp
+           * đồng có sẵn" (hợp đồng ký ngoài CRM). */}
           <button
             type="button"
             onClick={() => setRegisterOpen(true)}
@@ -400,13 +400,6 @@ export function ContractTab({ customer }: { customer: Customer }) {
           <p className="mt-2 text-sm text-slate-500">Chưa có hợp đồng nào được ghi nhận trong CRM.</p>
           <p className="mt-0.5 text-xs text-slate-400">Bạn có thể tạo hợp đồng mới hoặc ghi nhận hợp đồng đã ký bên ngoài.</p>
           <div className="mt-3 flex items-center justify-center gap-2">
-            <button
-              type="button"
-              onClick={() => setCreateOpen(true)}
-              className="inline-flex items-center gap-1 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 transition hover:bg-slate-100"
-            >
-              + Tạo hợp đồng
-            </button>
             <button
               type="button"
               onClick={() => setRegisterOpen(true)}
@@ -479,6 +472,48 @@ export function ContractTab({ customer }: { customer: Customer }) {
                 <div className="mt-0.5 text-sm font-medium text-amber-900">—</div>
               )}
             </div>
+            {/* Vấn đề 2 (2026-09): hợp đồng/báo giá MUA (Phase 1) — có thể nhiều link. */}
+            {(customer.purchase_contract_links ?? []).filter((l) => l?.url).length > 0 && (
+              <div className="rounded-md border border-amber-200 bg-white px-3 py-2">
+                <div className="text-[10px] uppercase tracking-wider text-amber-600">Hợp đồng mua (Phase 1)</div>
+                <div className="mt-0.5 space-y-0.5">
+                  {(customer.purchase_contract_links ?? [])
+                    .filter((l) => l?.url)
+                    .map((l, i) => (
+                      <a
+                        key={i}
+                        href={l.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="flex items-center gap-1 truncate text-sm font-medium text-blue-700 hover:underline"
+                      >
+                        <FileText className="size-3 shrink-0" /> {l.name || l.url}
+                      </a>
+                    ))}
+                </div>
+              </div>
+            )}
+            {/* Vấn đề 2 (2026-09): hợp đồng/báo giá BÁN (Phase 2) — có thể nhiều link. */}
+            {(customer.sale_contract_links ?? []).filter((l) => l?.url).length > 0 && (
+              <div className="rounded-md border border-amber-200 bg-white px-3 py-2">
+                <div className="text-[10px] uppercase tracking-wider text-amber-600">Hợp đồng bán (Phase 2)</div>
+                <div className="mt-0.5 space-y-0.5">
+                  {(customer.sale_contract_links ?? [])
+                    .filter((l) => l?.url)
+                    .map((l, i) => (
+                      <a
+                        key={i}
+                        href={l.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="flex items-center gap-1 truncate text-sm font-medium text-blue-700 hover:underline"
+                      >
+                        <FileText className="size-3 shrink-0" /> {l.name || l.url}
+                      </a>
+                    ))}
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -541,17 +576,6 @@ export function ContractTab({ customer }: { customer: Customer }) {
           </a>
         </div>
       )}
-
-      <ManualContractModal
-        open={createOpen}
-        lockedDealId={customer.id}
-        lockedDealLabel={customer.customer_name}
-        onClose={() => setCreateOpen(false)}
-        onCreated={() => {
-          setCreateOpen(false);
-          refresh();
-        }}
-      />
 
       <RegisterExternalContractModal
         open={registerOpen}

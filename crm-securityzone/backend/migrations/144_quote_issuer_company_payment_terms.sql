@@ -1,0 +1,26 @@
+-- (I) "Điều khoản thanh toán" mặc định của Đơn vị phát hành báo giá
+-- (quote_issuer_companies) — cho phép mỗi công ty phát hành có 1 đoạn điều
+-- khoản thanh toán mặc định riêng, thay vì luôn trống (trước giờ khối
+-- "Điều khoản thanh toán" trên báo giá là custom block tự do, người tạo phải
+-- tự gõ tay mỗi lần — xem CustomBlocksEditor.tsx, CustomBlockKind
+-- 'payment_terms').
+--
+-- CHỈ là 1 cột default text trên danh mục — KHÔNG tự đổi báo giá đã tạo trước
+-- đó (snapshot 1 LẦN vào quotes.data lúc tạo báo giá mới, xem
+-- apply_issuer_payment_terms_snapshot trong supabase_quote_service.py và
+-- CreateQuoteModal.tsx/QuoteWorkspaceModal.tsx phía tạo mới) — đúng nguyên
+-- tắc snapshot-tại-thời-điểm đã áp dụng cho toàn bộ issuer_company khác.
+--
+-- Port từ MAIN (linkedin_group_crawler/supabase/migrations/144_quote_issuer_company_payment_terms.sql)
+-- sang crm-securityzone. Đã verify qua REST API (GET
+-- /rest/v1/quote_issuer_companies?select=id,payment_terms trả về cột
+-- payment_terms=null, không lỗi "column does not exist") rằng cột này ĐÃ
+-- tồn tại sẵn trên DB self-host dùng chung (seeding.db.markeeai.com, cùng
+-- host với crm-cloudgate/.env và MAIN/.env.local) — migration ALTER TABLE ở
+-- MAIN chạy 1 lần là đủ cho mọi clone cùng dùng chung DB này. File này chỉ
+-- thêm vào cho khớp số thứ tự migration của crm-securityzone (parity), KHÔNG
+-- chạy lại ALTER TABLE để tránh lỗi "column already exists".
+--
+-- ALTER TABLE quote_issuer_companies
+--   ADD COLUMN payment_terms TEXT;
+-- (Không chạy — cột đã tồn tại sẵn trên DB dùng chung, xem giải thích trên.)

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
 import { ContractDetailModal } from './ContractDetailModal';
@@ -25,6 +25,7 @@ import { teamsService, type TeamRow } from '@/services/all-platform.service';
 import { seedingQuoteRepository } from '@/modules/quotes';
 import type { Quote } from '@/modules/quotes';
 import { useAppAuth } from '@/contexts/AppAuthContext';
+import { CascadeConfirmRequiredError, cascadeWarningText } from '../utils/cascadeDelete';
 
 type FilterState = {
   search: string;
@@ -82,6 +83,7 @@ export function CrmShell() {
   // "Lich su phien ban" - deal.quote.id (van la ban DA DUYET) khong doi khi
   // tao ban nhap moi nen khong the dung no lam dependency duy nhat.
   const [quoteVersionsRefreshKey, setQuoteVersionsRefreshKey] = useState(0);
+  const shellRef = useRef<HTMLDivElement>(null);
 
   // Toast tự ẩn sau vài giây — không dùng window.alert() cho việc báo thành công
   // vì alert chặn thao tác tiếp theo, gây khó chịu cho hành động vốn đã ổn.
@@ -97,7 +99,7 @@ export function CrmShell() {
   // trong chinh no roi - khong dua lai vao day, tranh 2 noi doc lap cung khoa
   // 1 tai nguyen (bug thuc te gap phai: body ket o overflow:hidden vinh vien
   // vi thu tu cleanup cua 2 effect rieng biet khong dong bo voi nhau).
-  const anyOverlayOpen = detailOpen || Boolean(contractDeal) || quoteModal.open || Boolean(stageData) || Boolean(reviewData);
+  const anyOverlayOpen = Boolean(contractDeal) || quoteModal.open || Boolean(stageData) || Boolean(reviewData);
   useBodyScrollLock(anyOverlayOpen);
 
   const sourceOptions = useMemo(() => {
@@ -203,6 +205,28 @@ export function CrmShell() {
     }
   }
 
+  function closeDealSidePanels() {
+    setDetailOpen(false);
+  }
+
+  function handleShellPointerDown(event: ReactPointerEvent<HTMLDivElement>) {
+    if (!detailOpen) return;
+    const target = event.target as HTMLElement | null;
+    if (!target) return;
+
+    if (target.closest('.crm-drawer')) return;
+    if (target.closest('[data-crm-deal-row="true"]')) return;
+    if (
+      target.closest(
+        'button, a, input, select, textarea, [role="button"], [role="combobox"], .crm-filter-select-menu, .crm-modal, .crm-stage-modal',
+      )
+    ) {
+      return;
+    }
+
+    closeDealSidePanels();
+  }
+
   // Chỉ có id (chưa có object Deal đầy đủ) - dùng khi quay lại từ trang chi
   // tiết báo giá (?openDeal=<id>), không có sẵn Deal để hiện tạm như openDetail.
   async function openDetailById(id: string) {
@@ -289,7 +313,14 @@ export function CrmShell() {
   async function handleDelete(deal: Deal) {
     if (!window.confirm(`Xóa deal "${deal.customerName}"?`)) return;
     try {
-      await deleteDeal(deal.id);
+      try {
+        await deleteDeal(deal.id);
+      } catch (err) {
+        // Deal con Bao gia/Hop dong: hoi ro truoc khi xoa kem (feedback 2026-09-23).
+        if (!(err instanceof CascadeConfirmRequiredError)) throw err;
+        if (!window.confirm(cascadeWarningText('Cơ hội này', err.summary))) return;
+        await deleteDeal(deal.id, true);
+      }
       setDetailOpen(false);
       setSelectedDeal(null);
     } catch (err) {
@@ -389,7 +420,9 @@ export function CrmShell() {
 
   async function handleDeleteQuote(deal: Deal) {
     if (!deal.quote?.id) return;
-    if (!window.confirm(`Xoá báo giá ${deal.quote.number || ''} khỏi deal "${deal.customerName}"? Báo giá sẽ chuyển sang trạng thái đã xoá (ẩn khỏi danh sách), Admin có thể khôi phục nếu cần.`)) return;
+    const approvedText = deal.quote.status === 'approved' ? ' Báo giá này đã duyệt, bạn có chắc muốn xóa?' : '';
+    if (!window.confirm(`Xoá báo giá ${deal.quote.number || ''} khỏi deal "${deal.customerName}"?${approvedText}
+Bạn chấp nhận mất báo giá này? (Báo giá bị ẩn khỏi danh sách, Admin có thể khôi phục nếu cần.)`)) return;
     try {
       await seedingQuoteRepository.deleteQuote(deal.quote.id);
       await refreshDealAfterQuoteChange(deal.id);
@@ -412,7 +445,7 @@ export function CrmShell() {
   }
 
   return (
-    <div className="crm-shell">
+    <div className="crm-shell" ref={shellRef} onPointerDownCapture={handleShellPointerDown}>
       <section className="crm-page-card">
         <div className="crm-header">
           <div>

@@ -1104,12 +1104,21 @@ class ZcaPersistentListenerManager:
             logger.warning(f"ZCA listener event error user={state.user_id}: {state.last_error}")
             return
         if event_name == "message":
+            # Nhan duoc tin nhan la bang chung manh nhat rang session dang song -
+            # truoc day chi co event "connected" moi bat state.connected=True, nen
+            # neu zca-js tu phat 1 dot "disconnected"/"closed" thoang qua (roi tu
+            # ket noi lai NOI BO ma khong bao "connected" moi) thi connected bi ket
+            # o False MAI MAI du tin nhan van vao deu deu - dung dung trieu chung
+            # "ket noi ngon nhung UI khong hien da ket noi thanh cong".
+            state.connected = True
             await self._record_messages(state, [event.get("message") or {}])
             return
         if event_name == "old_messages":
+            state.connected = True
             await self._record_messages(state, event.get("messages") or [], increment_unread=False)
             return
         if event_name == "reaction":
+            state.connected = True
             await self._handle_reaction(state, event.get("reaction") or {})
             return
 

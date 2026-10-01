@@ -83,3 +83,39 @@ export function clearVisibleSummaryFieldsDraft(quoteFormId?: string): void {
     // ignore
   }
 }
+
+const QUOTE_VISIBLE_CUSTOMER_FIELDS_DRAFT_PREFIX = 'crm:quote-visible-customer-fields-draft:v1:';
+
+function customerFieldsDraftKey(quoteFormId: string): string {
+  return `${QUOTE_VISIBLE_CUSTOMER_FIELDS_DRAFT_PREFIX}${quoteFormId}`;
+}
+
+export function loadVisibleCustomerFieldsDraft(quoteFormId?: string): string[] | null {
+  if (typeof window === 'undefined' || !quoteFormId) return null;
+  try {
+    const raw = window.localStorage.getItem(customerFieldsDraftKey(quoteFormId));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? (parsed as string[]) : null;
+  } catch {
+    return null;
+  }
+}
+
+export function saveVisibleCustomerFieldsDraft(quoteFormId: string | undefined, keys: string[]): void {
+  if (typeof window === 'undefined' || !quoteFormId) return;
+  try {
+    window.localStorage.setItem(customerFieldsDraftKey(quoteFormId), JSON.stringify(keys));
+  } catch {
+    // localStorage day/bi chan - bo qua.
+  }
+}
+
+export function clearVisibleCustomerFieldsDraft(quoteFormId?: string): void {
+  if (typeof window === 'undefined' || !quoteFormId) return;
+  try {
+    window.localStorage.removeItem(customerFieldsDraftKey(quoteFormId));
+  } catch {
+    // ignore
+  }
+}

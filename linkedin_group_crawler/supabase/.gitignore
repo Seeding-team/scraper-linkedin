@@ -6,3 +6,7 @@
 .env.keys
 .env.local
 .env.*.local
+
+# Local Mock Seed for QA/Testing (NEVER push to Production)
+local_mock.sql
+local_mock*.sql

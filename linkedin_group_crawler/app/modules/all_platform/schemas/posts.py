@@ -62,3 +62,14 @@ class UnifiedFilterRequest(BaseModel):
 class SyncProgressRequest(BaseModel):
     email: str
     posts: list[dict[str, Any]]
+
+
+class PostSeedingRosterRequest(BaseModel):
+    email: str
+    post_id: str
+    platform: str
+
+
+class MemberCrawlHistoryRequest(BaseModel):
+    email: str
+    id_member: str

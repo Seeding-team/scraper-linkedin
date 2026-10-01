@@ -64,3 +64,16 @@ jobs:
           sleep 3
           curl -sf -o /dev/null http://localhost:8080/ || (echo "Frontend khong phan hoi" && exit 1)
           curl -sf -o /dev/null http://localhost:8080/api/all-platform/auth/me || echo "Luu y: auth/me khong phai 200 (co the do chua dang nhap, khong tinh la loi)"
+
+      # Su co thuc te 2026-09-21: docker build cache tich luy toi 23.5GB (khong
+      # ai prune) lam / day 100% (218MB con trong), runner khong ghi noi log
+      # -> ca 4 lan deploy prod lien tiep fail voi "No space left on device"
+      # ngay o buoc dau, du code khong loi gi. Host nay dung CHUNG cho nhieu
+      # app khac (crm-cloudgate/module/securityzone) nen cache cang tich nhanh.
+      # Fix: don build cache cu (>24h) sau moi lan deploy thanh cong de khong
+      # tich luy vo han, van giu cache gan day de build nhanh.
+      - name: Don dep Docker build cache cu
+        if: success()
+        run: |
+          docker builder prune -af --filter until=24h || true
+          df -h / | tail -1

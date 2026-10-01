@@ -1,4 +1,5 @@
 import { formatCurrencyDisplay } from '@/lib/currency';
+import { customerPriceFromTargetGrossMargin } from './pricing-math';
 
 /** Preview cong thuc phia FE - CHI de hien thi truoc khi Luu, KHONG phai
  * nguon tinh chinh thuc (backend luon tinh lai bang Decimal khi luu, xem
@@ -54,7 +55,7 @@ export function previewPriceBookItem(input: PriceBookPreviewInput): PriceBookPre
   const vatInAmount = costTotal != null ? (costTotal * vatIn) / 100 : null;
   const inAfterVat = costTotal != null && vatInAmount != null ? costTotal + vatInAmount : null;
 
-  const unitPrice = costUnit != null ? costUnit * (1 + rate / 100) : null;
+  const unitPrice = costUnit != null ? customerPriceFromTargetGrossMargin(costUnit, rate) : null;
   const amountBeforeVat = unitPrice != null ? qty * unitPrice : null;
   const vatEuAmount = amountBeforeVat != null ? (amountBeforeVat * vatEu) / 100 : null;
   const totalAmount = amountBeforeVat != null && vatEuAmount != null ? amountBeforeVat + vatEuAmount : null;

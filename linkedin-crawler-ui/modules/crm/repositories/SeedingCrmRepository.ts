@@ -1,4 +1,5 @@
 import { API_BASE_URL, API_KEY } from '@/lib/env';
+import { CascadeConfirmRequiredError, cascadeSummaryFromBody } from '../utils/cascadeDelete';
 import {
   CRM_PACKAGE_OPTIONS,
   getContractStatusForStage,
@@ -58,6 +59,10 @@ type CustomerLeadRow = {
   team_type?: string | null;
   /** Du an that (migration 097) - null = Co hoi chua gan Du an nao. */
   project_id?: string | null;
+  /** Ten Du an MOI go tay (khong kem project_id) - backend tu tao Du an that
+   * tu ten nay (xem CreateDealInput.projectName). CHI dung o request GUI,
+   * server khong bao gio tra field nay lai. */
+  project_name?: string | null;
   /** Nguoi lien he chinh (migration 134/135) - null = chua chon. */
   primary_contact_id?: string | null;
   status?: 'pending' | 'closed' | 'rejected' | string | null;
@@ -503,7 +508,7 @@ function rowToCustomer(row: CrmCustomerRow): CrmCustomerSummary {
 
 function toCrmCustomerPayload(input: CreateDealInput): Partial<CrmCustomerRow> {
   return {
-    customer_name: input.customerName,
+    customer_name: input.customerProfileName ?? input.customerName,
     company_name: input.companyName,
     position_category_id: input.positionCategoryId,
     phone: input.phone,
@@ -523,6 +528,7 @@ function toCustomerPayload(input: CreateDealInput | UpdateDealInput): Partial<Cu
   // nay chay o CA 2 truong hop tao moi VA sua - gui project_id=null RO
   // RANG khi bo gan (khong duoc IM LANG bo qua project_id nhu bug cu).
   if ('projectId' in input) payload.project_id = input.projectId || null;
+  if ('projectName' in input && !input.projectId) payload.project_name = input.projectName || null;
   if ('primaryContactId' in input) payload.primary_contact_id = input.primaryContactId || null;
   if ('customerName' in input) payload.customer_name = input.customerName;
   if ('companyName' in input) payload.company_name = input.companyName;
@@ -718,10 +724,20 @@ export class SeedingCrmRepository implements CrmRepository {
     return rowToDeal(row);
   }
 
-  async deleteDeal(id: string): Promise<void> {
-    await apiFetch<unknown>(`/api/all-platform/customer-leads/${encodeURIComponent(id)}`, {
+  /** confirmCascade=true CHI gui sau khi nguoi dung da xac nhan xoa kem Bao
+   * gia/Hop dong lien quan. Lan goi dau (false) ma Deal con du lieu lien quan
+   * -> nem CascadeConfirmRequiredError (kem so dem) de UI hoi lai. */
+  async deleteDeal(id: string, confirmCascade = false): Promise<void> {
+    const query = confirmCascade ? '?confirm_cascade=true' : '';
+    const res = await fetch(`${API_BASE_URL}/api/all-platform/customer-leads/${encodeURIComponent(id)}${query}`, {
       method: 'DELETE',
+      credentials: 'include',
+      headers: getDefaultHeaders(),
     });
+    const body = (await res.json()) as ApiResponse<unknown>;
+    const summary = cascadeSummaryFromBody(body);
+    if (summary) throw new CascadeConfirmRequiredError(body.message || 'Cơ hội còn dữ liệu liên quan.', summary);
+    if (!res.ok || body.success === false) throw new Error(body.message || `Lỗi máy chủ (${res.status})`);
   }
 
   /** true nếu backend đã cấu hình AI thật (OPENAI_API_KEY) — gọi 1 lần lúc mount để quyết
@@ -862,10 +878,14 @@ export class SeedingCrmRepository implements CrmRepository {
     return (rows || []).map(rowToCustomer);
   }
 
+  async getCustomerProfile(id: string): Promise<CrmCustomerSummary> {
+    return rowToCustomer(await apiFetch<CrmCustomerRow>(`/api/all-platform/crm/customers/${encodeURIComponent(id)}`));
+  }
+
   /** Danh sach Contact THUOC DUNG 1 Customer - dung cho dropdown "Người liên
    * hệ chính" khi tao/sua Deal (phai loc dung customerId, khong duoc lo
    * Contact cua Customer khac). */
-  async listContacts(customerId: string): Promise<Array<{ id: string; name: string; position_label_snapshot?: string | null; position?: string | null; phone?: string | null }>> {
+  async listContacts(customerId: string): Promise<Array<{ id: string; name: string; position_label_snapshot?: string | null; position?: string | null; phone?: string | null; email?: string | null; is_primary?: boolean }>> {
     return apiFetch(`/api/all-platform/crm/customers/${encodeURIComponent(customerId)}/contacts`);
   }
 }

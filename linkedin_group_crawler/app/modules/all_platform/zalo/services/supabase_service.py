@@ -255,6 +255,7 @@ def _listener_message_payload(user_id: str, group_id: str, group_name: str, msg:
         "mentions": [m.model_dump() for m in msg.mentions] if msg.mentions else None,
         "cli_msg_id": msg.cli_msg_id,
         "msg_kind": msg.msg_kind,
+        "reply_to_id": msg.reply_to_id,
     }
 
 
@@ -281,6 +282,7 @@ def _message_from_row(row: Dict[str, Any]) -> Message:
         mentions=row.get("mentions") or [],
         msg_kind=row.get("msg_kind") or None,
         raw_content=row.get("raw_content") or None,
+        reply_to_id=row.get("reply_to_id") or None,
     )
 
 
@@ -1837,7 +1839,7 @@ async def search_conversation_messages(
         "GET",
         "zalo_messages",
         params={
-            "select": "id,source_message_id,sender_id,sender_name,content,timestamp_text,time_text,type,is_sent,created_at",
+            "select": "id,source_message_id,sender_id,sender_name,content,timestamp_text,time_text,type,is_sent,created_at,reply_to_id",
             "user_id": f"eq.{user_id}",
             "group_id": f"eq.{conversation_id}",
             "is_deleted": "eq.false",

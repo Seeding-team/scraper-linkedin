@@ -1,3 +1,8 @@
+// Module cào bài Facebook + LinkedIn (gộp từ 2 extension cũ) + Threads (tìm theo từ khoá).
+// Mỗi file tự bọc IIFE và tự đăng ký chrome.runtime.onMessage riêng cho lệnh
+// MK_FB_CRAWL_* / MK_LI_CRAWL_* / MK_TH_CRAWL_*.
+importScripts("bg/fb-crawl.js", "bg/li-crawl.js", "bg/threads-crawl.js", "bg/rotation-crawl.js");
+
 let isCommenting = false;
 let currentProgress = null;
 let shouldStop = false;
@@ -27,6 +32,33 @@ async function clearPersistedState() {
 }
 
 getPersistedState();
+
+// Neu vi 1 ly do nao do (loi cu truoc khi co fix nay, extension bi tat dot ngot...)
+// isCommenting bi ket o "true" trong chrome.storage.session, no se KET MAI - session
+// storage khong tu xoa khi cap nhat/reload extension, chi mat khi dong HET trinh duyet.
+// Reset sach moi lan extension duoc cai lai/cap nhat de chac chan khong bi "ket" nua.
+chrome.runtime.onInstalled.addListener(() => {
+    isCommenting = false;
+    shouldStop = false;
+    currentProgress = null;
+    clearPersistedState();
+});
+
+// Manifest V3: service worker nay bi Chrome tu dong "ngu" sau ~30s khong hoat
+// dong, roi Chrome PHAI tu wake lai khi co message/event moi - nhung tren
+// thuc te co truong hop wake khong thanh cong (bug/edge-case da biet cua
+// Chrome), khien chrome.runtime.sendMessage() ben content script KHONG BAO
+// GIO nhan duoc callback (khong loi, khong gi ca) - dung y trieu chung "bam
+// Gui khong ra gi ca" ma xac nhan qua watchdog phia web app. Dat 1 alarm
+// dinh ky de "danh thuc" service worker thuong xuyen hon, giam kha nang bi
+// ngu sau qua lau dan toi truong hop nay.
+chrome.alarms.create("keepAlive", { periodInMinutes: 0.4 });
+chrome.alarms.onAlarm.addListener((alarm) => {
+    if (alarm.name === "keepAlive") {
+        // Khong can lam gi - chi viec listener nay ton tai da du de Chrome
+        // tinh la "co hoat dong", tranh service worker bi terminate hoan toan.
+    }
+});
 
 let activeTargetTabId = null;
 let activeTargetConfig = null;
@@ -148,6 +180,45 @@ function delay(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+function isNoReceiverError(message) {
+    return typeof message === "string" && /Receiving end does not exist|Could not establish connection/i.test(message);
+}
+
+function sendExecuteCommentOnce(tabId, url, text) {
+    return new Promise((resolve) => {
+        chrome.tabs.sendMessage(tabId, {
+            action: "EXECUTE_COMMENT",
+            payload: { url, text }
+        }, response => {
+            if (chrome.runtime.lastError) {
+                resolve({ success: false, error: chrome.runtime.lastError.message });
+            } else if (!response) {
+                resolve({ success: false, error: "No response from content script." });
+            } else {
+                resolve(response);
+            }
+        });
+    });
+}
+
+// Cac trang nhu LinkedIn hay dieu huong THEM 1 lan nua (authwall/locale/rut gon lnkd.in)
+// SAU KHI tab da bao "complete" lan dau - content script cua lan dieu huong truoc bi huy,
+// con lan sau chua kip dang ky listener, nen sendMessage bao "Receiving end does not exist"
+// dung luc do. Thu lai vai lan thay vi bao loi ngay khi gap dung loai loi nay.
+async function sendExecuteCommentWithRetry(tabId, url, text, maxAttempts = 5, retryDelayMs = 1500) {
+    let lastResult = null;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        lastResult = await sendExecuteCommentOnce(tabId, url, text);
+        if (lastResult.success || !isNoReceiverError(lastResult.error)) {
+            return lastResult;
+        }
+        if (attempt < maxAttempts) {
+            await delay(retryDelayMs);
+        }
+    }
+    return lastResult;
+}
+
 async function waitForTabLoad(tabId, timeoutMs = 10000) {
     return new Promise(resolve => {
         let isResolved = false;
@@ -175,6 +246,13 @@ async function waitForTabLoad(tabId, timeoutMs = 10000) {
 async function runBulkComment(payload, uiTabId, postsToRun) {
     const { text, verifyConfig } = payload;
 
+    // Toan bo vong lap boc trong try/finally - truoc day neu co loi bat ngo nao
+    // thoat ra ngoai vong lap (khong duoc bat trong try/catch tung buoc ben duoi),
+    // isCommenting se ket cung o "true" MAI MAI (ke ca sau khi service worker restart,
+    // vi da persist qua chrome.storage.session) - moi lan bam "Gui" sau do bi background
+    // tu choi ngay lap tuc voi loi "Dang co 1 tien trinh dang chay" MA KHONG AI BAO CHO
+    // NGUOI DUNG BIET (xem fix o bridge.js) => giong het trieu chung "bam khong ra gi ca".
+    try {
     for (let i = 0; i < postsToRun.length; i++) {
         if (shouldStop) break;
 
@@ -218,20 +296,7 @@ async function runBulkComment(payload, uiTabId, postsToRun) {
                 }).catch(() => {});
             }
 
-            const result = await new Promise((resolve) => {
-                chrome.tabs.sendMessage(tab.id, {
-                    action: "EXECUTE_COMMENT",
-                    payload: { url, text }
-                }, response => {
-                    if (chrome.runtime.lastError) {
-                        resolve({ success: false, error: chrome.runtime.lastError.message });
-                    } else if (!response) {
-                        resolve({ success: false, error: "No response from content script." });
-                    } else {
-                        resolve(response);
-                    }
-                });
-            });
+            const result = await sendExecuteCommentWithRetry(tab.id, url, text);
 
             currentProgress = { current: i + 1, total: postsToRun.length, url, status: result.success ? "Thành công" : `Lỗi: ${result.error}`, result };
             persistState();
@@ -249,12 +314,23 @@ async function runBulkComment(payload, uiTabId, postsToRun) {
                         ? result.platform
                         : ((url && (url.includes("youtube.com") || url.includes("youtu.be")))
                             ? "youtube"
-                            : ((url && (url.includes("linkedin.com") || url.includes("lnkd.in"))) ? "linkedin" : "facebook"));
-                    const platformId = detectedPlatform === "youtube" ? 2 : (detectedPlatform === "linkedin" ? 3 : 1);
+                            : ((url && (url.includes("linkedin.com") || url.includes("lnkd.in")))
+                                ? "linkedin"
+                                : ((url && url.includes("threads.")) ? "threads" : "facebook")));
+                    // Theo bảng platforms thật trên DB: 1 = Facebook, 2 = LinkedIn. Trước đây
+                    // LinkedIn bị gán 3 (không tồn tại) -> seeding_content_kpi.id_platform vi
+                    // phạm khoá ngoại, verify thất bại im lặng, comment LinkedIn không được ghi nhận.
+                    const platformId = detectedPlatform === "linkedin" ? 2 : (detectedPlatform === "youtube" ? 2 : (detectedPlatform === "threads" ? 4 : 1));
 
                     if (verifyConfig.mode === "internal_engagement") {
                         // Trang Tương tác nội bộ — lưu vào bảng KPI riêng, không đụng
                         // vào bảng seeding_content_kpi của tính năng seeding nhóm cũ.
+                        // profile_id: danh tinh tai khoan THAT SU dang bam comment (khac
+                        // email_member la tai khoan dang nhap he thong noi bo) - Facebook
+                        // da co san (uid so tu token trang), LinkedIn dang cho HTML mau
+                        // khu vuc avatar "Me" de trich xuat tuong tu (xem account_name/
+                        // account_url tra ve tu doPostComment cua tung platform).
+                        const posterAccount = result.account_name || result.account_url || result.uid || undefined;
                         const kpiResp = await fetch(`${apiBase}/api/all-platform/internal-engagement/kpi/record`, {
                             method: "POST",
                             headers: { "Content-Type": "application/json" },
@@ -267,6 +343,7 @@ async function runBulkComment(payload, uiTabId, postsToRun) {
                                 facebook_post_id: currentPost.id_post || currentPost.facebook_post_id || "unknown",
                                 action_type: "comment",
                                 content: text,
+                                profile_id: posterAccount,
                                 status: result.success ? "success" : "failed",
                                 error_message: result.success ? undefined : result.error,
                             }),
@@ -305,6 +382,17 @@ async function runBulkComment(payload, uiTabId, postsToRun) {
                                 headers: { "Content-Type": "application/json" },
                                 body: JSON.stringify(verifyBody)
                             });
+                            if (vResp.ok && detectedPlatform !== "youtube") {
+                                // Backend trả HTTP 200 kèm success:false khi lỗi DB (vd khoá ngoại) —
+                                // trước đây không đọc body nên lỗi lưu seeding bị nuốt mất.
+                                const vJson = await vResp.clone().json().catch(() => null);
+                                if (vJson && vJson.success === false) {
+                                    console.error("[Comment Extension] Lưu seeding thất bại:", vJson.message);
+                                    result.kpiSaveError = vJson.message || "Lưu seeding thất bại";
+                                }
+                            } else if (!vResp.ok && detectedPlatform !== "youtube") {
+                                result.kpiSaveError = `HTTP ${vResp.status}`;
+                            }
                             if (!vResp.ok && detectedPlatform === "youtube") {
                                 await fetch(`${apiBase}/api/all-platform/facebook/seeding-mark/verify`, {
                                     method: "POST",
@@ -370,16 +458,17 @@ async function runBulkComment(payload, uiTabId, postsToRun) {
             await delay(5000);
         }
     }
-
-    isCommenting = false;
-    shouldStop = false;
-    currentProgress = null;
-    clearPersistedState();
-    if (uiTabId) {
-        chrome.tabs.sendMessage(uiTabId, {
-            action: "BULK_COMMENT_DONE",
-            payload: { total: postsToRun.length, stopped: shouldStop }
-        }).catch(() => {});
+    } finally {
+        isCommenting = false;
+        shouldStop = false;
+        currentProgress = null;
+        clearPersistedState();
+        if (uiTabId) {
+            chrome.tabs.sendMessage(uiTabId, {
+                action: "BULK_COMMENT_DONE",
+                payload: { total: postsToRun.length, stopped: shouldStop }
+            }).catch(() => {});
+        }
     }
 }
 

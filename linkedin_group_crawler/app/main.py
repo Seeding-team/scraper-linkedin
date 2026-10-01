@@ -116,6 +116,23 @@ async def lifespan(_: FastAPI):
     else:
         zca_listeners_task = asyncio.create_task(_start_zca_listeners_background())
 
+    # ── Auto-start lại các Telegram client (Telethon) đã connected trước khi BE
+    # restart — cùng lý do với ZCA listeners ở trên (không có hook này thì mất realtime
+    # cho tới khi ai đó chủ động mở lại trang Telegram Chat).
+    async def _start_telegram_clients_background() -> None:
+        try:
+            from app.modules.all_platform.telegram.services.client_manager import start_persisted_clients
+            await start_persisted_clients()
+            logger.info("Telegram persistent clients auto-start finished")
+        except Exception:
+            logger.exception("Telegram persistent clients auto-start failed — sẽ thử lại khi user kết nối lại")
+
+    telegram_clients_task: asyncio.Task[None] | None = None
+    if _os.getenv("DISABLE_TELEGRAM_LISTENERS", "").strip().lower() in {"1", "true", "yes"}:
+        logger.warning("DISABLE_TELEGRAM_LISTENERS enabled -> not auto-starting Telegram clients.")
+    else:
+        telegram_clients_task = asyncio.create_task(_start_telegram_clients_background())
+
     # ── Zalo tập trung: 3 background tick loop (forward engine / bulk-send+campaigns /
     # web push) — dịch từ 3 worker Node.js riêng của guide sang asyncio task cùng
     # process, giống pattern zca_listeners_task ở trên. Mỗi task tự bắt Exception
@@ -181,6 +198,17 @@ async def lifespan(_: FastAPI):
             await shutdown_persistent_listeners()
         except Exception:
             logger.exception("ZCA persistent listeners shutdown failed")
+        if telegram_clients_task is not None and not telegram_clients_task.done():
+            telegram_clients_task.cancel()
+            try:
+                await telegram_clients_task
+            except asyncio.CancelledError:
+                pass
+        try:
+            from app.modules.all_platform.telegram.services.client_manager import shutdown_all as shutdown_telegram_clients
+            await shutdown_telegram_clients()
+        except Exception:
+            logger.exception("Telegram clients shutdown failed")
         await asyncio.to_thread(shutdown_playwright_pool)
 
 
@@ -244,6 +272,7 @@ async def handle_cors_middleware(request: Request, call_next):
         "http://localhost:8000",
         "http://127.0.0.1:8000",
         "https://seeding.markeeai.com",
+        "https://seeding.markee.vn",
         "https://facebook.com",
         "https://www.facebook.com",
         "https://web.facebook.com",
@@ -331,6 +360,43 @@ async def request_validation_exception_handler(_, exc: RequestValidationError) -
             "success": False,
             "message": "Invalid request body",
             "data": {"errors": error_messages},
+        },
+    )
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(_, exc: Exception) -> JSONResponse:
+    """Safety net cho loi chua bat: FastAPI/Starlette tu uu tien handler cu
+    the hon (HTTPException/RequestValidationError da dang ky o tren) truoc
+    khi roi xuong day, nen handler nay CHI nhan cac exception thuc su chua
+    bat o dau ca. BUG THAT DA GAP: 1 so call site Supabase (auth, quote,
+    project, members...) goi `.execute()` truc tiep, khong qua wrapper
+    `execute_supabase_query()` - khi PostgREST self-host tra ve 502/503/504
+    (OpenResty/Kong gap su co), `postgrest.exceptions.APIError` thoat nguyen
+    dang (dict Python: `{'message': 'JSON could not be generated', 'code':
+    502, ...}`) toi tan response cho FE neu co code nao do lam `str(exc)`.
+    Bat toan bo o day de KHONG bao gio lo raw dict/HTML nhu vay ra ngoai."""
+    from app.core.supabase_client import (
+        friendly_supabase_error_message,
+        is_transient_supabase_error,
+    )
+
+    logger.exception("Unhandled exception: %s", exc)
+    if is_transient_supabase_error(exc):
+        return JSONResponse(
+            status_code=503,
+            content={
+                "success": False,
+                "message": friendly_supabase_error_message(exc),
+                "data": None,
+            },
+        )
+    return JSONResponse(
+        status_code=500,
+        content={
+            "success": False,
+            "message": "Đã có lỗi xảy ra, vui lòng thử lại.",
+            "data": None,
         },
     )
 

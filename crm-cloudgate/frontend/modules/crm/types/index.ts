@@ -353,6 +353,12 @@ export type CreateDealInput = Omit<
 > & {
   customerId?: string;
   updateCustomerProfile?: boolean;
+  /** Customer profile name, distinct from legacy Deal.customerName (deal title). */
+  customerProfileName?: string;
+  /** Ten Du an MOI go tay (chua co projectId) - feedback 2026-09-25: "Cơ hội"
+   * khong con nhap ten rieng, lay theo Du an. Backend tu tao Du an that tu
+   * ten nay khi projectId rong. */
+  projectName?: string;
   idempotencyKey?: string;
   contract?: ContractInfo;
   outcome?: OutcomeInfo;
@@ -421,6 +427,10 @@ export interface CrmLeadRow {
   qualificationDecisionMaker?: string;
   qualificationExpectedTimeline?: string;
   qualificationAeId?: string;
+  /** Team Sale bàn giao (crm_leads.team_id, migration 154) - thay cho chọn 1
+   * cá nhân cụ thể (qualificationAeId, để nguyên trong schema nhưng ngưng
+   * dùng ở form Xác minh Lead - feedback leader 2026-09-27). */
+  teamId?: string;
   nextStep?: string;
   followUpDate?: string;
   convertedCustomerId?: string;

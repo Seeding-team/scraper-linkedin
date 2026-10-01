@@ -34,4 +34,7 @@ python-docx
 pdfplumber
 # Zalo tap trung: Web Push notification (VAPID) -- thay the npm web-push cua guide goc
 pywebpush
+# Telegram Chat (Quan ly kenh & CSKH) -- client MTProto thuan Python, khong can subprocess/Node
+# nhu zca-js cua Zalo.
+telethon
 

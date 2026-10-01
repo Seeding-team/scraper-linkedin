@@ -9,7 +9,12 @@ import {
   type ReactNode,
 } from "react";
 import type { AppUser } from "@/types/unified.types";
-import { authService } from "@/services/all-platform.service";
+import { authService, presenceService } from "@/services/all-platform.service";
+
+// Khoảng cách giữa 2 heartbeat "thời gian online" (Dashboard leader) — xem
+// migration 156_member_online_minutes.sql. Chỉ gửi khi tab đang HIỂN THỊ
+// (Page Visibility API), không tính lúc tab ẩn/máy khoá màn hình.
+const HEARTBEAT_INTERVAL_MS = 45_000;
 
 // ─── Context ─────────────────────────────────────────────────────────────────
 interface AppAuthContextType {
@@ -177,6 +182,28 @@ export function AppAuthProvider({ children }: { children: ReactNode }) {
       window.localStorage?.removeItem("app_user_email");
     }
   }, [user]);
+
+  // "Thời gian online" (Dashboard leader, Seeding bên ngoài) — ping mỗi 45s trong lúc
+  // tab đang hiển thị. Gắn ở đây (không phải riêng trang Seeding bên ngoài) để đo được
+  // thời gian online THẬT của mọi thành viên trên toàn app, không chỉ lúc họ mở đúng
+  // trang đó. Best-effort: lỗi mạng/API không được phép ảnh hưởng gì tới trải nghiệm.
+  useEffect(() => {
+    const email = user?.email;
+    if (!email) return;
+
+    const ping = () => {
+      if (document.visibilityState === "visible") {
+        presenceService.heartbeat(email).catch(() => {});
+      }
+    };
+    ping();
+    const interval = window.setInterval(ping, HEARTBEAT_INTERVAL_MS);
+    document.addEventListener("visibilitychange", ping);
+    return () => {
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", ping);
+    };
+  }, [user?.email]);
 
   return (
     <AppAuthContext.Provider

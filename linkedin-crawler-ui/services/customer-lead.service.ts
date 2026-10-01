@@ -251,6 +251,12 @@ export const PIPELINE_COLUMNS: DealStage[] = [
   "on_hold",
 ];
 
+/** 1 dòng hợp đồng/báo giá — Vấn đề 2: nhiều link mua/bán cho 1 deal. */
+export interface ContractLink {
+  name: string;
+  url: string;
+}
+
 /** Một dòng activity log (audit trail). */
 export interface ActivityLogEntry {
   id: string;
@@ -330,6 +336,14 @@ export interface Customer {
   decision_maker?: string | null;
   /** Ngân sách dự kiến (qualified). */
   estimated_budget?: number | null;
+  /** Mức độ quan tâm. */
+  interest_level?: string | null;
+  /** Dự kiến triển khai. */
+  implementation_timeline?: string | null;
+  /** Dự kiến chốt. */
+  expected_close_date?: string | null;
+  /** Fit khách hàng. */
+  customer_fit?: string | null;
   /** Ngày vào stage hiện tại (track time-in-stage). */
   stage_entered_at?: string | null;
   /** Số ngày đã nằm ở stage hiện tại (server-side tính hoặc fallback client). */
@@ -348,6 +362,10 @@ export interface Customer {
   payment_status?: PaymentStatus | null;
   last_attachment_url?: string | null;
   last_attachment_name?: string | null;
+  /** Hợp đồng báo giá MUA (Phase 1) — nhiều link, thay cho last_attachment_url cũ trong form sửa KH. */
+  purchase_contract_links?: ContractLink[] | null;
+  /** Hợp đồng báo giá BÁN (Phase 2) — nhiều link. */
+  sale_contract_links?: ContractLink[] | null;
   tags: string[];
   has_budget: boolean;
   note: string | null;
@@ -632,8 +650,11 @@ export const customerLeadService = {
     });
   },
 
-  delete: async (id: string): Promise<any> => {
-    return apiFetch(`/api/all-platform/customer-leads/${id}`, {
+  /** confirmCascade=true CHI gui sau khi nguoi dung da xac nhan xoa kem Bao
+   * gia/Hop dong lien quan - lan goi dau con lien ket thi backend tra
+   * success:false + data.requiresCascadeConfirm (xem utils/cascadeDelete.ts). */
+  delete: async (id: string, confirmCascade: boolean = false): Promise<{ success?: boolean; message?: string; data?: unknown }> => {
+    return apiFetch(`/api/all-platform/customer-leads/${id}${confirmCascade ? "?confirm_cascade=true" : ""}`, {
       method: "DELETE",
     });
   },
@@ -698,6 +719,16 @@ export const customerLeadService = {
     const qs = q.toString() ? `?${q.toString()}` : "";
     const data = await apiFetch(`/api/all-platform/customer-leads/${id}/activity-log${qs}`);
     return data?.data ?? { items: [], total: 0 };
+  },
+
+  /** Thêm 1 ghi chú độc lập vào activity log — không gắn với đổi stage
+   * (feedback leader: man "Sửa cơ hội" trước đây chỉ ghi note kèm theo lúc
+   * chuyển stage, không có cách ghi chú độc lập bất cứ lúc nào). */
+  addNote: async (id: string, note: string): Promise<{ success: boolean; message?: string }> => {
+    return apiFetch(`/api/all-platform/customer-leads/${id}/notes`, {
+      method: "POST",
+      body: JSON.stringify({ note }),
+    });
   },
 };
 

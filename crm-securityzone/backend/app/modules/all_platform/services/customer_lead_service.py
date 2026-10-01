@@ -9,6 +9,7 @@ from app.modules.all_platform.services.crm_position_service import apply_positio
 from app.modules.all_platform.services.crm_city_normalizer import normalize_vietnam_city
 from app.modules.all_platform.services.supabase_user_service import get_member_option_by_id
 from app.modules.all_platform.services.supabase_members_service import get_member_by_display_name
+from app.modules.all_platform.services.crm_permission_service import get_scope_visible_user_ids
 
 logger = logging.getLogger(__name__)
 
@@ -210,6 +211,22 @@ def get_all_customer_leads(
             # transition), xem can_write_deal() trong crm_permission_service.py.
             # (Truoc day co self-scope leaded_by/sdr_id==uid cho non-admin/leader,
             # da bo theo yeu cau "Member duoc xem Pipeline cua minh va team khac".)
+            #
+            # "Nhom quyen"/Team CRM (migration 155, OPT-IN theo tung user): CHI
+            # ap dung khi user do da duoc admin gan Nhom quyen qua man hinh moi
+            # (`get_scope_visible_user_ids` tra ve None cho toan bo user CHUA
+            # duoc gan - universal nhu tren khong doi gi). Khi co, gioi han
+            # them theo leaded_by/sdr_id thuoc dung tap user_id duoc phep xem
+            # (ca nhan hoac ca Team CRM).
+            scope_user_ids = get_scope_visible_user_ids(current_user)
+            if scope_user_ids is not None:
+                ids_list = list(scope_user_ids)
+                if not ids_list:
+                    query = query.eq("id", "00000000-0000-0000-0000-000000000000")
+                else:
+                    query = query.or_(
+                        ",".join([f"leaded_by.eq.{o}" for o in ids_list] + [f"sdr_id.eq.{o}" for o in ids_list])
+                    )
 
             # Sắp xếp theo stage_entered_at DESC — deal mới nhất lên đầu trong cột
             query = (
@@ -401,9 +418,26 @@ def validate_deal_assignment_fields(actor: Dict[str, Any] | None, payload: Dict[
 
 def create_customer_lead(data: Dict[str, Any], actor: Dict[str, Any] | None = None) -> Optional[Dict[str, Any]]:
     try:
+        # Feedback 2026-09-25: "Cơ hội" khong con nhap ten rieng - lay theo Du
+        # an da chon. FE gui project_name (khong kem project_id) khi nguoi tao
+        # deal go ten Du an MOI chua co trong dropdown -> tu tao Du an that
+        # ngay tai day (goi thang service, KHONG qua router/can_manage_project()
+        # - da xac nhan voi nguoi dung: noi rong quyen tao Du an CHI trong
+        # luong tao deal, khong mo POST /projects cho moi nguoi). Can co
+        # customer_id THAT (Du an bat buoc thuoc 1 Customer) - neu chua co
+        # customer_id thi bo qua, de validate_deal_relations ben duoi bao loi
+        # binh thuong nhu cu.
+        project_name = (data.pop("project_name", None) or "").strip()
+        if project_name and not data.get("project_id") and data.get("customer_id"):
+            from app.modules.all_platform.services.supabase_project_service import create_project
+            new_project = create_project(
+                {"name": project_name, "customer_id": data["customer_id"]},
+                actor.get("id") if actor else None,
+            )
+            data["project_id"] = new_project["id"]
+        from app.modules.all_platform.services.deal_relation_service import validate_deal_relations
+        validate_deal_relations(data, actor)
         validate_deal_assignment_fields(actor, data, existing=None)
-        validate_project_belongs_to_customer(data.get("project_id"), data.get("customer_id"))
-        validate_contact_belongs_to_customer(data.get("primary_contact_id"), data.get("customer_id"))
         supabase = get_supabase_client()
         if "city" in data:
             data["city"] = normalize_vietnam_city(data.get("city"))
@@ -466,16 +500,22 @@ def update_customer_lead(lead_id: str, data: Dict[str, Any], actor: Dict[str, An
         validate_deal_assignment_fields(actor, data, existing=existing_for_assignment)
         supabase = get_supabase_client()
         safe_data = dict(data)
+        # Cung logic voi create_customer_lead(): go ten Du an moi (chua co
+        # project_id) -> tu tao Du an that, gan project_id vao deal.
+        project_name = (safe_data.pop("project_name", None) or "").strip()
+        if project_name and not safe_data.get("project_id"):
+            customer_id = safe_data.get("customer_id") or existing_for_assignment.get("customer_id")
+            if customer_id:
+                from app.modules.all_platform.services.supabase_project_service import create_project
+                new_project = create_project(
+                    {"name": project_name, "customer_id": customer_id},
+                    actor.get("id") if actor else None,
+                )
+                safe_data["project_id"] = new_project["id"]
         if "city" in safe_data:
             safe_data["city"] = normalize_vietnam_city(safe_data.get("city"))
-        if "project_id" in safe_data and safe_data.get("project_id"):
-            current = get_customer_lead_by_id(lead_id) or {}
-            target_customer_id = safe_data.get("customer_id") or current.get("customer_id")
-            validate_project_belongs_to_customer(safe_data.get("project_id"), target_customer_id)
-        if "primary_contact_id" in safe_data and safe_data.get("primary_contact_id"):
-            current = get_customer_lead_by_id(lead_id) or {}
-            target_customer_id = safe_data.get("customer_id") or current.get("customer_id")
-            validate_contact_belongs_to_customer(safe_data.get("primary_contact_id"), target_customer_id)
+        from app.modules.all_platform.services.deal_relation_service import validate_deal_relations
+        validate_deal_relations(safe_data, actor, existing_for_assignment)
         if "position_category_id" in safe_data:
             current = get_customer_lead_by_id(lead_id) or {}
             apply_position_category(safe_data, current_position_category_id=current.get("position_category_id"))
@@ -704,6 +744,30 @@ def _write_activity_log(
         logger.warning(f"Failed to write activity log for {customer_id}: {e}")
 
 
+def add_note(
+    lead_id: str,
+    note: str,
+    actor: Optional[str] = None,
+    actor_name: Optional[str] = None,
+) -> None:
+    """Them 1 ghi chu doc lap (khong gan voi doi stage) vao activity log cua
+    deal - feedback leader ve man "Sua co hoi" (DealDetailDrawer.tsx, tab
+    "Hoat dong"): truoc day note CHI duoc ghi kem theo luc transition_stage,
+    khong co cach nao them ghi chu doc lap bat cu luc nao. Dung lai dung
+    _write_activity_log() (action="note_added") - KHONG doi schema/logic
+    stage_change hien co."""
+    note = (note or "").strip()
+    if not note:
+        raise ValueError("Ghi chú không được để trống")
+    _write_activity_log(
+        customer_id=lead_id,
+        action="note_added",
+        actor=actor,
+        actor_name=actor_name,
+        note=note,
+    )
+
+
 def get_activity_log(
     lead_id: str,
     limit: int = 100,
@@ -743,24 +807,18 @@ def get_activity_log(
         return {"items": [], "total": 0}
 
 
-def delete_customer_lead(lead_id: str) -> bool:
-    """Hard delete 1 Deal. Phase 3.5 A6: truoc day khong co guard nao ca -
-    xoa mot Deal da co Quote/Contract se de lai ban ghi mo coi (orphaned
-    deal_id) va mat lich su thuc su. Chan lai neu da ton tai Quote hoac
-    Contract gan voi deal nay - nguoi dung phai dung "Hủy"/trang thai khac
-    cho cac truong hop nay, khong hard-delete."""
-    supabase = get_supabase_client()
-    quote_res = execute_supabase_query(
-        lambda: supabase.table("quotes").select("id", count="exact").eq("deal_id", lead_id).eq("instance", settings.crm_instance).limit(1).execute()
-    )
-    if quote_res.count:
-        raise ValueError("Deal đã có Báo giá — không thể xóa. Vui lòng chuyển trạng thái deal sang Thất bại/Hủy thay vì xóa.")
-    contract_res = execute_supabase_query(
-        lambda: supabase.table("contracts").select("id", count="exact").eq("deal_id", lead_id).eq("instance", settings.crm_instance).limit(1).execute()
-    )
-    if contract_res.count:
-        raise ValueError("Deal đã có Hợp đồng — không thể xóa. Vui lòng chuyển trạng thái deal sang Thất bại/Hủy thay vì xóa.")
-    supabase.table("customer_leads").delete().eq("id", lead_id).eq("instance", settings.crm_instance).execute()
+def delete_customer_lead(lead_id: str, user: Dict[str, Any] | None = None, confirm_cascade: bool = False) -> bool:
+    """Xoa 1 Co hoi. Feedback 2026-09-23: khong chan quyen/khong chan vi da co
+    Bao gia/Hop dong - chi HOI XAC NHAN: confirm_cascade=False ma con du lieu
+    lien quan -> raise CascadeConfirmRequired (kem so dem), KHONG xoa gi;
+    confirm_cascade=True -> xoa Co hoi kem Bao gia (xoa mem) va Hop dong."""
+    # Import tre de tranh vong import (cascade service -> supabase_quote_service).
+    from app.modules.all_platform.services.crm_delete_cascade_service import delete_deal_cascade
+
+    deal = get_customer_lead_by_id(lead_id)
+    if not deal:
+        raise ValueError("Không tìm thấy cơ hội này.")
+    delete_deal_cascade(deal, (user or {}).get("id"), confirm_cascade)
     return True
 
 

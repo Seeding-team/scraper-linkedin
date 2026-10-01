@@ -357,9 +357,26 @@ function shortDropdownLabel(name: string): string {
 
 function bundleToQuoteItem(bundle: ServiceCatalogItem): QuoteItem {
   const components = bundle.components || [];
-  const description = components
-    .map(component => (component.description ? `${component.displayText} - ${component.description}` : component.displayText))
+  const seenPools = new Set<string>();
+  const visibleComponents = components.filter(component => {
+    if (component.showOnQuote === false) return false;
+    if (!component.quotaPoolKey) return true;
+    if (seenPools.has(component.quotaPoolKey)) return false;
+    seenPools.add(component.quotaPoolKey);
+    return true;
+  });
+  const includedDescription = visibleComponents
+    .map(component => {
+      if (component.quotaPoolKey) return `${component.quotaPoolName || component.customerDisplayName || component.name}: ${component.quotaPoolQuota || component.quota || component.displayText}`;
+      if (component.customerDisplayName) return component.quota ? `${component.customerDisplayName}: ${component.quota}` : component.customerDisplayName;
+      return component.description ? `${component.displayText} - ${component.description}` : component.displayText;
+    })
     .join('\n');
+  const description = [
+    bundle.quoteDescription || bundle.description,
+    bundle.quoteCta,
+    includedDescription ? `Bao gồm:\n${includedDescription}` : null,
+  ].filter(Boolean).join('\n\n');
   const bundleSnapshot: BundleSnapshotComponent[] = components.map(component => ({
     componentId: component.componentId,
     sku: component.sku,
@@ -370,16 +387,31 @@ function bundleToQuoteItem(bundle: ServiceCatalogItem): QuoteItem {
     computedQuantity: component.computedQuantity,
     displayText: component.displayText,
     unitPriceVnd: component.unitPriceVnd,
+    defaultCostPriceVnd: component.defaultCostPriceVnd,
+    defaultMarkupPercent: component.defaultCostPriceVnd != null && (component.defaultCustomerPriceVnd ?? component.unitPriceVnd) != null && component.defaultCostPriceVnd > 0
+      ? (((component.defaultCustomerPriceVnd ?? component.unitPriceVnd) - component.defaultCostPriceVnd) / component.defaultCostPriceVnd) * 100
+      : null,
+    defaultCustomerPriceVnd: component.defaultCustomerPriceVnd ?? component.unitPriceVnd,
+    quota: component.quota,
+    customerDisplayName: component.customerDisplayName,
+    crmNote: component.crmNote,
+    quotaPoolKey: component.quotaPoolKey,
+    quotaPoolName: component.quotaPoolName,
+    quotaPoolQuota: component.quotaPoolQuota,
+    quotaPoolLimit: component.quotaPoolLimit,
+    required: component.required,
+    overagePolicy: component.overagePolicy,
+    showOnQuote: component.showOnQuote,
     sortOrder: component.sortOrder,
   }));
   return {
-    serviceDescription: formatSkuName(bundle.sku, bundle.name),
+    serviceDescription: bundle.quoteDisplayName || formatSkuName(bundle.sku, bundle.name),
     description,
     unit: bundle.unit || '',
     quantity: 1,
     unitPrice: bundle.defaultUnitPriceVnd,
     discountPercent: bundle.defaultDiscountPercent || 0,
-    vatRate: bundle.defaultVatRate || 0,
+    vatRate: bundle.defaultVatRate ?? 0,
     children: [],
     catalogItemId: bundle.id,
     bundleSnapshot,
@@ -398,7 +430,7 @@ function componentToQuoteItem(component: ServiceCatalogItem): QuoteItem {
     quantity: 1,
     unitPrice: component.defaultUnitPriceVnd,
     discountPercent: component.defaultDiscountPercent || 0,
-    vatRate: component.defaultVatRate || 0,
+    vatRate: component.defaultVatRate ?? 0,
     children: [],
     catalogItemId: component.id,
     listPriceUsd: component.listPriceUsd,
@@ -410,11 +442,30 @@ function componentToQuoteItem(component: ServiceCatalogItem): QuoteItem {
 
 function bundleToSolutionItem(bundle: ServiceCatalogItem): VillaSolutionItem {
   const components = bundle.components || [];
-  const description =
-    bundle.description ||
-    components.map(component => (component.description ? `${component.displayText} - ${component.description}` : component.displayText)).join('\n');
+  const seenPools = new Set<string>();
+  const visibleComponents = components
+    .filter(component => component.showOnQuote !== false)
+    .filter(component => {
+      if (!component.quotaPoolKey) return true;
+      if (seenPools.has(component.quotaPoolKey)) return false;
+      seenPools.add(component.quotaPoolKey);
+      return true;
+    });
+  const included = visibleComponents
+    .map(component => {
+      if (component.quotaPoolKey) return `${component.quotaPoolName || component.customerDisplayName || component.name}: ${component.quotaPoolQuota || component.quota || component.displayText}`;
+      if (component.customerDisplayName) return component.quota ? `${component.customerDisplayName}: ${component.quota}` : component.customerDisplayName;
+      return component.description ? `${component.displayText} - ${component.description}` : component.displayText;
+    })
+    .filter(Boolean)
+    .join('\n');
+  const description = [
+    bundle.quoteDescription || bundle.description,
+    bundle.quoteCta,
+    included ? `Bao gồm:\n${included}` : null,
+  ].filter(Boolean).join('\n\n');
   return {
-    name: formatSkuName(bundle.sku, bundle.name),
+    name: bundle.quoteDisplayName || formatSkuName(bundle.sku, bundle.name),
     description,
     originalPrice: bundle.defaultUnitPriceVnd,
     offerPrice: bundle.defaultUnitPriceVnd,
@@ -643,7 +694,7 @@ function CatalogItemPicker<T>({
                         <span className="quote-catalog-picker-item-name">{formatSkuName(bundle.sku, shortDropdownLabel(bundle.name))}</span>
                         <span className="quote-catalog-picker-item-meta">{bundle.groupName || ''}</span>
                         <span className="quote-catalog-picker-item-meta">{bundle.unit || ''}</span>
-                        <span className="quote-catalog-picker-item-meta">{bundle.defaultVatRate ? `${bundle.defaultVatRate}%` : '—'}</span>
+                        <span className="quote-catalog-picker-item-meta">{bundle.defaultVatRate != null ? `${bundle.defaultVatRate}%` : '—'}</span>
                         <span className="quote-catalog-picker-item-price">{formatVnd(bundle.defaultUnitPriceVnd)}</span>
                         {already ? <span className="quote-catalog-picker-badge">Đã có trong báo giá</span> : null}
                       </label>
@@ -671,7 +722,7 @@ function CatalogItemPicker<T>({
                         <span className="quote-catalog-picker-item-name">{formatSkuName(component.sku, shortDropdownLabel(component.name))}</span>
                         <span className="quote-catalog-picker-item-meta">{component.groupName || ''}</span>
                         <span className="quote-catalog-picker-item-meta">{component.unit || ''}</span>
-                        <span className="quote-catalog-picker-item-meta">{component.defaultVatRate ? `${component.defaultVatRate}%` : '—'}</span>
+                        <span className="quote-catalog-picker-item-meta">{component.defaultVatRate != null ? `${component.defaultVatRate}%` : '—'}</span>
                         <span className="quote-catalog-picker-item-price">{formatVnd(component.defaultUnitPriceVnd)}</span>
                         {already ? <span className="quote-catalog-picker-badge">Đã có trong báo giá</span> : null}
                       </label>
@@ -731,18 +782,27 @@ function QuoteCatalogPicker({
   const pickerItems: CatalogPickerListItem[] = [
     ...options.bundles.map(bundle => ({
       id: bundle.id,
+      itemType: 'bundle' as const,
       sku: bundle.sku,
       name: bundle.name,
       description: bundle.description,
+      quoteDisplayName: bundle.quoteDisplayName,
+      quoteDescription: bundle.quoteDescription,
+      quoteCta: bundle.quoteCta,
       groupName: bundle.groupName,
       unit: bundle.unit,
       vatRate: bundle.defaultVatRate,
       customerPriceVnd: bundle.defaultUnitPriceVnd || 0,
+      monthlyPriceVnd: bundle.monthlyPriceVnd,
+      annualCommitMonthlyPriceVnd: bundle.annualCommitMonthlyPriceVnd,
+      annualTotalPriceVnd: bundle.annualTotalPriceVnd,
       status: bundle.status,
       alreadyAdded: existingKeys.has(bundle.id),
+      components: bundle.components,
     })),
     ...options.components.map(component => ({
       id: component.id,
+      itemType: 'component' as const,
       sku: component.sku,
       name: component.name,
       description: component.description,
@@ -750,6 +810,9 @@ function QuoteCatalogPicker({
       unit: component.unit,
       vatRate: component.defaultVatRate,
       customerPriceVnd: component.defaultUnitPriceVnd || 0,
+      monthlyPriceVnd: component.monthlyPriceVnd,
+      annualCommitMonthlyPriceVnd: component.annualCommitMonthlyPriceVnd,
+      annualTotalPriceVnd: component.annualTotalPriceVnd,
       status: component.status,
       alreadyAdded: existingKeys.has(component.id),
     })),

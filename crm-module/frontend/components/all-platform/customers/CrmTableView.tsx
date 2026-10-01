@@ -271,6 +271,7 @@ export function CrmTableView({ customers, onCardClick, onEdit, onChat, onDelete 
               sorted.map((c) => (
                 <tr
                   key={c.id}
+                  data-crm-customer-row="true"
                   onClick={() => onCardClick(c)}
                   className="cursor-pointer transition-colors hover:bg-slate-50"
                 >

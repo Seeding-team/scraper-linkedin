@@ -208,13 +208,26 @@ def save_extension_crawl_batch(
                     "id_group": id_group,
                     "id_account_crawl": id_account_crawl,
                     "id_member": id_member or None,
+                    "comments_detail": p.get("comments_detail") or [],
+                    "likers": p.get("likers") or [],
                 }
             )
         try:
             res = supabase.table("linkedin_posts").insert(records).execute()
             saved_count = len(res.data or [])
-        except Exception:
-            logger.exception("[LI-EXT] Không insert được linkedin_posts cho %s", group_url)
+        except Exception as exc:
+            # Migration 151 (comments_detail/likers) có thể chưa áp trên DB -> PostgREST báo
+            # thiếu cột và làm hỏng CẢ lô bài. Lưu lại không kèm 2 cột đó thay vì mất hết bài.
+            if "comments_detail" in str(exc) or "likers" in str(exc):
+                logger.warning("[LI-EXT] linkedin_posts chưa có cột comments_detail/likers, lưu không kèm 2 cột này")
+                stripped = [{k: v for k, v in r.items() if k not in ("comments_detail", "likers")} for r in records]
+                try:
+                    res = supabase.table("linkedin_posts").insert(stripped).execute()
+                    saved_count = len(res.data or [])
+                except Exception:
+                    logger.exception("[LI-EXT] Không insert được linkedin_posts cho %s", group_url)
+            else:
+                logger.exception("[LI-EXT] Không insert được linkedin_posts cho %s", group_url)
 
     return {
         "success": True,

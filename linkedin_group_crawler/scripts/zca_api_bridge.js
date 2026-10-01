@@ -1112,7 +1112,26 @@ async function main() {
     const type = Number(args.type || input.type || ThreadType.Group);
     const text = args.text || input.text || input.message || "";
     if (!threadId) throw new Error("Missing --thread-id");
-    const response = await api.sendMessage({ msg: text }, String(threadId), type);
+    const messageContent = { msg: text };
+    const mentions = input.mentions;
+    if (Array.isArray(mentions) && mentions.length) {
+      messageContent.mentions = mentions;
+    }
+    const quoteIn = input.quote;
+    // Fallback spawn-per-call (dung khi worker pool loi) - giu dong bo voi
+    // cmdSendMessage trong zca_api_server.js, xem chu thich shape o do.
+    if (quoteIn && quoteIn.msgId) {
+      messageContent.quote = {
+        content: String(quoteIn.content || ""),
+        msgType: "webchat",
+        uidFrom: quoteIn.uidFrom != null ? String(quoteIn.uidFrom) : "",
+        msgId: String(quoteIn.msgId),
+        cliMsgId: quoteIn.cliMsgId != null ? String(quoteIn.cliMsgId) : "",
+        ts: quoteIn.ts != null ? String(quoteIn.ts) : "",
+        ttl: 0,
+      };
+    }
+    const response = await api.sendMessage(messageContent, String(threadId), type);
     emitAndExit({ ok: true, response }, 0);
     return;
   }

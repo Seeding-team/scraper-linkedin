@@ -11,8 +11,10 @@ from app.modules.all_platform.schemas.customer_lead import (
     DEAL_STAGES,
 )
 from app.modules.all_platform.services import customer_lead_service, decode_token, get_user_by_id, can_write_deal
+from app.modules.all_platform.services.crm_permission_service import has_module_access
 from app.core.supabase_client import friendly_supabase_error_message
 from app.modules.all_platform.services.customer_lead_service import TransitionError
+from app.modules.all_platform.services.crm_delete_cascade_service import CascadeConfirmRequired
 from app.modules.all_platform.services.crm_attachment_service import (
     upload_attachment,
     allowed_mime,
@@ -68,6 +70,8 @@ def get_customer_leads(
     page_size: int = Query(50, ge=1, le=500),
     current_user: Any = Depends(get_current_user),
 ):
+    if not has_module_access(current_user, "Deal"):
+        return BaseResponse(success=False, message="Forbidden: không có quyền truy cập module Deal")
     try:
         result = customer_lead_service.get_all_customer_leads(
             current_user=current_user,
@@ -176,6 +180,38 @@ def get_activity_log(
     try:
         data = customer_lead_service.get_activity_log(lead_id, limit=limit, offset=offset)
         return BaseResponse(success=True, data=data, message="Success")
+    except Exception as e:
+        return BaseResponse(success=False, message=str(e))
+
+
+class AddNoteRequest(BaseModel):
+    note: str
+
+
+@router.post("/{lead_id}/notes", response_model=BaseResponse)
+def add_note(
+    lead_id: str,
+    payload: AddNoteRequest,
+    current_user: Any = Depends(get_current_user),
+):
+    """Them 1 ghi chu doc lap vao "Hoat dong" cua deal - KHONG gan voi doi
+    stage (feedback leader: man Sua co hoi truoc day chi cho them note kem
+    theo doi stage, khong co cach ghi chu doc lap bat cu luc nao)."""
+    try:
+        existing = customer_lead_service.get_customer_lead_by_id(lead_id)
+        if not existing:
+            return BaseResponse(success=False, message="Không tìm thấy deal")
+        if not can_write_deal(current_user, existing):
+            return BaseResponse(success=False, message="Bạn không có quyền ghi chú deal này")
+        customer_lead_service.add_note(
+            lead_id=lead_id,
+            note=payload.note,
+            actor=current_user.get("id"),
+            actor_name=current_user.get("name") or current_user.get("email"),
+        )
+        return BaseResponse(success=True, message="Đã thêm ghi chú")
+    except ValueError as ve:
+        return BaseResponse(success=False, message=str(ve))
     except Exception as e:
         return BaseResponse(success=False, message=str(e))
 
@@ -367,12 +403,17 @@ def update_customer_lead(
 
 
 @router.delete("/{lead_id}", response_model=BaseResponse)
-def delete_customer_lead(lead_id: str, current_user: Any = Depends(get_current_user)):
+def delete_customer_lead(
+    lead_id: str,
+    confirm_cascade: bool = Query(False, description="True sau khi nguoi dung da xac nhan xoa kem Bao gia/Hop dong lien quan."),
+    current_user: Any = Depends(get_current_user),
+):
     try:
-        existing = customer_lead_service.get_customer_lead_by_id(lead_id)
-        if not can_write_deal(current_user, existing):
-            return BaseResponse(success=False, message="Bạn không có quyền xóa deal này — chỉ deal do mình tạo hoặc được giao mới xóa được")
-        customer_lead_service.delete_customer_lead(lead_id)
+        # Khong chan quyen xoa (feedback 2026-09-23) - chi hoi xac nhan; tim
+        # theo tenant hien tai trong delete_customer_lead().
+        customer_lead_service.delete_customer_lead(lead_id, current_user, confirm_cascade=confirm_cascade)
         return BaseResponse(success=True, message="Deleted successfully")
+    except CascadeConfirmRequired as e:
+        return BaseResponse(success=False, message=str(e), data={"requiresCascadeConfirm": True, **e.summary})
     except Exception as e:
         return BaseResponse(success=False, message=str(e))

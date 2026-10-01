@@ -13,9 +13,10 @@ import {
   validateDealForm,
 } from './DealFormFields';
 import type { DealFormState } from './DealFormFields';
-import { Loader2, X } from './icons';
+import { HelpCircle, Loader2, X } from './icons';
 import type { CreateDealInput, CrmUserOption, Deal, UpdateDealInput } from '../types';
 import type { AppUser } from '@/types/unified.types';
+import { seedingCrmRepository } from '../repositories/SeedingCrmRepository';
 
 // Nhap deal cu (localStorage key "crm:deal-draft:v1") tung tu dong luu/nap
 // da bi BO HOAN TOAN o duoi (xem ghi chu tai noi setForm(emptyDealForm())) -
@@ -82,6 +83,16 @@ export function DealFormModal({
   useBodyScrollLock(open);
 
   useEffect(() => {
+    if (!open || !deal?.customerId) return;
+    let alive = true;
+    void seedingCrmRepository.getCustomerProfile(deal.customerId).then(customer => {
+      if (alive) setForm(current => current.customerId === customer.id
+        ? { ...current, customerName: customer.customerName } : current);
+    }).catch(() => { /* Keep persisted Deal data on a denied/failed profile read. */ });
+    return () => { alive = false; };
+  }, [open, deal?.id, deal?.customerId]);
+
+  useEffect(() => {
     if (!open) return;
     setContinueMessage('');
     if (deal) {
@@ -102,6 +113,7 @@ export function DealFormModal({
         projectLocked: Boolean(initialProject?.id),
         primaryContactId: initialContact?.id || '',
         primaryContactLocked: Boolean(initialContact?.id),
+        contactPrefillPending: Boolean(initialContact?.id),
       });
       return;
     }
@@ -126,7 +138,7 @@ export function DealFormModal({
 
   function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
-    const validationError = validateDealForm(form);
+    const validationError = validateDealForm(form, { requireTeamSale: isCreate });
     if (validationError) {
       window.alert(validationError);
       return;
@@ -148,7 +160,7 @@ export function DealFormModal({
 
   async function handleSaveAndContinue() {
     if (!onCreateAndContinue || savingContinue || loading) return;
-    const validationError = validateDealForm(form);
+    const validationError = validateDealForm(form, { requireTeamSale: isCreate });
     if (validationError) {
       window.alert(validationError);
       return;
@@ -174,17 +186,78 @@ export function DealFormModal({
 
   if (!open) return null;
 
+  // "Tạo cơ hội nhanh" (isCreate) dùng chung khung crm-verify-drawer voi
+  // Xac minh Lead / Tao co hoi (leader yeu cau dung chung form/kieu) - Sua
+  // deal (isCreate=false) GIU NGUYEN crm-modal cu, khong doi gi.
+  if (isCreate) {
+    return (
+      <>
+        <div className="crm-drawer-backdrop crm-lead-verify-backdrop" onClick={onClose} />
+        <aside className="crm-drawer crm-lead-detail-drawer crm-verify-drawer">
+          <header className="crm-lead-drawer-header crm-verify-header">
+            <div className="crm-verify-header-text">
+              <h2>
+                Tạo cơ hội nhanh
+                <span
+                  className="crm-help-icon"
+                  tabIndex={0}
+                  title="Chỉ nhập thông tin cần để sale bắt đầu làm việc. Phần còn lại bổ sung sau."
+                >
+                  <HelpCircle className="crm-icon" />
+                </span>
+              </h2>
+            </div>
+            <div className="crm-lead-drawer-header-actions">
+              <button type="button" className="crm-drawer-close" onClick={onClose} aria-label="Đóng">
+                <X className="crm-icon" />
+              </button>
+            </div>
+          </header>
+
+          <form id="crmDealForm" className="crm-drawer-body crm-lead-drawer-body crm-verify-body" onSubmit={handleSubmit}>
+            {continueMessage ? <p className="crm-verify-ok">{continueMessage}</p> : null}
+            <DealFormFields
+              form={form}
+              setValue={setValue}
+              agents={agents}
+              sourceOptions={sourceOptions}
+              servicePackageOptions={servicePackageOptions}
+              packageOptions={packageOptions}
+              industryOptions={industryOptions}
+              isCreate={isCreate}
+              currentUser={currentUser}
+            />
+          </form>
+
+          <footer className="crm-drawer-footer crm-verify-footer">
+            <div className="crm-footer-actions">
+              <button type="button" className="crm-secondary-button" onClick={onClose} disabled={loading || savingContinue}>
+                Hủy
+              </button>
+              {onCreateAndContinue ? (
+                <button type="button" className="crm-secondary-button" disabled={loading || savingContinue} onClick={() => void handleSaveAndContinue()}>
+                  {savingContinue ? <Loader2 className="crm-save-spinner" /> : null}
+                  {savingContinue ? 'Đang lưu...' : 'Lưu & thêm tiếp'}
+                </button>
+              ) : null}
+              <button type="submit" form="crmDealForm" className="crm-primary-button" disabled={loading || savingContinue}>
+                {loading ? <Loader2 className="crm-save-spinner" /> : null}
+                {loading ? 'Đang lưu...' : 'Tạo deal'}
+              </button>
+            </div>
+          </footer>
+        </aside>
+      </>
+    );
+  }
+
   return (
     <div className="crm-modal-backdrop" onClick={onClose}>
       <div className="crm-modal crm-modal--deal-compact" onClick={event => event.stopPropagation()}>
         <header className="crm-modal-header">
           <div>
-            <h2 className="crm-modal-title">{deal ? 'Chỉnh sửa deal' : 'Thêm deal nhanh'}</h2>
-            <p className="crm-modal-subtitle">
-              {deal
-                ? `Nguồn: ${getSourceLabel(form.sourcePlatform)}`
-                : 'Chỉ nhập thông tin cần để sale bắt đầu làm việc. Phần còn lại bổ sung sau.'}
-            </p>
+            <h2 className="crm-modal-title">Chỉnh sửa deal</h2>
+            <p className="crm-modal-subtitle">Nguồn: {getSourceLabel(form.sourcePlatform)}</p>
           </div>
           <button type="button" className="crm-modal-close" onClick={onClose} aria-label="Đóng">
             <X className="crm-icon" />
@@ -192,7 +265,6 @@ export function DealFormModal({
         </header>
 
         <form id="crmDealForm" className="crm-modal-body" onSubmit={handleSubmit}>
-          {continueMessage ? <p className="crm-deal-continue-toast">{continueMessage}</p> : null}
           <DealFormFields
             form={form}
             setValue={setValue}
@@ -203,23 +275,15 @@ export function DealFormModal({
             industryOptions={industryOptions}
             isCreate={isCreate}
             currentUser={currentUser}
+            showTeamSaleInEditBranch
           />
         </form>
 
         <footer className="crm-modal-footer crm-modal-footer--deal">
-          {isCreate ? (
-            <p className="crm-deal-footer-hint">Mục tiêu: tạo deal trong &lt; 45 giây, không biến form thành hồ sơ khách hàng hoàn chỉnh.</p>
-          ) : null}
           <div className="crm-deal-footer-actions">
-            {isCreate && onCreateAndContinue ? (
-              <button type="button" className="crm-cancel-button" disabled={loading || savingContinue} onClick={() => void handleSaveAndContinue()}>
-                {savingContinue ? <Loader2 className="crm-save-spinner" /> : null}
-                {savingContinue ? 'Đang lưu...' : 'Lưu & thêm tiếp'}
-              </button>
-            ) : null}
-            <button type="submit" form="crmDealForm" className="crm-save-button" disabled={loading || savingContinue}>
+            <button type="submit" form="crmDealForm" className="crm-save-button" disabled={loading}>
               {loading ? <Loader2 className="crm-save-spinner" /> : null}
-              {loading ? 'Đang lưu...' : deal ? 'Lưu thay đổi' : 'Tạo deal'}
+              {loading ? 'Đang lưu...' : 'Lưu thay đổi'}
             </button>
           </div>
         </footer>

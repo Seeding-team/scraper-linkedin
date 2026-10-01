@@ -43,6 +43,7 @@ class ZaloLibraryMessage(BaseModel):
     mentions: List[ZaloMentionOut] = Field(default_factory=list)
     msg_kind: Optional[str] = None
     raw_content: Optional[Dict[str, Any]] = None
+    reply_to_id: Optional[str] = None
     # Thả cảm xúc (migration 138) — map {uid_người_react: icon}. Field thiếu
     # hẳn (KHÔNG null) khi migration 138 chưa áp lên DB (RPC cũ không có key
     # này trong JSON) — default_factory xử lý đúng case đó. Vẫn thêm

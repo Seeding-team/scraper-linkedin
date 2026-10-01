@@ -1,5 +1,10 @@
 import type { ServiceCatalogItem, ServiceCatalogItemInput } from './types';
 import { formatCurrencyDisplay } from '@/lib/currency';
+import {
+  costFromTargetGrossMarginAndCustomer,
+  customerPriceFromTargetGrossMargin,
+  targetGrossMarginFromCustomerPrice,
+} from './pricing-math';
 
 /** Helper dung chung cho form Nhom/San pham + tinh toan bo gia mac dinh
  * (Gia von/Markup/Gia khach) - tach rieng ra khoi ServiceCatalogPage.tsx cu
@@ -19,7 +24,27 @@ export function emptyProductForm(parentId?: string): ServiceCatalogItemInput {
     exchangeRateSnapshot: undefined,
     defaultUnitPriceVnd: 0,
     defaultDiscountPercent: 0,
-    defaultVatRate: 0,
+    defaultVatRate: null,
+    customerVisible: true,
+    quoteDisplayName: '',
+    quoteDescription: '',
+    quoteCta: '',
+    monthlyPriceVnd: null,
+    annualCommitMonthlyPriceVnd: null,
+    annualTotalPriceVnd: null,
+    maxSaleDiscountPercent: null,
+    targetGrossMarginPercent: null,
+    costBasisRule: '',
+    pricingPolicyExceptions: [],
+    quotaUserCount: null,
+    quotaUserLabel: '',
+    quotaConnectedChannels: null,
+    quotaConnectedChannelsLabel: '',
+    quotaMessagesPerMonth: null,
+    quotaMessagesPerMonthLabel: '',
+    quotaAiData: '',
+    quotaHighlights: '',
+    quotaExtra: {},
     specQuantityPerUnit: 1,
     specUnitLabel: '',
     note: '',
@@ -28,6 +53,21 @@ export function emptyProductForm(parentId?: string): ServiceCatalogItemInput {
     partNumber: '',
     productType: '',
     internalNote: '',
+    supplierCurrency: 'VND',
+    supplierListPrice: null,
+    supplierDiscountPercent: null,
+    supplierNetPrice: null,
+    supplierExchangeRate: null,
+    supplierConvertedPrice: null,
+    supplierVendorId: null,
+    supplierQuoteRef: '',
+    supplierQuoteSource: '',
+    supplierQuoteDate: '',
+    supplierValidUntil: '',
+    shippingCost: null,
+    importFee: null,
+    otherCost: null,
+    pricingPolicy: '',
   };
 }
 
@@ -38,10 +78,20 @@ export function emptyGroupForm(): ServiceCatalogItemInput {
     name: '',
     description: '',
     status: 'active',
+    defaultVatRate: null,
+    customerVisible: true,
+    targetGrossMarginPercent: null,
+    costBasisRule: '',
+    pricingPolicyExceptions: [],
+    quotaUserLabel: '',
+    quotaConnectedChannelsLabel: '',
+    quotaMessagesPerMonthLabel: '',
     brand: '',
     partNumber: '',
     productType: '',
     internalNote: '',
+    supplierCurrency: 'VND',
+    supplierQuoteSource: '',
   };
 }
 
@@ -58,7 +108,27 @@ export function itemToForm(item: ServiceCatalogItem): ServiceCatalogItemInput {
     exchangeRateSnapshot: item.exchangeRateSnapshot,
     defaultUnitPriceVnd: item.defaultUnitPriceVnd,
     defaultDiscountPercent: item.defaultDiscountPercent,
-    defaultVatRate: item.defaultVatRate,
+    defaultVatRate: item.defaultVatRate ?? null,
+    customerVisible: item.customerVisible ?? true,
+    quoteDisplayName: item.quoteDisplayName || '',
+    quoteDescription: item.quoteDescription || '',
+    quoteCta: item.quoteCta || '',
+    monthlyPriceVnd: item.monthlyPriceVnd ?? null,
+    annualCommitMonthlyPriceVnd: item.annualCommitMonthlyPriceVnd ?? null,
+    annualTotalPriceVnd: item.annualTotalPriceVnd ?? null,
+    maxSaleDiscountPercent: item.maxSaleDiscountPercent ?? null,
+    targetGrossMarginPercent: item.targetGrossMarginPercent ?? null,
+    costBasisRule: item.costBasisRule || '',
+    pricingPolicyExceptions: item.pricingPolicyExceptions || [],
+    quotaUserCount: item.quotaUserCount ?? null,
+    quotaUserLabel: item.quotaUserLabel || '',
+    quotaConnectedChannels: item.quotaConnectedChannels ?? null,
+    quotaConnectedChannelsLabel: item.quotaConnectedChannelsLabel || '',
+    quotaMessagesPerMonth: item.quotaMessagesPerMonth ?? null,
+    quotaMessagesPerMonthLabel: item.quotaMessagesPerMonthLabel || '',
+    quotaAiData: item.quotaAiData || '',
+    quotaHighlights: item.quotaHighlights || '',
+    quotaExtra: item.quotaExtra || {},
     specQuantityPerUnit: item.specQuantityPerUnit,
     specUnitLabel: item.specUnitLabel || '',
     note: item.note || '',
@@ -67,6 +137,21 @@ export function itemToForm(item: ServiceCatalogItem): ServiceCatalogItemInput {
     partNumber: item.partNumber,
     productType: item.productType,
     internalNote: item.internalNote,
+    supplierCurrency: item.supplierCurrency || 'VND',
+    supplierListPrice: item.supplierListPrice ?? null,
+    supplierDiscountPercent: item.supplierDiscountPercent ?? null,
+    supplierNetPrice: item.supplierNetPrice ?? null,
+    supplierExchangeRate: item.supplierExchangeRate ?? null,
+    supplierConvertedPrice: item.supplierConvertedPrice ?? null,
+    supplierVendorId: item.supplierVendorId ?? null,
+    supplierQuoteRef: item.supplierQuoteRef || '',
+    supplierQuoteSource: item.supplierQuoteSource || '',
+    supplierQuoteDate: item.supplierQuoteDate || '',
+    supplierValidUntil: item.supplierValidUntil || '',
+    shippingCost: item.shippingCost ?? null,
+    importFee: item.importFee ?? null,
+    otherCost: item.otherCost ?? null,
+    pricingPolicy: item.pricingPolicy || '',
   };
 }
 
@@ -90,23 +175,16 @@ export function formatMarkupOrMissing(value: number | undefined | null): string 
 }
 
 export function computeCustomerFromMarkup(cost: number | null, markup: number | null): number | null {
-  if (cost == null || markup == null) return null;
-  return cost * (1 + markup / 100);
+  return customerPriceFromTargetGrossMargin(cost, markup);
 }
 
 export function computeMarkupFromCustomer(cost: number | null, customer: number | null): number | null {
-  if (cost == null || cost === 0 || customer == null) return null;
-  return (customer / cost - 1) * 100;
+  return targetGrossMarginFromCustomerPrice(cost, customer);
 }
 
-/** Nguoc voi computeCustomerFromMarkup: suy Gia von tu Markup + Gia khach.
- * divisor <= 0 (markup <= -100%) -> khong chia duoc, tra ve null thay vi
- * so am/Infinity vo nghia. */
+/** Nguoc voi computeCustomerFromMarkup: suy Gia von tu GM muc tieu + Gia khach. */
 export function computeCostFromMarkupAndCustomer(markup: number | null, customer: number | null): number | null {
-  if (markup == null || customer == null) return null;
-  const divisor = 1 + markup / 100;
-  if (divisor <= 0) return null;
-  return customer / divisor;
+  return costFromTargetGrossMarginAndCustomer(markup, customer);
 }
 
 export function parseNullableNumber(raw: string): number | null {

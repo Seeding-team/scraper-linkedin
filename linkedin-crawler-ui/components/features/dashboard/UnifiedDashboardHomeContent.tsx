@@ -4,7 +4,10 @@ import { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from "recharts";
 import { createPortal } from "react-dom";
 import { cn } from "@/lib/utils";
-import { ApiExtensionLauncher } from "@/components/all-platform/components/api-extension-launcher";
+import { FiExternalLink } from "react-icons/fi";
+import { FaFacebook, FaLinkedin } from "react-icons/fa";
+import { FaThreads } from "react-icons/fa6";
+import { SeedingExtensionPanel } from "@/components/all-platform/components/seeding-extension/seeding-extension-panel";
 import { useAppAuth } from "@/contexts/AppAuthContext";
 import { FilterBar, type FilterState } from "@/components/all-platform/components/filter-bar";
 import { PostCard } from "@/components/all-platform/components/post-card";
@@ -15,13 +18,18 @@ import { PostDetailModal } from "@/components/all-platform/components/post-detai
 import { VerifyAccountModal } from "@/components/all-platform/components/verify-account-modal";
 import { KpiProgressCard } from "@/components/all-platform/components/kpi-progress-card";
 import { MemberKpiRewardOverview } from "@/components/all-platform/kpi-rewards/KpiRewardSections";
-import { BulkCommentLauncher } from "@/components/all-platform/components/bulk-comment-launcher";
 import { SeedingActivityPanel } from "@/components/all-platform/feed/SeedingActivityPanel";
+import { TeamEfficiencyWidget } from "@/components/all-platform/feed/TeamEfficiencyWidget";
+import { MemberOnlineTimeWidget } from "@/components/all-platform/feed/MemberOnlineTimeWidget";
 import { ScheduleCommentModal } from "@/components/all-platform/feed/ScheduleCommentModal";
 import { ScheduledCommentsPanel } from "@/components/all-platform/feed/ScheduledCommentsPanel";
 import { PostFeedSkeleton } from "@/components/all-platform/feed/PostFeedSkeleton";
+import { GroupManagementContent } from "@/components/all-platform/group-management";
+import { CrawlQueueMonitor } from "@/components/all-platform/crawl-queue-monitor";
+import { SeedingAccountsOverview } from "@/components/all-platform/seeding-accounts-overview";
+import { RotationCrawlPanel } from "@/components/all-platform/components/seeding-extension/rotation-crawl-panel";
 import { allPlatformPostsService, allPlatformCategoriesService, teamsService, socialAccountsService } from "@/services/all-platform.service";
-import type { UnifiedPost, UnifiedStats, Category, FeedPlatform, SocialAccount } from "@/types/unified.types";
+import type { UnifiedPost, UnifiedStats, Category, FeedPlatform, SocialAccount, PostSeedingRosterData } from "@/types/unified.types";
 
 // â”€â”€â”€ Retry helper â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 async function fetchWithRetry<T>(
@@ -196,33 +204,18 @@ function StatCard({
   );
 }
 
-// â”€â”€â”€ Menu doc lap theo mang dich vu (2026-07-04) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-// Yeu cau Thanh: "trong post feed chia làm 2,3 menu độc lập theo từng mảng
-// dịch vụ" (CNTT rieng, luu tru/hotel rieng). Category "industry" hien chi
-// co 4 gia tri (IT & Software, Artificial Intelligence, Finance & Banking,
-// Marketing & Digital) - CHUA co danh muc "luu tru/hotel" nao ca (se rong
-// cho toi khi admin them danh muc + co bai crawl thuoc nhom do). Dung so
-// khop TU KHOA (khong phai danh sach ten co dinh) de tu dong nhan dien danh
-// muc moi duoc them sau nay ma khong can sua code lai.
-type ServiceAreaKey = "all" | "tech" | "hospitality" | "other";
-const SERVICE_AREA_TABS: { key: ServiceAreaKey; label: string; keywords?: string[] }[] = [
-  { key: "all", label: "Tất cả" },
-  { key: "tech", label: "CNTT / Công nghệ", keywords: ["it", "software", "công nghệ", "cong nghe", "ai", "artificial intelligence", "phần mềm", "phan mem", "tech"] },
-  { key: "hospitality", label: "Lưu trú / Hotel", keywords: ["hotel", "khách sạn", "khach san", "lưu trú", "luu tru", "resort", "du lịch", "du lich", "nhà nghỉ", "nha nghi", "homestay"] },
-  { key: "other", label: "Khác" },
-];
+// â”€â”€â”€ Menu doc lap theo TEAM (2026-09-30, sua tu ban cu loc theo mang dich vu) â”€â”€
+// Truoc day loc theo "industry" (CNTT rieng, luu tru/hotel rieng) bang so khop
+// tu khoa mo - doi sang loc THANG theo team that (Team Dev, Team Infra, Team
+// MKT...) dung lai list `teams` (teamsService.getAll(), da fetch san cho
+// FilterBar) va so khop CHINH XAC voi post.team (ten team gan cho bai viet luc
+// crawl), khong con doan/khop tu khoa nua - "cho chuan" dung nghia team that
+// dang co trong he thong, tu dong co tab moi khi admin tao them team.
+type ServiceAreaKey = string; // "all" hoac dung ten team (post.team)
 
-function matchesServiceArea(industry: string | undefined, area: ServiceAreaKey): boolean {
+function matchesServiceArea(team: string | undefined, area: ServiceAreaKey): boolean {
   if (area === "all") return true;
-  const name = (industry || "").toLowerCase();
-  if (area === "other") {
-    // "Khac" = khong khop tech VA khong khop hospitality
-    const techKw = SERVICE_AREA_TABS.find(t => t.key === "tech")?.keywords || [];
-    const hospKw = SERVICE_AREA_TABS.find(t => t.key === "hospitality")?.keywords || [];
-    return !techKw.some(k => name.includes(k)) && !hospKw.some(k => name.includes(k));
-  }
-  const keywords = SERVICE_AREA_TABS.find(t => t.key === area)?.keywords || [];
-  return keywords.some(k => name.includes(k));
+  return (team || "").trim() === area;
 }
 
 // â”€â”€â”€ Main Component â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -232,6 +225,16 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
 
   const [feedPlatform, setFeedPlatform] = useState<FeedPlatform>("facebook");
   const [serviceArea, setServiceArea] = useState<ServiceAreaKey>("all");
+  // 4 tab phụ theo mockup "Seeding bên ngoài" (markee_seeding_optimized_user_leader_split_v4):
+  // Hoạt động seeding (danh sách bài viết, mặc định) / Dashboard leader (chỉ admin+leader,
+  // giống gate của SeedingActivityPanel) / Kho thư viện Group / Lịch crawl & Hàng đợi.
+  // 2 tab sau tái dùng NGUYÊN trang thật đã có sẵn trong sidebar ("Kho nhóm",
+  // "Giám sát hàng đợi cào") — không xây lại, tránh 2 nơi hiển thị lệch dữ liệu nhau.
+  const [subView, setSubView] = useState<"activity" | "leader" | "library" | "queue">("activity");
+  // 3 tab con trong "Lịch crawl & Hàng đợi" (2026-09-30): "Tài khoản seeding" (mặc định —
+  // bảng thành viên/extension/group/lịch sử cào) / "Lịch cào" (nhiều lịch xoay vòng độc
+  // lập) / "Hàng đợi VPS" (giám sát job đa VPS cào Facebook — trang cũ, không đổi).
+  const [queueSubTab, setQueueSubTab] = useState<"accounts" | "schedule" | "vps">("accounts");
   const [showBulkCommentModal, setShowBulkCommentModal] = useState(false);
 
   const [detailModalPost, setDetailModalPost] = useState<UnifiedPost | null>(null);
@@ -239,6 +242,12 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
   const [scheduleModalPost, setScheduleModalPost] = useState<UnifiedPost | null>(null);
   const [scheduleRefreshKey, setScheduleRefreshKey] = useState(0);
   const [socialAccounts, setSocialAccounts] = useState<SocialAccount[]>([]);
+
+  // "Xem seeding theo team" (admin/leader) — roster toàn bộ team sở hữu group
+  // của 1 bài viết, kèm ai đã/chưa seeding + nội dung.
+  const [seedingRosterPost, setSeedingRosterPost] = useState<UnifiedPost | null>(null);
+  const [seedingRosterData, setSeedingRosterData] = useState<PostSeedingRosterData | null>(null);
+  const [isLoadingSeedingRoster, setIsLoadingSeedingRoster] = useState(false);
 
   // Result Modals
   const [showCrawlResultModal, setShowCrawlResultModal] = useState(false);
@@ -580,7 +589,9 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
       setTotalCount((c) => Math.max(0, c - 1));
 
       try {
-        const res = await allPlatformPostsDeleteService.deleteFacebookPost({ id: post.id });
+        const res = post.platform === "threads"
+          ? await allPlatformPostsDeleteService.deleteThreadsPost({ id: post.id })
+          : await allPlatformPostsDeleteService.deleteFacebookPost({ id: post.id });
         if (!res?.success) {
           throw new Error(res?.message || "Xóa thất bại");
         }
@@ -596,19 +607,102 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
     [posts, totalCount],
   );
 
+  const openSeedingRosterModal = useCallback(
+    async (post: UnifiedPost) => {
+      if (!post.id) return;
+      setSeedingRosterPost(post);
+      setSeedingRosterData(null);
+      setIsLoadingSeedingRoster(true);
+      try {
+        const res = await allPlatformPostsService.getPostSeedingRoster(CURRENT_USER_EMAIL, post.id, post.platform || feedPlatform);
+        if (res.success && res.data) {
+          setSeedingRosterData(res.data);
+        } else {
+          toast.error(res.message || "Không tải được danh sách seeding theo team.");
+        }
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "Không tải được danh sách seeding theo team.");
+      } finally {
+        setIsLoadingSeedingRoster(false);
+      }
+    },
+    [CURRENT_USER_EMAIL, feedPlatform],
+  );
+
+  const closeSeedingRosterModal = useCallback(() => {
+    setSeedingRosterPost(null);
+    setSeedingRosterData(null);
+  }, []);
 
   // Loc client-side theo mang dich vu da chon (xem SERVICE_AREA_TABS o dau
   // file) - khong doi lai backend/pagination, chi an/hien trong trang hien
   // tai. Neu can loc dung tren toan bo du lieu (khong chi trang dang xem),
   // viec nay nen chuyen xuong backend (them tham so service_area) o phien sau.
   const visiblePosts = useMemo(
-    () => posts.filter(p => matchesServiceArea(p.industry, serviceArea)),
+    () => posts.filter(p => matchesServiceArea(p.team, serviceArea)),
     [posts, serviceArea],
   );
 
+  // Tab theo team: "Tất cả" + từng team thật đang có trong hệ thống (list `teams`
+  // đã fetch sẵn ở trên cho FilterBar) — tự động có tab mới khi admin tạo thêm team.
+  const serviceAreaTabs = useMemo(
+    () => [{ key: "all", label: "Tất cả" }, ...teams.map((t) => ({ key: t.name, label: t.name }))],
+    [teams],
+  );
+
+  // Tach rieng khoi khoi tieu de (!hideHeader) - day la CONTROL chuc nang
+  // (chuyen Facebook/LinkedIn/Threads), khong phai trang tri. Bug da gap: khi nhung
+  // trang "Seeding ben ngoai" render component nay voi hideHeader (gom vao
+  // tab noi bo, khong can lai tieu de "Unified Post Feed"), toan bo switcher
+  // nay bi an theo luon -> feedPlatform ket cung o "facebook" mac dinh, tab
+  // "Seeding ben ngoai" khong co cach nao xem duoc bai LinkedIn du logic cao/
+  // luu du lieu LinkedIn da chay va co du lieu that trong linkedin_posts.
+  // Threads khong co group - bai duoc tim theo tu khoa (extension, lenh MK_TH_CRAWL_*).
+  const platformTabs = (
+    <div className="bg-muted p-1 rounded-xl inline-flex flex-wrap gap-1" role="tablist" aria-label="Nền tảng">
+      {([
+        { key: "facebook", label: "Facebook", icon: <FaFacebook className="text-blue-600" /> },
+        { key: "linkedin", label: "LinkedIn", icon: <FaLinkedin className="text-blue-700" /> },
+        { key: "threads", label: "Threads", icon: <FaThreads /> },
+      ] as const).map((t) => (
+        <button
+          key={t.key}
+          type="button"
+          role="tab"
+          aria-selected={feedPlatform === t.key}
+          onClick={() => { setFeedPlatform(t.key); setPage(1); }}
+          className={cn(
+            "flex items-center gap-2 px-4 py-1.5 rounded-lg text-sm font-bold transition-all cursor-pointer",
+            feedPlatform === t.key
+              ? "bg-white text-foreground shadow-md"
+              : "text-muted-foreground hover:text-foreground hover:bg-accent",
+          )}
+        >
+          {t.icon}
+          {t.label}
+        </button>
+      ))}
+    </div>
+  );
+
+  const platformHint =
+    feedPlatform === "threads"
+      ? "Đang xem Threads — tìm bài theo từ khoá."
+      : feedPlatform === "linkedin"
+        ? "Đang xem LinkedIn — cào theo nhóm đã thêm."
+        : "Đang xem Facebook — cào theo nhóm đã thêm.";
+
+  const isLeaderOrAdmin = user?.role === "admin" || user?.role === "leader";
+  const SUB_TABS = [
+    { key: "activity" as const, label: "Hoạt động seeding", icon: "bolt" },
+    ...(isLeaderOrAdmin ? [{ key: "leader" as const, label: "Dashboard leader", icon: "leaderboard" }] : []),
+    { key: "library" as const, label: "Kho thư viện Group", icon: "folder_open" },
+    { key: "queue" as const, label: "Lịch crawl & Hàng đợi", icon: "schedule" },
+  ];
+
   return (
     <div className="w-full space-y-6">
-      {!hideHeader && (
+      {!hideHeader ? (
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
           <div className="space-y-1">
             <h1 className="text-2xl font-bold text-foreground tracking-tight">Unified Post Feed</h1>
@@ -618,283 +712,341 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
           </div>
 
           <div className="flex flex-wrap items-center gap-3 shrink-0">
-            <div className="bg-muted p-0.5 rounded-lg flex gap-0.5">
-              {([
-                { key: "facebook", label: "Facebook" },
-                { key: "linkedin", label: "LinkedIn" },
-              ] as const).map((t) => (
-                <button
-                  key={t.key}
-                  type="button"
-                  onClick={() => { setFeedPlatform(t.key); setPage(1); }}
-                  className={cn(
-                    "px-4 py-1 rounded-md text-xs font-semibold transition-all cursor-pointer",
-                    feedPlatform === t.key
-                      ? "bg-white text-foreground shadow-sm"
-                      : "text-muted-foreground hover:text-foreground hover:bg-accent",
-                  )}
-                >
-                  {t.label}
-                </button>
-              ))}
-            </div>
+            {platformTabs}
           </div>
         </div>
-      )}
+      ) : null}
 
-      <div className="bg-card border border-border rounded-2xl p-5 mb-4">
-        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-          <StatCard
-            icon="description"
-            label="Tổng bài hôm nay"
-            value={stats.totalPostsToday}
-            trend={{
-              value: Math.abs(fbDiff),
-              isUp: fbDiff >= 0,
-              label: `${fbDiff >= 0 ? "+" : ""}${fbDiff} so với hôm qua`,
-            }}
-            accent="blue"
-          />
-          <StatCard
-            icon="trending_up"
-            label="Tiến độ KPI"
-            value={stats.kpiProgress || 0}
-            progress={{
-              value: stats.kpiProgressPercent || 0,
-              label: `${stats.kpiProgressPercent || 0}% trong tập bài`,
-            }}
-            accent="green"
-          />
-          <StatCard
-            icon="rocket_launch"
-            label="Đã seeded hôm nay"
-            value={stats.seededToday}
-            sub="Ước tính từ batch hôm nay"
-            accent="amber"
-          />
-          <StatCard
-            icon="visibility"
-            label="Tổng bài hiển thị"
-            value={totalCount}
-            sub={`${totalCount} bài trong cơ sở dữ liệu`}
-            accent="indigo"
-          />
-        </div>
-      </div>
-
-      {/* Dashboard xu huong 14 ngay gan nhat (2026-07-04) — theo yeu cau Thanh:
-          4 the o tren chi co so HOM NAY, khong biet cac ngay truoc ra sao.
-          Chart nhe (khong chan trang neu loi/rong), dat ngay sau 4 the so lieu. */}
-      <div className="bg-card border border-border rounded-2xl p-5 mb-4">
-        <div className="mb-3 flex items-center justify-between">
-          <div>
-            <h3 className="text-sm font-bold text-foreground">Xu hướng 14 ngày gần nhất</h3>
-            <p className="text-xs text-muted-foreground">Tổng bài cào được · Comment đã verify · Inbox nhận được, theo từng ngày.</p>
-          </div>
-          {isLoadingTrend && <span className="text-xs text-muted-foreground">Đang tải...</span>}
-        </div>
-        {dailyTrend.length === 0 ? (
-          <div className="flex h-[220px] items-center justify-center text-sm text-muted-foreground">
-            {isLoadingTrend ? "Đang tải dữ liệu xu hướng..." : "Chưa có dữ liệu xu hướng."}
-          </div>
-        ) : (
-          <ResponsiveContainer width="100%" height={220}>
-            <AreaChart data={dailyTrend} margin={{ top: 4, right: 8, left: -20, bottom: 0 }}>
-              <defs>
-                <linearGradient id="colorPosts" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#2563eb" stopOpacity={0.35} />
-                  <stop offset="95%" stopColor="#2563eb" stopOpacity={0} />
-                </linearGradient>
-                <linearGradient id="colorComments" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#16a34a" stopOpacity={0.35} />
-                  <stop offset="95%" stopColor="#16a34a" stopOpacity={0} />
-                </linearGradient>
-                <linearGradient id="colorInbox" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#f59e0b" stopOpacity={0.35} />
-                  <stop offset="95%" stopColor="#f59e0b" stopOpacity={0} />
-                </linearGradient>
-              </defs>
-              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e5e5" />
-              <XAxis
-                dataKey="date"
-                tickFormatter={(d: string) => d.slice(5).replace("-", "/")}
-                tick={{ fontSize: 11, fill: "#737373" }}
-                axisLine={{ stroke: "#e5e5e5" }}
-                tickLine={false}
-              />
-              <YAxis tick={{ fontSize: 11, fill: "#737373" }} axisLine={false} tickLine={false} allowDecimals={false} />
-              <Tooltip
-                labelFormatter={(d) => `Ngày ${String(d ?? "").slice(5).replace("-", "/")}`}
-                contentStyle={{ borderRadius: 8, fontSize: 12, border: "1px solid #e5e5e5" }}
-              />
-              <Legend wrapperStyle={{ fontSize: 12 }} />
-              <Area type="monotone" dataKey="posts" name="Tổng bài" stroke="#2563eb" fill="url(#colorPosts)" strokeWidth={2} />
-              <Area type="monotone" dataKey="comments" name="Comment" stroke="#16a34a" fill="url(#colorComments)" strokeWidth={2} />
-              <Area type="monotone" dataKey="inbox" name="Inbox" stroke="#f59e0b" fill="url(#colorInbox)" strokeWidth={2} />
-            </AreaChart>
-          </ResponsiveContainer>
-        )}
-      </div>
-
-      {/* Phase 6: KPI personal progress — hiển thị cho cả member VÀ leader */}
-      {CURRENT_USER_EMAIL && (user?.role === "member" || user?.role === "leader") && (
-        <KpiProgressCard
-          email={CURRENT_USER_EMAIL}
-          type="comment"
-        />
-      )}
-      {CURRENT_USER_EMAIL && user?.role === "member" && (
-        <MemberKpiRewardOverview />
-      )}
-      {/* Phase 6: "Da seeding ai" - panel cho admin/leader.
-          Dat sau KpiProgressCard, truoc FilterBar de leader/admin
-          thay ngay tong quan seeding ma khong can mo tung PostCard. */}
-      {(user?.role === "admin" || user?.role === "leader") && (
-        <SeedingActivityPanel email={CURRENT_USER_EMAIL} />
-      )}
-
-      {CURRENT_USER_EMAIL && (
-        <ScheduledCommentsPanel refreshKey={scheduleRefreshKey} />
-      )}
-      {/* Phase 6: Siêu Tốc Cào Dữ Liệu + Bulk Comment — hiển thị cho cả 3 role
-          (admin/leader/member) khi đang ở tab Facebook. SeedingActivityPanel
-          vẫn chỉ admin/leader vì là panel tổng quan nhóm. */}
-      {CURRENT_USER_EMAIL && feedPlatform === "facebook" && (
-        <>
-          <ApiExtensionLauncher
-            onComplete={(totalPosts) => {
-              fetchPosts();
-              fetchStats();
-              setCrawlResultsSummary(prev => {
-                const realTotal = prev.groups.reduce((sum, g) => sum + g.count, 0);
-                return { ...prev, totalPosts: realTotal > 0 ? realTotal : (totalPosts || 0) };
-              });
-              setShowCrawlResultModal(true);
-            }}
-            onCrawlSaved={(data) => {
-              setCrawlResultsSummary(prev => {
-                const exists = prev.groups.find(g => g.groupUrl === data.groupUrl);
-                let newGroups = prev.groups;
-                if (exists) {
-                  newGroups = prev.groups.map(g => g.groupUrl === data.groupUrl ? { ...g, count: g.count + data.count } : g);
-                } else {
-                  newGroups = [...prev.groups, { groupUrl: data.groupUrl, count: data.count }];
-                }
-                return { ...prev, groups: newGroups };
-              });
-            }}
-          />
-          <BulkCommentLauncher
-            posts={posts}
-            onComplete={(seededUrls) => {
-              fetchPosts();
-              fetchStats();
-              if (seededUrls) setRecentlySeededUrls(seededUrls);
-              setShowSeedingResultModal(true);
-            }}
-          />
-        </>
-      )}
-
-      {/* Menu doc lap theo mang dich vu (2026-07-04) — loc theo industry, xem
-          ghi chu SERVICE_AREA_TABS o dau file. Tab "Lưu trú / Hotel" hien se
-          rong vi he thong chua co danh muc nao thuoc mang nay - se tu dong
-          co du lieu khi admin them danh muc + co bai crawl thuoc nhom do. */}
-      <div className="flex flex-wrap gap-1.5 rounded-xl border border-border bg-card p-1.5">
-        {SERVICE_AREA_TABS.map((tab) => (
+      {/* 4 tab phụ: "Hoạt động seeding" (danh sách bài viết) / "Dashboard leader"
+          (admin+leader) / "Kho thư viện Group" / "Lịch crawl & Hàng đợi". */}
+      <div className="flex gap-1.5 rounded-2xl border border-border bg-card p-1.5 overflow-x-auto">
+        {SUB_TABS.map((t) => (
           <button
-            key={tab.key}
+            key={t.key}
             type="button"
-            onClick={() => setServiceArea(tab.key)}
+            onClick={() => setSubView(t.key)}
             className={cn(
-              "rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors cursor-pointer",
-              serviceArea === tab.key
+              "flex items-center gap-1.5 whitespace-nowrap rounded-xl px-3.5 py-2 text-sm font-bold transition-colors cursor-pointer",
+              subView === t.key
                 ? "bg-primary text-primary-foreground shadow-sm"
                 : "text-muted-foreground hover:bg-accent hover:text-foreground",
             )}
           >
-            {tab.label}
+            <span className="material-symbols-outlined text-[16px]">{t.icon}</span>
+            {t.label}
           </button>
         ))}
       </div>
 
-      <FilterBar
-        intents={intents}
-        industries={industries}
-        teams={teamCategories}
-        tiers={tiers}
-        icps={icps}
-        contentTypes={contentTypes}
-        productSeedings={productSeedings}
-        onFilter={handleFilter}
-        isLoading={isLoadingPosts}
-      />
+      {(subView === "activity" || subView === "leader") && (
+        /* Tab "Seeding bên ngoài": làm nổi bật hẳn (khung viền + icon + mô tả) vì đây là
+           lựa chọn quan trọng nhất của trang - 3 nút nhỏ canh phải rất dễ bị lướt qua. */
+        <div className="flex flex-col sm:flex-row sm:items-center gap-3 rounded-2xl border-2 border-primary/30 bg-gradient-to-r from-primary/5 to-transparent p-3 sm:p-4">
+          <span className="text-xs font-bold text-muted-foreground uppercase tracking-wide shrink-0">
+            Chọn nền tảng
+          </span>
+          {platformTabs}
+          <span className="text-xs text-muted-foreground sm:ml-auto">{platformHint}</span>
+        </div>
+      )}
 
-      {isLoadingPosts ? (
-        <PostFeedSkeleton />
-      ) : postsError ? (
-        <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
-          {postsError}
-          <button type="button" onClick={fetchPosts} className="ml-3 underline">
-            Thử lại
-          </button>
+      {subView === "leader" && isLeaderOrAdmin && (
+        <div className="space-y-4 mb-4">
+          {/* Dashboard xu huong 14 ngay gan nhat (2026-07-04) — theo yeu cau Thanh:
+              4 the o tren chi co so HOM NAY, khong biet cac ngay truoc ra sao.
+              Chart nhe (khong chan trang neu loi/rong). Chuyen sang tab Dashboard
+              leader (2026-09-29) theo mockup markee_seeding_optimized_user_leader_split_v4 —
+              day la so lieu tong quan cho leader/admin, khong phai viec hang ngay cua user. */}
+          <div className="bg-card border border-border rounded-2xl p-5">
+            <div className="mb-3 flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-bold text-foreground">Xu hướng 14 ngày gần nhất</h3>
+                <p className="text-xs text-muted-foreground">Tổng bài cào được · Comment đã verify · Inbox nhận được, theo từng ngày.</p>
+              </div>
+              {isLoadingTrend && <span className="text-xs text-muted-foreground">Đang tải...</span>}
+            </div>
+            {dailyTrend.length === 0 ? (
+              <div className="flex h-[220px] items-center justify-center text-sm text-muted-foreground">
+                {isLoadingTrend ? "Đang tải dữ liệu xu hướng..." : "Chưa có dữ liệu xu hướng."}
+              </div>
+            ) : (
+              <ResponsiveContainer width="100%" height={220}>
+                <AreaChart data={dailyTrend} margin={{ top: 4, right: 8, left: -20, bottom: 0 }}>
+                  <defs>
+                    <linearGradient id="colorPosts" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#2563eb" stopOpacity={0.35} />
+                      <stop offset="95%" stopColor="#2563eb" stopOpacity={0} />
+                    </linearGradient>
+                    <linearGradient id="colorComments" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#16a34a" stopOpacity={0.35} />
+                      <stop offset="95%" stopColor="#16a34a" stopOpacity={0} />
+                    </linearGradient>
+                    <linearGradient id="colorInbox" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#f59e0b" stopOpacity={0.35} />
+                      <stop offset="95%" stopColor="#f59e0b" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e5e5" />
+                  <XAxis
+                    dataKey="date"
+                    tickFormatter={(d: string) => d.slice(5).replace("-", "/")}
+                    tick={{ fontSize: 11, fill: "#737373" }}
+                    axisLine={{ stroke: "#e5e5e5" }}
+                    tickLine={false}
+                  />
+                  <YAxis tick={{ fontSize: 11, fill: "#737373" }} axisLine={false} tickLine={false} allowDecimals={false} />
+                  <Tooltip
+                    labelFormatter={(d) => `Ngày ${String(d ?? "").slice(5).replace("-", "/")}`}
+                    contentStyle={{ borderRadius: 8, fontSize: 12, border: "1px solid #e5e5e5" }}
+                  />
+                  <Legend wrapperStyle={{ fontSize: 12 }} />
+                  <Area type="monotone" dataKey="posts" name="Tổng bài" stroke="#2563eb" fill="url(#colorPosts)" strokeWidth={2} />
+                  <Area type="monotone" dataKey="comments" name="Comment" stroke="#16a34a" fill="url(#colorComments)" strokeWidth={2} />
+                  <Area type="monotone" dataKey="inbox" name="Inbox" stroke="#f59e0b" fill="url(#colorInbox)" strokeWidth={2} />
+                </AreaChart>
+              </ResponsiveContainer>
+            )}
+          </div>
+
+          <div className="grid grid-cols-1 xl:grid-cols-3 gap-4 items-start">
+            <div className="xl:col-span-2">
+              <SeedingActivityPanel email={CURRENT_USER_EMAIL} />
+            </div>
+            <TeamEfficiencyWidget email={CURRENT_USER_EMAIL} />
+          </div>
+
+          <MemberOnlineTimeWidget email={CURRENT_USER_EMAIL} />
         </div>
-      ) : visiblePosts.length === 0 ? (
-        <div className="py-12 text-center text-muted-foreground">
-          {posts.length === 0
-            ? "Không có bài viết nào phù hợp với bộ lọc."
-            : "Không có bài viết nào trong mảng dịch vụ này."}
-        </div>
-      ) : (
+      )}
+
+      {subView === "activity" && (
         <>
-          <div className="flex flex-col gap-4">
-            {visiblePosts.map((post) => (
-                <PostCard
-                  key={post.id || post.post_url}
-                  post={post}
-                  userRole={user?.role}
-                  seeded={!!post.verify_status && post.verify_status !== "no"}
-                  verifyStatus={post.verify_status as "pending" | "yes" | "no"}
-                  onSeeding={() => {}}
-                  onVerify={() => {}}
-                  onSchedule={(post) => setScheduleModalPost(post)}
-                  onViewDetail={(post) => setDetailModalPost(post)}
-                  onDelete={(p) => void handleDeletePost(p)}
-                />
+          <div className="bg-card border border-border rounded-2xl p-5 mb-4">
+            <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+              <StatCard
+                icon="description"
+                label="Tổng bài hôm nay"
+                value={stats.totalPostsToday}
+                trend={{
+                  value: Math.abs(fbDiff),
+                  isUp: fbDiff >= 0,
+                  label: `${fbDiff >= 0 ? "+" : ""}${fbDiff} so với hôm qua`,
+                }}
+                accent="blue"
+              />
+              <StatCard
+                icon="trending_up"
+                label="Tiến độ KPI"
+                value={stats.kpiProgress || 0}
+                progress={{
+                  value: stats.kpiProgressPercent || 0,
+                  label: `${stats.kpiProgressPercent || 0}% trong tập bài`,
+                }}
+                accent="green"
+              />
+              <StatCard
+                icon="rocket_launch"
+                label="Đã seeded hôm nay"
+                value={stats.seededToday}
+                sub="Ước tính từ batch hôm nay"
+                accent="amber"
+              />
+              <StatCard
+                icon="visibility"
+                label="Tổng bài hiển thị"
+                value={totalCount}
+                sub={`${totalCount} bài trong cơ sở dữ liệu`}
+                accent="indigo"
+              />
+            </div>
+          </div>
+
+          {/* Phase 6: KPI personal progress — hiển thị cho cả member VÀ leader */}
+          {CURRENT_USER_EMAIL && (user?.role === "member" || user?.role === "leader") && (
+            <KpiProgressCard
+              email={CURRENT_USER_EMAIL}
+              type="comment"
+            />
+          )}
+          {CURRENT_USER_EMAIL && user?.role === "member" && (
+            <MemberKpiRewardOverview />
+          )}
+
+          {CURRENT_USER_EMAIL && (
+            <ScheduledCommentsPanel refreshKey={scheduleRefreshKey} />
+          )}
+          {/* 1 extension gộp (Markee Seeding Extension): cào bài + bình luận hàng loạt cho cả
+              Facebook và LinkedIn, theo tab nền tảng đang chọn — thay cho 2 launcher riêng
+              "Siêu Tốc Cào Dữ Liệu" + "Seeding Comment Hàng Loạt" trước đây (chỉ có ở tab Facebook).
+              Threads: chỉ cào (tìm theo từ khoá), feed/xu hướng tải lại mỗi khi lưu xong 1 từ khoá. */}
+          {CURRENT_USER_EMAIL && (
+            <SeedingExtensionPanel
+              platform={feedPlatform}
+              posts={posts}
+              onCrawlSaved={(platform, data) => {
+                if (platform === "threads" && data.count > 0) {
+                  fetchPosts();
+                  fetchDailyTrend();
+                }
+              }}
+              onCrawlDone={(platform, data) => {
+                fetchPosts();
+                fetchStats();
+                if (platform === "threads") fetchDailyTrend();
+                setCrawlResultsSummary((prev) => ({ ...prev, totalPosts: data.totalSaved }));
+                setShowCrawlResultModal(true);
+              }}
+              onCommentDone={(seededUrls) => {
+                fetchPosts();
+                fetchStats();
+                if (seededUrls) setRecentlySeededUrls(seededUrls);
+                setShowSeedingResultModal(true);
+              }}
+            />
+          )}
+
+          {/* Menu độc lập theo TEAM (2026-09-30) — mỗi tab là 1 team thật trong hệ
+              thống, xem ghi chú serviceAreaTabs/matchesServiceArea ở trên. */}
+          <div className="flex flex-wrap gap-1.5 rounded-xl border border-border bg-card p-1.5">
+            {serviceAreaTabs.map((tab) => (
+              <button
+                key={tab.key}
+                type="button"
+                onClick={() => setServiceArea(tab.key)}
+                className={cn(
+                  "rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors cursor-pointer",
+                  serviceArea === tab.key
+                    ? "bg-primary text-primary-foreground shadow-sm"
+                    : "text-muted-foreground hover:bg-accent hover:text-foreground",
+                )}
+              >
+                {tab.label}
+              </button>
             ))}
           </div>
 
-          {totalPages > 1 && (
-            <div className="mt-6 flex flex-wrap items-center justify-center gap-2 text-center">
-              <button
-                type="button"
-                onClick={() => setPage((p) => Math.max(1, p - 1))}
-                disabled={page === 1}
-                className="rounded-lg border border-border px-3 py-1.5 text-sm disabled:opacity-50 cursor-pointer whitespace-nowrap"
-              >
-                ‹ Trước
-              </button>
-              <span className="w-full whitespace-nowrap text-sm text-muted-foreground sm:w-auto">
-                Trang {page} / {totalPages} ({totalCount} bài)
-              </span>
-              <button
-                type="button"
-                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                disabled={page === totalPages}
-                className="rounded-lg border border-border px-3 py-1.5 text-sm disabled:opacity-50 cursor-pointer whitespace-nowrap"
-              >
-                Sau ›
+          <FilterBar
+            intents={intents}
+            industries={industries}
+            teams={teamCategories}
+            tiers={tiers}
+            icps={icps}
+            contentTypes={contentTypes}
+            productSeedings={productSeedings}
+            onFilter={handleFilter}
+            isLoading={isLoadingPosts}
+          />
+
+          {isLoadingPosts ? (
+            <PostFeedSkeleton />
+          ) : postsError ? (
+            <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+              {postsError}
+              <button type="button" onClick={fetchPosts} className="ml-3 underline">
+                Thử lại
               </button>
             </div>
+          ) : visiblePosts.length === 0 ? (
+            <div className="py-12 text-center text-muted-foreground">
+              {posts.length === 0
+                ? "Không có bài viết nào phù hợp với bộ lọc."
+                : "Không có bài viết nào của team này."}
+            </div>
+          ) : (
+            <>
+              <div className="flex flex-col gap-4">
+                {visiblePosts.map((post) => (
+                    <PostCard
+                      key={post.id || post.post_url}
+                      post={post}
+                      userRole={user?.role}
+                      seeded={!!post.verify_status && post.verify_status !== "no"}
+                      verifyStatus={post.verify_status as "pending" | "yes" | "no"}
+                      onSeeding={() => {
+                        // Nhiem vu binh luan qua Extension trong modal "Lam nhiem vu" vua
+                        // thanh cong - lam moi danh sach de the trang thai/roster cap nhat
+                        // dung ngay (khong doi F5 tay), giong het pattern onCommentDone cua
+                        // SeedingExtensionPanel o tren.
+                        fetchPosts();
+                        fetchStats();
+                      }}
+                      onVerify={() => {}}
+                      onSchedule={post.platform === "threads" ? undefined : (post) => setScheduleModalPost(post)}
+                      onViewDetail={(post) => setDetailModalPost(post)}
+                      onDelete={(p) => void handleDeletePost(p)}
+                      onViewSeedingRoster={post.platform === "threads" ? undefined : (p) => void openSeedingRosterModal(p)}
+                    />
+                ))}
+              </div>
+
+              {totalPages > 1 && (
+                <div className="mt-6 flex flex-wrap items-center justify-center gap-2 text-center">
+                  <button
+                    type="button"
+                    onClick={() => setPage((p) => Math.max(1, p - 1))}
+                    disabled={page === 1}
+                    className="rounded-lg border border-border px-3 py-1.5 text-sm disabled:opacity-50 cursor-pointer whitespace-nowrap"
+                  >
+                    ‹ Trước
+                  </button>
+                  <span className="w-full whitespace-nowrap text-sm text-muted-foreground sm:w-auto">
+                    Trang {page} / {totalPages} ({totalCount} bài)
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                    disabled={page === totalPages}
+                    className="rounded-lg border border-border px-3 py-1.5 text-sm disabled:opacity-50 cursor-pointer whitespace-nowrap"
+                  >
+                    Sau ›
+                  </button>
+                </div>
+              )}
+            </>
           )}
         </>
+      )}
+
+      {subView === "library" && <GroupManagementContent />}
+
+      {subView === "queue" && (
+        <div className="flex flex-col gap-4">
+          <div className="flex flex-wrap gap-1.5 rounded-xl border border-border bg-card p-1.5">
+            {(
+              [
+                { key: "accounts", label: "Tài khoản seeding" },
+                { key: "schedule", label: "Lịch cào" },
+                { key: "vps", label: "Hàng đợi VPS" },
+              ] as const
+            ).map((tab) => (
+              <button
+                key={tab.key}
+                type="button"
+                onClick={() => setQueueSubTab(tab.key)}
+                className={cn(
+                  "rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors cursor-pointer",
+                  queueSubTab === tab.key
+                    ? "bg-primary text-primary-foreground shadow-sm"
+                    : "text-muted-foreground hover:bg-accent hover:text-foreground",
+                )}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+
+          {queueSubTab === "accounts" && <SeedingAccountsOverview />}
+          {queueSubTab === "schedule" && <RotationCrawlPanel />}
+          {queueSubTab === "vps" && <CrawlQueueMonitor />}
+        </div>
       )}
 
       <PostDetailModal
         post={detailModalPost}
         isOpen={!!detailModalPost}
         onClose={() => setDetailModalPost(null)}
-        onVerify={(post) => {
+        // Xác minh seeding (chọn tài khoản FB/LinkedIn) chưa hỗ trợ bài Threads.
+        onVerify={detailModalPost?.platform === "threads" ? undefined : (post) => {
           setVerifyModalPost(post);
         }}
         verifyStatus={detailModalPost?.verify_status as any}
@@ -919,6 +1071,86 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
         onScheduled={() => setScheduleRefreshKey((k) => k + 1)}
       />
 
+      {/* MODAL "Xem seeding theo team" (admin/leader) */}
+      {seedingRosterPost && typeof document !== "undefined" && createPortal(
+        <div
+          className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) closeSeedingRosterModal();
+          }}
+        >
+          <div className="w-[min(640px,100%)] max-h-[85vh] bg-card rounded-2xl shadow-xl overflow-hidden flex flex-col">
+            <div className="flex justify-between items-start p-5 border-b border-border">
+              <div>
+                <h3 className="text-base font-bold text-foreground">Seeding theo team</h3>
+                <div className="text-xs text-muted-foreground mt-0.5 line-clamp-1">
+                  {seedingRosterData?.team_name ? `Team: ${seedingRosterData.team_name} · ` : ""}
+                  Bài: {seedingRosterPost.content || "(Bài viết không có nội dung văn bản)"}
+                </div>
+              </div>
+              <button
+                type="button"
+                className="w-8 h-8 rounded-full hover:bg-muted flex items-center justify-center text-muted-foreground font-bold shrink-0"
+                onClick={closeSeedingRosterModal}
+                aria-label="Đóng"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="p-4 overflow-y-auto flex-1">
+              {isLoadingSeedingRoster ? (
+                <div className="p-8 text-center text-muted-foreground text-sm">Đang tải danh sách seeding theo team...</div>
+              ) : !seedingRosterData || seedingRosterData.items.length === 0 ? (
+                <div className="p-8 text-center text-muted-foreground text-sm">
+                  {seedingRosterData?.team_name
+                    ? "Team này chưa có thành viên nào."
+                    : "Bài viết này chưa xác định được team sở hữu (nhóm crawl chưa gán team)."}
+                </div>
+              ) : (
+                <div className="flex flex-col gap-2">
+                  {seedingRosterData.items.map((m) => (
+                    <div
+                      key={m.id_member}
+                      className={cn(
+                        "px-3 py-2 rounded-lg border flex flex-col gap-1",
+                        m.has_seeded ? "bg-emerald-50/50 border-emerald-100" : "bg-muted/40 border-border",
+                      )}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-sm font-bold text-foreground">{m.name}</span>
+                        {m.has_seeded ? (
+                          <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-700 shrink-0">
+                            ✓ Đã seeding
+                          </span>
+                        ) : (
+                          <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-700 shrink-0">
+                            Chưa seeding
+                          </span>
+                        )}
+                      </div>
+                      {m.has_seeded && m.content ? (
+                        <p className="text-sm text-muted-foreground line-clamp-2">
+                          <span className="text-emerald-500 font-serif font-bold text-lg leading-none mr-1">"</span>
+                          {m.content}
+                          <span className="text-emerald-500 font-serif font-bold text-lg leading-none ml-1">"</span>
+                        </p>
+                      ) : null}
+                      {m.link_comment ? (
+                        <a href={m.link_comment} target="_blank" rel="noopener noreferrer" className="text-[11px] font-medium text-blue-600 hover:underline inline-flex items-center gap-1 w-fit">
+                          Xem bình luận <FiExternalLink className="w-3 h-3" />
+                        </a>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>,
+        document.body,
+      )}
+
       {/* MODAL KẾT QUẢ CÀO */}
       {showCrawlResultModal && typeof document !== "undefined" && createPortal(
         <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
@@ -933,10 +1165,10 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
               </p>
 
               <button
-                onClick={() => window.location.reload()}
+                onClick={() => setShowCrawlResultModal(false)}
                 className="w-full py-3 bg-primary hover:bg-primary/90 text-white rounded-xl font-bold shadow-md transition-all active:scale-95"
               >
-                Đồng ý & Tải lại trang
+                Đồng ý
               </button>
             </div>
           </div>
@@ -958,10 +1190,10 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
               </p>
               
               <button
-                onClick={() => window.location.reload()}
+                onClick={() => setShowSeedingResultModal(false)}
                 className="w-full py-3 bg-primary hover:bg-primary/90 text-white rounded-xl font-bold shadow-md transition-all active:scale-95"
               >
-                Đồng ý & Tải lại trang
+                Đồng ý
               </button>
             </div>
           </div>

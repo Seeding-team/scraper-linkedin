@@ -97,3 +97,13 @@ jobs:
           else
             echo "KHONG thay docker-compose.dev.yml o thu muc deploy - domain co the route noi khac"
           fi
+
+      # Cung 1 loai su co da gap tren host APP production (2026-09-21): docker
+      # build cache tich luy toi 23.5GB khong ai prune -> / day 100% -> deploy
+      # fail vi khong ghi noi log. Don cache cu (>24h) sau moi lan deploy thanh
+      # cong de tranh lap lai, van giu cache gan day de build nhanh.
+      - name: Don dep Docker build cache cu
+        if: success()
+        run: |
+          docker builder prune -af --filter until=24h || true
+          df -h / | tail -1

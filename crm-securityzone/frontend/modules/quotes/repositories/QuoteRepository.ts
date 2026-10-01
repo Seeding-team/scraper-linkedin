@@ -33,6 +33,7 @@ export interface QuoteRepository {
   createQuote(input: CreateQuoteInput): Promise<Quote>;
   updateQuote(id: string, input: UpdateQuoteInput): Promise<Quote>;
   deleteQuote(id: string): Promise<void>;
+  bulkDeleteQuotes(ids: string[], includeVersions: boolean): Promise<{ deletedIds: string[]; failed: Array<{ quoteId: string; message: string }> }>;
   /** Duyệt báo giá — khoá chỉnh sửa vĩnh viễn, sinh public link. */
   approveQuote(id: string, exceptionReason?: string): Promise<Quote>;
   /** Lưu thay đổi cuối + duyệt atomic (dùng khi bấm "Duyệt báo giá" trong modal đang sửa). */
@@ -92,6 +93,20 @@ export interface QuoteRepository {
     allowedEmails: string[],
     allowedPhones: string[]
   ): Promise<Quote>;
+  /** Nút "Lưu" ở toolbar in (hướng giấy + độ rộng cột đã kéo tay) trên
+   * QuoteDetailPage — trang NỘI BỘ đã đăng nhập. Chỉ ghi đúng 1 khoá
+   * `data.printLayoutPrefs`, không đụng giá/khách hàng/hạng mục. */
+  updatePrintLayoutPrefs(
+    quoteId: string,
+    orientation: 'portrait' | 'landscape',
+    columnWidths: Record<string, number>
+  ): Promise<Quote>;
+  /** Chỉ đọc quyền SỬA báo giá này cho người đang đăng nhập — dùng bởi trang
+   * công khai /baogia/{token} để quyết định CÓ HIỆN nút "Lưu" tuỳ chỉnh in
+   * hay không (vd Sale mở lại chính link của mình). CHỈ là lớp hiển thị —
+   * quyền THẬT vẫn do updatePrintLayoutPrefs() (can_edit_quote) tự kiểm tra
+   * lại phía backend, không tin kết quả gọi này. */
+  getQuoteEditPermission(quoteId: string): Promise<{ canEdit: boolean }>;
   /** Xoá mềm — khôi phục được qua restoreQuote(). */
   softDeleteQuote(quoteId: string, reason?: string): Promise<Quote>;
   restoreQuote(quoteId: string): Promise<Quote>;

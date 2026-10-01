@@ -63,6 +63,11 @@ class CrmLeadUpdate(BaseModel):
     status: Optional[CrmLeadStatus] = None
     score: Optional[float] = None
     sdr_id: Optional[str] = None
+    # "Marketing" (LeadsDirectory) - doi TAY nguoi dung lam "nguoi tao" sau
+    # khi Lead da co san (feedback leader 2026-09-27). Quyen gate o
+    # crm_lead_service.update_lead() (chi full CRM access), KHONG anh huong
+    # luc TAO Lead (van luon ep = actor_id that qua create_lead()).
+    created_by: Optional[str] = None
     note: Optional[str] = None
 
     # Qualification fields - plain update only, service layer guarantees

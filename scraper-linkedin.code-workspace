@@ -1,0 +1,34 @@
+{
+  "folders": [
+    {
+      "name": "🏢 Root Workspace",
+      "path": "."
+    },
+    {
+      "name": "🌐 LinkedIn Crawler UI (Seeding)",
+      "path": "linkedin-crawler-ui"
+    },
+    {
+      "name": "☁️ CRM Cloudgate",
+      "path": "crm-cloudgate/frontend"
+    },
+    {
+      "name": "📦 CRM Module",
+      "path": "crm-module/frontend"
+    },
+    {
+      "name": "🛡️ CRM SecurityZone",
+      "path": "crm-securityzone/frontend"
+    }
+  ],
+  "settings": {
+    "typescript.tsdk": "linkedin-crawler-ui/node_modules/typescript/lib",
+    "typescript.preferences.includePackageJsonAutoImports": "auto",
+    "eslint.workingDirectories": [
+      { "directory": "linkedin-crawler-ui", "changeProcessCWD": true },
+      { "directory": "crm-cloudgate/frontend", "changeProcessCWD": true },
+      { "directory": "crm-module/frontend", "changeProcessCWD": true },
+      { "directory": "crm-securityzone/frontend", "changeProcessCWD": true }
+    ]
+  }
+}

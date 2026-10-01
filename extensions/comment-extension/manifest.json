@@ -1,40 +1,53 @@
 {
   "manifest_version": 3,
-  "name": "Facebook, YouTube & LinkedIn Bulk Comment Extension",
-  "version": "1.1",
-  "description": "Seeding Comment hàng loạt trên Facebook, YouTube và LinkedIn",
+  "name": "Markee Seeding Extension",
+  "version": "2.4",
+  "description": "Gộp 1 extension: cào bài + bình luận Facebook & LinkedIn, cào bài Threads theo từ khoá, nhiều lịch cào xoay vòng độc lập cả 3 nền tảng (kèm comment YouTube, Threads) cho Markee Seeding",
   "permissions": [
     "activeTab",
     "scripting",
     "tabs",
-    "storage"
+    "storage",
+    "alarms"
   ],
   "host_permissions": [
     "*://*.facebook.com/*",
     "*://*.youtube.com/*",
     "*://youtube.com/*",
     "*://*.linkedin.com/*",
+    "*://*.threads.net/*",
+    "*://*.threads.com/*",
     "http://localhost:*/*",
     "http://127.0.0.1:*/*",
     "*://seeding.markeeai.com/*",
-    "*://*.seeding.markeeai.com/*"
+    "*://*.seeding.markeeai.com/*",
+    "*://seeding.markee.vn/*",
+    "*://*.seeding.markee.vn/*"
   ],
   "background": {
     "service_worker": "background.js"
   },
   "action": {
-    "default_title": "Bulk Comment Extension"
+    "default_title": "Markee Seeding Extension"
   },
   "content_scripts": [
     {
-      "matches": ["*://*.facebook.com/*"],
-      "js": ["graphql-sniffer.js"],
+      "matches": [
+        "*://*.facebook.com/*"
+      ],
+      "js": [
+        "graphql-sniffer.js"
+      ],
       "world": "MAIN",
       "run_at": "document_start"
     },
     {
-      "matches": ["*://*.facebook.com/*"],
-      "js": ["content.js"],
+      "matches": [
+        "*://*.facebook.com/*"
+      ],
+      "js": [
+        "content.js"
+      ],
       "run_at": "document_idle"
     },
     {
@@ -42,25 +55,65 @@
         "*://*.youtube.com/*",
         "*://youtube.com/*"
       ],
-      "js": ["platforms/youtube/youtube-handler.js"],
+      "js": [
+        "platforms/youtube/youtube-handler.js"
+      ],
       "run_at": "document_idle"
     },
     {
       "matches": [
         "*://*.linkedin.com/*"
       ],
-      "js": ["platforms/linkedin/content.js"],
+      "js": [
+        "platforms/linkedin/content.js",
+        "platforms/linkedin/crawler.js"
+      ],
       "run_at": "document_idle"
     },
     {
       "matches": [
-        "http://localhost:*/*", 
+        "*://*.threads.net/*",
+        "*://*.threads.com/*"
+      ],
+      "js": [
+        "platforms/threads/crawl-sniffer.js"
+      ],
+      "world": "MAIN",
+      "run_at": "document_start"
+    },
+    {
+      "matches": [
+        "*://*.threads.net/*",
+        "*://*.threads.com/*"
+      ],
+      "js": [
+        "platforms/threads/crawl.js"
+      ],
+      "run_at": "document_start"
+    },
+    {
+      "matches": [
+        "*://*.threads.net/*",
+        "*://*.threads.com/*"
+      ],
+      "js": [
+        "platforms/threads/content.js"
+      ],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "http://localhost:*/*",
         "http://127.0.0.1:*/*",
         "*://*.vercel.app/*",
         "*://seeding.markeeai.com/*",
-        "*://*.seeding.markeeai.com/*"
+        "*://*.seeding.markeeai.com/*",
+        "*://seeding.markee.vn/*",
+        "*://*.seeding.markee.vn/*"
       ],
-      "js": ["bridge.js"],
+      "js": [
+        "bridge.js"
+      ],
       "run_at": "document_idle"
     }
   ]

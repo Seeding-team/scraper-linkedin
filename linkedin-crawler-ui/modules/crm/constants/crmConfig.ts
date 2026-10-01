@@ -44,6 +44,17 @@ export function hasFullCrmAccess(user: AppUser | null | undefined): boolean {
   );
 }
 
+/** Mirror của progress_scope() (backend progress_service.py) cho submenu
+ * "Quản lý tiến độ" — CỐ Ý hẹp hơn hasFullCrmAccess(): chỉ role admin/leader,
+ * KHÔNG mở rộng cho Sale/quote_business_role như CRM/Phân tích CRM (đã chốt
+ * riêng với user: "Member chưa có quyền vào submenu này", không phải "member
+ * có full CRM access"). Chỉ ẩn/hiện UI — backend luôn tự chặn lại thật qua
+ * `require_admin_or_leader` + `progress_scope()`, ham nay khong phai lop bao mat. */
+export function hasProgressAccess(user: AppUser | null | undefined): boolean {
+  if (!user) return false;
+  return user.role === 'admin' || user.role === 'leader';
+}
+
 /** Mirror cua crm_permission_service.can_edit_technical_quote (backend) - CHI
  * dung de khoa/mo cell Giá vốn tren FE cho dung UX (bang hang muc thong nhat,
  * Section 4). Backend van la lop chan THAT (_check_item_field_level_permission),
@@ -212,6 +223,15 @@ export const DEAL_STAGE_META: Record<
     description: 'Legacy: Hoàn thành',
   },
 };
+
+/** "Lead_Convert"/"Existing_Customer"/"Upsell" - 3 gia tri he thong trong
+ * chung danh muc crm_source (migration 081), chi mang y nghia "Deal nay tao
+ * ra tu dau" (Deal tu convert 1 Lead / da la khach hang / upsell) - KHONG
+ * phai nguon Lead that su, khong dung cho nguoi dung TU CHON o form Lead
+ * (bug that: chon nham "Lead Convert" o dropdown Nguon lam sai du lieu Lead
+ * that, 2026-09-27). Dung o moi CrmCategoryCodeSelect categoryType=
+ * "crm_source" cua man Lead (Them/Sua/danh sach) qua prop excludeValues. */
+export const LEAD_SOURCE_EXCLUDED_VALUES = ['Existing_Customer', 'Lead_Convert', 'Upsell'];
 
 export const SOURCE_OPTIONS = [
   { value: 'Manual', label: 'Nhập tay' },

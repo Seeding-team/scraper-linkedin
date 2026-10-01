@@ -143,10 +143,10 @@ export function useCrm(repository: CrmRepository = seedingCrmRepository) {
   );
 
   const deleteDeal = useCallback(
-    async (id: string) => {
+    async (id: string, confirmCascade = false) => {
       setSaving(true);
       try {
-        await repository.deleteDeal(id);
+        await repository.deleteDeal(id, confirmCascade);
         await loadDeals();
       } finally {
         setSaving(false);

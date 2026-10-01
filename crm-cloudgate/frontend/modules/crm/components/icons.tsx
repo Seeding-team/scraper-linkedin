@@ -139,11 +139,22 @@ export const Pencil = makeIcon([
   { d: 'M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z' },
   { d: 'm15 5 4 4' },
 ]);
+export const Printer = makeIcon([
+  { d: 'M6 9V2h12v7' },
+  { d: 'M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2' },
+  { tag: 'rect', x: 6, y: 14, width: 12, height: 8 },
+]);
 export const Link2 = makeIcon([
   { d: 'M9 17H7A5 5 0 0 1 7 7h2' },
   { d: 'M15 7h2a5 5 0 1 1 0 10h-2' },
   { d: 'M8 12h8' },
 ]);
+export const HelpCircle = makeIcon([
+  { tag: 'circle', cx: 12, cy: 12, r: 10 },
+  { d: 'M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3' },
+  { d: 'M12 17h.01' },
+]);
+
 export const History = makeIcon([
   { d: 'M3 12a9 9 0 1 0 2.6-6.3L3 8' },
   { d: 'M3 3v5h5' },
@@ -165,6 +176,11 @@ export const RotateCcw = makeIcon([
   { d: 'M3 12a9 9 0 1 0 3-6.7L3 8' },
   { d: 'M3 3v5h5' },
 ]);
+// "Hướng giấy Dọc/Ngang" (toolbar chỉnh in báo giá) - 2 icon lucide chuan
+// "rectangle-vertical"/"rectangle-horizontal", tu ve lai qua makeIcon co san
+// (khong cai them thu vien lucide-react vao module nay).
+export const RectangleVertical = makeIcon([{ tag: 'rect', x: 5, y: 2, width: 14, height: 20, rx: 2 }]);
+export const RectangleHorizontal = makeIcon([{ tag: 'rect', x: 2, y: 5, width: 20, height: 14, rx: 2 }]);
 export const TableIcon = makeIcon([
   { tag: 'rect', x: 3, y: 3, width: 18, height: 18, rx: 2 },
   { d: 'M3 9h18' },

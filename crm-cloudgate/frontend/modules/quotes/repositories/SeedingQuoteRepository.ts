@@ -65,12 +65,12 @@ type QuoteItemPayload = {
   warranty_scope: string | null;
   unit?: string;
   quantity: number;
-  unit_price: number;
+  unit_price: number | null;
   discount_percent: number;
   vat_rate: number;
   children: QuoteItemPayload[];
   catalog_item_id?: string | null;
-  bundle_snapshot?: unknown[] | null;
+  bundle_snapshot?: unknown | null;
   list_price_usd?: number | null;
   unit_price_usd?: number | null;
   exchange_rate?: number | null;
@@ -160,6 +160,7 @@ function toIssuerCompanyPayload(input: CreateIssuerCompanyInput | UpdateIssuerCo
     default_quote_form_id: input.defaultQuoteFormId,
     status: input.status,
     sort_order: input.sortOrder,
+    payment_terms: input.paymentTerms,
   };
 }
 
@@ -193,6 +194,12 @@ function toUpdateQuotePayload(input: UpdateQuoteInput) {
     items: input.items?.map(toQuoteItemPayload),
     issuer_company_id: input.issuerCompanyId ?? null,
   };
+  // "Mẫu ăn theo Đơn vị phát hành" (feedback 2026-09-24) - CHI gui khi caller
+  // that su truyen quoteFormId (doi mau that su), KHONG dung `?? null` nhu
+  // issuer_company_id o tren vi backend (QuoteUpdateRequest) dung exclude_none
+  // mac dinh - gui null se bi bo qua (khong doi), khong can tri-state nhu
+  // project_id/sla_due_at.
+  if (input.quoteFormId) payload.quote_form_id = input.quoteFormId;
   if ('projectId' in input) payload.project_id = input.projectId ?? null;
   if ('overallDiscountPercent' in input) payload.overall_discount_percent = input.overallDiscountPercent ?? null;
   if ('slaDueAt' in input) payload.sla_due_at = input.slaDueAt ?? null;
@@ -208,7 +215,7 @@ function toQuoteItemPayload(item: NonNullable<CreateQuoteInput['items']>[number]
     warranty_scope: item.warrantyScope?.trim() || null,
     unit: item.unit,
     quantity: item.quantity,
-    unit_price: item.unitPrice,
+    unit_price: item.unitPrice ?? null,
     discount_percent: item.discountPercent ?? 0,
     vat_rate: item.vatRate,
     children: (item.children || []).map(toQuoteItemPayload),
@@ -353,6 +360,25 @@ export class SeedingQuoteRepository implements QuoteRepository {
     });
   }
 
+  /** Nút "Lưu" ở toolbar in trên QuoteDetailPage (trang nội bộ đã đăng nhập)
+   * - xem QuoteRepository.ts. */
+  async updatePrintLayoutPrefs(
+    quoteId: string,
+    orientation: 'portrait' | 'landscape',
+    columnWidths: Record<string, number>
+  ): Promise<Quote> {
+    return apiFetch<Quote>(`/api/all-platform/quotes/${encodeURIComponent(quoteId)}/print-layout-prefs`, {
+      method: 'PUT',
+      body: JSON.stringify({ orientation, column_widths: columnWidths }),
+    });
+  }
+
+  /** Nút "Lưu" trên trang public /baogia/{token} (PublicQuotePage) - chỉ đọc
+   * quyền, xem QuoteRepository.ts. */
+  async getQuoteEditPermission(quoteId: string): Promise<{ canEdit: boolean }> {
+    return apiFetch<{ canEdit: boolean }>(`/api/all-platform/quotes/${encodeURIComponent(quoteId)}/edit-permission`);
+  }
+
   async createQuote(input: CreateQuoteInput): Promise<Quote> {
     return apiFetch<Quote>('/api/all-platform/quotes', {
       method: 'POST',
@@ -369,6 +395,20 @@ export class SeedingQuoteRepository implements QuoteRepository {
 
   async deleteQuote(id: string): Promise<void> {
     await apiFetch<unknown>(`/api/all-platform/quotes/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  }
+
+  /** Xoa MEM nhieu bao gia 1 lan (Admin khoi phuc duoc). includeVersions=true:
+   * xoa ca chuoi version cua moi id (thao tac "Xoá báo giá" o danh sach);
+   * false: chi xoa dung id (xoa rieng 1 version). */
+  async bulkDeleteQuotes(ids: string[], includeVersions: boolean): Promise<{ deletedIds: string[]; failed: Array<{ quoteId: string; message: string }> }> {
+    const data = await apiFetch<{ deleted_ids?: string[]; failed?: Array<{ quote_id: string; message: string }> }>(
+      '/api/all-platform/quotes/bulk-delete',
+      { method: 'POST', body: JSON.stringify({ quote_ids: ids, include_versions: includeVersions }) },
+    );
+    return {
+      deletedIds: data?.deleted_ids || [],
+      failed: (data?.failed || []).map(f => ({ quoteId: f.quote_id, message: f.message })),
+    };
   }
 
   async approveQuote(id: string, exceptionReason?: string): Promise<Quote> {

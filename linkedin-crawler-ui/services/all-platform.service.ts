@@ -25,6 +25,11 @@ import type {
   InternalEngagementPostInteractionsData,
   InternalEngagementTeamTrendData,
   InternalEngagementTeamTotalsData,
+  PostSeedingRosterData,
+  TeamsSeedingEfficiencyData,
+  MemberSeedingOverviewData,
+  MemberCrawlHistoryData,
+  OnlineSummaryData,
 } from "@/types/unified.types";
 import { API_BASE_URL, API_KEY } from "@/lib/env";
 
@@ -284,6 +289,7 @@ export const internalEngagementService = {
     likes?: number;
     comments?: number;
     shares?: number;
+    scope?: "internal" | "external";
   }, emailParam?: string): Promise<ApiResponse<any>> => {
     const payload = typeof linkOrPayload === "string"
       ? { link: linkOrPayload, email: emailParam || "" }
@@ -309,6 +315,7 @@ export const internalEngagementService = {
         likes: payload.likes,
         comments: payload.comments,
         shares: payload.shares,
+        scope: payload.scope,
       }),
     });
   },
@@ -401,7 +408,7 @@ export const internalEngagementService = {
     });
   },
 
-  getMyMarks: (emailMember: string, linkPosts: string[]): Promise<ApiResponse<{ marks: Record<string, InternalEngagementMarkStatus> }>> => {
+  getMyMarks: (emailMember: string, linkPosts: string[]): Promise<ApiResponse<{ marks: Record<string, InternalEngagementMarkStatus>; my_comments?: Record<string, string> }>> => {
     return requestJson(`${BASE}/internal-engagement/my-marks`, {
       method: "POST",
       body: JSON.stringify({ email_member: emailMember, link_posts: linkPosts }),
@@ -1300,6 +1307,45 @@ export const allPlatformPostsService = {
       body: JSON.stringify({ email, posts }),
     });
   },
+
+  /**
+   * "Xem seeding theo team" (Seeding bên ngoài, admin/leader) — toàn bộ roster
+   * thành viên team sở hữu group của bài viết, kèm ai đã/chưa seeding.
+   */
+  getPostSeedingRoster: (email: string, postId: string, platform: string): Promise<ApiResponse<PostSeedingRosterData>> => {
+    return requestJson(`${BASE}/unified/posts/seeding-roster`, {
+      method: "POST",
+      body: JSON.stringify({ email, post_id: postId, platform }),
+    });
+  },
+
+  /**
+   * "Hiệu quả theo team" (Dashboard leader, Seeding bên ngoài) — admin thấy mọi team,
+   * leader chỉ thấy team mình quản lý.
+   */
+  getTeamsSeedingEfficiency: (email: string): Promise<ApiResponse<TeamsSeedingEfficiencyData>> => {
+    return requestJson(`${BASE}/unified/teams/seeding-efficiency`, {
+      method: "POST",
+      body: JSON.stringify({ email, platform: "all" }),
+    });
+  },
+
+  /** Tab phụ "Tài khoản seeding" (Lịch crawl & Hàng đợi) — admin thấy mọi thành viên,
+   * leader chỉ thấy team mình quản lý. */
+  getMemberSeedingOverview: (email: string): Promise<ApiResponse<MemberSeedingOverviewData>> => {
+    return requestJson(`${BASE}/unified/members/seeding-overview`, {
+      method: "POST",
+      body: JSON.stringify({ email, platform: "all" }),
+    });
+  },
+
+  /** Chi tiết lịch sử cào của 1 thành viên (bấm vào 1 hàng trong bảng "Tài khoản seeding"). */
+  getMemberCrawlHistory: (email: string, idMember: string): Promise<ApiResponse<MemberCrawlHistoryData>> => {
+    return requestJson(`${BASE}/unified/members/crawl-history`, {
+      method: "POST",
+      body: JSON.stringify({ email, id_member: idMember }),
+    });
+  },
 };
 
 // ── CATEGORIES ────────────────────────────────────────────────────────────────
@@ -1395,6 +1441,10 @@ export const allPlatformMembersService = {
 
   getSkills: (): Promise<ApiResponse<Skill[]>> => {
     return requestJson<Skill[]>(`${BASE}/members/skills`);
+  },
+
+  syncFromRecruitment: (): Promise<ApiResponse<{ created: number; updated: number; deleted: number; locked: number; unlocked: number; skipped: Array<{ row: string; reason: string }> }>> => {
+    return requestJson(`${BASE}/members/sync-from-recruitment`, { method: "POST" });
   },
 
   addSkill: (name: string, category?: string): Promise<ApiResponse<Skill>> => {
@@ -1508,8 +1558,8 @@ export const allPlatformGroupsService = {
    * Lấy groups cho Extension Launcher.
    * Backend tự động filter theo id_member từ auth token.
    */
-  getForExtension: (): Promise<ApiResponse<FacebookGroup[]>> => {
-    return requestJson(`${BASE}/facebook/groups?for_extension=true`);
+  getForExtension: (platform: "facebook" | "linkedin" = "facebook"): Promise<ApiResponse<(FacebookGroup | LinkedInGroup)[]>> => {
+    return requestJson(`${BASE}/${platform}/groups?for_extension=true`);
   },
 
   add: (payload: Record<string, unknown>, platform: string): Promise<ApiResponse<FacebookGroup | LinkedInGroup>> => {
@@ -1571,6 +1621,24 @@ export const allPlatformTeamsService = {
 };
 
 // ── AUTH ────────────────────────────────────────────────────────────────────────
+
+export const presenceService = {
+  /** Heartbeat mỗi ~45s trong lúc tab đang hiển thị — xem AppAuthContext.tsx. */
+  heartbeat: (email: string): Promise<ApiResponse<{ recorded: boolean }>> => {
+    return requestJson(`${BASE}/presence/heartbeat`, {
+      method: "POST",
+      body: JSON.stringify({ email }),
+    });
+  },
+
+  /** "Thời gian online" cho Dashboard leader — admin thấy mọi thành viên, leader chỉ team mình. */
+  getOnlineSummary: (email: string): Promise<ApiResponse<OnlineSummaryData>> => {
+    return requestJson(`${BASE}/presence/online-summary`, {
+      method: "POST",
+      body: JSON.stringify({ email }),
+    });
+  },
+};
 
 export const authService = {
   register: (payload: { email: string; password: string; name?: string }): Promise<ApiResponse<AuthLoginResponse>> => {
@@ -1848,6 +1916,67 @@ export interface AppUserProfile {
   /** Workspace/clone CRM (markee/cloudgate/SECURITYZONE) tài khoản này được
    * phép đăng nhập (migration 127) — quản trị tại Main, dùng bởi 3 clone. */
   allowed_instances?: string[] | null;
+  /** "Nhóm quyền" CRM đang gán (migration 155) — null = chưa gán, tiếp tục
+   * dùng đúng rule quyền cũ (has_full_crm_access), không enforcement mới. */
+  permission_group_id?: string | null;
+  /** Phạm vi dữ liệu override riêng (null = lấy theo Nhóm quyền). */
+  data_scope?: CrmDataScope | null;
+  permission_override?: boolean;
+  permission_overrides?: string[] | null;
+  crm_status?: "active" | "pending_review" | "locked";
+  crm_note?: string | null;
+  /** Team CRM đang thuộc về (không có trong app_users — chỉ có khi BE join
+   * kèm, dùng cho hiển thị; ghi qua `crm_team_id` trong updateCrmPermission). */
+  crm_team_id?: string | null;
+  /** Chỉ có khi BE trả trong `CrmTeam.members` (tab Leader/Team Sale) - số
+   * Deal ĐANG XỬ LÝ (không tính won/lost/post_sale_care) của riêng user này. */
+  active_deal_count?: number;
+}
+
+export type CrmDataScope = "personal" | "team" | "deal_assigned" | "workspace" | "system";
+export type CrmModuleKey = "Lead" | "Customer" | "Deal" | "Quote" | "Product" | "Report" | "Account" | "Setting";
+
+export interface CrmPermissionGroup {
+  id: string;
+  name: string;
+  status: "active" | "draft";
+  default_system_role: "member" | "leader" | "admin";
+  default_scope: CrmDataScope;
+  description?: string | null;
+  default_quote_business_role?: "presale" | "sale" | "both" | null;
+  default_can_approve_quotes: boolean;
+  quote_cost_permission: "none" | "read_only" | "assigned" | "all";
+  quote_sell_permission: "none" | "read_only" | "assigned" | "all";
+  quote_release_permission: "none" | "assigned" | "all";
+  modules: CrmModuleKey[];
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface CrmTeam {
+  id: string;
+  name: string;
+  code?: string | null;
+  leader_user_id?: string | null;
+  leader_name?: string | null;
+  status: "active" | "inactive";
+  segment?: "enterprise" | "smb" | "mid_market" | "government" | "mixed" | null;
+  function_area?: "sales" | "marketing" | "presale" | "infrastructure" | "software" | "security" | "finance" | "operations" | null;
+  industry?: string | null;
+  region?: string | null;
+  description?: string | null;
+  member_count?: number;
+  /** Tong so Deal DANG XU LY (khong tinh won/lost/post_sale_care) cua CAC
+   * MEMBER trong team (KHONG cong Deal rieng cua Leader) - khop dung cach
+   * tinh "Cơ hội đang xử lý" cua tab Leader/Team Sale. */
+  active_deal_count?: number;
+  /** Danh sach user_id thanh vien (chi co trong response cua list(), KHONG
+   * co trong get() - dung de FE tu tinh "tai khoan CRM chua thuoc Leader
+   * nao", tranh phai them 1 API rieng). */
+  member_ids?: string[];
+  members?: AppUserProfile[];
+  created_at?: string;
+  updated_at?: string;
 }
 
 export interface QuoteBusinessRoleUser {
@@ -1938,6 +2067,129 @@ export const usersService = {
    * đăng nhập cũng gọi được (owner-picker), không phải endpoint quản trị. */
   getUsersByQuoteBusinessRole: (role: "presale" | "sale"): Promise<ApiResponse<QuoteBusinessRoleUser[]>> => {
     return requestJson(`${BASE}/users/by-quote-business-role?role=${encodeURIComponent(role)}`);
+  },
+  /** Admin-ONLY: sửa hồ sơ 1 tài khoản đã tồn tại (đổi email, họ tên, gán/gỡ
+   * Member liên kết) — giống nút "Sửa" của pm-new. `member_id: null` = gỡ
+   * liên kết hẳn; bỏ field này ra khỏi payload = không đụng tới liên kết. */
+  updateAccountProfile: (
+    email: string,
+    updates: { new_email?: string; full_name?: string; member_id?: string | null }
+  ): Promise<ApiResponse<AppUserProfile>> => {
+    return requestJson(`${BASE}/users/update-profile-admin`, {
+      method: "POST",
+      body: JSON.stringify({ email, ...updates }),
+    });
+  },
+  /** Admin-ONLY: xóa HẲN 1 tài khoản đăng nhập (Member liên kết không bị xóa,
+   * chỉ tự gỡ liên kết) — giống nút "Xóa" của pm-new. */
+  deleteAccount: (email: string): Promise<ApiResponse<null>> => {
+    return requestJson(`${BASE}/users/delete-admin`, {
+      method: "POST",
+      body: JSON.stringify({ email }),
+    });
+  },
+  /** Admin-ONLY: gán Nhóm quyền/Team CRM/Phạm vi dữ liệu/override quyền
+   * riêng/trạng thái CRM (migration 155) — drawer "Chỉnh quyền user" ở tab
+   * Tài khoản CRM. Field nào không truyền thì giữ nguyên giá trị cũ. */
+  updateCrmPermission: (
+    email: string,
+    updates: {
+      permission_group_id?: string | null;
+      crm_team_id?: string | null;
+      data_scope?: CrmDataScope | null;
+      permission_override?: boolean;
+      permission_overrides?: CrmModuleKey[];
+      crm_status?: "active" | "pending_review" | "locked";
+      crm_note?: string | null;
+    }
+  ): Promise<ApiResponse<AppUserProfile>> => {
+    return requestJson(`${BASE}/users/update-crm-permission`, {
+      method: "POST",
+      body: JSON.stringify({ email, ...updates }),
+    });
+  },
+};
+
+/** "Nhóm quyền" (CRM permission group/template) - tab mới trong
+ * `/all-platform/admin/quan-ly-thanh-vien`. Xem migration
+ * 155_crm_permission_groups_and_teams.sql. */
+export const crmPermissionGroupsService = {
+  list: (status?: string): Promise<ApiResponse<CrmPermissionGroup[]>> => {
+    const qs = status ? `?status=${encodeURIComponent(status)}` : "";
+    return requestJson(`${BASE}/crm/permission-groups${qs}`);
+  },
+  get: (groupId: string): Promise<ApiResponse<CrmPermissionGroup>> => {
+    return requestJson(`${BASE}/crm/permission-groups/${groupId}`);
+  },
+  listUsers: (groupId: string): Promise<ApiResponse<AppUserProfile[]>> => {
+    return requestJson(`${BASE}/crm/permission-groups/${groupId}/users`);
+  },
+  create: (payload: Partial<CrmPermissionGroup>): Promise<ApiResponse<CrmPermissionGroup>> => {
+    return requestJson(`${BASE}/crm/permission-groups`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+  update: (groupId: string, payload: Partial<CrmPermissionGroup>): Promise<ApiResponse<CrmPermissionGroup>> => {
+    return requestJson(`${BASE}/crm/permission-groups/${groupId}`, {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    });
+  },
+  clone: (groupId: string): Promise<ApiResponse<CrmPermissionGroup>> => {
+    return requestJson(`${BASE}/crm/permission-groups/${groupId}/clone`, { method: "POST" });
+  },
+  delete: (groupId: string): Promise<ApiResponse<{ deleted: number }>> => {
+    return requestJson(`${BASE}/crm/permission-groups/${groupId}`, { method: "DELETE" });
+  },
+};
+
+/** "Team CRM" (KHÁC HẲN bảng `teams`/`team_type` KPI nội bộ) - trang
+ * `/all-platform/crm/sale-teams`. Xem migration
+ * 155_crm_permission_groups_and_teams.sql. */
+export const crmTeamsService = {
+  list: (params?: { segment?: string; function_area?: string; search?: string }): Promise<ApiResponse<CrmTeam[]>> => {
+    const qs = new URLSearchParams();
+    if (params?.segment) qs.set("segment", params.segment);
+    if (params?.function_area) qs.set("function_area", params.function_area);
+    if (params?.search) qs.set("search", params.search);
+    const suffix = qs.toString() ? `?${qs.toString()}` : "";
+    return requestJson(`${BASE}/crm/teams${suffix}`);
+  },
+  get: (teamId: string): Promise<ApiResponse<CrmTeam>> => {
+    return requestJson(`${BASE}/crm/teams/${teamId}`);
+  },
+  /** Team CRM hiện tại của 1 user (null nếu chưa thuộc Team nào) - dùng cho
+   * drawer "Chỉnh quyền user" hiển thị đúng Team đang chọn. */
+  getTeamIdForUser: (userId: string): Promise<ApiResponse<{ crm_team_id: string | null }>> => {
+    return requestJson(`${BASE}/crm/teams/member-of/${userId}`);
+  },
+  suggestCode: (leaderName: string): Promise<ApiResponse<{ code: string }>> => {
+    return requestJson(`${BASE}/crm/teams/suggest-code?leader_name=${encodeURIComponent(leaderName)}`);
+  },
+  create: (payload: Partial<CrmTeam>): Promise<ApiResponse<CrmTeam>> => {
+    return requestJson(`${BASE}/crm/teams`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+  update: (teamId: string, payload: Partial<CrmTeam>): Promise<ApiResponse<CrmTeam>> => {
+    return requestJson(`${BASE}/crm/teams/${teamId}`, {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    });
+  },
+  delete: (teamId: string): Promise<ApiResponse<{ deleted: number }>> => {
+    return requestJson(`${BASE}/crm/teams/${teamId}`, { method: "DELETE" });
+  },
+  addMember: (teamId: string, userId: string): Promise<ApiResponse<unknown>> => {
+    return requestJson(`${BASE}/crm/teams/${teamId}/members`, {
+      method: "POST",
+      body: JSON.stringify({ user_id: userId }),
+    });
+  },
+  removeMember: (teamId: string, userId: string): Promise<ApiResponse<{ deleted: number }>> => {
+    return requestJson(`${BASE}/crm/teams/${teamId}/members/${userId}`, { method: "DELETE" });
   },
 };
 

@@ -352,6 +352,61 @@ export function StageTransitionModal({
               <span>{targetMeta.description}</span>
             </div>
 
+            {/* ─────────── Tài liệu đã đính kèm ───────────
+                Vấn đề 2 (Note vấn đề CRM, 2026-09): stage này (VD "Đàm phán")
+                không bắt đính kèm mới, nhưng file/link đã gắn từ trước (Phase 1
+                mua, Phase 2 bán, hoặc file cũ upload lúc requirement/proposal)
+                vẫn còn nguyên trong DB — hiển thị lại ở đây để sale KHÔNG hiểu
+                nhầm là bị mất khi chuyển stage. */}
+            {(() => {
+              const purchaseLinks = (customer.purchase_contract_links ?? []).filter((l) => l?.url);
+              const saleLinks = (customer.sale_contract_links ?? []).filter((l) => l?.url);
+              const hasLegacy = !purchaseLinks.length && !saleLinks.length && !!customer.last_attachment_url;
+              if (!purchaseLinks.length && !saleLinks.length && !hasLegacy) return null;
+              return (
+                <div className="rounded-md border border-slate-200 bg-slate-50 p-3">
+                  <p className="mb-1.5 flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                    <Paperclip className="size-3" /> Tài liệu đã đính kèm — vẫn giữ nguyên khi chuyển stage
+                  </p>
+                  <div className="space-y-1 text-xs">
+                    {purchaseLinks.map((l, i) => (
+                      <a
+                        key={`purchase-${i}`}
+                        href={l.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="flex items-center gap-1 text-blue-700 hover:underline"
+                      >
+                        <ExternalLink className="size-3 shrink-0" /> [Mua] {l.name || l.url}
+                      </a>
+                    ))}
+                    {saleLinks.map((l, i) => (
+                      <a
+                        key={`sale-${i}`}
+                        href={l.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="flex items-center gap-1 text-blue-700 hover:underline"
+                      >
+                        <ExternalLink className="size-3 shrink-0" /> [Bán] {l.name || l.url}
+                      </a>
+                    ))}
+                    {hasLegacy && (
+                      <a
+                        href={customer.last_attachment_url!}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="flex items-center gap-1 text-blue-700 hover:underline"
+                      >
+                        <ExternalLink className="size-3 shrink-0" />{" "}
+                        {customer.last_attachment_name || customer.last_attachment_url}
+                      </a>
+                    )}
+                  </div>
+                </div>
+              );
+            })()}
+
             {/* ─────────── LOST: chọn lý do + ghi chú ─────────── */}
             {toStage === "lost" && (
               <>

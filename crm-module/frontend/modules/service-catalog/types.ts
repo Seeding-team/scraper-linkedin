@@ -12,6 +12,21 @@ export interface BundleComponentLine {
   computedQuantity: number;
   displayText: string;
   unitPriceVnd: number;
+  monthlyPriceVnd?: number | null;
+  annualCommitMonthlyPriceVnd?: number | null;
+  defaultCostPriceVnd?: number | null;
+  defaultMarkupPercent?: number | null;
+  defaultCustomerPriceVnd?: number | null;
+  quota?: string | null;
+  customerDisplayName?: string | null;
+  crmNote?: string | null;
+  quotaPoolKey?: string | null;
+  quotaPoolName?: string | null;
+  quotaPoolQuota?: string | null;
+  quotaPoolLimit?: number | null;
+  required?: boolean;
+  overagePolicy?: string | null;
+  showOnQuote?: boolean;
   sortOrder: number;
   /** Bo gia MAC DINH rieng (migration 107, service_catalog_item_pricing) -
    * TACH BIET unitPriceVnd (Gia BAN). defaultCostPriceVnd/defaultMarkupPercent
@@ -42,7 +57,27 @@ export interface ServiceCatalogItem {
   exchangeRateSnapshot?: number;
   defaultUnitPriceVnd: number;
   defaultDiscountPercent: number;
-  defaultVatRate: number;
+  defaultVatRate: number | null;
+  customerVisible: boolean;
+  quoteDisplayName?: string | null;
+  quoteDescription?: string | null;
+  quoteCta?: string | null;
+  monthlyPriceVnd?: number | null;
+  annualCommitMonthlyPriceVnd?: number | null;
+  annualTotalPriceVnd?: number | null;
+  maxSaleDiscountPercent?: number | null;
+  targetGrossMarginPercent?: number | null;
+  costBasisRule?: string | null;
+  pricingPolicyExceptions?: Array<Record<string, unknown>>;
+  quotaUserCount?: number | null;
+  quotaUserLabel?: string | null;
+  quotaConnectedChannels?: number | null;
+  quotaConnectedChannelsLabel?: string | null;
+  quotaMessagesPerMonth?: number | null;
+  quotaMessagesPerMonthLabel?: string | null;
+  quotaAiData?: string | null;
+  quotaHighlights?: string | null;
+  quotaExtra?: Record<string, unknown>;
   specQuantityPerUnit: number;
   specUnitLabel?: string;
   note?: string;
@@ -112,7 +147,27 @@ export interface ServiceCatalogItemInput {
   exchangeRateSnapshot?: number;
   defaultUnitPriceVnd?: number;
   defaultDiscountPercent?: number;
-  defaultVatRate?: number;
+  defaultVatRate?: number | null;
+  customerVisible?: boolean;
+  quoteDisplayName?: string | null;
+  quoteDescription?: string | null;
+  quoteCta?: string | null;
+  monthlyPriceVnd?: number | null;
+  annualCommitMonthlyPriceVnd?: number | null;
+  annualTotalPriceVnd?: number | null;
+  maxSaleDiscountPercent?: number | null;
+  targetGrossMarginPercent?: number | null;
+  costBasisRule?: string | null;
+  pricingPolicyExceptions?: Array<Record<string, unknown>>;
+  quotaUserCount?: number | null;
+  quotaUserLabel?: string | null;
+  quotaConnectedChannels?: number | null;
+  quotaConnectedChannelsLabel?: string | null;
+  quotaMessagesPerMonth?: number | null;
+  quotaMessagesPerMonthLabel?: string | null;
+  quotaAiData?: string | null;
+  quotaHighlights?: string | null;
+  quotaExtra?: Record<string, unknown>;
   specQuantityPerUnit?: number;
   specUnitLabel?: string;
   note?: string;
@@ -142,6 +197,16 @@ export interface ServiceCatalogItemInput {
 export interface BundleComponentInput {
   componentId: string;
   quantity: number;
+  quota?: string | null;
+  customerDisplayName?: string | null;
+  crmNote?: string | null;
+  quotaPoolKey?: string | null;
+  quotaPoolName?: string | null;
+  quotaPoolQuota?: string | null;
+  quotaPoolLimit?: number | null;
+  required?: boolean;
+  overagePolicy?: string | null;
+  showOnQuote?: boolean;
   sortOrder: number;
 }
 

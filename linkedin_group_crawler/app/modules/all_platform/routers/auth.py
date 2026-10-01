@@ -38,9 +38,33 @@ from app.modules.all_platform.services import (
     reset_password_without_old,
     get_user_by_email,
     is_sale_member,
+    get_effective_permissions,
 )
 
 router = APIRouter()
+
+
+def _resolve_cookie_security(request: Request) -> tuple[bool, str]:
+    """Xác định secure/samesite cho cookie phiên theo scheme THẬT của request.
+
+    nginx-router terminate HTTPS rồi proxy HTTP thuần vào backend, nên
+    request.url.scheme ở đây LUÔN là "http" bất kể người dùng đang duyệt qua
+    HTTPS — phải đọc header X-Forwarded-Proto (nginx đã set) mới biết đúng.
+
+    HTTPS (production thật): Secure=True + SameSite=None — BẮT BUỘC để cookie
+    còn được gửi trong request CROSS-SITE (vd frontend ở domain khác như
+    seeding.markee.vn gọi API domain seeding.markeeai.com — lỗi 401 thật đã
+    xác nhận: cookie SameSite=Lax cũ bị trình duyệt chặn không gửi trên
+    request cross-site, dù đã đăng nhập thành công và CORS đã cho phép).
+
+    HTTP (local dev, không qua proxy HTTPS): giữ Secure=False + SameSite=Lax
+    như cũ — trình duyệt TỪ CHỐI cookie Secure trên kết nối HTTP thuần, đổi
+    ngay sẽ làm mất đăng nhập trên dev local.
+    """
+    proto = (request.headers.get("x-forwarded-proto") or request.url.scheme or "").split(",")[0].strip().lower()
+    if proto == "https":
+        return True, "none"
+    return False, "lax"
 
 
 def _get_user_from_header(authorization: str | None, request: Request | None = None) -> dict:
@@ -70,7 +94,7 @@ def _get_user_from_header(authorization: str | None, request: Request | None = N
 
 
 @router.post("/register")
-def auth_register(payload: RegisterRequest, response: Response) -> BaseResponse:
+def auth_register(payload: RegisterRequest, response: Response, request: Request) -> BaseResponse:
     """Register a new app user account.
 
     Sets an HttpOnly cookie for 5 days so the browser keeps the session without
@@ -84,12 +108,13 @@ def auth_register(payload: RegisterRequest, response: Response) -> BaseResponse:
         )
         token = (data or {}).get("access_token")
         if token:
+            cookie_secure, cookie_samesite = _resolve_cookie_security(request)
             response.set_cookie(
                 key="crawlpro_access_token",
                 value=token,
                 httponly=True,
-                secure=False,
-                samesite="lax",
+                secure=cookie_secure,
+                samesite=cookie_samesite,
                 max_age=5 * 24 * 60 * 60,
                 path="/",
             )
@@ -101,7 +126,7 @@ def auth_register(payload: RegisterRequest, response: Response) -> BaseResponse:
 
 
 @router.post("/login")
-def auth_login(payload: LoginRequest, response: Response) -> BaseResponse:
+def auth_login(payload: LoginRequest, response: Response, request: Request) -> BaseResponse:
     """Login with email and password.
 
     Sets an HttpOnly cookie for 5 days so the browser keeps the session without
@@ -111,12 +136,13 @@ def auth_login(payload: LoginRequest, response: Response) -> BaseResponse:
         data = login_user(email=payload.email, password=payload.password)
         token = (data or {}).get("access_token")
         if token:
+            cookie_secure, cookie_samesite = _resolve_cookie_security(request)
             response.set_cookie(
                 key="crawlpro_access_token",
                 value=token,
                 httponly=True,
-                secure=False,
-                samesite="lax",
+                secure=cookie_secure,
+                samesite=cookie_samesite,
                 max_age=5 * 24 * 60 * 60,
                 path="/",
             )
@@ -128,7 +154,7 @@ def auth_login(payload: LoginRequest, response: Response) -> BaseResponse:
 
 
 @router.post("/google")
-def auth_google_login(payload: GoogleLoginRequest, response: Response) -> BaseResponse:
+def auth_google_login(payload: GoogleLoginRequest, response: Response, request: Request) -> BaseResponse:
     """Login via Google Sign-In (ID token from Google Identity Services).
 
     Mirrors /login exactly on success — same cookie, same response shape — so
@@ -139,12 +165,13 @@ def auth_google_login(payload: GoogleLoginRequest, response: Response) -> BaseRe
         data = login_with_google(payload.credential)
         token = (data or {}).get("access_token")
         if token:
+            cookie_secure, cookie_samesite = _resolve_cookie_security(request)
             response.set_cookie(
                 key="crawlpro_access_token",
                 value=token,
                 httponly=True,
-                secure=False,
-                samesite="lax",
+                secure=cookie_secure,
+                samesite=cookie_samesite,
                 max_age=5 * 24 * 60 * 60,
                 path="/",
             )
@@ -199,6 +226,12 @@ def auth_me(request: Request, authorization: str | None = Header(None)) -> BaseR
             authz = f"Bearer {cookie_token}"
 
         user = _get_user_from_header(authz)
+        # "Nhom quyen" (migration 155, OPT-IN theo tung user): modules=None
+        # (user CHUA duoc gan Nhom quyen) -> FE hieu la "khong gioi han them"
+        # (giu nguyen sidebar day du nhu hien tai). Chi khi co gia tri that
+        # (list, co the rong) FE moi an bot muc nav theo dung module.
+        effective = get_effective_permissions(user)
+        effective_modules = sorted(effective["modules"]) if effective["modules"] is not None else None
         return BaseResponse(success=True, data={
             "id": user.get("id"),
             "email": user.get("email"),
@@ -209,6 +242,7 @@ def auth_me(request: Request, authorization: str | None = Header(None)) -> BaseR
             "is_sale": is_sale_member(user.get("id")),
             "can_approve_quotes": bool(user.get("can_approve_quotes")),
             "quote_business_role": user.get("quote_business_role"),
+            "effective_modules": effective_modules,
         })
     except HTTPException as e:
         return BaseResponse(success=False, message=e.detail)

@@ -4,6 +4,7 @@ import { useRef, useState } from 'react';
 import { paymentPlanAmount, paymentPlanPercent, visiblePaymentPlan } from '../utils/paymentPlan';
 import type {
   CustomBlock,
+  BundleSnapshotComponent,
   QuoteData,
   QuoteField,
   QuoteItem,
@@ -17,6 +18,7 @@ import {
   calculateItemTotal,
   calculateItemVat,
   calculateOverallDiscountSummary,
+  calculateSectionTotal,
   formatVnd as formatVndRaw,
 } from '../utils/quoteCalculations';
 
@@ -28,10 +30,14 @@ import {
 function formatVnd(value: unknown): string {
   return formatVndRaw(value).replace(/\s*đ$/, '');
 }
-import { resolveQuoteItemColumns, resolveToggleableColumns } from '../utils/quoteColumns';
+import { filterRedundantAmountAfterDiscountColumn, normalizeQuoteColumnLabel, resolveDefaultVisibleColumnKeys, resolveQuoteItemColumns, resolveToggleableColumns } from '../utils/quoteColumns';
+import {
+  getCustomerDisplayFields,
+  resolveVisibleCustomerFieldKeys,
+} from '../utils/quoteCustomerFields';
 import { resolveVisibleSummaryFieldKeys } from '../utils/quoteSummaryFields';
 
-interface Totals {
+export interface Totals {
   subtotalAmount: number;
   /** Tiền giảm giá (đã tính sẵn = subtotalAmount * discountPercent / 100) - optional
    * để không phá các nơi gọi cũ (villa layout, quote đã lưu trước khi có tính năng
@@ -74,6 +80,38 @@ interface Props {
    * totals truyen vao (totals van la so goc, phep tinh chiet khau chi xay ra o
    * tang hien thi trong component nay). */
   overallDiscountPercent?: number | null;
+  /** Bật khi renderer đang hiển thị với toolbar "chỉnh xoay ngang/dọc, căn
+   * chỉnh cột" luôn hiện sẵn (PublicQuotePage/QuoteDetailPage/QuoteWorkspaceModal)
+   * - cho phép kéo giãn cột NGAY CẢ ở mode 'public' (khách/PDF), không chỉ
+   * 'preview'/'detail' như mặc định (xem allowColumnResize), VÀ mang độ rộng đã
+   * kéo vào bản in thật (mặc định resize chỉ là tiện ích xem màn hình, xem
+   * resizedColumnWidths + rule --col-print-w trong quotes.css). */
+  printPreviewMode?: boolean;
+  /** Hướng giấy khi in - mặc định 'portrait' (giữ nguyên yêu cầu cũ "luôn A4
+   * dọc, không tự đổi hướng"). Người dùng chọn 'landscape' ở màn Xem trước khi
+   * in (xem usesLandscapePrint bên dưới - trước đây luôn hardcode false). */
+  printOrientation?: 'portrait' | 'landscape';
+  /** Do rong cot da LUU truoc do (quoteData.printLayoutPrefs.columnWidths,
+   * nut "Lưu" tren QuoteDetailPage) - dung lam gia tri KHOI TAO cho
+   * resizedColumnWidths thay vi luon bat dau lai tu null (mac dinh %) moi
+   * lan mo trang. Chi doc 1 LAN luc mount (component nay khong tu dong
+   * "nhay" lai theo prop thay doi sau do - doi voi cha muon reset ve gia tri
+   * moi thi remount qua `key`, giong het co che printResetKey da co). */
+  initialColumnWidths?: Record<string, number> | null;
+  /** Bao cho noi goi biet resizedColumnWidths vua doi (moi lan keo xong 1
+   * cot, tren mouseup) - dung de cha giu ban nhap moi nhat, phuc vu nut
+   * "Lưu" (persist xuong DB) tren QuoteDetailPage. KHONG tu goi luc mount
+   * neu chua ai resize. */
+  onColumnWidthsChange?: (widths: Record<string, number>) => void;
+  /** "Người liên hệ" trong khối "Người phụ trách" PHẢI là Sale đang được gán
+   * (quote.quoteOwnerId), KHÔNG dùng field tự do sellerContactName nữa (field
+   * đó có defaultValue cứng "Lan Anh" - đúng bug "tên mặc định" người dùng
+   * báo). Truyền tên Sale ĐÃ RESOLVE (display name thật) từ nơi gọi - canonical
+   * renderer này không tự query user, chỉ hiển thị đúng theo props để mọi nơi
+   * gọi (preview draft/detail/public/PDF) đều đi qua CÙNG 1 cơ chế, không tự
+   * suy luận riêng. undefined/null = quote thật sự chưa có Sale -> fallback
+   * về fieldValue('sellerContactName') cũ (field tự do/default). */
+  contactPersonName?: string | null;
 }
 
 function emptySchema(): QuoteSchema {
@@ -162,6 +200,19 @@ function splitLegacyServiceText(raw: unknown): { name: string; rest: string } {
   return { name: match[1].trim(), rest: match[2].trim() };
 }
 
+/** Field nhan dien ben ban duoc snapshot tu Don vi phat hanh (xem
+ * applyIssuerCompanySnapshot trong crm/integrations/quotes/types.ts). */
+const ISSUER_SNAPSHOT_FIELD_KEYS = new Set([
+  'sellerCompanyName',
+  'sellerBrandName',
+  'sellerTaxCode',
+  'sellerAddress',
+  'sellerPhone',
+  'sellerEmail',
+  'sellerWebsite',
+  'sellerLogo',
+]);
+
 const COMPACT_BLOCK_CHAR_LIMIT = 500; // uoc luong noi dung con vua 1 trang A4
 const COMPACT_BLOCK_LINE_LIMIT = 8;   // 500 ky tu nhung xuong dong nhieu van co the rat dai
 
@@ -205,6 +256,97 @@ function formatDescriptionLines(raw: unknown): string[] {
     .filter(Boolean);
 }
 
+const MONEY_COLUMN_KEYS = [
+  'unitPrice',
+  'subtotal',
+  'vatAmount',
+  'total',
+  'amountAfterDiscount',
+  'listPriceUsd',
+  'unitPriceUsd',
+  'unitPriceVnd',
+  // "Giảm giá/Tiết kiệm" (Mẫu ưu đãi combo Markee, xem quoteConfig.ts
+  // promoBundleColumns) - BUG THAT DA GAP: thieu key nay trong danh sach nen
+  // khong duoc white-space:nowrap, chu bi be doc tung ky tu khi cot qua hep
+  // (bang nhieu cot, xem them fix o minWidth ben duoi).
+  'discountAmount',
+];
+
+/** Cot so NGAN (SL/VAT%/Giam gia%) - yeu cau rieng "chữ Số lượng bị rớt chữ
+ * g xuống" (kem anh chup ban in that): cac cot nay TRUOC DAY khong co class
+ * rieng, roi vao nhom "con lai chia deu" cung voi 2 cot tien it hon ~5-7%,
+ * qua hep cho tieu de "SỐ LƯỢNG"/"THUẾ VAT" nen bi ngat GIUA tu (vd
+ * "LƯỢN"+"G" tach roi 2 dong) thay vi ngat dung o khoang trang. Dat rieng
+ * class de co the danh mot % vua du (xem .num-cell trong quotes.css). */
+const SHORT_NUMBER_COLUMN_KEYS = ['quantity', 'vatRate', 'discountPercent'];
+
+function bundleSnapshotComponents(item: QuoteItem): BundleSnapshotComponent[] {
+  const snapshot = item.bundleSnapshot as unknown;
+  if (Array.isArray(snapshot)) return snapshot as BundleSnapshotComponent[];
+  if (snapshot && typeof snapshot === 'object' && Array.isArray((snapshot as { components?: unknown }).components)) {
+    return (snapshot as { components: BundleSnapshotComponent[] }).components;
+  }
+  return [];
+}
+
+function appendQuota(label: string, quota?: string | null): string {
+  const cleanQuota = String(quota || '').trim();
+  if (!cleanQuota) return label;
+  if (label.toLowerCase().includes(cleanQuota.toLowerCase())) return label;
+  return `${label} — ${cleanQuota}`;
+}
+
+function bundleComponentToDisplayItem(component: BundleSnapshotComponent, suffix: string): QuoteItem {
+  const label = component.customerDisplayName || component.name || component.displayText || 'Hạng mục';
+  const serviceDescription = appendQuota(label, component.quota);
+  return {
+    id: `bundle-component-${component.componentId}-${suffix}`,
+    rowType: 'item',
+    serviceDescription,
+    description: component.description || '',
+    unit: component.unit || '',
+    quantity: component.computedQuantity || component.quantity || 1,
+    unitPrice: component.unitPriceVnd || 0,
+    discountPercent: 0,
+    vatRate: 0,
+    __bundleComponent: true,
+  };
+}
+
+function bundleComponentsToDisplayItems(item: QuoteItem): QuoteItem[] {
+  const components = bundleSnapshotComponents(item)
+    .filter(component => component.showOnQuote !== false)
+    .sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
+  const renderedPoolKeys = new Set<string>();
+  const rows: QuoteItem[] = [];
+
+  components.forEach((component, index) => {
+    const poolKey = component.quotaPoolKey?.trim();
+    if (poolKey) {
+      if (renderedPoolKeys.has(poolKey)) return;
+      renderedPoolKeys.add(poolKey);
+      const technicalPoolName = component.quotaPoolName || '';
+      const name = component.customerDisplayName || (technicalPoolName.toLowerCase() === 'channel quota' ? 'Kênh kết nối' : technicalPoolName) || component.name || 'Kênh kết nối';
+      rows.push({
+        id: `bundle-pool-${poolKey}-${index}`,
+        rowType: 'item',
+        serviceDescription: appendQuota(name, component.quotaPoolQuota || component.quota),
+        description: '',
+        unit: '',
+        quantity: 1,
+        unitPrice: component.unitPriceVnd || 0,
+        discountPercent: 0,
+        vatRate: 0,
+        __bundleComponent: true,
+      });
+      return;
+    }
+    rows.push(bundleComponentToDisplayItem(component, String(index)));
+  });
+
+  return rows;
+}
+
 export function QuoteDocumentRenderer({
   schemaSnapshot,
   quoteData = {},
@@ -216,15 +358,34 @@ export function QuoteDocumentRenderer({
   isPublished = false,
   quoteNumber,
   overallDiscountPercent = null,
+  printPreviewMode = false,
+  printOrientation = 'portrait',
+  initialColumnWidths = null,
+  onColumnWidthsChange,
+  contactPersonName,
 }: Props) {
   // Resize cot bang hang muc kieu Excel - CHI cho man hinh xem truoc/chi tiet
   // noi bo (mode 'preview'/'detail', xem allowColumnResize ben duoi), KHONG
   // anh huong ban in/PDF (@media print da ep width qua !important nen inline
   // style o day luon bi ghi de luc in, xem quotes.css) va KHONG hien cho
-  // khach (mode 'public'). null = chua ai resize, dung CSS mac dinh (%).
-  const [resizedColumnWidths, setResizedColumnWidths] = useState<Record<string, number> | null>(null);
+  // khach (mode 'public'). null = chua ai resize, dung CSS mac dinh (%) - tru
+  // khi da co initialColumnWidths luu tu truoc (nut "Lưu").
+  const [resizedColumnWidths, setResizedColumnWidths] = useState<Record<string, number> | null>(
+    initialColumnWidths && Object.keys(initialColumnWidths).length ? initialColumnWidths : null
+  );
   const headerRowRef = useRef<HTMLTableRowElement | null>(null);
   const resizeDragRef = useRef<{ key: string; startX: number; startWidth: number } | null>(null);
+  // BUG THAT DA GAP (React canh bao "Cannot update a component while
+  // rendering a different component"): handleMouseUp truoc day goi
+  // onColumnWidthsChange(current) (cap nhat STATE CUA COMPONENT CHA -
+  // PublicQuotePage/QuoteDetailPage) NGAY BEN TRONG callback updater cua
+  // chinh setResizedColumnWidths o day - vi pham nguyen tac updater phai
+  // THUAN (khong side-effect/khong goi setState khac). Sua: giu 1 ref luon
+  // dong bo VOI GIA TRI MOI NHAT cua resizedColumnWidths (cap nhat cung luc
+  // voi moi lan setResizedColumnWidths, khong doi re-render), roi
+  // handleMouseUp chi DOC thang tu ref nay va goi onColumnWidthsChange BEN
+  // NGOAI moi updater - khong con setState long nhau.
+  const latestWidthsRef = useRef<Record<string, number> | null>(resizedColumnWidths);
 
   const beginColumnResize = (columnKey: string, columns: QuoteField[]) => (event: React.MouseEvent) => {
     event.preventDefault();
@@ -240,6 +401,7 @@ export function QuoteDocumentRenderer({
         const th = ths[index] as HTMLElement | undefined;
         widths![column.key] = th ? Math.round(th.getBoundingClientRect().width) : 120;
       });
+      latestWidthsRef.current = widths;
       setResizedColumnWidths(widths);
     }
     resizeDragRef.current = {
@@ -251,12 +413,20 @@ export function QuoteDocumentRenderer({
       const drag = resizeDragRef.current;
       if (!drag) return;
       const nextWidth = Math.max(40, drag.startWidth + (moveEvent.clientX - drag.startX));
-      setResizedColumnWidths(prev => ({ ...(prev || {}), [drag.key]: nextWidth }));
+      const next = { ...(latestWidthsRef.current || {}), [drag.key]: nextWidth };
+      latestWidthsRef.current = next;
+      setResizedColumnWidths(next);
     };
     const handleMouseUp = () => {
       resizeDragRef.current = null;
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
+      // Bao cho cha biet ban nhap moi nhat NGAY khi tha chuot - doc thang tu
+      // ref (luon la gia tri MOI NHAT, khong bi closure cu) THAY VI long ben
+      // trong updater cua setResizedColumnWidths nhu truoc.
+      if (onColumnWidthsChange && latestWidthsRef.current) {
+        onColumnWidthsChange(latestWidthsRef.current);
+      }
     };
     window.addEventListener('mousemove', handleMouseMove);
     window.addEventListener('mouseup', handleMouseUp);
@@ -278,12 +448,41 @@ export function QuoteDocumentRenderer({
       visible: true,
       editable: true,
     };
+  // Email cong ty cu "hello@markeeai.com" (default field cu trong
+  // seed_quote_forms.py, da doi thanh admin@markee.vn - xem comment o script
+  // do) van con "ket cung" trong 2 noi KHONG the sua bang cach doi 1 dong
+  // script: (1) data.sellerEmail cua CAC BAO GIA DA TAO TRUOC DAY (snapshot
+  // luc tao, khong duoc ghi de hang loat theo nguyen tac K), (2) defaultValue
+  // luu san trong CAC quote_form_schema DA TON TAI (script seed chi anh huong
+  // lan seed MOI, khong tu doi row schema cu trong DB). Loc o dung 1 diem
+  // fieldValue() (moi cho goi qua header/footer/villa deu di qua day) de AN
+  // gia tri legacy nay khoi hien thi cho MOI bao gia (cu lan moi), khong xoa/
+  // ghi de du lieu that nao ca - thuan tuy derived/display filter, dung tinh
+  // than "K" (thay doi trinh bay ap dung tu dong cho bao gia cu).
+  const LEGACY_HIDDEN_FIELD_VALUES: Record<string, string[]> = {
+    sellerEmail: ['hello@markeeai.com'],
+  };
+  // Bao gia da snapshot Don vi phat hanh (issuerSnapshotCompanyId) - cac field
+  // nhan dien ben ban CHI lay dung snapshot cua issuer do, KHONG roi ve
+  // defaultValue cua mau bao gia khi issuer de trong (feedback 2026-09-23:
+  // doi issuer nhung logo/dia chi van cua issuer cu, vi mau luu default cua
+  // 1 cong ty khac). Moi version giu snapshot rieng trong data cua chinh no.
+  const hasIssuerSnapshot = Boolean(quoteData.issuerSnapshotCompanyId);
   const fieldValue = (key: string) => {
     const value = quoteData[key];
-    if (value !== undefined && value !== null && value !== '') return value;
-    return findField(key).defaultValue || '';
+    if (hasIssuerSnapshot && ISSUER_SNAPSHOT_FIELD_KEYS.has(key)) {
+      return value !== undefined && value !== null ? value : '';
+    }
+    const resolved = value !== undefined && value !== null && value !== '' ? value : findField(key).defaultValue || '';
+    const hiddenValues = LEGACY_HIDDEN_FIELD_VALUES[key];
+    if (hiddenValues && typeof resolved === 'string' && hiddenValues.some(hidden => hidden.toLowerCase() === resolved.trim().toLowerCase())) {
+      return '';
+    }
+    return resolved;
   };
   const renderCell = (item: QuoteItem, column: QuoteField, index: number) => {
+    if (item.__bundleComponent && column.key === 'discountPercent') return '';
+    if (item.__bundleComponent && column.key === 'vatRate') return '';
     if (column.type === 'auto-number' || column.key === 'order') return String(index + 1);
     if (column.key === 'subtotal') return formatVnd(calculateItemSubtotal(item));
     if (column.key === 'vatAmount') return formatVnd(calculateItemVat(item));
@@ -305,6 +504,13 @@ export function QuoteDocumentRenderer({
     if (column.key === 'quantity') return String(item.quantity || '');
     if (column.key === 'discountPercent') return item.discountPercent ? `${item.discountPercent}%` : '';
     if (column.key === 'amountAfterDiscount') return formatVnd(calculateItemAfterDiscount(item));
+    // "Giảm giá/Tiết kiệm" (so tien, KHAC voi 'discountPercent' o tren chi
+    // hien %) - dung cho mau "Mẫu ưu đãi combo (Markee)" (xem promoBundleColumns
+    // trong quoteConfig.ts).
+    if (column.key === 'discountAmount') {
+      const discount = calculateItemDiscount(item);
+      return discount ? `-${formatVnd(discount)}` : formatVnd(0);
+    }
     if (column.key === 'vatRate') return item.vatRate ? `${item.vatRate}%` : '';
     // "Mô tả" luôn qua tách dòng theo "•" (kể cả du lieu moi da co serviceDescription
     // rieng) - phai xu ly TRUOC fallback chung ben duoi, khong thi item.description
@@ -375,19 +581,19 @@ export function QuoteDocumentRenderer({
     return String(value ?? '');
   };
 
-  const customerRows = findSection('customer')
-    .fields.filter(field => field.visible !== false)
+  const customerDisplayFields = getCustomerDisplayFields(schema);
+  const visibleCustomerFieldKeys = new Set(resolveVisibleCustomerFieldKeys(schema, quoteData.visibleCustomerFields));
+  const customerRows = customerDisplayFields
+    .filter(field => visibleCustomerFieldKeys.has(field.key))
     .map(field => ({
       key: field.key,
       label: field.label,
-      value: textValue(fieldValue(field.key)),
-      placeholder: `[${field.label}]`,
+      value: textValue(
+        field.key === 'customerRecipient'
+          ? fieldValue('customerRecipient') || fieldValue('customerContactName') || fieldValue('customerCompanyName')
+          : fieldValue(field.key)
+      ),
     }));
-  const validUntil = textValue(fieldValue('offerExpiryDate'))
-    ? formatDateVN(fieldValue('offerExpiryDate'))
-    : textValue(fieldValue('validityDays'))
-      ? `${textValue(fieldValue('validityDays'))} ngày kể từ ngày báo giá`
-      : '';
   const insightRows = [
     ['customerNeed', 'Nhu cầu khách hàng'],
     ['customerRequirement', 'Yêu cầu chính'],
@@ -445,31 +651,51 @@ export function QuoteDocumentRenderer({
   // hang can thay) - chi hien khi admin CHU DONG tick chung vao "Cột hiển
   // thị" (customerVisibleColumns thuc su chua key do).
   const DEFAULT_HIDDEN_FROM_CUSTOMER_KEYS = ['listPriceUsd', 'unitPriceUsd', 'unitPriceVnd'];
-  const finalColumns = applyCustomerColumnFilter
-    ? customerVisibleColumns
-      ? standardColumns.filter(
-          column => !TOGGLEABLE_COLUMN_KEYS.includes(column.key) || customerVisibleColumns.includes(column.key)
-        )
-      : standardColumns.filter(column => !DEFAULT_HIDDEN_FROM_CUSTOMER_KEYS.includes(column.key))
-    : standardColumns;
-  // Resize cot kieu Excel chi bat o man hinh noi bo (nguoi TAO/xem chi tiet
-  // bao gia) - khong bat cho 'public' (khach nhan bao gia khong can/khong nen
-  // co UI keo cot) va khong lien quan ban in (ban in doc theo @media print,
-  // khong doc prop mode nay).
-  const allowColumnResize = mode === 'preview' || mode === 'detail';
-  // Bang qua nhieu cot (vd mau "chuan" 9 cot: STT/Ten dich vu/Mo ta/DVT/So
-  // luong/Don gia/Giam gia/VAT/Thanh tien) khong the nen vua khong gian A4 du
-  // da nong cot Mo ta/Ten dich vu - cac cot so con lai bi ep qua hep gay
-  // chong chit/tran mep (QA thuc te + nguoi dung bao cao qua screenshot man
-  // hinh XEM, khong chi ban in). Tu 7 cot tro len, chuyen sang A4 NGANG cho
-  // CA man hinh xem (class .quote-sheet--print-landscape trong quotes.css)
-  // LAN ban in/PDF (the <style> chen duoi day, KHONG dung CSS "named page" -
-  // xem giai thich trong quotes.css, muc @page - da xac nhan Chromium bi 1
-  // loi that lam mat noi dung cuoi tai lieu voi named page). Bang van la
-  // <table> that, chi chia lai % cot rong rai hon, khong doi sang dang the
-  // xep doc/thu nho.
-  const LANDSCAPE_PRINT_COLUMN_THRESHOLD = 7;
-  const usesLandscapePrint = finalColumns.length >= LANDSCAPE_PRINT_COLUMN_THRESHOLD;
+  // "Thành tiền trước VAT" (`subtotal`) - cot TRUNG LAP THAT SU voi cap
+  // "Thành tiền (Chưa VAT)" (amountAfterDiscount) + "Thành tiền (gồm VAT)"
+  // (total) da dung o ban khach. `subtotal` co type 'calculated' nen KHONG
+  // nam trong TOGGLEABLE_COLUMN_KEYS (xem resolveToggleableColumns loc bo
+  // type 'calculated') - dieu nay khien dieu kien loc customer o duoi
+  // (`!TOGGLEABLE_COLUMN_KEYS.includes(...)`) LUON danh gia true cho no, tuc
+  // no bi coi la cot "khong the tat", hien BAT KE quoteData.visibleColumns da
+  // luu gi. Loai HAN khoi ban khach o day (khac DEFAULT_HIDDEN_FROM_CUSTOMER_KEYS
+  // - key do CHI an khi CHUA tuy chinh gi, con day phai an TUYET DOI, ke ca
+  // bao gia cu lo luu 'subtotal' trong visibleColumns tu truoc). Van tinh
+  // toan noi bo (calculateItemSubtotal) binh thuong, chi bo o tang hien thi
+  // khach hang - khong dung mode='detail' (noi bo van thay du neu mau khai).
+  const ALWAYS_HIDDEN_FROM_CUSTOMER_KEYS = ['subtotal'];
+  const defaultVisibleCustomerColumnKeys = resolveDefaultVisibleColumnKeys(schema, quoteItems);
+  const finalColumns = filterRedundantAmountAfterDiscountColumn(
+    applyCustomerColumnFilter
+      ? (customerVisibleColumns
+          ? standardColumns.filter(
+              column => !TOGGLEABLE_COLUMN_KEYS.includes(column.key) || customerVisibleColumns.includes(column.key)
+            )
+          : standardColumns.filter(
+              column =>
+                (!TOGGLEABLE_COLUMN_KEYS.includes(column.key) || defaultVisibleCustomerColumnKeys.includes(column.key)) &&
+                !DEFAULT_HIDDEN_FROM_CUSTOMER_KEYS.includes(column.key)
+            )
+        ).filter(column => !ALWAYS_HIDDEN_FROM_CUSTOMER_KEYS.includes(column.key))
+      : standardColumns,
+    quoteItems
+  );
+  // Resize cot kieu Excel: mac dinh chi bat o man hinh noi bo (nguoi TAO/xem
+  // chi tiet bao gia), khong bat cho 'public' (khach nhan bao gia khong
+  // can/khong nen co UI keo cot) va khong lien quan ban in (ban in doc theo
+  // @media print, khong doc prop mode nay) - TRU KHI toolbar chinh in dang
+  // hien san (printPreviewMode=true, xem PublicQuotePage/QuoteDetailPage/
+  // QuoteWorkspaceModal.tsx), noi nguoi dung CHU DONG can keo cot va IN LUON tu do (ke ca ban 'public' gui
+  // khach), nen bat resize bat ke mode.
+  const allowColumnResize = printPreviewMode || mode === 'preview' || mode === 'detail';
+  // Kho giay khi in: mac dinh 'portrait' (A4 doc) theo yeu cau cu ("Khổ A4
+  // portrait... Không cố nhồi nhiều sản phẩm bằng cách làm chữ nhỏ... Nếu báo
+  // giá dài → tự động sang trang 2, 3" - tuc KHONG tu dong doi ngang/thu nho
+  // chu de nen). Yeu cau moi hon ("Xem truoc khi in" co the chon doc/ngang)
+  // cho phep NGUOI DUNG tu chon qua prop printOrientation thay vi component
+  // tu quyet dinh - portrait van la mac dinh khi khong truyen gi (giu dung
+  // hanh vi cu cho moi noi goi chua cap nhat).
+  const usesLandscapePrint = printOrientation === 'landscape';
   // Muc cha (Section)/hang muc con - migration 104. 1 dong goc rowType=
   // 'section' la TIEU DE NHOM thuan tuy (khong tinh tien) - hien rieng 1 hang
   // noi bat chiem het cac cot, DUNG so La Ma (I, II, III...) rieng, KHONG
@@ -483,15 +709,38 @@ export function QuoteDocumentRenderer({
   const displayedQuoteRows = quoteItems.flatMap(item => {
     if (item.rowType === 'section') {
       sectionCounter += 1;
-      const sectionRow = { item, number: toRomanNumeral(sectionCounter), isChild: false, isSection: true as const };
-      const childRows = (item.children || []).map(child => {
+      const sectionRow = {
+        item,
+        number: toRomanNumeral(sectionCounter),
+        isChild: false,
+        isSection: true as const,
+        // Tong tien section (B) - CHI cong truc tiep cac hang muc con (khong
+        // de quy sau hon), dung chung 1 ham voi Workspace - xem
+        // calculateSectionTotal trong quoteCalculations.ts.
+        sectionTotal: calculateSectionTotal(item.children || []),
+      };
+      const childRows = (item.children || []).flatMap(child => {
         itemCounter += 1;
-        return { item: child, number: String(itemCounter).padStart(2, '0'), isChild: true, isSection: false as const };
+        const childRow = { item: child, number: String(itemCounter).padStart(2, '0'), isChild: true, isSection: false as const };
+        const bundleRows = bundleComponentsToDisplayItems(child).map(componentItem => ({
+          item: componentItem,
+          number: '',
+          isChild: true,
+          isSection: false as const,
+        }));
+        return [childRow, ...bundleRows];
       });
       return [sectionRow, ...childRows];
     }
     itemCounter += 1;
-    return [{ item, number: String(itemCounter).padStart(2, '0'), isChild: false, isSection: false as const }];
+    const parentRow = { item, number: String(itemCounter).padStart(2, '0'), isChild: false, isSection: false as const };
+    const bundleRows = bundleComponentsToDisplayItems(item).map(componentItem => ({
+      item: componentItem,
+      number: '',
+      isChild: true,
+      isSection: false as const,
+    }));
+    return [parentRow, ...bundleRows];
   });
 
   if (layoutType === 'villa_solution_package') {
@@ -526,7 +775,7 @@ export function QuoteDocumentRenderer({
               <thead>
                 <tr>
                   {finalColumns.map(column => (
-                    <th key={column.key}>{column.label}</th>
+                    <th key={column.key}>{normalizeQuoteColumnLabel(column)}</th>
                   ))}
                 </tr>
               </thead>
@@ -639,7 +888,7 @@ export function QuoteDocumentRenderer({
             <div className="villa-footer-col">
               <h4>Liên hệ</h4>
               <p>Zalo: {String(fieldValue('sellerZalo'))}</p>
-              <p>Email: {String(fieldValue('sellerEmail'))}</p>
+              {fieldValue('sellerEmail') ? <p>Email: {String(fieldValue('sellerEmail'))}</p> : null}
             </div>
             <div className="villa-footer-col">
               <h4>Hiệu lực</h4>
@@ -665,41 +914,53 @@ export function QuoteDocumentRenderer({
           @page DUY NHAT (khong dat ten) hoat dong moi luc in - an toan, da
           test that khong con mat noi dung. */}
       {usesLandscapePrint ? (
-        <style>{'@media print { @page { size: A4 landscape; margin: 10mm 12mm; } }'}</style>
+        <style>{'@media print { @page { size: A4 landscape; margin: 7mm 12mm; } }'}</style>
       ) : null}
       <section className={`quote-sheet quote-sheet--standard${usesLandscapePrint ? ' quote-sheet--print-landscape' : ''}`}>
+        {/* Banner marketing (anh tinh, URL dan san qua field "bannerImageUrl") -
+         * chi dung cho "Mẫu ưu đãi combo (Markee)" (xem quoteConfig.ts), CO
+         * DIEU KIEN nen KHONG anh huong mau standard/villa cu (field nay
+         * khong ton tai/rong o cac schema khac). */}
+        {fieldValue('bannerImageUrl') ? (
+          <img className="sheet-marketing-banner" src={String(fieldValue('bannerImageUrl'))} alt="" />
+        ) : null}
         <header className="sheet-company sheet-company--standard">
+          {/* Logo nam NGANG song song voi thong tin cong ty (yeu cau rieng
+           * "thông tin nằm ngang song song logo") - truoc day logo/ten/dia
+           * chi/sdt xep CHONG doc trong cung 1 div, gio logo la 1 flex item
+           * rieng, phan text ben canh (xem .sheet-brand-block trong
+           * quotes.css). */}
           <div className="sheet-brand-block">
             {fieldValue('sellerLogo') ? (
               <img className="sheet-brand-logo" src={String(fieldValue('sellerLogo'))} alt={String(fieldValue('sellerCompanyName') || '')} />
             ) : null}
-            <div className="sheet-brand-mark">{String(fieldValue('sellerCompanyName') || 'MARKEE')}</div>
-            <p>{String(fieldValue('sellerAddress'))}</p>
-            <p>
-              {String(fieldValue('sellerPhone'))}
-              {fieldValue('sellerEmail') ? ` · ${String(fieldValue('sellerEmail'))}` : ''}
-              {fieldValue('sellerWebsite') ? ` · ${String(fieldValue('sellerWebsite'))}` : ''}
-            </p>
+            <div className="sheet-brand-text">
+              <div className="sheet-brand-mark">{String(fieldValue('sellerCompanyName') || 'MARKEE')}</div>
+              <p>{String(fieldValue('sellerAddress'))}</p>
+              <p>
+                {/* Chi noi bang " · " cac gia tri CO that - issuer thieu SDT khong
+                    con dau " · " thua dau dong. */}
+                {[fieldValue('sellerPhone'), fieldValue('sellerEmail'), fieldValue('sellerWebsite')]
+                  .map(value => String(value || '').trim())
+                  .filter(Boolean)
+                  .join(' · ')}
+              </p>
+              {fieldValue('sellerTaxCode') ? <p>MST: {String(fieldValue('sellerTaxCode'))}</p> : null}
+            </div>
           </div>
           <div className="sheet-doc-code">
             <span>BÁO GIÁ</span>
             <strong>{quoteNumber || String(fieldValue('quoteNumber') || '[Số báo giá]')}</strong>
+            {/* Ngay bao gia chuyen LEN NGANG voi Ma bao gia (yeu cau rieng
+             * "bỏ ngày báo giá lên trang ngang mã báo giá") - Hiệu lực/Tiền
+             * tệ bo hoan toan (khong con hien o dau tai lieu nua). Van giu
+             * dung rule cu "chỉ hiển thị khi bấm phát hành". */}
+            {isPublished ? <em>{formatDateVN(fieldValue('quoteDate')) || ''}</em> : null}
           </div>
         </header>
 
         <section className="sheet-title-block sheet-title-block--standard">
-          <p className="sheet-eyebrow">Đề xuất thương mại</p>
           <h1>{String(fieldValue('quoteTitle') || 'Bảng báo giá')}</h1>
-          <div className="sheet-quote-meta sheet-quote-meta--cards">
-            {/* "Ngày báo giá chỉ hiển thị khi bấm phát hành" - truoc khi
-             * published, ngay nay chua chinh thuc/co the con doi, an han
-             * ca nhan lan gia tri (khong hien placeholder "[Ngày báo giá]"). */}
-            {isPublished ? (
-              <span><b>Ngày báo giá</b>{formatDateVN(fieldValue('quoteDate')) || ''}</span>
-            ) : null}
-            <span><b>Hiệu lực</b>{validUntil || '[Thời hạn hiệu lực]'}</span>
-            <span><b>Tiền tệ</b>{String(fieldValue('currency') || 'VND')}</span>
-          </div>
         </section>
 
         {/* CHOT LAI ("field không có dữ liệu thì ẩn hoàn toàn cả nhãn lẫn
@@ -711,10 +972,21 @@ export function QuoteDocumentRenderer({
          * ung rong het. */}
         {(() => {
           const filledCustomerRows = customerRows.filter(row => row.value);
+          // "Người liên hệ" = Sale dang duoc gan (quote_owner_id), KHONG con
+          // dung field tu do/default cu - chi fallback ve fieldValue khi quote
+          // THAT SU chua co Sale (contactPersonName undefined/null/rong).
+          const resolvedContactName = contactPersonName || String(fieldValue('sellerContactName') || '');
+          // Rieng khoi "Người liên hệ" nay (KHONG phai header cong ty ben tren,
+          // chi o day) - fallback ve admin@markee.vn khi email rong/da bi an
+          // (legacy hello@markeeai.com) de khong bo trong 1 dong lien he quan
+          // trong; header/villa footer KHONG doi (van dung nguyen fieldValue()
+          // goc, tiep tuc an hoan toan neu rong - yeu cau rieng "khong muon
+          // hien o do"). Khong ghi de sellerEmail THAT (khac rong) cua bao gia.
+          const sellerContactEmail = String(fieldValue('sellerEmail') || '') || 'admin@markee.vn';
           const sellerContactRows = [
-            { key: 'sellerContactName', label: findField('sellerContactName').label, value: String(fieldValue('sellerContactName') || '') },
+            { key: 'sellerContactName', label: findField('sellerContactName').label, value: resolvedContactName },
             { key: 'sellerPhone', label: findField('sellerPhone').label, value: String(fieldValue('sellerPhone') || '') },
-            { key: 'sellerEmail', label: findField('sellerEmail').label, value: String(fieldValue('sellerEmail') || '') },
+            { key: 'sellerEmail', label: findField('sellerEmail').label, value: sellerContactEmail },
           ].filter(row => row.value);
           if (!filledCustomerRows.length && !sellerContactRows.length) return null;
           return (
@@ -729,7 +1001,7 @@ export function QuoteDocumentRenderer({
               ) : null}
               {sellerContactRows.length ? (
                 <div>
-                  <h3>Người phụ trách</h3>
+                  <h3>Người liên hệ</h3>
                   {sellerContactRows.map(row => (
                     <p key={row.key}><strong>{row.label}:</strong> {row.value}</p>
                   ))}
@@ -769,7 +1041,7 @@ export function QuoteDocumentRenderer({
                 bot cot khac), header duoc phep xuong dong (xem quotes.css) nen
                 khong can cot rong toi thieu lon nhu truoc. */}
             <table
-              className={`sheet-items-table${usesLandscapePrint ? ' sheet-items-table--print-landscape' : ''}${allowColumnResize ? ' sheet-items-table--resizable' : ''}`}
+              className={`sheet-items-table${usesLandscapePrint ? ' sheet-items-table--print-landscape' : ''}${allowColumnResize ? ' sheet-items-table--resizable' : ''}${printPreviewMode && resizedColumnWidths ? ' sheet-items-table--custom-print-widths' : ''}`}
               style={
                 // Da resize it nhat 1 cot: dat width = TONG cac cot (co the
                 // vuot 100% wrapper) de bang tu gian rong ra that su thay vi
@@ -779,7 +1051,13 @@ export function QuoteDocumentRenderer({
                 // khac). Chua resize: giu nguyen minWidth mac dinh nhu cu.
                 allowColumnResize && resizedColumnWidths
                   ? { width: Object.values(resizedColumnWidths).reduce((sum, w) => sum + w, 0) }
-                  : { minWidth: Math.min(760, Math.max(420, finalColumns.length * 70)) }
+                  // BUG THAT DA GAP ("Mẫu ưu đãi combo Markee" 12 cot, chu bi
+                  // be/chong nhau): tran 760px cu THAP HON ca gia tri tinh ra
+                  // (12*70=840) cho bang nhieu cot - vo tinh EP bang HEP HON
+                  // muc can thiet du cong thuc tren da tinh dung. Nang tran
+                  // len 1400 (chi anh huong bang >10 cot, <=10 cot van y het
+                  // truoc gio vi 10*70=700 <760, khong bao gio cham tran).
+                  : { minWidth: Math.min(1400, Math.max(420, finalColumns.length * 70)) }
               }
             >
               <thead>
@@ -787,14 +1065,30 @@ export function QuoteDocumentRenderer({
                   {finalColumns.map(column => (
                     <th
                       key={column.key}
-                      className={column.key === 'unit' ? 'unit-cell' : undefined}
+                      className={
+                        column.type === 'currency' || MONEY_COLUMN_KEYS.includes(column.key)
+                          ? 'money-cell'
+                          : column.key === 'unit'
+                            ? 'unit-cell'
+                            : SHORT_NUMBER_COLUMN_KEYS.includes(column.key)
+                              ? 'num-cell'
+                              : undefined
+                      }
                       style={
                         allowColumnResize && resizedColumnWidths?.[column.key]
-                          ? { width: resizedColumnWidths[column.key], minWidth: resizedColumnWidths[column.key] }
+                          ? ({
+                              width: resizedColumnWidths[column.key],
+                              minWidth: resizedColumnWidths[column.key],
+                              // Doc lai o quotes.css (".sheet-items-table--custom-print-widths th")
+                              // KHI printPreviewMode - cho phep do rong da keo tay
+                              // "song" qua luc in that (@media print binh thuong ep
+                              // width:auto/% qua !important, xem comment o quotes.css).
+                              ...(printPreviewMode ? { '--col-print-w': `${resizedColumnWidths[column.key]}px` } : {}),
+                            } as React.CSSProperties)
                           : undefined
                       }
                     >
-                      {column.label}
+                      {normalizeQuoteColumnLabel(column)}
                       {allowColumnResize ? (
                         <span
                           className="quote-col-resize-handle"
@@ -813,19 +1107,42 @@ export function QuoteDocumentRenderer({
                     </td>
                   </tr>
                 ) : (
-                  displayedQuoteRows.map((row, index) =>
-                    row.isSection ? (
-                      <tr key={row.item.id || `section-${row.number}-${index}`} className="quote-item-row quote-item-row--section">
-                        <td colSpan={Math.max(finalColumns.length, 1)}>
-                          <strong>{row.number} — {stripLeadingRomanPrefix(String(row.item.description || row.item.serviceDescription || ''), row.number)}</strong>
-                        </td>
-                      </tr>
-                    ) : (
-                      <tr key={row.item.id || `${row.number}-${index}`} className={row.isChild ? 'quote-item-row quote-item-row--child' : 'quote-item-row quote-item-row--parent'}>
+                  displayedQuoteRows.map((row, index) => {
+                    if (row.isSection) {
+                      // Tong tien section (B) - hien BOLD, can PHAI, thang
+                      // hang duoi dung cot "Thành tiền" (`total`) - neu mau
+                      // KHONG khai bao cot `total` (hiem, vd solutionItems)
+                      // thi khong co cot nao de can theo, gop chung vao 1 o
+                      // ten section nhu cu (khong hien so).
+                      const totalColIndex = finalColumns.findIndex(column => column.key === 'total');
+                      if (totalColIndex < 0) {
+                        return (
+                          <tr key={row.item.id || `section-${row.number}-${index}`} className="quote-item-row quote-item-row--section">
+                            <td colSpan={Math.max(finalColumns.length, 1)}>
+                              <strong>{row.number} — {stripLeadingRomanPrefix(String(row.item.description || row.item.serviceDescription || ''), row.number)}</strong>
+                            </td>
+                          </tr>
+                        );
+                      }
+                      const trailingColSpan = finalColumns.length - totalColIndex - 1;
+                      return (
+                        <tr key={row.item.id || `section-${row.number}-${index}`} className="quote-item-row quote-item-row--section">
+                          <td colSpan={Math.max(totalColIndex, 1)}>
+                            <strong>{row.number} — {stripLeadingRomanPrefix(String(row.item.description || row.item.serviceDescription || ''), row.number)}</strong>
+                          </td>
+                          <td className="money-cell quote-section-total-cell">
+                            <strong>{formatVnd(row.sectionTotal)}</strong>
+                          </td>
+                          {trailingColSpan > 0 ? <td colSpan={trailingColSpan} /> : null}
+                        </tr>
+                      );
+                    }
+                    return (
+                      <tr key={`${row.item.id || row.number}-${index}`} className={row.isChild ? 'quote-item-row quote-item-row--child' : 'quote-item-row quote-item-row--parent'}>
                         {finalColumns.map(column => (
                           <td
                             key={column.key}
-                            data-label={column.label}
+                            data-label={normalizeQuoteColumnLabel(column)}
                             className={
                               column.type === 'currency' ||
                               // BUG THAT DA GAP ("Thành tiền chưa VAT bị rớt
@@ -836,11 +1153,13 @@ export function QuoteDocumentRenderer({
                               // roi vao rule chung overflow-wrap:anywhere, cat
                               // giua so tien. Bo sung du cac key tien te khac
                               // (calculated) vao danh sach.
-                              ['unitPrice', 'subtotal', 'vatAmount', 'total', 'amountAfterDiscount', 'listPriceUsd', 'unitPriceUsd', 'unitPriceVnd'].includes(column.key)
+                              MONEY_COLUMN_KEYS.includes(column.key)
                                 ? 'money-cell'
                                 : column.key === 'unit'
                                   ? 'unit-cell'
-                                  : undefined
+                                  : SHORT_NUMBER_COLUMN_KEYS.includes(column.key)
+                                    ? 'num-cell'
+                                    : undefined
                             }
                           >
                             {column.type === 'auto-number' || column.key === 'order'
@@ -854,8 +1173,8 @@ export function QuoteDocumentRenderer({
                           </td>
                         ))}
                       </tr>
-                    )
-                  )
+                    );
+                  })
                 )}
               </tbody>
             </table>
@@ -905,6 +1224,21 @@ export function QuoteDocumentRenderer({
               </tr>)}</tbody>
               <tfoot><tr><th>Tổng</th><th>{paymentPlanPercent(visiblePaymentPlan(quoteData.paymentPlan))}%</th><th>{formatVnd(visiblePaymentPlan(quoteData.paymentPlan).reduce((sum, row) => sum + paymentPlanAmount(discountSummary.grandTotal, row.percent), 0))}</th><td colSpan={2} /></tr></tfoot>
             </table>
+          </section>
+        ) : null}
+
+        {/* "Cam kết & bảo hành" - dung DUNG field "commitments" + bien
+         * commitmentRows da tinh san (xem dong 476, villa dang dung chung bien
+         * nay) - CO DIEU KIEN nen KHONG anh huong cac mau khac (field nay
+         * trong/khong ton tai o schema standard/villa cu). */}
+        {commitmentRows.length ? (
+          <section className="sheet-note sheet-commitments">
+            <h3>Cam kết & bảo hành</h3>
+            <ul>
+              {commitmentRows.map((item, index) => (
+                <li key={`${item}-${index}`}>{item}</li>
+              ))}
+            </ul>
           </section>
         ) : null}
 

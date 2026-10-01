@@ -1,6 +1,7 @@
 import type {
   Contract,
   ContractDashboardStats,
+  ContractOcrReconcileResult,
   ContractRiskReview,
   CreateContractInput,
   GenerateContractDraftInput,
@@ -9,7 +10,7 @@ import type {
 } from '../types';
 
 export interface ContractRepository {
-  getContracts(params?: { dealId?: string; status?: string }): Promise<Contract[]>;
+  getContracts(params?: { dealId?: string; status?: string; quoteId?: string }): Promise<Contract[]>;
   getContract(id: string): Promise<Contract>;
   getDashboardStats(): Promise<ContractDashboardStats>;
   createContract(input: CreateContractInput): Promise<Contract>;
@@ -26,4 +27,10 @@ export interface ContractRepository {
     clauses: import('../types').ContractClause[];
     findings: import('../types').ContractReviewFinding[];
   }): Promise<{ clauses: import('../types').ContractClause[] }>;
+
+  /** "Ghi nhận hợp đồng có sẵn" — đối chiếu file hợp đồng vừa upload với số
+   * liệu THẬT của báo giá `quoteId` (best-effort OCR/text extraction, xem
+   * contract_ocr_service.py — không bịa dữ liệu, `extractable=false` là kết
+   * quả hợp lệ khi không đọc được nội dung). */
+  ocrReconcile(file: File, quoteId: string): Promise<ContractOcrReconcileResult>;
 }

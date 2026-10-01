@@ -175,6 +175,13 @@ export interface MemberProfile {
   experience_year?: number | null;
   linked_user_id?: string | null;
   linked_user_id_2?: string | null;
+  leader_name?: string | null;
+  leader_email?: string | null;
+  cv_link?: string | null;
+  employment_status?: string | null;
+  off_effective_at?: string | null;
+  is_recruitment_synced?: boolean | null;
+  level?: string | null;
   skill_ids?: string[];
   skills?: Skill[];
   created_at?: string;
@@ -432,6 +439,12 @@ export interface AppUser {
    * (migration 005 — gán qua "Quản lý thành viên"). undefined/rỗng = không
    * giới hạn (admin luôn undefined vì không áp dụng). */
   allowedInstances?: string[];
+  /** "Nhom quyen" CRM (migration 155) - module duoc phep vao (Lead/Customer/
+   * Deal/Quote/Product/Report/Account/Setting). `null` = CHUA duoc gan Nhom
+   * quyen nao (opt-in) - khong gioi han gi, sidebar hien day du nhu hien tai.
+   * Mang RONG (`[]`, khac `null`) nghia la DA gan nhom nhung khong module nao
+   * duoc phep. */
+  effective_modules?: string[] | null;
 }
 
 export interface AuthLoginResponse {

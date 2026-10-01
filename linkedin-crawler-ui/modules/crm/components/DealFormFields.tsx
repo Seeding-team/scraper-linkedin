@@ -2,10 +2,14 @@
 
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { useMembers } from '@/hooks/useMembers';
-import { teamsService, projectsService, type TeamRow, type Project } from '@/services/all-platform.service';
-import { SearchableSelect } from './SearchableSelect';
+import { teamsService, projectsService, crmTeamsService, usersService, type TeamRow, type Project, type CrmTeam, type AppUserProfile } from '@/services/all-platform.service';
+import { SearchableSelect, type SelectAction } from './SearchableSelect';
 import { PositionSelect } from './PositionSelect';
-import { CrmCategoryCodeSelect, CrmCategorySelect } from './CrmCategorySelect';
+import { CrmCategoryCodeSelect, CrmCategorySelect, useCrmCategoryLabels } from './CrmCategorySelect';
+import { LeadDealQualificationPanel, formatEstimatedValue } from './LeadDealQualificationPanel';
+import { CrmTeamFormModal } from './CrmTeamFormModal';
+import { useLeadQualificationEngine } from '../hooks/useLeadQualificationEngine';
+import { ICP_OPTIONS, type InterestLevel } from '../utils/leadQualificationRules';
 import type { MemberProfile } from '@/types/unified.types';
 import {
   CRM_PACKAGE_OPTIONS,
@@ -21,7 +25,7 @@ import { seedingCrmRepository } from '../repositories/SeedingCrmRepository';
 import type { AppUser } from '@/types/unified.types';
 import { CurrencyInput } from '@/components/CurrencyInput';
 import { formatCurrencyDisplay, parseCurrencyInput } from '@/lib/currency';
-import { aiMayFill, contactValues, hydrationConflicts, type ContactOption, type EditableIdentity } from './dealHydration';
+import { contactValues, hydrationConflicts, type ContactOption, type EditableIdentity } from './dealHydration';
 
 const DEFAULT_INDUSTRY_OPTIONS = INDUSTRY_OPTIONS.map(value => ({ value, label: value }));
 
@@ -83,6 +87,14 @@ export type DealFormState = {
   sdrId: string;
   sdrNameHint: string;
   teamId: string;
+  /** "Team Sale" (Team CRM - crm_teams) - filter cascading rieng cho "Sale
+   * phu trach" (KHAC HAN `teamId` o tren la Team KPI/seeding noi bo qua
+   * teamsService). Chi dung de loc UI, KHONG co cot rieng nao luu gia tri
+   * nay - lay ra khoi payload o buildDealPayload(). Dat trong DealFormState
+   * (thay vi local state rieng trong DealFormFields) de DealFormModal (cha)
+   * doc duoc, dung lam dieu kien bat buoc luc "Tạo cơ hội nhanh" (feedback
+   * leader 2026-09-29: "những cái dấu sao đỏ là bắt buộc á"). */
+  crmTeamId: string;
 };
 
 export function emptyDealForm(): DealFormState {
@@ -144,6 +156,7 @@ export function emptyDealForm(): DealFormState {
     sdrId: '',
     sdrNameHint: '',
     teamId: '',
+    crmTeamId: '',
   };
 }
 
@@ -209,6 +222,11 @@ export function dealFormFromDeal(deal: Deal): DealFormState {
     sdrId: deal.assignment.sdrId || '',
     sdrNameHint: deal.assignment.sdrNameHint || deal.assignment.sdrName || '',
     teamId: deal.teamId || '',
+    // Luon bat dau rong - khong co cot rieng nao tren Deal luu "Team Sale",
+    // hieu ung auto-load (suy nguoc tu sdrId da luu qua
+    // crmTeamsService.getTeamIdForUser) se tu dien lai dung Team ngay sau khi
+    // form nay mount (xem effect trong DealFormFields).
+    crmTeamId: '',
   };
 }
 
@@ -216,13 +234,23 @@ export function getSourceLabel(sourcePlatform: string) {
   return SOURCE_OPTIONS.find(option => option.value === sourcePlatform)?.label || sourcePlatform;
 }
 
-export function validateDealForm(form: DealFormState): string | null {
-  if (!form.dealName.trim()) return 'Vui lòng nhập tên cơ hội.';
+export function validateDealForm(form: DealFormState, opts?: { requireTeamSale?: boolean }): string | null {
+  if (!form.dealName.trim()) return 'Vui lòng chọn hoặc nhập tên dự án.';
   if (!form.customerName.trim()) return 'Vui lòng nhập tên khách hàng.';
   if (!form.email.trim() && !form.phone.trim()) return 'Cần nhập email hoặc số điện thoại để tạo contact.';
   if (!form.servicePackage.trim()) return 'Vui lòng chọn sản phẩm/dịch vụ.';
   if (!form.nextStep.trim()) return 'Vui lòng nhập Next step (việc cần làm tiếp theo).';
   if (!form.followUpDate.trim()) return 'Vui lòng chọn hạn follow-up.';
+  // "Team Sale" + "Sale phụ trách" bắt buộc CHỈ ở nhánh "Tạo cơ hội nhanh"
+  // (isCreate) - feedback leader 2026-09-29: "áp dụng cùng flow Team Sale ->
+  // Sale phụ trách như 2 form còn lại... những cái dấu sao đỏ là bắt buộc
+  // á". Nhánh Sửa deal (isCreate=false) và DealQuoteWizard (khong truyen cờ
+  // này) KHÔNG bắt buộc - Team Sale ở đó chỉ là bộ lọc UI, không phải field
+  // nghiệp vụ mới bắt buộc phải chọn.
+  if (opts?.requireTeamSale) {
+    if (!form.crmTeamId.trim()) return 'Vui lòng chọn Team Sale.';
+    if (!form.sdrId.trim()) return 'Vui lòng chọn Sale phụ trách.';
+  }
   return null;
 }
 
@@ -293,7 +321,14 @@ export function buildDealPayload(form: DealFormState, _agents: CrmUserOption[] =
       : undefined;
   return {
     customerId: form.customerId || undefined,
-    projectId: form.projectId || null, primaryContactId: form.primaryContactId || null,
+    projectId: form.projectId || null,
+    // "Cơ hội" khong con nhap ten rieng - lay theo Du an da chon (feedback
+    // 2026-09-25). form.dealName vua la ten hien thi cua deal (cot
+    // customer_name legacy) VUA la ten Du an dang go/da chon (xem
+    // ProjectPicker). Neu chua co projectId (Du an MOI go tay, chua tung
+    // luu) thi gui projectName de backend tu tao Du an that.
+    projectName: !form.projectId ? (form.dealName.trim() || undefined) : undefined,
+    primaryContactId: form.primaryContactId || null,
     updateCustomerProfile: form.updateCustomerProfile,
     customerName: form.dealName.trim(),
     customerProfileName: form.customerName.trim(),
@@ -355,6 +390,7 @@ export function CustomerProfileCombobox({
   setValue,
   disabled = false,
   locked = false,
+  hideProfileUpdateToggle = false,
 }: {
   form: DealFormState;
   setValue: <K extends keyof DealFormState>(key: K, value: DealFormState[K]) => void;
@@ -362,6 +398,12 @@ export function CustomerProfileCombobox({
   /** Block 1: mo tu "Tạo cơ hội" o Ho so khach hang/Project card - Customer
    * PHAI tu dien va khoa, an nut "Đổi" (khong cho doi sang khach khac). */
   locked?: boolean;
+  /** An han checkbox "Cập nhật thông tin này vào hồ sơ khách hàng" - dung cho
+   * CreateOpportunityDrawer (feedback leader 2026-09-27: "mặc định cập nhật
+   * vào hồ sơ đi, không cần chọn tick") - luon cap nhat, khong can nguoi
+   * dung tu bat. Man sua Deal (DealFormFields chinh) VAN giu checkbox nhu
+   * cu, khong doi hanh vi o do. */
+  hideProfileUpdateToggle?: boolean;
 }) {
   const [query, setQuery] = useState(form.customerName);
   const [open, setOpen] = useState(false);
@@ -447,7 +489,8 @@ export function CustomerProfileCombobox({
     if (form.customerId) {
       setValue('customerId', '');
       setValue('projectId', ''); // doi Customer -> Project cu (thuoc Customer khac) khong con hop le
-      setValue('updateCustomerProfile', false);
+      setValue('dealName', ''); // Ten co hoi lay theo Du an - Du an cu cung khong con hop le
+      setValue('updateCustomerProfile', hideProfileUpdateToggle);
       setValue('customerProfileCanEdit', false);
       clearAutofilledContact();
     }
@@ -463,8 +506,9 @@ export function CustomerProfileCombobox({
     clearAutofilledContact();
     setValue('customerId', customer.id);
     setValue('projectId', ''); // Customer moi -> Project cu (neu co) thuoc Customer khac, khong con hop le
+    setValue('dealName', ''); // Ten co hoi lay theo Du an - Du an cu cung khong con hop le
     setValue('customerProfileCanEdit', Boolean(customer.canEdit));
-    setValue('updateCustomerProfile', false);
+    setValue('updateCustomerProfile', hideProfileUpdateToggle);
     setValue('customerName', customer.customerName || '');
     setValue('companyName', next.companyName);
     setValue('positionCategoryId', customer.positionCategoryId || '');
@@ -483,6 +527,7 @@ export function CustomerProfileCombobox({
       !window.confirm('Đổi khách hàng sẽ xóa thông tin liên hệ đã sửa tay. Tiếp tục?')) return;
     setValue('customerId', '');
     setValue('projectId', '');
+    setValue('dealName', ''); // Ten co hoi lay theo Du an - Du an cu cung khong con hop le
     setValue('updateCustomerProfile', false);
     setValue('customerProfileCanEdit', false);
     setValue('customerName', '');
@@ -558,7 +603,7 @@ export function CustomerProfileCombobox({
           ))}
         </div>
       ) : null}
-      {form.customerId ? (
+      {form.customerId && !hideProfileUpdateToggle ? (
         <label className={`crm-customer-profile-checkbox ${!form.customerProfileCanEdit ? 'is-disabled' : ''}`}>
           <input
             type="checkbox"
@@ -573,10 +618,11 @@ export function CustomerProfileCombobox({
   );
 }
 
-/** Dropdown "Dự án" cua Co hoi (Block 1) - CHI hien Project THUOC DUNG
- * Customer dang chon (khong cho chon Project cua Customer khac). Rong khi
- * chua chon Customer. Luon co option "Chưa thuộc dự án" (project_id=null
- * that su, khong phai bo qua). */
+/** "Dự án" cua Co hoi (Block 1) - feedback 2026-09-25: khong con o "Tên cơ
+ * hội" rieng, deal LAY TEN THEO DU AN - combobox nay VUA chon Du an co san
+ * (thuoc DUNG Customer dang chon) VUA cho go ten de TAO Du an moi (backend
+ * tu tao khi luu deal, xem buildDealPayload() projectName). Rong/khoa khi
+ * chua chon Customer. */
 function ProjectPicker({
   form,
   setValue,
@@ -589,6 +635,9 @@ function ProjectPicker({
   const [projects, setProjects] = useState<Project[]>([]);
   const [projectsCustomerId, setProjectsCustomerId] = useState('');
   const [loading, setLoading] = useState(false);
+  const [query, setQuery] = useState('');
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!form.customerId) {
@@ -606,34 +655,89 @@ function ProjectPicker({
     return () => { alive = false; window.clearTimeout(timer); };
   }, [form.customerId]);
 
+  // Khoa (mo tu Project card, vd "Tạo cơ hội") - projectId da co san nhung ten
+  // chi biet duoc SAU KHI danh sach projects tai xong - tu dien dealName ngay
+  // luc do (chi khi dealName con rong, khong ghi de deal dang sua).
+  useEffect(() => {
+    if (!locked || !form.projectId || form.dealName) return;
+    const current = projects.find(p => p.id === form.projectId);
+    if (current) setValue('dealName', current.name);
+  }, [locked, form.projectId, form.dealName, projects]);
+
+  useEffect(() => {
+    if (!open) return;
+    function handlePointerDown(event: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(event.target as Node)) setOpen(false);
+    }
+    document.addEventListener('mousedown', handlePointerDown);
+    return () => document.removeEventListener('mousedown', handlePointerDown);
+  }, [open]);
+
   if (!form.customerId) {
     return <input value="" disabled placeholder="Chọn khách hàng trước" />;
   }
 
-  // BUG THAT DA GAP ("2 dong Chua chon trong dropdown"): SearchableSelect da
-  // tu ve san 1 dong "clear" dung `placeholder` khi khong truyen
-  // hideClearOption - options o day KHONG duoc tu them lai 1 dong rong nua,
-  // keo bi trung 2 dong cung text.
-  const options = (projectsCustomerId === form.customerId ? projects : []).map(p => ({ value: p.id, label: `${p.projectCode} · ${p.name}` }));
+  const options = projectsCustomerId === form.customerId ? projects : [];
 
   if (locked) {
-    const current = projects.find(p => p.id === form.projectId);
-    return (
-      <input
-        value={form.projectId ? (current ? `${current.projectCode} · ${current.name}` : 'Dự án đã chọn') : 'Chưa thuộc dự án'}
-        disabled
-        readOnly
-      />
-    );
+    const current = options.find(p => p.id === form.projectId);
+    return <input value={form.dealName || current?.name || 'Dự án đã chọn'} disabled readOnly />;
+  }
+
+  const keyword = query.trim().toLowerCase();
+  const filtered = keyword
+    ? options.filter(p => p.name.toLowerCase().includes(keyword) || p.projectCode.toLowerCase().includes(keyword))
+    : options;
+  const exactMatch = options.some(p => p.name.trim().toLowerCase() === query.trim().toLowerCase());
+
+  function pick(project: Project) {
+    setValue('projectId', project.id);
+    setValue('dealName', project.name);
+    setQuery('');
+    setOpen(false);
+  }
+
+  function createNew() {
+    const name = query.trim();
+    if (!name) return;
+    setValue('projectId', '');
+    setValue('dealName', name);
+    setOpen(false);
   }
 
   return (
-    <SearchableSelect
-      value={form.projectId}
-      onChange={value => { if (!value || projectsCustomerId === form.customerId) setValue('projectId', value); }}
-      options={options}
-      placeholder={loading ? 'Đang tải dự án...' : 'Chưa thuộc dự án'}
-    />
+    <div className="crm-customer-combobox" ref={containerRef}>
+      <input
+        value={open ? query : form.dealName}
+        onFocus={() => { setQuery(form.dealName); setOpen(true); }}
+        onChange={event => {
+          setQuery(event.target.value);
+          setOpen(true);
+          setValue('projectId', '');
+          setValue('dealName', event.target.value);
+        }}
+        placeholder={loading ? 'Đang tải dự án...' : 'Chọn dự án có sẵn hoặc gõ tên dự án mới'}
+        autoComplete="off"
+        role="combobox"
+        aria-expanded={open}
+      />
+      {open ? (
+        <div className="crm-customer-combobox-menu">
+          {filtered.map(project => (
+            <button type="button" key={project.id} onMouseDown={event => event.preventDefault()} onClick={() => pick(project)}>
+              <strong>{project.name}</strong>
+              <span>{project.projectCode}</span>
+            </button>
+          ))}
+          {query.trim() && !exactMatch ? (
+            <button type="button" onMouseDown={event => event.preventDefault()} onClick={createNew}>
+              + Tạo dự án mới: “{query.trim()}”
+            </button>
+          ) : null}
+          {!filtered.length && !query.trim() ? <p>Chưa có dự án nào — gõ để tạo dự án mới</p> : null}
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -745,6 +849,7 @@ export function DealFormFields({
   industryOptions = DEFAULT_INDUSTRY_OPTIONS,
   isCreate = false,
   currentUser = null,
+  showTeamSaleInEditBranch = false,
 }: {
   form: DealFormState;
   setValue: <K extends keyof DealFormState>(key: K, value: DealFormState[K]) => void;
@@ -760,6 +865,12 @@ export function DealFormFields({
    * DEAL_STAGES (kể cả on_hold/won/lost) như hành vi cũ. */
   isCreate?: boolean;
   currentUser?: AppUser | null;
+  /** true = cũng bật "Team Sale" (Team CRM) ở nhánh SỬA deal (isCreate=false)
+   * — dropdown lọc "Người phụ trách" + auto-load Team từ sdrId đã lưu, giống
+   * hệt luồng lúc "Tạo cơ hội nhanh". Mặc định false để KHÔNG đổi hành vi của
+   * các nơi khác đang dùng chung DealFormFields ở nhánh sửa (vd
+   * DealQuoteWizard) — chỉ DealFormModal (form "Sửa deal" thật) bật cờ này. */
+  showTeamSaleInEditBranch?: boolean;
 }) {
   // Nguồn dữ liệu DUY NHẤT cho dropdown Quản lý/Phụ trách — GET /members,
   // không hard-code / không tự tạo danh sách riêng. Chọn tự do trên toàn bộ
@@ -778,6 +889,75 @@ export function DealFormFields({
     });
     return () => { alive = false; };
   }, []);
+  // "Team Sale" (Team CRM - crm_teams, KHAC HAN "Team" o tren dung teamsService
+  // KPI noi bo) - filter cascading rieng cho "Sale phu trach" trong panel
+  // LeadDealQualificationPanel (luc isCreate) + (khi showTeamSaleInEditBranch)
+  // trong nhanh Sua deal - khong luu cot rieng nao, chi filter danh sach hien
+  // thi. Gia tri dang chon nam trong form.crmTeamId (KHONG phai local state
+  // rieng) de DealFormModal (cha) doc duoc, dung lam dieu kien bat buoc luc
+  // "Tạo cơ hội nhanh".
+  const enableCrmTeamSale = isCreate || showTeamSaleInEditBranch;
+  const [crmTeamOptions, setCrmTeamOptions] = useState<CrmTeam[]>([]);
+  const crmTeamId = form.crmTeamId;
+  const [crmTeamMembers, setCrmTeamMembers] = useState<AppUserProfile[] | null>(null);
+  // "+ Thêm Team mới" trong dropdown Team Sale (feedback leader 2026-09-29:
+  // "tái sử dụng lại bên chỗ team crm") - tai su dung CHINH modal tao/sua
+  // Team CRM da tach ra CrmTeamFormModal.tsx (dung chung voi CrmTeamsShell).
+  const [addTeamOpen, setAddTeamOpen] = useState(false);
+  const [crmTeamLeaders, setCrmTeamLeaders] = useState<AppUserProfile[]>([]);
+  const [crmAllUsers, setCrmAllUsers] = useState<AppUserProfile[]>([]);
+  useEffect(() => {
+    if (!enableCrmTeamSale) return;
+    let alive = true;
+    usersService.getAllProfiles().then(res => {
+      if (!alive || !res.success) return;
+      const rows = res.data || [];
+      setCrmTeamLeaders(rows.filter(u => u.role === 'leader' || u.role === 'admin'));
+      setCrmAllUsers(rows);
+    });
+    return () => { alive = false; };
+  }, [enableCrmTeamSale]);
+  useEffect(() => {
+    let alive = true;
+    crmTeamsService.list()
+      .then(res => {
+        if (!alive) return;
+        const rows = res.success ? res.data || [] : [];
+        setCrmTeamOptions(rows.filter(t => t.status === 'active'));
+      })
+      .catch(() => {
+        if (alive) setCrmTeamOptions([]);
+      });
+    return () => { alive = false; };
+  }, []);
+  useEffect(() => {
+    if (!crmTeamId) {
+      setCrmTeamMembers(null);
+      return;
+    }
+    let alive = true;
+    crmTeamsService.get(crmTeamId)
+      .then(res => {
+        if (!alive) return;
+        const members = res.success ? res.data?.members || [] : [];
+        // Leader KHONG nam trong `members` - nhung van phai chon duoc lam
+        // Sale phu trach (feedback 2026-09-30: "leader cũng làm việc ở đó
+        // thì lúc này không thể chọn leader").
+        const leaderId = res.success ? res.data?.leader_user_id : undefined;
+        const leaderName = res.success ? res.data?.leader_name : undefined;
+        const hasLeader = leaderId && members.some(u => u.id === leaderId);
+        setCrmTeamMembers(
+          leaderId && !hasLeader
+            ? [...members, { id: leaderId, name: leaderName || '', email: '' } as AppUserProfile]
+            : members
+        );
+      })
+      .catch(() => {
+        if (alive) setCrmTeamMembers([]);
+      });
+    return () => { alive = false; };
+  }, [crmTeamId]);
+
   const assignableMembers = [...members].sort((a, b) => a.display_name.localeCompare(b.display_name));
 
   // Value trên <option> phải LUÔN duy nhất (kể cả người chưa liên kết) —
@@ -861,196 +1041,339 @@ export function DealFormFields({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isCreate, currentUser?.id, assignableMembers.length]);
 
-  const [aiText, setAiText] = useState('');
-  const [aiLoading, setAiLoading] = useState(false);
-  const [aiError, setAiError] = useState('');
-  const latestForm = useRef(form);
-  useLayoutEffect(() => { latestForm.current = form; }, [form]);
+  // "Auto-load" Team Sale khi da co Sale duoc gan san (vd default currentUser
+  // luc tao moi, hoac sdrId da luu san tren 1 Deal dang mo sua khi
+  // showTeamSaleInEditBranch) - CHI khi crmTeamId con rong (khong ghi de luc
+  // nguoi dung tu chon Team qua handleCrmTeamIdChange, vi luc do sdrId da bi
+  // reset ve rong nen effect nay khong chay lai). Guard "tra loi tre": effect
+  // deps gom form.sdrId nen moi lan sdrId doi (vd mo sang 1 Deal khac), cleanup
+  // (alive=false) tu dong huy ket qua cua request cu truoc khi request moi
+  // chay - khong can ref rieng vi crmTeamId gio nam trong `form` (tu reset ve
+  // rong moi lan dealFormFromDeal() nap 1 Deal khac).
+  useEffect(() => {
+    if (!enableCrmTeamSale || !form.sdrId || crmTeamId) return;
+    let alive = true;
+    crmTeamsService.getTeamIdForUser(form.sdrId)
+      .then(res => {
+        if (!alive) return;
+        const foundTeamId = res.success ? res.data?.crm_team_id : null;
+        if (foundTeamId) setValue('crmTeamId', foundTeamId);
+      })
+      .catch(() => { /* khong co Team CRM cho nguoi nay - bo qua */ });
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enableCrmTeamSale, form.sdrId]);
+
+  /** Doi Team do NGUOI DUNG tu bam trong panel - reset Sale phu trach dang
+   * chon (khac voi auto-load o tren) vi co the khong con thuoc Team moi. */
+  function handleCrmTeamIdChange(value: string) {
+    setValue('crmTeamId', value);
+    handlePick('', 'sdrId', 'sdrNameHint');
+  }
 
   function editIdentity(field: EditableIdentity, value: string) {
     setValue(field, value);
     setValue('manuallyEditedIdentity', [...new Set([...form.manuallyEditedIdentity, field])]);
   }
 
-  async function handleAiParse() {
-    if (aiLoading || !aiText.trim()) return;
-    setAiLoading(true);
-    setAiError('');
-    const requestedCustomer = form.customerId;
-    const requestedContact = form.primaryContactId;
-    try {
-      const result = await seedingCrmRepository.parseDealText(aiText.trim());
-      const current = latestForm.current;
-      if (current.customerId !== requestedCustomer || current.primaryContactId !== requestedContact) return;
-      const mayFill = (field: keyof DealFormState) =>
-        aiMayFill(field, current.customerId, current.primaryContactId) && !String(current[field] || '').trim();
-      // Chỉ điền field ĐANG RỖNG — không âm thầm ghi đè field Sale đã tự gõ tay.
-      const candidate = result.companyName || result.customerName;
-      if (candidate && mayFill('customerName')) setValue('customerName', String(candidate));
-      if (result.companyName && mayFill('companyName')) setValue('companyName', String(result.companyName));
-      if (result.phone && mayFill('phone')) setValue('phone', String(result.phone));
-      if (result.email && mayFill('email')) setValue('email', String(result.email));
-      if (result.servicePackage && mayFill('servicePackage')) setValue('servicePackage', String(result.servicePackage));
-      if (result.estimatedBudget != null && mayFill('estimatedBudget')) setValue('estimatedBudget', String(result.estimatedBudget));
-      if (result.nextStep && mayFill('nextStep')) setValue('nextStep', String(result.nextStep));
-      if (result.note && mayFill('note')) setValue('note', String(result.note));
-    } catch (err) {
-      setAiError(err instanceof Error ? err.message : 'AI điền nhanh thất bại, vui lòng nhập tay.');
-    } finally {
-      setAiLoading(false);
-    }
-  }
-
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const dealHealth = computeDealHealth(form);
+
+  // Field UI-only (chua co cot rieng tren Deal, giong het cach
+  // CreateOpportunityDrawer/LeadDetailDrawer xu ly) - dung de tinh ICP/Ket
+  // qua tu dong cho dung bo "1 form 1 luon" (feedback leader: "form Tạo cơ
+  // hội nhanh chưa giống 2 form kia") - CHI dung luc isCreate.
+  const [interestLevel, setInterestLevel] = useState<InterestLevel | ''>('');
+  const [timeline, setTimeline] = useState('');
+  const [nurtureReason, setNurtureReason] = useState('');
+  const [unqualifiedReason, setUnqualifiedReason] = useState('');
+  const { labels: knownProductLabels } = useCrmCategoryLabels('crm_service_package');
+  const {
+    ruleConditions, verificationOutcome, outcomeReasons, outcomeMissing, sqlProgress, icpFit,
+  } = useLeadQualificationEngine({
+    open: isCreate,
+    productValue: form.servicePackage,
+    knownProductLabels,
+    hasInterestLevel: Boolean(interestLevel),
+    hasValue: Boolean(form.estimatedBudget.trim()),
+    hasTeam: Boolean(sdrSelectionKey),
+    hasNext: Boolean(form.nextStep.trim()),
+    hasFollow: Boolean(form.followUpDate.trim()),
+    hasContact: Boolean(form.phone.trim() || form.email.trim()),
+  });
+  const nextStepWarning = verificationOutcome === 'sql' &&
+    (Boolean(form.nextStep.trim()) !== Boolean(form.followUpDate.trim()) ||
+      (!form.nextStep.trim() && !form.followUpDate.trim()));
+
+  // Khi DA chon Team CRM: lay TRUC TIEP tu `crmTeamMembers` (app_users thuc su
+  // cua Team, da gom Leader - xem fix o tren) THAY VI loc danh ba HR
+  // (assignableMembers) - vi nhieu tai khoan CRM (dac biet tai khoan test)
+  // KHONG co ho so lien ket ben "Quan ly thanh vien" (feedback 2026-09-30:
+  // "member sao ko thay ai trong nay" - dropdown trong rong dù Team co nguoi
+  // that, chi vi loc theo linked_user_id cua ho so HR). Khong chon Team ->
+  // giu nguyen hanh vi cu (toan he thong, loc tu danh ba HR).
+  const aeOptionsForPanel = crmTeamId
+    ? (crmTeamMembers || [])
+        .filter(u => u.id === sdrSelectionKey || u.id !== leadedBySelectionKey)
+        .map(u => ({
+          value: u.id,
+          label: u.name || u.email || '',
+          searchText: [u.name, u.email].filter(Boolean).join(' '),
+        }))
+    : [
+        ...(currentUserMissingFromMembers && currentUser ? [{
+          value: currentUser.id,
+          label: currentUser.name || currentUser.email || '',
+          searchText: [currentUser.name, currentUser.email].filter(Boolean).join(' '),
+        }] : []),
+        ...assignableMembers
+          .filter(m => selectionKeyOf(m) === sdrSelectionKey || selectionKeyOf(m) !== leadedBySelectionKey)
+          .map(m => {
+            return {
+              value: selectionKeyOf(m),
+              label: m.display_name,
+              searchText: [m.display_name, m.email].filter(Boolean).join(' '),
+            };
+          }),
+      ];
+  const crmTeamOptionsForSelect = crmTeamOptions.map(team => ({ value: team.id, label: team.name }));
+  // "+ Thêm Team mới" trong dropdown Team Sale - mo CrmTeamFormModal, chon
+  // luon Team vua tao khi tao xong (handleCrmTeamIdChange reset sdrId, dung
+  // vi Team moi chua co thanh vien nao tu truoc).
+  const crmTeamActions: SelectAction[] = enableCrmTeamSale
+    ? [{ key: 'add-team', label: '+ Thêm Team mới', type: 'add', onSelect: () => setAddTeamOpen(true) }]
+    : [];
+
+  // "Tóm tắt quyết định" cho luc TAO NHANH (isCreate) - cung mau UI/logic voi
+  // crm-verify-readiness-panel cua LeadDetailDrawer (Xac minh Lead) va
+  // CreateOpportunityDrawer (Tao co hoi), them dong ICP/Gia tri/Giai doan cho
+  // du bo (feedback: form nay phai giong 2 form kia). Checklist READINESS
+  // (gate nut Tao deal) van CHINH LA dieu kien cua validateDealForm() o tren
+  // (khong doi logic that) - CHI dung cho nhanh isCreate, KHONG anh huong man
+  // Sua deal (isCreate=false van giu nguyen layout/section cu ben duoi).
+  const createReviewChecks = [
+    { key: 'name', label: 'Tên dự án / cơ hội', ok: Boolean(form.dealName.trim()) },
+    { key: 'product', label: 'Sản phẩm / dịch vụ', ok: Boolean(form.servicePackage.trim()) },
+    { key: 'next', label: 'Tiếp theo', ok: Boolean(form.nextStep.trim()) },
+    { key: 'follow', label: 'Hạn follow-up', ok: Boolean(form.followUpDate.trim()) },
+    // "Team Sale"/"Sale phụ trách" bắt buộc (feedback leader 2026-09-29) -
+    // thêm vào đây để "Tóm tắt quyết định" phản ánh đúng, dù gate thật sự
+    // nằm ở validateDealForm({ requireTeamSale: isCreate }) trong DealFormModal.
+    { key: 'team', label: 'Team Sale', ok: Boolean(form.crmTeamId) },
+    { key: 'ae', label: 'Sale phụ trách', ok: Boolean(sdrSelectionKey) },
+  ];
+  const createReviewOkCount = createReviewChecks.filter(c => c.ok).length;
+  const createReviewReady = createReviewOkCount === createReviewChecks.length;
+  const createReadinessLabel = createReviewReady ? 'Sẵn sàng tạo deal' : createReviewOkCount >= 3 ? 'Cần bổ sung thêm' : 'Chưa sẵn sàng';
+  const createReadinessTone = createReviewReady ? 'ready' : createReviewOkCount >= 3 ? 'partial' : 'blocked';
+
+  // Giong het decisionRows cua LeadDetailDrawer (Xac minh Lead) - bo cac dong
+  // dinh danh khach hang (khong con UI chon/nhap khach hang o day nua theo
+  // feedback "bo mục Khách hàng & liên hệ, đem nguyên form của lead").
+  const decisionRows = [
+    { key: 'need', label: 'Nhu cầu', value: form.servicePackage.trim() || '—', ok: Boolean(form.servicePackage.trim()) },
+    { key: 'value', label: 'Giá trị ước tính', value: formatEstimatedValue(parseCurrencyInput(form.estimatedBudget)), ok: Boolean(form.estimatedBudget.trim()) },
+    { key: 'icp', label: 'ICP', value: ICP_OPTIONS.find(o => o.value === icpFit)?.label || '—', ok: icpFit !== 'unknown' },
+    { key: 'timeline', label: 'Thời gian triển khai', value: timeline || '—', ok: Boolean(timeline) },
+    {
+      key: 'next',
+      label: 'Tiếp theo',
+      value: form.nextStep.trim()
+        ? `${form.nextStep}${form.followUpDate ? ' · ' + new Date(form.followUpDate).toLocaleString('vi-VN') : ''}`
+        : '—',
+      ok: Boolean(form.nextStep.trim()) && Boolean(form.followUpDate),
+    },
+    { key: 'ae', label: 'Sale nhận bàn giao', value: form.sdrNameHint || '—', ok: Boolean(sdrSelectionKey) },
+    { key: 'stage', label: 'Giai đoạn', value: DEAL_STAGE_META[form.stage]?.label || form.stage, ok: true },
+    { key: 'ai_score', label: 'AI score', value: `${dealHealth.score}/100 · ${dealHealth.label}`, ok: dealHealth.score >= 60 },
+  ];
 
   // Next step: dropdown gợi ý thao tác phổ biến, vẫn cho gõ tự do — bắt đầu ở chế độ tuỳ
   // chỉnh nếu giá trị đang có (vd deal cũ) không khớp preset nào.
   return (
     <>
       {isCreate ? (
-        <section className="crm-ai-fill">
-          <h3 className="crm-form-title">Dán thông tin khách hàng <em className="crm-optional-hint">(tùy chọn)</em></h3>
-          <div className="crm-ai-fill-row">
-            <textarea
-              className="crm-ai-fill-textarea"
-              value={aiText}
-              onChange={event => setAiText(event.target.value)}
-              placeholder="VD: Nguyễn Văn A - CEO ABC, 0912345678, cần làm website, ngân sách ~80 triệu"
-              rows={2}
-            />
-            <button
-              type="button"
-              className="crm-ai-fill-btn"
-              disabled={aiLoading || !aiText.trim()}
-              onClick={() => void handleAiParse()}
-            >
-              ✨ {aiLoading ? 'Đang phân tích...' : 'AI điền nhanh'}
-            </button>
-          </div>
-          <p className="crm-ai-fill-hint">Dán tin nhắn/email/ghi chú cuộc gọi — AI sẽ tự điền các ô còn trống bên dưới, bạn vẫn sửa lại được.</p>
-          {aiError ? <p className="crm-error crm-ai-fill-error">{aiError}</p> : null}
-        </section>
-      ) : null}
-
-      <section className="crm-form-section">
-        <h3 className="crm-form-title">1. Khách hàng &amp; Cơ hội</h3>
-        <div className="crm-form-grid">
-          <Field label="Tên cơ hội" required>
-            <input value={form.dealName} onChange={e => setValue('dealName', e.target.value)} placeholder="Ví dụ: Website Unifarm..." />
-          </Field>
-          <Field label="Customer / Công ty" required>
-            <CustomerProfileCombobox form={form} setValue={setValue} locked={form.customerLocked} />
-          </Field>
-          <Field label="Dự án" hint={form.projectLocked ? undefined : 'tùy chọn'}>
-            <ProjectPicker form={form} setValue={setValue} locked={form.projectLocked} />
-          </Field>
-          <Field label="Người liên hệ chính" hint={form.primaryContactLocked ? undefined : 'tùy chọn'}>
-            <ContactPicker form={form} setValue={setValue} locked={form.primaryContactLocked} />
-          </Field>
-          <Field label="Công ty" hint="tùy chọn">
-            <input value={form.companyName} onChange={event => editIdentity('companyName', event.target.value)} placeholder="Công ty TNHH ABC" />
-          </Field>
-          <Field label="Tên người liên hệ" hint={form.primaryContactId ? 'từ Contact đã chọn; không sửa hồ sơ CRM' : 'tùy chọn'}>
-            <input value={form.contactName} readOnly placeholder="Chọn Contact để lấy tên người liên hệ" />
-          </Field>
-          <Field full label="Liên hệ" required hint="chỉ cần SĐT hoặc Email">
-            <div className="crm-inline-pair">
-              <input value={form.phone} onChange={event => editIdentity('phone', event.target.value)} type="tel" placeholder="Số điện thoại" />
-              <input value={form.email} onChange={event => editIdentity('email', event.target.value)} type="email" placeholder="Email" />
+        <>
+          {/* Bê nguyên form "Xác minh Lead"/"Tạo cơ hội bán hàng" sang đây
+           * (feedback leader: "bỏ mục Khách hàng & liên hệ, đem nguyên form
+           * của lead là được") - bỏ hẳn panel "Khách hàng & liên hệ" +
+           * "Dán thông tin khách hàng" (AI điền nhanh) cũ, dùng thẳng
+           * LeadDealQualificationPanel không thêm/bớt gì. Khách hàng cho deal
+           * này (nếu có) đến từ prop `initialCustomer` (đã đổ sẵn vào
+           * form.customerId/customerName/phone/email lúc mở modal), không
+           * còn UI để xem/sửa lại ở đây nữa. */}
+          <LeadDealQualificationPanel
+            canWrite
+            interest={form.servicePackage}
+            onInterestChange={value => setValue('servicePackage', value)}
+            estimatedValue={parseCurrencyInput(form.estimatedBudget)}
+            onEstimatedValueChange={value => setValue('estimatedBudget', value != null ? String(value) : '')}
+            interestLevel={interestLevel}
+            onInterestLevelChange={setInterestLevel}
+            timeline={timeline}
+            onTimelineChange={setTimeline}
+            project={form.dealName}
+            onProjectChange={value => { setValue('projectId', ''); setValue('dealName', value); }}
+            note={form.note}
+            onNoteChange={value => setValue('note', value)}
+            teamId={crmTeamId}
+            onTeamIdChange={handleCrmTeamIdChange}
+            teamOptions={crmTeamOptionsForSelect}
+            teamActions={crmTeamActions}
+            aeId={sdrSelectionKey}
+            onAeIdChange={value => handlePick(value, 'sdrId', 'sdrNameHint')}
+            aeOptions={aeOptionsForPanel}
+            contactName={form.contactName}
+            nextStep={form.nextStep}
+            onNextStepChange={value => setValue('nextStep', value)}
+            nextStepAt={form.followUpDate}
+            onNextStepAtChange={value => setValue('followUpDate', value)}
+            dealStage={form.stage}
+            onDealStageChange={value => setValue('stage', value as Deal['stage'])}
+            verificationOutcome={verificationOutcome}
+            ruleConditions={ruleConditions}
+            outcomeReasons={outcomeReasons}
+            outcomeMissing={outcomeMissing}
+            sqlProgress={sqlProgress}
+            nurtureReason={nurtureReason}
+            onNurtureReasonChange={setNurtureReason}
+            unqualifiedReason={unqualifiedReason}
+            onUnqualifiedReasonChange={setUnqualifiedReason}
+            followUpChannel=""
+            onFollowUpChannelChange={() => {}}
+            nextStepWarning={nextStepWarning}
+            decisionRows={decisionRows}
+            readinessLabel={createReadinessLabel}
+            readinessTone={createReadinessTone}
+          />
+        </>
+      ) : (
+        <>
+          <section className="crm-form-section">
+            <h3 className="crm-form-title">1. Khách hàng &amp; Cơ hội</h3>
+            <div className="crm-form-grid">
+              <Field label="Customer / Công ty" required>
+                <CustomerProfileCombobox form={form} setValue={setValue} locked={form.customerLocked} />
+              </Field>
+              <Field label="Dự án" required hint={form.projectLocked ? undefined : 'chọn có sẵn hoặc gõ tên mới — cơ hội lấy tên theo dự án'}>
+                <ProjectPicker form={form} setValue={setValue} locked={form.projectLocked} />
+              </Field>
+              <Field label="Người liên hệ chính" hint={form.primaryContactLocked ? undefined : 'tùy chọn'}>
+                <ContactPicker form={form} setValue={setValue} locked={form.primaryContactLocked} />
+              </Field>
+              <Field label="Công ty" hint="tùy chọn">
+                <input value={form.companyName} onChange={event => editIdentity('companyName', event.target.value)} placeholder="Công ty TNHH ABC" />
+              </Field>
+              <Field label="Tên người liên hệ" hint={form.primaryContactId ? 'từ Contact đã chọn; không sửa hồ sơ CRM' : 'tùy chọn'}>
+                <input value={form.contactName} readOnly placeholder="Chọn Contact để lấy tên người liên hệ" />
+              </Field>
+              <Field full label="Liên hệ" required hint="chỉ cần SĐT hoặc Email">
+                <div className="crm-inline-pair">
+                  <input value={form.phone} onChange={event => editIdentity('phone', event.target.value)} type="tel" placeholder="Số điện thoại" />
+                  <input value={form.email} onChange={event => editIdentity('email', event.target.value)} type="email" placeholder="Email" />
+                </div>
+              </Field>
+              <Field label="Sản phẩm / dịch vụ" required>
+                <CrmCategoryCodeSelect categoryType="crm_service_package" value={form.servicePackage} onChange={value => setValue('servicePackage', value)} fallbackOptions={servicePackageOptions} placeholder="-- Chọn --" />
+              </Field>
+              <Field label="Giá trị ước tính (VND)">
+                <CurrencyInput
+                  value={parseCurrencyInput(form.estimatedBudget)}
+                  onChange={value => setValue('estimatedBudget', value != null ? String(value) : '')}
+                  placeholder="VD: 50.000.000"
+                />
+              </Field>
             </div>
-          </Field>
-          <Field label="Sản phẩm / dịch vụ" required>
-            <CrmCategoryCodeSelect categoryType="crm_service_package" value={form.servicePackage} onChange={value => setValue('servicePackage', value)} fallbackOptions={servicePackageOptions} placeholder="-- Chọn --" />
-          </Field>
-          <Field label="Giá trị ước tính (VND)">
-            <CurrencyInput
-              value={parseCurrencyInput(form.estimatedBudget)}
-              onChange={value => setValue('estimatedBudget', value != null ? String(value) : '')}
-              placeholder="VD: 50.000.000"
-            />
-          </Field>
-        </div>
-      </section>
+          </section>
 
-      <section className="crm-form-section">
-        <h3 className="crm-form-title">2. Deal đang ở đâu?</h3>
-        <div className="crm-form-grid">
-          {isCreate ? (
-            <Field full label="Giai đoạn" required>
-              <div className="crm-stage-filter">
-                {CREATE_STAGE_CHIPS.map(stage => {
-                  const selected = form.stage === stage;
-                  return (
-                    <button
-                      type="button"
-                      key={stage}
-                      className={`crm-stage-pill ${selected ? 'crm-stage-pill--selected' : 'crm-stage-pill--idle'}`}
-                      style={selected ? { background: DEAL_STAGE_META[stage].color, borderColor: DEAL_STAGE_META[stage].color, color: '#fff' } : undefined}
-                      onClick={() => setValue('stage', stage)}
-                    >
-                      {CREATE_STAGE_LABELS[stage]}
-                    </button>
-                  );
-                })}
-              </div>
-            </Field>
-          ) : (
-            <Field full label="Giai đoạn deal">
-              <select value={form.stage} onChange={event => setValue('stage', event.target.value as Deal['stage'])}>
-                {DEAL_STAGES.map(stage => (
-                  <option key={stage} value={stage}>
-                    {DEAL_STAGE_META[stage].label} - {DEAL_STAGE_META[stage].description}
-                  </option>
-                ))}
-              </select>
-            </Field>
-          )}
-          <Field label="Next step" required>
-            <CrmCategorySelect categoryType="crm_next_step" value={form.nextStep} onChange={value => setValue('nextStep', value)} placeholder="-- Chọn --" excludeLabels={["Khác", "Khac"]} />
-          </Field>
-          <Field label="Hạn follow-up" required>
-            <input value={form.followUpDate} onChange={event => setValue('followUpDate', event.target.value)} type="datetime-local" />
-          </Field>
-          {form.stage === 'on_hold' ? (
-            <Field full label="Lý do tạm dừng">
-              <textarea value={form.pauseReason} onChange={event => setValue('pauseReason', event.target.value)} placeholder="Ghi rõ lý do deal bị tạm dừng..." />
-            </Field>
-          ) : null}
-        </div>
-
-        <div className="crm-deal-cards">
-          <div className={`crm-deal-card crm-deal-card--health-${dealHealth.level}`}>
-            <span className="crm-deal-card-label">Deal Health – tự tính để manager đánh giá chất lượng</span>
-            <strong className="crm-deal-card-score">{dealHealth.score}/100 · {dealHealth.label}</strong>
-            <p className="crm-deal-card-desc">{dealHealth.description}</p>
-          </div>
-          <div className="crm-deal-card">
-            <span className="crm-deal-card-label">Người phụ trách</span>
-            <select
-              className="crm-deal-card-select"
-              value={sdrSelectionKey}
-              onChange={event => handlePick(event.target.value, 'sdrId', 'sdrNameHint')}
-            >
-              <option value="">-- Chưa giao --</option>
-              {currentUserMissingFromMembers && currentUser ? (
-                <option value={currentUser.id}>{currentUser.name || currentUser.email}</option>
-              ) : null}
-              {assignableMembers
-                .filter(m => selectionKeyOf(m) === sdrSelectionKey || selectionKeyOf(m) !== leadedBySelectionKey)
-                .map(m => {
-                  const linked = !!(m.linked_user_id || m.linked_user_id_2);
-                  return (
-                    <option key={m.id} value={selectionKeyOf(m)}>
-                      {linked ? `${m.display_name}${m.email ? ` (${m.email})` : ''}` : m.display_name}
+          <section className="crm-form-section">
+            <h3 className="crm-form-title">2. Deal đang ở đâu?</h3>
+            <div className="crm-form-grid">
+              <Field full label="Giai đoạn deal">
+                <select value={form.stage} onChange={event => setValue('stage', event.target.value as Deal['stage'])}>
+                  {DEAL_STAGES.map(stage => (
+                    <option key={stage} value={stage}>
+                      {DEAL_STAGE_META[stage].label} - {DEAL_STAGE_META[stage].description}
                     </option>
-                  );
-                })}
-            </select>
-            <p className="crm-deal-card-desc">Tự động lấy sale đang đăng nhập. Manager có thể đổi sau.</p>
-          </div>
-        </div>
-      </section>
+                  ))}
+                </select>
+              </Field>
+              <Field label="Next step" required>
+                <CrmCategorySelect categoryType="crm_next_step" value={form.nextStep} onChange={value => setValue('nextStep', value)} placeholder="-- Chọn --" excludeLabels={["Khác", "Khac"]} />
+              </Field>
+              <Field label="Hạn follow-up" required>
+                <input value={form.followUpDate} onChange={event => setValue('followUpDate', event.target.value)} type="datetime-local" />
+              </Field>
+              {form.stage === 'on_hold' ? (
+                <Field full label="Lý do tạm dừng">
+                  <textarea value={form.pauseReason} onChange={event => setValue('pauseReason', event.target.value)} placeholder="Ghi rõ lý do deal bị tạm dừng..." />
+                </Field>
+              ) : null}
+            </div>
+
+            <div className="crm-deal-cards">
+              <div className={`crm-deal-card crm-deal-card--health-${dealHealth.level}`}>
+                <span className="crm-deal-card-label">Deal Health – tự tính để manager đánh giá chất lượng</span>
+                <strong className="crm-deal-card-score">{dealHealth.score}/100 · {dealHealth.label}</strong>
+                <p className="crm-deal-card-desc">{dealHealth.description}</p>
+              </div>
+              {showTeamSaleInEditBranch ? (
+                <div className="crm-deal-card">
+                  <span className="crm-deal-card-label">Team Sale</span>
+                  <SearchableSelect
+                    value={crmTeamId}
+                    onChange={handleCrmTeamIdChange}
+                    options={crmTeamOptionsForSelect}
+                    actions={crmTeamActions}
+                    placeholder="-- Chọn --"
+                  />
+                  <p className="crm-deal-card-desc">Lọc "Người phụ trách" bên dưới theo đúng Team đã chọn.</p>
+                </div>
+              ) : null}
+              <div className="crm-deal-card">
+                <span className="crm-deal-card-label">Người phụ trách</span>
+                <select
+                  className="crm-deal-card-select"
+                  value={sdrSelectionKey}
+                  onChange={event => handlePick(event.target.value, 'sdrId', 'sdrNameHint')}
+                >
+                  <option value="">-- Chưa giao --</option>
+                  {/* Da chon Team CRM -> lay TRUC TIEP tu crmTeamMembers (xem
+                      giai thich o aeOptionsForPanel phia tren) thay vi loc
+                      danh ba HR - tranh dropdown trong voi tai khoan CRM
+                      chua co ho so HR lien ket. */}
+                  {crmTeamId ? (
+                    (crmTeamMembers || [])
+                      .filter(u => u.id === sdrSelectionKey || u.id !== leadedBySelectionKey)
+                      .map(u => (
+                        <option key={u.id} value={u.id}>
+                          {u.name ? `${u.name}${u.email ? ` (${u.email})` : ''}` : u.email}
+                        </option>
+                      ))
+                  ) : (
+                    <>
+                      {currentUserMissingFromMembers && currentUser ? (
+                        <option value={currentUser.id}>{currentUser.name || currentUser.email}</option>
+                      ) : null}
+                      {assignableMembers
+                        .filter(m => selectionKeyOf(m) === sdrSelectionKey || selectionKeyOf(m) !== leadedBySelectionKey)
+                        .map(m => {
+                          const linked = !!(m.linked_user_id || m.linked_user_id_2);
+                          return (
+                            <option key={m.id} value={selectionKeyOf(m)}>
+                              {linked ? `${m.display_name}${m.email ? ` (${m.email})` : ''}` : m.display_name}
+                            </option>
+                          );
+                        })}
+                    </>
+                  )}
+                </select>
+                <p className="crm-deal-card-desc">Tự động lấy sale đang đăng nhập. Manager có thể đổi sau.</p>
+              </div>
+            </div>
+          </section>
+        </>
+      )}
 
       <section className="crm-advanced">
         <button type="button" className="crm-advanced-toggle" onClick={() => setAdvancedOpen(open => !open)}>
@@ -1235,6 +1558,23 @@ export function DealFormFields({
           </div>
         ) : null}
       </section>
+
+      {enableCrmTeamSale ? (
+        <CrmTeamFormModal
+          open={addTeamOpen}
+          editingId={null}
+          initialTeam={null}
+          leaders={crmTeamLeaders}
+          allUsers={crmAllUsers}
+          allowAddMembersAfterCreate
+          onClose={() => setAddTeamOpen(false)}
+          onSaved={newTeam => {
+            setAddTeamOpen(false);
+            setCrmTeamOptions(prev => [...prev, newTeam]);
+            handleCrmTeamIdChange(newTeam.id);
+          }}
+        />
+      ) : null}
     </>
   );
 }

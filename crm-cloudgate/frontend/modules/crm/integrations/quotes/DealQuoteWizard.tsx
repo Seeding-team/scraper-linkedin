@@ -12,6 +12,7 @@ import { SelectQuoteFormStep } from './SelectQuoteFormStep';
 import { emptyQuoteDraft, quoteDraftFromForm } from './types';
 import type { QuoteDraft, WizardStep } from './types';
 import { useDealQuoteSubmit } from './useDealQuoteSubmit';
+import { useAppAuth } from '@/contexts/AppAuthContext';
 
 const STEP_LABELS: Record<WizardStep, string> = {
   1: 'Khách hàng',
@@ -36,6 +37,7 @@ export function DealQuoteWizard({
   const [selectedForm, setSelectedForm] = useState<QuoteForm | null>(null);
   const [quoteDraft, setQuoteDraft] = useState<QuoteDraft>(emptyQuoteDraft);
   const { submit, submitting, submitError, resetError } = useDealQuoteSubmit();
+  const { user: currentUser } = useAppAuth();
 
   function setDealValue<K extends keyof DealFormState>(key: K, value: DealFormState[K]) {
     setDealDraft(current => ({ ...current, [key]: value }));
@@ -67,7 +69,7 @@ export function DealQuoteWizard({
 
   function handleSelectForm(form: QuoteForm) {
     setSelectedForm(form);
-    setQuoteDraft(quoteDraftFromForm(form, dealDraft));
+    setQuoteDraft(quoteDraftFromForm(form, dealDraft, undefined, currentUser?.name));
     setStep(3);
   }
 

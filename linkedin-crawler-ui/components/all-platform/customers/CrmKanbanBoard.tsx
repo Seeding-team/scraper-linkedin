@@ -262,6 +262,7 @@ function DealCard({
 
   return (
     <article
+      data-crm-customer-row="true"
       draggable
       onDragStart={(event) => {
         event.dataTransfer.setData("text/customer-id", customer.id);

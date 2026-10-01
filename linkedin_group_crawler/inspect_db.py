@@ -4,7 +4,7 @@ def main():
     host = "db.rtwpogvficadngtfrcci.supabase.co"
     port = 6543
     user = "postgres"
-    password = "KLTceUKTgTGm5kVL"
+    password = __import__("os").environ["SUPABASE_DB_PASSWORD"]
     database = "postgres"
     
     print(f"Connecting to database {database} on {host}:{port}...")

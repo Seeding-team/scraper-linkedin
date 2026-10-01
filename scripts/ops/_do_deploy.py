@@ -7,7 +7,7 @@ from pathlib import Path
 HOST = "10.120.80.45"
 PORT = 22
 USER = "seeding"
-PASS = "1"
+PASS = __import__("os").environ["SSH_PASS"]  # đặt biến môi trường SSH_PASS (mật khẩu ở docs/INFRASTRUCTURE.md local, không commit)
 
 REMOTE_BASE = "/home/seeding/service"
 FILES = [

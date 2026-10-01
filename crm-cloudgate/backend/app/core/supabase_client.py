@@ -213,6 +213,64 @@ def execute_supabase_query(
     raise RuntimeError("Supabase operation failed without an exception")
 
 
+# HTTP methods considered idempotent — safe to auto-retry after ANY 502/503/504
+# from the reverse proxy in front of self-host PostgREST (OpenResty/Kong),
+# because a GET that never got a real response cannot have caused a side
+# effect (BUG THAT DA GAP: "JSON could not be generated" / postgrest.exceptions
+# .APIError voi code 502 bi nem thang ra FE nguyen dang khi PostgREST self-host
+# (seeding.db.markeeai.com) tra ve trang HTML "502 Bad Gateway" cua OpenResty
+# thay vi JSON - execute_supabase_query() co retry cho loi nay NHUNG chi ap
+# dung o vai chuc call site, con lai (auth, quote, project, members...) goi
+# `.execute()` truc tiep khong qua wrapper nen khong duoc retry).
+_SAFE_RETRY_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+# 502/503 nghia la request CHUA TUNG toi duoc PostgREST (Kong/OpenResty tu
+# choi ngay) - retry an toan cho MOI method, ke ca ghi (POST/PATCH/DELETE).
+# 504 (gateway timeout) mo ho hon: PostgREST co the DA xu ly xong (vd da tao
+# xong 1 lead/customer) nhung phan hoi ve cham -> chi retry 504 cho method an
+# toan (GET/HEAD/OPTIONS) de tranh ghi trung (double-create) tren cac RPC/POST
+# mutating.
+_GATEWAY_NEVER_REACHED_STATUS = frozenset({502, 503})
+_GATEWAY_RETRY_STATUS_FOR_SAFE_METHODS = _GATEWAY_NEVER_REACHED_STATUS | {504}
+
+
+def _make_retry_on_gateway_error_transport(inner):
+    """Wrap an ``httpx.HTTPTransport`` to retry on a HTTP-level 502/503/504
+    *response* (valid HTTP response, not a connection error) — httpx's own
+    ``retries=`` kwarg only covers connect failures, never a well-formed 5xx
+    response from the reverse proxy sitting in front of PostgREST. Built as a
+    factory (subclassing ``httpx.BaseTransport`` lazily) so this module still
+    imports fine even if ``httpx`` isn't installed (see the ``try/except
+    ImportError`` around the caller)."""
+    import httpx as _httpx
+
+    class _RetryOnGatewayErrorTransport(_httpx.BaseTransport):
+        def __init__(self, transport, *, max_retries: int = 2, base_delay: float = 0.3):
+            self._transport = transport
+            self._max_retries = max_retries
+            self._base_delay = base_delay
+
+        def handle_request(self, request):
+            response = self._transport.handle_request(request)
+            method = request.method.upper()
+            retryable_statuses = (
+                _GATEWAY_RETRY_STATUS_FOR_SAFE_METHODS
+                if method in _SAFE_RETRY_METHODS
+                else _GATEWAY_NEVER_REACHED_STATUS
+            )
+            attempt = 0
+            while response.status_code in retryable_statuses and attempt < self._max_retries:
+                response.close()
+                time.sleep(self._base_delay * (2 ** attempt))
+                attempt += 1
+                response = self._transport.handle_request(request)
+            return response
+
+        def close(self) -> None:
+            self._transport.close()
+
+    return _RetryOnGatewayErrorTransport(inner)
+
+
 def get_supabase_client() -> Client:
     """Return a singleton Supabase client.
 
@@ -258,8 +316,10 @@ def get_supabase_client() -> Client:
                 headers={"Connection": "keep-alive"},
                 # `retries` only covers connect failures, never a RemoteProtocolError
                 # on a pooled socket the upstream closed. execute_supabase_query()
-                # is what actually recovers from that.
-                transport=httpx.HTTPTransport(retries=3),
+                # is what actually recovers from that. `_make_retry_on_gateway_error_transport`
+                # adds retry for a *received* 502/503/504 HTTP response (OpenResty/
+                # Kong gateway hiccup in front of self-host PostgREST).
+                transport=_make_retry_on_gateway_error_transport(httpx.HTTPTransport(retries=3)),
                 # Expire idle sockets well before Kong/nginx (keepalive_timeout 60s)
                 # reaps them, so we rarely hand out an already-closed connection.
                 limits=httpx.Limits(

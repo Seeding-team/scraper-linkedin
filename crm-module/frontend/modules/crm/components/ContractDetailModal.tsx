@@ -7,6 +7,7 @@ import type { Deal } from '../types';
 import { seedingContractRepository } from '@/modules/contracts/repositories/SeedingContractRepository';
 import type { Contract } from '@/modules/contracts';
 import { contractStatusLabel } from '@/modules/contracts/constants/contractConfig';
+import { seedingQuoteRepository } from '@/modules/quotes';
 
 type Props = {
   deal: Deal | null;
@@ -19,11 +20,12 @@ type Props = {
  * do la field legacy, chi dung lam fallback hien thi khi deal chua co ban ghi
  * contracts nao, tranh 2 noi (Deal Workspace vs Customer 360) hien 2 trang thai khac
  * nhau cho cung 1 hop dong (xem CRM_CUSTOMER_360_PRD Phase 1 Foundation). */
-function contractRows(contract: Contract) {
+function contractRows(contract: Contract, quoteNumber: string | null) {
   return [
     { label: 'Số hợp đồng', value: contract.contractNumber, icon: FileText },
     { label: 'Tên hợp đồng', value: contract.title, icon: FileText },
     { label: 'Trạng thái', value: contractStatusLabel(contract.status), icon: FileText },
+    { label: 'Báo giá', value: contract.quoteId ? (quoteNumber || 'Đang tải...') : 'Chưa gắn báo giá', icon: FileText },
     { label: 'Giá trị hợp đồng', value: formatVND(contract.contractValue || 0), icon: Wallet },
     { label: '% đã thu', value: `${contract.paymentCollectedPercent || 0}%`, icon: Wallet },
     { label: 'Ngày bắt đầu', value: formatDate(contract.startDate), icon: CalendarDays },
@@ -36,6 +38,7 @@ export function ContractDetailModal({ deal, open, onClose }: Props) {
   const [loading, setLoading] = useState(false);
   const [contracts, setContracts] = useState<Contract[]>([]);
   const [error, setError] = useState('');
+  const [quoteNumber, setQuoteNumber] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open || !deal) {
@@ -53,9 +56,24 @@ export function ContractDetailModal({ deal, open, onClose }: Props) {
     return () => { alive = false; };
   }, [open, deal]);
 
-  if (!open || !deal) return null;
-
   const contract = contracts[0] || null;
+
+  // "Báo giá" - Contract chi luu quoteId, khong co san quoteNumber de hien
+  // thi (feedback leader 2026-09-27: form hop dong thieu muc bao gia) - fetch
+  // rieng bang getQuote() da co san cua module quotes.
+  useEffect(() => {
+    if (!contract?.quoteId) {
+      setQuoteNumber(null);
+      return;
+    }
+    let alive = true;
+    seedingQuoteRepository.getQuote(contract.quoteId)
+      .then(quote => { if (alive) setQuoteNumber(quote.quoteNumber); })
+      .catch(() => { if (alive) setQuoteNumber(null); });
+    return () => { alive = false; };
+  }, [contract?.quoteId]);
+
+  if (!open || !deal) return null;
 
   return (
     <div className="crm-modal-backdrop crm-contract-detail-backdrop" onClick={onClose}>
@@ -83,7 +101,7 @@ export function ContractDetailModal({ deal, open, onClose }: Props) {
                 <span>{contract.paymentTerms || 'Chưa có điều khoản thanh toán.'}</span>
               </div>
               <div className="crm-contract-detail-grid">
-                {contractRows(contract).map(row => {
+                {contractRows(contract, quoteNumber).map(row => {
                   const Icon = row.icon;
                   return (
                     <article key={row.label} className="crm-contract-detail-card">

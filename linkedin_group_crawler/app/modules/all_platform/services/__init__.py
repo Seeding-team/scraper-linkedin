@@ -49,6 +49,7 @@ from app.modules.all_platform.services.supabase_members_service import (
     parse_excel_rows,
     import_members_from_rows,
     sync_members_from_list,
+    sync_members_from_recruitment,
 )
 from app.modules.all_platform.services.supabase_quick_comment_service import (
     get_all_quick_comments,
@@ -80,6 +81,7 @@ from app.modules.all_platform.services.supabase_quote_service import (
     revoke_public_quote,
     enable_public_quote,
     set_public_access_restriction,
+    set_print_layout_prefs,
     PublicQuoteVerificationRequiredError,
     soft_delete_quote,
     restore_quote,
@@ -159,6 +161,9 @@ from app.modules.all_platform.services.supabase_user_service import (
     update_user_allowed_instances,
     update_user_quote_approver,
     update_user_quote_business_role,
+    admin_update_account,
+    update_user_crm_permission,
+    admin_delete_account,
     list_users_by_quote_business_role,
     get_team_members,
     add_team_member,
@@ -221,6 +226,7 @@ from app.modules.all_platform.services.supabase_contract_service import (
     update_contract_status,
     delete_contract,
     get_contracts_dashboard_stats,
+    list_contract_activity_log,
 )
 from app.modules.all_platform.services.contract_ai_service import (
     generate_contract_draft,
@@ -237,6 +243,27 @@ from app.modules.all_platform.services.crm_permission_service import (
     is_sale_member,
     has_full_crm_access,
     can_write_deal,
+    get_effective_permissions,
+)
+from app.modules.all_platform.services.crm_permission_group_service import (
+    list_permission_groups,
+    get_permission_group,
+    create_permission_group,
+    update_permission_group,
+    clone_permission_group,
+    delete_permission_group,
+    list_users_of_permission_group,
+)
+from app.modules.all_platform.services.crm_team_service import (
+    list_teams,
+    get_team,
+    get_team_id_for_user as get_crm_team_id_for_user_lookup,
+    create_team as create_crm_team,
+    update_team as update_crm_team,
+    delete_team as delete_crm_team,
+    add_team_member as add_crm_team_member,
+    remove_team_member as remove_crm_team_member,
+    suggest_team_code,
 )
 from app.modules.all_platform.services.supabase_project_service import (
     list_projects,

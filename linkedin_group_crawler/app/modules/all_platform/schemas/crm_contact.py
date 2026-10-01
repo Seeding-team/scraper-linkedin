@@ -15,6 +15,10 @@ class CrmContactBase(BaseModel):
     email: Optional[str] = None
     zalo: Optional[str] = None
     facebook: Optional[str] = None
+    # migration 145 - khop phan "Thong tin bo sung" cua form Lead (feedback
+    # 2026-09-23: form Them Contact "thieu tt" so voi form Lead).
+    telegram: Optional[str] = None
+    website: Optional[str] = None
     is_primary: bool = False
     note: Optional[str] = None
 
@@ -31,6 +35,8 @@ class CrmContactUpdate(BaseModel):
     email: Optional[str] = None
     zalo: Optional[str] = None
     facebook: Optional[str] = None
+    telegram: Optional[str] = None
+    website: Optional[str] = None
     is_primary: Optional[bool] = None
     note: Optional[str] = None
 

@@ -33,6 +33,15 @@
                             detail: { friendlyName, docId },
                         }));
                     }
+                } else if (friendlyName === "GroupsCometFeedRegularStoriesPaginationQuery") {
+                    // Luồng cào bài (platforms/facebook/crawl.js) cần cả variables để dựng lại query.
+                    const docId = params.get("doc_id");
+                    const variables = params.get("variables");
+                    if (docId && variables) {
+                        document.dispatchEvent(new CustomEvent("fb-graphql-docid-captured", {
+                            detail: { friendlyName, docId, variables },
+                        }));
+                    }
                 }
             } catch (e) {}
         }

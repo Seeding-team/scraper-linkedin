@@ -28,6 +28,7 @@ from app.modules.all_platform.routers.linkedin_legacy import router as linkedin_
 from app.modules.all_platform.routers.crawl_facebook import crawl_facebook_router
 from app.modules.all_platform.routers.extension_crawl import router as extension_crawl_router
 from app.modules.all_platform.routers.extension_crawl_linkedin import router as extension_crawl_linkedin_router
+from app.modules.all_platform.routers.extension_crawl_threads import router as extension_crawl_threads_router
 from app.modules.all_platform.routers.crawl_queue import router as crawl_queue_router
 from app.modules.all_platform.routers.fb_account_pool import router as fb_account_pool_router
 from app.modules.all_platform.routers.fb import router as fb_automation_router
@@ -42,9 +43,12 @@ from app.modules.all_platform.routers.crm_customer import router as crm_customer
 from app.modules.all_platform.routers.crm_lead import router as crm_lead_router
 from app.modules.all_platform.routers.crm_contact import detail_router as crm_contact_detail_router
 from app.modules.all_platform.routers.crm_contact import router as crm_contact_router
+from app.modules.all_platform.routers.crm_permission_group import router as crm_permission_group_router
+from app.modules.all_platform.routers.crm_team import router as crm_team_router
 from app.modules.all_platform.routers.quote import quote_forms_router, quotes_router, quote_email_provider_router, quote_approval_rules_router
 from app.modules.all_platform.routers.price_book import price_book_router, price_book_admin_router
 from app.modules.all_platform.routers.contract import contracts_router
+from app.modules.all_platform.routers.progress import progress_router
 from app.modules.all_platform.routers.contract_template import contract_templates_router
 from app.modules.all_platform.routers.service_catalog import router as service_catalog_router
 from app.modules.all_platform.routers.sales_asset import router as sales_asset_router
@@ -52,7 +56,9 @@ from app.modules.all_platform.routers.kpi_reward import router as kpi_reward_rou
 from app.modules.all_platform.routers.scheduled_comments import router as scheduled_comments_router
 from app.modules.all_platform.routers.posts_delete import router as posts_delete_router
 from app.modules.all_platform.routers.internal_engagement import router as internal_engagement_router
+from app.modules.all_platform.routers.presence import router as presence_router
 from app.modules.all_platform.phone_bridge.router import router as phone_bridge_router
+from app.modules.all_platform.mobile_proxy.router import router as mobile_proxy_router
 
 all_platform_router = APIRouter()
 
@@ -100,6 +106,11 @@ all_platform_router.include_router(
     extension_crawl_linkedin_router,
     prefix="/extension/linkedin",
     tags=["All-Platform Extension LinkedIn Crawl"],
+)
+all_platform_router.include_router(
+    extension_crawl_threads_router,
+    prefix="/extension/threads",
+    tags=["All-Platform Extension Threads Crawl"],
 )
 all_platform_router.include_router(
     crawl_queue_router,
@@ -164,6 +175,13 @@ all_platform_router.include_router(
     unified_posts_router,
     prefix="/unified",
     tags=["All-Platform Unified Posts"],
+)
+
+# ── Presence (thoi gian online thanh vien — Dashboard leader) ─────────────────
+all_platform_router.include_router(
+    presence_router,
+    prefix="/presence",
+    tags=["All-Platform Presence"],
 )
 
 # ── KPI (platform-agnostic) ───────────────────────────────────────────────────
@@ -280,6 +298,11 @@ all_platform_router.include_router(
     prefix="/admin/phone-bridge",
     tags=["All-Platform Admin Phone Bridge"],
 )
+all_platform_router.include_router(
+    mobile_proxy_router,
+    prefix="/admin/mobile-proxy",
+    tags=["All-Platform Admin Mobile Proxy"],
+)
 
 # ── Customer Leads ─────────────────────────────────────────────────────────────
 all_platform_router.include_router(
@@ -315,6 +338,16 @@ all_platform_router.include_router(
     crm_contact_detail_router,
     prefix="/crm/contacts",
     tags=["All-Platform CRM Contacts"],
+)
+all_platform_router.include_router(
+    crm_permission_group_router,
+    prefix="/crm/permission-groups",
+    tags=["All-Platform CRM Permission Groups"],
+)
+all_platform_router.include_router(
+    crm_team_router,
+    prefix="/crm/teams",
+    tags=["All-Platform CRM Teams"],
 )
 
 # ── Quote Forms + Quotes ───────────────────────────────────────────────────────
@@ -364,6 +397,13 @@ all_platform_router.include_router(
     contract_templates_router,
     prefix="/contract-templates",
     tags=["All-Platform Contract Templates"],
+)
+
+# ── Quản lý tiến độ CRM (READ-only, không phải task management) ────────────────
+all_platform_router.include_router(
+    progress_router,
+    prefix="/progress",
+    tags=["All-Platform Progress Tracking"],
 )
 
 # ── Danh mục dịch vụ (Service Catalog) ─────────────────────────────────────────
@@ -417,6 +457,19 @@ all_platform_router.include_router(zalo_bulk_jobs_router, prefix="/zalo", tags=[
 all_platform_router.include_router(zalo_campaigns_router, prefix="/zalo", tags=["Zalo Campaigns"])
 all_platform_router.include_router(zalo_push_router, prefix="/zalo", tags=["Zalo Push"])
 all_platform_router.include_router(zalo_quick_replies_router, prefix="/zalo", tags=["Zalo Quick Replies"])
+
+# ── Telegram Chat (Telethon) ────────────────────────────────────────────────────
+from app.modules.all_platform.telegram.api.routes.auth import router as telegram_auth_router
+from app.modules.all_platform.telegram.api.routes.accounts import router as telegram_accounts_router
+from app.modules.all_platform.telegram.api.routes.conversations import router as telegram_conversations_router
+from app.modules.all_platform.telegram.api.routes.messages import router as telegram_messages_router
+from app.modules.all_platform.telegram.api.routes.events import router as telegram_events_router
+
+all_platform_router.include_router(telegram_auth_router, prefix="/telegram", tags=["Telegram Auth"])
+all_platform_router.include_router(telegram_accounts_router, prefix="/telegram", tags=["Telegram Accounts"])
+all_platform_router.include_router(telegram_conversations_router, prefix="/telegram", tags=["Telegram Conversations"])
+all_platform_router.include_router(telegram_messages_router, prefix="/telegram", tags=["Telegram Messages"])
+all_platform_router.include_router(telegram_events_router, prefix="/telegram", tags=["Telegram Events"])
 
 # ── Scheduled Comments ─────────────────────────────────────────────────────────
 all_platform_router.include_router(

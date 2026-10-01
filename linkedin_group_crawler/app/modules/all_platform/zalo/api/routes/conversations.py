@@ -787,6 +787,17 @@ async def sync_conversation_messages_manually(
     return {"ok": True, "message": "Đã thêm tác vụ đồng bộ lịch sử tin nhắn vào nền"}
 
 
+class ReplyToPayload(BaseModel):
+    """Tin nhắn đang được trả lời/trích dẫn — FE lấy nguyên các field này từ tin
+    đã có sẵn trong state cục bộ (không cần BE tra lại DB), rồi gửi kèm khi tạo
+    tin mới. Áp dụng được cho tin của CẢ đối phương lẫn của chính mình."""
+    message_id: str = Field(..., min_length=1, description="source_message_id (msgId thật) của tin được trả lời")
+    cli_msg_id: Optional[str] = Field(None, description="cli_msg_id của tin được trả lời (nếu có)")
+    sender_id: Optional[str] = Field(None, description="uid người gửi tin được trả lời")
+    content: Optional[str] = Field(None, description="Nội dung xem trước của tin được trả lời")
+    ts: Optional[int] = Field(None, description="epoch ms của tin được trả lời")
+
+
 class SendMessageRequest(BaseModel):
     text: str = Field(..., min_length=1, description="Nội dung tin nhắn văn bản")
     thread_type: Optional[int] = Field(
@@ -796,6 +807,9 @@ class SendMessageRequest(BaseModel):
     # Zalo tập trung (Mục 3.3.5 + 4.6 mentionUtils guide) — @tag/@All trong tin nhắn nhóm.
     mentions: Optional[List[Mention]] = Field(
         None, description="[{pos,uid,len}] — vị trí/uid/độ dài mỗi mention trong `text`"
+    )
+    reply_to: Optional[ReplyToPayload] = Field(
+        None, description="Trả lời/trích dẫn 1 tin nhắn cụ thể trong hội thoại"
     )
 
 
@@ -847,6 +861,19 @@ async def send_message_to_conversation(
         thread_type = await resolve_thread_type(user_id, conversation_id.strip())
 
     mentions_payload = [m.model_dump() for m in body.mentions] if body.mentions else None
+    quote_payload = None
+    if body.reply_to:
+        # Đúng shape SendMessageQuote của zca-js (node_modules/zca-js/dist/apis/sendMessage.d.ts):
+        # {content, msgType, uidFrom, msgId, cliMsgId, ts, ttl} — cố tình bỏ propertyExt
+        # (không bắt buộc ở runtime dù type khai là required) và ép content về string,
+        # tránh đúng lỗi zca-js throw với content không phải string + msgType "webchat".
+        quote_payload = {
+            "msgId": body.reply_to.message_id.strip(),
+            "cliMsgId": (body.reply_to.cli_msg_id or "").strip() or None,
+            "uidFrom": (body.reply_to.sender_id or "").strip() or None,
+            "ts": body.reply_to.ts,
+            "content": str(body.reply_to.content or ""),
+        }
     try:
         result = await send_zca_message(
             auth,
@@ -854,6 +881,7 @@ async def send_message_to_conversation(
             body.text.strip(),
             thread_type=thread_type,
             mentions=mentions_payload,
+            quote=quote_payload,
         )
     except ZcaAuthExpiredError:
         raise HTTPException(status_code=401, detail=ZCA_SESSION_EXPIRED_DETAIL)
@@ -875,6 +903,7 @@ async def send_message_to_conversation(
         content=body.text.strip(),
         message_type="text",
         mentions=body.mentions,
+        reply_to_id=body.reply_to.message_id.strip() if body.reply_to else None,
     )
 
     return SendMessageResponse(
@@ -1083,6 +1112,122 @@ async def set_conversation_tag(
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Không thể lưu tag: {exc}")
     return {"ok": True, "conversation_id": conversation_id, "tag": tag}
+
+
+class ForwardMessageRequest(BaseModel):
+    source_message_id: str = Field(..., min_length=1, description="zalo_messages.source_message_id của tin cần chuyển tiếp")
+    target_conversation_ids: List[str] = Field(..., min_length=1, max_length=20, description="Danh sách hội thoại đích (tối đa 20)")
+
+
+class ForwardMessageResult(BaseModel):
+    conversation_id: str
+    ok: bool
+    error: Optional[str] = None
+
+
+class ForwardMessageResponse(BaseModel):
+    ok: bool
+    results: List[ForwardMessageResult]
+
+
+@router.post("/{conversation_id}/forward", response_model=ForwardMessageResponse)
+async def forward_conversation_message(
+    conversation_id: str,
+    body: ForwardMessageRequest,
+    account_id: Optional[str] = Query(None),
+    x_user_id: str = Header("default", alias="X-User-ID"),
+    x_caller_email: Optional[str] = Depends(get_authenticated_caller_email),
+):
+    """Chuyển tiếp 1 tin nhắn (chữ hoặc ảnh) sang N hội thoại khác.
+
+    KHÔNG dùng zca-js ``api.forwardMessage()`` thật (API này không mang được
+    @mentions và cần đúng shape "message object" phức tạp của Zalo — xem ghi chú
+    tham khảo trong PR) — thay vào đó GỬI LẠI content/ảnh như 1 tin nhắn MỚI ở
+    từng đích, giống hệt cách nút "Chuyển tiếp" thủ công hoạt động trên các
+    client Zalo khác. Đơn giản hơn, không phụ thuộc shape nội bộ hay bị Zalo
+    đổi API, đánh đổi là tin đến nơi KHÔNG có tag "Đã chuyển tiếp" (chấp nhận
+    được, đã ghi chú rõ đây là lựa chọn có chủ đích).
+    """
+    user_id = _normalize_user_id(account_id or x_user_id)
+    allowed_conv_ids = await check_caller_conversation_access(user_id, x_caller_email)
+    if allowed_conv_ids is not None and conversation_id.strip() not in allowed_conv_ids:
+        raise HTTPException(status_code=403, detail="Cuộc trò chuyện này ở chế độ riêng tư và chưa được chia sẻ với bạn.")
+
+    auth = await load_zca_auth(user_id)
+    if not auth:
+        raise HTTPException(status_code=401, detail="Chưa có phiên ZCA hợp lệ. Hãy đăng nhập lại qua extension.")
+
+    rows = await _rest(
+        "GET",
+        "zalo_messages",
+        params={
+            "select": "content,type,msg_kind,is_deleted,assets:zalo_message_assets(storage_path,storage_url,status)",
+            "user_id": f"eq.{user_id}",
+            "group_id": f"eq.{conversation_id.strip()}",
+            "source_message_id": f"eq.{body.source_message_id.strip()}",
+            "limit": "1",
+        },
+    ) or []
+    if not rows:
+        raise HTTPException(status_code=404, detail="Không tìm thấy tin nhắn để chuyển tiếp.")
+    row = rows[0]
+    if row.get("is_deleted"):
+        raise HTTPException(status_code=409, detail="Tin nhắn này đã bị thu hồi, không thể chuyển tiếp.")
+
+    from app.modules.all_platform.zalo.services.zca_broadcast_sender import _asset_to_temp_file, _uploaded_assets
+
+    content = (row.get("content") or "").strip()
+    uploaded_assets = _uploaded_assets(row)
+    msg_kind = row.get("msg_kind") or row.get("type") or "text"
+    if not content and not uploaded_assets:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Loại tin nhắn này ({msg_kind}) chưa hỗ trợ chuyển tiếp — chỉ hỗ trợ tin nhắn có chữ hoặc ảnh.",
+        )
+
+    target_ids = [t.strip() for t in body.target_conversation_ids if t and t.strip()]
+    if not target_ids:
+        raise HTTPException(status_code=400, detail="Chưa chọn hội thoại đích.")
+
+    results: List[ForwardMessageResult] = []
+    for target_id in target_ids:
+        temp_paths: List[str] = []
+        try:
+            target_thread_type = await resolve_thread_type(user_id, target_id)
+            if uploaded_assets:
+                temp_paths = [await _asset_to_temp_file(asset) for asset in uploaded_assets]
+                api_result = await send_zca_images(
+                    auth, target_id, temp_paths, text=content, thread_type=target_thread_type,
+                )
+                image_urls = [a.get("storage_url") for a in uploaded_assets if a.get("storage_url")]
+                message_type = "image"
+            else:
+                api_result = await send_zca_message(auth, target_id, content, thread_type=target_thread_type)
+                image_urls = None
+                message_type = "text"
+
+            api_payload = (
+                api_result.get("response") or api_result.get("result")
+                if isinstance(api_result, dict) else None
+            )
+            await _persist_outgoing_message(
+                user_id, target_id, api_payload,
+                content=content, message_type=message_type, image_urls=image_urls,
+            )
+            results.append(ForwardMessageResult(conversation_id=target_id, ok=True))
+        except ZcaAuthExpiredError:
+            raise HTTPException(status_code=401, detail=ZCA_SESSION_EXPIRED_DETAIL)
+        except Exception as exc:
+            logger.warning(f"Forward message failed for target={target_id}: {exc}")
+            results.append(ForwardMessageResult(conversation_id=target_id, ok=False, error=str(exc)))
+        finally:
+            for p in temp_paths:
+                try:
+                    os.remove(p)
+                except Exception:
+                    pass
+
+    return ForwardMessageResponse(ok=all(r.ok for r in results), results=results)
 
 
 class RecallMessageRequest(BaseModel):
@@ -1366,6 +1511,7 @@ async def _persist_outgoing_message(
     message_type: str = "text",
     image_urls: Optional[List[str]] = None,
     mentions: Optional[List[Mention]] = None,
+    reply_to_id: Optional[str] = None,
 ) -> None:
     """Lưu message gửi đi vào Supabase để hiển thị ngay trong chat history.
 
@@ -1404,6 +1550,7 @@ async def _persist_outgoing_message(
         ts=now_ms,
         msg_kind=resolved_type,
         mentions=mentions or [],
+        reply_to_id=reply_to_id,
     )
 
     group_name = await _resolve_group_name(user_id, conversation_id)
@@ -1523,6 +1670,43 @@ async def find_zalo_user(
         "phone_e164": e164 if by == "phone" else None,
         "raw": user,
     }
+
+
+class CreateUserConversationRequest(BaseModel):
+    user_id: str = Field(..., min_length=1, description="uid Zalo tìm được qua GET /users/find")
+    display_name: str = Field(..., min_length=1)
+    avatar_url: Optional[str] = None
+
+
+@router.post("/users")
+async def create_conversation_with_user(
+    body: CreateUserConversationRequest,
+    account_id: Optional[str] = Query(None),
+    x_user_id: str = Header("default", alias="X-User-ID"),
+):
+    """Tạo (hoặc lấy lại) 1 hội thoại cá nhân (DM) với user vừa tìm bằng SĐT/username
+    qua GET /users/find — với DM, ``group_id`` của hội thoại CHÍNH LÀ uid Zalo của
+    đối phương (giống cách các hội thoại DM khác trong hệ thống này được định danh).
+    Idempotent: gọi lại nhiều lần với cùng user_id chỉ cập nhật metadata, không tạo
+    trùng — ``upsert_group`` đã có on_conflict=(user_id, group_id).
+    """
+    user_id = _normalize_user_id(account_id or x_user_id)
+    target_uid = body.user_id.strip()
+    if not target_uid:
+        raise HTTPException(status_code=400, detail="Thiếu user_id.")
+    try:
+        # Khong set is_friend o day - /users/find khong tra ve trang thai ban be,
+        # gan sai (vd False cho nguoi that ra da la ban) se lam sai UI cho ca cac
+        # cho khac dang doc cot nay. De None -> upsert_group tu bo qua field nay.
+        await upsert_group(
+            user_id=user_id,
+            group_id=target_uid,
+            group_name=body.display_name.strip(),
+            avatar_url=body.avatar_url,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Không thể tạo hội thoại: {exc}")
+    return {"ok": True, "conversation_id": target_uid, "group_name": body.display_name.strip()}
 
 
 @router.get("/users/{uid}/friend-status")

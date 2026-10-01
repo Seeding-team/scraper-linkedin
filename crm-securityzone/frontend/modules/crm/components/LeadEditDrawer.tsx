@@ -9,7 +9,8 @@ import { MemberSearchSelect } from './MemberSearchSelect';
 import { CrmCategoryCodeSelect } from './CrmCategorySelect';
 import { mapLead } from './LeadsDirectory';
 import { Loader2, X } from './icons';
-import { hasFullCrmAccess } from '../constants/crmConfig';
+import { hasFullCrmAccess, LEAD_SOURCE_EXCLUDED_VALUES } from '../constants/crmConfig';
+import { usersService } from '@/services/all-platform.service';
 import type { AppUser } from '@/types/unified.types';
 import type { CrmLeadRow, CrmLeadStatus } from '../types';
 
@@ -43,6 +44,10 @@ type EditFormState = {
   email: string;
   source: string;
   sdrId: string;
+  /** "Sale phụ trách" (qualification_ae_id) - dung LAI DUNG cot da co san
+   * (chi truoc day gan duoc luc Qualify), yeu cau rieng cho sua duoc luon
+   * o day de nhat quan voi form tao. */
+  aeId: string;
   status: CrmLeadStatus;
   zalo: string;
   facebook: string;
@@ -61,6 +66,7 @@ function formFromLead(lead: CrmLeadRow): EditFormState {
     email: lead.email || '',
     source: lead.source || '',
     sdrId: lead.sdrId || '',
+    aeId: lead.qualificationAeId || '',
     status: lead.status,
     zalo: lead.zalo || '',
     facebook: lead.facebook || '',
@@ -100,7 +106,6 @@ export function LeadEditDrawer({
   const [form, setForm] = useState<EditFormState | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
-  const [savedOk, setSavedOk] = useState('');
 
   useEffect(() => {
     if (!open || !lead) {
@@ -109,10 +114,9 @@ export function LeadEditDrawer({
     }
     setForm(formFromLead(lead));
     setError('');
-    setSavedOk('');
-    // Nạp lại form theo lead.id (không theo tham chiếu object) — sau khi lưu,
-    // LeadsDirectory đẩy xuống 1 object mới cho CÙNG lead, nếu chạy lại theo
-    // tham chiếu thì thông báo "Đã lưu" vừa hiện sẽ bị xoá ngay lập tức.
+    // Nạp lại form theo lead.id (không theo tham chiếu object) — tránh chạy
+    // lại effect này khi LeadsDirectory chỉ đẩy xuống 1 object mới cho CÙNG
+    // lead (vd sau khi lưu ở nơi khác).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, lead?.id]);
 
@@ -128,6 +132,24 @@ export function LeadEditDrawer({
     if (form.sdrId === currentUser?.id) return currentUser?.name || currentUser?.email || 'Bạn';
     return sdrOptions.find(m => selectionKeyOf(m) === form.sdrId)?.display_name || 'Chưa gán';
   }, [form?.sdrId, sdrOptions, currentUser]);
+
+  // "Sale phụ trách" - dung LAI DUNG nguon quote_business_role=sale (giong
+  // LeadFormDrawer.tsx/CrmCustomersDirectory.tsx), khong tu tao nguon rieng.
+  const [saleUsers, setSaleUsers] = useState<Array<{ id: string; name: string }>>([]);
+  useEffect(() => {
+    let alive = true;
+    usersService
+      .getUsersByQuoteBusinessRole('sale')
+      .then(res => {
+        if (alive) setSaleUsers(res.success ? (res.data || []).map(u => ({ id: u.id, name: u.name })) : []);
+      })
+      .catch(() => {
+        if (alive) setSaleUsers([]);
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   if (!open || !lead || !form) return null;
 
@@ -152,12 +174,10 @@ export function LeadEditDrawer({
     const validationError = validate(form);
     if (validationError) {
       setError(validationError);
-      setSavedOk('');
       return;
     }
     setSaving(true);
     setError('');
-    setSavedOk('');
     try {
       const payload: Record<string, unknown> = {
         lead_name: form.leadName.trim(),
@@ -176,6 +196,7 @@ export function LeadEditDrawer({
       // hạ cấp trạng thái của 1 Lead đã sinh Cơ hội cũng là sai nghiệp vụ).
       if (!isConverted) payload.status = form.status;
       if (canPickOwner) payload.sdr_id = form.sdrId || null;
+      payload.qualification_ae_id = form.aeId || null;
 
       const res = await fetch(`${API_BASE_URL}/api/all-platform/crm/leads/${encodeURIComponent(lead.id)}`, {
         method: 'PUT',
@@ -186,7 +207,7 @@ export function LeadEditDrawer({
       const body = await res.json();
       if (!res.ok || body.success === false) throw new Error(body?.message || `Không lưu được thay đổi (lỗi ${res.status}).`);
       onSaved(mapLead(body.data));
-      setSavedOk('Đã lưu thay đổi.');
+      onClose();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Không lưu được thay đổi.');
     } finally {
@@ -210,7 +231,6 @@ export function LeadEditDrawer({
 
         <div className="crm-drawer-body crm-lead-drawer-body">
           {error ? <p className="crm-error" data-testid="lead-edit-error">{error}</p> : null}
-          {savedOk ? <p className="crm-verify-ok" data-testid="lead-edit-ok">{savedOk}</p> : null}
           {!canWrite ? (
             <p className="crm-lead-lock-message">Bạn không có quyền sửa Lead này — chỉ xem.</p>
           ) : null}
@@ -275,6 +295,7 @@ export function LeadEditDrawer({
                   <CrmCategoryCodeSelect
                     categoryType="crm_source"
                     value={form.source}
+                    excludeValues={LEAD_SOURCE_EXCLUDED_VALUES}
                     onChange={value => setValue('source', value)}
                     placeholder="-- Chưa chọn --"
                   />
@@ -300,6 +321,15 @@ export function LeadEditDrawer({
                     <input data-testid="edit-sdr" value={ownerLabel} disabled readOnly />
                   </Field>
                 )}
+                <Field label="Người phụ trách Sale">
+                  <MemberSearchSelect
+                    value={form.aeId}
+                    onChange={value => setValue('aeId', value)}
+                    placeholder="-- Chưa gán --"
+                    showAvatar={false}
+                    members={saleUsers.map(u => ({ id: u.id, displayName: u.name }))}
+                  />
+                </Field>
                 <Field label="Trạng thái">
                   {isConverted ? (
                     <input data-testid="edit-status" value="Đã tạo cơ hội" disabled readOnly />

@@ -3,7 +3,7 @@ import time
 
 HOST = "10.30.50.29"
 USER = "vmadmin"
-PASS = "Poptech@123!"
+PASS = __import__("os").environ["SSH_PASS"]  # đặt biến môi trường SSH_PASS (mật khẩu ở docs/INFRASTRUCTURE.md local, không commit)
 REPO = "/opt/apps/seeding_markeeai/scraper-linkedin"
 BACKEND_DIR = f"{REPO}/linkedin_group_crawler"
 

@@ -251,6 +251,8 @@ export interface ZaloLibraryMessage {
   mentions?: ZaloMention[] | null;
   msg_kind?: string | null;
   raw_content?: Record<string, unknown> | null;
+  // "Trả lời tin nhắn" — source_message_id của tin đang được trích dẫn, nếu có.
+  reply_to_id?: string | null;
   // Thả cảm xúc (migration 138) — map {uid_người_react: icon}. Có thể thiếu
   // hẳn (undefined) nếu backend chưa deploy migration này — luôn dùng
   // `message.reactions ?? {}` khi đọc, không giả định luôn tồn tại.
@@ -410,8 +412,8 @@ export interface ZaloMention {
 }
 
 export interface ZaloRecallMessageRequest {
-  msg_id: string;
-  cli_msg_id: string;
+  source_message_id: string;
+  thread_type?: number;
 }
 
 export interface ZaloFriendStatusResponse {

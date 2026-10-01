@@ -148,7 +148,18 @@ export function CustomerFormModal({
     m.linked_user_id || m.linked_user_id_2 || m.id;
   const ownerOptions = useMemo(() => {
     const linked = members.filter(m => m.linked_user_id || m.linked_user_id_2);
-    return [...linked].sort((a, b) => a.display_name.localeCompare(b.display_name));
+    // De phong 2 Member profile khac nhau cung link chung 1 tai khoan dang
+    // nhap (linked_user_id trung) - selectionKeyOf() se tra ve cung 1 gia
+    // tri cho ca 2, gay "duplicate key" trong MemberSearchSelect/SearchableSelect
+    // ben duoi. Chi giu ban ghi dau tien cho moi selectionKeyOf.
+    const seen = new Set<string>();
+    const deduped = linked.filter(m => {
+      const key = selectionKeyOf(m);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+    return deduped.sort((a, b) => a.display_name.localeCompare(b.display_name));
   }, [members]);
   const currentUserMissing =
     Boolean(currentUser?.id) && !ownerOptions.some(m => selectionKeyOf(m) === currentUser!.id);

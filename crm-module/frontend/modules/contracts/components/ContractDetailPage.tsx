@@ -1,12 +1,13 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { seedingContractRepository } from '../repositories/SeedingContractRepository';
 import { contractStatusClass, contractStatusLabel, CONTRACT_STATUS_TRANSITIONS, extractPaymentTermsFromClauses } from '../constants/contractConfig';
 import { formatVnd } from '@/modules/quotes/utils/quoteCalculations';
 import type { Contract, ContractClause } from '../types';
 import { CurrencyInput } from '@/components/CurrencyInput';
+import { seedingQuoteRepository } from '@/modules/quotes';
 
 function pdfSafe(value?: string | number | null) {
   return String(value ?? '')
@@ -67,8 +68,11 @@ function downloadContractPdf(contract: Contract) {
   URL.revokeObjectURL(url);
 }
 
-export function ContractDetailPage({ contractId }: { contractId: string }) {
+export function ContractDetailPage({ contractId, onClose }: { contractId: string; onClose?: () => void }) {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const rawReturnUrl = searchParams.get('returnUrl');
+  const returnUrl = rawReturnUrl?.startsWith('/all-platform/') ? rawReturnUrl : null;
   const [contract, setContract] = useState<Contract | null>(null);
   const [clauses, setClauses] = useState<ContractClause[]>([]);
   const [activeClauseIndex, setActiveClauseIndex] = useState(0);
@@ -81,6 +85,15 @@ export function ContractDetailPage({ contractId }: { contractId: string }) {
   const [contractValue, setContractValue] = useState<number | null>(0);
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
+  const [quoteNumber, setQuoteNumber] = useState<string | null>(null);
+
+  function handleBack() {
+    if (returnUrl) {
+      router.replace(returnUrl);
+      return;
+    }
+    router.push('/all-platform/contracts');
+  }
 
   async function load() {
     setLoading(true);
@@ -105,6 +118,20 @@ export function ContractDetailPage({ contractId }: { contractId: string }) {
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [contractId]);
+
+  // "Báo giá" - Contract chi luu quoteId, khong co san quoteNumber de hien
+  // thi (feedback leader 2026-09-27: form hop dong thieu muc bao gia).
+  useEffect(() => {
+    if (!contract?.quoteId) {
+      setQuoteNumber(null);
+      return;
+    }
+    let alive = true;
+    seedingQuoteRepository.getQuote(contract.quoteId)
+      .then(quote => { if (alive) setQuoteNumber(quote.quoteNumber); })
+      .catch(() => { if (alive) setQuoteNumber(null); });
+    return () => { alive = false; };
+  }, [contract?.quoteId]);
 
   function updateClause(index: number, field: 'title' | 'body', value: string) {
     setClauses(current => current.map((c, i) => (i === index ? { ...c, [field]: value } : c)));
@@ -181,9 +208,22 @@ export function ContractDetailPage({ contractId }: { contractId: string }) {
     <main className="contract-detail-page">
       <header className="contract-detail-header">
         <div>
-          <button type="button" className="contract-button contract-button--secondary" onClick={() => router.push('/all-platform/contracts')} style={{ marginBottom: '0.6rem' }}>
-            ← Danh sách hợp đồng
-          </button>
+          {/* Mo trong modal (xem "Bản tóm tắt báo giá" cua QuoteWorkspaceModal,
+           * feedback 2026-09-25 "xem hợp đồng ở cửa sổ, giống xem bản khách
+           * hàng") - nut dong dang icon "X" o goc phai tren cua modal (xem
+           * .qc-contract-preview-panel-close trong QuoteWorkspaceModal.tsx),
+           * KHONG con nut "← Đóng" o day nua. Khong truyen onClose (trang
+           * day du /all-platform/contracts/[id]) van giu nguyen hanh vi cu. */}
+          {!onClose ? (
+            <button
+              type="button"
+              className="contract-button contract-button--secondary"
+              onClick={handleBack}
+              style={{ marginBottom: '0.6rem' }}
+            >
+              {returnUrl ? '← Quay lại khách hàng' : '← Danh sách hợp đồng'}
+            </button>
+          ) : null}
           <h1>{contract.contractNumber}</h1>
           <p>
             {contract.title} · {formatVnd(contract.contractValue)}
@@ -220,7 +260,11 @@ export function ContractDetailPage({ contractId }: { contractId: string }) {
             />
             {!contract.quoteId ? (
               <small style={{ color: '#bf7810', display: 'block', marginTop: '0.2rem' }}>Không gắn báo giá — sửa tay giá trị thật ở đây.</small>
-            ) : null}
+            ) : (
+              <small style={{ color: '#64748b', display: 'block', marginTop: '0.2rem' }}>
+                Báo giá: {quoteNumber || 'Đang tải...'}
+              </small>
+            )}
           </div>
         </article>
         <article className="contract-stat">

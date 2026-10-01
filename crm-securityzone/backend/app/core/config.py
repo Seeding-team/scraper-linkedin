@@ -71,6 +71,18 @@ class Settings:
         default_factory=lambda: _parse_workspace_domains(os.getenv("WORKSPACE_DOMAINS"))
     )
 
+    # Dong bo ung vien "accepted" tu he thong tuyen dung (cv.markeeai.com) vao
+    # danh ba noi bo `members` (nut "Dong bo tu tuyen dung" o tab Quan ly thanh
+    # vien) - dung CHUNG 1 project Supabase voi pm-new (PM tool noi bo), hardcode
+    # default de moi deploy/instance chay duoc ngay, .env van override duoc.
+    recruitment_supabase_url: str = os.getenv(
+        "RECRUITMENT_SUPABASE_URL", "https://cv.db.markeeai.com",
+    ).rstrip("/")
+    recruitment_supabase_service_role_key: str = os.getenv(
+        "RECRUITMENT_SUPABASE_SERVICE_ROLE_KEY",
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoic2VydmljZV9yb2xlIiwiaXNzIjoic3VwYWJhc2UiLCJpYXQiOjE3ODc3Njc3ODIsImV4cCI6MjEwMzEyNzc4Mn0.sTHQs9H3tzdnk3y9oLhWZx_4CBWwYXd3RAPiZiG44wg",
+    )
+
     jwt_secret_key: str = os.getenv("JWT_SECRET_KEY", "crawlpro-default-secret-change-me")
     jwt_algorithm: str = os.getenv("JWT_ALGORITHM", "HS256")
     jwt_access_token_expire_minutes: int = int(

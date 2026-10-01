@@ -377,10 +377,20 @@ async def send_zca_message(
     *,
     thread_type: int = 1,
     mentions: Optional[List[Dict[str, Any]]] = None,
+    quote: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Gửi tin nhắn text. ``mentions`` = [{"pos":int,"uid":str,"len":int}] cho @tag/@All
-    (xem Mục 3.3.5 + 4.6 mentionUtils của ZALO_CENTRALIZED_MODULE_GUIDE.md)."""
-    payload = {"mentions": mentions} if mentions else None
+    (xem Mục 3.3.5 + 4.6 mentionUtils của ZALO_CENTRALIZED_MODULE_GUIDE.md).
+
+    ``quote`` (tính năng "Trả lời tin nhắn") = {"msgId","cliMsgId","uidFrom","ts","content"}
+    của tin đang được trả lời — Node build lại đúng shape SendMessageQuote của zca-js
+    (xem cmdSendMessage trong zca_api_server.js)."""
+    payload: Dict[str, Any] = {}
+    if mentions:
+        payload["mentions"] = mentions
+    if quote:
+        payload["quote"] = quote
+    payload = payload or None
     try:
         return await _run_zca_command(
             "send-message",

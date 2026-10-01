@@ -6,7 +6,7 @@ import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { useAppAuth } from '@/contexts/AppAuthContext';
 import { teamsService, type TeamRow, projectsService, type Project, usersService, type QuoteBusinessRoleUser, allPlatformCategoriesService } from '@/services/all-platform.service';
 import { computeQuoteSla } from '../utils/quoteSla';
-import { seedingQuoteRepository } from '@/modules/quotes';
+import { seedingQuoteRepository, buildPublicQuoteUrl } from '@/modules/quotes';
 import type { IssuerCompany, Quote, QuoteForm, QuotePhase, QuotesByPhaseResult } from '@/modules/quotes';
 import { seedingContractRepository } from '@/modules/contracts';
 import type { Contract } from '@/modules/contracts';
@@ -17,6 +17,8 @@ import { CreateQuoteModal } from '../integrations/quotes';
 import { ActionMenu, type ActionMenuItem } from './ActionMenu';
 import {
   CheckCircle2,
+  ChevronDown,
+  ChevronUp,
   Eye,
   ExternalLink,
   FileText,
@@ -124,20 +126,20 @@ const PROJECT_STATUS_LABELS: Record<string, string> = {
  * status='approved' KHONG BAO GIO duoc ghi de sent/published - test rieng
  * o test_quote_phase_mapping.py (backend) cho tinh huong nay. */
 /** 5 mau RIENG cho DUNG 5 phase tab that (Presale=blue/Sale markup=amber/
- * Admin review=purple/Sẵn sàng gửi=teal/Đã gửi=success) - bug thuc te da
+ * Admin review=amber/Sẵn sàng gửi=teal/Đã gửi=success) - bug thuc te da
  * bao "trùng màu nhãn, 5 mục 5 màu" (truoc day 'neutral' dung chung cho ca
  * Presale lan Sale markup, 'warning' dung chung HEX voi 'Sẵn sàng gửi' cu).
  * 'Đã chốt'/'Đã huỷ'/'Đã duyệt · Chờ phát hành' la override theo KET QUA
  * DEAL (won/lost) hoac trang thai du lieu cu, KHONG phai 1 trong 5 tab -
  * giu rieng success/danger, khong can phan biet voi 5 mau tab o tren. */
-function phaseCellLabel(quote: Quote, deal?: Deal): { label: string; tone: 'neutral' | 'success' | 'warning' | 'danger' | 'blue' | 'amber' | 'purple' | 'teal' } {
+function phaseCellLabel(quote: Quote, deal?: Deal): { label: string; tone: 'neutral' | 'success' | 'warning' | 'danger' | 'blue' | 'amber' | 'purple' | 'teal' | 'rose' } {
   if (isWonDeal(deal)) return { label: 'Đã chốt', tone: 'success' };
   if (isLostDeal(deal) || quote.status === 'cancelled') return { label: 'Đã huỷ', tone: 'danger' };
   if (quote.sentAt) return { label: 'Đã gửi khách', tone: 'success' };
   if (quote.publishedAt || quote.processingStage === 'published') return { label: 'Sẵn sàng gửi', tone: 'teal' };
   if (quote.status === 'approved' || quote.approvedAt) return { label: 'Đã duyệt · Chờ phát hành', tone: 'success' };
   const stage = quote.processingStage || 'request';
-  if (stage === 'review') return { label: 'Chờ Admin duyệt', tone: 'purple' };
+  if (stage === 'review') return { label: 'Chờ Admin duyệt', tone: 'rose' };
   if (stage === 'pricing') return { label: 'Chờ Sale markup', tone: 'amber' };
   if (stage === 'ready_to_publish') return { label: 'Đã duyệt · Chờ phát hành', tone: 'success' };
   return { label: 'Chờ Presale input', tone: 'blue' };
@@ -766,24 +768,137 @@ export function QuoteCenterPage() {
     }
   }
 
-  async function deleteDraftNow(row: QuoteChainRow) {
-    // deleteQuote() goi DELETE /quotes/{id} - tu Section 3 da doi sang SOFT
-    // delete that su (khong con hard-delete am tham), Admin van khoi phuc
-    // duoc neu can - khac "Huỷ báo giá" (chuyen trang thai cancelled, giu
-    // nguyen record de xem lai), day la go han khoi danh sach dang lam.
-    if (!window.confirm(`Xoá báo giá ${row.current.quoteNumber}? Báo giá sẽ chuyển sang trạng thái đã xoá (ẩn khỏi danh sách), Admin có thể khôi phục nếu cần.`)) return;
+  function isApprovedLike(quote: Quote, deal?: Deal): boolean {
+    return quote.status === 'approved' || quote.status === 'confirmed' || Boolean(quote.approvedAt) || isWonDeal(deal);
+  }
+
+  /** Sau khi xoa: bo id khoi lua chon, nap lai bang + cac nhom version dang mo. */
+  async function afterQuotesDeleted(deletedIds: string[]) {
+    setSelectedQuoteIds(prev => {
+      const next = new Set(prev);
+      deletedIds.forEach(id => next.delete(id));
+      return next;
+    });
+    setExpandedVersions({});
+    await refreshQuotes();
+  }
+
+  /** "Xoá báo giá" o bang = xoa CA bao gia nghiep vu (moi version trong
+   * chuoi) - xoa MEM, Admin khoi phuc duoc. Feedback 2026-09-23: khong khoa
+   * quyen xoa chi vi da duyet, chi can hoi xac nhan ro rang. */
+  async function deleteChainNow(row: QuoteChainRow) {
+    const { current, deal, versionCount } = row;
+    const versionText = versionCount > 1 ? ` (gồm ${versionCount} phiên bản)` : '';
+    const message = isApprovedLike(current, deal)
+      ? `Báo giá ${current.quoteNumber} này đã duyệt, bạn có chắc muốn xóa${versionText}?`
+      : `Xoá báo giá ${current.quoteNumber}${versionText}?`;
+    if (!window.confirm(`${message}\nBạn chấp nhận mất báo giá này? (Báo giá bị ẩn khỏi danh sách, Admin có thể khôi phục nếu cần.)`)) return;
     try {
-      await seedingQuoteRepository.deleteQuote(row.current.id);
-      await refreshQuotes();
+      const result = await seedingQuoteRepository.bulkDeleteQuotes([current.id], true);
+      if (result.failed.length) window.alert(`Không xoá được ${result.failed.length} phiên bản: ${result.failed[0].message}`);
+      await afterQuotesDeleted([current.id, ...result.deletedIds]);
     } catch (err) {
       window.alert(err instanceof Error ? err.message : 'Không xoá được báo giá.');
     }
   }
 
-  async function copyPublicLink(row: QuoteChainRow) {
-    if (!row.current.publicUrl) return;
-    await navigator.clipboard.writeText(`${window.location.origin}${row.current.publicUrl}`);
+  /** Xoa RIENG 1 version (feedback muc 1: "Version nào không cần thì người
+   * dùng có thể xóa riêng version đó"). Cac version khac trong chuoi giu
+   * nguyen; neu xoa dung version hien tai thi version lien truoc thanh hien tai. */
+  async function deleteVersionNow(version: Quote) {
+    const label = `V${version.versionNumber || 1} (${version.quoteNumber})`;
+    const message = isApprovedLike(version)
+      ? `Phiên bản ${label} đã duyệt, bạn có chắc muốn xóa?`
+      : `Xoá phiên bản ${label}?`;
+    if (!window.confirm(`${message}\nBạn chấp nhận mất phiên bản này? Các phiên bản khác được giữ nguyên. (Admin có thể khôi phục nếu cần.)`)) return;
+    try {
+      await seedingQuoteRepository.bulkDeleteQuotes([version.id], false);
+      setVersionHistory(h => ({ ...h, versions: h.versions.filter(v => v.id !== version.id) }));
+      await afterQuotesDeleted([version.id]);
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : 'Không xoá được phiên bản này.');
+    }
   }
+
+  async function deleteSelectedQuotes() {
+    const rows = chainRows.filter(row => selectedQuoteIds.has(row.current.id));
+    if (!rows.length || bulkDeleting) return;
+    const approvedCount = rows.filter(row => isApprovedLike(row.current, row.deal)).length;
+    const versionTotal = rows.reduce((sum, row) => sum + row.versionCount, 0);
+    const lines = [
+      `Xoá ${rows.length} báo giá đã chọn${versionTotal > rows.length ? ` (tổng ${versionTotal} phiên bản)` : ''}?`,
+      approvedCount ? `Trong đó ${approvedCount} báo giá đã duyệt — bạn có chắc muốn xóa?` : '',
+      'Bạn chấp nhận mất các báo giá này? (Báo giá bị ẩn khỏi danh sách, Admin có thể khôi phục nếu cần.)',
+    ].filter(Boolean);
+    if (!window.confirm(lines.join('\n'))) return;
+    setBulkDeleting(true);
+    try {
+      const ids = rows.map(row => row.current.id);
+      const result = await seedingQuoteRepository.bulkDeleteQuotes(ids, true);
+      if (result.failed.length) {
+        window.alert(`Đã xoá ${result.deletedIds.length} phiên bản. Không xoá được ${result.failed.length}: ${result.failed[0].message}`);
+      }
+      await afterQuotesDeleted([...ids.filter(id => result.deletedIds.includes(id)), ...result.deletedIds]);
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : 'Không xoá được các báo giá đã chọn.');
+    } finally {
+      setBulkDeleting(false);
+    }
+  }
+
+  async function toggleExpandVersions(row: QuoteChainRow) {
+    const key = row.current.id;
+    if (expandedVersions[key]) {
+      setExpandedVersions(prev => {
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      });
+      return;
+    }
+    setExpandedVersions(prev => ({ ...prev, [key]: { loading: true, versions: [] } }));
+    try {
+      const versions = await seedingQuoteRepository.getQuoteVersions(key);
+      setExpandedVersions(prev => (prev[key] ? { ...prev, [key]: { loading: false, versions: versions.filter(v => v.id !== key) } } : prev));
+    } catch (err) {
+      setExpandedVersions(prev => (prev[key] ? {
+        ...prev,
+        [key]: { loading: false, versions: [], error: err instanceof Error ? err.message : 'Không tải được phiên bản cũ.' },
+      } : prev));
+    }
+  }
+
+  function toggleSelectQuote(id: string) {
+    setSelectedQuoteIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  /** Click TRUC TIEP vao dong -> mo ngay bao gia (feedback muc 1), tru khi
+   * bam vao nut/link/checkbox/menu ben trong dong. */
+  function handleRowClick(event: React.MouseEvent, quoteId: string) {
+    const target = event.target as HTMLElement;
+    if (target.closest('a, button, input, label, select, textarea, [role="menu"], .qc-cell-actions')) return;
+    openQuoteWorkspace(quoteId);
+  }
+
+
+  async function copyPublicLink(row: QuoteChainRow) {
+    const url = buildPublicQuoteUrl(row.current.publicUrl);
+    if (!url) return;
+    await navigator.clipboard.writeText(url);
+  }
+
+  // Feedback 2026-09-23 muc 1: version cu KHONG mat, gom ngay duoi version
+  // hien tai trong bang, mo rong bang mui ten (khong bat mo modal). Key =
+  // id cua version hien tai (current.id). Nap lazy luc bam mo rong.
+  const [expandedVersions, setExpandedVersions] = useState<Record<string, { loading: boolean; versions: Quote[]; error?: string }>>({});
+  // Feedback muc 2: chon 1 hoac nhieu bao gia -> Xoa. Luu id version hien tai.
+  const [selectedQuoteIds, setSelectedQuoteIds] = useState<Set<string>>(new Set());
+  const [bulkDeleting, setBulkDeleting] = useState(false);
 
   const [versionHistory, setVersionHistory] = useState<{ open: boolean; loading: boolean; quoteNumber: string; versions: Quote[] }>({
     open: false,
@@ -876,15 +991,23 @@ export function QuoteCenterPage() {
         ]
       : [];
 
+    // Feedback 2026-09-23: "Không cần khóa quyền xóa chỉ vì báo giá đã duyệt"
+    // - moi trang thai deu xoa duoc (xoa MEM ca chuoi version), chi hoi xac
+    // nhan ro rang hon voi ban da duyet (xem deleteChainNow).
+    // "ai muốn xóa thì xóa" - khong gate theo quyen, chi hoi xac nhan.
+    const deleteItem: ActionMenuItem[] = [
+      { key: 'delete', label: 'Xoá báo giá', icon: Trash2, group: 3, danger: true, onSelect: () => void deleteChainNow(row) },
+    ];
+
     if (status.key === 'lost') {
-      return [openItem, historyItem];
+      return [openItem, historyItem, ...deleteItem];
     }
     if (status.key === 'won') {
       const contract = contractByQuoteId.get(current.id);
       const contractItem: ActionMenuItem[] = contract
         ? [{ key: 'view-contract', label: 'Xem hợp đồng', icon: FileText, group: 2, onSelect: () => router.push(`/all-platform/contracts/${contract.id}`) }]
         : [];
-      return [openItem, ...viewPublicItems, ...contractItem, historyItem];
+      return [openItem, ...viewPublicItems, ...contractItem, historyItem, ...deleteItem];
     }
     if (current.status === 'draft') {
       const items = [openItem];
@@ -898,17 +1021,7 @@ export function QuoteCenterPage() {
         danger: true,
         onSelect: () => setCancelModal({ open: true, quoteId: current.id, quoteNumber: current.quoteNumber, reason: '', busy: false }),
       });
-      if (canEdit) {
-        items.push({
-          key: 'delete',
-          label: 'Xoá báo giá',
-          icon: Trash2,
-          group: 1,
-          danger: true,
-          onSelect: () => void deleteDraftNow(row),
-        });
-      }
-      items.push(historyItem);
+      items.push(historyItem, ...deleteItem);
       return items;
     }
     // Da duyet (approved/confirmed, chua chot/chua huy). "Tao phien ban moi"
@@ -939,7 +1052,7 @@ export function QuoteCenterPage() {
       title: !current.publicEnabled || !current.publicUrl ? 'Báo giá chưa được công khai' : undefined,
       onSelect: () => setRevokeModal({ open: true, quoteId: current.id, quoteNumber: current.quoteNumber, busy: false }),
     });
-    items.push(historyItem);
+    items.push(historyItem, ...deleteItem);
     return items;
   }
 
@@ -980,14 +1093,37 @@ export function QuoteCenterPage() {
     const saleOwnerName = current.quoteOwner?.name || deal?.assignment.sdrName || null;
     const margin = current.hasCostData ? marginTone(current.grossMarginPercent) : 'neutral';
     const sla = computeQuoteSla({ slaDueAt: current.slaDueAt, completedAt: current.completedAt, sentAt: current.sentAt });
+    const expanded = expandedVersions[current.id];
     return (
-      <tr key={current.id} className="qc-row-compact">
+      <Fragment key={current.id}>
+      <tr className="qc-row-compact qc-row-clickable" onClick={event => handleRowClick(event, current.id)} data-testid="qc-chain-row">
         <td data-label="Báo giá / Cơ hội · Version" className="qc-cell-quote">
           <div className="qc-cell-quote-line1">
+            <span className="qc-cell-quote-lead">
+            <input
+              type="checkbox"
+              className="qc-row-select"
+              checked={selectedQuoteIds.has(current.id)}
+              onChange={() => toggleSelectQuote(current.id)}
+              aria-label={`Chọn báo giá ${current.quoteNumber}`}
+            />
             <button type="button" className="qc-row-link qc-row-link-btn" title={current.quoteNumber} onClick={() => openQuoteWorkspace(current.id)}>
               {current.quoteNumber}
             </button>
+            </span>
             <span className="qc-badge qc-badge-version">V{current.versionNumber || 1} hiện tại</span>
+            {versionCount > 1 ? (
+              <button
+                type="button"
+                className="qc-version-toggle"
+                aria-expanded={Boolean(expanded)}
+                title={expanded ? 'Thu gọn phiên bản cũ' : `Xem ${versionCount - 1} phiên bản cũ`}
+                onClick={() => void toggleExpandVersions(row)}
+              >
+                {expanded ? <ChevronUp className="qc-icon" /> : <ChevronDown className="qc-icon" />}
+                {versionCount} phiên bản
+              </button>
+            ) : null}
           </div>
           {typeof current.data?.quoteTitle === 'string' && current.data.quoteTitle ? (
             <div className="qc-cell-quote-title" title={current.data.quoteTitle}>
@@ -1086,7 +1222,130 @@ export function QuoteCenterPage() {
           <ActionMenu items={rowActionItems(row)} />
         </td>
       </tr>
+      {expanded ? renderOlderVersionRows(row, expanded) : null}
+      </Fragment>
     );
+  }
+
+  /** Cac version cu gom ngay DUOI dong version hien tai (feedback muc 1).
+   * Click dong -> mo thang version do; xoa rieng tung version. */
+  function renderOlderVersionRows(row: QuoteChainRow, expanded: { loading: boolean; versions: Quote[]; error?: string }) {
+    if (expanded.loading || expanded.error || expanded.versions.length === 0) {
+      return (
+        <tr className="qc-row-version-old">
+          <td colSpan={10} className="qc-row-sub">
+            {expanded.loading ? 'Đang tải phiên bản cũ…' : expanded.error || 'Không có phiên bản cũ nào khác.'}
+          </td>
+        </tr>
+      );
+    }
+    // Feedback (2026-09-24): dong version cu phai hien DU thong tin nhu dong
+    // version hien tai (Khach hang/Du an/Phase/Phu trach/Margin/SLA), khong
+    // chi so bao gia + trang thai + gia - backend list_quote_versions() da
+    // duoc sua de embed project/technicalOwner/quoteOwner + tinh du
+    // hasCostData/costTotal/grossMarginPercent cho tung version (thay vi
+    // luon rong nhu truoc), nen o day chi can tinh lai giong het
+    // renderChainRow() cho `version` thay vi `current`. Deal dung chung
+    // `row.deal` (1 chuoi version luon thuoc DUNG 1 Deal, khong doi giua cac
+    // version). Nut Xoa doi sang ActionMenu (giong dong hien tai) vi nut rieng
+    // "Xoá" full-text de bi tran o cot hep (feedback UI).
+    return expanded.versions.map(version => {
+      const phase = phaseCellLabel(version, row.deal);
+      const techName = version.technicalOwner?.name || row.deal?.assignment.leadName || null;
+      const saleOwnerName = version.quoteOwner?.name || row.deal?.assignment.sdrName || null;
+      const margin = version.hasCostData ? marginTone(version.grossMarginPercent) : 'neutral';
+      const sla = computeQuoteSla({ slaDueAt: version.slaDueAt, completedAt: version.completedAt, sentAt: version.sentAt });
+      return (
+        <tr
+          key={version.id}
+          className="qc-row-compact qc-row-clickable qc-row-version-old"
+          onClick={event => handleRowClick(event, version.id)}
+          data-testid="qc-old-version-row"
+        >
+          <td className="qc-cell-quote">
+            <div className="qc-cell-quote-line1 qc-version-old-line">
+              <span className="qc-cell-quote-lead">
+                <span className="qc-version-old-branch" aria-hidden>↳</span>
+                <button type="button" className="qc-row-link qc-row-link-btn" title={version.quoteNumber} onClick={() => openQuoteWorkspace(version.id)}>
+                  {version.quoteNumber}
+                </button>
+              </span>
+              <span className="qc-badge qc-badge-neutral">V{version.versionNumber || 1}</span>
+            </div>
+            <div className="qc-row-sub">cập nhật {relativeTime(version.updatedAt || version.createdAt)}</div>
+          </td>
+          <td>
+            {row.deal ? (
+              row.deal.customerId ? (
+                <Link href={`/all-platform/crm/customers/${row.deal.customerId}`} className="qc-row-link" onClick={event => event.stopPropagation()}>
+                  {row.deal.customerName}
+                </Link>
+              ) : (
+                <span>{row.deal.customerName}</span>
+              )
+            ) : (
+              <span className="qc-row-sub">Chưa gắn cơ hội</span>
+            )}
+          </td>
+          <td>
+            {version.project ? (
+              <span>{version.project.code ? `${version.project.code} · ${version.project.name}` : version.project.name}</span>
+            ) : (
+              <span className="qc-row-sub">Chưa thuộc dự án</span>
+            )}
+          </td>
+          <td><span className={`qc-badge qc-badge-${phase.tone}`} style={{ whiteSpace: 'normal' }}>{phase.label}</span></td>
+          <td>
+            <div className="qc-sale-cell qc-sale-cell--stacked">
+              <div className="qc-owner-row"><span className="qc-owner-role">Presale:</span> <span title={techName || 'Chưa gán'}>{techName || 'Chưa gán'}</span></div>
+              <div className="qc-owner-row"><span className="qc-owner-role">Sale:</span> <span title={saleOwnerName || 'Chưa gán'}>{saleOwnerName || 'Chưa gán'}</span></div>
+            </div>
+          </td>
+          <td className="qc-cell-money">
+            {version.costViewAllowed === false ? (
+              <span className="qc-row-sub" title="Chỉ Presale/Sale được phân công hoặc Admin mới xem được giá vốn">Không có quyền xem</span>
+            ) : version.hasCostData ? (
+              formatMoney(version.costTotal || 0)
+            ) : (
+              <span className="qc-row-sub">Chưa có</span>
+            )}
+          </td>
+          <td className="qc-cell-money">{formatMoney(version.customerPriceBeforeVat ?? version.totalAmount ?? 0)}</td>
+          <td>
+            {version.profitabilityViewAllowed === false ? (
+              <span className="qc-row-sub" title="Chỉ Sale phụ trách hoặc Admin mới xem được margin">Không có quyền xem</span>
+            ) : version.hasCostData && version.grossMarginPercent !== null && version.grossMarginPercent !== undefined ? (
+              <span className={`qc-badge qc-badge-${margin}`}>{version.grossMarginPercent.toFixed(1)}%</span>
+            ) : (
+              <span className="qc-row-sub">Chưa tính</span>
+            )}
+          </td>
+          <td>
+            {sla.status === 'not_set' ? (
+              <span className="qc-row-sub">{sla.label}</span>
+            ) : (
+              <>
+                <span
+                  className="qc-badge"
+                  style={{ color: sla.tone === 'danger' ? '#b3261e' : sla.tone === 'warning' ? '#8a6416' : sla.tone === 'success' ? '#148e61' : undefined }}
+                >
+                  {sla.label}
+                </span>
+                {sla.relativeText ? <div className="qc-row-sub">{sla.relativeText}</div> : null}
+              </>
+            )}
+          </td>
+          <td className="qc-cell-actions">
+            <ActionMenu
+              items={[
+                { key: 'open', label: 'Mở', icon: FileText, group: 1, onSelect: () => openQuoteWorkspace(version.id) },
+                { key: 'delete', label: 'Xoá riêng phiên bản này', icon: Trash2, group: 2, danger: true, onSelect: () => void deleteVersionNow(version) },
+              ] satisfies ActionMenuItem[]}
+            />
+          </td>
+        </tr>
+      );
+    });
   }
 
   /** Card mobile (duoi 768px) cho 1 dong bao gia - CHU Y: tinh lai cac gia
@@ -1112,6 +1371,13 @@ export function QuoteCenterPage() {
       <div key={current.id} className="qc-quote-card">
         <div className="qc-quote-card-head">
           <div>
+            <input
+              type="checkbox"
+              className="qc-row-select"
+              checked={selectedQuoteIds.has(current.id)}
+              onChange={() => toggleSelectQuote(current.id)}
+              aria-label={`Chọn báo giá ${current.quoteNumber}`}
+            />
             <button type="button" className="qc-row-link qc-row-link-btn" onClick={() => openQuoteWorkspace(current.id)}>
               {current.quoteNumber}
             </button>
@@ -1176,8 +1442,36 @@ export function QuoteCenterPage() {
         </div>
         <div className="qc-quote-card-row">
           <span className="qc-quote-card-label">Cập nhật</span>
-          <span className="qc-quote-card-value qc-row-sub">{versionCount} phiên bản · {relativeTime(current.updatedAt || current.createdAt)}</span>
+          <span className="qc-quote-card-value qc-row-sub">
+            {versionCount} phiên bản · {relativeTime(current.updatedAt || current.createdAt)}
+            {versionCount > 1 ? (
+              <button type="button" className="qc-mini-btn" style={{ marginLeft: 8 }} onClick={() => void toggleExpandVersions(row)}>
+                {expandedVersions[current.id] ? 'Thu gọn' : `Xem ${versionCount - 1} phiên bản cũ`}
+              </button>
+            ) : null}
+          </span>
         </div>
+        {expandedVersions[current.id] ? (
+          <div className="qc-quote-card-versions">
+            {expandedVersions[current.id].loading ? (
+              <span className="qc-row-sub">Đang tải phiên bản cũ…</span>
+            ) : expandedVersions[current.id].versions.length === 0 ? (
+              <span className="qc-row-sub">{expandedVersions[current.id].error || 'Không có phiên bản cũ nào khác.'}</span>
+            ) : (
+              expandedVersions[current.id].versions.map(version => (
+                <div key={version.id} className="qc-quote-card-version-row">
+                  <button type="button" className="qc-row-link qc-row-link-btn" onClick={() => openQuoteWorkspace(version.id)}>
+                    ↳ V{version.versionNumber || 1} · {version.quoteNumber}
+                  </button>
+                  <span className="qc-row-sub">{quoteDisplayStatus(version, deal).label}</span>
+                  <button type="button" className="qc-mini-btn qc-mini-btn-danger" onClick={() => void deleteVersionNow(version)}>
+                    Xoá
+                  </button>
+                </div>
+              ))
+            )}
+          </div>
+        ) : null}
 
         {showExtra ? (
           <details className="qc-quote-card-more">
@@ -1213,10 +1507,6 @@ export function QuoteCenterPage() {
   return (
     <div className="qc-page">
       <header className="qc-header">
-        <div>
-          <h1>Trung tâm báo giá</h1>
-          <p>Tạo, gửi và theo dõi báo giá liên kết trực tiếp với CRM</p>
-        </div>
         <div className="qc-header-actions">
           <button type="button" className="qc-btn qc-btn-primary" onClick={openRequestWorkspace} title="Mở workspace xử lý báo giá — chọn khách hàng/cơ hội và người phụ trách ngay trong workspace">
             <Plus className="qc-icon" />
@@ -1585,12 +1875,51 @@ export function QuoteCenterPage() {
           </label>
         </div>
 
+        {selectedQuoteIds.size > 0 ? (
+          <div className="qc-bulk-bar" data-testid="qc-bulk-bar">
+            <span>Đã chọn <b>{selectedQuoteIds.size}</b> báo giá</span>
+            <div className="qc-bulk-bar-actions">
+              <button type="button" className="qc-btn" onClick={() => setSelectedQuoteIds(new Set())}>Bỏ chọn</button>
+              <button
+                type="button"
+                className="qc-btn qc-btn-danger"
+                disabled={bulkDeleting}
+                onClick={() => void deleteSelectedQuotes()}
+                data-testid="qc-bulk-delete-btn"
+              >
+                <Trash2 className="qc-icon" /> {bulkDeleting ? 'Đang xoá…' : 'Xoá báo giá đã chọn'}
+              </button>
+            </div>
+          </div>
+        ) : null}
+
         <div className="qc-quote-list-responsive">
         <div className="qc-table-wrap">
           <table className="qc-linked-table qc-linked-table--10col">
             <thead>
               <tr>
-                <th>Báo giá / Cơ hội · Version</th>
+                <th>
+                  {(() => {
+                    const selectable = chainRows;
+                    const allSelected = selectable.length > 0 && selectable.every(row => selectedQuoteIds.has(row.current.id));
+                    return (
+                      <input
+                        type="checkbox"
+                        className="qc-row-select"
+                        checked={allSelected}
+                        disabled={selectable.length === 0}
+                        aria-label="Chọn tất cả báo giá trên trang này"
+                        onChange={() => setSelectedQuoteIds(prev => {
+                          const next = new Set(prev);
+                          if (allSelected) selectable.forEach(row => next.delete(row.current.id));
+                          else selectable.forEach(row => next.add(row.current.id));
+                          return next;
+                        })}
+                      />
+                    );
+                  })()}
+                  Báo giá / Cơ hội · Version
+                </th>
                 <th>Khách hàng</th>
                 <th>Dự án</th>
                 <th>Phase hiện tại</th>
@@ -1775,17 +2104,25 @@ export function QuoteCenterPage() {
               ) : versionHistory.versions.length === 0 ? (
                 <div className="qc-empty">Không có dữ liệu.</div>
               ) : (
-                versionHistory.versions.map(version => (
-                  <Link
-                    key={version.id}
-                    href={`/all-platform/quotes/${version.id}`}
-                    className="qc-deal-picker-item"
-                  >
-                    <strong>
-                      V{version.versionNumber || 1} · {version.quoteNumber}
-                    </strong>
-                    <span>{quoteDisplayStatus(version).label} · {formatMoney(version.totalAmount)}</span>
-                  </Link>
+                versionHistory.versions.map((version, index) => (
+                  <div key={version.id} className="qc-deal-picker-item qc-version-history-item">
+                    <Link href={`/all-platform/quotes/${version.id}`} className="qc-version-history-link">
+                      <strong>
+                        V{version.versionNumber || 1} · {version.quoteNumber}
+                        {/* list_quote_versions tra ve moi nhat truoc -> phan tu dau = hien tai. */}
+                        {index === 0 ? <span className="qc-badge qc-badge-success" style={{ marginLeft: 8 }}>Hiện tại</span> : null}
+                      </strong>
+                      <span>{quoteDisplayStatus(version).label} · {formatMoney(version.totalAmount)}</span>
+                    </Link>
+                    <button
+                      type="button"
+                      className="qc-mini-btn qc-mini-btn-danger"
+                      title="Xoá riêng phiên bản này"
+                      onClick={() => void deleteVersionNow(version)}
+                    >
+                      <Trash2 className="qc-icon" />
+                    </button>
+                  </div>
                 ))
               )}
             </div>

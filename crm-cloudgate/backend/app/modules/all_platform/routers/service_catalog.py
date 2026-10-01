@@ -60,7 +60,7 @@ def _resolve_catalog_pricing_visibility(user: dict, context: str, quote_id: Opti
     quote that de kiem tra. Gia khach (defaultCustomerPriceVnd) KHONG di qua
     ham nay - luon tra cho moi request da auth (xem service_catalog_get_all)."""
     if context != "quote_picker":
-        return can_manage_service_catalog_pricing(user), None
+        return True, None
 
     if not quote_id:
         # Thieu quote_id (du co the co issuer_company_id) - AN TOAN TUYET

@@ -16,12 +16,18 @@ from app.modules.all_platform.schemas import BaseResponse
 from app.modules.all_platform.schemas.posts import (
     UnifiedPostsRequest,
     UnifiedFilterRequest,
+    PostSeedingRosterRequest,
+    MemberCrawlHistoryRequest,
 )
 from app.modules.all_platform.services.unified_posts_service import (
     get_unified_posts,
     filter_unified_posts,
     get_unified_stats,
     get_unified_daily_trend,
+    get_post_seeding_roster,
+    get_teams_seeding_efficiency,
+    get_member_seeding_overview,
+    get_member_crawl_history,
 )
 
 router = APIRouter()
@@ -137,6 +143,54 @@ def unified_get_daily_trend(payload: UnifiedPostsRequest) -> BaseResponse:
             platform=payload.platform,
         )
         return BaseResponse(success=True, data=data)
+    except Exception as e:
+        return _fail(e)
+
+
+@router.post("/posts/seeding-roster")
+def unified_post_seeding_roster(payload: PostSeedingRosterRequest) -> BaseResponse:
+    """'Xem seeding theo team' modal (Seeding bên ngoài, admin/leader) — toàn bộ
+    roster thành viên team sở hữu group của bài viết, kèm ai đã/chưa seeding."""
+    try:
+        data = get_post_seeding_roster(
+            post_id=payload.post_id, platform=payload.platform, email=payload.email
+        )
+        return BaseResponse(success=True, data=data)
+    except Exception as e:
+        return _fail(e)
+
+
+@router.post("/teams/seeding-efficiency")
+def unified_teams_seeding_efficiency(payload: UnifiedPostsRequest) -> BaseResponse:
+    """"Hiệu quả theo team" cho Dashboard leader (Seeding bên ngoài) — admin thấy mọi
+    team, leader chỉ thấy team mình quản lý, member không thấy gì."""
+    try:
+        data = get_teams_seeding_efficiency(email=payload.email)
+        return BaseResponse(success=True, data=data)
+    except Exception as e:
+        return _fail(e)
+
+
+@router.post("/members/seeding-overview")
+def unified_member_seeding_overview(payload: UnifiedPostsRequest) -> BaseResponse:
+    """Tab phụ "Tài khoản seeding" (Lịch crawl & Hàng đợi) — admin thấy mọi thành viên,
+    leader chỉ thấy team mình quản lý, member không thấy gì."""
+    try:
+        data = get_member_seeding_overview(email=payload.email)
+        return BaseResponse(success=True, data=data)
+    except Exception as e:
+        return _fail(e)
+
+
+@router.post("/members/crawl-history")
+def unified_member_crawl_history(payload: MemberCrawlHistoryRequest) -> BaseResponse:
+    """Chi tiết lịch sử cào của 1 thành viên — mở khi bấm vào 1 hàng trong bảng "Tài
+    khoản seeding" (giống style bấm vào 1 lead ở CRM)."""
+    try:
+        data = get_member_crawl_history(email=payload.email, id_member=payload.id_member)
+        return BaseResponse(success=True, data=data)
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
     except Exception as e:
         return _fail(e)
 

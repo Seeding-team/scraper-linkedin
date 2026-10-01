@@ -40,6 +40,61 @@ function hasRealPublicLink(quote: Quote): boolean {
   return Boolean(quote.publicUrl) && Boolean(quote.publicEnabled) && (quote.status === "approved" || quote.status === "confirmed");
 }
 
+function formatVNDShort(value?: number | null) {
+  if (value == null) return "—";
+  return new Intl.NumberFormat("vi-VN", { style: "currency", currency: "VND", maximumFractionDigits: 0 }).format(value);
+}
+
+/** "Lịch sử phiên bản" - dung chung cho ca vi tri tren dau (overlay, hien
+ * chua co caller nao thuc su truyen versions) VA vi tri duoi cung (embedded,
+ * mockup 2026-10-01). "Xem phiên bản này" goi thang `onSelectVersion` (=
+ * setSelectedVersionId cua form cha) - khong tao state/nguon du lieu song
+ * song thu hai. */
+function VersionHistoryList({
+  versions,
+  selectedVersionId,
+  onSelectVersion,
+}: {
+  versions: Quote[];
+  selectedVersionId?: string;
+  onSelectVersion?: (id: string) => void;
+}) {
+  return (
+    <div>
+      <div className="mb-2 text-xs font-semibold text-slate-500">Lịch sử phiên bản</div>
+      <div className="space-y-1.5">
+        {versions.map((v, idx) => {
+          const isSelected = v.id === selectedVersionId;
+          return (
+            <div
+              key={v.id}
+              className={`flex flex-wrap items-center justify-between gap-x-3 gap-y-1 rounded-md border px-2.5 py-1.5 text-xs ${
+                isSelected ? "border-primary/40 bg-primary/5" : "border-slate-200"
+              }`}
+            >
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="font-semibold text-slate-700">V{v.versionNumber || 1}{idx === 0 ? " · mới nhất" : ""}</span>
+                <span className="text-slate-400">{formatDate(v.updatedAt)}</span>
+                <span className={`quote-badge ${internalQuoteStatusClass(v.status)}`}>{internalQuoteStatusLabel(v.status)}</span>
+                <span className="text-slate-500">{formatVNDShort(v.customerPriceBeforeVat ?? v.totalAmount ?? null)}</span>
+              </div>
+              {!isSelected && onSelectVersion ? (
+                <button
+                  type="button"
+                  onClick={() => onSelectVersion(v.id)}
+                  className="shrink-0 font-semibold text-primary hover:underline"
+                >
+                  Xem phiên bản này →
+                </button>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 interface Props {
   quote: Quote | null;
   open: boolean;
@@ -47,21 +102,37 @@ interface Props {
   dealName?: string | null;
   onClose: () => void;
   onEdit?: (quote: Quote) => void;
+  /** "embedded" (redesign 2026-10-01, RegisterExternalContractModal): render
+   * nhu 1 panel NAM TRONG cha (khong backdrop, khong fixed/overlay full man
+   * hinh) de hien SONG SONG voi form thay vi che het. Mac dinh "overlay" giu
+   * NGUYEN y het hanh vi/giao dien cu cho DealWorkspaceTabs (caller kia KHONG
+   * truyen prop nay nen KHONG doi gi ca). */
+  mode?: "overlay" | "embedded";
+  /** Danh sach phien ban (V1/V2/...) de hien "Lịch sử phiên bản" + cho chuyen
+   * dang xem ngay trong panel nay. Chi dung khi mode="embedded" - overlay
+   * (DealWorkspaceTabs) khong truyen nen khong hien gi them. */
+  versions?: Quote[] | null;
+  selectedVersionId?: string;
+  onSelectVersion?: (id: string) => void;
+  /** Ten Nguoi lien he chinh DA RESOLVE san boi cha (RegisterExternalContractModal
+   * dung 1 chuoi fallback rieng: contactId cua bao gia -> contact cua Deal ->
+   * Khach hang chi co 1 Lien he -> "—") - chi dung khi mode="embedded", KHONG
+   * fork lai logic resolve o day. overlay (DealWorkspaceTabs) khong truyen. */
+  primaryContactName?: string | null;
 }
 
-export function QuoteQuickViewDrawer({ quote, open, customerName, dealName, onClose, onEdit }: Props) {
-  return (
-    <>
-      <div
-        onClick={onClose}
-        className={`fixed inset-0 z-[99985] bg-black/40 backdrop-blur-sm transition-opacity ${
-          open ? "opacity-100" : "pointer-events-none opacity-0"
-        }`}
-      />
+export function QuoteQuickViewDrawer({ quote, open, customerName, dealName, onClose, onEdit, mode = "overlay", versions, selectedVersionId, onSelectVersion, primaryContactName }: Props) {
+  const embedded = mode === "embedded";
+
+  const panel = (
       <aside
-        className={`fixed right-0 top-0 z-[99986] flex h-screen w-full max-w-[52rem] flex-col border-l border-slate-200 bg-white shadow-2xl transition-transform duration-300 ${
-          open ? "translate-x-0" : "translate-x-full"
-        }`}
+        className={
+          embedded
+            ? "flex h-full w-full flex-col bg-white"
+            : `fixed right-0 top-0 z-[99986] flex h-screen w-full max-w-[52rem] flex-col border-l border-slate-200 bg-white shadow-2xl transition-transform duration-300 ${
+                open ? "translate-x-0" : "translate-x-full"
+              }`
+        }
       >
         <header className="flex shrink-0 items-start justify-between border-b border-slate-200 px-5 py-4">
           <div className="min-w-0">
@@ -102,56 +173,148 @@ export function QuoteQuickViewDrawer({ quote, open, customerName, dealName, onCl
           </div>
         </header>
 
+        {/* "Lịch sử phiên bản" - CHI hien o day (ngay duoi header) cho mode
+         * overlay (DealWorkspaceTabs, hien tai khong truyen versions nen
+         * block nay khong bao gio render o overlay - giu cho tuong lai).
+         * Voi mode="embedded" (RegisterExternalContractModal), khoi nay
+         * duoc chuyen xuong DUOI CUNG (sau bang Hạng mục báo giá) de khop
+         * dung thu tu mockup "Xem nhanh báo giá" (feedback 2026-10-01: "chỗ
+         * xem nhanh báo giá UI như v nè chứ k phải hiện báo giá như pdf"). */}
+        {!embedded && versions && versions.length > 1 ? (
+          <div className="shrink-0 border-b border-slate-100 px-5 py-3">
+            <VersionHistoryList versions={versions} selectedVersionId={selectedVersionId} onSelectVersion={onSelectVersion} />
+          </div>
+        ) : null}
+
         {quote ? (
-          <>
-            <div className="grid shrink-0 grid-cols-2 gap-x-6 gap-y-2 border-b border-slate-100 bg-slate-50 px-5 py-3 text-xs sm:grid-cols-4">
-              <div>
-                <div className="text-slate-400">Khách hàng</div>
-                <div className="truncate font-medium text-slate-700">{customerName || "—"}</div>
+          embedded ? (
+            // Panel tom tat DON GIAN (mockup 2026-10-01) - KHONG dung
+            // QuoteDocumentRenderer (dinh dang tai lieu PDF gui khach, qua
+            // rom ra cho 1 luot "xem nhanh de chon dung bao gia") - chi hien
+            // dung 4 chi so + 1 bang hang muc THO, giong het cach ScreenShot
+            // mau the hien, KHONG tao 1 engine render bao gia thu hai (van
+            // doc thang tu `quote.items`/`quote.data`, khong bia them field
+            // moi nao khong co that tren Quote).
+            <div className="crm-scroll-hidden flex-1 overflow-y-auto px-5 py-4">
+              <div className="grid grid-cols-2 gap-3">
+                <div className="rounded-lg border border-slate-200 p-3">
+                  <div className="text-xs text-slate-400">Giá khách</div>
+                  <div className="mt-0.5 text-lg font-bold text-slate-800">
+                    {formatVNDShort(quote.customerPriceBeforeVat ?? quote.totalAmount ?? null)}
+                  </div>
+                </div>
+                <div className="rounded-lg border border-slate-200 p-3">
+                  <div className="text-xs text-slate-400">Biên lợi nhuận dự kiến</div>
+                  <div className="mt-0.5 text-lg font-bold text-slate-800">
+                    {quote.hasCostData && quote.grossMarginPercent != null ? `${quote.grossMarginPercent.toFixed(1)}%` : "—"}
+                  </div>
+                </div>
               </div>
-              <div>
-                <div className="text-slate-400">Cơ hội</div>
-                <div className="truncate font-medium text-slate-700">{dealName || "—"}</div>
+              <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
+                <div>
+                  <div className="text-xs text-slate-400">Liên hệ chính</div>
+                  <div className="font-medium text-slate-700">{primaryContactName || "—"}</div>
+                </div>
+                <div>
+                  <div className="text-xs text-slate-400">Phụ trách</div>
+                  <div className="font-medium text-slate-700">{quote.quoteOwner?.name || quote.technicalOwner?.name || "—"}</div>
+                </div>
               </div>
-              <div>
-                <div className="text-slate-400">Đơn vị phát hành</div>
-                <div className="truncate font-medium text-slate-700">{issuerName(quote)}</div>
+
+              <div className="mt-4">
+                <div className="mb-2 text-sm font-bold text-slate-700">Hạng mục báo giá</div>
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="border-b border-slate-200 text-left text-slate-400">
+                      <th className="py-1.5 pr-2 font-semibold">Hạng mục</th>
+                      <th className="py-1.5 pr-2 text-right font-semibold">SL</th>
+                      <th className="py-1.5 pr-2 text-right font-semibold">Đơn giá</th>
+                      <th className="py-1.5 text-right font-semibold">Thành tiền</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(quote.items || []).filter(item => item.rowType !== "section").map((item, idx) => (
+                      <tr key={item.id || idx} className="border-b border-slate-100">
+                        <td className="py-1.5 pr-2 text-slate-700">{item.description || "—"}</td>
+                        <td className="py-1.5 pr-2 text-right text-slate-600">{item.quantity ?? "—"}</td>
+                        <td className="py-1.5 pr-2 text-right text-slate-600">{formatVNDShort(item.unitPrice)}</td>
+                        <td className="py-1.5 text-right font-medium text-slate-700">{formatVNDShort(item.amountAfterDiscount ?? null)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
-              <div>
-                <div className="text-slate-400">Ngày báo giá</div>
-                <div className="font-medium text-slate-700">{formatDate(quote.issuedAt)}</div>
-              </div>
-              <div>
-                <div className="text-slate-400">Hiệu lực</div>
-                <div className="font-medium text-slate-700">{formatDate(quote.validUntil)}</div>
-              </div>
-              <div>
-                <div className="text-slate-400">Tiền tệ</div>
-                <div className="font-medium text-slate-700">{quote.currency || "VND"}</div>
-              </div>
+
+              {versions && versions.length > 1 ? (
+                <div className="mt-4">
+                  <VersionHistoryList versions={versions} selectedVersionId={selectedVersionId} onSelectVersion={onSelectVersion} />
+                </div>
+              ) : null}
             </div>
-            <div className="crm-scroll-hidden flex-1 overflow-y-auto bg-slate-100 px-4 py-4">
-              <div className="mx-auto max-w-[46rem] rounded-lg bg-white p-4 shadow-sm">
-                <QuoteDocumentRenderer
-                  schemaSnapshot={quote.formSnapshot}
-                  quoteData={quote.data}
-                  quoteItems={quote.items}
-                  solutionItems={quote.data?.solutionItems}
-                  totals={{
-                    subtotalAmount: quote.subtotalAmount,
-                    totalVatAmount: quote.vatAmount,
-                    totalAmount: quote.totalAmount,
-                  }}
-                  mode="detail"
-                  isPublished={quote.processingStage === "published"}
-                  quoteNumber={quote.quoteNumber}
-                  overallDiscountPercent={quote.overallDiscountPercent}
-                />
+          ) : (
+            <>
+              <div className="grid shrink-0 grid-cols-2 gap-x-6 gap-y-2 border-b border-slate-100 bg-slate-50 px-5 py-3 text-xs sm:grid-cols-4">
+                <div>
+                  <div className="text-slate-400">Khách hàng</div>
+                  <div className="truncate font-medium text-slate-700">{customerName || "—"}</div>
+                </div>
+                <div>
+                  <div className="text-slate-400">Cơ hội</div>
+                  <div className="truncate font-medium text-slate-700">{dealName || "—"}</div>
+                </div>
+                <div>
+                  <div className="text-slate-400">Đơn vị phát hành</div>
+                  <div className="truncate font-medium text-slate-700">{issuerName(quote)}</div>
+                </div>
+                <div>
+                  <div className="text-slate-400">Ngày báo giá</div>
+                  <div className="font-medium text-slate-700">{formatDate(quote.issuedAt)}</div>
+                </div>
+                <div>
+                  <div className="text-slate-400">Hiệu lực</div>
+                  <div className="font-medium text-slate-700">{formatDate(quote.validUntil)}</div>
+                </div>
+                <div>
+                  <div className="text-slate-400">Tiền tệ</div>
+                  <div className="font-medium text-slate-700">{quote.currency || "VND"}</div>
+                </div>
               </div>
-            </div>
-          </>
+              <div className="crm-scroll-hidden flex-1 overflow-y-auto bg-slate-100 px-4 py-4">
+                <div className="mx-auto max-w-[46rem] rounded-lg bg-white p-4 shadow-sm">
+                  <QuoteDocumentRenderer
+                    schemaSnapshot={quote.formSnapshot}
+                    quoteData={quote.data}
+                    quoteItems={quote.items}
+                    solutionItems={quote.data?.solutionItems}
+                    totals={{
+                      subtotalAmount: quote.subtotalAmount,
+                      totalVatAmount: quote.vatAmount,
+                      totalAmount: quote.totalAmount,
+                    }}
+                    mode="detail"
+                    isPublished={quote.processingStage === "published"}
+                    quoteNumber={quote.quoteNumber}
+                    overallDiscountPercent={quote.overallDiscountPercent}
+                  />
+                </div>
+              </div>
+            </>
+          )
         ) : null}
       </aside>
+  );
+
+  if (embedded) return panel;
+
+  return (
+    <>
+      <div
+        onClick={onClose}
+        className={`fixed inset-0 z-[99985] bg-black/40 backdrop-blur-sm transition-opacity ${
+          open ? "opacity-100" : "pointer-events-none opacity-0"
+        }`}
+      />
+      {panel}
     </>
   );
 }

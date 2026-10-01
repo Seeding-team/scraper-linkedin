@@ -20,7 +20,15 @@ jobs:
         working-directory: /opt/apps/seeding_markeeai/scraper-linkedin
     steps:
       - name: Pull main
+        # Repo tren host nay dung CHUNG working-directory voi deploy-app.yml
+        # (/opt/apps/seeding_markeeai/scraper-linkedin). Buoc dong goi extension
+        # zip trong deploy-app.yml de lai linkedin-crawler-ui/public/*.zip
+        # "dirty" (sua tay, chua commit) sau moi lan deploy App -> lan deploy
+        # CRM ke tiep bi `git pull --ff-only` tu choi vi file dang bi sua tay.
+        # Fix giong deploy-app.yml: xoa rac build artifact truoc khi pull (an
+        # toan, deploy-app.yml se tu build lai tu source o lan sau).
         run: |
+          git checkout -- linkedin-crawler-ui/public/*.zip || true
           git fetch origin main
           git checkout main
           git pull --ff-only origin main
@@ -37,9 +45,9 @@ jobs:
       - name: Build and apply CRM containers
         working-directory: /opt/apps/crm-cloudgate
         run: |
-          docker compose build frontend backend
-          docker compose up -d frontend backend
-          docker compose restart router
+          docker compose -p crm-cloudgate build frontend backend
+          docker compose -p crm-cloudgate up -d frontend backend
+          docker compose -p crm-cloudgate restart router
 
       - name: Verify CRM production
         run: |

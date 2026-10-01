@@ -6,6 +6,7 @@ import {
   customerLeadService,
   type ContractStatus,
   type Customer,
+  type ContractLink,
   type SDRUser,
   type SourcePlatform,
   type DealStage,
@@ -20,6 +21,7 @@ import { toast } from "sonner";
 import { CurrencyInput } from "@/components/CurrencyInput";
 import { useCrmCategoryCodeOptions, useCrmCategoryLabels } from "@/modules/crm/components/CrmCategorySelect";
 import { seedingCrmRepository } from "@/modules/crm/repositories/SeedingCrmRepository";
+import { projectsService, type Project } from "@/services/all-platform.service";
 
 interface CrmCustomerModalProps {
   isOpen: boolean;
@@ -56,9 +58,15 @@ const emptyForm = (): Partial<Customer> => ({
   last_care_at: null,
   last_attachment_name: null,
   last_attachment_url: null,
+  purchase_contract_links: [],
+  sale_contract_links: [],
   note: "",
   // CRM pipeline
   deal_stage: "new_lead",
+  interest_level: "Bình thường",
+  implementation_timeline: "Chưa xác định",
+  expected_close_date: null,
+  customer_fit: "Phù hợp",
   // Phân công
   leaded_by: "",
   sdr_id: "",
@@ -78,6 +86,69 @@ const CONTRACT_STATUS_OPTIONS: { value: ContractStatus; label: string }[] = [
   { value: "maintenance", label: "Bảo trì / bảo hành" },
 ];
 
+/** 1 dòng "Tên hợp đồng/báo giá + URL" trong khu vực Phase 1 (mua) / Phase 2 (bán). */
+function ContractLinkRow({
+  link,
+  uploading,
+  onChangeName,
+  onChangeUrl,
+  onUploadFile,
+  onRemove,
+}: {
+  link: ContractLink;
+  uploading: boolean;
+  onChangeName: (value: string) => void;
+  onChangeUrl: (value: string) => void;
+  onUploadFile: (file: File) => void;
+  onRemove: () => void;
+}) {
+  return (
+    <div className="flex items-start gap-1.5">
+      <div className="grid flex-1 grid-cols-2 gap-1.5">
+        <input
+          type="text"
+          value={link.name ?? ""}
+          onChange={(e) => onChangeName(e.target.value)}
+          placeholder="Tên hợp đồng/báo giá"
+          className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500"
+        />
+        <input
+          type="url"
+          value={link.url ?? ""}
+          onChange={(e) => onChangeUrl(e.target.value)}
+          placeholder="https://..."
+          className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500"
+        />
+      </div>
+      <label
+        className={`shrink-0 cursor-pointer rounded-lg border border-slate-300 px-2 py-1.5 text-[11px] font-medium text-slate-600 hover:bg-slate-50 transition-colors ${
+          uploading ? "opacity-50 pointer-events-none" : ""
+        }`}
+      >
+        {uploading ? "Đang tải…" : "Tải file"}
+        <input
+          type="file"
+          className="hidden"
+          disabled={uploading}
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            if (file) onUploadFile(file);
+            e.target.value = "";
+          }}
+        />
+      </label>
+      <button
+        type="button"
+        onClick={onRemove}
+        title="Xoá dòng"
+        className="shrink-0 px-1.5 py-1.5 text-slate-400 hover:text-red-500 transition-colors text-sm leading-none"
+      >
+        ×
+      </button>
+    </div>
+  );
+}
+
 export function CrmCustomerModal({
   isOpen,
   onClose,
@@ -92,7 +163,20 @@ export function CrmCustomerModal({
   const [sdrs, setSdrs] = useState<SDRUser[]>([]);
   const [leaders, setLeaders] = useState<SDRUser[]>([]);
   const [formData, setFormData] = useState<Partial<Customer>>(emptyForm());
+  // key = `${field}-${index}` của dòng hợp đồng/báo giá đang upload (Vấn đề 2).
+  const [uploadingLinkKey, setUploadingLinkKey] = useState<string | null>(null);
   const [contacts, setContacts] = useState<Array<{ id: string; name: string }>>([]);
+  // "Dự án" (feedback leader, WIP full-flow man Xac minh Lead + man nay) -
+  // truoc day modal nay hoan toan khong co field Du an nao du Customer.project_id
+  // da ton tai san trong type/backend. `projects` = danh sach Du an co san
+  // CUA DUNG khach hang nay (dropdown chon lai); `newProjectName` = go TEN
+  // MOI khi chon "+ Tạo dự án mới…" (backend tu tao that, xem
+  // customer_lead_service.create_customer_lead/update - da co san logic nay
+  // tu truoc, chi modal nay chua tung gui project_name len).
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [creatingNewProject, setCreatingNewProject] = useState(false);
+  const [newProjectName, setNewProjectName] = useState("");
+  const CREATE_NEW_PROJECT_VALUE = "__create_new__";
   const { options: sourceOptions } = useCrmCategoryCodeOptions("crm_source", SOURCE_PLATFORM_OPTIONS);
   const { labels: cityOptions } = useCrmCategoryLabels("crm_city", CITY_OPTIONS);
   const { options: industryOptions } = useCrmCategoryCodeOptions(
@@ -143,10 +227,76 @@ export function CrmCustomerModal({
     return () => { alive = false; };
   }, [isOpen, customer?.customer_id]);
 
+  // Danh sach Du an CUA DUNG khach hang nay (dropdown "Dự án") - cung dieu
+  // kien loc voi Contact o tren (chua co Customer canonical thi chua co Du
+  // an nao de chon).
+  useEffect(() => {
+    if (!isOpen || !customer?.customer_id) {
+      setProjects([]);
+      return;
+    }
+    let alive = true;
+    projectsService
+      .list(customer.customer_id)
+      .then(res => { if (alive && res.success && res.data) setProjects(res.data); })
+      .catch(() => { if (alive) setProjects([]); });
+    return () => { alive = false; };
+  }, [isOpen, customer?.customer_id]);
+
+  useEffect(() => {
+    if (isOpen) { setNewProjectName(""); setCreatingNewProject(false); }
+  }, [isOpen, customer?.id]);
+
   if (!isOpen) return null;
 
   const set = <K extends keyof Customer>(key: K, value: Customer[K]) =>
     setFormData((prev) => ({ ...prev, [key]: value }));
+
+  /* ── Hợp đồng báo giá mua/bán (Vấn đề 2) — mỗi khu vực nhiều dòng {name, url} ── */
+  type ContractLinkField = "purchase_contract_links" | "sale_contract_links";
+
+  const addLinkRow = (field: ContractLinkField) =>
+    setFormData((prev) => ({
+      ...prev,
+      [field]: [...(prev[field] ?? []), { name: "", url: "" }],
+    }));
+
+  const updateLinkRow = (field: ContractLinkField, index: number, patch: Partial<ContractLink>) =>
+    setFormData((prev) => {
+      const list = [...(prev[field] ?? [])];
+      list[index] = { ...list[index], ...patch };
+      return { ...prev, [field]: list };
+    });
+
+  const removeLinkRow = (field: ContractLinkField, index: number) =>
+    setFormData((prev) => ({
+      ...prev,
+      [field]: (prev[field] ?? []).filter((_, i) => i !== index),
+    }));
+
+  /**
+   * Upload file trực tiếp từ dòng hợp đồng/báo giá (thay vì phải kéo-thả sang
+   * bước "chuyển stage" mới upload được — theo yêu cầu Vấn đề 2 phần 2). File
+   * lên Supabase Storage qua endpoint chung /customer-leads/upload, sau đó
+   * "tự động nhảy qua" — tự điền URL/tên vào đúng dòng vừa bấm.
+   */
+  const handleRowUpload = async (field: ContractLinkField, index: number, file: File) => {
+    const key = `${field}-${index}`;
+    setUploadingLinkKey(key);
+    try {
+      const result = await customerLeadService.uploadAttachment(file, "contract", customer?.id);
+      updateLinkRow(field, index, { name: result.name, url: result.url });
+      // Đồng bộ ngược last_attachment_* để Kanban card / Drawer (đang đọc field
+      // cũ) vẫn thấy được file vừa gắn, không cần sửa lại các nơi đó.
+      set("last_attachment_url", result.url);
+      set("last_attachment_name", result.name);
+      toast.success(`Đã tải "${file.name}" lên`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Upload thất bại");
+    } finally {
+      setUploadingLinkKey(null);
+    }
+  };
 
   const selectedLeaderId = formData.leaded_by?.trim() || "";
   const selectedSdrId = formData.sdr_id?.trim() || "";
@@ -183,7 +333,7 @@ export function CrmCustomerModal({
     try {
       // CHỈ gửi các field có trong form. Tránh ghi đè các trường cũ (service_package,
       // tags, contract_*, ...) về null/empty khi user chỉnh sửa thông tin lead.
-      const payload: Partial<Customer> = {
+      const payload: Partial<Customer> & { project_name?: string } = {
         customer_name: formData.customer_name?.trim(),
         company_name: formData.company_name?.trim() || null,
         phone: formData.phone?.trim() || null,
@@ -199,6 +349,10 @@ export function CrmCustomerModal({
         decision_maker: formData.decision_maker?.trim() || null,
         estimated_budget: formData.estimated_budget ? Number(formData.estimated_budget) : 0,
         follow_up_date: formData.follow_up_date || null,
+        interest_level: (formData as any).interest_level || null,
+        implementation_timeline: (formData as any).implementation_timeline || null,
+        expected_close_date: (formData as any).expected_close_date || null,
+        customer_fit: (formData as any).customer_fit || null,
         // Optional — chỉ gửi khi user đã chọn, tránh ghi đè deal cũ về null
         service_package: formData.service_package || null,
         lifetime_value: formData.lifetime_value ? Number(formData.lifetime_value) : 0,
@@ -212,12 +366,19 @@ export function CrmCustomerModal({
         last_care_at: formData.last_care_at || null,
         last_attachment_name: formData.last_attachment_name?.trim() || null,
         last_attachment_url: formData.last_attachment_url?.trim() || null,
+        // Vấn đề 2 — bỏ các dòng lỡ bấm "+ Thêm link" nhưng chưa điền URL.
+        purchase_contract_links: (formData.purchase_contract_links ?? []).filter((l) => l.url?.trim()),
+        sale_contract_links: (formData.sale_contract_links ?? []).filter((l) => l.url?.trim()),
         note: formData.note?.trim() || null,
         deal_stage: formData.deal_stage ?? "new_lead",
         // Nguoi lien he chinh (migration 134/135) - chi gan duoc Contact
         // THUOC DUNG khach hang nay, server tu kiem tra lai (xem
         // validate_contact_belongs_to_customer o customer_lead_service.py).
         primary_contact_id: formData.primary_contact_id || null,
+        // "Dự án" - hoac gan lai Du an co san (project_id), hoac go ten Du an
+        // MOI (project_name, backend tu tao that). Khong gui ca 2 cung luc.
+        project_id: formData.project_id || null,
+        ...(newProjectName.trim() ? { project_name: newProjectName.trim() } : {}),
         leaded_by: (formData.leaded_by?.trim() || resolvedLeaderId || "") || null,
         sdr_id: (formData.sdr_id?.trim() || resolvedSdrId || "") || null,
         is_assigned: !!(formData.sdr_id?.trim() || resolvedSdrId),
@@ -510,6 +671,55 @@ export function CrmCustomerModal({
                   ) : null}
                 </div>
 
+                {/* "Dự án" (tùy chọn) - feedback leader: field nay truoc day
+                    hoan toan khong co trong modal, du Customer.project_id da
+                    ton tai san. Chi liet ke Du an THUOC DUNG khach hang canonical
+                    (xem effect fetch projects o tren) - "+ Tạo dự án mới…" cho
+                    go ten, backend tu tao that (project_name, da co san logic
+                    o customer_lead_service.py). */}
+                <div className="col-span-2">
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">
+                    Dự án <span className="text-slate-400 font-normal">(tùy chọn)</span>
+                  </label>
+                  <select
+                    value={formData.project_id ? formData.project_id : creatingNewProject ? CREATE_NEW_PROJECT_VALUE : ""}
+                    onChange={(e) => {
+                      const value = e.target.value;
+                      if (value === CREATE_NEW_PROJECT_VALUE) {
+                        set("project_id", null);
+                        setCreatingNewProject(true);
+                      } else {
+                        set("project_id", value || null);
+                        setCreatingNewProject(false);
+                        setNewProjectName("");
+                      }
+                    }}
+                    disabled={!customer?.customer_id}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500 text-sm bg-white disabled:bg-slate-50 disabled:text-slate-400"
+                  >
+                    <option value="">— Chưa gắn dự án —</option>
+                    {projects.map((p) => (
+                      <option key={p.id} value={p.id}>{p.name}</option>
+                    ))}
+                    <option value={CREATE_NEW_PROJECT_VALUE}>+ Tạo dự án mới…</option>
+                  </select>
+                  {creatingNewProject ? (
+                    <input
+                      type="text"
+                      autoFocus
+                      value={newProjectName}
+                      onChange={(e) => setNewProjectName(e.target.value)}
+                      className="mt-1.5 w-full px-3 py-2 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500 text-sm"
+                      placeholder="VD: Website 2026"
+                    />
+                  ) : null}
+                  {!customer?.customer_id ? (
+                    <p className="mt-1 text-[10px] text-slate-400">
+                      Khách hàng này chưa liên kết hồ sơ CRM chính thức nên chưa có Dự án để chọn.
+                    </p>
+                  ) : null}
+                </div>
+
                 {/* Decision maker — chỉ cần từ qualified trở đi */}
                 <div>
                   <label className="block text-xs font-semibold text-slate-600 mb-1">
@@ -562,27 +772,127 @@ export function CrmCustomerModal({
                   </p>
                 </div>
 
-                {/* ── Hợp đồng & báo giá (gộp vào Pipeline để khớp flow SMB) ── */}
+                {/* Mức độ quan tâm */}
                 <div>
-                  <label className="block text-xs font-semibold text-slate-600 mb-1">Tên file hợp đồng / báo giá</label>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">Mức độ quan tâm</label>
+                  <select
+                    value={(formData as any).interest_level ?? "Bình thường"}
+                    onChange={(e) => set("interest_level" as any, e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500 text-sm bg-white"
+                  >
+                    <option value="Bình thường">Bình thường</option>
+                    <option value="🔥 Cao">🔥 Cao</option>
+                    <option value="Rất cao">Rất cao</option>
+                    <option value="Thấp">Thấp</option>
+                  </select>
+                </div>
+
+                {/* Dự kiến triển khai */}
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">Dự kiến triển khai</label>
+                  <select
+                    value={(formData as any).implementation_timeline ?? "Chưa xác định"}
+                    onChange={(e) => set("implementation_timeline" as any, e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500 text-sm bg-white"
+                  >
+                    <option value="Chưa xác định">Chưa xác định</option>
+                    <option value="Ngay lập tức">Ngay lập tức</option>
+                    <option value="Trong 1 tháng">Trong 1 tháng</option>
+                    <option value="1-3 tháng">1-3 tháng</option>
+                    <option value="3-6 tháng">3-6 tháng</option>
+                  </select>
+                </div>
+
+                {/* Dự kiến chốt */}
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">Dự kiến chốt</label>
                   <input
-                    type="text"
-                    value={formData.last_attachment_name ?? ""}
-                    onChange={(e) => set("last_attachment_name", e.target.value || null)}
+                    type="date"
+                    value={dateInputValue((formData as any).expected_close_date)}
+                    onChange={(e) => set("expected_close_date" as any, toIsoDate(e.target.value))}
                     className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500 text-sm"
-                    placeholder="Bao_gia_ABC.pdf"
                   />
                 </div>
 
+                {/* Fit khách hàng */}
                 <div>
-                  <label className="block text-xs font-semibold text-slate-600 mb-1">Link báo giá / hợp đồng</label>
-                  <input
-                    type="url"
-                    value={formData.last_attachment_url ?? ""}
-                    onChange={(e) => set("last_attachment_url", e.target.value || null)}
-                    className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500 text-sm"
-                    placeholder="https://..."
-                  />
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">Fit khách hàng</label>
+                  <select
+                    value={(formData as any).customer_fit ?? "Phù hợp"}
+                    onChange={(e) => set("customer_fit" as any, e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500 text-sm bg-white"
+                  >
+                    <option value="Phù hợp">Phù hợp</option>
+                    <option value="Rất phù hợp">Rất phù hợp</option>
+                    <option value="Chưa phù hợp">Chưa phù hợp</option>
+                    <option value="Không phù hợp">Không phù hợp</option>
+                  </select>
+                </div>
+
+                {/* ── Hợp đồng & báo giá (Vấn đề 2): tách Phase 1 mua / Phase 2 bán,
+                       mỗi bên nhiều link + upload file trực tiếp tại đây ── */}
+                <div className="col-span-2 rounded-lg border border-slate-200 bg-white p-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="text-xs font-semibold text-slate-700">
+                      Hợp đồng báo giá mua <span className="text-slate-400 font-normal">(Phase 1)</span>
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => addLinkRow("purchase_contract_links")}
+                      className="text-xs font-semibold text-indigo-600 hover:text-indigo-800"
+                    >
+                      + Thêm link
+                    </button>
+                  </div>
+                  {(formData.purchase_contract_links ?? []).length === 0 ? (
+                    <p className="text-[11px] text-slate-400">Chưa có hợp đồng/báo giá mua nào.</p>
+                  ) : (
+                    <div className="space-y-1.5">
+                      {(formData.purchase_contract_links ?? []).map((link, idx) => (
+                        <ContractLinkRow
+                          key={idx}
+                          link={link}
+                          uploading={uploadingLinkKey === `purchase_contract_links-${idx}`}
+                          onChangeName={(v) => updateLinkRow("purchase_contract_links", idx, { name: v })}
+                          onChangeUrl={(v) => updateLinkRow("purchase_contract_links", idx, { url: v })}
+                          onUploadFile={(f) => handleRowUpload("purchase_contract_links", idx, f)}
+                          onRemove={() => removeLinkRow("purchase_contract_links", idx)}
+                        />
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div className="col-span-2 rounded-lg border border-slate-200 bg-white p-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="text-xs font-semibold text-slate-700">
+                      Hợp đồng báo giá bán <span className="text-slate-400 font-normal">(Phase 2)</span>
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => addLinkRow("sale_contract_links")}
+                      className="text-xs font-semibold text-indigo-600 hover:text-indigo-800"
+                    >
+                      + Thêm link
+                    </button>
+                  </div>
+                  {(formData.sale_contract_links ?? []).length === 0 ? (
+                    <p className="text-[11px] text-slate-400">Chưa có hợp đồng/báo giá bán nào.</p>
+                  ) : (
+                    <div className="space-y-1.5">
+                      {(formData.sale_contract_links ?? []).map((link, idx) => (
+                        <ContractLinkRow
+                          key={idx}
+                          link={link}
+                          uploading={uploadingLinkKey === `sale_contract_links-${idx}`}
+                          onChangeName={(v) => updateLinkRow("sale_contract_links", idx, { name: v })}
+                          onChangeUrl={(v) => updateLinkRow("sale_contract_links", idx, { url: v })}
+                          onUploadFile={(f) => handleRowUpload("sale_contract_links", idx, f)}
+                          onRemove={() => removeLinkRow("sale_contract_links", idx)}
+                        />
+                      ))}
+                    </div>
+                  )}
                 </div>
 
                 <div>

@@ -1,10 +1,13 @@
 'use client';
 
+import { Columns3, Printer, RectangleHorizontal, RectangleVertical, RotateCcw } from 'lucide-react';
 import { useEffect, useState } from 'react';
+import { useAppAuth } from '@/contexts/AppAuthContext';
 import { QUOTE_STATUS_LABELS } from '../constants/quoteConfig';
 import { QuotePublicVerificationRequiredError, seedingQuoteRepository } from '../repositories/SeedingQuoteRepository';
 import type { Quote } from '../types';
 import { QuoteDocumentRenderer } from './QuoteDocumentRenderer';
+import { QuotePrintLayoutSaveButton } from './QuotePrintLayoutSaveButton';
 
 /** "Giới hạn xem link báo giá bằng Email hoặc Số điện thoại" (migration 118) -
  * giá trị xác minh đúng được nhớ theo TỪNG token + method (mỗi báo giá 1 link
@@ -35,28 +38,6 @@ interface Props {
   token: string;
 }
 
-async function waitForPrintReady() {
-  await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-  if (document.fonts?.ready) {
-    try {
-      await document.fonts.ready;
-    } catch {}
-  }
-  const pendingImages = Array.from(document.images || []).filter(image => !image.complete);
-  if (pendingImages.length) {
-    await Promise.allSettled(
-      pendingImages.map(
-        image =>
-          new Promise(resolve => {
-            image.addEventListener('load', resolve, { once: true });
-            image.addEventListener('error', resolve, { once: true });
-          })
-      )
-    );
-  }
-  await new Promise(resolve => window.setTimeout(resolve, 300));
-}
-
 export function PublicQuotePage({ token }: Props) {
   const [quote, setQuote] = useState<Quote | null>(null);
   const [loading, setLoading] = useState(true);
@@ -71,10 +52,29 @@ export function PublicQuotePage({ token }: Props) {
   const [verifySubmitting, setVerifySubmitting] = useState(false);
   const [autoRetried, setAutoRetried] = useState(false);
 
-  async function downloadPDF() {
-    await waitForPrintReady();
-    window.print();
-  }
+  // "Chuyển đổi tờ giấy dọc/ngang, kéo chỉnh độ rộng cột" (yêu cầu ro rang
+  // "chỉnh xoay ngang, xoay dọc, căn chỉnh cột ở đây luôn" - KHONG qua modal
+  // "Xem trước khi in" rieng nhu truoc (phai bam "Tải PDF" moi hien ra, de bi
+  // hieu nham/bo lo) - toolbar nay LUON hien san ngay tren trang, dieu khien
+  // TRUC TIEP DUY NHAT 1 QuoteDocumentRenderer ben duoi (khong con renderer
+  // trung lap trong modal) qua printPreviewMode/printOrientation, dung 1 co
+  // che WYSIWYG voi ban in that ("căn như nào thì in ra như thế" - xem giai
+  // thich --col-print-w trong QuoteDocumentRenderer.tsx/quotes.css).
+  const [printOrientation, setPrintOrientation] = useState<'portrait' | 'landscape'>('portrait');
+  const [printResetKey, setPrintResetKey] = useState(0);
+  // Khach vang lai (khong dang nhap) KHONG co nut "Luu" - trang nay VAN GIEO
+  // SAN huong giay + do rong cot ma Sale da "Luu" truoc do
+  // (quote.data.printLayoutPrefs) lam mac dinh khi mo link - dam bao ban PDF
+  // in/tai ra dung nhu Sale da can chinh san. Rieng CHINH Sale (hoac ai co
+  // quyen sua bao gia nay) mo lai DUNG link nay bang phien dang nhap cua ho
+  // thi THAY nut "Luu" that (xem canEditPrintLayout/useAppAuth ben duoi) de
+  // chinh lai truoc khi gui khach, khong can mo rieng trang noi bo
+  // /all-platform/quotes/[id]. Khach that (khong session) khong bao gio thay
+  // nut nay - server (PUT print-layout-prefs) van tu kiem tra lai can_edit_quote,
+  // khong tin ket qua check quyen o client.
+  const [columnWidthsDraft, setColumnWidthsDraft] = useState<Record<string, number> | null>(null);
+  const { isAuthenticated, isLoading: authLoading } = useAppAuth();
+  const [canEditPrintLayout, setCanEditPrintLayout] = useState(false);
 
   // KHONG con doan "doc cache truoc, gui len ngay" nhu ban cu (chi ho tro
   // email) - vi luc dau trang KHONG biet quote dang bat che do nao (co the
@@ -96,6 +96,11 @@ export function PublicQuotePage({ token }: Props) {
         setError('');
         if (explicit) writeCachedVerification(token, explicit.method, explicit.value);
         document.title = row.quoteNumber ? `Bao-gia-${row.quoteNumber}` : 'Báo giá';
+        const prefs = row.data.printLayoutPrefs;
+        if (prefs) {
+          setPrintOrientation(prefs.orientation);
+          setColumnWidthsDraft(prefs.columnWidths && Object.keys(prefs.columnWidths).length ? prefs.columnWidths : null);
+        }
       })
       .catch(err => {
         if (err instanceof QuotePublicVerificationRequiredError) {
@@ -123,13 +128,30 @@ export function PublicQuotePage({ token }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
+  // "Sale mo lai chinh link cong khai cua minh" - CHI check quyen sua khi da
+  // co quote (biet id THAT) VA da xac dinh xong trang thai dang nhap (khong
+  // goi som luc authLoading con true, tranh goi API roi lai goi lai). Khach
+  // vang lai (khong session) -> authService.me() (ben trong useAppAuth) tra
+  // ve khong dang nhap -> KHONG goi getQuoteEditPermission luon, y het hanh
+  // vi "khong lo dau hieu gi ve viec co the sua" cho khach that.
   useEffect(() => {
-    if (!quote) return;
-    const params = new URLSearchParams(window.location.search);
-    if (params.get('print') !== 'true') return;
-    const timer = window.setTimeout(() => void downloadPDF(), 900);
-    return () => window.clearTimeout(timer);
-  }, [quote]);
+    if (!quote || authLoading || !isAuthenticated) {
+      setCanEditPrintLayout(false);
+      return;
+    }
+    let alive = true;
+    seedingQuoteRepository
+      .getQuoteEditPermission(quote.id)
+      .then(res => {
+        if (alive) setCanEditPrintLayout(Boolean(res.canEdit));
+      })
+      .catch(() => {
+        if (alive) setCanEditPrintLayout(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [quote, authLoading, isAuthenticated]);
 
   function submitVerifyGate() {
     if (!verifyGate) return;
@@ -189,9 +211,59 @@ export function PublicQuotePage({ token }: Props) {
         <h1>Báo giá Khách hàng</h1>
         <div className="quote-head-actions">
           <span className={`quote-badge status-${quote.status}`}>{QUOTE_STATUS_LABELS[quote.status]}</span>
-          <button type="button" className="quote-button quote-button--primary" onClick={() => void downloadPDF()}>Tải PDF</button>
         </div>
       </header>
+      {/* "chỉnh xoay ngang, xoay dọc, căn chỉnh cột ở đây luôn" - toolbar LUON
+       * hien san ngay tren trang (khong con phai bam "Tải PDF" moi hien ra 1
+       * modal rieng), dieu khien TRUC TIEP renderer ben duoi. */}
+      <div className="quote-print-preview-toolbar quote-print-preview-toolbar--inline no-print">
+        <div className="quote-print-preview-orientation-group" role="group" aria-label="Hướng giấy">
+          <button
+            type="button"
+            className={`quote-print-preview-btn${printOrientation === 'portrait' ? ' is-active' : ''}`}
+            onClick={() => setPrintOrientation('portrait')}
+          >
+            <RectangleVertical className="quote-print-preview-icon" /> Dọc
+          </button>
+          <button
+            type="button"
+            className={`quote-print-preview-btn${printOrientation === 'landscape' ? ' is-active' : ''}`}
+            onClick={() => setPrintOrientation('landscape')}
+          >
+            <RectangleHorizontal className="quote-print-preview-icon" /> Ngang
+          </button>
+        </div>
+        <button
+          type="button"
+          className="quote-print-preview-btn"
+          title="Kéo viền phải mỗi cột trong bảng để chỉnh độ rộng, sau đó bấm In"
+          onClick={() => {
+            setColumnWidthsDraft(null);
+            setPrintResetKey(key => key + 1);
+          }}
+        >
+          <RotateCcw className="quote-print-preview-icon" /> Đặt lại độ rộng cột
+        </button>
+        <button type="button" className="quote-print-preview-btn quote-print-preview-btn--primary" onClick={() => window.print()}>
+          <Printer className="quote-print-preview-icon" /> In / Tải PDF
+        </button>
+        {canEditPrintLayout ? (
+          <QuotePrintLayoutSaveButton
+            quoteId={quote.id}
+            printOrientation={printOrientation}
+            columnWidthsDraft={columnWidthsDraft}
+            // Khong ghi de `quote` (shape cong khai da qua allowlist) bang
+            // quote NOI BO tra ve tu endpoint luu (apply_quote_field_permissions)
+            // - chi component nay tu quan ly trang thai "Da luu", khong can
+            // cap nhat lai toan bo trang.
+            onSaved={() => {}}
+          />
+        ) : null}
+      </div>
+      <p className="quote-print-preview-hint no-print">
+        <Columns3 className="quote-print-preview-icon" /> Rê chuột tới viền phải tiêu đề cột rồi kéo để chỉnh độ rộng — độ rộng này sẽ
+        được giữ nguyên khi in/tải PDF (căn như nào thì in ra như thế).
+      </p>
       {/* Trinh duyet tu them URL/ngay gio/tieu de vao dau-cuoi moi trang in
           qua tuy chon rieng cua no ("Headers and footers") - CSS khong the
           tat tuy chon nay tu trang, chi co the goi y nguoi dung tu tat. */}
@@ -199,8 +271,9 @@ export function PublicQuotePage({ token }: Props) {
         Mẹo: trong hộp thoại in, bấm "Xem thêm cài đặt" và tắt "Tiêu đề và chân trang"
         (Headers and footers) để bản PDF không hiện URL/ngày giờ của trình duyệt.
       </p>
-      <div className="quote-document-wrapper">
+      <div className="quote-document-wrapper quote-print-root">
         <QuoteDocumentRenderer
+          key={printResetKey}
           schemaSnapshot={quote.formSnapshot}
           quoteData={quote.data}
           quoteItems={quote.items}
@@ -214,6 +287,11 @@ export function PublicQuotePage({ token }: Props) {
           isPublished={quote.processingStage ? quote.processingStage === 'published' : true}
           quoteNumber={quote.quoteNumber}
           overallDiscountPercent={quote.overallDiscountPercent}
+          printPreviewMode
+          printOrientation={printOrientation}
+          initialColumnWidths={columnWidthsDraft}
+          onColumnWidthsChange={setColumnWidthsDraft}
+          contactPersonName={quote.quoteOwnerName}
         />
       </div>
     </main>

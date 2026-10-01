@@ -4,7 +4,7 @@
 /* Unified TypeScript types for the All-Platform (Tổng hợp) page.
    These types mirror the Supabase database schema. */
 
-export type FeedPlatform = "facebook" | "linkedin";
+export type FeedPlatform = "facebook" | "linkedin" | "threads";
 export type CategoryType = "intent" | "industry" | "tier" | "team" | "icp" | "content_type" | "product_seeding" | "crm_source" | "crm_service_package" | "crm_package" | "crm_industry" | "crm_position" | "crm_city" | "crm_expected_timeline" | "crm_next_step" | "crm_nurture_reason" | "crm_follow_up_channel" | "crm_unqualified_reason" | "crm_quote_type" | "crm_contract_status" | "crm_payment_status" | "crm_billing_type" | "crm_won_reason" | "crm_lost_reason" | "crm_outcome_confidence" | "crm_outcome_trigger" | "crm_outcome_objection" | "crm_kb_reuse_level" | "crm_kb_owner" | "crm_kb_status";
 export type VerifyStatus = "pending" | "yes" | "no";
 export type UserRole = "member" | "leader" | "admin";
@@ -53,6 +53,19 @@ export interface UnifiedPost {
   crawler_name?: string;
   crawler_team?: string;
   all_seedings?: UnifiedSeedingInfo[];
+  /** Chỉ bài Threads: từ khoá tìm kiếm đã tìm ra bài (Threads không có group). */
+  search_keyword?: string;
+  /** Bình luận cào được từ bài (LinkedIn, extension >= 2.0) — cần migration 151. */
+  comments_detail?: UnifiedCrawledComment[];
+  /** Tên người đã react bài (LinkedIn, best-effort). */
+  likers?: string[];
+}
+
+export interface UnifiedCrawledComment {
+  author_name?: string;
+  author_url?: string;
+  content?: string;
+  likes?: number;
 }
 
 export interface GetAllPostsRequest {
@@ -175,6 +188,13 @@ export interface MemberProfile {
   experience_year?: number | null;
   linked_user_id?: string | null;
   linked_user_id_2?: string | null;
+  leader_name?: string | null;
+  leader_email?: string | null;
+  cv_link?: string | null;
+  employment_status?: string | null;
+  off_effective_at?: string | null;
+  is_recruitment_synced?: boolean | null;
+  level?: string | null;
   skill_ids?: string[];
   skills?: Skill[];
   created_at?: string;
@@ -211,6 +231,10 @@ export interface InternalEngagementPost {
   deadline?: string;
   target_comments?: number;
   assigned_team_ids?: string[];
+  /** "internal" (mặc định, bài của chính công ty) | "external" (bài của nguồn
+   * bên ngoài) — chỉ có ở bài custom-post, quyết định hiện ở tab "Seeding nội
+   * bộ" hay "Seeding bên ngoài" trên trang internal-engagement. */
+  scope?: "internal" | "external";
 }
 
 export type InternalEngagementMarkStatus = "need" | "received" | "completed";
@@ -236,12 +260,87 @@ export interface InternalEngagementInteraction {
   summary: string;
   created_at: string;
   raw_created_at?: string | null;
+  comment_content?: string;
 }
 
 export interface InternalEngagementPostInteractionsData {
   role: string;
   teams: InternalEngagementTeamRef[];
   items: InternalEngagementInteraction[];
+}
+
+export interface PostSeedingRosterItem {
+  id_member: string;
+  name: string;
+  has_seeded: boolean;
+  content: string;
+  verify_status?: string | null;
+  link_comment?: string | null;
+  created_at?: string | null;
+}
+
+export interface PostSeedingRosterData {
+  role: string;
+  team_name: string | null;
+  items: PostSeedingRosterItem[];
+}
+
+export interface TeamSeedingEfficiency {
+  team_id: string;
+  team_name: string;
+  total_members: number;
+  total_seeded_today: number;
+  total_verified_today: number;
+  active_members_today: number;
+}
+
+export interface TeamsSeedingEfficiencyData {
+  role: string;
+  teams: TeamSeedingEfficiency[];
+}
+
+export interface MemberSeedingAccount {
+  id_member: string;
+  name: string;
+  email: string;
+  fb_groups: number;
+  li_groups: number;
+  telegram_connected: boolean;
+  total_fb_posts_crawled: number;
+  last_crawled_at: string | null;
+}
+
+export interface MemberSeedingOverviewData {
+  role: string;
+  accounts: MemberSeedingAccount[];
+}
+
+export interface MemberCrawlHistoryItem {
+  id: string;
+  group_name: string;
+  content: string;
+  crawl_date: string | null;
+}
+
+export interface MemberCrawlHistoryData {
+  groups: { id: string; name: string }[];
+  history: MemberCrawlHistoryItem[];
+}
+
+export interface MemberOnlinePresence {
+  id_member: string;
+  name: string;
+  email?: string;
+  today_minutes: number;
+  week_minutes: number;
+  month_minutes: number;
+  is_online: boolean;
+  last_seen_at: string | null;
+}
+
+export interface OnlineSummaryData {
+  role: string;
+  members: MemberOnlinePresence[];
 }
 
 export interface InternalEngagementPostTeamCount {
@@ -428,6 +527,12 @@ export interface AppUser {
    * được dù cờ này false. */
   can_approve_quotes?: boolean;
   quote_business_role?: "presale" | "sale" | "both" | null;
+  /** "Nhom quyen" CRM (migration 155) - module duoc phep vao (Lead/Customer/
+   * Deal/Quote/Product/Report/Account/Setting). `null` = CHUA duoc gan Nhom
+   * quyen nao (opt-in) - khong gioi han gi, sidebar hien day du nhu hien tai.
+   * Mang RONG (`[]`, khac `null`) nghia la DA gan nhom nhung khong module nao
+   * duoc phep. */
+  effective_modules?: string[] | null;
 }
 
 export interface AuthLoginResponse {

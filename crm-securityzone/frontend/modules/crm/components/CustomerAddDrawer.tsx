@@ -61,8 +61,30 @@ type ManageForm = {
   followUpDate: string;
 };
 
-function emptyCompany(): CompanyForm {
-  return { customerName: '', taxCode: '', website: '', city: '', address: '', industry: '', source: 'Manual' };
+function customerSourceDefaultStorageKey(user: AppUser | null) {
+  return `crm:customer-default-source:v1:${user?.id || user?.email || 'anonymous'}`;
+}
+
+function readCustomerSourceDefault(currentUser: AppUser | null): string {
+  if (typeof window === 'undefined') return 'Manual';
+  try {
+    return window.localStorage.getItem(customerSourceDefaultStorageKey(currentUser)) || 'Manual';
+  } catch {
+    return 'Manual';
+  }
+}
+
+function saveCustomerSourceDefault(currentUser: AppUser | null, source: string) {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(customerSourceDefaultStorageKey(currentUser), source || 'Manual');
+  } catch {
+    // localStorage can be blocked/full; default preference is only a UX helper.
+  }
+}
+
+function emptyCompany(defaultSource = 'Manual'): CompanyForm {
+  return { customerName: '', taxCode: '', website: '', city: '', address: '', industry: '', source: defaultSource || 'Manual' };
 }
 function emptyContact(): ContactForm {
   return { name: '', positionCategoryId: '', positionLabel: '', phone: '', email: '', zalo: '', facebook: '' };
@@ -150,7 +172,8 @@ export function CustomerAddDrawer({
   const [searching, setSearching] = useState(false);
   const [matches, setMatches] = useState<QuickSearchRow[]>([]);
   const [searchedOnce, setSearchedOnce] = useState(false);
-  const [company, setCompany] = useState<CompanyForm>(emptyCompany);
+  const [defaultCustomerSource, setDefaultCustomerSource] = useState('Manual');
+  const [company, setCompany] = useState<CompanyForm>(() => emptyCompany());
   const [contact, setContact] = useState<ContactForm>(emptyContact);
   const [manage, setManage] = useState<ManageForm>(emptyManage);
   const [saving, setSaving] = useState<'' | 'plain' | 'contact' | 'deal'>('');
@@ -182,14 +205,16 @@ export function CustomerAddDrawer({
     setQuery('');
     setMatches([]);
     setSearchedOnce(false);
-    setCompany(emptyCompany());
+    const storedDefaultSource = readCustomerSourceDefault(currentUser);
+    setDefaultCustomerSource(storedDefaultSource);
+    setCompany(emptyCompany(storedDefaultSource));
     setContact(emptyContact());
     setManage(emptyManage());
     setError('');
     setSaving('');
     setActiveAnchor('crm');
     setSplitMenuOpen(false);
-  }, [open]);
+  }, [currentUser, open]);
 
   // Debounce 300ms — reuse cung UX voi CustomerProfileCombobox (DealFormFields.tsx).
   useEffect(() => {
@@ -244,6 +269,11 @@ export function CustomerAddDrawer({
 
   function setCompanyField<K extends keyof CompanyForm>(key: K, value: CompanyForm[K]) {
     setCompany(current => ({ ...current, [key]: value }));
+  }
+  function setCurrentSourceAsDefault() {
+    const next = company.source || 'Manual';
+    saveCustomerSourceDefault(currentUser, next);
+    setDefaultCustomerSource(next);
   }
   function setContactField<K extends keyof ContactForm>(key: K, value: ContactForm[K]) {
     setContact(current => ({ ...current, [key]: value }));
@@ -577,6 +607,16 @@ export function CustomerAddDrawer({
               </Field>
               <Field label="Nguồn">
                 <CrmCategoryCodeSelect categoryType="crm_source" value={company.source} onChange={value => setCompanyField('source', value)} />
+                <div className="crm-customer-source-default-row">
+                  <button
+                    type="button"
+                    className="crm-link-button"
+                    onClick={setCurrentSourceAsDefault}
+                    disabled={(company.source || 'Manual') === defaultCustomerSource}
+                  >
+                    {(company.source || 'Manual') === defaultCustomerSource ? 'Đang là mặc định của bạn' : 'Đặt làm mặc định'}
+                  </button>
+                </div>
               </Field>
               <Field full label="Địa chỉ">
                 <input value={company.address} onChange={e => setCompanyField('address', e.target.value)} />
