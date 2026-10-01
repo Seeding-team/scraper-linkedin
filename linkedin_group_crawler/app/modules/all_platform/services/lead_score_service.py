@@ -44,7 +44,9 @@ _SYSTEM_PROMPT = (
 
 # Gioi han so luong goi LLM dong thoi - tranh lam qua tai proxy AI dung chung voi cac
 # tinh nang khac (AI comment, AI dien nhanh deal...) khi 1 lo cao tra ve vai chuc bai.
-_MAX_CONCURRENT_SCORING = 5
+# Ha tu 5 xuong 3 sau khi thay proxy (shopaikey.com) tra 429 Too Many Requests kha thuong
+# xuyen o concurrency cao hon trong lan backfill du lieu cu (2026-10-02).
+_MAX_CONCURRENT_SCORING = 3
 
 # Bai diem THAP (< nguong nay) la "khong co gia tri gi" (bai rac/quang cao doi thu/khong
 # lien quan - dung tieu chi trong _SYSTEM_PROMPT) - XOA LUON thay vi chi luu diem thap, de
@@ -56,10 +58,17 @@ def is_lead_scoring_configured() -> bool:
     return bool(settings.openai_api_key)
 
 
+def _clean_content(text: str) -> str:
+    """Bỏ ký tự điều khiển (trừ \\n, \\t) — vài bài copy-paste từ mạng xã hội chứa ký tự lạ
+    (emoji biến thể, control char ẩn) khiến proxy AI trả 400 Bad Request khi encode JSON."""
+    return "".join(ch for ch in (text or "") if ch in ("\n", "\t") or ord(ch) >= 32)
+
+
 async def score_text_for_lead(content: str) -> Optional[dict[str, Any]]:
     """Trả {"score": int, "reason": str} hoặc None nếu chưa cấu hình/lỗi (KHÔNG raise —
     chấm điểm là tiện ích phụ, lỗi ở đây không được làm hỏng luồng lưu bài chính)."""
-    if not settings.openai_api_key or not (content or "").strip():
+    content = _clean_content(content)
+    if not settings.openai_api_key or not content.strip():
         return None
 
     url = f"{settings.openai_base_url}/chat/completions"
@@ -78,22 +87,34 @@ async def score_text_for_lead(content: str) -> Optional[dict[str, Any]]:
         "response_format": {"type": "json_object"},
     }
 
-    try:
-        async with httpx.AsyncClient(timeout=20.0) as client:
-            resp = await client.post(url, json=body, headers=headers)
-            resp.raise_for_status()
-            data = resp.json()
-        raw_content = data["choices"][0]["message"]["content"].strip()
-        parsed = json.loads(raw_content)
-        if not isinstance(parsed, dict):
-            return None
-        score = parsed.get("score")
-        score = max(0, min(100, int(score)))
-        reason = str(parsed.get("reason") or "")[:200]
-        return {"score": score, "reason": reason}
-    except Exception as exc:
-        logger.warning(f"lead_score: chấm điểm thất bại (bỏ qua, không ảnh hưởng lưu bài): {exc}")
-        return None
+    # Proxy AI dùng chung (shopaikey.com) rate-limit khá chặt (429) khi nhiều bài cùng lúc
+    # gọi gần nhau (vd 1 lô vài chục bài sau 1 lần cào group) — retry với backoff thay vì bỏ
+    # cuộc ngay lần đầu, để bài không bị "treo" mãi ở lead_score NULL chỉ vì 1 lần 429 thoáng qua.
+    last_exc: Exception | None = None
+    for attempt in range(3):
+        try:
+            async with httpx.AsyncClient(timeout=20.0) as client:
+                resp = await client.post(url, json=body, headers=headers)
+                if resp.status_code in (429, 503) and attempt < 2:
+                    await asyncio.sleep(3 * (attempt + 1))
+                    continue
+                resp.raise_for_status()
+                data = resp.json()
+            raw_content = data["choices"][0]["message"]["content"].strip()
+            parsed = json.loads(raw_content)
+            if not isinstance(parsed, dict):
+                return None
+            score = parsed.get("score")
+            score = max(0, min(100, int(score)))
+            reason = str(parsed.get("reason") or "")[:200]
+            return {"score": score, "reason": reason}
+        except Exception as exc:
+            last_exc = exc
+            if attempt < 2:
+                await asyncio.sleep(2 * (attempt + 1))
+                continue
+    logger.warning(f"lead_score: chấm điểm thất bại sau 3 lần thử (bỏ qua, không ảnh hưởng lưu bài): {last_exc}")
+    return None
 
 
 async def score_and_save_posts(table: str, rows: list[dict[str, Any]]) -> None:
