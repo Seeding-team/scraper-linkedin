@@ -38,6 +38,11 @@ def _with_seeding_system_visible(allowed_member_ids: Optional[list[str]]) -> Opt
     return [*allowed_member_ids, SEEDING_SYSTEM_MEMBER_ID]
 
 
+# Nguong diem "cao" cho view mac dinh khi vao trang (yeu cau 2026-10-02: "diem cao tam 80
+# 85 tro len") - dung 80 lam nguong duy nhat (dau duoi khoang nguoi dung neu).
+_DEFAULT_MIN_LEAD_SCORE = 80
+
+
 # ── Core fetch ──────────────────────────────────────────────────────────────────
 
 from functools import wraps
@@ -212,9 +217,10 @@ def _fetch_posts(
 
     # Sort
     if sort == "lead_score_high":
-        # Bai diem lead cao len dau (migration 159) - bai chua cham (NULL) xuong cuoi,
-        # cung diem thi bai moi hon len truoc.
-        query = query.order("lead_score", desc=True, nullsfirst=False).order("crawl_date", desc=True, nullsfirst=False)
+        # Mac dinh khi vao trang (yeu cau 2026-10-02): CHI hien bai diem cao (>=80) -
+        # bai diem thap/chua cham bi loai hoan toan khoi view nay - roi sap xep theo
+        # THOI GIAN bai viet moi nhat truoc (khong phai theo diem).
+        query = query.gte("lead_score", _DEFAULT_MIN_LEAD_SCORE).order("crawl_date", desc=True, nullsfirst=False)
     elif sort == "score_high":
         query = query.order("score", desc=True, nullsfirst=False)
     elif sort == "score_low":
@@ -369,7 +375,7 @@ def _fetch_threads_posts(
         query = query.ilike("content", f"%{search}%")
 
     if sort == "lead_score_high":
-        query = query.order("lead_score", desc=True, nullsfirst=False).order("crawl_date", desc=True, nullsfirst=False)
+        query = query.gte("lead_score", _DEFAULT_MIN_LEAD_SCORE).order("crawl_date", desc=True, nullsfirst=False)
     elif sort == "score_high":
         query = query.order("score", desc=True, nullsfirst=False)
     elif sort == "score_low":
@@ -776,7 +782,9 @@ def get_unified_posts(
 
         # Sort the combined list
         if sort == "lead_score_high":
-            all_posts.sort(key=lambda p: (p.get("lead_score") if p.get("lead_score") is not None else -1, str(p.get("crawl_date") or "")), reverse=True)
+            # Loc >=80 da ap dung o tung _fetch_posts()/_fetch_threads_posts() phia tren
+            # (truyen qua db_sort) - o day chi can gop lai va sap theo THOI GIAN moi nhat.
+            all_posts.sort(key=lambda p: str(p.get("crawl_date") or ""), reverse=True)
         elif sort == "score_high":
             all_posts.sort(key=lambda p: p.get("score", 0), reverse=True)
         elif sort == "score_low":

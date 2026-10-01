@@ -23,6 +23,8 @@ from app.core.supabase_client import get_supabase_client
 
 logger = get_logger(__name__)
 
+_NEED_CATEGORIES = ("website", "app", "landing_page", "software", "other")
+
 _SYSTEM_PROMPT = (
     "Bạn là trợ lý sales cho 1 đơn vị làm website/app/landing page. Đọc 1 bài đăng mạng xã "
     "hội (Facebook/LinkedIn/Threads) và chấm điểm mức độ đây có phải LEAD TIỀM NĂNG hay không "
@@ -37,9 +39,15 @@ _SYSTEM_PROMPT = (
     "chung chung không có nhu cầu thuê rõ ràng.\n"
     "Điểm TRUNG BÌNH (31-69): không rõ ràng, có nhắc tới web/app nhưng không chắc có đang tìm "
     "thuê hay không.\n\n"
-    "Chỉ trả về DUY NHẤT 1 object JSON hợp lệ, đúng 2 key sau, không thêm key nào khác, không "
+    "Nếu điểm >= 70, xác định thêm NHU CẦU CHÍNH (need_category) là 1 trong: "
+    "\"website\" (web bán hàng/giới thiệu/doanh nghiệp), \"app\" (app di động iOS/Android), "
+    "\"landing_page\" (trang đích 1 trang, quảng cáo/sự kiện), \"software\" (phần mềm/hệ thống "
+    "quản lý/outsource lập trình khác), \"other\" (không rõ loại cụ thể). Nếu điểm < 70, để "
+    "need_category là null.\n\n"
+    "Chỉ trả về DUY NHẤT 1 object JSON hợp lệ, đúng 3 key sau, không thêm key nào khác, không "
     "giải thích, không markdown:\n"
-    '{"score": number (0-100 nguyên), "reason": string (tối đa 20 từ tiếng Việt, lý do ngắn gọn)}'
+    '{"score": number (0-100 nguyên), "reason": string (tối đa 20 từ tiếng Việt, lý do ngắn gọn), '
+    '"need_category": string|null (1 trong 5 giá trị trên, hoặc null)}'
 )
 
 # Gioi han so luong goi LLM dong thoi - tranh lam qua tai proxy AI dung chung voi cac
@@ -107,7 +115,9 @@ async def score_text_for_lead(content: str) -> Optional[dict[str, Any]]:
             score = parsed.get("score")
             score = max(0, min(100, int(score)))
             reason = str(parsed.get("reason") or "")[:200]
-            return {"score": score, "reason": reason}
+            need_category = parsed.get("need_category")
+            need_category = need_category if need_category in _NEED_CATEGORIES else None
+            return {"score": score, "reason": reason, "need_category": need_category}
         except Exception as exc:
             last_exc = exc
             if attempt < 2:

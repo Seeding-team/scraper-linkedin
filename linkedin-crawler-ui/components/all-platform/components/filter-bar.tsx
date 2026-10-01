@@ -39,7 +39,7 @@ export interface FilterState {
 }
 
 const SORT_OPTIONS: { value: SortOption; label: string }[] = [
-  { value: "lead_score_high", label: "Điểm tiềm năng cao nhất (mặc định)" },
+  { value: "lead_score_high", label: "Điểm cao (≥80) — mới nhất trước (mặc định)" },
   { value: "latest", label: "Mới nhất" },
   { value: "score_high", label: "Score cao nhất" },
   { value: "score_low", label: "Score thấp nhất" },

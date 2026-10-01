@@ -61,10 +61,11 @@ export function PostDetailModal({
     window.open(post.post_url, "_blank");
   };
 
-  const score = post.score || 0;
-  let scoreBg = "bg-muted text-foreground border-border";
-  if (score >= 85) scoreBg = "bg-red-50 text-primary border-red-100";
-  else if (score >= 60) scoreBg = "bg-amber-50 text-amber-600 border-amber-100";
+  // Điểm "tiềm năng seeding" do LLM chấm (migration 159) — thay cho khối "AI Score" cũ
+  // tính từ tương tác (đã bỏ, giống post-card.tsx).
+  const leadScore = typeof post.lead_score === "number" ? post.lead_score : null;
+  const isHighLead = leadScore !== null && leadScore >= 70;
+  const isMidLead = leadScore !== null && leadScore >= 31 && leadScore < 70;
 
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4">
@@ -95,10 +96,6 @@ export function PostDetailModal({
         {/* Body */}
         <div className="flex-1 overflow-y-auto p-6">
           <div className="flex gap-4 items-start mb-6">
-            <div className={cn("w-16 h-16 rounded-xl flex flex-col items-center justify-center shrink-0 border", scoreBg)}>
-              <span className="text-2xl font-black leading-tight">{score}</span>
-              <span className="text-[10px] font-bold uppercaseer mt-0.5 opacity-80">AI Score</span>
-            </div>
             <div>
               <a
                 href={post.post_url}
@@ -109,6 +106,21 @@ export function PostDetailModal({
                 {post.group_name || "Unknown Group"}
               </a>
               <div className="flex flex-wrap gap-2 mb-2">
+                {leadScore !== null && (
+                  <span
+                    title={post.lead_score_reason || "Điểm tiềm năng seeding do AI chấm"}
+                    className={cn(
+                      "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-bold border",
+                      isHighLead
+                        ? "bg-emerald-100 text-emerald-700 border-emerald-300"
+                        : isMidLead
+                          ? "bg-amber-50 text-amber-600 border-amber-200"
+                          : "bg-muted text-muted-foreground border-border opacity-70",
+                    )}
+                  >
+                    🎯 {leadScore}
+                  </span>
+                )}
                 {post.intent && <span className="rounded bg-purple-50 px-2 py-0.5 text-xs font-bold text-purple-600">{post.intent}</span>}
                 {post.industry && <span className="rounded bg-indigo-50 px-2 py-0.5 text-xs font-bold text-indigo-600">{post.industry}</span>}
                 {post.icp && <span className="rounded bg-pink-50 px-2 py-0.5 text-xs font-bold text-pink-600">{post.icp}</span>}
