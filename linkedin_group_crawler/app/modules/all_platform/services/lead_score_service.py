@@ -1,0 +1,123 @@
+"""Chấm điểm "tiềm năng seeding" cho bài viết vừa cào về bằng LLM (OpenAI-compatible,
+dùng chung config với ai_comment_service.py/deal_ai_parse_service.py — không tự implement
+lại logic gọi API).
+
+Mục tiêu (yêu cầu 2026-10-01): chỉ giữ lại bài viết của người ĐANG TÌM đơn vị làm
+website/app/landing page (lead thật) — loại bài rác/không liên quan, và loại cả bài của
+CHÍNH các đơn vị khác đang quảng cáo dịch vụ của họ (không phải người đi tìm thuê, không
+phải lead). Chạy NỀN (fire-and-forget) ngay sau khi lưu bài — không chặn response trả về
+cho extension, vì extension gửi theo lô (có thể vài chục bài/lần) và LLM có độ trễ riêng.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+from typing import Any, Optional
+
+import httpx
+
+from app.core.config import settings
+from app.core.logger import get_logger
+from app.core.supabase_client import get_supabase_client
+
+logger = get_logger(__name__)
+
+_SYSTEM_PROMPT = (
+    "Bạn là trợ lý sales cho 1 đơn vị làm website/app/landing page. Đọc 1 bài đăng mạng xã "
+    "hội (Facebook/LinkedIn/Threads) và chấm điểm mức độ đây có phải LEAD TIỀM NĂNG hay không "
+    "— tức là người VIẾT bài này đang CẦN THUÊ/TÌM đơn vị để làm website, app di động, "
+    "landing page, hoặc phần mềm/outsource lập trình tương tự.\n\n"
+    "Điểm CAO (70-100): bài hỏi xin giới thiệu/báo giá/đánh giá đơn vị làm web-app-landing "
+    "page, đăng tin cần tuyển/thuê ngoài (outsource) làm web/app, hỏi kinh nghiệm chọn đơn vị "
+    "làm website...\n"
+    "Điểm THẤP (0-30): bài KHÔNG liên quan chủ đề này, bài tuyển dụng nhân sự nội bộ (không "
+    "phải thuê ngoài), bài CHÍNH CÁC ĐƠN VỊ/AGENCY tự quảng cáo dịch vụ của họ (đây là đối "
+    "thủ chào hàng, KHÔNG PHẢI người đi tìm thuê nên KHÔNG phải lead), bài chia sẻ kiến thức "
+    "chung chung không có nhu cầu thuê rõ ràng.\n"
+    "Điểm TRUNG BÌNH (31-69): không rõ ràng, có nhắc tới web/app nhưng không chắc có đang tìm "
+    "thuê hay không.\n\n"
+    "Chỉ trả về DUY NHẤT 1 object JSON hợp lệ, đúng 2 key sau, không thêm key nào khác, không "
+    "giải thích, không markdown:\n"
+    '{"score": number (0-100 nguyên), "reason": string (tối đa 20 từ tiếng Việt, lý do ngắn gọn)}'
+)
+
+# Gioi han so luong goi LLM dong thoi - tranh lam qua tai proxy AI dung chung voi cac
+# tinh nang khac (AI comment, AI dien nhanh deal...) khi 1 lo cao tra ve vai chuc bai.
+_MAX_CONCURRENT_SCORING = 5
+
+
+def is_lead_scoring_configured() -> bool:
+    return bool(settings.openai_api_key)
+
+
+async def score_text_for_lead(content: str) -> Optional[dict[str, Any]]:
+    """Trả {"score": int, "reason": str} hoặc None nếu chưa cấu hình/lỗi (KHÔNG raise —
+    chấm điểm là tiện ích phụ, lỗi ở đây không được làm hỏng luồng lưu bài chính)."""
+    if not settings.openai_api_key or not (content or "").strip():
+        return None
+
+    url = f"{settings.openai_base_url}/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {settings.openai_api_key}",
+        "Content-Type": "application/json",
+    }
+    body = {
+        "model": settings.ai_model,
+        "messages": [
+            {"role": "system", "content": _SYSTEM_PROMPT},
+            {"role": "user", "content": content[:3000]},
+        ],
+        "temperature": 0.2,
+        "max_tokens": 150,
+        "response_format": {"type": "json_object"},
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            resp = await client.post(url, json=body, headers=headers)
+            resp.raise_for_status()
+            data = resp.json()
+        raw_content = data["choices"][0]["message"]["content"].strip()
+        parsed = json.loads(raw_content)
+        if not isinstance(parsed, dict):
+            return None
+        score = parsed.get("score")
+        score = max(0, min(100, int(score)))
+        reason = str(parsed.get("reason") or "")[:200]
+        return {"score": score, "reason": reason}
+    except Exception as exc:
+        logger.warning(f"lead_score: chấm điểm thất bại (bỏ qua, không ảnh hưởng lưu bài): {exc}")
+        return None
+
+
+async def score_and_save_posts(table: str, rows: list[dict[str, Any]]) -> None:
+    """Chấm điểm + lưu lead_score/lead_score_reason cho các bài vừa insert (`rows` = list
+    {"id", "content"}). Chạy nền sau khi đã trả response cho extension — KHÔNG được raise
+    ra ngoài (gọi qua asyncio.create_task, exception ở đây sẽ chỉ log, không crash gì)."""
+    if not is_lead_scoring_configured() or not rows:
+        return
+
+    semaphore = asyncio.Semaphore(_MAX_CONCURRENT_SCORING)
+    supabase = get_supabase_client()
+
+    async def _score_one(row: dict[str, Any]) -> None:
+        post_id = row.get("id")
+        content = row.get("content") or ""
+        if not post_id or not content.strip():
+            return
+        async with semaphore:
+            result = await score_text_for_lead(content)
+        if not result:
+            return
+        try:
+            await asyncio.to_thread(
+                lambda: supabase.table(table)
+                .update({"lead_score": result["score"], "lead_score_reason": result["reason"]})
+                .eq("id", post_id)
+                .execute()
+            )
+        except Exception as exc:
+            logger.warning(f"lead_score: lưu điểm cho {table}#{post_id} thất bại: {exc}")
+
+    await asyncio.gather(*(_score_one(r) for r in rows))

@@ -164,6 +164,9 @@ def save_threads_crawl_batch(
             .execute()
         )
         inserted_urls = [r["post_url"] for r in (res.data or []) if r.get("post_url")]
+        inserted_rows = [{"id": r.get("id"), "content": r.get("content")} for r in (res.data or []) if r.get("id")]
+    else:
+        inserted_rows = []
 
     logger.info(
         "[THREADS-EXT] keyword=%r | nhận=%d | URL lạ=%d | cũ=%d | đã có=%d | mới=%d | lưu=%d (limit=%d)",
@@ -178,4 +181,7 @@ def save_threads_crawl_batch(
         "skipped_invalid": skipped_invalid,
         "skipped_old": skipped_old,
         "skipped_existing": len(existing),
+        # Noi bo - khong tra ve qua HTTP (router pop() ra truoc khi tra response cho
+        # extension), dung de cham diem "tiem nang seeding" (LLM) chay nen sau khi luu.
+        "_inserted_rows": inserted_rows,
     }

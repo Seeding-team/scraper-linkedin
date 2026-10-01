@@ -17,6 +17,7 @@ from app.core.logger import get_logger
 from app.modules.all_platform.services.supabase_linkedin_extension_crawl_service import (
     save_extension_crawl_batch,
 )
+from app.modules.all_platform.services.lead_score_service import score_and_save_posts
 
 logger = get_logger(__name__)
 
@@ -90,4 +91,11 @@ async def save_posts(
         group_name=payload.group_name,
         id_member=payload.id_member,
     )
+
+    # Cham diem "tiem nang seeding" (LLM) CHAY NEN - xem lead_score_service.py. Field noi
+    # bo, khong duoc tra ve qua HTTP cho extension.
+    inserted_rows = result.pop("_inserted_rows", [])
+    if inserted_rows:
+        asyncio.create_task(score_and_save_posts("linkedin_posts", inserted_rows))
+
     return result

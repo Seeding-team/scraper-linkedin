@@ -59,6 +59,11 @@ export interface UnifiedPost {
   comments_detail?: UnifiedCrawledComment[];
   /** Tên người đã react bài (LinkedIn, best-effort). */
   likers?: string[];
+  /** Điểm "tiềm năng seeding" do LLM chấm (0-100) — người đang tìm đơn vị làm website/
+   * app/landing page. NULL/undefined = chưa chấm (migration 159). */
+  lead_score?: number | null;
+  /** Lý do ngắn gọn LLM đưa ra cho lead_score — hiện tooltip. */
+  lead_score_reason?: string | null;
 }
 
 export interface UnifiedCrawledComment {

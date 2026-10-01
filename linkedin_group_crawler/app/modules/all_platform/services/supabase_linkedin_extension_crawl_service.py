@@ -183,6 +183,7 @@ def save_extension_crawl_batch(
         logger.exception("[LI-EXT] Không tạo được crawl_linkedin_session cho %s", group_url)
 
     saved_count = 0
+    inserted_rows: list[dict] = []
     if deduped:
         crawl_time = datetime.now(timezone.utc)
         crawl_date = crawl_time.strftime("%Y-%m-%d")
@@ -218,6 +219,7 @@ def save_extension_crawl_batch(
             # (migration 158) + ON CONFLICT DO NOTHING lam backstop o tang DB.
             res = supabase.table("linkedin_posts").upsert(records, on_conflict="post_url", ignore_duplicates=True).execute()
             saved_count = len(res.data or [])
+            inserted_rows = [{"id": r.get("id"), "content": r.get("content")} for r in (res.data or []) if r.get("id")]
         except Exception as exc:
             # Migration 151 (comments_detail/likers) có thể chưa áp trên DB -> PostgREST báo
             # thiếu cột và làm hỏng CẢ lô bài. Lưu lại không kèm 2 cột đó thay vì mất hết bài.
@@ -227,6 +229,7 @@ def save_extension_crawl_batch(
                 try:
                     res = supabase.table("linkedin_posts").upsert(stripped, on_conflict="post_url", ignore_duplicates=True).execute()
                     saved_count = len(res.data or [])
+                    inserted_rows = [{"id": r.get("id"), "content": r.get("content")} for r in (res.data or []) if r.get("id")]
                 except Exception:
                     logger.exception("[LI-EXT] Không insert được linkedin_posts cho %s", group_url)
             else:
@@ -237,5 +240,8 @@ def save_extension_crawl_batch(
         "saved_count": saved_count,
         "skipped_duplicates": skipped_duplicates,
         "group_id": id_group,
+        # Noi bo - khong tra ve qua HTTP (router pop() ra truoc khi tra response cho
+        # extension), dung de cham diem "tiem nang seeding" (LLM) chay nen sau khi luu.
+        "_inserted_rows": inserted_rows,
         "session_id": session_id,
     }

@@ -17,6 +17,7 @@ from app.core.supabase_client import get_supabase_client
 from app.modules.all_platform.websocket import manager
 from app.modules.all_platform.services.supabase_facebook_crawl_service import parse_facebook_time
 from app.modules.all_platform.services import supabase_crawl_queue_service as queue_service
+from app.modules.all_platform.services.lead_score_service import score_and_save_posts
 
 # Reuse facebook keyword picker logic
 from app.modules.facebook.src.modules.facebook.services.facebook_scraper import (
@@ -415,6 +416,7 @@ def sync_process_and_save_posts_db(payload: ExtensionCrawlRequest, legacy: bool)
 
     inserted_count = 0
     inserted_post_urls = []
+    inserted_rows = []
     if posts_to_insert:
         try:
             # upsert + ignore_duplicates: existing_urls ở trên lọc theo snapshot lúc ĐẦU
@@ -425,15 +427,20 @@ def sync_process_and_save_posts_db(payload: ExtensionCrawlRequest, legacy: bool)
             inserted_count = len(res.data or [])
             if res.data:
                 inserted_post_urls = [p.get("post_url") for p in res.data if p.get("post_url")]
+                inserted_rows = [{"id": p.get("id"), "content": p.get("content")} for p in res.data if p.get("id")]
         except Exception as e:
             logger.error(f"Error saving to facebook_posts: {e}")
             raise HTTPException(status_code=500, detail=str(e))
 
-    return inserted_count, inserted_post_urls
+    return inserted_count, inserted_post_urls, inserted_rows
 
 async def process_and_save_posts(payload: ExtensionCrawlRequest, event_name: str, legacy: bool = False):
     # Offload sync Supabase DB calls to a separate thread to prevent blocking Uvicorn Asyncio EventLoop
-    inserted_count, inserted_post_urls = await asyncio.to_thread(sync_process_and_save_posts_db, payload, legacy)
+    inserted_count, inserted_post_urls, inserted_rows = await asyncio.to_thread(sync_process_and_save_posts_db, payload, legacy)
+
+    # Cham diem "tiem nang seeding" (LLM) CHAY NEN, khong cho response - xem lead_score_service.py.
+    if inserted_rows:
+        asyncio.create_task(score_and_save_posts("facebook_posts", inserted_rows))
 
     if payload.job_id:
         try:

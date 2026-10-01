@@ -14,8 +14,10 @@ from pydantic import BaseModel, Field
 
 from app.core.logger import get_logger
 from app.modules.all_platform.services.supabase_threads_extension_crawl_service import (
+    TABLE,
     save_threads_crawl_batch,
 )
+from app.modules.all_platform.services.lead_score_service import score_and_save_posts
 from app.modules.all_platform.websocket import manager
 
 logger = get_logger(__name__)
@@ -70,6 +72,12 @@ async def save_posts(
     except Exception as e:
         logger.exception("[THREADS-EXT] Lỗi lưu bài Threads (keyword=%r)", payload.keyword)
         raise HTTPException(status_code=500, detail=str(e))
+
+    # Cham diem "tiem nang seeding" (LLM) CHAY NEN - xem lead_score_service.py. Field noi
+    # bo, khong duoc tra ve qua HTTP cho extension.
+    inserted_rows = result.pop("_inserted_rows", [])
+    if inserted_rows:
+        asyncio.create_task(score_and_save_posts(TABLE, inserted_rows))
 
     # involved_users: de GlobalCrawlNotification.tsx chi hien cho dung nguoi dang cao (+
     # admin), khong lam phien cac thanh vien khac dang dung app (bug 2026-10-01).

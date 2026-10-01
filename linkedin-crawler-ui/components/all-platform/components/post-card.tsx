@@ -87,8 +87,20 @@ export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onVi
   if (score >= 85) scoreBg = "bg-primary/10 text-primary border-primary/20";
   else if (score >= 60) scoreBg = "bg-amber-50 text-amber-600 border-amber-100";
 
+  // Điểm "tiềm năng seeding" do LLM chấm (migration 159, lead_score_service.py) — khác
+  // "AI Score" (score, tính từ tương tác) ở trên: lead_score đo ĐÚNG ý định "đang tìm đơn
+  // vị làm website/app/landing page" để người dùng biết ngay bài nào nên seeding.
+  const leadScore = typeof post.lead_score === "number" ? post.lead_score : null;
+  const isHighLead = leadScore !== null && leadScore >= 70;
+  const isMidLead = leadScore !== null && leadScore >= 31 && leadScore < 70;
+
   return (
-    <div className="bg-card rounded-lg shadow-sm border border-border p-4 flex gap-4 items-start transition duration-200 hover:border-primary/30">
+    <div
+      className={cn(
+        "rounded-lg shadow-sm border p-4 flex gap-4 items-start transition duration-200",
+        isHighLead ? "bg-emerald-50/70 border-emerald-300 ring-1 ring-emerald-200 hover:border-emerald-400" : "bg-card border-border hover:border-primary/30",
+      )}
+    >
       {/* KHỐI AI SCORE BÊN TRÁI */}
       <div className={cn("w-[60px] h-[60px] rounded-lg flex flex-col items-center justify-center shrink-0 border", scoreBg)}>
         <span className="text-xl font-black leading-tight">{score}</span>
@@ -110,6 +122,22 @@ export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onVi
             >
               {post.group_name || "Unknown Group"}
             </a>
+
+            {leadScore !== null && (
+              <span
+                title={post.lead_score_reason || "Điểm tiềm năng seeding do AI chấm"}
+                className={cn(
+                  "shrink-0 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold border",
+                  isHighLead
+                    ? "bg-emerald-100 text-emerald-700 border-emerald-300"
+                    : isMidLead
+                      ? "bg-amber-50 text-amber-600 border-amber-200"
+                      : "bg-muted text-muted-foreground border-border opacity-70",
+                )}
+              >
+                🎯 {leadScore}
+              </span>
+            )}
 
             {post.platform === "threads" && post.search_keyword && (
               <span className="shrink-0 rounded bg-neutral-100 px-2 py-0.5 text-[10px] font-bold text-neutral-700" title="Từ khoá đã tìm ra bài này">
