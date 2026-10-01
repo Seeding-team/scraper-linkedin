@@ -417,7 +417,11 @@ def sync_process_and_save_posts_db(payload: ExtensionCrawlRequest, legacy: bool)
     inserted_post_urls = []
     if posts_to_insert:
         try:
-            res = supabase.table("facebook_posts").insert(posts_to_insert).execute()
+            # upsert + ignore_duplicates: existing_urls ở trên lọc theo snapshot lúc ĐẦU
+            # request (TOCTOU race nếu 2 lần cào trùng group gần như đồng thời cùng tìm
+            # ra 1 bài) — UNIQUE(post_url) (migration 158) + ON CONFLICT DO NOTHING làm
+            # backstop ở tầng DB, không còn phụ thuộc hoàn toàn vào pre-check tầng app.
+            res = supabase.table("facebook_posts").upsert(posts_to_insert, on_conflict="post_url", ignore_duplicates=True).execute()
             inserted_count = len(res.data or [])
             if res.data:
                 inserted_post_urls = [p.get("post_url") for p in res.data if p.get("post_url")]

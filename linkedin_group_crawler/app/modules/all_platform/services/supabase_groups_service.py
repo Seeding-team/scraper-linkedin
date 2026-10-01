@@ -114,6 +114,22 @@ def add_facebook_group(payload: dict) -> dict:
     supabase: Client = get_supabase_client()
 
     cleaned = _clean_group_payload(payload)
+
+    # Chặn thêm trùng nhóm (cùng group_url) — khớp UNIQUE constraint facebook_groups_
+    # group_url_key (migration 158). Báo lỗi rõ ràng thay vì để lộ lỗi DB thô, và tránh
+    # race insert 2 lần gần như đồng thời.
+    group_url = (cleaned.get("group_url") or "").strip()
+    if group_url:
+        existing = (
+            supabase.table("facebook_groups")
+            .select("id, group_name")
+            .eq("group_url", group_url)
+            .limit(1)
+            .execute()
+        )
+        if existing.data:
+            raise ValueError(f"Nhóm này đã có trong hệ thống rồi (\"{existing.data[0].get('group_name') or group_url}\") — không thêm trùng.")
+
     insert_data = {
         "group_name": cleaned.get("group_name"),
         "group_url": cleaned.get("group_url"),
@@ -311,6 +327,22 @@ def add_linkedin_group(payload: dict) -> dict:
     supabase: Client = get_supabase_client()
 
     cleaned = _clean_group_payload(payload)
+
+    # Chặn thêm trùng nhóm (cùng group_url) — khớp UNIQUE constraint linkedin_groups_
+    # group_url_key (migration 158). Báo lỗi rõ ràng thay vì để lộ lỗi DB thô, và tránh
+    # race insert 2 lần gần như đồng thời.
+    group_url = (cleaned.get("group_url") or "").strip()
+    if group_url:
+        existing = (
+            supabase.table("linkedin_groups")
+            .select("id, group_name")
+            .eq("group_url", group_url)
+            .limit(1)
+            .execute()
+        )
+        if existing.data:
+            raise ValueError(f"Nhóm này đã có trong hệ thống rồi (\"{existing.data[0].get('group_name') or group_url}\") — không thêm trùng.")
+
     insert_data = {
         "group_url": cleaned["group_url"],
         "group_name": cleaned.get("group_name"),
