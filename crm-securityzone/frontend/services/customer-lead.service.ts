@@ -650,6 +650,19 @@ export const customerLeadService = {
     });
   },
 
+  /** Chuyển nốt purchase_contract_links/sale_contract_links cũ (tạo trước
+   * fix 2026-10-03) sang contracts canonical - xem
+   * customer_lead_service.migrate_legacy_deal_phase_contracts(). */
+  migrateLegacyContracts: async (id: string): Promise<{ migrated: number }> => {
+    const data = await apiFetch(`/api/all-platform/customer-leads/${id}/migrate-legacy-contracts`, {
+      method: "POST",
+    });
+    if (data?.success === false) {
+      throw new Error(data?.message || "Không chuyển được hợp đồng cũ");
+    }
+    return data?.data ?? { migrated: 0 };
+  },
+
   /** confirmCascade=true CHI gui sau khi nguoi dung da xac nhan xoa kem Bao
    * gia/Hop dong lien quan - lan goi dau con lien ket thi backend tra
    * success:false + data.requiresCascadeConfirm (xem utils/cascadeDelete.ts). */

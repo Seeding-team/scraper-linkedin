@@ -192,7 +192,7 @@ export function DealFormModal({
   if (isCreate) {
     return (
       <>
-        <div className="crm-drawer-backdrop crm-lead-verify-backdrop" onClick={onClose} />
+        <div className="crm-drawer-backdrop crm-lead-verify-backdrop" onClick={e => { e.stopPropagation(); onClose(); }} />
         <aside className="crm-drawer crm-lead-detail-drawer crm-verify-drawer">
           <header className="crm-lead-drawer-header crm-verify-header">
             <div className="crm-verify-header-text">
@@ -252,7 +252,7 @@ export function DealFormModal({
   }
 
   return (
-    <div className="crm-modal-backdrop" onClick={onClose}>
+    <div className="crm-modal-backdrop" onClick={e => { e.stopPropagation(); onClose(); }}>
       <div className="crm-modal crm-modal--deal-compact" onClick={event => event.stopPropagation()}>
         <header className="crm-modal-header">
           <div>

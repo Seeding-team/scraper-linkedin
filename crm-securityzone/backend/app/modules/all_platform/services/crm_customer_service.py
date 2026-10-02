@@ -157,10 +157,19 @@ def _customer_ids_visible_to(user: dict[str, Any]) -> set[str] | None:
     """"Nhom quyen"/Team CRM (migration 155, OPT-IN theo tung user): neu user
     da duoc gan Nhom quyen VA scope hieu luc la 'personal'/'team', owner_ids
     duoi day mo rong tu [uid] thanh ca Team CRM cua user do - KHONG doi gi
-    neu user chua duoc gan Nhom quyen nao (van la [uid] nhu truoc gio)."""
-    scope_user_ids = get_scope_visible_user_ids(user)
-    if _is_admin_or_leader(user) and scope_user_ids is None:
+    neu user chua duoc gan Nhom quyen nao (van la [uid] nhu truoc gio).
+
+    Fix (2026-10-03): role admin/leader LUON xem duoc MOI team qua filter
+    Team o trang Khach hang, bo qua het Nhom quyen scope rieng cua ho (du
+    da duoc gan Nhom quyen 'personal'/'team') - dung y nghia "quan ly tong
+    the, xem moi team de giam sat". Dung THANG cot `role` (khong dung
+    _is_admin_or_leader()/has_full_crm_access() - ham do RONG HON nhieu,
+    tinh ca Sale/Presale thuong/thanh vien team Sale - neu dung se vo tinh
+    mo quyen xem het moi team cho ca Sale thuong, KHONG phai y dinh fix nay)."""
+    role = str(user.get("role") or "").strip().lower()
+    if role in ("admin", "leader"):
         return None
+    scope_user_ids = get_scope_visible_user_ids(user)
 
     uid = str(user.get("id") or "")
     owner_ids = list(scope_user_ids) if scope_user_ids is not None else ([uid] if uid else [])

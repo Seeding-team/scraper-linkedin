@@ -66,6 +66,10 @@ export interface Contract {
   source: 'crm' | 'external';
   fileUrl?: string | null;
   note?: string | null;
+  /** Migration 162 — "Hợp đồng báo giá mua (Phase 1)" / "bán (Phase 2)" tạo
+   * từ form Sửa Deal (CrmCustomerModal.tsx). null cho mọi hợp đồng tạo từ
+   * luồng khác (wizard CRM, Ghi nhận hợp đồng có sẵn độc lập). */
+  dealPhase?: 'purchase' | 'sale' | null;
 }
 
 export interface ContractDashboardStats {

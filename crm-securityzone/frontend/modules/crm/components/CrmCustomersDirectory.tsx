@@ -6,9 +6,9 @@ import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as
 import { API_BASE_URL, API_KEY } from '@/lib/env';
 import { useAppAuth } from '@/contexts/AppAuthContext';
 import { useMembers } from '@/hooks/useMembers';
-import { usersService, crmTeamsService, type QuoteBusinessRoleUser, type CrmTeam } from '@/services/all-platform.service';
+import { crmTeamsService, type CrmTeam } from '@/services/all-platform.service';
+import { customerLeadService } from '@/services/customer-lead.service';
 import { formatVND } from '../constants/crmConfig';
-import { CustomerFormModal } from './CustomerFormModal';
 import { CustomerAddDrawer } from './CustomerAddDrawer';
 import { CreateOpportunityDrawer } from './CreateOpportunityDrawer';
 import { ActionMenu, type ActionMenuItem } from './ActionMenu';
@@ -144,7 +144,6 @@ export function CrmCustomersDirectory() {
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState('');
   const [ownerId, setOwnerId] = useState('');
-  const [saleManagerId, setSaleManagerId] = useState('');
   // "Team" = Team CRM THAT (crm_teams/crm_team_members, migration 155) - doi tu HR
   // roster (feedback 2026-10-01: "đây là danh sách các team như ảnh 2" -
   // dung dung danh sach Leader/Team hien o trang Quan ly thanh vien > Leader
@@ -167,26 +166,9 @@ export function CrmCustomersDirectory() {
       alive = false;
     };
   }, []);
-  const [saleManagerOptions, setSaleManagerOptions] = useState<QuoteBusinessRoleUser[]>([]);
-  useEffect(() => {
-    let alive = true;
-    usersService
-      .getUsersByQuoteBusinessRole('sale')
-      .then(res => {
-        if (alive) setSaleManagerOptions(res.success ? res.data || [] : []);
-      })
-      .catch(() => {
-        if (alive) setSaleManagerOptions([]);
-      });
-    return () => {
-      alive = false;
-    };
-  }, []);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [reloadTick, setReloadTick] = useState(0);
-  const [formOpen, setFormOpen] = useState(false);
-  const [editingCustomer, setEditingCustomer] = useState<CrmCustomerRow | null>(null);
   const [addDrawerOpen, setAddDrawerOpen] = useState(false);
   const [opportunityCustomer, setOpportunityCustomer] = useState<CrmCustomerRow | null>(null);
   const [quickViewCustomer, setQuickViewCustomer] = useState<CrmCustomerRow | null>(null);
@@ -252,7 +234,6 @@ export function CrmCustomersDirectory() {
     search: string;
     status: string;
     ownerId: string;
-    saleManagerId: string;
     team: string;
   };
   const FILTERS_STORAGE_KEY = 'crm-customers-filters';
@@ -276,7 +257,6 @@ export function CrmCustomersDirectory() {
       setSearch(stored.search);
       setStatus(stored.status);
       setOwnerId(stored.ownerId);
-      setSaleManagerId(stored.saleManagerId);
       setTeam(stored.team);
       return;
     }
@@ -288,14 +268,14 @@ export function CrmCustomersDirectory() {
     if (!user?.id) return;
     if (!defaultFilterAppliedRef.current) return; // chua khoi tao xong (dang doi auth/members) - tranh ghi de bang state rong luc mount
     try {
-      const payload: StoredCustomerFilters = { userId: user.id, search, status, ownerId, saleManagerId, team };
+      const payload: StoredCustomerFilters = { userId: user.id, search, status, ownerId, team };
       window.sessionStorage.setItem(FILTERS_STORAGE_KEY, JSON.stringify(payload));
     } catch {
       // sessionStorage khong kha dung (che do an danh...) - bo qua, khong chan UI
     }
-  }, [user, search, status, ownerId, saleManagerId, team]);
+  }, [user, search, status, ownerId, team]);
 
-  useEffect(() => { setPage(1); }, [status, ownerId, saleManagerId, team]);
+  useEffect(() => { setPage(1); }, [status, ownerId, team]);
 
   const load = useCallback(() => {
     let alive = true;
@@ -303,7 +283,6 @@ export function CrmCustomersDirectory() {
     if (search) params.set('search', search);
     if (status) params.set('status', status);
     if (ownerId) params.set('owner_id', ownerId);
-    if (saleManagerId) params.set('sale_manager_id', saleManagerId);
     if (team) params.set('team', team);
     setLoading(true);
     fetch(`${API_BASE_URL}/api/all-platform/crm/customers?${params.toString()}`, {
@@ -337,7 +316,7 @@ export function CrmCustomersDirectory() {
         if (alive) setLoading(false);
       });
     return () => { alive = false; };
-  }, [page, pageSize, search, status, ownerId, saleManagerId, team]);
+  }, [page, pageSize, search, status, ownerId, team]);
 
   useEffect(() => {
     const cleanup = load();
@@ -416,20 +395,34 @@ export function CrmCustomersDirectory() {
     return { label: 'Chưa có hạn', overdue: false };
   }
 
+  // "Tất cả người phụ trách" (2026-10-03): trước đây lấy TOÀN BỘ HR roster
+  // (members, không lọc vai trò) - quá rộng, lẫn cả người không liên quan gì
+  // tới bán hàng. Chỉ lấy Sale/Presale (quote_business_role), dùng CHUNG
+  // nguồn/API với dropdown "Người lead"/"Người xử lý (SDR)" đã sửa trước đó
+  // (customerLeadService.getSdrs() - BE đã gộp admin/leader + sale/presale,
+  // ở đây CHỈ giữ lại đúng sale/presale, bỏ admin/leader vì dropdown này là
+  // "Người phụ trách Customer", không phải "Người lead/xử lý Deal").
+  const [salePresaleUsers, setSalePresaleUsers] = useState<Array<{ id: string; name: string; role: string }>>([]);
+  useEffect(() => {
+    let alive = true;
+    customerLeadService.getSdrs()
+      .then(rows => { if (alive) setSalePresaleUsers(rows); })
+      .catch(() => { if (alive) setSalePresaleUsers([]); });
+    return () => { alive = false; };
+  }, []);
+
   const ownerFilterOptions = useMemo(() => {
     const seen = new Map<string, string>();
-    members.forEach(m => {
-      const key = m.linked_user_id || m.linked_user_id_2;
-      if (key) seen.set(key, m.display_name);
-    });
+    salePresaleUsers
+      .filter(u => u.role !== 'admin' && u.role !== 'leader')
+      .forEach(u => seen.set(u.id, u.name));
     // Dam bao option "chinh minh" luon co trong dropdown ke ca khi user hien
-    // tai khong co dong trong `members` (vd tai khoan admin/moi chua duoc
-    // gan HR roster) - neu khong, dropdown se hien placeholder rong dù
-    // ownerId da duoc mac dinh = user.id (vi pham yeu cau "gia tri ap dung
-    // phai hien ro tren dropdown").
+    // tai khong phai sale/presale (vd tai khoan admin) - neu khong, dropdown
+    // se hien placeholder rong dù ownerId da duoc mac dinh = user.id (vi
+    // pham yeu cau "gia tri ap dung phai hien ro tren dropdown").
     if (user?.id && !seen.has(user.id)) seen.set(user.id, user.name || user.email);
     return [...seen.entries()].sort((a, b) => a[1].localeCompare(b[1]));
-  }, [members, user]);
+  }, [salePresaleUsers, user]);
 
   const myWorkCustomers = useMemo(() => {
     if (!user?.id) return [];
@@ -504,7 +497,7 @@ export function CrmCustomersDirectory() {
     }
     return [1, '...', currentSafePage - 1, currentSafePage, currentSafePage + 1, '...', totalPages];
   }
-  const hasFilters = Boolean(search || ownerId || saleManagerId || team);
+  const hasFilters = Boolean(search || ownerId || team);
   // "Doanh nghiệp" + "Hành động" luon hien (khong dua vao preference) + so cot
   // tuy chon dang bat - dung de colSpan cho hang loading/empty khop dung so
   // cot that su dang render.
@@ -514,7 +507,6 @@ export function CrmCustomersDirectory() {
     setSearchInput('');
     setSearch('');
     setOwnerId('');
-    setSaleManagerId('');
     setTeam('');
     setPage(1);
   }
@@ -535,9 +527,12 @@ export function CrmCustomersDirectory() {
     clearSearchFilter();
   }
 
-  function handleSaved() {
-    setFormOpen(false);
-    setEditingCustomer(null);
+  // "Chỉnh sửa" ngay trong drawer Quick View (2026-10-03) - phải cập nhật
+  // NGAY `quickViewCustomer` (drawer đang mở, đọc object này trực tiếp) để
+  // quay lại Quick View thấy dữ liệu mới tức thì, KHÔNG đợi reload danh sách
+  // (setReloadTick vẫn gọi để đồng bộ nền cho bảng/list phía sau).
+  function handleQuickViewCustomerUpdated(updated: CrmCustomerRow) {
+    setQuickViewCustomer(updated);
     setReloadTick(tick => tick + 1);
   }
 
@@ -730,11 +725,11 @@ export function CrmCustomersDirectory() {
    * sửa lẫn xóa). Còn dữ liệu liên quan thì backend yêu cầu xác nhận xoá kèm
    * (bước 2 của modal), không chặn cứng. */
   function secondaryActionsOf(customer: CrmCustomerRow): ActionMenuItem[] {
-    // Sua van theo quyen; Xoa mo cho moi nguoi (chi hoi xac nhan).
+    // "Sửa" (2026-10-03): bỏ khỏi menu 3 chấm - sửa giờ nằm ở icon bút chì
+    // ngay trong drawer "Xem thông tin nhanh" (CustomerQuickViewPanel), mở
+    // 2 đường cho cùng 1 thao tác gây nhầm lẫn. Xoa van mo cho moi nguoi
+    // (chi hoi xac nhan).
     return [
-      ...(customer.canEdit
-        ? [{ key: 'edit', label: 'Sửa', onSelect: () => { setEditingCustomer(customer); setFormOpen(true); } }]
-        : []),
       {
         key: 'delete',
         label: 'Xóa',
@@ -801,14 +796,6 @@ export function CrmCustomersDirectory() {
               placeholder="Tìm tên doanh nghiệp, MST, người liên hệ, SĐT, email..."
               autoComplete="off"
             />
-            <div className="crm-filter-select-wrap">
-              <SearchableSelect
-                value={saleManagerId}
-                onChange={setSaleManagerId}
-                placeholder="Tất cả Sale manager"
-                options={saleManagerOptions.map(u => ({ value: u.id, label: u.name }))}
-              />
-            </div>
             <div className="crm-filter-select-wrap">
               <SearchableSelect
                 value={ownerId}
@@ -1293,14 +1280,8 @@ export function CrmCustomersDirectory() {
         onOpenDetail={(customerId, tab) => router.push(`/all-platform/crm/customers/${customerId}${tab ? `?tab=${tab}` : ''}`)}
         onOpenQuote={openQuoteFromQuickView}
         onOpenContract={openContractFromQuickView}
-      />
-
-      <CustomerFormModal
-        open={formOpen}
-        customer={editingCustomer}
         currentUser={user}
-        onClose={() => { setFormOpen(false); setEditingCustomer(null); }}
-        onSaved={handleSaved}
+        onCustomerUpdated={handleQuickViewCustomerUpdated}
       />
 
       <CustomerAddDrawer

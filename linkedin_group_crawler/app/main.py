@@ -1,4 +1,4 @@
-"""FastAPI application entrypoint."""
+"""FastAPI application entrypoint (hot-reloaded 2026-10-03 TargetInstance Fallback)."""
 
 from __future__ import annotations
 

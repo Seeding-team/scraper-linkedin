@@ -58,6 +58,14 @@ export interface QuoteRepository {
   createIssuerCompany(input: CreateIssuerCompanyInput): Promise<IssuerCompany>;
   updateIssuerCompany(id: string, input: UpdateIssuerCompanyInput): Promise<IssuerCompany>;
 
+  /** Chuyển (Move) chính báo giá hiện tại sang Customer + Deal khác trong CÙNG workspace. */
+  moveQuoteInWorkspace(
+    quoteId: string,
+    targetCustomerId: string,
+    targetDealId: string,
+    targetContactId?: string | null
+  ): Promise<Quote>;
+
   /** Gửi 1 báo giá ĐÃ DUYỆT qua Telegram (group/topic cố định, cấu hình ở backend). */
   sendQuoteTelegram(quoteId: string): Promise<QuoteTelegramLog>;
   /** Lịch sử gửi Telegram của 1 báo giá, mới nhất trước. */

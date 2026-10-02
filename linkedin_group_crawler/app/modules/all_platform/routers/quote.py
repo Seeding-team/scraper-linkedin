@@ -10,6 +10,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 
 from app.core.supabase_client import friendly_supabase_error_message
 from app.modules.all_platform.auth_deps import get_current_user, is_web_intake_user
@@ -423,6 +424,184 @@ def quotes_issuer_companies_create(
         return BaseResponse(success=True, message="Đã tạo công ty phát hành", data=data)
     except Exception as e:
         return BaseResponse(success=False, message=friendly_supabase_error_message(e))
+
+
+# ── Copy báo giá cross-workspace (2026-10-03, Phase 1 — xem
+# cross_workspace_quote_service.py cho toàn bộ ngữ cảnh/quy tắc). 4 route này
+# đều có path tĩnh ("cross-workspace/...") - phải đăng ký TRƯỚC /{quote_id}
+# để không bị FastAPI khớp nhầm, theo đúng convention đã có ở trên. ──
+
+from pydantic import BaseModel as _CrossWorkspaceBaseModel  # noqa: E402
+from app.modules.all_platform.services import cross_workspace_quote_service  # noqa: E402
+
+
+class CrossWorkspaceCreateCustomerRequest(_CrossWorkspaceBaseModel):
+    targetInstance: str
+    customer_name: str
+    company_name: str | None = None
+    phone: str | None = None
+    email: str | None = None
+    tax_code: str | None = None
+
+
+class CrossWorkspaceCopyRequest(_CrossWorkspaceBaseModel):
+    targetInstance: str
+    targetCustomerId: str
+    # Bat buoc (bo "Khong lien ket" - yeu cau mo rong 2026-10-03: bao gia phai
+    # di kem DAY DU business context, khong chi Customer).
+    targetDealId: str
+    targetContactId: str | None = None
+
+
+@quotes_router.get("/cross-workspace/customers")
+def quotes_cross_workspace_search_customers(
+    target_instance: str = Query(...),
+    search: str = Query(""),
+    user: dict = Depends(get_current_user),
+) -> BaseResponse:
+    try:
+        data = cross_workspace_quote_service.search_target_customers(user, target_instance, search)
+        return BaseResponse(success=True, data=data)
+    except (cross_workspace_quote_service.CrossWorkspaceCopyError, PermissionError) as e:
+        return BaseResponse(success=False, message=str(e))
+    except Exception as e:
+        return BaseResponse(success=False, message=_safe_error_message(e))
+
+
+@quotes_router.post("/cross-workspace/customers")
+def quotes_cross_workspace_create_customer(
+    payload: CrossWorkspaceCreateCustomerRequest,
+    user: dict = Depends(get_current_user),
+) -> BaseResponse:
+    try:
+        data = cross_workspace_quote_service.create_target_customer(
+            user, payload.targetInstance, payload.model_dump(exclude={"targetInstance"})
+        )
+        return BaseResponse(success=True, message="Đã tạo khách hàng ở workspace đích", data=data)
+    except (cross_workspace_quote_service.CrossWorkspaceCopyError, PermissionError) as e:
+        return BaseResponse(success=False, message=str(e))
+    except Exception as e:
+        return BaseResponse(success=False, message=_safe_error_message(e))
+
+
+@quotes_router.get("/cross-workspace/projects")
+def quotes_cross_workspace_list_projects(
+    target_instance: str = Query(...),
+    target_customer_id: str = Query(...),
+    user: dict = Depends(get_current_user),
+) -> BaseResponse:
+    try:
+        data = cross_workspace_quote_service.list_target_projects_for_customer(user, target_instance, target_customer_id)
+        return BaseResponse(success=True, data=data)
+    except (cross_workspace_quote_service.CrossWorkspaceCopyError, PermissionError) as e:
+        return BaseResponse(success=False, message=str(e))
+    except Exception as e:
+        return BaseResponse(success=False, message=_safe_error_message(e))
+
+
+@quotes_router.get("/cross-workspace/deals")
+def quotes_cross_workspace_list_deals(
+    target_instance: str = Query(...),
+    target_customer_id: str = Query(...),
+    target_project_id: str | None = Query(None),
+    user: dict = Depends(get_current_user),
+) -> BaseResponse:
+    try:
+        data = cross_workspace_quote_service.list_target_deals_for_customer(
+            user, target_instance, target_customer_id, target_project_id
+        )
+        return BaseResponse(success=True, data=data)
+    except (cross_workspace_quote_service.CrossWorkspaceCopyError, PermissionError) as e:
+        return BaseResponse(success=False, message=str(e))
+    except Exception as e:
+        return BaseResponse(success=False, message=_safe_error_message(e))
+
+
+class CreateCrossWorkspaceDealRequest(BaseModel):
+    targetInstance: str | None = None
+    targetCustomerId: str
+    targetProjectId: str | None = None
+    dealName: str | None = None
+    dealStage: str | None = None
+
+
+@quotes_router.post("/cross-workspace/deals")
+def quotes_cross_workspace_create_deal(
+    payload: CreateCrossWorkspaceDealRequest,
+    user: dict = Depends(get_current_user),
+) -> BaseResponse:
+    try:
+        data = cross_workspace_quote_service.create_target_deal(
+            user, payload.targetInstance or settings.crm_instance, payload.model_dump()
+        )
+        return BaseResponse(success=True, message="Đã tạo cơ hội mới", data=data)
+    except (cross_workspace_quote_service.CrossWorkspaceCopyError, PermissionError) as e:
+        return BaseResponse(success=False, message=str(e))
+    except Exception as e:
+        return BaseResponse(success=False, message=_safe_error_message(e))
+
+
+@quotes_router.get("/cross-workspace/contacts")
+def quotes_cross_workspace_list_contacts(
+    target_instance: str = Query(...),
+    target_customer_id: str = Query(...),
+    user: dict = Depends(get_current_user),
+) -> BaseResponse:
+    try:
+        data = cross_workspace_quote_service.list_target_contacts_for_customer(user, target_instance, target_customer_id)
+        return BaseResponse(success=True, data=data)
+    except (cross_workspace_quote_service.CrossWorkspaceCopyError, PermissionError) as e:
+        return BaseResponse(success=False, message=str(e))
+    except Exception as e:
+        return BaseResponse(success=False, message=_safe_error_message(e))
+
+
+class MoveQuoteInWorkspaceRequest(BaseModel):
+    targetCustomerId: str
+    targetDealId: str
+    targetContactId: str | None = None
+    targetInstance: str | None = None
+
+
+@quotes_router.post("/{quote_id}/copy-cross-workspace")
+def quotes_copy_cross_workspace(
+    quote_id: str,
+    payload: CrossWorkspaceCopyRequest,
+    user: dict = Depends(get_current_user),
+) -> BaseResponse:
+    try:
+        data = cross_workspace_quote_service.copy_quote_to_workspace(
+            quote_id, payload.targetInstance, payload.targetCustomerId, payload.targetDealId, user,
+            target_contact_id=payload.targetContactId,
+        )
+        return BaseResponse(success=True, message="Đã copy báo giá sang workspace đích", data=data)
+    except (cross_workspace_quote_service.CrossWorkspaceCopyError, PermissionError) as e:
+        return BaseResponse(success=False, message=str(e))
+    except Exception as e:
+        return BaseResponse(success=False, message=_safe_error_message(e))
+
+
+@quotes_router.post("/{quote_id}/move-in-workspace")
+def quotes_move_in_workspace(
+    quote_id: str,
+    payload: MoveQuoteInWorkspaceRequest,
+    user: dict = Depends(get_current_user),
+) -> BaseResponse:
+    try:
+        data = cross_workspace_quote_service.move_quote_in_workspace(
+            quote_id,
+            payload.targetCustomerId,
+            payload.targetDealId,
+            user,
+            target_contact_id=payload.targetContactId,
+            target_instance=payload.targetInstance,
+        )
+        return BaseResponse(success=True, message="Đã di chuyển báo giá sang khách hàng mới", data=data)
+    except (cross_workspace_quote_service.CrossWorkspaceCopyError, PermissionError) as e:
+        return BaseResponse(success=False, message=str(e))
+    except Exception as e:
+        return BaseResponse(success=False, message=_safe_error_message(e))
+
 
 
 @quotes_router.put("/issuer-companies/{company_id}")

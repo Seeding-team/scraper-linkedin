@@ -21,6 +21,9 @@ import { API_BASE_URL, API_KEY } from '@/lib/env';
 import { formatVND } from '../constants/crmConfig';
 import type { CrmCustomerRow } from '../types';
 import { relativeTime } from '../utils/quoteDisplay';
+import { CustomerFormModal } from './CustomerFormModal';
+import type { AppUser } from '@/types/unified.types';
+import { Pencil } from 'lucide-react';
 
 type RelatedDeal = {
   id: string;
@@ -89,6 +92,13 @@ type CustomerQuickViewPanelProps = {
   onOpenDetail: (customerId: string, tab?: 'deals' | 'quotes' | 'contracts' | 'activity') => void;
   onOpenQuote: (quoteId: string, customerId: string) => void;
   onOpenContract: (contractId: string, customerId: string) => void;
+  /** "Chỉnh sửa" trong drawer (2026-10-03) — currentUser để CustomerFormModal
+   * biết có cho chọn Người phụ trách hay không (canPickOwner), giống hệt
+   * luồng modal Sửa cũ. */
+  currentUser: AppUser | null;
+  /** Lưu thành công trong drawer → cập nhật NGAY data đang hiển thị (không
+   * đợi reload list cha) rồi quay lại Quick View, không đóng drawer. */
+  onCustomerUpdated: (customer: CrmCustomerRow) => void;
 };
 
 const STATUS_LABEL: Record<string, string> = {
@@ -200,6 +210,8 @@ export function CustomerQuickViewPanel({
   onOpenDetail,
   onOpenQuote,
   onOpenContract,
+  currentUser,
+  onCustomerUpdated,
 }: CustomerQuickViewPanelProps) {
   const [related, setRelated] = useState<RelatedPayload | null>(null);
   const [activities, setActivities] = useState<CustomerActivityEntry[]>([]);
@@ -207,6 +219,13 @@ export function CustomerQuickViewPanel({
   const [activityLoading, setActivityLoading] = useState(false);
   const [error, setError] = useState('');
   const [activityError, setActivityError] = useState('');
+  const [editMode, setEditMode] = useState(false);
+
+  // Dong edit mode moi khi doi/dong khach hang dang xem - tranh mo nham form
+  // Sua cua khach hang CU khi chuyen sang xem nhanh 1 khach hang khac.
+  useEffect(() => {
+    setEditMode(false);
+  }, [customer?.id, open]);
 
   useEffect(() => {
     if (!customer?.id) {
@@ -310,7 +329,7 @@ export function CustomerQuickViewPanel({
 
   return (
     <aside
-      className={`crm-customer-quickview${open && customer ? ' is-open' : ''}`}
+      className={`crm-customer-quickview${open && customer ? ' is-open' : ''}${editMode ? ' is-editing' : ''}`}
       data-crm-customer-quickview="true"
       aria-hidden={!open || !customer}
       aria-label={customer ? `Xem nhanh khách hàng ${customer.customerName}` : 'Xem nhanh khách hàng'}
@@ -319,25 +338,57 @@ export function CustomerQuickViewPanel({
         <>
           <header className="crm-customer-quickview-header">
             <div className="crm-customer-quickview-heading">
-              <span>Khách hàng</span>
+              <span>{editMode ? 'Chỉnh sửa khách hàng' : 'Khách hàng'}</span>
               <h2>{customer.customerName}</h2>
               <p>{[customer.companyName, phone].filter(Boolean).join(' · ') || 'Chưa có thông tin liên hệ'}</p>
-              <div className="crm-customer-quickview-tags">
-                <span className={`crm-customer-status-badge crm-customer-status--${customer.status || 'unknown'}`}>
-                  {STATUS_LABEL[customer.status || ''] || 'Chưa phân loại'}
-                </span>
-                {customer.source ? <span className="crm-customer-quickview-source">{customer.source}</span> : null}
-              </div>
-              <div className="crm-customer-quickview-meta" aria-label="Thông tin liên hệ nhanh">
-                <span><Phone size={16} /> {phone || 'Chưa có số điện thoại'}</span>
-                <span><Mail size={16} /> {email || 'Chưa có email'}</span>
-                {customer.city ? <span>{customer.city}</span> : null}
-              </div>
+              {editMode ? null : (
+                <>
+                  <div className="crm-customer-quickview-tags">
+                    <span className={`crm-customer-status-badge crm-customer-status--${customer.status || 'unknown'}`}>
+                      {STATUS_LABEL[customer.status || ''] || 'Chưa phân loại'}
+                    </span>
+                    {customer.source ? <span className="crm-customer-quickview-source">{customer.source}</span> : null}
+                  </div>
+                  <div className="crm-customer-quickview-meta" aria-label="Thông tin liên hệ nhanh">
+                    <span><Phone size={16} /> {phone || 'Chưa có số điện thoại'}</span>
+                    <span><Mail size={16} /> {email || 'Chưa có email'}</span>
+                    {customer.city ? <span>{customer.city}</span> : null}
+                  </div>
+                </>
+              )}
             </div>
-            <button type="button" className="crm-customer-quickview-close" onClick={onClose} aria-label="Đóng xem nhanh" title="Đóng">
-              <X size={20} />
-            </button>
+            <div className="crm-customer-quickview-header-actions">
+              {editMode ? null : (
+                <button type="button" className="crm-customer-quickview-close" onClick={() => setEditMode(true)} aria-label="Chỉnh sửa" title="Chỉnh sửa">
+                  <Pencil size={16} />
+                </button>
+              )}
+              <button
+                type="button"
+                className="crm-customer-quickview-close"
+                onClick={editMode ? () => setEditMode(false) : onClose}
+                aria-label={editMode ? 'Về xem nhanh' : 'Đóng xem nhanh'}
+                title={editMode ? 'Về xem nhanh' : 'Đóng'}
+              >
+                <X size={20} />
+              </button>
+            </div>
           </header>
+
+          {editMode ? (
+            <CustomerFormModal
+              open
+              variant="embedded"
+              customer={customer}
+              currentUser={currentUser}
+              onClose={() => setEditMode(false)}
+              onSaved={(updated) => {
+                onCustomerUpdated(updated);
+                setEditMode(false);
+              }}
+            />
+          ) : (
+          <>
 
           <div className="crm-customer-quickview-body">
             <section className="crm-customer-next-work" aria-labelledby="crm-next-work-title">
@@ -530,6 +581,8 @@ export function CustomerQuickViewPanel({
               Mở hồ sơ đầy đủ <ArrowUpRight size={17} />
             </button>
           </footer>
+          </>
+          )}
         </>
       ) : null}
     </aside>

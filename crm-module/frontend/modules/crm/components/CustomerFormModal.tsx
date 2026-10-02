@@ -116,6 +116,12 @@ export function CustomerFormModal({
   currentUser,
   onClose,
   onSaved,
+  /** 'modal' (mặc định, giữ nguyên hành vi cũ — backdrop + popup riêng) hoặc
+   * 'embedded' (2026-10-03: gộp vào drawer "Xem thông tin nhanh" — chỉ hiện
+   * khi bấm "Chỉnh sửa" ngay trong drawer, không mở modal/backdrop riêng,
+   * không tự khoá scroll body vì drawer cha đã quản lý). KHÔNG tạo logic
+   * validate/submit/API mới — tái dùng y hệt, chỉ đổi phần bọc ngoài JSX. */
+  variant = 'modal',
 }: {
   open: boolean;
   /** Edit-only trong luồng hiện tại — luôn truyền object khách hàng cần sửa. */
@@ -123,6 +129,7 @@ export function CustomerFormModal({
   currentUser: AppUser | null;
   onClose: () => void;
   onSaved: (customer: CrmCustomerRow) => void;
+  variant?: 'modal' | 'embedded';
 }) {
   const isEdit = Boolean(customer);
   const [form, setForm] = useState<FormState>(emptyForm);
@@ -130,7 +137,8 @@ export function CustomerFormModal({
   const [error, setError] = useState('');
   const [duplicates, setDuplicates] = useState<DuplicateRow[]>([]);
   const { members } = useMembers();
-  useBodyScrollLock(open);
+  const embedded = variant === 'embedded';
+  useBodyScrollLock(embedded ? false : open);
 
   useEffect(() => {
     if (!open) return;
@@ -236,22 +244,9 @@ export function CustomerFormModal({
 
   if (!open) return null;
 
-  return (
-    <div className="crm-modal-backdrop" onClick={onClose}>
-      <div className="crm-modal crm-modal--customer-form" onClick={event => event.stopPropagation()}>
-        <header className="crm-modal-header">
-          <div>
-            <h2 className="crm-modal-title">{isEdit ? 'Sửa hồ sơ khách hàng' : 'Thêm khách hàng'}</h2>
-            <p className="crm-modal-subtitle">
-              {isEdit ? 'Cập nhật thông tin hồ sơ khách hàng.' : 'Tạo hồ sơ khách hàng mới — không tự tạo deal.'}
-            </p>
-          </div>
-          <button type="button" className="crm-modal-close" onClick={onClose} aria-label="Đóng">
-            <X className="crm-icon" />
-          </button>
-        </header>
-
-        <form id="crmCustomerForm" className="crm-modal-body" onSubmit={handleSubmit}>
+  const formAndFooter = (
+    <>
+        <form id="crmCustomerForm" className={embedded ? 'crm-quickview-editform-body' : 'crm-modal-body'} onSubmit={handleSubmit}>
           {error ? <p className="crm-error crm-customer-form-error">{error}</p> : null}
           {duplicates.length ? (
             <div className="crm-duplicate-list">
@@ -308,22 +303,22 @@ export function CustomerFormModal({
           <div className="crm-form-section">
             <p className="crm-form-title">Thông tin liên hệ</p>
             <div className="crm-form-grid">
-              <Field label="Số điện thoại" required hint="cần SĐT hoặc email">
+              <Field label="Số điện thoại" required hint="cần SĐT hoặc email" onClear={() => setValue('phone', '')}>
                 <input value={form.phone} onChange={e => setValue('phone', e.target.value)} type="tel" placeholder="09xxxxxxxx" />
               </Field>
-              <Field label="Email" required hint="cần SĐT hoặc email">
+              <Field label="Email" required hint="cần SĐT hoặc email" onClear={() => setValue('email', '')}>
                 <input value={form.email} onChange={e => setValue('email', e.target.value)} type="email" placeholder="ten@congty.com" />
               </Field>
-              <Field label="Zalo">
+              <Field label="Zalo" onClear={() => setValue('zalo', '')}>
                 <input value={form.zalo} onChange={e => setValue('zalo', e.target.value)} placeholder="Số/link Zalo" />
               </Field>
-              <Field label="Facebook">
+              <Field label="Facebook" onClear={() => setValue('facebook', '')}>
                 <input value={form.facebook} onChange={e => setValue('facebook', e.target.value)} placeholder="Link Facebook" />
               </Field>
-              <Field label="Telegram">
+              <Field label="Telegram" onClear={() => setValue('telegram', '')}>
                 <input value={form.telegram} onChange={e => setValue('telegram', e.target.value)} placeholder="@username hoặc link" />
               </Field>
-              <Field label="Website">
+              <Field label="Website" onClear={() => setValue('website', '')}>
                 <input value={form.website} onChange={e => setValue('website', e.target.value)} placeholder="https://..." />
               </Field>
             </div>
@@ -332,7 +327,7 @@ export function CustomerFormModal({
           <div className="crm-form-section">
             <p className="crm-form-title">Thông tin doanh nghiệp</p>
             <div className="crm-form-grid">
-              <Field label="Mã số thuế">
+              <Field label="Mã số thuế" onClear={() => setValue('taxCode', '')}>
                 <input value={form.taxCode} onChange={e => setValue('taxCode', e.target.value)} />
               </Field>
               <Field label="Lĩnh vực">
@@ -376,7 +371,7 @@ export function CustomerFormModal({
           </div>
         </form>
 
-        <footer className="crm-modal-footer">
+        <footer className={embedded ? 'crm-quickview-editform-footer' : 'crm-modal-footer'}>
           <button type="button" className="crm-cancel-button" onClick={onClose} disabled={saving}>
             Hủy
           </button>
@@ -385,6 +380,26 @@ export function CustomerFormModal({
             {saving ? 'Đang lưu...' : isEdit ? 'Lưu thay đổi' : 'Tạo khách hàng'}
           </button>
         </footer>
+    </>
+  );
+
+  if (embedded) return formAndFooter;
+
+  return (
+    <div className="crm-modal-backdrop" onClick={onClose}>
+      <div className="crm-modal crm-modal--customer-form" onClick={event => event.stopPropagation()}>
+        <header className="crm-modal-header">
+          <div>
+            <h2 className="crm-modal-title">{isEdit ? 'Sửa hồ sơ khách hàng' : 'Thêm khách hàng'}</h2>
+            <p className="crm-modal-subtitle">
+              {isEdit ? 'Cập nhật thông tin hồ sơ khách hàng.' : 'Tạo hồ sơ khách hàng mới — không tự tạo deal.'}
+            </p>
+          </div>
+          <button type="button" className="crm-modal-close" onClick={onClose} aria-label="Đóng">
+            <X className="crm-icon" />
+          </button>
+        </header>
+        {formAndFooter}
       </div>
     </div>
   );
@@ -396,17 +411,35 @@ export function Field({
   required,
   full,
   children,
+  onClear,
 }: {
   label: string;
   hint?: string;
   required?: boolean;
   full?: boolean;
   children: React.ReactNode;
+  /** Nút "×" xoá nhanh field này (yêu cầu 2026-10-03: "thêm phần xoá thông
+   * tin khách hàng" - vd SĐT/email gõ sai, xoá 1 click thay vì bôi đen xoá
+   * tay). Chỉ hiện khi truyền - field nào không cần xoá nhanh (vd các field
+   * có dropdown/bắt buộc chọn) thì không truyền prop này. */
+  onClear?: () => void;
 }) {
   return (
     <label className={`crm-field ${full ? 'crm-field--full' : ''}`}>
-      <span>
-        {label} {hint ? <em>({hint})</em> : null} {required ? <b>*</b> : null}
+      <span className="crm-field-label-row">
+        <span>
+          {label} {hint ? <em>({hint})</em> : null} {required ? <b>*</b> : null}
+        </span>
+        {onClear ? (
+          <button
+            type="button"
+            className="crm-field-clear-btn"
+            title={`Xoá ${label}`}
+            onClick={(e) => { e.preventDefault(); onClear(); }}
+          >
+            ×
+          </button>
+        ) : null}
       </span>
       {children}
     </label>

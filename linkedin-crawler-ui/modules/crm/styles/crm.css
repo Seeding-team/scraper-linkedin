@@ -3438,6 +3438,29 @@
   font-weight: 500;
 }
 
+/* Nut "x" xoa nhanh 1 field (yeu cau 2026-10-03) - nam cung hang voi label,
+   day sang phai. */
+.crm-field-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.crm-field-clear-btn {
+  border: none;
+  background: transparent;
+  color: #94a3b8;
+  font-size: 0.95rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 0.15rem;
+}
+
+.crm-field-clear-btn:hover {
+  color: #ef4444;
+}
+
 .crm-field textarea,
 .crm-stage-field textarea,
 .crm-review-field textarea {
@@ -10953,6 +10976,41 @@
   transition: transform 180ms ease, visibility 0ms step-start;
 }
 
+/* Edit mode (2026-10-03, gop "Sua ho so khach hang" vao drawer Quick View) -
+   rong hon han che do xem thuong (820-900px, tu co lai 100vw o mobile). */
+.crm-customer-quickview.is-editing {
+  width: min(860px, 100vw);
+}
+
+.crm-quickview-editform-body {
+  overflow-y: auto;
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.crm-quickview-editform-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.75rem;
+  padding: 14px 18px;
+  border-top: 1px solid #e2e8f0;
+  background: #ffffff;
+}
+
+@media (min-width: 641px) {
+  .crm-quickview-editform-body .crm-form-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 640px) {
+  .crm-quickview-editform-body .crm-form-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 .crm-customer-quickview-header {
   padding: 18px;
   display: grid;
@@ -10960,6 +11018,12 @@
   align-items: start;
   gap: 12px;
   border-bottom: 1px solid #e2e8f0;
+}
+
+.crm-customer-quickview-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .crm-customer-quickview-heading {

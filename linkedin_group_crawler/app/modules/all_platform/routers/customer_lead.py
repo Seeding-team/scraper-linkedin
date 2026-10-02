@@ -406,6 +406,24 @@ def update_customer_lead(
         return BaseResponse(success=False, message=str(e))
 
 
+@router.post("/{lead_id}/migrate-legacy-contracts", response_model=BaseResponse)
+def migrate_legacy_contracts(lead_id: str, current_user: Any = Depends(get_current_user)):
+    """Chuyển nốt purchase_contract_links/sale_contract_links cũ (nếu còn)
+    của deal này sang contracts canonical — xem
+    customer_lead_service.migrate_legacy_deal_phase_contracts(). Action thủ
+    công (nút "Chuyển sang hợp đồng chính thức" trong form Sửa Deal)."""
+    try:
+        existing = customer_lead_service.get_customer_lead_by_id(lead_id)
+        if not existing:
+            return BaseResponse(success=False, message="Không tìm thấy deal này")
+        if not can_write_deal(current_user, existing):
+            return BaseResponse(success=False, message="Bạn không có quyền sửa deal này")
+        result = customer_lead_service.migrate_legacy_deal_phase_contracts(lead_id, actor=current_user)
+        return BaseResponse(success=True, data=result, message="Success")
+    except Exception as e:
+        return BaseResponse(success=False, message=str(e))
+
+
 @router.delete("/{lead_id}", response_model=BaseResponse)
 def delete_customer_lead(
     lead_id: str,

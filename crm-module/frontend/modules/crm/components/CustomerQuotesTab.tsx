@@ -1,9 +1,12 @@
 import React, { Fragment, useState, useMemo } from 'react';
-import { FileText, Plus, ChevronRight, ChevronDown, UserCog, Trash2, Search, Filter, Folder, Users, Clock, Zap } from 'lucide-react';
+import { FileText, Plus, ChevronRight, ChevronDown, UserCog, Trash2, Search, Filter, Folder, Users, Clock, Zap, Globe2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { useAppAuth } from '@/contexts/AppAuthContext';
 import { ActionMenu, type ActionMenuItem } from './ActionMenu';
 import { CustomerColumnVisibilityMenu } from './CustomerColumnVisibilityMenu';
 import { useQuoteColumnPreferences, type QuoteColumnKey } from '../hooks/useQuoteColumnPreferences';
+import { seedingQuoteRepository, CopyQuoteCrossWorkspaceModal, MoveQuoteModal } from '../../quotes';
+import type { Quote } from '../../quotes';
 
 const QUOTE_COLUMN_OPTIONS: Array<{ key: QuoteColumnKey; label: string }> = [
   { key: 'costTotal', label: 'Giá vốn' },
@@ -176,6 +179,67 @@ export function CustomerQuotesTab({
     return <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800">{fallbackLabel}</span>;
   };
 
+  // "Copy báo giá cross-workspace" (2026-10-03, Phase 1) - chỉ admin thấy mục
+  // menu này (gate THẬT nằm ở backend qua allowed_instances). Fetch lại FULL
+  // Quote qua getQuote() khi bấm thay vì ép kiểu `current` (shape lỏng lẻo,
+  // không chắc khớp type Quote đầy đủ mà modal cần) - tránh bug ngầm do thiếu
+  // field so với khi mở từ QuoteDetailPage.tsx (nguồn gốc feature này).
+  const { user: currentAuthUser } = useAppAuth();
+  const isAdminUser = currentAuthUser?.role === 'admin';
+  const [copyWorkspaceQuotes, setCopyWorkspaceQuotes] = useState<Quote[] | null>(null);
+  const [copyWorkspaceLoadingId, setCopyWorkspaceLoadingId] = useState<string | null>(null);
+  const [moveQuoteTarget, setMoveQuoteTarget] = useState<Quote | null>(null);
+  const [moveQuoteLoadingId, setMoveQuoteLoadingId] = useState<string | null>(null);
+
+  async function openCopyWorkspaceModal(quoteId: string) {
+    setCopyWorkspaceLoadingId(quoteId);
+    try {
+      const full = await seedingQuoteRepository.getQuote(quoteId);
+      setCopyWorkspaceQuotes([full]);
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : 'Không tải được báo giá để copy.');
+    } finally {
+      setCopyWorkspaceLoadingId(null);
+    }
+  }
+
+  async function openMoveQuoteModal(quoteId: string) {
+    setMoveQuoteLoadingId(quoteId);
+    try {
+      const full = await seedingQuoteRepository.getQuote(quoteId);
+      setMoveQuoteTarget(full);
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : 'Không tải được báo giá để di chuyển.');
+    } finally {
+      setMoveQuoteLoadingId(null);
+    }
+  }
+
+  // Chon NHIEU bao gia de copy cung luc (yeu cau mo rong 2026-10-03) - chi
+  // admin thay checkbox (dong bo voi gate menu "Copy sang workspace khac" o
+  // tren). Chon theo id cua CHINH xac quote dang hien (current.id - phien
+  // ban moi nhat cua chuoi, khong phai version cu).
+  const [selectedQuoteIds, setSelectedQuoteIds] = useState<Set<string>>(new Set());
+  const [bulkCopyLoading, setBulkCopyLoading] = useState(false);
+  function toggleQuoteSelection(id: string) {
+    setSelectedQuoteIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+  async function openBulkCopyWorkspaceModal() {
+    setBulkCopyLoading(true);
+    try {
+      const fetched = await Promise.all([...selectedQuoteIds].map(id => seedingQuoteRepository.getQuote(id)));
+      setCopyWorkspaceQuotes(fetched);
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : 'Không tải được các báo giá đã chọn.');
+    } finally {
+      setBulkCopyLoading(false);
+    }
+  }
+
   const projectList = projectsSummary?.projects || [];
 
   return (
@@ -300,12 +364,34 @@ export function CustomerQuotesTab({
         </div>
       </div>
 
+      {/* Copy nhiều báo giá cùng lúc (2026-10-03) - chỉ hiện khi admin đã tick
+       * ít nhất 1 dòng. */}
+      {isAdminUser && selectedQuoteIds.size > 0 ? (
+        <div className="flex items-center justify-between rounded-xl border border-rose-100 bg-rose-50/60 px-4 py-2.5">
+          <span className="text-xs font-medium text-slate-700">Đã chọn {selectedQuoteIds.size} báo giá</span>
+          <div className="flex items-center gap-2">
+            <button type="button" className="text-xs font-medium text-slate-500 hover:text-slate-700" onClick={() => setSelectedQuoteIds(new Set())}>
+              Bỏ chọn
+            </button>
+            <Button
+              size="sm"
+              className="h-8 text-xs font-semibold bg-[#c2185b] text-white hover:bg-[#a9144e] gap-1 px-3 rounded-lg"
+              disabled={bulkCopyLoading}
+              onClick={() => void openBulkCopyWorkspaceModal()}
+            >
+              {bulkCopyLoading ? 'Đang mở...' : `Sao chép báo giá (${selectedQuoteIds.size})`}
+            </Button>
+          </div>
+        </div>
+      ) : null}
+
       {/* Main Table Area */}
       <div className="bg-white border border-slate-200/90 rounded-xl shadow-2xs overflow-hidden">
         <div className="overflow-x-auto">
         <table className="w-full text-xs text-left border-collapse">
           <thead className="bg-slate-50/70 text-[11px] uppercase text-slate-500 font-semibold tracking-wide border-b border-slate-200">
             <tr>
+              {isAdminUser ? <th className="py-3 px-3 w-8 text-center"></th> : null}
               <th className="py-3 px-3 w-8 text-center"></th>
               <th className="py-3 px-3">BÁO GIÁ / VERSION</th>
               <th className="py-3 px-3">DỰ ÁN</th>
@@ -326,13 +412,13 @@ export function CustomerQuotesTab({
           <tbody className="divide-y divide-slate-100">
             {loading ? (
               <tr>
-                <td colSpan={11 + visibleQuoteColumns.size} className="py-8 text-center text-slate-500 font-medium">
+                <td colSpan={(isAdminUser ? 12 : 11) + visibleQuoteColumns.size} className="py-8 text-center text-slate-500 font-medium">
                   Đang tải danh sách báo giá...
                 </td>
               </tr>
             ) : filteredChains.length === 0 ? (
               <tr>
-                <td colSpan={11 + visibleQuoteColumns.size} className="py-8 text-center text-slate-400 font-medium">
+                <td colSpan={(isAdminUser ? 12 : 11) + visibleQuoteColumns.size} className="py-8 text-center text-slate-400 font-medium">
                   {quoteProjectFilter || search ? 'Không tìm thấy báo giá nào phù hợp với bộ lọc.' : 'Chưa có báo giá liên quan.'}
                 </td>
               </tr>
@@ -371,6 +457,19 @@ export function CustomerQuotesTab({
                       className="border-b border-slate-100 hover:bg-slate-50/80 transition-colors cursor-pointer group"
                       onClick={() => void viewQuoteInNewWorkspace(current)}
                     >
+                      {/* Checkbox chon nhieu bao gia (2026-10-03) - chi admin,
+                       * luon chon theo current.id (phien ban MOI NHAT, khong
+                       * phai 1 version cu nam trong sub-row expand). */}
+                      {isAdminUser ? (
+                        <td className="py-3 px-3 text-center" onClick={e => e.stopPropagation()}>
+                          <input
+                            type="checkbox"
+                            checked={selectedQuoteIds.has(current.id)}
+                            onChange={() => toggleQuoteSelection(current.id)}
+                          />
+                        </td>
+                      ) : null}
+
                       {/* Chevron expand column */}
                       <td className="py-3 px-3 text-center" onClick={e => e.stopPropagation()}>
                         {versionCount > 1 ? (
@@ -612,6 +711,26 @@ export function CustomerQuotesTab({
                                   onSelect: () => openContactAssignModal(current.deal_id!, current.quote_number || current.id, relatedDeal?.primary_contact_id),
                                 } satisfies ActionMenuItem]
                                 : []),
+                              ...(currentAuthUser?.role === 'admin'
+                                ? [
+                                  {
+                                    key: 'move_in_workspace',
+                                    label: moveQuoteLoadingId === current.id ? 'Đang mở...' : 'Di chuyển báo giá',
+                                    icon: Folder,
+                                    group: 1,
+                                    disabled: moveQuoteLoadingId === current.id,
+                                    onSelect: () => void openMoveQuoteModal(current.id),
+                                  } satisfies ActionMenuItem,
+                                  {
+                                    key: 'copy_cross_workspace',
+                                    label: copyWorkspaceLoadingId === current.id ? 'Đang mở...' : 'Copy sang workspace khác',
+                                    icon: Globe2,
+                                    group: 1,
+                                    disabled: copyWorkspaceLoadingId === current.id,
+                                    onSelect: () => void openCopyWorkspaceModal(current.id),
+                                  } satisfies ActionMenuItem,
+                                ]
+                                : []),
                               {
                                 key: 'delete',
                                 label: quoteDeleteBusy === current.id ? 'Đang xoá...' : 'Xóa',
@@ -631,7 +750,7 @@ export function CustomerQuotesTab({
                     {expanded ? (
                       expanded.loading || expanded.error || expanded.versions.length === 0 ? (
                         <tr className="bg-slate-50/50">
-                          <td colSpan={11 + visibleQuoteColumns.size} className="py-3 text-center text-slate-500 text-xs">
+                          <td colSpan={(isAdminUser ? 12 : 11) + visibleQuoteColumns.size} className="py-3 text-center text-slate-500 text-xs">
                             {expanded.loading ? 'Đang tải phiên bản cũ…' : expanded.error || 'Không có phiên bản cũ nào khác.'}
                           </td>
                         </tr>
@@ -649,6 +768,7 @@ export function CustomerQuotesTab({
                               className="bg-slate-50/40 border-b border-slate-100 hover:bg-slate-50 transition-colors cursor-pointer"
                               onClick={() => void viewQuoteInNewWorkspace({ ...current, id: version.id })}
                             >
+                              {isAdminUser ? <td className="py-2.5 px-3 text-center"></td> : null}
                               <td className="py-2.5 px-3 text-center"></td>
                               <td className="py-2.5 px-3 pl-8">
                                 <div className="text-slate-800 font-bold text-xs flex items-center gap-1.5">
@@ -789,6 +909,23 @@ export function CustomerQuotesTab({
         </div>
       </div>
     </div>
+    {copyWorkspaceQuotes ? (
+      <CopyQuoteCrossWorkspaceModal
+        quotes={copyWorkspaceQuotes}
+        onClose={() => setCopyWorkspaceQuotes(null)}
+        onCopied={() => setSelectedQuoteIds(new Set())}
+      />
+    ) : null}
+    {moveQuoteTarget ? (
+      <MoveQuoteModal
+        quote={moveQuoteTarget}
+        onClose={() => setMoveQuoteTarget(null)}
+        onMoved={() => {
+          setSelectedQuoteIds(new Set());
+          window.location.reload();
+        }}
+      />
+    ) : null}
   </div>
   );
 }

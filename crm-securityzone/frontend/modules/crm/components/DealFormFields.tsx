@@ -1201,7 +1201,46 @@ export function DealFormFields({
            * LeadDealQualificationPanel không thêm/bớt gì. Khách hàng cho deal
            * này (nếu có) đến từ prop `initialCustomer` (đã đổ sẵn vào
            * form.customerId/customerName/phone/email lúc mở modal), không
-           * còn UI để xem/sửa lại ở đây nữa. */}
+           * còn UI để xem/sửa lại ở đây nữa.
+           *
+           * Fix (2026-10-03): giả định trên chỉ đúng khi mở từ Hồ sơ khách
+           * hàng (luôn có initialCustomer -> customerLocked=true). Mở từ
+           * trang "Cơ hội" (Kanban "+ Thêm deal") KHÔNG có initialCustomer
+           * (customerLocked=false, customerName rỗng) và vốn không có UI
+           * nào để nhập - bấm Tạo deal luôn báo "Vui lòng nhập tên khách
+           * hàng" dù form đã điền đủ mọi thứ khác. Hiện lại ĐÚNG
+           * CustomerProfileCombobox đã dùng ở nhánh Sửa deal bên dưới (tái
+           * dùng y hệt, pick() của nó đã tự map Company/SĐT/Email/Nguồn và
+           * xoá Dự án/Contact cũ không còn hợp lệ) - CHỈ khi chưa bị khoá
+           * khách hàng sẵn.
+           *
+           * Thêm Dự án + Người liên hệ (feedback kế tiếp, cùng ngày): cũng
+           * tái dùng ĐÚNG ProjectPicker/ContactPicker của nhánh Sửa deal -
+           * CHỈ render được SAU khi đã có customerId (2 picker này tự khoá/
+           * rỗng khi chưa có khách hàng, xem ProjectPicker ở trên). Khác với
+           * nhánh Sửa deal: Dự án ở đây KHÔNG bắt buộc (hint "tùy chọn" thay
+           * vì required) - nhánh tạo nhanh này vẫn còn ô "Dự án" tự do trong
+           * LeadDealQualificationPanel bên dưới (ghi cùng form.dealName) nên
+           * không ép chọn lại 1 dự án có sẵn ở đây. */}
+          {!form.customerLocked ? (
+            <section className="crm-form-section">
+              <div className="crm-form-grid">
+                <Field label="Customer / Công ty" required>
+                  <CustomerProfileCombobox form={form} setValue={setValue} hideProfileUpdateToggle />
+                </Field>
+                {form.customerId ? (
+                  <>
+                    <Field label="Dự án" hint="tùy chọn — chọn có sẵn hoặc gõ tên mới">
+                      <ProjectPicker form={form} setValue={setValue} />
+                    </Field>
+                    <Field label="Người liên hệ chính" hint="tùy chọn">
+                      <ContactPicker form={form} setValue={setValue} />
+                    </Field>
+                  </>
+                ) : null}
+              </div>
+            </section>
+          ) : null}
           <LeadDealQualificationPanel
             canWrite
             interest={form.servicePackage}

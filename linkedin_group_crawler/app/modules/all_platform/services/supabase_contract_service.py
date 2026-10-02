@@ -68,6 +68,10 @@ def _row_to_contract(row: dict) -> dict:
         "source": row.get("source") or "crm",
         "fileUrl": row.get("file_url"),
         "note": row.get("note"),
+        # Migration 162 — "Hợp đồng báo giá mua/bán (Phase 1/2)" trong form
+        # Sửa Deal. NULL cho mọi hợp đồng tạo từ luồng khác (wizard CRM, Ghi
+        # nhận hợp đồng có sẵn độc lập) — không có khái niệm Phase 1/2.
+        "dealPhase": row.get("deal_phase"),
     }
 
 
@@ -209,6 +213,7 @@ def create_contract(payload: dict, created_by: str | None) -> dict:
         "source": payload.get("source") or "crm",
         "file_url": payload.get("file_url"),
         "note": payload.get("note"),
+        "deal_phase": payload.get("deal_phase"),
         "created_by": created_by,
         "updated_by": created_by,
         "instance": settings.crm_instance,

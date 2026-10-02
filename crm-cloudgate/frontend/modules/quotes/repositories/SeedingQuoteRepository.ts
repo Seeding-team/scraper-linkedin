@@ -643,6 +643,67 @@ export class SeedingQuoteRepository implements QuoteRepository {
     );
   }
 
+  // ── Copy báo giá cross-workspace (2026-10-03, Phase 1 — chỉ Admin có
+  // allowed_instances chứa workspace đích mới gọi được, backend tự chặn
+  // 403/message rõ nếu không đủ quyền, xem cross_workspace_quote_service.py). ──
+
+  async searchCrossWorkspaceCustomers(targetInstance: string, search: string) {
+    const params = new URLSearchParams({ target_instance: targetInstance, search });
+    return apiFetch<Array<{ id: string; customer_name: string; company_name?: string | null; phone?: string | null; email?: string | null }>>(
+      `/api/all-platform/quotes/cross-workspace/customers?${params.toString()}`
+    );
+  }
+
+  async createCrossWorkspaceCustomer(targetInstance: string, payload: { customer_name: string; company_name?: string; phone?: string; email?: string; tax_code?: string }) {
+    return apiFetch<{ id: string; customer_name: string }>(
+      `/api/all-platform/quotes/cross-workspace/customers`,
+      { method: 'POST', body: JSON.stringify({ targetInstance, ...payload }) }
+    );
+  }
+
+  async listCrossWorkspaceProjects(targetInstance: string, targetCustomerId: string) {
+    const params = new URLSearchParams({ target_instance: targetInstance, target_customer_id: targetCustomerId });
+    return apiFetch<Array<{ id: string; name: string; project_code?: string | null }>>(
+      `/api/all-platform/quotes/cross-workspace/projects?${params.toString()}`
+    );
+  }
+
+  async listCrossWorkspaceDeals(targetInstance: string, targetCustomerId: string, targetProjectId?: string | null) {
+    const params = new URLSearchParams({ target_instance: targetInstance, target_customer_id: targetCustomerId });
+    if (targetProjectId) params.set('target_project_id', targetProjectId);
+    return apiFetch<Array<{ id: string; customer_name?: string | null; company_name?: string | null; deal_stage?: string | null; project_id?: string | null }>>(
+      `/api/all-platform/quotes/cross-workspace/deals?${params.toString()}`
+    );
+  }
+
+  async createCrossWorkspaceDeal(targetInstance: string, targetCustomerId: string, payload: { dealName?: string; targetProjectId?: string | null; dealStage?: string }) {
+    return apiFetch<{ id: string; customer_name?: string | null; company_name?: string | null; deal_stage?: string | null; project_id?: string | null }>(
+      `/api/all-platform/quotes/cross-workspace/deals`,
+      { method: 'POST', body: JSON.stringify({ targetInstance, targetCustomerId, ...payload }) }
+    );
+  }
+
+  async listCrossWorkspaceContacts(targetInstance: string, targetCustomerId: string) {
+    const params = new URLSearchParams({ target_instance: targetInstance, target_customer_id: targetCustomerId });
+    return apiFetch<Array<{ id: string; name: string; phone?: string | null; email?: string | null }>>(
+      `/api/all-platform/quotes/cross-workspace/contacts?${params.toString()}`
+    );
+  }
+
+  async copyQuoteToWorkspace(quoteId: string, targetInstance: string, targetCustomerId: string, targetDealId: string, targetContactId?: string | null) {
+    return apiFetch<Quote>(
+      `/api/all-platform/quotes/${encodeURIComponent(quoteId)}/copy-cross-workspace`,
+      { method: 'POST', body: JSON.stringify({ targetInstance, targetCustomerId, targetDealId, targetContactId: targetContactId || null }) }
+    );
+  }
+
+  async moveQuoteInWorkspace(quoteId: string, targetCustomerId: string, targetDealId: string, targetContactId?: string | null) {
+    return apiFetch<Quote>(
+      `/api/all-platform/quotes/${encodeURIComponent(quoteId)}/move-in-workspace`,
+      { method: 'POST', body: JSON.stringify({ targetCustomerId, targetDealId, targetContactId: targetContactId || null }) }
+    );
+  }
+
   async sendQuoteEmail(quoteId: string, input: import('./QuoteRepository').SendQuoteEmailInput) {
     return apiFetch<import('./QuoteRepository').QuoteDeliveryLogEntry>(
       `/api/all-platform/quotes/${encodeURIComponent(quoteId)}/send`,

@@ -82,6 +82,7 @@ BASE_COLUMNS = (
     "warranty_expires_at, care_note, last_care_at, "
     "payment_due_date, payment_status, "
     "tags, has_budget, note, reject_reason, reject_reason_type, review_result, "
+    "purchase_contract_links, sale_contract_links, "
     "position, position_category_id, position_label_snapshot, crm_package, zalo, facebook, telegram, pause_reason, next_step, closed_at, outcome_detail, quote_id, "
     "leaded_by_name_hint, sdr_name_hint, team_id, project_id, primary_contact_id, "
     "created_at, updated_at, leader:leaded_by(name), sdr:sdr_id(name), "
@@ -490,6 +491,67 @@ def create_customer_lead(data: Dict[str, Any], actor: Dict[str, Any] | None = No
         raise e
 
 
+_DEAL_PHASE_LINK_FIELDS = {
+    "purchase_contract_links": "purchase",
+    "sale_contract_links": "sale",
+}
+
+
+def _sync_deal_phase_contracts(lead_id: str, data: Dict[str, Any], actor: Dict[str, Any] | None) -> None:
+    """"Hợp đồng báo giá mua (Phase 1)" / "bán (Phase 2)" trong form Sửa Deal
+    (CrmCustomerModal.tsx) — trước đây ghi thẳng vào 2 cột JSON
+    purchase_contract_links/sale_contract_links trên customer_leads (shadow
+    data, KHÔNG phải contracts canonical, nên tab Hợp đồng của Deal/Customer
+    360 không bao giờ thấy, phải link/ghi nhận lại lần 2).
+
+    Fix (2026-10-03, xác nhận với user: Phase 1/2 là hợp đồng với CÙNG 1
+    khách hàng, không phải Vendor — không cần vendor_id, chỉ cần tag
+    deal_phase để hiện lại đúng 2 khu vực trong form): mỗi dòng {name, url}
+    gửi lên giờ tạo/đối chiếu THẲNG vào bảng contracts (deal_id=lead_id,
+    deal_phase='purchase'|'sale', source='external' — đúng ngữ nghĩa "hợp
+    đồng đã có sẵn bên ngoài" của luồng "Ghi nhận hợp đồng có sẵn").
+
+    Dedup theo (deal_id, deal_phase, file_url) — lưu/sửa Deal nhiều lần với
+    đúng các link cũ KHÔNG tạo contract trùng, chỉ link mới thật sự mới
+    (url chưa từng thấy cho deal_phase này) mới được tạo thêm.
+
+    Gọi hàm này THAY VÌ ghi `data[field]` vào customer_leads — caller phải
+    tự pop 2 field này khỏi payload trước khi update() (xem update_customer_lead).
+    """
+    from app.modules.all_platform.services.supabase_contract_service import create_contract, list_contracts
+
+    actor_id = (actor or {}).get("id")
+    for field, phase in _DEAL_PHASE_LINK_FIELDS.items():
+        if field not in data:
+            continue
+        links = data.get(field) or []
+        rows = [
+            {"name": (item.get("name") or "").strip() or None, "url": (item.get("url") or "").strip()}
+            for item in links
+            if isinstance(item, dict) and (item.get("url") or "").strip()
+        ]
+        if not rows:
+            continue
+        existing = [
+            c for c in list_contracts(deal_id=lead_id) if c.get("dealPhase") == phase
+        ]
+        existing_urls = {c.get("fileUrl") for c in existing if c.get("fileUrl")}
+        for row in rows:
+            if row["url"] in existing_urls:
+                continue
+            create_contract(
+                {
+                    "deal_id": lead_id,
+                    "title": row["name"] or ("Hợp đồng mua" if phase == "purchase" else "Hợp đồng bán"),
+                    "source": "external",
+                    "file_url": row["url"],
+                    "deal_phase": phase,
+                },
+                created_by=actor_id,
+            )
+            existing_urls.add(row["url"])
+
+
 def update_customer_lead(lead_id: str, data: Dict[str, Any], actor: Dict[str, Any] | None = None) -> Optional[Dict[str, Any]]:
     """
     Update thông thường (không phải stage change).
@@ -500,6 +562,13 @@ def update_customer_lead(lead_id: str, data: Dict[str, Any], actor: Dict[str, An
         validate_deal_assignment_fields(actor, data, existing=existing_for_assignment)
         supabase = get_supabase_client()
         safe_data = dict(data)
+        # Phase 1/2 contract links (xem _sync_deal_phase_contracts) — tạo
+        # thẳng contracts canonical, KHÔNG còn ghi vào 2 cột JSON cũ nữa (dù
+        # schema DB vẫn giữ cột để đọc dữ liệu legacy cho action migrate).
+        if any(f in safe_data for f in _DEAL_PHASE_LINK_FIELDS):
+            _sync_deal_phase_contracts(lead_id, safe_data, actor)
+            for f in _DEAL_PHASE_LINK_FIELDS:
+                safe_data.pop(f, None)
         # Cung logic voi create_customer_lead(): go ten Du an moi (chua co
         # project_id) -> tu tao Du an that, gan project_id vao deal.
         project_name = (safe_data.pop("project_name", None) or "").strip()
@@ -535,6 +604,30 @@ def update_customer_lead(lead_id: str, data: Dict[str, Any], actor: Dict[str, An
     except Exception as e:
         logger.error(f"Error updating customer lead {lead_id}: {e}")
         raise e
+
+
+def migrate_legacy_deal_phase_contracts(lead_id: str, actor: Dict[str, Any] | None = None) -> Dict[str, Any]:
+    """Action thủ công (nút bấm, KHÔNG tự chạy ngầm) cho deal còn dữ liệu cũ ở
+    purchase_contract_links/sale_contract_links (tạo trước khi có fix
+    _sync_deal_phase_contracts) — chuyển nốt số link còn lại sang contracts
+    canonical rồi xoá sạch 2 cột JSON cũ, dừng hẳn việc duy trì 2 nguồn.
+
+    Dùng CHUNG logic dedup với _sync_deal_phase_contracts (không tạo trùng
+    nếu đã có vài link được migrate từ trước / đã có contract cùng URL)."""
+    lead = get_customer_lead_by_id(lead_id)
+    if not lead:
+        raise ValueError("Không tìm thấy deal này")
+    legacy_payload = {
+        field: lead.get(field) for field in _DEAL_PHASE_LINK_FIELDS if lead.get(field)
+    }
+    if not legacy_payload:
+        return {"migrated": 0}
+    _sync_deal_phase_contracts(lead_id, legacy_payload, actor)
+    supabase = get_supabase_client()
+    supabase.table("customer_leads").update(
+        {field: [] for field in legacy_payload}
+    ).eq("id", lead_id).eq("instance", settings.crm_instance).execute()
+    return {"migrated": sum(len(v) for v in legacy_payload.values())}
 
 
 # ---------------------------------------------------------------------------
@@ -838,10 +931,16 @@ def _is_test_account(email: str, name: str) -> bool:
 
 
 def get_all_sdrs() -> List[Dict[str, Any]]:
-    """Danh sach nguoi co the gan lam Quan ly / Phu trach deal CRM.
+    """Danh sach nguoi co the gan lam Quan ly (Nguoi lead) / Phu trach
+    (Nguoi xu ly - SDR) cho 1 Deal CRM.
 
-    Lay tat ca admin/leader that, loai tru cac acc test/dev/demo tao rieng
-    de test local (vd devadmin@markee.vn, leader@markee.test, admin123@gmail.com).
+    Feedback (2026-10-03): dropdown truoc day CHI lay role admin/leader, bo
+    sot het Sale/Presale (quote_business_role='sale'/'presale'/'both', KHAC
+    cot `role` - 1 Sale/Presale thuong co role='member') - nguoi dang la
+    Sale/Presale khong thay ten minh trong danh sach. Gop ca 2 nhom bang
+    .or_() (admin/leader theo `role`, HOAC co quote_business_role) roi loai
+    trung (1 admin/leader co the dong thoi co quote_business_role). Van loai
+    tru acc test/dev/demo nhu cu.
     """
     try:
         # Xem giai thich trong get_all_customer_leads() o tren - xay LAI
@@ -851,14 +950,31 @@ def get_all_sdrs() -> List[Dict[str, Any]]:
             supabase = get_supabase_client()
             return (
                 supabase.table("app_users")
-                .select("id, name, email, role")
-                .in_("role", ["admin", "leader"])
+                .select("id, name, email, role, quote_business_role")
+                .or_("role.in.(admin,leader),quote_business_role.in.(sale,presale,both)")
                 .execute()
             )
 
         res = execute_supabase_query(_run)
         users = [u for u in (res.data or []) if not _is_test_account(u.get("email"), u.get("name"))]
-        return [{"id": u["id"], "name": u["name"], "role": u["role"]} for u in users]
+        result = []
+        for u in users:
+            role = u.get("role")
+            biz_role = (u.get("quote_business_role") or "").strip().lower()
+            # Nhan hien thi: giu nguyen "admin"/"leader" (quyen he thong cao
+            # hon, uu tien hien thi); nguoi KHONG phai admin/leader (thuong
+            # role='member') thi hien Sale/Presale/ca 2 thay vi "member" vo
+            # nghia - day moi la thong tin nguoi dung can de nhan ra nhau.
+            if role in ("admin", "leader"):
+                label = role
+            elif biz_role == "both":
+                label = "sale/presale"
+            elif biz_role in ("sale", "presale"):
+                label = biz_role
+            else:
+                label = role
+            result.append({"id": u["id"], "name": u["name"], "role": label})
+        return result
     except Exception as e:
         logger.error(f"Error getting SDRs: {e}")
         return []

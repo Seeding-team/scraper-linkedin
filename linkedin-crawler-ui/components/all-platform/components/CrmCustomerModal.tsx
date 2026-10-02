@@ -20,7 +20,9 @@ import {
 import { toast } from "sonner";
 import { CurrencyInput } from "@/components/CurrencyInput";
 import { useCrmCategoryCodeOptions, useCrmCategoryLabels } from "@/modules/crm/components/CrmCategorySelect";
+import { SearchableSelect } from "@/modules/crm/components/SearchableSelect";
 import { seedingCrmRepository } from "@/modules/crm/repositories/SeedingCrmRepository";
+import { seedingContractRepository } from "@/modules/contracts/repositories/SeedingContractRepository";
 import { projectsService, type Project } from "@/services/all-platform.service";
 
 interface CrmCustomerModalProps {
@@ -165,6 +167,13 @@ export function CrmCustomerModal({
   const [formData, setFormData] = useState<Partial<Customer>>(emptyForm());
   // key = `${field}-${index}` của dòng hợp đồng/báo giá đang upload (Vấn đề 2).
   const [uploadingLinkKey, setUploadingLinkKey] = useState<string | null>(null);
+  // Action "Chuyển sang hợp đồng chính thức" (migrate legacy -> contracts
+  // canonical) - chỉ hiện khi record này còn purchase_contract_links/
+  // sale_contract_links cũ CHƯA migrate (xem useEffect load contracts bên
+  // dưới). `legacyMigrated` tắt banner ngay sau khi bấm thành công, không
+  // cần đợi đóng/mở lại modal.
+  const [migratingLegacy, setMigratingLegacy] = useState(false);
+  const [legacyMigrated, setLegacyMigrated] = useState(false);
   const [contacts, setContacts] = useState<Array<{ id: string; name: string }>>([]);
   // "Dự án" (feedback leader, WIP full-flow man Xac minh Lead + man nay) -
   // truoc day modal nay hoan toan khong co field Du an nao du Customer.project_id
@@ -191,6 +200,7 @@ export function CrmCustomerModal({
 
   useEffect(() => {
     if (!isOpen) return;
+    setLegacyMigrated(false);
 
     if (customer) {
       setFormData({ ...customer });
@@ -208,6 +218,35 @@ export function CrmCustomerModal({
     // Leaders pool: cùng nguồn với SDRs (admin/leader). Tách riêng state chỉ
     // cho semantic rõ ràng — nếu sau này tách bảng leaders thì không phải sửa UI.
     customerLeadService.getSdrs().then(setLeaders).catch(() => {});
+
+    // Hợp đồng báo giá mua/bán (Phase 1/2) — từ fix 2026-10-03, các link mới
+    // được lưu THẲNG vào contracts canonical (deal_phase='purchase'|'sale'),
+    // KHÔNG còn ghi vào customer.purchase_contract_links/sale_contract_links
+    // nữa. Mở form sửa phải đọc lại đúng nguồn mới này để thấy các link vừa
+    // lưu lần trước — chỉ override khi deal đó ĐÃ có ít nhất 1 contract gắn
+    // phase tương ứng, giữ nguyên fallback hiện field cũ (legacy, chưa
+    // migrate) khi chưa có gì canonical cho phase đó (tránh làm "biến mất"
+    // dữ liệu cũ của những deal chưa ai sửa lại từ khi có fix này).
+    if (customer?.id) {
+      seedingContractRepository
+        .getContracts({ dealId: customer.id })
+        .then((contracts) => {
+          const toLinks = (phase: "purchase" | "sale") =>
+            contracts
+              .filter((c) => c.dealPhase === phase)
+              .map((c) => ({ name: c.title, url: c.fileUrl || "" }));
+          const purchaseLinks = toLinks("purchase");
+          const saleLinks = toLinks("sale");
+          if (purchaseLinks.length || saleLinks.length) {
+            setFormData((prev) => ({
+              ...prev,
+              ...(purchaseLinks.length ? { purchase_contract_links: purchaseLinks } : {}),
+              ...(saleLinks.length ? { sale_contract_links: saleLinks } : {}),
+            }));
+          }
+        })
+        .catch(() => {});
+    }
   }, [isOpen, customer, defaultConvId, defaultCustomerName, defaultSourcePlatform]);
 
   // Danh sach Contact cho dropdown "Người liên hệ chính" - PHAI loc dung
@@ -322,6 +361,34 @@ export function CrmCustomerModal({
     resolvedSdrId || !currentSdrName || sdrs.some((item) => normalizeUserName(item.name) === normalizeUserName(currentSdrName))
       ? sdrs
       : [{ id: `current-sdr-${customer?.id ?? "new"}`, name: currentSdrName, role: "SDR" }, ...sdrs];
+
+  // Còn link hợp đồng mua/bán cũ (legacy, tạo trước fix 2026-10-03) chưa
+  // migrate sang contracts canonical - chỉ dựa vào `customer` gốc (không
+  // phải formData, vì formData đã bị useEffect ở trên ghi đè bằng canonical
+  // nếu có) để quyết định có hiện banner migrate hay không.
+  const hasLegacyContractLinks =
+    !legacyMigrated &&
+    Boolean((customer?.purchase_contract_links?.length ?? 0) > 0 || (customer?.sale_contract_links?.length ?? 0) > 0);
+
+  const handleMigrateLegacyContracts = async () => {
+    if (!customer?.id) return;
+    setMigratingLegacy(true);
+    try {
+      const { migrated } = await customerLeadService.migrateLegacyContracts(customer.id);
+      toast.success(migrated > 0 ? `Đã chuyển ${migrated} link sang hợp đồng chính thức` : "Không có link nào cần chuyển");
+      setLegacyMigrated(true);
+      const contracts = await seedingContractRepository.getContracts({ dealId: customer.id });
+      setFormData((prev) => ({
+        ...prev,
+        purchase_contract_links: contracts.filter((c) => c.dealPhase === "purchase").map((c) => ({ name: c.title, url: c.fileUrl || "" })),
+        sale_contract_links: contracts.filter((c) => c.dealPhase === "sale").map((c) => ({ name: c.title, url: c.fileUrl || "" })),
+      }));
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Chuyển hợp đồng cũ thất bại");
+    } finally {
+      setMigratingLegacy(false);
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -829,6 +896,22 @@ export function CrmCustomerModal({
                   </select>
                 </div>
 
+                {hasLegacyContractLinks ? (
+                  <div className="col-span-2 flex items-center justify-between gap-3 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2">
+                    <p className="text-xs text-amber-800">
+                      Deal này còn link hợp đồng cũ chưa được liên kết với hồ sơ Hợp đồng chính thức — tab "Hợp đồng" sẽ chưa thấy các link này.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={handleMigrateLegacyContracts}
+                      disabled={migratingLegacy}
+                      className="shrink-0 rounded-md bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-700 disabled:opacity-50"
+                    >
+                      {migratingLegacy ? "Đang chuyển..." : "Chuyển sang hợp đồng chính thức"}
+                    </button>
+                  </div>
+                ) : null}
+
                 {/* ── Hợp đồng & báo giá (Vấn đề 2): tách Phase 1 mua / Phase 2 bán,
                        mỗi bên nhiều link + upload file trực tiếp tại đây ── */}
                 <div className="col-span-2 rounded-lg border border-slate-200 bg-white p-3">
@@ -1023,18 +1106,13 @@ export function CrmCustomerModal({
                   <label className="block text-xs font-semibold text-slate-600 mb-1">
                     Người lead
                   </label>
-                  <select
+                  <SearchableSelect
                     value={resolvedLeaderId}
-                    onChange={(e) => set("leaded_by", e.target.value || null)}
-                    className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-red-500/30 focus:border-red-500 text-sm bg-white"
-                  >
-                    <option value="">-- Chưa gán --</option>
-                    {leaderOptions.map((u) => (
-                      <option key={u.id} value={u.id}>
-                        {u.name}{u.role ? ` (${u.role})` : ""}
-                      </option>
-                    ))}
-                  </select>
+                    onChange={(v) => set("leaded_by", v || null)}
+                    options={leaderOptions.map((u) => ({ value: u.id, label: `${u.name}${u.role ? ` (${u.role})` : ""}` }))}
+                    placeholder="-- Chưa gán --"
+                    searchPlaceholder="Tìm tên..."
+                  />
                   {!resolvedLeaderId && currentLeaderName && (
                     <p className="mt-1 text-[11px] text-slate-500">Hiện tại: {currentLeaderName}</p>
                   )}
@@ -1045,18 +1123,13 @@ export function CrmCustomerModal({
                   <label className="block text-xs font-semibold text-slate-600 mb-1">
                     Người xử lý (SDR)
                   </label>
-                  <select
+                  <SearchableSelect
                     value={resolvedSdrId}
-                    onChange={(e) => set("sdr_id", e.target.value || null)}
-                    className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-red-500/30 focus:border-red-500 text-sm bg-white"
-                  >
-                    <option value="">-- Chưa giao --</option>
-                    {sdrOptions.map((s) => (
-                      <option key={s.id} value={s.id}>
-                        {s.name}{s.role ? ` (${s.role})` : ""}
-                      </option>
-                    ))}
-                  </select>
+                    onChange={(v) => set("sdr_id", v || null)}
+                    options={sdrOptions.map((s) => ({ value: s.id, label: `${s.name}${s.role ? ` (${s.role})` : ""}` }))}
+                    placeholder="-- Chưa giao --"
+                    searchPlaceholder="Tìm tên..."
+                  />
                   {!resolvedSdrId && currentSdrName && (
                     <p className="mt-1 text-[11px] text-slate-500">Hiện tại: {currentSdrName}</p>
                   )}
