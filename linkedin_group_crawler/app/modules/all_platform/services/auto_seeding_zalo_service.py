@@ -136,6 +136,7 @@ async def maybe_send_zalo_consult(
             comment_id,
             {
                 "zalo_status": "sent",
+                "zalo_error": None,  # xoá lỗi lần thử trước (nếu retry sau khi từng failed)
                 "zalo_message_content": message,
                 "zalo_conversation_id": uid,
                 "zalo_sent_at": "now()",
