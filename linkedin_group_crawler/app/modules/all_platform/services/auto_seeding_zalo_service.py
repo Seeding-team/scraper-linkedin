@@ -100,7 +100,10 @@ async def maybe_send_zalo_consult(
 
     try:
         user = await find_zca_user_by_phone(auth, contact_phone)
-        uid = str((user or {}).get("userId") or "")
+        # Raw response zca-js dùng field "uid"/"display_name"/"zalo_name"/"avatar" (snake_case),
+        # KHÔNG PHẢI "userId"/"displayName"/"zaloName"/"avatarUrl" - bug phát hiện 2026-10-02
+        # (xem cùng fix ở conversations.py find_zalo_user) - giữ cả 2 tên để phòng hờ đổi shape.
+        uid = str((user or {}).get("uid") or (user or {}).get("userId") or (user or {}).get("id") or "")
         if not uid:
             await _update(comment_id, {"zalo_status": "failed", "zalo_error": "Không tìm thấy user Zalo với SĐT này."})
             return
@@ -113,7 +116,13 @@ async def maybe_send_zalo_consult(
         try:
             from app.modules.all_platform.zalo.services.supabase_service import upsert_group
 
-            display_name = (user or {}).get("displayName") or (user or {}).get("zaloName") or uid
+            display_name = (
+                (user or {}).get("display_name")
+                or (user or {}).get("displayName")
+                or (user or {}).get("zalo_name")
+                or (user or {}).get("zaloName")
+                or uid
+            )
             await upsert_group(
                 user_id=_ZALO_SENDER_ACCOUNT_ID,
                 group_id=uid,

@@ -1597,7 +1597,6 @@ async def find_zalo_user(
     q: str = Query(..., min_length=8, max_length=32, description="SĐT VN (08x/09x...) hoặc username Zalo"),
     by: str = Query("phone", pattern="^(phone|username)$", description="Loại tìm kiếm: phone | username"),
     account_id: Optional[str] = Query(None),
-    debug_raw: bool = Query(False, description="TẠM THỜI (2026-10-02): trả nguyên văn response ZCA thay vì raise 404, để chẩn đoán lỗi findUser-by-phone trả về rỗng dù SĐT có thật."),
     x_user_id: str = Header("default", alias="X-User-ID"),
 ):
     """Tìm một user Zalo bằng SĐT (E.164) hoặc username.
@@ -1629,8 +1628,6 @@ async def find_zalo_user(
         except ZcaAuthExpiredError:
             raise HTTPException(status_code=401, detail=ZCA_SESSION_EXPIRED_DETAIL)
         except RuntimeError as exc:
-            if debug_raw:
-                return {"debug": True, "exception": "RuntimeError", "detail": str(exc), "phone_e164": e164, "phone_sent_to_zca": e164.lstrip("+")}
             err = str(exc).lower()
             # ZCA thường trả lỗi -111 hoặc "user not found" khi SĐT không có Zalo.
             if "-111" in err or "not found" in err or "không tìm" in err:
@@ -1658,19 +1655,23 @@ async def find_zalo_user(
                 )
             raise HTTPException(status_code=500, detail=f"findUserByUsername thất bại: {exc}")
 
-    if not user or not user.get("userId"):
-        if debug_raw:
-            return {"debug": True, "exception": None, "raw_user": user, "phone_e164": e164 if by == "phone" else None}
+    # QUAN TRỌNG (bug phát hiện 2026-10-02): raw response zca-js dùng field "uid" (vd
+    # {"uid": "...", "zalo_name": "...", "display_name": "...", "avatar": "..."}), KHÔNG
+    # PHẢI "userId"/"displayName"/"zaloName"/"avatarUrl" như code cũ ở đây check - khiến
+    # MỌI lần tìm đều báo "không tìm thấy" dù ZCA trả về user thật hợp lệ. Giữ cả 2 tên để
+    # phòng hờ response shape đổi (giống automation_worker.py đã làm đúng từ trước).
+    user_id_zalo_raw = user.get("uid") or user.get("userId") or user.get("id")
+    if not user or not user_id_zalo_raw:
         raise HTTPException(
             status_code=404,
             detail="Không tìm thấy user Zalo. Có thể user đã tắt nhận tin nhắn từ người lạ.",
         )
 
-    user_id_zalo = str(user.get("userId"))
+    user_id_zalo = str(user_id_zalo_raw)
     return {
         "user_id": user_id_zalo,
-        "display_name": user.get("displayName") or user.get("zaloName") or user_id_zalo,
-        "zalo_name": user.get("zaloName") or None,
+        "display_name": user.get("display_name") or user.get("displayName") or user.get("zalo_name") or user.get("zaloName") or user_id_zalo,
+        "zalo_name": user.get("zalo_name") or user.get("zaloName") or None,
         "avatar_url": user.get("avatar") or user.get("avatarUrl") or None,
         "phone_e164": e164 if by == "phone" else None,
         "raw": user,
