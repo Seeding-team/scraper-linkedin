@@ -472,17 +472,23 @@ async def remove_zca_unread_mark(
 async def find_zca_user_by_phone(auth: Dict[str, Any], phone_e164: str) -> Dict[str, Any]:
     """Gọi zca-js findUser(phone). Trả về dict user hoặc raise RuntimeError.
 
-    Số điện thoại phải ở dạng E.164 (vd: +84939108906). Dùng ``app.core.phone.vn_phone_to_e164``
-    để chuẩn hoá trước khi gọi.
+    Nhận số điện thoại dạng E.164 (vd: +84939108906, từ ``app.core.phone.vn_phone_to_e164``)
+    nhưng BỎ DẤU '+' trước khi gọi xuống zca-js — hàm ``findUser`` của zca-js
+    (vendor/zca-js/dist/apis/findUser.js) chỉ tự convert input bắt đầu bằng '0' sang '84...',
+    còn lại gửi NGUYÊN VĂN cho API Zalo. Giữ dấu '+' (vd "+84939108906") khiến tham số
+    `phone` gửi lên Zalo sai định dạng Zalo thực sự chấp nhận ("84939108906", không '+') -> Zalo
+    luôn trả "không tìm thấy" dù số đó CÓ đăng ký Zalo thật (bug phát hiện 2026-10-02, số đã
+    test tìm được bằng tay qua app Zalo nhưng API báo not-found).
 
     Raises:
         RuntimeError: khi ZCA trả lỗi (user không tồn tại, không nhận tin từ người lạ, rate limit...)
         ZcaAuthExpiredError: khi session Zalo đã hết hạn.
     """
+    phone_for_zca = (phone_e164 or "").lstrip("+")
     result = await _run_zca_command(
         "find-user-by-phone",
         auth,
-        args=["--phone", phone_e164],
+        args=["--phone", phone_for_zca],
         timeout_seconds=30,
     )
     return result.get("user") or {}
