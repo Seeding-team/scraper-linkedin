@@ -110,6 +110,11 @@ def require_sync_api_key(
     return x_sync_api_key
 
 
+def is_web_intake_user(_user: dict[str, Any] | None) -> bool:
+    """CRM clones do not include Web Intake; keep quote router compatibility as a no-op."""
+    return False
+
+
 async def require_admin_ws(websocket, authorization: str | None = None) -> dict[str, Any] | None:
     """Bản cho WebSocket — không raise HTTPException (không áp dụng được), tự đóng
     connection với close code 4403 nếu thiếu quyền. Trả None nếu đã đóng — caller

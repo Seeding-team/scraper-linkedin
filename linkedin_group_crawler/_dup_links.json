@@ -1,0 +1,43 @@
+{
+  "d9879702-9f31-45f7-a2ed-ab1b00fc00c7": {
+    "deals": [
+      {
+        "id": "acadf435-8c60-41dc-807b-6d456240f116",
+        "customer_name": "Phan Văn Vũ",
+        "deal_stage": "new_lead",
+        "estimated_budget": 50000000,
+        "quote_id": "1fdb8f74-971b-4795-9699-2dc867d2246a"
+      }
+    ],
+    "contacts": [
+      {
+        "id": "e7607191-5366-42ec-8129-2174f7aa7cff",
+        "name": "Phan Văn Vũ"
+      }
+    ],
+    "contracts": []
+  },
+  "3d793519-3790-4e60-b3c9-2a0366d831a8": {
+    "deals": [
+      {
+        "id": "2af7b1b9-8e28-486b-972b-f60b31512105",
+        "customer_name": "DENFOOD",
+        "deal_stage": "requirement",
+        "estimated_budget": 59840000.0,
+        "quote_id": "f8dc6aaa-1a43-404e-815b-f0a4e9b68485"
+      }
+    ],
+    "contacts": [],
+    "contracts": []
+  },
+  "03d9a226-8d2d-4643-a0f6-c0156aa3c187": {
+    "deals": [],
+    "contacts": [],
+    "contracts": []
+  },
+  "1f6aa85a-5461-484c-ac72-af11c8e078f6": {
+    "deals": [],
+    "contacts": [],
+    "contracts": []
+  }
+}
