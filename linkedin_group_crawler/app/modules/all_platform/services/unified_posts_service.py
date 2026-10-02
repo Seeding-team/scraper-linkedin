@@ -349,7 +349,8 @@ def _attach_auto_seeding_comments(sb, posts: list[dict]) -> None:
             sb.table("auto_seeding_comments")
             .select(
                 "id_post_fb, comment_content, status, posted_at, link_comment, need_category, "
-                "phone_number, zalo_status, zalo_message_content, zalo_sent_at"
+                "phone_number, zalo_status, zalo_message_content, zalo_sent_at, zalo_conversation_id, "
+                "zalo_error"
             )
             .in_("id_post_fb", post_ids)
             .execute()
@@ -371,6 +372,8 @@ def _attach_auto_seeding_comments(sb, posts: list[dict]) -> None:
                 "zalo_status": row.get("zalo_status"),
                 "zalo_message_content": row.get("zalo_message_content"),
                 "zalo_sent_at": row.get("zalo_sent_at"),
+                "zalo_conversation_id": row.get("zalo_conversation_id"),
+                "zalo_error": row.get("zalo_error"),
             }
 
 

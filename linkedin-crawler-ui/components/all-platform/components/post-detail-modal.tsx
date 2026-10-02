@@ -41,7 +41,7 @@ export function PostDetailModal({
     return Array.from(groups.values());
   }, [fallbackItems, libraryItems]);
 
-  const isRejected = (link?: string) => {
+  const isRejected = (link?: string | null) => {
     return link && link.startsWith("Bị từ chối");
   };
 
@@ -198,9 +198,9 @@ export function PostDetailModal({
               <p className="text-sm text-foreground whitespace-pre-wrap leading-relaxed italic border-l-4 border-sky-300 pl-3 py-1">
                 {post.auto_seeding_comment.content}
               </p>
-              {post.auto_seeding_comment.link_comment && !isRejected(post.auto_seeding_comment.link_comment) && (
+              {!isRejected(post.auto_seeding_comment.link_comment) && (
                 <div className="mt-3">
-                  <a href={post.auto_seeding_comment.link_comment} target="_blank" rel="noopener noreferrer" className="text-sm font-medium text-blue-600 hover:underline inline-flex items-center gap-1.5 bg-card px-3 py-1.5 rounded-lg border border-blue-100 shadow-sm transition hover:shadow">
+                  <a href={post.auto_seeding_comment.link_comment || post.post_url} target="_blank" rel="noopener noreferrer" className="text-sm font-medium text-blue-600 hover:underline inline-flex items-center gap-1.5 bg-card px-3 py-1.5 rounded-lg border border-blue-100 shadow-sm transition hover:shadow">
                     <FiExternalLink className="w-4 h-4" /> Đi tới bình luận trên Facebook
                   </a>
                 </div>
@@ -208,9 +208,24 @@ export function PostDetailModal({
               {!post.auto_seeding_comment.phone_number ? (
                 <div className="text-xs font-semibold text-amber-600 mt-3">📩 Cần inbox thêm với khách hàng (bài không có SĐT liên hệ)</div>
               ) : post.auto_seeding_comment.zalo_status === "sent" ? (
-                <div className="text-xs font-semibold text-emerald-600 mt-3">✅ Hệ thống đã nhắn tin tư vấn với khách (Zalo {post.auto_seeding_comment.phone_number})</div>
+                <div className="flex items-center gap-2 flex-wrap mt-3">
+                  <span className="text-xs font-semibold text-emerald-600">✅ Hệ thống đã nhắn tin tư vấn với khách (Zalo {post.auto_seeding_comment.phone_number})</span>
+                  {post.auto_seeding_comment.zalo_conversation_id && (
+                    <a
+                      href={`/all-platform/zalo-inbox?conv=${encodeURIComponent(post.auto_seeding_comment.zalo_conversation_id)}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-xs font-medium text-blue-600 hover:underline inline-flex items-center gap-1"
+                    >
+                      Xem hộp thoại <FiExternalLink className="w-3 h-3" />
+                    </a>
+                  )}
+                </div>
               ) : post.auto_seeding_comment.zalo_status === "failed" ? (
-                <div className="text-xs font-semibold text-red-600 mt-3">⚠️ Tìm thấy SĐT {post.auto_seeding_comment.phone_number} nhưng chưa nhắn được qua Zalo — cần inbox thủ công</div>
+                <div className="text-xs font-semibold text-red-600 mt-3">
+                  ⚠️ Tìm thấy SĐT {post.auto_seeding_comment.phone_number} nhưng chưa nhắn được qua Zalo
+                  {post.auto_seeding_comment.zalo_error ? ` (${post.auto_seeding_comment.zalo_error})` : ""} — cần inbox thủ công
+                </div>
               ) : null}
             </div>
           )}

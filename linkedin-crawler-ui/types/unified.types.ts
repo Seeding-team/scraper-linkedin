@@ -78,6 +78,10 @@ export interface UnifiedPost {
     zalo_status?: "sent" | "failed" | string | null;
     zalo_message_content?: string | null;
     zalo_sent_at?: string | null;
+    /** uid Zalo của khách — dùng để mở thẳng hội thoại trong trang Zalo Inbox. */
+    zalo_conversation_id?: string | null;
+    /** Lý do cụ thể khi zalo_status='failed' (vd "SĐT chưa đăng ký Zalo", "phiên hết hạn"...). */
+    zalo_error?: string | null;
   } | null;
 }
 

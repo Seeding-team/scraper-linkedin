@@ -26,6 +26,12 @@ logger = get_logger(__name__)
 
 _NEED_CATEGORIES = ("website", "app", "landing_page", "software", "other")
 
+# An toan (yeu cau 2026-10-02: "dam bao AI khong de so dien thoai Markee"): chan cung cac
+# so dien thoai CUA CHINH CONG TY (tai khoan Zalo dung de seeding/tu van, KHONG BAO GIO la
+# so khach hang that) - phong truong hop LLM hallucinate/nham lan tra lai chinh so cua minh,
+# tranh he thong tu nhan tin cho chinh minh thay vi cho khach. Cap nhat neu them so cong ty moi.
+_OWN_COMPANY_PHONES_E164 = {"+84765055708", "+84902355083"}  # Markee, CloudGate
+
 _SYSTEM_PROMPT = (
     "Bạn là trợ lý sales cho 1 đơn vị làm website/app/landing page. Đọc 1 bài đăng mạng xã "
     "hội (Facebook/LinkedIn/Threads) và chấm điểm mức độ đây có phải LEAD TIỀM NĂNG hay không "
@@ -131,6 +137,12 @@ async def score_text_for_lead(content: str) -> Optional[dict[str, Any]]:
             # (co the con khoang trang/dau cham), va loai bo neu LLM tra ve chuoi khong phai
             # SDT VN hop le (tranh goi Zalo API voi gia tri rac).
             contact_phone = vn_phone_to_e164(parsed.get("contact_phone"))
+            if contact_phone in _OWN_COMPANY_PHONES_E164:
+                logger.warning(
+                    f"lead_score: LLM trả về số điện thoại CỦA CHÍNH CÔNG TY ({contact_phone}) "
+                    f"làm contact_phone - loại bỏ, không bao giờ tự nhắn tin cho chính mình."
+                )
+                contact_phone = None
             return {
                 "score": score,
                 "reason": reason,

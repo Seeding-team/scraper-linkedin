@@ -73,6 +73,9 @@ async def retry_zalo_endpoint(comment_id: str, payload: RetryZaloRequest) -> Bas
     e164 = vn_phone_to_e164(payload.contact_phone)
     if not e164:
         return BaseResponse(success=False, message="SĐT không hợp lệ.")
+    from app.modules.all_platform.services.lead_score_service import _OWN_COMPANY_PHONES_E164
+    if e164 in _OWN_COMPANY_PHONES_E164:
+        return BaseResponse(success=False, message="Đây là số điện thoại CỦA CHÍNH CÔNG TY (Markee/CloudGate) — không được nhắn tin cho chính mình.")
     try:
         supabase = get_supabase_client()
         existing = supabase.table("auto_seeding_comments").select("need_category").eq("id", comment_id).limit(1).execute()
