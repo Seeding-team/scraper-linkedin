@@ -88,6 +88,14 @@ export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onVi
   const isHighLead = leadScore !== null && leadScore >= 70;
   const isMidLead = leadScore !== null && leadScore >= 31 && leadScore < 70;
 
+  // Né bong bóng "Đã seeding bởi Seeding System (Tài khoản: Unknown)" bị trùng với bong
+  // bóng "Hệ thống (tự động)" bên dưới — cả 2 ghi lại CÙNG 1 hành động (roster cũ theo
+  // email_member vs bảng auto_seeding_comments mới), chỉ giữ bong bóng mới cho sạch
+  // (yêu cầu 2026-10-02). Nhận diện bằng nội dung trùng khớp, không hardcode tên tài khoản.
+  const autoSeedingText = post.auto_seeding_comment?.content;
+  const visibleAllSeedings = (post.all_seedings || []).filter((s) => s.seeding_content !== autoSeedingText);
+  const seedingContentIsAuto = !!autoSeedingText && post.seeding_content === autoSeedingText;
+
   return (
     <div
       className={cn(
@@ -174,9 +182,9 @@ export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onVi
         </p>
 
 
-        {(userRole === "admin" || userRole === "leader") && post.all_seedings && post.all_seedings.length > 0 ? (
+        {(userRole === "admin" || userRole === "leader") && visibleAllSeedings.length > 0 ? (
           <div className="mb-3 flex flex-col gap-2">
-            {post.all_seedings.map((seed, idx) => (
+            {visibleAllSeedings.map((seed, idx) => (
               <div key={idx} className="px-3 py-2 bg-emerald-50/50 border border-emerald-100 rounded-lg flex flex-col gap-1">
                 <div className="flex items-center gap-1.5">
                   <span className="text-[10px] font-bold text-emerald-600">Đã seeding bởi <span className="font-bold text-foreground">{seed.member_name}</span> (Tài khoản: {seed.seeding_name || "Unknown"}):</span>
@@ -209,7 +217,7 @@ export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onVi
               </div>
             ))}
           </div>
-        ) : post.seeding_content ? (
+        ) : post.seeding_content && !seedingContentIsAuto ? (
           <div className="mb-3 px-3 py-2 bg-emerald-50/50 border border-emerald-100 rounded-lg flex flex-col gap-1">
             <div className="flex items-center gap-1.5">
               <span className="text-[10px] font-bold text-emerald-600">Đã seeding bằng tài khoản:</span>
@@ -260,6 +268,15 @@ export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onVi
                 Xem bình luận <FiExternalLink className="w-3 h-3" />
               </a>
             )}
+            {/* Nhánh Zalo tự động (migration 161): bài không có SĐT -> nhắc còn cần inbox
+                tay; có SĐT -> báo đã/chưa nhắn tin tư vấn tự động qua Zalo. */}
+            {!post.auto_seeding_comment.phone_number ? (
+              <div className="text-[10px] font-semibold text-amber-600 mt-0.5">📩 Cần inbox thêm với khách hàng (bài không có SĐT liên hệ)</div>
+            ) : post.auto_seeding_comment.zalo_status === "sent" ? (
+              <div className="text-[10px] font-semibold text-emerald-600 mt-0.5">✅ Hệ thống đã nhắn tin tư vấn với khách (Zalo {post.auto_seeding_comment.phone_number})</div>
+            ) : post.auto_seeding_comment.zalo_status === "failed" ? (
+              <div className="text-[10px] font-semibold text-red-600 mt-0.5">⚠️ Tìm thấy SĐT {post.auto_seeding_comment.phone_number} nhưng chưa nhắn được qua Zalo — cần inbox thủ công</div>
+            ) : null}
           </div>
         ) : null}
 

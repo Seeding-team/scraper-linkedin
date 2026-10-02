@@ -45,6 +45,10 @@ export function PostDetailModal({
     return link && link.startsWith("Bị từ chối");
   };
 
+  // Né hiển thị trùng với bong bóng "Hệ thống (tự động)" bên dưới (cùng 1 hành động ghi lại
+  // ở 2 nơi khác nhau — xem giải thích ở post-card.tsx).
+  const seedingContentIsAuto = !!post?.auto_seeding_comment?.content && post?.seeding_content === post.auto_seeding_comment.content;
+
   React.useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
       if (inboxRef.current && !inboxRef.current.contains(event.target as Node)) {
@@ -152,7 +156,7 @@ export function PostDetailModal({
             </div>
           ) : null}
 
-          {post.seeding_content && (
+          {post.seeding_content && !seedingContentIsAuto && (
             <div className="bg-emerald-50/50 rounded-xl border border-emerald-100 p-4 mb-6">
               <div className="flex items-center gap-2 mb-2">
                 <span className="text-xs font-bold text-emerald-700 uppercase bg-emerald-100/50 px-2 py-0.5 rounded">Tài khoản Seeding:</span>
@@ -201,6 +205,13 @@ export function PostDetailModal({
                   </a>
                 </div>
               )}
+              {!post.auto_seeding_comment.phone_number ? (
+                <div className="text-xs font-semibold text-amber-600 mt-3">📩 Cần inbox thêm với khách hàng (bài không có SĐT liên hệ)</div>
+              ) : post.auto_seeding_comment.zalo_status === "sent" ? (
+                <div className="text-xs font-semibold text-emerald-600 mt-3">✅ Hệ thống đã nhắn tin tư vấn với khách (Zalo {post.auto_seeding_comment.phone_number})</div>
+              ) : post.auto_seeding_comment.zalo_status === "failed" ? (
+                <div className="text-xs font-semibold text-red-600 mt-3">⚠️ Tìm thấy SĐT {post.auto_seeding_comment.phone_number} nhưng chưa nhắn được qua Zalo — cần inbox thủ công</div>
+              ) : null}
             </div>
           )}
 

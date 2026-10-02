@@ -66,16 +66,20 @@ async def maybe_create_auto_seeding_comment(
     content: str,
     lead_score: int,
     need_category: Optional[str],
-) -> None:
+    contact_phone: Optional[str] = None,
+) -> Optional[dict[str, Any]]:
     """Tạo 1 dòng auto_seeding_comments (pending) cho bài điểm cao — bỏ qua êm nếu thiếu dữ
     liệu bắt buộc hoặc đã tồn tại (UNIQUE id_post_fb). KHÔNG raise — gọi từ lead_score_service
-    trong luồng nền, lỗi ở đây không được làm hỏng việc chấm điểm/lưu bài."""
+    trong luồng nền, lỗi ở đây không được làm hỏng việc chấm điểm/lưu bài.
+
+    Trả về dòng VỪA TẠO (để lead_score_service biết id mà trigger nhắn Zalo tiếp, migration
+    161), hoặc None nếu bỏ qua (thiếu dữ liệu / đã tồn tại từ trước - không trigger lại)."""
     if not id_post_fb or not post_url:
-        return
+        return None
     try:
         supabase = get_supabase_client()
         comment_content = _build_comment(need_category)
-        await _insert(
+        row = await _insert(
             supabase,
             {
                 "id_post_fb": id_post_fb,
@@ -85,19 +89,23 @@ async def maybe_create_auto_seeding_comment(
                 "comment_content": comment_content,
                 "lead_score": lead_score,
                 "need_category": need_category,
+                "phone_number": contact_phone,
                 "status": "pending",
             },
         )
         logger.info(f"auto_seeding_comment: đã tạo nhiệm vụ comment cho bài {id_post_fb} (điểm {lead_score}, {need_category})")
+        return row
     except Exception as exc:
         # UNIQUE(id_post_fb) vi phạm nghĩa là đã có nhiệm vụ cho bài này rồi - bỏ qua êm.
         logger.info(f"auto_seeding_comment: bỏ qua bài {id_post_fb} ({exc})")
+        return None
 
 
-async def _insert(supabase, record: dict[str, Any]) -> None:
+async def _insert(supabase, record: dict[str, Any]) -> dict[str, Any]:
     import asyncio
 
-    await asyncio.to_thread(lambda: supabase.table("auto_seeding_comments").insert(record).execute())
+    res = await asyncio.to_thread(lambda: supabase.table("auto_seeding_comments").insert(record).execute())
+    return res.data[0] if res.data else {}
 
 
 def list_pending(limit: int = 50) -> list[dict]:

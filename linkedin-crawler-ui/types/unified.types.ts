@@ -72,6 +72,12 @@ export interface UnifiedPost {
     posted_at?: string | null;
     link_comment?: string | null;
     need_category?: string | null;
+    /** SĐT liên hệ LLM trích được từ bài (E.164), null nếu bài không nêu rõ (migration 161). */
+    phone_number?: string | null;
+    /** Kết quả nhắn tin Zalo tự động tới SĐT trên (null nếu không có SĐT để thử). */
+    zalo_status?: "sent" | "failed" | string | null;
+    zalo_message_content?: string | null;
+    zalo_sent_at?: string | null;
   } | null;
 }
 

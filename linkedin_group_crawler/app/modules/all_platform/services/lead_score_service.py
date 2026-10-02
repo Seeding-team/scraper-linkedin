@@ -19,6 +19,7 @@ import httpx
 
 from app.core.config import settings
 from app.core.logger import get_logger
+from app.core.phone import vn_phone_to_e164
 from app.core.supabase_client import get_supabase_client
 
 logger = get_logger(__name__)
@@ -44,10 +45,16 @@ _SYSTEM_PROMPT = (
     "\"landing_page\" (trang đích 1 trang, quảng cáo/sự kiện), \"software\" (phần mềm/hệ thống "
     "quản lý/outsource lập trình khác), \"other\" (không rõ loại cụ thể). Nếu điểm < 70, để "
     "need_category là null.\n\n"
-    "Chỉ trả về DUY NHẤT 1 object JSON hợp lệ, đúng 3 key sau, không thêm key nào khác, không "
+    "Nếu điểm >= 70 VÀ bài viết có yêu cầu rõ ràng liên hệ/inbox/nhắn tin/Zalo tới 1 SỐ ĐIỆN "
+    "THOẠI cụ thể (vd \"liên hệ Zalo 09xxxxxxxx\", \"ib số 09xxxxxxxx\", \"gọi 09xxxxxxxx tư "
+    "vấn\"), trích nguyên văn số điện thoại đó vào contact_phone. Nếu bài không có số điện "
+    "thoại nào để liên hệ, hoặc điểm < 70, để contact_phone là null. KHÔNG được bịa số nếu bài "
+    "không có.\n\n"
+    "Chỉ trả về DUY NHẤT 1 object JSON hợp lệ, đúng 4 key sau, không thêm key nào khác, không "
     "giải thích, không markdown:\n"
     '{"score": number (0-100 nguyên), "reason": string (tối đa 20 từ tiếng Việt, lý do ngắn gọn), '
-    '"need_category": string|null (1 trong 5 giá trị trên, hoặc null)}'
+    '"need_category": string|null (1 trong 5 giá trị trên, hoặc null), '
+    '"contact_phone": string|null (số điện thoại liên hệ nếu bài có nêu rõ, hoặc null)}'
 )
 
 # Gioi han so luong goi LLM dong thoi - tranh lam qua tai proxy AI dung chung voi cac
@@ -94,7 +101,7 @@ async def score_text_for_lead(content: str) -> Optional[dict[str, Any]]:
             {"role": "user", "content": content[:3000]},
         ],
         "temperature": 0.2,
-        "max_tokens": 150,
+        "max_tokens": 200,
         "response_format": {"type": "json_object"},
     }
 
@@ -120,7 +127,16 @@ async def score_text_for_lead(content: str) -> Optional[dict[str, Any]]:
             reason = str(parsed.get("reason") or "")[:200]
             need_category = parsed.get("need_category")
             need_category = need_category if need_category in _NEED_CATEGORIES else None
-            return {"score": score, "reason": reason, "need_category": need_category}
+            # Chuan hoa ve E.164 qua vn_phone_to_e164 - KHONG tin thang dinh dang LLM tra ve
+            # (co the con khoang trang/dau cham), va loai bo neu LLM tra ve chuoi khong phai
+            # SDT VN hop le (tranh goi Zalo API voi gia tri rac).
+            contact_phone = vn_phone_to_e164(parsed.get("contact_phone"))
+            return {
+                "score": score,
+                "reason": reason,
+                "need_category": need_category,
+                "contact_phone": contact_phone,
+            }
         except Exception as exc:
             last_exc = exc
             if attempt < 2:
@@ -188,7 +204,7 @@ async def score_and_save_posts(
                     from app.modules.all_platform.services.auto_seeding_comment_service import (
                         maybe_create_auto_seeding_comment,
                     )
-                    await maybe_create_auto_seeding_comment(
+                    created = await maybe_create_auto_seeding_comment(
                         id_post_fb=post_id,
                         post_url=row.get("post_url") or "",
                         group_name=group_name,
@@ -196,7 +212,20 @@ async def score_and_save_posts(
                         content=content,
                         lead_score=result["score"],
                         need_category=result.get("need_category"),
+                        contact_phone=result.get("contact_phone"),
                     )
+                    # Chi trigger Zalo khi vua TAO MOI dong auto_seeding_comments (created
+                    # khong None) - neu da ton tai tu truoc (UNIQUE id_post_fb) thi KHONG gui
+                    # lai, tranh nhan tin trung lap cho cung 1 bai (yeu cau 2026-10-02).
+                    if created and result.get("contact_phone"):
+                        from app.modules.all_platform.services.auto_seeding_zalo_service import (
+                            maybe_send_zalo_consult,
+                        )
+                        await maybe_send_zalo_consult(
+                            comment_id=created["id"],
+                            contact_phone=result["contact_phone"],
+                            need_category=result.get("need_category"),
+                        )
         except Exception as exc:
             logger.warning(f"lead_score: lưu/xoá bài {table}#{post_id} thất bại: {exc}")
 
