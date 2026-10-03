@@ -3,6 +3,14 @@
 from __future__ import annotations
 
 from app.core.supabase_client import execute_supabase_query, get_supabase_client
+from app.modules.all_platform.services.supabase_quote_service import _crm_instance
+
+# Bang social_accounts/platforms nay dung CHUNG 1 DB self-host voi app seeding
+# goc + crm-module (ca 2 ben do CUNG tenant "markee" nen dung thang, khong
+# loc instance). crm-cloudgate la tenant RIENG nen PHAI loc theo instance
+# (giong crm_leads/quotes) de khong thay tai khoan mang xa hoi cua brand
+# khac - xem migration 156_social_accounts_instance.sql. "platforms" la
+# danh muc dung chung moi brand, KHONG can instance.
 
 
 def get_social_accounts(app_user_id: str, platform: str | None = None) -> list[dict]:
@@ -12,7 +20,7 @@ def get_social_accounts(app_user_id: str, platform: str | None = None) -> list[d
         lambda: get_supabase_client().table("platforms").select("id, name").execute()
     )
     plat_map = {p["id"]: p.get("name", "").strip().lower() for p in (plat_res.data or [])}
-    
+
     target_id = None
     if platform:
         for pid, p_slug in plat_map.items():
@@ -21,15 +29,20 @@ def get_social_accounts(app_user_id: str, platform: str | None = None) -> list[d
                 break
         if target_id is None:
             return []
-            
+
     def _load_accounts():
-        query = get_supabase_client().table("social_accounts").select("*").eq("app_user_id", app_user_id)
+        query = (
+            get_supabase_client().table("social_accounts")
+            .select("*")
+            .eq("app_user_id", app_user_id)
+            .eq("instance", _crm_instance())
+        )
         if target_id is not None:
             query = query.eq("id_platform", target_id)
         return query.order("created_at", desc=True).execute()
 
     result = execute_supabase_query(_load_accounts)
-    
+
     items = result.data or []
     for item in items:
         item["platform"] = plat_map.get(item.get("id_platform"), "unknown")
@@ -44,6 +57,7 @@ def get_social_account_by_id(account_id: str, app_user_id: str) -> dict | None:
             .select("*")
             .eq("id", account_id)
             .eq("app_user_id", app_user_id)
+            .eq("instance", _crm_instance())
             .execute()
         )
     )
@@ -60,22 +74,23 @@ def get_primary_account(app_user_id: str, platform: str) -> dict | None:
         if p.get("name", "").lower() == platform:
             target_id = p["id"]
             break
-            
+
     if target_id is None:
         return None
-        
+
     result = execute_supabase_query(
         lambda: (
             get_supabase_client().table("social_accounts")
             .select("*")
             .eq("app_user_id", app_user_id)
+            .eq("instance", _crm_instance())
             .eq("id_platform", target_id)
             .eq("is_primary", True)
             .eq("is_active", True)
             .execute()
         )
     )
-    
+
     item = result.data[0] if result.data else None
     if item:
         item["platform"] = platform
@@ -108,6 +123,7 @@ def create_social_account(
 
     insert_data = {
         "app_user_id": app_user_id,
+        "instance": _crm_instance(),
         "account_name": account_name,
         "account_email": account_email,
         "account_password": account_password,
@@ -181,6 +197,7 @@ def update_social_account(
             .update(safe_updates)
             .eq("id", account_id)
             .eq("app_user_id", app_user_id)
+            .eq("instance", _crm_instance())
             .execute()
         )
     )
@@ -196,6 +213,7 @@ def delete_social_account(account_id: str, app_user_id: str) -> dict:
             .delete()
             .eq("id", account_id)
             .eq("app_user_id", app_user_id)
+            .eq("instance", _crm_instance())
             .execute()
         )
     )
@@ -214,6 +232,7 @@ def set_primary_account(account_id: str, app_user_id: str) -> dict:
             .update({"is_primary": True, "updated_at": "now()"})
             .eq("id", account_id)
             .eq("app_user_id", app_user_id)
+            .eq("instance", _crm_instance())
             .execute()
         )
     )

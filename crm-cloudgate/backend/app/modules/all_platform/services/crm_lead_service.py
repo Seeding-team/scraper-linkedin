@@ -21,11 +21,9 @@ from app.modules.all_platform.services.crm_permission_service import (
     can_write_lead,
     has_full_crm_access,
     get_scope_visible_user_ids,
+    get_crm_team_member_ids,
 )
 from app.modules.all_platform.services.crm_position_service import apply_position_category
-# "Team" = phong ban THAT trong `members` (HR roster) - dung LAI DUNG nguon
-# da chot cho module Quan ly tien do, khong tu tao nguon rieng.
-from app.modules.all_platform.services.progress_service import _user_department_map
 
 logger = logging.getLogger(__name__)
 
@@ -233,8 +231,12 @@ def list_leads(
         rows = [row for row in rows if row.get("id") in visible]
 
     if team:
-        dept_map = _user_department_map()
-        rows = [row for row in rows if dept_map.get(str(row.get("sdr_id") or "")) == team]
+        # "Team" = Team CRM THAT (crm_teams/crm_team_members, migration 155) -
+        # fix 2026-10-03 (dong bo voi crm_customer_service.py): truoc day dung
+        # phong ban HR text (members.team) thay vi Team CRM that nen dropdown
+        # "Tất cả Team" hien sai danh sach + loc sai nguoi.
+        crm_team_member_ids = get_crm_team_member_ids(team)
+        rows = [row for row in rows if str(row.get("sdr_id") or "") in crm_team_member_ids]
 
     total = len(rows)
     start = (page - 1) * page_size

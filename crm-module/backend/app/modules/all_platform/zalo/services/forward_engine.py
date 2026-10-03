@@ -6,7 +6,7 @@ CRUD dùng bởi `api/routes/forward_rules.py`. Engine (`run_forward_tick_for_ac
 được `main.py` lifespan gọi định kỳ (`FORWARD_POLL_INTERVAL_MS`, mặc định 3000ms).
 
 Cơ chế bám sát guide:
-    * Watermark cursor (`zalo_module_forward_cursor.last_message_ts`) — chỉ xử lý tin
+    * Watermark cursor (`zalo_forward_cursor.last_message_ts`) — chỉ xử lý tin
       MỚI hơn cursor, seed = now() khi mới bật rule (không xử lý lịch sử cũ).
     * Rate limit cửa sổ trượt 60s/account (`ZALO_FORWARD_MAX_PER_MIN`).
     * Batch gộp ảnh cùng album (key = account:thread:sender), flush sau
@@ -56,8 +56,8 @@ def _now_iso() -> str:
 
 async def list_forward_rules(account_id: str) -> List[Dict[str, Any]]:
     rules = await _rest(
-        "GET", "zalo_module_forward_rules",
-        params={"select": "*,zalo_module_forward_targets(*)", "account_id": f"eq.{account_id}", "order": "created_at.desc"},
+        "GET", "zalo_forward_rules",
+        params={"select": "*,zalo_forward_targets(*)", "account_id": f"eq.{account_id}", "order": "created_at.desc"},
     ) or []
     return rules
 
@@ -69,8 +69,8 @@ async def validate_no_loop(account_id: str, master_thread_id: str, target_thread
     Returns: chuỗi lỗi (nếu vi phạm) hoặc None (hợp lệ).
     """
     other_rules = await _rest(
-        "GET", "zalo_module_forward_rules",
-        params={"select": "id,master_thread_id,zalo_module_forward_targets(target_thread_id)", "account_id": f"eq.{account_id}"},
+        "GET", "zalo_forward_rules",
+        params={"select": "id,master_thread_id,zalo_forward_targets(target_thread_id)", "account_id": f"eq.{account_id}"},
     ) or []
 
     for target_id in target_thread_ids:
@@ -78,7 +78,7 @@ async def validate_no_loop(account_id: str, master_thread_id: str, target_thread
             if rule.get("master_thread_id") == target_id:
                 return f"Nhóm đích {target_id} đang là nhóm chính của 1 rule khác — sẽ tạo vòng lặp."
     for rule in other_rules:
-        for t in rule.get("zalo_module_forward_targets") or []:
+        for t in rule.get("zalo_forward_targets") or []:
             if t.get("target_thread_id") == master_thread_id:
                 return f"Nhóm chính {master_thread_id} đang là nhóm đích của 1 rule khác — sẽ tạo vòng lặp."
     return None
@@ -94,7 +94,7 @@ async def create_forward_rule(
         raise ValueError(error)
 
     rows = await _rest(
-        "POST", "zalo_module_forward_rules",
+        "POST", "zalo_forward_rules",
         json=[{
             "account_id": account_id, "name": name or master_thread_name or master_thread_id,
             "master_thread_id": master_thread_id, "master_thread_name": master_thread_name,
@@ -107,7 +107,7 @@ async def create_forward_rule(
     if rule_id and target_thread_ids:
         names = target_thread_names or {}
         await _rest(
-            "POST", "zalo_module_forward_targets",
+            "POST", "zalo_forward_targets",
             json=[
                 {"rule_id": rule_id, "target_thread_id": tid, "target_thread_name": names.get(tid)}
                 for tid in target_thread_ids
@@ -115,7 +115,7 @@ async def create_forward_rule(
         )
     # Seed cursor = now() để KHÔNG xử lý lịch sử cũ (đúng Mục 5.2 guide bước 3).
     await _rest(
-        "POST", "zalo_module_forward_cursor",
+        "POST", "zalo_forward_cursor",
         json=[{"account_id": account_id, "last_message_ts": int(time.time() * 1000), "updated_at": _now_iso()}],
         params={"on_conflict": "account_id"}, prefer="resolution=ignore-duplicates",
     )
@@ -123,24 +123,24 @@ async def create_forward_rule(
 
 
 async def get_forward_rule(rule_id: int) -> Optional[Dict[str, Any]]:
-    rows = await _rest("GET", "zalo_module_forward_rules", params={"select": "*", "id": f"eq.{rule_id}", "limit": "1"}) or []
+    rows = await _rest("GET", "zalo_forward_rules", params={"select": "*", "id": f"eq.{rule_id}", "limit": "1"}) or []
     return rows[0] if rows else None
 
 
 async def update_forward_rule(rule_id: int, patch: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     body = dict(patch)
     body["updated_at"] = _now_iso()
-    rows = await _rest("PATCH", "zalo_module_forward_rules", params={"id": f"eq.{rule_id}"}, json=body, prefer="return=representation")
+    rows = await _rest("PATCH", "zalo_forward_rules", params={"id": f"eq.{rule_id}"}, json=body, prefer="return=representation")
     return (rows or [None])[0]
 
 
 async def delete_forward_rule(rule_id: int) -> None:
-    await _rest("DELETE", "zalo_module_forward_rules", params={"id": f"eq.{rule_id}"})
+    await _rest("DELETE", "zalo_forward_rules", params={"id": f"eq.{rule_id}"})
 
 
 async def list_forward_logs(rule_id: int, *, limit: int = 30) -> List[Dict[str, Any]]:
     return await _rest(
-        "GET", "zalo_module_forward_logs",
+        "GET", "zalo_forward_logs",
         params={"select": "*", "rule_id": f"eq.{rule_id}", "order": "created_at.desc", "limit": str(max(1, min(limit, 500)))},
     ) or []
 
@@ -175,13 +175,13 @@ def _consume_rate_budget(account_id: str) -> bool:
 
 
 async def _get_active_account_ids() -> List[str]:
-    rows = await _rest("GET", "zalo_module_forward_rules", params={"select": "account_id", "is_enabled": "eq.true"}) or []
+    rows = await _rest("GET", "zalo_forward_rules", params={"select": "account_id", "is_enabled": "eq.true"}) or []
     return sorted({r["account_id"] for r in rows if r.get("account_id")})
 
 
 async def _load_rules_by_master(account_id: str) -> Dict[str, List[Dict[str, Any]]]:
     rows = await _rest(
-        "GET", "v_zalo_module_forward_rules_active",
+        "GET", "v_zalo_forward_rules_active",
         params={"select": "*", "account_id": f"eq.{account_id}"},
     ) or []
     grouped: Dict[str, List[Dict[str, Any]]] = {}
@@ -191,17 +191,17 @@ async def _load_rules_by_master(account_id: str) -> Dict[str, List[Dict[str, Any
 
 
 async def _read_cursor(account_id: str) -> int:
-    rows = await _rest("GET", "zalo_module_forward_cursor", params={"select": "last_message_ts", "account_id": f"eq.{account_id}", "limit": "1"}) or []
+    rows = await _rest("GET", "zalo_forward_cursor", params={"select": "last_message_ts", "account_id": f"eq.{account_id}", "limit": "1"}) or []
     if rows:
         return int(rows[0].get("last_message_ts") or 0)
     seed = int(time.time() * 1000)
-    await _rest("POST", "zalo_module_forward_cursor", json=[{"account_id": account_id, "last_message_ts": seed}])
+    await _rest("POST", "zalo_forward_cursor", json=[{"account_id": account_id, "last_message_ts": seed}])
     return seed
 
 
 async def _write_cursor(account_id: str, ts: int) -> None:
     await _rest(
-        "POST", "zalo_module_forward_cursor",
+        "POST", "zalo_forward_cursor",
         json=[{"account_id": account_id, "last_message_ts": ts, "updated_at": _now_iso()}],
         params={"on_conflict": "account_id"}, prefer="resolution=merge-duplicates",
     )
@@ -210,7 +210,7 @@ async def _write_cursor(account_id: str, ts: int) -> None:
 async def _log_forward(rule_id: Optional[int], account_id: str, source_thread_id: str, source_msg_id: Optional[str],
                         target_thread_id: str, content_type: str, status: str, error: Optional[str] = None) -> None:
     await _rest(
-        "POST", "zalo_module_forward_logs",
+        "POST", "zalo_forward_logs",
         json=[{
             "rule_id": rule_id, "account_id": account_id, "source_thread_id": source_thread_id,
             "source_msg_id": source_msg_id, "target_thread_id": target_thread_id,
@@ -303,7 +303,7 @@ async def run_forward_tick_for_account(account_id: str) -> None:
     cursor = await _read_cursor(account_id)
 
     rows = await _rest(
-        "GET", "zalo_module_messages",
+        "GET", "zalo_messages",
         params={
             "select": "*", "user_id": f"eq.{account_id}",
             "group_id": f"in.({','.join(rules_by_master.keys())})" if rules_by_master else "eq.__none__",

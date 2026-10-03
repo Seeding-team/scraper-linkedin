@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { API_BASE_URL, API_KEY } from '@/lib/env';
+import { crmTeamsService, type CrmTeam } from '@/services/all-platform.service';
 import { useAppAuth } from '@/contexts/AppAuthContext';
 import { useMembers } from '@/hooks/useMembers';
 import { ActionMenu, type ActionMenuItem } from './ActionMenu';
@@ -12,7 +13,7 @@ import { LeadImportDialog } from './LeadImportDialog';
 import { SearchableSelect } from './SearchableSelect';
 import { useCrmCategoryCodeOptions, CrmCategorySelect, CrmCategoryCodeSelect } from './CrmCategorySelect';
 import { getSourceLabel } from './DealFormFields';
-import { LEAD_SOURCE_EXCLUDED_VALUES } from '../constants/crmConfig';
+import { LEAD_SOURCE_EXCLUDED_VALUES, formatDate } from '../constants/crmConfig';
 import { Loader2, Trash2 } from './icons';
 import {
   Users,
@@ -182,14 +183,29 @@ export function LeadsDirectory() {
   const [status, setStatus] = useState('');
   const [source, setSource] = useState('');
   const [sdrId, setSdrId] = useState('');
+  // "Team" = Team CRM THAT (crm_teams/crm_team_members, migration 155) - fix
+  // 2026-10-03: truoc day dung phong ban HR text (members.team) khien dropdown
+  // hien sai danh sach (vd "Intern L1 Tech", "Freelancer"...) khong khop voi
+  // cau hinh Team thuc su o "Quản lý thành viên" - dong bo dung nguon voi
+  // CrmCustomersDirectory.tsx.
   const [team, setTeam] = useState('');
-  // "Team" = phong ban that trong members (HR roster) - dung LAI DUNG nguon
-  // da chot cho Quan ly tien do, loc theo team cua SDR phu trach (sdr_id)
-  // tren backend.
-  const teamOptions = useMemo(
-    () => Array.from(new Set(members.map(m => m.team).filter(Boolean))) as string[],
-    [members]
-  );
+  const [crmTeamOptions, setCrmTeamOptions] = useState<CrmTeam[]>([]);
+  useEffect(() => {
+    let alive = true;
+    crmTeamsService
+      .list()
+      .then(res => {
+        if (!alive) return;
+        const rows = res.success ? res.data || [] : [];
+        setCrmTeamOptions(rows.filter(t => t.status === 'active'));
+      })
+      .catch(() => {
+        if (alive) setCrmTeamOptions([]);
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [reloadTick, setReloadTick] = useState(0);
@@ -402,15 +418,18 @@ export function LeadsDirectory() {
 
   // Mac dinh loc "cua toi + team cua toi" khi vao trang (thay vi "Tat ca") -
   // xem giai thich chi tiet o CrmCustomersDirectory.tsx (cung 1 rule, chi
-  // doi ownerId/owner_id -> sdrId/sdr_id). Rule tim team CHINH XAC khop
-  // _user_department_map() o backend: chi xet members.linked_user_id.
+  // doi ownerId/owner_id -> sdrId/sdr_id). Team CRM cua nguoi dang dang nhap
+  // tra ve tu crmTeamsService.getTeamIdForUser() (crm_team_members) - dong
+  // bo voi fix 2026-10-03 (Team CRM that, khong con dung HR text).
   const defaultFilterAppliedRef = useRef(false);
   const applyDefaultOwnerFilter = useCallback(() => {
     if (!user?.id) return;
     setSdrId(user.id);
-    const myMember = members.find(m => m.linked_user_id === user.id);
-    setTeam(myMember?.team || '');
-  }, [user, members]);
+    crmTeamsService
+      .getTeamIdForUser(user.id)
+      .then(res => setTeam((res.success ? res.data?.crm_team_id : null) || ''))
+      .catch(() => setTeam(''));
+  }, [user]);
 
   // Feedback nguoi dung (2026-09-25): quay lai trang Leads (Back, hoac dieu
   // huong sang trang khac roi vao lai) phai hien DUNG lich su tim kiem/loc
@@ -1017,7 +1036,7 @@ export function LeadsDirectory() {
                 value={team}
                 onChange={setTeam}
                 placeholder="Tất cả Team"
-                options={teamOptions.map(t => ({ value: t, label: t }))}
+                options={crmTeamOptions.map(t => ({ value: t.id, label: t.name }))}
               />
             </div>
             {hasFilters ? (
@@ -1134,13 +1153,14 @@ export function LeadsDirectory() {
                     <th className="crm-th">Marketing</th>
                     <th className="crm-th">Trạng thái</th>
                     <th className="crm-th">SDR</th>
+                    <th className="crm-th">Ngày tạo</th>
                     <th className="crm-th">Việc tiếp theo</th>
                     <th className="crm-th crm-th--right crm-th--actions-col">Thao tác</th>
                   </tr>
                 </thead>
                 <tbody>
                   {loading ? (
-                    <tr><td colSpan={10} className="crm-empty-cell"><Loader2 className="crm-spin-icon" /> Đang tải...</td></tr>
+                    <tr><td colSpan={11} className="crm-empty-cell"><Loader2 className="crm-spin-icon" /> Đang tải...</td></tr>
                   ) : items.length ? (
                     items.map(lead => {
                       const isActiveLead = detailLead?.id === lead.id || editLead?.id === lead.id;
@@ -1275,6 +1295,7 @@ export function LeadsDirectory() {
                               sdrName.get(lead.sdrId || '') || 'Chưa gán'
                             )}
                           </td>
+                          <td className="crm-td crm-small crm-muted">{formatDate(lead.createdAt) || '-'}</td>
                           <td className={editMode ? 'crm-td' : 'crm-td crm-muted crm-truncate'} title={editMode ? undefined : (lead.nextStep || '')} onClick={event => editMode && event.stopPropagation()}>
                             {editMode ? (
                               <div className="crm-inline-edit-cell">
@@ -1313,7 +1334,7 @@ export function LeadsDirectory() {
                     })
                   ) : (
                     <tr>
-                      <td colSpan={10}>
+                      <td colSpan={11}>
                         <div className="crm-empty-state">
                           <span className="crm-empty-state-icon">
                             <Plus className="crm-button-icon" />

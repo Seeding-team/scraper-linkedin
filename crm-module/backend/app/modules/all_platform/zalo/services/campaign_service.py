@@ -1,4 +1,4 @@
-"""CRUD cho `zalo_module_campaigns` / `zalo_module_campaign_recipients` / `zalo_module_campaign_logs`
+"""CRUD cho `zalo_campaigns` / `zalo_campaign_recipients` / `zalo_campaign_logs`
 (Mục 7 guide, mục 2 item 8: "Chiến dịch nhắn tin tự động lặp lịch").
 
 KHÁC với `zalo_broadcast_campaigns` cũ trong `supabase_service.py` (blast 1 lần
@@ -64,7 +64,7 @@ async def create_recurring_campaign(
     }
     if days_of_week is not None:
         payload["days_of_week"] = days_of_week
-    rows = await _rest("POST", "zalo_module_campaigns", json=[payload], prefer="return=representation")
+    rows = await _rest("POST", "zalo_campaigns", json=[payload], prefer="return=representation")
     return (rows or [{}])[0]
 
 
@@ -78,13 +78,13 @@ async def list_recurring_campaigns(
     }
     if account_id:
         params["account_id"] = f"eq.{account_id}"
-    return await _rest("GET", "zalo_module_campaigns", params=params) or []
+    return await _rest("GET", "zalo_campaigns", params=params) or []
 
 
 async def get_recurring_campaign(campaign_id: int) -> Optional[Dict[str, Any]]:
     rows = await _rest(
         "GET",
-        "zalo_module_campaigns",
+        "zalo_campaigns",
         params={"select": "*", "id": f"eq.{campaign_id}", "limit": "1"},
     )
     return rows[0] if rows else None
@@ -95,7 +95,7 @@ async def update_recurring_campaign(campaign_id: int, patch: Dict[str, Any]) -> 
     body["updated_at"] = _now_iso()
     rows = await _rest(
         "PATCH",
-        "zalo_module_campaigns",
+        "zalo_campaigns",
         params={"id": f"eq.{campaign_id}"},
         json=body,
         prefer="return=representation",
@@ -104,7 +104,7 @@ async def update_recurring_campaign(campaign_id: int, patch: Dict[str, Any]) -> 
 
 
 async def delete_recurring_campaign(campaign_id: int) -> None:
-    await _rest("DELETE", "zalo_module_campaigns", params={"id": f"eq.{campaign_id}"})
+    await _rest("DELETE", "zalo_campaigns", params={"id": f"eq.{campaign_id}"})
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -136,7 +136,7 @@ async def add_campaign_recipients(campaign_id: int, recipients: List[Dict[str, A
         rows = (
             await _rest(
                 "POST",
-                "zalo_module_campaign_recipients",
+                "zalo_campaign_recipients",
                 json=with_phone,
                 params={"on_conflict": "campaign_id,phone"},
                 prefer="resolution=merge-duplicates,return=representation",
@@ -148,7 +148,7 @@ async def add_campaign_recipients(campaign_id: int, recipients: List[Dict[str, A
         rows = (
             await _rest(
                 "POST",
-                "zalo_module_campaign_recipients",
+                "zalo_campaign_recipients",
                 json=without_phone,
                 prefer="return=representation",
             )
@@ -162,7 +162,7 @@ async def list_campaign_recipients(campaign_id: int, *, limit: int = 2000) -> Li
     return (
         await _rest(
             "GET",
-            "zalo_module_campaign_recipients",
+            "zalo_campaign_recipients",
             params={
                 "select": "*",
                 "campaign_id": f"eq.{campaign_id}",
@@ -178,7 +178,7 @@ async def get_next_pending_recipient(campaign_id: int) -> Optional[Dict[str, Any
     rows = (
         await _rest(
             "GET",
-            "zalo_module_campaign_recipients",
+            "zalo_campaign_recipients",
             params={
                 "select": "*",
                 "campaign_id": f"eq.{campaign_id}",
@@ -206,7 +206,7 @@ async def update_campaign_recipient_status(
         body["sent_at"] = sent_at
     await _rest(
         "PATCH",
-        "zalo_module_campaign_recipients",
+        "zalo_campaign_recipients",
         params={"id": f"eq.{recipient_id}"},
         json=body,
     )
@@ -227,7 +227,7 @@ async def add_campaign_log(
 ) -> None:
     await _rest(
         "POST",
-        "zalo_module_campaign_logs",
+        "zalo_campaign_logs",
         json=[
             {
                 "campaign_id": campaign_id,
@@ -245,7 +245,7 @@ async def list_campaign_logs(campaign_id: int, *, limit: int = 200) -> List[Dict
     return (
         await _rest(
             "GET",
-            "zalo_module_campaign_logs",
+            "zalo_campaign_logs",
             params={
                 "select": "*",
                 "campaign_id": f"eq.{campaign_id}",
@@ -265,7 +265,7 @@ async def list_enabled_campaigns() -> List[Dict[str, Any]]:
     return (
         await _rest(
             "GET",
-            "zalo_module_campaigns",
+            "zalo_campaigns",
             params={"select": "*", "is_enabled": "eq.true", "limit": "500"},
         )
         or []
