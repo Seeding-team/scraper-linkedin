@@ -166,10 +166,6 @@ function SectionHeader({ n, title }: { n: number; title: string }) {
 
 export function RegisterExternalContractModal({ open, deal, onClose, onCreated, customerLabel, dealOptions, contactOptions, projectOptions, quoteOptions }: Props) {
   const [title, setTitle] = useState("");
-  // Phan biet Mua vao (Phase 1) / Ban ra (Phase 2) - feedback mentor
-  // 2026-10-03: "2 hop dong nay la mua vao ban ra nen can phan biet ro voi
-  // ghi nhan hop dong co san", bat buoc chon, khong co gia tri mac dinh.
-  const [dealPhase, setDealPhase] = useState<"purchase" | "sale" | "">("");
   const [contractNumber, setContractNumber] = useState("");
   const [contractValue, setContractValue] = useState<number | null>(null);
   const [status, setStatus] = useState<ContractStatus>("signed");
@@ -224,7 +220,6 @@ export function RegisterExternalContractModal({ open, deal, onClose, onCreated, 
   useEffect(() => {
     if (!open) return;
     setTitle("");
-    setDealPhase("");
     setContractNumber("");
     setContractValue(null);
     setStatus("signed");
@@ -376,22 +371,15 @@ export function RegisterExternalContractModal({ open, deal, onClose, onCreated, 
     const customerName = (customerLabel || deal.customer_name || deal.company_name || "").trim();
     if (!customerName) return;
     const productName = deriveQuoteProductName(selectedVersion);
-    // Long chu "mua"/"bán" vao ten tu sinh (feedback mentor 2026-10-03: "nó
-    // lấy theo tên trong này được hong, chứ nó trùng nhau sau khó phân biệt
-    // á") - truoc day 2 hop dong Mua vao/Ban ra CUNG 1 bao gia/khach hang bi
-    // sinh ten GIONG HET nhau, khong phan biet duoc trong Danh sach Hop dong.
-    const phaseWord = dealPhase === "purchase" ? "mua" : dealPhase === "sale" ? "bán" : "";
     const generated = productName
-      ? `Hợp đồng ${phaseWord ? `${phaseWord} ` : ""}${productName} – ${customerName}`
-      : phaseWord
-      ? `Hợp đồng ${phaseWord} — ${customerName}`
+      ? `Hợp đồng ${productName} – ${customerName}`
       : `Hợp đồng cung cấp dịch vụ — ${customerName}`;
     setTitle(current => {
       if (current !== "" && current !== lastAutoTitleRef.current) return current;
       lastAutoTitleRef.current = generated;
       return generated;
     });
-  }, [open, customerLabel, deal.customer_name, deal.company_name, selectedVersion, dealPhase]);
+  }, [open, customerLabel, deal.customer_name, deal.company_name, selectedVersion]);
 
   // Tu dong dien "Giá trị hợp đồng" = Gia khach cua bao gia da chon (cung 1
   // gia tri hien trong panel tom tat ben duoi va o cot "GIÁ KHÁCH" cua Quote
@@ -487,10 +475,6 @@ export function RegisterExternalContractModal({ open, deal, onClose, onCreated, 
       setError("Vui lòng chọn báo giá.");
       return;
     }
-    if (!dealPhase) {
-      setError("Vui lòng chọn Mua vào hay Bán ra.");
-      return;
-    }
     // "Điều chỉnh giá trị hợp đồng" (redesign 2026-10-01) - bat buoc ly do khi
     // gia tri nguoi dung nhap khac gia bao gia da chon, giong y het khuon
     // validation "!title.trim()" o tren.
@@ -515,7 +499,6 @@ export function RegisterExternalContractModal({ open, deal, onClose, onCreated, 
         quoteId: selectedQuoteId === NONE_QUOTE ? undefined : (selectedVersionId || selectedQuoteId),
         contractNumber: contractNumber.trim() || undefined,
         title: title.trim(),
-        dealPhase: dealPhase || undefined,
         status,
         signedAt: signedAt || undefined,
         contractValue: contractValue ?? 0,
@@ -801,25 +784,6 @@ export function RegisterExternalContractModal({ open, deal, onClose, onCreated, 
                   placeholder="Hợp đồng triển khai..."
                 />
                 <p className="mt-1 text-[11px] text-slate-400">Sinh tự động từ sản phẩm/dịch vụ và khách hàng. Có thể chỉnh sửa.</p>
-              </label>
-
-              {/* "Loại hợp đồng" (feedback mentor 2026-10-03): bat buoc phan
-               * biet Mua vao (Phase 1, hop dong/bao gia NCC ban cho minh) /
-               * Ban ra (Phase 2, hop dong minh ban cho khach hang) ngay luc
-               * ghi nhan - truoc day field nay chi co trong luong Phase1/2
-               * rieng o CrmCustomerModal.tsx, "Ghi nhận hợp đồng có sẵn" chua
-               * he hoi nen 2 hop dong mua/ban deu bi luu chung khong phan biet. */}
-              <label className="block">
-                <span className="mb-1 block text-xs font-semibold text-slate-600">Loại hợp đồng *</span>
-                <select
-                  value={dealPhase}
-                  onChange={e => setDealPhase(e.target.value as "purchase" | "sale" | "")}
-                  className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm bg-white"
-                >
-                  <option value="" disabled>-- Chọn loại hợp đồng --</option>
-                  <option value="purchase">Mua vào (Phase 1 — hợp đồng/báo giá từ NCC)</option>
-                  <option value="sale">Bán ra (Phase 2 — hợp đồng/báo giá cho khách hàng)</option>
-                </select>
               </label>
 
               <label className="block">
