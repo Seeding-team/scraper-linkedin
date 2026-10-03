@@ -464,7 +464,8 @@ export function LeadDetailDrawer({
 
   if (!open || !lead) return null;
   const canWrite = Boolean(lead.canWrite);
-  const isConverted = lead.status === 'sql' || lead.status === 'converted';
+  const hasConvertedDeal = Boolean(lead.convertedDealId);
+  const isConverted = hasConvertedDeal;
   const displayScore = form.score ?? lead.score ?? null;
 
   /** "Dùng gợi ý" — suy ra giá trị từ CHÍNH dữ liệu Lead đang có (ghi chú,
@@ -543,11 +544,13 @@ export function LeadDetailDrawer({
       next_step: form.nextStep.trim() || null,
       follow_up_date: form.nextStepAt ? new Date(form.nextStepAt).toISOString() : null,
       note: form.note.trim() || null,
-      deal_stage: form.dealStage || 'dealing',
-      team_id: teamId || null,
     };
-    if (form.projectId) payload.project_id = form.projectId;
-    else if (form.project.trim()) payload.project_name = form.project.trim();
+    if (lead?.convertedDealId) {
+      payload.deal_stage = form.dealStage || 'dealing';
+      payload.team_id = teamId || null;
+      if (form.projectId) payload.project_id = form.projectId;
+      else if (form.project.trim()) payload.project_name = form.project.trim();
+    }
     return payload;
   }
 
@@ -560,10 +563,14 @@ export function LeadDetailDrawer({
    * `status` chỉ đi lên theo đúng mức đã xác minh được (new_lead -> qualifying,
    * và chỉ lên 'qualified' khi checklist thật sự đủ 5/5) — thay cho nút "Đủ
    * điều kiện" cũ vốn bật qualified mà không kiểm tra gì. */
-  async function saveVerification(overrideStatus?: string) {
+  async function saveVerification(overrideStatus?: string, allowDealDraftFields = false) {
     if (!lead) return false;
     if (!overrideStatus && form.nextStep.trim() && !form.nextStepAt) {
       setError('Đã chọn "Việc tiếp theo" thì phải chọn "Khi nào làm".');
+      return false;
+    }
+    if (!lead.convertedDealId && !allowDealDraftFields && form.project.trim()) {
+      setError('Dự án chỉ được tạo khi tạo Cơ hội. Bấm "Tạo cơ hội & bàn giao Sale" để lưu dự án mới.');
       return false;
     }
     setSaving(true);
@@ -753,7 +760,7 @@ export function LeadDetailDrawer({
       setError('SQL bắt buộc chọn Sale nhận bàn giao.');
       return;
     }
-    const ok = await saveVerification();
+    const ok = await saveVerification(undefined, true);
     if (ok) setConvertOpen(true);
   }
 
