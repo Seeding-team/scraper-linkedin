@@ -7532,12 +7532,13 @@
 
 .crm-col-lead-name { width: 20%; }
 .crm-col-lead-source { width: 9%; }
-.crm-col-lead-need { width: 13%; }
+.crm-col-lead-need { width: 11%; }
 .crm-col-lead-score { width: 8%; }
-.crm-col-lead-marketing { width: 10%; }
-.crm-col-lead-status { width: 11%; }
+.crm-col-lead-marketing { width: 9%; }
+.crm-col-lead-status { width: 10%; }
 .crm-col-lead-sdr { width: 8%; }
-.crm-col-lead-nextstep { width: 13%; }
+.crm-col-lead-created { width: 6%; }
+.crm-col-lead-nextstep { width: 11%; }
 .crm-col-lead-actions { width: 8%; }
 
 /* Mac dinh an card list (chi dung duoi 900px). PHAI khai bao TRUOC media query

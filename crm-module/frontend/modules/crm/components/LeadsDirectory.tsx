@@ -1132,6 +1132,7 @@ export function LeadsDirectory() {
                   <col className="crm-col-lead-marketing" />
                   <col className="crm-col-lead-status" />
                   <col className="crm-col-lead-sdr" />
+                  <col className="crm-col-lead-created" />
                   <col className="crm-col-lead-nextstep" />
                   <col className="crm-col-lead-actions" />
                 </colgroup>
