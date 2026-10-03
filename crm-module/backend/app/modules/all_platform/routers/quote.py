@@ -650,7 +650,15 @@ _COST_ONLY_ITEM_FIELD_PAIRS = [
 def _values_differ(old_val, new_val) -> bool:
     if isinstance(old_val, (int, float)) or isinstance(new_val, (int, float)):
         try:
-            return float(old_val or 0) != float(new_val or 0)
+            # Lam tron 2 chu so truoc khi so sanh (khong so bang float tuyet
+            # doi) - BUG THAT DA GAP: markupPercent FE tinh lai bang cong
+            # thuc (price-cost)/cost*100 ra full precision (vd 56.578947...),
+            # trong khi DB luu/tra ve da lam tron 2 so le (56.58, dung dung
+            # do chinh xac hien thi formatPercentFixed2 o FE). So bang float
+            # tuyet doi coi day la "da sua" du nguoi dung khong dong gi vao
+            # hang muc, khien "Bàn giao" bi chan sai voi loi "Markup/Gia khach
+            # chi duoc nhap o Buoc 3" ngay ca khi gia tri hien thi giong het.
+            return round(float(old_val or 0), 2) != round(float(new_val or 0), 2)
         except (TypeError, ValueError):
             return old_val != new_val
     return (old_val or None) != (new_val or None)
