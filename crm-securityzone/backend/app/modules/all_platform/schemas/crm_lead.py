@@ -82,10 +82,10 @@ class CrmLeadUpdate(BaseModel):
     next_step: Optional[str] = None
     follow_up_date: Optional[datetime] = None
 
-    # project_name is a real crm_leads field (draft "Dự án" typed before
-    # conversion) - synced to the converted customer_leads row when one
-    # exists, same pattern as team_id. deal_stage/project_id remain Deal-only
-    # handoff fields sent by the qualification form after conversion.
+    # project_name/deal_stage are real crm_leads fields (draft values typed
+    # before conversion) - synced to the converted customer_leads row when
+    # one exists, same pattern as team_id. project_id remains a Deal-only
+    # handoff field sent by the qualification form after conversion.
     project_name: Optional[str] = None
     deal_stage: Optional[str] = None
     project_id: Optional[str] = None
@@ -98,6 +98,7 @@ class CrmLeadResponse(CrmLeadBase):
     email_normalized: Optional[str] = None
     team_id: Optional[str] = None
     project_name: Optional[str] = None
+    deal_stage: Optional[str] = None
     qualification_need: Optional[str] = None
     qualification_icp_fit: Optional[bool] = None
     qualification_estimated_value: Optional[float] = None

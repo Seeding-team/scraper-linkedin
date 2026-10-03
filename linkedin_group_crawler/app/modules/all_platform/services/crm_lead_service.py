@@ -31,7 +31,7 @@ LEAD_COLUMNS = (
     "id, lead_name, company_name, position, position_category_id, "
     "position_label_snapshot, phone, phone_normalized, email, "
     "email_normalized, zalo, facebook, telegram, website, source, status, "
-    "score, sdr_id, team_id, project_name, note, qualification_need, qualification_icp_fit, "
+    "score, sdr_id, team_id, project_name, deal_stage, note, qualification_need, qualification_icp_fit, "
     "qualification_estimated_value, qualification_decision_maker, "
     "qualification_expected_timeline, qualification_ae_id, next_step, "
     "follow_up_date, converted_customer_id, converted_contact_id, "
@@ -447,13 +447,13 @@ def update_lead(lead_id: str, payload: dict[str, Any], user: dict[str, Any]) -> 
     if not can_write_lead(user, current):
         raise PermissionError("Khong co quyen sua lead nay.")
     data = {key: _clean_text(value) if isinstance(value, str) else value for key, value in payload.items()}
-    # The qualification drawer also owns a couple handoff fields that live
-    # only on the converted Deal, not on crm_leads. Keep the Lead update a
-    # plain Lead update by stripping them before writing crm_leads, then sync
-    # below if a converted deal exists. team_id/project_name are real
-    # crm_leads fields (persist even before conversion), so they must remain
-    # in `data`.
-    _DEAL_ONLY_UPDATE_FIELDS = ("deal_stage", "project_id")
+    # The qualification drawer also owns project_id (picking an EXISTING
+    # Project via a picker), which only makes sense once a Deal/Customer
+    # exists - keep that one Deal-only by stripping it before writing
+    # crm_leads, then sync below if a converted deal exists. team_id/
+    # project_name/deal_stage are real crm_leads fields (persist even before
+    # conversion), so they must remain in `data`.
+    _DEAL_ONLY_UPDATE_FIELDS = ("project_id",)
     deal_only_updates = {
         key: data.pop(key)
         for key in _DEAL_ONLY_UPDATE_FIELDS
@@ -517,6 +517,7 @@ def update_lead(lead_id: str, payload: dict[str, Any], user: dict[str, Any]) -> 
             "qualification_ae_id": "sdr_id",
             "team_id": "team_id",
             "project_name": "project_name",
+            "deal_stage": "deal_stage",
         }
         deal_updates = {
             deal_field: data[lead_field]

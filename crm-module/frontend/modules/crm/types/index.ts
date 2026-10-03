@@ -434,6 +434,9 @@ export interface CrmLeadRow {
   /** Dự án (nhập tay) lưu trước khi Lead convert thành Cơ hội (crm_leads.project_name,
    * migration 165) - cùng cơ chế round-trip với teamId ở trên. */
   projectName?: string;
+  /** Giai đoạn (nháp) chọn trước khi Lead convert thành Cơ hội (crm_leads.deal_stage,
+   * migration 166) - cùng cơ chế round-trip với teamId/projectName ở trên. */
+  dealStage?: string;
   nextStep?: string;
   followUpDate?: string;
   convertedCustomerId?: string;

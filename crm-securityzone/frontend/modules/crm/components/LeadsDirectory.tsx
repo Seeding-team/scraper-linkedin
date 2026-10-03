@@ -106,6 +106,7 @@ type ApiLeadRow = {
   qualification_ae_id?: string | null;
   team_id?: string | null;
   project_name?: string | null;
+  deal_stage?: string | null;
   next_step?: string | null;
   follow_up_date?: string | null;
   converted_customer_id?: string | null;
@@ -159,6 +160,7 @@ export function mapLead(row: ApiLeadRow): CrmLeadRow {
     qualificationAeId: row.qualification_ae_id || '',
     teamId: row.team_id || '',
     projectName: row.project_name || '',
+    dealStage: row.deal_stage || '',
     nextStep: row.next_step || '',
     followUpDate: row.follow_up_date || '',
     convertedCustomerId: row.converted_customer_id || '',

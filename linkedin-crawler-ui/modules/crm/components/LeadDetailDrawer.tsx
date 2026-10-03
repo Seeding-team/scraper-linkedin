@@ -206,7 +206,7 @@ export function LeadDetailDrawer({
       aeId: lead.qualificationAeId || '',
       note: lead.note || '',
       followUpChannel: '',
-      dealStage: 'dealing',
+      dealStage: lead.dealStage || 'dealing',
       project: lead.projectName || '',
       projectId: '',
     });
@@ -516,7 +516,7 @@ export function LeadDetailDrawer({
       aeId: lead.qualificationAeId || '',
       note: lead.note || '',
       followUpChannel: '',
-      dealStage: 'dealing',
+      dealStage: lead.dealStage || 'dealing',
       project: lead.projectName || '',
       projectId: '',
     });
@@ -544,13 +544,14 @@ export function LeadDetailDrawer({
       follow_up_date: form.nextStepAt ? new Date(form.nextStepAt).toISOString() : null,
       note: form.note.trim() || null,
       team_id: teamId || null,
-      // "Dự án" là field thật trên crm_leads (migration 165) nên luôn gửi,
-      // kể cả khi Lead chưa convert — trước đây chỉ gửi khi convertedDealId
-      // nên gõ vào ô này ở trạng thái Nuôi dưỡng/SQL chưa chốt bị rớt mất.
+      // "Dự án"/"Giai đoạn" là field thật trên crm_leads (migration 165/166)
+      // nên luôn gửi, kể cả khi Lead chưa convert — trước đây chỉ gửi khi
+      // convertedDealId nên gõ/chọn ở trạng thái Nuôi dưỡng/SQL chưa chốt bị
+      // rớt mất.
       project_name: form.project.trim() || null,
+      deal_stage: form.dealStage || null,
     };
     if (lead?.convertedDealId) {
-      payload.deal_stage = form.dealStage || 'dealing';
       if (form.projectId) payload.project_id = form.projectId;
     }
     return payload;
