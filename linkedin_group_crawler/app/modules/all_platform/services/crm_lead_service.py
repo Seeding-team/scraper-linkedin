@@ -31,7 +31,7 @@ LEAD_COLUMNS = (
     "id, lead_name, company_name, position, position_category_id, "
     "position_label_snapshot, phone, phone_normalized, email, "
     "email_normalized, zalo, facebook, telegram, website, source, status, "
-    "score, sdr_id, note, qualification_need, qualification_icp_fit, "
+    "score, sdr_id, team_id, note, qualification_need, qualification_icp_fit, "
     "qualification_estimated_value, qualification_decision_maker, "
     "qualification_expected_timeline, qualification_ae_id, next_step, "
     "follow_up_date, converted_customer_id, converted_contact_id, "
@@ -41,7 +41,7 @@ LEAD_COLUMNS = (
 
 # sdr_id/qualification_ae_id la UUID nullable - frontend co the gui "" thay vi
 # null (cung ly do voi _NULLABLE_UUID_COLUMNS trong customer_lead_service.py).
-_NULLABLE_UUID_COLUMNS = ("sdr_id", "qualification_ae_id", "created_by")
+_NULLABLE_UUID_COLUMNS = ("sdr_id", "team_id", "qualification_ae_id", "created_by")
 
 LEAD_STATUS_MAP = {
     "new_lead": "mql",
@@ -450,8 +450,9 @@ def update_lead(lead_id: str, payload: dict[str, Any], user: dict[str, Any]) -> 
     # The qualification drawer also owns a few handoff fields that live on the
     # converted Deal, not on crm_leads. Keep the Lead update a plain Lead update
     # by stripping them before writing crm_leads, then sync below if a converted
-    # deal exists.
-    _DEAL_ONLY_UPDATE_FIELDS = ("deal_stage", "team_id", "project_name", "project_id")
+    # deal exists. team_id is a real crm_leads field for SQL leads that have
+    # not been converted yet, so it must remain in `data`.
+    _DEAL_ONLY_UPDATE_FIELDS = ("deal_stage", "project_name", "project_id")
     deal_only_updates = {
         key: data.pop(key)
         for key in _DEAL_ONLY_UPDATE_FIELDS
@@ -513,6 +514,7 @@ def update_lead(lead_id: str, payload: dict[str, Any], user: dict[str, Any]) -> 
             "next_step": "next_step",
             "follow_up_date": "follow_up_date",
             "qualification_ae_id": "sdr_id",
+            "team_id": "team_id",
         }
         deal_updates = {
             deal_field: data[lead_field]

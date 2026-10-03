@@ -222,13 +222,12 @@ export function LeadDetailDrawer({
       ? crypto.randomUUID()
       : `lead-convert-${lead.id}-${Date.now()}`;
 
-    // Auto-load Team Sale tu Sale da luu san (lead.qualificationAeId) - CHI
-    // suy nguoc de hien dung Team dang gan, KHONG reset lai aeId vua nap o
-    // tren (reset aeId chi xay ra khi NGUOI DUNG tu doi Team - handleTeamIdChange).
-    setTeamId('');
+    // Prefer the persisted Lead Team Sale. Older rows may not have it yet, so
+    // fall back to deriving a team from the saved Sale owner.
+    setTeamId(lead.teamId || '');
     setTeamMembers(null);
     const initialAeId = lead.qualificationAeId || '';
-    if (initialAeId) {
+    if (initialAeId && !lead.teamId) {
       const leadIdAtRequest = lead.id;
       crmTeamsService.getTeamIdForUser(initialAeId)
         .then(res => {
@@ -544,10 +543,10 @@ export function LeadDetailDrawer({
       next_step: form.nextStep.trim() || null,
       follow_up_date: form.nextStepAt ? new Date(form.nextStepAt).toISOString() : null,
       note: form.note.trim() || null,
+      team_id: teamId || null,
     };
     if (lead?.convertedDealId) {
       payload.deal_stage = form.dealStage || 'dealing';
-      payload.team_id = teamId || null;
       if (form.projectId) payload.project_id = form.projectId;
       else if (form.project.trim()) payload.project_name = form.project.trim();
     }

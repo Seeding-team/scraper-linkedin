@@ -63,6 +63,7 @@ class CrmLeadUpdate(BaseModel):
     status: Optional[CrmLeadStatus] = None
     score: Optional[float] = None
     sdr_id: Optional[str] = None
+    team_id: Optional[str] = None
     # "Marketing" (LeadsDirectory) - doi TAY nguoi dung lam "nguoi tao" sau
     # khi Lead da co san (feedback leader 2026-09-27). Quyen gate o
     # crm_lead_service.update_lead() (chi full CRM access), KHONG anh huong
@@ -82,10 +83,10 @@ class CrmLeadUpdate(BaseModel):
     follow_up_date: Optional[datetime] = None
 
     # Deal handoff fields sent by the qualification form after a Lead has
-    # already been converted. The service layer strips these before updating
-    # crm_leads and syncs them only to the converted customer_leads row.
+    # already been converted. team_id is a real crm_leads field for SQL leads
+    # that have not been converted yet, and is also synced to the converted
+    # customer_leads row when one exists.
     deal_stage: Optional[str] = None
-    team_id: Optional[str] = None
     project_name: Optional[str] = None
     project_id: Optional[str] = None
 
@@ -95,6 +96,7 @@ class CrmLeadResponse(CrmLeadBase):
     position_label_snapshot: Optional[str] = None
     phone_normalized: Optional[str] = None
     email_normalized: Optional[str] = None
+    team_id: Optional[str] = None
     qualification_need: Optional[str] = None
     qualification_icp_fit: Optional[bool] = None
     qualification_estimated_value: Optional[float] = None
