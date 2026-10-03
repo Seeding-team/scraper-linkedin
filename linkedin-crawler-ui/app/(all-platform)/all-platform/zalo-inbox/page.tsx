@@ -9,7 +9,7 @@ export const metadata: Metadata = {
 
 export default function ZaloInboxAdminPage() {
   return (
-    <div className="h-[calc(100vh-3.25rem)] w-full overflow-hidden bg-white">
+    <div className="w-full">
       <ZaloInboxAdminShell />
     </div>
   );

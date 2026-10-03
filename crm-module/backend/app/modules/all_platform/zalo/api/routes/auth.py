@@ -107,9 +107,9 @@ async def _remember_zalo_user(
     owner_id: Optional[str] = None,
     id_member: Optional[str] = None,
 ) -> None:
-    # id_member là cột UUID (app_users.id) ở cả zalo_users lẫn zalo_accounts —
+    # id_member là cột UUID (app_users.id) ở cả zalo_module_users lẫn zalo_module_accounts —
     # extension gửi email nên phải resolve về UUID thật (hoặc bỏ qua), tránh 22P02.
-    # owner_id của zalo_accounts là cột TEXT (giữ nguyên email normalize để
+    # owner_id của zalo_module_accounts là cột TEXT (giữ nguyên email normalize để
     # auto-resolve `or=(owner_id.eq...,id_member.eq...)` tra lại được) — KHÔNG đổi.
     safe_member_id = await _resolve_app_user_uuid(id_member)
     try:
@@ -256,13 +256,19 @@ async def import_session_from_extension(
     if not user_id.startswith("zl_"):
         resolved_account_id: Optional[str] = None
         try:
+            from app.core.config import settings as crm_settings
             from app.modules.all_platform.zalo.services.supabase_service import _rest
             db_accounts = await _rest(
                 "GET",
-                "zalo_accounts",
+                "zalo_module_accounts",
                 params={
                     "select": "account_id,phone,status",
                     "or": f"(owner_id.eq.{user_id},id_member.eq.{user_id})",
+                    # DB self-host dùng chung cho cả 3 deploy CRM — chỉ resolve
+                    # trong đúng brand đang đăng nhập, tránh auto-login nhầm
+                    # sang account Zalo của brand khác nếu người này có mặt ở
+                    # nhiều workspace (xem migration 005 multi-workspace).
+                    "instance": f"eq.{crm_settings.crm_instance}",
                     "order": "created_at.desc",
                 }
             ) or []
@@ -492,7 +498,7 @@ async def delete_account_full(
     caller_email: Optional[str] = Depends(get_authenticated_caller_email),
 ):
     """Xoá HOÀN TOÀN một tài khoản Zalo (file auth local + toàn bộ bảng
-    `zalo_*` liên quan + dừng listener + xoá session in-memory).
+    `zalo_module_*` liên quan + dừng listener + xoá session in-memory).
 
     Body JSON::
         {
@@ -525,9 +531,9 @@ async def delete_account_full(
         "auth_file_deleted": False,
         "listener_stopped": False,
         "supabase": {
-            "zalo_accounts": 0,
-            "zalo_groups": 0,
-            "zalo_messages": 0,
+            "zalo_module_accounts": 0,
+            "zalo_module_groups": 0,
+            "zalo_module_messages": 0,
         },
         "in_memory_sessions_cleared": 0,
     }
@@ -578,6 +584,7 @@ async def cleanup_orphan_accounts(x_user_id: str = Header("default", alias="X-Us
     from app.modules.all_platform.zalo.services.zca_persistent_listener import (
         get_listener_status,
     )
+    from app.core.config import settings as crm_settings
     from app.modules.all_platform.zalo.services.supabase_service import (
         _rest,
         hard_delete_zalo_account_data,
@@ -585,10 +592,14 @@ async def cleanup_orphan_accounts(x_user_id: str = Header("default", alias="X-Us
 
     accounts_resp = await _rest(
         "GET",
-        "zalo_accounts",
+        "zalo_module_accounts",
         params={
             "select": "account_id,owner_id,is_active",
             "is_active": "eq.true",
+            # Không giới hạn instance -> maintenance endpoint của brand này sẽ
+            # dọn (hard-delete) luôn account "mồ côi" của brand khác dùng
+            # chung DB self-host này.
+            "instance": f"eq.{crm_settings.crm_instance}",
         },
     )
     items = []

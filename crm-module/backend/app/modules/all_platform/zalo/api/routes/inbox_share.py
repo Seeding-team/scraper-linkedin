@@ -91,7 +91,7 @@ class BulkSyncRequest(BaseModel):
 
 
 class VerifyRequest(BaseModel):
-    row_id: int = Field(..., ge=1, description="ID của zalo_conversation_permissions")
+    row_id: int = Field(..., ge=1, description="ID của zalo_module_conversation_permissions")
     leader_email: str = Field(..., min_length=3)
     note: Optional[str] = Field(None, max_length=500)
 

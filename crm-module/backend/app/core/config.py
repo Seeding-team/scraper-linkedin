@@ -147,13 +147,6 @@ class Settings:
     google_oauth_client_id: str = os.getenv("GOOGLE_CLIENT_ID", "")
     leader_code: str = (os.getenv("LEADER_CODE") or "8888").strip()
 
-    # BUG THAT DA GAP: thieu field nay (co san o main - linkedin_group_crawler)
-    # khien verify_zalo_api_key() (zalo/api/security.py) bi AttributeError
-    # 'Settings' object has no attribute 'api_key' tren MOI route Zalo (vd
-    # "Thêm tài khoản Zalo mới" bao API 500). Rong = tat kiem tra (giong
-    # hanh vi main khi khong cau hinh API_KEY).
-    api_key: str = os.getenv("API_KEY", "")
-
     # AI Contract Copilot (soạn/thẩm định/tinh chỉnh hợp đồng bằng AI).
     openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
     openai_base_url: str = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/")

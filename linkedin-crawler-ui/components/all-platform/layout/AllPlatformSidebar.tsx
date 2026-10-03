@@ -260,19 +260,12 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, workspaceTab: 
   const channelItems: NavLeafItem[] = [
     {
       type: "item",
-      id: "omnichannel-inbox",
-      href: "/all-platform/omnichannel-inbox",
-      icon: "forum",
-      label: "Hộp thư đa kênh",
-      matchStartsWith: ["/all-platform/omnichannel-inbox"],
-    },
-    {
-      type: "item",
       id: "inbox",
       href: "/all-platform/inbox",
       icon: "inbox",
-      label: "Facebook Chat",
+      label: "Inbox FB",
       matchStartsWith: ["/all-platform/inbox"],
+      badge: 5,
     },
     {
       type: "item",

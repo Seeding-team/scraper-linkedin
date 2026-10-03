@@ -62,7 +62,7 @@ async def send_zca_broadcast_to_targets(
                 from app.modules.all_platform.zalo.services.supabase_service import _rest
                 rows = await _rest(
                     "GET",
-                    "zalo_groups",
+                    "zalo_module_groups",
                     params={
                         "select": "group_id",
                         "user_id": f"eq.{user_id}",
@@ -76,7 +76,7 @@ async def send_zca_broadcast_to_targets(
                     # Case-insensitive check
                     rows = await _rest(
                         "GET",
-                        "zalo_groups",
+                        "zalo_module_groups",
                         params={
                             "select": "group_id",
                             "user_id": f"eq.{user_id}",

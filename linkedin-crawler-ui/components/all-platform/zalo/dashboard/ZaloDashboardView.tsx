@@ -91,9 +91,22 @@ export function ZaloDashboardView({ flow, onEnterChat }: ZaloDashboardViewProps)
 
   return (
     <div className="flex flex-col gap-5">
-      {/* HEADER ACTIONS */}
-      <header className="flex items-center justify-end gap-2 border-b border-outline-variant pb-3">
-        <div className="relative">
+      {/* HEADER */}
+      <header className="flex flex-wrap items-center justify-between gap-3 border-b border-outline-variant pb-4">
+        <div className="flex items-center gap-2.5">
+          <div className="h-9 w-9 rounded-lg bg-gradient-to-br from-primary to-red-700 flex items-center justify-center shadow-sm">
+            <MaterialIcon name="account_circle" className="text-white text-[22px]" />
+          </div>
+          <div className="flex flex-col">
+            <h2 className="text-lg font-bold text-on-surface leading-tight">Quản lý tài khoản</h2>
+            <p className="text-[11px] text-on-surface-variant leading-tight">Theo dõi trạng thái Zalo, share inbox với leader</p>
+          </div>
+          <span className="ml-1 rounded-full bg-surface-container-low border border-outline-variant px-2.5 py-0.5 text-[11px] font-bold text-on-surface-variant">
+            {flow.accounts.length} TK
+          </span>
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="relative">
             <MaterialIcon name="search" className="absolute left-2.5 top-1/2 -translate-y-1/2 text-on-surface-variant text-[16px]" />
             <input
               type="text"
@@ -130,6 +143,7 @@ export function ZaloDashboardView({ flow, onEnterChat }: ZaloDashboardViewProps)
             <MaterialIcon name="support_agent" className="text-[16px]" />
             Hỗ trợ
           </button>
+        </div>
       </header>
 
       {/* KPI CARDS */}

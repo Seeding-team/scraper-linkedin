@@ -1,4 +1,4 @@
-"""CRUD cho `zalo_bulk_jobs` / `zalo_bulk_job_items` (Mục 7 guide, mục 2 item 7:
+"""CRUD cho `zalo_module_bulk_jobs` / `zalo_module_bulk_job_items` (Mục 7 guide, mục 2 item 7:
 "Gửi tin nhắn hàng loạt" theo danh sách SĐT/UID).
 
 Dùng lại các REST helper dùng chung của `supabase_service.py` (`_rest`) — KHÔNG
@@ -73,7 +73,7 @@ async def create_bulk_job(
         "scheduled_at": scheduled_at,
         "created_by": created_by,
     }
-    rows = await _rest("POST", "zalo_bulk_jobs", json=[payload], prefer="return=representation")
+    rows = await _rest("POST", "zalo_module_bulk_jobs", json=[payload], prefer="return=representation")
     job = (rows or [{}])[0]
     job_id = job.get("id")
 
@@ -88,7 +88,7 @@ async def create_bulk_job(
             }
             for r in valid_recipients
         ]
-        await _rest("POST", "zalo_bulk_job_items", json=item_payloads)
+        await _rest("POST", "zalo_module_bulk_job_items", json=item_payloads)
 
     return job
 
@@ -97,7 +97,7 @@ async def list_bulk_jobs(account_id: str, *, limit: int = 200) -> List[Dict[str,
     return (
         await _rest(
             "GET",
-            "zalo_bulk_jobs",
+            "zalo_module_bulk_jobs",
             params={
                 "select": "*",
                 "account_id": f"eq.{account_id}",
@@ -112,7 +112,7 @@ async def list_bulk_jobs(account_id: str, *, limit: int = 200) -> List[Dict[str,
 async def get_bulk_job(job_id: int) -> Optional[Dict[str, Any]]:
     rows = await _rest(
         "GET",
-        "zalo_bulk_jobs",
+        "zalo_module_bulk_jobs",
         params={"select": "*", "id": f"eq.{job_id}", "limit": "1"},
     )
     return rows[0] if rows else None
@@ -122,7 +122,7 @@ async def list_bulk_job_items(job_id: int, *, limit: int = 5000) -> List[Dict[st
     return (
         await _rest(
             "GET",
-            "zalo_bulk_job_items",
+            "zalo_module_bulk_job_items",
             params={
                 "select": "*",
                 "job_id": f"eq.{job_id}",
@@ -138,7 +138,7 @@ async def update_bulk_job_status(job_id: int, status: str) -> Optional[Dict[str,
     """Pause/resume/cancel — chỉ đổi `status`, worker tự đọc lại ở tick sau."""
     rows = await _rest(
         "PATCH",
-        "zalo_bulk_jobs",
+        "zalo_module_bulk_jobs",
         params={"id": f"eq.{job_id}"},
         json={"status": status, "updated_at": _now_iso()},
         prefer="return=representation",
@@ -147,7 +147,7 @@ async def update_bulk_job_status(job_id: int, status: str) -> Optional[Dict[str,
 
 
 async def delete_bulk_job(job_id: int) -> None:
-    await _rest("DELETE", "zalo_bulk_jobs", params={"id": f"eq.{job_id}"})
+    await _rest("DELETE", "zalo_module_bulk_jobs", params={"id": f"eq.{job_id}"})
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -160,7 +160,7 @@ async def list_active_jobs(*, limit: int = 50) -> List[Dict[str, Any]]:
     return (
         await _rest(
             "GET",
-            "zalo_bulk_jobs",
+            "zalo_module_bulk_jobs",
             params={
                 "select": "*",
                 "status": "in.(pending,running)",
@@ -177,7 +177,7 @@ async def list_pending_items(job_id: int, *, limit: int = 5) -> List[Dict[str, A
     return (
         await _rest(
             "GET",
-            "zalo_bulk_job_items",
+            "zalo_module_bulk_job_items",
             params={
                 "select": "*",
                 "job_id": f"eq.{job_id}",
@@ -194,7 +194,7 @@ async def count_pending_items(job_id: int) -> int:
     rows = (
         await _rest(
             "GET",
-            "zalo_bulk_job_items",
+            "zalo_module_bulk_job_items",
             params={
                 "select": "id",
                 "job_id": f"eq.{job_id}",
@@ -210,7 +210,7 @@ async def count_pending_items(job_id: int) -> int:
 async def update_job_item_status(item_id: int, status: str, *, error: Optional[str] = None) -> None:
     await _rest(
         "PATCH",
-        "zalo_bulk_job_items",
+        "zalo_module_bulk_job_items",
         params={"id": f"eq.{item_id}"},
         json={"status": status, "error": error, "processed_at": _now_iso()},
     )
@@ -220,7 +220,7 @@ async def mark_job_running_if_pending(job_id: int) -> None:
     """Chuyển `pending` -> `running` khi worker bắt đầu xử lý item đầu tiên."""
     await _rest(
         "PATCH",
-        "zalo_bulk_jobs",
+        "zalo_module_bulk_jobs",
         params={"id": f"eq.{job_id}", "status": "eq.pending"},
         json={"status": "running", "updated_at": _now_iso()},
     )
@@ -235,7 +235,7 @@ async def bump_job_counters(job_id: int, *, sent: int = 0, success: int = 0, fai
         return
     await _rest(
         "PATCH",
-        "zalo_bulk_jobs",
+        "zalo_module_bulk_jobs",
         params={"id": f"eq.{job_id}"},
         json={
             "sent_count": int(job.get("sent_count") or 0) + sent,
@@ -252,7 +252,7 @@ async def mark_job_completed_if_done(job_id: int) -> None:
     if remaining == 0:
         await _rest(
             "PATCH",
-            "zalo_bulk_jobs",
+            "zalo_module_bulk_jobs",
             params={"id": f"eq.{job_id}", "status": "in.(pending,running)"},
             json={"status": "completed", "updated_at": _now_iso()},
         )

@@ -7,7 +7,7 @@
  *   -> đánh dấu "Là khách" -> "Mở chat" (tải full) -> trả lời / đẩy Zalo.
  */
 
-import { useEffect, useState, useCallback, useMemo, useRef, Suspense } from "react";
+import { useEffect, useState, useCallback, useRef, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { useAppAuth } from "@/contexts/AppAuthContext";
 import { Inbox as InboxIcon, TriangleAlert, Lock, Info, CirclePause, Moon, RefreshCw } from "lucide-react";
@@ -210,7 +210,6 @@ function InboxPageContent() {
   const [extraAccountIds, setExtraAccountIds] = useState<Set<string>>(new Set()); // acc admin/leader tự chọn thêm ngoài scope mặc định
   const [showAddAccountPicker, setShowAddAccountPicker] = useState(false);
   const [acc, setAcc] = useState("");
-  const [displayScope, setDisplayScope] = useState<"mine" | "team" | "all">("all");
   const [scopeReady, setScopeReady] = useState(false);
   const [allowedOwnerIds, setAllowedOwnerIds] = useState<Set<string> | null>(new Set());
   const [ownerNames, setOwnerNames] = useState<Record<string, string>>({});
@@ -475,34 +474,12 @@ function InboxPageContent() {
     })();
   }, [owner, user?.name, user?.email]);
 
-  const teamOwnerIds = useMemo(() => {
-    const ids = new Set<string>();
-    if (owner) ids.add(owner);
-    for (const team of teams) {
-      if (team.id_leader) ids.add(String(team.id_leader));
-      for (const member of team.members || []) {
-        if (member.id) ids.add(String(member.id));
-      }
-    }
-    return ids;
-  }, [teams, owner]);
-
   const sessionInScope = useCallback((session: Session) => {
     if (!scopeReady) return false;
     if (extraAccountIds.has(session.user_id)) return true; // admin/leader tự thêm ngoài scope
-    if (displayScope === "mine") {
-      return !!session.owner && session.owner === owner;
-    }
-    if (displayScope === "team") {
-      if (teamOwnerIds.size > 0) {
-        return !!session.owner && teamOwnerIds.has(String(session.owner));
-      }
-      return !!session.owner && (session.owner === owner || (allowedOwnerIds ? allowedOwnerIds.has(String(session.owner)) : false));
-    }
-    // displayScope === "all"
     if (allowedOwnerIds === null) return true;
     return !!session.owner && allowedOwnerIds.has(String(session.owner));
-  }, [allowedOwnerIds, teamOwnerIds, scopeReady, extraAccountIds, displayScope, owner]);
+  }, [allowedOwnerIds, scopeReady, extraAccountIds]);
 
   // Nạp danh sách acc admin/leader tự chọn thêm (lưu theo trình duyệt, key theo owner hiện tại)
   useEffect(() => {
@@ -1364,10 +1341,9 @@ function InboxPageContent() {
       .catch(() => setLoadingFresh(false));
   }, [convs, openConv, archiveReading, accOnline, needRelogin, acc, pollFreshThread]);
 
-  return (
-    <InboxModernLayout
-      displayScope={displayScope}
-        onScopeChange={setDisplayScope}
+  if (process.env.NEXT_PUBLIC_INBOX_LEGACY_UI !== "1") {
+    return (
+      <InboxModernLayout
         role={role}
         owner={owner}
         sessions={sessions}
@@ -1430,5 +1406,237 @@ function InboxPageContent() {
         accountOwnerEmail={selectedAccountOwnerEmail}
       />
     );
-}
+  }
 
+  return (
+    <div className="p-6 w-full">
+      <div className="flex items-center gap-2 mb-1">
+        <InboxIcon className="size-5 text-primary" />
+        <h1 className="text-xl font-black text-foreground">Inbox Facebook</h1>
+      </div>
+      <p className="text-sm text-muted-foreground mb-6">Tin nhắn Messenger tự cập nhật gần như tức thời khi extension đang mở (đọc ngay trên trình duyệt seeder, giải được mã hóa đầu cuối). Đánh dấu khách và trả lời, ưu tiên đẩy khách sang Zalo.</p>
+
+      {connErr && (
+        <div className="mb-4 flex items-center gap-2 rounded-xl bg-amber-50 border border-amber-300 px-4 py-3 text-sm text-amber-700">
+          <TriangleAlert className="size-[18px] shrink-0" />
+          <span>Không kết nối được Facebook automation service. Kiểm tra backend product và Markee service.</span>
+        </div>
+      )}
+      {needRelogin && (
+        <div className="mb-4 flex items-center gap-2 rounded-xl bg-red-50 border border-red-300 px-4 py-3 text-sm text-red-700">
+          <Lock className="size-[18px] shrink-0" />
+          <span>Cookie tài khoản này đã hết hạn — vào tab Tài khoản đăng nhập lại.</span>
+        </div>
+      )}
+
+      {role === "member" && extInstalled !== null && !sessions.some(s => s.owner === owner) && (
+        <div className="mb-4 flex items-start gap-2 rounded-xl bg-blue-50 border border-blue-300 px-4 py-3 text-sm text-blue-800">
+          <Info className="size-[18px] shrink-0 mt-0.5" />
+          <span>
+            {extInstalled === false
+              ? "Bạn chưa cài (hoặc chưa mở) extension Markee trên trình duyệt này. Cài + mở extension rồi đăng nhập Facebook — tài khoản của bạn sẽ tự kết nối về đây, không cần thao tác gì thêm."
+              : "Extension đã sẵn sàng nhưng tài khoản Facebook của bạn chưa kết nối. Mở extension (biểu tượng góc phải trình duyệt) và đăng nhập Facebook để kết nối. Giữ 1 tab Messenger mở trong giờ làm để tin nhắn tự về."}
+          </span>
+        </div>
+      )}
+
+      <div className="bg-card rounded-xl border border-border p-3 mb-4">
+        <div className="flex items-center justify-between mb-2 gap-2">
+          <label className="text-xs font-bold text-muted-foreground">Tài khoản nhân viên</label>
+          <div className="flex items-center gap-2">
+            {(role === "admin" || role === "leader") && (
+              <div className="relative">
+                <button onClick={() => setShowAddAccountPicker(v => !v)} className="text-xs font-bold px-3 py-1.5 rounded-xl border border-border text-muted-foreground hover:border-primary hover:text-primary transition">
+                  + Thêm tài khoản khác
+                </button>
+                {showAddAccountPicker && (
+                  <div className="absolute right-0 mt-1 w-72 max-h-80 overflow-auto bg-card border border-border rounded-xl shadow-lg z-20 p-2">
+                    <div className="text-[11px] text-muted-foreground px-1 pb-1.5">Chọn thêm acc ngoài phạm vi mặc định (team/của bạn) để hiện trong Inbox — chỉ lưu trên trình duyệt này.</div>
+                    {rawSessions.length === 0 ? (
+                      <div className="text-xs text-muted-foreground px-1 py-2">Chưa có acc nào.</div>
+                    ) : (
+                      rawSessions.map(s => {
+                        const inDefaultScope = allowedOwnerIds === null || (!!s.owner && allowedOwnerIds!.has(String(s.owner)));
+                        const checked = extraAccountIds.has(s.user_id);
+                        return (
+                          <label key={s.user_id} className={`flex items-center gap-2 px-1.5 py-1 rounded text-xs cursor-pointer hover:bg-muted ${inDefaultScope ? "opacity-50" : ""}`}>
+                            <input type="checkbox" checked={checked || inDefaultScope} disabled={inDefaultScope} onChange={() => toggleExtraAccount(s.user_id)} />
+                            <span className={`inline-block w-1.5 h-1.5 rounded-full ${s.status === "online" ? "bg-green-500" : "bg-muted"}`} />
+                            <span className="truncate">{accLabel(s)}</span>
+                            {inDefaultScope && <span className="text-[10px] text-muted-foreground ml-auto shrink-0">(mặc định)</span>}
+                          </label>
+                        );
+                      })
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+            <button onClick={scan} disabled={scanning || !acc || !accOnline || needRelogin} className="text-xs font-bold px-3 py-1.5 rounded-xl bg-primary text-white hover:bg-primary/90 transition disabled:opacity-50">
+              {scanning ? "Đang quét..." : "Quét ngay"}
+            </button>
+          </div>
+        </div>
+        {sessions.length === 0 ? (
+          <span className="text-sm text-muted-foreground">{extInstalled === false ? 'Chưa thấy extension. Hãy cài + mở extension trên trình duyệt này.' : 'Chưa có tài khoản nào. Nhân viên cài extension + đăng nhập Facebook để tài khoản hiện ra.'}</span>
+        ) : (role === "admin" || role === "leader") ? (
+          <div className="w-full">
+            <TeamAccountTree
+              sessions={sessions}
+              ownerNames={ownerNames}
+              teams={teams}
+              selectedAcc={acc}
+              role={role}
+              owner={owner}
+              onSelect={selectAcc}
+            />
+          </div>
+        ) : (
+          <div className="flex flex-wrap gap-2">
+            {sessions.map(s => {
+              const isOnline = s.status === "online";
+              const isPaused = s.status === "paused";
+              return (
+                <button key={s.user_id} onClick={() => selectAcc(s.user_id)}
+                  title={isOnline ? "Đang online — đọc/trả lời được" : isPaused ? "Inbox realtime đang tạm dừng trên extension" : "Offline (nhân viên tắt máy) — chỉ xem tin cũ"}
+                  className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-full text-sm font-semibold border transition ${acc === s.user_id ? "bg-primary text-white border-primary" : `border-border hover:border-primary ${isOnline ? "text-foreground" : isPaused ? "text-amber-700" : "text-muted-foreground"}`}`}>
+                  <span className={`inline-block w-2 h-2 rounded-full ${isOnline ? "bg-green-500" : isPaused ? "bg-amber-400" : "bg-muted"}`} />{accLabel(s)}{!isOnline && <span className="text-[10px] opacity-70">({isPaused ? "paused" : "offline"})</span>}
+                </button>
+              );
+            })}
+          </div>
+        )}
+        <div className="text-[11px] text-muted-foreground mt-1.5">Online: đọc + trả lời realtime. Offline: chỉ xem tin cũ tới khi máy nhân viên bật lại.</div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+        <div className="bg-card rounded-xl border border-border p-5">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-base font-bold text-foreground">Hộp thư</h2>
+            <select value={filter} onChange={e => setFilter(e.target.value as "all" | "unread" | "customer" | "need_reply" | "need_verify")} className="text-sm border border-border rounded-xl px-2 py-1 outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary text-foreground bg-card">
+              <option value="all">Tất cả</option>
+              <option value="need_reply">Cần trả lời</option>
+              <option value="unread">Chưa đọc</option>
+              <option value="customer">Khách</option>
+              <option value="need_verify">Chưa tính KPI</option>
+            </select>
+          </div>
+          <div className="inline-flex rounded-xl border border-border bg-muted p-0.5 mb-3">
+            <button onClick={() => { setViewMode("inbox"); setArchiveReading(false); }} className={`text-xs font-bold px-3 py-1.5 rounded-xl transition ${viewMode === "inbox" ? "bg-card text-primary shadow-sm" : "text-muted-foreground hover:text-foreground"}`}>Hộp thư</button>
+            <button onClick={() => setViewMode("archive")} className={`text-xs font-bold px-3 py-1.5 rounded-xl transition ${viewMode === "archive" ? "bg-card text-primary shadow-sm" : "text-muted-foreground hover:text-foreground"}`}>Lưu trữ</button>
+          </div>
+          <div className="space-y-2 max-h-[520px] overflow-auto">
+            {viewMode === "archive" ? (
+              loadingArchives && archives.length === 0
+                ? <div className="text-center text-muted-foreground py-10 text-sm animate-pulse">Đang tải lưu trữ...</div>
+                : archives.length === 0 ? <div className="text-center text-muted-foreground py-10 text-sm">Chưa có hội thoại lưu trữ.</div> :
+                archives.map(a => (
+                  <div key={a.conv_id} className={`border rounded-xl p-3 transition ${openConv === a.conv_id && archiveReading ? "border-primary bg-primary/5" : "border-border"}`}>
+                    <div onClick={() => openArchive(a.conv_id)} title="Xem bản lưu" className="flex justify-between gap-2 cursor-pointer">
+                      <div className="min-w-0">
+                        <div className="truncate font-semibold text-foreground">{a.name || a.conv_id}</div>
+                        <div className="text-xs text-muted-foreground truncate">{a.preview || "(không có preview)"}</div>
+                      </div>
+                      <div className="text-xs text-muted-foreground whitespace-nowrap">{a.messages_count || 0} tin</div>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5 mt-2">
+                      {a.is_customer && <span className="text-[10px] px-2 py-0.5 rounded-full bg-green-100 text-green-700 font-bold">khách</span>}
+                      {a.pushed_to_zalo && <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 font-bold">đã đẩy Zalo</span>}
+                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-muted text-muted-foreground font-bold">{a.archive_reason === "hidden_from_inbox" ? "đã ẩn" : "đã lưu"}</span>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5 mt-2">
+                      <button onClick={() => openArchive(a.conv_id)} className="text-xs px-2.5 py-1 rounded-xl border border-border hover:border-primary text-foreground font-semibold transition">Xem lại</button>
+                      <button onClick={() => { setViewMode("inbox"); openChat(a.conv_id); }} className="text-xs px-2.5 py-1 rounded-xl border border-border hover:border-primary text-foreground font-semibold transition">Mở inbox</button>
+                    </div>
+                  </div>
+                ))
+            ) : (loadingConvs && filtered.length === 0
+              ? <div className="text-center text-muted-foreground py-10 text-sm animate-pulse">Đang tải hộp thư của tài khoản...</div>
+              : filtered.length === 0 ? <div className="text-center text-muted-foreground py-10 text-sm">Chưa có hội thoại gần đây. Tin cũ nên lưu khách hoặc để ở lưu trữ.</div> :
+              filtered.map(c => (
+                <div key={c.conv_id} className={`border rounded-xl p-3 transition ${openConv === c.conv_id && !archiveReading ? "border-primary bg-primary/5" : "border-border"}`}>
+                  <div onClick={() => openChat(c.conv_id)} title="Bấm để mở hội thoại" className="flex justify-between gap-2 cursor-pointer">
+                    <div className="min-w-0">
+                      <div className={`truncate ${c.unread ? "font-extrabold" : "font-semibold"} text-foreground`}>{c.name}</div>
+                      <div className="text-xs text-muted-foreground truncate">{c.preview || "(không có preview)"}</div>
+                    </div>
+                    <div className="text-xs text-muted-foreground whitespace-nowrap">{c.time}</div>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5 mt-2">
+                    {needsReply(c) && <span className="text-[10px] px-2 py-0.5 rounded-full bg-red-100 text-red-700 font-bold">cần trả lời</span>}
+                    {c.unread && <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 font-bold">chưa đọc</span>}
+                    {c.is_customer && <span className="text-[10px] px-2 py-0.5 rounded-full bg-green-100 text-green-700 font-bold">khách</span>}
+                    {c.pushed_to_zalo && <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 font-bold">đã đẩy Zalo</span>}
+                    {c.archived && <span className="text-[10px] px-2 py-0.5 rounded-full bg-muted text-muted-foreground font-bold">đã lưu</span>}
+                  </div>
+                  <div className="flex flex-wrap gap-1.5 mt-2">
+                    <button onClick={() => openChat(c.conv_id)} className="text-xs px-2.5 py-1 rounded-xl border border-border hover:border-primary text-foreground font-semibold transition">Mở chat</button>
+                    <button onClick={() => mark(c.conv_id, "is_customer", !c.is_customer)} className="text-xs px-2.5 py-1 rounded-xl border border-border hover:border-primary text-foreground font-semibold transition">{c.is_customer ? "Bỏ khách" : "Là khách"}</button>
+                    {c.is_customer && <button onClick={() => mark(c.conv_id, "pushed_to_zalo", !c.pushed_to_zalo)} className="text-xs px-2.5 py-1 rounded-xl border border-border hover:border-primary text-foreground font-semibold transition">{c.pushed_to_zalo ? "Bỏ Zalo" : "Đã đẩy Zalo"}</button>}
+                    <button onClick={() => saveArchive(c.conv_id, false)} className="text-xs px-2.5 py-1 rounded-xl border border-border hover:border-primary text-foreground font-semibold transition">Lưu khách</button>
+                    <button onClick={() => { if (window.confirm(`Ẩn "${c.name || "hội thoại này"}" khỏi hộp thư? Markee sẽ lưu lại bản archive, không xóa trên Messenger.`)) saveArchive(c.conv_id, true); }} className="text-xs px-2.5 py-1 rounded-xl border border-red-200 text-red-500 hover:bg-red-50 font-semibold transition">Ẩn</button>
+                  </div>
+                </div>
+              ))) }
+          </div>
+        </div>
+
+        {/* Khung chat */}
+        <div className="bg-card rounded-xl border border-border p-5">
+          <h2 className="text-base font-bold text-foreground mb-3">Hội thoại</h2>
+          {!openConv ? <div className="text-center text-muted-foreground py-10 text-sm">Chọn 1 hội thoại để xem tin nhắn.</div> : (
+            <>
+              <div ref={chatScrollRef} className="max-h-[430px] overflow-auto mb-3 space-y-2 p-1">
+                {loadingChat && msgs.length === 0
+                  ? <div className="text-sm text-muted-foreground">Đang tải hội thoại (extension đang mở Messenger quét)... lần đầu có thể chờ 30–60s.</div>
+                  : msgs.length === 0
+                    ? <div className="text-sm rounded-xl bg-amber-50 border border-amber-200 px-3 py-2.5 text-amber-800 space-y-2">
+                        {archiveReading
+                          ? <div>Bản lưu này chưa có nội dung tin nhắn. Hãy mở hội thoại live một lần để tải thread rồi lưu lại.</div>
+                          : needRelogin
+                          ? <div className="flex items-start gap-1.5"><Lock className="size-4 shrink-0 mt-0.5" /><span>Cookie tài khoản đã hết hạn — vào tab <b>Tài khoản</b> đăng nhập lại rồi mở lại hội thoại.</span></div>
+                          : accPaused
+                            ? <div className="flex items-start gap-1.5"><CirclePause className="size-4 shrink-0 mt-0.5" /><span>Inbox realtime đang <b>tạm dừng</b> trong extension của nhân viên. Bật lại công tắc Inbox realtime trong popup extension để lấy tin mới.</span></div>
+                          : !accOnline
+                            ? <div className="flex items-start gap-1.5"><Moon className="size-4 shrink-0 mt-0.5" /><span>Tài khoản đang <b>offline</b> — nhân viên cần mở máy + extension và giữ 1 tab Messenger để lấy được tin.</span></div>
+                            : <div>Chưa lấy được tin nhắn. Đảm bảo extension đang bật và mở 1 tab <b>Messenger</b> trên máy nhân viên, rồi bấm <b>Quét lại</b>.</div>}
+                        {!archiveReading && accOnline && !needRelogin && (
+                          <button onClick={() => openChat(openConv)} className="inline-flex items-center gap-1 text-xs px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-white font-bold transition"><RefreshCw className="size-3.5" />Quét lại hội thoại</button>
+                        )}
+                      </div>
+                    : msgs.map((m, i) => {
+                        const mt = m.text.match(/^Tin nhắn do .+? gửi lúc (.+?):\s*([\s\S]*)$/i);
+                        let content = mt ? (mt[2] || "").trim() : m.text;
+                        const time = mt ? (mt[1] || "").trim() : (m.time || "");
+                        if (content) {
+                          // Strip time format VN đầu content: "03sáng: text", "47ch: text", "8:47chiều\ntext"
+                          const stripped = content.replace(/^(?:(?:Thứ\s+\S+\s+)?\d{1,2}(?::\d{2})?(?:sáng|chiều|ch|sa|CH|SA|AM|PM)?)\s*[:\n]+\s*/i, "").trim();
+                          if (stripped) content = stripped;
+                        }
+                        return (
+                          <div key={i} className={`flex ${m.from === "me" ? "justify-end" : "justify-start"}`}>
+                            <div className={`max-w-[78%] flex flex-col ${m.from === "me" ? "items-end" : "items-start"}`}>
+                              <div className={`px-3 py-2 rounded-xl text-sm ${m.from === "me" ? "bg-primary text-white" : "bg-muted text-foreground"}`}>{content}</div>
+                              {time && <div className="text-[10px] text-muted-foreground mt-0.5 px-1">{time}</div>}
+                            </div>
+                          </div>
+                        );
+                      })}
+                {loadingFresh && <div className="text-[11px] text-muted-foreground text-center pt-1 animate-pulse">Đang cập nhật tin mới nhất...</div>}
+              </div>
+              <div className="flex gap-2">
+                <input value={reply} onChange={e => setReply(e.target.value)} onKeyDown={e => { if (e.key === "Enter") sendReply(); }}
+                  disabled={archiveReading || !accOnline || needRelogin}
+                  placeholder={archiveReading ? "Đang xem bản lưu trữ — mở inbox live để trả lời" : needRelogin ? "Cookie hết hạn — đăng nhập lại để gửi" : accPaused ? "Inbox realtime đang tạm dừng — chưa gửi được" : !accOnline ? "Tài khoản offline — không gửi được" : "Nhập trả lời..."}
+                  className="flex-1 border border-border rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary text-foreground disabled:bg-muted disabled:cursor-not-allowed" />
+                <button onClick={sendReply} disabled={archiveReading || !accOnline || needRelogin} className="px-4 py-2 rounded-xl bg-primary text-white text-sm font-bold hover:bg-primary/90 transition disabled:opacity-50 disabled:cursor-not-allowed">Gửi</button>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+
+      {toast && <div className={`fixed bottom-6 right-6 px-5 py-3.5 rounded-xl text-white font-semibold shadow-lg ${toast.ok ? "bg-green-600" : "bg-red-600"}`}>{toast.msg}</div>}
+    </div>
+  );
+}

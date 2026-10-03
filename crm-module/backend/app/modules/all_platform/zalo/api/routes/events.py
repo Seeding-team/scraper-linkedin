@@ -253,7 +253,7 @@ async def stream_zalo_events(
 # SỰ đang dùng trong ZaloInboxAdminShell.tsx (giữ lại) là
 # api/routes/inbox_share.py + services/supabase_inbox_share_service.py (tick
 # "chia sẻ để leader verify KPI" — cùng ghi vào bảng
-# zalo_conversation_permissions nhưng với unique constraint 4 cột
+# zalo_module_conversation_permissions nhưng với unique constraint 4 cột
 # account_id+conversation_id+shared_role+id_leader để hỗ trợ 1 member thuộc
 # nhiều leader). 2 endpoint đơn giản này dùng constraint 3 cột KHÔNG còn khớp
 # với bảng sau khi đổi sang constraint 4 cột — bỏ hẳn để tránh gọi nhầm gây

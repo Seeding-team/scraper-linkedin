@@ -176,7 +176,7 @@ export function AccountManagementContent() {
   };
 
   return (
-    <div className="w-full min-w-0 space-y-6 font-sans bg-white p-6 rounded-2xl min-h-screen">      {/* Header */}
+<div className="w-full min-w-0 space-y-6 font-sans">      {/* Header */}
       <div className="relative overflow-hidden rounded-2xl border border-outline-variant bg-surface p-6 shadow-[0_1px_2px_rgba(16,24,40,0.04),0_4px_10px_-2px_rgba(16,24,40,0.06)]">
         <div className="absolute -right-10 -top-16 h-48 w-48 rounded-full bg-primary/[0.06] blur-2xl" aria-hidden="true" />
         <div className="absolute -right-24 top-8 h-40 w-40 rounded-full bg-primary/[0.04] blur-3xl" aria-hidden="true" />

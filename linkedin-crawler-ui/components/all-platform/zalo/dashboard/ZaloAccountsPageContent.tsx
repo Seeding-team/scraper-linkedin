@@ -4,26 +4,18 @@ import { useZaloCrawlerFlow } from "@/hooks/useZaloCrawlerFlow";
 import { ZaloDashboardView } from "./ZaloDashboardView";
 import { useRouter } from "next/navigation";
 
-interface ZaloAccountsPageContentProps {
-  onEnterChat?: (accountId: string) => void;
-}
-
-export function ZaloAccountsPageContent({ onEnterChat }: ZaloAccountsPageContentProps = {}) {
+export function ZaloAccountsPageContent() {
   const flow = useZaloCrawlerFlow();
   const router = useRouter();
 
   function handleEnterChat(accountId: string) {
-    if (onEnterChat) {
-      onEnterChat(accountId);
-    } else {
-      // Điều hướng sang trang quản lý inbox chính (có sidebar hội thoại, gán
-      // nhãn, share leader...) thay vì trang /zalo-chat full-screen cũ.
-      router.push(`/all-platform/zalo-inbox?account=${encodeURIComponent(accountId)}`);
-    }
+    // Điều hướng sang trang quản lý inbox chính (có sidebar hội thoại, gán
+    // nhãn, share leader...) thay vì trang /zalo-chat full-screen cũ.
+    router.push(`/all-platform/zalo-inbox?account=${encodeURIComponent(accountId)}`);
   }
 
   return (
-    <div className="flex-1 overflow-y-auto p-6 bg-white">
+    <div className="flex-1 overflow-y-auto p-6 bg-[#f8f9fa]">
       <ZaloDashboardView flow={flow} onEnterChat={handleEnterChat} />
 
       {/* Modal "Đăng nhập lại" (Zalo tập trung — đăng nhập CHỈ còn qua Extension,

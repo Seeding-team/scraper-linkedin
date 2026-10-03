@@ -1,7 +1,7 @@
 """Selective Inbox Sharing service for KPI verification.
 
 Cho phép member (staff) tick cho phép leader xem các conversation Zalo nhất
-định để verify "Tin nhắn KPI". Bảng lưu: ``zalo_conversation_permissions``
+định để verify "Tin nhắn KPI". Bảng lưu: ``zalo_module_conversation_permissions``
 (sử dụng lại từ migration 003, mở rộng thêm ở migration 004).
 
 Quy ước:
@@ -149,7 +149,7 @@ def toggle_inbox_share(
     if not is_active:
         try:
             res = (
-                supabase.table("zalo_conversation_permissions")
+                supabase.table("zalo_module_conversation_permissions")
                 .update({"is_active": False, "updated_at": "now()"})
                 .eq("account_id", str(account_id))
                 .eq("conversation_id", str(conversation_id))
@@ -232,7 +232,7 @@ def toggle_inbox_share(
         # Trước đây không có id_leader trong key → batch upsert fail với 21000
         # khi member thuộc 2+ leader (nhiều row cùng acc/conv/role).
         upsert_res = (
-            supabase.table("zalo_conversation_permissions")
+            supabase.table("zalo_module_conversation_permissions")
             .upsert(upsert_rows, on_conflict="account_id,conversation_id,shared_role,id_leader")
             .execute()
         )
@@ -284,7 +284,7 @@ def list_shared_conversations_by_member(
         return []
 
     q = (
-        supabase.table("zalo_conversation_permissions")
+        supabase.table("zalo_module_conversation_permissions")
         .select("id, account_id, conversation_id, shared_role, is_active, is_verify, is_lead, note, created_at, updated_at")
         .eq("id_member", member_id)
     )
@@ -316,11 +316,11 @@ def list_shared_conversations_for_leader(
     is_admin = user_res.data[0].get("role") in ["admin", "superadmin"]
 
     q = (
-        supabase.table("zalo_conversation_permissions")
+        supabase.table("zalo_module_conversation_permissions")
         .select(
             "id, account_id, conversation_id, shared_role, is_active, is_verify, is_lead, note, "
             "id_member, id_leader, verified_at, verified_by, created_at, updated_at, "
-            "zalo_accounts!fk_zalo_conv_perm_account(label, phone)"
+            "zalo_module_accounts!fk_zalo_conv_perm_account(label, phone)"
         )
         .eq("is_active", True)
         .eq("shared_role", "leader")
@@ -345,7 +345,7 @@ def list_shared_conversations_for_leader(
         if conv_ids and acc_ids:
             try:
                 groups_res = (
-                    supabase.table("zalo_groups")
+                    supabase.table("zalo_module_groups")
                     .select("user_id, group_id, group_name")
                     .in_("group_id", conv_ids)
                     .in_("user_id", acc_ids)
@@ -361,7 +361,7 @@ def list_shared_conversations_for_leader(
                 if missing:
                     for mi in missing:
                         msg_res = (
-                            supabase.table("zalo_messages")
+                            supabase.table("zalo_module_messages")
                             .select("group_name")
                             .eq("user_id", mi["account_id"])
                             .eq("group_id", mi["conversation_id"])
@@ -413,7 +413,7 @@ def verify_inbox_share(
 
     try:
         res = (
-            supabase.table("zalo_conversation_permissions")
+            supabase.table("zalo_module_conversation_permissions")
             .update(payload)
             .eq("id", int(row_id))
             .execute()
@@ -431,7 +431,7 @@ def unverify_inbox_share(row_id: int) -> Dict[str, Any]:
     supabase: Client = get_supabase_client()
     try:
         res = (
-            supabase.table("zalo_conversation_permissions")
+            supabase.table("zalo_module_conversation_permissions")
             .update({"verified_at": None, "verified_by": None, "is_verify": False, "updated_at": "now()"})
             .eq("id", int(row_id))
             .execute()
@@ -460,7 +460,7 @@ def toggle_lead_inbox_share(
 
     try:
         res = (
-            supabase.table("zalo_conversation_permissions")
+            supabase.table("zalo_module_conversation_permissions")
             .update({"is_lead": is_lead, "updated_at": "now()"})
             .eq("id", int(row_id))
             .execute()
@@ -497,10 +497,10 @@ def count_verified_inbox_shares(
 
     try:
         res = (
-            supabase.table("zalo_conversation_permissions")
+            supabase.table("zalo_module_conversation_permissions")
             .select(
                 "id, account_id, conversation_id, is_verify, verified_at, updated_at, note, "
-                "zalo_accounts!fk_zalo_conv_perm_account(label, phone)"
+                "zalo_module_accounts!fk_zalo_conv_perm_account(label, phone)"
             )
             .eq("id_member", member_id)
             .eq("shared_role", "leader")
@@ -576,7 +576,7 @@ def revoke_all_shares(account_id: str, member_email: str) -> Dict[str, Any]:
     try:
         # Cập nhật is_active = false cho toàn bộ các permission của account_id này mà chưa được verified
         res = (
-            supabase.table("zalo_conversation_permissions")
+            supabase.table("zalo_module_conversation_permissions")
             .update({"is_active": False})
             .eq("account_id", account_id)
             .eq("id_member", member_id)
