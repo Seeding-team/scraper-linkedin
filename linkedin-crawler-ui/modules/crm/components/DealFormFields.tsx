@@ -1228,6 +1228,23 @@ export function DealFormFields({
                 <Field label="Customer / Công ty" required>
                   <CustomerProfileCombobox form={form} setValue={setValue} hideProfileUpdateToggle />
                 </Field>
+                <Field label="Công ty" hint="tùy chọn">
+                  <input value={form.companyName} onChange={event => editIdentity('companyName', event.target.value)} placeholder="Công ty TNHH ABC" />
+                </Field>
+                {/* Fix (2026-10-03): nhanh "Tạo cơ hội nhanh" truoc day KHONG
+                 * co o nhap Email/SDT nao ca - go ten khach hang MOI (chua co
+                 * trong CRM) xong bam "Tạo deal" luon bao "Cần nhập email
+                 * hoặc số điện thoại" ma khong co cho de dien (bug nguoi dung
+                 * bao cao thuc te). CustomerProfileCombobox.pick() CO tu dien
+                 * phone/email neu chon 1 KHACH HANG CO SAN, nhung go ten MOI
+                 * thi 2 field nay van rong - phai co o nhap thu cong o day,
+                 * dung y het field "Liên hệ" cua nhanh Sua deal ben duoi. */}
+                <Field full label="Liên hệ" required hint="chỉ cần SĐT hoặc Email">
+                  <div className="crm-inline-pair">
+                    <input value={form.phone} onChange={event => editIdentity('phone', event.target.value)} type="tel" placeholder="Số điện thoại" />
+                    <input value={form.email} onChange={event => editIdentity('email', event.target.value)} type="email" placeholder="Email" />
+                  </div>
+                </Field>
                 {form.customerId ? (
                   <>
                     <Field label="Dự án" hint="tùy chọn — chọn có sẵn hoặc gõ tên mới">

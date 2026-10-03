@@ -319,6 +319,28 @@ export function CrmCustomerModal({
    * lên Supabase Storage qua endpoint chung /customer-leads/upload, sau đó
    * "tự động nhảy qua" — tự điền URL/tên vào đúng dòng vừa bấm.
    */
+  /**
+   * Upload file cho "Link báo giá / hợp đồng khác" — field đơn, chung
+   * (last_attachment_name/url, migration cũ) nằm NGOÀI Phase 1/2. Field này
+   * đã có sẵn trong Customer/payload từ trước (xem emptyForm + handleSubmit)
+   * nhưng chưa từng có input để tự tay sửa/dán link — chỉ được ghi gián tiếp
+   * qua handleRowUpload (Phase 1/2). Feedback mentor (2026-10-03): modal sửa
+   * KH thiếu đúng field này.
+   */
+  const handleLastAttachmentUpload = async (file: File) => {
+    setUploadingLinkKey("last_attachment");
+    try {
+      const result = await customerLeadService.uploadAttachment(file, "contract", customer?.id);
+      set("last_attachment_name", result.name);
+      set("last_attachment_url", result.url);
+      toast.success(`Đã tải "${file.name}" lên`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Upload thất bại");
+    } finally {
+      setUploadingLinkKey(null);
+    }
+  };
+
   const handleRowUpload = async (field: ContractLinkField, index: number, file: File) => {
     const key = `${field}-${index}`;
     setUploadingLinkKey(key);
@@ -911,6 +933,26 @@ export function CrmCustomerModal({
                     </button>
                   </div>
                 ) : null}
+
+                {/* ── Link báo giá / hợp đồng khác (tuỳ chọn, NGOÀI Phase 1/2) —
+                       feedback mentor 2026-10-03: field last_attachment_name/url
+                       đã có sẵn trong payload nhưng chưa từng có input để dán tay.
+                       Dùng cho trường hợp không cần phân biệt mua/bán. ── */}
+                <div className="col-span-2 rounded-lg border border-slate-200 bg-white p-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="text-xs font-semibold text-slate-700">
+                      Link báo giá / hợp đồng khác <span className="text-slate-400 font-normal">(tuỳ chọn)</span>
+                    </label>
+                  </div>
+                  <ContractLinkRow
+                    link={{ name: formData.last_attachment_name ?? "", url: formData.last_attachment_url ?? "" }}
+                    uploading={uploadingLinkKey === "last_attachment"}
+                    onChangeName={(v) => set("last_attachment_name", v || null)}
+                    onChangeUrl={(v) => set("last_attachment_url", v || null)}
+                    onUploadFile={handleLastAttachmentUpload}
+                    onRemove={() => { set("last_attachment_name", null); set("last_attachment_url", null); }}
+                  />
+                </div>
 
                 {/* ── Hợp đồng & báo giá (Vấn đề 2): tách Phase 1 mua / Phase 2 bán,
                        mỗi bên nhiều link + upload file trực tiếp tại đây ── */}
