@@ -483,7 +483,7 @@ export function LeadDetailDrawer({
   }
 
   function buildQualificationPayload(): Record<string, unknown> {
-    return {
+    const payload: Record<string, unknown> = {
       score: form.score ?? null,
       qualification_need: form.interest.trim() || null,
       qualification_icp_fit: icpToApi(icpFit),
@@ -493,7 +493,11 @@ export function LeadDetailDrawer({
       next_step: form.nextStep.trim() || null,
       follow_up_date: form.nextStepAt ? new Date(form.nextStepAt).toISOString() : null,
       note: form.note.trim() || null,
+      deal_stage: form.dealStage || 'dealing',
+      team_id: teamId || null,
     };
+    if (form.project.trim()) payload.project_name = form.project.trim();
+    return payload;
   }
 
   function noteWithVerification(prefix: string, reason?: string) {

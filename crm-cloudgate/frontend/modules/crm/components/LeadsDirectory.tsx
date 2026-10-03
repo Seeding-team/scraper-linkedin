@@ -1550,10 +1550,7 @@ export function LeadsDirectory() {
         initialMode={detailMode}
         currentUser={user}
         onClose={() => setDetailLead(null)}
-        onSaved={updated => {
-          setDetailLead(updated);
-          handleSaved();
-        }}
+        onSaved={applyUpdatedLead}
         onEdit={openEdit}
       />
 
