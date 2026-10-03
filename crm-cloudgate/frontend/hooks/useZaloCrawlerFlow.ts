@@ -5,16 +5,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { API_BASE_URL, API_KEY } from "@/lib/env";
 import { useAppAuth } from "@/contexts/AppAuthContext";
 import {
-  buildZaloJobEventsUrl,
   createZaloAccount,
   deleteAllZaloSessions,
   deleteZaloAccount,
   deleteZaloAccountFull,
   getDefaultZaloWorkerId,
   getZaloAccounts,
-  getZaloCrawledGroups,
   getZaloCurrentStatus,
-  getZaloWorkers,
   initZaloAuthSession,
   refreshZaloLoginQr,
   resumeZaloManualLogin,
@@ -551,47 +548,22 @@ export function useZaloCrawlerFlow(): ZaloCrawlerFlowValue {
     };
   }, [clearAuthEventStream, clearAuthPolling, clearJobEventStream, clearJobPolling]);
 
+  // Đã bỏ gọi "/zalo/workers" (route pool Playwright đa-worker cũ, xoá trong
+  // lần port sang kiến trúc Zalo tập trung) — kiến trúc mới chạy 1 listener
+  // zca-js/tài khoản, không còn khái niệm "worker" nữa nên chỉ cần 1 giá trị
+  // mặc định tĩnh, không cần gọi API (tránh 404 lặp lại mỗi 30s).
   const loadWorkers = useCallback(async () => {
-    setIsLoadingWorkers(true);
-    setWorkersError(null);
-    try {
-      const response = await getZaloWorkers(userId);
-      const nextWorkers =
-        response.workers.length > 0
-          ? response.workers
-          : [
-              {
-                id: getDefaultZaloWorkerId(),
-                label: "Default",
-                status: "unknown",
-                is_default: true,
-                queue_state: "unknown",
-              },
-            ];
-      setWorkers(nextWorkers);
-
-      const availableIds = new Set(nextWorkers.map((worker) => worker.id));
-      const backendSelected = response.selected_worker_id ?? nextWorkers[0]?.id ?? getDefaultZaloWorkerId();
-      const nextSelected = availableIds.has(backendSelected)
-        ? backendSelected
-        : nextWorkers[0]?.id ?? getDefaultZaloWorkerId();
-      setSelectedWorkerIdState(nextSelected);
-    } catch (error) {
-      setWorkersError(error instanceof Error ? error.message : "Không thể tải danh sách account Zalo.");
-      setWorkers([
-        {
-          id: getDefaultZaloWorkerId(),
-          label: "Default",
-          status: "unknown",
-          is_default: true,
-          queue_state: "unknown",
-        },
-      ]);
-      setSelectedWorkerIdState(getDefaultZaloWorkerId());
-    } finally {
-      setIsLoadingWorkers(false);
-    }
-  }, [userId]);
+    setWorkers([
+      {
+        id: getDefaultZaloWorkerId(),
+        label: "Default",
+        status: "unknown",
+        is_default: true,
+        queue_state: "unknown",
+      },
+    ]);
+    setSelectedWorkerIdState(getDefaultZaloWorkerId());
+  }, []);
 
   const loadAccounts = useCallback(async () => {
     setIsLoadingAccounts(true);
@@ -618,35 +590,12 @@ export function useZaloCrawlerFlow(): ZaloCrawlerFlowValue {
     return () => clearInterval(intervalId);
   }, [isUserIdReady, loadAccounts, loadWorkers]);
 
+  // Đã bỏ gọi "/zalo/groups/crawled" (kết quả crawl-job Google Sheet cũ, xoá
+  // trong lần port sang kiến trúc Zalo tập trung — không còn tính năng crawl
+  // nhóm theo job nữa) — giữ state rỗng tĩnh, không gọi API (tránh 404).
   const loadCrawledGroups = useCallback(async () => {
-    if (!isUserIdReady) return;
-
-    setIsLoadingCrawledGroups(true);
-    setCrawledGroupsError(null);
-
-    try {
-      const response: ZaloCrawledGroupsResponse = await getZaloCrawledGroups(userId);
-      setCrawledGroups(response.groups ?? []);
-      setCrawledGroupsSheetUrl(response.sheet_url ?? null);
-      setCrawledGroupsTotal(response.total_groups ?? response.groups?.length ?? 0);
-    } catch (error) {
-      setCrawledGroupsError(
-        error instanceof Error
-          ? `${MSG_LOAD_CRAWLED_GROUPS_ERROR} ${error.message}`
-          : MSG_LOAD_CRAWLED_GROUPS_ERROR,
-      );
-    } finally {
-      setIsLoadingCrawledGroups(false);
-    }
-  }, [isUserIdReady, userId]);
-
-  useEffect(() => {
-    const timerId = setTimeout(() => {
-      void loadCrawledGroups();
-    }, 0);
-
-    return () => clearTimeout(timerId);
-  }, [loadCrawledGroups]);
+    // no-op — tính năng đã bỏ, xem comment phía trên.
+  }, []);
 
   const resetAuthState = useCallback(() => {
     setSessionId(null);
@@ -769,7 +718,7 @@ export function useZaloCrawlerFlow(): ZaloCrawlerFlowValue {
     }
     setWarningMessage(
       expired
-        ? "Phiên đăng nhập Zalo đã hết hạn. Vui lòng đăng nhập lại bằng mã QR."
+        ? "Phiên đăng nhập Zalo đã hết hạn hoặc bị đăng xuất. Vui lòng đăng nhập lại qua Chrome Extension."
         : null,
     );
   }, []);
@@ -880,39 +829,10 @@ export function useZaloCrawlerFlow(): ZaloCrawlerFlowValue {
     });
   }, []);
 
-  useEffect(() => {
-    if (!isUserIdReady) return;
-
-    if (typeof window === "undefined" || typeof EventSource === "undefined") {
-      return;
-    }
-
-    clearJobEventStream();
-    const eventSource = new EventSource(buildZaloJobEventsUrl(userId), {
-      withCredentials: true,
-    });
-    jobEventSourceRef.current = eventSource;
-
-    const onJobStatus = (event: Event) => {
-      try {
-        const messageEvent = event as MessageEvent;
-        const data = JSON.parse(messageEvent.data) as ZaloJobData;
-        applyRemoteJob(data);
-      } catch {
-        // ignore malformed payload
-      }
-    };
-
-    eventSource.addEventListener("job-status", onJobStatus);
-    eventSource.onerror = () => {
-      // keep polling fallback active
-    };
-
-    return () => {
-      eventSource.removeEventListener("job-status", onJobStatus);
-      clearJobEventStream();
-    };
-  }, [applyRemoteJob, clearJobEventStream, isUserIdReady, userId]);
+  // Đã bỏ SSE "/zalo/jobs/events" (route crawl-job cũ, xoá trong lần port sang
+  // kiến trúc Zalo tập trung — xem ZALO_CENTRALIZED_MODULE_GUIDE.md) — trước đây
+  // effect này mở EventSource vô điều kiện mỗi lần mount, gây 404 lặp lại liên
+  // tục dù tính năng "jobs" (crawl-job) không còn UI nào tạo job mới cả.
 
   const pollRunningJobs = useCallback(async () => {
     const activeJobIds = activeJobIdsRef.current;

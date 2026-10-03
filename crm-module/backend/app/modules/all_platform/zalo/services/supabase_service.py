@@ -12,7 +12,6 @@ from urllib.parse import quote
 import httpx
 from loguru import logger
 
-from app.core.config import settings as crm_settings
 from app.modules.all_platform.zalo.config import settings
 from app.modules.all_platform.zalo.schemas.job import JobData
 from app.modules.all_platform.zalo.schemas.message import Message
@@ -82,7 +81,7 @@ async def _rest(
 
 
 async def resolve_thread_type(account_id: str, conversation_id: str) -> int:
-    """Tra cứu zalo_module_groups để xác định thread_type.
+    """Tra cứu zalo_groups để xác định thread_type.
 
     - Nếu group có is_friend=true → type 0 (cá nhân).
     - Mặc định type 1 (nhóm) nếu không xác định được.
@@ -90,7 +89,7 @@ async def resolve_thread_type(account_id: str, conversation_id: str) -> int:
     try:
         rows = await _rest(
             "GET",
-            "zalo_module_groups",
+            "zalo_groups",
             params={
                 "select": "is_friend",
                 "user_id": f"eq.{account_id}",
@@ -286,7 +285,7 @@ async def upsert_zalo_user(
 
     await _rest(
         "POST",
-        "zalo_module_users",
+        "zalo_users",
         json=[payload],
         params={"on_conflict": "user_id"},
         prefer="resolution=merge-duplicates",
@@ -334,7 +333,7 @@ async def upsert_group(
         try:
             existing = await _rest(
                 "GET",
-                "zalo_module_groups",
+                "zalo_groups",
                 params={
                     "select": "group_name",
                     "user_id": f"eq.{user_id}",
@@ -375,7 +374,7 @@ async def upsert_group(
 
     await _rest(
         "POST",
-        "zalo_module_groups",
+        "zalo_groups",
         json=[payload],
         params={"on_conflict": "user_id,group_id"},
         prefer="resolution=merge-duplicates",
@@ -402,7 +401,7 @@ async def upsert_groups(user_id: str, groups: Iterable[Dict[str, Any]]) -> int:
     try:
         existing_rows = await _rest(
             "GET",
-            "zalo_module_groups",
+            "zalo_groups",
             params={
                 "select": "group_id,group_name,avatar_url,unread_count,last_message_at,last_message_content,last_sender_id,last_sender_name,last_message_type,is_friend",
                 "user_id": f"eq.{user_id}",
@@ -411,7 +410,7 @@ async def upsert_groups(user_id: str, groups: Iterable[Dict[str, Any]]) -> int:
         ) or []
         existing_map = {str(r.get("group_id")): r for r in existing_rows}
     except Exception as exc:
-        logger.warning(f"Could not prefetch existing zalo_module_groups for merge: {exc}")
+        logger.warning(f"Could not prefetch existing zalo_groups for merge: {exc}")
 
     rows: List[Dict[str, Any]] = []
     for group_id, group_name, group in candidates:
@@ -444,7 +443,7 @@ async def upsert_groups(user_id: str, groups: Iterable[Dict[str, Any]]) -> int:
 
     await _rest(
         "POST",
-        "zalo_module_groups",
+        "zalo_groups",
         json=rows,
         params={"on_conflict": "user_id,group_id"},
         prefer="resolution=merge-duplicates",
@@ -474,7 +473,7 @@ async def save_crawl_messages(user_id: str, job: JobData, group_id: str, message
         try:
             rows = await _rest(
                 "POST",
-                "zalo_module_messages",
+                "zalo_messages",
                 json=payloads,
                 params={"on_conflict": "user_id,group_id,source_message_id"},
                 prefer="resolution=merge-duplicates,return=representation",
@@ -529,10 +528,6 @@ async def upsert_zalo_account(
         "avatar_url": avatar_url,
         "status": status,
         "is_active": is_active,
-        # DB self-host này dùng chung cho cả 3 deploy CRM (markee/cloudgate/
-        # SECURITYZONE) — luôn stamp theo instance đang phục vụ request HIỆN
-        # TẠI (giống crm_leads.instance), không cho client tự truyền.
-        "instance": crm_settings.crm_instance,
         "last_seen_at": now,
         "updated_at": now,
     }
@@ -546,14 +541,14 @@ async def upsert_zalo_account(
     try:
         await _rest(
             "POST",
-            "zalo_module_accounts",
+            "zalo_accounts",
             json=[payload],
             params={"on_conflict": "account_id"},
             prefer="resolution=merge-duplicates",
         )
     except RuntimeError as exc:
-        if "zalo_module_accounts" in str(exc):
-            logger.warning(f"zalo_module_accounts table is not ready; skipping account upsert: {exc}")
+        if "zalo_accounts" in str(exc):
+            logger.warning(f"zalo_accounts table is not ready; skipping account upsert: {exc}")
             return
         raise
 
@@ -562,15 +557,11 @@ async def get_zalo_account_by_id(account_id: str) -> Optional[Dict[str, Any]]:
     if not is_supabase_configured():
         return None
     try:
-        # instance filter: 1 account_id thuộc brand khác coi như không tồn tại
-        # với caller hiện tại — chặn dò/đọc/sửa/xoá chéo brand qua account_id
-        # (DB self-host dùng chung cho cả 3 deploy CRM, xem upsert_zalo_account).
         rows = await _rest(
             "GET",
-            "zalo_module_accounts",
+            "zalo_accounts",
             params={
                 "account_id": f"eq.{account_id}",
-                "instance": f"eq.{crm_settings.crm_instance}",
                 "limit": "1",
             },
         )
@@ -590,7 +581,6 @@ async def list_zalo_accounts(
     params: Dict[str, Any] = {
         "select": "*",
         "is_active": "eq.true",
-        "instance": f"eq.{crm_settings.crm_instance}",
         "order": "updated_at.desc",
     }
 
@@ -608,10 +598,10 @@ async def list_zalo_accounts(
         params["or"] = f"(owner_id.eq.{owner_id},is_shared_with_all.eq.true)"
 
     try:
-        return await _rest("GET", "zalo_module_accounts", params=params) or []
+        return await _rest("GET", "zalo_accounts", params=params) or []
     except RuntimeError as exc:
-        if "zalo_module_accounts" in str(exc):
-            logger.warning(f"zalo_module_accounts table is not ready; returning empty account list: {exc}")
+        if "zalo_accounts" in str(exc):
+            logger.warning(f"zalo_accounts table is not ready; returning empty account list: {exc}")
             return []
         raise
 
@@ -622,12 +612,12 @@ async def delete_zalo_account(account_id: str) -> None:
     try:
         await _rest(
             "PATCH",
-            "zalo_module_accounts",
-            params={"account_id": f"eq.{account_id}", "instance": f"eq.{crm_settings.crm_instance}"},
+            "zalo_accounts",
+            params={"account_id": f"eq.{account_id}"},
             json={"is_active": False, "updated_at": datetime.utcnow().isoformat()},
         )
     except RuntimeError as exc:
-        if "zalo_module_accounts" in str(exc):
+        if "zalo_accounts" in str(exc):
             return
         raise
 
@@ -635,7 +625,7 @@ async def delete_zalo_account(account_id: str) -> None:
 async def hard_delete_zalo_account_data(account_id: str) -> Dict[str, int]:
     """Xoá thật sự (hard delete) toàn bộ dữ liệu của 1 account Zalo trong Supabase.
 
-    Gọi PostgreSQL RPC fn_zalo_module_hard_delete_account để xóa toàn bộ các bảng trong 1 transaction.
+    Gọi PostgreSQL RPC fn_zalo_hard_delete_account để xóa toàn bộ các bảng trong 1 transaction.
     """
     if not is_supabase_configured():
         return {}
@@ -643,14 +633,14 @@ async def hard_delete_zalo_account_data(account_id: str) -> Dict[str, int]:
     try:
         resp = await _rest(
             "POST",
-            "rpc/fn_zalo_module_hard_delete_account",
+            "rpc/fn_zalo_hard_delete_account",
             json={"p_account_id": account_id},
         )
         if isinstance(resp, dict):
             return resp
         return {}
     except Exception as exc:
-        logger.info(f"fn_zalo_module_hard_delete_account RPC failed: {exc}. Falling back to sequential deletes...")
+        logger.info(f"fn_zalo_hard_delete_account RPC failed: {exc}. Falling back to sequential deletes...")
         return await _hard_delete_zalo_account_data_fallback(account_id)
 
 
@@ -667,11 +657,11 @@ async def _hard_delete_zalo_account_data_fallback(account_id: str) -> Dict[str, 
         return 0
 
     targets = [
-        ("zalo_module_sessions", {"user_id": f"eq.{account_id}"}),
-        ("zalo_module_users", {"user_id": f"eq.{account_id}"}),
-        ("zalo_module_accounts", {"account_id": f"eq.{account_id}"}),
-        ("zalo_module_groups", {"user_id": f"eq.{account_id}"}),
-        ("zalo_module_messages", {"user_id": f"eq.{account_id}"}),
+        ("zalo_sessions", {"user_id": f"eq.{account_id}"}),
+        ("zalo_users", {"user_id": f"eq.{account_id}"}),
+        ("zalo_accounts", {"account_id": f"eq.{account_id}"}),
+        ("zalo_groups", {"user_id": f"eq.{account_id}"}),
+        ("zalo_messages", {"user_id": f"eq.{account_id}"}),
     ]
     for table, params in targets:
         try:
@@ -828,7 +818,7 @@ async def set_conversation_share(
         if shared:
             await _rest(
                 "POST",
-                "zalo_module_conversation_permissions",
+                "zalo_conversation_permissions",
                 json=[payload],
                 params={"on_conflict": "account_id,conversation_id,shared_role"},
                 prefer="resolution=merge-duplicates",
@@ -837,7 +827,7 @@ async def set_conversation_share(
             # Tắt share: PATCH theo composite key (account_id, conversation_id, shared_role).
             await _rest(
                 "PATCH",
-                "zalo_module_conversation_permissions",
+                "zalo_conversation_permissions",
                 params={
                     "account_id": f"eq.{account_id}",
                     "conversation_id": f"eq.{conversation_id}",
@@ -846,9 +836,9 @@ async def set_conversation_share(
                 json={"is_active": False, "updated_at": now},
             )
     except RuntimeError as exc:
-        if "zalo_module_conversation_permissions" in str(exc) or "does not exist" in str(exc):
+        if "zalo_conversation_permissions" in str(exc) or "does not exist" in str(exc):
             logger.warning(
-                f"zalo_module_conversation_permissions table not ready; cannot set share: {exc}"
+                f"zalo_conversation_permissions table not ready; cannot set share: {exc}"
             )
             return
         raise
@@ -879,9 +869,9 @@ async def list_shared_conversation_ids(
         params["shared_role"] = f"eq.{shared_role.strip().lower()}"
 
     try:
-        rows = await _rest("GET", "zalo_module_conversation_permissions", params=params) or []
+        rows = await _rest("GET", "zalo_conversation_permissions", params=params) or []
     except RuntimeError as exc:
-        if "zalo_module_conversation_permissions" in str(exc) or "does not exist" in str(exc):
+        if "zalo_conversation_permissions" in str(exc) or "does not exist" in str(exc):
             return empty
         raise
 
@@ -913,7 +903,7 @@ async def get_conversation_share_status(
     try:
         rows = await _rest(
             "GET",
-            "zalo_module_conversation_permissions",
+            "zalo_conversation_permissions",
             params={
                 "select": "shared_role,is_active",
                 "account_id": f"eq.{account_id}",
@@ -921,7 +911,7 @@ async def get_conversation_share_status(
             },
         ) or []
     except RuntimeError as exc:
-        if "zalo_module_conversation_permissions" in str(exc) or "does not exist" in str(exc):
+        if "zalo_conversation_permissions" in str(exc) or "does not exist" in str(exc):
             return result
         raise
     for row in rows:
@@ -956,7 +946,7 @@ async def get_zalo_inbox_report(
         "order": "created_at.desc",
         "limit": str(max(1, min(limit, 5000))),
     }
-    rows = await _rest("GET", "zalo_module_messages", params=params) or []
+    rows = await _rest("GET", "zalo_messages", params=params) or []
 
     account_stats: Dict[str, Dict[str, Any]] = {}
     customer_stats: Dict[Tuple[str, str], Dict[str, Any]] = {}
@@ -1043,7 +1033,7 @@ async def save_listener_messages(
         try:
             group_rows = await _rest(
                 "GET",
-                "zalo_module_groups",
+                "zalo_groups",
                 params={
                     "select": "unread_count",
                     "user_id": f"eq.{user_id}",
@@ -1098,12 +1088,12 @@ async def save_listener_messages(
     failed_images = 0
     use_fallback = True
 
-    # 1. Gọi RPC fn_zalo_module_bulk_save_messages để gộp Group + Messages thành 1 truy vấn duy nhất
+    # 1. Gọi RPC fn_zalo_bulk_save_messages để gộp Group + Messages thành 1 truy vấn duy nhất
     if payloads:
         try:
             await _rest(
                 "POST",
-                "rpc/fn_zalo_module_bulk_save_messages",
+                "rpc/fn_zalo_bulk_save_messages",
                 json={
                     "p_user_id": user_id,
                     "p_groups": [group_payload],
@@ -1115,7 +1105,7 @@ async def save_listener_messages(
             source_ids = list(msg_by_source_id.keys())
             rows = await _rest(
                 "GET",
-                "zalo_module_messages",
+                "zalo_messages",
                 params={
                     "select": "id,source_message_id",
                     "user_id": f"eq.{user_id}",
@@ -1137,7 +1127,7 @@ async def save_listener_messages(
             use_fallback = False
         except Exception as rpc_exc:
             logger.warning(
-                "fn_zalo_module_bulk_save_messages RPC failed, fallback to REST: {}",
+                "fn_zalo_bulk_save_messages RPC failed, fallback to REST: {}",
                 rpc_exc,
             )
             use_fallback = True
@@ -1167,7 +1157,7 @@ async def save_listener_messages(
 
                 rows = await _rest(
                     "POST",
-                    "zalo_module_messages",
+                    "zalo_messages",
                     json=rest_payloads,
                     params={"on_conflict": "user_id,group_id,source_message_id"},
                     prefer="resolution=merge-duplicates,return=representation",
@@ -1215,7 +1205,7 @@ async def save_global_listener_messages(
     for g_id, g_messages in grouped.items():
         group_rows = await _rest(
             "GET",
-            "zalo_module_groups",
+            "zalo_groups",
             params={
                 "select": "group_name",
                 "user_id": f"eq.{user_id}",
@@ -1242,9 +1232,9 @@ async def list_recent_messages_for_group(
     safe_limit = max(1, min(int(limit or 500), 1000))
     rows = await _rest(
         "GET",
-        "zalo_module_messages",
+        "zalo_messages",
         params={
-            "select": "*,assets:zalo_module_message_assets(*)",
+            "select": "*,assets:zalo_message_assets(*)",
             "user_id": f"eq.{user_id}",
             "group_id": f"eq.{group_id}",
             "is_deleted": "eq.false",
@@ -1267,7 +1257,7 @@ async def save_message_assets(
     try:
         rows = await _rest(
             "GET",
-            "zalo_module_message_assets",
+            "zalo_message_assets",
             params={
                 "select": "source_url,status",
                 "message_id": f"eq.{message_uuid}",
@@ -1275,7 +1265,7 @@ async def save_message_assets(
         ) or []
         existing_assets = {r["source_url"]: r["status"] for r in rows}
     except Exception as exc:
-        logger.warning(f"Could not pre-fetch existing zalo_module_message_assets for message {message_uuid}: {exc}")
+        logger.warning(f"Could not pre-fetch existing zalo_message_assets for message {message_uuid}: {exc}")
 
     payloads = []
     for source_url in source_urls:
@@ -1335,7 +1325,7 @@ async def save_message_assets(
         try:
             await _rest(
                 "POST",
-                "zalo_module_message_assets",
+                "zalo_message_assets",
                 json=payloads,
                 params={"on_conflict": "message_id,source_url"},
                 prefer="resolution=merge-duplicates",
@@ -1355,9 +1345,9 @@ async def list_library_messages(
 ) -> Tuple[List[Dict[str, Any]], int]:
     safe_limit = max(1, min(limit, 1000))
     safe_offset = max(0, offset)
-    select_clause = "*,assets:zalo_module_message_assets(*)"
+    select_clause = "*,assets:zalo_message_assets(*)"
     if content_kind == "image":
-        select_clause = "*,assets:zalo_module_message_assets!inner(*)"
+        select_clause = "*,assets:zalo_message_assets!inner(*)"
     params: Dict[str, Any] = {
         "select": select_clause,
         "user_id": f"eq.{user_id}",
@@ -1372,7 +1362,7 @@ async def list_library_messages(
         params["content"] = "not.is.null"
     if content_kind == "image":
         params["assets.status"] = "eq.uploaded"
-    rows, total = await _rest_with_count("zalo_module_messages", params=params)
+    rows, total = await _rest_with_count("zalo_messages", params=params)
     if group_name and not rows:
         job_rows = await _rest(
             "GET",
@@ -1393,7 +1383,7 @@ async def list_library_messages(
             fallback_params = dict(params)
             fallback_params.pop("group_name", None)
             fallback_params["job_id"] = "in.(" + ",".join(f'"{job_id}"' for job_id in job_ids) + ")"
-            rows, total = await _rest_with_count("zalo_module_messages", params=fallback_params)
+            rows, total = await _rest_with_count("zalo_messages", params=fallback_params)
     hydrated_rows = await hydrate_message_groups_from_jobs(user_id, rows or [])
     return hydrated_rows, total
 
@@ -1429,10 +1419,10 @@ def _parse_to_millis(val: Any) -> int:
 
 
 async def list_conversations(user_id: str, limit: int = 500) -> List[Dict[str, Any]]:
-    # 1. Fetch group mappings from zalo_module_groups
+    # 1. Fetch group mappings from zalo_groups
     group_rows = await _rest(
         "GET",
-        "zalo_module_groups",
+        "zalo_groups",
         params={
             "select": (
                 "group_id,group_name,avatar_url,unread_count,updated_at,"
@@ -1467,7 +1457,7 @@ async def list_conversations(user_id: str, limit: int = 500) -> List[Dict[str, A
     # 2. Fetch up to 1000 recent messages for aggregation
     rows = await _rest(
         "GET",
-        "zalo_module_messages",
+        "zalo_messages",
         params={
             "select": "id,user_id,group_id,group_name,sender_name,created_at,timestamp_text,time_text,type,content,is_sent",
             "user_id": f"eq.{user_id}",
@@ -1551,7 +1541,7 @@ async def list_conversations(user_id: str, limit: int = 500) -> List[Dict[str, A
             current["latest_content"] = row.get("content")
             current["latest_sender_name"] = row.get("sender_name")
 
-    # 3. Add any groups that exist in zalo_module_groups but have no recent messages in our 3000-message window
+    # 3. Add any groups that exist in zalo_groups but have no recent messages in our 3000-message window
     for group in group_rows:
         conversation_id = str(group.get("group_id") or group.get("group_name") or "").strip()
         if not conversation_id or conversation_id in conversations:
@@ -1576,7 +1566,7 @@ async def list_conversations(user_id: str, limit: int = 500) -> List[Dict[str, A
             "is_pinned": bool(group.get("is_pinned")),
         }
 
-    # 4. Overlay metadata chính xác từ zalo_module_groups (last_message_at thật của tin nhắn).
+    # 4. Overlay metadata chính xác từ zalo_groups (last_message_at thật của tin nhắn).
     #    Cột này được listener cập nhật realtime nên là nguồn tin cậy nhất cho preview + sort.
     for conversation_id, info in group_info.items():
         conv = conversations.get(conversation_id)
@@ -1619,7 +1609,7 @@ async def list_conversation_messages(
     try:
         rpc_result = await _rest(
             "POST",
-            "rpc/fn_zalo_module_get_conversation_messages",
+            "rpc/fn_zalo_get_conversation_messages",
             json={
                 "p_user_id": user_id,
                 "p_conversation_id": conversation_id,
@@ -1638,7 +1628,7 @@ async def list_conversation_messages(
         hydrated_rows.reverse()
         return hydrated_rows, total_count
     except Exception as exc:
-        logger.info(f"fn_zalo_module_get_conversation_messages RPC failed: {exc}. Falling back to manual queries...")
+        logger.info(f"fn_zalo_get_conversation_messages RPC failed: {exc}. Falling back to manual queries...")
         return await _list_conversation_messages_fallback(user_id, conversation_id, limit, offset)
 
 
@@ -1651,7 +1641,7 @@ async def _list_conversation_messages_fallback(
     safe_limit = max(1, min(limit, 500))
     safe_offset = max(0, offset)
 
-    # Resolve group_id and group_name mappings from zalo_module_groups
+    # Resolve group_id and group_name mappings from zalo_groups
     resolved_group_id = None
     resolved_group_name = None
 
@@ -1667,7 +1657,7 @@ async def _list_conversation_messages_fallback(
         try:
             mapping_rows = await _rest(
                 "GET",
-                "zalo_module_groups",
+                "zalo_groups",
                 params={
                     "select": "group_id,group_name",
                     "user_id": f"eq.{user_id}",
@@ -1675,14 +1665,14 @@ async def _list_conversation_messages_fallback(
                 }
             ) or []
         except Exception as exc:
-            logger.warning(f"Failed to fetch zalo_module_groups mapping by id in messages view: {exc}")
+            logger.warning(f"Failed to fetch zalo_groups mapping by id in messages view: {exc}")
     else:
         # Có thể conversation_id chính là group_id kiểu "gXXXX" — tra theo group_id trước
-        # vì zalo_module_groups.group_id là khóa chính tra cứu nhanh nhất.
+        # vì zalo_groups.group_id là khóa chính tra cứu nhanh nhất.
         try:
             mapping_rows = await _rest(
                 "GET",
-                "zalo_module_groups",
+                "zalo_groups",
                 params={
                     "select": "group_id,group_name",
                     "user_id": f"eq.{user_id}",
@@ -1690,14 +1680,14 @@ async def _list_conversation_messages_fallback(
                 }
             ) or []
         except Exception as exc:
-            logger.warning(f"Failed to fetch zalo_module_groups mapping by id (non-numeric) in messages view: {exc}")
+            logger.warning(f"Failed to fetch zalo_groups mapping by id (non-numeric) in messages view: {exc}")
 
         # Nếu chưa thấy, thử match theo group_name
         if not mapping_rows:
             try:
                 mapping_rows = await _rest(
                     "GET",
-                    "zalo_module_groups",
+                    "zalo_groups",
                     params={
                         "select": "group_id,group_name",
                         "user_id": f"eq.{user_id}",
@@ -1705,7 +1695,7 @@ async def _list_conversation_messages_fallback(
                     }
                 ) or []
             except Exception as exc:
-                logger.warning(f"Failed to fetch zalo_module_groups mapping by name in messages view: {exc}")
+                logger.warning(f"Failed to fetch zalo_groups mapping by name in messages view: {exc}")
 
     if mapping_rows:
         resolved_group_id = mapping_rows[0].get("group_id")
@@ -1717,7 +1707,7 @@ async def _list_conversation_messages_fallback(
             if is_numeric_id:
                 msg_rows = await _rest(
                     "GET",
-                    "zalo_module_messages",
+                    "zalo_messages",
                     params={
                         "select": "group_name",
                         "user_id": f"eq.{user_id}",
@@ -1732,7 +1722,7 @@ async def _list_conversation_messages_fallback(
                 # Ưu tiên tra messages theo group_id trước (covers "gXXXX" Zalo group ids)
                 msg_rows = await _rest(
                     "GET",
-                    "zalo_module_messages",
+                    "zalo_messages",
                     params={
                         "select": "group_name",
                         "user_id": f"eq.{user_id}",
@@ -1747,7 +1737,7 @@ async def _list_conversation_messages_fallback(
                     # Cuối cùng mới thử match theo group_name
                     msg_rows = await _rest(
                         "GET",
-                        "zalo_module_messages",
+                        "zalo_messages",
                         params={
                             "select": "group_id",
                             "user_id": f"eq.{user_id}",
@@ -1760,7 +1750,7 @@ async def _list_conversation_messages_fallback(
                         resolved_group_id = msg_rows[0].get("group_id")
                         resolved_group_name = conversation_id
         except Exception as exc:
-            logger.warning(f"Failed to scan zalo_module_messages mapping in messages view: {exc}")
+            logger.warning(f"Failed to scan zalo_messages mapping in messages view: {exc}")
 
     if not resolved_group_id and is_numeric_id:
         resolved_group_id = conversation_id
@@ -1776,7 +1766,7 @@ async def _list_conversation_messages_fallback(
 
     # Query messages using or-filter to aggregate both group_id and group_name
     query_params = {
-        "select": "*,assets:zalo_module_message_assets(*)",
+        "select": "*,assets:zalo_message_assets(*)",
         "user_id": f"eq.{user_id}",
         "is_deleted": "eq.false",
         "order": "timestamp_text.desc",
@@ -1792,7 +1782,7 @@ async def _list_conversation_messages_fallback(
         # Fallback to conversation_id if somehow both are empty
         query_params["group_id"] = f"eq.{conversation_id}"
 
-    rows, total = await _rest_with_count("zalo_module_messages", params=query_params)
+    rows, total = await _rest_with_count("zalo_messages", params=query_params)
     hydrated_rows = await hydrate_message_groups_from_jobs(user_id, rows or [])
     hydrated_rows.reverse()
     return hydrated_rows, total
@@ -1931,9 +1921,9 @@ async def list_library_group_summaries(user_id: str = "default") -> List[Dict[st
 
     rows = await _rest(
         "GET",
-        "zalo_module_messages",
+        "zalo_messages",
         params={
-            "select": "job_id,group_id,group_name,created_at,assets:zalo_module_message_assets(status)",
+            "select": "job_id,group_id,group_name,created_at,assets:zalo_message_assets(status)",
             "user_id": f"eq.{user_id}",
             "is_deleted": "eq.false",
             "order": "created_at.desc",
@@ -1961,9 +1951,9 @@ async def list_library_group_summaries(user_id: str = "default") -> List[Dict[st
 async def _message_group_counts(user_id: str = "default") -> Dict[str, Dict[str, Any]]:
     rows = await _rest(
         "GET",
-        "zalo_module_messages",
+        "zalo_messages",
         params={
-            "select": "job_id,group_id,group_name,created_at,assets:zalo_module_message_assets(status)",
+            "select": "job_id,group_id,group_name,created_at,assets:zalo_message_assets(status)",
             "user_id": f"eq.{user_id}",
             "is_deleted": "eq.false",
             "order": "created_at.desc",
@@ -2022,7 +2012,7 @@ async def cleanup_expired_assets(retention_days: int, limit: int) -> Dict[str, A
     batch_limit = max(1, min(limit, 1000))
     rows = await _rest(
         "GET",
-        "zalo_module_message_assets",
+        "zalo_message_assets",
         params={
             "select": "id,storage_path,storage_url,status,created_at",
             "status": "eq.uploaded",
@@ -2048,7 +2038,7 @@ async def cleanup_expired_assets(retention_days: int, limit: int) -> Dict[str, A
                 deleted += 1
             await _rest(
                 "PATCH",
-                "zalo_module_message_assets",
+                "zalo_message_assets",
                 params={"id": f"eq.{asset_id}"},
                 json={
                     "status": "expired",
@@ -2097,7 +2087,7 @@ async def fetch_messages_by_ids(
         return []
 
     params = {
-        "select": "*,assets:zalo_module_message_assets(*)",
+        "select": "*,assets:zalo_message_assets(*)",
         "user_id": f"eq.{user_id}",
         "or": f"({','.join(or_filters)})",
     }
@@ -2105,7 +2095,7 @@ async def fetch_messages_by_ids(
         params["is_deleted"] = "eq.false"
     return await _rest(
         "GET",
-        "zalo_module_messages",
+        "zalo_messages",
         params=params,
     ) or []
 
@@ -2113,7 +2103,7 @@ async def fetch_messages_by_ids(
 async def create_library_message(user_id: str, payload: Dict[str, Any], asset_urls: List[str]) -> Dict[str, Any]:
     rows = await _rest(
         "POST",
-        "zalo_module_messages",
+        "zalo_messages",
         json=[
             {
                 "user_id": user_id,
@@ -2143,7 +2133,7 @@ async def update_library_message(user_id: str, message_id: str, payload: Dict[st
     
     rows = await _rest(
         "PATCH",
-        "zalo_module_messages",
+        "zalo_messages",
         params={id_field: f"eq.{message_id}", "user_id": f"eq.{user_id}"},
         json=payload,
         prefer="return=representation",
@@ -2174,7 +2164,7 @@ async def bulk_delete_library_messages(
 
     rows = await _rest(
         "PATCH",
-        "zalo_module_messages",
+        "zalo_messages",
         params=params,
         json=payload,
         prefer="return=representation",
@@ -2280,7 +2270,7 @@ async def mark_conversation_as_read(user_id: str, group_id: str) -> None:
         return
     await _rest(
         "PATCH",
-        "zalo_module_groups",
+        "zalo_groups",
         params={
             "user_id": f"eq.{user_id}",
             "group_id": f"eq.{group_id}",

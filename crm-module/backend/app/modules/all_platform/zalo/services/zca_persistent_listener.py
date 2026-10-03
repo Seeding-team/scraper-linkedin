@@ -432,12 +432,12 @@ class ZcaPersistentListenerManager:
 
     async def start_persisted_listeners(self) -> None:
         # LƯU Ý (2026-08-27): đã thử thêm check "chỉ start nếu có row active
-        # trong zalo_module_accounts" ở đây, nhưng phải revert — điều tra thực tế
+        # trong zalo_accounts" ở đây, nhưng phải revert — điều tra thực tế
         # trên production cho thấy có account (vd "zl_7035a34c",
         # "admin123-gmail.com") ĐANG hoạt động thật (nhận tin nhắn thật, được
-        # frontend poll liên tục) dù KHÔNG có row nào trong zalo_module_accounts.
-        # zalo_module_groups/zalo_module_messages chỉ khoá theo user_id (text), không có FK
-        # tới zalo_module_accounts, nên listener vẫn chạy tốt độc lập với bảng đó.
+        # frontend poll liên tục) dù KHÔNG có row nào trong zalo_accounts.
+        # zalo_groups/zalo_messages chỉ khoá theo user_id (text), không có FK
+        # tới zalo_accounts, nên listener vẫn chạy tốt độc lập với bảng đó.
         # Thêm check tồn tại sẽ làm gãy các phiên đang chạy thật kiểu này.
         for user_id in await list_zca_auth_users():
             auth = await load_zca_auth(user_id)
@@ -637,7 +637,7 @@ class ZcaPersistentListenerManager:
         try:
             rows = await _rest(
                 "GET",
-                "zalo_module_groups",
+                "zalo_groups",
                 params={
                     "select": "group_id,group_name,latest_message_at",
                     "user_id": f"eq.{state.user_id}",
@@ -977,7 +977,7 @@ class ZcaPersistentListenerManager:
             from app.modules.all_platform.zalo.services.supabase_service import _rest
             rows = await _rest(
                 "GET",
-                "zalo_module_groups",
+                "zalo_groups",
                 params={
                     "select": "group_id,group_name",
                     "user_id": f"eq.{state.user_id}",

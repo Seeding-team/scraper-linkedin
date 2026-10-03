@@ -12,7 +12,6 @@ from loguru import logger
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, UploadFile, File, Form, BackgroundTasks
 from pydantic import BaseModel, Field
 
-from app.core.config import settings as crm_settings
 from app.modules.all_platform.auth_deps import get_authenticated_caller_email
 from app.modules.all_platform.zalo.api.security import verify_zalo_api_key
 from app.modules.all_platform.zalo.schemas.library import (
@@ -103,18 +102,13 @@ async def check_caller_conversation_access(
     caller_user_id = str(caller_user.get("id"))
     caller_role = str(caller_user.get("role") or "").strip().lower()
 
-    # 2. Tìm chủ sở hữu của tài khoản Zalo (owner_id trong zalo_module_accounts).
-    # Lọc theo instance HIỆN TẠI — DB self-host dùng chung cho cả 3 deploy CRM
-    # (markee/cloudgate/SECURITYZONE), account_id của brand khác phải coi như
-    # không tồn tại (account_rows rỗng) chứ không được lộ owner_id/is_shared
-    # thật của brand đó ra ngoài.
+    # 2. Tìm chủ sở hữu của tài khoản Zalo (owner_id trong zalo_accounts).
     account_rows = await _rest(
         "GET",
-        "zalo_module_accounts",
+        "zalo_accounts",
         params={
             "select": "owner_id,is_shared_with_all",
             "account_id": f"eq.{account_id}",
-            "instance": f"eq.{crm_settings.crm_instance}",
             "limit": "1",
         },
     )
@@ -150,7 +144,7 @@ async def check_caller_conversation_access(
 
     perm_rows = await _rest(
         "GET",
-        "zalo_module_conversation_permissions",
+        "zalo_conversation_permissions",
         params=perm_params,
     ) or []
 
@@ -223,7 +217,7 @@ async def list_conversations_for_caller(
     try:
         rows = await _rest(
             "POST",
-            "rpc/fn_zalo_module_get_conversations",
+            "rpc/fn_zalo_get_conversations",
             json={
                 "p_account_id": user_id,
                 "p_caller_email": caller_email or "",
@@ -254,7 +248,7 @@ async def list_conversations_for_caller(
             })
         return results
     except Exception as exc:
-        logger.info(f"fn_zalo_module_get_conversations RPC failed: {exc}. Falling back to manual queries...")
+        logger.info(f"fn_zalo_get_conversations RPC failed: {exc}. Falling back to manual queries...")
         allowed_conv_ids = await check_caller_conversation_access(user_id, caller_email)
         rows = await list_conversations(user_id, limit=limit)
         if allowed_conv_ids is not None:
@@ -299,7 +293,7 @@ async def resolve_conversation_account(
     thoai, khong can biet truoc acc nao dang giu no."""
     rows = await _rest(
         "GET",
-        "zalo_module_groups",
+        "zalo_groups",
         params={"select": "user_id", "group_id": f"eq.{conv_id}", "limit": "1"},
     )
     if not rows:
@@ -332,7 +326,7 @@ async def sync_recent_conversations(
         from app.modules.all_platform.zalo.services.supabase_service import _rest
         rows = await _rest(
             "GET",
-            "zalo_module_groups",
+            "zalo_groups",
             params={
                 "select": "group_id,last_message_at,unread_count",
                 "user_id": f"eq.{user_id}",
@@ -349,7 +343,7 @@ async def sync_recent_conversations(
         logger.warning(f"Could not load existing group metadata for sync check: {exc}")
 
     try:
-        # 1. Fetch all groups and friends and upsert them to zalo_module_groups
+        # 1. Fetch all groups and friends and upsert them to zalo_groups
         groups = await list_zca_groups(auth)
         friends = await list_zca_friends(auth)
         all_chats = groups + friends
@@ -631,7 +625,7 @@ async def _background_sync_conversation_messages(account_id: str, conversation_i
         try:
             rows = await _rest(
                 "GET",
-                "zalo_module_groups",
+                "zalo_groups",
                 params={
                     "select": "group_name",
                     "user_id": f"eq.{account_id}",
@@ -1011,11 +1005,11 @@ async def mark_conversation_read(
 # --------------------------------------------------------------------------------------
 
 async def _resolve_group_name(user_id: str, group_id: str) -> str:
-    """Lấy group_name từ bảng zalo_module_groups; fallback về group_id nếu chưa có."""
+    """Lấy group_name từ bảng zalo_groups; fallback về group_id nếu chưa có."""
     try:
         rows = await _rest(
             "GET",
-            "zalo_module_groups",
+            "zalo_groups",
             params={
                 "select": "group_name",
                 "user_id": f"eq.{user_id}",
@@ -1039,7 +1033,7 @@ def _build_outgoing_message_id(api_response: Optional[Dict[str, Any]], conversat
       cũng sẽ emit event với cùng `msgId` thuần (xem scripts/zca_persistent_listener.js
       dòng 178-186: `data.msgId || data.cliMsgId || ...`).
     - Vì cả 2 path (gửi từ tool + echo từ listener) đều lưu vào bảng
-      zalo_module_messages với unique key `(user_id, group_id, source_message_id)`,
+      zalo_messages với unique key `(user_id, group_id, source_message_id)`,
       ta BẮT BUỘC dùng CÙNG format source_message_id để DB upsert theo conflict
       thay vì insert duplicate row. Sai format → hiển thị 2 bản sao trên UI.
 
@@ -1080,7 +1074,7 @@ async def _persist_outgoing_message(
 
     - Nếu response chứa msgId → dùng làm source_message_id (khi Zalo echo về sẽ merge).
     - Nếu không có → tạo UUID local; listener sẽ thay thế bằng dữ liệu thật khi có.
-    - Tự update last_message_* trên zalo_module_groups để sidebar preview tươi ngay.
+    - Tự update last_message_* trên zalo_groups để sidebar preview tươi ngay.
     """
     source_id = _build_outgoing_message_id(api_response, conversation_id)
     # Lưu UTC (chuẩn industry). Frontend sẽ convert sang Asia/Ho_Chi_Minh khi hiển thị.
@@ -1147,7 +1141,7 @@ async def _persist_outgoing_message(
 # ──────────────────────────────────────────────────────────────────────────────
 # Tìm user lạ (chưa từng chat) bằng SĐT hoặc username Zalo.
 # Sau khi tìm thấy, FE dùng endpoint POST /conversations/users để tạo thread
-# (insert vào zalo_module_groups) rồi mở khung chat như thread bình thường.
+# (insert vào zalo_groups) rồi mở khung chat như thread bình thường.
 # ──────────────────────────────────────────────────────────────────────────────
 
 
@@ -1243,7 +1237,7 @@ async def create_user_thread(
     account_id: Optional[str] = Query(None),
     x_user_id: str = Header("default", alias="X-User-ID"),
 ):
-    """Tạo (hoặc trả về) thread chat với một user lạ trong ``zalo_module_groups``.
+    """Tạo (hoặc trả về) thread chat với một user lạ trong ``zalo_groups``.
 
     Idempotent: nếu thread đã tồn tại thì chỉ update ``group_name`` / ``avatar_url``.
     Sau khi gọi endpoint này, FE chỉ cần select conversation_id == user_id để mở khung chat

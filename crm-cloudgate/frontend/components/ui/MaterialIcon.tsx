@@ -21,6 +21,7 @@ export type MaterialSymbolName =
   | "shield_person"
   | "error"
   | "settings_input_component"
+  | "cell_tower"
   | "monitoring"
   | "file_download"
   | "code"
@@ -131,6 +132,14 @@ export type MaterialSymbolName =
   | "filter_alt"
   | "bookmark_add"
   | "folder_shared"
+  | "folder_kanban"
+  | "package"
+  | "library_books"
+  | "plug"
+  // Zalo chat: tra loi / chuyen tiep tin nhan + huy ket qua chuyen tiep that bai.
+  | "reply"
+  | "forward"
+  | "cancel"
   // Sidebar CRM redesign (6 nhom phang: Giao tiep / Ban hang / Theo doi & phan
   // tich / Tai nguyen ban hang / Cau hinh CRM / Quan tri) — icon moi bo sung
   // cho cac muc/nhom chua co ten Material Symbol tuong ung truoc do.
