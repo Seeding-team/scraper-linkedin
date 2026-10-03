@@ -375,7 +375,12 @@ export function LeadDetailDrawer({
           project: deal.project?.name || prev.project,
           projectId: deal.project_id || prev.projectId,
         }));
-        if (deal.team_id) setTeamId(deal.team_id);
+        // KHÔNG còn ghi đè teamId bằng deal.team_id ở đây: từ khi Lead có cột
+        // team_id riêng (migration 164) và được đồng bộ SANG Deal mỗi lần lưu
+        // (không phải ngược lại), teamId đã set đúng từ lead.teamId ở effect
+        // mở drawer rồi. Bug thật đã gặp: nếu customer_leads.team_id là dữ
+        // liệu cũ/rác trỏ tới 1 Team đã bị xoá, dòng này sẽ ghi đè mất giá trị
+        // đúng vừa load, khiến dropdown hiện "-- Chọn --" dù Lead đã lưu đúng.
       })
       .catch(() => { /* Lead da convert nhung deal hydrate loi thi giu form lead hien co. */ });
     return () => {
