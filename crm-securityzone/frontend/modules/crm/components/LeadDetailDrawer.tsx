@@ -207,7 +207,7 @@ export function LeadDetailDrawer({
       note: lead.note || '',
       followUpChannel: '',
       dealStage: 'dealing',
-      project: '',
+      project: lead.projectName || '',
       projectId: '',
     });
     setContact({
@@ -517,7 +517,7 @@ export function LeadDetailDrawer({
       note: lead.note || '',
       followUpChannel: '',
       dealStage: 'dealing',
-      project: '',
+      project: lead.projectName || '',
       projectId: '',
     });
     setSuggestionUsed(false);
@@ -544,11 +544,14 @@ export function LeadDetailDrawer({
       follow_up_date: form.nextStepAt ? new Date(form.nextStepAt).toISOString() : null,
       note: form.note.trim() || null,
       team_id: teamId || null,
+      // "Dự án" là field thật trên crm_leads (migration 165) nên luôn gửi,
+      // kể cả khi Lead chưa convert — trước đây chỉ gửi khi convertedDealId
+      // nên gõ vào ô này ở trạng thái Nuôi dưỡng/SQL chưa chốt bị rớt mất.
+      project_name: form.project.trim() || null,
     };
     if (lead?.convertedDealId) {
       payload.deal_stage = form.dealStage || 'dealing';
       if (form.projectId) payload.project_id = form.projectId;
-      else if (form.project.trim()) payload.project_name = form.project.trim();
     }
     return payload;
   }
@@ -562,14 +565,10 @@ export function LeadDetailDrawer({
    * `status` chỉ đi lên theo đúng mức đã xác minh được (new_lead -> qualifying,
    * và chỉ lên 'qualified' khi checklist thật sự đủ 5/5) — thay cho nút "Đủ
    * điều kiện" cũ vốn bật qualified mà không kiểm tra gì. */
-  async function saveVerification(overrideStatus?: string, allowDealDraftFields = false) {
+  async function saveVerification(overrideStatus?: string) {
     if (!lead) return false;
     if (!overrideStatus && form.nextStep.trim() && !form.nextStepAt) {
       setError('Đã chọn "Việc tiếp theo" thì phải chọn "Khi nào làm".');
-      return false;
-    }
-    if (!lead.convertedDealId && !allowDealDraftFields && form.project.trim()) {
-      setError('Dự án chỉ được tạo khi tạo Cơ hội. Bấm "Tạo cơ hội & bàn giao Sale" để lưu dự án mới.');
       return false;
     }
     setSaving(true);
@@ -759,7 +758,7 @@ export function LeadDetailDrawer({
       setError('SQL bắt buộc chọn Sale nhận bàn giao.');
       return;
     }
-    const ok = await saveVerification(undefined, true);
+    const ok = await saveVerification();
     if (ok) setConvertOpen(true);
   }
 

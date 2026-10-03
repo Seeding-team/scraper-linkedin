@@ -431,6 +431,9 @@ export interface CrmLeadRow {
    * cá nhân cụ thể (qualificationAeId, để nguyên trong schema nhưng ngưng
    * dùng ở form Xác minh Lead - feedback leader 2026-09-27). */
   teamId?: string;
+  /** Dự án (nhập tay) lưu trước khi Lead convert thành Cơ hội (crm_leads.project_name,
+   * migration 165) - cùng cơ chế round-trip với teamId ở trên. */
+  projectName?: string;
   nextStep?: string;
   followUpDate?: string;
   convertedCustomerId?: string;
