@@ -571,6 +571,30 @@ export function LeadDetailDrawer({
     return details.join('\n');
   }
 
+  /** Đồng bộ lại form/teamId ngay sau khi lưu thành công, KHÔNG qua effect
+   * khởi tạo (effect đó cố tình bỏ qua khi `lead.id` không đổi - xem comment
+   * ở initializedLeadRef - để không reset convertOpen/qualificationEditOpen
+   * giữa chừng). Thiếu bước này thì giá trị vừa lưu (Team Sale/Dự án/Giai
+   * đoạn/Sale phụ trách...) không hiện liền trên UI, phải F5 mới thấy, dù
+   * data đã lưu đúng dưới DB. */
+  function syncFormFromSavedLead(updatedLead: CrmLeadRow) {
+    setTeamId(updatedLead.teamId || '');
+    setForm(prev => ({
+      ...prev,
+      interest: updatedLead.qualificationNeed || '',
+      interestLevel: interestLevelFromScore(updatedLead.score),
+      score: updatedLead.score ?? null,
+      timeline: updatedLead.qualificationExpectedTimeline || '',
+      estimatedValue: updatedLead.qualificationEstimatedValue ?? null,
+      nextStep: updatedLead.nextStep || '',
+      nextStepAt: toDatetimeLocal(updatedLead.followUpDate),
+      aeId: updatedLead.qualificationAeId || prev.aeId,
+      note: updatedLead.note || '',
+      dealStage: updatedLead.dealStage || prev.dealStage || 'dealing',
+      project: updatedLead.projectName || '',
+    }));
+  }
+
   /** Lưu xác minh — PUT thường, TUYỆT ĐỐI không tạo Customer/Contact/Deal.
    * `status` chỉ đi lên theo đúng mức đã xác minh được (new_lead -> qualifying,
    * và chỉ lên 'qualified' khi checklist thật sự đủ 5/5) — thay cho nút "Đủ
@@ -597,7 +621,9 @@ export function LeadDetailDrawer({
       });
       const body = await res.json();
       if (!res.ok || body.success === false) throw new Error(body?.message || 'Không lưu được thông tin xác minh.');
-      onSaved(mapLead(body.data));
+      const updatedLead = mapLead(body.data);
+      onSaved(updatedLead);
+      syncFormFromSavedLead(updatedLead);
       setSavedOk(overrideStatus ? 'Đã chốt kết quả xác minh.' : 'Đã lưu xác minh. Chưa tạo Cơ hội/Khách hàng nào.');
       return true;
     } catch (err) {
@@ -652,7 +678,9 @@ export function LeadDetailDrawer({
       });
       const body = await res.json();
       if (!res.ok || body.success === false) throw new Error(body?.message || 'Không lưu được kết quả xác minh.');
-      onSaved(mapLead(body.data));
+      const updatedLead = mapLead(body.data);
+      onSaved(updatedLead);
+      syncFormFromSavedLead(updatedLead);
       setSavedOk(okMessage);
       return true;
     } catch (err) {
