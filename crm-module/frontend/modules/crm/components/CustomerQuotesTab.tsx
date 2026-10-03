@@ -429,8 +429,8 @@ export function CustomerQuotesTab({
                   ? allContacts.find(c => c.id === relatedDeal.primary_contact_id) 
                   : null;
                 
-                const contactName = contactObj?.name || (relatedDeal?.primary_contact_id ? 'Liên hệ ẩn' : 'Trần Hoàng Hiệp');
-                const contactTitle = contactObj?.title || contactObj?.role || 'Giám đốc';
+                const contactName = contactObj?.name || (relatedDeal?.primary_contact_id ? 'Liên hệ ẩn' : 'Chưa có liên hệ');
+                const contactTitle = contactObj?.title || contactObj?.role || '';
                 const contactInitial = contactName.charAt(0).toUpperCase();
 
                 const projectNameStr = projectLabel(current.project_id);
