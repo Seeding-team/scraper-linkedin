@@ -1029,6 +1029,20 @@ export function DealFormFields({
   const leadedBySelectionKey = findSelectionKey(form.leadedBy, form.leadedByNameHint);
   const sdrSelectionKey = findSelectionKey(form.sdrId, form.sdrNameHint);
 
+  // Tong quat hoa currentUserMissingFromMembers o tren: NGUOI DA DUOC GAN lam
+  // Sale phu trach (sdrSelectionKey, bat ke la ai) co the khong nam trong
+  // danh sach dang hien (crmTeamMembers khi da loc theo Team CRM, hoac
+  // assignableMembers khi chua chon Team) - vd ho da bi doi/xoa khoi Team do
+  // sau khi duoc gan. Bug thuc te da gap: select hien sai "-- Chưa giao --"
+  // du DB van luu dung sdr_id (xac minh qua PUT response + query truc tiep).
+  // Chen 1 option ao dung chinh form.sdrNameHint (ten da luu san tren Deal)
+  // de luon hien dung ten da chon, khong phu thuoc danh sach loc hien tai.
+  const sdrMissingFromVisibleOptions = Boolean(sdrSelectionKey) && (
+    crmTeamId
+      ? !(crmTeamMembers || []).some(u => u.id === sdrSelectionKey)
+      : !assignableMembers.some(m => selectionKeyOf(m) === sdrSelectionKey)
+  );
+
   // Mặc định "Người phụ trách" = user đang đăng nhập lúc tạo deal mới — CHỈ chạy 1 lần khi
   // chưa có Phụ trách nào (kể cả từ nháp cũ đã lưu sẵn), lưu ĐÚNG app_users.id thật (không
   // chỉ tên hiển thị). Ưu tiên tìm đúng member khớp (đồng bộ cách hiển thị với handlePick),
@@ -1394,6 +1408,9 @@ export function DealFormFields({
                   onChange={event => handlePick(event.target.value, 'sdrId', 'sdrNameHint')}
                 >
                   <option value="">-- Chưa giao --</option>
+                  {sdrMissingFromVisibleOptions ? (
+                    <option value={sdrSelectionKey}>{form.sdrNameHint || 'Đã gán (ngoài danh sách lọc)'}</option>
+                  ) : null}
                   {/* Da chon Team CRM -> lay TRUC TIEP tu crmTeamMembers (xem
                       giai thich o aeOptionsForPanel phia tren) thay vi loc
                       danh ba HR - tranh dropdown trong voi tai khoan CRM
