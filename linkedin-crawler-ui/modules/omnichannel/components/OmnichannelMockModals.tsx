@@ -1,9 +1,18 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { X, CheckCircle, Plus, Search, FileEdit, FilePlus, Download, Send, ExternalLink, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { CHANNEL_CAPABILITIES } from "../constants/channelCapabilities";
+import { seedingCrmRepository } from "@/modules/crm/repositories/SeedingCrmRepository";
+import type { CrmCustomerSummary, CrmCustomerStatus } from "@/modules/crm/types";
+
+const CUSTOMER_STATUS_LABEL: Record<CrmCustomerStatus, string> = {
+  new_lead: "Tiềm năng",
+  following: "Đang bán",
+  current_customer: "Đã mua",
+  not_fit: "Ngừng hoạt động",
+};
 
 interface ModalProps {
   isOpen: boolean;
@@ -468,18 +477,43 @@ export const FindCustomerMockModal: React.FC<{
   onOpenCreateCustomer?: () => void;
   initialSearchQuery?: string;
 }> = ({ isOpen, onClose, onLinkCustomer, onOpenCreateCustomer, initialSearchQuery }) => {
-  const [searchTerm, setSearchTerm] = useState(initialSearchQuery || "0912345678");
+  const [searchTerm, setSearchTerm] = useState(initialSearchQuery || "");
+  const [results, setResults] = useState<CrmCustomerSummary[]>([]);
+  const [loading, setLoading] = useState(false);
 
-  React.useEffect(() => {
+  useEffect(() => {
     if (initialSearchQuery) {
       setSearchTerm(initialSearchQuery);
     }
   }, [initialSearchQuery]);
-  const mockResults = [
-    { name: "ABC FOOD", phone: "0912 345 678", email: "example@abcfood.vn", tag: "Khách hàng" },
-    { name: "Công ty ABC", phone: "0918 222 333", email: "contact@abc.vn", tag: "Tiềm năng" },
-    { name: "Tech Solution JSC", phone: "0909 123 456", email: "info@techsolution.vn", tag: "Tiềm năng" },
-  ];
+
+  useEffect(() => {
+    const keyword = searchTerm.trim();
+    if (keyword.length < 2) {
+      setResults([]);
+      setLoading(false);
+      return;
+    }
+    let alive = true;
+    setLoading(true);
+    const timer = window.setTimeout(() => {
+      seedingCrmRepository
+        .quickSearchCustomers(keyword, 8)
+        .then((rows) => {
+          if (alive) setResults(rows);
+        })
+        .catch(() => {
+          if (alive) setResults([]);
+        })
+        .finally(() => {
+          if (alive) setLoading(false);
+        });
+    }, 300);
+    return () => {
+      alive = false;
+      window.clearTimeout(timer);
+    };
+  }, [searchTerm]);
 
   return (
     <BaseModal isOpen={isOpen} onClose={onClose} title="Tìm & liên kết khách hàng">
@@ -496,31 +530,43 @@ export const FindCustomerMockModal: React.FC<{
         </div>
 
         <div className="divide-y divide-slate-100 max-h-52 overflow-y-auto border border-slate-100 rounded-xl bg-white">
-          {mockResults.map((item) => (
-            <div
-              key={item.name}
-              className="p-3 flex items-center justify-between hover:bg-slate-50 transition cursor-pointer"
-              onClick={() => {
-                onLinkCustomer(item.name);
-                onClose();
-              }}
-            >
-              <div>
-                <div className="flex items-center gap-1.5">
-                  <h4 className="text-xs font-bold text-slate-800">{item.name}</h4>
-                  <span className="rounded bg-sky-100 text-sky-700 px-1.5 py-0.2 text-[9px] font-semibold">
-                    {item.tag}
-                  </span>
+          {searchTerm.trim().length < 2 ? (
+            <div className="p-3 text-[11px] text-slate-400">Nhập ít nhất 2 ký tự để tìm...</div>
+          ) : loading ? (
+            <div className="p-3 text-[11px] text-slate-400">Đang tìm...</div>
+          ) : results.length === 0 ? (
+            <div className="p-3 text-[11px] text-slate-400">Không tìm thấy khách hàng nào khớp.</div>
+          ) : (
+            results.map((item) => {
+              const displayName = item.companyName || item.customerName;
+              const tag = item.status ? CUSTOMER_STATUS_LABEL[item.status] : "Khách hàng";
+              return (
+                <div
+                  key={item.id}
+                  className="p-3 flex items-center justify-between hover:bg-slate-50 transition cursor-pointer"
+                  onClick={() => {
+                    onLinkCustomer(displayName);
+                    onClose();
+                  }}
+                >
+                  <div>
+                    <div className="flex items-center gap-1.5">
+                      <h4 className="text-xs font-bold text-slate-800">{displayName}</h4>
+                      <span className="rounded bg-sky-100 text-sky-700 px-1.5 py-0.2 text-[9px] font-semibold">
+                        {tag}
+                      </span>
+                    </div>
+                    <p className="text-[10px] text-slate-500 pt-0.5">
+                      {item.phone || "—"} • {item.email || "—"}
+                    </p>
+                  </div>
+                  <button className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-1 text-xs font-bold text-[var(--color-markee-primary,#c2185b)] hover:bg-rose-100 cursor-pointer">
+                    Liên kết
+                  </button>
                 </div>
-                <p className="text-[10px] text-slate-500 pt-0.5">
-                  {item.phone} • {item.email}
-                </p>
-              </div>
-              <button className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-1 text-xs font-bold text-[var(--color-markee-primary,#c2185b)] hover:bg-rose-100 cursor-pointer">
-                Liên kết
-              </button>
-            </div>
-          ))}
+              );
+            })
+          )}
         </div>
 
         <div className="pt-2 border-t border-slate-100">
