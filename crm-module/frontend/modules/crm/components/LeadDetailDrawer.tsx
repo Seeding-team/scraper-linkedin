@@ -370,7 +370,11 @@ export function LeadDetailDrawer({
           estimatedValue: estimatedValue == null || Number.isNaN(estimatedValue) ? prev.estimatedValue : estimatedValue,
           nextStep: deal.next_step || prev.nextStep,
           nextStepAt: deal.follow_up_date ? toDatetimeLocal(String(deal.follow_up_date)) : prev.nextStepAt,
-          aeId: deal.sdr_id || prev.aeId,
+          // Uu tien gia tri Lead da luu (prev.aeId, tu lead.qualificationAeId)
+          // - cung nguyen tac voi teamId o tren: Deal.sdr_id chi dung lam
+          // fallback khi Lead chua co, tranh deal.sdr_id cu/rac (tro toi user
+          // da bi xoa/vo hieu hoa) de len gia tri dung cua Lead.
+          aeId: prev.aeId || deal.sdr_id || '',
           dealStage: deal.deal_stage || prev.dealStage || 'dealing',
           project: deal.project?.name || prev.project,
           projectId: deal.project_id || prev.projectId,
