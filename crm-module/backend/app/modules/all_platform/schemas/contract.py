@@ -56,6 +56,11 @@ class ContractCreateRequest(BaseModel):
     source: Optional[str] = None
     file_url: Optional[str] = None
     note: Optional[str] = None
+    # "Ghi nhận hợp đồng có sẵn" (feedback mentor 2026-10-03): phan biet ro
+    # hop dong Mua vao (Phase 1) / Ban ra (Phase 2) - cung 1 cot deal_phase
+    # da co san tren contracts (migration contract_deal_phase.sql), truoc day
+    # CHI duoc ghi qua luong Phase1/Phase2 rieng trong CrmCustomerModal.tsx.
+    deal_phase: Optional[str] = None
 
 
 class ContractUpdateRequest(BaseModel):

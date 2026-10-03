@@ -52,6 +52,7 @@ export function CustomerContractsTab({
             <thead className="bg-slate-50 text-[11px] uppercase tracking-wide text-slate-500 border-b border-slate-200">
               <tr>
                 <th className="py-2.5 px-3 font-semibold">Hợp đồng</th>
+                <th className="py-2.5 px-3 font-semibold">Loại</th>
                 <th className="py-2.5 px-3 font-semibold">Nguồn</th>
                 <th className="py-2.5 px-3 font-semibold">Trạng thái</th>
                 <th className="py-2.5 px-3 font-semibold">Liên hệ chính</th>
@@ -73,6 +74,15 @@ export function CustomerContractsTab({
                         <strong className="text-slate-800 font-medium truncate">{contract.title || contract.contract_number || contract.id}</strong>
                         {contract.contract_number ? <span className="text-[11px] text-slate-500">{contract.contract_number}</span> : null}
                       </div>
+                    </td>
+                    <td className="py-2.5 px-3">
+                      {contract.deal_phase === 'purchase' ? (
+                        <Badge className="bg-sky-500 hover:bg-sky-600 text-white border-transparent text-[10px] font-semibold px-2 py-0.5">Mua vào</Badge>
+                      ) : contract.deal_phase === 'sale' ? (
+                        <Badge className="bg-violet-500 hover:bg-violet-600 text-white border-transparent text-[10px] font-semibold px-2 py-0.5">Bán ra</Badge>
+                      ) : (
+                        <span className="text-slate-400">—</span>
+                      )}
                     </td>
                     <td className="py-2.5 px-3">{contractSourceBadge(contract.source)}</td>
                     <td className="py-2.5 px-3">

@@ -114,6 +114,9 @@ export interface CreateContractInput {
   source?: 'crm' | 'external';
   fileUrl?: string | null;
   note?: string | null;
+  /** Phân biệt hợp đồng Mua vào (Phase 1) / Bán ra (Phase 2) — bắt buộc chọn
+   * khi tạo qua "Ghi nhận hợp đồng có sẵn" (feedback mentor 2026-10-03). */
+  dealPhase?: 'purchase' | 'sale' | null;
 }
 
 export interface UpdateContractInput {

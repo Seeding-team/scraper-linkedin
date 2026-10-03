@@ -71,6 +71,7 @@ function toCreatePayload(input: CreateContractInput) {
     source: input.source,
     file_url: input.fileUrl,
     note: input.note,
+    deal_phase: input.dealPhase,
   };
 }
 

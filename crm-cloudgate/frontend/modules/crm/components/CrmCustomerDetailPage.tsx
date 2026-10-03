@@ -187,6 +187,7 @@ export type RelatedPayload = {
     source?: 'crm' | 'external' | null;
     file_url?: string | null;
     note?: string | null;
+    deal_phase?: 'purchase' | 'sale' | null;
   }>;
   kpi?: {
     deal_count?: number;
