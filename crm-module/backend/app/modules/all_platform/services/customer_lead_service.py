@@ -87,6 +87,7 @@ BASE_COLUMNS = (
     "leaded_by_name_hint, sdr_name_hint, team_id, project_id, primary_contact_id, "
     "created_at, updated_at, leader:leaded_by(name), sdr:sdr_id(name), "
     "quote:quote_id(quote_number, total_amount, public_token, status, version_number, version_chain_id), "
+    "project:project_id(name), "
     "team:team_id(name_team, team_type)"
 )
 

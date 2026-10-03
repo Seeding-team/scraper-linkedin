@@ -442,6 +442,16 @@ def update_lead(lead_id: str, payload: dict[str, Any], user: dict[str, Any]) -> 
     if not can_write_lead(user, current):
         raise PermissionError("Khong co quyen sua lead nay.")
     data = {key: _clean_text(value) if isinstance(value, str) else value for key, value in payload.items()}
+    # The qualification drawer also owns a few handoff fields that live on the
+    # converted Deal, not on crm_leads. Keep the Lead update a plain Lead update
+    # by stripping them before writing crm_leads, then sync below if a converted
+    # deal exists.
+    _DEAL_ONLY_UPDATE_FIELDS = ("deal_stage", "team_id", "project_name", "project_id")
+    deal_only_updates = {
+        key: data.pop(key)
+        for key in _DEAL_ONLY_UPDATE_FIELDS
+        if key in data
+    }
     if "email" in data:
         data["email_normalized"] = normalize_email(data.get("email"))
     if "phone" in data:
@@ -504,6 +514,7 @@ def update_lead(lead_id: str, payload: dict[str, Any], user: dict[str, Any]) -> 
             for lead_field, deal_field in _LEAD_TO_DEAL_FIELD_MAP.items()
             if lead_field in data
         }
+        deal_updates.update(deal_only_updates)
         if deal_updates:
             try:
                 from app.modules.all_platform.services.customer_lead_service import update_customer_lead

@@ -81,6 +81,14 @@ class CrmLeadUpdate(BaseModel):
     next_step: Optional[str] = None
     follow_up_date: Optional[datetime] = None
 
+    # Deal handoff fields sent by the qualification form after a Lead has
+    # already been converted. The service layer strips these before updating
+    # crm_leads and syncs them only to the converted customer_leads row.
+    deal_stage: Optional[str] = None
+    team_id: Optional[str] = None
+    project_name: Optional[str] = None
+    project_id: Optional[str] = None
+
 
 class CrmLeadResponse(CrmLeadBase):
     id: str

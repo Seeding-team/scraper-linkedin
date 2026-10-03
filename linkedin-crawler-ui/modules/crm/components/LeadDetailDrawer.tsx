@@ -39,6 +39,18 @@ type CompanyMatchRow = {
   match_reason?: string;
 };
 
+type ConvertedDealSnapshot = {
+  deal_stage?: string | null;
+  team_id?: string | null;
+  sdr_id?: string | null;
+  service_package?: string | null;
+  estimated_budget?: number | string | null;
+  next_step?: string | null;
+  follow_up_date?: string | null;
+  project_id?: string | null;
+  project?: { name?: string | null } | null;
+};
+
 function initialOf(name: string): string {
   const trimmed = (name || '').trim();
   return trimmed ? trimmed[0].toUpperCase() : '?';
@@ -62,6 +74,7 @@ type VerifyForm = {
    * (crm_lead_service.convert_lead) tự tạo Dự án THẬT sau khi convert xong,
    * gắn vào Deal vừa tạo (migration 153 + supabase_project_service). */
   project: string;
+  projectId: string;
 };
 
 /**
@@ -125,6 +138,7 @@ export function LeadDetailDrawer({
     followUpChannel: '',
     dealStage: 'dealing',
     project: '',
+    projectId: '',
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -194,6 +208,7 @@ export function LeadDetailDrawer({
       followUpChannel: '',
       dealStage: 'dealing',
       project: '',
+      projectId: '',
     });
     setContact({
       name: lead.leadName || '',
@@ -335,6 +350,40 @@ export function LeadDetailDrawer({
     };
   }, [teamId]);
 
+  useEffect(() => {
+    if (!open || !lead?.convertedDealId) return;
+    let alive = true;
+    const leadIdAtRequest = lead.id;
+    fetch(`${API_BASE_URL}/api/all-platform/customer-leads/${encodeURIComponent(lead.convertedDealId)}`, {
+      credentials: 'include',
+      headers: headers(),
+    })
+      .then(res => res.json())
+      .then(body => {
+        if (!alive || initializedLeadRef.current !== leadIdAtRequest || body.success === false) return;
+        const deal = (body.data || {}) as ConvertedDealSnapshot;
+        const estimatedValue = deal.estimated_budget == null || deal.estimated_budget === ''
+          ? null
+          : Number(deal.estimated_budget);
+        setForm(prev => ({
+          ...prev,
+          interest: deal.service_package || prev.interest,
+          estimatedValue: estimatedValue == null || Number.isNaN(estimatedValue) ? prev.estimatedValue : estimatedValue,
+          nextStep: deal.next_step || prev.nextStep,
+          nextStepAt: deal.follow_up_date ? toDatetimeLocal(String(deal.follow_up_date)) : prev.nextStepAt,
+          aeId: deal.sdr_id || prev.aeId,
+          dealStage: deal.deal_stage || prev.dealStage || 'dealing',
+          project: deal.project?.name || prev.project,
+          projectId: deal.project_id || prev.projectId,
+        }));
+        if (deal.team_id) setTeamId(deal.team_id);
+      })
+      .catch(() => { /* Lead da convert nhung deal hydrate loi thi giu form lead hien co. */ });
+    return () => {
+      alive = false;
+    };
+  }, [open, lead?.id, lead?.convertedDealId]);
+
   const { labels: knownProductLabels } = useCrmCategoryLabels('crm_service_package');
 
   const {
@@ -469,6 +518,7 @@ export function LeadDetailDrawer({
       followUpChannel: '',
       dealStage: 'dealing',
       project: '',
+      projectId: '',
     });
     setSuggestionUsed(false);
   }
@@ -496,7 +546,8 @@ export function LeadDetailDrawer({
       deal_stage: form.dealStage || 'dealing',
       team_id: teamId || null,
     };
-    if (form.project.trim()) payload.project_name = form.project.trim();
+    if (form.projectId) payload.project_id = form.projectId;
+    else if (form.project.trim()) payload.project_name = form.project.trim();
     return payload;
   }
 
@@ -960,7 +1011,7 @@ export function LeadDetailDrawer({
                 timeline={form.timeline}
                 onTimelineChange={value => setField('timeline', value)}
                 project={form.project}
-                onProjectChange={value => setField('project', value)}
+                onProjectChange={value => setForm(prev => ({ ...prev, project: value, projectId: '' }))}
                 note={form.note}
                 onNoteChange={value => setField('note', value)}
                 teamId={teamId}
