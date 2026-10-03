@@ -332,6 +332,8 @@ export interface QuoteData {
 
 export interface Quote {
   id: string;
+  code?: string;
+  grandTotal?: number;
   accountId?: string;
   contactId?: string;
   dealId?: string;

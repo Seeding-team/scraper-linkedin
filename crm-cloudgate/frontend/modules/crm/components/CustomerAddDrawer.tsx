@@ -118,16 +118,29 @@ type AnchorKey = (typeof ANCHORS)[number]['key'];
  *
  * Sửa hồ sơ đã có vẫn dùng CustomerFormModal (centered) như cũ.
  */
+export interface CustomerInitialValues {
+  companyName?: string;
+  contactName?: string;
+  phone?: string;
+  email?: string;
+  zalo?: string;
+  facebook?: string;
+  source?: string;
+  searchQuery?: string;
+}
+
 export function CustomerAddDrawer({
   open,
   currentUser,
   onClose,
   onCreated,
+  initialValues,
 }: {
   open: boolean;
   currentUser: AppUser | null;
   onClose: () => void;
   onCreated: (customerId: string) => void;
+  initialValues?: CustomerInitialValues;
 }) {
   useBodyScrollLock(open);
   const canPickOwner = isAdminOrLeader(currentUser);
@@ -202,19 +215,42 @@ export function CustomerAddDrawer({
 
   useEffect(() => {
     if (!open) return;
-    setQuery('');
-    setMatches([]);
-    setSearchedOnce(false);
     const storedDefaultSource = readCustomerSourceDefault(currentUser);
     setDefaultCustomerSource(storedDefaultSource);
-    setCompany(emptyCompany(storedDefaultSource));
-    setContact(emptyContact());
+
+    const initialSource = initialValues?.source || storedDefaultSource;
+    const initialQuery =
+      initialValues?.searchQuery ||
+      initialValues?.phone ||
+      initialValues?.email ||
+      initialValues?.companyName ||
+      initialValues?.contactName ||
+      '';
+
+    setQuery(initialQuery);
+    setMatches([]);
+    setSearchedOnce(false);
+
+    setCompany({
+      ...emptyCompany(initialSource),
+      customerName: initialValues?.companyName || '',
+    });
+
+    setContact({
+      ...emptyContact(),
+      name: initialValues?.contactName || '',
+      phone: initialValues?.phone || '',
+      email: initialValues?.email || '',
+      zalo: initialValues?.zalo || '',
+      facebook: initialValues?.facebook || '',
+    });
+
     setManage(emptyManage());
     setError('');
     setSaving('');
     setActiveAnchor('crm');
     setSplitMenuOpen(false);
-  }, [currentUser, open]);
+  }, [currentUser, open, initialValues]);
 
   // Debounce 300ms — reuse cung UX voi CustomerProfileCombobox (DealFormFields.tsx).
   useEffect(() => {

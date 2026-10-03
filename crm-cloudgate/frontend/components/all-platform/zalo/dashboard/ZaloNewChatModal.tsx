@@ -20,6 +20,8 @@ interface ZaloNewChatModalProps {
   onError?: (message: string) => void;
   /** Thông báo thành công (tuỳ chọn) */
   onSuccess?: (displayName: string) => void;
+  /** Mở sẵn với 1 SĐT đã gõ từ ô tìm kiếm chính — tự động tìm luôn khi mở. */
+  initialQuery?: string;
 }
 
 const PHONE_EXAMPLES = ["0839108906", "+84939108906", "0084 939 108 906"];
@@ -31,6 +33,7 @@ export function ZaloNewChatModal({
   onChatReady,
   onError,
   onSuccess,
+  initialQuery,
 }: ZaloNewChatModalProps) {
   const [mode, setMode] = useState<SearchMode>("phone");
   const [query, setQuery] = useState("");
@@ -40,19 +43,34 @@ export function ZaloNewChatModal({
   const [found, setFound] = useState<ZaloFoundUser | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
-  // Reset state khi modal đóng/mở
+  // Reset state khi modal đóng/mở — nếu có initialQuery (từ ô tìm kiếm chính
+  // phát hiện có dạng SĐT), điền sẵn và tự tìm luôn thay vì bắt gõ lại.
   useEffect(() => {
     if (open) {
-      setQuery("");
+      const seedQuery = initialQuery?.trim() || "";
+      setMode("phone");
+      setQuery(seedQuery);
       setFound(null);
       setError(null);
       setSearching(false);
       setCreating(false);
-      // Focus input khi mở
-      const t = window.setTimeout(() => inputRef.current?.focus(), 60);
-      return () => window.clearTimeout(t);
+      if (seedQuery.length >= 8) {
+        setSearching(true);
+        findZaloUser(accountId, seedQuery, "phone")
+          .then((result) => setFound(result))
+          .catch((e) => {
+            const msg = extractErrorMessage(e);
+            setError(msg);
+            onError?.(msg);
+          })
+          .finally(() => setSearching(false));
+      } else {
+        const t = window.setTimeout(() => inputRef.current?.focus(), 60);
+        return () => window.clearTimeout(t);
+      }
     }
-  }, [open]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, initialQuery]);
 
   // Đóng modal bằng ESC
   useEffect(() => {
@@ -96,7 +114,7 @@ export function ZaloNewChatModal({
         display_name: found.display_name,
         avatar_url: found.avatar_url ?? null,
       });
-      onSuccess?.(res.display_name);
+      onSuccess?.(res.group_name || found.display_name);
       onChatReady(res.conversation_id);
       onClose();
     } catch (e) {

@@ -18,6 +18,8 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from app.modules.all_platform.routers.auth import router as auth_router
+from app.modules.all_platform.routers.social_accounts import router as social_accounts_router
+from app.modules.all_platform.routers.platforms import router as platforms_router
 from app.modules.all_platform.routers.categories import router as categories_router
 from app.modules.all_platform.routers.members import router as members_router
 from app.modules.all_platform.routers.users import router as users_router, teams_router
@@ -71,6 +73,11 @@ all_platform_router.include_router(teams_router, prefix="/teams", tags=["All-Pla
 
 # ── Auth ───────────────────────────────────────────────────────────────────────
 all_platform_router.include_router(auth_router, prefix="/auth", tags=["All-Platform Auth"])
+
+# ── Social Accounts (port tu main, feedback mentor 2026-10-03 "Quan ly tai
+#    khoan" - chi tab nay thuc su portable, khong Playwright/VPS) ──────────────
+all_platform_router.include_router(social_accounts_router, prefix="/social-accounts", tags=["All-Platform Social Accounts"])
+all_platform_router.include_router(platforms_router, prefix="/platforms", tags=["All-Platform Platforms"])
 
 # ── Customer Leads (Deal / pipeline "Cơ hội") ─────────────────────────────────
 all_platform_router.include_router(customer_lead_router, tags=["Customer Leads"])
