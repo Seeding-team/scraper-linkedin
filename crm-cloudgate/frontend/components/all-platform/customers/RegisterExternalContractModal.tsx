@@ -674,7 +674,7 @@ export function RegisterExternalContractModal({ open, deal, onClose, onCreated, 
                * van mac dinh phien ban moi nhat qua effect getQuoteVersions
                * o tren). */}
               <div className="rounded-md border border-slate-300 p-3">
-                <span className="mb-2 block text-xs font-semibold text-slate-600">Báo giá / phiên bản *</span>
+                <span className="mb-2 block text-xs font-semibold text-slate-600">Báo giá / phiên bản <span className="text-red-500">*</span></span>
                 {selectedVersion ? (
                   <div className="mb-2 text-sm font-semibold text-slate-800">
                     {selectedVersion.quoteNumber} · V{selectedVersion.versionNumber || 1} · {formatVND(quotePrice)} · {isLatestVersion ? "Mới nhất" : "Phiên bản cũ"}
@@ -774,7 +774,7 @@ export function RegisterExternalContractModal({ open, deal, onClose, onCreated, 
                * da chon (feedback 2026-09-30), van sua tay duoc binh thuong. */}
               <label className="block">
                 <span className="mb-1 flex items-center gap-1.5 text-xs font-semibold text-slate-600">
-                  Tên hợp đồng *
+                  Tên hợp đồng <span className="text-red-500">*</span>
                   <Pill>Tự điền</Pill>
                 </span>
                 <input
@@ -821,7 +821,7 @@ export function RegisterExternalContractModal({ open, deal, onClose, onCreated, 
                 {showAdjustReason || valueDiffersFromQuote ? (
                   <div className="mt-2">
                     <span className="mb-1 block text-[11px] font-semibold text-slate-600">
-                      Lý do điều chỉnh giá trị hợp đồng {valueDiffersFromQuote ? "*" : ""}
+                      Lý do điều chỉnh giá trị hợp đồng {valueDiffersFromQuote ? <span className="text-red-500">*</span> : null}
                     </span>
                     <input
                       value={adjustmentReason}
