@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { API_BASE_URL, API_KEY } from '@/lib/env';
-import { crmTeamsService, type CrmTeam } from '@/services/all-platform.service';
+import { crmTeamsService, usersService, type CrmTeam } from '@/services/all-platform.service';
 import { useAppAuth } from '@/contexts/AppAuthContext';
 import { useMembers } from '@/hooks/useMembers';
 import { ActionMenu, type ActionMenuItem } from './ActionMenu';
@@ -106,6 +106,7 @@ type ApiLeadRow = {
   qualification_ae_id?: string | null;
   team_id?: string | null;
   project_name?: string | null;
+  project_id?: string | null;
   deal_stage?: string | null;
   next_step?: string | null;
   follow_up_date?: string | null;
@@ -160,6 +161,7 @@ export function mapLead(row: ApiLeadRow): CrmLeadRow {
     qualificationAeId: row.qualification_ae_id || '',
     teamId: row.team_id || '',
     projectName: row.project_name || '',
+    projectId: row.project_id || '',
     dealStage: row.deal_stage || '',
     nextStep: row.next_step || '',
     followUpDate: row.follow_up_date || '',
@@ -171,6 +173,47 @@ export function mapLead(row: ApiLeadRow): CrmLeadRow {
     createdAt: row.created_at || '',
     updatedAt: row.updated_at || '',
     canWrite: Boolean(row.can_write),
+  };
+}
+
+export function mergeLeadWithCache(incoming: CrmLeadRow, existing?: CrmLeadRow): CrmLeadRow {
+  if (!existing) return incoming;
+
+  const incomingTime = incoming.updatedAt ? new Date(incoming.updatedAt).getTime() : 0;
+  const existingTime = existing.updatedAt ? new Date(existing.updatedAt).getTime() : 0;
+
+  const isIncomingTimeValid = !Number.isNaN(incomingTime) && incomingTime > 0;
+  const isExistingTimeValid = !Number.isNaN(existingTime) && existingTime > 0;
+
+  // Nếu Cache có timestamp mới hơn hẳn dữ liệu incoming (do vừa lưu/sửa ở FE trước đó trong khi response API cũ về sau),
+  // ưu tiên giữ dữ liệu Cache mới hơn để không bị đè bởi response API cũ (stale in-flight).
+  if (isIncomingTimeValid && isExistingTimeValid && existingTime > incomingTime) {
+    return {
+      ...incoming,
+      ...existing,
+    };
+  }
+
+  // Khi API data strictly NEWER hơn cache: API Data 100% chiến thắng cho tất cả các field backend trả về.
+  // Cache CHỈ giữ lại projectId (vì project_id thuộc customer_leads, crm_leads không chứa cột này).
+  if (isIncomingTimeValid && isExistingTimeValid && incomingTime > existingTime) {
+    return {
+      ...existing,
+      ...incoming,
+      projectId: incoming.projectId || existing.projectId || '',
+    };
+  }
+
+  // Mặc định hoặc khi timestamp bằng nhau / chưa có timestamp: API data mới thắng các trường chuẩn,
+  // giữ lại cache cho các trường mở rộng nếu API không trả về (hoặc rỗng do chưa join).
+  return {
+    ...existing,
+    ...incoming,
+    projectName: incoming.projectName || existing.projectName || '',
+    projectId: incoming.projectId || existing.projectId || '',
+    teamId: incoming.teamId || existing.teamId || '',
+    dealStage: incoming.dealStage || existing.dealStage || '',
+    qualificationAeId: incoming.qualificationAeId || existing.qualificationAeId || '',
   };
 }
 
@@ -194,6 +237,7 @@ export function LeadsDirectory() {
   // CrmCustomersDirectory.tsx.
   const [team, setTeam] = useState('');
   const [crmTeamOptions, setCrmTeamOptions] = useState<CrmTeam[]>([]);
+  const [salePresaleUsers, setSalePresaleUsers] = useState<Array<{ id: string; name: string }>>([]);
   useEffect(() => {
     let alive = true;
     crmTeamsService
@@ -210,19 +254,61 @@ export function LeadsDirectory() {
       alive = false;
     };
   }, []);
+  useEffect(() => {
+    let alive = true;
+    Promise.all([
+      usersService.getUsersByQuoteBusinessRole('presale'),
+      usersService.getUsersByQuoteBusinessRole('sale'),
+    ])
+      .then(([presaleRes, saleRes]) => {
+        if (!alive) return;
+        const byId = new Map<string, string>();
+        [
+          ...(presaleRes.success ? presaleRes.data || [] : []),
+          ...(saleRes.success ? saleRes.data || [] : []),
+        ].forEach(item => {
+          if (item.id && !byId.has(item.id)) byId.set(item.id, item.name || 'Chưa đặt tên');
+        });
+        setSalePresaleUsers([...byId.entries()].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name)));
+      })
+      .catch(() => {
+        if (alive) setSalePresaleUsers([]);
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [reloadTick, setReloadTick] = useState(0);
   const [formOpen, setFormOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
-  const [detailLead, setDetailLead] = useState<CrmLeadRow | null>(null);
+  const [detailLeadId, setDetailLeadId] = useState<string | null>(null);
   const [detailMode, setDetailMode] = useState<'view' | 'qualify' | 'convert'>('view');
-  const [editLead, setEditLead] = useState<CrmLeadRow | null>(null);
+  const [editLeadId, setEditLeadId] = useState<string | null>(null);
+  const leadCacheRef = useRef<Record<string, CrmLeadRow>>({});
+  const [leadCacheVersion, setLeadCacheVersion] = useState(0);
   const shellRef = useRef<HTMLDivElement>(null);
   const [deleteTarget, setDeleteTarget] = useState<CrmLeadRow | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState('');
   const { options: sourceOptions } = useCrmCategoryCodeOptions('crm_source');
+
+  function rememberLead(lead: CrmLeadRow) {
+    const existing = leadCacheRef.current[lead.id];
+    leadCacheRef.current[lead.id] = mergeLeadWithCache(lead, existing);
+    setLeadCacheVersion(version => version + 1);
+  }
+
+  const detailLead = useMemo(() => {
+    if (!detailLeadId) return null;
+    return leadCacheRef.current[detailLeadId] || items.find(row => row.id === detailLeadId) || null;
+  }, [detailLeadId, items, leadCacheVersion]);
+
+  const editLead = useMemo(() => {
+    if (!editLeadId) return null;
+    return leadCacheRef.current[editLeadId] || items.find(row => row.id === editLeadId) || null;
+  }, [editLeadId, items, leadCacheVersion]);
 
   // Sao chep Lead (chua convert) sang 1 trong 2 clone CRM doc lap con lai -
   // Lead goc van giu nguyen o Main (khong phai "chuyen han"). Chi Admin
@@ -515,7 +601,12 @@ export function LeadsDirectory() {
       })
       .then(data => {
         if (!alive) return;
-        setItems((data.items || []).map(mapLead));
+        setItems((data.items || []).map(row => {
+          const lead = mapLead(row);
+          const merged = mergeLeadWithCache(lead, leadCacheRef.current[lead.id]);
+          leadCacheRef.current[lead.id] = merged;
+          return merged;
+        }));
         setTotal(data.total || 0);
         const rawKpi = (data.kpi || {}) as Record<string, number | undefined>;
         setKpi({
@@ -632,16 +723,13 @@ export function LeadsDirectory() {
 
   const sdrFilterOptions = useMemo(() => {
     const seen = new Map<string, string>();
-    members.forEach(m => {
-      const key = m.linked_user_id || m.linked_user_id_2;
-      if (key) seen.set(key, m.display_name);
-    });
+    salePresaleUsers.forEach(item => seen.set(item.id, item.name));
     // Dam bao option "chinh minh" luon co trong dropdown ke ca khi user hien
     // tai khong co dong trong `members` - xem giai thich o
     // CrmCustomersDirectory.tsx (ownerFilterOptions).
     if (user?.id && !seen.has(user.id)) seen.set(user.id, user.name || user.email);
     return [...seen.entries()].sort((a, b) => a[1].localeCompare(b[1]));
-  }, [members, user]);
+  }, [salePresaleUsers, user]);
 
   const kpiCards = [
     {
@@ -745,8 +833,9 @@ export function LeadsDirectory() {
   }
 
   function openView(lead: CrmLeadRow) {
-    setEditLead(null);
-    setDetailLead(lead);
+    rememberLead(lead);
+    setEditLeadId(null);
+    setDetailLeadId(lead.id);
     setDetailMode('view');
   }
 
@@ -754,17 +843,20 @@ export function LeadsDirectory() {
    * menu "⋯" lẫn nút "Chỉnh sửa" trong drawer "Xác minh Lead" đều gọi hàm
    * này — không có bản form sửa thứ hai ở đâu khác. */
   function openEdit(lead: CrmLeadRow) {
-    setDetailLead(null);
-    setEditLead(lead);
+    rememberLead(lead);
+    setDetailLeadId(null);
+    setEditLeadId(lead.id);
   }
 
   /** Cập nhật NGAY dòng tương ứng trong bảng sau khi lưu (không chờ reload
    * toàn trang), rồi vẫn nạp lại nền để KPI/thứ tự sắp xếp theo updated_at
    * khớp với server. */
   function applyUpdatedLead(updated: CrmLeadRow) {
-    setItems(current => current.map(row => (row.id === updated.id ? updated : row)));
-    setEditLead(current => (current && current.id === updated.id ? updated : current));
-    setDetailLead(current => (current && current.id === updated.id ? updated : current));
+    rememberLead(updated);
+    setItems(current => {
+      const found = current.some(row => row.id === updated.id);
+      return found ? current.map(row => (row.id === updated.id ? updated : row)) : current;
+    });
     setReloadTick(tick => tick + 1);
   }
 
@@ -798,8 +890,8 @@ export function LeadsDirectory() {
       });
       setDeleteTarget(null);
       setDeleteCascadeSummary(null);
-      if (detailLead?.id === target.id) setDetailLead(null);
-      if (editLead?.id === target.id) setEditLead(null);
+      if (detailLeadId === target.id) setDetailLeadId(null);
+      if (editLeadId === target.id) setEditLeadId(null);
       setReloadTick(tick => tick + 1);
     } catch (err) {
       setDeleteError(err instanceof Error ? err.message : 'Không xóa được Lead.');
@@ -809,14 +901,15 @@ export function LeadsDirectory() {
   }
 
   function openQualifyForNewLead(lead: CrmLeadRow) {
-    setEditLead(null);
-    setDetailLead(lead);
+    rememberLead(lead);
+    setEditLeadId(null);
+    setDetailLeadId(lead.id);
     setDetailMode('qualify');
   }
 
   function closeLeadSidePanels() {
-    setDetailLead(null);
-    setEditLead(null);
+    setDetailLeadId(null);
+    setEditLeadId(null);
   }
 
   function handleShellPointerDown(event: ReactPointerEvent<HTMLDivElement>) {
@@ -1553,7 +1646,7 @@ export function LeadsDirectory() {
         open={Boolean(detailLead)}
         initialMode={detailMode}
         currentUser={user}
-        onClose={() => setDetailLead(null)}
+        onClose={() => setDetailLeadId(null)}
         onSaved={applyUpdatedLead}
         onEdit={openEdit}
       />
@@ -1562,7 +1655,7 @@ export function LeadsDirectory() {
         lead={editLead}
         open={Boolean(editLead)}
         currentUser={user}
-        onClose={() => setEditLead(null)}
+        onClose={() => setEditLeadId(null)}
         onSaved={applyUpdatedLead}
       />
 

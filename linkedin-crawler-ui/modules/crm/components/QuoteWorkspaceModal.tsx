@@ -21,7 +21,6 @@ import { useCatalogItemAdd } from '@/modules/service-catalog/useCatalogItemAdd';
 import { QuickAddProductModal } from '@/modules/service-catalog/QuickAddProductModal';
 import { QuickAddGroupModal } from '@/modules/service-catalog/QuickAddGroupModal';
 import {
-  dealBusinessCode,
   formatDate,
   formatMoney,
   formatPercentTrim,
@@ -795,6 +794,7 @@ export function QuoteWorkspaceModal({
   quoteForms = [],
   initialCustomerId,
   initialProjectId,
+  initialDealId,
   lockCustomer = false,
   lockProject = false,
 }: {
@@ -825,6 +825,8 @@ export function QuoteWorkspaceModal({
    * text tinh - CHI ap dung khi quoteId=null. */
   initialCustomerId?: string;
   initialProjectId?: string;
+  /** Deal can tu chon san khi mo tu chi tiet co hoi/customer deal tab. */
+  initialDealId?: string;
   lockCustomer?: boolean;
   lockProject?: boolean;
 }) {
@@ -1036,16 +1038,34 @@ export function QuoteWorkspaceModal({
   // moi noi can doc (xem effectiveDeals/effectiveDealsById ben duoi) de hien
   // ngay khong can cho cha tai lai.
   const [locallyCreatedDeals, setLocallyCreatedDeals] = useState<Deal[]>([]);
-  const effectiveDeals = useMemo(
-    () => (locallyCreatedDeals.length ? [...deals, ...locallyCreatedDeals] : deals),
-    [deals, locallyCreatedDeals]
-  );
+  const [fetchedCustomerDeals, setFetchedCustomerDeals] = useState<Deal[]>([]);
+  useEffect(() => {
+    if (quote || !draftCustomerId) {
+      setFetchedCustomerDeals([]);
+      return;
+    }
+    let alive = true;
+    seedingCrmRepository.getDeals()
+      .then(rows => {
+        if (!alive) return;
+        setFetchedCustomerDeals(rows.filter(d => d.customerId === draftCustomerId));
+      })
+      .catch(() => {
+        if (alive) setFetchedCustomerDeals([]);
+      });
+    return () => { alive = false; };
+  }, [quote, draftCustomerId]);
+  const effectiveDeals = useMemo(() => {
+    const map = new Map<string, Deal>();
+    [...deals, ...fetchedCustomerDeals, ...locallyCreatedDeals].forEach(deal => map.set(deal.id, deal));
+    return [...map.values()];
+  }, [deals, fetchedCustomerDeals, locallyCreatedDeals]);
   const effectiveDealsById = useMemo(() => {
-    if (!locallyCreatedDeals.length) return dealsById;
     const map = new Map(dealsById);
+    fetchedCustomerDeals.forEach(d => map.set(d.id, d));
     locallyCreatedDeals.forEach(d => map.set(d.id, d));
     return map;
-  }, [dealsById, locallyCreatedDeals]);
+  }, [dealsById, fetchedCustomerDeals, locallyCreatedDeals]);
   const CREATE_NEW_DEAL_OPTION = '__create_new_deal__';
   const CREATE_NEW_PROJECT_OPTION = '__create_new_project__';
   // "Tạo dự án mới"/"Tạo cơ hội mới" nhanh ngay trong workspace - tái dùng
@@ -1089,6 +1109,12 @@ export function QuoteWorkspaceModal({
   // KHONG theo Co hoi (1 Du an co nhieu Co hoi). "" = "Chua thuoc du an".
   const [projects, setProjects] = useState<Project[] | null>(null);
   const [draftProjectId, setDraftProjectId] = useState(initialProjectId || '');
+  useEffect(() => {
+    if (quoteId !== null) return;
+    setDraftCustomerId(initialCustomerId || '');
+    setDraftProjectId(initialProjectId || '');
+    setDraftDealId(initialDealId || '');
+  }, [quoteId, initialCustomerId, initialProjectId, initialDealId]);
   // SLA / han hoan tat noi bo that (migration 097) - datetime-local string,
   // KHAC HOAN TOAN validUntil (hieu luc bao gia voi khach hang).
   const [draftSlaDueAt, setDraftSlaDueAt] = useState('');
@@ -3394,7 +3420,7 @@ export function QuoteWorkspaceModal({
   // khong con Leader) - CHI dung de hien goi y trong card "Quy tắc phê
   // duyệt", sua that da chuyen het sang trang "Cài đặt báo giá" rieng.
   const canManageApprovalRules = user?.role === 'admin';
-  const businessCode = deal ? dealBusinessCode(deal) : null;
+  const opportunityDisplayName = deal ? [deal.customerName, deal.companyName].filter(Boolean).join(' · ') : '';
   const opportunityName = deal ? getServicePackageText(deal.servicePackage) || getPackageText(deal.package) : '';
   const stage = quote?.processingStage || 'request';
   const isDraft = quote ? quote.status === 'draft' : true;
@@ -4706,10 +4732,9 @@ export function QuoteWorkspaceModal({
           hideClearOption
         />
       ) : null}
-      {!quote && draftDealId ? (
+      {!quote && draftDealId && deal?.estimatedBudget ? (
         <div className="qc-row-sub">
-          Mã cơ hội: {businessCode || 'Chưa có mã'}
-          {deal?.estimatedBudget ? ` · Giá trị dự kiến: ${formatMoney(deal.estimatedBudget)}` : ''}
+          Giá trị dự kiến: {formatMoney(deal.estimatedBudget)}
         </div>
       ) : null}
       {quote ? (
@@ -4721,7 +4746,7 @@ export function QuoteWorkspaceModal({
           <SearchableSelect
             value="current"
             onChange={() => {}}
-            options={[{ value: 'current', label: businessCode || (deal ? 'Cơ hội chưa có mã' : 'Chưa gắn cơ hội') }]}
+            options={[{ value: 'current', label: opportunityDisplayName || (deal ? 'Cơ hội đã chọn' : 'Chưa gắn cơ hội') }]}
             disabled
           />
           <div className="qc-row-sub">
@@ -5392,7 +5417,7 @@ export function QuoteWorkspaceModal({
                         <div className="qc-summary-grid">
                           <div><span className="qc-workspace-info-label">Khách hàng</span><strong>{deal?.customerName || 'Chưa gắn khách hàng'}</strong></div>
                           <div><span className="qc-workspace-info-label">Dự án</span><strong>{project ? `${project.projectCode} · ${project.name}` : 'Chưa thuộc dự án'}</strong></div>
-                          <div><span className="qc-workspace-info-label">Cơ hội CRM</span><strong>{businessCode || (deal ? 'Cơ hội chưa có mã' : 'Chưa gắn cơ hội')}</strong></div>
+                          <div><span className="qc-workspace-info-label">Cơ hội CRM</span><strong>{opportunityDisplayName || (deal ? 'Cơ hội đã chọn' : 'Chưa gắn cơ hội')}</strong></div>
                           <div><span className="qc-workspace-info-label">Presale phụ trách</span><strong>{techName || 'Chưa gán'}</strong></div>
                           <div><span className="qc-workspace-info-label">Sale phụ trách</span><strong>{saleName || 'Chưa gán'}</strong></div>
                           <div><span className="qc-workspace-info-label">SLA</span><strong>{quote.slaDueAt ? formatDate(quote.slaDueAt) : 'Chưa đặt SLA'}</strong></div>
@@ -6855,7 +6880,7 @@ export function QuoteWorkspaceModal({
                 </div>
                 <div className="qc-workspace-summary-row">
                   <span>Cơ hội</span>
-                  <strong>{businessCode || 'Bổ sung ở bước 2'}</strong>
+                  <strong>{opportunityDisplayName || 'Bổ sung ở bước 2'}</strong>
                 </div>
                 <div className="qc-workspace-summary-row">
                   <span>SLA</span>

@@ -46,7 +46,7 @@ export function useDealQuoteSubmit() {
       return await seedingCrmRepository.getDeal(deal.id);
     } catch (err) {
       if (createdQuoteId) await seedingQuoteRepository.deleteQuote(createdQuoteId).catch(() => {});
-      if (createdDealId) await seedingCrmRepository.deleteDeal(createdDealId).catch(() => {});
+      if (createdDealId) await seedingCrmRepository.deleteDeal(createdDealId, true).catch(() => {});
       setSubmitError(
         err instanceof Error ? humanizeCrmError(err.message) : 'Không thể tạo deal và báo giá. Đã hoàn tác các thay đổi.'
       );

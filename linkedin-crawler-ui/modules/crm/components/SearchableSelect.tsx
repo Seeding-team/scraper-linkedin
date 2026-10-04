@@ -45,6 +45,12 @@ function foldDiacritics(value: string): string {
     .toLowerCase();
 }
 
+function isValueEqual(a?: string, b?: string): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return a.trim().toLowerCase() === b.trim().toLowerCase();
+}
+
 /** Dropdown <select> tùy biến (trigger + menu tìm kiếm được) — dùng thay cho
  * <select> gốc để mọi dropdown trong form CRM có cùng 1 kiểu hiển thị, không
  * lệ thuộc vào cách mỗi trình duyệt tự vẽ <select>/<option> gốc. */
@@ -181,9 +187,13 @@ export function SearchableSelect({
     };
   }, []);
 
+  const uniqueOptions = options.filter((option, index, array) => (
+    array.findIndex(item => isValueEqual(optionValue(item), optionValue(option))) === index
+  ));
+
   const filtered = search.trim()
-    ? options.filter(o => foldDiacritics(optionSearchText(o)).includes(foldDiacritics(search.trim())))
-    : options;
+    ? uniqueOptions.filter(o => foldDiacritics(optionSearchText(o)).includes(foldDiacritics(search.trim())))
+    : uniqueOptions;
 
   // Giu nguoi/gia tri DANG DUOC CHON hien o dau danh sach ke ca khi khong
   // khop filter hien tai - vd ban ghi cu/da nghi viec van phai thay duoc
@@ -191,17 +201,17 @@ export function SearchableSelect({
   // "Keep currently selected member visible even if temporarily outside the
   // current filter"). Chi ap dung khi value THAT SU ton tai trong options
   // goc (khong tu bia them lua chon khong co that).
-  const selectedOption = value ? options.find(o => optionValue(o) === value) : undefined;
+  const selectedOption = value ? uniqueOptions.find(o => isValueEqual(optionValue(o), value)) : undefined;
   const visibleOptions =
-    selectedOption && !filtered.some(o => optionValue(o) === value) ? [selectedOption, ...filtered] : filtered;
+    selectedOption && !filtered.some(o => isValueEqual(optionValue(o), value)) ? [selectedOption, ...filtered] : filtered;
 
-  const selectedLabel = options.find(o => optionValue(o) === value);
+  const selectedLabel = value ? uniqueOptions.find(o => isValueEqual(optionValue(o), value)) : undefined;
 
   const trimmedSearch = search.trim();
   const showCreateOption =
     allowCreate &&
     trimmedSearch.length > 0 &&
-    !options.some(o => foldDiacritics(optionSearchText(o)) === foldDiacritics(trimmedSearch));
+    !uniqueOptions.some(o => foldDiacritics(optionSearchText(o)) === foldDiacritics(trimmedSearch));
 
   // Danh sach dieu huong ban phim PHAI khop DUNG thu tu render ben duoi (dong
   // "+ Tao moi" - neu co - roi "clear" - neu co - roi moi den tung option) de
@@ -224,7 +234,7 @@ export function SearchableSelect({
     if (trimmedSearch.length > 0) {
       if (showCreateOption) return 0;
       if (visibleOptions.length > 0) {
-        const foundVisibleIdx = visibleOptions.findIndex(o => optionValue(o) === value);
+        const foundVisibleIdx = visibleOptions.findIndex(o => isValueEqual(optionValue(o), value));
         const firstOptionIdx = (showCreateOption ? 1 : 0) + (hideClearOption ? 0 : 1);
         if (foundVisibleIdx !== -1) {
           return firstOptionIdx + foundVisibleIdx;
@@ -233,7 +243,7 @@ export function SearchableSelect({
       }
     }
     const targetValue = value ?? '';
-    const foundIdx = keyboardItems.findIndex(item => !item.isCreate && item.value === targetValue);
+    const foundIdx = keyboardItems.findIndex(item => !item.isCreate && isValueEqual(item.value, targetValue));
     if (foundIdx !== -1) return foundIdx;
     return hideClearOption ? 0 : clearOptionIndex;
   }
@@ -331,7 +341,7 @@ export function SearchableSelect({
                 )}
                 {!loading && visibleOptions.map((option, index) => {
                   const keyboardIndex = (showCreateOption ? 1 : 0) + (hideClearOption ? 0 : 1) + index;
-                  const isSelected = value === optionValue(option);
+                  const isSelected = isValueEqual(value, optionValue(option));
                   const isHighlighted = highlightedIndex === keyboardIndex;
                   return (
                     <button

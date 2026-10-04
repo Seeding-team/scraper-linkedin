@@ -1,10 +1,10 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { API_BASE_URL, API_KEY } from '@/lib/env';
-import { usersService, crmTeamsService, type QuoteBusinessRoleUser, type CrmTeam, type AppUserProfile } from '@/services/all-platform.service';
+import { usersService, crmTeamsService, projectsService, type QuoteBusinessRoleUser, type CrmTeam, type AppUserProfile, type Project } from '@/services/all-platform.service';
 import { parseMoney, DEAL_STAGE_META } from '../constants/crmConfig';
 import { mapLead } from './LeadsDirectory';
 import { CheckCircle2, HelpCircle, Loader2, X } from './icons';
@@ -40,6 +40,7 @@ type CompanyMatchRow = {
 };
 
 type ConvertedDealSnapshot = {
+  customer_id?: string | null;
   deal_stage?: string | null;
   team_id?: string | null;
   sdr_id?: string | null;
@@ -48,6 +49,7 @@ type ConvertedDealSnapshot = {
   next_step?: string | null;
   follow_up_date?: string | null;
   project_id?: string | null;
+  project_name?: string | null;
   project?: { name?: string | null } | null;
 };
 
@@ -140,6 +142,7 @@ export function LeadDetailDrawer({
     project: '',
     projectId: '',
   });
+  const [customerProjects, setCustomerProjects] = useState<Project[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [savedOk, setSavedOk] = useState('');
@@ -175,17 +178,121 @@ export function LeadDetailDrawer({
   // duoc luc chay Playwright, khong phai gia thuyet).
   const initializedLeadRef = useRef<string>('');
 
+  const [freshLead, setFreshLead] = useState<CrmLeadRow | null>(null);
+  const [convertedDeal, setConvertedDeal] = useState<ConvertedDealSnapshot | null>(null);
+
+  // ── Master Hydration Function (Pure Drawer Hydration, NO onSaved call!) ────
+  const hydrateLeadDrawer = useCallback((params: {
+    lead: CrmLeadRow;
+    freshLead?: CrmLeadRow | null;
+    deal?: ConvertedDealSnapshot | null;
+    customerProjects: Project[];
+  }) => {
+    const { lead, freshLead, deal, customerProjects } = params;
+    const currentLead = freshLead || lead;
+
+    // ── 1. SALE PHỤ TRÁCH (aeId) ───────────────────────────────────────────
+    // Source chính: crm_leads.qualification_ae_id
+    // Priority: Valid Lead qualificationAeId || Valid Deal sdr_id || ''
+    const rawLeadAe = currentLead.qualificationAeId || lead.qualificationAeId || '';
+    const rawDealAe = deal?.sdr_id || '';
+    const resolvedAeId = rawLeadAe || rawDealAe || '';
+
+    // ── 2. TEAM SALE (teamId) ──────────────────────────────────────────────
+    // Rule: Lead teamId valid > Deal team_id valid > infer từ Sale > empty
+    const rawLeadTeam = currentLead.teamId || lead.teamId || '';
+    const rawDealTeam = deal?.team_id || '';
+    const resolvedTeamId = rawLeadTeam || rawDealTeam || '';
+
+    // ── 3. DỰ ÁN (project & projectId) ──────────────────────────────────────
+    // Vì Lead đã có converted_deal_id, Project phải hydrate từ converted Deal detail.
+    let resolvedProjectId = currentLead.projectId || lead.projectId || deal?.project_id || '';
+    let resolvedProjectName = currentLead.projectName || lead.projectName || deal?.project_name || deal?.project?.name || '';
+
+    if (deal) {
+      if (deal.project_id) resolvedProjectId = deal.project_id;
+      if (deal.project?.name) {
+        resolvedProjectName = deal.project.name;
+      } else if (deal.project_name) {
+        resolvedProjectName = deal.project_name;
+      }
+    }
+
+    // Nếu Deal API chỉ trả project_id mà không trả tên (hoặc ngược lại): resolve từ customerProjects
+    if (resolvedProjectId && !resolvedProjectName && customerProjects.length > 0) {
+      const foundProject = customerProjects.find(p => p.id === resolvedProjectId);
+      if (foundProject) resolvedProjectName = foundProject.name;
+    } else if (resolvedProjectName && !resolvedProjectId && customerProjects.length > 0) {
+      const foundProject = customerProjects.find(p => p.name === resolvedProjectName);
+      if (foundProject) resolvedProjectId = foundProject.id;
+    }
+
+    // ── 4. GIAI ĐOẠN (dealStage) ───────────────────────────────────────────
+    // Converted: deal.deal_stage || lead.dealStage || 'dealing'
+    // Unconverted: lead.dealStage || 'dealing'
+    let resolvedDealStage = currentLead.dealStage || lead.dealStage || 'dealing';
+    if (deal && deal.deal_stage) {
+      resolvedDealStage = deal.deal_stage;
+    }
+
+    const estimatedValue = deal?.estimated_budget != null && deal.estimated_budget !== ''
+      ? Number(deal.estimated_budget)
+      : (currentLead.qualificationEstimatedValue ?? lead.qualificationEstimatedValue ?? null);
+
+    setForm(prev => ({
+      ...prev,
+      interest: deal?.service_package || currentLead.qualificationNeed || lead.qualificationNeed || prev.interest || '',
+      interestLevel: interestLevelFromScore(currentLead.score ?? lead.score) || prev.interestLevel,
+      score: currentLead.score ?? lead.score ?? prev.score,
+      timeline: currentLead.qualificationExpectedTimeline || lead.qualificationExpectedTimeline || prev.timeline || '',
+      estimatedValue: estimatedValue == null || Number.isNaN(estimatedValue) ? prev.estimatedValue : estimatedValue,
+      nextStep: deal?.next_step || currentLead.nextStep || lead.nextStep || prev.nextStep || '',
+      nextStepAt: deal?.follow_up_date
+        ? toDatetimeLocal(String(deal.follow_up_date))
+        : (toDatetimeLocal(currentLead.followUpDate || lead.followUpDate) || prev.nextStepAt),
+      note: currentLead.note || lead.note || prev.note || '',
+      aeId: resolvedAeId,
+      dealStage: resolvedDealStage,
+      project: resolvedProjectName,
+      projectId: resolvedProjectId,
+    }));
+
+    setTeamId(resolvedTeamId || '');
+    if (!resolvedTeamId && resolvedAeId) {
+      const leadIdAtRequest = lead.id;
+      crmTeamsService.getTeamIdForUser(resolvedAeId)
+        .then(res => {
+          if (initializedLeadRef.current !== leadIdAtRequest) return;
+          const foundTeamId = res.success ? res.data?.crm_team_id : null;
+          if (foundTeamId) setTeamId(foundTeamId);
+        })
+        .catch(() => {});
+    }
+  }, []);
+
+  // ── Master Hydration Effect ────────────────────────────────────────────────
+  useEffect(() => {
+    if (!open || !lead) return;
+    hydrateLeadDrawer({
+      lead,
+      freshLead,
+      deal: convertedDeal,
+      customerProjects,
+    });
+  }, [open, lead, freshLead, convertedDeal, customerProjects, hydrateLeadDrawer]);
+
   useEffect(() => {
     if (!open || !lead) {
       initializedLeadRef.current = '';
-      // Dong khong dung backdrop cua CrmTeamFormModal (vd dong ca drawer Lead
-      // ngoai cung) van phai reset - state nay khong tu mat vi component
-      // KHONG unmount giua cac lan mo/dong drawer (chi an/hien qua CSS).
+      setFreshLead(null);
+      setConvertedDeal(null);
       setAddTeamOpen(false);
       return;
     }
     if (initializedLeadRef.current === lead.id) return;
     initializedLeadRef.current = lead.id;
+    setFreshLead(null);
+    setConvertedDeal(null);
     setError('');
     setSavedOk('');
     setConvertError('');
@@ -195,21 +302,6 @@ export function LeadDetailDrawer({
     setUnqualifiedReason('');
     setQualificationEditOpen(false);
     setAddTeamOpen(false);
-    setForm({
-      interest: lead.qualificationNeed || '',
-      interestLevel: interestLevelFromScore(lead.score),
-      score: lead.score ?? null,
-      timeline: lead.qualificationExpectedTimeline || '',
-      estimatedValue: lead.qualificationEstimatedValue ?? null,
-      nextStep: lead.nextStep || '',
-      nextStepAt: toDatetimeLocal(lead.followUpDate),
-      aeId: lead.qualificationAeId || '',
-      note: lead.note || '',
-      followUpChannel: '',
-      dealStage: lead.dealStage || 'dealing',
-      project: lead.projectName || '',
-      projectId: '',
-    });
     setContact({
       name: lead.leadName || '',
       phone: lead.phone || '',
@@ -222,26 +314,6 @@ export function LeadDetailDrawer({
       ? crypto.randomUUID()
       : `lead-convert-${lead.id}-${Date.now()}`;
 
-    // Prefer the persisted Lead Team Sale. Older rows may not have it yet, so
-    // fall back to deriving a team from the saved Sale owner.
-    setTeamId(lead.teamId || '');
-    setTeamMembers(null);
-    const initialAeId = lead.qualificationAeId || '';
-    if (initialAeId && !lead.teamId) {
-      const leadIdAtRequest = lead.id;
-      crmTeamsService.getTeamIdForUser(initialAeId)
-        .then(res => {
-          if (initializedLeadRef.current !== leadIdAtRequest) return; // lead da doi, bo ket qua cu
-          const foundTeamId = res.success ? res.data?.crm_team_id : null;
-          if (foundTeamId) setTeamId(foundTeamId);
-        })
-        .catch(() => { /* khong co Team CRM cho nguoi nay - bo qua, giu teamId rong */ });
-    }
-
-    // Check trùng doanh nghiệp — đúng endpoint company-match đã dùng từ trước.
-    // Khi lead không có công ty/website thì lùi về duplicate-check theo
-    // SĐT/email để ô "đã được check trùng" phản ánh 1 lần kiểm tra THẬT chứ
-    // không tự bật xanh.
     setCompanyMatches([]);
     setDupChecked(false);
     const hasCompanyKeys = Boolean(lead.companyName || lead.website);
@@ -268,6 +340,25 @@ export function LeadDetailDrawer({
       .catch(() => setDupChecked(false));
   }, [open, lead, initialMode]);
 
+  // Always fetch fresh Lead details from server on drawer open (read-only, NO onSaved!)
+  useEffect(() => {
+    if (!open || !lead?.id) return;
+    let alive = true;
+    const targetLeadId = lead.id;
+    fetch(`${API_BASE_URL}/api/all-platform/crm/leads/${encodeURIComponent(targetLeadId)}`, {
+      credentials: 'include',
+      headers: headers(),
+    })
+      .then(res => res.json())
+      .then(body => {
+        if (!alive || body.success === false || !body.data) return;
+        const mapped = mapLead(body.data);
+        setFreshLead(mapped);
+      })
+      .catch(() => { /* silent fallback */ });
+    return () => { alive = false; };
+  }, [open, lead?.id]);
+
   useEffect(() => {
     if (!open) return;
     let alive = true;
@@ -292,7 +383,7 @@ export function LeadDetailDrawer({
       .then(res => {
         if (!alive) return;
         const rows = res.success ? res.data || [] : [];
-        setTeamOptions(rows.filter(t => t.status === 'active'));
+        setTeamOptions(rows);
       })
       .catch(() => {
         if (alive) setTeamOptions([]);
@@ -315,10 +406,26 @@ export function LeadDetailDrawer({
     return () => { alive = false; };
   }, [open]);
 
-  // Doi Team -> tai lai thanh vien Team do, thay THANG cho danh sach Sale he
-  // thong (yeu cau "CHI xo cac thanh vien thuoc Team do"). teamId rong -> giu
-  // teamMembers = null de aeOptions lui ve saleOptions toan he thong (fallback
-  // UX truoc khi chon Team, xem aeOptions ben duoi).
+  // Load danh sach Du an cua Khach hang (neu lead da link voi Customer hoac user chon Customer co san).
+  const hydratedLead = freshLead || lead;
+  const targetCustomerId = convertedDeal?.customer_id
+    || hydratedLead?.convertedCustomerId
+    || (customerChoice !== 'new' ? customerChoice : undefined);
+  useEffect(() => {
+    if (!open) return;
+    let alive = true;
+    projectsService.list(targetCustomerId)
+      .then(res => {
+        if (!alive) return;
+        setCustomerProjects(res.success && res.data ? res.data : []);
+      })
+      .catch(() => {
+        if (alive) setCustomerProjects([]);
+      });
+    return () => { alive = false; };
+  }, [open, targetCustomerId]);
+
+  // Doi Team -> tai lai thanh vien Team do, thay THANG cho danh sach Sale he thong.
   useEffect(() => {
     if (!teamId) {
       setTeamMembers(null);
@@ -329,9 +436,6 @@ export function LeadDetailDrawer({
       .then(res => {
         if (!alive) return;
         const members = res.success ? res.data?.members || [] : [];
-        // Leader KHONG nam trong `members` - nhung van phai chon duoc lam
-        // Sale phu trach (feedback 2026-09-30: "leader cũng làm việc ở đó
-        // thì lúc này không thể chọn leader").
         const leaderId = res.success ? res.data?.leader_user_id : undefined;
         const leaderName = res.success ? res.data?.leader_name : undefined;
         const hasLeader = leaderId && members.some(m => m.id === leaderId);
@@ -349,6 +453,7 @@ export function LeadDetailDrawer({
     };
   }, [teamId]);
 
+  // Fetch Converted Deal snapshot (read-only hydration, NO onSaved call!)
   useEffect(() => {
     if (!open || !lead?.convertedDealId) return;
     let alive = true;
@@ -361,32 +466,9 @@ export function LeadDetailDrawer({
       .then(body => {
         if (!alive || initializedLeadRef.current !== leadIdAtRequest || body.success === false) return;
         const deal = (body.data || {}) as ConvertedDealSnapshot;
-        const estimatedValue = deal.estimated_budget == null || deal.estimated_budget === ''
-          ? null
-          : Number(deal.estimated_budget);
-        setForm(prev => ({
-          ...prev,
-          interest: deal.service_package || prev.interest,
-          estimatedValue: estimatedValue == null || Number.isNaN(estimatedValue) ? prev.estimatedValue : estimatedValue,
-          nextStep: deal.next_step || prev.nextStep,
-          nextStepAt: deal.follow_up_date ? toDatetimeLocal(String(deal.follow_up_date)) : prev.nextStepAt,
-          // Uu tien gia tri Lead da luu (prev.aeId, tu lead.qualificationAeId)
-          // - cung nguyen tac voi teamId o tren: Deal.sdr_id chi dung lam
-          // fallback khi Lead chua co, tranh deal.sdr_id cu/rac (tro toi user
-          // da bi xoa/vo hieu hoa) de len gia tri dung cua Lead.
-          aeId: prev.aeId || deal.sdr_id || '',
-          dealStage: deal.deal_stage || prev.dealStage || 'dealing',
-          project: deal.project?.name || prev.project,
-          projectId: deal.project_id || prev.projectId,
-        }));
-        // KHÔNG còn ghi đè teamId bằng deal.team_id ở đây: từ khi Lead có cột
-        // team_id riêng (migration 164) và được đồng bộ SANG Deal mỗi lần lưu
-        // (không phải ngược lại), teamId đã set đúng từ lead.teamId ở effect
-        // mở drawer rồi. Bug thật đã gặp: nếu customer_leads.team_id là dữ
-        // liệu cũ/rác trỏ tới 1 Team đã bị xoá, dòng này sẽ ghi đè mất giá trị
-        // đúng vừa load, khiến dropdown hiện "-- Chọn --" dù Lead đã lưu đúng.
+        setConvertedDeal(deal);
       })
-      .catch(() => { /* Lead da convert nhung deal hydrate loi thi giu form lead hien co. */ });
+      .catch(() => { /* silent fallback */ });
     return () => {
       alive = false;
     };
@@ -410,12 +492,20 @@ export function LeadDetailDrawer({
 
   // Chua chon Team -> giu danh sach Sale toan he thong nhu cu (fallback UX);
   // da chon Team -> THAY THANG bang dung thanh vien Team do (khong hoi cu).
-  const aeOptions = useMemo(
-    () => teamId
-      ? (teamMembers || []).map(user => ({ value: user.id, label: user.name || user.email }))
-      : saleOptions.map(user => ({ value: user.id, label: user.name })),
-    [teamId, teamMembers, saleOptions],
-  );
+  const aeOptions = useMemo(() => {
+    const list = teamId && teamMembers && teamMembers.length > 0
+      ? [...teamMembers, ...saleOptions]
+      : saleOptions;
+    const seen = new Set<string>();
+    const result: Array<{ value: string; label: string }> = [];
+    for (const u of list) {
+      if (u && u.id && !seen.has(u.id)) {
+        seen.add(u.id);
+        result.push({ value: u.id, label: u.name || (u as any).email || u.id });
+      }
+    }
+    return result;
+  }, [teamId, teamMembers, saleOptions]);
   const teamOptionsForSelect = useMemo(
     () => teamOptions.map(team => ({ value: team.id, label: team.name })),
     [teamOptions],
@@ -423,6 +513,10 @@ export function LeadDetailDrawer({
   const teamActions: SelectAction[] = useMemo(
     () => [{ key: 'add-team', label: '+ Thêm Team mới', type: 'add', onSelect: () => setAddTeamOpen(true) }],
     [],
+  );
+  const projectOptions = useMemo(
+    () => customerProjects.map(p => ({ id: p.id, name: p.name, code: (p as Project & { code?: string }).code })),
+    [customerProjects],
   );
   /** Doi Team do NGUOI DUNG tu bam (khac voi auto-load luc mo lead) - phai
    * reset aeId dang chon vi Sale cu co the khong con thuoc Team moi. */
@@ -578,7 +672,19 @@ export function LeadDetailDrawer({
    * đoạn/Sale phụ trách...) không hiện liền trên UI, phải F5 mới thấy, dù
    * data đã lưu đúng dưới DB. */
   function syncFormFromSavedLead(updatedLead: CrmLeadRow) {
-    setTeamId(updatedLead.teamId || '');
+    if (updatedLead.teamId) {
+      setTeamId(updatedLead.teamId);
+    } else {
+      const ae = updatedLead.qualificationAeId || form.aeId;
+      if (ae) {
+        crmTeamsService.getTeamIdForUser(ae)
+          .then(res => {
+            const foundTeamId = res.success ? res.data?.crm_team_id : null;
+            if (foundTeamId) setTeamId(foundTeamId);
+          })
+          .catch(() => {});
+      }
+    }
     setForm(prev => ({
       ...prev,
       interest: updatedLead.qualificationNeed || '',
@@ -591,7 +697,8 @@ export function LeadDetailDrawer({
       aeId: updatedLead.qualificationAeId || prev.aeId,
       note: updatedLead.note || '',
       dealStage: updatedLead.dealStage || prev.dealStage || 'dealing',
-      project: updatedLead.projectName || '',
+      project: updatedLead.projectName || prev.project,
+      projectId: updatedLead.projectId || prev.projectId,
     }));
   }
 
@@ -609,6 +716,8 @@ export function LeadDetailDrawer({
     setError('');
     setSavedOk('');
     try {
+      const formSnapshot = form;
+      const teamIdSnapshot = teamId;
       const payload: Record<string, unknown> = overrideStatus
         ? { ...buildQualificationPayload(), status: overrideStatus }
         : buildQualificationPayload();
@@ -622,6 +731,11 @@ export function LeadDetailDrawer({
       const body = await res.json();
       if (!res.ok || body.success === false) throw new Error(body?.message || 'Không lưu được thông tin xác minh.');
       const updatedLead = mapLead(body.data);
+      if (formSnapshot.project) updatedLead.projectName = formSnapshot.project;
+      if (formSnapshot.projectId) updatedLead.projectId = formSnapshot.projectId;
+      if (teamIdSnapshot) updatedLead.teamId = teamIdSnapshot;
+      if (formSnapshot.dealStage) updatedLead.dealStage = formSnapshot.dealStage;
+      setFreshLead(updatedLead);
       onSaved(updatedLead);
       syncFormFromSavedLead(updatedLead);
       setSavedOk(overrideStatus ? 'Đã chốt kết quả xác minh.' : 'Đã lưu xác minh. Chưa tạo Cơ hội/Khách hàng nào.');
@@ -670,6 +784,8 @@ export function LeadDetailDrawer({
     setError('');
     setSavedOk('');
     try {
+      const formSnapshot = form;
+      const teamIdSnapshot = teamId;
       const res = await fetch(`${API_BASE_URL}/api/all-platform/crm/leads/${encodeURIComponent(lead.id)}`, {
         method: 'PUT',
         credentials: 'include',
@@ -679,6 +795,11 @@ export function LeadDetailDrawer({
       const body = await res.json();
       if (!res.ok || body.success === false) throw new Error(body?.message || 'Không lưu được kết quả xác minh.');
       const updatedLead = mapLead(body.data);
+      if (formSnapshot.project) updatedLead.projectName = formSnapshot.project;
+      if (formSnapshot.projectId) updatedLead.projectId = formSnapshot.projectId;
+      if (teamIdSnapshot) updatedLead.teamId = teamIdSnapshot;
+      if (formSnapshot.dealStage) updatedLead.dealStage = formSnapshot.dealStage;
+      setFreshLead(updatedLead);
       onSaved(updatedLead);
       syncFormFromSavedLead(updatedLead);
       setSavedOk(okMessage);
@@ -706,6 +827,7 @@ export function LeadDetailDrawer({
       // sau khi convert xong (xem crm_lead_service.convert_lead(), migration
       // 153). Man Xac minh Lead chua co ProjectPicker chon Du an co san.
       if (form.project.trim()) dealPayload.project_name = form.project.trim();
+      if (form.projectId) dealPayload.project_id = form.projectId;
 
       const payload: Record<string, unknown> = {
         deal: dealPayload,
@@ -1054,6 +1176,8 @@ export function LeadDetailDrawer({
                 timeline={form.timeline}
                 onTimelineChange={value => setField('timeline', value)}
                 project={form.project}
+                projectOptions={projectOptions}
+                onPickProject={p => setForm(prev => ({ ...prev, project: p.name, projectId: p.id }))}
                 onProjectChange={value => setForm(prev => ({ ...prev, project: value, projectId: '' }))}
                 note={form.note}
                 onNoteChange={value => setField('note', value)}

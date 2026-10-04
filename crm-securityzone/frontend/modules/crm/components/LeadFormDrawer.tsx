@@ -11,7 +11,7 @@ import { mapLead, LEAD_STATUS_LABEL } from './LeadsDirectory';
 import { getSourceLabel } from './DealFormFields';
 import { LEAD_SOURCE_EXCLUDED_VALUES } from '../constants/crmConfig';
 import { ChevronDown, ChevronUp, Loader2, X } from './icons';
-import { usersService } from '@/services/all-platform.service';
+import { crmTeamsService, usersService } from '@/services/all-platform.service';
 import type { AppUser } from '@/types/unified.types';
 import type { CrmLeadRow } from '../types';
 
@@ -29,11 +29,8 @@ type FormState = {
   source: string;
   sdrId: string;
   sdrLabel: string;
-  /** "Sale phụ trách" (quality_ae_id / "Sale nhận bàn giao" o buoc qualify) -
-   * yeu cau rieng "cho thêm ng phụ trách sale kế bên phụ trách lead": truoc
-   * day CHI gan duoc luc Qualify Lead (LeadDetailDrawer.tsx), gio cho gan
-   * NGAY luc tao/sua Lead, cung 1 cot DB that (khong them cot moi). */
-  aeId: string;
+  /** Team Sale nhận bàn giao (crm_leads.team_id -> crm_teams). */
+  teamId: string;
   note: string;
 };
 
@@ -74,7 +71,7 @@ function emptyForm(currentUser: AppUser | null, defaultSource = 'Manual'): FormS
     source: defaultSource || 'Manual',
     sdrId: currentUser?.id || '',
     sdrLabel: currentUser?.name || currentUser?.email || '',
-    aeId: '',
+    teamId: '',
     note: '',
   };
 }
@@ -294,41 +291,93 @@ export function LeadFormDrawer({
   }
 
   const canPickOwner = isAdminOrLeader(currentUser);
-  const selectionKeyOf = (m: { id: string; linked_user_id?: string | null; linked_user_id_2?: string | null }) =>
-    m.linked_user_id || m.linked_user_id_2 || m.id;
-  const sdrOptions = useMemo(() => {
-    const linked = members.filter(m => m.linked_user_id || m.linked_user_id_2);
-    return [...linked].sort((a, b) => a.display_name.localeCompare(b.display_name));
-  }, [members]);
+  const [leadOwnerUsers, setLeadOwnerUsers] = useState<Array<{ id: string; name: string; email?: string | null }>>([]);
   const memberName = useMemo(() => {
     const map = new Map<string, string>();
     members.forEach(m => {
       const key = m.linked_user_id || m.linked_user_id_2;
       if (key) map.set(key, m.display_name);
     });
+    leadOwnerUsers.forEach(u => map.set(u.id, u.name));
     if (currentUser?.id && !map.has(currentUser.id)) map.set(currentUser.id, currentUser.name || currentUser.email || 'Bạn');
     return map;
-  }, [members, currentUser]);
+  }, [members, leadOwnerUsers, currentUser]);
 
-  // "Sale phụ trách" (qualification_ae_id) - yeu cau rieng "ai có role sale
-  // thì hiện trong dropdown", dung LAI DUNG nguon "quote_business_role=sale"
-  // da co san (giong CrmCustomersDirectory.tsx saleManagerOptions, LeadDetailDrawer.tsx
-  // aeOptions), khong tu tao nguon rieng.
-  const [saleUsers, setSaleUsers] = useState<Array<{ id: string; name: string }>>([]);
   useEffect(() => {
+    if (!open) return;
     let alive = true;
-    usersService
-      .getUsersByQuoteBusinessRole('sale')
-      .then(res => {
-        if (alive) setSaleUsers(res.success ? (res.data || []).map(u => ({ id: u.id, name: u.name })) : []);
+    Promise.all([
+      usersService.getUsersByQuoteBusinessRole('presale'),
+      usersService.getUsersByQuoteBusinessRole('sale'),
+    ])
+      .then(([presaleRes, saleRes]) => {
+        if (!alive) return;
+        const byId = new Map<string, { id: string; name: string; email?: string | null }>();
+        const rows = [
+          ...(presaleRes.success ? presaleRes.data || [] : []),
+          ...(saleRes.success ? saleRes.data || [] : []),
+        ];
+        rows.forEach(user => {
+          if (user.id && !byId.has(user.id)) byId.set(user.id, { id: user.id, name: user.name || 'Chưa đặt tên' });
+        });
+        setLeadOwnerUsers([...byId.values()].sort((a, b) => a.name.localeCompare(b.name)));
       })
       .catch(() => {
-        if (alive) setSaleUsers([]);
+        if (alive) setLeadOwnerUsers([]);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (!open || !canPickOwner || leadOwnerUsers.length === 0) return;
+    if (leadOwnerUsers.some(user => user.id === form.sdrId)) return;
+    setForm(current => ({ ...current, sdrId: leadOwnerUsers[0]?.id || '' }));
+  }, [open, canPickOwner, leadOwnerUsers, form.sdrId]);
+
+  // Team Sale lấy từ Team CRM thật (crm_teams), không chọn một user Sale cá nhân.
+  const [saleTeams, setSaleTeams] = useState<Array<{ id: string; name: string }>>([]);
+  const [teamResolving, setTeamResolving] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    crmTeamsService
+      .list()
+      .then(res => {
+        if (alive) setSaleTeams(res.success ? (res.data || []).map(t => ({ id: t.id, name: t.name || t.code || 'Team Sale' })) : []);
+      })
+      .catch(() => {
+        if (alive) setSaleTeams([]);
       });
     return () => {
       alive = false;
     };
   }, []);
+  useEffect(() => {
+    const ownerId = form.sdrId || (!canPickOwner ? currentUser?.id || '' : '');
+    if (!ownerId) {
+      setForm(current => (current.teamId ? { ...current, teamId: '' } : current));
+      return;
+    }
+    let alive = true;
+    setTeamResolving(true);
+    crmTeamsService
+      .getTeamIdForUser(ownerId)
+      .then(res => {
+        if (!alive) return;
+        const nextTeamId = res.success ? res.data?.crm_team_id || '' : '';
+        setForm(current => (current.teamId === nextTeamId ? current : { ...current, teamId: nextTeamId }));
+      })
+      .catch(() => {
+        if (alive) setForm(current => (current.teamId ? { ...current, teamId: '' } : current));
+      })
+      .finally(() => {
+        if (alive) setTeamResolving(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [form.sdrId, canPickOwner, currentUser?.id]);
 
   // Auto-check trung khi SDT/Email hop le - debounce 400ms, huy neu component
   // unmount hoac gia tri lai doi truoc khi ket qua ve (dung effect-cleanup
@@ -492,7 +541,7 @@ export function LeadFormDrawer({
       source: form.source || null,
       status: 'new_lead',
       sdr_id: canPickOwner ? (form.sdrId || null) : (currentUser?.id || null),
-      qualification_ae_id: form.aeId || null,
+      team_id: form.teamId || null,
       note: form.note.trim() || null,
       // Backend is the final dedup gate.  This flag is only sent after the
       // user explicitly chose the existing manual-flow override.
@@ -871,16 +920,11 @@ export function LeadFormDrawer({
                         hideClearOption
                         showAvatar={false}
                         members={[
-                          ...(currentUser?.id
-                            ? [{
-                                id: currentUser.id,
-                                displayName: `${currentUser.name || currentUser.email || 'Bạn'} (Chính bạn)`,
-                                email: currentUser.email,
-                              }]
-                            : []),
-                          ...sdrOptions
-                            .filter(m => selectionKeyOf(m) !== currentUser?.id)
-                            .map(m => ({ id: selectionKeyOf(m), displayName: m.display_name, email: m.email })),
+                          ...leadOwnerUsers.map(user => ({
+                            id: user.id,
+                            displayName: user.id === currentUser?.id ? `${user.name} (Chính bạn)` : user.name,
+                            email: user.email,
+                          })),
                         ]}
                       />
                     </Field>
@@ -889,12 +933,15 @@ export function LeadFormDrawer({
                       <input value={currentUser?.name || currentUser?.email || 'Bạn'} disabled readOnly />
                     </Field>
                   )}
-                  <Field label="Người phụ trách Sale">
+                  <Field label="Team Sale">
                     <MemberSearchSelect
-                      value={form.aeId}
-                      onChange={value => setValue('aeId', value)}
+                      value={form.teamId}
+                      onChange={() => {}}
                       showAvatar={false}
-                      members={saleUsers.map(u => ({ id: u.id, displayName: u.name }))}
+                      disabled
+                      loading={teamResolving}
+                      placeholder={teamResolving ? 'Đang tìm Team Sale...' : 'Chưa gán'}
+                      members={saleTeams.map(t => ({ id: t.id, displayName: t.name }))}
                     />
                   </Field>
                   <Field label="Trạng thái">

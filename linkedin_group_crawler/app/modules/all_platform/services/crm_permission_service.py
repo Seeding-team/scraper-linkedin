@@ -727,6 +727,11 @@ def get_crm_team_id_for_user(user_id: str | None) -> str | None:
             lambda: supabase.table("crm_team_members").select("crm_team_id").eq("user_id", user_id).limit(1).execute()
         )
         team_id = result.data[0].get("crm_team_id") if result.data else None
+        if not team_id:
+            leader_result = execute_supabase_query(
+                lambda: supabase.table("crm_teams").select("id").eq("leader_user_id", user_id).eq("status", "active").limit(1).execute()
+            )
+            team_id = leader_result.data[0].get("id") if leader_result.data else None
     except Exception:
         team_id = None
     _CRM_TEAM_OF_USER_CACHE[user_id] = (now + _CRM_TEAM_OF_USER_CACHE_TTL_SECONDS, team_id)

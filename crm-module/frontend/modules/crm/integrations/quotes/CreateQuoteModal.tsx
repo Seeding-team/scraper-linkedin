@@ -555,7 +555,7 @@ export function CreateQuoteModal({
       if (draftEligible) clearQuoteWizardDraft();
     } catch (err) {
       if (createdQuoteId) await seedingQuoteRepository.deleteQuote(createdQuoteId).catch(() => {});
-      if (createdDealId) await seedingCrmRepository.deleteDeal(createdDealId).catch(() => {});
+      if (createdDealId) await seedingCrmRepository.deleteDeal(createdDealId, true).catch(() => {});
       setSubmitError(err instanceof Error ? err.message : 'Không thể tạo báo giá.');
     } finally {
       setSubmittingAction(null);

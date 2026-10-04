@@ -450,7 +450,11 @@ def update_lead(lead_id: str, payload: dict[str, Any], user: dict[str, Any]) -> 
     # The qualification drawer also owns project_id (picking an EXISTING
     # Project via a picker), which only makes sense once a Deal/Customer
     # exists - keep that one Deal-only by stripping it before writing
-    # crm_leads, then sync below if a converted deal exists. team_id/
+    # crm_leads, then sync below if a converted deal exists. team_id is a Team
+    # CRM id (crm_teams) on crm_leads, while customer_leads.team_id still points
+    # at the legacy KPI teams table, so it must remain Lead-only here. Mapping
+    # it into the Deal update makes the whole sync fail on the FK and causes the
+    # UI to look correct until a hard refresh reloads the unsynced Deal.
     # project_name/deal_stage are real crm_leads fields (persist even before
     # conversion), so they must remain in `data`.
     _DEAL_ONLY_UPDATE_FIELDS = ("project_id",)
@@ -515,7 +519,6 @@ def update_lead(lead_id: str, payload: dict[str, Any], user: dict[str, Any]) -> 
             "next_step": "next_step",
             "follow_up_date": "follow_up_date",
             "qualification_ae_id": "sdr_id",
-            "team_id": "team_id",
             "project_name": "project_name",
             "deal_stage": "deal_stage",
         }

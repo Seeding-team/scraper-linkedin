@@ -16,6 +16,7 @@ from __future__ import annotations
 import time
 from typing import Any
 
+from app.core.config import settings
 from app.core.supabase_client import execute_supabase_query, get_supabase_client
 
 _SALE_TEAM_TYPE = "sale"
@@ -184,6 +185,25 @@ def can_approve_quote(user: dict[str, Any] | None) -> bool:
     return bool(user.get("can_approve_quotes"))
 
 
+def is_web_intake_user(user: dict[str, Any] | None) -> bool:
+    """True nếu user là user kỹ thuật của tích hợp Web Intake (Project 2). Chỉ dùng để cấp các ngoại lệ TỐI THIỂU bên dưới."""
+    expected = (settings.web_intake_user_id or "").strip()
+    return bool(expected and user and str(user.get("id") or "") == expected)
+
+
+def _is_web_intake_owner(user: dict[str, Any] | None, quote: dict[str, Any] | None) -> bool:
+    """User Web Intake + báo giá do CHÍNH nó tạo (qua form web). Không áp dụng cho báo giá của ai khác, không bao giờ
+    cấp quyền duyệt/phát hành/gửi/xoá (những quyền đó không nằm trong allowlist của khoá và vẫn cần JWT thật)."""
+    if not quote or not is_web_intake_user(user):
+        return False
+    created_by = str(quote.get("created_by") or quote.get("createdById") or "")
+    if not created_by or created_by != str(user.get("id") or ""):
+        return False
+    # Chỉ khi báo giá còn là bản nháp ở "Yêu cầu mới": nội bộ đã nhận xử lý (chuyển bước) thì khách không sửa nữa.
+    stage = str(quote.get("processingStage") or quote.get("processing_stage") or "request")
+    return stage == "request" and str(quote.get("status") or "draft") == "draft"
+
+
 def can_edit_technical_quote(user: dict[str, Any] | None, quote: dict[str, Any] | None) -> bool:
     """True neu user duoc sua phan KY THUAT (scope/cost/checklist) cua 1
     quote: chinh nguoi duoc gan `technical_owner_id`, hoac admin/leader/
@@ -192,6 +212,8 @@ def can_edit_technical_quote(user: dict[str, Any] | None, quote: dict[str, Any] 
     if not user:
         return False
     if has_full_crm_access(user):
+        return True
+    if _is_web_intake_owner(user, quote):
         return True
     uid = str(user.get("id") or "")
     if not uid or not quote:
@@ -279,6 +301,8 @@ def can_edit_quote_cost(user: dict[str, Any] | None, quote: dict[str, Any] | Non
         return True
     if _group_quote_permission_grants_all(user, "quote_cost_permission"):
         return True
+    if _is_web_intake_owner(user, quote):
+        return True
     uid = str(user.get("id") or "")
     if not uid or not quote:
         return False
@@ -315,6 +339,8 @@ def can_view_quote_pricing(user: dict[str, Any] | None, quote: dict[str, Any] | 
     if role in ("admin", "leader"):
         return True
     if _group_quote_permission_grants_all(user, "quote_sell_permission"):
+        return True
+    if _is_web_intake_owner(user, quote):
         return True
     uid = str(user.get("id") or "")
     if not uid or not quote:
@@ -361,6 +387,8 @@ def can_edit_quote_pricing(user: dict[str, Any] | None, quote: dict[str, Any] | 
         return True
     if _group_quote_permission_grants_all(user, "quote_sell_permission"):
         return True
+    if _is_web_intake_owner(user, quote):
+        return True
     uid = str(user.get("id") or "")
     if not uid or not quote:
         return False
@@ -378,6 +406,8 @@ def can_transition_quote_stage(user: dict[str, Any] | None, quote: dict[str, Any
     BAN GIAO) can quyen ky thuat (nguoi ky thuat la nguoi bam ban giao); chuyen
     SANG 'review' (pricing->review, HOAN TAT gia ban) can quyen gia ban."""
     if not user:
+        return False
+    if is_web_intake_user(user):  # khách web không tự chuyển bước; nội bộ phân công và xử lý trong CRM
         return False
     if has_full_crm_access(user):
         return True
@@ -697,6 +727,11 @@ def get_crm_team_id_for_user(user_id: str | None) -> str | None:
             lambda: supabase.table("crm_team_members").select("crm_team_id").eq("user_id", user_id).limit(1).execute()
         )
         team_id = result.data[0].get("crm_team_id") if result.data else None
+        if not team_id:
+            leader_result = execute_supabase_query(
+                lambda: supabase.table("crm_teams").select("id").eq("leader_user_id", user_id).eq("status", "active").limit(1).execute()
+            )
+            team_id = leader_result.data[0].get("id") if leader_result.data else None
     except Exception:
         team_id = None
     _CRM_TEAM_OF_USER_CACHE[user_id] = (now + _CRM_TEAM_OF_USER_CACHE_TTL_SECONDS, team_id)

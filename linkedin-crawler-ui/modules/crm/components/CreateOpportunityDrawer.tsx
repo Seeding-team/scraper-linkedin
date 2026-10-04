@@ -6,7 +6,7 @@ import { API_BASE_URL, API_KEY } from '@/lib/env';
 import { parseCurrencyInput } from '@/lib/currency';
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
 import { useMembers } from '@/hooks/useMembers';
-import { allPlatformCategoriesService, usersService, crmTeamsService, type QuoteBusinessRoleUser, type CrmTeam, type AppUserProfile } from '@/services/all-platform.service';
+import { allPlatformCategoriesService, usersService, crmTeamsService, projectsService, type QuoteBusinessRoleUser, type CrmTeam, type AppUserProfile, type Project } from '@/services/all-platform.service';
 import { DEAL_STAGE_META } from '../constants/crmConfig';
 import {
   CustomerProfileCombobox,
@@ -104,6 +104,8 @@ export function CreateOpportunityDrawer({
   const [interestLevel, setInterestLevel] = useState<InterestLevel | ''>('');
   const [timeline, setTimeline] = useState('');
   const [project, setProject] = useState('');
+  const [projectId, setProjectId] = useState('');
+  const [customerProjects, setCustomerProjects] = useState<Project[]>([]);
   const [note, setNote] = useState('');
   const [nurtureReason, setNurtureReason] = useState('');
   const [unqualifiedReason, setUnqualifiedReason] = useState('');
@@ -142,6 +144,7 @@ export function CreateOpportunityDrawer({
     setInterestLevel('');
     setTimeline('');
     setProject('');
+    setProjectId('');
     setNote('');
     setNurtureReason('');
     setUnqualifiedReason('');
@@ -168,6 +171,23 @@ export function CreateOpportunityDrawer({
         .catch(() => { /* khong co Team CRM cho nguoi nay - bo qua */ });
     }
   }, [open, customer?.id]);
+
+  useEffect(() => {
+    if (!open || !customerForm.customerId) {
+      setCustomerProjects([]);
+      return;
+    }
+    let alive = true;
+    projectsService.list(customerForm.customerId)
+      .then(res => {
+        if (!alive) return;
+        setCustomerProjects(res.success && res.data ? res.data : []);
+      })
+      .catch(() => {
+        if (alive) setCustomerProjects([]);
+      });
+    return () => { alive = false; };
+  }, [open, customerForm.customerId]);
 
   useEffect(() => {
     if (!open) return;
@@ -326,6 +346,10 @@ export function CreateOpportunityDrawer({
     () => [{ key: 'add-team', label: '+ Thêm Team mới', type: 'add', onSelect: () => setAddTeamOpen(true) }],
     [],
   );
+  const projectOptions = useMemo(
+    () => customerProjects.map(p => ({ id: p.id, name: p.name, code: (p as any).code })),
+    [customerProjects],
+  );
   /** Doi Team do NGUOI DUNG tu bam - reset Sale phu trach dang chon vi co the
    * khong con thuoc Team moi (khac voi auto-load luc mo drawer/doi khach hang). */
   function handleTeamIdChange(value: string) {
@@ -407,6 +431,8 @@ export function CreateOpportunityDrawer({
     if (note.trim()) noteLines.push(note.trim());
     const form: DealFormState = {
       ...customerForm,
+      projectId: projectId || customerForm.projectId,
+      dealName: project.trim() || customerForm.dealName,
       servicePackage: productValue,
       estimatedBudget,
       decisionMaker: contactName.trim(),
@@ -580,7 +606,9 @@ export function CreateOpportunityDrawer({
                 timeline={timeline}
                 onTimelineChange={setTimeline}
                 project={project}
-                onProjectChange={setProject}
+                projectOptions={projectOptions}
+                onPickProject={p => { setProject(p.name); setProjectId(p.id); }}
+                onProjectChange={value => { setProject(value); setProjectId(''); }}
                 note={note}
                 onNoteChange={setNote}
                 teamId={teamId}

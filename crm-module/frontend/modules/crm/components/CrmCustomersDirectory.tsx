@@ -6,8 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as
 import { API_BASE_URL, API_KEY } from '@/lib/env';
 import { useAppAuth } from '@/contexts/AppAuthContext';
 import { useMembers } from '@/hooks/useMembers';
-import { crmTeamsService, type CrmTeam } from '@/services/all-platform.service';
-import { customerLeadService } from '@/services/customer-lead.service';
+import { crmTeamsService, usersService, type CrmTeam } from '@/services/all-platform.service';
 import { formatVND } from '../constants/crmConfig';
 import { CustomerAddDrawer } from './CustomerAddDrawer';
 import { CreateOpportunityDrawer } from './CreateOpportunityDrawer';
@@ -402,20 +401,31 @@ export function CrmCustomersDirectory() {
   // (customerLeadService.getSdrs() - BE đã gộp admin/leader + sale/presale,
   // ở đây CHỈ giữ lại đúng sale/presale, bỏ admin/leader vì dropdown này là
   // "Người phụ trách Customer", không phải "Người lead/xử lý Deal").
-  const [salePresaleUsers, setSalePresaleUsers] = useState<Array<{ id: string; name: string; role: string }>>([]);
+  const [salePresaleUsers, setSalePresaleUsers] = useState<Array<{ id: string; name: string }>>([]);
   useEffect(() => {
     let alive = true;
-    customerLeadService.getSdrs()
-      .then(rows => { if (alive) setSalePresaleUsers(rows); })
+    Promise.all([
+      usersService.getUsersByQuoteBusinessRole('presale'),
+      usersService.getUsersByQuoteBusinessRole('sale'),
+    ])
+      .then(([presaleRes, saleRes]) => {
+        if (!alive) return;
+        const byId = new Map<string, string>();
+        [
+          ...(presaleRes.success ? presaleRes.data || [] : []),
+          ...(saleRes.success ? saleRes.data || [] : []),
+        ].forEach(item => {
+          if (item.id && !byId.has(item.id)) byId.set(item.id, item.name || 'Chưa đặt tên');
+        });
+        setSalePresaleUsers([...byId.entries()].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name)));
+      })
       .catch(() => { if (alive) setSalePresaleUsers([]); });
     return () => { alive = false; };
   }, []);
 
   const ownerFilterOptions = useMemo(() => {
     const seen = new Map<string, string>();
-    salePresaleUsers
-      .filter(u => u.role !== 'admin' && u.role !== 'leader')
-      .forEach(u => seen.set(u.id, u.name));
+    salePresaleUsers.forEach(u => seen.set(u.id, u.name));
     // Dam bao option "chinh minh" luon co trong dropdown ke ca khi user hien
     // tai khong phai sale/presale (vd tai khoan admin) - neu khong, dropdown
     // se hien placeholder rong dù ownerId da duoc mac dinh = user.id (vi

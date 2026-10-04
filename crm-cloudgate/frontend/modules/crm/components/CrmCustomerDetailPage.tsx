@@ -28,7 +28,7 @@ import { useMembers } from '@/hooks/useMembers';
 import { QuoteWorkspaceModal } from './QuoteWorkspaceModal';
 import { CreateQuoteModal } from '../integrations/quotes/CreateQuoteModal';
 import { seedingQuoteRepository } from '@/modules/quotes';
-import type { Quote } from '@/modules/quotes';
+import type { IssuerCompany, Quote, QuoteForm } from '@/modules/quotes';
 import { seedingCrmRepository } from '../repositories/SeedingCrmRepository';
 import type { Deal } from '../types';
 import { DealDetailDrawer } from '@/components/all-platform/customers/DealDetailDrawer';
@@ -402,6 +402,8 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
   const [data, setData] = useState<RelatedPayload | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [quoteForms, setQuoteForms] = useState<QuoteForm[]>([]);
+  const [issuerCompanies, setIssuerCompanies] = useState<IssuerCompany[]>([]);
   // Cho phep deep-link tu trang khac (vd cot "Dự án" o Trung tâm báo giá):
   // ?tab=quotes&projectId=xxx -> mo dung tab + loc dung Du an ngay khi vao
   // trang, khong bat nguoi dung tu bam lai. Chi doc 1 LAN luc mount (gia tri
@@ -654,8 +656,9 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
   // 1, muc 9) - deal that duoc nap lazy (1 lan, dung luc bam Xem) de modal co
   // du du lieu Khach hang/Co hoi hien dung, khong dung ban Deal rut gon cua
   // trang nay.
-  const [quoteWorkspace, setQuoteWorkspace] = useState<{ quoteId: string | null; deal: Deal | null; initialProjectId?: string; lockProject?: boolean } | null>(null);
+  const [quoteWorkspace, setQuoteWorkspace] = useState<{ quoteId: string | null; deal: Deal | null; initialProjectId?: string; initialDealId?: string; lockProject?: boolean } | null>(null);
   const [quoteWorkspaceLoading, setQuoteWorkspaceLoading] = useState(false);
+  const [customerQuoteDeals, setCustomerQuoteDeals] = useState<Deal[]>([]);
   // "Tạo báo giá nhanh" tren Project card (Block 1) - mo thang CreateQuoteModal
   // voi 1 Deal that lien quan toi project, khong navigate sang trang khac.
   const [quickQuoteDeal, setQuickQuoteDeal] = useState<Deal | null>(null);
@@ -959,6 +962,41 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
 
   const customer = data?.customer;
   const customerRow = useMemo(() => toCustomerRow(customer), [customer]);
+  const customerQuoteDealsById = useMemo(() => new Map(customerQuoteDeals.map(deal => [deal.id, deal])), [customerQuoteDeals]);
+  const defaultQuoteFormId = useMemo(() => {
+    const nonVillaForms = quoteForms.filter(f => f.schemaJson?.layoutType !== 'villa_solution_package');
+    const primaryIssuer = issuerCompanies[0];
+    const issuerDefault = primaryIssuer?.defaultQuoteFormId
+      ? nonVillaForms.find(f => f.id === primaryIssuer.defaultQuoteFormId)?.id
+      : undefined;
+    if (issuerDefault) return issuerDefault;
+    const globalDefault = nonVillaForms.find(f => f.isDefaultTemplate)?.id;
+    return globalDefault || nonVillaForms[0]?.id;
+  }, [quoteForms, issuerCompanies]);
+
+  useEffect(() => {
+    let alive = true;
+    void seedingQuoteRepository.getForms()
+      .then(rows => { if (alive) setQuoteForms(rows); })
+      .catch(() => { if (alive) setQuoteForms([]); });
+    void seedingQuoteRepository.getIssuerCompanies()
+      .then(rows => { if (alive) setIssuerCompanies(rows); })
+      .catch(() => { if (alive) setIssuerCompanies([]); });
+    return () => { alive = false; };
+  }, []);
+
+  useEffect(() => {
+    let alive = true;
+    void seedingCrmRepository.getDeals()
+      .then(rows => {
+        if (!alive) return;
+        setCustomerQuoteDeals(rows.filter(deal => deal.customerId === customerId));
+      })
+      .catch(() => {
+        if (alive) setCustomerQuoteDeals([]);
+      });
+    return () => { alive = false; };
+  }, [customerId, reloadTick]);
 
   // "Active Deal" cho tab Tổng quan - KHÔNG có field DB nào đánh dấu 1 deal
   // là "chính" (1 Customer có thể có nhiều Deal, xem audit Phase 3) nên đây
@@ -1172,12 +1210,12 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
               activityItems={activityItems}
               onCreateDeal={() => setDealModal({ open: true, project: null, contactId: null })}
               onCreateQuote={(dealId: string) => {
-                const deal = data?.deals?.find(item => item.id === dealId) || null;
-                setQuoteWorkspace({ quoteId: null, deal: deal as unknown as Deal | null });
+                const deal = customerQuoteDealsById.get(dealId) || null;
+                setQuoteWorkspace({ quoteId: null, deal, initialDealId: dealId });
               }}
               onOpenQuote={(quoteId: string, dealId: string) => {
-                const deal = data?.deals?.find(item => item.id === dealId) || null;
-                setQuoteWorkspace({ quoteId, deal: deal as unknown as Deal | null });
+                const deal = customerQuoteDealsById.get(dealId) || null;
+                setQuoteWorkspace({ quoteId, deal });
               }}
               onEditDeal={deal => setEditingDealRow(deal)}
               onChanged={() => setReloadTick(t => t + 1)}
@@ -1358,17 +1396,20 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
       {quoteWorkspace ? (
         <QuoteWorkspaceModal
           quoteId={quoteWorkspace.quoteId}
-          deals={quoteWorkspace.deal ? [quoteWorkspace.deal] : []}
-          dealsById={new Map(quoteWorkspace.deal ? [[quoteWorkspace.deal.id, quoteWorkspace.deal]] : [])}
+          deals={customerQuoteDeals.length ? customerQuoteDeals : quoteWorkspace.deal ? [quoteWorkspace.deal] : []}
+          dealsById={customerQuoteDeals.length ? customerQuoteDealsById : new Map(quoteWorkspace.deal ? [[quoteWorkspace.deal.id, quoteWorkspace.deal]] : [])}
           agents={[]}
           user={user}
+          defaultFormId={defaultQuoteFormId}
+          quoteForms={quoteForms}
           initialCustomerId={customerId}
           initialProjectId={quoteWorkspace.initialProjectId}
+          initialDealId={quoteWorkspace.initialDealId}
           lockCustomer={quoteWorkspace.quoteId === null}
           lockProject={quoteWorkspace.lockProject}
           onClose={() => setQuoteWorkspace(null)}
           onChanged={() => setReloadTick(t => t + 1)}
-          onEditDraft={editQuote => setQuoteWorkspace({ quoteId: editQuote.id, deal: quoteWorkspace.deal })}
+          onEditDraft={editQuote => setQuoteWorkspace({ quoteId: editQuote.id, deal: quoteWorkspace.deal, initialDealId: quoteWorkspace.initialDealId })}
         />
       ) : null}
       {quickQuoteDeal ? (

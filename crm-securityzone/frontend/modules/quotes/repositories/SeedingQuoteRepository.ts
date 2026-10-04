@@ -165,16 +165,17 @@ function toIssuerCompanyPayload(input: CreateIssuerCompanyInput | UpdateIssuerCo
 }
 
 function toCreateQuotePayload(input: CreateQuoteInput) {
-  return {
+  const payload: Record<string, unknown> = {
     deal_id: input.dealId,
     quote_form_id: input.quoteFormId,
-    issuer_company_id: input.issuerCompanyId ?? null,
     data: input.data,
     items: (input.items || []).map(toQuoteItemPayload),
-    project_id: input.projectId ?? null,
-    sla_due_at: input.slaDueAt ?? null,
     quote_type_codes: input.quoteTypeCodes ?? [],
   };
+  if (input.issuerCompanyId) payload.issuer_company_id = input.issuerCompanyId;
+  if (input.projectId) payload.project_id = input.projectId;
+  if (input.slaDueAt) payload.sla_due_at = input.slaDueAt;
+  return payload;
 }
 
 function toUpdateQuotePayload(input: UpdateQuoteInput) {

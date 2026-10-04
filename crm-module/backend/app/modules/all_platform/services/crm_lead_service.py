@@ -75,6 +75,11 @@ _STATUS_DISPLAY_TO_INTERNAL_MAP = {
     "unqualified": "disqualified",
 }
 
+# Main la CRM markee CO DINH (settings.crm_instance = "markee", khong co
+# workspace_domains/switcher nhu 3 clone). Vi vay danh sach dich hop le khi
+# sao chep Lead tu Main chi co the la 2 clone doc lap con lai.
+_MAIN_COPY_TARGET_INSTANCES = ("cloudgate", "SECURITYZONE")
+
 
 def _normalize_lead_status(row: dict[str, Any]) -> dict[str, Any]:
     raw = str(row.get("status") or "mql")
@@ -442,11 +447,16 @@ def update_lead(lead_id: str, payload: dict[str, Any], user: dict[str, Any]) -> 
     if not can_write_lead(user, current):
         raise PermissionError("Khong co quyen sua lead nay.")
     data = {key: _clean_text(value) if isinstance(value, str) else value for key, value in payload.items()}
-    # The qualification drawer also owns a few handoff fields that live on the
-    # converted Deal, not on crm_leads. Keep the Lead update a plain Lead update
-    # by stripping them before writing crm_leads, then sync below if a converted
-    # deal exists. team_id is a real crm_leads field for SQL leads that have
-    # not been converted yet, so it must remain in `data`.
+    # The qualification drawer also owns project_id (picking an EXISTING
+    # Project via a picker), which only makes sense once a Deal/Customer
+    # exists - keep that one Deal-only by stripping it before writing
+    # crm_leads, then sync below if a converted deal exists. team_id is a Team
+    # CRM id (crm_teams) on crm_leads, while customer_leads.team_id still points
+    # at the legacy KPI teams table, so it must remain Lead-only here. Mapping
+    # it into the Deal update makes the whole sync fail on the FK and causes the
+    # UI to look correct until a hard refresh reloads the unsynced Deal.
+    # project_name/deal_stage are real crm_leads fields (persist even before
+    # conversion), so they must remain in `data`.
     _DEAL_ONLY_UPDATE_FIELDS = ("project_id",)
     deal_only_updates = {
         key: data.pop(key)
@@ -509,7 +519,6 @@ def update_lead(lead_id: str, payload: dict[str, Any], user: dict[str, Any]) -> 
             "next_step": "next_step",
             "follow_up_date": "follow_up_date",
             "qualification_ae_id": "sdr_id",
-            "team_id": "team_id",
             "project_name": "project_name",
             "deal_stage": "deal_stage",
         }
@@ -607,17 +616,16 @@ def delete_leads_bulk(lead_ids: list[str], user: dict[str, Any], confirm_cascade
 
 def copy_lead_to_instance(lead_id: str, target_instance: str, user: dict[str, Any]) -> dict[str, Any]:
     """Admin-only: TAO 1 BAN SAO cua 1 Lead (dau moi tho, CHUA convert) sang 1
-    workspace khac - Lead GOC van giu nguyen o workspace hien tai (khong xoa/
-    doi instance ban goc, khac voi "chuyen han"). Dung khi 1 dau moi vua la
-    tiem nang cua site nay vua la tiem nang cua site khac, thay vi phai nhap
-    tay lai tu dau. KHONG cascade gi ca - Lead chua convert thi chua sinh ra
-    Khach hang/Lien he/Co hoi nao ca (xem migration 078). Chan neu da convert:
-    luc do ban sao se khong co y nghia vi da co du lieu downstream rieng cua
-    workspace hien tai."""
-    if target_instance not in settings.workspace_domains:
+    clone CRM doc lap khac (cloudgate/SECURITYZONE) - Lead GOC van giu nguyen
+    o Main (khong xoa/doi instance ban goc, khac voi "chuyen han"). Main la
+    CRM markee CO DINH (khong co workspace_domains/switcher nhu 3 clone), nen
+    danh sach dich hop le CHI CO 2 gia tri co dinh (_MAIN_COPY_TARGET_INSTANCES),
+    khong tra cuu tu config nao ca. KHONG cascade gi ca - Lead chua convert
+    thi chua sinh ra Khach hang/Lien he/Co hoi nao ca (xem migration 078).
+    Chan neu da convert: luc do ban sao se khong co y nghia vi da co du lieu
+    downstream rieng cua Main."""
+    if target_instance not in _MAIN_COPY_TARGET_INSTANCES:
         raise ValueError(f"Workspace \"{target_instance}\" khong hop le.")
-    if target_instance == settings.crm_instance:
-        raise ValueError("Không thể sao chép sang chính workspace hiện tại.")
     current = get_lead(lead_id, user)
     if current.get("status") == "sql" or current.get("converted_customer_id"):
         raise ValueError(
@@ -643,7 +651,7 @@ def copy_lead_to_instance(lead_id: str, target_instance: str, user: dict[str, An
     # GAP: Markee -> CloudGate -> copy nguoc lai Markee tao ban trung o dung
     # noi da tao ra no). origin_instance khong bao gio doi (xem create_lead()),
     # fallback ve instance hien tai cho du lieu cu chua backfill (khong xay
-    # ra tren du lieu that vi migration 006 da backfill toan bo).
+    # ra tren du lieu that vi migration 128 da backfill toan bo).
     origin_instance = raw.get("origin_instance") or raw.get("instance")
     if target_instance == origin_instance:
         raise ValueError(
