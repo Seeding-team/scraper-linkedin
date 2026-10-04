@@ -36,6 +36,7 @@ import { API_BASE_URL, API_KEY } from "@/lib/env";
 const BASE = `${API_BASE_URL}/api/all-platform`;
 const authHeaders = () => ({});
 const AUTH_SUBMIT_TIMEOUT_MS = 12000;
+const GOOGLE_AUTH_SUBMIT_TIMEOUT_MS = 45000;
 
 /**
  * Lightweight in-memory TTL cache for read-mostly taxonomies & teams.
@@ -1672,7 +1673,7 @@ export const authService = {
         method: "POST",
         body: JSON.stringify({ credential }),
       },
-      AUTH_SUBMIT_TIMEOUT_MS,
+      GOOGLE_AUTH_SUBMIT_TIMEOUT_MS,
       "Đăng nhập quá lâu, vui lòng thử lại.",
     );
   },

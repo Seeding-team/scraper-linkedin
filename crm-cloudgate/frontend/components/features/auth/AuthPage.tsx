@@ -43,6 +43,7 @@ export function AuthPage() {
 
   const [showPasswordForm, setShowPasswordForm] = useState(false);
   const [googleError, setGoogleError] = useState<string | null>(null);
+  const [googleSubmitting, setGoogleSubmitting] = useState(false);
 
   const { user, isAuthenticated, isLoading: authLoading, login, loginWithGoogle, register, setLwuuSession } = useAppAuth();
   const router = useRouter();
@@ -62,19 +63,23 @@ export function AuthPage() {
 
   const handleGoogleSuccess = useCallback(
     async (credentialResponse: CredentialResponse) => {
+      if (googleSubmitting) return;
       setGoogleError(null);
       if (!credentialResponse.credential) {
         setGoogleError("Không nhận được thông tin đăng nhập từ Google.");
         return;
       }
+      setGoogleSubmitting(true);
       try {
         const user = await loginWithGoogle(credentialResponse.credential);
         router.push(getDashboardHrefForRole(user.role));
       } catch (err) {
         setGoogleError(err instanceof Error ? err.message : "Đăng nhập Google thất bại.");
+      } finally {
+        setGoogleSubmitting(false);
       }
     },
-    [loginWithGoogle, router],
+    [googleSubmitting, loginWithGoogle, router],
   );
 
   const switchMode = useCallback((m: AuthMode) => {
@@ -284,14 +289,17 @@ export function AuthPage() {
                 Đăng nhập bằng tài khoản Google được cấp cho công việc tại CloudGate.
               </p>
               <div className="flex justify-center">
-                <GoogleLogin
-                  onSuccess={handleGoogleSuccess}
-                  onError={() => setGoogleError("Đăng nhập Google thất bại. Vui lòng thử lại.")}
-                  text="signin_with"
-                  shape="pill"
-                  width={280}
-                />
+                <div className={googleSubmitting ? "pointer-events-none opacity-70" : undefined}>
+                  <GoogleLogin
+                    onSuccess={handleGoogleSuccess}
+                    onError={() => setGoogleError("Đăng nhập Google thất bại. Vui lòng thử lại.")}
+                    text="signin_with"
+                    shape="pill"
+                    width={280}
+                  />
+                </div>
               </div>
+              {googleSubmitting ? <p className="text-xs text-on-surface-variant">Đang xác thực Google...</p> : null}
               {googleError && (
                 <div className="w-full flex items-center gap-2 bg-red-50 border border-red-200 rounded-xl px-4 py-2.5 text-sm text-red-600 font-medium">
                   <Icon name="error" className="text-red-500 text-base" />
