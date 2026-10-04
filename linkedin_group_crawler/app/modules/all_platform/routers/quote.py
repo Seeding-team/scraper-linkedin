@@ -675,6 +675,21 @@ def _items_touch_fields(existing_items: list[dict], new_items: list[dict], field
     return False
 
 
+def _items_touch_pricing_fields(existing_items: list[dict], new_items: list[dict]) -> bool:
+    """Như _items_touch_fields nhưng cho nhóm GIÁ BÁN: thêm/bớt hạng mục KHÔNG
+    tính là "sửa giá". Hạng mục chọn từ danh mục luôn mang sẵn markup/giá mặc
+    định (hiển thị read-only ở Bước 1) - nếu coi việc thêm dòng là sửa giá thì
+    Presale thêm sản phẩm ở Bước 1 sẽ bị chặn "Markup/Giá khách chỉ được nhập ở
+    Bước 3" và không chuyển được sang Bước 2. Chỉ so sánh khi số dòng không đổi."""
+    if len(new_items) != len(existing_items):
+        return False
+    # markup_percent là giá trị SUY RA (từ giá vốn + giá khách): Presale sửa
+    # giá vốn ở Bước 1 làm markup tự tính lại dù không đụng tới giá bán. Sửa
+    # markup thật luôn đổi unit_price theo, nên chỉ cần soi các field còn lại.
+    pairs = [p for p in _PRICING_ITEM_FIELD_PAIRS if p[0] != "markupPercent"]
+    return _items_touch_fields(existing_items, new_items, pairs)
+
+
 def _check_item_field_level_permission(user: dict, quote: dict, new_items: Optional[list]) -> Optional[str]:
     """Field-level guard, latest business rule.
 
@@ -702,13 +717,13 @@ def _check_item_field_level_permission(user: dict, quote: dict, new_items: Optio
         return "Khong co quyen sua phan ky thuat cua bao gia nay"
     if _items_touch_fields(existing_items, new_items, _COST_ONLY_ITEM_FIELD_PAIRS) and not can_edit_quote_cost(user, quote):
         return "Khong co quyen sua gia von cua bao gia nay"
-    if _items_touch_fields(existing_items, new_items, _PRICING_ITEM_FIELD_PAIRS) and not can_edit_quote_pricing(user, quote):
+    if _items_touch_pricing_fields(existing_items, new_items) and not can_edit_quote_pricing(user, quote):
         return "Khong co quyen sua phan gia ban cua bao gia nay"
 
     is_versioned_quote = (quote.get("versionNumber") or 1) > 1
     stage = quote.get("processingStage") or "request"
     # Khách web (Web Intake) tự nhập giá ngay ở "Yêu cầu mới" (public flow, nội bộ duyệt/chỉnh giá sau trong CRM) nên không áp khoá bước.
-    if not is_web_intake_user(user) and not is_versioned_quote and _items_touch_fields(existing_items, new_items, _PRICING_ITEM_FIELD_PAIRS) and stage != "pricing":
+    if not is_web_intake_user(user) and not is_versioned_quote and _items_touch_pricing_fields(existing_items, new_items) and stage != "pricing":
         return "Markup/Gia khach chi duoc nhap o Buoc 3"
     return None
 

@@ -72,7 +72,7 @@ function pathMatchesPrefix(pathname: string, prefix: string): boolean {
 }
 
 export function isLeafActive(pathname: string, item: NavLeafItem) {
-  if (item.exactMatch) return pathname === item.href;
+  if (item.exactMatch) return pathname === item.href.split("?")[0];
   if (pathname === item.href) return true;
   if (item.matchStartsWith?.some((prefix) => pathMatchesPrefix(pathname, prefix))) return true;
   return pathMatchesPrefix(pathname, item.href) && item.href !== "/all-platform/post-feed";
@@ -321,14 +321,6 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, workspaceTab: 
       icon: "domain",
       label: "Khách hàng",
       matchStartsWith: ["/all-platform/crm/customers"],
-    },
-    {
-      type: "item",
-      id: "crm",
-      href: "/all-platform/crm",
-      icon: "track_changes",
-      label: "Cơ hội",
-      exactMatch: true,
     },
     {
       type: "item",

@@ -364,18 +364,6 @@ export function CustomerQuotesTab({
             <Plus className="size-3.5" />
             <span>Tạo báo giá</span>
           </Button>
-
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="h-8 text-xs font-medium bg-white text-[#c2185b] border-slate-200 hover:bg-rose-50 gap-1 px-3 rounded-lg"
-            disabled={quickQuoteLoading}
-            onClick={() => void openQuickQuoteForCustomer()}
-          >
-            <span>Báo giá nhanh</span>
-            <Zap className="size-3 text-[#c2185b] fill-[#c2185b]" />
-          </Button>
         </div>
       </div>
 

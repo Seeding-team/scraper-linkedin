@@ -456,8 +456,6 @@ export function CrmCustomerModal({
         last_attachment_name: formData.last_attachment_name?.trim() || null,
         last_attachment_url: formData.last_attachment_url?.trim() || null,
         // Vấn đề 2 — bỏ các dòng lỡ bấm "+ Thêm link" nhưng chưa điền URL.
-        purchase_contract_links: (formData.purchase_contract_links ?? []).filter((l) => l.url?.trim()),
-        sale_contract_links: (formData.sale_contract_links ?? []).filter((l) => l.url?.trim()),
         note: formData.note?.trim() || null,
         deal_stage: formData.deal_stage ?? "new_lead",
         // Nguoi lien he chinh (migration 134/135) - chi gan duoc Contact
@@ -954,71 +952,8 @@ export function CrmCustomerModal({
                   />
                 </div>
 
-                {/* ── Hợp đồng & báo giá (Vấn đề 2): tách Phase 1 mua / Phase 2 bán,
-                       mỗi bên nhiều link + upload file trực tiếp tại đây ── */}
-                <div className="col-span-2 rounded-lg border border-slate-200 bg-white p-3">
-                  <div className="flex items-center justify-between mb-2">
-                    <label className="text-xs font-semibold text-slate-700">
-                      Hợp đồng báo giá mua <span className="text-slate-400 font-normal">(Phase 1)</span>
-                    </label>
-                    <button
-                      type="button"
-                      onClick={() => addLinkRow("purchase_contract_links")}
-                      className="text-xs font-semibold text-indigo-600 hover:text-indigo-800"
-                    >
-                      + Thêm link
-                    </button>
-                  </div>
-                  {(formData.purchase_contract_links ?? []).length === 0 ? (
-                    <p className="text-[11px] text-slate-400">Chưa có hợp đồng/báo giá mua nào.</p>
-                  ) : (
-                    <div className="space-y-1.5">
-                      {(formData.purchase_contract_links ?? []).map((link, idx) => (
-                        <ContractLinkRow
-                          key={idx}
-                          link={link}
-                          uploading={uploadingLinkKey === `purchase_contract_links-${idx}`}
-                          onChangeName={(v) => updateLinkRow("purchase_contract_links", idx, { name: v })}
-                          onChangeUrl={(v) => updateLinkRow("purchase_contract_links", idx, { url: v })}
-                          onUploadFile={(f) => handleRowUpload("purchase_contract_links", idx, f)}
-                          onRemove={() => removeLinkRow("purchase_contract_links", idx)}
-                        />
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                <div className="col-span-2 rounded-lg border border-slate-200 bg-white p-3">
-                  <div className="flex items-center justify-between mb-2">
-                    <label className="text-xs font-semibold text-slate-700">
-                      Hợp đồng báo giá bán <span className="text-slate-400 font-normal">(Phase 2)</span>
-                    </label>
-                    <button
-                      type="button"
-                      onClick={() => addLinkRow("sale_contract_links")}
-                      className="text-xs font-semibold text-indigo-600 hover:text-indigo-800"
-                    >
-                      + Thêm link
-                    </button>
-                  </div>
-                  {(formData.sale_contract_links ?? []).length === 0 ? (
-                    <p className="text-[11px] text-slate-400">Chưa có hợp đồng/báo giá bán nào.</p>
-                  ) : (
-                    <div className="space-y-1.5">
-                      {(formData.sale_contract_links ?? []).map((link, idx) => (
-                        <ContractLinkRow
-                          key={idx}
-                          link={link}
-                          uploading={uploadingLinkKey === `sale_contract_links-${idx}`}
-                          onChangeName={(v) => updateLinkRow("sale_contract_links", idx, { name: v })}
-                          onChangeUrl={(v) => updateLinkRow("sale_contract_links", idx, { url: v })}
-                          onUploadFile={(f) => handleRowUpload("sale_contract_links", idx, f)}
-                          onRemove={() => removeLinkRow("sale_contract_links", idx)}
-                        />
-                      ))}
-                    </div>
-                  )}
-                </div>
+                {/* Hợp đồng Mua vào (Phase 1) / Bán ra (Phase 2) đã chuyển sang
+                       tab Hợp đồng của trang chi tiết khách hàng (nút "Thêm hợp đồng"). */}
 
                 <div>
                   <label className="block text-xs font-semibold text-slate-600 mb-1">Trạng thái hợp đồng</label>

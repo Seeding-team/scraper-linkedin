@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import Link from 'next/link';
-import { Target, X, Search, Filter, Plus, ChevronRight, Briefcase, UserCheck, Calendar, Clock, AlertCircle, Phone, Mail, FileText, Activity, MoreHorizontal, LayoutGrid, CheckCircle2, Sparkles, MessageCircle, Trash2 } from 'lucide-react';
+import { Target, X, Search, Filter, Plus, ChevronRight, Briefcase, UserCheck, Calendar, Clock, AlertCircle, Phone, Mail, FileText, Activity, MoreHorizontal, LayoutGrid, CheckCircle2, Sparkles, MessageCircle, Trash2, Pencil } from 'lucide-react';
 import { customerLeadService, type ActivityLogEntry, type Customer as LiveDealRow, type StageTransitionPayload } from '@/services/customer-lead.service';
 import { formatVND, getStageMeta, PIPELINE_COLUMNS, DEAL_STAGE_META } from '../constants/crmConfig';
 import { relativeTime } from '../utils/quoteDisplay';
@@ -1128,6 +1128,11 @@ export function CustomerDealSplitTab({
                       </span>
                       <span className="text-rose-500 text-[9px] font-bold uppercase tracking-wider">AI Score</span>
                     </div>
+                    {onEditDeal ? (
+                      <Button size="sm" variant="outline" className="h-8 text-xs font-medium gap-1" onClick={() => onEditDeal(currentDisplayDeal)}>
+                        <Pencil className="size-3.5" /> Sửa cơ hội
+                      </Button>
+                    ) : null}
                     <Button size="sm" className="bg-[#c2185b] hover:bg-[#a91549] text-white shadow-2xs h-8 text-xs font-medium" onClick={() => onCreateQuote?.(selectedDealId!)}>
                       + Tạo báo giá
                     </Button>
