@@ -3,10 +3,11 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "clean:next": "node -e \"require('node:fs').rmSync('.next',{recursive:true,force:true})\"",
     "clean:next-dev": "node -e \"require('node:fs').rmSync('.next/dev',{recursive:true,force:true})\"",
     "predev": "npm run clean:next-dev",
     "dev": "next dev",
-    "prebuild": "npm run clean:next-dev",
+    "prebuild": "npm run clean:next",
     "build": "next build",
     "postbuild": "node scripts/copy-standalone-assets.mjs",
     "build:prod": "npm run build",
