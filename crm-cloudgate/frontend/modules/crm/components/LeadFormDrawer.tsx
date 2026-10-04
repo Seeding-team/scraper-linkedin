@@ -11,7 +11,7 @@ import { mapLead, LEAD_STATUS_LABEL } from './LeadsDirectory';
 import { getSourceLabel } from './DealFormFields';
 import { LEAD_SOURCE_EXCLUDED_VALUES } from '../constants/crmConfig';
 import { ChevronDown, ChevronUp, Loader2, X } from './icons';
-import { crmTeamsService, usersService } from '@/services/all-platform.service';
+import { crmTeamsService, usersService, type CrmTeam } from '@/services/all-platform.service';
 import type { AppUser } from '@/types/unified.types';
 import type { CrmLeadRow } from '../types';
 
@@ -337,14 +337,20 @@ export function LeadFormDrawer({
   }, [open, canPickOwner, leadOwnerUsers, form.sdrId]);
 
   // Team Sale lấy từ Team CRM thật (crm_teams), không chọn một user Sale cá nhân.
-  const [saleTeams, setSaleTeams] = useState<Array<{ id: string; name: string }>>([]);
+  const [saleTeams, setSaleTeams] = useState<CrmTeam[]>([]);
   const [teamResolving, setTeamResolving] = useState(false);
+  const findTeamIdInLoadedTeams = (ownerId: string) => (
+    saleTeams.find(team => (
+      team.status === 'active' &&
+      (team.leader_user_id === ownerId || (team.member_ids || []).includes(ownerId))
+    ))?.id || ''
+  );
   useEffect(() => {
     let alive = true;
     crmTeamsService
       .list()
       .then(res => {
-        if (alive) setSaleTeams(res.success ? (res.data || []).map(t => ({ id: t.id, name: t.name || t.code || 'Team Sale' })) : []);
+        if (alive) setSaleTeams(res.success ? (res.data || []).filter(t => t.status === 'active') : []);
       })
       .catch(() => {
         if (alive) setSaleTeams([]);
@@ -359,17 +365,21 @@ export function LeadFormDrawer({
       setForm(current => (current.teamId ? { ...current, teamId: '' } : current));
       return;
     }
+    const localTeamId = findTeamIdInLoadedTeams(ownerId);
+    if (localTeamId) {
+      setForm(current => (current.teamId === localTeamId ? current : { ...current, teamId: localTeamId }));
+    }
     let alive = true;
     setTeamResolving(true);
     crmTeamsService
       .getTeamIdForUser(ownerId)
       .then(res => {
         if (!alive) return;
-        const nextTeamId = res.success ? res.data?.crm_team_id || '' : '';
+        const nextTeamId = (res.success ? res.data?.crm_team_id || '' : '') || localTeamId;
         setForm(current => (current.teamId === nextTeamId ? current : { ...current, teamId: nextTeamId }));
       })
       .catch(() => {
-        if (alive) setForm(current => (current.teamId ? { ...current, teamId: '' } : current));
+        if (alive && !localTeamId) setForm(current => (current.teamId ? { ...current, teamId: '' } : current));
       })
       .finally(() => {
         if (alive) setTeamResolving(false);
@@ -377,7 +387,7 @@ export function LeadFormDrawer({
     return () => {
       alive = false;
     };
-  }, [form.sdrId, canPickOwner, currentUser?.id]);
+  }, [form.sdrId, canPickOwner, currentUser?.id, saleTeams]);
 
   // Auto-check trung khi SDT/Email hop le - debounce 400ms, huy neu component
   // unmount hoac gia tri lai doi truoc khi ket qua ve (dung effect-cleanup
@@ -941,7 +951,7 @@ export function LeadFormDrawer({
                       disabled
                       loading={teamResolving}
                       placeholder={teamResolving ? 'Đang tìm Team Sale...' : 'Chưa gán'}
-                      members={saleTeams.map(t => ({ id: t.id, displayName: t.name }))}
+                      members={saleTeams.map(t => ({ id: t.id, displayName: t.name || t.code || 'Team Sale' }))}
                     />
                   </Field>
                   <Field label="Trạng thái">

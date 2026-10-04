@@ -133,7 +133,7 @@ function mapCustomer(row: ApiCustomerRow): CrmCustomerRow {
 export function CrmCustomersDirectory() {
   const router = useRouter();
   const { user, isLoading: authLoading } = useAppAuth();
-  const { members, loading: membersLoading } = useMembers();
+  const { members } = useMembers();
   const [items, setItems] = useState<CrmCustomerRow[]>([]);
   const [total, setTotal] = useState(0);
   const [kpi, setKpi] = useState<CrmCustomerKpi>({ total: 0, new_lead: 0, following: 0, current_customer: 0, not_fit: 0 });
@@ -235,11 +235,11 @@ export function CrmCustomersDirectory() {
     ownerId: string;
     team: string;
   };
-  const FILTERS_STORAGE_KEY = 'crm-customers-filters';
+  const FILTERS_STORAGE_KEY = 'crm-customers-filters-v2';
 
   useEffect(() => {
     if (defaultFilterAppliedRef.current) return;
-    if (authLoading || membersLoading) return;
+    if (authLoading) return;
     if (!user?.id) return;
     defaultFilterAppliedRef.current = true;
 
@@ -261,7 +261,7 @@ export function CrmCustomersDirectory() {
     }
 
     applyDefaultOwnerFilter();
-  }, [authLoading, membersLoading, user, members, applyDefaultOwnerFilter]);
+  }, [authLoading, user, applyDefaultOwnerFilter]);
 
   useEffect(() => {
     if (!user?.id) return;
