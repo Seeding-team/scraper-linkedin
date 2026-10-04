@@ -388,6 +388,16 @@ export function LeadFormDrawer({
       alive = false;
     };
   }, [form.sdrId, canPickOwner, currentUser?.id, saleTeams]);
+  const selectedOwnerId = form.sdrId || (!canPickOwner ? currentUser?.id || '' : '');
+  const locallyResolvedTeamId = selectedOwnerId ? findTeamIdInLoadedTeams(selectedOwnerId) : '';
+  const effectiveTeamId = form.teamId || locallyResolvedTeamId;
+  const teamOptionsForSelect = useMemo(() => {
+    const options = saleTeams.map(t => ({ id: t.id, displayName: t.name || t.code || 'Team Sale' }));
+    if (effectiveTeamId && !options.some(option => option.id === effectiveTeamId)) {
+      options.push({ id: effectiveTeamId, displayName: 'Team Sale đã gán' });
+    }
+    return options;
+  }, [saleTeams, effectiveTeamId]);
 
   // Auto-check trung khi SDT/Email hop le - debounce 400ms, huy neu component
   // unmount hoac gia tri lai doi truoc khi ket qua ve (dung effect-cleanup
@@ -551,7 +561,7 @@ export function LeadFormDrawer({
       source: form.source || null,
       status: 'new_lead',
       sdr_id: canPickOwner ? (form.sdrId || null) : (currentUser?.id || null),
-      team_id: form.teamId || null,
+      team_id: effectiveTeamId || null,
       note: form.note.trim() || null,
       // Backend is the final dedup gate.  This flag is only sent after the
       // user explicitly chose the existing manual-flow override.
@@ -945,13 +955,13 @@ export function LeadFormDrawer({
                   )}
                   <Field label="Team Sale">
                     <MemberSearchSelect
-                      value={form.teamId}
+                      value={effectiveTeamId}
                       onChange={() => {}}
                       showAvatar={false}
                       disabled
                       loading={teamResolving}
                       placeholder={teamResolving ? 'Đang tìm Team Sale...' : 'Chưa gán'}
-                      members={saleTeams.map(t => ({ id: t.id, displayName: t.name || t.code || 'Team Sale' }))}
+                      members={teamOptionsForSelect}
                     />
                   </Field>
                   <Field label="Trạng thái">
