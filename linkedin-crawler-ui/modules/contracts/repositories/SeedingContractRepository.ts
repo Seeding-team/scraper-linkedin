@@ -72,6 +72,7 @@ function toCreatePayload(input: CreateContractInput) {
     file_url: input.fileUrl,
     note: input.note,
     deal_phase: input.dealPhase,
+    contact_id: input.contactId,
   };
 }
 
@@ -95,6 +96,12 @@ function toUpdatePayload(input: UpdateContractInput) {
     ai_review: input.aiReview,
     source: input.source,
     file_url: input.fileUrl,
+    note: input.note,
+    quote_id: input.quoteId,
+    deal_id: input.dealId,
+    contact_id: input.contactId,
+    deal_phase: input.dealPhase,
+    contract_number: input.contractNumber,
   };
 }
 

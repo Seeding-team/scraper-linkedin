@@ -61,6 +61,7 @@ class ContractCreateRequest(BaseModel):
     # da co san tren contracts (migration contract_deal_phase.sql), truoc day
     # CHI duoc ghi qua luong Phase1/Phase2 rieng trong CrmCustomerModal.tsx.
     deal_phase: Optional[str] = None
+    contact_id: Optional[str] = None
 
 
 class ContractUpdateRequest(BaseModel):
@@ -82,6 +83,13 @@ class ContractUpdateRequest(BaseModel):
     ai_review: Optional[list[dict]] = None
     source: Optional[str] = None
     file_url: Optional[str] = None
+    # Sửa hợp đồng bằng form đầy đủ (giống form Thêm hợp đồng).
+    note: Optional[str] = None
+    quote_id: Optional[str] = None
+    deal_id: Optional[str] = None
+    contact_id: Optional[str] = None
+    deal_phase: Optional[str] = None
+    contract_number: Optional[str] = None
 
 
 class ContractStatusUpdateRequest(BaseModel):

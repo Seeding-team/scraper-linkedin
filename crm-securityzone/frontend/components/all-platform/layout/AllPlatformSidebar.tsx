@@ -71,7 +71,7 @@ function pathMatchesPrefix(pathname: string, prefix: string): boolean {
 }
 
 export function isLeafActive(pathname: string, item: NavLeafItem) {
-  if (item.exactMatch) return pathname === item.href;
+  if (item.exactMatch) return pathname === item.href.split("?")[0];
   if (pathname === item.href) return true;
   if (item.matchStartsWith?.some((prefix) => pathMatchesPrefix(pathname, prefix))) return true;
   return pathMatchesPrefix(pathname, item.href) && item.href !== "/all-platform/post-feed";
@@ -258,14 +258,6 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, _workspaceTab?
         },
         {
           type: "item",
-          id: "crm",
-          href: "/all-platform/crm",
-          icon: "track_changes",
-          label: "Cơ Hội",
-          exactMatch: true,
-        },
-        {
-          type: "item",
           id: "quote-center",
           href: "/all-platform/quote-center",
           icon: "article",
@@ -287,6 +279,14 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, _workspaceTab?
           icon: "description",
           label: "Hợp đồng",
           matchStartsWith: ["/all-platform/contracts"],
+        },
+        {
+          type: "item",
+          id: "service-catalog",
+          href: "/all-platform/service-catalog",
+          icon: "inventory_2",
+          label: "Sản phẩm và dịch vụ",
+          matchStartsWith: ["/all-platform/service-catalog"],
         },
       ],
     },
@@ -312,14 +312,6 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, _workspaceTab?
           icon: "bar_chart",
           label: "Phân tích CRM",
           matchStartsWith: ["/all-platform/crm/analytics"],
-        },
-        {
-          type: "item",
-          id: "service-catalog",
-          href: "/all-platform/service-catalog",
-          icon: "inventory_2",
-          label: "Sản phẩm và dịch vụ",
-          matchStartsWith: ["/all-platform/service-catalog"],
         },
         {
           type: "item",

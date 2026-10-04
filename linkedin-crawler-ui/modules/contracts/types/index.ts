@@ -70,6 +70,8 @@ export interface Contract {
    * từ form Sửa Deal (CrmCustomerModal.tsx). null cho mọi hợp đồng tạo từ
    * luồng khác (wizard CRM, Ghi nhận hợp đồng có sẵn độc lập). */
   dealPhase?: 'purchase' | 'sale' | null;
+  /** Migration 167 — người liên hệ chọn trên hợp đồng (null = liên hệ chính của deal). */
+  contactId?: string | null;
 }
 
 export interface ContractDashboardStats {
@@ -117,6 +119,7 @@ export interface CreateContractInput {
   /** Phân biệt hợp đồng Mua vào (Phase 1) / Bán ra (Phase 2) — bắt buộc chọn
    * khi tạo qua "Ghi nhận hợp đồng có sẵn" (feedback mentor 2026-10-03). */
   dealPhase?: 'purchase' | 'sale' | null;
+  contactId?: string | null;
 }
 
 export interface UpdateContractInput {
@@ -138,6 +141,13 @@ export interface UpdateContractInput {
   aiReview?: ContractReviewFinding[];
   source?: 'crm' | 'external';
   fileUrl?: string | null;
+  /** Sửa hợp đồng bằng form đầy đủ. Chuỗi rỗng "" = gỡ giá trị (dealPhase/contactId/quoteId). */
+  note?: string | null;
+  quoteId?: string | null;
+  dealId?: string | null;
+  contactId?: string | null;
+  dealPhase?: 'purchase' | 'sale' | '' | null;
+  contractNumber?: string | null;
 }
 
 export interface GenerateContractDraftInput {

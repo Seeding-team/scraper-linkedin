@@ -72,6 +72,8 @@ def _row_to_contract(row: dict) -> dict:
         # Sửa Deal. NULL cho mọi hợp đồng tạo từ luồng khác (wizard CRM, Ghi
         # nhận hợp đồng có sẵn độc lập) — không có khái niệm Phase 1/2.
         "dealPhase": row.get("deal_phase"),
+        # Migration 167 — người liên hệ chọn trên hợp đồng (NULL = liên hệ chính của deal).
+        "contactId": row.get("contact_id"),
     }
 
 
@@ -214,6 +216,7 @@ def create_contract(payload: dict, created_by: str | None) -> dict:
         "file_url": payload.get("file_url"),
         "note": payload.get("note"),
         "deal_phase": payload.get("deal_phase"),
+        **({"contact_id": payload["contact_id"]} if payload.get("contact_id") else {}),
         "created_by": created_by,
         "updated_by": created_by,
         "instance": settings.crm_instance,
@@ -230,9 +233,16 @@ def update_contract(contract_id: str, payload: dict, actor_id: str | None) -> di
         "title", "template_type", "status", "contract_value", "currency", "signed_at", "start_date", "end_date",
         "payment_terms", "progress_percent", "payment_collected_percent", "owner_id",
         "manual_customer_name", "source", "file_url",
+        "note", "quote_id", "deal_id", "contact_id", "deal_phase", "contract_number",
     ):
         if key in payload:
             update_data[key] = payload[key]
+    # FE gui "" de GO gia tri (exclude_none o router khong cho gui null).
+    for nullable in ("deal_phase", "contact_id", "quote_id"):
+        if update_data.get(nullable) == "":
+            update_data[nullable] = None
+    if "contract_number" in update_data and not str(update_data["contract_number"] or "").strip():
+        update_data.pop("contract_number")
     if payload.get("clauses") is not None:
         update_data["clauses"] = _serialize_clauses(payload.get("clauses"))
     if payload.get("ai_risk_score") is not None:

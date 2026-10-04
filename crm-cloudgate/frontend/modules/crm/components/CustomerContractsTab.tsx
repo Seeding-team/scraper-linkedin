@@ -37,54 +37,15 @@ function ContractsTable({
   allContacts,
   setReloadTick,
   showPhaseColumn,
+  onEditContract,
 }: {
   contracts: ContractRow[];
   deals: RelatedPayload['deals'];
   allContacts: Array<{ id: string; name: string }>;
   setReloadTick: React.Dispatch<React.SetStateAction<number>>;
   showPhaseColumn: boolean;
+  onEditContract: (contract: ContractRow) => void;
 }) {
-  const [editingContract, setEditingContract] = useState<ContractRow | null>(null);
-  const [editForm, setEditForm] = useState<ContractEditForm | null>(null);
-  const [saving, setSaving] = useState(false);
-  const [saveError, setSaveError] = useState('');
-
-  function openEdit(contract: ContractRow) {
-    setEditingContract(contract);
-    setEditForm({
-      title: contract.title || '',
-      fileUrl: contract.file_url || '',
-      contractValue: String(Number(contract.contract_value || 0) || ''),
-      signedAt: toDateInput(contract.signed_at),
-      status: (contract.status || 'draft') as ContractStatus,
-      source: contract.source === 'external' ? 'external' : 'crm',
-    });
-    setSaveError('');
-  }
-
-  async function saveContractEdit() {
-    if (!editingContract || !editForm) return;
-    setSaving(true);
-    setSaveError('');
-    try {
-      await seedingContractRepository.updateContract(editingContract.id, {
-        title: editForm.title.trim() || editingContract.contract_number || editingContract.id,
-        fileUrl: editForm.fileUrl.trim() || null,
-        contractValue: moneyInputToNumber(editForm.contractValue),
-        signedAt: editForm.signedAt || null,
-        status: editForm.status,
-        source: editForm.source,
-      });
-      setEditingContract(null);
-      setEditForm(null);
-      setReloadTick(t => t + 1);
-    } catch (err) {
-      setSaveError(err instanceof Error ? err.message : 'Không lưu được hợp đồng.');
-    } finally {
-      setSaving(false);
-    }
-  }
-
   return (
     <>
       <table className="w-full text-xs text-left">
@@ -103,8 +64,10 @@ function ContractsTable({
         <tbody className="divide-y divide-slate-100">
           {contracts.map(contract => {
             const contractDeal = deals?.find(d => d.id === contract.deal_id);
-            const contractPrimaryContactName = contractDeal?.primary_contact_id
-              ? allContacts.find(c => c.id === contractDeal.primary_contact_id)?.name || 'Liên hệ ẩn'
+            // Lien he luu rieng tren hop dong (contact_id) uu tien, fallback lien he chinh cua Co hoi.
+            const shownContactId = contract.contact_id || contractDeal?.primary_contact_id;
+            const contractPrimaryContactName = shownContactId
+              ? allContacts.find(c => c.id === shownContactId)?.name || 'Liên hệ ẩn'
               : 'Chưa có';
             return (
               <tr key={contract.id} className="hover:bg-slate-50/80 transition-colors">
@@ -144,7 +107,7 @@ function ContractsTable({
                     <button
                       type="button"
                       className="inline-flex items-center gap-1 rounded-md border border-slate-200 px-2 py-1 font-semibold text-slate-600 hover:border-[#c2185b] hover:text-[#c2185b]"
-                      onClick={() => openEdit(contract)}
+                      onClick={() => onEditContract(contract)}
                     >
                       <Pencil className="size-3" /> Sửa
                     </button>
@@ -164,55 +127,6 @@ function ContractsTable({
         </tbody>
       </table>
 
-      {editingContract && editForm ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 px-4" onMouseDown={() => !saving && setEditingContract(null)}>
-          <div className="w-full max-w-xl rounded-xl bg-white shadow-2xl" onMouseDown={event => event.stopPropagation()}>
-            <div className="flex items-start justify-between gap-4 border-b border-slate-100 p-5">
-              <div>
-                <h3 className="text-base font-bold text-slate-900">Sửa hợp đồng</h3>
-                <p className="mt-1 text-xs text-slate-500">{editingContract.contract_number || 'Hợp đồng chưa có mã'}</p>
-              </div>
-              <button type="button" className="text-xl leading-none text-slate-400 hover:text-slate-700" onClick={() => !saving && setEditingContract(null)}>x</button>
-            </div>
-            <div className="grid gap-4 p-5 sm:grid-cols-2">
-              <label className="flex flex-col gap-1.5 text-xs font-semibold text-slate-600 sm:col-span-2">
-                Tên hợp đồng
-                <input className="h-10 rounded-lg border border-slate-200 px-3 text-sm text-slate-900 outline-none focus:border-[#c2185b]" value={editForm.title} onChange={event => setEditForm({ ...editForm, title: event.target.value })} />
-              </label>
-              <label className="flex flex-col gap-1.5 text-xs font-semibold text-slate-600 sm:col-span-2">
-                File/link
-                <input className="h-10 rounded-lg border border-slate-200 px-3 text-sm text-slate-900 outline-none focus:border-[#c2185b]" value={editForm.fileUrl} onChange={event => setEditForm({ ...editForm, fileUrl: event.target.value })} placeholder="https://..." />
-              </label>
-              <label className="flex flex-col gap-1.5 text-xs font-semibold text-slate-600">
-                Giá trị
-                <input className="h-10 rounded-lg border border-slate-200 px-3 text-sm text-slate-900 outline-none focus:border-[#c2185b]" value={editForm.contractValue} onChange={event => setEditForm({ ...editForm, contractValue: event.target.value })} inputMode="numeric" />
-              </label>
-              <label className="flex flex-col gap-1.5 text-xs font-semibold text-slate-600">
-                Ngày ký
-                <input type="date" className="h-10 rounded-lg border border-slate-200 px-3 text-sm text-slate-900 outline-none focus:border-[#c2185b]" value={editForm.signedAt} onChange={event => setEditForm({ ...editForm, signedAt: event.target.value })} />
-              </label>
-              <label className="flex flex-col gap-1.5 text-xs font-semibold text-slate-600">
-                Trạng thái
-                <select className="h-10 rounded-lg border border-slate-200 px-3 text-sm text-slate-900 outline-none focus:border-[#c2185b]" value={editForm.status} onChange={event => setEditForm({ ...editForm, status: event.target.value as ContractStatus })}>
-                  {CONTRACT_STATUS_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-                </select>
-              </label>
-              <label className="flex flex-col gap-1.5 text-xs font-semibold text-slate-600">
-                Nguồn
-                <select className="h-10 rounded-lg border border-slate-200 px-3 text-sm text-slate-900 outline-none focus:border-[#c2185b]" value={editForm.source} onChange={event => setEditForm({ ...editForm, source: event.target.value as 'crm' | 'external' })}>
-                  <option value="crm">CRM</option>
-                  <option value="external">Bên ngoài</option>
-                </select>
-              </label>
-              {saveError ? <div className="rounded-lg bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-600 sm:col-span-2">{saveError}</div> : null}
-            </div>
-            <div className="flex items-center justify-end gap-2 border-t border-slate-100 p-4">
-              <Button type="button" variant="outline" disabled={saving} onClick={() => setEditingContract(null)}>Hủy</Button>
-              <Button type="button" disabled={saving} className="bg-[#c2185b] text-white hover:bg-[#a91549]" onClick={() => void saveContractEdit()}>{saving ? 'Đang lưu...' : 'Lưu thay đổi'}</Button>
-            </div>
-          </div>
-        </div>
-      ) : null}
     </>
   );
 }
@@ -223,6 +137,7 @@ export function CustomerContractsTab({
   allContacts,
   registerContractLoading,
   openRegisterContractForActiveDeal,
+  onEditContract,
   setReloadTick,
 }: {
   data: RelatedPayload | null;
@@ -230,6 +145,7 @@ export function CustomerContractsTab({
   allContacts: Array<{ id: string; name: string }>;
   registerContractLoading: boolean;
   openRegisterContractForActiveDeal: () => void;
+  onEditContract: (contract: ContractRow) => void;
   setReloadTick: React.Dispatch<React.SetStateAction<number>>;
 }) {
   const allContracts = data?.contracts ?? [];
@@ -251,7 +167,7 @@ export function CustomerContractsTab({
             onClick={() => void openRegisterContractForActiveDeal()}
           >
             <Plus className="size-3.5" />
-            <span>{registerContractLoading ? 'Đang tải...' : 'Ghi nhận hợp đồng có sẵn'}</span>
+            <span>{registerContractLoading ? 'Đang tải...' : 'Thêm hợp đồng'}</span>
           </Button>
         </div>
         <div className="overflow-x-auto">
@@ -264,6 +180,7 @@ export function CustomerContractsTab({
               allContacts={allContacts}
               setReloadTick={setReloadTick}
               showPhaseColumn={false}
+              onEditContract={onEditContract}
             />
           ) : (
             <div className="p-8 text-center text-xs text-slate-500">
@@ -290,6 +207,7 @@ export function CustomerContractsTab({
               allContacts={allContacts}
               setReloadTick={setReloadTick}
               showPhaseColumn={true}
+              onEditContract={onEditContract}
             />
           ) : (
             <div className="p-8 text-center text-xs text-slate-500">

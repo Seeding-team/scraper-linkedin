@@ -198,6 +198,8 @@ export type RelatedPayload = {
     file_url?: string | null;
     note?: string | null;
     deal_phase?: 'purchase' | 'sale' | null;
+    quote_id?: string | null;
+    contact_id?: string | null;
   }>;
   kpi?: {
     deal_count?: number;
@@ -464,6 +466,8 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
   const [registerContractOpen, setRegisterContractOpen] = useState(false);
   const [registerContractDeal, setRegisterContractDeal] = useState<LiveDealRow | null>(null);
   const [registerContractLoading, setRegisterContractLoading] = useState(false);
+  // Sua hop dong = mo chinh form Thêm hợp đồng o che do Sua.
+  const [editingContract, setEditingContract] = useState<NonNullable<RelatedPayload['contracts']>[number] | null>(null);
 
   // Tab "Du an" (Checkpoint C) - 1 API tong hop rieng (khong nam trong
   // /related cu, tranh phinh to payload cho nhung trang khac khong can Du an).
@@ -587,6 +591,25 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
       window.alert(err instanceof Error ? err.message : 'Không tải được cơ hội này.');
     } finally {
       setOpenDealLoading(false);
+    }
+  }
+
+  async function openEditContract(contract: NonNullable<RelatedPayload['contracts']>[number]) {
+    const dealId = contract.deal_id || activeDeal?.id;
+    if (!dealId) {
+      window.alert('Hợp đồng này chưa gắn Cơ hội nên chưa mở được form sửa.');
+      return;
+    }
+    setRegisterContractLoading(true);
+    try {
+      const full = await customerLeadService.getById(dealId);
+      setEditingContract(contract);
+      setRegisterContractDeal(full);
+      setRegisterContractOpen(true);
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : 'Không tải được cơ hội này.');
+    } finally {
+      setRegisterContractLoading(false);
     }
   }
 
@@ -1277,7 +1300,8 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
               loading={loading}
               allContacts={allContacts}
               registerContractLoading={registerContractLoading}
-              openRegisterContractForActiveDeal={openRegisterContractForActiveDeal}
+              openRegisterContractForActiveDeal={() => { setEditingContract(null); return openRegisterContractForActiveDeal(); }}
+              onEditContract={openEditContract}
               setReloadTick={setReloadTick}
             />
           )}
@@ -1344,6 +1368,7 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
       ) : null}
       {registerContractDeal ? (
         <RegisterExternalContractModal
+          contract={editingContract}
           open={registerContractOpen}
           deal={registerContractDeal}
           customerLabel={customer?.customer_name || customer?.company_name || undefined}
@@ -1365,8 +1390,8 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
               projectId: c.current.project_id,
               versionCount: c.versionCount,
             }))}
-          onClose={() => setRegisterContractOpen(false)}
-          onCreated={() => { setRegisterContractOpen(false); setReloadTick(t => t + 1); }}
+          onClose={() => { setRegisterContractOpen(false); setEditingContract(null); }}
+          onCreated={() => { setRegisterContractOpen(false); setEditingContract(null); setReloadTick(t => t + 1); }}
         />
       ) : null}
       <ProjectFormModal

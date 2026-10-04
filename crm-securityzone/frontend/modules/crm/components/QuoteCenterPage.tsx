@@ -1513,11 +1513,6 @@ export function QuoteCenterPage() {
             <span className="qc-btn-label-full">Yêu cầu hỗ trợ báo giá</span>
             <span className="qc-btn-label-short">Yêu cầu hỗ trợ</span>
           </button>
-          <button type="button" className="qc-btn" onClick={openFreshModal}>
-            <Plus className="qc-icon" />
-            <span className="qc-btn-label-full">Tạo báo giá</span>
-            <span className="qc-btn-label-short">Tạo nhanh</span>
-          </button>
         </div>
       </header>
 
@@ -1672,12 +1667,6 @@ export function QuoteCenterPage() {
             <button type="button" className="qc-btn qc-btn-primary" onClick={openRequestWorkspace} title="Mở workspace xử lý báo giá — chọn khách hàng/cơ hội và người phụ trách ngay trong workspace">
               <Plus className="qc-icon" /> Yêu cầu hỗ trợ báo giá
             </button>
-            <button type="button" className="qc-btn qc-btn-soft" onClick={openFreshModal}>
-              Tạo báo giá nhanh
-            </button>
-            <button type="button" className="qc-btn qc-btn-soft" onClick={openDealPicker}>
-              Tạo từ cơ hội CRM →
-            </button>
           </div>
         </div>
         <div className="qc-quick-steps">
@@ -1733,16 +1722,6 @@ export function QuoteCenterPage() {
                   </div>
                 </div>
                 <span className="qc-template-fieldcount">{form.fieldCount} trường dữ liệu</span>
-                <button
-                  type="button"
-                  className="qc-template-cta"
-                  onClick={event => {
-                    event.stopPropagation();
-                    openTemplateModal(form);
-                  }}
-                >
-                  Tạo báo giá
-                </button>
               </article>
             ))}
           </div>
