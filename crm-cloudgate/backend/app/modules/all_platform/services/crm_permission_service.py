@@ -751,6 +751,12 @@ def get_crm_team_member_ids(crm_team_id: str | None) -> set[str]:
             lambda: supabase.table("crm_team_members").select("user_id").eq("crm_team_id", crm_team_id).execute()
         )
         member_ids = {row["user_id"] for row in (result.data or []) if row.get("user_id")}
+        team_result = execute_supabase_query(
+            lambda: supabase.table("crm_teams").select("leader_user_id").eq("id", crm_team_id).limit(1).execute()
+        )
+        leader_id = team_result.data[0].get("leader_user_id") if team_result.data else None
+        if leader_id:
+            member_ids.add(leader_id)
     except Exception:
         member_ids = set()
     _CRM_TEAM_MEMBERS_CACHE[crm_team_id] = (now + _CRM_TEAM_MEMBERS_CACHE_TTL_SECONDS, member_ids)

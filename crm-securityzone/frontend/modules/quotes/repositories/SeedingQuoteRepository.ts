@@ -178,6 +178,11 @@ function toCreateQuotePayload(input: CreateQuoteInput) {
   return payload;
 }
 
+function optionalUuid(value: string | null | undefined): string | null {
+  const text = String(value || '').trim();
+  return text || null;
+}
+
 function toUpdateQuotePayload(input: UpdateQuoteInput) {
   // BUG THAT DA GAP (data loss): backend (quotes_update, routers/quote.py)
   // dung `model_fields_set` de phan biet "khong gui field nay" (giu nguyen
@@ -193,15 +198,15 @@ function toUpdateQuotePayload(input: UpdateQuoteInput) {
   const payload: Record<string, unknown> = {
     data: input.data,
     items: input.items?.map(toQuoteItemPayload),
-    issuer_company_id: input.issuerCompanyId ?? null,
   };
+  if ('issuerCompanyId' in input) payload.issuer_company_id = optionalUuid(input.issuerCompanyId);
   // "Mẫu ăn theo Đơn vị phát hành" (feedback 2026-09-24) - CHI gui khi caller
   // that su truyen quoteFormId (doi mau that su), KHONG dung `?? null` nhu
   // issuer_company_id o tren vi backend (QuoteUpdateRequest) dung exclude_none
   // mac dinh - gui null se bi bo qua (khong doi), khong can tri-state nhu
   // project_id/sla_due_at.
-  if (input.quoteFormId) payload.quote_form_id = input.quoteFormId;
-  if ('projectId' in input) payload.project_id = input.projectId ?? null;
+  if (optionalUuid(input.quoteFormId)) payload.quote_form_id = optionalUuid(input.quoteFormId);
+  if ('projectId' in input) payload.project_id = optionalUuid(input.projectId);
   if ('overallDiscountPercent' in input) payload.overall_discount_percent = input.overallDiscountPercent ?? null;
   if ('slaDueAt' in input) payload.sla_due_at = input.slaDueAt ?? null;
   if ('quoteTypeCodes' in input) payload.quote_type_codes = input.quoteTypeCodes ?? [];

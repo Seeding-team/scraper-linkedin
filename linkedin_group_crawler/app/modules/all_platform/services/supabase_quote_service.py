@@ -1960,6 +1960,9 @@ def update_quote(quote_id: str, payload: dict, actor_id: str | None) -> dict:
     RPC trong truong hop nay, KHONG duoc mac dinh ve []."""
     current_quote = _ensure_quote_in_instance(quote_id)
     supabase: Client = get_supabase_client()
+    for uuid_key in ("issuer_company_id", "project_id", "quote_form_id"):
+        if payload.get(uuid_key) == "":
+            payload[uuid_key] = None
     # Villa keeps its commercial rows in data.solutionItems, not quote_items.
     # quote_update is shared and recomputes totals from p_items, therefore a
     # metadata-only Villa save would otherwise persist 0 when p_items is empty.

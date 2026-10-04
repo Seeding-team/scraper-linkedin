@@ -475,19 +475,7 @@ def _public_item_tree(rows: list[dict]) -> list[dict]:
     """Ban sao doc lap cua _quote_item_tree() nhung dung _row_to_public_item -
     co the trung lap logic voi ham noi bo, CHU Y: co tinh, de nhanh public
     khong bao gio phu thuoc vao nhanh noi bo (sua/them field o _row_to_item
-    khong the vo tinh lam lo field moi qua duong nay).
-
-    BUG THAT DA GAP (2026-09-22, user bao cao "Chưa có hạng mục báo giá"
-    du bao gia co tong tien > 0): than ham nay bi tach doi trong 1 lan sua
-    truoc - phan logic that (mapped/by_id/roots/return) bi lac xuong duoi,
-    nam SAU return cua _infer_missing_parent_ids() (dead code khong bao gio
-    chay, chi la trung indent nen khong loi cu phap), khien ham nay chi con
-    docstring -> Python tu tra ve None ngam dinh. API public
-    (get_public_quote) tra thang "items": None cho MOI bao gia, FE phai tu
-    ve chan (xem QuoteDocumentRenderer.tsx) nhung khach hang mat het bang
-    hang muc that. Ghep lai dung logic (giong het cau truc
-    _quote_item_tree() ben duoi, chi khac _row_to_public_item thay
-    _row_to_item)."""
+    khong the vo tinh lam lo field moi qua duong nay)."""
     mapped = _infer_missing_parent_ids([_row_to_public_item(row) for row in rows])
     by_id = {item["id"]: item for item in mapped if item.get("id")}
     roots: list[dict] = []
@@ -500,33 +488,6 @@ def _public_item_tree(rows: list[dict]) -> list[dict]:
     for item in mapped:
         item["children"] = sorted(item.get("children") or [], key=lambda child: child.get("sortOrder") or 0)
     return sorted(roots, key=lambda item: item.get("sortOrder") or 0)
-
-
-def _infer_missing_parent_ids(mapped: list[dict]) -> list[dict]:
-    """Doc-time normalize cho hang muc CU luu tu TRUOC khi FE co fix
-    trailingParentItemId() (xem comment tren `normalizeLoadedParentIds()` trong
-    QuoteWorkspaceModal.tsx - day la ban tuong duong o phia backend, cho 2
-    duong render KHONG di qua itemsDraft cua FE: PublicQuotePage/QuoteDetailPage/
-    PDF, von lay `items` dang cay THANG tu day (_quote_item_tree/_public_item_tree)
-    ma khong bao gio load qua QuoteWorkspaceModal). Cac hang muc nay co
-    parent_item_id=NULL trong DB nhung NAM DUNG VI TRI (theo sort_order) ngay
-    sau 1 Section - _quote_item_tree() truoc day loc CHINH XAC theo
-    parentItemId nen coi nham la hang muc DOC LAP (root), lam Section do
-    tong tien = 0 tren ca Preview/Public/PDF giong het bug o FE. Suy luan
-    THUAN DOC (khong ghi DB) - danh sach `rows` da duoc goi noi (.order(
-    "sort_order")) truoc do nen chi can quet xuoi 1 lan, gan lai parentItemId
-    cho hang muc dang thieu bang parentItemId cua Section/hang muc LIEN KE
-    truoc no gan nhat - dung nguyen tac voi trailingParentItemId() ben FE."""
-    current_section_id: str | None = None
-    for item in mapped:
-        if item.get("rowType") == "section":
-            current_section_id = item.get("id")
-            continue
-        if not item.get("parentItemId") and current_section_id:
-            item["parentItemId"] = current_section_id
-        # Hang muc CO san parentItemId (kha nang do 1 lan luu that su co gia
-        # tri khac 0) giu nguyen, khong ghi de - tranh sai du lieu dung.
-    return mapped
 
 
 def _public_data_allowlist(data: dict, form_snapshot: dict) -> dict:
@@ -689,6 +650,33 @@ def _quote_items(quote_id: str) -> list[dict]:
         .execute()
     )
     return result.data or []
+
+
+def _infer_missing_parent_ids(mapped: list[dict]) -> list[dict]:
+    """Doc-time normalize cho hang muc CU luu tu TRUOC khi FE co fix
+    trailingParentItemId() (xem comment tren `normalizeLoadedParentIds()` trong
+    QuoteWorkspaceModal.tsx - day la ban tuong duong o phia backend, cho 2
+    duong render KHONG di qua itemsDraft cua FE: PublicQuotePage/QuoteDetailPage/
+    PDF, von lay `items` dang cay THANG tu day (_quote_item_tree/_public_item_tree)
+    ma khong bao gio load qua QuoteWorkspaceModal). Cac hang muc nay co
+    parent_item_id=NULL trong DB nhung NAM DUNG VI TRI (theo sort_order) ngay
+    sau 1 Section - _quote_item_tree() truoc day loc CHINH XAC theo
+    parentItemId nen coi nham la hang muc DOC LAP (root), lam Section do
+    tong tien = 0 tren ca Preview/Public/PDF giong het bug o FE. Suy luan
+    THUAN DOC (khong ghi DB) - danh sach `rows` da duoc goi noi (.order(
+    "sort_order")) truoc do nen chi can quet xuoi 1 lan, gan lai parentItemId
+    cho hang muc dang thieu bang parentItemId cua Section/hang muc LIEN KE
+    truoc no gan nhat - dung nguyen tac voi trailingParentItemId() ben FE."""
+    current_section_id: str | None = None
+    for item in mapped:
+        if item.get("rowType") == "section":
+            current_section_id = item.get("id")
+            continue
+        if not item.get("parentItemId") and current_section_id:
+            item["parentItemId"] = current_section_id
+        # Hang muc CO san parentItemId (kha nang do 1 lan luu that su co gia
+        # tri khac 0) giu nguyen, khong ghi de - tranh sai du lieu dung.
+    return mapped
 
 
 def _quote_item_tree(rows: list[dict]) -> list[dict]:
@@ -1972,6 +1960,9 @@ def update_quote(quote_id: str, payload: dict, actor_id: str | None) -> dict:
     RPC trong truong hop nay, KHONG duoc mac dinh ve []."""
     current_quote = _ensure_quote_in_instance(quote_id)
     supabase: Client = get_supabase_client()
+    for uuid_key in ("issuer_company_id", "project_id", "quote_form_id"):
+        if payload.get(uuid_key) == "":
+            payload[uuid_key] = None
     # Villa keeps its commercial rows in data.solutionItems, not quote_items.
     # quote_update is shared and recomputes totals from p_items, therefore a
     # metadata-only Villa save would otherwise persist 0 when p_items is empty.
