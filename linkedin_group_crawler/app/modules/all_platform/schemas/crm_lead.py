@@ -46,6 +46,9 @@ class CrmLeadCreate(CrmLeadBase):
     # Manual quick-create may explicitly override the duplicate warning.  The
     # import flow never exposes/sends this flag and is always strict.
     allow_duplicate: bool = False
+    # Lead tu Mua Sam Cong (MSC): chua co nguoi lien he nen cho phep thieu SDT/email.
+    # Thieu ca hai thi khong kiem tra trung duoc; Lead nhap tay van bat buoc nhu cu.
+    allow_no_contact: bool = False
 
 
 class CrmLeadUpdate(BaseModel):
