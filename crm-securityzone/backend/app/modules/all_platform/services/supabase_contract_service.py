@@ -68,7 +68,7 @@ def _row_to_contract(row: dict) -> dict:
         "source": row.get("source") or "crm",
         "fileUrl": row.get("file_url"),
         "note": row.get("note"),
-        # Migration (contract_deal_phase) — "Hợp đồng báo giá mua/bán (Phase 1/2)" trong form
+        # Migration 162 — "Hợp đồng báo giá mua/bán (Phase 1/2)" trong form
         # Sửa Deal. NULL cho mọi hợp đồng tạo từ luồng khác (wizard CRM, Ghi
         # nhận hợp đồng có sẵn độc lập) — không có khái niệm Phase 1/2.
         "dealPhase": row.get("deal_phase"),
@@ -227,11 +227,11 @@ def update_contract(contract_id: str, payload: dict, actor_id: str | None) -> di
     supabase: Client = get_supabase_client()
     update_data: dict[str, Any] = {}
     for key in (
-        "title", "template_type", "contract_value", "currency", "start_date", "end_date",
+        "title", "template_type", "status", "contract_value", "currency", "signed_at", "start_date", "end_date",
         "payment_terms", "progress_percent", "payment_collected_percent", "owner_id",
-        "manual_customer_name",
+        "manual_customer_name", "source", "file_url",
     ):
-        if payload.get(key) is not None:
+        if key in payload:
             update_data[key] = payload[key]
     if payload.get("clauses") is not None:
         update_data["clauses"] = _serialize_clauses(payload.get("clauses"))

@@ -123,8 +123,10 @@ export interface UpdateContractInput {
   title?: string;
   manualCustomerName?: string | null;
   templateType?: ContractTemplateType;
+  status?: ContractStatus;
   contractValue?: number;
   currency?: string;
+  signedAt?: string | null;
   startDate?: string | null;
   endDate?: string | null;
   paymentTerms?: string;
@@ -134,6 +136,8 @@ export interface UpdateContractInput {
   clauses?: ContractClause[];
   aiRiskScore?: number | null;
   aiReview?: ContractReviewFinding[];
+  source?: 'crm' | 'external';
+  fileUrl?: string | null;
 }
 
 export interface GenerateContractDraftInput {

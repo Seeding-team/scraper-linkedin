@@ -153,6 +153,8 @@ class Settings:
     # "Thêm tài khoản Zalo mới" bao API 500). Rong = tat kiem tra (giong
     # hanh vi main khi khong cau hinh API_KEY).
     api_key: str = os.getenv("API_KEY", "")
+    web_intake_api_key: str = os.getenv("WEB_INTAKE_API_KEY", "")
+    web_intake_user_id: str = os.getenv("WEB_INTAKE_USER_ID", "")
 
     # AI Contract Copilot (soạn/thẩm định/tinh chỉnh hợp đồng bằng AI).
     openai_api_key: str = os.getenv("OPENAI_API_KEY", "")

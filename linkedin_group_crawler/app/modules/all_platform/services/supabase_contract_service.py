@@ -227,11 +227,11 @@ def update_contract(contract_id: str, payload: dict, actor_id: str | None) -> di
     supabase: Client = get_supabase_client()
     update_data: dict[str, Any] = {}
     for key in (
-        "title", "template_type", "contract_value", "currency", "start_date", "end_date",
+        "title", "template_type", "status", "contract_value", "currency", "signed_at", "start_date", "end_date",
         "payment_terms", "progress_percent", "payment_collected_percent", "owner_id",
-        "manual_customer_name",
+        "manual_customer_name", "source", "file_url",
     ):
-        if payload.get(key) is not None:
+        if key in payload:
             update_data[key] = payload[key]
     if payload.get("clauses") is not None:
         update_data["clauses"] = _serialize_clauses(payload.get("clauses"))

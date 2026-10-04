@@ -187,7 +187,7 @@ def can_approve_quote(user: dict[str, Any] | None) -> bool:
 
 def is_web_intake_user(user: dict[str, Any] | None) -> bool:
     """True nếu user là user kỹ thuật của tích hợp Web Intake (Project 2). Chỉ dùng để cấp các ngoại lệ TỐI THIỂU bên dưới."""
-    expected = (settings.web_intake_user_id or "").strip()
+    expected = (getattr(settings, "web_intake_user_id", "") or "").strip()
     return bool(expected and user and str(user.get("id") or "") == expected)
 
 
@@ -826,5 +826,3 @@ def get_scope_visible_user_ids(user: dict[str, Any] | None) -> set[str] | None:
         members = get_crm_team_member_ids(team_id)
         return members or ({uid} if uid else set())
     return None
-
-

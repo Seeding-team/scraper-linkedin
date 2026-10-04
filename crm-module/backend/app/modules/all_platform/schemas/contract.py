@@ -67,8 +67,10 @@ class ContractUpdateRequest(BaseModel):
     title: Optional[str] = None
     manual_customer_name: Optional[str] = None
     template_type: Optional[str] = None
+    status: Optional[str] = None
     contract_value: Optional[float] = None
     currency: Optional[str] = None
+    signed_at: Optional[str] = None
     start_date: Optional[str] = None
     end_date: Optional[str] = None
     payment_terms: Optional[str] = None
@@ -78,6 +80,8 @@ class ContractUpdateRequest(BaseModel):
     clauses: Optional[list[ContractClauseInput]] = None
     ai_risk_score: Optional[int] = Field(default=None, ge=0, le=100)
     ai_review: Optional[list[dict]] = None
+    source: Optional[str] = None
+    file_url: Optional[str] = None
 
 
 class ContractStatusUpdateRequest(BaseModel):

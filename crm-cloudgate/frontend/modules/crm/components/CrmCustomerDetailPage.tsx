@@ -152,6 +152,16 @@ export type RelatedPayload = {
     leader_name?: string | null;
     sdr_name?: string | null;
   }>;
+  projects?: Array<{
+    id: string;
+    name?: string | null;
+    project_code?: string | null;
+    status?: string | null;
+    current_phase?: string | null;
+    contract_value?: number | string | null;
+    current_quote_value?: number | string | null;
+    updated_at?: string | null;
+  }>;
   // Nguon: related_records() (crm_customer_service.py) -> supabase.table("quotes").select("*")
   // - TRA VE NGUYEN raw row cua bang quotes (snake_case that, KHONG qua lop
   // chuan hoa camelCase dung o /quotes/by-phase) - dung DUNG ten cot that.

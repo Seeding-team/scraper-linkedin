@@ -80,8 +80,10 @@ function toUpdatePayload(input: UpdateContractInput) {
     title: input.title,
     manual_customer_name: input.manualCustomerName,
     template_type: input.templateType,
+    status: input.status,
     contract_value: input.contractValue,
     currency: input.currency,
+    signed_at: input.signedAt,
     start_date: input.startDate,
     end_date: input.endDate,
     payment_terms: input.paymentTerms,
@@ -91,6 +93,8 @@ function toUpdatePayload(input: UpdateContractInput) {
     clauses: input.clauses?.map(toClausePayload),
     ai_risk_score: input.aiRiskScore,
     ai_review: input.aiReview,
+    source: input.source,
+    file_url: input.fileUrl,
   };
 }
 

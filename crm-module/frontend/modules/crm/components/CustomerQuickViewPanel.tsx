@@ -10,6 +10,7 @@ import {
   CalendarClock,
   FileCheck2,
   FileText,
+  FolderKanban,
   Mail,
   MessageCircle,
   Phone,
@@ -61,6 +62,17 @@ type RelatedContract = {
   end_date?: string | null;
 };
 
+type RelatedProject = {
+  id: string;
+  name?: string | null;
+  project_code?: string | null;
+  status?: string | null;
+  current_phase?: string | null;
+  contract_value?: number | string | null;
+  current_quote_value?: number | string | null;
+  updated_at?: string | null;
+};
+
 type CustomerActivityEntry = {
   id: string;
   action: string;
@@ -73,6 +85,7 @@ type CustomerActivityEntry = {
 
 type RelatedPayload = {
   deals?: RelatedDeal[];
+  projects?: RelatedProject[];
   quotes?: RelatedQuote[];
   contracts?: RelatedContract[];
   kpi?: {
@@ -89,7 +102,7 @@ type CustomerQuickViewPanelProps = {
   ownerName: string;
   onClose: () => void;
   onCreateOpportunity: (customer: CrmCustomerRow) => void;
-  onOpenDetail: (customerId: string, tab?: 'deals' | 'quotes' | 'contracts' | 'activity') => void;
+  onOpenDetail: (customerId: string, tab?: 'deals' | 'projects' | 'quotes' | 'contracts' | 'activity') => void;
   onOpenQuote: (quoteId: string, customerId: string) => void;
   onOpenContract: (contractId: string, customerId: string) => void;
   /** "Chỉnh sửa" trong drawer (2026-10-03) — currentUser để CustomerFormModal
@@ -290,6 +303,7 @@ export function CustomerQuickViewPanel({
   }, [customer?.id]);
 
   const deals = related?.deals || [];
+  const projects = related?.projects || [];
   const openDeals = useMemo(
     () => deals.filter(deal => !['won', 'lost'].includes((deal.deal_stage || '').toLowerCase())),
     [deals],
@@ -449,6 +463,31 @@ export function CustomerQuickViewPanel({
               </div>
             </section>
 
+            <section className="crm-customer-quickview-section">
+              <div className="crm-customer-quickview-section-title">
+                <h3>Dự án</h3>
+                <button type="button" onClick={() => onOpenDetail(customer.id, 'projects')}>Xem tất cả</button>
+              </div>
+              {loading ? (
+                <div className="crm-customer-quickview-loading">Đang tải dự án...</div>
+              ) : projects.length ? (
+                <div className="crm-customer-related-list">
+                  {projects.slice(0, 3).map(project => (
+                    <button key={project.id} type="button" onClick={() => onOpenDetail(customer.id, 'projects')}>
+                      <span className="crm-customer-related-icon is-contract"><FolderKanban size={16} /></span>
+                      <span className="crm-customer-related-main">
+                        <strong>{project.name || project.project_code || 'Dự án chưa có tên'}</strong>
+                        <small>{project.current_phase || project.status || 'Chưa có trạng thái'}</small>
+                      </span>
+                      <span className="crm-customer-related-value">{money(project.current_quote_value || project.contract_value)}</span>
+                      <ArrowUpRight size={15} />
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <div className="crm-customer-quickview-empty">Khách hàng chưa có dự án.</div>
+              )}
+            </section>
             <section className="crm-customer-quickview-section">
               <div className="crm-customer-quickview-section-title">
                 <h3>Cơ hội đang mở</h3>
