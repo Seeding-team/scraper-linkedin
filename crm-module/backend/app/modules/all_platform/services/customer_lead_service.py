@@ -17,13 +17,14 @@ DEAL_STAGE_MAP = {
     "new_lead": "dealing",
     "contacted": "dealing",
     "qualified": "dealing",
-    "requirement": "dealing",
+    "requirement": "requirement",
     "contract_sent": "proposal_sent",
     "won": "post_sale_care",
 }
 
 DEAL_STAGE_FILTERS = {
-    "dealing": ["dealing", "new_lead", "contacted", "qualified", "requirement"],
+    "dealing": ["dealing", "new_lead", "contacted", "qualified"],
+    "requirement": ["requirement"],
     "proposal_sent": ["proposal_sent", "contract_sent"],
     "post_sale_care": ["post_sale_care", "won"],
 }

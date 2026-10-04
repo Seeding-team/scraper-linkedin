@@ -64,7 +64,7 @@ export const DEAL_STAGE_LABELS: Record<string, string> = {
   new_lead: 'Đang deal',
   contacted: 'Đang deal',
   qualified: 'Đang deal',
-  requirement: 'Đang deal',
+  requirement: 'Lấy yêu cầu',
   contract_sent: 'Lên Proposal',
   won: 'Chăm sóc sau bán',
 };

@@ -259,13 +259,14 @@ function normalizeStage(value?: string | null): DealStage {
     new_lead: 'dealing',
     contacted: 'dealing',
     qualified: 'dealing',
-    requirement: 'dealing',
+    requirement: 'requirement',
     contract_sent: 'proposal_sent',
     won: 'post_sale_care',
   };
   if (value && legacyMap[value]) return legacyMap[value];
   const stages: DealStage[] = [
     'dealing',
+    'requirement',
     'proposal_sent',
     'negotiation',
     'contract_signed',
