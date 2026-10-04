@@ -29,6 +29,20 @@ export function getStageSolidBgClass(stage?: string | null): string {
   return 'bg-slate-500';
 }
 
+
+function normalizePipelineStage(stage?: string | null): DealStage {
+  const raw = String(stage || 'dealing') as DealStage;
+  const legacyMap: Partial<Record<DealStage, DealStage>> = {
+    new_lead: 'dealing',
+    contacted: 'dealing',
+    qualified: 'dealing',
+    contract_sent: 'proposal_sent',
+    won: 'post_sale_care',
+  };
+  const mapped = legacyMap[raw] || raw;
+  return PIPELINE_COLUMNS.includes(mapped) ? mapped : 'dealing';
+}
+
 function formatCrmDate(value?: string | null): string {
   if (!value) return '';
   const date = new Date(value);
@@ -358,6 +372,7 @@ export function CustomerDealSplitTab({
 
   const optimisticDeal = deals.find(d => d.id === selectedDealId);
   const currentDisplayDeal = detailDeal?.id === selectedDealId ? detailDeal : optimisticDeal;
+  const currentDisplayStage = normalizePipelineStage(currentDisplayDeal?.deal_stage);
 
   const [saleRoleUsers, setSaleRoleUsers] = useState<QuoteBusinessRoleUser[]>([]);
   const [presaleRoleUsers, setPresaleRoleUsers] = useState<QuoteBusinessRoleUser[]>([]);
@@ -1111,7 +1126,7 @@ export function CustomerDealSplitTab({
                       <div className="flex flex-wrap items-center gap-2 mb-1">
                         <h2 className="text-xl font-bold text-slate-900 truncate">{currentDisplayDeal.customer_name || currentDisplayDeal.id}</h2>
                         <Badge variant="outline" className="text-blue-600 border-blue-200 bg-blue-50 text-[10px] uppercase font-mono px-1.5">{currentDisplayDeal.id.split('-')[1]?.substring(0,8)}</Badge>
-                        <Badge className="bg-blue-100 text-blue-700 shadow-none hover:bg-blue-100 font-semibold text-[11px]">{getStageMeta((currentDisplayDeal.deal_stage as DealStage) || 'new_lead').label}</Badge>
+                        <Badge className="bg-blue-100 text-blue-700 shadow-none hover:bg-blue-100 font-semibold text-[11px]">{getStageMeta(currentDisplayStage).label}</Badge>
                       </div>
                       <div className="text-xs text-slate-400 truncate">
                         Company: {currentDisplayDeal.company_name || 'Hilab'} • Owner: {memberName(currentDisplayDeal.quote_owner_id)}
@@ -1147,8 +1162,8 @@ export function CustomerDealSplitTab({
                   <div className="flex items-center min-w-[700px] justify-between px-1">
                     {PIPELINE_COLUMNS.map((stageKey, idx) => {
                       const step = DEAL_STAGE_META[stageKey].label;
-                      const isCurrent = currentDisplayDeal?.deal_stage === stageKey;
-                      const currentOrder = DEAL_STAGE_META[currentDisplayDeal?.deal_stage as DealStage]?.order || 1;
+                      const isCurrent = currentDisplayStage === stageKey;
+                      const currentOrder = DEAL_STAGE_META[currentDisplayStage]?.order || 1;
                       const stepOrder = DEAL_STAGE_META[stageKey].order;
                       const isPassed = stepOrder < currentOrder;
                       const daysInStage = (currentDisplayDeal as any).days_in_stage;
