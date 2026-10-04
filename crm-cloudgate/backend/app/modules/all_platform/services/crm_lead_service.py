@@ -400,10 +400,11 @@ def company_match(user: dict[str, Any], tax_code: str | None, website: str | Non
 def create_lead(payload: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]:
     actor_id = str(user.get("id") or "")
     allow_duplicate = bool(payload.pop("allow_duplicate", False))
+    allow_no_contact = bool(payload.pop("allow_no_contact", False))
     data = _normalize_payload(payload, actor_id=actor_id)
     if not data.get("lead_name"):
         raise ValueError("Vui long nhap ten Lead.")
-    if not data.get("phone") and not data.get("email"):
+    if not allow_no_contact and not data.get("phone") and not data.get("email"):
         raise ValueError("Can nhap so dien thoai hoac email.")
     if data.get("phone") and not data.get("phone_normalized"):
         raise ValueError("So dien thoai khong hop le.")

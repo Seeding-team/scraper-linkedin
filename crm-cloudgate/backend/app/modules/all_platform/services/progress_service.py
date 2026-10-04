@@ -86,7 +86,7 @@ class ProgressPermissionError(PermissionError):
 # phai loi backend cua chinh minh, backend van song binh thuong cho cac
 # request khac). Fix: chia nho ids thanh nhieu lo <= _IN_BATCH_SIZE, goi
 # nhieu lan roi gop ket qua - khong doi ket qua tra ve, chi tranh URL qua dai.
-_IN_BATCH_SIZE = 150
+_IN_BATCH_SIZE = 50
 
 
 def _query_in_batches(build_query, ids: list[str], batch_size: int = _IN_BATCH_SIZE) -> list[dict[str, Any]]:
