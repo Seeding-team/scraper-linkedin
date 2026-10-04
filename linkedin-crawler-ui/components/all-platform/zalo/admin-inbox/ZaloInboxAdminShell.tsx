@@ -306,6 +306,29 @@ export function ZaloInboxAdminShell() {
   useEffect(() => {
     const targetConv = searchParams.get("conv");
     if (!targetConv || jumpToConvRef.current === targetConv) return;
+    // SU CO THAT (2026-10-04): useRef chi chan duoc trong CUNG 1 lan mount -
+    // neu trang bi reload lien tuc (vd do ket hop voi loi auth/me cham gay
+    // "van dang nhap bi vang ra" o thoi diem do), moi lan reload la 1 mount
+    // MOI, jumpToConvRef tro ve null, effect nay goi lai resolveZaloConversationAccount
+    // tu dau - da gay flood hang nghin request /resolve-account trong vai
+    // phut, nghet CPU backend toi 86%+ lam MOI API (ke ca auth/me) bi xep
+    // hang/timeout - dung la nguyen nhan goc cua "dang nhap gg xac nhan lau,
+    // load lau, reload bi vang login". Them lop chan bang sessionStorage
+    // (song qua ca reload trang that, chi mat khi dong tab) voi cooldown
+    // ngan - neu da thu goi conv nay trong 15s gan day thi bo qua, tranh
+    // vong lap tu tang toc do.
+    const cooldownKey = `zalo-resolve-attempt:${targetConv}`;
+    try {
+      const lastAttempt = Number(window.sessionStorage.getItem(cooldownKey) || 0);
+      if (Date.now() - lastAttempt < 15000) {
+        jumpToConvRef.current = targetConv;
+        return;
+      }
+      window.sessionStorage.setItem(cooldownKey, String(Date.now()));
+    } catch {
+      // sessionStorage khong kha dung (vd private mode chan) - van tiep tuc,
+      // chi mat lop chan qua-reload, khong chan ca luong binh thuong.
+    }
     jumpToConvRef.current = targetConv;
     (async () => {
       try {

@@ -3,6 +3,7 @@ import os
 import posixpath
 import tempfile
 import shutil
+import time
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -280,6 +281,19 @@ async def get_conversations(
         raise HTTPException(status_code=500, detail=f"Không thể tải danh sách hội thoại Zalo: {exc}")
 
 
+# SU CO THAT (2026-10-04, seeding dashboard): frontend (ZaloInboxAdminShell.tsx,
+# luong "Xu ly" tu CRM voi ?conv=) co bug - reload trang lien tuc lam
+# component remount lien tuc, moi lan mount goi lai endpoint nay cho CUNG 1
+# conv_id, flood hang nghin request/phut, nghet CPU backend toi 86%+ lam MOI
+# API (ke ca auth/me) bi xep hang/timeout. Da fix frontend (sessionStorage
+# cooldown), nhung them 1 lop chan o day cho CHAC - cache ket qua ngan han
+# theo (conv_id, caller) de du frontend/client nao sau nay co bug tuong tu
+# cung khong lam qua tai Supabase/CPU. TTL ngan (20s) vi day chi la tra cuu
+# "acc nao dang giu conv nay" - khong nhay cam ve thoi gian thuc.
+_RESOLVE_ACCOUNT_CACHE: Dict[str, tuple[float, dict]] = {}
+_RESOLVE_ACCOUNT_CACHE_TTL_S = 20.0
+
+
 @router.get("/resolve-account")
 async def resolve_conversation_account(
     conv_id: str = Query(...),
@@ -291,6 +305,12 @@ async def resolve_conversation_account(
     """Tim tai khoan Zalo dang giu 1 conv_id, dung cho luong 'Xu ly' tu trang
     Khach hang (CRM) - bam vao la tu dong chon dung acc + nhay thang toi hoi
     thoai, khong can biet truoc acc nao dang giu no."""
+    cache_key = f"{conv_id}:{x_caller_email or ''}"
+    now = time.monotonic()
+    cached = _RESOLVE_ACCOUNT_CACHE.get(cache_key)
+    if cached and now - cached[0] < _RESOLVE_ACCOUNT_CACHE_TTL_S:
+        return cached[1]
+
     rows = await _rest(
         "GET",
         "zalo_groups",
@@ -305,6 +325,13 @@ async def resolve_conversation_account(
     allowed_ids = await check_caller_conversation_access(account_id, x_caller_email)
     if allowed_ids is not None and conv_id not in allowed_ids:
         raise HTTPException(status_code=403, detail="Bạn không có quyền truy cập hội thoại này.")
+
+    result = {"account_id": account_id, "conv_id": conv_id}
+    if len(_RESOLVE_ACCOUNT_CACHE) > 500:
+        expired = [k for k, (ts, _) in _RESOLVE_ACCOUNT_CACHE.items() if now - ts > _RESOLVE_ACCOUNT_CACHE_TTL_S]
+        for k in expired:
+            _RESOLVE_ACCOUNT_CACHE.pop(k, None)
+    _RESOLVE_ACCOUNT_CACHE[cache_key] = (now, result)
 
     return {"account_id": account_id, "conv_id": conv_id}
 
