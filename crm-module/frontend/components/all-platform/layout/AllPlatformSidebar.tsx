@@ -256,14 +256,15 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, _workspaceTab?
           label: "Khách Hàng",
           matchStartsWith: ["/all-platform/crm/customers"],
         },
-        {
-          type: "item",
-          id: "quote-center",
-          href: "/all-platform/quote-center",
-          icon: "article",
-          label: "Báo Giá",
-          matchStartsWith: ["/all-platform/quote-center"],
-        },
+        // AN (khong xoa): muc sidebar "Báo Giá" tam thoi bi an. Route /all-platform/quote-center va code van con nguyen; bo comment de hien lai.
+        //{
+        //  type: "item",
+        //  id: "quote-center",
+        //  href: "/all-platform/quote-center",
+        //  icon: "article",
+        //  label: "Báo Giá",
+        //  matchStartsWith: ["/all-platform/quote-center"],
+        //},
         {
           type: "item",
           id: "quote-history",
