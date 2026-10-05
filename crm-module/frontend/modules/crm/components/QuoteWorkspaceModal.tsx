@@ -15,7 +15,7 @@ import type { ServiceCatalogItem } from '@/modules/service-catalog/types';
 import { serviceCatalogRepository } from '@/modules/service-catalog/repositories/ServiceCatalogRepository';
 import { priceBookZoneRepository, type PriceBookItem } from '@/modules/service-catalog/repositories/PriceBookZoneRepository';
 import { previewPriceBookItem, formatVnd as formatPriceBookVnd, formatPercent as formatPriceBookPercent } from '@/modules/service-catalog/price-book-preview';
-import { customerPriceFromTargetGrossMargin } from '@/modules/service-catalog/pricing-math';
+import { customerPriceFromMarkup, customerPriceFromTargetGrossMargin } from '@/modules/service-catalog/pricing-math';
 import { CatalogPickerModal, type CatalogPickerListItem } from '@/modules/service-catalog/CatalogPickerModal';
 import { useCatalogItemAdd } from '@/modules/service-catalog/useCatalogItemAdd';
 import { QuickAddProductModal } from '@/modules/service-catalog/QuickAddProductModal';
@@ -255,7 +255,7 @@ function resolveCatalogCustomerPrice(item: ServiceCatalogItem): number {
     Number.isFinite(item.defaultCostPriceVnd) &&
     Number.isFinite(item.defaultMarkupPercent)
   ) {
-    return customerPriceFromTargetGrossMargin(item.defaultCostPriceVnd, item.defaultMarkupPercent) ?? 0;
+    return customerPriceFromMarkup(item.defaultCostPriceVnd, item.defaultMarkupPercent) ?? 0;
   }
   return 0;
 }

@@ -141,14 +141,14 @@ def compute_item_pricing(
 
     override_price = _to_decimal(unit_price_override)
     rate_pct = _to_decimal(rate_percent)
-    if rate_pct is not None and rate_pct >= 100:
-        raise ValueError("Markup phải nhỏ hơn 100%.")
+    if rate_pct is not None and rate_pct < -100:
+        raise ValueError("Markup must be greater than or equal to -100%.")
     if override_price is not None:
         unit_price = override_price
-        rate_pct = _safe_div(unit_price - cost_unit, unit_price) * 100 if (cost_unit is not None and unit_price > 0) else None
+        rate_pct = _safe_div(unit_price - cost_unit, cost_unit) * 100 if (cost_unit is not None and cost_unit > 0) else None
     elif cost_unit is not None and rate_pct is not None:
-        divisor = Decimal(1) - rate_pct / Decimal(100)
-        unit_price = (cost_unit / divisor) if divisor > 0 else None
+        multiplier = Decimal(1) + rate_pct / Decimal(100)
+        unit_price = (cost_unit * multiplier) if multiplier >= 0 else None
     else:
         unit_price = None
 

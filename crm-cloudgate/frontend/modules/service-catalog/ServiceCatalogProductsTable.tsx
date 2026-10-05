@@ -11,7 +11,7 @@ import {
   formatSkuName,
   type FlatProduct,
 } from './catalog-form-utils';
-import { customerPriceFromTargetGrossMargin } from './pricing-math';
+import { customerPriceFromMarkup } from './pricing-math';
 
 type PriceFilter = '' | 'configured' | 'unconfigured';
 
@@ -49,7 +49,7 @@ function resolvedCustomerPrice(product: FlatProduct): number | null {
     Number.isFinite(product.defaultCostPriceVnd) &&
     Number.isFinite(product.defaultMarkupPercent)
   ) {
-    return customerPriceFromTargetGrossMargin(product.defaultCostPriceVnd, product.defaultMarkupPercent);
+    return customerPriceFromMarkup(product.defaultCostPriceVnd, product.defaultMarkupPercent);
   }
   return product.defaultCustomerPriceVnd ?? null;
 }

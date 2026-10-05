@@ -9,7 +9,7 @@ import { serviceCatalogRepository } from './repositories/ServiceCatalogRepositor
 import type { BundleComponentInput, ServiceCatalogItem, ServiceCatalogItemInput, ServiceCatalogUnit, ServiceCatalogVatRate } from './types';
 import { usePricingLogic } from './usePricingLogic';
 import { emptyProductForm, formatSkuName, parseNullableNumber } from './catalog-form-utils';
-import { targetGrossMarginFromCustomerPrice } from './pricing-math';
+import { markupFromCustomerPrice } from './pricing-math';
 import './styles/service-catalog.css';
 import '@/modules/crm/styles/quote-center.css';
 import { SearchableSelect } from '@/modules/crm/components/SearchableSelect';
@@ -281,7 +281,7 @@ export function QuickAddProductModal({
         otherCost: 0,
         pricingPolicy: 'catalog_default',
         costPriceVnd: initialCost,
-        markupPercent: targetGrossMarginFromCustomerPrice(initialCost, initialPrice) ?? 0,
+        markupPercent: markupFromCustomerPrice(initialCost, initialPrice) ?? 0,
         customerPriceVnd: initialPrice,
       }));
     }

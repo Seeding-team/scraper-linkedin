@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { customerPriceFromTargetGrossMargin, targetGrossMarginFromCustomerPrice } from './pricing-math';
+import { customerPriceFromMarkup, markupFromCustomerPrice } from './pricing-math';
 
 export interface PricingState {
   // Input mode
@@ -73,20 +73,20 @@ export function usePricingLogic(initialState?: Partial<PricingState>) {
       // Forward compute pricing based on Input Mode
       if (field !== 'markupPercent' && field !== 'customerPriceVnd') {
         if (next.pricingInputMode === 'markup' || prev.pricingInputMode === 'cost') {
-          next.customerPriceVnd = customerPriceFromTargetGrossMargin(next.costPriceVnd, next.markupPercent) ?? 0;
+          next.customerPriceVnd = customerPriceFromMarkup(next.costPriceVnd, next.markupPercent) ?? 0;
         } else if (next.pricingInputMode === 'price') {
-          next.markupPercent = targetGrossMarginFromCustomerPrice(next.costPriceVnd, next.customerPriceVnd) ?? 0;
+          next.markupPercent = markupFromCustomerPrice(next.costPriceVnd, next.customerPriceVnd) ?? 0;
         }
       }
 
       if (field === 'markupPercent') {
         next.pricingInputMode = 'markup';
-        next.customerPriceVnd = customerPriceFromTargetGrossMargin(next.costPriceVnd, next.markupPercent) ?? 0;
+        next.customerPriceVnd = customerPriceFromMarkup(next.costPriceVnd, next.markupPercent) ?? 0;
       }
 
       if (field === 'customerPriceVnd') {
         next.pricingInputMode = 'price';
-        next.markupPercent = targetGrossMarginFromCustomerPrice(next.costPriceVnd, next.customerPriceVnd) ?? 0;
+        next.markupPercent = markupFromCustomerPrice(next.costPriceVnd, next.customerPriceVnd) ?? 0;
       }
 
       return next;

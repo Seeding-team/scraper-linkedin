@@ -915,8 +915,8 @@ def _enrich_bundle_catalog_quote_item(item: dict) -> dict:
     if next_item.get("unit_price") is None and catalog_item.get("defaultCustomerPriceVnd") is not None:
         next_item["unit_price"] = catalog_item.get("defaultCustomerPriceVnd")
     if next_item.get("unit_price") is None and next_item.get("cost_price") is not None and next_item.get("markup_percent") is not None:
-        divisor = 1 - float(next_item["markup_percent"]) / 100
-        next_item["unit_price"] = float(next_item["cost_price"]) / divisor if divisor > 0 else 0
+        multiplier = 1 + float(next_item["markup_percent"]) / 100
+        next_item["unit_price"] = float(next_item["cost_price"]) * multiplier if multiplier >= 0 else 0
     return next_item
 
 
