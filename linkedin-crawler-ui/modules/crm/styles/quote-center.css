@@ -2308,7 +2308,7 @@
   bottom: 24px;
   left: 50%;
   transform: translateX(-50%);
-  z-index: 1000;
+  z-index: 100400; /* tren Picker/dialog de thay thong bao khi dang mo Picker */
   padding: 10px 18px;
   border-radius: 8px;
   font-size: 13px;

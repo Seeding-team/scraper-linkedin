@@ -114,11 +114,6 @@ export function QuickAddProductModal({
   const { state: pricing, setState: setPricingState, updateField: setPricingField, getProfit } = usePricingLogic();
   // Ty gia mac dinh = ty gia HE THONG (khong hard-code); chi dien khi form chua co ty gia.
   const systemUsdVndRate = useSystemUsdVndRate();
-  useEffect(() => {
-    if (!open || !systemUsdVndRate) return;
-    setPricingState(prev => (prev.supplierExchangeRate > 0 ? prev : { ...prev, supplierExchangeRate: systemUsdVndRate }));
-  }, [open, systemUsdVndRate, pricing.supplierExchangeRate, setPricingState]);
-
   const [units, setUnits] = useState<ServiceCatalogUnit[] | null>(null);
   const [vatRates, setVatRates] = useState<ServiceCatalogVatRate[] | null>(null);
   const [creatingGroup, setCreatingGroup] = useState(false);
@@ -293,6 +288,14 @@ export function QuickAddProductModal({
       }));
     }
   }, [open, editingItem, defaultGroupId, initialValues, groups, setPricingState]);
+
+  // Dien ty gia he thong SAU cac effect reset form (thu tu effect: reset dat ty gia = 0 truoc, roi dien lai).
+  // Khong de deps: modal co the luon mounted (Picker) va reset chay lai khi initialValues/groups doi.
+  useEffect(() => {
+    if (!open || !systemUsdVndRate) return;
+    setPricingState(prev => (prev.supplierExchangeRate > 0 ? prev : { ...prev, supplierExchangeRate: systemUsdVndRate }));
+  });
+
 
 
 
@@ -523,7 +526,7 @@ export function QuickAddProductModal({
             supplierListPrice: pricing.supplierListPrice,
             supplierDiscountPercent: pricing.supplierDiscountPercent,
             supplierNetPrice: pricing.supplierNetPrice,
-            supplierExchangeRate: pricing.supplierExchangeRate,
+            supplierExchangeRate: pricing.supplierExchangeRate > 0 ? pricing.supplierExchangeRate : undefined,
             supplierConvertedPrice: pricing.supplierConvertedPrice,
             supplierVendorId: cleanOptionalText(pricing.supplierVendorId || ''),
             supplierQuoteRef: cleanText(pricing.supplierQuoteRef || ''),

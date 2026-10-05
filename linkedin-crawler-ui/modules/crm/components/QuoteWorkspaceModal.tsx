@@ -2926,6 +2926,8 @@ export function QuoteWorkspaceModal({
       // autoSelectCatalogItemId) - Sale tu bam "+ Thêm vào báo giá" khi da
       // san sang.
       setAutoSelectCatalogItemId(hydrated.id);
+      // Tao xong thi nhay vao dung nhom cua san pham moi (de thay no ngay trong danh sach).
+      setPickerGroupFilter(hydrated.groupName || 'Chưa phân nhóm');
       showToast(true, `Đã tạo "${created.name}" và tự chọn trong danh sách — bấm "+ Thêm vào báo giá" khi sẵn sàng.`);
     }
     setQuickAddProductTarget(null);
@@ -8170,8 +8172,11 @@ export function QuoteWorkspaceModal({
         onIncreaseExisting={id => {
           const existingIndex = (catalogSource === 'zone' ? existingZoneKeys : existingCatalogKeys).get(id);
           if (existingIndex == null) return;
+          const currentRow = itemsDraft[existingIndex];
+          const nextQty = (currentRow?.quantity || 0) + 1;
           increaseExistingRowQty(existingIndex, 1);
-          showToast(true, 'Đã tăng số lượng dòng có sẵn thêm 1.');
+          const rowName = currentRow?.serviceDescription || currentRow?.description || 'dòng này';
+          showToast(true, `Đã tăng số lượng "${rowName}" lên ${nextQty}.`);
         }}
         onAddAnother={id => {
           if (catalogSource === 'zone') {
@@ -8181,7 +8186,8 @@ export function QuoteWorkspaceModal({
             const catalogItem = catalogFlatItems.find(item => item.id === id);
             if (catalogItem) addItemsFromCatalog([catalogItemToQuoteItem(catalogItem)]);
           }
-          showToast(true, 'Đã thêm một dòng mới.');
+          const sameCount = itemsDraft.filter(row => (catalogSource === 'zone' ? row.priceBookItemId : row.catalogItemId) === id).length + 1;
+          showToast(true, `Đã thêm một dòng mới (hiện có ${sameCount} dòng cho sản phẩm này).`);
         }}
         extraToolbar={
           catalogSource === 'internal' && catalogSectionOptions.length > 0 ? (
