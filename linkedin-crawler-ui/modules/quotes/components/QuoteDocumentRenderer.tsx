@@ -546,6 +546,10 @@ export function QuoteDocumentRenderer({
       value = String(item.name);
     }
     if (value !== undefined && value !== null && value !== '') {
+      // Ten hang muc co xuong dong (Enter trong Workspace) -> giu xuong dong tren ban khach/PDF.
+      if (column.key === 'serviceDescription' && String(value).includes('\n')) {
+        return <span className="quote-pre-line">{String(value)}</span>;
+      }
       return String(value);
     }
     // item.serviceDescription trống (du lieu cu) -> thu tach tu description

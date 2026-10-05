@@ -541,6 +541,13 @@ def update_lead(lead_id: str, payload: dict[str, Any], user: dict[str, Any]) -> 
                     exc_info=True,
                 )
 
+    # Lead da chuyen doi: ten/SDT/email/cong ty sua o day -> Lien he, Khach hang, Co hoi, Bao gia sinh ra tu lead doi theo.
+    try:
+        from app.modules.all_platform.services.crm_cascade_sync_service import propagate_lead_change
+        propagate_lead_change(current, res.data[0])
+    except Exception:
+        logger.warning("Khong the dong bo Lead %s xuong khach hang/lien he/bao gia (bo qua).", lead_id, exc_info=True)
+
     return get_lead(lead_id, user)
 
 

@@ -602,7 +602,22 @@ def update_customer_lead(lead_id: str, data: Dict[str, Any], actor: Dict[str, An
             .execute()
         )
         if res.data:
-            return _normalize_row(res.data[0])
+            updated_row = _normalize_row(res.data[0])
+            # Doi lien he chinh cua co hoi -> bao gia cua co hoi doi "Kinh gui"/SDT/Email theo.
+            new_pc, old_pc = safe_data.get("primary_contact_id"), existing_for_assignment.get("primary_contact_id")
+            if new_pc and str(new_pc) != str(old_pc or ""):
+                try:
+                    from app.modules.all_platform.services.supabase_quote_service import sync_deal_primary_contact_to_quotes
+                    pc_new = (supabase.table("crm_contacts").select("*").eq("id", new_pc).limit(1).execute().data or [None])[0]
+                    pc_old = (supabase.table("crm_contacts").select("*").eq("id", old_pc).limit(1).execute().data or [None])[0] if old_pc else None
+                    sync_deal_primary_contact_to_quotes(lead_id, pc_new, pc_old)
+                except Exception:
+                    logger.warning("sync primary contact -> quotes failed for deal %s", lead_id, exc_info=True)
+            # Sua ten cong ty/dia chi/MST cua khach hang tren co hoi -> dong bo snapshot cua cac bao gia thuoc co hoi do.
+            if any(k in safe_data for k in ("company_name", "address", "tax_code")):
+                from app.modules.all_platform.services.supabase_quote_service import sync_customer_snapshot_to_quotes
+                sync_customer_snapshot_to_quotes(customer_row=res.data[0], deal_ids=[lead_id])
+            return updated_row
         return None
     except Exception as e:
         logger.error(f"Error updating customer lead {lead_id}: {e}")
