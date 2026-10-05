@@ -315,6 +315,17 @@ def get_contact_related(contact_id: str, user: dict[str, Any]) -> dict[str, Any]
             lambda: supabase.table("projects").select("*").eq("instance", settings.crm_instance).eq("primary_contact_id", contact_id).execute()
         )
         projects = project_res.data or []
+        # Du an cua nguoi lien he con gom du an gan qua CO HOI (co hoi co primary_contact_id = nguoi nay va project_id),
+        # khong chi du an gan truc tiep primary_contact_id (nhieu du an chi gan qua co hoi).
+        seen = {p["id"] for p in projects}
+        deal_project_ids = [
+            pid for pid in {(d.get("project_id") or d.get("projectId")) for d in deals} if pid and pid not in seen
+        ]
+        if deal_project_ids:
+            via_deals = execute_supabase_query(
+                lambda: supabase.table("projects").select("*").eq("instance", settings.crm_instance).in_("id", deal_project_ids).execute()
+            )
+            projects = projects + (via_deals.data or [])
     except Exception:
         logger.exception("get_contact_related: failed to load projects for contact %s", contact_id)
         projects = []
