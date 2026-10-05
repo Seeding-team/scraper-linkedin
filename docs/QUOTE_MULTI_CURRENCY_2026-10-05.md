@@ -14,8 +14,7 @@ Phạm vi: main (`linkedin-crawler-ui` + `linkedin_group_crawler`) và 3 clone `
 
 ## Tỷ giá tự động (migration 170 / clone 163)
 
-- Luồng chính là **tự động**: `quote_exchange_rate_service` lấy USD **bán ra** từ Vietcombank (`portal.vietcombank.com.vn/.../pXML.aspx`), dự phòng ExchangeRate-API (`open.er-api.com`). Lưu `rate + source + updated_at + is_manual` vào `quote_exchange_rates`, nhật ký ở `quote_exchange_rate_history`.
-- Rate tự động cũ > 6h được làm mới "lười" khi có người chọn USD / tạo quote USD (cooldown 5 phút vì Vietcombank chỉ cho 1 lần/5 phút; có khoá chống gọi trùng).
+- Luồng chính là **tự động**: `quote_exchange_rate_service` lấy **USD thị trường tự do – giá BÁN RA** từ `tygiausd.org` (bảng "Giá đô la chợ đen", vd Mua 26.000 / Bán 26.030 → lưu 26.030), nhãn nguồn hiển thị: "Tỷ giá USD thị trường tự do – tygiausd.org". Dự phòng ExchangeRate-API (`open.er-api.com`). (Đổi 2026-10-06 theo feedback sếp: không dùng USD bán ra Vietcombank nữa.) Lưu `rate + source + updated_at + is_manual` vào `quote_exchange_rates`, nhật ký ở `quote_exchange_rate_history`.
 - Nút **Cập nhật tỷ giá** (Cài đặt báo giá → Tỷ giá USD/VND) = `POST /quotes/exchange-rate/refresh` (cooldown 60s) và đưa về chế độ tự động. **Ghi đè thủ công** (`PUT`) đặt `is_manual=true`: tự động không ghi đè cho tới khi bấm Cập nhật.
 - Nguồn lỗi → **giữ rate gần nhất** (+ `lastError`, cờ `stale`); chưa từng có rate thì `rate=null` và UI cho nhập tay. Không có số tỷ giá nào trong code (có test quét mã nguồn).
 - Quote mới lấy rate mới nhất; quote đã tạo giữ snapshot (`exchange_rate` + `currency_snapshot`).

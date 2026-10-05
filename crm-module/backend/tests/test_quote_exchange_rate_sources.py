@@ -7,37 +7,50 @@ import pytest
 
 from app.modules.all_platform.services import quote_exchange_rate_service as svc
 
-VCB_XML = """<!--For reference only. Only one request every 5 minutes!-->
-<ExrateList>
-  <DateTime>10/5/2026 10:09:13 PM</DateTime>
-  <Exrate CurrencyCode="EUR" CurrencyName="EURO" Buy="28,341.59" Transfer="28,627.87" Sell="29,836.29" />
-  <Exrate CurrencyCode="USD" CurrencyName="US DOLLAR" Buy="25,900.00" Transfer="26,000.00" Sell="26,300.00" />
-</ExrateList>"""
+TYGIAUSD_HTML = """<html><head><title>Tỷ giá USD chợ đen, giá đô hôm nay</title></head><body>
+<table class="table"><tr class="bg-success"><th></th><th>Mua vào</th><th>Bán ra</th></tr>
+<tr>
+  <th title="giá usd chợ đen"><a href="https://tygiausd.org/"><h3>USD chợ đen</h3></a></th>
+  <td class="text-right">26,000 <span class="u">80</span></td>
+  <td class="text-right">26,030 <span class="u">70</span></td>
+</tr></table>
+<table><tr><td>USD</td><td>ĐÔ LA MỸ</td><td>25,780</td><td>25,810</td><td>26,190</td></tr></table></body></html>"""
 
 
 def client(handler):
     return httpx.Client(transport=httpx.MockTransport(handler))
 
 
-def test_vietcombank_parses_usd_sell():
-    rate, source = svc.fetch_vietcombank(client(lambda r: httpx.Response(200, text=VCB_XML)))
-    assert rate == Decimal("26300.00") and "Vietcombank" in source
+def _html(body: str, status: int = 200) -> httpx.Response:
+    return httpx.Response(status, content=body.encode("utf-8"), headers={"content-type": "text/html; charset=utf-8"})
+
+
+def test_tygiausd_parses_free_market_sell_not_buy_not_bank_table():
+    rate, source = svc.fetch_tygiausd(client(lambda r: _html(TYGIAUSD_HTML)))
+    assert rate == Decimal("26030")  # Mua 26.000 / Bán 26.030 → lấy BÁN RA, không phải 26.190 của bảng ngân hàng
+    assert source == "Tỷ giá USD thị trường tự do – tygiausd.org"
+
+
+def test_tygiausd_is_the_primary_source_and_vietcombank_is_gone():
+    assert svc.SOURCES[0][0] == "tygiausd" and svc.SOURCES[0][1] is svc.fetch_tygiausd
+    assert [name for name, _ in svc.SOURCES] == ["tygiausd", "exchangerate_api"]
+    assert not hasattr(svc, "fetch_vietcombank")
 
 
 @pytest.mark.parametrize("body", [
-    "<ExrateList><Exrate CurrencyCode='EUR' Sell='1,000'/></ExrateList>",        # khong co USD
-    "<ExrateList><Exrate CurrencyCode='USD' Sell='-'/></ExrateList>",           # khong ban
-    "<ExrateList><Exrate CurrencyCode='USD' Sell='26.30'/></ExrateList>",       # ngoai khoang hop ly
-    "khong phai xml",
+    "<html>khong co bang gia</html>",                                                     # khong thay dong USD cho den
+    TYGIAUSD_HTML.replace("26,030", "-"),                                                  # khong co gia ban
+    TYGIAUSD_HTML.replace("26,030", "26.03"),                                              # ngoai khoang hop ly
+    TYGIAUSD_HTML.replace("26,000", "27,000"),                                             # mua > ban: bo cuc trang doi
 ])
-def test_vietcombank_rejects_bad_payloads(body):
+def test_tygiausd_rejects_bad_payloads(body):
     with pytest.raises(svc.RateSourceError):
-        svc.fetch_vietcombank(client(lambda r: httpx.Response(200, text=body)))
+        svc.fetch_tygiausd(client(lambda r: _html(body)))
 
 
-def test_vietcombank_http_error():
+def test_tygiausd_http_error():
     with pytest.raises(svc.RateSourceError):
-        svc.fetch_vietcombank(client(lambda r: httpx.Response(503)))
+        svc.fetch_tygiausd(client(lambda r: httpx.Response(503)))
 
 
 def test_exchangerate_api_parses_and_validates():

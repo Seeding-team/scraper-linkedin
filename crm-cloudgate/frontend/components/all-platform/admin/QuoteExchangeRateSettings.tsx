@@ -12,7 +12,7 @@ function formatWhen(iso?: string | null): string {
   return Number.isNaN(d.getTime()) ? "—" : d.toLocaleString("vi-VN");
 }
 
-/** Tỷ giá USD → VND mặc định của hệ thống. Luồng chính là TỰ ĐỘNG (Vietcombank, dự phòng ExchangeRate-API);
+/** Tỷ giá USD → VND mặc định của hệ thống. Luồng chính là TỰ ĐỘNG (tygiausd.org – USD thị trường tự do, giá bán ra; dự phòng ExchangeRate-API);
  * Admin chỉ override thủ công khi cần. Báo giá mới lấy tỷ giá mới nhất, báo giá đã tạo giữ tỷ giá đã chốt. */
 export function QuoteExchangeRateSettings() {
   const [current, setCurrent] = useState<SystemExchangeRate | null>(null);
@@ -128,6 +128,10 @@ export function QuoteExchangeRateSettings() {
             {current?.error ? ` (${current.error})` : ""}. Bấm “Cập nhật tỷ giá” để thử lại hoặc nhập tay bên dưới.
           </div>
         )}
+
+        <div className="text-[12px] text-on-surface-variant">
+          Nguồn tự động: <strong className="text-on-surface">Tỷ giá USD thị trường tự do – tygiausd.org</strong> (giá <strong>bán ra</strong>); dự phòng ExchangeRate-API khi nguồn chính lỗi.
+        </div>
 
         <div className="pt-1">
           <button

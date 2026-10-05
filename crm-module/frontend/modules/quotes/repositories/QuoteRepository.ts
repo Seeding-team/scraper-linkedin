@@ -19,7 +19,7 @@ import type { ServiceCatalogOptions } from '../../service-catalog/types';
 
 export interface SystemExchangeRate {
   rate: number | null;
-  /** "Vietcombank (bán ra)" | "ExchangeRate-API …" | "Nhập tay" */
+  /** "Tỷ giá USD thị trường tự do – tygiausd.org" | "ExchangeRate-API …" | "Nhập tay" */
   source: string | null;
   isManual: boolean;
   updatedAt: string | null;

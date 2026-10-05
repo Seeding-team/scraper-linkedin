@@ -422,7 +422,7 @@ def quotes_exchange_rate_get(_user: dict = Depends(get_current_user)) -> BaseRes
 
 @quotes_router.post("/exchange-rate/refresh")
 def quotes_exchange_rate_refresh(user: dict = Depends(get_current_user)) -> BaseResponse:
-    """Nut "Cap nhat ty gia": lay NGAY tu nguon uy tin (Vietcombank, du phong ExchangeRate-API), ghi de
+    """Nut "Cap nhat ty gia": lay NGAY tu nguon uy tin (tygiausd.org - USD thi truong tu do ban ra, du phong ExchangeRate-API), ghi de
     ca override thu cong (quay lai che do tu dong). Nguon loi → GIU rate gan nhat va tra kem `error`
     (FE cho nhap tay). Khong dong toi bao gia da tao (snapshot da chot)."""
     _require_master_data_manager(user)

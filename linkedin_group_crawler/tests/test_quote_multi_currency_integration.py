@@ -305,9 +305,9 @@ def _reset_fx(env):
 def test_auto_refresh_stores_rate_source_updated_at_and_history(env):
     fx = env["fx"]
     _reset_fx(env)
-    fx.SOURCES[:] = [("fake", _fake_source(26_350, "Vietcombank (bán ra)"))]
+    fx.SOURCES[:] = [("fake", _fake_source(26_350, "Tỷ giá USD thị trường tự do – tygiausd.org"))]
     data = fx.get_usd_vnd_rate()  # chua co → tu lay
-    assert data["rate"] == 26_350 and data["source"] == "Vietcombank (bán ra)" and data["isManual"] is False
+    assert data["rate"] == 26_350 and data["source"] == "Tỷ giá USD thị trường tự do – tygiausd.org" and data["isManual"] is False
     assert data["updatedAt"] and data["refreshed"] is True and data["stale"] is False
     assert psql("SELECT count(*) FROM public.quote_exchange_rate_history WHERE instance='test';") == "1"
 
