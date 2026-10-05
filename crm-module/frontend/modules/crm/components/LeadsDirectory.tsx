@@ -731,6 +731,23 @@ export function LeadsDirectory() {
     return [...seen.entries()].sort((a, b) => a[1].localeCompare(b[1]));
   }, [salePresaleUsers, user]);
 
+  // Nguoi phu trach hien thi = Sale phu trach (qualification_ae_id) neu da co, neu khong thi SDR (sdr_id).
+  // Ten tra theo danh ba HR (members) roi theo danh sach Presale/Sale - tranh hien "Chua gan" cho nguoi co that nhung
+  // khong co dong trong danh ba HR.
+  const resolvePersonName = (id?: string | null) => {
+    if (!id) return '';
+    // Uu tien ten tai khoan (Presale/Sale) - ten danh ba HR co the viet tat (vd "D Thi Mai").
+    return sdrFilterOptions.find(([optionId]) => optionId === id)?.[1] || sdrName.get(id) || '';
+  };
+  const personInCharge = (lead: CrmLeadRow) => {
+    const aeName = resolvePersonName(lead.qualificationAeId);
+    const sdrLabel = resolvePersonName(lead.sdrId);
+    return {
+      label: aeName || sdrLabel || 'Chưa gán',
+      title: [aeName ? `Sale phụ trách: ${aeName}` : '', sdrLabel ? `SDR: ${sdrLabel}` : ''].filter(Boolean).join(' · '),
+    };
+  };
+
   const kpiCards = [
     {
       id: '',
@@ -1250,7 +1267,7 @@ export function LeadsDirectory() {
                     <th className="crm-th crm-th--right">AI Score</th>
                     <th className="crm-th">Marketing</th>
                     <th className="crm-th">Trạng thái</th>
-                    <th className="crm-th">SDR</th>
+                    <th className="crm-th" title="Sale phụ trách (nếu có), nếu không thì SDR">SDR / Sale</th>
                     <th className="crm-th">Ngày tạo</th>
                     <th className="crm-th">Việc tiếp theo</th>
                     <th className="crm-th crm-th--right crm-th--actions-col">Thao tác</th>
@@ -1390,7 +1407,7 @@ export function LeadsDirectory() {
                                 </select>
                               </div>
                             ) : (
-                              sdrName.get(lead.sdrId || '') || 'Chưa gán'
+                              <span title={personInCharge(lead).title}>{personInCharge(lead).label}</span>
                             )}
                           </td>
                           <td className="crm-td crm-small crm-muted">{formatDate(lead.createdAt) || '-'}</td>
@@ -1509,7 +1526,7 @@ export function LeadsDirectory() {
                   </div>
                   <div className="crm-customer-card-meta">
                     <span className="crm-source-badge">{getSourceLabel(lead.source || 'Manual')}</span>
-                    <span className="crm-small">{sdrName.get(lead.sdrId || '') || 'Chưa gán'}</span>
+                    <span className="crm-small" title={personInCharge(lead).title}>{personInCharge(lead).label}</span>
                   </div>
                   <div className="crm-customer-card-metrics">
                     <span>Score: {lead.score == null ? '-' : lead.score}</span>
