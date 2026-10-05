@@ -1700,7 +1700,7 @@ async def find_zalo_user(
         "user_id": user_id_zalo,
         "display_name": user.get("display_name") or user.get("displayName") or user.get("zalo_name") or user.get("zaloName") or user_id_zalo,
         "zalo_name": user.get("zalo_name") or user.get("zaloName") or None,
-        "avatar_url": user.get("avatar") or user.get("avatarUrl") or None,
+        "avatar_url": user.get("avatar") or user.get("avatarUrl") or user.get("avt") or user.get("fullAvt") or user.get("fullAvatar") or None,
         "phone_e164": e164 if by == "phone" else None,
         "raw": user,
     }

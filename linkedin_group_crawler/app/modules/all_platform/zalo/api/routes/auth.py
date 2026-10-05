@@ -254,7 +254,7 @@ async def _build_current_status_payload(user_id: str) -> dict:
     # thật) — KHÔNG xóa auth ngay, chỉ đánh dấu session_expired để FE hiện nút
     # đăng nhập lại qua extension. Auth sẽ bị ghi đè khi import cookie mới.
     listener = get_listener_status(user_id)
-    if listener.get("auth_expired"):
+    if listener.get("auth_expired") and not listener.get("connected"):
         if session.status != "session_expired":
             logger.warning(
                 f"ZCA session expired for user={user_id} — keeping auth file but marking "

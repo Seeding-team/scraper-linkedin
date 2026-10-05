@@ -181,7 +181,10 @@ async def list_accounts(
         listener = get_listener_status(account_id)
         account["has_auth"] = account_id in auth_users
         account["listener"] = listener
-        if listener.get("auth_expired"):
+        if listener.get("connected"):
+            if account["has_auth"] and account.get("status") in {None, "", "unknown", "not_logged_in", "session_expired"}:
+                account["status"] = "confirmed"
+        elif listener.get("auth_expired"):
             account["status"] = "session_expired"
         elif account["has_auth"] and account.get("status") in {None, "", "unknown", "not_logged_in"}:
             account["status"] = "confirmed"

@@ -297,6 +297,8 @@ export function ZaloInboxAdminShell() {
   const [noteDraftState, setNoteDraftState] = useState({ convId: "", value: "" });
   const panelScrollRef = useRef<HTMLDivElement>(null);
   const chatScrollRef = useRef<HTMLDivElement>(null);
+  const lastChatScrollStateRef = useRef({ convId: "", lastMessageKey: "" });
+  const groupMembersLoadKeyRef = useRef<string | null>(null);
 
   // States for account edit
   const [editLabel, setEditLabel] = useState("");
@@ -431,6 +433,7 @@ export function ZaloInboxAdminShell() {
   const [mentionAtPos, setMentionAtPos] = useState<number | null>(null);
   const [showStickerPicker, setShowStickerPicker] = useState(false);
   const [reactionPickerFor, setReactionPickerFor] = useState<string | null>(null);
+  const [messageMenuFor, setMessageMenuFor] = useState<string | null>(null);
   const [showSearchPanel, setShowSearchPanel] = useState(false);
 
   const [forwardingMessage, setForwardingMessage] = useState<ZaloLibraryMessage | null>(null);
@@ -506,7 +509,7 @@ export function ZaloInboxAdminShell() {
   // và UI tự hiện fallback "Tin nhắn gốc" không nội dung.
   const findQuotedMessage = (replyToId: string | null | undefined) => {
     if (!replyToId) return undefined;
-    return inbox.messages.find((m) => m.source_message_id === replyToId);
+    return inbox.messages.find((m) => m.source_message_id === replyToId || m.id === replyToId);
   };
 
   const handleCopyMessage = (message: ZaloLibraryMessage) => {
@@ -738,26 +741,51 @@ export function ZaloInboxAdminShell() {
   const setNoteDraft = (value: string) => setNoteDraftState({ convId: inbox.openConv, value });
   const noteChanged = noteDraft.trim() !== selectedNote.trim();
 
-  // Scroll to bottom on chat loading
+  // Giữ feed ổn định: chỉ tự kéo xuống khi đổi hội thoại hoặc khi người dùng
+  // đang ở gần đáy, tránh poll realtime làm nhảy khỏi đoạn tin đang đọc.
   useEffect(() => {
-    if (chatScrollRef.current) {
+    const el = chatScrollRef.current;
+    const convId = inbox.openConv || "";
+    const lastMsg = inbox.messages[inbox.messages.length - 1];
+    const lastMessageKey = lastMsg ? String(lastMsg.source_message_id || lastMsg.id || lastMsg.timestamp_text || "") : "";
+    const prev = lastChatScrollStateRef.current;
+    const convChanged = prev.convId !== convId;
+    const messageChanged = prev.lastMessageKey !== lastMessageKey;
+    if (!el || (!convChanged && !messageChanged)) {
+      lastChatScrollStateRef.current = { convId, lastMessageKey };
+      return;
+    }
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    const shouldStickToBottom = convChanged || distanceFromBottom < 180;
+    lastChatScrollStateRef.current = { convId, lastMessageKey };
+    if (shouldStickToBottom) {
       requestAnimationFrame(() => {
         if (chatScrollRef.current) {
           chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
         }
       });
     }
-  }, [inbox.messages]);
+  }, [inbox.messages, inbox.openConv]);
+
+  useEffect(() => {
+    setMessageMenuFor(null);
+    setReactionPickerFor(null);
+    groupMembersLoadKeyRef.current = null;
+  }, [inbox.openConv, inbox.selectedAccountId]);
 
   useEffect(() => {
     if (!inbox.openConv || !inbox.selectedAccountId || inbox.loadingGroupMembers) return;
+    if (inbox.groupMembers?.group_id === inbox.openConv && inbox.groupMembers.members.length > 0) return;
+    const loadKey = `${inbox.selectedAccountId}:${inbox.openConv}`;
+    if (groupMembersLoadKeyRef.current === loadKey) return;
     const hasReceivedGroupSender = inbox.messages.some(
       (msg) => !msg.is_sent && msg.sender_id && msg.sender_id !== inbox.openConv,
     );
     if (hasReceivedGroupSender) {
+      groupMembersLoadKeyRef.current = loadKey;
       void inbox.loadGroupMembers();
     }
-  }, [inbox.openConv, inbox.selectedAccountId, inbox.messages, inbox.loadingGroupMembers]);
+  }, [inbox.openConv, inbox.selectedAccountId, inbox.messages, inbox.loadingGroupMembers, inbox.groupMembers]);
 
   const groupMemberByUid = useMemo(() => {
     if (!inbox.openConv || inbox.groupMembers?.group_id !== inbox.openConv) {
@@ -1454,7 +1482,7 @@ export function ZaloInboxAdminShell() {
                       const isSelected = selectedMessageIds.includes(msg.source_message_id || msg.id || "");
                       const senderMember = msg.sender_id ? groupMemberByUid.get(msg.sender_id) : undefined;
                       const senderName = senderMember?.display_name || msg.sender_name || selectedName || "Zalo";
-                      const senderAvatar = senderMember?.avatar_url || null;
+                      const senderAvatar = senderMember?.avatar_url || (msg as unknown as { sender_avatar_url?: string; avatar_url?: string }).sender_avatar_url || (msg as unknown as { avatar_url?: string }).avatar_url || null;
                       const isGroupSender = Boolean(msg.sender_id && msg.sender_id !== inbox.openConv);
                       const checkboxEl = (
                         <input
@@ -1476,6 +1504,7 @@ export function ZaloInboxAdminShell() {
                           key={msg.source_message_id || msg.id || `${group.date}-${index}`}
                           disabled={msg.is_deleted}
                           onReply={() => inbox.setReplyingTo(msg)}
+                          direction={isSent ? "left" : "right"}
                           className="w-full"
                         >
                           <div
@@ -1506,6 +1535,12 @@ export function ZaloInboxAdminShell() {
                               )}
                               {!msg.is_deleted && msg.reply_to_id && (() => {
                                 const quoted = findQuotedMessage(msg.reply_to_id);
+                                const quotedMember = quoted?.sender_id ? groupMemberByUid.get(quoted.sender_id) : undefined;
+                                const quotedSender = quoted
+                                  ? quoted.is_sent
+                                    ? "Bạn"
+                                    : quotedMember?.display_name || quoted.sender_name || senderName || "Zalo"
+                                  : "Tin nhắn gốc";
                                 return (
                                   <button
                                     type="button"
@@ -1513,13 +1548,17 @@ export function ZaloInboxAdminShell() {
                                       if (quoted) handleJumpToSearchedMessage(quoted);
                                     }}
                                     className={cn(
-                                      "block w-full text-left mb-1 px-2 py-1 rounded-lg border-l-2 text-[10.5px] truncate",
-                                      isSent ? "bg-white/10 border-white/40 text-white/85" : "bg-white border-[#E5E5E5] text-[#5a5f68]",
+                                      "mb-1 block w-full rounded-xl border-l-4 px-2.5 py-1.5 text-left shadow-xs",
+                                      isSent
+                                        ? "border-white/60 bg-white/15 text-white/90"
+                                        : "border-[#E3000F] bg-white text-[#4b5563]",
                                     )}
-                                    title={quoted ? "Di toi tin nhan goc" : undefined}
+                                    title={quoted ? "Đi tới tin nhắn gốc" : undefined}
                                   >
-                                    <span className="font-semibold">{quoted ? (quoted.sender_name || (quoted.is_sent ? "Ban" : "Khach")) : "Tin nhan goc"}: </span>
-                                    {quoted?.content || (quoted ? "Dinh kem" : "Khong tai duoc noi dung goc")}
+                                    <span className={cn("block text-[10px] font-bold", isSent ? "text-white" : "text-[#E3000F]")}>Trả lời {quotedSender}</span>
+                                    <span className="block truncate text-[10.5px] opacity-90">
+                                      {quoted?.content || (quoted ? "Đính kèm" : "Chưa tải được nội dung gốc")}
+                                    </span>
                                   </button>
                                 );
                               })()}
@@ -1551,6 +1590,8 @@ export function ZaloInboxAdminShell() {
                                 const msgKey = msg.source_message_id || msg.id || String(index);
                                 const canReact = !msg.is_deleted && msg.source_message_id && (msg as unknown as { cli_msg_id?: string }).cli_msg_id;
                                 const canActOnMessage = !msg.is_deleted && !!(msg.source_message_id || msg.id);
+                                const canCopyMessage = canActOnMessage && !!msg.content?.trim();
+                                const canForwardMessage = canActOnMessage && !!(msg.content?.trim() || (msg.assets ?? []).some((asset) => asset.storage_url));
                                 return (
                                   <div className="relative mt-0.5 flex items-center gap-1 px-1" style={{ justifyContent: isSent ? "flex-end" : "flex-start" }}>
                                     {time && <span className="text-[9px] text-[#A0A0A0]">{time}</span>}
@@ -1559,41 +1600,61 @@ export function ZaloInboxAdminShell() {
                                         type="button"
                                         data-zalo-reaction-ui
                                         onClick={() => setReactionPickerFor((prev) => (prev === msgKey ? null : msgKey))}
-                                        title="Tha cam xuc"
+                                        title="Thả cảm xúc"
                                         className="opacity-0 group-hover:opacity-100 transition-opacity text-[#A0A0A0] hover:text-brand"
                                       >
                                         <MaterialIcon name="mood" className="text-[11px]" />
                                       </button>
                                     )}
                                     {canActOnMessage && (
-                                      <button
-                                        type="button"
-                                        onClick={() => inbox.setReplyingTo(msg)}
-                                        title="Tra loi tin nhan nay"
-                                        className="opacity-70 group-hover:opacity-100 transition-all text-[#A0A0A0] hover:text-[#E3000F] hover:scale-110 flex items-center gap-0.5"
-                                      >
-                                        <MaterialIcon name="reply" className="text-[12px]" />
-                                      </button>
-                                    )}
-                                    {canActOnMessage && msg.content?.trim() && (
-                                      <button
-                                        type="button"
-                                        onClick={() => handleCopyMessage(msg)}
-                                        title="Copy"
-                                        className="opacity-0 group-hover:opacity-100 transition-opacity text-[#A0A0A0] hover:text-brand"
-                                      >
-                                        <MaterialIcon name="content_copy" className="text-[11px]" />
-                                      </button>
-                                    )}
-                                    {canActOnMessage && (msg.content?.trim() || (msg.assets ?? []).some((asset) => asset.storage_url)) && (
-                                      <button
-                                        type="button"
-                                        onClick={() => setForwardingMessage(msg)}
-                                        title="Chuyen tiep"
-                                        className="opacity-0 group-hover:opacity-100 transition-opacity text-[#A0A0A0] hover:text-brand"
-                                      >
-                                        <MaterialIcon name="forward" className="text-[11px]" />
-                                      </button>
+                                      <div className="relative">
+                                        <button
+                                          type="button"
+                                          onClick={() => setMessageMenuFor((prev) => (prev === msgKey ? null : msgKey))}
+                                          title="Thao tác tin nhắn"
+                                          className="flex h-5 w-5 items-center justify-center rounded-full text-[#A0A0A0] opacity-70 transition hover:bg-slate-100 hover:text-[#E3000F] group-hover:opacity-100"
+                                        >
+                                          <MoreVertical size={13} />
+                                        </button>
+                                        {messageMenuFor === msgKey && (
+                                          <div className={cn("absolute bottom-full z-40 mb-1 w-36 rounded-xl border border-slate-200 bg-white p-1 shadow-xl", isSent ? "right-0" : "left-0")}>
+                                            <button
+                                              type="button"
+                                              onClick={() => {
+                                                inbox.setReplyingTo(msg);
+                                                setMessageMenuFor(null);
+                                              }}
+                                              className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[11px] font-semibold text-slate-700 hover:bg-slate-50 hover:text-[#E3000F]"
+                                            >
+                                              <MaterialIcon name="reply" className="text-[13px]" /> Trả lời
+                                            </button>
+                                            <button
+                                              type="button"
+                                              disabled={!canForwardMessage}
+                                              onClick={() => {
+                                                if (!canForwardMessage) return;
+                                                setForwardingMessage(msg);
+                                                setMessageMenuFor(null);
+                                              }}
+                                              className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[11px] font-semibold text-slate-700 hover:bg-slate-50 hover:text-[#E3000F] disabled:cursor-not-allowed disabled:opacity-40"
+                                            >
+                                              <MaterialIcon name="forward" className="text-[13px]" /> Chuyển tiếp
+                                            </button>
+                                            <button
+                                              type="button"
+                                              disabled={!canCopyMessage}
+                                              onClick={() => {
+                                                if (!canCopyMessage) return;
+                                                handleCopyMessage(msg);
+                                                setMessageMenuFor(null);
+                                              }}
+                                              className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[11px] font-semibold text-slate-700 hover:bg-slate-50 hover:text-[#E3000F] disabled:cursor-not-allowed disabled:opacity-40"
+                                            >
+                                              <MaterialIcon name="content_copy" className="text-[13px]" /> Copy
+                                            </button>
+                                          </div>
+                                        )}
+                                      </div>
                                     )}
                                     {isSent && !msg.is_deleted && (msg as unknown as { cli_msg_id?: string }).cli_msg_id && (
                                       <button
@@ -1692,13 +1753,13 @@ export function ZaloInboxAdminShell() {
                 <MaterialIcon name="reply" className="shrink-0 text-base text-[#E3000F]" />
                 <div className="min-w-0 flex-1">
                   <div className="font-bold text-[#E3000F]">
-                    Dang tra loi {inbox.replyingTo.is_sent ? "ban" : inbox.replyingTo.sender_name || "khach"}
+                    Đang trả lời {inbox.replyingTo.is_sent ? "bạn" : inbox.replyingTo.sender_name || "khách"}
                   </div>
                   <div className="truncate text-slate-600">
-                    {inbox.replyingTo.content || ((inbox.replyingTo.assets?.length ?? 0) > 0 ? "Dinh kem" : "Tin nhan")}
+                    {inbox.replyingTo.content || ((inbox.replyingTo.assets?.length ?? 0) > 0 ? "Đính kèm" : "Tin nhắn")}
                   </div>
                 </div>
-                <button type="button" onClick={() => inbox.setReplyingTo(null)} className="rounded-full p-1 hover:bg-white" title="Huy tra loi">
+                <button type="button" onClick={() => inbox.setReplyingTo(null)} className="rounded-full p-1 hover:bg-white" title="Hủy trả lời">
                   <MaterialIcon name="close" className="text-sm text-slate-400" />
                 </button>
               </div>

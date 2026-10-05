@@ -97,7 +97,7 @@ export interface ZaloArchiveConv {
 
 const ACCOUNTS_POLL_MS = 15_000;
 const CONVERSATIONS_POLL_MS = 5_000;
-const MESSAGES_POLL_MS = 3_000;
+const MESSAGES_POLL_MS = 7_000;
 
 // ─── Hook ─────────────────────────────────────────────────────────────────────
 
@@ -368,8 +368,12 @@ export function useZaloAdminInbox() {
         if (r.status === "fulfilled" && r.value) {
           loaded.push(r.value);
           for (const acc of r.value.accounts) {
-            if (acc.listener?.connected) onlineSet.add(acc.account_id);
-            if (acc.listener?.auth_expired) expiredSet.add(acc.account_id);
+            if (acc.listener?.connected) {
+              onlineSet.add(acc.account_id);
+              expiredSet.delete(acc.account_id);
+            } else if (acc.listener?.auth_expired || acc.status === "session_expired") {
+              expiredSet.add(acc.account_id);
+            }
           }
         }
       }
@@ -472,8 +476,10 @@ export function useZaloAdminInbox() {
     } finally {
       setLoadingMessages(false);
     }
-    // Mark as read
-    try { await markZaloConversationAsRead(accountId, convId); } catch { /* no-op */ }
+    // Chỉ mark-read khi mở hội thoại/lần tải chính, tránh poll nền làm chậm và giật UI.
+    if (!append) {
+      try { await markZaloConversationAsRead(accountId, convId); } catch { /* no-op */ }
+    }
   }, []);
 
   useEffect(() => {
@@ -511,11 +517,20 @@ export function useZaloAdminInbox() {
         void loadConversations(selectedAccountIdRef.current);
       });
 
-      es.addEventListener("auth_expired", () => {
-        setExpiredAccounts((prev) => new Set([...prev, selectedAccountId]));
+      es.addEventListener("auth_expired", (event) => {
+        let eventAccountId = selectedAccountId;
+        try {
+          const payload = JSON.parse((event as MessageEvent).data || "{}");
+          eventAccountId = String(payload.account_id || payload.user_id || payload.userId || eventAccountId);
+        } catch {
+          // Older backend events may not include JSON; keep the selected account fallback.
+        }
+        const currentAccountId = selectedAccountIdRef.current;
+        if (!eventAccountId || eventAccountId !== currentAccountId) return;
+        setExpiredAccounts((prev) => new Set([...prev, eventAccountId]));
         setOnlineAccounts((prev) => {
           const next = new Set(prev);
-          next.delete(selectedAccountId);
+          next.delete(eventAccountId);
           return next;
         });
       });
@@ -1108,8 +1123,8 @@ export function useZaloAdminInbox() {
 
   const getAccountStatus = useCallback(
     (accountId: string): ZaloAccountOnlineStatus => {
-      if (expiredAccounts.has(accountId)) return "expired";
       if (onlineAccounts.has(accountId)) return "online";
+      if (expiredAccounts.has(accountId)) return "expired";
       for (const group of memberAccounts) {
         const accInfo = group.accounts.find((a) => a.account_id === accountId);
         if (accInfo?.listener?.running) return "connecting";
@@ -1146,7 +1161,7 @@ export function useZaloAdminInbox() {
     acc: selectedAccountId,
     accOnline: onlineAccounts.has(selectedAccountId),
     accPaused: false,
-    needRelogin: expiredAccounts.has(selectedAccountId),
+    needRelogin: Boolean(selectedAccountId && expiredAccounts.has(selectedAccountId) && !onlineAccounts.has(selectedAccountId)),
     connErr: false,
     extInstalled: true,
 

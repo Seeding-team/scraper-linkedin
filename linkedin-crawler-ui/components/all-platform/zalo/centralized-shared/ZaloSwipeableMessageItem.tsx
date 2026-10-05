@@ -7,17 +7,33 @@ interface ZaloSwipeableMessageItemProps {
   disabled?: boolean;
   onReply: () => void;
   className?: string;
+  direction?: "left" | "right";
 }
 
 export function ZaloSwipeableMessageItem({
   children,
-  disabled,
+  disabled = false,
   onReply,
   className,
+  direction = "left",
 }: ZaloSwipeableMessageItemProps) {
   const [offsetX, setOffsetX] = useState(0);
   const [isSwiping, setIsSwiping] = useState(false);
   const startXRef = useRef<number | null>(null);
+
+  const applyDragOffset = (diffX: number) => {
+    const allowedDiff = direction === "right" ? Math.max(diffX, 0) : Math.min(diffX, 0);
+    setOffsetX(direction === "right" ? Math.min(allowedDiff, 80) : Math.max(allowedDiff, -80));
+  };
+
+  const finishSwipe = () => {
+    if (startXRef.current === null) return;
+    setIsSwiping(false);
+    const shouldReply = direction === "right" ? offsetX >= 40 : offsetX <= -40;
+    if (shouldReply) onReply();
+    setOffsetX(0);
+    startXRef.current = null;
+  };
 
   const handleTouchStart = (e: React.TouchEvent) => {
     if (disabled) return;
@@ -27,23 +43,7 @@ export function ZaloSwipeableMessageItem({
 
   const handleTouchMove = (e: React.TouchEvent) => {
     if (startXRef.current === null || disabled) return;
-    const currentX = e.touches[0].clientX;
-    const diffX = currentX - startXRef.current;
-    if (diffX < 0) {
-      setOffsetX(Math.max(-80, diffX));
-    } else {
-      setOffsetX(0);
-    }
-  };
-
-  const handleTouchEnd = () => {
-    if (disabled) return;
-    setIsSwiping(false);
-    if (offsetX <= -40) {
-      onReply();
-    }
-    setOffsetX(0);
-    startXRef.current = null;
+    applyDragOffset(e.touches[0].clientX - startXRef.current);
   };
 
   const handleMouseDown = (e: React.MouseEvent) => {
@@ -54,22 +54,7 @@ export function ZaloSwipeableMessageItem({
 
   const handleMouseMove = (e: React.MouseEvent) => {
     if (startXRef.current === null || !isSwiping || disabled) return;
-    const diffX = e.clientX - startXRef.current;
-    if (diffX < 0) {
-      setOffsetX(Math.max(-80, diffX));
-    } else {
-      setOffsetX(0);
-    }
-  };
-
-  const handleMouseUpOrLeave = () => {
-    if (startXRef.current === null) return;
-    setIsSwiping(false);
-    if (offsetX <= -40) {
-      onReply();
-    }
-    setOffsetX(0);
-    startXRef.current = null;
+    applyDragOffset(e.clientX - startXRef.current);
   };
 
   const progress = Math.min(1, Math.abs(offsetX) / 45);
@@ -79,11 +64,11 @@ export function ZaloSwipeableMessageItem({
       className={cn("relative overflow-hidden touch-pan-y select-none", className)}
       onTouchStart={handleTouchStart}
       onTouchMove={handleTouchMove}
-      onTouchEnd={handleTouchEnd}
+      onTouchEnd={finishSwipe}
       onMouseDown={handleMouseDown}
       onMouseMove={handleMouseMove}
-      onMouseUp={handleMouseUpOrLeave}
-      onMouseLeave={handleMouseUpOrLeave}
+      onMouseUp={finishSwipe}
+      onMouseLeave={finishSwipe}
     >
       <div
         className="transition-transform duration-75"
@@ -95,9 +80,12 @@ export function ZaloSwipeableMessageItem({
         {children}
       </div>
 
-      {offsetX < 0 && (
+      {offsetX !== 0 && (
         <div
-          className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center justify-center h-8 w-8 rounded-full bg-red-100 text-[#E3000F] shadow-sm transition-all pointer-events-none"
+          className={cn(
+            "absolute top-1/2 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-full bg-red-100 text-[#E3000F] shadow-sm transition-all pointer-events-none",
+            direction === "right" ? "left-2" : "right-2",
+          )}
           style={{
             opacity: progress,
             transform: `translateY(-50%) scale(${0.5 + progress * 0.5})`,

@@ -635,7 +635,7 @@ async function cmdGroupMembersFull(api, args) {
         profiles.push({
           uid: String(id),
           display_name: p ? (p.zaloName || p.displayName || String(id)) : String(id),
-          avatar_url: p ? p.avatar : null,
+          avatar_url: p ? (p.avatar || p.avatarUrl || p.avt || p.fullAvt || p.fullAvatar || null) : null,
           role: roleInfo ? (roleInfo.isAdmin ? "admin" : "member") : "member",
         });
       }
