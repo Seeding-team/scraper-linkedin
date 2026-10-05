@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { seedingQuoteRepository } from '@/modules/quotes/repositories/SeedingQuoteRepository';
 import type { SystemExchangeRate } from '@/modules/quotes/repositories/QuoteRepository';
 
-/** Ty gia USD->VND HE THONG (bang quote_exchange_rates) — backend TU lay tu nguon uy tin (Vietcombank,
+/** Ty gia USD->VND HE THONG (bang quote_exchange_rates) — backend TU lay tu nguon uy tin (tygiausd.org,
  * du phong ExchangeRate-API), co the bi Admin override thu cong. Nguon duy nhat cho form San pham/Dich vu,
  * import NCC va bao gia (Workspace + Tao bao gia nhanh). KHONG hard-code ty gia trong code: khong lay
  * duoc va chua tung co rate → null va nguoi dung nhap tay. Bao gia da tao KHONG doc lai ty gia nay
@@ -34,7 +34,7 @@ export function invalidateSystemUsdVndRate(): void {
   cache = null;
 }
 
-/** "Vietcombank (bán ra) · cập nhật 14:05 05/10/2026" — de nguoi dung biet rate tu dau, luc nao. */
+/** "Tỷ giá USD thị trường tự do – tygiausd.org · cập nhật 14:05 05/10/2026" — de nguoi dung biet rate tu dau, luc nao. */
 export function describeSystemRate(info: Pick<SystemExchangeRate, 'source' | 'updatedAt' | 'isManual' | 'stale'> | null | undefined): string {
   if (!info) return '';
   const when = info.updatedAt ? new Date(info.updatedAt).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit', year: 'numeric' }) : '';

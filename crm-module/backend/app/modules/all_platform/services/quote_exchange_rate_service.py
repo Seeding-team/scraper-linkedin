@@ -2,9 +2,9 @@
 override thu cong, KHONG hard-code bat ky ty gia nao.
 
 Nguon (theo thu tu uu tien, co the thay trong SOURCES khi test):
-  1. Vietcombank — bang ty gia cong khai (muc "Bán ra" USD). Nguon cua ngan hang, sat gia tri thuc
-     te Viet Nam. Ho yeu cau chi goi 1 lan / 5 phut → service co cooldown.
-  2. ExchangeRate-API (open.er-api.com) — ty gia thi truong tham khao, chi dung khi Vietcombank loi.
+  1. tygiausd.org — ty gia USD thi truong tu do (cho den), muc "Bán ra" (vd Mua 26.000 / Ban 26.030 → 26.030).
+     Nguon chinh theo yeu cau; doc truc tiep bang "Giá đô la chợ đen" tren trang chu.
+  2. ExchangeRate-API (open.er-api.com) — ty gia thi truong tham khao, chi dung khi tygiausd.org loi.
 
 Quy tac:
   * Bang quote_exchange_rates (1 dong / instance) luu rate + source + updated_at + is_manual.
@@ -19,8 +19,8 @@ Quy tac:
 from __future__ import annotations
 
 import logging
+import re
 import threading
-import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Any, Callable
@@ -37,7 +37,6 @@ logger = logging.getLogger(__name__)
 TABLE = "quote_exchange_rates"
 HISTORY_TABLE = "quote_exchange_rate_history"
 
-VCB_URL = "https://portal.vietcombank.com.vn/Usercontrols/TVPortal.TyGia/pXML.aspx"
 ER_API_URL = "https://open.er-api.com/v6/latest/USD"
 HTTP_TIMEOUT = 5.0
 
@@ -45,7 +44,7 @@ HTTP_TIMEOUT = 5.0
 AUTO_REFRESH_AFTER = timedelta(hours=6)
 # Rate tu dong cu hon muc nay (hoac lan lam moi gan nhat loi) bi coi la "stale" → FE canh bao.
 STALE_AFTER = timedelta(hours=24)
-# Khong goi nguon ngoai thuong xuyen hon: Vietcombank yeu cau >= 5 phut / lan.
+# Khong goi nguon ngoai thuong xuyen hon (lich su: nguon cu yeu cau >= 5 phut / lan, giu nguyen co che).
 LAZY_COOLDOWN = timedelta(minutes=5)
 FORCE_COOLDOWN = timedelta(seconds=60)
 
@@ -75,21 +74,33 @@ def _validated(rate: Decimal) -> Decimal:
         raise RateSourceError(str(exc)) from exc
 
 
-def fetch_vietcombank(client: httpx.Client) -> tuple[Decimal, str]:
-    """USD 'Bán ra' tu bang ty gia Vietcombank."""
+TYGIAUSD_URL = "https://tygiausd.org/"
+TYGIAUSD_SOURCE = "Tỷ giá USD thị trường tự do – tygiausd.org"
+# Dong "USD chợ đen" trong bang "Giá đô la chợ đen": <th>…USD chợ đen…</th><td>MUA <span>±</span></td><td>BÁN <span>±</span></td>
+_TYGIAUSD_ROW = re.compile(
+    r"USD\s+ch\S+\s+\S+.*?</th>\s*<td[^>]*>\s*([\d.,]+)[^<]*(?:<span[^>]*>[^<]*</span>)?\s*</td>"
+    r"\s*<td[^>]*>\s*([\d.,]+)",
+    re.S | re.I,
+)
+
+
+def fetch_tygiausd(client: httpx.Client) -> tuple[Decimal, str]:
+    """USD thi truong tu do (cho den) 'Bán ra' tu tygiausd.org — vd Mua 26.000 / Ban 26.030 → lay 26.030."""
     try:
-        response = client.get(VCB_URL)
+        response = client.get(TYGIAUSD_URL)
         response.raise_for_status()
-        root = ET.fromstring(response.text)
-    except (httpx.HTTPError, ET.ParseError) as exc:
-        raise RateSourceError(f"Vietcombank: {exc}") from exc
-    for node in root.iter("Exrate"):
-        if (node.get("CurrencyCode") or "").strip().upper() == "USD":
-            sell = (node.get("Sell") or "").strip()
-            if not sell or sell == "-":
-                raise RateSourceError("Vietcombank: không có giá bán ra USD")
-            return _validated(_parse_number(sell)), "Vietcombank (bán ra)"
-    raise RateSourceError("Vietcombank: không thấy dòng USD")
+        html = response.content.decode("utf-8", errors="replace")
+    except httpx.HTTPError as exc:
+        raise RateSourceError(f"tygiausd.org: {exc}") from exc
+    match = _TYGIAUSD_ROW.search(html)
+    if not match:
+        raise RateSourceError("tygiausd.org: không thấy dòng USD chợ đen")
+    buy, sell = _parse_number(match.group(1)), _parse_number(match.group(2))
+    if sell <= 0:
+        raise RateSourceError("tygiausd.org: không có giá bán ra USD")
+    if buy > sell:
+        raise RateSourceError("tygiausd.org: giá mua lớn hơn giá bán (bố cục trang đã đổi?)")
+    return _validated(sell), TYGIAUSD_SOURCE
 
 
 def fetch_exchangerate_api(client: httpx.Client) -> tuple[Decimal, str]:
@@ -110,7 +121,7 @@ def fetch_exchangerate_api(client: httpx.Client) -> tuple[Decimal, str]:
 
 # (ten, ham) — thu tu uu tien. Test co the thay the.
 SOURCES: list[tuple[str, Callable[[httpx.Client], tuple[Decimal, str]]]] = [
-    ("vietcombank", fetch_vietcombank),
+    ("tygiausd", fetch_tygiausd),
     ("exchangerate_api", fetch_exchangerate_api),
 ]
 

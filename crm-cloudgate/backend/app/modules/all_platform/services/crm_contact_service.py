@@ -55,7 +55,47 @@ def list_contacts(customer_id: str, user: dict[str, Any]) -> list[dict[str, Any]
         .order("created_at")
         .execute()
     )
-    return res.data or []
+    contacts = res.data or []
+    _attach_contact_counts(contacts, customer_id, user)
+    return contacts
+
+
+def _attach_contact_counts(contacts: list[dict[str, Any]], customer_id: str, user: dict[str, Any]) -> None:
+    """Gan deal_count/project_count cho tung lien he (danh sach Nguoi lien he cua khach hang). Cung quy tac voi
+    get_contact_related: Co hoi = deal co primary_contact_id = nguoi nay (loc theo _deal_visible_to); Du an =
+    du an gan truc tiep primary_contact_id + du an cua cac co hoi do. Loi chi log, so dem = 0."""
+    for c in contacts:
+        c["deal_count"] = 0
+        c["project_count"] = 0
+    if not contacts:
+        return
+    try:
+        supabase = get_supabase_client()
+        lead_res = execute_supabase_query(
+            lambda: supabase.table("customer_leads")
+            .select(BASE_COLUMNS)
+            .eq("customer_id", customer_id)
+            .eq("instance", settings.crm_instance)
+            .execute()
+        )
+        deals = [d for d in (_normalize_row(row) for row in lead_res.data or []) if _deal_visible_to(user, d)]
+        project_res = execute_supabase_query(
+            lambda: supabase.table("projects").select("id, primary_contact_id")
+            .eq("customer_id", customer_id).eq("instance", settings.crm_instance).execute()
+        )
+        direct: dict[str, set[str]] = {}
+        for p in project_res.data or []:
+            if p.get("primary_contact_id"):
+                direct.setdefault(str(p["primary_contact_id"]), set()).add(p["id"])
+        for c in contacts:
+            cid = str(c["id"])
+            its_deals = [d for d in deals if str(d.get("primary_contact_id") or "") == cid]
+            c["deal_count"] = len(its_deals)
+            ids = set(direct.get(cid, set()))
+            ids.update(pid for pid in ((d.get("project_id") or d.get("projectId")) for d in its_deals) if pid)
+            c["project_count"] = len(ids)
+    except Exception:
+        logger.exception("list_contacts: failed to attach deal/project counts for customer %s", customer_id)
 
 
 def _unset_other_primary_contacts(customer_id: str, exclude_contact_id: str | None) -> None:
