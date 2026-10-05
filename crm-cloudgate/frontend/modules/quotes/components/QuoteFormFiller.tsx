@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { createContext, useContext, useEffect, useState } from 'react';
 import type { BundleSnapshotComponent, QuoteData, QuoteField, QuoteItem, QuoteSchema, VillaSolutionItem } from '../types';
 import {
   calculateItemAfterDiscount,
@@ -23,14 +23,25 @@ import { useCatalogItemAdd } from '../../service-catalog/useCatalogItemAdd';
 import { ConfirmModal } from '../../crm/components/ConfirmModal';
 import { CurrencyInput } from '@/components/CurrencyInput';
 import { PaymentPlanEditor } from './PaymentPlanEditor';
-import { calculateOverallDiscountSummary } from '../utils/quoteCalculations';
+import { calculateOverallDiscountSummary, formatMoney } from '../utils/quoteCalculations';
+import { localizeCurrencyLabel, normalizeQuoteCurrency, type QuoteCurrency } from '@/lib/currency';
+import { VND_FX, convertQuoteItemsCurrency, type QuoteFx } from '../utils/quoteCurrency';
+import { describeSystemRate, fetchSystemUsdVndRate, fetchSystemUsdVndRateInfo } from '../../service-catalog/useSystemExchangeRate';
+import type { SystemExchangeRate } from '../repositories/QuoteRepository';
 
 export interface QuoteFillValue {
   data: QuoteData;
   items: QuoteItem[];
   solutionItems: VillaSolutionItem[];
   overallDiscountPercent?: number | null;
+  /** Ty gia (VND / 1 USD) da chot khi data.currency = 'USD'; null = VND. */
+  exchangeRate?: number | null;
 }
+
+/** Tien te + ty gia cua bao gia dang soan - DUNG CHUNG logic quy doi voi Quote Workspace
+ * (lib/currency + utils/quoteCurrency), khong co logic rieng. */
+const QuoteCurrencyContext = createContext<QuoteFx>(VND_FX);
+const moneyInputProps = (currency: QuoteCurrency) => (currency === 'USD' ? ({ decimals: 2, locale: 'en-US' } as const) : ({} as const));
 
 interface Props {
   schema: QuoteSchema;
@@ -42,6 +53,9 @@ interface Props {
    * định trước đây villa không hiện khối này ở màn điền, chỉ hiện ở preview).
    * undefined = giữ hành vi cũ (ẩn với villa, hiện với các mẫu khác). */
   showTotals?: boolean;
+  /** false = khong tu chen control tien te canh bang hang muc (khi cho khac cua cung man da co,
+   * vd FillQuoteStep combined hien o khoi 'Thong tin bao gia'). Mac dinh true. */
+  showCurrencyInItems?: boolean;
 }
 
 type RowRecord = Record<string, unknown>;
@@ -89,20 +103,145 @@ function coercePercent(value: string) {
   return clampDiscountPercent(Number(value) || 0);
 }
 
-export function QuoteFormFiller({ schema, value, onChange, quoteFormId, showTotals }: Props) {
+export function QuoteFormFiller({ schema, value, onChange, quoteFormId, showTotals, showCurrencyInItems = true }: Props) {
   const layoutType = schema.layoutType;
   const sections = schema.sections || [];
-  const totals =
-    layoutType === 'villa_solution_package'
-      ? calculateVillaTotals(value.solutionItems)
-      : calculateQuoteTotals(value.items);
+  const isVillaLayout = layoutType === 'villa_solution_package';
+  // Villa (solutionItems) luon VND; mau thuong theo data.currency (chi 'USD' moi la USD).
+  const currency: QuoteCurrency = isVillaLayout ? 'VND' : normalizeQuoteCurrency(value.data.currency);
+  const fx: QuoteFx = { currency, rate: currency === 'USD' ? value.exchangeRate ?? null : null };
+  const totals = isVillaLayout ? calculateVillaTotals(value.solutionItems) : calculateQuoteTotals(value.items, 0, currency);
   const shouldShowTotals = typeof showTotals === 'boolean' ? showTotals : layoutType !== 'villa_solution_package';
+  const fmt = (amount: unknown) => formatMoney(amount, currency);
+  const [pendingSwitch, setPendingSwitch] = useState<{ target: QuoteCurrency; rateInput: number | null; custom?: boolean } | null>(null);
+  const [systemRate, setSystemRate] = useState<number | null>(null);
+  const [systemRateInfo, setSystemRateInfo] = useState<SystemExchangeRate | null>(null);
+  useEffect(() => {
+    let alive = true;
+    void fetchSystemUsdVndRate().then(rate => {
+      if (alive) setSystemRate(rate);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+  useEffect(() => {
+    if (!systemRate) return;
+    setPendingSwitch(current => (current && current.target === 'USD' && !(current.rateInput && current.rateInput > 0) ? { ...current, rateInput: systemRate } : current));
+  }, [systemRate, pendingSwitch?.target]);
+
+  function applyCurrency(target: QuoteCurrency, rate: number | null) {
+    const to: QuoteFx = { currency: target, rate: target === 'USD' ? rate : null };
+    onChange({
+      ...value,
+      data: { ...value.data, currency: target },
+      exchangeRate: to.rate,
+      items: convertQuoteItemsCurrency(value.items, fx, to),
+    });
+  }
+
+  async function requestCurrency(target: QuoteCurrency) {
+    if (target === currency) return;
+    // Chon USD: lay TY GIA HE THONG MOI NHAT de khong bat nhap tay (bao gia da tao giu ty gia da chot).
+    const info = target === 'USD' ? await fetchSystemUsdVndRateInfo(true) : null;
+    const rate = info?.rate ?? null;
+    if (target === 'USD') {
+      setSystemRate(rate);
+      setSystemRateInfo(info);
+    }
+    const hasItems = value.items.length > 0;
+    if (!hasItems && (target === 'VND' || (rate && rate > 0))) {
+      applyCurrency(target, rate);
+      return;
+    }
+    setPendingSwitch({ target, rateInput: rate });
+  }
+
+  const currencyControl = isVillaLayout ? (
+    <strong>VND</strong>
+  ) : (
+    <div className="quote-currency-switch" role="group" aria-label="Tiền tệ báo giá" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
+        {(['VND', 'USD'] as const).map(code => (
+          <button
+            key={code}
+            type="button"
+            className="quote-add-parent-button quote-add-parent-button--secondary"
+            style={{
+              width: 'auto',
+              flex: '0 0 auto',
+              padding: '6px 18px',
+              fontWeight: 700,
+              ...(currency === code ? { background: '#c2185b', color: '#fff', borderColor: '#c2185b' } : {}),
+            }}
+            aria-pressed={currency === code}
+            onClick={() => requestCurrency(code)}
+          >
+            {code}
+          </button>
+        ))}
+        {currency === 'USD' && fx.rate ? <em>1 USD = {fx.rate.toLocaleString('vi-VN')} VND (tỷ giá đã chốt)</em> : null}
+      </span>
+      {pendingSwitch ? (
+        <span className="quote-currency-confirm" role="alertdialog" style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: 10, border: '1px solid #e2e8f0', borderRadius: 8 }}>
+          <span>
+            {value.items.length
+              ? `Giá vốn và đơn giá của ${value.items.length} hạng mục sẽ được quy đổi sang ${pendingSwitch.target}, tổng tiền tính lại. Giá gốc trong danh mục (VND) không đổi.`
+              : `Báo giá sẽ chuyển sang ${pendingSwitch.target}.`}
+          </span>
+          {pendingSwitch.target === 'USD' ? (
+            systemRate && !pendingSwitch.custom ? (
+              <span>
+                Tỷ giá hệ thống: <strong>1 USD = {systemRate.toLocaleString('vi-VN')} VND</strong> — sẽ được chốt cho báo giá này.
+                {systemRateInfo ? <small style={{ display: 'block' }}>{describeSystemRate(systemRateInfo)}</small> : null}
+                {systemRateInfo?.stale ? <small style={{ display: 'block' }}>Chưa lấy được tỷ giá mới — đang dùng tỷ giá gần nhất.</small> : null}{' '}
+                <button type="button" onClick={() => setPendingSwitch(current => (current ? { ...current, custom: true } : current))}>
+                  Dùng tỷ giá khác
+                </button>
+              </span>
+            ) : (
+              <label>
+                Tỷ giá (1 USD = ? VND) — chốt cho báo giá này
+                <CurrencyInput
+                  decimals={2}
+                  locale="en-US"
+                  value={pendingSwitch.rateInput}
+                  placeholder={systemRate ? undefined : 'Chưa có tỷ giá hệ thống - nhập tỷ giá'}
+                  onChange={next => setPendingSwitch(current => (current ? { ...current, rateInput: next } : current))}
+                />
+                {!systemRate ? <small>Chưa lấy được tỷ giá tự động — nhập tỷ giá, hoặc Admin vào Cài đặt báo giá → Tỷ giá USD/VND để cập nhật.</small> : null}
+              </label>
+            )
+          ) : (
+            <span>Quy đổi ngược theo tỷ giá đã chốt: 1 USD = {(fx.rate ?? 0).toLocaleString('vi-VN')} VND.</span>
+          )}
+          <span style={{ display: 'inline-flex', gap: 6 }}>
+            <button
+              type="button"
+              className="quote-add-parent-button"
+              disabled={pendingSwitch.target === 'USD' && !(pendingSwitch.rateInput && pendingSwitch.rateInput >= 1000 && pendingSwitch.rateInput <= 100000)}
+              onClick={() => {
+                applyCurrency(pendingSwitch.target, pendingSwitch.rateInput);
+                setPendingSwitch(null);
+              }}
+            >
+              Đổi sang {pendingSwitch.target}
+            </button>
+            <button type="button" className="quote-add-parent-button quote-add-parent-button--secondary" onClick={() => setPendingSwitch(null)}>
+              Huỷ
+            </button>
+          </span>
+        </span>
+      ) : null}
+    </div>
+  );
 
   function setData(key: string, fieldValue: unknown) {
     onChange({ ...value, data: { ...value.data, [key]: fieldValue } });
   }
 
   return (
+    <QuoteCurrencyContext.Provider value={fx}>
     <div className="quote-form-filler">
       {sections.map(section => {
         const repeaterField = section.fields.find(field => field.type === 'repeater-table');
@@ -118,6 +257,12 @@ export function QuoteFormFiller({ schema, value, onChange, quoteFormId, showTota
                   {isQuoteItemsTable || isSolutionTable ? <span className="quote-section-count-badge">{itemCount} hạng mục</span> : null}
                 </h4>
               </div>
+              {isQuoteItemsTable && showCurrencyInItems && !schema.sections.some(sec => sec.fields.some(f => f.key === 'currency')) ? (
+                <div className="quote-currency-row" style={{ marginBottom: 8 }}>
+                  <span>Tiền tệ: </span>
+                  {currencyControl}
+                </div>
+              ) : null}
               {isQuoteItemsTable || isSolutionTable ? (
                 <p className="quote-section-hint">
                   Chọn các sản phẩm đang kinh doanh từ danh mục. Giá và mô tả sẽ được sao chép vào báo giá.
@@ -161,6 +306,7 @@ export function QuoteFormFiller({ schema, value, onChange, quoteFormId, showTota
                   value={value.data[field.key]}
                   data={value.data}
                   totals={totals}
+                  currencyControl={currencyControl}
                   onChange={fieldValue => setData(field.key, fieldValue)}
                 />
               ))}
@@ -173,30 +319,32 @@ export function QuoteFormFiller({ schema, value, onChange, quoteFormId, showTota
         <section className="quote-section-card quote-totals-card">
           <div className="quote-total-row">
             <span>Tạm tính</span>
-            <strong>{formatVnd(totals.subtotalAmount)}</strong>
+            <strong>{fmt(totals.subtotalAmount)}</strong>
           </div>
           {totals.discountAmount ? (
             <div className="quote-total-row quote-total-row--discount">
               <span>Giảm giá</span>
-              <strong>-{formatVnd(totals.discountAmount)}</strong>
+              <strong>-{fmt(totals.discountAmount)}</strong>
             </div>
           ) : null}
           <div className="quote-total-row">
             <span>VAT</span>
-            <strong>{formatVnd(totals.totalVatAmount)}</strong>
+            <strong>{fmt(totals.totalVatAmount)}</strong>
           </div>
           <div className="quote-total-row quote-total-row--grand">
             <span>Tổng cộng</span>
-            <strong>{formatVnd(totals.totalAmount)}</strong>
+            <strong>{fmt(totals.totalAmount)}</strong>
           </div>
         </section>
       )}
       {shouldShowTotals && schema.enableDynamicPaymentPlan && layoutType !== 'villa_solution_package' ? (
         <PaymentPlanEditor rows={value.data.paymentPlan || []}
-          finalPayable={calculateOverallDiscountSummary(totals, value.overallDiscountPercent).grandTotal}
+          finalPayable={calculateOverallDiscountSummary(totals, value.overallDiscountPercent, currency).grandTotal}
+          currency={currency}
           onChange={paymentPlan => setData('paymentPlan', paymentPlan)} />
       ) : null}
     </div>
+    </QuoteCurrencyContext.Provider>
   );
 }
 
@@ -205,15 +353,27 @@ function FieldInput({
   value,
   data,
   totals,
+  currencyControl,
   onChange,
 }: {
   field: QuoteField;
   value: unknown;
   data: QuoteData;
   totals: { subtotalAmount: number; discountAmount?: number; totalVatAmount: number; totalAmount: number };
+  currencyControl?: React.ReactNode;
   onChange: (value: unknown) => void;
 }) {
+  const { currency: ctxCurrency } = useContext(QuoteCurrencyContext);
   if (field.visible === false) return null;
+  if (field.key === 'currency') {
+    // Tien te la lua chon he thong (VND | USD), khong con la o text tu do.
+    return (
+      <div className={`crm-field`}>
+        <span>{field.label}</span>
+        {currencyControl}
+      </div>
+    );
+  }
   const disabled = field.editable === false;
   const fieldClass = `crm-field ${field.type === 'textarea' || field.type === 'repeatable-textarea' || WIDE_FIELD_KEYS.has(field.key) ? 'crm-field--full' : ''}`;
   const label = (
@@ -238,7 +398,7 @@ function FieldInput({
     return (
       <label className={fieldClass}>
         {label}
-        <input value={formatVnd(computed)} disabled readOnly />
+        <input value={formatMoney(computed, ctxCurrency)} disabled readOnly />
       </label>
     );
   }
@@ -305,6 +465,7 @@ function FieldInput({
       <label className={fieldClass}>
         {label}
         <CurrencyInput
+          {...moneyInputProps(ctxCurrency)}
           value={numericValue}
           placeholder={field.placeholder}
           disabled={disabled}
@@ -766,6 +927,9 @@ function QuoteCatalogPicker({
   onIncreaseQuantity: (existingIndex: number, addQuantity: number) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const fxCtx = useContext(QuoteCurrencyContext);
+  // Gia danh muc luon VND -> quy doi sang tien te quote khi them (khong sua danh muc).
+  const addConverted = (newItems: QuoteItem[]) => onAddMany(convertQuoteItemsCurrency(newItems, VND_FX, fxCtx));
 
   // Rules of Hooks: useCatalogItemAdd (goi useState ben trong) PHAI nam
   // TRUOC moi early-return co dieu kien - khong duoc dat sau
@@ -775,7 +939,7 @@ function QuoteCatalogPicker({
   items.forEach((item, index) => {
     if (item.catalogItemId) existingKeys.set(item.catalogItemId, index);
   });
-  const catalogAdd = useCatalogItemAdd<QuoteItem>({ existingKeys, onAdd: newItems => onAddMany(newItems) });
+  const catalogAdd = useCatalogItemAdd<QuoteItem>({ existingKeys, onAdd: addConverted });
 
   if (!options.bundles.length && !options.components.length) return null;
 
@@ -844,6 +1008,21 @@ function QuoteCatalogPicker({
         loading={false}
         items={pickerItems}
         onAddSelected={handleAddSelected}
+        quoteCurrency={fxCtx.currency}
+        exchangeRate={fxCtx.rate}
+        onIncreaseExisting={id => {
+          const existingIndex = existingKeys.get(id);
+          if (existingIndex != null) onIncreaseQuantity(existingIndex, 1);
+        }}
+        onAddAnother={id => {
+          const bundle = options.bundles.find(b => b.id === id);
+          if (bundle) {
+            addConverted([bundleToQuoteItem(bundle)]);
+            return;
+          }
+          const component = options.components.find(c => c.id === id);
+          if (component) addConverted([componentToQuoteItem(component)]);
+        }}
       />
       <ConfirmModal
         open={catalogAdd.dedupQueue.length > 0}
@@ -882,6 +1061,7 @@ function QuoteItemsEditor({
   quoteFormId?: string;
 }) {
   const catalogOptions = useCatalogOptions(quoteFormId);
+  const { currency: ctxCurrencyForGroup } = useContext(QuoteCurrencyContext);
 
   function updateParent(index: number, patch: Partial<QuoteItem>) {
     onChange(items.map((item, i) => (i === index ? { ...item, ...patch } : item)));
@@ -1018,7 +1198,7 @@ function QuoteItemsEditor({
             </button>
             <div className="quote-group-subtotal">
               <span>Tạm tính nhóm</span>
-              <strong>{formatVnd([item, ...(item.children || [])].reduce((sum, row) => sum + calculateItemTotal(row), 0))}</strong>
+              <strong>{formatMoney([item, ...(item.children || [])].reduce((sum, row) => sum + calculateItemTotal(row, ctxCurrencyForGroup), 0), ctxCurrencyForGroup)}</strong>
             </div>
           </div>
         </div>
@@ -1076,6 +1256,7 @@ function SchemaQuoteItemsTable({
   onRemoveParent: (index: number) => void;
   onRemoveChild: (parentIndex: number, childIndex: number) => void;
 }) {
+  const { currency: tableCurrency } = useContext(QuoteCurrencyContext);
   const [detailRow, setDetailRow] = useState<Extract<QuoteItemEditorRow, { kind: 'item' }> | null>(null);
   const [detailDescription, setDetailDescription] = useState('');
   const [detailWarranty, setDetailWarranty] = useState('');
@@ -1104,7 +1285,7 @@ function SchemaQuoteItemsTable({
       <table className="quote-table quote-table--editable quote-schema-items-table">
         <thead>
           <tr>
-            {editorColumns.map(column => <th key={column.key}>{column.label}</th>)}
+            {editorColumns.map(column => <th key={column.key}>{localizeCurrencyLabel(column.label, tableCurrency)}</th>)}
             <th aria-label="Thao tác" />
           </tr>
         </thead>
@@ -1124,7 +1305,7 @@ function SchemaQuoteItemsTable({
           ) : (
             <tr key={row.item.id || `item-${row.parentIndex}-${row.childIndex ?? 'root'}`}>
               {editorColumns.map(column => (
-                <td key={column.key} data-label={column.label}>
+                <td key={column.key} data-label={localizeCurrencyLabel(column.label, tableCurrency)}>
                   <SchemaQuoteItemCell
                     item={row.item}
                     column={column}
@@ -1187,16 +1368,17 @@ function SchemaQuoteItemCell({
   number: string;
   onChange: (patch: Partial<QuoteItem>) => void;
 }) {
+  const { currency: cellCurrency } = useContext(QuoteCurrencyContext);
   if (column.type === 'auto-number' || column.key === 'order') return <span className="quote-schema-row-number">{number}</span>;
 
   const calculatedValues: Record<string, number> = {
-    subtotal: calculateItemSubtotal(item),
-    amountAfterDiscount: calculateItemAfterDiscount(item),
-    vatAmount: calculateItemVat(item),
-    total: calculateItemTotal(item),
+    subtotal: calculateItemSubtotal(item, cellCurrency),
+    amountAfterDiscount: calculateItemAfterDiscount(item, cellCurrency),
+    vatAmount: calculateItemVat(item, cellCurrency),
+    total: calculateItemTotal(item, cellCurrency),
   };
   if (column.type === 'calculated' || Object.prototype.hasOwnProperty.call(calculatedValues, column.key)) {
-    return <span className="quote-schema-calculated">{formatVnd(calculatedValues[column.key] ?? 0)}</span>;
+    return <span className="quote-schema-calculated">{formatMoney(calculatedValues[column.key] ?? 0, cellCurrency)}</span>;
   }
 
   const record = item as unknown as Record<string, unknown>;
@@ -1228,6 +1410,7 @@ function SchemaQuoteItemCell({
           : Number(rawValue) || 0;
     return (
       <CurrencyInput
+        {...moneyInputProps(cellCurrency)}
         value={numericValue}
         placeholder={column.placeholder}
         disabled={column.editable === false}
@@ -1360,11 +1543,12 @@ function CompactSolutionRow({
 }
 
 function QuoteItemFields({ item, prefix, onChange }: { item: QuoteItem; prefix: 'parent' | 'child'; onChange: (patch: Partial<QuoteItem>) => void }) {
-  const subtotal = calculateItemSubtotal(item);
-  const discount = calculateItemDiscount(item);
-  const afterDiscount = calculateItemAfterDiscount(item);
-  const vat = calculateItemVat(item);
-  const total = calculateItemTotal(item);
+  const { currency: rowCurrency } = useContext(QuoteCurrencyContext);
+  const subtotal = calculateItemSubtotal(item, rowCurrency);
+  const discount = calculateItemDiscount(item, rowCurrency);
+  const afterDiscount = calculateItemAfterDiscount(item, rowCurrency);
+  const vat = calculateItemVat(item, rowCurrency);
+  const total = calculateItemTotal(item, rowCurrency);
   const nameLabel = prefix === 'parent' ? 'Tên dịch vụ' : 'Tên dịch vụ con';
   return (
     <div className="quote-item-fields">
@@ -1386,7 +1570,7 @@ function QuoteItemFields({ item, prefix, onChange }: { item: QuoteItem; prefix: 
       </label>
       <label className="crm-field">
         <span>Đơn giá</span>
-        <CurrencyInput value={item.unitPrice || 0} onChange={next => onChange({ unitPrice: next ?? 0 })} />
+        <CurrencyInput {...moneyInputProps(rowCurrency)} value={item.unitPrice || 0} onChange={next => onChange({ unitPrice: next ?? 0 })} />
       </label>
       <label className="crm-field">
         <span>Giảm giá (%)</span>
@@ -1397,11 +1581,11 @@ function QuoteItemFields({ item, prefix, onChange }: { item: QuoteItem; prefix: 
         <input type="number" min={0} max={100} value={item.vatRate || 0} onChange={event => onChange({ vatRate: coercePercent(event.target.value) })} />
       </label>
       <div className="quote-item-calculation">
-        <span>Gốc: {formatVnd(subtotal)}</span>
-        <span>Giảm: {discount ? `-${formatVnd(discount)}` : '—'}</span>
-        <span>Sau giảm: {formatVnd(afterDiscount)}</span>
-        <span>VAT: {formatVnd(vat)}</span>
-        <strong>Thành tiền: {formatVnd(total)}</strong>
+        <span>Gốc: {formatMoney(subtotal, rowCurrency)}</span>
+        <span>Giảm: {discount ? `-${formatMoney(discount, rowCurrency)}` : '—'}</span>
+        <span>Sau giảm: {formatMoney(afterDiscount, rowCurrency)}</span>
+        <span>VAT: {formatMoney(vat, rowCurrency)}</span>
+        <strong>Thành tiền: {formatMoney(total, rowCurrency)}</strong>
       </div>
     </div>
   );

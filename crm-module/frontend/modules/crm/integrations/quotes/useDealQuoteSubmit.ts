@@ -7,6 +7,7 @@ import { buildDealPayload } from '../../components/DealFormFields';
 import type { DealFormState } from '../../components/DealFormFields';
 import type { CreateDealInput, CrmUserOption, Deal } from '../../types';
 import type { QuoteDraft } from './types';
+import { normalizeQuoteCurrency } from '@/lib/currency';
 
 interface SubmitArgs {
   dealDraft: DealFormState;
@@ -36,6 +37,8 @@ export function useDealQuoteSubmit() {
         dealId: deal.id,
         data: isVilla ? { ...quoteDraft.data, solutionItems: quoteDraft.solutionItems } : quoteDraft.data,
         items: isVilla ? [] : quoteDraft.items,
+        currency: isVilla ? 'VND' : normalizeQuoteCurrency(quoteDraft.data.currency),
+        exchangeRate: !isVilla && normalizeQuoteCurrency(quoteDraft.data.currency) === 'USD' ? quoteDraft.exchangeRate ?? null : null,
       });
       createdQuoteId = quote.id;
 

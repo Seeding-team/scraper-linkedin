@@ -398,6 +398,7 @@ _ITEM_COPY_FIELDS = (
     "bundle_snapshot", "list_price_usd", "unit_price_usd", "exchange_rate", "unit_price_vnd",
     "cost_price", "markup_percent", "cost_not_applicable", "price_book_snapshot",
     "cost_override_reason", "cost_override_by", "cost_override_at", "cost_price_original",
+    "cost_price_vnd",
 )
 
 
@@ -510,6 +511,10 @@ def copy_quote_to_workspace(
         "updated_by": actor_id,
         "instance": target_instance,
     }
+    if source.get("exchangeRate") is not None:
+        # Quote USD: mang theo ty gia DONG BANG de tong tien khong doi nghia sau khi copy.
+        insert_data["exchange_rate"] = source["exchangeRate"]
+        insert_data["currency_snapshot"] = source.get("currencySnapshot")
     supabase.table(QUOTES_TABLE).insert(insert_data).execute()
     _copy_items_to_quote(quote_id, new_quote_id)
 

@@ -111,7 +111,11 @@ def _build_caption(quote: dict, lead: dict | None) -> str:
     seller_name = data.get("sellerCompanyName") or "(Chưa gán công ty phát hành)"
     customer_name = data.get("customerCompanyName") or data.get("customerRecipient") or "(Chưa rõ khách hàng)"
     total = quote.get("totalAmount") or 0
-    total_text = f"{total:,.0f}".replace(",", ".") + " đ"
+    # Tien te cua QUOTE: USD "$158.66", VND "4.125.000 đ".
+    if str(quote.get("currency") or "VND").upper() == "USD":
+        total_text = f"${total:,.2f}"
+    else:
+        total_text = f"{total:,.0f}".replace(",", ".") + " đ"
     sale_name = "Chưa gán"
     if lead:
         sale_name = lead.get("sdr_name") or lead.get("sdrName") or lead.get("lead_name") or lead.get("leadName") or "Chưa gán"

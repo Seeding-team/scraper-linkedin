@@ -29,6 +29,7 @@ import { seedingQuoteRepository } from "@/modules/quotes";
 import type { Quote } from "@/modules/quotes";
 import { internalQuoteStatusLabel } from "@/modules/quotes/constants/quoteConfig";
 import { QuoteQuickViewDrawer } from "./QuoteQuickViewDrawer";
+import { formatQuoteAmountOr, quoteCurrencyToVnd } from '@/lib/currency';
 
 interface DealOption {
   id: string;
@@ -100,6 +101,17 @@ interface Props {
 const STATUS_OPTIONS: ContractStatus[] = ["signed", "active", "completed", "draft", "pending_signature", "terminated"];
 const ALL = "__all__";
 const NONE_QUOTE = "__none__";
+
+/** So tien cua bao gia -> VND (hop dong luon bang VND). Quote USD x ty gia da chot; VND giu nguyen. */
+function quoteAmountVnd(
+  amount: number | null,
+  quote: { currency?: string | null; exchangeRate?: number | null }
+): number | null {
+  if (amount == null) return null;
+  if (String(quote.currency || 'VND').toUpperCase() !== 'USD') return amount;
+  const vnd = quoteCurrencyToVnd(amount, 'USD', quote.exchangeRate);
+  return vnd == null ? amount : Math.round(vnd);
+}
 
 function formatVND(value?: number | null) {
   if (value == null) return "—";
@@ -377,7 +389,8 @@ export function RegisterExternalContractModal({ contract, open, deal, onClose, o
   // sanh gia tri dang nhap voi gia bao gia da chon (CUNG 1 cong thuc voi effect
   // tu dien "Giá trị hợp đồng" ben duoi: customerPriceBeforeVat, fallback
   // totalAmount) de biet co can bat buoc ly do dieu chinh hay khong.
-  const quotePrice = selectedVersion ? (selectedVersion.customerPriceBeforeVat ?? selectedVersion.totalAmount ?? null) : null;
+  // Hop dong luon tinh bang VND: bao gia USD quy doi theo ty gia DA CHOT cua chinh bao gia do.
+  const quotePrice = selectedVersion ? quoteAmountVnd(selectedVersion.customerPriceBeforeVat ?? selectedVersion.totalAmount ?? null, selectedVersion) : null;
   const valueDiffersFromQuote = quotePrice != null && contractValue != null && contractValue !== quotePrice;
   const isLatestVersion = chainVersions && chainVersions.length > 0 ? chainVersions[0]?.id === selectedVersionId : true;
 
@@ -434,7 +447,7 @@ export function RegisterExternalContractModal({ contract, open, deal, onClose, o
   // Center) - chi ghi de khi nguoi dung CHUA tu sua gia tri nay.
   useEffect(() => {
     if (!open || !selectedVersion) return;
-    const price = selectedVersion.customerPriceBeforeVat ?? selectedVersion.totalAmount ?? null;
+    const price = quoteAmountVnd(selectedVersion.customerPriceBeforeVat ?? selectedVersion.totalAmount ?? null, selectedVersion);
     if (price == null) return;
     setContractValue(current => {
       if (current !== null && current !== lastAutoValueRef.current) return current;
@@ -842,7 +855,7 @@ export function RegisterExternalContractModal({ contract, open, deal, onClose, o
                   <div className="grid grid-cols-3 gap-x-4 gap-y-2 text-xs">
                     <div>
                       <div className="text-slate-400">GIÁ KHÁCH</div>
-                      <div className="font-medium text-slate-700">{formatVND(selectedVersion.customerPriceBeforeVat ?? selectedVersion.totalAmount ?? null)}</div>
+                      <div className="font-medium text-slate-700">{formatQuoteAmountOr(selectedVersion.customerPriceBeforeVat ?? selectedVersion.totalAmount ?? null, selectedVersion.currency, formatVND)}</div>
                     </div>
                     <div>
                       <div className="text-slate-400">LIÊN HỆ CHÍNH</div>

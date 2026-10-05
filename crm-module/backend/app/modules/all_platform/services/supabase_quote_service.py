@@ -21,6 +21,8 @@ from app.core.config import settings
 from app.core.supabase_client import get_supabase_client
 from app.modules.all_platform.services.supabase_categories_service import get_categories_by_type
 from app.modules.all_platform.services.supabase_user_service import get_member_option_by_id
+from app.modules.all_platform.services import quote_currency as qc
+from app.modules.all_platform.services.quote_exchange_rate_service import default_usd_vnd_rate
 
 logger = logging.getLogger(__name__)
 
@@ -189,6 +191,9 @@ def _row_to_item(row: dict) -> dict:
         # thua ham nay) nen an toan them truc tiep o day.
         "costPrice": (float(row["cost_price"]) if row.get("cost_price") is not None else None),
         "markupPercent": (float(row["markup_percent"]) if row.get("markup_percent") is not None else None),
+        # Gia von GOC bang VND (migration 169) - chi co o bao gia USD, de doi lai
+        # VND khong troi do lam tron.
+        "costPriceVnd": (float(row["cost_price_vnd"]) if row.get("cost_price_vnd") is not None else None),
         "costNotApplicable": bool(row.get("cost_not_applicable") or False),
         "costTotal": (
             float(row["cost_price"]) * float(row.get("quantity") or 0)
@@ -286,6 +291,10 @@ def _row_to_quote(row: dict, items: list[dict] | None = None) -> dict:
         "vatAmount": float(row.get("vat_amount") or 0),
         "totalAmount": float(row.get("total_amount") or 0),
         "currency": row.get("currency") or "VND",
+        # Ty gia (VND / 1 USD) DONG BANG luc tao/chuyen currency (migration 169) -
+        # NULL voi bao gia VND/bao gia cu. Khong bao gio doc lai ty gia he thong.
+        "exchangeRate": (float(row["exchange_rate"]) if row.get("exchange_rate") is not None else None),
+        "currencySnapshot": row.get("currency_snapshot"),
         "issuedAt": row.get("issued_at"),
         "validUntil": row.get("valid_until"),
         "createdById": row.get("created_by"),
@@ -379,7 +388,7 @@ def _row_to_quote(row: dict, items: list[dict] | None = None) -> dict:
 _QUOTE_COST_KEYS = ("costTotal", "hasCostData")
 _QUOTE_PRICING_KEYS: tuple[str, ...] = ()  # markupPercent chi o item-level, khong co field quote-level rieng
 _QUOTE_PROFIT_KEYS = ("grossProfit", "grossMarginPercent")
-_ITEM_COST_KEYS = ("costPrice", "costNotApplicable", "costTotal")
+_ITEM_COST_KEYS = ("costPrice", "costPriceVnd", "costNotApplicable", "costTotal")
 _ITEM_PRICING_KEYS = ("markupPercent",)
 
 
@@ -802,17 +811,19 @@ def _to_decimal(value: Any) -> Decimal:
         return Decimal(0)
 
 
-def _round_vnd(value: Decimal) -> float:
-    """VNĐ khong co phan thap phan - lam tron ve DONG NGUYEN (ROUND_HALF_UP)
-    truoc khi tra ra float de luu DB. Sua bug that phat hien qua UI (VD:
-    unitPrice tinh nguoc tu Margin muc tieu ra so co qua nhieu chu so thap
-    phan nhu 1428571.4285714286 - dung Decimal + quantize o day de moi so
-    tien server luu/tra ve LUON la dong nguyen, khong chi lam tron o tang
-    hien thi FE roi van luu so sai xuong DB)."""
-    return float(value.quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+def _round_vnd(value: Decimal, currency: str = "VND") -> float:
+    """Lam tron theo TIEN TE CUA QUOTE: VND khong co phan thap phan - lam tron
+    ve DONG NGUYEN (ROUND_HALF_UP); USD (va tien te khac) giu 2 chu so thap phan.
+    Sua bug that phat hien qua UI (VD: unitPrice tinh nguoc tu Margin muc tieu ra
+    so co qua nhieu chu so thap phan nhu 1428571.4285714286 - dung Decimal +
+    quantize o day de moi so tien server luu/tra ve LUON dung quy uoc tien te,
+    khong chi lam tron o tang hien thi FE roi van luu so sai xuong DB)."""
+    return qc.round_money(value, currency)
 
 
-def _calculate_item(quantity: float, unit_price: float, vat_rate: float, discount_percent: float = 0) -> tuple[float, float, float, float, float]:
+def _calculate_item(
+    quantity: float, unit_price: float, vat_rate: float, discount_percent: float = 0, currency: str = "VND"
+) -> tuple[float, float, float, float, float]:
     q = _to_decimal(quantity)
     u = _to_decimal(unit_price)
     d_pct = _to_decimal(discount_percent)
@@ -823,11 +834,11 @@ def _calculate_item(quantity: float, unit_price: float, vat_rate: float, discoun
     vat = after_discount * v_pct / 100
     total = after_discount + vat
     return (
-        _round_vnd(subtotal),
-        _round_vnd(discount),
-        _round_vnd(after_discount),
-        _round_vnd(vat),
-        _round_vnd(total),
+        _round_vnd(subtotal, currency),
+        _round_vnd(discount, currency),
+        _round_vnd(after_discount, currency),
+        _round_vnd(vat, currency),
+        _round_vnd(total, currency),
     )
 
 
@@ -868,7 +879,7 @@ def _bundle_snapshot_from_catalog_components(components: list[dict]) -> list[dic
     ]
 
 
-def _enrich_bundle_catalog_quote_item(item: dict) -> dict:
+def _enrich_bundle_catalog_quote_item(item: dict, currency: str = "VND", exchange_rate: Any = None) -> dict:
     """Server-side fallback for catalog bundle quote rows.
 
     The UI normally sends description + full bundle_snapshot. This keeps API/RPC
@@ -908,32 +919,36 @@ def _enrich_bundle_catalog_quote_item(item: dict) -> dict:
     if not next_item.get("service_description"):
         next_item["service_description"] = catalog_item.get("quoteDisplayName") or catalog_item.get("name")
     if next_item.get("cost_price") is None and catalog_item.get("defaultCostPriceVnd") is not None:
-        next_item["cost_price"] = catalog_item.get("defaultCostPriceVnd")
+        next_item["cost_price"] = qc.vnd_to_quote_currency(catalog_item.get("defaultCostPriceVnd"), currency, exchange_rate)
+        if currency != "VND":
+            next_item["cost_price_vnd"] = catalog_item.get("defaultCostPriceVnd")
         next_item["cost_not_applicable"] = False
     if next_item.get("markup_percent") is None and catalog_item.get("defaultMarkupPercent") is not None:
         next_item["markup_percent"] = catalog_item.get("defaultMarkupPercent")
     if next_item.get("unit_price") is None and catalog_item.get("defaultCustomerPriceVnd") is not None:
-        next_item["unit_price"] = catalog_item.get("defaultCustomerPriceVnd")
+        next_item["unit_price"] = qc.vnd_to_quote_currency(catalog_item.get("defaultCustomerPriceVnd"), currency, exchange_rate)
+        if currency != "VND":
+            next_item["unit_price_vnd"] = catalog_item.get("defaultCustomerPriceVnd")
     if next_item.get("unit_price") is None and next_item.get("cost_price") is not None and next_item.get("markup_percent") is not None:
         multiplier = 1 + float(next_item["markup_percent"]) / 100
         next_item["unit_price"] = float(next_item["cost_price"]) * multiplier if multiplier >= 0 else 0
     return next_item
 
 
-def _enrich_bundle_catalog_quote_items(items: list[dict]) -> list[dict]:
+def _enrich_bundle_catalog_quote_items(items: list[dict], currency: str = "VND", exchange_rate: Any = None) -> list[dict]:
     enriched: list[dict] = []
     for item in items:
-        next_item = _enrich_bundle_catalog_quote_item(item)
+        next_item = _enrich_bundle_catalog_quote_item(item, currency, exchange_rate)
         if next_item.get("children"):
             next_item = {
                 **next_item,
-                "children": _enrich_bundle_catalog_quote_items(next_item.get("children") or []),
+                "children": _enrich_bundle_catalog_quote_items(next_item.get("children") or [], currency, exchange_rate),
             }
         enriched.append(next_item)
     return enriched
 
 
-def _flatten_computed_items(raw_items: list[dict]) -> tuple[list[dict], float, float, float]:
+def _flatten_computed_items(raw_items: list[dict], currency: str = "VND") -> tuple[list[dict], float, float, float]:
     flattened: list[dict] = []
     subtotal = 0.0
     vat = 0.0
@@ -958,6 +973,7 @@ def _flatten_computed_items(raw_items: list[dict]) -> tuple[list[dict], float, f
             float(item.get("unit_price") or 0),
             vat_rate,
             discount_percent,
+            currency,
         )
         row = {
             **item,
@@ -1758,6 +1774,58 @@ def set_print_layout_prefs(
     return get_quote(quote_id)
 
 
+def _resolve_quote_fx(currency: str, requested_rate: Any) -> tuple[float | None, dict | None]:
+    """(exchange_rate, currency_snapshot) cho 1 quote. VND -> (None, None). Ngoai te:
+    uu tien ty gia client gui (nguoi dung nhap/xac nhan), neu khong thi ty gia he
+    thong; khong co ca 2 -> loi (KHONG bia ty gia)."""
+    if currency == "VND":
+        return None, None
+    rate = qc.to_rate(requested_rate) or qc.to_rate(default_usd_vnd_rate())
+    if rate is None:
+        raise ValueError("Chưa có tỷ giá USD→VND. Vui lòng nhập tỷ giá trước khi chuyển báo giá sang USD.")
+    qc.assert_plausible_usd_vnd_rate(rate)
+    return float(rate), qc.build_snapshot(currency, rate)
+
+
+def _apply_quote_currency_change(quote_id: str, current_quote: dict, payload: dict) -> dict | None:
+    """Doi currency cua quote DRAFT (neu payload yeu cau) TRUOC khi goi RPC quote_update
+    (RPC doc quotes.currency de lam tron). Tra ve gia tri cu de rollback neu RPC loi,
+    hoac None neu khong doi gi. Cung currency -> GIU NGUYEN snapshot (khong doi ty gia
+    khi reload/save/approve). Bao gia da duyet: bo qua - RPC se tu choi chinh sua."""
+    # CHI doi currency khi client gui RO `currency` - data.currency la field text tu do
+    # (co the la "VNĐ"...) nen khong duoc coi la yeu cau doi tien te.
+    requested = payload.get("currency")
+    if requested is None or current_quote.get("status") == "approved":
+        return None
+    target = qc.normalize_currency(requested)
+    current = current_quote.get("currency") or "VND"
+    if target == current:
+        if isinstance(payload.get("data"), dict):
+            payload["data"]["currency"] = current
+        return None
+    if payload.get("items") is None:
+        raise ValueError("Đổi tiền tệ báo giá phải gửi kèm toàn bộ hạng mục đã quy đổi.")
+    rate, snapshot = _resolve_quote_fx(target, payload.get("exchange_rate"))
+    previous = {
+        "currency": current,
+        "exchange_rate": current_quote.get("exchangeRate"),
+        "currency_snapshot": current_quote.get("currencySnapshot"),
+    }
+    get_supabase_client().table(QUOTES_TABLE).update({
+        "currency": target, "exchange_rate": rate, "currency_snapshot": snapshot,
+    }).eq("id", quote_id).eq("instance", _crm_instance()).execute()
+    if isinstance(payload.get("data"), dict):
+        payload["data"]["currency"] = target
+    return previous
+
+
+def _rollback_quote_currency(quote_id: str, previous: dict | None) -> None:
+    if previous:
+        get_supabase_client().table(QUOTES_TABLE).update(previous).eq("id", quote_id).eq(
+            "instance", _crm_instance()
+        ).execute()
+
+
 def create_quote(payload: dict, created_by: str | None) -> dict:
     supabase: Client = get_supabase_client()
     _normalize_optional_uuid_fields(payload, ("deal_id", "quote_form_id", "issuer_company_id", "project_id"))
@@ -1774,13 +1842,19 @@ def create_quote(payload: dict, created_by: str | None) -> dict:
 
     is_villa = form["layout_type"] == "villa_solution_package"
     data = dict(payload.get("data") or {})
-    raw_items = _enrich_bundle_catalog_quote_items(payload.get("items") or [])
+    # Tien te CAP QUOTE + dong bang ty gia (migration 169). Quote cu / khong gui
+    # currency -> VND, exchange_rate=NULL, hanh vi y het truoc day.
+    # CHI tin `currency` gui RO (data.currency la text go tay, KHONG phai nguon tien te he thong).
+    currency = qc.normalize_currency(payload["currency"]) if payload.get("currency") else "VND"
+    exchange_rate, currency_snapshot = _resolve_quote_fx(currency, payload.get("exchange_rate"))
+    data["currency"] = currency
+    raw_items = _enrich_bundle_catalog_quote_items(payload.get("items") or [], currency, exchange_rate)
 
     if is_villa:
         subtotal, vat, total = _calculate_villa_totals(data.get("solutionItems") or [])
         items_to_insert: list[dict] = []
     else:
-        items_to_insert, subtotal, vat, total = _flatten_computed_items(raw_items)
+        items_to_insert, subtotal, vat, total = _flatten_computed_items(raw_items, currency)
 
     quote_number = _next_quote_number()
     now = _now_iso()
@@ -1803,7 +1877,7 @@ def create_quote(payload: dict, created_by: str | None) -> dict:
         "subtotal_amount": subtotal,
         "vat_amount": vat,
         "total_amount": total,
-        "currency": str(data.get("currency") or "VND"),
+        "currency": currency,
         "issued_at": now,
         "public_token": None,
         "public_enabled": False,
@@ -1819,6 +1893,11 @@ def create_quote(payload: dict, created_by: str | None) -> dict:
         # khong doi update_quote() duy nhat.
         "quote_type_codes": payload.get("quote_type_codes") or [],
     }
+    if currency != "VND":
+        # Chi them khi that su la ngoai te: DB chua chay migration 169 van tao duoc
+        # bao gia VND nhu cu (PostgREST bao loi neu gui cot khong ton tai).
+        insert_data["exchange_rate"] = exchange_rate
+        insert_data["currency_snapshot"] = currency_snapshot
     logger.info(
         "tenant_write table=quotes operation=insert settings.crm_instance=%s resolved_instance=%s",
         _crm_instance(),
@@ -1869,6 +1948,8 @@ def create_quote(payload: dict, created_by: str | None) -> dict:
         if item.get("cost_price") is not None:
             row["cost_price"] = item["cost_price"]
             row["markup_percent"] = item.get("markup_percent")
+        if item.get("cost_price_vnd") is not None:
+            row["cost_price_vnd"] = item["cost_price_vnd"]
         inserted = supabase.table(ITEMS_TABLE).insert(row).execute().data[0]
         inserted_items.append(inserted)
         inserted_ids_by_flat_index[index] = inserted["id"]
@@ -2026,8 +2107,14 @@ def update_quote(quote_id: str, payload: dict, actor_id: str | None) -> dict:
         villa_totals = _calculate_villa_totals(effective_data.get("solutionItems") or [])
     items = payload.get("items")
     items_changed = items is not None
+    previous_fx = _apply_quote_currency_change(quote_id, current_quote, payload)
+    effective_currency = current_quote.get("currency") or "VND"
+    effective_rate = current_quote.get("exchangeRate")
+    if previous_fx is not None:
+        effective_currency = qc.normalize_currency(payload.get("currency"))
+        effective_rate = qc.to_rate(payload.get("exchange_rate")) or qc.to_rate(default_usd_vnd_rate())
     if items_changed:
-        rpc_items = _enrich_bundle_catalog_quote_items([item for item in items])
+        rpc_items = _enrich_bundle_catalog_quote_items([item for item in items], effective_currency, effective_rate)
     else:
         rpc_items = _raw_items_for_rpc(_quote_items(quote_id))
     changes = {"data_changed": payload.get("data") is not None, "items_changed": items_changed}
@@ -2041,6 +2128,7 @@ def update_quote(quote_id: str, payload: dict, actor_id: str | None) -> dict:
             "p_issuer_company_id": payload.get("issuer_company_id"),
         }).execute()
     except Exception as exc:
+        _rollback_quote_currency(quote_id, previous_fx)
         _raise_friendly_rpc_error(exc)
 
     if villa_totals is not None:
@@ -2293,12 +2381,13 @@ def update_and_approve_quote(quote_id: str, payload: dict, actor_id: str | None)
     tu p_items. Neu caller khong gui "items" (vd chi doi data/issuer_company_id
     roi bam Duyet), PHAI truyen lai items HIEN CO thay vi [] - khong thi bam
     Duyet se xoa sach hang muc."""
-    _ensure_quote_in_instance(quote_id)
+    current_quote = _ensure_quote_in_instance(quote_id)
     _normalize_optional_uuid_fields(payload, ("issuer_company_id", "project_id", "quote_form_id"))
     _normalize_quote_item_uuid_fields(payload.get("items"))
     supabase: Client = get_supabase_client()
     items = payload.get("items")
     items_changed = items is not None
+    previous_fx = _apply_quote_currency_change(quote_id, current_quote, payload)
     if items_changed:
         rpc_items = [item for item in items]
     else:
@@ -2315,6 +2404,7 @@ def update_and_approve_quote(quote_id: str, payload: dict, actor_id: str | None)
             "p_issuer_company_id": payload.get("issuer_company_id"),
         }).execute()
     except Exception as exc:
+        _rollback_quote_currency(quote_id, previous_fx)
         _raise_friendly_rpc_error(exc)
     quote = get_quote(quote_id)
     if quote.get("dealId"):
@@ -2724,7 +2814,7 @@ def link_quote_to_deal(quote_id: str, deal_id: str, reference: dict | None = Non
     trên customer_leads — Deal Card/Drawer đọc y hệt như tham chiếu thủ công cũ
     (rowToDeal() phía frontend không cần sửa gì), chỉ khác nguồn dữ liệu giờ là
     quote thật thay vì user tự gõ tay."""
-    _ensure_quote_in_instance(quote_id)
+    linked_quote = _ensure_quote_in_instance(quote_id)
     supabase: Client = get_supabase_client()
     supabase.table(QUOTES_TABLE).update({"deal_id": deal_id, "updated_at": _now_iso()}).eq("id", quote_id).eq("instance", _crm_instance()).execute()
 
@@ -2745,6 +2835,10 @@ def link_quote_to_deal(quote_id: str, deal_id: str, reference: dict | None = Non
                 .data
             )
             if not (current or {}).get("estimated_budget"):
-                update_data["estimated_budget"] = reference["totalAmount"]
+                # estimated_budget cua Deal luon la VND - quote USD phai quy doi theo
+                # ty gia DA DONG BANG cua chinh quote (khong dung ty gia moi).
+                update_data["estimated_budget"] = qc.quote_amount_to_vnd(
+                    reference["totalAmount"], linked_quote.get("currency"), linked_quote.get("exchangeRate")
+                )
     supabase.table("customer_leads").update(update_data).eq("id", deal_id).eq("instance", _crm_instance()).execute()
     return get_quote(quote_id)

@@ -1,5 +1,5 @@
 import type { QuoteItem, VillaSolutionItem } from '../types';
-import { formatCurrencyDisplay } from '@/lib/currency';
+import { formatCurrencyDisplay, formatQuoteMoney, normalizeQuoteCurrency, roundQuoteMoney } from '@/lib/currency';
 
 export const parseCurrencyInput = (value: unknown) => {
   if (value === null || value === undefined || value === '') return 0;
@@ -10,6 +10,9 @@ export const parseCurrencyInput = (value: unknown) => {
 
 const toSafeNumber = (value: unknown) => parseCurrencyInput(value);
 
+/** Don gia co the la so thap phan (USD): number giu nguyen; chuoi giu hanh vi cu. */
+const toSafeDecimal = (value: unknown) => toSafeNumber(value);
+
 const toSafePercent = (value: unknown) => {
   if (value === null || value === undefined || value === '') return 0;
   if (typeof value === 'number') return Number.isNaN(value) ? 0 : value;
@@ -18,20 +21,27 @@ const toSafePercent = (value: unknown) => {
   return Number.isNaN(parsed) ? 0 : parsed;
 };
 
-export const calculateItemSubtotal = (item?: Partial<QuoteItem>) =>
-  toSafeNumber(item?.quantity) * toSafeNumber(item?.unitPrice);
+/** Lam tron tung buoc THEO TIEN TE CUA QUOTE, khop RPC quote_update (migration 169):
+ * USD = 2 so le, tung dong. VND (mac dinh) KHONG lam tron o day de bao gia cu
+ * hien thi y nhu truoc (server da tu lam tron dong khi luu). `currency` la
+ * tham so TUY CHON cuoi cung - khong truyen = VND = hanh vi cu. */
+const roundFor = (value: number, currency?: unknown) =>
+  normalizeQuoteCurrency(currency) === 'VND' ? value : roundQuoteMoney(value, currency);
 
-export const calculateItemDiscount = (item?: Partial<QuoteItem>) =>
-  (calculateItemSubtotal(item) * clampDiscountPercent(item?.discountPercent)) / 100;
+export const calculateItemSubtotal = (item?: Partial<QuoteItem>, currency?: unknown) =>
+  roundFor(toSafeNumber(item?.quantity) * toSafeDecimal(item?.unitPrice), currency);
 
-export const calculateItemAfterDiscount = (item?: Partial<QuoteItem>) =>
-  calculateItemSubtotal(item) - calculateItemDiscount(item);
+export const calculateItemDiscount = (item?: Partial<QuoteItem>, currency?: unknown) =>
+  roundFor((calculateItemSubtotal(item, currency) * clampDiscountPercent(item?.discountPercent)) / 100, currency);
 
-export const calculateItemVat = (item?: Partial<QuoteItem>) =>
-  (calculateItemAfterDiscount(item) * toSafeNumber(item?.vatRate)) / 100;
+export const calculateItemAfterDiscount = (item?: Partial<QuoteItem>, currency?: unknown) =>
+  calculateItemSubtotal(item, currency) - calculateItemDiscount(item, currency);
 
-export const calculateItemTotal = (item?: Partial<QuoteItem>) =>
-  calculateItemAfterDiscount(item) + calculateItemVat(item);
+export const calculateItemVat = (item?: Partial<QuoteItem>, currency?: unknown) =>
+  roundFor((calculateItemAfterDiscount(item, currency) * toSafeNumber(item?.vatRate)) / 100, currency);
+
+export const calculateItemTotal = (item?: Partial<QuoteItem>, currency?: unknown) =>
+  calculateItemAfterDiscount(item, currency) + calculateItemVat(item, currency);
 
 /** Kẹp % giảm giá về [0, 100] - phòng người dùng gõ số âm hoặc >100% làm tổng
  * tiền ra số vô lý (âm hoặc lớn hơn cả tổng gốc). */
@@ -52,23 +62,18 @@ export const clampDiscountPercent = (value: unknown) => {
  */
 export const calculateQuoteTotals = (
   items: Partial<QuoteItem>[] = [],
-  _discountPercent: unknown = 0
+  _discountPercent: unknown = 0,
+  currency?: unknown
 ) => {
   void _discountPercent;
   const allItems = flattenQuoteItems(items);
-  const discountAmount = allItems.reduce(
-    (sum, item) => sum + calculateItemDiscount(item),
-    0
-  );
-  const totalVatAmount = allItems.reduce(
-    (sum, item) => sum + calculateItemVat(item),
-    0
-  );
+  const sum = (fn: (item: Partial<QuoteItem>, cur?: unknown) => number) =>
+    roundFor(allItems.reduce((acc, item) => acc + fn(item, currency), 0), currency);
   return {
-    subtotalAmount: allItems.reduce((sum, item) => sum + calculateItemSubtotal(item), 0),
-    discountAmount,
-    totalVatAmount,
-    totalAmount: allItems.reduce((sum, item) => sum + calculateItemTotal(item), 0),
+    subtotalAmount: sum(calculateItemSubtotal),
+    discountAmount: sum(calculateItemDiscount),
+    totalVatAmount: sum(calculateItemVat),
+    totalAmount: sum(calculateItemTotal),
   };
 };
 
@@ -103,13 +108,14 @@ export const calculateVillaTotals = (items: Partial<VillaSolutionItem>[] = []) =
  * o tren) - KHONG tinh lai VAT tu dau. */
 export const calculateOverallDiscountSummary = (
   totals: { totalAmount: number; totalVatAmount: number },
-  overallDiscountPercent?: number | null
+  overallDiscountPercent?: number | null,
+  currency?: unknown
 ) => {
   const pct = clampDiscountPercent(overallDiscountPercent ?? 0);
-  const subtotalBeforeVat = toSafeNumber(totals.totalAmount) - toSafeNumber(totals.totalVatAmount);
-  const overallDiscountAmount = (subtotalBeforeVat * pct) / 100;
+  const subtotalBeforeVat = toSafeDecimal(totals.totalAmount) - toSafeDecimal(totals.totalVatAmount);
+  const overallDiscountAmount = roundFor((subtotalBeforeVat * pct) / 100, currency);
   const subtotalAfterDiscount = subtotalBeforeVat - overallDiscountAmount;
-  const vatAfterDiscount = toSafeNumber(totals.totalVatAmount) * (1 - pct / 100);
+  const vatAfterDiscount = roundFor(toSafeDecimal(totals.totalVatAmount) * (1 - pct / 100), currency);
   return {
     subtotalBeforeVat,
     overallDiscountAmount,
@@ -132,13 +138,18 @@ export const calculateOverallDiscountSummary = (
  * roi, cong them se bi tinh 2 lan. Chi la gia tri HIEN THI (khong luu DB),
  * tinh lai moi lan render tu du lieu hien tai - dung duoc cho ca bao gia cu
  * (khong can migrate/backfill gi ca). */
-export const calculateSectionTotal = (children: Partial<QuoteItem>[] = []) =>
-  children.reduce((sum, child) => sum + calculateItemTotal(child), 0);
+export const calculateSectionTotal = (children: Partial<QuoteItem>[] = [], currency?: unknown) =>
+  children.reduce((sum, child) => sum + calculateItemTotal(child, currency), 0);
 
 // Wrapper mong quanh formatCurrencyDisplay() dung chung (lib/currency.ts) -
 // giu nguyen dinh dang output cu ("5.000.000 đ"), khong tu goi toLocaleString
 // rieng nua.
 export const formatVnd = (value: unknown) =>
   `${formatCurrencyDisplay(toSafeNumber(value))} đ`;
+
+/** Format theo tien te cua quote ("1.250.000 đ" / "$48.08") - dung thay formatVnd
+ * o moi noi hien thi tien cua 1 quote cu the. */
+export const formatMoney = (value: unknown, currency?: unknown) =>
+  normalizeQuoteCurrency(currency) === 'USD' ? formatQuoteMoney(toSafeDecimal(value), 'USD') : formatVnd(value);
 
 export const sanitizeMoneyInput = (value: unknown) => toSafeNumber(value);

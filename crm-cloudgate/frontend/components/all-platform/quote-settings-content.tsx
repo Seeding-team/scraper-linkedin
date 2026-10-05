@@ -7,9 +7,10 @@ import { useAppAuth } from "@/contexts/AppAuthContext";
 import { cn } from "@/lib/utils";
 import { QuoteEmailProviderSettings } from "@/components/all-platform/admin/QuoteEmailProviderSettings";
 import { QuoteApprovalRuleSettings } from "@/components/all-platform/admin/QuoteApprovalRuleSettings";
+import { QuoteExchangeRateSettings } from "@/components/all-platform/admin/QuoteExchangeRateSettings";
 
-type Tab = "email" | "rules";
-const VALID_TABS: Tab[] = ["email", "rules"];
+type Tab = "email" | "rules" | "fx";
+const VALID_TABS: Tab[] = ["email", "rules", "fx"];
 
 /** Trang "Cài đặt báo giá" (submenu riêng cạnh "Quản lý CRM") - gom 2 cai dat
  * TRUOC DAY nam rai rac: tab "Email gửi báo giá" (von o Trang ca nhan) va
@@ -39,6 +40,7 @@ export function QuoteSettingsContent() {
   const TABS: { key: Tab; label: string; icon: MaterialSymbolName }[] = [
     { key: "email", label: "Email gửi báo giá", icon: "mail" },
     { key: "rules", label: "Quy tắc phê duyệt", icon: "verified" },
+    { key: "fx", label: "Tỷ giá USD/VND", icon: "verified" },
   ];
 
   return (
@@ -70,7 +72,7 @@ export function QuoteSettingsContent() {
             </div>
           </div>
 
-          {activeTab === "email" ? <QuoteEmailProviderSettings /> : <QuoteApprovalRuleSettings />}
+          {activeTab === "email" ? <QuoteEmailProviderSettings /> : activeTab === "fx" ? <QuoteExchangeRateSettings /> : <QuoteApprovalRuleSettings />}
         </>
       )}
     </div>

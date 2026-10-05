@@ -4376,3 +4376,12 @@
   white-space: nowrap;
 }
 .qc-version-old-line { padding-left: 16px; }
+
+/* Bang hang muc Workspace: duong ke ngang o cap <tr> (1 border-bottom / row chay xuyen bang),
+ * khong ke tung <td> (cell cao/thap khac nhau lam lech duong ke). */
+.qc-workspace-items-table--unified tbody td {
+  border-bottom: 0;
+}
+.qc-workspace-items-table--unified tbody tr {
+  border-bottom: 1px solid #eff1f5;
+}

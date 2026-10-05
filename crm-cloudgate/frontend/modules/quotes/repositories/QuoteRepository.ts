@@ -17,6 +17,23 @@ import type {
 } from '../types';
 import type { ServiceCatalogOptions } from '../../service-catalog/types';
 
+export interface SystemExchangeRate {
+  rate: number | null;
+  /** "Vietcombank (bán ra)" | "ExchangeRate-API …" | "Nhập tay" */
+  source: string | null;
+  isManual: boolean;
+  updatedAt: string | null;
+  lastAttemptAt?: string | null;
+  lastError?: string | null;
+  /** true = rate tu dong da cu (>24h) hoac lan lam moi gan nhat loi → canh bao, van dung rate gan nhat. */
+  stale: boolean;
+  note?: string | null;
+  refreshed?: boolean;
+  /** true = vua goi nguon < cooldown nen khong goi lai (dung ket qua da co). */
+  cooldown?: boolean;
+  error?: string | null;
+}
+
 export interface QuoteRepository {
   getForms(): Promise<QuoteForm[]>;
   getForm(id: string): Promise<QuoteForm>;
@@ -50,6 +67,15 @@ export interface QuoteRepository {
   setFormCatalogLinks(formId: string, catalogItemIds: string[]): Promise<string[]>;
   /** Gói bán + dịch vụ thành phần khả dụng cho 1 mẫu báo giá, dùng dựng dropdown khi điền báo giá. */
   getServiceCatalogOptions(formId: string): Promise<ServiceCatalogOptions>;
+
+  /** Ty gia USD->VND he thong cho luong bao gia (rate=null neu chua co va nguon tu dong loi). Backend tu
+   * lam moi tu nguon uy tin khi rate tu dong da cu. Bao gia chi COPY gia tri nay vao snapshot luc
+   * tao/chuyen currency. */
+  getExchangeRate(): Promise<SystemExchangeRate>;
+  /** Nut "Cap nhat ty gia": lay NGAY tu nguon uy tin (quay lai che do tu dong). Loi → giu rate cu + `error`. */
+  refreshExchangeRate(): Promise<SystemExchangeRate>;
+  /** Override THU CONG cua Admin. */
+  setExchangeRate(rate: number, note?: string): Promise<SystemExchangeRate>;
 
   /** Danh sách công ty phát hành báo giá (bên bán) — dropdown "Đơn vị phát hành
    * báo giá" ở Bước 1 wizard tạo báo giá. includeInactive=true dùng cho trang

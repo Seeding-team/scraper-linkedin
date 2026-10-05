@@ -21,13 +21,14 @@ import {
   calculateSectionTotal,
   formatVnd as formatVndRaw,
 } from '../utils/quoteCalculations';
+import { formatQuoteMoney, localizeCurrencyLabel, normalizeQuoteCurrency } from '@/lib/currency';
 
 // Yeu cau rieng "bỏ 'đ' trong các mẫu báo giá đi" - moi tien te da ghi ro 1
 // LAN duy nhat o dau tai lieu ("TIỀN TỆ VND") + header cot ("(VNĐ)"), lap
 // lai "đ" tren TUNG so trong bang la du thua. Shadow lai formatVnd CHI
 // trong file nay (formatVnd goc o quoteCalculations.ts van giu nguyen "đ"
 // cho moi noi khac dang dung, khong doi hanh vi chung).
-function formatVnd(value: unknown): string {
+function formatVndPlain(value: unknown): string {
   return formatVndRaw(value).replace(/\s*đ$/, '');
 }
 import { filterRedundantAmountAfterDiscountColumn, normalizeQuoteColumnLabel, resolveDefaultVisibleColumnKeys, resolveQuoteItemColumns, resolveToggleableColumns } from '../utils/quoteColumns';
@@ -112,6 +113,10 @@ interface Props {
    * suy luận riêng. undefined/null = quote thật sự chưa có Sale -> fallback
    * về fieldValue('sellerContactName') cũ (field tự do/default). */
   contactPersonName?: string | null;
+  /** Tien te CAP QUOTE ('VND' | 'USD', quote.currency). Bo trong -> doc quoteData.currency;
+   * khong nhan ra USD thi coi la VND (bao gia cu render y nhu truoc). Moi so tien, tieu de cot
+   * "(VND)" va khoi tong tien theo tien te nay - KHONG theo mau/template hard-code. */
+  currency?: string | null;
 }
 
 function emptySchema(): QuoteSchema {
@@ -363,6 +368,7 @@ export function QuoteDocumentRenderer({
   initialColumnWidths = null,
   onColumnWidthsChange,
   contactPersonName,
+  currency: currencyProp,
 }: Props) {
   // Resize cot bang hang muc kieu Excel - CHI cho man hinh xem truoc/chi tiet
   // noi bo (mode 'preview'/'detail', xem allowColumnResize ben duoi), KHONG
@@ -433,6 +439,11 @@ export function QuoteDocumentRenderer({
   };
 
   const schema = schemaSnapshot || emptySchema();
+  const currency = normalizeQuoteCurrency(currencyProp ?? quoteData.currency);
+  // Quote USD: "$48.08" (2 so le); VND: giu nguyen dang bo "đ" cua mau ("1.250.000").
+  const formatVnd = (value: unknown): string =>
+    currency === 'USD' ? formatQuoteMoney(typeof value === 'number' ? value : Number(value) || 0, 'USD') : formatVndPlain(value);
+  const columnLabel = (column: QuoteField): string => localizeCurrencyLabel(normalizeQuoteColumnLabel(column), currency);
   const layoutType = schema.layoutType || 'cloudgate_standard_quote';
   const sections = schema.sections || [];
   const findSection = (key: string) =>
@@ -469,6 +480,8 @@ export function QuoteDocumentRenderer({
   // 1 cong ty khac). Moi version giu snapshot rieng trong data cua chinh no.
   const hasIssuerSnapshot = Boolean(quoteData.issuerSnapshotCompanyId);
   const fieldValue = (key: string) => {
+    // Truong "Đơn vị tiền tệ" luon theo tien te THAT cua quote (khong theo text go tay/mau).
+    if (key === 'currency') return currency;
     const value = quoteData[key];
     if (hasIssuerSnapshot && ISSUER_SNAPSHOT_FIELD_KEYS.has(key)) {
       return value !== undefined && value !== null ? value : '';
@@ -484,31 +497,31 @@ export function QuoteDocumentRenderer({
     if (item.__bundleComponent && column.key === 'discountPercent') return '';
     if (item.__bundleComponent && column.key === 'vatRate') return '';
     if (column.type === 'auto-number' || column.key === 'order') return String(index + 1);
-    if (column.key === 'subtotal') return formatVnd(calculateItemSubtotal(item));
-    if (column.key === 'vatAmount') return formatVnd(calculateItemVat(item));
+    if (column.key === 'subtotal') return formatVnd(calculateItemSubtotal(item, currency));
+    if (column.key === 'vatAmount') return formatVnd(calculateItemVat(item, currency));
     // "ô nào null thì không hiện" (yeu cau rieng, cung nguyen tac voi Thong
     // tin khach hang) - tra chuoi rong thay vi dau "—" khi khong co du lieu.
     if (column.key === 'listPriceUsd') return item.listPriceUsd != null ? `$${item.listPriceUsd.toLocaleString('en-US')}` : '';
     if (column.key === 'unitPriceUsd') return item.unitPriceUsd != null ? `$${item.unitPriceUsd.toLocaleString('en-US')}` : '';
-    if (column.key === 'unitPriceVnd') return item.unitPriceVnd != null ? formatVnd(item.unitPriceVnd) : '';
+    if (column.key === 'unitPriceVnd') return item.unitPriceVnd != null ? formatVndPlain(item.unitPriceVnd) : '';
     if (column.key === 'total') {
-      const discount = calculateItemDiscount(item);
+      const discount = calculateItemDiscount(item, currency);
       return discount ? (
         <span className="quote-price-stack">
-          <s>{formatVnd(calculateItemSubtotal(item) + calculateItemVat({ ...item, discountPercent: 0 }))}</s>
-          <b>{formatVnd(calculateItemTotal(item))}</b>
+          <s>{formatVnd(calculateItemSubtotal(item, currency) + calculateItemVat({ ...item, discountPercent: 0 }, currency))}</s>
+          <b>{formatVnd(calculateItemTotal(item, currency))}</b>
         </span>
-      ) : formatVnd(calculateItemTotal(item));
+      ) : formatVnd(calculateItemTotal(item, currency));
     }
     if (column.key === 'unitPrice') return formatVnd(item.unitPrice);
     if (column.key === 'quantity') return String(item.quantity || '');
     if (column.key === 'discountPercent') return item.discountPercent ? `${item.discountPercent}%` : '';
-    if (column.key === 'amountAfterDiscount') return formatVnd(calculateItemAfterDiscount(item));
+    if (column.key === 'amountAfterDiscount') return formatVnd(calculateItemAfterDiscount(item, currency));
     // "Giảm giá/Tiết kiệm" (so tien, KHAC voi 'discountPercent' o tren chi
     // hien %) - dung cho mau "Mẫu ưu đãi combo (Markee)" (xem promoBundleColumns
     // trong quoteConfig.ts).
     if (column.key === 'discountAmount') {
-      const discount = calculateItemDiscount(item);
+      const discount = calculateItemDiscount(item, currency);
       return discount ? `-${formatVnd(discount)}` : formatVnd(0);
     }
     if (column.key === 'vatRate') return item.vatRate ? `${item.vatRate}%` : '';
@@ -551,7 +564,7 @@ export function QuoteDocumentRenderer({
   // gọi nào cũng truyền discountAmount) nên tự động net đúng phần giảm giá TỪNG
   // DÒNG (nếu có) đã có sẵn trong totals, không cần đọc lại quoteItems/discountPercent
   // legacy ở đây nữa.
-  const discountSummary = calculateOverallDiscountSummary(totals, overallDiscountPercent);
+  const discountSummary = calculateOverallDiscountSummary(totals, overallDiscountPercent, currency);
   // "Giảm giá tổng"/"Tổng sau giảm giá" chỉ hiện khi > 0, BẤT KỂ đang bật trong
   // cấu hình "Tổng hợp giá" hay không (auto-hide đè lên cấu hình - yêu cầu rõ
   // "trùng với tạm tính thì ẩn").
@@ -717,7 +730,7 @@ export function QuoteDocumentRenderer({
         // Tong tien section (B) - CHI cong truc tiep cac hang muc con (khong
         // de quy sau hon), dung chung 1 ham voi Workspace - xem
         // calculateSectionTotal trong quoteCalculations.ts.
-        sectionTotal: calculateSectionTotal(item.children || []),
+        sectionTotal: calculateSectionTotal(item.children || [], currency),
       };
       const childRows = (item.children || []).flatMap(child => {
         itemCounter += 1;
@@ -775,7 +788,7 @@ export function QuoteDocumentRenderer({
               <thead>
                 <tr>
                   {finalColumns.map(column => (
-                    <th key={column.key}>{normalizeQuoteColumnLabel(column)}</th>
+                    <th key={column.key}>{columnLabel(column)}</th>
                   ))}
                 </tr>
               </thead>
@@ -1088,7 +1101,7 @@ export function QuoteDocumentRenderer({
                           : undefined
                       }
                     >
-                      {normalizeQuoteColumnLabel(column)}
+                      {columnLabel(column)}
                       {allowColumnResize ? (
                         <span
                           className="quote-col-resize-handle"
@@ -1142,7 +1155,7 @@ export function QuoteDocumentRenderer({
                         {finalColumns.map(column => (
                           <td
                             key={column.key}
-                            data-label={normalizeQuoteColumnLabel(column)}
+                            data-label={columnLabel(column)}
                             className={
                               column.type === 'currency' ||
                               // BUG THAT DA GAP ("Thành tiền chưa VAT bị rớt
@@ -1220,9 +1233,9 @@ export function QuoteDocumentRenderer({
             <table className="quote-table">
               <thead><tr><th>Đợt</th><th>Tỷ lệ (%)</th><th>Số tiền</th><th>Điều kiện thanh toán</th><th>Ghi chú</th></tr></thead>
               <tbody>{visiblePaymentPlan(quoteData.paymentPlan).map((row, i) => <tr key={row.id || i}>
-                <td>{row.phase}</td><td>{row.percent}%</td><td className="money-cell">{formatVnd(paymentPlanAmount(discountSummary.grandTotal, row.percent))}</td><td>{row.condition}</td><td>{row.note}</td>
+                <td>{row.phase}</td><td>{row.percent}%</td><td className="money-cell">{formatVnd(paymentPlanAmount(discountSummary.grandTotal, row.percent, currency))}</td><td>{row.condition}</td><td>{row.note}</td>
               </tr>)}</tbody>
-              <tfoot><tr><th>Tổng</th><th>{paymentPlanPercent(visiblePaymentPlan(quoteData.paymentPlan))}%</th><th>{formatVnd(visiblePaymentPlan(quoteData.paymentPlan).reduce((sum, row) => sum + paymentPlanAmount(discountSummary.grandTotal, row.percent), 0))}</th><td colSpan={2} /></tr></tfoot>
+              <tfoot><tr><th>Tổng</th><th>{paymentPlanPercent(visiblePaymentPlan(quoteData.paymentPlan))}%</th><th>{formatVnd(visiblePaymentPlan(quoteData.paymentPlan).reduce((sum, row) => sum + paymentPlanAmount(discountSummary.grandTotal, row.percent, currency), 0))}</th><td colSpan={2} /></tr></tfoot>
             </table>
           </section>
         ) : null}

@@ -250,10 +250,15 @@
   border-bottom: 1px solid #e4e7ec;
 }
 
+/* Duong ke ngang o cap <tr> (1 border/row, chay xuyen suot bang) - KHONG ke theo tung <td>
+ * (td co display khac table-cell hoac cao khac nhau se bi lech duong ke). */
 .sc-table tbody td {
   padding: 10px 14px;
-  border-top: 1px solid #f0f1f3;
+  border: 0;
   vertical-align: top;
+}
+.sc-table tbody tr {
+  border-top: 1px solid #f0f1f3;
 }
 
 .sc-table tbody tr:hover {
@@ -273,9 +278,16 @@
  * -webkit-line-clamp:2 chi con hien duoc vai chu + 1 dong thu 3 bi cat dang
  * do line-height khong khop khit voi chieu cao box clamp. Them min-width co
  * dinh (khop voi .sc-th-desc) de cot luon co du cho hien 2 dong ro rang. */
-.sc-cell-desc {
+/* <td class="sc-cell-desc"> PHAI giu display:table-cell (truoc day la -webkit-box tren chinh td
+ * nen td tach khoi layout bang, duong ke lech). Clamp 2 dong dat o phan tu con. */
+td.sc-cell-desc {
   max-width: 320px;
   min-width: 180px;
+  color: #475467;
+}
+.sc-cell-desc-text,
+div.sc-cell-desc {
+  max-width: 320px;
   overflow: hidden;
   color: #475467;
   text-overflow: ellipsis;
@@ -2265,7 +2277,7 @@ a.sc-btn {
 
 .cp-compact-table {
   width: 100%;
-  border-collapse: separate;
+  border-collapse: collapse; /* de border cap <tr> chay xuyen hang */
   border-spacing: 0;
 }
 
@@ -2285,6 +2297,8 @@ a.sc-btn {
 .cp-selectable-row {
   cursor: pointer;
   transition: all 0.15s;
+  /* 1 duong ke / row o cap <tr> (khong ke tung td) */
+  border-bottom: 1px solid #e4e7ec;
 }
 
 .cp-selectable-row:hover {
@@ -2293,7 +2307,7 @@ a.sc-btn {
 
 .cp-selectable-row td {
   padding: 12px;
-  border-bottom: 1px solid #e4e7ec;
+  border: 0;
   font-size: 13px;
   color: #344054;
   vertical-align: middle;
@@ -2303,9 +2317,11 @@ a.sc-btn {
   background: #fff;
 }
 
+.cp-selectable-row.cp-row-selected {
+  border-bottom-color: #fce1e8;
+}
 .cp-selectable-row.cp-row-selected td {
   background: #fdf2f5;
-  border-bottom-color: #fce1e8;
 }
 .cp-selectable-row.cp-row-selected td:first-child {
   border-left: 2px solid #be1e4b;
@@ -2441,3 +2457,36 @@ a.sc-btn {
   overflow: hidden;
 }
 
+
+/* San pham DA CO trong bao gia (CatalogPickerModal): checkbox khoa + badge ro rang + 2 hanh dong
+ * (Tang SL / Them dong moi) thay vi hien checkbox "da tick" nhung khong chon duoc. */
+.cp-selectable-row.cp-row-added td {
+  background: #f8fafc;
+}
+.cp-added-state {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+}
+.cp-added-badge {
+  background: #ecfdf5;
+  color: #047857;
+  border: 1px solid #a7f3d0;
+  font-weight: 600;
+}
+.cp-currency-toggle {
+  display: inline-flex !important;
+  flex-direction: row !important;
+  align-items: stretch;
+  flex: 0 0 auto;
+  height: 36px;
+}
+.cp-currency-toggle .qc-btn {
+  height: 100%;
+  min-width: 52px;
+  font-size: 12px;
+  border: 0;
+  white-space: nowrap;
+}

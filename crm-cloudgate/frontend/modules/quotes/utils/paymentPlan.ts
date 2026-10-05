@@ -1,12 +1,15 @@
 import type { PaymentPlanRow } from '../types';
+import { quoteCurrencyDecimals } from '@/lib/currency';
 
 /** Basis points avoid floating point equality errors for two-decimal percentages. */
 export function paymentPlanPercent(rows: PaymentPlanRow[]): number {
   return rows.reduce((sum, row) => sum + Math.round((Number(row.percent) || 0) * 100), 0) / 100;
 }
 
-export function paymentPlanAmount(finalPayable: number, percent: number): number {
-  return Math.round(finalPayable * percent / 100);
+/** So tien tung dot - lam tron theo tien te cua quote (VND = dong nguyen, USD = 2 so le). */
+export function paymentPlanAmount(finalPayable: number, percent: number, currency?: unknown): number {
+  const factor = 10 ** quoteCurrencyDecimals(currency);
+  return Math.round(Number(((finalPayable * percent / 100) * factor).toPrecision(15))) / factor;
 }
 
 export function visiblePaymentPlan(rows: PaymentPlanRow[] | undefined): PaymentPlanRow[] {

@@ -221,6 +221,8 @@ export interface QuoteItem {
    * hoac chua ai dien), KHONG bia du lieu. costTotal = quantity*costPrice,
    * tinh o backend, null neu costPrice null. */
   costPrice?: number | null;
+  /** Gia von GOC bang VND (chi o bao gia USD) - doi lai VND khong troi do lam tron. */
+  costPriceVnd?: number | null;
   markupPercent?: number | null;
   costTotal?: number | null;
   /** true = hạng mục này không có giá vốn để nhập (migration 090) - cho phép
@@ -350,7 +352,12 @@ export interface Quote {
   subtotalAmount: number;
   vatAmount: number;
   totalAmount: number;
+  /** Tien te CAP QUOTE: 'VND' (mac dinh, ke ca bao gia cu) | 'USD'. Moi so tien cua
+   * quote/hang muc nam TRONG tien te nay. */
   currency: string;
+  /** So VND cho 1 USD, DONG BANG luc tao/chuyen currency (null voi bao gia VND). */
+  exchangeRate?: number | null;
+  currencySnapshot?: { currency: string; exchange_rate: number | null; base_currency: string; captured_at: string } | null;
   issuedAt: string;
   validUntil?: string;
   createdById?: string;
@@ -573,6 +580,9 @@ export interface CreateQuoteInput {
   projectId?: string | null;
   slaDueAt?: string | null;
   quoteTypeCodes?: string[];
+  /** 'VND' | 'USD' + ty gia (VND/USD). Bo trong = VND. */
+  currency?: string;
+  exchangeRate?: number | null;
 }
 
 export interface UpdateQuoteInput {
@@ -584,4 +594,7 @@ export interface UpdateQuoteInput {
   slaDueAt?: string | null;
   overallDiscountPercent?: number | null;
   quoteTypeCodes?: string[];
+  /** Doi tien te bao gia DRAFT - PHAI gui kem toan bo `items` da quy doi. */
+  currency?: string;
+  exchangeRate?: number | null;
 }

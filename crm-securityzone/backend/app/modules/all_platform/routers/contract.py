@@ -33,6 +33,7 @@ from app.modules.all_platform.services import (
     list_contract_activity_log,
 )
 from app.modules.all_platform.services.contract_ocr_service import compare_to_quote, extract_contract_summary
+from app.modules.all_platform.services.quote_currency import quote_amount_to_vnd
 from app.modules.all_platform.services.crm_permission_service import can_edit_contract, can_edit_quote
 from app.modules.all_platform.services.customer_lead_service import get_customer_lead_by_id
 
@@ -225,11 +226,17 @@ async def contracts_ocr_reconcile(
     try:
         file_bytes = await file.read()
         extracted = await extract_contract_summary(file_bytes, file.filename or "")
+        # Hop dong dang VND: bao gia USD so sanh theo gia tri quy doi VND (ty gia DA CHOT cua bao gia).
+        def _vnd(amount):
+            if amount is None or str(quote.get("currency") or "VND").upper() == "VND":
+                return amount
+            return quote_amount_to_vnd(amount, quote.get("currency"), quote.get("exchangeRate"))
+
         comparison = compare_to_quote(
             extracted,
-            quote.get("subtotalAmount"),
-            quote.get("vatAmount"),
-            quote.get("totalAmount"),
+            _vnd(quote.get("subtotalAmount")),
+            _vnd(quote.get("vatAmount")),
+            _vnd(quote.get("totalAmount")),
         )
         return BaseResponse(
             success=True,

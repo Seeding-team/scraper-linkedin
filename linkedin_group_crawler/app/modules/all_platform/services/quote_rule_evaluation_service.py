@@ -175,6 +175,11 @@ def compute_quote_metrics(quote: dict[str, Any]) -> dict[str, Any]:
     nang bang 1 dong CK 5% tien lon)."""
     gross_margin_percent = quote.get("grossMarginPercent")
     gross_profit = quote.get("grossProfit")
+    # Nguong loi nhuan (gross_profit_amount) tinh bang VND - quote USD phai quy doi theo ty gia
+    # DA CHOT cua chinh quote (margin % khong doi vi la ty le cung tien te).
+    if gross_profit is not None and str(quote.get("currency") or "VND").upper() != "VND":
+        from app.modules.all_platform.services.quote_currency import quote_amount_to_vnd
+        gross_profit = quote_amount_to_vnd(gross_profit, quote.get("currency"), quote.get("exchangeRate"))
 
     items = quote.get("items") or []
     subtotal = sum(float(i.get("subtotalAmount") or 0) for i in items)

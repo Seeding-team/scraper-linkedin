@@ -14,6 +14,7 @@ import { X, ExternalLink, Pencil } from "lucide-react";
 import { QuoteDocumentRenderer } from "@/modules/quotes/components/QuoteDocumentRenderer";
 import type { Quote, QuoteItem } from "@/modules/quotes";
 import { internalQuoteStatusClass, internalQuoteStatusLabel } from "@/modules/quotes/constants/quoteConfig";
+import { formatQuoteAmountOr, quoteCurrencyToVnd } from '@/lib/currency';
 
 /** Items tra ve tu backend la 1 CAY (section chua children long nhau, xem
  * _quote_item_tree() o supabase_quote_service.py) - bang tom tat o day chi
@@ -117,7 +118,7 @@ function VersionHistoryList({
                 <span className="font-semibold text-slate-700">V{v.versionNumber || 1}{idx === 0 ? " · mới nhất" : ""}</span>
                 <span className="text-slate-400">{formatDate(v.updatedAt)}</span>
                 <span className={`quote-badge ${internalQuoteStatusClass(v.status)}`}>{internalQuoteStatusLabel(v.status)}</span>
-                <span className="text-slate-500">{formatVNDShort(v.customerPriceBeforeVat ?? v.totalAmount ?? null)}</span>
+                <span className="text-slate-500">{formatQuoteAmountOr(v.customerPriceBeforeVat ?? v.totalAmount ?? null, v.currency, formatVNDShort)}</span>
               </div>
               {!isSelected && onSelectVersion ? (
                 <button
@@ -274,7 +275,7 @@ export function QuoteQuickViewDrawer({ quote, open, customerName, dealName, onCl
                 <div className="rounded-lg border border-slate-200 p-3">
                   <div className="text-xs text-slate-400">Giá khách</div>
                   <div className="mt-0.5 text-lg font-bold text-slate-800">
-                    {formatVNDShort(quote.customerPriceBeforeVat ?? quote.totalAmount ?? null)}
+                    {formatQuoteAmountOr(quote.customerPriceBeforeVat ?? quote.totalAmount ?? null, quote.currency, formatVNDShort)}
                   </div>
                 </div>
                 {quote.costViewAllowed !== false ? (
@@ -471,6 +472,7 @@ export function QuoteQuickViewDrawer({ quote, open, customerName, dealName, onCl
                     mode="detail"
                     isPublished={quote.processingStage === "published"}
                     quoteNumber={quote.quoteNumber}
+                    currency={quote.currency}
                     overallDiscountPercent={quote.overallDiscountPercent}
                   />
                 </div>

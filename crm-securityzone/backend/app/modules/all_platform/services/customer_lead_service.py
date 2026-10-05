@@ -87,7 +87,7 @@ BASE_COLUMNS = (
     "position, position_category_id, position_label_snapshot, crm_package, zalo, facebook, telegram, pause_reason, next_step, closed_at, outcome_detail, quote_id, "
     "leaded_by_name_hint, sdr_name_hint, team_id, project_id, primary_contact_id, "
     "created_at, updated_at, leader:leaded_by(name), sdr:sdr_id(name), "
-    "quote:quote_id(quote_number, total_amount, public_token, status, version_number, version_chain_id), "
+    "quote:quote_id(quote_number, total_amount, currency, public_token, status, version_number, version_chain_id), "
     "project:project_id(name), "
     "team:team_id(name_team, team_type)"
 )
@@ -116,6 +116,7 @@ def _normalize_row(row: Dict[str, Any]) -> Dict[str, Any]:
     if row.get("quote"):
         row["quote_number"] = row["quote"].get("quote_number")
         row["quote_total_amount"] = row["quote"].get("total_amount")
+        row["quote_currency"] = row["quote"].get("currency") or "VND"
         public_token = row["quote"].get("public_token")
         row["quote_public_url"] = f"/public/quotes/{public_token}" if public_token else None
         # Trang thai LIVE lay thang tu bang quotes qua JOIN (khong denormalize

@@ -39,6 +39,7 @@ from typing import Any
 
 from app.core.config import settings
 from app.core.supabase_client import execute_supabase_query, get_supabase_client
+from app.modules.all_platform.services.quote_currency import quote_amount_to_vnd
 from app.modules.all_platform.schemas.customer_lead import TERMINAL_STAGES
 from app.modules.all_platform.services.supabase_quote_service import (
     _crm_instance,
@@ -789,7 +790,7 @@ def list_member_projects(user: dict[str, Any], member_id: str) -> dict[str, Any]
 _QUOTE_SELECT = (
     "id, quote_number, deal_id, project_id, processing_stage, status, sent_at, published_at, "
     "approved_at, deleted_at, sla_started_at, sla_due_at, completed_at, subtotal_amount, vat_amount, "
-    "total_amount, currency, technical_owner_id, quote_owner_id, created_at, "
+    "total_amount, currency, exchange_rate, technical_owner_id, quote_owner_id, created_at, "
     "deal:deal_id(customer_name), project:project_id(name), "
     "technical_owner:technical_owner_id(name), quote_owner:quote_owner_id(name)"
 )
@@ -818,7 +819,7 @@ def _quote_to_progress_item(row: dict[str, Any], since_map: dict[str, str]) -> d
         "quoteOwnerName": quote_owner.get("name"),
         "timeInCurrentStage": {"sinceAt": since_map.get(row["id"]) or row.get("created_at")},
         "sla": _quote_sla_payload(row),
-        "totalAmountVnd": float(row.get("total_amount") or 0),
+        "totalAmountVnd": quote_amount_to_vnd(row.get("total_amount"), row.get("currency"), row.get("exchange_rate")),
         "currency": row.get("currency") or "VND",
         "deepLink": f"/all-platform/quotes/{row['id']}",
     }
