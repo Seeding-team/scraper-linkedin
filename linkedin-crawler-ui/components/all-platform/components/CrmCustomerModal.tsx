@@ -18,12 +18,25 @@ import {
   PAYMENT_STATUS_OPTIONS,
 } from "@/services/customer-lead.service";
 import { toast } from "sonner";
+import { Info } from "lucide-react";
 import { CurrencyInput } from "@/components/CurrencyInput";
 import { useCrmCategoryCodeOptions, useCrmCategoryLabels } from "@/modules/crm/components/CrmCategorySelect";
 import { SearchableSelect } from "@/modules/crm/components/SearchableSelect";
 import { seedingCrmRepository } from "@/modules/crm/repositories/SeedingCrmRepository";
 import { seedingContractRepository } from "@/modules/contracts/repositories/SeedingContractRepository";
 import { projectsService, type Project } from "@/services/all-platform.service";
+
+/** Icon ⓘ: di chuot/focus de xem huong dan nhap + vi du cho tung o. */
+function FieldHint({ text }: { text: string }) {
+  return (
+    <span className="relative inline-flex align-middle ml-1 group" tabIndex={0} aria-label={text}>
+      <Info className="w-3.5 h-3.5 text-slate-400 group-hover:text-red-500 group-focus:text-red-500 cursor-help" />
+      <span className="pointer-events-none absolute left-1/2 -translate-x-1/2 top-full mt-1 z-50 w-64 rounded-lg bg-slate-800 px-3 py-2 text-[11px] font-normal leading-snug text-white shadow-lg opacity-0 group-hover:opacity-100 group-focus:opacity-100 transition-opacity">
+        {text}
+      </span>
+    </span>
+  );
+}
 
 interface CrmCustomerModalProps {
   isOpen: boolean;
@@ -424,7 +437,7 @@ export function CrmCustomerModal({
       // tags, contract_*, ...) về null/empty khi user chỉnh sửa thông tin lead.
       const payload: Partial<Customer> & { project_name?: string } = {
         customer_name: formData.customer_name?.trim(),
-        company_name: formData.company_name?.trim() || null,
+        company_name: formData.customer_name?.trim() || null, // 1 ten duy nhat: ten KH = ten cong ty
         phone: formData.phone?.trim() || null,
         email: formData.email?.trim() || null,
         website: formData.website?.trim() || null,
@@ -533,79 +546,66 @@ export function CrmCustomerModal({
                 Thông tin cơ bản
               </p>
               <div className="grid grid-cols-2 gap-3">
-                {/* Tên KH */}
+                {/* Tên khách hàng = tên công ty (1 o duy nhat) */}
                 <div className="col-span-2">
                   <label className="block text-xs font-semibold text-slate-600 mb-1">
-                    Tên khách hàng <span className="text-red-500">*</span>
+                    Tên khách hàng / công ty <span className="text-red-500">*</span>
+                    <FieldHint text="Một tên duy nhất cho khách hàng (cá nhân hoặc tổ chức) — cũng là tên công ty. VD: Công ty TNHH ABC, Trung tâm Chăm sóc khách hàng Điện lực miền Trung, Nguyễn Văn A." />
                   </label>
                   <input
                     type="text" required
                     value={formData.customer_name ?? ""}
                     onChange={(e) => set("customer_name", e.target.value)}
                     className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-red-500/30 focus:border-red-500 text-sm"
-                    placeholder="Nguyễn Văn A"
-                  />
-                </div>
-
-                {/* Công ty */}
-                <div className="col-span-2">
-                  <label className="block text-xs font-semibold text-slate-600 mb-1">
-                    Tên công ty / Dự án
-                  </label>
-                  <input
-                    type="text"
-                    value={formData.company_name ?? ""}
-                    onChange={(e) => set("company_name", e.target.value || null)}
-                    className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-red-500/30 focus:border-red-500 text-sm"
-                    placeholder="Công ty TNHH ABC..."
+                    placeholder="VD: Công ty TNHH ABC / Nguyễn Văn A"
                   />
                 </div>
 
                 {/* Điện thoại */}
                 <div>
-                  <label className="block text-xs font-semibold text-slate-600 mb-1">Điện thoại</label>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">Điện thoại<FieldHint text="Số điện thoại liên hệ chính của khách. VD: 0912 345 678." /></label>
                   <input
                     type="text"
                     value={formData.phone ?? ""}
                     onChange={(e) => set("phone", e.target.value || null)}
                     className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-red-500/30 focus:border-red-500 text-sm"
-                    placeholder="0912 345 678"
+                    placeholder="VD: 0912 345 678"
                   />
                 </div>
 
                 {/* Email */}
                 <div>
-                  <label className="block text-xs font-semibold text-slate-600 mb-1">Email</label>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">Email<FieldHint text="Email liên hệ/nhận báo giá. VD: lienhe@abc.vn." /></label>
                   <input
                     type="email"
                     value={formData.email ?? ""}
                     onChange={(e) => set("email", e.target.value || null)}
                     className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-red-500/30 focus:border-red-500 text-sm"
-                    placeholder="khach@email.com"
+                    placeholder="VD: lienhe@abc.vn"
                   />
                 </div>
 
                 {/* Website */}
                 <div>
-                  <label className="block text-xs font-semibold text-slate-600 mb-1">Website</label>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">Website<FieldHint text="Website của khách hàng (nếu có). VD: https://abc.vn." /></label>
                   <input
                     type="text"
                     value={formData.website ?? ""}
                     onChange={(e) => set("website", e.target.value || null)}
                     className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-red-500/30 focus:border-red-500 text-sm"
-                    placeholder="https://..."
+                    placeholder="VD: https://abc.vn"
                   />
                 </div>
 
                 {/* Mã số thuế */}
                 <div>
-                  <label className="block text-xs font-semibold text-slate-600 mb-1">Mã số thuế</label>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">Mã số thuế<FieldHint text="Mã số thuế doanh nghiệp (10 hoặc 13 số), dùng khi xuất hoá đơn/hợp đồng. VD: 0312345678." /></label>
                   <input
                     type="text"
                     value={formData.tax_code ?? ""}
                     onChange={(e) => set("tax_code", e.target.value || null)}
                     className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-red-500/30 focus:border-red-500 text-sm"
-                    placeholder="0312345678"
+                    placeholder="VD: 0312345678"
                   />
                 </div>
               </div>
@@ -618,13 +618,13 @@ export function CrmCustomerModal({
               </p>
               <div className="grid grid-cols-2 gap-3">
                 <div className="col-span-2">
-                  <label className="block text-xs font-semibold text-slate-600 mb-1">Địa chỉ</label>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">Địa chỉ<FieldHint text="Địa chỉ trụ sở/giao dịch của khách (không phải tên công ty). VD: 393 Trưng Nữ Vương, Phường Hòa Cường, Đà Nẵng." /></label>
                   <input
                     type="text"
                     value={formData.address ?? ""}
                     onChange={(e) => set("address", e.target.value || null)}
                     className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-red-500/30 focus:border-red-500 text-sm"
-                    placeholder="Số nhà, đường, phường/xã..."
+                    placeholder="VD: 393 Trưng Nữ Vương, P. Hòa Cường, Đà Nẵng"
                   />
                 </div>
                 <div>

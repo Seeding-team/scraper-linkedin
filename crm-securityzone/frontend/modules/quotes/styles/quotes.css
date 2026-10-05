@@ -2689,6 +2689,11 @@ select.quote-compact-vat:hover {
   text-align: left;
 }
 
+/* Giu xuong dong nguoi dung go (Enter) trong ten hang muc. */
+.quote-pre-line {
+  white-space: pre-line;
+}
+
 .quote-desc-line + .quote-desc-line {
   margin-top: 0.4rem;
 }

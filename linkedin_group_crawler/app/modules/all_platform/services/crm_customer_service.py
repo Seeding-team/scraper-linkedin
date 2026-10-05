@@ -482,7 +482,11 @@ def update_customer(customer_id: str, payload: dict[str, Any], user: dict[str, A
         .eq("instance", settings.crm_instance)
         .execute()
     )
-    return normalize_city_fields(res.data[0])
+    updated_customer = normalize_city_fields(res.data[0])
+    # Sua thong tin khach hang -> dong bo toan bo bao gia cua khach hang do (ten cong ty/dia chi/MST).
+    from app.modules.all_platform.services.crm_cascade_sync_service import propagate_customer_change
+    propagate_customer_change(updated_customer)
+    return updated_customer
 
 
 def delete_customer(customer_id: str, user: dict[str, Any], confirm_cascade: bool = False) -> dict[str, Any]:

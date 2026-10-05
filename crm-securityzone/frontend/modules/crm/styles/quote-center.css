@@ -4385,3 +4385,8 @@
 .qc-workspace-items-table--unified tbody tr {
   border-bottom: 1px solid #eff1f5;
 }
+
+/* Giu xuong dong ten hang muc (Enter) o che do chi-doc. */
+.qc-workspace-item-name-clamp {
+  white-space: pre-line;
+}

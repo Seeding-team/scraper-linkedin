@@ -1826,6 +1826,131 @@ def _rollback_quote_currency(quote_id: str, previous: dict | None) -> None:
         ).execute()
 
 
+
+def _apply_contact_to_quote_data(data: dict, deal_id: str | None) -> None:
+    """Luc tao bao gia: "Kinh gui"/"Nguoi lien he" PHAI la nguoi lien he THAT (crm_contacts), khong bao gio la ten
+    cong ty. Neu FE khong gui duoc ten nguoi (hoac chi roi ve ten cong ty cua co hoi) -> dung Lien he chinh cua co hoi.
+    Chi dien khi thieu/trung ten cong ty; khong ghi de ten ngoi dung da nhap tay khac."""
+    try:
+        supabase: Client = get_supabase_client()
+        deal = None
+        if deal_id:
+            deal = (supabase.table("customer_leads").select("customer_name, company_name, primary_contact_id")
+                    .eq("id", deal_id).limit(1).execute().data or [None])[0]
+        contact_id = data.get("customerContactId") or (deal or {}).get("primary_contact_id")
+        if not contact_id:
+            return
+        contact = (supabase.table("crm_contacts").select("id, name, phone, email").eq("id", contact_id).limit(1).execute().data or [None])[0]
+        if not contact or not (contact.get("name") or "").strip():
+            return
+        company_like = {str(v).strip() for v in (
+            data.get("customerCompanyName"), (deal or {}).get("customer_name"), (deal or {}).get("company_name")) if v}
+        recipient = str(data.get("customerRecipient") or "").strip()
+        if not recipient or recipient in company_like:
+            data["customerRecipient"] = contact["name"].strip()
+            data["customerContactName"] = contact["name"].strip()
+            data["customerContactId"] = contact["id"]
+            if contact.get("phone") and not data.get("customerPhone"):
+                data["customerPhone"] = contact["phone"]
+            if contact.get("email") and not data.get("customerEmail"):
+                data["customerEmail"] = contact["email"]
+    except Exception as exc:  # noqa: BLE001 - phu tro, khong chan tao bao gia
+        logger.warning("_apply_contact_to_quote_data failed: %s", exc)
+
+
+def sync_contact_snapshot_to_quotes(contact_row: dict | None, old_row: dict | None = None) -> int:
+    """Sua Nguoi lien he (crm_contacts) -> dong bo "Kinh gui"/SDT/Email trong snapshot cua cac bao gia da chon nguoi
+    lien he do (data.customerContactId) HOAC thuoc co hoi co lien he chinh la nguoi nay. Neu co `old_row`, chi ghi de
+    truong con la ban sao cua gia tri cu (hoac rong) - ten go tay rieng tren bao gia duoc giu nguyen.
+    Loi chi log, khong chan thao tac goc. Tra ve so bao gia da cap nhat."""
+    try:
+        row = contact_row or {}
+        old = old_row or {}
+        cid = row.get("id")
+        if not cid:
+            return 0
+        pairs = (("customerRecipient", "name"), ("customerContactName", "name"),
+                 ("customerPhone", "phone"), ("customerEmail", "email"))
+        new_vals = {snap: str(row.get(col) or "").strip() for snap, col in pairs}
+        if not any(new_vals.values()):
+            return 0
+        supabase: Client = get_supabase_client()
+        instance = _crm_instance()
+        by_id = {
+            q["id"]: q for q in (
+                supabase.table(QUOTES_TABLE).select("id, data").eq("instance", instance)
+                .eq("data->>customerContactId", str(cid)).is_("deleted_at", "null").execute().data or []
+            )
+        }
+        deal_ids = [d["id"] for d in (
+            supabase.table("customer_leads").select("id").eq("primary_contact_id", cid).eq("instance", instance).execute().data or []
+        )]
+        if deal_ids:
+            for q in (supabase.table(QUOTES_TABLE).select("id, data").eq("instance", instance)
+                      .in_("deal_id", deal_ids).is_("deleted_at", "null").execute().data or []):
+                if not (q.get("data") or {}).get("customerContactId"):
+                    by_id.setdefault(q["id"], q)
+        changed = 0
+        for q in by_id.values():
+            data = dict(q.get("data") or {})
+            data_changed = False
+            for snap, col in pairs:
+                new_val = new_vals[snap]
+                if not new_val or data.get(snap) == new_val:
+                    continue
+                cur = str(data.get(snap) or "").strip()
+                old_val = str(old.get(col) or "").strip()
+                if old_row is not None and cur and cur != old_val:
+                    continue  # nguoi dung da go tay gia tri rieng tren bao gia nay
+                data[snap] = new_val
+                data_changed = True
+            if data_changed:
+                data["customerContactId"] = str(cid)
+                supabase.table(QUOTES_TABLE).update({"data": data}).eq("id", q["id"]).execute()
+                changed += 1
+        return changed
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("sync_contact_snapshot_to_quotes failed: %s", exc)
+        return 0
+
+
+def sync_deal_primary_contact_to_quotes(deal_id: str, new_contact: dict | None, old_contact: dict | None = None) -> int:
+    """Doi lien he chinh cua Co hoi -> cac bao gia cua co hoi do doi "Kinh gui"/SDT/Email sang nguoi moi
+    (chi khi gia tri hien tai la cua nguoi cu, ten cong ty hoac rong; ten go tay khac duoc giu)."""
+    try:
+        new = new_contact or {}
+        if not (deal_id and new.get("id")):
+            return 0
+        old = old_contact or {}
+        pairs = (("customerRecipient", "name"), ("customerContactName", "name"),
+                 ("customerPhone", "phone"), ("customerEmail", "email"))
+        supabase: Client = get_supabase_client()
+        quotes = (supabase.table(QUOTES_TABLE).select("id, data").eq("instance", _crm_instance())
+                  .eq("deal_id", deal_id).is_("deleted_at", "null").execute().data or [])
+        changed = 0
+        for q in quotes:
+            data = dict(q.get("data") or {})
+            company_like = {str(data.get("customerCompanyName") or "").strip()} - {""}
+            data_changed = False
+            for snap, col in pairs:
+                new_val = str(new.get(col) or "").strip()
+                cur = str(data.get(snap) or "").strip()
+                if not new_val or cur == new_val:
+                    continue
+                if cur and cur != str(old.get(col) or "").strip() and cur not in company_like:
+                    continue
+                data[snap] = new_val
+                data_changed = True
+            if data_changed or data.get("customerContactId") != str(new["id"]):
+                data["customerContactId"] = str(new["id"])
+                supabase.table(QUOTES_TABLE).update({"data": data}).eq("id", q["id"]).execute()
+                changed += 1
+        return changed
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("sync_deal_primary_contact_to_quotes failed: %s", exc)
+        return 0
+
+
 def create_quote(payload: dict, created_by: str | None) -> dict:
     supabase: Client = get_supabase_client()
     _normalize_optional_uuid_fields(payload, ("deal_id", "quote_form_id", "issuer_company_id", "project_id"))
@@ -1842,6 +1967,7 @@ def create_quote(payload: dict, created_by: str | None) -> dict:
 
     is_villa = form["layout_type"] == "villa_solution_package"
     data = dict(payload.get("data") or {})
+    _apply_contact_to_quote_data(data, payload.get("deal_id"))
     # Tien te CAP QUOTE + dong bang ty gia (migration 169). Quote cu / khong gui
     # currency -> VND, exchange_rate=NULL, hanh vi y het truoc day.
     # CHI tin `currency` gui RO (data.currency la text go tay, KHONG phai nguon tien te he thong).
@@ -2523,6 +2649,61 @@ _RPC_ERROR_MESSAGES.update({
     "invalid_processing_stage": "Bước xử lý không hợp lệ.",
     "processing_stage_cannot_go_backward": "Không thể lùi về bước xử lý trước đó.",
 })
+
+
+
+# Truong "ho so khach hang" trong snapshot data cua bao gia (lay tu crm_customers luc tao bao gia).
+_CUSTOMER_SNAPSHOT_FIELD_MAP = {
+    "company_name": "customerCompanyName",
+    "address": "customerAddress",
+    "tax_code": "customerTaxCode",
+}
+
+
+def sync_customer_snapshot_to_quotes(customer_id: str | None = None, customer_row: dict | None = None, deal_ids: list[str] | None = None) -> int:
+    """Dong bo thong tin Khach hang (ten cong ty/dia chi/MST) vao snapshot `data` cua MOI bao gia
+    thuoc khach hang/co hoi do - sua ho so khach hang la moi bao gia (ke ca cu) cap nhat theo.
+
+    Chi ghi de cac key co gia tri khong rong trong `customer_row` (khong xoa du lieu quote khi ho so de trong);
+    "Kinh gui"/SDT/Email (theo Nguoi lien he) khong dong bo vi do Contact quyet dinh. Loi o day
+    KHONG duoc lam hong thao tac sua khach hang -> nuot loi + log. Tra ve so bao gia da cap nhat."""
+    try:
+        row = customer_row or {}
+        updates = {
+            snap_key: str(row.get(col)).strip()
+            for col, snap_key in _CUSTOMER_SNAPSHOT_FIELD_MAP.items()
+            if row.get(col) is not None and str(row.get(col)).strip()
+        }
+        if not updates:
+            return 0
+        supabase: Client = get_supabase_client()
+        instance = _crm_instance()
+        ids = list(deal_ids or [])
+        if customer_id:
+            deals = (
+                supabase.table("customer_leads").select("id")
+                .eq("customer_id", customer_id).eq("instance", instance).execute().data or []
+            )
+            ids.extend(d["id"] for d in deals)
+        ids = list({i for i in ids if i})
+        if not ids:
+            return 0
+        quotes = (
+            supabase.table(QUOTES_TABLE).select("id, data")
+            .eq("instance", instance).in_("deal_id", ids).is_("deleted_at", "null").execute().data or []
+        )
+        changed = 0
+        for q in quotes:
+            data = dict(q.get("data") or {})
+            if all(data.get(k) == v for k, v in updates.items()):
+                continue
+            data.update(updates)
+            supabase.table(QUOTES_TABLE).update({"data": data}).eq("id", q["id"]).execute()
+            changed += 1
+        return changed
+    except Exception as exc:  # noqa: BLE001 - dong bo phu, khong chan luong chinh
+        logger.warning("sync_customer_snapshot_to_quotes failed: %s", exc)
+        return 0
 
 
 def set_quote_processing_stage(quote_id: str, actor_id: str | None, stage: str) -> dict:

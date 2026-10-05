@@ -258,7 +258,10 @@ export function LeadDetailDrawer({
     }));
 
     setTeamId(resolvedTeamId || '');
-    if (!resolvedTeamId && resolvedAeId) {
+    // Team Sale theo Sale phu trach: team that cua Sale (leader/thanh vien) la nguon dung nhat.
+    // team_id da luu co the cu/lech (vd Sale la leader Team Minh nhung lead luu Presale) -> uu tien team cua Sale,
+    // chi giu team da luu khi Sale khong thuoc Team CRM nao.
+    if (resolvedAeId) {
       const leadIdAtRequest = lead.id;
       crmTeamsService.getTeamIdForUser(resolvedAeId)
         .then(res => {

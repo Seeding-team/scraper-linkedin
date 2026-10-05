@@ -208,6 +208,9 @@ def update_contact(customer_id: str, contact_id: str, payload: dict[str, Any], u
         .eq("instance", settings.crm_instance)
         .execute()
     )
+    # Sua nguoi lien he -> dong bo Kinh gui/SDT/Email tren cac bao gia da chon nguoi nay.
+    from app.modules.all_platform.services.supabase_quote_service import sync_contact_snapshot_to_quotes
+    sync_contact_snapshot_to_quotes(res.data[0], old_row=contact)
     return res.data[0]
 
 

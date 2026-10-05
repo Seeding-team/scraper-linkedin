@@ -106,12 +106,14 @@ export function InternalQuoteWorkspacePage({ quoteId }: Props) {
   const [createContractOpen, setCreateContractOpen] = useState(false);
   const [updatingStatus, setUpdatingStatus] = useState(false);
 
+  const reloadRef = React.useRef<(() => void) | null>(null);
+
   useEffect(() => {
     let alive = true;
     setLoading(true);
     setError('');
 
-    async function loadData() {
+    async function loadData(silent = false) {
       try {
         const loadedQuote = await seedingQuoteRepository.getQuote(quoteId);
         if (!alive) return;
@@ -131,17 +133,46 @@ export function InternalQuoteWorkspacePage({ quoteId }: Props) {
         if (agentRes.status === 'fulfilled') setAgents(agentRes.value || []);
         if (contractRes.status === 'fulfilled' && contractRes.value?.length) setLinkedContract(contractRes.value[0]);
       } catch (err) {
-        if (alive) setError(err instanceof Error ? err.message : 'Không tải được chi tiết báo giá.');
+        // Tai lai am tham (quay lai tab/trang) loi thi giu du lieu dang hien, khong bao loi.
+        if (alive && !silent) setError(err instanceof Error ? err.message : 'Không tải được chi tiết báo giá.');
       } finally {
-        if (alive) setLoading(false);
+        if (alive && !silent) setLoading(false);
       }
     }
 
     loadData();
+    reloadRef.current = () => { void loadData(true); };
     return () => {
       alive = false;
+      reloadRef.current = null;
     };
   }, [quoteId, dealIdParam]);
+
+  // Sua bao gia o noi khac (Quote Workspace / tab khac) roi quay lai trang nay -> tu lay lai du lieu that,
+  // khong bat F5. Throttle 3s de focus + visibilitychange khong goi trung.
+  useEffect(() => {
+    let last = 0;
+    function refresh() {
+      const now = Date.now();
+      if (now - last < 3000) return;
+      last = now;
+      reloadRef.current?.();
+    }
+    function onVisible() {
+      if (document.visibilityState === 'visible') refresh();
+    }
+    function onPageShow(event: PageTransitionEvent) {
+      if (event.persisted) refresh();
+    }
+    window.addEventListener('focus', refresh);
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('pageshow', onPageShow);
+    return () => {
+      window.removeEventListener('focus', refresh);
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('pageshow', onPageShow);
+    };
+  }, []);
 
   const currency = quote?.currency;
   const money = (value: number | null | undefined) => formatQuoteMoney(value ?? 0, currency);
@@ -315,7 +346,7 @@ export function InternalQuoteWorkspacePage({ quoteId }: Props) {
       <tr key={item.id || idx} className="border-b border-slate-100 last:border-b-0 hover:bg-slate-50/80 transition-colors">
         <td className="py-3.5 px-3 font-mono text-[11px] text-slate-500 font-medium">{sku || PLACEHOLDER}</td>
         <td className={`py-3.5 px-3 text-slate-900 max-w-xs ${indent ? 'pl-6' : ''}`}>
-          <div className="font-bold text-slate-900">{name || PLACEHOLDER}</div>
+          <div className="font-bold text-slate-900 whitespace-pre-line">{name || PLACEHOLDER}</div>
           {detail ? <div className="text-[11px] text-slate-400 font-normal mt-0.5 leading-relaxed whitespace-pre-line">{detail}</div> : null}
         </td>
         <td className="py-3.5 px-3 text-slate-600">{item.unit || PLACEHOLDER}</td>

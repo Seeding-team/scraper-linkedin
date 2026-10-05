@@ -3631,7 +3631,10 @@ export function QuoteWorkspaceModal({
   // stage nhu cu, tranh sua gia non khi chua qua xac nhan ky thuat.
   const isVersionedQuote = (quote?.versionNumber || 1) > 1;
   const costStageOk = true;
-  const pricingStageOk = stage === 'pricing' || isVersionedQuote;
+  // Admin "Yêu cầu chỉnh sửa" tra bao gia ve Buoc 1/2: phai sua duoc nhu binh thuong (khong khoa) - mo khoa
+  // giong Version moi (V2+), backend mirror cung dieu kien o _check_item_field_level_permission.
+  const isReturnedForChanges = Boolean(quote?.requestedChangesAt) && (stage === 'technical' || stage === 'pricing');
+  const pricingStageOk = stage === 'pricing' || isVersionedQuote || isReturnedForChanges;
   const canEditCostCells = canEdit && isDraft && !isLockedForReview && canEditQuoteCost(user, quote) && costStageOk;
   const canEditPricingCells = canEdit && isDraft && !isLockedForReview && canEditQuotePricingFields(user, quote) && pricingStageOk;
   // "Loai bao gia" (yeu cau rieng, sua lai 2026-09-24): truoc day chi khoa o
@@ -3646,7 +3649,7 @@ export function QuoteWorkspaceModal({
   // tro di, AN het khoi Presale luc con o Buoc 1 (request/technical) hoac
   // dang tao yeu cau (!quote). isVersionedQuote van cho hien (giong
   // pricingStageOk) vi tao V2+ la Sale lam lai tu dau, khong qua lai Buoc 1.
-  const beyondStep1 = Boolean(quote) && (stage !== 'request' && stage !== 'technical' || isVersionedQuote);
+  const beyondStep1 = Boolean(quote) && (stage !== 'request' && stage !== 'technical' || isVersionedQuote || isReturnedForChanges);
   // BUG THAT DA GAP: zonePickerItems truoc day khai bao O TREN (gan
   // catalogPickerItems, ~dong 1248) - nhung lai doc canEditCostCells (khai
   // bao O DUOI, dong nay) ngay trong THAN useMemo, chay NGAY LUC RENDER nen

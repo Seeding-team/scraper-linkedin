@@ -489,6 +489,43 @@ export function LeadFormDrawer({
     companyTimer.current = window.setTimeout(() => runCompanyMatch(value, form.website), 300);
   }
 
+  // Go ten khach hang trung voi khach hang da co trong CRM (cung ten voi Co hoi / danh sach Khach hang)
+  // -> o "Cong ty / To chuc" tu lay dung ten do. Khong ghi de khi nguoi dung da tu nhap cong ty khac.
+  const leadNameTimer = useRef<number | undefined>(undefined);
+  const companyAutoFilledRef = useRef('');
+  const formCompanyRef = useRef('');
+  formCompanyRef.current = form.companyName;
+  const foldName = (v?: string | null) =>
+    (v || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/đ/g, 'd').replace(/Đ/g, 'D').toLowerCase().replace(/\s+/g, ' ').trim();
+  function handleLeadNameChange(value: string) {
+    setValue('leadName', value);
+    window.clearTimeout(leadNameTimer.current);
+    const name = value.trim();
+    if (name.length < 3) return;
+    leadNameTimer.current = window.setTimeout(() => {
+      fetch(`${API_BASE_URL}/api/all-platform/crm/leads/company-match?name=${encodeURIComponent(name)}`, {
+        credentials: 'include',
+        headers: headers(),
+      })
+        .then(res => res.json())
+        .then(body => {
+          if (body.success === false) return;
+          const matches = (body.data?.matches || []) as CompanyMatchRow[];
+          const exact = matches.find(m => foldName(m.customer_name) === foldName(name) || foldName(m.company_name) === foldName(name));
+          if (!exact) return;
+          const current = formCompanyRef.current.trim();
+          if (current && current !== companyAutoFilledRef.current) return; // nguoi dung da tu nhap
+          const companyName = (exact.company_name || exact.customer_name || '').trim();
+          if (!companyName) return;
+          companyAutoFilledRef.current = companyName;
+          setValue('companyName', companyName);
+          setCompanyMatches(matches);
+          setMatchedCustomerId(exact.id);
+        })
+        .catch(() => { /* goi y khong bat buoc */ });
+    }, 400);
+  }
+
   function handleParsePaste() {
     const text = pasteText;
     const phoneMatch = text.match(PHONE_RE);
@@ -893,7 +930,7 @@ export function LeadFormDrawer({
               <fieldset className="crm-lead-info-fieldset" disabled={!unlocked}>
                 <div className="crm-form-grid">
                   <Field label="Họ và tên người liên hệ" required>
-                    <input ref={leadNameRef} value={form.leadName} onChange={e => setValue('leadName', e.target.value)} placeholder="Nguyễn Văn A" />
+                    <input ref={leadNameRef} value={form.leadName} onChange={e => handleLeadNameChange(e.target.value)} placeholder="Nguyễn Văn A" />
                   </Field>
                   <Field label="Công ty / Tổ chức">
                     <input value={form.companyName} onChange={e => handleCompanyNameChange(e.target.value)} placeholder="Công ty TNHH ABC" />
