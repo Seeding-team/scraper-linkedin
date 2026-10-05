@@ -2989,6 +2989,14 @@ export function QuoteWorkspaceModal({
     doApplyQuickMarkup(percent);
   }
 
+  function applyCustomMarkup(percent: number) {
+    if (!isValidMarkupPercent(percent)) {
+      window.alert('Markup phải từ -100% trở lên.');
+      return;
+    }
+    doApplyQuickMarkup(percent);
+  }
+
   const [marginApplyConfirm, setMarginApplyConfirm] = useState<{ percent: number } | null>(null);
   function applyTargetMargin(marginPercent: number) {
     if (!isValidTargetMarginPercent(marginPercent)) {
@@ -5580,7 +5588,7 @@ export function QuoteWorkspaceModal({
                         className="qc-mini-btn"
                         disabled={busy || markupCustomInput.trim() === '' || !Number.isFinite(Number(markupCustomInput)) || !isValidMarkupPercent(Number(markupCustomInput))}
                         title="Áp Markup tuỳ chỉnh cho toàn bộ hạng mục có giá vốn hợp lệ"
-                        onClick={() => applyQuickMarkup(Number(markupCustomInput))}
+                        onClick={() => applyCustomMarkup(Number(markupCustomInput))}
                       >
                         Áp dụng
                       </button>
