@@ -1013,9 +1013,9 @@ export function CustomerDealSplitTab({
                     <td className="px-4 py-3.5 whitespace-nowrap">
                       <div className="flex items-center gap-1.5">
                         <div className="size-5 rounded-full bg-slate-200 text-slate-600 font-bold text-[9px] uppercase flex items-center justify-center shrink-0">
-                          {memberName((deal as any).quote_owner_id || (deal as any).owner_id)[0] || 'C'}
+                          {memberName((deal as any).quote_owner_id || (deal as any).owner_id || (deal as any).sdr_id || (deal as any).leaded_by)[0] || 'C'}
                         </div>
-                        <span className="font-medium text-slate-700 text-xs">{memberName((deal as any).quote_owner_id || (deal as any).owner_id)}</span>
+                        <span className="font-medium text-slate-700 text-xs">{memberName((deal as any).quote_owner_id || (deal as any).owner_id || (deal as any).sdr_id || (deal as any).leaded_by)}</span>
                       </div>
                     </td>
 

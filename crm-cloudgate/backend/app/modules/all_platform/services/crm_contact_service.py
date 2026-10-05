@@ -86,7 +86,11 @@ def _attach_contact_counts(contacts: list[dict[str, Any]], customer_id: str, use
         customer_project_count = len(project_res.data or [])  # moi lien he cua khach tham gia moi du an cua khach
         for c in contacts:
             cid = str(c["id"])
-            c["deal_count"] = len([d for d in deals if str(d.get("primary_contact_id") or "") == cid])
+            owns_unassigned = len(contacts) == 1 or bool(c.get("is_primary"))
+            c["deal_count"] = len([
+                d for d in deals
+                if str(d.get("primary_contact_id") or "") == cid or (owns_unassigned and not d.get("primary_contact_id"))
+            ])
             c["project_count"] = customer_project_count
     except Exception:
         logger.exception("list_contacts: failed to attach deal/project counts for customer %s", customer_id)
@@ -285,16 +289,38 @@ def get_contact(contact_id: str, user: dict[str, Any]) -> dict[str, Any]:
     return {"contact": contact, "customer": customer}
 
 
+def _contact_owns_unassigned_deals(contact_id: str, customer_id: str) -> bool:
+    """True neu `contact_id` la lien he chinh (is_primary) cua khach hang, hoac la lien he DUY NHAT cua khach."""
+    try:
+        supabase = get_supabase_client()
+        rows = execute_supabase_query(
+            lambda: supabase.table("crm_contacts").select("id, is_primary")
+            .eq("customer_id", customer_id).eq("instance", settings.crm_instance).execute()
+        ).data or []
+        if len(rows) == 1:
+            return str(rows[0]["id"]) == str(contact_id)
+        return any(str(r["id"]) == str(contact_id) and r.get("is_primary") for r in rows)
+    except Exception:
+        logger.exception("_contact_owns_unassigned_deals failed for contact %s", contact_id)
+        return False
+
+
 def _contact_deal_ids(contact_id: str, customer_id: str, user: dict[str, Any]) -> tuple[list[dict[str, Any]], list[str]]:
     """Deal ma primary_contact_id = contact nay VA cung thuoc dung Customer
     cha (defense-in-depth - primary_contact_id/customer_id la 2 cot doc lap,
     khong co FK composite rang buoc chung phai khop nhau), da loc theo dung
     _deal_visible_to() nhu related_records()."""
     supabase = get_supabase_client()
+    # Co hoi CHUA gan lien he chinh (primary_contact_id trong) thuoc ve lien he chinh cua khach hang, hoac lien he
+    # duy nhat neu khach chi co 1 nguoi - tranh "0 Co hoi" o khach chi co 1 lien he va 1 co hoi.
+    unassigned_too = _contact_owns_unassigned_deals(contact_id, customer_id)
     lead_res = execute_supabase_query(
-        lambda: supabase.table("customer_leads")
-        .select(BASE_COLUMNS)
-        .eq("primary_contact_id", contact_id)
+        lambda: (
+            supabase.table("customer_leads")
+            .select(BASE_COLUMNS)
+            .or_(f"primary_contact_id.eq.{contact_id},primary_contact_id.is.null") if unassigned_too
+            else supabase.table("customer_leads").select(BASE_COLUMNS).eq("primary_contact_id", contact_id)
+        )
         .eq("customer_id", customer_id)
         .eq("instance", settings.crm_instance)
         .execute()
