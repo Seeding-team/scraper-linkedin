@@ -129,7 +129,7 @@ function toCreateFormPayload(input: CreateQuoteFormInput) {
     layout_type: input.layoutType,
     schema_version: input.schemaVersion,
     schema_json: input.schemaJson,
-    issuer_company_id: input.issuerCompanyId,
+    issuer_company_id: optionalUuid(input.issuerCompanyId),
   };
 }
 
@@ -141,7 +141,7 @@ function toUpdateFormPayload(input: UpdateQuoteFormInput) {
     layout_type: input.layoutType,
     schema_version: input.schemaVersion,
     schema_json: input.schemaJson,
-    issuer_company_id: input.issuerCompanyId,
+    issuer_company_id: optionalUuid(input.issuerCompanyId),
   };
 }
 
@@ -157,7 +157,7 @@ function toIssuerCompanyPayload(input: CreateIssuerCompanyInput | UpdateIssuerCo
     website: input.website,
     tax_code: input.taxCode,
     logo_url: input.logoUrl,
-    default_quote_form_id: input.defaultQuoteFormId,
+    default_quote_form_id: optionalUuid(input.defaultQuoteFormId),
     status: input.status,
     sort_order: input.sortOrder,
     payment_terms: input.paymentTerms,
@@ -225,7 +225,7 @@ function toQuoteItemPayload(item: NonNullable<CreateQuoteInput['items']>[number]
     discount_percent: item.discountPercent ?? 0,
     vat_rate: item.vatRate,
     children: (item.children || []).map(toQuoteItemPayload),
-    catalog_item_id: item.catalogItemId ?? null,
+    catalog_item_id: optionalUuid(item.catalogItemId),
     bundle_snapshot: item.bundleSnapshot ?? null,
     list_price_usd: item.listPriceUsd ?? null,
     unit_price_usd: item.unitPriceUsd ?? null,
@@ -234,11 +234,11 @@ function toQuoteItemPayload(item: NonNullable<CreateQuoteInput['items']>[number]
     cost_price: item.costPrice ?? null,
     markup_percent: item.markupPercent ?? null,
     cost_not_applicable: item.costNotApplicable ?? false,
-    price_book_item_id: item.priceBookItemId ?? null,
-    price_book_version_id: item.priceBookVersionId ?? null,
+    price_book_item_id: optionalUuid(item.priceBookItemId),
+    price_book_version_id: optionalUuid(item.priceBookVersionId),
     price_book_snapshot: item.priceBookSnapshot ?? null,
     cost_override_reason: item.costOverrideReason ?? null,
-    cost_override_by: item.costOverrideBy ?? null,
+    cost_override_by: optionalUuid(item.costOverrideBy),
     cost_override_at: item.costOverrideAt ?? null,
     cost_price_original: item.costPriceOriginal ?? null,
   };
@@ -501,8 +501,8 @@ export class SeedingQuoteRepository implements QuoteRepository {
     input: { technicalOwnerId?: string | null; quoteOwnerId?: string | null }
   ): Promise<Quote> {
     const payload: Record<string, string | null> = {};
-    if ('technicalOwnerId' in input) payload.technical_owner_id = input.technicalOwnerId ?? null;
-    if ('quoteOwnerId' in input) payload.quote_owner_id = input.quoteOwnerId ?? null;
+    if ('technicalOwnerId' in input) payload.technical_owner_id = optionalUuid(input.technicalOwnerId);
+    if ('quoteOwnerId' in input) payload.quote_owner_id = optionalUuid(input.quoteOwnerId);
     return apiFetch<Quote>(`/api/all-platform/quotes/${encodeURIComponent(quoteId)}/owners`, {
       method: 'POST',
       body: JSON.stringify(payload),

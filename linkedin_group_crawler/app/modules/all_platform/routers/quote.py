@@ -166,7 +166,10 @@ def quote_forms_create(payload: QuoteFormCreateRequest, user: dict = Depends(get
 def quote_forms_update(form_id: str, payload: QuoteFormUpdateRequest, user: dict = Depends(get_current_user)) -> BaseResponse:
     _require_master_data_manager(user)
     try:
-        data = update_quote_form(form_id, payload.model_dump(exclude_none=True))
+        dump = payload.model_dump(exclude_none=True)
+        if "issuer_company_id" in payload.model_fields_set:
+            dump["issuer_company_id"] = payload.issuer_company_id
+        data = update_quote_form(form_id, dump)
         return BaseResponse(success=True, message="Đã lưu mẫu báo giá", data=data)
     except HTTPException:
         raise
@@ -610,7 +613,10 @@ def quotes_issuer_companies_update(
 ) -> BaseResponse:
     _require_master_data_manager(user)
     try:
-        data = update_issuer_company(company_id, payload.model_dump(exclude_none=True))
+        dump = payload.model_dump(exclude_none=True)
+        if "default_quote_form_id" in payload.model_fields_set:
+            dump["default_quote_form_id"] = payload.default_quote_form_id
+        data = update_issuer_company(company_id, dump)
         return BaseResponse(success=True, message="Đã lưu công ty phát hành", data=data)
     except Exception as e:
         return BaseResponse(success=False, message=friendly_supabase_error_message(e))
@@ -743,6 +749,27 @@ def _load_quote_and_lead(quote_id: str) -> tuple[dict, dict | None]:
     return quote, lead
 
 
+def _quote_update_dump(payload: QuoteUpdateRequest) -> dict:
+    dump = payload.model_dump(exclude_none=True)
+    # Bug that da gap: exclude_none=True xoa het field client gui RO
+    # RANG la null (vd "bo gan Du an" = gui project_id=null CO Y) khoi
+    # dump, khien no lam y het "khong gui gi ca" (giu nguyen gia tri
+    # cu). Dung model_fields_set (Pydantic v2 - field co mat trong body
+    # request, bat ke gia tri) de phan biet that "khong gui" voi "gui null
+    # co y". Helper nay duoc dung chung cho PUT va update-and-approve de
+    # tranh nut Luu/Duyet xu ly khac nhau.
+    fields_set = payload.model_fields_set
+    if "project_id" in fields_set:
+        dump["project_id"] = payload.project_id
+    if "sla_due_at" in fields_set:
+        dump["sla_due_at"] = payload.sla_due_at
+    if "overall_discount_percent" in fields_set:
+        dump["overall_discount_percent"] = payload.overall_discount_percent
+    if "quote_type_codes" in fields_set:
+        dump["quote_type_codes"] = payload.quote_type_codes
+    return dump
+
+
 @quotes_router.get("/{quote_id}")
 def quotes_get(quote_id: str, user: dict = Depends(get_current_user)) -> BaseResponse:
     try:
@@ -776,24 +803,7 @@ def quotes_update(quote_id: str, payload: QuoteUpdateRequest, user: dict = Depen
         quote, lead = _load_quote_and_lead(quote_id)
         if not can_edit_quote(user, quote, lead):
             return BaseResponse(success=False, message="Không có quyền chỉnh sửa báo giá này")
-        dump = payload.model_dump(exclude_none=True)
-        # Bug that da gap: exclude_none=True xoa het field client gui RO
-        # RANG la null (vd "bo gan Du an" = gui project_id=null CO Y) khoi
-        # dump, khien no lam y het "khong gui gi ca" (giu nguyen gia tri
-        # cu) - nguoi dung KHONG THE go Project ra duoc nua. Dung
-        # model_fields_set (Pydantic v2 - field co mat trong body request,
-        # bat ke gia tri) de phan biet that "khong gui" voi "gui null co y",
-        # CHI ap dung rieng cho project_id/sla_due_at (khong doi hanh vi cac
-        # field khac, tranh vo tinh lam field khac bi clear ngoai y muon).
-        fields_set = payload.model_fields_set
-        if "project_id" in fields_set:
-            dump["project_id"] = payload.project_id
-        if "sla_due_at" in fields_set:
-            dump["sla_due_at"] = payload.sla_due_at
-        if "overall_discount_percent" in fields_set:
-            dump["overall_discount_percent"] = payload.overall_discount_percent
-        if "quote_type_codes" in fields_set:
-            dump["quote_type_codes"] = payload.quote_type_codes
+        dump = _quote_update_dump(payload)
         denied = _check_item_field_level_permission(user, quote, dump.get("items"))
         if denied:
             return BaseResponse(success=False, message=denied)
@@ -942,7 +952,11 @@ def quotes_update_and_approve(
         if guard is not None:
             return guard
         evaluation = quote_rule_evaluation_service.get_latest_evaluation(quote_id)
-        data = update_and_approve_quote(quote_id, payload.model_dump(exclude_none=True), user.get("id"))
+        dump = _quote_update_dump(payload)
+        denied = _check_item_field_level_permission(user, quote, dump.get("items"))
+        if denied:
+            return BaseResponse(success=False, message=denied)
+        data = update_and_approve_quote(quote_id, dump, user.get("id"))
         if quote_rule_evaluation_service.requires_exception_reason(evaluation) and exception_reason:
             quote_rule_evaluation_service.record_exception_approval(
                 quote_id, data.get("versionNumber") or 1, evaluation.get("id"), exception_reason.strip(), user.get("id"),

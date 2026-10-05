@@ -2453,7 +2453,8 @@
   align-items: center;
   gap: 6px;
   flex-wrap: wrap;
-  margin-top: 6px;
+  margin-top: 4px;
+  max-width: 100%;
 }
 
 .qc-bundle-pricing-chip {
@@ -2467,6 +2468,8 @@
   border: 1px solid #dbe4f0;
   color: #52627a;
   background: #f8fafc;
+  max-width: 100%;
+  white-space: nowrap;
 }
 
 .qc-bundle-pricing-chip--auto {
@@ -2522,11 +2525,11 @@
  * ranh gioi ro, ten bi bop khi STT/nut doi cho). */
 .qc-workspace-item-name-cell {
   display: grid;
-  grid-template-columns: 60px 1fr;
+  grid-template-columns: 48px minmax(0, 1fr);
   align-items: center;
   width: 100%;
   min-height: 56px;
-  gap: 4px;
+  gap: 6px;
 }
 .qc-workspace-item-no-col {
   display: flex;
@@ -2566,6 +2569,7 @@
   width: 100%;
 }
 .qc-workspace-item-name-row {
+  position: relative;
   display: flex;
   align-items: center;
   /* BUG THAT DA GAP ("2 dấu + đóng quá" - cac icon dinh sat nhau kho bam
@@ -2574,6 +2578,7 @@
   gap: 8px;
   min-width: 0;
   overflow-wrap: break-word;
+  padding-right: 4px;
 }
 /* "Nội dung công việc" (quote_item.description) sua TRUC TIEP ngay duoi ten
  * hang muc (yeu cau ro rang "chỉnh được ở đây luôn, không cần bấm vào chỉnh
@@ -2679,7 +2684,7 @@
  * dai, giu nguyen tu binh thuong). */
 .qc-workspace-item-name-clamp {
   display: -webkit-box;
-  -webkit-line-clamp: 3;
+  -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
   white-space: normal;
@@ -2699,12 +2704,37 @@
 .qc-workspace-item-name-cell .qc-cell-textarea {
   flex: 1;
   min-width: 0;
+  width: 100%;
   resize: none;
   white-space: pre-wrap;
   overflow-wrap: break-word;
   word-break: normal;
   line-height: 1.35;
   font-family: inherit;
+}
+.qc-workspace-item-inline-actions {
+  position: absolute;
+  right: 0;
+  top: 0;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 128px;
+  padding: 2px 0 2px 6px;
+  background: linear-gradient(90deg, rgba(255,255,255,0), #fff 18px);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease;
+}
+.qc-workspace-items-table--unified tbody tr:hover .qc-workspace-item-inline-actions,
+.qc-workspace-item-name-row:focus-within .qc-workspace-item-inline-actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+.qc-workspace-item-name-row:hover .qc-cell-textarea,
+.qc-workspace-item-name-row:focus-within .qc-cell-textarea {
+  padding-right: 132px;
 }
 /* Icon "i" nho canh ten - CHI la dau hieu "co mo ta day du, xem o Drawer",
  * KHONG render nguyen doan mo ta ra bang (yeu cau rieng: bang qua roi khi
@@ -2735,7 +2765,7 @@
  * an toan hon nhieu. flex-shrink:0 de KHONG bao gio bop ten (ten van
  * flex:1/min-width:0 nhu cu, uu tien chiem het khong gian con lai truoc). */
 .qc-workspace-item-quick-add {
-  display: flex;
+  display: inline-flex;
   /* BUG THAT DA GAP ("2 dấu + đóng quá") - tang tu 3px len 6px giua chinh 2
    * icon "Thêm hạng mục trống"/"Chọn từ danh mục" trong cum nay. */
   gap: 6px;
@@ -2774,7 +2804,7 @@
   justify-content: center;
   flex-shrink: 0;
   align-self: flex-start;
-  margin-top: 2px;
+  margin-top: 0;
   width: 20px;
   height: 20px;
   border-radius: 6px;
@@ -2817,7 +2847,7 @@
   justify-content: center;
   flex-shrink: 0;
   align-self: flex-start;
-  margin-top: 2px;
+  margin-top: 0;
   width: 20px;
   height: 20px;
   border: 1px solid #e4e7ec;
@@ -2955,7 +2985,7 @@
  * khac dang dung chung .qc-th-actions/.qc-cell-actions. */
 .qc-workspace-items-table--unified .qc-th-actions,
 .qc-workspace-items-table--unified .qc-cell-actions {
-  width: 128px;
+  width: 36px;
   white-space: nowrap;
   overflow: visible;
   text-overflow: clip;
@@ -2963,7 +2993,7 @@
 /* Cot Thao tac gio chi con 1 nut menu "..." (ActionMenu) thay 4 nut roi rac
  * - thu hep lai de nhuong khong gian cho cot Hang muc, khong con can 128px. */
 .qc-workspace-items-table--unified .qc-cell-actions--menu {
-  width: 44px;
+  width: 36px;
   text-align: center;
 }
 .qc-cell-qty .qc-cell-input-money { text-align: center; }

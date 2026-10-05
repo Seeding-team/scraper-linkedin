@@ -1875,6 +1875,10 @@ export function QuoteWorkspaceModal({
     void persistQuote({}, { silent: true });
   }
 
+  function handlePricingBlur() {
+    void persistQuote({}, { silent: true });
+  }
+
   // Tick "Khong ap dung gia von" xoa luon costPrice/markupPercent dang co -
   // 2 trang thai nay khong duoc cung ton tai (tranh vua co gia von vua danh
   // dau khong ap dung, vo nghia va se bi RPC ep ve NULL/false phia server
@@ -5714,9 +5718,9 @@ export function QuoteWorkspaceModal({
                    * .qc-workspace-item-name-cell (van "60px 1fr", 1fr tu
                    * dong nhan them do rong moi). */}
                   <colgroup>
-                    <col style={{ width: '330px' }} />
-                    <col style={{ width: '300px' }} />
-                    <col style={{ width: '92px' }} />
+                    <col style={{ width: '390px' }} />
+                    <col style={{ width: '260px' }} />
+                    <col style={{ width: '84px' }} />
                     <col style={{ width: '64px' }} />
                     <col style={{ width: '104px' }} />
                     <col style={{ width: '104px' }} />
@@ -5724,8 +5728,8 @@ export function QuoteWorkspaceModal({
                     <col style={{ width: '104px' }} />
                     <col style={{ width: '104px' }} />
                     <col style={{ width: '82px' }} />
-                    <col style={{ width: '88px' }} />
-                    {canEdit && isDraft && !isLockedForReview ? <col style={{ width: '44px' }} /> : null}
+                    <col style={{ width: '84px' }} />
+                    {canEdit && isDraft && !isLockedForReview ? <col style={{ width: '36px' }} /> : null}
                   </colgroup>
                   <thead>
                     <tr>
@@ -5951,6 +5955,7 @@ export function QuoteWorkspaceModal({
                                    * vao chi hien thong bao huong dan tao
                                    * phien ban moi, KHONG mo form sua/KHONG
                                    * ghi de catalogItemId len version da khoa). */}
+                                  <span className="qc-workspace-item-inline-actions">
                                   {item.catalogItemId || item.priceBookItemId ? (
                                     <span
                                       className="qc-workspace-item-link-badge qc-workspace-item-link-badge--linked"
@@ -6032,6 +6037,8 @@ export function QuoteWorkspaceModal({
                                       </button>
                                     </span>
                                   ) : null}
+                                  </span>
+                                </span>
                                   {isBundleRow ? (
                                     <span className="qc-bundle-pricing-mode">
                                       <span className={`qc-bundle-pricing-chip qc-bundle-pricing-chip--${bundleMode}`}>
@@ -6052,7 +6059,6 @@ export function QuoteWorkspaceModal({
                                   {(item.discountPercent ?? 0) > 0 ? (
                                     <span className="qc-line-discount-chip">CK dòng {formatPercentTrim(item.discountPercent)}</span>
                                   ) : null}
-                                </span>
                               </span>
                               </span>
                             </td>
@@ -6128,7 +6134,7 @@ export function QuoteWorkspaceModal({
                                   {!pricingViewAllowed ? (
                                     <span className="qc-row-sub">Không có quyền xem</span>
                                   ) : editableCells ? (
-                                    <input type="number" step="0.01" className="qc-cell-input qc-cell-input-money" value={item.markupPercent != null ? Number(item.markupPercent.toFixed(2)) : ''} placeholder="—" disabled={item.costPrice == null} onChange={e => handleMarkupChange(index, e.target.value)} />
+                                    <input type="number" step="0.01" className="qc-cell-input qc-cell-input-money" value={item.markupPercent != null ? Number(item.markupPercent.toFixed(2)) : ''} placeholder="—" disabled={item.costPrice == null} onChange={e => handleMarkupChange(index, e.target.value)} onBlur={handlePricingBlur} />
                                   ) : formatPercentFixed2(item.markupPercent)}
                                 </span>
                                 {renderFillDownIcon(index, 'markupPercent')}
@@ -8406,6 +8412,7 @@ export function QuoteWorkspaceModal({
                         value={drawerItem.markupPercent ?? ''}
                         disabled={drawerItem.costPrice == null}
                         onChange={e => handleMarkupChange(drawerIndex, e.target.value)}
+                        onBlur={handlePricingBlur}
                       />
                     ) : (
                       <p>{formatPercentTrim(drawerItem.markupPercent)}</p>

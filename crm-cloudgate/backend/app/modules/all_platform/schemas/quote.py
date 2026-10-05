@@ -25,6 +25,22 @@ def normalize_quote_data(data):
                                   for row in data["paymentPlan"]]}
 
 
+def optional_uuid_or_none(value):
+    """Normalize optional UUID fields before they reach PostgREST/Postgres.
+
+    Browser selects often send "" for "not selected"; Postgres UUID columns do
+    not accept empty strings. Keep real UUID strings unchanged, but consistently
+    turn empty/blank strings into None across quote create/update/assignment
+    payloads.
+    """
+    if value is None:
+        return None
+    if isinstance(value, str):
+        text = value.strip()
+        return text or None
+    return value
+
+
 class QuoteFormCreateRequest(BaseModel):
     name: str
     description: Optional[str] = None
@@ -33,6 +49,8 @@ class QuoteFormCreateRequest(BaseModel):
     schema_version: int = 1
     schema_json: dict[str, Any]
     issuer_company_id: Optional[str] = None
+
+    _normalize_optional_uuid = field_validator("issuer_company_id", mode="before")(optional_uuid_or_none)
 
 
 class QuoteFormUpdateRequest(BaseModel):
@@ -43,6 +61,8 @@ class QuoteFormUpdateRequest(BaseModel):
     schema_version: Optional[int] = None
     schema_json: Optional[dict[str, Any]] = None
     issuer_company_id: Optional[str] = None
+
+    _normalize_optional_uuid = field_validator("issuer_company_id", mode="before")(optional_uuid_or_none)
 
 
 class IssuerCompanyCreateRequest(BaseModel):
@@ -65,6 +85,8 @@ class IssuerCompanyCreateRequest(BaseModel):
     # KHONG doc song - sua o day chi anh huong bao gia MOI tao sau do.
     payment_terms: Optional[str] = None
 
+    _normalize_optional_uuid = field_validator("default_quote_form_id", mode="before")(optional_uuid_or_none)
+
 
 class IssuerCompanyUpdateRequest(BaseModel):
     code: Optional[str] = None
@@ -81,6 +103,8 @@ class IssuerCompanyUpdateRequest(BaseModel):
     status: Optional[str] = None
     sort_order: Optional[int] = None
     payment_terms: Optional[str] = None
+
+    _normalize_optional_uuid = field_validator("default_quote_form_id", mode="before")(optional_uuid_or_none)
 
 
 class QuoteItemInput(BaseModel):
@@ -138,6 +162,18 @@ class QuoteItemInput(BaseModel):
     price_book_item_id: Optional[str] = None
     price_book_version_id: Optional[str] = None
     price_book_snapshot: Optional[dict[str, Any]] = None
+    cost_override_reason: Optional[str] = None
+    cost_override_by: Optional[str] = None
+    cost_override_at: Optional[str] = None
+    cost_price_original: Optional[float] = Field(default=None, ge=0)
+
+    _normalize_optional_uuid = field_validator(
+        "catalog_item_id",
+        "price_book_item_id",
+        "price_book_version_id",
+        "cost_override_by",
+        mode="before",
+    )(optional_uuid_or_none)
 
 
 class QuoteCreateRequest(BaseModel):
@@ -154,6 +190,12 @@ class QuoteCreateRequest(BaseModel):
     quote_type_codes: Optional[list[str]] = None
 
     _normalize_data = field_validator("data")(normalize_quote_data)
+    _normalize_optional_uuid = field_validator(
+        "deal_id",
+        "issuer_company_id",
+        "project_id",
+        mode="before",
+    )(optional_uuid_or_none)
 
 
 class QuoteUpdateRequest(BaseModel):
@@ -182,6 +224,12 @@ class QuoteUpdateRequest(BaseModel):
     quote_type_codes: Optional[list[str]] = None
 
     _normalize_data = field_validator("data")(normalize_quote_data)
+    _normalize_optional_uuid = field_validator(
+        "issuer_company_id",
+        "quote_form_id",
+        "project_id",
+        mode="before",
+    )(optional_uuid_or_none)
 
 
 class QuoteStageUpdateRequest(BaseModel):
@@ -198,6 +246,12 @@ class QuoteOwnersUpdateRequest(BaseModel):
 
     technical_owner_id: Optional[str] = None
     quote_owner_id: Optional[str] = None
+
+    _normalize_optional_uuid = field_validator(
+        "technical_owner_id",
+        "quote_owner_id",
+        mode="before",
+    )(optional_uuid_or_none)
 
 
 class QuoteVersionReasonRequest(BaseModel):

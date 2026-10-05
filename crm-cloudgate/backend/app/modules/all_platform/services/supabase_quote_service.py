@@ -58,6 +58,39 @@ def _ensure_quote_in_instance(quote_id: str, include_deleted: bool = False) -> d
     return get_quote(quote_id, include_deleted=include_deleted)
 
 
+def _optional_uuid(value: Any) -> Any:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        text = value.strip()
+        return text or None
+    return value
+
+
+def _normalize_optional_uuid_fields(payload: dict, fields: tuple[str, ...]) -> dict:
+    for field in fields:
+        if field in payload:
+            payload[field] = _optional_uuid(payload.get(field))
+    return payload
+
+
+def _normalize_quote_item_uuid_fields(items: list[dict] | None) -> list[dict] | None:
+    if items is None:
+        return None
+    uuid_fields = (
+        "catalog_item_id",
+        "price_book_item_id",
+        "price_book_version_id",
+        "cost_override_by",
+    )
+    for item in items:
+        _normalize_optional_uuid_fields(item, uuid_fields)
+        children = item.get("children")
+        if isinstance(children, list):
+            _normalize_quote_item_uuid_fields(children)
+    return items
+
+
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -630,6 +663,8 @@ def update_issuer_company(company_id: str, payload: dict) -> dict:
         "status": "status", "sort_order": "sort_order", "payment_terms": "payment_terms",
     }
     update_data = {field_map[k]: v for k, v in payload.items() if k in field_map and v is not None}
+    if "default_quote_form_id" in payload:
+        update_data["default_quote_form_id"] = payload.get("default_quote_form_id")
     # logo_url/website/... rong "" (xoa logo/field) van phai ap dung duoc - chi
     # loai None (khong gui field do len), khong loai chuoi rong.
     # Rieng default_quote_form_id la cot UUID: "" (bo chon mau mac dinh) phai
@@ -1059,6 +1094,8 @@ def create_quote_form(payload: dict) -> dict:
 def update_quote_form(form_id: str, payload: dict) -> dict:
     supabase: Client = get_supabase_client()
     update_data = {k: v for k, v in payload.items() if v is not None}
+    if "issuer_company_id" in payload:
+        update_data["issuer_company_id"] = payload.get("issuer_company_id")
     if "layout_type" in update_data and not update_data["layout_type"]:
         update_data.pop("layout_type")
     update_data["updated_at"] = _now_iso()
@@ -1723,6 +1760,12 @@ def set_print_layout_prefs(
 
 def create_quote(payload: dict, created_by: str | None) -> dict:
     supabase: Client = get_supabase_client()
+    _normalize_optional_uuid_fields(payload, ("deal_id", "quote_form_id", "issuer_company_id", "project_id"))
+    _normalize_quote_item_uuid_fields(payload.get("items"))
+    if not payload.get("quote_form_id"):
+        raise ValueError("Vui lòng chọn mẫu báo giá.")
+    if not payload.get("deal_id"):
+        raise ValueError("Vui lòng chọn cơ hội trước khi tạo báo giá.")
     form = supabase.table(FORMS_TABLE).select("*").eq("id", payload["quote_form_id"]).single().execute().data
     if not form or form["status"] != "active":
         raise ValueError("Mẫu báo giá không còn hoạt động.")
@@ -1811,6 +1854,13 @@ def create_quote(payload: dict, created_by: str | None) -> dict:
             "unit_price_usd": item.get("unit_price_usd"),
             "exchange_rate": item.get("exchange_rate"),
             "unit_price_vnd": item.get("unit_price_vnd"),
+            "price_book_item_id": item.get("price_book_item_id") or None,
+            "price_book_version_id": item.get("price_book_version_id") or None,
+            "price_book_snapshot": item.get("price_book_snapshot"),
+            "cost_override_reason": item.get("cost_override_reason"),
+            "cost_override_by": item.get("cost_override_by") or None,
+            "cost_override_at": item.get("cost_override_at"),
+            "cost_price_original": item.get("cost_price_original"),
         }
         # Chi them cost_price/markup_percent (migration 086) vao payload INSERT
         # khi THAT SU co gia tri - neu luon them ca key voi gia tri None,
@@ -1960,9 +2010,8 @@ def update_quote(quote_id: str, payload: dict, actor_id: str | None) -> dict:
     RPC trong truong hop nay, KHONG duoc mac dinh ve []."""
     current_quote = _ensure_quote_in_instance(quote_id)
     supabase: Client = get_supabase_client()
-    for uuid_key in ("issuer_company_id", "project_id", "quote_form_id"):
-        if payload.get(uuid_key) == "":
-            payload[uuid_key] = None
+    _normalize_optional_uuid_fields(payload, ("issuer_company_id", "project_id", "quote_form_id"))
+    _normalize_quote_item_uuid_fields(payload.get("items"))
     # Villa keeps its commercial rows in data.solutionItems, not quote_items.
     # quote_update is shared and recomputes totals from p_items, therefore a
     # metadata-only Villa save would otherwise persist 0 when p_items is empty.
@@ -2245,6 +2294,8 @@ def update_and_approve_quote(quote_id: str, payload: dict, actor_id: str | None)
     roi bam Duyet), PHAI truyen lai items HIEN CO thay vi [] - khong thi bam
     Duyet se xoa sach hang muc."""
     _ensure_quote_in_instance(quote_id)
+    _normalize_optional_uuid_fields(payload, ("issuer_company_id", "project_id", "quote_form_id"))
+    _normalize_quote_item_uuid_fields(payload.get("items"))
     supabase: Client = get_supabase_client()
     items = payload.get("items")
     items_changed = items is not None
