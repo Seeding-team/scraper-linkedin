@@ -803,6 +803,9 @@ def upsert_service_catalog_item_pricing(
         "updated_by": actor_id,
         "updated_at": _now_iso(),
     }
+    # DB co CHECK exchange_rate > 0: 0/am nghia la "chua co ty gia" -> NULL.
+    if supplier_exchange_rate is not None and supplier_exchange_rate <= 0:
+        supplier_exchange_rate = None
     supplier_payload = {
         "supplier_currency": supplier_currency,
         "supplier_list_price": supplier_list_price,
