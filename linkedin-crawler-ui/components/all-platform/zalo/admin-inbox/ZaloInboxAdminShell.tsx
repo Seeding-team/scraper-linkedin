@@ -19,6 +19,7 @@ import { ZaloStickerPicker } from "../centralized-shared/ZaloStickerPicker";
 import { ZaloReactionQuickPicker, ZaloReactionBadges } from "../centralized-shared/ZaloReactionPicker";
 import { ZaloMessageSearchPanel } from "../centralized-shared/ZaloMessageSearchPanel";
 import { ZaloForwardModal } from "../centralized-shared/ZaloForwardModal";
+import { ZaloSwipeableMessageItem } from "../centralized-shared/ZaloSwipeableMessageItem";
 import { ZaloNewChatModal } from "../dashboard/ZaloNewChatModal";
 import type { ZaloConversationSummary, ZaloLibraryMessage } from "@/types/zalo-api";
 import {
@@ -226,6 +227,54 @@ function ZaloMessageAssetView({ asset, message }: { asset: NonNullable<ZaloLibra
   );
 }
 
+function ZaloFilePreviewItem({ file, onRemove }: { file: File; onRemove: () => void }) {
+  const isImage = file.type.startsWith("image/");
+  const [objectUrl, setObjectUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isImage) return;
+    const url = URL.createObjectURL(file);
+    setObjectUrl(url);
+    return () => {
+      URL.revokeObjectURL(url);
+    };
+  }, [file, isImage]);
+
+  if (isImage && objectUrl) {
+    return (
+      <div className="relative group rounded-lg overflow-hidden border border-slate-200 bg-white shadow-xs">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={objectUrl} alt={file.name} className="h-14 w-14 object-cover" />
+        <button
+          type="button"
+          onClick={onRemove}
+          className="absolute top-1 right-1 bg-black/60 hover:bg-[#E3000F] text-white rounded-full p-0.5 transition shadow-xs"
+          title="Xóa ảnh"
+        >
+          <MaterialIcon name="close" className="text-[10px]" />
+        </button>
+        <div className="absolute bottom-0 inset-x-0 bg-black/60 text-[9px] text-white px-1 py-0.5 truncate text-center opacity-0 group-hover:opacity-100 transition-opacity">
+          {file.name}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 border border-slate-200 rounded-lg px-2.5 py-1 text-[11px]">
+      <MaterialIcon name="attach_file" className="text-[14px] text-slate-500" />
+      <span className="text-slate-700 max-w-[140px] truncate font-medium">{file.name}</span>
+      <button
+        type="button"
+        onClick={onRemove}
+        className="text-slate-400 hover:text-[#E3000F] transition ml-1"
+        title="Xóa file"
+      >
+        <MaterialIcon name="close" className="text-[12px]" />
+      </button>
+    </div>
+  );
+}
 function looksLikeVnPhoneQuery(raw: string): boolean {
   const digits = raw.replace(/[\s.\-()]/g, "");
   return /^(\+?84|0)\d{8,10}$/.test(digits);
@@ -288,6 +337,7 @@ export function ZaloInboxAdminShell() {
   const [assignee, setAssignee] = useState(user?.name || user?.email || "Chưa phân công");
 
   // File Input Refs
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const documentInputRef = useRef<HTMLInputElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
 
@@ -437,6 +487,331 @@ export function ZaloInboxAdminShell() {
     }
   };
 
+  // Nhảy tới 1 tin nhắn tìm được — best-effort, chỉ hoạt động nếu tin đang
+  // nằm trong danh sách ĐÃ TẢI (data-msg-anchor khớp source_message_id).
+  const handleJumpToSearchedMessage = (message: ZaloLibraryMessage): boolean => {
+    if (!message.source_message_id) return false;
+    const el = chatScrollRef.current?.querySelector(
+      `[data-msg-anchor="${CSS.escape(message.source_message_id)}"]`,
+    ) as HTMLElement | null;
+    if (!el) return false;
+    el.scrollIntoView({ behavior: "smooth", block: "center" });
+    el.classList.add("ring-2", "ring-[#E3000F]", "ring-offset-2");
+    setTimeout(() => el.classList.remove("ring-2", "ring-[#E3000F]", "ring-offset-2"), 1600);
+    return true;
+  };
+
+  // Tra ngược tin đang được trích dẫn TRONG danh sách đã tải sẵn (không gọi
+  // API mới) — nếu tin gốc nằm ngoài phạm vi trang hiện tại, trả về undefined
+  // và UI tự hiện fallback "Tin nhắn gốc" không nội dung.
+  const findQuotedMessage = (replyToId: string | null | undefined) => {
+    if (!replyToId) return undefined;
+    return inbox.messages.find((m) => m.source_message_id === replyToId);
+  };
+
+  const handleCopyMessage = (message: ZaloLibraryMessage) => {
+    const text = (message.content || "").trim();
+    if (!text) return;
+    navigator.clipboard
+      .writeText(text)
+      .then(() => inbox.showToast("Đã copy tin nhắn", true))
+      .catch(() => inbox.showToast("Không thể copy — trình duyệt chặn quyền clipboard", false));
+  };
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files ?? []);
+    setSelectedFiles((prev) => [...prev, ...files]);
+    e.target.value = "";
+  };
+
+  // Dán hình trực tiếp vào ô nhắn tin (Ctrl+V) để gửi luôn, không cần bấm
+  // chọn file — giống hành vi chuẩn của Zalo Web/app thật.
+  const handlePasteImage = (e: React.ClipboardEvent<HTMLTextAreaElement | HTMLDivElement>) => {
+    const clipboardData = e.clipboardData;
+    if (!clipboardData) return;
+
+    const files: File[] = [];
+
+    // 1. Thử lấy từ e.clipboardData.files trực tiếp
+    if (clipboardData.files && clipboardData.files.length > 0) {
+      for (let i = 0; i < clipboardData.files.length; i += 1) {
+        const f = clipboardData.files[i];
+        if (f.type.startsWith("image/")) {
+          files.push(f);
+        }
+      }
+    }
+
+    // 2. Thử lấy từ e.clipboardData.items (dán từ Snipping Tool, clipboard screenshot, browser copy)
+    if (files.length === 0 && clipboardData.items && clipboardData.items.length > 0) {
+      for (let i = 0; i < clipboardData.items.length; i += 1) {
+        const item = clipboardData.items[i];
+        if (item.kind === "file" && item.type.startsWith("image/")) {
+          const file = item.getAsFile();
+          if (file) {
+            const ext = file.type.split("/")[1] || "png";
+            const filename =
+              file.name && file.name !== "image.png"
+                ? file.name
+                : `pasted_image_${Date.now()}_${i + 1}.${ext}`;
+            const renamedFile = new File([file], filename, { type: file.type });
+            files.push(renamedFile);
+          }
+        }
+      }
+    }
+
+    if (files.length > 0) {
+      e.preventDefault();
+      setSelectedFiles((prev) => [...prev, ...files]);
+      inbox.showToast(`Đã dán ${files.length} ảnh trực tiếp`, true);
+    }
+  };
+
+  const handleSendReply = async () => {
+    const text = inbox.reply.trim();
+    if (!text && selectedFiles.length === 0) return;
+
+    inbox.setReply("");
+    setSelectedFiles([]);
+
+    try {
+      await inbox.sendMessage(text, selectedFiles.length > 0 ? selectedFiles : undefined);
+    } catch (e) {
+      console.error("Failed to send message via ZCA", e);
+    }
+  };
+
+  const appendEmoji = (emoji: string) => {
+    inbox.setReply((prev) => prev + emoji);
+  };
+
+  // Zalo tập trung: gõ "@" mở popup chọn thành viên nhóm (cần đã bấm "Quét thành
+  // viên" ở tab Thông tin trước — xem inbox.groupMembers) — chèn mention token
+  // {pos,uid,len} khớp format sendZaloMessageWithMentions cần.
+  const handleReplyChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const value = e.target.value;
+    inbox.setReply(value);
+    const caret = e.target.selectionStart ?? value.length;
+    const atIdx = value.lastIndexOf("@", caret - 1);
+    if (atIdx === -1 || /\s/.test(value.slice(atIdx + 1, caret))) {
+      setShowMentionPicker(false);
+      setMentionAtPos(null);
+      return;
+    }
+    setMentionAtPos(atIdx);
+    setMentionQuery(value.slice(atIdx + 1, caret));
+    setShowMentionPicker(true);
+  };
+
+  const insertMention = (uid: string, displayName: string) => {
+    if (mentionAtPos === null) return;
+    const before = inbox.reply.slice(0, mentionAtPos);
+    const after = inbox.reply.slice(mentionAtPos + 1 + mentionQuery.length);
+    const label = `@${displayName}`;
+    inbox.setReply(`${before}${label} ${after}`);
+    inbox.setPendingMentions((prev) => [...prev, { pos: before.length, uid, len: label.length }]);
+    setShowMentionPicker(false);
+    setMentionAtPos(null);
+    setMentionQuery("");
+  };
+
+  const filteredMentionCandidates = (inbox.groupMembers?.members ?? []).filter((m) =>
+    !mentionQuery.trim() || m.display_name.toLowerCase().includes(mentionQuery.trim().toLowerCase())
+  );
+
+  const handleSendSticker = (sticker: { id: number; cateId: number }) => {
+    setShowStickerPicker(false);
+    void inbox.sendStickerAction(sticker);
+  };
+
+  // Đóng panel tìm tin nhắn khi đổi hội thoại — tránh tìm nhầm sang hội
+  // thoại khác vẫn đang hiện kết quả cũ.
+  useEffect(() => {
+    setShowSearchPanel(false);
+  }, [inbox.openConv]);
+
+  const handleAutoSend = async () => {
+    if (!inbox.selectedAccountId || selectedMessageIds.length === 0) return;
+
+    setIsSendingCampaign(true);
+    setCampaignError(null);
+    setCampaignSuccess(null);
+    setCampaignLogs([]);
+
+    const manualLines = manualRecipients
+      .split("\n")
+      .map(line => line.trim())
+      .filter(Boolean);
+
+    const targets: ZaloBroadcastTarget[] = [];
+
+    // System targets
+    autoSendTargetIds.forEach(id => {
+      const conv = inbox.filtered.find(c => c.conv_id === id);
+      if (conv) {
+        targets.push({ group_id: conv.conv_id, group_name: conv.name || conv.conv_id });
+      }
+    });
+
+    // Manual targets
+    manualLines.forEach(line => {
+      targets.push({ group_id: line, group_name: line });
+    });
+
+    if (targets.length === 0) {
+      setCampaignError("Không tìm thấy người nhận hợp lệ.");
+      setIsSendingCampaign(false);
+      return;
+    }
+
+    setIsSendingCampaign(true);
+    setCampaignError(null);
+    setCampaignSuccess(null);
+    setCampaignLogs([]);
+
+    // Build text overrides
+    const textOverrides: Record<string, string> = {};
+    selectedMessageIds.forEach(msgId => {
+      const text = editedMessagesText[msgId];
+      if (text !== undefined) {
+        textOverrides[msgId] = text;
+      }
+    });
+
+    try {
+      await createZaloBroadcast(inbox.selectedAccountId, {
+        user_id: inbox.selectedAccountId,
+        message_ids: selectedMessageIds,
+        targets,
+        content_mode: campaignMode,
+        text_overrides: textOverrides,
+      });
+
+      // Simulate log stream for interactive view
+      let currentIdx = 0;
+      const logNext = () => {
+        if (currentIdx >= targets.length) {
+          setCampaignSuccess(`Đã gửi thành công đến ${targets.length} người nhận!`);
+          setIsSendingCampaign(false);
+          setAutoSendTargetIds([]);
+          setSelectedMessageIds([]);
+          setManualRecipients("");
+        } else {
+          const target = targets[currentIdx];
+          setCampaignLogs(prev => [...prev, { name: target.group_name, status: "success" }]);
+          currentIdx++;
+          setTimeout(logNext, 300);
+        }
+      };
+      logNext();
+    } catch (e) {
+      setCampaignError(e instanceof Error ? e.message : String(e));
+      setIsSendingCampaign(false);
+    }
+  };
+
+  // Reset selected campaign messages and target recipients when conversation or account changes
+  useEffect(() => {
+    void Promise.resolve().then(() => {
+      setSelectedMessageIds([]);
+      setEditedMessagesText({});
+      setAutoSendTargetIds([]);
+    });
+  }, [inbox.openConv, inbox.selectedAccountId]);
+
+  // Selected conversation objects mapped
+  const selectedConv = useMemo<ZaloConv | null>(
+    () => inbox.activeConvs.find((c) => c.conv_id === inbox.openConv) ?? null,
+    [inbox.activeConvs, inbox.openConv]
+  );
+  const selectedArchive = useMemo(() => {
+    return inbox.archives.find((a) => a.conv_id === inbox.openConv) ?? null;
+  }, [inbox.archives, inbox.openConv]);
+
+  const selectedName = inbox.archiveReading ? selectedArchive?.name : selectedConv?.name;
+  const selectedPreview = inbox.archiveReading ? selectedArchive?.preview : selectedConv?.preview;
+  const selectedNote = inbox.openConv ? (inbox.customerNotes[inbox.openConv] ?? selectedArchive?.note ?? "") : "";
+
+  const activeTemplateGroup = QUICK_REPLY_GROUPS.find((g) => g.id === templateGroupId) || QUICK_REPLY_GROUPS[0];
+  const noteDraft = noteDraftState.convId === inbox.openConv ? noteDraftState.value : selectedNote;
+  const setNoteDraft = (value: string) => setNoteDraftState({ convId: inbox.openConv, value });
+  const noteChanged = noteDraft.trim() !== selectedNote.trim();
+
+  // Scroll to bottom on chat loading
+  useEffect(() => {
+    if (chatScrollRef.current) {
+      requestAnimationFrame(() => {
+        if (chatScrollRef.current) {
+          chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
+        }
+      });
+    }
+  }, [inbox.messages]);
+
+  useEffect(() => {
+    if (!inbox.openConv || !inbox.selectedAccountId || inbox.loadingGroupMembers) return;
+    const hasReceivedGroupSender = inbox.messages.some(
+      (msg) => !msg.is_sent && msg.sender_id && msg.sender_id !== inbox.openConv,
+    );
+    if (hasReceivedGroupSender) {
+      void inbox.loadGroupMembers();
+    }
+  }, [inbox.openConv, inbox.selectedAccountId, inbox.messages, inbox.loadingGroupMembers]);
+
+  const groupMemberByUid = useMemo(() => {
+    if (!inbox.openConv || inbox.groupMembers?.group_id !== inbox.openConv) {
+      return new Map<string, NonNullable<typeof inbox.groupMembers>["members"][number]>();
+    }
+    const entries = inbox.groupMembers.members.map((member) => [member.uid, member] as const);
+    return new Map(entries);
+  }, [inbox.groupMembers, inbox.openConv]);
+
+  // Current owner/account labels for display
+  const ownerName = inbox.selectedOwnerInfo?.ownerName ?? inbox.ownerNames[inbox.selectedOwnerId] ?? "";
+  const ownerEmail = inbox.selectedOwnerInfo?.ownerEmail ?? inbox.ownerEmails[inbox.selectedOwnerId] ?? "";
+  const accountLabel = inbox.selectedAccountInfo
+    ? inbox.selectedAccountInfo.label ?? inbox.selectedAccountInfo.phone ?? inbox.selectedAccountId
+    : "";
+  // Ai được phép bấm "Đăng nhập lại"/gọi extension cho account đang xem — trước đây
+  // CHỈ cho phép khi ownerEmail khớp đúng email người gọi (owner_id resolve đúng
+  // group của họ), nên admin/leader hoặc bất kỳ ai xem 1 account is_shared_with_all
+  // (KHÔNG thuộc team mình, ownerEmail resolve rỗng) không hề thấy nút này — đúng
+  // y bug "chưa login mà không có nút nào để gọi extension đăng nhập" report ngày
+  // 2026-08-25. Giờ mở rộng: chủ sở hữu thật HOẶC admin/leader HOẶC account đã
+  // đánh dấu dùng chung toàn công ty.
+  const isOwnAccount = Boolean(
+    ownerEmail && inbox.leaderEmail && ownerEmail.toLowerCase() === inbox.leaderEmail.toLowerCase()
+  );
+  const canManageAccountAuth =
+    isOwnAccount ||
+    inbox.role === "admin" ||
+    inbox.role === "leader" ||
+    Boolean(inbox.selectedAccountInfo?.is_shared_with_all);
+  const accountStatus = inbox.selectedAccountId ? inbox.getAccountStatus(inbox.selectedAccountId) : "offline";
+
+  // Sync edit account values
+  useEffect(() => {
+    if (inbox.selectedAccountInfo) {
+      void Promise.resolve().then(() => {
+        setEditLabel(inbox.selectedAccountInfo?.label || "");
+        setEditPhone(inbox.selectedAccountInfo?.phone || "");
+      });
+    }
+  }, [inbox.selectedAccountId, inbox.selectedAccountInfo]);
+
+  // Stats calculation
+  const stats = useMemo(() => {
+    const activeList = inbox.activeConvs.filter((c) => !c.archived);
+    return {
+      total: activeList.length,
+      unread: activeList.filter((c) => c.unread).length,
+      needReply: activeList.filter((c) => c.unread || c.preview !== "").length,
+      customers: activeList.filter((c) => c.is_customer).length,
+      pushed: activeList.filter((c) => c.is_customer).length,
+    };
+  }, [inbox.activeConvs]);
+
   const appendTemplate = (text: string) => {
     inbox.setReply(inbox.reply.trim() ? `${inbox.reply.trim()}\n${text}` : text);
   };
@@ -462,52 +837,16 @@ export function ZaloInboxAdminShell() {
   };
 
   const handleDocumentSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const textToAppend = `📎 [Tài liệu] ${file.name} (${(file.size / 1024).toFixed(1)} KB)`;
-    inbox.setReply(inbox.reply ? `${inbox.reply}\n${textToAppend}` : textToAppend);
-    inbox.showToast(`Đã đính kèm tài liệu: ${file.name}`, true);
+    handleFileChange(e);
   };
 
   const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const textToAppend = `🖼 [Hình ảnh] ${file.name} (${(file.size / 1024).toFixed(1)} KB)`;
-    inbox.setReply(inbox.reply ? `${inbox.reply}\n${textToAppend}` : textToAppend);
-    inbox.showToast(`Đã đính kèm hình ảnh: ${file.name}`, true);
+    handleFileChange(e);
   };
-
   const insertEmoji = (emoji: string) => {
     inbox.setReply(inbox.reply + emoji);
     setShowEmojiPicker(false);
   };
-
-  const selectedConv = inbox.filtered.find((c) => c.conv_id === inbox.openConv);
-  const selectedArchive = inbox.archives.find((a) => a.conv_id === inbox.openConv);
-  const selectedName = inbox.archiveReading ? selectedArchive?.name : selectedConv?.name;
-  const selectedPreview = inbox.archiveReading ? selectedArchive?.preview : selectedConv?.preview;
-  const selectedNote = inbox.openConv ? inbox.customerNotes[inbox.openConv] ?? selectedArchive?.note ?? "" : "";
-  const activeTemplateGroup = QUICK_REPLY_GROUPS.find((g) => g.id === templateGroupId) || QUICK_REPLY_GROUPS[0];
-  const noteDraft = noteDraftState.convId === inbox.openConv ? noteDraftState.value : selectedNote;
-  const setNoteDraft = (value: string) => setNoteDraftState({ convId: inbox.openConv, value });
-  const noteChanged = noteDraft.trim() !== selectedNote.trim();
-
-  const stats = useMemo(
-    () => ({
-      total: inbox.activeConvs.length,
-      unread: inbox.activeConvs.filter((c) => c.unread).length,
-      needReply: inbox.activeConvs.filter((c) => c.unread).length,
-      customers: inbox.activeConvs.filter((c) => c.is_customer).length,
-      pushed: inbox.activeConvs.filter((c) => c.pushed_to_zalo).length,
-    }),
-    [inbox.activeConvs]
-  );
-
-  const ownerEmail = inbox.selectedAccountInfo?.owner_id || inbox.leaderEmail;
-  const ownerName = ownerEmail ? inbox.ownerNames[ownerEmail] || ownerEmail : "Hệ thống";
-  const canManageAccountAuth =
-    inbox.role === "admin" || (inbox.role === "leader" && ownerEmail === inbox.leaderEmail) || ownerEmail === user?.email;
-  const accountStatus = inbox.selectedAccountInfo?.listener?.connected ? "online" : inbox.selectedAccountInfo?.status || (inbox.selectedAccountInfo?.has_auth ? "online" : "offline");
 
   const handleUpdateAccount = async () => {
     if (!inbox.selectedAccountId) return;
@@ -565,44 +904,23 @@ export function ZaloInboxAdminShell() {
     }
   };
 
-  const handleAutoSend = async () => {
-    if (!inbox.selectedAccountId || selectedMessageIds.length === 0) return;
-    setIsSendingCampaign(true);
-    setCampaignError(null);
-    setCampaignSuccess(null);
-    setCampaignLogs([]);
-
+  const handleMessageSenderPrivately = async (senderId: string, senderName: string) => {
+    if (!inbox.selectedAccountId || !senderId || startingDmSenderId) return;
+    setStartingDmSenderId(senderId);
     try {
-      const targets = autoSendTargetIds.map(id => {
-        const c = inbox.activeConvs.find(x => x.conv_id === id);
-        return { conversation_id: id, name: c?.name || id };
+      const res = await createZaloUserThread(inbox.selectedAccountId, {
+        user_id: senderId,
+        display_name: senderName || `User ${senderId}`,
       });
-
-      for (const target of targets) {
-        setCampaignLogs(prev => [...prev, { name: target.name, status: "sending" }]);
-        for (const msgId of selectedMessageIds) {
-          const msg = inbox.messages.find(m => (m.source_message_id || m.id) === msgId);
-          if (!msg) continue;
-          const text = editedMessagesText[msgId] ?? msg.content ?? "";
-          if (text) {
-            await createZaloUserThread(inbox.selectedAccountId, {
-              user_id: target.conversation_id,
-              display_name: target.name,
-            });
-          }
-        }
-        setCampaignLogs(prev => prev.map(l => l.name === target.name ? { ...l, status: "success" } : l));
-      }
-      setCampaignSuccess(`Đã hoàn tất gửi tin tự động cho ${targets.length} hội thoại!`);
-      setSelectedMessageIds([]);
-      setAutoSendTargetIds([]);
-    } catch (err) {
-      setCampaignError(err instanceof Error ? err.message : "Có lỗi xảy ra khi gửi tin tự động.");
+      await inbox.refreshConversations();
+      inbox.openChat(res.conversation_id);
+      inbox.showToast(`Da mo hoi thoai rieng voi ${senderName || senderId}`, true);
+    } catch (error) {
+      inbox.showToast(error instanceof Error ? error.message : "Khong the mo hoi thoai rieng voi nguoi nay", false);
     } finally {
-      setIsSendingCampaign(false);
+      setStartingDmSenderId(null);
     }
   };
-
   const handleVerifyKpi = async () => {
     if (!inbox.openConv || !inbox.selectedAccountId) return;
     try {
@@ -623,6 +941,19 @@ export function ZaloInboxAdminShell() {
     }
   };
 
+  const groupedMessages = useMemo(() => {
+    const groups: { date: string; msgs: ZaloLibraryMessage[] }[] = [];
+    for (const msg of inbox.messages) {
+      const date = formatDate(msg.timestamp_text ?? msg.time_text) || "Hom nay";
+      const last = groups[groups.length - 1];
+      if (!last || last.date !== date) {
+        groups.push({ date, msgs: [msg] });
+      } else {
+        last.msgs.push(msg);
+      }
+    }
+    return groups;
+  }, [inbox.messages]);
   const panelH = "h-[620px]";
 
   return (
@@ -1108,46 +1439,213 @@ export function ZaloInboxAdminShell() {
 
           {/* Messages Feed */}
           <div ref={chatScrollRef} className="flex-1 min-h-0 overflow-auto bg-white p-4 space-y-4 no-scrollbar">
-            {inbox.messages && inbox.messages.length > 0 ? (
-              <div className="space-y-4">
-                <div className="flex justify-center">
-                  <span className="rounded-full bg-slate-100 px-3 py-0.5 text-[11px] font-medium text-slate-600">
-                    Hôm nay
-                  </span>
-                </div>
-                {inbox.messages.map((m) => (
-                  <div key={m.id} className={cn("flex items-end gap-2", m.is_sent ? "justify-end" : "justify-start")}>
-                    {!m.is_sent && (
-                      <Avatar src={selectedConv?.avatar_url} name={selectedName || "M"} className="h-7 w-7 text-xs shrink-0" />
-                    )}
-                    <div className="max-w-[65%]">
-                      <div
-                        className={cn(
-                          "rounded-2xl px-3.5 py-2 text-xs",
-                          m.is_sent
-                            ? "rounded-br-xs bg-[#fce4ec] text-slate-900 border border-rose-100/80 font-medium"
-                            : "rounded-bl-xs bg-slate-100 text-slate-800 border border-slate-200/60"
-                        )}
-                      >
-                        {m.content}
-                      </div>
-                      <div className={cn("mt-1 text-[10px] text-slate-400 flex items-center gap-1", m.is_sent ? "justify-end" : "justify-start")}>
-                        <span>{m.timestamp_text || m.time_text || "Vừa xong"}</span>
-                        {m.is_sent && <span className="text-blue-500 font-bold">✓✓</span>}
-                      </div>
+            {groupedMessages.length > 0 ? (
+              <div className="space-y-3">
+                {groupedMessages.map((group) => (
+                  <div key={group.date} className="space-y-2">
+                    <div className="flex items-center gap-2 my-2.5">
+                      <div className="flex-1 h-px bg-slate-200" />
+                      <span className="text-[9px] text-slate-400 px-1.5 font-medium">{group.date}</span>
+                      <div className="flex-1 h-px bg-slate-200" />
                     </div>
+                    {group.msgs.map((msg, index) => {
+                      const isSent = msg.is_sent;
+                      const time = formatTime(msg.timestamp_text ?? msg.time_text);
+                      const isSelected = selectedMessageIds.includes(msg.source_message_id || msg.id || "");
+                      const senderMember = msg.sender_id ? groupMemberByUid.get(msg.sender_id) : undefined;
+                      const senderName = senderMember?.display_name || msg.sender_name || selectedName || "Zalo";
+                      const senderAvatar = senderMember?.avatar_url || null;
+                      const isGroupSender = Boolean(msg.sender_id && msg.sender_id !== inbox.openConv);
+                      const checkboxEl = (
+                        <input
+                          type="checkbox"
+                          className="w-3.5 h-3.5 cursor-pointer opacity-0 group-hover:opacity-100 checked:opacity-100 transition-opacity shrink-0"
+                          checked={isSelected}
+                          onChange={() => {
+                            const msgId = msg.source_message_id || msg.id || "";
+                            if (!msgId) return;
+                            setSelectedMessageIds((prev) =>
+                              prev.includes(msgId) ? prev.filter((x) => x !== msgId) : [...prev, msgId],
+                            );
+                          }}
+                        />
+                      );
+
+                      return (
+                        <ZaloSwipeableMessageItem
+                          key={msg.source_message_id || msg.id || `${group.date}-${index}`}
+                          disabled={msg.is_deleted}
+                          onReply={() => inbox.setReplyingTo(msg)}
+                          className="w-full"
+                        >
+                          <div
+                            data-msg-anchor={msg.source_message_id || undefined}
+                            className={cn("flex items-center gap-2 group rounded-lg transition-shadow py-0.5", isSent ? "justify-end" : "justify-start")}
+                          >
+                            {!isSent && checkboxEl}
+                            {!isSent && <Avatar src={senderAvatar} name={senderName} className="h-7 w-7 text-[10px] shrink-0 self-end" />}
+                            <div className={cn("max-w-[88%] sm:max-w-[75%]", isSent ? "text-right" : "text-left")}>
+                              {!isSent && (
+                                <div className="flex items-center gap-1 mb-0.5 px-1">
+                                  <span className="text-[10px] font-semibold text-slate-500">{senderName}</span>
+                                  {isGroupSender && (
+                                    <button
+                                      type="button"
+                                      onClick={() => void handleMessageSenderPrivately(msg.sender_id!, senderName)}
+                                      disabled={startingDmSenderId === msg.sender_id}
+                                      title={`Nhan rieng cho ${senderName}`}
+                                      className="opacity-0 group-hover:opacity-100 transition-opacity text-slate-400 hover:text-[#E3000F] disabled:opacity-60 disabled:cursor-wait shrink-0"
+                                    >
+                                      <MaterialIcon
+                                        name={startingDmSenderId === msg.sender_id ? "sync" : "send"}
+                                        className={cn("text-[11px]", startingDmSenderId === msg.sender_id && "animate-spin")}
+                                      />
+                                    </button>
+                                  )}
+                                </div>
+                              )}
+                              {!msg.is_deleted && msg.reply_to_id && (() => {
+                                const quoted = findQuotedMessage(msg.reply_to_id);
+                                return (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      if (quoted) handleJumpToSearchedMessage(quoted);
+                                    }}
+                                    className={cn(
+                                      "block w-full text-left mb-1 px-2 py-1 rounded-lg border-l-2 text-[10.5px] truncate",
+                                      isSent ? "bg-white/10 border-white/40 text-white/85" : "bg-white border-[#E5E5E5] text-[#5a5f68]",
+                                    )}
+                                    title={quoted ? "Di toi tin nhan goc" : undefined}
+                                  >
+                                    <span className="font-semibold">{quoted ? (quoted.sender_name || (quoted.is_sent ? "Ban" : "Khach")) : "Tin nhan goc"}: </span>
+                                    {quoted?.content || (quoted ? "Dinh kem" : "Khong tai duoc noi dung goc")}
+                                  </button>
+                                );
+                              })()}
+                              {msg.content && (
+                                <div
+                                  className={cn(
+                                    "whitespace-pre-wrap rounded-2xl px-3.5 py-2 text-xs leading-relaxed break-words transition-all duration-200 shadow-xs",
+                                    isSent ? "bg-brand text-white rounded-br-md" : "bg-[#f1f4f8] text-[#1f2a3a] rounded-bl-md",
+                                    isSelected && (isSent ? "ring-2 ring-brand ring-offset-2" : "ring-2 ring-brand/60 bg-brand-subtle"),
+                                  )}
+                                >
+                                  {msg.content}
+                                </div>
+                              )}
+                              {(msg.assets ?? [])
+                                .filter((asset) => asset.storage_url)
+                                .map((asset, assetIndex) => (
+                                  <div
+                                    key={assetIndex}
+                                    className={cn(
+                                      "rounded-xl overflow-hidden border border-slate-200 max-w-[200px] mt-1 shadow-xs",
+                                      isSent ? "ml-auto" : "mr-auto",
+                                    )}
+                                  >
+                                    <ZaloMessageAssetView asset={asset} message={msg} />
+                                  </div>
+                                ))}
+                              {(() => {
+                                const msgKey = msg.source_message_id || msg.id || String(index);
+                                const canReact = !msg.is_deleted && msg.source_message_id && (msg as unknown as { cli_msg_id?: string }).cli_msg_id;
+                                const canActOnMessage = !msg.is_deleted && !!(msg.source_message_id || msg.id);
+                                return (
+                                  <div className="relative mt-0.5 flex items-center gap-1 px-1" style={{ justifyContent: isSent ? "flex-end" : "flex-start" }}>
+                                    {time && <span className="text-[9px] text-[#A0A0A0]">{time}</span>}
+                                    {canReact && (
+                                      <button
+                                        type="button"
+                                        data-zalo-reaction-ui
+                                        onClick={() => setReactionPickerFor((prev) => (prev === msgKey ? null : msgKey))}
+                                        title="Tha cam xuc"
+                                        className="opacity-0 group-hover:opacity-100 transition-opacity text-[#A0A0A0] hover:text-brand"
+                                      >
+                                        <MaterialIcon name="mood" className="text-[11px]" />
+                                      </button>
+                                    )}
+                                    {canActOnMessage && (
+                                      <button
+                                        type="button"
+                                        onClick={() => inbox.setReplyingTo(msg)}
+                                        title="Tra loi tin nhan nay"
+                                        className="opacity-70 group-hover:opacity-100 transition-all text-[#A0A0A0] hover:text-[#E3000F] hover:scale-110 flex items-center gap-0.5"
+                                      >
+                                        <MaterialIcon name="reply" className="text-[12px]" />
+                                      </button>
+                                    )}
+                                    {canActOnMessage && msg.content?.trim() && (
+                                      <button
+                                        type="button"
+                                        onClick={() => handleCopyMessage(msg)}
+                                        title="Copy"
+                                        className="opacity-0 group-hover:opacity-100 transition-opacity text-[#A0A0A0] hover:text-brand"
+                                      >
+                                        <MaterialIcon name="content_copy" className="text-[11px]" />
+                                      </button>
+                                    )}
+                                    {canActOnMessage && (msg.content?.trim() || (msg.assets ?? []).some((asset) => asset.storage_url)) && (
+                                      <button
+                                        type="button"
+                                        onClick={() => setForwardingMessage(msg)}
+                                        title="Chuyen tiep"
+                                        className="opacity-0 group-hover:opacity-100 transition-opacity text-[#A0A0A0] hover:text-brand"
+                                      >
+                                        <MaterialIcon name="forward" className="text-[11px]" />
+                                      </button>
+                                    )}
+                                    {isSent && !msg.is_deleted && (msg as unknown as { cli_msg_id?: string }).cli_msg_id && (
+                                      <button
+                                        type="button"
+                                        onClick={() => void inbox.recallMessage(msg)}
+                                        title="Thu hoi tin nhan"
+                                        className="opacity-0 group-hover:opacity-100 transition-opacity text-[#A0A0A0] hover:text-[#E3000F]"
+                                      >
+                                        <MaterialIcon name="delete" className="text-[11px]" />
+                                      </button>
+                                    )}
+                                    {msg.is_deleted && <span className="italic text-[9px] text-[#A0A0A0]">Tin nhan da thu hoi</span>}
+                                    {reactionPickerFor === msgKey && (
+                                      <div data-zalo-reaction-ui className={`absolute bottom-full z-30 mb-1 ${isSent ? "right-0" : "left-0"}`}>
+                                        <ZaloReactionQuickPicker
+                                          activeIcon={msg.reactions?.[inbox.myZaloUid || "__me__"] || null}
+                                          onPick={(icon) => {
+                                            void inbox.reactToMessage(msg, icon);
+                                            setReactionPickerFor(null);
+                                          }}
+                                        />
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })()}
+                              {!msg.is_deleted && (
+                                <div className={isSent ? "flex justify-end" : "flex justify-start"}>
+                                  <ZaloReactionBadges
+                                    reactions={msg.reactions}
+                                    myUid={inbox.myZaloUid}
+                                    onClickIcon={(icon) => void inbox.reactToMessage(msg, icon)}
+                                  />
+                                </div>
+                              )}
+                            </div>
+                            {isSent && checkboxEl}
+                          </div>
+                        </ZaloSwipeableMessageItem>
+                      );
+                    })}
                   </div>
                 ))}
               </div>
             ) : (
               <div className="flex h-full flex-col items-center justify-center text-center p-6 text-slate-400">
                 <MessageCircle size={32} className="mb-2 opacity-40 text-slate-400" />
-                <p className="text-xs font-semibold text-slate-600">Chưa có tin nhắn</p>
-                <p className="text-[11px] text-slate-400 mt-1">Bắt đầu trò chuyện bằng cách nhập nội dung phía dưới.</p>
+                <p className="text-xs font-semibold text-slate-600">Chua co tin nhan</p>
+                <p className="text-[11px] text-slate-400 mt-1">Bat dau tro chuyen bang cach nhap noi dung phia duoi.</p>
               </div>
             )}
           </div>
-
           {/* AI REPLY SUGGESTIONS BAR */}
           <div className="shrink-0 border-t border-purple-100 bg-purple-50/60 p-2.5">
             <div className="flex items-center justify-between mb-1.5">
@@ -1189,26 +1687,68 @@ export function ZaloInboxAdminShell() {
               </div>
             )}
 
+            {inbox.replyingTo && (
+              <div className="flex items-center gap-2 rounded-xl border border-[#E3000F]/20 bg-[#FFF5F5] px-3 py-2 text-xs">
+                <MaterialIcon name="reply" className="shrink-0 text-base text-[#E3000F]" />
+                <div className="min-w-0 flex-1">
+                  <div className="font-bold text-[#E3000F]">
+                    Dang tra loi {inbox.replyingTo.is_sent ? "ban" : inbox.replyingTo.sender_name || "khach"}
+                  </div>
+                  <div className="truncate text-slate-600">
+                    {inbox.replyingTo.content || ((inbox.replyingTo.assets?.length ?? 0) > 0 ? "Dinh kem" : "Tin nhan")}
+                  </div>
+                </div>
+                <button type="button" onClick={() => inbox.setReplyingTo(null)} className="rounded-full p-1 hover:bg-white" title="Huy tra loi">
+                  <MaterialIcon name="close" className="text-sm text-slate-400" />
+                </button>
+              </div>
+            )}
+
+            {selectedFiles.length > 0 && (
+              <div className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-slate-50/80 p-2">
+                {selectedFiles.map((file, index) => (
+                  <ZaloFilePreviewItem
+                    key={`${file.name}-${index}`}
+                    file={file}
+                    onRemove={() => setSelectedFiles((prev) => prev.filter((_, i) => i !== index))}
+                  />
+                ))}
+                {selectedFiles.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={() => setSelectedFiles([])}
+                    className="rounded-lg px-2 py-1 text-[11px] font-semibold text-slate-500 hover:bg-white hover:text-[#E3000F]"
+                  >
+                    Xoa tat ca ({selectedFiles.length})
+                  </button>
+                )}
+              </div>
+            )}
+
             <div className="flex flex-wrap items-center gap-1.5 border-b border-slate-100 pb-2">
               <button
                 type="button"
-                onClick={() => documentInputRef.current?.click()}
-                className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-100"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={!inbox.openConv || inbox.archiveReading}
+                className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-100 disabled:opacity-40"
+                title="Dinh kem file"
               >
-                <Paperclip size={13} /> Gửi tài liệu
+                <Paperclip size={13} /> File
               </button>
+              <input ref={fileInputRef} type="file" multiple className="hidden" onChange={handleFileChange} />
 
               <button
                 type="button"
                 onClick={() => imageInputRef.current?.click()}
-                className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-100"
+                disabled={!inbox.openConv || inbox.archiveReading}
+                className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-100 disabled:opacity-40"
               >
-                <ImageIcon size={13} /> Chọn ảnh
+                <ImageIcon size={13} /> Anh
               </button>
 
               <button
                 type="button"
-                onClick={() => setShowEmojiPicker(v => !v)}
+                onClick={() => setShowEmojiPicker((value) => !value)}
                 className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-100"
               >
                 <Smile size={13} /> Emoji
@@ -1219,23 +1759,7 @@ export function ZaloInboxAdminShell() {
                 onClick={() => setPanelTab("templates")}
                 className="inline-flex items-center gap-1 rounded-lg border border-[#d81b60]/40 bg-[#fce4ec]/60 px-2.5 py-1 text-[11px] font-bold text-[#d81b60]"
               >
-                <Star size={13} /> Mẫu nhanh
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setShowInternalNoteModal(true)}
-                className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-100"
-              >
-                <StickyNote size={13} /> Ghi chú nội bộ
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setShowTaskModal(true)}
-                className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-100"
-              >
-                <CheckSquare size={13} /> Tạo việc
+                <Star size={13} /> Mau nhanh
               </button>
 
               <button
@@ -1243,7 +1767,7 @@ export function ZaloInboxAdminShell() {
                 onClick={() => setShowDealModal(true)}
                 className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-100"
               >
-                <Briefcase size={13} /> Tạo cơ hội
+                <Briefcase size={13} /> Tao co hoi
               </button>
 
               <button
@@ -1251,59 +1775,58 @@ export function ZaloInboxAdminShell() {
                 onClick={() => setShowQuoteModal(true)}
                 className="inline-flex items-center gap-1 rounded-lg border border-[#E3000F]/40 bg-[#E3000F]/10 px-2.5 py-1 text-[11px] font-bold text-[#E3000F] hover:bg-[#E3000F]/20"
               >
-                <FileSpreadsheet size={13} /> Báo giá CRM &gt;
-              </button>
-
-              <button
-                type="button"
-                onClick={() => inbox.setReply("Giới thiệu sản phẩm & dịch vụ giải pháp của công ty")}
-                className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-100"
-              >
-                🛍 Giới thiệu sản phẩm &gt;
-              </button>
-
-              <button
-                type="button"
-                onClick={() => inbox.setReply("Hẹn lịch demo hệ thống trực tiếp cho anh/chị")}
-                className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-100"
-              >
-                📅 Hẹn lịch demo &gt;
-              </button>
-
-              <button
-                type="button"
-                onClick={() => inbox.setReply("Dạ cảm ơn anh/chị đã quan tâm giải pháp bên em ạ!")}
-                className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-100"
-              >
-                🙏 Cảm ơn khách hàng
+                <FileSpreadsheet size={13} /> Bao gia CRM
               </button>
             </div>
 
-            <div className="flex gap-2 items-end">
+            <div className="relative flex gap-2 items-end">
+              {showMentionPicker && (
+                <div className="absolute bottom-full left-0 z-20 mb-1 max-h-48 w-64 overflow-y-auto rounded-xl border border-slate-200 bg-white shadow-lg">
+                  {!inbox.groupMembers ? (
+                    <div className="px-3 py-2 text-[11px] text-slate-400">Dang lay thanh vien nhom tu ZCA...</div>
+                  ) : filteredMentionCandidates.length === 0 ? (
+                    <div className="px-3 py-2 text-[11px] text-slate-400">Khong tim thay thanh vien.</div>
+                  ) : (
+                    filteredMentionCandidates.slice(0, 20).map((member) => (
+                      <button
+                        key={member.uid}
+                        type="button"
+                        onClick={() => insertMention(member.uid, member.display_name)}
+                        className="flex w-full items-center gap-2 px-3 py-2 text-left text-[11px] hover:bg-slate-50"
+                      >
+                        <Avatar src={member.avatar_url} name={member.display_name} className="h-6 w-6 text-[9px]" />
+                        <span className="truncate font-semibold text-slate-700">{member.display_name}</span>
+                      </button>
+                    ))
+                  )}
+                </div>
+              )}
               <textarea
                 value={inbox.reply}
-                onChange={(e) => inbox.setReply(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && !e.shiftKey) {
-                    e.preventDefault();
-                    inbox.sendReply();
+                onChange={handleReplyChange}
+                onPaste={handlePasteImage}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && !event.shiftKey && !showMentionPicker) {
+                    event.preventDefault();
+                    void handleSendReply();
                   }
                 }}
                 rows={3}
-                placeholder="Nhập tin nhắn..."
-                className="flex-1 min-h-[72px] max-h-[140px] overflow-y-auto leading-relaxed rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-xs outline-none focus:border-[#E3000F]"
+                disabled={!inbox.openConv || inbox.archiveReading || inbox.isSending}
+                placeholder="Nhap tin nhan..."
+                className="flex-1 min-h-[72px] max-h-[140px] overflow-y-auto leading-relaxed rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-xs outline-none focus:border-[#E3000F] disabled:bg-slate-50 disabled:opacity-70"
               />
 
               <button
-                onClick={() => inbox.sendReply()}
-                disabled={!inbox.reply.trim()}
+                type="button"
+                onClick={() => void handleSendReply()}
+                disabled={!inbox.openConv || inbox.archiveReading || inbox.isSending || (!inbox.reply.trim() && selectedFiles.length === 0)}
                 className="flex h-11 items-center justify-center rounded-2xl bg-[#E3000F] px-6 text-xs font-bold text-white shadow-xs transition hover:bg-[#C40009] disabled:opacity-40"
               >
-                Gửi
+                {inbox.isSending ? "Dang gui..." : "Gui"}
               </button>
             </div>
-          </div>
-        </section>
+          </div>        </section>
 
         {/* ── RIGHT PANE: 4 TABS (TƯƠNG TÁC / THÔNG TIN / CRM 360 / CÀI ĐẶT) ── */}
         <aside className="flex flex-col min-h-0 overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-xs">

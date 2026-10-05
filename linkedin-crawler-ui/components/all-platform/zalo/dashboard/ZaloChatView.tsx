@@ -43,6 +43,7 @@ import type {
   ZaloStickerDetail,
 } from "@/types/zalo-api";
 import { ZaloChatHeaderSkeleton, ZaloMessageListSkeleton } from "./chat/ZaloChatSkeleton";
+import { ZaloSwipeableMessageItem } from "../centralized-shared/ZaloSwipeableMessageItem";
 import { ZaloEmptyChat } from "./chat/ZaloEmptyChat";
 import { ZaloConversationListVirtualized } from "./sidebar/ZaloConversationListVirtualized";
 import { ZaloNewChatModal } from "./ZaloNewChatModal";
@@ -1229,20 +1230,44 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
 
   // Dán hình trực tiếp vào ô chat (Ctrl+V) để gửi luôn, không cần bấm chọn
   // file — giống hành vi chuẩn của Zalo Web/app thật.
-  const handlePasteImage = useCallback((e: React.ClipboardEvent<HTMLTextAreaElement>) => {
-    const items = e.clipboardData?.items;
-    if (!items || items.length === 0) return;
+  const handlePasteImage = useCallback((e: React.ClipboardEvent<HTMLTextAreaElement | HTMLDivElement>) => {
+    const clipboardData = e.clipboardData;
+    if (!clipboardData) return;
+
     const files: File[] = [];
-    for (let i = 0; i < items.length; i += 1) {
-      const item = items[i];
-      if (item.kind === "file" && item.type.startsWith("image/")) {
-        const file = item.getAsFile();
-        if (file) files.push(file);
+
+    if (clipboardData.files && clipboardData.files.length > 0) {
+      for (let i = 0; i < clipboardData.files.length; i += 1) {
+        const f = clipboardData.files[i];
+        if (f.type.startsWith("image/")) {
+          files.push(f);
+        }
       }
     }
+
+    if (files.length === 0 && clipboardData.items && clipboardData.items.length > 0) {
+      for (let i = 0; i < clipboardData.items.length; i += 1) {
+        const item = clipboardData.items[i];
+        if (item.kind === "file" && item.type.startsWith("image/")) {
+          const file = item.getAsFile();
+          if (file) {
+            const ext = file.type.split("/")[1] || "png";
+            const filename =
+              file.name && file.name !== "image.png"
+                ? file.name
+                : `pasted_image_${Date.now()}_${i + 1}.${ext}`;
+            const renamedFile = new File([file], filename, { type: file.type });
+            files.push(renamedFile);
+          }
+        }
+      }
+    }
+
     if (files.length > 0) {
-      e.preventDefault(); // chặn dán base64/tên file lẫn vào text nếu clipboard có cả 2
+      e.preventDefault();
       addFilesToSelectedMedia(files);
+      setNewChatToast(`Đã dán ${files.length} ảnh trực tiếp`);
+      window.setTimeout(() => setNewChatToast(null), 3000);
     }
   }, [addFilesToSelectedMedia]);
 
@@ -2147,46 +2172,46 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
                     }
 
                     return (
-                      <div
+                      <ZaloSwipeableMessageItem
                         key={messageRenderKey(message)}
-                        data-msg-anchor={message.source_message_id || undefined}
-                        className={`flex group ${isSentByMe ? 'justify-end' : 'justify-start'} w-full mb-3 rounded-lg transition-shadow`}
+                        disabled={message.is_deleted}
+                        onReply={() => setReplyingTo(message)}
+                        className="w-full"
                       >
-                        {/* Checkbox for Auto Send Selection - visible on hover or if selected */}
-                        {!isSentByMe && (
-                           <div className={`mr-1.5 pt-4 transition-opacity ${isSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
-                             <input
-                               type="checkbox"
-                               className="w-3.5 h-3.5 cursor-pointer"
-                               checked={isSelected}
-                               onChange={() => handleToggleSelectMessage(msgId)}
-                             />
-                           </div>
-                        )}
+                        <div
+                          data-msg-anchor={message.source_message_id || undefined}
+                          className={`flex group ${isSentByMe ? 'justify-end' : 'justify-start'} w-full mb-3 rounded-lg transition-shadow`}
+                        >
+                          {/* Checkbox for Auto Send Selection - visible on hover or if selected */}
+                          {!isSentByMe && (
+                             <div className={`mr-1.5 pt-4 transition-opacity ${isSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
+                               <input
+                                 type="checkbox"
+                                 className="w-3.5 h-3.5 cursor-pointer"
+                                 checked={isSelected}
+                                 onChange={() => handleToggleSelectMessage(msgId)}
+                               />
+                             </div>
+                          )}
 
-                        <div className={fullScreen ? "max-w-[80%]" : "max-w-[70%]"}>
-                          {/* [P4.2] Role tag and sender name above bubble */}
-                          <div className={`flex items-center gap-1.5 mb-1 px-1 text-[11px] font-semibold text-on-surface-variant ${isSentByMe ? 'justify-end' : 'justify-start'}`}>
-                            <span className="text-on-surface font-bold">{sender}</span>
-                            <span className={`px-1.5 py-0.5 rounded-full text-[9px] font-extrabold uppercase ${roleColorClass}`}>{roleLabel}</span>
-                          </div>
+                          <div className={fullScreen ? "max-w-[80%]" : "max-w-[70%]"}>
+                            {/* [P4.2] Role tag and sender name above bubble */}
+                            <div className={`flex items-center gap-1.5 mb-1 px-1 text-[11px] font-semibold text-on-surface-variant ${isSentByMe ? 'justify-end' : 'justify-start'}`}>
+                              <span className="text-on-surface font-bold">{sender}</span>
+                              <span className={`px-1.5 py-0.5 rounded-full text-[9px] font-extrabold uppercase ${roleColorClass}`}>{roleLabel}</span>
+                            </div>
 
-                          {/* Bubble box */}
-                          <div className={`rounded-xl ${
-                            fullScreen ? "px-4 py-2.5 text-[15px]" : "px-3 py-1.5"
-                          } relative transition-all duration-200 ${
-                            isSentByMe
-                              ? 'bg-[#0068FF] text-white rounded-tr-none shadow-sm shadow-blue-500/10'
-                              : 'bg-surface text-on-surface rounded-tl-none shadow-sm border border-outline-variant'
-                          } ${isSelected ? 'ring-2 ring-red-500 ring-offset-2' : ''}`}>
+                            {/* Bubble box */}
+                            <div className={`rounded-xl ${
+                              fullScreen ? "px-4 py-2.5 text-[15px]" : "px-3 py-1.5"
+                            } relative transition-all duration-200 ${
+                              isSentByMe
+                                ? 'bg-[#0068FF] text-white rounded-tr-none shadow-sm shadow-blue-500/10'
+                                : 'bg-surface text-on-surface rounded-tl-none shadow-sm border border-outline-variant'
+                            } ${isSelected ? 'ring-2 ring-red-500 ring-offset-2' : ''}`}>
 
-                            {/* Zalo tập trung: toolbar hover — thả cảm xúc (mọi tin, kể cả
-                                người khác gửi, giống Zalo thật), trả lời/copy/chuyển tiếp
-                                (mọi tin có source_message_id) + thu hồi (chỉ tin CHÍNH MÌNH
-                                gửi và có đủ source_message_id + cli_msg_id — KHÁC reply, vẫn
-                                giữ nguyên gating cũ, chỉ tách riêng ra khỏi điều kiện chung
-                                của cả toolbar để copy/reply/forward không bị ẩn theo). */}
-                            {!message.is_deleted && message.source_message_id && (
+                              {/* Zalo tập trung: toolbar hover */}
+                              {!message.is_deleted && (message.source_message_id || message.id) && (
                               <div
                                 data-zalo-reaction-ui
                                 className={`absolute -top-7 ${isSentByMe ? "right-0" : "left-0"} flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition z-20`}
@@ -2373,7 +2398,8 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
                            </div>
                         )}
                       </div>
-                    );
+                    </ZaloSwipeableMessageItem>
+                  );
                   })}
 
                   {newMessageCount > 0 && (

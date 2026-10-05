@@ -167,6 +167,7 @@ export function useZaloAdminInbox() {
 
   // ── Zalo tập trung: recall / mentions / friend-status / sticker / group-scan ──
   const [pendingMentions, setPendingMentions] = useState<ZaloMention[]>([]);
+  const [replyingTo, setReplyingTo] = useState<ZaloLibraryMessage | null>(null);
   const [friendStatus, setFriendStatus] = useState<ZaloFriendStatusResponse | null>(null);
   const [loadingFriendStatus, setLoadingFriendStatus] = useState(false);
   const [friendActionLoading, setFriendActionLoading] = useState(false);
@@ -451,6 +452,10 @@ export function useZaloAdminInbox() {
   const onSelectConv = useCallback((convId: string) => {
     setSelectedConvId(convId);
     setMessages([]);
+    setGroupMembers(null);
+    setPendingMentions([]);
+    setReplyingTo(null);
+    setSendError(null);
   }, []);
 
   const loadMessages = useCallback(async (accountId: string, convId: string, append = false) => {
@@ -836,8 +841,6 @@ export function useZaloAdminInbox() {
   // recall, chỉ cho tin mình gửi). Preview hiện phía trên ô nhập (do shell tự
   // render dựa vào replyingTo), huỷ được, tự xoá ngay khi bắt đầu gửi (optimistic)
   // và được phục hồi lại nếu gửi lỗi để không mất ngữ cảnh đang trả lời.
-  const [replyingTo, setReplyingTo] = useState<ZaloLibraryMessage | null>(null);
-
   const sendMessage = useCallback(async (text: string, files?: File[]) => {
     const accId = selectedAccountIdRef.current;
     const convId = selectedConvIdRef.current;
@@ -848,10 +851,11 @@ export function useZaloAdminInbox() {
     // chưa hỗ trợ quote ở đó). message_id là bắt buộc, các field còn lại bỏ
     // qua nếu thiếu thay vì gửi null/undefined tường minh.
     const capturedReplyingTo = replyingTo;
+    const msgIdForQuote = capturedReplyingTo?.source_message_id || capturedReplyingTo?.id;
     const replyTo: ZaloReplyToPayload | undefined =
-      capturedReplyingTo?.source_message_id && !(files && files.length > 0)
+      msgIdForQuote && !(files && files.length > 0)
         ? {
-            message_id: capturedReplyingTo.source_message_id,
+            message_id: msgIdForQuote,
             cli_msg_id: capturedReplyingTo.cli_msg_id || undefined,
             sender_id: capturedReplyingTo.sender_id || undefined,
             content: capturedReplyingTo.content || undefined,
@@ -990,17 +994,25 @@ export function useZaloAdminInbox() {
   // /all-platform/zalo-bulk-send với kết quả này, không xử lý bulk-send ở đây.
   // ─────────────────────────────────────────────────────────────────────────────
   const loadGroupMembers = useCallback(async () => {
-    if (!selectedAccountId || !selectedConvId) return;
+    const accountId = selectedAccountIdRef.current;
+    const convId = selectedConvIdRef.current;
+    if (!accountId || !convId) return;
     setLoadingGroupMembers(true);
     try {
-      const res = await getZaloGroupMembers(selectedAccountId, selectedConvId);
-      setGroupMembers(res);
+      const res = await getZaloGroupMembers(accountId, convId);
+      if (selectedAccountIdRef.current === accountId && selectedConvIdRef.current === convId) {
+        setGroupMembers(res);
+      }
     } catch (e) {
-      showToast(e instanceof Error ? e.message : "Quét thành viên nhóm thất bại", false);
+      if (selectedAccountIdRef.current === accountId && selectedConvIdRef.current === convId) {
+        showToast(e instanceof Error ? e.message : "Quét thành viên nhóm thất bại", false);
+      }
     } finally {
-      setLoadingGroupMembers(false);
+      if (selectedAccountIdRef.current === accountId && selectedConvIdRef.current === convId) {
+        setLoadingGroupMembers(false);
+      }
     }
-  }, [selectedAccountId, selectedConvId, showToast]);
+  }, [showToast]);
 
   // ─────────────────────────────────────────────────────────────────────────────
   // Sticker — tìm theo từ khoá thật (searchZaloStickers, giống ô tìm sticker
