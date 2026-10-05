@@ -227,7 +227,12 @@ def list_leads(
     if source:
         query = query.eq("source", source)
     if sdr_id:
-        query = query.eq("sdr_id", sdr_id)
+        # Loc theo nguoi phu trach: SDR cua lead HOAC Sale phu trach (qualification_ae_id, o drawer "Sale phu trach").
+        # Truoc day chi so sdr_id nen lead co Sale phu trach la nguoi nay ma sdr_id khac thi loc khong ra.
+        if re.fullmatch(r"[0-9a-fA-F-]{36}", sdr_id):
+            query = query.or_(f"sdr_id.eq.{sdr_id},qualification_ae_id.eq.{sdr_id}")
+        else:
+            query = query.eq("sdr_id", sdr_id)
 
     res = execute_supabase_query(lambda: query.order("updated_at", desc=True).execute())
     rows = [_normalize_lead_status(row) for row in (res.data or [])]
@@ -241,7 +246,12 @@ def list_leads(
         # phong ban HR text (members.team) thay vi Team CRM that nen dropdown
         # "Tất cả Team" hien sai danh sach + loc sai nguoi.
         crm_team_member_ids = get_crm_team_member_ids(team)
-        rows = [row for row in rows if str(row.get("sdr_id") or "") in crm_team_member_ids]
+        rows = [
+            row for row in rows
+            if str(row.get("sdr_id") or "") in crm_team_member_ids
+            or str(row.get("qualification_ae_id") or "") in crm_team_member_ids
+            or str(row.get("team_id") or "") == str(team)
+        ]
 
     total = len(rows)
     start = (page - 1) * page_size
@@ -486,6 +496,12 @@ def update_lead(lead_id: str, payload: dict[str, Any], user: dict[str, Any]) -> 
         data["status"] = _STATUS_DISPLAY_TO_INTERNAL_MAP.get(raw_status, raw_status)
     if not (has_full_crm_access(user) and "sdr_id" in data):
         data.pop("sdr_id", None)
+    # SDR luon theo Sale phu trach: chon/doi Sale phu trach (qualification_ae_id) thi sdr_id = nguoi do, khong can chon
+    # SDR rieng (tranh lech SDR/Sale, vd SDR=Minh nhung Sale=Mai). Dat SAU buoc loai sdr_id o tren vi day la he qua cua
+    # viec gan Sale phu trach (nguoi duoc phep sua lead), khong phai tu y doi SDR.
+    if data.get("qualification_ae_id"):
+        _validate_owner(data["qualification_ae_id"])
+        data["sdr_id"] = data["qualification_ae_id"]
     # "Marketing" (cot created_by, hien o LeadsDirectory) - cho phep doi TAY
     # sau khi tao (feedback leader 2026-09-27: "cho thêm marketing cũng đổi
     # được"), cung 1 rule quyen voi sdr_id o tren - CHI full CRM access moi

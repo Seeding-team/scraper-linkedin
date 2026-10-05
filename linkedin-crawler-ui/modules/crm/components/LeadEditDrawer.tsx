@@ -51,7 +51,8 @@ function formFromLead(lead: CrmLeadRow): EditFormState {
     phone: lead.phone || '',
     email: lead.email || '',
     source: lead.source || '',
-    sdrId: lead.sdrId || '',
+    // Sale phu trach (neu da co) la nguoi phu trach that; SDR luon theo Sale.
+    sdrId: lead.qualificationAeId || lead.sdrId || '',
     teamId: lead.teamId || '',
     status: lead.status,
     zalo: lead.zalo || '',
@@ -240,7 +241,7 @@ export function LeadEditDrawer({
         source: form.source || null,
         note: form.note.trim() || null,
       };
-      if (canPickOwner) payload.sdr_id = form.sdrId || null;
+      if (canPickOwner && !lead?.qualificationAeId) payload.sdr_id = form.sdrId || null;
       payload.team_id = effectiveTeamId || null;
 
       const res = await fetch(`${API_BASE_URL}/api/all-platform/crm/leads/${encodeURIComponent(lead.id)}`, {
@@ -345,7 +346,11 @@ export function LeadEditDrawer({
                     placeholder="-- Chưa chọn --"
                   />
                 </Field>
-                {canPickOwner ? (
+                {lead?.qualificationAeId ? (
+                  <Field label="Người phụ trách (theo Sale phụ trách)" required hint="đổi ở bước Xác minh → Sale phụ trách">
+                    <input data-testid="edit-sdr" value={ownerLabel} disabled readOnly />
+                  </Field>
+                ) : canPickOwner ? (
                   <Field label="Người phụ trách (SDR)" required>
                     <MemberSearchSelect
                       testId="edit-sdr"
