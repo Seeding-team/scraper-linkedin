@@ -22,7 +22,7 @@ import { QuickAddProductModal } from '@/modules/service-catalog/QuickAddProductM
 import { QuickAddGroupModal } from '@/modules/service-catalog/QuickAddGroupModal';
 import {
   formatDate,
-  formatMoney,
+  formatMoney as formatVndMoney,
   formatPercentTrim,
   initialsOf,
   quoteDisplayStatus,
@@ -47,6 +47,11 @@ import { QuoteColumnVisibilityPicker } from '../integrations/quotes/QuoteColumnV
 import type { QuoteDraft } from '../integrations/quotes/types';
 import { CustomBlocksEditor } from '../integrations/quotes/CustomBlocksEditor';
 import { PaymentPlanEditor } from '@/modules/quotes/components/PaymentPlanEditor';
+import { formatQuoteMoney, normalizeQuoteCurrency, roundQuoteMoney, type QuoteCurrency } from '@/lib/currency';
+import { describeSystemRate, fetchSystemUsdVndRateInfo } from '@/modules/service-catalog/useSystemExchangeRate';
+import type { SystemExchangeRate } from '@/modules/quotes/repositories/QuoteRepository';
+import { VND_FX, convertQuoteItemsCurrency, fromQuoteMoney, toQuoteMoney, type QuoteFx } from '@/modules/quotes/utils/quoteCurrency';
+import { ACTIVITY_LABELS } from '@/modules/quotes/utils/quoteActivity';
 import { calculateQuoteTotals, calculateOverallDiscountSummary, clampDiscountPercent, calculateItemTotal, calculateSectionTotal } from '@/modules/quotes/utils/quoteCalculations';
 import { paymentPlanAmount, paymentPlanPercent } from '@/modules/quotes/utils/paymentPlan';
 import type { BundleSnapshotComponent, BundleSnapshotValue, CustomBlock, PaymentPlanRow } from '@/modules/quotes/types';
@@ -260,15 +265,18 @@ function resolveCatalogCustomerPrice(item: ServiceCatalogItem): number {
   return 0;
 }
 
-function recalculateBundleParent(item: QuoteItem, components: BundleSnapshotComponent[], mode: 'fixed' | 'auto' = bundleSnapshotPricingMode(item), targetGm = bundleSnapshotTargetGm(item)): QuoteItem {
-  const bundleCost = calculateBundleComponentCost(components);
+function recalculateBundleParent(item: QuoteItem, components: BundleSnapshotComponent[], mode: 'fixed' | 'auto' = bundleSnapshotPricingMode(item), targetGm = bundleSnapshotTargetGm(item), fx: QuoteFx = VND_FX): QuoteItem {
+  // Gia von/gia combo tinh o VND (snapshot goc) roi moi quy doi sang tien te cua quote.
+  const bundleCostVnd = calculateBundleComponentCost(components);
+  const bundleCost = toQuoteMoney(bundleCostVnd, fx);
   let unitPrice = item.unitPrice;
-  if (mode === 'auto' && bundleCost != null) {
-    unitPrice = roundBundlePrice(bundleCost / (1 - targetGm / 100));
+  if (mode === 'auto' && bundleCostVnd != null) {
+    unitPrice = toQuoteMoney(roundBundlePrice(bundleCostVnd / (1 - targetGm / 100)), fx);
   }
   return {
     ...item,
     costPrice: bundleCost,
+    ...(fx.currency !== 'VND' ? { costPriceVnd: bundleCostVnd } : {}),
     costNotApplicable: false,
     unitPrice,
     markupPercent: calculateMarkupFromCostPrice(bundleCost, unitPrice),
@@ -276,7 +284,7 @@ function recalculateBundleParent(item: QuoteItem, components: BundleSnapshotComp
   };
 }
 
-function bundleComponentsToWorkspaceRows(item: QuoteItem, catalogItems: ServiceCatalogItem[] = []): QuoteItem[] {
+function bundleComponentsToWorkspaceRows(item: QuoteItem, catalogItems: ServiceCatalogItem[] = [], fx: QuoteFx = VND_FX): QuoteItem[] {
   const catalogBundle = item.catalogItemId ? catalogItems.find(candidate => candidate.id === item.catalogItemId) : undefined;
   const fallbackComponentsById = new Map(
     (catalogBundle?.components || []).map(component => [component.componentId, component])
@@ -318,8 +326,8 @@ function bundleComponentsToWorkspaceRows(item: QuoteItem, catalogItems: ServiceC
         description: '',
         unit: component.unit || '',
         quantity: 1,
-        unitPrice: componentCustomerPriceValue,
-        costPrice: componentCost,
+        unitPrice: toQuoteMoney(componentCustomerPriceValue, fx) ?? 0,
+        costPrice: toQuoteMoney(componentCost, fx),
         markupPercent: componentMarkup,
         discountPercent: 0,
         vatRate: 0,
@@ -339,8 +347,8 @@ function bundleComponentsToWorkspaceRows(item: QuoteItem, catalogItems: ServiceC
       description: component.description || '',
       unit: component.unit || '',
       quantity: component.computedQuantity || component.quantity || 1,
-      unitPrice: componentCustomerPriceValue,
-      costPrice: componentCost,
+      unitPrice: toQuoteMoney(componentCustomerPriceValue, fx) ?? 0,
+      costPrice: toQuoteMoney(componentCost, fx),
       markupPercent: componentMarkup,
       discountPercent: 0,
       vatRate: 0,
@@ -408,19 +416,6 @@ async function loadQuoteCustomerOption(customerId: string): Promise<QuoteCustome
   };
 }
 
-const ACTIVITY_LABELS: Record<string, string> = {
-  created: 'Tạo báo giá',
-  updated: 'Cập nhật báo giá',
-  approved: 'Duyệt báo giá',
-  cancelled: 'Huỷ báo giá',
-  version_created: 'Tạo phiên bản mới',
-  stage_changed: 'Chuyển bước xử lý',
-  handoff_updated: 'Cập nhật bàn giao kỹ thuật',
-  owner_assigned: 'Gán người phụ trách',
-  version_reason: 'Ghi lý do tạo phiên bản',
-  approved_with_exception: 'đã phê duyệt ngoại lệ',
-  auto_approved_by_rule_engine: 'Tự động duyệt bởi Rule Engine',
-};
 
 /** Section 5 - hien cau tu nhien "<Ten> đã phê duyệt ngoại lệ cho V2 lúc …"
  * cho rieng action nay (khac cach hien chung "<Ten> <nhan>" cua cac action
@@ -1637,6 +1632,49 @@ export function QuoteWorkspaceModal({
   const persistedOverallDiscountRef = useRef<number | null | undefined>(undefined);
   const [discardCloseConfirmOpen, setDiscardCloseConfirmOpen] = useState(false);
   const [zeroPriceConfirm, setZeroPriceConfirm] = useState<string[] | null>(null);
+
+  // ---- Tien te CAP QUOTE (multi-currency, migration 169) -------------------
+  // Quote da ton tai: currency + exchangeRate doc tu server (DA DONG BANG, khong doi khi
+  // reload/approve). Tao moi (!quote): giu trong draft state den luc tao.
+  const [draftCurrency, setDraftCurrency] = useState<QuoteCurrency>('VND');
+  const [draftExchangeRate, setDraftExchangeRate] = useState<number | null>(null);
+  const [systemExchangeRate, setSystemExchangeRate] = useState<number | null>(null);
+  const [systemRateInfo, setSystemRateInfo] = useState<SystemExchangeRate | null>(null);
+  const [currencySwitch, setCurrencySwitch] = useState<{ target: QuoteCurrency; rateInput: number | null; custom?: boolean } | null>(null);
+  const workspaceCurrency: QuoteCurrency = normalizeQuoteCurrency(quote ? quote.currency : draftCurrency);
+  const workspaceExchangeRate: number | null = quote ? quote.exchangeRate ?? null : draftExchangeRate;
+  const workspaceFx: QuoteFx = { currency: workspaceCurrency, rate: workspaceExchangeRate };
+  // Format MOI so tien cua QUOTE theo tien te cua no (VND "1.250.000 đ" / USD "$48.08") -
+  // che (shadow) formatMoney VND import tu quoteDisplay. Gia tri khong thuoc quote (VD gia
+  // tri uoc tinh cua Co hoi) dung formatVndMoney.
+  const formatMoney = (value: number | null | undefined) => formatQuoteMoney(value ?? 0, workspaceCurrency);
+  // O nhap tien: USD can 2 so le (locale en-US de dau cham = thap phan).
+  const moneyInput = workspaceCurrency === 'USD' ? ({ decimals: 2, locale: 'en-US' } as const) : ({} as const);
+  // VND giu nguyen hanh vi cu (khong lam tron o FE, server lam tron khi luu).
+  const roundForQuote = (value: number) => (workspaceCurrency === 'VND' ? value : roundQuoteMoney(value, workspaceCurrency));
+  // Ty gia he thong ve cham hon luc mo hop thoai doi tien te -> tu dien vao o ty gia neu con trong.
+  useEffect(() => {
+    if (!systemExchangeRate) return;
+    setCurrencySwitch(current =>
+      current && current.target === 'USD' && !(current.rateInput && current.rateInput > 0)
+        ? { ...current, rateInput: systemExchangeRate }
+        : current
+    );
+  }, [systemExchangeRate, currencySwitch?.target]);
+  useEffect(() => {
+    let alive = true;
+    seedingQuoteRepository
+      .getExchangeRate()
+      .then(result => {
+        if (alive) setSystemExchangeRate(result?.rate ?? null);
+      })
+      .catch(() => {
+        if (alive) setSystemExchangeRate(null);
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
   function makeWorkspaceSnapshot(items: QuoteItem[], data: Quote['data'] | undefined, overallDiscountPercent: number | null | undefined): string {
     return JSON.stringify({
       items: buildItemsPayload(cloneQuoteItems(items)),
@@ -1853,6 +1891,8 @@ export function QuoteWorkspaceModal({
     return {
       ...row,
       costPrice: cost,
+      // Sua tay gia von bao gia USD -> goc VND cu khong con dung, doi lai VND dung gia tri nhap * ty gia.
+      ...(workspaceCurrency === 'USD' ? { costPriceVnd: null } : {}),
       costNotApplicable: false,
       markupPercent: calculateMarkupFromCostPrice(cost, row.unitPrice),
     };
@@ -1936,7 +1976,7 @@ export function QuoteWorkspaceModal({
         if (raw.trim() === '') return { ...row, markupPercent: null };
         if (parsed == null || !Number.isFinite(parsed)) return row;
         const markup = parsed;
-        return { ...row, markupPercent: markup, unitPrice: Math.max(0, row.costPrice * (1 + markup / 100)) };
+        return { ...row, markupPercent: markup, unitPrice: roundForQuote(Math.max(0, row.costPrice * (1 + markup / 100))) };
       })
     );
   }
@@ -1946,7 +1986,12 @@ export function QuoteWorkspaceModal({
     setItemsDraft(prev =>
       prev.map((row, i) => {
         if (i !== index) return row;
-        return { ...row, unitPrice: price, markupPercent: calculateMarkupFromCostPrice(row.costPrice, price) };
+        return {
+          ...row,
+          unitPrice: price,
+          ...(workspaceCurrency === 'USD' ? { unitPriceVnd: undefined } : {}),
+          markupPercent: calculateMarkupFromCostPrice(row.costPrice, price),
+        };
       })
     );
   }
@@ -1958,13 +2003,14 @@ export function QuoteWorkspaceModal({
       const currentComponents = bundleSnapshotComponents(row);
       if (currentComponents.length === 0) return row;
       const nextComponents = currentComponents.map(component => (targetIds.has(component.componentId) ? patcher(component) : component));
-      return recalculateBundleParent(row, nextComponents);
+      return recalculateBundleParent(row, nextComponents, undefined, undefined, workspaceFx);
     });
     setItemsDraft(nextItems);
   }
 
   function setBundleComponentCost(parentIndex: number, componentIds: string[], value: number | null) {
-    const cost = toSafeNonNegative(value);
+    // Hang muc con cua Combo hien thi theo tien te quote, nhung snapshot goc luu VND.
+    const cost = fromQuoteMoney(toSafeNonNegative(value), workspaceFx);
     updateBundleComponents(parentIndex, componentIds, component => {
       const price = componentCustomerPrice(component);
       return {
@@ -1976,7 +2022,7 @@ export function QuoteWorkspaceModal({
   }
 
   function setBundleComponentPrice(parentIndex: number, componentIds: string[], value: number | null) {
-    const price = toSafeNonNegative(value) ?? 0;
+    const price = fromQuoteMoney(toSafeNonNegative(value), workspaceFx) ?? 0;
     updateBundleComponents(parentIndex, componentIds, component => {
       const cost = componentCostPrice(component);
       return {
@@ -2005,7 +2051,7 @@ export function QuoteWorkspaceModal({
   function toggleBundleAutoPricing(parentIndex: number, auto: boolean) {
     const nextItems = itemsDraft.map((row, i) => {
       if (i !== parentIndex) return row;
-      return recalculateBundleParent(row, bundleSnapshotComponents(row), auto ? 'auto' : 'fixed', bundleSnapshotTargetGm(row));
+      return recalculateBundleParent(row, bundleSnapshotComponents(row), auto ? 'auto' : 'fixed', bundleSnapshotTargetGm(row), workspaceFx);
     });
     setItemsDraft(nextItems);
     if (quote) void persistQuote({ items: nextItems }, { silent: true });
@@ -2021,7 +2067,7 @@ export function QuoteWorkspaceModal({
     const nextItems = itemsDraft.map((row, i) => {
       if (i !== parentIndex) return row;
       const nextComponents = bundleSnapshotComponents(row).filter(component => !targetIds.has(component.componentId));
-      return recalculateBundleParent(row, nextComponents);
+      return recalculateBundleParent(row, nextComponents, undefined, undefined, workspaceFx);
     });
     setItemsDraft(nextItems);
     if (quote) void persistQuote({ items: nextItems }, { silent: true });
@@ -2186,6 +2232,9 @@ export function QuoteWorkspaceModal({
       discountPercent: row.discountPercent ?? 0,
       vatRate: row.vatRate ?? 10,
       costPrice: row.costPrice ?? null,
+      // Goc VND (migration 169) - chi co y nghia o bao gia USD; gui kem de doi lai VND khong troi do.
+      costPriceVnd: row.costPriceVnd ?? null,
+      unitPriceVnd: row.unitPriceVnd,
       markupPercent: row.markupPercent != null && isValidMarkupPercent(row.markupPercent) ? row.markupPercent : null,
       costNotApplicable: row.costNotApplicable ?? false,
       catalogItemId: row.catalogItemId,
@@ -2227,7 +2276,7 @@ export function QuoteWorkspaceModal({
     skipNextAutoSaveRef.current = true;
   }
 
-  async function persistQuote(overrides: { data?: Quote['data']; items?: QuoteItem[]; overallDiscountPercent?: number | null; quoteTypeCodes?: string[] }, opts?: { silent?: boolean; force?: boolean }) {
+  async function persistQuote(overrides: { data?: Quote['data']; items?: QuoteItem[]; overallDiscountPercent?: number | null; quoteTypeCodes?: string[]; currency?: QuoteCurrency; exchangeRate?: number | null }, opts?: { silent?: boolean; force?: boolean }) {
     if (!quote) return;
     // BUG THAT DA GAP (fix 2026-09-22, xem commit e38f1635 "stabilize pricing
     // draft behavior" 2026-09-20): 1 dong `if (opts?.silent) return;` bi
@@ -2271,6 +2320,8 @@ export function QuoteWorkspaceModal({
         items: buildItemsPayload(nextItems),
         overallDiscountPercent: 'overallDiscountPercent' in overrides ? overrides.overallDiscountPercent : (quote.overallDiscountPercent ?? null),
         ...('quoteTypeCodes' in overrides ? { quoteTypeCodes: overrides.quoteTypeCodes } : {}),
+        // Doi tien te (da kem toan bo items quy doi) - CHI gui khi nguoi dung doi tien te.
+        ...(overrides.currency ? { currency: overrides.currency, exchangeRate: overrides.exchangeRate ?? null } : {}),
       });
       setQuote(current => current?.id === updated.id && contentRevision !== quoteContentRevisionRef.current
         ? { ...updated, data: { ...updated.data, paymentPlan: current.data.paymentPlan, customBlocks: current.data.customBlocks } }
@@ -2493,9 +2544,16 @@ export function QuoteWorkspaceModal({
       showOnQuote: component.showOnQuote,
       sortOrder: component.sortOrder,
     }));
-    const defaultUnitPrice = resolveCatalogCustomerPrice(item);
-    const defaultCostPrice = item.itemType === 'bundle' ? calculateBundleComponentCost(bundleSnapshot) : (item.defaultCostPriceVnd ?? null);
+    // Gia danh muc luon VND goc; quote USD: quy doi theo ty gia da dong bang cua quote
+    // (khong sua danh muc), giu goc VND o unitPriceVnd/costPriceVnd de doi lai khong troi.
+    const defaultUnitPriceVnd = resolveCatalogCustomerPrice(item);
+    const defaultCostPriceVnd = item.itemType === 'bundle' ? calculateBundleComponentCost(bundleSnapshot) : (item.defaultCostPriceVnd ?? null);
+    const defaultUnitPrice = toQuoteMoney(defaultUnitPriceVnd, workspaceFx) ?? 0;
+    const defaultCostPrice = toQuoteMoney(defaultCostPriceVnd, workspaceFx);
     return {
+      ...(workspaceCurrency === 'USD'
+        ? { unitPriceVnd: defaultUnitPriceVnd, costPriceVnd: costViewAllowed ? defaultCostPriceVnd : null }
+        : {}),
       description: item.quoteDescription || item.description || item.name,
       serviceDescription: item.quoteDisplayName || (item.sku ? `${item.sku} - ${item.name}` : item.name),
       unit: item.unit || '',
@@ -2556,10 +2614,16 @@ export function QuoteWorkspaceModal({
       serviceDescription: `${item.sku} - ${item.name}`,
       unit: item.unit || '',
       quantity: item.defaultQuantity || 1,
-      unitPrice: canEditPricingCells ? preview.unitPrice || 0 : 0,
+      unitPrice: canEditPricingCells ? toQuoteMoney(preview.unitPrice || 0, workspaceFx) ?? 0 : 0,
       discountPercent: 0,
       vatRate: item.vatEuPercent ?? 10,
-      costPrice: canEditCostCells ? preview.costUnit ?? null : null,
+      costPrice: canEditCostCells ? toQuoteMoney(preview.costUnit ?? null, workspaceFx) : null,
+      ...(workspaceCurrency === 'USD'
+        ? {
+            unitPriceVnd: canEditPricingCells ? preview.unitPrice || 0 : undefined,
+            costPriceVnd: canEditCostCells ? preview.costUnit ?? null : null,
+          }
+        : {}),
       // Cung bug/fix voi catalogItemToQuoteItem() o tren - markupPercent la
       // field PRICING (chi sua duoc o stage 'pricing'), khong phai canEditCostCells.
       markupPercent: canEditPricingCells ? item.defaultRatePercent ?? null : null,
@@ -2867,6 +2931,50 @@ export function QuoteWorkspaceModal({
     setQuickAddProductTarget(null);
   }
 
+  async function requestCurrencyChange(target: QuoteCurrency) {
+    if (target === workspaceCurrency || !canSwitchQuoteCurrency) return;
+    // Chon USD: lay TY GIA HE THONG MOI NHAT (khong dung ban cache cu) de khong bat nhap tay.
+    let rate: number | null;
+    if (target === 'USD') {
+      const info = await fetchSystemUsdVndRateInfo(true);
+      rate = info?.rate ?? null;
+      setSystemRateInfo(info);
+      setSystemExchangeRate(rate);
+    } else {
+      rate = workspaceExchangeRate;
+    }
+    if (!hasPricedItems && (target === 'VND' || (rate != null && rate > 0))) {
+      void applyCurrencySwitch(target, target === 'USD' ? rate : null);
+      return;
+    }
+    setCurrencySwitch({ target, rateInput: target === 'USD' ? rate : null });
+  }
+
+  async function applyCurrencySwitch(target: QuoteCurrency, rate: number | null) {
+    const to: QuoteFx = { currency: target, rate: target === 'USD' ? rate : null };
+    if (target === 'USD' && !(to.rate && to.rate > 0)) {
+      window.alert('Vui lòng nhập tỷ giá USD → VND lớn hơn 0.');
+      return;
+    }
+    const nextItems = convertQuoteItemsCurrency(itemsDraft, workspaceFx, to);
+    if (!quote) {
+      setDraftCurrency(target);
+      setDraftExchangeRate(to.rate);
+      setItemsDraft(nextItems);
+      return;
+    }
+    // Quote da ton tai: luu NGAY (currency + ty gia chot + hang muc da quy doi trong cung 1 request)
+    // de DB khong bao gio lech tien te voi gia tung dong.
+    setLastAppliedMarkupPct(null);
+    setLastAppliedMarginPct(null);
+    await persistQuote({
+      items: nextItems,
+      data: { ...quote.data, currency: target },
+      currency: target,
+      exchangeRate: to.rate,
+    });
+  }
+
   function increaseExistingRowQty(existingIndex: number, addQuantity: number) {
     setItemsDraft(prev => {
       const next = prev.map((row, index) => (index === existingIndex ? { ...row, quantity: (row.quantity || 0) + (addQuantity || 1) } : row));
@@ -2948,7 +3056,7 @@ export function QuoteWorkspaceModal({
   function doApplyQuickMarkup(percent: number) {
     if (!isValidMarkupPercent(percent)) return;
     const next = itemsDraft.map(row =>
-      row.costPrice != null ? { ...row, markupPercent: percent, unitPrice: Math.max(0, row.costPrice * (1 + percent / 100)) } : row
+      row.costPrice != null ? { ...row, markupPercent: percent, unitPrice: roundForQuote(Math.max(0, row.costPrice * (1 + percent / 100))) } : row
     );
     setItemsDraft(next);
     setLastAppliedMarkupPct(percent);
@@ -2965,9 +3073,9 @@ export function QuoteWorkspaceModal({
   function doApplyTargetMargin(marginPercent: number) {
     const next = itemsDraft.map(row => {
       if (row.costPrice == null) return row;
-      const unitPrice = customerPriceFromTargetGrossMargin(row.costPrice, marginPercent);
-      if (unitPrice == null) return row;
-      return { ...row, unitPrice, markupPercent: marginPercent };
+      const rawUnitPrice = customerPriceFromTargetGrossMargin(row.costPrice, marginPercent);
+      if (rawUnitPrice == null) return row;
+      return { ...row, unitPrice: roundForQuote(rawUnitPrice), markupPercent: marginPercent };
     });
     setItemsDraft(next);
     setLastAppliedMarginPct(marginPercent);
@@ -3755,7 +3863,10 @@ export function QuoteWorkspaceModal({
         projectId: draftProjectId || null,
         slaDueAt: datetimeLocalValueToIso(draftSlaDueAt),
         quoteTypeCodes: draftQuoteTypeCodes,
-        data: createData,
+        data: { ...createData, currency: workspaceCurrency },
+        // Tien te cap quote + ty gia DONG BANG luc tao (USD) - VND khong gui ty gia.
+        currency: workspaceCurrency,
+        exchangeRate: workspaceCurrency === 'USD' ? workspaceExchangeRate : null,
         // Hang muc da nhap truoc khi quote that ton tai (che do tao moi) -
         // gui luon cung luc tao, KHONG bat nguoi dung phai luu roi moi duoc
         // nhap hang muc (yeu cau da xac nhan).
@@ -4605,17 +4716,26 @@ export function QuoteWorkspaceModal({
     return previewData;
   }, [deal, draftCustomerId, customers, draftTitle, draftScope, draftPaymentTermsDays, draftExtraTerms, draftCustomBlocks, draftPaymentPlan, draftVisibleColumns, draftVisibleSummaryFields, draftVisibleCustomerFields, effectiveIssuerCompany, issuerCompanies]);
   const columnVisibilitySchema = quote?.formSnapshot || draftSelectedForm?.schemaJson;
+  const hasPricedItems = itemsDraft.some(row => row.rowType !== 'section');
+  const isVillaLayout = (quote?.formSnapshot || draftSelectedForm?.schemaJson)?.layoutType === 'villa_solution_package';
+  /** Doi tien te chi cho bao gia DRAFT, Sale/Presale co du quyen cho cac cot bi doi (gia von + gia ban). */
+  const canSwitchQuoteCurrency =
+    !isVillaLayout &&
+    isDraft &&
+    !isLockedForReview &&
+    (!quote || (canEditCostCells && (canEditPricingCells || !itemsDraft.some(row => (row.unitPrice ?? 0) > 0))));
+
   // "Kế hoạch thanh toán" dang chim qua trong 1 accordion phang - badge trang
   // thai + tom tat khi dong de Sale khong bo qua (yeu cau rieng, xem
   // paymentPlanCardOpen ben duoi). KHONG doi logic tinh tien/villa/persistence.
   const paymentPlanRows = quote?.data.paymentPlan || draftPaymentPlan;
-  const paymentPlanFinalPayable = calculateOverallDiscountSummary(calculateQuoteTotals(itemsDraft), quote ? quote.overallDiscountPercent : draftOverallDiscountPercent).grandTotal;
+  const paymentPlanFinalPayable = calculateOverallDiscountSummary(calculateQuoteTotals(itemsDraft, 0, workspaceCurrency), quote ? quote.overallDiscountPercent : draftOverallDiscountPercent, workspaceCurrency).grandTotal;
   const paymentPlanPct = paymentPlanPercent(paymentPlanRows);
   const paymentPlanIsEmpty = paymentPlanRows.length === 0;
   const paymentPlanIsComplete = !paymentPlanIsEmpty && paymentPlanPct === 100;
   const paymentPlanBadgeText = paymentPlanIsEmpty ? 'Chưa thiết lập' : paymentPlanIsComplete ? `${paymentPlanRows.length} đợt · 100%` : 'Cần đủ 100%';
   const paymentPlanBadgeClass = paymentPlanIsEmpty ? 'qc-badge-neutral' : paymentPlanIsComplete ? 'qc-badge-success' : 'qc-badge-warning';
-  const paymentPlanTotalAmount = paymentPlanRows.reduce((sum, row) => sum + paymentPlanAmount(paymentPlanFinalPayable, row.percent), 0);
+  const paymentPlanTotalAmount = paymentPlanRows.reduce((sum, row) => sum + paymentPlanAmount(paymentPlanFinalPayable, row.percent, workspaceCurrency), 0);
   const columnVisibilityDraft: QuoteDraft = {
     data: quote ? quote.data : draftPreviewData,
     items: itemsDraft,
@@ -4674,8 +4794,8 @@ export function QuoteWorkspaceModal({
     const numericCostValues = costValues.filter((value): value is number => value != null);
     const liveHasCostData = rows.length > 0 && numericCostValues.length > 0;
     const costTotal = numericCostValues.reduce((sum, value) => sum + value, 0);
-    const totals = calculateQuoteTotals(rows);
-    const discountSummary = calculateOverallDiscountSummary(totals, quote ? quote.overallDiscountPercent : draftOverallDiscountPercent);
+    const totals = calculateQuoteTotals(rows, 0, workspaceCurrency);
+    const discountSummary = calculateOverallDiscountSummary(totals, quote ? quote.overallDiscountPercent : draftOverallDiscountPercent, workspaceCurrency);
     const netRevenue = discountSummary.subtotalAfterDiscount;
     const grossProfit = liveHasCostData ? netRevenue - costTotal : null;
     const grossMarginPercent = liveHasCostData && netRevenue > 0 && grossProfit != null ? (grossProfit / netRevenue) * 100 : null;
@@ -4691,7 +4811,7 @@ export function QuoteWorkspaceModal({
       ratePercent,
       overallDiscountPercent: quote ? quote.overallDiscountPercent : draftOverallDiscountPercent,
     };
-  }, [itemsDraft, quote, draftOverallDiscountPercent]);
+  }, [itemsDraft, quote, draftOverallDiscountPercent, workspaceCurrency]);
 
   const summaryHasCostData = liveCommercialSummary.hasCostData || hasCostData;
   const summaryCostTotal = liveCommercialSummary.hasCostData ? liveCommercialSummary.costTotal : (quote?.costTotal || 0);
@@ -4792,7 +4912,7 @@ export function QuoteWorkspaceModal({
       ) : null}
       {!quote && draftDealId && deal?.estimatedBudget ? (
         <div className="qc-row-sub">
-          Giá trị dự kiến: {formatMoney(deal.estimatedBudget)}
+          Giá trị dự kiến: {formatVndMoney(deal.estimatedBudget)}
         </div>
       ) : null}
       {quote ? (
@@ -4812,7 +4932,7 @@ export function QuoteWorkspaceModal({
              * co hoi" that (Deal khong co field nay) - ghi nhan ro
              * nguon that de khong trinh bay nhu du lieu that khac. */}
             {opportunityName ? `Gói dịch vụ: ${opportunityName}` : deal ? 'Chưa có gói dịch vụ' : ''}
-            {deal?.estimatedBudget ? ` · Giá trị dự kiến: ${formatMoney(deal.estimatedBudget)}` : ''}
+            {deal?.estimatedBudget ? ` · Giá trị dự kiến: ${formatVndMoney(deal.estimatedBudget)}` : ''}
           </div>
         </>
       ) : null}
@@ -5549,6 +5669,28 @@ export function QuoteWorkspaceModal({
                       ? 'Bạn sửa được cả Giá vốn và Giá bán'
                       : 'Chỉ xem — không có quyền sửa hạng mục này'}
                   </span>
+                  <span className="qc-currency-switch" role="group" aria-label="Tiền tệ báo giá" style={{ display: 'inline-flex', alignItems: 'center', gap: 8, marginTop: 4 }}>
+                    <span className="qc-row-sub">Tiền tệ:</span>
+                    {canSwitchQuoteCurrency ? (
+                      (['VND', 'USD'] as const).map(code => (
+                        <button
+                          key={code}
+                          type="button"
+                          className={`qc-mini-btn${workspaceCurrency === code ? ' qc-mini-btn-active' : ''}`}
+                          aria-pressed={workspaceCurrency === code}
+                          disabled={busy}
+                          onClick={() => requestCurrencyChange(code)}
+                        >
+                          {code}
+                        </button>
+                      ))
+                    ) : (
+                      <strong>{workspaceCurrency}</strong>
+                    )}
+                    {workspaceCurrency === 'USD' && workspaceExchangeRate ? (
+                      <span className="qc-row-sub">1 USD = {workspaceExchangeRate.toLocaleString('vi-VN')} VND (tỷ giá đã chốt cho báo giá này)</span>
+                    ) : null}
+                  </span>
                 </div>
                 {/* "markup /margin cho 1 dòng với hạng mục di" - yeu cau rieng
                  * dat thanh Markup nhanh/Margin muc tieu CUNG 1 hang voi
@@ -5815,7 +5957,7 @@ export function QuoteWorkspaceModal({
                         // calculateItemTotal) de luon cung 1 co so voi tu so
                         // (calculateItemTotal/calculateSectionTotal), khong
                         // lech nhau du hang muc nao thay doi.
-                        const workspaceQuoteTotal = calculateQuoteTotals(itemsDraft).totalAmount;
+                        const workspaceQuoteTotal = calculateQuoteTotals(itemsDraft, 0, workspaceCurrency).totalAmount;
                         return itemsDraft.map((item, index) => {
                           if (item.rowType === 'section') {
                             sectionCounter += 1;
@@ -5825,7 +5967,7 @@ export function QuoteWorkspaceModal({
                             // de quy sau hon, dung chung 1 ham voi
                             // QuoteDocumentRenderer (xem calculateSectionTotal).
                             const sectionChildren = itemsDraft.filter(row => row.parentItemId === item.id);
-                            const sectionTotal = calculateSectionTotal(sectionChildren);
+                            const sectionTotal = calculateSectionTotal(sectionChildren, workspaceCurrency);
                             return (
                               <tr
                                 key={item.id || index}
@@ -5889,7 +6031,7 @@ export function QuoteWorkspaceModal({
                         const costTotal = item.costPrice != null ? item.costPrice * item.quantity : null;
                         const editableTechnicalCells = canEditCostCells;
                         const editableCells = canEditPricingCells;
-                        const bundleChildRows = bundleComponentsToWorkspaceRows(item, catalogFlatItems);
+                        const bundleChildRows = bundleComponentsToWorkspaceRows(item, catalogFlatItems, workspaceFx);
                         const isBundleRow = bundleChildRows.length > 0;
                         const bundleMode = bundleSnapshotPricingMode(item);
                         const bundleTargetGm = bundleSnapshotTargetGm(item);
@@ -6119,6 +6261,7 @@ export function QuoteWorkspaceModal({
                                     <span className="qc-row-sub">Không có quyền xem</span>
                                   ) : editableTechnicalCells ? (
                                     <CurrencyInput
+                                      {...moneyInput}
                                       className="qc-cell-input qc-cell-input-money"
                                       value={item.costPrice ?? null}
                                       placeholder={item.costNotApplicable ? 'Không áp dụng' : 'Bắt buộc nhập'}
@@ -6151,6 +6294,7 @@ export function QuoteWorkspaceModal({
                             <td className="qc-cell-money qc-cell-markup" data-label="Giá khách/ĐV">
                               {editableCells ? (
                                 <CurrencyInput
+                                  {...moneyInput}
                                   className="qc-cell-input qc-cell-input-money"
                                   value={item.unitPrice ?? null}
                                   onChange={value => handleUnitPriceChange(index, value)}
@@ -6169,7 +6313,7 @@ export function QuoteWorkspaceModal({
                              * lech cong thuc nhau (fallback cu KHONG co VAT/
                              * chiet khau, item.totalAmount tri hoan toi luc
                              * luu that su). */}
-                            <td className="qc-cell-money" data-label="Thành tiền">{formatMoney(calculateItemTotal(item))}</td>
+                            <td className="qc-cell-money" data-label="Thành tiền">{formatMoney(calculateItemTotal(item, workspaceCurrency))}</td>
                             <td className={`qc-cell-money qc-th-margin-col ${margin != null && margin >= 20 ? 'qc-cell-margin-good' : margin != null ? 'qc-cell-margin-warn' : ''}`} style={{ position: 'relative' }} data-label="Margin">
                               {!profitabilityViewAllowed ? <span className="qc-row-sub">Không có quyền xem</span> : formatPercentFixed2(margin)}
                             </td>
@@ -6177,7 +6321,7 @@ export function QuoteWorkspaceModal({
                               {!profitabilityViewAllowed ? (
                                 <span className="qc-row-sub">Không có quyền xem</span>
                               ) : (
-                                formatWeightPercent(calculateItemTotal(item), workspaceQuoteTotal)
+                                formatWeightPercent(calculateItemTotal(item, workspaceCurrency), workspaceQuoteTotal)
                               )}
                             </td>
                             {canEdit && isDraft && !isLockedForReview ? (
@@ -6256,6 +6400,7 @@ export function QuoteWorkspaceModal({
                                       ) : editableTechnicalCells ? (
                                         <span className="qc-bundle-child-edit">
                                           <CurrencyInput
+                                            {...moneyInput}
                                             className="qc-cell-input qc-cell-input-money"
                                             value={child.costPrice ?? null}
                                             placeholder="Chưa có giá"
@@ -6278,6 +6423,7 @@ export function QuoteWorkspaceModal({
                                         <span className="qc-row-sub">Không có quyền xem</span>
                                       ) : editableCells ? (
                                         <CurrencyInput
+                                          {...moneyInput}
                                           className="qc-cell-input qc-cell-input-money"
                                           value={child.unitPrice ?? null}
                                           onChange={value => setBundleComponentPrice(index, child.__bundleComponentIds || [], value)}
@@ -6520,6 +6666,7 @@ export function QuoteWorkspaceModal({
                   </div>
                 </summary>
               <PaymentPlanEditor rows={paymentPlanRows}
+                currency={workspaceCurrency}
                 finalPayable={paymentPlanFinalPayable}
                 disabled={!canEdit || !isDraft || isLockedForReview}
                 onChange={paymentPlan => {
@@ -6974,26 +7121,37 @@ export function QuoteWorkspaceModal({
             {stage === 'pricing' || stage === 'review' ? (
             <div className="qc-workspace-card">
               <h3>Tổng hợp thương mại</h3>
-              <div className="qc-workspace-summary-row">
-                <span>Trước chiết khấu</span>
-                <strong>{quote ? formatMoney(quote.subtotalAmount) : '0 đ'}</strong>
-              </div>
-              <div className="qc-workspace-summary-row">
-                <span>Chiết khấu</span>
-                <strong>{quote ? formatMoney(Math.max(0, quote.subtotalAmount - (quote.netRevenue ?? quote.subtotalAmount))) : '0 đ'}</strong>
-              </div>
-              <div className="qc-workspace-summary-row">
-                <span>Sau chiết khấu</span>
-                <strong>{quote ? formatMoney(quote.netRevenue ?? quote.subtotalAmount) : '0 đ'}</strong>
-              </div>
-              <div className="qc-workspace-summary-row">
-                <span>VAT</span>
-                <strong>{quote ? formatMoney(quote.vatAmount) : '0 đ'}</strong>
-              </div>
-              <div className="qc-workspace-summary-row qc-workspace-summary-row--total">
-                <span>Khách thanh toán</span>
-                <strong>{quote ? formatMoney(quote.totalAmount) : '0 đ'}</strong>
-              </div>
+              {(() => {
+                // Cung cong thuc voi trang Chi tiet bao gia + khoi tong ben duoi: chiet khau TONG
+                // (overallDiscountPercent) tru vao tien truoc thue, VAT tinh lai tren phan con lai.
+                const s = quote
+                  ? calculateOverallDiscountSummary({ totalAmount: quote.totalAmount ?? 0, totalVatAmount: quote.vatAmount ?? 0 }, quote.overallDiscountPercent ?? null, workspaceCurrency)
+                  : null;
+                return (
+                  <>
+                    <div className="qc-workspace-summary-row">
+                      <span>Trước chiết khấu</span>
+                      <strong>{s ? formatMoney(s.subtotalBeforeVat) : formatMoney(0)}</strong>
+                    </div>
+                    <div className="qc-workspace-summary-row">
+                      <span>Chiết khấu</span>
+                      <strong>{s ? formatMoney(s.overallDiscountAmount) : formatMoney(0)}</strong>
+                    </div>
+                    <div className="qc-workspace-summary-row">
+                      <span>Sau chiết khấu</span>
+                      <strong>{s ? formatMoney(s.subtotalAfterDiscount) : formatMoney(0)}</strong>
+                    </div>
+                    <div className="qc-workspace-summary-row">
+                      <span>VAT</span>
+                      <strong>{s ? formatMoney(s.vatAfterDiscount) : formatMoney(0)}</strong>
+                    </div>
+                    <div className="qc-workspace-summary-row qc-workspace-summary-row--total">
+                      <span>Khách thanh toán</span>
+                      <strong>{s ? formatMoney(s.grandTotal) : formatMoney(0)}</strong>
+                    </div>
+                  </>
+                );
+              })()}
               <div className="qc-workspace-summary-row">
                 <span>Lợi nhuận dự kiến</span>
                 <strong className={hasCostData ? 'qc-cell-margin-good' : 'qc-workspace-muted'}>
@@ -7585,7 +7743,8 @@ export function QuoteWorkspaceModal({
                     subtotalAmount: quote.subtotalAmount ?? 0,
                     totalVatAmount: quote.vatAmount ?? 0,
                     totalAmount: quote.totalAmount ?? 0,
-                  } : calculateQuoteTotals(itemsDraft)}
+                  } : calculateQuoteTotals(itemsDraft, 0, workspaceCurrency)}
+                  currency={workspaceCurrency}
                   mode="public"
                   isPublished={quote ? quote.processingStage === 'published' : false}
                   quoteNumber={quote?.quoteNumber}
@@ -8005,6 +8164,25 @@ export function QuoteWorkspaceModal({
         onGroupFilterChange={catalogSource === 'internal' ? setPickerGroupFilter : undefined}
         onQuickAddProduct={catalogSource === 'internal' ? () => setQuickAddProductTarget('newRow') : undefined}
         onQuickAddGroup={catalogSource === 'internal' ? () => setQuickAddGroupOpen(true) : undefined}
+        quoteCurrency={workspaceCurrency}
+        exchangeRate={workspaceExchangeRate}
+        onQuoteCurrencyChange={canSwitchQuoteCurrency ? requestCurrencyChange : undefined}
+        onIncreaseExisting={id => {
+          const existingIndex = (catalogSource === 'zone' ? existingZoneKeys : existingCatalogKeys).get(id);
+          if (existingIndex == null) return;
+          increaseExistingRowQty(existingIndex, 1);
+          showToast(true, 'Đã tăng số lượng dòng có sẵn thêm 1.');
+        }}
+        onAddAnother={id => {
+          if (catalogSource === 'zone') {
+            const zoneItem = (priceBookItems || []).find(item => item.id === id);
+            if (zoneItem) addItemsFromCatalog([priceBookItemToQuoteItem(zoneItem)]);
+          } else {
+            const catalogItem = catalogFlatItems.find(item => item.id === id);
+            if (catalogItem) addItemsFromCatalog([catalogItemToQuoteItem(catalogItem)]);
+          }
+          showToast(true, 'Đã thêm một dòng mới.');
+        }}
         extraToolbar={
           catalogSource === 'internal' && catalogSectionOptions.length > 0 ? (
             <div className="cp-filter-chips" style={{ paddingTop: 0 }}>
@@ -8052,6 +8230,77 @@ export function QuoteWorkspaceModal({
         }
         onCreated={item => void handleQuickAddProductCreated(item)}
       />
+
+      {currencySwitch ? (
+        <div className="crm-modal-backdrop" style={{ zIndex: 100300 }} onClick={() => setCurrencySwitch(null)}>
+          <div className="crm-modal crm-modal--confirm" onClick={event => event.stopPropagation()}>
+            <header className="crm-modal-header">
+              <h2 className="crm-modal-title">Đổi tiền tệ báo giá sang {currencySwitch.target}</h2>
+              <button type="button" className="crm-modal-close" onClick={() => setCurrencySwitch(null)} aria-label="Đóng">
+                <X className="crm-icon" />
+              </button>
+            </header>
+            <div className="crm-modal-body">
+              <p>
+                {hasPricedItems
+                  ? `Toàn bộ giá vốn và giá khách của ${itemsDraft.filter(row => row.rowType !== 'section').length} hạng mục sẽ được quy đổi sang ${currencySwitch.target} và tổng tiền được tính lại. Giá gốc trong Danh mục / Bảng giá (VND) không bị thay đổi.`
+                  : `Báo giá sẽ chuyển sang ${currencySwitch.target}.`}
+              </p>
+              {currencySwitch.target === 'USD' ? (
+                systemExchangeRate && !currencySwitch.custom ? (
+                  <p style={{ marginTop: 12 }}>
+                    Tỷ giá hệ thống: <strong>1 USD = {systemExchangeRate.toLocaleString('vi-VN')} VND</strong> — sẽ được chốt cho báo giá này.
+                    {systemRateInfo ? <small style={{ display: 'block', color: '#667085' }}>{describeSystemRate(systemRateInfo)}</small> : null}
+                    {systemRateInfo?.stale ? <small style={{ display: 'block', color: '#bf7810' }}>Chưa lấy được tỷ giá mới — đang dùng tỷ giá gần nhất. Có thể dùng tỷ giá khác nếu cần.</small> : null}{' '}
+                    <button type="button" className="qc-mini-btn" onClick={() => setCurrencySwitch(current => (current ? { ...current, custom: true } : current))}>
+                      Dùng tỷ giá khác
+                    </button>
+                  </p>
+                ) : (
+                  <label className="qc-workspace-quickbar-field" style={{ display: 'block', marginTop: 12 }}>
+                    Tỷ giá (1 USD = ? VND) — được chốt cho báo giá này
+                    <CurrencyInput
+                      className="qc-cell-input qc-cell-input-money"
+                      decimals={2}
+                      locale="en-US"
+                      value={currencySwitch.rateInput}
+                      placeholder={systemExchangeRate ? undefined : 'Chưa có tỷ giá hệ thống - nhập tỷ giá'}
+                      onChange={value => setCurrencySwitch(current => (current ? { ...current, rateInput: value } : current))}
+                    />
+                    {!systemExchangeRate ? (
+                      <small style={{ display: 'block', color: '#bf7810' }}>
+                        Chưa lấy được tỷ giá tự động — nhập tỷ giá, hoặc Admin vào Cài đặt báo giá → Tỷ giá USD/VND để cập nhật.
+                      </small>
+                    ) : null}
+                  </label>
+                )
+              ) : (
+                <p className="qc-row-sub" style={{ marginTop: 8 }}>
+                  Quy đổi ngược theo tỷ giá đã chốt: 1 USD = {(workspaceExchangeRate ?? 0).toLocaleString('vi-VN')} VND.
+                </p>
+              )}
+            </div>
+            <footer className="crm-modal-footer">
+              <div className="crm-deal-footer-actions">
+                <button type="button" className="crm-cancel-button" onClick={() => setCurrencySwitch(null)}>Huỷ</button>
+                <button
+                  type="button"
+                  className="crm-save-button"
+                  disabled={busy || (currencySwitch.target === 'USD' && !(currencySwitch.rateInput && currencySwitch.rateInput >= 1000 && currencySwitch.rateInput <= 100000))}
+                  onClick={() => {
+                    const target = currencySwitch.target;
+                    const rate = currencySwitch.rateInput;
+                    setCurrencySwitch(null);
+                    void applyCurrencySwitch(target, rate);
+                  }}
+                >
+                  Đổi sang {currencySwitch.target}
+                </button>
+              </div>
+            </footer>
+          </div>
+        </div>
+      ) : null}
 
       <ConfirmModal
         open={zeroPriceConfirm != null}
@@ -8225,7 +8474,7 @@ export function QuoteWorkspaceModal({
                     <p>VAT đầu vào: {snap.vatInPercent ?? 0}%</p>
                     <p>Nhà cung cấp: {snap.vendorName || '—'}</p>
                     <p>VAT đầu ra: {snap.vatEuPercent ?? 0}%</p>
-                    <p>Giá tham chiếu: {snap.referencePrice != null ? formatMoney(snap.referencePrice) : '—'}</p>
+                    <p>Giá tham chiếu: {snap.referencePrice != null ? formatVndMoney(snap.referencePrice) : '—'}</p>
                     {snap.referenceLink ? <p>Link tham chiếu: <a href={snap.referenceLink} target="_blank" rel="noreferrer">{snap.referenceLink}</a></p> : null}
                     {snap.quoteLink ? <p>Link/chứng từ giá: <a href={snap.quoteLink} target="_blank" rel="noreferrer">{snap.quoteLink}</a></p> : null}
 
@@ -8457,8 +8706,9 @@ export function QuoteWorkspaceModal({
               </div>
               <div className="qc-workspace-preview-modal-body">
                 <label className="qc-field">
-                  <span>Giá vốn mới (VND)</span>
+                  <span>Giá vốn mới ({workspaceCurrency})</span>
                   <CurrencyInput
+                    {...moneyInput}
                     className="qc-cell-input qc-cell-input-money"
                     value={costOverrideModal.value ?? targetItem?.costPrice ?? null}
                     onChange={value => setCostOverrideModal({ ...costOverrideModal, value })}

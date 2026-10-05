@@ -27,6 +27,7 @@ import { SelectCustomerStep } from './SelectCustomerStep';
 import { applyIssuerCompanySnapshot, applyIssuerPaymentTermsSnapshot, emptyQuoteDraft, quoteDraftFromExistingQuote, quoteDraftFromForm } from './types';
 import type { QuoteDraft } from './types';
 import { clearVisibleColumnsDraft } from './quoteColumnsDraft';
+import { normalizeQuoteCurrency } from '@/lib/currency';
 
 type CreateQuoteStep = 1 | 2 | 3 | 4;
 
@@ -510,9 +511,13 @@ export function CreateQuoteModal({
       block => block.title.trim() || block.content.trim()
     );
     const data = { ...quoteDraft.data, customBlocks };
+    // Tien te CAP QUOTE + ty gia da chot (xem QuoteFormFiller). Villa luon VND.
+    const currency = isVilla ? 'VND' : normalizeQuoteCurrency(quoteDraft.data.currency);
     return {
-      data: isVilla ? { ...data, solutionItems: quoteDraft.solutionItems } : data,
+      data: isVilla ? { ...data, currency, solutionItems: quoteDraft.solutionItems } : { ...data, currency },
       items: isVilla ? [] : quoteDraft.items,
+      currency,
+      exchangeRate: currency === 'USD' ? quoteDraft.exchangeRate ?? null : null,
     };
   }
 

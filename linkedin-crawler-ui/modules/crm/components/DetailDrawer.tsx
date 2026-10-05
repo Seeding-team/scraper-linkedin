@@ -39,6 +39,7 @@ import {
 import type { ContractStatus, Deal, DealStage } from '../types';
 import { useAppAuth } from '@/contexts/AppAuthContext';
 import { useCrmCategoryCodeOptions } from './CrmCategorySelect';
+import { formatQuoteAmountOr, quoteCurrencyToVnd } from '@/lib/currency';
 
 type Props = {
   deal: Deal | null;
@@ -272,7 +273,7 @@ export function DetailDrawer({
                         {isApproved ? '🟢 Đã duyệt' : '🟠 Chưa duyệt'}
                       </span>
                     </div>
-                    <strong>{formatVND(deal.quote.totalAmount || 0) || 'Chưa có giá trị'}</strong>
+                    <strong>{formatQuoteAmountOr(deal.quote.totalAmount || 0, deal.quote.currency, formatVND) || 'Chưa có giá trị'}</strong>
                   </div>
                   <div className="crm-quote-row-actions">
                     {!isApproved && canEditThisQuote ? (
@@ -352,7 +353,7 @@ export function DetailDrawer({
                             {versionApproved ? '🟢 Đã duyệt' : '🟠 Chưa duyệt'}
                           </span>
                         </div>
-                        <strong>{formatVND(version.totalAmount || 0) || 'Chưa có giá trị'}</strong>
+                        <strong>{formatQuoteAmountOr(version.totalAmount || 0, version.currency, formatVND) || 'Chưa có giá trị'}</strong>
                       </div>
                       <div className="crm-quote-row-actions">
                         {versionApproved ? (

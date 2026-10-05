@@ -11,6 +11,7 @@ import type { ContractClause, ContractTemplateType } from '@/modules/contracts/t
 import { seedingContractTemplateRepository } from '@/modules/contract-templates';
 import type { ContractTemplate } from '@/modules/contract-templates';
 import { formatVnd } from '@/modules/quotes/utils/quoteCalculations';
+import { formatQuoteAmountOr, quoteCurrencyToVnd } from '@/lib/currency';
 import { CurrencyInput } from '@/components/CurrencyInput';
 import { DEAL_STAGE_META } from '../../constants/crmConfig';
 import type { DealStage } from '../../types';
@@ -138,7 +139,14 @@ export function ContractAIWizard({
   // sua tay o cung 1 bao gia) - dung selectedQuote?.id lam dependency, khong phai
   // ca object, de tranh chay lai vo ich khi quotes re-fetch nhung id khong doi.
   useEffect(() => {
-    setManualContractValue(selectedQuote ? selectedQuote.totalAmount : null);
+    // Hop dong luon bang VND: bao gia USD quy doi theo ty gia DA CHOT cua bao gia do.
+    setManualContractValue(
+      selectedQuote
+        ? selectedQuote.currency === 'USD'
+          ? Math.round(quoteCurrencyToVnd(selectedQuote.totalAmount, 'USD', selectedQuote.exchangeRate) ?? selectedQuote.totalAmount)
+          : selectedQuote.totalAmount
+        : null
+    );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedQuote?.id]);
   const effectiveContractValue = manualContractValue ?? 0;
@@ -220,7 +228,7 @@ export function ContractAIWizard({
         title: title || 'Hợp đồng cung cấp dịch vụ',
         templateType,
         contractValue: effectiveContractValue,
-        currency: selectedQuote?.currency || 'VND',
+        currency: 'VND',
         startDate: startDate || undefined,
         endDate: endDate || undefined,
         paymentTerms: extractPaymentTermsFromClauses(clauses),
@@ -393,7 +401,7 @@ export function ContractAIWizard({
                           <option value="">-- Không đính kèm báo giá --</option>
                           {quotes.map(quote => (
                             <option key={quote.id} value={quote.id}>
-                              {quote.quoteNumber} · {formatVnd(quote.totalAmount)}
+                              {quote.quoteNumber} · {formatQuoteAmountOr(quote.totalAmount, quote.currency, formatVnd)}
                             </option>
                           ))}
                         </select>
@@ -483,7 +491,7 @@ export function ContractAIWizard({
                       <b className="ai-context-row-icon">▤</b>
                       <span>
                         <strong>Báo giá đã chốt</strong>
-                        <small>{selectedQuote ? `${selectedQuote.quoteNumber} · ${formatVnd(selectedQuote.totalAmount)}` : 'Chưa đính kèm báo giá'}</small>
+                        <small>{selectedQuote ? `${selectedQuote.quoteNumber} · ${formatQuoteAmountOr(selectedQuote.totalAmount, selectedQuote.currency, formatVnd)}` : 'Chưa đính kèm báo giá'}</small>
                       </span>
                       <em>{selectedQuote ? 'Đã chốt' : 'Thiếu'}</em>
                     </div>

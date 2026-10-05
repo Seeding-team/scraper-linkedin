@@ -7,6 +7,7 @@ import { CustomerColumnVisibilityMenu } from './CustomerColumnVisibilityMenu';
 import { useQuoteColumnPreferences, type QuoteColumnKey } from '../hooks/useQuoteColumnPreferences';
 import { seedingQuoteRepository, CopyQuoteCrossWorkspaceModal, MoveQuoteModal } from '../../quotes';
 import type { Quote } from '../../quotes';
+import { formatQuoteAmountOr, quoteCurrencyToVnd } from '@/lib/currency';
 
 const QUOTE_COLUMN_OPTIONS: Array<{ key: QuoteColumnKey; label: string }> = [
   { key: 'costTotal', label: 'Giá vốn' },
@@ -595,7 +596,7 @@ export function CustomerQuotesTab({
                           nay. */}
                       <td className="py-3 px-3 text-right">
                         <span className="font-bold text-xs text-emerald-600">
-                          {formatVND(Number(current.total_amount || current.customer_price_before_vat || 0)) || '0 đ'}
+                          {formatQuoteAmountOr(Number(current.total_amount || current.customer_price_before_vat || 0), current.currency, formatVND) || '0 đ'}
                         </span>
                       </td>
 
@@ -608,7 +609,7 @@ export function CustomerQuotesTab({
                           {current.costViewAllowed === false ? (
                             <span className="text-[11px] text-slate-400" title="Chỉ Presale/Sale được phân công hoặc Admin mới xem được giá vốn">—</span>
                           ) : current.hasCostData ? (
-                            <span className="font-medium text-xs text-slate-700">{formatVND(Number(current.costTotal || 0))}</span>
+                            <span className="font-medium text-xs text-slate-700">{formatQuoteAmountOr(Number(current.costTotal || 0), current.currency, formatVND)}</span>
                           ) : (
                             <span className="text-[11px] text-slate-400">Chưa có</span>
                           )}
@@ -622,7 +623,7 @@ export function CustomerQuotesTab({
                           {current.profitabilityViewAllowed === false ? (
                             <span className="text-[11px] text-slate-400" title="Chỉ Sale phụ trách hoặc Admin mới xem được lợi nhuận">—</span>
                           ) : current.hasCostData && current.grossProfit !== null && current.grossProfit !== undefined ? (
-                            <span className="font-medium text-xs text-slate-700">{formatVND(Number(current.grossProfit || 0))}</span>
+                            <span className="font-medium text-xs text-slate-700">{formatQuoteAmountOr(Number(current.grossProfit || 0), current.currency, formatVND)}</span>
                           ) : (
                             <span className="text-[11px] text-slate-400">Chưa tính</span>
                           )}
@@ -657,7 +658,7 @@ export function CustomerQuotesTab({
                             <>
                               <div className="font-medium text-xs text-slate-700">{Number(current.discountPercent).toFixed(1)}%</div>
                               {current.discountAmount ? (
-                                <div className="text-[11px] text-slate-400 font-normal mt-0.5">{formatVND(Number(current.discountAmount))}</div>
+                                <div className="text-[11px] text-slate-400 font-normal mt-0.5">{formatQuoteAmountOr(Number(current.discountAmount), current.currency, formatVND)}</div>
                               ) : null}
                             </>
                           ) : (
@@ -803,14 +804,14 @@ export function CustomerQuotesTab({
                                 {version.technicalOwnerId ? memberName(version.technicalOwnerId) : (version.quoteOwnerId ? memberName(version.quoteOwnerId) : '—')}
                               </td>
                               <td className="py-2.5 px-3 text-right font-bold text-emerald-600 text-xs">
-                                {formatVND(Number(version.customerPriceBeforeVat ?? version.totalAmount ?? 0)) || '0 đ'}
+                                {formatQuoteAmountOr(Number(version.customerPriceBeforeVat ?? version.totalAmount ?? 0), version.currency, formatVND) || '0 đ'}
                               </td>
                               {visibleQuoteColumns.has('costTotal') ? (
                                 <td className="py-2.5 px-3 text-right text-xs">
                                   {version.costViewAllowed === false ? (
                                     <span className="text-[11px] text-slate-400">—</span>
                                   ) : version.hasCostData ? (
-                                    <span className="text-slate-700">{formatVND(Number(version.costTotal || 0))}</span>
+                                    <span className="text-slate-700">{formatQuoteAmountOr(Number(version.costTotal || 0), version.currency, formatVND)}</span>
                                   ) : (
                                     <span className="text-[11px] text-slate-400">Chưa có</span>
                                   )}
@@ -821,7 +822,7 @@ export function CustomerQuotesTab({
                                   {version.profitabilityViewAllowed === false ? (
                                     <span className="text-[11px] text-slate-400">—</span>
                                   ) : version.hasCostData && version.grossProfit !== null && version.grossProfit !== undefined ? (
-                                    <span className="text-slate-700">{formatVND(Number(version.grossProfit || 0))}</span>
+                                    <span className="text-slate-700">{formatQuoteAmountOr(Number(version.grossProfit || 0), version.currency, formatVND)}</span>
                                   ) : (
                                     <span className="text-[11px] text-slate-400">Chưa tính</span>
                                   )}

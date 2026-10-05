@@ -501,7 +501,7 @@ export const ServiceCatalogProductsTable = forwardRef<ServiceCatalogProductsTabl
                     {/* Yeu cau rieng "chuyển mô tả ra 1 cột ngoài luôn" - truoc
                      * day mo ta nam LONG ben trong o Ten (sc-cell-name-desc),
                      * gio tach rieng 1 cot doc lap giong cac cot gia/VAT khac. */}
-                    <td className="sc-cell-desc" title={product.description || undefined}>{product.description || '—'}</td>
+                    <td className="sc-cell-desc" title={product.description || undefined}><div className="sc-cell-desc-text">{product.description || '—'}</div></td>
                     {fixedGroupId ? null : <td>{product.groupName}</td>}
                     <td>{product.unit || '—'}</td>
                     <td className={product.defaultCostPriceVnd == null ? 'sc-cell-price-missing' : undefined}>

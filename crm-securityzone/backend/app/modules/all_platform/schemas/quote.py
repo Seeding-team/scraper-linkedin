@@ -166,6 +166,9 @@ class QuoteItemInput(BaseModel):
     cost_override_by: Optional[str] = None
     cost_override_at: Optional[str] = None
     cost_price_original: Optional[float] = Field(default=None, ge=0)
+    # Gia von GOC bang VND (migration 169) - chi gui o bao gia USD de doi lai VND
+    # khong troi do lam tron. Gia ban goc VND dung lai unit_price_vnd co san.
+    cost_price_vnd: Optional[float] = Field(default=None, ge=0)
 
     _normalize_optional_uuid = field_validator(
         "catalog_item_id",
@@ -188,6 +191,11 @@ class QuoteCreateRequest(BaseModel):
     # "Loai bao gia" (migration 112) - multi-select code cua
     # category_type='crm_quote_type', chon duoc tu Buoc 1 luc tao.
     quote_type_codes: Optional[list[str]] = None
+    # Tien te cap Quote (migration 169): 'VND' (mac dinh) | 'USD'. exchange_rate = so
+    # VND cho 1 USD, bat buoc/duoc dong bang khi currency khac VND (neu bo trong dung
+    # ty gia he thong - xem quote_exchange_rate_service).
+    currency: Optional[str] = None
+    exchange_rate: Optional[float] = Field(default=None, gt=0)
 
     _normalize_data = field_validator("data")(normalize_quote_data)
     _normalize_optional_uuid = field_validator(
@@ -222,6 +230,9 @@ class QuoteUpdateRequest(BaseModel):
     # o router (list rong [] la gia tri that su hop le "bo chon het", khac
     # "khong gui gi").
     quote_type_codes: Optional[list[str]] = None
+    # Doi tien te cua bao gia DRAFT: phai gui kem toan bo `items` da quy doi.
+    currency: Optional[str] = None
+    exchange_rate: Optional[float] = Field(default=None, gt=0)
 
     _normalize_data = field_validator("data")(normalize_quote_data)
     _normalize_optional_uuid = field_validator(

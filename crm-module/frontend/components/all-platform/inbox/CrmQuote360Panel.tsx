@@ -21,6 +21,7 @@ import { seedingQuoteRepository } from "@/modules/quotes/repositories/SeedingQuo
 import type { Quote } from "@/modules/quotes/types";
 import { customerLeadService, type Customer } from "@/services/customer-lead.service";
 import { cn } from "@/lib/utils";
+import { formatQuoteAmountOr, quoteCurrencyToVnd } from '@/lib/currency';
 
 interface CrmQuote360PanelProps {
   currentLead: Customer | null;
@@ -364,7 +365,7 @@ export function CrmQuote360Panel({
                 {getStatusBadge(selectedQuoteForSend.status)}
               </div>
               <div className="text-sm font-bold text-[#d81b60]">
-                {formatVND(selectedQuoteForSend.grandTotal ?? selectedQuoteForSend.totalAmount)}
+                {formatQuoteAmountOr(selectedQuoteForSend.grandTotal ?? selectedQuoteForSend.totalAmount, selectedQuoteForSend.currency, formatVND)}
               </div>
               <div className="text-xs text-slate-500">
                 Khách nhận: <strong>{currentLead.customer_name || currentLead.company_name}</strong> ({channelName})

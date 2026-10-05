@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { CalendarClock, Info } from 'lucide-react';
 import type { PaymentPlanRow } from '../types';
-import { formatVnd } from '../utils/quoteCalculations';
+import { formatMoney } from '../utils/quoteCalculations';
 import { clampPercentValue, paymentPlanAmount, paymentPlanPercent, sanitizePercentDraft } from '../utils/paymentPlan';
 
 /** Text input (not type="number") for phase percent - a controlled number
@@ -50,11 +50,13 @@ function PercentInput({ index, value, disabled, onCommit }: {
   );
 }
 
-export function PaymentPlanEditor({ rows, finalPayable, onChange, disabled = false }: {
+export function PaymentPlanEditor({ rows, finalPayable, onChange, disabled = false, currency }: {
   rows: PaymentPlanRow[];
   finalPayable: number;
   onChange: (rows: PaymentPlanRow[]) => void;
   disabled?: boolean;
+  /** Tien te cua quote ('VND' | 'USD') - mac dinh VND. */
+  currency?: string | null;
 }) {
   const percent = paymentPlanPercent(rows);
   const isEmpty = rows.length === 0;
@@ -98,13 +100,13 @@ export function PaymentPlanEditor({ rows, finalPayable, onChange, disabled = fal
                 <tr key={row.id}>
                   <td><input aria-label={`Tên đợt ${index + 1}`} disabled={disabled} value={row.phase} onChange={e => update(index, { phase: e.target.value })} /></td>
                   <td className="money-cell"><PercentInput index={index} value={row.percent} disabled={disabled} onCommit={percent => update(index, { percent })} /></td>
-                  <td className="money-cell">{formatVnd(paymentPlanAmount(finalPayable, row.percent))}</td>
+                  <td className="money-cell">{formatMoney(paymentPlanAmount(finalPayable, row.percent, currency), currency)}</td>
                   <td><input aria-label={`Điều kiện đợt ${index + 1}`} disabled={disabled} value={row.condition} onChange={e => update(index, { condition: e.target.value })} /></td>
                   <td><input aria-label={`Ghi chú đợt ${index + 1}`} disabled={disabled} value={row.note} onChange={e => update(index, { note: e.target.value })} /></td>
                   <td><button type="button" disabled={disabled} aria-label={`Xóa đợt ${index + 1}`} onClick={() => onChange(rows.filter((_, i) => i !== index))}>×</button></td>
                 </tr>
               ))}</tbody>
-              <tfoot><tr><th>Tổng</th><th className="money-cell">{percent}%</th><th className="money-cell">{formatVnd(rows.reduce((sum, row) => sum + paymentPlanAmount(finalPayable, row.percent), 0))}</th><td colSpan={3} /></tr></tfoot>
+              <tfoot><tr><th>Tổng</th><th className="money-cell">{percent}%</th><th className="money-cell">{formatMoney(rows.reduce((sum, row) => sum + paymentPlanAmount(finalPayable, row.percent, currency), 0), currency)}</th><td colSpan={3} /></tr></tfoot>
             </table>
           </div>
           {isWarning ? <p role="alert" className="quote-payment-plan-warning">Tổng tỷ lệ hiện tại là {percent}%, cần đủ 100%.</p> : null}

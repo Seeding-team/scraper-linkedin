@@ -259,6 +259,7 @@ export function QuoteDetailPage({ quoteId }: Props) {
           mode="detail"
           isPublished={quote.processingStage === 'published'}
           quoteNumber={quote.quoteNumber}
+          currency={quote.currency}
           overallDiscountPercent={quote.overallDiscountPercent}
           printPreviewMode
           printOrientation={printOrientation}

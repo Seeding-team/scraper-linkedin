@@ -8,6 +8,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { serviceCatalogRepository } from './repositories/ServiceCatalogRepository';
 import type { BundleComponentInput, ServiceCatalogItem, ServiceCatalogItemInput, ServiceCatalogUnit, ServiceCatalogVatRate } from './types';
 import { usePricingLogic } from './usePricingLogic';
+import { useSystemUsdVndRate } from './useSystemExchangeRate';
 import { emptyProductForm, formatSkuName, parseNullableNumber } from './catalog-form-utils';
 import { markupFromCustomerPrice } from './pricing-math';
 import './styles/service-catalog.css';
@@ -111,6 +112,12 @@ export function QuickAddProductModal({
   const [internalNote, setInternalNote] = useState('');
 
   const { state: pricing, setState: setPricingState, updateField: setPricingField, getProfit } = usePricingLogic();
+  // Ty gia mac dinh = ty gia HE THONG (khong hard-code); chi dien khi form chua co ty gia.
+  const systemUsdVndRate = useSystemUsdVndRate();
+  useEffect(() => {
+    if (!open || !systemUsdVndRate) return;
+    setPricingState(prev => (prev.supplierExchangeRate > 0 ? prev : { ...prev, supplierExchangeRate: systemUsdVndRate }));
+  }, [open, systemUsdVndRate, pricing.supplierExchangeRate, setPricingState]);
 
   const [units, setUnits] = useState<ServiceCatalogUnit[] | null>(null);
   const [vatRates, setVatRates] = useState<ServiceCatalogVatRate[] | null>(null);
@@ -191,7 +198,7 @@ export function QuickAddProductModal({
             supplierListPrice: editingItem.supplierListPrice ?? 0,
             supplierDiscountPercent: editingItem.supplierDiscountPercent ?? 0,
             supplierNetPrice: editingItem.supplierNetPrice ?? 0,
-            supplierExchangeRate: editingItem.supplierExchangeRate ?? 25400,
+            supplierExchangeRate: editingItem.supplierExchangeRate ?? 0,
             supplierConvertedPrice: editingItem.supplierConvertedPrice ?? 0,
             supplierVendorId: editingItem.supplierVendorId || '',
             supplierQuoteRef: editingItem.supplierQuoteRef || '',
@@ -269,7 +276,7 @@ export function QuickAddProductModal({
         supplierListPrice: initialCost,
         supplierDiscountPercent: 0,
         supplierNetPrice: initialCost,
-        supplierExchangeRate: 25400,
+        supplierExchangeRate: 0,
         supplierConvertedPrice: initialCost,
         supplierVendorId: undefined,
         supplierQuoteRef: undefined,
@@ -1035,7 +1042,7 @@ export function QuickAddProductModal({
                       <div className="grid grid-cols-3 gap-6">
                         <div>
                           <label className="block text-xs font-medium text-slate-500 mb-1">Tỷ giá VND/USD</label>
-                          <input type="number" className="w-full h-8 px-2 border border-slate-300 rounded text-sm disabled:bg-slate-100 disabled:text-slate-400" value={pricing.supplierExchangeRate || ''} onChange={e => setPricingField('supplierExchangeRate', Number(e.target.value))} disabled={pricing.supplierCurrency === 'VND'} />
+                          <input type="number" className="w-full h-8 px-2 border border-slate-300 rounded text-sm read-only:bg-slate-100 read-only:text-slate-500 read-only:cursor-not-allowed" value={pricing.supplierExchangeRate || ''} onChange={e => setPricingField('supplierExchangeRate', Number(e.target.value))} readOnly={systemUsdVndRate != null} title={systemUsdVndRate != null ? 'Tỷ giá hệ thống (Cài đặt báo giá → Tỷ giá USD/VND), không sửa tại đây' : undefined} placeholder="Nhập tỷ giá USD → VND" />
                         </div>
                         <div>
                           <label className="block text-xs font-medium text-slate-500 mb-1">Giá mua quy đổi</label>

@@ -404,6 +404,52 @@ def quotes_service_catalog_options(form_id: str = Query(..., alias="formId"), _u
         return BaseResponse(success=False, message=friendly_supabase_error_message(e))
 
 
+class ExchangeRateSaveRequest(BaseModel):
+    rate: float
+    note: Optional[str] = None
+
+
+@quotes_router.get("/exchange-rate")
+def quotes_exchange_rate_get(_user: dict = Depends(get_current_user)) -> BaseResponse:
+    """Ty gia USD->VND he thong cho luong bao gia (rate=None neu chua cau hinh).
+    Dang ky TRUOC /{quote_id} de khong bi khop nham."""
+    try:
+        from app.modules.all_platform.services import quote_exchange_rate_service
+        return BaseResponse(success=True, data=quote_exchange_rate_service.get_usd_vnd_rate())
+    except Exception as e:
+        return BaseResponse(success=False, message=friendly_supabase_error_message(e))
+
+
+@quotes_router.post("/exchange-rate/refresh")
+def quotes_exchange_rate_refresh(user: dict = Depends(get_current_user)) -> BaseResponse:
+    """Nut "Cap nhat ty gia": lay NGAY tu nguon uy tin (Vietcombank, du phong ExchangeRate-API), ghi de
+    ca override thu cong (quay lai che do tu dong). Nguon loi → GIU rate gan nhat va tra kem `error`
+    (FE cho nhap tay). Khong dong toi bao gia da tao (snapshot da chot)."""
+    _require_master_data_manager(user)
+    try:
+        from app.modules.all_platform.services import quote_exchange_rate_service
+        data = quote_exchange_rate_service.refresh_usd_vnd_rate(user.get("id"), force=True)
+        message = "Đã cập nhật tỷ giá" if data.get("refreshed") else (data.get("error") or "Chưa cập nhật được tỷ giá")
+        return BaseResponse(success=True, message=message, data=data)
+    except Exception as e:
+        return BaseResponse(success=False, message=friendly_supabase_error_message(e))
+
+
+@quotes_router.put("/exchange-rate")
+def quotes_exchange_rate_put(payload: ExchangeRateSaveRequest, user: dict = Depends(get_current_user)) -> BaseResponse:
+    """Dat ty gia he thong - chi anh huong bao gia TAO/CHUYEN SANG USD ve sau, khong
+    doi snapshot cua bao gia da co."""
+    _require_master_data_manager(user)
+    try:
+        from app.modules.all_platform.services import quote_exchange_rate_service
+        data = quote_exchange_rate_service.set_usd_vnd_rate(payload.rate, user.get("id"), payload.note)
+        return BaseResponse(success=True, message="Đã cập nhật tỷ giá", data=data)
+    except ValueError as e:
+        return BaseResponse(success=False, message=str(e))
+    except Exception as e:
+        return BaseResponse(success=False, message=friendly_supabase_error_message(e))
+
+
 @quotes_router.get("/issuer-companies")
 def quotes_issuer_companies(
     include_inactive: bool = Query(False), _user: dict = Depends(get_current_user)

@@ -4,6 +4,7 @@ import { CrmVendorSelect } from '@/modules/crm/components/CrmVendorSelect';
 import { SearchableSelect } from '@/modules/crm/components/SearchableSelect';
 import { VendorImportRepository, VendorImportBatch, VendorImportItem } from '@/modules/crm/repositories/VendorImportRepository';
 import { usePricingLogic } from './usePricingLogic';
+import { useSystemUsdVndRate } from './useSystemExchangeRate';
 import { serviceCatalogRepository } from './repositories/ServiceCatalogRepository';
 import type { ServiceCatalogItem } from './types';
 
@@ -16,7 +17,12 @@ export function VendorImportFlow({ onClose }: { onClose: () => void }) {
 
   const [vendorId, setVendorId] = useState('');
   const [projectId, setProjectId] = useState('');
-  const [exchangeRate, setExchangeRate] = useState('25400');
+  const systemUsdVndRate = useSystemUsdVndRate();
+  const [exchangeRate, setExchangeRate] = useState('');
+  // Ty gia mac dinh = ty gia he thong (khong hard-code); nguoi dung van sua tay duoc.
+  useEffect(() => {
+    if (systemUsdVndRate) setExchangeRate(prev => (prev ? prev : String(systemUsdVndRate)));
+  }, [systemUsdVndRate]);
   const [priceScope, setPriceScope] = useState<'project_only' | 'cost_price_book' | 'product_catalog'>('project_only');
   const [uploading, setUploading] = useState(false);
   const [batch, setBatch] = useState<VendorImportBatch | null>(null);
@@ -170,7 +176,7 @@ export function VendorImportFlow({ onClose }: { onClose: () => void }) {
     setPricingField('supplierNetPrice', item.net_price || 0);
     setPricingField('shippingCost', item.shipping_cost || 0);
     setPricingField('otherCost', item.other_cost || 0);
-    if (item.currency === 'USD') setPricingField('supplierExchangeRate', Number(exchangeRate) || 1);
+    if (item.currency === 'USD') setPricingField('supplierExchangeRate', Number(exchangeRate) || 0);
   };
 
   // Item ke tiep CHUA xu ly (review_status='pending'), dung cho nut "Item

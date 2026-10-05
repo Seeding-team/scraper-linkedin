@@ -286,6 +286,7 @@ export function PublicQuotePage({ token }: Props) {
           mode="public"
           isPublished={quote.processingStage ? quote.processingStage === 'published' : true}
           quoteNumber={quote.quoteNumber}
+          currency={quote.currency}
           overallDiscountPercent={quote.overallDiscountPercent}
           printPreviewMode
           printOrientation={printOrientation}

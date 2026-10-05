@@ -18,7 +18,7 @@ import type {
   UpdateQuoteHandoffChecklistInput,
   UpdateQuoteInput,
 } from '../types';
-import type { QuoteRepository } from './QuoteRepository';
+import type { QuoteRepository, SystemExchangeRate } from './QuoteRepository';
 import type { ServiceCatalogOptions } from '../../service-catalog/types';
 
 type ApiResponse<T> = {
@@ -85,6 +85,7 @@ type QuoteItemPayload = {
   cost_override_by?: string | null;
   cost_override_at?: string | null;
   cost_price_original?: number | null;
+  cost_price_vnd?: number | null;
 };
 
 function getDefaultHeaders(): Record<string, string> {
@@ -175,6 +176,8 @@ function toCreateQuotePayload(input: CreateQuoteInput) {
   if (input.issuerCompanyId) payload.issuer_company_id = input.issuerCompanyId;
   if (input.projectId) payload.project_id = input.projectId;
   if (input.slaDueAt) payload.sla_due_at = input.slaDueAt;
+  if (input.currency) payload.currency = input.currency;
+  if (input.exchangeRate) payload.exchange_rate = input.exchangeRate;
   return payload;
 }
 
@@ -210,6 +213,8 @@ function toUpdateQuotePayload(input: UpdateQuoteInput) {
   if ('overallDiscountPercent' in input) payload.overall_discount_percent = input.overallDiscountPercent ?? null;
   if ('slaDueAt' in input) payload.sla_due_at = input.slaDueAt ?? null;
   if ('quoteTypeCodes' in input) payload.quote_type_codes = input.quoteTypeCodes ?? [];
+  if (input.currency) payload.currency = input.currency;
+  if (input.exchangeRate) payload.exchange_rate = input.exchangeRate;
   return payload;
 }
 
@@ -241,6 +246,7 @@ function toQuoteItemPayload(item: NonNullable<CreateQuoteInput['items']>[number]
     cost_override_by: optionalUuid(item.costOverrideBy),
     cost_override_at: item.costOverrideAt ?? null,
     cost_price_original: item.costPriceOriginal ?? null,
+    cost_price_vnd: item.costPriceVnd ?? null,
   };
 }
 
@@ -457,6 +463,21 @@ export class SeedingQuoteRepository implements QuoteRepository {
     return apiFetch<ServiceCatalogOptions>(
       `/api/all-platform/quotes/service-catalog-options?formId=${encodeURIComponent(formId)}`
     );
+  }
+
+  async getExchangeRate(): Promise<SystemExchangeRate> {
+    return apiFetch<SystemExchangeRate>('/api/all-platform/quotes/exchange-rate');
+  }
+
+  async refreshExchangeRate(): Promise<SystemExchangeRate> {
+    return apiFetch<SystemExchangeRate>('/api/all-platform/quotes/exchange-rate/refresh', { method: 'POST' });
+  }
+
+  async setExchangeRate(rate: number, note?: string): Promise<SystemExchangeRate> {
+    return apiFetch<SystemExchangeRate>('/api/all-platform/quotes/exchange-rate', {
+      method: 'PUT',
+      body: JSON.stringify({ rate, note: note ?? null }),
+    });
   }
 
   async getIssuerCompanies(includeInactive = false): Promise<IssuerCompany[]> {

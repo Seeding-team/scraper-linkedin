@@ -23,6 +23,7 @@ import {
   Folder
 } from 'lucide-react';
 import { relativeTime } from '../utils/quoteDisplay';
+import { formatQuoteAmountOr, quoteCurrencyToVnd } from '@/lib/currency';
 
 function formatCrmDate(value?: string | null): string {
   if (!value) return 'Chưa có';
@@ -483,7 +484,7 @@ export function CustomerOverviewTab({
                     </div>
                     <div>
                       <div className="font-bold text-slate-800 text-xs">{q.quote_number || q.quoteNumber || q.id}</div>
-                      <div className="text-[11px] text-emerald-600 font-bold mt-0.5">{formatVND(Number(q.total_amount || q.totalAmount || 0))}</div>
+                      <div className="text-[11px] text-emerald-600 font-bold mt-0.5">{formatQuoteAmountOr(Number(q.total_amount || q.totalAmount || 0), q.currency, formatVND)}</div>
                     </div>
                   </div>
                   <div className="flex items-center gap-8 text-xs text-slate-500">
@@ -591,7 +592,7 @@ export function CustomerOverviewTab({
                 {(primaryContact?.name || contactName(primaryContactId) || 'T').charAt(0).toUpperCase()}
               </div>
               <div className="min-w-0">
-                <div className="font-bold text-slate-900 text-xs truncate">{primaryContact?.name || contactName(primaryContactId) || 'Trần Hoàng Hiệp'}</div>
+                <div className="font-bold text-slate-900 text-xs truncate">{primaryContact?.name || contactName(primaryContactId) || '—'}</div>
                 <div className="text-[11px] text-slate-500 font-medium truncate">{primaryContact?.position || 'Giám đốc'}</div>
               </div>
             </div>
