@@ -1618,6 +1618,24 @@ async def list_conversations(user_id: str, limit: int = 500) -> List[Dict[str, A
     return sorted(conversations.values(), key=_sort_key, reverse=True)
 
 
+def _message_sort_millis(row: Dict[str, Any]) -> int:
+    return (
+        _parse_to_millis(row.get("timestamp_text"))
+        or _parse_to_millis(row.get("time_text"))
+        or _parse_to_millis(row.get("created_at"))
+    )
+
+
+def _sort_messages_oldest_first(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    return sorted(
+        rows,
+        key=lambda row: (
+            _message_sort_millis(row),
+            str(row.get("source_message_id") or row.get("id") or ""),
+        ),
+    )
+
+
 async def list_conversation_messages(
     user_id: str,
     conversation_id: str,
@@ -1649,8 +1667,7 @@ async def list_conversation_messages(
         total_count = int(data.get("total_count") or 0)
         
         hydrated_rows = await hydrate_message_groups_from_jobs(user_id, messages_list)
-        hydrated_rows.reverse()
-        return hydrated_rows, total_count
+        return _sort_messages_oldest_first(hydrated_rows), total_count
     except Exception as exc:
         logger.info(f"fn_get_zalo_conversation_messages RPC failed: {exc}. Falling back to manual queries...")
         return await _list_conversation_messages_fallback(user_id, conversation_id, limit, offset)
@@ -1808,8 +1825,7 @@ async def _list_conversation_messages_fallback(
 
     rows, total = await _rest_with_count("zalo_messages", params=query_params)
     hydrated_rows = await hydrate_message_groups_from_jobs(user_id, rows or [])
-    hydrated_rows.reverse()
-    return hydrated_rows, total
+    return _sort_messages_oldest_first(hydrated_rows), total
 
 
 async def search_conversation_messages(

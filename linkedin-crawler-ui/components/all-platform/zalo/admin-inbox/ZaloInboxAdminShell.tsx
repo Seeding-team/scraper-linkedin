@@ -167,21 +167,36 @@ const IMAGE_EXT_RE = /\.(png|jpe?g|webp|gif|bmp|svg)(\?|#|$)/i;
 const AUDIO_EXT_RE = /\.(mp3|m4a|aac|wav|ogg|opus)(\?|#|$)/i;
 
 type ZaloAssetKind = "image" | "video" | "audio" | "file";
+type JsonRecord = Record<string, unknown>;
+
+type NormalizedAsset = NonNullable<ZaloLibraryMessage["assets"]>[number] & { url: string };
+
+type ZaloSpecialCard = {
+  kind: "link" | "contact" | "bank" | "reminder" | "sticker" | "special";
+  title: string;
+  subtitle?: string;
+  description?: string;
+  url?: string;
+  imageUrl?: string;
+  rows?: { label: string; value: string }[];
+};
+
+const URL_RE = /(https?:\/\/[^\s<>)"']+)/i;
 
 function classifyAssetKind(url: string, message: ZaloLibraryMessage): ZaloAssetKind {
   if (VIDEO_EXT_RE.test(url)) return "video";
   if (AUDIO_EXT_RE.test(url)) return "audio";
   if (IMAGE_EXT_RE.test(url)) return "image";
   const type = String(message.type || message.msg_kind || "").toLowerCase();
-  if (type === "image" || type === "chat.gif" || type === "chat.sticker") return "image";
+  if (type === "image" || type === "chat.photo" || type === "chat.gif" || type === "chat.sticker" || type === "sticker") return "image";
   if (type === "chat.video.msg" || type.startsWith("video")) return "video";
   if (type === "chat.voice" || type.startsWith("voice") || type.startsWith("audio")) return "audio";
-  return type === "image" ? "image" : "file";
+  return "file";
 }
 
 function assetFileName(url: string, message: ZaloLibraryMessage): string {
   const fromContent = (message.content || "").trim();
-  if (fromContent && !fromContent.includes("\n") && fromContent.length <= 150) {
+  if (fromContent && !fromContent.includes("\n") && fromContent.length <= 150 && !URL_RE.test(fromContent)) {
     return fromContent;
   }
   try {
@@ -192,24 +207,163 @@ function assetFileName(url: string, message: ZaloLibraryMessage): string {
   }
 }
 
-function ZaloMessageAssetView({ asset, message }: { asset: NonNullable<ZaloLibraryMessage["assets"]>[number]; message: ZaloLibraryMessage }) {
-  const url = asset.storage_url || "";
+function asRecord(value: unknown): JsonRecord | null {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as JsonRecord) : null;
+}
+
+function parseMaybeJson(value: unknown): unknown {
+  if (typeof value !== "string") return value;
+  const trimmed = value.trim();
+  if (!trimmed || !/^[{[]/.test(trimmed)) return value;
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    return value;
+  }
+}
+
+function getPathString(source: unknown, keys: string[]): string | undefined {
+  const seen = new Set<unknown>();
+  const visit = (value: unknown): string | undefined => {
+    const parsed = parseMaybeJson(value);
+    if (parsed == null || seen.has(parsed)) return undefined;
+    if (typeof parsed === "string") return parsed.trim() || undefined;
+    if (typeof parsed === "number" || typeof parsed === "boolean") return String(parsed);
+    if (Array.isArray(parsed)) {
+      seen.add(parsed);
+      for (const item of parsed) {
+        const found = visit(item);
+        if (found) return found;
+      }
+      return undefined;
+    }
+    const record = asRecord(parsed);
+    if (!record) return undefined;
+    seen.add(record);
+    for (const key of keys) {
+      const direct = record[key];
+      if (typeof direct === "string" && direct.trim()) return direct.trim();
+      if (typeof direct === "number" || typeof direct === "boolean") return String(direct);
+    }
+    for (const nestedKey of ["data", "content", "params", "attach", "attachment", "extra", "payload", "link", "hrefInfo", "card"]) {
+      if (nestedKey in record) {
+        const found = visit(record[nestedKey]);
+        if (found) return found;
+      }
+    }
+    return undefined;
+  };
+  return visit(source);
+}
+
+function collectRawUrls(source: unknown, out = new Set<string>()): string[] {
+  const parsed = parseMaybeJson(source);
+  if (!parsed) return Array.from(out);
+  if (typeof parsed === "string") {
+    if (/^https?:\/\//i.test(parsed.trim())) out.add(parsed.trim());
+    const match = parsed.match(URL_RE);
+    if (match?.[1]) out.add(match[1]);
+    return Array.from(out);
+  }
+  if (Array.isArray(parsed)) {
+    parsed.forEach((item) => collectRawUrls(item, out));
+    return Array.from(out);
+  }
+  const record = asRecord(parsed);
+  if (!record) return Array.from(out);
+  for (const key of ["hdUrl", "normalUrl", "url", "href", "src", "imageUrl", "photoUrl", "thumb", "thumbnail", "thumbUrl", "icon", "avatar", "fileUrl", "downloadUrl", "stickerUrl", "stickerWebpUrl", "videoUrl", "voiceUrl"]) {
+    const value = record[key];
+    if (typeof value === "string" && /^https?:\/\//i.test(value.trim())) out.add(value.trim());
+  }
+  Object.values(record).forEach((value) => collectRawUrls(value, out));
+  return Array.from(out);
+}
+
+function normalizeMessageAssets(message: ZaloLibraryMessage): NormalizedAsset[] {
+  const seen = new Set<string>();
+  const normalized: NormalizedAsset[] = [];
+  for (const asset of message.assets ?? []) {
+    const url = String(asset.storage_url || asset.source_url || "").trim();
+    if (!url || seen.has(url)) continue;
+    seen.add(url);
+    normalized.push({ ...asset, url });
+  }
+  return normalized;
+}
+
+function inferSpecialCard(message: ZaloLibraryMessage, assets: NormalizedAsset[]): ZaloSpecialCard | null {
+  const raw = (message.raw_content as unknown) || null;
+  const type = String(message.msg_kind || message.type || "").toLowerCase();
+  const rawText = JSON.stringify(raw || {}).toLowerCase();
+  const content = (message.content || "").trim();
+  const url = getPathString(raw, ["href", "url", "link", "linkUrl", "shareUrl", "downloadUrl"]) || content.match(URL_RE)?.[1];
+  const imageUrl = getPathString(raw, ["thumb", "thumbnail", "thumbUrl", "imageUrl", "photoUrl", "icon", "avatar", "stickerUrl", "stickerWebpUrl"])
+    || collectRawUrls(raw).find((item) => IMAGE_EXT_RE.test(item));
+  const title = getPathString(raw, ["title", "name", "displayName", "fileName", "accountName", "bankName", "eventTitle", "subject"]);
+  const description = getPathString(raw, ["description", "desc", "summary", "text", "message", "address", "note"]);
+  const phone = getPathString(raw, ["phone", "phoneNumber", "mobile", "tel"]);
+  const accountNo = getPathString(raw, ["accountNo", "accountNumber", "bankAccount", "stk", "cardNumber"]);
+  const amount = getPathString(raw, ["amount", "money", "total", "price"]);
+  const when = getPathString(raw, ["time", "date", "startTime", "endTime", "deadline", "remindTime"]);
+
+  if (type.includes("sticker")) {
+    return { kind: "sticker", title: title || "Sticker", imageUrl: imageUrl || assets[0]?.url, description };
+  }
+  if (type.includes("link") || (url && (title || description || content === url))) {
+    let subtitle = "Liên kết";
+    try { if (url) subtitle = new URL(url).hostname.replace(/^www\./, ""); } catch { /* noop */ }
+    return { kind: "link", title: title || content || url || "Liên kết", subtitle, description, url, imageUrl };
+  }
+  if (type.includes("card") || type.includes("business") || type.includes("contact") || rawText.includes("businesscard") || phone) {
+    return {
+      kind: "contact",
+      title: title || content || "Danh thiếp",
+      subtitle: "Danh thiếp Zalo",
+      imageUrl,
+      rows: [phone ? { label: "Điện thoại", value: phone } : null, url ? { label: "Liên kết", value: url } : null].filter(Boolean) as { label: string; value: string }[],
+    };
+  }
+  if (type.includes("bank") || rawText.includes("bank") || rawText.includes("accountno") || accountNo) {
+    return {
+      kind: "bank",
+      title: title || "Thông tin tài khoản ngân hàng",
+      subtitle: getPathString(raw, ["bankName", "bank", "branch"]),
+      rows: [accountNo ? { label: "Số tài khoản", value: accountNo } : null, amount ? { label: "Số tiền", value: amount } : null, description ? { label: "Nội dung", value: description } : null].filter(Boolean) as { label: string; value: string }[],
+    };
+  }
+  if (type.includes("reminder") || type.includes("calendar") || rawText.includes("remind") || rawText.includes("appointment")) {
+    return {
+      kind: "reminder",
+      title: title || content || "Nhắc hẹn",
+      subtitle: when,
+      description,
+      rows: url ? [{ label: "Liên kết", value: url }] : undefined,
+    };
+  }
+  if (!content && !assets.length && (type === "system" || type.includes("system") || title || description)) {
+    return { kind: "special", title: title || "Tin nhắn đặc biệt", subtitle: type || undefined, description };
+  }
+  return null;
+}
+
+function ZaloMessageAssetView({ asset, message, compact = false }: { asset: NormalizedAsset; message: ZaloLibraryMessage; compact?: boolean }) {
+  const url = asset.url;
   const kind = classifyAssetKind(url, message);
   const fileName = assetFileName(url, message);
 
   if (kind === "image") {
     return (
-      <a href={url} target="_blank" rel="noopener noreferrer" title="Mở ảnh gốc">
+      <a href={url} target="_blank" rel="noopener noreferrer" title="Mở ảnh gốc" className="block h-full min-h-0">
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={url} alt={fileName} className="w-full h-auto rounded-lg" loading="lazy" />
+        <img src={url} alt={fileName} className={cn("h-full w-full rounded-lg object-cover", compact ? "max-h-[170px]" : "max-h-[260px]")} loading="lazy" />
       </a>
     );
   }
   if (kind === "video") {
-    return <video src={url} controls preload="metadata" className="w-full max-h-[220px] rounded-lg bg-black/5" />;
+    return <video src={url} controls preload="metadata" className="w-full max-h-[260px] rounded-lg bg-black/5" />;
   }
   if (kind === "audio") {
-    return <audio src={url} controls className="w-full" />;
+    return <audio src={url} controls className="w-full min-w-[220px]" />;
   }
   return (
     <a
@@ -217,13 +371,95 @@ function ZaloMessageAssetView({ asset, message }: { asset: NonNullable<ZaloLibra
       download={fileName}
       target="_blank"
       rel="noopener noreferrer"
-      className="flex items-center gap-2 p-2.5 text-xs text-blue-600 hover:underline bg-white rounded-xl border border-slate-200"
+      className="flex min-w-0 items-center gap-2 rounded-xl border border-slate-200 bg-white p-2.5 text-xs text-blue-600 shadow-xs hover:underline"
       title={`Tải về: ${fileName}`}
     >
-      <MaterialIcon name="description" className="text-[16px] shrink-0" />
-      <span className="truncate flex-1 font-semibold">{fileName}</span>
-      <MaterialIcon name="download" className="text-[14px] shrink-0" />
+      <MaterialIcon name="description" className="shrink-0 text-[17px] text-blue-500" />
+      <span className="min-w-0 flex-1 truncate font-semibold">{fileName}</span>
+      <MaterialIcon name="download" className="shrink-0 text-[14px]" />
     </a>
+  );
+}
+
+function ZaloSpecialCardView({ card, isSent }: { card: ZaloSpecialCard; isSent: boolean }) {
+  const iconName = card.kind === "link" ? "link" : "description";
+  const body = (
+    <div className={cn("overflow-hidden rounded-2xl border text-left shadow-xs", isSent ? "border-white/20 bg-white/15 text-white" : "border-slate-200 bg-white text-slate-800")}>
+      {card.imageUrl && (
+        <div className="max-h-44 overflow-hidden bg-slate-100">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={card.imageUrl} alt={card.title} className="h-full max-h-44 w-full object-cover" loading="lazy" />
+        </div>
+      )}
+      <div className="flex gap-2 p-3">
+        <div className={cn("flex h-8 w-8 shrink-0 items-center justify-center rounded-xl", isSent ? "bg-white/20" : "bg-[#fce4ec] text-[#E3000F]") }>
+          <MaterialIcon name={iconName} className="text-[18px]" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-xs font-bold">{card.title}</div>
+          {card.subtitle && <div className={cn("mt-0.5 truncate text-[10px]", isSent ? "text-white/75" : "text-slate-500")}>{card.subtitle}</div>}
+          {card.description && <div className={cn("mt-1 line-clamp-2 text-[11px] leading-relaxed", isSent ? "text-white/85" : "text-slate-600")}>{card.description}</div>}
+          {card.rows?.length ? (
+            <div className="mt-2 space-y-1">
+              {card.rows.slice(0, 4).map((row) => (
+                <div key={`${row.label}-${row.value}`} className={cn("flex gap-2 rounded-lg px-2 py-1 text-[10px]", isSent ? "bg-white/10" : "bg-slate-50")}>
+                  <span className={cn("shrink-0 font-semibold", isSent ? "text-white/70" : "text-slate-500")}>{row.label}</span>
+                  <span className="min-w-0 flex-1 truncate font-medium">{row.value}</span>
+                </div>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
+  if (!card.url) return body;
+  return <a href={card.url} target="_blank" rel="noopener noreferrer" className="block hover:opacity-95">{body}</a>;
+}
+
+function ZaloMessageBody({ message, isSent, isSelected }: { message: ZaloLibraryMessage; isSent: boolean; isSelected: boolean }) {
+  const assets = normalizeMessageAssets(message);
+  const imageAssets = assets.filter((asset) => classifyAssetKind(asset.url, message) === "image");
+  const otherAssets = assets.filter((asset) => classifyAssetKind(asset.url, message) !== "image");
+  const specialCard = inferSpecialCard(message, assets);
+  const hasText = Boolean(message.content?.trim());
+  const showText = hasText && !(specialCard?.kind === "link" && specialCard.url && message.content?.trim() === specialCard.url);
+  const bubbleClass = cn(
+    "rounded-2xl px-3.5 py-2 text-xs leading-relaxed break-words transition-all duration-200 shadow-xs",
+    isSent ? "bg-brand text-white rounded-br-md" : "bg-[#f1f4f8] text-[#1f2a3a] rounded-bl-md",
+    isSelected && (isSent ? "ring-2 ring-brand ring-offset-2" : "ring-2 ring-brand/60 bg-brand-subtle"),
+  );
+
+  return (
+    <div className={cn("space-y-1", isSent ? "items-end" : "items-start")}>
+      {showText && <div className={cn("whitespace-pre-wrap", bubbleClass)}>{message.content}</div>}
+      {specialCard && <div className={cn("max-w-[280px]", isSent ? "ml-auto" : "mr-auto")}><ZaloSpecialCardView card={specialCard} isSent={isSent} /></div>}
+      {imageAssets.length > 0 && (
+        <div
+          className={cn(
+            "overflow-hidden rounded-2xl border border-slate-200 bg-white p-1 shadow-xs",
+            isSent ? "ml-auto rounded-br-md" : "mr-auto rounded-bl-md",
+            imageAssets.length === 1 ? "max-w-[260px]" : "grid max-w-[300px] gap-1",
+            imageAssets.length === 2 ? "grid-cols-2" : imageAssets.length >= 3 ? "grid-cols-2" : "",
+          )}
+        >
+          {imageAssets.slice(0, 6).map((asset, assetIndex) => (
+            <div key={`${asset.url}-${assetIndex}`} className={cn("relative overflow-hidden rounded-xl", imageAssets.length === 1 ? "" : "aspect-square", imageAssets.length === 3 && assetIndex === 0 && "row-span-2 aspect-auto")}>
+              <ZaloMessageAssetView asset={asset} message={message} compact={imageAssets.length > 1} />
+              {assetIndex === 5 && imageAssets.length > 6 && <div className="absolute inset-0 flex items-center justify-center rounded-xl bg-black/55 text-sm font-bold text-white">+{imageAssets.length - 6}</div>}
+            </div>
+          ))}
+        </div>
+      )}
+      {otherAssets.length > 0 && (
+        <div className={cn("space-y-1 max-w-[300px]", isSent ? "ml-auto" : "mr-auto")}>
+          {otherAssets.map((asset, assetIndex) => <ZaloMessageAssetView key={`${asset.url}-${assetIndex}`} asset={asset} message={message} />)}
+        </div>
+      )}
+      {!message.is_deleted && !hasText && !assets.length && !specialCard && (
+        <div className={cn(bubbleClass, "italic opacity-80")}>Tin nhắn đặc biệt chưa có dữ liệu hiển thị</div>
+      )}
+    </div>
   );
 }
 
@@ -759,15 +995,21 @@ export function ZaloInboxAdminShell() {
     const shouldStickToBottom = convChanged || distanceFromBottom < 180;
     lastChatScrollStateRef.current = { convId, lastMessageKey };
     if (shouldStickToBottom) {
-      requestAnimationFrame(() => {
+      const scrollToBottom = () => {
         if (chatScrollRef.current) {
           chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
         }
+      };
+      requestAnimationFrame(() => {
+        scrollToBottom();
+        requestAnimationFrame(scrollToBottom);
+        window.setTimeout(scrollToBottom, 80);
       });
     }
   }, [inbox.messages, inbox.openConv]);
 
   useEffect(() => {
+    lastChatScrollStateRef.current = { convId: "", lastMessageKey: "" };
     setMessageMenuFor(null);
     setReactionPickerFor(null);
     groupMembersLoadKeyRef.current = null;
@@ -1190,6 +1432,11 @@ export function ZaloInboxAdminShell() {
             ) : (
               inbox.filtered.map((conv) => {
                 const active = inbox.openConv === conv.conv_id && !inbox.archiveReading;
+                const lastSender = conv.latest_sender_name?.trim();
+                const previewText = conv.preview || "—";
+                const previewWithSender = lastSender && lastSender !== conv.name && previewText !== "—"
+                  ? `${lastSender}: ${previewText}`
+                  : previewText;
                 return (
                   <button
                     key={conv.conv_id}
@@ -1215,7 +1462,7 @@ export function ZaloInboxAdminShell() {
                       </div>
 
                       <p className={cn("truncate text-[11px]", conv.unread ? "font-bold text-slate-900" : "text-slate-500")}>
-                        {conv.preview || "—"}
+                        {previewWithSender}
                       </p>
 
                       <div className="mt-1 flex flex-wrap items-center gap-1.5">
@@ -1482,7 +1729,10 @@ export function ZaloInboxAdminShell() {
                       const isSelected = selectedMessageIds.includes(msg.source_message_id || msg.id || "");
                       const senderMember = msg.sender_id ? groupMemberByUid.get(msg.sender_id) : undefined;
                       const senderName = senderMember?.display_name || msg.sender_name || selectedName || "Zalo";
-                      const senderAvatar = senderMember?.avatar_url || (msg as unknown as { sender_avatar_url?: string; avatar_url?: string }).sender_avatar_url || (msg as unknown as { avatar_url?: string }).avatar_url || null;
+                      const senderAvatar = isSent
+                        ? null
+                        : senderMember?.avatar_url || (msg as unknown as { sender_avatar_url?: string; avatar_url?: string }).sender_avatar_url || (msg as unknown as { avatar_url?: string }).avatar_url || null;
+                      const displayAvatarName = isSent ? "Bạn" : senderName;
                       const isGroupSender = Boolean(msg.sender_id && msg.sender_id !== inbox.openConv);
                       const checkboxEl = (
                         <input
@@ -1509,10 +1759,10 @@ export function ZaloInboxAdminShell() {
                         >
                           <div
                             data-msg-anchor={msg.source_message_id || undefined}
-                            className={cn("flex items-center gap-2 group rounded-lg transition-shadow py-0.5", isSent ? "justify-end" : "justify-start")}
+                            className={cn("flex items-start gap-2 group rounded-lg transition-shadow py-1", isSent ? "justify-end" : "justify-start")}
                           >
                             {!isSent && checkboxEl}
-                            {!isSent && <Avatar src={senderAvatar} name={senderName} className="h-7 w-7 text-[10px] shrink-0 self-end" />}
+                            {!isSent && <Avatar src={senderAvatar} name={displayAvatarName} className="mt-4 h-8 w-8 text-[10px] shrink-0 shadow-sm ring-2 ring-white" />}
                             <div className={cn("max-w-[88%] sm:max-w-[75%]", isSent ? "text-right" : "text-left")}>
                               {!isSent && (
                                 <div className="flex items-center gap-1 mb-0.5 px-1">
@@ -1562,30 +1812,7 @@ export function ZaloInboxAdminShell() {
                                   </button>
                                 );
                               })()}
-                              {msg.content && (
-                                <div
-                                  className={cn(
-                                    "whitespace-pre-wrap rounded-2xl px-3.5 py-2 text-xs leading-relaxed break-words transition-all duration-200 shadow-xs",
-                                    isSent ? "bg-brand text-white rounded-br-md" : "bg-[#f1f4f8] text-[#1f2a3a] rounded-bl-md",
-                                    isSelected && (isSent ? "ring-2 ring-brand ring-offset-2" : "ring-2 ring-brand/60 bg-brand-subtle"),
-                                  )}
-                                >
-                                  {msg.content}
-                                </div>
-                              )}
-                              {(msg.assets ?? [])
-                                .filter((asset) => asset.storage_url)
-                                .map((asset, assetIndex) => (
-                                  <div
-                                    key={assetIndex}
-                                    className={cn(
-                                      "rounded-xl overflow-hidden border border-slate-200 max-w-[200px] mt-1 shadow-xs",
-                                      isSent ? "ml-auto" : "mr-auto",
-                                    )}
-                                  >
-                                    <ZaloMessageAssetView asset={asset} message={msg} />
-                                  </div>
-                                ))}
+                              <ZaloMessageBody message={msg} isSent={isSent} isSelected={isSelected} />
                               {(() => {
                                 const msgKey = msg.source_message_id || msg.id || String(index);
                                 const canReact = !msg.is_deleted && msg.source_message_id && (msg as unknown as { cli_msg_id?: string }).cli_msg_id;
@@ -1691,6 +1918,7 @@ export function ZaloInboxAdminShell() {
                                 </div>
                               )}
                             </div>
+                            {isSent && <Avatar src={null} name={displayAvatarName} className="mt-0.5 h-8 w-8 text-[10px] shrink-0 shadow-sm ring-2 ring-white" />}
                             {isSent && checkboxEl}
                           </div>
                         </ZaloSwipeableMessageItem>
