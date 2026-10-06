@@ -246,10 +246,18 @@ function getPathString(source: unknown, keys: string[]): string | undefined {
       if (typeof direct === "number" || typeof direct === "boolean") return String(direct);
     }
     for (const nestedKey of ["data", "content", "params", "attach", "attachment", "extra", "payload", "link", "hrefInfo", "card"]) {
-      if (nestedKey in record) {
-        const found = visit(record[nestedKey]);
-        if (found) return found;
-      }
+      if (!(nestedKey in record)) continue;
+      // Chỉ đi sâu tiếp khi giá trị lồng là OBJECT/ARRAY (vùng chứa có thể có
+      // field đang tìm bên trong) — KHÔNG được coi 1 STRING thường (vd nội
+      // dung chữ của tin nhắn text nằm ở raw_content.data.content) là "tìm
+      // thấy" chỉ vì nó nằm dưới 1 key tên quen thuộc như "content"/"data".
+      // Thiếu điều kiện này khiến MỌI tin nhắn chữ bình thường bị hiểu nhầm
+      // thành link/liên hệ/ngân hàng (content text tình cờ trùng điều kiện
+      // content === url ở inferSpecialCard) — bug đã gặp thực tế 2026-10-06.
+      const nestedParsed = parseMaybeJson(record[nestedKey]);
+      if (!nestedParsed || typeof nestedParsed !== "object") continue;
+      const found = visit(nestedParsed);
+      if (found) return found;
     }
     return undefined;
   };
