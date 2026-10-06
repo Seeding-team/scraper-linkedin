@@ -247,3 +247,24 @@ export interface ServiceCatalogItemPricingUpsertInput {
   pricingPolicy?: string | null;
 
 }
+
+/** Ket qua 1 lan "Đồng bộ hàng hóa từ MSC" (trường data cua /msc-sync/run, va
+ * tung row cua /msc-sync/status — mirror bang msc_sync_runs, migration 175). */
+export interface MscSyncStats {
+  status?: 'success' | 'partial' | 'failed' | string;
+  trigger?: string;
+  dry_run?: boolean;
+  http_status?: number | null;
+  duration_ms?: number | null;
+  fetched_groups?: number;
+  fetched_items?: number;
+  groups_created?: number;
+  groups_updated?: number;
+  inserted?: number;
+  updated?: number;
+  skipped?: number;
+  failed?: number;
+  duplicates?: number;
+  error_message?: string | null;
+  errors?: string[];
+}
