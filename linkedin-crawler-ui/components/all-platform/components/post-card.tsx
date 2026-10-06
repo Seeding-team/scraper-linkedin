@@ -2,7 +2,7 @@
 
 import { useState, useMemo } from "react";
 import { FaFacebook, FaLinkedin } from "react-icons/fa";
-import { FaThreads } from "react-icons/fa6";
+import { FaThreads, FaYoutube } from "react-icons/fa6";
 import { FiExternalLink } from "react-icons/fi";
 import { cn } from "@/lib/utils";
 import type { UnifiedPost, FeedPlatform } from "@/types/unified.types";
@@ -16,6 +16,9 @@ import {
   REQUIRED_EXTENSION_VERSION,
   type GroupPlatform,
 } from "./seeding-extension/use-seeding-extension";
+import { LeadFormDrawer } from "@/modules/crm/components/LeadFormDrawer";
+import type { CrmLeadRow } from "@/modules/crm/types";
+import { toast } from "sonner";
 
 interface PostCardProps {
   post: UnifiedPost;
@@ -26,6 +29,8 @@ interface PostCardProps {
   onViewDetail?: (post: UnifiedPost) => void;
   onDelete?: (post: UnifiedPost) => void | Promise<void>;
   onViewSeedingRoster?: (post: UnifiedPost) => void;
+  /** YouTube: mở modal gõ comment -> mở video trong tab mới, điền sẵn, tính KPI khi nhân viên bấm Bình luận. */
+  onComment?: (post: UnifiedPost) => void;
   seeded?: boolean;
   verifyStatus?: "pending" | "yes" | "no";
 }
@@ -38,13 +43,19 @@ function PlatformIcon({ platform }: { platform: FeedPlatform }) {
   if (platform === "threads") {
     return <FaThreads className="text-foreground shrink-0" />;
   }
+  if (platform === "youtube") {
+    return <FaYoutube className="text-[#ff0000] shrink-0" />;
+  }
   return <FaLinkedin className="text-blue-700 shrink-0" />;
 }
 
-export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onViewDetail, onDelete, onViewSeedingRoster, seeded, verifyStatus }: PostCardProps) {
+export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onViewDetail, onDelete, onViewSeedingRoster, onComment, seeded, verifyStatus }: PostCardProps) {
+  const { user: currentUser } = useAppAuth();
+  const isYouTube = post.platform === "youtube";
   const [showAllCrawledComments, setShowAllCrawledComments] = useState(false);
   const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
   const [isMoreMenuOpen, setIsMoreMenuOpen] = useState(false);
+  const [showLeadDrawer, setShowLeadDrawer] = useState(false);
   const crawledComments = (post.comments_detail || []).filter((c) => c && (c.content || c.author_name));
   const visibleCrawledComments = showAllCrawledComments ? crawledComments : crawledComments.slice(0, 2);
 
@@ -135,10 +146,18 @@ export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onVi
               </span>
             )}
 
-            {post.platform === "threads" && post.search_keyword && (
+            {(post.platform === "threads" || isYouTube) && post.search_keyword && (
               <span className="shrink-0 rounded bg-neutral-100 px-2 py-0.5 text-[10px] font-bold text-neutral-700" title="Từ khoá đã tìm ra bài này">
                 🔎 {post.search_keyword}
               </span>
+            )}
+            {isYouTube && post.source === "link" && (
+              <span className="shrink-0 rounded bg-neutral-100 px-2 py-0.5 text-[10px] font-bold text-neutral-700" title="Video do người dùng dán link">
+                🔗 Link thêm tay
+              </span>
+            )}
+            {isYouTube && post.is_short && (
+              <span className="shrink-0 rounded bg-red-50 px-2 py-0.5 text-[10px] font-bold text-red-600">Shorts</span>
             )}
             {post.intent && (
               <span className="shrink-0 rounded bg-purple-50 px-2 py-0.5 text-[10px] font-bold text-purple-600">
@@ -177,9 +196,41 @@ export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onVi
         </div>
 
         {/* Nội dung */}
-        <p className="text-sm text-foreground italic line-clamp-2 leading-relaxed bg-muted px-3 py-2 rounded-lg border border-border mb-3">
-          {post.content || "Nội dung bài viết rỗng hoặc chứa thuần hình ảnh/video."}
-        </p>
+        {isYouTube ? (
+          <a
+            href={post.post_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="group flex gap-3 items-start bg-muted px-3 py-2 rounded-lg border border-border mb-3 transition-colors hover:border-primary/30"
+          >
+            {post.image_urls?.[0] ? (
+              <span className="relative block w-40 aspect-video shrink-0 overflow-hidden rounded-md border border-border bg-black/5">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={post.image_urls[0]} alt="" loading="lazy" className="h-full w-full object-cover" />
+                <span className="absolute inset-0 flex items-center justify-center bg-black/0 transition-colors group-hover:bg-black/20">
+                  <span className="flex h-9 w-9 items-center justify-center rounded-full bg-black/70 text-white opacity-0 shadow-sm transition-opacity group-hover:opacity-100">
+                    <FaYoutube className="text-base" />
+                  </span>
+                </span>
+                {post.duration_text && (
+                  <span className="absolute bottom-1 right-1 rounded bg-black/80 px-1.5 py-0.5 text-[10px] font-bold leading-none text-white">
+                    {post.duration_text}
+                  </span>
+                )}
+              </span>
+            ) : null}
+            <span className="min-w-0">
+              <span className="block text-sm font-semibold text-foreground line-clamp-2 group-hover:text-primary">{post.title || "Video YouTube"}</span>
+              <span className="block text-xs text-muted-foreground mt-0.5">
+                {post.published_text || "Chưa rõ ngày đăng"}
+              </span>
+            </span>
+          </a>
+        ) : (
+          <p className="text-sm text-foreground italic line-clamp-2 leading-relaxed bg-muted px-3 py-2 rounded-lg border border-border mb-3">
+            {post.content || "Nội dung bài viết rỗng hoặc chứa thuần hình ảnh/video."}
+          </p>
+        )}
 
 
         {(userRole === "admin" || userRole === "leader") && visibleAllSeedings.length > 0 ? (
@@ -268,30 +319,54 @@ export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onVi
                 Xem bình luận <FiExternalLink className="w-3 h-3" />
               </a>
             )}
-            {/* Nhánh Zalo tự động (migration 161): bài không có SĐT -> nhắc còn cần inbox
-                tay; có SĐT -> báo đã/chưa nhắn tin tư vấn tự động qua Zalo. */}
+            {/* Nhánh Zalo tự động (migration 161/172): bài không có SĐT -> nhắc còn cần
+                inbox tay; có SĐT -> hiện rõ SĐT + tên Zalo tìm được, trạng thái tư vấn
+                tự động, và nút tạo lead ngay từ thông tin này. */}
             {!post.auto_seeding_comment.phone_number ? (
               <div className="text-[10px] font-semibold text-amber-600 mt-0.5">📩 Cần inbox thêm với khách hàng (bài không có SĐT liên hệ)</div>
-            ) : post.auto_seeding_comment.zalo_status === "sent" ? (
-              <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
-                <span className="text-[10px] font-semibold text-emerald-600">✅ Hệ thống đã nhắn tin tư vấn với khách (Zalo {post.auto_seeding_comment.phone_number})</span>
-                {post.auto_seeding_comment.zalo_conversation_id && (
-                  <a
-                    href={`/all-platform/zalo-inbox?conv=${encodeURIComponent(post.auto_seeding_comment.zalo_conversation_id)}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-[10px] font-medium text-blue-600 hover:underline inline-flex items-center gap-1"
+            ) : (
+              <div className="mt-1 flex flex-col gap-1 rounded-lg border border-sky-100 bg-white px-2 py-1.5">
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                  <span className="inline-flex items-center gap-1 text-[11px] font-bold text-slate-800">
+                    📞 {post.auto_seeding_comment.phone_number}
+                  </span>
+                  {post.auto_seeding_comment.zalo_display_name && (
+                    <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-sky-700">
+                      · Zalo: {post.auto_seeding_comment.zalo_display_name}
+                    </span>
+                  )}
+                  {post.auto_seeding_comment.zalo_status === "sent" ? (
+                    <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-emerald-100 text-emerald-700">✓ Đã nhắn tư vấn</span>
+                  ) : post.auto_seeding_comment.zalo_status === "failed" ? (
+                    <span
+                      className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-red-100 text-red-700"
+                      title={post.auto_seeding_comment.zalo_error || undefined}
+                    >
+                      ⚠️ Chưa nhắn được qua Zalo
+                    </span>
+                  ) : null}
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  {post.auto_seeding_comment.zalo_conversation_id && (
+                    <a
+                      href={`/all-platform/zalo-inbox?conv=${encodeURIComponent(post.auto_seeding_comment.zalo_conversation_id)}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-[10px] font-medium text-blue-600 hover:underline inline-flex items-center gap-1"
+                    >
+                      Xem hộp thoại <FiExternalLink className="w-3 h-3" />
+                    </a>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setShowLeadDrawer(true)}
+                    className="inline-flex items-center gap-1 rounded-full bg-emerald-600 px-2 py-0.5 text-[10px] font-bold text-white transition hover:bg-emerald-700"
                   >
-                    Xem hộp thoại <FiExternalLink className="w-3 h-3" />
-                  </a>
-                )}
+                    + Tạo Lead
+                  </button>
+                </div>
               </div>
-            ) : post.auto_seeding_comment.zalo_status === "failed" ? (
-              <div className="text-[10px] font-semibold text-red-600 mt-0.5" title={post.auto_seeding_comment.zalo_error || undefined}>
-                ⚠️ Tìm thấy SĐT {post.auto_seeding_comment.phone_number} nhưng chưa nhắn được qua Zalo
-                {post.auto_seeding_comment.zalo_error ? ` (${post.auto_seeding_comment.zalo_error})` : ""} — cần inbox thủ công
-              </div>
-            ) : null}
+            )}
           </div>
         ) : null}
 
@@ -327,15 +402,23 @@ export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onVi
         <div className="flex items-center justify-between flex-wrap gap-2 pt-1">
 
           <div className="flex items-center gap-2.5 flex-wrap">
-            <span className="flex items-center gap-1.5 px-2.5 py-1 bg-amber-50/60 text-amber-700 rounded-md text-[11px] font-bold border border-amber-100/40" title="Lượt thích/Cảm xúc">
-              👍 {post.reactions?.toLocaleString() || 0}
-            </span>
-            <span className="flex items-center gap-1.5 px-2.5 py-1 bg-muted text-muted-foreground rounded-md text-[11px] font-bold border border-border" title="Lượt bình luận">
-              💬 {post.comments?.toLocaleString() || 0}
-            </span>
-            <span className="flex items-center gap-1.5 px-2.5 py-1 bg-blue-50 text-blue-600 rounded-md text-[11px] font-bold border border-blue-100/50" title="Lượt chia sẻ">
-              🔁 {post.shares?.toLocaleString() || 0}
-            </span>
+            {isYouTube ? (
+              <span className="flex items-center gap-1.5 px-2.5 py-1 bg-muted text-muted-foreground rounded-md text-[11px] font-bold border border-border" title="Lượt xem">
+                👁 {(post.view_count || 0).toLocaleString()} lượt xem
+              </span>
+            ) : (
+              <>
+                <span className="flex items-center gap-1.5 px-2.5 py-1 bg-amber-50/60 text-amber-700 rounded-md text-[11px] font-bold border border-amber-100/40" title="Lượt thích/Cảm xúc">
+                  👍 {post.reactions?.toLocaleString() || 0}
+                </span>
+                <span className="flex items-center gap-1.5 px-2.5 py-1 bg-muted text-muted-foreground rounded-md text-[11px] font-bold border border-border" title="Lượt bình luận">
+                  💬 {post.comments?.toLocaleString() || 0}
+                </span>
+                <span className="flex items-center gap-1.5 px-2.5 py-1 bg-blue-50 text-blue-600 rounded-md text-[11px] font-bold border border-blue-100/50" title="Lượt chia sẻ">
+                  🔁 {post.shares?.toLocaleString() || 0}
+                </span>
+              </>
+            )}
 
             {(userRole === "admin" || userRole === "leader") && post.crawler_name && (
               <span className="flex items-center gap-1.5 px-2.5 py-1 bg-muted text-muted-foreground rounded-md text-[11px] font-medium border border-border">
@@ -358,6 +441,19 @@ export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onVi
               <span className="px-2.5 py-1 rounded-md text-[11px] font-bold border bg-muted text-muted-foreground border-border">
                 Chưa seeding
               </span>
+            )}
+
+            {/* YouTube: mở modal gõ comment (mở video tab mới, điền sẵn, tính KPI khi nhân
+                viên bấm Bình luận) — cần nổi ngay ở hàng chính, không gom vào "Tuỳ chọn
+                khác" vì đây là hành động chính của bài YouTube, không phải việc ít dùng. */}
+            {onComment && (
+              <button
+                type="button"
+                onClick={() => onComment(post)}
+                className="px-3 py-2 bg-[#ff0000] hover:bg-[#d90000] text-white rounded-lg text-sm font-semibold transition shadow-sm cursor-pointer inline-flex items-center gap-1.5"
+              >
+                <FaYoutube /> Bình luận
+              </button>
             )}
 
             {/* Nut xem roster: nhan/label theo role — admin xem toan bo team, leader chi
@@ -410,6 +506,26 @@ export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onVi
           onDelete={(userRole === "admin" || userRole === "leader") ? onDelete : undefined}
         />
       )}
+
+      {/* Tạo lead ngay từ SĐT + tên Zalo bot auto-seeding đã tìm được (migration 172) —
+          không bắt gõ lại, đi đúng luồng check trùng/tạo lead đang dùng ở CRM. */}
+      <LeadFormDrawer
+        open={showLeadDrawer}
+        currentUser={currentUser}
+        onClose={() => setShowLeadDrawer(false)}
+        onSaved={(lead) => {
+          setShowLeadDrawer(false);
+          toast.success(`Đã tạo lead "${lead.leadName || lead.phone || "mới"}"`);
+        }}
+        // post-card không có khung "Chấm điểm lead" riêng như trang CRM Leads —
+        // dùng nút "Lưu & Chấm điểm" trong drawer thì cũng chỉ đóng lại như lưu thường.
+        onOpenQualification={() => setShowLeadDrawer(false)}
+        initialValues={{
+          phone: post.auto_seeding_comment?.phone_number || undefined,
+          leadName: post.auto_seeding_comment?.zalo_display_name || undefined,
+          note: `Tạo từ bài seeding tự động: ${post.post_url}`,
+        }}
+      />
     </div>
   );
 }

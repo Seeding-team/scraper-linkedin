@@ -113,6 +113,9 @@ async def maybe_send_zalo_consult(
 
         # Upsert hội thoại để team thấy trong UI Zalo chat, theo dõi tiếp nếu khách trả lời
         # (best-effort — lỗi ở đây không coi là gửi thất bại, tin đã gửi thành công rồi).
+        # display_name khởi tạo = uid TRƯỚC try/except để luôn có giá trị hợp lệ dùng ở
+        # _update() bên dưới dù nhánh upsert_group lỗi (import lỗi, mạng...).
+        display_name = uid
         try:
             from app.modules.all_platform.zalo.services.supabase_service import upsert_group
 
@@ -140,6 +143,8 @@ async def maybe_send_zalo_consult(
                 "zalo_message_content": message,
                 "zalo_conversation_id": uid,
                 "zalo_sent_at": "now()",
+                # migration 172 — hiện rõ tên Zalo kèm SĐT trên post card, không chỉ uid.
+                "zalo_display_name": display_name if display_name != uid else None,
             },
         )
         logger.info(f"auto_seeding_zalo: đã nhắn tin tư vấn Zalo cho SĐT {contact_phone} (comment={comment_id})")

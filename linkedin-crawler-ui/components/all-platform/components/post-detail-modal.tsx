@@ -2,7 +2,7 @@
 
 import React from "react";
 import { FaFacebook, FaLinkedin } from "react-icons/fa";
-import { FaThreads } from "react-icons/fa6";
+import { FaThreads, FaYoutube } from "react-icons/fa6";
 import { FiExternalLink } from "react-icons/fi";
 import { cn } from "@/lib/utils";
 import { useMemo } from "react";
@@ -14,6 +14,8 @@ interface PostDetailModalProps {
   isOpen: boolean;
   onClose: () => void;
   onVerify?: (post: UnifiedPost) => void;
+  /** YouTube: mở modal comment (mở video trong tab mới, điền sẵn, tính KPI). */
+  onComment?: (post: UnifiedPost) => void;
   verifyStatus?: "pending" | "yes" | "no";
 }
 
@@ -22,6 +24,7 @@ export function PostDetailModal({
   isOpen,
   onClose,
   onVerify,
+  onComment,
   verifyStatus,
 }: PostDetailModalProps) {
   const [isInboxOpen, setIsInboxOpen] = React.useState(false);
@@ -81,6 +84,8 @@ export function PostDetailModal({
               <FaFacebook className="text-blue-600" />
             ) : post.platform === "threads" ? (
               <FaThreads className="text-foreground" />
+            ) : post.platform === "youtube" ? (
+              <FaYoutube className="text-[#ff0000]" />
             ) : (
               <FaLinkedin className="text-blue-700" />
             )}
@@ -168,7 +173,7 @@ export function PostDetailModal({
               {post.link_comment && !isRejected(post.link_comment) && (
                 <div className="mt-3">
                   <a href={post.link_comment} target="_blank" rel="noopener noreferrer" className="text-sm font-medium text-blue-600 hover:underline inline-flex items-center gap-1.5 bg-card px-3 py-1.5 rounded-lg border border-blue-100 shadow-sm transition hover:shadow">
-                    <FiExternalLink className="w-4 h-4" /> Đi tới bình luận trên Facebook
+                    <FiExternalLink className="w-4 h-4" /> Đi tới bình luận
                   </a>
                 </div>
               )}
@@ -278,6 +283,15 @@ export function PostDetailModal({
               <FiExternalLink />
               Xem chi tiết
             </button>
+            {onComment && (
+              <button
+                onClick={() => onComment(post)}
+                className="px-4 py-2 bg-[#ff0000] hover:bg-[#d90000] text-white rounded-xl text-sm font-bold transition shadow-sm flex items-center gap-1.5"
+              >
+                <FaYoutube />
+                Bình luận
+              </button>
+            )}
             {onVerify && !(post.seeding_content && post.link_comment) && (
               <button
                 onClick={() => onVerify(post)}

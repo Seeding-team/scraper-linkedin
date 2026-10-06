@@ -471,7 +471,9 @@ export function useZaloAdminInbox() {
     const requestSeq = ++messageLoadSeqRef.current;
     if (!append) setLoadingMessages(true);
     try {
-      const res = await getZaloConversationMessages(accountId, convId, 60, 0);
+      // 200 tin mới nhất — đủ rộng để lightbox ảnh trượt qua lại có nhiều ảnh
+      // để xem, nhưng vẫn chặn trên để tránh tải/ render cả nghìn tin 1 lúc.
+      const res = await getZaloConversationMessages(accountId, convId, 200, 0);
       if (selectedAccountIdRef.current !== accountId || selectedConvIdRef.current !== convId) return;
       if (requestSeq !== messageLoadSeqRef.current && !append) return;
       if (res?.messages) {
