@@ -26,6 +26,7 @@ from app.modules.all_platform.routers.users import router as users_router, teams
 from app.modules.all_platform.routers.customer_lead import router as customer_lead_router
 from app.modules.all_platform.routers.crm_customer import router as crm_customer_router
 from app.modules.all_platform.routers.crm_lead import router as crm_lead_router
+from app.modules.all_platform.routers.crm_scope_items import router as crm_scope_items_router
 from app.modules.all_platform.routers.crm_contact import router as crm_contact_router
 from app.modules.all_platform.routers.crm_contact import detail_router as crm_contact_detail_router
 from app.modules.all_platform.routers.crm_permission_group import router as crm_permission_group_router
@@ -83,6 +84,7 @@ all_platform_router.include_router(platforms_router, prefix="/platforms", tags=[
 all_platform_router.include_router(customer_lead_router, tags=["Customer Leads"])
 all_platform_router.include_router(crm_customer_router, prefix="/crm/customers", tags=["All-Platform CRM Customers"])
 all_platform_router.include_router(crm_lead_router, prefix="/crm/leads", tags=["All-Platform CRM Leads"])
+all_platform_router.include_router(crm_scope_items_router, prefix="/crm/scope-items", tags=["All-Platform CRM Scope Items"])
 all_platform_router.include_router(
     crm_contact_router,
     prefix="/crm/customers/{customer_id}/contacts",
