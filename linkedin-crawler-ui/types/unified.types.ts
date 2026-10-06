@@ -4,7 +4,7 @@
 /* Unified TypeScript types for the All-Platform (Tổng hợp) page.
    These types mirror the Supabase database schema. */
 
-export type FeedPlatform = "facebook" | "linkedin" | "threads";
+export type FeedPlatform = "facebook" | "linkedin" | "threads" | "youtube";
 export type CategoryType = "intent" | "industry" | "tier" | "team" | "icp" | "content_type" | "product_seeding" | "crm_source" | "crm_service_package" | "crm_package" | "crm_industry" | "crm_position" | "crm_city" | "crm_expected_timeline" | "crm_next_step" | "crm_nurture_reason" | "crm_follow_up_channel" | "crm_unqualified_reason" | "crm_quote_type" | "crm_contract_status" | "crm_payment_status" | "crm_billing_type" | "crm_won_reason" | "crm_lost_reason" | "crm_outcome_confidence" | "crm_outcome_trigger" | "crm_outcome_objection" | "crm_kb_reuse_level" | "crm_kb_owner" | "crm_kb_status";
 export type VerifyStatus = "pending" | "yes" | "no";
 export type UserRole = "member" | "leader" | "admin";
@@ -53,8 +53,17 @@ export interface UnifiedPost {
   crawler_name?: string;
   crawler_team?: string;
   all_seedings?: UnifiedSeedingInfo[];
-  /** Chỉ bài Threads: từ khoá tìm kiếm đã tìm ra bài (Threads không có group). */
+  /** Chỉ bài Threads/YouTube: từ khoá tìm kiếm đã tìm ra bài (không có group). */
   search_keyword?: string;
+  /** Chỉ video YouTube (bảng youtube_posts, migration 155). */
+  video_id?: string;
+  title?: string;
+  is_short?: boolean;
+  view_count?: number;
+  duration_text?: string;
+  published_text?: string;
+  /** 'keyword' (tìm theo từ khoá) | 'link' (người dùng dán link). */
+  source?: string;
   /** Bình luận cào được từ bài (LinkedIn, extension >= 2.0) — cần migration 151. */
   comments_detail?: UnifiedCrawledComment[];
   /** Tên người đã react bài (LinkedIn, best-effort). */
@@ -602,6 +611,7 @@ export interface SocialAccount {
   account_email?: string;
   account_password?: string;
   account_profile_id?: string;  // Profile ID on the social platform
+  account_handle?: string;      // YouTube: @handle của kênh đã liên kết
   id_platform?: number;         // FK to platforms table
   two_fa_secret?: string;
   two_fa_enabled: boolean;

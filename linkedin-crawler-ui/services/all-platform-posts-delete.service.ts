@@ -34,6 +34,12 @@ export const allPlatformPostsDeleteService = {
       body: JSON.stringify(payload),
     });
   },
+  deleteYoutubePost: async (payload: { id?: string; post_url?: string }) => {
+    return requestJson(`${BASE}/unified/posts/youtube`, {
+      method: "DELETE",
+      body: JSON.stringify(payload),
+    });
+  },
 };
 
 

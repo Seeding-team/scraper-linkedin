@@ -5,9 +5,11 @@ import { scheduledCommentService } from "@/services/scheduled-comment.service";
 import { autoSeedingCommentService } from "@/services/auto-seeding-comment.service";
 import { API_BASE_URL } from "@/lib/env";
 
-export type ExtensionPlatform = "facebook" | "linkedin" | "threads";
-/** Nền tảng cào/bình luận theo NHÓM (Threads không có nhóm - tìm theo từ khoá). */
-export type GroupPlatform = Exclude<ExtensionPlatform, "threads">;
+export type ExtensionPlatform = "facebook" | "linkedin" | "threads" | "youtube";
+/** Nền tảng cào/bình luận theo NHÓM (Threads/YouTube không có nhóm - tìm theo từ khoá). */
+export type GroupPlatform = Exclude<ExtensionPlatform, "threads" | "youtube">;
+/** Nền tảng tìm bài theo TỪ KHOÁ. */
+export type KeywordPlatform = Extract<ExtensionPlatform, "threads" | "youtube">;
 
 /** Phiên bản tối thiểu của "Markee Seeding Extension" (extensions/comment-extension) có lệnh cào gộp. */
 export const REQUIRED_EXTENSION_VERSION = "2.0";
@@ -17,6 +19,10 @@ export const THREADS_CRAWL_EXTENSION_VERSION = "2.1";
 
 /** Phiên bản đầu tiên có lệnh cào xoay vòng cả 3 nền tảng (MK_ROTATE_CRAWL_*, feature "rotate_crawl"). */
 export const ROTATE_CRAWL_EXTENSION_VERSION = "2.9";
+/** Phiên bản đầu tiên có YouTube: cào (MK_YT_CRAWL_*, "yt_crawl") + comment tính KPI ("yt_comment").
+ * = bản manifest thực tế gộp tính năng này (2.10) — không giữ "2.2" cũ của nhánh gốc, vì các bản
+ * extension 2.3-2.9 (đã lên main entre đó) KHÔNG có youtube-crawl.js, sẽ lọt qua check sai. */
+export const YOUTUBE_EXTENSION_VERSION = "2.10";
 
 export type ExtensionStatus = "checking" | "ready" | "outdated" | "missing" | "invalidated";
 
@@ -99,7 +105,8 @@ export interface CrawlRuntime {
 }
 
 const EMPTY_RUNTIME: CrawlRuntime = { running: false, done: false, logs: [], groupIndex: 0, totalGroups: 0, posts: 0, saved: 0 };
-const PREFIX: Record<ExtensionPlatform, string> = { facebook: "MK_FB_CRAWL_", linkedin: "MK_LI_CRAWL_", threads: "MK_TH_CRAWL_" };
+const PREFIX: Record<ExtensionPlatform, string> = { facebook: "MK_FB_CRAWL_", linkedin: "MK_LI_CRAWL_", threads: "MK_TH_CRAWL_", youtube: "MK_YT_CRAWL_" };
+const PLATFORMS = Object.keys(PREFIX) as ExtensionPlatform[];
 
 export interface CrawlGroupInput {
   id?: string;
@@ -119,10 +126,11 @@ export function useExtensionCrawl({ onSaved, onDone }: UseExtensionCrawlOptions 
     facebook: EMPTY_RUNTIME,
     linkedin: EMPTY_RUNTIME,
     threads: EMPTY_RUNTIME,
+    youtube: EMPTY_RUNTIME,
   });
   const onSavedRef = useRef(onSaved);
   const onDoneRef = useRef(onDone);
-  const startTimeoutRef = useRef<Record<ExtensionPlatform, number | null>>({ facebook: null, linkedin: null, threads: null });
+  const startTimeoutRef = useRef<Record<ExtensionPlatform, number | null>>({ facebook: null, linkedin: null, threads: null, youtube: null });
   useEffect(() => {
     onSavedRef.current = onSaved;
     onDoneRef.current = onDone;
@@ -148,13 +156,7 @@ export function useExtensionCrawl({ onSaved, onDone }: UseExtensionCrawlOptions 
     const onMessage = (event: MessageEvent) => {
       if (event.source !== window || !event.data || typeof event.data.action !== "string") return;
       const action: string = event.data.action;
-      const platform: ExtensionPlatform | null = action.startsWith(PREFIX.facebook)
-        ? "facebook"
-        : action.startsWith(PREFIX.linkedin)
-          ? "linkedin"
-          : action.startsWith(PREFIX.threads)
-            ? "threads"
-            : null;
+      const platform = PLATFORMS.find((p) => action.startsWith(PREFIX[p])) ?? null;
       if (!platform) return;
       const kind = action.slice(PREFIX[platform].length);
       const p = event.data.payload || {};
@@ -190,9 +192,7 @@ export function useExtensionCrawl({ onSaved, onDone }: UseExtensionCrawlOptions 
 
     window.addEventListener("message", onMessage);
     // Trang vừa mở lại giữa lúc extension đang cào (F5) -> vẫn hiện đúng trạng thái "đang chạy".
-    postToExtension("MK_FB_CRAWL_STATUS");
-    postToExtension("MK_LI_CRAWL_STATUS");
-    postToExtension("MK_TH_CRAWL_STATUS");
+    PLATFORMS.forEach((p) => postToExtension(PREFIX[p] + "STATUS"));
     return () => window.removeEventListener("message", onMessage);
   }, [addLog, update]);
 
@@ -220,10 +220,16 @@ export function useExtensionCrawl({ onSaved, onDone }: UseExtensionCrawlOptions 
     [sendStart],
   );
 
-  /** Threads không có group: gửi danh sách TỪ KHOÁ (extension mở trang tìm kiếm cho từng từ khoá). */
+  /** Threads/YouTube không có group: gửi danh sách TỪ KHOÁ (YouTube: từ khoá hoặc link video). */
   const startKeywords = useCallback(
-    (keywords: string[], config: Record<string, unknown>) =>
-      sendStart("threads", keywords.length, "từ khoá", { keywords, config: { apiBase: extensionApiBase(), ...config } }, THREADS_CRAWL_EXTENSION_VERSION),
+    (keywords: string[], config: Record<string, unknown>, platform: KeywordPlatform = "threads") =>
+      sendStart(
+        platform,
+        keywords.length,
+        platform === "youtube" ? "từ khoá/link" : "từ khoá",
+        { keywords, config: { apiBase: extensionApiBase(), ...config } },
+        platform === "youtube" ? YOUTUBE_EXTENSION_VERSION : THREADS_CRAWL_EXTENSION_VERSION,
+      ),
     [sendStart],
   );
 

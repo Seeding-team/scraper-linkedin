@@ -92,8 +92,9 @@ def _fetch_posts(
 
     Returns (posts, total_count).
     """
-    if table == "threads_posts":
-        return _fetch_threads_posts(
+    if table in KEYWORD_POST_TABLES:
+        return _fetch_keyword_posts(
+            table=table,
             email=email,
             date_from=date_from,
             date_to=date_to,
@@ -378,8 +379,23 @@ def _attach_auto_seeding_comments(sb, posts: list[dict]) -> None:
             }
 
 
-def _fetch_threads_posts(
+# Nền tảng không có "group" — bài tìm theo từ khoá qua "Markee Seeding Extension":
+# Threads (lệnh MK_TH_CRAWL_*) và YouTube (lệnh MK_YT_CRAWL_*, kèm link dán tay).
+KEYWORD_POST_TABLES = ("threads_posts", "youtube_posts")
+# Bảng phân quyền theo cột id_member (người bấm cào), khác linkedin_posts (theo group).
+MEMBER_SCOPED_TABLES = ("facebook_posts", *KEYWORD_POST_TABLES)
+_TABLE_PLATFORM = {
+    "facebook_posts": "facebook",
+    "linkedin_posts": "linkedin",
+    "threads_posts": "threads",
+    "youtube_posts": "youtube",
+}
+_PLATFORM_TABLE = {v: k for k, v in _TABLE_PLATFORM.items()}
+
+
+def _fetch_keyword_posts(
     *,
+    table: str,
     email: str,
     date_from: Optional[str],
     date_to: Optional[str],
@@ -390,10 +406,10 @@ def _fetch_threads_posts(
     page: int,
     page_size: int,
 ) -> tuple[list[dict], int]:
-    """Bài Threads (bảng threads_posts, cào qua "Markee Seeding Extension", lệnh MK_TH_CRAWL_*).
+    """Bài Threads/YouTube (bảng threads_posts/youtube_posts, cào qua "Markee Seeding Extension").
 
-    Threads không có group -> không có taxonomy (intent/industry/team...): khi FE lọc
-    theo taxonomy thì không bài Threads nào khớp -> trả rỗng (không lờ bộ lọc đi).
+    Không có group -> không có taxonomy (intent/industry/team...): khi FE lọc
+    theo taxonomy thì không bài nào khớp -> trả rỗng (không lờ bộ lọc đi).
     Phân quyền giống facebook_posts: lọc theo id_member (người bấm cào).
     """
     if has_taxonomy_filter:
@@ -411,7 +427,7 @@ def _fetch_threads_posts(
         else:
             allowed_member_ids = ["00000000-0000-0000-0000-000000000000"]
 
-    query = sb.table("threads_posts").select("*", count="exact")
+    query = sb.table(table).select("*", count="exact")
     if allowed_member_ids is not None:
         query = query.in_("id_member", allowed_member_ids or ["00000000-0000-0000-0000-000000000000"])
     if date_from:
@@ -428,7 +444,8 @@ def _fetch_threads_posts(
     elif sort == "score_low":
         query = query.order("score", desc=False, nullsfirst=False)
     elif sort == "comments_high":
-        query = query.order("comments", desc=True, nullsfirst=False)
+        # YouTube: trang tìm kiếm không có số comment -> "nhiều tương tác" = nhiều lượt xem.
+        query = query.order("view_count" if table == "youtube_posts" else "comments", desc=True, nullsfirst=False)
     elif sort == "crawler":
         query = query.order("id_member", desc=False, nullsfirst=False)
     else:  # latest
@@ -458,13 +475,19 @@ def _fetch_threads_posts(
                     member_map[mid]["team_name"] = team_dict[tid]
 
     for p in posts:
-        username = p.get("author_username") or ""
-        # PostCard hiển thị group_name ở đầu thẻ — với Threads dùng @tác giả, kèm từ
-        # khoá đã tìm ra bài để người seeding biết bài đến từ đâu.
-        p["group_name"] = f"@{username}" if username else "Threads"
+        if table == "youtube_posts":
+            # PostCard hiển thị group_name ở đầu thẻ — với YouTube là tên kênh.
+            p["group_name"] = p.get("author_name") or p.get("channel_handle") or "Kênh YouTube"
+            p["author"] = p.get("author_name") or p.get("channel_handle") or ""
+            p["search_keyword"] = p.get("keyword") or ""
+        else:
+            username = p.get("author_username") or ""
+            # PostCard hiển thị group_name ở đầu thẻ — với Threads dùng @tác giả, kèm từ
+            # khoá đã tìm ra bài để người seeding biết bài đến từ đâu.
+            p["group_name"] = f"@{username}" if username else "Threads"
+            p["search_keyword"] = p.get("keyword") or ""
+            p["author"] = p.get("author_name") or username
         p["group_url"] = p.get("author_url") or ""
-        p["search_keyword"] = p.get("keyword") or ""
-        p["author"] = p.get("author_name") or username
         mid = p.get("id_member")
         if mid and mid in member_map:
             p["crawler_name"] = member_map[mid].get("name")
@@ -473,18 +496,28 @@ def _fetch_threads_posts(
     return posts, total
 
 
-def _get_threads_platform_id(sb: Client) -> Optional[int]:
-    """id của Threads trong bảng platforms (seeding_content_kpi/kpi_tracker dùng id_platform).
+def _get_platform_id_by_name(sb: Client, name: str) -> Optional[int]:
+    """id của Threads/YouTube trong bảng platforms (seeding_content_kpi/kpi_tracker dùng id_platform).
 
-    Không hardcode như Facebook=1/LinkedIn=2 vì không chắc DB đã có dòng Threads và id
-    là bao nhiêu — None nghĩa là chưa có -> các số liệu seeding/KPI Threads = 0.
+    Không hardcode như Facebook=1/LinkedIn=2 vì không chắc DB đã có dòng đó và id
+    là bao nhiêu — None nghĩa là chưa có -> các số liệu seeding/KPI của nền tảng = 0.
     """
     try:
-        res = sb.table("platforms").select("id, name").ilike("name", "%threads%").limit(1).execute()
+        res = sb.table("platforms").select("id, name").ilike("name", f"%{name}%").limit(1).execute()
         if res.data:
             return res.data[0]["id"]
     except Exception:
         pass
+    return None
+
+
+def _platform_db_id(sb: Client, platform: str) -> Optional[int]:
+    if platform == "facebook":
+        return 1
+    if platform == "linkedin":
+        return 2
+    if platform in ("threads", "youtube"):
+        return _get_platform_id_by_name(sb, platform)
     return None
 
 
@@ -506,11 +539,11 @@ def _get_seeded_today(sb: Client, id_member: str, platform: str) -> int:
             query = query.eq("id_platform", 1)  # Facebook
         elif platform == "linkedin":
             query = query.eq("id_platform", 2)  # LinkedIn
-        elif platform == "threads":
-            threads_id = _get_threads_platform_id(sb)
-            if threads_id is None:
+        elif platform in ("threads", "youtube"):
+            platform_id = _platform_db_id(sb, platform)
+            if platform_id is None:
                 return 0
-            query = query.eq("id_platform", threads_id)
+            query = query.eq("id_platform", platform_id)
 
         res = query.execute()
         return res.count or 0
@@ -531,7 +564,7 @@ def _get_kpi_progress(sb: Client, id_member: str, platform: str) -> tuple[int, i
             return 0, 0
             
         # If there are multiple, try to match by platform
-        target_platform_id = _get_threads_platform_id(sb) if platform == "threads" else (1 if platform == "facebook" else 2)
+        target_platform_id = _platform_db_id(sb, platform)
         if target_platform_id is None:
             return 0, 0
         active_kpi = None
@@ -603,14 +636,14 @@ def _fetch_stats(
     def apply_scope(query):
         if table == "linkedin_posts" and allowed_member_ids is not None:
             return query.in_("id_group", group_ids or ["00000000-0000-0000-0000-000000000000"])
-        if table in ("facebook_posts", "threads_posts") and allowed_member_ids is not None:
+        if table in MEMBER_SCOPED_TABLES and allowed_member_ids is not None:
             return query.in_("id_member", allowed_member_ids)
         return query
 
     # id_member da resolve o buoc 1 (user_id_fetch) - khong query lai app_users lan 2
     # cho cung 1 email trong cung 1 ham (tung la 1 round-trip Supabase thua thai).
     id_member = user_id_fetch
-    platform_name = {"facebook_posts": "facebook", "threads_posts": "threads"}.get(table, "linkedin")
+    platform_name = _TABLE_PLATFORM.get(table, "linkedin")
 
     # 6 query/tinh toan doc lap ben duoi (khong cai nao phu thuoc ket qua cua
     # nhau) truoc day chay tuan tu tung cai mot (~6 round-trip Supabase noi
@@ -774,17 +807,7 @@ def get_unified_posts(
     page_size: int = 20,
 ) -> dict[str, Any]:
     """Fetch posts from one or all platforms, fully filtered server-side."""
-    platforms_to_fetch = []
-    if platform == "all" or platform == "general":
-        platforms_to_fetch = ["facebook_posts", "linkedin_posts"]
-    elif platform == "facebook":
-        platforms_to_fetch = ["facebook_posts"]
-    elif platform == "linkedin":
-        platforms_to_fetch = ["linkedin_posts"]
-    elif platform == "threads":
-        platforms_to_fetch = ["threads_posts"]
-    else:
-        platforms_to_fetch = ["facebook_posts", "linkedin_posts"]
+    platforms_to_fetch = _tables_for_platform(platform)
 
     # Normalize sort parameter for backend database order
     db_sort = sort
@@ -978,16 +1001,8 @@ def get_unified_posts(
 
 def _tables_for_platform(platform: str) -> list[str]:
     """Resolve platform token -> table list."""
-    p = (platform or "").lower()
-    if p in ("all", "general", ""):
-        return ["facebook_posts", "linkedin_posts"]
-    if p == "facebook":
-        return ["facebook_posts"]
-    if p == "linkedin":
-        return ["linkedin_posts"]
-    if p == "threads":
-        return ["threads_posts"]
-    return ["facebook_posts", "linkedin_posts"]
+    table = _PLATFORM_TABLE.get((platform or "").lower())
+    return [table] if table else ["facebook_posts", "linkedin_posts"]
 
 
 def filter_unified_posts(
@@ -1038,17 +1053,7 @@ def get_unified_stats(
     platform: str,
 ) -> dict[str, Any]:
     """Compute stats from Supabase — no cache, always fresh."""
-    tables = []
-    if platform == "all" or platform == "general":
-        tables = ["facebook_posts", "linkedin_posts"]
-    elif platform == "facebook":
-        tables = ["facebook_posts"]
-    elif platform == "linkedin":
-        tables = ["linkedin_posts"]
-    elif platform == "threads":
-        tables = ["threads_posts"]
-    else:
-        tables = ["facebook_posts", "linkedin_posts"]
+    tables = _tables_for_platform(platform)
 
     if len(tables) == 1:
         return _fetch_stats(table=tables[0], email=email)
@@ -1134,19 +1139,14 @@ def get_unified_daily_trend(
         buckets[d.isoformat()] = {"posts": 0, "comments": 0, "inbox": 0}
         d += timedelta(days=1)
 
-    tables = ["facebook_posts", "linkedin_posts"] if platform in ("all", "general") else (
-        ["facebook_posts"] if platform == "facebook" else
-        ["linkedin_posts"] if platform == "linkedin" else
-        ["threads_posts"] if platform == "threads" else
-        ["facebook_posts", "linkedin_posts"]
-    )
+    tables = _tables_for_platform(platform)
 
     # 1) Posts theo ngay (crawl_date)
     for table in tables:
         query = sb.table(table).select("id, crawl_date").gte(
             "crawl_date", f"{start_day.isoformat()}T00:00:00Z"
         ).lte("crawl_date", f"{today.isoformat()}T23:59:59Z")
-        if table in ("facebook_posts", "threads_posts") and allowed_member_ids is not None:
+        if table in MEMBER_SCOPED_TABLES and allowed_member_ids is not None:
             query = query.in_("id_member", allowed_member_ids or ["00000000-0000-0000-0000-000000000000"])
         elif table == "linkedin_posts" and allowed_member_ids is not None:
             gq = sb.table("linkedin_groups").select("id").in_("id_member", allowed_member_ids or ["00000000-0000-0000-0000-000000000000"]).execute()
@@ -1161,15 +1161,15 @@ def get_unified_daily_trend(
             if day_key in buckets:
                 buckets[day_key]["posts"] += 1
 
-    # Tab Threads: comment chi tinh seeding tren Threads (id_platform cua Threads),
-    # inbox luon 0 (view inbox chi co Facebook) - tranh hien so lieu cua Facebook
-    # duoi tab Threads. Facebook/LinkedIn giu nguyen hanh vi cu.
-    is_threads = platform == "threads"
-    threads_platform_id = _get_threads_platform_id(sb) if is_threads else None
+    # Tab Threads/YouTube: comment chi tinh seeding tren dung nen tang do (id_platform
+    # theo ten trong bang platforms), inbox luon 0 (view inbox chi co Facebook) - tranh
+    # hien so lieu cua Facebook duoi tab khac. Facebook/LinkedIn giu nguyen hanh vi cu.
+    is_keyword_platform = platform in ("threads", "youtube")
+    keyword_platform_id = _platform_db_id(sb, platform) if is_keyword_platform else None
 
     # 2) Comment/seeding da verify theo ngay (current_day)
     try:
-        if is_threads and threads_platform_id is None:
+        if is_keyword_platform and keyword_platform_id is None:
             c_rows = []
         else:
             c_query = sb.table("seeding_content_kpi").select("current_day, verify").gte(
@@ -1177,8 +1177,8 @@ def get_unified_daily_trend(
             ).lte("current_day", today.isoformat())
             if allowed_member_ids is not None:
                 c_query = c_query.in_("id_member", allowed_member_ids or ["00000000-0000-0000-0000-000000000000"])
-            if is_threads:
-                c_query = c_query.eq("id_platform", threads_platform_id)
+            if is_keyword_platform:
+                c_query = c_query.eq("id_platform", keyword_platform_id)
             c_rows = c_query.execute().data or []
     except Exception:
         c_rows = []
@@ -1192,7 +1192,7 @@ def get_unified_daily_trend(
     # 3) Inbox FB theo ngay (view co san v_member_daily_fb_inbox, da gop san
     #    theo id_member + day_vn - chi can loc scope + cong don theo ngay)
     i_rows = []
-    if not is_threads:
+    if not is_keyword_platform:
         try:
             i_query = sb.table("v_member_daily_fb_inbox").select("day_vn, inbox_count, id_member").gte(
                 "day_vn", start_day.isoformat()
@@ -1231,9 +1231,9 @@ def get_post_seeding_roster(post_id: str, platform: str, email: str) -> dict:
     role = user_res.data[0].get("role", "member")
     if role not in ("admin", "leader"):
         return {"role": role, "team_name": None, "items": []}
-    # Bài Threads không thuộc group nào -> không suy ra được team sở hữu (FE ẩn nút này
-    # với bài Threads); trả rỗng thay vì tra nhầm sang bảng linkedin_posts ở dưới.
-    if platform == "threads":
+    # Bài Threads/YouTube không thuộc group nào -> không suy ra được team sở hữu (FE ẩn nút
+    # này với 2 nền tảng đó); trả rỗng thay vì tra nhầm sang bảng linkedin_posts ở dưới.
+    if platform in ("threads", "youtube"):
         return {"role": role, "team_name": None, "items": []}
 
     table = "facebook_posts" if platform == "facebook" else "linkedin_posts"

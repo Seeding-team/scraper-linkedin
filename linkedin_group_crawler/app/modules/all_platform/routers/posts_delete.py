@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Header, HTTPException, Request
 
 from app.modules.all_platform.schemas import BaseResponse
 from app.core.supabase_client import get_supabase_client
@@ -24,7 +24,12 @@ from pydantic import BaseModel
 router = APIRouter()
 
 
-def _get_user_from_header(authorization: str | None, request=None) -> dict:
+def _get_user_from_header(authorization: str | None, request: Request | None = None) -> dict:
+    # FE gửi token qua cookie (credentials: "include"), không có header Authorization.
+    if not authorization and request is not None:
+        cookie_token = request.cookies.get("crawlpro_access_token")
+        if cookie_token:
+            authorization = f"Bearer {cookie_token}"
     if not authorization:
         raise HTTPException(status_code=401, detail="Missing authorization header")
     if not authorization.startswith("Bearer "):
@@ -105,6 +110,37 @@ def delete_threads_post(
         role = user.get("role")
 
         q = get_supabase_client().table("threads_posts").delete()
+        if role not in ("admin", "leader"):
+            q = q.eq("id_member", user_id)
+
+        if payload.id:
+            q.eq("id", payload.id).execute()
+        else:
+            q.eq("post_url", payload.post_url).execute()
+
+        return BaseResponse(success=True, data={"deleted": True})
+    except HTTPException as e:
+        return BaseResponse(success=False, message=e.detail)
+    except Exception as e:
+        return BaseResponse(success=False, message=str(e))
+
+
+@router.delete("/posts/youtube")
+def delete_youtube_post(
+    payload: DeleteFacebookPostRequest,
+    request: Request,
+    authorization: str | None = Header(None),
+):
+    """Xoá video YouTube (bảng youtube_posts) — cùng quy tắc phân quyền với bài Facebook ở trên."""
+    try:
+        if not payload.id and not payload.post_url:
+            raise HTTPException(status_code=400, detail="Missing id or post_url")
+
+        user = _get_user_from_header(authorization, request)
+        user_id = user.get("id")
+        role = user.get("role")
+
+        q = get_supabase_client().table("youtube_posts").delete()
         if role not in ("admin", "leader"):
             q = q.eq("id_member", user_id)
 

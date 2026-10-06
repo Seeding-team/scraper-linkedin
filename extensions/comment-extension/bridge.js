@@ -7,7 +7,7 @@
 const MK_EXTENSION_INFO = (() => {
     let version = "";
     try { version = chrome.runtime.getManifest().version; } catch (e) {}
-    return { version, features: ["fb_crawl", "fb_comment", "li_crawl", "li_comment", "th_crawl", "rotate_crawl"] };
+    return { version, features: ["fb_crawl", "fb_comment", "li_crawl", "li_comment", "th_crawl", "rotate_crawl", "yt_crawl", "yt_comment"] };
 })();
 
 // Truoc day KHONG check chrome.runtime.lastError va KHONG co timeout gi ca -
@@ -124,9 +124,27 @@ window.addEventListener("message", function(event) {
         }, response => {
             window.postMessage({ action: "MK_TH_CRAWL_START_RESULT", payload: response || { success: false, error: "Không nhận được phản hồi từ Extension." } }, "*");
         });
-    } else if (action === "MK_FB_CRAWL_STOP" || action === "MK_LI_CRAWL_STOP" || action === "MK_TH_CRAWL_STOP") {
+    } else if (action === "MK_YT_CRAWL_START") {
+        // YouTube: mỗi mục là 1 từ khoá HOẶC 1 link video (extension tự phân biệt).
+        safeSendMessage({
+            action,
+            keywords: payload?.keywords || [],
+            config: payload?.config || {},
+        }, response => {
+            window.postMessage({ action: "MK_YT_CRAWL_START_RESULT", payload: response || { success: false, error: "Không nhận được phản hồi từ Extension." } }, "*");
+        });
+    } else if (action === "MK_YT_DETECT_ACCOUNT") {
+        // Có thể phải mở 1 tab YouTube ngầm để đọc kênh đang đăng nhập -> chờ lâu hơn mặc định.
+        safeSendMessage({ action }, response => {
+            window.postMessage({ action: "MK_YT_DETECT_ACCOUNT_RESULT", payload: response || { success: false, error: "Không nhận được phản hồi từ Extension." } }, "*");
+        }, 45000);
+    } else if (action === "MK_YT_COMMENT_OPEN") {
+        safeSendMessage({ action, payload }, response => {
+            window.postMessage({ action: "MK_YT_COMMENT_OPEN_RESULT", payload: response || { success: false, error: "Không nhận được phản hồi từ Extension." } }, "*");
+        });
+    } else if (action === "MK_FB_CRAWL_STOP" || action === "MK_LI_CRAWL_STOP" || action === "MK_TH_CRAWL_STOP" || action === "MK_YT_CRAWL_STOP") {
         safeSendMessage({ action }, () => {});
-    } else if (action === "MK_FB_CRAWL_STATUS" || action === "MK_LI_CRAWL_STATUS" || action === "MK_TH_CRAWL_STATUS") {
+    } else if (action === "MK_FB_CRAWL_STATUS" || action === "MK_LI_CRAWL_STATUS" || action === "MK_TH_CRAWL_STATUS" || action === "MK_YT_CRAWL_STATUS") {
         safeSendMessage({ action }, response => {
             window.postMessage({ action: action + "_RESULT", payload: response }, "*");
         });
@@ -164,7 +182,7 @@ window.addEventListener("message", function(event) {
 
 // Lắng nghe tiến trình từ background và relay xuống Web App UI
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-    if (typeof request.action === "string" && (request.action.startsWith("MK_FB_CRAWL_") || request.action.startsWith("MK_LI_CRAWL_") || request.action.startsWith("MK_TH_CRAWL_") || request.action.startsWith("MK_ROTATE_SCHEDULE_"))) {
+    if (typeof request.action === "string" && (request.action.startsWith("MK_FB_CRAWL_") || request.action.startsWith("MK_LI_CRAWL_") || request.action.startsWith("MK_TH_CRAWL_") || request.action.startsWith("MK_ROTATE_SCHEDULE_") || request.action.startsWith("MK_YT_CRAWL_") || request.action === "MK_YT_COMMENT_RESULT")) {
         const { action, ...rest } = request;
         window.postMessage({ action, payload: rest }, "*");
         return;

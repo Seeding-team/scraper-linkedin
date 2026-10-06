@@ -6,8 +6,10 @@ import { createPortal } from "react-dom";
 import { cn } from "@/lib/utils";
 import { FiExternalLink } from "react-icons/fi";
 import { FaFacebook, FaLinkedin } from "react-icons/fa";
-import { FaThreads } from "react-icons/fa6";
-import { SeedingExtensionPanel } from "@/components/all-platform/components/seeding-extension/seeding-extension-panel";
+import { FaThreads, FaYoutube } from "react-icons/fa6";
+import { SeedingExtensionPanel, type PanelTab } from "@/components/all-platform/components/seeding-extension/seeding-extension-panel";
+import { useYouTubeCommentResults } from "@/components/all-platform/components/seeding-extension/use-youtube-seeding";
+import { YouTubeCommentModal } from "@/components/all-platform/components/youtube-comment-modal";
 import { useAppAuth } from "@/contexts/AppAuthContext";
 import { FilterBar, type FilterState } from "@/components/all-platform/components/filter-bar";
 import { PostCard } from "@/components/all-platform/components/post-card";
@@ -239,6 +241,9 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
 
   const [detailModalPost, setDetailModalPost] = useState<UnifiedPost | null>(null);
   const [verifyModalPost, setVerifyModalPost] = useState<UnifiedPost | null>(null);
+  // YouTube: modal gõ comment -> extension mở video + điền sẵn, tính KPI khi nhân viên bấm Bình luận.
+  const [youtubeCommentPost, setYoutubeCommentPost] = useState<UnifiedPost | null>(null);
+  const [panelFocus, setPanelFocus] = useState<{ tab: PanelTab; nonce: number } | null>(null);
   const [scheduleModalPost, setScheduleModalPost] = useState<UnifiedPost | null>(null);
   const [scheduleRefreshKey, setScheduleRefreshKey] = useState(0);
   const [socialAccounts, setSocialAccounts] = useState<SocialAccount[]>([]);
@@ -573,6 +578,18 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
 
   const fbDiff = stats.totalPostsToday - stats.postsYesterday;
 
+  // Extension báo về sau khi nhân viên đã bấm "Bình luận" trên tab YouTube.
+  useYouTubeCommentResults((result) => {
+    if (result.success) {
+      toast.success(result.message || "Đã ghi nhận comment YouTube và tính KPI.");
+      fetchPosts();
+      fetchStats();
+      fetchDailyTrend();
+    } else {
+      toast.error(result.message || "Comment YouTube chưa được tính KPI.");
+    }
+  });
+
   const handleDeletePost = useCallback(
     async (post: UnifiedPost) => {
       if (!post?.id) {
@@ -591,7 +608,9 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
       try {
         const res = post.platform === "threads"
           ? await allPlatformPostsDeleteService.deleteThreadsPost({ id: post.id })
-          : await allPlatformPostsDeleteService.deleteFacebookPost({ id: post.id });
+          : post.platform === "youtube"
+            ? await allPlatformPostsDeleteService.deleteYoutubePost({ id: post.id })
+            : await allPlatformPostsDeleteService.deleteFacebookPost({ id: post.id });
         if (!res?.success) {
           throw new Error(res?.message || "Xóa thất bại");
         }
@@ -664,6 +683,7 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
         { key: "facebook", label: "Facebook", icon: <FaFacebook className="text-blue-600" /> },
         { key: "linkedin", label: "LinkedIn", icon: <FaLinkedin className="text-blue-700" /> },
         { key: "threads", label: "Threads", icon: <FaThreads /> },
+        { key: "youtube", label: "YouTube", icon: <FaYoutube className="text-[#ff0000]" /> },
       ] as const).map((t) => (
         <button
           key={t.key}
@@ -686,7 +706,9 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
   );
 
   const platformHint =
-    feedPlatform === "threads"
+    feedPlatform === "youtube"
+      ? "Đang xem YouTube — tìm video theo từ khoá hoặc dán link, comment tính KPI theo kênh đã liên kết."
+      : feedPlatform === "threads"
       ? "Đang xem Threads — tìm bài theo từ khoá."
       : feedPlatform === "linkedin"
         ? "Đang xem LinkedIn — cào theo nhóm đã thêm."
@@ -878,13 +900,14 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
           {/* 1 extension gộp (Markee Seeding Extension): cào bài + bình luận hàng loạt cho cả
               Facebook và LinkedIn, theo tab nền tảng đang chọn — thay cho 2 launcher riêng
               "Siêu Tốc Cào Dữ Liệu" + "Seeding Comment Hàng Loạt" trước đây (chỉ có ở tab Facebook).
-              Threads: chỉ cào (tìm theo từ khoá), feed/xu hướng tải lại mỗi khi lưu xong 1 từ khoá. */}
+              Threads/YouTube: chỉ cào (tìm theo từ khoá hoặc link), feed/xu hướng tải lại mỗi khi lưu xong. */}
           {CURRENT_USER_EMAIL && (
             <SeedingExtensionPanel
               platform={feedPlatform}
               posts={posts}
+              focusRequest={panelFocus}
               onCrawlSaved={(platform, data) => {
-                if (platform === "threads" && data.count > 0) {
+                if ((platform === "threads" || platform === "youtube") && data.count > 0) {
                   fetchPosts();
                   fetchDailyTrend();
                 }
@@ -892,7 +915,7 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
               onCrawlDone={(platform, data) => {
                 fetchPosts();
                 fetchStats();
-                if (platform === "threads") fetchDailyTrend();
+                if (platform === "threads" || platform === "youtube") fetchDailyTrend();
                 setCrawlResultsSummary((prev) => ({ ...prev, totalPosts: data.totalSaved }));
                 setShowCrawlResultModal(true);
               }}
@@ -971,10 +994,11 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
                         fetchStats();
                       }}
                       onVerify={() => {}}
-                      onSchedule={post.platform === "threads" ? undefined : (post) => setScheduleModalPost(post)}
+                      onSchedule={post.platform === "threads" || post.platform === "youtube" ? undefined : (post) => setScheduleModalPost(post)}
                       onViewDetail={(post) => setDetailModalPost(post)}
                       onDelete={(p) => void handleDeletePost(p)}
-                      onViewSeedingRoster={post.platform === "threads" ? undefined : (p) => void openSeedingRosterModal(p)}
+                      onViewSeedingRoster={post.platform === "threads" || post.platform === "youtube" ? undefined : (p) => void openSeedingRosterModal(p)}
+                      onComment={post.platform === "youtube" ? (p) => setYoutubeCommentPost(p) : undefined}
                     />
                 ))}
               </div>
@@ -1045,11 +1069,27 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
         post={detailModalPost}
         isOpen={!!detailModalPost}
         onClose={() => setDetailModalPost(null)}
-        // Xác minh seeding (chọn tài khoản FB/LinkedIn) chưa hỗ trợ bài Threads.
-        onVerify={detailModalPost?.platform === "threads" ? undefined : (post) => {
+        // Xác minh seeding (chọn tài khoản FB/LinkedIn) chưa hỗ trợ bài Threads; YouTube dùng nút
+        // "Bình luận" riêng (KPI tự ghi nhận khi extension thấy comment đã đăng).
+        onVerify={detailModalPost?.platform === "threads" || detailModalPost?.platform === "youtube" ? undefined : (post) => {
           setVerifyModalPost(post);
         }}
+        onComment={detailModalPost?.platform === "youtube" ? (post) => {
+          setDetailModalPost(null);
+          setYoutubeCommentPost(post);
+        } : undefined}
         verifyStatus={detailModalPost?.verify_status as any}
+      />
+
+      <YouTubeCommentModal
+        // key theo video: mở video khác thì modal reset sạch nội dung đã gõ.
+        key={youtubeCommentPost?.id ?? "closed"}
+        post={youtubeCommentPost}
+        onClose={() => setYoutubeCommentPost(null)}
+        onNeedLinkChannel={() => {
+          setYoutubeCommentPost(null);
+          setPanelFocus({ tab: "channel", nonce: Date.now() });
+        }}
       />
 
       {verifyModalPost && (
