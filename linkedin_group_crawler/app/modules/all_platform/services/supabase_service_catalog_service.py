@@ -273,6 +273,12 @@ def create_service_catalog_item(payload: dict, created_by: str | None) -> dict:
     for field in ["brand", "part_number", "product_type", "internal_note"]:
         if payload.get(field) is not None:
             insert_data[field] = payload.get(field)
+    # External identity (migration 175) — chi dien khi nguoi goi truyen vao
+    # (dong bo MSC). Caller thuong (UI them moi) khong truyen => khong thay doi
+    # hanh vi hien tai.
+    for field in ["external_source", "external_id"]:
+        if payload.get(field) is not None:
+            insert_data[field] = payload.get(field)
     
     result = supabase.table(ITEMS_TABLE).insert(insert_data).execute()
     item = result.data[0]
@@ -325,7 +331,7 @@ def update_service_catalog_item(item_id: str, payload: dict, actor_id: str | Non
         "quota_messages_per_month", "quota_messages_per_month_label", "quota_ai_data",
         "quota_highlights", "quota_extra", "spec_quantity_per_unit", "spec_unit_label",
         "note", "status", "sort_order", "brand", "part_number", "product_type",
-        "internal_note",
+        "internal_note", "external_source", "external_id",
     }
     nullable_clear_keys = {
         "default_vat_rate", "quote_display_name", "quote_description", "quote_cta",

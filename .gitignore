@@ -161,6 +161,9 @@ node_modules/
 # Cau hinh docker rieng tung host (dev vs app co domain build-arg khac nhau) - khong commit
 docker-compose.override.yml
 
+# DB local (Postgres + PostgREST) — chi chay may local, khong commit
+/local-db/
+
 # ---- Root-level generated artifacts ----
 __pycache__/
 scratch/*.xlsx
@@ -263,9 +266,15 @@ facebook-module/frontend/npm-install.log
 crm-cloudgate/frontend/.next
 
 
-prompts
+prompts/
 
-Reports
+Reports/
+
+AGENTS.md
+.opencode/
+
+graphify-out/
+linkedin_group_crawler/graphify-out/
 
 docker-compose.local-test.yml
 scripts/init-local-test-db.sql
@@ -275,4 +284,4 @@ scripts/local-test/
 supabase/local_mock.sql
 linkedin_group_crawler/supabase/local_mock.sql
 scripts/local-mock-seed.*
-local_mock.sql
+local_mock.sql
