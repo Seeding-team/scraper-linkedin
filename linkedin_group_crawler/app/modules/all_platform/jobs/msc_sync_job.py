@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+from datetime import timedelta, timezone
 
 logger = logging.getLogger("app.jobs.msc_sync")
 
@@ -67,9 +68,13 @@ def setup_msc_sync_job() -> None:
     from apscheduler.schedulers.asyncio import AsyncIOScheduler
     from apscheduler.executors.asyncio import AsyncIOExecutor
 
+    # Container production dat TZ=Asia/Ho_Chi_Minh nhung image KHONG co tzdata (/usr/share/zoneinfo) nen
+    # AsyncIOScheduler() mac dinh (tzlocal) bi ZoneInfoNotFoundError luc khoi dong -> job khong bao gio chay.
+    # Dung mui gio CO DINH UTC+7 (Viet Nam khong co gio mua he), khong phu thuoc tzdata cua container.
     scheduler = AsyncIOScheduler(
         executors={"default": AsyncIOExecutor()},
         job_defaults={"coalesce": True},
+        timezone=timezone(timedelta(hours=7)),
     )
     scheduler.add_job(
         func=lambda: asyncio.to_thread(execute_msc_product_sync),
@@ -82,7 +87,7 @@ def setup_msc_sync_job() -> None:
     )
     scheduler.start()
     logger.info(
-        "🕒 MSC product sync scheduler started (daily at %02d:%02d, TZ cua container).",
+        "🕒 MSC product sync scheduler started (daily at %02d:%02d, gio Viet Nam UTC+7).",
         settings.msc_sync_hour,
         settings.msc_sync_minute,
     )
