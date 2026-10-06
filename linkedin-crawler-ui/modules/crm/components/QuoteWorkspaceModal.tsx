@@ -7796,7 +7796,7 @@ export function QuoteWorkspaceModal({
                         }
                         return (
                           <tr key={item.id || index}>
-                            <td>{item.serviceDescription || '—'}</td>
+                            <td style={{ whiteSpace: 'pre-line' }}>{item.serviceDescription || '—'}</td>
                             <td className="qc-cell-money">{item.quantity}</td>
                             <td className="qc-cell-money">{formatMoney(item.unitPrice ?? 0)}</td>
                             <td className="qc-cell-money">{formatMoney(item.totalAmount || item.quantity * (item.unitPrice ?? 0) || 0)}</td>
@@ -8469,7 +8469,7 @@ export function QuoteWorkspaceModal({
                 </button>
               </div>
               <div className="qc-workspace-preview-modal-body">
-                <p><strong>{drawerItem.serviceDescription || drawerItem.description}</strong></p>
+                <p style={{ whiteSpace: 'pre-line' }}><strong>{drawerItem.serviceDescription || drawerItem.description}</strong></p>
                 {costViewAllowed ? (
                   <>
                     <p>Chế độ giá vốn: {snap.costMode === 'usd' ? 'USD × Tỷ giá' : 'VND trực tiếp'}</p>
@@ -8549,7 +8549,7 @@ export function QuoteWorkspaceModal({
               <div className="qc-workspace-preview-modal-body">
                 <div className="qc-workspace-drawer-field">
                   <span className="qc-workspace-info-label">Tên hạng mục</span>
-                  <p>{descItem.serviceDescription || '—'}</p>
+                  <p style={{ whiteSpace: 'pre-line' }}>{descItem.serviceDescription || '—'}</p>
                 </div>
                 <label className="qc-workspace-drawer-field">
                   <span className="qc-workspace-info-label">Phạm vi bảo hành</span>
@@ -8619,7 +8619,7 @@ export function QuoteWorkspaceModal({
                       onChange={e => updateRow(drawerIndex, { serviceDescription: e.target.value })}
                     />
                   ) : (
-                    <p>{drawerItem.serviceDescription || '—'}</p>
+                    <p style={{ whiteSpace: 'pre-line' }}>{drawerItem.serviceDescription || '—'}</p>
                   )}
                 </label>
                 <label className="qc-workspace-drawer-field">

@@ -1337,7 +1337,7 @@ function SchemaQuoteItemsTable({
           <div className="crm-modal" role="dialog" aria-modal="true" aria-label="Chi tiết hạng mục" onClick={e => e.stopPropagation()}>
             <div className="crm-modal-header"><h3>Chi tiết hạng mục</h3></div>
             <div className="crm-modal-body">
-            <p>{detailRow.item.serviceDescription}</p>
+            <p style={{ whiteSpace: 'pre-line' }}>{detailRow.item.serviceDescription}</p>
             <label className="crm-field"><span>Nội dung công việc</span><textarea rows={5} value={detailDescription} onChange={e => setDetailDescription(e.target.value)} /></label>
             <label className="crm-field"><span>Phạm vi bảo hành</span><textarea rows={5} value={detailWarranty} onChange={e => setDetailWarranty(e.target.value)} /></label>
             </div>
