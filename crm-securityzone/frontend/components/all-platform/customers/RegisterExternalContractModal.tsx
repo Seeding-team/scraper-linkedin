@@ -390,7 +390,8 @@ export function RegisterExternalContractModal({ contract, open, deal, onClose, o
   // tu dien "Giá trị hợp đồng" ben duoi: customerPriceBeforeVat, fallback
   // totalAmount) de biet co can bat buoc ly do dieu chinh hay khong.
   // Hop dong luon tinh bang VND: bao gia USD quy doi theo ty gia DA CHOT cua chinh bao gia do.
-  const quotePrice = selectedVersion ? quoteAmountVnd(selectedVersion.customerPriceBeforeVat ?? selectedVersion.totalAmount ?? null, selectedVersion) : null;
+  // Gia tri hop dong = so THANH TOAN CUOI CUNG (gom VAT) = totalAmount cua bao gia (khop ContractAIWizard); fallback gia chua VAT.
+  const quotePrice = selectedVersion ? quoteAmountVnd(selectedVersion.totalAmount ?? selectedVersion.customerPriceBeforeVat ?? null, selectedVersion) : null;
   const valueDiffersFromQuote = quotePrice != null && contractValue != null && contractValue !== quotePrice;
   const isLatestVersion = chainVersions && chainVersions.length > 0 ? chainVersions[0]?.id === selectedVersionId : true;
 
@@ -447,7 +448,7 @@ export function RegisterExternalContractModal({ contract, open, deal, onClose, o
   // Center) - chi ghi de khi nguoi dung CHUA tu sua gia tri nay.
   useEffect(() => {
     if (!open || !selectedVersion) return;
-    const price = quoteAmountVnd(selectedVersion.customerPriceBeforeVat ?? selectedVersion.totalAmount ?? null, selectedVersion);
+    const price = quoteAmountVnd(selectedVersion.totalAmount ?? selectedVersion.customerPriceBeforeVat ?? null, selectedVersion);
     if (price == null) return;
     setContractValue(current => {
       if (current !== null && current !== lastAutoValueRef.current) return current;
@@ -854,10 +855,12 @@ export function RegisterExternalContractModal({ contract, open, deal, onClose, o
                   </div>
                   <div className="grid grid-cols-3 gap-x-4 gap-y-2 text-xs">
                     <div>
-                      <div className="text-slate-400">GIÁ KHÁCH (CHƯA VAT)</div>
-                      <div className="font-medium text-slate-700">{formatQuoteAmountOr(selectedVersion.customerPriceBeforeVat ?? selectedVersion.totalAmount ?? null, selectedVersion.currency, formatVND)}</div>
+                      <div className="text-slate-400">GIÁ KHÁCH</div>
+                      <div className="font-medium text-slate-700">
+                        Chưa VAT: {formatQuoteAmountOr(selectedVersion.customerPriceBeforeVat ?? selectedVersion.totalAmount ?? null, selectedVersion.currency, formatVND)}
+                      </div>
                       {selectedVersion.totalAmount != null ? (
-                        <div className="text-[11px] text-slate-500">Gồm VAT: {formatQuoteAmountOr(selectedVersion.totalAmount, selectedVersion.currency, formatVND)}</div>
+                        <div className="font-medium text-slate-700">Gồm VAT: {formatQuoteAmountOr(selectedVersion.totalAmount, selectedVersion.currency, formatVND)}</div>
                       ) : null}
                     </div>
                     <div>
@@ -922,8 +925,8 @@ export function RegisterExternalContractModal({ contract, open, deal, onClose, o
                 {quotePrice != null ? (
                   <div className="mt-1 flex items-center justify-between">
                     <span className="text-[11px] text-slate-400">
-                      Theo {selectedVersion?.quoteNumber} · V{selectedVersion?.versionNumber || 1} · <strong className="font-semibold text-slate-500">chưa VAT</strong>
-                      {selectedVersion?.totalAmount != null ? ` (gồm VAT: ${formatVND(quoteAmountVnd(selectedVersion.totalAmount, selectedVersion))})` : ""}
+                      Theo {selectedVersion?.quoteNumber} · V{selectedVersion?.versionNumber || 1} · <strong className="font-semibold text-slate-500">gồm VAT</strong>
+                      {selectedVersion?.customerPriceBeforeVat != null && selectedVersion?.totalAmount != null ? ` (chưa VAT: ${formatVND(quoteAmountVnd(selectedVersion.customerPriceBeforeVat, selectedVersion))})` : ""}
                     </span>
                     {!showAdjustReason && !valueDiffersFromQuote ? (
                       <button type="button" onClick={() => setShowAdjustReason(true)} className="text-[11px] font-semibold text-primary hover:underline">

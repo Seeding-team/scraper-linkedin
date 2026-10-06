@@ -273,14 +273,19 @@ export function QuoteQuickViewDrawer({ quote, open, customerName, dealName, onCl
             <div className="crm-scroll-hidden flex-1 overflow-y-auto px-5 py-4">
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                 <div className="rounded-lg border border-slate-200 p-3">
-                  <div className="text-xs text-slate-400">Giá khách (chưa VAT)</div>
-                  <div className="mt-0.5 text-lg font-bold text-slate-800">
-                    {formatQuoteAmountOr(quote.customerPriceBeforeVat ?? quote.totalAmount ?? null, quote.currency, formatVNDShort)}
+                  <div className="text-xs text-slate-400">Giá khách</div>
+                  <div className="mt-1">
+                    <span className="inline-block whitespace-nowrap rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold text-slate-600">Chưa VAT</span>
+                    <div className="whitespace-nowrap text-base font-bold leading-tight text-slate-800">
+                      {formatQuoteAmountOr(quote.customerPriceBeforeVat ?? quote.totalAmount ?? null, quote.currency, formatVNDShort)}
+                    </div>
                   </div>
                   {quote.totalAmount != null ? (
-                    <div className="mt-1 text-[11px] leading-snug text-slate-500">
-                      VAT {formatQuoteAmountOr(quote.vatAmount ?? 0, quote.currency, formatVNDShort)} · Tổng thanh toán (gồm VAT){" "}
-                      <span className="font-semibold text-slate-700">{formatQuoteAmountOr(quote.totalAmount, quote.currency, formatVNDShort)}</span>
+                    <div className="mt-2 border-t border-slate-100 pt-1.5">
+                      <span className="inline-block whitespace-nowrap rounded bg-indigo-50 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-600">Gồm VAT</span>
+                      <div className="whitespace-nowrap text-base font-bold leading-tight text-indigo-700">
+                        {formatQuoteAmountOr(quote.totalAmount, quote.currency, formatVNDShort)}
+                      </div>
                     </div>
                   ) : null}
                 </div>
@@ -359,7 +364,7 @@ export function QuoteQuickViewDrawer({ quote, open, customerName, dealName, onCl
                             <th className="py-1.5 pr-2 font-semibold">Hạng mục</th>
                             <th className="py-1.5 pr-2 text-right font-semibold">SL</th>
                             {showCost ? <th className="py-1.5 pr-2 text-right font-semibold">Giá vốn</th> : null}
-                            <th className="py-1.5 pr-2 text-right font-semibold">Giá khách</th>
+                            <th className="py-1.5 pr-2 text-right font-semibold">Giá khách<span className="block text-[10px] font-normal text-slate-400">(chưa VAT)</span></th>
                             {showProfit ? <th className="py-1.5 pr-2 text-right font-semibold">Lợi nhuận</th> : null}
                             {showProfit ? <th className="py-1.5 text-right font-semibold">Margin</th> : null}
                           </tr>
