@@ -260,7 +260,7 @@ function collectRawUrls(source: unknown, out = new Set<string>()): string[] {
   const parsed = parseMaybeJson(source);
   if (!parsed) return Array.from(out);
   if (typeof parsed === "string") {
-    if (/^https?:\/\//i.test(parsed.trim())) out.add(parsed.trim());
+    if (/^https?:\/\//i.test(parsed.trim()) || /^data:/i.test(parsed.trim())) out.add(parsed.trim());
     const match = parsed.match(URL_RE);
     if (match?.[1]) out.add(match[1]);
     return Array.from(out);
@@ -273,7 +273,7 @@ function collectRawUrls(source: unknown, out = new Set<string>()): string[] {
   if (!record) return Array.from(out);
   for (const key of ["hdUrl", "normalUrl", "url", "href", "src", "imageUrl", "photoUrl", "thumb", "thumbnail", "thumbUrl", "icon", "avatar", "fileUrl", "downloadUrl", "stickerUrl", "stickerWebpUrl", "videoUrl", "voiceUrl"]) {
     const value = record[key];
-    if (typeof value === "string" && /^https?:\/\//i.test(value.trim())) out.add(value.trim());
+    if (typeof value === "string" && (/^https?:\/\//i.test(value.trim()) || /^data:/i.test(value.trim()))) out.add(value.trim());
   }
   Object.values(record).forEach((value) => collectRawUrls(value, out));
   return Array.from(out);
@@ -282,11 +282,18 @@ function collectRawUrls(source: unknown, out = new Set<string>()): string[] {
 function normalizeMessageAssets(message: ZaloLibraryMessage): NormalizedAsset[] {
   const seen = new Set<string>();
   const normalized: NormalizedAsset[] = [];
-  for (const asset of message.assets ?? []) {
-    const url = String(asset.storage_url || asset.source_url || "").trim();
-    if (!url || seen.has(url)) continue;
+  const addUrl = (urlValue: unknown, baseAsset?: NonNullable<ZaloLibraryMessage["assets"]>[number]) => {
+    const url = String(urlValue || "").trim();
+    if (!url || seen.has(url)) return;
+    if (!/^(https?:|data:)/i.test(url)) return;
     seen.add(url);
-    normalized.push({ ...asset, url });
+    normalized.push({ ...(baseAsset || { status: "uploaded" }), source_url: baseAsset?.source_url || url, storage_url: baseAsset?.storage_url || url, url } as NormalizedAsset);
+  };
+  for (const asset of message.assets ?? []) {
+    addUrl(asset.storage_url || asset.source_url, asset);
+  }
+  for (const rawUrl of collectRawUrls(message.raw_content as unknown)) {
+    addUrl(rawUrl);
   }
   return normalized;
 }
@@ -2717,3 +2724,4 @@ export function ZaloInboxAdminShell() {
     </div>
   );
 }
+

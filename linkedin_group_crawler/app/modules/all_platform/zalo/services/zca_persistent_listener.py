@@ -370,6 +370,7 @@ def _to_message(row: Dict[str, Any]) -> Message:
         cli_msg_id=row.get("cli_msg_id") or None,
         mentions=[m for m in raw_mentions if isinstance(m, dict) and "uid" in m],
         msg_kind=row.get("msg_kind") or None,
+        raw_content=row.get("raw") or row.get("raw_content") or None,
     )
 
 
