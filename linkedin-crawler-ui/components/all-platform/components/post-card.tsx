@@ -16,6 +16,9 @@ import {
   REQUIRED_EXTENSION_VERSION,
   type GroupPlatform,
 } from "./seeding-extension/use-seeding-extension";
+import { LeadFormDrawer } from "@/modules/crm/components/LeadFormDrawer";
+import type { CrmLeadRow } from "@/modules/crm/types";
+import { toast } from "sonner";
 
 interface PostCardProps {
   post: UnifiedPost;
@@ -42,9 +45,11 @@ function PlatformIcon({ platform }: { platform: FeedPlatform }) {
 }
 
 export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onViewDetail, onDelete, onViewSeedingRoster, seeded, verifyStatus }: PostCardProps) {
+  const { user: currentUser } = useAppAuth();
   const [showAllCrawledComments, setShowAllCrawledComments] = useState(false);
   const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
   const [isMoreMenuOpen, setIsMoreMenuOpen] = useState(false);
+  const [showLeadDrawer, setShowLeadDrawer] = useState(false);
   const crawledComments = (post.comments_detail || []).filter((c) => c && (c.content || c.author_name));
   const visibleCrawledComments = showAllCrawledComments ? crawledComments : crawledComments.slice(0, 2);
 
@@ -268,30 +273,54 @@ export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onVi
                 Xem bình luận <FiExternalLink className="w-3 h-3" />
               </a>
             )}
-            {/* Nhánh Zalo tự động (migration 161): bài không có SĐT -> nhắc còn cần inbox
-                tay; có SĐT -> báo đã/chưa nhắn tin tư vấn tự động qua Zalo. */}
+            {/* Nhánh Zalo tự động (migration 161/172): bài không có SĐT -> nhắc còn cần
+                inbox tay; có SĐT -> hiện rõ SĐT + tên Zalo tìm được, trạng thái tư vấn
+                tự động, và nút tạo lead ngay từ thông tin này. */}
             {!post.auto_seeding_comment.phone_number ? (
               <div className="text-[10px] font-semibold text-amber-600 mt-0.5">📩 Cần inbox thêm với khách hàng (bài không có SĐT liên hệ)</div>
-            ) : post.auto_seeding_comment.zalo_status === "sent" ? (
-              <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
-                <span className="text-[10px] font-semibold text-emerald-600">✅ Hệ thống đã nhắn tin tư vấn với khách (Zalo {post.auto_seeding_comment.phone_number})</span>
-                {post.auto_seeding_comment.zalo_conversation_id && (
-                  <a
-                    href={`/all-platform/zalo-inbox?conv=${encodeURIComponent(post.auto_seeding_comment.zalo_conversation_id)}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-[10px] font-medium text-blue-600 hover:underline inline-flex items-center gap-1"
+            ) : (
+              <div className="mt-1 flex flex-col gap-1 rounded-lg border border-sky-100 bg-white px-2 py-1.5">
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                  <span className="inline-flex items-center gap-1 text-[11px] font-bold text-slate-800">
+                    📞 {post.auto_seeding_comment.phone_number}
+                  </span>
+                  {post.auto_seeding_comment.zalo_display_name && (
+                    <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-sky-700">
+                      · Zalo: {post.auto_seeding_comment.zalo_display_name}
+                    </span>
+                  )}
+                  {post.auto_seeding_comment.zalo_status === "sent" ? (
+                    <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-emerald-100 text-emerald-700">✓ Đã nhắn tư vấn</span>
+                  ) : post.auto_seeding_comment.zalo_status === "failed" ? (
+                    <span
+                      className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-red-100 text-red-700"
+                      title={post.auto_seeding_comment.zalo_error || undefined}
+                    >
+                      ⚠️ Chưa nhắn được qua Zalo
+                    </span>
+                  ) : null}
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  {post.auto_seeding_comment.zalo_conversation_id && (
+                    <a
+                      href={`/all-platform/zalo-inbox?conv=${encodeURIComponent(post.auto_seeding_comment.zalo_conversation_id)}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-[10px] font-medium text-blue-600 hover:underline inline-flex items-center gap-1"
+                    >
+                      Xem hộp thoại <FiExternalLink className="w-3 h-3" />
+                    </a>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setShowLeadDrawer(true)}
+                    className="inline-flex items-center gap-1 rounded-full bg-emerald-600 px-2 py-0.5 text-[10px] font-bold text-white transition hover:bg-emerald-700"
                   >
-                    Xem hộp thoại <FiExternalLink className="w-3 h-3" />
-                  </a>
-                )}
+                    + Tạo Lead
+                  </button>
+                </div>
               </div>
-            ) : post.auto_seeding_comment.zalo_status === "failed" ? (
-              <div className="text-[10px] font-semibold text-red-600 mt-0.5" title={post.auto_seeding_comment.zalo_error || undefined}>
-                ⚠️ Tìm thấy SĐT {post.auto_seeding_comment.phone_number} nhưng chưa nhắn được qua Zalo
-                {post.auto_seeding_comment.zalo_error ? ` (${post.auto_seeding_comment.zalo_error})` : ""} — cần inbox thủ công
-              </div>
-            ) : null}
+            )}
           </div>
         ) : null}
 
@@ -410,6 +439,26 @@ export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onVi
           onDelete={(userRole === "admin" || userRole === "leader") ? onDelete : undefined}
         />
       )}
+
+      {/* Tạo lead ngay từ SĐT + tên Zalo bot auto-seeding đã tìm được (migration 172) —
+          không bắt gõ lại, đi đúng luồng check trùng/tạo lead đang dùng ở CRM. */}
+      <LeadFormDrawer
+        open={showLeadDrawer}
+        currentUser={currentUser}
+        onClose={() => setShowLeadDrawer(false)}
+        onSaved={(lead) => {
+          setShowLeadDrawer(false);
+          toast.success(`Đã tạo lead "${lead.leadName || lead.phone || "mới"}"`);
+        }}
+        // post-card không có khung "Chấm điểm lead" riêng như trang CRM Leads —
+        // dùng nút "Lưu & Chấm điểm" trong drawer thì cũng chỉ đóng lại như lưu thường.
+        onOpenQualification={() => setShowLeadDrawer(false)}
+        initialValues={{
+          phone: post.auto_seeding_comment?.phone_number || undefined,
+          leadName: post.auto_seeding_comment?.zalo_display_name || undefined,
+          note: `Tạo từ bài seeding tự động: ${post.post_url}`,
+        }}
+      />
     </div>
   );
 }

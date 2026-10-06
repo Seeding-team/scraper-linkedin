@@ -165,6 +165,7 @@ function formatDate(value: string | null | undefined): string {
 const VIDEO_EXT_RE = /\.(mp4|webm|mov|m4v|3gp|mkv|avi)(\?|#|$)/i;
 const IMAGE_EXT_RE = /\.(png|jpe?g|webp|gif|bmp|svg)(\?|#|$)/i;
 const AUDIO_EXT_RE = /\.(mp3|m4a|aac|wav|ogg|opus)(\?|#|$)/i;
+const FILE_EXT_RE = /\.(pdf|docx?|xlsx?|pptx?|zip|rar|7z|txt|csv|rtf)(\?|#|$)/i;
 
 type ZaloAssetKind = "image" | "video" | "audio" | "file";
 type JsonRecord = Record<string, unknown>;
@@ -246,10 +247,18 @@ function getPathString(source: unknown, keys: string[]): string | undefined {
       if (typeof direct === "number" || typeof direct === "boolean") return String(direct);
     }
     for (const nestedKey of ["data", "content", "params", "attach", "attachment", "extra", "payload", "link", "hrefInfo", "card"]) {
-      if (nestedKey in record) {
-        const found = visit(record[nestedKey]);
-        if (found) return found;
-      }
+      if (!(nestedKey in record)) continue;
+      // Chỉ đi sâu tiếp khi giá trị lồng là OBJECT/ARRAY (vùng chứa có thể có
+      // field đang tìm bên trong) — KHÔNG được coi 1 STRING thường (vd nội
+      // dung chữ của tin nhắn text nằm ở raw_content.data.content) là "tìm
+      // thấy" chỉ vì nó nằm dưới 1 key tên quen thuộc như "content"/"data".
+      // Thiếu điều kiện này khiến MỌI tin nhắn chữ bình thường bị hiểu nhầm
+      // thành link/liên hệ/ngân hàng (content text tình cờ trùng điều kiện
+      // content === url ở inferSpecialCard) — bug đã gặp thực tế 2026-10-06.
+      const nestedParsed = parseMaybeJson(record[nestedKey]);
+      if (!nestedParsed || typeof nestedParsed !== "object") continue;
+      const found = visit(nestedParsed);
+      if (found) return found;
     }
     return undefined;
   };
@@ -313,10 +322,18 @@ function inferSpecialCard(message: ZaloLibraryMessage, assets: NormalizedAsset[]
   const amount = getPathString(raw, ["amount", "money", "total", "price"]);
   const when = getPathString(raw, ["time", "date", "startTime", "endTime", "deadline", "remindTime"]);
 
+  // Zalo dùng CHUNG 1 hình dạng raw_content (href+title+thumb) cho cả "chia sẻ
+  // liên kết web" LẪN "gửi file đính kèm" (share.file, hdUrl trỏ tới CDN file-stal-*)
+  // — nếu không loại trừ, 1 file PDF/DOCX gửi/nhận được sẽ bị vẽ thêm 1 thẻ
+  // "Liên kết" 🔗 thừa bên cạnh thẻ file (icon tài liệu + nút tải) đã đúng từ
+  // normalizeMessageAssets/otherAssets — gây hiện 2 khối cho cùng 1 file (bug
+  // thực tế gặp 2026-10-06). Nhận diện "đây là file, không phải link" qua
+  // msg_kind HOẶC đuôi file phổ biến trong chính URL.
+  const looksLikeFileShare = type.includes("file") || (url ? FILE_EXT_RE.test(url) : false);
   if (type.includes("sticker")) {
     return { kind: "sticker", title: title || "Sticker", imageUrl: imageUrl || assets[0]?.url, description };
   }
-  if (type.includes("link") || (url && (title || description || content === url))) {
+  if (!looksLikeFileShare && (type.includes("link") || (url && (title || description || content === url)))) {
     let subtitle = "Liên kết";
     try { if (url) subtitle = new URL(url).hostname.replace(/^www\./, ""); } catch { /* noop */ }
     return { kind: "link", title: title || content || url || "Liên kết", subtitle, description, url, imageUrl };
@@ -353,17 +370,22 @@ function inferSpecialCard(message: ZaloLibraryMessage, assets: NormalizedAsset[]
   return null;
 }
 
-function ZaloMessageAssetView({ asset, message, compact = false }: { asset: NormalizedAsset; message: ZaloLibraryMessage; compact?: boolean }) {
+function ZaloMessageAssetView({ asset, message, compact = false, onImageClick }: { asset: NormalizedAsset; message: ZaloLibraryMessage; compact?: boolean; onImageClick?: (url: string) => void }) {
   const url = asset.url;
   const kind = classifyAssetKind(url, message);
   const fileName = assetFileName(url, message);
 
   if (kind === "image") {
     return (
-      <a href={url} target="_blank" rel="noopener noreferrer" title="Mở ảnh gốc" className="block h-full min-h-0">
+      <button
+        type="button"
+        onClick={() => onImageClick?.(url)}
+        title="Xem ảnh"
+        className="block h-full min-h-0 w-full cursor-zoom-in"
+      >
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src={url} alt={fileName} className={cn("h-full w-full rounded-lg object-cover", compact ? "max-h-[170px]" : "max-h-[260px]")} loading="lazy" />
-      </a>
+      </button>
     );
   }
   if (kind === "video") {
@@ -451,7 +473,7 @@ function linkifyText(text: string, isSent: boolean): React.ReactNode {
   );
 }
 
-function ZaloMessageBody({ message, isSent, isSelected }: { message: ZaloLibraryMessage; isSent: boolean; isSelected: boolean }) {
+function ZaloMessageBody({ message, isSent, isSelected, onImageClick }: { message: ZaloLibraryMessage; isSent: boolean; isSelected: boolean; onImageClick?: (url: string) => void }) {
   const assets = normalizeMessageAssets(message);
   const imageAssets = assets.filter((asset) => classifyAssetKind(asset.url, message) === "image");
   const otherAssets = assets.filter((asset) => classifyAssetKind(asset.url, message) !== "image");
@@ -479,7 +501,7 @@ function ZaloMessageBody({ message, isSent, isSelected }: { message: ZaloLibrary
         >
           {imageAssets.slice(0, 6).map((asset, assetIndex) => (
             <div key={`${asset.url}-${assetIndex}`} className={cn("relative overflow-hidden rounded-xl", imageAssets.length === 1 ? "" : "aspect-square", imageAssets.length === 3 && assetIndex === 0 && "row-span-2 aspect-auto")}>
-              <ZaloMessageAssetView asset={asset} message={message} compact={imageAssets.length > 1} />
+              <ZaloMessageAssetView asset={asset} message={message} compact={imageAssets.length > 1} onImageClick={onImageClick} />
               {assetIndex === 5 && imageAssets.length > 6 && <div className="absolute inset-0 flex items-center justify-center rounded-xl bg-black/55 text-sm font-bold text-white">+{imageAssets.length - 6}</div>}
             </div>
           ))}
@@ -487,12 +509,102 @@ function ZaloMessageBody({ message, isSent, isSelected }: { message: ZaloLibrary
       )}
       {otherAssets.length > 0 && (
         <div className={cn("space-y-1 max-w-[300px]", isSent ? "ml-auto" : "mr-auto")}>
-          {otherAssets.map((asset, assetIndex) => <ZaloMessageAssetView key={`${asset.url}-${assetIndex}`} asset={asset} message={message} />)}
+          {otherAssets.map((asset, assetIndex) => <ZaloMessageAssetView key={`${asset.url}-${assetIndex}`} asset={asset} message={message} onImageClick={onImageClick} />)}
         </div>
       )}
       {!message.is_deleted && !hasText && !assets.length && !specialCard && (
         <div className={cn(bubbleClass, "italic opacity-80")}>Tin nhắn đặc biệt chưa có dữ liệu hiển thị</div>
       )}
+    </div>
+  );
+}
+
+// Overlay xem ảnh toàn màn hình — bấm vào 1 ảnh trong đoạn chat mở overlay này,
+// trượt qua lại (nút mũi tên, phím ←/→, hoặc vuốt trên mobile) để xem hết các
+// ảnh khác đã gửi/nhận trong CÙNG hội thoại (urls đã được tính theo đúng thứ
+// tự tin nhắn cũ -> mới ở component cha).
+function ZaloImageLightbox({
+  urls,
+  index,
+  onClose,
+  onNavigate,
+}: {
+  urls: string[];
+  index: number;
+  onClose: () => void;
+  onNavigate: (nextIndex: number) => void;
+}) {
+  const touchStartXRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+      else if (e.key === "ArrowLeft" && urls.length > 1) onNavigate((index - 1 + urls.length) % urls.length);
+      else if (e.key === "ArrowRight" && urls.length > 1) onNavigate((index + 1) % urls.length);
+    };
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, [index, urls.length, onClose, onNavigate]);
+
+  const url = urls[index];
+  if (!url) return null;
+
+  const goPrev = () => onNavigate((index - 1 + urls.length) % urls.length);
+  const goNext = () => onNavigate((index + 1) % urls.length);
+
+  return (
+    <div
+      className="fixed inset-0 z-[100000] flex items-center justify-center bg-black/90 backdrop-blur-xs"
+      onClick={onClose}
+      onTouchStart={(e) => { touchStartXRef.current = e.touches[0]?.clientX ?? null; }}
+      onTouchEnd={(e) => {
+        const startX = touchStartXRef.current;
+        touchStartXRef.current = null;
+        if (startX == null || urls.length <= 1) return;
+        const deltaX = (e.changedTouches[0]?.clientX ?? startX) - startX;
+        if (Math.abs(deltaX) < 50) return;
+        if (deltaX > 0) goPrev();
+        else goNext();
+      }}
+    >
+      <button
+        type="button"
+        onClick={(e) => { e.stopPropagation(); onClose(); }}
+        title="Đóng (Esc)"
+        className="absolute top-4 right-4 z-10 text-white/80 transition hover:text-white"
+      >
+        <MaterialIcon name="close" className="text-3xl" />
+      </button>
+      {urls.length > 1 && (
+        <>
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); goPrev(); }}
+            title="Ảnh trước (←)"
+            className="absolute left-2 top-1/2 z-10 -translate-y-1/2 rounded-full bg-black/30 p-2 text-white/80 transition hover:bg-black/50 hover:text-white sm:left-6"
+          >
+            <MaterialIcon name="chevron_left" className="text-3xl" />
+          </button>
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); goNext(); }}
+            title="Ảnh sau (→)"
+            className="absolute right-2 top-1/2 z-10 -translate-y-1/2 rounded-full bg-black/30 p-2 text-white/80 transition hover:bg-black/50 hover:text-white sm:right-6"
+          >
+            <MaterialIcon name="chevron_right" className="text-3xl" />
+          </button>
+          <div className="absolute bottom-4 left-1/2 z-10 -translate-x-1/2 rounded-full bg-black/40 px-3 py-1 text-xs font-semibold text-white/80">
+            {index + 1} / {urls.length}
+          </div>
+        </>
+      )}
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={url}
+        alt="Xem ảnh"
+        onClick={(e) => e.stopPropagation()}
+        className="max-h-[90vh] max-w-[92vw] select-none rounded object-contain shadow-2xl"
+      />
     </div>
   );
 }
@@ -705,6 +817,24 @@ export function ZaloInboxAdminShell() {
   const [reactionPickerFor, setReactionPickerFor] = useState<string | null>(null);
   const [messageMenuFor, setMessageMenuFor] = useState<string | null>(null);
   const [showSearchPanel, setShowSearchPanel] = useState(false);
+
+  // Overlay xem ảnh (lightbox) — chỉ lưu INDEX trong chatImageUrls, không lưu URL
+  // trực tiếp, để nút trượt qua lại tính next/prev đơn giản bằng index +-1.
+  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
+  const chatImageUrls = useMemo(() => {
+    const urls: string[] = [];
+    for (const m of inbox.messages) {
+      if (m.is_deleted) continue;
+      for (const asset of normalizeMessageAssets(m)) {
+        if (classifyAssetKind(asset.url, m) === "image") urls.push(asset.url);
+      }
+    }
+    return urls;
+  }, [inbox.messages]);
+  const handleImageClick = (url: string) => {
+    const idx = chatImageUrls.indexOf(url);
+    setLightboxIndex(idx >= 0 ? idx : 0);
+  };
 
   const [forwardingMessage, setForwardingMessage] = useState<ZaloLibraryMessage | null>(null);
   const [newChatModalOpen, setNewChatModalOpen] = useState(false);
@@ -1046,6 +1176,7 @@ export function ZaloInboxAdminShell() {
     lastChatScrollStateRef.current = { convId: "", lastMessageKey: "" };
     setMessageMenuFor(null);
     setReactionPickerFor(null);
+    setLightboxIndex(null);
     groupMembersLoadKeyRef.current = null;
   }, [inbox.openConv, inbox.selectedAccountId]);
 
@@ -1846,7 +1977,7 @@ export function ZaloInboxAdminShell() {
                                   </button>
                                 );
                               })()}
-                              <ZaloMessageBody message={msg} isSent={isSent} isSelected={isSelected} />
+                              <ZaloMessageBody message={msg} isSent={isSent} isSelected={isSelected} onImageClick={handleImageClick} />
                               {(() => {
                                 const msgKey = msg.source_message_id || msg.id || String(index);
                                 const canReact = !msg.is_deleted && msg.source_message_id && (msg as unknown as { cli_msg_id?: string }).cli_msg_id;
@@ -2683,6 +2814,17 @@ export function ZaloInboxAdminShell() {
           inbox.showToast(`Đã gán người phụ trách: ${name}`, true);
         }}
       />
+
+      {/* Overlay xem ảnh — trượt qua lại giữa các ảnh đã gửi/nhận trong đoạn chat */}
+      {mounted && lightboxIndex !== null && createPortal(
+        <ZaloImageLightbox
+          urls={chatImageUrls}
+          index={lightboxIndex}
+          onClose={() => setLightboxIndex(null)}
+          onNavigate={setLightboxIndex}
+        />,
+        document.body
+      )}
 
       {/* Auth Portal Modal */}
       {mounted && showAuthModal && inbox.selectedAccountId && createPortal(

@@ -82,6 +82,9 @@ export interface UnifiedPost {
     zalo_conversation_id?: string | null;
     /** Lý do cụ thể khi zalo_status='failed' (vd "SĐT chưa đăng ký Zalo", "phiên hết hạn"...). */
     zalo_error?: string | null;
+    /** Tên hiển thị Zalo của khách (tìm được qua SĐT) — null nếu Zalo không trả về tên
+     * riêng (migration 172). Hiện cùng SĐT trên post card cho rõ thông tin khách. */
+    zalo_display_name?: string | null;
   } | null;
 }
 
