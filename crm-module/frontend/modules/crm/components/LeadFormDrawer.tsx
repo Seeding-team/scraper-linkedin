@@ -18,6 +18,7 @@ import type { CrmLeadRow } from '../types';
 type FormState = {
   leadName: string;
   companyName: string;
+  taxCode: string;
   positionCategoryId: string;
   positionLabel: string;
   phone: string;
@@ -60,6 +61,7 @@ function emptyForm(currentUser: AppUser | null, defaultSource = 'Manual'): FormS
   return {
     leadName: '',
     companyName: '',
+    taxCode: '',
     positionCategoryId: '',
     positionLabel: '',
     phone: '',
@@ -588,6 +590,7 @@ export function LeadFormDrawer({
     return {
       lead_name: form.leadName.trim(),
       company_name: form.companyName.trim() || null,
+      tax_code: form.taxCode.trim() || null,
       position_category_id: form.positionCategoryId || null,
       phone: phone || null,
       email: form.email.trim() || null,
@@ -934,6 +937,9 @@ export function LeadFormDrawer({
                   </Field>
                   <Field label="Công ty / Tổ chức">
                     <input value={form.companyName} onChange={e => handleCompanyNameChange(e.target.value)} placeholder="Công ty TNHH ABC" />
+                  </Field>
+                  <Field label="MST (mã số thuế)">
+                    <input value={form.taxCode} onChange={e => setValue('taxCode', e.target.value.replace(/[^0-9-]/g, ''))} inputMode="numeric" placeholder="VD: 0312345678" />
                   </Field>
                   <Field label="Số điện thoại" hint="cần SĐT hoặc email">
                     <input value={form.phone} onChange={e => setValue('phone', normalizePhoneInput(e.target.value))} type="tel" inputMode="tel" autoComplete="tel" placeholder="Autofill từ kiểm tra trùng" />

@@ -858,6 +858,7 @@ export function LeadDetailDrawer({
           // ve leadName (customer_name NOT NULL, khong the de rong).
           customer_name: lead.companyName || lead.leadName,
           company_name: lead.companyName || null,
+          tax_code: lead.taxCode || null,
           position_category_id: lead.positionCategoryId || null,
           phone: lead.phone || null,
           email: lead.email || null,

@@ -28,7 +28,7 @@ from app.modules.all_platform.services.crm_position_service import apply_positio
 logger = logging.getLogger(__name__)
 
 LEAD_COLUMNS = (
-    "id, lead_name, company_name, position, position_category_id, "
+    "id, lead_name, company_name, tax_code, position, position_category_id, "
     "position_label_snapshot, phone, phone_normalized, email, "
     "email_normalized, zalo, facebook, telegram, website, source, status, "
     "score, sdr_id, team_id, project_name, deal_stage, note, qualification_need, qualification_icp_fit, "
