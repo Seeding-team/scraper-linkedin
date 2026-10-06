@@ -424,6 +424,33 @@ function ZaloSpecialCardView({ card, isSent }: { card: ZaloSpecialCard; isSent: 
   return <a href={card.url} target="_blank" rel="noopener noreferrer" className="block hover:opacity-95">{body}</a>;
 }
 
+const URL_SPLIT_RE = /(https?:\/\/[^\s<>)"']+)/gi;
+
+// Nhiều tin nhắn text thường (không phải "chia sẻ liên kết" có thẻ preview của
+// Zalo) chỉ là link dán thẳng vào nội dung (vd link Google Meet) — trước đây
+// hiện ra chữ xám tĩnh, không bấm được. Tách URL ra khỏi text thường để render
+// thành <a> bấm mở được, song song với ZaloSpecialCardView (chỉ xử lý link có
+// metadata card riêng từ raw_content).
+function linkifyText(text: string, isSent: boolean): React.ReactNode {
+  const segments = text.split(URL_SPLIT_RE);
+  if (segments.length <= 1) return text;
+  return segments.map((segment, idx) =>
+    /^https?:\/\//i.test(segment) ? (
+      <a
+        key={idx}
+        href={segment}
+        target="_blank"
+        rel="noopener noreferrer"
+        className={cn("underline break-all", isSent ? "text-white" : "text-blue-600")}
+      >
+        {segment}
+      </a>
+    ) : (
+      <span key={idx}>{segment}</span>
+    ),
+  );
+}
+
 function ZaloMessageBody({ message, isSent, isSelected }: { message: ZaloLibraryMessage; isSent: boolean; isSelected: boolean }) {
   const assets = normalizeMessageAssets(message);
   const imageAssets = assets.filter((asset) => classifyAssetKind(asset.url, message) === "image");
@@ -439,7 +466,7 @@ function ZaloMessageBody({ message, isSent, isSelected }: { message: ZaloLibrary
 
   return (
     <div className={cn("space-y-1", isSent ? "items-end" : "items-start")}>
-      {showText && <div className={cn("whitespace-pre-wrap", bubbleClass)}>{message.content}</div>}
+      {showText && <div className={cn("whitespace-pre-wrap", bubbleClass)}>{linkifyText(message.content || "", isSent)}</div>}
       {specialCard && <div className={cn("max-w-[280px]", isSent ? "ml-auto" : "mr-auto")}><ZaloSpecialCardView card={specialCard} isSent={isSent} /></div>}
       {imageAssets.length > 0 && (
         <div
