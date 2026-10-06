@@ -197,15 +197,32 @@ export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onVi
 
         {/* Nội dung */}
         {isYouTube ? (
-          <a href={post.post_url} target="_blank" rel="noopener noreferrer" className="flex gap-3 items-start bg-muted px-3 py-2 rounded-lg border border-border mb-3 hover:border-primary/30">
+          <a
+            href={post.post_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="group flex gap-3 items-start bg-muted px-3 py-2 rounded-lg border border-border mb-3 transition-colors hover:border-primary/30"
+          >
             {post.image_urls?.[0] ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={post.image_urls[0]} alt="" loading="lazy" className="w-32 aspect-video rounded-md object-cover shrink-0 border border-border" />
+              <span className="relative block w-40 aspect-video shrink-0 overflow-hidden rounded-md border border-border bg-black/5">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={post.image_urls[0]} alt="" loading="lazy" className="h-full w-full object-cover" />
+                <span className="absolute inset-0 flex items-center justify-center bg-black/0 transition-colors group-hover:bg-black/20">
+                  <span className="flex h-9 w-9 items-center justify-center rounded-full bg-black/70 text-white opacity-0 shadow-sm transition-opacity group-hover:opacity-100">
+                    <FaYoutube className="text-base" />
+                  </span>
+                </span>
+                {post.duration_text && (
+                  <span className="absolute bottom-1 right-1 rounded bg-black/80 px-1.5 py-0.5 text-[10px] font-bold leading-none text-white">
+                    {post.duration_text}
+                  </span>
+                )}
+              </span>
             ) : null}
             <span className="min-w-0">
-              <span className="block text-sm font-semibold text-foreground line-clamp-2">{post.title || "Video YouTube"}</span>
+              <span className="block text-sm font-semibold text-foreground line-clamp-2 group-hover:text-primary">{post.title || "Video YouTube"}</span>
               <span className="block text-xs text-muted-foreground mt-0.5">
-                {[post.duration_text, post.published_text].filter(Boolean).join(" • ")}
+                {post.published_text || "Chưa rõ ngày đăng"}
               </span>
             </span>
           </a>
