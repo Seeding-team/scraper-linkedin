@@ -1493,7 +1493,10 @@ export function ZaloInboxAdminShell() {
                       const isSelected = selectedMessageIds.includes(msg.source_message_id || msg.id || "");
                       const senderMember = msg.sender_id ? groupMemberByUid.get(msg.sender_id) : undefined;
                       const senderName = senderMember?.display_name || msg.sender_name || selectedName || "Zalo";
-                      const senderAvatar = senderMember?.avatar_url || (msg as unknown as { sender_avatar_url?: string; avatar_url?: string }).sender_avatar_url || (msg as unknown as { avatar_url?: string }).avatar_url || null;
+                      const senderAvatar = isSent
+                        ? null
+                        : senderMember?.avatar_url || (msg as unknown as { sender_avatar_url?: string; avatar_url?: string }).sender_avatar_url || (msg as unknown as { avatar_url?: string }).avatar_url || null;
+                      const displayAvatarName = isSent ? "Bạn" : senderName;
                       const isGroupSender = Boolean(msg.sender_id && msg.sender_id !== inbox.openConv);
                       const checkboxEl = (
                         <input
@@ -1520,10 +1523,10 @@ export function ZaloInboxAdminShell() {
                         >
                           <div
                             data-msg-anchor={msg.source_message_id || undefined}
-                            className={cn("flex items-center gap-2 group rounded-lg transition-shadow py-0.5", isSent ? "justify-end" : "justify-start")}
+                            className={cn("flex items-start gap-2 group rounded-lg transition-shadow py-1", isSent ? "justify-end" : "justify-start")}
                           >
                             {!isSent && checkboxEl}
-                            {!isSent && <Avatar src={senderAvatar} name={senderName} className="h-7 w-7 text-[10px] shrink-0 self-end" />}
+                            {!isSent && <Avatar src={senderAvatar} name={displayAvatarName} className="mt-4 h-8 w-8 text-[10px] shrink-0 shadow-sm ring-2 ring-white" />}
                             <div className={cn("max-w-[88%] sm:max-w-[75%]", isSent ? "text-right" : "text-left")}>
                               {!isSent && (
                                 <div className="flex items-center gap-1 mb-0.5 px-1">
@@ -1702,6 +1705,7 @@ export function ZaloInboxAdminShell() {
                                 </div>
                               )}
                             </div>
+                            {isSent && <Avatar src={null} name={displayAvatarName} className="mt-0.5 h-8 w-8 text-[10px] shrink-0 shadow-sm ring-2 ring-white" />}
                             {isSent && checkboxEl}
                           </div>
                         </ZaloSwipeableMessageItem>
