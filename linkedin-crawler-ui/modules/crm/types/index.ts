@@ -409,6 +409,7 @@ export interface CrmLeadRow {
   id: string;
   leadName: string;
   companyName?: string;
+  taxCode?: string;
   position?: string;
   positionCategoryId?: string;
   positionLabelSnapshot?: string;

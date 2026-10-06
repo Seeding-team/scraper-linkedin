@@ -26,6 +26,7 @@ function isAdminOrLeader(user: AppUser | null) {
 type EditFormState = {
   leadName: string;
   companyName: string;
+  taxCode: string;
   positionCategoryId: string;
   positionLabel: string;
   phone: string;
@@ -46,6 +47,7 @@ function formFromLead(lead: CrmLeadRow): EditFormState {
   return {
     leadName: lead.leadName || '',
     companyName: lead.companyName || '',
+    taxCode: lead.taxCode || '',
     positionCategoryId: lead.positionCategoryId || '',
     positionLabel: lead.positionLabelSnapshot || lead.position || '',
     phone: lead.phone || '',
@@ -231,6 +233,7 @@ export function LeadEditDrawer({
       const payload: Record<string, unknown> = {
         lead_name: form.leadName.trim(),
         company_name: form.companyName.trim() || null,
+        tax_code: form.taxCode.trim() || null,
         position_category_id: form.positionCategoryId || null,
         phone: form.phone.trim() || null,
         email: form.email.trim() || null,
@@ -299,6 +302,15 @@ export function LeadEditDrawer({
                     value={form.companyName}
                     onChange={e => setValue('companyName', e.target.value)}
                     placeholder="Công ty TNHH ABC"
+                  />
+                </Field>
+                <Field label="MST (mã số thuế)">
+                  <input
+                    data-testid="edit-tax-code"
+                    value={form.taxCode}
+                    onChange={e => setValue('taxCode', e.target.value.replace(/[^0-9-]/g, ''))}
+                    inputMode="numeric"
+                    placeholder="VD: 0312345678"
                   />
                 </Field>
                 <Field label="Chức vụ">

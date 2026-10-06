@@ -84,6 +84,7 @@ type ApiLeadRow = {
   id: string;
   lead_name?: string | null;
   company_name?: string | null;
+  tax_code?: string | null;
   position?: string | null;
   position_category_id?: string | null;
   position_label_snapshot?: string | null;
@@ -139,6 +140,7 @@ export function mapLead(row: ApiLeadRow): CrmLeadRow {
     id: row.id,
     leadName: row.lead_name || 'Lead chưa tên',
     companyName: row.company_name || '',
+    taxCode: row.tax_code || '',
     position: row.position || '',
     positionCategoryId: row.position_category_id || '',
     positionLabelSnapshot: row.position_label_snapshot || '',

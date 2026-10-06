@@ -26,6 +26,7 @@ CrmLeadStatus = Literal[
 class CrmLeadBase(BaseModel):
     lead_name: str = Field(..., min_length=1)
     company_name: Optional[str] = None
+    tax_code: Optional[str] = None  # MST (migration tax_code)
     position: Optional[str] = None
     # migration 079 — Chuc vu category-driven select (category_type=crm_position).
     position_category_id: Optional[str] = None
@@ -54,6 +55,7 @@ class CrmLeadCreate(CrmLeadBase):
 class CrmLeadUpdate(BaseModel):
     lead_name: Optional[str] = None
     company_name: Optional[str] = None
+    tax_code: Optional[str] = None
     position: Optional[str] = None
     position_category_id: Optional[str] = None
     phone: Optional[str] = None
