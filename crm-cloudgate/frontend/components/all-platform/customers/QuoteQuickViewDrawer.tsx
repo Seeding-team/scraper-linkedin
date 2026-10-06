@@ -273,10 +273,16 @@ export function QuoteQuickViewDrawer({ quote, open, customerName, dealName, onCl
             <div className="crm-scroll-hidden flex-1 overflow-y-auto px-5 py-4">
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                 <div className="rounded-lg border border-slate-200 p-3">
-                  <div className="text-xs text-slate-400">Giá khách</div>
+                  <div className="text-xs text-slate-400">Giá khách (chưa VAT)</div>
                   <div className="mt-0.5 text-lg font-bold text-slate-800">
                     {formatQuoteAmountOr(quote.customerPriceBeforeVat ?? quote.totalAmount ?? null, quote.currency, formatVNDShort)}
                   </div>
+                  {quote.totalAmount != null ? (
+                    <div className="mt-1 text-[11px] leading-snug text-slate-500">
+                      VAT {formatQuoteAmountOr(quote.vatAmount ?? 0, quote.currency, formatVNDShort)} · Tổng thanh toán (gồm VAT){" "}
+                      <span className="font-semibold text-slate-700">{formatQuoteAmountOr(quote.totalAmount, quote.currency, formatVNDShort)}</span>
+                    </div>
+                  ) : null}
                 </div>
                 {quote.costViewAllowed !== false ? (
                   <div className="rounded-lg border border-slate-200 p-3">

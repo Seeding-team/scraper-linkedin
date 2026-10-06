@@ -854,8 +854,11 @@ export function RegisterExternalContractModal({ contract, open, deal, onClose, o
                   </div>
                   <div className="grid grid-cols-3 gap-x-4 gap-y-2 text-xs">
                     <div>
-                      <div className="text-slate-400">GIÁ KHÁCH</div>
+                      <div className="text-slate-400">GIÁ KHÁCH (CHƯA VAT)</div>
                       <div className="font-medium text-slate-700">{formatQuoteAmountOr(selectedVersion.customerPriceBeforeVat ?? selectedVersion.totalAmount ?? null, selectedVersion.currency, formatVND)}</div>
+                      {selectedVersion.totalAmount != null ? (
+                        <div className="text-[11px] text-slate-500">Gồm VAT: {formatQuoteAmountOr(selectedVersion.totalAmount, selectedVersion.currency, formatVND)}</div>
+                      ) : null}
                     </div>
                     <div>
                       <div className="text-slate-400">LIÊN HỆ CHÍNH</div>
@@ -918,7 +921,10 @@ export function RegisterExternalContractModal({ contract, open, deal, onClose, o
                 />
                 {quotePrice != null ? (
                   <div className="mt-1 flex items-center justify-between">
-                    <span className="text-[11px] text-slate-400">Theo {selectedVersion?.quoteNumber} · V{selectedVersion?.versionNumber || 1}</span>
+                    <span className="text-[11px] text-slate-400">
+                      Theo {selectedVersion?.quoteNumber} · V{selectedVersion?.versionNumber || 1} · <strong className="font-semibold text-slate-500">chưa VAT</strong>
+                      {selectedVersion?.totalAmount != null ? ` (gồm VAT: ${formatVND(quoteAmountVnd(selectedVersion.totalAmount, selectedVersion))})` : ""}
+                    </span>
                     {!showAdjustReason && !valueDiffersFromQuote ? (
                       <button type="button" onClick={() => setShowAdjustReason(true)} className="text-[11px] font-semibold text-primary hover:underline">
                         Điều chỉnh
