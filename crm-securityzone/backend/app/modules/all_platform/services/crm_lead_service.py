@@ -798,6 +798,18 @@ def convert_lead(lead_id: str, payload: dict[str, Any], user: dict[str, Any]) ->
     # own "leave existing profile alone unless p_update_customer" rule).
     new_deal_id = (data.get("deal") or {}).get("id")
     new_customer_id_for_project = (data.get("customer") or {}).get("id")
+    # PVCC tu MSC (crm_scope_items) dang gan Lead -> gan them vao Co hoi vua tao (bao gia / MSC dung lai). Loi o day khong chan convert.
+    if new_deal_id:
+        try:
+            execute_supabase_query(
+                lambda: supabase.table("crm_scope_items")
+                .update({"deal_id": new_deal_id})
+                .eq("lead_id", lead_id)
+                .eq("instance", settings.crm_instance)
+                .execute()
+            )
+        except Exception as exc:  # bang chua co (chua chay migration) hoac loi tam thoi
+            logger.warning("Khong gan duoc PVCC vao Co hoi %s: %s", new_deal_id, exc)
     # "Dự án" go ten moi (project_name, xem chu thich o tren) - tao THAT sau
     # khi biet customer_id (co the la khach hang vua tao trong chinh RPC nay),
     # roi patch project_id nguoc vao Deal. project_id CO SAN (chon tu du an
