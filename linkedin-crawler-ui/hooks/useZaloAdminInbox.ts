@@ -71,6 +71,7 @@ export interface ZaloConv {
   conv_id: string;
   name: string;
   preview: string;
+  latest_sender_name?: string | null;
   unread: boolean;
   time: string;
   is_customer: boolean;
@@ -184,6 +185,8 @@ export function useZaloAdminInbox() {
   const convPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const msgPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const accountPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const messageLoadSeqRef = useRef(0);
+  const messageSignatureRef = useRef("");
   const selectedAccountIdRef = useRef(selectedAccountId);
   const selectedConvIdRef = useRef(selectedConvId);
 
@@ -456,6 +459,7 @@ export function useZaloAdminInbox() {
   const onSelectConv = useCallback((convId: string) => {
     setSelectedConvId(convId);
     setMessages([]);
+    messageSignatureRef.current = "";
     setGroupMembers(null);
     setPendingMentions([]);
     setReplyingTo(null);
@@ -464,20 +468,31 @@ export function useZaloAdminInbox() {
 
   const loadMessages = useCallback(async (accountId: string, convId: string, append = false) => {
     if (!accountId || !convId) return;
+    const requestSeq = ++messageLoadSeqRef.current;
     if (!append) setLoadingMessages(true);
     try {
-      const res = await getZaloConversationMessages(accountId, convId, 50, 0);
+      const res = await getZaloConversationMessages(accountId, convId, 60, 0);
+      if (selectedAccountIdRef.current !== accountId || selectedConvIdRef.current !== convId) return;
+      if (requestSeq !== messageLoadSeqRef.current && !append) return;
       if (res?.messages) {
-        setMessages(res.messages);
+        const signature = res.messages
+          .map((m) => `${m.source_message_id || m.id || ""}:${m.timestamp_text || m.time_text || ""}:${m.is_deleted ? 1 : 0}`)
+          .join("|");
+        if (signature !== messageSignatureRef.current) {
+          messageSignatureRef.current = signature;
+          setMessages(res.messages);
+        }
         setMessageTotal(res.total ?? res.messages.length);
       }
     } catch (e) {
       console.error("loadMessages error", e);
     } finally {
-      setLoadingMessages(false);
+      if (selectedAccountIdRef.current === accountId && selectedConvIdRef.current === convId) {
+        setLoadingMessages(false);
+      }
     }
     // Chỉ mark-read khi mở hội thoại/lần tải chính, tránh poll nền làm chậm và giật UI.
-    if (!append) {
+    if (!append && selectedAccountIdRef.current === accountId && selectedConvIdRef.current === convId) {
       try { await markZaloConversationAsRead(accountId, convId); } catch { /* no-op */ }
     }
   }, []);
@@ -1075,6 +1090,7 @@ export function useZaloAdminInbox() {
         conv_id: c.conversation_id,
         name: c.conversation_name || "Người dùng Zalo",
         preview: c.latest_content || "",
+        latest_sender_name: c.latest_sender_name ?? null,
         unread: hasUnread,
         time: timeStr,
         is_customer: isCust,
@@ -1262,3 +1278,4 @@ export function useZaloAdminInbox() {
     refreshAccounts: loadMemberAccounts,
   };
 }
+

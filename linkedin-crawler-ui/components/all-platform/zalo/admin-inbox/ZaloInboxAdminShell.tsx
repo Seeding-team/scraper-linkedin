@@ -759,15 +759,21 @@ export function ZaloInboxAdminShell() {
     const shouldStickToBottom = convChanged || distanceFromBottom < 180;
     lastChatScrollStateRef.current = { convId, lastMessageKey };
     if (shouldStickToBottom) {
-      requestAnimationFrame(() => {
+      const scrollToBottom = () => {
         if (chatScrollRef.current) {
           chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
         }
+      };
+      requestAnimationFrame(() => {
+        scrollToBottom();
+        requestAnimationFrame(scrollToBottom);
+        window.setTimeout(scrollToBottom, 80);
       });
     }
   }, [inbox.messages, inbox.openConv]);
 
   useEffect(() => {
+    lastChatScrollStateRef.current = { convId: "", lastMessageKey: "" };
     setMessageMenuFor(null);
     setReactionPickerFor(null);
     groupMembersLoadKeyRef.current = null;
@@ -1190,6 +1196,11 @@ export function ZaloInboxAdminShell() {
             ) : (
               inbox.filtered.map((conv) => {
                 const active = inbox.openConv === conv.conv_id && !inbox.archiveReading;
+                const lastSender = conv.latest_sender_name?.trim();
+                const previewText = conv.preview || "—";
+                const previewWithSender = lastSender && lastSender !== conv.name && previewText !== "—"
+                  ? `${lastSender}: ${previewText}`
+                  : previewText;
                 return (
                   <button
                     key={conv.conv_id}
@@ -1215,7 +1226,7 @@ export function ZaloInboxAdminShell() {
                       </div>
 
                       <p className={cn("truncate text-[11px]", conv.unread ? "font-bold text-slate-900" : "text-slate-500")}>
-                        {conv.preview || "—"}
+                        {previewWithSender}
                       </p>
 
                       <div className="mt-1 flex flex-wrap items-center gap-1.5">
