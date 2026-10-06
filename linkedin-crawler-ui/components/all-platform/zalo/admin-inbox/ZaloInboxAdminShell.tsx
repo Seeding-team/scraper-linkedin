@@ -165,6 +165,7 @@ function formatDate(value: string | null | undefined): string {
 const VIDEO_EXT_RE = /\.(mp4|webm|mov|m4v|3gp|mkv|avi)(\?|#|$)/i;
 const IMAGE_EXT_RE = /\.(png|jpe?g|webp|gif|bmp|svg)(\?|#|$)/i;
 const AUDIO_EXT_RE = /\.(mp3|m4a|aac|wav|ogg|opus)(\?|#|$)/i;
+const FILE_EXT_RE = /\.(pdf|docx?|xlsx?|pptx?|zip|rar|7z|txt|csv|rtf)(\?|#|$)/i;
 
 type ZaloAssetKind = "image" | "video" | "audio" | "file";
 type JsonRecord = Record<string, unknown>;
@@ -321,10 +322,18 @@ function inferSpecialCard(message: ZaloLibraryMessage, assets: NormalizedAsset[]
   const amount = getPathString(raw, ["amount", "money", "total", "price"]);
   const when = getPathString(raw, ["time", "date", "startTime", "endTime", "deadline", "remindTime"]);
 
+  // Zalo dùng CHUNG 1 hình dạng raw_content (href+title+thumb) cho cả "chia sẻ
+  // liên kết web" LẪN "gửi file đính kèm" (share.file, hdUrl trỏ tới CDN file-stal-*)
+  // — nếu không loại trừ, 1 file PDF/DOCX gửi/nhận được sẽ bị vẽ thêm 1 thẻ
+  // "Liên kết" 🔗 thừa bên cạnh thẻ file (icon tài liệu + nút tải) đã đúng từ
+  // normalizeMessageAssets/otherAssets — gây hiện 2 khối cho cùng 1 file (bug
+  // thực tế gặp 2026-10-06). Nhận diện "đây là file, không phải link" qua
+  // msg_kind HOẶC đuôi file phổ biến trong chính URL.
+  const looksLikeFileShare = type.includes("file") || (url ? FILE_EXT_RE.test(url) : false);
   if (type.includes("sticker")) {
     return { kind: "sticker", title: title || "Sticker", imageUrl: imageUrl || assets[0]?.url, description };
   }
-  if (type.includes("link") || (url && (title || description || content === url))) {
+  if (!looksLikeFileShare && (type.includes("link") || (url && (title || description || content === url)))) {
     let subtitle = "Liên kết";
     try { if (url) subtitle = new URL(url).hostname.replace(/^www\./, ""); } catch { /* noop */ }
     return { kind: "link", title: title || content || url || "Liên kết", subtitle, description, url, imageUrl };
