@@ -314,6 +314,9 @@ def _ensure_group(
             "external_source": MSC_SOURCE,
             "external_id": external_id,
             "status": "active",
+            # default_vat_rate la NOT NULL trong DB (065) — create UI luon truyen
+            # so; sync truyen 0 (= dung DEFAULT cua cot, nguoi dung sua sau).
+            "default_vat_rate": 0,
         },
         user_id,
     )
@@ -372,6 +375,9 @@ def _upsert_items(
                         "external_source": MSC_SOURCE,
                         "external_id": item["external_id"],
                         "status": "active",
+                        # Xuong dong nhu nhom: NOT NULL + DEFAULT 0, khong dinh
+                        # gia sau (gia/VAT nguoi dung CRM tu quan ly).
+                        "default_vat_rate": 0,
                     },
                     user_id,
                 )
