@@ -1002,6 +1002,7 @@ async def send_media_to_conversation(
         # Upload ảnh đã gửi lên Supabase storage để hiển thị trong lịch sử chat
         # (zca-js không trả URL persistent, chỉ trả msgId).
         uploaded_urls: List[str] = []
+        uploaded_assets: List[Dict[str, str]] = []
         try:
             from app.modules.all_platform.zalo.services.supabase_service import (
                 _download_image,
@@ -1028,6 +1029,16 @@ async def send_media_to_conversation(
                     )
                     url = await upload_asset_bytes(storage_path, file_bytes, content_type)
                     uploaded_urls.append(url)
+                    # Đã có sẵn URL + path trong storage của mình (vừa upload xong) —
+                    # ghi thẳng vào zalo_message_assets bên dưới, KHÔNG để
+                    # save_message_assets() tải lại CHÍNH url này về rồi upload lại
+                    # lần 2 (lãng phí, và từng lỗi im lặng khi bucket zalo-assets
+                    # chưa tồn tại — ảnh mình tự gửi không hiện ra được).
+                    uploaded_assets.append({
+                        "source_url": url,
+                        "storage_path": storage_path,
+                        "storage_url": url,
+                    })
                 except Exception as exc:
                     logger.warning(f"Could not persist outgoing Zalo image {path}: {exc}")
         except Exception as exc:
@@ -1045,6 +1056,7 @@ async def send_media_to_conversation(
             content=text.strip() if text else "",
             message_type="image",
             image_urls=uploaded_urls,
+            uploaded_assets=uploaded_assets,
         )
 
         return SendMessageResponse(
@@ -1222,6 +1234,7 @@ async def forward_conversation_message(
         temp_paths: List[str] = []
         try:
             target_thread_type = await resolve_thread_type(user_id, target_id)
+            persisted_assets: Optional[List[Dict[str, str]]] = None
             if uploaded_assets:
                 temp_paths = [await _asset_to_temp_file(asset) for asset in uploaded_assets]
                 api_result = await send_zca_images(
@@ -1229,6 +1242,13 @@ async def forward_conversation_message(
                 )
                 image_urls = [a.get("storage_url") for a in uploaded_assets if a.get("storage_url")]
                 message_type = "image"
+                # Tái dùng storage_url gốc (đã có sẵn trong bucket của mình) cho tin
+                # nhắn mới — tránh save_listener_messages() tải lại chính url này
+                # qua save_message_assets() (cùng lỗi tự-tải-lại đã sửa ở gửi ảnh mới).
+                persisted_assets = [
+                    {"source_url": a["storage_url"], "storage_path": a.get("storage_path") or "", "storage_url": a["storage_url"]}
+                    for a in uploaded_assets if a.get("storage_url")
+                ]
             else:
                 api_result = await send_zca_message(auth, target_id, content, thread_type=target_thread_type)
                 image_urls = None
@@ -1241,6 +1261,7 @@ async def forward_conversation_message(
             await _persist_outgoing_message(
                 user_id, target_id, api_payload,
                 content=content, message_type=message_type, image_urls=image_urls,
+                uploaded_assets=persisted_assets,
             )
             results.append(ForwardMessageResult(conversation_id=target_id, ok=True))
         except ZcaAuthExpiredError:
@@ -1540,6 +1561,7 @@ async def _persist_outgoing_message(
     image_urls: Optional[List[str]] = None,
     mentions: Optional[List[Mention]] = None,
     reply_to_id: Optional[str] = None,
+    uploaded_assets: Optional[List[Dict[str, str]]] = None,
 ) -> None:
     """Lưu message gửi đi vào Supabase để hiển thị ngay trong chat history.
 
@@ -1571,7 +1593,10 @@ async def _persist_outgoing_message(
         time_text=now_iso,
         type=resolved_type,
         content=safe_content,
-        image_urls=safe_image_urls,
+        # uploaded_assets đã có sẵn → ghi thẳng zalo_message_assets bên dưới sau khi
+        # lưu xong, KHÔNG để save_listener_messages() lại tự tải/upload lại qua
+        # save_message_assets() (xem call site ở send_media_to_conversation).
+        image_urls=[] if uploaded_assets else safe_image_urls,
         is_sent=True,
         is_deleted=False,
         group_id=conversation_id,
@@ -1611,6 +1636,43 @@ async def _persist_outgoing_message(
         logger.warning(
             f"Could not persist outgoing message to Supabase for user={user_id} conv={conversation_id}: {exc}"
         )
+        return
+
+    if uploaded_assets:
+        try:
+            rows = await _rest(
+                "GET",
+                "zalo_messages",
+                params={
+                    "select": "id",
+                    "user_id": f"eq.{user_id}",
+                    "group_id": f"eq.{conversation_id}",
+                    "source_message_id": f"eq.{source_id}",
+                    "limit": "1",
+                },
+            ) or []
+            message_uuid = rows[0]["id"] if rows else None
+            if message_uuid:
+                now_iso2 = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+                await _rest(
+                    "POST",
+                    "zalo_message_assets",
+                    json=[
+                        {
+                            "message_id": message_uuid,
+                            "source_url": asset["source_url"],
+                            "storage_path": asset["storage_path"],
+                            "storage_url": asset["storage_url"],
+                            "status": "uploaded",
+                            "updated_at": now_iso2,
+                        }
+                        for asset in uploaded_assets
+                    ],
+                )
+        except Exception as exc:
+            logger.warning(
+                f"Could not persist outgoing message assets for user={user_id} conv={conversation_id}: {exc}"
+            )
 
 
 # ──────────────────────────────────────────────────────────────────────────────
