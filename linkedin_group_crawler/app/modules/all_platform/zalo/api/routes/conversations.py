@@ -999,11 +999,15 @@ async def send_media_to_conversation(
         except Exception as exc:
             raise HTTPException(status_code=500, detail=f"Không thể gửi file: {exc}")
 
-        # Upload ảnh đã gửi lên Supabase storage để hiển thị trong lịch sử chat
+        # Upload file/ảnh đã gửi lên Supabase storage để hiển thị trong lịch sử chat
         # (zca-js không trả URL persistent, chỉ trả msgId).
         uploaded_urls: List[str] = []
         uploaded_assets: List[Dict[str, str]] = []
+        all_images = True
+        _IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".svg"}
         try:
+            import mimetypes
+
             from app.modules.all_platform.zalo.services.supabase_service import (
                 _download_image,
                 upload_asset_bytes,
@@ -1015,13 +1019,14 @@ async def send_media_to_conversation(
                     # Lấy extension từ file gốc
                     orig_name = files[idx].filename if idx < len(files) else None
                     ext = os.path.splitext(orig_name or path)[1] or ".jpg"
-                    content_type = "image/jpeg"
-                    if ext.lower() in {".png"}:
-                        content_type = "image/png"
-                    elif ext.lower() in {".webp"}:
-                        content_type = "image/webp"
-                    elif ext.lower() in {".gif"}:
-                        content_type = "image/gif"
+                    if ext.lower() not in _IMAGE_EXTS:
+                        all_images = False
+                    # Trước đây hard-code content_type về "image/jpeg" cho MỌI phần mở
+                    # rộng lạ (pdf, docx, zip...) — file lưu trong storage với
+                    # Content-Type sai, và msg_kind bị ép thành "image" khiến FE vẽ
+                    # <img> cho 1 file không phải ảnh -> hiện icon ảnh vỡ. Dùng
+                    # mimetypes để suy ra đúng content-type theo tên file thật.
+                    content_type = mimetypes.guess_type(orig_name or path)[0] or "application/octet-stream"
                     storage_path = posixpath.join(
                         user_id,
                         "outgoing",
@@ -1049,12 +1054,24 @@ async def send_media_to_conversation(
         # 2026-08-26); vẫn thử "result" phòng hộ nếu 1 worker cũ chưa restart kịp
         # còn trả key cũ — tránh lại rơi vào fallback ID tạm gây lặp tin.
         api_payload = result.get("response") or result.get("result") if isinstance(result, dict) else None
+        caption = text.strip() if text else ""
+        if not caption and not all_images:
+            # File thường không có chữ kèm — dùng tên file thật làm content, giống
+            # đúng cách listener làm cho file NHẬN được (xem comment fileNameHint ở
+            # zca_persistent_listener.js), để FE hiện đúng tên thay vì tên ngẫu
+            # nhiên UUID của storage_path.
+            orig_names = [f.filename for f in files if f.filename]
+            caption = ", ".join(orig_names)[:150]
         await _persist_outgoing_message(
             user_id,
             conversation_id.strip(),
             api_payload,
-            content=text.strip() if text else "",
-            message_type="image",
+            content=caption,
+            # Chỉ ép "image" khi THẬT SỰ toàn ảnh — file thường (pdf/docx/zip...) phải
+            # để "file" để FE hiện thẻ tên-file+tải-về thay vì <img> vỡ (xem comment
+            # classifyAssetKind trong ZaloInboxAdminShell.tsx — URL không đúng đuôi
+            # ảnh + msg_kind=image mới là tổ hợp gây vỡ ảnh).
+            message_type="image" if all_images and uploaded_urls else "file",
             image_urls=uploaded_urls,
             uploaded_assets=uploaded_assets,
         )
@@ -1562,6 +1579,7 @@ async def _persist_outgoing_message(
     mentions: Optional[List[Mention]] = None,
     reply_to_id: Optional[str] = None,
     uploaded_assets: Optional[List[Dict[str, str]]] = None,
+    raw_content_override: Optional[Dict[str, Any]] = None,
 ) -> None:
     """Lưu message gửi đi vào Supabase để hiển thị ngay trong chat history.
 
@@ -1579,11 +1597,12 @@ async def _persist_outgoing_message(
     now_iso = now_utc.isoformat().replace("+00:00", "Z")
     safe_content = (content or "").strip() or None
     safe_image_urls = [url for url in (image_urls or []) if url]
-    resolved_type = "image" if safe_image_urls and not safe_content else message_type
-    if safe_image_urls and safe_content:
-        resolved_type = "image"  # type đính kèm chữ vẫn là image
-    elif safe_image_urls:
-        resolved_type = "image"
+    # Trước đây luôn ép resolved_type="image" bất cứ khi nào có URL đính kèm, bất kể
+    # caller truyền message_type gì — đúng lúc _persist_outgoing_message() CHỈ được
+    # gọi cho ảnh, nhưng giờ cũng dùng cho file thường/sticker (caller đã tự tính
+    # đúng message_type rồi), ép cứng về "image" ở đây sẽ làm 1 file .pdf/.docx bị
+    # gắn msg_kind="image" và FE vẽ ra <img> vỡ thay vì thẻ file tải về. Tin caller.
+    resolved_type = message_type
 
     message = Message(
         message_id=source_id,
@@ -1604,6 +1623,7 @@ async def _persist_outgoing_message(
         msg_kind=resolved_type,
         mentions=mentions or [],
         reply_to_id=reply_to_id,
+        raw_content=raw_content_override,
     )
 
     group_name = await _resolve_group_name(user_id, conversation_id)
@@ -1970,6 +1990,33 @@ async def send_sticker_to_conversation(
         raise HTTPException(status_code=401, detail=ZCA_SESSION_EXPIRED_DETAIL)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Không thể gửi sticker: {exc}")
+
+    # Trước đây KHÔNG lưu gì vào Supabase sau khi gửi — sticker chỉ hiện lại khi
+    # listener echo về, và dữ liệu echo của Zalo cho sticker chỉ có id/cateId (không
+    # có URL ảnh thật, phải tra riêng qua getStickersDetail), nên dù echo về cũng
+    # không có ảnh để vẽ. Ở đây đã có sẵn id/cateId CHẮC CHẮN đúng (từ chính request)
+    # nên tra ngay URL thật rồi lưu local, hiện ra tức thì — không cần chờ/đoán field
+    # từ raw_content của listener.
+    sticker_url: Optional[str] = None
+    try:
+        details = await get_zca_stickers_detail(auth, [body.id])
+        detail = details[0] if details else {}
+        sticker_url = detail.get("stickerWebpUrl") or detail.get("stickerUrl") or None
+    except Exception as exc:
+        logger.info(f"Could not resolve sticker detail for id={body.id}: {exc}")
+
+    api_payload = result.get("response") or result.get("result") if isinstance(result, dict) else None
+    await _persist_outgoing_message(
+        user_id,
+        conversation_id.strip(),
+        api_payload,
+        content="",
+        message_type="image" if sticker_url else "sticker",
+        image_urls=[sticker_url] if sticker_url else None,
+        raw_content_override=(
+            {"stickerUrl": sticker_url, "stickerWebpUrl": sticker_url} if sticker_url else None
+        ),
+    )
     return {"ok": True, "result": result}
 
 
