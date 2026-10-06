@@ -372,7 +372,7 @@ export function QuoteQuickViewDrawer({ quote, open, customerName, dealName, onCl
                         <tbody>
                           {rows.map(({ item, giaKhach, giaVon, loiNhuan, margin }, idx) => (
                             <tr key={item.id || idx} className="border-b border-slate-100">
-                              <td className="py-1.5 pr-2 text-slate-700">{item.serviceDescription || item.description || "—"}</td>
+                              <td className="whitespace-pre-line py-1.5 pr-2 text-slate-700">{item.serviceDescription || item.description || "—"}</td>
                               <td className="py-1.5 pr-2 text-right text-slate-600">{item.quantity ?? "—"}</td>
                               {showCost ? (
                                 <td className="py-1.5 pr-2 text-right text-slate-600">{giaVon != null ? formatVNDShort(giaVon) : "—"}</td>
