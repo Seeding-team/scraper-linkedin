@@ -1,4 +1,4 @@
--- 172: PVCC (phạm vi cung cấp) từ Mua Sắm Công gắn với Lead / Cơ hội CRM.
+-- 174: PVCC (phạm vi cung cấp) từ Mua Sắm Công gắn với Lead / Cơ hội CRM.
 -- Presale nhập PVCC ở MSC (Presale Review); khi gói Tham gia / Trúng thầu, MSC đồng bộ sang đây để CRM dùng lại (không gõ lại).
 CREATE TABLE IF NOT EXISTS public.crm_scope_items (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
