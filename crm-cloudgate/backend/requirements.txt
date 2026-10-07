@@ -19,3 +19,6 @@ google-generativeai
 
 # Telegram Chat (Quan ly kenh & CSKH) -- client MTProto thuan Python
 telethon
+
+# MSC → CRM product sync (migration 175) -- scheduler dong bo hang ngay
+apscheduler
