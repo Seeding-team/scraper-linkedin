@@ -35,6 +35,7 @@ _WEB_INTAKE_ALLOWED: tuple[tuple[str, re.Pattern[str]], ...] = tuple(
         ("GET", rf"/quote-forms/{_UUID}"),
         ("GET", rf"/quote-forms/{_UUID}/catalog-links"),
         ("GET", r"/quotes/issuer-companies"),
+        ("GET", r"/quotes/exchange-rate"),  # tỷ giá USD/VND hệ thống (chỉ đọc; POST refresh/cập nhật vẫn cần JWT)
         ("GET", r"/price-book-items"),
         ("GET", r"/service-catalog"),
         ("GET", r"/service-catalog/(lookup|units|vat-rates)"),
