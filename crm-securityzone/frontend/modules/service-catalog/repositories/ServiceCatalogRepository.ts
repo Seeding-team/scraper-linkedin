@@ -91,6 +91,7 @@ function toItemPayload(input: ServiceCatalogItemInput) {
     default_customer_price_vnd: input.defaultCustomerPriceVnd,
     pricing_input_mode: input.pricingInputMode,
     spec_quantity_per_unit: input.specQuantityPerUnit,
+    spec_unit_label: input.specUnitLabel,
     note: input.note,
     status: input.status,
     // TÍCH HỢP BỘ LỌC WORKSPACE: Gửi instance khi tạo mới hoặc cập nhật
