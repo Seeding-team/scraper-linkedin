@@ -177,33 +177,36 @@ async def message_exists(account_id: str, message_token: str) -> bool:
     return bool(res.data)
 
 
+# Trạng thái tin gửi đi chỉ được "nâng cấp" (sent -> delivered -> seen, hoặc -> failed),
+# không hạ cấp. ``delivered`` và ``seen`` có thể tới gần như đồng thời và được xử lý ở 2
+# task nền song song -> KHÔNG dùng đọc-rồi-ghi (race: cả 2 cùng đọc 'sent' rồi ghi đè
+# nhau). Thay vào đó 1 câu UPDATE nguyên tử chỉ khớp khi trạng thái hiện tại còn thấp hơn.
+_LOWER_STATUSES = {
+    "delivered": ["sent"],
+    "seen": ["sent", "delivered"],
+    "failed": ["sent", "delivered", "seen"],
+}
+
+
 async def update_message_status(account_id: str, message_token: str, status: str, error: Optional[str] = None) -> Optional[Dict[str, Any]]:
-    """Cập nhật trạng thái tin GỬI ĐI (delivered/seen/failed). Không hạ cấp: 'seen' rồi
-    thì 'delivered' tới trễ không ghi đè."""
+    """Nâng trạng thái tin GỬI ĐI (delivered/seen/failed) bằng 1 UPDATE có điều kiện —
+    an toàn khi 2 webhook trạng thái tới song song. Trả về dòng đã cập nhật, hoặc None nếu
+    trạng thái hiện tại đã bằng/cao hơn (không làm gì)."""
+    allowed_from = _LOWER_STATUSES.get(status)
+    if allowed_from is None:
+        return None
     sb: Client = get_supabase_client()
-    rank = {"sent": 0, "delivered": 1, "seen": 2, "failed": 3}
+    fields: Dict[str, Any] = {"status": status}
+    if error:
+        fields["error"] = error[:500]
 
     def _do():
-        cur = (
-            sb.table("viber_messages")
-            .select("status")
-            .eq("account_id", account_id)
-            .eq("message_token", message_token)
-            .limit(1)
-            .execute()
-        )
-        if not cur.data:
-            return None
-        if rank.get(cur.data[0]["status"], 0) >= rank.get(status, 0):
-            return None
-        fields: Dict[str, Any] = {"status": status}
-        if error:
-            fields["error"] = error[:500]
         res = (
             sb.table("viber_messages")
             .update(fields)
             .eq("account_id", account_id)
             .eq("message_token", message_token)
+            .in_("status", allowed_from)
             .execute()
         )
         return res.data[0] if res.data else None

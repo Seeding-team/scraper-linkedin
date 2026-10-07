@@ -8,8 +8,11 @@ Mentor giao: thêm Viber Chat (nhắn tin 2 chiều, gửi ảnh/link/tệp đ�
 - Backend `linkedin_group_crawler/app/modules/all_platform/viber/`, migration **`177_viber_module.sql`**
   (`viber_accounts`/`viber_dialogs`/`viber_messages`, bucket storage `viber-media`). FE: `/all-platform/viber-chat`
   + `/viber-chat/[accountId]`, `components/all-platform/viber/`. Chỉ làm app chính, CHƯA làm cho 3 clone crm-*.
-- Đã verify: pytest `tests/test_viber_service.py` (6 test, Viber API giả), migration chạy 2 lần trên Postgres 15,
-  repo layer chạy với Supabase local thật (trừ upload storage — local không bật storage), `tsc` sạch.
+- Đã verify: pytest `tests/test_viber_service.py` + `tests/test_viber_extra.py` (**20 test**, Viber API giả),
+  migration chạy 2 lần trên Postgres 15, repo layer chạy với Supabase local thật, `tsc`+eslint sạch, và
+  **E2E backend thật** (`tests/viber_local/`: mock Viber + Supabase local + webhook ký HMAC) **24/24 PASS**
+  ổn định 3 lần — xem `docs/VIBER_CHAT_WALKTHROUGH.md`. **Bug đã sửa khi test**: race condition ở
+  `update_message_status` (delivered/seen tới song song ghi đè nhau) -> đổi sang 1 UPDATE có điều kiện nguyên tử.
   **CHƯA test với bot Viber thật** (không có token), migration **CHƯA áp DB thật**.
 
 # Tiến độ phiên làm việc (2026-10-05) — Multi-currency (VND | USD) cho Báo giá
