@@ -47,6 +47,9 @@ _UNCLASSIFIED_TOKENS = {"", "chưa phân loại", "chua phan loai", "unclassifie
 
 # Field CRM cho phep sync ghi de (name/brand/part_number/parent). Moi thu khac
 # (sku, gia, VAT, quota, supplier, status, note, ...) la cua nguoi dung CRM.
+# Rieng brand/part_number/parent_id ma nguoi dung da sua thu cong (danh dau
+# sync_manual_fields, migration 176) cung KHONG duoc ghi de — xem
+# _desired_fields_for_item().
 _ITEM_SYNC_FIELDS = ("name", "brand", "part_number", "parent_id")
 
 _sync_lock = threading.Lock()
@@ -260,13 +263,30 @@ def _load_crm_groups(supabase: Client) -> list[dict]:
 def _load_crm_msc_items(supabase: Client) -> dict[str, dict]:
     rows = (
         supabase.table(ITEMS_TABLE)
-        .select("id, name, brand, part_number, parent_id, external_id, status")
+        .select("id, name, brand, part_number, parent_id, external_id, status, sync_manual_fields")
         .eq("external_source", MSC_SOURCE)
         .execute()
         .data
         or []
     )
     return {row["external_id"]: row for row in rows if row.get("external_id")}
+
+
+def _desired_fields_for_item(item: dict, group_crm_id: str | None, existing: dict | None) -> dict:
+    """Gia tri MSC mong muon cho 1 item — CHU dong bo field da bi nguoi dung
+    CRM sua thu cong (sync_manual_fields, migration 176). Field chua danh dau
+    van tiep tuc dong bo binh thuong tu MSC (task §7)."""
+    desired = {
+        "name": item["name"],
+        "brand": item["brand"],
+        "part_number": item["model"],
+        "parent_id": group_crm_id,
+    }
+    if existing:
+        for field in existing.get("sync_manual_fields") or []:
+            if field in desired:
+                desired.pop(field)
+    return desired
 
 
 def _ensure_group(
@@ -358,12 +378,7 @@ def _upsert_items(
                 # tuc la chua phan loai / khong khop nhom nao trong snapshot).
                 group_crm_id = group_id_map[None]
             existing = existing_items.get(item["external_id"])
-            desired = {
-                "name": item["name"],
-                "brand": item["brand"],
-                "part_number": item["model"],
-                "parent_id": group_crm_id,
-            }
+            desired = _desired_fields_for_item(item, group_crm_id, existing)
             if existing is None:
                 create_service_catalog_item(
                     {
@@ -532,12 +547,13 @@ def run_sync(
             would_update = 0
             for it in normalized["items"]:
                 existing = existing_items.get(it["external_id"])
-                if existing and (
-                    (it["name"] or None) != (existing.get("name") or None)
-                    or (it["brand"] or None) != (existing.get("brand") or None)
-                    or (it["model"] or None) != (existing.get("part_number") or None)
-                ):
-                    would_update += 1
+                if existing:
+                    desired = _desired_fields_for_item(it, existing.get("parent_id"), existing)
+                    if any(
+                        (value or None) != (existing.get(field) or None)
+                        for field, value in desired.items()
+                    ):
+                        would_update += 1
             known_new_groups = [
                 gid for gid in normalized["groups"] if gid not in external_ids
             ]
