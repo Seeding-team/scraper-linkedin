@@ -447,9 +447,14 @@ export function QuickAddProductModal({
         const trimmed = (value || '').trim();
         return trimmed ? trimmed : undefined;
       };
+      // TÍCH HỢP BỘ LỌC WORKSPACE: Kế thừa workspace instance từ nhóm cha hoặc item đang chỉnh sửa
+      const selectedParent = localGroups.find(g => g.id === parentId);
+      const inheritedInstance = selectedParent?.instance || editingItem?.instance || undefined;
+
       const payload: ServiceCatalogItemInput = itemType === 'bundle'
         ? {
             ...emptyProductForm(),
+            instance: inheritedInstance,
             itemType: 'bundle',
             parentId,
             sku: cleanText(skuInput),
@@ -504,6 +509,7 @@ export function QuickAddProductModal({
           }
         : {
             ...emptyProductForm(),
+            instance: inheritedInstance,
             itemType: 'component',
             parentId,
             sku: cleanText(skuInput),

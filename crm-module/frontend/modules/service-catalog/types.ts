@@ -36,7 +36,17 @@ export interface BundleComponentLine {
    * LUON co mat cho moi request da auth (khong qua cong quyen nay). */
 }
 
+/** TÍCH HỢP BỘ LỌC WORKSPACE: Metadata của 1 Workspace lấy động từ Database */
+export interface WorkspaceMeta {
+  instance_key: string;
+  code?: string | null;
+  name: string;
+  total_groups: number;
+}
+
 export interface ServiceCatalogItem {
+  /** TÍCH HỢP BỘ LỌC WORKSPACE: Mã định danh workspace (markee, cloudgate, securityzone,...) */
+  instance?: string;
   defaultCostPriceVnd?: number | null;
   defaultMarkupPercent?: number | null;
   defaultCustomerPriceVnd?: number | null;
@@ -132,6 +142,8 @@ export interface ServiceCatalogOptions {
 }
 
 export interface ServiceCatalogItemInput {
+  /** TÍCH HỢP BỘ LỌC WORKSPACE: Mã định danh workspace khi tạo mới/chỉnh sửa */
+  instance?: string;
   defaultCostPriceVnd?: number | null;
   defaultMarkupPercent?: number | null;
   defaultCustomerPriceVnd?: number | null;
@@ -246,4 +258,25 @@ export interface ServiceCatalogItemPricingUpsertInput {
   otherCost?: number | null;
   pricingPolicy?: string | null;
 
+}
+
+/** Ket qua 1 lan "Đồng bộ hàng hóa từ MSC" (trường data cua /msc-sync/run, va
+ * tung row cua /msc-sync/status — mirror bang msc_sync_runs, migration 175). */
+export interface MscSyncStats {
+  status?: 'success' | 'partial' | 'failed' | string;
+  trigger?: string;
+  dry_run?: boolean;
+  http_status?: number | null;
+  duration_ms?: number | null;
+  fetched_groups?: number;
+  fetched_items?: number;
+  groups_created?: number;
+  groups_updated?: number;
+  inserted?: number;
+  updated?: number;
+  skipped?: number;
+  failed?: number;
+  duplicates?: number;
+  error_message?: string | null;
+  errors?: string[];
 }

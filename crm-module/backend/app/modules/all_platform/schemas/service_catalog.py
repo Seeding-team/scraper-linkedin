@@ -69,6 +69,8 @@ class ServiceCatalogItemCreateRequest(BaseModel):
     default_cost_price_vnd: Optional[Decimal] = None
     default_markup_percent: Optional[Decimal] = None
     default_customer_price_vnd: Optional[Decimal] = None
+    # TÍCH HỢP BỘ LỌC WORKSPACE: Gán instance (workspace) khi tạo mới từ Seeding hoặc CRM Standalone
+    instance: Optional[str] = None
 
 
 class ServiceCatalogItemUpdateRequest(BaseModel):
@@ -131,6 +133,8 @@ class ServiceCatalogItemUpdateRequest(BaseModel):
     default_cost_price_vnd: Optional[Decimal] = None
     default_markup_percent: Optional[Decimal] = None
     default_customer_price_vnd: Optional[Decimal] = None
+    # TÍCH HỢP BỘ LỌC WORKSPACE: Cập nhật instance (workspace) của item
+    instance: Optional[str] = None
 
 
 class ServiceCatalogReorderRequest(BaseModel):

@@ -16,11 +16,42 @@ from app.core.config import settings
 from app.core.supabase_client import execute_supabase_query, get_supabase_client
 from app.modules.all_platform.services.crm_permission_service import is_sale_member
 
-_USER_PUBLIC_FIELDS = (
-    "id, email, name, role, is_active, can_approve_quotes, quote_business_role, created_at, updated_at, "
-    "home_instance, allowed_instances, "
+_USER_BASE_FIELDS = (
+    "id, email, name, role, is_active, can_approve_quotes, quote_business_role, created_at, updated_at"
+)
+_USER_EXTENDED_FIELDS = (
     "permission_group_id, data_scope, permission_override, permission_overrides, crm_status, crm_note"
 )
+_USER_PUBLIC_FIELDS = f"{_USER_BASE_FIELDS}, {_USER_EXTENDED_FIELDS}"
+
+_SUPPORTS_PERMISSION_FIELDS: bool | None = None
+
+
+def _get_user_select_fields(include_password: bool = False) -> str:
+    global _SUPPORTS_PERMISSION_FIELDS
+    base = _USER_BASE_FIELDS if _SUPPORTS_PERMISSION_FIELDS is False else _USER_PUBLIC_FIELDS
+    return f"{base}, password" if include_password else base
+
+
+def _execute_user_query(query_fn, include_password: bool = False):
+    """Query app_users with adaptive schema: tự động fallback về các trường cơ bản
+    nếu Database chưa áp dụng migration 154 (lỗi 42703: column permission_group_id does not exist)."""
+    global _SUPPORTS_PERMISSION_FIELDS
+    fields = _get_user_select_fields(include_password=include_password)
+    try:
+        res = execute_supabase_query(lambda: query_fn(fields).execute())
+        if _SUPPORTS_PERMISSION_FIELDS is None:
+            _SUPPORTS_PERMISSION_FIELDS = True
+        return res
+    except Exception as exc:
+        err_msg = str(exc)
+        if "permission_group_id" in err_msg or "42703" in err_msg:
+            _SUPPORTS_PERMISSION_FIELDS = False
+            fallback_fields = f"{_USER_BASE_FIELDS}, password" if include_password else _USER_BASE_FIELDS
+            return execute_supabase_query(lambda: query_fn(fallback_fields).execute())
+        raise
+
+
 _USER_CACHE_TTL_SECONDS = 30.0
 _USER_BY_ID_CACHE: dict[str, tuple[float, dict]] = {}
 _USER_BY_EMAIL_CACHE: dict[str, tuple[float, dict]] = {}
@@ -38,6 +69,12 @@ _USER_BY_EMAIL_FALLBACK_CACHE: dict[str, tuple[float, dict]] = {}
 def _copy_user(user: dict) -> dict:
     clean = dict(user)
     clean.pop("password", None)
+    clean.setdefault("permission_group_id", None)
+    clean.setdefault("data_scope", None)
+    clean.setdefault("permission_override", False)
+    clean.setdefault("permission_overrides", [])
+    clean.setdefault("crm_status", "active")
+    clean.setdefault("crm_note", None)
     return clean
 
 
@@ -163,14 +200,6 @@ def register_user(email: str, password: str, name: Optional[str] = None) -> dict
         "name": name.strip() if name else None,
         "role": "member",
         "is_active": True,
-        # Site (instance) da dang ky, suy tu Host header cua chinh request nay
-        # (xem middleware resolve_crm_instance_middleware trong app/main.py) —
-        # dung de chan/redirect neu sau nay dang nhap nham site khac.
-        "home_instance": settings.crm_instance,
-        # Danh sach workspace duoc phep truy cap (migration 005) — mac dinh
-        # chi co dung site vua dang ky, admin co the mo them qua "Quan ly
-        # thanh vien" sau nay.
-        "allowed_instances": [settings.crm_instance],
     }
     result = execute_supabase_query(
         lambda: get_supabase_client().table("app_users").insert(user_data).execute()
@@ -190,47 +219,19 @@ def register_user(email: str, password: str, name: Optional[str] = None) -> dict
             "email": cached_user["email"],
             "name": cached_user.get("name"),
             "role": cached_user["role"],
-            "allowedInstances": cached_user.get("allowed_instances"),
         },
         "access_token": access_token,
     }
 
 
-def _check_home_instance_redirect(user: dict) -> Optional[dict]:
-    """Non-admin: neu instance dang phuc vu request HIEN TAI (settings.crm_instance,
-    suy tu Host header) KHONG nam trong danh sach allowed_instances (danh sach
-    workspace admin cho phep truy cap, migration 005 — gan qua "Quan ly thanh
-    vien") -> tra ve tin hieu redirect ve workspace DAU TIEN duoc phep, thay vi
-    dang nhap thang. Admin luon duoc bo qua (dang nhap truc tiep duoc o moi
-    site, dung switcher rieng de chuyen qua lai). allowed_instances rong/NULL
-    -> fallback ve home_instance (tai khoan tao truoc migration 005, chua duoc
-    admin gan gi) -> van rong/NULL nua thi khong bi rang buoc gi (giu hanh vi
-    cu)."""
-    if user.get("role") == "admin":
-        return None
-    allowed = user.get("allowed_instances")
-    if not allowed:
-        home_instance = user.get("home_instance")
-        allowed = [home_instance] if home_instance else None
-    if not allowed:
-        return None
-    if settings.crm_instance in allowed:
-        return None
-    return {
-        "redirect_required": True,
-        "user_id": user["id"],
-        "home_instance": allowed[0],
-    }
-
-
 def login_user(email: str, password: str) -> dict:
     """Login an existing app user. Returns user + token or raises ValueError."""
-    result = execute_supabase_query(
-        lambda: get_supabase_client()
+    result = _execute_user_query(
+        lambda fields: get_supabase_client()
         .table("app_users")
-        .select(_USER_PUBLIC_FIELDS + ", password")
-        .eq("email", email.lower().strip())
-        .execute()
+        .select(fields)
+        .eq("email", email.lower().strip()),
+        include_password=True,
     )
     if not result.data:
         raise ValueError("Email không tồn tại")
@@ -241,10 +242,6 @@ def login_user(email: str, password: str) -> dict:
 
     if not _verify_password(password, user["password"]):
         raise ValueError("Sai mật khẩu")
-
-    redirect = _check_home_instance_redirect(user)
-    if redirect:
-        return redirect
 
     cached_user = _cache_user(user)
     access_token = create_access_token(user["id"], user["email"], user["role"])
@@ -259,9 +256,7 @@ def login_user(email: str, password: str) -> dict:
             "role": cached_user.get("role", "member"),
             "is_sale": is_sale_member(cached_user["id"]),
             "can_approve_quotes": bool(cached_user.get("can_approve_quotes")),
-            "allowedInstances": cached_user.get("allowed_instances"),
             "quote_business_role": cached_user.get("quote_business_role"),
-
         },
         "access_token": access_token,
     }
@@ -357,12 +352,11 @@ def login_with_google(id_token_str: str) -> dict:
     if not email:
         raise ValueError("Không lấy được email từ tài khoản Google")
 
-    result = execute_supabase_query(
-        lambda: get_supabase_client()
+    result = _execute_user_query(
+        lambda fields: get_supabase_client()
         .table("app_users")
-        .select(_USER_PUBLIC_FIELDS)
+        .select(fields)
         .eq("email", email)
-        .execute()
     )
     if not result.data:
         raise ValueError("Email chưa được cấp tài khoản trong hệ thống. Liên hệ admin để được thêm.")
@@ -370,10 +364,6 @@ def login_with_google(id_token_str: str) -> dict:
     user = result.data[0]
     if not user.get("is_active", True):
         raise ValueError("Tài khoản đã bị vô hiệu hóa")
-
-    redirect = _check_home_instance_redirect(user)
-    if redirect:
-        return redirect
 
     cached_user = _cache_user(user)
     access_token = create_access_token(user["id"], user["email"], user["role"])
@@ -388,9 +378,7 @@ def login_with_google(id_token_str: str) -> dict:
             "role": cached_user.get("role", "member"),
             "is_sale": is_sale_member(cached_user["id"]),
             "can_approve_quotes": bool(cached_user.get("can_approve_quotes")),
-            "allowedInstances": cached_user.get("allowed_instances"),
             "quote_business_role": cached_user.get("quote_business_role"),
-
         },
         "access_token": access_token,
     }
@@ -453,8 +441,8 @@ def get_user_by_id(user_id: str) -> Optional[dict]:
     if cached:
         return cached
     try:
-        result = execute_supabase_query(
-            lambda: get_supabase_client().table("app_users").select(_USER_PUBLIC_FIELDS).eq("id", user_key).execute()
+        result = _execute_user_query(
+            lambda fields: get_supabase_client().table("app_users").select(fields).eq("id", user_key)
         )
     except Exception:
         fallback = _fallback_cached_user(_USER_BY_ID_FALLBACK_CACHE, user_key)
@@ -473,8 +461,8 @@ def get_user_by_email(email: str) -> Optional[dict]:
     if cached:
         return cached
     try:
-        result = execute_supabase_query(
-            lambda: get_supabase_client().table("app_users").select(_USER_PUBLIC_FIELDS).eq("email", email_key).execute()
+        result = _execute_user_query(
+            lambda fields: get_supabase_client().table("app_users").select(fields).eq("email", email_key)
         )
     except Exception:
         fallback = _fallback_cached_user(_USER_BY_EMAIL_FALLBACK_CACHE, email_key)

@@ -7,8 +7,12 @@ import { ConfirmModal } from '@/modules/crm/components/ConfirmModal';
 import { ActionMenu } from '@/modules/crm/components/ActionMenu';
 import { Eye, Pencil, PauseCircle, Trash2, LayoutGrid, TableIcon } from '@/modules/crm/components/icons';
 import { useServiceCatalog } from './use-service-catalog';
+import { serviceCatalogRepository } from './repositories/ServiceCatalogRepository';
 import type { ServiceCatalogItem, ServiceCatalogItemInput } from './types';
 import { emptyGroupForm, itemToForm } from './catalog-form-utils';
+import { useWorkspaceFilter } from './useWorkspaceFilter';
+import { WorkspaceFilterPopover } from './WorkspaceFilterPopover';
+import { WorkspaceBadge } from './WorkspaceBadge';
 import './styles/service-catalog.css';
 import '@/modules/crm/styles/quote-center.css';
 
@@ -35,7 +39,21 @@ const PAGE_SIZE = 6;
  * tiet nhom) - file nay CHI con logic rieng cua danh sach Nhom. */
 export function ServiceCatalogPage() {
   const router = useRouter();
-  const { items, isLoaded, error, createItem, updateItem, deleteItem, refresh } = useServiceCatalog();
+  
+  // TÍCH HỢP BỘ LỌC WORKSPACE:
+  // - Seeding chính: Nút bộ lọc hiển thị, multi-select.
+  // - CRM Standalone: Ẩn nút bộ lọc, tự động gán cố định theo CRM_INSTANCE.
+  const {
+    workspaces,
+    loading: workspacesLoading,
+    isStandalone,
+    appliedWorkspaces,
+    setAppliedWorkspaces,
+    triggerLabel,
+    resetFilter,
+  } = useWorkspaceFilter();
+
+  const { items, isLoaded, error, createItem, updateItem, deleteItem, refresh } = useServiceCatalog(appliedWorkspaces);
   const groups = useMemo(() => items.filter(item => item.itemType === 'group'), [items]);
 
   const [search, setSearch] = useState('');
@@ -47,6 +65,9 @@ export function ServiceCatalogPage() {
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [confirmDeleteTarget, setConfirmDeleteTarget] = useState<ServiceCatalogItem | null>(null);
+  // Đồng bộ hàng hóa từ MSC (msc-sync): loading state chặn click lặp; kết quả
+  // alert + refresh lại danh mục. dry-run chỉ dùng qua API/env (không thêm UI).
+  const [mscSyncing, setMscSyncing] = useState(false);
 
   const filteredGroups = useMemo(() => {
     const term = search.trim().toLowerCase();
@@ -75,7 +96,9 @@ export function ServiceCatalogPage() {
 
   function openAdd() {
     setEditTarget({ mode: 'add' });
-    setForm(emptyGroupForm());
+    // TÍCH HỢP BỘ LỌC WORKSPACE: Gán instance mặc định theo workspace đang lọc (nếu lọc 1) hoặc workspace đầu tiên
+    const defaultInst = appliedWorkspaces.length === 1 ? appliedWorkspaces[0] : (workspaces[0]?.instance_key || 'markee');
+    setForm(emptyGroupForm(defaultInst));
     setFormError(null);
   }
   function openEdit(group: ServiceCatalogItem) {
@@ -125,6 +148,31 @@ export function ServiceCatalogPage() {
     }
   }
 
+  async function handleMscSync() {
+    if (mscSyncing) return; // chặn click lặp khi sync đang chạy
+    setMscSyncing(true);
+    try {
+      const stats = await serviceCatalogRepository.runMscSync(false);
+      const summary = [
+        `Thêm mới: ${stats.inserted ?? 0}`,
+        `Cập nhật: ${stats.updated ?? 0}`,
+        `Không thay đổi: ${stats.skipped ?? 0}`,
+        `Lỗi: ${stats.failed ?? 0}`,
+        `Bản ghi trùng trên MSC: ${stats.duplicates ?? 0}`,
+      ].join(' · ');
+      window.alert(
+        (stats.dry_run ? '[DRY RUN] Chưa ghi dữ liệu. Dự kiến — ' : 'Đồng bộ hàng hóa từ MSC hoàn tất — ') + summary
+      );
+      await refresh();
+    } catch (err) {
+      // Backend trả message tiếng Việt friendly (timeout / MSC không khả dụng /
+      // HTTP lỗi) — không lộ chi tiết internals.
+      window.alert(err instanceof Error ? err.message : 'Đồng bộ hàng hóa từ MSC thất bại.');
+    } finally {
+      setMscSyncing(false);
+    }
+  }
+
   function groupActionItems(group: ServiceCatalogItem) {
     return [
       { key: 'view', label: 'Xem sản phẩm', icon: Eye, onSelect: () => router.push(`/all-platform/service-catalog/groups/${group.id}`) },
@@ -157,6 +205,15 @@ export function ServiceCatalogPage() {
           <Link href="/all-platform/service-catalog/price-book-zone" className="sc-btn">
             Bảng giá VPS Zone
           </Link>
+          <button
+            type="button"
+            className="sc-btn"
+            disabled={mscSyncing}
+            title="Lấy danh mục hàng hóa mới nhất từ hệ thống MSC"
+            onClick={() => void handleMscSync()}
+          >
+            {mscSyncing ? 'Đang đồng bộ từ MSC...' : 'Đồng bộ hàng hóa từ MSC'}
+          </button>
           <button type="button" className="sc-btn sc-btn-primary" onClick={openAdd}>
             + Nhóm mới
           </button>
@@ -193,6 +250,17 @@ export function ServiceCatalogPage() {
               <option value="active">Đang sử dụng</option>
               <option value="inactive">Ngừng sử dụng</option>
             </select>
+            {/* TÍCH HỢP BỘ LỌC WORKSPACE: Nút lọc đa chọn (chỉ hiển thị ở Seeding chính, ẩn ở CRM Standalone) */}
+            {!isStandalone && (
+              <WorkspaceFilterPopover
+                workspaces={workspaces}
+                appliedWorkspaces={appliedWorkspaces}
+                triggerLabel={triggerLabel}
+                loading={workspacesLoading}
+                onApply={setAppliedWorkspaces}
+                onReset={resetFilter}
+              />
+            )}
             <div className="sc-view-toggle" role="group" aria-label="Chế độ xem">
               <button
                 type="button"
@@ -230,6 +298,22 @@ export function ServiceCatalogPage() {
                     <option value="inactive">Ngừng sử dụng</option>
                   </select>
                 </label>
+                {/* TÍCH HỢP BỘ LỌC WORKSPACE: Chọn Workspace cho nhóm (chỉ trên Seeding chính) */}
+                {!isStandalone && workspaces.length > 0 && (
+                  <label className="sc-field">
+                    <span>Workspace</span>
+                    <select
+                      value={(form.instance || 'markee').toLowerCase()}
+                      onChange={e => setForm({ ...form, instance: e.target.value })}
+                    >
+                      {workspaces.map(w => (
+                        <option key={w.instance_key} value={w.instance_key.toLowerCase()}>
+                          {w.name} {w.code ? `(${w.code})` : ''}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                )}
                 <label className="sc-field" style={{ gridColumn: '1 / -1' }}>
                   <span>Mô tả</span>
                   <textarea value={form.description || ''} onChange={e => setForm({ ...form, description: e.target.value })} />
@@ -260,6 +344,8 @@ export function ServiceCatalogPage() {
                     <div className="sc-group-card-body">
                       <div className="sc-group-card-title-row">
                         <span className="sc-group-card-title">{group.name}</span>
+                        {/* TÍCH HỢP BỘ LỌC WORKSPACE: Tag hiển thị nhãn Workspace */}
+                        <WorkspaceBadge instance={group.instance} />
                       </div>
                       {group.description ? <p className="sc-group-card-desc">{group.description}</p> : null}
                       <div className="sc-group-card-meta">
@@ -297,7 +383,11 @@ export function ServiceCatalogPage() {
                     <tr key={group.id} className="sc-row-clickable">
                       <td>
                         <Link href={`/all-platform/service-catalog/groups/${group.id}`} className="sc-row-link">
-                          <span className="sc-cell-title-text">{group.name}</span>
+                          <div className="flex items-center gap-2">
+                            <span className="sc-cell-title-text">{group.name}</span>
+                            {/* TÍCH HỢP BỘ LỌC WORKSPACE: Tag hiển thị nhãn Workspace */}
+                            <WorkspaceBadge instance={group.instance} />
+                          </div>
                           {group.description ? <span className="sc-cell-name-desc">{group.description}</span> : null}
                         </Link>
                       </td>

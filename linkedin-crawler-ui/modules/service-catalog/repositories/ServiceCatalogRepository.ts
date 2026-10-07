@@ -9,6 +9,7 @@ import {
   ServiceCatalogVatRate,
   ServiceCatalogStatus,
   MscSyncStats,
+  WorkspaceMeta,
 } from '../types';
 
 type ApiResponse<T> = {
@@ -90,9 +91,10 @@ function toItemPayload(input: ServiceCatalogItemInput) {
     default_customer_price_vnd: input.defaultCustomerPriceVnd,
     pricing_input_mode: input.pricingInputMode,
     spec_quantity_per_unit: input.specQuantityPerUnit,
-    spec_unit_label: input.specUnitLabel,
     note: input.note,
     status: input.status,
+    // TÍCH HỢP BỘ LỌC WORKSPACE: Gửi instance khi tạo mới hoặc cập nhật
+    ...(input.instance ? { instance: input.instance } : {}),
   };
   
   // Only include optional fields with non-empty values (for databases that may not have migration 127 applied)
@@ -137,6 +139,8 @@ export interface ServiceCatalogListOptions {
   context?: 'admin' | 'quote_picker';
   quoteId?: string | null;
   issuerCompanyId?: string | null;
+  /** TÍCH HỢP BỘ LỌC WORKSPACE: Danh sách instance/workspace cần lọc */
+  instances?: string[];
 }
 
 export class ServiceCatalogRepository {
@@ -145,8 +149,17 @@ export class ServiceCatalogRepository {
     if (options?.context) params.set('context', options.context);
     if (options?.quoteId) params.set('quote_id', options.quoteId);
     if (options?.issuerCompanyId) params.set('issuer_company_id', options.issuerCompanyId);
+    // TÍCH HỢP BỘ LỌC WORKSPACE: Đưa tham số instances vào query string nếu có
+    if (options?.instances && options.instances.length > 0) {
+      params.set('instances', options.instances.join(','));
+    }
     const qs = params.toString();
     return apiFetch<ServiceCatalogItem[]>(`/api/all-platform/service-catalog${qs ? `?${qs}` : ''}`);
+  }
+
+  /** TÍCH HỢP BỘ LỌC WORKSPACE: Lấy danh sách Workspace từ DB */
+  async getWorkspaces(): Promise<WorkspaceMeta[]> {
+    return apiFetch<WorkspaceMeta[]>('/api/all-platform/service-catalog/workspaces');
   }
 
   /** Danh sách đầy đủ bộ giá (mọi issuer_company_id) của 1 sản phẩm — CHỈ

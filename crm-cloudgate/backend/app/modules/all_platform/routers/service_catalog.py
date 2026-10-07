@@ -93,15 +93,33 @@ def _can_view_draft_catalog_cost(user: dict) -> bool:
     )
 
 
+# ==============================================================================
+# TÍCH HỢP BỘ LỌC WORKSPACE: Endpoint danh sách Workspace lấy động từ DB
+# ==============================================================================
+@router.get("/workspaces")
+def service_catalog_get_workspaces(_user: dict = Depends(get_current_user)) -> BaseResponse:
+    """TÍCH HỢP BỘ LỌC WORKSPACE: Lấy danh sách các Workspace khả dụng động từ Database."""
+    try:
+        data = catalog_service.list_available_workspaces()
+        return BaseResponse(success=True, data=data)
+    except Exception as e:
+        logger.exception("Lỗi khi tải danh sách workspaces cho service catalog")
+        return BaseResponse(success=False, message=str(e))
+
+
 @router.get("")
 def service_catalog_get_all(
     context: str = Query("admin", pattern="^(admin|quote_picker)$"),
     quote_id: Optional[str] = Query(None),
     issuer_company_id: Optional[str] = Query(None),
+    instances: Optional[str] = Query(None, description="TÍCH HỢP BỘ LỌC WORKSPACE: Danh sách instance phân tách bằng dấu phẩy, vd: markee,cloudgate"),
     user: dict = Depends(get_current_user),
 ) -> BaseResponse:
     try:
-        tree = list_service_catalog_items()
+        instance_list: list[str] | None = None
+        if instances:
+            instance_list = [i.strip() for i in instances.split(",") if i.strip()]
+        tree = catalog_service.list_service_catalog_items_scoped(instance_list)
     except Exception as e:
         return BaseResponse(success=False, message=str(e))
 
