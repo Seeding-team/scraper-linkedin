@@ -172,8 +172,9 @@ async def score_and_save_posts(
     registry) AWAIT trực tiếp hàm này để biết kết quả chấm điểm theo từ khoá; FB/LI vẫn dùng
     kiểu fire-and-forget như cũ, bỏ qua giá trị trả về.
 
-    Với facebook_posts điểm cao (>=70): tự tạo 1 dòng "auto_seeding_comments" (pending) để
-    comment seeding tự động — xem app/modules/all_platform/services/auto_seeding_comment_service.py.
+    Với facebook_posts/linkedin_posts điểm cao (>=70): tự tạo 1 dòng "auto_seeding_comments"
+    (pending) để comment seeding tự động — xem
+    app/modules/all_platform/services/auto_seeding_comment_service.py.
     """
     summary = {"total": 0, "high": 0, "deleted": 0}
     if not is_lead_scoring_configured() or not rows:
@@ -212,12 +213,17 @@ async def score_and_save_posts(
                 )
                 if result["score"] >= _HIGH_SCORE:
                     summary["high"] += 1
-                if table == "facebook_posts" and result["score"] >= 70:
+                # Bot comment seeding tu dong - ban dau chi Facebook (2026-10-02), mo rong
+                # sang LinkedIn (2026-10-07, migration 174) vi co cung co che cao he thong +
+                # cham diem lead, chi khac bang luu/cot FK.
+                if table in ("facebook_posts", "linkedin_posts") and result["score"] >= 70:
                     from app.modules.all_platform.services.auto_seeding_comment_service import (
                         maybe_create_auto_seeding_comment,
                     )
+                    platform = "linkedin" if table == "linkedin_posts" else "facebook"
                     created = await maybe_create_auto_seeding_comment(
-                        id_post_fb=post_id,
+                        post_id=post_id,
+                        platform=platform,
                         post_url=row.get("post_url") or "",
                         group_name=group_name,
                         id_member=id_member,
@@ -227,8 +233,8 @@ async def score_and_save_posts(
                         contact_phone=result.get("contact_phone"),
                     )
                     # Chi trigger Zalo khi vua TAO MOI dong auto_seeding_comments (created
-                    # khong None) - neu da ton tai tu truoc (UNIQUE id_post_fb) thi KHONG gui
-                    # lai, tranh nhan tin trung lap cho cung 1 bai (yeu cau 2026-10-02).
+                    # khong None) - neu da ton tai tu truoc (UNIQUE id_post_fb/id_post_li) thi
+                    # KHONG gui lai, tranh nhan tin trung lap cho cung 1 bai (yeu cau 2026-10-02).
                     if created and result.get("contact_phone"):
                         from app.modules.all_platform.services.auto_seeding_zalo_service import (
                             maybe_send_zalo_consult,

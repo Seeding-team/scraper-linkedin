@@ -576,14 +576,16 @@ export function useBulkCommentRuntime({ isReady, email, onComplete }: UseBulkCom
     return () => window.clearInterval(interval);
   }, [isReady, email]);
 
-  // Comment seeding TỰ ĐỘNG (Facebook, yêu cầu 2026-10-02): backend tự tạo nhiệm vụ
-  // (auto_seeding_comments) ngay khi 1 bài acc hệ thống cào về được chấm điểm AI cao
-  // (>=70) — hook này poll danh sách chờ mỗi ~10s và tự gọi extension comment thật,
-  // không cần ai bấm, chỉ cần tab Seeding còn mở (giống cơ chế comment hẹn giờ ở trên).
+  // Comment seeding TỰ ĐỘNG (Facebook + LinkedIn, yêu cầu 2026-10-02, mở rộng LinkedIn
+  // 2026-10-07): backend tự tạo nhiệm vụ (auto_seeding_comments) ngay khi 1 bài acc hệ
+  // thống cào về được chấm điểm AI cao (>=70) — hook này poll danh sách chờ mỗi ~10s và tự
+  // gọi extension comment thật, không cần ai bấm, chỉ cần tab Seeding còn mở (giống cơ chế
+  // comment hẹn giờ ở trên). `item.platform` quyết định id_post/id_platform đúng nền tảng
+  // — item có thể là bài Facebook HOẶC LinkedIn tuỳ nhiệm vụ nào tới lượt trong hàng đợi.
   useEffect(() => {
     // CHỈ chạy khi đang đăng nhập bằng đúng tài khoản hệ thống — mọi tài khoản member khác
     // (kể cả khi họ đang mở tab Seeding/TaskModal) sẽ KHÔNG poll/tự động đăng bình luận gì
-    // cả, tránh dùng nhầm phiên Facebook của member để seeding tự động.
+    // cả, tránh dùng nhầm phiên Facebook/LinkedIn của member để seeding tự động.
     if (!isReady || !email || email.toLowerCase() !== SEEDING_SYSTEM_ACCOUNT_EMAIL) return;
     const poll = async () => {
       if (isCommentingRef.current) return;
@@ -593,15 +595,17 @@ export function useBulkCommentRuntime({ isReady, email, onComplete }: UseBulkCom
         if (due.length === 0 || isCommentingRef.current) return;
         const item = due[0];
         processingAutoSeedingRef.current.add(item.id);
+        const idPlatform = item.platform === "linkedin" ? PLATFORM_DB_ID.linkedin : PLATFORM_DB_ID.facebook;
+        const idPost = item.platform === "linkedin" ? item.id_post_li : item.id_post_fb;
         runRef.current = { kind: "auto_seeding", urls: [item.post_url], scheduledId: item.id };
         setCommenting(true);
         postToExtension("START_BULK_COMMENT", {
-          posts: [{ url: item.post_url, id_post: item.id_post_fb || undefined, id_platform: PLATFORM_DB_ID.facebook }],
+          posts: [{ url: item.post_url, id_post: idPost || undefined, id_platform: idPlatform }],
           text: item.comment_content || "",
           verifyConfig: {
             apiBase: extensionApiBase(),
             email_member: email,
-            id_platform: PLATFORM_DB_ID.facebook,
+            id_platform: idPlatform,
           },
         });
       } catch {

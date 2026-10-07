@@ -96,6 +96,10 @@ async def save_posts(
     # bo, khong duoc tra ve qua HTTP cho extension.
     inserted_rows = result.pop("_inserted_rows", [])
     if inserted_rows:
-        asyncio.create_task(score_and_save_posts("linkedin_posts", inserted_rows))
+        # id_member/group_name can cho bot auto-seeding (lead_score_service.py, migration 174)
+        # ghi dung nguoi cao + ten nhom vao nhiem vu comment tu dong - giong het Facebook.
+        asyncio.create_task(
+            score_and_save_posts("linkedin_posts", inserted_rows, id_member=payload.id_member, group_name=payload.group_name)
+        )
 
     return result

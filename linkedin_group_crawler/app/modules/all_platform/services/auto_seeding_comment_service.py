@@ -59,7 +59,7 @@ def _build_comment(need_category: Optional[str]) -> str:
 
 async def maybe_create_auto_seeding_comment(
     *,
-    id_post_fb: str,
+    post_id: str,
     post_url: str,
     group_name: Optional[str],
     id_member: Optional[str],
@@ -67,22 +67,29 @@ async def maybe_create_auto_seeding_comment(
     lead_score: int,
     need_category: Optional[str],
     contact_phone: Optional[str] = None,
+    platform: str = "facebook",
 ) -> Optional[dict[str, Any]]:
     """Tạo 1 dòng auto_seeding_comments (pending) cho bài điểm cao — bỏ qua êm nếu thiếu dữ
-    liệu bắt buộc hoặc đã tồn tại (UNIQUE id_post_fb). KHÔNG raise — gọi từ lead_score_service
-    trong luồng nền, lỗi ở đây không được làm hỏng việc chấm điểm/lưu bài.
+    liệu bắt buộc hoặc đã tồn tại (UNIQUE id_post_fb/id_post_li). KHÔNG raise — gọi từ
+    lead_score_service trong luồng nền, lỗi ở đây không được làm hỏng việc chấm điểm/lưu bài.
+
+    `platform` quyết định ghi vào cột id_post_fb hay id_post_li (migration 174 — ban đầu chỉ
+    Facebook, mở rộng sang LinkedIn 2026-10-07, dùng 2 cột riêng thay vì 1 cột dùng chung để
+    không đụng vào dữ liệu Facebook đang chạy thật).
 
     Trả về dòng VỪA TẠO (để lead_score_service biết id mà trigger nhắn Zalo tiếp, migration
     161), hoặc None nếu bỏ qua (thiếu dữ liệu / đã tồn tại từ trước - không trigger lại)."""
-    if not id_post_fb or not post_url:
+    if not post_id or not post_url:
         return None
+    id_column = "id_post_li" if platform == "linkedin" else "id_post_fb"
     try:
         supabase = get_supabase_client()
         comment_content = _build_comment(need_category)
         row = await _insert(
             supabase,
             {
-                "id_post_fb": id_post_fb,
+                id_column: post_id,
+                "platform": platform,
                 "post_url": post_url,
                 "group_name": group_name,
                 "id_member": id_member,
@@ -93,11 +100,12 @@ async def maybe_create_auto_seeding_comment(
                 "status": "pending",
             },
         )
-        logger.info(f"auto_seeding_comment: đã tạo nhiệm vụ comment cho bài {id_post_fb} (điểm {lead_score}, {need_category})")
+        logger.info(f"auto_seeding_comment: đã tạo nhiệm vụ comment cho bài {platform}#{post_id} (điểm {lead_score}, {need_category})")
         return row
     except Exception as exc:
-        # UNIQUE(id_post_fb) vi phạm nghĩa là đã có nhiệm vụ cho bài này rồi - bỏ qua êm.
-        logger.info(f"auto_seeding_comment: bỏ qua bài {id_post_fb} ({exc})")
+        # UNIQUE(id_post_fb)/UNIQUE(id_post_li) vi phạm nghĩa là đã có nhiệm vụ cho bài này
+        # rồi - bỏ qua êm.
+        logger.info(f"auto_seeding_comment: bỏ qua bài {platform}#{post_id} ({exc})")
         return None
 
 

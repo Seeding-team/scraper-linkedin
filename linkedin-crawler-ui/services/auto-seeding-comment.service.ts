@@ -9,6 +9,10 @@ const BASE = `${API_BASE_URL}/api/all-platform/auto-seeding-comments`;
 export interface AutoSeedingComment {
   id: string;
   id_post_fb: string | null;
+  /** Bài LinkedIn (migration 174) — song song id_post_fb, chỉ đúng 1 trong 2 cột được điền. */
+  id_post_li: string | null;
+  /** "facebook" | "linkedin" — nền tảng thật của nhiệm vụ, dùng để gọi đúng lệnh extension. */
+  platform: "facebook" | "linkedin";
   post_url: string;
   group_name: string | null;
   id_member: string | null;

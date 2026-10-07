@@ -329,34 +329,35 @@ def _fetch_posts(
             p["author"] = author_name
             p["author_name"] = author_name
 
-    if table == "facebook_posts":
-        _attach_auto_seeding_comments(sb, posts)
+    if table in ("facebook_posts", "linkedin_posts"):
+        _attach_auto_seeding_comments(sb, posts, platform="linkedin" if table == "linkedin_posts" else "facebook")
 
     return posts, total
 
 
-def _attach_auto_seeding_comments(sb, posts: list[dict]) -> None:
-    """Gắn `auto_seeding_comment` (nội dung + trạng thái) cho mỗi bài FB đã có nhiệm vụ
-    seeding tự động (bảng auto_seeding_comments, migration 160) - để FE hiển thị ngay trên
-    card bài viết, trông như 1 bình luận thật của member nhưng ghi rõ "Hệ thống:" (yêu cầu
-    2026-10-02). Chỉ 1 trang (page_size nhỏ, vài chục id) nên .in_() an toàn - vẫn bọc
-    try/except, lỗi ở đây KHÔNG được làm hỏng việc hiển thị bài viết (bài học từ bug 502
-    .in_() quá dài ở _attach_group_lead_stats)."""
+def _attach_auto_seeding_comments(sb, posts: list[dict], platform: str = "facebook") -> None:
+    """Gắn `auto_seeding_comment` (nội dung + trạng thái) cho mỗi bài đã có nhiệm vụ seeding
+    tự động (bảng auto_seeding_comments, migration 160 Facebook + 174 LinkedIn) - để FE hiển
+    thị ngay trên card bài viết, trông như 1 bình luận thật của member nhưng ghi rõ "Hệ
+    thống:" (yêu cầu 2026-10-02). Chỉ 1 trang (page_size nhỏ, vài chục id) nên .in_() an
+    toàn - vẫn bọc try/except, lỗi ở đây KHÔNG được làm hỏng việc hiển thị bài viết (bài học
+    từ bug 502 .in_() quá dài ở _attach_group_lead_stats)."""
     post_ids = [p["id"] for p in posts if p.get("id")]
     if not post_ids:
         return
+    id_column = "id_post_li" if platform == "linkedin" else "id_post_fb"
     try:
         res = (
             sb.table("auto_seeding_comments")
             .select(
-                "id_post_fb, comment_content, status, posted_at, link_comment, need_category, "
+                f"{id_column}, comment_content, status, posted_at, link_comment, need_category, "
                 "phone_number, zalo_status, zalo_message_content, zalo_sent_at, zalo_conversation_id, "
                 "zalo_error, zalo_display_name"
             )
-            .in_("id_post_fb", post_ids)
+            .in_(id_column, post_ids)
             .execute()
         )
-        by_post = {r["id_post_fb"]: r for r in (res.data or []) if r.get("id_post_fb")}
+        by_post = {r[id_column]: r for r in (res.data or []) if r.get(id_column)}
     except Exception as e:
         _get_logger().warning(f"[AUTO-SEEDING-COMMENT] Lỗi lấy bình luận auto-seeding cho feed, bỏ qua: {e}")
         return
