@@ -274,12 +274,7 @@ export const ServiceCatalogProductsTable = forwardRef<ServiceCatalogProductsTabl
     return firstPositiveNumber(component.defaultCustomerPriceVnd, component.unitPriceVnd) ?? component.defaultCustomerPriceVnd ?? component.unitPriceVnd ?? null;
   }
 
-  // Thu tu cot bat buoc (task Extend MSC product sync): Mã/Sản phẩm, Nhóm
-  // hàng, Hãng, Model, Mô tả, ĐVT, Giá vốn, Giá tháng, Giá trả năm/tháng,
-  // Giá khách mặc định, VAT, Trạng thái, Hiển thị KH, Thao tác = 14 cot.
-  // "Nhóm hàng" hien ca 2 che do (tuong tu cot khac), nen không còn phu thuoc
-  // fixedGroupId nhu truoc day (12/13).
-  const productColSpan = 14;
+  const productColSpan = fixedGroupId ? 12 : 13;
 
   return (
     <div className="sc-tab-panel">
@@ -470,10 +465,8 @@ export const ServiceCatalogProductsTable = forwardRef<ServiceCatalogProductsTabl
           <thead>
             <tr>
               <th>Mã/Sản phẩm</th>
-              <th>Nhóm hàng</th>
-              <th>Hãng</th>
-              <th>Model</th>
               <th className="sc-th-desc">Mô tả</th>
+              {fixedGroupId ? null : <th>Nhóm</th>}
               <th>ĐVT</th>
               <th>Giá vốn</th>
               <th>Giá tháng</th>
@@ -505,19 +498,11 @@ export const ServiceCatalogProductsTable = forwardRef<ServiceCatalogProductsTabl
                         {product.itemType === 'bundle' ? <span className="sc-badge sc-badge-bundle">Gói</span> : null}
                       </div>
                     </td>
-                    {/* Yeu cau "Extend MSC product sync": thu tu cot bat buoc
-                     * Mã/Sản phẩm → Nhóm hàng → Hãng → Model → Mô tả. 3 field
-                     * moi lay tu dong bo MSC (service_catalog_items: group qua
-                     * groupName, brand, part_number=Model); gia tri thieu hien
-                     * "—" (khong suy dien tu ten san pham). Truoc day cot
-                     * "Nhóm" chi hien khi KHONG có fixedGroupId va Hãng/Model
-                     * khong co cot - gio Nhóm hàng hien CA 2 che do de dung
-                     * thu tu yeu cau, ke ca o trang chi tiet nhom
-                     * (fixedGroupId). */}
-                    <td>{product.groupName || '—'}</td>
-                    <td>{product.brand || '—'}</td>
-                    <td>{product.partNumber || '—'}</td>
+                    {/* Yeu cau rieng "chuyển mô tả ra 1 cột ngoài luôn" - truoc
+                     * day mo ta nam LONG ben trong o Ten (sc-cell-name-desc),
+                     * gio tach rieng 1 cot doc lap giong cac cot gia/VAT khac. */}
                     <td className="sc-cell-desc" title={product.description || undefined}><div className="sc-cell-desc-text">{product.description || '—'}</div></td>
+                    {fixedGroupId ? null : <td>{product.groupName}</td>}
                     <td>{product.unit || '—'}</td>
                     <td className={product.defaultCostPriceVnd == null ? 'sc-cell-price-missing' : undefined}>
                         {formatVndOrMissing(product.defaultCostPriceVnd)}
@@ -548,10 +533,7 @@ export const ServiceCatalogProductsTable = forwardRef<ServiceCatalogProductsTabl
               {product.itemType === 'bundle' ? <span className="sc-badge sc-badge-bundle">Gói</span> : null}
             </div>
             {product.description ? <div className="sc-product-card-desc">{product.description}</div> : null}
-            {/* Card view (mobile) - 3 field moi cung thu tu Nhóm hàng/Hãng/Model */}
-            <div className="sc-row-sub">
-              {`${product.groupName || '—'} · ${product.brand || '—'} · ${product.partNumber || '—'} · ${product.unit || '—'}`}
-            </div>
+            <div className="sc-row-sub">{fixedGroupId ? (product.unit || '—') : `${product.groupName} · ${product.unit || '—'}`}</div>
             <div className="sc-product-card-prices">
               <div className="sc-product-card-price-row"><span>Giá vốn</span><span>{formatVndOrMissing(product.defaultCostPriceVnd)}</span></div>
               <div className="sc-product-card-price-row"><span>Giá tháng</span><span>{formatVndOrMissing(product.monthlyPriceVnd)}</span></div>
