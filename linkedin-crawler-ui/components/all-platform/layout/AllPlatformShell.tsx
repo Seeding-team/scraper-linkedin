@@ -73,6 +73,7 @@ function AllPlatformShellInner({ children }: { children: React.ReactNode }) {
     pathname === "/zalo-chat" ||
     pathname.startsWith("/zalo-chat") ||
     pathname.startsWith("/telegram-chat/") ||
+    pathname.startsWith("/viber-chat/") ||
     pathname === "/all-platform/omnichannel-inbox" ||
     pathname.startsWith("/all-platform/omnichannel-inbox");
   const pageTitle = findCurrentPageLabel(ALL_ENTRIES_FOR_TITLE_LOOKUP, pathname) ?? "Marketing Agents";
