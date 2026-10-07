@@ -64,6 +64,16 @@ async def lifespan(app: FastAPI):
     else:
         zca_listeners_task = asyncio.create_task(_start_zca_listeners_background())
 
+    # MSC → CRM product sync (migration 175): cron 1 lan/ngay, goi dung
+    # msc_sync_service.run_sync nhu button manual. Gate: DISABLE_MSC_SYNC;
+    # khong them job neu MSC_API_BASE_URL chua cau hinh (xem jobs/msc_sync_job.py).
+    try:
+        from app.modules.all_platform.jobs.msc_sync_job import setup_msc_sync_job
+        setup_msc_sync_job()
+        logger.info("MSC product sync scheduler setup finished")
+    except Exception:
+        logger.exception("Failed to start MSC product sync scheduler")
+
     # Auto-start lại các Telegram client (Telethon) đã connected trước khi BE restart.
     telegram_clients_task: asyncio.Task | None = None
 
