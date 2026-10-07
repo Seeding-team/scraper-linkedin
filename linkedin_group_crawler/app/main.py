@@ -82,6 +82,15 @@ async def lifespan(_: FastAPI):
             logger.info("All-platform maintenance scheduler started (24h Facebook crawl stays gated by DISABLE_ALL_PLATFORM_CRAWL_24H)")
         except Exception:
             logger.exception("Failed to start all-platform maintenance scheduler")
+        try:
+            # MSC → CRM product sync (migration 175): cron 1 lan/ngay, goi dung
+            # msc_sync_service.run_sync nhu button manual. Gate: DISABLE_MSC_SYNC;
+            # khong them job neu MSC_API_BASE_URL chua cau hinh (xem jobs/msc_sync_job.py).
+            from app.modules.all_platform.jobs.msc_sync_job import setup_msc_sync_job
+            setup_msc_sync_job()
+            logger.info("MSC product sync scheduler setup finished")
+        except Exception:
+            logger.exception("Failed to start MSC product sync scheduler")
     async def _warmup_background() -> None:
         try:
             await asyncio.to_thread(warmup_playwright_pool)

@@ -316,6 +316,21 @@ class Settings:
     web_intake_api_key: str = os.getenv("WEB_INTAKE_API_KEY", "")
     web_intake_user_id: str = os.getenv("WEB_INTAKE_USER_ID", "")
     render_api_key: str = os.getenv("RENDER_API_KEY", "")
+
+    # ── MSC → CRM Product Sync (migration 175) ──────────────────────────────
+    # Base URL he thong MSC (source of truth, chi GET /api/v1/goods boil dau /).
+    # De trong = tat tinh nang dong bo (job se khong chay, endpoint bao loi).
+    msc_api_base_url: str = os.getenv("MSC_API_BASE_URL", "").rstrip("/")
+    # Token neu MSC tuong lai bang auth (hien tai /goods khong can). Khong hardcode.
+    msc_api_token: str = os.getenv("MSC_API_TOKEN", "")
+    # Gio (0-23) va phut chay dong bo tu dong 1 lan/ngay (timezone cua container,
+    # docker-compose dat TZ=Asia/Ho_Chi_Minh).
+    msc_sync_hour: int = max(0, min(23, int(os.getenv("MSC_SYNC_HOUR", "2"))))
+    msc_sync_minute: int = max(0, min(59, int(os.getenv("MSC_SYNC_MINUTE", "30"))))
+    # 1 = chi tinh toan dem insert/update, KHONG ghi CRM (kiem tra mapping an toan).
+    msc_sync_dry_run: bool = os.getenv("MSC_SYNC_DRY_RUN", "").strip().lower() in ("1", "true", "yes")
+    # Timeout cho GET /api/v1/goods (giay).
+    msc_sync_timeout_sec: float = float(os.getenv("MSC_SYNC_TIMEOUT_SEC", "60"))
     render_service_id: str = os.getenv("RENDER_SERVICE_ID", "")
     cors_origins: list[str] | None = None
     host: str = os.getenv("HOST", "0.0.0.0")

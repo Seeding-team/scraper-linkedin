@@ -43,6 +43,7 @@ from app.modules.all_platform.routers.vendor_imports import router as vendor_imp
 from app.modules.all_platform.routers.vendors import router as vendors_router
 from app.modules.all_platform.routers.crm_customer import router as crm_customer_router
 from app.modules.all_platform.routers.crm_lead import router as crm_lead_router
+from app.modules.all_platform.routers.crm_scope_items import router as crm_scope_items_router
 from app.modules.all_platform.routers.crm_contact import detail_router as crm_contact_detail_router
 from app.modules.all_platform.routers.crm_contact import router as crm_contact_router
 from app.modules.all_platform.routers.crm_permission_group import router as crm_permission_group_router
@@ -53,6 +54,7 @@ from app.modules.all_platform.routers.contract import contracts_router
 from app.modules.all_platform.routers.progress import progress_router
 from app.modules.all_platform.routers.contract_template import contract_templates_router
 from app.modules.all_platform.routers.service_catalog import router as service_catalog_router
+from app.modules.all_platform.routers.msc_sync import router as msc_sync_router
 from app.modules.all_platform.routers.sales_asset import router as sales_asset_router
 from app.modules.all_platform.routers.kpi_reward import router as kpi_reward_router
 from app.modules.all_platform.routers.scheduled_comments import router as scheduled_comments_router
@@ -342,6 +344,7 @@ all_platform_router.include_router(
     prefix="/crm/leads",
     tags=["All-Platform CRM Leads"],
 )
+all_platform_router.include_router(crm_scope_items_router, prefix="/crm/scope-items", tags=["All-Platform CRM Scope Items"])
 all_platform_router.include_router(
     crm_contact_router,
     prefix="/crm/customers/{customer_id}/contacts",
@@ -424,6 +427,13 @@ all_platform_router.include_router(
     service_catalog_router,
     prefix="/service-catalog",
     tags=["All-Platform Service Catalog"],
+)
+
+# ── Dong bo Hang hoa MSC → CRM (manual + xem trang thai; scheduled o jobs) ────
+all_platform_router.include_router(
+    msc_sync_router,
+    prefix="/msc-sync",
+    tags=["All-Platform MSC Sync"],
 )
 
 all_platform_router.include_router(
