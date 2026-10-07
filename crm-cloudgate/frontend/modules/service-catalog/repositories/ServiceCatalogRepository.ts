@@ -1,5 +1,5 @@
 import { API_BASE_URL, API_KEY } from '@/lib/env';
-import type {
+import {
   ServiceCatalogItem,
   ServiceCatalogItemInput,
   BundleComponentInput,
@@ -8,6 +8,7 @@ import type {
   ServiceCatalogUnit,
   ServiceCatalogVatRate,
   ServiceCatalogStatus,
+  MscSyncStats,
 } from '../types';
 
 type ApiResponse<T> = {
@@ -273,6 +274,20 @@ export class ServiceCatalogRepository {
         }),
       }
     );
+  }
+
+  /** Dong bo hang hoa tu MSC (button "Đồng bộ hàng hóa từ MSC").
+   * dryRun=true → backend chi tinh toan dem du kien, KHONG ghi CRM. */
+  async runMscSync(dryRun = false): Promise<MscSyncStats> {
+    return apiFetch<MscSyncStats>('/api/all-platform/msc-sync/run', {
+      method: 'POST',
+      body: JSON.stringify({ dry_run: dryRun }),
+    });
+  }
+
+  /** Trang thai cac lan dong bo MSC gan nhat (msc_sync_runs). */
+  async getMscSyncStatus(limit = 10): Promise<MscSyncStats[]> {
+    return apiFetch<MscSyncStats[]>(`/api/all-platform/msc-sync/status?limit=${encodeURIComponent(String(limit))}`);
   }
 }
 

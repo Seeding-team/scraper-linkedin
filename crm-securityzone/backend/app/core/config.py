@@ -125,6 +125,21 @@ class Settings:
     # khong vo tinh mo endpoint export du lieu khach hang ma khong ai biet).
     crm_sync_api_key: str = os.getenv("CRM_SYNC_API_KEY", "")
 
+    # ── MSC → CRM Product Sync (migration 175) ──────────────────────────────
+    # Base URL he thong MSC (source of truth, chi GET /api/v1/goods boil dau /).
+    # De trong = tat tinh nang dong bo (job se khong chay, endpoint bao loi).
+    msc_api_base_url: str = os.getenv("MSC_API_BASE_URL", "").rstrip("/")
+    # Token neu MSC tuong lai bang auth (hien tai /goods khong can). Khong hardcode.
+    msc_api_token: str = os.getenv("MSC_API_TOKEN", "")
+    # Gio (0-23) va phut chay dong bo tu dong 1 lan/ngay (mui gio CO DINH UTC+7
+    # trong jobs/msc_sync_job.py — container co the khong co tzdata).
+    msc_sync_hour: int = max(0, min(23, int(os.getenv("MSC_SYNC_HOUR", "2"))))
+    msc_sync_minute: int = max(0, min(59, int(os.getenv("MSC_SYNC_MINUTE", "30"))))
+    # 1 = chi tinh toan dem insert/update, KHONG ghi CRM (kiem tra mapping an toan).
+    msc_sync_dry_run: bool = os.getenv("MSC_SYNC_DRY_RUN", "").strip().lower() in ("1", "true", "yes")
+    # Timeout cho GET /api/v1/goods (giay).
+    msc_sync_timeout_sec: float = float(os.getenv("MSC_SYNC_TIMEOUT_SEC", "60"))
+
     def __post_init__(self) -> None:
         if self.cors_origins is None:
             self.cors_origins = _parse_csv(

@@ -7,6 +7,7 @@ import { ConfirmModal } from '@/modules/crm/components/ConfirmModal';
 import { ActionMenu } from '@/modules/crm/components/ActionMenu';
 import { Eye, Pencil, PauseCircle, Trash2, LayoutGrid, TableIcon } from '@/modules/crm/components/icons';
 import { useServiceCatalog } from './use-service-catalog';
+import { serviceCatalogRepository } from './repositories/ServiceCatalogRepository';
 import type { ServiceCatalogItem, ServiceCatalogItemInput } from './types';
 import { emptyGroupForm, itemToForm } from './catalog-form-utils';
 import './styles/service-catalog.css';
@@ -47,6 +48,9 @@ export function ServiceCatalogPage() {
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [confirmDeleteTarget, setConfirmDeleteTarget] = useState<ServiceCatalogItem | null>(null);
+  // Đồng bộ hàng hóa từ MSC (msc-sync): loading state chặn click lặp; kết quả
+  // alert + refresh lại danh mục. dry-run chỉ dùng qua API/env (không thêm UI).
+  const [mscSyncing, setMscSyncing] = useState(false);
 
   const filteredGroups = useMemo(() => {
     const term = search.trim().toLowerCase();
@@ -125,6 +129,31 @@ export function ServiceCatalogPage() {
     }
   }
 
+  async function handleMscSync() {
+    if (mscSyncing) return; // chặn click lặp khi sync đang chạy
+    setMscSyncing(true);
+    try {
+      const stats = await serviceCatalogRepository.runMscSync(false);
+      const summary = [
+        `Thêm mới: ${stats.inserted ?? 0}`,
+        `Cập nhật: ${stats.updated ?? 0}`,
+        `Không thay đổi: ${stats.skipped ?? 0}`,
+        `Lỗi: ${stats.failed ?? 0}`,
+        `Bản ghi trùng trên MSC: ${stats.duplicates ?? 0}`,
+      ].join(' · ');
+      window.alert(
+        (stats.dry_run ? '[DRY RUN] Chưa ghi dữ liệu. Dự kiến — ' : 'Đồng bộ hàng hóa từ MSC hoàn tất — ') + summary
+      );
+      await refresh();
+    } catch (err) {
+      // Backend trả message tiếng Việt friendly (timeout / MSC không khả dụng /
+      // HTTP lỗi) — không lộ chi tiết internals.
+      window.alert(err instanceof Error ? err.message : 'Đồng bộ hàng hóa từ MSC thất bại.');
+    } finally {
+      setMscSyncing(false);
+    }
+  }
+
   function groupActionItems(group: ServiceCatalogItem) {
     return [
       { key: 'view', label: 'Xem sản phẩm', icon: Eye, onSelect: () => router.push(`/all-platform/service-catalog/groups/${group.id}`) },
@@ -157,6 +186,15 @@ export function ServiceCatalogPage() {
           <Link href="/all-platform/service-catalog/price-book-zone" className="sc-btn">
             Bảng giá VPS Zone
           </Link>
+          <button
+            type="button"
+            className="sc-btn"
+            disabled={mscSyncing}
+            title="Lấy danh mục hàng hóa mới nhất từ hệ thống MSC"
+            onClick={() => void handleMscSync()}
+          >
+            {mscSyncing ? 'Đang đồng bộ từ MSC...' : 'Đồng bộ hàng hóa từ MSC'}
+          </button>
           <button type="button" className="sc-btn sc-btn-primary" onClick={openAdd}>
             + Nhóm mới
           </button>
