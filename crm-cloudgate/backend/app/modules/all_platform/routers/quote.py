@@ -772,14 +772,9 @@ def _check_item_field_level_permission(user: dict, quote: dict, new_items: Optio
     if _items_touch_pricing_fields(existing_items, new_items) and not can_edit_quote_pricing(user, quote):
         return "Khong co quyen sua phan gia ban cua bao gia nay"
 
-    is_versioned_quote = (quote.get("versionNumber") or 1) > 1
-    stage = quote.get("processingStage") or "request"
-    # Khách web (Web Intake) tự nhập giá ngay ở "Yêu cầu mới" (public flow, nội bộ duyệt/chỉnh giá sau trong CRM) nên không áp khoá bước.
-    # Admin "Yeu cau chinh sua" tra quote ve Buoc 1/2 (requested_changes_at co gia tri, stage technical/pricing)
-    # -> khong khoa gia nhu quote moi (mirror FE isReturnedForChanges).
-    is_returned_for_changes = bool(quote.get("requestedChangesAt")) and stage in ("technical", "pricing")
-    if not is_web_intake_user(user) and not is_versioned_quote and not is_returned_for_changes and _items_touch_pricing_fields(existing_items, new_items) and stage != "pricing":
-        return "Markup/Gia khach chi duoc nhap o Buoc 3"
+    # Da BO khoa theo buoc "Markup/Gia khach chi duoc nhap o Buoc 3": san pham chon tu danh muc o Buoc 1 da co san gia khach
+    # (gia mac dinh) nen khong duoc chan luu/ban giao o Buoc 1. Van giu kiem tra quyen theo vai tro o tren
+    # (can_edit_technical_quote / can_edit_quote_cost / can_edit_quote_pricing).
     return None
 
 
