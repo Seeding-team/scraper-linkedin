@@ -1013,7 +1013,12 @@ export function QuoteCenterPage() {
     if (status.key === 'won') {
       const contract = contractByQuoteId.get(current.id);
       const contractItem: ActionMenuItem[] = contract
-        ? [{ key: 'view-contract', label: 'Xem hợp đồng', icon: FileText, group: 2, onSelect: () => router.push(`/all-platform/contracts/${contract.id}`) }]
+        ? [{ key: 'view-contract', label: 'Xem hợp đồng', icon: FileText, group: 2, onSelect: () => {
+          // Mo LINK/FILE hop dong that (contracts.file_url) o tab moi; khong co link thi bao ro, khong chuyen sang trang chi tiet.
+          const url = (contract as { fileUrl?: string | null }).fileUrl;
+          if (url) window.open(url, '_blank', 'noopener,noreferrer');
+          else window.alert('Chưa có link hợp đồng.');
+        } }]
         : [];
       return [openItem, ...viewPublicItems, ...contractItem, historyItem, ...deleteItem];
     }

@@ -5423,6 +5423,9 @@
 }
 
 .progress-quote-hero-card {
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
   background: #ffffff;
   border: 1px solid #e2e8f0;
   border-radius: 12px;
@@ -5434,6 +5437,8 @@
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 10px 16px;
   margin-bottom: 14px;
 }
 
@@ -5476,13 +5481,15 @@
 
 .quote-hero-meta-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px 16px;
   padding-top: 12px;
   border-top: 1px solid #f1f5f9;
+  min-width: 0;
 }
 
 .quote-meta-item {
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -5509,9 +5516,8 @@
   font-size: 12.5px;
   font-weight: 700;
   color: #0f172a;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .progress-quote-personnel-grid {
@@ -6010,5 +6016,64 @@
   text-overflow: ellipsis;
 }
 
+/* Drawer persistent (Lead 360): khong chan thao tac ben duong, noi tren moi lop cua trang CRM. */
+.progress-drawer-backdrop--passive {
+  background: transparent;
+  pointer-events: none;
+  z-index: 99990;
+}
+.progress-drawer--persistent {
+  z-index: 99991;
+}
 
+/* ───────── Drawer con (Lead 360 / Tien do): bo cuc COMPACT, tan dung chieu ngang, khong khoang trang lon ───────── */
+.progress-drawer .progress-key-value {
+  grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+  gap: 10px 16px;
+  padding: 12px 14px;
+  margin-bottom: 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  background: #fff;
+}
+.progress-drawer .progress-key-value .wide { grid-column: span 2; }
+@media (max-width: 767px) {
+  .progress-drawer .progress-key-value,
+  .progress-drawer .progress-key-value--compact { grid-template-columns: minmax(0, 1fr); }
+  .progress-drawer .progress-key-value .wide { grid-column: auto; }
+}
+.progress-panel--compact { gap: 10px; }
+.progress-compact-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; }
+.progress-compact-money { font-size: 18px; font-weight: 800; color: #0f172a; }
+.progress-compact-sub { font-size: 12px; color: #64748b; }
+.progress-compact-section {
+  padding: 12px 14px;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  background: #fff;
+}
+.progress-compact-section h3 { margin: 0 0 8px; font-size: 11px; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; color: #64748b; }
+.progress-compact-steps { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.progress-compact-steps li {
+  display: flex; flex-direction: column; gap: 1px;
+  padding: 6px 10px; border-radius: 10px; background: #f1f5f9; min-width: 0;
+}
+.progress-compact-steps b { font-size: 12px; color: #334155; }
+.progress-compact-steps span { font-size: 11px; color: #64748b; white-space: nowrap; }
+.progress-compact-steps .is-done { background: #dcfce7; }
+.progress-compact-steps .is-done span { color: #15803d; }
+.progress-compact-steps .is-current { background: #fce7f3; }
+.progress-compact-steps .is-current span { color: #c2185b; font-weight: 700; }
+.progress-compact-steps .is-overdue { background: #fee2e2; }
+.progress-compact-steps .is-overdue span { color: #b91c1c; font-weight: 700; }
+.progress-compact-link { align-self: flex-start; }
 
+/* Badge thoi gian/trang thai KHONG BAO GIO bi tach chu ("Qua han 5" / "gio"): giu nguyen khoi, neu thieu cho thi ca badge xuong dong. */
+.progress-drawer .qc-badge,
+.progress-drawer [class*='qc-badge-'] {
+  display: inline-block;
+  white-space: nowrap;
+  flex-shrink: 0;
+  width: fit-content;
+  max-width: 100%;
+}

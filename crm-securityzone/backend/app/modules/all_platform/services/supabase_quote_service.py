@@ -275,6 +275,13 @@ def _quote_cost_summary(row: dict, raw_items: list[dict] | None) -> dict:
     }
 
 
+
+def _lost_reason_label(code: str | None) -> str | None:
+    from app.modules.all_platform.services.quote_outcome_service import lost_reason_label
+
+    return lost_reason_label(code)
+
+
 def _row_to_quote(row: dict, items: list[dict] | None = None) -> dict:
     return {
         "id": row["id"],
@@ -332,6 +339,15 @@ def _row_to_quote(row: dict, items: list[dict] | None = None) -> dict:
         "cancellationReason": row.get("cancellation_reason"),
         "cancelledAt": row.get("cancelled_at"),
         "cancelledById": row.get("cancelled_by"),
+        # Ket qua bao gia sau phat hanh (migration 179): None = dang cho khach phan hoi; 'lost' = Khong chot / OUT.
+        "customerOutcome": row.get("customer_outcome"),
+        "lostReason": row.get("lost_reason"),
+        "lostReasonLabel": _lost_reason_label(row.get("lost_reason")),
+        "lostReasonOther": row.get("lost_reason_other"),
+        "lostNote": row.get("lost_note"),
+        "lostById": row.get("lost_by"),
+        "lostByName": row.get("lost_by_name"),
+        "lostAt": row.get("lost_at"),
         "publishedAt": row.get("published_at"),
         "publishedById": row.get("published_by"),
         "sentAt": row.get("sent_at"),

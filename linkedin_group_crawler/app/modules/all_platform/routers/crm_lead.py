@@ -243,6 +243,16 @@ def leads_save_classification_rules(payload: dict[str, Any], user: dict[str, Any
         return _error(exc)
 
 
+@router.get("/{lead_id}/overview")
+def leads_overview(lead_id: str, user: dict[str, Any] = Depends(get_current_user)) -> BaseResponse:
+    """Lead 360 - tong quan xu ly Lead (read-only), xem lead_overview_service."""
+    try:
+        from app.modules.all_platform.services.lead_overview_service import get_lead_overview
+        return BaseResponse(success=True, data=get_lead_overview(lead_id, user))
+    except Exception as exc:
+        return _error(exc)
+
+
 @router.get("/{lead_id}")
 def leads_get(lead_id: str, user: dict[str, Any] = Depends(get_current_user)) -> BaseResponse:
     try:

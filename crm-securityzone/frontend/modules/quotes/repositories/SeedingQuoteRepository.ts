@@ -574,6 +574,20 @@ export class SeedingQuoteRepository implements QuoteRepository {
     });
   }
 
+  async getLostReasons(): Promise<Array<{ code: string; label: string }>> {
+    return apiFetch<Array<{ code: string; label: string }>>('/api/all-platform/quotes/lost-reasons');
+  }
+
+  async markQuoteLost(
+    quoteId: string,
+    payload: { reason: string; reasonOther?: string; note?: string },
+  ): Promise<{ quote: Quote; dealOut: { changed: boolean; message?: string } }> {
+    return apiFetch(`/api/all-platform/quotes/${encodeURIComponent(quoteId)}/mark-lost`, {
+      method: 'POST',
+      body: JSON.stringify({ reason: payload.reason, reason_other: payload.reasonOther || null, note: payload.note || null }),
+    });
+  }
+
   async revokePublicQuote(quoteId: string): Promise<Quote> {
     return apiFetch<Quote>(`/api/all-platform/quotes/${encodeURIComponent(quoteId)}/revoke-public`, {
       method: 'POST',

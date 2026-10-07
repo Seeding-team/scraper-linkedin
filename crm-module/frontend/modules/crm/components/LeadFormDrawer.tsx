@@ -210,6 +210,7 @@ export function LeadFormDrawer({
   onSaved,
   onOpenQualification,
   onOpenExistingLead,
+  initialValues,
 }: {
   open: boolean;
   currentUser: AppUser | null;
@@ -219,6 +220,10 @@ export function LeadFormDrawer({
   /** Mo lead da co (tim thay khi check trung) bang chinh co che mo Lead hien
    * huu dang dung o LeadsDirectory (LeadDetailDrawer) - khong dung lai. */
   onOpenExistingLead?: (lead: CrmLeadRow) => void;
+  /** Dien san tu nguon ben ngoai (vd nut "Tao lead" tren post card seeding
+   * bai tu dong - da co san SDT + ten Zalo do bot tim duoc, khong bat go lai
+   * tu dau). SDT van di qua dung luong check-trung nhu go tay. */
+  initialValues?: { phone?: string; leadName?: string; note?: string; source?: string };
 }) {
   const [checkPhone, setCheckPhone] = useState('');
   const [checkEmail, setCheckEmail] = useState('');
@@ -263,7 +268,7 @@ export function LeadFormDrawer({
   useEffect(() => {
     if (!open) return;
     setError('');
-    setCheckPhone('');
+    setCheckPhone(initialValues?.phone ? normalizePhoneInput(initialValues.phone) : '');
     setCheckEmail('');
     setDupState('idle');
     setDuplicates([]);
@@ -274,13 +279,19 @@ export function LeadFormDrawer({
     setMatchedCustomerId('');
     const storedDefaultSource = readLeadSourceDefault(currentUser);
     setDefaultLeadSource(storedDefaultSource);
-    setForm(emptyForm(currentUser, storedDefaultSource));
+    const base = emptyForm(currentUser, initialValues?.source || storedDefaultSource);
+    setForm({
+      ...base,
+      leadName: initialValues?.leadName || base.leadName,
+      note: initialValues?.note || base.note,
+    });
     setExtraOpen(false);
     setInteractionForId('');
     setInteractionNote('');
     setInteractionSavedFor('');
     checkSeqRef.current += 1;
-  }, [open, currentUser]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, currentUser, initialValues?.phone, initialValues?.leadName, initialValues?.note, initialValues?.source]);
 
   function setValue<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm(current => ({ ...current, [key]: value }));
@@ -1082,16 +1093,6 @@ export function LeadFormDrawer({
             >
               {saving === 'create-next' ? <Loader2 className="crm-save-spinner" /> : null}
               Tạo và thêm Lead tiếp theo
-            </button>
-            <button
-              type="button"
-              className="crm-secondary-button"
-              disabled={saving !== null || !dedupGatePassed}
-              title={dedupGatePassed ? undefined : 'Cần kiểm tra trùng SĐT/Email trước'}
-              onClick={() => void handleAction('create-qualify')}
-            >
-              {saving === 'create-qualify' ? <Loader2 className="crm-save-spinner" /> : null}
-              Tạo và mở Qualification
             </button>
             <button
               type="button"

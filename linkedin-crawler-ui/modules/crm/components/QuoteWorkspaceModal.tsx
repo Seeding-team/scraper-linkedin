@@ -55,6 +55,7 @@ import { ACTIVITY_LABELS } from '@/modules/quotes/utils/quoteActivity';
 import { calculateQuoteTotals, calculateOverallDiscountSummary, clampDiscountPercent, calculateItemTotal, calculateSectionTotal } from '@/modules/quotes/utils/quoteCalculations';
 import { paymentPlanAmount, paymentPlanPercent } from '@/modules/quotes/utils/paymentPlan';
 import type { BundleSnapshotComponent, BundleSnapshotValue, CustomBlock, PaymentPlanRow } from '@/modules/quotes/types';
+import { QuoteOutcomeSection } from './QuoteOutcomeSection';
 
 /** 4 buoc THAT (Yeu cau bao gia/Thong tin ky thuat/Hoan thien gia ban/Cho
  * duyet-Phat hanh) - anh xa dung 1-1 voi `quotes.processing_stage` (migration
@@ -5663,14 +5664,18 @@ export function QuoteWorkspaceModal({
                                    * xem duoc trong modal), doi sang mau do
                                    * chinh cua app (--color-primary) thay vi
                                    * xanh duong (feedback 2026-09-25). */}
-                                  <button
-                                    type="button"
-                                    className="qc-btn qc-inline-link-btn"
-                                    onClick={() => setContractPreviewId(c.id)}
-                                  >
-                                    <Eye className="qc-icon" />
-                                    Xem hợp đồng {c.contractNumber || c.title}
-                                  </button>
+                                  {/* "Xem hợp đồng" = mở LINK/FILE hợp đồng thật đã lưu trên Contract (contracts.file_url) ở tab mới; không có link thì báo rõ,
+                                   * không mở popup chi tiết hợp đồng (popup ContractDetailPage vẫn giữ trong code, chưa dùng cho CTA này). */}
+                                  {c.fileUrl ? (
+                                    <a className="qc-btn qc-inline-link-btn" href={c.fileUrl} target="_blank" rel="noopener noreferrer">
+                                      <Eye className="qc-icon" />
+                                      Xem hợp đồng {c.contractNumber || c.title}
+                                    </a>
+                                  ) : (
+                                    <span className="qc-btn qc-inline-link-btn" style={{ opacity: 0.7, cursor: 'default' }}>
+                                      {c.contractNumber || c.title} — Chưa có link hợp đồng
+                                    </span>
+                                  )}
                                 </li>
                               ))}
                             </ul>
@@ -7038,6 +7043,9 @@ export function QuoteWorkspaceModal({
                   <div className="qc-workspace-summary-row"><span>Phê duyệt</span><strong>{ruleEvaluation?.autoApproveEnabled ? 'Tự động duyệt' : 'Duyệt thủ công'}</strong></div>
                   <div className="qc-workspace-summary-row"><span>Trạng thái public link</span><strong>{quote.publicEnabled ? 'Đang bật' : 'Chưa bật'}</strong></div>
                 </div>
+
+                {/* Kết quả báo giá (OUT) - KẾT QUẢ CỦA KHÁCH sau phát hành; đặt ngay dưới "Phê duyệt & version" ở sidebar phải. */}
+                <QuoteOutcomeSection quote={quote} onUpdated={updated => { setQuote(updated); void onChanged(); }} />
 
                 {quote.processingStage === 'published' ? (
                   <div className="qc-workspace-card">

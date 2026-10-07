@@ -12131,3 +12131,58 @@
     grid-column: 1 / -1;
   }
 }
+
+/* ───────────────────────────────────────────────────────────────────────────
+ * RIGHT DRAWER CHUAN CUA CRM (plan GD1): MOI drawer ben phai (Lead, Lead 360, Khach hang, Co hoi, Bao gia, Hop dong)
+ * dung CUNG 1 chieu rong: desktop ~58vw (toi thieu 44rem, toi da 80rem; de con cho nhin/bam danh sach ben trai), tablet 92vw, mobile 100vw.
+ * Dat o CUOI file de thang cac rule width rieng le cu cua tung drawer (42rem/720px/980px/1080px...).
+ * Class dung chung cho drawer viet bang Tailwind: `crm-drawer-w`.
+ * ─────────────────────────────────────────────────────────────────────────── */
+:root {
+  --crm-drawer-width: min(100vw, max(44rem, min(58vw, 80rem)));
+}
+@media (max-width: 1023px) {
+  :root { --crm-drawer-width: 92vw; }
+}
+@media (max-width: 767px) {
+  :root { --crm-drawer-width: 100vw; }
+}
+.crm-drawer,
+.crm-lead-drawer,
+.crm-lead-detail-drawer,
+.crm-lead-drawer--quick,
+.crm-verify-drawer,
+.crm-lead-edit-drawer,
+.crm-customer-drawer,
+.crm-right-drawer,
+.crm-drawer-w,
+.progress-drawer {
+  width: var(--crm-drawer-width) !important;
+  max-width: 100vw;
+  min-width: 0;
+  box-sizing: border-box;
+}
+/* Form/bang ben trong khong duoc lam tran drawer. */
+.crm-drawer-body,
+.crm-lead-drawer-body,
+.progress-drawer-body {
+  min-width: 0;
+  overflow-x: hidden;
+}
+
+/* Ten Lead bam duoc (mo Lead 360): gach chan khi hover/focus de nguoi dung biet day la link. */
+.crm-lead-name-btn {
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1.5px;
+}
+.crm-lead-name-btn:hover,
+.crm-lead-name-btn:focus-visible {
+  text-decoration: underline;
+}
+
+/* Link "← Lead 360 / Xac minh Lead" tren header form con mo tu Lead 360 */
+.crm-drawer-backlink {
+  display: inline-flex; align-items: center; gap: 4px; margin: 0 0 6px; padding: 0;
+  border: 0; background: none; cursor: pointer; font-size: 12.5px; font-weight: 600; color: #2563eb;
+}
+.crm-drawer-backlink:hover { text-decoration: underline; }

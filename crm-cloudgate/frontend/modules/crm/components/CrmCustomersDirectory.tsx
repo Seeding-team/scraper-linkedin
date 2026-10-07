@@ -803,7 +803,7 @@ export function CrmCustomersDirectory() {
               value={searchInput}
               onChange={event => setSearchInput(event.target.value)}
               className="crm-input"
-              placeholder="Tìm tên doanh nghiệp, MST, người liên hệ, SĐT, email..."
+              placeholder="Tìm tên doanh nghiệp, mã KH, mã LH, MST, người liên hệ, SĐT, email..."
               autoComplete="off"
             />
             <div className="crm-filter-select-wrap">

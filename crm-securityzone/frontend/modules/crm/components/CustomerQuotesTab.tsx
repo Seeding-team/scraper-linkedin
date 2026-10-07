@@ -108,6 +108,24 @@ export function CustomerQuotesTab({
   const { visible: visibleQuoteColumns, toggle: toggleQuoteColumn, selectAll: selectAllQuoteColumns, resetToDefault: resetQuoteColumnsToDefault } =
     useQuoteColumnPreferences(columnWorkspaceId, columnUserId);
 
+  // Bo loc "Phu trach": CHI nhung nguoi thuc su la Sale (quote_owner_id) / Presale (technical_owner_id) cua cac bao gia o khach nay,
+  // thay vi toan bo thanh vien he thong.
+  const ownerOptions = useMemo(() => {
+    const roles = new Map<string, Set<string>>();
+    const add = (id: unknown, role: string) => {
+      if (!id || typeof id !== 'string') return;
+      if (!roles.has(id)) roles.set(id, new Set());
+      roles.get(id)!.add(role);
+    };
+    for (const chain of allQuoteChains || []) {
+      add(chain?.current?.quote_owner_id, 'Sale');
+      add(chain?.current?.technical_owner_id, 'Presale');
+    }
+    return Array.from(roles.entries())
+      .map(([id, set]) => ({ id, label: `${(() => { const n = memberName(id); return n && n !== 'Chưa gán' ? n : 'Không rõ tên'; })()} (${['Sale', 'Presale'].filter(r => set.has(r)).join(', ')})` }))
+      .sort((a, b) => a.label.localeCompare(b.label, 'vi'));
+  }, [allQuoteChains, memberName]);
+
   // Filter quoteChains by search string and ownerFilter
   const filteredChains = useMemo(() => {
     return quoteChains.filter(({ current }) => {
@@ -125,8 +143,7 @@ export function CustomerQuotesTab({
 
       // Owner filter check
       if (ownerFilter !== 'all') {
-        const ownerId = current.quote_owner_id || current.technical_owner_id;
-        if (ownerId !== ownerFilter) {
+        if (current.quote_owner_id !== ownerFilter && current.technical_owner_id !== ownerFilter) {
           return false;
         }
       }
@@ -320,8 +337,8 @@ export function CustomerQuotesTab({
               onChange={e => setOwnerFilter(e.target.value)}
             >
               <option value="all">Phụ trách</option>
-              {members.map((m: any) => (
-                <option key={m.id} value={m.id}>{m.display_name || m.name || m.email}</option>
+              {ownerOptions.map(o => (
+                <option key={o.id} value={o.id}>{o.label}</option>
               ))}
             </select>
             <Users className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-slate-400 pointer-events-none" />

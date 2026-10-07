@@ -403,10 +403,13 @@ export type CrmLeadStatus =
   | 'qualified'
   | 'nurture'
   | 'converted'
-  | 'disqualified';
+  | 'disqualified'
+  | 'out'; // Lead da convert co Co hoi OUT (tinh tu backend) - tach rieng voi 'unqualified'
 
 export interface CrmLeadRow {
   id: string;
+  /** Co hoi cua Lead nay da OUT (backend tinh tu deal_stage = lost). */
+  dealOut?: boolean;
   leadName: string;
   companyName?: string;
   taxCode?: string;
@@ -459,6 +462,8 @@ export interface CrmLeadKpi {
   sql: number;
   nurturing: number;
   unqualified: number;
+  /** Lead da convert nhung Co hoi OUT (deal_stage = lost) - tach rieng voi Khong dat chuan. */
+  out?: number;
 }
 
 export interface CrmAnalytics {

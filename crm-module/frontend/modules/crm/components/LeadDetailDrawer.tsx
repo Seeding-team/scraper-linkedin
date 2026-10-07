@@ -98,6 +98,8 @@ export function LeadDetailDrawer({
   initialMode,
   currentUser,
   onClose,
+  onBack,
+  parentLabel,
   onSaved,
   onEdit,
 }: {
@@ -106,6 +108,9 @@ export function LeadDetailDrawer({
   initialMode: 'view' | 'qualify' | 'convert';
   currentUser: AppUser | null;
   onClose: () => void;
+  /** Co khi mo tu Lead 360: Back quay ve Lead 360 (khong dong drawer). X van dong tat ca. */
+  onBack?: () => void;
+  parentLabel?: string;
   onSaved: (lead: CrmLeadRow) => void;
   /** Mở form sửa hồ sơ Lead. Drawer này KHÔNG tự dựng form sửa riêng — nó đẩy
    * ngược lên LeadsDirectory để mở đúng LeadEditDrawer mà "Sửa nhanh" dùng,
@@ -1010,6 +1015,9 @@ export function LeadDetailDrawer({
       <aside className="crm-drawer crm-lead-detail-drawer crm-verify-drawer">
         <header className="crm-lead-drawer-header crm-verify-header">
           <div className="crm-verify-header-text">
+            {onBack ? (
+              <button type="button" className="crm-drawer-backlink" onClick={onBack}>← {parentLabel || 'Quay lại'} / Xác minh Lead</button>
+            ) : null}
             <h2>
               Xác minh Lead
               <span

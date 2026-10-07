@@ -94,6 +94,7 @@ from app.modules.all_platform.services.crm_permission_service import (
     can_manage_quote_approval_rules,
     can_manage_shared_master_data,
     has_module_access,
+    filter_rows_by_scope,
     get_scope_visible_user_ids,
 )
 from app.modules.all_platform.services import quote_rule_evaluation_service
@@ -235,6 +236,7 @@ def quotes_list(deal_id: str | None = Query(None), user: dict = Depends(get_curr
         rows = list_quotes(deal_id)
         if is_web_intake_user(user):  # khoá Web Intake chỉ thấy báo giá do chính nó tạo
             rows = [q for q in rows if str(q.get("createdById") or "") == str(user.get("id") or "")]
+        rows = filter_rows_by_scope(user, rows, ("createdById", "quoteOwnerId", "technicalOwnerId"))
         data = [apply_quote_field_permissions(quote, user) for quote in rows]
         return BaseResponse(success=True, data=data)
     except Exception as e:
@@ -814,6 +816,14 @@ def _quote_update_dump(payload: QuoteUpdateRequest) -> dict:
     return dump
 
 
+@quotes_router.get("/lost-reasons")
+def quotes_lost_reasons(user: dict = Depends(get_current_user)) -> BaseResponse:
+    """Danh sach ly do "Khong chot / OUT" (nguon duy nhat o backend, FE khong hard-code)."""
+    from app.modules.all_platform.services.quote_outcome_service import list_lost_reasons
+
+    return BaseResponse(success=True, data=list_lost_reasons())
+
+
 @quotes_router.get("/{quote_id}")
 def quotes_get(quote_id: str, user: dict = Depends(get_current_user)) -> BaseResponse:
     try:
@@ -821,7 +831,8 @@ def quotes_get(quote_id: str, user: dict = Depends(get_current_user)) -> BaseRes
         # Bao gia da duyet/confirmed (da co link public) thi ai dang nhap cung
         # xem noi bo duoc nhu truoc gio - chi bao gia CHUA duyet moi gioi han
         # theo nhom quyen (nguoi tao/quan ly deal/phu trach deal/co quyen duyet/admin).
-        if quote["status"] not in ("approved", "confirmed") and not can_edit_quote(user, quote, lead):
+        _scoped = get_scope_visible_user_ids(user) is not None  # user bi gioi han theo team/ca nhan: KHONG ngoai le "da duyet"
+        if (_scoped or quote["status"] not in ("approved", "confirmed")) and not can_edit_quote(user, quote, lead):
             return BaseResponse(success=False, message="Không có quyền xem báo giá này")
         return BaseResponse(success=True, data=apply_quote_field_permissions(quote, user))
     except Exception as e:
@@ -1110,6 +1121,32 @@ def quotes_publish(quote_id: str, user: dict = Depends(get_current_user)) -> Bas
             return BaseResponse(success=False, message="Bạn không có quyền phát hành báo giá")
         data = publish_quote(quote_id, user.get("id"))
         return BaseResponse(success=True, message="Đã phát hành báo giá", data=data)
+    except ValueError as e:
+        return BaseResponse(success=False, message=str(e))
+    except Exception as e:
+        return BaseResponse(success=False, message=friendly_supabase_error_message(e))
+
+
+class QuoteMarkLostRequest(BaseModel):
+    reason: str
+    reason_other: str | None = None
+    note: str | None = None
+
+
+@quotes_router.post("/{quote_id}/mark-lost")
+def quotes_mark_lost(quote_id: str, payload: QuoteMarkLostRequest, user: dict = Depends(get_current_user)) -> BaseResponse:
+    """Khong chot / OUT sau khi bao gia da phat hanh/gui khach (ket qua cua khach, khong phai buoc workflow noi bo)."""
+    try:
+        quote, lead = _load_quote_and_lead(quote_id)
+        if not can_edit_quote(user, quote, lead):
+            return BaseResponse(success=False, message="Không có quyền cập nhật kết quả báo giá này")
+        from app.modules.all_platform.services.quote_outcome_service import mark_quote_lost
+
+        result = mark_quote_lost(quote_id, user, payload.reason, payload.reason_other, payload.note)
+        result["quote"] = apply_quote_field_permissions(result["quote"], user)
+        return BaseResponse(success=True, message="Đã đánh dấu Không chốt", data=result)
+    except QuoteNotFoundError as e:
+        return _not_found_response(e)
     except ValueError as e:
         return BaseResponse(success=False, message=str(e))
     except Exception as e:

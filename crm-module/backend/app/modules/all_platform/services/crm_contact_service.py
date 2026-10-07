@@ -27,7 +27,7 @@ CONTACT_COLUMNS = (
     "id, customer_id, name, position, position_category_id, "
     "position_label_snapshot, phone, phone_normalized, email, "
     "email_normalized, zalo, facebook, telegram, website, is_primary, note, "
-    "created_by, created_at, updated_at"
+    "created_by, created_at, updated_at, contact_code"
 )
 logger = logging.getLogger(__name__)
 

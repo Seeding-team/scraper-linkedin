@@ -1096,16 +1096,6 @@ export function LeadFormDrawer({
             </button>
             <button
               type="button"
-              className="crm-secondary-button"
-              disabled={saving !== null || !dedupGatePassed}
-              title={dedupGatePassed ? undefined : 'Cần kiểm tra trùng SĐT/Email trước'}
-              onClick={() => void handleAction('create-qualify')}
-            >
-              {saving === 'create-qualify' ? <Loader2 className="crm-save-spinner" /> : null}
-              Tạo và mở Qualification
-            </button>
-            <button
-              type="button"
               className="crm-save-button"
               disabled={saving !== null || !dedupGatePassed}
               title={dedupGatePassed ? undefined : 'Cần kiểm tra trùng SĐT/Email trước'}

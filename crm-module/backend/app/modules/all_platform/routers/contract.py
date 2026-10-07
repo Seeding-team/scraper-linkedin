@@ -34,7 +34,7 @@ from app.modules.all_platform.services import (
 )
 from app.modules.all_platform.services.contract_ocr_service import compare_to_quote, extract_contract_summary
 from app.modules.all_platform.services.quote_currency import quote_amount_to_vnd
-from app.modules.all_platform.services.crm_permission_service import can_edit_contract, can_edit_quote
+from app.modules.all_platform.services.crm_permission_service import can_edit_contract, can_edit_quote, filter_rows_by_scope, get_scope_visible_user_ids
 from app.modules.all_platform.services.customer_lead_service import get_customer_lead_by_id
 
 contracts_router = APIRouter()
@@ -54,7 +54,8 @@ def contracts_list(
     _user: dict = Depends(get_current_user),
 ) -> BaseResponse:
     try:
-        return BaseResponse(success=True, data=list_contracts(deal_id, status, quote_id))
+        rows = filter_rows_by_scope(_user, list_contracts(deal_id, status, quote_id), ("createdById", "ownerId"))
+        return BaseResponse(success=True, data=rows)
     except Exception as e:
         return BaseResponse(success=False, message=str(e))
 
@@ -62,7 +63,10 @@ def contracts_list(
 @contracts_router.get("/dashboard-stats")
 def contracts_dashboard_stats(_user: dict = Depends(get_current_user)) -> BaseResponse:
     try:
-        return BaseResponse(success=True, data=get_contracts_dashboard_stats())
+        allowed = None
+        if get_scope_visible_user_ids(_user) is not None:  # KPI chi tinh tren hop dong user duoc thay
+            allowed = {r["id"] for r in filter_rows_by_scope(_user, list_contracts(None, None, None), ("createdById", "ownerId"))}
+        return BaseResponse(success=True, data=get_contracts_dashboard_stats(allowed))
     except Exception as e:
         return BaseResponse(success=False, message=str(e))
 

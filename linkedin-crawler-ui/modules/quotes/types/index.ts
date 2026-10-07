@@ -420,6 +420,15 @@ export interface Quote {
   deletedAt?: string | null;
   deletedById?: string | null;
   cancellationReason?: string | null;
+  /** Ket qua cua KHACH sau phat hanh (migration 179): null = dang cho phan hoi; 'lost' = Khong chot / OUT. */
+  customerOutcome?: 'lost' | null;
+  lostReason?: string | null;
+  lostReasonLabel?: string | null;
+  lostReasonOther?: string | null;
+  lostNote?: string | null;
+  lostById?: string | null;
+  lostByName?: string | null;
+  lostAt?: string | null;
   cancelledAt?: string | null;
   cancelledById?: string | null;
   publishedAt?: string | null;

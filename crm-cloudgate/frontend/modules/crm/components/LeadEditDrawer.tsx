@@ -82,12 +82,17 @@ export function LeadEditDrawer({
   open,
   currentUser,
   onClose,
+  onBack,
+  parentLabel,
   onSaved,
 }: {
   lead: CrmLeadRow | null;
   open: boolean;
   currentUser: AppUser | null;
   onClose: () => void;
+  /** Co khi mo tu Lead 360: Huy/Luu xong quay ve Lead 360 (khong dong drawer). X van dong tat ca. */
+  onBack?: () => void;
+  parentLabel?: string;
   onSaved: (lead: CrmLeadRow) => void;
 }) {
   useBodyScrollLock(open);
@@ -256,7 +261,7 @@ export function LeadEditDrawer({
       const body = await res.json();
       if (!res.ok || body.success === false) throw new Error(body?.message || `Không lưu được thay đổi (lỗi ${res.status}).`);
       onSaved(mapLead(body.data));
-      onClose();
+      (onBack ?? onClose)();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Không lưu được thay đổi.');
     } finally {
@@ -266,10 +271,13 @@ export function LeadEditDrawer({
 
   return (
     <>
-      <div className="crm-drawer-backdrop" onClick={onClose} />
+      <div className="crm-drawer-backdrop crm-drawer-backdrop--passive" />
       <aside className="crm-drawer crm-lead-edit-drawer" data-testid="lead-edit-drawer">
         <header className="crm-lead-drawer-header">
           <div>
+            {onBack ? (
+              <button type="button" className="crm-drawer-backlink" onClick={onBack}>← {parentLabel || 'Quay lại'} / Sửa Lead</button>
+            ) : null}
             <h2>Sửa Lead</h2>
             <p>Cập nhật thông tin hồ sơ Lead. Thao tác này không tạo Khách hàng/Cơ hội nào.</p>
           </div>
@@ -440,7 +448,7 @@ export function LeadEditDrawer({
         </div>
 
         <footer className="crm-drawer-footer crm-lead-drawer-footer">
-          <button type="button" className="crm-cancel-button" onClick={onClose} disabled={saving}>
+          <button type="button" className="crm-cancel-button" onClick={onBack ?? onClose} disabled={saving}>
             Hủy
           </button>
           <div className="crm-lead-drawer-footer-actions">

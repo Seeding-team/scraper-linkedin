@@ -14,6 +14,7 @@ from app.modules.all_platform.services.crm_permission_service import (
     can_edit_contract,
     is_web_intake_user,
     has_full_crm_access,
+    can_access_by_scope,
     get_scope_visible_user_ids,
     # "Team" o day la Team CRM THAT (crm_teams/crm_team_members, migration
     # 155) - feedback 2026-10-01: doi tu HR roster (members.team, vd
@@ -171,6 +172,8 @@ def _customer_ids_visible_to(user: dict[str, Any]) -> set[str] | None:
     if role in ("admin", "leader"):
         return None
     scope_user_ids = get_scope_visible_user_ids(user)
+    if scope_user_ids is None and has_full_crm_access(user):
+        return None  # Sale / full CRM access trong instance (scope system/workspace hoac chua gan Nhom quyen)
 
     uid = str(user.get("id") or "")
     owner_ids = list(scope_user_ids) if scope_user_ids is not None else ([uid] if uid else [])
@@ -201,7 +204,10 @@ def can_edit_customer(user: dict[str, Any], customer: dict[str, Any] | None) -> 
         return False
     if _is_admin_or_leader(user):
         return True
-    return str(customer.get("owner_id") or "") == str(user.get("id") or "")
+    if str(customer.get("owner_id") or "") == str(user.get("id") or ""):
+        return True
+    # Team Sale member: duoc sua ho so khach hang cua thanh vien CRM Team minh (union nhieu team)
+    return can_access_by_scope(user, customer.get("owner_id"))
 
 
 def can_view_customer(user: dict[str, Any], customer: dict[str, Any] | None) -> bool:
@@ -330,7 +336,8 @@ def list_customers(
         # rieng.
         query = query.or_(
             f"customer_name.ilike.%{search}%,company_name.ilike.%{search}%,"
-            f"phone.ilike.%{search}%,email.ilike.%{search}%,tax_code.ilike.%{search}%"
+            f"phone.ilike.%{search}%,email.ilike.%{search}%,tax_code.ilike.%{search}%,"
+            f"customer_code.ilike.%{search}%"
         )
     res = execute_supabase_query(lambda: query.order("updated_at", desc=True).execute())
     rows = [normalize_city_fields(row) for row in (res.data or [])]
@@ -354,7 +361,7 @@ def list_customers(
         contact_res = execute_supabase_query(
             lambda: supabase.table("crm_contacts")
             .select("customer_id")
-            .or_(f"name.ilike.%{search}%,phone.ilike.%{search}%,email.ilike.%{search}%")
+            .or_(f"name.ilike.%{search}%,phone.ilike.%{search}%,email.ilike.%{search}%,contact_code.ilike.%{search}%")
             .eq("instance", settings.crm_instance)
             .execute()
         )
@@ -386,7 +393,8 @@ def list_customers(
         if search:
             kpi_query = kpi_query.or_(
                 f"customer_name.ilike.%{search}%,company_name.ilike.%{search}%,"
-                f"phone.ilike.%{search}%,email.ilike.%{search}%,tax_code.ilike.%{search}%"
+                f"phone.ilike.%{search}%,email.ilike.%{search}%,tax_code.ilike.%{search}%,"
+                f"customer_code.ilike.%{search}%"
             )
         kpi_res = execute_supabase_query(lambda: kpi_query.execute())
         kpi_rows = [normalize_city_fields(row) for row in (kpi_res.data or [])]
@@ -474,7 +482,13 @@ def create_customer(payload: dict[str, Any], user: dict[str, Any]) -> dict[str, 
     )
     supabase = get_supabase_client()
     res = execute_supabase_query(lambda: supabase.table("crm_customers").insert(data).execute())
-    return normalize_city_fields(res.data[0])
+    created = res.data[0]
+    try:  # Ma KH tu sinh ngay khi tao (khong de den luc tao du an moi co)
+        from app.modules.all_platform.services.supabase_project_service import _resolve_customer_code
+        created["customer_code"] = _resolve_customer_code(created["id"])
+    except Exception:
+        logger.warning("auto customer_code failed for %s", created.get("id"))
+    return normalize_city_fields(created)
 
 
 def update_customer(customer_id: str, payload: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]:
@@ -806,6 +820,14 @@ def create_customer_with_deal(payload: dict[str, Any], user: dict[str, Any]) -> 
             raise ValueError("Dự án đã chọn không thuộc đúng khách hàng này.") from exc
         raise
     data = res.data or {}
+    _cust = data.get("customer") if isinstance(data.get("customer"), dict) else None
+    if _cust and _cust.get("id"):  # Customer tao thu cong kem Deal cung tu sinh customer_code ngay luc tao
+        try:
+            from app.modules.all_platform.services.supabase_project_service import _resolve_customer_code
+
+            _cust["customer_code"] = _resolve_customer_code(_cust["id"])
+        except Exception:  # noqa: BLE001
+            logger.warning("auto customer_code failed for %s", _cust.get("id"))
     data["partial"] = partial
     if partial_message:
         data["partial_message"] = partial_message

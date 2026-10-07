@@ -33,13 +33,13 @@ from app.modules.all_platform.services.crm_lead_service import (
     LeadLinkedError,
     company_match,
     convert_lead,
+    copy_lead_to_instance,
+    copy_leads_to_instance,
     create_lead,
     delete_lead,
     delete_leads_bulk,
     duplicate_check,
     get_lead,
-    copy_lead_to_instance,
-    copy_leads_to_instance,
     list_leads,
     update_lead,
 )
@@ -170,9 +170,9 @@ def leads_create(payload: CrmLeadCreate, user: dict[str, Any] = Depends(get_curr
 @router.post("/copy-instance")
 def leads_copy_instance_bulk(payload: dict, user: dict[str, Any] = Depends(get_current_user)) -> BaseResponse:
     """Chi Admin THAT: sao chep NHIEU Lead cung luc, MOI Lead 1 workspace dich
-    RIENG (khong bat buoc cung 1 dich cho ca lo) - ban bulk cua
-    POST /{lead_id}/copy-instance. Payload: {"assignments": [{"lead_id":
-    ..., "target_instance": ...}, ...]}."""
+    RIENG (khong bat buoc cung 1 dich cho ca lo) trong so 2 clone CRM doc
+    lap (cloudgate/SECURITYZONE) - ban bulk cua POST /{lead_id}/copy-instance.
+    Payload: {"assignments": [{"lead_id": ..., "target_instance": ...}, ...]}."""
     if str(user.get("role") or "").strip().lower() != "admin":
         return BaseResponse(success=False, message="Chỉ Admin mới được sao chép Lead sang workspace khác")
     try:
@@ -243,6 +243,16 @@ def leads_save_classification_rules(payload: dict[str, Any], user: dict[str, Any
         return _error(exc)
 
 
+@router.get("/{lead_id}/overview")
+def leads_overview(lead_id: str, user: dict[str, Any] = Depends(get_current_user)) -> BaseResponse:
+    """Lead 360 - tong quan xu ly Lead (read-only), xem lead_overview_service."""
+    try:
+        from app.modules.all_platform.services.lead_overview_service import get_lead_overview
+        return BaseResponse(success=True, data=get_lead_overview(lead_id, user))
+    except Exception as exc:
+        return _error(exc)
+
+
 @router.get("/{lead_id}")
 def leads_get(lead_id: str, user: dict[str, Any] = Depends(get_current_user)) -> BaseResponse:
     try:
@@ -279,8 +289,8 @@ def leads_delete(
 @router.post("/{lead_id}/copy-instance")
 def leads_copy_instance(lead_id: str, payload: dict, user: dict[str, Any] = Depends(get_current_user)) -> BaseResponse:
     """Chi Admin THAT (khong phai leader): tao 1 ban sao cua 1 Lead (chua
-    convert) sang 1 workspace khac, Lead goc van giu nguyen - thao tac xuyen
-    tenant."""
+    convert) sang 1 clone CRM doc lap khac (cloudgate/SECURITYZONE), Lead
+    goc van giu nguyen o Main - thao tac xuyen tenant."""
     if str(user.get("role") or "").strip().lower() != "admin":
         return BaseResponse(success=False, message="Chỉ Admin mới được sao chép Lead sang workspace khác")
     try:

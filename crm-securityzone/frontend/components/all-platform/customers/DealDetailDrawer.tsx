@@ -213,7 +213,7 @@ export function DealDetailDrawer({ customer, open, onClose, onRequestTransition,
       {/* Drawer */}
       <aside
         data-crm-deal-workspace="true"
-        className={`fixed right-0 top-0 z-[99991] flex h-screen w-full max-w-[42rem] flex-col border-l border-slate-200 bg-white shadow-2xl transition-transform duration-300 ${
+        className={`fixed right-0 top-0 z-[99991] flex h-screen crm-drawer-w flex-col border-l border-slate-200 bg-white shadow-2xl transition-transform duration-300 ${
           open ? "translate-x-0" : "translate-x-full"
         }`}
       >

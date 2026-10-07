@@ -296,7 +296,7 @@ def delete_contract(contract_id: str) -> None:
     supabase.table(CONTRACTS_TABLE).delete().eq("id", contract_id).eq("instance", settings.crm_instance).execute()
 
 
-def get_contracts_dashboard_stats() -> dict:
+def get_contracts_dashboard_stats(allowed_ids: set[str] | None = None) -> dict:
     """4 KPI đầu trang, khớp đúng 4 ô trong mockup UI (Hợp đồng hiệu lực / Chờ ký /
     Sắp hết hạn / Công nợ đến hạn). "Công nợ đến hạn" không có bảng lịch thanh toán
     riêng (out of scope, xem kế hoạch) nên tính xấp xỉ = phần GIÁ TRỊ CHƯA THU của
@@ -305,12 +305,14 @@ def get_contracts_dashboard_stats() -> dict:
     supabase: Client = get_supabase_client()
     rows = (
         supabase.table(CONTRACTS_TABLE)
-        .select("status, contract_value, end_date, payment_collected_percent")
+        .select("id, status, contract_value, end_date, payment_collected_percent")
         .eq("instance", settings.crm_instance)
         .execute()
         .data
         or []
     )
+    if allowed_ids is not None:
+        rows = [r for r in rows if r.get("id") in allowed_ids]
     active_statuses = {"signed", "active"}
     active = [r for r in rows if r["status"] in active_statuses]
     pending_signature = [r for r in rows if r["status"] == "pending_signature"]

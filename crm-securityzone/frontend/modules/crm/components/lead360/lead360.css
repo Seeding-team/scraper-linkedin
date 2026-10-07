@@ -1,0 +1,735 @@
+/* Lead 360 - tong quan xu ly Lead (right drawer, read-only). Enterprise compact layout. */
+.crm-l360 {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px 20px 24px;
+  min-width: 0;
+}
+
+.crm-l360-state {
+  padding: 14px 16px;
+  border-radius: 10px;
+  background: #f8fafc;
+  color: #475569;
+  font-size: 13px;
+}
+.crm-l360-state--error { background: #fef2f2; color: #b91c1c; }
+.crm-l360-state--error button { margin-left: 8px; font-weight: 700; text-decoration: underline; }
+
+.crm-l360-card {
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #fff;
+  padding: 12px 14px;
+  min-width: 0;
+}
+
+.crm-l360-eyebrow {
+  margin: 0 0 8px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #64748b;
+}
+
+/* Header */
+.crm-l360-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr);
+  gap: 12px 20px;
+  align-items: start;
+  position: relative;
+}
+.crm-l360-head-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: 17px;
+  font-weight: 800;
+  color: #0f172a;
+  overflow-wrap: anywhere;
+}
+.crm-l360-head-sub {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin-top: 4px;
+  font-size: 12.5px;
+  color: #475569;
+}
+.crm-l360-head-sub b { color: #0f172a; font-weight: 600; }
+.crm-l360-link { color: #c2185b; text-align: left; font-weight: 800; }
+.crm-l360-link:hover { text-decoration: underline; }
+.crm-l360-chip {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  background: #f1f5f9;
+  color: #475569;
+}
+.crm-l360-chip--code { background: #eef2ff; color: #4338ca; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.crm-l360-chip--status-sql, .crm-l360-chip--status-converted { background: #dcfce7; color: #15803d; }
+.crm-l360-chip--status-mql { background: #dbeafe; color: #1d4ed8; }
+.crm-l360-chip--status-nurturing { background: #fef3c7; color: #b45309; }
+.crm-l360-chip--status-unqualified { background: #fee2e2; color: #b91c1c; }
+
+.crm-l360-head-people {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+.crm-l360-head-people > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: #f8fafc;
+  min-width: 0;
+}
+.crm-l360-head-people span { font-size: 10.5px; color: #64748b; }
+.crm-l360-head-people b { font-size: 12.5px; color: #0f172a; overflow-wrap: anywhere; }
+.crm-l360-head-people small { font-size: 10.5px; color: #94a3b8; }
+
+.crm-l360-head-cta {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.crm-l360-btn-verify {
+  padding: 6px 14px;
+  border: 1px solid #c2185b;
+  border-radius: 8px;
+  background: #c2185b;
+  font-size: 12px;
+  font-weight: 700;
+  color: #ffffff;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.crm-l360-btn-verify:hover {
+  background: #a91549;
+  border-color: #a91549;
+}
+
+.crm-l360-btn-customer {
+  padding: 6px 14px;
+  border: 1px solid #059669;
+  border-radius: 8px;
+  background: #059669;
+  font-size: 12px;
+  font-weight: 700;
+  color: #ffffff;
+  cursor: pointer;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  transition: all 0.15s ease;
+}
+.crm-l360-btn-customer:hover {
+  background: #047857;
+  border-color: #047857;
+}
+
+.crm-l360-head-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.crm-l360-head-name--company {
+  color: #0f172a;
+  font-weight: 800;
+}
+.crm-l360-icon-company {
+  color: #2563eb;
+  flex-shrink: 0;
+}
+
+/* Viec hien tai */
+.crm-l360-task { border-left: 4px solid #c2185b; background: #fff; }
+.crm-l360-task.is-late { border-left-color: #dc2626; background: #fff; }
+.crm-l360-task h3 { margin: 0 0 6px; font-size: 15px; font-weight: 800; color: #0f172a; }
+.crm-l360-task-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; font-size: 12.5px; color: #475569; }
+.crm-l360-task-meta b { color: #0f172a; font-weight: 600; }
+.crm-l360-due { padding: 2px 8px; border-radius: 999px; font-size: 11.5px; font-weight: 700; }
+.crm-l360-due--ok { background: #dbeafe; color: #1d4ed8; }
+.crm-l360-due--soon { background: #fef3c7; color: #b45309; }
+.crm-l360-due--late { background: #fee2e2; color: #b91c1c; }
+.crm-l360-due--done { background: #dcfce7; color: #15803d; }
+
+/* Pipeline */
+.crm-l360-steps {
+  display: grid;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.crm-l360-step {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  padding: 6px 2px;
+  border-radius: 8px;
+  text-align: center;
+}
+.crm-l360-step-dot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  background: #e2e8f0;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 800;
+}
+.crm-l360-step-label { font-size: 11px; font-weight: 700; color: #475569; overflow-wrap: anywhere; line-height: 1.2; }
+.crm-l360-step-meta { font-size: 10.5px; color: #94a3b8; }
+.crm-l360-step-actor { font-size: 10.5px; color: #64748b; overflow-wrap: anywhere; }
+.crm-l360-step--done .crm-l360-step-dot { background: #16a34a; color: #fff; }
+.crm-l360-step--done .crm-l360-step-label { color: #0f172a; }
+.crm-l360-step--current { background: transparent; }
+.crm-l360-step--current .crm-l360-step-dot { background: #c2185b; color: #fff; box-shadow: 0 0 0 3px rgba(194, 24, 91, 0.15); }
+.crm-l360-step--current .crm-l360-step-label { color: #0f172a; font-weight: 700; }
+.crm-l360-step--overdue { background: transparent; }
+.crm-l360-step--overdue .crm-l360-step-dot { background: #dc2626; color: #fff; box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.15); }
+.crm-l360-step--overdue .crm-l360-step-label { color: #0f172a; font-weight: 700; }
+.crm-l360-step--overdue .crm-l360-step-meta { color: #b91c1c; }
+
+/* Timeline */
+.crm-l360-timeline { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; }
+.crm-l360-tl {
+  display: grid;
+  grid-template-columns: 8.5rem minmax(0, 1fr);
+  gap: 10px;
+  padding: 8px 0 8px 12px;
+  border-left: 2px solid #e2e8f0;
+  position: relative;
+}
+.crm-l360-tl::before {
+  content: '';
+  position: absolute;
+  left: -5px;
+  top: 12px;
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: #94a3b8;
+}
+.crm-l360-tl--lead::before { background: #2563eb; }
+.crm-l360-tl--convert::before, .crm-l360-tl--handover::before { background: #7c3aed; }
+.crm-l360-tl--quote::before { background: #c2185b; }
+.crm-l360-tl--contract::before { background: #16a34a; }
+.crm-l360-tl-time { font-size: 11px; color: #64748b; }
+.crm-l360-tl b { display: block; font-size: 12.5px; color: #0f172a; }
+.crm-l360-tl span:not(.crm-l360-tl-time), .crm-l360-tl small { display: block; font-size: 11.5px; color: #64748b; overflow-wrap: anywhere; }
+
+/* Fields */
+.crm-l360-fields {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px 16px;
+}
+.crm-l360-fields--tight { margin-top: 6px; gap: 8px 14px; }
+.crm-l360-fields--4col {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px 14px;
+}
+.crm-l360-field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.crm-l360-field > span { font-size: 11px; color: #64748b; font-weight: 500; line-height: 1.3; }
+.crm-l360-field > b { font-size: 12.5px; font-weight: 600; color: #0f172a; overflow-wrap: anywhere; line-height: 1.35; }
+.crm-l360-field small { font-weight: 500; color: #64748b; }
+.crm-l360-doc { display: inline-block; margin-right: 8px; color: #2563eb; font-weight: 600; text-decoration: none; }
+.crm-l360-doc:hover { text-decoration: underline; }
+
+/* Chain */
+.crm-l360-chain {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 6px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.crm-l360-chain li {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.8);
+  border: 1px solid rgba(15, 23, 42, 0.06);
+  min-width: 0;
+}
+.crm-l360-chain span { font-size: 10px; font-weight: 700; color: #64748b; text-transform: uppercase; letter-spacing: 0.04em; }
+.crm-l360-chain b { font-size: 12.5px; color: #0f172a; overflow-wrap: anywhere; }
+.crm-l360-chain small { font-size: 10.5px; color: #64748b; }
+
+.crm-l360-step-state { font-size: 10.5px; font-weight: 700; color: #64748b; }
+.crm-l360-step--done .crm-l360-step-state { color: #16a34a; }
+.crm-l360-step--current .crm-l360-step-state { color: #c2185b; }
+.crm-l360-step--overdue .crm-l360-step-state { color: #b91c1c; }
+.crm-l360-step-meta.is-late { color: #b91c1c; font-weight: 700; }
+
+.crm-l360-chip--appr-approved { background: #dcfce7; color: #15803d; }
+.crm-l360-chip--appr-pending { background: #fef3c7; color: #b45309; }
+.crm-l360-chip--appr-changes_requested { background: #fee2e2; color: #b91c1c; }
+.crm-l360-chip--appr-not_yet { background: #f1f5f9; color: #64748b; }
+.crm-l360-chip--ct-signed, .crm-l360-chip--ct-active { background: #dcfce7; color: #15803d; }
+.crm-l360-chip--ct-pending_signature, .crm-l360-chip--ct-pending_legal { background: #fef3c7; color: #b45309; }
+.crm-l360-chip--ct-terminated, .crm-l360-chip--ct-expired { background: #fee2e2; color: #b91c1c; }
+.crm-l360-sla { display: inline-block; padding: 1px 7px; border-radius: 999px; font-size: 11px; font-weight: 700; background: #f1f5f9; color: #475569; }
+.crm-l360-sla--overdue, .crm-l360-sla--completed_late { background: #fee2e2; color: #b91c1c; }
+.crm-l360-sla--due_soon { background: #fef3c7; color: #b45309; }
+.crm-l360-sla--in_progress { background: #dbeafe; color: #1d4ed8; }
+.crm-l360-sla--completed_on_time { background: #dcfce7; color: #15803d; }
+
+/* Accordions & Lists */
+.crm-l360-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.crm-l360-acc {
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #fff;
+  transition: border-color 0.15s ease, background-color 0.15s ease;
+}
+
+.crm-l360-acc.is-active {
+  background: #f8fafc;
+  border-color: #cbd5e1;
+}
+
+.crm-l360-row--deal.is-active {
+  background: #f8fafc;
+  border-color: #cbd5e1;
+}
+
+.crm-l360-row--contract.is-active {
+  background: #f8fafc;
+  border-color: #cbd5e1;
+}
+
+.crm-l360-acc-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+  border-radius: 8px;
+}
+.crm-l360-acc-head:hover { background: rgba(0, 0, 0, 0.02); }
+.crm-l360-acc-caret { color: #94a3b8; font-size: 11px; width: 10px; flex-shrink: 0; }
+.crm-l360-acc-title { font-size: 12.5px; color: #0f172a; }
+.crm-l360-acc-sub { font-size: 11.5px; color: #64748b; min-width: 0; overflow-wrap: anywhere; }
+.crm-l360-acc-item { flex: 1 1 8rem; color: #334155; }
+.crm-l360-acc-body { padding: 8px 10px 10px; border-top: 1px solid #f1f5f9; }
+
+/* Details collapsible */
+.crm-l360-details > summary {
+  cursor: pointer;
+  list-style: none;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #64748b;
+  margin-bottom: 6px;
+}
+.crm-l360-details > summary.crm-l360-info-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+}
+.crm-l360-info-edit {
+  margin-left: auto;
+  flex-shrink: 0;
+}
+.crm-l360-details > summary::-webkit-details-marker { display: none; }
+.crm-l360-details > summary::before { content: '▾'; display: inline-block; margin-right: 6px; transition: transform 0.15s ease; }
+.crm-l360-details:not([open]) > summary::before { transform: rotate(-90deg); }
+.crm-l360-details:not([open]) > summary { margin-bottom: 0; }
+.crm-l360-note { margin: 8px 0 0; padding: 6px 8px; border-radius: 8px; background: #f8fafc; font-size: 12.5px; color: #334155; white-space: pre-line; }
+.crm-l360-note span { display: block; font-size: 10.5px; color: #64748b; margin-bottom: 2px; }
+.crm-l360-more { margin-top: 6px; font-size: 11.5px; font-weight: 700; color: #c2185b; }
+.crm-l360-more:hover { text-decoration: underline; }
+
+/* Sub-group Boxes & Colored Banner Headers for Lead / Customer Details */
+.crm-l360-group-box {
+  margin-top: 8px;
+  padding: 10px 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.crm-l360-group-hdr {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  margin-bottom: 8px;
+  background: #f1f5f9;
+  color: #475569;
+}
+
+.crm-l360-group-hdr--company { background: #eff6ff; color: #1e40af; }
+.crm-l360-group-hdr--contact { background: #faf5ff; color: #6b21a8; }
+.crm-l360-group-hdr--lead { background: #fff1f2; color: #9f1239; }
+.crm-l360-group-hdr--need { background: #fffbeb; color: #92400e; }
+
+.crm-l360-ghdr-icon {
+  flex-shrink: 0;
+}
+
+/* Badges & Pills */
+.crm-l360-due,
+.crm-l360-sla,
+.crm-l360-chip,
+.crm-l360-nolink {
+  display: inline-block;
+  white-space: nowrap;
+  flex-shrink: 0;
+  width: fit-content;
+  max-width: 100%;
+}
+.crm-l360-field > b { display: block; }
+.crm-l360-field > b .crm-l360-due,
+.crm-l360-field > b .crm-l360-sla { margin-left: 4px; margin-top: 2px; }
+
+/* Actions & Buttons */
+.crm-l360-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 8px; }
+.crm-l360-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  padding: 5px 12px; border: 1px solid #cbd5e1; border-radius: 8px;
+  background: #fff; color: #334155; font-size: 12px; font-weight: 700;
+  white-space: nowrap; text-decoration: none; cursor: pointer;
+  transition: all 0.15s ease;
+}
+.crm-l360-btn:hover { border-color: #c2185b; color: #c2185b; }
+.crm-l360-btn--primary { background: #c2185b; border-color: #c2185b; color: #fff; }
+.crm-l360-btn--primary:hover { background: #a91549; border-color: #a91549; color: #fff; }
+.crm-l360-btn--ghost { border-color: transparent; background: transparent; color: #64748b; font-weight: 600; }
+.crm-l360-btn--ghost:hover { color: #c2185b; background: rgba(194, 24, 91, 0.05); }
+.crm-l360-nolink { padding: 3px 8px; border-radius: 999px; background: #f1f5f9; color: #64748b; font-size: 11px; font-weight: 600; }
+
+/* Quick view items table */
+.crm-l360-quick { margin-top: 8px; padding-top: 8px; border-top: 1px dashed #e2e8f0; }
+.crm-l360-items { width: 100%; margin-top: 6px; border-collapse: collapse; font-size: 12px; }
+.crm-l360-items th { text-align: left; font-size: 10.5px; font-weight: 700; color: #64748b; padding: 4px 6px; border-bottom: 1px solid #e2e8f0; text-transform: uppercase; }
+.crm-l360-items td { padding: 4px 6px; border-bottom: 1px solid #f1f5f9; color: #0f172a; vertical-align: top; overflow-wrap: anywhere; }
+.crm-l360-items td:nth-child(2), .crm-l360-items td:nth-child(3) { white-space: nowrap; }
+
+/* 3 Section Visual Accents (Clean white background, sharp left accent border) */
+
+/* Section Header & Sort Controls */
+.crm-l360-sec-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.crm-l360-sec-head .crm-l360-eyebrow {
+  margin-bottom: 0;
+}
+.crm-l360-sort-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: #64748b;
+}
+.crm-l360-sort-label {
+  font-weight: 500;
+  color: #94a3b8;
+  margin-right: 2px;
+}
+.crm-l360-sort-btn {
+  padding: 2px 8px;
+  border-radius: 6px;
+  border: 1px solid #cbd5e1;
+  background: #fff;
+  color: #475569;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.crm-l360-sort-btn:hover {
+  border-color: #c2185b;
+  color: #c2185b;
+}
+.crm-l360-sort-btn.is-active {
+  background: #fdf2f8;
+  border-color: #fbcfe8;
+  color: #be185d;
+  font-weight: 700;
+}
+
+.crm-l360-time-badge {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11px;
+  font-weight: 600;
+  color: #475569;
+  background: #f8fafc;
+  padding: 1px 6px;
+  border-radius: 6px;
+  border: 1px solid #f1f5f9;
+}
+.crm-l360-chip--newest {
+  background: #e0e7ff;
+  color: #3730a3;
+  font-weight: 700;
+}
+.crm-l360-chip--oldest {
+  background: #f1f5f9;
+  color: #64748b;
+  font-weight: 600;
+}
+
+/* Section 1: Cơ hội / Dự án (Blue Accent) */
+.crm-l360-sec--deal {
+  border-left: 4px solid #2563eb;
+  background: #ffffff;
+}
+.crm-l360-eyebrow--deal {
+  color: #1d4ed8;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Section 2: Báo giá / Yêu cầu báo giá (Markee Red/Pink Accent) */
+.crm-l360-sec--quote {
+  border-left: 4px solid #c2185b;
+  background: #ffffff;
+}
+.crm-l360-eyebrow--quote {
+  color: #c2185b;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Section 3: Hợp đồng (Green Accent) */
+.crm-l360-sec--contract {
+  border-left: 4px solid #16a34a;
+  background: #ffffff;
+}
+.crm-l360-eyebrow--contract {
+  color: #15803d;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.crm-l360-icon {
+  flex-shrink: 0;
+}
+
+/* Mã (Code) & Giá (Money/Value) */
+.crm-l360-val-code {
+  color: #4338ca;
+  font-weight: 700;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.crm-l360-val-money {
+  color: #047857;
+  font-weight: 700;
+}
+.crm-l360-val-money small {
+  color: #475569;
+  font-weight: 500;
+}
+
+/* Tiến độ theo từng báo giá (Stepper row connected by line) */
+.crm-l360-qprogs { margin-top: 10px; padding-top: 10px; border-top: 1px dashed #e2e8f0; display: flex; flex-direction: column; gap: 6px; }
+.crm-l360-qprog {
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 8px 12px;
+  background: #ffffff;
+  transition: border-color 0.15s ease;
+}
+.crm-l360-qprog:hover {
+  border-color: #cbd5e1;
+}
+.crm-l360-qprog-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; font-size: 12px; }
+.crm-l360-qprog-code { border: 0; background: none; padding: 0; cursor: pointer; }
+.crm-l360-qprog-code:hover b { text-decoration: underline; }
+.crm-l360-qprog-item { font-size: 12px; color: #334155; min-width: 0; overflow-wrap: anywhere; flex: 1 1 8rem; font-weight: 500; }
+.crm-l360-qprog-who, .crm-l360-qprog-due { font-size: 11.5px; color: #64748b; }
+
+.crm-l360-qsteps {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  position: relative;
+  margin: 8px 0 2px;
+  padding: 0;
+  list-style: none;
+}
+.crm-l360-qsteps::before {
+  content: '';
+  position: absolute;
+  top: 10px;
+  left: 6%;
+  right: 6%;
+  height: 2px;
+  background: #f1f5f9;
+  border-top: 1px solid #e2e8f0;
+  z-index: 0;
+}
+.crm-l360-qstep {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  flex: 1;
+  text-align: center;
+  padding: 0 2px;
+}
+.crm-l360-qstep-dot {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #f1f5f9;
+  color: #94a3b8;
+  font-size: 10px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid #fff;
+}
+.crm-l360-qstep-label { font-size: 10.5px; font-weight: 600; color: #94a3b8; line-height: 1.25; overflow-wrap: anywhere; }
+.crm-l360-qstep-actor { font-size: 10px; color: #94a3b8; overflow-wrap: anywhere; }
+
+/* Done state: xanh la diu, label text toi trung tinh */
+.crm-l360-qstep--done .crm-l360-qstep-dot { background: #16a34a; color: #fff; }
+.crm-l360-qstep--done .crm-l360-qstep-label { color: #334155; font-weight: 600; }
+
+/* Current state: dot accent Markee, label text dam trung tinh (KHONG dung text do gatt) */
+.crm-l360-qstep--current { background: transparent; }
+.crm-l360-qstep--current .crm-l360-qstep-dot { background: #c2185b; color: #fff; box-shadow: 0 0 0 3px rgba(194, 24, 91, 0.15); }
+.crm-l360-qstep--current .crm-l360-qstep-label { color: #0f172a; font-weight: 700; }
+
+/* Overdue state: dot do phan biet, label dark trung tinh */
+.crm-l360-qstep--overdue { background: transparent; }
+.crm-l360-qstep--overdue .crm-l360-qstep-dot { background: #dc2626; color: #fff; box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.15); }
+.crm-l360-qstep--overdue .crm-l360-qstep-label { color: #991b1b; font-weight: 700; }
+
+@media (max-width: 1024px) {
+  .crm-l360-head { grid-template-columns: minmax(0, 1fr); }
+  .crm-l360-steps { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .crm-l360-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .crm-l360-fields--4col { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 640px) {
+  .crm-l360 { padding: 12px 10px 20px; }
+  .crm-l360-head-people { grid-template-columns: minmax(0, 1fr); }
+  .crm-l360-steps { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .crm-l360-chain { grid-template-columns: minmax(0, 1fr); }
+  .crm-l360-fields { grid-template-columns: minmax(0, 1fr); }
+  .crm-l360-fields--4col { grid-template-columns: minmax(0, 1fr); }
+  .crm-l360-tl { grid-template-columns: minmax(0, 1fr); gap: 2px; }
+}
+
+.crm-l360-head-cta { display: flex; flex-wrap: wrap; gap: 8px; }
+.crm-l360-open-customer { text-decoration: none; display: inline-flex; align-items: center; }
+.crm-l360-head-name { font-weight: 800; }
+
+.crm-l360-related { display: flex; flex-direction: column; gap: 6px; }
+.crm-l360-related-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+  padding: 8px 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #ffffff;
+  min-width: 0;
+}
+.crm-l360-related-info {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+.crm-l360-related-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+/* OUT / Khong chot (ket qua cua khach sau phat hanh) */
+.crm-l360-chip--out { background: #fee2e2; color: #b91c1c; font-weight: 700; }
+.crm-l360-chip--awaiting { background: #e0f2fe; color: #0369a1; }
+.crm-l360-qstep--out { background: #fef2f2; }
+.crm-l360-qstep--out .crm-l360-qstep-dot { background: #b91c1c; color: #fff; }
+.crm-l360-qstep--out .crm-l360-qstep-label { color: #b91c1c; font-weight: 700; }
+
+/* Progress TONG roll-up: Lead -> KH/Co hoi -> Bao gia -> Hop dong (4 buoc) */
+.crm-l360-steps { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+@media (max-width: 640px) { .crm-l360-steps { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.crm-l360-step-note { font-size: 11px; color: #475569; font-weight: 600; text-align: center; }
+.crm-l360-step--out { background: transparent; }
+.crm-l360-step--out .crm-l360-step-dot { background: #b91c1c; color: #fff; box-shadow: 0 0 0 3px rgba(185, 28, 28, 0.15); }
+.crm-l360-step--out .crm-l360-step-label, .crm-l360-step--out .crm-l360-step-state { color: #b91c1c; font-weight: 700; }
+
+/* "Dang xu ly" = xanh duong (khong dung hong): de phan biet voi Qua han (do) / Hoan thanh (xanh la) / OUT (do dam) */
+.crm-l360-step--current { background: transparent; }
+.crm-l360-step--current .crm-l360-step-dot { background: #2563eb; color: #fff; box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.18); }
+.crm-l360-step--current .crm-l360-step-label { color: #1e3a8a; font-weight: 700; }
+.crm-l360-step--current .crm-l360-step-state { color: #1d4ed8; font-weight: 700; }
+.crm-l360-qstep--current { background: transparent; }
+.crm-l360-qstep--current .crm-l360-qstep-dot { background: #2563eb; color: #fff; box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.18); }
+.crm-l360-qstep--current .crm-l360-qstep-label { color: #1e3a8a; font-weight: 700; }
+.crm-l360-task { border-left-color: #2563eb; }
+.crm-l360-task.is-late { border-left-color: #dc2626; }
