@@ -36,7 +36,17 @@ export interface BundleComponentLine {
    * LUON co mat cho moi request da auth (khong qua cong quyen nay). */
 }
 
+/** TÍCH HỢP BỘ LỌC WORKSPACE: Metadata của 1 Workspace lấy động từ Database */
+export interface WorkspaceMeta {
+  instance_key: string;
+  code?: string | null;
+  name: string;
+  total_groups: number;
+}
+
 export interface ServiceCatalogItem {
+  /** TÍCH HỢP BỘ LỌC WORKSPACE: Mã định danh workspace (markee, cloudgate, securityzone,...) */
+  instance?: string;
   defaultCostPriceVnd?: number | null;
   defaultMarkupPercent?: number | null;
   defaultCustomerPriceVnd?: number | null;
@@ -132,6 +142,8 @@ export interface ServiceCatalogOptions {
 }
 
 export interface ServiceCatalogItemInput {
+  /** TÍCH HỢP BỘ LỌC WORKSPACE: Mã định danh workspace khi tạo mới/chỉnh sửa */
+  instance?: string;
   defaultCostPriceVnd?: number | null;
   defaultMarkupPercent?: number | null;
   defaultCustomerPriceVnd?: number | null;
