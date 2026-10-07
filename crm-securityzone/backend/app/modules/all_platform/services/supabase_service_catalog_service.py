@@ -1,4 +1,4 @@
-﻿"""Danh mục dịch vụ (Service Catalog): group/component/bundle dùng chung cho các
+"""Danh mục dịch vụ (Service Catalog): group/component/bundle dùng chung cho các
 Mẫu báo giá. Bundle (gói/combo, vd SZ-VPS) tổ hợp nhiều component qua
 service_catalog_bundle_items — khi chọn 1 bundle lúc điền báo giá, hệ thống ghép
 Description Items từ các thành phần và chỉ sinh ĐÚNG 1 dòng quote_item.
@@ -81,6 +81,8 @@ def _row_to_item(row: dict) -> dict:
         "partNumber": row.get("part_number"),
         "productType": row.get("product_type"),
         "internalNote": row.get("internal_note"),
+        # TÍCH HỢP BỘ LỌC WORKSPACE: Trả về instance của item để FE hiển thị badge và phục vụ lọc
+        "instance": row.get("instance") or "markee",
         "children": [],
     }
 
@@ -173,9 +175,113 @@ def render_bundle_description(bundle_id: str) -> str:
     return "\n".join(lines)
 
 
-def list_service_catalog_items() -> list[dict]:
+# ==============================================================================
+# TÍCH HỢP BỘ LỌC WORKSPACE: Danh sách Workspace khả dụng & Lọc danh mục theo Workspace
+# ==============================================================================
+
+def list_available_workspaces() -> list[dict]:
+    """Lấy danh sách các Workspace khả dụng động từ Database.
+
+    TÍCH HỢP BỘ LỌC WORKSPACE:
+    - Truy vấn bảng `quote_issuer_companies` để lấy danh sách công ty/brand chính thức.
+    - Truy vấn distinct `instance` từ bảng `service_catalog_items`.
+    - Hợp nhất và trả về danh sách đầy đủ metadata (instance_key, code, name, total_groups)
+      100% động từ DB, không hardcode danh sách trong client.
+    """
     supabase: Client = get_supabase_client()
-    rows = supabase.table(ITEMS_TABLE).select("*").order("sort_order").execute().data or []
+    companies = []
+    try:
+        companies_res = (
+            supabase.table("quote_issuer_companies")
+            .select("id, code, legal_name, brand_name, instance, status")
+            .eq("status", "active")
+            .order("sort_order")
+            .execute()
+        )
+        companies = companies_res.data or []
+    except Exception:
+        companies = []
+
+    group_counts: dict[str, int] = {}
+    distinct_instances: set[str] = set()
+    try:
+        groups_res = (
+            supabase.table(ITEMS_TABLE)
+            .select("id, instance")
+            .eq("item_type", "group")
+            .execute()
+        )
+        for g in (groups_res.data or []):
+            inst = (g.get("instance") or "markee").strip().lower()
+            group_counts[inst] = group_counts.get(inst, 0) + 1
+            distinct_instances.add(inst)
+    except Exception:
+        pass
+
+    # Bản đồ quy chuẩn mã code công ty sang instance slug nếu chưa gán riêng
+    code_to_instance = {
+        "mk": "markee",
+        "cg": "cloudgate",
+        "sz": "securityzone",
+    }
+
+    seen_keys: set[str] = set()
+    workspaces: list[dict] = []
+
+    for comp in companies:
+        code = (comp.get("code") or "").strip()
+        code_lower = code.lower()
+        inst_key = code_to_instance.get(code_lower, (comp.get("instance") or code_lower or "markee").lower())
+        name = (comp.get("brand_name") or comp.get("legal_name") or code).strip()
+
+        if inst_key not in seen_keys:
+            seen_keys.add(inst_key)
+            workspaces.append({
+                "instance_key": inst_key,
+                "code": code,
+                "name": name,
+                "total_groups": group_counts.get(inst_key, 0),
+            })
+
+    # Bổ sung các instance tồn tại trong service_catalog_items mà chưa có trong quote_issuer_companies
+    for inst in sorted(distinct_instances):
+        if inst not in seen_keys:
+            seen_keys.add(inst)
+            workspaces.append({
+                "instance_key": inst,
+                "code": inst[:2].upper(),
+                "name": inst.capitalize(),
+                "total_groups": group_counts.get(inst, 0),
+            })
+
+    return workspaces
+
+
+def list_service_catalog_items_scoped(instances: list[str] | None = None) -> list[dict]:
+    """Lấy cây danh mục dịch vụ có lọc theo phân vùng Workspace (instances).
+
+    TÍCH HỢP BỘ LỌC WORKSPACE:
+    - Nếu instances được chỉ định (vd ['markee', 'cloudgate']): lọc items có instance tương ứng.
+    - Nếu instances là None hoặc rỗng: lấy toàn bộ danh mục như cũ.
+    - Duy trì 100% cấu trúc phân tầng cha-con và bundle components hiện tại.
+    """
+    supabase: Client = get_supabase_client()
+    query = supabase.table(ITEMS_TABLE).select("*")
+
+    if instances:
+        normalized: set[str] = set()
+        for i in instances:
+            s = str(i).strip()
+            if s:
+                normalized.add(s)
+                normalized.add(s.lower())
+                normalized.add(s.upper())
+                if s.lower() == "securityzone":
+                    normalized.add("SECURITYZONE")
+        if normalized:
+            query = query.in_("instance", list(normalized))
+
+    rows = query.order("sort_order").execute().data or []
     mapped = [_row_to_item(row) for row in rows]
     by_id = {item["id"]: item for item in mapped}
     roots: list[dict] = []
@@ -190,6 +296,11 @@ def list_service_catalog_items() -> list[dict]:
     for item in mapped:
         item["children"] = sorted(item.get("children") or [], key=lambda c: c.get("sortOrder") or 0)
     return sorted(roots, key=lambda item: item.get("sortOrder") or 0)
+
+
+def list_service_catalog_items() -> list[dict]:
+    """Hàm gốc giữ nguyên để đảm bảo backward-compatibility 100%."""
+    return list_service_catalog_items_scoped(None)
 
 
 def get_service_catalog_item(item_id: str) -> dict:
@@ -279,6 +390,17 @@ def create_service_catalog_item(payload: dict, created_by: str | None) -> dict:
     for field in ["external_source", "external_id"]:
         if payload.get(field) is not None:
             insert_data[field] = payload.get(field)
+
+    # TÍCH HỢP BỘ LỌC WORKSPACE: Gán instance khi tạo mới (từ form, hoặc kế thừa từ nhóm cha nếu có parent_id)
+    if payload.get("instance"):
+        insert_data["instance"] = payload.get("instance").strip().lower()
+    elif payload.get("parent_id"):
+        try:
+            parent_res = supabase.table(ITEMS_TABLE).select("instance").eq("id", payload.get("parent_id")).limit(1).execute()
+            if parent_res.data and parent_res.data[0].get("instance"):
+                insert_data["instance"] = parent_res.data[0]["instance"].strip().lower()
+        except Exception:
+            pass
     
     result = supabase.table(ITEMS_TABLE).insert(insert_data).execute()
     item = result.data[0]
@@ -378,6 +500,8 @@ def update_service_catalog_item(item_id: str, payload: dict, actor_id: str | Non
         "quota_highlights", "quota_extra", "spec_quantity_per_unit", "spec_unit_label",
         "note", "status", "sort_order", "brand", "part_number", "product_type",
         "internal_note", "external_source", "external_id",
+        # TÍCH HỢP BỘ LỌC WORKSPACE: Cho phép cập nhật trường instance
+        "instance",
     }
     nullable_clear_keys = {
         "default_vat_rate", "quote_display_name", "quote_description", "quote_cta",
