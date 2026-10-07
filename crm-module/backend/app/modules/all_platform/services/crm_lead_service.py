@@ -738,6 +738,15 @@ def convert_lead(lead_id: str, payload: dict[str, Any], user: dict[str, Any]) ->
     if customer:
         customer = _normalize_payload(dict(customer), actor_id=actor_id)
         apply_position_category(customer)
+        # Khach hang MOI tao tu lead: owner = Sale phu trach cua lead (de Team/Owner o danh sach Khach hang dung team Sale),
+        # khong phai nguoi bam chuyen doi/nguoi tao lead. Chi dien khi FE chua gui owner_id va Sale hop le (dang hoat dong).
+        ae_owner = _clean_text(current.get("qualification_ae_id"))
+        if ae_owner and not _clean_text(customer.get("owner_id")):
+            try:
+                _validate_owner(ae_owner)
+                customer["owner_id"] = ae_owner
+            except Exception:
+                logger.warning("convert_lead: bo qua owner=Sale phu trach %s (khong hop le)", ae_owner)
     deal = dict(payload.get("deal") or {})
     # Truoc day hard-code "dealing", bo qua FE gui gi (feedback WIP full-flow:
     # them field "Giai đoạn" cho SDR chon truoc khi tao Deal) - gio ton trong
