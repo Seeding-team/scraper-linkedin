@@ -438,6 +438,52 @@ def create_service_catalog_item(payload: dict, created_by: str | None) -> dict:
     return created_item
 
 
+# Field dong bo MSC (msc_sync_service._ITEM_SYNC_FIELDS tru name) ma nguoi dung
+# CRM co the sua qua edit form. Khi update THUC SU lam doi gia tri 1 trong cac
+# field nay, field do duoc danh dau vao cot sync_manual_fields (migration 176)
+# de lan dong bo MSC sau do GIU NGUYEN gia tri nguoi dung (task "Extend MSC
+# product sync" §7 - manual edit khong bi ghi de). Danh dau theo "gia tri that
+# su khac" chu KHONG theo "co ton tai trong payload" vi edit form luon gui day
+# du cac field (khong sua = khong danh dau).
+_SYNC_MANUAL_TRACKED_FIELDS = ("brand", "part_number", "parent_id")
+
+
+def _mark_sync_manual_fields(
+    supabase: Client, item_id: str, update_data: dict
+) -> None:
+    """Doc gia tri cu cua item, danh dau cac field dong bo bi nguoi dung sua
+    that su vao sync_manual_fields (merge voi danh sach cu, khong mat mark).
+    Khong lam hong qua trinh update: loi doc/ghi mark chi duoc bo qua."""
+    try:
+        old_rows = (
+            supabase.table(ITEMS_TABLE)
+            .select("id, brand, part_number, parent_id, sync_manual_fields")
+            .eq("id", item_id)
+            .limit(1)
+            .execute()
+            .data
+            or []
+        )
+        if not old_rows:
+            return
+        old_row = old_rows[0]
+        manual_fields = list(old_row.get("sync_manual_fields") or [])
+        changed = False
+        for key in _SYNC_MANUAL_TRACKED_FIELDS:
+            if key not in update_data:
+                continue
+            if str(update_data.get(key) or "") == str(old_row.get(key) or ""):
+                continue
+            if key not in manual_fields:
+                manual_fields.append(key)
+                changed = True
+        if changed:
+            update_data["sync_manual_fields"] = manual_fields
+    except Exception:
+        # Khong duoc de viec danh dau manual lam hong update binh thuong.
+        pass
+
+
 def update_service_catalog_item(item_id: str, payload: dict, actor_id: str | None) -> dict:
     supabase: Client = get_supabase_client()
 
@@ -474,6 +520,10 @@ def update_service_catalog_item(item_id: str, payload: dict, actor_id: str | Non
             update_data[numeric_key] = _float_or_none(update_data[numeric_key])
     if update_data.get("pricing_policy_exceptions") is None:
         update_data.pop("pricing_policy_exceptions", None)
+
+    # Manual-edit tracking (migration 176): danh dau field dong bo bi nguoi
+    # dung sua that su truoc khi ghi, de MSC sync khong ghi de (§7).
+    _mark_sync_manual_fields(supabase, item_id, update_data)
 
     update_data["updated_by"] = actor_id
     update_data["updated_at"] = _now_iso()

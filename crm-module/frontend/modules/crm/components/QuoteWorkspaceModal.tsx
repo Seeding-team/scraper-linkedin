@@ -1290,6 +1290,8 @@ export function QuoteWorkspaceModal({
   // { linkIndex } (bam dau "+" canh 1 hang muc da co san trong bao gia -
   // san pham tao xong CHI GAN ID nguoc lai dong do, KHONG tao dong moi).
   const [quickAddProductTarget, setQuickAddProductTarget] = useState<'newRow' | { linkIndex: number; locked?: boolean } | null>(null);
+  // Sua san pham ngay trong popup "Chon san pham / dich vu" (dung chinh QuickAddProductModal o che do sua).
+  const [quickEditProduct, setQuickEditProduct] = useState<ServiceCatalogItem | null>(null);
   // BUG THAT DA GAP ("tự động thêm thẳng vào báo giá ngay sau khi lưu sản
   // phẩm"): luong 'newRow' TRUOC DAY tu goi catalogAdd.handleAddSelected()
   // ngay sau khi tao xong - sai vi Sale co the tao nham hoac muon tao nhieu
@@ -2847,6 +2849,37 @@ export function QuoteWorkspaceModal({
     void refreshCatalogTree();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [itemsDraft, catalogTree, catalogTreeQuoteId, quote?.id]);
+
+  // Sua / ngung kinh doanh / xoa san pham ngay trong popup chon san pham (nut o cot "Thao tac").
+  function handleCatalogEditItem(item: { id: string }) {
+    const full = catalogFlatItems.find(entry => entry.id === item.id);
+    if (!full) {
+      showToast(false, 'Không tìm thấy sản phẩm để sửa.');
+      return;
+    }
+    setQuickEditProduct(full);
+  }
+  async function handleCatalogToggleItemStatus(item: { id: string; name?: string; status?: string }) {
+    const next = item.status === 'inactive' ? 'active' : 'inactive';
+    await serviceCatalogRepository.update(item.id, { status: next });
+    await refreshCatalogTree();
+    showToast(true, next === 'inactive' ? `Đã ngừng kinh doanh "${item.name || 'sản phẩm'}".` : `Đã kích hoạt lại "${item.name || 'sản phẩm'}".`);
+  }
+  async function handleCatalogDeleteItem(item: { id: string; name?: string }) {
+    const label = item.name || 'sản phẩm này';
+    if (!window.confirm(`Xoá "${label}" khỏi Sản phẩm & dịch vụ?`)) return;
+    try {
+      const result = await serviceCatalogRepository.delete(item.id);
+      await refreshCatalogTree();
+      if (result?.deactivated) {
+        showToast(true, `"${label}" đang được báo giá khác tham chiếu nên không xoá hẳn được, hệ thống đã chuyển sang Ngừng kinh doanh.`);
+      } else {
+        showToast(true, `Đã xoá "${label}".`);
+      }
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : 'Không xoá được sản phẩm.');
+    }
+  }
 
   async function handleGroupCreated(created: ServiceCatalogItem) {
     await refreshCatalogTree();
@@ -8169,6 +8202,9 @@ export function QuoteWorkspaceModal({
         onGroupFilterChange={catalogSource === 'internal' ? setPickerGroupFilter : undefined}
         onQuickAddProduct={catalogSource === 'internal' ? () => setQuickAddProductTarget('newRow') : undefined}
         onQuickAddGroup={catalogSource === 'internal' ? () => setQuickAddGroupOpen(true) : undefined}
+        onEditItem={catalogSource === 'internal' ? handleCatalogEditItem : undefined}
+        onToggleItemStatus={catalogSource === 'internal' ? handleCatalogToggleItemStatus : undefined}
+        onDeleteItem={catalogSource === 'internal' ? handleCatalogDeleteItem : undefined}
         quoteCurrency={workspaceCurrency}
         exchangeRate={workspaceExchangeRate}
         onQuoteCurrencyChange={canSwitchQuoteCurrency ? requestCurrencyChange : undefined}
@@ -8211,8 +8247,14 @@ export function QuoteWorkspaceModal({
       />
 
       <QuickAddProductModal
-        open={quickAddProductTarget != null}
-        onClose={() => setQuickAddProductTarget(null)}
+        open={quickAddProductTarget != null || quickEditProduct != null}
+        onClose={() => { setQuickAddProductTarget(null); setQuickEditProduct(null); }}
+        editingItem={quickEditProduct || undefined}
+        onUpdated={updated => {
+          setQuickEditProduct(null);
+          void refreshCatalogTree();
+          showToast(true, `Đã cập nhật "${updated.name}".`);
+        }}
         groups={(catalogTree || []).filter(g => g.itemType === 'group')}
         existingItems={catalogFlatItems}
         defaultGroupId={

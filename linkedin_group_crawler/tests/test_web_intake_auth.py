@@ -15,6 +15,7 @@ def test_allowlist_allows_only_what_project2_needs():
     allowed = [
         ("GET", "/api/all-platform/categories"),
         ("GET", "/api/all-platform/quotes/issuer-companies"),
+        ("GET", "/api/all-platform/quotes/exchange-rate"),
         ("GET", "/api/all-platform/quotes"),
         ("POST", "/api/all-platform/quotes"),
         ("PUT", f"/api/all-platform/quotes/{U}"),
@@ -25,6 +26,8 @@ def test_allowlist_allows_only_what_project2_needs():
     ]
     denied = [
         ("POST", f"/api/all-platform/quotes/{U}/approve"),
+        ("POST", "/api/all-platform/quotes/exchange-rate/refresh"),
+        ("PUT", "/api/all-platform/quotes/exchange-rate"),
         ("POST", f"/api/all-platform/quotes/{U}/processing-stage"),
         ("POST", f"/api/all-platform/quotes/{U}/owners"),
         ("POST", f"/api/all-platform/quotes/{U}/publish"),
@@ -53,3 +56,18 @@ def test_owner_exception_only_for_intake_user_on_own_quote(monkeypatch):
     assert not perm.can_edit_technical_quote(intake, foreign)
     assert not perm.can_edit_technical_quote(other, own)
     assert not perm.can_approve_quote(intake)
+
+
+def test_duplicate_customer_not_blocked_and_not_leaked_for_web_intake(monkeypatch):
+    import pytest
+    from app.modules.all_platform.services import crm_customer_service as svc
+
+    monkeypatch.setattr(settings, "web_intake_user_id", "intake-1")
+    existing = [{"id": "c1", "customer_name": "Khách thật", "phone": "0900000000"}]
+    intake, staff = {"id": "intake-1", "role": "member"}, {"id": "s1", "role": "member"}
+
+    data = {"note": None}
+    svc._handle_duplicates(intake, existing, data)  # không ném lỗi, không lộ danh sách khách trùng
+    assert "Trùng" in data["note"] and "Khách thật" not in data["note"]
+    with pytest.raises(svc.DuplicateCustomerError):  # nội bộ vẫn bị chặn như cũ
+        svc._handle_duplicates(staff, existing, {})

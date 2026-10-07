@@ -438,14 +438,27 @@ def get_customer(customer_id: str, user: dict[str, Any]) -> dict[str, Any]:
     return _attach_customer_metrics([customer])[0]
 
 
+def _handle_duplicates(user: dict[str, Any], matches: list[dict[str, Any]], data: dict[str, Any]) -> None:
+    """Trùng email/SĐT với khách có sẵn.
+
+    - Người dùng nội bộ: chặn như cũ (DuplicateCustomerError, kèm danh sách khách trùng để chọn lại).
+    - Khách web (Web Intake): KHÔNG chặn và KHÔNG trả thông tin khách có sẵn ra ngoài (tránh lộ dữ liệu CRM qua form công khai).
+      Vẫn tạo hồ sơ mới của chính khách web, ghi chú để nội bộ đối chiếu/gộp.
+    """
+    if not matches:
+        return
+    if not is_web_intake_user(user):
+        raise DuplicateCustomerError(matches)
+    flag = "[Web] Trùng email/SĐT với khách hàng có sẵn trong CRM — nội bộ kiểm tra/gộp."
+    data["note"] = (str(data.get("note") or "").strip() + chr(10) + flag).strip()
+
+
 def create_customer(payload: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]:
     actor_id = str(user.get("id") or "")
     data = _normalize_payload(payload, actor_id=actor_id)
     data["source"] = _resolve_source(data.get("source"))
     apply_position_category(data)
-    matches = _duplicate_query(data.get("email_normalized"), data.get("phone_normalized"))
-    if matches:
-        raise DuplicateCustomerError(matches)
+    _handle_duplicates(user, _duplicate_query(data.get("email_normalized"), data.get("phone_normalized")), data)
     # Khong tin owner_id client gui len - chi admin/leader duoc chi dinh chu
     # ho so khac minh luc tao; con lai luon la chinh nguoi tao (dung quy dinh
     # "owner_id duoc sua" - khong cho tu gan/gan ho quyen sua cho nguoi khac).
@@ -766,9 +779,7 @@ def create_customer_with_deal(payload: dict[str, Any], user: dict[str, Any]) -> 
         # nao ca - bo qua primary_contact_id neu client lo gui len (khong co
         # customer_id de doi chieu, khong tin bat ky gia tri nao o day).
         deal.pop("primary_contact_id", None)
-        matches = _duplicate_query(customer.get("email_normalized"), customer.get("phone_normalized"))
-        if matches:
-            raise DuplicateCustomerError(matches)
+        _handle_duplicates(user, _duplicate_query(customer.get("email_normalized"), customer.get("phone_normalized")), customer)
 
     supabase = get_supabase_client()
     try:

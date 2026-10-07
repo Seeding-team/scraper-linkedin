@@ -527,6 +527,21 @@ export function LeadDetailDrawer({
     setTeamId(value);
     setField('aeId', '');
   }
+  /** Chon Sale phu trach -> tu doi Team Sale sang team cua Sale do (thanh vien hoac leader). Khong doi neu Sale
+   * khong thuoc Team CRM nao; khong reset Sale (khac handleTeamIdChange). */
+  const latestAeIdRef = useRef('');
+  function handleAeIdChange(value: string) {
+    latestAeIdRef.current = value;
+    setField('aeId', value);
+    if (!value) return;
+    crmTeamsService.getTeamIdForUser(value)
+      .then(res => {
+        if (latestAeIdRef.current !== value) return; // da chon nguoi khac trong luc cho
+        const foundTeamId = res.success ? res.data?.crm_team_id : null;
+        if (foundTeamId) setTeamId(foundTeamId);
+      })
+      .catch(() => { /* Sale khong thuoc Team CRM nao - giu nguyen Team */ });
+  }
   const aeName = (id?: string) => {
     if (!id) return 'Chưa gán';
     if (id === currentUser?.id) return currentUser?.name || currentUser?.email || 'Bạn';
@@ -1190,7 +1205,7 @@ export function LeadDetailDrawer({
                 teamOptions={teamOptionsForSelect}
                 teamActions={teamActions}
                 aeId={form.aeId}
-                onAeIdChange={value => setField('aeId', value)}
+                onAeIdChange={handleAeIdChange}
                 aeOptions={aeOptions}
                 contactName={contact.name}
                 onContactNameChange={value => setContact(c => ({ ...c, name: value }))}

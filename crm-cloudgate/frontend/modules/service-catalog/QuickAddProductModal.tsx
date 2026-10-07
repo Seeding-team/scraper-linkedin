@@ -708,6 +708,16 @@ export function QuickAddProductModal({
                         <label className="block text-sm font-medium text-slate-700 mb-1.5">Hãng </label>
                         <input className="w-full h-9 px-3 border border-slate-300 rounded-md text-sm focus:border-[#c2185b] focus:ring-1 focus:ring-[#c2185b] bg-slate-50" placeholder="vd: Dell, HP..." value={brand} onChange={e => setBrand(e.target.value)} />
                       </div>
+                      {/* Yeu cau "Extend MSC product sync" (§6): Model phai sua
+                          duoc trong edit form - chuyen tu "Part Number Vendor"
+                          (trước day nam long trong "Thông tin mở rộng" hay bi
+                          bo sót) len main card, canh Hãng. Tiep tuc dung state
+                          vendorPartNumber/cot DB part_number (dang chua du lieu
+                          dong bo MSC) - khong doi field khac. */}
+                      <div>
+                        <label className="block text-sm font-medium text-slate-700 mb-1.5">Model </label>
+                        <input className="w-full h-9 px-3 border border-slate-300 rounded-md text-sm focus:border-[#c2185b] focus:ring-1 focus:ring-[#c2185b] bg-slate-50" placeholder="vd: PowerEdge R750, TG1250..." value={vendorPartNumber} onChange={e => setVendorPartNumber(e.target.value)} />
+                      </div>
                       <div>
                         <label className="block text-sm font-medium text-slate-700 mb-1.5">Nhóm sản phẩm <span className="text-[#c2185b]">*</span></label>
                         <SearchableSelect
@@ -799,10 +809,9 @@ export function QuickAddProductModal({
                       </button>
                       {showAdvancedInfo && (
                         <div className="grid grid-cols-2 gap-6 mt-4">
-                          <div>
-                            <label className="block text-sm font-medium text-slate-700 mb-1.5">Part Number Vendor </label>
-                            <input className="w-full h-9 px-3 border border-slate-300 rounded-md text-sm focus:border-[#c2185b] bg-slate-50" value={vendorPartNumber} onChange={e => setVendorPartNumber(e.target.value)} />
-                          </div>
+                          {/* "Part Number Vendor" da chuyen len main card voi
+                              nhan "Model" (Extend MSC product sync §6) - bo
+                              input trung lap o day, giu nguyen cac field khac. */}
                           <div>
                             <label className="block text-sm font-medium text-slate-700 mb-1.5">Loại sản phẩm </label>
                             <input className="w-full h-9 px-3 border border-slate-300 rounded-md text-sm focus:border-[#c2185b] bg-slate-50" value={productType} onChange={e => setProductType(e.target.value)} />
