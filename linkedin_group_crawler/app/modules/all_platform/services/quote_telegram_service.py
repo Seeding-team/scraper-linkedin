@@ -83,7 +83,7 @@ def _render_quote_pdf(public_url: str, base_url: str | None = None) -> bytes:
     origin = (base_url or _public_base_url()).rstrip("/")
     target = f"{origin}{public_url}?print=true"
     with sync_playwright() as p:
-        browser = p.chromium.launch()
+        browser = p.chromium.launch(args=["--no-sandbox", "--disable-dev-shm-usage"])
         try:
             page = browser.new_page()
             page.goto(target, wait_until="networkidle", timeout=30000)
