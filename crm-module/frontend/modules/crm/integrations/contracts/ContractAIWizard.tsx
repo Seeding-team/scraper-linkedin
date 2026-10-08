@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { customerLeadService } from '@/services/customer-lead.service';
 import type { Customer } from '@/services/customer-lead.service';
 import { seedingQuoteRepository } from '@/modules/quotes';
@@ -26,6 +26,18 @@ const DETAIL_LEVEL_OPTIONS: Array<{ value: string; label: string }> = [
   { value: 'concise', label: 'Tinh gọn' },
   { value: 'legal', label: 'Chi tiết pháp lý' },
 ];
+
+/** Ô soạn điều khoản tự giãn theo nội dung — không bị khung 3 dòng + thanh cuộn nhỏ như textarea mặc định. */
+function AutoGrowTextarea({ value, onChange, className }: { value: string; onChange: (value: string) => void; className?: string }) {
+  const ref = useRef<HTMLTextAreaElement>(null);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${el.scrollHeight + 2}px`;
+  }, [value]);
+  return <textarea ref={ref} rows={3} className={className} value={value} onChange={event => onChange(event.target.value)} />;
+}
 
 export function ContractAIWizard({
   open,
@@ -574,10 +586,10 @@ export function ContractAIWizard({
                           value={clause.title}
                           onChange={event => updateClause(index, 'title', event.target.value)}
                         />
-                        <textarea
+                        <AutoGrowTextarea
                           className="contract-clause-body"
                           value={clause.body}
-                          onChange={event => updateClause(index, 'body', event.target.value)}
+                          onChange={value => updateClause(index, 'body', value)}
                         />
                       </div>
                     ))}
