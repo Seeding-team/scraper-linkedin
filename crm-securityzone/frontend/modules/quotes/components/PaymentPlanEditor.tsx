@@ -1,10 +1,10 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { CalendarClock, Info } from 'lucide-react';
 import type { PaymentPlanRow } from '../types';
 import { formatMoney } from '../utils/quoteCalculations';
-import { clampPercentValue, paymentPlanAmount, paymentPlanPercent, sanitizePercentDraft } from '../utils/paymentPlan';
+import { clampPercentValue, distributePaymentPlan, paymentPlanAmount, paymentPlanPercent, sanitizePercentDraft } from '../utils/paymentPlan';
 
 /** Text input (not type="number") for phase percent - a controlled number
  * input doesn't repaint its DOM value when the parsed number is unchanged
@@ -64,11 +64,23 @@ export function PaymentPlanEditor({ rows, finalPayable, onChange, disabled = fal
   const isComplete = !isEmpty && percent === 100;
   const badgeText = isEmpty ? 'Chưa thiết lập' : isComplete ? `${rows.length} đợt · 100%` : 'Cần đủ 100%';
   const badgeClass = isEmpty ? 'quote-payment-plan-badge--neutral' : isComplete ? 'quote-payment-plan-badge--success' : 'quote-payment-plan-badge--warning';
+  // Dot Sale da CHINH TAY ti le -> giu nguyen; cac dot con lai tu chia deu phan con lai (muon chinh dot nao thi bam vao dot do).
+  const manualIds = useRef<Set<string>>(new Set());
   function update(index: number, patch: Partial<PaymentPlanRow>) {
-    onChange(rows.map((row, i) => i === index ? { ...row, ...patch } : row));
+    const next = rows.map((row, i) => i === index ? { ...row, ...patch } : row);
+    if ('percent' in patch) {
+      manualIds.current.add(rows[index].id);
+      onChange(distributePaymentPlan(next, manualIds.current));
+      return;
+    }
+    onChange(next);
   }
   function addRow() {
-    onChange([...rows, { id: crypto.randomUUID(), phase: `Đợt ${rows.length + 1}`, percent: 0, condition: '', note: '' }]);
+    onChange(distributePaymentPlan([...rows, { id: crypto.randomUUID(), phase: `Đợt ${rows.length + 1}`, percent: 0, condition: '', note: '' }], manualIds.current));
+  }
+  function removeRow(index: number) {
+    manualIds.current.delete(rows[index].id);
+    onChange(distributePaymentPlan(rows.filter((_, i) => i !== index), manualIds.current));
   }
   return (
     <section className={`quote-section-card quote-payment-plan${isWarning ? ' quote-payment-plan--warning' : ''}${isComplete ? ' quote-payment-plan--complete' : ''}`}>
@@ -103,7 +115,7 @@ export function PaymentPlanEditor({ rows, finalPayable, onChange, disabled = fal
                   <td className="money-cell">{formatMoney(paymentPlanAmount(finalPayable, row.percent, currency), currency)}</td>
                   <td><input aria-label={`Điều kiện đợt ${index + 1}`} disabled={disabled} value={row.condition} onChange={e => update(index, { condition: e.target.value })} /></td>
                   <td><input aria-label={`Ghi chú đợt ${index + 1}`} disabled={disabled} value={row.note} onChange={e => update(index, { note: e.target.value })} /></td>
-                  <td><button type="button" disabled={disabled} aria-label={`Xóa đợt ${index + 1}`} onClick={() => onChange(rows.filter((_, i) => i !== index))}>×</button></td>
+                  <td><button type="button" disabled={disabled} aria-label={`Xóa đợt ${index + 1}`} onClick={() => removeRow(index)}>×</button></td>
                 </tr>
               ))}</tbody>
               <tfoot><tr><th>Tổng</th><th className="money-cell">{percent}%</th><th className="money-cell">{formatMoney(rows.reduce((sum, row) => sum + paymentPlanAmount(finalPayable, row.percent, currency), 0), currency)}</th><td colSpan={3} /></tr></tfoot>

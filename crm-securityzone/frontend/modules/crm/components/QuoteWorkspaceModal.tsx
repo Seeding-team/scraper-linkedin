@@ -1098,6 +1098,20 @@ export function QuoteWorkspaceModal({
     locallyCreatedDeals.forEach(d => map.set(d.id, d));
     return map;
   }, [dealsById, fetchedCustomerDeals, locallyCreatedDeals]);
+  // Khach hang chi co DUNG 1 co hoi -> tu chon co hoi do (khong bat Sale mo dropdown); nhieu co hoi thi de Sale tu chon.
+  // Moi khach chi tu chon 1 lan de khong gianh quyen voi lua chon sau cua Sale.
+  const autoDealCustomerRef = useRef<string>('');
+  useEffect(() => {
+    if (quote || !draftCustomerId || draftDealId || autoDealCustomerRef.current === draftCustomerId) return;
+    const candidates = effectiveDeals
+      .filter(d => d.customerId === draftCustomerId)
+      .filter(d => !lockProject || !draftProjectId || d.projectId === draftProjectId);
+    if (candidates.length === 1) {
+      autoDealCustomerRef.current = draftCustomerId;
+      handleSelectDeal(candidates[0].id);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [quote, draftCustomerId, draftDealId, effectiveDeals, lockProject]);
   const CREATE_NEW_DEAL_OPTION = '__create_new_deal__';
   const CREATE_NEW_PROJECT_OPTION = '__create_new_project__';
   // "Tạo dự án mới"/"Tạo cơ hội mới" nhanh ngay trong workspace - tái dùng
@@ -2996,10 +3010,12 @@ export function QuoteWorkspaceModal({
             unit: row.unit || priced.unit,
             vatRate: priced.vatRate,
             discountPercent: row.discountPercent || priced.discountPercent,
-            ...(canEditPricingCells
+            // Dong con TRONG (gia khach/gia von = 0) thi luon lay gia san pham vua tao - giong luc them tu danh muc (khong phu thuoc
+            // quyen sua o; neu khong, Sale khong co quyen sua gia khach se thay 0 d / markup -100%). Dong da co gia thi chi ghi de khi duoc quyen sua.
+            ...((canEditPricingCells || !Number(row.unitPrice))
               ? { unitPrice: priced.unitPrice, markupPercent: priced.markupPercent, ...(priced.unitPriceVnd !== undefined ? { unitPriceVnd: priced.unitPriceVnd } : {}) }
               : {}),
-            ...(canEditCostCells
+            ...((canEditCostCells || !Number(row.costPrice))
               ? { costPrice: priced.costPrice, ...(priced.costPriceVnd !== undefined ? { costPriceVnd: priced.costPriceVnd } : {}) }
               : {}),
           };

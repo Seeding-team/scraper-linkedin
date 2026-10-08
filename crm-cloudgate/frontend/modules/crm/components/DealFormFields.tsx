@@ -25,6 +25,7 @@ import { seedingCrmRepository } from '../repositories/SeedingCrmRepository';
 import type { AppUser } from '@/types/unified.types';
 import { CurrencyInput } from '@/components/CurrencyInput';
 import { formatCurrencyDisplay, parseCurrencyInput } from '@/lib/currency';
+import { API_BASE_URL, API_KEY } from '@/lib/env';
 import { contactValues, hydrationConflicts, type ContactOption, type EditableIdentity } from './dealHydration';
 import { customerDisplay } from '../utils/customerNames';
 
@@ -487,6 +488,7 @@ export function CustomerProfileCombobox({
     setQuery(value);
     setOpen(true);
     setValue('customerName', value);
+    if (!form.customerId) setValue('companyName', value); // khach moi: 1 o nhap duy nhat, ten cong ty = ten go vao
     if (form.customerId) {
       setValue('customerId', '');
       setValue('projectId', ''); // doi Customer -> Project cu (thuoc Customer khac) khong con hop le
@@ -757,6 +759,11 @@ function ContactPicker({
   const currentContactForm = useRef(form);
   useLayoutEffect(() => { currentContactForm.current = form; }, [form]);
   const [loading, setLoading] = useState(false);
+  // '+ Them lien he' ngay trong dropdown (tao Contact moi cho khach da chon roi chon luon).
+  const [addOpen, setAddOpen] = useState(false);
+  const [addName, setAddName] = useState('');
+  const [addBusy, setAddBusy] = useState(false);
+  const [addError, setAddError] = useState('');
 
   useEffect(() => {
     if (!form.customerId) {
@@ -826,6 +833,42 @@ function ContactPicker({
     return <input value={current ? current.label : form.primaryContactId ? 'Người liên hệ đã chọn' : 'Chưa chọn'} disabled readOnly />;
   }
 
+  async function submitAddContact() {
+    if (!addName.trim()) { setAddError('Vui lòng nhập họ tên.'); return; }
+    const phoneValue = (form.phone || '').trim();
+    const emailValue = (form.email || '').trim();
+    if (!phoneValue && !emailValue) { setAddError('Nhập SĐT hoặc Email ở ô “Liên hệ” phía trên trước.'); return; }
+    setAddBusy(true);
+    setAddError('');
+    try {
+      const headersInit: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (API_KEY) headersInit['X-API-Key'] = API_KEY;
+      const res = await fetch(`${API_BASE_URL}/api/all-platform/crm/customers/${encodeURIComponent(form.customerId)}/contacts`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: headersInit,
+        body: JSON.stringify({ name: addName.trim(), phone: phoneValue || null, email: emailValue || null, is_primary: contacts.length === 0 }),
+      });
+      const body = await res.json();
+      if (!res.ok || body.success === false) throw new Error(body.message || 'Không tạo được người liên hệ.');
+      const refreshed = await seedingCrmRepository.listContacts(form.customerId);
+      setContacts(refreshed);
+      const created = refreshed.find(c => c.id === body.data?.id);
+      if (created) {
+        const next = contactValues(created);
+        setValue('primaryContactId', created.id);
+        setValue('contactName', next.contactName);
+        setValue('phone', next.phone);
+        setValue('email', next.email);
+      }
+      setAddOpen(false); setAddName('');
+    } catch (err) {
+      setAddError(err instanceof Error ? err.message : 'Không tạo được người liên hệ.');
+    } finally {
+      setAddBusy(false);
+    }
+  }
+
   return (
     <>
     <SearchableSelect
@@ -833,8 +876,20 @@ function ContactPicker({
       onChange={chooseContact}
       options={options}
       placeholder={loading ? 'Đang tải người liên hệ...' : 'Chưa chọn'}
+      actions={[{ key: 'add-contact', label: '+ Thêm liên hệ', type: 'add', onSelect: () => { setAddError(''); setAddOpen(true); } }]}
     />
     {contactError ? <p className="crm-error">{contactError}</p> : null}
+    {addOpen ? (
+      <div className="crm-contact-add" data-testid="deal-contact-add">
+        <input value={addName} onChange={e => setAddName(e.target.value)} placeholder="Họ tên người liên hệ *" autoFocus />
+        <p className="crm-customer-form-hint">SĐT/Email lấy từ ô “Liên hệ” phía trên.</p>
+        {addError ? <p className="crm-error">{addError}</p> : null}
+        <div className="crm-contact-add-actions">
+          <button type="button" className="crm-secondary-button" disabled={addBusy} onClick={() => setAddOpen(false)}>Hủy</button>
+          <button type="button" className="crm-primary-button" disabled={addBusy} onClick={() => void submitAddContact()}>{addBusy ? 'Đang lưu…' : 'Lưu liên hệ'}</button>
+        </div>
+      </div>
+    ) : null}
     </>
   );
 }
@@ -959,6 +1014,29 @@ export function DealFormFields({
     return () => { alive = false; };
   }, [crmTeamId]);
 
+  // Tao co hoi nhanh: o Sale phu trach liet ke THANH VIEN + LEADER cua cac Team CRM dang hoat dong (khong do ca danh ba HR hay moi tai khoan Sale).
+  const latestPickRef = useRef('');
+  const [roleUsers, setRoleUsers] = useState<Array<{ id: string; name: string; email?: string }>>([]);
+  useEffect(() => {
+    if (!isCreate || crmTeamOptions.length === 0) return;
+    let alive = true;
+    Promise.all(crmTeamOptions.map(team => crmTeamsService.get(team.id).catch(() => null)))
+      .then(results => {
+        if (!alive) return;
+        const teamUsersUnion = new Map<string, { id: string; name: string; email?: string }>();
+        results.forEach((res, index) => {
+          if (!res || !res.success || !res.data) return;
+          const leaderId = res.data.leader_user_id || crmTeamOptions[index].leader_user_id;
+          if (leaderId) teamUsersUnion.set(leaderId, { id: leaderId, name: res.data.leader_name || crmTeamOptions[index].leader_name || '', email: '' });
+          for (const u of (res.data.members || []) as Array<{ id: string; name?: string; email?: string }>) {
+            if (u?.id) teamUsersUnion.set(u.id, { id: u.id, name: u.name || u.email || u.id, email: u.email });
+          }
+        });
+        setRoleUsers([...teamUsersUnion.values()].filter(u => u.name).sort((a, b) => a.name.localeCompare(b.name)));
+      });
+    return () => { alive = false; };
+  }, [isCreate, crmTeamOptions]);
+
   const assignableMembers = [...members].sort((a, b) => a.display_name.localeCompare(b.display_name));
 
   // Value trên <option> phải LUÔN duy nhất (kể cả người chưa liên kết) —
@@ -1020,8 +1098,9 @@ export function DealFormFields({
       return;
     }
     const member = assignableMembers.find(m => selectionKeyOf(m) === value);
-    setValue(idKey, member ? (member.linked_user_id || member.linked_user_id_2 || '') : '');
-    setValue(hintKey, member ? member.display_name : '');
+    const roleUser = !member ? roleUsers.find(u => u.id === value) : undefined;
+    setValue(idKey, member ? (member.linked_user_id || member.linked_user_id_2 || '') : (roleUser?.id || ''));
+    setValue(hintKey, member ? member.display_name : (roleUser?.name || ''));
     // Team giờ HOÀN TOÀN tự động theo Quản lý (đã bỏ dropdown Team) —
     // useEffect autoTeam ở trên sẽ tự đồng bộ form.teamId ngay sau khi state
     // leadedBy/leadedByNameHint cập nhật.
@@ -1127,7 +1206,11 @@ export function DealFormFields({
   // "member sao ko thay ai trong nay" - dropdown trong rong dù Team co nguoi
   // that, chi vi loc theo linked_user_id cua ho so HR). Khong chon Team ->
   // giu nguyen hanh vi cu (toan he thong, loc tu danh ba HR).
-  const aeOptionsForPanel = crmTeamId
+  const aeOptionsForPanel = (isCreate && roleUsers.length > 0)
+    ? roleUsers
+        .filter(u => u.id === sdrSelectionKey || u.id !== leadedBySelectionKey)
+        .map(u => ({ value: u.id, label: u.name, searchText: [u.name, u.email].filter(Boolean).join(' ') }))
+    : crmTeamId
     ? (crmTeamMembers || [])
         .filter(u => u.id === sdrSelectionKey || u.id !== leadedBySelectionKey)
         .map(u => ({
@@ -1243,9 +1326,6 @@ export function DealFormFields({
                 <Field label="Customer / Công ty" required>
                   <CustomerProfileCombobox form={form} setValue={setValue} hideProfileUpdateToggle />
                 </Field>
-                <Field label="Công ty" hint="tùy chọn">
-                  <input value={form.companyName} onChange={event => editIdentity('companyName', event.target.value)} placeholder="Công ty TNHH ABC" />
-                </Field>
                 {/* Fix (2026-10-03): nhanh "Tạo cơ hội nhanh" truoc day KHONG
                  * co o nhap Email/SDT nao ca - go ten khach hang MOI (chua co
                  * trong CRM) xong bam "Tạo deal" luon bao "Cần nhập email
@@ -1292,7 +1372,19 @@ export function DealFormFields({
             teamOptions={crmTeamOptionsForSelect}
             teamActions={crmTeamActions}
             aeId={sdrSelectionKey}
-            onAeIdChange={value => handlePick(value, 'sdrId', 'sdrNameHint')}
+            onAeIdChange={value => {
+              handlePick(value, 'sdrId', 'sdrNameHint');
+              // Chon Sale -> Team Sale nhay sang Team cua nguoi do (neu co); khong co thi giu nguyen.
+              latestPickRef.current = value;
+              if (!value) return;
+              crmTeamsService.getTeamIdForUser(value)
+                .then(res => {
+                  if (latestPickRef.current !== value) return;
+                  const foundTeamId = res.success ? res.data?.crm_team_id : null;
+                  if (foundTeamId) setValue('crmTeamId', foundTeamId);
+                })
+                .catch(() => { /* khong thuoc Team CRM nao - giu Team hien tai */ });
+            }}
             aeOptions={aeOptionsForPanel}
             contactName={form.contactName}
             nextStep={form.nextStep}
@@ -1331,9 +1423,6 @@ export function DealFormFields({
               </Field>
               <Field label="Người liên hệ chính" hint={form.primaryContactLocked ? undefined : 'tùy chọn'}>
                 <ContactPicker form={form} setValue={setValue} locked={form.primaryContactLocked} />
-              </Field>
-              <Field label="Công ty" hint="tùy chọn">
-                <input value={form.companyName} onChange={event => editIdentity('companyName', event.target.value)} placeholder="Công ty TNHH ABC" />
               </Field>
               <Field label="Tên người liên hệ" hint={form.primaryContactId ? 'từ Contact đã chọn; không sửa hồ sơ CRM' : 'tùy chọn'}>
                 <input value={form.contactName} readOnly placeholder="Chọn Contact để lấy tên người liên hệ" />

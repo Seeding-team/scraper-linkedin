@@ -74,13 +74,14 @@ def get_quote_telegram_log(quote_id: str) -> list[dict]:
     return [_row_to_log(row) for row in (result.data or [])]
 
 
-def _render_quote_pdf(public_url: str) -> bytes:
+def _render_quote_pdf(public_url: str, base_url: str | None = None) -> bytes:
     """Render đúng trang public báo giá (chế độ in, ?print=true) thành PDF thật
     bằng Playwright headless — tái dùng nguyên UI/CSS khách hàng đang thấy,
     không tạo template PDF riêng."""
     from playwright.sync_api import sync_playwright
 
-    target = f"{_public_base_url()}{public_url}?print=true"
+    origin = (base_url or _public_base_url()).rstrip("/")
+    target = f"{origin}{public_url}?print=true"
     with sync_playwright() as p:
         browser = p.chromium.launch()
         try:

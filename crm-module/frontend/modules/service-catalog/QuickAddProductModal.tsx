@@ -430,7 +430,7 @@ export function QuickAddProductModal({
     const errs = validate();
     if (Object.keys(errs).length > 0) {
       setFieldErrors(errs);
-      setError('Vui lòng kiểm tra lại thông tin có lỗi màu đỏ.');
+      setError(`Chưa lưu được — ${Object.values(errs).join(' ')}`);
       return;
     }
     setSaving(true);

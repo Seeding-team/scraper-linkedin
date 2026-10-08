@@ -63,12 +63,9 @@ def resolve_recipient(quote: dict[str, Any], deal: Optional[dict[str, Any]], use
 
 
 def build_greeting(recipient_name: Optional[str]) -> str:
-    """KHONG BAO GIO render 'undefined'/'null' - co ten thi chao dung ten,
-    khong co thi chao chung chung."""
-    name = (recipient_name or "").strip()
-    if name:
-        return f"Chào anh/chị {name},"
-    return "Chào anh/chị,"
+    """KHONG BAO GIO render 'undefined'/'null' - co ten thi chao dung ten (khong tu them 'anh/chi'), khong co thi chao chung."""
+    from app.modules.all_platform.services.quote_email_template import greeting
+    return greeting(recipient_name)
 
 
 def build_subject(quote: dict[str, Any]) -> str:
@@ -78,10 +75,72 @@ def build_subject(quote: dict[str, Any]) -> str:
     return f"Báo giá {quote_number} · {title}".strip(" ·")
 
 
+def _public_base(quote: dict[str, Any]) -> str:
+    """Domain CRM chinh thuc cua WORKSPACE chua bao gia (workspace_domains.py - cung co che voi email ban giao GD3). Khong dung Origin/Host
+    cua request hay PUBLIC_APP_BASE_URL (co the la DEV/localhost) de tao link gui khach; thieu cau hinh -> bao loi ro rang."""
+    from app.modules.all_platform.services.crm_lead_handover_service import EmailLinkConfigError, resolve_base_url
+    try:
+        return resolve_base_url(quote.get("instance") or _crm_instance())
+    except EmailLinkConfigError as exc:
+        raise QuoteSendValidationError(str(exc)) from exc
+
+
 def _public_full_url(quote: dict[str, Any]) -> str:
-    import os
-    base = os.environ.get("PUBLIC_APP_BASE_URL", "http://localhost:3001").rstrip("/")
-    return f"{base}{quote.get('publicUrl') or ''}"
+    return f"{_public_base(quote)}{quote.get('publicUrl') or ''}"
+
+
+def _issuer_company(quote: dict[str, Any]) -> dict[str, Any]:
+    """Don vi phat hanh cua bao gia (ten thuong hieu/phap ly, SDT, email, website, dia chi) - CHI doc, khong co thi tra rong."""
+    issuer_id = quote.get("issuerCompanyId")
+    if not issuer_id:
+        return {}
+    try:
+        rows = get_supabase_client().table("quote_issuer_companies").select("legal_name, brand_name, address, phone, email, website").eq("id", issuer_id).limit(1).execute().data or []
+        return rows[0] if rows else {}
+    except Exception:  # noqa: BLE001 - thong tin phu, khong lam hong viec gui
+        return {}
+
+
+def _money_text(quote: dict[str, Any]) -> Optional[str]:
+    total = quote.get("totalAmount")
+    try:
+        total = float(total)
+    except (TypeError, ValueError):
+        return None
+    if total <= 0:
+        return None
+    if str(quote.get("currency") or "VND").upper() == "USD":
+        return f"${total:,.2f}"
+    return f"{total:,.0f}".replace(",", ".") + " đ"
+
+
+def _vn_today() -> str:
+    from datetime import timedelta
+    return (datetime.now(timezone.utc) + timedelta(hours=7)).strftime("%d/%m/%Y")
+
+
+def build_quote_email_content(
+    quote: dict[str, Any], user: dict[str, Any], recipient_name: Optional[str], message: str, public_url: str, attached_pdf: bool,
+) -> tuple[str, str]:
+    """(html, plain-text). Chi dung du lieu CO SAN (don vi phat hanh, nhan vien gui); khong bia ten/SDT/dia chi."""
+    from app.modules.all_platform.services.quote_email_template import render_quote_email
+
+    data = quote.get("data") or {}
+    issuer = _issuer_company(quote)
+    seller = (issuer.get("brand_name") or issuer.get("legal_name") or data.get("sellerCompanyName") or "").strip() or None
+    customer = (data.get("customerCompanyName") or data.get("customerRecipient") or recipient_name or "").strip() or None
+    sender_name = (user.get("name") or user.get("full_name") or quote.get("quoteOwnerName") or "").strip() or None
+    contacts: list[tuple[str, str]] = []
+    for label, value in (("Điện thoại", issuer.get("phone")), ("Email", issuer.get("email")), ("Website", issuer.get("website")), ("Địa chỉ", issuer.get("address"))):
+        if value and str(value).strip():
+            contacts.append((label, str(value).strip()))
+    short = public_url.split("://", 1)[-1]
+    short = short if len(short) <= 56 else short[:55] + "…"
+    return render_quote_email(
+        brand_name=seller or "BÁO GIÁ", seller_name=seller, recipient_name=recipient_name, quote_number=str(quote.get("quoteNumber") or ""),
+        customer_name=customer, sent_date=_vn_today(), total_text=_money_text(quote), message=message, public_url=public_url, public_url_short=short,
+        attached_pdf=attached_pdf, sender_name=sender_name, sender_company=(issuer.get("legal_name") or seller), contacts=contacts,
+    )
 
 
 def _validate_before_send(quote: dict[str, Any], user: dict[str, Any], recipient_email: str) -> None:
@@ -236,7 +295,8 @@ def send_quote_email(
 
     supabase = get_supabase_client()
     subject = (subject_override or "").strip() or build_subject(quote)
-    public_url = _public_full_url(quote)
+    public_base = _public_base(quote)
+    public_url = f"{public_base}{quote.get('publicUrl') or ''}"
 
     log_row = {
         "quote_id": quote_id,
@@ -267,25 +327,19 @@ def send_quote_email(
                 # Tai su dung DUNG ham render PDF that da co (khong dung PDF
                 # gia/template thu 2 lech du lieu).
                 from app.modules.all_platform.services.quote_telegram_service import _render_quote_pdf
-                pdf_bytes = _render_quote_pdf(quote["publicUrl"])
+                pdf_bytes = _render_quote_pdf(quote["publicUrl"], base_url=public_base)
             except Exception as exc:
                 pdf_error = str(exc)
 
-        msg = MIMEMultipart()
+        msg = MIMEMultipart("mixed")
         msg["From"] = f"{creds['sender_name']} <{creds['sender_address']}>"
         msg["To"] = recipient_email
         msg["Subject"] = subject
-        greeting = build_greeting(recipient_name)
-        body_lines = [
-            greeting,
-            "",
-            (message or "").strip(),
-            "",
-            f"Xem báo giá tại: {public_url}",
-            "",
-            f"Trân trọng,\n{creds['sender_name']}",
-        ]
-        msg.attach(MIMEText("\n".join(line for line in body_lines if line is not None), "plain", "utf-8"))
+        html_body, text_body = build_quote_email_content(quote, user, recipient_name, message, public_url, bool(pdf_bytes))
+        alternative = MIMEMultipart("alternative")
+        alternative.attach(MIMEText(text_body, "plain", "utf-8"))
+        alternative.attach(MIMEText(html_body, "html", "utf-8"))
+        msg.attach(alternative)
         if pdf_bytes:
             part = MIMEApplication(pdf_bytes, _subtype="pdf")
             part.add_header("Content-Disposition", "attachment", filename=f"Bao-gia-{quote.get('quoteNumber') or quote_id}.pdf")

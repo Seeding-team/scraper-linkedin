@@ -402,8 +402,10 @@ def _validate_one_deal_assignment_field(
             raise ValueError(f"{label} không hợp lệ hoặc không còn tồn tại.")
         if not user.get("isActive", True):
             raise ValueError(f"{label} đã ngừng hoạt động. Vui lòng chọn người khác.")
-        if user.get("quoteBusinessRole") not in ("sale", "both"):
-            raise ValueError(f"{label} phải có vai trò báo giá Sale hoặc Both — không thể là Presale.")
+        # Sale phu trach (sdr_id) co the la Presale (vd Presale tu nhan Lead roi tu xu ly); Nguoi phu trach (leaded_by) van chi Sale/Both.
+        allowed_roles = ("sale", "both", "presale") if field == "sdr_id" else ("sale", "both")
+        if user.get("quoteBusinessRole") not in allowed_roles:
+            raise ValueError(f"{label} phải có vai trò báo giá Sale hoặc Both — không thể là Presale." if field != "sdr_id" else f"{label} phải có vai trò báo giá Sale, Presale hoặc Both.")
         if not is_admin_or_leader and str(new_id) != actor_id:
             raise ValueError(f"Bạn không có quyền gán {label.lower()} cho người khác — chỉ tự gán cho chính mình.")
         return

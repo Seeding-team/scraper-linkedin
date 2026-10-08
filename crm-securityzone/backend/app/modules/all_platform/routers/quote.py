@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
@@ -101,10 +101,21 @@ from app.modules.all_platform.services import quote_rule_evaluation_service
 from app.modules.all_platform.services.customer_lead_service import get_customer_lead_by_id
 
 quote_forms_router = APIRouter()
-def _web_intake_quote_scope(request: Request, user: dict = Depends(get_current_user)) -> None:
+def _optional_current_user(request: Request, authorization: str | None = Header(default=None)) -> dict | None:
+    """Router-level chi de GIOI HAN khoa Web Intake - KHONG duoc ep dang nhap cho moi endpoint (link bao gia cong khai /quotes/public/{token}
+    cua khach + render PDF khong co phien dang nhap). Thieu/sai credential -> None; endpoint can xac thuc van tu Depends(get_current_user)."""
+    try:
+        return get_current_user(request, authorization)
+    except HTTPException as exc:
+        if exc.status_code == 401:
+            return None
+        raise
+
+
+def _web_intake_quote_scope(request: Request, user: dict | None = Depends(_optional_current_user)) -> None:
     """Khoá Web Intake chỉ được đụng vào báo giá do CHÍNH user kỹ thuật đó tạo (kể cả đọc báo giá đã duyệt — vốn mọi user
     đăng nhập đều xem được). JWT người dùng thường không bị ảnh hưởng."""
-    if not is_web_intake_user(user):
+    if user is None or not is_web_intake_user(user):
         return
     quote_id = request.path_params.get("quote_id")
     if not quote_id:

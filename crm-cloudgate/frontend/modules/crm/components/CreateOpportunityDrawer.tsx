@@ -86,6 +86,16 @@ export function CreateOpportunityDrawer({
   // toan, dung chung" (2026-09-27): buoc 1 dien form -> buoc 2 xac nhan KPI
   // summary -> tao that + dieu huong sang trang chi tiet Khach hang.
   const [confirmOpen, setConfirmOpen] = useState(false);
+  // Dau '?' canh nut chinh o footer (dong bo voi Xac minh Lead): bam de xem giai thich.
+  const [footerHelp, setFooterHelp] = useState(false);
+  useEffect(() => {
+    if (!footerHelp) return;
+    const close = (event: MouseEvent) => {
+      if (!(event.target as HTMLElement | null)?.closest?.('.crm-footer-btn-wrap')) setFooterHelp(false);
+    };
+    document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
+  }, [footerHelp]);
 
   // "Người liên hệ" - GIONG HET field cua form Xac minh Lead (chi go ten,
   // khong chon tu danh sach Contact co san/khong gan vai tro) - leader yeu
@@ -312,12 +322,23 @@ export function CreateOpportunityDrawer({
 
   // Chua chon Team -> giu danh sach Sale toan he thong nhu cu; da chon Team ->
   // THAY THANG bang dung thanh vien Team do.
-  const aeOptionsForSelect = useMemo(
-    () => teamId
+  // Presale cung duoc lam Sale phu trach (vd chi Thao Vu): luon co trong danh sach, tim theo ten khong phu thuoc Team dang chon.
+  const [presaleUsers, setPresaleUsers] = useState<QuoteBusinessRoleUser[]>([]);
+  useEffect(() => {
+    if (!open) return;
+    let alive = true;
+    usersService.getUsersByQuoteBusinessRole('presale')
+      .then(res => { if (alive) setPresaleUsers(res.success ? res.data || [] : []); })
+      .catch(() => { if (alive) setPresaleUsers([]); });
+    return () => { alive = false; };
+  }, [open]);
+  const aeOptionsForSelect = useMemo(() => {
+    const base = teamId
       ? (teamMembers || []).map(user => ({ value: user.id, label: user.name || user.email }))
-      : aeOptions.map(user => ({ value: user.id, label: user.name })),
-    [teamId, teamMembers, aeOptions],
-  );
+      : aeOptions.map(user => ({ value: user.id, label: user.name }));
+    const seen = new Set(base.map(o => o.value));
+    return [...base, ...presaleUsers.filter(u => u?.id && !seen.has(u.id)).map(u => ({ value: u.id, label: u.name || u.id }))];
+  }, [teamId, teamMembers, aeOptions, presaleUsers]);
   const teamOptionsForSelect = useMemo(
     () => teamOptions.map(team => ({ value: team.id, label: team.name })),
     [teamOptions],
@@ -638,6 +659,11 @@ export function CreateOpportunityDrawer({
           </footer>
         ) : (
           <footer className="crm-drawer-footer crm-verify-footer">
+            {!reviewReady ? (
+              <p className="crm-footer-reason" data-testid="deal-footer-reason">
+                Chưa thể tạo cơ hội — còn thiếu: {reviewChecks.filter(c => !c.ok).map(c => c.label).join(', ')}.
+              </p>
+            ) : null}
             {/* 2 nut giong het footer buoc 1 cua LeadDetailDrawer (Lưu nháp |
              * nut chinh mo buoc xac nhan) - leader yeu cau 2 form giong nhau
              * hoan toan (2026-09-27). "Lưu nháp" o day tao Deal that luon (deal
@@ -651,9 +677,17 @@ export function CreateOpportunityDrawer({
                 {saving === 'stay' ? <Loader2 className="crm-save-spinner" /> : null}
                 Lưu nháp
               </button>
-              <button type="button" className="crm-primary-button" disabled={!reviewReady || saving !== ''} onClick={openConfirm}>
-                Tạo cơ hội
-              </button>
+              <span className="crm-footer-btn-wrap">
+                <button type="button" className="crm-primary-button" disabled={!reviewReady || saving !== ''} onClick={openConfirm}>
+                  Tạo cơ hội
+                </button>
+                <button type="button" className="crm-footer-help" aria-label="Giải thích nút này" aria-expanded={footerHelp} data-testid="deal-footer-help" onClick={() => setFooterHelp(v => !v)}>?</button>
+                {footerHelp ? (
+                  <div className="crm-footer-help-pop" role="dialog" data-testid="deal-footer-help-pop">
+                    Tạo cơ hội: mở bước xác nhận rồi tạo Cơ hội mới cho khách hàng đã chọn, giao cho Sale nhận bàn giao và chuyển sang trang Chi tiết khách hàng. Cần đủ khách hàng, Team Sale, Sale nhận bàn giao, việc tiếp theo và hạn follow-up.
+                  </div>
+                ) : null}
+              </span>
             </div>
           </footer>
         )}
