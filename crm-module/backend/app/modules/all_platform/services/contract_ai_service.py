@@ -7,6 +7,8 @@ deal/quote đã load sẵn từ router, trả kết quả để router/FE quyế
 from __future__ import annotations
 
 import json
+import os
+import re
 
 import httpx
 
@@ -65,32 +67,62 @@ _REVIEW_SYSTEM_PROMPT = (
 )
 
 
+# Contract Copilot dung proxy.markeeai.com (model cc/claude-*) qua bien moi truong RIENG,
+# de khong anh huong cac tinh nang AI khac dang dung chung OPENAI_* (ai_comment, deal_ai_parse...).
+# Khong dat bien rieng -> roi ve OPENAI_* nhu cu.
+def _cfg() -> tuple[str, str, str]:
+    api_key = os.getenv("CONTRACT_AI_API_KEY") or settings.openai_api_key
+    base_url = (os.getenv("CONTRACT_AI_BASE_URL") or settings.openai_base_url).rstrip("/")
+    model = os.getenv("CONTRACT_AI_MODEL") or settings.ai_model
+    return api_key, base_url, model
+
+
 def _require_api_key() -> str:
-    api_key = settings.openai_api_key
+    api_key = _cfg()[0]
     if not api_key:
-        raise RuntimeError("Chưa cấu hình OPENAI_API_KEY — không thể dùng AI Contract Copilot.")
+        raise RuntimeError("Chưa cấu hình CONTRACT_AI_API_KEY/OPENAI_API_KEY — không thể dùng AI Contract Copilot.")
     return api_key
 
 
-# Model dự phòng khi provider (proxy nhiều nhà cung cấp kiểu shopaikey) báo lỗi
-# tạm thời cho model chính ("no available channel", hết quota theo model...) -
-# thử lần lượt, MỖI model 2 lượt (proxy dạng distributor này rất chập chờn -
-# cùng 1 model có thể fail rồi thành công ngay lượt sau), tránh phải đổi
-# AI_MODEL thủ công mỗi lần provider gặp sự cố. Lỗi thật (401 sai key, thiếu
-# cấu hình...) vẫn sẽ lộ ra trong message cuối cùng nếu MỌI model đều fail.
-_FALLBACK_MODELS = ["gpt-4o-mini", "gpt-4o", "gpt-5-mini", "gpt-5", "gpt-4.1-mini", "gpt-4.1"]
+# Model dự phòng (thử lần lượt, MỖI model 2 lượt).
+# - Dùng proxy markeeai (đặt CONTRACT_AI_BASE_URL): thứ tự theo benchmark 08/10/2026:
+#   sonnet-5 (số liệu đúng 9/9) -> sonnet-5-5 -> haiku-4-5 (rẻ nhất, thi thoảng bịa số).
+# - Không đặt biến riêng: giữ NGUYÊN hành vi cũ (shopaikey, danh sách GPT, max_tokens 2000).
+_FALLBACK_MODELS_PROXY = ["cc/claude-sonnet-5", "cc/claude-sonnet-5-5", "cc/claude-haiku-4-5-20251001"]
+_FALLBACK_MODELS_LEGACY = ["gpt-4o-mini", "gpt-4o", "gpt-5-mini", "gpt-5", "gpt-4.1-mini", "gpt-4.1"]
 _ATTEMPTS_PER_MODEL = 2
+
+
+def _use_proxy() -> bool:
+    return bool(os.getenv("CONTRACT_AI_BASE_URL"))
+
+
+def _max_tokens() -> int:
+    # 2000 làm bản soạn 7 điều khoản bị CẮT CỤT (finish_reason=length -> JSON hỏng) với model Claude.
+    return 6000 if _use_proxy() else 2000
+
+
+def _parse_json_lenient(content: str) -> dict:
+    """Model Claude đôi khi viết 1 câu trước/sau JSON hoặc bọc ```json."""
+    try:
+        return json.loads(content)
+    except json.JSONDecodeError:
+        text = re.sub(r"^```(?:json)?|```$", "", (content or "").strip(), flags=re.M).strip()
+        start, end = text.find("{"), text.rfind("}")
+        return json.loads(text[start : end + 1])  # ném JSONDecodeError nếu vẫn hỏng
 
 
 async def _call_chat_json(system_prompt: str, user_content: str) -> dict:
     api_key = _require_api_key()
-    url = f"{settings.openai_base_url}/chat/completions"
+    _, base_url, primary_model = _cfg()
+    url = f"{base_url}/chat/completions"
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-    models_to_try = [settings.ai_model] + [m for m in _FALLBACK_MODELS if m != settings.ai_model]
+    fallbacks = _FALLBACK_MODELS_PROXY if _use_proxy() else _FALLBACK_MODELS_LEGACY
+    models_to_try = [primary_model] + [m for m in fallbacks if m != primary_model]
 
     data: dict | None = None
     last_error_text = ""
-    async with httpx.AsyncClient(timeout=60.0) as client:
+    async with httpx.AsyncClient(timeout=180.0) as client:
         for model in models_to_try:
             body = {
                 "model": model,
@@ -99,8 +131,10 @@ async def _call_chat_json(system_prompt: str, user_content: str) -> dict:
                     {"role": "user", "content": user_content},
                 ],
                 "temperature": 0.4,
-                "max_tokens": 2000,
+                "max_tokens": _max_tokens(),
                 "response_format": {"type": "json_object"},
+                # proxy.markeeai.com mặc định trả SSE; thiếu cờ này resp.json() sẽ vỡ.
+                **({"stream": False} if _use_proxy() else {}),
             }
             for attempt in range(_ATTEMPTS_PER_MODEL):
                 try:
@@ -111,7 +145,7 @@ async def _call_chat_json(system_prompt: str, user_content: str) -> dict:
                         continue
                     data = resp.json()
                     break
-                except httpx.HTTPError as exc:
+                except (httpx.HTTPError, ValueError) as exc:
                     last_error_text = f"[{model}] {exc}"
                     logger.warning(f"AI model call errored, will retry/fallback: {last_error_text}")
             if data is not None:
@@ -120,7 +154,7 @@ async def _call_chat_json(system_prompt: str, user_content: str) -> dict:
         raise RuntimeError(f"Tất cả model AI đều không khả dụng lúc này (provider chập chờn). Lỗi gần nhất: {last_error_text}")
     content = data["choices"][0]["message"]["content"]
     try:
-        return json.loads(content)
+        return _parse_json_lenient(content)
     except json.JSONDecodeError as exc:
         logger.error(f"AI contract response is not valid JSON: {content[:500]!r}")
         raise RuntimeError("AI trả về dữ liệu không hợp lệ, vui lòng thử lại.") from exc
