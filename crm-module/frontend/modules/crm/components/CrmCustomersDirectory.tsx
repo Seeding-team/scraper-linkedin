@@ -106,7 +106,7 @@ function headers() {
   return value;
 }
 
-function mapCustomer(row: ApiCustomerRow): CrmCustomerRow {
+export function mapCustomer(row: ApiCustomerRow): CrmCustomerRow {
   return {
     id: row.id,
     customerName: row.customer_name || 'Khách hàng chưa tên',

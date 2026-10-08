@@ -39,6 +39,18 @@ export const CONTRACT_STATUS_TONE: Record<string, string> = {
   terminated: 'qc-badge-danger',
 };
 
+export const CONTRACT_STATUS_LABELS: Record<string, string> = {
+  draft: 'Bản nháp',
+  pending_legal: 'Chờ pháp chế duyệt',
+  pending_signature: 'Chờ ký',
+  signed: 'Đã ký',
+  active: 'Đang thực hiện',
+  completed: 'Đã hoàn thành',
+  expiring: 'Sắp hết hạn',
+  expired: 'Đã hết hạn',
+  terminated: 'Đã chấm dứt',
+};
+
 export const PROJECT_STATUS_TONE: Record<string, string> = {
   planning: 'qc-badge-neutral',
   active: 'qc-badge-blue',
@@ -105,4 +117,20 @@ export function formatSinceDuration(iso: string | null | undefined): string {
   }
 
   return diffMs < 0 ? `${text} (tương lai)` : text;
+}
+
+/** Trạng thái hạn follow-up của cơ hội (dùng thống nhất ở mọi nơi): cơ hội đã Out/Tạm dừng/Thắng không tính.
+ * 'overdue' = follow-up trước hôm nay; 'soon' = từ hôm nay đến 2 ngày tới; null = bình thường / không có. */
+export function dealFollowUpState(
+  dealStage: string | null | undefined,
+  followUpDate: string | null | undefined
+): 'overdue' | 'soon' | null {
+  if (!followUpDate || ['on_hold', 'lost', 'won'].includes(dealStage || '')) return null;
+  const ymd = (d: Date) =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const now = new Date();
+  const day = String(followUpDate).slice(0, 10);
+  if (day < ymd(now)) return 'overdue';
+  if (day <= ymd(new Date(now.getFullYear(), now.getMonth(), now.getDate() + 2))) return 'soon';
+  return null;
 }

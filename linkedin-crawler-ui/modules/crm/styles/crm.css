@@ -12252,3 +12252,64 @@
 @media (max-width: 640px) { .crm-footer-help-pop { left: auto; right: 0; } }
 .crm-contact-add { margin-top: 8px; padding: 10px; border: 1px dashed #cbd5e1; border-radius: 8px; background: #f8fafc; display: flex; flex-direction: column; gap: 8px; }
 .crm-contact-add-actions { display: flex; justify-content: flex-end; gap: 8px; }
+
+/* ===== Chế độ NHÚNG (Quản lý tiến độ): cùng nội dung form Lead / Khách hàng nhưng nằm trong drawer của tiến độ ===== */
+.crm-verify-drawer--embedded {
+  position: static;
+  width: 100%;
+  max-width: none;
+  height: auto;
+  min-width: 0;
+  border: none;
+  box-shadow: none;
+  display: block;
+}
+.crm-verify-drawer--embedded .crm-verify-header--embedded {
+  position: static;
+  justify-content: flex-end;
+  background: transparent;
+  border-bottom: none;
+  padding: 0 0 .75rem;
+}
+.crm-verify-drawer--embedded .crm-drawer-body { overflow: visible; height: auto; }
+.crm-verify-drawer--embedded .crm-verify-footer {
+  position: sticky;
+  bottom: -22px;
+  z-index: 3;
+  margin: 12px -18px -22px;
+  padding-bottom: 26px;
+  background: #ffffff;
+}
+
+.crm-customer-quickview.is-embedded {
+  position: static;
+  width: 100%;
+  height: auto;
+  display: block;
+  overflow: visible;
+  transform: none;
+  visibility: visible;
+  pointer-events: auto;
+  border: none;
+  box-shadow: none;
+}
+.crm-customer-quickview.is-embedded .crm-customer-quickview-heading > span:first-child,
+.crm-customer-quickview.is-embedded .crm-customer-quickview-heading > h2,
+.crm-customer-quickview.is-embedded .crm-customer-quickview-heading > p { display: none; }
+.crm-customer-quickview.is-embedded .crm-customer-quickview-header { padding-top: 0; }
+.crm-customer-quickview.is-embedded .crm-customer-quickview-body { overflow: visible; }
+/* Footer dính đáy: bù padding của .progress-drawer-body (16/18/22px) để nút nằm sát đáy và nền trắng che hết nội dung cuộn bên dưới */
+.crm-customer-quickview.is-embedded .crm-customer-quickview-footer {
+  position: sticky;
+  bottom: -22px;
+  z-index: 3;
+  margin: 12px -18px -22px;
+  padding: 12px 18px 26px;
+  background: #ffffff;
+  box-shadow: 0 -10px 14px -10px rgba(15, 23, 42, .18);
+}
+
+.crm-verify-fieldset { display: contents; border: 0; padding: 0; margin: 0; min-width: 0; }
+.crm-customer-quickview.is-embedded .crm-customer-related-list button:disabled { cursor: default; opacity: 1; }
+.crm-customer-quickview.is-embedded .crm-customer-related-list button:disabled > svg:last-child { display: none; }
+.crm-verify-drawer--embedded .crm-verify-header--embedded { padding: 0; min-height: 0; }

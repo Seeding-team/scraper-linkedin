@@ -23,8 +23,7 @@ import { formatSinceDuration } from './progressLabels';
 import type { ProgressQuoteItem } from './progress.types';
 
 const WORKFLOW_STEPS = [
-  { key: 'request', label: 'Request' },
-  { key: 'technical', altKey: 'presale', label: 'Kỹ thuật' },
+  { key: 'presale', altKey: 'technical', label: 'Presale' },
   { key: 'sale_markup', altKey: 'pricing', label: 'Sale markup' },
   { key: 'admin_review', altKey: 'review', label: 'Admin review' },
   { key: 'ready_to_send', altKey: 'ready_to_publish', label: 'Sẵn sàng gửi' },
@@ -32,9 +31,9 @@ const WORKFLOW_STEPS = [
 ] as const;
 
 const PHASE_LABELS: Record<string, string> = {
-  request: 'Request',
-  presale: 'Kỹ thuật / Presale',
-  technical: 'Kỹ thuật / Presale',
+  request: 'Presale',
+  presale: 'Presale',
+  technical: 'Presale',
   sale_markup: 'Sale markup',
   pricing: 'Sale markup',
   admin_review: 'Admin review',
@@ -161,17 +160,17 @@ export function ProgressQuoteDrawer({ item }: { item: ProgressQuoteItem }) {
 
   // Stepper calculations
   const stepperData = useMemo(() => {
-    const currentPhase = item.processingStage || 'request';
+    const currentPhase = item.processingStage || 'presale';
 
     let currentIndex = WORKFLOW_STEPS.findIndex(
       step => step.key === currentPhase || (step as any).altKey === currentPhase
     );
     if (currentIndex < 0) {
-      if (currentPhase.includes('review')) currentIndex = 3;
-      else if (currentPhase.includes('markup') || currentPhase.includes('pricing')) currentIndex = 2;
-      else if (currentPhase.includes('ready')) currentIndex = 4;
-      else if (currentPhase.includes('sent')) currentIndex = 5;
-      else currentIndex = 1;
+      if (currentPhase.includes('review')) currentIndex = 2;
+      else if (currentPhase.includes('markup') || currentPhase.includes('pricing')) currentIndex = 1;
+      else if (currentPhase.includes('ready')) currentIndex = 3;
+      else if (currentPhase.includes('sent')) currentIndex = 4;
+      else currentIndex = 0;
     }
 
     const stepsWithDates = WORKFLOW_STEPS.map((step, idx) => {
@@ -369,11 +368,9 @@ export function ProgressQuoteDrawer({ item }: { item: ProgressQuoteItem }) {
 
           <a
             href={`/all-platform/quotes/${item.quoteId}`}
-            target="_blank"
-            rel="noopener noreferrer"
             className="sla-alert-action-btn"
           >
-            <span>Mở CRM</span>
+            <span>Mở báo giá</span>
             <ExternalLink size={13} />
           </a>
         </div>
@@ -405,9 +402,9 @@ export function ProgressQuoteDrawer({ item }: { item: ProgressQuoteItem }) {
       {/* 4. Quy Trình 6 Bước (Horizontal Stepper) */}
       <div className="progress-quote-stepper-section">
         <div className="section-title-row">
-          <h4>Quy trình xử lý báo giá (6 bước)</h4>
+          <h4>Quy trình xử lý báo giá</h4>
           <span className="current-step-indicator">
-            Bước {stepperData.currentIndex + 1}/6
+            Bước {stepperData.currentIndex + 1}/{stepperData.steps.length}
           </span>
         </div>
 
@@ -523,11 +520,9 @@ export function ProgressQuoteDrawer({ item }: { item: ProgressQuoteItem }) {
       <div className="progress-quote-footer-actions">
         <a
           href={`/all-platform/quotes/${item.quoteId}`}
-          target="_blank"
-          rel="noopener noreferrer"
           className="quote-open-full-btn"
         >
-          <span>Mở báo giá đầy đủ trong CRM</span>
+          <span>Mở báo giá</span>
           <ExternalLink size={15} />
         </a>
       </div>

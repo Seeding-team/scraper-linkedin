@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { Box, FileCheck, FileText, Handshake } from 'lucide-react';
 import { progressRepository } from '../../repositories/ProgressRepository';
 import { seedingCrmRepository } from '../../repositories/SeedingCrmRepository';
 import { formatVND } from '../../constants/crmConfig';
@@ -64,33 +65,13 @@ export function ProgressCustomerDrawer({ customerId }: { customerId: string }) {
         <MiniInline label="Pipeline" value={formatVND(data.kpi.total_value) || '0 đ'} isText />
       </div>
 
-      <section className="progress-drawer-section">
-        <h3>Cơ hội ({openDeals.length} đang mở / {data.deals.length} tổng)</h3>
-        {data.deals.length === 0 ? (
-          <p className="crm-empty-log">Chưa có cơ hội nào.</p>
-        ) : (
-          <div className="progress-record-list">
-            {data.deals.map(d => (
-              <div key={d.id} className="progress-record-card" style={{ cursor: 'default' }}>
-                <span className="progress-record-card-icon">🎯</span>
-                <div className="progress-record-card-main">
-                  <div className="progress-record-card-title">{dealStageLabel(d.deal_stage)}</div>
-                  <div className="progress-record-card-sub">{d.follow_up_date ? `Follow-up: ${new Date(d.follow_up_date).toLocaleDateString('vi-VN')}` : 'Không có follow-up'}</div>
-                </div>
-                <div className="progress-record-card-value">{formatVND(d.estimated_budget || 0) || '0 đ'}</div>
-              </div>
-            ))}
-          </div>
-        )}
-      </section>
-
       {data.projects.length > 0 ? (
         <section className="progress-drawer-section">
           <h3>Dự án ({data.projects.length})</h3>
           <div className="progress-record-list">
             {data.projects.map(p => (
               <div key={p.id} className="progress-record-card" style={{ cursor: 'default' }}>
-                <span className="progress-record-card-icon">📁</span>
+                <span className="progress-record-card-icon"><Box size={16} /></span>
                 <div className="progress-record-card-main">
                   <div className="progress-record-card-title">{p.name || p.project_code}</div>
                   <div className="progress-record-card-sub">{p.status || '—'}</div>
@@ -102,6 +83,26 @@ export function ProgressCustomerDrawer({ customerId }: { customerId: string }) {
       ) : null}
 
       <section className="progress-drawer-section">
+        <h3>Cơ hội ({openDeals.length} đang mở / {data.deals.length} tổng)</h3>
+        {data.deals.length === 0 ? (
+          <p className="crm-empty-log">Chưa có cơ hội nào.</p>
+        ) : (
+          <div className="progress-record-list">
+            {data.deals.map(d => (
+              <div key={d.id} className="progress-record-card" style={{ cursor: 'default' }}>
+                <span className="progress-record-card-icon"><Handshake size={16} /></span>
+                <div className="progress-record-card-main">
+                  <div className="progress-record-card-title">{dealStageLabel(d.deal_stage)}</div>
+                  <div className="progress-record-card-sub">{d.follow_up_date ? `Follow-up: ${new Date(d.follow_up_date).toLocaleDateString('vi-VN')}` : 'Không có follow-up'}</div>
+                </div>
+                <div className="progress-record-card-value">{formatVND(d.estimated_budget || 0) || '0 đ'}</div>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section className="progress-drawer-section">
         <h3>Báo giá ({data.quotes.length})</h3>
         {data.quotes.length === 0 ? (
           <p className="crm-empty-log">Chưa có báo giá nào.</p>
@@ -109,7 +110,7 @@ export function ProgressCustomerDrawer({ customerId }: { customerId: string }) {
           <div className="progress-record-list">
             {data.quotes.map(q => (
               <div key={q.id} className="progress-record-card" style={{ cursor: 'default' }}>
-                <span className="progress-record-card-icon">📄</span>
+                <span className="progress-record-card-icon"><FileText size={16} /></span>
                 <div className="progress-record-card-main">
                   <div className="progress-record-card-title">{q.quote_number}</div>
                   <div className="progress-record-card-sub">{q.processing_stage || q.status || '—'}</div>
@@ -127,7 +128,7 @@ export function ProgressCustomerDrawer({ customerId }: { customerId: string }) {
           <div className="progress-record-list">
             {data.contracts.map(ct => (
               <div key={ct.id} className="progress-record-card" style={{ cursor: 'default' }}>
-                <span className="progress-record-card-icon">📝</span>
+                <span className="progress-record-card-icon"><FileCheck size={16} /></span>
                 <div className="progress-record-card-main">
                   <div className="progress-record-card-title">{ct.contract_number || ct.title}</div>
                   <div className="progress-record-card-sub">{ct.status || '—'}</div>
