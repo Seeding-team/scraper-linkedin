@@ -22,16 +22,6 @@ const SERIES_CONFIG = [
   { key: 'contract' as const, label: 'Hợp đồng theo dõi', color: '#0d9488' },
 ];
 
-function calculateNiceMax(maxVal: number): number {
-  if (maxVal <= 4) return 4;
-  if (maxVal <= 8) return 8;
-  if (maxVal <= 12) return 12;
-  if (maxVal <= 20) return 20;
-  const order = Math.pow(10, Math.floor(Math.log10(maxVal)));
-  const n = maxVal / order;
-  return (n <= 1.5 ? 2 : n <= 3 ? 4 : n <= 6 ? 8 : 10) * order;
-}
-
 export type ChartRange = 'today' | 'week' | 'month' | 'year' | 'all';
 
 const RANGE_OPTIONS: Array<{ value: ChartRange; label: string }> = [
@@ -55,11 +45,14 @@ export function ProgressTimeSeriesChart({
 }) {
   const { rows, maxValue } = useMemo(() => {
     const list = SERIES_CONFIG.map(s => ({ ...s, value: totals[s.key] || 0 }));
-    const max = calculateNiceMax(Math.max(0, ...list.map(r => r.value)));
+    // Thang đo = đúng giá trị lớn nhất (cột dài nhất luôn gần đầy khung) -> dùng tốt cho mọi quy mô (5, 50, 500, 5.000...).
+    // Không còn trục số 0/4/8/12: mỗi cột đã ghi sẵn số của nó.
+    const max = Math.max(1, ...list.map(r => r.value));
     return { rows: list, maxValue: max };
   }, [totals]);
 
-  const xTicks = [0, 0.2, 0.4, 0.6, 0.8, 1].map(r => Math.round(maxValue * r));
+  // Vạch lưới chia đều (không ghi số)
+  const gridFractions = [0, 0.25, 0.5, 0.75, 1];
 
   return (
     <div className="progress-timeseries-container">
@@ -84,11 +77,10 @@ export function ProgressTimeSeriesChart({
       {!ready ? <div className="pbar-chart" style={{ minHeight: 360 }} /> : (
       <>
       <div className="pbar-chart">
-        <span className="pbar-unit">(Số bản ghi)</span>
         <div className="pbar-plot">
           <div className="pbar-grid" aria-hidden="true">
-            {xTicks.map((t, i) => (
-              <span key={i} className="pbar-grid-line" style={{ left: `${(t / maxValue) * 100}%` }} />
+            {gridFractions.map((f, i) => (
+              <span key={i} className="pbar-grid-line" style={{ left: `${f * 100}%` }} />
             ))}
           </div>
           <div className="pbar-rows">
@@ -99,6 +91,8 @@ export function ProgressTimeSeriesChart({
                     className="pbar-bar"
                     style={{
                       width: `${Math.min(100, (r.value / maxValue) * 100)}%`,
+                      // cột nhỏ vẫn đủ chỗ chứa số (kể cả 5-6 chữ số)
+                      minWidth: `${String(r.value).length * 9 + 24}px`,
                       ['--bar-main' as string]: r.color,
                       animationDelay: `${i * 80}ms`,
                     }}
@@ -109,11 +103,6 @@ export function ProgressTimeSeriesChart({
               </div>
             ))}
           </div>
-        </div>
-        <div className="pbar-xaxis">
-          {xTicks.map((t, i) => (
-            <span key={i} style={{ left: `${(t / maxValue) * 100}%` }}>{t}</span>
-          ))}
         </div>
       </div>
 
