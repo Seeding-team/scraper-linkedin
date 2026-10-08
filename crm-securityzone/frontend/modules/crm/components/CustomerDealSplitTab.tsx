@@ -16,6 +16,7 @@ import { Button } from '@/components/ui/button';
 import { CatalogPickerModal, type CatalogPickerListItem } from '@/modules/service-catalog/CatalogPickerModal';
 import { serviceCatalogRepository } from '@/modules/service-catalog/repositories/ServiceCatalogRepository';
 import type { ServiceCatalogItem } from '@/modules/service-catalog/types';
+import { HandoverDocsCard, type HandoverDoc } from './HandoverDocsCard';
 
 export function getStageSolidBgClass(stage?: string | null): string {
   if (!stage) return 'bg-slate-500';
@@ -163,6 +164,7 @@ export function CustomerDealSplitTab({
   onOpenQuote,
   onEditDeal,
   onChanged,
+  handoverDocs = [],
 }: { 
   deals: any[];
   customerId: string;
@@ -177,6 +179,8 @@ export function CustomerDealSplitTab({
   onOpenQuote?: (quoteId: string, dealId: string) => void;
   onEditDeal?: (deal: LiveDealRow) => void;
   onChanged?: () => void;
+  /** Link Doc/Sheet ban giao Lead (loc theo Co hoi dang chon). */
+  handoverDocs?: HandoverDoc[];
 }) {
   const { user } = useAppAuth();
   const [selectedDealId, setSelectedDealIdState] = useState<string | null>(() => {
@@ -1455,6 +1459,9 @@ export function CustomerDealSplitTab({
                     {/* Right Rail Column (Width 310px) */}
                     <div className="w-full xl:w-[310px] shrink-0 flex flex-col gap-5 min-w-0">
                       
+                      {selectedDealId && handoverDocs.some(doc => doc.dealId === selectedDealId) ? (
+                        <HandoverDocsCard docs={handoverDocs.filter(doc => doc.dealId === selectedDealId)} />
+                      ) : null}
                       {/* 4. Phụ trách (Clean Text Rows, NO 4 mini-card boxes) */}
                       <div className="bg-white border border-slate-200/90 rounded-xl p-4 shadow-2xs space-y-3 text-xs">
                         <div className="flex justify-between items-center">

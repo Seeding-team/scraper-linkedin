@@ -68,6 +68,8 @@ const PRIMARY_ACTION_LABEL: Record<string, string> = {
 type ApiCustomerRow = {
   id: string;
   customer_name?: string | null;
+  short_name?: string | null;
+  short_name_manual?: boolean | null;
   company_name?: string | null;
   position?: string | null;
   phone?: string | null;
@@ -109,6 +111,8 @@ function mapCustomer(row: ApiCustomerRow): CrmCustomerRow {
     id: row.id,
     customerName: row.customer_name || 'Khách hàng chưa tên',
     companyName: row.company_name || '',
+    shortName: row.short_name || null,
+    shortNameManual: Boolean(row.short_name_manual),
     position: row.position || '',
     phone: row.phone || '',
     email: row.email || '',
@@ -1032,10 +1036,10 @@ export function CrmCustomersDirectory() {
                               <Link
                                 href={`/all-platform/crm/customers/${customer.id}`}
                                 className="crm-customer-compact-name"
-                                title={customer.customerName}
+                                title={customer.companyName && customer.companyName !== (customer.shortName || customer.customerName) ? `${customer.companyName}${customer.customerName && customer.customerName !== customer.companyName ? ` (${customer.customerName})` : ''}` : customer.customerName}
                                 onClick={event => event.stopPropagation()}
                               >
-                                {customer.customerName}
+                                {customer.shortName || customer.companyName || customer.customerName}
                               </Link>
                               <div className="crm-customer-compact-sub" title={[primaryContactName, primaryPhone].filter(Boolean).join(' · ')}>
                                 <span>{primaryContactName}</span>

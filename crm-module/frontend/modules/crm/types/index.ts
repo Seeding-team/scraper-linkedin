@@ -198,6 +198,9 @@ export interface CrmCustomerSummary {
   id: string;
   customerName: string;
   companyName?: string;
+  /** Ten viet tat (uu tien hien thi o danh sach/dropdown); ten day du van la companyName/customerName. */
+  shortName?: string | null;
+  customerCode?: string | null;
   position?: string;
   positionCategoryId?: string;
   positionLabelSnapshot?: string;
@@ -227,6 +230,10 @@ export interface CrmCustomerSummary {
  * cho combobox chọn khách hàng lúc tạo deal).
  */
 export interface CrmCustomerRow extends CrmCustomerSummary {
+  /** Ten viet tat (hien thi o danh sach). null = chua co -> fallback ten cong ty day du. */
+  shortName?: string | null;
+  /** true = nguoi dung tu nhap/sua tay -> he thong khong bao gio tu ghi de. */
+  shortNameManual?: boolean;
   zalo?: string;
   facebook?: string;
   telegram?: string;
@@ -408,6 +415,8 @@ export type CrmLeadStatus =
 
 export interface CrmLeadRow {
   id: string;
+  /** Link Doc/Sheet hang muc bao gia dan luc ban giao (GD3). */
+  handoverLinks?: Array<{ url: string; title?: string }>;
   /** Co hoi cua Lead nay da OUT (backend tinh tu deal_stage = lost). */
   dealOut?: boolean;
   leadName: string;

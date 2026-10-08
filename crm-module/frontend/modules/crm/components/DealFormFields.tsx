@@ -26,6 +26,7 @@ import type { AppUser } from '@/types/unified.types';
 import { CurrencyInput } from '@/components/CurrencyInput';
 import { formatCurrencyDisplay, parseCurrencyInput } from '@/lib/currency';
 import { contactValues, hydrationConflicts, type ContactOption, type EditableIdentity } from './dealHydration';
+import { customerDisplay } from '../utils/customerNames';
 
 const DEFAULT_INDUSTRY_OPTIONS = INDUSTRY_OPTIONS.map(value => ({ value, label: value }));
 
@@ -597,8 +598,8 @@ export function CustomerProfileCombobox({
               onMouseDown={event => event.preventDefault()}
               onClick={() => pick(customer)}
             >
-              <strong>{customer.customerName || 'Khách hàng chưa tên'}</strong>
-              <span>{[customer.companyName, customer.phone, customer.email].filter(Boolean).join(' · ') || 'Chưa có liên hệ'}</span>
+              <strong title={customerDisplay(customer).full}>{customerDisplay(customer).title}</strong>
+              <span>{[customerDisplay(customer).sub, customer.customerCode, customer.phone, customer.email].filter(Boolean).join(' · ') || 'Chưa có liên hệ'}</span>
             </button>
           ))}
         </div>

@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { API_BASE_URL, API_KEY } from '@/lib/env';
 import { crmTeamsService, usersService, type CrmTeam } from '@/services/all-platform.service';
 import { useAppAuth } from '@/contexts/AppAuthContext';
@@ -86,6 +87,7 @@ const PAGE_SIZE = 20;
 
 type ApiLeadRow = {
   id: string;
+  handover_links?: Array<{ url: string; title?: string }> | null;
   deal_out?: boolean | null;
   lead_name?: string | null;
   company_name?: string | null;
@@ -143,6 +145,7 @@ function headers() {
 export function mapLead(row: ApiLeadRow): CrmLeadRow {
   return {
     id: row.id,
+    handoverLinks: Array.isArray(row.handover_links) ? row.handover_links : [],
     dealOut: Boolean(row.deal_out),
     leadName: row.lead_name || 'Lead chưa tên',
     companyName: row.company_name || '',
@@ -1025,6 +1028,29 @@ export function LeadsDirectory() {
     }
     openQualifyForNewLead(lead);
   }
+
+  // GD3 - Deep link tu email ban giao: /all-platform/crm/leads?lead=<id>&mode=verify -> mo thang Xac minh Lead (chi 1 lan, roi go tham so).
+  const leadDeepLinkParams = useSearchParams();
+  const deepLinkLeadId = leadDeepLinkParams?.get('lead') || '';
+  const deepLinkHandledRef = useRef('');
+  useEffect(() => {
+    if (!deepLinkLeadId || deepLinkHandledRef.current === deepLinkLeadId) return;
+    deepLinkHandledRef.current = deepLinkLeadId; // khong huy theo cleanup (React StrictMode chay effect 2 lan) - chi xu ly 1 lan/lead
+    fetch(`${API_BASE_URL}/api/all-platform/crm/leads/${encodeURIComponent(deepLinkLeadId)}`, { credentials: 'include', headers: headers() })
+      .then(res => res.json())
+      .then(body => {
+        if (body.success === false || !body.data) {
+          setError(body?.message || 'Không mở được Lead từ liên kết (không có quyền hoặc Lead không tồn tại).');
+          return;
+        }
+        const lead = mapLead(body.data);
+        rememberLead(lead);
+        openRow(lead);
+        window.history.replaceState(null, '', window.location.pathname);
+      })
+      .catch(() => setError('Không mở được Lead từ liên kết.'));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deepLinkLeadId]);
 
   /** Hành động chính của 1 dòng phụ thuộc TRẠNG THÁI lead — mọi trạng thái đều
    * mở đúng 1 drawer "Xác minh Lead", chỉ khác chỗ được cuộn tới; riêng lead đã

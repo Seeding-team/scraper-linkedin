@@ -14,6 +14,7 @@ import { useAppAuth } from '@/contexts/AppAuthContext';
 import { formatVND, getStageMeta, SOURCE_OPTIONS, SERVICE_PACKAGE_OPTIONS, CRM_PACKAGE_OPTIONS, INDUSTRY_OPTIONS } from '../constants/crmConfig';
 import type { CreateDealInput, CrmUserOption, DealStage } from '../types';
 import { CustomerFormModal } from './CustomerFormModal';
+import { HandoverDocsCard, type HandoverDoc } from './HandoverDocsCard';
 import { CrmContactsPanel } from './CrmContactsPanel';
 import { ProjectFormModal } from './ProjectFormModal';
 import { DealFormModal, clearDealDraft } from './DealFormModal';
@@ -118,6 +119,9 @@ export type RelatedPayload = {
   customer?: {
     id: string;
     customer_name?: string | null;
+    short_name?: string | null;
+    short_name_manual?: boolean | null;
+    position_category_id?: string | null;
     company_name?: string | null;
     position?: string | null;
     phone?: string | null;
@@ -142,6 +146,9 @@ export type RelatedPayload = {
   deals?: Array<{
     id: string;
     customer_name?: string | null;
+    short_name?: string | null;
+    short_name_manual?: boolean | null;
+    position_category_id?: string | null;
     deal_stage?: string | null;
     estimated_budget?: number | string | null;
     lifetime_value?: number | string | null;
@@ -385,6 +392,9 @@ function toCustomerRow(customer: RelatedPayload['customer']): CrmCustomerRow | n
     id: customer.id,
     customerName: customer.customer_name || '',
     companyName: customer.company_name || '',
+    shortName: customer.short_name || null,
+    shortNameManual: Boolean(customer.short_name_manual),
+    positionCategoryId: customer.position_category_id || undefined,
     position: customer.position || '',
     phone: customer.phone || '',
     email: customer.email || '',
@@ -453,6 +463,16 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
   };
   const [editOpen, setEditOpen] = useState(false);
   const [reloadTick, setReloadTick] = useState(0);
+  // Link Doc/Sheet bàn giao Lead (crm_leads.handover_links) của các Lead đã convert thành khách hàng này.
+  const [handoverDocs, setHandoverDocs] = useState<HandoverDoc[]>([]);
+  useEffect(() => {
+    let alive = true;
+    fetch(`${API_BASE_URL}/api/all-platform/crm/customers/${encodeURIComponent(customerId)}/handover-docs`, { credentials: 'include', headers: { 'Content-Type': 'application/json', ...(API_KEY ? { 'X-API-Key': API_KEY } : {}) } })
+      .then(res => res.json())
+      .then(body => { if (alive && body.success !== false && Array.isArray(body.data)) setHandoverDocs(body.data); })
+      .catch(() => { /* chi la thong tin phu */ });
+    return () => { alive = false; };
+  }, [customerId, reloadTick]);
 
   // Tab "Hợp đồng" o Customer 360 - TAI SU DUNG dung 2 modal Deal Workspace
   // dang dung (ManualContractModal/RegisterExternalContractModal), khong tu
@@ -1112,14 +1132,14 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
               Khách hàng
             </button>
             <span className="mx-1.5">/</span>
-            <span>{customer?.customer_name || 'Khách hàng chưa tên'}</span>
+            <span>{customer?.company_name || customer?.customer_name || 'Khách hàng chưa tên'}</span>
           </div>
 
           <div className="px-4 py-4 flex items-center justify-between">
             <div className="flex items-center gap-3.5 min-w-0">
               <div className="min-w-0">
                 <div className="flex items-center gap-2 mb-1">
-                  <h1 className="text-xl font-bold text-slate-900 truncate">{customer?.customer_name || 'Khách hàng chưa tên'}</h1>
+                  <h1 className="text-xl font-bold text-slate-900 truncate" title={customer?.short_name ? `Tên viết tắt: ${customer.short_name}` : undefined}>{customer?.company_name || customer?.customer_name || 'Khách hàng chưa tên'}</h1>
                   {customer?.status ? (
                     <span className="px-2.5 py-0.5 rounded bg-blue-50 text-blue-700 text-xs font-semibold">
                       {STATUS_LABEL[customer.status] || customer.status}
@@ -1184,6 +1204,7 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
 
         <section className="crm-content-section !p-0 !border-0 !bg-transparent !shadow-none">
 
+          {tab === 'overview' && handoverDocs.length ? <HandoverDocsCard docs={handoverDocs} /> : null}
           {tab === 'overview' && (
             <CustomerOverviewTab
               data={data}
@@ -1241,6 +1262,7 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
               projectsSummary={projectsSummary}
               quotes={data?.quotes || []}
               activityItems={activityItems}
+              handoverDocs={handoverDocs}
               onCreateDeal={() => setDealModal({ open: true, project: null, contactId: null })}
               onCreateQuote={(dealId: string) => {
                 const deal = customerQuoteDealsById.get(dealId) || null;

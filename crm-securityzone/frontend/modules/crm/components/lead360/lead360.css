@@ -733,3 +733,4 @@
 .crm-l360-qstep--current .crm-l360-qstep-label { color: #1e3a8a; font-weight: 700; }
 .crm-l360-task { border-left-color: #2563eb; }
 .crm-l360-task.is-late { border-left-color: #dc2626; }
+.crm-l360-hand-hist { display: block; font-size: 12px; line-height: 1.5; color: #475569; font-weight: 500; }

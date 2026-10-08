@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { API_BASE_URL, API_KEY } from '@/lib/env';
 import { useMembers } from '@/hooks/useMembers';
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
@@ -11,6 +11,7 @@ import { PositionSelect } from './PositionSelect';
 import { Loader2, X } from './icons';
 import type { AppUser } from '@/types/unified.types';
 import type { CrmCustomerRow, CrmCustomerStatus } from '../types';
+import { deriveShortName, looksLikeEnterprise } from '../utils/customerNames';
 
 const STATUS_OPTIONS: Array<{ value: CrmCustomerStatus; label: string }> = [
   { value: 'new_lead', label: 'Tiềm năng' },
@@ -20,8 +21,14 @@ const STATUS_OPTIONS: Array<{ value: CrmCustomerStatus; label: string }> = [
 ];
 
 type FormState = {
+  /** Ten viet tat (hien thi o danh sach/tieu de) - tu sinh tu ten cong ty, nguoi dung sua lai duoc. */
   customerName: string;
+  /** Cong ty (ten day du) - bat buoc voi doanh nghiep. */
   companyName: string;
+  /** Ten viet tat (short_name) - tu de xuat theo ten cong ty, sua duoc. */
+  shortName: string;
+  /** Nguoi lien he chinh (crm_contacts). */
+  contactName: string;
   positionCategoryId: string;
   positionLabel: string;
   phone: string;
@@ -44,6 +51,8 @@ function emptyForm(): FormState {
   return {
     customerName: '',
     companyName: '',
+    shortName: '',
+    contactName: '',
     positionCategoryId: '',
     positionLabel: '',
     phone: '',
@@ -66,7 +75,10 @@ function emptyForm(): FormState {
 function formFromCustomer(customer: CrmCustomerRow): FormState {
   return {
     customerName: customer.customerName || '',
-    companyName: customer.companyName || '',
+    // Khach CA NHAN (khong cong ty/MST/tu khoa to chuc): khong ep ten nguoi thanh "Cong ty".
+    companyName: customer.companyName || (looksLikeEnterprise(customer.customerName, customer.companyName, customer.taxCode) ? customer.customerName || '' : ''),
+    shortName: customer.shortName || '',
+    contactName: customer.primaryContact?.name || '',
     positionCategoryId: customer.positionCategoryId || '',
     positionLabel: customer.positionLabelSnapshot || customer.position || '',
     phone: customer.phone || '',
@@ -136,6 +148,17 @@ export function CustomerFormModal({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [duplicates, setDuplicates] = useState<DuplicateRow[]>([]);
+  // Ten viet tat: tu dong theo Cong ty cho toi khi nguoi dung tu sua tay (khong ghi de ten da dat tay).
+  const [shortTouched, setShortTouched] = useState(false);
+  const [suggesting, setSuggesting] = useState(false);
+  // Nguoi lien he chinh hien co (co the chua kem theo customer - vd trang chi tiet) -> tu nap khi mo form sua.
+  const [primaryContact, setPrimaryContact] = useState<{ id: string; name: string } | null>(null);
+  // Chuc vu goc cua nguoi lien he chinh (de biet co doi hay khong khi luu) - lay tu chinh Contact, khong phai Khach hang.
+  const [contactPositionBase, setContactPositionBase] = useState('');
+  // Tat ca nguoi lien he cua khach (chi de hien thi) - truoc day form chi cho thay 1 nguoi.
+  const [contactsList, setContactsList] = useState<Array<{ id: string; name: string; position: string; phone: string; email: string; isPrimary: boolean }>>([]);
+  // 4 kenh phu (Zalo/Facebook/Telegram/Website) chi hien khi co du lieu hoac bam "+" de them.
+  const [extraChannels, setExtraChannels] = useState<Record<'zalo' | 'facebook' | 'telegram' | 'website', boolean>>({ zalo: false, facebook: false, telegram: false, website: false });
   const { members } = useMembers();
   const embedded = variant === 'embedded';
   useBodyScrollLock(embedded ? false : open);
@@ -144,11 +167,76 @@ export function CustomerFormModal({
     if (!open) return;
     setError('');
     setDuplicates([]);
-    setForm(customer ? formFromCustomer(customer) : emptyForm());
+    const initial = customer ? formFromCustomer(customer) : emptyForm();
+    setForm(initial);
+    setShortTouched(Boolean(customer?.shortNameManual));
+    setExtraChannels({ zalo: Boolean(initial.zalo), facebook: Boolean(initial.facebook), telegram: Boolean(initial.telegram), website: Boolean(initial.website) });
+    setPrimaryContact(customer?.primaryContact?.id ? { id: customer.primaryContact.id, name: customer.primaryContact.name || '' } : null);
+    setContactPositionBase('');
+    setContactsList([]);
+    if (customer) {
+      let alive = true;
+      fetch(`${API_BASE_URL}/api/all-platform/crm/customers/${encodeURIComponent(customer.id)}/contacts`, { credentials: 'include', headers: headers() })
+        .then(res => res.json())
+        .then(body => {
+          if (!alive || body.success === false || !Array.isArray(body.data) || !body.data.length) return;
+          const main = body.data.find((c: { is_primary?: boolean }) => c.is_primary) || body.data[0];
+          const digits = (v?: string | null) => String(v || '').replace(/\D/g, '');
+          const sameAsCustomer = (c: { phone?: string | null; email?: string | null }) => Boolean((customer?.phone && digits(c.phone) === digits(customer.phone)) || (customer?.email && String(c.email || '').toLowerCase() === String(customer.email).toLowerCase()));
+          // Chuc vu: uu tien lien he chinh; neu chua co thi lay cua lien he trung SDT/email dang hien tren form.
+          const withPosition = body.data.find((c: { position_category_id?: string | null } & { phone?: string | null; email?: string | null }) => c.position_category_id && sameAsCustomer(c));
+          const mainPosition = main.position_category_id || withPosition?.position_category_id || '';
+          setContactsList(body.data.map((c: { id: string; name?: string; position_label_snapshot?: string | null; position?: string | null; phone?: string | null; email?: string | null; is_primary?: boolean }) => ({ id: c.id, name: c.name || '', position: c.position_label_snapshot || c.position || '', phone: c.phone || '', email: c.email || '', isPrimary: Boolean(c.is_primary) })));
+          setPrimaryContact({ id: main.id, name: main.name || '' });
+          setContactPositionBase(mainPosition);
+          setForm(current => ({ ...current, contactName: current.contactName || main.name || '', positionCategoryId: mainPosition || current.positionCategoryId }));
+        })
+        .catch(() => { /* khong co lien he -> de trong */ });
+      return () => { alive = false; };
+    }
   }, [open, customer]);
 
   function setValue<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm(current => ({ ...current, [key]: value }));
+  }
+
+  // Goi y ten viet tat: dien NGAY bang quy tac cuc bo, roi nang cap bang backend (thuong hieu da co/AI) - chong race bang so thu tu.
+  const suggestSeq = useRef(0);
+  const suggestTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  async function requestSuggestion(company: string, useAi: boolean): Promise<string> {
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/all-platform/crm/customers/suggest-short-name`, {
+        method: 'POST', credentials: 'include', headers: headers(),
+        body: JSON.stringify({ company_name: company, customer_id: customer?.id, use_ai: useAi }),
+      });
+      const body = await res.json();
+      const value = body?.data?.suggestion;
+      if (res.ok && body.success !== false && typeof value === 'string' && value.trim()) return value.trim();
+    } catch { /* backend/AI loi -> fallback quy tac cuc bo */ }
+    return deriveShortName(company);
+  }
+
+  function changeCompany(value: string) {
+    setForm(current => ({ ...current, companyName: value, ...(shortTouched ? {} : { shortName: deriveShortName(value) }) }));
+    if (shortTouched) return;   // da sua tay -> chi de xuat khi bam "Tao lai goi y", khong tu ghi de
+    const seq = ++suggestSeq.current;
+    if (suggestTimer.current) clearTimeout(suggestTimer.current);
+    if (!value.trim()) return;
+    suggestTimer.current = setTimeout(() => {
+      void requestSuggestion(value, true).then(suggestion => {
+        if (suggestSeq.current === seq) setForm(current => (current.companyName === value ? { ...current, shortName: suggestion } : current));
+      });
+    }, 700);
+  }
+
+  async function regenerateShortName() {
+    const company = form.companyName.trim() || form.customerName.trim();
+    if (!company) return;
+    setSuggesting(true);
+    const suggestion = await requestSuggestion(company, true);
+    setSuggesting(false);
+    setShortTouched(false);   // nguoi dung chu dong yeu cau -> quay lai che do tu dong
+    setForm(current => ({ ...current, shortName: suggestion }));
   }
 
   const canPickOwner = isAdminOrLeader(currentUser);
@@ -173,9 +261,35 @@ export function CustomerFormModal({
     Boolean(currentUser?.id) && !ownerOptions.some(m => selectionKeyOf(m) === currentUser!.id);
 
   function validate(): string | null {
-    if (!form.customerName.trim()) return 'Vui lòng nhập tên khách hàng.';
+    const personal = isEdit && !looksLikeEnterprise(customer?.customerName, customer?.companyName, customer?.taxCode) && !form.companyName.trim();
+    if (!personal && !form.companyName.trim()) return 'Vui lòng nhập tên công ty.';
     if (!form.phone.trim() && !form.email.trim()) return 'Cần nhập số điện thoại hoặc email.';
     return null;
+  }
+
+  /** Nguoi lien he chinh + chuc vu luu o crm_contacts (cap nhat lien he co san, hoac tao moi neu da nhap ten). */
+  async function syncPrimaryContact(customerId: string) {
+    const name = form.contactName.trim();
+    const existing = primaryContact;
+    const base = `${API_BASE_URL}/api/all-platform/crm/customers/${encodeURIComponent(customerId)}/contacts`;
+    if (existing?.id) {
+      const nameChanged = name && name !== (existing.name || '');
+      const positionChanged = form.positionCategoryId !== (contactPositionBase || customer?.positionCategoryId || '');
+      if (!nameChanged && !positionChanged) return;
+      const res = await fetch(`${base}/${encodeURIComponent(existing.id)}`, {
+        method: 'PUT', credentials: 'include', headers: headers(),
+        body: JSON.stringify({ ...(nameChanged ? { name } : {}), ...(positionChanged ? { position_category_id: form.positionCategoryId || null } : {}) }),
+      });
+      const out = await res.json();
+      if (!res.ok || out.success === false) throw new Error(out?.message || 'Đã lưu hồ sơ nhưng chưa cập nhật được người liên hệ.');
+    } else if (name) {
+      const res = await fetch(base, {
+        method: 'POST', credentials: 'include', headers: headers(),
+        body: JSON.stringify({ name, phone: form.phone.trim() || null, email: form.email.trim() || null, position_category_id: form.positionCategoryId || null, is_primary: true }),
+      });
+      const out = await res.json();
+      if (!res.ok || out.success === false) throw new Error(out?.message || 'Đã lưu hồ sơ nhưng chưa tạo được người liên hệ.');
+    }
   }
 
   async function handleSubmit(event: React.FormEvent) {
@@ -190,8 +304,11 @@ export function CustomerFormModal({
     setDuplicates([]);
     try {
       const payload: Record<string, unknown> = {
-        customer_name: form.customerName.trim(),
+        // customer_name giu nguyen khi sua (ten day du/ten dinh danh da co); tao moi = ten cong ty.
+        customer_name: isEdit ? (customer?.customerName || form.companyName.trim()) : (form.companyName.trim() || form.customerName.trim()),
         company_name: form.companyName.trim() || null,
+        short_name: form.shortName.trim() || null,
+        short_name_manual: shortTouched && Boolean(form.shortName.trim()),
         position_category_id: form.positionCategoryId || null,
         phone: form.phone.trim() || null,
         email: form.email.trim() || null,
@@ -234,7 +351,9 @@ export function CustomerFormModal({
         }
         throw new Error(body.message || 'Không lưu được hồ sơ khách hàng.');
       }
-      onSaved(body.data as CrmCustomerRow);
+      const saved = body.data as CrmCustomerRow;
+      await syncPrimaryContact(saved.id);
+      onSaved({ ...saved, primaryContact: saved.primaryContact || customer?.primaryContact || null });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Không lưu được hồ sơ khách hàng.');
     } finally {
@@ -274,21 +393,18 @@ export function CustomerFormModal({
           <div className="crm-form-section">
             <p className="crm-form-title">Thông tin cơ bản</p>
             <div className="crm-form-grid">
-              <Field label="Tên khách hàng" required>
-                <input value={form.customerName} onChange={e => setValue('customerName', e.target.value)} placeholder="Nguyễn Văn A" />
+              <Field label="Công ty" required>
+                <input value={form.companyName} onChange={e => changeCompany(e.target.value)} placeholder="Công ty TNHH ABC" />
               </Field>
-              <Field label="Công ty">
-                <input value={form.companyName} onChange={e => setValue('companyName', e.target.value)} placeholder="Công ty TNHH ABC" />
-              </Field>
-              <Field label="Chức vụ">
-                <PositionSelect
-                  value={form.positionCategoryId}
-                  labelSnapshot={form.positionLabel}
-                  onChange={(id, label) => {
-                    setValue('positionCategoryId', id);
-                    setValue('positionLabel', label);
-                  }}
+              <Field label="Tên viết tắt" hint="tự điền theo tên công ty, sửa được">
+                <input
+                  value={form.shortName}
+                  onChange={e => { setShortTouched(true); setValue('shortName', e.target.value); }}
+                  placeholder="ABC"
                 />
+                <button type="button" className="crm-short-regen-btn" data-testid="short-name-regen" disabled={suggesting || !(form.companyName.trim() || form.customerName.trim())} onClick={() => void regenerateShortName()}>
+                  {suggesting ? 'Đang gợi ý…' : '↻ Tạo lại gợi ý'}
+                </button>
               </Field>
               <Field label="Trạng thái">
                 <select value={form.status} onChange={e => setValue('status', e.target.value as CrmCustomerStatus)}>
@@ -302,26 +418,70 @@ export function CustomerFormModal({
 
           <div className="crm-form-section">
             <p className="crm-form-title">Thông tin liên hệ</p>
+            {contactsList.length > 1 ? (
+              <ul className="crm-contact-list" data-testid="customer-contact-list">
+                {contactsList.map(c => (
+                  <li key={c.id}>
+                    <b>{c.name || 'Chưa đặt tên'}</b>{c.isPrimary ? <em> · Chính</em> : null}
+                    {c.position ? <span> · {c.position}</span> : null}
+                    {c.phone ? <span> · {c.phone}</span> : null}
+                    {c.email ? <span> · {c.email}</span> : null}
+                  </li>
+                ))}
+              </ul>
+            ) : null}
             <div className="crm-form-grid">
+              <Field label="Người liên hệ" onClear={() => setValue('contactName', '')}>
+                <input value={form.contactName} onChange={e => setValue('contactName', e.target.value)} placeholder="Nguyễn Văn A" />
+              </Field>
+              <Field label="Chức vụ">
+                <PositionSelect
+                  value={form.positionCategoryId}
+                  labelSnapshot={form.positionLabel}
+                  onChange={(id, label) => {
+                    setValue('positionCategoryId', id);
+                    setValue('positionLabel', label);
+                  }}
+                />
+              </Field>
               <Field label="Số điện thoại" required hint="cần SĐT hoặc email" onClear={() => setValue('phone', '')}>
                 <input value={form.phone} onChange={e => setValue('phone', e.target.value)} type="tel" placeholder="09xxxxxxxx" />
               </Field>
               <Field label="Email" required hint="cần SĐT hoặc email" onClear={() => setValue('email', '')}>
                 <input value={form.email} onChange={e => setValue('email', e.target.value)} type="email" placeholder="ten@congty.com" />
               </Field>
-              <Field label="Zalo" onClear={() => setValue('zalo', '')}>
-                <input value={form.zalo} onChange={e => setValue('zalo', e.target.value)} placeholder="Số/link Zalo" />
-              </Field>
-              <Field label="Facebook" onClear={() => setValue('facebook', '')}>
-                <input value={form.facebook} onChange={e => setValue('facebook', e.target.value)} placeholder="Link Facebook" />
-              </Field>
-              <Field label="Telegram" onClear={() => setValue('telegram', '')}>
-                <input value={form.telegram} onChange={e => setValue('telegram', e.target.value)} placeholder="@username hoặc link" />
-              </Field>
-              <Field label="Website" onClear={() => setValue('website', '')}>
-                <input value={form.website} onChange={e => setValue('website', e.target.value)} placeholder="https://..." />
-              </Field>
+              {extraChannels.zalo ? (
+                <Field label="Zalo" onClear={() => { setValue('zalo', ''); setExtraChannels(c => ({ ...c, zalo: false })); }}>
+                  <input value={form.zalo} onChange={e => setValue('zalo', e.target.value)} placeholder="Số/link Zalo" />
+                </Field>
+              ) : null}
+              {extraChannels.facebook ? (
+                <Field label="Facebook" onClear={() => { setValue('facebook', ''); setExtraChannels(c => ({ ...c, facebook: false })); }}>
+                  <input value={form.facebook} onChange={e => setValue('facebook', e.target.value)} placeholder="Link Facebook" />
+                </Field>
+              ) : null}
+              {extraChannels.telegram ? (
+                <Field label="Telegram" onClear={() => { setValue('telegram', ''); setExtraChannels(c => ({ ...c, telegram: false })); }}>
+                  <input value={form.telegram} onChange={e => setValue('telegram', e.target.value)} placeholder="@username hoặc link" />
+                </Field>
+              ) : null}
+              {extraChannels.website ? (
+                <Field label="Website" onClear={() => { setValue('website', ''); setExtraChannels(c => ({ ...c, website: false })); }}>
+                  <input value={form.website} onChange={e => setValue('website', e.target.value)} placeholder="https://..." />
+                </Field>
+              ) : null}
             </div>
+            {(['zalo', 'facebook', 'telegram', 'website'] as const).some(key => !extraChannels[key]) ? (
+              <div className="crm-extra-channels" data-testid="crm-extra-channels">
+                {([['zalo', 'Zalo'], ['facebook', 'Facebook'], ['telegram', 'Telegram'], ['website', 'Website']] as const)
+                  .filter(([key]) => !extraChannels[key])
+                  .map(([key, label]) => (
+                    <button key={key} type="button" className="crm-extra-channel-btn" onClick={() => setExtraChannels(c => ({ ...c, [key]: true }))}>
+                      + {label}
+                    </button>
+                  ))}
+              </div>
+            ) : null}
           </div>
 
           <div className="crm-form-section">

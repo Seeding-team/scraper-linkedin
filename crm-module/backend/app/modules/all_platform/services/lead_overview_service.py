@@ -270,6 +270,24 @@ def _rollup_steps(*, lead, deal, quotes, contracts, open_tasks, contracts_of, le
     ]
 
 
+def _handover_history(lead_id: str) -> list[dict[str, Any]]:
+    """Lich su giao/nhan/re-assign (crm_lead_handovers). Chua co bang (chua chay migration 180) -> rong."""
+    try:
+        from app.modules.all_platform.services.crm_lead_handover_service import HANDOVER_TABLE, _names
+
+        rows = _select_all(HANDOVER_TABLE, "id, kind, from_user_id, prev_assignee_id, to_user_id, doc_links, email_status, email_to, created_at", lead_id=lead_id)
+        rows.sort(key=lambda r: str(r.get("created_at") or ""), reverse=True)
+        rows = rows[:20]
+        names = _names({r.get(k) for r in rows for k in ("from_user_id", "to_user_id", "prev_assignee_id")})
+        return [
+            {"id": r["id"], "kind": r["kind"], "at": r.get("created_at"), "from": names.get(r.get("from_user_id") or ""), "to": names.get(r.get("to_user_id") or ""),
+             "prev": names.get(r.get("prev_assignee_id") or ""), "linkCount": len(r.get("doc_links") or []), "emailStatus": r.get("email_status"), "emailTo": r.get("email_to")}
+            for r in rows
+        ]
+    except Exception:  # noqa: BLE001
+        return []
+
+
 def _ensure_customer_code(customer: dict[str, Any]) -> str | None:
     """CHI DOC ma KH (sinh luc convert / tao Customer) - KHONG sinh ma khi mo Lead 360."""
     return customer.get("customer_code") or None
@@ -343,6 +361,14 @@ def get_lead_overview(lead_id: str, user: dict[str, Any]) -> dict[str, Any]:
         except Exception:  # migration 177 (contact_code) chua ap -> van tra contact, ma de trong
             rows = _select_all("crm_contacts", "id, name, phone, email, position, position_label_snapshot", id=lead["converted_contact_id"], instance=inst)
         contact = rows[0] if rows else None
+    other_contacts: list[dict[str, Any]] = []
+    if lead.get("converted_customer_id"):
+        try:
+            for row in _select_all("crm_contacts", "id, name, position, position_label_snapshot", customer_id=lead["converted_customer_id"], instance=inst):
+                if row.get("id") != (contact or {}).get("id"):
+                    other_contacts.append({"id": row["id"], "name": row.get("name"), "position": row.get("position_label_snapshot") or row.get("position")})
+        except Exception:  # khong lam hong Lead 360 chi vi thieu thong tin phu
+            other_contacts = []
     deal = None
     if lead.get("converted_deal_id"):
         rows = _select_all(
@@ -642,6 +668,7 @@ def get_lead_overview(lead_id: str, user: dict[str, Any]) -> dict[str, Any]:
                       "owner": nm(customer.get("owner_id")), "team": (_team_of(customer.get("owner_id")) or {}).get("name")} if customer else None),
         "contact": ({"id": contact["id"], "name": contact.get("name"), "phone": contact.get("phone"), "email": contact.get("email"), "contactCode": contact.get("contact_code") or lead_contact_code,
                      "position": contact.get("position_label_snapshot") or contact.get("position")} if contact else None),
+        "otherContacts": other_contacts[:10],
         "deal": ({"id": deal["id"], "name": deal.get("customer_name"), "companyName": deal.get("company_name"), "stage": deal.get("deal_stage"),
                   "estimatedBudget": deal.get("estimated_budget"), "stageEnteredAt": deal.get("stage_entered_at"), "followUpDate": deal.get("follow_up_date"),
                   "createdAt": deal.get("created_at"), "nextStep": deal.get("next_step"), "nextStepDue": _due_info(deal.get("follow_up_date")),
@@ -657,8 +684,10 @@ def get_lead_overview(lead_id: str, user: dict[str, Any]) -> dict[str, Any]:
             "teamSale": team_sale, "sale": nm(sale_id), "presale": presale_label,
             "handedOverBy": nm(lead.get("converted_by")) if deal else None, "handedOverAt": lead.get("converted_at") if deal else None,
             "nextStep": lead.get("next_step") or (deal or {}).get("next_step"), "followUp": _due_info(follow_src), "followUpAt": follow_src,
-            # GD1 chua co field/audit tai lieu ban giao (thuoc GD3) -> luon rong; TUYET DOI khong lay file/link hop dong hay bao gia.
-            "documents": [],
+            # Tai lieu ban giao = link Doc/Sheet duoc dan LUC ASSIGN/BAN GIAO (crm_leads.handover_links, GD3).
+            # TUYET DOI khong lay file/link hop dong hay bao gia lam du lieu thay the.
+            "documents": [{"title": l.get("title") or l.get("url"), "url": l["url"]} for l in (lead.get("handover_links") or []) if isinstance(l, dict) and l.get("url")],
+            "history": _handover_history(lead_id),
         },
         "currentTask": current,
         "steps": steps,

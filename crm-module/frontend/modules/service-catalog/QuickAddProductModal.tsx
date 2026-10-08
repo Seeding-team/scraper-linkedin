@@ -774,7 +774,7 @@ export function QuickAddProductModal({
                           <input
                             type="number"
                             className="w-full h-9 px-3 border border-slate-300 rounded-md text-sm focus:border-[#c2185b] focus:ring-1 focus:ring-[#c2185b]"
-                            placeholder="10"
+                            placeholder="0"
                             value={vatInput}
                             onChange={e => setVatInput(e.target.value)}
                             list="qap-vat-options"

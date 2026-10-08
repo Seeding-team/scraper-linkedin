@@ -56,6 +56,7 @@ import { calculateQuoteTotals, calculateOverallDiscountSummary, clampDiscountPer
 import { paymentPlanAmount, paymentPlanPercent } from '@/modules/quotes/utils/paymentPlan';
 import type { BundleSnapshotComponent, BundleSnapshotValue, CustomBlock, PaymentPlanRow } from '@/modules/quotes/types';
 import { QuoteOutcomeSection } from './QuoteOutcomeSection';
+import { customerDisplay } from '../utils/customerNames';
 
 /** 4 buoc THAT (Yeu cau bao gia/Thong tin ky thuat/Hoan thien gia ban/Cho
  * duyet-Phat hanh) - anh xa dung 1-1 voi `quotes.processing_stage` (migration
@@ -79,6 +80,8 @@ type QuoteCustomerOption = {
   label: string;
   name?: string;
   companyName?: string;
+  shortName?: string | null;
+  customerCode?: string | null;
   phone?: string;
   email?: string;
   address?: string;
@@ -266,6 +269,13 @@ function resolveCatalogCustomerPrice(item: ServiceCatalogItem): number {
   return 0;
 }
 
+/** Tieu de mac dinh khi Presale tao yeu cau chua dat ten - KHONG phai ten that Sale phai dat o Buoc 2. */
+const DEFAULT_QUOTE_TITLE = 'Yêu cầu hỗ trợ báo giá';
+function isQuoteTitleMissing(value: unknown): boolean {
+  const text = typeof value === 'string' ? value.trim() : '';
+  return !text || text === DEFAULT_QUOTE_TITLE;
+}
+
 function recalculateBundleParent(item: QuoteItem, components: BundleSnapshotComponent[], mode: 'fixed' | 'auto' = bundleSnapshotPricingMode(item), targetGm = bundleSnapshotTargetGm(item), fx: QuoteFx = VND_FX): QuoteItem {
   // Gia von/gia combo tinh o VND (snapshot goc) roi moi quy doi sang tien te cua quote.
   const bundleCostVnd = calculateBundleComponentCost(components);
@@ -363,6 +373,24 @@ function bundleComponentsToWorkspaceRows(item: QuoteItem, catalogItems: ServiceC
   return rows;
 }
 
+/** Option dropdown khach hang: ten viet tat uu tien (kem ten day du dong phu); tim duoc theo ten day du, viet tat, ma KH, SDT.
+ * `label`/`name`/`companyName` giu nguyen de bao gia/PDF/hop dong van dung ten phap ly day du. */
+function customerPickerOption(c: QuoteCustomerOption) {
+  const d = customerDisplay({ shortName: c.shortName, companyName: c.companyName, customerName: c.name });
+  return {
+    value: c.id,
+    label: d.sub ? `${d.title} · ${d.sub}` : d.title,
+    searchText: [c.shortName, c.companyName, c.name, c.customerCode, c.phone, c.email].filter(Boolean).join(' '),
+    richLabel: (
+      <span title={d.full}>
+        <strong>{d.title}</strong>
+        {d.sub ? <small style={{ marginLeft: 6, opacity: 0.7 }}>{d.sub}</small> : null}
+        {c.customerCode ? <small style={{ marginLeft: 6, opacity: 0.6 }}>· {c.customerCode}</small> : null}
+      </span>
+    ),
+  };
+}
+
 async function loadQuoteCustomerOptions(): Promise<QuoteCustomerOption[]> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (API_KEY) headers['X-API-Key'] = API_KEY;
@@ -373,6 +401,8 @@ async function loadQuoteCustomerOptions(): Promise<QuoteCustomerOption[]> {
     id: string;
     customer_name?: string;
     company_name?: string;
+    short_name?: string | null;
+    customer_code?: string | null;
     phone?: string;
     email?: string;
     address?: string;
@@ -383,6 +413,8 @@ async function loadQuoteCustomerOptions(): Promise<QuoteCustomerOption[]> {
     label: `${row.customer_name || 'Khách hàng chưa tên'}${row.company_name ? ' · ' + row.company_name : ''}`,
     name: row.customer_name,
     companyName: row.company_name,
+    shortName: row.short_name || null,
+    customerCode: row.customer_code || null,
     phone: row.phone,
     email: row.email,
     address: row.address,
@@ -400,6 +432,8 @@ async function loadQuoteCustomerOption(customerId: string): Promise<QuoteCustome
     id: string;
     customer_name?: string;
     company_name?: string;
+    short_name?: string | null;
+    customer_code?: string | null;
     phone?: string;
     email?: string;
     address?: string;
@@ -410,6 +444,8 @@ async function loadQuoteCustomerOption(customerId: string): Promise<QuoteCustome
     label: `${row.customer_name || 'Khách hàng chưa tên'}${row.company_name ? ' · ' + row.company_name : ''}`,
     name: row.customer_name,
     companyName: row.company_name,
+    shortName: row.short_name || null,
+    customerCode: row.customer_code || null,
     phone: row.phone,
     email: row.email,
     address: row.address,
@@ -2233,7 +2269,7 @@ export function QuoteWorkspaceModal({
       quantity: row.quantity,
       unitPrice: row.unitPrice,
       discountPercent: row.discountPercent ?? 0,
-      vatRate: row.vatRate ?? 10,
+      vatRate: row.vatRate ?? 0,
       costPrice: row.costPrice ?? null,
       // Goc VND (migration 169) - chi co y nghia o bao gia USD; gui kem de doi lai VND khong troi do.
       costPriceVnd: row.costPriceVnd ?? null,
@@ -2351,7 +2387,7 @@ export function QuoteWorkspaceModal({
     clearRequiredError('items');
     setItemsDraft(prev => [
       ...prev,
-      { description: '', quantity: 1, unitPrice: 0, vatRate: 10, discountPercent: 0, costPrice: null, markupPercent: null, parentItemId: trailingParentItemId(prev) },
+      { description: '', quantity: 1, unitPrice: 0, vatRate: 0, discountPercent: 0, costPrice: null, markupPercent: null, parentItemId: trailingParentItemId(prev) },
     ]);
   }
 
@@ -2378,7 +2414,7 @@ export function QuoteWorkspaceModal({
       const sourceRow = prev[index];
       if (!sourceRow) return prev;
       const newRow: QuoteItem = {
-        description: '', quantity: 1, unitPrice: 0, vatRate: 10, discountPercent: 0,
+        description: '', quantity: 1, unitPrice: 0, vatRate: 0, discountPercent: 0,
         costPrice: null, markupPercent: null, parentItemId: sourceRow.parentItemId,
       };
       return [...prev.slice(0, index + 1), newRow, ...prev.slice(index + 1)];
@@ -2566,7 +2602,7 @@ export function QuoteWorkspaceModal({
       // CHUA duoc cau hinh bo gia moi, tranh Gia khach ve 0 vo ly.
       unitPrice: defaultUnitPrice,
       discountPercent: item.defaultDiscountPercent || 0,
-      vatRate: item.defaultVatRate ?? 10,
+      vatRate: item.defaultVatRate ?? 0,
       // Bo gia MAC DINH cua danh muc chung (migration 107,
       // service_catalog_item_pricing) - CHI la GIA TRI MAC DINH luc chon,
       // sua trong quote KHONG ghi nguoc ve danh muc (dung nguyen tac
@@ -2619,7 +2655,7 @@ export function QuoteWorkspaceModal({
       quantity: item.defaultQuantity || 1,
       unitPrice: canEditPricingCells ? toQuoteMoney(preview.unitPrice || 0, workspaceFx) ?? 0 : 0,
       discountPercent: 0,
-      vatRate: item.vatEuPercent ?? 10,
+      vatRate: item.vatEuPercent ?? 0,
       costPrice: canEditCostCells ? toQuoteMoney(preview.costUnit ?? null, workspaceFx) : null,
       ...(workspaceCurrency === 'USD'
         ? {
@@ -2948,12 +2984,30 @@ export function QuoteWorkspaceModal({
         setQuickAddProductTarget(null);
         return;
       }
+      // Gia khach/gia von/markup/VAT cua san pham vua tao phai hien NGAY tren dong hang muc (truoc day chi gan catalogItemId nen
+      // phai xoa dong them lai moi thay gia). Giu nguyen mo ta/so luong Sale da go; chi do gia theo dung quyen sua gia/gia von.
+      const priced = catalogItemToQuoteItem(hydrated);
       setItemsDraft(prev => {
-        const next = prev.map((row, i) => (i === linkIndex ? { ...row, catalogItemId: hydrated.id } : row));
+        const next = prev.map((row, i) => {
+          if (i !== linkIndex) return row;
+          return {
+            ...row,
+            catalogItemId: hydrated.id,
+            unit: row.unit || priced.unit,
+            vatRate: priced.vatRate,
+            discountPercent: row.discountPercent || priced.discountPercent,
+            ...(canEditPricingCells
+              ? { unitPrice: priced.unitPrice, markupPercent: priced.markupPercent, ...(priced.unitPriceVnd !== undefined ? { unitPriceVnd: priced.unitPriceVnd } : {}) }
+              : {}),
+            ...(canEditCostCells
+              ? { costPrice: priced.costPrice, ...(priced.costPriceVnd !== undefined ? { costPriceVnd: priced.costPriceVnd } : {}) }
+              : {}),
+          };
+        });
         if (quote) void persistQuote({ items: next }, { silent: true });
         return next;
       });
-      showToast(true, `Đã thêm "${created.name}" vào Sản phẩm & dịch vụ và liên kết với hạng mục này.`);
+      showToast(true, `Đã thêm "${created.name}" vào Sản phẩm & dịch vụ và điền giá vào hạng mục này.`);
     } else {
       // 'newRow' - CHI tao san pham + tu tich chon trong Picker (van dang
       // mo), KHONG tu dong them vao bao gia (xem giai thich o khai bao
@@ -3061,7 +3115,7 @@ export function QuoteWorkspaceModal({
       quantity: item.quantity,
       unitPrice: 0,
       discountPercent: item.discountPercent ?? 0,
-      vatRate: item.vatRate ?? 10,
+      vatRate: item.vatRate ?? 0,
       costPrice: item.costPrice ?? null,
       markupPercent: null,
       catalogItemId: item.catalogItemId,
@@ -3486,6 +3540,8 @@ export function QuoteWorkspaceModal({
             id: string;
             customer_name?: string;
             company_name?: string;
+            short_name?: string | null;
+            customer_code?: string | null;
             phone?: string;
             email?: string;
             address?: string;
@@ -3501,6 +3557,8 @@ export function QuoteWorkspaceModal({
             label: `${row.customer_name || 'Khách hàng chưa tên'}${row.company_name ? ' · ' + row.company_name : ''}`,
             name: row.customer_name,
             companyName: row.company_name,
+            shortName: row.short_name || null,
+            customerCode: row.customer_code || null,
             phone: row.phone,
             email: row.email,
             address: row.address,
@@ -4253,6 +4311,15 @@ export function QuoteWorkspaceModal({
    * tai o Dự án), khong chi am tham disable nut. */
   function handoffPricingToReview(skipZeroPriceCheck = false) {
     if (!quote) return;
+    // Ten bao gia BAT BUOC (khong de mac dinh "Yêu cầu hỗ trợ báo giá") truoc khi hoan tat phan gia ban.
+    if (isQuoteTitleMissing(quote.data?.quoteTitle)) {
+      const errors: Record<string, string> = { quoteTitle: 'Vui lòng nhập tên báo giá trước khi hoàn tất phần giá bán.' };
+      if (!quote.projectId) errors.project = 'Vui lòng chọn dự án.';
+      setRequiredFieldErrors(current => ({ ...current, ...errors }));
+      focusFirstRequiredError(errors);
+      showToast(false, 'Cần nhập Tên báo giá (dấu * đỏ) trước khi hoàn tất phần giá bán.');
+      return;
+    }
     if (!quote.projectId) {
       const errors = { project: 'Vui lòng chọn dự án.' };
       setRequiredFieldErrors(current => ({ ...current, ...errors }));
@@ -4890,7 +4957,7 @@ export function QuoteWorkspaceModal({
           const lineSubtotal = (item.quantity || 0) * (item.unitPrice || 0);
           const discountAmount = lineSubtotal * ((item.discountPercent ?? 0) / 100);
           const afterDiscount = lineSubtotal - discountAmount;
-          const vat = afterDiscount * ((item.vatRate ?? 10) / 100);
+          const vat = afterDiscount * ((item.vatRate ?? 0) / 100);
           return { subtotal: acc.subtotal + lineSubtotal, vat: acc.vat + vat, total: acc.total + afterDiscount + vat };
         },
         { subtotal: 0, vat: 0, total: 0 }
@@ -5053,17 +5120,24 @@ export function QuoteWorkspaceModal({
                  * dung quyen canEditPricingCells nhu truoc (chi Sale duoc sua,
                  * dung luc Buoc 2 nhap gia). */}
                 {canEditPricingCells && isDraft ? (
-                  <input
-                    type="text"
-                    className="qc-workspace-header-quote-title qc-workspace-header-quote-title--input"
-                    placeholder="Vui lòng nhập tên báo giá"
-                    value={typeof quote.data?.quoteTitle === 'string' ? quote.data.quoteTitle : ''}
-                    onChange={event => {
-                      const value = event.target.value;
-                      setQuote(prev => (prev ? { ...prev, data: { ...prev.data, quoteTitle: value } } : prev));
-                    }}
-
-                  />
+                  <div className="qc-title-field" data-qc-required="quoteTitle">
+                    <label className="qc-title-field-label" htmlFor="qc-quote-title-input">
+                      Tên báo giá <span className="qc-required-mark">*</span>
+                    </label>
+                    <input
+                      id="qc-quote-title-input"
+                      type="text"
+                      className={`qc-workspace-header-quote-title qc-workspace-header-quote-title--input qc-title-input--prominent${requiredFieldErrors.quoteTitle ? ' is-error' : ''}`}
+                      placeholder="Nhập tên báo giá (bắt buộc)"
+                      value={isQuoteTitleMissing(quote.data?.quoteTitle) ? '' : String(quote.data?.quoteTitle)}
+                      onChange={event => {
+                        const value = event.target.value;
+                        if (value.trim()) clearRequiredError('quoteTitle');
+                        setQuote(prev => (prev ? { ...prev, data: { ...prev.data, quoteTitle: value } } : prev));
+                      }}
+                    />
+                    {requiredFieldErrors.quoteTitle ? <p className="qc-field-error">{requiredFieldErrors.quoteTitle}</p> : null}
+                  </div>
                 ) : (
                   <h2 className="qc-workspace-header-quote-title">
                     {typeof quote.data?.quoteTitle === 'string' && quote.data.quoteTitle ? quote.data.quoteTitle : 'Vui lòng nhập tên báo giá'}
@@ -5221,7 +5295,7 @@ export function QuoteWorkspaceModal({
               <SearchableSelect
                 value={draftCustomerId}
                 onChange={selectDraftCustomer}
-                options={customers.map(c => ({ value: c.id, label: c.label }))}
+                options={customers.map(c => customerPickerOption(c))}
                 actions={[
                   { key: 'create-customer', label: '+ Tạo khách hàng mới', onSelect: () => setCustomerDrawerOpen(true), type: 'add' },
                   { key: 'manage-customers', label: 'Quản lý khách hàng', onSelect: () => window.open('/all-platform/crm/customers', '_blank', 'noopener,noreferrer'), type: 'manage' },

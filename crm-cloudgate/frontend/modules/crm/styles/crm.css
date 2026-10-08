@@ -12186,3 +12186,68 @@
   border: 0; background: none; cursor: pointer; font-size: 12.5px; font-weight: 600; color: #2563eb;
 }
 .crm-drawer-backlink:hover { text-decoration: underline; }
+
+/* GD3 - Phu trach & ban giao (Xac minh Lead) */
+.crm-handover { display: flex; flex-direction: column; gap: 10px; }
+.crm-handover-who { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.crm-handover-label { display: block; font-size: 11px; color: #64748b; text-transform: uppercase; letter-spacing: .04em; }
+.crm-handover-badge { padding: 4px 10px; border-radius: 999px; font-size: 12px; font-weight: 700; background: #f1f5f9; color: #334155; }
+.crm-handover-badge.is-handover { background: #dbeafe; color: #1d4ed8; }
+.crm-handover-badge.is-reassign { background: #fef3c7; color: #b45309; }
+.crm-handover-badge.is-verify { background: #dcfce7; color: #15803d; }
+.crm-handover-links { width: 100%; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; }
+.crm-handover-hint { margin: 0; font-size: 12px; color: #64748b; }
+.crm-handover-ok { margin: 0; font-size: 13px; color: #15803d; font-weight: 600; }
+.crm-handover-email { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.crm-handover-missing { background: #fff7ed; border: 1px solid #fed7aa; border-radius: 8px; padding: 8px 12px; font-size: 13px; color: #9a3412; }
+.crm-handover-missing ul { margin: 4px 0 0 18px; padding: 0; }
+.crm-handover-history { font-size: 12.5px; color: #475569; }
+.crm-handover-history ul { margin: 6px 0 0 16px; padding: 0; }
+
+/* Form sua khach hang: kenh phu (Zalo/Facebook/Telegram/Website) chi them khi can */
+.crm-extra-channels { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.crm-extra-channel-btn { padding: 4px 12px; border: 1px dashed #94a3b8; border-radius: 999px; background: #fff; color: #475569; font-size: 12.5px; font-weight: 600; cursor: pointer; }
+.crm-extra-channel-btn:hover { border-color: #2563eb; color: #2563eb; background: #eff6ff; }
+
+.crm-short-regen-btn { align-self: flex-start; margin-top: 4px; padding: 0; border: 0; background: none; color: #2563eb; font-size: 12px; font-weight: 600; cursor: pointer; }
+.crm-short-regen-btn:disabled { color: #94a3b8; cursor: default; }
+.crm-short-regen-btn:hover:not(:disabled) { text-decoration: underline; }
+
+.crm-handover-reassign { display: flex; flex-direction: column; gap: 8px; max-width: 360px; }
+.crm-handover-docs-card { border: 1px solid #e2e8f0; border-radius: 10px; padding: 12px 14px; background: #fff; margin-bottom: 12px; }
+.crm-handover-docs-card h4 { margin: 0 0 8px; font-size: 13px; font-weight: 700; color: #0f172a; }
+.crm-handover-docs-card ul { margin: 0; padding-left: 18px; font-size: 13px; }
+.crm-handover-docs-card small { color: #64748b; }
+
+/* Xac minh Lead: tong quan compact + khoi ban giao thu gon duoi form */
+.crm-verify-kpi-strip .crm-verify-kpi-suggest b { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.crm-link-button { background: none; border: 0; padding: 0; color: #1d4ed8; font-size: 12px; font-weight: 700; cursor: pointer; }
+.crm-link-button:disabled { color: #94a3b8; cursor: not-allowed; }
+.crm-handover-details { border: 1px solid #e2e8f0; border-radius: 10px; background: #fff; margin: 12px 0; }
+.crm-handover-details > summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 14px; cursor: pointer; font-size: 13px; font-weight: 700; color: #0f172a; list-style: none; }
+.crm-handover-details > summary::-webkit-details-marker { display: none; }
+.crm-handover-details > summary::after { content: '▾'; color: #64748b; margin-left: auto; }
+.crm-handover-details[open] > summary::after { content: '▴'; }
+.crm-handover-details > summary small { color: #64748b; font-weight: 600; }
+.crm-handover-details .crm-handover { padding: 0 14px 12px; border: 0; background: transparent; }
+.crm-handover-links { min-height: 52px; max-height: 52px; resize: vertical; transition: max-height .15s ease; }
+.crm-handover-links:focus { max-height: 160px; min-height: 96px; }
+.crm-footer-reason { flex: 1 1 100%; margin: 0 0 4px; font-size: 12px; color: #b45309; }
+@media (max-width: 640px) {
+  .crm-verify-footer .crm-footer-actions { width: 100%; }
+  .crm-verify-footer .crm-footer-actions > button { flex: 1 1 calc(50% - 6px); min-width: 0; }
+}
+.crm-verify-kpi-strip .crm-verify-kpi-suggest > span { white-space: nowrap; display: inline-flex; align-items: center; gap: 4px; }
+.crm-verify-kpi-strip .crm-verify-kpi-suggest b { white-space: nowrap; flex-wrap: nowrap; gap: 6px; }
+.crm-verify-kpi-strip .crm-verify-suggest-pill { white-space: nowrap; padding: 2px 8px; font-size: 10px; }
+.crm-l360-more-contacts { color: #475569; }
+.crm-contact-list { list-style: none; margin: 0 0 10px; padding: 8px 12px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 12.5px; color: #475569; display: flex; flex-direction: column; gap: 4px; }
+.crm-contact-list b { color: #0f172a; } .crm-contact-list em { color: #1d4ed8; font-style: normal; font-weight: 700; }
+.crm-verify-footer .crm-handover-cta { background: #fef9c3; border-color: #fde047; color: #713f12; font-weight: 700; }
+.crm-verify-footer .crm-handover-cta:hover:not(:disabled) { background: #fef08a; }
+.crm-footer-btn-wrap { position: relative; display: inline-flex; align-items: center; gap: 4px; }
+.crm-footer-help { width: 20px; height: 20px; border-radius: 50%; border: 1px solid #cbd5e1; background: #fff; color: #475569; font-size: 12px; font-weight: 800; line-height: 1; cursor: pointer; padding: 0; flex: none; }
+.crm-footer-help:hover, .crm-footer-help[aria-expanded='true'] { background: #1d4ed8; border-color: #1d4ed8; color: #fff; }
+.crm-footer-help-pop { position: absolute; bottom: calc(100% + 8px); left: 0; z-index: 20; width: 280px; max-width: 80vw; padding: 10px 12px; background: #0f172a; color: #f8fafc; border-radius: 8px; font-size: 12.5px; line-height: 1.45; font-weight: 500; box-shadow: 0 8px 24px rgba(15, 23, 42, .25); text-align: left; }
+@media (max-width: 640px) { .crm-footer-help-pop { left: auto; right: 0; } }
+

@@ -16,7 +16,7 @@ import { WorkspaceBadge } from './WorkspaceBadge';
 import './styles/service-catalog.css';
 import '@/modules/crm/styles/quote-center.css';
 
-const PAGE_SIZE = 6;
+const PAGE_SIZE = 12; // 3 cot x 4 hang: lap day man hinh, khong de trong phia duoi
 
 /** CHOT LAI CAU TRUC ("cấu trúc tab hiện tại đang bị ngược" - yeu cau tai
  * cau truc toan bo): trang goc "Sản phẩm & dịch vụ" GIO CHI con la danh

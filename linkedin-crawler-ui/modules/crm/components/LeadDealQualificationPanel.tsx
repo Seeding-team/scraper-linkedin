@@ -278,7 +278,7 @@ export function LeadDealQualificationPanel(props: {
               <SearchableSelect disabled={!canWrite} value={props.teamId} onChange={props.onTeamIdChange} options={props.teamOptions} placeholder="-- Chọn --" actions={props.teamActions} />
             </Field>
             <Field label="Sale phụ trách">
-              <SearchableSelect disabled={!canWrite} value={props.aeId} onChange={props.onAeIdChange} options={props.aeOptions} placeholder="Chờ phân công" />
+              <SearchableSelect testId="lead-ae-select" disabled={!canWrite} value={props.aeId} onChange={props.onAeIdChange} options={props.aeOptions} placeholder="Chờ phân công" />
             </Field>
           </div>
           <div className="crm-inline-pair">

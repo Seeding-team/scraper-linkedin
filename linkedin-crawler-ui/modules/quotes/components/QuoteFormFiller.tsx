@@ -79,7 +79,7 @@ function emptyItemRow(): QuoteItem {
     quantity: 1,
     unitPrice: 0,
     discountPercent: 0,
-    vatRate: 10,
+    vatRate: 0,
     children: [],
   };
 }

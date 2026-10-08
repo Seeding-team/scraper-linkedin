@@ -8,6 +8,7 @@ import { seedingCrmRepository } from '../../repositories/SeedingCrmRepository';
 import type { CrmCustomerSummary, CrmUserOption, Deal } from '../../types';
 import type { Quote } from '@/modules/quotes';
 import type { Project } from '@/services/all-platform.service';
+import { customerDisplay } from '../../utils/customerNames';
 
 /** Chu cai dau (toi da 2 tu) de lam avatar-initials - vd "Nguyen Van An" -> "NA". */
 function initialsOf(name: string): string {
@@ -312,9 +313,9 @@ export function SelectCustomerStep({
                           >
                             <span className="crm-quote-customer-card-avatar">{initialsOf(found.customerName)}</span>
                             <span className="crm-quote-customer-card-body">
-                              <strong>{found.companyName || found.customerName}</strong>
+                              <strong title={customerDisplay(found).full}>{customerDisplay(found).title}</strong>
                               <small>
-                                {found.companyName ? found.customerName : found.position || 'Khách hàng'}
+                                {customerDisplay(found).sub || found.position || 'Khách hàng'}
                                 {found.dealCount ? ` · ${found.dealCount} deal` : ''}
                               </small>
                               {found.phone ? <small>{found.phone}</small> : null}

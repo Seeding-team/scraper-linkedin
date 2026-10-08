@@ -4390,3 +4390,15 @@
 .qc-workspace-item-name-clamp {
   white-space: pre-line;
 }
+
+/* O nhap "Ten bao gia" (Buoc 2, Sale) noi bat: co nhan + dau * do, khung ro, do dac khi thieu */
+.qc-title-field { margin: 0 0 6px; max-width: 100%; }
+.qc-title-field-label { display: block; font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: #475569; margin-bottom: 4px; }
+.qc-workspace-header-quote-title--input.qc-title-input--prominent {
+  background: #fff; border: 1.5px solid #93c5fd; border-radius: 8px; padding: 4px 10px; font-size: 15px; font-weight: 700; color: #0f172a;
+  box-shadow: none; width: min(100%, 360px);
+}
+.qc-workspace-header-quote-title--input.qc-title-input--prominent:hover { background: #fff; border-color: #60a5fa; }
+.qc-workspace-header-quote-title--input.qc-title-input--prominent:focus { background: #fff; border-color: #2563eb; box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15); }
+.qc-workspace-header-quote-title--input.qc-title-input--prominent::placeholder { color: #94a3b8; font-weight: 600; }
+.qc-workspace-header-quote-title--input.qc-title-input--prominent.is-error { border-color: #dc2626; background: #fef2f2; box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.12); }

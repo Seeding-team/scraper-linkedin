@@ -129,6 +129,8 @@ type CrmCustomerRow = {
   id: string;
   customer_name?: string | null;
   company_name?: string | null;
+  short_name?: string | null;
+  customer_code?: string | null;
   position?: string | null;
   position_category_id?: string | null;
   position_label_snapshot?: string | null;
@@ -494,6 +496,8 @@ function rowToCustomer(row: CrmCustomerRow): CrmCustomerSummary {
     id: row.id,
     customerName: asText(row.customer_name),
     companyName: asText(row.company_name),
+    shortName: row.short_name || null,
+    customerCode: row.customer_code || null,
     position: asText(row.position),
     positionCategoryId: asText(row.position_category_id),
     positionLabelSnapshot: asText(row.position_label_snapshot),

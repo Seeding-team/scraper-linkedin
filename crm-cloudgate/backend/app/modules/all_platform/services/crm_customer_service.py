@@ -32,7 +32,7 @@ CUSTOMER_COLUMNS = (
     "position_label_snapshot, phone, phone_normalized, "
     "email, email_normalized, zalo, facebook, telegram, website, tax_code, "
     "address, city, industry, source, status, owner_id, sale_manager_id, "
-    "created_by, note, created_at, updated_at"
+    "created_by, note, created_at, updated_at, short_name, short_name_manual, customer_code"
 )
 logger = logging.getLogger(__name__)
 
@@ -336,7 +336,7 @@ def list_customers(
         query = query.or_(
             f"customer_name.ilike.%{search}%,company_name.ilike.%{search}%,"
             f"phone.ilike.%{search}%,email.ilike.%{search}%,tax_code.ilike.%{search}%,"
-            f"customer_code.ilike.%{search}%"
+            f"customer_code.ilike.%{search}%,short_name.ilike.%{search}%"
         )
     res = execute_supabase_query(lambda: query.order("updated_at", desc=True).execute())
     rows = [normalize_city_fields(row) for row in (res.data or [])]
@@ -393,7 +393,7 @@ def list_customers(
             kpi_query = kpi_query.or_(
                 f"customer_name.ilike.%{search}%,company_name.ilike.%{search}%,"
                 f"phone.ilike.%{search}%,email.ilike.%{search}%,tax_code.ilike.%{search}%,"
-                f"customer_code.ilike.%{search}%"
+                f"customer_code.ilike.%{search}%,short_name.ilike.%{search}%"
             )
         kpi_res = execute_supabase_query(lambda: kpi_query.execute())
         kpi_rows = [normalize_city_fields(row) for row in (kpi_res.data or [])]
@@ -450,6 +450,9 @@ def create_customer(payload: dict[str, Any], user: dict[str, Any]) -> dict[str, 
     data = _normalize_payload(payload, actor_id=actor_id)
     data["source"] = _resolve_source(data.get("source"))
     apply_position_category(data)
+    from app.modules.all_platform.services.crm_short_name_service import fill_short_name_for_new
+
+    fill_short_name_for_new(data)  # khach doanh nghiep chua co ten viet tat -> tu sinh; khach ca nhan bo qua
     matches = _duplicate_query(data.get("email_normalized"), data.get("phone_normalized"))
     if matches:
         raise DuplicateCustomerError(matches)
@@ -484,6 +487,19 @@ def update_customer(customer_id: str, payload: dict[str, Any], user: dict[str, A
     data = _normalize_payload(payload)
     data["source"] = _resolve_source(data.get("source"), allow_legacy_value=current.get("source"))
     apply_position_category(data, current_position_category_id=current.get("position_category_id"))
+    # Ten viet tat: gui tay (short_name) -> manual; xoa trong -> quay ve tu dong; doi ten cong ty ma KHONG gui short_name va ten cu
+    # chua bi sua tay -> de xuat lai (quy tac); da sua tay -> giu nguyen.
+    if "short_name" in data:
+        typed = (data.get("short_name") or "").strip() or None
+        data["short_name"] = typed
+        data["short_name_manual"] = bool(typed) if data.get("short_name_manual") is None else bool(data["short_name_manual"]) and bool(typed)
+    elif "company_name" in data and not current.get("short_name_manual"):
+        from app.modules.all_platform.services.crm_short_name_service import looks_like_enterprise, suggest_short_name
+
+        if looks_like_enterprise(data.get("customer_name") or current.get("customer_name"), data.get("company_name"), current.get("tax_code")):
+            suggestion = suggest_short_name(data.get("company_name") or "", customer_id=customer_id, use_ai=False)["suggestion"]
+            if suggestion:
+                data["short_name"], data["short_name_manual"] = suggestion, False
     matches = _duplicate_query(data.get("email_normalized"), data.get("phone_normalized"), exclude_id=customer_id)
     if matches:
         raise DuplicateCustomerError(matches)
@@ -808,6 +824,10 @@ def create_customer_with_deal(payload: dict[str, Any], user: dict[str, Any]) -> 
         raise
     data = res.data or {}
     _cust = data.get("customer") if isinstance(data.get("customer"), dict) else None
+    if _cust and _cust.get("id"):
+        from app.modules.all_platform.services.crm_short_name_service import ensure_short_name
+
+        ensure_short_name(_cust["id"])
     if _cust and _cust.get("id"):  # Customer tao thu cong kem Deal cung tu sinh customer_code ngay luc tao
         try:
             from app.modules.all_platform.services.supabase_project_service import _resolve_customer_code

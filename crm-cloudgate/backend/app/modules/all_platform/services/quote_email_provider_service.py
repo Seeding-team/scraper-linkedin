@@ -88,6 +88,23 @@ def _decrypt_password(encrypted: bytes | str) -> str:
         ) from exc
 
 
+def normalize_app_password(value: Optional[str]) -> str:
+    """Google hien App Password dang 'abcd efgh ijkl mnop' - bo moi khoang trang truoc khi test/luu/dung."""
+    return "".join((value or "").split())
+
+
+def connection_state(row: Optional[dict]) -> str:
+    """not_configured | saved_untested | ok | error - KHONG coi 'co mat khau trong DB' la 'hoat dong'."""
+    if not row or row.get("encrypted_app_password") is None:
+        return "not_configured"
+    status = row.get("smtp_connection_status") or "unknown"
+    if status == "ok":
+        return "ok"
+    if status == "error":
+        return "error"
+    return "saved_untested"
+
+
 def record_audit_log(user: dict, action: str) -> None:
     """Ghi 1 dong audit - CHI actorId/actorName/role/action/timestamp, KHONG
     BAO GIO nhan hay ghi bat ky truong nao khac (khong truyen payload request
@@ -163,6 +180,7 @@ def get_email_provider_settings() -> dict:
             "smtpPort": GMAIL_SMTP_PORT,
             "smtpSecurity": GMAIL_SMTP_SECURITY,
             "credentialConfigured": False,
+            "connectionState": "not_configured",
             "credentialUpdatedAt": None,
             "imapConnectionStatus": "unknown",
             "imapLastTestedAt": None,
@@ -181,6 +199,7 @@ def get_email_provider_settings() -> dict:
         "smtpPort": row.get("smtp_port") or GMAIL_SMTP_PORT,
         "smtpSecurity": row.get("smtp_security") or GMAIL_SMTP_SECURITY,
         "credentialConfigured": row.get("encrypted_app_password") is not None,
+        "connectionState": connection_state(row),
         "credentialUpdatedAt": row.get("credential_updated_at"),
         "imapConnectionStatus": row.get("imap_connection_status") or "unknown",
         "imapLastTestedAt": row.get("imap_last_tested_at"),
@@ -195,16 +214,32 @@ def save_email_provider_settings(
     app_password: Optional[str],
     actor_id: Optional[str],
 ) -> dict:
-    """Luu cau hinh. app_password=None/rong -> GIU credential cu nguyen ven
-    (dung yeu cau "de trong password thi giu credential cu") - CHI ghi de cot
-    encrypted_app_password khi app_password that su duoc nhap."""
+    """Luu cau hinh. app_password=None/rong -> GIU credential cu nguyen ven (chi doi ten nguoi gui).
+    Doi EMAIL gui hoac nhap App Password MOI -> bat buoc co App Password tuong ung va test SMTP+IMAP bang
+    credential moi TRUOC KHI ghi DB; test that bai -> raise, cau hinh dang hoat dong GIU NGUYEN (khong gian doan gui mail)."""
     supabase = get_supabase_client()
     existing = _get_row()
+    address = sender_address.strip()
+    password = normalize_app_password(app_password)
+    address_changed = bool(existing and existing.get("sender_address") and existing["sender_address"].strip().lower() != address.lower())
+
+    if address_changed and not password:
+        raise ValueError("Đổi email gửi cần nhập App Password tương ứng của email mới. Cấu hình hiện tại vẫn được giữ nguyên.")
+    if not existing and not password:
+        raise ValueError("Cần nhập App Password để lưu cấu hình email gửi.")
+
+    candidate_ok = False
+    if password:
+        for kind, tester in (("SMTP", test_smtp_connection), ("IMAP", test_imap_connection)):
+            res = tester(address, password)  # inline test: khong ghi DB
+            if not res.get("ok"):
+                raise ValueError(f"Kiểm tra {kind} với cấu hình mới thất bại: {res.get('message')} Cấu hình đang dùng được giữ nguyên.")
+        candidate_ok = True
 
     payload = {
         "channel_type": _CHANNEL_TYPE,
         "display_name": "Gmail SMTP",
-        "sender_address": sender_address.strip(),
+        "sender_address": address,
         "sender_name": (sender_name or "").strip() or None,
         "imap_host": GMAIL_IMAP_HOST,
         "imap_port": GMAIL_IMAP_PORT,
@@ -214,15 +249,18 @@ def save_email_provider_settings(
         "smtp_security": GMAIL_SMTP_SECURITY,
         "updated_by": actor_id,
     }
-    if app_password:
-        payload["encrypted_app_password"] = _encrypt_password(app_password).decode("ascii")
-        payload["credential_updated_at"] = datetime.now(timezone.utc).isoformat()
+    if candidate_ok:
+        now = datetime.now(timezone.utc).isoformat()
+        payload["encrypted_app_password"] = _encrypt_password(password).decode("ascii")
+        payload["credential_updated_at"] = now
         payload["credential_updated_by"] = actor_id
+        # Da test OK ngay ben tren -> ghi trang thai that, khong de 'ok' cu cua credential truoc.
+        payload.update({"smtp_connection_status": "ok", "smtp_last_tested_at": now, "imap_connection_status": "ok", "imap_last_tested_at": now})
 
     if existing:
         supabase.table("quote_delivery_channels").update(payload).eq("channel_type", _CHANNEL_TYPE).execute()
     else:
-        payload["is_enabled"] = False
+        payload["is_enabled"] = True  # test SMTP vua pass -> kich hoat luon
         supabase.table("quote_delivery_channels").insert(payload).execute()
 
     return get_email_provider_settings()
@@ -272,7 +310,7 @@ def get_active_email_channel_for_sending() -> dict:
     return {
         "sender_address": row["sender_address"],
         "sender_name": row.get("sender_name") or row["sender_address"],
-        "app_password": _decrypt_password(row["encrypted_app_password"]),
+        "app_password": normalize_app_password(_decrypt_password(row["encrypted_app_password"])),
     }
 
 
@@ -281,6 +319,7 @@ def _resolve_credentials(inline_email: Optional[str], inline_app_password: Optio
     CHUA ghi DB) bang cach truyen inline_email/inline_app_password; neu
     khong truyen gi thi dung credential DA LUU. Khong bao gio ghi lai inline
     credential vao DB o day - chi test-and-discard."""
+    inline_app_password = normalize_app_password(inline_app_password) or None
     if inline_app_password:
         if not inline_email:
             raise ValueError("Thiếu email để test kết nối.")
@@ -308,7 +347,7 @@ def _record_connection_status(kind: str, ok: bool) -> None:
 
 
 def test_imap_connection(inline_email: Optional[str] = None, inline_app_password: Optional[str] = None) -> dict:
-    is_inline_test = bool(inline_app_password)
+    is_inline_test = bool(normalize_app_password(inline_app_password))
     email_addr, app_password = _resolve_credentials(inline_email, inline_app_password)
     try:
         conn = imaplib.IMAP4_SSL(GMAIL_IMAP_HOST, GMAIL_IMAP_PORT, timeout=15)
@@ -337,7 +376,7 @@ def test_imap_connection(inline_email: Optional[str] = None, inline_app_password
 
 
 def test_smtp_connection(inline_email: Optional[str] = None, inline_app_password: Optional[str] = None) -> dict:
-    is_inline_test = bool(inline_app_password)
+    is_inline_test = bool(normalize_app_password(inline_app_password))
     email_addr, app_password = _resolve_credentials(inline_email, inline_app_password)
     try:
         with smtplib.SMTP(GMAIL_SMTP_HOST, GMAIL_SMTP_PORT, timeout=15) as server:

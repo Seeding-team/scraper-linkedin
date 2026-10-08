@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from pydantic import BaseModel
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.modules.all_platform.auth_deps import get_current_user
@@ -70,6 +72,34 @@ def customers_list(
                 owner_id=owner_id, sale_manager_id=sale_manager_id, team=team, page=page, page_size=page_size,
             ),
         )
+    except Exception as exc:
+        return _error(exc)
+
+
+class SuggestShortNameRequest(BaseModel):
+    company_name: str
+    customer_id: str | None = None
+    use_ai: bool = True
+
+
+@router.post("/suggest-short-name")
+def customers_suggest_short_name(payload: SuggestShortNameRequest, user: dict[str, Any] = Depends(get_current_user)) -> BaseResponse:
+    """De xuat ten viet tat tu ten cong ty (thuong hieu da co -> quy tac -> AI neu can -> fallback quy tac). Khong ghi DB."""
+    try:
+        from app.modules.all_platform.services.crm_short_name_service import suggest_short_name
+
+        return BaseResponse(success=True, data=suggest_short_name(payload.company_name, customer_id=payload.customer_id, use_ai=payload.use_ai))
+    except Exception as exc:
+        return _error(exc)
+
+
+@router.get("/{customer_id}/handover-docs")
+def customers_handover_docs(customer_id: str, user: dict[str, Any] = Depends(get_current_user)) -> BaseResponse:
+    """Link tai lieu (Doc/Sheet) dan luc ban giao Lead -> hien o Customer Detail / Co hoi sau convert."""
+    try:
+        from app.modules.all_platform.services.crm_lead_handover_service import customer_handover_docs
+
+        return BaseResponse(success=True, data=customer_handover_docs(customer_id, user))
     except Exception as exc:
         return _error(exc)
 
