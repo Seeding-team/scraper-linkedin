@@ -1846,16 +1846,47 @@ def mark_action_by_fb_uid(
     return result.data[0] if result.data else {}
 
 
-def get_post_team_counts(link_post: str, email: str, team_id: Optional[str] = None) -> dict:
-    teams, role = resolve_team_scope(email, team_id)
-    if not teams:
-        return {"role": role, "teams": []}
+def _post_total_interacted(supabase: Client, link_post: str, assigned_team_ids: list) -> int:
+    """So thanh vien (distinct) da tuong tac thanh cong tren bai — KHONG phu thuoc role
+    nguoi xem (con so tong hop, dung cho thanh tien do "x/y thanh vien da tuong tac" tren
+    card). Bai co giao team -> chi dem thanh vien thuoc cac team duoc giao; khong giao
+    team -> dem moi nguoi da tuong tac.
 
+    Truoc day card lay tong tu `teams` cua get_post_team_counts, ma `teams` bi gioi han
+    theo role (member -> [], leader -> chi team minh lead) va FE chi goi cho admin/leader
+    -> member comment thanh cong van thay 0/N, leader thay thieu."""
+    rows = (
+        supabase.table("internal_engagement_kpi")
+        .select("id_member")
+        .eq("link_post", link_post)
+        .eq("status", "success")
+        .execute()
+    ).data or []
+    commenter_ids = {str(r["id_member"]) for r in rows if r.get("id_member")}
+    if not commenter_ids:
+        return 0
+    if not assigned_team_ids:
+        return len(commenter_ids)
+
+    assigned = {str(x) for x in assigned_team_ids}
+    allowed: set[str] = set()
+    for t in get_all_teams():
+        if str(t["id"]) in assigned or (t.get("name_team") or "") in assigned:
+            allowed.update(str(m["id"]) for m in t.get("members", []))
+    return len(commenter_ids & allowed)
+
+
+def get_post_team_counts(link_post: str, email: str, team_id: Optional[str] = None) -> dict:
     supabase: Client = get_supabase_client()
 
     post_res = supabase.table("internal_engagement_custom_posts").select("assigned_team_ids").eq("link_post", link_post).execute()
     post_data = post_res.data[0] if post_res.data else {}
     assigned_team_ids = post_data.get("assigned_team_ids") or []
+    total_interacted = _post_total_interacted(supabase, link_post, assigned_team_ids)
+
+    teams, role = resolve_team_scope(email, team_id)
+    if not teams:
+        return {"role": role, "teams": [], "total_interacted": total_interacted}
 
     valid_teams = []
     for t in teams:
@@ -1863,7 +1894,7 @@ def get_post_team_counts(link_post: str, email: str, team_id: Optional[str] = No
             valid_teams.append(t)
 
     if not valid_teams:
-        return {"role": role, "teams": []}
+        return {"role": role, "teams": [], "total_interacted": total_interacted}
 
     member_team = _member_team_map(valid_teams)
     team_meta = {t["id"]: t.get("name_team") or "Team" for t in valid_teams}
@@ -1911,6 +1942,7 @@ def get_post_team_counts(link_post: str, email: str, team_id: Optional[str] = No
             {"team_id": tid, "team_name": name, "count": counts.get(tid, 0)}
             for tid, name in team_meta.items()
         ],
+        "total_interacted": total_interacted,
     }
 
 

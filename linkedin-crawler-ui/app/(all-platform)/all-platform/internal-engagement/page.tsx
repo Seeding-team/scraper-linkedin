@@ -14,7 +14,6 @@ import type {
   InternalEngagementInteraction,
   InternalEngagementMarkStatus,
   InternalEngagementPost,
-  InternalEngagementPostTeamCount,
   InternalEngagementTeamRef,
   SocialAccount,
 } from "@/types/unified.types";
@@ -372,7 +371,10 @@ export default function InternalEngagementPage() {
 
   // Team visibility
   const canSeeTeamInteractions = user?.role === "admin" || user?.role === "leader";
-  const [teamCounts, setTeamCounts] = useState<Record<string, InternalEngagementPostTeamCount[]>>({});
+  // Tổng số thành viên đã tương tác mỗi bài (backend tính, không phụ thuộc role người xem) —
+  // nguồn cho thanh tiến độ/KPI trên card. Trước đây cộng từ `teams` (chỉ admin/leader mới có,
+  // leader chỉ thấy team mình) nên member comment thành công vẫn thấy 0/N.
+  const [interactedTotals, setInteractedTotals] = useState<Record<string, number>>({});
   const [interactionsPost, setInteractionsPost] = useState<InternalEngagementPost | null>(null);
   const [interactionsRole, setInteractionsRole] = useState<string>("member");
   const [interactionsTeams, setInteractionsTeams] = useState<InternalEngagementTeamRef[]>([]);
@@ -1205,12 +1207,7 @@ export default function InternalEngagementPage() {
     }, 0);
 
     const totalCompletedComments = allCombinedPosts.reduce((sum, post) => {
-      const postTeamStats = teamCounts[post.id] || [];
-      const assignedTeams = (post as any).assigned_team_ids || [];
-      const postInteracted = postTeamStats
-        .filter((t) => assignedTeams.length === 0 || assignedTeams.includes(t.team_id) || assignedTeams.includes(t.team_name))
-        .reduce((s, t) => s + (t.count || 0), 0);
-      return sum + postInteracted;
+      return sum + (interactedTotals[post.id] || 0);
     }, 0);
 
     const activeUniqueMembers = leaderboard.filter((item) => item.total_completed > 0).length;
@@ -1225,7 +1222,7 @@ export default function InternalEngagementPage() {
       activeUniqueMembers,
       perfectMembers,
     };
-  }, [membersCount, leaderboard, allCombinedPosts, dbTeams, teamCounts]);
+  }, [membersCount, leaderboard, allCombinedPosts, dbTeams, interactedTotals]);
 
   // Unified multi-filter algorithm: Search, Campaign, Team, Status
   const filteredPosts = useMemo(() => {
@@ -1261,8 +1258,7 @@ export default function InternalEngagementPage() {
       // 4. Status Filter
       const rawTarget = (post as any).target_comments || (post as any).targetComments;
       const targetTotal = Number(rawTarget) > 0 ? Number(rawTarget) : 32;
-      const postTeamStats = teamCounts[post.id] || [];
-      const interactedCount = postTeamStats.reduce((sum, t) => sum + (t.count || 0), 0);
+      const interactedCount = interactedTotals[post.id] || 0;
 
       const isCompleted = targetTotal > 0 && interactedCount >= targetTotal;
       const isOverdue = (post as any).deadline && new Date((post as any).deadline) < new Date() && !isCompleted;
@@ -1277,7 +1273,7 @@ export default function InternalEngagementPage() {
 
       return true;
     });
-  }, [scopedPosts, search, selectedCampaignId, selectedTeamFilter, tab, dbTeams, teamCounts]);
+  }, [scopedPosts, search, selectedCampaignId, selectedTeamFilter, tab, dbTeams, interactedTotals]);
 
   const tabCounts = useMemo(() => {
     let all = scopedPosts.length;
@@ -1288,8 +1284,7 @@ export default function InternalEngagementPage() {
     scopedPosts.forEach((post) => {
       const rawTarget = (post as any).target_comments || (post as any).targetComments;
       const targetTotal = Number(rawTarget) > 0 ? Number(rawTarget) : 32;
-      const postTeamStats = teamCounts[post.id] || [];
-      const interactedCount = postTeamStats.reduce((sum, t) => sum + (t.count || 0), 0);
+      const interactedCount = interactedTotals[post.id] || 0;
       const isComp = targetTotal > 0 && interactedCount >= targetTotal;
       const isOver = (post as any).deadline && new Date((post as any).deadline) < new Date() && !isComp;
 
@@ -1299,11 +1294,11 @@ export default function InternalEngagementPage() {
     });
 
     return { all, need, completed, overdue, received: need };
-  }, [scopedPosts, teamCounts]);
+  }, [scopedPosts, interactedTotals]);
 
-  // Admin/leader: badge "Team X: N tương tác" hiển thị dưới mỗi bài.
+  // Số thành viên đã tương tác mỗi bài (mọi role).
   useEffect(() => {
-    if (!user?.email || !canSeeTeamInteractions || allCombinedPosts.length === 0) return;
+    if (!user?.email || allCombinedPosts.length === 0) return;
     let cancelled = false;
 
     Promise.all(
@@ -1312,22 +1307,27 @@ export default function InternalEngagementPage() {
         .map((p: InternalEngagementPost) =>
           internalEngagementService
             .getPostTeamCounts(p.permalink_url as string, user.email)
-            .then((res) => [p.id, res.success && res.data ? res.data.teams : []] as const),
+            .then((res) => [p.id, res.success && res.data ? res.data : null] as const)
+            .catch(() => [p.id, null] as const),
         ),
     ).then((results) => {
       if (cancelled) return;
-      const map: Record<string, InternalEngagementPostTeamCount[]> = {};
-      results.forEach(([postId, teams]: readonly [string, InternalEngagementPostTeamCount[]]) => {
-        map[postId] = teams;
+      const totals: Record<string, number> = {};
+      results.forEach(([postId, data]) => {
+        const teams = data?.teams || [];
+        totals[postId] =
+          typeof data?.total_interacted === "number"
+            ? data.total_interacted
+            : teams.reduce((sum, t) => sum + (t.count || 0), 0);
       });
-      setTeamCounts(map);
+      setInteractedTotals(totals);
     });
 
     return () => {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [allCombinedPosts, user?.email, canSeeTeamInteractions]);
+  }, [allCombinedPosts, user?.email]);
 
   const openInteractionsModal = async (post: InternalEngagementPost, teamId?: string) => {
     if (!user?.email || !post.permalink_url) return;
@@ -2108,8 +2108,6 @@ export default function InternalEngagementPage() {
                   const rawDeadline = (post as any).deadline || (post as any).due_date || (post as any).dueDate;
 
                   // TÍNH TOÁN DATA THẬT
-                  const postTeamStats = teamCounts[post.id] || [];
-
                   // Strict Summary Card Scoping: Filter by assigned teams only
                   const assignedTeams: string[] = (post as any).assigned_team_ids || [];
                   let targetTotal = 0;
@@ -2124,9 +2122,7 @@ export default function InternalEngagementPage() {
                     }
                   }
 
-                  const interactedCount = postTeamStats
-                    .filter((t) => assignedTeams.length === 0 || assignedTeams.includes(t.team_id) || assignedTeams.includes(t.team_name))
-                    .reduce((sum, t) => sum + (t.count || 0), 0);
+                  const interactedCount = interactedTotals[post.id] || 0;
 
                   const progressPercent = Math.min(100, Math.round((interactedCount / Math.max(1, targetTotal)) * 100));
                   const pendingCount = Math.max(0, targetTotal - interactedCount);
