@@ -20,6 +20,10 @@ RUN apt-get update \
 COPY requirements.txt constraints.txt ./
 RUN pip install --upgrade pip && pip install -r requirements.txt
 
+# Chromium cho render PDF bao gia gui khach (quote_telegram_service._render_quote_pdf). Cai o duong dan chung de appuser doc duoc.
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+RUN playwright install --with-deps chromium && chmod -R a+rX /ms-playwright && rm -rf /var/lib/apt/lists/*
+
 # npm install chay TRONG container Linux - KHONG copy node_modules tu may dev
 # (tranh bug symlink Windows->Linux).
 COPY package.json package-lock.json* ./
