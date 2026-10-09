@@ -74,6 +74,9 @@ def _row_to_contract(row: dict) -> dict:
         "dealPhase": row.get("deal_phase"),
         # Migration 167 — người liên hệ chọn trên hợp đồng (NULL = liên hệ chính của deal).
         "contactId": row.get("contact_id"),
+        # Migration 186 — người đại diện ký (vai trò riêng, không mặc nhiên = Người liên hệ) + ảnh chụp pháp lý 2 bên.
+        "representativeConfirmed": bool(row.get("representative_confirmed")),
+        "legalSnapshot": row.get("legal_snapshot"),
     }
 
 
@@ -95,6 +98,12 @@ def _next_contract_number() -> str:
         except (ValueError, IndexError):
             continue
     return f"{prefix}{max_seq + 1:04d}"
+
+
+def _normalize_type(value: Any) -> str:
+    from app.modules.all_platform.services.contract_type_service import normalize_label
+
+    return normalize_label(value) or "service"
 
 
 def _log_activity(contract_id: str, actor_id: str | None, action: str, changes: dict | None = None) -> None:
@@ -129,7 +138,16 @@ def list_contract_activity_log(contract_id: str) -> list[dict]:
         .order("created_at", desc=True)
         .execute()
     )
-    return [_row_to_activity(row) for row in (result.data or [])]
+    rows = result.data or []
+    names: dict[str, str] = {}
+    actor_ids = sorted({r["actor_id"] for r in rows if r.get("actor_id")})
+    if actor_ids:
+        try:
+            for u in supabase.table("app_users").select("id, name").in_("id", actor_ids).execute().data or []:
+                names[u["id"]] = u.get("name") or ""
+        except Exception:  # noqa: BLE001  (không resolve được tên: vẫn trả id)
+            pass
+    return [{**_row_to_activity(row), "actorName": names.get(row.get("actor_id") or "")} for row in rows]
 
 
 def _serialize_clauses(clauses: list[Any] | None) -> list[dict]:
@@ -186,13 +204,13 @@ def _resolve_customer_id(deal_id: str | None, customer_id: str | None) -> str | 
 def create_contract(payload: dict, created_by: str | None) -> dict:
     supabase: Client = get_supabase_client()
     insert_data = {
-        "contract_number": payload.get("contract_number") or _next_contract_number(),
+        "contract_number": payload.get("contract_number") or "",   # số được cấp ở dưới (an toàn đồng thời, có retry khi trùng)
         "deal_id": payload.get("deal_id"),
         "customer_id": _resolve_customer_id(payload.get("deal_id"), payload.get("customer_id")),
         "manual_customer_name": payload.get("manual_customer_name"),
         "quote_id": payload.get("quote_id"),
         "title": payload["title"],
-        "template_type": payload.get("template_type") or "service",
+        "template_type": _normalize_type(payload.get("template_type")),   # khoá cũ hoặc NHÃN tự do (không giới hạn danh sách)
         # Hop dong ngoai (External) thuong duoc ghi lai SAU khi da ky ngoai doi
         # thuc - cho phep chon trang thai/ngay ky ban dau thay vi luon ep
         # 'draft', dung lai CHINH enum da co san tren cot `status` (khong them
@@ -217,11 +235,21 @@ def create_contract(payload: dict, created_by: str | None) -> dict:
         "note": payload.get("note"),
         "deal_phase": payload.get("deal_phase"),
         **({"contact_id": payload["contact_id"]} if payload.get("contact_id") else {}),
+        "representative_confirmed": bool(payload.get("representative_confirmed")),
+        "legal_snapshot": payload.get("legal_snapshot"),
         "created_by": created_by,
         "updated_by": created_by,
         "instance": settings.crm_instance,
     }
-    row = supabase.table(CONTRACTS_TABLE).insert(insert_data).execute().data[0]
+    def _insert(number: str) -> dict:
+        return supabase.table(CONTRACTS_TABLE).insert({**insert_data, "contract_number": number}).execute().data[0]
+
+    if payload.get("contract_number"):
+        row = _insert(payload["contract_number"])
+    else:
+        from app.modules.all_platform.services import contract_number_service
+
+        row = contract_number_service.create_with_retry(_insert, payload.get("number_short"))
     _log_activity(row["id"], created_by, "created")
     return get_contract(row["id"])
 
@@ -234,6 +262,7 @@ def update_contract(contract_id: str, payload: dict, actor_id: str | None) -> di
         "payment_terms", "progress_percent", "payment_collected_percent", "owner_id",
         "manual_customer_name", "source", "file_url",
         "note", "quote_id", "deal_id", "contact_id", "deal_phase", "contract_number",
+        "representative_confirmed", "legal_snapshot",
     ):
         if key in payload:
             update_data[key] = payload[key]
@@ -345,3 +374,58 @@ def get_contracts_dashboard_stats(allowed_ids: set[str] | None = None) -> dict:
         "outstandingValue": outstanding_value,
         "outstandingCount": len(unpaid),
     }
+
+
+# ── Dong bo Sales Pipeline sau cac su kien hop dong (stage 5 "Lên hợp đồng") ───────────────────────────────
+def _sync_contract_deal(deal_ids, source: str) -> None:
+    try:
+        from app.modules.all_platform.services import deal_stage_sync_service as _dss
+
+        if not _dss.CONTRACT_STAGE_SYNC_ENABLED:  # tam tat stage 5 tu hop dong; CRUD hop dong khong bi anh huong
+            return
+        sync_deal_stage = _dss.sync_deal_stage
+        for deal_id in {d for d in deal_ids if d}:
+            sync_deal_stage(deal_id, source=source)
+    except Exception:  # noqa: BLE001
+        import logging
+
+        logging.getLogger(__name__).warning("deal stage sync sau %s that bai", source, exc_info=True)
+
+
+def _contract_deal_id(contract_id: str) -> str | None:
+    try:
+        rows = get_supabase_client().table(CONTRACTS_TABLE).select("deal_id").eq("id", contract_id).limit(1).execute().data or []
+        return rows[0].get("deal_id") if rows else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+_orig_create_contract = create_contract
+_orig_update_contract = update_contract
+_orig_update_contract_status = update_contract_status
+_orig_delete_contract = delete_contract
+
+
+def create_contract(payload: dict, created_by: str | None) -> dict:  # noqa: F811
+    result = _orig_create_contract(payload, created_by)
+    _sync_contract_deal([result.get("dealId") or payload.get("deal_id")], "tạo hợp đồng")
+    return result
+
+
+def update_contract(contract_id: str, payload: dict, actor_id: str | None) -> dict:  # noqa: F811
+    before = _contract_deal_id(contract_id)
+    result = _orig_update_contract(contract_id, payload, actor_id)
+    _sync_contract_deal([before, result.get("dealId")], "cập nhật hợp đồng")
+    return result
+
+
+def update_contract_status(contract_id: str, status: str, signed_at: str | None, actor_id: str | None) -> dict:  # noqa: F811
+    result = _orig_update_contract_status(contract_id, status, signed_at, actor_id)
+    _sync_contract_deal([result.get("dealId")], "đổi trạng thái hợp đồng")
+    return result
+
+
+def delete_contract(contract_id: str) -> None:  # noqa: F811
+    deal_id = _contract_deal_id(contract_id)
+    _orig_delete_contract(contract_id)
+    _sync_contract_deal([deal_id], "xoá hợp đồng")

@@ -45,6 +45,8 @@ from app.modules.all_platform.routers.quote import (
 from app.modules.all_platform.routers.price_book import price_book_router, price_book_admin_router
 from app.modules.all_platform.routers.project import router as project_router
 from app.modules.all_platform.routers.contract import contracts_router
+from app.modules.all_platform.routers.contract_docx import contract_docx_router
+from app.modules.all_platform.routers.contract_versions import contract_versions_router
 from app.modules.all_platform.routers.progress import progress_router
 from app.modules.all_platform.routers.contract_template import contract_templates_router
 from app.modules.all_platform.routers.service_catalog import router as service_catalog_router
@@ -132,6 +134,16 @@ all_platform_router.include_router(
 
 # ── Contracts (AI Contract Copilot) ────────────────────────────────────────────
 all_platform_router.include_router(contracts_router, prefix="/contracts", tags=["All-Platform Contracts"])
+all_platform_router.include_router(
+    contract_docx_router,
+    prefix="/contract-docs",
+    tags=["All-Platform Contract Documents (DOCX engine)"],
+)
+all_platform_router.include_router(
+    contract_versions_router,
+    prefix="/contract-docs",
+    tags=["All-Platform Contract Documents (versions, risk, readiness)"],
+)
 all_platform_router.include_router(
     contract_templates_router,
     prefix="/contract-templates",

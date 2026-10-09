@@ -62,3 +62,14 @@ Cả 2 đã được sửa/bổ sung template bên dưới.
 - Không commit `docker-compose.override.yml` (không phải bản `.example`) —
   file này khác nhau giữa máy local / host dev / host app (domain build-arg
   khác nhau), commit nhầm sẽ làm hỏng deploy thật ở lần sau.
+
+## AI Contract Copilot: xuất PDF cần LibreOffice trong Docker
+
+Backend xuất DOCX -> PDF bằng **LibreOffice Writer (`soffice`) có sẵn trong Docker image backend** (đã kèm font tiếng Việt:
+Liberation/Carlito/Caladea/DejaVu). Production và local dùng chung image này, nên **hãy chạy backend bằng Docker**
+(`docker compose up -d --build backend`), KHÔNG chạy `uvicorn` trực tiếp trên Windows và KHÔNG cài LibreOffice lên máy cá nhân.
+Chạy `uvicorn` trần trên Windows vẫn dùng được Copilot, nhưng PDF sẽ báo "chưa cài LibreOffice" (không có PDF thay thế).
+
+Kiểm tra engine: `curl http://localhost:8080/api/all-platform/contract-docs/health` (nhanh) hoặc `...?deep=true` (chuyển thử 1 DOCX tiếng Việt, cache 5 phút).
+HTTP 200 = dùng được, 503 = thiếu/hỏng. Biến tuỳ chọn: `CONTRACT_SOFFICE_TIMEOUT` (giây, mặc định 90), `CONTRACT_PDF_MAX_CONCURRENCY` (mặc định 2),
+`CONTRACT_SOFFICE_PATH`. Chi tiết: `docs/CONTRACT_PDF_ENGINE_DEPLOY_2026-10-09.md`.

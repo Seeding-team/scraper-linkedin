@@ -20,6 +20,7 @@ from supabase import Client
 from app.core.config import settings
 from app.core.supabase_client import get_supabase_client
 from app.modules.all_platform.services.supabase_categories_service import get_categories_by_type
+from app.modules.all_platform.services.crm_position_service import resolve_position_category
 from app.modules.all_platform.services.supabase_user_service import get_member_option_by_id
 from app.modules.all_platform.services import quote_currency as qc
 from app.modules.all_platform.services.quote_exchange_rate_service import default_usd_vnd_rate
@@ -631,6 +632,8 @@ def _row_to_issuer_company(row: dict) -> dict:
         "brandName": row.get("brand_name"),
         "address": row.get("address"),
         "contactName": row.get("contact_name"),
+        "positionCategoryId": row.get("position_category_id"),
+        "positionLabel": row.get("position_label_snapshot"),
         "phone": row.get("phone"),
         "email": row.get("email"),
         "website": row.get("website"),
@@ -639,6 +642,9 @@ def _row_to_issuer_company(row: dict) -> dict:
         "defaultQuoteFormId": row.get("default_quote_form_id"),
         "status": row.get("status") or "active",
         "paymentTerms": row.get("payment_terms"),
+        # Nội bộ (không phải field nghiệp vụ mới) - để _issuer_of_quote() quyết định fallback có nên tự chọn công ty này cho
+        # workspace hiện tại hay không (KHÔNG tự lấy công ty của workspace khác khi quote chưa chọn issuer tường minh).
+        "instance": row.get("instance"),
     }
 
 
@@ -656,12 +662,15 @@ def list_issuer_companies(include_inactive: bool = False) -> list[dict]:
 
 def create_issuer_company(payload: dict) -> dict:
     supabase: Client = get_supabase_client()
+    position_id, position_label = resolve_position_category(payload.get("position_category_id"), require_active=True)
     insert_data = {
         "code": payload["code"],
         "legal_name": payload["legal_name"],
         "brand_name": payload.get("brand_name"),
         "address": payload.get("address"),
         "contact_name": payload.get("contact_name"),
+        "position_category_id": position_id,
+        "position_label_snapshot": position_label,
         "phone": payload.get("phone"),
         "email": payload.get("email"),
         "website": payload.get("website"),
@@ -690,6 +699,17 @@ def update_issuer_company(company_id: str, payload: dict) -> dict:
     update_data = {field_map[k]: v for k, v in payload.items() if k in field_map and v is not None}
     if "default_quote_form_id" in payload:
         update_data["default_quote_form_id"] = payload.get("default_quote_form_id")
+    # "position_category_id" rieng: co the la None (bo chon Chuc vu) nen khong qua loc "v is not None" o tren - chi
+    # resolve khi key THAT SU co trong payload (sua truong khac khong duoc dong cham Chuc vu dang luu). require_active
+    # chi bat buoc khi gia tri THAY DOI so voi ban ghi hien co - sua truong khac cua 1 ban ghi dang gan Chuc vu da bi
+    # ngung dung (is_active=false) khong duoc bao loi vo ly (dung khuon resolve_position_category() da dung cho CRM).
+    if "position_category_id" in payload:
+        current = supabase.table(ISSUER_COMPANIES_TABLE).select("position_category_id").eq("id", company_id).execute()
+        current_id = (current.data or [{}])[0].get("position_category_id")
+        incoming_id = str(payload.get("position_category_id") or "").strip() or None
+        position_id, position_label = resolve_position_category(incoming_id, require_active=(incoming_id != current_id))
+        update_data["position_category_id"] = position_id
+        update_data["position_label_snapshot"] = position_label
     # logo_url/website/... rong "" (xoa logo/field) van phai ap dung duoc - chi
     # loai None (khong gui field do len), khong loai chuoi rong.
     # Rieng default_quote_form_id la cot UUID: "" (bo chon mau mac dinh) phai
@@ -3039,3 +3059,37 @@ def link_quote_to_deal(quote_id: str, deal_id: str, reference: dict | None = Non
                 )
     supabase.table("customer_leads").update(update_data).eq("id", deal_id).eq("instance", _crm_instance()).execute()
     return get_quote(quote_id)
+
+
+# ── Dong bo Sales Pipeline (customer_leads.deal_stage) sau cac su kien bao gia ──────────────────────────────
+# Boc (wrap) cac ham nghiep vu: ket qua cu GIU NGUYEN, chi them buoc tinh lai stage cua DUNG Deal gan voi bao gia
+# (deal_stage_sync_service.sync_deal_stage - khong bao gio raise). Dat o CUOI module de moi noi import/goi noi bo deu di qua ban da boc.
+def _wrap_deal_stage_sync(fn, source: str):
+    import functools
+
+    @functools.wraps(fn)
+    def inner(*args, **kwargs):
+        result = fn(*args, **kwargs)
+        try:
+            deal_id = result.get("dealId") if isinstance(result, dict) else None
+            if not deal_id:
+                quote_id = (result.get("id") if isinstance(result, dict) else None) or (args[0] if args else kwargs.get("quote_id") or kwargs.get("clicked_quote_id"))
+                if quote_id:
+                    rows = get_supabase_client().table(QUOTES_TABLE).select("deal_id").eq("id", quote_id).limit(1).execute().data or []
+                    deal_id = rows[0].get("deal_id") if rows else None
+            if deal_id:
+                from app.modules.all_platform.services.deal_stage_sync_service import sync_deal_stage
+
+                sync_deal_stage(deal_id, source=source)
+        except Exception:  # noqa: BLE001 - dong bo stage khong duoc lam hong thao tac bao gia
+            logger.warning("deal stage sync sau %s that bai", source, exc_info=True)
+        return result
+
+    return inner
+
+
+for _name, _source in (
+    ("create_quote", "tạo báo giá"), ("approve_quote", "duyệt báo giá"), ("cancel_quote", "huỷ báo giá"),
+    ("soft_delete_quote", "xoá báo giá"), ("restore_quote", "khôi phục báo giá"), ("create_quote_version", "tạo phiên bản báo giá"),
+):
+    globals()[_name] = _wrap_deal_stage_sync(globals()[_name], _source)

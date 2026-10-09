@@ -6,8 +6,13 @@ import { seedingQuoteRepository } from '../repositories/SeedingQuoteRepository';
 import { ActionMenu, type ActionMenuItem } from '../../crm/components/ActionMenu';
 import { SearchableSelect } from '../../crm/components/SearchableSelect';
 import { Field } from '../../crm/components/CustomerFormModal';
+import { PositionSelect } from '../../crm/components/PositionSelect';
 import { X } from '../../crm/components/icons';
 import type { CreateIssuerCompanyInput, IssuerCompany, QuoteForm } from '../types';
+
+/** `positionLabel` chỉ để PositionSelect hiện đúng tên khi mở form sửa (server-derived, không gửi lên backend -
+ * toIssuerCompanyPayload() không đọc field này). */
+type IssuerForm = CreateIssuerCompanyInput & { positionLabel?: string };
 import '../../service-catalog/styles/service-catalog.css';
 import './issuer-company-admin.css';
 
@@ -20,13 +25,15 @@ const STATUS_FILTER_OPTIONS = [
   { value: 'inactive', label: 'Ngừng dùng' },
 ];
 
-function emptyForm(): CreateIssuerCompanyInput {
+function emptyForm(): IssuerForm {
   return {
     code: '',
     legalName: '',
     brandName: '',
     address: '',
     contactName: '',
+    positionCategoryId: '',
+    positionLabel: '',
     phone: '',
     email: '',
     website: '',
@@ -39,13 +46,15 @@ function emptyForm(): CreateIssuerCompanyInput {
   };
 }
 
-function companyToForm(company: IssuerCompany): CreateIssuerCompanyInput {
+function companyToForm(company: IssuerCompany): IssuerForm {
   return {
     code: company.code,
     legalName: company.legalName,
     brandName: company.brandName || '',
     address: company.address || '',
     contactName: company.contactName || '',
+    positionCategoryId: company.positionCategoryId || '',
+    positionLabel: company.positionLabel || '',
     phone: company.phone || '',
     email: company.email || '',
     website: company.website || '',
@@ -76,7 +85,7 @@ export function IssuerCompanyAdminPage() {
   const [error, setError] = useState('');
 
   const [modalOpen, setModalOpen] = useState<{ mode: 'add' | 'edit'; id?: string } | null>(null);
-  const [form, setForm] = useState<CreateIssuerCompanyInput>(emptyForm());
+  const [form, setForm] = useState<IssuerForm>(emptyForm());
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState('');
   const [uploadingLogo, setUploadingLogo] = useState(false);
@@ -391,6 +400,13 @@ export function IssuerCompanyAdminPage() {
                   <Field label="Người liên hệ">
                     <input value={form.contactName || ''} onChange={e => setForm({ ...form, contactName: e.target.value })} />
                   </Field>
+                  <Field label="Chức vụ">
+                    <PositionSelect
+                      value={form.positionCategoryId || ''}
+                      labelSnapshot={form.positionLabel}
+                      onChange={(id, label) => setForm({ ...form, positionCategoryId: id, positionLabel: label })}
+                    />
+                  </Field>
                   <Field label="Số điện thoại">
                     <input value={form.phone || ''} onChange={e => setForm({ ...form, phone: e.target.value })} />
                   </Field>
@@ -498,6 +514,10 @@ export function IssuerCompanyAdminPage() {
                   <div className="crm-meta-card">
                     <span>Người liên hệ</span>
                     <b>{detailCompany.contactName || '—'}</b>
+                  </div>
+                  <div className="crm-meta-card">
+                    <span>Chức vụ</span>
+                    <b>{detailCompany.positionLabel || '—'}</b>
                   </div>
                   <div className="crm-meta-card">
                     <span>Số điện thoại</span>

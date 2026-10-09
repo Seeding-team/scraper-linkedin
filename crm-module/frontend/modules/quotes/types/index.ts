@@ -128,6 +128,9 @@ export interface IssuerCompany {
   brandName?: string;
   address?: string;
   contactName?: string;
+  /** Chức vụ của "Người liên hệ" (contactName) - tái sử dụng dropdown Chức vụ chung (category_type=crm_position). */
+  positionCategoryId?: string;
+  positionLabel?: string;
   phone?: string;
   email?: string;
   website?: string;
@@ -566,6 +569,7 @@ export interface CreateIssuerCompanyInput {
   brandName?: string;
   address?: string;
   contactName?: string;
+  positionCategoryId?: string;
   phone?: string;
   email?: string;
   website?: string;

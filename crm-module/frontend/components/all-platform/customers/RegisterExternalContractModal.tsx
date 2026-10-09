@@ -470,6 +470,24 @@ export function RegisterExternalContractModal({ contract, open, deal, onClose, o
     }
   }, [open, projectOptions, activeProjectId]);
 
+  // Chi co DUNG 1 Nguoi lien he -> tu dong chon luon, khong de "Tất cả liên hệ" mac dinh bat
+  // nguoi dung phai tu bam (cung logic/ly do voi auto-chon Du an o tren).
+  useEffect(() => {
+    if (!open) return;
+    if (contactOptions && contactOptions.length === 1 && activeContactId !== contactOptions[0].id) {
+      setActiveContactId(contactOptions[0].id);
+    }
+  }, [open, contactOptions, activeContactId]);
+
+  // Chi co DUNG 1 bao gia hop le (sau loc theo Lien he/Du an) va chua chon gi -> tu dong chon
+  // luon, khong bat nguoi dung phai tu mo dropdown chon 1 muc duy nhat.
+  useEffect(() => {
+    if (!open) return;
+    if (selectedQuoteId === NONE_QUOTE && filteredQuotes.length === 1) {
+      setSelectedQuoteId(filteredQuotes[0].id);
+    }
+  }, [open, filteredQuotes, selectedQuoteId]);
+
   // Cơ hội nao) thi fallback ve toan bo dealOptions - KHONG duoc de dropdown
   // Cơ hội trong rong khong co gi de chon.
   const filteredDeals = useMemo(() => {

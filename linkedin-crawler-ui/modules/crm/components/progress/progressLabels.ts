@@ -1,6 +1,8 @@
 /** Shared labels and tones for the CRM Progress dashboard. Quote is the only
  * record with real SLA here; other records only show their normal CRM status. */
 
+import { DEAL_STAGE_META } from '../../constants/crmConfig';
+
 export const CUSTOMER_STATUS_LABELS: Record<string, string> = {
   new_lead: 'Tiềm năng',
   following: 'Đang bán',
@@ -58,28 +60,12 @@ export const PROJECT_STATUS_TONE: Record<string, string> = {
   cancelled: 'qc-badge-danger',
 };
 
-/** Mirror DEAL_STAGE_META (modules/crm/constants/crmConfig.ts) - dùng cho Deal
+/** Lay TRUC TIEP tu DEAL_STAGE_META (modules/crm/constants/crmConfig.ts - nguon nhan stage duy nhat) - dùng cho Deal
  * Quick View và Customer Quick View (deal thô từ /crm/customers/{id}/related,
  * chỉ có raw deal_stage, không có label kèm sẵn như ProgressDealItem). */
-export const DEAL_STAGE_LABELS: Record<string, string> = {
-  dealing: 'Đang deal',
-  proposal_sent: 'Lên Proposal',
-  negotiation: 'Chăm sóc/Đàm phán',
-  contract_signed: 'Lên hợp đồng',
-  payment_1: 'Thanh toán đợt 1',
-  implementation: 'Triển khai',
-  acceptance: 'Nghiệm thu',
-  payment_final: 'Thanh toán còn lại',
-  post_sale_care: 'Chăm sóc sau bán',
-  on_hold: 'Tiếp tục chăm sóc',
-  lost: 'Out',
-  new_lead: 'Đang deal',
-  contacted: 'Đang deal',
-  qualified: 'Đang deal',
-  requirement: 'Lấy yêu cầu',
-  contract_sent: 'Lên Proposal',
-  won: 'Chăm sóc sau bán',
-};
+export const DEAL_STAGE_LABELS: Record<string, string> = Object.fromEntries(
+  Object.entries(DEAL_STAGE_META).map(([stage, meta]) => [stage, meta.label]),
+);
 
 export function dealStageLabel(stage: string | null | undefined): string {
   if (!stage) return '—';

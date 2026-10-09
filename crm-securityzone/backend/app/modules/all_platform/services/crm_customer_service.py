@@ -85,8 +85,11 @@ def _normalize_payload(payload: dict[str, Any], actor_id: str | None = None) -> 
     out = {key: _clean_text(value) if isinstance(value, str) else value for key, value in payload.items()}
     if "city" in out:
         out["city"] = normalize_vietnam_city(out.get("city"))
-    out["email_normalized"] = normalize_email(out.get("email"))
-    out["phone_normalized"] = normalize_phone(out.get("phone"))
+    # CHI dong bo *_normalized khi field goc THAT SU co trong payload - mot patch chi sua 1 truong khong duoc phep vo tinh ghi None len email/phone cua ban ghi.
+    if "email" in out:
+        out["email_normalized"] = normalize_email(out.get("email"))
+    if "phone" in out:
+        out["phone_normalized"] = normalize_phone(out.get("phone"))
     if actor_id:
         # created_by chi de audit (ai tao ho so lan dau) - khong bao gio tin
         # gia tri client gui len, luon ep ve actor that cua request.

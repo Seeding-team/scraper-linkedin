@@ -71,6 +71,7 @@ class IssuerCompanyCreateRequest(BaseModel):
     brand_name: Optional[str] = None
     address: Optional[str] = None
     contact_name: Optional[str] = None
+    position_category_id: Optional[str] = None
     phone: Optional[str] = None
     email: Optional[str] = None
     website: Optional[str] = None
@@ -94,6 +95,7 @@ class IssuerCompanyUpdateRequest(BaseModel):
     brand_name: Optional[str] = None
     address: Optional[str] = None
     contact_name: Optional[str] = None
+    position_category_id: Optional[str] = None
     phone: Optional[str] = None
     email: Optional[str] = None
     website: Optional[str] = None

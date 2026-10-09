@@ -56,7 +56,7 @@ _DEAL_STAGE_LABELS = {
     "contract_signed": "Lên hợp đồng", "payment_1": "Thanh toán đợt 1", "implementation": "Triển khai",
     "acceptance": "Nghiệm thu", "payment_final": "Thanh toán còn lại", "post_sale_care": "Chăm sóc sau bán",
     "on_hold": "Tiếp tục chăm sóc", "lost": "Out",
-    "new_lead": "Đang deal", "contacted": "Đang deal", "qualified": "Đang deal", "requirement": "Đang deal",
+    "new_lead": "Đang deal", "contacted": "Đang deal", "qualified": "Đang deal", "requirement": "Lấy yêu cầu",
     "contract_sent": "Lên Proposal", "won": "Chăm sóc sau bán",
 }
 _TERMINAL_DEAL_STAGES = set(TERMINAL_STAGES) | {"won"}

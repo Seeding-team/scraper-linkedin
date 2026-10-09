@@ -2665,7 +2665,7 @@
    * + 300 (Mô tả) + 92 (ĐVT) + 64 (SL) + 104 (Giá vốn/ĐV) + 104 (Cost tổng)
    * + 96 (Markup) + 104 (Giá khách/ĐV) + 104 (Thành tiền) + 82 (Margin) + 88
    * (TỶ TRỌNG, cot C) + 44 (Thao tác) = ~1712px. */
-  min-width: 1712px;
+  min-width: 1782px;
 }
 .qc-workspace-items-card--fullscreen .qc-table-wrap.qc-workspace-items-scroll {
   max-height: none;

@@ -14,6 +14,7 @@ import { useAppAuth } from '@/contexts/AppAuthContext';
 import { formatVND, getStageMeta, SOURCE_OPTIONS, SERVICE_PACKAGE_OPTIONS, CRM_PACKAGE_OPTIONS, INDUSTRY_OPTIONS } from '../constants/crmConfig';
 import type { CreateDealInput, CrmUserOption, DealStage } from '../types';
 import { CustomerFormModal } from './CustomerFormModal';
+import { useDealsChanged } from '../utils/dealSync';
 import { HandoverDocsCard, type HandoverDoc } from './HandoverDocsCard';
 import { CrmContactsPanel } from './CrmContactsPanel';
 import { ProjectFormModal } from './ProjectFormModal';
@@ -463,6 +464,8 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
   };
   const [editOpen, setEditOpen] = useState(false);
   const [reloadTick, setReloadTick] = useState(0);
+  // Bao gia/hop dong doi -> backend tu cap nhat stage Deal -> tai lai Customer 360 tu du lieu that.
+  useDealsChanged(() => setReloadTick(t => t + 1));
   // Link Doc/Sheet bàn giao Lead (crm_leads.handover_links) của các Lead đã convert thành khách hàng này.
   const [handoverDocs, setHandoverDocs] = useState<HandoverDoc[]>([]);
   useEffect(() => {
@@ -1325,6 +1328,7 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
               openRegisterContractForActiveDeal={() => { setEditingContract(null); return openRegisterContractForActiveDeal(); }}
               onEditContract={openEditContract}
               setReloadTick={setReloadTick}
+              customerRef={customer ? { id: customerId, name: customer.company_name || customer.customer_name || 'Khách hàng' } : undefined}
             />
           )}
 

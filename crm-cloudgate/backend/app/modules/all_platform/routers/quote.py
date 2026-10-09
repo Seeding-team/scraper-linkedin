@@ -675,6 +675,8 @@ def quotes_issuer_companies_update(
         dump = payload.model_dump(exclude_none=True)
         if "default_quote_form_id" in payload.model_fields_set:
             dump["default_quote_form_id"] = payload.default_quote_form_id
+        if "position_category_id" in payload.model_fields_set:
+            dump["position_category_id"] = payload.position_category_id
         data = update_issuer_company(company_id, dump)
         return BaseResponse(success=True, message="Đã lưu công ty phát hành", data=data)
     except Exception as e:

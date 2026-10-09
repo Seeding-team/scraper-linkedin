@@ -6009,6 +6009,7 @@ export function QuoteWorkspaceModal({
                     <col style={{ width: '104px' }} />
                     <col style={{ width: '96px' }} />
                     <col style={{ width: '104px' }} />
+                    <col style={{ width: '70px' }} />
                     <col style={{ width: '104px' }} />
                     <col style={{ width: '82px' }} />
                     <col style={{ width: '84px' }} />
@@ -6041,6 +6042,7 @@ export function QuoteWorkspaceModal({
                       <th className="qc-th-money qc-th-cost">Cost tổng</th>
                       <th className="qc-th-money qc-th-markup">Markup</th>
                       <th className="qc-th-money qc-th-markup">Giá khách/ĐV</th>
+                      <th className="qc-th-money qc-th-vat" title="Thuế GTGT (%) của hạng mục — lấy theo sản phẩm khi thêm từ danh mục, để 0 nếu không có">VAT (%)</th>
                       <th className="qc-th-money qc-th-total">Thành tiền</th>
                       <th className="qc-th-money qc-th-margin-col">Margin</th>
                       {profitabilityViewAllowed ? (
@@ -6054,7 +6056,7 @@ export function QuoteWorkspaceModal({
                   <tbody>
                     {itemsDraft.length === 0 ? (
                       <tr>
-                        <td colSpan={11} className="qc-empty qc-workspace-items-empty-cell">
+                        <td colSpan={12} className="qc-empty qc-workspace-items-empty-cell">
                           {/* CHOT LAI (yeu cau moi nhat "Trả các nút thêm hạng
                            * mục xuống dưới bảng"): 3 nut Chọn từ danh mục/
                            * Thêm hạng mục/+ Mục cha da chuyen XUONG DUOI bang
@@ -6111,7 +6113,7 @@ export function QuoteWorkspaceModal({
                                 onDrop={canDragRows ? () => handleRowDrop(index, true) : undefined}
                               >
                                 {/* Ten data columns (them "Mô tả"), plus the separate action cell when editable. */}
-                                <td colSpan={8}>
+                                <td colSpan={9}>
                                   {canDragRows ? <span className="qc-workspace-drag-handle" title="Kéo để sắp xếp">⠿</span> : null}
                                   {/* Roman numeral (I/II/III...) dat TRUOC ten muc (ben trai) thay vi
                                    * sau nhu cu - o kich thuoc nho, badge "I" dat SAU chu de bi doc
@@ -6433,6 +6435,20 @@ export function QuoteWorkspaceModal({
                                   onChange={value => handleUnitPriceChange(index, value)}
                                 />
                               ) : formatMoney(item.unitPrice ?? 0)}
+                            </td>
+                            <td className="qc-cell-money qc-cell-vat" data-label="VAT (%)">
+                              {editableCells ? (
+                                <input
+                                  type="number"
+                                  min={0}
+                                  max={100}
+                                  step={0.5}
+                                  className="qc-cell-input qc-cell-input-money"
+                                  aria-label={`VAT hạng mục ${index + 1}`}
+                                  value={item.vatRate ?? 0}
+                                  onChange={e => updateRow(index, { vatRate: Math.min(100, Math.max(0, Number(e.target.value) || 0)) })}
+                                />
+                              ) : `${item.vatRate ?? 0}%`}
                             </td>
                             {/* Dung calculateItemTotal(item) (tinh TUOI moi
                              * lan render tu quantity/unitPrice/discountPercent/

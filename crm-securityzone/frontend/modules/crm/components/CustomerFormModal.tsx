@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { API_BASE_URL, API_KEY } from '@/lib/env';
 import { useMembers } from '@/hooks/useMembers';
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
@@ -75,8 +75,10 @@ function emptyForm(): FormState {
 function formFromCustomer(customer: CrmCustomerRow): FormState {
   return {
     customerName: customer.customerName || '',
-    // Khach CA NHAN (khong cong ty/MST/tu khoa to chuc): khong ep ten nguoi thanh "Cong ty".
-    companyName: customer.companyName || (looksLikeEnterprise(customer.customerName, customer.companyName, customer.taxCode) ? customer.customerName || '' : ''),
+    // Luon prefill = ten khach khi chua co company_name rieng (khop voi fallback hien thi "Cong ty: <ten khach>" o
+    // Overview - feedback: ten khach hang CHINH LA ten cong ty, mo form Sua ma o trong gay hieu lam la mat du lieu).
+    // Van sua/xoa duoc binh thuong neu Sale xac nhan day thuc su la khach ca nhan.
+    companyName: customer.companyName || customer.customerName || '',
     shortName: customer.shortName || '',
     contactName: customer.primaryContact?.name || '',
     positionCategoryId: customer.positionCategoryId || '',
@@ -162,6 +164,11 @@ export function CustomerFormModal({
   const { members } = useMembers();
   const embedded = variant === 'embedded';
   useBodyScrollLock(embedded ? false : open);
+  // Id DUY NHAT cho moi instance (truoc day hardcode "crmCustomerForm") - component nay duoc mount o CA
+  // CrmCustomerDetailPage LAN CustomerQuickViewPanel; neu 2 instance cung open cung luc, 2 <form> trung id se
+  // khien nut Luu (lien ket qua attribute form="...") co the submit NHAM form khac hoac khong submit gi ca
+  // (feedback: "k bấm lưu dc" - bam nhung khong co gi xay ra).
+  const formId = useId();
 
   useEffect(() => {
     if (!open) return;
@@ -365,7 +372,7 @@ export function CustomerFormModal({
 
   const formAndFooter = (
     <>
-        <form id="crmCustomerForm" className={embedded ? 'crm-quickview-editform-body' : 'crm-modal-body'} onSubmit={handleSubmit}>
+        <form id={formId} className={embedded ? 'crm-quickview-editform-body' : 'crm-modal-body'} onSubmit={handleSubmit}>
           {error ? <p className="crm-error crm-customer-form-error">{error}</p> : null}
           {duplicates.length ? (
             <div className="crm-duplicate-list">
@@ -532,10 +539,13 @@ export function CustomerFormModal({
         </form>
 
         <footer className={embedded ? 'crm-quickview-editform-footer' : 'crm-modal-footer'}>
+          {/* Form co the rat dai/cuon duoc - loi hien o DAU form (tren) de ngoai tam nhin khi dang cuon o duoi, nhin
+              nhu bam Luu "khong co gi xay ra" (feedback that). Lap lai NGAY CANH nut Luu de luon thay duoc. */}
+          {error ? <p className="crm-error crm-customer-form-error" style={{ margin: 0, flex: '1 1 auto' }}>{error}</p> : null}
           <button type="button" className="crm-cancel-button" onClick={onClose} disabled={saving}>
             Hủy
           </button>
-          <button type="submit" form="crmCustomerForm" className="crm-save-button" disabled={saving}>
+          <button type="submit" form={formId} className="crm-save-button" disabled={saving}>
             {saving ? <Loader2 className="crm-save-spinner" /> : null}
             {saving ? 'Đang lưu...' : isEdit ? 'Lưu thay đổi' : 'Tạo khách hàng'}
           </button>

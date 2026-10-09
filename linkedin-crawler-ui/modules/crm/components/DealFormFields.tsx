@@ -1750,13 +1750,9 @@ export const CREATE_STAGE_CHIPS: Deal['stage'][] = ['dealing', 'proposal_sent', 
 /** Nhãn hiển thị RIÊNG cho chip picker của form nhanh — khác nhãn dùng chung
  * DEAL_STAGE_META (vd 'new_lead' vẫn là "Khách mới" ở kanban/nơi khác, chỉ ở đây gọi "Lead
  * mới") — cùng 1 giá trị stage lưu xuống DB, chỉ đổi CHỮ hiển thị tại đúng chỗ này. */
-export const CREATE_STAGE_LABELS: Partial<Record<Deal['stage'], string>> = {
-  dealing: 'Đang deal',
-  proposal_sent: 'Lên Proposal',
-  negotiation: 'Chăm sóc/Đàm phán',
-  contract_signed: 'Lên hợp đồng',
-  payment_1: 'Thanh toán đợt 1',
-};
+export const CREATE_STAGE_LABELS: Partial<Record<Deal['stage'], string>> = Object.fromEntries(
+  CREATE_STAGE_CHIPS.map(stage => [stage, DEAL_STAGE_META[stage].label]),
+) as Partial<Record<Deal['stage'], string>>;
 
 /** Gợi ý Next step phổ biến — vẫn cho gõ tự do qua "Tuỳ chỉnh...". */
 export const NEXT_STEP_PRESETS = [

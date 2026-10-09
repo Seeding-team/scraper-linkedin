@@ -7,6 +7,10 @@ import { cn } from "@/lib/utils";
 import { API_BASE_URL, API_KEY } from "@/lib/env";
 
 type EmailProviderSettings = {
+  /** Workspace (instance) của backend đang phục vụ — mỗi workspace có cấu hình email RIÊNG. */
+  instance?: string;
+  /** false = hệ thống chưa áp migration tách email theo workspace. */
+  schemaReady?: boolean;
   channelType: string;
   isEnabled: boolean;
   senderName: string | null;
@@ -58,7 +62,7 @@ const dangerBtnClass =
 const linkBtnClass = "text-xs font-bold text-primary hover:underline disabled:opacity-50 disabled:no-underline cursor-pointer whitespace-nowrap";
 
 function StatusBadge({ status, saved = false }: { status: "unknown" | "ok" | "error"; saved?: boolean }) {
-  const label = status === "ok" ? "Đã kết nối" : status === "error" ? "Lỗi kết nối" : saved ? "Đã lưu, chưa kiểm tra" : "Chưa cấu hình";
+  const label = status === "ok" ? "Đã kết nối" : status === "error" ? "Lỗi kết nối" : saved ? "Đã lưu, chưa kiểm tra" : "Chưa kết nối";
   const icon = status === "ok" ? "check_circle" : status === "error" ? "error" : "help";
   const classes =
     status === "ok"
@@ -255,9 +259,18 @@ export function QuoteEmailProviderSettings() {
       <div>
         <h2 className="text-sm font-bold text-on-surface">Email gửi báo giá</h2>
         <p className="text-xs text-on-surface-variant mt-1">
-          Một Gmail hệ thống dùng chung: gửi báo giá (PDF/link) cho khách, nhận phản hồi qua IMAP và gửi email bàn giao/re-assign Lead nội bộ. Đổi email gửi cần nhập App Password mới — hệ thống kiểm tra SMTP + IMAP trước khi áp dụng, thất bại thì giữ nguyên cấu hình đang dùng.
+          Gmail riêng của workspace{settings.instance ? ` “${settings.instance}”` : ""} (không dùng chung với workspace khác): gửi báo giá (PDF/link) cho khách, nhận phản hồi qua IMAP và gửi email bàn giao/re-assign Lead nội bộ. Đổi email gửi cần nhập App Password mới — hệ thống kiểm tra SMTP + IMAP trước khi áp dụng, thất bại thì giữ nguyên cấu hình đang dùng.
         </p>
       </div>
+
+      {!settings.credentialConfigured ? (
+        <div data-testid="email-not-connected" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs font-medium text-amber-800">
+          Workspace{settings.instance ? ` “${settings.instance}”` : ""} chưa kết nối email gửi. Nhập email và App Password của chính workspace này — hệ thống không dùng email của workspace khác.
+          {settings.schemaReady === false && settings.instance && settings.instance !== "markee"
+            ? " Hệ thống chưa áp migration tách email theo workspace nên chưa thể lưu cấu hình — liên hệ quản trị."
+            : ""}
+        </div>
+      ) : null}
 
       {notice ? (
         <div

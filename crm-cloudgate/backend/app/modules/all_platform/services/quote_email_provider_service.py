@@ -17,6 +17,7 @@ from __future__ import annotations
 import imaplib
 import os
 import smtplib
+import time
 from datetime import datetime, timezone
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -24,9 +25,68 @@ from typing import Optional
 
 from cryptography.fernet import InvalidToken
 
+from app.core.config import settings
 from app.core.supabase_client import get_supabase_client
 
 _CHANNEL_TYPE = "email"
+
+# ── PHAN TACH THEO WORKSPACE (instance) ─────────────────────────────────────────────────────────────────────────────
+# Truoc day bang quote_delivery_channels CHI co unique(channel_type) va moi truy van chi loc channel_type => MOI workspace
+# (markee / cloudgate / securityzone dung chung 1 DB) doc/ghi/gui bang CUNG 1 cau hinh email. Nay moi truy van bi gioi han
+# theo instance cua backend (settings.crm_instance, lay tu bien moi truong cua deployment - KHONG tin gia tri client gui).
+# Migration 183 them cot `instance`. TRUOC khi migration duoc ap (cot chua ton tai) chi workspace so huu dong cau hinh cu
+# (xac minh: admin@markee.vn -> markee) tiep tuc dung dong do; workspace khac = "Chua ket noi", KHONG fallback, KHONG ghi.
+LEGACY_OWNER_INSTANCE = (os.environ.get("QUOTE_EMAIL_LEGACY_INSTANCE") or "markee").strip().lower()
+_schema_cache: dict = {"has_instance": None, "at": 0.0}
+
+
+class EmailInstanceSchemaPendingError(ValueError):
+    pass
+
+
+def current_instance() -> str:
+    """Workspace dang phuc vu request. GIU NGUYEN hoa/thuong nhu trong DB (vd 'SECURITYZONE'). Lay tu settings.crm_instance:
+    backend 1-workspace doc CRM_INSTANCE; backend da-workspace (crm-module) suy ra tu Host header qua middleware (ContextVar) - khong tin gia tri client gui."""
+    return (getattr(settings, "crm_instance", "") or "").strip()
+
+
+def _is_legacy_owner() -> bool:
+    return current_instance().lower() == LEGACY_OWNER_INSTANCE
+
+
+def has_instance_column(force: bool = False) -> bool:
+    """Cot `instance` da ton tai (migration 183 da ap)? Cache; ket qua 'chua co' duoc kiem tra lai moi 30 giay de nhan migration ma khong can restart."""
+    now = time.time()
+    cached = _schema_cache["has_instance"]
+    if not force and cached is True:
+        return True
+    if not force and cached is False and now - _schema_cache["at"] < 30:
+        return False
+    try:
+        get_supabase_client().table("quote_delivery_channels").select("instance").limit(1).execute()
+        _schema_cache.update(has_instance=True, at=now)
+    except Exception as exc:  # noqa: BLE001
+        if "instance" in str(exc).lower() and ("does not exist" in str(exc).lower() or "42703" in str(exc)):
+            _schema_cache.update(has_instance=False, at=now)
+        else:
+            raise
+    return bool(_schema_cache["has_instance"])
+
+
+def _scope(query):
+    """Gan bo loc kenh email + workspace. Chua co cot instance: chi chu so huu cau hinh cu moi thay dong do, workspace khac khong thay gi."""
+    query = query.eq("channel_type", _CHANNEL_TYPE)
+    if has_instance_column():
+        return query.eq("instance", current_instance())
+    return query
+
+
+def _assert_writable() -> None:
+    if not has_instance_column() and not _is_legacy_owner():
+        raise EmailInstanceSchemaPendingError(
+            f"Workspace '{current_instance()}' chưa có cấu hình email riêng và hệ thống chưa áp migration 183 (tách email theo workspace) "
+            "nên chưa thể lưu cấu hình. Liên hệ quản trị hệ thống."
+        )
 
 # Co dinh theo yeu cau - Gmail IMAP/SMTP, khong cho sua qua API (tranh danh
 # lua tro toi host la khac qua tham so client-side).
@@ -111,13 +171,16 @@ def record_audit_log(user: dict, action: str) -> None:
     vao day, tranh vo tinh log ca App Password neu code sau nay sua sai)."""
     try:
         supabase = get_supabase_client()
-        supabase.table("quote_delivery_channel_audit_log").insert({
+        row = {
             "channel_type": _CHANNEL_TYPE,
             "actor_id": user.get("id"),
             "actor_name": user.get("full_name") or user.get("display_name") or user.get("email"),
             "actor_role": str(user.get("role") or "").strip().lower(),
             "action": action,
-        }).execute()
+        }
+        if has_instance_column():
+            row["instance"] = current_instance()
+        supabase.table("quote_delivery_channel_audit_log").insert(row).execute()
     except Exception:
         # Audit khong duoc lam sap luong chinh (luu/test that su van thanh
         # cong ngay ca khi ghi audit loi) - chi bo qua, khong raise.
@@ -126,14 +189,12 @@ def record_audit_log(user: dict, action: str) -> None:
 
 def get_audit_log(limit: int = 100) -> list[dict]:
     supabase = get_supabase_client()
-    result = (
-        supabase.table("quote_delivery_channel_audit_log")
-        .select("*")
-        .eq("channel_type", _CHANNEL_TYPE)
-        .order("created_at", desc=True)
-        .limit(limit)
-        .execute()
-    )
+    if not has_instance_column() and not _is_legacy_owner():
+        return []
+    query = supabase.table("quote_delivery_channel_audit_log").select("*").eq("channel_type", _CHANNEL_TYPE)
+    if has_instance_column():
+        query = query.eq("instance", current_instance())
+    result = query.order("created_at", desc=True).limit(limit).execute()
     rows = result.data or []
     return [
         {
@@ -152,13 +213,9 @@ def _get_row() -> Optional[dict]:
     # .maybe_single().execute() tra ve None (khong phai 1 object co .data)
     # khi 0 dong khop - phai kiem tra result truoc khi doc .data, neu khong
     # se loi "'NoneType' object has no attribute 'data'" (bug that da gap).
-    result = (
-        supabase.table("quote_delivery_channels")
-        .select("*")
-        .eq("channel_type", _CHANNEL_TYPE)
-        .maybe_single()
-        .execute()
-    )
+    if not has_instance_column() and not _is_legacy_owner():
+        return None  # dong cau hinh cu thuoc workspace khac - KHONG fallback sang cau hinh cua workspace khac
+    result = _scope(supabase.table("quote_delivery_channels").select("*")).maybe_single().execute()
     return result.data if result else None
 
 
@@ -169,6 +226,8 @@ def get_email_provider_settings() -> dict:
     row = _get_row()
     if not row:
         return {
+            "instance": current_instance(),
+            "schemaReady": has_instance_column(),
             "channelType": _CHANNEL_TYPE,
             "isEnabled": False,
             "senderName": None,
@@ -188,6 +247,8 @@ def get_email_provider_settings() -> dict:
             "smtpLastTestedAt": None,
         }
     return {
+        "instance": current_instance(),
+        "schemaReady": has_instance_column(),
         "channelType": row.get("channel_type"),
         "isEnabled": bool(row.get("is_enabled")),
         "senderName": row.get("sender_name"),
@@ -217,6 +278,7 @@ def save_email_provider_settings(
     """Luu cau hinh. app_password=None/rong -> GIU credential cu nguyen ven (chi doi ten nguoi gui).
     Doi EMAIL gui hoac nhap App Password MOI -> bat buoc co App Password tuong ung va test SMTP+IMAP bang
     credential moi TRUOC KHI ghi DB; test that bai -> raise, cau hinh dang hoat dong GIU NGUYEN (khong gian doan gui mail)."""
+    _assert_writable()
     supabase = get_supabase_client()
     existing = _get_row()
     address = sender_address.strip()
@@ -258,31 +320,33 @@ def save_email_provider_settings(
         payload.update({"smtp_connection_status": "ok", "smtp_last_tested_at": now, "imap_connection_status": "ok", "imap_last_tested_at": now})
 
     if existing:
-        supabase.table("quote_delivery_channels").update(payload).eq("channel_type", _CHANNEL_TYPE).execute()
+        _scope(supabase.table("quote_delivery_channels").update(payload)).execute()
     else:
         payload["is_enabled"] = True  # test SMTP vua pass -> kich hoat luon
+        if has_instance_column():
+            payload["instance"] = current_instance()
         supabase.table("quote_delivery_channels").insert(payload).execute()
 
     return get_email_provider_settings()
 
 
 def set_email_provider_enabled(is_enabled: bool, actor_id: Optional[str]) -> dict:
+    _assert_writable()
     row = _get_row()
     if not row or row.get("encrypted_app_password") is None:
         raise EmailProviderNotConfiguredError("Cần cấu hình App Password trước khi bật kênh gửi email.")
     supabase = get_supabase_client()
-    supabase.table("quote_delivery_channels").update(
-        {"is_enabled": is_enabled, "updated_by": actor_id}
-    ).eq("channel_type", _CHANNEL_TYPE).execute()
+    _scope(supabase.table("quote_delivery_channels").update({"is_enabled": is_enabled, "updated_by": actor_id})).execute()
     return get_email_provider_settings()
 
 
 def clear_email_provider_credentials(actor_id: Optional[str]) -> dict:
+    _assert_writable()
     supabase = get_supabase_client()
     row = _get_row()
     if not row:
         return get_email_provider_settings()
-    supabase.table("quote_delivery_channels").update(
+    _scope(supabase.table("quote_delivery_channels").update(
         {
             "encrypted_app_password": None,
             "credential_updated_at": None,
@@ -290,7 +354,7 @@ def clear_email_provider_credentials(actor_id: Optional[str]) -> dict:
             "is_enabled": False,
             "updated_by": actor_id,
         }
-    ).eq("channel_type", _CHANNEL_TYPE).execute()
+    )).execute()
     return get_email_provider_settings()
 
 
@@ -302,7 +366,7 @@ def get_active_email_channel_for_sending() -> dict:
     (dung dieu kien "Mail config đang bật" + "SMTP đã test thành công")."""
     row = _get_row()
     if not row or row.get("encrypted_app_password") is None:
-        raise EmailProviderNotConfiguredError("Admin chưa cấu hình email gửi báo giá.")
+        raise EmailProviderNotConfiguredError(f"Workspace '{current_instance()}' chưa kết nối email gửi — Admin cần cấu hình email riêng của workspace này (không dùng chung email của workspace khác).")
     if not row.get("is_enabled"):
         raise EmailProviderNotConfiguredError("Kênh email hiện không hoạt động.")
     if row.get("smtp_connection_status") != "ok":
@@ -341,9 +405,7 @@ def _record_connection_status(kind: str, ok: bool) -> None:
     now = datetime.now(timezone.utc).isoformat()
     field_status = f"{kind}_connection_status"
     field_tested = f"{kind}_last_tested_at"
-    supabase.table("quote_delivery_channels").update(
-        {field_status: "ok" if ok else "error", field_tested: now}
-    ).eq("channel_type", _CHANNEL_TYPE).execute()
+    _scope(supabase.table("quote_delivery_channels").update({field_status: "ok" if ok else "error", field_tested: now})).execute()
 
 
 def test_imap_connection(inline_email: Optional[str] = None, inline_app_password: Optional[str] = None) -> dict:

@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import { useDealsChanged } from '../../utils/dealSync';
 import { progressRepository } from '../../repositories/ProgressRepository';
 import { getAllTeams } from '@/services/linkedinCrawlerService';
 import { formatVND } from '../../constants/crmConfig';
@@ -151,6 +152,9 @@ export function ProgressDashboardView() {
     setDrawerStack(s => s.slice(0, idx + 1));
   }
 
+  const [reloadTick, setReloadTick] = useState(0);
+  useDealsChanged(() => setReloadTick(t => t + 1));
+
   useEffect(() => {
     let alive = true;
     setLoading(true);
@@ -195,7 +199,7 @@ export function ProgressDashboardView() {
     return () => {
       alive = false;
     };
-  }, []);
+  }, [reloadTick]);
 
   // 1 request lấy KPI cho cả 5 mốc thời gian -> đổi bộ lọc là tức thì, không chờ mạng
   useEffect(() => {

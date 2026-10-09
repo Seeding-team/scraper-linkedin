@@ -19,7 +19,7 @@ import {
   X,
 } from 'lucide-react';
 import { API_BASE_URL, API_KEY } from '@/lib/env';
-import { formatVND } from '../constants/crmConfig';
+import { DEAL_STAGE_META, formatVND } from '../constants/crmConfig';
 import type { CrmCustomerRow } from '../types';
 import { relativeTime } from '../utils/quoteDisplay';
 import { CustomerFormModal } from './CustomerFormModal';
@@ -123,22 +123,17 @@ const STATUS_LABEL: Record<string, string> = {
   not_fit: 'Ngừng hoạt động',
 };
 
-const STAGE_LABEL: Record<string, string> = {
-  new_lead: 'Mới',
-  contacted: 'Đã liên hệ',
-  qualified: 'Đang qualify',
-  requirement: 'Lấy yêu cầu',
-  dealing: 'Đang xử lý',
-  proposal_sent: 'Đã gửi đề xuất',
-  negotiation: 'Đàm phán',
-  contract_sent: 'Đã gửi hợp đồng',
-  contract_signed: 'Đã ký hợp đồng',
-  implementation: 'Triển khai',
-  acceptance: 'Nghiệm thu',
+// Nhãn 10 stage lấy từ DEAL_STAGE_META (một nguồn duy nhất); chỉ giữ nhãn riêng cho stage legacy.
+const LEGACY_STAGE_LABEL: Record<string, string> = {
+  new_lead: 'Đang deal',
+  contacted: 'Đang deal',
+  qualified: 'Đang deal',
+  contract_sent: 'Lên Proposal',
   won: 'Đã thắng',
-  lost: 'Đã thua',
-  on_hold: 'Tạm dừng',
 };
+const STAGE_LABEL: Record<string, string> = new Proxy({} as Record<string, string>, {
+  get: (_t, key: string) => (DEAL_STAGE_META as Record<string, { label: string }>)[key]?.label ?? LEGACY_STAGE_LABEL[key],
+});
 
 const CONTRACT_STATUS_LABEL: Record<string, string> = {
   draft: 'Bản nháp',
