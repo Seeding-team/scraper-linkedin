@@ -30,6 +30,7 @@ from app.modules.all_platform.services import (
     refine_contract_draft,
     get_contract_template,
     get_quote,
+    list_issuer_companies,
     list_contract_activity_log,
 )
 from app.modules.all_platform.services.contract_ocr_service import compare_to_quote, extract_contract_summary
@@ -150,6 +151,20 @@ def contracts_delete(contract_id: str, user: dict = Depends(get_current_user)) -
 
 # ── AI Contract Copilot ──────────────────────────────────────────────────────
 
+def _issuer_of_quote(quote: dict | None) -> dict | None:
+    """Đơn vị phát hành báo giá = Bên B của hợp đồng. Báo giá cũ chưa gắn đơn vị: nếu hệ thống chỉ có
+    đúng 1 đơn vị đang hoạt động thì dùng đơn vị đó, ngược lại để trống (không đoán)."""
+    try:
+        companies = list_issuer_companies(include_inactive=True)
+    except Exception:
+        return None
+    issuer_id = (quote or {}).get("issuerCompanyId")
+    if issuer_id:
+        return next((c for c in companies if c.get("id") == issuer_id), None)
+    active = [c for c in companies if (c.get("status") or "active") == "active"]
+    return active[0] if len(active) == 1 else None
+
+
 @contracts_router.post("/generate-draft")
 async def contracts_generate_draft(payload: ContractGenerateRequest, _user: dict = Depends(get_current_user)) -> BaseResponse:
     """AI soạn thảo — KHÔNG tạo row DB, chỉ trả clauses tạm để FE review trước khi Lưu."""
@@ -162,7 +177,8 @@ async def contracts_generate_draft(payload: ContractGenerateRequest, _user: dict
         if payload.reference_template_id:
             reference_text = get_contract_template(payload.reference_template_id, include_text=True).get("extractedText")
         clauses = await generate_contract_draft(
-            deal, quote, payload.template_type, payload.detail_level, payload.extra_prompt, reference_text
+            deal, quote, payload.template_type, payload.detail_level, payload.extra_prompt, reference_text,
+            issuer=_issuer_of_quote(quote),
         )
         return BaseResponse(success=True, data={"clauses": clauses})
     except RuntimeError as e:
