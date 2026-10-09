@@ -43,7 +43,10 @@ _DRAFT_SYSTEM_PROMPT = (
     "Bạn là luật sư soạn thảo hợp đồng cung cấp dịch vụ tại Việt Nam. Dựa trên dữ liệu CRM "
     "và báo giá được cung cấp, soạn các điều khoản hợp đồng bằng tiếng Việt, văn phong pháp lý "
     "chuẩn mực, ngắn gọn, rõ ràng. PHẢI trả về ĐÚNG 7 điều khoản, ĐÚNG THỨ TỰ và ĐÚNG TIÊU ĐỀ sau "
-    "(giữ nguyên văn tiêu đề, chỉ viết phần body): "
+    "(giữ nguyên văn tiêu đề, chỉ viết phần body). ĐIỀU 1: KHÔNG ghi tên, mã số thuế, địa chỉ hay người đại diện "
+    "của các bên — hệ thống tự chèn khối thông tin hai bên ở đầu Điều 1; chỉ viết 1-2 câu về năng lực pháp lý và căn cứ ký kết. "
+    "Tuyệt đối không bịa số liệu hay thông tin không có trong dữ liệu được cung cấp. Bên A là khách hàng (bên sử dụng dịch vụ), "
+    "Bên B là bên cung cấp dịch vụ: "
     + " | ".join(_CANONICAL_CLAUSE_TITLES)
     + '. Luôn trả về DUY NHẤT 1 JSON object dạng '
     '{"clauses": [{"title": "...", "body": "..."}]} với đúng 7 phần tử theo thứ tự trên, '
@@ -54,14 +57,16 @@ _REFINE_SYSTEM_PROMPT = (
     "Bạn là luật sư chỉnh sửa hợp đồng cung cấp dịch vụ tại Việt Nam. Bạn nhận nội dung hợp đồng "
     "hiện tại (7 điều khoản) và danh sách rủi ro pháp chế vừa phát hiện. Hãy VIẾT LẠI phần body của "
     "TỪNG điều khoản để khắc phục các rủi ro đó (bổ sung nội dung còn thiếu, sửa số liệu sai lệch), "
-    "giữ nguyên đúng 7 tiêu đề đã cho, không đổi thứ tự. Luôn trả về DUY NHẤT 1 JSON object dạng "
+    "giữ nguyên đúng 7 tiêu đề đã cho, không đổi thứ tự. Khối thông tin hai bên (BÊN A / BÊN B) ở đầu ĐIỀU 1 do hệ thống quản lý: "
+    "không viết lại, không đưa vào body bạn trả về. Luôn trả về DUY NHẤT 1 JSON object dạng "
     '{"clauses": [{"title": "...", "body": "..."}]} với đúng 7 phần tử, không thêm giải thích, không markdown.'
 )
 
 _REVIEW_SYSTEM_PROMPT = (
     "Bạn là chuyên viên pháp chế rà soát rủi ro hợp đồng. So sánh nội dung điều khoản với "
     "báo giá gốc và điều khoản chuẩn công ty; phát hiện thiếu sót, sai lệch giá trị/thanh toán, "
-    "hoặc rủi ro pháp lý. Luôn trả về DUY NHẤT 1 JSON object dạng "
+    "hoặc rủi ro pháp lý. Trong khối thông tin hai bên, dấu '……' nghĩa là thông tin chưa có: chỉ báo thiếu ĐÚNG trường còn trống, "
+    "không báo thiếu những trường đã có nội dung. Luôn trả về DUY NHẤT 1 JSON object dạng "
     '{"score": <0-100>, "findings": [{"severity": "ok"|"warn", "title": "...", "detail": "..."}]}, '
     "không thêm giải thích, không markdown. score 100 = an toàn tuyệt đối, càng nhiều rủi ro càng thấp."
 )
@@ -160,6 +165,79 @@ async def _call_chat_json(system_prompt: str, user_content: str) -> dict:
         raise RuntimeError("AI trả về dữ liệu không hợp lệ, vui lòng thử lại.") from exc
 
 
+_BLANK = "………………………"
+
+
+def _first(*values) -> str:
+    for v in values:
+        if v is not None and str(v).strip():
+            return str(v).strip()
+    return ""
+
+
+def build_parties(deal: dict | None, quote: dict | None, issuer: dict | None) -> dict:
+    """Gom thông tin 2 bên từ dữ liệu THẬT: Bên A = khách (deal CRM, thiếu thì lấy từ form báo giá),
+    Bên B = đơn vị phát hành báo giá (quote_issuer_companies). Thiếu thì để rỗng, KHÔNG bịa."""
+    d = deal or {}
+    data = (quote or {}).get("data") or {}
+    i = issuer or {}
+    return {
+        "a": {
+            "name": _first(d.get("company_name"), data.get("customerCompanyName")),
+            "tax_code": _first(d.get("tax_code"), data.get("customerTaxCode")),
+            "address": _first(d.get("address"), data.get("customerAddress")),
+            "rep": _first(data.get("customerContactName"), d.get("customer_name")),
+            "position": _first(d.get("position")),
+            "phone": _first(d.get("phone"), data.get("customerPhone")),
+            "email": _first(d.get("email"), data.get("customerEmail")),
+        },
+        "b": {
+            "name": _first(i.get("legalName")),
+            "tax_code": _first(i.get("taxCode")),
+            "address": _first(i.get("address")),
+            "rep": _first(i.get("contactName")),
+            "position": "",
+            "phone": _first(i.get("phone")),
+            "email": _first(i.get("email")),
+        },
+    }
+
+
+def format_parties_block(parties: dict) -> str:
+    def side(title: str, p: dict) -> str:
+        rep = p["rep"] or _BLANK
+        if p["position"]:
+            rep = f"{rep} — Chức vụ: {p['position']}"
+        return (
+            f"{title}: {p['name'] or _BLANK}\n"
+            f"- Mã số thuế: {p['tax_code'] or _BLANK}\n"
+            f"- Địa chỉ: {p['address'] or _BLANK}\n"
+            f"- Đại diện/Người liên hệ: {rep}\n"
+            f"- Điện thoại: {p['phone'] or _BLANK}    Email: {p['email'] or _BLANK}"
+        )
+
+    return side("BÊN A (Bên sử dụng dịch vụ)", parties["a"]) + "\n\n" + side("BÊN B (Bên cung cấp dịch vụ)", parties["b"])
+
+
+def _split_parties_block(body: str) -> tuple[str, str]:
+    """Điều 1 = khối thông tin hai bên (hệ thống chèn) + đoạn do AI viết."""
+    body = body or ""
+    if body.startswith("BÊN A") and "BÊN B" in body:
+        end = body.find("Email:", body.find("BÊN B"))
+        if end != -1:
+            end = body.find("\n", end)
+            end = len(body) if end == -1 else end
+            return body[:end].strip(), body[end:].strip()
+    return "", body.strip()
+
+
+def _attach_parties(clauses: list[dict], block: str) -> list[dict]:
+    if block and clauses:
+        _, rest = _split_parties_block(clauses[0].get("body", ""))
+        clauses[0]["body"] = block + ("\n\n" + rest if rest else "")
+    return clauses
+
+
 def _format_quote_context(quote: dict | None) -> str:
     if not quote:
         return "Chưa có báo giá đính kèm."
@@ -188,6 +266,7 @@ async def generate_contract_draft(
     detail_level: str,
     extra_prompt: str | None,
     reference_template_text: str | None = None,
+    issuer: dict | None = None,
 ) -> list[dict]:
     template_labels = {
         "service": "Hợp đồng cung cấp dịch vụ CNTT",
@@ -200,17 +279,19 @@ async def generate_contract_draft(
         if reference_template_text
         else ""
     )
+    parties_block = format_parties_block(build_parties(deal, quote, issuer))
     user_content = (
         f"Loại hợp đồng: {template_labels.get(template_type, template_type)}\n"
         f"Mức độ chi tiết: {detail_level}\n\n"
         f"=== THÔNG TIN KHÁCH HÀNG (CRM) ===\n{_format_deal_context(deal)}\n\n"
+        f"=== THÔNG TIN HAI BÊN (hệ thống tự chèn vào đầu Điều 1 — CHỈ để bạn hiểu ngữ cảnh, không chép lại) ===\n{parties_block}\n\n"
         f"=== BÁO GIÁ ĐÃ CHỐT ===\n{_format_quote_context(quote)}\n\n"
         f"=== ĐIỀU KHOẢN CHUẨN CÔNG TY (tham chiếu, không copy nguyên văn) ===\n{_STANDARD_TERMS}\n\n"
         f"{reference_section}"
         f"=== YÊU CẦU THÊM TỪ SALE ===\n{extra_prompt or '(không có)'}"
     )
     result = await _call_chat_json(_DRAFT_SYSTEM_PROMPT, user_content)
-    clauses = _normalize_to_canonical(result.get("clauses") or [])
+    clauses = _attach_parties(_normalize_to_canonical(result.get("clauses") or []), parties_block)
     logger.info(f"AI contract draft generated: {len(clauses)} clauses")
     return clauses
 
@@ -232,6 +313,7 @@ async def refine_contract_draft(clauses: list[dict], findings: list[dict]) -> li
     rủi ro AI vừa phát hiện ở review_contract_risk(). Khác generate_contract_draft:
     không cần deal/quote (đã có sẵn nội dung hợp đồng hiện tại), chỉ cần bản thân
     nội dung + danh sách finding cần sửa."""
+    kept_block, _ = _split_parties_block(clauses[0].get("body", "")) if clauses else ("", "")
     clauses_text = "\n\n".join(f"{c.get('title', '')}\n{c.get('body', '')}" for c in clauses)
     findings_text = "\n".join(f"- [{f.get('severity')}] {f.get('title')}: {f.get('detail')}" for f in findings)
     user_content = (
@@ -240,7 +322,7 @@ async def refine_contract_draft(clauses: list[dict], findings: list[dict]) -> li
         f"=== ĐIỀU KHOẢN CHUẨN CÔNG TY (tham chiếu để sửa đúng) ===\n{_STANDARD_TERMS}"
     )
     result = await _call_chat_json(_REFINE_SYSTEM_PROMPT, user_content)
-    refined = _normalize_to_canonical(result.get("clauses") or [])
+    refined = _attach_parties(_normalize_to_canonical(result.get("clauses") or []), kept_block)
     logger.info(f"AI contract draft refined: {len(refined)} clauses")
     return refined
 
