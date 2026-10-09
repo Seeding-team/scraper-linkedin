@@ -34,7 +34,7 @@ hiện tại ở nơi khác):
 from __future__ import annotations
 
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from app.core.config import settings
@@ -370,27 +370,68 @@ def _scoped(rows: list[dict[str, Any]], scope: dict[str, Any], *, team_field: st
 
 # ── 1. GET /progress/overview ───────────────────────────────────────────────
 
-def get_progress_overview(user: dict[str, Any]) -> dict[str, Any]:
+def _range_start(range_key: str | None) -> datetime | None:
+    """'today' | 'week' (từ thứ Hai) | 'month' | 'year'; 'all'/rỗng = không lọc (giờ VN, UTC+7)."""
+    if not range_key or range_key == "all":
+        return None
+    now = datetime.now(timezone(timedelta(hours=7)))
+    day0 = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    if range_key == "today":
+        return day0
+    if range_key == "week":
+        return day0 - timedelta(days=day0.weekday())
+    if range_key == "month":
+        return day0.replace(day=1)
+    if range_key == "year":
+        return day0.replace(month=1, day=1)
+    return None
+
+
+def _created_since(rows: list[dict[str, Any]], start: datetime | None) -> list[dict[str, Any]]:
+    if start is None:
+        return rows
+    out = []
+    for r in rows:
+        raw = r.get("created_at")
+        if not raw:
+            continue
+        try:
+            dt = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        if dt >= start:
+            out.append(r)
+    return out
+
+
+def get_progress_overview(user: dict[str, Any], range_key: str | None = None) -> dict[str, Any]:
+    """range_key (tuỳ chọn): chỉ đếm record TẠO TRONG khoảng thời gian đó."""
     scope = progress_scope(user)
+    start = _range_start(range_key)
 
     leads = _scoped(_fetch_all("crm_leads", "id, sdr_id, status, created_at, sdr:sdr_id(name)"), scope, team_field=None, owner_fields=["sdr_id"])
-    customers = _scoped(_fetch_all("crm_customers", "id, owner_id, status"), scope, team_field=None, owner_fields=["owner_id"])
+    customers = _scoped(_fetch_all("crm_customers", "id, owner_id, status, created_at"), scope, team_field=None, owner_fields=["owner_id"])
     deals = _scoped(
-        _fetch_all("customer_leads", "id, sdr_id, leaded_by, team_id, deal_stage, estimated_budget, customer_id"),
+        _fetch_all("customer_leads", "id, sdr_id, leaded_by, team_id, deal_stage, estimated_budget, customer_id, created_at"),
         scope, team_field="team_id", owner_fields=["sdr_id", "leaded_by"],
     )
     quotes = _scoped(
         _fetch_all(
             "quotes",
             "id, technical_owner_id, quote_owner_id, processing_stage, status, sent_at, published_at, "
-            "approved_at, deleted_at, sla_due_at, completed_at",
+            "approved_at, deleted_at, sla_due_at, completed_at, created_at",
         ),
         scope, team_field=None, owner_fields=["technical_owner_id", "quote_owner_id"],
     )
-    contracts = _scoped(_fetch_all("contracts", "id, owner_id, status"), scope, team_field=None, owner_fields=["owner_id"])
+    contracts = _scoped(_fetch_all("contracts", "id, owner_id, status, created_at"), scope, team_field=None, owner_fields=["owner_id"])
     projects = _scoped(
-        _fetch_all("projects", "id, team_id, manager_id, status"),
+        _fetch_all("projects", "id, team_id, manager_id, status, created_at"),
         scope, team_field="team_id", owner_fields=["manager_id"],
+    )
+    leads, customers, deals, quotes, contracts, projects = (
+        _created_since(x, start) for x in (leads, customers, deals, quotes, contracts, projects)
     )
 
     now = datetime.now(timezone.utc)
@@ -441,6 +482,12 @@ def get_progress_overview(user: dict[str, Any]) -> dict[str, Any]:
             },
         },
     }
+
+
+def get_progress_overview_ranges(user: dict[str, Any]) -> dict[str, Any]:
+    """KPI cho cả 5 mốc thời gian trong 1 request (dữ liệu nguồn đã cache bởi
+    _fetch_all nên 5 lần tính chỉ tốn CPU) - FE đổi bộ lọc mà không phải gọi lại API."""
+    return {key: get_progress_overview(user, key)["kpis"] for key in ("today", "week", "month", "year", "all")}
 
 
 # ── 2/3. GET /progress/teams, /progress/teams/{team_id} ────────────────────
@@ -747,7 +794,10 @@ def list_member_deals(user: dict[str, Any], member_id: str) -> dict[str, Any]:
 
 # ── 8. GET /progress/members/{user_id}/projects ─────────────────────────────
 
-_PROJECT_SELECT = "id, project_code, name, customer_id, status, manager_id, team_id, customer:customer_id(customer_name), manager:manager_id(name)"
+_PROJECT_SELECT = (
+    "id, project_code, name, customer_id, status, manager_id, team_id, description, created_at, updated_at, "
+    "customer:customer_id(customer_name), manager:manager_id(name), team:team_id(name_team)"
+)
 
 
 def _project_row_to_item(row: dict[str, Any]) -> dict[str, Any]:
@@ -762,6 +812,11 @@ def _project_row_to_item(row: dict[str, Any]) -> dict[str, Any]:
         "status": row.get("status"),
         "statusLabel": _PROJECT_STATUS_LABELS.get(row.get("status") or "", row.get("status")),
         "managerName": manager.get("name"),
+        # projects.team_id đang NULL ở hầu hết dự án -> fallback sang team (department) của quản lý dự án.
+        "teamName": (row.get("team") or {}).get("name_team") or _user_department_map().get(str(row.get("manager_id") or "")),
+        "description": row.get("description"),
+        "createdAt": row.get("created_at"),
+        "updatedAt": row.get("updated_at"),
         "deepLink": "/all-platform/crm",
     }
 
@@ -845,7 +900,11 @@ def list_member_quotes(user: dict[str, Any], member_id: str) -> dict[str, Any]:
 
 # ── 10. GET /progress/members/{user_id}/contracts ───────────────────────────
 
-_CONTRACT_SELECT = "id, contract_number, title, status, contract_value, currency, deal_id, quote_id, owner_id, created_at, owner:owner_id(name)"
+_CONTRACT_SELECT = (
+    "id, contract_number, title, status, contract_value, currency, deal_id, quote_id, owner_id, created_at, updated_at, "
+    "template_type, start_date, end_date, signed_at, payment_terms, "
+    "owner:owner_id(name), deal:deal_id(customer_name), quote:quote_id(quote_number)"
+)
 
 
 def _contract_row_to_item(row: dict[str, Any], since_at: str | None) -> dict[str, Any]:
@@ -863,6 +922,16 @@ def _contract_row_to_item(row: dict[str, Any], since_at: str | None) -> dict[str
         "quoteId": row.get("quote_id"),
         "ownerId": row.get("owner_id"),
         "ownerName": owner.get("name"),
+        "teamName": _user_department_map().get(str(row.get("owner_id") or "")),
+        "customerName": (row.get("deal") or {}).get("customer_name"),
+        "quoteNumber": (row.get("quote") or {}).get("quote_number"),
+        "templateType": row.get("template_type"),
+        "startDate": row.get("start_date"),
+        "endDate": row.get("end_date"),
+        "signedAt": row.get("signed_at"),
+        "paymentTerms": row.get("payment_terms"),
+        "createdAt": row.get("created_at"),
+        "updatedAt": row.get("updated_at"),
         "deepLink": f"/all-platform/contracts/{row['id']}",
     }
 

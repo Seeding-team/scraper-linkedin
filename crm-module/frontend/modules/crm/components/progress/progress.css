@@ -699,6 +699,7 @@
   place-items: center;
   flex: 0 0 auto;
   font-size: 15px;
+  color: #475569;
 }
 
 .progress-record-card-main {
@@ -4363,7 +4364,7 @@
 /* 9 KPI Grid */
 .progress-team-kpi-grid-9 {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 10px;
 }
 
@@ -6076,4 +6077,396 @@
   flex-shrink: 0;
   width: fit-content;
   max-width: 100%;
+}
+
+.progress-sub-middle-row .progress-card-full { margin-bottom: 0; min-width: 0; }
+
+/* ===== Biểu đồ cột ngang ruy-băng 3D (Tổng quan tiến độ theo thời gian) ===== */
+.pbar-chart { position: relative; padding: 4px 4px 0; }
+.pbar-unit { display: block; font-size: 11px; color: #64748b; margin: 0 0 8px 14px; }
+.pbar-plot { position: relative; margin: 0 24px 0 14px; border-left: 1.5px solid #334155; border-bottom: 1.5px solid #334155; }
+.pbar-grid { position: absolute; inset: 0; pointer-events: none; }
+.pbar-grid-line { position: absolute; top: 0; bottom: 0; border-left: 1px solid #cbd5e1; opacity: .8; animation: pbar-fade .6s ease both; }
+.pbar-rows { position: relative; display: flex; flex-direction: column; gap: 14px; padding: 12px 0 12px; }
+.pbar-rows.dense { gap: 5px; padding: 8px 0; }
+.pbar-row { position: relative; height: 26px; display: flex; align-items: center; cursor: pointer; }
+.pbar-rows.dense .pbar-row { height: 15px; }
+.pbar-label { position: absolute; right: 100%; padding-right: 8px; font-size: 11.5px; color: #475569; white-space: nowrap; }
+.pbar-track { flex: 1; height: 100%; position: relative; }
+.pbar-bar {
+  position: relative; height: 100%; min-width: 34px; max-width: 100%;
+  display: flex; align-items: center; justify-content: flex-end; padding-right: 10px;
+  background: var(--bar-main);
+  border-radius: 0 8px 8px 0;
+  transform-origin: left center;
+  animation: pbar-grow .9s cubic-bezier(.22, 1, .36, 1) both;
+  transition: width .7s cubic-bezier(.22, 1, .36, 1), filter .15s ease;
+}
+.pbar-row:hover .pbar-bar, .pbar-row.is-hovered .pbar-bar { filter: brightness(.94); }
+.pbar-value { font-style: normal; font-weight: 700; font-size: 13px; color: #fff;  animation: pbar-fade .5s ease both; }
+.pbar-rows.dense .pbar-value { font-size: 10px; }
+.pbar-xaxis { position: relative; height: 22px; margin: 0 24px 0 14px; }
+.pbar-xaxis span { position: absolute; top: 5px; transform: translateX(-50%); font-size: 11px; color: #64748b; }
+
+@keyframes pbar-grow { from { clip-path: inset(0 100% 0 0); } to { clip-path: inset(0 0 0 0); } }
+@keyframes pbar-fade { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .pbar-bar, .pbar-value, .pbar-grid-line { animation: none; } }
+
+/* ===== Form team: donut SLA có hiệu ứng + stepper báo giá mini ===== */
+.pteam-donut-slice { animation: pteam-donut-draw .9s cubic-bezier(.22, 1, .36, 1) both; }
+@keyframes pteam-donut-draw { from { stroke-dasharray: 0 var(--circ); } to { stroke-dasharray: var(--len) var(--rest); } }
+.pteam-legend-anim { animation: pteam-slide-in .5s ease both; }
+.pteam-legend-anim:nth-child(1) { animation-delay: .15s; }
+.pteam-legend-anim:nth-child(2) { animation-delay: .3s; }
+.pteam-legend-anim:nth-child(3) { animation-delay: .45s; }
+.pteam-legend-anim:nth-child(4) { animation-delay: .6s; }
+.progress-team-donut-center-num { animation: pteam-pop .6s ease .3s both; }
+@keyframes pteam-slide-in { from { opacity: 0; transform: translateX(10px); } to { opacity: 1; transform: none; } }
+@keyframes pteam-pop { from { opacity: 0; transform: scale(.7); } to { opacity: 1; transform: none; } }
+.pteam-quotes-table tbody tr { animation: pteam-slide-in .4s ease both; }
+.pqs { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.pqs-track { display: flex; align-items: center; }
+.pqs-dot { width: 11px; height: 11px; border-radius: 50%; flex: none; border: 2px solid #cbd5e1; background: #fff; box-sizing: border-box; }
+.pqs-dot.done { background: #2563eb; border-color: #2563eb; }
+.pqs-dot.current { background: #fff; border-color: #2563eb; box-shadow: 0 0 0 3px rgba(37,99,235,.18); animation: pqs-pulse 1.8s ease-in-out infinite; }
+.pqs-dot.current-overdue { background: #fff; border-color: #dc2626; box-shadow: 0 0 0 3px rgba(220,38,38,.18); animation: pqs-pulse 1.8s ease-in-out infinite; }
+.pqs-line { flex: 1; height: 2px; background: #e2e8f0; min-width: 8px; }
+.pqs-line.done { background: #2563eb; }
+.pqs-label { font-size: 11.5px; font-weight: 600; color: #2563eb; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pqs-label.overdue { color: #dc2626; }
+@keyframes pqs-pulse { 50% { box-shadow: 0 0 0 5px rgba(37,99,235,0); } }
+@media (prefers-reduced-motion: reduce) { .pteam-donut-slice, .pteam-legend-anim, .pteam-quotes-table tbody tr, .pqs-dot { animation: none; } }
+
+/* Danh sách team (dạng list): chia cột đều bằng grid để số không lệch khi Pipeline dài/ngắn */
+.progress-teams-list .progress-team-card-row { gap: 24px; padding: 14px 24px; }
+.progress-teams-list .progress-team-card-left { flex: 0 0 240px; min-width: 0; }
+.progress-teams-list .progress-team-card-stats {
+  display: grid;
+  grid-template-columns: repeat(8, minmax(62px, 1fr)) minmax(150px, 180px);
+  column-gap: 8px;
+  align-items: center;
+  justify-content: stretch;
+  flex: 1 1 auto;
+}
+.progress-teams-list .progress-team-stat-col { min-width: 0; width: 100%; }
+.progress-teams-list .progress-team-pipeline-col { min-width: 0; align-items: flex-end; text-align: right; padding-left: 12px; }
+.progress-teams-list .progress-team-pipeline-col .progress-team-stat-label { align-self: flex-end; }
+
+/* Form thành viên: thẻ KPI gộp cơ cấu hồ sơ (số + % + thanh tỷ trọng) */
+.kpi-card-v2-pct { font-style: normal; font-size: 11px; font-weight: 600; color: #64748b; margin-left: 6px; }
+.kpi-card-v2-bar { display: block; height: 4px; border-radius: 999px; background: #f1f5f9; margin-top: 6px; overflow: hidden; }
+.kpi-card-v2-bar > i { display: block; height: 100%; border-radius: 999px; animation: pbar-grow .8s cubic-bezier(.22, 1, .36, 1) both; }
+.pteam-legend-anim:nth-child(5) { animation-delay: .75s; }
+
+.urgent-pager { display: flex; align-items: center; justify-content: center; gap: 12px; margin-top: 12px; font-size: 12px; color: #64748b; }
+.urgent-pager button { width: 28px; height: 28px; border: 1px solid #e2e8f0; background: #fff; border-radius: 8px; cursor: pointer; font-size: 16px; line-height: 1; color: #334155; }
+.urgent-pager button:hover:not(:disabled) { border-color: #94a3b8; background: #f8fafc; }
+.urgent-pager button:disabled { opacity: .4; cursor: default; }
+
+/* Hồ sơ cần chú ý (form thành viên): kích thước cố định, không nhảy khi lật trang */
+.progress-member-chart-card .progress-urgent-list { min-height: 232px; align-content: flex-start; }
+.progress-member-chart-card .progress-urgent-item { height: 52px; box-sizing: border-box; flex: none; }
+.progress-member-chart-card .urgent-status-tag { flex: none; min-width: 108px; text-align: center; white-space: nowrap; }
+.progress-member-chart-card .urgent-item-code { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.progress-member-chart-card .urgent-item-right { flex: none; }
+
+/* Cơ hội: nhãn quá/sắp follow-up nằm GIỮA thời gian follow-up và giá tiền */
+.progress-record-card-flag { flex: 0 0 112px; display: flex; justify-content: center; align-items: center; }
+
+.progress-lead-form-actions { display: flex; justify-content: flex-end; margin-bottom: 10px; }
+.progress-view-in-leads-btn { display: inline-flex; align-items: center; gap: 6px; padding: 7px 14px; border: 1px solid #dbe3ee; border-radius: 8px; background: #fff; color: #334155; font-size: 12.5px; font-weight: 700; cursor: pointer; }
+.progress-view-in-leads-btn:hover { background: #f8fafc; border-color: #94a3b8; }
+
+/* Báo giá & SLA: 3 widget nằm ngang dưới các thẻ KPI */
+.progress-quotes-widgets-row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; align-items: stretch; }
+.progress-quotes-widgets-row > .progress-sidebar-widget { margin: 0; min-width: 0; }
+@media (max-width: 900px) { .progress-quotes-widgets-row { grid-template-columns: 1fr; } }
+
+/* =====================================================================
+ * RESPONSIVE MOBILE cho toàn bộ Quản lý tiến độ (tablet ≤900px, điện thoại ≤640px / ≤480px)
+ * - Bảng: giữ nguyên dạng bảng, cuộn ngang trong khung (không còn kiểu thẻ mất tiêu đề cột).
+ * - Lưới/hàng nhiều cột: thu về 2 hoặc 1 cột. Drawer: full màn hình.
+ * ===================================================================== */
+@media (max-width: 900px) {
+  .progress-page, .progress-drawer, .progress-drawer-body { max-width: 100vw; }
+  .progress-page { overflow-x: hidden; }
+
+  /* Khung bảng cuộn ngang mượt */
+  .qc-table-wrap.progress-table-wrap,
+  .progress-table-wrap,
+  .progress-team-table-wrap,
+  .progress-member-table-wrap,
+  .progress-members-table-wrap,
+  .progress-quotes-table-wrap {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    max-width: 100%;
+  }
+
+  /* Bỏ kiểu "thẻ không nhãn" của quote-center.css cho các bảng của tiến độ */
+  .progress-page .qc-team-table,
+  .progress-drawer .qc-team-table { display: table; width: 100%; min-width: 640px; }
+  .progress-page .qc-team-table thead,
+  .progress-drawer .qc-team-table thead { display: table-header-group; }
+  .progress-page .qc-team-table tbody,
+  .progress-drawer .qc-team-table tbody { display: table-row-group; }
+  .progress-page .qc-team-table tr,
+  .progress-drawer .qc-team-table tr { display: table-row; border: 0; padding: 0; margin: 0; width: auto; }
+  .progress-page .qc-team-table th,
+  .progress-page .qc-team-table td,
+  .progress-drawer .qc-team-table th,
+  .progress-drawer .qc-team-table td {
+    display: table-cell;
+    width: auto;
+    text-align: left;
+    padding: 9px 10px !important;
+    border-bottom: 1px solid #f1f5f9 !important;
+    white-space: nowrap;
+  }
+  .progress-page .qc-team-table .num-col,
+  .progress-drawer .qc-team-table .num-col { text-align: right; }
+  .progress-page .qc-team-table td[data-label]::before,
+  .progress-drawer .qc-team-table td[data-label]::before { content: none; }
+
+  .progress-team-table, .progress-members-table, .progress-quotes-table, .progress-overdue-table { min-width: 640px; }
+  .progress-member-quotes-table { table-layout: auto !important; min-width: 700px; width: 100% !important; }
+  .progress-team-deals-table { table-layout: auto !important; min-width: 760px; width: 100% !important; }
+  .progress-quotes-table { min-width: 1040px; }
+  .pteam-quotes-table { table-layout: auto !important; min-width: 640px; }
+
+  /* Hàng 2 cột ở tổng quan → 1 cột */
+  .progress-sub-middle-row,
+  .progress-tables-row,
+  .progress-middle-row { grid-template-columns: 1fr; }
+  .progress-card-timeseries-full { padding: 14px 12px; }
+
+  /* Danh sách team: lưới số liệu 3 cột */
+  .progress-teams-list .progress-team-card-row { padding: 14px; gap: 12px; }
+  .progress-teams-list .progress-team-card-left { flex: 1 1 auto; }
+  .progress-teams-list .progress-team-card-stats {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    row-gap: 12px;
+    padding-top: 12px;
+    border-top: 1px solid #f1f5f9;
+  }
+  .progress-teams-list .progress-team-pipeline-col { grid-column: 1 / -1; align-items: flex-start; text-align: left; padding-left: 0; }
+  .progress-teams-list .progress-team-pipeline-col .progress-team-stat-label { align-self: flex-start; }
+
+  /* Báo giá & SLA */
+  .progress-quotes-main-layout { flex-direction: column; }
+  .progress-quotes-kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .progress-quotes-widgets-row { grid-template-columns: 1fr; }
+  .progress-quotes-filter-toolbar, .progress-quotes-filter-row { flex-wrap: wrap; }
+
+  /* Form thành viên / team: lưới KPI & biểu đồ */
+  .progress-team-kpi-grid-9 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .progress-member-kpi-grid-8 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .progress-member-charts-row { grid-template-columns: 1fr; }
+  .progress-member-drawer-nav { padding: 0 12px; gap: 4px; }
+  .progress-team-drawer-tabs { padding: 0 12px; gap: 16px; }
+  .progress-member-filter-row { flex-wrap: wrap; }
+  .progress-member-filter-row > * { flex: 1 1 140px; min-width: 0; }
+  .progress-member-stepper-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .progress-member-stepper { min-width: 520px; }
+  .progress-member-timeline-header { flex-wrap: wrap; gap: 6px; }
+  .progress-member-sla-alert-box { flex-direction: column; align-items: stretch; gap: 10px; }
+  .progress-member-sla-alert-box .sla-alert-action-btn { align-self: flex-start; }
+  .progress-workload-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .drawer-search-toolbar { flex-wrap: wrap; gap: 8px; }
+  .drawer-search-box { flex: 1 1 100%; min-width: 0; }
+  .progress-urgent-item { gap: 8px; }
+}
+
+@media (max-width: 640px) {
+  .progress-drawer { width: 100vw !important; max-width: 100vw !important; }
+  .progress-drawer-header { padding: 12px 14px; min-height: 0; }
+  .progress-drawer-body { padding: 12px 12px 22px; }
+  .progress-team-drawer-header, .progress-member-drawer-header { padding: 12px; flex-wrap: wrap; gap: 8px; }
+  .progress-team-drawer-body { padding: 12px; }
+  .progress-card { padding: 12px; }
+  .progress-card-title { flex-wrap: wrap; gap: 6px; }
+  .progress-tabs { overflow-x: auto; white-space: nowrap; -webkit-overflow-scrolling: touch; }
+  .progress-tabs button { flex: 0 0 auto; }
+  .progress-time-filter-row { flex-direction: column; align-items: stretch; gap: 8px; }
+  .progress-time-tabs { overflow-x: auto; }
+  .progress-date-range-control { width: 100%; }
+  .progress-date-range-control input { min-width: 0; flex: 1 1 0; }
+  .progress-teams-pagination, .progress-pagination-wrap { flex-direction: column; gap: 8px; align-items: stretch; }
+  .progress-pagination-pages { justify-content: center; flex-wrap: wrap; }
+  .progress-alerts-list { gap: 6px; }
+  .progress-alert-row { flex-wrap: wrap; gap: 6px; }
+  .progress-alert-time { margin-left: auto; }
+  .progress-record-card { flex-wrap: wrap; }
+  .progress-record-card-flag { flex: 0 0 auto; }
+  .progress-key-value, .progress-key-value--compact { grid-template-columns: 1fr; }
+  .progress-compact-steps { flex-wrap: wrap; }
+  .pbar-chart { padding: 0; }
+  .pbar-plot, .pbar-xaxis, .pbar-unit { margin-left: 8px; margin-right: 10px; }
+  .progress-timeseries-header { flex-wrap: wrap; gap: 8px; }
+}
+
+@media (max-width: 480px) {
+  .progress-kpi-7-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .progress-team-kpi-grid-9, .progress-member-kpi-grid-8, .progress-workload-grid, .progress-quotes-kpi-grid { grid-template-columns: 1fr 1fr; gap: 8px; }
+  .progress-teams-list .progress-team-card-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 900px) {
+  .progress-sub-middle-row > *, .progress-tables-row > *, .progress-middle-row > *, .progress-member-charts-row > * { min-width: 0; max-width: 100%; }
+  .progress-card { min-width: 0; max-width: 100%; }
+  .progress-quotes-main-layout { align-items: stretch; }
+  .progress-quotes-left-col { width: 100%; max-width: 100%; }
+  .team-member-workload-row { flex-wrap: wrap; gap: 8px; }
+  .member-workload-left, .member-workload-center, .member-workload-right { min-width: 0; }
+  .member-workload-center { flex: 1 1 100%; order: 3; }
+  .member-workload-right { flex-wrap: wrap; justify-content: flex-start; }
+}
+
+@media (max-width: 640px) {
+  .progress-member-section-header, .progress-team-section-header { flex-direction: column; align-items: stretch; gap: 8px; }
+  .progress-member-section-header .progress-member-period-badge { align-self: flex-start; }
+  .progress-drawer .progress-member-kpi-card-v2 { min-width: 0; overflow: hidden; }
+  .progress-drawer .progress-member-kpi-card-v2 .kpi-card-v2-body { min-width: 0; }
+  .progress-drawer .kpi-card-v2-num { font-size: 17px; word-break: break-word; }
+  .progress-member-kpi-grid-8, .progress-drawer .progress-member-kpi-grid-8 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+
+  /* Hồ sơ cần chú ý: mỗi dòng 2 tầng (nhãn + tên / giá trị) để không bị cắt chữ, chiều cao vẫn cố định */
+  .progress-member-chart-card .progress-urgent-list { min-height: 312px; }
+  .progress-member-chart-card .progress-urgent-item { height: 72px; flex-wrap: wrap; align-content: center; row-gap: 2px; }
+  .progress-member-chart-card .urgent-item-left { flex: 1 1 100%; min-width: 0; }
+  .progress-member-chart-card .urgent-status-tag { min-width: 96px; }
+  .progress-member-chart-card .urgent-item-right { flex: 1 1 100%; justify-content: flex-end; }
+  .progress-time-filter, .drawer-time-filter { overflow-x: auto; max-width: 100%; }
+}
+
+@media (max-width: 640px) {
+  .drawer-pagination, .drawer-pagination-wrap { flex-wrap: wrap; gap: 8px; justify-content: center; }
+  .drawer-pagination-actions { flex-wrap: wrap; justify-content: center; min-width: 0; max-width: 100%; }
+  .drawer-pagination-select { max-width: 100%; }
+}
+
+/* ===== Mobile: thu nhỏ các box KPI (không để 1 box/hàng quá to) ===== */
+@media (max-width: 640px) {
+  /* Theo thành viên: 8 box KPI → lưới 2 cột gọn */
+  .progress-members-kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .progress-members-kpi-card { flex-direction: column-reverse; align-items: flex-start; justify-content: flex-start; gap: 4px; padding: 10px 12px; border-radius: 10px; }
+  .progress-members-kpi-left { gap: 8px; }
+  .progress-members-kpi-icon-box { width: 30px; height: 30px; border-radius: 8px; }
+  .progress-members-kpi-icon-box svg { width: 15px; height: 15px; }
+  .progress-members-kpi-num { font-size: 19px; line-height: 1.1; }
+  .progress-members-kpi-title { font-size: 11px; line-height: 1.25; text-align: left; }
+
+  /* Báo giá & SLA: 4 box KPI gọn */
+  .progress-quotes-kpi-grid { gap: 8px; }
+  .progress-quotes-kpi-card { padding: 10px 12px; gap: 4px; border-radius: 10px; }
+  .progress-quotes-kpi-icon { width: 28px; height: 28px; border-radius: 8px; }
+  .progress-quotes-kpi-icon svg { width: 14px; height: 14px; }
+  .progress-quotes-kpi-num { font-size: 20px; margin-bottom: 0; }
+  .progress-quotes-kpi-label { font-size: 11.5px; }
+  .progress-quotes-kpi-trend { font-size: 10.5px; }
+
+  /* Tổng quan: thẻ KPI + KPI trong form team/thành viên */
+  .progress-kpi-card { padding: 8px 10px; gap: 8px; }
+  .progress-kpi-icon-wrap { width: 28px; height: 28px; }
+  .progress-kpi-title { font-size: 11px; line-height: 1.2; }
+  .progress-kpi-val { font-size: 18px; }
+  .progress-team-kpi-card { padding: 8px 10px; }
+  .team-kpi-num { font-size: 18px; }
+  .team-kpi-lbl { font-size: 11px; }
+  .team-kpi-icon-box { width: 30px; height: 30px; }
+  .progress-member-kpi-card { padding: 8px 10px; }
+  .progress-member-kpi-card .kpi-num { font-size: 18px; }
+  .progress-member-kpi-grid-5 { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .progress-drawer .progress-member-kpi-card-v2 { padding: 8px 10px; gap: 8px; }
+  .progress-drawer .kpi-card-v2-icon { width: 30px; height: 30px; }
+  .progress-drawer .kpi-card-v2-lbl { font-size: 11px; }
+}
+
+/* Mobile: thanh lọc gọn - ô tìm kiếm 1 hàng, các ô chọn 2 ô/hàng, 2 nút cạnh nhau */
+@media (max-width: 520px) {
+  .progress-toolbar-controls { gap: 8px; }
+  .progress-toolbar-controls .progress-global-search { flex: 1 1 100%; }
+  .progress-toolbar-controls .progress-select { flex: 1 1 calc(50% - 4px); width: auto; min-width: 0; }
+  .progress-toolbar-controls .progress-time-filter-row { flex: 1 1 100%; }
+  .progress-toolbar-controls .progress-filter-reset-btn,
+  .progress-toolbar-controls .progress-export-btn { flex: 1 1 calc(50% - 4px); width: auto; justify-content: center; }
+}
+
+/* Mobile: thẻ bản ghi (Lead/KH/Cơ hội/Dự án/Báo giá/Hợp đồng trong form thành viên) - 2 tầng, không cắt chữ */
+@media (max-width: 640px) {
+  .progress-record-card { flex-wrap: wrap; align-items: flex-start; row-gap: 6px; padding: 10px 12px; }
+  .progress-record-card-main { flex: 1 1 calc(100% - 52px); min-width: 0; }
+  .progress-record-card-title { white-space: normal; word-break: break-word; }
+  .progress-record-card-sub { display: flex; flex-wrap: wrap; gap: 4px 8px; white-space: normal; }
+  .progress-record-card-sub .qc-badge { max-width: 100%; }
+  .progress-record-card-flag { order: 3; flex: 0 0 auto; margin-left: 44px; justify-content: flex-start; }
+  .progress-record-card-value { order: 4; margin-left: auto; align-self: center; }
+}
+
+/* ===== Mobile: header của form (breadcrumb + nút quay lại + tiêu đề) đủ cao, đứng yên khi cuộn ===== */
+@media (max-width: 640px) {
+  .progress-drawer-header {
+    min-height: 108px;
+    padding: 12px 14px;
+    flex: 0 0 auto;
+    position: sticky;
+    top: 0;
+    z-index: 6;
+    background: #ffffff;
+    align-items: flex-start;
+    overflow: visible;
+  }
+  .progress-drawer-header-row { align-items: flex-start; gap: 10px; }
+  .progress-drawer-header h2 { font-size: 18px; line-height: 1.3; margin: 2px 0 0; word-break: break-word; }
+  .progress-drawer-back { flex: 0 0 auto; }
+  .progress-drawer-breadcrumb { flex-wrap: wrap; row-gap: 2px; margin-bottom: 6px; }
+  .progress-drawer-close { flex: 0 0 auto; }
+
+  /* Đầu form team / thành viên (avatar + tên) và thanh tab cũng đứng yên */
+  .progress-team-drawer-header, .progress-member-drawer-header { position: sticky; top: 0; z-index: 6; background: #fff; flex: 0 0 auto; }
+
+  /* Danh sách team trên điện thoại: ẩn các số Thành viên/Lead/KH/Cơ hội/Dự án/Báo giá/Hợp đồng, chỉ giữ Quá SLA + Pipeline */
+  .progress-team-card-stats .progress-team-stat-col:nth-child(-n+7) { display: none; }
+  .progress-teams-list .progress-team-card-stats,
+  .progress-teams-grid .progress-team-card-stats { grid-template-columns: auto minmax(0, 1fr); column-gap: 18px; padding-top: 10px; display: grid; }
+  .progress-teams-list .progress-team-pipeline-col,
+  .progress-teams-grid .progress-team-pipeline-col { grid-column: auto; align-items: flex-end; text-align: right; padding-left: 0; }
+  .progress-teams-list .progress-team-pipeline-col .progress-team-stat-label,
+  .progress-teams-grid .progress-team-pipeline-col .progress-team-stat-label { align-self: flex-end; }
+  .progress-teams-grid { grid-template-columns: minmax(0, 1fr); }
+  .progress-team-card-row { min-width: 0; max-width: 100%; }
+}
+
+/* ===== Mobile: thẻ team - ẩn hết số liệu + Quá SLA; Pipeline ngang hàng tên; dạng box (lưới) thu nhỏ 2 cột ===== */
+@media (max-width: 640px) {
+  .progress-team-card-stats .progress-team-stat-col:not(.progress-team-pipeline-col) { display: none; }
+
+  /* Dạng danh sách: 1 hàng = icon + tên/leader (trái) | Pipeline (phải, ngang hàng tên) */
+  .progress-teams-list .progress-team-card-row { flex-direction: row; align-items: center; justify-content: space-between; gap: 10px; padding: 12px 14px; }
+  .progress-teams-list .progress-team-card-left { flex: 1 1 auto; min-width: 0; }
+  .progress-teams-list .progress-team-card-stats { display: flex; flex: 0 0 auto; padding: 0; border-top: 0; }
+  .progress-teams-list .progress-team-pipeline-col { align-items: flex-end; text-align: right; }
+  .progress-teams-list .progress-team-stat-val.pipeline-val { font-size: 13px; }
+
+  /* Dạng box (lưới): 2 box nhỏ mỗi hàng */
+  .progress-teams-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .progress-teams-grid .progress-team-card-row { flex-direction: column; align-items: flex-start; justify-content: flex-start; gap: 8px; padding: 10px; border-radius: 10px; }
+  .progress-teams-grid .progress-team-card-left { flex-direction: column; align-items: flex-start; gap: 6px; min-width: 0; width: 100%; }
+  .progress-teams-grid .progress-team-icon-box { width: 32px; height: 32px; border-radius: 8px; }
+  .progress-teams-grid .progress-team-icon-box svg { width: 16px; height: 16px; }
+  .progress-teams-grid .progress-team-name { font-size: 14px; word-break: break-word; }
+  .progress-teams-grid .progress-team-leader { font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+  .progress-teams-grid .progress-team-card-stats { display: flex; width: 100%; padding: 0; border-top: 0; }
+  .progress-teams-grid .progress-team-pipeline-col { align-items: flex-start; text-align: left; width: 100%; }
+  .progress-teams-grid .progress-team-stat-val.pipeline-val { font-size: 12.5px; }
+  .progress-teams-grid .progress-team-pipeline-col .progress-team-stat-label { display: none; }
+}
+
+/* ===== Phần đầu của mọi form (cả desktop & mobile) đứng yên khi cuộn ===== */
+.progress-sticky-top { position: sticky; top: 0; z-index: 8; background: #ffffff; box-shadow: 0 1px 0 #e5e7eb; }
+.progress-drawer-header { position: sticky; top: 0; z-index: 8; background: #ffffff; flex: 0 0 auto; }
+@media (max-width: 640px) {
+  /* header & tabs nằm trong khối dính => bỏ sticky riêng của từng cái để khỏi chồng lên nhau */
+  .progress-sticky-top .progress-team-drawer-header,
+  .progress-sticky-top .progress-member-drawer-header { position: static; }
 }

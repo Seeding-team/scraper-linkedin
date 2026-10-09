@@ -21,8 +21,7 @@ import {
   Hourglass,
   RotateCcw,
 } from 'lucide-react';
-import { ProgressTimeSeriesChart } from './ProgressTimeSeriesChart';
-import { ProgressDonut } from './ProgressDonut';
+import { ProgressTimeSeriesChart, type ChartRange } from './ProgressTimeSeriesChart';
 import { ProgressOverdueQuotesTable } from './ProgressOverdueQuotesTable';
 import { ProgressTeamPanel } from './ProgressTeamPanel';
 import { ProgressTeamsListView, getLeaderName } from './ProgressTeamsListView';
@@ -31,8 +30,7 @@ import { ProgressQuotesSlaView } from './ProgressQuotesSlaView';
 import { ProgressMemberPanel, QuotesTable } from './ProgressMemberPanel';
 import { ProgressQuoteDrawer } from './ProgressQuoteDrawer';
 import { ProgressRightDrawer } from './ProgressRightDrawer';
-import { ProgressLeadDrawer } from './ProgressLeadDrawer';
-import { ProgressCustomerDrawer } from './ProgressCustomerDrawer';
+import { ProgressCustomerQuickView, ProgressLeadForm } from './ProgressLeadCustomerForms';
 import { ProgressDealDrawer } from './ProgressDealDrawer';
 import { ProgressProjectDrawer } from './ProgressProjectDrawer';
 import { ProgressContractDrawer } from './ProgressContractDrawer';
@@ -133,6 +131,8 @@ export function ProgressDashboardView() {
   const [quotePresaleFilter, setQuotePresaleFilter] = useState('');
   const [quoteSaleFilter, setQuoteSaleFilter] = useState('');
   const [quoteStageFilter, setQuoteStageFilter] = useState('');
+  const [chartRange, setChartRange] = useState<ChartRange>('week');
+  const [rangeKpis, setRangeKpis] = useState<Record<string, ProgressOverview['kpis']> | null>(null);
   const [drawerStack, setDrawerStack] = useState<DrawerEntry[]>([]);
 
   function openRoot(entry: DrawerEntry) {
@@ -195,6 +195,16 @@ export function ProgressDashboardView() {
     return () => {
       alive = false;
     };
+  }, []);
+
+  // 1 request lấy KPI cho cả 5 mốc thời gian -> đổi bộ lọc là tức thì, không chờ mạng
+  useEffect(() => {
+    let alive = true;
+    progressRepository
+      .getOverviewRanges()
+      .then(res => { if (alive) setRangeKpis(res); })
+      .catch(() => {});
+    return () => { alive = false; };
   }, []);
 
   useEffect(() => {
@@ -475,31 +485,18 @@ export function ProgressDashboardView() {
     };
   }, [kpis, teamFilter, memberFilter, flatMembers, allQuotes]);
 
-  const donutSegments = useMemo(
-    () => [
-      { label: 'Lead', value: dynamicKpis?.leadsInProgress.count || 0, color: '#2563eb' },
-      { label: 'Khách hàng', value: dynamicKpis?.customersBeingCared.count || 0, color: '#e11d48' },
-      { label: 'Cơ hội', value: dynamicKpis?.dealsOpen.count || 0, color: '#16a34a' },
-      { label: 'Dự án đang chạy', value: dynamicKpis?.projectsActive.count || 0, color: '#9333ea' },
-      { label: 'Báo giá', value: dynamicKpis?.quotesInProgress.count || 0, color: '#ea580c' },
-      { label: 'Báo giá quá SLA', value: dynamicKpis?.quotesOverSla.count || 0, color: '#dc2626' },
-      { label: 'Hợp đồng theo dõi', value: dynamicKpis?.contractsTracked.count || 0, color: '#8b5cf6' },
-    ],
-    [dynamicKpis]
-  );
-
-  const timeSeriesTotals = useMemo(
-    () => ({
-      lead: dynamicKpis?.leadsInProgress.count || 0,
-      customer: dynamicKpis?.customersBeingCared.count || 0,
-      deal: dynamicKpis?.dealsOpen.count || 0,
-      project: dynamicKpis?.projectsActive.count || 0,
-      quote: dynamicKpis?.quotesInProgress.count || 0,
-      quoteOverdue: dynamicKpis?.quotesOverSla.count || 0,
-      contract: dynamicKpis?.contractsTracked.count || 0,
-    }),
-    [dynamicKpis]
-  );
+  const timeSeriesTotals = useMemo(() => {
+    const k = rangeKpis?.[chartRange];
+    return {
+      lead: k?.leadsInProgress.count || 0,
+      customer: k?.customersBeingCared.count || 0,
+      deal: k?.dealsOpen.count || 0,
+      project: k?.projectsActive.count || 0,
+      quote: k?.quotesInProgress.count || 0,
+      quoteOverdue: k?.quotesOverSla.count || 0,
+      contract: k?.contractsTracked.count || 0,
+    };
+  }, [rangeKpis, chartRange]);
 
   const searchPlaceholder = useMemo(() => {
     switch (tab) {
@@ -839,16 +836,19 @@ export function ProgressDashboardView() {
 
             {/* Sơ đồ đa đường toàn chiều rộng: Trải dài thoáng đãng, không bị co hẹp */}
             <section className="progress-card progress-card-timeseries-full">
-              <ProgressTimeSeriesChart totals={timeSeriesTotals} />
+              <ProgressTimeSeriesChart totals={timeSeriesTotals} range={chartRange} onRangeChange={setChartRange} ready={rangeKpis !== null} />
             </section>
 
-            {/* Hàng 2 cột cân đối: Cơ cấu record (Donut) và Cảnh báo cần xử lý */}
+            {/* Báo giá quá SLA + Cảnh báo cần xử lý */}
             <div className="progress-sub-middle-row">
-              <section className="progress-card">
-                <CardTitle title="Cơ cấu record đang xử lý" subtitle="Tỷ lệ 7 nhóm đối tượng" />
-                <ProgressDonut segments={donutSegments} />
-              </section>
-
+              <ProgressOverdueQuotesTable
+                quotes={allQuotes || []}
+                onOpenQuote={quote => openRoot({ type: 'quote', quote, label: quote.quoteNumber || quote.quoteId })}
+                onSeeAll={() => {
+                  setQuotesSlaFilter('overdue');
+                  setTab('quotes');
+                }}
+              />
               <section className="progress-card">
                 <CardTitle
                   title="Cảnh báo cần xử lý"
@@ -880,14 +880,6 @@ export function ProgressDashboardView() {
               </section>
             </div>
 
-            <ProgressOverdueQuotesTable
-              quotes={allQuotes || []}
-              onOpenQuote={quote => openRoot({ type: 'quote', quote, label: quote.quoteNumber || quote.quoteId })}
-              onSeeAll={() => {
-                setQuotesSlaFilter('overdue');
-                setTab('quotes');
-              }}
-            />
           </>
         )
       ) : null}
@@ -1244,7 +1236,7 @@ function ManagementAlertsPanel({
   });
 
   if (!items.length) {
-    return <p className="crm-empty-log">Không có cảnh báo nào — mọi thứ đang ổn. 🎉</p>;
+    return <p className="crm-empty-log">Không có cảnh báo nào — mọi thứ đang ổn.</p>;
   }
 
   return (
@@ -1459,19 +1451,28 @@ function ProgressDrawer({
     content = <ProgressQuoteDrawer item={top.quote} />;
   } else if (top.type === 'lead') {
     eyebrow = 'Lead';
-    content = <ProgressLeadDrawer item={top.item} />;
+    // Nội dung giống form "Xác minh Lead" của trang Leads, nằm trong CÙNG drawer (có breadcrumb + nút Quay lại).
+    content = <ProgressLeadForm key={top.item.leadId} leadId={top.item.leadId} />;
   } else if (top.type === 'customer') {
     eyebrow = 'Khách hàng';
-    content = <ProgressCustomerDrawer customerId={top.customerId} />;
+    // Nội dung giống form "Xem nhanh khách hàng" của trang Khách hàng, nằm trong CÙNG drawer.
+    content = <ProgressCustomerQuickView key={top.customerId} customerId={top.customerId} onClose={onClose} />;
   } else if (top.type === 'deal') {
     eyebrow = 'Cơ hội';
     content = <ProgressDealDrawer item={top.item} onOpenCustomer={(id, name) => onOpenCustomer(id, name)} />;
   } else if (top.type === 'project') {
     eyebrow = 'Dự án';
-    content = <ProgressProjectDrawer item={top.item} onOpenCustomer={(id, name) => onOpenCustomer(id, name)} />;
+    const parentTeam = [...stack].reverse().find(e => e.type === 'team');
+    content = (
+      <ProgressProjectDrawer
+        item={top.item}
+        teamNameFallback={parentTeam?.label}
+        onOpenCustomer={(id, name) => onOpenCustomer(id, name)}
+      />
+    );
   } else if (top.type === 'contract') {
     eyebrow = 'Hợp đồng';
-    content = <ProgressContractDrawer item={top.item} />;
+    content = <ProgressContractDrawer item={top.item} teamNameFallback={[...stack].reverse().find(e => e.type === 'team')?.label} />;
   }
 
   return (
@@ -1484,6 +1485,7 @@ function ProgressDrawer({
       onBreadcrumbClick={onBreadcrumbClick}
       width={top.type === 'member' || top.type === 'team' || top.type === 'quote' ? 780 : 680}
       hideHeader={top.type === 'member' || top.type === 'team'}
+      persistent={top.type === 'team' || top.type === 'member'}
     >
       {content}
     </ProgressRightDrawer>

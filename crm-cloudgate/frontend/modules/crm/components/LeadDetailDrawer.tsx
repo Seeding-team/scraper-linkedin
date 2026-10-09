@@ -103,6 +103,8 @@ export function LeadDetailDrawer({
   parentLabel,
   onSaved,
   onEdit,
+  embedded = false,
+  readOnly = false,
 }: {
   lead: CrmLeadRow | null;
   open: boolean;
@@ -117,6 +119,10 @@ export function LeadDetailDrawer({
    * ngược lên LeadsDirectory để mở đúng LeadEditDrawer mà "Sửa nhanh" dùng,
    * nên chỉ tồn tại duy nhất 1 bản form sửa Lead trong toàn bộ ứng dụng. */
   onEdit?: (lead: CrmLeadRow) => void;
+  /** Nhúng thẳng vào 1 drawer khác (Quản lý tiến độ): không vẽ drawer/backdrop/tiêu đề/nút đóng riêng - drawer chứa lo phần đó. */
+  embedded?: boolean;
+  /** Chỉ xem: ẩn mọi nút sửa/lưu/xác nhận và khoá toàn bộ ô nhập. */
+  readOnly?: boolean;
 }) {
   const router = useRouter();
   const [saleOptions, setSaleOptions] = useState<QuoteBusinessRoleUser[]>([]);
@@ -1231,12 +1237,15 @@ export function LeadDetailDrawer({
     },
   ];
 
+  const ShellTag = (embedded ? 'div' : 'aside') as 'aside';
+
   return (
     <>
       {/* Visual-only layer: LeadsDirectory handles click-away so the lead list stays interactive. */}
-      <div className="crm-drawer-backdrop crm-lead-verify-backdrop crm-lead-verify-backdrop--passive" />
-      <aside className="crm-drawer crm-lead-detail-drawer crm-verify-drawer">
-        <header className="crm-lead-drawer-header crm-verify-header">
+      {embedded ? null : <div className="crm-drawer-backdrop crm-lead-verify-backdrop crm-lead-verify-backdrop--passive" />}
+      <ShellTag className={`crm-drawer crm-lead-detail-drawer crm-verify-drawer${embedded ? ' crm-verify-drawer--embedded' : ''}`}>
+        <header className={`crm-lead-drawer-header crm-verify-header${embedded ? ' crm-verify-header--embedded' : ''}`}>
+          {embedded ? null : (
           <div className="crm-verify-header-text">
             {onBack ? (
               <button type="button" className="crm-drawer-backlink" onClick={onBack}>← {parentLabel || 'Quay lại'} / Xác minh Lead</button>
@@ -1252,8 +1261,9 @@ export function LeadDetailDrawer({
               </span>
             </h2>
           </div>
+          )}
           <div className="crm-lead-drawer-header-actions">
-            {isConverted && canWrite ? (
+            {!readOnly && isConverted && canWrite ? (
               <button
                 type="button"
                 className="crm-secondary-button crm-button-sm"
@@ -1263,7 +1273,7 @@ export function LeadDetailDrawer({
                 {qualificationEditOpen ? 'Xem (khoá sửa)' : 'Chỉnh sửa thông tin xác minh'}
               </button>
             ) : null}
-            {onEdit ? (
+            {!readOnly && onEdit ? (
               <button
                 type="button"
                 className="crm-secondary-button crm-button-sm"
@@ -1273,13 +1283,16 @@ export function LeadDetailDrawer({
                 Sửa thông tin Lead
               </button>
             ) : null}
-            <button type="button" className="crm-drawer-close" onClick={onClose} aria-label="Đóng">
-              <X className="crm-icon" />
-            </button>
+            {embedded ? null : (
+              <button type="button" className="crm-drawer-close" onClick={onClose} aria-label="Đóng">
+                <X className="crm-icon" />
+              </button>
+            )}
           </div>
         </header>
 
         <div className="crm-drawer-body crm-lead-drawer-body crm-verify-body" ref={bodyRef}>
+          <fieldset disabled={readOnly} className="crm-verify-fieldset">
           {error ? <p className="crm-error">{error}</p> : null}
           {savedOk ? <p className="crm-verify-ok">{savedOk}</p> : null}
 
@@ -1516,9 +1529,10 @@ export function LeadDetailDrawer({
               ) : null}
             </>
           )}
+          </fieldset>
         </div>
 
-        {!isConverted && canWrite && !convertOpen ? (
+        {!readOnly && !isConverted && canWrite && !convertOpen ? (
           <footer className="crm-drawer-footer crm-verify-footer">
             {footerReason ? <p className="crm-footer-reason" data-testid="lead-footer-reason">{footerReason}</p> : null}
             <div className="crm-footer-actions">
@@ -1565,7 +1579,7 @@ export function LeadDetailDrawer({
          * nut "Lưu nháp" cua nhanh chua convert) - KHONG dung
          * submitFinalOutcome/handleConvert o day vi se tao trung Deal/
          * Customer moi hoac doi status ngoai y muon. */}
-        {isConverted && canWrite && qualificationEditOpen ? (
+        {!readOnly && isConverted && canWrite && qualificationEditOpen ? (
           <footer className="crm-drawer-footer crm-verify-footer">
             <div className="crm-footer-actions">
               <button type="button" className="crm-secondary-button" disabled={saving} onClick={() => setQualificationEditOpen(false)}>
@@ -1585,7 +1599,7 @@ export function LeadDetailDrawer({
             </div>
           </footer>
         ) : null}
-      </aside>
+      </ShellTag>
 
       <CrmTeamFormModal
         open={addTeamOpen}

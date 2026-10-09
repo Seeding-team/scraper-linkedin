@@ -10,10 +10,8 @@ import {
   Clock,
   FileCheck,
   TrendingUp,
-  ArrowRight,
 } from 'lucide-react';
 import type { ProgressQuoteItem, ProgressTeamSummary } from './progress.types';
-import { ProgressDonut } from './ProgressDonut';
 import { formatSinceDuration } from './progressLabels';
 
 // Avatar pastel color palette
@@ -241,16 +239,6 @@ export function ProgressQuotesSlaView({
     return filteredQuotes.slice(start, start + pageSize);
   }, [filteredQuotes, currentSafePage, pageSize]);
 
-  // Donut chart segments for Widget 1
-  const donutSegments = useMemo(() => {
-    return [
-      { label: 'Đúng hạn', value: kpiStats.onTime, color: '#10b981' },
-      { label: 'Sắp đến hạn', value: kpiStats.dueSoon, color: '#f59e0b' },
-      { label: 'Quá hạn', value: kpiStats.overdue, color: '#ef4444' },
-      { label: 'Chưa thiết lập', value: kpiStats.notSet, color: '#94a3b8' },
-    ];
-  }, [kpiStats]);
-
   // Widget 2: Stage counts (Horizontal Bar Chart)
   const stageStats = useMemo(() => {
     const counts: Record<string, number> = {};
@@ -291,7 +279,7 @@ export function ProgressQuotesSlaView({
     return Object.entries(counts)
       .map(([name, count]) => ({ name, count }))
       .sort((a, b) => b.count - a.count)
-      .slice(0, 5);
+      .slice(0, 3);
   }, [quotes]);
 
   const maxPresaleCount = useMemo(() => {
@@ -308,7 +296,7 @@ export function ProgressQuotesSlaView({
     return Object.entries(counts)
       .map(([name, count]) => ({ name, count }))
       .sort((a, b) => b.count - a.count)
-      .slice(0, 5);
+      .slice(0, 3);
   }, [quotes]);
 
   const maxSaleCount = useMemo(() => {
@@ -386,6 +374,96 @@ export function ProgressQuotesSlaView({
                 </div>
               </div>
             </div>
+          </div>
+
+          {/* Bước hiện tại + Top Presale + Top Sale: nằm ngay dưới 4 thẻ KPI */}
+          <div className="progress-quotes-widgets-row">
+          {/* Widget 2: Bước hiện tại (Horizontal Bar Chart) */}
+          <div className="progress-sidebar-widget">
+            <h3 className="progress-sidebar-title">Bước hiện tại</h3>
+            <div className="progress-stage-bars-list">
+              {stageStats.map(st => {
+                const pct = Math.round((st.count / maxStageCount) * 100);
+                return (
+                  <div key={st.label} className="progress-stage-bar-item">
+                    <div className="progress-stage-bar-meta">
+                      <span className="progress-stage-bar-label">{st.label}</span>
+                      <span className="progress-stage-bar-count">{st.count}</span>
+                    </div>
+                    <div className="progress-stage-bar-track">
+                      <div
+                        className="progress-stage-bar-fill"
+                        style={{
+                          width: `${pct}%`,
+                          backgroundColor: st.color,
+                        }}
+                      />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Widget 3: Top Presale */}
+          <div className="progress-sidebar-widget">
+            <div className="progress-sidebar-widget-header">
+              <h3 className="progress-sidebar-title">Top Presale</h3>
+            </div>
+            <div className="progress-top-ranking-list">
+              {topPresales.map(p => {
+                const pct = Math.round((p.count / maxPresaleCount) * 100);
+                return (
+                  <div key={p.name} className="progress-top-ranking-item">
+                    <div className="progress-ranking-left">
+                      <span className="progress-ranking-name" title={p.name}>
+                        {p.name}
+                      </span>
+                    </div>
+                    <div className="progress-ranking-right">
+                      <div className="progress-ranking-bar-track">
+                        <div
+                          className="progress-ranking-bar-fill"
+                          style={{ width: `${pct}%` }}
+                        />
+                      </div>
+                      <span className="progress-ranking-val">{p.count}</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Widget 4: Top Sale */}
+          <div className="progress-sidebar-widget">
+            <div className="progress-sidebar-widget-header">
+              <h3 className="progress-sidebar-title">Top Sale</h3>
+            </div>
+            <div className="progress-top-ranking-list">
+              {topSales.map(s => {
+                const pct = Math.round((s.count / maxSaleCount) * 100);
+                return (
+                  <div key={s.name} className="progress-top-ranking-item">
+                    <div className="progress-ranking-left">
+                      <span className="progress-ranking-name" title={s.name}>
+                        {s.name}
+                      </span>
+                    </div>
+                    <div className="progress-ranking-right">
+                      <div className="progress-ranking-bar-track">
+                        <div
+                          className="progress-ranking-bar-fill"
+                          style={{ width: `${pct}%` }}
+                        />
+                      </div>
+                      <span className="progress-ranking-val">{s.count}</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
           </div>
 
           {/* 12-Column Quotes & SLA Table */}
@@ -586,126 +664,6 @@ export function ProgressQuotesSlaView({
             </div>
           </div>
         </div>
-
-        {/* Right Column (28%): Sidebar Analytics Widgets */}
-        <aside className="progress-quotes-sidebar-col">
-          {/* Widget 1: Tình trạng báo giá (Donut Chart) */}
-          <div className="progress-sidebar-widget">
-            <h3 className="progress-sidebar-title">Tình trạng báo giá</h3>
-            <div className="progress-sidebar-donut-wrap">
-              <ProgressDonut
-                segments={donutSegments}
-                centerLabel={String(kpiStats.total)}
-                centerSubtext="Tổng số"
-              />
-            </div>
-          </div>
-
-          {/* Widget 2: Bước hiện tại (Horizontal Bar Chart) */}
-          <div className="progress-sidebar-widget">
-            <h3 className="progress-sidebar-title">Bước hiện tại</h3>
-            <div className="progress-stage-bars-list">
-              {stageStats.map(st => {
-                const pct = Math.round((st.count / maxStageCount) * 100);
-                return (
-                  <div key={st.label} className="progress-stage-bar-item">
-                    <div className="progress-stage-bar-meta">
-                      <span className="progress-stage-bar-label">{st.label}</span>
-                      <span className="progress-stage-bar-count">{st.count}</span>
-                    </div>
-                    <div className="progress-stage-bar-track">
-                      <div
-                        className="progress-stage-bar-fill"
-                        style={{
-                          width: `${pct}%`,
-                          backgroundColor: st.color,
-                        }}
-                      />
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* Widget 3: Top Presale */}
-          <div className="progress-sidebar-widget">
-            <div className="progress-sidebar-widget-header">
-              <h3 className="progress-sidebar-title">Top Presale</h3>
-              <a href="#all-presale" className="progress-sidebar-link">
-                <span>Xem tất cả</span>
-                <ArrowRight size={13} />
-              </a>
-            </div>
-            <div className="progress-top-ranking-list">
-              {topPresales.map(p => {
-                const initial = p.name.trim().slice(0, 1).toUpperCase();
-                const bg = getAvatarColor(p.name);
-                const pct = Math.round((p.count / maxPresaleCount) * 100);
-                return (
-                  <div key={p.name} className="progress-top-ranking-item">
-                    <div className="progress-ranking-left">
-                      <span className="progress-ranking-avatar" style={{ backgroundColor: bg }}>
-                        {initial}
-                      </span>
-                      <span className="progress-ranking-name" title={p.name}>
-                        {p.name}
-                      </span>
-                    </div>
-                    <div className="progress-ranking-right">
-                      <div className="progress-ranking-bar-track">
-                        <div
-                          className="progress-ranking-bar-fill"
-                          style={{ width: `${pct}%` }}
-                        />
-                      </div>
-                      <span className="progress-ranking-val">{p.count}</span>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* Widget 4: Top Sale */}
-          <div className="progress-sidebar-widget">
-            <div className="progress-sidebar-widget-header">
-              <h3 className="progress-sidebar-title">Top Sale</h3>
-              <a href="#all-sale" className="progress-sidebar-link">
-                <span>Xem tất cả</span>
-                <ArrowRight size={13} />
-              </a>
-            </div>
-            <div className="progress-top-ranking-list">
-              {topSales.map(s => {
-                const initial = s.name.trim().slice(0, 1).toUpperCase();
-                const bg = getAvatarColor(s.name);
-                const pct = Math.round((s.count / maxSaleCount) * 100);
-                return (
-                  <div key={s.name} className="progress-top-ranking-item">
-                    <div className="progress-ranking-left">
-                      <span className="progress-ranking-avatar" style={{ backgroundColor: bg }}>
-                        {initial}
-                      </span>
-                      <span className="progress-ranking-name" title={s.name}>
-                        {s.name}
-                      </span>
-                    </div>
-                    <div className="progress-ranking-right">
-                      <div className="progress-ranking-bar-track">
-                        <div
-                          className="progress-ranking-bar-fill"
-                          style={{ width: `${pct}%` }}
-                        />
-                      </div>
-                      <span className="progress-ranking-val">{s.count}</span>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        </aside>
       </div>
     </div>
   );

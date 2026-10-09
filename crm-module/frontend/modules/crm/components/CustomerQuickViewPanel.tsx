@@ -101,6 +101,8 @@ type CustomerQuickViewPanelProps = {
   customer: CrmCustomerRow | null;
   ownerName: string;
   onClose: () => void;
+  /** Nhúng trong drawer khác (Quản lý tiến độ): không có khung cố định/nút đóng riêng, drawer chứa lo tiêu đề + nút Quay lại/X. */
+  embedded?: boolean;
   onCreateOpportunity: (customer: CrmCustomerRow) => void;
   onOpenDetail: (customerId: string, tab?: 'deals' | 'projects' | 'quotes' | 'contracts' | 'activity') => void;
   onOpenQuote: (quoteId: string, customerId: string) => void;
@@ -219,6 +221,7 @@ export function CustomerQuickViewPanel({
   customer,
   ownerName,
   onClose,
+  embedded = false,
   onCreateOpportunity,
   onOpenDetail,
   onOpenQuote,
@@ -343,7 +346,7 @@ export function CustomerQuickViewPanel({
 
   return (
     <aside
-      className={`crm-customer-quickview${open && customer ? ' is-open' : ''}${editMode ? ' is-editing' : ''}`}
+      className={`crm-customer-quickview${open && customer ? ' is-open' : ''}${editMode ? ' is-editing' : ''}${embedded ? ' is-embedded' : ''}`}
       data-crm-customer-quickview="true"
       aria-hidden={!open || !customer}
       aria-label={customer ? `Xem nhanh khách hàng ${customer.customerName}` : 'Xem nhanh khách hàng'}
@@ -372,20 +375,22 @@ export function CustomerQuickViewPanel({
               )}
             </div>
             <div className="crm-customer-quickview-header-actions">
-              {editMode ? null : (
+              {editMode || embedded ? null : (
                 <button type="button" className="crm-customer-quickview-close" onClick={() => setEditMode(true)} aria-label="Chỉnh sửa" title="Chỉnh sửa">
                   <Pencil size={16} />
                 </button>
               )}
-              <button
-                type="button"
-                className="crm-customer-quickview-close"
-                onClick={editMode ? () => setEditMode(false) : onClose}
-                aria-label={editMode ? 'Về xem nhanh' : 'Đóng xem nhanh'}
-                title={editMode ? 'Về xem nhanh' : 'Đóng'}
-              >
-                <X size={20} />
-              </button>
+              {embedded && !editMode ? null : (
+                <button
+                  type="button"
+                  className="crm-customer-quickview-close"
+                  onClick={editMode ? () => setEditMode(false) : onClose}
+                  aria-label={editMode ? 'Về xem nhanh' : 'Đóng xem nhanh'}
+                  title={editMode ? 'Về xem nhanh' : 'Đóng'}
+                >
+                  <X size={20} />
+                </button>
+              )}
             </div>
           </header>
 
@@ -420,18 +425,22 @@ export function CustomerQuickViewPanel({
                 <p>Thêm lịch follow-up trong hồ sơ đầy đủ để theo dõi tại đây.</p>
               )}
               <div className="crm-customer-next-work-actions">
-                <button type="button" onClick={() => onOpenDetail(customer.id)}>
-                  <Building2 size={15} /> Không gian KH
-                </button>
+                {embedded ? null : (
+                  <button type="button" onClick={() => onOpenDetail(customer.id)}>
+                    <Building2 size={15} /> Không gian KH
+                  </button>
+                )}
                 <a href={phone ? `tel:${phone.replace(/[^\d+]/g, '')}` : undefined} aria-disabled={!phone}>
                   <Phone size={15} /> Gọi
                 </a>
                 <a href={zalo} target={zalo ? '_blank' : undefined} rel={zalo ? 'noopener noreferrer' : undefined} aria-disabled={!zalo}>
                   <MessageCircle size={15} /> Zalo
                 </a>
-                <button type="button" onClick={() => onOpenDetail(customer.id)}>
-                  <Plus size={15} /> Follow-up
-                </button>
+                {embedded ? null : (
+                  <button type="button" onClick={() => onOpenDetail(customer.id)}>
+                    <Plus size={15} /> Follow-up
+                  </button>
+                )}
               </div>
             </section>
 
@@ -445,7 +454,7 @@ export function CustomerQuickViewPanel({
             <section className="crm-customer-quickview-section">
               <div className="crm-customer-quickview-section-title">
                 <h3>Liên hệ chính</h3>
-                <button type="button" onClick={() => onOpenDetail(customer.id)}>Xem hồ sơ</button>
+                {embedded ? null : (<button type="button" onClick={() => onOpenDetail(customer.id)}>Xem hồ sơ</button>)}
               </div>
               <div className="crm-customer-contact-row">
                 <div className="crm-customer-contact-summary">
@@ -466,14 +475,14 @@ export function CustomerQuickViewPanel({
             <section className="crm-customer-quickview-section">
               <div className="crm-customer-quickview-section-title">
                 <h3>Dự án</h3>
-                <button type="button" onClick={() => onOpenDetail(customer.id, 'projects')}>Xem tất cả</button>
+                {embedded ? null : (<button type="button" onClick={() => onOpenDetail(customer.id, 'projects')}>Xem tất cả</button>)}
               </div>
               {loading ? (
                 <div className="crm-customer-quickview-loading">Đang tải dự án...</div>
               ) : projects.length ? (
                 <div className="crm-customer-related-list">
                   {projects.slice(0, 3).map(project => (
-                    <button key={project.id} type="button" onClick={() => onOpenDetail(customer.id, 'projects')}>
+                    <button key={project.id} type="button" disabled={embedded} onClick={() => onOpenDetail(customer.id, 'projects')}>
                       <span className="crm-customer-related-icon is-contract"><FolderKanban size={16} /></span>
                       <span className="crm-customer-related-main">
                         <strong>{project.name || project.project_code || 'Dự án chưa có tên'}</strong>
@@ -491,7 +500,7 @@ export function CustomerQuickViewPanel({
             <section className="crm-customer-quickview-section">
               <div className="crm-customer-quickview-section-title">
                 <h3>Cơ hội đang mở</h3>
-                <button type="button" onClick={() => onOpenDetail(customer.id, 'deals')}>Xem tất cả</button>
+                {embedded ? null : (<button type="button" onClick={() => onOpenDetail(customer.id, 'deals')}>Xem tất cả</button>)}
               </div>
               {loading ? (
                 <div className="crm-customer-quickview-loading">Đang tải cơ hội...</div>
@@ -500,7 +509,7 @@ export function CustomerQuickViewPanel({
               ) : openDeals.length ? (
                 <div className="crm-customer-opportunity-list">
                   {openDeals.slice(0, 3).map(deal => (
-                    <button key={deal.id} type="button" onClick={() => onOpenDetail(customer.id, 'deals')}>
+                    <button key={deal.id} type="button" disabled={embedded} onClick={() => onOpenDetail(customer.id, 'deals')}>
                       <span className="crm-customer-opportunity-icon"><BriefcaseBusiness size={16} /></span>
                       <span className="crm-customer-opportunity-main">
                         <strong>{deal.customer_name || deal.company_name || customer.customerName}</strong>
@@ -519,7 +528,7 @@ export function CustomerQuickViewPanel({
             <section className="crm-customer-quickview-section">
               <div className="crm-customer-quickview-section-title">
                 <h3>Báo giá cần chú ý</h3>
-                <button type="button" onClick={() => onOpenDetail(customer.id, 'quotes')}>Xem tất cả</button>
+                {embedded ? null : (<button type="button" onClick={() => onOpenDetail(customer.id, 'quotes')}>Xem tất cả</button>)}
               </div>
               {loading ? (
                 <div className="crm-customer-quickview-loading">Đang tải báo giá...</div>
@@ -545,7 +554,7 @@ export function CustomerQuickViewPanel({
             <section className="crm-customer-quickview-section">
               <div className="crm-customer-quickview-section-title">
                 <h3>Hợp đồng / doanh thu</h3>
-                <button type="button" onClick={() => onOpenDetail(customer.id, 'contracts')}>Xem tất cả</button>
+                {embedded ? null : (<button type="button" onClick={() => onOpenDetail(customer.id, 'contracts')}>Xem tất cả</button>)}
               </div>
               {loading ? (
                 <div className="crm-customer-quickview-loading">Đang tải hợp đồng...</div>
@@ -571,7 +580,7 @@ export function CustomerQuickViewPanel({
             <section className="crm-customer-quickview-section">
               <div className="crm-customer-quickview-section-title">
                 <h3>Hoạt động gần nhất</h3>
-                <button type="button" onClick={() => onOpenDetail(customer.id, 'activity')}>Xem lịch sử</button>
+                {embedded ? null : (<button type="button" onClick={() => onOpenDetail(customer.id, 'activity')}>Xem lịch sử</button>)}
               </div>
               {activityLoading ? (
                 <div className="crm-customer-quickview-loading">Đang tải hoạt động...</div>
@@ -608,7 +617,7 @@ export function CustomerQuickViewPanel({
           </div>
 
           <footer className="crm-customer-quickview-footer">
-            {customer.status !== 'not_fit' ? (
+            {customer.status !== 'not_fit' && !embedded ? (
               <button type="button" className="crm-customer-quickview-secondary" onClick={() => onCreateOpportunity(customer)}>
                 <Plus size={17} /> Cơ hội
               </button>

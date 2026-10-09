@@ -35,6 +35,7 @@ import {
   PROJECT_STATUS_TONE,
   QUOTE_PHASE_TONE,
   customerStatusLabel,
+  dealFollowUpState,
   formatSinceDuration,
 } from './progressLabels';
 import { MiniStat, DrawerPagination, DrawerTimeFilter, type TimeFilterPreset } from './ProgressTeamPanel';
@@ -71,8 +72,7 @@ const AVATAR_COLORS = [
 ];
 
 const WORKFLOW_STEPS = [
-  { key: 'request', label: 'Request' },
-  { key: 'technical', altKey: 'presale', label: 'Kỹ thuật' },
+  { key: 'presale', altKey: 'technical', label: 'Presale' },
   { key: 'sale_markup', altKey: 'pricing', label: 'Sale markup' },
   { key: 'admin_review', altKey: 'review', label: 'Admin review' },
   { key: 'ready_to_send', altKey: 'ready_to_publish', label: 'Sẵn sàng gửi' },
@@ -257,9 +257,7 @@ export function ProgressMemberPanel({
   const quotesKpis = useMemo(() => {
     const list = summaryQuotes || [];
     const total = list.length;
-    const overdue = list.filter(
-      q => q.sla.status === 'overdue' || q.sla.status === 'completed_late'
-    ).length;
+    const overdue = list.filter(q => q.sla.status === 'overdue').length;
     const onTime = list.filter(
       q => q.sla.status === 'in_progress' || q.sla.status === 'completed_on_time'
     ).length;
@@ -275,13 +273,15 @@ export function ProgressMemberPanel({
     let onTime = 0;
     let dueSoon = 0;
     let overdue = 0;
+    let lateDone = 0;
     let notSet = 0;
 
     for (const q of list) {
       const st = q.sla?.status;
       if (st === 'completed_on_time' || st === 'in_progress') onTime++;
       else if (st === 'due_soon') dueSoon++;
-      else if (st === 'overdue' || st === 'completed_late') overdue++;
+      else if (st === 'overdue') overdue++;
+      else if (st === 'completed_late') lateDone++;
       else notSet++;
     }
 
@@ -290,6 +290,8 @@ export function ProgressMemberPanel({
 
     return {
       total,
+      lateDone,
+      lateDonePct: total > 0 ? ((lateDone / safeTotal) * 100).toFixed(1) : '0.0',
       onTime,
       onTimePct: total > 0 ? ((onTime / safeTotal) * 100).toFixed(1) : '0.0',
       dueSoon,
@@ -301,11 +303,10 @@ export function ProgressMemberPanel({
     };
   }, [summaryQuotes]);
 
-  // Stage funnel breakdown for quotes (6 steps)
+  // 5 bước THẬT của báo giá (khớp processingStage backend: request+kỹ thuật = presale)
   const stageBreakdown = useMemo(() => {
     const counts = [
-      { key: 'request', label: 'Request', count: 0, color: '#94a3b8' },
-      { key: 'technical', label: 'Kỹ thuật', count: 0, color: '#6366f1' },
+      { key: 'presale', label: 'Presale', count: 0, color: '#6366f1' },
       { key: 'sale_markup', label: 'Sale markup', count: 0, color: '#f59e0b' },
       { key: 'admin_review', label: 'Admin review', count: 0, color: '#e11d48' },
       { key: 'ready_to_send', label: 'Sẵn sàng gửi', count: 0, color: '#14b8a6' },
@@ -313,13 +314,8 @@ export function ProgressMemberPanel({
     ];
 
     (summaryQuotes || []).forEach(q => {
-      const stage = (q.processingStage || '').toLowerCase();
-      if (stage.includes('sent') || stage.includes('đã gửi') || stage.includes('published')) counts[5].count++;
-      else if (stage.includes('ready') || stage.includes('sẵn sàng')) counts[4].count++;
-      else if (stage.includes('admin') || stage.includes('review')) counts[3].count++;
-      else if (stage.includes('markup') || stage.includes('sale') || stage.includes('pricing')) counts[2].count++;
-      else if (stage.includes('tech') || stage.includes('presale') || stage.includes('kỹ thuật')) counts[1].count++;
-      else counts[0].count++;
+      const c = counts.find(x => x.key === q.processingStage);
+      if (c) c.count++;
     });
 
     const maxCount = Math.max(...counts.map(c => c.count), 1);
@@ -331,8 +327,8 @@ export function ProgressMemberPanel({
     const items = [
       { key: 'leads' as SubTab, label: 'Lead', count: s?.leadCount ?? 0, icon: Magnet, color: '#06b6d4', bg: '#ecfeff' },
       { key: 'customers' as SubTab, label: 'Khách hàng', count: s?.customerCount ?? 0, icon: Building2, color: '#10b981', bg: '#ecfdf5' },
-      { key: 'deals' as SubTab, label: 'Cơ hội', count: s?.dealCount ?? 0, icon: Handshake, color: '#3b82f6', bg: '#eff6ff' },
       { key: 'projects' as SubTab, label: 'Dự án', count: s?.projectCount ?? 0, icon: Box, color: '#f59e0b', bg: '#fffbeb' },
+      { key: 'deals' as SubTab, label: 'Cơ hội', count: s?.dealCount ?? 0, icon: Handshake, color: '#3b82f6', bg: '#eff6ff' },
       { key: 'quotes' as SubTab, label: 'Báo giá', count: s?.quoteCount ?? 0, icon: FileText, color: '#8b5cf6', bg: '#f5f3ff' },
       { key: 'contracts' as SubTab, label: 'Hợp đồng', count: s?.contractCount ?? 0, icon: FileCheck, color: '#6366f1', bg: '#eef2ff' },
     ];
@@ -345,17 +341,38 @@ export function ProgressMemberPanel({
   }, [s]);
 
   // Urgent attention items (Overdue/Due soon quotes, overdue deals)
-  const urgentQuotes = useMemo(() => {
-    return (quotes || []).filter(
-      q => q.sla.status === 'overdue' || q.sla.status === 'completed_late' || q.sla.status === 'due_soon'
-    ).slice(0, 4);
-  }, [quotes]);
+  // "Hồ sơ cần chú ý gấp": CHỈ báo giá / cơ hội đang có vấn đề về hạn - KHÔNG hiện cái đúng hạn.
+  //  - Báo giá: sla.status 'overdue' (quá SLA) hoặc 'due_soon' (sắp đến hạn SLA).
+  //  - Cơ hội còn chạy (loại Out/Tạm dừng/Thắng): follow-up trước hôm nay = quá hạn; hôm nay → +2 ngày = sắp đến hạn.
+  // Thứ tự: mọi mục QUÁ HẠN lên đầu (mới nhất trước), mục SẮP ĐẾN HẠN xuống cuối (mới nhất trước).
+  type UrgentItem =
+    | { kind: 'quote'; level: 'overdue' | 'soon'; recent: number; quote: ProgressQuoteItem }
+    | { kind: 'deal'; level: 'overdue' | 'soon'; recent: number; deal: ProgressDealItem };
+  const urgentItems = useMemo<UrgentItem[]>(() => {
+    const ts = (v?: string | null) => (v ? new Date(v).getTime() || 0 : 0);
 
-  const urgentDeals = useMemo(() => {
-    return (deals || []).filter(
-      d => Boolean(d.followUpDate && new Date(d.followUpDate).getTime() < Date.now())
-    ).slice(0, 3);
-  }, [deals]);
+    const items: UrgentItem[] = [];
+    (quotes || []).forEach(quote => {
+      const st = quote.sla.status;
+      if (st !== 'overdue' && st !== 'due_soon') return;
+      items.push({
+        kind: 'quote',
+        level: st === 'overdue' ? 'overdue' : 'soon',
+        recent: ts(quote.timeInCurrentStage?.sinceAt) || ts(quote.sla.startedAt),
+        quote,
+      });
+    });
+    (deals || []).forEach(deal => {
+      const fu = dealFollowUpState(deal.dealStage, deal.followUpDate);
+      if (fu) items.push({ kind: 'deal', level: fu, recent: ts(deal.sinceAt) || ts(deal.followUpDate), deal });
+    });
+    return items.sort((a, b) => (a.level === b.level ? b.recent - a.recent : a.level === 'overdue' ? -1 : 1));
+  }, [quotes, deals]);
+  const [urgentPage, setUrgentPage] = useState(1);
+  const URGENT_PAGE_SIZE = 4;
+  const urgentTotalPages = Math.max(1, Math.ceil(urgentItems.length / URGENT_PAGE_SIZE));
+  const urgentSafePage = Math.min(urgentPage, urgentTotalPages);
+  const urgentPaged = urgentItems.slice((urgentSafePage - 1) * URGENT_PAGE_SIZE, urgentSafePage * URGENT_PAGE_SIZE);
 
   // Unique Stage options for dropdown
   const stageOptions = useMemo(() => {
@@ -374,7 +391,9 @@ export function ProgressMemberPanel({
       }
       if (quoteSlaFilter) {
         const st = q.sla.status;
-        if (quoteSlaFilter === 'overdue' && st !== 'overdue' && st !== 'completed_late') return false;
+        if (quoteSlaFilter === 'attention' && st !== 'overdue' && st !== 'due_soon') return false;
+        if (quoteSlaFilter === 'overdue' && st !== 'overdue') return false;
+        if (quoteSlaFilter === 'late_done' && st !== 'completed_late') return false;
         if (quoteSlaFilter === 'on_time' && st !== 'in_progress' && st !== 'completed_on_time') return false;
         if (quoteSlaFilter === 'due_soon' && st !== 'due_soon') return false;
         if (quoteSlaFilter === 'not_set' && st !== 'not_set') return false;
@@ -397,17 +416,17 @@ export function ProgressMemberPanel({
   // Stepper Calculation for selectedQuote
   const stepperData = useMemo(() => {
     if (!selectedQuote) return null;
-    const currentPhase = selectedQuote.processingStage || 'request';
+    const currentPhase = selectedQuote.processingStage || 'presale';
 
     let currentIndex = WORKFLOW_STEPS.findIndex(
       step => step.key === currentPhase || (step as any).altKey === currentPhase
     );
     if (currentIndex < 0) {
-      if (currentPhase.includes('review')) currentIndex = 3;
-      else if (currentPhase.includes('markup') || currentPhase.includes('pricing')) currentIndex = 2;
-      else if (currentPhase.includes('ready')) currentIndex = 4;
-      else if (currentPhase.includes('sent')) currentIndex = 5;
-      else currentIndex = 1;
+      if (currentPhase.includes('review')) currentIndex = 2;
+      else if (currentPhase.includes('markup') || currentPhase.includes('pricing')) currentIndex = 1;
+      else if (currentPhase.includes('ready')) currentIndex = 3;
+      else if (currentPhase.includes('sent')) currentIndex = 4;
+      else currentIndex = 0;
     }
 
     const logs = (selectedQuote.quoteId && activityLogs[selectedQuote.quoteId]) || [];
@@ -507,6 +526,8 @@ export function ProgressMemberPanel({
 
   return (
     <div className="progress-member-drawer-wrap">
+      {/* Header + tabs: dính trên cùng, đứng yên khi cuộn nội dung */}
+      <div className="progress-sticky-top">
       {/* ── Top Header Bar ────────────────────────────────────────── */}
       <header className="progress-member-drawer-header">
         <div className="progress-member-drawer-header-left">
@@ -561,17 +582,6 @@ export function ProgressMemberPanel({
         </div>
 
         <div className="progress-member-drawer-header-right">
-          <a
-            href="/all-platform/crm"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="progress-member-crm-link-btn"
-            title="Mở trong CRM"
-          >
-            <span>Xem trong CRM</span>
-            <ExternalLink size={13} />
-          </a>
-
           {onClose ? (
             <button
               type="button"
@@ -592,8 +602,8 @@ export function ProgressMemberPanel({
           ['summary', 'Tổng quan'],
           ['leads', `Lead${leads ? ` (${leads.length})` : ''}`],
           ['customers', `Khách hàng${customers ? ` (${customers.length})` : ''}`],
-          ['deals', `Cơ hội${deals ? ` (${deals.length})` : ''}`],
           ['projects', `Dự án${projects ? ` (${projects.length})` : ''}`],
+          ['deals', `Cơ hội${deals ? ` (${deals.length})` : ''}`],
           ['quotes', `Báo giá${quotes ? ` (${quotes.length})` : ''}`],
           ['contracts', `Hợp đồng${contracts ? ` (${contracts.length})` : ''}`],
         ] as Array<[SubTab, string]>).map(([key, label]) => (
@@ -607,6 +617,7 @@ export function ProgressMemberPanel({
           </button>
         ))}
       </nav>
+      </div>
 
       {/* ── Tab Content ───────────────────────────────────────────── */}
       <div className="progress-member-drawer-body">
@@ -701,7 +712,9 @@ export function ProgressMemberPanel({
                   <option value="">Tất cả trạng thái SLA</option>
                   <option value="overdue">Quá SLA</option>
                   <option value="on_time">Đúng hạn</option>
+                  <option value="attention">Quá hạn &amp; sắp đến hạn</option>
                   <option value="due_soon">Sắp đến hạn</option>
+                  <option value="late_done">Hoàn thành trễ</option>
                   <option value="not_set">Chưa thiết lập</option>
                 </select>
               </div>
@@ -732,9 +745,8 @@ export function ProgressMemberPanel({
                       pagedQuotes.map(quote => {
                         const isSelected = selectedQuote?.quoteId === quote.quoteId;
                         const stStyle = getStageStyle(quote.processingStageLabel);
-                        const isOverdue =
-                          quote.sla.status === 'overdue' ||
-                          quote.sla.status === 'completed_late';
+                        const isOverdue = quote.sla.status === 'overdue';
+                        const isLateDone = quote.sla.status === 'completed_late';
                         const isDueSoon = quote.sla.status === 'due_soon';
                         const isNotSet = quote.sla.status === 'not_set';
 
@@ -773,7 +785,7 @@ export function ProgressMemberPanel({
                                 className={`quote-sla-pill ${
                                   isOverdue
                                     ? 'sla-badge-danger'
-                                    : isDueSoon
+                                    : isDueSoon || isLateDone
                                       ? 'sla-badge-warning'
                                       : isNotSet
                                         ? 'sla-badge-neutral'
@@ -784,9 +796,11 @@ export function ProgressMemberPanel({
                                   ? 'Quá SLA'
                                   : isDueSoon
                                     ? 'Sắp đến hạn'
-                                    : isNotSet
-                                      ? 'Chưa thiết lập'
-                                      : 'Đúng hạn'}
+                                    : isLateDone
+                                      ? 'Xong trễ'
+                                      : isNotSet
+                                        ? 'Chưa thiết lập'
+                                        : 'Đúng hạn'}
                               </span>
                             </td>
                             <td style={{ textAlign: 'right' }} className="quote-val-cell">
@@ -944,11 +958,9 @@ export function ProgressMemberPanel({
 
                     <a
                       href={`/all-platform/quotes/${selectedQuote.quoteId}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
                       className="sla-alert-action-btn"
                     >
-                      <span>Mở báo giá đầy đủ</span>
+                      <span>Mở báo giá</span>
                       <ExternalLink size={13} />
                     </a>
                   </div>
@@ -958,6 +970,7 @@ export function ProgressMemberPanel({
           </div>
         ) : tab === 'summary' ? (
           <div className="progress-member-summary-content">
+            {/* 1. Tổng quan hiệu suất: KPI + cơ cấu hồ sơ (đã gộp) */}
             {/* 1. Lưới 8 Thẻ KPI Hiện Đại */}
             <div className="progress-member-section">
               <div className="progress-member-section-header">
@@ -973,7 +986,7 @@ export function ProgressMemberPanel({
               </div>
 
               <div className="progress-member-kpi-grid-8">
-                {/* 1. Pipeline Value */}
+                {/* Giá trị pipeline */}
                 <div className="progress-member-kpi-card-v2 kpi-tone-purple">
                   <div className="kpi-card-v2-icon">
                     <Wallet size={18} />
@@ -984,22 +997,40 @@ export function ProgressMemberPanel({
                   </div>
                 </div>
 
-                {/* 2. Báo giá */}
-                <div
-                  className="progress-member-kpi-card-v2 kpi-tone-yellow is-clickable"
-                  onClick={() => setTab('quotes')}
-                  title="Xem danh sách báo giá"
-                >
-                  <div className="kpi-card-v2-icon">
-                    <FileText size={18} />
-                  </div>
-                  <div className="kpi-card-v2-body">
-                    <span className="kpi-card-v2-num">{s?.quoteCount ?? quotesKpis.total}</span>
-                    <span className="kpi-card-v2-lbl">Báo giá</span>
-                  </div>
-                </div>
+                {/* 6 loại hồ sơ: số lượng + tỷ trọng trong tổng khối lượng (đã gộp từ "Cơ cấu hồ sơ") */}
+                {workloadBreakdown.map((item, i) => {
+                  const ItemIcon = item.icon;
+                  return (
+                    <div
+                      key={item.key}
+                      className="progress-member-kpi-card-v2 is-clickable"
+                      onClick={() => setTab(item.key)}
+                      title={`Xem danh sách ${item.label} (${item.percentage}% khối lượng)`}
+                    >
+                      <div className="kpi-card-v2-icon" style={{ backgroundColor: item.bg, color: item.color }}>
+                        <ItemIcon size={18} />
+                      </div>
+                      <div className="kpi-card-v2-body">
+                        <span className="kpi-card-v2-num">
+                          {item.count}
+                          <em className="kpi-card-v2-pct">{item.percentage}%</em>
+                        </span>
+                        <span className="kpi-card-v2-lbl">{item.label}</span>
+                        <span className="kpi-card-v2-bar">
+                          <i
+                            style={{
+                              width: `${Math.max(item.count > 0 ? 6 : 0, item.percentage)}%`,
+                              backgroundColor: item.color,
+                              animationDelay: `${i * 80}ms`,
+                            }}
+                          />
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
 
-                {/* 3. Quá hạn SLA */}
+                {/* Quá SLA */}
                 <div
                   className={`progress-member-kpi-card-v2 kpi-tone-red ${
                     ((s?.quotesOverSlaCount ?? quotesKpis.overdue) || 0) > 0 ? 'is-alert-danger' : ''
@@ -1015,78 +1046,7 @@ export function ProgressMemberPanel({
                   </div>
                   <div className="kpi-card-v2-body">
                     <span className="kpi-card-v2-num">{(s?.quotesOverSlaCount ?? quotesKpis.overdue) || 0}</span>
-                    <span className="kpi-card-v2-lbl">Quá SLA</span>
-                  </div>
-                </div>
-
-                {/* 4. Đúng hạn SLA */}
-                <div className="progress-member-kpi-card-v2 kpi-tone-green">
-                  <div className="kpi-card-v2-icon">
-                    <CheckCircle2 size={18} />
-                  </div>
-                  <div className="kpi-card-v2-body">
-                    <span className="kpi-card-v2-num">{quotesKpis.onTime}</span>
-                    <span className="kpi-card-v2-lbl">Đúng hạn SLA</span>
-                  </div>
-                </div>
-
-                {/* 5. Khách hàng */}
-                <div
-                  className="progress-member-kpi-card-v2 kpi-tone-emerald is-clickable"
-                  onClick={() => setTab('customers')}
-                  title="Xem danh sách khách hàng"
-                >
-                  <div className="kpi-card-v2-icon">
-                    <Building2 size={18} />
-                  </div>
-                  <div className="kpi-card-v2-body">
-                    <span className="kpi-card-v2-num">{s?.customerCount ?? 0}</span>
-                    <span className="kpi-card-v2-lbl">Khách hàng</span>
-                  </div>
-                </div>
-
-                {/* 6. Cơ hội */}
-                <div
-                  className="progress-member-kpi-card-v2 kpi-tone-blue is-clickable"
-                  onClick={() => setTab('deals')}
-                  title="Xem danh sách cơ hội"
-                >
-                  <div className="kpi-card-v2-icon">
-                    <Handshake size={18} />
-                  </div>
-                  <div className="kpi-card-v2-body">
-                    <span className="kpi-card-v2-num">{s?.dealCount ?? 0}</span>
-                    <span className="kpi-card-v2-lbl">Cơ hội (Deals)</span>
-                  </div>
-                </div>
-
-                {/* 7. Dự án */}
-                <div
-                  className="progress-member-kpi-card-v2 kpi-tone-amber is-clickable"
-                  onClick={() => setTab('projects')}
-                  title="Xem danh sách dự án"
-                >
-                  <div className="kpi-card-v2-icon">
-                    <Box size={18} />
-                  </div>
-                  <div className="kpi-card-v2-body">
-                    <span className="kpi-card-v2-num">{s?.projectCount ?? 0}</span>
-                    <span className="kpi-card-v2-lbl">Dự án</span>
-                  </div>
-                </div>
-
-                {/* 8. Hợp đồng */}
-                <div
-                  className="progress-member-kpi-card-v2 kpi-tone-indigo is-clickable"
-                  onClick={() => setTab('contracts')}
-                  title="Xem danh sách hợp đồng"
-                >
-                  <div className="kpi-card-v2-icon">
-                    <FileCheck size={18} />
-                  </div>
-                  <div className="kpi-card-v2-body">
-                    <span className="kpi-card-v2-num">{s?.contractCount ?? 0}</span>
-                    <span className="kpi-card-v2-lbl">Hợp đồng</span>
+                    <span className="kpi-card-v2-lbl">Báo giá quá SLA</span>
                   </div>
                 </div>
               </div>
@@ -1117,6 +1077,7 @@ export function ProgressMemberPanel({
                         { label: 'Đúng hạn', count: memberSlaStats.onTime, color: '#10b981' },
                         { label: 'Sắp đến hạn', count: memberSlaStats.dueSoon, color: '#f59e0b' },
                         { label: 'Quá hạn', count: memberSlaStats.overdue, color: '#ef4444' },
+                        { label: 'Hoàn thành trễ', count: memberSlaStats.lateDone, color: '#fb923c' },
                         { label: 'Chưa thiết lập', count: memberSlaStats.notSet, color: '#94a3b8' },
                       ];
 
@@ -1131,7 +1092,7 @@ export function ProgressMemberPanel({
 
                       return (
                         <div className="progress-team-donut-wrapper">
-                          <svg width={dSize} height={dSize} viewBox={`0 0 ${dSize} ${dSize}`}>
+                          <svg key={`${memberSlaStats.total}-${memberSlaStats.onTime}-${memberSlaStats.overdue}-${memberSlaStats.dueSoon}`} width={dSize} height={dSize} viewBox={`0 0 ${dSize} ${dSize}`}>
                             {totalSla === 0 ? (
                               <circle
                                 cx={dSize / 2}
@@ -1153,6 +1114,13 @@ export function ProgressMemberPanel({
                                     fill="none"
                                     stroke={sl.color}
                                     strokeWidth={dStroke}
+                                    className="pteam-donut-slice"
+                                    style={{
+                                      ['--len' as string]: sl.length,
+                                      ['--rest' as string]: dCirc - sl.length,
+                                      ['--circ' as string]: dCirc,
+                                      animationDelay: `${(sl.offset / dCirc) * 0.6}s`,
+                                    }}
                                     strokeDasharray={`${sl.length} ${dCirc - sl.length}`}
                                     strokeDashoffset={-sl.offset}
                                     transform={`rotate(-90 ${dSize / 2} ${dSize / 2})`}
@@ -1173,22 +1141,27 @@ export function ProgressMemberPanel({
                   </div>
 
                   <div className="donut-legend-vertical">
-                    <div className="donut-legend-item">
+                    <div className="donut-legend-item pteam-legend-anim">
                       <span className="legend-dot bg-emerald" />
                       <span className="legend-label">Đúng hạn</span>
                       <span className="legend-val">{memberSlaStats.onTimePct}% ({memberSlaStats.onTime})</span>
                     </div>
-                    <div className="donut-legend-item">
+                    <div className="donut-legend-item pteam-legend-anim">
                       <span className="legend-dot bg-amber" />
                       <span className="legend-label">Sắp đến hạn</span>
                       <span className="legend-val">{memberSlaStats.dueSoonPct}% ({memberSlaStats.dueSoon})</span>
                     </div>
-                    <div className="donut-legend-item">
+                    <div className="donut-legend-item pteam-legend-anim">
                       <span className="legend-dot bg-danger" />
                       <span className="legend-label">Quá hạn</span>
                       <span className="legend-val">{memberSlaStats.overduePct}% ({memberSlaStats.overdue})</span>
                     </div>
-                    <div className="donut-legend-item">
+                    <div className="donut-legend-item pteam-legend-anim">
+                      <span className="legend-dot" style={{ backgroundColor: '#fb923c' }} />
+                      <span className="legend-label">Hoàn thành trễ</span>
+                      <span className="legend-val">{memberSlaStats.lateDonePct}% ({memberSlaStats.lateDone})</span>
+                    </div>
+                    <div className="donut-legend-item pteam-legend-anim">
                       <span className="legend-dot bg-slate" />
                       <span className="legend-label">Chưa thiết lập</span>
                       <span className="legend-val">{memberSlaStats.notSetPct}% ({memberSlaStats.notSet})</span>
@@ -1197,173 +1170,138 @@ export function ProgressMemberPanel({
                 </div>
               </div>
 
-              {/* Cột 2: Biểu Đồ 6 Bước Quy Trình Báo Giá (Stage Funnel) */}
-              <div className="progress-member-chart-card">
-                <div className="progress-member-chart-header">
-                  <div className="chart-header-left">
-                    <BarChart2 size={16} className="chart-header-icon" />
-                    <h4>Quy trình xử lý báo giá (6 bước)</h4>
+              {urgentItems.length > 0 ? (
+                <div className="progress-member-chart-card">
+                  <div className="progress-member-section-header">
+                    <div className="section-title-with-badge">
+                      <h3 className="progress-member-section-title">Hồ sơ cần chú ý gấp</h3>
+                      <span className="urgent-badge-pill">{urgentItems.length} việc</span>
+                    </div>
                   </div>
-                  <button
-                    type="button"
-                    className="chart-link-btn"
-                    onClick={() => setTab('quotes')}
-                  >
-                    Xem chi tiết →
-                  </button>
-                </div>
 
-                <div className="progress-funnel-vertical-list">
-                  {stageBreakdown.counts.map(st => {
-                    const pct = Math.round((st.count / stageBreakdown.maxCount) * 100);
-                    return (
-                      <div
-                        key={st.key}
-                        className="progress-funnel-row"
-                        onClick={() => {
-                          setQuoteStageFilter(st.label);
-                          setTab('quotes');
-                        }}
-                        title={`Lọc báo giá ở bước ${st.label}`}
-                      >
-                        <div className="funnel-label-col">
-                          <span className="funnel-dot" style={{ backgroundColor: st.color }} />
-                          <span className="funnel-name">{st.label}</span>
-                        </div>
-                        <div className="funnel-bar-track">
+                  <div className="progress-urgent-list">
+                    {urgentPaged.map(item => {
+                      if (item.kind === 'quote') {
+                        const quote = item.quote;
+                        const isOverdue = item.level === 'overdue';
+                        return (
                           <div
-                            className="funnel-bar-fill"
-                            style={{
-                              width: `${Math.max(st.count > 0 ? 8 : 0, pct)}%`,
-                              backgroundColor: st.color,
+                            key={`q-${quote.quoteId}`}
+                            className="progress-urgent-item"
+                            onClick={() => {
+                              setSelectedQuoteId(quote.quoteId);
+                              setTab('quotes');
                             }}
-                          />
+                          >
+                            <div className="urgent-item-left">
+                              <span className={`urgent-status-tag ${isOverdue ? 'is-danger' : 'is-warning'}`}>
+                                {isOverdue ? 'Quá SLA' : 'Sắp hết SLA'}
+                              </span>
+                              <div className="urgent-item-details">
+                                <span className="urgent-item-code">#{quote.quoteNumber || quote.quoteId.slice(0, 8)}</span>
+                                <span className="urgent-item-sub">
+                                  {quote.customerName || 'Khách hàng'}
+                                </span>
+                              </div>
+                            </div>
+                            <div className="urgent-item-right">
+                              <span className="urgent-item-val">{formatVND(quote.totalAmountVnd)}</span>
+                              <ChevronRight size={15} className="urgent-item-arrow" />
+                            </div>
+                          </div>
+                        );
+                      }
+                      const deal = item.deal;
+                      return (
+                        <div key={`d-${deal.dealId}`} className="progress-urgent-item" onClick={() => onOpenDeal(deal)}>
+                          <div className="urgent-item-left">
+                            <span className={`urgent-status-tag ${item.level === 'overdue' ? 'is-danger' : 'is-warning'}`}>
+                              {item.level === 'overdue' ? 'Quá follow-up' : 'Sắp follow-up'}
+                            </span>
+                            <div className="urgent-item-details">
+                              <span className="urgent-item-code">{deal.customerName}</span>
+                              <span className="urgent-item-sub">
+                                {deal.companyName || 'Cơ hội'}
+                              </span>
+                            </div>
+                          </div>
+                          <div className="urgent-item-right">
+                            <span className="urgent-item-val">{formatVND(deal.estimatedBudgetVnd)}</span>
+                            <ChevronRight size={15} className="urgent-item-arrow" />
+                          </div>
                         </div>
-                        <span className="funnel-count-badge">{st.count}</span>
-                      </div>
-                    );
-                  })}
+                      );
+                    })}
+                  </div>
+
+                  {urgentTotalPages > 1 ? (
+                    <div className="urgent-pager">
+                      <button type="button" disabled={urgentSafePage <= 1} onClick={() => setUrgentPage(urgentSafePage - 1)} aria-label="Trang trước">‹</button>
+                      <span>Trang {urgentSafePage}/{urgentTotalPages}</span>
+                      <button type="button" disabled={urgentSafePage >= urgentTotalPages} onClick={() => setUrgentPage(urgentSafePage + 1)} aria-label="Trang sau">›</button>
+                    </div>
+                  ) : null}
                 </div>
-              </div>
+              ) : (
+                <div className="progress-member-chart-card">
+                  <div className="progress-member-chart-header">
+                    <div className="chart-header-left">
+                      <h4>Hồ sơ cần chú ý gấp</h4>
+                    </div>
+                  </div>
+                  <p className="crm-empty-log">Không có báo giá hoặc cơ hội nào quá hạn / sắp đến hạn.</p>
+                </div>
+              )}
             </div>
 
-            {/* 3. Biểu đồ Thanh Cơ Cấu Khối Lượng Hồ Sơ CRM (Workload Portfolio) */}
-            <div className="progress-member-section">
-              <div className="progress-member-section-header">
-                <h3 className="progress-member-section-title">Cơ cấu hồ sơ &amp; Khối lượng công việc</h3>
-                <span className="progress-member-period-badge">
-                  Tổng {workloadBreakdown.reduce((sum, w) => sum + w.count, 0)} hồ sơ
-                </span>
+            {/* Quy trình xử lý báo giá - hàng riêng bên dưới */}
+            <div className="progress-member-chart-card">
+              <div className="progress-member-chart-header">
+                <div className="chart-header-left">
+                  <BarChart2 size={16} className="chart-header-icon" />
+                  <h4>Quy trình xử lý báo giá</h4>
+                </div>
+                <button
+                  type="button"
+                  className="chart-link-btn"
+                  onClick={() => setTab('quotes')}
+                >
+                  Xem chi tiết →
+                </button>
               </div>
 
-              <div className="progress-workload-grid">
-                {workloadBreakdown.map(item => {
-                  const ItemIcon = item.icon;
+              <div className="progress-funnel-vertical-list">
+                {stageBreakdown.counts.map(st => {
+                  const pct = Math.round((st.count / stageBreakdown.maxCount) * 100);
                   return (
                     <div
-                      key={item.key}
-                      className="progress-workload-card is-clickable"
-                      onClick={() => setTab(item.key)}
-                      title={`Xem danh sách ${item.label}`}
+                      key={st.key}
+                      className="progress-funnel-row"
+                      onClick={() => {
+                        setQuoteStageFilter(st.label);
+                        setTab('quotes');
+                      }}
+                      title={`Lọc báo giá ở bước ${st.label}`}
                     >
-                      <div className="workload-card-top">
-                        <div
-                          className="workload-card-icon"
-                          style={{ backgroundColor: item.bg, color: item.color }}
-                        >
-                          <ItemIcon size={16} />
-                        </div>
-                        <div className="workload-card-info">
-                          <span className="workload-card-count">{item.count}</span>
-                          <span className="workload-card-label">{item.label}</span>
-                        </div>
-                        <span className="workload-card-pct">{item.percentage}%</span>
+                      <div className="funnel-label-col">
+                        <span className="funnel-dot" style={{ backgroundColor: st.color }} />
+                        <span className="funnel-name">{st.label}</span>
                       </div>
-                      <div className="workload-bar-track">
+                      <div className="funnel-bar-track">
                         <div
-                          className="workload-bar-fill"
+                          className="funnel-bar-fill"
                           style={{
-                            width: `${Math.max(item.count > 0 ? 6 : 0, item.percentage)}%`,
-                            backgroundColor: item.color,
+                            width: `${Math.max(st.count > 0 ? 8 : 0, pct)}%`,
+                            backgroundColor: st.color,
                           }}
                         />
                       </div>
+                      <span className="funnel-count-badge">{st.count}</span>
                     </div>
                   );
                 })}
               </div>
             </div>
-
-            {/* 4. Danh Sách Việc Khẩn Cấp Cần Xử Lý (Urgent Action Items) */}
-            {(urgentQuotes.length > 0 || urgentDeals.length > 0) && (
-              <div className="progress-member-section">
-                <div className="progress-member-section-header">
-                  <div className="section-title-with-badge">
-                    <h3 className="progress-member-section-title">Hồ sơ cần chú ý gấp</h3>
-                    <span className="urgent-badge-pill">
-                      {urgentQuotes.length + urgentDeals.length} việc
-                    </span>
-                  </div>
-                </div>
-
-                <div className="progress-urgent-list">
-                  {urgentQuotes.map(quote => {
-                    const isOverdue =
-                      quote.sla.status === 'overdue' || quote.sla.status === 'completed_late';
-                    return (
-                      <div
-                        key={quote.quoteId}
-                        className="progress-urgent-item"
-                        onClick={() => {
-                          setSelectedQuoteId(quote.quoteId);
-                          setTab('quotes');
-                        }}
-                      >
-                        <div className="urgent-item-left">
-                          <span className={`urgent-status-tag ${isOverdue ? 'is-danger' : 'is-warning'}`}>
-                            {isOverdue ? 'Quá SLA' : 'Sắp đến hạn'}
-                          </span>
-                          <div className="urgent-item-details">
-                            <span className="urgent-item-code">
-                              #{quote.quoteNumber || quote.quoteId.slice(0, 8)}
-                            </span>
-                            <span className="urgent-item-sub">
-                              {quote.customerName || 'Khách hàng'} • Bước: {quote.processingStageLabel}
-                            </span>
-                          </div>
-                        </div>
-                        <div className="urgent-item-right">
-                          <span className="urgent-item-val">{formatVND(quote.totalAmountVnd)}</span>
-                          <ChevronRight size={15} className="urgent-item-arrow" />
-                        </div>
-                      </div>
-                    );
-                  })}
-
-                  {urgentDeals.map(deal => (
-                    <div
-                      key={deal.dealId}
-                      className="progress-urgent-item"
-                      onClick={() => onOpenDeal(deal)}
-                    >
-                      <div className="urgent-item-left">
-                        <span className="urgent-status-tag is-danger">Quá Follow-up</span>
-                        <div className="urgent-item-details">
-                          <span className="urgent-item-code">{deal.customerName}</span>
-                          <span className="urgent-item-sub">
-                            Giai đoạn: {deal.dealStageLabel} • Hạn follow: {formatDate(deal.followUpDate)}
-                          </span>
-                        </div>
-                      </div>
-                      <div className="urgent-item-right">
-                        <span className="urgent-item-val">{formatVND(deal.estimatedBudgetVnd)}</span>
-                        <ChevronRight size={15} className="urgent-item-arrow" />
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
           </div>
         ) : tab === 'leads' ? (
           <LeadsList items={leads || []} onOpen={onOpenLead} />
@@ -1457,7 +1395,7 @@ function LeadsList({
                 className="progress-record-card"
                 onClick={() => onOpen(row)}
               >
-                <span className="progress-record-card-icon">🧲</span>
+                <span className="progress-record-card-icon"><Magnet size={16} /></span>
                 <div className="progress-record-card-main">
                   <div className="progress-record-card-title">{row.leadName}</div>
                   <div className="progress-record-card-sub">
@@ -1554,7 +1492,7 @@ function CustomersList({
                 className="progress-record-card"
                 onClick={() => onOpen(row)}
               >
-                <span className="progress-record-card-icon">🏢</span>
+                <span className="progress-record-card-icon"><Building2 size={16} /></span>
                 <div className="progress-record-card-main">
                   <div className="progress-record-card-title">{row.customerName}</div>
                   <div className="progress-record-card-sub">
@@ -1653,7 +1591,7 @@ function DealsList({
                 className="progress-record-card"
                 onClick={() => onOpen(row)}
               >
-                <span className="progress-record-card-icon">🎯</span>
+                <span className="progress-record-card-icon"><Handshake size={16} /></span>
                 <div className="progress-record-card-main">
                   <div className="progress-record-card-title">{row.customerName}</div>
                   <div className="progress-record-card-sub">
@@ -1661,6 +1599,13 @@ function DealsList({
                     <span>{formatSinceDuration(row.sinceAt)}</span>
                     {row.followUpDate ? <span>Follow-up {formatDate(row.followUpDate)}</span> : null}
                   </div>
+                </div>
+                <div className="progress-record-card-flag">
+                  {dealFollowUpState(row.dealStage, row.followUpDate) === 'overdue' ? (
+                    <span className="qc-badge qc-badge-danger">Quá follow-up</span>
+                  ) : dealFollowUpState(row.dealStage, row.followUpDate) === 'soon' ? (
+                    <span className="qc-badge qc-badge-amber">Sắp follow-up</span>
+                  ) : null}
                 </div>
                 <div className="progress-record-card-value">
                   {formatVND(row.estimatedBudgetVnd) || '0 đ'}
@@ -1752,7 +1697,7 @@ function ProjectsList({
                 className="progress-record-card"
                 onClick={() => onOpen(row)}
               >
-                <span className="progress-record-card-icon">📁</span>
+                <span className="progress-record-card-icon"><Box size={16} /></span>
                 <div className="progress-record-card-main">
                   <div className="progress-record-card-title">
                     {row.projectName || row.projectCode}
@@ -1851,7 +1796,7 @@ function ContractsList({
                 className="progress-record-card"
                 onClick={() => onOpen(row)}
               >
-                <span className="progress-record-card-icon">📝</span>
+                <span className="progress-record-card-icon"><FileCheck size={16} /></span>
                 <div className="progress-record-card-main">
                   <div className="progress-record-card-title">
                     {row.contractNumber || row.title}
@@ -1929,7 +1874,7 @@ export function QuotesTable({
           className="progress-record-card"
           onClick={() => onOpen(row)}
         >
-          <span className="progress-record-card-icon">📄</span>
+          <span className="progress-record-card-icon"><FileText size={16} /></span>
           <div className="progress-record-card-main">
             <div className="progress-record-card-title">
               {row.quoteNumber} · {row.customerName}
