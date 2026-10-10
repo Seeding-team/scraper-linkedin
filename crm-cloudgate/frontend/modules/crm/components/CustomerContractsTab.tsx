@@ -128,7 +128,14 @@ function ContractsTable({
                       title="Sửa"
                       className="inline-flex items-center justify-center rounded-md border border-slate-200 p-1.5 text-slate-600 hover:border-[#c2185b] hover:text-[#c2185b]"
                       data-testid={`contract-edit-${contract.id}`}
-                      onClick={() => onOpenDetail(contract, true)}
+                      // Hop dong "external" (ghi nhan Bên ngoài, badge xam "Bên ngoài") khong phai AI soan - bam Sua
+                      // phai mo THANG form don gian "Thêm/Sửa hợp đồng" (RegisterExternalContractModal, da ho tro
+                      // edit mode san) qua onEditContract, KHONG qua ContractDetailDrawer (drawer AI Copilot day du
+                      // phien ban/DOCX/PDF/Legal Check - chi hop ly cho hop dong source='crm'). Truoc day luon mo
+                      // ContractDetailDrawer bat ke source, Sale phai bam tiep 1 nut phu "Sửa thông tin ghi nhận..."
+                      // BEN TRONG drawer do moi toi dung form (feedback "chỉ mở sidebar sửa bên phải chứ k phải chi
+                      // tiết hợp đồng ai kia").
+                      onClick={() => (contract.source === 'external' ? onEditContract(contract) : onOpenDetail(contract, true))}
                     >
                       <Pencil className="size-3.5" />
                     </button>

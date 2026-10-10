@@ -1320,39 +1320,51 @@ export function DealFormFields({
            * vì required) - nhánh tạo nhanh này vẫn còn ô "Dự án" tự do trong
            * LeadDealQualificationPanel bên dưới (ghi cùng form.dealName) nên
            * không ép chọn lại 1 dự án có sẵn ở đây. */}
-          {!form.customerLocked ? (
-            <section className="crm-form-section">
-              <div className="crm-form-grid">
+          {/* Bug (2026-10-10, bao cao thuc te kem anh chup): khi mo nhanh "Tao co hoi nhanh"
+           * tu 1 Customer DA BIET (customerLocked=true - vd tu tab "Co hoi"/"Bao gia" trong
+           * Customer 360, hoac tu QuoteWorkspaceModal/CreateQuoteModal), CA KHOI nay (gom ca
+           * "Liên hệ" + Du an + Nguoi lien he chinh) truoc day bi an theo "!form.customerLocked",
+           * trong khi initialCustomer thuong CHI co id/name (khong co phone/email - thong tin
+           * do nam o Contact, khong phai Customer) hoac Customer khong co san SDT/Email. Ket qua:
+           * Sale dien het form roi bam "Tao deal" thi bi chan boi validateDealForm() ("Cần nhập
+           * email hoặc số điện thoại để tạo contact.") MA KHONG CO O NAO DE DIEN/CHON ca - khoa
+           * hoan toan luong tao deal tu cac noi do. Fix: CHI an rieng field "Customer / Công ty"
+           * (picker) khi da khoa san khach hang - van hien "Liên hệ" (go tay) + ContactPicker
+           * (chon nguoi lien he co san, tu dien phone/email - xem chooseContact() o tren) de
+           * luon co cach thoa man validate, bat ke co bi khoa Customer hay khong. */}
+          <section className="crm-form-section">
+            <div className="crm-form-grid">
+              {!form.customerLocked ? (
                 <Field label="Customer / Công ty" required>
                   <CustomerProfileCombobox form={form} setValue={setValue} hideProfileUpdateToggle />
                 </Field>
-                {/* Fix (2026-10-03): nhanh "Tạo cơ hội nhanh" truoc day KHONG
-                 * co o nhap Email/SDT nao ca - go ten khach hang MOI (chua co
-                 * trong CRM) xong bam "Tạo deal" luon bao "Cần nhập email
-                 * hoặc số điện thoại" ma khong co cho de dien (bug nguoi dung
-                 * bao cao thuc te). CustomerProfileCombobox.pick() CO tu dien
-                 * phone/email neu chon 1 KHACH HANG CO SAN, nhung go ten MOI
-                 * thi 2 field nay van rong - phai co o nhap thu cong o day,
-                 * dung y het field "Liên hệ" cua nhanh Sua deal ben duoi. */}
-                <Field full label="Liên hệ" required hint="chỉ cần SĐT hoặc Email">
-                  <div className="crm-inline-pair">
-                    <input value={form.phone} onChange={event => editIdentity('phone', event.target.value)} type="tel" placeholder="Số điện thoại" />
-                    <input value={form.email} onChange={event => editIdentity('email', event.target.value)} type="email" placeholder="Email" />
-                  </div>
-                </Field>
-                {form.customerId ? (
-                  <>
-                    <Field label="Dự án" hint="tùy chọn — chọn có sẵn hoặc gõ tên mới">
-                      <ProjectPicker form={form} setValue={setValue} />
-                    </Field>
-                    <Field label="Người liên hệ chính" hint="tùy chọn">
-                      <ContactPicker form={form} setValue={setValue} />
-                    </Field>
-                  </>
-                ) : null}
-              </div>
-            </section>
-          ) : null}
+              ) : null}
+              {/* Fix (2026-10-03): nhanh "Tạo cơ hội nhanh" truoc day KHONG
+               * co o nhap Email/SDT nao ca - go ten khach hang MOI (chua co
+               * trong CRM) xong bam "Tạo deal" luon bao "Cần nhập email
+               * hoặc số điện thoại" ma khong co cho de dien (bug nguoi dung
+               * bao cao thuc te). CustomerProfileCombobox.pick() CO tu dien
+               * phone/email neu chon 1 KHACH HANG CO SAN, nhung go ten MOI
+               * thi 2 field nay van rong - phai co o nhap thu cong o day,
+               * dung y het field "Liên hệ" cua nhanh Sua deal ben duoi. */}
+              <Field full label="Liên hệ" required hint="chỉ cần SĐT hoặc Email">
+                <div className="crm-inline-pair">
+                  <input value={form.phone} onChange={event => editIdentity('phone', event.target.value)} type="tel" placeholder="Số điện thoại" />
+                  <input value={form.email} onChange={event => editIdentity('email', event.target.value)} type="email" placeholder="Email" />
+                </div>
+              </Field>
+              {form.customerId ? (
+                <>
+                  <Field label="Dự án" hint="tùy chọn — chọn có sẵn hoặc gõ tên mới">
+                    <ProjectPicker form={form} setValue={setValue} />
+                  </Field>
+                  <Field label="Người liên hệ chính" hint="tùy chọn">
+                    <ContactPicker form={form} setValue={setValue} />
+                  </Field>
+                </>
+              ) : null}
+            </div>
+          </section>
           <LeadDealQualificationPanel
             canWrite
             interest={form.servicePackage}

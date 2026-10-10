@@ -22,6 +22,7 @@ import { API_BASE_URL, API_KEY } from '@/lib/env';
 import { DEAL_STAGE_META, formatVND } from '../constants/crmConfig';
 import type { CrmCustomerRow } from '../types';
 import { relativeTime } from '../utils/quoteDisplay';
+import { customerDisplay } from '../utils/customerNames';
 import { CustomerFormModal } from './CustomerFormModal';
 import type { AppUser } from '@/types/unified.types';
 import { Pencil } from 'lucide-react';
@@ -351,7 +352,10 @@ export function CustomerQuickViewPanel({
           <header className="crm-customer-quickview-header">
             <div className="crm-customer-quickview-heading">
               <span>{editMode ? 'Chỉnh sửa khách hàng' : 'Khách hàng'}</span>
-              <h2>{customer.customerName}</h2>
+              {/* Feedback "chưa lấy tên viết tắt hiển thị nè bro" - h2 truoc day luon la customer.customerName (ten
+               * nguoi lien he/khach ca nhan), chua tung doc shortName; dung chung customerDisplay() uu tien Tên viết
+               * tắt, fallback dung ve customerName khi chua co short name. */}
+              <h2>{customerDisplay({ shortName: customer.shortName, customerName: customer.customerName }).title}</h2>
               <p>{[customer.companyName, phone].filter(Boolean).join(' · ') || 'Chưa có thông tin liên hệ'}</p>
               {editMode ? null : (
                 <>

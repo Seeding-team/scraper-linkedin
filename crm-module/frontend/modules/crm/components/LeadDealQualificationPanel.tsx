@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { CurrencyInput } from '@/components/CurrencyInput';
-import { formatVND, DEAL_STAGE_META } from '../constants/crmConfig';
+import { formatVND, DEAL_STAGE_META, PIPELINE_COLUMNS } from '../constants/crmConfig';
 import { CrmCategorySelect } from './CrmCategorySelect';
 import { CrmProductMultiSelect } from './CrmProductMultiSelect';
 import { SearchableSelect, type SelectAction } from './SearchableSelect';
@@ -15,9 +15,14 @@ import {
 
 /** "Giai đoạn" cho Deal sap tao (feedback WIP full-flow, mucE.2 "Bàn giao
  * Sale": layout `Giai đoạn | Kết quả Lead`) - chi cho chon trong cac stage
- * PIPELINE THAT (khong gom on_hold/lost, khong hop ly cho 1 co hoi vua tao). */
-const ALL_DEAL_STAGE_KEYS = Object.keys(DEAL_STAGE_META) as Array<keyof typeof DEAL_STAGE_META>;
-const DEAL_STAGE_OPTIONS = ALL_DEAL_STAGE_KEYS.map(stage => ({
+ * PIPELINE THAT (khong gom on_hold/lost, khong hop ly cho 1 co hoi vua tao).
+ * TRUOC DAY doc Object.keys(DEAL_STAGE_META) - object nay con giu 6 key cu
+ * (new_lead/contacted/qualified/contract_sent/won...) trung nhan voi cac stage
+ * hien hanh (vd "Đang deal" x4, "Lên Proposal" x2) de tuong thich nguoc du
+ * lieu cu, lam dropdown hien trung lap (bug "giai đoạn bị lặp"). PIPELINE_COLUMNS
+ * da la danh sach DUNG 10 stage that, khong trung, dung thu tu, dung tinh than
+ * comment ben tren tu truoc gio. */
+const DEAL_STAGE_OPTIONS = PIPELINE_COLUMNS.map(stage => ({
   value: stage,
   label: DEAL_STAGE_META[stage]?.label || stage,
 }));

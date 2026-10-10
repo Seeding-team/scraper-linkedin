@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { API_BASE_URL, API_KEY } from '@/lib/env';
-import { useMembers } from '@/hooks/useMembers';
+import { usersService, type QuoteBusinessRoleUser } from '@/services/all-platform.service';
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
 import { MemberSearchSelect } from './MemberSearchSelect';
 import { CrmCategoryCodeSelect, CrmCategorySelect } from './CrmCategorySelect';
@@ -161,7 +161,6 @@ export function CustomerFormModal({
   const [contactsList, setContactsList] = useState<Array<{ id: string; name: string; position: string; phone: string; email: string; isPrimary: boolean }>>([]);
   // 4 kenh phu (Zalo/Facebook/Telegram/Website) chi hien khi co du lieu hoac bam "+" de them.
   const [extraChannels, setExtraChannels] = useState<Record<'zalo' | 'facebook' | 'telegram' | 'website', boolean>>({ zalo: false, facebook: false, telegram: false, website: false });
-  const { members } = useMembers();
   const embedded = variant === 'embedded';
   useBodyScrollLock(embedded ? false : open);
   // Id DUY NHAT cho moi instance (truoc day hardcode "crmCustomerForm") - component nay duoc mount o CA
@@ -247,25 +246,36 @@ export function CustomerFormModal({
   }
 
   const canPickOwner = isAdminOrLeader(currentUser);
-  const selectionKeyOf = (m: { id: string; linked_user_id?: string | null; linked_user_id_2?: string | null }) =>
-    m.linked_user_id || m.linked_user_id_2 || m.id;
-  const ownerOptions = useMemo(() => {
-    const linked = members.filter(m => m.linked_user_id || m.linked_user_id_2);
-    // De phong 2 Member profile khac nhau cung link chung 1 tai khoan dang
-    // nhap (linked_user_id trung) - selectionKeyOf() se tra ve cung 1 gia
-    // tri cho ca 2, gay "duplicate key" trong MemberSearchSelect/SearchableSelect
-    // ben duoi. Chi giu ban ghi dau tien cho moi selectionKeyOf.
-    const seen = new Set<string>();
-    const deduped = linked.filter(m => {
-      const key = selectionKeyOf(m);
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
-    return deduped.sort((a, b) => a.display_name.localeCompare(b.display_name));
-  }, [members]);
+  // "Người phụ trách" chỉ nên chọn trong Presale/Sale (feedback "lấy tên k đúng nó phải lấy
+  // presale với sale") - truoc day loc tu `members` (toan bo nhan su co tai khoan dang nhap,
+  // khong phan biet vai tro) nen hien ca nguoi khong thuoc Sale/Presale. Dung LAI dung API
+  // "vai tro nghiep vu bao gia" (app_users.quote_business_role) qua GET /users/by-quote-business-role
+  // (da tu gom ca 'sale' lan 'both') - dung y het CustomerAddDrawer.tsx dang dung cho field nay.
+  const [ownerAssignableUsers, setOwnerAssignableUsers] = useState<QuoteBusinessRoleUser[]>([]);
+  useEffect(() => {
+    if (!open) return;
+    let alive = true;
+    Promise.all([
+      usersService.getUsersByQuoteBusinessRole('sale'),
+      usersService.getUsersByQuoteBusinessRole('presale'),
+    ])
+      .then(([saleRes, presaleRes]) => {
+        if (!alive) return;
+        const saleUsers = saleRes.success ? saleRes.data || [] : [];
+        const presaleUsers = presaleRes.success ? presaleRes.data || [] : [];
+        const assignable = new Map<string, QuoteBusinessRoleUser>();
+        [...saleUsers, ...presaleUsers].forEach(user => { if (user.id) assignable.set(user.id, user); });
+        setOwnerAssignableUsers([...assignable.values()].sort((a, b) => a.name.localeCompare(b.name)));
+      })
+      .catch(() => { if (alive) setOwnerAssignableUsers([]); });
+    return () => { alive = false; };
+  }, [open]);
+  const ownerOptions = useMemo(
+    () => ownerAssignableUsers.map(u => ({ id: u.id, display_name: u.name, email: '' })),
+    [ownerAssignableUsers],
+  );
   const currentUserMissing =
-    Boolean(currentUser?.id) && !ownerOptions.some(m => selectionKeyOf(m) === currentUser!.id);
+    Boolean(currentUser?.id) && !ownerAssignableUsers.some(u => u.id === currentUser!.id);
 
   function validate(): string | null {
     const personal = isEdit && !looksLikeEnterprise(customer?.customerName, customer?.companyName, customer?.taxCode) && !form.companyName.trim();
@@ -526,7 +536,7 @@ export function CustomerFormModal({
                       ...(currentUserMissing && currentUser
                         ? [{ id: currentUser.id, displayName: currentUser.name || currentUser.email || 'Bạn' }]
                         : []),
-                      ...ownerOptions.map(m => ({ id: selectionKeyOf(m), displayName: m.display_name, email: m.email })),
+                      ...ownerOptions.map(m => ({ id: m.id, displayName: m.display_name, email: m.email })),
                     ]}
                   />
                 </Field>

@@ -12,6 +12,7 @@ import { Fragment, useEffect, useMemo, useState } from 'react';
 import { API_BASE_URL, API_KEY } from '@/lib/env';
 import { useAppAuth } from '@/contexts/AppAuthContext';
 import { formatVND, getStageMeta, SOURCE_OPTIONS, SERVICE_PACKAGE_OPTIONS, CRM_PACKAGE_OPTIONS, INDUSTRY_OPTIONS } from '../constants/crmConfig';
+import { customerDisplay } from '../utils/customerNames';
 import type { CreateDealInput, CrmUserOption, DealStage } from '../types';
 import { CustomerFormModal } from './CustomerFormModal';
 import { useDealsChanged } from '../utils/dealSync';
@@ -19,6 +20,7 @@ import { HandoverDocsCard, type HandoverDoc } from './HandoverDocsCard';
 import { CrmContactsPanel } from './CrmContactsPanel';
 import { ProjectFormModal } from './ProjectFormModal';
 import { DealFormModal, clearDealDraft } from './DealFormModal';
+import { CreateOpportunityDrawer } from './CreateOpportunityDrawer';
 import { mergeCategoryOptions } from '../hooks/useCrm';
 import { Loader2, Plus, Trash2, ChevronDown, ChevronUp, UserCog, X } from './icons';
 import { ActionMenu, type ActionMenuItem } from './ActionMenu';
@@ -509,6 +511,13 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
   // ca useCrm() - hook do con tu fetch toan bo danh sach deal cua he thong,
   // thua thai cho 1 trang Ho so 1 khach hang).
   const [dealModal, setDealModal] = useState<{ open: boolean; project: Project | null; contactId: string | null }>({ open: false, project: null, contactId: null });
+  // "Tạo cơ hội" KHONG gan san nguoi lien he (nut chung o tab Tong quan/Co hoi) - dung CreateOpportunityDrawer
+  // (feedback "tạo cơ hội trong chi tiết khách hàng nó phải là form của +deal upsell chứ ta") thay vi DealFormModal:
+  // giao dien day du hon (the tom tat khach hang, dem "Cơ hội hiện có", chip Nguon/Trang thai/Owner/Lien he), dung
+  // chung 1 backend contract (buildDealPayload + createDeal) nen an toan de doi UI ma khong doi logic luu. Rieng 2
+  // nut "Tạo cơ hội" GAN SAN 1 nguoi lien he cu the (tab Nguoi lien he) VAN giu DealFormModal vi CreateOpportunityDrawer
+  // chua ho tro gan contactId that (chi co o ten tu do) - doi se mat lien ket Contact that su.
+  const [createOpportunityOpen, setCreateOpportunityOpen] = useState(false);
   const [dealSaving, setDealSaving] = useState(false);
   const [dealAgents, setDealAgents] = useState<CrmUserOption[]>([]);
   const [dealSourceOptions, setDealSourceOptions] = useState(SOURCE_OPTIONS);
@@ -1125,6 +1134,11 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
     );
   }
 
+  // Feedback "chưa lấy tên viết tắt hiển thị nè bro" - truoc day header luon hien ten DAY DU (company_name), bo qua
+  // han short_name du da fetch san (chi dung lam tooltip). Dung chung customerDisplay() (da co san, dang dung dung o
+  // QuoteWorkspaceModal) de uu tien short_name, fallback ten day du khi chua co short_name.
+  const headerDisplay = customerDisplay({ shortName: customer?.short_name, companyName: customer?.company_name, customerName: customer?.customer_name });
+
   return (
     <div className="crm-shell">
       <section className="crm-page-card crm-customers-page-shell bg-slate-50/70">
@@ -1135,14 +1149,14 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
               Khách hàng
             </button>
             <span className="mx-1.5">/</span>
-            <span>{customer?.company_name || customer?.customer_name || 'Khách hàng chưa tên'}</span>
+            <span>{headerDisplay.title}</span>
           </div>
 
           <div className="px-4 py-4 flex items-center justify-between">
             <div className="flex items-center gap-3.5 min-w-0">
               <div className="min-w-0">
                 <div className="flex items-center gap-2 mb-1">
-                  <h1 className="text-xl font-bold text-slate-900 truncate" title={customer?.short_name ? `Tên viết tắt: ${customer.short_name}` : undefined}>{customer?.company_name || customer?.customer_name || 'Khách hàng chưa tên'}</h1>
+                  <h1 className="text-xl font-bold text-slate-900 truncate" title={headerDisplay.sub ? `Tên đầy đủ: ${headerDisplay.sub}` : undefined}>{headerDisplay.title}</h1>
                   {customer?.status ? (
                     <span className="px-2.5 py-0.5 rounded bg-blue-50 text-blue-700 text-xs font-semibold">
                       {STATUS_LABEL[customer.status] || customer.status}
@@ -1217,7 +1231,7 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
               projectsSummary={projectsSummary}
               activityItems={activityItems}
               setTab={setTab}
-              onCreateDeal={() => setDealModal({ open: true, project: null, contactId: null })}
+              onCreateDeal={() => setCreateOpportunityOpen(true)}
               onEditCustomer={() => setEditOpen(true)}
             />
           )}
@@ -1266,7 +1280,7 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
               quotes={data?.quotes || []}
               activityItems={activityItems}
               handoverDocs={handoverDocs}
-              onCreateDeal={() => setDealModal({ open: true, project: null, contactId: null })}
+              onCreateDeal={() => setCreateOpportunityOpen(true)}
               onCreateQuote={(dealId: string) => {
                 const deal = customerQuoteDealsById.get(dealId) || null;
                 setQuoteWorkspace({ quoteId: null, deal, initialDealId: dealId });
@@ -1454,6 +1468,13 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
           initialContact={dealModal.contactId ? { id: dealModal.contactId } : null}
         />
       ) : null}
+      <CreateOpportunityDrawer
+        open={createOpportunityOpen}
+        customer={customerRow ? { ...customerRow, canEdit } : null}
+        currentUser={user}
+        onClose={() => setCreateOpportunityOpen(false)}
+        onCreated={() => { setCreateOpportunityOpen(false); setReloadTick(t => t + 1); setTab('deals'); }}
+      />
       {quoteWorkspace ? (
         <QuoteWorkspaceModal
           quoteId={quoteWorkspace.quoteId}
