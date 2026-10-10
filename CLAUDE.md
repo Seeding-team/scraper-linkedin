@@ -1,3 +1,20 @@
+# Tiến độ phiên làm việc (2026-10-07) — Viber Chat (submenu "Quản lý kênh & CSKH")
+
+Mentor giao: thêm Viber Chat (nhắn tin 2 chiều, gửi ảnh/link/tệp đồng bộ với Viber), làm submenu riêng trước,
+ổn rồi mới gộp vào "Hộp thư đa kênh" (CHƯA gộp — `channelCapabilities.ts` vẫn để Viber "Đang phát triển").
+- Viber KHÔNG có API cho tài khoản cá nhân -> dùng **Viber Bot API** chính thức: mỗi "tài khoản" = 1 bot (auth
+  token từ partners.viber.com), backend `set_webhook` tới `{VIBER_WEBHOOK_BASE_URL|PUBLIC_APP_BASE_URL}/api/all-platform/viber/webhook/{account_id}`
+  (bắt buộc HTTPS công khai), kiểm chữ ký HMAC `X-Viber-Content-Signature`. Không đọc được lịch sử cũ, không sửa/xoá/ghim.
+- Backend `linkedin_group_crawler/app/modules/all_platform/viber/`, migration **`177_viber_module.sql`**
+  (`viber_accounts`/`viber_dialogs`/`viber_messages`, bucket storage `viber-media`). FE: `/all-platform/viber-chat`
+  + `/viber-chat/[accountId]`, `components/all-platform/viber/`. Chỉ làm app chính, CHƯA làm cho 3 clone crm-*.
+- Đã verify: pytest `tests/test_viber_service.py` + `tests/test_viber_extra.py` (**20 test**, Viber API giả),
+  migration chạy 2 lần trên Postgres 15, repo layer chạy với Supabase local thật, `tsc`+eslint sạch, và
+  **E2E backend thật** (`tests/viber_local/`: mock Viber + Supabase local + webhook ký HMAC) **24/24 PASS**
+  ổn định 3 lần — xem `docs/VIBER_CHAT_WALKTHROUGH.md`. **Bug đã sửa khi test**: race condition ở
+  `update_message_status` (delivered/seen tới song song ghi đè nhau) -> đổi sang 1 UPDATE có điều kiện nguyên tử.
+  **CHƯA test với bot Viber thật** (không có token), migration **CHƯA áp DB thật**.
+
 # Tiến độ phiên làm việc (2026-10-05) — Multi-currency (VND | USD) cho Báo giá
 
 **ĐỌC `docs/QUOTE_MULTI_CURRENCY_2026-10-05.md` TRƯỚC KHI SỬA báo giá / tỷ giá / tiền tệ.** Tóm tắt: tiền tệ thuộc cấp
