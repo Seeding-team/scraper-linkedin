@@ -96,7 +96,9 @@ export function DealQuoteWizard({
   if (!open) return null;
 
   return (
-    <div className="crm-modal-backdrop" onClick={resetAndClose}>
+    // Chi dong khi click THAT SU vao backdrop (khong phai bubble tu dropdown
+    // portal ra document.body ben trong modal - xem CustomerFormModal.tsx).
+    <div className="crm-modal-backdrop" onClick={event => { if (event.target === event.currentTarget) resetAndClose(); }}>
       <div className="crm-modal crm-wizard-modal" onClick={event => event.stopPropagation()}>
         <header className="crm-modal-header">
           <div>

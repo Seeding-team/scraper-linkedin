@@ -37,6 +37,8 @@ export function CustomerProjectsTab({
   viewQuoteInNewWorkspace,
   setProjectModal,
   setDealModal,
+  onCreateQuote,
+  onCreateContract,
   memberName,
   allContacts = [],
   activityItems = [],
@@ -53,6 +55,11 @@ export function CustomerProjectsTab({
   viewQuoteInNewWorkspace: (row: any) => void;
   setProjectModal: (modal: any) => void;
   setDealModal: (modal: any) => void;
+  /** "Tạo báo giá" trên Project card (tab Báo giá) - mở QuoteWorkspaceModal khóa sẵn Dự án này,
+   * KHÔNG mở nhầm form Tạo Cơ hội như trước (bug thực tế đã xác nhận, xem thao/CRM_KNOWN_BUGS_FIXED.md). */
+  onCreateQuote: (projectId: string) => void;
+  /** "Tạo hợp đồng" trên Project card (tab Hợp đồng) - cùng pattern với onCreateQuote. */
+  onCreateContract: (projectId: string) => void;
   memberName: (id?: string | null) => string;
   allContacts?: any[];
   activityItems?: any[];
@@ -399,7 +406,7 @@ export function CustomerProjectsTab({
                 <Button 
                   size="sm" 
                   className="h-8 text-xs bg-[#c2185b] hover:bg-[#a91549] text-white gap-1.5 font-medium px-3 rounded-lg shadow-sm"
-                  onClick={() => setDealModal({ open: true, project: selectedProject })}
+                  onClick={() => selectedProject && onCreateQuote(selectedProject.id)}
                 >
                   <Plus className="size-3.5" /> Tạo báo giá
                 </Button>
@@ -452,7 +459,7 @@ export function CustomerProjectsTab({
                 <Button 
                   size="sm" 
                   className="h-8 text-xs bg-[#c2185b] hover:bg-[#a91549] text-white gap-1.5 font-medium px-3 rounded-lg shadow-sm"
-                  onClick={() => setDealModal({ open: true, project: selectedProject })}
+                  onClick={() => selectedProject && onCreateContract(selectedProject.id)}
                 >
                   <Plus className="size-3.5" /> Tạo hợp đồng
                 </Button>

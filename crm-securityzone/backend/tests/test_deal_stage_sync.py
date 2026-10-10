@@ -97,23 +97,28 @@ def test_quote_and_contract_services_are_wrapped():
     assert cs.create_contract.__name__ == "create_contract" and cs._orig_create_contract is not cs.create_contract
 
 
-def test_contract_stage_sync_is_disabled_by_default():
+def test_contract_stage_sync_is_enabled_by_default():
+    # Bat lai 2026-10-10 (truoc do tam tat trong luc module Hop dong xay lai - xem comment o
+    # CONTRACT_STAGE_SYNC_ENABLED). Gio hop dong hop le keo Deal len stage 5 dung quy tac "chi tien len".
     from app.modules.all_platform.services import supabase_contract_service as cs
-    assert svc.CONTRACT_STAGE_SYNC_ENABLED is False
-    assert svc.compute_target_stage("dealing", [], [C("active")]) == (None, "khong_co_bang_chung")      # hop dong khong keo len stage 5
-    assert svc.compute_target_stage("negotiation", [Q("approved")], [C("signed")])[0] is None            # da o 4, bao gia khong len 5
-    with mock.patch.object(cs, "_orig_create_contract", return_value={"id": "c1", "dealId": "D9"}) as orig,             mock.patch("app.modules.all_platform.services.deal_stage_sync_service.sync_deal_stage") as sync:
+    assert svc.CONTRACT_STAGE_SYNC_ENABLED is True
+    assert svc.compute_target_stage("dealing", [], [C("active")]) == ("contract_signed", "co_hop_dong_hop_le")
+    assert svc.compute_target_stage("negotiation", [Q("approved")], [C("signed")])[0] == "contract_signed"  # dang o 4 -> len 5
+    assert svc.compute_target_stage("contract_signed", [], [C("active")])[0] is None  # da o 5, khong lap lai
+    with mock.patch.object(cs, "_orig_create_contract", return_value={"id": "c1", "dealId": "D9"}) as orig, \
+            mock.patch("app.modules.all_platform.services.deal_stage_sync_service.sync_deal_stage") as sync:
         assert cs.create_contract({"deal_id": "D9", "title": "HD"}, "u1")["id"] == "c1"                   # CRUD van chay
         orig.assert_called_once()
-        sync.assert_not_called()
+        sync.assert_called_once()
+        assert sync.call_args.args[0] == "D9"
 
 
-def test_contract_save_triggers_stage_sync_but_unsaved_flow_does_not(monkeypatch):
+def test_contract_stage_sync_can_be_disabled_via_monkeypatch(monkeypatch):
     from app.modules.all_platform.services import supabase_contract_service as cs
-    monkeypatch.setattr(svc, "CONTRACT_STAGE_SYNC_ENABLED", True)
+    monkeypatch.setattr(svc, "CONTRACT_STAGE_SYNC_ENABLED", False)
+    assert svc.compute_target_stage("dealing", [], [C("active")]) == (None, "khong_co_bang_chung")
     with mock.patch.object(cs, "_orig_create_contract", return_value={"id": "c1", "dealId": "D9"}), \
             mock.patch("app.modules.all_platform.services.deal_stage_sync_service.sync_deal_stage") as sync:
         cs.create_contract({"deal_id": "D9", "title": "HD"}, "u1")
-        sync.assert_called_once()
-        assert sync.call_args.args[0] == "D9"
+        sync.assert_not_called()
     # Soan AI / chon mau / upload tam KHONG goi API tao hop dong -> khong co sync nao khac duoc goi

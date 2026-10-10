@@ -667,6 +667,29 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
     }
   }
 
+  // Bug thuc te (2026-10-10, audit thao/crm/SHARED_COMPONENT_MAP.md + REGRESSION_CHECKLIST.md Known
+  // gaps #7): nut "Tạo hợp đồng" tren Project card (tab "Hợp đồng") truoc day dung chung handler
+  // setDealModal voi nut "Tạo cơ hội" ben canh - bam vao mo nham form Tao Co hoi, khong tao hop dong
+  // nao ca. Dung y het resolve-Deal cua openQuickQuoteForProject() o tren (uu tien Deal thuoc dung
+  // project, fallback activeDeal) roi mo dung RegisterExternalContractModal.
+  async function openRegisterContractForProject(projectId: string) {
+    const candidate = data?.deals?.find(d => d.project_id === projectId) || activeDeal;
+    if (!candidate) {
+      window.alert('Dự án này chưa có Cơ hội (Deal) nào để ghi nhận hợp đồng. Hãy tạo Cơ hội trước.');
+      return;
+    }
+    setRegisterContractLoading(true);
+    try {
+      const full = await customerLeadService.getById(candidate.id);
+      setRegisterContractDeal(full);
+      setRegisterContractOpen(true);
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : 'Không tải được cơ hội này.');
+    } finally {
+      setRegisterContractLoading(false);
+    }
+  }
+
   async function submitDealTransition(payload: StageTransitionPayload) {
     if (!dealTransitionTarget) return;
     try {
@@ -1263,6 +1286,8 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
               viewQuoteInNewWorkspace={viewQuoteInNewWorkspace}
               setProjectModal={setProjectModal}
               setDealModal={setDealModal}
+              onCreateQuote={openQuoteRequestForProject}
+              onCreateContract={projectId => void openRegisterContractForProject(projectId)}
               memberName={memberName}
               allContacts={allContacts}
               activityItems={activityItems}
@@ -1375,7 +1400,7 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
         onSaved={() => { setEditOpen(false); setReloadTick(t => t + 1); }}
       />
       {contactAssignTarget ? (
-        <div className="crm-modal-backdrop" onClick={() => !contactAssignSaving && setContactAssignTarget(null)}>
+        <div className="crm-modal-backdrop" onClick={event => { if (event.target === event.currentTarget && !contactAssignSaving) setContactAssignTarget(null); }}>
           <div className="crm-modal crm-modal--confirm" onClick={event => event.stopPropagation()}>
             <header className="crm-modal-header">
               <h2 className="crm-modal-title">Đổi liên hệ chính</h2>

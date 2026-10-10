@@ -96,7 +96,7 @@ export function DealQuoteWizard({
   if (!open) return null;
 
   return (
-    <div className="crm-modal-backdrop" onClick={resetAndClose}>
+    <div className="crm-modal-backdrop" onClick={event => { if (event.target === event.currentTarget) resetAndClose(); }}>
       <div className="crm-modal crm-wizard-modal" onClick={event => event.stopPropagation()}>
         <header className="crm-modal-header">
           <div>

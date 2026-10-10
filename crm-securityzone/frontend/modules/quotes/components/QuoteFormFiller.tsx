@@ -791,7 +791,7 @@ function CatalogItemPicker<T>({
       </button>
 
       {open ? (
-        <div className="quote-catalog-picker-backdrop" onClick={closePanel}>
+        <div className="quote-catalog-picker-backdrop" onClick={event => { if (event.target === event.currentTarget) closePanel(); }}>
           <div className="quote-catalog-picker-panel" onClick={event => event.stopPropagation()}>
             <header className="quote-catalog-picker-panel-head">
               <div>
@@ -1332,8 +1332,10 @@ function SchemaQuoteItemsTable({
           ))}
         </tbody>
       </table>
+      {/* Chi dong khi click THAT SU vao backdrop (khong phai bubble tu dropdown
+       * portal ra document.body ben trong modal - xem CustomerFormModal.tsx). */}
       {detailRow ? (
-        <div className="crm-modal-backdrop" onClick={() => setDetailRow(null)}>
+        <div className="crm-modal-backdrop" onClick={event => { if (event.target === event.currentTarget) setDetailRow(null); }}>
           <div className="crm-modal" role="dialog" aria-modal="true" aria-label="Chi tiết hạng mục" onClick={e => e.stopPropagation()}>
             <div className="crm-modal-header"><h3>Chi tiết hạng mục</h3></div>
             <div className="crm-modal-body">

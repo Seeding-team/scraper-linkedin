@@ -7662,7 +7662,7 @@ export function QuoteWorkspaceModal({
        * chon lai ngay), KHONG phai ban sao trang quan ly Contact day du
        * (CrmContactsPanel.tsx) - dung LAI dung endpoint API cua trang do. */}
       {createContactOpen ? (
-        <div className="crm-modal-backdrop" onClick={() => !createContactBusy && setCreateContactOpen(false)}>
+        <div className="crm-modal-backdrop" onClick={event => { if (event.target === event.currentTarget && !createContactBusy) setCreateContactOpen(false); }}>
           <div className="crm-modal" onClick={event => event.stopPropagation()}>
             <header className="crm-modal-header">
               <h2 className="crm-modal-title">Tạo người liên hệ mới</h2>
@@ -8396,7 +8396,7 @@ export function QuoteWorkspaceModal({
       />
 
       {currencySwitch ? (
-        <div className="crm-modal-backdrop" style={{ zIndex: 100300 }} onClick={() => setCurrencySwitch(null)}>
+        <div className="crm-modal-backdrop" style={{ zIndex: 100300 }} onClick={event => { if (event.target === event.currentTarget) setCurrencySwitch(null); }}>
           <div className="crm-modal crm-modal--confirm" onClick={event => event.stopPropagation()}>
             <header className="crm-modal-header">
               <h2 className="crm-modal-title">Đổi tiền tệ báo giá sang {currencySwitch.target}</h2>

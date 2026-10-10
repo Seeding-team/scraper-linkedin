@@ -12,7 +12,7 @@ import { useAppAuth } from '@/contexts/AppAuthContext';
 import { seedingQuoteRepository } from '@/modules/quotes';
 import type { IssuerCompany, QuoteForm } from '@/modules/quotes';
 import { seedingCrmRepository } from '../../repositories/SeedingCrmRepository';
-import type { Deal } from '../../types';
+import type { CrmUserOption, Deal } from '../../types';
 import { QuoteWorkspaceModal } from '../QuoteWorkspaceModal';
 
 export function LeadQuoteWorkspaceHost({
@@ -37,6 +37,11 @@ export function LeadQuoteWorkspaceHost({
   const [issuers, setIssuers] = useState<IssuerCompany[]>([]);
   const [ready, setReady] = useState(false);
   const [error, setError] = useState('');
+  // Bug thuc te (2026-10-10, audit thao/crm/SHARED_COMPONENT_MAP.md muc 2a): truoc day agents=[]
+  // hardcode o day - dropdown Presale/Sale trong Workspace bi thieu/rong khi mo tu Lead 360, khac voi
+  // moi entry point khac cua QuoteWorkspaceModal (deu truyen danh sach that). Fetch giong het
+  // dealAgents cua CrmCustomerDetailPage.tsx.
+  const [agents, setAgents] = useState<CrmUserOption[]>([]);
 
   useEffect(() => {
     let alive = true;
@@ -46,11 +51,13 @@ export function LeadQuoteWorkspaceHost({
       dealId ? seedingCrmRepository.getDeal(dealId).catch(() => null) : Promise.resolve(null),
       seedingQuoteRepository.getForms().catch(() => [] as QuoteForm[]),
       seedingQuoteRepository.getIssuerCompanies().catch(() => [] as IssuerCompany[]),
-    ]).then(([dealRow, formRows, issuerRows]) => {
+      seedingCrmRepository.getAgents().catch(() => [] as CrmUserOption[]),
+    ]).then(([dealRow, formRows, issuerRows, agentRows]) => {
       if (!alive) return;
       setDeal(dealRow);
       setForms(formRows);
       setIssuers(issuerRows);
+      setAgents(agentRows);
       setReady(true);
     }).catch(() => {
       if (alive) setError('Không tải được dữ liệu để mở báo giá.');
@@ -86,7 +93,7 @@ export function LeadQuoteWorkspaceHost({
       quoteId={activeQuoteId}
       deals={deal ? [deal] : []}
       dealsById={dealsById}
-      agents={[]}
+      agents={agents}
       user={user}
       defaultFormId={defaultFormId}
       quoteForms={forms}

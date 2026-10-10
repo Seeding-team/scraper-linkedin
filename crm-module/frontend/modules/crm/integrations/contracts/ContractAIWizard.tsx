@@ -40,6 +40,28 @@ const CHIPS: Array<{ label: string; text: string }> = [
   { label: 'Khác', text: 'Yêu cầu khác: ' },
 ];
 
+const DETAIL_LEVEL_OPTIONS = [
+  { value: 'standard', label: 'Tiêu chuẩn · Khuyến nghị' },
+  { value: 'concise', label: 'Tinh gọn' },
+  { value: 'legal', label: 'Chi tiết pháp lý' },
+];
+
+const LANGUAGE_OPTIONS = [
+  { value: 'Tiếng Việt', label: 'Tiếng Việt' },
+  { value: 'Tiếng Việt + English', label: 'Tiếng Việt + English' },
+];
+
+const STYLE_OPTIONS = [
+  { value: 'Chính thức', label: 'Chính thức' },
+  { value: 'Ngắn gọn', label: 'Ngắn gọn' },
+  { value: 'Thân thiện', label: 'Thân thiện' },
+];
+
+const DIRECTION_OPTIONS = [
+  { value: 'sell', label: 'Bán ra (khách hàng là Bên A)' },
+  { value: 'buy', label: 'Mua vào (công ty là Bên A)' },
+];
+
 const STEP_TITLES: Record<Step, { title: string; sub: string }> = {
   1: { title: 'Thông tin & nguồn hợp đồng', sub: 'Chọn báo giá, mẫu (nếu có) và loại hợp đồng. AI sẽ gợi ý loại phù hợp.' },
   2: { title: 'Nhập yêu cầu và điều kiện hợp đồng', sub: 'Mô tả yêu cầu, điều khoản đặc biệt hoặc chọn các gợi ý nhanh.' },
@@ -343,7 +365,7 @@ export function ContractAIWizard({
   const blocked = precheck ? precheck.blockers.length > 0 : false;
   const needAck = !!precheck && precheck.required.length > 0 && !ack;
   const step1Block = needCustomer ? 'Chọn khách hàng' : noDeals ? 'Khách hàng chưa có Deal' : needDeal ? 'Chọn Deal để tiếp tục' : precheckLoading || !precheck ? 'Đang kiểm tra dữ liệu CRM…'
-    : blocked ? 'Có thông tin bắt buộc chưa hợp lệ' : needAck ? 'Xác nhận các trường pháp lý còn thiếu' : typeEmpty ? 'Chọn hoặc nhập loại hợp đồng' : '';
+    : blocked ? 'Có thông tin bắt buộc chưa hợp lệ' : needAck ? 'Xác nhận các trường pháp lý còn thiếu' : '';
 
   // ───────── PDF blob URL ─────────
   const setPdf = useCallback((b64: string | null, orig?: string | null) => {
@@ -579,6 +601,26 @@ export function ContractAIWizard({
     onClose();
   }
 
+  // Hook PHẢI gọi TRƯỚC "if (!open) return null" bên dưới (Rules of Hooks - gọi hook sau early-return làm lệch thứ tự hook
+  // giữa các lần render khi open đổi true/false, React báo lỗi "change in the order of Hooks").
+  const contractTypeSelectOptions = useMemo(() => {
+    const combined = Array.from(new Set([
+      ...(suggestion?.label ? [suggestion.label] : []),
+      ...(suggestion?.alternatives || []),
+      ...typeOptions
+    ]));
+    return combined.map(t => ({
+      value: t,
+      label: t,
+      richLabel: t === suggestion?.label ? (
+        <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, width: '100%' }}>
+          <span>{t}</span>
+          <span className="cp-badge" style={{ fontSize: '0.68rem', padding: '1px 6px' }}>✦ AI đề xuất</span>
+        </span>
+      ) : t
+    }));
+  }, [suggestion, typeOptions]);
+
   if (!open) return null;
 
   const dealOptions = deals.map(d => {
@@ -594,11 +636,12 @@ export function ContractAIWizard({
   });
   const templateOptions = templates.map(t => ({ value: t.id, label: t.name, searchText: t.name, richLabel: <span title={t.name}>{t.name}</span> }));
   const items = (quote?.items || []).filter(i => i.rowType !== 'section');
-  const typeListId = 'copilot-type-options';
   const riskScore = draftRisk?.score ?? null;
 
   return (
-    <div className="cp-backdrop" onClick={resetAndClose}>
+    // Chi dong khi click THAT SU vao backdrop (khong phai bubble tu dropdown
+    // portal ra document.body ben trong modal - xem CustomerFormModal.tsx).
+    <div className="cp-backdrop" onClick={event => { if (event.target === event.currentTarget) resetAndClose(); }}>
       <div className={`copilot-modal${step === 3 && mode === 'template' && tab === 'preview' ? ' copilot-modal--wide' : ''}`} data-testid="copilot-modal" onClick={e => e.stopPropagation()}>
         <aside className="cp-steps">
           <h2>AI Contract Copilot</h2>
@@ -644,18 +687,26 @@ export function ContractAIWizard({
 
               <div className="cp-field">
                 <span>Loại hợp đồng {suggestion?.label && !typeConfirmed ? <em className="cp-badge" data-testid="copilot-ai-badge">✦ AI đề xuất</em> : null}</span>
-                <input className="cp-input" data-testid="copilot-type-input" list={typeListId} value={typeText} placeholder="Nhập hoặc chọn loại hợp đồng (không giới hạn danh sách)"
-                  onChange={e => { setTypeText(e.target.value); setTypeConfirmed(true); }} />
-                <datalist id={typeListId}>{Array.from(new Set([...(suggestion?.label ? [suggestion.label] : []), ...(suggestion?.alternatives || []), ...typeOptions])).map(t => <option key={t} value={t} />)}</datalist>
+                <SearchableSelect
+                  testId="copilot-type-select"
+                  value={typeText}
+                  onChange={val => { setTypeText(val); setTypeConfirmed(true); }}
+                  options={contractTypeSelectOptions}
+                  allowCreate
+                  onCreateOption={val => { setTypeText(val); setTypeConfirmed(true); }}
+                  placeholder="Nhập hoặc chọn loại hợp đồng…"
+                  searchPlaceholder="Nhập tên loại hợp đồng mới hoặc chọn…"
+                  emptyText="Chưa có loại hợp đồng trùng khớp — bấm để chọn hoặc nhập loại mới"
+                />
                 {suggesting ? <small style={{ color: '#64748b' }}>AI đang phân tích hạng mục báo giá…</small> : null}
                 {suggestion?.label && !suggestion.needsConfirmation ? (
-                  <small data-testid="copilot-type-suggestion" style={{ color: '#475569' }}>
+                  <small data-testid="copilot-type-suggestion" style={{ color: '#475569', marginTop: 2 }}>
                     AI đề xuất: <b>{suggestion.label}</b> (độ tin cậy {Math.round(suggestion.confidence * 100)}%) — {suggestion.reason}
                     {typeConfirmed && typeText.trim() !== suggestion.label ? <button type="button" className="cp-chip" style={{ marginLeft: 8 }} onClick={() => { setTypeText(suggestion.label || ''); setTypeConfirmed(false); }}>Dùng đề xuất</button> : null}
                   </small>
                 ) : null}
                 {suggestion && suggestion.needsConfirmation ? (
-                  <small data-testid="copilot-type-unsure" style={{ color: '#9a3412' }}>
+                  <small data-testid="copilot-type-unsure" style={{ color: '#9a3412', marginTop: 2 }}>
                     AI chưa đủ chắc chắn về loại hợp đồng{suggestion.label ? ` (gần nhất: ${suggestion.label}, ${Math.round(suggestion.confidence * 100)}%)` : ''} — hãy chọn hoặc nhập loại phù hợp.
                     {suggestion.aiError ? ` (AI lỗi: ${suggestion.aiError})` : ''}
                     {suggestion.alternatives.slice(0, 3).map(a => <button key={a} type="button" className="cp-chip" style={{ marginLeft: 6 }} onClick={() => { setTypeText(a); setTypeConfirmed(true); }}>{a}</button>)}
@@ -665,13 +716,13 @@ export function ContractAIWizard({
 
               <div className="cp-field">
                 <span>Mẫu hợp đồng (tùy chọn) — không chọn thì AI soạn mới</span>
-                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                  <label className="cp-btn" style={{ display: 'inline-flex', alignItems: 'center', cursor: templateId ? 'not-allowed' : 'pointer', opacity: templateId ? 0.5 : 1 }}>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                  <label className="cp-btn" style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', cursor: templateId ? 'not-allowed' : 'pointer', opacity: templateId ? 0.5 : 1, margin: 0 }}>
                     <input type="file" hidden disabled={!!templateId} accept=".docx,.pdf,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                       onChange={e => { const f = e.target.files?.[0]; setTemplateFile(f ? { name: f.name, size: f.size, file: f } : null); if (f) setTemplateId(''); e.target.value = ''; }} />
                     ⬆ {templateFile ? templateFile.name : 'Chọn mẫu DOCX/PDF'}
                   </label>
-                  <div style={{ flex: 1, minWidth: 200 }}>
+                  <div style={{ flex: 1, minWidth: 200, display: 'flex', alignItems: 'center' }}>
                     <SearchableSelect value={templateId} onChange={id => { setTemplateId(id); if (id) setTemplateFile(null); }} options={templateOptions} disabled={!!templateFile} placeholder="-- Hoặc chọn mẫu đã lưu --" searchPlaceholder="Tìm mẫu…" emptyText="Chưa có mẫu" testId="copilot-template-select" />
                   </div>
                   <button type="button" className="cp-btn" onClick={() => setLibraryOpen(true)} disabled={!!templateFile} data-testid="copilot-open-library">Thư viện</button>
@@ -726,24 +777,58 @@ export function ContractAIWizard({
               <small style={{ color: '#64748b' }}>AI chỉ dùng số tiền, VAT, hạng mục từ báo giá; tỷ lệ/thời hạn thanh toán chỉ lấy từ nội dung bạn nhập. AI không tự tạo ngày ký hay thông tin pháp nhân.</small>
               <button type="button" className="cp-btn" style={{ justifySelf: 'start' }} data-testid="copilot-advanced-toggle" onClick={() => setAdvancedOpen(o => !o)}>{advancedOpen ? '▾' : '▸'} Tùy chọn nâng cao</button>
               {advancedOpen ? (
-                <div className="cp-card" data-testid="copilot-advanced" style={{ display: 'grid', gap: 12 }}>
-                  <div className="cp-grid3">
-                    <label className="cp-field"><span>Mức độ chi tiết</span>
-                      <select className="cp-select" value={detailLevel} onChange={e => setDetailLevel(e.target.value)}><option value="standard">Tiêu chuẩn · Khuyến nghị</option><option value="concise">Tinh gọn</option><option value="legal">Chi tiết pháp lý</option></select></label>
-                    <label className="cp-field"><span>Ngôn ngữ</span>
-                      <select className="cp-select" value={language} onChange={e => setLanguage(e.target.value)}><option>Tiếng Việt</option><option>Tiếng Việt + English</option></select></label>
-                    <label className="cp-field"><span>Phong cách</span>
-                      <select className="cp-select" value={style} onChange={e => setStyle(e.target.value)}><option>Chính thức</option><option>Ngắn gọn</option><option>Thân thiện</option></select></label>
-                    <label className="cp-field"><span>Hướng giao dịch</span>
-                      <select className="cp-select" data-testid="copilot-direction" value={direction} onChange={e => setDirection(e.target.value as 'sell' | 'buy')}><option value="sell">Bán ra (khách hàng là Bên A)</option><option value="buy">Mua vào (công ty là Bên A)</option></select></label>
+                <div className="cp-card" data-testid="copilot-advanced" style={{ display: 'grid', gap: 14 }}>
+                  <div className="cp-grid4">
+                    <div className="cp-field">
+                      <span>Mức độ chi tiết</span>
+                      <SearchableSelect
+                        value={detailLevel}
+                        onChange={setDetailLevel}
+                        options={DETAIL_LEVEL_OPTIONS}
+                        hideClearOption
+                      />
+                    </div>
+                    <div className="cp-field">
+                      <span>Ngôn ngữ</span>
+                      <SearchableSelect
+                        value={language}
+                        onChange={setLanguage}
+                        options={LANGUAGE_OPTIONS}
+                        hideClearOption
+                      />
+                    </div>
+                    <div className="cp-field">
+                      <span>Phong cách</span>
+                      <SearchableSelect
+                        value={style}
+                        onChange={setStyle}
+                        options={STYLE_OPTIONS}
+                        hideClearOption
+                      />
+                    </div>
+                    <div className="cp-field">
+                      <span>Hướng giao dịch</span>
+                      <SearchableSelect
+                        testId="copilot-direction"
+                        value={direction}
+                        onChange={v => setDirection(v as 'sell' | 'buy')}
+                        options={DIRECTION_OPTIONS}
+                        hideClearOption
+                      />
+                    </div>
                   </div>
-                  <div className="cp-grid3">
-                    <label className="cp-field"><span>Tên viết tắt công ty (dùng cho mã hợp đồng)</span>
+                  <div className="cp-grid2">
+                    <div className="cp-field">
+                      <span>Tên viết tắt công ty (dùng cho mã hợp đồng)</span>
                       <input className="cp-input" data-testid="copilot-short-name" value={shortName} placeholder={precheck?.issuer?.code ? `Hồ sơ công ty: ${precheck.issuer.code}` : 'Chưa có — nhập để dùng trong mã'}
-                        onChange={e => { setShortName(e.target.value); }} onBlur={() => getNumberSettings(shortName || undefined).then(setNumberInfo).catch(() => undefined)} /></label>
-                    <div className="cp-field"><span>Mã hợp đồng dự kiến</span>
+                        onChange={e => { setShortName(e.target.value); }} onBlur={() => getNumberSettings(shortName || undefined).then(setNumberInfo).catch(() => undefined)} />
+                      <small style={{ color: '#64748b' }}>Ký hiệu phân biệt công ty trong mã (VD: MARKEE).</small>
+                    </div>
+                    <div className="cp-field">
+                      <span>Mã hợp đồng dự kiến</span>
                       <input className="cp-input" readOnly data-testid="copilot-number-preview" value={numberInfo?.example || '—'} />
-                      <small style={{ color: '#64748b' }}>Quy tắc: {numberInfo?.format || 'HD/{YYYY}/{SEQ}'}{numberInfo && !numberInfo.schemaReady ? ' (mặc định — chưa cấu hình theo workspace)' : ''}. Mã chính thức cấp khi lưu.</small></div>
+                      <small style={{ color: '#64748b' }}>Quy tắc: {numberInfo?.format || 'HD/{YYYY}/{SEQ}'}{numberInfo && !numberInfo.schemaReady ? ' (mặc định)' : ''}. Mã chính thức cấp khi lưu.</small>
+                    </div>
                   </div>
                 </div>
               ) : null}
@@ -906,7 +991,7 @@ export function ContractAIWizard({
             {step === 1 ? (
               <>
                 <button type="button" className="cp-btn" onClick={resetAndClose}>Hủy</button>
-                <button type="button" className="cp-btn primary" data-testid="copilot-next-1" disabled={!!step1Block || libraryOpen} onClick={() => { setError(''); setStep(2); }}>Tiếp theo →</button>
+                <button type="button" className="cp-btn primary" data-testid="copilot-next-1" disabled={!!step1Block || typeEmpty || libraryOpen} onClick={() => { setError(''); setStep(2); }}>Tiếp theo →</button>
               </>
             ) : null}
             {step === 2 ? (

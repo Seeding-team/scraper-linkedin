@@ -1523,7 +1523,7 @@ export function CrmCustomersDirectory() {
       ) : null}
 
       {deleteTargets ? (
-        <div className="crm-modal-backdrop crm-modal-backdrop--confirm" onClick={closeDelete}>
+        <div className="crm-modal-backdrop crm-modal-backdrop--confirm" onClick={event => { if (event.target === event.currentTarget) closeDelete(); }}>
           <div
             className="crm-modal crm-modal--confirm"
             role="dialog"

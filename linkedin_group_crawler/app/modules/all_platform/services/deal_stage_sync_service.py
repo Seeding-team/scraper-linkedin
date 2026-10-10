@@ -7,7 +7,7 @@ Quy tac TU DONG (chi tien len, KHONG BAO GIO keo lui, chi dung stage 1-5):
   - Deal co bao gia con hieu luc (khong huy/xoa/OUT) DANG LAP BAO GIA NHAP (processing_stage pricing/review: Sale hoan thien gia ban,
     cho duyet) -> proposal_sent (3). processing_stage 'request'/'technical' = Presale moi tiep nhan/nhap ky thuat -> CHUA tinh la Proposal.
   - Deal co bao gia con hieu luc DA duyet (approved/confirmed)        -> negotiation (4)
-  - [TAM TAT - CONTRACT_STAGE_SYNC_ENABLED=False] Deal co hop dong hop le gan voi Deal (da luu, khong terminated/expired, khong phai hop dong mua/ban)  -> contract_signed (5)
+  - Deal co hop dong hop le gan voi Deal (da luu, khong terminated/expired, khong phai hop dong mua/ban)  -> contract_signed (5)
   - Stage 6-10, on_hold, lost, won (legacy): CHI chuyen thu cong - khong bao gio bi ghi de.
   - Stage 2 'requirement' (Lay yeu cau): KHONG tu dong (chua co su kien nghiep vu ro rang) - chi la stage thap hon 3 nen bao gia se day len 3.
 Chi cap nhat DUNG Deal gan voi bao gia/hop dong (theo deal_id), dung instance (tenant); idempotent; ghi customer_lead_activity_log.
@@ -37,9 +37,11 @@ APPROVED_QUOTE_STATUSES = {"approved", "confirmed"}
 # Bao gia nhap chi tinh la "lap bao gia" khi da qua buoc Presale (request/technical): tu 'pricing' tro di.
 DRAFTING_PROCESSING_STAGES = {"pricing", "review", "ready_to_publish", "published"}
 INVALID_CONTRACT_STATUSES = {"terminated", "expired"}
-# TAM TAT stage 5 tu Hop dong (module Hop dong dang xay lai): False => hop dong KHONG con keo Deal len contract_signed (ca hook hop dong
-# lan hook bao gia/backfill). Bat lai = True khi module Hop dong xong. Stage 5 hien co trong DB giu nguyen (khong bao gio bi ha).
-CONTRACT_STAGE_SYNC_ENABLED = False
+# Stage 5 tu Hop dong: True => hop dong hop le (da luu, khong terminated/expired, khong phai hop dong
+# mua/ban) keo Deal len contract_signed (ca hook hop dong lan hook bao gia/backfill). Da BAT LAI
+# 2026-10-10 (audit thao/crm/REGRESSION_CHECKLIST.md Known gaps #1 - module Hop dong da du on dinh
+# theo xac nhan cua mentor). Van chi tien len, khong bao gio ha (xem compute_target_stage()).
+CONTRACT_STAGE_SYNC_ENABLED = True
 
 
 def stage_order(stage: str | None) -> int | None:

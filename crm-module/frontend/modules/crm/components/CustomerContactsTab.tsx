@@ -540,7 +540,7 @@ export function CustomerContactsTab({
     </Card>
 
       {formOpen ? (
-        <div className="crm-drawer-backdrop" onClick={closeForm}>
+        <div className="crm-drawer-backdrop" onClick={event => { if (event.target === event.currentTarget) closeForm(); }}>
           <aside
             className="crm-drawer crm-lead-drawer crm-lead-drawer--quick"
             data-testid="contact-form-drawer"

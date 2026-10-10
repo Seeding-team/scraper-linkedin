@@ -12,6 +12,7 @@ from app.modules.all_platform.services.customer_lead_service import BASE_COLUMNS
 from app.modules.all_platform.services.supabase_quote_service import apply_quote_field_permissions, _quote_cost_summary
 from app.modules.all_platform.services.crm_permission_service import (
     can_edit_contract,
+    is_web_intake_user,
     has_full_crm_access,
     can_access_by_scope,
     get_scope_visible_user_ids,
@@ -82,10 +83,12 @@ def normalize_phone(value: Any) -> str | None:
 
 
 def _normalize_payload(payload: dict[str, Any], actor_id: str | None = None) -> dict[str, Any]:
+    # CHI dong bo *_normalized khi field goc THAT SU co trong payload - mot patch chi sua
+    # 1 truong (vd {"tax_code": "..."}) khong duoc phep vo tinh ghi None len email/phone
+    # cua ban ghi (bug that: moi lan PUT thieu field la mat du lieu field khac).
     out = {key: _clean_text(value) if isinstance(value, str) else value for key, value in payload.items()}
     if "city" in out:
         out["city"] = normalize_vietnam_city(out.get("city"))
-    # CHI dong bo *_normalized khi field goc THAT SU co trong payload - mot patch chi sua 1 truong khong duoc phep vo tinh ghi None len email/phone cua ban ghi.
     if "email" in out:
         out["email_normalized"] = normalize_email(out.get("email"))
     if "phone" in out:
@@ -489,6 +492,21 @@ def get_customer(customer_id: str, user: dict[str, Any]) -> dict[str, Any]:
     return _attach_customer_metrics([customer])[0]
 
 
+def _handle_duplicates(user: dict[str, Any], matches: list[dict[str, Any]], data: dict[str, Any]) -> None:
+    """Trùng email/SĐT với khách có sẵn.
+
+    - Người dùng nội bộ: chặn như cũ (DuplicateCustomerError, kèm danh sách khách trùng để chọn lại).
+    - Khách web (Web Intake): KHÔNG chặn và KHÔNG trả thông tin khách có sẵn ra ngoài (tránh lộ dữ liệu CRM qua form công khai).
+      Vẫn tạo hồ sơ mới của chính khách web, ghi chú để nội bộ đối chiếu/gộp.
+    """
+    if not matches:
+        return
+    if not is_web_intake_user(user):
+        raise DuplicateCustomerError(matches)
+    flag = "[Web] Trùng email/SĐT với khách hàng có sẵn trong CRM — nội bộ kiểm tra/gộp."
+    data["note"] = (str(data.get("note") or "").strip() + chr(10) + flag).strip()
+
+
 def create_customer(payload: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]:
     actor_id = str(user.get("id") or "")
     data = _normalize_payload(payload, actor_id=actor_id)
@@ -496,10 +514,8 @@ def create_customer(payload: dict[str, Any], user: dict[str, Any]) -> dict[str, 
     apply_position_category(data)
     from app.modules.all_platform.services.crm_short_name_service import fill_short_name_for_new
 
-    fill_short_name_for_new(data)  # khach doanh nghiep chua co ten viet tat -> tu sinh; khach ca nhan bo qua
-    matches = _duplicate_query(data.get("email_normalized"), data.get("phone_normalized"))
-    if matches:
-        raise DuplicateCustomerError(matches)
+    fill_short_name_for_new(data)  # khach doanh nghiep chua co ten viet tat -> tu sinh (quy tac); khach ca nhan bo qua
+    _handle_duplicates(user, _duplicate_query(data.get("email_normalized"), data.get("phone_normalized")), data)
     # Khong tin owner_id client gui len - chi admin/leader duoc chi dinh chu
     # ho so khac minh luc tao; con lai luon la chinh nguoi tao (dung quy dinh
     # "owner_id duoc sua" - khong cho tu gan/gan ho quyen sua cho nguoi khac).
@@ -871,7 +887,8 @@ def create_customer_with_deal(payload: dict[str, Any], user: dict[str, Any]) -> 
     # customer_id that roi moi tao Du an duoc - xem doan follow-up ben duoi.
     project_name = _clean_text(deal.pop("project_name", None))
 
-    if not deal.get("leaded_by"):
+    # Khách web (Web Intake): để trống người phụ trách → hiện "Chưa gán", nội bộ tự phân công trong CRM.
+    if not deal.get("leaded_by") and not is_web_intake_user(user):
         deal["leaded_by"] = actor_id
     idempotency_key = _clean_text(payload.get("idempotency_key")) or _request_hash({"customer": customer, "deal": deal, "actor": actor_id, "project_name": project_name})
 
@@ -904,9 +921,7 @@ def create_customer_with_deal(payload: dict[str, Any], user: dict[str, Any]) -> 
         # nao ca - bo qua primary_contact_id neu client lo gui len (khong co
         # customer_id de doi chieu, khong tin bat ky gia tri nao o day).
         deal.pop("primary_contact_id", None)
-        matches = _duplicate_query(customer.get("email_normalized"), customer.get("phone_normalized"))
-        if matches:
-            raise DuplicateCustomerError(matches)
+        _handle_duplicates(user, _duplicate_query(customer.get("email_normalized"), customer.get("phone_normalized")), customer)
 
     supabase = get_supabase_client()
     try:
@@ -968,6 +983,17 @@ def create_customer_with_deal(payload: dict[str, Any], user: dict[str, Any]) -> 
             .eq("instance", settings.crm_instance)
             .execute()
         )
+    # Khách web (Web Intake): RPC tự gán người tạo làm người phụ trách deal → gỡ ra để CRM hiện "Chưa gán" và nội bộ phân công.
+    if new_deal_id and is_web_intake_user(user) and not deal.get("leaded_by"):
+        execute_supabase_query(
+            lambda: supabase.table("customer_leads")
+            .update({"leaded_by": None})
+            .eq("id", new_deal_id)
+            .eq("instance", settings.crm_instance)
+            .execute()
+        )
+        if data.get("deal"):
+            data["deal"]["leaded_by"] = None
     new_customer_id = (data.get("customer") or {}).get("id")
     customer_was_written = not customer_id or update_customer_profile
     if new_customer_id and customer_was_written and (

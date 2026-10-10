@@ -319,7 +319,7 @@ export function IssuerCompanyAdminPage() {
       ) : null}
 
       {modalOpen ? (
-        <div className="crm-modal-backdrop" onClick={closeModal}>
+        <div className="crm-modal-backdrop" onClick={event => { if (event.target === event.currentTarget) closeModal(); }}>
           <div className="crm-modal issuer-modal" onClick={event => event.stopPropagation()}>
             <header className="crm-modal-header">
               <div>

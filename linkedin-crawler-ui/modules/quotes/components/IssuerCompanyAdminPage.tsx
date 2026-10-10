@@ -319,7 +319,9 @@ export function IssuerCompanyAdminPage() {
       ) : null}
 
       {modalOpen ? (
-        <div className="crm-modal-backdrop" onClick={closeModal}>
+        // Chi dong khi click THAT SU vao backdrop (khong phai bubble tu dropdown
+        // portal ra document.body ben trong modal - xem CustomerFormModal.tsx).
+        <div className="crm-modal-backdrop" onClick={event => { if (event.target === event.currentTarget) closeModal(); }}>
           <div className="crm-modal issuer-modal" onClick={event => event.stopPropagation()}>
             <header className="crm-modal-header">
               <div>

@@ -81,6 +81,8 @@ export function ContractDetailContent({
   // sửa nội dung -> phiên bản mới: mở LẠI đúng popup AI Contract Copilot Bước 3 (xem ContractAIWizard's `editVersion`
   // prop) thay vì 1 editor riêng - Sale có đủ Preview/so sánh/AI rủi ro/Legal Check như lúc soạn hợp đồng.
   const [editWizardOpen, setEditWizardOpen] = useState(false);
+  // Legal Check "Xem & xử lý" bấm từ tab Rủi ro - mở wizard sửa kèm đúng điều khoản cần xem (xem openToClause).
+  const [jumpClause, setJumpClause] = useState<string | null>(null);
   const pdfRef = useRef<string | null>(null);
   const [statusBusy, setStatusBusy] = useState<string | null>(null);
   const [generatingDoc, setGeneratingDoc] = useState(false);
@@ -247,7 +249,7 @@ export function ContractDetailContent({
   const secondaryStatuses = nextStatuses.filter(s => s !== primaryStatus && !(s === 'pending_signature' && contract.status !== 'pending_legal'));
   // Danh sách đúng trạng thái hiện tại cho phép chuyển tới (áp dụng NHẤT QUÁN ở cả header và tab "Phê duyệt & ký" - không hiện "Chuyển chờ ký" nhảy cóc từ draft).
   const visibleNextStatuses = [...(primaryStatus ? [primaryStatus] : []), ...secondaryStatuses];
-  const typeLabel =({ service: 'Hợp đồng cung cấp dịch vụ CNTT', principle: 'Hợp đồng nguyên tắc', marketing: 'Hợp đồng dịch vụ Marketing' } as Record<string, string>)[contract.templateType] || contract.templateType;
+  const typeLabel = ({ service: 'Hợp đồng cung cấp dịch vụ CNTT', principle: 'Hợp đồng nguyên tắc', marketing: 'Hợp đồng dịch vụ Marketing' } as Record<string, string>)[contract.templateType] || contract.templateType;
   const customerName = contract.dealCustomerName || contract.manualCustomerName || '—';
   const approvals = activity.filter(a => a.action.startsWith('approval:'));
   const valueMismatch = !!contract.quoteId && readiness?.checks.find(c => c.key === 'value' && !c.ok);
@@ -429,7 +431,17 @@ export function ContractDetailContent({
                     </div>
                   ) : null}
                   {current.risk.findings.length > 0 ? <small style={{ color: '#64748b' }}>AI nhận định (chưa xác minh bằng số liệu):</small> : null}
-                  {current.risk.findings.map((f, i) => <div key={i} className={`cp-finding ${f.severity}`}><b>{f.severity === 'ok' ? '✓' : '!'} {f.title}</b><div>{f.detail}</div></div>)}
+                  {current.risk.findings.map((f, i) => (
+                    <div key={i} className={`cp-finding ${f.severity}`}>
+                      <b>{f.severity === 'ok' ? '✓' : '!'} {f.title}</b><div>{f.detail}</div>
+                      {f.clause ? (
+                        <button type="button" className="cp-btn small" style={{ marginTop: 4 }} data-testid={`detail-risk-fix-${i}`}
+                          onClick={() => { setJumpClause(f.clause || null); setEditWizardOpen(true); }}>
+                          Xem & xử lý →
+                        </button>
+                      ) : null}
+                    </div>
+                  ))}
                 </>
               ) : <small style={{ color: '#94a3b8' }}>Phiên bản v{current.version} chưa được phân tích (kết quả của phiên bản khác không áp dụng cho phiên bản này).</small>}
             </div>
@@ -499,12 +511,13 @@ export function ContractDetailContent({
       {editWizardOpen && selected ? (
         <ContractAIWizard
           open={editWizardOpen}
-          onClose={() => void onEditWizardClosed()}
-          onCreated={() => void onEditWizardClosed()}
+          onClose={() => { setJumpClause(null); void onEditWizardClosed(); }}
+          onCreated={() => { setJumpClause(null); void onEditWizardClosed(); }}
           editVersion={{
             contractId: contract.id, version: selected, contractNumber: contract.contractNumber,
             dealId: contract.dealId || undefined, quoteId: contract.quoteId || undefined, customerId: contract.customerId || undefined,
           }}
+          openToClause={jumpClause || undefined}
         />
       ) : null}
     </main>

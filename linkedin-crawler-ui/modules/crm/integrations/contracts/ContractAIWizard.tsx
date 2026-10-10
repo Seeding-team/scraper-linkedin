@@ -639,7 +639,9 @@ export function ContractAIWizard({
   const riskScore = draftRisk?.score ?? null;
 
   return (
-    <div className="cp-backdrop" onClick={resetAndClose}>
+    // Chi dong khi click THAT SU vao backdrop (khong phai bubble tu dropdown
+    // portal ra document.body ben trong modal - xem CustomerFormModal.tsx).
+    <div className="cp-backdrop" onClick={event => { if (event.target === event.currentTarget) resetAndClose(); }}>
       <div className={`copilot-modal${step === 3 && mode === 'template' && tab === 'preview' ? ' copilot-modal--wide' : ''}`} data-testid="copilot-modal" onClick={e => e.stopPropagation()}>
         <aside className="cp-steps">
           <h2>AI Contract Copilot</h2>
