@@ -1071,19 +1071,31 @@ export function QuoteWorkspaceModal({
   // ngay khong can cho cha tai lai.
   const [locallyCreatedDeals, setLocallyCreatedDeals] = useState<Deal[]>([]);
   const [fetchedCustomerDeals, setFetchedCustomerDeals] = useState<Deal[]>([]);
+  // Co hoi nao vua tai XONG (thanh cong hoac loi deu tinh la "xong") cho dung
+  // draftCustomerId hien tai - dung lam dieu kien cho auto-chon Co hoi ben
+  // duoi, tranh dua voi `deals` prop tu trang cha (vd mo "Yêu cầu hỗ trợ báo
+  // giá" ngay luc trang Báo giá chua tai xong danh sach Deal toan he thong -
+  // bug thuc te: dropdown hien dung 1 lua chon khi mo tay sau do, nhung
+  // auto-chon da dem thieu truoc khi fetch nay kip tra ve nen bo lo oan uong).
+  const [fetchedCustomerDealsReadyFor, setFetchedCustomerDealsReadyFor] = useState('');
   useEffect(() => {
     if (quote || !draftCustomerId) {
       setFetchedCustomerDeals([]);
+      setFetchedCustomerDealsReadyFor('');
       return;
     }
     let alive = true;
+    setFetchedCustomerDealsReadyFor('');
     seedingCrmRepository.getDeals()
       .then(rows => {
         if (!alive) return;
         setFetchedCustomerDeals(rows.filter(d => d.customerId === draftCustomerId));
+        setFetchedCustomerDealsReadyFor(draftCustomerId);
       })
       .catch(() => {
-        if (alive) setFetchedCustomerDeals([]);
+        if (!alive) return;
+        setFetchedCustomerDeals([]);
+        setFetchedCustomerDealsReadyFor(draftCustomerId);
       });
     return () => { alive = false; };
   }, [quote, draftCustomerId]);
@@ -1103,6 +1115,10 @@ export function QuoteWorkspaceModal({
   const autoDealCustomerRef = useRef<string>('');
   useEffect(() => {
     if (quote || !draftCustomerId || draftDealId || autoDealCustomerRef.current === draftCustomerId) return;
+    // Cho fetch rieng theo draftCustomerId tai XONG roi moi dem so Co hoi -
+    // `deals` prop (tu trang cha) co the con cu/chua tai luc nguoi dung vua
+    // chon khach hang (xem comment o fetchedCustomerDealsReadyFor ben tren).
+    if (fetchedCustomerDealsReadyFor !== draftCustomerId) return;
     const candidates = effectiveDeals
       .filter(d => d.customerId === draftCustomerId)
       .filter(d => !lockProject || !draftProjectId || d.projectId === draftProjectId);
@@ -1111,7 +1127,7 @@ export function QuoteWorkspaceModal({
       handleSelectDeal(candidates[0].id);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [quote, draftCustomerId, draftDealId, effectiveDeals, lockProject]);
+  }, [quote, draftCustomerId, draftDealId, effectiveDeals, lockProject, fetchedCustomerDealsReadyFor]);
   const CREATE_NEW_DEAL_OPTION = '__create_new_deal__';
   const CREATE_NEW_PROJECT_OPTION = '__create_new_project__';
   // "Tạo dự án mới"/"Tạo cơ hội mới" nhanh ngay trong workspace - tái dùng

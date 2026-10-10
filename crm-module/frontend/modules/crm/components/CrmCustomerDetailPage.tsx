@@ -1480,7 +1480,7 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
           quoteId={quoteWorkspace.quoteId}
           deals={customerQuoteDeals.length ? customerQuoteDeals : quoteWorkspace.deal ? [quoteWorkspace.deal] : []}
           dealsById={customerQuoteDeals.length ? customerQuoteDealsById : new Map(quoteWorkspace.deal ? [[quoteWorkspace.deal.id, quoteWorkspace.deal]] : [])}
-          agents={[]}
+          agents={dealAgents}
           user={user}
           defaultFormId={defaultQuoteFormId}
           quoteForms={quoteForms}
