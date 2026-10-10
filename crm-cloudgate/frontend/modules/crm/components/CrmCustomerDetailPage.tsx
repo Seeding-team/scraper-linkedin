@@ -145,6 +145,11 @@ export type RelatedPayload = {
     updated_at?: string | null;
     contact_count?: number | null;
     deal_count?: number | null;
+    /** "Việc tiếp theo" tu tinh server-side tu Deal/Bao gia/Hop dong dang hoat dong
+     * (crm_customer_progress_service.py, qua _attach_customer_metrics() trong get_customer()) -
+     * backend DA tra san o day (related_records() goi get_customer() ben trong), chi thieu
+     * khai bao type + hien thi o FE (bug thuc te 2026-10-11, Known gaps #6). */
+    next_action?: string | null;
   };
   deals?: Array<{
     id: string;
@@ -1161,6 +1166,17 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
   // han short_name du da fetch san (chi dung lam tooltip). Dung chung customerDisplay() (da co san, dang dung dung o
   // QuoteWorkspaceModal) de uu tien short_name, fallback ten day du khi chua co short_name.
   const headerDisplay = customerDisplay({ shortName: customer?.short_name, companyName: customer?.company_name, customerName: customer?.customer_name });
+  // "Việc tiếp theo" - backend da tinh san (next_action, qua _attach_customer_metrics() trong
+  // get_customer()) va tra dung cho endpoint nay, chi chua tung hien o Chi tiet Khach hang (du
+  // da hien o CrmCustomersDirectory/LeadsDirectory/Lead360Drawer - Known gaps #6). Dung chung
+  // fallback theo status khi backend chua tra duoc, giong het nextActionOf() o
+  // CrmCustomersDirectory.tsx de khong lech logic giua 2 noi.
+  const nextActionText = customer?.next_action
+    || (customer?.status === 'new_lead' ? 'Xác minh nhu cầu'
+      : customer?.status === 'following' ? 'Theo dõi cơ hội'
+      : customer?.status === 'current_customer' ? 'Chăm sóc / upsell'
+      : customer?.status === 'not_fit' ? 'Không còn theo dõi'
+      : 'Cập nhật hồ sơ');
 
   return (
     <div className="crm-shell">
@@ -1192,6 +1208,8 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
                   {customer?.source ? <span>{customer.source}</span> : null}
                   <span>•</span>
                   <span>Owner: {memberName(customer?.owner_id)}</span>
+                  <span>•</span>
+                  <span title={nextActionText}>Việc tiếp theo: <strong className="text-slate-700">{nextActionText}</strong></span>
                 </div>
                 {error ? <p className="crm-error mt-2">{error}</p> : null}
               </div>
