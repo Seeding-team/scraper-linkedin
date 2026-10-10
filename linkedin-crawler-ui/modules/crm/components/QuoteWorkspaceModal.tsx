@@ -2060,6 +2060,7 @@ export function QuoteWorkspaceModal({
         // Gia khach / (1 + Markup% mac dinh cua san pham do) thay vi cho dien tay. Markup% la
         // ty le, dung chung duoc cho ca VND lan USD (khong phu thuoc don vi tien te).
         let costPrice = row.costPrice;
+        let costPriceChanged = false;
         // Chi tu dien khi Sale THAT SU co quyen sua Gia von (canEditCostCells) - neu khong,
         // nguoi khong co quyen se thay/ghi 1 Gia von suy doan ma khong duoc phep dong vao
         // bao gia (backend se tu choi field nay neu thieu quyen, gay loi luu kho hieu).
@@ -2068,6 +2069,7 @@ export function QuoteWorkspaceModal({
           const defaultMarkup = catalogItem?.defaultMarkupPercent;
           if (defaultMarkup != null && defaultMarkup > -100) {
             costPrice = price / (1 + defaultMarkup / 100);
+            costPriceChanged = true;
           }
         }
         return {
@@ -2075,6 +2077,9 @@ export function QuoteWorkspaceModal({
           unitPrice: price,
           ...(workspaceCurrency === 'USD' ? { unitPriceVnd: undefined } : {}),
           costPrice,
+          // Giong het pattern cua handleCostPriceChange (sua Gia von tay): costPriceVnd (goc VND
+          // pin cho quote USD) khong con dung voi Gia von vua tu tinh - xoa de khong lech du lieu.
+          ...(costPriceChanged && workspaceCurrency === 'USD' ? { costPriceVnd: null } : {}),
           markupPercent: calculateMarkupFromCostPrice(costPrice, price),
         };
       })
