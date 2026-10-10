@@ -3017,6 +3017,19 @@
   min-width: 0;
   overflow-wrap: anywhere;
 }
+/* Bug thuc te (2026-10-10): "Điều khoản thanh toán"/"Phạm vi công việc" o
+ * "Tổng hợp giá" co the dai nhieu dong (danh sach so thu tu) - truoc day
+ * khong gioi han chieu cao nen choan het luoi, day cac o khac ("Hiệu lực
+ * báo giá"...) xuong qua xa, nhin nhu "bi dai qua". Cho xem gon toi da 4
+ * dong + "..."; xem day du qua title (hover) hoac mo lai o Buoc "Chỉnh sua
+ * dieu khoan". */
+.qc-summary-grid > div.qc-summary-field--clamp strong {
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  white-space: pre-line;
+}
 .qc-summary-grid--2col {
   grid-template-columns: 1fr 1fr;
 }

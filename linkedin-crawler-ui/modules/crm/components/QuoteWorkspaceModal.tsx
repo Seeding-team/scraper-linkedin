@@ -6808,9 +6808,9 @@ export function QuoteWorkspaceModal({
               <div className="qc-workspace-card">
                 <h3>Tổng hợp giá</h3>
                 <div className="qc-summary-grid">
-                  <div><span className="qc-workspace-info-label">Điều khoản thanh toán</span><strong>{paymentTermsBlock?.content || 'Chưa có điều khoản'}</strong></div>
+                  <div className="qc-summary-field--clamp"><span className="qc-workspace-info-label">Điều khoản thanh toán</span><strong title={paymentTermsBlock?.content || undefined}>{paymentTermsBlock?.content || 'Chưa có điều khoản'}</strong></div>
                   <div><span className="qc-workspace-info-label">Hiệu lực báo giá</span><strong>{quote.validUntil ? formatDate(quote.validUntil) : 'Chưa đặt'}</strong></div>
-                  <div><span className="qc-workspace-info-label">Phạm vi công việc</span><strong>{scopeBlock?.content || 'Chưa mô tả'}</strong></div>
+                  <div className="qc-summary-field--clamp"><span className="qc-workspace-info-label">Phạm vi công việc</span><strong title={scopeBlock?.content || undefined}>{scopeBlock?.content || 'Chưa mô tả'}</strong></div>
                   <div><span className="qc-workspace-info-label">Trước chiết khấu</span><strong>{formatMoney(quote.subtotalAmount)}</strong></div>
                   <div><span className="qc-workspace-info-label">VAT</span><strong>{formatMoney(quote.vatAmount)}</strong></div>
                   <div><span className="qc-workspace-info-label">Khách thanh toán</span><strong>{formatMoney(quote.totalAmount)}</strong></div>
