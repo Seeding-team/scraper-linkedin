@@ -330,6 +330,17 @@ export function LeadDetailDrawer({
     initializedLeadRef.current = lead.id;
     setFreshLead(null);
     setConvertedDeal(null);
+    // Bug thuc te (2026-10-10): mo Lead khac sau khi da xem/dien 1 Lead truoc do - "THÔNG TIN
+    // THEN CHỐT"/"BÀN GIAO SALE" con giu lai du lieu cua Lead CU. Nguyen nhan: effect hydrate
+    // ben duoi (hydrateLeadDrawer) merge setForm(prev => ({... || prev.xxx || ''})) - cac field
+    // Lead moi chua co gia tri se fallback ve `prev` (tuc du lieu Lead cu con sot trong state),
+    // vi effect nay (reset theo lead.id) truoc gio KHONG reset `form` nhu cac state khac. Phai
+    // dua form ve dung mac dinh rong truoc khi hydrate effect chay lai cho Lead moi.
+    setForm({
+      interest: '', interestLevel: '', score: null, timeline: '', estimatedValue: null,
+      nextStep: '', nextStepAt: '', aeId: '', note: '', followUpChannel: '',
+      dealStage: 'dealing', project: '', projectId: '',
+    });
     setError('');
     setSavedOk('');
     setConvertError('');
