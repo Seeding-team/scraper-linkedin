@@ -59,6 +59,7 @@ export function QuickAddProductModal({
   defaultGroupId?: string;
   initialValues?: {
     name?: string;
+    description?: string;
     unit?: string;
     vatRate?: number;
     unitPriceVnd?: number;
@@ -250,7 +251,11 @@ export function QuickAddProductModal({
       setNameInput(initialValues?.name || '');
       setUnitInput(initialValues?.unit || '');
       setVatInput(initialValues?.vatRate != null ? String(initialValues.vatRate) : '');
-      setDescription('');
+      // Bug thuc te (2026-10-10): truoc day LUON de trong "Mo ta chi tiet" du dong bao gia
+      // dang lien ket (openQuickAddForRow) da co san mo ta - Sale thay Ten san pham duoc
+      // dien san nhung Mo ta thi khong, tuong nham la mat du lieu. Dien san tu dong bao gia
+      // neu co, Sale van sua/xoa binh thuong truoc khi luu.
+      setDescription(initialValues?.description || '');
       setNote('');
       setQuoteDisplayName('');
       setQuoteDescription('');

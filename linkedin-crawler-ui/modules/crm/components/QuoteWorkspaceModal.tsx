@@ -8390,6 +8390,10 @@ export function QuoteWorkspaceModal({
                 return source
                   ? {
                       name: source.serviceDescription || source.description,
+                      // Dien san "Mo ta chi tiet" theo mo ta dong dang co (neu Sale da go) - truoc
+                      // day bo trong, dien duoc Ten nhung khong dien duoc Mo ta (bug thuc te
+                      // 2026-10-10: "mô tả ở đây phải ăn với mô tả chi tiết trong đây").
+                      description: source.description,
                       unit: source.unit,
                       vatRate: source.vatRate,
                       unitPriceVnd: source.unitPrice ?? undefined,
