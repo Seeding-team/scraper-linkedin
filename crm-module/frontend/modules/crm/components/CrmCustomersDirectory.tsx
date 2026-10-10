@@ -688,7 +688,11 @@ export function CrmCustomersDirectory() {
       if (!target) return;
       if (target.closest('[data-crm-customer-quickview="true"]')) return;
       if (target.closest('[data-crm-customer-row="true"]')) return;
-      if (target.closest('[role="dialog"],.crm-modal,.crm-modal-backdrop,.crm-verify-drawer,.crm-action-menu')) return;
+      // .crm-searchable-select-menu: dropdown MemberSearchSelect/SearchableSelect (vd "Người phụ trách"
+      // trong form Sửa khách hàng embedded) portal ra document.body, NGOAI DOM cua quickview - bug
+      // thuc te (2026-10-10, kem anh chup): click chon 1 ten trong dropdown bi coi la "click ra ngoai"
+      // nen dong het panel truoc khi kip chon xong.
+      if (target.closest('[role="dialog"],.crm-modal,.crm-modal-backdrop,.crm-verify-drawer,.crm-action-menu,.crm-searchable-select-menu')) return;
       closeQuickView();
     };
 
