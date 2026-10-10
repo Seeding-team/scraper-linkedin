@@ -2622,7 +2622,11 @@ export function QuoteWorkspaceModal({
       ...(workspaceCurrency === 'USD'
         ? { unitPriceVnd: defaultUnitPriceVnd, costPriceVnd: costViewAllowed ? defaultCostPriceVnd : null }
         : {}),
-      description: item.quoteDescription || item.description || item.name,
+      // Bug thuc te (2026-10-10, xac nhan tu mentor): truoc day fallback ve item.name khi
+      // "Mo ta chi tiet" de trong luc tao san pham - Sale co y de trong (khong go gi) nhung
+      // cot Mo ta van bi dien trung ten san pham, tuong nham la da luu dung du lieu go. Chi lay
+      // dung mo ta that (quoteDescription uu tien, roi toi description), de trong neu ca 2 trong.
+      description: item.quoteDescription || item.description || '',
       serviceDescription: item.quoteDisplayName || (item.sku ? `${item.sku} - ${item.name}` : item.name),
       unit: item.unit || '',
       quantity: item.specQuantityPerUnit || 1,
