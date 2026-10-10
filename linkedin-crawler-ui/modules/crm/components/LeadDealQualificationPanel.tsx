@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { CurrencyInput } from '@/components/CurrencyInput';
 import { formatVND, DEAL_STAGE_META, PIPELINE_COLUMNS } from '../constants/crmConfig';
 import { CrmCategorySelect } from './CrmCategorySelect';
@@ -142,6 +142,12 @@ export function LeadDealQualificationPanel(props: {
    * hàng để tra Dự án có sẵn). */
   projectOptions?: Array<{ id: string; name: string; code?: string }>;
   onPickProject?: (project: { id: string; name: string }) => void;
+  /** Khi cha truyền node này - RENDER THẲNG node đó thay cho input/combobox
+   * dựng sẵn ở trên (vd cha muốn dùng lại nguyên `ProjectPicker` thật của
+   * DealFormFields.tsx - tự fetch/tạo Dự án - thay vì bản combobox nhận
+   * props rời của riêng panel này). `project`/`projectOptions` vẫn khai báo
+   * required để không phá các nơi gọi cũ, nhưng bị bỏ qua khi có `projectField`. */
+  projectField?: ReactNode;
   note: string;
   onNoteChange: (value: string) => void;
 
@@ -303,7 +309,7 @@ export function LeadDealQualificationPanel(props: {
           </div>
           {props.showProjectField !== false ? (
             <Field label="Dự án" hint="tùy chọn">
-              {props.projectOptions ? (
+              {props.projectField ? props.projectField : props.projectOptions ? (
                 <ProjectComboField
                   disabled={!canWrite}
                   value={props.project}

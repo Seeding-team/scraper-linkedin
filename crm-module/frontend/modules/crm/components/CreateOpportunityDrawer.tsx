@@ -10,6 +10,7 @@ import { allPlatformCategoriesService, usersService, crmTeamsService, type Quote
 import { DEAL_STAGE_META } from '../constants/crmConfig';
 import {
   CustomerProfileCombobox,
+  ProjectPicker,
   emptyDealForm,
   buildDealPayload,
   getSourceLabel,
@@ -113,7 +114,6 @@ export function CreateOpportunityDrawer({
   // submit thay vi fabricate migration moi cho field UI-only.
   const [interestLevel, setInterestLevel] = useState<InterestLevel | ''>('');
   const [timeline, setTimeline] = useState('');
-  const [project, setProject] = useState('');
   const [note, setNote] = useState('');
   const [nurtureReason, setNurtureReason] = useState('');
   const [unqualifiedReason, setUnqualifiedReason] = useState('');
@@ -151,7 +151,6 @@ export function CreateOpportunityDrawer({
     setEstimatedBudget('');
     setInterestLevel('');
     setTimeline('');
-    setProject('');
     setNote('');
     setNurtureReason('');
     setUnqualifiedReason('');
@@ -424,9 +423,10 @@ export function CreateOpportunityDrawer({
     const noteLines: string[] = [];
     if (timeline) noteLines.push(`Dự kiến triển khai: ${timeline}`);
     if (icpFit !== 'unknown') noteLines.push(`ICP: ${ICP_OPTIONS.find(o => o.value === icpFit)?.label}`);
-    if (project.trim()) noteLines.push(`Dự án: ${project.trim()}`);
     if (note.trim()) noteLines.push(note.trim());
     const form: DealFormState = {
+      // projectId/dealName da duoc ProjectPicker ghi thang vao customerForm
+      // (giong het +Deal that) - khong con can ghi de rieng o day nua.
       ...customerForm,
       servicePackage: productValue,
       estimatedBudget,
@@ -450,8 +450,14 @@ export function CreateOpportunityDrawer({
     try {
       const payload = buildPayload();
       await seedingCrmRepository.createDeal(payload);
+      // Luon bao cho trang cha reload (bump reloadTick) bat ke mode nao - rieng
+      // nhanh 'deal' ben duoi chi router.push SANG CUNG 1 trang (doi query
+      // ?tab=deals), Next.js KHONG tu fetch lai du lieu vi customerId khong
+      // doi -> thieu onCreated() o day la ly do "tạo xong k update liền mà
+      // f5 mới thấy" (bug thuc te nguoi dung bao cao).
+      onCreated();
       if (mode === 'stay') {
-        onCreated();
+        // da goi onCreated() o tren
       } else {
         // Feedback leader 2026-09-27: "xác nhận tạo cơ hội xong thì tự trỏ về
         // đúng trang chi tiết khách hàng" - giong het hanh vi handleConvert()
@@ -600,8 +606,9 @@ export function CreateOpportunityDrawer({
                 onInterestLevelChange={setInterestLevel}
                 timeline={timeline}
                 onTimelineChange={setTimeline}
-                project={project}
-                onProjectChange={setProject}
+                project={customerForm.dealName}
+                onProjectChange={() => {}}
+                projectField={<ProjectPicker form={customerForm} setValue={setCustomerFormValue} />}
                 note={note}
                 onNoteChange={setNote}
                 teamId={teamId}

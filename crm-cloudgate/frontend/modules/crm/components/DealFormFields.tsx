@@ -626,7 +626,7 @@ export function CustomerProfileCombobox({
  * (thuoc DUNG Customer dang chon) VUA cho go ten de TAO Du an moi (backend
  * tu tao khi luu deal, xem buildDealPayload() projectName). Rong/khoa khi
  * chua chon Customer. */
-function ProjectPicker({
+export function ProjectPicker({
   form,
   setValue,
   locked = false,

@@ -6,10 +6,11 @@ import { API_BASE_URL, API_KEY } from '@/lib/env';
 import { parseCurrencyInput } from '@/lib/currency';
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
 import { useMembers } from '@/hooks/useMembers';
-import { allPlatformCategoriesService, usersService, crmTeamsService, projectsService, type QuoteBusinessRoleUser, type CrmTeam, type AppUserProfile, type Project } from '@/services/all-platform.service';
+import { allPlatformCategoriesService, usersService, crmTeamsService, type QuoteBusinessRoleUser, type CrmTeam, type AppUserProfile } from '@/services/all-platform.service';
 import { DEAL_STAGE_META } from '../constants/crmConfig';
 import {
   CustomerProfileCombobox,
+  ProjectPicker,
   emptyDealForm,
   buildDealPayload,
   getSourceLabel,
@@ -113,9 +114,6 @@ export function CreateOpportunityDrawer({
   // submit thay vi fabricate migration moi cho field UI-only.
   const [interestLevel, setInterestLevel] = useState<InterestLevel | ''>('');
   const [timeline, setTimeline] = useState('');
-  const [project, setProject] = useState('');
-  const [projectId, setProjectId] = useState('');
-  const [customerProjects, setCustomerProjects] = useState<Project[]>([]);
   const [note, setNote] = useState('');
   const [nurtureReason, setNurtureReason] = useState('');
   const [unqualifiedReason, setUnqualifiedReason] = useState('');
@@ -153,8 +151,6 @@ export function CreateOpportunityDrawer({
     setEstimatedBudget('');
     setInterestLevel('');
     setTimeline('');
-    setProject('');
-    setProjectId('');
     setNote('');
     setNurtureReason('');
     setUnqualifiedReason('');
@@ -181,23 +177,6 @@ export function CreateOpportunityDrawer({
         .catch(() => { /* khong co Team CRM cho nguoi nay - bo qua */ });
     }
   }, [open, customer?.id]);
-
-  useEffect(() => {
-    if (!open || !customerForm.customerId) {
-      setCustomerProjects([]);
-      return;
-    }
-    let alive = true;
-    projectsService.list(customerForm.customerId)
-      .then(res => {
-        if (!alive) return;
-        setCustomerProjects(res.success && res.data ? res.data : []);
-      })
-      .catch(() => {
-        if (alive) setCustomerProjects([]);
-      });
-    return () => { alive = false; };
-  }, [open, customerForm.customerId]);
 
   useEffect(() => {
     if (!open) return;
@@ -367,10 +346,6 @@ export function CreateOpportunityDrawer({
     () => [{ key: 'add-team', label: '+ Thêm Team mới', type: 'add', onSelect: () => setAddTeamOpen(true) }],
     [],
   );
-  const projectOptions = useMemo(
-    () => customerProjects.map(p => ({ id: p.id, name: p.name, code: (p as any).code })),
-    [customerProjects],
-  );
   /** Doi Team do NGUOI DUNG tu bam - reset Sale phu trach dang chon vi co the
    * khong con thuoc Team moi (khac voi auto-load luc mo drawer/doi khach hang). */
   function handleTeamIdChange(value: string) {
@@ -448,12 +423,11 @@ export function CreateOpportunityDrawer({
     const noteLines: string[] = [];
     if (timeline) noteLines.push(`Dự kiến triển khai: ${timeline}`);
     if (icpFit !== 'unknown') noteLines.push(`ICP: ${ICP_OPTIONS.find(o => o.value === icpFit)?.label}`);
-    if (project.trim()) noteLines.push(`Dự án: ${project.trim()}`);
     if (note.trim()) noteLines.push(note.trim());
     const form: DealFormState = {
+      // projectId/dealName da duoc ProjectPicker ghi thang vao customerForm
+      // (giong het +Deal that) - khong con can ghi de rieng o day nua.
       ...customerForm,
-      projectId: projectId || customerForm.projectId,
-      dealName: project.trim() || customerForm.dealName,
       servicePackage: productValue,
       estimatedBudget,
       decisionMaker: contactName.trim(),
@@ -476,8 +450,14 @@ export function CreateOpportunityDrawer({
     try {
       const payload = buildPayload();
       await seedingCrmRepository.createDeal(payload);
+      // Luon bao cho trang cha reload (bump reloadTick) bat ke mode nao - rieng
+      // nhanh 'deal' ben duoi chi router.push SANG CUNG 1 trang (doi query
+      // ?tab=deals), Next.js KHONG tu fetch lai du lieu vi customerId khong
+      // doi -> thieu onCreated() o day la ly do "tạo xong k update liền mà
+      // f5 mới thấy" (bug thuc te nguoi dung bao cao).
+      onCreated();
       if (mode === 'stay') {
-        onCreated();
+        // da goi onCreated() o tren
       } else {
         // Feedback leader 2026-09-27: "xác nhận tạo cơ hội xong thì tự trỏ về
         // đúng trang chi tiết khách hàng" - giong het hanh vi handleConvert()
@@ -626,10 +606,9 @@ export function CreateOpportunityDrawer({
                 onInterestLevelChange={setInterestLevel}
                 timeline={timeline}
                 onTimelineChange={setTimeline}
-                project={project}
-                projectOptions={projectOptions}
-                onPickProject={p => { setProject(p.name); setProjectId(p.id); }}
-                onProjectChange={value => { setProject(value); setProjectId(''); }}
+                project={customerForm.dealName}
+                onProjectChange={() => {}}
+                projectField={<ProjectPicker form={customerForm} setValue={setCustomerFormValue} />}
                 note={note}
                 onNoteChange={setNote}
                 teamId={teamId}

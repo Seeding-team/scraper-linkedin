@@ -246,7 +246,7 @@ def _attach_customer_metrics(customers: list[dict[str, Any]], user: dict[str, An
     ids = [row["id"] for row in customers]
     lead_res = execute_supabase_query(
         lambda: supabase.table("customer_leads")
-        .select("id, customer_id, estimated_budget, lifetime_value, updated_at, created_at, leaded_by, sdr_id")
+        .select("id, customer_id, estimated_budget, lifetime_value, updated_at, created_at, leaded_by, sdr_id, deal_stage")
         .in_("customer_id", ids)
         .eq("instance", settings.crm_instance)
         .execute()
@@ -254,6 +254,47 @@ def _attach_customer_metrics(customers: list[dict[str, Any]], user: dict[str, An
     by_customer: dict[str, list[dict[str, Any]]] = {}
     for lead in lead_res.data or []:
         by_customer.setdefault(lead.get("customer_id"), []).append(lead)
+
+    # "Việc tiếp theo" tự động (xem crm_customer_progress_service) - tai hang loat bao
+    # gia/hop dong cua TOAN BO Deal trong trang nay (1 truy van gop, khong N+1) roi tinh
+    # ngay o day, khong luu DB - luon dung voi du lieu that tai thoi diem GET.
+    from app.modules.all_platform.services.crm_customer_progress_service import attach_next_action
+
+    deal_ids_all = [lead["id"] for leads in by_customer.values() for lead in leads]
+    quotes_by_deal: dict[str, list[dict[str, Any]]] = {}
+    contracts_by_deal: dict[str, list[dict[str, Any]]] = {}
+    if deal_ids_all:
+        quote_res = execute_supabase_query(
+            lambda: supabase.table("quotes").select("id, deal_id, status, deleted_at")
+            .in_("deal_id", deal_ids_all).eq("instance", settings.crm_instance).execute()
+        )
+        for row in quote_res.data or []:
+            if row.get("deal_id"):
+                quotes_by_deal.setdefault(row["deal_id"], []).append(row)
+        contract_res = execute_supabase_query(
+            lambda: supabase.table("contracts").select("id, deal_id, status")
+            .in_("deal_id", deal_ids_all).eq("instance", settings.crm_instance).execute()
+        )
+        for row in contract_res.data or []:
+            if row.get("deal_id"):
+                contracts_by_deal.setdefault(row["deal_id"], []).append(row)
+    # Hop dong tao truc tiep tren Customer (khong qua Deal) - gop them theo customer_id.
+    direct_contract_res = execute_supabase_query(
+        lambda: supabase.table("contracts").select("id, deal_id, status, customer_id")
+        .in_("customer_id", ids).eq("instance", settings.crm_instance).execute()
+    )
+    deals_by_customer_for_progress: dict[str, list[dict[str, Any]]] = by_customer
+    quotes_by_customer: dict[str, list[dict[str, Any]]] = {}
+    contracts_by_customer: dict[str, list[dict[str, Any]]] = {}
+    for cid, leads in by_customer.items():
+        for lead in leads:
+            quotes_by_customer.setdefault(cid, []).extend(quotes_by_deal.get(lead["id"], []))
+            contracts_by_customer.setdefault(cid, []).extend(contracts_by_deal.get(lead["id"], []))
+    for row in direct_contract_res.data or []:
+        if row.get("deal_id") or not row.get("customer_id"):
+            continue
+        contracts_by_customer.setdefault(row["customer_id"], []).append(row)
+    attach_next_action(customers, deals_by_customer_for_progress, quotes_by_customer, contracts_by_customer)
 
     # Contact that theo tung khach hang - 1 truy van gop cho ca trang, khong
     # phai N+1 (khop do phuc tap voi cach lam cua lead_res o tren). Mo rong

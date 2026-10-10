@@ -377,19 +377,40 @@ def get_contracts_dashboard_stats(allowed_ids: set[str] | None = None) -> dict:
 
 
 # ── Dong bo Sales Pipeline sau cac su kien hop dong (stage 5 "Lên hợp đồng") ───────────────────────────────
-def _sync_contract_deal(deal_ids, source: str) -> None:
+def _sync_contract_deal(deal_ids, source: str, customer_ids: list | None = None) -> None:
     try:
         from app.modules.all_platform.services import deal_stage_sync_service as _dss
 
-        if not _dss.CONTRACT_STAGE_SYNC_ENABLED:  # tam tat stage 5 tu hop dong; CRUD hop dong khong bi anh huong
-            return
-        sync_deal_stage = _dss.sync_deal_stage
-        for deal_id in {d for d in deal_ids if d}:
-            sync_deal_stage(deal_id, source=source)
+        unique_deal_ids = {d for d in deal_ids if d}
+        if _dss.CONTRACT_STAGE_SYNC_ENABLED:  # tam tat stage 5 tu hop dong; CRUD hop dong khong bi anh huong
+            sync_deal_stage = _dss.sync_deal_stage
+            for deal_id in unique_deal_ids:
+                sync_deal_stage(deal_id, source=source)
     except Exception:  # noqa: BLE001
         import logging
 
         logging.getLogger(__name__).warning("deal stage sync sau %s that bai", source, exc_info=True)
+
+    # "Việc tiếp theo" / nhom Khach hang tu dong (crm_customer_progress_service) - DOC LAP voi
+    # CONTRACT_STAGE_SYNC_ENABLED (hop dong luon anh huong toi tien do Khach hang, kha hon flag
+    # tam tat chi danh rieng cho Sales Pipeline stage 5 noi tren).
+    try:
+        from app.modules.all_platform.services.crm_customer_progress_service import recompute_customer_progress
+
+        resolved_customer_ids: set[str] = {c for c in (customer_ids or []) if c}
+        unique_deal_ids = {d for d in deal_ids if d}
+        if unique_deal_ids:
+            rows = (
+                get_supabase_client().table("customer_leads").select("id, customer_id")
+                .in_("id", list(unique_deal_ids)).execute().data or []
+            )
+            resolved_customer_ids.update(r.get("customer_id") for r in rows if r.get("customer_id"))
+        for customer_id in resolved_customer_ids:
+            recompute_customer_progress(customer_id, source=source)
+    except Exception:  # noqa: BLE001
+        import logging
+
+        logging.getLogger(__name__).warning("customer progress sync sau %s that bai", source, exc_info=True)
 
 
 def _contract_deal_id(contract_id: str) -> str | None:
@@ -408,20 +429,29 @@ _orig_delete_contract = delete_contract
 
 def create_contract(payload: dict, created_by: str | None) -> dict:  # noqa: F811
     result = _orig_create_contract(payload, created_by)
-    _sync_contract_deal([result.get("dealId") or payload.get("deal_id")], "tạo hợp đồng")
+    _sync_contract_deal(
+        [result.get("dealId") or payload.get("deal_id")], "tạo hợp đồng",
+        customer_ids=[result.get("customerId") or payload.get("customer_id")],
+    )
     return result
 
 
 def update_contract(contract_id: str, payload: dict, actor_id: str | None) -> dict:  # noqa: F811
     before = _contract_deal_id(contract_id)
     result = _orig_update_contract(contract_id, payload, actor_id)
-    _sync_contract_deal([before, result.get("dealId")], "cập nhật hợp đồng")
+    _sync_contract_deal(
+        [before, result.get("dealId")], "cập nhật hợp đồng",
+        customer_ids=[result.get("customerId")],
+    )
     return result
 
 
 def update_contract_status(contract_id: str, status: str, signed_at: str | None, actor_id: str | None) -> dict:  # noqa: F811
     result = _orig_update_contract_status(contract_id, status, signed_at, actor_id)
-    _sync_contract_deal([result.get("dealId")], "đổi trạng thái hợp đồng")
+    _sync_contract_deal(
+        [result.get("dealId")], "đổi trạng thái hợp đồng",
+        customer_ids=[result.get("customerId")],
+    )
     return result
 
 

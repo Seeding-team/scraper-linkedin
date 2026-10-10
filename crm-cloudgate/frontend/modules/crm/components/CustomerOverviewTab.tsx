@@ -123,7 +123,7 @@ export function CustomerOverviewTab({
               <div className="min-w-0">
                 <div className="font-bold text-slate-900 text-sm">Việc cần làm tiếp theo</div>
                 <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600 mt-0.5">
-                  <span className="font-medium">{nextFollowUpDeal.next_action || 'Follow-up khách hàng'}</span>
+                  <span className="font-medium">{nextFollowUpDeal.next_step || customer?.next_action || 'Follow-up khách hàng'}</span>
                   <span>•</span>
                   <span>Cơ hội: <span className="font-semibold text-slate-800">{nextFollowUpDeal.customer_name || customer?.customer_name || 'Hilab'}</span></span>
                   <Badge className="bg-rose-100 text-rose-700 hover:bg-rose-200 border-transparent text-[10px] font-semibold px-2 py-0">

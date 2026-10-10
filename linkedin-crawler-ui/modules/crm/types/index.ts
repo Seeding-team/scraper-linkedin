@@ -220,6 +220,9 @@ export interface CrmCustomerSummary {
    * contact nao is_primary) - cung gan o _attach_customer_metrics(), null neu
    * khach hang chua co contact nao. */
   primaryContact?: { id: string; name: string; phone?: string | null; email?: string | null } | null;
+  /** "Việc tiếp theo" tự tính từ Deal/Báo giá/Hợp đồng đang hoạt động (server-computed, khong luu DB -
+   * xem crm_customer_progress_service.py) - khong con la switch cung theo `status` o FE. */
+  nextAction?: string;
 }
 
 /**

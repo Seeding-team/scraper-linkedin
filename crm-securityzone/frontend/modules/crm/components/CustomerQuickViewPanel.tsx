@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Activity,
   AlertTriangle,
@@ -26,6 +26,7 @@ import { customerDisplay } from '../utils/customerNames';
 import { CustomerFormModal } from './CustomerFormModal';
 import type { AppUser } from '@/types/unified.types';
 import { Pencil } from 'lucide-react';
+import { useDealsChanged } from '../utils/dealSync';
 
 type RelatedDeal = {
   id: string;
@@ -239,6 +240,11 @@ export function CustomerQuickViewPanel({
     setEditMode(false);
   }, [customer?.id, open]);
 
+  const [reloadTick, setReloadTick] = useState(0);
+  // Tao/duyet bao gia hoac luu/doi trang thai hop dong co the xay ra o noi khac trong luc panel nay
+  // dang mo (vd tab khac cung trinh duyet) - tai lai /related de "Viec can lam tiep theo" khong bi cu.
+  useDealsChanged(useCallback(() => setReloadTick(t => t + 1), []));
+
   useEffect(() => {
     if (!customer?.id) {
       setRelated(null);
@@ -299,7 +305,7 @@ export function CustomerQuickViewPanel({
       });
 
     return () => controller.abort();
-  }, [customer?.id]);
+  }, [customer?.id, reloadTick]);
 
   const deals = related?.deals || [];
   const projects = related?.projects || [];
@@ -423,6 +429,11 @@ export function CustomerQuickViewPanel({
               ) : (
                 <p>Thêm lịch follow-up trong hồ sơ đầy đủ để theo dõi tại đây.</p>
               )}
+              {customer?.nextAction ? (
+                // Tu dong tu Bao gia/Hop dong (crm_customer_progress_service.py) - KHAC voi task thu
+                // cong `nextDeal.next_step` o tren, khong ghi de len nhau.
+                <p className="crm-customer-next-work-auto">Tự động: {customer.nextAction}</p>
+              ) : null}
               <div className="crm-customer-next-work-actions">
                 {embedded ? null : (
                   <button type="button" onClick={() => onOpenDetail(customer.id)}>

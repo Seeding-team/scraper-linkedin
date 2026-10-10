@@ -1,5 +1,6 @@
 import { API_BASE_URL, API_KEY } from '@/lib/env';
 import { CascadeConfirmRequiredError, cascadeSummaryFromBody } from '../utils/cascadeDelete';
+import { notifyDealsChanged } from '../utils/dealSync';
 import {
   CRM_PACKAGE_OPTIONS,
   getContractStatusForStage,
@@ -715,6 +716,7 @@ export class SeedingCrmRepository implements CrmRepository {
     });
     const row = body.data?.deal;
     if (!row) throw new Error('Backend khong tra ve deal vua tao.');
+    notifyDealsChanged();
     return {
       ...rowToDeal(row),
       customerId: asText(body.data?.customer?.id) || asText(row.customer_id),
@@ -728,6 +730,7 @@ export class SeedingCrmRepository implements CrmRepository {
       method: 'PUT',
       body: JSON.stringify(payload),
     });
+    notifyDealsChanged();
     return rowToDeal(row);
   }
 

@@ -3081,6 +3081,13 @@ def _wrap_deal_stage_sync(fn, source: str):
                 from app.modules.all_platform.services.deal_stage_sync_service import sync_deal_stage
 
                 sync_deal_stage(deal_id, source=source)
+
+                from app.modules.all_platform.services.crm_customer_progress_service import recompute_customer_progress
+
+                rows = get_supabase_client().table("customer_leads").select("customer_id").eq("id", deal_id).limit(1).execute().data or []
+                customer_id = rows[0].get("customer_id") if rows else None
+                if customer_id:
+                    recompute_customer_progress(customer_id, source=source)
         except Exception:  # noqa: BLE001 - dong bo stage khong duoc lam hong thao tac bao gia
             logger.warning("deal stage sync sau %s that bai", source, exc_info=True)
         return result

@@ -21,6 +21,7 @@ import { AlertTriangle, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Clock
 import type { CrmCustomerKpi, CrmCustomerRow } from '../types';
 import { cascadeLossText, describeCascadeSummary, sumCascadeSummaries, type CascadeSummary } from '../utils/cascadeDelete';
 import { relativeTime } from '../utils/quoteDisplay';
+import { useDealsChanged } from '../utils/dealSync';
 
 /**
  * Tab -> status mapping (quyet dinh cuoi cung, xem bao cao task):
@@ -87,6 +88,9 @@ type ApiCustomerRow = {
   total_value?: number | string | null;
   last_deal_at?: string | null;
   updated_at?: string | null;
+  /** "Việc tiếp theo" tự tính server-side tu Deal/Bao gia/Hop dong dang hoat dong
+   * (crm_customer_progress_service.py) - KHONG con la switch cung theo status o day. */
+  next_action?: string | null;
 };
 
 type ApiListResponse = {
@@ -131,6 +135,7 @@ export function mapCustomer(row: ApiCustomerRow): CrmCustomerRow {
     totalValue: Number(row.total_value || 0),
     lastDealAt: row.last_deal_at || '',
     updatedAt: row.updated_at || '',
+    nextAction: row.next_action || undefined,
   };
 }
 
@@ -326,6 +331,10 @@ export function CrmCustomersDirectory() {
     return cleanup;
   }, [load, reloadTick]);
 
+  // Tao/duyet bao gia, luu/doi trang thai hop dong o noi khac (vd trong Chi tiet khach hang) co the
+  // lam "Viec tiep theo" / nhom khach hang thay doi - tai lai ngay, khong doi F5.
+  useDealsChanged(useCallback(() => setReloadTick(t => t + 1), []));
+
   useEffect(() => {
     const customerId = new URLSearchParams(window.location.search).get('quickCustomer') || '';
     if (!customerId) {
@@ -382,6 +391,9 @@ export function CrmCustomersDirectory() {
   }, [members]);
 
   function nextActionOf(customer: CrmCustomerRow) {
+    // Server tinh tu Deal/Bao gia/Hop dong dang hoat dong that (crm_customer_progress_service.py) -
+    // switch cu theo status chi con la fallback khi backend chua co du lieu (vd loi tai).
+    if (customer.nextAction) return customer.nextAction;
     if (customer.status === 'new_lead') return 'Xác minh nhu cầu';
     if (customer.status === 'following') return 'Theo dõi cơ hội';
     if (customer.status === 'current_customer') return 'Chăm sóc / upsell';
