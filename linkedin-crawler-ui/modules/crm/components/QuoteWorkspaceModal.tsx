@@ -7864,9 +7864,22 @@ export function QuoteWorkspaceModal({
                  * Sale chinh do rong cot xong khong co cach xem thu ban in TAI DAY, phai roi
                  * qua trang cong khai moi in duoc. Them lai dung window.print() (giong
                  * PublicQuotePage.tsx) - CSS @media print da san cho view nay (xem comment
-                 * .qc-modal-backdrop/.qc-workspace-preview-modal o quotes.css). */}
+                 * .qc-modal-backdrop/.qc-workspace-preview-modal o quotes.css). Rieng document.title:
+                 * PublicQuotePage set 1 LAN vinh vien vi do la trang doc lap; o day la popup NAM
+                 * TRONG trang CRM dang lam viec - chi doi title NGAY TRUOC khi in (de ten file
+                 * goi y khi "Luu dang PDF" la "Bao-gia-<so>" giong trang cong khai) roi tra lai
+                 * title cu ngay sau, tranh doi luon ten tab trinh duyet cua Sale. */}
                 {previewSchema ? (
-                  <button type="button" className="qc-mini-btn" onClick={() => window.print()}>
+                  <button
+                    type="button"
+                    className="qc-mini-btn"
+                    onClick={() => {
+                      const prevTitle = document.title;
+                      if (quote?.quoteNumber) document.title = `Bao-gia-${quote.quoteNumber}`;
+                      window.print();
+                      document.title = prevTitle;
+                    }}
+                  >
                     <Printer className="qc-icon" /> Xem trước / In PDF
                   </button>
                 ) : null}
