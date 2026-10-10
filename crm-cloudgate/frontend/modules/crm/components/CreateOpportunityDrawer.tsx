@@ -24,7 +24,7 @@ import { useCrmCategoryLabels } from './CrmCategorySelect';
 import { useLeadQualificationEngine } from '../hooks/useLeadQualificationEngine';
 import { ICP_OPTIONS, INTEREST_LEVEL_OPTIONS, type InterestLevel } from '../utils/leadQualificationRules';
 import { seedingCrmRepository } from '../repositories/SeedingCrmRepository';
-import type { CreateDealInput, CrmCustomerRow } from '../types';
+import type { CreateDealInput, CrmCustomerRow, Deal } from '../types';
 import type { AppUser } from '@/types/unified.types';
 
 function headers() {
@@ -66,13 +66,22 @@ export function CreateOpportunityDrawer({
   currentUser,
   onClose,
   onCreated,
+  // Nhung noi nhung drawer nay vao 1 modal/workspace khac dang mo (vd
+  // "+ Tạo cơ hội mới" trong QuoteWorkspaceModal) KHONG duoc dieu huong di
+  // dau ca khi bam "Xác nhận tạo cơ hội" - Sale dang dang do mot bao gia,
+  // dieu huong se mat du lieu dang nhap. true = luon cu xu nhu nhanh "Lưu
+  // nháp" (dong + goi onCreated, khong router.push), bat ke mode nao.
+  suppressNavigation = false,
 }: {
   open: boolean;
   customer: CrmCustomerRow | null;
   currentUser: AppUser | null;
   onClose: () => void;
-  /** Tạo xong (Lưu nháp), ở lại danh sách (đóng drawer + báo cho trang cha reload số liệu). */
-  onCreated: () => void;
+  /** Tạo xong (Lưu nháp hoặc Tạo cơ hội), đóng drawer + báo cho trang cha reload số liệu.
+   * Nhận kèm Deal vừa tạo (khi cha cần dùng ngay, vd tự chọn vào 1 dropdown "Cơ hội CRM" -
+   * tham số optional để các nơi gọi cũ không cần đổi gì). */
+  onCreated: (deal?: Deal) => void;
+  suppressNavigation?: boolean;
 }) {
   useBodyScrollLock(open);
   const router = useRouter();
@@ -449,15 +458,20 @@ export function CreateOpportunityDrawer({
     setSaving(mode);
     try {
       const payload = buildPayload();
-      await seedingCrmRepository.createDeal(payload);
+      const created = await seedingCrmRepository.createDeal(payload);
       // Luon bao cho trang cha reload (bump reloadTick) bat ke mode nao - rieng
       // nhanh 'deal' ben duoi chi router.push SANG CUNG 1 trang (doi query
       // ?tab=deals), Next.js KHONG tu fetch lai du lieu vi customerId khong
       // doi -> thieu onCreated() o day la ly do "tạo xong k update liền mà
       // f5 mới thấy" (bug thuc te nguoi dung bao cao).
-      onCreated();
-      if (mode === 'stay') {
-        // da goi onCreated() o tren
+      onCreated(created);
+      if (mode === 'stay' || suppressNavigation) {
+        // da goi onCreated() o tren - suppressNavigation (nhung trong modal
+        // khac) khong duoc dieu huong di dau du dang o nhanh 'deal'.
+        if (mode === 'deal') {
+          setConfirmOpen(false);
+          onClose();
+        }
       } else {
         // Feedback leader 2026-09-27: "xác nhận tạo cơ hội xong thì tự trỏ về
         // đúng trang chi tiết khách hàng" - giong het hanh vi handleConvert()

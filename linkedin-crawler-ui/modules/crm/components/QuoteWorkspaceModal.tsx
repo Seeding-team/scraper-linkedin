@@ -10,7 +10,7 @@ import { applyIssuerCompanySnapshot, applyIssuerPaymentTermsSnapshot } from '../
 import type { AppUser } from '@/types/unified.types';
 import { canApproveQuote, canEditQuoteCost, canEditQuotePricingFields, canWriteDeal, getPackageText, getServicePackageText, SOURCE_OPTIONS, SERVICE_PACKAGE_OPTIONS, CRM_PACKAGE_OPTIONS, INDUSTRY_OPTIONS } from '../constants/crmConfig';
 import { CurrencyInput } from '@/components/CurrencyInput';
-import type { CrmUserOption, Deal, CreateDealInput } from '../types';
+import type { CrmUserOption, CrmCustomerRow, Deal } from '../types';
 import type { ServiceCatalogItem } from '@/modules/service-catalog/types';
 import { serviceCatalogRepository } from '@/modules/service-catalog/repositories/ServiceCatalogRepository';
 import { priceBookZoneRepository, type PriceBookItem } from '@/modules/service-catalog/repositories/PriceBookZoneRepository';
@@ -36,7 +36,7 @@ import { CustomerAddDrawer } from './CustomerAddDrawer';
 import { CrmCategoryManageDrawer, CrmCategoryQuickModal, invalidateCrmCategoryCache } from './CrmCategorySelect';
 import { seedingCrmRepository } from '../repositories/SeedingCrmRepository';
 import { ProjectFormModal } from './ProjectFormModal';
-import { DealFormModal, clearDealDraft } from './DealFormModal';
+import { CreateOpportunityDrawer } from './CreateOpportunityDrawer';
 import { seedingContractRepository } from '@/modules/contracts/repositories/SeedingContractRepository';
 import { CONTRACT_STATUS_LABELS } from '@/modules/contracts/constants/contractConfig';
 import { ContractDetailPage } from '@/modules/contracts/components/ContractDetailPage';
@@ -1137,29 +1137,28 @@ export function QuoteWorkspaceModal({
   // trung lap. `agents` chi can fetch 1 lan cho ca 2 modal nay dung chung.
   const [projectModalOpen, setProjectModalOpen] = useState(false);
   const [dealModalOpen, setDealModalOpen] = useState(false);
-  const [dealCreateBusy, setDealCreateBusy] = useState(false);
-  const [dealCreateError, setDealCreateError] = useState('');
-  const [quickCreateAgents, setQuickCreateAgents] = useState<CrmUserOption[]>([]);
-  useEffect(() => {
-    void seedingCrmRepository.getAgents().then(setQuickCreateAgents).catch(() => setQuickCreateAgents([]));
-  }, []);
-
-  async function handleCreateQuickDeal(input: CreateDealInput) {
-    setDealCreateBusy(true);
-    setDealCreateError('');
-    try {
-      const created = await seedingCrmRepository.createDeal(input);
-      clearDealDraft();
-      setLocallyCreatedDeals(prev => [...prev, created]);
-      setDraftDealId(created.id);
-      if (created.projectId) setDraftProjectId(created.projectId);
-      setDealModalOpen(false);
-    } catch (err) {
-      setDealCreateError(err instanceof Error ? err.message : 'Không tạo được cơ hội.');
-    } finally {
-      setDealCreateBusy(false);
-    }
-  }
+  // "+ Tạo cơ hội mới" trong "Cơ hội CRM" (feedback 2026-10-10: dùng ĐÚNG form
+  // "+Deal upsell"/"Tạo cơ hội bán hàng" (CreateOpportunityDrawer) thay vì bản
+  // "Tạo cơ hội nhanh" (DealFormModal) đơn giản hơn trước đây - khách hàng đã
+  // chọn sẵn ở Bước 1 nên CreateOpportunityDrawer có đủ ngữ cảnh. Build 1
+  // CrmCustomerRow TỐI THIỂU từ `customers` (QuoteCustomerOption, nhẹ hơn) -
+  // CreateOpportunityDrawer tự fetch lại dealCount/ownerId/canEdit thật khi mở
+  // (xem effect "Khi doi sang khach hang khac" trong chinh no), khong can day
+  // du moi field o day.
+  const dealModalCustomer = useMemo<CrmCustomerRow | null>(() => {
+    if (!dealModalOpen || !draftCustomerId) return null;
+    const option = customers.find(c => c.id === draftCustomerId);
+    return {
+      id: draftCustomerId,
+      customerName: option?.name || option?.label || '',
+      companyName: option?.companyName,
+      shortName: option?.shortName,
+      customerCode: option?.customerCode,
+      phone: option?.phone,
+      email: option?.email,
+      taxCode: option?.taxCode,
+    };
+  }, [dealModalOpen, draftCustomerId, customers]);
   // "Mau bao gia" - Sale duoc doi lai mau goi y mac dinh (defaultFormId) qua
   // dropdown rieng, CHI o che do tao moi (quoteId=null). '' = chua co goi y
   // nao (dang cho fetch defaultFormId) - fallback ve defaultFormId luc gui.
@@ -3842,7 +3841,6 @@ export function QuoteWorkspaceModal({
   // tuong nut khong hoat dong - dung phan hoi UI da xac nhan can sua).
   function handleSelectDeal(dealId: string) {
     if (dealId === CREATE_NEW_DEAL_OPTION) {
-      setDealCreateError('');
       setDealModalOpen(true);
       return;
     }
@@ -7741,36 +7739,21 @@ export function QuoteWorkspaceModal({
         }}
       />
 
-      <DealFormModal
+      <CreateOpportunityDrawer
         open={dealModalOpen}
-        loading={dealCreateBusy}
-        onClose={() => { if (!dealCreateBusy) setDealModalOpen(false); }}
-        onCreate={input => void handleCreateQuickDeal(input)}
-        onUpdate={() => {}}
-        agents={quickCreateAgents}
-        sourceOptions={SOURCE_OPTIONS}
-        servicePackageOptions={SERVICE_PACKAGE_OPTIONS}
-        packageOptions={CRM_PACKAGE_OPTIONS}
-        industryOptions={INDUSTRY_OPTIONS.map(value => ({ value, label: value }))}
+        customer={dealModalCustomer}
         currentUser={user ?? null}
-        initialCustomer={
-          draftCustomerId
-            ? { id: draftCustomerId, name: customers.find(c => c.id === draftCustomerId)?.label || '' }
-            : null
-        }
-        initialProject={draftProjectId ? { id: draftProjectId } : null}
+        suppressNavigation
+        onClose={() => setDealModalOpen(false)}
+        onCreated={created => {
+          if (created) {
+            setLocallyCreatedDeals(prev => [...prev, created]);
+            setDraftDealId(created.id);
+            if (created.projectId) setDraftProjectId(created.projectId);
+          }
+          setDealModalOpen(false);
+        }}
       />
-      {dealCreateError ? (
-        <div className="qc-modal-backdrop qc-modal-backdrop--nested" onMouseDown={() => setDealCreateError('')}>
-          <div className="qc-deal-picker" onMouseDown={event => event.stopPropagation()}>
-            <h3>Không tạo được cơ hội</h3>
-            <div className="qc-workspace-note-box qc-workspace-note-box--warn">{dealCreateError}</div>
-            <div className="qc-workspace-modal-actions">
-              <button type="button" className="qc-btn qc-btn-primary" onClick={() => setDealCreateError('')}>Đóng</button>
-            </div>
-          </div>
-        </div>
-      ) : null}
 
       {previewModalOpen ? (() => {
         // BUG THAT DA GAP ("bấm Preview khách hàng ở bước 1 ra bảng cũ chứ
