@@ -268,6 +268,9 @@ class FromClausesRequest(BaseModel):
     # Loại hợp đồng (nhãn tự do) quyết định tên vai trò Bên A/Bên B; direction='buy' (hợp đồng mua vào) đổi chỗ: công ty phát hành là Bên A
     contract_type: str = ""
     direction: str = "sell"
+    # Người liên hệ + người đại diện ký Sale đã chọn/xác nhận ở Copilot (None = tự suy ra mặc định, xem resolve_representative()).
+    contact_id: str = ""
+    representative: dict | None = None
 
 
 @contract_docx_router.post("/from-clauses")
@@ -276,14 +279,15 @@ def docx_from_clauses(payload: FromClausesRequest, _user: dict = Depends(get_cur
     lịch thanh toán chính xác) -> DOCX là nguồn chuẩn -> PDF chuyển từ chính DOCX bằng LibreOffice."""
     try:
         from app.modules.all_platform.routers.contract import _issuer_of_quote
-        from app.modules.all_platform.services.contract_ai_service import build_parties
+        from app.modules.all_platform.services.contract_ai_service import build_parties, resolve_representative
         from app.modules.all_platform.services.contract_docx_builder import build_contract_docx
 
-        deal, quote = (source.resolve_source(payload.deal_id or None, payload.quote_id or None, payload.customer_id or None)
+        deal, quote = (source.resolve_source(payload.deal_id or None, payload.quote_id or None, payload.customer_id or None, contact_id=payload.contact_id or None)
                        if (payload.deal_id or payload.quote_id) else (None, None))
         from app.modules.all_platform.services.contract_roles import arrange_parties, role_labels
 
-        parties = build_parties(deal, quote, _issuer_of_quote(quote)) if deal else None
+        representative = resolve_representative(deal, payload.representative) if deal else None
+        parties = build_parties(deal, quote, _issuer_of_quote(quote), representative) if deal else None
         if parties:
             parties = arrange_parties(parties, payload.direction)
         role_a, role_b = role_labels(payload.contract_type)
