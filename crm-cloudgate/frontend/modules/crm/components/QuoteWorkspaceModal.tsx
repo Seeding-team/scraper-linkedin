@@ -2637,7 +2637,24 @@ export function QuoteWorkspaceModal({
     // Gia danh muc luon VND goc; quote USD: quy doi theo ty gia da dong bang cua quote
     // (khong sua danh muc), giu goc VND o unitPriceVnd/costPriceVnd de doi lai khong troi.
     const defaultUnitPriceVnd = resolveCatalogCustomerPrice(item);
-    const defaultCostPriceVnd = item.itemType === 'bundle' ? calculateBundleComponentCost(bundleSnapshot) : (item.defaultCostPriceVnd ?? null);
+    let defaultCostPriceVnd = item.itemType === 'bundle' ? calculateBundleComponentCost(bundleSnapshot) : (item.defaultCostPriceVnd ?? null);
+    // Bug thuc te (2026-10-11, mentor bao cao): san pham le chi cau hinh san Gia khach
+    // + Markup mac dinh (khong luu san Gia von) thi luc "Chon tu danh muc" hang muc bi
+    // them vao voi Gia von RONG ("Bat buoc nhap"), bat Sale tu nham tinh Gia khach /
+    // (1+Markup%) roi dien tay - cung cong thuc he thong DA tu lam khi Sale go Gia khach
+    // tay o dong trong (handleUnitPriceChange). Ap dung NGAY luc them tu danh muc, dung
+    // chung item.defaultMarkupPercent (da duoc backend tra san, xem service_catalog.py),
+    // khong doi hanh vi cac san pham DA co san Gia von (item.defaultCostPriceVnd != null).
+    if (
+      item.itemType !== 'bundle' &&
+      defaultCostPriceVnd == null &&
+      item.defaultMarkupPercent != null &&
+      item.defaultMarkupPercent > -100 &&
+      defaultUnitPriceVnd != null &&
+      defaultUnitPriceVnd > 0
+    ) {
+      defaultCostPriceVnd = defaultUnitPriceVnd / (1 + item.defaultMarkupPercent / 100);
+    }
     const defaultUnitPrice = toQuoteMoney(defaultUnitPriceVnd, workspaceFx) ?? 0;
     const defaultCostPrice = toQuoteMoney(defaultCostPriceVnd, workspaceFx);
     return {

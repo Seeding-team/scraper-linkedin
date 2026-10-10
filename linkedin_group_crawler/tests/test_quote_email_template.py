@@ -86,4 +86,4 @@ def test_send_builds_multipart_with_pdf_and_workspace_link(monkeypatch):
     assert "text/plain" in types and "text/html" in types and "application/pdf" in types
     body = "".join(part.get_payload(decode=True).decode("utf-8") for part in msg.walk() if part.get_content_type() in ("text/plain", "text/html"))
     assert "https://crm.markee.vn/baogia/TOKEN123" in body and "dev.seeding" not in body
-    render.assert_called_once_with("/baogia/TOKEN123", base_url="https://crm.markee.vn")
+    render.assert_called_once_with("/baogia/TOKEN123", base_url="https://crm.markee.vn", verification_params={})

@@ -326,8 +326,8 @@ def send_quote_email(
             try:
                 # Tai su dung DUNG ham render PDF that da co (khong dung PDF
                 # gia/template thu 2 lech du lieu).
-                from app.modules.all_platform.services.quote_telegram_service import _render_quote_pdf
-                pdf_bytes = _render_quote_pdf(quote["publicUrl"], base_url=public_base)
+                from app.modules.all_platform.services.quote_telegram_service import _render_quote_pdf, _pdf_render_verification_params
+                pdf_bytes = _render_quote_pdf(quote["publicUrl"], base_url=public_base, verification_params=_pdf_render_verification_params(quote))
             except Exception as exc:
                 pdf_error = str(exc)
 

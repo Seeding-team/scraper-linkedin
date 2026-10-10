@@ -215,9 +215,9 @@ export function CustomerOverviewTab({
                       <td className="px-3 py-3">
                         <div className="flex items-center gap-2">
                           <div className="size-5 rounded-full bg-slate-200 text-slate-600 flex items-center justify-center text-[9px] font-bold uppercase shrink-0">
-                            {memberName(deal.quote_owner_id)[0]}
+                            {memberName(deal.quote_owner_id || deal.owner_id || deal.sdr_id || deal.leaded_by)[0]}
                           </div>
-                          <span className="text-slate-700 font-medium truncate max-w-[100px]">{memberName(deal.quote_owner_id)}</span>
+                          <span className="text-slate-700 font-medium truncate max-w-[100px]">{memberName(deal.quote_owner_id || deal.owner_id || deal.sdr_id || deal.leaded_by)}</span>
                         </div>
                       </td>
                       <td className="px-2 py-3 text-right text-slate-400 group-hover:text-slate-600">
@@ -460,7 +460,7 @@ export function CustomerOverviewTab({
                     </div>
                   </div>
                   <div className="flex items-center gap-8 text-xs text-slate-500">
-                    <div>Owner: <span className="font-medium text-slate-700">{memberName(p.owner_id || p.ownerId)}</span></div>
+                    <div>Owner: <span className="font-medium text-slate-700">{memberName(p.managerId || p.manager_id)}</span></div>
                     <div className="flex items-center gap-1 text-[11px] text-slate-400">
                       <Calendar className="size-3" />
                       <span>{formatCrmDate(p.updatedAt || p.createdAt)}</span>

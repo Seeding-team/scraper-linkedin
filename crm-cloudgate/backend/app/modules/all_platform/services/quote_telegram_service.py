@@ -74,14 +74,41 @@ def get_quote_telegram_log(quote_id: str) -> list[dict]:
     return [_row_to_log(row) for row in (result.data or [])]
 
 
-def _render_quote_pdf(public_url: str, base_url: str | None = None) -> bytes:
+def _pdf_render_verification_params(quote: dict) -> dict[str, str]:
+    """Bug thuc te (2026-10-11, bao cao tu dau phien: "PDF gửi qua mail hiển thị sai" -
+    thuc chat la PDF CHI chup duoc dung trang "Xac nhan SDT de xem bao gia", khong bao
+    gio chup duoc noi dung that). Nguyen nhan: bao gia nao dang o che do gioi han xem
+    theo Email/SDT (migration 116/149) thi trang public THAT SU chan lai cho toi khi
+    co dung email/SDT - Playwright headless (khong co cookie, khong biet SDT khach) KHONG
+    CO CACH NAO vuot qua cong nay, nen page.pdf() chi chup duoc dung man hinh cong.
+    `_render_quote_pdf` dung cho luong NOI BO/da duoc uy quyen (Sale bam Gui bao gia/Gui
+    Telegram) nen duoc phep tu dong dien dung gia tri se khop voi chinh logic server
+    (get_public_quote() trong supabase_quote_service.py) - uu tien danh sach da luu
+    (publicAllowedEmails/publicAllowedPhones), fallback ve data.customerEmail/customerPhone
+    dung HET y het fallback ben get_public_quote() de dam bao khop."""
+    mode = quote.get("publicAccessMode") or "none"
+    data = quote.get("data") or {}
+    if mode == "email":
+        allowed = quote.get("publicAllowedEmails") or []
+        email = (allowed[0] if allowed else data.get("customerEmail")) or ""
+        return {"email": str(email).strip()} if str(email).strip() else {}
+    if mode == "phone":
+        allowed = quote.get("publicAllowedPhones") or []
+        phone = (allowed[0] if allowed else data.get("customerPhone")) or ""
+        return {"phone": str(phone).strip()} if str(phone).strip() else {}
+    return {}
+
+
+def _render_quote_pdf(public_url: str, base_url: str | None = None, verification_params: dict[str, str] | None = None) -> bytes:
     """Render đúng trang public báo giá (chế độ in, ?print=true) thành PDF thật
     bằng Playwright headless — tái dùng nguyên UI/CSS khách hàng đang thấy,
     không tạo template PDF riêng."""
     from playwright.sync_api import sync_playwright
+    from urllib.parse import urlencode
 
     origin = (base_url or _public_base_url()).rstrip("/")
-    target = f"{origin}{public_url}?print=true"
+    extra_qs = f"&{urlencode(verification_params)}" if verification_params else ""
+    target = f"{origin}{public_url}?print=true{extra_qs}"
     with sync_playwright() as p:
         browser = p.chromium.launch(args=["--no-sandbox", "--disable-dev-shm-usage"])
         try:
@@ -153,7 +180,7 @@ def send_quote_to_telegram(quote_id: str, actor_id: str | None) -> dict:
     }
 
     try:
-        pdf_bytes = _render_quote_pdf(quote["publicUrl"])
+        pdf_bytes = _render_quote_pdf(quote["publicUrl"], verification_params=_pdf_render_verification_params(quote))
         caption = _build_caption(quote, lead)
         filename = f"Bao-gia-{quote.get('quoteNumber') or quote_id}.pdf"
 

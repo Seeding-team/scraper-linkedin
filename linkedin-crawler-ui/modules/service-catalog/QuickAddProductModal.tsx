@@ -15,6 +15,7 @@ import './styles/service-catalog.css';
 import '@/modules/crm/styles/quote-center.css';
 import { SearchableSelect } from '@/modules/crm/components/SearchableSelect';
 import { CrmVendorSelect } from '@/modules/crm/components/CrmVendorSelect';
+import { CurrencyInput } from '@/components/CurrencyInput';
 import { VendorImportFlow } from './VendorImportFlow';
 import { ChevronDown, ChevronUp, CheckCircle2, Info, Building2, Box, X } from 'lucide-react';
 
@@ -976,19 +977,19 @@ export function QuickAddProductModal({
                       <div className="p-5 grid grid-cols-2 gap-4">
                         <div>
                           <label className="block text-sm font-medium text-slate-700 mb-1.5">Giá bán theo tháng</label>
-                          <input type="number" className="w-full h-9 px-3 border border-slate-300 rounded-md text-sm" value={bundleMonthlyPrice} onChange={e => setBundleMonthlyPrice(e.target.value)} />
+                          <CurrencyInput className="w-full h-9 px-3 border border-slate-300 rounded-md text-sm" value={parseNullableNumber(bundleMonthlyPrice)} onChange={value => setBundleMonthlyPrice(value != null ? String(value) : '')} />
                         </div>
                         <div>
                           <label className="block text-sm font-medium text-slate-700 mb-1.5">Giá / tháng khi thanh toán năm</label>
-                          <input type="number" className="w-full h-9 px-3 border border-slate-300 rounded-md text-sm" value={bundleAnnualMonthlyPrice} onChange={e => setBundleAnnualMonthlyPrice(e.target.value)} />
+                          <CurrencyInput className="w-full h-9 px-3 border border-slate-300 rounded-md text-sm" value={parseNullableNumber(bundleAnnualMonthlyPrice)} onChange={value => setBundleAnnualMonthlyPrice(value != null ? String(value) : '')} />
                         </div>
                         <div>
                           <label className="block text-sm font-medium text-slate-700 mb-1.5">Tổng thanh toán 12 tháng</label>
-                          <input type="number" className="w-full h-9 px-3 border border-slate-300 rounded-md text-sm" value={bundleAnnualTotalPrice} onChange={e => setBundleAnnualTotalPrice(e.target.value)} />
+                          <CurrencyInput className="w-full h-9 px-3 border border-slate-300 rounded-md text-sm" value={parseNullableNumber(bundleAnnualTotalPrice)} onChange={value => setBundleAnnualTotalPrice(value != null ? String(value) : '')} />
                         </div>
                         <div>
                           <label className="block text-sm font-medium text-slate-700 mb-1.5">Giá vốn target</label>
-                          <input type="number" className="w-full h-9 px-3 border border-slate-300 rounded-md text-sm" value={bundleCostPrice} onChange={e => setBundleCostPrice(e.target.value)} />
+                          <CurrencyInput className="w-full h-9 px-3 border border-slate-300 rounded-md text-sm" value={parseNullableNumber(bundleCostPrice)} onChange={value => setBundleCostPrice(value != null ? String(value) : '')} />
                         </div>
                         <div>
                           <label className="block text-sm font-medium text-slate-700 mb-1.5">Discount tối đa Sale (%)</label>
@@ -1041,7 +1042,7 @@ export function QuickAddProductModal({
                       <div>
                         <label className="block text-sm font-medium text-slate-700 mb-1.5">Giá niêm yết NCC </label>
                         <div className="relative">
-                          <input type="number" className="w-full h-9 pl-3 pr-10 border border-slate-300 rounded-md text-sm focus:border-[#c2185b] bg-slate-50" value={pricing.supplierListPrice || ''} onChange={e => setPricingField('supplierListPrice', Number(e.target.value))} />
+                          <CurrencyInput className="w-full h-9 pl-3 pr-10 border border-slate-300 rounded-md text-sm focus:border-[#c2185b] bg-slate-50" value={pricing.supplierListPrice || null} onChange={value => setPricingField('supplierListPrice', value ?? 0)} />
                           <span className="absolute right-3 top-2 text-xs font-medium text-slate-400">{pricing.supplierCurrency}</span>
                         </div>
                       </div>
@@ -1055,7 +1056,7 @@ export function QuickAddProductModal({
                       <div>
                         <label className="block text-sm font-medium text-slate-700 mb-1.5">Giá mua sau CK</label>
                         <div className="relative">
-                          <input type="number" className="w-full h-9 pl-3 pr-10 border border-slate-300 rounded-md text-sm focus:border-[#c2185b]" value={pricing.supplierNetPrice || ''} onChange={e => setPricingField('supplierNetPrice', Number(e.target.value))} />
+                          <CurrencyInput className="w-full h-9 pl-3 pr-10 border border-slate-300 rounded-md text-sm focus:border-[#c2185b]" value={pricing.supplierNetPrice || null} onChange={value => setPricingField('supplierNetPrice', value ?? 0)} />
                           <span className="absolute right-3 top-2 text-xs font-medium text-slate-400">{pricing.supplierCurrency}</span>
                         </div>
                       </div>
@@ -1075,7 +1076,7 @@ export function QuickAddProductModal({
                         </div>
                         <div>
                           <label className="block text-xs font-medium text-slate-700 mb-1">GIÁ VỐN / ĐVT (VND)</label>
-                          <input type="number" className="w-full h-8 px-2 border border-[#f3b8ca] bg-[#fff1f6] rounded text-sm focus:border-[#c2185b] font-semibold text-[#a91549]" value={pricing.costPriceVnd || ''} onChange={e => setPricingField('costPriceVnd', Number(e.target.value))} />
+                          <CurrencyInput className="w-full h-8 px-2 border border-[#f3b8ca] bg-[#fff1f6] rounded text-sm focus:border-[#c2185b] font-semibold text-[#a91549]" value={pricing.costPriceVnd || null} onChange={value => setPricingField('costPriceVnd', value ?? 0)} />
                         </div>
                       </div>
                     </div>
@@ -1115,15 +1116,15 @@ export function QuickAddProductModal({
                           </div>
                           <div>
                             <label className="block text-xs font-medium text-slate-600 mb-1">Phi van chuyen</label>
-                            <input type="number" className="w-full h-9 px-3 border border-slate-300 rounded-md text-sm focus:border-[#c2185b]" value={pricing.shippingCost || ''} onChange={e => setPricingField('shippingCost', Number(e.target.value) || 0)} />
+                            <CurrencyInput className="w-full h-9 px-3 border border-slate-300 rounded-md text-sm focus:border-[#c2185b]" value={pricing.shippingCost || null} onChange={value => setPricingField('shippingCost', value ?? 0)} />
                           </div>
                           <div>
                             <label className="block text-xs font-medium text-slate-600 mb-1">Phi nhap khau / xu ly</label>
-                            <input type="number" className="w-full h-9 px-3 border border-slate-300 rounded-md text-sm focus:border-[#c2185b]" value={pricing.importFee || ''} onChange={e => setPricingField('importFee', Number(e.target.value) || 0)} />
+                            <CurrencyInput className="w-full h-9 px-3 border border-slate-300 rounded-md text-sm focus:border-[#c2185b]" value={pricing.importFee || null} onChange={value => setPricingField('importFee', value ?? 0)} />
                           </div>
                           <div>
                             <label className="block text-xs font-medium text-slate-600 mb-1">Chi phi khac</label>
-                            <input type="number" className="w-full h-9 px-3 border border-slate-300 rounded-md text-sm focus:border-[#c2185b]" value={pricing.otherCost || ''} onChange={e => setPricingField('otherCost', Number(e.target.value) || 0)} />
+                            <CurrencyInput className="w-full h-9 px-3 border border-slate-300 rounded-md text-sm focus:border-[#c2185b]" value={pricing.otherCost || null} onChange={value => setPricingField('otherCost', value ?? 0)} />
                           </div>
                         </div>
                       )}
@@ -1156,7 +1157,7 @@ export function QuickAddProductModal({
                       <div className="text-slate-400 mt-6 shrink-0">→</div>
                       <div className="flex-1">
                         <label className="block text-sm font-medium text-slate-900 mb-1.5">GIÁ BÁN / ĐVT (VND)</label>
-                        <input type="number" className="w-full h-9 px-3 border-2 border-emerald-500 rounded-md text-sm font-bold text-emerald-700 focus:border-emerald-600 focus:ring-1 focus:ring-emerald-600" value={pricing.customerPriceVnd || ''} onChange={e => setPricingField('customerPriceVnd', parseNullableNumber(e.target.value) ?? 0)} />
+                        <CurrencyInput className="w-full h-9 px-3 border-2 border-emerald-500 rounded-md text-sm font-bold text-emerald-700 focus:border-emerald-600 focus:ring-1 focus:ring-emerald-600" value={pricing.customerPriceVnd || null} onChange={value => setPricingField('customerPriceVnd', value ?? 0)} />
                       </div>
                     </div>
 

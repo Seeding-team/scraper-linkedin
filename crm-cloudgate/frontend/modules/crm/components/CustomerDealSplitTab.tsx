@@ -1133,7 +1133,7 @@ export function CustomerDealSplitTab({
                         <Badge className="bg-blue-100 text-blue-700 shadow-none hover:bg-blue-100 font-semibold text-[11px]">{getStageMeta(currentDisplayStage).label}</Badge>
                       </div>
                       <div className="text-xs text-slate-400 truncate">
-                        Company: {currentDisplayDeal.company_name || 'Hilab'} • Owner: {memberName(currentDisplayDeal.quote_owner_id)}
+                        Company: {currentDisplayDeal.company_name || 'Hilab'} • Owner: {memberName((currentDisplayDeal as any).quote_owner_id || currentDisplayDeal.owner_id || (currentDisplayDeal as any).sdr_id || (currentDisplayDeal as any).leaded_by)}
                       </div>
                     </div>
                   </div>

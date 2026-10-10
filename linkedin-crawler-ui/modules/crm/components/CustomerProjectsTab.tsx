@@ -170,7 +170,7 @@ export function CustomerProjectsTab({
                   </>
                 ) : null}
                 <span>•</span>
-                <span>Owner: <strong className="text-slate-700 font-semibold">{memberName(selectedProject.owner_id || selectedProject.ownerId)}</strong></span>
+                <span>Owner: <strong className="text-slate-700 font-semibold">{memberName(selectedProject.managerId || selectedProject.manager_id)}</strong></span>
                 <span>•</span>
                 <span>Cập nhật: {formatCrmDate(selectedProject.updatedAt || selectedProject.createdAt)}</span>
               </p>
@@ -374,7 +374,7 @@ export function CustomerProjectsTab({
                         <td className="px-4 py-3 font-semibold text-slate-900">{d.customer_name || d.id}</td>
                         <td className="px-4 py-3"><Badge className="bg-blue-50 text-blue-700 border-blue-100 font-semibold text-[10px]">{d.deal_stage}</Badge></td>
                         <td className="px-4 py-3 text-right font-bold text-slate-900">{formatVND(Number(d.estimated_budget || 0))}</td>
-                        <td className="px-4 py-3 text-slate-600">{memberName(d.quote_owner_id || d.owner_id)}</td>
+                        <td className="px-4 py-3 text-slate-600">{memberName(d.quote_owner_id || d.owner_id || d.sdr_id || d.leaded_by)}</td>
                         <td className="px-4 py-3 text-slate-400">{formatCrmDate(d.updated_at || d.created_at)}</td>
                         <td className="px-4 py-3 text-right"><Button variant="ghost" size="sm" className="h-6 text-xs text-[#c2185b] font-medium">Mở workspace</Button></td>
                       </tr>
@@ -632,9 +632,9 @@ export function CustomerProjectsTab({
                 {/* Column 3: Owner */}
                 <div className="flex items-center gap-2 shrink-0 min-w-[120px]">
                   <div className="size-6 rounded-full bg-slate-200 text-slate-700 font-bold text-[10px] flex items-center justify-center shrink-0">
-                    {memberName(p.owner_id || p.ownerId)[0] || 'M'}
+                    {memberName(p.managerId || p.manager_id)[0] || 'M'}
                   </div>
-                  <span className="text-xs font-medium text-slate-700 truncate">{memberName(p.owner_id || p.ownerId)}</span>
+                  <span className="text-xs font-medium text-slate-700 truncate">{memberName(p.managerId || p.manager_id)}</span>
                 </div>
 
                 {/* Column 4: Date Range (Only show if real dates exist) */}
