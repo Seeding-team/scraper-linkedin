@@ -17,6 +17,7 @@ from docx.oxml.ns import qn
 from docx.shared import Cm, Pt, RGBColor
 
 from app.modules.all_platform.services.contract_docx_engine import save_document
+from app.modules.all_platform.services.supabase_quote_service import flatten_quote_items
 
 FONT = "Times New Roman"
 BLANK = "………………………"
@@ -63,7 +64,7 @@ def quote_totals(quote: dict) -> dict[str, Decimal]:
 
 def check_quote_consistency(quote: dict) -> list[str]:
     """Báo giá là nguồn chuẩn - KHÔNG sửa số, chỉ cảnh báo nếu tổng các dòng lệch tổng báo giá."""
-    items = [i for i in (quote.get("items") or []) if i.get("rowType") != "section"]
+    items = [i for i in flatten_quote_items(quote.get("items")) if i.get("rowType") != "section"]
     if not items:
         return []
     t = quote_totals(quote)
@@ -253,7 +254,7 @@ def _party_block(doc, heading: str, p: dict, who: str, missing: list[str]):
 
 
 def _items_table(doc, quote: dict, currency: str):
-    items = quote.get("items") or []
+    items = flatten_quote_items(quote.get("items"))
     headers = ["STT", "Hạng mục", "Tính năng / mô tả", "ĐVT", "SL", f"Đơn giá ({currency})", "VAT", f"Thành tiền gồm VAT ({currency})"]
     widths = [1.1, 3.2, 3.4, 1.2, 1.0, 2.3, 1.3, 2.5]
     body = [i for i in items]

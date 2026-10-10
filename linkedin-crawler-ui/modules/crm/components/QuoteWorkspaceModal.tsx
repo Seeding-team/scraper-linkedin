@@ -3014,7 +3014,9 @@ export function QuoteWorkspaceModal({
         return;
       }
       // Gia khach/gia von/markup/VAT cua san pham vua tao phai hien NGAY tren dong hang muc (truoc day chi gan catalogItemId nen
-      // phai xoa dong them lai moi thay gia). Giu nguyen mo ta/so luong Sale da go; chi do gia theo dung quyen sua gia/gia von.
+      // phai xoa dong them lai moi thay gia). Giu nguyen mo ta/so luong Sale da go TREN BANG; nhung neu dong con
+      // trong mo ta (chua go gi) thi lay mo ta Sale vua nhap trong modal tao san pham (bug thuc te 2026-10-10: go
+      // "Mo ta chi tiet" trong modal + bam luu nhung dong bao gia van trong vi field nay bi loai khoi danh sach patch).
       const priced = catalogItemToQuoteItem(hydrated);
       setItemsDraft(prev => {
         const next = prev.map((row, i) => {
@@ -3022,6 +3024,7 @@ export function QuoteWorkspaceModal({
           return {
             ...row,
             catalogItemId: hydrated.id,
+            description: row.description?.trim() ? row.description : priced.description,
             unit: row.unit || priced.unit,
             vatRate: priced.vatRate,
             discountPercent: row.discountPercent || priced.discountPercent,

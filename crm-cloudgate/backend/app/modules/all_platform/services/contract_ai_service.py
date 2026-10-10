@@ -294,11 +294,15 @@ def _quote_payment_plan(quote: dict | None) -> list[dict] | None:
 
 def _format_quote_context(quote: dict | None) -> str:
     from app.modules.all_platform.services.contract_docx_builder import money
+    from app.modules.all_platform.services.supabase_quote_service import flatten_quote_items
 
     if not quote:
         return "Chưa có báo giá đính kèm."
     currency = quote.get("currency", "VND")
-    items = quote.get("items") or []
+    # quote["items"] la CAY long nhau (hang muc that nam trong children cua Section) - phai flatten
+    # + bo rowType='section' truoc khi dua cho AI, neu khong AI chi thay 1 dong Section rong (bug
+    # thuc te 2026-10-10: hop dong AI chi dien dung 1 hang muc rong, mat het cac hang muc that).
+    items = [i for i in flatten_quote_items(quote.get("items")) if i.get("rowType") != "section"]
     lines = []
     for i in items[:20]:
         vat_rate = i.get("vatRate") or 0

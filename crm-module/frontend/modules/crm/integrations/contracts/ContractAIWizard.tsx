@@ -11,7 +11,7 @@ import type { ContractClause } from '@/modules/contracts/types';
 import { seedingContractTemplateRepository } from '@/modules/contract-templates';
 import type { ContractTemplate } from '@/modules/contract-templates';
 import { ContractTemplateLibrary } from '@/modules/contract-templates/components/ContractTemplateLibrary';
-import { formatVnd } from '@/modules/quotes/utils/quoteCalculations';
+import { formatVnd, flattenQuoteItems } from '@/modules/quotes/utils/quoteCalculations';
 import { formatQuoteAmountOr, quoteCurrencyToVnd } from '@/lib/currency';
 import { DEAL_STAGE_META } from '../../constants/crmConfig';
 import type { DealStage } from '../../types';
@@ -635,7 +635,11 @@ export function ContractAIWizard({
     return { value: q.id, label, searchText: q.quoteNumber, richLabel: <span title={label}>{label}</span> };
   });
   const templateOptions = templates.map(t => ({ value: t.id, label: t.name, searchText: t.name, richLabel: <span title={t.name}>{t.name}</span> }));
-  const items = (quote?.items || []).filter(i => i.rowType !== 'section');
+  // quote.items tra ve tu API la CAY long nhau (hang muc that nam trong
+  // children cua Section, xem _quote_item_tree() backend) - truoc day chi
+  // filter phang tren mang goc nen bao gia co Section se hien bang trong
+  // (bug thuc te 2026-10-10: "hạng mục đâu hết r"). Phai flatten truoc.
+  const items = flattenQuoteItems(quote?.items || []).filter(i => i.rowType !== 'section');
   const riskScore = draftRisk?.score ?? null;
 
   return (

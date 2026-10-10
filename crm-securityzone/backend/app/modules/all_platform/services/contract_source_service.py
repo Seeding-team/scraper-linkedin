@@ -11,6 +11,7 @@ from typing import Any
 from app.core.config import settings
 from app.core.supabase_client import get_supabase_client
 from app.modules.all_platform.services.contract_ai_service import build_parties, resolve_representative
+from app.modules.all_platform.services.supabase_quote_service import flatten_quote_items
 
 APPROVED_QUOTE_STATUSES = {"approved", "confirmed"}
 
@@ -88,7 +89,10 @@ def money_tokens_text(quote: dict | None, deal: dict | None = None, issuer: dict
     if quote:
         for k in ("subtotalAmount", "vatAmount", "totalAmount"):
             parts.append(fmt(quote.get(k)))
-        for i in quote.get("items") or []:
+        # quote["items"] co the la cay long nhau (hang muc that nam trong children cua Section) -
+        # phai flatten truoc, neu khong fingerprint doi chieu OCR bo sot hang muc that (bug thuc
+        # te 2026-10-10, cung goc voi bug AI/bang hop dong bo sot hang muc).
+        for i in flatten_quote_items(quote.get("items")):
             for k in ("quantity", "unitPrice", "amountAfterDiscount", "totalAmount", "vatAmount", "subtotalAmount"):
                 parts.append(fmt(i.get(k)))
             parts.append(f"{fmt(i.get('vatRate'))}%" if i.get("vatRate") is not None else "")

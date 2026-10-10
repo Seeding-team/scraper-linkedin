@@ -81,7 +81,7 @@ from app.modules.all_platform.services import (
     list_quote_activity_log,
     log_quote_version_reason,
 )
-from app.modules.all_platform.services.supabase_quote_service import apply_quote_field_permissions
+from app.modules.all_platform.services.supabase_quote_service import apply_quote_field_permissions, flatten_quote_items
 from app.modules.all_platform.services.crm_permission_service import (
     can_approve_quote,
     can_edit_quote,
@@ -779,7 +779,11 @@ def _check_item_field_level_permission(user: dict, quote: dict, new_items: Optio
     the stage lock."""
     if new_items is None:
         return None
-    existing_items = quote.get("items") or []
+    # quote["items"] la CAY long nhau (xem _quote_item_tree) nhung new_items (payload FE, tu
+    # itemsDraft) la MANG PHANG - phai flatten existing_items truoc khi so sanh theo index, neu
+    # khong 2 ben lech do dai/thu tu ngay ca khi khong co gi thay doi that (bug thuc te 2026-10-10,
+    # cung goc voi bug AI/bang hop dong bo sot hang muc trong children cua Section).
+    existing_items = flatten_quote_items(quote.get("items"))
     if _items_touch_fields(existing_items, new_items, _TECHNICAL_ITEM_FIELD_PAIRS) and not can_edit_technical_quote(user, quote):
         return "Khong co quyen sua phan ky thuat cua bao gia nay"
     if _items_touch_fields(existing_items, new_items, _COST_ONLY_ITEM_FIELD_PAIRS) and not can_edit_quote_cost(user, quote):

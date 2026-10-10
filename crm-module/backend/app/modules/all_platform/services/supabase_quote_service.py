@@ -774,6 +774,21 @@ def _quote_item_tree(rows: list[dict]) -> list[dict]:
     return sorted(roots, key=lambda item: item.get("sortOrder") or 0)
 
 
+def flatten_quote_items(items: list[dict] | None) -> list[dict]:
+    """Nghich dao cua _quote_item_tree(): quote["items"] tra ve tu get_quote() la CAY long nhau
+    (hang muc that nam trong item["children"] cua Section). Module nao doc quote["items"] de tinh
+    toan/hien thi (AI contract context, bang Word hop dong, rule engine margin/discount, so sanh
+    quyen sua items...) PHAI flatten truoc, neu khong hang muc trong children bi bo sot hoan toan
+    (bug thuc te 2026-10-10: bao gia gom het hang muc vao 1 Section -> noi doc truc tiep quote["items"]
+    chi thay dung 1 dong Section rong, mat sach du lieu that). Giu NGUYEN THU TU: moi item roi toi
+    children cua no."""
+    out: list[dict] = []
+    for item in items or []:
+        out.append(item)
+        out.extend(flatten_quote_items(item.get("children") or []))
+    return out
+
+
 def _slug_code(name: str) -> str:
     import re
     import unicodedata
