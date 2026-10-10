@@ -3740,10 +3740,18 @@
   margin: 8px 0;
 }
 
-/* Nut xem hop dong gan voi bao gia (trong "Bản tóm tắt báo giá") - rut gon
- * nhan + doi sang mau do chinh cua app (--color-primary, giong .qc-btn-primary)
- * thay vi xanh duong (feedback 2026-09-25 "thu gọn lại, để màu đỏ tone màu
- * chính app dùng"). width:auto (khong con full width) vi nhan da ngan. */
+.qc-workspace-note-box ul {
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* Nut/Link xem hop dong gan voi bao gia (trong "Bản tóm tắt báo giá") -
+ * bo border box nung hong/do gay thô, doi sang dang text link sach se,
+ * giu khoang cach va mau do accent thuong hieu. */
 .qc-inline-link-btn {
   display: inline-flex;
   align-items: center;
@@ -3751,22 +3759,26 @@
   width: auto;
   height: auto;
   white-space: normal;
-  border: 1px solid var(--color-primary, #ba244a);
-  background: #fff;
-  border-radius: 10px;
-  padding: 8px 14px;
+  border: none;
+  background: transparent;
+  padding: 2px 0;
   color: var(--color-primary, #ba244a);
-  font-weight: 700;
-  text-align: left;
+  font-weight: 600;
+  font-size: 12.5px;
+  text-decoration: none;
   cursor: pointer;
+  transition: color 0.15s ease;
 }
 
 .qc-inline-link-btn:hover {
-  background: var(--color-primary, #ba244a);
-  color: #fff;
+  background: transparent;
+  color: #9e123b;
+  text-decoration: underline;
 }
 
 .qc-inline-link-btn .qc-icon {
+  width: 14px;
+  height: 14px;
   flex-shrink: 0;
 }
 

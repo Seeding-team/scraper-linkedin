@@ -239,6 +239,9 @@ export function CustomerQuotesTab({
   // ban moi nhat cua chuoi, khong phai version cu).
   const [selectedQuoteIds, setSelectedQuoteIds] = useState<Set<string>>(new Set());
   const [bulkCopyLoading, setBulkCopyLoading] = useState(false);
+  const [moveWorkspaceQuotes, setMoveWorkspaceQuotes] = useState<Quote[] | null>(null);
+  const [bulkMoveLoading, setBulkMoveLoading] = useState(false);
+
   function toggleQuoteSelection(id: string) {
     setSelectedQuoteIds(prev => {
       const next = new Set(prev);
@@ -255,6 +258,18 @@ export function CustomerQuotesTab({
       window.alert(err instanceof Error ? err.message : 'Không tải được các báo giá đã chọn.');
     } finally {
       setBulkCopyLoading(false);
+    }
+  }
+
+  async function openBulkMoveQuoteModal() {
+    setBulkMoveLoading(true);
+    try {
+      const fetched = await Promise.all([...selectedQuoteIds].map(id => seedingQuoteRepository.getQuote(id)));
+      setMoveWorkspaceQuotes(fetched);
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : 'Không tải được các báo giá đã chọn.');
+    } finally {
+      setBulkMoveLoading(false);
     }
   }
 
@@ -376,9 +391,18 @@ export function CustomerQuotesTab({
         <div className="flex items-center justify-between rounded-xl border border-rose-100 bg-rose-50/60 px-4 py-2.5">
           <span className="text-xs font-medium text-slate-700">Đã chọn {selectedQuoteIds.size} báo giá</span>
           <div className="flex items-center gap-2">
-            <button type="button" className="text-xs font-medium text-slate-500 hover:text-slate-700" onClick={() => setSelectedQuoteIds(new Set())}>
+            <button type="button" className="text-xs font-medium text-slate-500 hover:text-slate-700 mr-1" onClick={() => setSelectedQuoteIds(new Set())}>
               Bỏ chọn
             </button>
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-8 text-xs font-semibold bg-white text-[#c2185b] border-slate-300 hover:bg-rose-50 gap-1 px-3 rounded-lg"
+              disabled={bulkMoveLoading}
+              onClick={() => void openBulkMoveQuoteModal()}
+            >
+              {bulkMoveLoading ? 'Đang mở...' : `Di chuyển báo giá (${selectedQuoteIds.size})`}
+            </Button>
             <Button
               size="sm"
               className="h-8 text-xs font-semibold bg-[#c2185b] text-white hover:bg-[#a9144e] gap-1 px-3 rounded-lg"
@@ -925,9 +949,24 @@ export function CustomerQuotesTab({
     {moveQuoteTarget ? (
       <MoveQuoteModal
         quote={moveQuoteTarget}
+        currentCustomerId={(moveQuoteTarget as any).customer_id || moveQuoteTarget.accountId}
+        currentCustomerName={customerName || (moveQuoteTarget.data?.customerName as string)}
         onClose={() => setMoveQuoteTarget(null)}
         onMoved={() => {
           setSelectedQuoteIds(new Set());
+          window.location.reload();
+        }}
+      />
+    ) : null}
+    {moveWorkspaceQuotes ? (
+      <MoveQuoteModal
+        quotes={moveWorkspaceQuotes}
+        currentCustomerId={(moveWorkspaceQuotes[0] as any)?.customer_id || moveWorkspaceQuotes[0]?.accountId}
+        currentCustomerName={customerName || (moveWorkspaceQuotes[0]?.data?.customerName as string)}
+        onClose={() => setMoveWorkspaceQuotes(null)}
+        onMoved={() => {
+          setSelectedQuoteIds(new Set());
+          setMoveWorkspaceQuotes(null);
           window.location.reload();
         }}
       />

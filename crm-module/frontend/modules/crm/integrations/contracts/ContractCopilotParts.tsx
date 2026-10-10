@@ -8,6 +8,7 @@ import type {
   ApplyParagraphResult, ClauseProposal, LegalOverrideInput, PrecheckContact, PrecheckGap, PrecheckIssuer, PrecheckParty,
   PrecheckRepresentative, PrecheckResult, RepresentativeOverrideInput,
 } from '@/modules/contracts/repositories/contractDocs';
+import { SearchableSelect } from '../../components/SearchableSelect';
 
 const card: React.CSSProperties = { border: '1px solid #e2e8f0', borderRadius: 10, background: '#fff', padding: '0.7rem 0.9rem' };
 const small: React.CSSProperties = { fontSize: '0.76rem', color: '#475569' };
@@ -43,15 +44,17 @@ const PARTY_FIELD_LABELS: Array<[keyof PrecheckParty, string]> = [
 /** Tóm tắt ĐẦY ĐỦ hai bên (không chỉ liệt kê trường thiếu): trường đã có dữ liệu hiện ✓ + giá trị thật, trường thiếu hiện "—". */
 function PartyColumn({ title, party }: { title: string; party: PrecheckParty }) {
   return (
-    <div style={{ display: 'grid', gap: 3, minWidth: 0 }}>
-      <b style={{ fontSize: '0.8rem' }}>{title}</b>
+    <div style={{ display: 'grid', gap: 4, minWidth: 0 }}>
+      <b style={{ fontSize: '0.82rem', color: '#0f172a' }}>{title}</b>
       {PARTY_FIELD_LABELS.map(([key, label]) => {
         const value = party[key];
         return (
-          <div key={key} style={{ fontSize: '0.76rem', display: 'flex', gap: 5, color: value ? '#0f172a' : '#94a3b8' }}>
-            <span style={{ color: value ? '#16845d' : '#cbd5e1' }}>{value ? '✓' : '—'}</span>
-            <span style={{ color: '#64748b', flex: 'none' }}>{label}:</span>
-            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={value || undefined}>{value || 'Chưa có'}</span>
+          <div key={key} style={{ fontSize: '0.78rem', display: 'flex', gap: 6, alignItems: 'flex-start', minWidth: 0, color: value ? '#0f172a' : '#94a3b8' }}>
+            <span style={{ color: value ? '#16845d' : '#cbd5e1', flexShrink: 0, marginTop: 1 }}>{value ? '✓' : '—'}</span>
+            <span style={{ color: '#64748b', flexShrink: 0 }}>{label}:</span>
+            <span style={{ minWidth: 0, flex: 1, overflowWrap: 'anywhere', wordBreak: 'break-word' }} title={value || undefined}>
+              {value || <em style={{ color: '#cbd5e1', fontStyle: 'normal' }}>Chưa có</em>}
+            </span>
           </div>
         );
       })}
@@ -121,11 +124,24 @@ export function LegalInfoEditor({ party, representative, contacts, contactId, on
   }
 
   if (!open) {
-    return <button type="button" data-testid="legal-info-edit-open" onClick={() => setOpen(true)}
-      style={{ border: '1px solid #be1e4b', color: '#be1e4b', background: '#fff', borderRadius: 6, fontSize: '0.72rem', padding: '2px 10px', cursor: 'pointer' }}>Bổ sung tại chỗ ✎</button>;
+    return (
+      <button
+        type="button"
+        data-testid="legal-info-edit-open"
+        onClick={() => setOpen(true)}
+        style={{
+          display: 'inline-flex', alignItems: 'center', gap: 4,
+          border: '1px solid #be1e4b', color: '#be1e4b', background: '#fff',
+          borderRadius: 6, fontSize: '0.74rem', fontWeight: 600, padding: '4px 10px',
+          cursor: 'pointer', transition: 'all 0.15s ease', boxShadow: '0 1px 2px rgba(0,0,0,0.03)'
+        }}
+      >
+        Bổ sung thông tin ↗
+      </button>
+    );
   }
   const label: React.CSSProperties = { display: 'grid', gap: 2 };
-  const input: React.CSSProperties = { height: 32, border: '1px solid #cbd5e1', borderRadius: 6, padding: '0 8px', fontSize: '0.78rem' };
+  const input: React.CSSProperties = { height: 34, border: '1px solid #cbd5e1', borderRadius: 6, padding: '0 8px', fontSize: '0.78rem' };
   return (
     <div data-testid="legal-info-edit-form" style={{ ...card, marginTop: 6, display: 'grid', gap: 10, background: '#fffbeb', borderColor: '#fde68a' }}>
       {onlySection !== 'rep' ? (
@@ -142,10 +158,19 @@ export function LegalInfoEditor({ party, representative, contacts, contactId, on
         <div>
           <b style={{ fontSize: '0.78rem' }}>Người liên hệ</b>
           {contacts.length > 0 ? (
-            <select data-testid="legal-contact-picker" value={selectedContactId} onChange={e => pickContact(e.target.value)} style={{ ...input, marginTop: 4, width: '100%' }}>
-              <option value="">— Chọn người liên hệ —</option>
-              {contacts.map(c => <option key={c.id} value={c.id}>{c.name}{c.position ? ` (${c.position})` : ''}{c.isPrimary ? ' · chính' : ''}</option>)}
-            </select>
+            <div style={{ marginTop: 4 }}>
+              <SearchableSelect
+                testId="legal-contact-picker"
+                value={selectedContactId}
+                onChange={id => pickContact(id)}
+                options={contacts.map(c => ({
+                  value: c.id,
+                  label: `${c.name}${c.position ? ` (${c.position})` : ''}${c.isPrimary ? ' · chính' : ''}`
+                }))}
+                placeholder="— Chọn người liên hệ —"
+                searchPlaceholder="Tìm người liên hệ…"
+              />
+            </div>
           ) : null}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 6, marginTop: 4 }}>
             <label style={label}><span style={small}>Họ tên</span><input data-testid="legal-field-contactName" value={contactName} onChange={e => setContactName(e.target.value)} style={input} /></label>
@@ -222,10 +247,24 @@ function IssuerInlineEditor({ issuer, canEdit, onFixUrl, onSaved }: { issuer: Pr
   }
 
   if (!canEdit) {
-    return <a href={onFixUrl} target="_blank" rel="noopener noreferrer" data-testid="issuer-fix-link" style={{ fontSize: '0.72rem', color: '#be1e4b' }}>Đề xuất bổ sung (mở trang Đơn vị phát hành) ↗</a>;
+    return <a href={onFixUrl} target="_blank" rel="noopener noreferrer" data-testid="issuer-fix-link" style={{ fontSize: '0.74rem', color: '#be1e4b', fontWeight: 600 }}>Đề xuất bổ sung (mở trang Đơn vị phát hành) ↗</a>;
   }
   if (!open) {
-    return <button type="button" data-testid="issuer-fix-inline-open" onClick={start} style={{ border: '1px solid #be1e4b', color: '#be1e4b', background: '#fff', borderRadius: 6, fontSize: '0.72rem', padding: '2px 10px', cursor: 'pointer' }}>Bổ sung tại chỗ ✎</button>;
+    return (
+      <button
+        type="button"
+        data-testid="issuer-fix-inline-open"
+        onClick={start}
+        style={{
+          display: 'inline-flex', alignItems: 'center', gap: 4,
+          border: '1px solid #be1e4b', color: '#be1e4b', background: '#fff',
+          borderRadius: 6, fontSize: '0.74rem', fontWeight: 600, padding: '4px 10px',
+          cursor: 'pointer', transition: 'all 0.15s ease', boxShadow: '0 1px 2px rgba(0,0,0,0.03)'
+        }}
+      >
+        Bổ sung thông tin ↗
+      </button>
+    );
   }
   return (
     <div data-testid="issuer-fix-inline-form" style={{ ...card, marginTop: 6, display: 'grid', gap: 6, background: '#fffbeb', borderColor: '#fde68a' }}>
@@ -266,14 +305,30 @@ export function PrecheckPanel({ precheck, loading, needDeal, noDeals, ack, onAck
     return <div data-testid="precheck-needdeal" style={{ ...card, background: '#fff7ed', borderColor: '#fed7aa', color: '#9a3412', fontSize: '0.8rem' }}>Chọn Deal để tiếp tục — không thể tạo bản nháp khi chưa chọn Deal.</div>;
   }
   if (loading || !precheck) return <div style={{ ...small, padding: '0.3rem 0' }}>{loading ? 'Đang kiểm tra dữ liệu CRM…' : null}</div>;
-  const li = (g: PrecheckGap, i: number) => (
-    <li key={i}>{g.label} <small style={{ color: '#94a3b8' }}>— {g.source}</small>
+
+  const renderGapItem = (g: PrecheckGap, i: number, total: number) => (
+    <li
+      key={i}
+      style={{
+        display: 'flex',
+        flexWrap: 'wrap',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: '6px 12px',
+        padding: '6px 0',
+        borderBottom: i < total - 1 ? '1px dashed #fed7aa' : 'none'
+      }}
+    >
+      <div style={{ flex: '1 1 220px', minWidth: 0, fontSize: '0.8rem', lineHeight: '1.4' }}>
+        <b style={{ color: '#9a3412', fontWeight: 600 }}>{g.label}</b>{' '}
+        <small style={{ color: '#64748b', fontSize: '0.74rem' }}>— {g.source}</small>
+      </div>
       {g.side === 'B' && precheck.issuer ? (
-        <span style={{ marginLeft: 8, display: 'inline-block' }}>
+        <div style={{ flexShrink: 0 }}>
           <IssuerInlineEditor issuer={precheck.issuer} canEdit={canEditIssuer} onFixUrl="/all-platform/issuer-companies" onSaved={() => onIssuerSaved?.()} />
-        </span>
+        </div>
       ) : g.side === 'A' && precheck.parties && onLegalInfoSaved ? (
-        <span style={{ marginLeft: 8, display: 'inline-flex', gap: 6 }}>
+        <div style={{ flexShrink: 0, display: 'flex', gap: 6 }}>
           {g.field === 'rep' && precheck.representative?.name && !repFormOpen ? (
             // Da co GOI Y ten (tu Nguoi lien he) - cho xac nhan NGAY tai day (khong phai mo "Bo sung thong tin" long
             // nhau moi thay) - gui lai DUNG gia tri dang goi y nhu 1 override tuong minh, backend tu danh dau confirmed=True
@@ -291,12 +346,14 @@ export function PrecheckPanel({ precheck, loading, needDeal, noDeals, ack, onAck
           <LegalInfoEditor party={precheck.parties.a} representative={precheck.representative} contacts={precheck.contacts || []}
             contactId={precheck.contactId} onSaved={onLegalInfoSaved} onlySection={g.field === 'rep' ? 'rep' : undefined}
             onOpenChange={g.field === 'rep' ? setRepFormOpen : undefined} />
-        </span>
+        </div>
       ) : null}
     </li>
   );
+
   const optionalRepGaps = precheck.optional.filter(g => g.field === 'rep' && precheck.representative?.name);
   const optionalOtherGaps = precheck.optional.filter(g => !(g.field === 'rep' && precheck.representative?.name));
+
   return (
     <div data-testid="precheck-panel" style={{ display: 'grid', gap: 8 }}>
       {precheck.warnings && precheck.warnings.length > 0 ? (
@@ -313,33 +370,43 @@ export function PrecheckPanel({ precheck, loading, needDeal, noDeals, ack, onAck
       {precheck.blockers.length > 0 ? (
         <div data-testid="precheck-blockers" style={{ ...card, background: '#fef2f2', borderColor: '#fecaca', color: '#b91c1c', fontSize: '0.8rem' }}>
           <b>Không thể tạo bản nháp:</b>
-          <ul style={{ margin: '0.3rem 0 0', paddingLeft: '1.1rem' }}>{precheck.blockers.map(li)}</ul>
+          <ul style={{ margin: '0.3rem 0 0', paddingLeft: 0, listStyle: 'none' }}>
+            {precheck.blockers.map((g, i) => renderGapItem(g, i, precheck.blockers.length))}
+          </ul>
         </div>
       ) : null}
       {precheck.required.length > 0 ? (
         <div data-testid="precheck-required" style={{ ...card, background: '#fff7ed', borderColor: '#fed7aa', color: '#9a3412', fontSize: '0.8rem' }}>
-          <b>Thiếu thông tin pháp lý cần bổ sung:</b>
-          <ul style={{ margin: '0.3rem 0 0.4rem', paddingLeft: '1.1rem' }}>{precheck.required.map(li)}</ul>
-          <label style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+          <b style={{ fontSize: '0.82rem' }}>Thiếu thông tin pháp lý cần bổ sung:</b>
+          <ul style={{ margin: '0.4rem 0 0.6rem', paddingLeft: 0, listStyle: 'none' }}>
+            {precheck.required.map((g, i) => renderGapItem(g, i, precheck.required.length))}
+          </ul>
+          <label style={{ display: 'flex', gap: 8, alignItems: 'center', paddingTop: 6, borderTop: '1px solid #fde68a', marginTop: 4 }}>
             <input data-testid="precheck-ack" type="checkbox" checked={ack} onChange={e => onAck(e.target.checked)} />
-            Tôi đã hiểu: các trường này sẽ để trống (………) trong hợp đồng, hệ thống không tự điền
+            <span style={{ fontSize: '0.78rem', color: '#9a3412', fontWeight: 500 }}>
+              Tôi đã hiểu: các trường này sẽ để trống (………) trong hợp đồng, hệ thống không tự điền
+            </span>
           </label>
         </div>
       ) : null}
       {optionalRepGaps.length > 0 && precheck.blockers.length === 0 ? (
         // Gap "xac nhan nguoi dai dien" co nut xac nhan nhanh - de NGOAI dropdown "Co the de trong" cho de thao tac
-        // ngay, khong bat Sale phai bam mo dropdown moi thay.
+        // ngay, khong bat Sale phai bam mo dropdown moi thay (bro phan hoi dropdown an mat thao tac nay).
         <div data-testid="precheck-optional-rep" style={{ ...card, background: '#fff7ed', borderColor: '#fed7aa', color: '#9a3412', fontSize: '0.8rem' }}>
-          <ul style={{ margin: 0, paddingLeft: '1.1rem' }}>{optionalRepGaps.map(li)}</ul>
+          <ul style={{ margin: 0, paddingLeft: 0, listStyle: 'none' }}>
+            {optionalRepGaps.map((g, i) => renderGapItem(g, i, optionalRepGaps.length))}
+          </ul>
         </div>
       ) : null}
       {optionalOtherGaps.length > 0 && precheck.blockers.length === 0 ? (
         <details data-testid="precheck-optional" style={{ ...card, ...small }}>
-          <summary style={{ cursor: 'pointer' }}>Có thể để trống ({optionalOtherGaps.length}) — không chặn tạo bản nháp</summary>
-          <ul style={{ margin: '0.3rem 0 0', paddingLeft: '1.1rem' }}>{optionalOtherGaps.map(li)}</ul>
+          <summary style={{ cursor: 'pointer', fontWeight: 600 }}>Có thể để trống ({optionalOtherGaps.length}) — không chặn tạo bản nháp</summary>
+          <ul style={{ margin: '0.3rem 0 0', paddingLeft: 0, listStyle: 'none' }}>
+            {optionalOtherGaps.map((g, i) => renderGapItem(g, i, optionalOtherGaps.length))}
+          </ul>
         </details>
       ) : null}
-      {precheck.ok && precheck.required.length === 0 && precheck.blockers.length === 0 ? <div data-testid="precheck-ok" style={{ ...small, color: '#16845d' }}>✓ Thông tin pháp lý hai bên đủ để soạn hợp đồng.</div> : null}
+      {precheck.ok && precheck.required.length === 0 && precheck.blockers.length === 0 ? <div data-testid="precheck-ok" style={{ ...small, color: '#16845d', fontWeight: 600 }}>✓ Thông tin pháp lý hai bên đủ để soạn hợp đồng.</div> : null}
     </div>
   );
 }

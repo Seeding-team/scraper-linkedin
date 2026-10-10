@@ -224,20 +224,15 @@ export function ContractTemplateLibrary({
   }
 
   return (
-    <section data-testid="template-library" style={{ minWidth: 0, maxWidth: '100%' }}>
-      <header style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: '0.8rem' }}>
-        <div style={{ minWidth: 0 }}>
-          <h3 style={{ margin: 0, fontSize: '1.05rem', fontWeight: 800 }}>Thư viện mẫu hợp đồng</h3>
-          <p style={{ margin: '2px 0 0', fontSize: '0.76rem', color: '#64748b' }}>{onSelect ? 'Chọn mẫu có sẵn hoặc tải mẫu mới để AI sử dụng' : 'Mẫu để AI Contract Copilot tham chiếu văn phong và cấu trúc khi soạn thảo'}</p>
+    <section data-testid="template-library" style={{ minWidth: 0, maxWidth: '100%', paddingTop: '0.4rem' }}>
+      <header style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: '1rem' }}>
+        <div style={{ position: 'relative', flex: 1, minWidth: 220 }}>
+          <Search size={15} style={{ position: 'absolute', left: 12, top: 11, color: '#94a3b8' }} />
+          <input value={query} onChange={event => setQuery(event.target.value)} placeholder="Tìm theo tên mẫu hoặc tên file…" aria-label="Tìm mẫu hợp đồng" data-testid="template-search"
+            style={{ width: '100%', height: 38, border: '1px solid #e2e8f0', borderRadius: 999, padding: '0 14px 0 34px', fontSize: '0.84rem' }} />
         </div>
         <button type="button" style={btn(true)} onClick={() => setUploadOpen(true)} data-testid="template-upload-open"><Upload size={15} /> Tải mẫu mới</button>
       </header>
-
-      <div style={{ position: 'relative', marginBottom: '0.7rem' }}>
-        <Search size={15} style={{ position: 'absolute', left: 12, top: 11, color: '#94a3b8' }} />
-        <input value={query} onChange={event => setQuery(event.target.value)} placeholder="Tìm theo tên mẫu hoặc tên file…" aria-label="Tìm mẫu hợp đồng" data-testid="template-search"
-          style={{ width: '100%', height: 38, border: '1px solid #e2e8f0', borderRadius: 999, padding: '0 14px 0 34px', fontSize: '0.84rem' }} />
-      </div>
 
       {error ? <p role="alert" style={{ color: '#b91c1c', fontSize: '0.8rem' }}>{error}</p> : null}
       {loading ? <p style={{ fontSize: '0.8rem', color: '#64748b' }}>Đang tải danh sách…</p> : null}
