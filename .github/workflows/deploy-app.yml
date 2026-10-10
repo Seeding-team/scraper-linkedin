@@ -19,6 +19,22 @@ jobs:
       run:
         working-directory: /opt/apps/seeding_markeeai/scraper-linkedin
     steps:
+      # Host app (10.120.60.26) dung CHUNG cho 3 stack CRM + app: moi lan build backend ~2.35GB
+      # va docker build cache tich luy khong ai don -> / day 100% (21/09: 23.5GB, 10/10: 18.8GB),
+      # runner khong ghi noi log -> job chet o buoc dau "No space left on device" du code khong loi.
+      # Buoc nay chay DAU job: neu dia trong < 8GB thi don truoc khi build.
+      - name: Dam bao dia con trong
+        working-directory: /
+        run: |
+          avail=$(df -BG --output=avail / | tail -1 | tr -dc '0-9')
+          echo "Dia con trong: ${avail}GB"
+          if [ "${avail:-0}" -lt 8 ]; then
+            echo "Dia sap day -> don Docker build cache + image mo coi"
+            docker builder prune -af || true
+            docker image prune -f || true
+            df -h / | tail -1
+          fi
+
       - name: Pull code theo ref duoc chon
         # Da gap thuc te (xem docs/INFRASTRUCTURE.md muc 5.1): buoc dong goi
         # extension zip o duoi day de lai public/*.zip "dirty" tren host sau
@@ -73,7 +89,8 @@ jobs:
       # Fix: don build cache cu (>24h) sau moi lan deploy thanh cong de khong
       # tich luy vo han, van giu cache gan day de build nhanh.
       - name: Don dep Docker build cache cu
-        if: success()
+        if: always()
+        working-directory: /
         run: |
           docker builder prune -af --filter until=24h || true
           df -h / | tail -1
