@@ -598,6 +598,72 @@ def delete_customers_bulk(customer_ids: list[str], user: dict[str, Any], confirm
     return {"deleted_ids": deleted_ids, "failed": failed}
 
 
+# Main la CRM markee CO DINH (khong co /auth/workspaces/switcher nhu 3 clone) -
+# danh sach workspace dich khi sao chep Khach hang CHI CO 2 clone doc lap con
+# lai, khai bao TINH tai day (dung y het _MAIN_COPY_TARGET_INSTANCES cua
+# crm_lead_service.py, khong tra cuu tu config nao ca).
+_MAIN_COPY_TARGET_INSTANCES = ("cloudgate", "SECURITYZONE")
+
+
+def copy_customer_to_instance(customer_id: str, target_instance: str, user: dict[str, Any]) -> dict[str, Any]:
+    """Admin-only: tao 1 BAN SAO cua chinh ho so Khach hang (crm_customers)
+    sang 1 clone CRM doc lap khac - Khach hang GOC van giu nguyen o workspace
+    hien tai. CHI sao chep dung 1 dong crm_customers (khong cascade Deal/Bao
+    gia/Hop dong/Contact - dung tinh than copy_lead_to_instance() ben
+    crm_lead_service.py, "sao chep y het nhu Lead"). `crm_customers` KHONG
+    co cot origin_instance (chi crm_leads moi co, migration 128) nen chi
+    chan copy VE DUNG workspace hien tai (tu-copy vo nghia), khong chan duoc
+    toan bo vong lap nhieu buoc qua lai nhu Lead."""
+    if target_instance not in _MAIN_COPY_TARGET_INSTANCES:
+        raise ValueError(f"Workspace \"{target_instance}\" khong hop le.")
+    supabase = get_supabase_client()
+    raw_res = execute_supabase_query(
+        lambda: supabase.table("crm_customers")
+        .select(CUSTOMER_COLUMNS)
+        .eq("id", customer_id)
+        .eq("instance", settings.crm_instance)
+        .maybe_single()
+        .execute()
+    )
+    raw = raw_res.data if raw_res else None
+    if not raw:
+        raise ValueError("Không tìm thấy khách hàng ở workspace hiện tại.")
+    if target_instance == settings.crm_instance:
+        raise ValueError("Không thể sao chép khách hàng về đúng workspace hiện tại.")
+    copy_data = {
+        key: value
+        for key, value in raw.items()
+        if key not in ("id", "created_at", "updated_at", "customer_code")
+    }
+    copy_data["instance"] = target_instance
+    res = execute_supabase_query(lambda: supabase.table("crm_customers").insert(copy_data).execute())
+    created = res.data[0]
+    try:  # Ma KH tu sinh ngay khi tao - dung y het create_customer()
+        from app.modules.all_platform.services.supabase_project_service import _resolve_customer_code
+
+        created["customer_code"] = _resolve_customer_code(created["id"])
+    except Exception:
+        logger.warning("auto customer_code failed for copied customer %s", created.get("id"))
+    return normalize_city_fields(created)
+
+
+def copy_customers_to_instance(assignments: list[dict[str, Any]], user: dict[str, Any]) -> dict[str, Any]:
+    """Ban nhieu (bulk) cua copy_customer_to_instance() - moi Khach hang duoc
+    chon 1 workspace dich RIENG, dung y het copy_leads_to_instance()."""
+    copied: list[dict[str, Any]] = []
+    failed: list[dict[str, Any]] = []
+    for item in assignments:
+        customer_id = str(item.get("customer_id") or "")
+        target_instance = str(item.get("target_instance") or "")
+        try:
+            if not customer_id or not target_instance:
+                raise ValueError("Thiếu customer_id hoặc target_instance.")
+            copied.append(copy_customer_to_instance(customer_id, target_instance, user))
+        except Exception as exc:  # noqa: BLE001 - tra loi tung dong cho FE
+            failed.append({"customer_id": customer_id, "message": str(exc)})
+    return {"copied": copied, "failed": failed}
+
+
 def related_records(customer_id: str, user: dict[str, Any]) -> dict[str, Any]:
     customer = get_customer(customer_id, user)
     supabase = get_supabase_client()

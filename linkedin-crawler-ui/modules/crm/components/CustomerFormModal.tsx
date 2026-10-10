@@ -566,7 +566,14 @@ export function CustomerFormModal({
   if (embedded) return formAndFooter;
 
   return (
-    <div className="crm-modal-backdrop" onClick={onClose}>
+    // Bug thuc te (2026-10-10, kem anh chup): dropdown MemberSearchSelect/
+    // SearchableSelect portal menu ra thang document.body (ngoai DOM cua modal
+    // nay) - click 1 option trong portal van bubble theo CAY REACT (khong phai
+    // DOM) len toi backdrop, khien onClick={onClose} coi la "click ra ngoai"
+    // va dong het modal truoc khi kip chon xong. Chi dong khi click THAT SU
+    // vao chinh backdrop (event.target === event.currentTarget), bubble tu
+    // bat ky phan tu con/portal nao deu bi bo qua.
+    <div className="crm-modal-backdrop" onClick={event => { if (event.target === event.currentTarget) onClose(); }}>
       <div className="crm-modal crm-modal--customer-form" onClick={event => event.stopPropagation()}>
         <header className="crm-modal-header">
           <div>

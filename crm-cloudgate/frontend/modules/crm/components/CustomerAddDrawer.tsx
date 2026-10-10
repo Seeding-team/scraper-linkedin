@@ -586,7 +586,9 @@ export function CustomerAddDrawer({
   if (!open) return null;
 
   return (
-    <div className="crm-drawer-backdrop" onClick={onClose}>
+    // Chi dong khi click THAT SU vao backdrop (khong phai bubble tu dropdown
+    // portal ra document.body ben trong drawer - xem CustomerFormModal.tsx).
+    <div className="crm-drawer-backdrop" onClick={event => { if (event.target === event.currentTarget) onClose(); }}>
       <div className="crm-customer-drawer" onClick={event => event.stopPropagation()}>
         <header className="crm-customer-drawer-header">
           <div>

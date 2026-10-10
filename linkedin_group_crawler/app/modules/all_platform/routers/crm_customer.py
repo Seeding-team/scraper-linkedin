@@ -17,6 +17,8 @@ from app.modules.all_platform.services.crm_customer_service import (
     CustomerLinkedError,
     CustomerNotFoundError,
     DuplicateCustomerError,
+    copy_customer_to_instance,
+    copy_customers_to_instance,
     create_customer,
     create_customer_with_deal,
     delete_customer,
@@ -148,6 +150,45 @@ def customers_delete_bulk(payload: dict, user: dict[str, Any] = Depends(get_curr
         if deleted == 0 and failed > 0:
             return BaseResponse(success=False, message=f"Không xoá được khách hàng nào ({failed} khách hàng cần xác nhận hoặc bị từ chối).", data=data)
         return BaseResponse(success=True, message=f"Đã xoá {deleted} khách hàng" + (f", {failed} khách hàng chưa xoá" if failed else ""), data=data)
+    except Exception as exc:
+        return _error(exc)
+
+
+@router.post("/copy-instance")
+def customers_copy_instance_bulk(payload: dict, user: dict[str, Any] = Depends(get_current_user)) -> BaseResponse:
+    """Chi Admin THAT: sao chep NHIEU Khach hang cung luc, MOI Khach hang 1
+    workspace dich RIENG, trong so 2 clone CRM doc lap (cloudgate/SECURITYZONE)
+    - dung y het leads_copy_instance_bulk(). Payload:
+    {"assignments": [{"customer_id": ..., "target_instance": ...}, ...]}."""
+    if str(user.get("role") or "").strip().lower() != "admin":
+        return BaseResponse(success=False, message="Chỉ Admin mới được sao chép khách hàng sang workspace khác")
+    try:
+        assignments = payload.get("assignments")
+        if not assignments or not isinstance(assignments, list):
+            return BaseResponse(success=False, message="assignments là bắt buộc (danh sách)")
+        data = copy_customers_to_instance(assignments, user)
+        failed_count = len(data.get("failed") or [])
+        copied_count = len(data.get("copied") or [])
+        message = f"Đã sao chép {copied_count} khách hàng" + (f", {failed_count} lỗi" if failed_count else "")
+        return BaseResponse(success=True, message=message, data=data)
+    except Exception as exc:
+        return _error(exc)
+
+
+@router.post("/{customer_id}/copy-instance")
+def customers_copy_instance(customer_id: str, payload: dict, user: dict[str, Any] = Depends(get_current_user)) -> BaseResponse:
+    """Chi Admin THAT (khong phai leader): tao 1 ban sao cua 1 Khach hang sang
+    1 clone CRM doc lap khac (cloudgate/SECURITYZONE), Khach hang goc van giu
+    nguyen o workspace hien tai - thao tac xuyen tenant, dung y het
+    leads_copy_instance()."""
+    if str(user.get("role") or "").strip().lower() != "admin":
+        return BaseResponse(success=False, message="Chỉ Admin mới được sao chép khách hàng sang workspace khác")
+    try:
+        target_instance = payload.get("target_instance")
+        if not target_instance:
+            return BaseResponse(success=False, message="target_instance là bắt buộc")
+        data = copy_customer_to_instance(customer_id, str(target_instance), user)
+        return BaseResponse(success=True, message="Đã sao chép sang workspace khác", data=data)
     except Exception as exc:
         return _error(exc)
 

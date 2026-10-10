@@ -455,7 +455,7 @@ async def contracts_ocr_reconcile(
     quote_id: str = Form(...),
     user: dict = Depends(get_current_user),
 ) -> BaseResponse:
-    """Đọc file hợp đồng vừa upload (PDF/ảnh), trích xuất best-effort số hợp
+    """Đọc file hợp đồng vừa upload (PDF/ảnh/.docx), trích xuất best-effort số hợp
     đồng/ngày ký/3 mốc tiền (Trước VAT/VAT/Sau VAT), rồi so với số liệu THẬT
     của báo giá `quote_id` đã chọn trên form. Dùng lại đúng quyền đọc báo giá
     đã áp dụng ở GET /quotes/{quote_id} (quotes_get trong quote.py) - báo giá

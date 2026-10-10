@@ -76,7 +76,9 @@ export function ContractDetailModal({ deal, open, onClose }: Props) {
   if (!open || !deal) return null;
 
   return (
-    <div className="crm-modal-backdrop crm-contract-detail-backdrop" onClick={onClose}>
+    // Chi dong khi click THAT SU vao backdrop (khong phai bubble tu dropdown
+    // portal ra document.body ben trong modal - xem CustomerFormModal.tsx).
+    <div className="crm-modal-backdrop crm-contract-detail-backdrop" onClick={event => { if (event.target === event.currentTarget) onClose(); }}>
       <section className="crm-contract-detail-modal" onClick={event => event.stopPropagation()}>
         <header className="crm-contract-detail-header">
           <div>

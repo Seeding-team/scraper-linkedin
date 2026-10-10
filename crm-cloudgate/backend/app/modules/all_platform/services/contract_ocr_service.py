@@ -290,13 +290,59 @@ def _fallback_parse_contract_text(text: str) -> dict:
     }
 
 
+def _extract_docx_text(file_bytes: bytes) -> str:
+    """Van ban tho tu file .docx (doan van + bang) - dung lai python-docx
+    da co san lam dependency (xem contract_docx_engine.py), KHONG them thu
+    vien moi. .docx LUON co text that (khong co truong hop "scan anh" nhu
+    PDF) nen khong can tang AI vision rieng cho dinh dang nay."""
+    from io import BytesIO
+
+    from docx import Document
+
+    doc = Document(BytesIO(file_bytes))
+    parts = [p.text for p in doc.paragraphs if p.text.strip()]
+    for table in doc.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                if cell.text.strip():
+                    parts.append(cell.text)
+    return "\n".join(parts)
+
+
+async def _summarize_from_text(text: str) -> dict:
+    """Tang AI (uu tien Gemini roi OpenAI-compatible) -> heuristic - dung
+    chung cho moi nguon da co san TEXT THAT (PDF co text + .docx), tranh
+    lap lai cung 1 logic 3 tang o 2 nhanh dinh dang khac nhau."""
+    if len(text.strip()) < _MIN_TEXT_LEN_FOR_HEURISTIC:
+        return _empty_result("heuristic", False)
+    if settings.gemini_api_key:
+        parsed = await _extract_via_gemini_text(text)
+        if parsed:
+            return {**_empty_result("ai", True), **parsed, "extraction_method": "ai", "extractable": True}
+        # AI co key nhung goi loi/parse loi - van con text that, roi xuong heuristic thay vi tra loi trang tay.
+    elif settings.openai_api_key:
+        parsed = await _extract_via_openai_text(text)
+        if parsed:
+            return {**_empty_result("ai", True), **parsed, "extraction_method": "ai", "extractable": True}
+    return _fallback_parse_contract_text(text)
+
+
 async def extract_contract_summary(file_bytes: bytes, filename: str) -> dict:
     """Best-effort trích xuất {contract_number, signed_at, subtotal_amount,
     vat_amount, total_amount, extraction_method, extractable} từ 1 file hợp
-    đồng đã upload (PDF hoặc ảnh). KHÔNG BAO GIỜ bịa số liệu - extractable=False
-    + toàn bộ field None là kết quả hợp lệ khi không đọc được nội dung."""
+    đồng đã upload (PDF, ảnh, hoặc .docx). KHÔNG BAO GIỜ bịa số liệu -
+    extractable=False + toàn bộ field None là kết quả hợp lệ khi không đọc
+    được nội dung."""
     ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
     has_ai = bool(settings.gemini_api_key or settings.openai_api_key)
+
+    if ext == "docx":
+        try:
+            text = _extract_docx_text(file_bytes)
+        except Exception:
+            logger.warning("Contract OCR: khong doc duoc .docx %s", filename, exc_info=True)
+            text = ""
+        return await _summarize_from_text(text)
 
     if ext in ("png", "jpg", "jpeg"):
         # Ảnh chụp/scan: không có text để pdfplumber đọc - bắt buộc cần AI

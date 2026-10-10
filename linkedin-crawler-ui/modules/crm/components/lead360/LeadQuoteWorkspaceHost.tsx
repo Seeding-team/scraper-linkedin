@@ -69,7 +69,9 @@ export function LeadQuoteWorkspaceHost({
 
   if (error) {
     return (
-      <div className="crm-modal-backdrop" style={{ zIndex: 100200 }} onClick={onClose}>
+      // Chi dong khi click THAT SU vao backdrop (khong phai bubble tu dropdown
+      // portal ra document.body ben trong modal - xem CustomerFormModal.tsx).
+      <div className="crm-modal-backdrop" style={{ zIndex: 100200 }} onClick={event => { if (event.target === event.currentTarget) onClose(); }}>
         <div className="crm-modal" onClick={e => e.stopPropagation()} style={{ padding: 20 }}>
           <p>{error}</p>
           <button type="button" className="qc-btn" onClick={onClose}>Đóng</button>

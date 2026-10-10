@@ -1338,7 +1338,15 @@ export function DealFormFields({
                 <Field label="Customer / Công ty" required>
                   <CustomerProfileCombobox form={form} setValue={setValue} hideProfileUpdateToggle />
                 </Field>
-              ) : null}
+              ) : (
+                // Bug (2026-10-10, bao cao thuc te kem anh chup): khoa san Customer thi AN LUON
+                // field, khong con dau vet nao cho Sale biet dang tao Co hoi cho KHACH HANG NAO -
+                // trong nhu "quen" auto-dien khach hang du da khoa dung. Hien lai ten (read-only,
+                // khong cho sua - da khoa that su) thay vi an trang hoan toan.
+                <Field label="Customer / Công ty">
+                  <input value={form.companyName || form.customerName || 'Khách hàng hiện tại'} disabled readOnly />
+                </Field>
+              )}
               {/* Fix (2026-10-03): nhanh "Tạo cơ hội nhanh" truoc day KHONG
                * co o nhap Email/SDT nao ca - go ten khach hang MOI (chua co
                * trong CRM) xong bam "Tạo deal" luon bao "Cần nhập email
