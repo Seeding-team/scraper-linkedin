@@ -2054,11 +2054,28 @@ export function QuoteWorkspaceModal({
     setItemsDraft(prev =>
       prev.map((row, i) => {
         if (i !== index) return row;
+        // Bug thuc te (2026-10-10): Gia khach da co nhung Gia von con 0/rong thi Markup luon
+        // hien "—" (khong tinh duoc), bat Sale tu dien Gia von tay moi thay Markup. Neu dong
+        // da lien ket san pham danh muc co san defaultMarkupPercent, tu suy nguoc Gia von =
+        // Gia khach / (1 + Markup% mac dinh cua san pham do) thay vi cho dien tay. Markup% la
+        // ty le, dung chung duoc cho ca VND lan USD (khong phu thuoc don vi tien te).
+        let costPrice = row.costPrice;
+        // Chi tu dien khi Sale THAT SU co quyen sua Gia von (canEditCostCells) - neu khong,
+        // nguoi khong co quyen se thay/ghi 1 Gia von suy doan ma khong duoc phep dong vao
+        // bao gia (backend se tu choi field nay neu thieu quyen, gay loi luu kho hieu).
+        if (canEditCostCells && (costPrice == null || costPrice <= 0) && row.catalogItemId && price != null && price > 0) {
+          const catalogItem = catalogFlatItems.find(entry => entry.id === row.catalogItemId);
+          const defaultMarkup = catalogItem?.defaultMarkupPercent;
+          if (defaultMarkup != null && defaultMarkup > -100) {
+            costPrice = price / (1 + defaultMarkup / 100);
+          }
+        }
         return {
           ...row,
           unitPrice: price,
           ...(workspaceCurrency === 'USD' ? { unitPriceVnd: undefined } : {}),
-          markupPercent: calculateMarkupFromCostPrice(row.costPrice, price),
+          costPrice,
+          markupPercent: calculateMarkupFromCostPrice(costPrice, price),
         };
       })
     );
@@ -3979,9 +3996,17 @@ export function QuoteWorkspaceModal({
       // (chi ap dung neu block 'payment_terms' con RONG - applyIssuerPaymentTermsSnapshot
       // tu tra ve som neu legacyBlocks o tren da dien san noi dung) - dung
       // LAI 2 helper co san (types.ts), KHONG viet lai logic snapshot rieng.
-      if (effectiveIssuerCompany) {
-        applyIssuerCompanySnapshot(createData, effectiveIssuerCompany);
-        applyIssuerPaymentTermsSnapshot(createData, effectiveIssuerCompany, issuerCompanies);
+      // Bug thuc te (2026-10-10, nghi van race condition): `issuerCompanies` fetch 1 lan
+      // luc mount (useEffect []) - neu Sale tao bao gia ngay khi vua mo form (truoc khi
+      // fetch xong), effectiveIssuerCompany tinh tu state con rong -> mat snapshot (dac
+      // biet logo, text field khac co the da duoc dien san tu defaultValue cua MAU nen
+      // "nhin van dung"). Fetch lai THAT TUOI o day thay vi tin tuong closure co the cu.
+      const freshIssuerCompanies = await seedingQuoteRepository.getIssuerCompanies().catch(() => issuerCompanies);
+      const freshEffectiveIssuerCompany =
+        freshIssuerCompanies.find(company => company.id === effectiveIssuerCompanyId) || effectiveIssuerCompany;
+      if (freshEffectiveIssuerCompany) {
+        applyIssuerCompanySnapshot(createData, freshEffectiveIssuerCompany);
+        applyIssuerPaymentTermsSnapshot(createData, freshEffectiveIssuerCompany, freshIssuerCompanies);
       }
       const created = await seedingQuoteRepository.createQuote({
         dealId: draftDealId,
@@ -7832,6 +7857,17 @@ export function QuoteWorkspaceModal({
                     }}
                   >
                     <RotateCcw className="qc-icon" /> Đặt lại độ rộng cột
+                  </button>
+                ) : null}
+                {/* Bug thuc te (2026-10-10): comment cu phia tren tung ghi "In/Tải PDF nam
+                 * TRUC TIEP trong header popup nay" nhung nut nay da bi mat luc nao khong ro -
+                 * Sale chinh do rong cot xong khong co cach xem thu ban in TAI DAY, phai roi
+                 * qua trang cong khai moi in duoc. Them lai dung window.print() (giong
+                 * PublicQuotePage.tsx) - CSS @media print da san cho view nay (xem comment
+                 * .qc-modal-backdrop/.qc-workspace-preview-modal o quotes.css). */}
+                {previewSchema ? (
+                  <button type="button" className="qc-mini-btn" onClick={() => window.print()}>
+                    <Printer className="qc-icon" /> Xem trước / In PDF
                   </button>
                 ) : null}
                 {/* Nut "Lưu" giong het toolbar ban PDF chinh thuc
