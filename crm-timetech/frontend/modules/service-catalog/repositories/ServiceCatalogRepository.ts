@@ -1,0 +1,308 @@
+import { API_BASE_URL, API_KEY } from '@/lib/env';
+import {
+  ServiceCatalogItem,
+  ServiceCatalogItemInput,
+  BundleComponentInput,
+  ServiceCatalogItemPricingRow,
+  ServiceCatalogItemPricingUpsertInput,
+  ServiceCatalogUnit,
+  ServiceCatalogVatRate,
+  ServiceCatalogStatus,
+  MscSyncStats,
+  WorkspaceMeta,
+} from '../types';
+
+type ApiResponse<T> = {
+  success?: boolean;
+  message?: string;
+  detail?: string;
+  data?: T;
+};
+
+function getDefaultHeaders(): Record<string, string> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (API_KEY) headers['X-API-Key'] = API_KEY;
+  return headers;
+}
+
+async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
+  const res = await fetch(`${API_BASE_URL}${path}`, {
+    credentials: 'include',
+    headers: getDefaultHeaders(),
+    ...options,
+  });
+  const body = (await res.json()) as ApiResponse<T>;
+  if (!res.ok) {
+    if (res.status === 403) throw new Error(body.message || body.detail || 'Bạn không có quyền thực hiện thao tác này.');
+    if (res.status === 401) throw new Error(body.message || body.detail || 'Phiên đăng nhập đã hết hạn, vui lòng đăng nhập lại.');
+    throw new Error(body.message || body.detail || `Lỗi máy chủ (${res.status})`);
+  }
+  if (body.success === false) {
+    throw new Error(body.message || 'Không thực hiện được yêu cầu danh mục dịch vụ.');
+  }
+  return body.data as T;
+}
+
+function toItemPayload(input: ServiceCatalogItemInput) {
+  const optionalFields = [
+    'brand', 'part_number', 'product_type', 'internal_note',
+    'supplier_currency', 'supplier_list_price', 'supplier_discount_percent',
+    'supplier_net_price', 'supplier_exchange_rate', 'supplier_converted_price',
+    'supplier_vendor_id', 'supplier_quote_ref', 'supplier_quote_source',
+    'supplier_quote_date', 'supplier_valid_until', 'shipping_cost',
+    'import_fee', 'other_cost', 'pricing_policy'
+  ];
+  
+  const payload: Record<string, unknown> = {
+    item_type: input.itemType,
+    parent_id: input.parentId,
+    sku: input.sku,
+    name: input.name,
+    description: input.description,
+    unit: input.unit,
+    list_price_usd: input.listPriceUsd,
+    unit_price_usd: input.unitPriceUsd,
+    exchange_rate_snapshot: input.exchangeRateSnapshot,
+    default_unit_price_vnd: input.defaultUnitPriceVnd ?? input.monthlyPriceVnd ?? undefined,
+    default_discount_percent: input.defaultDiscountPercent,
+    default_vat_rate: input.defaultVatRate,
+    customer_visible: input.customerVisible,
+    quote_display_name: input.quoteDisplayName,
+    quote_description: input.quoteDescription,
+    quote_cta: input.quoteCta,
+    monthly_price_vnd: input.monthlyPriceVnd,
+    annual_commit_monthly_price_vnd: input.annualCommitMonthlyPriceVnd,
+    annual_total_price_vnd: input.annualTotalPriceVnd,
+    max_sale_discount_percent: input.maxSaleDiscountPercent,
+    target_gross_margin_percent: input.targetGrossMarginPercent,
+    cost_basis_rule: input.costBasisRule,
+    pricing_policy_exceptions: input.pricingPolicyExceptions,
+    quota_user_count: input.quotaUserCount,
+    quota_user_label: input.quotaUserLabel,
+    quota_connected_channels: input.quotaConnectedChannels,
+    quota_connected_channels_label: input.quotaConnectedChannelsLabel,
+    quota_messages_per_month: input.quotaMessagesPerMonth,
+    quota_messages_per_month_label: input.quotaMessagesPerMonthLabel,
+    quota_ai_data: input.quotaAiData,
+    quota_highlights: input.quotaHighlights,
+    quota_extra: input.quotaExtra,
+    default_cost_price_vnd: input.defaultCostPriceVnd,
+    default_markup_percent: input.defaultMarkupPercent,
+    default_customer_price_vnd: input.defaultCustomerPriceVnd,
+    pricing_input_mode: input.pricingInputMode,
+    spec_quantity_per_unit: input.specQuantityPerUnit,
+    spec_unit_label: input.specUnitLabel,
+    note: input.note,
+    status: input.status,
+    // TÍCH HỢP BỘ LỌC WORKSPACE: Gửi instance khi tạo mới hoặc cập nhật
+    ...(input.instance ? { instance: input.instance } : {}),
+  };
+  
+  // Only include optional fields with non-empty values (for databases that may not have migration 127 applied)
+  for (const [key, snakeKey] of [
+    ['brand', 'brand'],
+    ['partNumber', 'part_number'],
+    ['productType', 'product_type'],
+    ['internalNote', 'internal_note'],
+    ['supplierCurrency', 'supplier_currency'],
+    ['supplierListPrice', 'supplier_list_price'],
+    ['supplierDiscountPercent', 'supplier_discount_percent'],
+    ['supplierNetPrice', 'supplier_net_price'],
+    ['supplierExchangeRate', 'supplier_exchange_rate'],
+    ['supplierConvertedPrice', 'supplier_converted_price'],
+    ['supplierVendorId', 'supplier_vendor_id'],
+    ['supplierQuoteRef', 'supplier_quote_ref'],
+    ['supplierQuoteSource', 'supplier_quote_source'],
+    ['supplierQuoteDate', 'supplier_quote_date'],
+    ['supplierValidUntil', 'supplier_valid_until'],
+    ['shippingCost', 'shipping_cost'],
+    ['importFee', 'import_fee'],
+    ['otherCost', 'other_cost'],
+    ['pricingPolicy', 'pricing_policy'],
+  ] as const) {
+    const value = input[key as keyof ServiceCatalogItemInput];
+    if (value !== '' && value !== null && value !== undefined) {
+      payload[snakeKey] = value;
+    }
+  }
+  
+  return payload;
+}
+
+export interface ServiceCatalogListOptions {
+  /** 'quote_picker' = dang goi tu Catalog Picker trong 1 quote - anh huong
+   * quyen xem Gia von/Markup mac dinh (Gia khach LUON tra, khong qua cong
+   * quyen nay). BAT BUOC kem `quoteId` THAT (1 row `quotes` da ton tai) de
+   * duoc cap cost theo quote. Rieng draft chua co quoteId co the truyen
+   * `issuerCompanyId`; backend chi cap cost draft cho global cost viewer
+   * (Admin/Leader), khong mo cho moi user da dang nhap. Mac dinh 'admin'
+   * (trang quan tri danh muc). */
+  context?: 'admin' | 'quote_picker';
+  quoteId?: string | null;
+  issuerCompanyId?: string | null;
+  /** TÍCH HỢP BỘ LỌC WORKSPACE: Danh sách instance/workspace cần lọc */
+  instances?: string[];
+}
+
+export class ServiceCatalogRepository {
+  async list(options?: ServiceCatalogListOptions): Promise<ServiceCatalogItem[]> {
+    const params = new URLSearchParams();
+    if (options?.context) params.set('context', options.context);
+    if (options?.quoteId) params.set('quote_id', options.quoteId);
+    if (options?.issuerCompanyId) params.set('issuer_company_id', options.issuerCompanyId);
+    // TÍCH HỢP BỘ LỌC WORKSPACE: Đưa tham số instances vào query string nếu có
+    if (options?.instances && options.instances.length > 0) {
+      params.set('instances', options.instances.join(','));
+    }
+    const qs = params.toString();
+    return apiFetch<ServiceCatalogItem[]>(`/api/all-platform/service-catalog${qs ? `?${qs}` : ''}`);
+  }
+
+  /** TÍCH HỢP BỘ LỌC WORKSPACE: Lấy danh sách Workspace từ DB */
+  async getWorkspaces(): Promise<WorkspaceMeta[]> {
+    return apiFetch<WorkspaceMeta[]>('/api/all-platform/service-catalog/workspaces');
+  }
+
+  /** Danh sách đầy đủ bộ giá (mọi issuer_company_id) của 1 sản phẩm — CHỈ
+   * dùng cho form quản trị (Admin), không dùng cho picker chọn danh mục. */
+  async listPricing(itemId: string): Promise<ServiceCatalogItemPricingRow[]> {
+    return apiFetch(`/api/all-platform/service-catalog/${encodeURIComponent(itemId)}/pricing`);
+  }
+
+  async upsertPricing(itemId: string, input: ServiceCatalogItemPricingUpsertInput): Promise<ServiceCatalogItemPricingRow> {
+    return apiFetch(`/api/all-platform/service-catalog/${encodeURIComponent(itemId)}/pricing`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        issuer_company_id: input.issuerCompanyId ?? null,
+        default_cost_price_vnd: input.defaultCostPriceVnd ?? null,
+        default_markup_percent: input.defaultMarkupPercent ?? null,
+        default_customer_price_vnd: input.defaultCustomerPriceVnd ?? null,
+        // Backend chi chap nhan dung 3 literal "cost"|"markup"|"customer_price"
+        // (xem ServiceCatalogItemPricingUpsertRequest) - FE dung "price" lam
+        // ten mode noi bo (ServiceCatalogPricingInputMode), phai doi ten khi
+        // goi API keo Pydantic tra 422 "Invalid request body".
+        pricing_input_mode: input.pricingInputMode === 'price' ? 'customer_price' : input.pricingInputMode,
+      }),
+    });
+  }
+
+  /** Tra cuu nhieu san pham theo id cung luc (vd de "Ap gia de xuat" o Buoc 2
+   * dua tren catalogItemId da luu tren dong hang muc) - luon goi lai server,
+   * khong dua vao state cua modal chon danh muc da dong. */
+  async lookupByIds(ids: string[]): Promise<ServiceCatalogItem[]> {
+    if (ids.length === 0) return [];
+    const unique = Array.from(new Set(ids));
+    return apiFetch<ServiceCatalogItem[]>(`/api/all-platform/service-catalog/lookup?ids=${encodeURIComponent(unique.join(','))}`);
+  }
+
+  async create(input: ServiceCatalogItemInput): Promise<ServiceCatalogItem> {
+    return apiFetch<ServiceCatalogItem>('/api/all-platform/service-catalog/add', {
+      method: 'POST',
+      body: JSON.stringify(toItemPayload(input)),
+    });
+  }
+
+  async update(id: string, input: Partial<ServiceCatalogItemInput>): Promise<ServiceCatalogItem> {
+    return apiFetch<ServiceCatalogItem>('/api/all-platform/service-catalog/update', {
+      method: 'PUT',
+      body: JSON.stringify({ id, ...toItemPayload(input as ServiceCatalogItemInput) }),
+    });
+  }
+
+  async delete(id: string): Promise<{ deleted: boolean; deactivated?: boolean }> {
+    return apiFetch(`/api/all-platform/service-catalog/delete?id=${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async reorder(id: string, direction: 'up' | 'down'): Promise<ServiceCatalogItem[]> {
+    return apiFetch<ServiceCatalogItem[]>('/api/all-platform/service-catalog/reorder', {
+      method: 'PUT',
+      body: JSON.stringify({ id, direction }),
+    });
+  }
+
+  // "Đơn vị tính & VAT" (migration 117) - master-data that, dung cho
+  // ServiceCatalogConfigPage.tsx.
+  async listUnits(includeInactive = true): Promise<ServiceCatalogUnit[]> {
+    return apiFetch<ServiceCatalogUnit[]>(
+      `/api/all-platform/service-catalog/units?include_inactive=${includeInactive}`
+    );
+  }
+
+  async createUnit(name: string, status: ServiceCatalogStatus = 'active'): Promise<ServiceCatalogUnit> {
+    return apiFetch<ServiceCatalogUnit>('/api/all-platform/service-catalog/units', {
+      method: 'POST',
+      body: JSON.stringify({ name, status }),
+    });
+  }
+
+  async updateUnit(id: string, patch: { name?: string; status?: ServiceCatalogStatus }): Promise<ServiceCatalogUnit> {
+    return apiFetch<ServiceCatalogUnit>(`/api/all-platform/service-catalog/units/${encodeURIComponent(id)}`, {
+      method: 'PUT',
+      body: JSON.stringify({ id, ...patch }),
+    });
+  }
+
+  async listVatRates(includeInactive = true): Promise<ServiceCatalogVatRate[]> {
+    return apiFetch<ServiceCatalogVatRate[]>(
+      `/api/all-platform/service-catalog/vat-rates?include_inactive=${includeInactive}`
+    );
+  }
+
+  async createVatRate(rate: number, status: ServiceCatalogStatus = 'active'): Promise<ServiceCatalogVatRate> {
+    return apiFetch<ServiceCatalogVatRate>('/api/all-platform/service-catalog/vat-rates', {
+      method: 'POST',
+      body: JSON.stringify({ rate, status }),
+    });
+  }
+
+  async updateVatRate(id: string, patch: { rate?: number; status?: ServiceCatalogStatus }): Promise<ServiceCatalogVatRate> {
+    return apiFetch<ServiceCatalogVatRate>(`/api/all-platform/service-catalog/vat-rates/${encodeURIComponent(id)}`, {
+      method: 'PUT',
+      body: JSON.stringify({ id, ...patch }),
+    });
+  }
+
+  async setBundleComponents(bundleId: string, items: BundleComponentInput[]): Promise<ServiceCatalogItem> {
+    return apiFetch<ServiceCatalogItem>(
+      `/api/all-platform/service-catalog/${encodeURIComponent(bundleId)}/components`,
+      {
+        method: 'PUT',
+        body: JSON.stringify({
+          items: items.map(item => ({
+            component_id: item.componentId,
+            quantity: item.quantity,
+            quota: item.quota,
+            customer_display_name: item.customerDisplayName,
+            crm_note: item.crmNote,
+            quota_pool_key: item.quotaPoolKey,
+            quota_pool_name: item.quotaPoolName,
+            quota_pool_quota: item.quotaPoolQuota,
+            quota_pool_limit: item.quotaPoolLimit,
+            is_required: item.required ?? true,
+            overage_policy: item.overagePolicy,
+            show_on_quote: item.showOnQuote ?? true,
+            sort_order: item.sortOrder,
+          })),
+        }),
+      }
+    );
+  }
+
+  /** Dong bo hang hoa tu MSC (button "Đồng bộ hàng hóa từ MSC").
+   * dryRun=true → backend chi tinh toan dem du kien, KHONG ghi CRM. */
+  async runMscSync(dryRun = false): Promise<MscSyncStats> {
+    return apiFetch<MscSyncStats>('/api/all-platform/msc-sync/run', {
+      method: 'POST',
+      body: JSON.stringify({ dry_run: dryRun }),
+    });
+  }
+
+  /** Trang thai cac lan dong bo MSC gan nhat (msc_sync_runs). */
+  async getMscSyncStatus(limit = 10): Promise<MscSyncStats[]> {
+    return apiFetch<MscSyncStats[]>(`/api/all-platform/msc-sync/status?limit=${encodeURIComponent(String(limit))}`);
+  }
+}
+
+export const serviceCatalogRepository = new ServiceCatalogRepository();

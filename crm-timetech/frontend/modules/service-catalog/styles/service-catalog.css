@@ -1,0 +1,2492 @@
+.sc-page {
+  width: 100%;
+  padding: 24px 32px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.sc-header {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+.sc-header h1 {
+  font-size: 20px;
+  font-weight: 600;
+  margin: 0;
+}
+.sc-header-desc {
+  margin: 2px 0 0;
+  font-size: 13px;
+  color: #667085;
+}
+
+/* Danh sach Nhom dang CARD GRID (yeu cau rieng "đổi danh sách nhóm sang
+ * dạng card grid") - 3 cot desktop, 2 cot tablet, 1 cot mobile. Toan bo card
+ * bam duoc qua .sc-group-card-link (Next Link full-size, giu nguyen hanh vi
+ * <a> that) - menu ba cham dat rieng, tuyet doi, stopPropagation de khong
+ * kich hoat Link ben duoi. */
+.sc-groups-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+}
+@media (max-width: 1100px) {
+  .sc-groups-grid { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 640px) {
+  .sc-groups-grid { grid-template-columns: 1fr; }
+}
+.sc-group-card {
+  position: relative;
+  border: 1px solid #e4e7ec;
+  border-radius: 14px;
+  background: #fff;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.sc-group-card:hover {
+  border-color: #cc1541;
+  box-shadow: 0 4px 16px rgba(16, 24, 40, 0.08);
+}
+.sc-group-card-link {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 18px 44px 18px 18px;
+  color: inherit;
+  text-decoration: none;
+}
+.sc-group-card-icon {
+  flex-shrink: 0;
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  background: #fdf1f4;
+  color: #cc1541;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.sc-group-card-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.sc-group-card-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.sc-group-card-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: #1f2530;
+}
+.sc-group-card-desc {
+  margin: 0;
+  font-size: 12.5px;
+  color: #667085;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+.sc-group-card-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 4px;
+}
+.sc-group-card-count {
+  font-size: 12.5px;
+  color: #455167;
+  font-weight: 600;
+}
+/* "Không để badge stretch thành 1 thanh dài" - o day .sc-badge nam trong 1
+ * flex row co align-items:center (khong phai stretch) nen tu nhien da chi
+ * rong vua noi dung, khong can them gi khac ngoai align-self phong ho. */
+.sc-group-card-meta .sc-badge {
+  align-self: center;
+}
+.sc-group-card-updated {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: #98a2b3;
+  margin-top: 2px;
+}
+.sc-group-card-chevron {
+  position: absolute;
+  right: 44px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 20px;
+  color: #98a2b3;
+}
+.sc-group-card-menu {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+}
+.sc-group-card--skeleton {
+  height: 128px;
+  background: linear-gradient(90deg, #f3f4f6 25%, #e9eaed 37%, #f3f4f6 63%);
+  background-size: 400% 100%;
+  animation: sc-skeleton-shimmer 1.4s ease infinite;
+}
+@keyframes sc-skeleton-shimmer {
+  0% { background-position: 100% 50%; }
+  100% { background-position: 0 50%; }
+}
+
+.sc-view-toggle {
+  display: inline-flex;
+  border: 1px solid #d0d5dd;
+  border-radius: 8px;
+  overflow: hidden;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+.sc-view-toggle button {
+  width: 34px;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: #fff;
+  color: #667085;
+  cursor: pointer;
+}
+.sc-view-toggle button + button {
+  border-left: 1px solid #d0d5dd;
+}
+.sc-view-toggle button.active {
+  background: #fdf1f4;
+  color: #cc1541;
+}
+
+.sc-toolbar {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.sc-toolbar select {
+  padding: 8px 10px;
+  border: 1px solid #d0d5dd;
+  border-radius: 8px;
+  font-size: 13px;
+  background: #fff;
+}
+
+.sc-tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid #e4e7ec;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  flex-wrap: nowrap;
+}
+
+.sc-tabs button {
+  padding: 10px 16px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: 13px;
+  color: #667085;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.sc-tabs button.active {
+  color: #be1e4b;
+  border-bottom-color: #be1e4b;
+  font-weight: 600;
+}
+
+.sc-tab-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.sc-tab-note {
+  font-size: 12px;
+  color: #667085;
+  margin: 0;
+}
+
+.sc-table-wrap {
+  overflow-x: auto;
+  border: 1px solid #e4e7ec;
+  border-radius: 10px;
+}
+
+.sc-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.sc-table thead th {
+  text-align: left;
+  padding: 10px 14px;
+  background: #f9fafb;
+  font-weight: 600;
+  color: #344054;
+  white-space: nowrap;
+  border-bottom: 1px solid #e4e7ec;
+}
+
+/* Duong ke ngang o cap <tr> (1 border/row, chay xuyen suot bang) - KHONG ke theo tung <td>
+ * (td co display khac table-cell hoac cao khac nhau se bi lech duong ke). */
+.sc-table tbody td {
+  padding: 10px 14px;
+  border: 0;
+  vertical-align: top;
+}
+.sc-table tbody tr {
+  border-top: 1px solid #f0f1f3;
+}
+
+.sc-table tbody tr:hover {
+  background: #fbfbfc;
+}
+
+.sc-cell-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 500;
+}
+
+/* BUG THAT DA GAP ("mô tả hiện có 1 nửa rồi mất"): table dung table-layout
+ * auto (mac dinh) + cot Mo ta KHONG co width/min-width nao, nen thuat toan
+ * auto-layout co the ep cot nay hep toi muc chi con 1 tu/dong, khien
+ * -webkit-line-clamp:2 chi con hien duoc vai chu + 1 dong thu 3 bi cat dang
+ * do line-height khong khop khit voi chieu cao box clamp. Them min-width co
+ * dinh (khop voi .sc-th-desc) de cot luon co du cho hien 2 dong ro rang. */
+/* <td class="sc-cell-desc"> PHAI giu display:table-cell (truoc day la -webkit-box tren chinh td
+ * nen td tach khoi layout bang, duong ke lech). Clamp 2 dong dat o phan tu con. */
+td.sc-cell-desc {
+  max-width: 320px;
+  min-width: 180px;
+  color: #475467;
+}
+.sc-cell-desc-text,
+div.sc-cell-desc {
+  max-width: 320px;
+  overflow: hidden;
+  color: #475467;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+.sc-th-desc {
+  min-width: 180px;
+}
+
+.sc-cell-title-text {
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.sc-badge-active {
+  background: #ecfdf5;
+  color: #047857;
+}
+
+.sc-empty {
+  text-align: center;
+  padding: 24px;
+  color: #98a2b3;
+}
+
+.sc-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 16px;
+}
+/* Trang "Đơn vị tính & VAT" - yeu cau rieng "Không chia hai card 50/50 vì
+ * VAT có ít dữ liệu, tạo khoảng trắng rất lớn": ĐVT ~65-70%, VAT ~30-35%,
+ * VAT card CHI cao theo noi dung (align-items:start de khong bi keo dai
+ * bang chieu cao cot ĐVT ben canh trong 1 hang grid). CHI dung rieng cho
+ * trang nay (chi 1 noi goi .sc-summary-grid trong toan module). */
+.sc-summary-grid--config {
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  align-items: start;
+}
+@media (max-width: 900px) {
+  .sc-summary-grid--config { grid-template-columns: 1fr; }
+}
+
+.sc-summary-card {
+  border: 1px solid #e4e7ec;
+  border-radius: 10px;
+  padding: 14px;
+}
+
+.sc-summary-card h3 {
+  margin: 0 0 10px;
+  font-size: 14px;
+}
+
+.sc-search {
+  flex: 1;
+  min-width: 200px;
+  padding: 8px 12px;
+  border: 1px solid var(--border, #d0d5dd);
+  border-radius: 8px;
+}
+
+.sc-btn {
+  padding: 8px 14px;
+  border-radius: 8px;
+  border: 1px solid #d0d5dd;
+  background: #fff;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.sc-btn-primary {
+  background: #be1e4b;
+  border-color: #be1e4b;
+  color: #fff;
+}
+
+.sc-btn-primary:hover {
+  background: #a31840;
+  border-color: #a31840;
+}
+
+.sc-btn-danger {
+  border-color: #dc2626;
+  color: #dc2626;
+  background: #fff;
+}
+
+.sc-error {
+  color: #dc2626;
+  font-size: 13px;
+}
+
+.sc-notice {
+  color: #15803d;
+  font-size: 13px;
+}
+
+.sc-group {
+  border: 1px solid #e4e7ec;
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.sc-group-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  background: #f9fafb;
+  font-weight: 600;
+}
+
+.sc-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 20px 14px 36px;
+  border-top: 1px solid #f0f1f3;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.sc-row-main {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  flex: 1;
+}
+
+.sc-row-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 500;
+  flex-wrap: wrap;
+}
+
+.sc-badge {
+  flex-shrink: 0;
+  white-space: nowrap;
+  font-size: 11px;
+  line-height: 1.6;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: #eef2ff;
+  color: #4338ca;
+}
+
+.sc-badge-bundle {
+  background: #ecfdf5;
+  color: #047857;
+}
+
+.sc-badge-inactive {
+  background: #f3f4f6;
+  color: #6b7280;
+}
+
+.sc-row-sub {
+  font-size: 12px;
+  color: #667085;
+}
+
+.sc-row-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+  flex-wrap: nowrap;
+  white-space: nowrap;
+}
+
+.sc-inline-panel {
+  padding: 12px 20px 16px 36px;
+  border-top: 1px solid #f0f1f3;
+  background: #fbfbfc;
+}
+
+.sc-icon-btn {
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  color: #667085;
+  padding: 2px 0;
+  font-size: 12.5px;
+}
+
+.sc-icon-btn:hover {
+  color: #111827;
+}
+
+.sc-panel {
+  border: 1px solid #e4e7ec;
+  border-radius: 10px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  background: #fff;
+}
+
+.sc-panel-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+}
+/* Modal "Thêm sản phẩm mới" (QuickAddProductModal, rong 720px) - can DUNG 2
+ * cot co dinh de dung cap dung yeu cau ("SKU | Tên", "ĐVT | VAT", "Giá vốn |
+ * Markup"), khac voi .sc-panel-grid mac dinh (auto-fit co the ra 3-4 cot tren
+ * modal rong, lam sai thu tu cap field mong muon). */
+.sc-panel-grid--2col {
+  grid-template-columns: 1fr 1fr;
+}
+@media (max-width: 560px) {
+  .sc-panel-grid--2col { grid-template-columns: 1fr; }
+}
+
+.sc-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: #344054;
+  /* BUG THAT DA GAP: grid item mac dinh min-width:auto = min-content cua
+   * <input> ben trong (trinh duyet cho input number/text 1 do rong toi
+   * thieu ~170px) - buoc track grid (vd .sc-pricing-grid 3 cot) rong hon
+   * container, day ca Drawer (480px) ra cuon ngang xau. min-width:0 cho
+   * phep track/flex item co lai dung theo khong gian thuc te. */
+  min-width: 0;
+}
+
+.sc-field input,
+.sc-field select,
+.sc-field textarea {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 7px 10px;
+  border: 1px solid #d0d5dd;
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+/* Tab toggle VND/USD (Bang gia VPS Zone, "Che do gia von") - thay <select>
+ * cu bang 2 nut bam chuyen doi ngay, dung chung layout voi .sc-field. */
+.sc-mode-toggle {
+  display: flex;
+  gap: 6px;
+}
+.sc-mode-toggle button {
+  flex: 1;
+  padding: 7px 10px;
+  border: 1px solid #d0d5dd;
+  border-radius: 6px;
+  background: #fff;
+  cursor: pointer;
+  font-size: 12.5px;
+  color: #475467;
+  white-space: nowrap;
+}
+.sc-mode-toggle button.active {
+  background: var(--color-primary, #ba244a);
+  border-color: var(--color-primary, #ba244a);
+  color: #fff;
+  font-weight: 600;
+}
+
+/* Toggle "Giá VNĐ | Xem quy đổi USD" o dau tab Bang gia VPS Zone - dung
+ * chung khung .sc-mode-toggle nhung KHONG chiem full-width (chi 2 nut nho,
+ * khac voi toggle trong drawer chiem full 1 hang .sc-field). */
+.sc-pb-currency-toggle {
+  display: inline-flex;
+  width: auto;
+  margin: 4px 0 2px;
+}
+.sc-pb-currency-toggle button {
+  flex: none;
+  min-width: 120px;
+}
+.sc-pb-fx-note {
+  font-size: 12px;
+  color: #667085;
+  margin: 0 0 8px;
+}
+.sc-pb-fx-badge {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: #fef3f2;
+  color: #b42318;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  vertical-align: middle;
+}
+
+.sc-panel-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.sc-bundle-components {
+  margin-top: 8px;
+  padding: 12px;
+  background: #f9fafb;
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sc-bundle-component-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.sc-bundle-preview {
+  white-space: pre-line;
+  font-size: 12px;
+  color: #475467;
+  background: #fff;
+  border: 1px dashed #d0d5dd;
+  border-radius: 6px;
+  padding: 8px 10px;
+}
+
+.sc-bundle-components-table {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 12px;
+  overflow-x: auto;
+}
+
+.sc-bundle-components-head,
+.sc-bundle-components-row {
+  display: grid;
+  grid-template-columns: minmax(220px, 1.2fr) minmax(150px, 1fr) minmax(120px, 0.8fr) minmax(190px, 1fr) 84px minmax(150px, 1fr) 112px minmax(140px, 1fr) 48px;
+  gap: 8px;
+  align-items: center;
+  min-width: 1280px;
+}
+
+.sc-bundle-components-head {
+  color: #667085;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.sc-bundle-components-row select,
+.sc-bundle-components-row input {
+  width: 100%;
+}
+
+.sc-bundle-components-row input[type='checkbox'] {
+  width: 18px;
+  height: 18px;
+  justify-self: start;
+}
+
+.sc-bundle-pool-fields {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 4px;
+}
+
+/* ── Bảng giá VPS Zone (PriceBookZoneTab) ─────────────────────────────── */
+
+.sc-pb-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.sc-pb-toolbar-tabs {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.sc-pb-version-status {
+  font-size: 12px;
+  color: #667085;
+  margin-right: auto;
+}
+.sc-pb-toolbar-row2 {
+  margin-top: 4px;
+}
+.sc-pb-toolbar-row2 .sc-pb-currency-toggle {
+  margin: 0;
+  flex-shrink: 0;
+}
+
+.sc-pb-group {
+  border: 1px solid #e4e7ec;
+  border-radius: 10px;
+  padding: 16px;
+  margin-bottom: 16px;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.sc-pb-group * {
+  max-width: 100%;
+}
+
+.sc-pb-group-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* Mac dinh (desktop): hien table, an card list. */
+.sc-pb-cards {
+  display: none;
+}
+
+.sc-pb-card {
+  border: 1px solid #e4e7ec;
+  border-radius: 10px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.sc-pb-card + .sc-pb-card {
+  margin-top: 10px;
+}
+
+.sc-pb-card-head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.sc-pb-card-sku {
+  font-size: 11px;
+  color: #667085;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.sc-pb-card-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: #101828;
+  overflow-wrap: break-word;
+}
+
+.sc-pb-card-badges {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.sc-pb-card-prices {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+}
+
+.sc-pb-card-price-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.sc-pb-card-price-label {
+  color: #667085;
+}
+
+.sc-pb-card-price-value {
+  font-weight: 600;
+  color: #101828;
+  text-align: right;
+}
+
+.sc-pb-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.sc-pb-card-actions .sc-btn,
+.sc-pb-card-actions .sc-btn-danger {
+  flex: 1 1 auto;
+  min-width: 0;
+  text-align: center;
+}
+
+.sc-pb-preview {
+  border: 1px solid #e4e7ec;
+  border-radius: 10px;
+  padding: 16px;
+  background: #f9fafb;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.sc-pb-preview-title {
+  font-size: 13px;
+}
+
+.sc-pb-preview-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sc-pb-preview-section-label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #98a2b3;
+}
+
+.sc-pb-preview-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+}
+
+.sc-pb-stat {
+  background: #fff;
+  border: 1px solid #e4e7ec;
+  border-radius: 8px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.sc-pb-stat-label {
+  font-size: 11.5px;
+  color: #667085;
+}
+
+.sc-pb-stat-value {
+  font-size: 15px;
+  font-weight: 700;
+  color: #101828;
+  overflow-wrap: break-word;
+}
+
+.sc-pb-stat-value--good {
+  color: #047857;
+}
+
+.sc-pb-preview-note {
+  font-size: 11px;
+  color: #98a2b3;
+  margin: 0;
+}
+
+.sc-pb-help-btn {
+  width: 26px;
+  height: 26px;
+  border-radius: 999px;
+  border: 1px solid #be1e4b;
+  color: #be1e4b;
+  background: #fff;
+  font-weight: 700;
+  font-size: 13px;
+  cursor: pointer;
+  flex-shrink: 0;
+  align-self: center;
+}
+
+.sc-pb-help-btn:hover {
+  background: #fdf2f5;
+}
+
+.sc-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(16, 24, 40, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 16px;
+}
+
+.sc-modal {
+  width: min(640px, 94vw);
+  max-height: 86vh;
+  background: #fff;
+  border-radius: 14px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.sc-modal-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 20px;
+  border-bottom: 1px solid #e4e7ec;
+  flex-shrink: 0;
+}
+
+.sc-modal-body {
+  padding: 16px 20px;
+  overflow-y: auto;
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: #344054;
+}
+
+.sc-modal-body h4 {
+  margin: 16px 0 6px;
+  font-size: 13.5px;
+  color: #101828;
+}
+
+.sc-modal-body h4:first-child {
+  margin-top: 0;
+}
+
+.sc-modal-body ul {
+  margin: 0 0 8px;
+  padding-left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sc-modal-actions {
+  padding: 12px 20px;
+  border-top: 1px solid #e4e7ec;
+  display: flex;
+  justify-content: flex-end;
+  flex-shrink: 0;
+}
+
+/* ── Cot gia mac dinh (migration 107) trong bang San pham & dich vu ────── */
+
+.sc-cell-name-block {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.sc-cell-name-desc {
+  font-size: 11.5px;
+  color: #98a2b3;
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+/* BUG THAT DA GAP ("'Chưa nhập' dùng màu trung tính, không làm mờ đến mức
+ * khó đọc"): mau cu #98a2b3 + italic qua nhat, kho doc tren nen trang. Dam
+ * hon 1 chut (van la mau trung tinh, khong phai mau canh bao/loi), bo
+ * italic. */
+.sc-cell-price-missing {
+  color: #7c8593;
+}
+.sc-cell-price-ok {
+  color: #148e61;
+}
+
+.sc-price-filter-chip {
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid #d0d5dd;
+  background: #fff;
+  font-size: 12.5px;
+  cursor: pointer;
+  color: #475467;
+}
+
+.sc-price-filter-chip.active {
+  border-color: #be1e4b;
+  color: #be1e4b;
+  background: #fdf2f5;
+}
+
+.sc-subtabs {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid #e4e7ec;
+  border-radius: 10px;
+  background: #f9fafb;
+  align-self: flex-start;
+}
+
+.sc-subtabs button {
+  border: 0;
+  background: transparent;
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #667085;
+  cursor: pointer;
+}
+
+.sc-subtabs button.active {
+  background: #fff;
+  color: #be1e4b;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.08);
+}
+
+.sc-subtabs span {
+  margin-left: 4px;
+  color: #98a2b3;
+}
+
+.sc-inline-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.sc-link-btn {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: #be1e4b;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.sc-link-btn-danger {
+  color: #b42318;
+}
+
+/* Thao tac chi icon (khong chu) o cot Thao tac cua bang San pham - gon hon
+ * .sc-link-btn cu (Sua/Ngung kinh doanh/Xoa co chu), tooltip qua title/aria-label. */
+.sc-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #667085;
+  cursor: pointer;
+}
+
+.sc-icon-btn:hover {
+  background: #f2f4f7;
+  color: #344054;
+}
+
+.sc-icon-btn-danger {
+  color: #b42318;
+}
+
+.sc-icon-btn-danger:hover {
+  background: #fef3f2;
+  color: #b42318;
+}
+
+.sc-inline-actions .qc-inline-icon {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+}
+
+.sc-bundle-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.sc-bundle-card {
+  border: 1px solid #e4e7ec;
+  border-radius: 10px;
+  background: #fff;
+  padding: 14px;
+}
+
+.sc-bundle-card-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-start;
+}
+
+.sc-bundle-card-main {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.sc-bundle-price-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  font-size: 13px;
+  color: #667085;
+}
+
+.sc-bundle-price-line strong {
+  color: #101828;
+}
+
+.sc-bundle-card-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.sc-bundle-components-preview {
+  margin-top: 14px;
+  border-top: 1px solid #f0f1f3;
+  padding-top: 12px;
+}
+
+.sc-bundle-components-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: #101828;
+  margin-bottom: 8px;
+}
+
+.sc-bundle-components-table--readonly {
+  overflow-x: auto;
+}
+
+.sc-bundle-components-table--readonly .sc-bundle-components-head,
+.sc-bundle-components-table--readonly .sc-bundle-components-row {
+  grid-template-columns: 110px minmax(150px, 1.2fr) minmax(180px, 1.4fr) 90px 130px 110px 110px 90px minmax(140px, 1fr);
+}
+
+.sc-bundle-components-row--pool {
+  background: #f8fafc;
+  font-weight: 600;
+}
+
+.sc-bundle-components-row--pool-child {
+  background: #fcfdff;
+  color: #475467;
+}
+
+.sc-bundle-components-row--pool-child > span:first-child {
+  padding-left: 22px;
+  border-left: 2px solid #bfdbfe;
+}
+
+.sc-quota-pool-toggle {
+  width: 24px;
+  height: 24px;
+  border: 1px solid #d0d5dd;
+  border-radius: 6px;
+  background: #fff;
+  color: #344054;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.sc-quota-pool-toggle:hover {
+  border-color: #98a2b3;
+  background: #f9fafb;
+}
+
+/* ── Drawer "Chi tiết sản phẩm" (Thêm/Sửa) - trượt tu phai, thay the panel
+   inline cu (.sc-panel van giu de tai su dung style field ben trong). ───── */
+
+.sc-drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(16, 24, 40, 0.45);
+  /* Render qua Portal vao document.body (xem ServiceCatalogPage.tsx/
+   * PriceBookZoneTab.tsx) - z-index nang len vuot qua moi lop khac trong
+   * app (xem crm.css .crm-searchable-select-menu--portal, cung 100300) de
+   * luon noi tren CA khi trang nay duoc mo long trong 1 modal khac. */
+  z-index: 100300;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.sc-drawer {
+  width: min(480px, 100vw);
+  height: 100vh;
+  background: #fff;
+  box-shadow: -8px 0 24px rgba(16, 24, 40, 0.12);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Modifier RIENG cho 2 popup "tạo nhanh" trong Catalog Picker (+ Sản phẩm
+ * mới/+ Nhóm sản phẩm, QuickAddProductModal/QuickAddGroupModal) - yeu cau
+ * rieng "đổi thành modal giữa màn hình, chiều cao theo nội dung" (BUG THAT DA
+ * GAP: dung nguyen .sc-drawer goc bi cao 100vh/canh phai co dinh du chi vai
+ * field, tao khoang trang thua rat lon ben duoi). KHONG doi .sc-drawer goc
+ * (van dung nguyen cho cac drawer khac trong module - vd sua san pham) -
+ * component dung 2 CLASS cung luc (className="sc-drawer sc-drawer--modal")
+ * de ke thua style field/head/body/footer ben trong, chi ghi de kich thuoc/
+ * vi tri khung ngoai. */
+.sc-drawer--modal {
+  width: min(720px, calc(100vw - 32px));
+  height: auto;
+  max-height: 85vh;
+  border-radius: 16px;
+  box-shadow: 0 24px 60px rgba(15, 23, 42, 0.28);
+}
+.sc-drawer--modal.sc-drawer--modal-sm {
+  width: min(520px, calc(100vw - 32px));
+}
+.sc-drawer--modal .sc-drawer-body {
+  overflow-y: auto;
+}
+
+.sc-drawer-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  padding: 16px 20px;
+  border-bottom: 1px solid #e4e7ec;
+  flex-shrink: 0;
+}
+/* BUG THAT DA GAP (do Playwright bat duoc boundingClientRect w=0): nut Dong
+ * dung chung .sc-icon-btn (class thiet ke cho link chu "Sửa"/"Xoá", khong
+ * co kich thuoc co dinh) - trong flex row .sc-drawer-head, khoi tieu de ben
+ * trai (h2+p) khong co min-width:0 nen chiem het cho, ep nut Dong (flex-
+ * shrink mac dinh = 1) co lai con 0px, khong con bam duoc/khong con thay
+ * duoc du van "ton tai" trong DOM. */
+.sc-drawer-head > div:first-child {
+  min-width: 0;
+  overflow: hidden;
+}
+.sc-drawer-head > button {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.sc-drawer-head h2 {
+  margin: 0 0 4px;
+  font-size: 16px;
+}
+
+.sc-drawer-head p {
+  margin: 0;
+  font-size: 12px;
+  color: #667085;
+}
+
+.sc-drawer-body {
+  padding: 16px 20px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  /* Thanh cuon mong, khong choi mat nhu default (Firefox). Webkit dung rule
+   * rieng ben duoi. */
+  scrollbar-width: thin;
+}
+.sc-drawer-body::-webkit-scrollbar { width: 6px; }
+.sc-drawer-body::-webkit-scrollbar-thumb { background: #d0d5dd; border-radius: 3px; }
+.sc-drawer-body::-webkit-scrollbar-track { background: transparent; }
+
+.sc-drawer-footer {
+  padding: 12px 20px;
+  border-top: 1px solid #e4e7ec;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.sc-drawer-section-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #101828;
+  margin: 0;
+}
+
+.sc-drawer-section-hint {
+  font-size: 11.5px;
+  color: #98a2b3;
+  margin: 0;
+}
+
+.sc-pricing-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+
+.sc-pricing-preview {
+  border: 1px solid #e4e7ec;
+  border-radius: 10px;
+  padding: 12px;
+  background: #f9fafb;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sc-pricing-preview-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #667085;
+}
+
+.sc-pricing-preview-card {
+  border: 1px solid #e4e7ec;
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: #fff;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.sc-pricing-preview-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12.5px;
+}
+
+.sc-pricing-preview-row span:first-child {
+  color: #667085;
+}
+
+.sc-pricing-preview-row span:last-child {
+  font-weight: 600;
+  color: #101828;
+}
+
+/* Mac dinh (desktop): hien table, an card list. */
+.sc-product-cards {
+  display: none;
+}
+
+.sc-product-card {
+  border: 1px solid #e4e7ec;
+  border-radius: 10px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sc-product-card + .sc-product-card {
+  margin-top: 10px;
+}
+
+.sc-product-card-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #101828;
+}
+
+.sc-product-card-desc {
+  font-size: 12px;
+  color: #667085;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.sc-product-card-prices {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12.5px;
+}
+
+.sc-product-card-price-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+/* ── CatalogPickerModal (dung chung QuoteWorkspaceModal + FillQuoteStep) ── */
+
+.cp-modal {
+  width: min(1100px, 96vw);
+  height: min(760px, 92vh);
+  background: #fff;
+  border-radius: 14px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.cp-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  padding: 16px 20px;
+  border-bottom: 1px solid #e4e7ec;
+  flex-shrink: 0;
+}
+
+.cp-head h3 { margin: 0 0 4px; font-size: 16px; }
+.cp-head p { margin: 0; font-size: 12px; color: #667085; }
+
+.cp-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 10px 20px 0;
+  flex-shrink: 0;
+}
+
+.cp-tabs button {
+  padding: 8px 14px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: 13px;
+  color: #667085;
+  border-bottom: 2px solid transparent;
+}
+
+.cp-tabs button.active {
+  color: #be1e4b;
+  border-bottom-color: #be1e4b;
+  font-weight: 600;
+}
+
+.cp-product-tabs {
+  padding-top: 4px;
+}
+
+.cp-product-tabs span {
+  margin-left: 4px;
+  color: #98a2b3;
+}
+
+/* Toggle "Giá VNĐ | Xem quy đổi USD" trong Catalog Picker (tab Bảng giá VPS
+ * Zone) - dung chung .sc-mode-toggle/.sc-pb-currency-toggle nhung nam trong
+ * padding rieng cua modal Picker (khac trang quan ly). */
+.cp-currency-toggle {
+  margin: 0;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.cp-currency-toggle button {
+  min-width: 0;
+  white-space: nowrap;
+}
+.cp-fx-note {
+  font-size: 12px;
+  color: #667085;
+  margin-left: 8px;
+}
+
+.cp-search-row {
+  padding: 12px 20px 0;
+  flex-shrink: 0;
+}
+
+.cp-search {
+  width: 100%;
+  padding: 10px 14px;
+  border: 1px solid #d0d5dd;
+  border-radius: 8px;
+  font-size: 13.5px;
+}
+
+.cp-filter-chips {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 10px 20px;
+  flex-shrink: 0;
+}
+
+.cp-filter-chips button {
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid #d0d5dd;
+  background: #fff;
+  font-size: 12.5px;
+  cursor: pointer;
+  color: #475467;
+}
+
+.cp-filter-chips button.active {
+  border-color: #be1e4b;
+  color: #be1e4b;
+  background: #fdf2f5;
+}
+
+.cp-body {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+  border-top: 1px solid #e4e7ec;
+}
+
+.cp-sidebar {
+  width: 220px;
+  flex-shrink: 0;
+  border-right: 1px solid #e4e7ec;
+  overflow-y: auto;
+  padding: 14px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.cp-sidebar-section {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.cp-sidebar-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #98a2b3;
+  padding: 4px 10px;
+}
+
+.cp-sidebar-section button {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 10px;
+  border: none;
+  background: transparent;
+  border-radius: 8px;
+  font-size: 13px;
+  color: #344054;
+  cursor: pointer;
+  text-align: left;
+}
+
+.cp-sidebar-section button:hover { background: #f9fafb; }
+
+.cp-sidebar-section button.active {
+  background: #fdf2f5;
+  color: #be1e4b;
+  font-weight: 600;
+}
+
+.cp-sidebar-section button span {
+  font-size: 11.5px;
+  color: #98a2b3;
+}
+
+.cp-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 14px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.cp-list-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12.5px;
+  color: #667085;
+  margin-bottom: 4px;
+  /* Them toggle VNĐ/USD vao chung hang - cho phep xuong dong tren man hep
+   * thay vi tran ngang ("Responsive mobile: toggle không tràn ngang"). */
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.cp-list-head .qc-mini-btn {
+  margin-left: auto;
+}
+
+.cp-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  border: 1px solid #e4e7ec;
+  border-radius: 10px;
+  padding: 12px 14px;
+  cursor: pointer;
+}
+
+.cp-row:hover { border-color: #d0d5dd; background: #fbfbfc; }
+
+.cp-row--added {
+  background: #f9fafb;
+}
+
+.cp-row input[type='checkbox'] { flex-shrink: 0; width: 16px; height: 16px; }
+
+.cp-row-main {
+  flex: 1 1 220px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.cp-row-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.cp-row-title strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.cp-row-desc {
+  font-size: 12px;
+  color: #667085;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.cp-row-meta {
+  flex: 0 0 90px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+  color: #667085;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.cp-row-meta span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cp-row-price {
+  flex: 0 0 96px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12.5px;
+  min-width: 0;
+}
+
+.cp-row-price-label {
+  font-size: 11px;
+  color: #98a2b3;
+}
+
+.cp-row-price span:last-child {
+  font-weight: 600;
+  color: #101828;
+}
+
+.cp-row-actions {
+  display: flex;
+  flex: 0 0 190px;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.qc-mini-btn-danger {
+  color: #b42318;
+  border-color: #fecaca;
+  background: #fff7f7;
+}
+
+.cp-row-add {
+  flex-shrink: 0;
+  padding: 6px 14px;
+  border-radius: 999px;
+  border: 1px solid #be1e4b;
+  color: #be1e4b;
+  font-size: 12.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.cp-row-add--done {
+  border-color: #12b76a;
+  color: #12b76a;
+  background: #ecfdf5;
+}
+
+.cp-bundle-card {
+  border: 1px solid #e4e7ec;
+  border-radius: 10px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.cp-bundle-card:hover {
+  border-color: #d0d5dd;
+  background: #fbfbfc;
+}
+
+.cp-bundle-card-head,
+.cp-bundle-actions,
+.cp-bundle-price {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.cp-bundle-card-head {
+  justify-content: space-between;
+}
+
+.cp-bundle-select {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  font-weight: 700;
+  color: #101828;
+}
+
+.cp-bundle-select input {
+  width: 16px;
+  height: 16px;
+}
+
+.cp-bundle-desc {
+  margin: 0;
+  color: #667085;
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+.cp-bundle-price {
+  font-size: 13px;
+  color: #667085;
+}
+
+.cp-bundle-price strong {
+  color: #101828;
+}
+
+.cp-bundle-components {
+  border-top: 1px solid #f0f1f3;
+  padding-top: 10px;
+  display: grid;
+  gap: 8px;
+}
+
+.cp-bundle-components-title {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: #101828;
+}
+
+.cp-bundle-component {
+  border: 1px solid #f0f1f3;
+  border-radius: 8px;
+  padding: 10px;
+  display: grid;
+  gap: 3px;
+  font-size: 12px;
+  color: #475467;
+  background: #fff;
+}
+
+.cp-bundle-component strong {
+  color: #101828;
+}
+
+.cp-bundle-component small {
+  color: #667085;
+}
+
+.cp-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14px 20px;
+  border-top: 1px solid #e4e7ec;
+  flex-shrink: 0;
+  font-size: 13px;
+  color: #344054;
+}
+
+.cp-footer-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.cp-hydration-state {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 16px 0;
+  padding: 9px 12px;
+  border: 1px solid #dbe7f5;
+  border-radius: 6px;
+  background: #f5f9ff;
+  color: #344054;
+  font-size: 12px;
+}
+
+.cp-hydration-state--error {
+  justify-content: space-between;
+  border-color: #fecaca;
+  background: #fff7f7;
+  color: #b42318;
+}
+
+.cp-hydration-spinner {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 14px;
+  border: 2px solid #bfd4ee;
+  border-top-color: #2563eb;
+  border-radius: 50%;
+  animation: cp-hydration-spin 0.8s linear infinite;
+}
+
+@keyframes cp-hydration-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (max-width: 767px) {
+  .cp-modal {
+    width: 100vw;
+    height: 100dvh;
+    border-radius: 0;
+  }
+
+  .cp-body {
+    flex-direction: column;
+  }
+
+  .cp-sidebar {
+    width: 100%;
+    flex-direction: row;
+    flex-wrap: wrap;
+    border-right: none;
+    border-bottom: 1px solid #e4e7ec;
+    max-height: 160px;
+  }
+
+  .cp-row {
+    flex-wrap: wrap;
+  }
+
+  .cp-row-main {
+    flex: 1 1 100%;
+  }
+}
+
+@media (max-width: 768px) {
+  .sc-page {
+    padding: 16px;
+  }
+
+  /* Bang desktop an tren mobile, chi hien card list - khong nhet bang vao
+     man hinh hep gay tran ngang toan trang. */
+  .sc-pb-group .sc-table-wrap {
+    display: none;
+  }
+
+  .sc-pb-cards {
+    display: block;
+  }
+
+  .sc-pb-group {
+    padding: 12px;
+  }
+
+  .sc-tab-panel > .sc-table-wrap {
+    display: none;
+  }
+
+  .sc-product-cards {
+    display: block;
+  }
+
+  .sc-pricing-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .sc-drawer {
+    width: 100vw;
+  }
+}
+
+/* Tai cau truc "Sản phẩm & dịch vụ": danh sach Nhom (trang goc) -> trang
+ * chi tiet 1 nhom rieng, thay cho 4 tab ngang cu. Cac class moi cho
+ * breadcrumb/header nhom/nut dieu huong (Cấu hình, Bảng giá VPS Zone) va
+ * hang co the bam duoc trong bang danh sach nhom. */
+.sc-header-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+a.sc-btn {
+  display: inline-flex;
+  align-items: center;
+  text-decoration: none;
+  color: #344054;
+}
+
+.sc-loading {
+  color: #667085;
+  font-size: 13px;
+  padding: 8px 0;
+}
+
+.sc-mini-link-btn {
+  border: 0;
+  background: none;
+  padding: 0;
+  color: #be1e4b;
+  font-weight: 600;
+  text-decoration: underline;
+  cursor: pointer;
+  font-size: inherit;
+}
+
+.sc-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: #667085;
+}
+
+.sc-breadcrumb a {
+  color: #667085;
+  text-decoration: none;
+}
+
+.sc-breadcrumb a:hover {
+  color: #be1e4b;
+  text-decoration: underline;
+}
+
+.sc-breadcrumb-sep {
+  color: #d0d5dd;
+}
+
+.sc-breadcrumb-current {
+  color: #101828;
+  font-weight: 600;
+}
+
+.sc-group-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+/* Trang chi tiet Nhom - header GON THANH 1 HANG (yeu cau rieng): breadcrumb
+ * + ten + badge + so san pham + Sua nhom + "+ Sản phẩm mới" cung 1 hang tren
+ * desktop, tu xuong hang tren man hep (flex-wrap). Breadcrumb rieng dat o
+ * DAU hang (khong phai 1 dong tren cung nua) - van la <nav> giong cac trang
+ * khac trong module de dong bo, chi doi vi tri lay ngang hang. */
+.sc-group-header-line {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.sc-group-header-line .sc-breadcrumb {
+  flex-basis: 100%;
+  margin-bottom: 2px;
+}
+.sc-group-header-title {
+  font-size: 20px;
+  font-weight: 700;
+  margin: 0;
+  color: #1f2530;
+}
+.sc-group-header-actions {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+  flex-wrap: wrap;
+}
+.sc-group-header-actions .sc-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  width: auto;
+  min-width: 0;
+  min-height: 38px;
+  white-space: nowrap;
+}
+
+.sc-group-header-actions .qc-inline-icon {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+}
+
+.sc-group-price-counters {
+  display: flex;
+  gap: 20px;
+  flex-wrap: wrap;
+  font-size: 12.5px;
+  color: #667085;
+}
+
+.sc-group-header h1 {
+  font-size: 20px;
+  font-weight: 600;
+  margin: 0 0 4px;
+}
+
+.sc-group-desc {
+  margin: 0;
+  color: #667085;
+  font-size: 13px;
+  max-width: 60ch;
+}
+
+.sc-group-header-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.sc-group-count {
+  color: #667085;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+/* Ca dong bam duoc trong danh sach Nhom - <td> boc <a> (Next Link) full-size
+ * thay vi onClick tren <tr> (giu nguyen hanh vi ban phim/mo tab moi/chuot
+ * giua chuan cua the <a> that). Cot cuoi (Thao tac, ActionMenu) KHONG boc
+ * Link - khong the long 1 nut trong 1 the <a> khac. */
+.sc-row-clickable td {
+  padding: 0;
+}
+
+.sc-row-clickable td.sc-row-actions {
+  padding: 10px 12px;
+}
+
+.sc-row-link {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+  color: inherit;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.sc-row-clickable:hover {
+  background: #f9fafb;
+}
+
+/* =========================================
+   CATALOG PICKER REDESIGN (SIDEBAR LAYOUT)
+   ========================================= */
+
+.cp-modal-redesign {
+  width: min(1300px, 96vw);
+  height: min(850px, 92vh);
+  display: flex;
+  flex-direction: column;
+}
+
+.cp-head-redesign {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 16px 20px;
+  border-bottom: 1px solid #e4e7ec;
+  flex-shrink: 0;
+}
+
+.cp-head-title h3 {
+  margin: 0 0 4px;
+  font-size: 18px;
+  color: #101828;
+}
+
+.cp-head-title p {
+  margin: 0;
+  font-size: 13px;
+  color: #667085;
+}
+
+.cp-head-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+}
+
+.cp-search {
+  padding: 8px 12px;
+  border: 1px solid #d0d5dd;
+  border-radius: 6px;
+  font-size: 14px;
+  width: 100%;
+  max-width: 400px;
+}
+
+.cp-source-select {
+  padding: 8px 12px;
+  border: 1px solid #d0d5dd;
+  border-radius: 6px;
+  font-size: 14px;
+  background-color: #fff;
+}
+
+.cp-close-btn {
+  margin-left: auto;
+}
+
+.cp-body-redesign {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+
+.cp-sidebar-redesign {
+  width: 220px;
+  flex-shrink: 0;
+  border-right: 1px solid #e4e7ec;
+  display: flex;
+  flex-direction: column;
+  background: #f9fafb;
+}
+
+.cp-sidebar-title {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: #667085;
+  padding: 16px 16px 8px;
+  letter-spacing: 0.5px;
+}
+
+.cp-sidebar-search {
+  padding: 0 16px 12px;
+}
+
+.cp-sidebar-search input {
+  width: 100%;
+  padding: 6px 10px;
+  border: 1px solid #d0d5dd;
+  border-radius: 4px;
+  font-size: 13px;
+}
+
+.cp-sidebar-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0 8px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.cp-sidebar-list button {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  border: none;
+  background: transparent;
+  text-align: left;
+  font-size: 14px;
+  color: #344054;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.cp-sidebar-list button:hover {
+  background: #f2f4f7;
+}
+
+.cp-sidebar-list button.active {
+  background: #fdf2f5;
+  color: #be1e4b;
+  font-weight: 500;
+}
+
+.cp-sidebar-list button span {
+  font-size: 12px;
+  color: #98a2b3;
+}
+
+.cp-sidebar-list button.active span {
+  color: #be1e4b;
+}
+
+.cp-content-redesign {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: #fff;
+}
+
+.cp-content-header {
+  padding: 20px 24px 0;
+}
+
+.cp-content-header h2 {
+  margin: 0;
+  font-size: 20px;
+  color: #101828;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.cp-content-header h2 span {
+  font-size: 13px;
+  font-weight: 400;
+  color: #667085;
+  background: #f2f4f7;
+  padding: 2px 8px;
+  border-radius: 12px;
+}
+
+.cp-content-scroll {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: auto;
+}
+
+/* Padding phai nam o div con nay, KHONG duoc dat truc tiep len
+ * .cp-content-scroll (phan tu overflow:auto) - Chromium co bug that (da
+ * repro qua test co lap): position:sticky cua <th> trong <table> bi lech,
+ * de dong tbody da cuon qua "lo" len tren header dinh, NEU chinh phan tu
+ * overflow:auto co padding. Bo padding khoi day, doi sang div con la het
+ * bug ma khong doi hanh vi UI (padding nhin y het). */
+.cp-content-scroll-inner {
+  padding: 20px 24px;
+}
+
+.cp-compact-table {
+  width: 100%;
+  border-collapse: collapse; /* de border cap <tr> chay xuyen hang */
+  border-spacing: 0;
+}
+
+.cp-compact-table th {
+  padding: 10px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  color: #667085;
+  border-bottom: 1px solid #e4e7ec;
+  text-align: left;
+  background: #f9fafb;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.cp-selectable-row {
+  cursor: pointer;
+  transition: all 0.15s;
+  /* 1 duong ke / row o cap <tr> (khong ke tung td) */
+  border-bottom: 1px solid #e4e7ec;
+}
+
+.cp-selectable-row:hover {
+  background: #f9fafb;
+}
+
+.cp-selectable-row td {
+  padding: 12px;
+  border: 0;
+  font-size: 13px;
+  color: #344054;
+  vertical-align: middle;
+  /* BUG THAT DA GAP: td khong co background (trong suot) -> khi cuon, chu
+   * dong ben tren "loi" qua thanh header dinh (position: sticky) vi khong co
+   * gi che phu doi lap hoan toan. Nen trang dac de header luon che dung. */
+  background: #fff;
+}
+
+.cp-selectable-row.cp-row-selected {
+  border-bottom-color: #fce1e8;
+}
+.cp-selectable-row.cp-row-selected td {
+  background: #fdf2f5;
+}
+.cp-selectable-row.cp-row-selected td:first-child {
+  border-left: 2px solid #be1e4b;
+}
+
+.cp-row-name {
+  font-weight: 500;
+  color: #101828;
+}
+
+.cp-row-desc {
+  font-size: 12px;
+  color: #667085;
+  margin-top: 4px;
+}
+
+.cp-bundle-cards-redesign {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.cp-bundle-card {
+  border: 1px solid #e4e7ec;
+  border-radius: 8px;
+  padding: 16px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.cp-bundle-card:hover {
+  border-color: #d0d5dd;
+  box-shadow: 0 1px 3px rgba(16, 24, 40, 0.05);
+}
+
+.cp-bundle-card.cp-row-selected {
+  background: #fdf2f5;
+  border-color: #be1e4b;
+}
+
+.cp-bundle-card-top {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.cp-bundle-select-box {
+  padding-top: 2px;
+}
+
+.cp-bundle-info {
+  flex: 1;
+}
+
+.cp-bundle-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: #101828;
+}
+
+.cp-bundle-desc {
+  font-size: 13px;
+  color: #475467;
+  margin-top: 6px;
+}
+
+.cp-bundle-price-info {
+  text-align: right;
+  min-width: 150px;
+}
+
+.cp-bundle-price-info strong {
+  font-size: 16px;
+  color: #101828;
+}
+
+.cp-bundle-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cp-footer-redesign {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 24px;
+  border-top: 1px solid #e4e7ec;
+  background: #fff;
+  flex-shrink: 0;
+}
+
+.cp-footer-left {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.cp-footer-count {
+  font-weight: 600;
+  font-size: 14px;
+  color: #101828;
+}
+
+.cp-footer-details {
+  font-size: 13px;
+  color: #667085;
+}
+
+.cp-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+/* Nut hanh dong (Sua/3 cham) trong the Goi Combo o CatalogPickerModal - dung
+ * class rieng thay vi tai su dung .cp-row-actions vi class do co
+ * "flex: 0 0 190px" (danh cho cot "Thao tac" cua bang san pham le) khien
+ * hop nut o day bi ep rong co dinh 190px du chi co 1-2 icon, de lo khoang
+ * trong thua (bug that da gap qua screenshot). */
+.cp-bundle-row-actions {
+  flex: 0 0 auto;
+}
+
+.cp-compact-table {
+  table-layout: fixed;
+}
+.cp-truncate-2 {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;  
+  overflow: hidden;
+}
+
+
+/* San pham DA CO trong bao gia (CatalogPickerModal): checkbox khoa + badge ro rang + 2 hanh dong
+ * (Tang SL / Them dong moi) thay vi hien checkbox "da tick" nhung khong chon duoc. */
+.cp-selectable-row.cp-row-added td {
+  background: #f8fafc;
+}
+.cp-added-state {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+}
+.cp-added-badge {
+  background: #ecfdf5;
+  color: #047857;
+  border: 1px solid #a7f3d0;
+  font-weight: 600;
+}
+.cp-currency-toggle {
+  display: inline-flex !important;
+  flex-direction: row !important;
+  align-items: stretch;
+  flex: 0 0 auto;
+  height: 36px;
+}
+.cp-currency-toggle .qc-btn {
+  height: 100%;
+  min-width: 52px;
+  font-size: 12px;
+  border: 0;
+  white-space: nowrap;
+}

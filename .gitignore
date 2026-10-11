@@ -187,7 +187,21 @@ docs/INFRASTRUCTURE.md
 # Doc tien do phien lam viec, phong hua thong tin ha tang nhay cam lot vao sau nay
 docs/QUOTE_ISSUER_COMPANY_WIZARD_2026-08-27.md
 
-# ---- crm-module + crm-cloudgate + crm-securityzone (module CRM doc lap, FE + BE, 1 instance/host) ----
+# ---- crm-module + crm-cloudgate + crm-securityzone + crm-timetech (module CRM doc lap, FE + BE, 1 instance/host) ----
+crm-timetech/.env
+crm-timetech/docker-compose.override.yml
+crm-timetech/backend/.env
+crm-timetech/backend/.env.local
+crm-timetech/backend/.venv
+crm-timetech/backend/__pycache__
+crm-timetech/backend/**/__pycache__
+crm-timetech/backend/artifacts
+crm-timetech/backend/node_modules
+crm-timetech/frontend/.env*
+crm-timetech/frontend/node_modules
+crm-timetech/frontend/.next
+crm-timetech/frontend/nextdev.log
+crm-timetech/frontend/npm-install.log
 crm-securityzone/.env
 crm-securityzone/docker-compose.override.yml
 crm-securityzone/backend/.env
