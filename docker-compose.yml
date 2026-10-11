@@ -30,6 +30,8 @@ services:
     image: scraper-linkedin-backend:latest
     container_name: seeding-backend
     restart: unless-stopped
+    # PID 1 phải reap tiến trình con: LibreOffice (soffice.bin) bị diệt khi timeout sẽ thành zombie nếu uvicorn là PID 1
+    init: true
     env_file:
       - ./linkedin_group_crawler/.env
     extra_hosts:

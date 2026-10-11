@@ -641,7 +641,7 @@ export function CreateQuoteModal({
   // width/max-width CSS khai bao la gi. Portal ra document.body de thoat
   // hoan toan containing block bi anh huong boi transform cua drawer cha.
   return createPortal(
-    <div className="crm-modal-backdrop" onClick={resetAndClose}>
+    <div className="crm-modal-backdrop" onClick={event => { if (event.target === event.currentTarget) resetAndClose(); }}>
       <div
         className={`crm-modal crm-wizard-modal${step === 3 ? ' crm-wizard-modal--wide' : ''}`}
         onClick={event => event.stopPropagation()}

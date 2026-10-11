@@ -128,6 +128,9 @@ export interface IssuerCompany {
   brandName?: string;
   address?: string;
   contactName?: string;
+  /** Chức vụ của "Người liên hệ" (contactName) - tái sử dụng dropdown Chức vụ chung (category_type=crm_position). */
+  positionCategoryId?: string;
+  positionLabel?: string;
   phone?: string;
   email?: string;
   website?: string;
@@ -240,6 +243,20 @@ export interface QuoteItem {
   costOverrideBy?: string | null;
   costOverrideAt?: string | null;
   costPriceOriginal?: number | null;
+  /** Chu ky "tra thang/tra nam" (migration 189) - dung chung moi nhom san
+   * pham co ca 2 gia tu danh muc (vd Markee Chat MCHAT-AGENT). null/undefined
+   * = hang muc chi co 1 gia (khong doi duoc chu ky) hoac bao gia cu truoc
+   * tinh nang nay - calculateItemSubtotal() coi nhu billingTermMonths=1,
+   * hanh vi tinh tien giu nguyen y het truoc day. */
+  billingCycle?: 'monthly' | 'annual' | null;
+  /** So thang nhan vao Thanh tien khi billingCycle='annual' (thuong la 12) -
+   * dung boi calculateItemSubtotal(). 1/null cho hang muc thang thuong. */
+  billingTermMonths?: number | null;
+  /** Snapshot 2 gia goc tu danh muc luc them hang (KHONG doi khi danh muc doi
+   * sau nay, giong nguyen tac snapshot cua bundleSnapshot) - dung de doi qua
+   * lai Chu ky ma khong can goi lai danh muc. */
+  catalogMonthlyPriceVnd?: number | null;
+  catalogAnnualCommitMonthlyPriceVnd?: number | null;
   [key: string]: unknown;
 }
 
@@ -566,6 +583,7 @@ export interface CreateIssuerCompanyInput {
   brandName?: string;
   address?: string;
   contactName?: string;
+  positionCategoryId?: string;
   phone?: string;
   email?: string;
   website?: string;

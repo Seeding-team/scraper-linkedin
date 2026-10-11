@@ -2053,7 +2053,7 @@ export function QuoteCenterPage() {
       </section>
 
       {dealPickerOpen ? (
-        <div className="qc-modal-backdrop" onClick={closeDealPicker}>
+        <div className="qc-modal-backdrop" onClick={event => { if (event.target === event.currentTarget) closeDealPicker(); }}>
           <div className="qc-deal-picker" onClick={event => event.stopPropagation()}>
             <h3>Chọn cơ hội CRM</h3>
             <input
@@ -2087,7 +2087,7 @@ export function QuoteCenterPage() {
       ) : null}
 
       {versionHistory.open ? (
-        <div className="qc-modal-backdrop" onClick={() => setVersionHistory({ open: false, loading: false, quoteNumber: '', versions: [] })}>
+        <div className="qc-modal-backdrop" onClick={event => { if (event.target === event.currentTarget) setVersionHistory({ open: false, loading: false, quoteNumber: '', versions: [] }); }}>
           <div className="qc-deal-picker" onClick={event => event.stopPropagation()}>
             <h3>Lịch sử phiên bản — {versionHistory.quoteNumber}</h3>
             <div className="qc-deal-picker-list">
@@ -2132,7 +2132,7 @@ export function QuoteCenterPage() {
       ) : null}
 
       {cancelModal.open ? (
-        <div className="qc-modal-backdrop" onClick={() => (!cancelModal.busy ? setCancelModal({ open: false, quoteId: '', quoteNumber: '', reason: '', busy: false }) : undefined)}>
+        <div className="qc-modal-backdrop" onClick={event => { if (event.target === event.currentTarget && !cancelModal.busy) setCancelModal({ open: false, quoteId: '', quoteNumber: '', reason: '', busy: false }); }}>
           <div className="qc-deal-picker" onClick={event => event.stopPropagation()}>
             <h3>Huỷ báo giá {cancelModal.quoteNumber}</h3>
             <p className="qc-workspace-note">Báo giá sẽ chuyển sang trạng thái Đã huỷ, không hard-delete, public link (nếu có) sẽ tự tắt.</p>
@@ -2157,7 +2157,7 @@ export function QuoteCenterPage() {
       ) : null}
 
       {revokeModal.open ? (
-        <div className="qc-modal-backdrop" onClick={() => (!revokeModal.busy ? setRevokeModal({ open: false, quoteId: '', quoteNumber: '', busy: false }) : undefined)}>
+        <div className="qc-modal-backdrop" onClick={event => { if (event.target === event.currentTarget && !revokeModal.busy) setRevokeModal({ open: false, quoteId: '', quoteNumber: '', busy: false }); }}>
           <div className="qc-deal-picker" onClick={event => event.stopPropagation()}>
             <h3>Huỷ công khai {revokeModal.quoteNumber}</h3>
             <p className="qc-workspace-note">Public link của báo giá này sẽ ngừng hoạt động ngay sau khi xác nhận. Báo giá KHÔNG bị xoá, có thể phát hành lại sau.</p>

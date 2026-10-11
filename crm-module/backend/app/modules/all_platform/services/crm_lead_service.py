@@ -38,7 +38,7 @@ LEAD_COLUMNS = (
     "qualification_expected_timeline, qualification_ae_id, next_step, "
     "follow_up_date, converted_customer_id, converted_contact_id, "
     "converted_deal_id, converted_by, converted_at, created_by, created_at, "
-    "updated_at, origin_instance"
+    "updated_at, instance, origin_instance, handover_links, handover_by, handover_at"
 )
 
 # sdr_id/qualification_ae_id la UUID nullable - frontend co the gui "" thay vi
@@ -480,6 +480,15 @@ def create_lead(payload: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]
     if not (has_full_crm_access(user) and data.get("sdr_id")):
         data["sdr_id"] = actor_id or None
     _validate_owner(data.get("sdr_id"))
+    # GD3: Team member tu tao Lead -> mac dinh nguoi phu trach = chinh minh + CRM Team cua minh (khong can tu ban giao).
+    # User khong thuoc CRM Team nao (vd Marketing tao Lead de ban giao) khong bi gan tu dong.
+    if actor_id and not data.get("qualification_ae_id"):
+        from app.modules.all_platform.services.crm_permission_service import get_crm_team_id_for_user
+
+        own_team = get_crm_team_id_for_user(actor_id)
+        if own_team:
+            data["qualification_ae_id"] = actor_id
+            data.setdefault("team_id", own_team)
     if data.get("status") in ("sql", "qualified", "converted"):
         raise ValueError("Khong duoc tao lead voi status SQL/converted truc tiep - phai qua Convert Lead.")
     raw_status = str(data.get("status") or "mql")
@@ -590,6 +599,13 @@ def update_lead(lead_id: str, payload: dict[str, Any], user: dict[str, Any]) -> 
             if lead_field in data
         }
         deal_updates.update(deal_only_updates)
+        # Sale/Presale da duoc validate o Lead (can_write + _validate_owner). Validate Deal chi cho Sale/Both nen se
+        # chan Presale (vd Re-assign sau convert cho Presale) -> ghi thang sdr_id, khong qua validate Deal.
+        if "sdr_id" in deal_updates:
+            try:
+                execute_supabase_query(lambda: supabase.table("customer_leads").update({"sdr_id": deal_updates.pop("sdr_id") or None}).eq("id", converted_deal_id).eq("instance", settings.crm_instance).execute())
+            except Exception:
+                logger.warning("Khong dong bo sdr Lead %s sang Deal %s.", lead_id, converted_deal_id, exc_info=True)
         if deal_updates:
             try:
                 from app.modules.all_platform.services.customer_lead_service import update_customer_lead
@@ -817,6 +833,12 @@ def _apply_convert_codes(data: dict[str, Any], payload: dict[str, Any], lead_cod
             logger.error("convert: khong giu duoc contact_code %s cho contact %s: %s", lead_code, contact.get("id"), exc)
     customer = data.get("customer") if isinstance(data.get("customer"), dict) else None
     if customer and customer.get("id"):
+        try:  # ten viet tat cho khach doanh nghiep vua tao luc convert (khong ghi de gia tri da co)
+            from app.modules.all_platform.services.crm_short_name_service import ensure_short_name
+
+            ensure_short_name(customer["id"])
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("convert: khong dien duoc ten viet tat cho %s: %s", customer.get("id"), exc)
         try:
             from app.modules.all_platform.services.supabase_project_service import _resolve_customer_code
 
@@ -892,6 +914,12 @@ def convert_lead(lead_id: str, payload: dict[str, Any], user: dict[str, Any]) ->
     res = execute_supabase_query(lambda: supabase.rpc("crm_convert_lead", args).execute())
     data = res.data or {}
     _apply_convert_codes(data, payload, lead_code)
+    try:  # GD3: lich su ban giao + email cho nguoi nhan (tu xu ly thi bo qua). Loi o day KHONG lam hong convert da thanh cong.
+        from app.modules.all_platform.services.crm_lead_handover_service import record_convert_handover
+
+        record_convert_handover(current, data, payload, user, lead_code)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("convert: ghi nhan ban giao that bai cho lead %s: %s", lead_id, exc)
     if isinstance(data.get("lead"), dict):
         _normalize_lead_status(data["lead"])
     if isinstance(data.get("deal"), dict):

@@ -33,7 +33,7 @@ CUSTOMER_COLUMNS = (
     "position_label_snapshot, phone, phone_normalized, "
     "email, email_normalized, zalo, facebook, telegram, website, tax_code, "
     "address, city, industry, source, status, owner_id, sale_manager_id, "
-    "created_by, note, created_at, updated_at"
+    "created_by, note, created_at, updated_at, short_name, short_name_manual, customer_code"
 )
 logger = logging.getLogger(__name__)
 
@@ -83,11 +83,16 @@ def normalize_phone(value: Any) -> str | None:
 
 
 def _normalize_payload(payload: dict[str, Any], actor_id: str | None = None) -> dict[str, Any]:
+    # CHI dong bo *_normalized khi field goc THAT SU co trong payload - mot patch chi sua
+    # 1 truong (vd {"tax_code": "..."}) khong duoc phep vo tinh ghi None len email/phone
+    # cua ban ghi (bug that: moi lan PUT thieu field la mat du lieu field khac).
     out = {key: _clean_text(value) if isinstance(value, str) else value for key, value in payload.items()}
     if "city" in out:
         out["city"] = normalize_vietnam_city(out.get("city"))
-    out["email_normalized"] = normalize_email(out.get("email"))
-    out["phone_normalized"] = normalize_phone(out.get("phone"))
+    if "email" in out:
+        out["email_normalized"] = normalize_email(out.get("email"))
+    if "phone" in out:
+        out["phone_normalized"] = normalize_phone(out.get("phone"))
     if actor_id:
         # created_by chi de audit (ai tao ho so lan dau) - khong bao gio tin
         # gia tri client gui len, luon ep ve actor that cua request.
@@ -241,7 +246,7 @@ def _attach_customer_metrics(customers: list[dict[str, Any]], user: dict[str, An
     ids = [row["id"] for row in customers]
     lead_res = execute_supabase_query(
         lambda: supabase.table("customer_leads")
-        .select("id, customer_id, estimated_budget, lifetime_value, updated_at, created_at, leaded_by, sdr_id")
+        .select("id, customer_id, estimated_budget, lifetime_value, updated_at, created_at, leaded_by, sdr_id, deal_stage")
         .in_("customer_id", ids)
         .eq("instance", settings.crm_instance)
         .execute()
@@ -249,6 +254,47 @@ def _attach_customer_metrics(customers: list[dict[str, Any]], user: dict[str, An
     by_customer: dict[str, list[dict[str, Any]]] = {}
     for lead in lead_res.data or []:
         by_customer.setdefault(lead.get("customer_id"), []).append(lead)
+
+    # "Việc tiếp theo" tự động (xem crm_customer_progress_service) - tai hang loat bao
+    # gia/hop dong cua TOAN BO Deal trong trang nay (1 truy van gop, khong N+1) roi tinh
+    # ngay o day, khong luu DB - luon dung voi du lieu that tai thoi diem GET.
+    from app.modules.all_platform.services.crm_customer_progress_service import attach_next_action
+
+    deal_ids_all = [lead["id"] for leads in by_customer.values() for lead in leads]
+    quotes_by_deal: dict[str, list[dict[str, Any]]] = {}
+    contracts_by_deal: dict[str, list[dict[str, Any]]] = {}
+    if deal_ids_all:
+        quote_res = execute_supabase_query(
+            lambda: supabase.table("quotes").select("id, deal_id, status, deleted_at")
+            .in_("deal_id", deal_ids_all).eq("instance", settings.crm_instance).execute()
+        )
+        for row in quote_res.data or []:
+            if row.get("deal_id"):
+                quotes_by_deal.setdefault(row["deal_id"], []).append(row)
+        contract_res = execute_supabase_query(
+            lambda: supabase.table("contracts").select("id, deal_id, status")
+            .in_("deal_id", deal_ids_all).eq("instance", settings.crm_instance).execute()
+        )
+        for row in contract_res.data or []:
+            if row.get("deal_id"):
+                contracts_by_deal.setdefault(row["deal_id"], []).append(row)
+    # Hop dong tao truc tiep tren Customer (khong qua Deal) - gop them theo customer_id.
+    direct_contract_res = execute_supabase_query(
+        lambda: supabase.table("contracts").select("id, deal_id, status, customer_id")
+        .in_("customer_id", ids).eq("instance", settings.crm_instance).execute()
+    )
+    deals_by_customer_for_progress: dict[str, list[dict[str, Any]]] = by_customer
+    quotes_by_customer: dict[str, list[dict[str, Any]]] = {}
+    contracts_by_customer: dict[str, list[dict[str, Any]]] = {}
+    for cid, leads in by_customer.items():
+        for lead in leads:
+            quotes_by_customer.setdefault(cid, []).extend(quotes_by_deal.get(lead["id"], []))
+            contracts_by_customer.setdefault(cid, []).extend(contracts_by_deal.get(lead["id"], []))
+    for row in direct_contract_res.data or []:
+        if row.get("deal_id") or not row.get("customer_id"):
+            continue
+        contracts_by_customer.setdefault(row["customer_id"], []).append(row)
+    attach_next_action(customers, deals_by_customer_for_progress, quotes_by_customer, contracts_by_customer)
 
     # Contact that theo tung khach hang - 1 truy van gop cho ca trang, khong
     # phai N+1 (khop do phuc tap voi cach lam cua lead_res o tren). Mo rong
@@ -337,7 +383,7 @@ def list_customers(
         query = query.or_(
             f"customer_name.ilike.%{search}%,company_name.ilike.%{search}%,"
             f"phone.ilike.%{search}%,email.ilike.%{search}%,tax_code.ilike.%{search}%,"
-            f"customer_code.ilike.%{search}%"
+            f"customer_code.ilike.%{search}%,short_name.ilike.%{search}%"
         )
     res = execute_supabase_query(lambda: query.order("updated_at", desc=True).execute())
     rows = [normalize_city_fields(row) for row in (res.data or [])]
@@ -394,7 +440,7 @@ def list_customers(
             kpi_query = kpi_query.or_(
                 f"customer_name.ilike.%{search}%,company_name.ilike.%{search}%,"
                 f"phone.ilike.%{search}%,email.ilike.%{search}%,tax_code.ilike.%{search}%,"
-                f"customer_code.ilike.%{search}%"
+                f"customer_code.ilike.%{search}%,short_name.ilike.%{search}%"
             )
         kpi_res = execute_supabase_query(lambda: kpi_query.execute())
         kpi_rows = [normalize_city_fields(row) for row in (kpi_res.data or [])]
@@ -466,6 +512,9 @@ def create_customer(payload: dict[str, Any], user: dict[str, Any]) -> dict[str, 
     data = _normalize_payload(payload, actor_id=actor_id)
     data["source"] = _resolve_source(data.get("source"))
     apply_position_category(data)
+    from app.modules.all_platform.services.crm_short_name_service import fill_short_name_for_new
+
+    fill_short_name_for_new(data)  # khach doanh nghiep chua co ten viet tat -> tu sinh (quy tac); khach ca nhan bo qua
     _handle_duplicates(user, _duplicate_query(data.get("email_normalized"), data.get("phone_normalized")), data)
     # Khong tin owner_id client gui len - chi admin/leader duoc chi dinh chu
     # ho so khac minh luc tao; con lai luon la chinh nguoi tao (dung quy dinh
@@ -498,6 +547,19 @@ def update_customer(customer_id: str, payload: dict[str, Any], user: dict[str, A
     data = _normalize_payload(payload)
     data["source"] = _resolve_source(data.get("source"), allow_legacy_value=current.get("source"))
     apply_position_category(data, current_position_category_id=current.get("position_category_id"))
+    # Ten viet tat: gui tay (short_name) -> manual; xoa trong -> quay ve tu dong; doi ten cong ty ma KHONG gui short_name va ten cu
+    # chua bi sua tay -> de xuat lai (quy tac); da sua tay -> giu nguyen.
+    if "short_name" in data:
+        typed = (data.get("short_name") or "").strip() or None
+        data["short_name"] = typed
+        data["short_name_manual"] = bool(typed) if data.get("short_name_manual") is None else bool(data["short_name_manual"]) and bool(typed)
+    elif "company_name" in data and not current.get("short_name_manual"):
+        from app.modules.all_platform.services.crm_short_name_service import looks_like_enterprise, suggest_short_name
+
+        if looks_like_enterprise(data.get("customer_name") or current.get("customer_name"), data.get("company_name"), current.get("tax_code")):
+            suggestion = suggest_short_name(data.get("company_name") or "", customer_id=customer_id, use_ai=False)["suggestion"]
+            if suggestion:
+                data["short_name"], data["short_name_manual"] = suggestion, False
     matches = _duplicate_query(data.get("email_normalized"), data.get("phone_normalized"), exclude_id=customer_id)
     if matches:
         raise DuplicateCustomerError(matches)
@@ -550,6 +612,72 @@ def delete_customers_bulk(customer_ids: list[str], user: dict[str, Any], confirm
         except Exception as exc:  # noqa: BLE001 - tra loi tung dong cho FE
             failed.append({"customer_id": customer_id, "message": str(exc), "requiresCascadeConfirm": False})
     return {"deleted_ids": deleted_ids, "failed": failed}
+
+
+# Main la CRM markee CO DINH (khong co /auth/workspaces/switcher nhu 3 clone) -
+# danh sach workspace dich khi sao chep Khach hang CHI CO 2 clone doc lap con
+# lai, khai bao TINH tai day (dung y het _MAIN_COPY_TARGET_INSTANCES cua
+# crm_lead_service.py, khong tra cuu tu config nao ca).
+_MAIN_COPY_TARGET_INSTANCES = ("cloudgate", "SECURITYZONE")
+
+
+def copy_customer_to_instance(customer_id: str, target_instance: str, user: dict[str, Any]) -> dict[str, Any]:
+    """Admin-only: tao 1 BAN SAO cua chinh ho so Khach hang (crm_customers)
+    sang 1 clone CRM doc lap khac - Khach hang GOC van giu nguyen o workspace
+    hien tai. CHI sao chep dung 1 dong crm_customers (khong cascade Deal/Bao
+    gia/Hop dong/Contact - dung tinh than copy_lead_to_instance() ben
+    crm_lead_service.py, "sao chep y het nhu Lead"). `crm_customers` KHONG
+    co cot origin_instance (chi crm_leads moi co, migration 128) nen chi
+    chan copy VE DUNG workspace hien tai (tu-copy vo nghia), khong chan duoc
+    toan bo vong lap nhieu buoc qua lai nhu Lead."""
+    if target_instance not in _MAIN_COPY_TARGET_INSTANCES:
+        raise ValueError(f"Workspace \"{target_instance}\" khong hop le.")
+    supabase = get_supabase_client()
+    raw_res = execute_supabase_query(
+        lambda: supabase.table("crm_customers")
+        .select(CUSTOMER_COLUMNS)
+        .eq("id", customer_id)
+        .eq("instance", settings.crm_instance)
+        .maybe_single()
+        .execute()
+    )
+    raw = raw_res.data if raw_res else None
+    if not raw:
+        raise ValueError("Không tìm thấy khách hàng ở workspace hiện tại.")
+    if target_instance == settings.crm_instance:
+        raise ValueError("Không thể sao chép khách hàng về đúng workspace hiện tại.")
+    copy_data = {
+        key: value
+        for key, value in raw.items()
+        if key not in ("id", "created_at", "updated_at", "customer_code")
+    }
+    copy_data["instance"] = target_instance
+    res = execute_supabase_query(lambda: supabase.table("crm_customers").insert(copy_data).execute())
+    created = res.data[0]
+    try:  # Ma KH tu sinh ngay khi tao - dung y het create_customer()
+        from app.modules.all_platform.services.supabase_project_service import _resolve_customer_code
+
+        created["customer_code"] = _resolve_customer_code(created["id"])
+    except Exception:
+        logger.warning("auto customer_code failed for copied customer %s", created.get("id"))
+    return normalize_city_fields(created)
+
+
+def copy_customers_to_instance(assignments: list[dict[str, Any]], user: dict[str, Any]) -> dict[str, Any]:
+    """Ban nhieu (bulk) cua copy_customer_to_instance() - moi Khach hang duoc
+    chon 1 workspace dich RIENG, dung y het copy_leads_to_instance()."""
+    copied: list[dict[str, Any]] = []
+    failed: list[dict[str, Any]] = []
+    for item in assignments:
+        customer_id = str(item.get("customer_id") or "")
+        target_instance = str(item.get("target_instance") or "")
+        try:
+            if not customer_id or not target_instance:
+                raise ValueError("Thiếu customer_id hoặc target_instance.")
+            copied.append(copy_customer_to_instance(customer_id, target_instance, user))
+        except Exception as exc:  # noqa: BLE001 - tra loi tung dong cho FE
+            failed.append({"customer_id": customer_id, "message": str(exc)})
+    return {"copied": copied, "failed": failed}
 
 
 def related_records(customer_id: str, user: dict[str, Any]) -> dict[str, Any]:
@@ -821,6 +949,10 @@ def create_customer_with_deal(payload: dict[str, Any], user: dict[str, Any]) -> 
         raise
     data = res.data or {}
     _cust = data.get("customer") if isinstance(data.get("customer"), dict) else None
+    if _cust and _cust.get("id"):
+        from app.modules.all_platform.services.crm_short_name_service import ensure_short_name
+
+        ensure_short_name(_cust["id"])
     if _cust and _cust.get("id"):  # Customer tao thu cong kem Deal cung tu sinh customer_code ngay luc tao
         try:
             from app.modules.all_platform.services.supabase_project_service import _resolve_customer_code

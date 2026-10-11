@@ -7,6 +7,10 @@ import { cn } from "@/lib/utils";
 import { API_BASE_URL, API_KEY } from "@/lib/env";
 
 type EmailProviderSettings = {
+  /** Workspace (instance) của backend đang phục vụ — mỗi workspace có cấu hình email RIÊNG. */
+  instance?: string;
+  /** false = hệ thống chưa áp migration tách email theo workspace. */
+  schemaReady?: boolean;
   channelType: string;
   isEnabled: boolean;
   senderName: string | null;
@@ -57,8 +61,8 @@ const dangerBtnClass =
   "px-4 py-2 border border-red-200 text-red-600 hover:bg-red-50 font-bold text-xs rounded-xl active:scale-95 transition-all disabled:opacity-50 cursor-pointer whitespace-nowrap";
 const linkBtnClass = "text-xs font-bold text-primary hover:underline disabled:opacity-50 disabled:no-underline cursor-pointer whitespace-nowrap";
 
-function StatusBadge({ status }: { status: "unknown" | "ok" | "error" }) {
-  const label = status === "ok" ? "Đã kết nối" : status === "error" ? "Lỗi kết nối" : "Chưa kiểm tra";
+function StatusBadge({ status, saved = false }: { status: "unknown" | "ok" | "error"; saved?: boolean }) {
+  const label = status === "ok" ? "Đã kết nối" : status === "error" ? "Lỗi kết nối" : saved ? "Đã lưu, chưa kiểm tra" : "Chưa kết nối";
   const icon = status === "ok" ? "check_circle" : status === "error" ? "error" : "help";
   const classes =
     status === "ok"
@@ -151,7 +155,10 @@ export function QuoteEmailProviderSettings() {
       setSettings(data);
       setAppPassword("");
       setShowPasswordField(!data.credentialConfigured);
-      setNotice({ ok: true, message: "Đã lưu cấu hình." });
+      setNotice({
+        ok: true,
+        message: appPassword.trim() ? "Đã kiểm tra SMTP + IMAP thành công và lưu cấu hình mới. Báo giá và email bàn giao Lead dùng Gmail này ngay." : "Đã lưu cấu hình (giữ nguyên App Password đã lưu).",
+      });
     } catch (err) {
       setNotice({ ok: false, message: err instanceof Error ? err.message : "Không lưu được cấu hình." });
     } finally {
@@ -252,9 +259,18 @@ export function QuoteEmailProviderSettings() {
       <div>
         <h2 className="text-sm font-bold text-on-surface">Email gửi báo giá</h2>
         <p className="text-xs text-on-surface-variant mt-1">
-          Cấu hình hộp thư dùng chung để gửi báo giá và nhận phản hồi khách hàng.
+          Gmail riêng của workspace{settings.instance ? ` “${settings.instance}”` : ""} (không dùng chung với workspace khác): gửi báo giá (PDF/link) cho khách, nhận phản hồi qua IMAP và gửi email bàn giao/re-assign Lead nội bộ. Đổi email gửi cần nhập App Password mới — hệ thống kiểm tra SMTP + IMAP trước khi áp dụng, thất bại thì giữ nguyên cấu hình đang dùng.
         </p>
       </div>
+
+      {!settings.credentialConfigured ? (
+        <div data-testid="email-not-connected" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs font-medium text-amber-800">
+          Workspace{settings.instance ? ` “${settings.instance}”` : ""} chưa kết nối email gửi. Nhập email và App Password của chính workspace này — hệ thống không dùng email của workspace khác.
+          {settings.schemaReady === false && settings.instance && settings.instance !== "markee"
+            ? " Hệ thống chưa áp migration tách email theo workspace nên chưa thể lưu cấu hình — liên hệ quản trị."
+            : ""}
+        </div>
+      ) : null}
 
       {notice ? (
         <div
@@ -355,10 +371,10 @@ export function QuoteEmailProviderSettings() {
               <span className="flex-1" />
               <div className="flex items-center gap-2 text-[11px] font-bold text-on-surface-variant">
                 <span>IMAP</span>
-                <StatusBadge status={settings.imapConnectionStatus} />
+                <StatusBadge status={settings.imapConnectionStatus} saved={settings.credentialConfigured} />
                 <span className="mx-1 text-outline-variant">·</span>
                 <span>SMTP</span>
-                <StatusBadge status={settings.smtpConnectionStatus} />
+                <StatusBadge status={settings.smtpConnectionStatus} saved={settings.credentialConfigured} />
               </div>
             </div>
           </div>
@@ -403,7 +419,7 @@ export function QuoteEmailProviderSettings() {
                 className="mt-0.5 h-4 w-4 accent-primary cursor-pointer disabled:cursor-not-allowed"
               />
               <span className="text-xs font-semibold text-on-surface">
-                Sử dụng kênh này để gửi báo giá cho khách hàng
+                Sử dụng kênh này để gửi email (báo giá cho khách, bàn giao Lead nội bộ)
               </span>
             </label>
             {!settings.credentialConfigured ? (

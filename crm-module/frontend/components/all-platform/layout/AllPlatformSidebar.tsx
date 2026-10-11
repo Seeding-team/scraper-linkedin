@@ -273,14 +273,17 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, _workspaceTab?
           label: "Lịch sử báo giá",
           matchStartsWith: ["/all-platform/quote-history"],
         },
-        {
-          type: "item",
-          id: "contracts",
-          href: "/all-platform/contracts",
-          icon: "description",
-          label: "Hợp đồng",
-          matchStartsWith: ["/all-platform/contracts"],
-        },
+        // AN (khong xoa): muc sidebar "Hợp đồng" tam thoi bi an theo yeu cau - trang chi tiet khach hang
+        // van giu nguyen tab "Hop dong ghi nhan" (CustomerContractsTab) nhu cu, khong doi gi. Route
+        // /all-platform/contracts va code van con nguyen; bo comment de hien lai.
+        //{
+        //  type: "item",
+        //  id: "contracts",
+        //  href: "/all-platform/contracts",
+        //  icon: "description",
+        //  label: "Hợp đồng",
+        //  matchStartsWith: ["/all-platform/contracts"],
+        //},
         {
           type: "item",
           id: "service-catalog",

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, File, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Query, Request, UploadFile
 from fastapi.responses import Response
 
 from app.modules.all_platform.auth_deps import get_current_user
@@ -10,6 +10,7 @@ from app.modules.all_platform.schemas import BaseResponse
 from app.modules.all_platform.schemas.crm_lead import (
     CrmLeadConvertRequest,
     CrmLeadCreate,
+    CrmLeadHandoverRequest,
     CrmLeadUpdate,
 )
 from app.modules.all_platform.schemas.crm_lead_import import (
@@ -303,13 +304,58 @@ def leads_copy_instance(lead_id: str, payload: dict, user: dict[str, Any] = Depe
         return _error(exc)
 
 
+def _request_base(request: Request) -> str | None:
+    """Origin cua trinh duyet goi API (de link trong email tro dung site/deployment dang dung)."""
+    from urllib.parse import urlparse
+
+    origin = request.headers.get("origin")
+    if not origin:
+        ref = urlparse(request.headers.get("referer") or "")
+        origin = f"{ref.scheme}://{ref.netloc}" if ref.scheme and ref.netloc else None
+    return origin.rstrip("/") if origin else None
+
+
+@router.post("/{lead_id}/handover")
+def leads_handover(lead_id: str, payload: CrmLeadHandoverRequest, request: Request, user: dict[str, Any] = Depends(get_current_user)) -> BaseResponse:
+    """GD3: Ban giao xu ly / Re-assign Lead (chua du SQL) + email nguoi nhan. Co idempotency_key chong gui trung."""
+    try:
+        from app.modules.all_platform.services.crm_lead_handover_service import assign_lead
+
+        result = assign_lead(lead_id, {**payload.model_dump(exclude_unset=True), "_base_url": _request_base(request)}, user)
+        return BaseResponse(success=True, message="Đã bàn giao xử lý", data=result)
+    except Exception as exc:
+        return _error(exc)
+
+
+@router.post("/{lead_id}/handovers/{handover_id}/resend-email")
+def leads_handover_resend(lead_id: str, handover_id: str, request: Request, user: dict[str, Any] = Depends(get_current_user)) -> BaseResponse:
+    try:
+        from app.modules.all_platform.services.crm_lead_handover_service import resend_handover_email
+
+        row = resend_handover_email(lead_id, handover_id, user, base_url=_request_base(request))
+        ok = row.get("email_status") in ("sent", "dry_run")
+        return BaseResponse(success=ok, message="Đã gửi lại email" if ok else (row.get("email_error") or "Gửi email thất bại"), data={"emailStatus": row.get("email_status"), "emailError": row.get("email_error")})
+    except Exception as exc:
+        return _error(exc)
+
+
+@router.get("/{lead_id}/handovers")
+def leads_handovers(lead_id: str, user: dict[str, Any] = Depends(get_current_user)) -> BaseResponse:
+    try:
+        from app.modules.all_platform.services.crm_lead_handover_service import list_handovers
+
+        return BaseResponse(success=True, data=list_handovers(lead_id, user))
+    except Exception as exc:
+        return _error(exc)
+
+
 @router.post("/{lead_id}/convert")
-def leads_convert(lead_id: str, payload: CrmLeadConvertRequest, user: dict[str, Any] = Depends(get_current_user)) -> BaseResponse:
+def leads_convert(lead_id: str, payload: CrmLeadConvertRequest, request: Request, user: dict[str, Any] = Depends(get_current_user)) -> BaseResponse:
     try:
         return BaseResponse(
             success=True,
             message="Da chuyen doi lead",
-            data=convert_lead(lead_id, payload.model_dump(exclude_none=True), user),
+            data=convert_lead(lead_id, {**payload.model_dump(exclude_none=True), "_base_url": _request_base(request)}, user),
         )
     except Exception as exc:
         return _error(exc)

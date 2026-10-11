@@ -9,6 +9,8 @@ import { usersService, type QuoteBusinessRoleUser } from '@/services/all-platfor
 import { SearchableSelect } from './SearchableSelect';
 import { CrmCategoryCodeSelect, CrmCategorySelect } from './CrmCategorySelect';
 import { PositionSelect } from './PositionSelect';
+import { deriveShortName, looksLikeEnterprise } from '../utils/customerNames';
+import { requestShortNameSuggestion } from '../utils/shortNameApi';
 import { ChevronDown, Loader2, X } from './icons';
 import type { AppUser } from '@/types/unified.types';
 
@@ -33,13 +35,21 @@ type QuickSearchRow = {
 };
 
 type CompanyForm = {
+  /** Cong ty (ten day du) - luu vao customer_name (+ company_name neu la doanh nghiep). */
   customerName: string;
+  /** Ten viet tat (short_name): tu de xuat theo ten cong ty, sua tay duoc. */
+  shortName: string;
   taxCode: string;
   website: string;
   city: string;
   address: string;
   industry: string;
   source: string;
+  /** SDT/email cua CONG TY (khac voi phone/email cua Nguoi lien he chinh o
+   * ContactForm) - tuy chon, de trong neu khach hang khong co SDT/email
+   * chung rieng (dung SDT/email cua nguoi lien he la du). */
+  phone: string;
+  email: string;
 };
 
 type ContactForm = {
@@ -84,7 +94,7 @@ function saveCustomerSourceDefault(currentUser: AppUser | null, source: string) 
 }
 
 function emptyCompany(defaultSource = 'Manual'): CompanyForm {
-  return { customerName: '', taxCode: '', website: '', city: '', address: '', industry: '', source: defaultSource || 'Manual' };
+  return { customerName: '', shortName: '', taxCode: '', website: '', city: '', address: '', industry: '', source: defaultSource || 'Manual', phone: '', email: '' };
 }
 function emptyContact(): ContactForm {
   return { name: '', positionCategoryId: '', positionLabel: '', phone: '', email: '', zalo: '', facebook: '' };
@@ -187,6 +197,11 @@ export function CustomerAddDrawer({
   const [searchedOnce, setSearchedOnce] = useState(false);
   const [defaultCustomerSource, setDefaultCustomerSource] = useState('Manual');
   const [company, setCompany] = useState<CompanyForm>(() => emptyCompany());
+  // Ten viet tat: tu dong theo ten cong ty cho toi khi nguoi dung sua tay (khong bao gio ghi de ten da sua tay).
+  const [shortTouched, setShortTouched] = useState(false);
+  const [suggesting, setSuggesting] = useState(false);
+  const suggestSeq = useRef(0);
+  const suggestTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [contact, setContact] = useState<ContactForm>(emptyContact);
   const [manage, setManage] = useState<ManageForm>(emptyManage);
   const [saving, setSaving] = useState<'' | 'plain' | 'contact' | 'deal'>('');
@@ -234,7 +249,9 @@ export function CustomerAddDrawer({
     setCompany({
       ...emptyCompany(initialSource),
       customerName: initialValues?.companyName || '',
+      shortName: initialValues?.companyName && looksLikeEnterprise(initialValues.companyName, null, null) ? deriveShortName(initialValues.companyName) : '',
     });
+    setShortTouched(false);
 
     setContact({
       ...emptyContact(),
@@ -306,6 +323,33 @@ export function CustomerAddDrawer({
   function setCompanyField<K extends keyof CompanyForm>(key: K, value: CompanyForm[K]) {
     setCompany(current => ({ ...current, [key]: value }));
   }
+
+  /** Khach CA NHAN (khong MST, ten khong co tu khoa to chuc) khong bi ep thanh cong ty: khong tu de xuat ten viet tat. */
+  const enterpriseLike = looksLikeEnterprise(company.customerName, null, company.taxCode);
+
+  function changeCompanyName(value: string) {
+    const isEnterprise = looksLikeEnterprise(value, null, company.taxCode);
+    setCompany(current => ({ ...current, customerName: value, ...(shortTouched ? {} : { shortName: isEnterprise ? deriveShortName(value) : '' }) }));
+    if (shortTouched || !isEnterprise) return;   // da sua tay -> chi de xuat lai khi bam "Tao lai goi y"
+    const seq = ++suggestSeq.current;
+    if (suggestTimer.current) clearTimeout(suggestTimer.current);
+    if (!value.trim()) return;
+    suggestTimer.current = setTimeout(() => {
+      void requestShortNameSuggestion(value, { useAi: true }).then(suggestion => {
+        if (suggestSeq.current === seq) setCompany(current => (current.customerName === value ? { ...current, shortName: suggestion } : current));
+      });
+    }, 700);
+  }
+
+  async function regenerateShortName() {
+    const value = company.customerName.trim();
+    if (!value) return;
+    setSuggesting(true);
+    const suggestion = await requestShortNameSuggestion(value, { useAi: true });
+    setSuggesting(false);
+    setShortTouched(false);
+    setCompany(current => ({ ...current, shortName: suggestion }));
+  }
   function setCurrentSourceAsDefault() {
     const next = company.source || 'Manual';
     saveCustomerSourceDefault(currentUser, next);
@@ -376,7 +420,13 @@ export function CustomerAddDrawer({
   function buildCustomerPayload(): Record<string, unknown> {
     const payload: Record<string, unknown> = {
       customer_name: company.customerName.trim(),
+      // Doanh nghiep: company_name = ten day du; khach ca nhan: khong ep thanh cong ty.
+      company_name: enterpriseLike ? company.customerName.trim() : null,
+      short_name: company.shortName.trim() || null,
+      short_name_manual: shortTouched && Boolean(company.shortName.trim()),
       tax_code: company.taxCode.trim() || null,
+      phone: company.phone.trim() || null,
+      email: company.email.trim() || null,
       website: company.website.trim() || null,
       city: company.city || null,
       address: company.address.trim() || null,
@@ -543,7 +593,9 @@ export function CustomerAddDrawer({
   if (!open) return null;
 
   return (
-    <div className="crm-drawer-backdrop" onClick={onClose}>
+    // Chi dong khi click THAT SU vao backdrop (khong phai bubble tu dropdown
+    // portal ra document.body ben trong drawer - xem CustomerFormModal.tsx).
+    <div className="crm-drawer-backdrop" onClick={event => { if (event.target === event.currentTarget) onClose(); }}>
       <div className="crm-customer-drawer" onClick={event => event.stopPropagation()}>
         <header className="crm-customer-drawer-header">
           <div>
@@ -621,14 +673,32 @@ export function CustomerAddDrawer({
           <section className="crm-form-section" ref={companySectionRef}>
             <p className="crm-form-title">2. Thông tin công ty</p>
             <div className="crm-form-grid">
-              <Field label="Tên doanh nghiệp" required>
+              <Field label="Công ty" required>
                 <input
                   ref={customerNameInputRef}
                   value={company.customerName}
-                  onChange={e => setCompanyField('customerName', e.target.value)}
+                  onChange={e => changeCompanyName(e.target.value)}
                   placeholder="Công ty TNHH ABC"
                 />
               </Field>
+              <Field label="SĐT công ty" hint="tùy chọn — khác với SĐT người liên hệ bên dưới">
+                <input value={company.phone} onChange={e => setCompanyField('phone', e.target.value)} type="tel" placeholder="09xxxxxxxx" />
+              </Field>
+              <Field label="Email công ty" hint="tùy chọn — khác với email người liên hệ bên dưới">
+                <input value={company.email} onChange={e => setCompanyField('email', e.target.value)} type="email" placeholder="contact@congty.com" />
+              </Field>
+              {enterpriseLike || company.shortName ? (
+                <Field label="Tên viết tắt" hint="tự điền theo tên công ty, sửa được">
+                  <input
+                    value={company.shortName}
+                    onChange={e => { setShortTouched(true); setCompanyField('shortName', e.target.value); }}
+                    placeholder="ABC"
+                  />
+                  <button type="button" className="crm-short-regen-btn" data-testid="short-name-regen-add" disabled={suggesting || !company.customerName.trim()} onClick={() => void regenerateShortName()}>
+                    {suggesting ? 'Đang gợi ý…' : '↻ Tạo lại gợi ý'}
+                  </button>
+                </Field>
+              ) : null}
               <Field label="Mã số thuế">
                 <input value={company.taxCode} onChange={e => setCompanyField('taxCode', e.target.value)} />
               </Field>
@@ -875,11 +945,13 @@ export function CustomerAddDrawer({
 
 function Field({
   label,
+  hint,
   required,
   full,
   children,
 }: {
   label: string;
+  hint?: string;
   required?: boolean;
   full?: boolean;
   children: React.ReactNode;
@@ -887,7 +959,7 @@ function Field({
   return (
     <label className={`crm-field ${full ? 'crm-field--full' : ''}`}>
       <span>
-        {label} {required ? <b>*</b> : null}
+        {label} {hint ? <em>({hint})</em> : null} {required ? <b>*</b> : null}
       </span>
       {children}
     </label>

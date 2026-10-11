@@ -13,6 +13,28 @@ class ContractClauseInput(BaseModel):
     body: str = ""
 
 
+class RepresentativeOverrideInput(BaseModel):
+    """Người đại diện ký Bên A đã được Sale CHỌN/XÁC NHẬN ở AI Copilot - vai trò nghiệp vụ riêng,
+    không mặc nhiên = Người liên hệ của Deal (xem contract_ai_service.resolve_representative())."""
+    name: str
+    position: Optional[str] = None
+    phone: Optional[str] = None
+    email: Optional[str] = None
+    contact_id: Optional[str] = None
+
+
+class LegalOverrideInput(BaseModel):
+    """Bổ sung tại chỗ trong Copilot (không rời luồng soạn hợp đồng): chỉ các trường THẬT SỰ thiếu.
+    Phân 2 nhóm rõ ràng - company_* ghi vào Customer (doanh nghiệp), contact_* ghi vào Contact (người liên hệ)."""
+    company_name: Optional[str] = None
+    tax_code: Optional[str] = None
+    address: Optional[str] = None
+    contact_name: Optional[str] = None
+    contact_position: Optional[str] = None
+    contact_phone: Optional[str] = None
+    contact_email: Optional[str] = None
+
+
 class ContractCreateRequest(BaseModel):
     deal_id: Optional[str] = None
     # "Ghi nhận hợp đồng có sẵn": hợp đồng bên ngoài đã có SỐ HỢP ĐỒNG riêng
@@ -31,6 +53,8 @@ class ContractCreateRequest(BaseModel):
     manual_customer_name: Optional[str] = None
     quote_id: Optional[str] = None
     title: str
+    # Tên viết tắt công ty dùng cho mã hợp đồng ({SHORT}) - chỉ để sinh số, không lưu thành cột riêng
+    number_short: Optional[str] = None
     template_type: str = "service"
     # Hop dong ngoai thuong duoc ghi lai SAU khi da ky that ngoai doi - cho
     # phep chon trang thai/ngay ky ngay luc tao thay vi luon ep 'draft'. Dung
@@ -62,6 +86,10 @@ class ContractCreateRequest(BaseModel):
     # CHI duoc ghi qua luong Phase1/Phase2 rieng trong CrmCustomerModal.tsx.
     deal_phase: Optional[str] = None
     contact_id: Optional[str] = None
+    # Migration 186 — người đại diện ký đã xác nhận (checkbox thật, không phải "Tôi đã hiểu" vượt qua) + ảnh chụp pháp lý 2 bên
+    # dùng khi Sale chọn "Chỉ dùng cho hợp đồng này" ở Copilot (xem IssuerInlineEditor/LegalInfoEditor phía frontend).
+    representative_confirmed: bool = False
+    legal_snapshot: Optional[dict] = None
 
 
 class ContractUpdateRequest(BaseModel):
@@ -90,11 +118,15 @@ class ContractUpdateRequest(BaseModel):
     contact_id: Optional[str] = None
     deal_phase: Optional[str] = None
     contract_number: Optional[str] = None
+    representative_confirmed: Optional[bool] = None
+    legal_snapshot: Optional[dict] = None
 
 
 class ContractStatusUpdateRequest(BaseModel):
     status: str
     signed_at: Optional[str] = None
+    # Phiên bản tài liệu được gửi duyệt/duyệt/ký (ghi vào lịch sử)
+    version: Optional[int] = None
 
 
 class ContractGenerateRequest(BaseModel):
@@ -108,6 +140,22 @@ class ContractGenerateRequest(BaseModel):
     detail_level: str = "standard"
     extra_prompt: Optional[str] = None
     reference_template_id: Optional[str] = None
+    # Tuỳ chọn nâng cao ở bước Yêu cầu AI (chỉ ảnh hưởng văn phong; không được đổi số liệu)
+    language: Optional[str] = None
+    style: Optional[str] = None
+    # Customer 360 truyền customer_id => backend BẮT BUỘC có deal_id hợp lệ (không chỉ chặn ở frontend)
+    customer_id: Optional[str] = None
+    # Đã xác nhận để trống (………) các trường pháp lý còn thiếu
+    acknowledge_missing: bool = False
+    # Text trích từ PDF mẫu người dùng vừa tải lên (chỉ để tham chiếu văn phong; không dùng làm nguồn số liệu)
+    reference_text: Optional[str] = None
+    # Khách có nhiều Contact: Sale chọn tường minh người liên hệ cho hợp đồng này (thắng liên hệ chính mặc định của Deal).
+    contact_id: Optional[str] = None
+    # Người đại diện ký đã chọn/nhập + XÁC NHẬN ở Copilot (không mặc nhiên = Người liên hệ).
+    representative: Optional[RepresentativeOverrideInput] = None
+    # "Bổ sung tại chỗ": chỉ áp dụng cho PHIÊN SOẠN THẢO này (không ghi CRM) khi save_overrides_to_crm=False.
+    legal_overrides: Optional[LegalOverrideInput] = None
+    save_overrides_to_crm: bool = False
 
 
 class ContractReviewRequest(BaseModel):
@@ -120,3 +168,26 @@ class ContractReviewRequest(BaseModel):
 class ContractRefineRequest(BaseModel):
     clauses: list[ContractClauseInput]
     findings: list[dict] = Field(default_factory=list)
+
+
+class ContractPrecheckRequest(BaseModel):
+    customer_id: Optional[str] = None
+    deal_id: Optional[str] = None
+    quote_id: Optional[str] = None
+    contact_id: Optional[str] = None
+    representative: Optional[RepresentativeOverrideInput] = None
+    legal_overrides: Optional[LegalOverrideInput] = None
+    save_overrides_to_crm: bool = False
+
+
+class ContractSuggestTypeRequest(BaseModel):
+    customer_id: Optional[str] = None
+    deal_id: Optional[str] = None
+    quote_id: Optional[str] = None
+    extra_prompt: Optional[str] = None
+    template_name: Optional[str] = None
+
+
+class ContractNumberSettingsRequest(BaseModel):
+    number_format: str
+    short_name: Optional[str] = None

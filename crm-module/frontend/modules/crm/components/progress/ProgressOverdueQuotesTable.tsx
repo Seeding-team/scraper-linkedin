@@ -3,7 +3,6 @@
 import React from 'react';
 import { Eye } from 'lucide-react';
 import { formatVND } from '../../constants/crmConfig';
-import { formatSinceDuration } from './progressLabels';
 import type { ProgressQuoteItem } from './progress.types';
 
 export function ProgressOverdueQuotesTable({
@@ -65,19 +64,15 @@ export function ProgressOverdueQuotesTable({
                 <th style={{ width: 40 }}>#</th>
                 <th>Mã báo giá</th>
                 <th>Khách hàng</th>
-                <th>Project</th>
                 <th>Presale</th>
-                <th>Sale</th>
                 <th>Bước hiện tại</th>
-                <th>Ở bước này</th>
                 <th>SLA</th>
                 <th className="num-col">Giá trị</th>
-                <th style={{ width: 120, textAlign: 'center' }}>Hành động</th>
+                <th style={{ width: 70, textAlign: 'center' }}>Chi tiết</th>
               </tr>
             </thead>
             <tbody>
               {displayList.map((q, idx) => {
-                const duration = q.timeInCurrentStage?.sinceAt ? formatSinceDuration(q.timeInCurrentStage.sinceAt) : '—';
                 return (
                   <tr key={q.quoteId} className="progress-row-clickable" onClick={() => onOpenQuote(q)}>
                     <td className="text-muted">{idx + 1}</td>
@@ -89,21 +84,12 @@ export function ProgressOverdueQuotesTable({
                     <td>
                       <b>{q.customerName || '—'}</b>
                     </td>
-                    <td>
-                      {q.projectName ? (
-                        <span className="qc-badge qc-badge-neutral">{q.projectName}</span>
-                      ) : (
-                        '—'
-                      )}
-                    </td>
                     <td>{q.technicalOwnerName || '—'}</td>
-                    <td>{q.quoteOwnerName || '—'}</td>
                     <td>
                       <span className={`qc-badge ${getStageBadgeClass(q.processingStage)}`}>
                         {q.processingStageLabel || q.processingStage}
                       </span>
                     </td>
-                    <td className="text-secondary">{duration}</td>
                     <td>
                       <span className={`qc-badge ${q.sla?.status === 'overdue' ? 'qc-badge-danger' : 'qc-badge-neutral'}`}>
                         {q.sla?.status === 'overdue' ? 'Quá SLA' : 'Đang xử lý'}
@@ -119,7 +105,7 @@ export function ProgressOverdueQuotesTable({
                         onClick={() => onOpenQuote(q)}
                       >
                         <Eye size={13} style={{ display: 'inline', marginRight: 5, verticalAlign: -2 }} />
-                        Xem chi tiết
+                        Xem
                       </button>
                     </td>
                   </tr>

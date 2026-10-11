@@ -42,3 +42,21 @@ export function clampPercentValue(value: number): number {
   if (!Number.isFinite(value)) return 0;
   return Math.min(100, Math.max(0, value));
 }
+
+/** Chia DEU phan tram con lai (100 - tong cac dot da chinh tay) cho cac dot CHUA chinh tay, lam tron 2 so le,
+ * dot cuoi nhan phan du de tong = 100. Moi dot da chinh tay (manualIds) giu nguyen. Khong co dot tu dong -> giu nguyen. */
+export function distributePaymentPlan(rows: PaymentPlanRow[], manualIds: ReadonlySet<string>): PaymentPlanRow[] {
+  const autoRows = rows.filter(row => !manualIds.has(row.id));
+  if (autoRows.length === 0) return rows;
+  const usedBp = rows.filter(row => manualIds.has(row.id)).reduce((sum, row) => sum + Math.round((Number(row.percent) || 0) * 100), 0);
+  const remainingBp = Math.max(0, 10000 - usedBp);
+  const shareBp = Math.floor(remainingBp / autoRows.length);
+  let given = 0;
+  return rows.map(row => {
+    if (manualIds.has(row.id)) return row;
+    const isLastAuto = row.id === autoRows[autoRows.length - 1].id;
+    const bp = isLastAuto ? remainingBp - given : shareBp;
+    given += bp;
+    return { ...row, percent: bp / 100 };
+  });
+}

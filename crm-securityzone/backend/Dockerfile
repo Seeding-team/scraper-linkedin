@@ -16,8 +16,24 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*
 
+# LibreOffice Writer + font tieng Viet: engine DUY NHAT xuat DOCX -> PDF cho AI Contract Copilot (local = production, dung chung image nay).
+# Font tuong thich so lieu: Times New Roman->Liberation Serif, Arial->Liberation Sans, Calibri->Carlito, Cambria->Caladea. KHONG cai LibreOffice tren may Windows ca nhan.
+RUN apt-get update     && apt-get install -y --no-install-recommends libreoffice-writer fonts-liberation fonts-crosextra-carlito fonts-crosextra-caladea fonts-dejavu-core fontconfig     && rm -rf /var/lib/apt/lists/*
+
+# Liberation Serif thieu mot so dau tieng Viet (o, o, a, O, U, U, O...) nen fontconfig tu fallback sang
+# DejaVu Serif cho rieng nhung ky tu do - nhin "dam/to" khac han chu xung quanh (bug da bao). Ghi de de
+# uu tien "FreeSerif" (co san, di kem libreoffice-writer, du glyph tieng Viet, nhin gan Times New Roman hon).
+COPY docker/fonts-local.conf /etc/fonts/local.conf
+RUN fc-cache -f
+
+RUN soffice --headless --version     && fc-list | grep -qi "Liberation Serif" && fc-list :lang=vi family | grep -qi "DejaVu Serif"
+
 COPY requirements.txt constraints.txt ./
 RUN pip install --upgrade pip && pip install -r requirements.txt
+
+# Chromium cho render PDF bao gia gui khach (quote_telegram_service._render_quote_pdf). Cai o duong dan chung de appuser doc duoc.
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+RUN playwright install --with-deps chromium && chmod -R a+rX /ms-playwright && rm -rf /var/lib/apt/lists/*
 
 # npm install chay TRONG container Linux - KHONG copy node_modules tu may dev
 # (tranh bug symlink Windows->Linux).

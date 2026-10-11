@@ -397,7 +397,9 @@ export function CopyQuoteCrossWorkspaceModal({
   }));
 
   return (
-    <div className="crm-modal-backdrop fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4" onClick={onClose}>
+    // Chi dong khi click THAT SU vao backdrop (khong phai bubble tu dropdown
+    // portal ra document.body ben trong modal - xem CustomerFormModal.tsx).
+    <div className="crm-modal-backdrop fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4" onClick={event => { if (event.target === event.currentTarget) onClose(); }}>
       <div className="crm-modal bg-white rounded-2xl shadow-2xl border border-slate-200 w-full flex flex-col" style={{ maxWidth: 640, minHeight: 420 }} onClick={event => event.stopPropagation()}>
         <header className="crm-modal-header px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
           <div>

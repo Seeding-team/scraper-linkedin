@@ -606,7 +606,9 @@ export function CrmContactsPanel({
 
       {/* Slide-over Form Drawer */}
       {formOpen ? (
-        <div className="crm-drawer-backdrop" onClick={closeForm}>
+        // Chi dong khi click THAT SU vao backdrop (khong phai bubble tu dropdown
+        // portal ra document.body ben trong drawer - xem CustomerFormModal.tsx).
+        <div className="crm-drawer-backdrop" onClick={event => { if (event.target === event.currentTarget) closeForm(); }}>
           <aside
             className="crm-drawer crm-lead-drawer crm-lead-drawer--quick"
             data-testid="contact-form-drawer"

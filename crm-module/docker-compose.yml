@@ -25,6 +25,7 @@ services:
     image: crm-module-backend:latest
     container_name: crm-module-backend
     restart: unless-stopped
+    init: true   # PID 1 reap tien trinh con (LibreOffice soffice.bin thanh zombie sau timeout)
     env_file:
       - ./backend/.env
     environment:

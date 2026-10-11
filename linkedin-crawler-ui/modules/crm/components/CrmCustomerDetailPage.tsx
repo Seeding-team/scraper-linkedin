@@ -12,11 +12,15 @@ import { Fragment, useEffect, useMemo, useState } from 'react';
 import { API_BASE_URL, API_KEY } from '@/lib/env';
 import { useAppAuth } from '@/contexts/AppAuthContext';
 import { formatVND, getStageMeta, SOURCE_OPTIONS, SERVICE_PACKAGE_OPTIONS, CRM_PACKAGE_OPTIONS, INDUSTRY_OPTIONS } from '../constants/crmConfig';
+import { customerDisplay } from '../utils/customerNames';
 import type { CreateDealInput, CrmUserOption, DealStage } from '../types';
 import { CustomerFormModal } from './CustomerFormModal';
+import { useDealsChanged } from '../utils/dealSync';
+import { HandoverDocsCard, type HandoverDoc } from './HandoverDocsCard';
 import { CrmContactsPanel } from './CrmContactsPanel';
 import { ProjectFormModal } from './ProjectFormModal';
 import { DealFormModal, clearDealDraft } from './DealFormModal';
+import { CreateOpportunityDrawer } from './CreateOpportunityDrawer';
 import { mergeCategoryOptions } from '../hooks/useCrm';
 import { Loader2, Plus, Trash2, ChevronDown, ChevronUp, UserCog, X } from './icons';
 import { ActionMenu, type ActionMenuItem } from './ActionMenu';
@@ -118,6 +122,9 @@ export type RelatedPayload = {
   customer?: {
     id: string;
     customer_name?: string | null;
+    short_name?: string | null;
+    short_name_manual?: boolean | null;
+    position_category_id?: string | null;
     company_name?: string | null;
     position?: string | null;
     phone?: string | null;
@@ -138,10 +145,18 @@ export type RelatedPayload = {
     updated_at?: string | null;
     contact_count?: number | null;
     deal_count?: number | null;
+    /** "Việc tiếp theo" tu tinh server-side tu Deal/Bao gia/Hop dong dang hoat dong
+     * (crm_customer_progress_service.py, qua _attach_customer_metrics() trong get_customer()) -
+     * backend DA tra san o day (related_records() goi get_customer() ben trong), chi thieu
+     * khai bao type + hien thi o FE (bug thuc te 2026-10-11, Known gaps #6). */
+    next_action?: string | null;
   };
   deals?: Array<{
     id: string;
     customer_name?: string | null;
+    short_name?: string | null;
+    short_name_manual?: boolean | null;
+    position_category_id?: string | null;
     deal_stage?: string | null;
     estimated_budget?: number | string | null;
     lifetime_value?: number | string | null;
@@ -385,6 +400,9 @@ function toCustomerRow(customer: RelatedPayload['customer']): CrmCustomerRow | n
     id: customer.id,
     customerName: customer.customer_name || '',
     companyName: customer.company_name || '',
+    shortName: customer.short_name || null,
+    shortNameManual: Boolean(customer.short_name_manual),
+    positionCategoryId: customer.position_category_id || undefined,
     position: customer.position || '',
     phone: customer.phone || '',
     email: customer.email || '',
@@ -453,6 +471,18 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
   };
   const [editOpen, setEditOpen] = useState(false);
   const [reloadTick, setReloadTick] = useState(0);
+  // Bao gia/hop dong doi -> backend tu cap nhat stage Deal -> tai lai Customer 360 tu du lieu that.
+  useDealsChanged(() => setReloadTick(t => t + 1));
+  // Link Doc/Sheet bàn giao Lead (crm_leads.handover_links) của các Lead đã convert thành khách hàng này.
+  const [handoverDocs, setHandoverDocs] = useState<HandoverDoc[]>([]);
+  useEffect(() => {
+    let alive = true;
+    fetch(`${API_BASE_URL}/api/all-platform/crm/customers/${encodeURIComponent(customerId)}/handover-docs`, { credentials: 'include', headers: { 'Content-Type': 'application/json', ...(API_KEY ? { 'X-API-Key': API_KEY } : {}) } })
+      .then(res => res.json())
+      .then(body => { if (alive && body.success !== false && Array.isArray(body.data)) setHandoverDocs(body.data); })
+      .catch(() => { /* chi la thong tin phu */ });
+    return () => { alive = false; };
+  }, [customerId, reloadTick]);
 
   // Tab "Hợp đồng" o Customer 360 - TAI SU DUNG dung 2 modal Deal Workspace
   // dang dung (ManualContractModal/RegisterExternalContractModal), khong tu
@@ -486,6 +516,13 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
   // ca useCrm() - hook do con tu fetch toan bo danh sach deal cua he thong,
   // thua thai cho 1 trang Ho so 1 khach hang).
   const [dealModal, setDealModal] = useState<{ open: boolean; project: Project | null; contactId: string | null }>({ open: false, project: null, contactId: null });
+  // "Tạo cơ hội" KHONG gan san nguoi lien he (nut chung o tab Tong quan/Co hoi) - dung CreateOpportunityDrawer
+  // (feedback "tạo cơ hội trong chi tiết khách hàng nó phải là form của +deal upsell chứ ta") thay vi DealFormModal:
+  // giao dien day du hon (the tom tat khach hang, dem "Cơ hội hiện có", chip Nguon/Trang thai/Owner/Lien he), dung
+  // chung 1 backend contract (buildDealPayload + createDeal) nen an toan de doi UI ma khong doi logic luu. Rieng 2
+  // nut "Tạo cơ hội" GAN SAN 1 nguoi lien he cu the (tab Nguoi lien he) VAN giu DealFormModal vi CreateOpportunityDrawer
+  // chua ho tro gan contactId that (chi co o ten tu do) - doi se mat lien ket Contact that su.
+  const [createOpportunityOpen, setCreateOpportunityOpen] = useState(false);
   const [dealSaving, setDealSaving] = useState(false);
   const [dealAgents, setDealAgents] = useState<CrmUserOption[]>([]);
   const [dealSourceOptions, setDealSourceOptions] = useState(SOURCE_OPTIONS);
@@ -626,6 +663,29 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
     setRegisterContractLoading(true);
     try {
       const full = await customerLeadService.getById(activeDeal.id);
+      setRegisterContractDeal(full);
+      setRegisterContractOpen(true);
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : 'Không tải được cơ hội này.');
+    } finally {
+      setRegisterContractLoading(false);
+    }
+  }
+
+  // Bug thuc te (2026-10-10, audit thao/crm/SHARED_COMPONENT_MAP.md + REGRESSION_CHECKLIST.md Known
+  // gaps #7): nut "Tạo hợp đồng" tren Project card (tab "Hợp đồng") truoc day dung chung handler
+  // setDealModal voi nut "Tạo cơ hội" ben canh - bam vao mo nham form Tao Co hoi, khong tao hop dong
+  // nao ca. Dung y het resolve-Deal cua openQuickQuoteForProject() o tren (uu tien Deal thuoc dung
+  // project, fallback activeDeal) roi mo dung RegisterExternalContractModal.
+  async function openRegisterContractForProject(projectId: string) {
+    const candidate = data?.deals?.find(d => d.project_id === projectId) || activeDeal;
+    if (!candidate) {
+      window.alert('Dự án này chưa có Cơ hội (Deal) nào để ghi nhận hợp đồng. Hãy tạo Cơ hội trước.');
+      return;
+    }
+    setRegisterContractLoading(true);
+    try {
+      const full = await customerLeadService.getById(candidate.id);
       setRegisterContractDeal(full);
       setRegisterContractOpen(true);
     } catch (err) {
@@ -1102,6 +1162,22 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
     );
   }
 
+  // Feedback "chưa lấy tên viết tắt hiển thị nè bro" - truoc day header luon hien ten DAY DU (company_name), bo qua
+  // han short_name du da fetch san (chi dung lam tooltip). Dung chung customerDisplay() (da co san, dang dung dung o
+  // QuoteWorkspaceModal) de uu tien short_name, fallback ten day du khi chua co short_name.
+  const headerDisplay = customerDisplay({ shortName: customer?.short_name, companyName: customer?.company_name, customerName: customer?.customer_name });
+  // "Việc tiếp theo" - backend da tinh san (next_action, qua _attach_customer_metrics() trong
+  // get_customer()) va tra dung cho endpoint nay, chi chua tung hien o Chi tiet Khach hang (du
+  // da hien o CrmCustomersDirectory/LeadsDirectory/Lead360Drawer - Known gaps #6). Dung chung
+  // fallback theo status khi backend chua tra duoc, giong het nextActionOf() o
+  // CrmCustomersDirectory.tsx de khong lech logic giua 2 noi.
+  const nextActionText = customer?.next_action
+    || (customer?.status === 'new_lead' ? 'Xác minh nhu cầu'
+      : customer?.status === 'following' ? 'Theo dõi cơ hội'
+      : customer?.status === 'current_customer' ? 'Chăm sóc / upsell'
+      : customer?.status === 'not_fit' ? 'Không còn theo dõi'
+      : 'Cập nhật hồ sơ');
+
   return (
     <div className="crm-shell">
       <section className="crm-page-card crm-customers-page-shell bg-slate-50/70">
@@ -1112,14 +1188,14 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
               Khách hàng
             </button>
             <span className="mx-1.5">/</span>
-            <span>{customer?.customer_name || 'Khách hàng chưa tên'}</span>
+            <span>{headerDisplay.title}</span>
           </div>
 
           <div className="px-4 py-4 flex items-center justify-between">
             <div className="flex items-center gap-3.5 min-w-0">
               <div className="min-w-0">
                 <div className="flex items-center gap-2 mb-1">
-                  <h1 className="text-xl font-bold text-slate-900 truncate">{customer?.customer_name || 'Khách hàng chưa tên'}</h1>
+                  <h1 className="text-xl font-bold text-slate-900 truncate" title={headerDisplay.sub ? `Tên đầy đủ: ${headerDisplay.sub}` : undefined}>{headerDisplay.title}</h1>
                   {customer?.status ? (
                     <span className="px-2.5 py-0.5 rounded bg-blue-50 text-blue-700 text-xs font-semibold">
                       {STATUS_LABEL[customer.status] || customer.status}
@@ -1132,6 +1208,8 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
                   {customer?.source ? <span>{customer.source}</span> : null}
                   <span>•</span>
                   <span>Owner: {memberName(customer?.owner_id)}</span>
+                  <span>•</span>
+                  <span title={nextActionText}>Việc tiếp theo: <strong className="text-slate-700">{nextActionText}</strong></span>
                 </div>
                 {error ? <p className="crm-error mt-2">{error}</p> : null}
               </div>
@@ -1184,6 +1262,7 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
 
         <section className="crm-content-section !p-0 !border-0 !bg-transparent !shadow-none">
 
+          {tab === 'overview' && handoverDocs.length ? <HandoverDocsCard docs={handoverDocs} /> : null}
           {tab === 'overview' && (
             <CustomerOverviewTab
               data={data}
@@ -1193,7 +1272,7 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
               projectsSummary={projectsSummary}
               activityItems={activityItems}
               setTab={setTab}
-              onCreateDeal={() => setDealModal({ open: true, project: null, contactId: null })}
+              onCreateDeal={() => setCreateOpportunityOpen(true)}
               onEditCustomer={() => setEditOpen(true)}
             />
           )}
@@ -1225,6 +1304,8 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
               viewQuoteInNewWorkspace={viewQuoteInNewWorkspace}
               setProjectModal={setProjectModal}
               setDealModal={setDealModal}
+              onCreateQuote={openQuoteRequestForProject}
+              onCreateContract={projectId => void openRegisterContractForProject(projectId)}
               memberName={memberName}
               allContacts={allContacts}
               activityItems={activityItems}
@@ -1241,7 +1322,8 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
               projectsSummary={projectsSummary}
               quotes={data?.quotes || []}
               activityItems={activityItems}
-              onCreateDeal={() => setDealModal({ open: true, project: null, contactId: null })}
+              handoverDocs={handoverDocs}
+              onCreateDeal={() => setCreateOpportunityOpen(true)}
               onCreateQuote={(dealId: string) => {
                 const deal = customerQuoteDealsById.get(dealId) || null;
                 setQuoteWorkspace({ quoteId: null, deal, initialDealId: dealId });
@@ -1303,6 +1385,7 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
               openRegisterContractForActiveDeal={() => { setEditingContract(null); return openRegisterContractForActiveDeal(); }}
               onEditContract={openEditContract}
               setReloadTick={setReloadTick}
+              customerRef={customer ? { id: customerId, name: customer.company_name || customer.customer_name || 'Khách hàng' } : undefined}
             />
           )}
 
@@ -1335,7 +1418,7 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
         onSaved={() => { setEditOpen(false); setReloadTick(t => t + 1); }}
       />
       {contactAssignTarget ? (
-        <div className="crm-modal-backdrop" onClick={() => !contactAssignSaving && setContactAssignTarget(null)}>
+        <div className="crm-modal-backdrop" onClick={event => { if (event.target === event.currentTarget && !contactAssignSaving) setContactAssignTarget(null); }}>
           <div className="crm-modal crm-modal--confirm" onClick={event => event.stopPropagation()}>
             <header className="crm-modal-header">
               <h2 className="crm-modal-title">Đổi liên hệ chính</h2>
@@ -1428,12 +1511,19 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
           initialContact={dealModal.contactId ? { id: dealModal.contactId } : null}
         />
       ) : null}
+      <CreateOpportunityDrawer
+        open={createOpportunityOpen}
+        customer={customerRow ? { ...customerRow, canEdit } : null}
+        currentUser={user}
+        onClose={() => setCreateOpportunityOpen(false)}
+        onCreated={() => { setCreateOpportunityOpen(false); setReloadTick(t => t + 1); setTab('deals'); }}
+      />
       {quoteWorkspace ? (
         <QuoteWorkspaceModal
           quoteId={quoteWorkspace.quoteId}
           deals={customerQuoteDeals.length ? customerQuoteDeals : quoteWorkspace.deal ? [quoteWorkspace.deal] : []}
           dealsById={customerQuoteDeals.length ? customerQuoteDealsById : new Map(quoteWorkspace.deal ? [[quoteWorkspace.deal.id, quoteWorkspace.deal]] : [])}
-          agents={[]}
+          agents={dealAgents}
           user={user}
           defaultFormId={defaultQuoteFormId}
           quoteForms={quoteForms}

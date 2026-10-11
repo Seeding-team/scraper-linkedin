@@ -22,3 +22,4 @@ telethon
 
 # MSC → CRM product sync (migration 175) -- scheduler dong bo hang ngay
 apscheduler
+playwright==1.58.0

@@ -39,6 +39,8 @@ export function mergeCategoryOptions(defaults: CrmSelectOption[], dynamic?: Arra
   return [...merged, ...extra];
 }
 
+import { useDealsChanged } from '../utils/dealSync';
+
 export function useCrm(repository: CrmRepository = seedingCrmRepository) {
   const [deals, setDeals] = useState<Deal[]>([]);
   const [agents, setAgents] = useState<CrmUserOption[]>([]);
@@ -70,6 +72,9 @@ export function useCrm(repository: CrmRepository = seedingCrmRepository) {
   useEffect(() => {
     void loadDeals();
   }, [loadDeals]);
+
+  // Backend vua tu dong doi stage Deal (bao gia/hop dong) -> tai lai tu du lieu that, khong F5.
+  useDealsChanged(useCallback(() => { void loadDeals(); }, [loadDeals]));
 
   const loadAgents = useCallback(async () => {
     try {

@@ -31,7 +31,7 @@ import { formatQuoteMoney, localizeCurrencyLabel, normalizeQuoteCurrency } from 
 function formatVndPlain(value: unknown): string {
   return formatVndRaw(value).replace(/\s*đ$/, '');
 }
-import { filterRedundantAmountAfterDiscountColumn, normalizeQuoteColumnLabel, resolveDefaultVisibleColumnKeys, resolveQuoteItemColumns, resolveToggleableColumns } from '../utils/quoteColumns';
+import { ALWAYS_HIDDEN_CALCULATED_KEYS, filterRedundantAmountAfterDiscountColumn, normalizeQuoteColumnLabel, resolveDefaultVisibleColumnKeys, resolveQuoteItemColumns, resolveToggleableColumns } from '../utils/quoteColumns';
 import {
   getCustomerDisplayFields,
   resolveVisibleCustomerFieldKeys,
@@ -370,6 +370,16 @@ export function QuoteDocumentRenderer({
   contactPersonName,
   currency: currencyProp,
 }: Props) {
+  // BUG THAT DA GAP (2026-09-22): trang /baogia/{token} crash trang ("This
+  // page couldn't load") khi backend tra ve quoteItems/solutionItems la
+  // `null` THAT SU (khong phai []) - default param `= []` o tren CHI ap
+  // dung khi gia tri la `undefined`, KHONG ap dung cho `null` (dac diem cua
+  // JS/TS default parameter). Nhieu cho ben duoi (quoteItems.flatMap,
+  // filterRedundantAmountAfterDiscountColumn -> .some, v.v.) doc thang
+  // quoteItems ma khong tu guard rieng - chan 1 lan duy nhat o day thay vi
+  // sua tung noi goi rai rac, tranh sot.
+  quoteItems = quoteItems || [];
+  solutionItems = solutionItems || [];
   // Resize cot bang hang muc kieu Excel - CHI cho man hinh xem truoc/chi tiet
   // noi bo (mode 'preview'/'detail', xem allowColumnResize ben duoi), KHONG
   // anh huong ban in/PDF (@media print da ep width qua !important nen inline
@@ -497,7 +507,23 @@ export function QuoteDocumentRenderer({
     if (item.__bundleComponent && column.key === 'discountPercent') return '';
     if (item.__bundleComponent && column.key === 'vatRate') return '';
     if (column.type === 'auto-number' || column.key === 'order') return String(index + 1);
-    if (column.key === 'subtotal') return formatVnd(calculateItemSubtotal(item, currency));
+    // Chu ky "Trả năm" (migration 189): Thanh tien = Don gia x SL x 12 thang -
+    // khong ghi chu thi khach de hieu nham tinh sai (SL 1 x Don gia 199.000
+    // khong khop Thanh tien 2.388.000). Dung CHUNG .quote-price-stack voi
+    // nhanh giam gia (gach ngang) ben duoi - cung muc dich "1 dong phu nho
+    // duoi so tien chinh", khong tao class/cach trinh bay rieng.
+    if (column.key === 'subtotal') {
+      const amount = formatVnd(calculateItemSubtotal(item, currency));
+      if (item.billingCycle === 'annual' && item.billingTermMonths && item.billingTermMonths > 1) {
+        return (
+          <span className="quote-price-stack">
+            <b>{amount}</b>
+            <small>Cam kết {item.billingTermMonths} tháng</small>
+          </span>
+        );
+      }
+      return amount;
+    }
     if (column.key === 'vatAmount') return formatVnd(calculateItemVat(item, currency));
     // "ô nào null thì không hiện" (yeu cau rieng, cung nguyen tac voi Thong
     // tin khach hang) - tra chuoi rong thay vi dau "—" khi khong co du lieu.
@@ -513,7 +539,18 @@ export function QuoteDocumentRenderer({
         </span>
       ) : formatVnd(calculateItemTotal(item, currency));
     }
-    if (column.key === 'unitPrice') return formatVnd(item.unitPrice);
+    if (column.key === 'unitPrice') {
+      const amount = formatVnd(item.unitPrice);
+      if (item.billingCycle === 'annual' && item.billingTermMonths && item.billingTermMonths > 1) {
+        return (
+          <span className="quote-price-stack">
+            <b>{amount}</b>
+            <small>/tháng (trả năm)</small>
+          </span>
+        );
+      }
+      return amount;
+    }
     if (column.key === 'quantity') return String(item.quantity || '');
     if (column.key === 'discountPercent') return item.discountPercent ? `${item.discountPercent}%` : '';
     if (column.key === 'amountAfterDiscount') return formatVnd(calculateItemAfterDiscount(item, currency));
@@ -680,7 +717,7 @@ export function QuoteDocumentRenderer({
   // bao gia cu lo luu 'subtotal' trong visibleColumns tu truoc). Van tinh
   // toan noi bo (calculateItemSubtotal) binh thuong, chi bo o tang hien thi
   // khach hang - khong dung mode='detail' (noi bo van thay du neu mau khai).
-  const ALWAYS_HIDDEN_FROM_CUSTOMER_KEYS = ['subtotal'];
+  const ALWAYS_HIDDEN_FROM_CUSTOMER_KEYS = [...ALWAYS_HIDDEN_CALCULATED_KEYS];
   const defaultVisibleCustomerColumnKeys = resolveDefaultVisibleColumnKeys(schema, quoteItems);
   const finalColumns = filterRedundantAmountAfterDiscountColumn(
     applyCustomerColumnFilter

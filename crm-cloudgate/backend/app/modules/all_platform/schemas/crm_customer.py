@@ -11,6 +11,9 @@ CrmCustomerStatus = Literal["new_lead", "following", "current_customer", "not_fi
 class CrmCustomerBase(BaseModel):
     customer_name: str = Field(..., min_length=1)
     company_name: Optional[str] = None
+    # Ten viet tat (hien thi o danh sach). short_name_manual = true khi nguoi dung tu nhap -> khong bao gio tu ghi de.
+    short_name: Optional[str] = None
+    short_name_manual: Optional[bool] = None
     position: Optional[str] = None
     # migration 079 — Chuc vu category-driven select (category_type=crm_position).
     # position_label_snapshot is server-derived only, never trusted from client.
@@ -39,6 +42,8 @@ class CrmCustomerCreate(CrmCustomerBase):
 class CrmCustomerUpdate(BaseModel):
     customer_name: Optional[str] = None
     company_name: Optional[str] = None
+    short_name: Optional[str] = None
+    short_name_manual: Optional[bool] = None
     position: Optional[str] = None
     position_category_id: Optional[str] = None
     phone: Optional[str] = None

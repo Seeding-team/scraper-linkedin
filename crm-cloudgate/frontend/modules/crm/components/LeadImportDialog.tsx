@@ -285,7 +285,7 @@ export function LeadImportDialog({ open, onClose, onImported }: {
   const step = result ? 3 : preview ? 2 : 1;
 
   return (
-    <div className="crm-modal-backdrop" onClick={closeDialog}>
+    <div className="crm-modal-backdrop" onClick={event => { if (event.target === event.currentTarget) closeDialog(); }}>
       <div className="crm-modal crm-lead-import-modal" onClick={event => event.stopPropagation()}>
         <header className="crm-modal-header crm-lead-import-header">
           <div>
