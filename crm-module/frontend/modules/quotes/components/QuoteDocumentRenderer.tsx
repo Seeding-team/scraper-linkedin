@@ -31,7 +31,7 @@ import { formatQuoteMoney, localizeCurrencyLabel, normalizeQuoteCurrency } from 
 function formatVndPlain(value: unknown): string {
   return formatVndRaw(value).replace(/\s*đ$/, '');
 }
-import { filterRedundantAmountAfterDiscountColumn, normalizeQuoteColumnLabel, resolveDefaultVisibleColumnKeys, resolveQuoteItemColumns, resolveToggleableColumns } from '../utils/quoteColumns';
+import { ALWAYS_HIDDEN_CALCULATED_KEYS, filterRedundantAmountAfterDiscountColumn, normalizeQuoteColumnLabel, resolveDefaultVisibleColumnKeys, resolveQuoteItemColumns, resolveToggleableColumns } from '../utils/quoteColumns';
 import {
   getCustomerDisplayFields,
   resolveVisibleCustomerFieldKeys,
@@ -717,7 +717,7 @@ export function QuoteDocumentRenderer({
   // bao gia cu lo luu 'subtotal' trong visibleColumns tu truoc). Van tinh
   // toan noi bo (calculateItemSubtotal) binh thuong, chi bo o tang hien thi
   // khach hang - khong dung mode='detail' (noi bo van thay du neu mau khai).
-  const ALWAYS_HIDDEN_FROM_CUSTOMER_KEYS = ['subtotal'];
+  const ALWAYS_HIDDEN_FROM_CUSTOMER_KEYS = [...ALWAYS_HIDDEN_CALCULATED_KEYS];
   const defaultVisibleCustomerColumnKeys = resolveDefaultVisibleColumnKeys(schema, quoteItems);
   const finalColumns = filterRedundantAmountAfterDiscountColumn(
     applyCustomerColumnFilter
