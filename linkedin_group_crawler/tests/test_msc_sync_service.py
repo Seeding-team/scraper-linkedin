@@ -129,6 +129,7 @@ def fake_db(monkeypatch):
     stub_settings = types.SimpleNamespace(
         msc_api_base_url="https://msc.example",
         msc_api_token="",
+        msc_integration_key="integration-key-for-test",
         msc_sync_hour=2,
         msc_sync_minute=30,
         msc_sync_dry_run=False,
@@ -390,7 +391,7 @@ def test_dry_run_zero_writes(fake_db, monkeypatch):
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def _stub_http(monkeypatch, status_code=200, json_data=None, json_error=None):
+def _stub_http(monkeypatch, status_code=200, json_data=None, json_error=None, capture=None):
     class _Resp:
         def __init__(self):
             self.status_code = status_code
@@ -410,7 +411,10 @@ def _stub_http(monkeypatch, status_code=200, json_data=None, json_error=None):
         def __exit__(self, *_a):
             return False
 
-        def get(self, *_a, **_k):
+        def get(self, url, headers=None, **_k):
+            if capture is not None:
+                capture["url"] = url
+                capture["headers"] = dict(headers or {})
             return _Resp()
 
     monkeypatch.setattr(
@@ -426,6 +430,8 @@ def _stub_http(monkeypatch, status_code=200, json_data=None, json_error=None):
 @pytest.mark.parametrize(
     "status_code, json_data",
     [
+        (401, None),  # HTTP 401: key sai/thieu hoac het han → CRM khong duoc ghi
+        (403, None),  # HTTP 403: MSC tu choi phan quyen
         (500, None),  # HTTP 5xx
         (404, None),  # HTTP 4xx
         (200, {"success": False}),  # success=false
@@ -468,6 +474,61 @@ def test_missing_base_url_fails_cleanly(fake_db, monkeypatch):
     assert fake_db.db.get("service_catalog_items", []) == [
         {"id": "crm-1", "item_type": "group", "name": "Old", "status": "active"}
     ]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Khoa tich hop may-may (X-Msc-Integration-Key) — auth moi ESC ↔ MSC
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def test_integration_key_header_sent_and_no_bearer(fake_db, monkeypatch):
+    """Dung khoa tu MSC_INTEGRATION_KEY, gui dung header, va KHONG con Bearer."""
+    capture = {}
+    _stub_http(monkeypatch, json_data=base_snapshot(), capture=capture)
+    stats = msc_sync_service.run_sync(trigger="manual", user_id="user-1")
+    assert stats["status"] == "success"
+    assert capture["url"] == "https://msc.example/api/v1/goods"
+    assert capture["headers"] == {"X-Msc-Integration-Key": "integration-key-for-test"}
+    assert "Authorization" not in capture["headers"]
+
+
+def test_missing_integration_key_fails_cleanly_no_crm_write(fake_db, monkeypatch):
+    fake_db.db["service_catalog_items"] = [
+        {"id": "crm-1", "item_type": "group", "name": "Old", "status": "active"}
+    ]
+    monkeypatch.setattr(msc_sync_service.settings, "msc_integration_key", "")
+    stats = msc_sync_service.run_sync(trigger="manual", user_id=None)
+    assert stats["status"] == "failed"
+    assert "MSC_INTEGRATION_KEY" in stats["error_message"]
+    # CRM giu nguyen; va KHONG bat dau bat du lieu (loi truoc khi fetch)
+    assert [r["name"] for r in fake_db.db["service_catalog_items"]] == ["Old"]
+
+
+def test_missing_key_does_not_fall_back_to_bearer_token(fake_db, monkeypatch):
+    """Neu thieu khoa tich hop thi KHONG fallback gui token Bearer cu."""
+    monkeypatch.setattr(msc_sync_service.settings, "msc_api_token", "old-expired-token")
+    monkeypatch.setattr(msc_sync_service.settings, "msc_integration_key", "")
+    capture = {}
+    _stub_http(monkeypatch, capture=capture)
+    stats = msc_sync_service.run_sync(trigger="scheduled", user_id=None)
+    assert stats["status"] == "failed"
+    assert "MSC_INTEGRATION_KEY" in stats["error_message"]
+    # fetch KHONG duoc goi (loi xay truoc khi fetch) → khong co url/header nao
+    assert "headers" not in capture
+    assert "Authorization" not in capture.get("headers", {})
+
+
+def test_msc_401_with_wrong_key_recorded_failed_no_crm_write(fake_db, monkeypatch):
+    """MSC tra 401 (khoa sai): run failed, CRM khong thay doi, khong fallback."""
+    fake_db.db["service_catalog_items"] = [
+        {"id": "crm-1", "item_type": "group", "name": "Old", "status": "active"}
+    ]
+    capture = {}
+    _stub_http(monkeypatch, status_code=401, capture=capture)
+    stats = msc_sync_service.run_sync(trigger="manual", user_id=None)
+    assert stats["status"] == "failed"
+    assert stats["http_status"] == 401
+    assert [r["name"] for r in fake_db.db["service_catalog_items"]] == ["Old"]
 
 
 def test_failed_run_is_recorded_in_msc_sync_runs(fake_db, monkeypatch):
