@@ -2086,6 +2086,31 @@ export function QuoteWorkspaceModal({
     );
   }
 
+  /** Tinh nang "Chu ky" (migration 189) - doi Tra thang/Tra nam cho hang muc
+   * CO SAN ca 2 gia da snapshot tu danh muc (catalogMonthlyPriceVnd/
+   * catalogAnnualCommitMonthlyPriceVnd, dat o catalogItemToQuoteItem() luc
+   * them hang). CHI doi dung 1 trong 2 muc gia DA CO SAN - khong phai sua gia
+   * tuy y, nen backend (quote.py _is_billing_cycle_price_toggle) cho phep ca
+   * Presale doi o dong DA LUU, khong can quyen sua gia ban nhu cac o khac. */
+  function handleBillingCycleChange(index: number, cycle: 'monthly' | 'annual') {
+    setItemsDraft(prev =>
+      prev.map((row, i) => {
+        if (i !== index) return row;
+        const vnd = cycle === 'annual' ? row.catalogAnnualCommitMonthlyPriceVnd : row.catalogMonthlyPriceVnd;
+        if (vnd == null) return row;
+        const price = toQuoteMoney(vnd, workspaceFx) ?? 0;
+        return {
+          ...row,
+          billingCycle: cycle,
+          billingTermMonths: cycle === 'annual' ? 12 : 1,
+          unitPrice: price,
+          ...(workspaceCurrency === 'USD' ? { unitPriceVnd: vnd } : {}),
+          markupPercent: calculateMarkupFromCostPrice(row.costPrice ?? null, price),
+        };
+      })
+    );
+  }
+
   function updateBundleComponents(parentIndex: number, componentIds: string[], patcher: (component: BundleSnapshotComponent) => BundleSnapshotComponent) {
     const targetIds = new Set(componentIds);
     const nextItems = itemsDraft.map((row, i) => {
@@ -2342,6 +2367,16 @@ export function QuoteWorkspaceModal({
       priceBookItemId: row.priceBookItemId,
       priceBookVersionId: row.priceBookVersionId,
       priceBookSnapshot: row.priceBookSnapshot,
+      // Chu ky (migration 189) - CUNG LOI y het bug priceBookItemId o tren:
+      // toItemInput() liet ke tung field mot, quen 4 field nay se lam MOI
+      // lan doi Chu ky (Trả tháng/Trả năm) bi ROI RA khi Luu/Bàn giao (xac
+      // nhan thuc te qua network payload: billingCycle doi dung tren UI/
+      // unitPrice tinh dung, nhung gui len BE billing_cycle=null) - DB luu
+      // NULL, mat het lua chon Chu ky ngay sau lan Luu dau tien.
+      billingCycle: row.billingCycle,
+      billingTermMonths: row.billingTermMonths,
+      catalogMonthlyPriceVnd: row.catalogMonthlyPriceVnd,
+      catalogAnnualCommitMonthlyPriceVnd: row.catalogAnnualCommitMonthlyPriceVnd,
       // De quy - hang muc thuoc 1 nhom (Section) duoc gui long trong
       // `children` cua dong section do, dung DINH DANG API cu da co san
       // (xem buildItemTree() gop itemsDraft PHANG thanh cay truoc khi goi
@@ -2657,6 +2692,20 @@ export function QuoteWorkspaceModal({
     }
     const defaultUnitPrice = toQuoteMoney(defaultUnitPriceVnd, workspaceFx) ?? 0;
     const defaultCostPrice = toQuoteMoney(defaultCostPriceVnd, workspaceFx);
+    // Chu ky "tra thang/tra nam" (migration 189) - ap dung cho MOI nhom san
+    // pham co du CA 2 gia trong danh muc (vd Markee Chat MCHAT-AGENT: Gia
+    // thang 39.000/Gia tra nam-thang 29.000), khong rieng VPS/bundle nao.
+    // Chi component moi co khai niem nay (itemType==='bundle' dung co che gia
+    // combo rieng, khong lien quan monthlyPriceVnd/annualCommitMonthlyPriceVnd).
+    // Chon Chu ky MAC DINH khop voi gia resolveCatalogCustomerPrice() DA chon
+    // (firstPositiveNumber uu tien defaultCustomerPriceVnd truoc) - giu dung
+    // hanh vi/con so hien thi NHU CU luc moi them, chi mo khoa dropdown doi
+    // qua lai, khong tu doi gia mac dinh đang co.
+    const hasDualCatalogPrice =
+      item.itemType !== 'bundle' &&
+      typeof item.monthlyPriceVnd === 'number' && item.monthlyPriceVnd > 0 &&
+      typeof item.annualCommitMonthlyPriceVnd === 'number' && item.annualCommitMonthlyPriceVnd > 0;
+    const defaultBillingCycle: 'monthly' | 'annual' = defaultUnitPriceVnd === item.annualCommitMonthlyPriceVnd ? 'annual' : 'monthly';
     return {
       ...(workspaceCurrency === 'USD'
         ? { unitPriceVnd: defaultUnitPriceVnd, costPriceVnd: costViewAllowed ? defaultCostPriceVnd : null }
@@ -2698,6 +2747,14 @@ export function QuoteWorkspaceModal({
       bundleSnapshot: item.itemType === 'bundle'
         ? { pricingMode: 'fixed', targetGrossMarginPercent: item.targetGrossMarginPercent ?? 30, components: bundleSnapshot }
         : undefined,
+      ...(hasDualCatalogPrice
+        ? {
+            billingCycle: defaultBillingCycle,
+            billingTermMonths: defaultBillingCycle === 'annual' ? 12 : 1,
+            catalogMonthlyPriceVnd: item.monthlyPriceVnd,
+            catalogAnnualCommitMonthlyPriceVnd: item.annualCommitMonthlyPriceVnd,
+          }
+        : {}),
     };
   }
 
@@ -3879,6 +3936,14 @@ export function QuoteWorkspaceModal({
   const costViewAllowed = quote ? quote.costViewAllowed !== false : true;
   const pricingViewAllowed = quote ? quote.pricingViewAllowed !== false : true;
   const profitabilityViewAllowed = quote ? quote.profitabilityViewAllowed !== false : true;
+  // Tinh nang "Chu ky" (migration 189) - cot chi hien KHI CO it nhat 1 hang
+  // muc hien tai ho tro ca 2 gia (duoc danh dau boi catalogMonthlyPriceVnd +
+  // catalogAnnualCommitMonthlyPriceVnd deu khac null luc them tu danh muc) -
+  // ap dung cho MOI nhom san pham, khong rieng VPS/Markee Chat nao. Xoa het
+  // hang muc co 2 gia thi cot tu an, dung yeu cau "cột tự ẩn".
+  const hasAnyBillingCycleItem = itemsDraft.some(
+    it => it.catalogMonthlyPriceVnd != null && it.catalogAnnualCommitMonthlyPriceVnd != null
+  );
 
   // Sau khi chon Co hoi CRM (che do tao moi), tu dien cac field nghiep vu tu
   // CHINH Deal that (khong bia noi dung) - CHI dien field dang TRONG, hoi xac
@@ -6076,6 +6141,7 @@ export function QuoteWorkspaceModal({
                     <col style={{ width: '104px' }} />
                     <col style={{ width: '104px' }} />
                     <col style={{ width: '96px' }} />
+                    {hasAnyBillingCycleItem ? <col style={{ width: '112px' }} /> : null}
                     <col style={{ width: '104px' }} />
                     <col style={{ width: '70px' }} />
                     <col style={{ width: '104px' }} />
@@ -6109,6 +6175,9 @@ export function QuoteWorkspaceModal({
                       <th className="qc-th-money qc-th-cost">Giá vốn/ĐV</th>
                       <th className="qc-th-money qc-th-cost">Cost tổng</th>
                       <th className="qc-th-money qc-th-markup">Markup</th>
+                      {hasAnyBillingCycleItem ? (
+                        <th className="qc-th-money qc-th-billing-cycle" title="Trả theo tháng hay cam kết trả theo năm (ưu đãi) — chỉ áp dụng cho hạng mục có cấu hình cả 2 mức giá trong danh mục">Chu kỳ</th>
+                      ) : null}
                       <th className="qc-th-money qc-th-markup">Giá khách/ĐV</th>
                       <th className="qc-th-money qc-th-vat" title="Thuế GTGT (%) của hạng mục — lấy theo sản phẩm khi thêm từ danh mục, để 0 nếu không có">VAT (%)</th>
                       <th className="qc-th-money qc-th-total">Thành tiền</th>
@@ -6180,8 +6249,8 @@ export function QuoteWorkspaceModal({
                                 onDragOver={canDragRows ? event => event.preventDefault() : undefined}
                                 onDrop={canDragRows ? () => handleRowDrop(index, true) : undefined}
                               >
-                                {/* Ten data columns (them "Mô tả"), plus the separate action cell when editable. */}
-                                <td colSpan={9}>
+                                {/* Ten data columns (them "Mô tả" + "Chu kỳ" khi co), plus the separate action cell when editable. */}
+                                <td colSpan={hasAnyBillingCycleItem ? 10 : 9}>
                                   {canDragRows ? <span className="qc-workspace-drag-handle" title="Kéo để sắp xếp">⠿</span> : null}
                                   {/* Roman numeral (I/II/III...) dat TRUOC ten muc (ben trai) thay vi
                                    * sau nhu cu - o kich thuoc nho, badge "I" dat SAU chu de bi doc
@@ -6494,6 +6563,24 @@ export function QuoteWorkspaceModal({
                                 {renderFillDownIcon(index, 'markupPercent')}
                               </span>
                             </td>
+                            {hasAnyBillingCycleItem ? (
+                              <td className="qc-cell-money qc-cell-billing-cycle" data-label="Chu kỳ">
+                                {item.catalogMonthlyPriceVnd != null && item.catalogAnnualCommitMonthlyPriceVnd != null ? (
+                                  (editableTechnicalCells || editableCells) ? (
+                                    <select
+                                      className="qc-cell-input"
+                                      value={item.billingCycle === 'annual' ? 'annual' : 'monthly'}
+                                      onChange={e => handleBillingCycleChange(index, e.target.value === 'annual' ? 'annual' : 'monthly')}
+                                    >
+                                      <option value="monthly">Trả tháng</option>
+                                      <option value="annual">Trả năm</option>
+                                    </select>
+                                  ) : (
+                                    item.billingCycle === 'annual' ? 'Trả năm' : 'Trả tháng'
+                                  )
+                                ) : '—'}
+                              </td>
+                            ) : null}
                             <td className="qc-cell-money qc-cell-markup" data-label="Giá khách/ĐV">
                               {editableCells ? (
                                 <CurrencyInput
@@ -6530,7 +6617,12 @@ export function QuoteWorkspaceModal({
                              * lech cong thuc nhau (fallback cu KHONG co VAT/
                              * chiet khau, item.totalAmount tri hoan toi luc
                              * luu that su). */}
-                            <td className="qc-cell-money" data-label="Thành tiền">{formatMoney(calculateItemTotal(item, workspaceCurrency))}</td>
+                            <td className="qc-cell-money" data-label="Thành tiền">
+                              {formatMoney(calculateItemTotal(item, workspaceCurrency))}
+                              {item.billingCycle === 'annual' && item.billingTermMonths && item.billingTermMonths > 1 ? (
+                                <span className="qc-row-sub" style={{ display: 'block' }}>{item.billingTermMonths} tháng</span>
+                              ) : null}
+                            </td>
                             <td className={`qc-cell-money qc-th-margin-col ${margin != null && margin >= 20 ? 'qc-cell-margin-good' : margin != null ? 'qc-cell-margin-warn' : ''}`} style={{ position: 'relative' }} data-label="Margin">
                               {!profitabilityViewAllowed ? <span className="qc-row-sub">Không có quyền xem</span> : formatPercentFixed2(margin)}
                             </td>
@@ -6635,6 +6727,7 @@ export function QuoteWorkspaceModal({
                                       {!costViewAllowed ? <span className="qc-row-sub">Không có quyền xem</span> : childCostTotal != null ? formatMoney(childCostTotal) : '—'}
                                     </td>
                                     <td className="qc-cell-money qc-cell-markup" data-label="Markup">{formatPercentFixed2(child.markupPercent)}</td>
+                                    {hasAnyBillingCycleItem ? <td className="qc-cell-money qc-cell-billing-cycle" data-label="Chu kỳ">—</td> : null}
                                     <td className="qc-cell-money qc-cell-markup" data-label="Giá khách/ĐV">
                                       {!pricingViewAllowed ? (
                                         <span className="qc-row-sub">Không có quyền xem</span>

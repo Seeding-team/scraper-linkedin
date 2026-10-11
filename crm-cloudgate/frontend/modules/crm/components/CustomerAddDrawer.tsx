@@ -45,6 +45,11 @@ type CompanyForm = {
   address: string;
   industry: string;
   source: string;
+  /** SDT/email cua CONG TY (khac voi phone/email cua Nguoi lien he chinh o
+   * ContactForm) - tuy chon, de trong neu khach hang khong co SDT/email
+   * chung rieng (dung SDT/email cua nguoi lien he la du). */
+  phone: string;
+  email: string;
 };
 
 type ContactForm = {
@@ -89,7 +94,7 @@ function saveCustomerSourceDefault(currentUser: AppUser | null, source: string) 
 }
 
 function emptyCompany(defaultSource = 'Manual'): CompanyForm {
-  return { customerName: '', shortName: '', taxCode: '', website: '', city: '', address: '', industry: '', source: defaultSource || 'Manual' };
+  return { customerName: '', shortName: '', taxCode: '', website: '', city: '', address: '', industry: '', source: defaultSource || 'Manual', phone: '', email: '' };
 }
 function emptyContact(): ContactForm {
   return { name: '', positionCategoryId: '', positionLabel: '', phone: '', email: '', zalo: '', facebook: '' };
@@ -420,6 +425,8 @@ export function CustomerAddDrawer({
       short_name: company.shortName.trim() || null,
       short_name_manual: shortTouched && Boolean(company.shortName.trim()),
       tax_code: company.taxCode.trim() || null,
+      phone: company.phone.trim() || null,
+      email: company.email.trim() || null,
       website: company.website.trim() || null,
       city: company.city || null,
       address: company.address.trim() || null,
@@ -673,6 +680,12 @@ export function CustomerAddDrawer({
                   onChange={e => changeCompanyName(e.target.value)}
                   placeholder="Công ty TNHH ABC"
                 />
+              </Field>
+              <Field label="SĐT công ty" hint="tùy chọn — khác với SĐT người liên hệ bên dưới">
+                <input value={company.phone} onChange={e => setCompanyField('phone', e.target.value)} type="tel" placeholder="09xxxxxxxx" />
+              </Field>
+              <Field label="Email công ty" hint="tùy chọn — khác với email người liên hệ bên dưới">
+                <input value={company.email} onChange={e => setCompanyField('email', e.target.value)} type="email" placeholder="contact@congty.com" />
               </Field>
               {enterpriseLike || company.shortName ? (
                 <Field label="Tên viết tắt" hint="tự điền theo tên công ty, sửa được">

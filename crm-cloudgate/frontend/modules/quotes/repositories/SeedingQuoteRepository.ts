@@ -87,6 +87,10 @@ type QuoteItemPayload = {
   cost_override_at?: string | null;
   cost_price_original?: number | null;
   cost_price_vnd?: number | null;
+  billing_cycle?: string | null;
+  billing_term_months?: number | null;
+  catalog_monthly_price_vnd?: number | null;
+  catalog_annual_commit_monthly_price_vnd?: number | null;
 };
 
 function getDefaultHeaders(): Record<string, string> {
@@ -253,6 +257,10 @@ function toQuoteItemPayload(item: NonNullable<CreateQuoteInput['items']>[number]
     cost_override_at: item.costOverrideAt ?? null,
     cost_price_original: item.costPriceOriginal ?? null,
     cost_price_vnd: item.costPriceVnd ?? null,
+    billing_cycle: item.billingCycle ?? null,
+    billing_term_months: item.billingTermMonths ?? null,
+    catalog_monthly_price_vnd: item.catalogMonthlyPriceVnd ?? null,
+    catalog_annual_commit_monthly_price_vnd: item.catalogAnnualCommitMonthlyPriceVnd ?? null,
   };
 }
 

@@ -31,6 +31,9 @@ type FormState = {
   contactName: string;
   positionCategoryId: string;
   positionLabel: string;
+  /** SDT/Email cua NGUOI LIEN HE chinh (crm_contacts) - khac voi phone/email ben duoi (cua CONG TY, crm_customers). */
+  contactPhone: string;
+  contactEmail: string;
   phone: string;
   email: string;
   zalo: string;
@@ -55,6 +58,8 @@ function emptyForm(): FormState {
     contactName: '',
     positionCategoryId: '',
     positionLabel: '',
+    contactPhone: '',
+    contactEmail: '',
     phone: '',
     email: '',
     zalo: '',
@@ -83,6 +88,8 @@ function formFromCustomer(customer: CrmCustomerRow): FormState {
     contactName: customer.primaryContact?.name || '',
     positionCategoryId: customer.positionCategoryId || '',
     positionLabel: customer.positionLabelSnapshot || customer.position || '',
+    contactPhone: customer.primaryContact?.phone || '',
+    contactEmail: customer.primaryContact?.email || '',
     phone: customer.phone || '',
     email: customer.email || '',
     zalo: customer.zalo || '',
@@ -155,8 +162,10 @@ export function CustomerFormModal({
   const [suggesting, setSuggesting] = useState(false);
   // Nguoi lien he chinh hien co (co the chua kem theo customer - vd trang chi tiet) -> tu nap khi mo form sua.
   const [primaryContact, setPrimaryContact] = useState<{ id: string; name: string } | null>(null);
-  // Chuc vu goc cua nguoi lien he chinh (de biet co doi hay khong khi luu) - lay tu chinh Contact, khong phai Khach hang.
+  // Chuc vu/SDT/Email goc cua nguoi lien he chinh (de biet co doi hay khong khi luu) - lay tu chinh Contact, khong phai Khach hang.
   const [contactPositionBase, setContactPositionBase] = useState('');
+  const [contactPhoneBase, setContactPhoneBase] = useState('');
+  const [contactEmailBase, setContactEmailBase] = useState('');
   // Tat ca nguoi lien he cua khach (chi de hien thi) - truoc day form chi cho thay 1 nguoi.
   const [contactsList, setContactsList] = useState<Array<{ id: string; name: string; position: string; phone: string; email: string; isPrimary: boolean }>>([]);
   // 4 kenh phu (Zalo/Facebook/Telegram/Website) chi hien khi co du lieu hoac bam "+" de them.
@@ -179,6 +188,8 @@ export function CustomerFormModal({
     setExtraChannels({ zalo: Boolean(initial.zalo), facebook: Boolean(initial.facebook), telegram: Boolean(initial.telegram), website: Boolean(initial.website) });
     setPrimaryContact(customer?.primaryContact?.id ? { id: customer.primaryContact.id, name: customer.primaryContact.name || '' } : null);
     setContactPositionBase('');
+    setContactPhoneBase(customer?.primaryContact?.phone || '');
+    setContactEmailBase(customer?.primaryContact?.email || '');
     setContactsList([]);
     if (customer) {
       let alive = true;
@@ -195,7 +206,15 @@ export function CustomerFormModal({
           setContactsList(body.data.map((c: { id: string; name?: string; position_label_snapshot?: string | null; position?: string | null; phone?: string | null; email?: string | null; is_primary?: boolean }) => ({ id: c.id, name: c.name || '', position: c.position_label_snapshot || c.position || '', phone: c.phone || '', email: c.email || '', isPrimary: Boolean(c.is_primary) })));
           setPrimaryContact({ id: main.id, name: main.name || '' });
           setContactPositionBase(mainPosition);
-          setForm(current => ({ ...current, contactName: current.contactName || main.name || '', positionCategoryId: mainPosition || current.positionCategoryId }));
+          setContactPhoneBase(main.phone || '');
+          setContactEmailBase(main.email || '');
+          setForm(current => ({
+            ...current,
+            contactName: current.contactName || main.name || '',
+            positionCategoryId: mainPosition || current.positionCategoryId,
+            contactPhone: current.contactPhone || main.phone || '',
+            contactEmail: current.contactEmail || main.email || '',
+          }));
         })
         .catch(() => { /* khong co lien he -> de trong */ });
       return () => { alive = false; };
@@ -280,29 +299,40 @@ export function CustomerFormModal({
   function validate(): string | null {
     const personal = isEdit && !looksLikeEnterprise(customer?.customerName, customer?.companyName, customer?.taxCode) && !form.companyName.trim();
     if (!personal && !form.companyName.trim()) return 'Vui lòng nhập tên công ty.';
-    if (!form.phone.trim() && !form.email.trim()) return 'Cần nhập số điện thoại hoặc email.';
+    if (!form.phone.trim() && !form.email.trim()) return 'Cần nhập SĐT hoặc Email của công ty.';
     return null;
   }
 
-  /** Nguoi lien he chinh + chuc vu luu o crm_contacts (cap nhat lien he co san, hoac tao moi neu da nhap ten). */
+  /** Nguoi lien he chinh + chuc vu/SDT/Email luu o crm_contacts (cap nhat lien he co san, hoac tao moi neu da nhap ten).
+   * SDT/Email o day la CUA NGUOI LIEN HE (form.contactPhone/contactEmail) - khac voi form.phone/email (cua CONG TY,
+   * luu rieng vao crm_customers o handleSubmit). */
   async function syncPrimaryContact(customerId: string) {
     const name = form.contactName.trim();
+    const contactPhone = form.contactPhone.trim();
+    const contactEmail = form.contactEmail.trim();
     const existing = primaryContact;
     const base = `${API_BASE_URL}/api/all-platform/crm/customers/${encodeURIComponent(customerId)}/contacts`;
     if (existing?.id) {
       const nameChanged = name && name !== (existing.name || '');
       const positionChanged = form.positionCategoryId !== (contactPositionBase || customer?.positionCategoryId || '');
-      if (!nameChanged && !positionChanged) return;
+      const phoneChanged = contactPhone !== (contactPhoneBase || '');
+      const emailChanged = contactEmail !== (contactEmailBase || '');
+      if (!nameChanged && !positionChanged && !phoneChanged && !emailChanged) return;
       const res = await fetch(`${base}/${encodeURIComponent(existing.id)}`, {
         method: 'PUT', credentials: 'include', headers: headers(),
-        body: JSON.stringify({ ...(nameChanged ? { name } : {}), ...(positionChanged ? { position_category_id: form.positionCategoryId || null } : {}) }),
+        body: JSON.stringify({
+          ...(nameChanged ? { name } : {}),
+          ...(positionChanged ? { position_category_id: form.positionCategoryId || null } : {}),
+          ...(phoneChanged ? { phone: contactPhone || null } : {}),
+          ...(emailChanged ? { email: contactEmail || null } : {}),
+        }),
       });
       const out = await res.json();
       if (!res.ok || out.success === false) throw new Error(out?.message || 'Đã lưu hồ sơ nhưng chưa cập nhật được người liên hệ.');
-    } else if (name) {
+    } else if (name || contactPhone || contactEmail) {
       const res = await fetch(base, {
         method: 'POST', credentials: 'include', headers: headers(),
-        body: JSON.stringify({ name, phone: form.phone.trim() || null, email: form.email.trim() || null, position_category_id: form.positionCategoryId || null, is_primary: true }),
+        body: JSON.stringify({ name: name || form.companyName.trim(), phone: contactPhone || null, email: contactEmail || null, position_category_id: form.positionCategoryId || null, is_primary: true }),
       });
       const out = await res.json();
       if (!res.ok || out.success === false) throw new Error(out?.message || 'Đã lưu hồ sơ nhưng chưa tạo được người liên hệ.');
@@ -434,7 +464,7 @@ export function CustomerFormModal({
           </div>
 
           <div className="crm-form-section">
-            <p className="crm-form-title">Thông tin liên hệ</p>
+            <p className="crm-form-title">Người liên hệ chính</p>
             {contactsList.length > 1 ? (
               <ul className="crm-contact-list" data-testid="customer-contact-list">
                 {contactsList.map(c => (
@@ -461,24 +491,36 @@ export function CustomerFormModal({
                   }}
                 />
               </Field>
-              <Field label="Số điện thoại" required hint="cần SĐT hoặc email" onClear={() => setValue('phone', '')}>
+              <Field label="SĐT người liên hệ" onClear={() => setValue('contactPhone', '')}>
+                <input value={form.contactPhone} onChange={e => setValue('contactPhone', e.target.value)} type="tel" placeholder="09xxxxxxxx" />
+              </Field>
+              <Field label="Email người liên hệ" onClear={() => setValue('contactEmail', '')}>
+                <input value={form.contactEmail} onChange={e => setValue('contactEmail', e.target.value)} type="email" placeholder="ten@congty.com" />
+              </Field>
+            </div>
+          </div>
+
+          <div className="crm-form-section">
+            <p className="crm-form-title">Thông tin doanh nghiệp</p>
+            <div className="crm-form-grid">
+              <Field label="SĐT công ty" required hint="cần SĐT hoặc email" onClear={() => setValue('phone', '')}>
                 <input value={form.phone} onChange={e => setValue('phone', e.target.value)} type="tel" placeholder="09xxxxxxxx" />
               </Field>
-              <Field label="Email" required hint="cần SĐT hoặc email" onClear={() => setValue('email', '')}>
+              <Field label="Email công ty" required hint="cần SĐT hoặc email" onClear={() => setValue('email', '')}>
                 <input value={form.email} onChange={e => setValue('email', e.target.value)} type="email" placeholder="ten@congty.com" />
               </Field>
               {extraChannels.zalo ? (
-                <Field label="Zalo" onClear={() => { setValue('zalo', ''); setExtraChannels(c => ({ ...c, zalo: false })); }}>
+                <Field label="Zalo công ty" onClear={() => { setValue('zalo', ''); setExtraChannels(c => ({ ...c, zalo: false })); }}>
                   <input value={form.zalo} onChange={e => setValue('zalo', e.target.value)} placeholder="Số/link Zalo" />
                 </Field>
               ) : null}
               {extraChannels.facebook ? (
-                <Field label="Facebook" onClear={() => { setValue('facebook', ''); setExtraChannels(c => ({ ...c, facebook: false })); }}>
+                <Field label="Facebook công ty" onClear={() => { setValue('facebook', ''); setExtraChannels(c => ({ ...c, facebook: false })); }}>
                   <input value={form.facebook} onChange={e => setValue('facebook', e.target.value)} placeholder="Link Facebook" />
                 </Field>
               ) : null}
               {extraChannels.telegram ? (
-                <Field label="Telegram" onClear={() => { setValue('telegram', ''); setExtraChannels(c => ({ ...c, telegram: false })); }}>
+                <Field label="Telegram công ty" onClear={() => { setValue('telegram', ''); setExtraChannels(c => ({ ...c, telegram: false })); }}>
                   <input value={form.telegram} onChange={e => setValue('telegram', e.target.value)} placeholder="@username hoặc link" />
                 </Field>
               ) : null}
@@ -487,23 +529,6 @@ export function CustomerFormModal({
                   <input value={form.website} onChange={e => setValue('website', e.target.value)} placeholder="https://..." />
                 </Field>
               ) : null}
-            </div>
-            {(['zalo', 'facebook', 'telegram', 'website'] as const).some(key => !extraChannels[key]) ? (
-              <div className="crm-extra-channels" data-testid="crm-extra-channels">
-                {([['zalo', 'Zalo'], ['facebook', 'Facebook'], ['telegram', 'Telegram'], ['website', 'Website']] as const)
-                  .filter(([key]) => !extraChannels[key])
-                  .map(([key, label]) => (
-                    <button key={key} type="button" className="crm-extra-channel-btn" onClick={() => setExtraChannels(c => ({ ...c, [key]: true }))}>
-                      + {label}
-                    </button>
-                  ))}
-              </div>
-            ) : null}
-          </div>
-
-          <div className="crm-form-section">
-            <p className="crm-form-title">Thông tin doanh nghiệp</p>
-            <div className="crm-form-grid">
               <Field label="Mã số thuế" onClear={() => setValue('taxCode', '')}>
                 <input value={form.taxCode} onChange={e => setValue('taxCode', e.target.value)} />
               </Field>
@@ -520,6 +545,17 @@ export function CustomerFormModal({
                 <input value={form.address} onChange={e => setValue('address', e.target.value)} />
               </Field>
             </div>
+            {(['zalo', 'facebook', 'telegram', 'website'] as const).some(key => !extraChannels[key]) ? (
+              <div className="crm-extra-channels" data-testid="crm-extra-channels">
+                {([['zalo', 'Zalo'], ['facebook', 'Facebook'], ['telegram', 'Telegram'], ['website', 'Website']] as const)
+                  .filter(([key]) => !extraChannels[key])
+                  .map(([key, label]) => (
+                    <button key={key} type="button" className="crm-extra-channel-btn" onClick={() => setExtraChannels(c => ({ ...c, [key]: true }))}>
+                      + {label}
+                    </button>
+                  ))}
+              </div>
+            ) : null}
           </div>
 
           <div className="crm-form-section">

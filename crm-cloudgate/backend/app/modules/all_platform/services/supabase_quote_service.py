@@ -214,6 +214,21 @@ def _row_to_item(row: dict) -> dict:
         "costPriceOriginal": (
             float(row["cost_price_original"]) if row.get("cost_price_original") is not None else None
         ),
+        # Chu ky (migration 189) - tra thang/nam cho hang muc co ca 2 gia tu
+        # danh muc (vd Markee Chat MCHAT-AGENT). NULL het = hang muc 1 gia
+        # hoac bao gia tao truoc tinh nang nay, khong anh huong tinh tien.
+        "billingCycle": row.get("billing_cycle"),
+        "billingTermMonths": (
+            float(row["billing_term_months"]) if row.get("billing_term_months") is not None else None
+        ),
+        "catalogMonthlyPriceVnd": (
+            float(row["catalog_monthly_price_vnd"]) if row.get("catalog_monthly_price_vnd") is not None else None
+        ),
+        "catalogAnnualCommitMonthlyPriceVnd": (
+            float(row["catalog_annual_commit_monthly_price_vnd"])
+            if row.get("catalog_annual_commit_monthly_price_vnd") is not None
+            else None
+        ),
         "children": [],
     }
 
@@ -489,6 +504,12 @@ _PUBLIC_ITEM_KEYS = (
     "unitPrice", "discountPercent", "discountAmount", "amountAfterDiscount", "vatRate",
     "subtotalAmount", "vatAmount", "totalAmount", "sortOrder",
     "catalogItemId", "bundleSnapshot", "listPriceUsd", "unitPriceUsd", "exchangeRate", "unitPriceVnd",
+    # Chu ky (migration 189) - CAN cong khai de QuoteDocumentRenderer ghi chu
+    # "Cam kết N tháng"/"trả năm" canh Don gia/Thanh tien, tranh khach hieu
+    # nham tinh sai (SL x Don gia khong khop Thanh tien da nhan them so thang).
+    # KHONG them 2 field snapshot catalogMonthlyPriceVnd/catalogAnnualCommit...
+    # (chi Sale can de doi qua lai Chu ky, khach khong can biet gia gon kia).
+    "billingCycle", "billingTermMonths",
 )
 
 
@@ -526,6 +547,10 @@ def _row_to_public_item(row: dict) -> dict:
         "unitPriceUsd": row.get("unit_price_usd"),
         "exchangeRate": row.get("exchange_rate"),
         "unitPriceVnd": row.get("unit_price_vnd"),
+        "billingCycle": row.get("billing_cycle"),
+        "billingTermMonths": (
+            float(row["billing_term_months"]) if row.get("billing_term_months") is not None else None
+        ),
         "children": [],
     }
 
@@ -873,13 +898,23 @@ def _round_vnd(value: Decimal, currency: str = "VND") -> float:
 
 
 def _calculate_item(
-    quantity: float, unit_price: float, vat_rate: float, discount_percent: float = 0, currency: str = "VND"
+    quantity: float,
+    unit_price: float,
+    vat_rate: float,
+    discount_percent: float = 0,
+    currency: str = "VND",
+    billing_term_months: float | None = None,
 ) -> tuple[float, float, float, float, float]:
+    """billing_term_months (migration 189): he so nhan them vao subtotal khi
+    hang muc chon "Tra nam" (thuong la 12) - dung Gia tra nam/thang (da UU
+    DAI theo thang) nhung tinh tien ca nam. None/<=1 = khong nhan them, giong
+    het hanh vi cu (hang muc 1 gia, hoac bao gia tao truoc tinh nang nay)."""
     q = _to_decimal(quantity)
     u = _to_decimal(unit_price)
     d_pct = _to_decimal(discount_percent)
     v_pct = _to_decimal(vat_rate)
-    subtotal = q * u
+    bt = _to_decimal(billing_term_months) if billing_term_months and billing_term_months > 1 else _to_decimal(1)
+    subtotal = q * u * bt
     discount = subtotal * d_pct / 100
     after_discount = subtotal - discount
     vat = after_discount * v_pct / 100
@@ -1025,6 +1060,9 @@ def _flatten_computed_items(raw_items: list[dict], currency: str = "VND") -> tup
             vat_rate,
             discount_percent,
             currency,
+            billing_term_months=(
+                float(item["billing_term_months"]) if item.get("billing_term_months") is not None else None
+            ),
         )
         row = {
             **item,
@@ -2127,6 +2165,16 @@ def create_quote(payload: dict, created_by: str | None) -> dict:
             row["markup_percent"] = item.get("markup_percent")
         if item.get("cost_price_vnd") is not None:
             row["cost_price_vnd"] = item["cost_price_vnd"]
+        # Chu ky (migration 189) - chi them key khi THAT SU co gia tri, dung
+        # pattern voi cost_price o tren: tranh loi "column does not exist" tren
+        # DB CHUA chay migration 189 cho hang muc KHONG dung tinh nang nay.
+        if item.get("billing_cycle") is not None:
+            row["billing_cycle"] = item["billing_cycle"]
+            row["billing_term_months"] = item.get("billing_term_months")
+        if item.get("catalog_monthly_price_vnd") is not None:
+            row["catalog_monthly_price_vnd"] = item["catalog_monthly_price_vnd"]
+        if item.get("catalog_annual_commit_monthly_price_vnd") is not None:
+            row["catalog_annual_commit_monthly_price_vnd"] = item["catalog_annual_commit_monthly_price_vnd"]
         inserted = supabase.table(ITEMS_TABLE).insert(row).execute().data[0]
         inserted_items.append(inserted)
         inserted_ids_by_flat_index[index] = inserted["id"]

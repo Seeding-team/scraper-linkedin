@@ -742,6 +742,28 @@ def _items_touch_fields(existing_items: list[dict], new_items: list[dict], field
     return False
 
 
+def _is_billing_cycle_price_toggle(existing_item: dict, new_item: dict) -> bool:
+    """Tinh nang "Chu ky" (migration 189): doi Trả tháng/Trả năm lam unit_price
+    doi theo (lay dung 1 trong 2 gia da snapshot san tu danh muc luc them hang
+    - catalogMonthlyPriceVnd/catalogAnnualCommitMonthlyPriceVnd). Day KHONG
+    phai "sua gia ban tuy y" (van bi chan o moi truong hop khac qua check goi
+    ham nay) - chi la chon lai 1 trong 2 muc gia DA CO SAN tu dau, nen Presale
+    (Buoc 1) duoc phep doi Chu ky ngay ca cho dong DA LUU, khong can quyen sua
+    gia ban. Chi mien tru dung khi gia moi khop CHINH XAC 1 trong 2 snapshot -
+    go tay 1 con so khac (du trung ngau nhien) van di qua nhanh so sanh binh
+    thuong vi _values_differ se bao khac bat ky field GIA BAN nao khac cung
+    thay doi trong cung lan luu."""
+    monthly = existing_item.get("catalogMonthlyPriceVnd")
+    annual = existing_item.get("catalogAnnualCommitMonthlyPriceVnd")
+    if monthly is None or annual is None:
+        return False
+    try:
+        new_price = round(float(new_item.get("unit_price") or 0), 2)
+    except (TypeError, ValueError):
+        return False
+    return new_price in (round(float(monthly), 2), round(float(annual), 2))
+
+
 def _items_touch_pricing_fields(existing_items: list[dict], new_items: list[dict]) -> bool:
     """Như _items_touch_fields nhưng cho nhóm GIÁ BÁN: thêm/bớt hạng mục KHÔNG
     tính là "sửa giá". Hạng mục chọn từ danh mục luôn mang sẵn markup/giá mặc
@@ -754,7 +776,15 @@ def _items_touch_pricing_fields(existing_items: list[dict], new_items: list[dict
     # giá vốn ở Bước 1 làm markup tự tính lại dù không đụng tới giá bán. Sửa
     # markup thật luôn đổi unit_price theo, nên chỉ cần soi các field còn lại.
     pairs = [p for p in _PRICING_ITEM_FIELD_PAIRS if p[0] != "markupPercent"]
-    return _items_touch_fields(existing_items, new_items, pairs)
+    for i, new_item in enumerate(new_items):
+        existing = existing_items[i] if i < len(existing_items) else {}
+        for camel, snake in pairs:
+            if not _values_differ(existing.get(camel), new_item.get(snake)):
+                continue
+            if camel == "unitPrice" and _is_billing_cycle_price_toggle(existing, new_item):
+                continue
+            return True
+    return False
 
 
 def _check_item_field_level_permission(user: dict, quote: dict, new_items: Optional[list]) -> Optional[str]:
