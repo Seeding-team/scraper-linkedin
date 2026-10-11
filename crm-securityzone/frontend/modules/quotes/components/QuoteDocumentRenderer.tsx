@@ -1,7 +1,7 @@
 'use client';
 
 import { useRef, useState } from 'react';
-import { paymentPlanAmount, paymentPlanPercent, visiblePaymentPlan } from '../utils/paymentPlan';
+import { paymentPlanAmounts, paymentPlanPercent, visiblePaymentPlan } from '../utils/paymentPlan';
 import type {
   CustomBlock,
   BundleSnapshotComponent,
@@ -1274,9 +1274,9 @@ export function QuoteDocumentRenderer({
             <table className="quote-table">
               <thead><tr><th>Đợt</th><th>Tỷ lệ (%)</th><th>Số tiền</th><th>Điều kiện thanh toán</th><th>Ghi chú</th></tr></thead>
               <tbody>{visiblePaymentPlan(quoteData.paymentPlan).map((row, i) => <tr key={row.id || i}>
-                <td>{row.phase}</td><td>{row.percent}%</td><td className="money-cell">{formatVnd(paymentPlanAmount(discountSummary.grandTotal, row.percent, currency))}</td><td>{row.condition}</td><td>{row.note}</td>
+                <td>{row.phase}</td><td>{row.percent}%</td><td className="money-cell">{formatVnd(paymentPlanAmounts(visiblePaymentPlan(quoteData.paymentPlan), discountSummary.grandTotal, currency)[i])}</td><td>{row.condition}</td><td>{row.note}</td>
               </tr>)}</tbody>
-              <tfoot><tr><th>Tổng</th><th>{paymentPlanPercent(visiblePaymentPlan(quoteData.paymentPlan))}%</th><th>{formatVnd(visiblePaymentPlan(quoteData.paymentPlan).reduce((sum, row) => sum + paymentPlanAmount(discountSummary.grandTotal, row.percent, currency), 0))}</th><td colSpan={2} /></tr></tfoot>
+              <tfoot><tr><th>Tổng</th><th>{paymentPlanPercent(visiblePaymentPlan(quoteData.paymentPlan))}%</th><th>{formatVnd(paymentPlanAmounts(visiblePaymentPlan(quoteData.paymentPlan), discountSummary.grandTotal, currency).reduce((sum, amount) => sum + amount, 0))}</th><td colSpan={2} /></tr></tfoot>
             </table>
           </section>
         ) : null}

@@ -138,6 +138,11 @@ export interface IssuerCompany {
   logoUrl?: string;
   defaultQuoteFormId?: string;
   status: 'active' | 'inactive';
+  /** Workspace "nhà" của đơn vị phát hành này (CRM_INSTANCE, vd 'markee'/'cloudgate') -
+   * dùng để gợi ý MẶC ĐỊNH đúng đơn vị theo workspace đang chạy lúc tạo báo giá mới
+   * (xem CreateQuoteModal.tsx) - KHÔNG dùng để lọc/ẩn, mọi workspace vẫn thấy đủ
+   * danh sách (bảng quote_issuer_companies dùng chung giữa các workspace). */
+  instance?: string;
   /** (I) Điều khoản thanh toán MẶC ĐỊNH của đơn vị phát hành này - SNAPSHOT
    * 1 LẦN vào custom block 'payment_terms' của báo giá lúc tạo mới (nếu block
    * đó đang trống) - sửa ở đây KHÔNG đổi báo giá đã tạo trước đó. */

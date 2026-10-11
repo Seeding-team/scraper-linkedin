@@ -12,6 +12,29 @@ export function paymentPlanAmount(finalPayable: number, percent: number, currenc
   return Math.round(Number(((finalPayable * percent / 100) * factor).toPrecision(15))) / factor;
 }
 
+/** BUG THAT DA GAP (phat hien luc audit payment-plan, chua co bao cao thuc te):
+ * paymentPlanAmount() lam tron TUNG dong DOC LAP - khi % khong chia het chan
+ * (vd 999 VND chia 50/25/25, hoac bat ky tien USD co le), tong cac dong hien
+ * thi (ca o tung dong lan dong "Tong" o tfoot) co the LECH 1 don vi tien te so
+ * voi `finalPayable` that (vd 1.000đ thay vi 999đ). Ham nay CHI dung khi tong %
+ * da DU 100% (giong dieu kien "da chot", luc dang nhap do chua du 100% thi giu
+ * nguyen so lam tron doc lap de khong gay hieu nham) - dong CUOI CUNG nhan phan
+ * du de tong luon khop CHINH XAC finalPayable, dung y het pattern
+ * distributePaymentPlan() da dung cho %. */
+export function paymentPlanAmounts(rows: Array<{ percent: number }>, finalPayable: number, currency?: unknown): number[] {
+  const amounts = rows.map(row => paymentPlanAmount(finalPayable, row.percent, currency));
+  const totalPercent = rows.reduce((sum, row) => sum + Math.round((Number(row.percent) || 0) * 100), 0) / 100;
+  if (!rows.length || totalPercent !== 100) return amounts;
+  const factor = 10 ** quoteCurrencyDecimals(currency);
+  const sum = amounts.reduce((a, b) => a + b, 0);
+  const diff = finalPayable - sum;
+  if (diff === 0) return amounts;
+  const lastIndex = amounts.length - 1;
+  const adjusted = [...amounts];
+  adjusted[lastIndex] = Math.round(Number(((adjusted[lastIndex] + diff) * factor).toPrecision(15))) / factor;
+  return adjusted;
+}
+
 export function visiblePaymentPlan(rows: PaymentPlanRow[] | undefined): PaymentPlanRow[] {
   return (rows || []).filter(row => Boolean(row.phase?.trim() || row.percent || row.condition?.trim() || row.note?.trim()));
 }

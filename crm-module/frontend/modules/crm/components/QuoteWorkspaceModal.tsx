@@ -4,6 +4,7 @@ import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { API_BASE_URL, API_KEY } from '@/lib/env';
 import { seedingQuoteRepository, QuoteApprovalRequiresExceptionError, QuoteDocumentRenderer, QuotePrintLayoutSaveButton, buildPublicQuoteUrl } from '@/modules/quotes';
+import { CRM_INSTANCE } from '@/modules/quotes/utils/publicQuoteUrl';
 import type { Quote, QuoteActivityLogEntry, QuoteHandoffChecklist, QuoteItem, QuoteProcessingStage, QuoteApprovalRuleSet, QuoteApprovalRuleType, QuoteRuleEvaluation, QuoteDeliveryLogEntry, QuoteForm, QuoteData, IssuerCompany } from '@/modules/quotes';
 import type { ContactOption } from './dealHydration';
 import { applyIssuerCompanySnapshot, applyIssuerPaymentTermsSnapshot } from '../integrations/quotes/types';
@@ -53,7 +54,7 @@ import type { SystemExchangeRate } from '@/modules/quotes/repositories/QuoteRepo
 import { VND_FX, convertQuoteItemsCurrency, fromQuoteMoney, toQuoteMoney, type QuoteFx } from '@/modules/quotes/utils/quoteCurrency';
 import { ACTIVITY_LABELS } from '@/modules/quotes/utils/quoteActivity';
 import { calculateQuoteTotals, calculateOverallDiscountSummary, clampDiscountPercent, calculateItemTotal, calculateSectionTotal } from '@/modules/quotes/utils/quoteCalculations';
-import { paymentPlanAmount, paymentPlanPercent } from '@/modules/quotes/utils/paymentPlan';
+import { paymentPlanAmounts, paymentPlanPercent } from '@/modules/quotes/utils/paymentPlan';
 import type { BundleSnapshotComponent, BundleSnapshotValue, CustomBlock, PaymentPlanRow } from '@/modules/quotes/types';
 import { QuoteOutcomeSection } from './QuoteOutcomeSection';
 import { customerDisplay } from '../utils/customerNames';
@@ -2831,14 +2832,27 @@ export function QuoteWorkspaceModal({
   // extraToolbar neu muon).
   const draftCatalogIssuerCompanyId =
     quote?.issuerCompanyId ?? quoteForms.find(form => form.id === (draftFormId || defaultFormId))?.issuerCompanyId ?? null;
+  // "Đơn vị phát hành mặc định theo workspace" (feedback 2026-10-11, "zone/markee
+  // chưa có mặc định đúng tên workspace"): truoc day mac dinh CHI suy tu mau bao
+  // gia dang chon (draftCatalogIssuerCompanyId) - mau mac dinh toan he thong chi
+  // co 1 (vd "MARKEE..."), khien workspace khac (SecurityZone/Markee tu mau rieng
+  // chua gan) khong ra dung ten minh. Uu tien KHOP WORKSPACE HIEN TAI truoc (dung
+  // 1 dong active co instance == CRM_INSTANCE, mirror luat da test o backend
+  // contract.py:_issuer_of_quote() va CreateQuoteModal.tsx) - chi fallback ve
+  // draftCatalogIssuerCompanyId (theo mau) khi workspace khong co/co qua 1 dong
+  // khop (khong doan mu).
+  const instanceDefaultIssuerCompanyId = (() => {
+    const matches = issuerCompanies.filter(company => company.status === 'active' && company.instance === CRM_INSTANCE);
+    return matches.length === 1 ? matches[0].id : null;
+  })();
   // "Đơn vị phát hành" THAT SU se duoc dung (che do tao moi, !quote) - mac
-  // dinh la draftCatalogIssuerCompanyId (suy tu mau bao gia), Sale van doi
-  // duoc qua dropdown moi (draftIssuerCompanyIdOverride) ma khong mat mac
+  // dinh uu tien dung workspace hien tai, sau do moi toi mau bao gia, Sale van
+  // doi duoc qua dropdown moi (draftIssuerCompanyIdOverride) ma khong mat mac
   // dinh ban dau. Quote da ton tai (co quote) van giu nguyen issuerCompanyId
   // da luu, KHONG bi override nay anh huong.
   const effectiveIssuerCompanyId = quote
     ? quote.issuerCompanyId ?? null
-    : draftIssuerCompanyIdOverride || draftCatalogIssuerCompanyId;
+    : draftIssuerCompanyIdOverride || instanceDefaultIssuerCompanyId || draftCatalogIssuerCompanyId;
   // "Mặc định luôn hiện Markee" (feedback 2026-09-24): quote DA TON TAI ma
   // chua tung gan issuerCompanyId (tao truoc khi tinh nang nay co, hoac Presale
   // tao yeu cau chua dung toi Buoc thuong mai) - hien "MARKEE AI" (code 'MK',
@@ -4990,7 +5004,7 @@ export function QuoteWorkspaceModal({
   const paymentPlanIsComplete = !paymentPlanIsEmpty && paymentPlanPct === 100;
   const paymentPlanBadgeText = paymentPlanIsEmpty ? 'Chưa thiết lập' : paymentPlanIsComplete ? `${paymentPlanRows.length} đợt · 100%` : 'Cần đủ 100%';
   const paymentPlanBadgeClass = paymentPlanIsEmpty ? 'qc-badge-neutral' : paymentPlanIsComplete ? 'qc-badge-success' : 'qc-badge-warning';
-  const paymentPlanTotalAmount = paymentPlanRows.reduce((sum, row) => sum + paymentPlanAmount(paymentPlanFinalPayable, row.percent, workspaceCurrency), 0);
+  const paymentPlanTotalAmount = paymentPlanAmounts(paymentPlanRows, paymentPlanFinalPayable, workspaceCurrency).reduce((sum, amount) => sum + amount, 0);
   const columnVisibilityDraft: QuoteDraft = {
     data: quote ? quote.data : draftPreviewData,
     items: itemsDraft,

@@ -23,6 +23,9 @@ export function WorkspaceBadge({ instance, className = '' }: WorkspaceBadgeProps
   } else if (inst === 'securityzone') {
     label = 'SecurityZone';
     badgeClass = 'bg-emerald-50 text-emerald-700 border-emerald-200';
+  } else if (inst === 'timetech') {
+    label = 'TimeTech';
+    badgeClass = 'bg-amber-50 text-amber-700 border-amber-200';
   } else if (inst !== 'markee') {
     label = inst.toUpperCase();
     badgeClass = 'bg-slate-50 text-slate-700 border-slate-200';

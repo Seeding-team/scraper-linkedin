@@ -1481,6 +1481,22 @@ class EmailProviderSendTestRequest(BaseModel):
     test_recipient: str
 
 
+@quote_email_provider_router.get("/ready")
+def email_provider_ready(user: dict = Depends(get_current_user)) -> BaseResponse:
+    """Chi tra 1 boolean "san sang gui that" (KHONG kem thong tin cau hinh/
+    sender) - khac GET "" (require_quote_email_manager, chi Admin/Leader) vi
+    endpoint nay can moi user CRM da dang nhap goi duoc (Sale/Presale) de
+    canh bao TRUOC khi Ban giao/Xac minh dat chuan neu email chua san sang
+    gui, xem LeadDetailDrawer.tsx runWithEmailConfigCheck(). An toan de mo
+    rong quyen vi khong lo du lieu nhay cam, chi 1 co dung/sai."""
+    try:
+        data = email_provider_service.get_email_provider_settings()
+        ready = bool(data.get("credentialConfigured") and data.get("isEnabled") and data.get("smtpConnectionStatus") == "ok")
+        return BaseResponse(success=True, data={"ready": ready})
+    except Exception as e:
+        return BaseResponse(success=False, message=_safe_error_message(e))
+
+
 @quote_email_provider_router.get("")
 def email_provider_get(user: dict = Depends(require_quote_email_manager)) -> BaseResponse:
     try:

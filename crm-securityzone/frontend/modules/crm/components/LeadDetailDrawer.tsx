@@ -13,6 +13,7 @@ import { CrmTeamFormModal } from './CrmTeamFormModal';
 import { SearchableSelect, type SelectAction } from './SearchableSelect';
 import { getSourceLabel } from './DealFormFields';
 import { LeadHandoverSection, parseDocLinks, type HandoverMode } from './LeadHandoverSection';
+import { ConfirmModal } from './ConfirmModal';
 import { useCrmCategoryLabels } from './CrmCategorySelect';
 import { useLeadQualificationEngine } from '../hooks/useLeadQualificationEngine';
 import {
@@ -182,6 +183,25 @@ export function LeadDetailDrawer({
   const handoverKeyRef = useRef<string>('');
   const [docLinksText, setDocLinksText] = useState('');
   const [sendEmail, setSendEmail] = useState(true);
+  // Canh bao "chua cau hinh email" TRUOC khi Ban giao/Xac minh dat chuan (thay vi
+  // chi bao sau khi gui that bai, nhu truoc day) - null = chua kiem tra xong,
+  // false = chua san sang gui (thieu/tat/SMTP chua test OK, dung DUNG dieu kien
+  // get_active_email_channel_for_sending() o backend).
+  const [emailProviderReady, setEmailProviderReady] = useState<boolean | null>(null);
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    fetch(`${API_BASE_URL}/api/all-platform/quotes-email-provider/ready`, { credentials: 'include', headers: headers() })
+      .then(res => res.json())
+      .then(body => {
+        if (cancelled) return;
+        setEmailProviderReady(body?.success ? Boolean(body.data?.ready) : null);
+      })
+      .catch(() => { if (!cancelled) setEmailProviderReady(null); });
+    return () => { cancelled = true; };
+  }, [open]);
+  const [emailConfigWarnOpen, setEmailConfigWarnOpen] = useState(false);
+  const pendingEmailActionRef = useRef<(() => void) | null>(null);
   const [handoverBusy, setHandoverBusy] = useState(false);
   // Re-assign SAU KHI Lead da convert (dong bo Co hoi/Khach hang qua update_lead)
   const [reassignAeId, setReassignAeId] = useState('');
@@ -1043,6 +1063,23 @@ export function LeadDetailDrawer({
     } catch { /* lich su chi de tham khao */ }
   }
 
+  /** Chan lai 1 nhip TRUOC khi Ban giao/Xac minh dat chuan neu "Gui email thong
+   * bao" dang tick MA kenh email workspace nay chua san sang gui that (xem
+   * emailProviderReady) - hien canh bao + cho chon "Den Cai dat bao gia" hoac
+   * "Bo qua, tiep tuc" (thay vi truoc day: cu gui, chi biet that bai SAU khi
+   * xong, qua emailStatus==='failed' trong savedOk). Khong chan gi neu dang
+   * tu xac minh cho chinh minh (sendEmail thuc te se la false) hoac chua kiem
+   * tra xong trang thai (emailProviderReady===null, giu hanh vi cu de khong
+   * chan nhiem vu chinh chi vi 1 lan goi API phu bi loi). */
+  function runWithEmailConfigCheck(action: () => void) {
+    if (sendEmail && !isSelfHandling && emailProviderReady === false) {
+      pendingEmailActionRef.current = action;
+      setEmailConfigWarnOpen(true);
+      return;
+    }
+    action();
+  }
+
   /** "Bàn giao xử lý" / "Re-assign": lưu thông tin xác minh đã nhập (GIỮ nguyên người phụ trách hiện tại để lịch sử ghi đúng
    * người trước/sau), rồi giao cho người nhận + gửi email (nếu tick). Khoá idempotency chống gửi trùng khi reload/retry. */
   async function submitHandover() {
@@ -1559,7 +1596,7 @@ export function LeadDetailDrawer({
                   className="crm-secondary-button crm-handover-cta"
                   data-testid="lead-handover-cta"
                   disabled={saving || handoverBusy}
-                  onClick={() => void submitHandover()}
+                  onClick={() => runWithEmailConfigCheck(() => void submitHandover())}
                 >
                   {handoverBusy ? <Loader2 className="crm-save-spinner" /> : null} {handoverLabel}
                 </button>
@@ -1574,7 +1611,7 @@ export function LeadDetailDrawer({
                 data-testid="lead-final-submit"
                 disabled={saving}
                 title={verificationOutcome === 'sql' && !isReady ? 'Hoàn tất checklist "Mức sẵn sàng tạo cơ hội" trước' : undefined}
-                onClick={() => void submitFinalOutcome()}
+                onClick={() => runWithEmailConfigCheck(() => void submitFinalOutcome())}
               >
                 {finalSubmitLabel}
               </button>
@@ -1584,6 +1621,31 @@ export function LeadDetailDrawer({
             </div>
           </footer>
         ) : null}
+
+        <ConfirmModal
+          open={emailConfigWarnOpen}
+          title="Chưa cấu hình email gửi"
+          message={`Workspace này chưa cấu hình (hoặc chưa kết nối thành công) email gửi thông báo — nếu tiếp tục, thao tác vẫn thực hiện bình thường nhưng email thông báo sẽ KHÔNG gửi được. Bro có thể vào "Cài đặt báo giá" để cấu hình trước, hoặc bỏ qua và tiếp tục.`}
+          onClose={() => setEmailConfigWarnOpen(false)}
+          cancelLabel="Đóng"
+          actions={[
+            {
+              label: 'Đến Cài đặt báo giá',
+              onClick: () => {
+                window.open('/all-platform/quote-settings', '_blank');
+              },
+            },
+            {
+              label: 'Bỏ qua, tiếp tục',
+              variant: 'primary',
+              onClick: () => {
+                setEmailConfigWarnOpen(false);
+                pendingEmailActionRef.current?.();
+                pendingEmailActionRef.current = null;
+              },
+            },
+          ]}
+        />
 
         {/* Lead da convert, dang mo khoa sua (qualificationEditOpen) - CHI
          * Luu thay doi thuong vao dung Lead (saveVerification(), giong het

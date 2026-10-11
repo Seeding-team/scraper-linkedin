@@ -35,10 +35,14 @@
 // ngoai.
 // 2026-10-09: domain tran (markee.vn/getcloudgate.com/securityzone.vn) KHONG phuc vu app CRM (API 404, font CORS) -> dung domain CRM chinh thuc,
 // cung bang voi backend app/core/workspace_domains.py va link trong email.
+// 2026-10-11 (them clone TimeTech): "crm.timetech.vn" la PLACEHOLDER, CHUA
+// duoc nguoi phu trach ha tang xac nhan (khac voi 3 dong tren) - doi truoc
+// khi dung that tren production.
 const INSTANCE_PUBLIC_DOMAIN: Record<string, string> = {
   markee: "https://crm.markee.vn",
   cloudgate: "https://crm.getcloudgate.com",
   SECURITYZONE: "https://crm.securityzone.vn",
+  timetech: "https://crm.timetech.vn",
 };
 
 const DEFAULT_INSTANCE = "markee";
