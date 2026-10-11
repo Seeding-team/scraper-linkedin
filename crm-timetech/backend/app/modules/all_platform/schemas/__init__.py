@@ -129,4 +129,7 @@ from app.modules.all_platform.schemas.contract import (
     ContractGenerateRequest,
     ContractReviewRequest,
     ContractRefineRequest,
+    ContractPrecheckRequest,
+    ContractSuggestTypeRequest,
+    ContractNumberSettingsRequest,
 )

@@ -6,8 +6,8 @@
 > mục "Multi-tenant" bên dưới để hiểu cơ chế, và mục "Deploy thêm 1 instance
 > mới" nếu cần tạo thêm brand khác sau này.
 >
-> **Tạo ngày 2026-10-11, CHƯA deploy lên host nào, CHƯA commit/push.** Logo
-> (`frontend/public/timetech_logo.png`) và domain công khai (`timetech.vn`
+> **Tạo ngày 2026-10-11, CHƯA deploy lên host nào.** Logo
+> (`frontend/public/timetech_logo.png`) và domain công khai (`crm.timetech.vn`
 > trong `publicQuoteUrl.ts` + `WORKSPACE_DOMAINS`) đang là **placeholder** —
 > xem mục "Việc còn dang dở" ở cuối file trước khi deploy thật.
 
@@ -116,6 +116,12 @@ self-host dùng chung** (áp khi bật `crm-cloudgate`/`crm-securityzone` trư�
 vì thêm instance mới, miễn `CRM_INSTANCE` là 1 slug mới không trùng
 (`markee`/`cloudgate`/`SECURITYZONE` đã dùng).
 
+`backend/app/core/workspace_domains.py` (dùng cho link trong email bàn giao
+Lead/báo giá) đọc `WORKSPACE_DOMAINS`/`EMAIL_LINK_WORKSPACE_DOMAINS` từ env
+TRƯỚC khi rơi về danh sách cố định trong code — chỉ cần set đúng
+`WORKSPACE_DOMAINS` trong `backend/.env` (đã làm sẵn ở `.env.example`) là đủ,
+KHÔNG cần sửa file Python này.
+
 ## Deploy thêm 1 instance mới (vd brand khác sau TimeTech)
 
 Không fork code thủ công qua sửa tay — **clone nguyên thư mục
@@ -128,28 +134,30 @@ securityzone) thành thư mục mới cùng cấp**, rồi đổi:
 - `docker-compose.yml`: đổi tên image/container + port (`CRM_ROUTER_PORT`,
   lấy port kế tiếp chưa dùng — `crm-module`=18090, `crm-cloudgate`=18091,
   `crm-securityzone`=18092, `crm-timetech`=18093).
-- Branding frontend (title, logo, text đăng nhập Google, copyright — xem danh
-  sách file đã sửa khi tạo `crm-timetech` so với `crm-cloudgate` qua
-  `git log`/`git diff` nếu cần đối chiếu).
+- Branding frontend (title, logo, text đăng nhập Google, copyright,
+  `frontend/modules/quotes/utils/publicQuoteUrl.ts`'s `INSTANCE_PUBLIC_DOMAIN`,
+  các `WORKSPACE_LABELS` trong `WorkspaceSwitcherShadcn.tsx`/
+  `CrmPermissionModal.tsx`).
 - Thêm `.github/workflows/deploy-crm-<tên>.yml` (mirror
   `deploy-crm-timetech.yml`) nếu muốn CI tự deploy khi push `main`.
 
 2 deploy hoàn toàn độc lập (khác host, khác container, khác domain) nhưng cùng
 đọc/ghi 1 DB, mỗi bên chỉ thấy dữ liệu `instance` của mình.
 
-## Việc còn dang dở (tạo clone 2026-10-11, chưa deploy)
+## Việc còn dang dở (tạo clone 2026-10-11)
 
 - **Logo placeholder**: `frontend/public/timetech_logo.png` là ảnh chữ "TT"
   dựng tạm bằng script (không phải logo thật của TimeTech) — thay file này
   (giữ nguyên tên hoặc đổi tên + cập nhật các chỗ reference trong
   `app/layout.tsx`, `AuthPage.tsx`, `DashboardHeader.tsx`, `DashboardSidebar.tsx`)
   bằng logo thật trước khi đưa cho khách dùng.
-- **Domain công khai placeholder**: `https://timetech.vn` trong
+- **Domain công khai placeholder**: `https://crm.timetech.vn` trong
   `frontend/modules/quotes/utils/publicQuoteUrl.ts` (`INSTANCE_PUBLIC_DOMAIN`)
-  và `https://crm.timetech.vn` trong `backend/.env.example`'s
-  `WORKSPACE_DOMAINS` **chưa được xác nhận bởi người phụ trách hạ tầng** —
-  đổi sang domain thật trước khi dùng tính năng "Sao chép link"/"In PDF" báo
-  giá hoặc admin workspace switcher trên production thật.
+  và `backend/.env.example`'s `WORKSPACE_DOMAINS` **chưa được xác nhận bởi
+  người phụ trách hạ tầng** (khác 3 domain kia đã xác nhận thật
+  2026-09-22/2026-10-09) — đổi sang domain thật trước khi dùng tính năng "Sao
+  chép link"/"In PDF" báo giá, link email bàn giao, hoặc admin workspace
+  switcher trên production thật.
 - **CHƯA wiring cross-workspace với 3 module kia** (theo đúng yêu cầu "dữ liệu
   riêng" khi tạo clone này): `WORKSPACE_DOMAINS` trên `crm-module`/
   `crm-cloudgate`/`crm-securityzone` (host thật) **chưa** được thêm dòng
@@ -161,10 +169,11 @@ securityzone) thành thư mục mới cùng cấp**, rồi đổi:
   CÓ CHỦ ĐÍCH (cô lập dữ liệu hoàn toàn) — chỉ làm thêm nếu sau này có yêu cầu
   cho phép chuyển dữ liệu qua lại giữa TimeTech và 3 brand kia (lúc đó phải
   sửa thêm cả 3 module kia, kéo theo CI tự redeploy chúng).
-- **CHƯA commit/push, CHƯA deploy lên host nào** — thư mục này mới chỉ tồn tại
-  trong working tree. Trước khi deploy thật cần: tạo `backend/.env`/`.env`
-  thật (xem mục "Deploy lên host riêng"), quyết định domain/port thật, thêm
-  workflow CI `deploy-crm-timetech.yml` nếu muốn tự động hoá, và theo
-  `[[crm-clone-modules-deploy-path]]` — lần deploy ĐẦU TIÊN của 1 module mới
-  cần ai đó tạo sẵn `/opt/apps/crm-timetech/backend/.env` thật trên host
-  TRƯỚC khi chạy CI (CI chỉ rsync code, không tự sinh secret).
+- **CHƯA deploy lên host nào** — trước khi deploy thật cần: tạo
+  `backend/.env`/`.env` thật (xem mục "Deploy lên host riêng"), quyết định
+  domain/port thật, và theo `[[crm-clone-modules-deploy-path]]` — lần deploy
+  ĐẦU TIÊN của 1 module mới cần ai đó tạo sẵn
+  `/opt/apps/crm-timetech/backend/.env` thật trên host TRƯỚC khi chạy CI (CI
+  chỉ rsync code, không tự sinh secret) — nếu không, workflow
+  `deploy-crm-timetech.yml` sẽ build/up container nhưng bước verify cuối sẽ
+  fail (backend crash vì thiếu secret) cho tới khi secret được tạo tay.

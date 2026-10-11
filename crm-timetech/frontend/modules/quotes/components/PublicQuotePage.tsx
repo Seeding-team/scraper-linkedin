@@ -105,7 +105,21 @@ export function PublicQuotePage({ token }: Props) {
       .catch(err => {
         if (err instanceof QuotePublicVerificationRequiredError) {
           if (!explicit && !autoRetried) {
-            const cached = readCachedVerification(token, err.method);
+            // Bug thuc te (2026-10-11): "PDF gửi qua mail hiển thị sai" - thuc chat la PDF chi
+            // chup duoc dung man hinh cong "Xac nhan SDT" vi Playwright headless (dung de render
+            // PDF gui mail/Telegram, xem _render_quote_pdf) khong co cookie/localStorage nao, nen
+            // cache ben duoi (readCachedVerification) khong giup duoc gi. Backend da sua: luong
+            // noi bo nay tu dong them ?phone=/?email= vao URL dung GIA TRI se khop voi chinh
+            // logic xac thuc server (xem _pdf_render_verification_params). Doc tu URL TRUOC cache
+            // (uu tien gia tri Playwright truyen vao cho dung lan render nay).
+            const qsValue = (() => {
+              try {
+                return new URLSearchParams(window.location.search).get(err.method) || '';
+              } catch {
+                return '';
+              }
+            })();
+            const cached = qsValue || readCachedVerification(token, err.method);
             if (cached) {
               setAutoRetried(true);
               loadQuote({ method: err.method, value: cached });

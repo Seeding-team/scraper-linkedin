@@ -69,6 +69,7 @@ type Overview = {
   };
   customer: { id: string; name: string | null; code: string | null; taxCode: string | null; owner: string | null; team: string | null } | null;
   contact: { id: string; name: string | null; phone: string | null; email: string | null; position: string | null; contactCode?: string | null } | null;
+  otherContacts?: Array<{ id: string; name: string | null; position: string | null }>;
   deal: {
     id: string; name: string | null; companyName: string | null; stage: string | null; estimatedBudget: number | null; stageEnteredAt: string | null; followUpDate: string | null;
     createdAt: string | null; nextStep: string | null; nextStepDue: Due; servicePackage: string | null; customerId: string | null; projectId: string | null; quoteId: string | null;
@@ -81,6 +82,7 @@ type Overview = {
   handover: {
     teamSale: string | null; sale: string | null; presale: string | null; handedOverBy: string | null; handedOverAt: string | null; nextStep: string | null;
     followUp: Due; followUpAt: string | null; documents: Array<{ title: string; url: string }>;
+    history?: Array<{ id: string; kind: string; at: string; from: string | null; to: string | null; prev: string | null; linkCount: number; emailStatus: string | null; emailTo: string | null }>;
   };
   currentTask: { label: string; stepKey?: string; assignee: string | null; role: string | null; due: Due; nextStep: string | null; quoteId?: string; quoteNumber?: string | null; openQuotes?: number };
   steps: Step[];
@@ -346,7 +348,7 @@ function Lead360Body({
   quoteItem: (q: QuoteCard) => ProgressQuoteItem;
   onOpenWorkspace: (quoteId: string) => void;
 }) {
-  const { lead, customer, contact, deal, sale, presale, owner, handover, currentTask, steps, quotes, contracts, timeline } = data;
+  const { lead, customer, contact, otherContacts, deal, sale, presale, owner, handover, currentTask, steps, quotes, contracts, timeline } = data;
   const [showAllTimeline, setShowAllTimeline] = useState(false);
   const [expandedQuotes, setExpandedQuotes] = useState<Set<string>>(new Set());
   const [quoteSortOrder, setQuoteSortOrder] = useState<'desc' | 'asc'>('desc');
@@ -417,7 +419,13 @@ function Lead360Body({
             {lead.isOut ? <span className="crm-l360-chip crm-l360-chip--out" title="Cơ hội đã OUT (không còn báo giá nào hoạt động)">OUT</span> : null}
           </div>
           <div className="crm-l360-head-sub">
-            <span>Liên hệ: <b>{contact?.name || lead.name || '—'}</b>{(contact?.position || lead.position) ? ` · ${contact?.position || lead.position}` : ''}</span>
+            <span>Liên hệ: <b>{contact?.name || lead.name || '—'}</b>{(contact?.position || lead.position) ? ` · ${contact?.position || lead.position}` : ''}
+              {otherContacts && otherContacts.length ? (
+                <span className="crm-l360-more-contacts" title={otherContacts.map(c => `${c.name || ''}${c.position ? ' · ' + c.position : ''}`).join('\n')}>
+                  {' '}· +{otherContacts.length}: {otherContacts.map(c => c.name).filter(Boolean).join(', ')}
+                </span>
+              ) : null}
+            </span>
             {(contact?.phone || lead.phone) ? <span>SĐT: <b>{contact?.phone || lead.phone}</b></span> : null}
             {(contact?.email || lead.email) ? <span>Email: <b>{contact?.email || lead.email}</b></span> : null}
             {lead.source ? <span>Nguồn: <b>{getSourceLabel(lead.source)}</b></span> : null}
@@ -494,6 +502,16 @@ function Lead360Body({
               <a key={d.url} className="crm-l360-doc" href={d.url} target="_blank" rel="noopener noreferrer">{d.title}</a>
             )) : <span className="crm-l360-nolink">Chưa có tài liệu bàn giao</span>}
           </Field>
+          {handover.history && handover.history.length ? (
+            <Field label="Lịch sử bàn giao">
+              {handover.history.slice(0, 5).map(h => (
+                <span key={h.id} className="crm-l360-hand-hist">
+                  {fmtDateTime(h.at)} · {h.from || '—'} → <b>{h.to || '—'}</b> · {h.kind === 'reassign' ? 'Re-assign' : h.kind === 'assign_qualified' ? 'Xác minh đạt chuẩn' : 'Bàn giao'}
+                  {h.emailStatus === 'sent' ? ' · đã gửi email' : h.emailStatus === 'failed' ? ' · lỗi email' : ''}
+                </span>
+              ))}
+            </Field>
+          ) : null}
         </div>
       </section>
 

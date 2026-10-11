@@ -91,7 +91,7 @@ export function QuoteOutcomeSection({ quote, onUpdated }: { quote: Quote; onUpda
       {notice ? <p className="qc-workspace-note">{notice}</p> : null}
 
       {open ? (
-        <div className="crm-modal-backdrop" style={{ zIndex: 100400 }} onClick={() => (busy ? undefined : setOpen(false))}>
+        <div className="crm-modal-backdrop" style={{ zIndex: 100400 }} onClick={event => { if (event.target === event.currentTarget && !busy) setOpen(false); }}>
           <div className="crm-modal" role="dialog" aria-modal="true" aria-label="Xác nhận Không chốt" style={{ padding: 20, width: 'min(32rem, 94vw)' }} onClick={e => e.stopPropagation()}>
             <h3 style={{ marginTop: 0 }}>Xác nhận Không chốt (OUT)</h3>
             <p className="qc-row-sub">Báo giá {quote.quoteNumber} · V{quote.versionNumber}. Cơ hội chỉ chuyển OUT khi không còn báo giá/nhánh bán hàng nào đang hoạt động.</p>

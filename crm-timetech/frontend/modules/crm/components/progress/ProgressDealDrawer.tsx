@@ -2,7 +2,7 @@
 
 import type { ReactNode } from 'react';
 import { formatDate, formatVND } from '../../constants/crmConfig';
-import { formatSinceDuration } from './progressLabels';
+import { dealFollowUpState, dealStageLabel, formatSinceDuration } from './progressLabels';
 import type { ProgressDealItem } from './progress.types';
 
 /** Du lieu THAT bo sung khi Co hoi duoc mo BEN TRONG drawer (vd tu Lead 360) de dung bo cuc compact:
@@ -38,94 +38,92 @@ export function ProgressDealDrawer({
   onOpenCustomer?: (customerId: string, customerName: string) => void;
   extra?: DealDrawerExtra;
 }) {
-  const followUpOverdue = Boolean(item.followUpDate && new Date(item.followUpDate).getTime() < Date.now());
-
-  if (extra) {
-    return (
-      <div className="progress-panel progress-panel--compact">
-        <div className="progress-compact-head">
-          <span className="qc-badge qc-badge-blue">{item.dealStageLabel}</span>
-          <span className="progress-compact-money">{formatVND(item.estimatedBudgetVnd) || '0 đ'}</span>
-          <span className="progress-compact-sub">Đã ở giai đoạn: {formatSinceDuration(item.sinceAt)}</span>
-        </div>
-
-        <dl className="progress-key-value progress-key-value--compact">
-          <div><dt>Khách hàng</dt><dd>{item.customerName || '—'}</dd></div>
-          <div><dt>Người liên hệ</dt><dd>{extra.contactName || '—'}{extra.contactPosition ? ` · ${extra.contactPosition}` : ''}</dd></div>
-          <div><dt>Giá trị / ngân sách</dt><dd>{formatVND(item.estimatedBudgetVnd) || '0 đ'}</dd></div>
-          <div><dt>Dự án</dt><dd>{extra.projectName || 'Chưa gắn dự án'}</dd></div>
-          <div><dt>Sale phụ trách / Team</dt><dd>{item.sdrName || '—'}{extra.teamName ? ` · ${extra.teamName}` : ''}</dd></div>
-          <div><dt>Người dẫn dắt</dt><dd>{item.leadedByName || '—'}</dd></div>
-          <div><dt>Ngày tạo</dt><dd>{formatDate(extra.createdAt) || '—'}</dd></div>
-          <div className="wide">
-            <dt>Follow-up</dt>
-            <dd>{formatDate(item.followUpDate) || '—'} {extra.followUpBadge}</dd>
-          </div>
-          <div className="wide"><dt>Việc tiếp theo</dt><dd>{extra.nextStep || '—'}</dd></div>
-        </dl>
-
-        {extra.steps?.length ? (
-          <section className="progress-compact-section">
-            <h3>Tiến độ hiện tại</h3>
-            <ol className="progress-compact-steps">
-              {extra.steps.map(step => (
-                <li key={step.key} className={`is-${step.state}`}>
-                  <b>{step.label}</b>
-                  <span>{STEP_STATE_LABEL[step.state]}</span>
-                </li>
-              ))}
-            </ol>
-          </section>
-        ) : null}
-
-        {extra.related ? (
-          <section className="progress-compact-section">
-            <h3>Record liên quan</h3>
-            {extra.related}
-          </section>
-        ) : null}
-
-        {item.customerId ? (
-          <button type="button" className="qc-btn qc-btn-soft progress-compact-link" onClick={() => onOpenCustomer?.(item.customerId!, item.customerName || 'Khách hàng')}>
-            Mở hồ sơ khách hàng ↗
-          </button>
-        ) : null}
-      </div>
-    );
-  }
+  const followUpState = dealFollowUpState(item.dealStage, item.followUpDate);
+  const e: DealDrawerExtra = extra || {};
+  const steps = e.steps?.length ? e.steps : buildDealSteps(item.dealStage);
+  const followUpBadge =
+    e.followUpBadge ??
+    (followUpState === 'overdue' ? (
+      <span className="qc-badge qc-badge-danger" style={{ marginLeft: 6 }}>Quá follow-up</span>
+    ) : followUpState === 'soon' ? (
+      <span className="qc-badge qc-badge-amber" style={{ marginLeft: 6 }}>Sắp follow-up</span>
+    ) : null);
 
   return (
-    <div className="progress-panel">
-      <span className="qc-badge qc-badge-blue" style={{ width: 'fit-content' }}>{item.dealStageLabel}</span>
+    <div className="progress-panel progress-panel--compact">
+      <div className="progress-compact-head">
+        <span className={`qc-badge ${item.dealStage === 'lost' ? 'qc-badge-danger' : 'qc-badge-blue'}`}>{item.dealStageLabel || '—'}</span>
+        <span className="progress-compact-money">{formatVND(item.estimatedBudgetVnd) || '0 đ'}</span>
+        <span className="progress-compact-sub">Đã ở giai đoạn: {formatSinceDuration(item.sinceAt)}</span>
+      </div>
 
-      <dl className="progress-key-value">
-        <div className="full"><dt>Khách hàng</dt><dd>{item.customerName || '—'}</dd></div>
+      <dl className="progress-key-value progress-key-value--compact">
+        <div><dt>Khách hàng</dt><dd>{item.customerName || '—'}</dd></div>
         <div><dt>Công ty</dt><dd>{item.companyName || '—'}</dd></div>
-        <div><dt>SDR</dt><dd>{item.sdrName || '—'}</dd></div>
+        {extra ? (
+          <div><dt>Người liên hệ</dt><dd>{e.contactName || '—'}{e.contactPosition ? ` · ${e.contactPosition}` : ''}</dd></div>
+        ) : null}
+        <div><dt>Giá trị / ngân sách</dt><dd>{formatVND(item.estimatedBudgetVnd) || '0 đ'}</dd></div>
+        {extra ? <div><dt>Dự án</dt><dd>{e.projectName || 'Chưa gắn dự án'}</dd></div> : null}
+        <div><dt>Sale phụ trách{e.teamName ? ' / Team' : ''}</dt><dd>{item.sdrName || '—'}{e.teamName ? ` · ${e.teamName}` : ''}</dd></div>
         <div><dt>Người dẫn dắt</dt><dd>{item.leadedByName || '—'}</dd></div>
-        <div><dt>Đã ở giai đoạn</dt><dd>{formatSinceDuration(item.sinceAt)}</dd></div>
-        <div><dt>Ngân sách</dt><dd>{formatVND(item.estimatedBudgetVnd) || '0 đ'}</dd></div>
-        <div>
+        {e.createdAt ? <div><dt>Ngày tạo</dt><dd>{formatDate(e.createdAt) || '—'}</dd></div> : null}
+        <div className="wide">
           <dt>Follow-up</dt>
-          <dd>
-            {formatDate(item.followUpDate) || '—'}
-            {followUpOverdue ? <span className="qc-badge qc-badge-danger" style={{ marginLeft: 6 }}>Quá hạn follow-up</span> : null}
-          </dd>
+          <dd>{formatDate(item.followUpDate) || '—'} {followUpBadge}</dd>
         </div>
+        {extra ? <div className="wide"><dt>Việc tiếp theo</dt><dd>{e.nextStep || '—'}</dd></div> : null}
       </dl>
 
-      {item.quoteId || item.projectId ? (
-        <div className="progress-linked-actions">
-          {item.quoteId ? <span className="qc-badge qc-badge-neutral">Có báo giá liên quan — tìm trong tab Báo giá &amp; SLA</span> : null}
-          {item.projectId ? <span className="qc-badge qc-badge-neutral">Có dự án liên quan</span> : null}
-        </div>
+      {steps.length ? (
+        <section className="progress-compact-section">
+          <h3>Tiến độ hiện tại</h3>
+          <ol className="progress-compact-steps">
+            {steps.map(step => (
+              <li key={step.key} className={`is-${step.state}`}>
+                <b>{step.label}</b>
+                <span>{STEP_STATE_LABEL[step.state]}</span>
+              </li>
+            ))}
+          </ol>
+        </section>
+      ) : null}
+
+      {e.related ? (
+        <section className="progress-compact-section">
+          <h3>Record liên quan</h3>
+          {e.related}
+        </section>
+      ) : item.quoteId || item.projectId ? (
+        <section className="progress-compact-section">
+          <h3>Record liên quan</h3>
+          <div className="progress-linked-actions">
+            {item.quoteId ? <span className="qc-badge qc-badge-neutral">Có báo giá liên quan — xem trong tab Báo giá</span> : null}
+            {item.projectId ? <span className="qc-badge qc-badge-neutral">Có dự án liên quan</span> : null}
+          </div>
+        </section>
       ) : null}
 
       {item.customerId ? (
-        <button type="button" className="qc-btn qc-btn-soft progress-open-full" onClick={() => onOpenCustomer?.(item.customerId!, item.customerName || 'Khách hàng')}>
-          Xem khách hàng tại chỗ
+        <button type="button" className="qc-btn qc-btn-soft progress-compact-link" onClick={() => onOpenCustomer?.(item.customerId!, item.customerName || 'Khách hàng')}>
+          Mở hồ sơ khách hàng ↗
         </button>
       ) : null}
     </div>
   );
+}
+
+/** Các giai đoạn pipeline theo thứ tự (khớp DEAL_STAGE_LABELS) - dựng chip tiến độ khi caller không truyền steps. */
+const PIPELINE_ORDER = ['dealing', 'proposal_sent', 'negotiation', 'contract_signed', 'payment_1', 'implementation', 'acceptance', 'payment_final', 'post_sale_care'];
+
+function buildDealSteps(stage: string | null): NonNullable<DealDrawerExtra['steps']> {
+  if (!stage) return [];
+  if (stage === 'lost') return PIPELINE_ORDER.slice(0, 3).map(k => ({ key: k, label: dealStageLabel(k), state: 'out' as const }));
+  const idx = PIPELINE_ORDER.indexOf(stage);
+  if (idx < 0) return [];
+  return PIPELINE_ORDER.map((k, i) => ({
+    key: k,
+    label: dealStageLabel(k),
+    state: i < idx ? ('done' as const) : i === idx ? ('current' as const) : ('pending' as const),
+  }));
 }
