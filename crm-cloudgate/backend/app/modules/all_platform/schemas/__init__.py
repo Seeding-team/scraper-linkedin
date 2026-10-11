@@ -83,6 +83,7 @@ from app.modules.all_platform.schemas.service_catalog import (
     ServiceCatalogUnitUpdateRequest,
     ServiceCatalogVatRateCreateRequest,
     ServiceCatalogVatRateUpdateRequest,
+    ServiceCatalogWorkspaceAssignRequest,
     BundleComponentInput,
     BundleComponentsSetRequest,
     QuoteFormCatalogLinksSetRequest,
