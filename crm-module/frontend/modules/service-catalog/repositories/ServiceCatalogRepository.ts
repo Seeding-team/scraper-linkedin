@@ -11,6 +11,7 @@ import {
   MscSyncStats,
   WorkspaceMeta,
   WorkspaceAssignResult,
+  CatalogChangeFingerprint,
 } from '../types';
 
 type ApiResponse<T> = {
@@ -162,6 +163,15 @@ export class ServiceCatalogRepository {
   /** TÍCH HỢP BỘ LỌC WORKSPACE: Lấy danh sách Workspace từ DB */
   async getWorkspaces(): Promise<WorkspaceMeta[]> {
     return apiFetch<WorkspaceMeta[]>('/api/all-platform/service-catalog/workspaces');
+  }
+
+  /** ĐỒNG BỘ CROSS-CLONE (Requirement C): fingerprint thay đổi dữ liệu danh mục
+   * (max updated_at + counts). Poll chu kỳ bounded ở use-service-catalog;
+   * fingerprint đổi → refetch list/workspaces. Endpoint tồn tại trên clone
+   * backend; MAIN/TimeTech chưa có → chỉ clone standalone gọi (guard bằng
+   * IS_STANDALONE_CRM). */
+  async getCatalogVersion(): Promise<CatalogChangeFingerprint> {
+    return apiFetch<CatalogChangeFingerprint>('/api/all-platform/service-catalog/version');
   }
 
   /** Danh sách đầy đủ bộ giá (mọi issuer_company_id) của 1 sản phẩm — CHỈ

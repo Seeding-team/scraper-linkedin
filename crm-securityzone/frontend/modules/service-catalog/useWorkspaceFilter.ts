@@ -3,18 +3,29 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { serviceCatalogRepository } from './repositories/ServiceCatalogRepository';
 import type { WorkspaceMeta } from './types';
-import { IS_STANDALONE_CRM } from '@/lib/env';
+import { IS_STANDALONE_CRM, CURRENT_WORKSPACE_INSTANCE } from '@/lib/env';
 
 /**
  * Hook quản lý trạng thái bộ lọc Workspace.
- * 
+ *
  * TÍCH HỢP BỘ LỌC WORKSPACE:
  * - Tự động phát hiện môi trường:
  *   + Seeding chính: isStandalone = false -> Nút bộ lọc hiển thị, hỗ trợ multi-select.
- *   + CRM Standalone: isStandalone = true -> mặc định "Tất cả" (dùng chung giữa 4 clone,
- *     giống Seeding chính), chỉ ẩn nút bộ lọc trên UI (không cho đổi thủ công).
- * - Tải danh sách Workspaces 100% động từ Database qua endpoint /api/all-platform/service-catalog/workspaces.
- * - Quản lý trạng thái áp dụng (appliedWorkspaces).
+ *   + CRM Standalone (clone): KHÓA list luôn theo workspace của chính clone
+ *     (CURRENT_WORKSPACE_INSTANCE, suy từ build arg NEXT_PUBLIC_CRM_INSTANCE
+ *     của stack đó) — Requirement B: clone KHÔNG hiển thị groups của workspace
+ *     khác; server lọc trước khi trả (instances= được truyền vào mỗi query).
+ *
+ * LỊCH SỬ (giữ ngữ cảnh): trước 2026-10-12 clone cố ý để "Tất cả" vì khi đó
+ * toàn bộ rows đều instance='markee' + CURRENT_WORKSPACE_INSTANCE luôn trả
+ * 'markee' ở mọi app. Từ migration 190 (junction many-to-many), DB có thật
+ * sự phân bổ theo workspace (vd securityzone chỉ tồn tại trong junction) và
+ * yêu cầu hiện tại (Requirement B) là lọc chặt → mở lại scoping và GUARD
+ * setter: mọi đường đổi filter trong clone đều bị ép về workspace của clone.
+ *
+ * - Tải danh sách Workspaces 100% động từ Database qua endpoint
+ *   /api/all-platform/service-catalog/workspaces; refreshWorkspaces() cho phép
+ *   sync-poller (use-service-catalog) làm mới metadata khi fingerprint đổi.
  */
 export function useWorkspaceFilter() {
   const [workspaces, setWorkspaces] = useState<WorkspaceMeta[]>([]);
@@ -24,21 +35,44 @@ export function useWorkspaceFilter() {
   // Môi trường standalone hay Seeding chính
   const isStandalone = IS_STANDALONE_CRM;
 
-  // State các workspace đã áp dụng để query API
-  // BUG THAT DA GAP ("sp và dv bên timetech chưa thấy hiện, nhớ xài chung 4
-  // clone mà"): TRUOC DAY Standalone tu gan cung [CURRENT_WORKSPACE_INSTANCE]
-  // - "Sản phẩm & dịch vụ" la bang DUNG CHUNG giua 4 clone (khong co y dinh
-  // tach rieng theo workspace, khac han Khach hang/Lead/Deal/Bao gia), nen
-  // loc cung nay khien moi clone CHI thay dung nhom cua minh, trong khi du
-  // lieu that nam het duoi 1 instance (truoc day la 'markee' do
-  // CURRENT_WORKSPACE_INSTANCE bi loi luon tra 'markee' o moi app - xem fix
-  // NEXT_PUBLIC_CRM_INSTANCE build-arg). Standalone gio cung mac dinh RONG
-  // (= "Tất cả") giong Seeding chinh - UI nut loc van an o Standalone (xem
-  // `isStandalone` ben duoi), chi khac o day KHONG con tu dong thu hep theo
-  // instance nua.
-  const [appliedWorkspaces, setAppliedWorkspaces] = useState<string[]>([]);
+  // Workspace key mở khóa của clone này (lowercase — chuẩn so với junction)
+  const ownInstance = useMemo(() => CURRENT_WORKSPACE_INSTANCE.toLowerCase(), []);
 
-  // Fetch danh sách workspace động từ DB (dùng async promise callback)
+  // State các workspace đã áp dụng để query API.
+  // STANDALONE: luôn đúng 1 workspace của clone (Requirement B — strict
+  // filtering, server-side qua `instances=`); không route UI nào thay được.
+  const [appliedWorkspaces, setAppliedWorkspacesState] = useState<string[]>(() =>
+    IS_STANDALONE_CRM ? [CURRENT_WORKSPACE_INSTANCE.toLowerCase()] : []
+  );
+
+  // Guard setter: ở standalone MỌI attempt đổi/thêm/reset đều bị ép về đúng
+  // workspace của clone (openGroupsFor('')/resetFilter/popover... không thể
+  // mở rộng scope). MAIN giữ hành vi set tự do như cũ.
+  const setAppliedWorkspaces = useCallback(
+    (value: string[] | ((prev: string[]) => string[])) => {
+      if (!IS_STANDALONE_CRM) {
+        setAppliedWorkspacesState(value);
+        return;
+      }
+      setAppliedWorkspacesState([ownInstance]);
+    },
+    [ownInstance]
+  );
+
+  // Fetch danh sách workspace động từ DB (async promise callback — rule
+  // react-hooks: setState chỉ trong callback, không trong effect body).
+  const loadWorkspaces = useCallback(async () => {
+    try {
+      const data = await serviceCatalogRepository.getWorkspaces();
+      setWorkspaces(data || []);
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Không tải được danh sách workspace');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     let active = true;
     serviceCatalogRepository
@@ -59,10 +93,16 @@ export function useWorkspaceFilter() {
     };
   }, []);
 
-  // Đặt lại (reset về Tất cả)
+  // ĐỒNG BỘ CROSS-CLONE (Requirement C): hook cho page cắm vào sync callback
+  // (fingerprint đổi → metadata workspace/counts cũng được làm mới).
+  const refreshWorkspaces = useCallback(() => {
+    void loadWorkspaces();
+  }, [loadWorkspaces]);
+
+  // Đặt lại (MAIN: về Tất cả; standalone: guard giữ workspace của clone)
   const resetFilter = useCallback(() => {
-    setAppliedWorkspaces([]);
-  }, []);
+    setAppliedWorkspaces(IS_STANDALONE_CRM ? [ownInstance] : []);
+  }, [ownInstance, setAppliedWorkspaces]);
 
   // Label hiển thị trên nút Trigger
   const triggerLabel = useMemo(() => {
@@ -81,8 +121,10 @@ export function useWorkspaceFilter() {
     loading,
     error,
     isStandalone,
+    ownInstance,
     appliedWorkspaces,
     setAppliedWorkspaces,
+    refreshWorkspaces,
     triggerLabel,
     resetFilter,
   };

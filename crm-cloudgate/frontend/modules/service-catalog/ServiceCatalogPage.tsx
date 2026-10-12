@@ -37,22 +37,75 @@ export function ServiceCatalogPage() {
     workspaces,
     loading: workspacesLoading,
     isStandalone,
+    ownInstance,
     appliedWorkspaces,
     setAppliedWorkspaces,
+    refreshWorkspaces,
     triggerLabel,
     resetFilter,
   } = useWorkspaceFilter();
 
-  const { items, isLoaded, error, createItem, updateItem, deleteItem, refresh } = useServiceCatalog(appliedWorkspaces);
+  const { items, isLoaded, isFetching, error, createItem, updateItem, deleteItem, refresh } = useServiceCatalog(appliedWorkspaces, refreshWorkspaces);
   const groups = useMemo(() => items.filter(item => item.itemType === 'group'), [items]);
 
   // ── Workspace-first navigation (view state): 'workspaces' | 'groups' ──────
   const [view, setView] = useState<'workspaces' | 'groups'>('workspaces');
 
+  // Many-to-many (migration 190): COUNT THEO NHÓM ĐƯỢC XUẤT TỪ PAYLOAD
+  // `workspaces[]` (junction ∪ legacy fallback, kế thừa counting rules của
+  // `list_available_workspaces` backend: mỗi nhóm đếm 1 lần cho mỗi set).
+  // Nguồn của counts = `groups` vừa load (refresh() chạy lại sau mỗi
+  // mutation + sync-poll) — không optimistic, không race.
+  const countsByInstance = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const group of groups) {
+      const list = Array.isArray(group.workspaces) && group.workspaces.length > 0
+        ? group.workspaces
+        : [group.instance || 'markee'];
+      const seen = new Set<string>();
+      for (const raw of list) {
+        const key = (raw || '').toLowerCase();
+        if (!key || seen.has(key)) continue;
+        seen.add(key);
+        counts[key] = (counts[key] || 0) + 1;
+      }
+    }
+    return counts;
+  }, [groups]);
+
+  // STANDALONE (clone — Requirement B): màn hình chọn Workspace CHỈ có card
+  // của workspace thuộc về clone này — không card "Tất cả Workspace", không
+  // card workspace khác (đều là data leakage). Fallback tên/code khi API
+  // workspaces chưa trả về gì vẫn dùng CURRENT_WORKSPACE_INSTANCE (đúng
+  // build arg của stack), không hardcode tên hiển thị.
+  const ownWorkspaceCard = useMemo(() => {
+    const listed = workspaces.find(w => (w.instance_key || '').toLowerCase() === ownInstance);
+    if (listed) return listed;
+    return {
+      instance_key: ownInstance,
+      code: ownInstance.slice(0, 2).toUpperCase(),
+      name: ownInstance,
+      total_groups: countsByInstance[ownInstance] ?? 0,
+    };
+  }, [workspaces, ownInstance, countsByInstance]);
+
   function openGroupsFor(key: string) {
-    const k = key.toLowerCase();
-    setAppliedWorkspaces(k ? [k] : []);
+    // Guard trong useWorkspaceFilter ép standalone về đúng workspace của clone
+    // (kể cả khi gọi với key khác) — MAIN set tự do theo key được chọn.
+    setAppliedWorkspaces([key.toLowerCase()]);
     setView('groups');
+    setPage(1);
+  }
+
+  // Về hub Workspace (MAIN): reset filter về "Tất cả" + refresh dữ liệu để
+  // counts không stale. STANDALONE: guard giữ workspace của clone (không bao
+  // giờ về "Tất cả" — vẫn refresh dữ liệu).
+  function openWorkspacesView() {
+    if (view !== 'workspaces') {
+      setView('workspaces');
+      setAppliedWorkspaces(isStandalone ? [ownInstance] : []);
+      void refresh();
+    }
     setPage(1);
   }
 
@@ -289,54 +342,88 @@ export function ServiceCatalogPage() {
 
         <div className="sc-page-heading">
           <h1>Chọn Workspace</h1>
-          <p>Chọn một workspace để xem danh sách nhóm sản phẩm của nó.</p>
+          <p>
+            {isStandalone
+              ? 'Sản phẩm & dịch vụ của workspace này được quản lý tập trung tại hệ thống Markee AI.'
+              : 'Chọn một workspace để xem danh sách nhóm sản phẩm của nó.'}
+          </p>
         </div>
 
-        <div className="sc-groups-grid">
-          {/* Card "Tất cả Workspace": giữ được view không lọc (giống hành vi cũ) */}
-          <Link href="#" onClick={e => { e.preventDefault(); openGroupsFor(''); }} className="sc-group-card sc-ws-card sc-ws-card-all">
-            <div className="sc-group-card-icon">
-              <LayoutGrid className="qc-icon" />
-            </div>
-            <div className="sc-group-card-body">
-              <div className="sc-group-card-title-row">
-                <span className="sc-group-card-title">Tất cả Workspace</span>
-              </div>
-              <div className="sc-group-card-meta">
-                <span className="sc-group-card-count">
-                  {workspaces.reduce((sum, ws) => sum + (ws.total_groups ?? 0), 0)} nhóm
-                </span>
-              </div>
-            </div>
-            <span className="sc-group-card-chevron" aria-hidden="true">›</span>
-          </Link>
-
-          {workspaces.map(ws => (
-            <Link
-              href="#"
-              key={ws.instance_key}
-              onClick={e => { e.preventDefault(); openGroupsFor(ws.instance_key); }}
-              className="sc-group-card sc-ws-card"
+        {(!isLoaded || isFetching) ? (
+          <div className="sc-groups-grid" aria-hidden="true">
+            {[1, 2, 3].map(i => (
+              <div className="sc-group-card sc-group-card--skeleton" key={i} />
+            ))}
+          </div>
+        ) : isStandalone ? (
+          // ── STANDALONE (clone): CHỈ card workspace của clone (Requirement B:
+          //    không card "Tất cả", không workspace khác — tránh data leakage).
+          //    Markup theo design đã duyệt ở Seeding chính (Requirement A):
+          //    icon + title + code cùng hàng, count dưới, chevron bên phải.
+          <div className="sc-groups-grid">
+            <button
+              type="button"
+              className="sc-ws-card"
+              onClick={() => openGroupsFor(ownWorkspaceCard.instance_key)}
             >
-              <div className="sc-group-card-icon sc-ws-card-icon">
-                <Building2 className="qc-icon" />
-              </div>
-              <div className="sc-group-card-body">
-                <div className="sc-group-card-title-row">
-                  <span className="sc-group-card-title">{ws.name}</span>
-                  {ws.code ? <span className="sc-ws-code-chip">{ws.code}</span> : null}
-                </div>
-                <div className="sc-group-card-meta">
-                  <span className="sc-group-card-count">{ws.total_groups ?? 0} nhóm</span>
-                </div>
-              </div>
-              <span className="sc-group-card-chevron" aria-hidden="true">›</span>
-            </Link>
-          ))}
-        </div>
+              <span className="sc-ws-card-row">
+                <span className="sc-ws-card-icon">
+                  <Building2 className="sc-ws-card-svg" />
+                </span>
+                <span className="sc-ws-card-title">{ownWorkspaceCard.name}</span>
+                {ownWorkspaceCard.code ? <span className="sc-ws-code-chip">{ownWorkspaceCard.code}</span> : null}
+                <span className="sc-ws-card-chevron" aria-hidden="true">›</span>
+              </span>
+              <span className="sc-ws-card-count">
+                {countsByInstance[ownWorkspaceCard.instance_key] ?? 0} nhóm
+              </span>
+            </button>
+          </div>
+        ) : (
+          // ── MAIN (Seeding chính): đa workspace như design hiện có ──
+          <div className="sc-groups-grid">
+            {/* Card "Tất cả Workspace": giữ được view không lọc (giống hành vi cũ) */}
+            <button
+              type="button"
+              className="sc-ws-card sc-ws-card-all"
+              onClick={() => { setAppliedWorkspaces([]); setView('groups'); setPage(1); }}
+            >
+              <span className="sc-ws-card-row">
+                <span className="sc-ws-card-icon">
+                  <LayoutGrid className="sc-ws-card-svg" />
+                </span>
+                <span className="sc-ws-card-title">Tất cả Workspace</span>
+                <span className="sc-ws-card-chevron" aria-hidden="true">›</span>
+              </span>
+              <span className="sc-ws-card-count">{groups.length} nhóm</span>
+            </button>
+
+            {workspaces.map(ws => {
+              const key = (ws.instance_key || '').toLowerCase();
+              return (
+                <button
+                  type="button"
+                  key={ws.instance_key}
+                  className="sc-ws-card"
+                  onClick={() => openGroupsFor(key)}
+                >
+                  <span className="sc-ws-card-row">
+                    <span className="sc-ws-card-icon">
+                      <Building2 className="sc-ws-card-svg" />
+                    </span>
+                    <span className="sc-ws-card-title">{ws.name}</span>
+                    {ws.code ? <span className="sc-ws-code-chip">{ws.code}</span> : null}
+                    <span className="sc-ws-card-chevron" aria-hidden="true">›</span>
+                  </span>
+                  <span className="sc-ws-card-count">{countsByInstance[key] ?? 0} nhóm</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
 
         {workspacesLoading ? <div className="sc-loading">Đang tải danh sách Workspace...</div> : null}
-        {!workspacesLoading && workspaces.length === 0 && !error ? (
+        {!workspacesLoading && !error && workspaces.length === 0 && !isLoaded ? (
           <div className="sc-empty">Chưa có Workspace nào được thiết lập.</div>
         ) : null}
       </div>
@@ -351,7 +438,7 @@ export function ServiceCatalogPage() {
           <button
             type="button"
             className="sc-btn sc-btn-ghost"
-            onClick={() => setView('workspaces')}
+            onClick={openWorkspacesView}
             title="Về màn hình chọn Workspace"
           >
             <ChevronLeft className="h-3.5 w-3.5" /> Workspace
@@ -400,7 +487,7 @@ export function ServiceCatalogPage() {
           </button>
         </div>
       ) : null}
-      {!isLoaded ? (
+      {(!isLoaded || isFetching) ? (
         <div className="sc-groups-grid" aria-hidden="true">
           {[1, 2, 3].map(i => (
             <div className="sc-group-card sc-group-card--skeleton" key={i} />
@@ -414,7 +501,7 @@ export function ServiceCatalogPage() {
             <button
               type="button"
               className="sc-btn sc-btn-ghost sc-toolbar-back"
-              onClick={() => setView('workspaces')}
+              onClick={openWorkspacesView}
               title="Về danh sách Workspace"
             >
               <ChevronLeft className="h-3.5 w-3.5" />

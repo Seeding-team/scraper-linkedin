@@ -471,6 +471,74 @@ def list_available_workspaces() -> list[dict]:
     return workspaces
 
 
+def get_catalog_change_fingerprint() -> dict:
+    """Fingerprint ĐỒNG BỘ DỮ LIỆU DANH MỤC (cross-clone sync — Requirement C).
+
+    Các stack (Seeding chính + 3 clone) đọc/ghi CÙNG 1 Postgres (không có cơ chế
+    push giữa các deploy), nên clone không thể biết "ở nơi khác vừa ghi gì".
+    Cách rẻ & an toàn: dựa trên các dấu vết mà MỌI đường ghi hiện có đều để lại:
+
+    - `service_catalog_items.updated_at` — được stamp bởi create/update/delete
+      service và CỰC KỲ QUAN TRỌNG bởi RPC `service_catalog_ws_assign`
+      (migration 190) cho group VÀ toàn bộ con trực tiếp — tức là mọi thay đổi
+      assignment Workspace từ Seeding chính đều bump được fingerprint.
+    - Số lượng group và số dòng junction (bảng many-to-many).
+
+    Frontend clone poll endpoint này theo chu kỳ bounded (revalidate); fingerprint
+    khác lần trước → refetch list/workspaces của mình. Không thay đổi gì schema,
+    không thêm service bên ngoài, không expose privileged key nào. """
+    supabase: Client = get_supabase_client()
+
+    groups_count = 0
+    items_max_updated_at = None
+    try:
+        res = (
+            supabase.table(ITEMS_TABLE)
+            .select("id, updated_at")
+            .order("updated_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+        rows = res.data or []
+        if rows:
+            items_max_updated_at = rows[0].get("updated_at")
+        # Đếm GROUP (item_type='group'); max(updated_at) lấy trên TOÀN BỘ items
+        # nên product thêm/sửa/xoá cũng bump được fingerprint (UI refetch là
+        # hành vi đúng trong cả hai trường hợp).
+        count_res = (
+            supabase.table(ITEMS_TABLE)
+            .select("id", count="exact")
+            .eq("item_type", "group")
+            .execute()
+        )
+        groups_count = getattr(count_res, "count", None)
+        if groups_count is None:
+            groups_count = len(count_res.data or [])
+    except Exception:
+        # Không bao giờ raise — fingerprint là "thêm đường sync", lỗi phải để
+        # client giữ nguyên dữ liệu cũ và thử lại chu kỳ sau (fallback an toàn).
+        pass
+
+    junction_count = 0
+    try:
+        j_res = (
+            supabase.table(WORKSPACES_TABLE)
+            .select("item_id", count="exact")
+            .execute()
+        )
+        junction_count = getattr(j_res, "count", None)
+        if junction_count is None:
+            junction_count = len(j_res.data or [])
+    except Exception:
+        pass
+
+    return {
+        "groups_count": groups_count,
+        "items_max_updated_at": items_max_updated_at,
+        "junction_count": junction_count,
+    }
+
+
 def list_service_catalog_items_scoped(instances: list[str] | None = None) -> list[dict]:
     """Lấy cây danh mục dịch vụ có lọc theo phân vùng Workspace (instances).
 
