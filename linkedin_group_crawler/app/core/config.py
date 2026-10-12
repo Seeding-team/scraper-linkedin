@@ -321,8 +321,13 @@ class Settings:
     # Base URL he thong MSC (source of truth, chi GET /api/v1/goods boil dau /).
     # De trong = tat tinh nang dong bo (job se khong chay, endpoint bao loi).
     msc_api_base_url: str = os.getenv("MSC_API_BASE_URL", "").rstrip("/")
-    # Token neu MSC tuong lai bang auth (hien tai /goods khong can). Khong hardcode.
+    # DEPRECATED (dung cho luu dong bo cu): token Bearer — MSC KHONG con nhan token nay
+    # cho GET /goods; msc_sync_service gio dung khoa tich hop msc_integration_key.
+    # Giu lai value cho den khi luu dong bo moi da xac minh xong tren prod roi moi xoa.
     msc_api_token: str = os.getenv("MSC_API_TOKEN", "")
+    # Khoa tich hop may-may (X-Msc-Integration-Key): MSC chi nhan tren GET /api/v1/goods.
+    # Bat buoc cho dong bo: thieu = run that bai sach se (khong fallback ve token cu).
+    msc_integration_key: str = os.getenv("MSC_INTEGRATION_KEY", "")
     # Gio (0-23) va phut chay dong bo tu dong 1 lan/ngay (timezone cua container,
     # docker-compose dat TZ=Asia/Ho_Chi_Minh).
     msc_sync_hour: int = max(0, min(23, int(os.getenv("MSC_SYNC_HOUR", "2"))))

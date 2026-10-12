@@ -93,11 +93,18 @@ def _fetch_msc_snapshot() -> tuple[int, dict]:
     base_url = (settings.msc_api_base_url or "").strip().rstrip("/")
     if not base_url:
         raise ValueError("MSC_API_BASE_URL chua duoc cau hinh - khong the dong bo hang hoa tu MSC.")
+    integration_key = (settings.msc_integration_key or "").strip()
+    if not integration_key:
+        raise ValueError(
+            "MSC_INTEGRATION_KEY chua duoc cau hinh - dong bo hang hoa tu MSC can khoa tich hop "
+            "(header X-Msc-Integration-Key, chi cho phep GET /api/v1/goods; xem .env.example)."
+        )
     url = f"{base_url}/api/v1/goods"
-    headers = {}
-    token = (settings.msc_api_token or "").strip()
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
+    # Khoa tich hop may-may duyet rieng; khong con gui Authorization Bearer (token
+    # dang nhap nguoi dung MSC chi nam <12h va day la nguyen nhan 401 hang ngay).
+    # KHONG co fallback ve token cu — neu khoa bi tu choi thi run ghi that bai
+    # (MSC tra loai 401/403 duoi day) va CRM khong bi thay doi.
+    headers = {"X-Msc-Integration-Key": integration_key}
 
     timeout = httpx.Timeout(settings.msc_sync_timeout_sec)
     with httpx.Client(timeout=timeout, follow_redirects=True) as client:

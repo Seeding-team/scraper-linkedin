@@ -14,26 +14,19 @@ import type { ServiceCatalogItem, ServiceCatalogItemInput, BundleComponentInput 
 export function useServiceCatalog(instances?: string[]) {
   const [items, setItems] = useState<ServiceCatalogItem[]>([]);
   const [isLoaded, setIsLoaded] = useState(false);
+  const [isFetching, setIsFetching] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const instancesKey = instances ? [...instances].sort().join(',') : '';
 
-  const refresh = useCallback(async () => {
-    try {
-      // TÍCH HỢP BỘ LỌC WORKSPACE: Truyền instances vào list()
-      const data = await serviceCatalogRepository.list({
-        instances: instances && instances.length > 0 ? instances : undefined,
-      });
-      setItems(data || []);
-      setError(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Không tải được danh mục dịch vụ.');
-    } finally {
-      setIsLoaded(true);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [instancesKey]);
+  const applyData = useCallback(async (data: ServiceCatalogItem[] | null) => {
+    setItems(data || []);
+    setError(null);
+    setIsLoaded(true);
+  }, []);
 
+  // Fetch được mount / đổi filter: setState chỉ chạy trong async callbacks
+  // (original pattern của hook này — rule react-hooks yêu cầu vậy).
   useEffect(() => {
     let active = true;
     serviceCatalogRepository
@@ -42,9 +35,7 @@ export function useServiceCatalog(instances?: string[]) {
       })
       .then(data => {
         if (!active) return;
-        setItems(data || []);
-        setError(null);
-        setIsLoaded(true);
+        void applyData(data);
       })
       .catch(err => {
         if (!active) return;
@@ -56,7 +47,24 @@ export function useServiceCatalog(instances?: string[]) {
       active = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [instancesKey]);
+  }, [instancesKey, applyData]);
+
+  // Refresh thủ công sau mutation thành công (create/delete/delete/assign) —
+  // refetch light-weight; ws counts (client-derived từ groups) tự cập nhật
+  // đúng khi data về (khong optimistic update khi fetch lỗi).
+  const refresh = useCallback(async () => {
+    setIsFetching(true);
+    try {
+      const data = await serviceCatalogRepository.list({
+        instances: instances && instances.length > 0 ? instances : undefined,
+      });
+      await applyData(data);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Không tải được danh mục dịch vụ.');
+    } finally {
+      setIsFetching(false);
+    }
+  }, [instances, applyData]);
 
   const createItem = async (input: ServiceCatalogItemInput) => {
     const result = await serviceCatalogRepository.create(input);
@@ -88,5 +96,5 @@ export function useServiceCatalog(instances?: string[]) {
     return result;
   };
 
-  return { items, isLoaded, error, createItem, updateItem, deleteItem, moveItem, setBundleComponents, refresh };
+  return { items, isLoaded, isFetching, error, createItem, updateItem, deleteItem, moveItem, setBundleComponents, refresh };
 }

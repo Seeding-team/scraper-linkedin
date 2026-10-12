@@ -44,9 +44,18 @@ export interface WorkspaceMeta {
   total_groups: number;
 }
 
+/** Many-to-many Workspace assignment (migration 190): kết quả của bulk replace-all. */
+export interface WorkspaceAssignResult {
+  assignment: Record<string, string[]>;
+  groups: string[];
+}
+
 export interface ServiceCatalogItem {
   /** TÍCH HỢP BỘ LỌC WORKSPACE: Mã định danh workspace (markee, cloudgate, securityzone,...) */
   instance?: string;
+  /** Many-to-many Workspace (migration 190):Set đầy đủ các workspace của item
+   * (junction table; thiếu = [instance] legacy fallback). */
+  workspaces?: string[];
   defaultCostPriceVnd?: number | null;
   defaultMarkupPercent?: number | null;
   defaultCustomerPriceVnd?: number | null;
