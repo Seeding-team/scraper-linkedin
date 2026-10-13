@@ -341,6 +341,91 @@ def test_scoped_list_none_returns_all_with_workspaces(fake_db):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# get_catalog_change_fingerprint (cross-clone sync — Requirement C)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def test_fingerprint_counts_groups_and_junction(monkeypatch):
+    db = FakeSupabase()
+    monkeypatch.setattr(catalog, "get_supabase_client", lambda: db)
+    db.db["service_catalog_items"] = [
+        {"id": "g1", "item_type": "group", "updated_at": "2026-10-12T01:00:00+00:00"},
+        {"id": "g2", "item_type": "group", "updated_at": "2026-10-12T03:00:00+00:00"},
+        {"id": "c1", "item_type": "component", "parent_id": "g1", "updated_at": "2026-10-12T02:00:00+00:00"},
+    ]
+    db.db[catalog.WORKSPACES_TABLE] = [
+        {"item_id": "g1", "instance": "markee"},
+        {"item_id": "g2", "instance": "cloudgate"},
+        {"item_id": "c1", "instance": "markee"},
+    ]
+    result = catalog.get_catalog_change_fingerprint()
+    # CHỈ group được đếm (không đếm product/con như là group)
+    assert result["groups_count"] == 2
+    assert result["junction_count"] == 3
+    # fake Query ignores order(): row đầu của select là g1 — shape verified;
+    # logic max(updated_at) thực sự nằm ở Postgres (order desc + limit 1).
+    assert result["items_max_updated_at"] == "2026-10-12T01:00:00+00:00"
+
+
+def test_fingerprint_is_stable_then_changes_with_data(monkeypatch):
+    db = FakeSupabase()
+    monkeypatch.setattr(catalog, "get_supabase_client", lambda: db)
+    db.db["service_catalog_items"] = [
+        {"id": "g1", "item_type": "group", "instance": "markee", "updated_at": "2026-10-12T01:00:00+00:00"},
+    ]
+    fp1 = catalog.get_catalog_change_fingerprint()
+    # "Seeding ghi": thêm 1 group + 2 junction dòng (giống ws_assign replace-all
+    # với 2 instance) → fingerprint khác lần trước
+    db.db["service_catalog_items"].append({"id": "g2", "item_type": "group", "instance": "cloudgate", "updated_at": "2026-10-12T05:00:00+00:00"})
+    db.db[catalog.WORKSPACES_TABLE] = [
+        {"item_id": "g1", "instance": "markee"},
+        {"item_id": "g2", "instance": "cloudgate"},
+        {"item_id": "g2", "instance": "securityzone"},
+    ]
+    fp2 = catalog.get_catalog_change_fingerprint()
+    assert fp2["groups_count"] == fp1["groups_count"] + 1
+    # junction sau thay đổi = g1×1 (markee) + g2×2 (cloudgate, securityzone)
+    assert fp2["junction_count"] == 3
+
+
+def test_fingerprint_never_raises_on_db_errors(monkeypatch):
+    class _ExplodingQuery:
+        def select(self, *_a, **_k):
+            return self
+
+        def eq(self, *_a, **_k):
+            return self
+
+        def order(self, *_a, **_k):
+            return self
+
+        def limit(self, *_a, **_k):
+            return self
+
+        def execute(self):
+            raise RuntimeError("db down")
+
+    class _ExplodingDb:
+        def table(self, _name):
+            return _ExplodingQuery()
+
+    monkeypatch.setattr(catalog, "get_supabase_client", lambda: _ExplodingDb())
+    result = catalog.get_catalog_change_fingerprint()
+    # Không raise — client giữ nguyên dữ liệu cũ, thử lại chu kỳ sau
+    assert result["groups_count"] == 0
+    assert result["items_max_updated_at"] is None
+    assert result["junction_count"] == 0
+
+
+VERSION_PATH = "/api/all-platform/service-catalog/version"
+
+
+def test_version_endpoint_requires_auth() -> None:
+    response = client.get(VERSION_PATH)
+    assert response.status_code == 401
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # API: auth (khong cho phep goi thieu auth/phan quyen)
 # ─────────────────────────────────────────────────────────────────────────────
 

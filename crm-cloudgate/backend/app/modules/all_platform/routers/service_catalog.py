@@ -109,6 +109,24 @@ def service_catalog_get_workspaces(_user: dict = Depends(get_current_user)) -> B
         return BaseResponse(success=False, message=str(e))
 
 
+@router.get("/version")
+def service_catalog_get_version(_user: dict = Depends(get_current_user)) -> BaseResponse:
+    """ĐỒNG BỘ CROSS-CLONE (Requirement C): fingerprint thay đổi dữ liệu danh mục.
+
+    Các clone đọc/ghi CÙNG 1 DB với Seeding chính nhưng KHÔNG có cơ chế push giữa
+    các deploy, nên frontend clone poll endpoint này với chu kỳ bounded (20s khi
+    tab đang mở): fingerprint khác lần trước → refetch list/workspaces của mình —
+    không cần F5, không poll full list. Mọi đường ghi hiện có (create/update/
+    delete/reorder + RPC ws_assign) đều stamp `updated_at` nên fingerprint bắt
+    được cả thay đổi assignment Workspace lẫn đổi tên/sửa nhóm. """
+    try:
+        data = catalog_service.get_catalog_change_fingerprint()
+        return BaseResponse(success=True, data=data)
+    except Exception as e:
+        logger.exception("Lỗi khi lấy fingerprint service catalog")
+        return BaseResponse(success=False, message=str(e))
+
+
 @router.get("")
 def service_catalog_get_all(
     context: str = Query("admin", pattern="^(admin|quote_picker)$"),
