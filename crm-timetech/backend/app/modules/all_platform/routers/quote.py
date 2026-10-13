@@ -233,6 +233,13 @@ def quote_forms_set_catalog_links(
     form_id: str, payload: QuoteFormCatalogLinksSetRequest, user: dict = Depends(get_current_user)
 ) -> BaseResponse:
     _require_master_data_manager(user)
+    # Workspace isolation (task 2026-10-14): trước đây catalog_item_ids được
+    # insert thẳng không tồn tại/ownership check — giờ mỗi id phải thuộc
+    # workspace của deploy (403 nếu khác). Nằm NGOÀI try: HTTPException 403
+    # không bị `except Exception` nuốt thành 200 success=False.
+    from app.modules.all_platform.services import supabase_service_catalog_service as _catalog_service
+
+    _catalog_service.ensure_catalog_items_in_scope(list(payload.catalog_item_ids))
     try:
         data = set_quote_form_catalog_links(form_id, payload.catalog_item_ids)
         return BaseResponse(success=True, message="Đã lưu danh mục dịch vụ áp dụng", data=data)

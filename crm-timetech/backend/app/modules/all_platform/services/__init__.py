@@ -115,6 +115,7 @@ from app.modules.all_platform.services.supabase_service_catalog_service import (
     get_quote_form_catalog_links,
     set_quote_form_catalog_links,
     get_service_catalog_options_for_form,
+    assign_group_workspaces,
 )
 from app.modules.all_platform.services.quote_telegram_service import (
     send_quote_to_telegram,

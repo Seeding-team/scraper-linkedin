@@ -10,7 +10,9 @@ from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPExcepti
 from app.core.config import settings
 from app.core.logger import logger
 from app.core.supabase_client import get_supabase_client
+from app.modules.all_platform.auth_deps import get_current_user
 from app.modules.all_platform.services import create_service_catalog_item, update_service_catalog_item
+from app.modules.all_platform.services.crm_permission_service import can_manage_shared_master_data
 from app.modules.all_platform.services.supabase_vendor_imports_service import SupabaseVendorImportsService
 from app.modules.all_platform.services.vendor_ai_parse_service import VendorAIParsingService
 
@@ -23,6 +25,41 @@ def get_imports_service():
 
 def get_instance():
     return settings.crm_instance or "markee"
+
+
+def _require_master_data_manager(user: dict) -> None:
+    """CUNG policy voi catalog /add /update (can_manage_shared_master_data):
+    admin/leader hoac member co quote_business_role sale/presale — da duoc
+    confirm voi user (Ops) ngay 2026-10-14 khi trien khai isolation task."""
+    if not can_manage_shared_master_data(user):
+        raise HTTPException(status_code=403, detail="Forbidden: CRM master data manager role required")
+
+
+def _catalog_scope_floor():
+    """Floor workspace cua deploy khi CATALOG_SCOPE_ENFORCED=1 (isolation
+    task); None = flag OFF. Reuse helper cua catalog service de 1 nguon
+    that duy nhat."""
+    from app.modules.all_platform.services import supabase_service_catalog_service as catalog
+
+    return catalog._catalog_scope_floor()
+
+
+def _workspace_map_for_floor(db):
+    """Load junction map cho vendor-import scoping (blank-safe: loi DB => {})."""
+    from app.modules.all_platform.services.supabase_service_catalog_service import _load_workspaces_map
+
+    try:
+        return _load_workspaces_map(db)
+    except Exception:
+        return {}
+
+
+def _workspace_set_for_raw(item_row: dict, ws_map: dict) -> list[str]:
+    """Ban re-implementation nhe cua _workspace_set_for cho row CHUA qua
+    _row_to_item (vendor import map). Junction truoc, legacy fallback."""
+    from app.modules.all_platform.services.supabase_service_catalog_service import _workspace_set_for
+
+    return _workspace_set_for(None, item_row, ws_map)
 
 
 def _to_float(value, default=None):
@@ -72,7 +109,12 @@ async def upload_batch(
     file: UploadFile = File(...),
     service: SupabaseVendorImportsService = Depends(get_imports_service),
     instance: str = Depends(get_instance),
+    user: dict = Depends(get_current_user),
 ):
+    # AUTH (isolation task 2026-10-14, policy confirm boi user/Ops): upload
+    # la duong GHI (batch + storage) → JWT + master-data manager role.
+    # Truoc day endpoint nay KHONG co auth gi ca.
+    _require_master_data_manager(user)
     try:
         content = await file.read()
         batch_id = str(uuid.uuid4())
@@ -135,9 +177,19 @@ async def process_ocr_extraction(batch_id: str, instance: str, file_path: str, c
         # KHONG duoc doi sang "Nhom san pham mac dinh" cua lan import nay
         # (yeu cau that: "Import gia Vendor khong duoc tu doi nhom cua
         # existing SKU").
-        catalog_res = db.table("service_catalog_items").select("id, sku, part_number, parent_id").execute()
+        catalog_res = db.table("service_catalog_items").select("id, sku, part_number, parent_id, instance").execute()
+        # Workspace isolation (task 2026-10-14, review round 2): SKU map CHI
+        # gom item thuoc workspace cua deploy (junction ∪ legacy fallback khi
+        # floor bat) — SKU cua workspace khac khong duoc goi y / pre-fill
+        # parent_id cua deploy khac. Floor OFF => full map nhu cu.
         catalog_map: dict[str, dict] = {}
+        _vi_floor = _catalog_scope_floor_safe()
+        _vi_ws_map = _workspace_map_for_floor(db) if _vi_floor else None
         for item in catalog_res.data or []:
+            if _vi_floor is not None and _vi_ws_map is not None:
+                _set = _workspace_set_for_raw(item, _vi_ws_map)
+                if not set(_set) & set(_vi_floor):
+                    continue
             for key in (item.get("sku"), item.get("part_number")):
                 if key and str(key).strip():
                     catalog_map[str(key).strip().lower()] = {"id": item["id"], "parent_id": item.get("parent_id")}
@@ -204,7 +256,9 @@ async def list_batches(
     limit: int = Query(50),
     service: SupabaseVendorImportsService = Depends(get_imports_service),
     instance: str = Depends(get_instance),
+    user: dict = Depends(get_current_user),
 ):
+    # AUTH: doc-only → JWT bat buoc (moi role), parity voi catalog GETs.
     return await service.list_batches(instance, limit)
 
 
@@ -213,6 +267,7 @@ async def get_batch(
     batch_id: str,
     service: SupabaseVendorImportsService = Depends(get_imports_service),
     instance: str = Depends(get_instance),
+    user: dict = Depends(get_current_user),
 ):
     return await service.get_batch(batch_id, instance)
 
@@ -222,6 +277,7 @@ async def get_batch_items(
     batch_id: str,
     service: SupabaseVendorImportsService = Depends(get_imports_service),
     instance: str = Depends(get_instance),
+    user: dict = Depends(get_current_user),
 ):
     return await service.get_batch_items(batch_id, instance)
 
@@ -233,7 +289,10 @@ async def update_item(
     data: dict,
     service: SupabaseVendorImportsService = Depends(get_imports_service),
     instance: str = Depends(get_instance),
+    user: dict = Depends(get_current_user),
 ):
+    # AUTH: review edit la duong GHI → JWT + master-data manager role.
+    _require_master_data_manager(user)
     user_id = "00000000-0000-0000-0000-000000000000"
     return await service.update_item(item_id, batch_id, instance, data, user_id)
 
@@ -244,7 +303,10 @@ async def retry_batch(
     background_tasks: BackgroundTasks,
     service: SupabaseVendorImportsService = Depends(get_imports_service),
     instance: str = Depends(get_instance),
+    user: dict = Depends(get_current_user),
 ):
+    # AUTH: retry chay OCR + AI (tai file, doc catalog) → JWT + master-data.
+    _require_master_data_manager(user)
     batch = await service.get_batch(batch_id, instance)
     if batch["status"] not in ["failed", "uploaded", "review"]:
         raise HTTPException(status_code=400, detail="Chi retry batch failed/uploaded/review.")
@@ -267,7 +329,13 @@ async def approve_batch(
     batch_id: str,
     service: SupabaseVendorImportsService = Depends(get_imports_service),
     instance: str = Depends(get_instance),
+    user: dict = Depends(get_current_user),
 ):
+    # AUTH (isolation task 2026-10-14, policy confirm boi user/Ops): approve
+    # la duong GHI catalog/price book (create/update_service_catalog_item) —
+    # JWT + master-data manager role. Truoc day KHONG co auth gi ca va la
+    # unauthenticated write chain vao catalog cao nhat trong audit.
+    _require_master_data_manager(user)
     db = get_supabase_client()
     batch = await service.get_batch(batch_id, instance)
     if batch["status"] == "approved":
@@ -285,7 +353,7 @@ async def approve_batch(
     if scope == "cost_price_book":
         await _approve_cost_price_book(db, batch, to_process)
     elif scope == "product_catalog":
-        await _approve_product_catalog(batch, to_process)
+        await _approve_product_catalog(batch, to_process, instance)
     elif scope != "project_only":
         raise HTTPException(status_code=400, detail="target_scope khong hop le.")
 
@@ -299,8 +367,18 @@ async def _approve_cost_price_book(db, batch: dict, items: list[dict]) -> None:
     if res_pb.data:
         pb_id = res_pb.data[0]["id"]
     else:
-        res_comp = db.table("quote_issuer_companies").select("id").limit(1).execute()
-        if not res_comp.data:
+        # Workspace isolation (review round 2): price book moi phai gắn issuer
+        # company thuoc workspace cua deploy khi floor bat — khong lay "company
+        # dau tien cua toan DB" (hay gắn sai brand).
+        issuer_companies = db.table("quote_issuer_companies").select("id, instance").execute().data or []
+        _vi_floor = _catalog_scope_floor()
+        if _vi_floor is not None:
+            ws_map = _workspace_map_for_floor(db)
+            issuer_companies = [
+                c for c in issuer_companies
+                if set(_workspace_set_for_raw(c, ws_map)) & set(_vi_floor)
+            ]
+        if not issuer_companies:
             raise HTTPException(status_code=400, detail="Chua co don vi phat hanh de tao price book.")
         created = (
             db.table("price_books")
@@ -308,7 +386,7 @@ async def _approve_cost_price_book(db, batch: dict, items: list[dict]) -> None:
                 {
                     "code": code,
                     "name": f"Vendor Price Book {batch['vendor_id']}",
-                    "issuer_company_id": res_comp.data[0]["id"],
+                    "issuer_company_id": issuer_companies[0]["id"],
                 }
             )
             .execute()
@@ -378,7 +456,7 @@ async def _approve_cost_price_book(db, batch: dict, items: list[dict]) -> None:
         db.table("price_book_items").insert(rows).execute()
 
 
-async def _approve_product_catalog(batch: dict, items: list[dict]) -> None:
+async def _approve_product_catalog(batch: dict, items: list[dict], instance: str | None = None) -> None:
     db = get_supabase_client()
     # Fallback CUOI CUNG - chi dung khi item khong co group_id nao ca (vd
     # batch tao truoc migration 132, hoac nguoi dung khong chon "Nhom san
@@ -398,7 +476,7 @@ async def _approve_product_catalog(batch: dict, items: list[dict]) -> None:
         group_id = item.get("group_id")
         if not group_id and item["review_status"] == "new":
             if fallback_group_id is None:
-                fallback_group_id = _resolve_vendor_import_group_id(db)
+                fallback_group_id = _resolve_vendor_import_group_id(db, instance)
             group_id = fallback_group_id
         payload = {
             "item_type": "component",
@@ -428,33 +506,49 @@ async def _approve_product_catalog(batch: dict, items: list[dict]) -> None:
             update_service_catalog_item(item["matched_catalog_item_id"], payload, None)
 
 
-def _resolve_vendor_import_group_id(db) -> str:
+def _resolve_vendor_import_group_id(db, instance: str | None = None) -> str:
+    """Tim nhom dau tien lam fallback cho SKU moi KHONG co group. Neu KHONG
+    con nhom nao thi TAO MOI — isolation task 2026-10-14: phai tao qua
+    `create_service_catalog_item` (ownership-aware helper) de nhom duoc GHI
+    JUNCTION `service_catalog_item_workspaces` + mirror legacy `instance`,
+    gan dung workspace cua deploy, thay vi raw-insert khong instance
+    (DB default 'markee', KHONG co junction — item 'ma' khong thuoc
+    workspace nao ro rang).
+
+    Review round 2: CHON nhom THUOC workspace cua deploy (junction ∪ legacy
+    khi floor bat) — khong lay "nhom dau tien cua toan DB" (hay rơi vào
+    nhom workspace khác). Floor OFF => full list như cũ."""
     groups = (
         db.table("service_catalog_items")
-        .select("id")
+        .select("id, instance")
         .eq("item_type", "group")
         .eq("status", "active")
         .order("sort_order")
-        .limit(1)
         .execute()
         .data
         or []
     )
+    _vi_floor = _catalog_scope_floor()
+    if _vi_floor is not None:
+        ws_map = _workspace_map_for_floor(db)
+        in_scope_ids = {
+            g["id"]
+            for g in groups
+            if set(_workspace_set_for_raw(g, ws_map)) & set(_vi_floor)
+        }
+        groups = [g for g in groups if g["id"] in in_scope_ids]
     if groups:
         return groups[0]["id"]
-    created = (
-        db.table("service_catalog_items")
-        .insert(
-            {
-                "item_type": "group",
-                "name": "Vendor Import",
-                "status": "active",
-                "sort_order": 0,
-            }
-        )
-        .execute()
-        .data
-    )
-    if not created:
+    create_payload = {
+        "item_type": "group",
+        "name": "Vendor Import",
+        "status": "active",
+        "sort_order": 0,
+    }
+    if instance and str(instance).strip():
+        create_payload["instance"] = str(instance).strip().lower()
+    created_item = create_service_catalog_item(create_payload, None)
+    created_id = created_item.get("id") if isinstance(created_item, dict) else None
+    if not created_id:
         raise HTTPException(status_code=400, detail="Khong tao duoc nhom san pham cho Vendor Import.")
-    return created[0]["id"]
+    return created_id
