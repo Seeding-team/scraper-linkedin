@@ -155,6 +155,146 @@ def _attach_workspaces(supabase: Client, items: list[dict]) -> list[dict]:
     return items
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Workspace ISOLATION (isolation task 2026-10-14): "floor" theo deploy.
+#
+# Cac deploy clone (crm-module/cloudgate/securityzone/timetech) bat flag
+# `CATALOG_SCOPE_ENFORCED=1` + khai bao `CRM_INSTANCE` -> moi read/write cua
+# Service Catalog bi gioi han trong workspace cua deploy do (fail-closed),
+# client KHONG the mo rong scope bang query/payload. Flag OFF (hoặc MAIN,
+# co ban sao code rieng) => moi helper ben duoi la no-op, hanh vi cu 100%.
+#
+# Ownership van dung dung `_workspace_set_for` (junction truoc, legacy
+# fallback) — KHONG doi mo hinh so huu, KHONG tu sua data.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _catalog_scope_floor() -> list[str] | None:
+    """Workspace floor cua deploy khi flag ON; None = khong enforcement.
+
+    `settings.crm_instance` doc tai goi ham (khong cache) de crm-module co
+    contextvar theo tung request van duoc resolve dung. Flag ON ma instance
+    rong (khong the xay ra neu boot-validation da chay) => raise thay vi
+    fail-open — an toan tuyet doi."""
+    from app.core.config import settings
+
+    if not getattr(settings, "catalog_scope_enforced", False):
+        return None
+    floor = _normalize_instances([settings.crm_instance])
+    if not floor:
+        raise RuntimeError(
+            "CATALOG_SCOPE_ENFORCED is on but CRM_INSTANCE is empty "
+            "(service catalog isolation is fail-closed)"
+        )
+    return floor
+
+
+def enforce_catalog_scope_floor(instances: list[str] | None) -> list[str] | None:
+    """Giao bo instances client hoi voi floor cua deploy (flag OFF => passthrough).
+
+    - Client khong chon (None/[]): scope = floor.
+    - Client chon: floor ∩ requested (KHONG BAO GIO mo rong floor).
+    - Tra ve list RONG => giao rong: router tra cay rong voi HTTP 200,
+      TUYET DOI khong goi list_service_catalog_items_scoped() voi list rong
+      (se tro thanh unfiltered)."""
+    floor = _catalog_scope_floor()
+    if floor is None:
+        return instances
+    if not instances:
+        return list(floor)
+    requested = set(_normalize_instances(instances))
+    return [i for i in floor if i in requested]
+
+
+def item_in_scope(supabase: Client, item_row: dict | None, floor: list[str] | None, ws_map: dict[str, list[str]] | None = None) -> bool:
+    """ObjChk: item nam trong floor (junction ∪ legacy fallback) hay khong.
+
+    floor None => True (khong enforcement). item_row None => False (caller
+    xu ly not-found rieng theo convention hien co). ws_map truyen de dat lai
+    (neu da load trong cung request); khong truyen => tu load."""
+    if floor is None:
+        return True
+    if not item_row:
+        return False
+    ws_set = _workspace_set_for(supabase, item_row, ws_map if ws_map is not None else _load_workspaces_map(supabase))
+    return bool(set(ws_set) & set(floor))
+
+
+def ensure_catalog_items_in_scope(item_ids: list[str] | None) -> None:
+    """ObjChk tap id (lookup/update/delete/reorder/components/pricing/links).
+
+    Co bat ke 1 id nao da xac nhan ton tai ma khong nam trong floor =>
+    HTTPException 403 (convention 403 cua router — xem CRM_SERVICE_CATALOG_
+    FINAL_INVESTIGATION §6). Id khong ton tai bo qua o day de duong service
+    xu ly "Khong tim thay dich vu" nhu cu (khong doi contract not-found)."""
+    from fastapi import HTTPException
+
+    ids = [str(i) for i in (item_ids or []) if str(i or "").strip()]
+    floor = _catalog_scope_floor()
+    if not ids or floor is None:
+        return
+    supabase: Client = get_supabase_client()
+    unique_ids = list(dict.fromkeys(ids))
+    rows = (
+        supabase.table(ITEMS_TABLE)
+        .select("id, instance")
+        .in_("id", unique_ids)
+        .execute()
+        .data
+        or []
+    )
+    by_id = {str(r["id"]): r for r in rows}
+    ws_map = _load_workspaces_map(supabase)
+    foreign = [
+        i for i in unique_ids
+        if i in by_id and not set(_workspace_set_for(supabase, by_id[i], ws_map)) & set(floor)
+    ]
+    if foreign:
+        raise HTTPException(
+            status_code=403,
+            detail="Forbidden: item belongs to another workspace",
+        )
+
+
+def issuer_company_in_scope(supabase: Client, issuer_company_id: str | None, floor: list[str] | None) -> bool:
+    """Issuer company (quote_issuer_companies) nam trong workspace floor?
+
+    issuer_company_id None = dong gia MAC DINH dung chung (kem theo item) =>
+    luon cho phep. Issuer khong ton tai bo qua (id sai de FK/duong service
+    bao loi nhu cu) — chi chan ISSUER THUOC WORKSPACE KHAC."""
+    if floor is None or not issuer_company_id:
+        return True
+    rows = (
+        supabase.table("quote_issuer_companies")
+        .select("id, instance")
+        .eq("id", issuer_company_id)
+        .limit(1)
+        .execute()
+        .data
+        or []
+    )
+    if not rows:
+        return True
+    instance = (rows[0].get("instance") or "").strip().lower()
+    return not instance or instance in set(floor)
+
+
+def ensure_issuer_company_in_scope(issuer_company_id: str | None) -> None:
+    """Wrapper 403 cho issuer_company_in_scope (dung o router pricing/quote
+    picker khi issuer do CLIENT tu gui — issuer lay tu quote that tren
+    server khong can check vi quote da instance-scoped tu truoc)."""
+    from fastapi import HTTPException
+
+    floor = _catalog_scope_floor()
+    if floor is None:
+        return
+    if not issuer_company_in_scope(get_supabase_client(), issuer_company_id, floor):
+        raise HTTPException(
+            status_code=403,
+            detail="Forbidden: issuer company belongs to another workspace",
+        )
+
+
 def _ws_write(
     supabase: Client,
     item_ids: list[str],
@@ -475,6 +615,74 @@ def list_available_workspaces() -> list[dict]:
     return workspaces
 
 
+def get_catalog_change_fingerprint() -> dict:
+    """Fingerprint ĐỒNG BỘ DỮ LIỆU DANH MỤC (cross-clone sync — Requirement C).
+
+    Các stack (Seeding chính + 3 clone) đọc/ghi CÙNG 1 Postgres (không có cơ chế
+    push giữa các deploy), nên clone không thể biết "ở nơi khác vừa ghi gì".
+    Cách rẻ & an toàn: dựa trên các dấu vết mà MỌI đường ghi hiện có đều để lại:
+
+    - `service_catalog_items.updated_at` — được stamp bởi create/update/delete
+      service và CỰC KỲ QUAN TRỌNG bởi RPC `service_catalog_ws_assign`
+      (migration 190) cho group VÀ toàn bộ con trực tiếp — tức là mọi thay đổi
+      assignment Workspace từ Seeding chính đều bump được fingerprint.
+    - Số lượng group và số dòng junction (bảng many-to-many).
+
+    Frontend clone poll endpoint này theo chu kỳ bounded (revalidate); fingerprint
+    khác lần trước → refetch list/workspaces của mình. Không thay đổi gì schema,
+    không thêm service bên ngoài, không expose privileged key nào. """
+    supabase: Client = get_supabase_client()
+
+    groups_count = 0
+    items_max_updated_at = None
+    try:
+        res = (
+            supabase.table(ITEMS_TABLE)
+            .select("id, updated_at")
+            .order("updated_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+        rows = res.data or []
+        if rows:
+            items_max_updated_at = rows[0].get("updated_at")
+        # Đếm GROUP (item_type='group'); max(updated_at) lấy trên TOÀN BỘ items
+        # nên product thêm/sửa/xoá cũng bump được fingerprint (UI refetch là
+        # hành vi đúng trong cả hai trường hợp).
+        count_res = (
+            supabase.table(ITEMS_TABLE)
+            .select("id", count="exact")
+            .eq("item_type", "group")
+            .execute()
+        )
+        groups_count = getattr(count_res, "count", None)
+        if groups_count is None:
+            groups_count = len(count_res.data or [])
+    except Exception:
+        # Không bao giờ raise — fingerprint là "thêm đường sync", lỗi phải để
+        # client giữ nguyên dữ liệu cũ và thử lại chu kỳ sau (fallback an toàn).
+        pass
+
+    junction_count = 0
+    try:
+        j_res = (
+            supabase.table(WORKSPACES_TABLE)
+            .select("item_id", count="exact")
+            .execute()
+        )
+        junction_count = getattr(j_res, "count", None)
+        if junction_count is None:
+            junction_count = len(j_res.data or [])
+    except Exception:
+        pass
+
+    return {
+        "groups_count": groups_count,
+        "items_max_updated_at": items_max_updated_at,
+        "junction_count": junction_count,
+    }
+
+
 def list_service_catalog_items_scoped(instances: list[str] | None = None) -> list[dict]:
     """Lấy cây danh mục dịch vụ có lọc theo phân vùng Workspace (instances).
 
@@ -531,6 +739,29 @@ def list_service_catalog_items_scoped(instances: list[str] | None = None) -> lis
                 extra_rows = []
             rows = list(rows) + list(extra_rows)
     mapped = [_row_to_item(row) for row in rows]
+    # Workspace isolation (task 2026-10-14): khi floor bat, POST-filter theo
+    # _workspace_set_for (junction THANG legacy): row chi con nam trong ket
+    # qua khi set(item) ∩ floor. Legacy-filter + junction-union ben TREN chi
+    # la gioi ket qua — legacy filter bat ca row co junction chi thuoc
+    # workspace khac, union KHONG loai duoc, nen phai loai o day cho dung
+    # "junction wins" (fail-closed). Flag OFF => giu nguyen 100% hanh vi
+    # filter legacy ∪ junction hien tai.
+    _floor = _catalog_scope_floor()
+    if _floor is not None:
+        ws_map = _load_workspaces_map(supabase)
+        mapped = [
+            item
+            for item in mapped
+            if set(_workspace_set_for(supabase, {"id": item["id"], "instance": item["instance"]}, ws_map)) & set(_floor)
+        ]
+        # Con cua nhom cha bi loai (thuoc workspace khac) KHONG duoc tro
+        # thanh "floating root" — drop; flag OFF giu nguyen hanh vi cu.
+        _visible_ids = {item["id"] for item in mapped}
+        mapped = [
+            item
+            for item in mapped
+            if not item.get("parentId") or item["parentId"] in _visible_ids
+        ]
     _attach_workspaces(supabase, mapped)
     by_id = {item["id"]: item for item in mapped}
     roots: list[dict] = []
@@ -581,6 +812,33 @@ def get_service_catalog_items_by_ids(item_ids: list[str]) -> list[dict]:
 
 def create_service_catalog_item(payload: dict, created_by: str | None) -> dict:
     supabase: Client = get_supabase_client()
+
+    # Workspace isolation (task 2026-10-14, review round 2): service-level
+    # fail-closed cho MOI caller (router /add da 403; check nay chot MSC sync
+    # job, vendor import approve...). Floor OFF => no-op.
+    _floor = _catalog_scope_floor()
+    if _floor is not None:
+        _requested = _normalize_instances([payload.get("instance") or ""])
+        if _requested and not set(_requested) <= set(_floor):
+            raise ValueError(
+                "Không thể tạo dịch vụ vào workspace khác (yêu cầu: "
+                + ", ".join(_requested) + ")."
+            )
+        if payload.get("parent_id"):
+            _parent_rows = (
+                supabase.table(ITEMS_TABLE)
+                .select("id, instance")
+                .eq("id", payload["parent_id"])
+                .limit(1)
+                .execute()
+                .data
+                or []
+            )
+            if _parent_rows and not item_in_scope(supabase, _parent_rows[0], _floor):
+                raise ValueError(
+                    "Nhom cha thuoc workspace khac — khong the tao dich vu con tu deploy nay."
+                )
+
     existing = (
         supabase.table(ITEMS_TABLE)
         .select("sort_order")
@@ -657,7 +915,17 @@ def create_service_catalog_item(payload: dict, created_by: str | None) -> dict:
                 insert_data["instance"] = parent_res.data[0]["instance"].strip().lower()
         except Exception:
             pass
-    
+
+    # Workspace isolation (isolation task 2026-10-14): khi deploy bat
+    # enforce_catalog_scope_floor, item tao moi KHONG duoc roi vao default
+    # 'markee' cua DB — gan workspace cua deploy de legacy column va junction
+    # (ghi duoi day qua _ws_write) cung thuoc floor, dung cho moi duong goi
+    # (router /add, MSC sync job, vendor import approve). Flag OFF => khong doi gi.
+    if not insert_data.get("instance"):
+        _floor = _catalog_scope_floor()
+        if _floor:
+            insert_data["instance"] = _floor[0]
+
     result = supabase.table(ITEMS_TABLE).insert(insert_data).execute()
     item = result.data[0]
 
@@ -794,6 +1062,11 @@ def update_service_catalog_item(item_id: str, payload: dict, actor_id: str | Non
     previous = previous_rows[0] if previous_rows else None
     previous_parent_id = str(previous.get("parent_id") or "") if previous else ""
 
+    # Workspace isolation (task 2026-10-14): service-level fail-closed cho MOI
+    # caller (router /update da 403 truc; check nay chot cac duong KHONG qua
+    # router — MSC sync job, vendor import approve). Floor OFF => no-op.
+    _floor = _catalog_scope_floor()
+
     allowed_keys = {
         "item_type", "parent_id", "sku", "name", "description", "unit",
         "list_price_usd", "unit_price_usd", "exchange_rate_snapshot",
@@ -821,6 +1094,12 @@ def update_service_catalog_item(item_id: str, payload: dict, actor_id: str | Non
         k: v for k, v in payload.items()
         if k in allowed_keys and (v is not None or k in nullable_clear_keys)
     }
+    # Workspace isolation (review round 2, LOW-9): `instance` rỗng (""/blank)
+    # trước đây lọt qua allowed_keys → ghi legacy column rỗng + Junction mirror
+    # bị IndexError nuốt đi (bất biến legacy ∈ junction broken). Loại bỏ event
+    # instance rỗng khỏi update payload (flag ON lẫn OFF — sửa lỗi thật).
+    if "instance" in update_data and not str(update_data.get("instance") or "").strip():
+        update_data.pop("instance", None)
     for numeric_key in (
         "monthly_price_vnd", "annual_commit_monthly_price_vnd", "annual_total_price_vnd",
         "max_sale_discount_percent", "target_gross_margin_percent", "quota_user_count", "quota_connected_channels",
@@ -830,6 +1109,38 @@ def update_service_catalog_item(item_id: str, payload: dict, actor_id: str | Non
             update_data[numeric_key] = _float_or_none(update_data[numeric_key])
     if update_data.get("pricing_policy_exceptions") is None:
         update_data.pop("pricing_policy_exceptions", None)
+
+    # Service-level fail-closed (isolation task): chot ca duong KHONG qua
+    # router (MSC sync job, vendor-import approve). Thu tu: (1) target
+    # phai thuoc floor; (2) reparent vao nhom cha da-workspace → tu choi;
+    # flag OFF => khong check gi (hanh vi cu).
+    if _floor is not None:
+        _ws_map = _load_workspaces_map(supabase)
+        if previous is not None and not item_in_scope(supabase, previous, _floor, _ws_map):
+            raise ValueError(
+                "Dich vu thuoc workspace khac — khong the cap nhat tu deploy nay."
+            )
+        new_parent_candidate = str(update_data.get("parent_id") or "")
+        if new_parent_candidate and new_parent_candidate != previous_parent_id:
+            _parent_rows = (
+                supabase.table(ITEMS_TABLE)
+                .select("id, instance")
+                .eq("id", new_parent_candidate)
+                .limit(1)
+                .execute()
+                .data
+                or []
+            )
+            if _parent_rows:
+                _parent_set = _workspace_set_for(supabase, _parent_rows[0], _ws_map)
+                _outside = [w for w in _parent_set if w not in set(_floor)]
+                if _outside:
+                    raise ValueError(
+                        "Nhom cha dang chia sẻ cho workspace khác "
+                        "(" + ", ".join(sorted(set(_outside))) + ") — "
+                        "việc kéo item vào nhóm này sẽ thay đổi assignment của workspace khác. "
+                        "Chỉ workspace chính (MAIN) được thao tác khi nhóm đa workspace."
+                    )
 
     # Manual-edit tracking (migration 176): danh dau field dong bo bi nguoi
     # dung sua that su truoc khi ghi, de MSC sync khong ghi de (§7).
@@ -874,7 +1185,24 @@ def update_service_catalog_item(item_id: str, payload: dict, actor_id: str | Non
     #   - payload co `instance`  -> set moi = {instance do} (replace-all;
     #     bulk multi-workspace di qua endpoint /workspaces-assign).
     #   - parent_id THAY DOI     -> reparent: product nhan full set cua nhom moi.
+    #
+    # Workspace isolation (row 2, review round 2): khi floor bat, item DA
+    # chia se cho workspace khac phai duoc bao ve khoi thay doi assignment —
+    # payload `instance` chay theo duong _ws_write REPLACE-ALL se mat con
+    # assignment cua workspace khac tren item do. Ton trong nguyen tac "khong
+    # ep moi nhom ve 1 workspace, khong lam doi quan he cross-workspace hop
+    # le": tu choi thay doi assignment cua item da-workspace (ValueError →
+    # 200 success=False); bulk assignment chi lam tu workspace chinh (MAIN).
     if "instance" in update_data:
+        if _floor is not None and previous is not None:
+            _current_set = _workspace_set_for(supabase, previous, _ws_map)
+            _outside = [w for w in _current_set if w not in set(_floor)]
+            if _outside:
+                raise ValueError(
+                    "Dich vu dang chia sẻ cho workspace khác "
+                    "(" + ", ".join(sorted(set(_outside))) + ") — thay đổi Workspace "
+                    "của nhóm đa workspace chỉ được thực hiện từ workspace chính (MAIN)."
+                )
         try:
             _ws_write(supabase, [item_id], [_normalize_instances([update_data["instance"]])[0] or "markee"], actor_id)
         except Exception:
@@ -974,8 +1302,12 @@ def reorder_service_catalog_item(item_id: str, direction: str) -> list[dict]:
         return list_service_catalog_items()
 
     target = siblings[target_index]
-    supabase.table(ITEMS_TABLE).update({"sort_order": target["sort_order"]}).eq("id", current["id"]).execute()
-    supabase.table(ITEMS_TABLE).update({"sort_order": current["sort_order"]}).eq("id", target["id"]).execute()
+    # updated_at stamp (isolation task 2026-10-14): reorder truoc day khong
+    # bump updated_at nen fingerprint (max updated_at) khong doi → clone
+    # khong biet de refetch. Stamp CA 2 dong (reader FE sap xep lai theo
+    # sort_order, 2 dong lien ke doi cho nhau).
+    supabase.table(ITEMS_TABLE).update({"sort_order": target["sort_order"], "updated_at": _now_iso()}).eq("id", current["id"]).execute()
+    supabase.table(ITEMS_TABLE).update({"sort_order": current["sort_order"], "updated_at": _now_iso()}).eq("id", target["id"]).execute()
     return list_service_catalog_items()
 
 
@@ -1003,6 +1335,13 @@ def set_bundle_components(bundle_id: str, items: list[dict]) -> dict:
             "show_on_quote": item.get("show_on_quote", True),
             "sort_order": item.get("sort_order", index),
         }).execute()
+
+    # updated_at stamp tren bundle item (isolation task 2026-10-14): sua THÀNH
+    # PHẦN goi chi ghi service_catalog_bundle_items (composition ≠ ownership,
+    # migration 190) nen fingerprint chi doc ITEMS + WORKSPACES tu truoc nay
+    # khong thay doi — stamp updated_at cua bundle de clone refetch khi noi
+    # khac sua thanh phan goi.
+    supabase.table(ITEMS_TABLE).update({"updated_at": _now_iso()}).eq("id", bundle_id).execute()
 
     return get_service_catalog_item(bundle_id)
 
@@ -1225,8 +1564,14 @@ def strip_cost_markup_fields(tree: list[dict]) -> None:
 def list_service_catalog_item_pricing(item_id: str) -> list[dict]:
     """Danh sach TAT CA dong gia (ca dong mac dinh chung lan tung dong rieng
     theo issuer_company_id) cua 1 san pham - dung cho form quan tri (Admin),
-    KHONG dung cho picker chon danh muc trong quote."""
+    KHONG dung cho picker chon danh muc trong quote.
+
+    Workspace isolation (task 2026-10-14): khi floor bat, an toan tuyet doi
+    chi tra the dong gia MAC DINH (issuer None, truoc day cua item) va dong
+    chu thuoc issuer cua deploy — dong cua ISSUER WORKSPACE KHAC tren item
+    chia se bi AN (fail-closed, khong doi contract: list co the ngan hon)."""
     supabase: Client = get_supabase_client()
+    _floor = _catalog_scope_floor()
     rows = (
         supabase.table(PRICING_TABLE)
         .select("*")
@@ -1235,6 +1580,8 @@ def list_service_catalog_item_pricing(item_id: str) -> list[dict]:
         .data
         or []
     )
+    if _floor is not None:
+        rows = [r for r in rows if issuer_company_in_scope(supabase, r.get("issuer_company_id"), _floor)]
     return [
         {
             "id": row["id"],

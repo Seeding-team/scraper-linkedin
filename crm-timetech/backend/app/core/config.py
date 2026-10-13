@@ -133,6 +133,15 @@ class Settings:
     # Timeout cho GET /api/v1/goods (giay).
     msc_sync_timeout_sec: float = float(os.getenv("MSC_SYNC_TIMEOUT_SEC", "60"))
 
+    # ── Service Catalog Workspace isolation (isolation task 2026-10-14) ─────
+    # 1 = bat/enforce "workspace floor" cho Service Catalog: deploy doc/ghi
+    # CHI trong workspace cua chinh no (settings.crm_instance), khong cho
+    # client tu chon instance khac. Flag OFF = giu nguyen 100% hanh vi cu
+    # (filter theo client instances, khong co floor). Phai bat CUNG VOI
+    # CRM_INSTANCE; neu CRM_INSTANCE rong/thieu khi flag ON thi process
+    # FAIL SAU KHI BOOT (RuntimeError) thay vi silently expose data unscoped.
+    catalog_scope_enforced: bool = (os.getenv("CATALOG_SCOPE_ENFORCED") or "").strip().lower() in ("1", "true", "yes")
+
     def __post_init__(self) -> None:
         if self.cors_origins is None:
             self.cors_origins = _parse_csv(
@@ -144,4 +153,30 @@ class Settings:
             )
 
 
+def _validate_catalog_scope_enforcement(cfg: "Settings") -> None:
+    """Fail-fast khi bat enforcement ma thieu CRM_INSTANCE (isolation task).
+
+    Flag ON + CRM_INSTANCE rong/thieu => RuntimeError ngay tai import config
+    (kill boot) — KHONG BAO GIO silently fallback sang 'markee' hay tra
+    catalog unscoped. Flag OFF => khong kiem tra gi (hanh vi cu, MAIN-
+    compatible). Log 1 dong warning liet ke floor da resolve de DEP sai
+    ten workspace (vd 'foo') de fail CLOSED (giao rong → cay rong) nhin
+    thay doi trong log thay vi im lang."""
+
+    if not cfg.catalog_scope_enforced:
+        return
+    import logging
+
+    instance = (os.getenv("CRM_INSTANCE") or "").strip()
+    if not instance:
+        raise RuntimeError(
+            "CRM_INSTANCE must be set when CATALOG_SCOPE_ENFORCED is enabled "
+            "(service catalog isolation: empty workspace floor is not allowed)"
+        )
+    logging.getLogger(__name__).warning(
+        "Service Catalog scope enforcement ON — workspace floor: %s", instance
+    )
+
+
 settings = Settings()
+_validate_catalog_scope_enforcement(settings)

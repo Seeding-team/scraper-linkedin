@@ -44,6 +44,14 @@ export interface WorkspaceMeta {
   total_groups: number;
 }
 
+/** ĐỒNG BỘ CROSS-CLONE (Requirement C): fingerprint thay đổi dữ liệu danh mục
+ * từ GET /service-catalog/version (clone backend). */
+export interface CatalogChangeFingerprint {
+  groups_count: number;
+  items_max_updated_at: string | null;
+  junction_count: number;
+}
+
 /** Many-to-many Workspace assignment (migration 190): kết quả của bulk replace-all. */
 export interface WorkspaceAssignResult {
   assignment: Record<string, string[]>;

@@ -189,6 +189,16 @@ class Settings:
     # Timeout cho GET /api/v1/goods (giay).
     msc_sync_timeout_sec: float = float(os.getenv("MSC_SYNC_TIMEOUT_SEC", "60"))
 
+    # ── Service Catalog Workspace isolation (isolation task 2026-10-14) ─────
+    # 1 = bat/enforce "workspace floor" cho Service Catalog: deploy doc/ghi
+    # CHI trong workspace dang phuc vu request (settings.crm_instance —
+    # property doc contextvar theo Host header, xem phia duoi), khong cho
+    # client tu chon instance khac. Flag OFF = giu nguyen 100% hanh vi cu.
+    # Phai bat CUNG VOI CRM_INSTANCE (env); neu CRM_INSTANCE rong/thieu khi
+    # flag ON thi process FAIL SAU KHI BOOT (RuntimeError) thay vi silently
+    # expose data unscoped.
+    catalog_scope_enforced: bool = (os.getenv("CATALOG_SCOPE_ENFORCED") or "").strip().lower() in ("1", "true", "yes")
+
     def __post_init__(self) -> None:
         if self.cors_origins is None:
             self.cors_origins = _parse_csv(
@@ -208,4 +218,31 @@ class Settings:
         return _current_instance.get() or self.default_crm_instance
 
 
+def _validate_catalog_scope_enforcement(cfg: "Settings") -> None:
+    """Fail-fast khi bat enforcement ma thieu CRM_INSTANCE (isolation task).
+
+    Flag ON + CRM_INSTANCE rong/thieu => RuntimeError ngay tai import config
+    (kill boot) — KHONG BAO GIO silently fallback hay tra catalog unscoped.
+    Luu y rieng cua crm-module: `settings.crm_instance` la property doc
+    contextvar theo tung request; validation o day kiem tra ENV goc
+    `CRM_INSTANCE` (fallback khi Host khong khop map — config.py:94-112),
+    khong the check contextvar o pha import. Flag OFF => khong kiem tra."""
+
+    if not cfg.catalog_scope_enforced:
+        return
+    import logging
+
+    instance = (os.getenv("CRM_INSTANCE") or "").strip()
+    if not instance:
+        raise RuntimeError(
+            "CRM_INSTANCE must be set when CATALOG_SCOPE_ENFORCED is enabled "
+            "(service catalog isolation: empty workspace floor is not allowed)"
+        )
+    logging.getLogger(__name__).warning(
+        "Service Catalog scope enforcement ON — default workspace floor "
+        "(per-request Host may override): %s", instance
+    )
+
+
 settings = Settings()
+_validate_catalog_scope_enforcement(settings)

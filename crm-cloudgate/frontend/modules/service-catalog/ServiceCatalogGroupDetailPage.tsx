@@ -8,6 +8,7 @@ import { ServiceCatalogProductsTable, type ServiceCatalogProductsTableHandle } f
 import type { FlatProduct } from './catalog-form-utils';
 import { Pencil } from '@/modules/crm/components/icons';
 import { WorkspaceBadge } from './WorkspaceBadge';
+import { IS_STANDALONE_CRM, CURRENT_WORKSPACE_INSTANCE } from '@/lib/env';
 import './styles/service-catalog.css';
 
 /** Trang chi tiet 1 NHOM san pham cu the (vd VPS Hosting, Website...) - moi,
@@ -26,7 +27,13 @@ import './styles/service-catalog.css';
  * ServiceCatalogProductsTable qua ref (khong lift toan bo logic drawer ra
  * ngoai), hideAddButton de khong con 2 nut trung nhau. */
 export function ServiceCatalogGroupDetailPage({ groupId }: { groupId: string }) {
-  const { items, isLoaded, error, createItem, updateItem, deleteItem, refresh } = useServiceCatalog();
+  // TÍCH HỢP BỘ LỌC WORKSPACE (Requirement B — clone standalone): trang chi
+  // tiết chỉ load CÂY của workspace thuộc clone (server lọc qua `instances=`),
+  // không fetch toàn bộ danh mục dùng chung. Deep-link tới group của workspace
+  // khác → group không nằm trong payload → giữ hành vi not-found hiện có.
+  // Seeding chính (MAIN) giữ nguyên hành vi unfiltered.
+  const detailScope = IS_STANDALONE_CRM ? [CURRENT_WORKSPACE_INSTANCE.toLowerCase()] : undefined;
+  const { items, isLoaded, error, createItem, updateItem, deleteItem, refresh } = useServiceCatalog(detailScope);
   const tableRef = useRef<ServiceCatalogProductsTableHandle>(null);
   const openedEditRef = useRef<string | null>(null);
   const searchParams = useSearchParams();
