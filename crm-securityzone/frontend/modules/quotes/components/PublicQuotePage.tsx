@@ -294,6 +294,8 @@ export function PublicQuotePage({ token }: Props) {
           solutionItems={quote.data.solutionItems}
           totals={{
             subtotalAmount: quote.subtotalAmount,
+            // "Giảm giá hạng mục" (2026-10-13) - xem giai thich o QuoteDetailPage.tsx.
+            discountAmount: quote.subtotalAmount - (quote.totalAmount - quote.vatAmount),
             totalVatAmount: quote.vatAmount,
             totalAmount: quote.totalAmount,
           }}

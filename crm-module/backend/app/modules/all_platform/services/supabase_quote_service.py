@@ -1686,6 +1686,89 @@ def get_quote(quote_id: str, include_deleted: bool = False) -> dict:
     return _row_to_quote(_apply_default_phone_access(row), _quote_items(quote_id))
 
 
+def get_access_suggestions(quote_id: str) -> list[dict]:
+    """Goi y Email/SDT cho "Giới hạn theo Email/SĐT" (man Thong tin phat
+    hanh) - lay THAT tu CRM thay vi Sale phai go tay: khach hang cua bao
+    gia, Nguoi lien he thuoc khach hang do, Sale/Presale phu trach. CHI
+    trong pham vi dung 1 Khach hang + dung instance cua quote nay (khong
+    bao gio tra Nguoi lien he/Khach hang workspace khac) - dung
+    customer_id suy tu quotes.deal_id -> customer_leads.customer_id, KHONG
+    nhan client tu truyen customer_id rieng (tranh do tron tenant). Trung
+    email+sdt chi giu 1 dong dau tien gap."""
+    quote = get_quote(quote_id)
+    supabase: Client = get_supabase_client()
+    instance = _crm_instance()
+    results: list[dict] = []
+    seen: set[tuple[str, str]] = set()
+
+    def add(name: str | None, role: str, email: str | None, phone: str | None) -> None:
+        email = (email or "").strip()
+        phone = (phone or "").strip()
+        if not email and not phone:
+            return
+        key = (email.lower(), phone)
+        if key in seen:
+            return
+        seen.add(key)
+        results.append({"name": (name or "").strip() or role, "role": role, "email": email or None, "phone": phone or None})
+
+    deal_id = quote.get("dealId")
+    customer_id = None
+    if deal_id:
+        deal_rows = (
+            supabase.table("customer_leads")
+            .select("customer_id")
+            .eq("id", deal_id)
+            .eq("instance", instance)
+            .limit(1)
+            .execute()
+            .data
+            or []
+        )
+        if deal_rows:
+            customer_id = deal_rows[0].get("customer_id")
+
+    if customer_id:
+        customer_rows = (
+            supabase.table("crm_customers")
+            .select("customer_name, phone, email")
+            .eq("id", customer_id)
+            .eq("instance", instance)
+            .limit(1)
+            .execute()
+            .data
+            or []
+        )
+        if customer_rows:
+            c = customer_rows[0]
+            add(c.get("customer_name"), "Khách hàng", c.get("email"), c.get("phone"))
+        contact_rows = (
+            supabase.table("crm_contacts")
+            .select("name, phone, email")
+            .eq("customer_id", customer_id)
+            .eq("instance", instance)
+            .execute()
+            .data
+            or []
+        )
+        for contact in contact_rows:
+            add(contact.get("name"), "Người liên hệ", contact.get("email"), contact.get("phone"))
+
+    owner_specs = [(quote.get("quoteOwnerId"), "Sale phụ trách"), (quote.get("technicalOwnerId"), "Presale phụ trách")]
+    owner_ids = [uid for uid, _ in owner_specs if uid]
+    if owner_ids:
+        user_rows = supabase.table("app_users").select("id, name, email").in_("id", owner_ids).execute().data or []
+        users_by_id = {row["id"]: row for row in user_rows}
+        for uid, role in owner_specs:
+            if not uid:
+                continue
+            u = users_by_id.get(uid)
+            if u:
+                add(u.get("name"), role, u.get("email"), None)
+
+    return results
+
+
 class PublicQuoteVerificationRequiredError(Exception):
     """"Giới hạn xem link báo giá bằng Email hoặc Số điện thoại" (migration
     118, thay the PublicQuoteEmailRequiredError cu chi ho tro email). Nem loi

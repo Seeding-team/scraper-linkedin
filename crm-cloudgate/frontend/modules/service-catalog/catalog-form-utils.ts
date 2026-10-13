@@ -25,6 +25,7 @@ export function emptyProductForm(parentId?: string): ServiceCatalogItemInput {
     defaultUnitPriceVnd: 0,
     defaultDiscountPercent: 0,
     defaultVatRate: null,
+    defaultCostVatRate: null,
     customerVisible: true,
     quoteDisplayName: '',
     quoteDescription: '',

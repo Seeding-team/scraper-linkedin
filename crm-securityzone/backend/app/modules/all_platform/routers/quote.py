@@ -57,6 +57,7 @@ from app.modules.all_platform.services import (
     get_public_quote,
     get_public_quote_form,
     get_quote,
+    get_access_suggestions,
     get_quote_form,
     list_quote_forms,
     list_quote_versions,
@@ -882,6 +883,21 @@ def quotes_get(quote_id: str, user: dict = Depends(get_current_user)) -> BaseRes
         if (_scoped or quote["status"] not in ("approved", "confirmed")) and not can_edit_quote(user, quote, lead):
             return BaseResponse(success=False, message="Không có quyền xem báo giá này")
         return BaseResponse(success=True, data=apply_quote_field_permissions(quote, user))
+    except Exception as e:
+        return BaseResponse(success=False, message=friendly_supabase_error_message(e))
+
+
+@quotes_router.get("/{quote_id}/access-suggestions")
+def quotes_access_suggestions(quote_id: str, user: dict = Depends(get_current_user)) -> BaseResponse:
+    """Goi y Email/SDT cho "Giới hạn theo Email/SĐT" (xem get_access_suggestions())
+    - cung gate quyen voi GET /{quote_id} (chi nguoi xem duoc bao gia nay moi
+    goi y duoc danh sach lien quan den no, tranh do tron du lieu khach hang)."""
+    try:
+        quote, lead = _load_quote_and_lead(quote_id)
+        _scoped = get_scope_visible_user_ids(user) is not None
+        if (_scoped or quote["status"] not in ("approved", "confirmed")) and not can_edit_quote(user, quote, lead):
+            return BaseResponse(success=False, message="Không có quyền xem báo giá này")
+        return BaseResponse(success=True, data=get_access_suggestions(quote_id))
     except Exception as e:
         return BaseResponse(success=False, message=friendly_supabase_error_message(e))
 

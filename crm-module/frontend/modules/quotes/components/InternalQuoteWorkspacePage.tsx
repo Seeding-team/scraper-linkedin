@@ -489,7 +489,7 @@ export function InternalQuoteWorkspacePage({ quoteId }: Props) {
           <div className="grid grid-cols-2 md:grid-cols-6 gap-3 pt-2 text-xs">
             <div className="bg-slate-50/70 border border-slate-100 rounded-xl p-3.5 space-y-1">
               <span className="text-[11px] text-slate-400 font-medium block">
-                {quote.overallDiscountPercent ? 'Giá bán trước VAT (sau chiết khấu)' : 'Giá bán trước VAT'}
+                {quote.overallDiscountPercent ? 'Giá bán trước VAT (sau giảm giá)' : 'Giá bán trước VAT'}
               </span>
               <span className="text-sm font-extrabold text-slate-900 block">{money(summary.subtotalAfterDiscount)}</span>
               {quote.overallDiscountPercent ? (

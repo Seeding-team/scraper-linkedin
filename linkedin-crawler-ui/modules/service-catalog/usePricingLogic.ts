@@ -28,6 +28,21 @@ export interface PricingState {
   costPriceVnd: number;
   markupPercent: number;
   customerPriceVnd: number;
+
+  /** "VAT giá vốn" (2026-10-13) - VAT dau vao RIENG cho Gia von (mua hang tu
+   * NCC), KHAC voi VAT ban ra ap cho Gia khach (defaultVatRate, nam o form
+   * rieng khong thuoc PricingState nay). costPriceVnd o tren VAN la gia von
+   * THUAN (truoc VAT) - dung effectiveCostPriceVnd() ben duoi de lay gia von
+   * DA GOM VAT (dung cho Markup/Margin va luc gui len server). */
+  costVatRate: number;
+}
+
+/** Gia von THAT su dung cho Markup/Margin (da gom VAT dau vao) - costPriceVnd
+ * van la gia von thuan (NCC xuat hoa don chua VAT), nhan them costVatRate o
+ * day CHI o tang tinh toan, khong ghi de lai costPriceVnd (tranh cong don VAT
+ * nhieu lan neu tinh lai). */
+export function effectiveCostPriceVnd(state: Pick<PricingState, 'costPriceVnd' | 'costVatRate'>): number {
+  return state.costPriceVnd * (1 + (state.costVatRate || 0) / 100);
 }
 
 /** Reducer THUAN cho form gia SP/DV (test duoc, khong phu thuoc React). Doi supplierCurrency
@@ -74,23 +89,28 @@ export function reducePricing<K extends keyof PricingState>(prev: PricingState, 
     next.costPriceVnd = next.supplierConvertedPrice + extraCosts;
   }
 
+  // "VAT giá vốn" (2026-10-13) - Markup/Gia khach tinh TREN GIA VON DA GOM
+  // VAT dau vao (effectiveCostPriceVnd), KHONG phai costPriceVnd thuan - dung
+  // 1 bien chung cho ca 3 nhanh forward-compute ben duoi.
+  const effectiveCost = effectiveCostPriceVnd(next);
+
   // Forward compute pricing based on Input Mode
   if (field !== 'markupPercent' && field !== 'customerPriceVnd') {
     if (next.pricingInputMode === 'markup' || prev.pricingInputMode === 'cost') {
-      next.customerPriceVnd = customerPriceFromMarkup(next.costPriceVnd, next.markupPercent) ?? 0;
+      next.customerPriceVnd = customerPriceFromMarkup(effectiveCost, next.markupPercent) ?? 0;
     } else if (next.pricingInputMode === 'price') {
-      next.markupPercent = markupFromCustomerPrice(next.costPriceVnd, next.customerPriceVnd) ?? 0;
+      next.markupPercent = markupFromCustomerPrice(effectiveCost, next.customerPriceVnd) ?? 0;
     }
   }
 
   if (field === 'markupPercent') {
     next.pricingInputMode = 'markup';
-    next.customerPriceVnd = customerPriceFromMarkup(next.costPriceVnd, next.markupPercent) ?? 0;
+    next.customerPriceVnd = customerPriceFromMarkup(effectiveCost, next.markupPercent) ?? 0;
   }
 
   if (field === 'customerPriceVnd') {
     next.pricingInputMode = 'price';
-    next.markupPercent = markupFromCustomerPrice(next.costPriceVnd, next.customerPriceVnd) ?? 0;
+    next.markupPercent = markupFromCustomerPrice(effectiveCost, next.customerPriceVnd) ?? 0;
   }
 
   return next;
@@ -113,6 +133,7 @@ export function usePricingLogic(initialState?: Partial<PricingState>) {
     costPriceVnd: 0,
     markupPercent: 0,
     customerPriceVnd: 0,
+    costVatRate: 0,
     ...initialState,
   });
 
@@ -120,7 +141,7 @@ export function usePricingLogic(initialState?: Partial<PricingState>) {
     setState((prev) => reducePricing(prev, field, value));
   };
 
-  const getProfit = () => state.customerPriceVnd - state.costPriceVnd;
+  const getProfit = () => state.customerPriceVnd - effectiveCostPriceVnd(state);
   const getMargin = () => state.customerPriceVnd > 0 ? (getProfit() / state.customerPriceVnd) * 100 : 0;
 
   return { state, setState, updateField, getProfit, getMargin };

@@ -54,7 +54,7 @@ export interface QuoteSection {
  * config.columns[].visible/required cua bang hang muc da la 1 phan schema),
  * KHONG hardcode theo layoutType trong resolver - xem quoteSummaryFields.ts. */
 export interface SummaryFieldConfig {
-  key: 'subtotalBeforeVat' | 'overallDiscount' | 'subtotalAfterDiscount' | 'vatTotal' | 'grandTotal';
+  key: 'grossSubtotal' | 'subtotalBeforeVat' | 'overallDiscount' | 'totalDiscount' | 'subtotalAfterDiscount' | 'vatTotal' | 'grandTotal';
   label?: string;
   order?: number;
   defaultVisible?: boolean;
@@ -121,6 +121,16 @@ export interface QuoteTelegramLog {
  * với khách hàng CRM (bên nhận). Chọn ở Bước 1 wizard tạo báo giá; thông tin được
  * SNAPSHOT thẳng vào QuoteData lúc chọn (xem quoteDraftFromForm) — sửa công ty ở
  * danh mục sau này không ảnh hưởng báo giá đã tạo. */
+/** 1 dong goi y trong picker "Giới hạn theo Email/SĐT" (xem
+ * SeedingQuoteRepository.getAccessSuggestions()) - name/role de hien thi
+ * phan biet, email/phone co the null (1 nguon chi co 1 trong 2). */
+export interface QuoteAccessSuggestion {
+  name: string;
+  role: string;
+  email?: string | null;
+  phone?: string | null;
+}
+
 export interface IssuerCompany {
   id: string;
   code: string;
@@ -138,6 +148,11 @@ export interface IssuerCompany {
   logoUrl?: string;
   defaultQuoteFormId?: string;
   status: 'active' | 'inactive';
+  /** Workspace "nhà" của đơn vị phát hành này (CRM_INSTANCE, vd 'markee'/'cloudgate') -
+   * dùng để gợi ý MẶC ĐỊNH đúng đơn vị theo workspace đang chạy lúc tạo báo giá mới
+   * (xem CreateQuoteModal.tsx) - KHÔNG dùng để lọc/ẩn, mọi workspace vẫn thấy đủ
+   * danh sách (bảng quote_issuer_companies dùng chung giữa các workspace). */
+  instance?: string;
   /** (I) Điều khoản thanh toán MẶC ĐỊNH của đơn vị phát hành này - SNAPSHOT
    * 1 LẦN vào custom block 'payment_terms' của báo giá lúc tạo mới (nếu block
    * đó đang trống) - sửa ở đây KHÔNG đổi báo giá đã tạo trước đó. */

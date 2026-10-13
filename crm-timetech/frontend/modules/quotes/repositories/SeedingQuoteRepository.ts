@@ -7,6 +7,7 @@ import type {
   Quote,
   QuoteActivityLogEntry,
   QuoteForm,
+  QuoteAccessSuggestion,
   QuoteHandoffChecklist,
   QuotePhase,
   QuoteProcessingStage,
@@ -384,6 +385,13 @@ export class SeedingQuoteRepository implements QuoteRepository {
       method: 'PUT',
       body: JSON.stringify({ mode, allowed_emails: allowedEmails, allowed_phones: allowedPhones }),
     });
+  }
+
+  /** Goi y Email/SDT cho "Giới hạn theo Email/SĐT" (lay tu Khach hang/Nguoi
+   * lien he/Sale/Presale cua CHINH bao gia nay, khong go tay) - xem
+   * supabase_quote_service.get_access_suggestions(). */
+  async getAccessSuggestions(quoteId: string): Promise<QuoteAccessSuggestion[]> {
+    return apiFetch<QuoteAccessSuggestion[]>(`/api/all-platform/quotes/${encodeURIComponent(quoteId)}/access-suggestions`);
   }
 
   /** Nút "Lưu" ở toolbar in trên QuoteDetailPage (trang nội bộ đã đăng nhập)

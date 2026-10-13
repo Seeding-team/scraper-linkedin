@@ -9918,6 +9918,12 @@
   padding: 1.1rem 1.5rem;
 }
 
+/* "\n" trong message (vd danh sach gia preview nhieu dong cua modal xoa
+ * thanh phan Combo) hien xuong dong that thay vi bi gop thanh 1 dong. */
+.crm-modal--confirm .crm-modal-body p {
+  white-space: pre-line;
+}
+
 .crm-danger-button {
   display: inline-flex;
   min-width: 4.2rem;

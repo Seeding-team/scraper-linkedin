@@ -54,7 +54,7 @@ export interface QuoteSection {
  * config.columns[].visible/required cua bang hang muc da la 1 phan schema),
  * KHONG hardcode theo layoutType trong resolver - xem quoteSummaryFields.ts. */
 export interface SummaryFieldConfig {
-  key: 'subtotalBeforeVat' | 'overallDiscount' | 'subtotalAfterDiscount' | 'vatTotal' | 'grandTotal';
+  key: 'grossSubtotal' | 'subtotalBeforeVat' | 'overallDiscount' | 'totalDiscount' | 'subtotalAfterDiscount' | 'vatTotal' | 'grandTotal';
   label?: string;
   order?: number;
   defaultVisible?: boolean;
@@ -121,6 +121,16 @@ export interface QuoteTelegramLog {
  * với khách hàng CRM (bên nhận). Chọn ở Bước 1 wizard tạo báo giá; thông tin được
  * SNAPSHOT thẳng vào QuoteData lúc chọn (xem quoteDraftFromForm) — sửa công ty ở
  * danh mục sau này không ảnh hưởng báo giá đã tạo. */
+/** 1 dong goi y trong picker "Giới hạn theo Email/SĐT" (xem
+ * SeedingQuoteRepository.getAccessSuggestions()) - name/role de hien thi
+ * phan biet, email/phone co the null (1 nguon chi co 1 trong 2). */
+export interface QuoteAccessSuggestion {
+  name: string;
+  role: string;
+  email?: string | null;
+  phone?: string | null;
+}
+
 export interface IssuerCompany {
   id: string;
   code: string;

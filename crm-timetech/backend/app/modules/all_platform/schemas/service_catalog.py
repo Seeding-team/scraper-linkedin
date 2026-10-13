@@ -4,7 +4,7 @@ cho các Mẫu báo giá, thay thế dữ liệu dịch vụ hard-code trong sch
 from __future__ import annotations
 
 from decimal import Decimal
-from typing import Any, Literal, Optional
+from typing import Any, List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -69,6 +69,9 @@ class ServiceCatalogItemCreateRequest(BaseModel):
     default_cost_price_vnd: Optional[Decimal] = None
     default_markup_percent: Optional[Decimal] = None
     default_customer_price_vnd: Optional[Decimal] = None
+    # "VAT giá vốn" (2026-10-13) - VAT dau vao rieng cho Gia von, KHAC
+    # default_vat_rate (VAT dau ra ap cho Gia khach) - xem migration 191.
+    default_cost_vat_rate: Optional[Decimal] = Field(default=None, ge=0, le=100)
     # TÍCH HỢP BỘ LỌC WORKSPACE: Gán instance (workspace) khi tạo mới từ Seeding hoặc CRM Standalone
     instance: Optional[str] = None
 
@@ -133,6 +136,8 @@ class ServiceCatalogItemUpdateRequest(BaseModel):
     default_cost_price_vnd: Optional[Decimal] = None
     default_markup_percent: Optional[Decimal] = None
     default_customer_price_vnd: Optional[Decimal] = None
+    # "VAT giá vốn" (2026-10-13) - xem migration 191.
+    default_cost_vat_rate: Optional[Decimal] = Field(default=None, ge=0, le=100)
     # TÍCH HỢP BỘ LỌC WORKSPACE: Cập nhật instance (workspace) của item
     instance: Optional[str] = None
 
@@ -140,6 +145,16 @@ class ServiceCatalogItemUpdateRequest(BaseModel):
 class ServiceCatalogReorderRequest(BaseModel):
     id: str
     direction: str  # 'up' | 'down'
+
+
+class ServiceCatalogWorkspaceAssignRequest(BaseModel):
+    """Bulk thay set Workspace (many-to-many, migration 190) cho cac NHOM
+    product-service. Replace-all: set moi thay toan bo set cu (khong merge);
+    TAT CA con truc tiep cua cac nhom (parent_id = group) nhan dung set moi.
+    Khong cho phep set rong (khong co 'unassigned')."""
+
+    group_ids: List[str] = Field(..., min_length=1, description="Danh sach id NHOM (item_type='group')")
+    instances: List[str] = Field(..., min_length=1, description="Danh sach Workspace key (vd: markee, cloudgate, securityzone)")
 
 
 class BundleComponentInput(BaseModel):

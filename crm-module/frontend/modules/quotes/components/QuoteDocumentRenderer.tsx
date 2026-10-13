@@ -301,7 +301,7 @@ function appendQuota(label: string, quota?: string | null): string {
   return `${label} — ${cleanQuota}`;
 }
 
-function bundleComponentToDisplayItem(component: BundleSnapshotComponent, suffix: string): QuoteItem {
+function bundleComponentToDisplayItem(component: BundleSnapshotComponent, suffix: string, unitMultiplier: number): QuoteItem {
   const label = component.customerDisplayName || component.name || component.displayText || 'Hạng mục';
   const serviceDescription = appendQuota(label, component.quota);
   return {
@@ -310,7 +310,7 @@ function bundleComponentToDisplayItem(component: BundleSnapshotComponent, suffix
     serviceDescription,
     description: component.description || '',
     unit: component.unit || '',
-    quantity: component.computedQuantity || component.quantity || 1,
+    quantity: (component.computedQuantity || component.quantity || 1) * unitMultiplier,
     unitPrice: component.unitPriceVnd || 0,
     discountPercent: 0,
     vatRate: 0,
@@ -318,7 +318,13 @@ function bundleComponentToDisplayItem(component: BundleSnapshotComponent, suffix
   };
 }
 
+// BUG THAT DA GAP (giong QuoteWorkspaceModal.tsx): ham nay TRUOC DAY luon
+// tinh so luong hang muc con theo DUNG 1 bo bundle, bo qua item.quantity
+// (so bo Sale da chon) - bao gia khach xem (ban in/public) hien thi sai so
+// luong neu Sale mua >1 bo. Nhan them unitMultiplier = item.quantity (toi
+// thieu 1) vao so luong tung dong con, dong bo voi QuoteWorkspaceModal.tsx.
 function bundleComponentsToDisplayItems(item: QuoteItem): QuoteItem[] {
+  const unitMultiplier = Math.max(1, Number(item.quantity) || 1);
   const components = bundleSnapshotComponents(item)
     .filter(component => component.showOnQuote !== false)
     .sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
@@ -338,7 +344,7 @@ function bundleComponentsToDisplayItems(item: QuoteItem): QuoteItem[] {
         serviceDescription: appendQuota(name, component.quotaPoolQuota || component.quota),
         description: '',
         unit: '',
-        quantity: 1,
+        quantity: unitMultiplier,
         unitPrice: component.unitPriceVnd || 0,
         discountPercent: 0,
         vatRate: 0,
@@ -346,7 +352,7 @@ function bundleComponentsToDisplayItems(item: QuoteItem): QuoteItem[] {
       });
       return;
     }
-    rows.push(bundleComponentToDisplayItem(component, String(index)));
+    rows.push(bundleComponentToDisplayItem(component, String(index), unitMultiplier));
   });
 
   return rows;
@@ -610,6 +616,12 @@ export function QuoteDocumentRenderer({
   // cấu hình "Tổng hợp giá" hay không (auto-hide đè lên cấu hình - yêu cầu rõ
   // "trùng với tạm tính thì ẩn").
   const hasOverallDiscount = discountSummary.overallDiscountAmount > 0;
+  // "Tổng tiền giảm = Giảm giá hạng mục + Giảm giá toàn báo giá" (2026-10-13) -
+  // overallDiscountAmount DA tinh tren phan CON LAI sau khi tru giam gia hang
+  // muc (xem calculateOverallDiscountSummary - ap dung dung thu tu "hạng mục
+  // trước, sau đó mới toàn báo giá trên số tiền còn lại"), nen cong truc tiep
+  // 2 so nay la dung, khong tinh trung.
+  const totalDiscountAmount = (totals.discountAmount || 0) + discountSummary.overallDiscountAmount;
   // Trường "Tổng hợp giá" hiện cho khách - áp dụng ở MỌI mode (preview/detail/
   // public/print), KHÁC với cột bảng hạng mục (applyCustomerColumnFilter chỉ áp ở
   // public/print/preview) - yêu cầu rõ "Chi tiết báo giá đã duyệt phải đồng nhất
@@ -885,7 +897,13 @@ export function QuoteDocumentRenderer({
                   <strong>-{formatVnd(discountSummary.overallDiscountAmount)}</strong>
                 </div>
               ) : null}
-              {visibleSummaryKeys.has('subtotalAfterDiscount') && hasOverallDiscount ? (
+              {visibleSummaryKeys.has('totalDiscount') && totalDiscountAmount > 0 ? (
+                <div className="villa-total-row villa-total-row--discount">
+                  <span>Tổng tiền giảm</span>
+                  <strong>-{formatVnd(totalDiscountAmount)}</strong>
+                </div>
+              ) : null}
+              {visibleSummaryKeys.has('subtotalAfterDiscount') && totalDiscountAmount > 0 ? (
                 <div className="villa-total-row">
                   <span>Tổng sau giảm giá</span>
                   <strong>{formatVnd(discountSummary.subtotalAfterDiscount)}</strong>
@@ -1236,7 +1254,20 @@ export function QuoteDocumentRenderer({
         </section>
 
         <section className="sheet-total-block sheet-total-block--standard">
-          {visibleSummaryKeys.has('subtotalBeforeVat') ? (
+          {/* "nhìn như bị trừ 2 lần" (2026-10-13): subtotalBeforeVat tu truoc
+           * gio da NET san phan giam gia hang muc (xem comment o
+           * calculateOverallDiscountSummary) - hien dong nay NGAY PHIA TREN
+           * dong "Giảm giá hạng mục" gay hieu nham la bi tru 2 lan. Co giam
+           * gia hang muc thi doi sang hien "Giá gốc trước giảm" (gia GOC that,
+           * truoc ca giam gia hang muc) thay the - CHI 1 trong 2 dong hien tai
+           * 1 thoi diem, khong lap lai. */}
+          {visibleSummaryKeys.has('grossSubtotal') && (totals.discountAmount || 0) > 0 ? (
+            <div className="sheet-total-row">
+              <span>Giá gốc trước giảm</span>
+              <strong>{formatVnd(totals.subtotalAmount)}</strong>
+            </div>
+          ) : null}
+          {visibleSummaryKeys.has('subtotalBeforeVat') && (totals.discountAmount || 0) <= 0 ? (
             <div className="sheet-total-row">
               <span>{findField('subtotalAmount').label || 'Tổng cộng chưa bao gồm thuế GTGT'}</span>
               <strong>{formatVnd(discountSummary.subtotalBeforeVat)}</strong>
@@ -1248,7 +1279,13 @@ export function QuoteDocumentRenderer({
               <strong>-{formatVnd(discountSummary.overallDiscountAmount)}</strong>
             </div>
           ) : null}
-          {visibleSummaryKeys.has('subtotalAfterDiscount') && hasOverallDiscount ? (
+          {visibleSummaryKeys.has('totalDiscount') && totalDiscountAmount > 0 ? (
+            <div className="sheet-total-row sheet-total-row--discount">
+              <span>Tổng tiền giảm</span>
+              <strong>-{formatVnd(totalDiscountAmount)}</strong>
+            </div>
+          ) : null}
+          {visibleSummaryKeys.has('subtotalAfterDiscount') && totalDiscountAmount > 0 ? (
             <div className="sheet-total-row">
               <span>Tổng sau giảm giá</span>
               <strong>{formatVnd(discountSummary.subtotalAfterDiscount)}</strong>
