@@ -14,7 +14,6 @@ import { emptyGroupForm, itemToForm } from './catalog-form-utils';
 import { useWorkspaceFilter } from './useWorkspaceFilter';
 import { WorkspaceFilterPopover } from './WorkspaceFilterPopover';
 import { WorkspaceBadge } from './WorkspaceBadge';
-import { WorkspaceAssignDialog } from './WorkspaceAssignDialog';
 import { IS_STANDALONE_CRM } from '@/lib/env';
 import './styles/service-catalog.css';
 import '@/modules/crm/styles/quote-center.css';
@@ -129,46 +128,11 @@ export function ServiceCatalogPage() {
     });
   }
 
-  const selectedGroups = useMemo(
-    () => groups.filter(g => effectiveSelectedIds.has(g.id)),
-    [groups, effectiveSelectedIds],
-  );
-
   // ── Dialog "Chỉnh sửa hàng hóa theo Workspace" (bulk replace-all) ─────────
-  const [assignOpen, setAssignOpen] = useState(false);
-  const [assignSubmitting, setAssignSubmitting] = useState(false);
-  const [assignError, setAssignError] = useState<string | null>(null);
-
-  const currentUnionWorkspaces = useMemo(() => {
-    const set = new Set<string>();
-    for (const group of selectedGroups) {
-      const list = Array.isArray(group.workspaces) && group.workspaces.length > 0
-        ? group.workspaces
-        : [group.instance || 'markee'];
-      list.forEach(w => set.add((w || '').toLowerCase()));
-    }
-    return [...set];
-  }, [selectedGroups]);
-
-  async function handleAssignConfirm(instances: string[]) {
-    if (assignSubmitting) return;
-    setAssignSubmitting(true);
-    setAssignError(null);
-    try {
-      const ids = [...selectedIds];
-      await serviceCatalogRepository.assignWorkspaces(ids, instances);
-      setAssignOpen(false);
-      setAssignError(null);
-      setSelectedIds(new Set());
-      window.alert(`Đã cập nhật Workspace cho ${ids.length} nhóm sản phẩm (kèm các sản phẩm bên trong).`);
-      await refresh();
-    } catch (err) {
-      // GIỮ dialog + selection để sửa/retry; hiện đúng lỗi API trả về.
-      setAssignError(err instanceof Error ? err.message : 'Không cập nhật được Workspace.');
-    } finally {
-      setAssignSubmitting(false);
-    }
-  }
+  // REMOVED (isolation task 2026-10-14): backend clone TẮT endpoint
+  // /workspaces-assign (403 mọi lúc) nên UI clone không còn offer action
+  // này — button + dialog đã bỏ (xem Reports/CRM_SERVICE_CATALOG_WORKSPACE_
+  // ISOLATION_IMPLEMENTATION...). MAIN giữ nguyên UI của nó (bản sao riêng).
 
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
@@ -462,20 +426,10 @@ export function ServiceCatalogPage() {
               {mscSyncing ? 'Đang đồng bộ từ MSC...' : 'Đồng bộ hàng hóa từ MSC'}
             </button>
           )}
-          {/* Bulk assign button: hiện NGAY SAU + Nhóm mới, chỉ khi có selection */}
+          {/* REMOVED (isolation task): bulk assign button — endpoint clone đã 403 */}
           <button type="button" className="sc-btn sc-btn-primary" onClick={openAdd}>
             + Nhóm mới
           </button>
-          {selectedGroups.length > 0 && (
-            <button
-              type="button"
-              className="sc-btn sc-btn-assign"
-              onClick={() => { setAssignError(null); setAssignOpen(true); }}
-              title="Gán lại Workspace cho các nhóm đã chọn (thay thế toàn bộ)"
-            >
-              Chỉnh sửa hàng hóa theo Workspace ({selectedGroups.length})
-            </button>
-          )}
         </div>
       </div>
 
@@ -701,18 +655,6 @@ export function ServiceCatalogPage() {
             actions={[{ label: 'Xoá', variant: 'primary', onClick: () => void handleConfirmDelete() }]}
             onClose={() => setConfirmDeleteTarget(null)}
           />
-
-          {assignOpen && (
-            <WorkspaceAssignDialog
-              workspaces={workspaces}
-              selectedCount={selectedGroups.length}
-              currentWorkspaces={currentUnionWorkspaces}
-              submitting={assignSubmitting}
-              error={assignError}
-              onConfirm={handleAssignConfirm}
-              onClose={() => setAssignOpen(false)}
-            />
-          )}
         </div>
       ) : null}
     </div>

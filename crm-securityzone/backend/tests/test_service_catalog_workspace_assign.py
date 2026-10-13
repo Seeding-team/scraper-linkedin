@@ -37,7 +37,6 @@ class _Query:
         self.op, self.payload = "select", None
         self.filters, self._order, self._limit = [], None, None
         self._single = False
-
     def select(self, *_a, **_k):
         return self
 
@@ -77,6 +76,7 @@ class _Query:
         return self
 
     def maybe_single(self):
+        self._single = True
         return self
 
     def _match(self, row):
@@ -85,8 +85,12 @@ class _Query:
                 return False
             if kind == "in" and row.get(col) not in value:
                 return False
-            if kind == "is" and (row.get(col or "") is not value):
-                return False
+            if kind == "is":
+                # PostgREST: .is_(col, "null") nghia la NULL (None); .is_(col, True/False)
+                current = row.get(col or "")
+                expected: object = None if value in ("null", None) else value
+                if current is not expected and current != expected:
+                    return False
             if kind == "neq" and row.get(col) == value:
                 return False
         return True
@@ -96,10 +100,12 @@ class _Query:
         if self.op == "insert":
             payload = self.payload if isinstance(self.payload, list) else [self.payload]
             inserted = []
+            import uuid as _uuid
+
             for item in payload:
                 row = dict(copy.deepcopy(item))
-                # giong Postgres: khong tu sinh id trong fake (id do server gen
-                # neu caller khong truyen; test khong phu thuoc gia tri do).
+                # giong Postgres: DB tao id (uuid) khi caller khong truyen.
+                row.setdefault("id", str(_uuid.uuid4()))
                 rows.append(row)
                 inserted.append(dict(row))
             return _Result(inserted)
@@ -118,6 +124,9 @@ class _Query:
         result = [dict(row) for row in rows if self._match(row)]
         if self._limit is not None:
             result = result[: self._limit]
+        if self._single:
+            # giong Supabase: maybe_single() tra 1 row (dict) hoac None
+            return _Result(result[0] if result else None)
         return _Result(result)
 
 
@@ -266,7 +275,10 @@ def test_ws_write_replaces_junction_and_mirrors_legacy(fake_db):
     sets = catalog._ws_write(fake_db, ["g1"], ["Cloudgate"], "actor-1")
     assert sets == {"g1": ["cloudgate"]}
 
-    ws_rows = fake_db.db[catalog.WORKSPACES_TABLE]
+    ws_rows = [
+        {k: v for k, v in w.items() if k in ("item_id", "instance")}
+        for w in fake_db.db[catalog.WORKSPACES_TABLE]
+    ]
     assert ws_rows == [{"item_id": "g1", "instance": "cloudgate"}]
     group = next(r for r in fake_db.db["service_catalog_items"] if r["id"] == "g1")
     assert group["instance"] == "cloudgate"  # legacy: set cu khong con trong set moi -> primary = first member
@@ -441,3 +453,56 @@ def test_assign_endpoint_requires_auth() -> None:
 def test_assign_endpoint_rejects_empty_body_shapes_unauth_too() -> None:
     response = client.post(ASSIGN_PATH, json={})
     assert response.status_code == 401  # auth checked truoc schema/permission
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Fingerprint stamps (isolation task 2026-10-14): reorder + bundle composition
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def test_reorder_stamps_updated_at_on_both_rows(fake_db):
+    fake_db.db["service_catalog_items"] = [
+        {"id": "a", "item_type": "group", "parent_id": None, "instance": "cloudgate", "sort_order": 0, "name": "A"},
+        {"id": "b", "item_type": "group", "parent_id": None, "instance": "cloudgate", "sort_order": 1, "name": "B"},
+    ]
+    catalog.reorder_service_catalog_item("b", "up")
+    rows = {r["id"]: r for r in fake_db.db["service_catalog_items"]}
+    # ca 2 dong doi sort_order deu phai co updated_at (fingerprint bump)
+    assert rows["a"].get("updated_at"), "dong 'a' phai duoc stamp updated_at"
+    assert rows["b"].get("updated_at"), "dong 'b' phai duoc stamp updated_at"
+    assert rows["a"]["sort_order"] == 1 and rows["b"]["sort_order"] == 0
+
+
+def test_fingerprint_changes_after_reorder(fake_db):
+    fake_db.db["service_catalog_items"] = [
+        {"id": "a", "item_type": "group", "parent_id": None, "instance": "cloudgate", "sort_order": 0, "updated_at": "2026-10-12T01:00:00+00:00", "name": "A"},
+        {"id": "b", "item_type": "group", "parent_id": None, "instance": "cloudgate", "sort_order": 1, "updated_at": "2026-10-12T02:00:00+00:00", "name": "B"},
+    ]
+    fake_db.db[catalog.WORKSPACES_TABLE] = [
+        {"item_id": "a", "instance": "cloudgate"},
+        {"item_id": "b", "instance": "cloudgate"},
+    ]
+
+    def key():
+        fp = catalog.get_catalog_change_fingerprint()
+        return (fp["groups_count"], fp["items_max_updated_at"], fp["junction_count"])
+
+    key_before = key()
+    catalog.reorder_service_catalog_item("b", "up")
+    key_after = key()
+    assert key_after != key_before, "reorder phai lam fingerprint doi (updated_at stamp)"
+
+
+def test_set_bundle_components_stamps_bundle_item(fake_db):
+    fake_db.db["service_catalog_items"] = [
+        {"id": "bundle-1", "item_type": "bundle", "instance": "cloudgate", "name": "Bundle"},
+        {"id": "comp-1", "item_type": "component", "instance": "cloudgate", "name": "Comp"},
+    ]
+    fake_db.db[catalog.BUNDLE_ITEMS_TABLE] = []
+    fake_db.db[catalog.PRICING_TABLE] = []
+    catalog.set_bundle_components(
+        "bundle-1",
+        [{"component_id": "comp-1", "quantity": 2}],
+    )
+    bundle = next(r for r in fake_db.db["service_catalog_items"] if r["id"] == "bundle-1")
+    assert bundle.get("updated_at"), "bundle item phai duoc stamp updated_at sau khi sua thanh phan"

@@ -25,6 +25,10 @@ import { IS_STANDALONE_CRM } from '@/lib/env';
  */
 const REVALIDATE_INTERVAL_MS = 20_000;
 
+// Key fingerprint (dùng chung cho mount effect + poller — isolation task).
+const catalogFingerprintKey = (fp: CatalogChangeFingerprint) =>
+  [fp.groups_count, fp.items_max_updated_at ?? '', fp.junction_count].join('|');
+
 export function useServiceCatalog(instances?: string[], onSyncChange?: () => void) {
   const [items, setItems] = useState<ServiceCatalogItem[]>([]);
   const [isLoaded, setIsLoaded] = useState(false);
@@ -39,29 +43,6 @@ export function useServiceCatalog(instances?: string[], onSyncChange?: () => voi
     setIsLoaded(true);
   }, []);
 
-  // Fetch khi mount / đổi filter: setState chỉ chạy trong async callbacks
-  // (original pattern của hook này — rule react-hooks yêu cầu vậy).
-  useEffect(() => {
-    let active = true;
-    serviceCatalogRepository
-      .list({
-        instances: instances && instances.length > 0 ? instances : undefined,
-      })
-      .then(data => {
-        if (!active) return;
-        void applyData(data);
-      })
-      .catch(err => {
-        if (!active) return;
-        setError(err instanceof Error ? err.message : 'Không tải được danh mục dịch vụ.');
-        setIsLoaded(true);
-      });
-
-    return () => {
-      active = false;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [instancesKey, applyData]);
   // ── Fingerprint lần cuối biết (sync poll) — refresh() thủ công cũng cập
   //    nhật nó để poll kế tiếp không refetch thừa sau mutation cục bộ. ──────
   const fingerprintRef = useRef<string | null>(null);
@@ -71,27 +52,86 @@ export function useServiceCatalog(instances?: string[], onSyncChange?: () => voi
     serviceCatalogRepository
       .getCatalogVersion()
       .then(fp => {
-        fingerprintRef.current = [
-          fp.groups_count,
-          fp.items_max_updated_at ?? '',
-          fp.junction_count,
-        ].join('|');
+        fingerprintRef.current = catalogFingerprintKey(fp);
       })
       .catch(() => {
         /* poll lỗi: bỏ qua — chu kỳ sau sẽ thử lại */
       });
   }, []);
 
+  // Fetch khi mount / đổi filter: setState chỉ chạy trong async callbacks
+  // (original pattern của hook này — rule react-hooks yêu cầu vậy).
+  //
+  // FIX INITIAL-LOAD RACE (isolation task — clone standalone only):
+  // trước đây mount fetch list mà KHÔNG chôt fingerprint baseline; poll đầu
+  // tiên (≤20s sau mount) chỉ GHI baseline mà bỏ qua so sánh (`previous !==
+  // null`), nên mọi thay đổi ở nơi khác rơi vào cửa sổ (mount → poll đầu)
+  // bị "nuốt" thành baseline mới — UI stale cho tới khi có thay đổi KẾ tiếp.
+  // Giờ: CAP fingerprint TRƯỚC khi gọi list, rồi SAU khi list resolve mới
+  // gắn nó làm baseline → thay đổi xảy ra TRONG/SAU fetch khiến fingerprint
+  // hiện tại ≠ baseline → poll đầu refetch ngay (converge trong 1 chu kỳ).
+  // Lỗi getCatalogVersion → giữ baseline null (poll đầu bỏ qua như cũ).
+  useEffect(() => {
+    let active = true;
+    const load = async () => {
+      let fpBefore: CatalogChangeFingerprint | null = null;
+      if (IS_STANDALONE_CRM) {
+        try {
+          fpBefore = await serviceCatalogRepository.getCatalogVersion();
+        } catch {
+          fpBefore = null;
+        }
+        if (!active) return;
+      }
+      try {
+        const data = await serviceCatalogRepository.list({
+          instances: instances && instances.length > 0 ? instances : undefined,
+        });
+        if (!active) return;
+        if (IS_STANDALONE_CRM && fpBefore) {
+          fingerprintRef.current = catalogFingerprintKey(fpBefore);
+        }
+        void applyData(data);
+      } catch (err) {
+        if (!active) return;
+        setError(err instanceof Error ? err.message : 'Không tải được danh mục dịch vụ.');
+        setIsLoaded(true);
+      }
+    };
+    void load();
+
+    return () => {
+      active = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [instancesKey, applyData]);
+
   // Refresh thủ công sau mutation thành công (create/update/delete/assign) —
   // refetch light-weight; không optimistic update khi fetch lỗi.
+  //
+  // Cùng thứ tự "baseline trước fetch" như mount effect (isolation task):
+  // capture trước list → gắn baseline sau khi data áp vào, đóng cửa sổ
+  // tương tự cho mọi refresh sau mutation/manual.
   const refresh = useCallback(async () => {
     setIsFetching(true);
     try {
+      let fpBefore: CatalogChangeFingerprint | null = null;
+      if (IS_STANDALONE_CRM) {
+        try {
+          fpBefore = await serviceCatalogRepository.getCatalogVersion();
+        } catch {
+          fpBefore = null; // lỗi capture → fallback markFingerprint như cũ
+        }
+      }
       const data = await serviceCatalogRepository.list({
         instances: instances && instances.length > 0 ? instances : undefined,
       });
       await applyData(data);
-      markFingerprint();
+      if (IS_STANDALONE_CRM && fpBefore) {
+        fingerprintRef.current = catalogFingerprintKey(fpBefore);
+      } else {
+        markFingerprint();
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Không tải được danh mục dịch vụ.');
     } finally {
@@ -111,9 +151,6 @@ export function useServiceCatalog(instances?: string[], onSyncChange?: () => voi
     let timer: ReturnType<typeof setTimeout> | null = null;
     let seq = 0; // token monotonic: response cũ của request cũ bị bỏ qua
 
-    const fingerprintKey = (fp: CatalogChangeFingerprint) =>
-      [fp.groups_count, fp.items_max_updated_at ?? '', fp.junction_count].join('|');
-
     const revalidate = async () => {
       if (stopped) return;
       if (typeof document !== 'undefined' && document.visibilityState !== 'visible') {
@@ -124,7 +161,7 @@ export function useServiceCatalog(instances?: string[], onSyncChange?: () => voi
       try {
         const fp = await serviceCatalogRepository.getCatalogVersion();
         if (stopped || my !== seq) return;
-        const key = fingerprintKey(fp);
+        const key = catalogFingerprintKey(fp);
         const previous = fingerprintRef.current;
         fingerprintRef.current = key;
         if (previous !== null && key !== previous) {
