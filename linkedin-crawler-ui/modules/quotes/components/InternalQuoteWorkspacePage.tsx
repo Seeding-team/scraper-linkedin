@@ -44,7 +44,7 @@ import { Button } from '@/components/ui/button';
 import { formatQuoteMoney } from '@/lib/currency';
 import { calculateItemTotal, calculateOverallDiscountSummary, calculateSectionTotal } from '../utils/quoteCalculations';
 import { ACTIVITY_LABELS, PROCESSING_STAGE_LABELS } from '../utils/quoteActivity';
-import { paymentPlanAmount } from '../utils/paymentPlan';
+import { paymentPlanAmounts } from '../utils/paymentPlan';
 
 const PLACEHOLDER = '—';
 
@@ -630,11 +630,11 @@ export function InternalQuoteWorkspacePage({ quoteId }: Props) {
                   <span className="text-[11px] text-slate-400 font-medium block mb-1">Kế hoạch thanh toán</span>
                   <table className="w-full text-xs border-collapse">
                     <tbody>
-                      {paymentPlan.map(row => (
+                      {paymentPlan.map((row, idx) => (
                         <tr key={row.id} className="border-b border-slate-100 last:border-b-0">
                           <td className="py-2 pr-3 font-semibold text-slate-800">{row.phase}</td>
                           <td className="py-2 pr-3 text-slate-600">{row.percent}%</td>
-                          <td className="py-2 pr-3 text-slate-900 font-bold text-right">{money(paymentPlanAmount(summary.grandTotal, row.percent, currency))}</td>
+                          <td className="py-2 pr-3 text-slate-900 font-bold text-right">{money(paymentPlanAmounts(paymentPlan, summary.grandTotal, currency)[idx])}</td>
                           <td className="py-2 pl-3 text-slate-500">{[row.condition, row.note].filter(Boolean).join(' · ')}</td>
                         </tr>
                       ))}

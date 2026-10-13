@@ -121,6 +121,16 @@ export interface QuoteTelegramLog {
  * với khách hàng CRM (bên nhận). Chọn ở Bước 1 wizard tạo báo giá; thông tin được
  * SNAPSHOT thẳng vào QuoteData lúc chọn (xem quoteDraftFromForm) — sửa công ty ở
  * danh mục sau này không ảnh hưởng báo giá đã tạo. */
+/** 1 dong goi y trong picker "Giới hạn theo Email/SĐT" (xem
+ * SeedingQuoteRepository.getAccessSuggestions()) - name/role de hien thi
+ * phan biet, email/phone co the null (1 nguon chi co 1 trong 2). */
+export interface QuoteAccessSuggestion {
+  name: string;
+  role: string;
+  email?: string | null;
+  phone?: string | null;
+}
+
 export interface IssuerCompany {
   id: string;
   code: string;

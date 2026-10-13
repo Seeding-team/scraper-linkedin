@@ -2448,6 +2448,22 @@
   background: #94a3b8;
 }
 
+/* Thanh "Xoá đã chọn" cho cac thanh phan Combo da tick checkbox - hien ngay
+ * tren dong dau tien cua Combo khi co >=1 thanh phan dang duoc chon. */
+.qc-bundle-child-bulk-actions-row td {
+  background: #fef2f2;
+  padding: 6px 12px;
+}
+
+.qc-bundle-child-bulk-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #b91c1c;
+}
+
 .qc-bundle-pricing-mode {
   display: flex;
   align-items: center;
@@ -3700,6 +3716,31 @@
 .qc-workspace-access-mode-toggle { display: flex; flex-direction: column; gap: 4px; }
 .qc-workspace-access-mode-toggle label { display: flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 600; color: #2b3445; cursor: pointer; }
 .qc-workspace-access-mode-toggle input { width: auto; }
+
+/* Picker "Giới hạn theo Email/SĐT" (goi y tu CRM thay textarea thuan - xem
+ * AccessAllowListPicker trong QuoteWorkspaceModal.tsx). */
+.qc-access-picker { position: relative; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.qc-access-picker-chips { display: flex; flex-wrap: wrap; gap: 6px; min-height: 22px; min-width: 0; }
+.qc-access-picker-empty { font-size: 12px; color: #9099a7; }
+.qc-access-picker-chip { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; background: #eef2ff; color: #2b3445; border-radius: 999px; padding: 3px 8px 3px 10px; font-size: 12px; font-weight: 600; }
+.qc-access-picker-chip > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.qc-access-picker-chip-remove { border: none; background: none; cursor: pointer; font-size: 13px; line-height: 1; color: #5b6576; padding: 0 2px; }
+.qc-access-picker-chip-remove:hover { color: #b91c1c; }
+.qc-access-picker-input-row { display: flex; gap: 6px; }
+.qc-access-picker-input { flex: 1; border: 1px solid #dbe1ea; border-radius: 8px; padding: 6px 8px; font-size: 12px; font-family: inherit; }
+.qc-access-picker-dropdown { position: absolute; top: 100%; left: 0; right: 0; z-index: 20; margin-top: 2px; background: #fff; border: 1px solid #dbe1ea; border-radius: 8px; box-shadow: 0 6px 18px rgba(0,0,0,0.08); max-height: 220px; overflow-y: auto; }
+/* BUG DA GAP ("bị che" - text goi y dai bi .qc-workspace-body overflow-x:hidden
+ * cat vo hinh, xem giai thich dong ~2105 phia tren): flex item mac dinh
+ * min-width:auto (= theo noi dung, KHONG phai 0) nen hang dai tran ra ngoai
+ * ma khong tu xuong dong/rut gon duoc - ep min-width:0 cho CA .qc-access-picker-option
+ * (item cua .qc-access-picker-dropdown, 1 flex/grid context khac o ngoai) LAN
+ * .qc-access-picker-option-text (item cua chinh no) + ellipsis cho tung dong. */
+.qc-access-picker-option { display: flex; align-items: center; gap: 8px; padding: 6px 10px; font-size: 12px; cursor: pointer; min-width: 0; }
+.qc-access-picker-option:hover { background: #f5f7fa; }
+.qc-access-picker-option input { width: auto; flex-shrink: 0; }
+.qc-access-picker-option-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1; }
+.qc-access-picker-option-main { font-weight: 600; color: #2b3445; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.qc-access-picker-option-meta { color: #9099a7; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .qc-workspace-checks { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: 12.5px; }
 .qc-workspace-checks li { padding-left: 18px; position: relative; color: #5b6576; }

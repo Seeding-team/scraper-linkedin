@@ -70,6 +70,7 @@ from app.modules.all_platform.services.supabase_quote_service import (
     list_quotes,
     list_quotes_by_phase,
     get_quote,
+    get_access_suggestions,
     get_public_quote,
     create_quote,
     update_quote,

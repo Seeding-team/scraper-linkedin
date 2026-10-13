@@ -1,7 +1,7 @@
 'use client';
 
 import { useRef, useState } from 'react';
-import { paymentPlanAmount, paymentPlanPercent, visiblePaymentPlan } from '../utils/paymentPlan';
+import { paymentPlanAmounts, paymentPlanPercent, visiblePaymentPlan } from '../utils/paymentPlan';
 import type {
   CustomBlock,
   BundleSnapshotComponent,
@@ -301,7 +301,7 @@ function appendQuota(label: string, quota?: string | null): string {
   return `${label} — ${cleanQuota}`;
 }
 
-function bundleComponentToDisplayItem(component: BundleSnapshotComponent, suffix: string): QuoteItem {
+function bundleComponentToDisplayItem(component: BundleSnapshotComponent, suffix: string, unitMultiplier: number): QuoteItem {
   const label = component.customerDisplayName || component.name || component.displayText || 'Hạng mục';
   const serviceDescription = appendQuota(label, component.quota);
   return {
@@ -310,7 +310,7 @@ function bundleComponentToDisplayItem(component: BundleSnapshotComponent, suffix
     serviceDescription,
     description: component.description || '',
     unit: component.unit || '',
-    quantity: component.computedQuantity || component.quantity || 1,
+    quantity: (component.computedQuantity || component.quantity || 1) * unitMultiplier,
     unitPrice: component.unitPriceVnd || 0,
     discountPercent: 0,
     vatRate: 0,
@@ -318,7 +318,13 @@ function bundleComponentToDisplayItem(component: BundleSnapshotComponent, suffix
   };
 }
 
+// BUG THAT DA GAP (giong QuoteWorkspaceModal.tsx): ham nay TRUOC DAY luon
+// tinh so luong hang muc con theo DUNG 1 bo bundle, bo qua item.quantity
+// (so bo Sale da chon) - bao gia khach xem (ban in/public) hien thi sai so
+// luong neu Sale mua >1 bo. Nhan them unitMultiplier = item.quantity (toi
+// thieu 1) vao so luong tung dong con, dong bo voi QuoteWorkspaceModal.tsx.
 function bundleComponentsToDisplayItems(item: QuoteItem): QuoteItem[] {
+  const unitMultiplier = Math.max(1, Number(item.quantity) || 1);
   const components = bundleSnapshotComponents(item)
     .filter(component => component.showOnQuote !== false)
     .sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
@@ -338,7 +344,7 @@ function bundleComponentsToDisplayItems(item: QuoteItem): QuoteItem[] {
         serviceDescription: appendQuota(name, component.quotaPoolQuota || component.quota),
         description: '',
         unit: '',
-        quantity: 1,
+        quantity: unitMultiplier,
         unitPrice: component.unitPriceVnd || 0,
         discountPercent: 0,
         vatRate: 0,
@@ -346,7 +352,7 @@ function bundleComponentsToDisplayItems(item: QuoteItem): QuoteItem[] {
       });
       return;
     }
-    rows.push(bundleComponentToDisplayItem(component, String(index)));
+    rows.push(bundleComponentToDisplayItem(component, String(index), unitMultiplier));
   });
 
   return rows;
@@ -1274,9 +1280,9 @@ export function QuoteDocumentRenderer({
             <table className="quote-table">
               <thead><tr><th>Đợt</th><th>Tỷ lệ (%)</th><th>Số tiền</th><th>Điều kiện thanh toán</th><th>Ghi chú</th></tr></thead>
               <tbody>{visiblePaymentPlan(quoteData.paymentPlan).map((row, i) => <tr key={row.id || i}>
-                <td>{row.phase}</td><td>{row.percent}%</td><td className="money-cell">{formatVnd(paymentPlanAmount(discountSummary.grandTotal, row.percent, currency))}</td><td>{row.condition}</td><td>{row.note}</td>
+                <td>{row.phase}</td><td>{row.percent}%</td><td className="money-cell">{formatVnd(paymentPlanAmounts(visiblePaymentPlan(quoteData.paymentPlan), discountSummary.grandTotal, currency)[i])}</td><td>{row.condition}</td><td>{row.note}</td>
               </tr>)}</tbody>
-              <tfoot><tr><th>Tổng</th><th>{paymentPlanPercent(visiblePaymentPlan(quoteData.paymentPlan))}%</th><th>{formatVnd(visiblePaymentPlan(quoteData.paymentPlan).reduce((sum, row) => sum + paymentPlanAmount(discountSummary.grandTotal, row.percent, currency), 0))}</th><td colSpan={2} /></tr></tfoot>
+              <tfoot><tr><th>Tổng</th><th>{paymentPlanPercent(visiblePaymentPlan(quoteData.paymentPlan))}%</th><th>{formatVnd(paymentPlanAmounts(visiblePaymentPlan(quoteData.paymentPlan), discountSummary.grandTotal, currency).reduce((sum, amount) => sum + amount, 0))}</th><td colSpan={2} /></tr></tfoot>
             </table>
           </section>
         ) : null}

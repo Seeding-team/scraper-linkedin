@@ -57,6 +57,7 @@ from app.modules.all_platform.services import (
     get_public_quote,
     get_public_quote_form,
     get_quote,
+    get_access_suggestions,
     get_quote_form,
     list_quote_forms,
     list_quote_versions,
@@ -886,6 +887,20 @@ def quotes_get(quote_id: str, user: dict = Depends(get_current_user)) -> BaseRes
         return BaseResponse(success=False, message=friendly_supabase_error_message(e))
 
 
+@quotes_router.get("/{quote_id}/access-suggestions")
+def quotes_access_suggestions(quote_id: str, user: dict = Depends(get_current_user)) -> BaseResponse:
+    """Goi y Email/SDT cho "Giới hạn theo Email/SĐT" (xem get_access_suggestions())
+    - cung gate quyen voi GET /{quote_id} (chi nguoi xem duoc bao gia nay moi
+    goi y duoc danh sach lien quan den no, tranh do tron du lieu khach hang)."""
+    try:
+        quote, lead = _load_quote_and_lead(quote_id)
+        _scoped = get_scope_visible_user_ids(user) is not None
+        if (_scoped or quote["status"] not in ("approved", "confirmed")) and not can_edit_quote(user, quote, lead):
+            return BaseResponse(success=False, message="Không có quyền xem báo giá này")
+        return BaseResponse(success=True, data=get_access_suggestions(quote_id))
+    except Exception as e:
+        return BaseResponse(success=False, message=friendly_supabase_error_message(e))
+
 @quotes_router.post("")
 def quotes_create(payload: QuoteCreateRequest, user: dict = Depends(get_current_user)) -> BaseResponse:
     try:
@@ -1479,6 +1494,22 @@ class EmailProviderTestRequest(BaseModel):
 
 class EmailProviderSendTestRequest(BaseModel):
     test_recipient: str
+
+
+@quote_email_provider_router.get("/ready")
+def email_provider_ready(user: dict = Depends(get_current_user)) -> BaseResponse:
+    """Chi tra 1 boolean "san sang gui that" (KHONG kem thong tin cau hinh/
+    sender) - khac GET "" (require_quote_email_manager, chi Admin/Leader) vi
+    endpoint nay can moi user CRM da dang nhap goi duoc (Sale/Presale) de
+    canh bao TRUOC khi Ban giao/Xac minh dat chuan neu email chua san sang
+    gui, xem LeadDetailDrawer.tsx runWithEmailConfigCheck(). An toan de mo
+    rong quyen vi khong lo du lieu nhay cam, chi 1 co dung/sai."""
+    try:
+        data = email_provider_service.get_email_provider_settings()
+        ready = bool(data.get("credentialConfigured") and data.get("isEnabled") and data.get("smtpConnectionStatus") == "ok")
+        return BaseResponse(success=True, data={"ready": ready})
+    except Exception as e:
+        return BaseResponse(success=False, message=_safe_error_message(e))
 
 
 @quote_email_provider_router.get("")
