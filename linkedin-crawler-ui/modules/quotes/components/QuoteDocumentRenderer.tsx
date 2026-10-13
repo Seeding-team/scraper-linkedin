@@ -891,12 +891,6 @@ export function QuoteDocumentRenderer({
                   <strong>{formatVnd(discountSummary.subtotalBeforeVat || setupTotal || totals.totalAmount)}</strong>
                 </div>
               ) : null}
-              {visibleSummaryKeys.has('itemDiscount') && (totals.discountAmount || 0) > 0 ? (
-                <div className="villa-total-row villa-total-row--discount">
-                  <span>Giảm giá hạng mục</span>
-                  <strong>-{formatVnd(totals.discountAmount || 0)}</strong>
-                </div>
-              ) : null}
               {visibleSummaryKeys.has('overallDiscount') && hasOverallDiscount ? (
                 <div className="villa-total-row villa-total-row--discount">
                   <span>Giảm giá tổng ({overallDiscountPercent}%)</span>
@@ -909,7 +903,7 @@ export function QuoteDocumentRenderer({
                   <strong>-{formatVnd(totalDiscountAmount)}</strong>
                 </div>
               ) : null}
-              {visibleSummaryKeys.has('subtotalAfterDiscount') && hasOverallDiscount ? (
+              {visibleSummaryKeys.has('subtotalAfterDiscount') && totalDiscountAmount > 0 ? (
                 <div className="villa-total-row">
                   <span>Tổng sau giảm giá</span>
                   <strong>{formatVnd(discountSummary.subtotalAfterDiscount)}</strong>
@@ -1260,16 +1254,23 @@ export function QuoteDocumentRenderer({
         </section>
 
         <section className="sheet-total-block sheet-total-block--standard">
-          {visibleSummaryKeys.has('subtotalBeforeVat') ? (
+          {/* "nhìn như bị trừ 2 lần" (2026-10-13): subtotalBeforeVat tu truoc
+           * gio da NET san phan giam gia hang muc (xem comment o
+           * calculateOverallDiscountSummary) - hien dong nay NGAY PHIA TREN
+           * dong "Giảm giá hạng mục" gay hieu nham la bi tru 2 lan. Co giam
+           * gia hang muc thi doi sang hien "Giá gốc trước giảm" (gia GOC that,
+           * truoc ca giam gia hang muc) thay the - CHI 1 trong 2 dong hien tai
+           * 1 thoi diem, khong lap lai. */}
+          {visibleSummaryKeys.has('grossSubtotal') && (totals.discountAmount || 0) > 0 ? (
+            <div className="sheet-total-row">
+              <span>Giá gốc trước giảm</span>
+              <strong>{formatVnd(totals.subtotalAmount)}</strong>
+            </div>
+          ) : null}
+          {visibleSummaryKeys.has('subtotalBeforeVat') && (totals.discountAmount || 0) <= 0 ? (
             <div className="sheet-total-row">
               <span>{findField('subtotalAmount').label || 'Tổng cộng chưa bao gồm thuế GTGT'}</span>
               <strong>{formatVnd(discountSummary.subtotalBeforeVat)}</strong>
-            </div>
-          ) : null}
-          {visibleSummaryKeys.has('itemDiscount') && (totals.discountAmount || 0) > 0 ? (
-            <div className="sheet-total-row sheet-total-row--discount">
-              <span>Giảm giá hạng mục</span>
-              <strong>-{formatVnd(totals.discountAmount || 0)}</strong>
             </div>
           ) : null}
           {visibleSummaryKeys.has('overallDiscount') && hasOverallDiscount ? (
@@ -1284,7 +1285,7 @@ export function QuoteDocumentRenderer({
               <strong>-{formatVnd(totalDiscountAmount)}</strong>
             </div>
           ) : null}
-          {visibleSummaryKeys.has('subtotalAfterDiscount') && hasOverallDiscount ? (
+          {visibleSummaryKeys.has('subtotalAfterDiscount') && totalDiscountAmount > 0 ? (
             <div className="sheet-total-row">
               <span>Tổng sau giảm giá</span>
               <strong>{formatVnd(discountSummary.subtotalAfterDiscount)}</strong>

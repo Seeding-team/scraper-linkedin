@@ -44,9 +44,18 @@ export interface WorkspaceMeta {
   total_groups: number;
 }
 
+/** Many-to-many Workspace assignment (migration 190): kết quả của bulk replace-all. */
+export interface WorkspaceAssignResult {
+  assignment: Record<string, string[]>;
+  groups: string[];
+}
+
 export interface ServiceCatalogItem {
   /** TÍCH HỢP BỘ LỌC WORKSPACE: Mã định danh workspace (markee, cloudgate, securityzone,...) */
   instance?: string;
+  /** Many-to-many Workspace (migration 190):Set đầy đủ các workspace của item
+   * (junction table; thiếu = [instance] legacy fallback). */
+  workspaces?: string[];
   defaultCostPriceVnd?: number | null;
   defaultMarkupPercent?: number | null;
   defaultCustomerPriceVnd?: number | null;
@@ -68,6 +77,11 @@ export interface ServiceCatalogItem {
   defaultUnitPriceVnd: number;
   defaultDiscountPercent: number;
   defaultVatRate: number | null;
+  /** "VAT giá vốn" (2026-10-13, migration 191) - VAT dau vao RIENG cho Gia
+   * von (mua hang tu NCC), KHAC defaultVatRate (VAT dau ra ap cho Gia khach).
+   * Khi them san pham vao bao gia, Gia von cua dong = defaultCostPriceVnd x
+   * (1 + defaultCostVatRate/100). Null/0 = gia von khong gom VAT (hanh vi cu). */
+  defaultCostVatRate?: number | null;
   customerVisible: boolean;
   quoteDisplayName?: string | null;
   quoteDescription?: string | null;
@@ -147,6 +161,8 @@ export interface ServiceCatalogItemInput {
   defaultCostPriceVnd?: number | null;
   defaultMarkupPercent?: number | null;
   defaultCustomerPriceVnd?: number | null;
+  /** "VAT giá vốn" (2026-10-13, migration 191) - xem ServiceCatalogItem.defaultCostVatRate. */
+  defaultCostVatRate?: number | null;
   pricingInputMode?: ServiceCatalogPricingInputMode;
   itemType: ServiceCatalogItemType;
   parentId?: string;

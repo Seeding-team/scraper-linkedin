@@ -2973,6 +2973,16 @@ export function QuoteWorkspaceModal({
     // (khong sua danh muc), giu goc VND o unitPriceVnd/costPriceVnd de doi lai khong troi.
     const defaultUnitPriceVnd = resolveCatalogCustomerPrice(item);
     let defaultCostPriceVnd = item.itemType === 'bundle' ? calculateBundleComponentCost(bundleSnapshot) : (item.defaultCostPriceVnd ?? null);
+    // "VAT cộng luôn vào Giá vốn hiển thị" (2026-10-13) - item.defaultCostPriceVnd
+    // la gia von THUAN (truoc VAT, xem migration 191); nhan them VAT dau vao
+    // RIENG (defaultCostVatRate, KHAC defaultVatRate la VAT dau ra ap cho Gia
+    // khach) NGAY luc them vao bao gia - tu do Gia von/Cost tong/Markup/Margin
+    // cua dong bao gia nay deu tinh tren gia von DA GOM VAT. Combo khong ap
+    // (calculateBundleComponentCost tinh tu tung thanh phan rieng, ngoai pham
+    // vi dot nay).
+    if (item.itemType !== 'bundle' && defaultCostPriceVnd != null && item.defaultCostVatRate) {
+      defaultCostPriceVnd = defaultCostPriceVnd * (1 + item.defaultCostVatRate / 100);
+    }
     // Bug thuc te (2026-10-11, mentor bao cao): san pham le chi cau hinh san Gia khach
     // + Markup mac dinh (khong luu san Gia von) thi luc "Chon tu danh muc" hang muc bi
     // them vao voi Gia von RONG ("Bat buoc nhap"), bat Sale tu nham tinh Gia khach /

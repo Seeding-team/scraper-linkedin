@@ -120,6 +120,7 @@ function toItemPayload(input: ServiceCatalogItemInput) {
     ['importFee', 'import_fee'],
     ['otherCost', 'other_cost'],
     ['pricingPolicy', 'pricing_policy'],
+    ['defaultCostVatRate', 'default_cost_vat_rate'],
   ] as const) {
     const value = input[key as keyof ServiceCatalogItemInput];
     if (value !== '' && value !== null && value !== undefined) {

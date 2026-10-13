@@ -17,7 +17,7 @@ import {
 } from '../modules/quotes/utils/quoteCalculations';
 import { paymentPlanAmount } from '../modules/quotes/utils/paymentPlan';
 import { VND_FX, convertQuoteItemsCurrency, type QuoteFx } from '../modules/quotes/utils/quoteCurrency';
-import { reducePricing, type PricingState } from '../modules/service-catalog/usePricingLogic';
+import { reducePricing, effectiveCostPriceVnd, type PricingState } from '../modules/service-catalog/usePricingLogic';
 import { customerPriceFromMarkup } from '../modules/service-catalog/pricing-math';
 import type { Quote, QuoteItem } from '../modules/quotes/types';
 import { quoteDraftFromExistingQuote } from '../modules/crm/integrations/quotes/types';
@@ -155,6 +155,7 @@ const basePricing: PricingState = {
   costPriceVnd: 27.5 * RATE,
   markupPercent: 0,
   customerPriceVnd: 0,
+  costVatRate: 0,
 };
 
 test('form SP/DV: 27.5 USD -> VND = 715.000 theo ty gia that (khong giu nguyen 27.5)', () => {
@@ -178,6 +179,42 @@ test('form SP/DV: chua co ty gia thi KHONG doi tien te de lam sai so', () => {
   const next = reducePricing(noRate, 'supplierCurrency', 'VND');
   assert.equal(next.supplierCurrency, 'USD');
   assert.equal(next.supplierListPrice, 27.5);
+});
+
+// ---- "VAT giá vốn" (2026-10-13): gia von hien thi/Markup/Margin tinh tren
+// gia von DA GOM VAT dau vao, costPriceVnd thuan khong doi.
+test('VAT giá vốn: 5.800.000 + 10% VAT -> effectiveCostPriceVnd = 6.380.000', () => {
+  const state: PricingState = { ...basePricing, costPriceVnd: 5800000, costVatRate: 10, markupPercent: 0, customerPriceVnd: 0 };
+  assert.ok(Math.abs(effectiveCostPriceVnd(state) - 6380000) < 0.01);
+});
+
+// supplierCurrency='VND' + supplierNetPrice = costPriceVnd mong muon, de
+// nhanh "tinh lai costPriceVnd tu supplier chain" trong reducePricing KHONG
+// ghi de mat gia tri test chu dinh (field != 'costPriceVnd' se tu tinh lai
+// costPriceVnd = supplierConvertedPrice + extraCosts).
+const vndCostBase: PricingState = {
+  ...basePricing,
+  supplierCurrency: 'VND',
+  supplierListPrice: 5800000,
+  supplierDiscountPercent: 0,
+  supplierNetPrice: 5800000,
+  supplierExchangeRate: 0,
+  supplierConvertedPrice: 5800000,
+  costPriceVnd: 5800000,
+  customerPriceVnd: 0,
+};
+
+test('VAT giá vốn: markup 20% tinh tren gia von DA GOM VAT, khong phai gia von thuan', () => {
+  const withVat = reducePricing({ ...vndCostBase, costVatRate: 10 }, 'markupPercent', 20);
+  // gia von thuan: 5.800.000, da gom VAT 10%: 6.380.000 -> gia ban = 6.380.000*1.2 = 7.656.000
+  assert.ok(Math.abs(withVat.customerPriceVnd - 7656000) < 0.01, `customerPriceVnd=${withVat.customerPriceVnd}`);
+  // costPriceVnd (thuan, truoc VAT) KHONG bi ghi de boi VAT - tranh cong don neu tinh lai nhieu lan
+  assert.equal(withVat.costPriceVnd, 5800000);
+});
+
+test('VAT giá vốn: costVatRate=0 cho ket qua GIONG HET truoc khi co tinh nang nay', () => {
+  const noVat = reducePricing({ ...vndCostBase, costVatRate: 0 }, 'markupPercent', 20);
+  assert.equal(noVat.customerPriceVnd, 6960000); // 5.800.000 * 1.2
 });
 
 // ---- Sua bao gia trong wizard "Tao bao gia nhanh": nap dung tien te + ty gia da chot

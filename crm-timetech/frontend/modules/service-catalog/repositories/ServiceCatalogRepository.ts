@@ -10,6 +10,7 @@ import {
   ServiceCatalogStatus,
   MscSyncStats,
   WorkspaceMeta,
+  WorkspaceAssignResult,
 } from '../types';
 
 type ApiResponse<T> = {
@@ -119,6 +120,7 @@ function toItemPayload(input: ServiceCatalogItemInput) {
     ['importFee', 'import_fee'],
     ['otherCost', 'other_cost'],
     ['pricingPolicy', 'pricing_policy'],
+    ['defaultCostVatRate', 'default_cost_vat_rate'],
   ] as const) {
     const value = input[key as keyof ServiceCatalogItemInput];
     if (value !== '' && value !== null && value !== undefined) {
@@ -302,6 +304,16 @@ export class ServiceCatalogRepository {
   /** Trang thai cac lan dong bo MSC gan nhat (msc_sync_runs). */
   async getMscSyncStatus(limit = 10): Promise<MscSyncStats[]> {
     return apiFetch<MscSyncStats[]>(`/api/all-platform/msc-sync/status?limit=${encodeURIComponent(String(limit))}`);
+  }
+
+  /** Many-to-many Workspace assignment (migration 190): bulk replace-all cho
+   * cac NHOM da chon (+ tat ca san pham ben trong). Backend goi 1 RPC
+   * `service_catalog_ws_assign` de atomic (khong co partial failure). */
+  async assignWorkspaces(groupIds: string[], instances: string[]): Promise<WorkspaceAssignResult> {
+    return apiFetch<WorkspaceAssignResult>('/api/all-platform/service-catalog/workspaces-assign', {
+      method: 'POST',
+      body: JSON.stringify({ group_ids: groupIds, instances }),
+    });
   }
 }
 

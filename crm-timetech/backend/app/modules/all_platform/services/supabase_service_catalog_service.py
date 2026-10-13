@@ -16,6 +16,11 @@ from app.core.supabase_client import get_supabase_client
 
 ITEMS_TABLE = "service_catalog_items"
 BUNDLE_ITEMS_TABLE = "service_catalog_bundle_items"
+# Many-to-many Workspace assignment (migration 190): 1 nhóm/có thể thuộc nhiều
+# workspace; item nhìn thấy khi instance legacy nằm trong bộ lọc HOẶC có dòng
+# junction (một trong những assignment của nó nằm trong bộ lọc). Cot cu `instance`
+# LUON được giữ "primary" (1 phần tử của set) cho mọi reader cũ.
+WORKSPACES_TABLE = "service_catalog_item_workspaces"
 LINKS_TABLE = "quote_form_catalog_links"
 PRICING_TABLE = "service_catalog_item_pricing"
 
@@ -52,6 +57,10 @@ def _row_to_item(row: dict) -> dict:
         "defaultUnitPriceVnd": float(row.get("default_unit_price_vnd") or 0),
         "defaultDiscountPercent": float(row.get("default_discount_percent") or 0),
         "defaultVatRate": _float_or_none(row.get("default_vat_rate")),
+        # "VAT giá vốn" (2026-10-13, migration 191) - VAT dau vao rieng cho Gia
+        # von, KHAC defaultVatRate (VAT dau ra ap cho Gia khach) - cot DON
+        # GIAN, KHONG di qua bo may resolve pricing (xem comment migration).
+        "defaultCostVatRate": _float_or_none(row.get("default_cost_vat_rate")),
         "customerVisible": bool(row.get("customer_visible", True)),
         "quoteDisplayName": row.get("quote_display_name"),
         "quoteDescription": row.get("quote_description"),
@@ -85,6 +94,203 @@ def _row_to_item(row: dict) -> dict:
         "instance": row.get("instance") or "markee",
         "children": [],
     }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Many-to-many Workspace assignment (migration 190). Quy uoc chung:
+#  - set(item) = cac dong junction cua item neu co, nguoc lai [instance legacy].
+#  - Moi thay doi assignment deu di qua `_ws_write()` de cot cu `instance`
+#    va junction khong tach lech; MSP sync & vendor import khong can sua gi
+#    vi ca hai deu di qua create/update service.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _normalize_instances(instances: list[str] | None) -> list[str]:
+    """Lowercased, trimmed, deduplicated, bo phan tu rong theo thu tu truyen."""
+    out: list[str] = []
+    for raw in instances or []:
+        if raw is None:
+            continue
+        value = str(raw).strip().lower()
+        if value and value not in out:
+            out.append(value)
+    return out
+
+
+def _load_workspaces_map(supabase: Client) -> dict[str, list[str]]:
+    """Map item_id → danh sách instance (giu thu tu DB) tu junction table."""
+    try:
+        rows = supabase.table(WORKSPACES_TABLE).select("item_id, instance").execute().data or []
+    except Exception:
+        return {}
+    ws_map: dict[str, list[str]] = {}
+    for row in rows:
+        instance = (row.get("instance") or "").strip().lower()
+        if not instance:
+            continue
+        ws_map.setdefault(str(row.get("item_id")), []).append(instance)
+    return ws_map
+
+
+def _workspace_set_for(supabase: Client, item_row: dict, ws_map: dict[str, list[str]]) -> list[str]:
+    """set cua 1 item = junction (neu co) hoac legacy instance (fallback)."""
+    item_id = str(item_row.get("id"))
+    existing = ws_map.get(item_id)
+    if existing:
+        return list(existing)
+    legacy = (item_row.get("instance") or "markee").strip().lower()
+    return [legacy] if legacy else ["markee"]
+
+
+def _attach_workspaces(supabase: Client, items: list[dict]) -> list[dict]:
+    """Annotate `workspaces` (list) len cac item da qua `_row_to_item`."""
+    if not items:
+        return items
+    ws_map = _load_workspaces_map(supabase)
+    for item in items:
+        if isinstance(item, dict):
+            item["workspaces"] = _workspace_set_for(
+                supabase, {"id": item.get("id"), "instance": item.get("instance")}, ws_map
+            )
+    return items
+
+
+def _ws_write(
+    supabase: Client,
+    item_ids: list[str],
+    instances: list[str],
+    actor_id: str | None = None,
+) -> dict[str, list[str]]:
+    """REPLACE-ALL assignment cho cac item_ids (1-2 item don le):
+
+    - Xoa toan bo junction rows cu cua cac item, chen set instances moi.
+    - Mirror legacy: giu gia tri `instance` hien tai neu no van con nam trong
+      set moi, nguoc lai lay phan tu dau tien cua set (cot cu lun giu 1 phan tu
+      de 100% read-path cu van dung).
+
+    Luu y giao dich: bulk nhieu nhom phai di qua RPC `service_catalog_ws_assign`
+    (migration 190) de co 1 giao dich duy nhat; ham nay danh cho 1-2 item don
+    le trong cac duong create/update cua service.
+
+    Set rong: `instances` rong se raise ValueError (KHONG silently clear
+    assignment).
+    """
+    ids = [str(i) for i in item_ids if i]
+    normalized = _normalize_instances(instances)
+    if not ids:
+        return {}
+    if not normalized:
+        raise ValueError("Vui long chon it nhat 1 Workspace.")
+
+    old_rows = (
+        supabase.table(ITEMS_TABLE)
+        .select("id, instance")
+        .in_("id", ids)
+        .execute()
+        .data
+        or []
+    )
+    current = {r.get("id"): (r.get("instance") or "").strip().lower() for r in old_rows}
+    primary_in_set = [c for c in current.values() if c in normalized]
+    primary = primary_in_set[0] if primary_in_set else normalized[0]
+
+    supabase.table(WORKSPACES_TABLE).delete().in_("item_id", ids).execute()
+    supabase.table(WORKSPACES_TABLE).insert(
+        [{"item_id": item_id, "instance": instance} for item_id in ids for instance in normalized]
+    ).execute()
+
+    supabase.table(ITEMS_TABLE).update(
+        {"instance": primary, "updated_at": _now_iso(), "updated_by": actor_id}
+    ).in_("id", ids).execute()
+
+    return {item_id: list(normalized) for item_id in ids}
+
+
+def assign_group_workspaces(
+    group_ids: list[str],
+    instances: list[str],
+    actor_id: str | None = None,
+) -> dict:
+    """Bulk replace-all Workspace assignment cho cac NHOM + con truc tiep.
+
+    Dung RPC `service_catalog_ws_assign` (migration 190) de: normalize instance,
+    khoa nhom (FOR UPDATE), replace junction cho nhom + TAT CA con truc tiep
+    (parent_id IN groups), mirror legacy instance — TAT CA trong 1 giao dich.
+
+    Raises:
+        ValueError: khong chon nhom / qua 500 nhom / khong chon workspace /
+            workspace chua dang ky trong danh sach kha dung (GET /workspaces) /
+            id khong ton tai / khong phai nhom / RPC tra ve trong.
+
+    Tra ve: {"assignment": {item_id: [instances]}, "groups": [ids da goi]}.
+    """
+    supabase: Client = get_supabase_client()
+    ids: list[str] = []
+    for raw in group_ids or []:
+        value = str(raw or "").strip()
+        if value and value not in ids:
+            ids.append(value)
+    if not ids:
+        raise ValueError("Vui lòng chọn ít nhất 1 nhóm sản phẩm.")
+    if len(ids) > 500:
+        raise ValueError("Chỉ được gán tối đa 500 nhóm mỗi lần.")
+
+    normalized = _normalize_instances(instances)
+    if not normalized:
+        raise ValueError("Vui lòng chọn ít nhất 1 Workspace.")
+
+    # Workspace kha dung = nguon DONG duy nhat cua app (GET /workspaces).
+    available = {
+        (w.get("instance_key") or "").strip().lower()
+        for w in list_available_workspaces()
+        if w.get("instance_key")
+    }
+    unknown = [i for i in normalized if i not in available]
+    if unknown:
+        raise ValueError(
+            "Workspace không hợp lệ: " + ", ".join(sorted(set(unknown)))
+            + ". Danh sách Workspace khả dụng: " + ", ".join(sorted(available))
+        )
+
+    existing = (
+        supabase.table(ITEMS_TABLE)
+        .select("id, item_type")
+        .in_("id", ids)
+        .execute()
+        .data
+        or []
+    )
+    by_id = {r["id"]: r for r in existing}
+    missing = [i for i in ids if i not in by_id]
+    if missing:
+        raise ValueError(
+            "Một vài nhóm không tồn tại hoặc đã bị xoá (ids: " + ", ".join(missing[:5]) + "…)."
+        )
+    not_group = [i for i, r in by_id.items() if r.get("item_type") != "group"]
+    if not_group:
+        raise ValueError(
+            "Các id sau không phải là nhóm sản phẩm (ids: " + ", ".join(sorted(not_group)[:5]) + "…)."
+        )
+
+    rpc_rows = (
+        supabase.rpc(
+            "service_catalog_ws_assign",
+            {"p_group_ids": ids, "p_instances": normalized, "p_actor_id": actor_id},
+        )
+        .execute()
+        .data
+        or []
+    )
+    if not rpc_rows:
+        raise ValueError("Không ghi được Workspace assignment (database trả về trống).")
+
+    assignment: dict[str, list[str]] = {}
+    for row in rpc_rows:
+        item_id = str(row.get("item_id"))
+        instance = (row.get("instance") or "").strip().lower()
+        if item_id and instance and instance not in assignment.setdefault(item_id, []):
+            assignment[item_id].append(instance)
+    return {"assignment": assignment, "groups": ids}
 
 
 def _bundle_component_line(bundle_item_row: dict, component: dict) -> dict:
@@ -211,12 +417,24 @@ def list_available_workspaces() -> list[dict]:
             .eq("item_type", "group")
             .execute()
         )
-        for g in (groups_res.data or []):
+        all_groups = groups_res.data or []
+        for g in all_groups:
             inst = (g.get("instance") or "markee").strip().lower()
-            group_counts[inst] = group_counts.get(inst, 0) + 1
             distinct_instances.add(inst)
     except Exception:
-        pass
+        all_groups = []
+
+    # Counts theo assignment many-to-many (migration 190): dem DISTINCT nhom
+    # theo tung instance trong JUNCTION; nhom khong co junction (DB cu / seed
+    # cu) dem theo legacy instance (fallback). Product khong tao workspace moi.
+    ws_map = _load_workspaces_map(supabase)
+    for g in all_groups:
+        gid = str(g.get("id"))
+        inst = (g.get("instance") or "markee").strip().lower()
+        assignments = set(ws_map.get(gid) or ([inst] if inst else []))
+        for assigned in assignments:
+            group_counts[assigned] = group_counts.get(assigned, 0) + 1
+            distinct_instances.add(assigned)
 
     # Bản đồ quy chuẩn mã code công ty sang instance slug nếu chưa gán riêng
     code_to_instance = {
@@ -282,7 +500,38 @@ def list_service_catalog_items_scoped(instances: list[str] | None = None) -> lis
             query = query.in_("instance", list(normalized))
 
     rows = query.order("sort_order").execute().data or []
+    if instances:
+        # Many-to-many (migration 190): nhom da gan nhieu workspace chi cap-junction.
+        # Lay them cac item co assignment nam trong bo loc (junction), nhung
+        # chua tu cach legacy-filter benh tre (fallback cho DB cu / seeded cu).
+        keys = sorted({s.lower() for s in normalized if s})
+        ws_rows = (
+            supabase.table(WORKSPACES_TABLE)
+            .select("item_id")
+            .in_("instance", keys)
+            .execute()
+            .data
+            or []
+        )
+        junction_ids = [str(r["item_id"]) for r in ws_rows if r.get("item_id")]
+        seen_ids = {r.get("id") for r in rows}
+        extra_ids = [i for i in junction_ids if i not in seen_ids]
+        if extra_ids:
+            try:
+                extra_rows = (
+                    supabase.table(ITEMS_TABLE)
+                    .select("*")
+                    .in_("id", extra_ids)
+                    .order("sort_order")
+                    .execute()
+                    .data
+                    or []
+                )
+            except Exception:
+                extra_rows = []
+            rows = list(rows) + list(extra_rows)
     mapped = [_row_to_item(row) for row in rows]
+    _attach_workspaces(supabase, mapped)
     by_id = {item["id"]: item for item in mapped}
     roots: list[dict] = []
     for item in mapped:
@@ -309,6 +558,7 @@ def get_service_catalog_item(item_id: str) -> dict:
     if not row:
         raise ValueError("Khong tim thay dich vu.")
     item = _row_to_item(row)
+    _attach_workspaces(supabase, [item])
     if item["itemType"] == "bundle":
         item["components"] = _bundle_components(item_id)
     merge_pricing_into_tree([item], resolve_pricing_map(_collect_item_ids([item]), None))
@@ -324,7 +574,9 @@ def get_service_catalog_items_by_ids(item_ids: list[str]) -> list[dict]:
         return []
     supabase: Client = get_supabase_client()
     rows = supabase.table(ITEMS_TABLE).select("*").in_("id", item_ids).execute().data or []
-    return [_row_to_item(row) for row in rows]
+    items = [_row_to_item(row) for row in rows]
+    _attach_workspaces(supabase, items)
+    return items
 
 
 def create_service_catalog_item(payload: dict, created_by: str | None) -> dict:
@@ -384,6 +636,10 @@ def create_service_catalog_item(payload: dict, created_by: str | None) -> dict:
     for field in ["brand", "part_number", "product_type", "internal_note"]:
         if payload.get(field) is not None:
             insert_data[field] = payload.get(field)
+    # "VAT giá vốn" (migration 191) - cung pattern "chi them key khi co gia
+    # tri" tranh loi "column does not exist" tren DB chua chay migration 191.
+    if payload.get("default_cost_vat_rate") is not None:
+        insert_data["default_cost_vat_rate"] = float(payload["default_cost_vat_rate"])
     # External identity (migration 175) — chi dien khi nguoi goi truyen vao
     # (dong bo MSC). Caller thuong (UI them moi) khong truyen => khong thay doi
     # hanh vi hien tai.
@@ -404,6 +660,41 @@ def create_service_catalog_item(payload: dict, created_by: str | None) -> dict:
     
     result = supabase.table(ITEMS_TABLE).insert(insert_data).execute()
     item = result.data[0]
+
+    # Many-to-many Workspace (migration 190): ghep junction ngay khi tao de
+    # cac duong sau nay (MSC sync, vendor import) tu dong dong bo qua ham nay.
+    try:
+        ws_map = _load_workspaces_map(supabase)
+        if item.get("parent_id"):
+            # child: nhan dung set cua nhom cha (junction cua parent, fallback legacy)
+            try:
+                parent_row = (
+                    supabase.table(ITEMS_TABLE)
+                    .select("id, instance")
+                    .eq("id", item["parent_id"])
+                    .limit(1)
+                    .execute()
+                    .data
+                    or []
+                )
+                parent_set = _workspace_set_for(
+                    supabase,
+                    parent_row[0] if parent_row else {"id": item["parent_id"], "instance": None},
+                    ws_map,
+                )
+            except Exception:
+                parent_set = []
+            if not parent_set:
+                parent_set = [(insert_data.get("instance") or "markee").strip().lower()]
+            _ws_write(supabase, [item["id"]], parent_set, created_by)
+        else:
+            own_instance = (insert_data.get("instance") or item.get("instance") or "markee").strip().lower()
+            _ws_write(supabase, [item["id"]], [own_instance], created_by)
+    except Exception:
+        # Neu attach workspace that bai (vd DB chua chay migration 190):
+        # khong lam hong flow create; item van co legacy instance de hoat
+        # dong nhu cu (read path co fallback).
+        pass
 
     # Also upsert pricing if provided (only if at least one core pricing field has a non-None value)
     # Note: pricing_input_mode alone is not enough - we need at least one actual price value
@@ -487,6 +778,22 @@ def _mark_sync_manual_fields(
 def update_service_catalog_item(item_id: str, payload: dict, actor_id: str | None) -> dict:
     supabase: Client = get_supabase_client()
 
+    # Doc ban ghi hien tai TRUOC khi cap nhat: can biet parent_id cu de nhan
+    # biet co "reparent" (doi nhom cha) hay khong — reparent thi phai inherit
+    # lai full set workspace cua nhom moi. Dung limit(1) (khong maybe_single)
+    # de tuong thich moi truong test hien co cua repo.
+    previous_rows = (
+        supabase.table(ITEMS_TABLE)
+        .select("id, parent_id, instance")
+        .eq("id", item_id)
+        .limit(1)
+        .execute()
+        .data
+        or []
+    )
+    previous = previous_rows[0] if previous_rows else None
+    previous_parent_id = str(previous.get("parent_id") or "") if previous else ""
+
     allowed_keys = {
         "item_type", "parent_id", "sku", "name", "description", "unit",
         "list_price_usd", "unit_price_usd", "exchange_rate_snapshot",
@@ -500,12 +807,15 @@ def update_service_catalog_item(item_id: str, payload: dict, actor_id: str | Non
         "quota_highlights", "quota_extra", "spec_quantity_per_unit", "spec_unit_label",
         "note", "status", "sort_order", "brand", "part_number", "product_type",
         "internal_note", "external_source", "external_id",
+        # "VAT giá vốn" (migration 191) - xem comment o default_cost_vat_rate.
+        "default_cost_vat_rate",
         # TÍCH HỢP BỘ LỌC WORKSPACE: Cho phép cập nhật trường instance
         "instance",
     }
     nullable_clear_keys = {
         "default_vat_rate", "quote_display_name", "quote_description", "quote_cta",
         "target_gross_margin_percent", "cost_basis_rule", "pricing_policy_exceptions",
+        "default_cost_vat_rate",
     }
     update_data = {
         k: v for k, v in payload.items()
@@ -559,7 +869,42 @@ def update_service_catalog_item(item_id: str, payload: dict, actor_id: str | Non
             pricing_policy=payload.get("pricing_policy"),
         )
 
+    # Many-to-many Workspace (migration 190): sua assignment SAU khi cap nhat
+    # update_data xong de gia tri sau-cap-nhat la co so duyet 1 duong:
+    #   - payload co `instance`  -> set moi = {instance do} (replace-all;
+    #     bulk multi-workspace di qua endpoint /workspaces-assign).
+    #   - parent_id THAY DOI     -> reparent: product nhan full set cua nhom moi.
+    if "instance" in update_data:
+        try:
+            _ws_write(supabase, [item_id], [_normalize_instances([update_data["instance"]])[0] or "markee"], actor_id)
+        except Exception:
+            pass
+    else:
+        new_parent_id = str(update_data.get("parent_id") or "")
+        if new_parent_id and new_parent_id != previous_parent_id:
+            try:
+                parent_row = (
+                    supabase.table(ITEMS_TABLE)
+                    .select("id, instance")
+                    .eq("id", new_parent_id)
+                    .limit(1)
+                    .execute()
+                    .data
+                    or []
+                )
+                ws_map = _load_workspaces_map(supabase)
+                parent_set = _workspace_set_for(
+                    supabase,
+                    parent_row[0] if parent_row else {"id": new_parent_id, "instance": None},
+                    ws_map,
+                )
+                if parent_set:
+                    _ws_write(supabase, [item_id], parent_set, actor_id)
+            except Exception:
+                pass
+
     updated_item = _row_to_item(result.data[0])
+    _attach_workspaces(supabase, [updated_item])
     merge_pricing_into_tree([updated_item], resolve_pricing_map([item_id], None))
     return updated_item
 

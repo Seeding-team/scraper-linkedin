@@ -57,6 +57,10 @@ def _row_to_item(row: dict) -> dict:
         "defaultUnitPriceVnd": float(row.get("default_unit_price_vnd") or 0),
         "defaultDiscountPercent": float(row.get("default_discount_percent") or 0),
         "defaultVatRate": _float_or_none(row.get("default_vat_rate")),
+        # "VAT giá vốn" (2026-10-13, migration 191) - VAT dau vao rieng cho Gia
+        # von, KHAC defaultVatRate (VAT dau ra ap cho Gia khach) - cot DON
+        # GIAN, KHONG di qua bo may resolve pricing (xem comment migration).
+        "defaultCostVatRate": _float_or_none(row.get("default_cost_vat_rate")),
         "customerVisible": bool(row.get("customer_visible", True)),
         "quoteDisplayName": row.get("quote_display_name"),
         "quoteDescription": row.get("quote_description"),
@@ -632,6 +636,10 @@ def create_service_catalog_item(payload: dict, created_by: str | None) -> dict:
     for field in ["brand", "part_number", "product_type", "internal_note"]:
         if payload.get(field) is not None:
             insert_data[field] = payload.get(field)
+    # "VAT giá vốn" (migration 191) - cung pattern "chi them key khi co gia
+    # tri" tranh loi "column does not exist" tren DB chua chay migration 191.
+    if payload.get("default_cost_vat_rate") is not None:
+        insert_data["default_cost_vat_rate"] = float(payload["default_cost_vat_rate"])
     # External identity (migration 175) — chi dien khi nguoi goi truyen vao
     # (dong bo MSC). Caller thuong (UI them moi) khong truyen => khong thay doi
     # hanh vi hien tai.
@@ -799,12 +807,15 @@ def update_service_catalog_item(item_id: str, payload: dict, actor_id: str | Non
         "quota_highlights", "quota_extra", "spec_quantity_per_unit", "spec_unit_label",
         "note", "status", "sort_order", "brand", "part_number", "product_type",
         "internal_note", "external_source", "external_id",
+        # "VAT giá vốn" (migration 191) - xem comment o default_cost_vat_rate.
+        "default_cost_vat_rate",
         # TÍCH HỢP BỘ LỌC WORKSPACE: Cho phép cập nhật trường instance
         "instance",
     }
     nullable_clear_keys = {
         "default_vat_rate", "quote_display_name", "quote_description", "quote_cta",
         "target_gross_margin_percent", "cost_basis_rule", "pricing_policy_exceptions",
+        "default_cost_vat_rate",
     }
     update_data = {
         k: v for k, v in payload.items()
