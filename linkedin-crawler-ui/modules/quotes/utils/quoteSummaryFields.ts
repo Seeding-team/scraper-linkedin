@@ -10,10 +10,22 @@ import type { QuoteSchema, SummaryFieldConfig } from '../types';
  * diễn từ hằng số dùng chung này. */
 export const DEFAULT_SUMMARY_FIELDS: SummaryFieldConfig[] = [
   { key: 'subtotalBeforeVat', label: 'Tổng cộng chưa bao gồm thuế GTGT', order: 1, defaultVisible: true, required: false },
-  { key: 'overallDiscount', label: 'Giảm giá tổng (%)', order: 2, defaultVisible: true, required: false },
-  { key: 'subtotalAfterDiscount', label: 'Tổng sau giảm giá', order: 3, defaultVisible: true, required: false },
-  { key: 'vatTotal', label: 'Thuế GTGT', order: 4, defaultVisible: true, required: false },
-  { key: 'grandTotal', label: 'Tổng thanh toán', order: 5, defaultVisible: true, required: false },
+  // "bổ sung riêng Giảm giá hạng mục, tránh gộp hai loại giảm giá vào nhau"
+  // (2026-10-13) - TÁCH khỏi 'overallDiscount' (giảm giá áp sau cùng trên
+  // TOÀN báo giá): day la TONG cac muc giam gia rieng TUNG dong (xem
+  // Totals.discountAmount) - subtotalBeforeVat da NET san phan nay (khong
+  // doi), chi THEM 1 dong hien thi RO rang so tien da giam o cap hang muc,
+  // tranh Sale/khach hieu nham subtotalBeforeVat la gia GOC chua giam gi ca.
+  { key: 'itemDiscount', label: 'Giảm giá hạng mục', order: 2, defaultVisible: true, required: false },
+  { key: 'overallDiscount', label: 'Giảm giá tổng (%)', order: 3, defaultVisible: true, required: false },
+  // "Tổng tiền giảm = Giảm giá hạng mục + Giảm giá toàn báo giá" (2026-10-13)
+  // - dong TONG HOP rieng, LUON hien mien tong > 0 (khac 2 dong tren chi hien
+  // khi TUNG phan > 0) - xem cong thuc o totals.discountAmount +
+  // discountSummary.overallDiscountAmount trong QuoteDocumentRenderer.
+  { key: 'totalDiscount', label: 'Tổng tiền giảm', order: 4, defaultVisible: true, required: false },
+  { key: 'subtotalAfterDiscount', label: 'Tổng sau giảm giá', order: 5, defaultVisible: true, required: false },
+  { key: 'vatTotal', label: 'Thuế GTGT', order: 6, defaultVisible: true, required: false },
+  { key: 'grandTotal', label: 'Tổng thanh toán', order: 7, defaultVisible: true, required: false },
 ];
 
 /** Trường "Tổng hợp giá" THẬT của mẫu này - đọc thẳng schema.summaryFields (mẫu

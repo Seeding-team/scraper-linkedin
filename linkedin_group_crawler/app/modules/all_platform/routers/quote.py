@@ -901,6 +901,7 @@ def quotes_access_suggestions(quote_id: str, user: dict = Depends(get_current_us
     except Exception as e:
         return BaseResponse(success=False, message=friendly_supabase_error_message(e))
 
+
 @quotes_router.post("")
 def quotes_create(payload: QuoteCreateRequest, user: dict = Depends(get_current_user)) -> BaseResponse:
     try:

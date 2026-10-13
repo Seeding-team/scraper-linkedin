@@ -1769,8 +1769,6 @@ def get_access_suggestions(quote_id: str) -> list[dict]:
     return results
 
 
-
-
 class PublicQuoteVerificationRequiredError(Exception):
     """"Giới hạn xem link báo giá bằng Email hoặc Số điện thoại" (migration
     118, thay the PublicQuoteEmailRequiredError cu chi ho tro email). Nem loi

@@ -54,7 +54,7 @@ export interface QuoteSection {
  * config.columns[].visible/required cua bang hang muc da la 1 phan schema),
  * KHONG hardcode theo layoutType trong resolver - xem quoteSummaryFields.ts. */
 export interface SummaryFieldConfig {
-  key: 'subtotalBeforeVat' | 'overallDiscount' | 'subtotalAfterDiscount' | 'vatTotal' | 'grandTotal';
+  key: 'subtotalBeforeVat' | 'itemDiscount' | 'overallDiscount' | 'totalDiscount' | 'subtotalAfterDiscount' | 'vatTotal' | 'grandTotal';
   label?: string;
   order?: number;
   defaultVisible?: boolean;

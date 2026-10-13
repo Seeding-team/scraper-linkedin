@@ -253,6 +253,11 @@ export function QuoteDetailPage({ quoteId }: Props) {
           solutionItems={quote.data.solutionItems}
           totals={{
             subtotalAmount: quote.subtotalAmount,
+            // "Giảm giá hạng mục" (2026-10-13) - quote.subtotalAmount la GROSS
+            // (truoc giam gia TUNG dong, xem RPC quote_update), quote.totalAmount
+            // - quote.vatAmount la NET (sau giam gia tung dong, truoc VAT) - hieu
+            // so chinh la tong tien da giam o cap hang muc.
+            discountAmount: quote.subtotalAmount - (quote.totalAmount - quote.vatAmount),
             totalVatAmount: quote.vatAmount,
             totalAmount: quote.totalAmount,
           }}

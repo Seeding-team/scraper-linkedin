@@ -129,7 +129,7 @@ export function PaymentPlanEditor({ rows, finalPayable, onChange, disabled = fal
       )}
       <p className="quote-payment-plan-info">
         <Info aria-hidden="true" />
-        <span>Số tiền được tự động tính theo &quot;Khách thanh toán&quot; sau chiết khấu. Nếu không thêm đợt thanh toán, phần này sẽ không hiển thị trên báo giá/PDF.</span>
+        <span>Số tiền được tự động tính theo &quot;Khách thanh toán&quot; sau giảm giá. Nếu không thêm đợt thanh toán, phần này sẽ không hiển thị trên báo giá/PDF.</span>
       </p>
     </section>
   );

@@ -53,7 +53,7 @@ import { describeSystemRate, fetchSystemUsdVndRateInfo } from '@/modules/service
 import type { SystemExchangeRate } from '@/modules/quotes/repositories/QuoteRepository';
 import { VND_FX, convertQuoteItemsCurrency, fromQuoteMoney, toQuoteMoney, type QuoteFx } from '@/modules/quotes/utils/quoteCurrency';
 import { ACTIVITY_LABELS } from '@/modules/quotes/utils/quoteActivity';
-import { calculateQuoteTotals, calculateOverallDiscountSummary, clampDiscountPercent, calculateItemTotal, calculateSectionTotal } from '@/modules/quotes/utils/quoteCalculations';
+import { calculateQuoteTotals, calculateOverallDiscountSummary, clampDiscountPercent, calculateItemTotal, calculateItemSubtotal, calculateSectionTotal } from '@/modules/quotes/utils/quoteCalculations';
 import { paymentPlanAmounts, paymentPlanPercent } from '@/modules/quotes/utils/paymentPlan';
 import type { BundleSnapshotComponent, BundleSnapshotValue, CustomBlock, PaymentPlanRow } from '@/modules/quotes/types';
 import { QuoteOutcomeSection } from './QuoteOutcomeSection';
@@ -1906,6 +1906,14 @@ export function QuoteWorkspaceModal({
     });
   }
   const [itemDiscountInput, setItemDiscountInput] = useState('');
+  // "Chiết khấu hạng mục" - cho nhap SO TIEN muon giam (tren tong Thanh tien
+  // cac dong duoc chon/tat ca) THAY VI phai tu quy doi ra % (bug thuc te: Sale
+  // go "66,67%" tuc la da tu tinh tay "giảm 2tr trên 3tr"). 'percent' (mac
+  // dinh) = itemDiscountInput la %, hanh vi cu y het truoc gio. 'amount' =
+  // itemDiscountInput la SO TIEN, applyItemDiscount() tu quy doi ra % DUA TREN
+  // tong Thanh tien HIEN TAI cua cac dong trong pham vi roi ap CUNG 1 % do cho
+  // tung dong (giu nguyen co che "1 % dong deu" cu, chi doi CACH NHAP).
+  const [itemDiscountInputMode, setItemDiscountInputMode] = useState<'percent' | 'amount'>('percent');
   const persistedDraftSnapshotRef = useRef('');
   const persistedItemsDraftRef = useRef<QuoteItem[]>([]);
   const persistedQuoteDataRef = useRef<Quote['data'] | undefined>(undefined);
@@ -2143,16 +2151,32 @@ export function QuoteWorkspaceModal({
   function applyItemDiscount(scope: 'selected' | 'all') {
     const normalized = itemDiscountInput.trim().replace(',', '.');
     const rawValue = normalized === '' ? 0 : Number(normalized);
-    if (!Number.isFinite(rawValue)) {
-      window.alert('Chiết khấu phải là một số từ 0% đến 100%.');
+    if (!Number.isFinite(rawValue) || rawValue < 0) {
+      window.alert(itemDiscountInputMode === 'amount' ? 'Số tiền giảm phải là một số từ 0 trở lên.' : 'Giảm giá phải là một số từ 0% đến 100%.');
       return;
     }
-    const discountPercent = clampDiscountPercent(rawValue);
     if (scope === 'selected' && selectedDiscountCount === 0) {
       window.alert('Chọn ít nhất một hạng mục để áp chiết khấu.');
       return;
     }
     const targetKeys = scope === 'all' ? new Set(selectableDiscountRowKeys) : selectedDiscountRowKeys;
+    let discountPercent: number;
+    if (itemDiscountInputMode === 'amount') {
+      // Quy doi SO TIEN -> % DUA TREN tong Thanh tien HIEN TAI (truoc giam) cua
+      // CHINH cac dong trong pham vi - khong phai tong ca bao gia - roi ap
+      // CUNG 1 % do cho tung dong (giu nguyen co che "1 % dong deu" cu).
+      const targetSubtotal = itemsDraft.reduce((sum, row, index) => {
+        if (row.rowType === 'section') return sum;
+        return targetKeys.has(discountRowKey(row, index)) ? sum + calculateItemSubtotal(row, workspaceCurrency) : sum;
+      }, 0);
+      if (targetSubtotal <= 0) {
+        window.alert('Các hạng mục trong phạm vi chưa có Thành tiền để quy đổi % từ số tiền.');
+        return;
+      }
+      discountPercent = clampDiscountPercent((rawValue / targetSubtotal) * 100);
+    } else {
+      discountPercent = clampDiscountPercent(rawValue);
+    }
     const nextItems = itemsDraft.map((row, index) => {
       if (row.rowType === 'section') return row;
       const key = discountRowKey(row, index);
@@ -4172,6 +4196,14 @@ export function QuoteWorkspaceModal({
   const pricingStageOk = stage === 'pricing' || isVersionedQuote || isReturnedForChanges;
   const canEditCostCells = canEdit && isDraft && !isLockedForReview && canEditQuoteCost(user, quote) && costStageOk;
   const canEditPricingCells = canEdit && isDraft && !isLockedForReview && canEditQuotePricingFields(user, quote) && pricingStageOk;
+  // "chưa cho chỉnh giảm ở bước 2" (2026-10-13) - rieng cot "Giảm giá (%)" MO
+  // KHOA tu Buoc 2 (khong cho pricingStageOk), KHAC voi Giá khách/Markup/VAT
+  // (van khoa den dung Buoc 3 nhu truoc) - van giu nguyen dieu kien quyen +
+  // trang thai ban nhap (canEdit/isDraft/isLockedForReview/canEditQuotePricingFields),
+  // backend KHONG stage-gate truong nay (chi gate theo quyen, xem
+  // _check_item_field_level_permission/_PRICING_ITEM_FIELD_PAIRS) nen mo o FE
+  // la an toan, khong can doi gi o backend.
+  const canEditDiscountCell = canEdit && isDraft && !isLockedForReview && canEditQuotePricingFields(user, quote);
   // "Loai bao gia" (yeu cau rieng, sua lai 2026-09-24): truoc day chi khoa o
   // stage 'review' nen Presale VAN sua duoc luc con o Buoc 1 (bug nguoi dung
   // phat hien qua screenshot thuc te) - day la phan loai thuong mai giong
@@ -6462,6 +6494,7 @@ export function QuoteWorkspaceModal({
                     <col style={{ width: '96px' }} />
                     {hasAnyBillingCycleItem ? <col style={{ width: '112px' }} /> : null}
                     <col style={{ width: '104px' }} />
+                    <col style={{ width: '76px' }} />
                     <col style={{ width: '70px' }} />
                     <col style={{ width: '104px' }} />
                     <col style={{ width: '82px' }} />
@@ -6497,7 +6530,8 @@ export function QuoteWorkspaceModal({
                       {hasAnyBillingCycleItem ? (
                         <th className="qc-th-money qc-th-billing-cycle" title="Trả theo tháng hay cam kết trả theo năm (ưu đãi) — chỉ áp dụng cho hạng mục có cấu hình cả 2 mức giá trong danh mục">Chu kỳ</th>
                       ) : null}
-                      <th className="qc-th-money qc-th-markup">Giá khách/ĐV</th>
+                      <th className="qc-th-money qc-th-markup" title="Mặc định là Giá khách/ĐV (nhân với SL). Bấm nút /ĐV ↔ Tổng ở từng dòng để đổi sang nhập Giá khách TỔNG cho cả dòng (vd trọn gói N tháng, không nhân SL) khi SL là số kỳ/tháng chứ không phải số lượng hàng hoá.">Giá khách</th>
+                      <th className="qc-th-money qc-th-discount" title="Giảm giá riêng cho dòng này (%), tính trước VAT - khác với 'Giảm giá toàn báo giá' áp sau cùng trên tổng.">Giảm giá (%)</th>
                       <th className="qc-th-money qc-th-vat" title="Thuế GTGT (%) của hạng mục — lấy theo sản phẩm khi thêm từ danh mục, để 0 nếu không có">VAT (%)</th>
                       <th className="qc-th-money qc-th-total">Thành tiền</th>
                       <th className="qc-th-money qc-th-margin-col">Margin</th>
@@ -6512,7 +6546,7 @@ export function QuoteWorkspaceModal({
                   <tbody>
                     {itemsDraft.length === 0 ? (
                       <tr>
-                        <td colSpan={12} className="qc-empty qc-workspace-items-empty-cell">
+                        <td colSpan={13} className="qc-empty qc-workspace-items-empty-cell">
                           {/* CHOT LAI (yeu cau moi nhat "Trả các nút thêm hạng
                            * mục xuống dưới bảng"): 3 nut Chọn từ danh mục/
                            * Thêm hạng mục/+ Mục cha da chuyen XUONG DUOI bang
@@ -6569,7 +6603,7 @@ export function QuoteWorkspaceModal({
                                 onDrop={canDragRows ? () => handleRowDrop(index, true) : undefined}
                               >
                                 {/* Ten data columns (them "Mô tả" + "Chu kỳ" khi co), plus the separate action cell when editable. */}
-                                <td colSpan={hasAnyBillingCycleItem ? 10 : 9}>
+                                <td colSpan={hasAnyBillingCycleItem ? 11 : 10}>
                                   {canDragRows ? <span className="qc-workspace-drag-handle" title="Kéo để sắp xếp">⠿</span> : null}
                                   {/* Roman numeral (I/II/III...) dat TRUOC ten muc (ben trai) thay vi
                                    * sau nhu cu - o kich thuoc nho, badge "I" dat SAU chu de bi doc
@@ -6798,7 +6832,7 @@ export function QuoteWorkspaceModal({
                                     </span>
                                   ) : null}
                                   {(item.discountPercent ?? 0) > 0 ? (
-                                    <span className="qc-line-discount-chip">CK dòng {formatPercentTrim(item.discountPercent)}</span>
+                                    <span className="qc-line-discount-chip">Giảm {formatPercentTrim(item.discountPercent)}</span>
                                   ) : null}
                               </span>
                               </span>
@@ -6910,6 +6944,27 @@ export function QuoteWorkspaceModal({
                                 />
                               ) : formatMoney(item.unitPrice ?? 0)}
                             </td>
+                            {/* "cột Giảm giá phải hiện... để Sale chỉnh tiếp" (2026-10-13)
+                             * - truoc day discountPercent CHI co the sua qua cong cu bulk
+                             * "Giảm giá hạng mục" (ap roi quen, khong xem/sua lai TUNG dong
+                             * duoc) + 1 badge nho CHI-DOC duoi ten dong - them han 1 cot
+                             * rieng, sua truc tiep duoc tung dong, giong het pattern o
+                             * VAT (%) ben canh. */}
+                            <td className="qc-cell-money qc-cell-discount" data-label="Giảm giá (%)">
+                              {canEditDiscountCell ? (
+                                <input
+                                  type="number"
+                                  min={0}
+                                  max={100}
+                                  step={0.5}
+                                  className="qc-cell-input qc-cell-input-money"
+                                  aria-label={`Giảm giá hạng mục ${index + 1}`}
+                                  value={item.discountPercent ?? 0}
+                                  onChange={e => updateRow(index, { discountPercent: clampDiscountPercent(e.target.value) })}
+                                  onBlur={handlePricingBlur}
+                                />
+                              ) : `${item.discountPercent ?? 0}%`}
+                            </td>
                             <td className="qc-cell-money qc-cell-vat" data-label="VAT (%)">
                               {editableCells ? (
                                 <input
@@ -7007,7 +7062,7 @@ export function QuoteWorkspaceModal({
                             {mainRow}
                             {selectedBundleChildCountHere > 0 ? (
                               <tr className="qc-workspace-item-row--bundle-child qc-bundle-child-bulk-actions-row">
-                                <td colSpan={13}>
+                                <td colSpan={14}>
                                   <div className="qc-bundle-child-bulk-actions">
                                     <span>{selectedBundleChildCountHere} thành phần đã chọn</span>
                                     <button
@@ -7096,6 +7151,15 @@ export function QuoteWorkspaceModal({
                                         />
                                       ) : child.unitPrice ? formatMoney(child.unitPrice) : '—'}
                                     </td>
+                                    {/* BUG THAT DA GAP ("lệch dô ô vat trong khi k có"): hang
+                                     * header co cot VAT (%)/Giảm giá (%) (dung chung voi dong
+                                     * hang muc thuong) nhung dong con Combo truoc day KHONG
+                                     * render o nay - thieu <td> lam MOI cot phia sau (Thanh
+                                     * tien/Margin/Tỷ trọng) bi day lech sang trai. Thanh phan
+                                     * con Combo khong co Giảm giá/VAT rieng (tinh o dong cha)
+                                     * nen chi hien "—" giu cho dung vi tri cot. */}
+                                    <td className="qc-cell-money qc-cell-discount" data-label="Giảm giá (%)">—</td>
+                                    <td className="qc-cell-money qc-cell-vat" data-label="VAT (%)">—</td>
                                     <td className="qc-cell-money" data-label="Thành tiền">{childTotal ? formatMoney(childTotal) : '—'}</td>
                                     <td className={`qc-cell-money qc-th-margin-col ${childMargin != null && childMargin >= 20 ? 'qc-cell-margin-good' : childMargin != null ? 'qc-cell-margin-warn' : ''}`} data-label="Margin">
                                       {formatPercentFixed2(childMargin)}
@@ -7209,17 +7273,39 @@ export function QuoteWorkspaceModal({
                 <div className="qc-workspace-commercial-row">
                   <div className="qc-item-discount-tools" title="Áp chiết khấu cho từng hạng mục thật; thành phần con của Combo chỉ để hiển thị nên không bị tính lần 2.">
                     <span className="qc-workspace-quickbar-field">
-                      Chiết khấu hạng mục
-                      <input
-                        type="number"
-                        min={0}
-                        max={100}
-                        className="qc-workspace-quickbar-input qc-qb-discount-input"
-                        value={itemDiscountInput}
-                        placeholder="0"
-                        onChange={event => setItemDiscountInput(event.target.value)}
-                      />
-                      %
+                      Giảm giá hạng mục
+                      {itemDiscountInputMode === 'amount' ? (
+                        <CurrencyInput
+                          {...moneyInput}
+                          className="qc-workspace-quickbar-input qc-qb-discount-input"
+                          value={itemDiscountInput.trim() === '' ? null : Number(itemDiscountInput.replace(',', '.')) || 0}
+                          placeholder="0"
+                          onChange={value => setItemDiscountInput(value == null ? '' : String(value))}
+                        />
+                      ) : (
+                        <input
+                          type="number"
+                          min={0}
+                          max={100}
+                          className="qc-workspace-quickbar-input qc-qb-discount-input"
+                          value={itemDiscountInput}
+                          placeholder="0"
+                          onChange={event => setItemDiscountInput(event.target.value)}
+                        />
+                      )}
+                      {itemDiscountInputMode === 'amount' ? workspaceCurrency : '%'}
+                      {/* "cho fill giá tiền nữa k chỉ fill riêng %" (2026-10-13) -
+                       * nut doi che do nhap: % (mac dinh, hanh vi cu) hoac SO
+                       * TIEN muon giam (tu quy doi ra % dua tren Thanh tien hien
+                       * tai cua cac dong trong pham vi, xem applyItemDiscount). */}
+                      <button
+                        type="button"
+                        className="qc-price-mode-toggle"
+                        onClick={() => { setItemDiscountInputMode(prev => (prev === 'amount' ? 'percent' : 'amount')); setItemDiscountInput(''); }}
+                        title={itemDiscountInputMode === 'amount' ? 'Đang nhập theo SỐ TIỀN muốn giảm — bấm để đổi sang nhập %' : 'Đang nhập theo % — bấm để đổi sang nhập SỐ TIỀN muốn giảm'}
+                      >
+                        {itemDiscountInputMode === 'amount' ? '%' : workspaceCurrency}
+                      </button>
                     </span>
                     <button type="button" className="qc-mini-btn" onClick={() => applyItemDiscount('selected')}>
                       Áp hạng mục được chọn ({selectedDiscountCount})
@@ -7230,7 +7316,7 @@ export function QuoteWorkspaceModal({
                   </div>
                   <span className="qc-workspace-quickbar-sep" aria-hidden="true" />
                   <label className="qc-workspace-quickbar-field" title="Áp dụng cho tổng báo giá sau khi đã tính các hạng mục; không tự ghi đè chiết khấu riêng từng dòng.">
-                    Chiết khấu toàn báo giá
+                    Giảm giá toàn báo giá
                     <input
                       type="number"
                       min={0}
@@ -7310,7 +7396,7 @@ export function QuoteWorkspaceModal({
                   <div className="qc-summary-field--clamp"><span className="qc-workspace-info-label">Điều khoản thanh toán</span><strong title={paymentTermsBlock?.content || undefined}>{paymentTermsBlock?.content || 'Chưa có điều khoản'}</strong></div>
                   <div><span className="qc-workspace-info-label">Hiệu lực báo giá</span><strong>{quote.validUntil ? formatDate(quote.validUntil) : 'Chưa đặt'}</strong></div>
                   <div className="qc-summary-field--clamp"><span className="qc-workspace-info-label">Phạm vi công việc</span><strong title={scopeBlock?.content || undefined}>{scopeBlock?.content || 'Chưa mô tả'}</strong></div>
-                  <div><span className="qc-workspace-info-label">Trước chiết khấu</span><strong>{formatMoney(quote.subtotalAmount)}</strong></div>
+                  <div><span className="qc-workspace-info-label">Trước giảm giá</span><strong>{formatMoney(quote.subtotalAmount)}</strong></div>
                   <div><span className="qc-workspace-info-label">VAT</span><strong>{formatMoney(quote.vatAmount)}</strong></div>
                   <div><span className="qc-workspace-info-label">Khách thanh toán</span><strong>{formatMoney(quote.totalAmount)}</strong></div>
                 </div>
@@ -7791,15 +7877,15 @@ export function QuoteWorkspaceModal({
                 return (
                   <>
                     <div className="qc-workspace-summary-row">
-                      <span>Trước chiết khấu</span>
+                      <span>Trước giảm giá</span>
                       <strong>{formatMoney(s.subtotalBeforeVat)}</strong>
                     </div>
                     <div className="qc-workspace-summary-row">
-                      <span>Chiết khấu</span>
+                      <span>Giảm giá</span>
                       <strong>{formatMoney(s.overallDiscountAmount)}</strong>
                     </div>
                     <div className="qc-workspace-summary-row">
-                      <span>Sau chiết khấu</span>
+                      <span>Sau giảm giá</span>
                       <strong>{formatMoney(s.subtotalAfterDiscount)}</strong>
                     </div>
                     <div className="qc-workspace-summary-row">

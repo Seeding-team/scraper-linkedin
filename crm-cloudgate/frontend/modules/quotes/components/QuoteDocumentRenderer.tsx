@@ -616,6 +616,12 @@ export function QuoteDocumentRenderer({
   // cấu hình "Tổng hợp giá" hay không (auto-hide đè lên cấu hình - yêu cầu rõ
   // "trùng với tạm tính thì ẩn").
   const hasOverallDiscount = discountSummary.overallDiscountAmount > 0;
+  // "Tổng tiền giảm = Giảm giá hạng mục + Giảm giá toàn báo giá" (2026-10-13) -
+  // overallDiscountAmount DA tinh tren phan CON LAI sau khi tru giam gia hang
+  // muc (xem calculateOverallDiscountSummary - ap dung dung thu tu "hạng mục
+  // trước, sau đó mới toàn báo giá trên số tiền còn lại"), nen cong truc tiep
+  // 2 so nay la dung, khong tinh trung.
+  const totalDiscountAmount = (totals.discountAmount || 0) + discountSummary.overallDiscountAmount;
   // Trường "Tổng hợp giá" hiện cho khách - áp dụng ở MỌI mode (preview/detail/
   // public/print), KHÁC với cột bảng hạng mục (applyCustomerColumnFilter chỉ áp ở
   // public/print/preview) - yêu cầu rõ "Chi tiết báo giá đã duyệt phải đồng nhất
@@ -885,10 +891,22 @@ export function QuoteDocumentRenderer({
                   <strong>{formatVnd(discountSummary.subtotalBeforeVat || setupTotal || totals.totalAmount)}</strong>
                 </div>
               ) : null}
+              {visibleSummaryKeys.has('itemDiscount') && (totals.discountAmount || 0) > 0 ? (
+                <div className="villa-total-row villa-total-row--discount">
+                  <span>Giảm giá hạng mục</span>
+                  <strong>-{formatVnd(totals.discountAmount || 0)}</strong>
+                </div>
+              ) : null}
               {visibleSummaryKeys.has('overallDiscount') && hasOverallDiscount ? (
                 <div className="villa-total-row villa-total-row--discount">
                   <span>Giảm giá tổng ({overallDiscountPercent}%)</span>
                   <strong>-{formatVnd(discountSummary.overallDiscountAmount)}</strong>
+                </div>
+              ) : null}
+              {visibleSummaryKeys.has('totalDiscount') && totalDiscountAmount > 0 ? (
+                <div className="villa-total-row villa-total-row--discount">
+                  <span>Tổng tiền giảm</span>
+                  <strong>-{formatVnd(totalDiscountAmount)}</strong>
                 </div>
               ) : null}
               {visibleSummaryKeys.has('subtotalAfterDiscount') && hasOverallDiscount ? (
@@ -1248,10 +1266,22 @@ export function QuoteDocumentRenderer({
               <strong>{formatVnd(discountSummary.subtotalBeforeVat)}</strong>
             </div>
           ) : null}
+          {visibleSummaryKeys.has('itemDiscount') && (totals.discountAmount || 0) > 0 ? (
+            <div className="sheet-total-row sheet-total-row--discount">
+              <span>Giảm giá hạng mục</span>
+              <strong>-{formatVnd(totals.discountAmount || 0)}</strong>
+            </div>
+          ) : null}
           {visibleSummaryKeys.has('overallDiscount') && hasOverallDiscount ? (
             <div className="sheet-total-row sheet-total-row--discount">
               <span>Giảm giá tổng ({overallDiscountPercent}%)</span>
               <strong>-{formatVnd(discountSummary.overallDiscountAmount)}</strong>
+            </div>
+          ) : null}
+          {visibleSummaryKeys.has('totalDiscount') && totalDiscountAmount > 0 ? (
+            <div className="sheet-total-row sheet-total-row--discount">
+              <span>Tổng tiền giảm</span>
+              <strong>-{formatVnd(totalDiscountAmount)}</strong>
             </div>
           ) : null}
           {visibleSummaryKeys.has('subtotalAfterDiscount') && hasOverallDiscount ? (

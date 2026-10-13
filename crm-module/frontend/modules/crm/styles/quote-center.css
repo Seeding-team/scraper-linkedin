@@ -3133,6 +3133,23 @@
   gap: 4px;
   z-index: 40;
 }
+
+/* Nut nho doi che do nhap (vd % <-> so tien cho cong cu "Giảm giá hạng mục"
+ * - xem itemDiscountInputMode trong QuoteWorkspaceModal.tsx). */
+.qc-price-mode-toggle {
+  flex-shrink: 0;
+  border: 1px solid #dbe1ea;
+  border-radius: 4px;
+  background: #f8fafc;
+  color: #5b6576;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  padding: 3px 5px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.qc-price-mode-toggle:hover, .qc-price-mode-toggle:focus-visible { color: #cc1541; border-color: #f0c3cf; background: #fff; }
 .qc-fill-down-popover .qc-mini-btn { width: 100%; text-align: left; justify-content: flex-start; }
 /* Icon chi la tien ich desktop (bam nhanh ngay tai o) - man hinh hep/mobile
  * van du dung qua muc "⋮" Thao tác (nhan chu ro rang, khong can hover) nen
