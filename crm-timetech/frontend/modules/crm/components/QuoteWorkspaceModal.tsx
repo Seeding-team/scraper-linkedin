@@ -53,7 +53,7 @@ import { describeSystemRate, fetchSystemUsdVndRateInfo } from '@/modules/service
 import type { SystemExchangeRate } from '@/modules/quotes/repositories/QuoteRepository';
 import { VND_FX, convertQuoteItemsCurrency, fromQuoteMoney, toQuoteMoney, type QuoteFx } from '@/modules/quotes/utils/quoteCurrency';
 import { ACTIVITY_LABELS } from '@/modules/quotes/utils/quoteActivity';
-import { calculateQuoteTotals, calculateOverallDiscountSummary, clampDiscountPercent, calculateItemTotal, calculateItemSubtotal, calculateSectionTotal } from '@/modules/quotes/utils/quoteCalculations';
+import { calculateQuoteTotals, calculateOverallDiscountSummary, clampDiscountPercent, calculateItemTotal, calculateItemSubtotal, calculateSectionTotal, billingTermMultiplier } from '@/modules/quotes/utils/quoteCalculations';
 import { paymentPlanAmounts, paymentPlanPercent } from '@/modules/quotes/utils/paymentPlan';
 import type { BundleSnapshotComponent, BundleSnapshotValue, CustomBlock, PaymentPlanRow } from '@/modules/quotes/types';
 import { QuoteOutcomeSection } from './QuoteOutcomeSection';
@@ -122,6 +122,37 @@ function bundleSnapshotTargetGm(item: QuoteItem): number {
   return 30;
 }
 
+/** "Ẩn/Hiện thành phần con trên báo giá" (2026-10-14, đổi mặc định theo yêu cầu
+ * "mặc định bật sẵn hết") - mac dinh TRUE, CHI tat khi Sale CHU DONG bam tat
+ * (showComponentsOnQuote===false ro rang). */
+function bundleSnapshotShowComponentsOnQuote(item: QuoteItem): boolean {
+  const snapshot = item.bundleSnapshot as unknown;
+  if (snapshot && typeof snapshot === 'object' && !Array.isArray(snapshot) && (snapshot as { showComponentsOnQuote?: unknown }).showComponentsOnQuote === false) {
+    return false;
+  }
+  return true;
+}
+
+/** "Chuan hoa gia von Combo" (2026-10-13) - mac dinh 'rollup' ca khi field
+ * chua ton tai (bao gia cu) - dam bao bao gia cu GIU NGUYEN cong thuc cu
+ * (calculateBundleComponentCost), KHONG tu doi sang combo_target. */
+function bundleSnapshotCostSource(item: QuoteItem): 'target' | 'rollup' {
+  const snapshot = item.bundleSnapshot as unknown;
+  if (snapshot && typeof snapshot === 'object' && !Array.isArray(snapshot) && (snapshot as { costSource?: unknown }).costSource === 'target') {
+    return 'target';
+  }
+  return 'rollup';
+}
+
+function bundleSnapshotTargetCostPerMonthVnd(item: QuoteItem): number | null {
+  const snapshot = item.bundleSnapshot as unknown;
+  const raw = snapshot && typeof snapshot === 'object' && !Array.isArray(snapshot)
+    ? (snapshot as { targetCostPerMonthVnd?: unknown }).targetCostPerMonthVnd
+    : undefined;
+  const num = Number(raw);
+  return raw != null && Number.isFinite(num) ? num : null;
+}
+
 function makeBundleSnapshot(item: QuoteItem, components: BundleSnapshotComponent[], patch: Partial<BundleSnapshotValue> = {}): BundleSnapshotValue {
   const snapshot = item.bundleSnapshot as unknown;
   const existing = snapshot && typeof snapshot === 'object' && !Array.isArray(snapshot) ? snapshot as Partial<BundleSnapshotValue> : {};
@@ -129,6 +160,9 @@ function makeBundleSnapshot(item: QuoteItem, components: BundleSnapshotComponent
     ...existing,
     pricingMode: patch.pricingMode ?? existing.pricingMode ?? 'fixed',
     targetGrossMarginPercent: patch.targetGrossMarginPercent ?? existing.targetGrossMarginPercent ?? 30,
+    showComponentsOnQuote: patch.showComponentsOnQuote ?? existing.showComponentsOnQuote ?? true,
+    costSource: patch.costSource ?? existing.costSource ?? 'rollup',
+    targetCostPerMonthVnd: 'targetCostPerMonthVnd' in patch ? patch.targetCostPerMonthVnd : (existing.targetCostPerMonthVnd ?? null),
     components,
   };
 }
@@ -239,7 +273,11 @@ function resolveQuoteItemCostTotal(item: Partial<QuoteItem>): number | null {
   if (item.costTotal != null && Number.isFinite(Number(item.costTotal))) return Math.max(0, Number(item.costTotal));
   if (item.costPrice != null && Number.isFinite(Number(item.costPrice))) {
     const quantity = Number.isFinite(Number(item.quantity)) ? Math.max(0, Number(item.quantity)) : 0;
-    return Math.max(0, Number(item.costPrice)) * quantity;
+    // "Giá vốn định kỳ phải tính đủ thời gian sử dụng" (2026-10-14) - dung
+    // CHUNG he so voi calculateItemSubtotal (doanh thu) de Cost tong khop
+    // dung khoang thoi gian voi Thanh tien khi Chu ky = Tra nam, tranh margin
+    // hien sai lac quan (cost bi thieu he so 12 nhung doanh thu da nhan du).
+    return Math.max(0, Number(item.costPrice)) * quantity * billingTermMultiplier(item);
   }
   return null;
 }
@@ -278,8 +316,14 @@ function isQuoteTitleMissing(value: unknown): boolean {
 }
 
 function recalculateBundleParent(item: QuoteItem, components: BundleSnapshotComponent[], mode: 'fixed' | 'auto' = bundleSnapshotPricingMode(item), targetGm = bundleSnapshotTargetGm(item), fx: QuoteFx = VND_FX): QuoteItem {
+  // "Chuan hoa gia von Combo" (2026-10-14) - costSource==='target': gia von LUON
+  // la targetCostPerMonthVnd da dong bang luc them vao bao gia, KHONG doc lai
+  // components (xoa/sua thanh phan con khong lam doi gia von Combo). Fixed/Auto
+  // dung CHUNG nguon nay, chi khac cach suy ra unitPrice. costSource==='rollup'
+  // (mac dinh/bao gia cu) giu 100% hanh vi cu.
+  const costSource = bundleSnapshotCostSource(item);
   // Gia von/gia combo tinh o VND (snapshot goc) roi moi quy doi sang tien te cua quote.
-  const bundleCostVnd = calculateBundleComponentCost(components);
+  const bundleCostVnd = costSource === 'target' ? bundleSnapshotTargetCostPerMonthVnd(item) : calculateBundleComponentCost(components);
   const bundleCost = toQuoteMoney(bundleCostVnd, fx);
   let unitPrice = item.unitPrice;
   if (mode === 'auto' && bundleCostVnd != null) {
@@ -311,8 +355,10 @@ function bundleComponentsToWorkspaceRows(item: QuoteItem, catalogItems: ServiceC
   const fallbackComponentsById = new Map(
     (catalogBundle?.components || []).map(component => [component.componentId, component])
   );
+  // Sale phai thay DU moi thanh phan con de quan ly, ke ca showOnQuote=false
+  // (yeu cau 2026-10-14) - filter theo showOnQuote CHI ap dung cho khach hang
+  // (QuoteDocumentRenderer.tsx), khong ap dung o bang sua cua Sale.
   const components = bundleSnapshotComponents(item)
-    .filter(component => component.showOnQuote !== false)
     .map(component => {
       const fallback = fallbackComponentsById.get(component.componentId);
       return {
@@ -2972,7 +3018,15 @@ export function QuoteWorkspaceModal({
     // Gia danh muc luon VND goc; quote USD: quy doi theo ty gia da dong bang cua quote
     // (khong sua danh muc), giu goc VND o unitPriceVnd/costPriceVnd de doi lai khong troi.
     const defaultUnitPriceVnd = resolveCatalogCustomerPrice(item);
-    let defaultCostPriceVnd = item.itemType === 'bundle' ? calculateBundleComponentCost(bundleSnapshot) : (item.defaultCostPriceVnd ?? null);
+    // "Chuan hoa gia von Combo" (2026-10-14) - Combo tu dong dung combo_target
+    // (item.defaultCostPriceVnd CUA CHINH Combo, o "Giá vốn target" luc tao/sua
+    // Combo trong Thu vien San pham) NEU catalog DA khai bao; chua khai bao (NULL,
+    // vd 3 goi Markee Chat hien tai) thi giu nguyen rollup (calculateBundleComponentCost).
+    // Khong co toggle nao cho Sale chon - hoan toan tu dong theo du lieu catalog.
+    const bundleCostSource: 'target' | 'rollup' = item.itemType === 'bundle' && item.defaultCostPriceVnd != null ? 'target' : 'rollup';
+    let defaultCostPriceVnd = item.itemType === 'bundle'
+      ? (bundleCostSource === 'target' ? item.defaultCostPriceVnd : calculateBundleComponentCost(bundleSnapshot))
+      : (item.defaultCostPriceVnd ?? null);
     // "VAT cộng luôn vào Giá vốn hiển thị" (2026-10-13) - item.defaultCostPriceVnd
     // la gia von THUAN (truoc VAT, xem migration 191); nhan them VAT dau vao
     // RIENG (defaultCostVatRate, KHAC defaultVatRate la VAT dau ra ap cho Gia
@@ -3002,17 +3056,21 @@ export function QuoteWorkspaceModal({
     }
     const defaultUnitPrice = toQuoteMoney(defaultUnitPriceVnd, workspaceFx) ?? 0;
     const defaultCostPrice = toQuoteMoney(defaultCostPriceVnd, workspaceFx);
-    // Chu ky "tra thang/tra nam" (migration 189) - ap dung cho MOI nhom san
-    // pham co du CA 2 gia trong danh muc (vd Markee Chat MCHAT-AGENT: Gia
-    // thang 39.000/Gia tra nam-thang 29.000), khong rieng VPS/bundle nao.
-    // Chi component moi co khai niem nay (itemType==='bundle' dung co che gia
-    // combo rieng, khong lien quan monthlyPriceVnd/annualCommitMonthlyPriceVnd).
-    // Chon Chu ky MAC DINH khop voi gia resolveCatalogCustomerPrice() DA chon
-    // (firstPositiveNumber uu tien defaultCustomerPriceVnd truoc) - giu dung
-    // hanh vi/con so hien thi NHU CU luc moi them, chi mo khoa dropdown doi
-    // qua lai, khong tu doi gia mac dinh đang co.
+    // Chu ky "tra thang/tra nam" (migration 189, mo rong cho Combo 2026-10-13)
+    // - ap dung cho MOI loai hang muc co du CA 2 gia trong danh muc (vd Markee
+    // Chat MCHAT-AGENT: Gia thang 39.000/Gia tra nam-thang 29.000), KE CA
+    // Combo (card "Giá gói" luc tao Combo da co san 2 o Gia thang/Gia tra
+    // nam-thang, chi truoc day bi loai tru o day). Dung CHUNG 1 co che voi
+    // san pham le - khong xay dung rieng cho Combo (yeu cau ro). Chon Chu ky
+    // MAC DINH khop voi gia resolveCatalogCustomerPrice() DA chon
+    // (firstPositiveNumber uu tien defaultCustomerPriceVnd truoc - Combo luon
+    // gui defaultCustomerPriceVnd=Gia thang luc tao, nen mac dinh tu nhien la
+    // 'monthly') - giu dung hanh vi/con so hien thi NHU CU luc moi them, chi
+    // mo khoa dropdown doi qua lai, khong tu doi gia mac dinh đang co. Rieng
+    // Combo dang o pricingMode==='auto' (Tu tinh theo GM%) se KHONG cho doi
+    // Chu ky o day (xem dieu kien render dropdown ben duoi) vi 2 co che xung
+    // dot nhau (gia tu tinh lai vs gia co dinh da snapshot).
     const hasDualCatalogPrice =
-      item.itemType !== 'bundle' &&
       typeof item.monthlyPriceVnd === 'number' && item.monthlyPriceVnd > 0 &&
       typeof item.annualCommitMonthlyPriceVnd === 'number' && item.annualCommitMonthlyPriceVnd > 0;
     const defaultBillingCycle: 'monthly' | 'annual' = defaultUnitPriceVnd === item.annualCommitMonthlyPriceVnd ? 'annual' : 'monthly';
@@ -3055,7 +3113,13 @@ export function QuoteWorkspaceModal({
         : calculateMarkupFromCostPrice(costViewAllowed ? defaultCostPrice : null, defaultUnitPrice) ?? item.defaultMarkupPercent ?? null,
       catalogItemId: item.id,
       bundleSnapshot: item.itemType === 'bundle'
-        ? { pricingMode: 'fixed', targetGrossMarginPercent: item.targetGrossMarginPercent ?? 30, components: bundleSnapshot }
+        ? {
+            pricingMode: 'fixed',
+            targetGrossMarginPercent: item.targetGrossMarginPercent ?? 30,
+            components: bundleSnapshot,
+            costSource: bundleCostSource,
+            targetCostPerMonthVnd: bundleCostSource === 'target' ? item.defaultCostPriceVnd ?? null : null,
+          }
         : undefined,
       ...(hasDualCatalogPrice
         ? {
@@ -6663,13 +6727,14 @@ export function QuoteWorkspaceModal({
                         const displayNo = String(itemCounter).padStart(2, '0');
                         const unitPriceValue = item.unitPrice ?? 0;
                         const margin = item.costPrice != null && unitPriceValue > 0 ? ((unitPriceValue - item.costPrice) / unitPriceValue) * 100 : null;
-                        const costTotal = item.costPrice != null ? item.costPrice * item.quantity : null;
+                        const costTotal = resolveQuoteItemCostTotal(item);
                         const editableTechnicalCells = canEditCostCells;
                         const editableCells = canEditPricingCells;
                         const bundleChildRows = bundleComponentsToWorkspaceRows(item, catalogFlatItems, workspaceFx);
                         const isBundleRow = bundleChildRows.length > 0;
                         const bundleMode = bundleSnapshotPricingMode(item);
                         const bundleTargetGm = bundleSnapshotTargetGm(item);
+                        const bundleCostSourceIsTarget = isBundleRow && bundleSnapshotCostSource(item) === 'target';
                         const discountKey = discountRowKey(item, index);
                         const discountSelected = selectedDiscountRowKeys.has(discountKey);
                         const mainRow = (
@@ -6839,6 +6904,19 @@ export function QuoteWorkspaceModal({
                                           {bundleMode === 'auto' ? 'Tắt tự tính' : 'Tự tính giá gói'}
                                         </button>
                                       ) : null}
+                                      {bundleCostSourceIsTarget ? (
+                                        <span className="qc-bundle-pricing-chip" title="Giá vốn Combo lấy theo giá vốn mục tiêu khai báo trong danh mục, không tính từ thành phần con">
+                                          Giá vốn: Combo
+                                        </span>
+                                      ) : null}
+                                      {/* Khong con toggle An/Hien thanh phan con (yeu cau
+                                       * 2026-10-14: "y la an GIA voi khong GIA chu khong
+                                       * phai an thanh phan con" - mac dinh LUON hien ten
+                                       * thanh phan con, LUON an gia rieng - khong can bam
+                                       * gi ca). Nhan tinh thuan thong tin, khong co nut. */}
+                                      <span className="qc-bundle-pricing-chip" title="Khách luôn thấy tên các thành phần con, không hiện giá riêng từng thành phần (giá chỉ hiện ở dòng gói)">
+                                        Khách thấy tên thành phần (không giá)
+                                      </span>
                                     </span>
                                   ) : null}
                                   {(item.discountPercent ?? 0) > 0 ? (
@@ -6929,7 +7007,11 @@ export function QuoteWorkspaceModal({
                             {hasAnyBillingCycleItem ? (
                               <td className="qc-cell-money qc-cell-billing-cycle" data-label="Chu kỳ">
                                 {item.catalogMonthlyPriceVnd != null && item.catalogAnnualCommitMonthlyPriceVnd != null ? (
-                                  (editableTechnicalCells || editableCells) ? (
+                                  // Combo dang "Tự tính theo GM%" (pricingMode='auto') thi KHONG
+                                  // cho doi Chu ky o day - 2 co che xung dot nhau (gia tu tinh lai
+                                  // theo cost/margin vs gia co dinh da snapshot theo Chu ky), xem
+                                  // giai thich o catalogItemToQuoteItem()/hasDualCatalogPrice.
+                                  (editableTechnicalCells || editableCells) && (!isBundleRow || bundleMode !== 'auto') ? (
                                     <select
                                       className="qc-cell-input"
                                       value={item.billingCycle === 'annual' ? 'annual' : 'monthly'}
@@ -6939,7 +7021,9 @@ export function QuoteWorkspaceModal({
                                       <option value="annual">Trả năm</option>
                                     </select>
                                   ) : (
-                                    item.billingCycle === 'annual' ? 'Trả năm' : 'Trả tháng'
+                                    <span title={isBundleRow && bundleMode === 'auto' ? 'Tắt "Tự tính theo GM%" để đổi Chu kỳ' : undefined}>
+                                      {item.billingCycle === 'annual' ? 'Trả năm' : 'Trả tháng'}
+                                    </span>
                                   )
                                 ) : '—'}
                               </td>

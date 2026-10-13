@@ -34,7 +34,7 @@ const roundFor = (value: number, currency?: unknown) =>
  * phai nhan rieng o day. Item khong co billingCycle (bao gia cu, hoac hang
  * muc chi co 1 gia/ban 1 lan) mac dinh he so 1 - hanh vi tinh tien giu
  * NGUYEN y het truoc khi co tinh nang nay. */
-const billingTermMultiplier = (item?: Partial<QuoteItem>) =>
+export const billingTermMultiplier = (item?: Partial<QuoteItem>) =>
   item?.billingCycle === 'annual' && item?.billingTermMonths && item.billingTermMonths > 1 ? item.billingTermMonths : 1;
 
 export const calculateItemSubtotal = (item?: Partial<QuoteItem>, currency?: unknown) =>
