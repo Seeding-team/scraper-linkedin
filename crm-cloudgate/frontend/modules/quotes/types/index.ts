@@ -191,12 +191,14 @@ export interface BundleSnapshotValue {
   pricingMode?: 'fixed' | 'auto';
   targetGrossMarginPercent?: number | null;
   components: BundleSnapshotComponent[];
-  /** "Ẩn/Hiện thành phần con trên báo giá" (2026-10-13) - rieng biet voi
-   * BundleSnapshotComponent.showOnQuote (co ban KHOI bung voi khach, mac
-   * dinh true) - day la 1 CO DUY NHAT cho CA Combo, mac dinh false (an).
-   * CHI anh huong hien thi o QuoteDocumentRenderer (preview/PDF/link cong
-   * khai) - man Sale sua (QuoteWorkspaceModal.tsx, bundleComponentsToWorkspaceRows)
-   * LUON hien du thanh phan con bat ke co nay, khong doc field nay. */
+  /** "Ẩn/Hiện GIÁ của thành phần con trên báo giá" (2026-10-14, doi y nghia tu
+   * "an/hien THANH PHAN CON" - yeu cau xac nhan lai: ten thanh phan con LUON
+   * hien voi khach, chi GIA tung thanh phan la can bat/tat) - mac dinh FALSE
+   * (an gia tung thanh phan, chi gia o dong goi cha). Bat len (true) thi khach
+   * thay ca gia rieng tung thanh phan con. CHI anh huong hien thi o
+   * QuoteDocumentRenderer (preview/PDF/link cong khai) - man Sale sua
+   * (QuoteWorkspaceModal.tsx, bundleComponentsToWorkspaceRows) LUON hien du
+   * thanh phan con VA gia cua chung, khong doc field nay. */
   showComponentsOnQuote?: boolean;
   /** "Chuan hoa gia von Combo" (2026-10-13) - nguon gia von dang dung:
    * 'target' = dung CHINH gia von muc tieu cua Combo (targetCostPerMonthVnd),
@@ -246,6 +248,11 @@ export interface QuoteItem {
   catalogItemId?: string;
   bundleSnapshot?: BundleSnapshotComponent[] | BundleSnapshotValue;
   __bundleComponent?: boolean;
+  /** Chi dung trong QuoteDocumentRenderer.tsx - true khi dong thanh phan con
+   * nay PHAI che cot gia (Combo cha dang showComponentsOnQuote!==true). Gan
+   * san luc dung bundleComponentsToDisplayItems() vi renderCell() chi nhan
+   * dong con, khong co ngu canh Combo cha. */
+  __bundleComponentPricesHidden?: boolean;
   __bundleComponentIds?: string[];
   __bundlePoolKey?: string | null;
   __bundleRequired?: boolean;

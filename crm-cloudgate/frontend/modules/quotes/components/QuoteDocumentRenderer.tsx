@@ -301,20 +301,14 @@ const BUNDLE_COMPONENT_HIDDEN_PRICE_COLUMNS = new Set([
   'amountAfterDiscount', 'discountAmount', 'vatAmount',
 ]);
 
-/** "Ẩn/Hiện thành phần con trên báo giá" (2026-10-14, đổi mặc định theo yêu cầu
- * "mặc định bật sẵn hết") - mac dinh TRUE (hien TEN, KHONG hien gia - xem
- * BUNDLE_COMPONENT_HIDDEN_PRICE_COLUMNS) ca khi field chua ton tai (bao gia
- * cu/Combo moi them) - CHI tat khi Sale CHU DONG bam tat
- * (showComponentsOnQuote===false ro rang). CHI anh huong man khach hang
- * (preview/PDF/link cong khai, qua bundleComponentsToDisplayItems) - man Sale sua
- * (QuoteWorkspaceModal.tsx, bundleComponentsToWorkspaceRows) LUON hien du, khong
- * doc field nay. */
-function bundleSnapshotShowComponentsOnQuote(item: QuoteItem): boolean {
+/** "Ẩn/Hiện GIÁ của thành phần con trên báo giá" (2026-10-14, đổi ý nghĩa - xem
+ * comment type BundleSnapshotValue.showComponentsOnQuote) - TEN thanh phan
+ * con LUON hien (khong con gate o day nua, xem bundleComponentsToDisplayItems),
+ * field nay CHI con quyet dinh co hien GIA rieng tung thanh phan hay khong -
+ * mac dinh FALSE (an gia) ca khi field chua ton tai (bao gia cu). */
+function bundleSnapshotShowComponentPricesOnQuote(item: QuoteItem): boolean {
   const snapshot = item.bundleSnapshot as unknown;
-  if (snapshot && typeof snapshot === 'object' && !Array.isArray(snapshot) && (snapshot as { showComponentsOnQuote?: unknown }).showComponentsOnQuote === false) {
-    return false;
-  }
-  return true;
+  return !!(snapshot && typeof snapshot === 'object' && !Array.isArray(snapshot) && (snapshot as { showComponentsOnQuote?: unknown }).showComponentsOnQuote === true);
 }
 
 function appendQuota(label: string, quota?: string | null): string {
@@ -347,7 +341,6 @@ function bundleComponentToDisplayItem(component: BundleSnapshotComponent, suffix
 // luong neu Sale mua >1 bo. Nhan them unitMultiplier = item.quantity (toi
 // thieu 1) vao so luong tung dong con, dong bo voi QuoteWorkspaceModal.tsx.
 function bundleComponentsToDisplayItems(item: QuoteItem): QuoteItem[] {
-  if (!bundleSnapshotShowComponentsOnQuote(item)) return [];
   const unitMultiplier = Math.max(1, Number(item.quantity) || 1);
   const components = bundleSnapshotComponents(item)
     .filter(component => component.showOnQuote !== false)
@@ -379,7 +372,8 @@ function bundleComponentsToDisplayItems(item: QuoteItem): QuoteItem[] {
     rows.push(bundleComponentToDisplayItem(component, String(index), unitMultiplier));
   });
 
-  return rows;
+  const pricesHidden = !bundleSnapshotShowComponentPricesOnQuote(item);
+  return rows.map(row => ({ ...row, __bundleComponentPricesHidden: pricesHidden }));
 }
 
 export function QuoteDocumentRenderer({
@@ -536,13 +530,14 @@ export function QuoteDocumentRenderer({
   const renderCell = (item: QuoteItem, column: QuoteField, index: number) => {
     if (item.__bundleComponent && column.key === 'discountPercent') return '';
     if (item.__bundleComponent && column.key === 'vatRate') return '';
-    // "van cho coi thanh phan con, mien khong hien gia" (2026-10-14) - bat
-    // "Hien thanh phan con" chi de khach thay TEN/mo ta/so luong cac SKU con,
-    // KHONG hien gia tung dong (tranh khach tu cong don gia SKU con roi doi
-    // chieu voi gia goi, hoac tuong nham day la gia PHAI tra them) - gia CHI
-    // hien o dong Combo cha (khong doi). Khong anh huong gia von/gia ban/
-    // chiet khau/margin that su cua Combo, thuan la che cot hien thi.
-    if (item.__bundleComponent && BUNDLE_COMPONENT_HIDDEN_PRICE_COLUMNS.has(column.key)) return '';
+    // "van cho coi thanh phan con, mien khong hien gia" (2026-10-14) - thanh
+    // phan con LUON hien ten/mo ta/so luong; GIA tung dong chi hien khi Combo
+    // cha chu dong bat (showComponentsOnQuote===true, xem toggle canh chip
+    // "Giữ giá gói cố định") - mac dinh an (tranh khach tu cong don gia SKU
+    // con roi doi chieu voi gia goi, hoac tuong nham day la gia PHAI tra
+    // them). Khong anh huong gia von/gia ban/chiet khau/margin that su cua
+    // Combo, thuan la che cot hien thi.
+    if (item.__bundleComponent && item.__bundleComponentPricesHidden && BUNDLE_COMPONENT_HIDDEN_PRICE_COLUMNS.has(column.key)) return '';
     if (column.type === 'auto-number' || column.key === 'order') return String(index + 1);
     // Chu ky "Trả năm" (migration 189): Thanh tien = Don gia x SL x 12 thang -
     // khong ghi chu thi khach de hieu nham tinh sai (SL 1 x Don gia 199.000

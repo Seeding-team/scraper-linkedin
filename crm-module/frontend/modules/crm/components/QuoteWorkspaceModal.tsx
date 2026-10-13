@@ -122,15 +122,16 @@ function bundleSnapshotTargetGm(item: QuoteItem): number {
   return 30;
 }
 
-/** "Ẩn/Hiện thành phần con trên báo giá" (2026-10-14, đổi mặc định theo yêu cầu
- * "mặc định bật sẵn hết") - mac dinh TRUE, CHI tat khi Sale CHU DONG bam tat
- * (showComponentsOnQuote===false ro rang). */
+/** "Ẩn/Hiện GIÁ của thành phần con trên báo giá khách" (2026-10-14, đổi ý
+ * nghĩa - tên thành phần con LUÔN hiện với khách, field này chỉ còn quyết
+ * định GIÁ riêng từng thành phần có hiện hay không) - mac dinh FALSE (an
+ * gia), CHI bat khi Sale CHU DONG bam bat (showComponentsOnQuote===true ro
+ * rang). Dung chung field/helper nay o man Sale CHI de hien thi dung trang
+ * thai hien tai cua Combo (nut bam), KHONG anh huong man Sale sua (luon thay
+ * du gia moi thanh phan bat ke co nay). */
 function bundleSnapshotShowComponentsOnQuote(item: QuoteItem): boolean {
   const snapshot = item.bundleSnapshot as unknown;
-  if (snapshot && typeof snapshot === 'object' && !Array.isArray(snapshot) && (snapshot as { showComponentsOnQuote?: unknown }).showComponentsOnQuote === false) {
-    return false;
-  }
-  return true;
+  return !!(snapshot && typeof snapshot === 'object' && !Array.isArray(snapshot) && (snapshot as { showComponentsOnQuote?: unknown }).showComponentsOnQuote === true);
 }
 
 /** "Chuan hoa gia von Combo" (2026-10-13) - mac dinh 'rollup' ca khi field
@@ -160,7 +161,7 @@ function makeBundleSnapshot(item: QuoteItem, components: BundleSnapshotComponent
     ...existing,
     pricingMode: patch.pricingMode ?? existing.pricingMode ?? 'fixed',
     targetGrossMarginPercent: patch.targetGrossMarginPercent ?? existing.targetGrossMarginPercent ?? 30,
-    showComponentsOnQuote: patch.showComponentsOnQuote ?? existing.showComponentsOnQuote ?? true,
+    showComponentsOnQuote: patch.showComponentsOnQuote ?? existing.showComponentsOnQuote ?? false,
     costSource: patch.costSource ?? existing.costSource ?? 'rollup',
     targetCostPerMonthVnd: 'targetCostPerMonthVnd' in patch ? patch.targetCostPerMonthVnd : (existing.targetCostPerMonthVnd ?? null),
     components,
@@ -2477,6 +2478,23 @@ export function QuoteWorkspaceModal({
     const nextItems = itemsDraft.map((row, i) => {
       if (i !== parentIndex) return row;
       return recalculateBundleParent(row, bundleSnapshotComponents(row), auto ? 'auto' : 'fixed', bundleSnapshotTargetGm(row), workspaceFx);
+    });
+    setItemsDraft(nextItems);
+    if (quote) void persistQuote({ items: nextItems }, { silent: true });
+  }
+
+  /** "Ẩn/Hiện GIÁ thành phần con trên báo giá khách" (2026-10-14) - CHI patch
+   * bundleSnapshot, KHONG goi recalculateBundleParent - thuan hien thi, khong
+   * dung gi den gia von/gia ban/chiet khau/margin cua Combo. Ten thanh phan
+   * con LUON hien voi khach (khong con gate), field nay chi quyet dinh co
+   * hien GIA rieng tung thanh phan hay khong. */
+  function toggleBundleShowComponentsOnQuote(parentIndex: number, show: boolean) {
+    const nextItems = itemsDraft.map((row, i) => {
+      if (i !== parentIndex) return row;
+      return {
+        ...row,
+        bundleSnapshot: makeBundleSnapshot(row, bundleSnapshotComponents(row), { showComponentsOnQuote: show }),
+      };
     });
     setItemsDraft(nextItems);
     if (quote) void persistQuote({ items: nextItems }, { silent: true });
@@ -6735,6 +6753,7 @@ export function QuoteWorkspaceModal({
                         const bundleMode = bundleSnapshotPricingMode(item);
                         const bundleTargetGm = bundleSnapshotTargetGm(item);
                         const bundleCostSourceIsTarget = isBundleRow && bundleSnapshotCostSource(item) === 'target';
+                        const bundleShowComponentPrices = bundleSnapshotShowComponentsOnQuote(item);
                         const discountKey = discountRowKey(item, index);
                         const discountSelected = selectedDiscountRowKeys.has(discountKey);
                         const mainRow = (
@@ -6913,14 +6932,24 @@ export function QuoteWorkspaceModal({
                                           Giá vốn: Combo
                                         </span>
                                       ) : null}
-                                      {/* Khong con toggle An/Hien thanh phan con (yeu cau
-                                       * 2026-10-14: "y la an GIA voi khong GIA chu khong
-                                       * phai an thanh phan con" - mac dinh LUON hien ten
-                                       * thanh phan con, LUON an gia rieng - khong can bam
-                                       * gi ca). Nhan tinh thuan thong tin, khong co nut. */}
-                                      <span className="qc-bundle-pricing-chip" title="Khách luôn thấy tên các thành phần con, không hiện giá riêng từng thành phần (giá chỉ hiện ở dòng gói)">
-                                        Khách thấy tên thành phần (không giá)
+                                      {/* Yeu cau 2026-10-14: toggle la de bat/tat GIA tung
+                                       * thanh phan, KHONG phai an/hien ban than thanh phan
+                                       * (ten thanh phan LUON hien voi khach). Mac dinh an
+                                       * gia ("khong giá" dung roi), co nut bam de Sale chu
+                                       * dong bat gia neu can cho Combo cu the. */}
+                                      <span className="qc-bundle-pricing-chip" title="Tên thành phần con luôn hiện với khách. Bật: hiện thêm giá riêng từng thành phần. Tắt (mặc định): chỉ hiện giá ở dòng gói.">
+                                        {bundleShowComponentPrices ? 'Khách thấy giá từng thành phần' : 'Khách thấy tên thành phần (không giá)'}
                                       </span>
+                                      {canEdit && isDraft && !isLockedForReview && (editableTechnicalCells || editableCells) ? (
+                                        <button
+                                          type="button"
+                                          className="qc-bundle-pricing-toggle"
+                                          onClick={() => toggleBundleShowComponentsOnQuote(index, !bundleShowComponentPrices)}
+                                          title={bundleShowComponentPrices ? 'Ẩn giá riêng từng thành phần con (chỉ hiện giá ở dòng gói)' : 'Hiện giá riêng từng thành phần con trên báo giá khách'}
+                                        >
+                                          {bundleShowComponentPrices ? 'Ẩn giá thành phần' : 'Hiện giá thành phần'}
+                                        </button>
+                                      ) : null}
                                     </span>
                                   ) : null}
                                   {(item.discountPercent ?? 0) > 0 ? (
