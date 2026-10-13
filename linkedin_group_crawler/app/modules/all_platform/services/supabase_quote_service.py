@@ -150,6 +150,19 @@ def _row_to_form(row: dict) -> dict:
     }
 
 
+def _item_billing_term_multiplier(row: dict) -> float:
+    """Giá vốn định kỳ phải tính đủ thời gian sử dụng (2026-10-14) - dùng CHUNG
+    hệ số với doanh thu (_calculate_item's `bt`): billing_cycle='annual' +
+    billing_term_months>1 thì nhân thêm, ngược lại he so 1 (giu NGUYEN hanh vi
+    cu cho moi hang muc khong co Chu ky). Khong doc billing_term_months khi
+    billing_cycle != 'annual' de tranh nham voi quantity (SL van la truc rieng,
+    KHONG phai so thang)."""
+    if row.get("billing_cycle") != "annual":
+        return 1.0
+    months = row.get("billing_term_months")
+    return float(months) if months and float(months) > 1 else 1.0
+
+
 def _row_to_item(row: dict) -> dict:
     return {
         "id": row["id"],
@@ -197,7 +210,7 @@ def _row_to_item(row: dict) -> dict:
         "costPriceVnd": (float(row["cost_price_vnd"]) if row.get("cost_price_vnd") is not None else None),
         "costNotApplicable": bool(row.get("cost_not_applicable") or False),
         "costTotal": (
-            float(row["cost_price"]) * float(row.get("quantity") or 0)
+            float(row["cost_price"]) * float(row.get("quantity") or 0) * _item_billing_term_multiplier(row)
             if row.get("cost_price") is not None
             else None
         ),
@@ -276,7 +289,7 @@ def _quote_cost_summary(row: dict, raw_items: list[dict] | None) -> dict:
     if not has_cost_data:
         return {"hasCostData": False, "costTotal": None, "netRevenue": net_revenue, "grossProfit": None, "grossMarginPercent": None}
     cost_total = sum(
-        float(item["cost_price"]) * float(item.get("quantity") or 0)
+        float(item["cost_price"]) * float(item.get("quantity") or 0) * _item_billing_term_multiplier(item)
         for item in real_items
         if item.get("cost_price") is not None
     )
