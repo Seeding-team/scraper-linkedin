@@ -2,7 +2,7 @@
 
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
-import { API_BASE_URL, API_KEY } from '@/lib/env';
+import { API_BASE_URL, API_KEY, IS_STANDALONE_CRM, CURRENT_WORKSPACE_INSTANCE } from '@/lib/env';
 import { seedingQuoteRepository, QuoteApprovalRequiresExceptionError, QuoteDocumentRenderer, QuotePrintLayoutSaveButton, buildPublicQuoteUrl } from '@/modules/quotes';
 import { CRM_INSTANCE } from '@/modules/quotes/utils/publicQuoteUrl';
 import type { Quote, QuoteActivityLogEntry, QuoteHandoffChecklist, QuoteItem, QuoteProcessingStage, QuoteApprovalRuleSet, QuoteApprovalRuleType, QuoteRuleEvaluation, QuoteDeliveryLogEntry, QuoteForm, QuoteData, IssuerCompany, QuoteAccessSuggestion } from '@/modules/quotes';
@@ -3282,6 +3282,10 @@ export function QuoteWorkspaceModal({
         context: 'quote_picker',
         quoteId: quote?.id,
         issuerCompanyId: draftCatalogIssuerCompanyId,
+        // Workspace isolation (issue A): clone standalone LUON pin dung
+        // workspace cua minh — giong guard cua useWorkspaceFilter (P&S page);
+        // MAIN giu nguyen multi-workspace vi IS_STANDALONE_CRM = false.
+        instances: IS_STANDALONE_CRM ? [CURRENT_WORKSPACE_INSTANCE] : undefined,
       });
       setCatalogTree(tree);
       setCatalogTreeQuoteId(quote?.id ?? null);
@@ -3394,6 +3398,10 @@ export function QuoteWorkspaceModal({
         context: 'quote_picker',
         quoteId: quote?.id,
         issuerCompanyId: draftCatalogIssuerCompanyId,
+        // Workspace isolation (issue A): clone standalone LUON pin dung
+        // workspace cua minh — giong guard cua useWorkspaceFilter (P&S page);
+        // MAIN giu nguyen multi-workspace vi IS_STANDALONE_CRM = false.
+        instances: IS_STANDALONE_CRM ? [CURRENT_WORKSPACE_INSTANCE] : undefined,
       });
       setCatalogTree(tree);
       setCatalogTreeQuoteId(quote?.id ?? null);

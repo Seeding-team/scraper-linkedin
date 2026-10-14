@@ -15,6 +15,7 @@ import {
   sanitizeMoneyInput,
 } from '../utils/quoteCalculations';
 import { seedingQuoteRepository } from '../repositories/SeedingQuoteRepository';
+import { IS_STANDALONE_CRM, CURRENT_WORKSPACE_INSTANCE } from '@/lib/env';
 import { serviceCatalogRepository } from '../../service-catalog/repositories/ServiceCatalogRepository';
 import type { ServiceCatalogItem, ServiceCatalogOptions } from '../../service-catalog/types';
 import { SearchableSelect } from '../../crm/components/SearchableSelect';
@@ -689,7 +690,13 @@ function useCatalogOptions(quoteFormId?: string): ServiceCatalogOptions | null {
         if (!cancelled) setOptions(scoped);
         return;
       }
-      const tree = await serviceCatalogRepository.list().catch(() => null);
+      // Workspace isolation (issue A): duong FALLBACK "ca danh muc" (mau chua
+      // lien ket nhom nao) cung phai pin theo workspace cua clone — nhu guard
+      // cua useWorkspaceFilter; duong options gan theo MAU o tren GIU NGUYEN
+      // (thiet ke cross-workspace co y). MAIN (IS_STANDALONE_CRM=false) khong loc.
+      const tree = await serviceCatalogRepository
+        .list(IS_STANDALONE_CRM ? { instances: [CURRENT_WORKSPACE_INSTANCE] } : undefined)
+        .catch(() => null);
       if (!cancelled) setOptions(tree ? flattenActiveCatalogTree(tree) : scoped);
     }
     load();
