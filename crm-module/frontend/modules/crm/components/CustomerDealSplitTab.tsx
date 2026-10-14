@@ -15,6 +15,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { CatalogPickerModal, type CatalogPickerListItem } from '@/modules/service-catalog/CatalogPickerModal';
 import { serviceCatalogRepository } from '@/modules/service-catalog/repositories/ServiceCatalogRepository';
+import { IS_STANDALONE_CRM, CURRENT_WORKSPACE_INSTANCE } from '@/lib/env';
 import type { ServiceCatalogItem } from '@/modules/service-catalog/types';
 import { HandoverDocsCard, type HandoverDoc } from './HandoverDocsCard';
 
@@ -288,7 +289,13 @@ export function CustomerDealSplitTab({
     if (categoryModalOpen) {
       let alive = true;
       setLoadingCatalog(true);
-      serviceCatalogRepository.list({ context: 'quote_picker' })
+      serviceCatalogRepository.list({
+        context: 'quote_picker',
+        // Workspace isolation (issue A): clone standalone LUON pin dung
+        // workspace cua minh — giong guard cua useWorkspaceFilter (P&S page);
+        // MAIN (IS_STANDALONE_CRM=false) giu nguyen view da workspace.
+        instances: IS_STANDALONE_CRM ? [CURRENT_WORKSPACE_INSTANCE] : undefined,
+      })
         .then(data => {
           if (alive) setCatalogItems(data || []);
         })
