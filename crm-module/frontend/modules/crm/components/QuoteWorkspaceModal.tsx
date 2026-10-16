@@ -7801,7 +7801,9 @@ export function QuoteWorkspaceModal({
                       value={draftSlaDueAt}
                       onChange={e => { setDraftSlaDueAt(e.target.value); if (e.target.value) clearRequiredError('sla'); }}
                     />
-                  ) : stage === 'request' && canEdit ? (
+                  ) : (stage === 'request' || stage === 'technical') && canEdit ? (
+                    // SLA sua duoc o CA 'request' va 'technical' (bubble 1 gop 2 stage nay): truoc day chi 'request' nen sau khi gui yeu cau
+                    // xu ly SLA thanh chu, bao gia QUA HAN khong co cho nao tren giao dien de doi han (admin cung khong).
                     // key rieng voi input tren - tranh React tuong "cung 1
                     // input" roi bao "controlled -> uncontrolled" khi quote
                     // tu dong duoc tao xong (tu !quote sang co quote NGAY
