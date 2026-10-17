@@ -290,6 +290,14 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, workspaceTab: 
       label: "Telegram Chat",
       matchStartsWith: ["/all-platform/telegram-chat"],
     },
+    {
+      type: "item",
+      id: "viber-chat",
+      href: "/all-platform/viber-chat",
+      icon: "call",
+      label: "Viber Chat",
+      matchStartsWith: ["/all-platform/viber-chat"],
+    },
   ];
 
   // Space "QUAN LY CRM":
