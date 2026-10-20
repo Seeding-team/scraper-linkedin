@@ -59,7 +59,12 @@ STAGE_REQUIRED_FIELDS: dict[str, dict[str, list[str]]] = {
     "negotiation":    {"required": ["note"]},
     "contract_signed": {},
     "payment_1":      {"required": ["estimated_budget", "follow_up_date"]},
-    "implementation": {"required": ["sdr_id", "follow_up_date"]},
+    # "sdr_id" bo khoi yeu cau bat buoc (2026-10-20, cung ly do voi
+    # attachment_url o tren) - StageModal.tsx khong co o chon SDR nao ca, va
+    # validate chi doc tu payload Sale vua gui (khong doc sdr_id co san cua
+    # deal), nen bat buoc field nay khien stage "Trien khai" KHONG THE chuyen
+    # duoc tu modal nay.
+    "implementation": {"required": ["follow_up_date"]},
     "acceptance":     {"required": ["follow_up_date"]},
     "payment_final":  {"required": ["estimated_budget", "follow_up_date"]},
     "post_sale_care": {},
