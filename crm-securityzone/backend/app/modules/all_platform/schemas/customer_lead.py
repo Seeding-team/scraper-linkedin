@@ -47,13 +47,21 @@ def is_transition_allowed(from_stage: str, to_stage: str) -> bool:
 # Khi client POST transition, server check lại để chặn hack.
 STAGE_REQUIRED_FIELDS: dict[str, dict[str, list[str]]] = {
     "dealing":        {},
-    "proposal_sent":  {"required": ["attachment_url"]},
+    # "attachment_url" bo khoi yeu cau bat buoc (2026-10-20) - StageModal.tsx
+    # (modal "Chuyen sang..." THAT SU dang dung tren UI) khong co o nhap
+    # file/link nao ca (STAGE_REQUIREMENTS o crmConfig.ts chi co requireNote/
+    # requireBudget/requireDecisionMaker/requireWonReason/requireRejectReason,
+    # khong co requireAttachment) - bat buoc field nay la bug khien Sale KHONG
+    # THE chuyen stage duoc, luon bao "Thieu thong tin bat buoc: attachment_url"
+    # du dien gi cung vay. Component StageTransitionModal.tsx (ban cu hon) co
+    # o dinh kem that nhung khong phai modal dang duoc dung.
+    "proposal_sent":  {},
     "negotiation":    {"required": ["note"]},
-    "contract_signed": {"required": ["attachment_url"]},
-    "payment_1":      {"required": ["estimated_budget", "follow_up_date", "attachment_url"]},
+    "contract_signed": {},
+    "payment_1":      {"required": ["estimated_budget", "follow_up_date"]},
     "implementation": {"required": ["sdr_id", "follow_up_date"]},
-    "acceptance":     {"required": ["follow_up_date", "attachment_url"]},
-    "payment_final":  {"required": ["estimated_budget", "follow_up_date", "attachment_url"]},
+    "acceptance":     {"required": ["follow_up_date"]},
+    "payment_final":  {"required": ["estimated_budget", "follow_up_date"]},
     "post_sale_care": {},
     "lost":           {"required": ["reject_reason_type", "note"]},
     "on_hold":        {"required": ["follow_up_date", "note"]},
@@ -61,8 +69,8 @@ STAGE_REQUIRED_FIELDS: dict[str, dict[str, list[str]]] = {
     "new_lead":       {},
     "contacted":      {"required": ["note"]},
     "qualified":      {"required": ["decision_maker", "estimated_budget", "note"]},
-    "requirement":    {"required": ["note", "attachment_url"]},
-    "contract_sent":  {"required": ["attachment_url"]},
+    "requirement":    {"required": ["note"]},
+    "contract_sent":  {},
     "won":            {},
 }
 
