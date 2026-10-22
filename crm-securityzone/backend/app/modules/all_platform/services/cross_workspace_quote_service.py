@@ -62,10 +62,11 @@ from app.modules.all_platform.services.supabase_quote_service import (
     get_quote,
 )
 
-# Danh sach instance HOP LE duy nhat hien co (3 workspace that, xem docstring
+# Danh sach instance HOP LE duy nhat hien co (4 workspace that, xem docstring
 # tren dau file) - chan som 1 target_instance go sai/khong ton tai thay vi de
-# query tra rong roi bao loi mo ho hon.
-VALID_TARGET_INSTANCES = {"markee", "cloudgate", "SECURITYZONE"}
+# query tra rong roi bao loi mo ho hon. (2026-10-23: them "timetech" - truoc
+# day thieu nen chon TimeTech o FE se bi tu choi "workspace khong hop le".)
+VALID_TARGET_INSTANCES = {"markee", "cloudgate", "SECURITYZONE", "timetech"}
 
 CUSTOMERS_TABLE = "crm_customers"
 DEALS_TABLE = "customer_leads"
@@ -568,7 +569,7 @@ def move_quote_in_workspace(
       Nếu target_instance được truyền vào và khác current_instance -> REJECT.
     - KHÔNG tạo Quote mới, KHÔNG đổi instance, KHÔNG đổi quote_number/code/version.
     - Bắt buộc validate target_customer, target_deal, target_contact đều thuộc current_instance.
-    - Chặn Move nếu Quote đã gắn Hợp đồng (crm_contracts).
+    - Chặn Move nếu Quote đã gắn Hợp đồng (contracts).
     - Ghi log audit vào quote_cross_workspace_copy_log.
     """
     current_instance = settings.crm_instance
@@ -588,7 +589,7 @@ def move_quote_in_workspace(
 
     # Chặn các case nguy hiểm: Audit contract dependency
     contract_check = (
-        supabase.table("crm_contracts")
+        supabase.table("contracts")
         .select("id, contract_number, title")
         .eq("instance", current_instance)
         .eq("quote_id", quote_id)
