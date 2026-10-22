@@ -3,10 +3,11 @@
 /**
  * "Copy báo giá sang khách hàng khác hoặc workspace khác" (2026-10-03, Phase
  * 1 — chỉ Copy, Move để sau; hỗ trợ chọn NHIỀU báo giá cùng lúc, copy sang
- * CÙNG 1 ngữ cảnh đích). Chỉ admin có `allowed_instances` chứa workspace đích
- * (hoặc workspace đích = workspace hiện tại, không cần cấp thêm) mới dùng
- * được - backend tự chặn (403/message rõ), modal này KHÔNG tự kiểm tra
- * quyền, chỉ ẩn nút trigger khi role khác admin (xem nơi gọi).
+ * CÙNG 1 ngữ cảnh đích). Phase 2 (2026-10-23): Admin toàn quyền; Sale/Presale
+ * dùng được NHƯNG chỉ với workspace nằm trong `allowed_instances` của chính
+ * họ (hoặc workspace đích = workspace hiện tại, không cần cấp thêm) - backend
+ * tự chặn (403/message rõ), modal này KHÔNG tự kiểm tra quyền, chỉ ẩn nút
+ * trigger khi role/quote_business_role không đủ điều kiện (xem nơi gọi).
  */
 
 import { useEffect, useRef, useState } from 'react';
@@ -20,6 +21,7 @@ const WORKSPACE_OPTIONS: Array<{ value: string; label: string }> = [
   { value: 'markee', label: 'Markee' },
   { value: 'cloudgate', label: 'CloudGate' },
   { value: 'SECURITYZONE', label: 'SecurityZone' },
+  { value: 'timetech', label: 'TimeTech' },
 ];
 
 type TargetCustomer = { id: string; customer_name: string; company_name?: string | null; phone?: string | null; email?: string | null };

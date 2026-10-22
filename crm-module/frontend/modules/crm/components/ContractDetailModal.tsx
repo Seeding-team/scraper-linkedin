@@ -31,6 +31,7 @@ function contractRows(contract: Contract, quoteNumber: string | null) {
     { label: 'Ngày bắt đầu', value: formatDate(contract.startDate), icon: CalendarDays },
     { label: 'Ngày kết thúc', value: formatDate(contract.endDate), icon: CalendarDays },
     { label: 'Ngày ký', value: formatDate(contract.signedAt), icon: CalendarDays },
+    { label: 'Thời gian bảo hành', value: contract.warrantyPeriod || '', icon: FileText },
   ];
 }
 

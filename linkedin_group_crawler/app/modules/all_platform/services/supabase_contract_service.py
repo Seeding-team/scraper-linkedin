@@ -50,6 +50,7 @@ def _row_to_contract(row: dict) -> dict:
         "endDate": row.get("end_date"),
         "signedAt": row.get("signed_at"),
         "paymentTerms": row.get("payment_terms") or "",
+        "warrantyPeriod": row.get("warranty_period") or "",
         "progressPercent": row.get("progress_percent") or 0,
         "paymentCollectedPercent": row.get("payment_collected_percent") or 0,
         "ownerId": row.get("owner_id"),
@@ -222,6 +223,7 @@ def create_contract(payload: dict, created_by: str | None) -> dict:
         "start_date": payload.get("start_date"),
         "end_date": payload.get("end_date"),
         "payment_terms": payload.get("payment_terms"),
+        "warranty_period": payload.get("warranty_period"),
         "progress_percent": int(payload.get("progress_percent") or 0),
         "payment_collected_percent": int(payload.get("payment_collected_percent") or 0),
         "owner_id": payload.get("owner_id") or created_by,
@@ -259,7 +261,7 @@ def update_contract(contract_id: str, payload: dict, actor_id: str | None) -> di
     update_data: dict[str, Any] = {}
     for key in (
         "title", "template_type", "status", "contract_value", "currency", "signed_at", "start_date", "end_date",
-        "payment_terms", "progress_percent", "payment_collected_percent", "owner_id",
+        "payment_terms", "warranty_period", "progress_percent", "payment_collected_percent", "owner_id",
         "manual_customer_name", "source", "file_url",
         "note", "quote_id", "deal_id", "contact_id", "deal_phase", "contract_number",
         "representative_confirmed", "legal_snapshot",

@@ -45,6 +45,8 @@ export interface Contract {
   endDate?: string | null;
   signedAt?: string | null;
   paymentTerms?: string;
+  /** "Thời gian bảo hành" (2026-10-23) - chữ tự do (vd "12 tháng"), không ép số/ngày. */
+  warrantyPeriod?: string | null;
   /** Tiến độ thực hiện hợp đồng (0-100), hiện dạng progress bar ở danh sách. */
   progressPercent: number;
   /** % giá trị hợp đồng đã thu, dùng tính "Công nợ đến hạn" ở dashboard. */
@@ -106,6 +108,7 @@ export interface CreateContractInput {
   startDate?: string | null;
   endDate?: string | null;
   paymentTerms?: string;
+  warrantyPeriod?: string | null;
   progressPercent?: number;
   paymentCollectedPercent?: number;
   ownerId?: string | null;
@@ -140,6 +143,7 @@ export interface UpdateContractInput {
   startDate?: string | null;
   endDate?: string | null;
   paymentTerms?: string;
+  warrantyPeriod?: string | null;
   progressPercent?: number;
   paymentCollectedPercent?: number;
   ownerId?: string | null;

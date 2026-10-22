@@ -92,9 +92,23 @@ export function getInitials(name?: string) {
 
 /** Trang chủ của module CRM độc lập — module này KHÔNG có Admin Dashboard /
  * Leader Dashboard riêng (những trang đó thuộc app seeding gốc, không nằm
- * trong "Quản lý CRM"), nên mọi role (member/leader/admin) đều về thẳng
- * trang Cơ hội (pipeline) sau khi đăng nhập. */
-export function getDashboardHrefForRole(_role?: string | null): string {
+ * trong "Quản lý CRM"), nên admin/leader về thẳng trang Cơ hội (pipeline)
+ * sau khi đăng nhập như cũ. Sale (2026-10-23, yeu cau sep) - quote_business_role
+ * la 'sale'/'both' - ve thang trang Khach hang thay vi Co hoi, vi cong viec
+ * chinh cua Sale la lam viec voi khach hang co san. Ham nay la NGUON DUY
+ * NHAT quyet dinh trang mac dinh sau dang nhap - duoc goi tu ca 5 luong:
+ * dang nhap mat khau/Google, dang ky moi (AuthPage.tsx), tai lai trang goc
+ * khi da co session (app/page.tsx), va luong chuyen site workspace-handoff
+ * (app/auth/handoff/page.tsx) - sua dung 1 cho nay la phu het ca 5 luong. */
+export function getDashboardHrefForRole(role?: string | null, quoteBusinessRole?: string | null): string {
+  const normalizedRole = (role || "").trim().toLowerCase();
+  if (normalizedRole === "admin" || normalizedRole === "leader") {
+    return "/all-platform/crm";
+  }
+  const normalizedQbr = (quoteBusinessRole || "").trim().toLowerCase();
+  if (normalizedQbr === "sale" || normalizedQbr === "both") {
+    return "/all-platform/crm/customers";
+  }
   return "/all-platform/crm";
 }
 
@@ -706,7 +720,14 @@ export function AllPlatformSidebar({
 
       <aside
         className={cn(
-          "fixed inset-y-0 left-0 z-50 flex flex-col border-r border-outline-variant bg-[#fafafa] text-on-surface shadow-xl transition-all duration-300 lg:translate-x-0 lg:shadow-none",
+          // z-[99990]: cao hon moi backdrop/drawer trong app (cao nhat la
+          // z-[99985] o QuoteQuickViewDrawer.tsx) - truoc day sidebar z-50
+          // thap hon backdrop nen vua bi mo VUA bi chan click (backdrop
+          // hung het su kien chuot dung ngay vung sidebar). Tang z-index
+          // sidebar len tren backdrop giai quyet ca 2 cung luc: sidebar tu
+          // ve de len backdrop (het mo), va la phan tu tren cung nhan dung
+          // click chuot (het bi chan dieu huong).
+          "fixed inset-y-0 left-0 z-[99990] flex flex-col border-r border-outline-variant bg-[#fafafa] text-on-surface shadow-xl transition-all duration-300 lg:translate-x-0 lg:shadow-none",
           isCollapsed ? "w-[70px]" : "w-[280px]",
           isOpen ? "translate-x-0" : "-translate-x-full",
         )}

@@ -263,6 +263,8 @@ export interface CrmCustomerKpi {
   following: number;
   current_customer: number;
   not_fit: number;
+  /** So khach dang co hop dong con hieu luc/da ky (2026-10-23) - dung cho tab "Hợp đồng". */
+  has_contract: number;
 }
 
 export interface CrmCustomerListResult {

@@ -83,22 +83,28 @@ def _now_iso() -> str:
 
 
 def require_cross_workspace_permission(user: dict[str, Any] | None, target_instance: str) -> None:
-    """Permission Phase 1 (yeu cau bat buoc): CHI role admin ("Super Admin/
-    Administrator") duoc dung tinh nang nay - Sale/leader CHUA duoc, du o
-    scope/quyen nao (ke ca khi target_instance = instance hien tai, tuc
-    "doi sang customer khac trong cung workspace" - van gioi han admin cho
-    Phase 1, chua mo cho Sale).
-
-    Instance dich KHAC instance hien tai moi can kiem tra them
-    `app_users.allowed_instances` (migration 127, co san tu truoc cho muc
-    dich "Admin cap cho tai khoan nao duoc vao workspace nao") - target =
-    instance hien tai thi KHONG vuot qua bien gioi tenant nao ca, bo qua kiem
-    tra nay (admin da o san trong instance do roi, khong can cap them)."""
+    """Permission Phase 2 (2026-10-23, yeu cau sep - mo rong tu Phase 1 chi
+    Admin): Admin toan quyen (khong gioi han allowed_instances, giu nguyen
+    hanh vi cu). Sale/Presale (`quote_business_role` la 'sale'/'presale'/
+    'both') CUNG duoc dung, nhung CHI cho workspace nam trong
+    `app_users.allowed_instances` cua chinh ho (fallback `home_instance` neu
+    allowed_instances rong/None - dung CHUNG 1 pattern voi
+    `/workspace-handoff/consume`, xem auth.py:203) - dam bao Sale/Presale
+    khong vuot duoc bien gioi tenant ma ho khong duoc cap. Role khac (member
+    khong co quote_business_role, leader) van bi tu choi nhu Phase 1."""
     role = str((user or {}).get("role") or "").strip().lower()
-    if role != "admin":
-        raise PermissionError("Chỉ Admin mới được dùng tính năng copy/move báo giá.")
-    # Admin role được quyền copy sang tất cả workspace hợp lệ mà không bị giới hạn allowed_instances
-    return
+    if role == "admin":
+        # Admin toan quyen, khong gioi han allowed_instances - giu nguyen hanh vi cu.
+        return
+    quote_business_role = str((user or {}).get("quote_business_role") or "").strip().lower()
+    if quote_business_role in ("sale", "presale", "both"):
+        allowed = (user or {}).get("allowed_instances") or (
+            [(user or {}).get("home_instance")] if (user or {}).get("home_instance") else None
+        )
+        if allowed and target_instance in allowed:
+            return
+        raise PermissionError(f"Bạn không có quyền truy cập workspace '{target_instance}'.")
+    raise PermissionError("Chỉ Admin/Sale/Presale mới được dùng tính năng copy/move báo giá.")
 
 
 def _validate_target_instance(target_instance: str | None) -> str:

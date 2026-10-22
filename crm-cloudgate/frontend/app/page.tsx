@@ -11,7 +11,7 @@ export default function HomePage() {
 
   useEffect(() => {
     if (isLoading) return;
-    router.replace(user ? getDashboardHrefForRole(user.role) : "/auth/login");
+    router.replace(user ? getDashboardHrefForRole(user.role, user.quote_business_role) : "/auth/login");
   }, [isLoading, router, user]);
 
   return (

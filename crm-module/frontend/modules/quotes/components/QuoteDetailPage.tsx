@@ -142,10 +142,11 @@ export function QuoteDetailPage({ quoteId }: Props) {
             </button>
           ) : null}
           <TelegramSendButton quoteId={quote.id} status={quote.status} />
-          {/* "Copy báo giá cross-workspace" (2026-10-03, Phase 1) - chỉ hiện
-           * cho admin (gate THẬT nằm ở backend qua allowed_instances, đây chỉ
-           * là ẩn/hiện UI cho gọn, không phải lớp bảo mật). */}
-          {user?.role === 'admin' ? (
+          {/* "Copy báo giá cross-workspace" (2026-10-03, Phase 1 → mở rộng
+           * Phase 2 2026-10-23) - hiện cho admin VÀ Sale/Presale (gate THẬT
+           * nằm ở backend qua allowed_instances, đây chỉ là ẩn/hiện UI cho
+           * gọn, không phải lớp bảo mật). */}
+          {user?.role === 'admin' || ['sale', 'presale', 'both'].includes(user?.quote_business_role || '') ? (
             <>
               <button type="button" className="quote-button quote-button--secondary" onClick={() => setMoveModalOpen(true)}>
                 Di chuyển báo giá
