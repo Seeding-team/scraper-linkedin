@@ -100,11 +100,33 @@ export function getInitials(name?: string) {
  * dang nhap mat khau/Google, dang ky moi (AuthPage.tsx), tai lai trang goc
  * khi da co session (app/page.tsx), va luong chuyen site workspace-handoff
  * (app/auth/handoff/page.tsx) - sua dung 1 cho nay la phu het ca 5 luong. */
-export function getDashboardHrefForRole(role?: string | null, quoteBusinessRole?: string | null): string {
+export function getDashboardHrefForRole(
+  role?: string | null,
+  quoteBusinessRole?: string | null,
+  functionArea?: string | null,
+): string {
   const normalizedRole = (role || "").trim().toLowerCase();
-  if (normalizedRole === "admin" || normalizedRole === "leader") {
+  if (normalizedRole === "admin") {
     return "/all-platform/crm";
   }
+  // Khoi/chuyen mon cua Team CRM (2026-10-23, yeu cau sep: "team Thuy la
+  // sales thi CA Thuy (leader) va member deu vao thang trang khach hang; mkt
+  // thi vao lead") - uu tien hon quoteBusinessRole, AP DUNG CHO CA leader lan
+  // member (khong con ngoai le "leader luon vao /crm" o 2 nhanh nay).
+  const normalizedFunctionArea = (functionArea || "").trim().toLowerCase();
+  if (normalizedFunctionArea === "sales") {
+    return "/all-platform/crm/customers";
+  }
+  if (normalizedFunctionArea === "marketing") {
+    return "/all-platform/crm/leads";
+  }
+  if (normalizedRole === "leader") {
+    return "/all-platform/crm";
+  }
+  // Fallback logic CU (gia tri functionArea rong/None - vd 40/57 member CRM
+  // "chua co Leader, can phan team" tai thoi diem viet - KHONG duoc vo hanh
+  // vi dang chay cho nhom nay) hoac functionArea khac sales/marketing
+  // (presale/infrastructure/software/security/finance/operations...).
   const normalizedQbr = (quoteBusinessRole || "").trim().toLowerCase();
   if (normalizedQbr === "sale" || normalizedQbr === "both") {
     return "/all-platform/crm/customers";

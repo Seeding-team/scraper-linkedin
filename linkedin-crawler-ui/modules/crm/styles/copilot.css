@@ -133,8 +133,13 @@
   .copilot-tabs { padding: 0 8px; }
 }
 
-/* Drawer chi tiết hợp đồng (Customer 360): header + tabs cố định, chỉ phần nội dung cuộn (không cuộn lồng nhau). */
-.cd-backdrop { position: fixed; inset: 0; z-index: 60; background: rgba(15, 23, 42, 0.45); display: flex; justify-content: flex-end; }
+/* Drawer chi tiết hợp đồng (Customer 360): header + tabs cố định, chỉ phần nội dung cuộn (không cuộn lồng nhau).
+ * z-index 99984 + khong mau (2026-10-23, yeu cau sep "k mo cua so ben trai cho bam doi nhu lead a") -
+ * dong bo voi RegisterExternalContractModal.tsx (cung z-[99984]), THAP HON sidebar trai
+ * (AllPlatformSidebar.tsx, z-[99990]) nen sidebar luon render DE LEN tren, sang ro + bam dieu huong
+ * binh thuong. Giu nguyen hanh vi dong khi bam ra ngoai panel (onMouseDown check e.target===
+ * e.currentTarget o ContractDetailDrawer), chi bo MAU/dim. */
+.cd-backdrop { position: fixed; inset: 0; z-index: 99984; background: transparent; display: flex; justify-content: flex-end; }
 .cd-panel { width: min(72vw, 1280px); height: 100%; background: #fff; box-shadow: -18px 0 40px rgba(15, 23, 42, 0.25); display: flex; flex-direction: column; animation: cd-in .18s ease-out; }
 @keyframes cd-in { from { transform: translateX(40px); opacity: .6; } to { transform: none; opacity: 1; } }
 .cd-root { display: flex; flex-direction: column; height: 100%; min-height: 0; }

@@ -57,7 +57,7 @@ export function AuthPage() {
   useEffect(() => {
     if (authLoading) return;
     if (isAuthenticated && user) {
-      router.replace(getDashboardHrefForRole(user.role, user.quote_business_role));
+      router.replace(getDashboardHrefForRole(user.role, user.quote_business_role, user.crm_function_area));
     }
   }, [authLoading, isAuthenticated, user, router]);
 
@@ -72,7 +72,7 @@ export function AuthPage() {
       setGoogleSubmitting(true);
       try {
         const user = await loginWithGoogle(credentialResponse.credential);
-        router.push(getDashboardHrefForRole(user.role, user.quote_business_role));
+        router.push(getDashboardHrefForRole(user.role, user.quote_business_role, user.crm_function_area));
       } catch (err) {
         setGoogleError(err instanceof Error ? err.message : "Đăng nhập Google thất bại.");
       } finally {
@@ -101,7 +101,7 @@ export function AuthPage() {
       if (remember) {
         setLwuuSession(email.trim(), true);
       }
-      router.push(getDashboardHrefForRole(user.role, user.quote_business_role));
+      router.push(getDashboardHrefForRole(user.role, user.quote_business_role, user.crm_function_area));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Có lỗi xảy ra");
       setSubmitStatus("idle");

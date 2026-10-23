@@ -46,6 +46,7 @@ from app.modules.all_platform.services import (
     is_sale_member,
     get_effective_permissions,
 )
+from app.modules.all_platform.services.auth_service import _resolve_crm_function_area
 
 router = APIRouter()
 
@@ -222,6 +223,8 @@ def auth_consume_workspace_handoff(code: str, response: Response) -> BaseRespons
                 "email": user["email"],
                 "name": user.get("name"),
                 "role": user.get("role", "member"),
+                "quote_business_role": user.get("quote_business_role"),
+                "crm_function_area": _resolve_crm_function_area(user.get("id")),
             },
         },
     )
@@ -322,6 +325,9 @@ def auth_me(request: Request, authorization: str | None = Header(None)) -> BaseR
             # Both cua chinh user dang dang nhap (dung xuyen suot he thong
             # gan Deal/Quote owner - xem DealFormFields.tsx/QuoteWorkspaceModal.tsx).
             "quote_business_role": user.get("quote_business_role"),
+            # Khoi/chuyen mon cua Team CRM (2026-10-23, yeu cau sep) - dung de
+            # quyet dinh route mac dinh sau dang nhap (getDashboardHrefForRole).
+            "crm_function_area": _resolve_crm_function_area(user.get("id")),
 
         })
     except HTTPException as e:

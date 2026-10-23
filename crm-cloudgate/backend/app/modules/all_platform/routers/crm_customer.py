@@ -17,8 +17,6 @@ from app.modules.all_platform.services.crm_customer_service import (
     CustomerLinkedError,
     CustomerNotFoundError,
     DuplicateCustomerError,
-    copy_customer_to_instance,
-    copy_customers_to_instance,
     create_customer,
     create_customer_with_deal,
     delete_customer,
@@ -32,6 +30,13 @@ from app.modules.all_platform.services.crm_customer_service import (
 )
 from app.modules.all_platform.services.supabase_project_service import get_customer_projects_summary
 from app.modules.all_platform.services.crm_permission_service import can_view_project, has_module_access
+from app.modules.all_platform.services.crm_customer_cross_workspace_service import (
+    CustomerCrossWorkspaceError,
+    copy_customer_deep_to_instance,
+    copy_customers_deep_to_instance,
+    move_customer_to_instance,
+    move_customers_to_instance,
+)
 
 router = APIRouter()
 
@@ -166,10 +171,33 @@ def customers_copy_instance_bulk(payload: dict, user: dict[str, Any] = Depends(g
         assignments = payload.get("assignments")
         if not assignments or not isinstance(assignments, list):
             return BaseResponse(success=False, message="assignments là bắt buộc (danh sách)")
-        data = copy_customers_to_instance(assignments, user)
+        # (2026-10-23, yeu cau sep) Doi sang copy SAU - xem comment o route don
+        # "/{customer_id}/copy-instance" ben duoi, ly do giong het.
+        data = copy_customers_deep_to_instance(assignments, user)
         failed_count = len(data.get("failed") or [])
         copied_count = len(data.get("copied") or [])
         message = f"Đã sao chép {copied_count} khách hàng" + (f", {failed_count} lỗi" if failed_count else "")
+        return BaseResponse(success=True, message=message, data=data)
+    except Exception as exc:
+        return _error(exc)
+
+
+@router.post("/move-instance")
+def customers_move_instance_bulk(payload: dict, user: dict[str, Any] = Depends(get_current_user)) -> BaseResponse:
+    """Chi Admin THAT: di chuyen han NHIEU Khach hang cung luc sang workspace
+    dich RIENG cho tung khach - dung y het customers_copy_instance_bulk()
+    nhung CHUYEN HAN (mat o nguon, giu nguyen ID). Payload:
+    {"assignments": [{"customer_id": ..., "target_instance": ...}, ...]}."""
+    if str(user.get("role") or "").strip().lower() != "admin":
+        return BaseResponse(success=False, message="Chỉ Admin mới được di chuyển khách hàng sang workspace khác")
+    try:
+        assignments = payload.get("assignments")
+        if not assignments or not isinstance(assignments, list):
+            return BaseResponse(success=False, message="assignments là bắt buộc (danh sách)")
+        data = move_customers_to_instance(assignments, user)
+        failed_count = len(data.get("failed") or [])
+        moved_count = len(data.get("moved") or [])
+        message = f"Đã di chuyển {moved_count} khách hàng" + (f", {failed_count} lỗi" if failed_count else "")
         return BaseResponse(success=True, message=message, data=data)
     except Exception as exc:
         return _error(exc)
@@ -187,8 +215,35 @@ def customers_copy_instance(customer_id: str, payload: dict, user: dict[str, Any
         target_instance = payload.get("target_instance")
         if not target_instance:
             return BaseResponse(success=False, message="target_instance là bắt buộc")
-        data = copy_customer_to_instance(customer_id, str(target_instance), user)
-        return BaseResponse(success=True, message="Đã sao chép sang workspace khác", data=data)
+        # (2026-10-23, yeu cau sep) Doi sang copy SAU - mang theo Co hoi/Bao
+        # gia/Lien he/Hop dong (ke ca file that)/Du an, khong chi 1 dong
+        # crm_customers nhu copy_customer_to_instance() cu (van giu ham cu,
+        # khong xoa, chi khong con duoc goi tu route nay).
+        data = copy_customer_deep_to_instance(customer_id, str(target_instance), user)
+        if data.get("error"):
+            return BaseResponse(success=False, message=data["error"], data=data)
+        return BaseResponse(success=True, message="Đã sao chép toàn bộ dữ liệu khách hàng sang workspace khác", data=data)
+    except (CustomerCrossWorkspaceError, PermissionError) as exc:
+        return BaseResponse(success=False, message=str(exc))
+    except Exception as exc:
+        return _error(exc)
+
+
+@router.post("/{customer_id}/move-instance")
+def customers_move_instance(customer_id: str, payload: dict, user: dict[str, Any] = Depends(get_current_user)) -> BaseResponse:
+    """Chi Admin THAT: CHUYEN HAN 1 Khach hang (va toan bo Co hoi/Bao gia/
+    Lien he/Hop dong/Du an) sang 1 workspace khac - workspace nguon MAT HAN
+    du lieu nay sau khi move (khong con la ban sao, giu nguyen ID)."""
+    if str(user.get("role") or "").strip().lower() != "admin":
+        return BaseResponse(success=False, message="Chỉ Admin mới được di chuyển khách hàng sang workspace khác")
+    try:
+        target_instance = payload.get("target_instance")
+        if not target_instance:
+            return BaseResponse(success=False, message="target_instance là bắt buộc")
+        data = move_customer_to_instance(customer_id, str(target_instance), user)
+        return BaseResponse(success=True, message="Đã di chuyển khách hàng sang workspace khác", data=data)
+    except (CustomerCrossWorkspaceError, PermissionError) as exc:
+        return BaseResponse(success=False, message=str(exc))
     except Exception as exc:
         return _error(exc)
 

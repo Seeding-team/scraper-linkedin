@@ -215,6 +215,7 @@ export type RelatedPayload = {
     deal_phase?: 'purchase' | 'sale' | null;
     quote_id?: string | null;
     contact_id?: string | null;
+    warranty_period?: string | null;
   }>;
   kpi?: {
     deal_count?: number;

@@ -35,7 +35,7 @@ function HandoffInner() {
       if (res.success && res.data?.user) {
         await refreshUser();
         if (cancelled) return;
-        router.replace(getDashboardHrefForRole(res.data.user.role, res.data.user.quote_business_role));
+        router.replace(getDashboardHrefForRole(res.data.user.role, res.data.user.quote_business_role, res.data.user.crm_function_area));
       } else {
         setError(res.message || "Mã chuyển workspace đã hết hạn hoặc không hợp lệ.");
       }

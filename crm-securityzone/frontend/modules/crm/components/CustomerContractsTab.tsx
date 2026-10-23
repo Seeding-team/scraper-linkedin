@@ -13,6 +13,7 @@ import { ContractDetailDrawer } from '@/modules/contracts/components/ContractDet
 import { ContractTemplatesPanel } from '@/modules/contract-templates/components/ContractTemplatesPanel';
 import { ContactAssignCell, contractSourceBadge, formatContractDate } from './CrmCustomerDetailPage';
 import type { RelatedPayload } from './CrmCustomerDetailPage';
+import { computeWarrantyEndDate, formatWarrantyEndDate } from '@/modules/contracts/utils/warrantyCalc';
 
 type ContractRow = NonNullable<RelatedPayload['contracts']>[number];
 type ContractEditForm = {
@@ -73,7 +74,7 @@ function ContractsTable({
             {showPhaseColumn ? <th className="py-2.5 px-3 font-semibold">Loại</th> : null}
             <th className="py-2.5 px-3 font-semibold">Nguồn</th>
             <th className="py-2.5 px-3 font-semibold">Trạng thái</th>
-            <th className="py-2.5 px-3 font-semibold">Liên hệ chính</th>
+            <th className="py-2.5 px-3 font-semibold">Bảo hành</th>
             <th className="py-2.5 px-3 font-semibold text-right">Giá trị</th>
             <th className="py-2.5 px-3 font-semibold">Ngày ký</th>
             <th className="py-2.5 px-3 font-semibold text-right">Thao tác</th>
@@ -82,11 +83,8 @@ function ContractsTable({
         <tbody className="divide-y divide-slate-100">
           {contracts.map(contract => {
             const contractDeal = deals?.find(d => d.id === contract.deal_id);
-            // Lien he luu rieng tren hop dong (contact_id) uu tien, fallback lien he chinh cua Co hoi.
-            const shownContactId = contract.contact_id || contractDeal?.primary_contact_id;
-            const contractPrimaryContactName = shownContactId
-              ? allContacts.find(c => c.id === shownContactId)?.name || 'Liên hệ ẩn'
-              : 'Chưa có';
+            const warrantyEndDate = computeWarrantyEndDate(contract.signed_at, contract.warranty_period);
+            const warrantyEndDateLabel = formatWarrantyEndDate(warrantyEndDate);
             return (
               <tr key={contract.id} className="hover:bg-slate-50/80 transition-colors">
                 <td className="py-2.5 px-3">
@@ -113,7 +111,11 @@ function ContractsTable({
                     {contractStatusLabel(contract.status || '')}
                   </Badge>
                 </td>
-                <td className="py-2.5 px-3 text-slate-500 truncate">{contractPrimaryContactName}</td>
+                <td className="py-2.5 px-3 text-slate-500 truncate">
+                  {contract.warranty_period
+                    ? `${contract.warranty_period}${warrantyEndDateLabel ? ` (hết hạn ${warrantyEndDateLabel})` : ''}`
+                    : '—'}
+                </td>
                 <td className="py-2.5 px-3 text-right font-semibold text-emerald-600">{formatVND(Number(contract.contract_value || 0)) || '0 đ'}</td>
                 <td className="py-2.5 px-3 text-slate-500">{contract.signed_at ? formatContractDate(contract.signed_at) : '-'}</td>
                 <td className="py-2.5 px-3 text-right">

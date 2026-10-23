@@ -23,6 +23,11 @@ import { toast } from "sonner";
 import { customerLeadService, type Customer } from "@/services/customer-lead.service";
 import { seedingContractRepository } from "@/modules/contracts/repositories/SeedingContractRepository";
 import { CONTRACT_STATUS_LABELS } from "@/modules/contracts/constants/contractConfig";
+import {
+  WARRANTY_PERIOD_PRESETS,
+  computeWarrantyEndDate,
+  formatWarrantyEndDate,
+} from "@/modules/contracts/utils/warrantyCalc";
 import { CurrencyInput } from "@/components/CurrencyInput";
 import type { Contract, ContractOcrReconcileResult, ContractStatus } from "@/modules/contracts";
 import { seedingQuoteRepository } from "@/modules/quotes";
@@ -210,6 +215,10 @@ export function RegisterExternalContractModal({ contract, open, deal, onClose, o
   // "24 tháng theo hãng"), giong het pattern warranty_scope tren quote_items
   // (migration 141) - khong ep so/ngay.
   const [warrantyPeriod, setWarrantyPeriod] = useState("");
+  // Dropdown preset vs nhap tay (2026-10-23) - mac dinh 'preset', tu chuyen
+  // sang 'custom' khi nap 1 hop dong co san voi gia tri KHONG khop preset nao
+  // (xem effect nap du lieu ben duoi) de khong mat du lieu tu do cu.
+  const [warrantyPeriodMode, setWarrantyPeriodMode] = useState<"preset" | "custom">("preset");
   const [fileUrl, setFileUrl] = useState("");
   const [linkInput, setLinkInput] = useState("");
   const [note, setNote] = useState("");
@@ -268,6 +277,7 @@ export function RegisterExternalContractModal({ contract, open, deal, onClose, o
     setSignedAt("");
     setEndDate("");
     setWarrantyPeriod("");
+    setWarrantyPeriodMode("preset");
     setFileUrl("");
     setLinkInput("");
     setNote("");
@@ -290,6 +300,11 @@ export function RegisterExternalContractModal({ contract, open, deal, onClose, o
       setSignedAt(contract.signed_at ? String(contract.signed_at).slice(0, 10) : "");
       setEndDate(contract.end_date ? String(contract.end_date).slice(0, 10) : "");
       setWarrantyPeriod(contract.warranty_period || "");
+      setWarrantyPeriodMode(
+        contract.warranty_period && !WARRANTY_PERIOD_PRESETS.includes(contract.warranty_period)
+          ? "custom"
+          : "preset"
+      );
       setLinkInput(contract.file_url || "");
       setNote(contract.note || "");
       setContractKind(contract.deal_phase || "recorded");
@@ -1031,12 +1046,46 @@ export function RegisterExternalContractModal({ contract, open, deal, onClose, o
               <div className="grid grid-cols-2 gap-3">
                 <label className="block">
                   <span className="mb-1 block text-xs font-semibold text-slate-600">Thời gian bảo hành</span>
+                  <select
+                    value={warrantyPeriodMode === "custom" ? "__custom__" : warrantyPeriod}
+                    onChange={e => {
+                      const next = e.target.value;
+                      if (next === "__custom__") {
+                        setWarrantyPeriodMode("custom");
+                        return;
+                      }
+                      setWarrantyPeriodMode("preset");
+                      setWarrantyPeriod(next);
+                    }}
+                    className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                  >
+                    <option value="" disabled>
+                      Chọn thời gian bảo hành
+                    </option>
+                    {WARRANTY_PERIOD_PRESETS.map(preset => (
+                      <option key={preset} value={preset}>
+                        {preset}
+                      </option>
+                    ))}
+                    <option value="__custom__">Khác (nhập tay)</option>
+                  </select>
+                  {warrantyPeriodMode === "custom" ? (
+                    <input
+                      type="text"
+                      value={warrantyPeriod}
+                      onChange={e => setWarrantyPeriod(e.target.value)}
+                      placeholder="VD: 12 tháng"
+                      className="mt-2 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                    />
+                  ) : null}
+                </label>
+                <label className="block">
+                  <span className="mb-1 block text-xs font-semibold text-slate-600">Dự kiến hết hạn bảo hành</span>
                   <input
                     type="text"
-                    value={warrantyPeriod}
-                    onChange={e => setWarrantyPeriod(e.target.value)}
-                    placeholder="VD: 12 tháng"
-                    className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                    readOnly
+                    value={formatWarrantyEndDate(computeWarrantyEndDate(signedAt, warrantyPeriod)) || "—"}
+                    className="w-full rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-500"
                   />
                 </label>
               </div>

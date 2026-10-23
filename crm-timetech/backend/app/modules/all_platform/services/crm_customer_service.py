@@ -684,7 +684,7 @@ def delete_customers_bulk(customer_ids: list[str], user: dict[str, Any], confirm
 # danh sach workspace dich khi sao chep Khach hang CHI CO 2 clone doc lap con
 # lai, khai bao TINH tai day (dung y het _MAIN_COPY_TARGET_INSTANCES cua
 # crm_lead_service.py, khong tra cuu tu config nao ca).
-_MAIN_COPY_TARGET_INSTANCES = ("cloudgate", "SECURITYZONE")
+_MAIN_COPY_TARGET_INSTANCES = ("cloudgate", "SECURITYZONE", "timetech")
 
 
 def copy_customer_to_instance(customer_id: str, target_instance: str, user: dict[str, Any]) -> dict[str, Any]:
