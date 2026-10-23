@@ -1,3 +1,14 @@
+# =============================================================================
+# CRITICAL RULE: ZERO-LEAK INTELLECTUAL PROPERTY & AI BRAIN (LOCAL ONLY)
+# =============================================================================
+.aevum/
+.agents/
+.agent/
+_aevum/
+_agents/
+_agent/
+GEMINI.md
+AGENTS.md
 # =========================
 # Monorepo ignore (FE + BE)
 # =========================
@@ -166,15 +177,10 @@ docker-compose.override.yml
 
 # ---- Root-level generated artifacts ----
 __pycache__/
-scratch/*.xlsx
-scratch/*.png
-scratch/*.html
-scratch/*.sql
-scratch/*.py
-scratch/*.log
-scratch/**/*.js
-scratch/**/package.json
-scratch/**/package-lock.json
+scratch/
+linkedin-crawler-ui/scratch/
+linkedin_group_crawler/scratch/
+api-sniffer-*.json
 
 # Code review reports
 code-review-report-*.md
@@ -299,3 +305,6 @@ supabase/local_mock.sql
 linkedin_group_crawler/supabase/local_mock.sql
 scripts/local-mock-seed.*
 local_mock.sql
+
+# Cloned external prototypes
+prototype-studio/
