@@ -34,6 +34,11 @@ _LEGAL_PREFIXES = sorted(
         "CONG TY TNHH MTV", "CONG TY HOP DANH", "CONG TY TNHH", "CONG TY CP", "TONG CONG TY", "CONG TY", "DOANH NGHIEP TU NHAN",
         "HO KINH DOANH", "CHI NHANH", "VAN PHONG DAI DIEN", "TAP DOAN", "DNTN", "CTCP", "TNHH", "MTV", "JSC", "CO., LTD", "CO LTD", "LTD",
         "COMPANY LIMITED", "CORPORATION", "CORP", "INC",
+        # To chuc/co quan (khong phai doanh nghiep nhung van la "loai hinh" dung truoc ten rieng,
+        # 2026-10-23: "Trung tam Chuyen doi so va Cong nghe chien luoc Da Nang" khong co loai hinh
+        # doanh nghiep nao o tren nen _strip_prefixes khong cat duoc gi -> suggestion = nguyen van
+        # ten day du, khong rut gon). Dung CHUNG danh sach voi _ORG_MARKERS cho nhat quan.
+        "TRUNG TAM", "BENH VIEN", "TRUONG", "HOC VIEN", "NGAN HANG", "HOP TAC XA",
     ],
     key=len,
     reverse=True,

@@ -106,13 +106,15 @@ export function getDashboardHrefForRole(
   functionArea?: string | null,
 ): string {
   const normalizedRole = (role || "").trim().toLowerCase();
-  if (normalizedRole === "admin") {
-    return "/all-platform/crm";
-  }
   // Khoi/chuyen mon cua Team CRM (2026-10-23, yeu cau sep: "team Thuy la
   // sales thi CA Thuy (leader) va member deu vao thang trang khach hang; mkt
-  // thi vao lead") - uu tien hon quoteBusinessRole, AP DUNG CHO CA leader lan
-  // member (khong con ngoai le "leader luon vao /crm" o 2 nhanh nay).
+  // thi vao lead") - uu tien hon QUOTE_BUSINESS_ROLE LAN admin/leader, AP
+  // DUNG CHO CA leader/member/admin neu ho CO thuoc 1 Team CRM co Khoi ro
+  // rang (2026-10-23, phan hoi lan 2: 1 tai khoan role=admin nhung thuc te
+  // lam Presale, dang thuoc "Presale Dev Team" van muon vao thang Khach
+  // hang chu khong phai /crm chung - admin CHI con la fallback khi KHONG
+  // thuoc team nao / team khong co Khoi ro rang, khong con la truong hop uu
+  // tien tuyet doi dau tien nua).
   const normalizedFunctionArea = (functionArea || "").trim().toLowerCase();
   if (normalizedFunctionArea === "sales" || normalizedFunctionArea === "presale") {
     return "/all-platform/crm/customers";
@@ -120,7 +122,7 @@ export function getDashboardHrefForRole(
   if (normalizedFunctionArea === "marketing") {
     return "/all-platform/crm/leads";
   }
-  if (normalizedRole === "leader") {
+  if (normalizedRole === "admin" || normalizedRole === "leader") {
     return "/all-platform/crm";
   }
   // Fallback logic CU (gia tri functionArea rong/None - vd 40/57 member CRM
