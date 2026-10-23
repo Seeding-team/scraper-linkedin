@@ -114,7 +114,7 @@ export function getDashboardHrefForRole(
   // thi vao lead") - uu tien hon quoteBusinessRole, AP DUNG CHO CA leader lan
   // member (khong con ngoai le "leader luon vao /crm" o 2 nhanh nay).
   const normalizedFunctionArea = (functionArea || "").trim().toLowerCase();
-  if (normalizedFunctionArea === "sales") {
+  if (normalizedFunctionArea === "sales" || normalizedFunctionArea === "presale") {
     return "/all-platform/crm/customers";
   }
   if (normalizedFunctionArea === "marketing") {

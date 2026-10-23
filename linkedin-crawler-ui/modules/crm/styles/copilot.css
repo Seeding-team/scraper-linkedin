@@ -140,7 +140,7 @@
  * binh thuong. Giu nguyen hanh vi dong khi bam ra ngoai panel (onMouseDown check e.target===
  * e.currentTarget o ContractDetailDrawer), chi bo MAU/dim. */
 .cd-backdrop { position: fixed; inset: 0; z-index: 99984; background: transparent; display: flex; justify-content: flex-end; }
-.cd-panel { width: min(72vw, 1280px); height: 100%; background: #fff; box-shadow: -18px 0 40px rgba(15, 23, 42, 0.25); display: flex; flex-direction: column; animation: cd-in .18s ease-out; }
+.cd-panel { width: min(58vw, 1040px); height: 100%; background: #fff; box-shadow: -18px 0 40px rgba(15, 23, 42, 0.25); display: flex; flex-direction: column; animation: cd-in .18s ease-out; }
 @keyframes cd-in { from { transform: translateX(40px); opacity: .6; } to { transform: none; opacity: 1; } }
 .cd-root { display: flex; flex-direction: column; height: 100%; min-height: 0; }
 .cd-head { flex: none; padding: 14px 22px 0; border-bottom: 1px solid #e2e8f0; background: #fff; }

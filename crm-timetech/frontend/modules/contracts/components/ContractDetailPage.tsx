@@ -244,8 +244,8 @@ export function ContractDetailContent({
     if (focusEdit && !loading && tab === 'overview') editCardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }, [focusEdit, loading, tab]);
 
-  if (loading) return <main className="contract-detail-page"><section className="contract-state">Đang tải hợp đồng...</section></main>;
-  if (error || !contract) return <main className="contract-detail-page"><section className="contract-state contract-state--error">{error || 'Không tìm thấy hợp đồng.'}</section></main>;
+  if (loading) return <main className={isDrawer ? 'cd-root' : 'contract-detail-page'}><section className="contract-state">Đang tải hợp đồng...</section></main>;
+  if (error || !contract) return <main className={isDrawer ? 'cd-root' : 'contract-detail-page'}><section className="contract-state contract-state--error">{error || 'Không tìm thấy hợp đồng.'}</section></main>;
 
   const nextStatuses = CONTRACT_STATUS_TRANSITIONS[contract.status] || [];
   // Nút chính nổi bật theo ĐÚNG trạng thái hiện tại (không hiện mọi nút ở mọi trạng thái):

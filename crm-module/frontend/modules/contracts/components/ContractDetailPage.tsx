@@ -244,8 +244,16 @@ export function ContractDetailContent({
     if (focusEdit && !loading && tab === 'overview') editCardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }, [focusEdit, loading, tab]);
 
-  if (loading) return <main className="contract-detail-page"><section className="contract-state">Đang tải hợp đồng...</section></main>;
-  if (error || !contract) return <main className="contract-detail-page"><section className="contract-state contract-state--error">{error || 'Không tìm thấy hợp đồng.'}</section></main>;
+  {/* "Bam hop dong 1 sang 2 thi k dong sidebar chi doi content nhu lead" (2026-10-23,
+   * yeu cau sep): truoc day loading/error fallback LUON dung className "contract-detail-page"
+   * (layout trang doc lap, KHONG khop khung .cd-panel) bat ke variant - khi doi contractId
+   * (key={contractId} tai ContractDetailDrawer lam remount component nay), panel tam thoi
+   * thu nho/sup lai theo layout trang trong luc "Dang tai hop dong..." hien ra, nhin y het
+   * nhu dong roi mo lai du .cd-backdrop/.cd-panel (phan tu cha) khong he unmount. Fix: dung
+   * dung className "cd-root" (giong nhanh binh thuong ben duoi) khi la drawer, giu nguyen
+   * khung/chieu rong panel on dinh trong luc tai du lieu hop dong moi. */}
+  if (loading) return <main className={isDrawer ? 'cd-root' : 'contract-detail-page'}><section className="contract-state">Đang tải hợp đồng...</section></main>;
+  if (error || !contract) return <main className={isDrawer ? 'cd-root' : 'contract-detail-page'}><section className="contract-state contract-state--error">{error || 'Không tìm thấy hợp đồng.'}</section></main>;
 
   const nextStatuses = CONTRACT_STATUS_TRANSITIONS[contract.status] || [];
   // Nút chính nổi bật theo ĐÚNG trạng thái hiện tại (không hiện mọi nút ở mọi trạng thái):
