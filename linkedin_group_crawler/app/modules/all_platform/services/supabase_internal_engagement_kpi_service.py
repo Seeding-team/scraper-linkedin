@@ -1846,15 +1846,14 @@ def mark_action_by_fb_uid(
     return result.data[0] if result.data else {}
 
 
-def _post_total_interacted(supabase: Client, link_post: str, assigned_team_ids: list) -> int:
-    """So thanh vien (distinct) da tuong tac thanh cong tren bai — KHONG phu thuoc role
-    nguoi xem (con so tong hop, dung cho thanh tien do "x/y thanh vien da tuong tac" tren
-    card). Bai co giao team -> chi dem thanh vien thuoc cac team duoc giao; khong giao
-    team -> dem moi nguoi da tuong tac.
+def _post_total_interacted(supabase: Client, link_post: str) -> int:
+    """So nguoi (distinct) da tuong tac thanh cong tren bai — KHONG phu thuoc role nguoi
+    xem va KHONG loc theo team duoc giao: ai comment thanh cong (ke ca leader, admin,
+    nguoi ngoai team duoc giao) deu duoc tinh. Dung cho thanh tien do "x/y thanh vien da
+    tuong tac" tren card, nen x co the vuot y (y = so thanh vien cac team duoc giao).
 
-    Truoc day card lay tong tu `teams` cua get_post_team_counts, ma `teams` bi gioi han
-    theo role (member -> [], leader -> chi team minh lead) va FE chi goi cho admin/leader
-    -> member comment thanh cong van thay 0/N, leader thay thieu."""
+    Truoc day loc theo `member_of_teams` cua team duoc giao -> nguoi ngoai team (vd
+    leader, khong nam trong members) comment thanh cong van thay 0/N."""
     rows = (
         supabase.table("internal_engagement_kpi")
         .select("id_member")
@@ -1862,18 +1861,7 @@ def _post_total_interacted(supabase: Client, link_post: str, assigned_team_ids: 
         .eq("status", "success")
         .execute()
     ).data or []
-    commenter_ids = {str(r["id_member"]) for r in rows if r.get("id_member")}
-    if not commenter_ids:
-        return 0
-    if not assigned_team_ids:
-        return len(commenter_ids)
-
-    assigned = {str(x) for x in assigned_team_ids}
-    allowed: set[str] = set()
-    for t in get_all_teams():
-        if str(t["id"]) in assigned or (t.get("name_team") or "") in assigned:
-            allowed.update(str(m["id"]) for m in t.get("members", []))
-    return len(commenter_ids & allowed)
+    return len({str(r["id_member"]) for r in rows if r.get("id_member")})
 
 
 def get_post_team_counts(link_post: str, email: str, team_id: Optional[str] = None) -> dict:
@@ -1882,7 +1870,7 @@ def get_post_team_counts(link_post: str, email: str, team_id: Optional[str] = No
     post_res = supabase.table("internal_engagement_custom_posts").select("assigned_team_ids").eq("link_post", link_post).execute()
     post_data = post_res.data[0] if post_res.data else {}
     assigned_team_ids = post_data.get("assigned_team_ids") or []
-    total_interacted = _post_total_interacted(supabase, link_post, assigned_team_ids)
+    total_interacted = _post_total_interacted(supabase, link_post)
 
     teams, role = resolve_team_scope(email, team_id)
     if not teams:
