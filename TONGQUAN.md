@@ -149,16 +149,60 @@ Dưới đây là các bài học xương máu được tổng hợp từ thực
 
 ---
 
-## 7. TI?N �? TH?C HI?N & NH?T K� V?N H�NH (2026-10-22)
+## 7. TI?N �? TH?C HI?N & NH?T K� V?N H�NH (2026-10-22)
 
-### 7.1. K?t Qu? Nghi?m Thu �?t 1 (D?n R�c Tri?t �? - COMPLETED)
-- **Frontend**: �� git rm -r th�nh c�ng 21 file dead code trong linkedin-crawler-ui/_deprecated/. K?t qu? 
+### 7.1. K?t Qu? Nghi?m Thu �?t 1 (D?n R�c Tri?t �? - COMPLETED)
+- **Frontend**: �� git rm -r th�nh c�ng 21 file dead code trong linkedin-crawler-ui/_deprecated/. K?t qu? 
 px tsc --noEmit d?t **Exit Code 0 (0 l?i)**.
-- **Root Repository**: �� git rm -f hon 30 file script debug ad-hoc (debug_routes*.py, ind_*.py, save_*.py, esolve_*.sh, supabase_logs.json, i_output.html...).
-- **Extension Artifacts**: �� x�a __tmp_markee_extension/, __tmp_markee_extension_local/ v� file l? acebook-seeding-extension/content-script.js.
-- **Backend Root**: �� lo?i b? file typo -w, _dup_links.json, c�c file test/dump ad-hoc ? root linkedin_group_crawler/. B? Pytest don v? d?t **100% PASS (8/8 passed)**.
-- **Git Hygiene**: �� ch?n to�n di?n scratch/**, pi-sniffer-*.json, prototype-studio/ trong .gitignore. Gi? s?ch working tree.
+- **Root Repository**: �� git rm -f hon 30 file script debug ad-hoc (debug_routes*.py, ind_*.py, save_*.py, esolve_*.sh, supabase_logs.json, i_output.html...).
+- **Extension Artifacts**: �� x�a __tmp_markee_extension/, __tmp_markee_extension_local/ v� file l? acebook-seeding-extension/content-script.js.
+- **Backend Root**: �� lo?i b? file typo -w, _dup_links.json, c�c file test/dump ad-hoc ? root linkedin_group_crawler/. B? Pytest don v? d?t **100% PASS (8/8 passed)**.
+- **Git Hygiene**: �� ch?n to�n di?n scratch/**, pi-sniffer-*.json, prototype-studio/ trong .gitignore. Gi? s?ch working tree.
 
-### 7.2. K? Ho?ch �?t 2 & �?t 3 (Pending Ch? �?o Ti?p Theo C?a Master)
-- **�?t 2**: T�ch nh? c�c God Components ? Frontend (internal-engagement/page.tsx: 3,180 d�ng, ZaloChatView.tsx: 3,007 d�ng...).
-- **�?t 3**: Ph�n chia Domain-Driven Design cho Router Backend (linkedin/router.py: 3,114 d�ng, ll_platform/router.py: 522 d�ng...).
+### 7.2. K? Ho?ch �?t 2 & �?t 3 (Pending Ch? �?o Ti?p Theo C?a Master)
+- **�?t 2**: T�ch nh? c�c God Components ? Frontend (internal-engagement/page.tsx: 3,180 d�ng, ZaloChatView.tsx: 3,007 d�ng...).
+- **�?t 3**: Ph�n chia Domain-Driven Design cho Router Backend (linkedin/router.py: 3,114 d�ng, ll_platform/router.py: 522 d�ng...).
+
+
+### 7.2. Kết Quả Nghiệm Thu Đợt 2 (Chuẩn Hóa Seeding App, Services, Hooks & Bảo Toàn Core - COMPLETED 2026-10-23)
+- **Định danh Seeding App**:
+  - `linkedin-crawler-ui/package.json`: Tên app `"name": "seeding-app-ui"`, mô tả `"Seeding App - All-Platform Social Media Automation"`.
+  - `linkedin_group_crawler/app/main.py`: `title="Seeding App API"`, `description="All-Platform Seeding & Social Media Automation API"`.
+  - `docker-compose.yml` & `deploy.sh`: Image chuyển sang `seeding-app-frontend:latest` và `seeding-app-backend:latest` với rollback tag và alias tương thích ngược.
+  - `seeding-app.code-workspace`: Workspace chuẩn hóa cho toàn bộ dự án.
+- **Dọn dẹp mã chết & route dư thừa**:
+  - Đã xóa `linkedin-crawler-ui/scratch/` (13 file test Python/TS tạm bị sót).
+  - Đã xóa `linkedin_group_crawler/app/api/` (thư mục rỗng).
+  - Đã xóa route rác cũ `app/(all-platform-chat)/` và duplicate page `app/public/quotes/[token]/page.tsx`.
+- **Chuẩn hóa đặt tên file & thư mục (Zero-Breaking Compatibility Architecture)**:
+  - `services/`: Đổi tên sang kebab-case chuẩn: `linkedin-crawler.service.ts`, `telegram.service.ts`, `zalo-crawler.service.ts`, `zalo-extension.service.ts`. Tạo compatibility re-export bridge tại `linkedinCrawlerService.ts`, `telegramService.ts`, `zaloCrawlerService.ts`, `zaloExtension.ts`.
+  - `hooks/`: Đổi `use-mobile.ts` sang camelCase chuẩn `useMobile.ts` (kèm bridge `use-mobile.ts`). Chuyển `lib/useKpiRefresh.ts` về đúng `hooks/useKpiRefresh.ts`.
+  - `types/`: Chuyển `lib/teamTypes.ts` về đúng `types/team.types.ts` (kèm bridge `lib/teamTypes.ts`).
+  - Khôi phục và bảo toàn trọn vẹn 20 core components trong `components/all-platform/components/` (`post-card`, `filter-bar`, `CrmCustomerModal`, `kpi-progress-card`, `seeding-extension...`).
+- **Ma trận Kiểm thử (Rule 5 - 100% PASS)**:
+  - Frontend TypeScript (`tsc --noEmit`): **Exit Code 0 (0 lỗi)**.
+  - Frontend Production Build (`npm run build`): **Exit Code 0 (66/66 routes sinh thành công, postbuild copy standalone hoàn tất)**.
+  - Backend Syntax Check (`py_compile`): **Exit Code 0**.
+  - Backend Unit Test (`pytest tests/test_phone_bridge.py`): **9/9 PASSED (100%)**.
+  - Git Hygiene: Đã push thành công lên `origin/main` commit `450892f1`.
+
+---
+
+## 8. BÀI HỌC KINH NGHIỆM & QUY TẮC PHÒNG NGỪA (LESSONS LEARNED & GOTCHAS)
+1. **Không Bao Giờ Xóa `components/all-platform/components/`**: Thư mục này chứa 20 component cốt lõi render bảng feed, bộ lọc, modal CRM của Seeding App. Mọi hành động di chuyển component phải giữ alias tương thích.
+2. **Kỷ Luật Compatibility Bridge Khi Refactor Monorepo**: Dự án chứa nhiều workspace CRM song song (`crm-cloudgate`, `crm-module`, `crm-securityzone`, `crm-timetech`) cùng import chéo từ `@/services` và `@/hooks`. Khi đổi tên file sang kebab-case/camelCase, **BẮT BUỘC** phải để lại file bridge `export * from "./new-file"` để 0% nguy cơ gãy các module khác.
+3. **Đường Dẫn Runner CI/CD**: Runner trên 2 máy chủ `10.120.60.26` và `10.30.50.29` đặt cố định tại `/opt/apps/seeding_markeeai/scraper-linkedin`. Tuyệt đối không sửa tên thư mục gốc trên máy chủ.
+
+---
+
+## 11.0. HIỆN TRẠNG DỰ ÁN & HƯỚNG DẪN TRIỂN KHAI CHO PHIÊN TIẾP THEO
+- **Trạng thái hiện tại**: Mã nguồn trên nhánh `main` (`450892f1`) đã sạch hoàn toàn, chuẩn hóa toàn diện tên định danh `seeding-app`, chuẩn hóa file services/hooks và build pass 100%.
+- **Thao tác deploy Production (`10.120.60.26`)**:
+  - *Cách 1*: Vào GitHub -> tab **Actions** -> chọn workflow **Deploy App (Production)** -> nhấn **Run workflow** (branch `main`).
+  - *Cách 2*: SSH vào máy chủ `10.120.60.26`:
+    ```bash
+    cd /opt/apps/seeding_markeeai/scraper-linkedin
+    git pull origin main
+    bash deploy.sh all
+    curl -sI http://localhost:8080/
+    ```
