@@ -185,6 +185,23 @@ export function CustomerFormModal({
     const initial = customer ? formFromCustomer(customer) : emptyForm();
     setForm(initial);
     setShortTouched(Boolean(customer?.shortNameManual));
+    // "Chua co ten viet tat" (2026-10-23, phat hien o securityzone nhung la
+    // lo hong code dung chung, khong rieng 1 workspace) - khach hang cu tao
+    // TRUOC khi co tinh nang goi y ten viet tat (hoac chua tung go lai ten
+    // cong ty) co `short_name` rong trong DB. Form Sua truoc day CHI copy
+    // thang `customer.shortName || ''` vao form, KHONG tu goi y nhu luc go
+    // ten cong ty moi (xem changeCompany) - de trong vo thoi han cho toi khi
+    // nguoi dung tu bam "Tao lai goi y" hoac go lai ten cong ty. Tu dong goi
+    // y ngay khi mo form Sua neu dang trong + chua sua tay thu cong truoc do.
+    if (customer && !initial.shortName.trim() && !customer.shortNameManual) {
+      const company = initial.companyName.trim() || initial.customerName.trim();
+      if (company) {
+        const seq = ++suggestSeq.current;
+        void requestSuggestion(company, true).then(suggestion => {
+          if (suggestSeq.current === seq) setForm(current => (current.companyName === company ? { ...current, shortName: suggestion } : current));
+        });
+      }
+    }
     setExtraChannels({ zalo: Boolean(initial.zalo), facebook: Boolean(initial.facebook), telegram: Boolean(initial.telegram), website: Boolean(initial.website) });
     setPrimaryContact(customer?.primaryContact?.id ? { id: customer.primaryContact.id, name: customer.primaryContact.name || '' } : null);
     setContactPositionBase('');

@@ -435,6 +435,11 @@ export interface AppUser {
    * được dù cờ này false. */
   can_approve_quotes?: boolean;
   quote_business_role?: "presale" | "sale" | "both" | null;
+  /** Khoi/chuyen mon (`crm_teams.function_area`, vd "sales"/"marketing") cua
+   * Team CRM user thuoc ve (2026-10-23) - dung de quyet dinh route mac dinh
+   * sau dang nhap, xem getDashboardHrefForRole. null/undefined = chua co
+   * Team CRM nao. */
+  crm_function_area?: string | null;
   /** Danh sách workspace (instance) tài khoản này được PHÉP truy cập
    * (migration 005 — gán qua "Quản lý thành viên"). undefined/rỗng = không
    * giới hạn (admin luôn undefined vì không áp dụng). */

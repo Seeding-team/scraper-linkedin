@@ -339,14 +339,62 @@ def _attach_customer_metrics(customers: list[dict[str, Any]], user: dict[str, An
     return customers
 
 
-def _kpi(customers: list[dict[str, Any]]) -> dict[str, int]:
+def _kpi(customers: list[dict[str, Any]], customer_ids_with_contract: set[str] | None = None) -> dict[str, int]:
+    customer_ids_with_contract = customer_ids_with_contract or set()
     return {
         "total": len(customers),
         "new_lead": sum(1 for row in customers if row.get("status") == "new_lead"),
         "following": sum(1 for row in customers if row.get("status") == "following"),
         "current_customer": sum(1 for row in customers if row.get("status") == "current_customer"),
         "not_fit": sum(1 for row in customers if row.get("status") == "not_fit"),
+        "has_contract": sum(1 for row in customers if row.get("id") in customer_ids_with_contract),
     }
+
+
+# Gia tri dac biet cho tham so `status` cua list_customers() - khong phai 1
+# gia tri that cua cot crm_customers.status, ma la tin hieu "loc theo khach
+# dang co hop dong" (tab "Hợp đồng", 2026-10-23) - xu ly rieng ben duoi,
+# KHONG duoc dua thang vao .eq("status", ...).
+HAS_CONTRACT_FILTER = "has_contract"
+
+
+def _customer_ids_with_contract(customer_ids: list[str]) -> set[str]:
+    """Tra ve tap customer_id dang co it nhat 1 hop dong con "song" (status
+    nam trong SIGNED_CONTRACT_STATUSES) - gop ca hop dong gan qua Deal
+    (customer_leads) lan hop dong tao truc tiep tren Customer (customer_id,
+    khong qua Deal) - dung CHUNG dung logic voi _attach_customer_metrics()
+    ben tren (tranh viet 2 cach khac nhau de doi chieu trang thai hop dong)."""
+    if not customer_ids:
+        return set()
+    from app.modules.all_platform.services.crm_customer_progress_service import SIGNED_CONTRACT_STATUSES
+
+    supabase = get_supabase_client()
+    lead_res = execute_supabase_query(
+        lambda: supabase.table("customer_leads")
+        .select("id, customer_id")
+        .in_("customer_id", customer_ids)
+        .eq("instance", settings.crm_instance)
+        .execute()
+    )
+    deal_id_to_customer = {row["id"]: row["customer_id"] for row in lead_res.data or [] if row.get("customer_id")}
+    result: set[str] = set()
+    deal_ids = list(deal_id_to_customer.keys())
+    if deal_ids:
+        contract_res = execute_supabase_query(
+            lambda: supabase.table("contracts").select("deal_id, status")
+            .in_("deal_id", deal_ids).eq("instance", settings.crm_instance).execute()
+        )
+        for row in contract_res.data or []:
+            if row.get("status") in SIGNED_CONTRACT_STATUSES and row.get("deal_id") in deal_id_to_customer:
+                result.add(deal_id_to_customer[row["deal_id"]])
+    direct_res = execute_supabase_query(
+        lambda: supabase.table("contracts").select("customer_id, status, deal_id")
+        .in_("customer_id", customer_ids).eq("instance", settings.crm_instance).execute()
+    )
+    for row in direct_res.data or []:
+        if row.get("status") in SIGNED_CONTRACT_STATUSES and not row.get("deal_id") and row.get("customer_id"):
+            result.add(row["customer_id"])
+    return result
 
 
 def list_customers(
@@ -365,7 +413,9 @@ def list_customers(
 
     def base_query(*, include_status: bool = True):
         query = supabase.table("crm_customers").select(CUSTOMER_COLUMNS).eq("instance", settings.crm_instance)
-        if include_status and status:
+        # "has_contract" KHONG phai gia tri that cua cot status - loc rieng o
+        # Python (xem duoi, sau khi co rows) bang _customer_ids_with_contract().
+        if include_status and status and status != HAS_CONTRACT_FILTER:
             query = query.eq("status", status)
         if source:
             query = query.eq("source", source)
@@ -428,6 +478,14 @@ def list_customers(
         crm_team_member_ids = get_crm_team_member_ids(team)
         rows = [row for row in rows if str(row.get("owner_id") or "") in crm_team_member_ids]
 
+    # Tab "Hợp đồng" (2026-10-23) - loc theo bang contracts (status con
+    # "song"), KHONG phai cot crm_customers.status - base_query() da BO QUA
+    # eq("status", ...) cho gia tri nay (xem tren) nen `rows` o day van la
+    # TOAN BO khach khop search/source/owner/team, loc dung o Python.
+    if status == HAS_CONTRACT_FILTER:
+        ids_with_contract = _customer_ids_with_contract([row["id"] for row in rows])
+        rows = [row for row in rows if row.get("id") in ids_with_contract]
+
     # KPI (dem theo tung tab trang thai) phai luon tinh tren TOAN BO tap hop
     # khop search/source/owner_id, KHONG bi gioi han theo `status` dang chon -
     # neu khong, bam vao 1 tab se lam cac tab con lai hien 0 (bug thuc te nguoi
@@ -465,7 +523,15 @@ def list_customers(
     page_rows = _attach_customer_metrics(rows[start:start + page_size], user=user)
     for customer in page_rows:
         customer["can_edit"] = can_edit_customer(user, customer)
-    return {"items": page_rows, "total": total, "page": page, "page_size": page_size, "kpi": _kpi(kpi_rows)}
+    # Dem "Hợp đồng" (2026-10-23) tren DUNG tap kpi_rows (toan bo, khong bi
+    # gioi han theo status dang chon) - tai su dung ids_with_contract da tinh
+    # o tren neu status dang la has_contract (cung 1 tap voi rows luc do),
+    # nguoc lai tinh rieng tren kpi_rows.
+    kpi_contract_ids = (
+        ids_with_contract if status == HAS_CONTRACT_FILTER
+        else _customer_ids_with_contract([row["id"] for row in kpi_rows])
+    )
+    return {"items": page_rows, "total": total, "page": page, "page_size": page_size, "kpi": _kpi(kpi_rows, kpi_contract_ids)}
 
 
 def quick_search_customers(user: dict[str, Any], q: str, limit: int = 8) -> list[dict[str, Any]]:
@@ -618,7 +684,7 @@ def delete_customers_bulk(customer_ids: list[str], user: dict[str, Any], confirm
 # danh sach workspace dich khi sao chep Khach hang CHI CO 2 clone doc lap con
 # lai, khai bao TINH tai day (dung y het _MAIN_COPY_TARGET_INSTANCES cua
 # crm_lead_service.py, khong tra cuu tu config nao ca).
-_MAIN_COPY_TARGET_INSTANCES = ("cloudgate", "SECURITYZONE")
+_MAIN_COPY_TARGET_INSTANCES = ("cloudgate", "SECURITYZONE", "timetech")
 
 
 def copy_customer_to_instance(customer_id: str, target_instance: str, user: dict[str, Any]) -> dict[str, Any]:

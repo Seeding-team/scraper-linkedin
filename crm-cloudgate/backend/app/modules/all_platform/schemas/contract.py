@@ -66,6 +66,8 @@ class ContractCreateRequest(BaseModel):
     start_date: Optional[str] = None
     end_date: Optional[str] = None
     payment_terms: Optional[str] = None
+    # "Thoi gian bao hanh" (2026-10-23) - chu tu do (vd "12 thang"), khong ep so/ngay.
+    warranty_period: Optional[str] = None
     progress_percent: int = Field(default=0, ge=0, le=100)
     payment_collected_percent: int = Field(default=0, ge=0, le=100)
     owner_id: Optional[str] = None
@@ -103,6 +105,7 @@ class ContractUpdateRequest(BaseModel):
     start_date: Optional[str] = None
     end_date: Optional[str] = None
     payment_terms: Optional[str] = None
+    warranty_period: Optional[str] = None
     progress_percent: Optional[int] = Field(default=None, ge=0, le=100)
     payment_collected_percent: Optional[int] = Field(default=None, ge=0, le=100)
     owner_id: Optional[str] = None

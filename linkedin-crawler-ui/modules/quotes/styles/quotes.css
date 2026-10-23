@@ -2828,8 +2828,20 @@ select.quote-compact-vat:hover {
   display: block;
 }
 
-.sheet-signatures span {
-  margin-top: 1.8rem;
+/* "sheet-signature-line" (2026-10-23, yeu cau sep): khoang trong + 1 duong ke
+ * ngang phia tren ten dai dien, de co cho KY TAY THAT khi in giay - truoc day
+ * chi co margin-top don thuan giua nhan va ten, khong ro la "cho de ky".
+ * Khoang cach doc TRUOC do giu nguyen (margin-top 1.8rem chuyen sang day), ten
+ * phia duoi chi can khoang cach nho voi duong ke. */
+.sheet-signatures span.sheet-signature-line {
+  margin: 8.5rem auto 0.4rem;
+  width: 65%;
+  max-width: 12rem;
+  height: 0;
+}
+
+.sheet-signatures span:not(.sheet-signature-line) {
+  margin-top: 0;
   color: #475569;
 }
 
@@ -3034,11 +3046,25 @@ select.quote-compact-vat:hover {
 }
 
 @media print {
+  /* BUG THAT DA GAP LAN 6 (2026-10-23, xac nhan qua PDF xuat THAT bang
+   * page.pdf() - khong phai doan CSS suong): cac modal dung JS lock scroll
+   * nen (`document.body.style.overflow = 'hidden'` - xem useBodyScrollLock.ts,
+   * QuoteWorkspaceModal.tsx dong 2155-2158/4086-4088, ContractDetailPage.tsx...)
+   * set INLINE STYLE tren <body>, TON TAI SUOT luc modal "Xem ban khach hang"
+   * dang mo - khi in/xuat PDF ngay trong luc modal mo (dung cach nguoi dung
+   * that su thao tac), inline style nay KHONG tu mat va chi co the bi de bang
+   * 1 rule stylesheet co !important (@media print nay). Thieu dong nay khien
+   * <body> giu overflow:hidden + height co dinh bang viewport man hinh -> moi
+   * noi dung bao gia vuot qua 1 "trang man hinh" (tong tien, dieu khoan, chu
+   * ky) bi CAT HAN thay vi chay sang trang in thu 2, dung voi QA thuc te "chi
+   * con 1 to giay nhung thieu han noi dung". */
   html,
   body {
     margin: 0 !important;
     padding: 0 !important;
     background: #ffffff !important;
+    overflow: visible !important;
+    height: auto !important;
     -webkit-print-color-adjust: exact;
     print-color-adjust: exact;
   }
@@ -3064,10 +3090,37 @@ select.quote-compact-vat:hover {
     visibility: visible;
   }
   .quote-print-root {
-    position: absolute;
-    left: 0;
-    top: 0;
+    position: static;
     width: 100%;
+  }
+
+  /* BUG THAT DA GAP LAN 9 (2026-10-23, xac nhan qua PDF xuat THAT bang
+   * page.pdf() - popup "Xem ban khach hang" trong QuoteWorkspaceModal, DUNG
+   * NODE/duong dan khac voi trang bao gia doc lap QuoteDetailPage/
+   * PublicQuotePage): sau khi doi `.quote-print-root` tu position:absolute
+   * (LAN 7) sang position:static (can thiet de dong gop vao chieu cao luong
+   * binh thuong, tranh bug ICB o LAN 4), no quay lai nam THAT SU ben trong
+   * cac lop layout cua AllPlatformShell (vd div ".flex-1 overflow-x-hidden
+   * bg-white p-3..." bao quanh <main>) - cac lop nay dung cho MAN HINH binh
+   * thuong voi `overflow-y:auto` + chieu cao co dinh theo vh (de tu cuon noi
+   * bo), VAN visibility:hidden (khong duoc chon rieng o tren) nhung overflow/
+   * height cua chung VAN cat mat noi dung con dang visibility:visible (dung
+   * y bai hoc LAN 2: overflow:hidden cat MOI hau due bat ke visibility gi).
+   * Ket qua: bang hang muc duoc chia dung 2 trang (table tu dong lap lai
+   * header - DUNG), nhung "Dieu khoan thanh toan"/chu ky bi CAT NGANG giua
+   * chung thay vi day sang trang 3 - khong phai do page-break-inside sai,
+   * ma do bi clip truoc khi kip sinh trang moi.
+   *
+   * FIX: KHONG the liet ke het ten class cu the cua AllPlatformShell (de vo
+   * khi doi cau trung sau nay, dung tinh than "bulletproof" cua rule body *
+   * o tren) - dung `:has()` (Chromium moi ho tro, repo nay chi target
+   * Chromium cho in/PDF, da xac nhan nhieu lan trong file) de reset overflow/
+   * height cho MOI TO TIEN O BAT KY CAP NAO chua .quote-print-root, khong
+   * can biet ten class. */
+  body *:has(.quote-print-root) {
+    overflow: visible !important;
+    height: auto !important;
+    max-height: none !important;
   }
 
   /* BUG THAT DA GAP LAN 5 (2026-10-11, phat hien qua PDF in THAT - khong phai
@@ -3425,8 +3478,18 @@ select.quote-compact-vat:hover {
     min-height: 10mm !important;
   }
 
-  .sheet-signatures span {
-    margin-top: 3mm !important;
+  /* "sheet-signature-line" khi in (2026-10-23) - cung 1 ly do voi ban man
+   * hinh: duong ke la cho KY TAY THAT, KHONG dung margin-top lon tren chinh
+   * <span> ten (se day ca cum xuong, dung nguy co lan 2 da canh bao o tren). */
+  .sheet-signatures span.sheet-signature-line {
+    margin: 20mm auto 1mm !important;
+    width: 65% !important;
+    max-width: 30mm !important;
+    height: 0 !important;
+  }
+
+  .sheet-signatures span:not(.sheet-signature-line) {
+    margin-top: 0 !important;
   }
 
   /* .quote-sheet--standard co san "overflow:hidden" (dung cho man hinh, che

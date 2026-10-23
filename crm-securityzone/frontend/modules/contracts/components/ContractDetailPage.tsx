@@ -12,6 +12,7 @@ import { ContractAIWizard } from '@/modules/crm/integrations/contracts/ContractA
 import {
   docxFromClauses, fetchVersionBlob, getContractReadiness, listContractActivity, listContractVersionsFull, runVersionRisk, saveBlobAs, saveContractVersionFull,
 } from '../repositories/contractDocs';
+import { ContractDocumentViewer } from './ContractDocumentViewer';
 import type { ActivityEntry, DocVersion, Readiness } from '../repositories/contractDocs';
 import { base64ToBlob } from '../repositories/contractDocs';
 import '@/modules/crm/styles/copilot.css';
@@ -155,6 +156,12 @@ export function ContractDetailContent({
   const current = useMemo(() => versions.find(v => v.version === selected) || null, [versions, selected]);
   const latest = versions.length ? versions[versions.length - 1] : null;
   const hasDocs = versions.length > 0;
+  // Fix bug mapping tai lieu (2026-10-23, yeu cau sep): hop dong "ghi nhan ngoai" (source=external)
+  // chi co `contract.fileUrl` (link/file nguoi dung tu nhap), KHONG BAO GIO co "version" that trong
+  // bucket contract-documents (versions chi ton tai qua luong AI Copilot/tao tai lieu trong CRM) -
+  // truoc day hasDocs=false khien ca badge/tab deu bao sai "Chua co tai lieu" du fileUrl co gia tri
+  // that. Coi fileUrl nhu 1 nguon tai lieu hop le rieng, DOC LAP voi `versions`/`hasDocs`.
+  const hasExternalFile = !hasDocs && !!contract?.fileUrl;
 
   async function saveInfo() {
     if (!contract) return;
@@ -237,8 +244,8 @@ export function ContractDetailContent({
     if (focusEdit && !loading && tab === 'overview') editCardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }, [focusEdit, loading, tab]);
 
-  if (loading) return <main className="contract-detail-page"><section className="contract-state">Đang tải hợp đồng...</section></main>;
-  if (error || !contract) return <main className="contract-detail-page"><section className="contract-state contract-state--error">{error || 'Không tìm thấy hợp đồng.'}</section></main>;
+  if (loading) return <main className={isDrawer ? 'cd-root' : 'contract-detail-page'}><section className="contract-state">Đang tải hợp đồng...</section></main>;
+  if (error || !contract) return <main className={isDrawer ? 'cd-root' : 'contract-detail-page'}><section className="contract-state contract-state--error">{error || 'Không tìm thấy hợp đồng.'}</section></main>;
 
   const nextStatuses = CONTRACT_STATUS_TRANSITIONS[contract.status] || [];
   // Nút chính nổi bật theo ĐÚNG trạng thái hiện tại (không hiện mọi nút ở mọi trạng thái):
@@ -292,6 +299,8 @@ export function ContractDetailContent({
               <button type="button" className="cp-btn" data-testid="action-download-docx" onClick={() => void dl(latest.version, 'docx')}>↓ Tải DOCX</button>
               <button type="button" className="cp-btn" data-testid="action-download-pdf" onClick={() => void dl(latest.version, 'pdf')}>↓ Tải PDF</button>
             </>
+          ) : hasExternalFile ? (
+            <button type="button" className="cp-btn" data-testid="action-view-external-doc" onClick={() => setTab('docs')}>👁 Xem tài liệu</button>
           ) : (
             <span data-testid="action-no-doc" style={{ fontSize: '0.78rem', color: '#9a3412', background: '#fff7ed', border: '1px solid #fed7aa', borderRadius: 6, padding: '4px 8px' }}>Chưa có tài liệu</span>
           )}
@@ -300,7 +309,7 @@ export function ContractDetailContent({
       </header>
 
       <div className="cp-tabs" role="tablist" style={{ padding: 0, marginTop: 8, borderBottom: isDrawer ? 0 : undefined }}>
-        {([['overview', 'Tổng quan'], ['docs', `Tài liệu (${versions.length})`], ['risk', 'AI rủi ro'], ['approval', 'Phê duyệt & ký'], ['history', 'Lịch sử']] as Array<[Tab, string]>).map(([id, label]) => (
+        {([['overview', 'Tổng quan'], ['docs', `Tài liệu (${versions.length || (hasExternalFile ? 1 : 0)})`], ['risk', 'AI rủi ro'], ['approval', 'Phê duyệt & ký'], ['history', 'Lịch sử']] as Array<[Tab, string]>).map(([id, label]) => (
           <button key={id} type="button" role="tab" data-testid={`detail-tab-${id}`} className={`cp-tab ${tab === id ? 'is-active' : ''}`} onClick={() => setTab(id)}>{label}</button>
         ))}
       </div>
@@ -325,7 +334,7 @@ export function ContractDetailContent({
               <dt style={{ color: '#64748b' }}>Ngày ký</dt><dd style={{ margin: 0 }}>{contract.signedAt ? new Date(contract.signedAt).toLocaleDateString('vi-VN') : '—'}</dd>
               <dt style={{ color: '#64748b' }}>Người phụ trách</dt><dd style={{ margin: 0 }}>{contract.ownerName || '—'}</dd>
               <dt style={{ color: '#64748b' }}>Nguồn</dt><dd style={{ margin: 0 }}>{contract.source === 'external' ? 'Ghi nhận hợp đồng có sẵn' : contract.aiGenerated ? 'Tạo bằng AI Copilot' : 'Tạo trong CRM'}</dd>
-              <dt style={{ color: '#64748b' }}>Tài liệu</dt><dd style={{ margin: 0 }}>{latest ? `v${latest.version} · ${when(latest.createdAt)}${latest.createdByName ? ` · ${latest.createdByName}` : ''}` : 'Chưa có tài liệu DOCX/PDF'}</dd>
+              <dt style={{ color: '#64748b' }}>Tài liệu</dt><dd style={{ margin: 0 }}>{latest ? `v${latest.version} · ${when(latest.createdAt)}${latest.createdByName ? ` · ${latest.createdByName}` : ''}` : hasExternalFile ? 'Có file/link đã lưu (xem ở tab Tài liệu)' : 'Chưa có tài liệu DOCX/PDF'}</dd>
             </dl>
           </div>
           <div className="cp-card" ref={editCardRef} data-testid="detail-edit-card" style={{ display: 'grid', gap: 10, ...(focusEdit ? { borderColor: '#be1e4b', boxShadow: '0 0 0 2px #fdf2f8' } : {}) }}>
@@ -350,7 +359,9 @@ export function ContractDetailContent({
       {/* ───────── Tài liệu ───────── */}
       {tab === 'docs' ? (
         <section style={{ display: 'grid', gap: 14, marginTop: 12 }} data-testid="detail-docs">
-          {!hasDocs ? (
+          {hasExternalFile ? (
+            <ContractDocumentViewer contractId={contractId} fileUrl={contract.fileUrl as string} fileName={contract.title} />
+          ) : !hasDocs ? (
             <div className="cp-card" data-testid="legacy-notice" style={{ background: '#fff7ed', borderColor: '#fed7aa' }}>
               <b style={{ fontSize: '0.88rem', color: '#9a3412' }}>Chưa có tài liệu DOCX/PDF{contract.aiGenerated ? ' — hợp đồng tạo bằng AI Copilot nhưng chưa từng lưu phiên bản tài liệu nào' : ' (hợp đồng cũ/legacy)'}</b>
               <p style={{ margin: '4px 0 0', fontSize: '0.8rem', color: '#9a3412' }}>Dưới đây là nội dung điều khoản lưu trong hệ thống (không phải DOCX/PDF thật). Hệ thống không tự tạo tài liệu thay bạn — bấm nút bên dưới để tạo tài liệu DOCX/PDF thật từ đúng nội dung này, hoặc soạn lại bằng AI Copilot.</p>

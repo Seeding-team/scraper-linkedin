@@ -40,6 +40,11 @@ const STATUS_TABS: Array<{ value: string; label: string; kpiKey: keyof CrmCustom
   { value: 'new_lead', label: 'Tiềm năng', kpiKey: 'new_lead' },
   { value: 'following', label: 'Đang bán', kpiKey: 'following' },
   { value: 'current_customer', label: 'Đã mua', kpiKey: 'current_customer' },
+  // "Hợp đồng" (2026-10-23, yeu cau sep) - loc khach dang co hop dong con
+  // hieu luc/da ky, KHAC voi loc theo cot `status` nhu cac tab tren - backend
+  // (`list_customers()`) nhan dung gia tri 'has_contract' nay de doi sang
+  // nhanh loc theo bang `contracts` thay vi cot `status`.
+  { value: 'has_contract', label: 'Hợp đồng', kpiKey: 'has_contract' },
   { value: 'not_fit', label: 'Ngừng hoạt động', kpiKey: 'not_fit' },
 ];
 
@@ -154,7 +159,7 @@ export function CrmCustomersDirectory() {
   const { members } = useMembers();
   const [items, setItems] = useState<CrmCustomerRow[]>([]);
   const [total, setTotal] = useState(0);
-  const [kpi, setKpi] = useState<CrmCustomerKpi>({ total: 0, new_lead: 0, following: 0, current_customer: 0, not_fit: 0 });
+  const [kpi, setKpi] = useState<CrmCustomerKpi>({ total: 0, new_lead: 0, following: 0, current_customer: 0, not_fit: 0, has_contract: 0 });
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
   const [searchInput, setSearchInput] = useState('');
@@ -403,6 +408,7 @@ export function CrmCustomersDirectory() {
           following: data.kpi?.following ?? 0,
           current_customer: data.kpi?.current_customer ?? 0,
           not_fit: data.kpi?.not_fit ?? 0,
+          has_contract: data.kpi?.has_contract ?? 0,
         });
         setError('');
       })
@@ -888,14 +894,6 @@ export function CrmCustomersDirectory() {
     <div className="crm-shell" onPointerDownCapture={handleShellPointerDown}>
       <section className="crm-page-card crm-customers-page-shell">
         {error ? <p className="crm-error">{error}</p> : null}
-
-        <div className="crm-guidance-strip">
-          <div className="crm-guidance-chip">Biết rõ doanh nghiệp/khách hàng → Thêm khách hàng.</div>
-          <div className="crm-guidance-chip">
-            Đầu mối chưa xác minh → <Link href="/all-platform/crm/leads">Tạo Lead</Link>.
-          </div>
-          <div className="crm-guidance-chip">Có nhu cầu bán hàng → Tạo cơ hội.</div>
-        </div>
 
         <div className="crm-page-tabs" role="tablist">
           {STATUS_TABS.map(tab => (

@@ -199,3 +199,35 @@ def download_contract_version(contract_id: str, version: int, fmt: str, user: di
             return BaseResponse(success=False, message=str(exc))
         return Response(pdf, media_type="application/pdf", headers={"Content-Disposition": f'attachment; filename="hop-dong-v{version}.pdf"'})
     return BaseResponse(success=False, message="Định dạng không hợp lệ (docx|pdf).")
+
+
+@contract_versions_router.get("/{contract_id}/documents/preview-pdf")
+def preview_external_document_as_pdf(contract_id: str, file_url: str, user: dict = Depends(get_current_user)):
+    """Xem truoc file hop dong 'ghi nhan ngoai' (chi co contracts.file_url, KHONG phai 1 'version'
+    luu trong bucket contract-documents) - xem ContractDetailPage.tsx/ContractDocumentViewer.tsx.
+    Proxy LUON qua backend (khong de FE <iframe src={file_url}> truc tiep) vi file_url tro domain
+    ngoai co the chan X-Frame-Options/CORS; DOCX thi convert sang PDF bang CHINH engine da dung cho
+    cac phien ban luu trong bucket (contract_docx_engine.convert_docx_to_pdf, LibreOffice headless -
+    KHONG viet converter rieng). Nhan dien dinh dang theo magic bytes (%PDF.../PK\x03\x04 cho docx,
+    vi la file zip) thay vi tin duoi url (link ngoai co the khong co duoi ro rang)."""
+    try:
+        _authorize(contract_id, user)
+    except (PermissionError, LookupError) as exc:
+        return _deny(exc)
+    import httpx
+
+    try:
+        resp = httpx.get(file_url, timeout=20.0, follow_redirects=True)
+        resp.raise_for_status()
+    except Exception as exc:  # noqa: BLE001
+        return BaseResponse(success=False, message=f"Không tải được file từ link đã lưu: {exc}")
+    content = resp.content
+    if content[:4] == b"%PDF":
+        return Response(content, media_type="application/pdf", headers={"Content-Disposition": 'inline; filename="hop-dong.pdf"'})
+    if content[:2] == b"PK":  # DOCX la file zip (PK\x03\x04)
+        try:
+            pdf = eng.convert_docx_to_pdf(content)
+        except (eng.PdfEngineUnavailable, ValueError) as exc:
+            return BaseResponse(success=False, message=str(exc))
+        return Response(pdf, media_type="application/pdf", headers={"Content-Disposition": 'inline; filename="hop-dong.pdf"'})
+    return BaseResponse(success=False, message="Định dạng file không hỗ trợ xem trước (chỉ PDF/DOCX).")

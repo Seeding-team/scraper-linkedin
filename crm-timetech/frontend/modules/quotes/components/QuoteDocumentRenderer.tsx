@@ -1378,10 +1378,17 @@ export function QuoteDocumentRenderer({
             {/* Khong con hien placeholder "[Đại diện công ty]" khi trong -
              * day la dong DE KY THAT, de trong (khong chu) van hop ly hon
              * hien 1 chuoi ngoac vuong khong phai chu ky ai ca. */}
+            {/* "sheet-signature-line" (2026-10-23, yeu cau sep - ten dai dien
+             * khong co cho ky tay khi in giay): 1 duong ke ngang ngan phia
+             * tren ten, tao khoang trong de ky that bang tay truoc khi dong
+             * dau - KHONG dung border-top tren <span> ten (se dinh sat vao
+             * chu) ma la 1 phan tu rieng. */}
+            <span className="sheet-signature-line" aria-hidden="true" />
             <span>{String(fieldValue('companyRepresentative') || '')}</span>
           </div>
           <div>
             <strong>{findField('customerRepresentative').label || 'Đại diện khách hàng'}</strong>
+            <span className="sheet-signature-line" aria-hidden="true" />
             <span>{String(fieldValue('customerRepresentative') || '')}</span>
           </div>
         </footer>

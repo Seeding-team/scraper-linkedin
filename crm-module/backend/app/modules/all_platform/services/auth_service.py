@@ -16,6 +16,36 @@ from app.core.config import settings
 from app.core.supabase_client import execute_supabase_query, get_supabase_client
 from app.modules.all_platform.services.crm_permission_service import is_sale_member
 
+
+def _resolve_crm_function_area(user_id: Optional[str]) -> Optional[str]:
+    """Khoi/chuyen mon (`crm_teams.function_area`, vd 'sales'/'marketing') cua
+    Team CRM ma user thuoc ve (member hoac leader) - dung de quyet dinh route
+    mac dinh sau dang nhap (xem getDashboardHrefForRole o FE). Khong duoc lam
+    fail ca request dang nhap neu lookup loi/chua co Team - luon nuot loi, tra
+    None (FE se tu fallback ve logic cu theo quote_business_role)."""
+    if not user_id:
+        return None
+    try:
+        from app.modules.all_platform.services.crm_permission_service import get_crm_team_id_for_user
+
+        team_id = get_crm_team_id_for_user(user_id)
+        if not team_id:
+            return None
+        result = execute_supabase_query(
+            lambda: get_supabase_client()
+            .table("crm_teams")
+            .select("function_area")
+            .eq("id", team_id)
+            .limit(1)
+            .execute()
+        )
+        if result.data:
+            return result.data[0].get("function_area")
+    except Exception:
+        return None
+    return None
+
+
 _USER_BASE_FIELDS = (
     "id, email, name, role, is_active, can_approve_quotes, quote_business_role, created_at, updated_at, "
     "home_instance, allowed_instances"
@@ -231,6 +261,7 @@ def register_user(email: str, password: str, name: Optional[str] = None) -> dict
             "name": cached_user.get("name"),
             "role": cached_user["role"],
             "allowedInstances": cached_user.get("allowed_instances"),
+            "crm_function_area": _resolve_crm_function_area(cached_user.get("id")),
         },
         "access_token": access_token,
     }
@@ -301,6 +332,7 @@ def login_user(email: str, password: str) -> dict:
             "can_approve_quotes": bool(cached_user.get("can_approve_quotes")),
             "allowedInstances": cached_user.get("allowed_instances"),
             "quote_business_role": cached_user.get("quote_business_role"),
+            "crm_function_area": _resolve_crm_function_area(cached_user.get("id")),
         },
         "access_token": access_token,
     }
@@ -428,6 +460,7 @@ def login_with_google(id_token_str: str) -> dict:
             "can_approve_quotes": bool(cached_user.get("can_approve_quotes")),
             "allowedInstances": cached_user.get("allowed_instances"),
             "quote_business_role": cached_user.get("quote_business_role"),
+            "crm_function_area": _resolve_crm_function_area(cached_user.get("id")),
         },
         "access_token": access_token,
     }

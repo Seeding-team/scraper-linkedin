@@ -367,6 +367,27 @@ export async function fetchVersionBlob(contractId: string, version: number, fmt:
   return res.blob();
 }
 
+/** Xem truoc file hop dong "ghi nhan ngoai" (contract.fileUrl, khong phai 1 version luu trong
+ * bucket) - backend proxy + tu convert DOCX->PDF (xem contract_versions.py preview_external_document_as_pdf).
+ * Dung cho ContractDocumentViewer.tsx. */
+export async function fetchExternalDocumentPreviewPdf(contractId: string, fileUrl: string): Promise<Blob> {
+  const res = await fetch(
+    `${API_BASE_URL}/api/all-platform/contract-docs/${encodeURIComponent(contractId)}/documents/preview-pdf?file_url=${encodeURIComponent(fileUrl)}`,
+    { credentials: 'include', headers: authHeaders(false) },
+  );
+  const type = res.headers.get('content-type') || '';
+  if (!res.ok || type.includes('application/json')) {
+    let message = `Không xem trước được (${res.status})`;
+    try {
+      message = ((await res.json()) as ApiResponse<unknown>).message || message;
+    } catch {
+      /* giữ message mặc định */
+    }
+    throw new Error(message);
+  }
+  return res.blob();
+}
+
 export function saveBlobAs(blob: Blob, filename: string): void {
   saveBlob(blob, filename);
 }

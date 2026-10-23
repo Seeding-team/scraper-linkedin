@@ -40,6 +40,11 @@ const STATUS_TABS: Array<{ value: string; label: string; kpiKey: keyof CrmCustom
   { value: 'new_lead', label: 'Tiềm năng', kpiKey: 'new_lead' },
   { value: 'following', label: 'Đang bán', kpiKey: 'following' },
   { value: 'current_customer', label: 'Đã mua', kpiKey: 'current_customer' },
+  // "Hợp đồng" (2026-10-23, yeu cau sep) - loc khach dang co hop dong con
+  // hieu luc/da ky, KHAC voi loc theo cot `status` nhu cac tab tren - backend
+  // (`list_customers()`) nhan dung gia tri 'has_contract' nay de doi sang
+  // nhanh loc theo bang `contracts` thay vi cot `status`.
+  { value: 'has_contract', label: 'Hợp đồng', kpiKey: 'has_contract' },
   { value: 'not_fit', label: 'Ngừng hoạt động', kpiKey: 'not_fit' },
 ];
 
@@ -73,6 +78,7 @@ const PRIMARY_ACTION_LABEL: Record<string, string> = {
 const COPY_TARGET_OPTIONS: { instance: string; label: string }[] = [
   { instance: 'cloudgate', label: 'CloudGate' },
   { instance: 'SECURITYZONE', label: 'SecurityZone' },
+  { instance: 'timetech', label: 'TimeTech' },
 ];
 
 type ApiCustomerRow = {
@@ -154,7 +160,7 @@ export function CrmCustomersDirectory() {
   const { members } = useMembers();
   const [items, setItems] = useState<CrmCustomerRow[]>([]);
   const [total, setTotal] = useState(0);
-  const [kpi, setKpi] = useState<CrmCustomerKpi>({ total: 0, new_lead: 0, following: 0, current_customer: 0, not_fit: 0 });
+  const [kpi, setKpi] = useState<CrmCustomerKpi>({ total: 0, new_lead: 0, following: 0, current_customer: 0, not_fit: 0, has_contract: 0 });
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
   const [searchInput, setSearchInput] = useState('');
@@ -213,14 +219,31 @@ export function CrmCustomersDirectory() {
   const [copying, setCopying] = useState(false);
   const [copyError, setCopyError] = useState('');
   const [copyFailures, setCopyFailures] = useState<Array<{ customer_id: string; message: string }>>([]);
+  // (2026-10-23, yeu cau sep) Copy gio la copy SAU (Co hoi/Bao gia/Lien he/
+  // Hop dong ke ca file/Du an), khong con la "sao chep nong 1 dong" nhu truoc
+  // - them buoc xac nhan 2 lan truoc khi goi API that (giong tinh than modal
+  // Xoa cascade ben duoi, dung field rieng thay vi dung chung cascadeStep).
+  const [copyConfirming, setCopyConfirming] = useState(false);
   const canCopyInstance = user?.role === 'admin';
   const copyReady = copyCustomerIds.length > 0 && copyCustomerIds.every(id => copyTargets[id]);
+
+  // Di chuyen Khach hang sang workspace khac (tinh nang MOI, khac Copy o cho
+  // CHUYEN HAN - mat o nguon, co o dich, giu nguyen ID) - dung chung UI/kieu
+  // state voi Copy nhung goi endpoint rieng `/move-instance`.
+  const [moveCustomerIds, setMoveCustomerIds] = useState<string[]>([]);
+  const [moveTargets, setMoveTargets] = useState<Record<string, string>>({});
+  const [moving, setMoving] = useState(false);
+  const [moveError, setMoveError] = useState('');
+  const [moveFailures, setMoveFailures] = useState<Array<{ customer_id: string; message: string }>>([]);
+  const [moveConfirming, setMoveConfirming] = useState(false);
+  const moveReady = moveCustomerIds.length > 0 && moveCustomerIds.every(id => moveTargets[id]);
 
   function openCopyModal(customer: CrmCustomerRow) {
     setCopyCustomerIds([customer.id]);
     setCopyTargets({});
     setCopyError('');
     setCopyFailures([]);
+    setCopyConfirming(false);
   }
 
   function openCopyModalForSelection() {
@@ -230,6 +253,7 @@ export function CrmCustomersDirectory() {
     setCopyTargets({});
     setCopyError('');
     setCopyFailures([]);
+    setCopyConfirming(false);
   }
 
   function closeCopyModal() {
@@ -238,6 +262,81 @@ export function CrmCustomersDirectory() {
     setCopyTargets({});
     setCopyError('');
     setCopyFailures([]);
+    setCopyConfirming(false);
+  }
+
+  function openMoveModal(customer: CrmCustomerRow) {
+    setMoveCustomerIds([customer.id]);
+    setMoveTargets({});
+    setMoveError('');
+    setMoveFailures([]);
+    setMoveConfirming(false);
+  }
+
+  function openMoveModalForSelection() {
+    const movable = items.filter(customer => selectedIds.has(customer.id)).map(customer => customer.id);
+    if (movable.length === 0) return;
+    setMoveCustomerIds(movable);
+    setMoveTargets({});
+    setMoveError('');
+    setMoveFailures([]);
+    setMoveConfirming(false);
+  }
+
+  function closeMoveModal() {
+    if (moving) return;
+    setMoveCustomerIds([]);
+    setMoveTargets({});
+    setMoveError('');
+    setMoveFailures([]);
+    setMoveConfirming(false);
+  }
+
+  function setMoveTargetFor(customerId: string, instance: string) {
+    setMoveTargets(prev => ({ ...prev, [customerId]: instance }));
+  }
+
+  function applyMoveTargetToAll(instance: string) {
+    setMoveTargets(prev => {
+      const next = { ...prev };
+      moveCustomerIds.forEach(id => { next[id] = instance; });
+      return next;
+    });
+  }
+
+  async function confirmMove() {
+    if (!moveReady || moving) return;
+    setMoving(true);
+    setMoveError('');
+    setMoveFailures([]);
+    try {
+      const assignments = moveCustomerIds.map(id => ({ customer_id: id, target_instance: moveTargets[id] }));
+      const res = await fetch(`${API_BASE_URL}/api/all-platform/crm/customers/move-instance`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: headers(),
+        body: JSON.stringify({ assignments }),
+      });
+      const body = await res.json();
+      if (!res.ok || body.success === false) throw new Error(body?.message || 'Không di chuyển được sang workspace khác.');
+      const failures = (body.data?.failed || []) as Array<{ customer_id: string; message: string }>;
+      if (failures.length > 0) {
+        setMoveFailures(failures);
+        const failedIds = new Set(failures.map(f => f.customer_id));
+        setSelectedIds(prev => new Set([...prev].filter(id => failedIds.has(id))));
+        setMoveCustomerIds(failures.map(f => f.customer_id));
+        setMoveConfirming(false);
+      } else {
+        setSelectedIds(new Set());
+        setMoveCustomerIds([]);
+        setMoveTargets({});
+        void load();
+      }
+    } catch (err) {
+      setMoveError(err instanceof Error ? err.message : 'Không di chuyển được sang workspace khác.');
+    } finally {
+      setMoving(false);
+    }
   }
 
   function setCopyTargetFor(customerId: string, instance: string) {
@@ -403,6 +502,7 @@ export function CrmCustomersDirectory() {
           following: data.kpi?.following ?? 0,
           current_customer: data.kpi?.current_customer ?? 0,
           not_fit: data.kpi?.not_fit ?? 0,
+          has_contract: data.kpi?.has_contract ?? 0,
         });
         setError('');
       })
@@ -856,6 +956,10 @@ export function CrmCustomersDirectory() {
             key: 'copy-instance',
             label: 'Sao chép sang workspace khác',
             onSelect: () => openCopyModal(customer),
+          }, {
+            key: 'move-instance',
+            label: 'Di chuyển sang workspace khác',
+            onSelect: () => openMoveModal(customer),
           }]
         : []),
       {
@@ -888,14 +992,6 @@ export function CrmCustomersDirectory() {
     <div className="crm-shell" onPointerDownCapture={handleShellPointerDown}>
       <section className="crm-page-card crm-customers-page-shell">
         {error ? <p className="crm-error">{error}</p> : null}
-
-        <div className="crm-guidance-strip">
-          <div className="crm-guidance-chip">Biết rõ doanh nghiệp/khách hàng → Thêm khách hàng.</div>
-          <div className="crm-guidance-chip">
-            Đầu mối chưa xác minh → <Link href="/all-platform/crm/leads">Tạo Lead</Link>.
-          </div>
-          <div className="crm-guidance-chip">Có nhu cầu bán hàng → Tạo cơ hội.</div>
-        </div>
 
         <div className="crm-page-tabs" role="tablist">
           {STATUS_TABS.map(tab => (
@@ -978,6 +1074,16 @@ export function CrmCustomersDirectory() {
                   onClick={openCopyModalForSelection}
                 >
                   Sao chép sang workspace khác
+                </button>
+              ) : null}
+              {canCopyInstance ? (
+                <button
+                  type="button"
+                  className="crm-secondary-button"
+                  data-testid="customer-bulk-move-btn"
+                  onClick={openMoveModalForSelection}
+                >
+                  Di chuyển sang workspace khác
                 </button>
               ) : null}
               <button
@@ -1453,8 +1559,8 @@ export function CrmCustomersDirectory() {
                 <p className="crm-modal-title">Sao chép sang workspace khác</p>
                 <p className="crm-modal-subtitle">
                   {copyCustomerIds.length > 1
-                    ? `Chọn workspace đích riêng cho từng khách hàng (${copyCustomerIds.length} khách hàng) — hồ sơ gốc vẫn giữ nguyên ở workspace hiện tại.`
-                    : `Tạo 1 bản sao của khách hàng "${items.find(c => c.id === copyCustomerIds[0])?.companyName || items.find(c => c.id === copyCustomerIds[0])?.customerName || ''}" ở workspace khác — hồ sơ gốc vẫn giữ nguyên ở workspace hiện tại.`}
+                    ? `Sẽ sao chép TOÀN BỘ dữ liệu của ${copyCustomerIds.length} khách hàng (Cơ hội, Báo giá, Người liên hệ, Hợp đồng kể cả file tài liệu, Dự án) sang workspace đích — hồ sơ gốc vẫn giữ nguyên ở workspace hiện tại. Hành động không thể hoàn tác.`
+                    : `Sẽ sao chép TOÀN BỘ dữ liệu của khách hàng "${items.find(c => c.id === copyCustomerIds[0])?.companyName || items.find(c => c.id === copyCustomerIds[0])?.customerName || ''}" (Cơ hội, Báo giá, Người liên hệ, Hợp đồng kể cả file tài liệu, Dự án) sang workspace khác — hồ sơ gốc vẫn giữ nguyên ở workspace hiện tại. Hành động không thể hoàn tác.`}
                 </p>
               </div>
             </header>
@@ -1472,50 +1578,168 @@ export function CrmCustomersDirectory() {
                   </ul>
                 </div>
               ) : null}
-              {copyCustomerIds.length > 1 ? (
-                <div style={{ marginBottom: '0.75rem' }}>
-                  <SearchableSelect
-                    value=""
-                    onChange={applyCopyTargetToAll}
-                    placeholder="Áp dụng 1 workspace cho tất cả (tuỳ chọn)"
-                    options={COPY_TARGET_OPTIONS.map(option => ({ value: option.instance, label: option.label }))}
-                  />
+              {copyConfirming ? (
+                <div className="crm-lead-check-banner crm-lead-check-banner--warning">
+                  <b>Bạn có chắc chắn?</b>
+                  <span>
+                    Toàn bộ Cơ hội/Báo giá/Người liên hệ/Hợp đồng (kể cả file tài liệu)/Dự án của{' '}
+                    {copyCustomerIds.length > 1 ? `${copyCustomerIds.length} khách hàng` : 'khách hàng này'} sẽ được sao chép sang workspace đích đã chọn. Hành động này không thể hoàn tác.
+                  </span>
                 </div>
-              ) : null}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', maxHeight: 260, overflowY: 'auto' }}>
-                {copyCustomerIds.map(customerId => {
-                  const customer = items.find(c => c.id === customerId);
-                  const label = customer?.companyName || customer?.customerName || customerId;
-                  return (
-                    <div key={customerId} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                      <span className="crm-truncate" style={{ flex: 1, minWidth: 0 }} title={label}>
-                        {label}
-                      </span>
-                      <div style={{ width: 200, flexShrink: 0 }}>
-                        <SearchableSelect
-                          value={copyTargets[customerId] || ''}
-                          onChange={value => setCopyTargetFor(customerId, value)}
-                          placeholder="Chọn workspace"
-                          options={COPY_TARGET_OPTIONS.map(option => ({ value: option.instance, label: option.label }))}
-                        />
-                      </div>
+              ) : (
+                <>
+                  {copyCustomerIds.length > 1 ? (
+                    <div style={{ marginBottom: '0.75rem' }}>
+                      <SearchableSelect
+                        value=""
+                        onChange={applyCopyTargetToAll}
+                        placeholder="Áp dụng 1 workspace cho tất cả (tuỳ chọn)"
+                        options={COPY_TARGET_OPTIONS.map(option => ({ value: option.instance, label: option.label }))}
+                      />
                     </div>
-                  );
-                })}
-              </div>
+                  ) : null}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', maxHeight: 260, overflowY: 'auto' }}>
+                    {copyCustomerIds.map(customerId => {
+                      const customer = items.find(c => c.id === customerId);
+                      const label = customer?.companyName || customer?.customerName || customerId;
+                      return (
+                        <div key={customerId} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                          <span className="crm-truncate" style={{ flex: 1, minWidth: 0 }} title={label}>
+                            {label}
+                          </span>
+                          <div style={{ width: 200, flexShrink: 0 }}>
+                            <SearchableSelect
+                              value={copyTargets[customerId] || ''}
+                              onChange={value => setCopyTargetFor(customerId, value)}
+                              placeholder="Chọn workspace"
+                              options={COPY_TARGET_OPTIONS.map(option => ({ value: option.instance, label: option.label }))}
+                            />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </>
+              )}
             </div>
             <footer className="crm-modal-footer">
-              <button type="button" className="crm-cancel-button" disabled={copying} onClick={closeCopyModal}>
-                Hủy
+              <button
+                type="button"
+                className="crm-cancel-button"
+                disabled={copying}
+                onClick={copyConfirming ? () => setCopyConfirming(false) : closeCopyModal}
+              >
+                {copyConfirming ? 'Quay lại' : 'Hủy'}
               </button>
               <button
                 type="button"
                 className="crm-primary-button"
                 disabled={copying || !copyReady}
-                onClick={() => void confirmCopy()}
+                onClick={() => (copyConfirming ? void confirmCopy() : setCopyConfirming(true))}
               >
                 {copying ? <Loader2 className="crm-save-spinner" /> : null}
-                {copying ? 'Đang sao chép...' : 'Sao chép'}
+                {copying ? 'Đang sao chép...' : copyConfirming ? 'Xác nhận sao chép' : 'Sao chép'}
+              </button>
+            </footer>
+          </div>
+        </div>
+      ) : null}
+
+      {moveCustomerIds.length > 0 ? (
+        <div
+          className="crm-modal-backdrop crm-modal-backdrop--confirm"
+          onClick={() => (moving ? undefined : closeMoveModal())}
+        >
+          <div
+            className="crm-modal crm-modal--confirm"
+            role="dialog"
+            aria-modal="true"
+            onClick={event => event.stopPropagation()}
+          >
+            <header className="crm-modal-header">
+              <div>
+                <p className="crm-modal-title">Di chuyển sang workspace khác</p>
+                <p className="crm-modal-subtitle">
+                  {moveCustomerIds.length > 1
+                    ? `Sẽ XOÁ KHỎI workspace hiện tại và chuyển hẳn toàn bộ dữ liệu của ${moveCustomerIds.length} khách hàng (Cơ hội, Báo giá, Người liên hệ, Hợp đồng, Dự án) sang workspace đích. Không thể hoàn tác.`
+                    : `Sẽ XOÁ KHỎI workspace hiện tại và chuyển hẳn toàn bộ dữ liệu của khách hàng "${items.find(c => c.id === moveCustomerIds[0])?.companyName || items.find(c => c.id === moveCustomerIds[0])?.customerName || ''}" (Cơ hội, Báo giá, Người liên hệ, Hợp đồng, Dự án) sang workspace đích. Không thể hoàn tác.`}
+                </p>
+              </div>
+            </header>
+            <div className="crm-modal-body">
+              {moveError ? <p className="crm-error">{moveError}</p> : null}
+              {moveFailures.length > 0 ? (
+                <div className="crm-error">
+                  <p>{moveFailures.length} khách hàng di chuyển thất bại:</p>
+                  <ul style={{ margin: '0.25rem 0 0', paddingLeft: '1.25rem' }}>
+                    {moveFailures.map(f => (
+                      <li key={f.customer_id}>
+                        {items.find(c => c.id === f.customer_id)?.companyName || items.find(c => c.id === f.customer_id)?.customerName || f.customer_id}: {f.message}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+              {moveConfirming ? (
+                <div className="crm-lead-check-banner crm-lead-check-banner--warning">
+                  <b>Bạn có chắc chắn?</b>
+                  <span>
+                    {moveCustomerIds.length > 1 ? `${moveCustomerIds.length} khách hàng` : 'Khách hàng này'} sẽ KHÔNG CÒN ở workspace hiện tại sau khi di chuyển — toàn bộ Cơ hội/Báo giá/Người liên hệ/Hợp đồng/Dự án đi theo sang workspace đích. Hành động này không thể hoàn tác.
+                  </span>
+                </div>
+              ) : (
+                <>
+                  {moveCustomerIds.length > 1 ? (
+                    <div style={{ marginBottom: '0.75rem' }}>
+                      <SearchableSelect
+                        value=""
+                        onChange={applyMoveTargetToAll}
+                        placeholder="Áp dụng 1 workspace cho tất cả (tuỳ chọn)"
+                        options={COPY_TARGET_OPTIONS.map(option => ({ value: option.instance, label: option.label }))}
+                      />
+                    </div>
+                  ) : null}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', maxHeight: 260, overflowY: 'auto' }}>
+                    {moveCustomerIds.map(customerId => {
+                      const customer = items.find(c => c.id === customerId);
+                      const label = customer?.companyName || customer?.customerName || customerId;
+                      return (
+                        <div key={customerId} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                          <span className="crm-truncate" style={{ flex: 1, minWidth: 0 }} title={label}>
+                            {label}
+                          </span>
+                          <div style={{ width: 200, flexShrink: 0 }}>
+                            <SearchableSelect
+                              value={moveTargets[customerId] || ''}
+                              onChange={value => setMoveTargetFor(customerId, value)}
+                              placeholder="Chọn workspace"
+                              options={COPY_TARGET_OPTIONS.map(option => ({ value: option.instance, label: option.label }))}
+                            />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </>
+              )}
+            </div>
+            <footer className="crm-modal-footer">
+              <button
+                type="button"
+                className="crm-cancel-button"
+                disabled={moving}
+                onClick={moveConfirming ? () => setMoveConfirming(false) : closeMoveModal}
+              >
+                {moveConfirming ? 'Quay lại' : 'Hủy'}
+              </button>
+              <button
+                type="button"
+                className="crm-primary-button"
+                disabled={moving || !moveReady}
+                onClick={() => (moveConfirming ? void confirmMove() : setMoveConfirming(true))}
+              >
+                {moving ? <Loader2 className="crm-save-spinner" /> : null}
+                {moving ? 'Đang di chuyển...' : moveConfirming ? 'Xác nhận di chuyển' : 'Di chuyển'}
               </button>
             </footer>
           </div>

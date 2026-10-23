@@ -204,6 +204,11 @@ export function CustomerQuotesTab({
   // field so với khi mở từ QuoteDetailPage.tsx (nguồn gốc feature này).
   const { user: currentAuthUser } = useAppAuth();
   const isAdminUser = currentAuthUser?.role === 'admin';
+  // Copy/Di chuyen bao gia sang workspace khac - Phase 2 (2026-10-23, yeu cau
+  // sep): mo them cho Sale/Presale (quyen that enforce o backend qua
+  // allowed_instances, day chi la an/hien UI cho gon).
+  const canUseCrossWorkspaceQuoteActions = isAdminUser
+    || ['sale', 'presale', 'both'].includes(currentAuthUser?.quote_business_role || '');
   const [copyWorkspaceQuotes, setCopyWorkspaceQuotes] = useState<Quote[] | null>(null);
   const [copyWorkspaceLoadingId, setCopyWorkspaceLoadingId] = useState<string | null>(null);
   const [moveQuoteTarget, setMoveQuoteTarget] = useState<Quote | null>(null);
@@ -741,7 +746,7 @@ export function CustomerQuotesTab({
                                   onSelect: () => openContactAssignModal(current.deal_id!, current.quote_number || current.id, relatedDeal?.primary_contact_id),
                                 } satisfies ActionMenuItem]
                                 : []),
-                              ...(currentAuthUser?.role === 'admin'
+                              ...(canUseCrossWorkspaceQuoteActions
                                 ? [
                                   {
                                     key: 'move_in_workspace',
