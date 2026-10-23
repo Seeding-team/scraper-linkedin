@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { allPlatformQuickInboxService } from "@/services/all-platform.service";
 import { useAppAuth } from "@/contexts/AppAuthContext";
-import { INBOX_TEMPLATES, POST_PLACEHOLDER } from "./inbox-templates";
+import { INBOX_TEMPLATES, POST_PLACEHOLDER } from "@/lib/inbox-templates";
 import type { QuickInboxTemplate } from "@/types/unified.types";
 
 export interface QuickInboxLibraryEntry {

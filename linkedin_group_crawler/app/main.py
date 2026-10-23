@@ -222,9 +222,9 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(
-    title="LinkedIn Group Crawler API",
+    title="Seeding App API",
     version="1.0.0",
-    description="FastAPI service to login, crawl LinkedIn groups, and expose top daily posts for n8n.",
+    description="All-Platform Seeding & Social Media Automation API",
     lifespan=lifespan,
 )
 
