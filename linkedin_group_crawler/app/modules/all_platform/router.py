@@ -506,6 +506,11 @@ all_platform_router.include_router(telegram_conversations_router, prefix="/teleg
 all_platform_router.include_router(telegram_messages_router, prefix="/telegram", tags=["Telegram Messages"])
 all_platform_router.include_router(telegram_events_router, prefix="/telegram", tags=["Telegram Events"])
 
+# ── Viber Chat (Viber Bot API + webhook) ────────────────────────────────────────
+from app.modules.all_platform.viber.api.routes.viber import router as viber_router
+
+all_platform_router.include_router(viber_router, prefix="/viber", tags=["Viber Chat"])
+
 # ── Scheduled Comments ─────────────────────────────────────────────────────────
 all_platform_router.include_router(
     scheduled_comments_router,
