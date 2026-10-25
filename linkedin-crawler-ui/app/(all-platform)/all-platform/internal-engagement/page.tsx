@@ -2768,6 +2768,18 @@ export default function InternalEngagementPage() {
                                     💬 "{m.comment_content}"
                                   </div>
                                 ) : null}
+                                {m.link_comment ? (
+                                  <div className="mt-1">
+                                    <a
+                                      href={m.link_comment}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      className="inline-flex items-center gap-1 text-[11px] font-bold text-blue-600 hover:text-blue-800 hover:underline"
+                                    >
+                                      <span>🔗</span> Link minh chứng ↗
+                                    </a>
+                                  </div>
+                                ) : null}
                               </td>
                               <td className="py-3 text-gray-500">
                                 {dbTeams.find((t) => t.id === m.team_id || t.name_team.toLowerCase() === (m.team || "").toLowerCase())?.name_team || m.team || "Team"}

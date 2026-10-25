@@ -62,7 +62,7 @@ def _get_member_id(email: str) -> Optional[str]:
 
 
 def record_action(payload: dict) -> dict:
-    """Record the final result of one comment/reaction/share attempt."""
+    """Record the final result of one comment/reaction/share attempt with resilient fallback."""
     print(f"Nhận request KPI: {payload}")
     supabase: Client = get_supabase_client()
 
@@ -77,59 +77,85 @@ def record_action(payload: dict) -> dict:
     link_comment = payload.get("link_comment") or ""
     comment_id = payload.get("comment_id") or ""
 
-    if action_type == "comment" and (link_comment or comment_id):
-        existing_cmt_query = supabase.table("internal_engagement_kpi").select("id, link_comment, status").eq("id_member", id_member)
-        if link_comment:
-            existing_cmt_query = existing_cmt_query.eq("link_comment", link_comment)
-        elif comment_id:
-            existing_cmt_query = existing_cmt_query.eq("comment_id", comment_id)
-        existing_cmt = existing_cmt_query.limit(1).execute()
-        if existing_cmt.data:
-            print(f"[KPI DEDUPLICATE] Bỏ qua vì comment đã ghi nhận: {link_comment or comment_id}")
-            return existing_cmt.data[0]
+    if action_type == "comment" and link_post:
+        try:
+            if link_comment or comment_id:
+                existing_cmt_query = supabase.table("internal_engagement_kpi").select("id, status").eq("id_member", id_member)
+                if link_comment:
+                    existing_cmt_query = existing_cmt_query.eq("link_comment", link_comment)
+                elif comment_id:
+                    existing_cmt_query = existing_cmt_query.eq("comment_id", comment_id)
+                existing_cmt = existing_cmt_query.limit(1).execute()
+                if existing_cmt.data:
+                    print(f"[KPI DEDUPLICATE] Bỏ qua vì comment đã ghi nhận: {link_comment or comment_id}")
+                    return existing_cmt.data[0]
+        except Exception:
+            pass
 
     if action_type in ("like", "reaction") and link_post:
-        existing_like = (
-            supabase.table("internal_engagement_kpi")
-            .select("id, status")
-            .eq("id_member", id_member)
-            .eq("link_post", link_post)
-            .in_("action_type", ["like", "reaction", "love", "care", "haha", "wow"])
-            .limit(1)
-            .execute()
-        )
-        if existing_like.data:
-            print(f"[KPI DEDUPLICATE] Bỏ qua vì bài viết đã được like: {link_post}")
-            return existing_like.data[0]
+        try:
+            # Chấp nhận mọi biến thể link của bài viết
+            link_clean = link_post.rstrip("/")
+            existing_like = (
+                supabase.table("internal_engagement_kpi")
+                .select("id, status")
+                .eq("id_member", id_member)
+                .in_("link_post", [link_post, link_clean, link_clean + "/"])
+                .in_("action_type", ["like", "reaction", "love", "care", "haha", "wow"])
+                .limit(1)
+                .execute()
+            )
+            if existing_like.data:
+                print(f"[KPI DEDUPLICATE] Bỏ qua vì bài viết đã được like: {link_post}")
+                return existing_like.data[0]
+        except Exception:
+            pass
 
-    data = {
+    raw_content = payload.get("content") or payload.get("text") or ""
+    # Bảo lưu link minh chứng trực tiếp vào content để KHÔNG BAO GIỜ bị mất link dù DB chưa có cột link_comment
+    final_content = raw_content
+    if link_comment and link_comment not in final_content:
+        if final_content:
+            final_content = f"{final_content}\n[Link minh chứng: {link_comment}]"
+        else:
+            final_content = f"[Link minh chứng: {link_comment}]"
+
+    base_data = {
         "id_member": id_member,
         "fanpage_id": payload.get("fanpage_id") or "",
         "fanpage_name": payload.get("fanpage_name") or "",
         "facebook_post_id": payload.get("facebook_post_id") or "unknown",
         "link_post": link_post,
         "action_type": action_type,
-        "content": payload.get("content") or payload.get("text") or "",
+        "content": final_content,
         "status": payload.get("status") or "success",
         "platform": payload.get("platform") or "facebook",
     }
-    if link_comment:
-        data["link_comment"] = link_comment
-    if comment_id:
-        data["comment_id"] = comment_id
-    if payload.get("facebook_name"):
-        data["facebook_name"] = payload.get("facebook_name")
-    if payload.get("reaction_id"):
-        data["reaction_id"] = payload.get("reaction_id")
     if payload.get("id_social_account"):
-        data["id_social_account"] = payload.get("id_social_account")
+        base_data["id_social_account"] = payload.get("id_social_account")
     if payload.get("profile_id"):
-        data["profile_id"] = payload.get("profile_id")
+        base_data["profile_id"] = payload.get("profile_id")
     if payload.get("error_message"):
-        data["error_message"] = payload.get("error_message")
+        base_data["error_message"] = payload.get("error_message")
 
-    result = supabase.table("internal_engagement_kpi").insert(data).execute()
-    return result.data[0] if result.data else {}
+    full_data = dict(base_data)
+    if link_comment:
+        full_data["link_comment"] = link_comment
+    if comment_id:
+        full_data["comment_id"] = comment_id
+    if payload.get("facebook_name"):
+        full_data["facebook_name"] = payload.get("facebook_name")
+    if payload.get("reaction_id"):
+        full_data["reaction_id"] = payload.get("reaction_id")
+
+    try:
+        # Thử lưu với đầy đủ các cột mới
+        result = supabase.table("internal_engagement_kpi").insert(full_data).execute()
+        return result.data[0] if result.data else {}
+    except Exception as err:
+        logger.warning(f"Lỗi khi insert với cột mở rộng ({err}) — tự động chuyển sang fallback base_data an toàn...")
+        result = supabase.table("internal_engagement_kpi").insert(base_data).execute()
+        return result.data[0] if result.data else {}
 
 
 def get_marks_by_links(email_member: str, link_posts: list[str]) -> dict[str, str]:
@@ -1716,10 +1742,27 @@ def get_post_interactions(link_post: str, email: str, team_id: Optional[str] = N
     users = supabase.table("app_users").select("id, name, email").in_("id", linked_user_ids).execute().data or []
     user_map = {linked_to_original.get(str(u["id"]), str(u["id"])): u for u in users}
 
+    # Chuẩn hóa các biến thể link_post (có/không slash, www/non-www)
+    link_variants = [link_post]
+    clean_l = link_post.rstrip("/")
+    if clean_l not in link_variants:
+        link_variants.append(clean_l)
+    slash_l = clean_l + "/"
+    if slash_l not in link_variants:
+        link_variants.append(slash_l)
+    if "https://www.facebook.com" in link_post:
+        link_variants.append(link_post.replace("https://www.facebook.com", "https://facebook.com"))
+        link_variants.append(clean_l.replace("https://www.facebook.com", "https://facebook.com"))
+        link_variants.append(slash_l.replace("https://www.facebook.com", "https://facebook.com"))
+    elif "https://facebook.com" in link_post:
+        link_variants.append(link_post.replace("https://facebook.com", "https://www.facebook.com"))
+        link_variants.append(clean_l.replace("https://facebook.com", "https://www.facebook.com"))
+        link_variants.append(slash_l.replace("https://facebook.com", "https://www.facebook.com"))
+
     kpi_rows = (
         supabase.table("internal_engagement_kpi")
         .select("*")
-        .eq("link_post", link_post)
+        .in_("link_post", link_variants)
         .in_("id_member", linked_user_ids)
         .order("created_at", desc=True)
         .execute()
@@ -1741,7 +1784,15 @@ def get_post_interactions(link_post: str, email: str, team_id: Optional[str] = N
             # nên dòng ĐẦU TIÊN gặp cho mỗi member ở action_type comment chính
             # là lần comment gần nhất (không cần so sánh thời gian lại).
             if action_type == "comment" and "comment_content" not in kpi_by_member[m_id]:
-                kpi_by_member[m_id]["comment_content"] = row.get("content") or ""
+                raw_c = row.get("content") or ""
+                link_c = row.get("link_comment") or ""
+                if not link_c and "[Link minh chứng: " in raw_c:
+                    try:
+                        link_c = raw_c.split("[Link minh chứng: ")[1].split("]")[0].strip()
+                    except Exception:
+                        pass
+                kpi_by_member[m_id]["link_comment"] = link_c
+                kpi_by_member[m_id]["comment_content"] = raw_c
             # latest_row: dùng để tính "thời gian gần nhất" cho cột Thời gian
             existing_latest = kpi_by_member[m_id].get("latest_row")
             if not existing_latest:
@@ -1810,6 +1861,7 @@ def get_post_interactions(link_post: str, email: str, team_id: Optional[str] = N
             "comment_time": m_kpi_actions.get("comment_time"),
             "share_time": m_kpi_actions.get("share_time"),
             "comment_content": m_kpi_actions.get("comment_content") or "",
+            "link_comment": m_kpi_actions.get("link_comment") or "",
             "time": time_str,
             "raw_created_at": raw_created_at,
         })

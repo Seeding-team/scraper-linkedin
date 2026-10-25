@@ -133,12 +133,10 @@ function getUniversalFacebookId(url) {
   return "";
 }
 
-let reelShareTimer = null;
-
 // Lắng nghe sự kiện Like/Comment/Share bắt được từ graphql-sniffer.js (MAIN world)
 document.addEventListener("markee-action-captured", (evt) => {
   try {
-    const { actionType, fbUid, authorName, postUrl, linkComment, commentId, reactionId, delayMs, content } = evt.detail || {};
+    const { actionType, fbUid, authorName, postUrl, linkComment, commentId, reactionId, content } = evt.detail || {};
     if (!actionType) return;
 
     const executeRecordAction = () => {
@@ -148,14 +146,6 @@ document.addEventListener("markee-action-captured", (evt) => {
         let emailMember = verifyConfig.email_member || "";
 
         const sendKpi = (targetEmail, config) => {
-          if (actionType === "comment") {
-            showToastNotification("🎉 Đã ghi nhận bình luận! Đã lưu link minh chứng (+1 KPI)");
-          } else if (actionType === "like") {
-            showToastNotification("❤️ Đã ghi nhận tương tác Thích/Thả tim! (+1 KPI)");
-          } else {
-            showToastNotification("🚀 Đã ghi nhận lượt Chia sẻ thành công! (+1 KPI)");
-          }
-
           let apiBase = config.apiBase || "https://seeding.markeeai.com";
           if (!apiBase || typeof apiBase !== "string" || !apiBase.startsWith("http")) {
             apiBase = "https://seeding.markeeai.com";
@@ -187,7 +177,17 @@ document.addEventListener("markee-action-captured", (evt) => {
             payload: kpiPayload
           }, (res) => {
             if (res && res.success) {
-              console.log("[Comment Extension] Đã lưu KPI và link minh chứng thành công.");
+              console.log("[Comment Extension] Đã lưu KPI và link minh chứng thành công:", res);
+              if (actionType === "comment") {
+                showToastNotification("🎉 Đã ghi nhận bình luận! Đã lưu link minh chứng (+1 KPI)");
+              } else if (actionType === "like") {
+                showToastNotification("❤️ Đã ghi nhận tương tác Thích/Thả tim! (+1 KPI)");
+              } else if (actionType === "share") {
+                showToastNotification("🚀 Đã ghi nhận lượt Chia sẻ thành công! (+1 KPI)");
+              }
+            } else {
+              console.error("[Comment Extension] Lỗi ghi nhận KPI:", res?.error);
+              showToastNotification(`⚠️ Ghi nhận ${actionType} chưa thành công: ${res?.error || "Lỗi máy chủ"}`, "warning");
             }
           });
         };
@@ -203,17 +203,9 @@ document.addEventListener("markee-action-captured", (evt) => {
       });
     };
 
-    // Nếu là thao tác Share Reel (có delayMs), hoãn 3s trước khi hiển thị Toast và đẩy KPI về Supabase
-    if (delayMs && delayMs > 0) {
-      if (reelShareTimer) clearTimeout(reelShareTimer);
-      console.log(`[Comment Extension] Bắt được thao tác Share Reel, chờ ${delayMs}ms trước khi gửi KPI...`);
-      reelShareTimer = setTimeout(executeRecordAction, delayMs);
-    } else {
-      executeRecordAction();
-    }
+    executeRecordAction();
   } catch (e) {}
 });
-
 
 function getTokensFromPage() {
   return new Promise((resolve, reject) => {

@@ -69,23 +69,53 @@
                 let delayMs = 0;
                 let content = "";
 
-                // 1. NGHE HÀNH ĐỘNG LIKE (CometUFIFeedbackReactMutation / Reel Like)
-                const fbReact = responseData && responseData.data && (responseData.data.feedback_react || responseData.data.feedback_reaction);
-                if (fbReact) {
-                    // CHỈ GHI NHẬN KHI THỰC SỰ LIKE / THẢ TIM (viewer_feedback_reaction_info != null)
-                    // Khi người dùng bấm xóa like (unlike), viewer_feedback_reaction_info là null -> BỎ QUA KHÔNG TÍNH KPI!
-                    if (fbReact.viewer_feedback_reaction_info && fbReact.viewer_feedback_reaction_info.id) {
-                        actionType = "like";
-                        fbUid = (fbReact.viewer_actor && fbReact.viewer_actor.id)
-                            || (fbReact.feedback && fbReact.feedback.viewer_actor && fbReact.feedback.viewer_actor.id)
-                            || "unknown";
-                        authorName = (fbReact.viewer_actor && fbReact.viewer_actor.name) || "";
-                        postUrl = (fbReact.feedback && fbReact.feedback.url) || window.location.href;
-                        reactionId = fbReact.viewer_feedback_reaction_info.id;
+                // 1. ƯU TIÊN SỐ 1: BẮT BÌNH LUẬN THỦ CÔNG (bắt qua json.data.comment_create)
+                if (responseData && responseData.data && responseData.data.comment_create) {
+                    const commentCreate = responseData.data.comment_create;
+                    const edgeNode = commentCreate.feedback_comment_edge && commentCreate.feedback_comment_edge.node;
+                    actionType = "comment";
+                    content = (edgeNode && edgeNode.body && edgeNode.body.text) || "";
+
+                    fbUid = (edgeNode && edgeNode.author && edgeNode.author.id)
+                        || (commentCreate.feedback && commentCreate.feedback.viewer_actor && commentCreate.feedback.viewer_actor.id)
+                        || "unknown";
+
+                    authorName = (edgeNode && edgeNode.author && edgeNode.author.name) || "";
+                    commentId = (edgeNode && edgeNode.legacy_fbid) || (edgeNode && edgeNode.id) || "";
+                    
+                    // Link comment minh chứng trực tiếp (ví dụ: https://www.facebook.com/reel/29299018259785802/?comment_id=1096395736652564)
+                    linkComment = (edgeNode && edgeNode.url) || "";
+                    postUrl = (commentCreate.feedback && commentCreate.feedback.url) || window.location.href;
+                    console.log("[GraphQL-Sniffer] Bắt thành công COMMENT:", { linkComment, commentId, authorName, content });
+                }
+
+                // 2. ƯU TIÊN SỐ 2: BẮT THAO TÁC THÍCH / THẢ TIM (feedback_react / feedback_reaction)
+                if (!actionType && responseData && responseData.data) {
+                    const fbReact = responseData.data.feedback_react || responseData.data.feedback_reaction;
+                    if (fbReact) {
+                        const reactionInfo = fbReact.viewer_feedback_reaction_info || (fbReact.feedback && fbReact.feedback.viewer_feedback_reaction_info);
+                        // CHỈ GHI NHẬN KHI THỰC SỰ LIKE / THẢ TIM (reactionInfo != null)
+                        // Khi người dùng bấm xóa like (unlike), reactionInfo là null -> BỎ QUA KHÔNG TÍNH KPI!
+                        if (reactionInfo) {
+                            actionType = "like";
+                            fbUid = (fbReact.viewer_actor && fbReact.viewer_actor.id)
+                                || (fbReact.feedback && fbReact.feedback.viewer_actor && fbReact.feedback.viewer_actor.id)
+                                || (fbReact.actor_provider && fbReact.actor_provider.current_actor && fbReact.actor_provider.current_actor.id)
+                                || "unknown";
+                            authorName = (fbReact.viewer_actor && fbReact.viewer_actor.name)
+                                || (fbReact.actor_provider && fbReact.actor_provider.current_actor && fbReact.actor_provider.current_actor.name)
+                                || "";
+                            postUrl = (fbReact.feedback && fbReact.feedback.url) || window.location.href;
+                            reactionId = String(reactionInfo.id || reactionInfo.key || reactionInfo.reaction_type || "1");
+                            console.log("[GraphQL-Sniffer] Bắt thành công LIKE/REACTION:", { reactionId, authorName, fbUid });
+                        } else {
+                            console.log("[GraphQL-Sniffer] Người dùng BỎ THÍCH (Unlike), bỏ qua không tính KPI.");
+                        }
                     }
                 }
 
-                // 2. NGHE HÀNH ĐỘNG SHARE (Bài viết thường - Kích hoạt ngay tức thì)
+                // 3. ƯU TIÊN SỐ 3: BẮT THAO TÁC CHIA SẺ THẬT (story_create / share_create / reels_share_create)
+                // LƯU Ý BẢO MẬT: TUYỆT ĐỐI KHÔNG bắt xfb_fb_shorts_seen_state_mutation (đó chỉ là xem video 3s, không phải Share!)
                 if (!actionType && responseData && responseData.data) {
                     const shareResult =
                         (responseData.data.story_create && (responseData.data.story_create.story || responseData.data.story_create)) ||
@@ -104,38 +134,8 @@
                             || "unknown";
                         authorName = (storyObj.default_actor && storyObj.default_actor.name) || "";
                         postUrl = storyObj.url || storyObj.permalink_url || window.location.href;
+                        console.log("[GraphQL-Sniffer] Bắt thành công SHARE:", { postUrl, authorName, fbUid });
                     }
-                }
-
-                // 3. NGHE HÀNH ĐỘNG SHARE REEL (Bắt qua xfb_fb_shorts_seen_state_mutation hoặc fb_shorts_seen_state_mutation)
-                if (!actionType && responseData && responseData.data) {
-                    const shortsMutation = responseData.data.xfb_fb_shorts_seen_state_mutation || responseData.data.fb_shorts_seen_state_mutation;
-                    const actorId = shortsMutation && shortsMutation.viewer && shortsMutation.viewer.actor && shortsMutation.viewer.actor.id;
-
-                    if (shortsMutation && actorId) {
-                        actionType = "share";
-                        fbUid = actorId;
-                        delayMs = 3000;
-                    }
-                }
-
-                // 4. NGHE HÀNH ĐỘNG COMMENT THỦ CÔNG (bắt qua json.data.comment_create)
-                if (!actionType && responseData && responseData.data && responseData.data.comment_create) {
-                    const commentCreate = responseData.data.comment_create;
-                    const edgeNode = commentCreate.feedback_comment_edge && commentCreate.feedback_comment_edge.node;
-                    actionType = "comment";
-                    content = (edgeNode && edgeNode.body && edgeNode.body.text) || "";
-
-                    fbUid = (edgeNode && edgeNode.author && edgeNode.author.id)
-                        || (commentCreate.feedback && commentCreate.feedback.viewer_actor && commentCreate.feedback.viewer_actor.id)
-                        || "unknown";
-
-                    authorName = (edgeNode && edgeNode.author && edgeNode.author.name) || "";
-                    commentId = (edgeNode && edgeNode.legacy_fbid) || (edgeNode && edgeNode.id) || "";
-                    
-                    // Link comment minh chứng trực tiếp (ví dụ: https://www.facebook.com/reel/29299018259785802/?comment_id=1096395736652564)
-                    linkComment = (edgeNode && edgeNode.url) || "";
-                    postUrl = (commentCreate.feedback && commentCreate.feedback.url) || window.location.href;
                 }
 
                 if (actionType) {
