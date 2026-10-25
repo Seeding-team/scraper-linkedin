@@ -226,6 +226,7 @@ export default function InternalEngagementPage() {
   const [commentText, setCommentText] = useState("");
   const [isTemplatePickerOpen, setIsTemplatePickerOpen] = useState(false);
   const [isExtensionReady, setIsExtensionReady] = useState(false);
+  const [showExtensionGuideModal, setShowExtensionGuideModal] = useState(false);
   const [isLiExtensionReady, setIsLiExtensionReady] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
   const [runProgress, setRunProgress] = useState<string | null>(null);
@@ -573,6 +574,10 @@ export default function InternalEngagementPage() {
           console.warn("Clipboard write failed:", err);
         }
       }
+    }
+
+    if (!isExtensionReady) {
+      showToast("Lưu ý: Chưa phát hiện Extension KPI. Hãy cài tiện ích để hệ thống tự động lưu link minh chứng & cộng điểm nhé!", "warning");
     }
 
     // Gửi message cho Extension và mở Tab bài viết
@@ -1719,6 +1724,19 @@ export default function InternalEngagementPage() {
             {mainTab !== "external" ? (
               <div className="flex items-center gap-3">
                 <a
+                  href="/comment-extension.zip"
+                  download="comment-extension.zip"
+                  className={`px-4 py-2.5 rounded-xl text-[13px] font-bold shadow-sm transition flex items-center gap-2 cursor-pointer ${
+                    isExtensionReady
+                      ? "border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
+                      : "border border-amber-300 bg-amber-500 hover:bg-amber-600 text-white shadow-md animate-pulse"
+                  }`}
+                  title="Tải tiện ích ghi nhận minh chứng Like & Comment tính KPI"
+                >
+                  <span>{isExtensionReady ? "✓" : "📥"}</span>
+                  <span>{isExtensionReady ? "Extension KPI đã kết nối" : "Tải Extension ghi nhận KPI"}</span>
+                </a>
+                <a
                   href="/all-platform/quick-comments"
                   className="px-4 py-2.5 border border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 rounded-xl text-[13px] font-bold shadow-sm transition flex items-center gap-2"
                 >
@@ -1747,6 +1765,44 @@ export default function InternalEngagementPage() {
               {loadError}
             </div>
           ) : null}
+
+          {/* BANNER CẢNH BÁO CHƯA CÓ EXTENSION KPI */}
+          {!isExtensionReady && (
+            <div className="mb-6 bg-gradient-to-r from-amber-50 via-orange-50 to-amber-50 border border-amber-200 rounded-2xl p-4.5 flex flex-col md:flex-row md:items-center justify-between gap-4 shadow-[0_2px_12px_rgba(245,158,11,0.08)]">
+              <div className="flex items-start sm:items-center gap-3.5">
+                <div className="w-11 h-11 rounded-2xl bg-amber-100 border border-amber-300 flex items-center justify-center text-2xl shrink-0 shadow-2xs">
+                  🧩
+                </div>
+                <div>
+                  <div className="text-[14px] font-black text-amber-950 flex items-center gap-2 flex-wrap">
+                    <span>Chưa phát hiện Extension ghi nhận KPI Seeding</span>
+                    <span className="px-2.5 py-0.5 rounded-full bg-amber-200 text-amber-900 text-[10px] font-extrabold uppercase tracking-wide">
+                      Cần thiết để tính điểm
+                    </span>
+                  </div>
+                  <p className="text-[12px] text-amber-800/90 mt-1 max-w-2xl leading-relaxed">
+                    Khi bạn bấm <strong>&quot;Làm Nhiệm Vụ&quot;</strong>, tự tay Like hoặc Bình luận trên Facebook, tiện ích này sẽ tự động bắt gói tin, trích xuất link bình luận làm minh chứng và cộng điểm KPI cho bạn.
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2.5 shrink-0">
+                <a
+                  href="/comment-extension.zip"
+                  download="comment-extension.zip"
+                  className="inline-flex items-center gap-2 px-4.5 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-[13px] font-extrabold shadow-sm transition-all cursor-pointer whitespace-nowrap active:scale-95"
+                >
+                  <span>📥</span> Tải Extension (.zip)
+                </a>
+                <button
+                  type="button"
+                  onClick={() => setShowExtensionGuideModal(true)}
+                  className="px-3.5 py-2.5 rounded-xl border border-amber-300 bg-white hover:bg-amber-100/70 text-amber-900 text-[12px] font-bold transition-all cursor-pointer whitespace-nowrap"
+                >
+                  Hướng dẫn cài đặt
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* MAIN TABS SWITCHER - thứ tự: Seeding nội bộ -> Seeding bên ngoài -> Tổng quan báo cáo */}
           <div className="flex items-center gap-2 border-b border-gray-200 mb-6 bg-white p-2.5 rounded-2xl shadow-xs">
@@ -2463,7 +2519,7 @@ export default function InternalEngagementPage() {
                           ? `Extension${modalIsLinkedIn ? " LinkedIn" : ""} đã sẵn sàng.`
                           : `Đang chờ kết nối ${modalIsLinkedIn ? "LinkedIn " : ""}Extension. Vui lòng cài đặt và F5 lại trang.`}
                       </span>
-                      {!ready && modalIsLinkedIn ? (
+                      {!ready ? (
                         <a
                           href="/comment-extension.zip"
                           download
@@ -3421,6 +3477,87 @@ export default function InternalEngagementPage() {
             </div>
           </div>
         ) : null}
+
+        {/* MODAL HƯỚNG DẪN CÀI ĐẶT EXTENSION KPI */}
+        {showExtensionGuideModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs animate-in fade-in duration-200">
+            <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl border border-gray-100">
+              <div className="flex items-center justify-between pb-4 border-b border-gray-100">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-2xl bg-amber-100 flex items-center justify-center text-xl">
+                    🧩
+                  </div>
+                  <div>
+                    <h3 className="text-base font-black text-gray-900">Hướng dẫn cài đặt Extension KPI</h3>
+                    <p className="text-xs text-gray-500">Chỉ mất 30 giây để cài đặt 1 lần duy nhất</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowExtensionGuideModal(false)}
+                  className="w-8 h-8 rounded-full hover:bg-gray-100 grid place-items-center text-gray-400 hover:text-gray-600 transition cursor-pointer"
+                >
+                  ✕
+                </button>
+              </div>
+
+              <div className="py-5 space-y-4">
+                <div className="flex items-start gap-3.5">
+                  <span className="w-7 h-7 rounded-full bg-amber-500 text-white font-extrabold text-xs grid place-items-center shrink-0">
+                    1
+                  </span>
+                  <div>
+                    <div className="text-[13px] font-bold text-gray-900">Tải file và giải nén</div>
+                    <p className="text-[12px] text-gray-500 mt-0.5">
+                      Bấm nút màu cam bên dưới để tải file <code>comment-extension.zip</code> về máy tính, sau đó giải nén ra một thư mục.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-start gap-3.5">
+                  <span className="w-7 h-7 rounded-full bg-amber-500 text-white font-extrabold text-xs grid place-items-center shrink-0">
+                    2
+                  </span>
+                  <div>
+                    <div className="text-[13px] font-bold text-gray-900">Mở trang tiện ích Chrome</div>
+                    <p className="text-[12px] text-gray-500 mt-0.5">
+                      Mở tab mới trên Chrome, dán địa chỉ <code>chrome://extensions/</code> và bật công tắc <strong>&quot;Chế độ dành cho nhà phát triển&quot;</strong> (Developer mode) ở góc trên bên phải.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-start gap-3.5">
+                  <span className="w-7 h-7 rounded-full bg-amber-500 text-white font-extrabold text-xs grid place-items-center shrink-0">
+                    3
+                  </span>
+                  <div>
+                    <div className="text-[13px] font-bold text-gray-900">Nạp tiện ích &amp; hoàn tất</div>
+                    <p className="text-[12px] text-gray-500 mt-0.5">
+                      Bấm nút <strong>&quot;Tải tiện ích đã giải nén&quot;</strong> (Load unpacked) ở góc trái và chọn thư mục vừa giải nén. Sau đó quay lại trang này bấm <strong>F5</strong> là xong!
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-3 pt-4 border-t border-gray-100">
+                <button
+                  type="button"
+                  onClick={() => setShowExtensionGuideModal(false)}
+                  className="px-4 py-2.5 rounded-xl border border-gray-200 text-gray-700 hover:bg-gray-50 text-[13px] font-bold transition cursor-pointer"
+                >
+                  Đã hiểu &amp; Đóng
+                </button>
+                <a
+                  href="/comment-extension.zip"
+                  download="comment-extension.zip"
+                  className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-[13px] font-black shadow-sm transition cursor-pointer"
+                >
+                  <span>📥</span> Tải Extension (.zip) Ngay
+                </a>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Toast Light Theme */}
         {toast ? (
