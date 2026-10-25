@@ -8,14 +8,18 @@
 
     // Dispatch CustomEvent để content.js (ISOLATED world) bắt và kiểm tra session / target_link
     // trước khi ghi nhận KPI và hiển thị Toast thông báo cho người dùng.
-    function dispatchActionCaptured(actionType, fbUid, postUrl, delayMs = 0, content = "") {
+    function dispatchActionCaptured(actionData) {
         document.dispatchEvent(new CustomEvent("markee-action-captured", {
             detail: {
-                actionType: actionType,
-                fbUid: fbUid || "",
-                postUrl: postUrl || window.location.href,
-                delayMs: delayMs || 0,
-                content: content || "",
+                actionType: actionData.actionType || "",
+                fbUid: actionData.fbUid || "",
+                authorName: actionData.authorName || "",
+                postUrl: actionData.postUrl || window.location.href,
+                linkComment: actionData.linkComment || "",
+                commentId: actionData.commentId || "",
+                reactionId: actionData.reactionId || "",
+                delayMs: actionData.delayMs || 0,
+                content: actionData.content || "",
             },
         }));
     }
@@ -33,8 +37,8 @@
                             detail: { friendlyName, docId },
                         }));
                     }
-                } else if (friendlyName === "GroupsCometFeedRegularStoriesPaginationQuery") {
-                    // Luồng cào bài (platforms/facebook/crawl.js) cần cả variables để dựng lại query.
+                } else if (friendlyName === "GroupsCometFeedRegularStoriesPaginationQuery" || friendlyName === "GroupsFeedRootSuccessionQuery") {
+                    // Luồng cào bài cần cả variables để dựng lại query.
                     const docId = params.get("doc_id");
                     const variables = params.get("variables");
                     if (docId && variables) {
@@ -48,20 +52,37 @@
 
         if (responseData) {
             try {
+                // Bắt stream bài viết group feed cho AI Lead Scorer
+                if (responseData.data && (responseData.data.node?.group_feed || responseData.data.node || responseData.data.edges)) {
+                    document.dispatchEvent(new CustomEvent("fb-stream-posts-response", {
+                        detail: { friendlyName: friendlyName || "GroupsCometFeedRegularStoriesPaginationQuery", responseText: JSON.stringify(responseData), timestamp: Date.now() },
+                    }));
+                }
+
                 let actionType = null;
                 let postUrl = window.location.href;
                 let fbUid = "unknown";
+                let authorName = "";
+                let linkComment = "";
+                let commentId = "";
+                let reactionId = "";
                 let delayMs = 0;
                 let content = "";
 
                 // 1. NGHE HÀNH ĐỘNG LIKE (CometUFIFeedbackReactMutation / Reel Like)
                 const fbReact = responseData && responseData.data && (responseData.data.feedback_react || responseData.data.feedback_reaction);
                 if (fbReact) {
-                    actionType = "like";
-                    fbUid = (fbReact.viewer_actor && fbReact.viewer_actor.id)
-                        || (fbReact.feedback && fbReact.feedback.viewer_actor && fbReact.feedback.viewer_actor.id)
-                        || "unknown";
-                    postUrl = (fbReact.feedback && fbReact.feedback.url) || window.location.href;
+                    // CHỈ GHI NHẬN KHI THỰC SỰ LIKE / THẢ TIM (viewer_feedback_reaction_info != null)
+                    // Khi người dùng bấm xóa like (unlike), viewer_feedback_reaction_info là null -> BỎ QUA KHÔNG TÍNH KPI!
+                    if (fbReact.viewer_feedback_reaction_info && fbReact.viewer_feedback_reaction_info.id) {
+                        actionType = "like";
+                        fbUid = (fbReact.viewer_actor && fbReact.viewer_actor.id)
+                            || (fbReact.feedback && fbReact.feedback.viewer_actor && fbReact.feedback.viewer_actor.id)
+                            || "unknown";
+                        authorName = (fbReact.viewer_actor && fbReact.viewer_actor.name) || "";
+                        postUrl = (fbReact.feedback && fbReact.feedback.url) || window.location.href;
+                        reactionId = fbReact.viewer_feedback_reaction_info.id;
+                    }
                 }
 
                 // 2. NGHE HÀNH ĐỘNG SHARE (Bài viết thường - Kích hoạt ngay tức thì)
@@ -81,6 +102,7 @@
                             || (storyObj.actor && storyObj.actor.id)
                             || (storyObj.owner && storyObj.owner.id)
                             || "unknown";
+                        authorName = (storyObj.default_actor && storyObj.default_actor.name) || "";
                         postUrl = storyObj.url || storyObj.permalink_url || window.location.href;
                     }
                 }
@@ -93,32 +115,41 @@
                     if (shortsMutation && actorId) {
                         actionType = "share";
                         fbUid = actorId;
-                        delayMs = 3000; // Hoãn 3 giây theo đúng giải pháp người dùng yêu cầu
+                        delayMs = 3000;
                     }
                 }
 
                 // 4. NGHE HÀNH ĐỘNG COMMENT THỦ CÔNG (bắt qua json.data.comment_create)
                 if (!actionType && responseData && responseData.data && responseData.data.comment_create) {
                     const commentCreate = responseData.data.comment_create;
+                    const edgeNode = commentCreate.feedback_comment_edge && commentCreate.feedback_comment_edge.node;
                     actionType = "comment";
-                    let commentText = "";
-                    try {
-                        commentText = commentCreate.feedback_comment_edge?.node?.body?.text || "";
-                    } catch (e) {}
+                    content = (edgeNode && edgeNode.body && edgeNode.body.text) || "";
 
-                    fbUid = (commentCreate.feedback_comment_edge && commentCreate.feedback_comment_edge.node && commentCreate.feedback_comment_edge.node.author && commentCreate.feedback_comment_edge.node.author.id)
+                    fbUid = (edgeNode && edgeNode.author && edgeNode.author.id)
                         || (commentCreate.feedback && commentCreate.feedback.viewer_actor && commentCreate.feedback.viewer_actor.id)
                         || "unknown";
 
-                    postUrl = (commentCreate.feedback_comment_edge && commentCreate.feedback_comment_edge.node && commentCreate.feedback_comment_edge.node.url)
-                        || (commentCreate.feedback && commentCreate.feedback.url)
-                        || window.location.href;
-
-                    content = commentText;
+                    authorName = (edgeNode && edgeNode.author && edgeNode.author.name) || "";
+                    commentId = (edgeNode && edgeNode.legacy_fbid) || (edgeNode && edgeNode.id) || "";
+                    
+                    // Link comment minh chứng trực tiếp (ví dụ: https://www.facebook.com/reel/29299018259785802/?comment_id=1096395736652564)
+                    linkComment = (edgeNode && edgeNode.url) || "";
+                    postUrl = (commentCreate.feedback && commentCreate.feedback.url) || window.location.href;
                 }
 
                 if (actionType) {
-                    dispatchActionCaptured(actionType, fbUid, postUrl, delayMs, content);
+                    dispatchActionCaptured({
+                        actionType,
+                        fbUid,
+                        authorName,
+                        postUrl,
+                        linkComment,
+                        commentId,
+                        reactionId,
+                        delayMs,
+                        content
+                    });
                 }
             } catch (e) {}
         }
@@ -134,6 +165,14 @@
                 response.clone().json().then(function(data) {
                     tryCapture(null, data);
                 }).catch(function() {});
+            } else if (url && url.includes(".srt")) {
+                response.clone().text().then(function(srtText) {
+                    if (srtText && srtText.length > 5) {
+                        document.dispatchEvent(new CustomEvent("fb-stream-srt-captured", {
+                            detail: { url, srtText, timestamp: Date.now() },
+                        }));
+                    }
+                }).catch(function() {});
             }
         } catch (e) {}
         return response;
@@ -148,12 +187,24 @@
     };
     OriginalXHR.prototype.send = function (body) {
         try {
-            if (this.__sniffUrl && this.__sniffUrl.includes("/api/graphql/")) {
+            const url = this.__sniffUrl || "";
+            if (url && url.includes("/api/graphql/")) {
                 tryCapture(body, null);
                 this.addEventListener("load", function () {
                     try {
                         const data = JSON.parse(this.responseText);
                         tryCapture(null, data);
+                    } catch (e) {}
+                });
+            } else if (url && url.includes(".srt")) {
+                this.addEventListener("load", function () {
+                    try {
+                        const srtText = this.responseText;
+                        if (srtText && srtText.length > 5) {
+                            document.dispatchEvent(new CustomEvent("fb-stream-srt-captured", {
+                                detail: { url, srtText, timestamp: Date.now() },
+                            }));
+                        }
                     } catch (e) {}
                 });
             }

@@ -135,58 +135,71 @@ function getUniversalFacebookId(url) {
 
 let reelShareTimer = null;
 
-// Lắng nghe sự kiện Like/Share bắt được từ graphql-sniffer.js (MAIN world)
+// Lắng nghe sự kiện Like/Comment/Share bắt được từ graphql-sniffer.js (MAIN world)
 document.addEventListener("markee-action-captured", (evt) => {
   try {
-    const { actionType, fbUid, postUrl, delayMs, content } = evt.detail || {};
+    const { actionType, fbUid, authorName, postUrl, linkComment, commentId, reactionId, delayMs, content } = evt.detail || {};
     if (!actionType) return;
 
     const executeRecordAction = () => {
       // Gửi yêu cầu tới Background kiểm tra xem TAB HIỆN TẠI có phải là Tab mục tiêu được cấp quyền không
       chrome.runtime.sendMessage({ action: "CHECK_TAB_PERMISSION" }, (response) => {
-        if (chrome.runtime.lastError || !response || !response.allowed) {
-          // Sai tab hoặc Tab mục tiêu đã đóng (Session đã tự hủy) -> CÂM LẶNG 100%, KHÔNG LOG, KHÔNG TOAST
-          return;
-        }
+        let verifyConfig = response && response.config ? response.config : {};
+        let emailMember = verifyConfig.email_member || "";
 
-        const verifyConfig = response.config || {};
-        const emailMember = verifyConfig.email_member || "";
-        if (!emailMember) return;
+        const sendKpi = (targetEmail, config) => {
+          if (actionType === "comment") {
+            showToastNotification("🎉 Đã ghi nhận bình luận! Đã lưu link minh chứng (+1 KPI)");
+          } else if (actionType === "like") {
+            showToastNotification("❤️ Đã ghi nhận tương tác Thích/Thả tim! (+1 KPI)");
+          } else {
+            showToastNotification("🚀 Đã ghi nhận lượt Chia sẻ thành công! (+1 KPI)");
+          }
 
-        // ĐÚNG TAB MỤC TIÊU ĐƯỢC CẤP QUYỀN -> Hiển thị Toast thông báo xanh cho người dùng
-        const actionLabel = actionType === "like" ? "Like" : (actionType === "comment" ? "Comment" : "Share");
-        showToastNotification(`✅ Đã ghi nhận ${actionLabel} thành công!`);
+          let apiBase = config.apiBase || "https://seeding.markeeai.com";
+          if (!apiBase || typeof apiBase !== "string" || !apiBase.startsWith("http")) {
+            apiBase = "https://seeding.markeeai.com";
+          }
+          apiBase = apiBase.replace(/\/$/, "");
 
-        let apiBase = verifyConfig.apiBase || "https://seeding.markeeai.com";
-        if (!apiBase || typeof apiBase !== "string" || !apiBase.startsWith("http")) {
-          apiBase = "https://seeding.markeeai.com";
-        }
-        apiBase = apiBase.replace(/\/$/, "");
+          const kpiPayload = {
+            email_member: targetEmail,
+            link_post: config.target_link || postUrl,
+            link_comment: linkComment || "",
+            comment_id: commentId || "",
+            fanpage_id: config.fanpage_id || "",
+            fanpage_name: config.fanpage_name || "",
+            facebook_post_id: config.facebook_post_id || "unknown",
+            action_type: actionType,
+            content: content || "",
+            profile_id: fbUid || "",
+            facebook_name: authorName || "",
+            reaction_id: reactionId || "",
+            status: "success",
+          };
 
-        const kpiPayload = {
-          email_member: emailMember,
-          link_post: verifyConfig.target_link || postUrl,
-          fanpage_id: verifyConfig.fanpage_id || "",
-          fanpage_name: verifyConfig.fanpage_name || "",
-          facebook_post_id: verifyConfig.facebook_post_id || "unknown",
-          action_type: actionType,
-          content: content || "",
-          profile_id: fbUid || "",
-          status: "success",
-        };
+          const recordEndpoint = `${apiBase}/api/all-platform/internal-engagement/kpi/record`;
+          console.log(`[Comment Extension] Ghi nhận ${actionType} kèm minh chứng:`, kpiPayload);
 
-        const recordEndpoint = `${apiBase}/api/all-platform/internal-engagement/kpi/record`;
-        console.log(`[Comment Extension] Ghi nhận ${actionType} cho Tab mục tiêu:`, kpiPayload);
-
-        chrome.runtime.sendMessage({
+          chrome.runtime.sendMessage({
             action: "RECORD_KPI_BACKGROUND",
             endpoint: recordEndpoint,
             payload: kpiPayload
-        }, (res) => {
+          }, (res) => {
             if (res && res.success) {
-                console.log("[Comment Extension] Đã lưu KPI thành công.");
+              console.log("[Comment Extension] Đã lưu KPI và link minh chứng thành công.");
             }
-        });
+          });
+        };
+
+        if (emailMember) {
+          sendKpi(emailMember, verifyConfig);
+        } else {
+          chrome.storage.local.get(["markee_email_member", "user_email"], (res) => {
+            const fallbackEmail = res?.markee_email_member || res?.user_email;
+            if (fallbackEmail) sendKpi(fallbackEmail, verifyConfig);
+          });
+        }
       });
     };
 

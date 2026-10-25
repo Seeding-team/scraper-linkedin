@@ -71,17 +71,54 @@ def record_action(payload: dict) -> dict:
     if not id_member:
         raise ValueError(f"Member email '{email}' not found in app_users")
 
+    # Deduplication check: Tránh ghi nhận KPI trùng lặp
+    link_post = payload.get("link_post") or payload.get("url") or ""
+    action_type = payload.get("action_type") or "comment"
+    link_comment = payload.get("link_comment") or ""
+    comment_id = payload.get("comment_id") or ""
+
+    if action_type == "comment" and (link_comment or comment_id):
+        existing_cmt_query = supabase.table("internal_engagement_kpi").select("id, link_comment, status").eq("id_member", id_member)
+        if link_comment:
+            existing_cmt_query = existing_cmt_query.eq("link_comment", link_comment)
+        elif comment_id:
+            existing_cmt_query = existing_cmt_query.eq("comment_id", comment_id)
+        existing_cmt = existing_cmt_query.limit(1).execute()
+        if existing_cmt.data:
+            print(f"[KPI DEDUPLICATE] Bỏ qua vì comment đã ghi nhận: {link_comment or comment_id}")
+            return existing_cmt.data[0]
+
+    if action_type in ("like", "reaction") and link_post:
+        existing_like = (
+            supabase.table("internal_engagement_kpi")
+            .select("id, status")
+            .eq("id_member", id_member)
+            .eq("link_post", link_post)
+            .in_("action_type", ["like", "reaction", "love", "care", "haha", "wow"])
+            .limit(1)
+            .execute()
+        )
+        if existing_like.data:
+            print(f"[KPI DEDUPLICATE] Bỏ qua vì bài viết đã được like: {link_post}")
+            return existing_like.data[0]
+
     data = {
         "id_member": id_member,
         "fanpage_id": payload.get("fanpage_id") or "",
         "fanpage_name": payload.get("fanpage_name") or "",
         "facebook_post_id": payload.get("facebook_post_id") or "unknown",
-        "link_post": payload.get("link_post") or payload.get("url") or "",
-        "action_type": payload.get("action_type") or "comment",
+        "link_post": link_post,
+        "action_type": action_type,
         "content": payload.get("content") or payload.get("text") or "",
         "status": payload.get("status") or "success",
         "platform": payload.get("platform") or "facebook",
     }
+    if link_comment:
+        data["link_comment"] = link_comment
+    if comment_id:
+        data["comment_id"] = comment_id
+    if payload.get("facebook_name"):
+        data["facebook_name"] = payload.get("facebook_name")
     if payload.get("reaction_id"):
         data["reaction_id"] = payload.get("reaction_id")
     if payload.get("id_social_account"):

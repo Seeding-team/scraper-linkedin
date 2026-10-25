@@ -17,7 +17,7 @@ from app.core.supabase_client import get_supabase_client
 from app.modules.all_platform.websocket import manager
 from app.modules.all_platform.services.supabase_facebook_crawl_service import parse_facebook_time
 from app.modules.all_platform.services import supabase_crawl_queue_service as queue_service
-from app.modules.all_platform.services.lead_score_service import score_and_save_posts
+from app.modules.all_platform.services.lead_score_service import score_and_save_posts, score_text_for_lead
 
 # Reuse facebook keyword picker logic
 from app.modules.facebook.src.modules.facebook.services.facebook_scraper import (
@@ -526,3 +526,18 @@ async def crawl_result(
     logger.info("[KEYWORD-FINAL] payload.keywords sau khi validate = %s", payload.keywords)
 
     return await process_and_save_posts(payload, event_name="extension_crawl_saved_legacy", legacy=True)
+
+
+class ScorePostRequest(BaseModel):
+    content: str
+    post_id: Optional[str] = None
+    author_name: Optional[str] = None
+
+
+@router.post("/score-post")
+async def score_single_post(payload: ScorePostRequest):
+    """Chấm điểm tiềm năng bài viết tức thì (0-100) cho Extension."""
+    result = await score_text_for_lead(payload.content)
+    if not result:
+        return {"success": False, "score": 0, "reason": "Chưa thể đánh giá hoặc nội dung rỗng", "need_category": None}
+    return {"success": True, **result}
