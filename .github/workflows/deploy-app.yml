@@ -5,6 +5,9 @@ name: Deploy App (Production)
 # khi push/merge code (khac voi Deploy Dev). Dung de kiem soat khi nao code
 # thuc su len production, sau khi da test o dev truoc.
 on:
+  push:
+    branches:
+      - main
   workflow_dispatch:
     inputs:
       ref:
@@ -44,10 +47,11 @@ jobs:
         # artifact truoc khi pull (an toan, buoc sau tu build lai tu source),
         # va bo `|| true` de loi pull thuc su duoc bao ro, khong bi nuot.
         run: |
+          REF="${{ github.event.inputs.ref || github.ref_name }}"
           git checkout -- linkedin-crawler-ui/public/*.zip || true
           git fetch origin
-          git checkout "${{ github.event.inputs.ref }}"
-          git pull origin "${{ github.event.inputs.ref }}"
+          git checkout "$REF"
+          git pull origin "$REF"
 
       # Docker build cua frontend chi thay context ./linkedin-crawler-ui nen
       # KHONG thay duoc thu muc ngoai ../extensions -> npm predev/prebuild se
