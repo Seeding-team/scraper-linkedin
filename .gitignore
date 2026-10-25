@@ -117,6 +117,8 @@ linkedin-crawler-ui/realtime_explore/
 /container_code.txt
 /container_image.txt
 /container_top.txt
+/network_logs_*.json
+/network_logs*.json
 /conv_1070.txt
 /fe_image.txt
 /fe_latest.txt

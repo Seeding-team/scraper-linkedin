@@ -155,6 +155,96 @@
         }
     }
 
+
+    // ==========================================
+    // BÓC TÁCH BÀI VIẾT LINKEDIN VOYAGER GRAPHQL
+    // ==========================================
+    function tryCaptureLinkedIn(url, responseData) {
+        if (!responseData || !url) return;
+        if (url.includes("voyagerFeedDashGroupsUpdates") || url.includes("voyagerFeedDashUpdates")) {
+            try {
+                const included = responseData.included || [];
+                if (!included.length) return;
+
+                const entityMap = new Map();
+                included.forEach(function (item) {
+                    if (item && item.entityUrn) entityMap.set(item.entityUrn, item);
+                });
+
+                const updates = included.filter(function (item) {
+                    return item && item.$type === "com.linkedin.voyager.dash.feed.Update";
+                });
+                if (!updates.length) return;
+
+                const groupUrl = window.location.href.split("?")[0];
+                const groupName = document.title ? document.title.split("|")[0].trim() : "";
+
+                const posts = [];
+                for (let i = 0; i < updates.length; i++) {
+                    const upd = updates[i];
+                    const backendUrn = (upd.metadata && upd.metadata.backendUrn) || "";
+                    let activityUrn = backendUrn;
+                    if (!activityUrn && upd.entityUrn && upd.entityUrn.includes("urn:li:activity:")) {
+                        const m = upd.entityUrn.match(/urn:li:activity:\d+/);
+                        if (m) activityUrn = m[0];
+                    }
+                    const postUrl = activityUrn ? `https://www.linkedin.com/feed/update/${activityUrn}/` : "";
+                    const content = (upd.commentary && upd.commentary.text && upd.commentary.text.text) || "";
+                    const author = (upd.actor && upd.actor.name && upd.actor.name.text) || "";
+                    const authorHeadline = (upd.actor && upd.actor.description && upd.actor.description.text) || "";
+                    const authorUrl = (upd.actor && upd.actor.navigationContext && upd.actor.navigationContext.actionTarget) || "";
+                    const postedAtRaw = (upd.actor && upd.actor.subDescription && upd.actor.subDescription.text) || "";
+
+                    let likes = 0, comments = 0, reposts = 0;
+                    const socialDetailUrn = upd["*socialDetail"];
+                    if (socialDetailUrn && entityMap.has(socialDetailUrn)) {
+                        const sd = entityMap.get(socialDetailUrn);
+                        const countsUrn = sd["*totalSocialActivityCounts"];
+                        if (countsUrn && entityMap.has(countsUrn)) {
+                            const counts = entityMap.get(countsUrn);
+                            likes = counts.numLikes || 0;
+                            comments = counts.numComments || 0;
+                            reposts = counts.numShares || 0;
+                        }
+                    }
+
+                    if (postUrl && (content || author)) {
+                        posts.push({
+                            post_url: postUrl,
+                            author: author,
+                            author_headline: authorHeadline,
+                            author_url: authorUrl,
+                            content: content,
+                            posted_at_raw: postedAtRaw,
+                            likes: likes,
+                            comments: comments,
+                            reposts: reposts,
+                            comments_list: [],
+                            likers: [],
+                            group_url: groupUrl,
+                            group_name: groupName,
+                            crawled_at: new Date().toISOString(),
+                        });
+                    }
+                }
+
+                if (posts.length > 0) {
+                    console.log(`[GraphQL-Sniffer] Bắt thành công ${posts.length} bài viết LinkedIn từ Voyager API.`);
+                    document.dispatchEvent(new CustomEvent("li-feed-updates-captured", {
+                        detail: { posts: posts, timestamp: Date.now() }
+                    }));
+                    window.postMessage({
+                        source: "MK_GRAPHQL_SNIFFER",
+                        type: "LINKEDIN_FEED_EXTRACTED",
+                        posts: posts
+                    }, "*");
+                }
+            } catch (e) {
+                console.error("[GraphQL-Sniffer] Lỗi bóc tách LinkedIn updates:", e);
+            }
+        }
+    }
+
     const originalFetch = window.fetch;
     window.fetch = async function (input, init) {
         const response = await originalFetch.apply(this, arguments);
@@ -164,6 +254,10 @@
                 if (init && init.body) tryCapture(init.body, null);
                 response.clone().json().then(function(data) {
                     tryCapture(null, data);
+                }).catch(function() {});
+            } else if (url && url.includes("/voyager/api/graphql")) {
+                response.clone().json().then(function(data) {
+                    tryCaptureLinkedIn(url, data);
                 }).catch(function() {});
             } else if (url && url.includes(".srt")) {
                 response.clone().text().then(function(srtText) {
@@ -194,6 +288,13 @@
                     try {
                         const data = JSON.parse(this.responseText);
                         tryCapture(null, data);
+                    } catch (e) {}
+                });
+            } else if (url && url.includes("/voyager/api/graphql")) {
+                this.addEventListener("load", function () {
+                    try {
+                        const data = JSON.parse(this.responseText);
+                        tryCaptureLinkedIn(url, data);
                     } catch (e) {}
                 });
             } else if (url && url.includes(".srt")) {
