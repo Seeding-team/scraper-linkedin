@@ -245,6 +245,142 @@
         }
     }
 
+
+    // =========================================================================
+    // BÓC TÁCH MINH CHỨNG COMMENT & REACTION LINKEDIN (SDUI RSC-ACTION)
+    // =========================================================================
+    let latestLinkedInAuthor = "";
+
+    function tryCaptureLinkedInRSC(url, body, isSuccess) {
+        if (!body || !isSuccess) return;
+        const bodyStr = typeof body === "string" ? body : JSON.stringify(body);
+
+        // Bắt tên tác giả từ component submitCommentButton nếu có
+        if (bodyStr.includes("memberFirstName") || bodyStr.includes("memberLastName")) {
+            try {
+                const fnMatch = bodyStr.match(/"memberFirstName"\s*:\s*"([^"]+)"/);
+                const lnMatch = bodyStr.match(/"memberLastName"\s*:\s*"([^"]+)"/);
+                if (fnMatch || lnMatch) {
+                    const fn = fnMatch ? fnMatch[1] : "";
+                    const ln = lnMatch ? lnMatch[1] : "";
+                    latestLinkedInAuthor = `${ln} ${fn}`.trim();
+                }
+            } catch (e) {}
+        }
+
+        // 1. BẮT BÌNH LUẬN THỦ CÔNG TRÊN LINKEDIN (com.linkedin.sdui.comments.createComment)
+        if (bodyStr.includes("comments.createComment") || (url && url.includes("comments.createComment"))) {
+            try {
+                // Trích xuất Activity ID của bài viết
+                let activityId = "";
+                const actMatch = bodyStr.match(/"activityId"\s*:\s*"(\d+)"/);
+                if (actMatch) activityId = actMatch[1];
+                if (!activityId) {
+                    const ugcMatch = bodyStr.match(/"userGeneratedContentId"\s*:\s*"(\d+)"/);
+                    if (ugcMatch) activityId = ugcMatch[1];
+                }
+
+                // Trích xuất nội dung bình luận
+                let commentText = "";
+                try {
+                    const parsed = JSON.parse(bodyStr);
+                    const states = (parsed && parsed.states) || (parsed && parsed.serverRequest && parsed.serverRequest.states) || (parsed && parsed.requestedArguments && parsed.requestedArguments.states) || [];
+                    for (let i = 0; i < states.length; i++) {
+                        const s = states[i];
+                        if (s && s.value && typeof s.value.text === "string" && s.value.text.trim()) {
+                            commentText = s.value.text.trim();
+                            break;
+                        }
+                    }
+                } catch (e) {}
+
+                if (!commentText) {
+                    const textMatch = bodyStr.match(/"text"\s*:\s*"([^"]+)"/);
+                    if (textMatch) commentText = textMatch[1];
+                }
+
+                // Xây dựng link bài viết & link bình luận
+                const currentHref = window.location.href.split("?")[0];
+                const postUrl = activityId ? `https://www.linkedin.com/feed/update/urn:li:activity:${activityId}/` : currentHref;
+                const linkComment = postUrl;
+                const commentId = activityId ? `li_act_${activityId}` : `li_cmt_${Date.now()}`;
+
+                let author = latestLinkedInAuthor;
+                if (!author) {
+                    const imgEl = document.querySelector('img[alt^="View "]');
+                    if (imgEl) {
+                        const alt = imgEl.getAttribute("alt") || "";
+                        const m = alt.match(/^View (.+?)(?:&#39;|'|’)s profile/i);
+                        if (m) author = m[1].trim();
+                    }
+                }
+
+                console.log("[GraphQL-Sniffer] Bắt thành công COMMENT LinkedIn:", {
+                    activityId,
+                    postUrl,
+                    commentText,
+                    author
+                });
+
+                dispatchActionCaptured({
+                    actionType: "comment",
+                    postUrl: postUrl,
+                    linkComment: linkComment,
+                    commentId: commentId,
+                    content: commentText,
+                    authorName: author || "LinkedIn User",
+                    fbUid: "",
+                    reactionId: ""
+                });
+            } catch (err) {
+                console.error("[GraphQL-Sniffer] Lỗi bóc tách LinkedIn comment:", err);
+            }
+        }
+
+        // 2. BẮT LIKE / REACTION THỦ CÔNG TRÊN LINKEDIN (com.linkedin.sdui.reactions.create / update)
+        if (bodyStr.includes("reactions.create") || bodyStr.includes("reactions.update") || (url && (url.includes("reactions.create") || url.includes("reactions.update")))) {
+            try {
+                let reactionType = "1";
+                const rMatch = bodyStr.match(/"reactionType"\s*:\s*"([^"]+)"/);
+                if (rMatch) {
+                    const rStr = rMatch[1];
+                    if (rStr.includes("LIKE")) reactionType = "1";
+                    else if (rStr.includes("PRAISE")) reactionType = "2";
+                    else if (rStr.includes("EMPATHY")) reactionType = "3";
+                    else if (rStr.includes("INTEREST")) reactionType = "4";
+                    else if (rStr.includes("APPRECIATION")) reactionType = "5";
+                    else reactionType = rStr;
+                }
+
+                let activityId = "";
+                const actMatch = bodyStr.match(/"activityId"\s*:\s*"(\d+)"/);
+                if (actMatch) activityId = actMatch[1];
+                if (!activityId) {
+                    const ugcMatch = bodyStr.match(/"userGeneratedContentId"\s*:\s*"(\d+)"/);
+                    if (ugcMatch) activityId = ugcMatch[1];
+                }
+
+                const currentHref = window.location.href.split("?")[0];
+                const postUrl = activityId ? `https://www.linkedin.com/feed/update/urn:li:activity:${activityId}/` : currentHref;
+
+                console.log("[GraphQL-Sniffer] Bắt thành công REACTION/LIKE LinkedIn:", {
+                    reactionType,
+                    postUrl
+                });
+
+                dispatchActionCaptured({
+                    actionType: "like",
+                    postUrl: postUrl,
+                    reactionId: reactionType,
+                    authorName: latestLinkedInAuthor || "LinkedIn User",
+                    fbUid: ""
+                });
+            } catch (err) {
+                console.error("[GraphQL-Sniffer] Lỗi bóc tách LinkedIn reaction:", err);
+            }
+        }
+    }
+
     const originalFetch = window.fetch;
     window.fetch = async function (input, init) {
         const response = await originalFetch.apply(this, arguments);
@@ -259,6 +395,10 @@
                 response.clone().json().then(function(data) {
                     tryCaptureLinkedIn(url, data);
                 }).catch(function() {});
+            } else if (url && (url.includes("/flagship-web/rsc-action/") || url.includes("/rsc-action/"))) {
+                if (init && init.body) {
+                    tryCaptureLinkedInRSC(url, init.body, response.ok);
+                }
             } else if (url && url.includes(".srt")) {
                 response.clone().text().then(function(srtText) {
                     if (srtText && srtText.length > 5) {
@@ -296,6 +436,12 @@
                         const data = JSON.parse(this.responseText);
                         tryCaptureLinkedIn(url, data);
                     } catch (e) {}
+                });
+            } else if (url && (url.includes("/flagship-web/rsc-action/") || url.includes("/rsc-action/"))) {
+                this.addEventListener("load", function () {
+                    if (this.status >= 200 && this.status < 400) {
+                        tryCaptureLinkedInRSC(url, body, true);
+                    }
                 });
             } else if (url && url.includes(".srt")) {
                 this.addEventListener("load", function () {
