@@ -2401,39 +2401,23 @@ export default function InternalEngagementPage() {
                           </button>
 
                           <div className="flex items-center justify-end gap-2">
-                            {/* Nút theo nền tảng: Facebook (Làm Nhiệm Vụ ↗ + Copy Mẫu câu) vs Nền tảng khác (Xem bài viết gốc ↗) */}
-                            {((post.platform || "").toLowerCase() === "facebook" || (post.platform || "").toLowerCase() === "fb") ? (
-                              <div className="relative group inline-block">
-                                <button
-                                  type="button"
-                                  onClick={() => handleDoTask(post)}
-                                  className="px-3.5 py-2 bg-rose-50 hover:bg-rose-100 text-[#be123c] border border-rose-200 rounded-full text-xs font-bold transition flex items-center gap-1 cursor-pointer shadow-2xs"
-                                >
-                                  ⚡ Làm Nhiệm Vụ ↗
-                                </button>
-                                <div className="absolute bottom-full right-0 mb-1.5 hidden group-hover:block w-max z-10 pointer-events-none">
-                                  <div className="bg-gray-900 text-white text-[11px] font-medium rounded-lg py-1 px-2.5 shadow-xl">
-                                    Tự động copy mẫu câu &amp; mở bài viết để Like/Comment/Share để tương tác trên FB
-                                  </div>
-                                </div>
-                              </div>
-                            ) : (
+                            {/* Nút Làm Nhiệm Vụ đồng nhất cho cả Facebook và LinkedIn (Copy mẫu câu + Sync Extension + Mở tab bài viết gốc) */}
+                            <div className="relative group inline-block">
                               <button
                                 type="button"
-                                onClick={() => handleOpenOriginalPost(post)}
-                                className="px-3.5 py-2 bg-gray-50 hover:bg-gray-100 text-gray-700 border border-gray-200 rounded-full text-xs font-bold transition flex items-center gap-1 cursor-pointer shadow-2xs"
+                                onClick={() => handleDoTask(post)}
+                                className="px-3.5 py-2 bg-rose-50 hover:bg-rose-100 text-[#be123c] border border-rose-200 rounded-full text-xs font-bold transition flex items-center gap-1 cursor-pointer shadow-2xs"
                               >
-                                Xem bài viết gốc ↗
+                                ⚡ Làm Nhiệm Vụ ↗
                               </button>
-                            )}
-
-                            <button
-                              type="button"
-                              onClick={() => openModal(post)}
-                              className="px-5 py-2 bg-[#BE123C] hover:bg-[#9F1239] text-white rounded-full text-xs font-bold shadow-sm transition cursor-pointer"
-                            >
-                              Comment ngay
-                            </button>
+                              <div className="absolute bottom-full right-0 mb-1.5 hidden group-hover:block w-max z-10 pointer-events-none">
+                                <div className="bg-gray-900 text-white text-[11px] font-medium rounded-lg py-1 px-2.5 shadow-xl">
+                                  {isLinkedInPost
+                                    ? "Tự động copy mẫu câu & mở bài viết LinkedIn để Like/Comment và lưu minh chứng"
+                                    : "Tự động copy mẫu câu & mở bài viết để Like/Comment/Share để tương tác trên FB"}
+                                </div>
+                              </div>
+                            </div>
                           </div>
                         </div>
                       </div>
