@@ -58,6 +58,10 @@ export interface Contract {
   aiRiskScore?: number | null;
   aiReview: ContractReviewFinding[];
   aiPrompt?: string | null;
+  /** Google Drive (2026-10-26, Phan A4) - trang thai dong bo file goc. */
+  driveFolderId?: string | null;
+  driveSyncStatus?: 'not_applicable' | 'pending' | 'synced' | 'error';
+  aiHighlight?: { fileName: string | null; driveFileId: string | null; confirmedAt: string | null } | null;
   version: number;
   createdById?: string | null;
   updatedById?: string | null;

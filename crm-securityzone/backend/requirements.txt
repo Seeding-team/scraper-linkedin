@@ -16,6 +16,10 @@ openpyxl
 python-docx
 pdfplumber
 google-generativeai
+google-api-python-client
+google-auth-oauthlib
+pymupdf
+pytesseract
 
 # Telegram Chat (Quan ly kenh & CSKH) -- client MTProto thuan Python
 telethon

@@ -29,6 +29,11 @@ RUN fc-cache -f
 
 RUN soffice --headless --version     && fc-list | grep -qi "Liberation Serif" && fc-list :lang=vi family | grep -qi "DejaVu Serif"
 
+# Tesseract OCR + goi ngon ngu tieng Viet: dung de dinh vi toa do (bbox) tung tu tren PDF scan
+# (khong co text layer) cho tinh nang "AI Highlight" hop dong (2026-10-26) - pdfplumber chi doc
+# duoc text layer that, KHONG doc duoc anh scan.
+RUN apt-get update     && apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-vie     && rm -rf /var/lib/apt/lists/*
+
 COPY requirements.txt constraints.txt ./
 RUN pip install --upgrade pip && pip install -r requirements.txt
 

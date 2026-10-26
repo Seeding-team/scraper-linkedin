@@ -8,7 +8,7 @@ import { CustomerActivityTab } from './CustomerActivityTab';
 
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { Fragment, useEffect, useMemo, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { API_BASE_URL, API_KEY } from '@/lib/env';
 import { useAppAuth } from '@/contexts/AppAuthContext';
 import { formatVND, getStageMeta, SOURCE_OPTIONS, SERVICE_PACKAGE_OPTIONS, CRM_PACKAGE_OPTIONS, INDUSTRY_OPTIONS } from '../constants/crmConfig';
@@ -216,6 +216,8 @@ export type RelatedPayload = {
     quote_id?: string | null;
     contact_id?: string | null;
     warranty_period?: string | null;
+    drive_sync_status?: 'not_applicable' | 'pending' | 'synced' | 'error' | null;
+    ai_review_status?: 'not_run' | 'pending_confirmation' | 'confirmed' | null;
   }>;
   kpi?: {
     deal_count?: number;
@@ -1018,17 +1020,12 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
     setOpenDeal(null);
   }, [tab]);
 
-  useEffect(() => {
-    let alive = true;
-    setLoading(true);
-    // Đồng thời tải contacts để hiện tên Người liên hệ chính trong bảng Deal.
-    void seedingCrmRepository.listContacts(customerId).then(contacts => {
-      if (alive) setAllContacts(contacts || []);
-    }).catch(() => {
-      if (alive) setAllContacts([]);
-    });
-
-    fetch(`${API_BASE_URL}/api/all-platform/crm/customers/${encodeURIComponent(customerId)}/related`, {
+  // Tach rieng ham tai /related (khong doi setLoading/setError cho lan POLL ngam - xem
+  // useEffect polling ben duoi) de dung lai duoc cho ca lan tai chinh VA lan poll tu dong, khong
+  // lam nhay giao dien (spinner/"dang tai") moi lan poll ngam.
+  const loadRelated = useCallback((opts?: { silent?: boolean }): Promise<RelatedPayload | null> => {
+    if (!opts?.silent) setLoading(true);
+    return fetch(`${API_BASE_URL}/api/all-platform/crm/customers/${encodeURIComponent(customerId)}/related`, {
       credentials: 'include',
       headers: headers(),
     })
@@ -1040,19 +1037,49 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
         return body.data as RelatedPayload;
       })
       .then(payload => {
-        if (alive) {
-          setData(payload);
-          setError('');
-        }
+        setData(payload);
+        setError('');
+        return payload;
       })
       .catch(err => {
-        if (alive) setError(err instanceof Error ? err.message : 'Không tải được hồ sơ khách hàng.');
+        if (!opts?.silent) setError(err instanceof Error ? err.message : 'Không tải được hồ sơ khách hàng.');
+        return null;
       })
       .finally(() => {
-        if (alive) setLoading(false);
+        if (!opts?.silent) setLoading(false);
       });
+  }, [customerId]);
+
+  useEffect(() => {
+    let alive = true;
+    // Đồng thời tải contacts để hiện tên Người liên hệ chính trong bảng Deal.
+    void seedingCrmRepository.listContacts(customerId).then(contacts => {
+      if (alive) setAllContacts(contacts || []);
+    }).catch(() => {
+      if (alive) setAllContacts([]);
+    });
+    void loadRelated();
     return () => { alive = false; };
-  }, [customerId, reloadTick]);
+  }, [customerId, reloadTick, loadRelated]);
+
+  // (2026-10-27, fix bug "Dang dong bo Drive" khong tu cap nhat, phai F5 moi thay) - dong bo
+  // Drive chay NGAM trong 1 job worker (xem contract_drive_sync_job.py, poll moi 10s) nen lan
+  // tai /related NGAY sau khi tao/sua hop dong chi bat dung trang thai "pending" tam thoi, KHONG
+  // tu bao khi job xong. Poll NGAM (khong hien spinner) moi 5s CHI KHI con hop dong o trang thai
+  // "pending", dung han sau 60s (12 lan) de khong poll vo thoi han neu job thuc su loi/ket.
+  const hasPendingDriveSync = (data?.contracts || []).some(c => c.drive_sync_status === 'pending');
+  useEffect(() => {
+    if (!hasPendingDriveSync) return undefined;
+    let cancelled = false;
+    let attempts = 0;
+    const timer = setInterval(() => {
+      attempts += 1;
+      if (cancelled) return;
+      if (attempts > 12) { clearInterval(timer); return; }
+      void loadRelated({ silent: true });
+    }, 5000);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, [hasPendingDriveSync, loadRelated]);
 
   const customer = data?.customer;
   const customerRow = useMemo(() => toCustomerRow(customer), [customer]);

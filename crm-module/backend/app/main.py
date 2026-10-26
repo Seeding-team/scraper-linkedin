@@ -75,6 +75,15 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.exception("Failed to start MSC product sync scheduler")
 
+    # Google Drive sync worker cho hop dong (2026-10-26, Phan A3) - poll bang
+    # contract_drive_sync_jobs moi 10s, ben vung qua restart (xem jobs/contract_drive_sync_job.py).
+    try:
+        from app.modules.all_platform.jobs.contract_drive_sync_job import setup_contract_drive_sync_worker
+        setup_contract_drive_sync_worker()
+        logger.info("Contract Drive sync worker setup finished")
+    except Exception:
+        logger.exception("Failed to start Contract Drive sync worker")
+
     # Auto-start lại các Telegram client (Telethon) đã connected trước khi BE restart.
     telegram_clients_task: asyncio.Task | None = None
 

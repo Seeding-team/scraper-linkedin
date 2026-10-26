@@ -145,7 +145,26 @@ class Settings:
         os.getenv("JWT_ACCESS_TOKEN_EXPIRE_MINUTES", "10080"),
     )
     google_oauth_client_id: str = os.getenv("GOOGLE_CLIENT_ID", "")
+    # (2026-10-27) Authorization-code flow rieng cho "nhap Google Docs/Drive rieng tu bang
+    # quyen nguoi dung" - KHAC voi GOOGLE_CLIENT_ID dung cho nut "Dang nhap Google" (ID-token/
+    # GSI, khong can secret). Cung co the dung CHUNG 1 OAuth Client (Web application) tren
+    # Google Cloud Console - chi can bat them redirect URI + lay Client secret, KHONG bat
+    # buoc tao Client moi (xem huong dan trong google_oauth_service.py).
+    google_oauth_client_secret: str = os.getenv("GOOGLE_CLIENT_SECRET", "")
+    # URL cong khai (qua router nginx) de dung lam redirect_uri OAuth - PHAI khop CHINH XAC
+    # voi 1 Authorized redirect URI da dang ky tren Google Cloud Console cho OAuth Client o
+    # tren. Mac dinh khop voi CRM_ROUTER_PORT trong docker-compose.yml (18090) o dev.
+    crm_public_url: str = os.getenv("CRM_PUBLIC_URL", "http://localhost:18090").rstrip("/")
     leader_code: str = (os.getenv("LEADER_CODE") or "8888").strip()
+
+    # Google Drive - luu file hop dong (2026-10-26, yeu cau sep). Service account
+    # rieng (markee-recruitment-bot) da duoc them lam Content Manager cua 1
+    # Shared Drive co san - KHONG dung My Drive ca nhan (service account khong co
+    # dung luong rieng tren My Drive thuong). Private key KHONG duoc in ra log/
+    # response o bat ky dau dung field nay.
+    google_service_account_email: str = os.getenv("GOOGLE_SERVICE_ACCOUNT_EMAIL", "")
+    google_private_key: str = os.getenv("GOOGLE_PRIVATE_KEY", "").replace("\\n", "\n")
+    google_drive_contracts_shared_drive_id: str = os.getenv("GOOGLE_DRIVE_CONTRACTS_SHARED_DRIVE_ID", "")
 
     # BUG THAT DA GAP: thieu field nay (co san o main - linkedin_group_crawler)
     # khien verify_zalo_api_key() (zalo/api/security.py) bi AttributeError
