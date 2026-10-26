@@ -266,6 +266,7 @@ export interface RotationScheduleCfg {
   idMember: string | null;
   intervalHours: number;
   repeatEnabled: boolean;
+  antiBotEnabled?: boolean;
   fbGroups: RotationGroupInput[];
   liGroups: RotationGroupInput[];
   threadsKeywords: string[];

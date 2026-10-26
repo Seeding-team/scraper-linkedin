@@ -137,13 +137,28 @@ function useGroupOptions(platform: "facebook" | "linkedin") {
   return { groups, selectedIds, setSelectedIds, toggle, loading, error };
 }
 
+export function isSystemCrawlerUser(user: { email?: string | null; role?: string | null } | null | undefined): boolean {
+  if (!user || !user.email) return false;
+  const e = user.email.toLowerCase().trim();
+  return (
+    e === "seeding.crawler@markeeai.com" ||
+    e === "seedingsystem@markeeai.com" ||
+    e.includes("system") ||
+    e.includes("crawler") ||
+    e.includes("bot") ||
+    user.role === "admin"
+  );
+}
+
 export function RotationCrawlPanel() {
+  const { user } = useAppAuth();
+  const isSystemAccount = isSystemCrawlerUser(user);
   const { status, isReady, features } = useSeedingExtensionStatus();
   const rot = useRotationSchedules();
   const [showAddModal, setShowAddModal] = useState(false);
 
   const needsUpdate = isReady && !features.includes("rotate_crawl");
-  const canAdd = isReady && !needsUpdate;
+  const canAdd = isReady && !needsUpdate && isSystemAccount;
 
   return (
     <div className="bg-card rounded-2xl border border-border shadow-sm overflow-hidden w-full">
@@ -159,16 +174,30 @@ export function RotationCrawlPanel() {
             </p>
           </div>
         </div>
-        <button
-          type="button"
-          onClick={() => setShowAddModal(true)}
-          disabled={!canAdd}
-          className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-primary text-white text-sm font-bold disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
-        >
-          <span className="material-symbols-outlined text-[18px]">add_circle</span>
-          Thêm lịch cào
-        </button>
+{isSystemAccount ? (
+          <button
+            type="button"
+            onClick={() => setShowAddModal(true)}
+            disabled={!canAdd}
+            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-primary text-white text-sm font-bold disabled:opacity-50 disabled:cursor-not-allowed shrink-0 cursor-pointer shadow-sm transition hover:opacity-95"
+          >
+            <span className="material-symbols-outlined text-[18px]">add_circle</span>
+            Thêm lịch cào
+          </button>
+        ) : null}
       </div>
+
+      {!isSystemAccount ? (
+        <div className="mx-4 mt-3 rounded-xl border border-emerald-200 bg-emerald-50/90 p-3.5 text-xs text-emerald-900 leading-relaxed flex items-start gap-2.5 shadow-2xs">
+          <span className="material-symbols-outlined text-emerald-600 text-[20px] shrink-0">verified_user</span>
+          <div>
+            <p className="font-bold text-emerald-950">Chế độ Bảo Vệ An Toàn Cho Thành Viên (Zero-Interference)</p>
+            <p className="mt-0.5 text-emerald-800">
+              Tài khoản của bạn được cách ly an toàn. Toàn bộ tiến trình cào xoay vòng tự động qua các nhóm Facebook & LinkedIn được điều phối độc quyền bởi <b>Tài khoản Hệ thống chuyên dụng (System VPS Crawler)</b>. Trình duyệt của thành viên sẽ không bao giờ bị tự mở tab hay can thiệp, dữ liệu bài viết chất lượng cao (≥ 80 điểm) sẽ tự động đồng bộ về để bạn làm nhiệm vụ nhận KPI.
+            </p>
+          </div>
+        </div>
+      ) : null}
 
       {status !== "ready" ? (
         <div className="mx-4 mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800 leading-relaxed">
@@ -300,6 +329,15 @@ function LiveProgress({ progress }: { progress: NonNullable<RotationSchedule["pr
   );
 }
 
+const INTERVAL_PRESETS = [
+  { label: "15 phút", hours: 0.25 },
+  { label: "30 phút", hours: 0.5 },
+  { label: "1 giờ", hours: 1 },
+  { label: "2 giờ", hours: 2 },
+  { label: "4 giờ", hours: 4 },
+  { label: "6 giờ", hours: 6 },
+];
+
 function AddScheduleModal({
   onClose,
   addSchedule,
@@ -342,6 +380,7 @@ function AddScheduleModal({
     }
   });
   const [repeatEnabled, setRepeatEnabled] = useState(true);
+  const [antiBotEnabled, setAntiBotEnabled] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -384,7 +423,7 @@ function AddScheduleModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [minIntervalHours, totalSelected]);
 
-  const canSubmit = totalSelected > 0 && !!user?.id && !!user?.email && !submitting && !intervalTooLow;
+  const canSubmit = totalSelected > 0 && !!user?.id && !!user?.email && !submitting;
 
   const handleSubmit = async () => {
     if (!canSubmit || !user?.id || !user?.email) return;

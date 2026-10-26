@@ -172,7 +172,10 @@
     async function advanceQueue(state) {
         const nextIndex = state.groupQueue.findIndex((g, i) => i > state.currentIndex && g.status === "pending");
         if (nextIndex === -1) return false;
-        await sleep(INTER_GROUP_COOLDOWN_MS);
+        // Nghỉ an toàn giữa các nhóm LinkedIn né bot
+        const cooldown = 15000 + Math.floor(Math.random() * 15000); // 15s - 30s
+        log(`🛡️ Chống bot: Chờ an toàn ${(cooldown / 1000).toFixed(1)}s trước khi mở nhóm LinkedIn tiếp theo...`);
+        await sleep(cooldown);
         state.currentIndex = nextIndex;
         await saveState();
         return true;
