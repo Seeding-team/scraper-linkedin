@@ -1791,8 +1791,14 @@ def get_post_interactions(link_post: str, email: str, team_id: Optional[str] = N
                         link_c = raw_c.split("[Link minh chứng: ")[1].split("]")[0].strip()
                     except Exception:
                         pass
+                clean_c = raw_c
+                if "[Link minh chứng: " in clean_c:
+                    try:
+                        clean_c = clean_c.split("[Link minh chứng: ")[0].strip()
+                    except Exception:
+                        pass
                 kpi_by_member[m_id]["link_comment"] = link_c
-                kpi_by_member[m_id]["comment_content"] = raw_c
+                kpi_by_member[m_id]["comment_content"] = clean_c
             # latest_row: dùng để tính "thời gian gần nhất" cho cột Thời gian
             existing_latest = kpi_by_member[m_id].get("latest_row")
             if not existing_latest:

@@ -147,6 +147,32 @@ function formatMemberTime(rawCreatedAt?: string | null, fallbackTime: string = "
   }
 }
 
+/**
+ * Tách nội dung bình luận sạch và link minh chứng (loại bỏ chuỗi thô [Link minh chứng: ...])
+ */
+function parseCommentAndProof(rawComment?: string | null, rawLink?: string | null): { cleanComment: string; proofUrl: string | null } {
+  let proofUrl = rawLink?.trim() || null;
+  let cleanComment = (rawComment || "").trim();
+
+  // Bóc tách URL từ [Link minh chứng: https://...] hoặc Link minh chứng: https://...
+  const linkRegex = /\[?(?:Link minh chứng|Minh chứng):\s*(https?:\/\/[^\s\]]+)\]?/i;
+  const match = cleanComment.match(linkRegex);
+  if (match) {
+    if (!proofUrl) {
+      proofUrl = match[1];
+    }
+    cleanComment = cleanComment.replace(match[0], "").trim();
+  }
+
+  // Nếu comment chỉ chứa duy nhất một URL thì lấy làm proofUrl
+  if (!proofUrl && /^https?:\/\/[^\s]+$/.test(cleanComment)) {
+    proofUrl = cleanComment;
+    cleanComment = "";
+  }
+
+  return { cleanComment, proofUrl };
+}
+
 
 type ToastType = "success" | "error" | "warning" | "info";
 interface ToastMessage {
@@ -2383,12 +2409,36 @@ export default function InternalEngagementPage() {
                         </div>
 
                         {/* Noi dung comment CUA CHINH MINH da dang tren bai nay (neu da hoan thanh) */}
-                        {status === "completed" && myComment ? (
-                          <div className="mb-3.5 p-2.5 rounded-xl bg-emerald-50 border border-emerald-200 text-[12px] text-emerald-800">
-                            <div className="font-bold mb-0.5">✓ Bạn đã comment thành công:</div>
-                            <div className="line-clamp-2">{myComment}</div>
-                          </div>
-                        ) : null}
+                        {status === "completed" && myComment ? (() => {
+                          const { cleanComment, proofUrl } = parseCommentAndProof(myComment);
+                          return (
+                            <div className="mb-3.5 p-2.5 rounded-xl bg-emerald-50 border border-emerald-200 text-[12px] text-emerald-800 flex items-center justify-between gap-3 flex-wrap shadow-2xs">
+                              <div className="min-w-0 flex-1">
+                                <div className="font-bold text-emerald-800 flex items-center gap-1 mb-0.5">
+                                  <span>✓</span> Bạn đã comment thành công:
+                                </div>
+                                {cleanComment ? (
+                                  <div className="line-clamp-2 font-medium italic text-emerald-950">
+                                    "{cleanComment}"
+                                  </div>
+                                ) : (
+                                  <div className="text-[11px] text-emerald-700 italic">Đã ghi nhận minh chứng tương tác thành công</div>
+                                )}
+                              </div>
+
+                              {proofUrl ? (
+                                <a
+                                  href={proofUrl}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-lg shadow-2xs transition shrink-0 cursor-pointer"
+                                >
+                                  <span>👁️</span> Xem minh chứng ↗
+                                </a>
+                              ) : null}
+                            </div>
+                          );
+                        })() : null}
 
                         {/* BỐ CỤC FOOTER ACTION BUTTONS */}
                         <div className="flex items-center justify-between gap-3 pt-2.5 border-t border-gray-100 flex-wrap">
@@ -2747,23 +2797,30 @@ export default function InternalEngagementPage() {
                             <tr key={m.id_member || idx} className="hover:bg-gray-50/80">
                               <td className="py-3 font-bold text-gray-900">
                                 {m.name}
-                                {m.comment_content ? (
-                                  <div className="mt-0.5 text-[11px] font-medium text-gray-500 italic line-clamp-2 max-w-[220px]" title={m.comment_content}>
-                                    💬 "{m.comment_content}"
-                                  </div>
-                                ) : null}
-                                {m.link_comment ? (
-                                  <div className="mt-1">
-                                    <a
-                                      href={m.link_comment}
-                                      target="_blank"
-                                      rel="noreferrer"
-                                      className="inline-flex items-center gap-1 text-[11px] font-bold text-blue-600 hover:text-blue-800 hover:underline"
-                                    >
-                                      <span>🔗</span> Link minh chứng ↗
-                                    </a>
-                                  </div>
-                                ) : null}
+                                {(() => {
+                                  const { cleanComment, proofUrl } = parseCommentAndProof(m.comment_content, m.link_comment);
+                                  return (
+                                    <>
+                                      {cleanComment ? (
+                                        <div className="mt-0.5 text-[11px] font-medium text-gray-500 italic line-clamp-2 max-w-[240px]" title={cleanComment}>
+                                          💬 "{cleanComment}"
+                                        </div>
+                                      ) : null}
+                                      {proofUrl ? (
+                                        <div className="mt-1">
+                                          <a
+                                            href={proofUrl}
+                                            target="_blank"
+                                            rel="noreferrer"
+                                            className="inline-flex items-center gap-1 px-2.5 py-1 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded-lg text-[11px] font-bold shadow-2xs transition cursor-pointer"
+                                          >
+                                            <span>👁️</span> Xem minh chứng ↗
+                                          </a>
+                                        </div>
+                                      ) : null}
+                                    </>
+                                  );
+                                })()}
                               </td>
                               <td className="py-3 text-gray-500">
                                 {dbTeams.find((t) => t.id === m.team_id || t.name_team.toLowerCase() === (m.team || "").toLowerCase())?.name_team || m.team || "Team"}
