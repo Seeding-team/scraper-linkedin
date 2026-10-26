@@ -1,15 +1,10 @@
-# Tiến độ phiên làm việc (2026-10-26) — Cào Threads kết hợp DOM + bắt API (task 11, chỉ Threads)
+# Tiến độ phiên làm việc (2026-10-26) — Cào Threads kết hợp DOM + bắt API
 
-Nhánh `feat/threads-crawl-dom-api-sniffer` (từ `main` `e6f85bef`), **CHƯA commit**. Extension lên **2.11**:
-`platforms/threads/crawl-sniffer.js` (bắt fetch + XHR `/graphql`, ghi tên query), `platforms/threads/crawl.js`
+Extension 2.11: `platforms/threads/crawl-sniffer.js` (bắt fetch + XHR `/graphql`, ghi tên query), `platforms/threads/crawl.js`
 (gộp 3 nguồn theo `post_url`: API > JSON nhúng > DOM; DOM cuộn tới bài cuối + đọc số like/bình luận/đăng lại
 từ `<svg><title>`; đẩy bài realtime `MK_TH_COLLECT_BATCH` -> bg -> web `MK_TH_CRAWL_POSTS`), UI
 `keyword-crawl-section.tsx` có danh sách "Bài vừa tìm thấy" + lọc theo nguồn. Bot xoay vòng
-(`rotation-crawl.js`) gọi `__mkStartThreadsCrawl` nên tự dùng luồng mới, không sửa.
-Đã xác minh: threads.com **chưa đăng nhập không phân trang, không gọi GraphQL nào chứa bài** (chỉ ~20 bài JSON
-nhúng). Đã test E2E local (extension thật, backend/DB local) cả khi CHƯA và ĐÃ đăng nhập Threads (user tự đăng
-nhập vào profile Playwright riêng): đã đăng nhập thì cuộn gọi `BarcelonaSearchResultsRefetchableQuery`, sniffer
-bắt được -> "marketing" 79 bài/7 lần cuộn, tab "Gần đây" ra bài 1-2 ngày; nút Dừng dừng sau ~4.5s và vẫn lưu bài đã gom.
+(`rotation-crawl.js`) gọi `__mkStartThreadsCrawl` tự động thừa hưởng luồng thu thập mới.
 
 # Tiến độ phiên làm việc (2026-10-05) — Multi-currency (VND | USD) cho Báo giá
 

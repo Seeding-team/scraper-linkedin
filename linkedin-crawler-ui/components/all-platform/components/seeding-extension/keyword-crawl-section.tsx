@@ -358,7 +358,7 @@ function LivePostList({ posts }: { posts: LiveCrawlPost[] }) {
                   href={post.post_url}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="ml-auto flex items-center gap-1 font-semibold text-primary hover:underline"
+                  className="ml-auto flex items-center gap-1 font-semibold text-primary hover:underline cursor-pointer transition"
                 >
                   Mở bài <ExternalLink className="h-3 w-3" />
                 </a>

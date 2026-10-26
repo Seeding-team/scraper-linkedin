@@ -445,5 +445,8 @@
     });
 
     // Cho test tự động / debug từ DevTools (world cô lập, không lộ ra trang Threads).
-    window.__mkThreadsCrawlDebug = { parseCount, readDomPosts, store, stats };
+    // Cho test tu dong / debug tu DevTools khi co co bat chu dong (world co lap, an toan).
+    if (typeof window !== 'undefined' && window.__MK_DEV_DEBUG__) {
+        window.__mkThreadsCrawlDebug = { parseCount, readDomPosts, store, stats };
+    }
 })();
