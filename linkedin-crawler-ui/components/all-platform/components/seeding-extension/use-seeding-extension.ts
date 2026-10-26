@@ -94,6 +94,22 @@ export interface CrawlLogLine {
   at: number;
 }
 
+/** Bài extension vừa gom được, đẩy về realtime trong lúc cào (hiện tại chỉ Threads: MK_TH_CRAWL_POSTS). */
+export interface LiveCrawlPost {
+  post_url: string;
+  author_username: string;
+  author_name: string;
+  content: string;
+  post_time: string | null;
+  reactions: number;
+  comments: number;
+  shares: number;
+  image_urls: string[];
+  /** Nguồn dữ liệu của bài: "api" (bắt request), "embedded" (JSON trong trang), "dom" (đọc giao diện). */
+  sources: string[];
+  keyword: string;
+}
+
 export interface CrawlRuntime {
   running: boolean;
   done: boolean;
@@ -102,9 +118,42 @@ export interface CrawlRuntime {
   totalGroups: number;
   posts: number;
   saved: number;
+  livePosts: LiveCrawlPost[];
 }
 
-const EMPTY_RUNTIME: CrawlRuntime = { running: false, done: false, logs: [], groupIndex: 0, totalGroups: 0, posts: 0, saved: 0 };
+/** Giữ tối đa chừng này bài trong danh sách realtime (bài mới nhất lên đầu). */
+const MAX_LIVE_POSTS = 500;
+
+const EMPTY_RUNTIME: CrawlRuntime = { running: false, done: false, logs: [], groupIndex: 0, totalGroups: 0, posts: 0, saved: 0, livePosts: [] };
+
+// Gộp lô bài mới vào danh sách realtime: bài đã có (cùng post_url) thì cập nhật tại chỗ
+// (vd DOM thấy trước, API tới sau mang số tương tác chính xác), bài mới lên đầu.
+function mergeLivePosts(current: LiveCrawlPost[], incoming: unknown[], keyword: string): LiveCrawlPost[] {
+  const index = new Map(current.map((p, i) => [p.post_url, i]));
+  const next = [...current];
+  const fresh = new Map<string, LiveCrawlPost>();
+  for (const raw of incoming) {
+    const r = raw as Record<string, unknown>;
+    if (!r || typeof r.post_url !== "string") continue;
+    const post: LiveCrawlPost = {
+      post_url: r.post_url,
+      author_username: String(r.author_username || ""),
+      author_name: String(r.author_name || r.author_username || ""),
+      content: String(r.content || ""),
+      post_time: typeof r.post_time === "string" ? r.post_time : null,
+      reactions: Number(r.reactions) || 0,
+      comments: Number(r.comments) || 0,
+      shares: Number(r.shares) || 0,
+      image_urls: Array.isArray(r.image_urls) ? (r.image_urls as string[]) : [],
+      sources: Array.isArray(r._sources) ? (r._sources as string[]) : [],
+      keyword,
+    };
+    const at = index.get(post.post_url);
+    if (at !== undefined) next[at] = { ...post, keyword: next[at].keyword };
+    else fresh.set(post.post_url, post);
+  }
+  return [...Array.from(fresh.values()).reverse(), ...next].slice(0, MAX_LIVE_POSTS);
+}
 const PREFIX: Record<ExtensionPlatform, string> = { facebook: "MK_FB_CRAWL_", linkedin: "MK_LI_CRAWL_", threads: "MK_TH_CRAWL_", youtube: "MK_YT_CRAWL_" };
 const PLATFORMS = Object.keys(PREFIX) as ExtensionPlatform[];
 
@@ -179,6 +228,9 @@ export function useExtensionCrawl({ onSaved, onDone }: UseExtensionCrawlOptions 
           totalGroups: typeof p.totalGroups === "number" ? p.totalGroups : r.totalGroups,
           posts: typeof p.posts === "number" && p.posts > 0 ? p.posts : r.posts,
         }));
+      } else if (kind === "POSTS") {
+        const incoming = Array.isArray(p.posts) ? p.posts : [];
+        if (incoming.length) update(platform, (r) => ({ ...r, running: true, livePosts: mergeLivePosts(r.livePosts, incoming, String(p.keyword || "")) }));
       } else if (kind === "SAVED") {
         const count = Number(p.count) || 0;
         update(platform, (r) => ({ ...r, saved: r.saved + count }));

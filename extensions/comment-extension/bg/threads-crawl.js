@@ -17,6 +17,9 @@
     let crawlTabId = null;
     let crawlWindowId = null;
     let dashboardTabId = null;
+    // Từ khoá đang cào - gắn vào lô bài crawl.js đẩy về (MK_TH_COLLECT_BATCH) để web biết
+    // bài thuộc từ khoá nào khi hiện danh sách realtime.
+    let currentKeyword = "";
 
     function sleep(ms) {
         return new Promise((r) => setTimeout(r, ms));
@@ -76,6 +79,15 @@
         }
     }
 
+    // "API 40 · JSON trang 18 · DOM 3 (DOM bổ sung dữ liệu còn thiếu cho 2 bài) · 4 lần cuộn, 3 response API (BarcelonaSearchResultsRefetchableQuery x3)"
+    function describeSources(result) {
+        const parts = [`API ${result.fromApi || 0}`, `JSON trang ${result.fromJson || 0}`, `DOM ${result.fromDom || 0}`];
+        if (result.domEnriched) parts[2] += ` (DOM bổ sung dữ liệu còn thiếu cho ${result.domEnriched} bài)`;
+        const names = (result.apiNames || []).map((n) => `${n.name} x${n.count}`).join(", ");
+        parts.push(`${result.scrolls || 0} lần cuộn, ${result.apiResponses || 0} response API${names ? ` (${names})` : ""}`);
+        return parts.join(" · ");
+    }
+
     async function postToBackend(apiBase, body) {
         let lastError = null;
         for (let attempt = 0; attempt <= 2; attempt++) {
@@ -128,6 +140,7 @@
             for (let i = 0; i < keywords.length; i++) {
                 if (shouldStop) break;
                 const keyword = keywords[i];
+                currentKeyword = keyword;
                 notifyApp({ action: "MK_TH_CRAWL_PROGRESS", groupIndex: i, totalGroups: keywords.length, keyword, posts: totalPosts });
                 reportProgress(i);
                 log(`[${i + 1}/${keywords.length}] Đang tìm: "${keyword}"`);
@@ -165,7 +178,7 @@
                 const posts = result.data || [];
                 totalPosts += posts.length;
                 notifyApp({ action: "MK_TH_CRAWL_PROGRESS", groupIndex: i, totalGroups: keywords.length, keyword, posts: totalPosts });
-                log(`Tìm thấy ${posts.length} bài cho "${keyword}"${result.fromDom ? ` (${result.fromDom} bài lấy từ giao diện, thiếu số tương tác)` : ""}.`);
+                log(`Tìm thấy ${posts.length} bài cho "${keyword}" — ${describeSources(result)}.`);
                 if (posts.length === 0) continue;
 
                 try {
@@ -175,7 +188,7 @@
                         id_member: config.idMember || null,
                         post_limit: postLimit,
                         max_age_days: maxAgeDays,
-                        extension_version: "Markee-Seeding-Extension-2.1",
+                        extension_version: `Markee-Seeding-Extension-${chrome.runtime.getManifest().version}`,
                     });
                     const count = saved.count || 0;
                     totalSaved += count;
@@ -208,8 +221,16 @@
 
     // Cho phep bg/rotation-crawl.js goi truc tiep va await - xem giai thich o fb-crawl.js.
     self.__mkStartThreadsCrawl = runCrawl;
-    self.__mkStopThreadsCrawl = () => { if (running) shouldStop = true; };
+    self.__mkStopThreadsCrawl = () => {
+        if (!running) return;
+        shouldStop = true;
+        stopCollectInTab();
+    };
     self.__mkThreadsCrawlStatus = () => running;
+
+    function stopCollectInTab() {
+        if (crawlTabId != null) chrome.tabs.sendMessage(crawlTabId, { action: "MK_TH_COLLECT_STOP" }).catch(() => {});
+    }
 
     chrome.tabs.onRemoved.addListener((tabId) => {
         if (running && tabId === crawlTabId) {
@@ -221,6 +242,13 @@
 
     chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         if (!msg) return;
+        if (msg.action === "MK_TH_COLLECT_BATCH") {
+            // Lô bài crawl.js vừa gom được trong tab cào -> chuyển nguyên cho trang web.
+            if (running && sender.tab && sender.tab.id === crawlTabId) {
+                notifyApp({ action: "MK_TH_CRAWL_POSTS", keyword: currentKeyword, posts: msg.posts || [], keywordTotal: msg.total || 0 });
+            }
+            return;
+        }
         if (msg.action === "MK_TH_CRAWL_START") {
             if (running) {
                 sendResponse({ success: false, error: "Đang có một tiến trình cào Threads chạy." });
@@ -244,7 +272,8 @@
         if (msg.action === "MK_TH_CRAWL_STOP") {
             if (running) {
                 shouldStop = true;
-                log("Đã nhận lệnh dừng, sẽ dừng sau bước hiện tại...", "warn");
+                stopCollectInTab();
+                log("Đã nhận lệnh dừng, sẽ lưu nốt bài đã gom của từ khoá hiện tại rồi dừng...", "warn");
             }
             sendResponse({ success: true });
             return;

@@ -7,7 +7,7 @@
 const MK_EXTENSION_INFO = (() => {
     let version = "";
     try { version = chrome.runtime.getManifest().version; } catch (e) {}
-    return { version, features: ["fb_crawl", "fb_comment", "li_crawl", "li_comment", "th_crawl", "rotate_crawl", "yt_crawl", "yt_comment"] };
+    return { version, features: ["fb_crawl", "fb_comment", "li_crawl", "li_comment", "th_crawl", "th_crawl_live", "rotate_crawl", "yt_crawl", "yt_comment"] };
 })();
 
 // Truoc day KHONG check chrome.runtime.lastError va KHONG co timeout gi ca -
