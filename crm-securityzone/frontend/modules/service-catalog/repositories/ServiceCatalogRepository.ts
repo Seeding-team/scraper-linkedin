@@ -1,5 +1,5 @@
 import { API_BASE_URL, API_KEY } from '@/lib/env';
-import type {
+import {
   ServiceCatalogItem,
   ServiceCatalogItemInput,
   BundleComponentInput,
@@ -8,6 +8,10 @@ import type {
   ServiceCatalogUnit,
   ServiceCatalogVatRate,
   ServiceCatalogStatus,
+  MscSyncStats,
+  WorkspaceMeta,
+  WorkspaceAssignResult,
+  CatalogChangeFingerprint,
 } from '../types';
 
 type ApiResponse<T> = {
@@ -92,6 +96,8 @@ function toItemPayload(input: ServiceCatalogItemInput) {
     spec_unit_label: input.specUnitLabel,
     note: input.note,
     status: input.status,
+    // TÍCH HỢP BỘ LỌC WORKSPACE: Gửi instance khi tạo mới hoặc cập nhật
+    ...(input.instance ? { instance: input.instance } : {}),
   };
   
   // Only include optional fields with non-empty values (for databases that may not have migration 127 applied)
@@ -115,6 +121,7 @@ function toItemPayload(input: ServiceCatalogItemInput) {
     ['importFee', 'import_fee'],
     ['otherCost', 'other_cost'],
     ['pricingPolicy', 'pricing_policy'],
+    ['defaultCostVatRate', 'default_cost_vat_rate'],
   ] as const) {
     const value = input[key as keyof ServiceCatalogItemInput];
     if (value !== '' && value !== null && value !== undefined) {
@@ -136,6 +143,8 @@ export interface ServiceCatalogListOptions {
   context?: 'admin' | 'quote_picker';
   quoteId?: string | null;
   issuerCompanyId?: string | null;
+  /** TÍCH HỢP BỘ LỌC WORKSPACE: Danh sách instance/workspace cần lọc */
+  instances?: string[];
 }
 
 export class ServiceCatalogRepository {
@@ -144,8 +153,26 @@ export class ServiceCatalogRepository {
     if (options?.context) params.set('context', options.context);
     if (options?.quoteId) params.set('quote_id', options.quoteId);
     if (options?.issuerCompanyId) params.set('issuer_company_id', options.issuerCompanyId);
+    // TÍCH HỢP BỘ LỌC WORKSPACE: Đưa tham số instances vào query string nếu có
+    if (options?.instances && options.instances.length > 0) {
+      params.set('instances', options.instances.join(','));
+    }
     const qs = params.toString();
     return apiFetch<ServiceCatalogItem[]>(`/api/all-platform/service-catalog${qs ? `?${qs}` : ''}`);
+  }
+
+  /** TÍCH HỢP BỘ LỌC WORKSPACE: Lấy danh sách Workspace từ DB */
+  async getWorkspaces(): Promise<WorkspaceMeta[]> {
+    return apiFetch<WorkspaceMeta[]>('/api/all-platform/service-catalog/workspaces');
+  }
+
+  /** ĐỒNG BỘ CROSS-CLONE (Requirement C): fingerprint thay đổi dữ liệu danh mục
+   * (max updated_at + counts). Poll chu kỳ bounded ở use-service-catalog;
+   * fingerprint đổi → refetch list/workspaces. Endpoint tồn tại trên clone
+   * backend; MAIN/TimeTech chưa có → chỉ clone standalone gọi (guard bằng
+   * IS_STANDALONE_CRM). */
+  async getCatalogVersion(): Promise<CatalogChangeFingerprint> {
+    return apiFetch<CatalogChangeFingerprint>('/api/all-platform/service-catalog/version');
   }
 
   /** Danh sách đầy đủ bộ giá (mọi issuer_company_id) của 1 sản phẩm — CHỈ
@@ -273,6 +300,30 @@ export class ServiceCatalogRepository {
         }),
       }
     );
+  }
+
+  /** Dong bo hang hoa tu MSC (button "Đồng bộ hàng hóa từ MSC").
+   * dryRun=true → backend chi tinh toan dem du kien, KHONG ghi CRM. */
+  async runMscSync(dryRun = false): Promise<MscSyncStats> {
+    return apiFetch<MscSyncStats>('/api/all-platform/msc-sync/run', {
+      method: 'POST',
+      body: JSON.stringify({ dry_run: dryRun }),
+    });
+  }
+
+  /** Trang thai cac lan dong bo MSC gan nhat (msc_sync_runs). */
+  async getMscSyncStatus(limit = 10): Promise<MscSyncStats[]> {
+    return apiFetch<MscSyncStats[]>(`/api/all-platform/msc-sync/status?limit=${encodeURIComponent(String(limit))}`);
+  }
+
+  /** Many-to-many Workspace assignment (migration 190): bulk replace-all cho
+   * cac NHOM da chon (+ tat ca san pham ben trong). Backend goi 1 RPC
+   * `service_catalog_ws_assign` de atomic (khong co partial failure). */
+  async assignWorkspaces(groupIds: string[], instances: string[]): Promise<WorkspaceAssignResult> {
+    return apiFetch<WorkspaceAssignResult>('/api/all-platform/service-catalog/workspaces-assign', {
+      method: 'POST',
+      body: JSON.stringify({ group_ids: groupIds, instances }),
+    });
   }
 }
 

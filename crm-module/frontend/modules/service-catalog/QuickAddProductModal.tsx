@@ -7,7 +7,7 @@ import { useEffect, useMemo, useState } from 'react';
 
 import { serviceCatalogRepository } from './repositories/ServiceCatalogRepository';
 import type { BundleComponentInput, ServiceCatalogItem, ServiceCatalogItemInput, ServiceCatalogUnit, ServiceCatalogVatRate } from './types';
-import { usePricingLogic } from './usePricingLogic';
+import { usePricingLogic, effectiveCostPriceVnd } from './usePricingLogic';
 import { useSystemUsdVndRate } from './useSystemExchangeRate';
 import { emptyProductForm, formatSkuName, parseNullableNumber } from './catalog-form-utils';
 import { markupFromCustomerPrice } from './pricing-math';
@@ -15,6 +15,7 @@ import './styles/service-catalog.css';
 import '@/modules/crm/styles/quote-center.css';
 import { SearchableSelect } from '@/modules/crm/components/SearchableSelect';
 import { CrmVendorSelect } from '@/modules/crm/components/CrmVendorSelect';
+import { CurrencyInput } from '@/components/CurrencyInput';
 import { VendorImportFlow } from './VendorImportFlow';
 import { ChevronDown, ChevronUp, CheckCircle2, Info, Building2, Box, X } from 'lucide-react';
 
@@ -59,6 +60,7 @@ export function QuickAddProductModal({
   defaultGroupId?: string;
   initialValues?: {
     name?: string;
+    description?: string;
     unit?: string;
     vatRate?: number;
     unitPriceVnd?: number;
@@ -207,6 +209,7 @@ export function QuickAddProductModal({
             costPriceVnd: editingItem.defaultCostPriceVnd ?? 0,
             markupPercent: editingItem.defaultMarkupPercent ?? 0,
             customerPriceVnd: editingItem.defaultCustomerPriceVnd ?? editingItem.defaultUnitPriceVnd ?? 0,
+            costVatRate: editingItem.defaultCostVatRate ?? 0,
           });
           setBundleComponents([]);
         }
@@ -250,7 +253,11 @@ export function QuickAddProductModal({
       setNameInput(initialValues?.name || '');
       setUnitInput(initialValues?.unit || '');
       setVatInput(initialValues?.vatRate != null ? String(initialValues.vatRate) : '');
-      setDescription('');
+      // Bug thuc te (2026-10-10): truoc day LUON de trong "Mo ta chi tiet" du dong bao gia
+      // dang lien ket (openQuickAddForRow) da co san mo ta - Sale thay Ten san pham duoc
+      // dien san nhung Mo ta thi khong, tuong nham la mat du lieu. Dien san tu dong bao gia
+      // neu co, Sale van sua/xoa binh thuong truoc khi luu.
+      setDescription(initialValues?.description || '');
       setNote('');
       setQuoteDisplayName('');
       setQuoteDescription('');
@@ -430,7 +437,7 @@ export function QuickAddProductModal({
     const errs = validate();
     if (Object.keys(errs).length > 0) {
       setFieldErrors(errs);
-      setError('Vui lòng kiểm tra lại thông tin có lỗi màu đỏ.');
+      setError(`Chưa lưu được — ${Object.values(errs).join(' ')}`);
       return;
     }
     setSaving(true);
@@ -447,9 +454,14 @@ export function QuickAddProductModal({
         const trimmed = (value || '').trim();
         return trimmed ? trimmed : undefined;
       };
+      // TÍCH HỢP BỘ LỌC WORKSPACE: Kế thừa workspace instance từ nhóm cha hoặc item đang chỉnh sửa
+      const selectedParent = localGroups.find(g => g.id === parentId);
+      const inheritedInstance = selectedParent?.instance || editingItem?.instance || undefined;
+
       const payload: ServiceCatalogItemInput = itemType === 'bundle'
         ? {
             ...emptyProductForm(),
+            instance: inheritedInstance,
             itemType: 'bundle',
             parentId,
             sku: cleanText(skuInput),
@@ -504,6 +516,7 @@ export function QuickAddProductModal({
           }
         : {
             ...emptyProductForm(),
+            instance: inheritedInstance,
             itemType: 'component',
             parentId,
             sku: cleanText(skuInput),
@@ -540,6 +553,11 @@ export function QuickAddProductModal({
             defaultCostPriceVnd: pricing.costPriceVnd,
             defaultMarkupPercent: pricing.markupPercent,
             defaultCustomerPriceVnd: pricing.customerPriceVnd,
+            // "VAT giá vốn" (2026-10-13) - gui gia von THUAN (defaultCostPriceVnd
+            // o tren khong doi) + VAT rieng, backend luu nguyen 2 gia tri, KHONG
+            // gop lai (xem catalogItemToQuoteItem() o QuoteWorkspaceModal.tsx -
+            // noi THAT su nhan VAT vao gia von luc them vao bao gia).
+            defaultCostVatRate: pricing.costVatRate || null,
             pricingPolicy: cleanText(pricing.pricingPolicy || ''),
           };
       const saved = editingItem
@@ -578,7 +596,11 @@ export function QuickAddProductModal({
   if (!open) return null;
 
   const isBundleMode = itemType === 'bundle';
-  const costVal = isBundleMode ? (parseNullableNumber(bundleCostPrice) ?? 0) : pricing.costPriceVnd;
+  // "VAT giá vốn" (2026-10-13) - costVal (dung cho Tom tat gia/Markup/Margin)
+  // la gia von DA GOM VAT dau vao (pricing.costVatRate), KHAC pricing.costPriceVnd
+  // (van la gia von THUAN truoc VAT, giu nguyen de khong mat du lieu goc khi
+  // sua lai sau nay).
+  const costVal = isBundleMode ? (parseNullableNumber(bundleCostPrice) ?? 0) : effectiveCostPriceVnd(pricing);
   const priceVal = isBundleMode ? (parseNullableNumber(bundleMonthlyPrice) ?? 0) : pricing.customerPriceVnd;
   const profit = isBundleMode ? priceVal - costVal : getProfit();
   const margin = priceVal > 0 ? (profit / priceVal) * 100 : 0;
@@ -702,6 +724,16 @@ export function QuickAddProductModal({
                         <label className="block text-sm font-medium text-slate-700 mb-1.5">Hãng </label>
                         <input className="w-full h-9 px-3 border border-slate-300 rounded-md text-sm focus:border-[#c2185b] focus:ring-1 focus:ring-[#c2185b] bg-slate-50" placeholder="vd: Dell, HP..." value={brand} onChange={e => setBrand(e.target.value)} />
                       </div>
+                      {/* Yeu cau "Extend MSC product sync" (§6): Model phai sua
+                          duoc trong edit form - chuyen tu "Part Number Vendor"
+                          (trước day nam long trong "Thông tin mở rộng" hay bi
+                          bo sót) len main card, canh Hãng. Tiep tuc dung state
+                          vendorPartNumber/cot DB part_number (dang chua du lieu
+                          dong bo MSC) - khong doi field khac. */}
+                      <div>
+                        <label className="block text-sm font-medium text-slate-700 mb-1.5">Model </label>
+                        <input className="w-full h-9 px-3 border border-slate-300 rounded-md text-sm focus:border-[#c2185b] focus:ring-1 focus:ring-[#c2185b] bg-slate-50" placeholder="vd: PowerEdge R750, TG1250..." value={vendorPartNumber} onChange={e => setVendorPartNumber(e.target.value)} />
+                      </div>
                       <div>
                         <label className="block text-sm font-medium text-slate-700 mb-1.5">Nhóm sản phẩm <span className="text-[#c2185b]">*</span></label>
                         <SearchableSelect
@@ -752,22 +784,14 @@ export function QuickAddProductModal({
                           {(units || []).filter(u => u.status === 'active').map(u => <option key={u.id} value={u.name} />)}
                         </datalist>
                       </div>
+                      {/* "VAT ở ngoài nó tính rồi, nhập ô ngoài là được" (2026-10-13)
+                       * - bo han o VAT(%) mac dinh cua san pham o day (truoc day
+                       * lam layout 3 muc le trong grid-cols-2, xem anh), VAT giờ
+                       * CHỈ nhập truc tiep tren tung dong bao gia (cot "VAT (%)"
+                       * trong bang hang muc) - KHONG doi field defaultVatRate
+                       * duoi DB/payload (van gui nguyen vatInput da co san luc
+                       * sua san pham cu, chi khong con o nhap moi o day nua). */}
                       <div className="grid grid-cols-2 gap-4">
-                        <div>
-                          <label className="block text-sm font-medium text-slate-700 mb-1.5">VAT (%)</label>
-                          <input
-                            type="number"
-                            className="w-full h-9 px-3 border border-slate-300 rounded-md text-sm focus:border-[#c2185b] focus:ring-1 focus:ring-[#c2185b]"
-                            placeholder="10"
-                            value={vatInput}
-                            onChange={e => setVatInput(e.target.value)}
-                            list="qap-vat-options"
-                          />
-                          <datalist id="qap-vat-options">
-                            {(vatRates || []).filter(v => v.status === 'active').map(v => <option key={v.id} value={v.rate} />)}
-                          </datalist>
-                          {fieldErrors.vat && <div className="text-[#c2185b] text-xs mt-1">{fieldErrors.vat}</div>}
-                        </div>
                         <div>
                           <label className="block text-sm font-medium text-slate-700 mb-1.5">Trạng thái</label>
                           <select className="w-full h-9 px-3 border border-slate-300 rounded-md text-sm focus:border-[#c2185b] focus:ring-1 focus:ring-[#c2185b]" value={status} onChange={e => setStatus(e.target.value)}>
@@ -793,10 +817,9 @@ export function QuickAddProductModal({
                       </button>
                       {showAdvancedInfo && (
                         <div className="grid grid-cols-2 gap-6 mt-4">
-                          <div>
-                            <label className="block text-sm font-medium text-slate-700 mb-1.5">Part Number Vendor </label>
-                            <input className="w-full h-9 px-3 border border-slate-300 rounded-md text-sm focus:border-[#c2185b] bg-slate-50" value={vendorPartNumber} onChange={e => setVendorPartNumber(e.target.value)} />
-                          </div>
+                          {/* "Part Number Vendor" da chuyen len main card voi
+                              nhan "Model" (Extend MSC product sync §6) - bo
+                              input trung lap o day, giu nguyen cac field khac. */}
                           <div>
                             <label className="block text-sm font-medium text-slate-700 mb-1.5">Loại sản phẩm </label>
                             <input className="w-full h-9 px-3 border border-slate-300 rounded-md text-sm focus:border-[#c2185b] bg-slate-50" value={productType} onChange={e => setProductType(e.target.value)} />
@@ -956,19 +979,19 @@ export function QuickAddProductModal({
                       <div className="p-5 grid grid-cols-2 gap-4">
                         <div>
                           <label className="block text-sm font-medium text-slate-700 mb-1.5">Giá bán theo tháng</label>
-                          <input type="number" className="w-full h-9 px-3 border border-slate-300 rounded-md text-sm" value={bundleMonthlyPrice} onChange={e => setBundleMonthlyPrice(e.target.value)} />
+                          <CurrencyInput className="w-full h-9 px-3 border border-slate-300 rounded-md text-sm" value={parseNullableNumber(bundleMonthlyPrice)} onChange={value => setBundleMonthlyPrice(value != null ? String(value) : '')} />
                         </div>
                         <div>
                           <label className="block text-sm font-medium text-slate-700 mb-1.5">Giá / tháng khi thanh toán năm</label>
-                          <input type="number" className="w-full h-9 px-3 border border-slate-300 rounded-md text-sm" value={bundleAnnualMonthlyPrice} onChange={e => setBundleAnnualMonthlyPrice(e.target.value)} />
+                          <CurrencyInput className="w-full h-9 px-3 border border-slate-300 rounded-md text-sm" value={parseNullableNumber(bundleAnnualMonthlyPrice)} onChange={value => setBundleAnnualMonthlyPrice(value != null ? String(value) : '')} />
                         </div>
                         <div>
                           <label className="block text-sm font-medium text-slate-700 mb-1.5">Tổng thanh toán 12 tháng</label>
-                          <input type="number" className="w-full h-9 px-3 border border-slate-300 rounded-md text-sm" value={bundleAnnualTotalPrice} onChange={e => setBundleAnnualTotalPrice(e.target.value)} />
+                          <CurrencyInput className="w-full h-9 px-3 border border-slate-300 rounded-md text-sm" value={parseNullableNumber(bundleAnnualTotalPrice)} onChange={value => setBundleAnnualTotalPrice(value != null ? String(value) : '')} />
                         </div>
                         <div>
                           <label className="block text-sm font-medium text-slate-700 mb-1.5">Giá vốn target</label>
-                          <input type="number" className="w-full h-9 px-3 border border-slate-300 rounded-md text-sm" value={bundleCostPrice} onChange={e => setBundleCostPrice(e.target.value)} />
+                          <CurrencyInput className="w-full h-9 px-3 border border-slate-300 rounded-md text-sm" value={parseNullableNumber(bundleCostPrice)} onChange={value => setBundleCostPrice(value != null ? String(value) : '')} />
                         </div>
                         <div>
                           <label className="block text-sm font-medium text-slate-700 mb-1.5">Discount tối đa Sale (%)</label>
@@ -1021,7 +1044,7 @@ export function QuickAddProductModal({
                       <div>
                         <label className="block text-sm font-medium text-slate-700 mb-1.5">Giá niêm yết NCC </label>
                         <div className="relative">
-                          <input type="number" className="w-full h-9 pl-3 pr-10 border border-slate-300 rounded-md text-sm focus:border-[#c2185b] bg-slate-50" value={pricing.supplierListPrice || ''} onChange={e => setPricingField('supplierListPrice', Number(e.target.value))} />
+                          <CurrencyInput className="w-full h-9 pl-3 pr-10 border border-slate-300 rounded-md text-sm focus:border-[#c2185b] bg-slate-50" value={pricing.supplierListPrice || null} onChange={value => setPricingField('supplierListPrice', value ?? 0)} />
                           <span className="absolute right-3 top-2 text-xs font-medium text-slate-400">{pricing.supplierCurrency}</span>
                         </div>
                       </div>
@@ -1035,14 +1058,14 @@ export function QuickAddProductModal({
                       <div>
                         <label className="block text-sm font-medium text-slate-700 mb-1.5">Giá mua sau CK</label>
                         <div className="relative">
-                          <input type="number" className="w-full h-9 pl-3 pr-10 border border-slate-300 rounded-md text-sm focus:border-[#c2185b]" value={pricing.supplierNetPrice || ''} onChange={e => setPricingField('supplierNetPrice', Number(e.target.value))} />
+                          <CurrencyInput className="w-full h-9 pl-3 pr-10 border border-slate-300 rounded-md text-sm focus:border-[#c2185b]" value={pricing.supplierNetPrice || null} onChange={value => setPricingField('supplierNetPrice', value ?? 0)} />
                           <span className="absolute right-3 top-2 text-xs font-medium text-slate-400">{pricing.supplierCurrency}</span>
                         </div>
                       </div>
                     </div>
 
                     <div className="mt-5 p-4 bg-slate-50 border border-slate-100 rounded-lg">
-                      <div className="grid grid-cols-3 gap-6">
+                      <div className="grid grid-cols-4 gap-6">
                         <div>
                           <label className="block text-xs font-medium text-slate-500 mb-1">Tỷ giá VND/USD</label>
                           <input type="number" className="w-full h-8 px-2 border border-slate-300 rounded text-sm read-only:bg-slate-100 read-only:text-slate-500 read-only:cursor-not-allowed" value={pricing.supplierExchangeRate || ''} onChange={e => setPricingField('supplierExchangeRate', Number(e.target.value))} readOnly={systemUsdVndRate != null} title={systemUsdVndRate != null ? 'Tỷ giá hệ thống (Cài đặt báo giá → Tỷ giá USD/VND), không sửa tại đây' : undefined} placeholder="Nhập tỷ giá USD → VND" />
@@ -1055,7 +1078,18 @@ export function QuickAddProductModal({
                         </div>
                         <div>
                           <label className="block text-xs font-medium text-slate-700 mb-1">GIÁ VỐN / ĐVT (VND)</label>
-                          <input type="number" className="w-full h-8 px-2 border border-[#f3b8ca] bg-[#fff1f6] rounded text-sm focus:border-[#c2185b] font-semibold text-[#a91549]" value={pricing.costPriceVnd || ''} onChange={e => setPricingField('costPriceVnd', Number(e.target.value))} />
+                          <CurrencyInput className="w-full h-8 px-2 border border-[#f3b8ca] bg-[#fff1f6] rounded text-sm focus:border-[#c2185b] font-semibold text-[#a91549]" value={pricing.costPriceVnd || null} onChange={value => setPricingField('costPriceVnd', value ?? 0)} />
+                        </div>
+                        {/* "VAT cộng luôn vào Giá vốn hiển thị" (2026-10-13) -
+                         * VAT dau vao RIENG cho Gia von (khac VAT ban ra o dau
+                         * form), chi anh huong gia von hien thi/Markup/Margin,
+                         * KHONG dung chung field voi VAT (%) ban ra. */}
+                        <div>
+                          <label className="block text-xs font-medium text-slate-700 mb-1" title="VAT đầu vào khi mua hàng từ nhà cung cấp - khác VAT (%) đầu ra ở phần Thông tin sản phẩm. Giá vốn hiển thị/Markup/Margin sẽ tự tính theo giá vốn ĐÃ GỒM VAT này.">VAT giá vốn (%)</label>
+                          <div className="relative">
+                            <input type="number" min={0} max={100} step={0.5} className="w-full h-8 pl-2 pr-7 border border-slate-300 rounded text-sm focus:border-[#c2185b]" placeholder="0" value={pricing.costVatRate || ''} onChange={e => setPricingField('costVatRate', parseNullableNumber(e.target.value) ?? 0)} />
+                            <span className="absolute right-2 top-1.5 text-xs font-medium text-slate-400">%</span>
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -1095,15 +1129,15 @@ export function QuickAddProductModal({
                           </div>
                           <div>
                             <label className="block text-xs font-medium text-slate-600 mb-1">Phi van chuyen</label>
-                            <input type="number" className="w-full h-9 px-3 border border-slate-300 rounded-md text-sm focus:border-[#c2185b]" value={pricing.shippingCost || ''} onChange={e => setPricingField('shippingCost', Number(e.target.value) || 0)} />
+                            <CurrencyInput className="w-full h-9 px-3 border border-slate-300 rounded-md text-sm focus:border-[#c2185b]" value={pricing.shippingCost || null} onChange={value => setPricingField('shippingCost', value ?? 0)} />
                           </div>
                           <div>
                             <label className="block text-xs font-medium text-slate-600 mb-1">Phi nhap khau / xu ly</label>
-                            <input type="number" className="w-full h-9 px-3 border border-slate-300 rounded-md text-sm focus:border-[#c2185b]" value={pricing.importFee || ''} onChange={e => setPricingField('importFee', Number(e.target.value) || 0)} />
+                            <CurrencyInput className="w-full h-9 px-3 border border-slate-300 rounded-md text-sm focus:border-[#c2185b]" value={pricing.importFee || null} onChange={value => setPricingField('importFee', value ?? 0)} />
                           </div>
                           <div>
                             <label className="block text-xs font-medium text-slate-600 mb-1">Chi phi khac</label>
-                            <input type="number" className="w-full h-9 px-3 border border-slate-300 rounded-md text-sm focus:border-[#c2185b]" value={pricing.otherCost || ''} onChange={e => setPricingField('otherCost', Number(e.target.value) || 0)} />
+                            <CurrencyInput className="w-full h-9 px-3 border border-slate-300 rounded-md text-sm focus:border-[#c2185b]" value={pricing.otherCost || null} onChange={value => setPricingField('otherCost', value ?? 0)} />
                           </div>
                         </div>
                       )}
@@ -1119,9 +1153,9 @@ export function QuickAddProductModal({
                   <div className="p-5">
                     <div className="flex items-center gap-4">
                       <div className="flex-1">
-                        <label className="block text-sm font-medium text-slate-700 mb-1.5">Giá vốn</label>
+                        <label className="block text-sm font-medium text-slate-700 mb-1.5">Giá vốn (đã gồm VAT)</label>
                         <div className="h-9 px-3 flex items-center border border-slate-200 bg-slate-50 rounded-md text-sm text-slate-500">
-                          {formatCurrency(pricing.costPriceVnd)}
+                          {formatCurrency(costVal)}
                         </div>
                       </div>
                       <div className="text-slate-400 mt-6 shrink-0">→</div>
@@ -1136,7 +1170,7 @@ export function QuickAddProductModal({
                       <div className="text-slate-400 mt-6 shrink-0">→</div>
                       <div className="flex-1">
                         <label className="block text-sm font-medium text-slate-900 mb-1.5">GIÁ BÁN / ĐVT (VND)</label>
-                        <input type="number" className="w-full h-9 px-3 border-2 border-emerald-500 rounded-md text-sm font-bold text-emerald-700 focus:border-emerald-600 focus:ring-1 focus:ring-emerald-600" value={pricing.customerPriceVnd || ''} onChange={e => setPricingField('customerPriceVnd', parseNullableNumber(e.target.value) ?? 0)} />
+                        <CurrencyInput className="w-full h-9 px-3 border-2 border-emerald-500 rounded-md text-sm font-bold text-emerald-700 focus:border-emerald-600 focus:ring-1 focus:ring-emerald-600" value={pricing.customerPriceVnd || null} onChange={value => setPricingField('customerPriceVnd', value ?? 0)} />
                       </div>
                     </div>
 

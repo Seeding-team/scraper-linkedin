@@ -19,3 +19,12 @@ export const API_BASE_URL = resolveApiBaseUrl();
 export const API_KEY = process.env.NEXT_PUBLIC_LINKEDIN_CRAWLER_API_KEY ?? "";
 
 export const GOOGLE_OAUTH_CLIENT_ID = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID ?? "";
+
+/**
+ * TÍCH HỢP BỘ LỌC WORKSPACE:
+ * - crm-cloudgate là module CRM Standalone (CloudGate instance).
+ * - Khóa cố định workspace vào "cloudgate", ẩn hoàn toàn nút bộ lọc trên giao diện.
+ */
+export const IS_STANDALONE_CRM = true;
+
+export const CURRENT_WORKSPACE_INSTANCE = (process.env.NEXT_PUBLIC_CRM_INSTANCE || "cloudgate").toLowerCase();

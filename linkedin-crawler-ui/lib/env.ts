@@ -19,3 +19,12 @@ export const API_BASE_URL = resolveApiBaseUrl();
 export const API_KEY = process.env.NEXT_PUBLIC_LINKEDIN_CRAWLER_API_KEY ?? "";
 
 export const GOOGLE_OAUTH_CLIENT_ID = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID ?? "";
+
+/**
+ * TÍCH HỢP BỘ LỌC WORKSPACE:
+ * - Seeding chính (linkedin-crawler-ui): Chạy đa workspace -> hiển thị nút bộ lọc đa chọn.
+ * - CRM Standalone (crm-module, crm-cloudgate, crm-securityzone): Chạy cố định theo từng brand -> ẩn nút bộ lọc.
+ */
+export const IS_STANDALONE_CRM = false;
+
+export const CURRENT_WORKSPACE_INSTANCE = (process.env.NEXT_PUBLIC_CRM_INSTANCE || "markee").toLowerCase();

@@ -1,0 +1,258 @@
+import type {
+  CreateIssuerCompanyInput,
+  CreateQuoteFormInput,
+  CreateQuoteInput,
+  IssuerCompany,
+  Quote,
+  QuoteActivityLogEntry,
+  QuoteForm,
+  QuoteHandoffChecklist,
+  QuoteProcessingStage,
+  QuoteTelegramLog,
+  QuoteVersionResult,
+  UpdateIssuerCompanyInput,
+  UpdateQuoteFormInput,
+  UpdateQuoteHandoffChecklistInput,
+  UpdateQuoteInput,
+} from '../types';
+import type { ServiceCatalogOptions } from '../../service-catalog/types';
+
+export interface SystemExchangeRate {
+  rate: number | null;
+  /** "Tỷ giá USD thị trường tự do – tygiausd.org" | "ExchangeRate-API …" | "Nhập tay" */
+  source: string | null;
+  isManual: boolean;
+  updatedAt: string | null;
+  lastAttemptAt?: string | null;
+  lastError?: string | null;
+  /** true = rate tu dong da cu (>24h) hoac lan lam moi gan nhat loi → canh bao, van dung rate gan nhat. */
+  stale: boolean;
+  note?: string | null;
+  refreshed?: boolean;
+  /** true = vua goi nguon < cooldown nen khong goi lai (dung ket qua da co). */
+  cooldown?: boolean;
+  error?: string | null;
+}
+
+export interface QuoteRepository {
+  getForms(): Promise<QuoteForm[]>;
+  getForm(id: string): Promise<QuoteForm>;
+  getPublicForm(token: string): Promise<QuoteForm>;
+  createForm(input: CreateQuoteFormInput): Promise<QuoteForm>;
+  updateForm(id: string, input: UpdateQuoteFormInput): Promise<QuoteForm>;
+  deleteForm(id: string): Promise<{ deleted: boolean; archived: boolean; form?: QuoteForm }>;
+  duplicateForm(id: string): Promise<QuoteForm>;
+  shareForm(id: string, enabled?: boolean): Promise<QuoteForm>;
+
+  getQuotes(params?: { dealId?: string }): Promise<Quote[]>;
+  getQuote(id: string): Promise<Quote>;
+  getPublicQuote(token: string, email?: string, phone?: string): Promise<Quote>;
+  createQuote(input: CreateQuoteInput): Promise<Quote>;
+  updateQuote(id: string, input: UpdateQuoteInput): Promise<Quote>;
+  deleteQuote(id: string): Promise<void>;
+  bulkDeleteQuotes(ids: string[], includeVersions: boolean): Promise<{ deletedIds: string[]; failed: Array<{ quoteId: string; message: string }> }>;
+  /** Duyệt báo giá — khoá chỉnh sửa vĩnh viễn, sinh public link. */
+  approveQuote(id: string, exceptionReason?: string): Promise<Quote>;
+  /** Lưu thay đổi cuối + duyệt atomic (dùng khi bấm "Duyệt báo giá" trong modal đang sửa). */
+  updateAndApproveQuote(id: string, input: UpdateQuoteInput, exceptionReason?: string): Promise<Quote>;
+  /** Tạo phiên bản mới (V2/V3...) từ bản ĐÃ DUYỆT mới nhất trong chuỗi của
+   * id được truyền vào — có thể redirect (created=false, trả về bản nháp có
+   * sẵn) hoặc nguồn copy thật khác id được bấm (redirectedFromClickedQuote). */
+  createQuoteVersion(id: string): Promise<QuoteVersionResult>;
+  /** Toàn bộ phiên bản (V1..Vn) cùng chuỗi với id này, mới nhất trước. */
+  getQuoteVersions(id: string): Promise<Quote[]>;
+
+  /** Danh mục dịch vụ liên kết với 1 mẫu báo giá (danh sách id nhóm). */
+  getFormCatalogLinks(formId: string): Promise<string[]>;
+  setFormCatalogLinks(formId: string, catalogItemIds: string[]): Promise<string[]>;
+  /** Gói bán + dịch vụ thành phần khả dụng cho 1 mẫu báo giá, dùng dựng dropdown khi điền báo giá. */
+  getServiceCatalogOptions(formId: string): Promise<ServiceCatalogOptions>;
+
+  /** Ty gia USD->VND he thong cho luong bao gia (rate=null neu chua co va nguon tu dong loi). Backend tu
+   * lam moi tu nguon uy tin khi rate tu dong da cu. Bao gia chi COPY gia tri nay vao snapshot luc
+   * tao/chuyen currency. */
+  getExchangeRate(): Promise<SystemExchangeRate>;
+  /** Nut "Cap nhat ty gia": lay NGAY tu nguon uy tin (quay lai che do tu dong). Loi → giu rate cu + `error`. */
+  refreshExchangeRate(): Promise<SystemExchangeRate>;
+  /** Override THU CONG cua Admin. */
+  setExchangeRate(rate: number, note?: string): Promise<SystemExchangeRate>;
+
+  /** Danh sách công ty phát hành báo giá (bên bán) — dropdown "Đơn vị phát hành
+   * báo giá" ở Bước 1 wizard tạo báo giá. includeInactive=true dùng cho trang
+   * quản trị danh mục công ty. */
+  getIssuerCompanies(includeInactive?: boolean): Promise<IssuerCompany[]>;
+  createIssuerCompany(input: CreateIssuerCompanyInput): Promise<IssuerCompany>;
+  updateIssuerCompany(id: string, input: UpdateIssuerCompanyInput): Promise<IssuerCompany>;
+
+  /** Chuyển (Move) chính báo giá hiện tại sang Customer + Deal khác trong CÙNG workspace. */
+  moveQuoteInWorkspace(
+    quoteId: string,
+    targetCustomerId: string,
+    targetDealId: string,
+    targetContactId?: string | null
+  ): Promise<Quote>;
+
+  /** Gửi 1 báo giá ĐÃ DUYỆT qua Telegram (group/topic cố định, cấu hình ở backend). */
+  sendQuoteTelegram(quoteId: string): Promise<QuoteTelegramLog>;
+  /** Lịch sử gửi Telegram của 1 báo giá, mới nhất trước. */
+  getQuoteTelegramLog(quoteId: string): Promise<QuoteTelegramLog[]>;
+
+  /** Phase 2 "Workspace xử lý báo giá" (migration 085). Chuyển bước xử lý nội
+   * bộ — chỉ tiến, chỉ áp dụng khi status='draft' (RPC tự chặn ở backend). */
+  setQuoteProcessingStage(quoteId: string, stage: QuoteProcessingStage): Promise<Quote>;
+  /** Gán người phụ trách kỹ thuật/báo giá — field không truyền = không đổi,
+   * truyền `null` = bỏ gán. */
+  assignQuoteOwners(quoteId: string, input: { technicalOwnerId?: string | null; quoteOwnerId?: string | null }): Promise<Quote>;
+  getQuoteHandoffChecklist(quoteId: string): Promise<QuoteHandoffChecklist>;
+  saveQuoteHandoffChecklist(quoteId: string, input: UpdateQuoteHandoffChecklistInput): Promise<QuoteHandoffChecklist>;
+  /** Lịch sử hoạt động thật (created/updated/approved/version_created/
+   * stage_changed/handoff_updated/owner_assigned), mới nhất trước. */
+  getQuoteActivityLog(quoteId: string): Promise<QuoteActivityLogEntry[]>;
+  /** Ghi lý do tạo phiên bản (popup "Tạo phiên bản mới") vào activity log —
+   * gọi SAU KHI version mới đã tạo xong, gắn vào id của bản MỚI. */
+  logQuoteVersionReason(quoteId: string, reason: string): Promise<QuoteActivityLogEntry[]>;
+
+  // ── Phase 1/3 lifecycle (migration 087/089) ──────────────────────────────
+  /** Huỷ báo giá (không hard-delete) — bắt buộc lý do, tự tắt public link. */
+  cancelQuote(quoteId: string, reason: string): Promise<Quote>;
+  /** Danh sach ly do Khong chot / OUT (nguon o backend). */
+  getLostReasons(): Promise<Array<{ code: string; label: string }>>;
+  /** Khong chot / OUT sau phat hanh - tra ve quote moi + ket qua xet OUT Co hoi. */
+  markQuoteLost(quoteId: string, payload: { reason: string; reasonOther?: string; note?: string }): Promise<{ quote: Quote; dealOut: { changed: boolean; message?: string } }>;
+  /** Huỷ công khai — tắt public link, KHÔNG xoá quote. */
+  revokePublicQuote(quoteId: string): Promise<Quote>;
+  /** Mở lại link báo giá — chiều ngược của revokePublicQuote(), giữ nguyên public_token cũ. */
+  enablePublicQuote(quoteId: string): Promise<Quote>;
+  /** Giới hạn xem link công khai bằng Email hoặc Số điện thoại (migration 118) -
+   * `mode`: 'none' | 'email' | 'phone', chỉ 1 chế độ có hiệu lực tại 1 thời điểm. */
+  setPublicAccessRestriction(
+    quoteId: string,
+    mode: 'none' | 'email' | 'phone',
+    allowedEmails: string[],
+    allowedPhones: string[]
+  ): Promise<Quote>;
+  /** Nút "Lưu" ở toolbar in (hướng giấy + độ rộng cột đã kéo tay) trên
+   * QuoteDetailPage — trang NỘI BỘ đã đăng nhập. Chỉ ghi đúng 1 khoá
+   * `data.printLayoutPrefs`, không đụng giá/khách hàng/hạng mục. */
+  updatePrintLayoutPrefs(
+    quoteId: string,
+    orientation: 'portrait' | 'landscape',
+    columnWidths: Record<string, number>
+  ): Promise<Quote>;
+  /** Chỉ đọc quyền SỬA báo giá này cho người đang đăng nhập — dùng bởi trang
+   * công khai /baogia/{token} để quyết định CÓ HIỆN nút "Lưu" tuỳ chỉnh in
+   * hay không (vd Sale mở lại chính link của mình). CHỈ là lớp hiển thị —
+   * quyền THẬT vẫn do updatePrintLayoutPrefs() (can_edit_quote) tự kiểm tra
+   * lại phía backend, không tin kết quả gọi này. */
+  getQuoteEditPermission(quoteId: string): Promise<{ canEdit: boolean }>;
+  /** Xoá mềm — khôi phục được qua restoreQuote(). */
+  softDeleteQuote(quoteId: string, reason?: string): Promise<Quote>;
+  restoreQuote(quoteId: string): Promise<Quote>;
+  /** Yêu cầu chỉnh sửa (Phase 3) — trả báo giá đang ở 'review' lùi về
+   * 'technical' hoặc 'pricing', bắt buộc lý do. */
+  requestQuoteChanges(quoteId: string, targetStage: 'technical' | 'pricing', reason: string): Promise<Quote>;
+  /** Phát hành báo giá đã duyệt (tách riêng khỏi approve) — sinh/bật public
+   * link thật, processingStage -> 'published'. */
+  publishQuote(quoteId: string): Promise<Quote>;
+
+  // ── Gửi báo giá qua email (migration 093) ────────────────────────────────
+  /** Gợi ý người nhận (ưu tiên deal.email, rồi crm_customers.email) — có thể
+   * rỗng, không đoán. */
+  getQuoteRecipientSuggestion(quoteId: string): Promise<{ name: string | null; email: string | null; source: string | null }>;
+  /** Kênh gửi email đã sẵn sàng chưa (không lộ host/port/email kỹ thuật) —
+   * dùng để bật/tắt nút "Gửi khách hàng", gọi được bởi bất kỳ ai có quyền
+   * gửi báo giá này (không chỉ Admin/Leader). */
+  getQuoteSendAvailability(quoteId: string): Promise<{ available: boolean; reason: string | null }>;
+  /** Lịch sử gửi email của báo giá, mới nhất trước. */
+  getQuoteDeliveryLog(quoteId: string): Promise<QuoteDeliveryLogEntry[]>;
+  /** Gửi báo giá THẬT qua email — idempotencyKey chống double-submit. */
+  sendQuoteEmail(quoteId: string, input: SendQuoteEmailInput): Promise<QuoteDeliveryLogEntry>;
+
+  // ── Rule engine duyệt báo giá (migration 091) ────────────────────────────
+  /** Bộ quy tắc đang active — null nếu chưa cấu hình (mọi người xem được). */
+  getActiveQuoteApprovalRuleSet(): Promise<QuoteApprovalRuleSet | null>;
+  /** Lưu bộ quy tắc mới — LUÔN tạo version mới, chỉ Admin/Leader (403 nếu không). */
+  saveQuoteApprovalRuleSet(input: SaveQuoteApprovalRuleSetInput): Promise<QuoteApprovalRuleSet>;
+  /** Đánh giá lại rule engine cho 1 báo giá cụ thể (không đổi trạng thái, chỉ ghi snapshot mới). */
+  evaluateQuoteRules(quoteId: string): Promise<QuoteRuleEvaluation | null>;
+  /** Snapshot đánh giá GẦN NHẤT đã lưu cho báo giá này. */
+  getQuoteRuleEvaluation(quoteId: string): Promise<QuoteRuleEvaluation | null>;
+}
+
+export type QuoteApprovalRuleType = 'gross_margin_percent' | 'gross_profit_amount' | 'discount_percent' | 'payment_terms_days';
+
+export interface QuoteApprovalRule {
+  ruleType: QuoteApprovalRuleType;
+  operator: 'gte' | 'lte' | 'gt' | 'lt' | 'eq';
+  thresholdValue: number;
+  unit: 'percent' | 'vnd' | 'days';
+  isRequired: boolean;
+  displayOrder: number;
+  isActive: boolean;
+}
+
+export interface QuoteApprovalRuleSet {
+  id: string;
+  name: string;
+  version: number;
+  autoApproveEnabled: boolean;
+  rules: QuoteApprovalRule[];
+}
+
+export interface SaveQuoteApprovalRuleSetInput {
+  rules: { ruleType: QuoteApprovalRuleType; thresholdValue: number; isRequired?: boolean; isActive?: boolean }[];
+  autoApproveEnabled: boolean;
+  /** Chong double-submit - cung key goi lai (double-click/network retry) tra ve DUNG ban da tao, khong tao them version. */
+  idempotencyKey: string;
+}
+
+export interface QuoteRuleEvaluationDetail {
+  ruleType: QuoteApprovalRuleType;
+  label: string;
+  actualValue: number | null;
+  actualDisplay: string;
+  threshold: number;
+  thresholdDisplay: string;
+  operator: string;
+  isRequired: boolean;
+  status: 'pass' | 'fail' | 'insufficient_data';
+  reason: string;
+}
+
+export interface QuoteRuleEvaluation {
+  ruleSetId: string;
+  ruleSetName: string;
+  ruleSetVersion: number;
+  autoApproveEnabled?: boolean;
+  result: 'pass' | 'fail' | 'insufficient_data';
+  details: QuoteRuleEvaluationDetail[];
+  evaluatedAt?: string;
+  isSystemActor?: boolean;
+}
+
+export interface SendQuoteEmailInput {
+  recipientName?: string | null;
+  recipientEmail: string;
+  recipientSource?: string | null;
+  subject?: string | null;
+  message?: string;
+  attachPdf?: boolean;
+  idempotencyKey: string;
+}
+
+export interface QuoteDeliveryLogEntry {
+  id: string;
+  quoteId: string;
+  quoteVersion?: number | null;
+  channel: string;
+  recipientName?: string | null;
+  recipientEmail?: string | null;
+  recipientSource?: string | null;
+  subject?: string | null;
+  status: "queued" | "sending" | "sent" | "failed";
+  attemptCount?: number | null;
+  errorMessage?: string | null;
+  requestedAt?: string | null;
+  requestedById?: string | null;
+  sentAt?: string | null;
+}

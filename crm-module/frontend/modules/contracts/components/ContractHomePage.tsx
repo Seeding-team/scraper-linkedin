@@ -6,6 +6,7 @@ import { seedingContractRepository } from '../repositories/SeedingContractReposi
 import { contractStatusClass, contractStatusLabel } from '../constants/contractConfig';
 import { formatVnd } from '@/modules/quotes/utils/quoteCalculations';
 import { ContractAIWizard } from '@/modules/crm/integrations/contracts';
+import { useDealsChanged } from '@/modules/crm/utils/dealSync';
 import { ContractTemplatesPanel } from '@/modules/contract-templates';
 import type { Contract, ContractDashboardStats } from '../types';
 
@@ -63,6 +64,10 @@ export function ContractHomePage() {
   useEffect(() => {
     void load();
   }, []);
+  // Hợp đồng vừa tạo/sửa/đổi trạng thái ở nơi khác (Customer 360, Copilot) -> tải lại danh sách, không cần F5
+  useDealsChanged(() => {
+    void load();
+  });
 
   const filtered = contracts.filter(contract => {
     if (statusFilter && contract.status !== statusFilter) return false;

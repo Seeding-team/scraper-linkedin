@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { API_BASE_URL, API_KEY } from '@/lib/env';
 import { crmTeamsService, usersService, type CrmTeam } from '@/services/all-platform.service';
 import { useAppAuth } from '@/contexts/AppAuthContext';
@@ -9,6 +10,7 @@ import { ActionMenu, type ActionMenuItem } from './ActionMenu';
 import { LeadFormDrawer } from './LeadFormDrawer';
 import { LeadDetailDrawer } from './LeadDetailDrawer';
 import { LeadEditDrawer } from './LeadEditDrawer';
+import { Lead360Drawer } from './lead360/Lead360Drawer';
 import { LeadImportDialog } from './LeadImportDialog';
 import { SearchableSelect } from './SearchableSelect';
 import { useCrmCategoryCodeOptions, CrmCategorySelect, CrmCategoryCodeSelect } from './CrmCategorySelect';
@@ -50,6 +52,7 @@ const STATUS_OPTIONS: Array<{ value: CrmLeadStatus | ''; label: string }> = [
   { value: 'sql', label: 'SQL' },
   { value: 'nurturing', label: 'Nuôi dưỡng' },
   { value: 'unqualified', label: 'Không đạt chuẩn' },
+  { value: 'out', label: 'OUT (Không chốt)' },
 ];
 
 export const LEAD_STATUS_LABEL: Record<string, string> = {
@@ -63,6 +66,7 @@ export const LEAD_STATUS_LABEL: Record<string, string> = {
   nurture: 'Nuôi dưỡng',
   converted: 'SQL',
   disqualified: 'Không đạt chuẩn',
+  out: 'OUT',
 };
 
 const STATUS_BADGE_CLASS: Record<string, string> = {
@@ -76,12 +80,15 @@ const STATUS_BADGE_CLASS: Record<string, string> = {
   nurture: 'crm-lead-status--nurture',
   converted: 'crm-lead-status--converted',
   disqualified: 'crm-lead-status--disqualified',
+  out: 'crm-lead-status--disqualified',
 };
 
 const PAGE_SIZE = 20;
 
 type ApiLeadRow = {
   id: string;
+  handover_links?: Array<{ url: string; title?: string }> | null;
+  deal_out?: boolean | null;
   lead_name?: string | null;
   company_name?: string | null;
   tax_code?: string | null;
@@ -138,6 +145,8 @@ function headers() {
 export function mapLead(row: ApiLeadRow): CrmLeadRow {
   return {
     id: row.id,
+    handoverLinks: Array.isArray(row.handover_links) ? row.handover_links : [],
+    dealOut: Boolean(row.deal_out),
     leadName: row.lead_name || 'Lead chưa tên',
     companyName: row.company_name || '',
     taxCode: row.tax_code || '',
@@ -224,7 +233,7 @@ export function LeadsDirectory() {
   const { members, loading: membersLoading } = useMembers();
   const [items, setItems] = useState<CrmLeadRow[]>([]);
   const [total, setTotal] = useState(0);
-  const [kpi, setKpi] = useState<CrmLeadKpi>({ total: 0, mql: 0, sql: 0, nurturing: 0, unqualified: 0 });
+  const [kpi, setKpi] = useState<CrmLeadKpi>({ total: 0, mql: 0, sql: 0, nurturing: 0, unqualified: 0, out: 0 });
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
   const [searchInput, setSearchInput] = useState('');
@@ -286,8 +295,14 @@ export function LeadsDirectory() {
   const [formOpen, setFormOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [detailLeadId, setDetailLeadId] = useState<string | null>(null);
+  // Lead 360 (tong quan xu ly Lead) - CUNG right drawer shell, chi 1 noi dung hien tai (Lead 360 hoac Xac minh/Sua).
+  const [overviewLeadId, setOverviewLeadId] = useState<string | null>(null);
   const [detailMode, setDetailMode] = useState<'view' | 'qualify' | 'convert'>('view');
   const [editLeadId, setEditLeadId] = useState<string | null>(null);
+  // Stack dieu huong: Xac minh/Sua mo TU Lead 360 -> Back ve dung Lead 360 (Lead 360 van mounted, chi an) thay vi dong drawer.
+  const [fromOverview, setFromOverview] = useState(false);
+  const keepOverviewRef = useRef(false);
+  const [overviewReloadKey, setOverviewReloadKey] = useState(0);
   const leadCacheRef = useRef<Record<string, CrmLeadRow>>({});
   const [leadCacheVersion, setLeadCacheVersion] = useState(0);
   const shellRef = useRef<HTMLDivElement>(null);
@@ -617,6 +632,7 @@ export function LeadsDirectory() {
           sql: rawKpi.sql ?? rawKpi.qualified ?? 0,
           nurturing: rawKpi.nurturing ?? rawKpi.nurture ?? 0,
           unqualified: rawKpi.unqualified ?? rawKpi.disqualified ?? 0,
+          out: rawKpi.out ?? 0,
         });
         setError('');
       })
@@ -661,6 +677,7 @@ export function LeadsDirectory() {
   const UNRESOLVED_STATUSES = useMemo(() => new Set(['mql', 'new_lead', 'qualifying']), []);
 
   function displayStatusOf(lead: CrmLeadRow): string {
+    if (lead.dealOut) return 'out'; // OUT that tu backend (Co hoi lost) - khong phai Khong dat chuan
     if (!ruleConditions || !UNRESOLVED_STATUSES.has(lead.status)) return lead.status;
     const fields: LeadRuleFields = {
       has_product: Boolean(lead.qualificationNeed?.trim()),
@@ -796,6 +813,15 @@ export function LeadsDirectory() {
       pct: kpi.total > 0 ? `${Math.round((kpi.unqualified / kpi.total) * 100)}%` : null,
       isActive: status === 'unqualified',
     },
+    {
+      id: 'out',
+      label: 'OUT (Không chốt)',
+      value: kpi.out ?? 0,
+      icon: XCircle,
+      tone: 'tone-slate',
+      pct: kpi.total > 0 ? `${Math.round(((kpi.out ?? 0) / kpi.total) * 100)}%` : null,
+      isActive: status === 'out',
+    },
   ];
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
@@ -851,8 +877,18 @@ export function LeadsDirectory() {
     setReloadTick(tick => tick + 1);
   }
 
+  /** Bam TEN Lead -> Lead 360 trong cung right drawer; Lead khac -> chi doi noi dung (drawer KHONG dong). */
+  function openOverview(lead: CrmLeadRow) {
+    rememberLead(lead);
+    setFromOverview(false);
+    setDetailLeadId(null);
+    setEditLeadId(null);
+    setOverviewLeadId(lead.id);
+  }
+
   function openView(lead: CrmLeadRow) {
     rememberLead(lead);
+    if (!keepOverviewRef.current) { setOverviewLeadId(null); setFromOverview(false); }
     setEditLeadId(null);
     setDetailLeadId(lead.id);
     setDetailMode('view');
@@ -863,6 +899,7 @@ export function LeadsDirectory() {
    * này — không có bản form sửa thứ hai ở đâu khác. */
   function openEdit(lead: CrmLeadRow) {
     rememberLead(lead);
+    if (!keepOverviewRef.current) { setOverviewLeadId(null); setFromOverview(false); }
     setDetailLeadId(null);
     setEditLeadId(lead.id);
   }
@@ -877,6 +914,7 @@ export function LeadsDirectory() {
       return found ? current.map(row => (row.id === updated.id ? updated : row)) : current;
     });
     setReloadTick(tick => tick + 1);
+    setOverviewReloadKey(key => key + 1);
   }
 
   async function confirmDelete(confirmCascade = false) {
@@ -921,6 +959,7 @@ export function LeadsDirectory() {
 
   function openQualifyForNewLead(lead: CrmLeadRow) {
     rememberLead(lead);
+    if (!keepOverviewRef.current) { setOverviewLeadId(null); setFromOverview(false); }
     setEditLeadId(null);
     setDetailLeadId(lead.id);
     setDetailMode('qualify');
@@ -929,25 +968,53 @@ export function LeadsDirectory() {
   function closeLeadSidePanels() {
     setDetailLeadId(null);
     setEditLeadId(null);
+    setOverviewLeadId(null);
+    setFromOverview(false);
   }
 
-  function handleShellPointerDown(event: ReactPointerEvent<HTMLDivElement>) {
-    if (!detailLead && !editLead) return;
-    const target = event.target as HTMLElement | null;
-    if (!target) return;
-
-    if (target.closest('.crm-lead-detail-drawer, .crm-lead-edit-drawer')) return;
-    if (target.closest('[data-crm-lead-row="true"]')) return;
-    if (
-      target.closest(
-        'button, a, input, select, textarea, [role="button"], [role="combobox"], .crm-select-trigger, .crm-action-menu, .crm-modal, .crm-drawer',
-      )
-    ) {
-      return;
-    }
-
-    closeLeadSidePanels();
+  /** Mo Xac minh / Sua TU Lead 360: giu Lead 360 (an di) de Back quay ve dung noi do. */
+  function runFromOverview(fn: () => void) {
+    keepOverviewRef.current = true;
+    try { fn(); } finally { keepOverviewRef.current = false; }
+    setFromOverview(true);
   }
+
+  function backToOverview() {
+    setDetailLeadId(null);
+    setEditLeadId(null);
+    setFromOverview(false);
+  }
+
+  // Click vao vung trong/overlay ben ngoai right drawer -> dong; ESC -> dong.
+  // Click trong drawer, dong lead, control, popup con thi KHONG dong.
+  const anyPanelOpen = Boolean(detailLeadId || editLeadId || overviewLeadId);
+  useEffect(() => {
+    if (!anyPanelOpen) return;
+    const childOpen = () => document.body.hasAttribute('data-crm-drawer-child')
+      || Boolean(document.querySelector('[role="dialog"], .crm-modal-backdrop'));
+    const onPointerDown = (event: MouseEvent) => {
+      const el = event.target as HTMLElement | null;
+      if (!el || !el.closest) return;
+      if (childOpen()) return;
+      if (el.closest('.crm-drawer, .progress-drawer, [data-crm-lead-row], [data-crm-keep-drawer], button, a, input, select, textarea, label, summary, [role="menu"], [role="listbox"], [role="dialog"], .crm-modal, .crm-modal-backdrop, table')) return;
+      closeLeadSidePanels();
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || childOpen()) return;
+      const active = document.activeElement as HTMLElement | null;
+      if (active && /^(INPUT|TEXTAREA|SELECT)$/.test(active.tagName)) return;
+      closeLeadSidePanels();
+    };
+    document.addEventListener('mousedown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [anyPanelOpen]);
+
+  // Drawer ben phai la PERSISTENT: bam Lead khac chi doi noi dung, bam ra ngoai KHONG dong - chi dong bang nut X.
 
   /** Bấm vào tên Lead / dòng Lead mở ĐÚNG cùng 1 drawer "Xác minh Lead" như
    * nút hành động chính — trước đây tên Lead luôn mở chế độ 'view' trong khi
@@ -961,6 +1028,29 @@ export function LeadsDirectory() {
     }
     openQualifyForNewLead(lead);
   }
+
+  // GD3 - Deep link tu email ban giao: /all-platform/crm/leads?lead=<id>&mode=verify -> mo thang Xac minh Lead (chi 1 lan, roi go tham so).
+  const leadDeepLinkParams = useSearchParams();
+  const deepLinkLeadId = leadDeepLinkParams?.get('lead') || '';
+  const deepLinkHandledRef = useRef('');
+  useEffect(() => {
+    if (!deepLinkLeadId || deepLinkHandledRef.current === deepLinkLeadId) return;
+    deepLinkHandledRef.current = deepLinkLeadId; // khong huy theo cleanup (React StrictMode chay effect 2 lan) - chi xu ly 1 lan/lead
+    fetch(`${API_BASE_URL}/api/all-platform/crm/leads/${encodeURIComponent(deepLinkLeadId)}`, { credentials: 'include', headers: headers() })
+      .then(res => res.json())
+      .then(body => {
+        if (body.success === false || !body.data) {
+          setError(body?.message || 'Không mở được Lead từ liên kết (không có quyền hoặc Lead không tồn tại).');
+          return;
+        }
+        const lead = mapLead(body.data);
+        rememberLead(lead);
+        openRow(lead);
+        window.history.replaceState(null, '', window.location.pathname);
+      })
+      .catch(() => setError('Không mở được Lead từ liên kết.'));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deepLinkLeadId]);
 
   /** Hành động chính của 1 dòng phụ thuộc TRẠNG THÁI lead — mọi trạng thái đều
    * mở đúng 1 drawer "Xác minh Lead", chỉ khác chỗ được cuộn tới; riêng lead đã
@@ -1073,7 +1163,7 @@ export function LeadsDirectory() {
   }
 
   return (
-    <div className="crm-shell" ref={shellRef} onPointerDownCapture={handleShellPointerDown}>
+    <div className="crm-shell" ref={shellRef}>
       <section className="crm-page-card crm-leads-page-shell">
         {error ? <p className="crm-error">{error}</p> : null}
 
@@ -1119,7 +1209,7 @@ export function LeadsDirectory() {
                 value={searchInput}
                 onChange={event => setSearchInput(event.target.value)}
                 className="crm-input"
-                placeholder="Tìm tên, công ty, SĐT, email..."
+                placeholder="Tìm tên, công ty, SĐT, email, mã KH, mã LH..."
                 autoComplete="off"
               />
             </div>
@@ -1280,7 +1370,7 @@ export function LeadsDirectory() {
                     <tr><td colSpan={11} className="crm-empty-cell"><Loader2 className="crm-spin-icon" /> Đang tải...</td></tr>
                   ) : items.length ? (
                     items.map(lead => {
-                      const isActiveLead = detailLead?.id === lead.id || editLead?.id === lead.id;
+                      const isActiveLead = detailLead?.id === lead.id || editLead?.id === lead.id || overviewLeadId === lead.id;
                       return (
                         <tr
                           key={lead.id}
@@ -1303,7 +1393,7 @@ export function LeadsDirectory() {
                                   type="button"
                                   className="crm-lead-name-btn"
                                   title={lead.leadName}
-                                  onClick={event => { event.stopPropagation(); openRow(lead); }}
+                                  onClick={event => { event.stopPropagation(); openOverview(lead); }}
                                 >
                                   {lead.leadName}
                                 </button>
@@ -1507,7 +1597,7 @@ export function LeadsDirectory() {
                       style={{ marginTop: 4 }}
                     />
                     <div className="crm-customer-card-identity">
-                      <button type="button" className="crm-customer-name-link crm-lead-name-btn" title={lead.leadName} onClick={event => { event.stopPropagation(); openRow(lead); }}>
+                      <button type="button" className="crm-customer-name-link crm-lead-name-btn" title={lead.leadName} onClick={event => { event.stopPropagation(); openOverview(lead); }}>
                         {lead.leadName}
                       </button>
                       <div className="crm-customer-company" title={lead.companyName || 'Chưa có công ty'}>
@@ -1665,16 +1755,37 @@ export function LeadsDirectory() {
         open={Boolean(detailLead)}
         initialMode={detailMode}
         currentUser={user}
-        onClose={() => setDetailLeadId(null)}
+        onClose={fromOverview ? closeLeadSidePanels : () => setDetailLeadId(null)}
+        onBack={fromOverview ? backToOverview : undefined}
+        parentLabel="Lead 360"
         onSaved={applyUpdatedLead}
-        onEdit={openEdit}
+        onEdit={lead => (fromOverview ? runFromOverview(() => openEdit(lead)) : openEdit(lead))}
       />
+
+      {overviewLeadId ? (
+        <Lead360Drawer
+          leadId={overviewLeadId}
+          onClose={closeLeadSidePanels}
+          hidden={fromOverview && Boolean(detailLead || editLead)}
+          reloadKey={overviewReloadKey}
+          onOpenVerify={id => {
+            const target = leadCacheRef.current[id] || items.find(row => row.id === id);
+            if (target) runFromOverview(() => openRow(target));
+          }}
+          onOpenEdit={id => {
+            const target = leadCacheRef.current[id] || items.find(row => row.id === id);
+            if (target) runFromOverview(() => openEdit(target));
+          }}
+        />
+      ) : null}
 
       <LeadEditDrawer
         lead={editLead}
         open={Boolean(editLead)}
         currentUser={user}
-        onClose={() => setEditLeadId(null)}
+        onClose={fromOverview ? closeLeadSidePanels : () => setEditLeadId(null)}
+        onBack={fromOverview ? backToOverview : undefined}
+        parentLabel="Lead 360"
         onSaved={applyUpdatedLead}
       />
 

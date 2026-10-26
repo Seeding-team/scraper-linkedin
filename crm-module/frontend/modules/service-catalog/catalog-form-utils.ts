@@ -25,6 +25,7 @@ export function emptyProductForm(parentId?: string): ServiceCatalogItemInput {
     defaultUnitPriceVnd: 0,
     defaultDiscountPercent: 0,
     defaultVatRate: null,
+    defaultCostVatRate: null,
     customerVisible: true,
     quoteDisplayName: '',
     quoteDescription: '',
@@ -71,9 +72,11 @@ export function emptyProductForm(parentId?: string): ServiceCatalogItemInput {
   };
 }
 
-export function emptyGroupForm(): ServiceCatalogItemInput {
+export function emptyGroupForm(defaultInstance?: string): ServiceCatalogItemInput {
   return {
     itemType: 'group',
+    // TÍCH HỢP BỘ LỌC WORKSPACE: Gán instance mặc định khi tạo mới nhóm
+    instance: defaultInstance || '',
     sku: '',
     name: '',
     description: '',
@@ -152,6 +155,8 @@ export function itemToForm(item: ServiceCatalogItem): ServiceCatalogItemInput {
     importFee: item.importFee ?? null,
     otherCost: item.otherCost ?? null,
     pricingPolicy: item.pricingPolicy || '',
+    // TÍCH HỢP BỘ LỌC WORKSPACE: Giữ lại instance khi mở form chỉnh sửa
+    instance: item.instance,
   };
 }
 

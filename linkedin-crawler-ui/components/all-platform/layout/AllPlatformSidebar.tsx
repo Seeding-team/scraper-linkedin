@@ -925,7 +925,14 @@ export function AllPlatformSidebar({
 
       <aside
         className={cn(
-          "fixed inset-y-0 left-0 z-50 flex flex-col border-r border-outline-variant bg-[#fafafa] text-on-surface shadow-xl transition-all duration-300 lg:translate-x-0 lg:shadow-none",
+          // z-[99990]: cao hon moi backdrop/drawer trong app (cao nhat la
+          // z-[99985] o QuoteQuickViewDrawer.tsx) - truoc day sidebar z-50
+          // thap hon backdrop nen vua bi mo VUA bi chan click (backdrop
+          // hung het su kien chuot dung ngay vung sidebar). Tang z-index
+          // sidebar len tren backdrop giai quyet ca 2 cung luc: sidebar tu
+          // ve de len backdrop (het mo), va la phan tu tren cung nhan dung
+          // click chuot (het bi chan dieu huong).
+          "fixed inset-y-0 left-0 z-[99990] flex flex-col border-r border-outline-variant bg-[#fafafa] text-on-surface shadow-xl transition-all duration-300 lg:translate-x-0 lg:shadow-none",
           isCollapsed ? "w-[70px]" : "w-[280px]",
           isOpen ? "translate-x-0" : "-translate-x-full",
         )}

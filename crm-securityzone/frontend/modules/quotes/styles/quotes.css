@@ -2675,6 +2675,16 @@ select.quote-compact-vat:hover {
   color: #0f172a;
 }
 
+/* Ghi chu Chu ky "Trả năm" (migration 189) tren ban khach hang/PDF - dung
+ * CHUNG .quote-price-stack voi gia gach ngang o tren (cung muc dich: 1 dong
+ * phu nho duoi so tien chinh), tranh khach hieu nham "SL x Don gia" khong
+ * khop "Thanh tien" khi da nhan them billingTermMonths. */
+.quote-price-stack small {
+  color: #94a3b8;
+  font-size: 10px;
+  font-style: normal;
+}
+
 .empty-row {
   color: #94a3b8 !important;
   text-align: center !important;
@@ -2818,8 +2828,20 @@ select.quote-compact-vat:hover {
   display: block;
 }
 
-.sheet-signatures span {
-  margin-top: 1.8rem;
+/* "sheet-signature-line" (2026-10-23, yeu cau sep): khoang trong + 1 duong ke
+ * ngang phia tren ten dai dien, de co cho KY TAY THAT khi in giay - truoc day
+ * chi co margin-top don thuan giua nhan va ten, khong ro la "cho de ky".
+ * Khoang cach doc TRUOC do giu nguyen (margin-top 1.8rem chuyen sang day), ten
+ * phia duoi chi can khoang cach nho voi duong ke. */
+.sheet-signatures span.sheet-signature-line {
+  margin: 8.5rem auto 0.4rem;
+  width: 65%;
+  max-width: 12rem;
+  height: 0;
+}
+
+.sheet-signatures span:not(.sheet-signature-line) {
+  margin-top: 0;
   color: #475569;
 }
 
@@ -2982,6 +3004,26 @@ select.quote-compact-vat:hover {
   }
 }
 
+/* BUG THAT DA GAP (2026-10-11, "bị thừa khoảng trắng ở trên" trong popup "Xem
+ * bản khách hàng" TRÊN MÀN HÌNH, không phải lúc in): `@media (max-width:
+ * 900px)` ngay trên ép `.sheet-company`/`.sheet-parties` xếp DỌC - rule này
+ * viết cho man hinh mobile/tablet that su hep, nhung popup preview co the bi
+ * HIEU LAM la "man hinh hep" khi cua so trinh duyet cua Sale khong maximize
+ * het (vd chia doi man hinh, laptop nho) du BAN THAN document/modal preview
+ * van du rong de hien 1 hang ngang - letterhead (logo+ten cong ty) tach
+ * rieng 1 hang, "BÁO GIÁ/so/ngay" rot xuong hang duoi, sinh khoang trang lon
+ * o giua. DA CO SAN fix tuong tu cho luc IN (xem `.sheet-company`/
+ * `.sheet-parties` trong `@media print` o duoi) nhung CHUA co cho XEM TREN
+ * MAN HINH trong popup preview nay - khien ban xem truoc KHONG KHOP voi ban
+ * in that su (WYSIWYG sai). Ep rieng trong pham vi popup preview (khong dong
+ * vao cac trang bao gia khac, nơi stack doc tren man hinh hep VAN la hanh vi
+ * dung y). */
+.qc-workspace-preview-modal-body--doc .sheet-company,
+.qc-workspace-preview-modal-body--doc .sheet-parties {
+  flex-direction: row !important;
+  align-items: flex-start !important;
+}
+
 /* CSS Paged Media: trang A4 mac dinh in DOC cho MOI trang khac trong app.
  * Rieng bao gia: KHONG dung "named page" (thuoc tinh `page` + @page ten
  * rieng) - da test that va xac nhan Chromium bi 1 loi that: khi mot phan tu
@@ -3004,11 +3046,25 @@ select.quote-compact-vat:hover {
 }
 
 @media print {
+  /* BUG THAT DA GAP LAN 6 (2026-10-23, xac nhan qua PDF xuat THAT bang
+   * page.pdf() - khong phai doan CSS suong): cac modal dung JS lock scroll
+   * nen (`document.body.style.overflow = 'hidden'` - xem useBodyScrollLock.ts,
+   * QuoteWorkspaceModal.tsx dong 2155-2158/4086-4088, ContractDetailPage.tsx...)
+   * set INLINE STYLE tren <body>, TON TAI SUOT luc modal "Xem ban khach hang"
+   * dang mo - khi in/xuat PDF ngay trong luc modal mo (dung cach nguoi dung
+   * that su thao tac), inline style nay KHONG tu mat va chi co the bi de bang
+   * 1 rule stylesheet co !important (@media print nay). Thieu dong nay khien
+   * <body> giu overflow:hidden + height co dinh bang viewport man hinh -> moi
+   * noi dung bao gia vuot qua 1 "trang man hinh" (tong tien, dieu khoan, chu
+   * ky) bi CAT HAN thay vi chay sang trang in thu 2, dung voi QA thuc te "chi
+   * con 1 to giay nhung thieu han noi dung". */
   html,
   body {
     margin: 0 !important;
     padding: 0 !important;
     background: #ffffff !important;
+    overflow: visible !important;
+    height: auto !important;
     -webkit-print-color-adjust: exact;
     print-color-adjust: exact;
   }
@@ -3034,10 +3090,67 @@ select.quote-compact-vat:hover {
     visibility: visible;
   }
   .quote-print-root {
-    position: absolute;
-    left: 0;
-    top: 0;
+    position: static;
     width: 100%;
+  }
+
+  /* BUG THAT DA GAP LAN 9 (2026-10-23, xac nhan qua PDF xuat THAT bang
+   * page.pdf() - popup "Xem ban khach hang" trong QuoteWorkspaceModal, DUNG
+   * NODE/duong dan khac voi trang bao gia doc lap QuoteDetailPage/
+   * PublicQuotePage): sau khi doi `.quote-print-root` tu position:absolute
+   * (LAN 7) sang position:static (can thiet de dong gop vao chieu cao luong
+   * binh thuong, tranh bug ICB o LAN 4), no quay lai nam THAT SU ben trong
+   * cac lop layout cua AllPlatformShell (vd div ".flex-1 overflow-x-hidden
+   * bg-white p-3..." bao quanh <main>) - cac lop nay dung cho MAN HINH binh
+   * thuong voi `overflow-y:auto` + chieu cao co dinh theo vh (de tu cuon noi
+   * bo), VAN visibility:hidden (khong duoc chon rieng o tren) nhung overflow/
+   * height cua chung VAN cat mat noi dung con dang visibility:visible (dung
+   * y bai hoc LAN 2: overflow:hidden cat MOI hau due bat ke visibility gi).
+   * Ket qua: bang hang muc duoc chia dung 2 trang (table tu dong lap lai
+   * header - DUNG), nhung "Dieu khoan thanh toan"/chu ky bi CAT NGANG giua
+   * chung thay vi day sang trang 3 - khong phai do page-break-inside sai,
+   * ma do bi clip truoc khi kip sinh trang moi.
+   *
+   * FIX: KHONG the liet ke het ten class cu the cua AllPlatformShell (de vo
+   * khi doi cau trung sau nay, dung tinh than "bulletproof" cua rule body *
+   * o tren) - dung `:has()` (Chromium moi ho tro, repo nay chi target
+   * Chromium cho in/PDF, da xac nhan nhieu lan trong file) de reset overflow/
+   * height cho MOI TO TIEN O BAT KY CAP NAO chua .quote-print-root, khong
+   * can biet ten class. */
+  body *:has(.quote-print-root) {
+    overflow: visible !important;
+    height: auto !important;
+    max-height: none !important;
+  }
+
+  /* BUG THAT DA GAP LAN 5 (2026-10-11, phat hien qua PDF in THAT - khong phai
+   * qua page.emulate_media+screenshot, vi cach test do khong mo phong dung
+   * @page A4 that su nen khong lo ra): .quote-print-root (o popup "Xem ban
+   * khach hang") dung CHUNG 1 node DOM voi than modal preview tren man hinh
+   * (class gop chung "quote-print-root qc-workspace-preview-modal-body
+   * qc-workspace-preview-modal-body--doc") - 2 class sau la "khung" trang tri
+   * CHI danh cho xem tren man hinh (quote-center.css: nen xam #eef0f4,
+   * padding 16px, border-radius 10px, cung voi modal cha .qc-workspace-
+   * preview-modal--doc nen trang/border-radius 16px/box-shadow). Khi in that
+   * (khong phai xem tren man hinh) cac style trang tri nay VAN duoc ve vi
+   * chinh .quote-print-root la phan tu duoc set visibility:visible - ket qua
+   * la noi dung bao gia bi THU NHO + boc trong 1 "the" nen xam bo vien bo
+   * tron thay vi chiem full trang A4 trang trinh, du thua chieu cao khien
+   * trang 2 trang trắng xuat hien. Phai RESET het cac style trang tri nay
+   * rieng cho print - khong dong vao class dung chung tren man hinh. */
+  .quote-print-root {
+    background: #ffffff !important;
+    padding: 0 !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    overflow: visible !important;
+  }
+  .qc-workspace-preview-modal,
+  .qc-workspace-preview-modal--doc {
+    background: none !important;
+    box-shadow: none !important;
+    border-radius: 0 !important;
+    padding: 0 !important;
   }
 
   /* BUG THAT DA GAP THAT SU ("2 hạng mục in ra 3-10 trang, letterhead công ty
@@ -3054,6 +3167,64 @@ select.quote-compact-vat:hover {
    * print-root (position:absolute, dat rieng o tren) luc do se lay THANG
    * trang giay (initial containing block) lam moc, khong con phu thuoc 1
    * backdrop fixed nao nua. */
+  /* BUG THAT DA GAP LAN 4 (2026-10-11, tiep theo LAN 3 o duoi): khoang trang
+   * dau trang khi in - thu dung position:absolute (LAN 4) roi absolute+top/
+   * left rieng (LAN 6) cho .qc-modal-backdrop/--nested deu KHONG ON vi
+   * containing block cua 1 phan tu absolute (khi khong to tien nao positioned)
+   * la INITIAL CONTAINING BLOCK, ma ICB nay cao BANG CA TRANG CRM AN phia sau
+   * (`visibility:hidden` giu nguyen layout, co the cao hang nghin px) - du
+   * dung `inset:0` (tu dan full chieu cao ICB, sinh trang 2 trang trang thua
+   * khi Chromium phan trang) hay chi `top/left:0` (lech vi tri vi containing
+   * block cua backdrop LONG lai la backdrop NGOAI, da bi anh huong tuong tu),
+   * ca 2 cach deu khong tach duoc backdrop ra khoi "kich thuoc" cua trang an
+   * do mot cach triet de.
+   *
+   * FIX DUNG (LAN 7): GIU position:static cho backdrop (dung nhu LAN 1, tranh
+   * bug lap-trang cua position:fixed) nhung THAY VI co gang "thoat" khoi dong
+   * chay, XOA LUON chieu cao cua CAC ANH EM DUNG TRUOC backdrop trong DOM (vd
+   * noi dung trang Chi tiet khach hang dang mo phia sau modal - `.qc-modal-
+   * backdrop` o day la CON TRUC TIEP cua `.crm-shell`, dung canh cac phan tu
+   * noi dung trang khac). Dung bo chon CSS `:has()` (Chromium moi ho tro) de
+   * an (display:none) MOI con truc tiep cua .crm-shell KHONG CHUA
+   * .quote-print-root ben trong - khong can biet ten class cu the cua tung
+   * trang CRM (an toan cho moi trang, giong tinh than "bulletproof" cua rule
+   * body * o dau file), CHI backdrop (nhanh con chua .quote-print-root) con
+   * giu lai. Khi do backdrop se tu nhien nam o DAU dong chay (vi khong con
+   * anh em nao co chieu cao truoc no nua) MA KHONG can doi position. */
+  .crm-shell > *:not(:has(.quote-print-root)) {
+    display: none !important;
+  }
+  /* .crm-shell (crm.css) tu no co san min-height:100vh + padding 1.75rem/
+   * 6rem (danh cho khung trang CRM binh thuong) - du cac con da bi an o tren,
+   * 2 thuoc tinh nay van ap cho CHINH .crm-shell nen no van chiem it nhat 1
+   * man hinh + them padding, day modal xuong/them khoang trang/them trang
+   * thua. Reset luon cho print. */
+  .crm-shell {
+    min-height: auto !important;
+    padding: 0 !important;
+  }
+  /* BUG THAT DA GAP LAN 8 (2026-10-11, PDF in THAT van con ~2-4cm khoang
+   * trang o dau trang du da fix LAN 4-7 o tren): 2 nguon con sot, CA HAI deu
+   * NAM NGOAI .crm-shell nen khong bi anh huong boi cac fix tren.
+   * 1. `AllPlatformShell.tsx` co 1 <header> (thanh tren cung "sticky top-0
+   *    h-12", chua tieu de trang/nut sidebar mobile) la ANH EM (khong phai
+   *    con chau) cua div bao .crm-shell - KHONG nam trong pham vi [data-slot=
+   *    sidebar-*] da an o duoi, cung KHONG duoc body*{visibility:hidden} xoa
+   *    khoi LAYOUT (chi an thi giac, khong xoa khoang trong 48px no chiem).
+   * 2. Chinh div bao .crm-shell (class Tailwind "flex-1 ... p-3 sm:p-5
+   *    lg:p-8", khong co class/data-slot rieng de nham) tu no co padding
+   *    rieng (20-32px tuy breakpoint) - rieng biet voi padding cua CHINH
+   *    .crm-shell da reset o tren.
+   * Dung `main > header` (cau truc AllPlatformShell co dinh, SidebarInset
+   * luon render <main> bao header+noi dung) va `:has(> .crm-shell)` (chon
+   * dung the cha TRUC TIEP cua .crm-shell bat ke class Tailwind cu the la
+   * gi) de khong phu thuoc ten class de vo lien doi sau nay. */
+  main > header {
+    display: none !important;
+  }
+  *:has(> .crm-shell) {
+    padding: 0 !important;
+  }
   .qc-modal-backdrop,
   .qc-modal-backdrop--nested,
   .qc-workspace-preview-modal {
@@ -3071,12 +3242,32 @@ select.quote-compact-vat:hover {
    * static o tren nhung VAN bi khung 94vh nay "giam giu" ve mat clip region,
    * Chromium sau do co gang phan trang PHAN BI KET do sinh ra trang trắng
    * xen ke thay vi 1 luong lien tuc binh thuong. Phai reset ca overflow LAN
-   * height/max-height ve auto/visible khi in - khong chi position. */
+   * height/max-height ve auto/visible khi in - khong chi position.
+   *
+   * BUG THAT DA GAP LAN 3 (2026-10-11, "khoang trang lon dau trang 1 khi in
+   * tu nut 'Xem trước / In PDF' trong popup Workspace"): modal preview nay
+   * (.qc-modal-backdrop--nested > .qc-workspace-preview-modal) la 1 SIBLING
+   * cua modal chinh dang sua bao gia (.qc-workspace) - CA 2 deu la con truc
+   * tiep cua CUNG 1 .qc-modal-backdrop ngoai cung (xem DOM that: .quote-
+   * print-root KHONG nam trong .qc-workspace). .qc-workspace co san
+   * max-height:92vh+overflow:hidden de gioi han tren MAN HINH - thu DAU TIEN
+   * la reset overflow/height cua no giong cac lop kia, nhung LAM SAI HON:
+   * .qc-workspace van `visibility:hidden` (khong phai noi dung can in) nhung
+   * SAU KHI mo overflow/height no PHINH TO theo toan bo noi dung that (bang
+   * hang muc, form...) vi visibility:hidden GIU NGUYEN layout space. Backdrop
+   * ngoai cung dung `align-items:center` - sibling .qc-modal-backdrop--nested
+   * (chua noi dung in that) bi "keo xuong GIUA" khoang trong do .qc-workspace
+   * da phinh to tao ra, sinh dung khoang trang lon o dau trang da QA thuc te.
+   * Fix dung: AN HAN .qc-workspace khoi layout (display:none, khong chi
+   * overflow/height) - an toan 100% vi no khong chua .quote-print-root. */
   .qc-workspace-preview-modal--doc,
   .qc-workspace-preview-modal-body--doc {
     overflow: visible !important;
     height: auto !important;
     max-height: none !important;
+  }
+  .qc-workspace {
+    display: none !important;
   }
 
   /* Sidebar + header sticky cua app-shell (AllPlatformShell.tsx) chua tung
@@ -3105,6 +3296,15 @@ select.quote-compact-vat:hover {
    * .sheet-items-table--custom-print-widths), cac rule % o tren da tu loai
    * minh ra qua :not() - xem rule --col-print-w cuoi khoi @media print nay. */
 
+  /* BUG THAT DA GAP LAN 5 tiep theo (2026-10-11): rule base (dau file,
+   * ngoai @media print) dat `min-height: 100vh` cho chinh cac class nay -
+   * trong popup "Xem ban khach hang", .quote-print-root (node duoc in) MANG
+   * LUON 1 trong cac class nay (vd .quote-public-page). `100vh` o day tinh
+   * theo chieu cao VIEWPORT TRINH DUYET dang mo (khong phai chieu cao vung
+   * in cua trang A4) - vo tinh buoc khoi noi dung phai cao it nhat bang
+   * viewport do, nhieu hon chieu cao that su cua noi dung bao gia (ngan,
+   * 1 hang muc). Phan du thua nay nhinh hon 1 trang A4 mot chut => Chromium
+   * sinh them 1 trang 2 TRANG TRANG. Phai ep min-height ve auto khi in. */
   .quote-page,
   .quote-builder,
   .quote-preview-page,
@@ -3114,6 +3314,7 @@ select.quote-compact-vat:hover {
     margin: 0 !important;
     padding: 0 !important;
     background: #ffffff !important;
+    min-height: auto !important;
   }
 
   /* width:100% (KHONG phai "210mm" co dinh) - de .quote-sheet tu dien dung
@@ -3277,8 +3478,18 @@ select.quote-compact-vat:hover {
     min-height: 10mm !important;
   }
 
-  .sheet-signatures span {
-    margin-top: 3mm !important;
+  /* "sheet-signature-line" khi in (2026-10-23) - cung 1 ly do voi ban man
+   * hinh: duong ke la cho KY TAY THAT, KHONG dung margin-top lon tren chinh
+   * <span> ten (se day ca cum xuong, dung nguy co lan 2 da canh bao o tren). */
+  .sheet-signatures span.sheet-signature-line {
+    margin: 20mm auto 1mm !important;
+    width: 65% !important;
+    max-width: 30mm !important;
+    height: 0 !important;
+  }
+
+  .sheet-signatures span:not(.sheet-signature-line) {
+    margin-top: 0 !important;
   }
 
   /* .quote-sheet--standard co san "overflow:hidden" (dung cho man hinh, che

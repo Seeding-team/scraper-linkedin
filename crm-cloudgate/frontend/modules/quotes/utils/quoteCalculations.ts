@@ -28,8 +28,17 @@ const toSafePercent = (value: unknown) => {
 const roundFor = (value: number, currency?: unknown) =>
   normalizeQuoteCurrency(currency) === 'VND' ? value : roundQuoteMoney(value, currency);
 
+/** Chu ky "tra nam" (migration 189): billingTermMonths (thuong 12) nhan them
+ * vao subtotal khi billingCycle='annual' - item.unitPrice luc do la Gia tra
+ * nam/thang (da UU DAI theo thang) tu danh muc, KHONG phai gia ca nam, nen
+ * phai nhan rieng o day. Item khong co billingCycle (bao gia cu, hoac hang
+ * muc chi co 1 gia/ban 1 lan) mac dinh he so 1 - hanh vi tinh tien giu
+ * NGUYEN y het truoc khi co tinh nang nay. */
+export const billingTermMultiplier = (item?: Partial<QuoteItem>) =>
+  item?.billingCycle === 'annual' && item?.billingTermMonths && item.billingTermMonths > 1 ? item.billingTermMonths : 1;
+
 export const calculateItemSubtotal = (item?: Partial<QuoteItem>, currency?: unknown) =>
-  roundFor(toSafeNumber(item?.quantity) * toSafeDecimal(item?.unitPrice), currency);
+  roundFor(toSafeNumber(item?.quantity) * toSafeDecimal(item?.unitPrice) * billingTermMultiplier(item), currency);
 
 export const calculateItemDiscount = (item?: Partial<QuoteItem>, currency?: unknown) =>
   roundFor((calculateItemSubtotal(item, currency) * clampDiscountPercent(item?.discountPercent)) / 100, currency);

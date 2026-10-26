@@ -32,6 +32,33 @@
     let activeScheduleId = null;
     // Tap hop id lich da duoc yeu cau DUNG NGAY trong luc dang chay (bam nut Dung).
     let cancelRequestedIds = new Set();
+    function isSystemCrawlerAccount(email) {
+        if (!email) return false;
+        const e = email.toLowerCase().trim();
+        return (
+            e === "seeding.crawler@markeeai.com" ||
+            e === "seedingsystem@markeeai.com" ||
+            e.includes("system") ||
+            e.includes("crawler") ||
+            e.includes("bot") ||
+            e.includes("admin")
+        );
+    }
+
+    // Thuat toan Fisher-Yates xao tron ngau nhien thu tu nhom de ne bot checkpoint
+    function shuffleArray(orig) {
+        const arr = [...orig];
+        for (let i = arr.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [arr[i], arr[j]] = [arr[j], arr[i]];
+        }
+        return arr;
+    }
+
+    function sleep(ms) {
+        return new Promise((resolve) => setTimeout(resolve, ms));
+    }
+
 
     function genId() {
         return "sch_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -149,12 +176,17 @@
         const isCancelled = () => cancelRequestedIds.has(scheduleId);
         const autoThreadsKeywordsPromise = cfg.threadsAutoDiscover ? fetchAutoThreadsKeywords(cfg.apiBase) : Promise.resolve([]);
 
-        if (!isCancelled() && cfg.fbGroups.length > 0) {
+        // 1. CHỐNG BOT NÉ CHECKPOINT: XÁO TRỘN NGẪU NHIÊN THỨ TỰ NHÓM FACEBOOK MỖI VÒNG (FISHER-YATES)
+        const fbGroupsToRun = (cfg.antiBotEnabled !== false && cfg.fbGroups.length > 1)
+            ? shuffleArray(cfg.fbGroups)
+            : cfg.fbGroups;
+
+        if (!isCancelled() && fbGroupsToRun.length > 0) {
             stage(scheduleId, "facebook", { roundNumber });
-            log(scheduleId, label, `[Vòng ${roundNumber}] Bắt đầu cào Facebook (${cfg.fbGroups.length} nhóm)...`);
+            log(scheduleId, label, `[Vòng ${roundNumber}] Bắt đầu cào Facebook (${fbGroupsToRun.length} nhóm${cfg.antiBotEnabled !== false ? " - đã xáo trộn thứ tự né bot" : ""})...`);
             self.__mkFbProgressHook = (p) => progress(scheduleId, "facebook", p);
             try {
-                summary.facebook = await self.__mkStartFbCrawl(cfg.fbGroups, { apiBase: cfg.apiBase, idMember: cfg.idMember, fetchCount: 100, dashboardTabId });
+                summary.facebook = await self.__mkStartFbCrawl(fbGroupsToRun, { apiBase: cfg.apiBase, idMember: cfg.idMember, fetchCount: 100, dashboardTabId, antiBotEnabled: cfg.antiBotEnabled !== false });
                 log(scheduleId, label, `[Vòng ${roundNumber}] Facebook xong: lưu ${summary.facebook.totalSaved} bài mới${summary.facebook.stopped ? " — BỊ DỪNG GIỮA CHỪNG (có thể do tab Facebook bị đóng)" : ""}.`, summary.facebook.stopped ? "warn" : "success");
             } catch (e) {
                 log(scheduleId, label, `[Vòng ${roundNumber}] Lỗi cào Facebook: ${e.message}`, "error");
@@ -163,12 +195,24 @@
             }
         }
 
-        if (!isCancelled() && cfg.liGroups.length > 0) {
+        // 2. CHỐNG BOT: NGHỈ AN TOÀN CHUYỂN GIAO NỀN TẢNG (INTER-PLATFORM COOL-DOWN)
+        if (!isCancelled() && cfg.fbGroups.length > 0 && cfg.liGroups.length > 0) {
+            const pauseSec = Math.floor(Math.random() * 21) + 20; // 20s - 40s
+            log(scheduleId, label, `🛡️ Cơ chế chống bot: Nghỉ tự nhiên ${pauseSec}s trước khi chuyển sang cào LinkedIn...`);
+            await sleep(pauseSec * 1000);
+        }
+
+        // 3. CHỐNG BOT NÉ CHECKPOINT: XÁO TRỘN NGẪU NHIÊN THỨ TỰ NHÓM LINKEDIN MỖI VÒNG (FISHER-YATES)
+        const liGroupsToRun = (cfg.antiBotEnabled !== false && cfg.liGroups.length > 1)
+            ? shuffleArray(cfg.liGroups)
+            : cfg.liGroups;
+
+        if (!isCancelled() && liGroupsToRun.length > 0) {
             stage(scheduleId, "linkedin", { roundNumber });
-            log(scheduleId, label, `[Vòng ${roundNumber}] Bắt đầu cào LinkedIn (${cfg.liGroups.length} nhóm)...`);
+            log(scheduleId, label, `[Vòng ${roundNumber}] Bắt đầu cào LinkedIn (${liGroupsToRun.length} nhóm${cfg.antiBotEnabled !== false ? " - đã xáo trộn thứ tự né bot" : ""})...`);
             self.__mkLiProgressHook = (p) => progress(scheduleId, "linkedin", p);
             try {
-                summary.linkedin = await self.__mkStartLiCrawl(cfg.liGroups, { apiBase: cfg.apiBase, idMember: cfg.idMember, maxPosts: 40, dashboardTabId });
+                summary.linkedin = await self.__mkStartLiCrawl(liGroupsToRun, { apiBase: cfg.apiBase, idMember: cfg.idMember, maxPosts: 40, dashboardTabId });
                 log(scheduleId, label, `[Vòng ${roundNumber}] LinkedIn xong: lưu ${summary.linkedin.totalSaved} bài mới${summary.linkedin.stopped ? " — BỊ DỪNG GIỮA CHỪNG (có thể do tab LinkedIn bị đóng)" : ""}.`, summary.linkedin.stopped ? "warn" : "success");
             } catch (e) {
                 log(scheduleId, label, `[Vòng ${roundNumber}] Lỗi cào LinkedIn: ${e.message}`, "error");
@@ -177,9 +221,7 @@
             }
         }
 
-        // Gop tu khoa tay (neu co) voi tu khoa tu dong kham pha (registry backend) - bo trung
-        // khong phan biet hoa/thuong. autoThreadsKeywordsPromise da chay song song tu dau
-        // vong (luc dang cao FB/LI o tren) nen den day thuong da co san, khong phai cho them.
+        // Gop tu khoa tay (neu co) voi tu khoa tu dong kham pha
         const autoThreadsKeywords = await autoThreadsKeywordsPromise;
         if (autoThreadsKeywords.length > 0) {
             log(scheduleId, label, `Registry tự khám phá: ${autoThreadsKeywords.length} từ khoá/chủ đề Threads đang active.`);
@@ -257,14 +299,24 @@
         } else if (!schedule.cfg.repeatEnabled) {
             await updateSchedule(schedule.id, { status: "done", enabled: false, nextRunAt: null, currentStage: null, lastRoundSummary: { roundNumber, totalSaved, at: Date.now() } });
         } else {
-            const nextRunAt = Date.now() + schedule.cfg.intervalHours * 3600 * 1000;
+            let baseHours = schedule.cfg.intervalHours || 1;
+            let intervalMs = baseHours * 3600 * 1000;
+            let jitterDesc = "";
+            if (schedule.cfg.antiBotEnabled !== false) {
+                // Jitter ngẫu nhiên +-8% (0.92 đến 1.08)
+                const jitterFactor = 0.92 + Math.random() * 0.16;
+                intervalMs = Math.round(intervalMs * jitterFactor);
+                const actualMinutes = Math.round(intervalMs / 60000);
+                jitterDesc = ` (đã thêm jitter né bot: thực tế ~${actualMinutes} phút)`;
+            }
+            const nextRunAt = Date.now() + intervalMs;
             await updateSchedule(schedule.id, {
                 status: "waiting_interval",
                 nextRunAt,
                 currentStage: null,
                 lastRoundSummary: { roundNumber, totalSaved, at: Date.now() },
             });
-            log(schedule.id, schedule.label, `Đã lên lịch vòng ${roundNumber + 1} lúc ${new Date(nextRunAt).toLocaleString("vi-VN")} (sau ${schedule.cfg.intervalHours} giờ) — CHỈ chạy nếu tab Seeding vẫn còn mở lúc đó.`);
+            log(schedule.id, schedule.label, `Đã lên lịch vòng ${roundNumber + 1} lúc ${new Date(nextRunAt).toLocaleString("vi-VN")}${jitterDesc} — CHỈ chạy nếu tab Seeding vẫn còn mở lúc đó.`);
         }
 
         await scheduleNextAlarm();
@@ -285,6 +337,12 @@
             return;
         }
         const schedule = due[0];
+        if (!isSystemCrawlerAccount(schedule.cfg.email)) {
+            log(schedule.id, schedule.label, "🛡️ Chế độ bảo vệ thành viên: Tài khoản hiện tại không phải là Tài khoản Hệ thống chuyên dụng (System Crawler VPS). Cơ chế cào ngầm bị vô hiệu hóa để bảo vệ an toàn cho nick cá nhân của bạn.", "warn");
+            await updateSchedule(schedule.id, { status: "stopped", enabled: false, nextRunAt: null });
+            await scheduleNextAlarm();
+            return;
+        }
         const tabOpen = await checkAppTabOpen(schedule.cfg.apiBase);
         if (tabOpen && typeof tabOpen === "object" && tabOpen.networkError) {
             log(schedule.id, schedule.label, `Không kiểm tra được tab Seeding (lỗi: ${tabOpen.networkError}) — sẽ thử lại sau ${ONLINE_RETRY_MINUTES} phút.`, "warn");
@@ -316,11 +374,16 @@
 
         if (msg.action === "MK_ROTATE_SCHEDULE_ADD") {
             (async () => {
+                if (!isSystemCrawlerAccount(msg.config && msg.config.email)) {
+                    sendResponse({
+                        success: false,
+                        error: "🛡️ Quyền hạn bị từ chối: Tính năng cào xoay vòng tự động chỉ dành riêng cho Tài khoản Hệ thống (VPS Crawler) để bảo vệ an toàn tuyệt đối cho tài khoản mạng xã hội của thành viên."
+                    });
+                    return;
+                }
                 const fbGroups = Array.isArray(msg.fbGroups) ? msg.fbGroups.filter((g) => g && g.url) : [];
                 const liGroups = Array.isArray(msg.liGroups) ? msg.liGroups.filter((g) => g && g.url) : [];
                 const threadsKeywords = Array.isArray(msg.threadsKeywords) ? msg.threadsKeywords.filter(Boolean) : [];
-                // threadsAutoDiscover: nen tang Threads duoc bat du khong go tu khoa tay nao -
-                // dung registry tu khoa tu kham pha o backend (threads_keyword_service.py).
                 const threadsAutoDiscover = !!(msg.config && msg.config.threadsAutoDiscover);
                 if (fbGroups.length === 0 && liGroups.length === 0 && threadsKeywords.length === 0 && !threadsAutoDiscover) {
                     sendResponse({ success: false, error: "Chưa có nhóm Facebook/LinkedIn hoặc từ khoá Threads nào để cào." });
@@ -334,8 +397,9 @@
                     apiBase: msg.config.apiBase || "https://seeding.markeeai.com",
                     email: msg.config.email,
                     idMember: msg.config.idMember || null,
-                    intervalHours: Math.max(0.25, Number(msg.config.intervalHours) || 2),
+                    intervalHours: Math.max(0.05, Number(msg.config.intervalHours) || 1),
                     repeatEnabled: !!msg.config.repeatEnabled,
+                    antiBotEnabled: msg.config.antiBotEnabled !== false,
                     fbGroups,
                     liGroups,
                     threadsKeywords,

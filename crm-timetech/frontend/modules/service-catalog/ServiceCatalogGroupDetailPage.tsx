@@ -1,0 +1,217 @@
+'use client';
+
+import { useEffect, useMemo, useRef, useState } from 'react';
+import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
+import { useServiceCatalog } from './use-service-catalog';
+import { ServiceCatalogProductsTable, type ServiceCatalogProductsTableHandle } from './ServiceCatalogProductsTable';
+import type { FlatProduct } from './catalog-form-utils';
+import { Pencil } from '@/modules/crm/components/icons';
+import { WorkspaceBadge } from './WorkspaceBadge';
+import { IS_STANDALONE_CRM, CURRENT_WORKSPACE_INSTANCE } from '@/lib/env';
+import './styles/service-catalog.css';
+
+/** Trang chi tiet 1 NHOM san pham cu the (vd VPS Hosting, Website...) - moi,
+ * thay the cho hanh vi cu ("bam vao 1 nhom" khong ton tai, ProductsTab tron
+ * chung san pham cua MOI nhom vao 1 bang duy nhat). Route:
+ * /all-platform/service-catalog/groups/[groupId] (xem page.tsx tuong ung).
+ *
+ * KHONG hardcode ten/logic rieng cho VPS/Website - hoan toan generic theo
+ * `groupId` truyen vao, dung LAI y het bang san pham + drawer them/sua/xoa
+ * (ServiceCatalogProductsTable.tsx, dung chung voi truoc day) qua prop
+ * `fixedGroupId`.
+ *
+ * BUG THAT DA GAP ("header rời rạc, thiếu Sửa nhóm/+ Sản phẩm mới"): header
+ * gio gon thanh 1 hang (breadcrumb + ten + badge + so san pham + Sua nhom +
+ * "+ Sản phẩm mới") - nut "+ Sản phẩm mới" goi vao DUNG state noi bo cua
+ * ServiceCatalogProductsTable qua ref (khong lift toan bo logic drawer ra
+ * ngoai), hideAddButton de khong con 2 nut trung nhau. */
+export function ServiceCatalogGroupDetailPage({ groupId }: { groupId: string }) {
+  // TÍCH HỢP BỘ LỌC WORKSPACE (Requirement B — clone standalone): trang chi
+  // tiết chỉ load CÂY của workspace thuộc clone (server lọc qua `instances=`),
+  // không fetch toàn bộ danh mục dùng chung. Deep-link tới group của workspace
+  // khác → group không nằm trong payload → giữ hành vi not-found hiện có.
+  // Seeding chính (MAIN) giữ nguyên hành vi unfiltered.
+  const detailScope = IS_STANDALONE_CRM ? [CURRENT_WORKSPACE_INSTANCE.toLowerCase()] : undefined;
+  const { items, isLoaded, error, createItem, updateItem, deleteItem, refresh } = useServiceCatalog(detailScope);
+  const tableRef = useRef<ServiceCatalogProductsTableHandle>(null);
+  const openedEditRef = useRef<string | null>(null);
+  const searchParams = useSearchParams();
+
+  const group = useMemo(
+    () => items.find(item => item.itemType === 'group' && item.id === groupId),
+    [items, groupId]
+  );
+
+  const products = useMemo<FlatProduct[]>(() => {
+    if (!group) return [];
+    return (group.children || []).map(child => ({ ...child, groupName: group.name }));
+  }, [group]);
+
+  const activeCount = useMemo(() => products.filter(p => p.status === 'active').length, [products]);
+
+  // BUG THAT DA GAP ("sao đang có 1 mà hiện tổng là 2"): `products` la TAT
+  // CA con cua nhom (group.children tu backend KHONG loc status - xem
+  // list_service_catalog_items), gom ca san pham da bi chuyen "Ngừng kinh
+  // doanh" (vd do bi tu dong deactivate khi xoa 1 san pham dang duoc bao gia
+  // tham chieu - xem handleConfirmDelete o ServiceCatalogProductsTable.tsx).
+  // Bang phia duoi mac dinh CHI hien status='active' (statusFilter mac dinh
+  // 'active'), nen truoc day "Tổng X sản phẩm" tinh tren CA nhom (ke ca
+  // inactive) trong khi bang chi hien so it hon - nhin nhu mat du lieu/loi
+  // hien thi. Doi sang chi dem tren san pham active, KHOP DUNG voi nhung gi
+  // bang dang hien mac dinh (nguoi dung doi sang bo loc "Tất cả trạng thái"
+  // se van thay day du san pham, chi la khong con bi lech so voi so dem nua).
+  const activeProducts = useMemo(() => products.filter(p => p.status === 'active'), [products]);
+
+  const priceConfigCounts = useMemo(() => {
+    const configured = activeProducts.filter(p => p.defaultCostPriceVnd != null).length;
+    return { total: activeProducts.length, configured, unconfigured: activeProducts.length - configured };
+  }, [activeProducts]);
+
+  useEffect(() => {
+    const editId = searchParams.get('edit');
+    if (!editId || openedEditRef.current === editId || products.length === 0) return;
+    if (!products.some(product => product.id === editId)) return;
+    openedEditRef.current = editId;
+    tableRef.current?.openEditById(editId);
+  }, [searchParams, products]);
+
+  const [editingGroup, setEditingGroup] = useState(false);
+  const [editName, setEditName] = useState('');
+  const [editDescription, setEditDescription] = useState('');
+  const [editStatus, setEditStatus] = useState<'active' | 'inactive'>('active');
+  const [savingGroup, setSavingGroup] = useState(false);
+  const [groupError, setGroupError] = useState<string | null>(null);
+
+  function openEditGroup() {
+    if (!group) return;
+    setEditName(group.name);
+    setEditDescription(group.description || '');
+    setEditStatus(group.status === 'inactive' ? 'inactive' : 'active');
+    setGroupError(null);
+    setEditingGroup(true);
+  }
+
+  async function saveGroupEdit() {
+    if (!group) return;
+    if (!editName.trim()) {
+      setGroupError('Tên nhóm bắt buộc.');
+      return;
+    }
+    setSavingGroup(true);
+    setGroupError(null);
+    try {
+      await updateItem(group.id, { name: editName.trim(), description: editDescription.trim() || undefined, status: editStatus });
+      setEditingGroup(false);
+    } catch (err) {
+      setGroupError(err instanceof Error ? err.message : 'Không lưu được thông tin nhóm.');
+    } finally {
+      setSavingGroup(false);
+    }
+  }
+
+  return (
+    <div className="sc-page">
+      {error ? (
+        <div className="sc-error">
+          {error}{' '}
+          <button type="button" className="sc-mini-link-btn" onClick={() => void refresh()}>
+            Thử lại
+          </button>
+        </div>
+      ) : null}
+      {!isLoaded ? <div className="sc-loading">Đang tải...</div> : null}
+
+      {isLoaded && !error && !group ? (
+        <div className="sc-error">
+          Không tìm thấy nhóm sản phẩm này (có thể đã bị xoá).{' '}
+          <Link href="/all-platform/service-catalog">Quay lại danh sách nhóm</Link>
+        </div>
+      ) : null}
+
+      {isLoaded && group ? (
+        <>
+          <div className="sc-group-header-line">
+            <nav className="sc-breadcrumb" aria-label="Breadcrumb">
+              <Link href="/all-platform/service-catalog">Sản phẩm & dịch vụ</Link>
+              <span className="sc-breadcrumb-sep">/</span>
+              <span className="sc-breadcrumb-current">{group.name}</span>
+            </nav>
+            <div className="flex items-center gap-2">
+              <h1 className="sc-group-header-title">{group.name}</h1>
+              {/* TÍCH HỢP BỘ LỌC WORKSPACE: Tag hiển thị Workspace của nhóm */}
+              <WorkspaceBadge instance={group.instance} />
+            </div>
+            <span className={`sc-badge ${group.status === 'inactive' ? 'sc-badge-inactive' : 'sc-badge-active'}`}>
+              {group.status === 'inactive' ? 'Ngừng sử dụng' : 'Đang sử dụng'}
+            </span>
+            <span className="sc-group-count">{activeCount} sản phẩm đang kinh doanh</span>
+            <div className="sc-group-header-actions">
+              <button type="button" className="sc-btn" onClick={openEditGroup}>
+                <Pencil className="qc-inline-icon" /> Sửa thông tin nhóm
+              </button>
+              <button type="button" className="sc-btn sc-btn-primary" onClick={() => tableRef.current?.openAdd()}>
+                + Sản phẩm mới
+              </button>
+            </div>
+          </div>
+          {group.description ? <p className="sc-group-desc">{group.description}</p> : null}
+
+          {editingGroup ? (
+            <div className="sc-panel">
+              <strong>Sửa nhóm: {group.name}</strong>
+              <div className="sc-panel-grid">
+                <label className="sc-field">
+                  <span>Tên nhóm</span>
+                  <input value={editName} onChange={e => setEditName(e.target.value)} />
+                </label>
+                <label className="sc-field">
+                  <span>Trạng thái</span>
+                  <select value={editStatus} onChange={e => setEditStatus(e.target.value as 'active' | 'inactive')}>
+                    <option value="active">Đang sử dụng</option>
+                    <option value="inactive">Ngừng sử dụng</option>
+                  </select>
+                </label>
+                <label className="sc-field" style={{ gridColumn: '1 / -1' }}>
+                  <span>Mô tả</span>
+                  <textarea value={editDescription} onChange={e => setEditDescription(e.target.value)} />
+                </label>
+              </div>
+              {groupError ? <div className="sc-error">{groupError}</div> : null}
+              <div className="sc-panel-actions">
+                <button type="button" className="sc-btn" onClick={() => setEditingGroup(false)}>Huỷ</button>
+                <button type="button" className="sc-btn sc-btn-primary" disabled={savingGroup} onClick={() => void saveGroupEdit()}>
+                  {savingGroup ? 'Đang lưu...' : 'Lưu'}
+                </button>
+              </div>
+            </div>
+          ) : null}
+
+          {/* Bo dem nho (yeu cau "Có thể thêm bộ đếm nhỏ: Tổng sản phẩm/Đã
+           * cấu hình giá/Chưa cấu hình giá") - chi hien khi co du lieu gia
+           * (canViewPricing suy trong chinh bang, o day suy don gian qua
+           * defaultCostPriceVnd co mat tren it nhat 1 san pham). */}
+          {products.some(p => p.defaultCostPriceVnd !== undefined) ? (
+            <div className="sc-group-price-counters">
+              <span>Tổng <strong>{priceConfigCounts.total}</strong> sản phẩm</span>
+              <span>Đã cấu hình giá <strong className="sc-cell-price-ok">{priceConfigCounts.configured}</strong></span>
+              <span>Chưa cấu hình giá <strong className="sc-cell-price-missing">{priceConfigCounts.unconfigured}</strong></span>
+            </div>
+          ) : null}
+
+          <ServiceCatalogProductsTable
+            ref={tableRef}
+            products={products}
+            groups={[group]}
+            createItem={createItem}
+            updateItem={updateItem}
+            deleteItem={deleteItem}
+            refresh={refresh}
+            fixedGroupId={group.id}
+            hideAddButton
+          />
+        </>
+      ) : null}
+    </div>
+  );
+}

@@ -7,6 +7,7 @@ import { useServiceCatalog } from './use-service-catalog';
 import { ServiceCatalogProductsTable, type ServiceCatalogProductsTableHandle } from './ServiceCatalogProductsTable';
 import type { FlatProduct } from './catalog-form-utils';
 import { Pencil } from '@/modules/crm/components/icons';
+import { WorkspaceBadge } from './WorkspaceBadge';
 import './styles/service-catalog.css';
 
 /** Trang chi tiet 1 NHOM san pham cu the (vd VPS Hosting, Website...) - moi,
@@ -129,7 +130,11 @@ export function ServiceCatalogGroupDetailPage({ groupId }: { groupId: string }) 
               <span className="sc-breadcrumb-sep">/</span>
               <span className="sc-breadcrumb-current">{group.name}</span>
             </nav>
-            <h1 className="sc-group-header-title">{group.name}</h1>
+            <div className="flex items-center gap-2">
+              <h1 className="sc-group-header-title">{group.name}</h1>
+              {/* TÍCH HỢP BỘ LỌC WORKSPACE: Tag hiển thị Workspace của nhóm */}
+              <WorkspaceBadge instance={group.instance} />
+            </div>
             <span className={`sc-badge ${group.status === 'inactive' ? 'sc-badge-inactive' : 'sc-badge-active'}`}>
               {group.status === 'inactive' ? 'Ngừng sử dụng' : 'Đang sử dụng'}
             </span>

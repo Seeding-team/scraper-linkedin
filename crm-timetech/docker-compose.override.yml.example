@@ -1,0 +1,9 @@
+# Dùng khi .env (root của crm-timetech/) đã trỏ CRM_PUBLIC_URL sang domain
+# thật (host riêng) nhưng bạn vẫn muốn build + chạy thử trên máy local — copy
+# file này thành `docker-compose.override.yml` (không commit, đã có trong
+# .gitignore, Docker Compose tự gộp mỗi lần `docker compose up`).
+services:
+  frontend:
+    build:
+      args:
+        NEXT_PUBLIC_LINKEDIN_CRAWLER_API_URL: http://localhost:18093

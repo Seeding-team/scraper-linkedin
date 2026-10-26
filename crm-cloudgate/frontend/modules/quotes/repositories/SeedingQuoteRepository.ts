@@ -7,6 +7,7 @@ import type {
   Quote,
   QuoteActivityLogEntry,
   QuoteForm,
+  QuoteAccessSuggestion,
   QuoteHandoffChecklist,
   QuotePhase,
   QuoteProcessingStage,
@@ -20,6 +21,7 @@ import type {
 } from '../types';
 import type { QuoteRepository, SystemExchangeRate } from './QuoteRepository';
 import type { ServiceCatalogOptions } from '../../service-catalog/types';
+import { notifyDealsChanged } from '@/modules/crm/utils/dealSync';
 
 type ApiResponse<T> = {
   success?: boolean;
@@ -86,6 +88,10 @@ type QuoteItemPayload = {
   cost_override_at?: string | null;
   cost_price_original?: number | null;
   cost_price_vnd?: number | null;
+  billing_cycle?: string | null;
+  billing_term_months?: number | null;
+  catalog_monthly_price_vnd?: number | null;
+  catalog_annual_commit_monthly_price_vnd?: number | null;
 };
 
 function getDefaultHeaders(): Record<string, string> {
@@ -153,6 +159,11 @@ function toIssuerCompanyPayload(input: CreateIssuerCompanyInput | UpdateIssuerCo
     brand_name: input.brandName,
     address: input.address,
     contact_name: input.contactName,
+    // Chi gui key nay khi caller THAT SU co truyen (!== undefined) - optionalUuid() bien undefined thanh null, neu
+    // luon gui se lam cac noi CHI sua 1 vai truong (vd toggleStatus() chi gui {status}, IssuerInlineEditor chi gui
+    // legalName/taxCode/address/phone/email) VO TINH xoa mat Chuc vu da chon moi lan luu (JSON.stringify giu key co
+    // gia tri null nhung bo key co gia tri undefined).
+    position_category_id: input.positionCategoryId !== undefined ? optionalUuid(input.positionCategoryId) : undefined,
     phone: input.phone,
     email: input.email,
     website: input.website,
@@ -247,6 +258,10 @@ function toQuoteItemPayload(item: NonNullable<CreateQuoteInput['items']>[number]
     cost_override_at: item.costOverrideAt ?? null,
     cost_price_original: item.costPriceOriginal ?? null,
     cost_price_vnd: item.costPriceVnd ?? null,
+    billing_cycle: item.billingCycle ?? null,
+    billing_term_months: item.billingTermMonths ?? null,
+    catalog_monthly_price_vnd: item.catalogMonthlyPriceVnd ?? null,
+    catalog_annual_commit_monthly_price_vnd: item.catalogAnnualCommitMonthlyPriceVnd ?? null,
   };
 }
 
@@ -370,6 +385,13 @@ export class SeedingQuoteRepository implements QuoteRepository {
       method: 'PUT',
       body: JSON.stringify({ mode, allowed_emails: allowedEmails, allowed_phones: allowedPhones }),
     });
+  }
+
+  /** Goi y Email/SDT cho "Giới hạn theo Email/SĐT" (lay tu Khach hang/Nguoi
+   * lien he/Sale/Presale cua CHINH bao gia nay, khong go tay) - xem
+   * supabase_quote_service.get_access_suggestions(). */
+  async getAccessSuggestions(quoteId: string): Promise<QuoteAccessSuggestion[]> {
+    return apiFetch<QuoteAccessSuggestion[]>(`/api/all-platform/quotes/${encodeURIComponent(quoteId)}/access-suggestions`);
   }
 
   /** Nút "Lưu" ở toolbar in trên QuoteDetailPage (trang nội bộ đã đăng nhập)
@@ -574,6 +596,20 @@ export class SeedingQuoteRepository implements QuoteRepository {
     });
   }
 
+  async getLostReasons(): Promise<Array<{ code: string; label: string }>> {
+    return apiFetch<Array<{ code: string; label: string }>>('/api/all-platform/quotes/lost-reasons');
+  }
+
+  async markQuoteLost(
+    quoteId: string,
+    payload: { reason: string; reasonOther?: string; note?: string },
+  ): Promise<{ quote: Quote; dealOut: { changed: boolean; message?: string } }> {
+    return apiFetch(`/api/all-platform/quotes/${encodeURIComponent(quoteId)}/mark-lost`, {
+      method: 'POST',
+      body: JSON.stringify({ reason: payload.reason, reason_other: payload.reasonOther || null, note: payload.note || null }),
+    });
+  }
+
   async revokePublicQuote(quoteId: string): Promise<Quote> {
     return apiFetch<Quote>(`/api/all-platform/quotes/${encodeURIComponent(quoteId)}/revoke-public`, {
       method: 'POST',
@@ -751,3 +787,14 @@ export class SeedingQuoteRepository implements QuoteRepository {
 }
 
 export const seedingQuoteRepository = new SeedingQuoteRepository();
+
+// Sau moi thao tac DOI bao gia/hop dong thanh cong: backend da tu cap nhat stage cua Deal -> bao cac man hinh tai lai tu du lieu that.
+for (const method of ['createQuote', 'deleteQuote', 'approveQuote', 'createQuoteVersion', 'cancelQuote', 'softDeleteQuote', 'restoreQuote'] as const) {
+  const proto = SeedingQuoteRepository.prototype as unknown as Record<string, (...args: unknown[]) => Promise<unknown>>;
+  const original = proto[method];
+  proto[method] = async function (this: unknown, ...args: unknown[]) {
+    const result = await original.apply(this, args);
+    notifyDealsChanged();
+    return result;
+  };
+}

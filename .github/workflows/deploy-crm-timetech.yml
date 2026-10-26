@@ -1,0 +1,62 @@
+name: Deploy CRM TimeTech
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "crm-timetech/**"
+      - ".github/workflows/deploy-crm-timetech.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-crm-timetech-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: [self-hosted, app]
+    defaults:
+      run:
+        working-directory: /opt/apps/seeding_markeeai/scraper-linkedin
+    steps:
+      - name: Pull main
+        # Repo tren host nay dung CHUNG working-directory voi deploy-app.yml
+        # (/opt/apps/seeding_markeeai/scraper-linkedin). Buoc dong goi extension
+        # zip trong deploy-app.yml de lai linkedin-crawler-ui/public/*.zip
+        # "dirty" (sua tay, chua commit) sau moi lan deploy App -> lan deploy
+        # CRM ke tiep bi `git pull --ff-only` tu choi vi file dang bi sua tay.
+        # Fix giong deploy-app.yml: xoa rac build artifact truoc khi pull (an
+        # toan, deploy-app.yml se tu build lai tu source o lan sau).
+        run: |
+          git checkout -- linkedin-crawler-ui/public/*.zip || true
+          git fetch origin main
+          git checkout main
+          git pull --ff-only origin main
+
+      - name: Sync CRM source while preserving runtime secrets
+        run: |
+          rsync -a --delete \
+            --exclude '.env' \
+            --exclude '.env.local' \
+            --exclude 'node_modules/' \
+            --exclude '.next/' \
+            crm-timetech/ /opt/apps/crm-timetech/
+
+      - name: Build and apply CRM containers
+        working-directory: /opt/apps/crm-timetech
+        run: |
+          docker compose -p crm-timetech build frontend backend
+          docker compose -p crm-timetech up -d frontend backend
+          docker compose -p crm-timetech restart router
+
+      - name: Verify CRM production
+        run: |
+          for attempt in $(seq 1 20); do
+            if curl -fsS http://localhost:18093/ >/dev/null; then
+              exit 0
+            fi
+            sleep 3
+          done
+          docker logs --tail 120 crm-timetech-frontend
+          docker logs --tail 120 crm-timetech-backend
+          exit 1

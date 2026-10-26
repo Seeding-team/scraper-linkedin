@@ -146,3 +146,15 @@ class CrmLeadConvertRequest(BaseModel):
     deal: dict[str, Any] = Field(default_factory=dict)
     update_customer: bool = False
     idempotency_key: Optional[str] = None
+    # GD3: link Doc/Sheet hang muc bao gia + co gui email cho nguoi nhan (convert 'Xac minh dat chuan' co nguoi nhan)
+    handover: Optional[dict[str, Any]] = None
+
+
+class CrmLeadHandoverRequest(BaseModel):
+    to_user_id: str
+    doc_links: Optional[Any] = None
+    send_email: bool = True
+    note: Optional[str] = None
+    missing_items: Optional[list[str]] = None
+    crm_team_id: Optional[str] = None
+    idempotency_key: Optional[str] = None

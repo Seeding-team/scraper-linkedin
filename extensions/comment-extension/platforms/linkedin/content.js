@@ -357,4 +357,102 @@
       return true; // Giữ kênh giao tiếp Asynchronous mở
     }
   });
+
+
+  // =========================================================================
+  // GHI NHẬN MINH CHỨNG KPI KHI NGƯỜI DÙNG TƯƠNG TÁC THẬT TRÊN LINKEDIN
+  // =========================================================================
+  function showLinkedInToast(msg, isWarning = false) {
+    try {
+      let toast = document.getElementById("markee-linkedin-toast");
+      if (!toast) {
+        toast = document.createElement("div");
+        toast.id = "markee-linkedin-toast";
+        toast.style.position = "fixed";
+        toast.style.bottom = "24px";
+        toast.style.right = "24px";
+        toast.style.zIndex = "999999999";
+        toast.style.color = "#ffffff";
+        toast.style.padding = "12px 20px";
+        toast.style.borderRadius = "12px";
+        toast.style.boxShadow = "0 10px 25px -5px rgba(0, 0, 0, 0.3), 0 8px 10px -6px rgba(0, 0, 0, 0.2)";
+        toast.style.fontSize = "14px";
+        toast.style.fontWeight = "600";
+        toast.style.fontFamily = "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
+        toast.style.display = "flex";
+        toast.style.alignItems = "center";
+        toast.style.gap = "8px";
+        toast.style.transition = "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)";
+        toast.style.opacity = "0";
+        toast.style.transform = "translateY(10px)";
+        document.body.appendChild(toast);
+      }
+      toast.style.backgroundColor = isWarning ? "#f59e0b" : "#0a66c2";
+      toast.textContent = msg;
+      toast.style.opacity = "1";
+      toast.style.transform = "translateY(0)";
+
+      setTimeout(() => {
+        if (toast) {
+          toast.style.opacity = "0";
+          toast.style.transform = "translateY(10px)";
+        }
+      }, 4000);
+    } catch (e) {}
+  }
+
+  document.addEventListener("markee-action-captured", (evt) => {
+    try {
+      const detail = evt.detail || {};
+      const actionType = detail.actionType;
+      if (!actionType) return;
+
+      chrome.storage.local.get(["markee_verify_config", "markee_email_member", "user_email"], (storageData) => {
+        const config = storageData.markee_verify_config || {};
+        const targetEmail = config.email_member || storageData.markee_email_member || storageData.user_email;
+        if (!targetEmail) {
+          console.warn("[LinkedIn Extension] Không tìm thấy email thành viên để ghi nhận KPI.");
+          return;
+        }
+
+        let apiBase = config.api_base || "https://seeding.markeeai.com";
+        apiBase = apiBase.replace(/\/$/, "");
+
+        const kpiPayload = {
+          email_member: targetEmail,
+          link_post: config.target_link || detail.postUrl || window.location.href,
+          link_comment: detail.linkComment || detail.postUrl || window.location.href,
+          comment_id: detail.commentId || "",
+          action_type: actionType,
+          content: detail.content || "",
+          facebook_name: detail.authorName || "LinkedIn User",
+          reaction_id: detail.reactionId || "1",
+          status: "success",
+        };
+
+        console.log(`[LinkedIn Extension] Gửi minh chứng ${actionType} lên máy chủ:`, kpiPayload);
+
+        chrome.runtime.sendMessage({
+          action: "RECORD_KPI_BACKGROUND",
+          endpoint: `${apiBase}/api/all-platform/internal-engagement/kpi/record`,
+          payload: kpiPayload
+        }, (res) => {
+          if (res && res.success) {
+            console.log("[LinkedIn Extension] Đã ghi nhận KPI thành công:", res);
+            if (actionType === "comment") {
+              showLinkedInToast("🎉 Đã ghi nhận bình luận LinkedIn! Đã lưu link minh chứng (+1 KPI)");
+            } else if (actionType === "like") {
+              showLinkedInToast("❤️ Đã ghi nhận tương tác Thích/Thả tim LinkedIn! (+1 KPI)");
+            }
+          } else {
+            console.error("[LinkedIn Extension] Lỗi ghi nhận KPI LinkedIn:", res?.error);
+            showLinkedInToast(`⚠️ Ghi nhận ${actionType} chưa thành công: ${res?.error || "Lỗi máy chủ"}`, true);
+          }
+        });
+      });
+    } catch (e) {
+      console.error("[LinkedIn Extension] Lỗi xử lý markee-action-captured:", e);
+    }
+  });
+
 })();

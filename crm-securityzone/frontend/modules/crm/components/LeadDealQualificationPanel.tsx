@@ -1,8 +1,8 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { CurrencyInput } from '@/components/CurrencyInput';
-import { formatVND, DEAL_STAGE_META } from '../constants/crmConfig';
+import { formatVND, DEAL_STAGE_META, PIPELINE_COLUMNS } from '../constants/crmConfig';
 import { CrmCategorySelect } from './CrmCategorySelect';
 import { CrmProductMultiSelect } from './CrmProductMultiSelect';
 import { SearchableSelect, type SelectAction } from './SearchableSelect';
@@ -15,9 +15,14 @@ import {
 
 /** "Giai đoạn" cho Deal sap tao (feedback WIP full-flow, mucE.2 "Bàn giao
  * Sale": layout `Giai đoạn | Kết quả Lead`) - chi cho chon trong cac stage
- * PIPELINE THAT (khong gom on_hold/lost, khong hop ly cho 1 co hoi vua tao). */
-const ALL_DEAL_STAGE_KEYS = Object.keys(DEAL_STAGE_META) as Array<keyof typeof DEAL_STAGE_META>;
-const DEAL_STAGE_OPTIONS = ALL_DEAL_STAGE_KEYS.map(stage => ({
+ * PIPELINE THAT (khong gom on_hold/lost, khong hop ly cho 1 co hoi vua tao).
+ * TRUOC DAY doc Object.keys(DEAL_STAGE_META) - object nay con giu 6 key cu
+ * (new_lead/contacted/qualified/contract_sent/won...) trung nhan voi cac stage
+ * hien hanh (vd "Đang deal" x4, "Lên Proposal" x2) de tuong thich nguoc du
+ * lieu cu, lam dropdown hien trung lap (bug "giai đoạn bị lặp"). PIPELINE_COLUMNS
+ * da la danh sach DUNG 10 stage that, khong trung, dung thu tu, dung tinh than
+ * comment ben tren tu truoc gio. */
+const DEAL_STAGE_OPTIONS = PIPELINE_COLUMNS.map(stage => ({
   value: stage,
   label: DEAL_STAGE_META[stage]?.label || stage,
 }));
@@ -137,6 +142,12 @@ export function LeadDealQualificationPanel(props: {
    * hàng để tra Dự án có sẵn). */
   projectOptions?: Array<{ id: string; name: string; code?: string }>;
   onPickProject?: (project: { id: string; name: string }) => void;
+  /** Khi cha truyền node này - RENDER THẲNG node đó thay cho input/combobox
+   * dựng sẵn ở trên (vd cha muốn dùng lại nguyên `ProjectPicker` thật của
+   * DealFormFields.tsx - tự fetch/tạo Dự án - thay vì bản combobox nhận
+   * props rời của riêng panel này). `project`/`projectOptions` vẫn khai báo
+   * required để không phá các nơi gọi cũ, nhưng bị bỏ qua khi có `projectField`. */
+  projectField?: ReactNode;
   note: string;
   onNoteChange: (value: string) => void;
 
@@ -278,7 +289,7 @@ export function LeadDealQualificationPanel(props: {
               <SearchableSelect disabled={!canWrite} value={props.teamId} onChange={props.onTeamIdChange} options={props.teamOptions} placeholder="-- Chọn --" actions={props.teamActions} />
             </Field>
             <Field label="Sale phụ trách">
-              <SearchableSelect disabled={!canWrite} value={props.aeId} onChange={props.onAeIdChange} options={props.aeOptions} placeholder="Chờ phân công" />
+              <SearchableSelect testId="lead-ae-select" disabled={!canWrite} value={props.aeId} onChange={props.onAeIdChange} options={props.aeOptions} placeholder="Chờ phân công" />
             </Field>
           </div>
           <div className="crm-inline-pair">
@@ -298,7 +309,7 @@ export function LeadDealQualificationPanel(props: {
           </div>
           {props.showProjectField !== false ? (
             <Field label="Dự án" hint="tùy chọn">
-              {props.projectOptions ? (
+              {props.projectField ? props.projectField : props.projectOptions ? (
                 <ProjectComboField
                   disabled={!canWrite}
                   value={props.project}

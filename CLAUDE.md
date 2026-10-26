@@ -1,3 +1,11 @@
+# Tiến độ phiên làm việc (2026-10-26) — Cào Threads kết hợp DOM + bắt API
+
+Extension 2.11: `platforms/threads/crawl-sniffer.js` (bắt fetch + XHR `/graphql`, ghi tên query), `platforms/threads/crawl.js`
+(gộp 3 nguồn theo `post_url`: API > JSON nhúng > DOM; DOM cuộn tới bài cuối + đọc số like/bình luận/đăng lại
+từ `<svg><title>`; đẩy bài realtime `MK_TH_COLLECT_BATCH` -> bg -> web `MK_TH_CRAWL_POSTS`), UI
+`keyword-crawl-section.tsx` có danh sách "Bài vừa tìm thấy" + lọc theo nguồn. Bot xoay vòng
+(`rotation-crawl.js`) gọi `__mkStartThreadsCrawl` tự động thừa hưởng luồng thu thập mới.
+
 # Tiến độ phiên làm việc (2026-10-07) — Viber Chat (submenu "Quản lý kênh & CSKH")
 
 Mentor giao: thêm Viber Chat (nhắn tin 2 chiều, gửi ảnh/link/tệp đồng bộ với Viber), làm submenu riêng trước,
@@ -5,7 +13,7 @@ Mentor giao: thêm Viber Chat (nhắn tin 2 chiều, gửi ảnh/link/tệp đ�
 - Viber KHÔNG có API cho tài khoản cá nhân -> dùng **Viber Bot API** chính thức: mỗi "tài khoản" = 1 bot (auth
   token từ partners.viber.com), backend `set_webhook` tới `{VIBER_WEBHOOK_BASE_URL|PUBLIC_APP_BASE_URL}/api/all-platform/viber/webhook/{account_id}`
   (bắt buộc HTTPS công khai), kiểm chữ ký HMAC `X-Viber-Content-Signature`. Không đọc được lịch sử cũ, không sửa/xoá/ghim.
-- Backend `linkedin_group_crawler/app/modules/all_platform/viber/`, migration **`177_viber_module.sql`**
+- Backend `linkedin_group_crawler/app/modules/all_platform/viber/`, migration **`180_viber_module.sql`**
   (`viber_accounts`/`viber_dialogs`/`viber_messages`, bucket storage `viber-media`). FE: `/all-platform/viber-chat`
   + `/viber-chat/[accountId]`, `components/all-platform/viber/`. Chỉ làm app chính, CHƯA làm cho 3 clone crm-*.
 - Đã verify: pytest `tests/test_viber_service.py` + `tests/test_viber_extra.py` (**20 test**, Viber API giả),

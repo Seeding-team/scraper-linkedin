@@ -7,6 +7,7 @@ services:
         NEXT_PUBLIC_LINKEDIN_CRAWLER_API_URL: ${CRM_PUBLIC_URL:-http://localhost:18090}
         NEXT_PUBLIC_LINKEDIN_CRAWLER_API_KEY: ${NEXT_PUBLIC_LINKEDIN_CRAWLER_API_KEY:-}
         NEXT_PUBLIC_GOOGLE_CLIENT_ID: ${NEXT_PUBLIC_GOOGLE_CLIENT_ID:-}
+        NEXT_PUBLIC_CRM_INSTANCE: markee
     image: crm-module-frontend:latest
     container_name: crm-module-frontend
     restart: unless-stopped
@@ -25,6 +26,7 @@ services:
     image: crm-module-backend:latest
     container_name: crm-module-backend
     restart: unless-stopped
+    init: true   # PID 1 reap tien trinh con (LibreOffice soffice.bin thanh zombie sau timeout)
     env_file:
       - ./backend/.env
     environment:

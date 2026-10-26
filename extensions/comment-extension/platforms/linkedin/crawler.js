@@ -493,7 +493,32 @@
       let idleScrolls = 0;
       const posts = [];
 
-      while (this.running) {
+      // Hook lắng nghe bài viết bóc tách trực tiếp từ Network Sniffer (Voyager GraphQL)
+      const onSniffedUpdates = (evt) => {
+        try {
+          const incoming = (evt && evt.detail && evt.detail.posts) || [];
+          if (!this.running || !incoming.length) return;
+          for (const post of incoming) {
+            if (this.postsCount >= this.maxPosts) break;
+            if (!post || !post.post_url || this.seenUrls.has(post.post_url)) continue;
+            this.seenUrls.add(post.post_url);
+            posts.push(post);
+            this.postsCount++;
+            idleScrolls = 0;
+            send({ type: "LI_CRAWL_POST", post });
+            send({
+              type: "LI_CRAWL_PROGRESS",
+              postsCount: this.postsCount,
+              scrollCount: this.scrollCount,
+              progressText: `[Sniffer] Đã bóc tách ${this.postsCount} bài, cuộn ${this.scrollCount} lần`,
+            });
+          }
+        } catch (e) {}
+      };
+      document.addEventListener("li-feed-updates-captured", onSniffedUpdates);
+
+      try {
+        while (this.running) {
         const blocks = findPostBlocks();
         let newFound = 0;
         for (const block of blocks) {
@@ -546,6 +571,10 @@
         if (this.scrollCount % 5 === 0) {
           await sleep(randomBetween(1000, 3000));
         }
+      }
+
+      } finally {
+        document.removeEventListener("li-feed-updates-captured", onSniffedUpdates);
       }
 
       const wasStopped = !this.running;

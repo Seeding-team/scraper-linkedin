@@ -11,13 +11,15 @@ import {
   vndToQuoteCurrency,
 } from '../lib/currency';
 import {
+  billingTermMultiplier,
+  calculateItemSubtotal,
   calculateItemTotal,
   calculateOverallDiscountSummary,
   calculateQuoteTotals,
 } from '../modules/quotes/utils/quoteCalculations';
 import { paymentPlanAmount } from '../modules/quotes/utils/paymentPlan';
 import { VND_FX, convertQuoteItemsCurrency, type QuoteFx } from '../modules/quotes/utils/quoteCurrency';
-import { reducePricing, type PricingState } from '../modules/service-catalog/usePricingLogic';
+import { reducePricing, effectiveCostPriceVnd, type PricingState } from '../modules/service-catalog/usePricingLogic';
 import { customerPriceFromMarkup } from '../modules/service-catalog/pricing-math';
 import type { Quote, QuoteItem } from '../modules/quotes/types';
 import { quoteDraftFromExistingQuote } from '../modules/crm/integrations/quotes/types';
@@ -155,6 +157,7 @@ const basePricing: PricingState = {
   costPriceVnd: 27.5 * RATE,
   markupPercent: 0,
   customerPriceVnd: 0,
+  costVatRate: 0,
 };
 
 test('form SP/DV: 27.5 USD -> VND = 715.000 theo ty gia that (khong giu nguyen 27.5)', () => {
@@ -180,6 +183,42 @@ test('form SP/DV: chua co ty gia thi KHONG doi tien te de lam sai so', () => {
   assert.equal(next.supplierListPrice, 27.5);
 });
 
+// ---- "VAT giá vốn" (2026-10-13): gia von hien thi/Markup/Margin tinh tren
+// gia von DA GOM VAT dau vao, costPriceVnd thuan khong doi.
+test('VAT giá vốn: 5.800.000 + 10% VAT -> effectiveCostPriceVnd = 6.380.000', () => {
+  const state: PricingState = { ...basePricing, costPriceVnd: 5800000, costVatRate: 10, markupPercent: 0, customerPriceVnd: 0 };
+  assert.ok(Math.abs(effectiveCostPriceVnd(state) - 6380000) < 0.01);
+});
+
+// supplierCurrency='VND' + supplierNetPrice = costPriceVnd mong muon, de
+// nhanh "tinh lai costPriceVnd tu supplier chain" trong reducePricing KHONG
+// ghi de mat gia tri test chu dinh (field != 'costPriceVnd' se tu tinh lai
+// costPriceVnd = supplierConvertedPrice + extraCosts).
+const vndCostBase: PricingState = {
+  ...basePricing,
+  supplierCurrency: 'VND',
+  supplierListPrice: 5800000,
+  supplierDiscountPercent: 0,
+  supplierNetPrice: 5800000,
+  supplierExchangeRate: 0,
+  supplierConvertedPrice: 5800000,
+  costPriceVnd: 5800000,
+  customerPriceVnd: 0,
+};
+
+test('VAT giá vốn: markup 20% tinh tren gia von DA GOM VAT, khong phai gia von thuan', () => {
+  const withVat = reducePricing({ ...vndCostBase, costVatRate: 10 }, 'markupPercent', 20);
+  // gia von thuan: 5.800.000, da gom VAT 10%: 6.380.000 -> gia ban = 6.380.000*1.2 = 7.656.000
+  assert.ok(Math.abs(withVat.customerPriceVnd - 7656000) < 0.01, `customerPriceVnd=${withVat.customerPriceVnd}`);
+  // costPriceVnd (thuan, truoc VAT) KHONG bi ghi de boi VAT - tranh cong don neu tinh lai nhieu lan
+  assert.equal(withVat.costPriceVnd, 5800000);
+});
+
+test('VAT giá vốn: costVatRate=0 cho ket qua GIONG HET truoc khi co tinh nang nay', () => {
+  const noVat = reducePricing({ ...vndCostBase, costVatRate: 0 }, 'markupPercent', 20);
+  assert.equal(noVat.customerPriceVnd, 6960000); // 5.800.000 * 1.2
+});
+
 // ---- Sua bao gia trong wizard "Tao bao gia nhanh": nap dung tien te + ty gia da chot
 test('quoteDraftFromExistingQuote: USD giu tien te + ty gia chot; VND bo text tu do "VNĐ"', () => {
   const base = { formSnapshot: { version: 1, layoutType: 'cloudgate_standard_quote', sections: [] }, items: [], data: {} } as unknown as Quote;
@@ -189,6 +228,70 @@ test('quoteDraftFromExistingQuote: USD giu tien te + ty gia chot; VND bo text tu
   const vnd = quoteDraftFromExistingQuote({ ...base, currency: 'VND', exchangeRate: null, data: { currency: 'đồng' } } as Quote);
   assert.equal(vnd.data.currency, 'VND');
   assert.equal(vnd.exchangeRate, null);
+});
+
+// ---- "Chu kỳ" cho Combo (2026-10-13, mo rong dung chung voi san pham le):
+// billingTermMultiplier CHI doc item.billingCycle/billingTermMonths, khong
+// phu thuoc itemType - xac nhan Combo khong bi nhan trung he so thoi han, va
+// thanh phan con (khong nam trong mang tinh tong) khong lam lech tong.
+test('Chu kỳ Combo: Trả năm nhân đúng 1 lần hệ số 12, không phụ thuộc itemType', () => {
+  const comboAnnual = { itemType: 'bundle', quantity: 2, unitPrice: 500000, billingCycle: 'annual' as const, billingTermMonths: 12, vatRate: 0, discountPercent: 0 };
+  // 2 bo x 500.000/thang x 12 thang = 12.000.000 - KHONG phai 500.000*2*12*12
+  assert.equal(calculateItemSubtotal(comboAnnual, 'VND'), 12000000);
+});
+
+test('Chu kỳ Combo: Trả tháng (mặc định) KHÔNG nhân hệ số, giống hệt sản phẩm lẻ', () => {
+  const comboMonthly = { itemType: 'bundle', quantity: 2, unitPrice: 500000, billingCycle: 'monthly' as const, billingTermMonths: 1, vatRate: 0, discountPercent: 0 };
+  assert.equal(calculateItemSubtotal(comboMonthly, 'VND'), 1000000);
+});
+
+test('Chu kỳ Combo: tổng báo giá chỉ cộng dòng cha, không cộng dòng con hiển thị ảo', () => {
+  // Dong con Combo la ROW HIEN THI RIENG (bundleComponentsToWorkspaceRows()),
+  // KHONG nam trong itemsDraft/mang truyen vao calculateQuoteTotals - mo
+  // phong dung thuc te: chi 1 dong cha duy nhat trong mang tinh tong.
+  const items = [
+    { itemType: 'bundle' as const, quantity: 2, unitPrice: 500000, billingCycle: 'annual' as const, billingTermMonths: 12, vatRate: 0, discountPercent: 0 },
+  ];
+  const totals = calculateQuoteTotals(items, 0, 'VND');
+  assert.equal(totals.totalAmount, 12000000);
+  assert.equal(totals.subtotalAmount, 12000000);
+});
+
+// ---- "Giá vốn định kỳ phải tính đủ thời gian sử dụng" (2026-10-14): Cost tổng
+// (resolveQuoteItemCostTotal trong QuoteWorkspaceModal.tsx - KHONG export,
+// khong import duoc truc tiep vao script nay giong cac ham noi bo khac cua
+// file do) phai dung CHUNG billingTermMultiplier voi Thanh tien
+// (calculateItemSubtotal) de margin khong bi lech khi Chu ky = Tra nam. Test
+// o day xac nhan billingTermMultiplier (da export) tra dung he so, VA mo
+// phong lai dung cong thuc moi cua resolveQuoteItemCostTotal (costPrice *
+// quantity * billingTermMultiplier) de doi chieu bang tay voi doanh thu.
+test('billingTermMultiplier: Trả năm (billingTermMonths=12) = 12; Trả tháng/không có Chu kỳ = 1', () => {
+  assert.equal(billingTermMultiplier({ billingCycle: 'annual', billingTermMonths: 12 }), 12);
+  assert.equal(billingTermMultiplier({ billingCycle: 'monthly', billingTermMonths: 1 }), 1);
+  assert.equal(billingTermMultiplier({}), 1);
+  assert.equal(billingTermMultiplier({ billingCycle: 'annual', billingTermMonths: 1 }), 1); // <=1 khong nhan
+});
+
+test('Combo target, Trả năm: Cost tổng và Thành tiền dùng CHUNG hệ số 12, margin không đổi', () => {
+  // Gia lap 1 dong Combo costSource='target': costPrice/thang = 279.300,
+  // unitPrice/thang (annual rate) = 499.000, quantity (so bo) = 1.
+  const item = { itemType: 'bundle' as const, quantity: 1, unitPrice: 499000, costPrice: 279300, billingCycle: 'annual' as const, billingTermMonths: 12, vatRate: 0, discountPercent: 0 };
+  const bt = billingTermMultiplier(item);
+  const resolveQuoteItemCostTotalMirror = item.costPrice * item.quantity * bt; // cong thuc moi
+  assert.equal(resolveQuoteItemCostTotalMirror, 279300 * 12); // 3.351.600 - DUNG 1 lan he so 12
+  const subtotal = calculateItemSubtotal(item, 'VND'); // doanh thu, da co san tu truoc
+  assert.equal(subtotal, 499000 * 12); // 5.988.000 - cung 1 nguon he so voi cost
+  // Margin% tren CA 2 cach tinh (theo thang hay theo nam) phai GIONG NHAU vi
+  // he so 12 duoc NHAN DEU ca tu so va mau so - dung chinh diem sep lo "margin sai".
+  const marginPerMonth = ((item.unitPrice - item.costPrice) / item.unitPrice) * 100;
+  const marginPerYear = ((subtotal - resolveQuoteItemCostTotalMirror) / subtotal) * 100;
+  assert.ok(Math.abs(marginPerMonth - marginPerYear) < 1e-9, `marginPerMonth=${marginPerMonth} marginPerYear=${marginPerYear}`);
+});
+
+test('Combo rollup/sản phẩm lẻ không Chu kỳ: Cost tổng KHÔNG đổi so với code cũ (hệ số = 1)', () => {
+  const item = { itemType: 'bundle' as const, quantity: 2, unitPrice: 500000, costPrice: 350000, vatRate: 0, discountPercent: 0 };
+  const resolveQuoteItemCostTotalMirror = item.costPrice * item.quantity * billingTermMultiplier(item);
+  assert.equal(resolveQuoteItemCostTotalMirror, 700000); // y het cost*quantity cu, khong co Chu ky nen he so 1
 });
 
 console.log(`\n${passed} test PASS${process.exitCode ? ' (co test FAIL)' : ''}`);

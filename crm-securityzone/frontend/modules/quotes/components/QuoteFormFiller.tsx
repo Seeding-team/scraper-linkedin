@@ -15,6 +15,7 @@ import {
   sanitizeMoneyInput,
 } from '../utils/quoteCalculations';
 import { seedingQuoteRepository } from '../repositories/SeedingQuoteRepository';
+import { IS_STANDALONE_CRM, CURRENT_WORKSPACE_INSTANCE } from '@/lib/env';
 import { serviceCatalogRepository } from '../../service-catalog/repositories/ServiceCatalogRepository';
 import type { ServiceCatalogItem, ServiceCatalogOptions } from '../../service-catalog/types';
 import { SearchableSelect } from '../../crm/components/SearchableSelect';
@@ -79,7 +80,7 @@ function emptyItemRow(): QuoteItem {
     quantity: 1,
     unitPrice: 0,
     discountPercent: 0,
-    vatRate: 10,
+    vatRate: 0,
     children: [],
   };
 }
@@ -689,7 +690,13 @@ function useCatalogOptions(quoteFormId?: string): ServiceCatalogOptions | null {
         if (!cancelled) setOptions(scoped);
         return;
       }
-      const tree = await serviceCatalogRepository.list().catch(() => null);
+      // Workspace isolation (issue A): duong FALLBACK "ca danh muc" (mau chua
+      // lien ket nhom nao) cung phai pin theo workspace cua clone — nhu guard
+      // cua useWorkspaceFilter; duong options gan theo MAU o tren GIU NGUYEN
+      // (thiet ke cross-workspace co y). MAIN (IS_STANDALONE_CRM=false) khong loc.
+      const tree = await serviceCatalogRepository
+        .list(IS_STANDALONE_CRM ? { instances: [CURRENT_WORKSPACE_INSTANCE] } : undefined)
+        .catch(() => null);
       if (!cancelled) setOptions(tree ? flattenActiveCatalogTree(tree) : scoped);
     }
     load();
@@ -791,7 +798,7 @@ function CatalogItemPicker<T>({
       </button>
 
       {open ? (
-        <div className="quote-catalog-picker-backdrop" onClick={closePanel}>
+        <div className="quote-catalog-picker-backdrop" onClick={event => { if (event.target === event.currentTarget) closePanel(); }}>
           <div className="quote-catalog-picker-panel" onClick={event => event.stopPropagation()}>
             <header className="quote-catalog-picker-panel-head">
               <div>
@@ -1332,8 +1339,10 @@ function SchemaQuoteItemsTable({
           ))}
         </tbody>
       </table>
+      {/* Chi dong khi click THAT SU vao backdrop (khong phai bubble tu dropdown
+       * portal ra document.body ben trong modal - xem CustomerFormModal.tsx). */}
       {detailRow ? (
-        <div className="crm-modal-backdrop" onClick={() => setDetailRow(null)}>
+        <div className="crm-modal-backdrop" onClick={event => { if (event.target === event.currentTarget) setDetailRow(null); }}>
           <div className="crm-modal" role="dialog" aria-modal="true" aria-label="Chi tiết hạng mục" onClick={e => e.stopPropagation()}>
             <div className="crm-modal-header"><h3>Chi tiết hạng mục</h3></div>
             <div className="crm-modal-body">

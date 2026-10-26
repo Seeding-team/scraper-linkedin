@@ -29,9 +29,9 @@ verify() { # $1=path  $2=nhãn ; coi 200 hoặc 401 (cần auth) là "sống"
 }
 
 deploy_one() { # $1=service  $2=path verify
-  local svc="$1" check="$2" img="scraper-linkedin-$1:latest"
+  local svc="$1" check="$2" img="seeding-app-$1:latest"
   echo "==> [$svc] Đánh dấu bản rollback + BUILD bản mới (web cũ vẫn chạy)..."
-  docker tag "$img" "scraper-linkedin-$svc:rollback" 2>/dev/null || true
+  docker tag "$img" "seeding-app-$svc:rollback" 2>/dev/null || true
   if ! docker compose build "$svc"; then
     echo "!! [$svc] BUILD LỖI — KHÔNG đụng container đang chạy, web vẫn sống. Dừng."
     return 1
@@ -46,7 +46,7 @@ deploy_one() { # $1=service  $2=path verify
   done
   if [ "$ok" != "1" ]; then
     echo "!! [$svc] Bản mới KHÔNG lên — ROLLBACK về bản cũ..."
-    docker tag "scraper-linkedin-$svc:rollback" "$img"
+    docker tag "seeding-app-$svc:rollback" "$img"
     docker compose up -d --no-deps "$svc"
     docker exec "$ROUTER" nginx -s reload 2>/dev/null || true
     verify "$check" "$svc(rollback)"

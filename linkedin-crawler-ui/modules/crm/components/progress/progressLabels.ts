@@ -1,6 +1,8 @@
 /** Shared labels and tones for the CRM Progress dashboard. Quote is the only
  * record with real SLA here; other records only show their normal CRM status. */
 
+import { DEAL_STAGE_META } from '../../constants/crmConfig';
+
 export const CUSTOMER_STATUS_LABELS: Record<string, string> = {
   new_lead: 'Tiềm năng',
   following: 'Đang bán',
@@ -39,6 +41,18 @@ export const CONTRACT_STATUS_TONE: Record<string, string> = {
   terminated: 'qc-badge-danger',
 };
 
+export const CONTRACT_STATUS_LABELS: Record<string, string> = {
+  draft: 'Bản nháp',
+  pending_legal: 'Chờ pháp chế duyệt',
+  pending_signature: 'Chờ ký',
+  signed: 'Đã ký',
+  active: 'Đang thực hiện',
+  completed: 'Đã hoàn thành',
+  expiring: 'Sắp hết hạn',
+  expired: 'Đã hết hạn',
+  terminated: 'Đã chấm dứt',
+};
+
 export const PROJECT_STATUS_TONE: Record<string, string> = {
   planning: 'qc-badge-neutral',
   active: 'qc-badge-blue',
@@ -46,28 +60,12 @@ export const PROJECT_STATUS_TONE: Record<string, string> = {
   cancelled: 'qc-badge-danger',
 };
 
-/** Mirror DEAL_STAGE_META (modules/crm/constants/crmConfig.ts) - dùng cho Deal
+/** Lay TRUC TIEP tu DEAL_STAGE_META (modules/crm/constants/crmConfig.ts - nguon nhan stage duy nhat) - dùng cho Deal
  * Quick View và Customer Quick View (deal thô từ /crm/customers/{id}/related,
  * chỉ có raw deal_stage, không có label kèm sẵn như ProgressDealItem). */
-export const DEAL_STAGE_LABELS: Record<string, string> = {
-  dealing: 'Đang deal',
-  proposal_sent: 'Lên Proposal',
-  negotiation: 'Chăm sóc/Đàm phán',
-  contract_signed: 'Lên hợp đồng',
-  payment_1: 'Thanh toán đợt 1',
-  implementation: 'Triển khai',
-  acceptance: 'Nghiệm thu',
-  payment_final: 'Thanh toán còn lại',
-  post_sale_care: 'Chăm sóc sau bán',
-  on_hold: 'Tiếp tục chăm sóc',
-  lost: 'Out',
-  new_lead: 'Đang deal',
-  contacted: 'Đang deal',
-  qualified: 'Đang deal',
-  requirement: 'Lấy yêu cầu',
-  contract_sent: 'Lên Proposal',
-  won: 'Chăm sóc sau bán',
-};
+export const DEAL_STAGE_LABELS: Record<string, string> = Object.fromEntries(
+  Object.entries(DEAL_STAGE_META).map(([stage, meta]) => [stage, meta.label]),
+);
 
 export function dealStageLabel(stage: string | null | undefined): string {
   if (!stage) return '—';
@@ -105,4 +103,20 @@ export function formatSinceDuration(iso: string | null | undefined): string {
   }
 
   return diffMs < 0 ? `${text} (tương lai)` : text;
+}
+
+/** Trạng thái hạn follow-up của cơ hội (dùng thống nhất ở mọi nơi): cơ hội đã Out/Tạm dừng/Thắng không tính.
+ * 'overdue' = follow-up trước hôm nay; 'soon' = từ hôm nay đến 2 ngày tới; null = bình thường / không có. */
+export function dealFollowUpState(
+  dealStage: string | null | undefined,
+  followUpDate: string | null | undefined
+): 'overdue' | 'soon' | null {
+  if (!followUpDate || ['on_hold', 'lost', 'won'].includes(dealStage || '')) return null;
+  const ymd = (d: Date) =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const now = new Date();
+  const day = String(followUpDate).slice(0, 10);
+  if (day < ymd(now)) return 'overdue';
+  if (day <= ymd(new Date(now.getFullYear(), now.getMonth(), now.getDate() + 2))) return 'soon';
+  return null;
 }

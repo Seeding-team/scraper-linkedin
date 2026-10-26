@@ -204,7 +204,7 @@ export function QuoteQuickViewDrawer({ quote, open, customerName, dealName, onCl
         className={
           embedded
             ? "flex h-full w-full flex-col bg-white"
-            : `fixed right-0 top-0 z-[99986] flex h-screen w-full max-w-[52rem] flex-col border-l border-slate-200 bg-white shadow-2xl transition-transform duration-300 ${
+            : `fixed right-0 top-0 z-[99986] flex h-screen crm-drawer-w flex-col border-l border-slate-200 bg-white shadow-2xl transition-transform duration-300 ${
                 open ? "translate-x-0" : "translate-x-full"
               }`
         }

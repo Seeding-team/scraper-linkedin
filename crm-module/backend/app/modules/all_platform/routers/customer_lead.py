@@ -10,8 +10,16 @@ from app.modules.all_platform.schemas.customer_lead import (
     ActivityLogResponse,
     DEAL_STAGES,
 )
+from app.modules.all_platform.auth_deps import is_web_intake_user, resolve_web_intake_user
 from app.modules.all_platform.services import customer_lead_service, decode_token, get_user_by_id, can_write_deal
-from app.modules.all_platform.services.crm_permission_service import has_module_access
+from app.modules.all_platform.services.crm_permission_service import can_access_by_scope, get_scope_visible_user_ids, has_module_access
+
+
+def _deal_in_user_scope(user: Any, deal: dict | None) -> bool:
+    """User bi gioi han scope (team/ca nhan) chi duoc thay co hoi do minh/team phu trach (leaded_by/sdr_id)."""
+    if not isinstance(user, dict) or get_scope_visible_user_ids(user) is None:
+        return True
+    return bool(deal) and can_access_by_scope(user, deal.get('leaded_by'), deal.get('sdr_id'))
 from app.core.supabase_client import friendly_supabase_error_message
 from app.modules.all_platform.services.customer_lead_service import TransitionError
 from app.modules.all_platform.services.crm_delete_cascade_service import CascadeConfirmRequired
@@ -30,6 +38,9 @@ logger = logging.getLogger(__name__)
 
 
 def get_current_user(request: Request, authorization: str | None = Header(None)) -> dict[str, Any]:
+    intake_user = resolve_web_intake_user(request)
+    if intake_user is not None:
+        return intake_user
     if not authorization:
         cookie_token = request.cookies.get("crawlpro_access_token")
         if cookie_token:
@@ -178,6 +189,8 @@ def get_activity_log(
 ):
     """Audit trail cho 1 deal — DESC theo created_at."""
     try:
+        if not _deal_in_user_scope(_, customer_lead_service.get_customer_lead_by_id(lead_id)):
+            return BaseResponse(success=False, message="Không có quyền xem cơ hội này.")
         data = customer_lead_service.get_activity_log(lead_id, limit=limit, offset=offset)
         return BaseResponse(success=True, data=data, message="Success")
     except Exception as e:
@@ -353,6 +366,8 @@ def get_customer_lead(lead_id: str, current_user: Any = Depends(get_current_user
         lead = customer_lead_service.get_customer_lead_by_id(lead_id)
         if not lead:
             return BaseResponse(success=False, message="Không tìm thấy cơ hội này.")
+        if not _deal_in_user_scope(current_user, lead):
+            return BaseResponse(success=False, message="Không có quyền xem cơ hội này.")
         return BaseResponse(success=True, data=lead)
     except Exception as e:
         return BaseResponse(success=False, message=friendly_supabase_error_message(e))
@@ -368,7 +383,7 @@ def create_customer_lead(
 ):
     try:
         data_dict = payload.model_dump(exclude_unset=True)
-        if not data_dict.get("leaded_by") and isinstance(current_user, dict) and current_user.get("id"):
+        if not data_dict.get("leaded_by") and isinstance(current_user, dict) and current_user.get("id") and not is_web_intake_user(current_user):
             data_dict["leaded_by"] = current_user.get("id")
             # NOTE: không ghi `leaded_by_name` vào customer_leads — bảng không có cột này
             # (tên leader được JOIN qua `leader:leaded_by(name)` ở SELECT và cache qua

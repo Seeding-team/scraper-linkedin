@@ -94,6 +94,13 @@ def propagate_lead_change(old_lead: dict | None, new_lead: dict | None) -> None:
                 }, old, new)
                 if new_org and new_org != old_org and _s(cur.get("customer_name")) in ("", old_org):
                     upd["customer_name"] = new_org
+                # Doi Sale phu trach cua lead -> owner Khach hang theo Sale moi, CHI khi owner hien tai la owner do chinh lead nay sinh ra
+                # (Sale cu / SDR cu / nguoi tao / nguoi chuyen doi); owner da chon tay khac duoc giu nguyen.
+                new_ae, old_ae = _s(new.get("qualification_ae_id")), _s(old.get("qualification_ae_id"))
+                if new_ae and new_ae != old_ae:
+                    derived = {x for x in (old_ae, _s(old.get("sdr_id")), _s(new.get("created_by")), _s(new.get("converted_by"))) if x}
+                    if _s(cur.get("owner_id")) in derived and _s(cur.get("owner_id")) != new_ae:
+                        upd["owner_id"] = new_ae
                 if upd:
                     from app.modules.all_platform.services.crm_customer_service import normalize_email, normalize_phone
                     if "phone" in upd:

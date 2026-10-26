@@ -1,10 +1,10 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { CalendarClock, Info } from 'lucide-react';
 import type { PaymentPlanRow } from '../types';
 import { formatMoney } from '../utils/quoteCalculations';
-import { clampPercentValue, paymentPlanAmount, paymentPlanPercent, sanitizePercentDraft } from '../utils/paymentPlan';
+import { clampPercentValue, distributePaymentPlan, paymentPlanAmounts, paymentPlanPercent, sanitizePercentDraft } from '../utils/paymentPlan';
 
 /** Text input (not type="number") for phase percent - a controlled number
  * input doesn't repaint its DOM value when the parsed number is unchanged
@@ -59,16 +59,31 @@ export function PaymentPlanEditor({ rows, finalPayable, onChange, disabled = fal
   currency?: string | null;
 }) {
   const percent = paymentPlanPercent(rows);
+  // Dong CUOI nhan phan du lam tron de tong tien luon khop CHINH XAC finalPayable
+  // khi da du 100% - xem comment paymentPlanAmounts() trong utils/paymentPlan.ts.
+  const amounts = paymentPlanAmounts(rows, finalPayable, currency);
   const isEmpty = rows.length === 0;
   const isWarning = !isEmpty && percent !== 100;
   const isComplete = !isEmpty && percent === 100;
   const badgeText = isEmpty ? 'Chưa thiết lập' : isComplete ? `${rows.length} đợt · 100%` : 'Cần đủ 100%';
   const badgeClass = isEmpty ? 'quote-payment-plan-badge--neutral' : isComplete ? 'quote-payment-plan-badge--success' : 'quote-payment-plan-badge--warning';
+  // Dot Sale da CHINH TAY ti le -> giu nguyen; cac dot con lai tu chia deu phan con lai (muon chinh dot nao thi bam vao dot do).
+  const manualIds = useRef<Set<string>>(new Set());
   function update(index: number, patch: Partial<PaymentPlanRow>) {
-    onChange(rows.map((row, i) => i === index ? { ...row, ...patch } : row));
+    const next = rows.map((row, i) => i === index ? { ...row, ...patch } : row);
+    if ('percent' in patch) {
+      manualIds.current.add(rows[index].id);
+      onChange(distributePaymentPlan(next, manualIds.current));
+      return;
+    }
+    onChange(next);
   }
   function addRow() {
-    onChange([...rows, { id: crypto.randomUUID(), phase: `Đợt ${rows.length + 1}`, percent: 0, condition: '', note: '' }]);
+    onChange(distributePaymentPlan([...rows, { id: crypto.randomUUID(), phase: `Đợt ${rows.length + 1}`, percent: 0, condition: '', note: '' }], manualIds.current));
+  }
+  function removeRow(index: number) {
+    manualIds.current.delete(rows[index].id);
+    onChange(distributePaymentPlan(rows.filter((_, i) => i !== index), manualIds.current));
   }
   return (
     <section className={`quote-section-card quote-payment-plan${isWarning ? ' quote-payment-plan--warning' : ''}${isComplete ? ' quote-payment-plan--complete' : ''}`}>
@@ -100,13 +115,13 @@ export function PaymentPlanEditor({ rows, finalPayable, onChange, disabled = fal
                 <tr key={row.id}>
                   <td><input aria-label={`Tên đợt ${index + 1}`} disabled={disabled} value={row.phase} onChange={e => update(index, { phase: e.target.value })} /></td>
                   <td className="money-cell"><PercentInput index={index} value={row.percent} disabled={disabled} onCommit={percent => update(index, { percent })} /></td>
-                  <td className="money-cell">{formatMoney(paymentPlanAmount(finalPayable, row.percent, currency), currency)}</td>
+                  <td className="money-cell">{formatMoney(amounts[index], currency)}</td>
                   <td><input aria-label={`Điều kiện đợt ${index + 1}`} disabled={disabled} value={row.condition} onChange={e => update(index, { condition: e.target.value })} /></td>
                   <td><input aria-label={`Ghi chú đợt ${index + 1}`} disabled={disabled} value={row.note} onChange={e => update(index, { note: e.target.value })} /></td>
-                  <td><button type="button" disabled={disabled} aria-label={`Xóa đợt ${index + 1}`} onClick={() => onChange(rows.filter((_, i) => i !== index))}>×</button></td>
+                  <td><button type="button" disabled={disabled} aria-label={`Xóa đợt ${index + 1}`} onClick={() => removeRow(index)}>×</button></td>
                 </tr>
               ))}</tbody>
-              <tfoot><tr><th>Tổng</th><th className="money-cell">{percent}%</th><th className="money-cell">{formatMoney(rows.reduce((sum, row) => sum + paymentPlanAmount(finalPayable, row.percent, currency), 0), currency)}</th><td colSpan={3} /></tr></tfoot>
+              <tfoot><tr><th>Tổng</th><th className="money-cell">{percent}%</th><th className="money-cell">{formatMoney(amounts.reduce((sum, amount) => sum + amount, 0), currency)}</th><td colSpan={3} /></tr></tfoot>
             </table>
           </div>
           {isWarning ? <p role="alert" className="quote-payment-plan-warning">Tổng tỷ lệ hiện tại là {percent}%, cần đủ 100%.</p> : null}
@@ -114,7 +129,7 @@ export function PaymentPlanEditor({ rows, finalPayable, onChange, disabled = fal
       )}
       <p className="quote-payment-plan-info">
         <Info aria-hidden="true" />
-        <span>Số tiền được tự động tính theo &quot;Khách thanh toán&quot; sau chiết khấu. Nếu không thêm đợt thanh toán, phần này sẽ không hiển thị trên báo giá/PDF.</span>
+        <span>Số tiền được tự động tính theo &quot;Khách thanh toán&quot; sau giảm giá. Nếu không thêm đợt thanh toán, phần này sẽ không hiển thị trên báo giá/PDF.</span>
       </p>
     </section>
   );

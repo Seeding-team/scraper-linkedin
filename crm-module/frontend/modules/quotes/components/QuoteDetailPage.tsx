@@ -142,10 +142,11 @@ export function QuoteDetailPage({ quoteId }: Props) {
             </button>
           ) : null}
           <TelegramSendButton quoteId={quote.id} status={quote.status} />
-          {/* "Copy báo giá cross-workspace" (2026-10-03, Phase 1) - chỉ hiện
-           * cho admin (gate THẬT nằm ở backend qua allowed_instances, đây chỉ
-           * là ẩn/hiện UI cho gọn, không phải lớp bảo mật). */}
-          {user?.role === 'admin' ? (
+          {/* "Copy báo giá cross-workspace" (2026-10-03, Phase 1 → mở rộng
+           * Phase 2 2026-10-23) - hiện cho admin VÀ Sale/Presale (gate THẬT
+           * nằm ở backend qua allowed_instances, đây chỉ là ẩn/hiện UI cho
+           * gọn, không phải lớp bảo mật). */}
+          {user?.role === 'admin' || ['sale', 'presale', 'both'].includes(user?.quote_business_role || '') ? (
             <>
               <button type="button" className="quote-button quote-button--secondary" onClick={() => setMoveModalOpen(true)}>
                 Di chuyển báo giá
@@ -253,6 +254,11 @@ export function QuoteDetailPage({ quoteId }: Props) {
           solutionItems={quote.data.solutionItems}
           totals={{
             subtotalAmount: quote.subtotalAmount,
+            // "Giảm giá hạng mục" (2026-10-13) - quote.subtotalAmount la GROSS
+            // (truoc giam gia TUNG dong, xem RPC quote_update), quote.totalAmount
+            // - quote.vatAmount la NET (sau giam gia tung dong, truoc VAT) - hieu
+            // so chinh la tong tien da giam o cap hang muc.
+            discountAmount: quote.subtotalAmount - (quote.totalAmount - quote.vatAmount),
             totalVatAmount: quote.vatAmount,
             totalAmount: quote.totalAmount,
           }}

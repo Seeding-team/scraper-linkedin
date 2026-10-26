@@ -226,7 +226,9 @@ export function ManualContractModal({
   // (transform cua DealDetailDrawer's <aside> lam containing block cho
   // position:fixed neu khong portal, ep modal vao kich thuoc drawer).
   return createPortal(
-    <div className="crm-modal-backdrop" onClick={closeAndReset}>
+    // Chi dong khi click THAT SU vao backdrop (khong phai bubble tu dropdown
+    // portal ra document.body ben trong modal - xem CustomerFormModal.tsx).
+    <div className="crm-modal-backdrop" onClick={event => { if (event.target === event.currentTarget) closeAndReset(); }}>
       <div className="crm-modal" onClick={event => event.stopPropagation()} style={{ maxWidth: '640px' }}>
         <header className="crm-modal-header">
           <div>

@@ -222,9 +222,9 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(
-    title="LinkedIn Group Crawler API",
+    title="Seeding App API",
     version="1.0.0",
-    description="FastAPI service to login, crawl LinkedIn groups, and expose top daily posts for n8n.",
+    description="All-Platform Seeding & Social Media Automation API",
     lifespan=lifespan,
 )
 
@@ -311,7 +311,7 @@ async def handle_cors_middleware(request: Request, call_next):
         else:
             response.headers["Access-Control-Allow-Origin"] = origin or "*"
         response.headers["Access-Control-Allow-Methods"] = "POST, GET, OPTIONS, PUT, DELETE, PATCH"
-        response.headers["Access-Control-Allow-Headers"] = "Content-Type, x-api-key, Authorization, X-User-ID, X-Session-ID, X-Zalo-Worker-ID, X-Caller-Email"
+        response.headers["Access-Control-Allow-Headers"] = "Content-Type, x-api-key, Authorization, X-User-ID, X-Session-ID, X-Zalo-Worker-ID, X-Caller-Email, Idempotency-Key"
         return response
 
     response = await call_next(request)

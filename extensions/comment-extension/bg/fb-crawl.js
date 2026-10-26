@@ -165,7 +165,10 @@
                 }
                 reportProgress(i + 1);
 
-                await sleep(3000);
+                // Nghỉ an toàn giữa các nhóm Facebook né bot
+                const delayMs = Math.floor(Math.random() * 12000) + 10000; // 10s - 22s
+                log(`🛡️ Chống bot: Chờ an toàn ${(delayMs / 1000).toFixed(1)}s trước khi mở nhóm Facebook tiếp theo...`);
+                await sleep(delayMs);
             }
             log(shouldStop ? "Đã dừng theo yêu cầu." : "Hoàn tất toàn bộ tiến trình cào!", "success");
         } catch (e) {

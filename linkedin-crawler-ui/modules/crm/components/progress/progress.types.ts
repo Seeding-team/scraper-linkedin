@@ -145,6 +145,10 @@ export interface ProgressProjectItem {
   status: string | null;
   statusLabel: string | null;
   managerName: string | null;
+  teamName?: string | null;
+  description?: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
   deepLink: string;
 }
 
@@ -190,6 +194,16 @@ export interface ProgressContractItem {
   quoteId: string | null;
   ownerId: string | null;
   ownerName: string | null;
+  teamName?: string | null;
+  customerName?: string | null;
+  quoteNumber?: string | null;
+  templateType?: string | null;
+  startDate?: string | null;
+  endDate?: string | null;
+  signedAt?: string | null;
+  paymentTerms?: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
   deepLink: string;
 }
 

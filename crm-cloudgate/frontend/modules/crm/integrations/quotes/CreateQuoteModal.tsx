@@ -28,6 +28,7 @@ import { applyIssuerCompanySnapshot, applyIssuerPaymentTermsSnapshot, emptyQuote
 import type { QuoteDraft } from './types';
 import { clearVisibleColumnsDraft } from './quoteColumnsDraft';
 import { normalizeQuoteCurrency } from '@/lib/currency';
+import { CRM_INSTANCE } from '@/modules/quotes/utils/publicQuoteUrl';
 
 type CreateQuoteStep = 1 | 2 | 3 | 4;
 
@@ -247,6 +248,27 @@ export function CreateQuoteModal({
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, editQuote?.issuerCompanyId, selectedForm?.issuerCompanyId, issuerCompanies]);
+
+  // Tu chon Don vi phat hanh MAC DINH theo workspace dang chay (CRM_INSTANCE) khi
+  // tao bao gia MOI (khong phai Sua, khong phai dang khoi phuc 1 ban nhap da co
+  // san lua chon) - mirror DUNG luat da co san + da test o backend
+  // (contract.py:_issuer_of_quote(), dung cho hop dong): chi tu chon khi co
+  // DUNG 1 dong active co instance khop CRM_INSTANCE; 0 hoac >1 dong khop thi
+  // GIU NGUYEN de Sale tu chon tay (khong doan mu). Chi chay 1 LAN/1 lan mo
+  // modal (autoDefaultIssuerRef) - khong tu dong ghi de neu Sale sau do tu tay
+  // bo chon (selectedIssuerCompany ve null) hoac tu doi sang cong ty khac.
+  const autoDefaultIssuerRef = useRef(false);
+  useEffect(() => {
+    if (!open) { autoDefaultIssuerRef.current = false; return; }
+    if (editQuote || autoDefaultIssuerRef.current || !issuerCompanies.length) return;
+    // Cho effect khoi phuc ban nhap (phia tren) co co hoi chay truoc, tranh
+    // tu chon de roi bi ban nhap da luu ghi de lai (hoac nguoc lai).
+    if (draftEligible && !restoredDraftRef.current) return;
+    autoDefaultIssuerRef.current = true;
+    if (selectedIssuerCompany) return;
+    const matches = issuerCompanies.filter(c => c.status === 'active' && c.instance === CRM_INSTANCE);
+    if (matches.length === 1) setSelectedIssuerCompany(matches[0]);
+  }, [open, editQuote, issuerCompanies, draftEligible, selectedIssuerCompany]);
   // Theo dõi ĐÚNG nút nào đang chạy (không dùng 1 boolean chung) - trước đây
   // 1 boolean khiến cả 2 nút "Cập nhật báo giá"/"Duyệt báo giá" cùng xoay
   // spinner dù chỉ bấm 1 nút, nhìn rất kỳ.
@@ -641,7 +663,7 @@ export function CreateQuoteModal({
   // width/max-width CSS khai bao la gi. Portal ra document.body de thoat
   // hoan toan containing block bi anh huong boi transform cua drawer cha.
   return createPortal(
-    <div className="crm-modal-backdrop" onClick={resetAndClose}>
+    <div className="crm-modal-backdrop" onClick={event => { if (event.target === event.currentTarget) resetAndClose(); }}>
       <div
         className={`crm-modal crm-wizard-modal${step === 3 ? ' crm-wizard-modal--wide' : ''}`}
         onClick={event => event.stopPropagation()}

@@ -1,0 +1,4487 @@
+.qc-page {
+  max-width: 1560px;
+  margin: 0 auto;
+  padding: 24px 36px 60px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  background: var(--color-surface, #fff);
+}
+
+.qc-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-end;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.qc-header h1 {
+  font-size: 24px;
+  font-weight: 800;
+  margin: 0 0 5px;
+  color: var(--color-on-surface, #1a1a1a);
+  letter-spacing: -0.01em;
+}
+
+.qc-header p {
+  font-size: 13px;
+  color: var(--color-on-surface-variant, #666);
+  margin: 0;
+}
+
+.qc-header-actions {
+  display: flex;
+  gap: 10px;
+  margin-left: auto;
+}
+
+.qc-icon {
+  width: 16px;
+  height: 16px;
+}
+
+.qc-inline-icon {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  vertical-align: -2px;
+}
+
+.qc-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--color-outline, #e5e5e5);
+  border-radius: 10px;
+  background: var(--color-surface, #fff);
+  height: 42px;
+  padding: 0 18px;
+  font-weight: 650;
+  font-size: 13px;
+  color: #536075;
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.qc-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.qc-btn[aria-busy="true"] {
+  cursor: progress;
+  opacity: 0.85;
+}
+
+/* Spinner nho trong nut submit/action (Bàn giao, Duyệt, Phát hành...) - luon
+   di kem chu mo ta hanh dong dang chay, khong bao gio chi hien spinner tron
+   mot minh (accessibility). */
+.qc-btn-spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: qc-spin 0.6s linear infinite;
+  flex-shrink: 0;
+}
+
+@keyframes qc-spin {
+  to { transform: rotate(360deg); }
+}
+
+.qc-btn-primary {
+  background: var(--color-primary, #ba244a) !important;
+  color: #fff !important;
+  border-color: var(--color-primary, #ba244a) !important;
+  box-shadow: 0 6px 16px rgba(186, 36, 74, 0.25);
+}
+
+.qc-btn-soft {
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+}
+
+.qc-state {
+  padding: 30px;
+  text-align: center;
+  color: var(--color-on-surface-variant, #666);
+  font-size: 13.5px;
+}
+
+.qc-section-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 18px;
+}
+
+.qc-section-head h2 {
+  font-size: 19px;
+  font-weight: 750;
+  margin: 0 0 4px;
+  color: var(--color-on-surface, #1a1a1a);
+}
+
+.qc-section-head p {
+  font-size: 12.5px;
+  color: var(--color-on-surface-variant, #666);
+  margin: 0;
+}
+
+.qc-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.qc-role-switch {
+  display: flex;
+  background: var(--color-surface-container-low, #eef1f5);
+  border-radius: 10px;
+  padding: 3px;
+}
+
+.qc-role-switch button {
+  height: 34px;
+  border: 0;
+  background: transparent;
+  border-radius: 8px;
+  padding: 0 14px;
+  color: #6b7585;
+  font-size: 12.5px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.qc-role-switch button.active {
+  background: #fff;
+  color: var(--color-primary, #ba244a);
+  box-shadow: 0 2px 8px rgba(23, 32, 51, 0.12);
+}
+
+.qc-role-switch--compact button {
+  height: 32px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+.qc-controls select {
+  height: 40px;
+  border: 1px solid var(--color-outline, #e5e5e5);
+  border-radius: 9px;
+  background: #fff;
+  padding: 0 12px;
+  color: #536075;
+  font-size: 12.5px;
+}
+
+.qc-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.qc-metric {
+  position: relative;
+  background: var(--color-surface, #fff);
+  border: 1px solid var(--color-outline, #e5e5e5);
+  border-radius: 12px;
+  padding: 12px 14px 10px;
+  box-shadow: 0 1px 3px rgba(16, 24, 40, 0.04);
+}
+
+.qc-metric-dot {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  border-radius: 16px 0 0 16px;
+}
+
+.qc-metric-dot-rose {
+  background: var(--color-primary, #ba244a);
+}
+.qc-metric-dot-blue {
+  background: #3377d4;
+}
+.qc-metric-dot-green {
+  background: #148e61;
+}
+.qc-metric-dot-amber {
+  background: #d18416;
+}
+
+.qc-metric-label {
+  display: block;
+  font-size: 12px;
+  color: var(--color-on-surface-variant, #666);
+  margin-bottom: 10px;
+}
+
+.qc-metric strong {
+  display: block;
+  font-size: 24px;
+  font-weight: 800;
+  color: var(--color-on-surface, #1a1a1a);
+  letter-spacing: -0.01em;
+}
+
+.qc-metric strong.qc-metric-value-lg {
+  font-size: 21px;
+}
+
+/* 3 card that su (Phễu/Hiệu suất Sale/Hiệu suất Team) nhung truoc day chi
+ * khai bao 2 cot - card thu 3 (Team) bi wrap xuong hang moi CHI o cot 1
+ * (0.8fr), de trong ca 1 cot ben canh (dung "3 box này làm trống khoảng
+ * cách" nguoi dung bao cao) thay vi dung het chieu rong con lai. */
+.qc-insight-grid {
+  display: grid;
+  grid-template-columns: 0.8fr 1.4fr;
+  gap: 16px;
+  align-items: stretch;
+}
+.qc-insight-grid > article:nth-child(3) {
+  grid-column: 1 / -1;
+}
+
+/* Card "Hiệu suất theo Sale"/"Hiệu suất theo Team" cao vo tan theo so dong
+ * (nguoi dung bao cao dai qua so voi card "Phễu chuyển đổi" ben canh) -
+ * co dinh 1 chieu cao chung, bang tu cuon RIENG ben trong thay vi day card
+ * phinh to. */
+.qc-insight-grid > article:nth-child(2),
+.qc-insight-grid > article:nth-child(3) {
+  display: flex;
+  flex-direction: column;
+  height: 420px;
+}
+.qc-insight-grid > article:nth-child(2) .qc-table-wrap,
+.qc-insight-grid > article:nth-child(3) .qc-table-wrap {
+  flex: 1;
+  max-height: none;
+  min-height: 0;
+}
+.qc-insight-grid > article:nth-child(1) {
+  height: 420px;
+}
+
+.qc-insight-card {
+  background: var(--color-surface, #fff);
+  border: 1px solid var(--color-outline, #e5e5e5);
+  border-radius: 16px;
+  padding: 22px;
+}
+
+.qc-insight-card h3 {
+  font-size: 15px;
+  font-weight: 700;
+  margin: 0 0 4px;
+}
+
+.qc-insight-card > p {
+  font-size: 12px;
+  color: var(--color-on-surface-variant, #666);
+  margin: 0 0 20px;
+}
+
+.qc-funnel {
+  display: grid;
+  gap: 20px;
+}
+
+.qc-funnel-item {
+  display: grid;
+  grid-template-columns: 92px 1fr 90px;
+  align-items: center;
+  gap: 12px;
+  font-size: 12.5px;
+}
+
+.qc-funnel-item span {
+  color: #667184;
+  font-weight: 600;
+}
+
+.qc-funnel-track {
+  height: 12px;
+  background: var(--color-surface-container-low, #eef1f5);
+  border-radius: 7px;
+  overflow: hidden;
+}
+
+.qc-funnel-track i {
+  display: block;
+  height: 100%;
+  border-radius: 7px;
+  background: linear-gradient(90deg, var(--color-primary, #ba244a), #e55f84);
+}
+
+.qc-funnel-item b {
+  text-align: right;
+  font-size: 12.5px;
+  font-weight: 700;
+}
+
+.qc-table-wrap {
+  overflow-x: auto;
+  overflow-y: auto;
+}
+
+.qc-team-table {
+  width: 100%;
+  min-width: 760px;
+  border-collapse: collapse;
+}
+
+.qc-team-table th {
+  text-align: left;
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #9099a7;
+  padding: 11px 12px;
+  border-bottom: 1px solid var(--color-outline, #e5e5e5);
+  white-space: nowrap;
+}
+
+.qc-team-table td {
+  font-size: 12.5px;
+  padding: 13px 12px;
+  border-bottom: 1px solid #eff1f5;
+  color: #5b6576;
+}
+
+.qc-team-table td strong {
+  color: #2b3445;
+}
+
+.qc-sale-cell {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+/* Cot "Presale -> Sale" (Checkpoint C) - CHI hien ten (khong avatar), tranh
+ * bug thuc te da bao "avatar chiem cho lam khuat ten" tren cot hep. Cho phep
+ * xuong dong (wrap) khi ten dai, khong dung nowrap ep tran 1 dong. */
+.qc-sale-cell--text-only {
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  row-gap: 2px;
+  font-size: 12px;
+}
+.qc-sale-cell--text-only span:not(.qc-owner-arrow) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+.qc-sale-cell--text-only .qc-owner-arrow {
+  flex-shrink: 0;
+  color: #98a2b3;
+}
+
+/* Cot "Phu trach" (Presale/Sale tach 2 dong, thay "A -> B" 1 dong cu) -
+ * desktop dung 2 dong trong 1 cot de khong lam bang rong ra. */
+.qc-sale-cell--stacked {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  font-size: 12px;
+}
+.qc-owner-row {
+  display: flex;
+  gap: 4px;
+  max-width: 100%;
+  overflow: hidden;
+}
+.qc-owner-row span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.qc-owner-role {
+  flex-shrink: 0;
+  color: #98a2b3;
+}
+
+/* Mobile card - 2 chip gon thay vi 1 dong "A -> B". */
+.qc-owner-chips {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}
+.qc-owner-chip {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #f2f4f7;
+  font-size: 11.5px;
+  color: #344054;
+  white-space: nowrap;
+}
+
+.qc-avatar {
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: #fde8ee;
+  color: var(--color-primary, #ba244a);
+  display: inline-grid;
+  place-items: center;
+  font-weight: 800;
+  font-size: 10.5px;
+}
+
+.qc-avatar-sm {
+  width: 24px;
+  height: 24px;
+  font-size: 9.5px;
+}
+
+.qc-empty {
+  text-align: center;
+  color: var(--color-on-surface-variant, #666);
+  padding: 30px !important;
+}
+
+.qc-quick {
+  border-radius: 14px;
+  padding: 14px 20px;
+  display: grid;
+  grid-template-columns: 1.15fr 0.85fr;
+  gap: 16px;
+  align-items: center;
+  color: #fff;
+  background: radial-gradient(circle at 90% 10%, #ec4c75 0, transparent 29%),
+    linear-gradient(120deg, #9e123b, var(--color-primary, #ba244a) 66%, #c51d4d);
+  box-shadow: 0 8px 18px rgba(169, 24, 66, 0.2);
+  overflow: hidden;
+}
+
+.qc-eyebrow {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  opacity: 0.8;
+}
+
+.qc-quick h2 {
+  font-size: 17px;
+  font-weight: 800;
+  margin: 2px 0;
+}
+
+.qc-quick p {
+  font-size: 12px;
+  line-height: 1.5;
+  margin: 0;
+  color: #ffeaf0;
+  max-width: 480px;
+}
+
+.qc-quick-buttons {
+  margin-top: 10px;
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.qc-quick .qc-quick-buttons .qc-btn-primary {
+  background: #fff !important;
+  color: var(--color-primary, #ba244a) !important;
+  border-color: #fff !important;
+  box-shadow: none;
+}
+
+.qc-quick-steps {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.qc-quick-step {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 112px;
+}
+
+.qc-quick-step b {
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  background: rgba(255, 255, 255, 0.1);
+  font-size: 12px;
+}
+
+.qc-quick-step:first-child b {
+  background: #fff;
+  color: var(--color-primary, #ba244a);
+  border-color: #fff;
+}
+
+.qc-quick-step span {
+  display: flex;
+  flex-direction: column;
+}
+
+.qc-quick-step strong {
+  font-size: 11.5px;
+}
+
+.qc-quick-step small {
+  font-size: 10px;
+  color: #ffdce6;
+  margin-top: 3px;
+}
+
+.qc-quick-steps > i {
+  height: 1px;
+  background: rgba(255, 255, 255, 0.35);
+  flex: 1;
+  max-width: 40px;
+  margin: 0 8px;
+}
+
+.qc-section {
+  margin-top: 2px;
+}
+
+.qc-link {
+  border: 0;
+  background: none;
+  color: var(--color-primary, #ba244a);
+  font-size: 12.5px;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.qc-templates {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 16px;
+}
+
+.qc-template {
+  background: var(--color-surface, #fff);
+  border: 1px solid var(--color-outline, #e5e5e5);
+  border-radius: 15px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  height: 100%;
+  min-width: 0;
+  cursor: pointer;
+  transition: 0.15s;
+}
+
+.qc-template-top {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  min-width: 0;
+}
+
+.qc-template-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.qc-template:hover {
+  transform: translateY(-2px);
+  border-color: #efabc0;
+  box-shadow: 0 10px 22px rgba(35, 48, 75, 0.1);
+}
+
+.qc-template-icon {
+  width: 46px;
+  height: 46px;
+  border-radius: 12px;
+  display: grid;
+  place-items: center;
+  background: #fff0f4;
+  color: var(--color-primary, #ba244a);
+}
+
+.qc-template-icon.qc-icon-blue {
+  background: #edf5ff;
+  color: #3377d4;
+}
+.qc-template-icon.qc-icon-rose {
+  background: #fff0f4;
+  color: var(--color-primary, #ba244a);
+}
+.qc-template-icon.qc-icon-green {
+  background: #ecfbf4;
+  color: #148e61;
+}
+
+.qc-template h3 {
+  font-size: 14px;
+  font-weight: 700;
+  margin: 2px 0 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.qc-template p {
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--color-on-surface-variant, #666);
+  margin: 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  min-height: 2.4em;
+}
+
+/* Badge "N truong du lieu" — thong tin ky thuat, khong huu ich voi nguoi dung
+ * cuoi, demote thanh chu nho/nhat mau thay vi pill noi bat nhu truoc. */
+.qc-template-fieldcount {
+  font-size: 10px;
+  font-weight: 600;
+  color: #b7bec9;
+  background: none;
+  padding: 0;
+  border-radius: 0;
+}
+
+.qc-template-cta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 0;
+  background: #f6f7f9;
+  width: 100%;
+  min-height: 34px;
+  border-radius: 8px;
+  color: var(--color-primary, #ba244a);
+  font-size: 12.5px;
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.qc-template-cta:hover {
+  background: #fff0f4;
+}
+
+.qc-linked-quotes {
+  background: var(--color-surface, #fff);
+  border: 1px solid var(--color-outline, #e5e5e5);
+  border-radius: 16px;
+  padding: 16px;
+}
+
+.qc-linked-quotes .qc-section-head {
+  margin-bottom: 12px;
+}
+
+.qc-list-tools {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+
+.qc-list-tools .crm-filter-select-wrap {
+  min-width: 172px;
+  flex: 0 0 auto;
+}
+
+.qc-list-tools input {
+  height: 38px;
+  width: 230px;
+  border: 1px solid var(--color-outline, #e5e5e5);
+  border-radius: 9px;
+  padding: 0 12px;
+  font-size: 12px;
+}
+
+.qc-list-tools select {
+  height: 38px;
+  border: 1px solid var(--color-outline, #e5e5e5);
+  border-radius: 9px;
+  background: #fff;
+  padding: 0 10px;
+  font-size: 12px;
+  color: #536075;
+}
+
+/* Section 7 - KPI SLA (bam de loc, giong toggle chu khong phai the hien tinh
+ * that don thuan). Mau nhe (khong dam) - dung quy uoc mau THAT nhe da co
+ * (xem .qc-workspace-items-table--unified o tren: nen nhat, chu dam). */
+.qc-sla-kpi-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.qc-sla-kpi {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border-radius: 999px;
+  padding: 6px 14px;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+.qc-sla-kpi:disabled { cursor: default; opacity: 0.7; }
+.qc-sla-kpi strong { font-size: 14px; font-weight: 800; }
+.qc-sla-kpi--danger { background: #fdecec; color: #b3261e; }
+.qc-sla-kpi--danger.active { border-color: #b3261e; }
+.qc-sla-kpi--warning { background: #fff7e6; color: #8a6416; }
+.qc-sla-kpi--warning.active { border-color: #8a6416; }
+.qc-sla-kpi-clear {
+  border: 1px solid var(--color-outline, #e5e5e5);
+  background: #fff;
+  color: #536075;
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.qc-status-tabs {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.qc-status-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid var(--color-outline, #e5e5e5);
+  border-radius: 999px;
+  background: #fff;
+  color: #536075;
+  font-size: 12px;
+  font-weight: 650;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+
+.qc-status-tab span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: #f1f3f5;
+  color: #657184;
+  font-size: 10.5px;
+}
+
+.qc-status-tab.active {
+  background: var(--color-primary, #ba244a);
+  border-color: var(--color-primary, #ba244a);
+  color: #fff;
+}
+
+.qc-status-tab.active span {
+  background: rgba(255, 255, 255, 0.25);
+  color: #fff;
+}
+
+.qc-group-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #536075;
+  cursor: pointer;
+  margin-left: auto;
+  user-select: none;
+}
+
+/* Switch that dung <input type="checkbox"> lam trang thai that (khong dung
+ * div gia) nhung an di, tu ve lai bang track+thumb - toan bo <label> (chu +
+ * switch) bam duoc vi input van nam trong label, khong can id/htmlFor rieng.
+ * PHAI dat sau/specificity cao hon ".qc-list-tools input" (height:38px;
+ * width:230px) - khong thi checkbox bi keo thanh 1 o vuong trang to (bug that
+ * da gap: selector input chung trong .qc-list-tools ap luon vao checkbox
+ * long trong .qc-group-toggle vi no cung nam trong .qc-list-tools). */
+.qc-list-tools .qc-group-toggle input[type='checkbox'] {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 34px;
+  height: 20px;
+  min-width: 34px;
+  border-radius: 999px;
+  background: #d7dbe0;
+  border: none;
+  position: relative;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.15s ease;
+}
+
+.qc-list-tools .qc-group-toggle input[type='checkbox']::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+  transition: left 0.15s ease;
+}
+
+.qc-list-tools .qc-group-toggle input[type='checkbox']:checked {
+  background: var(--color-primary, #ba244a);
+}
+
+.qc-list-tools .qc-group-toggle input[type='checkbox']:checked::after {
+  left: 16px;
+}
+
+.qc-group-header-row td {
+  background: #fafbfc;
+  font-size: 12px;
+  color: #536075;
+  padding: 8px 12px;
+}
+
+.qc-group-header-count {
+  float: right;
+  color: #9099a7;
+  font-weight: 600;
+}
+
+.qc-linked-table {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+}
+
+/* Dong Muc cha (Section) trong bang "Bản xem trước cho khách hàng" - truoc
+ * day render nhu 1 hang muc gia 0 ("—" | 0 | 0đ | 0đ), gio la tieu de nhom
+ * noi bat, khong tinh tien - dung nen nhat giong .qc-workspace-section-row
+ * o bang chinh Workspace. */
+.qc-linked-table-section-row td {
+  background: #fdf1f4;
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+
+/* Bang 10 cot that (mapping da xac nhan - xem renderChainRow): Bao gia/Version
+ * - Khach hang - Co hoi CRM - Trang thai hien tai - Quan ly/Phu trach - Gia
+ * truoc VAT - Tong thanh toan - VAT - Ngay bao gia/Hieu luc - Thao tac. Dung
+ * % (khong px/min-width) de bang LUON fit du trong 1 viewport tu 1280px tro
+ * len - KHONG duoc co horizontal scrollbar o desktop (yeu cau xac nhan lai
+ * sau khi ban px+min-width truoc do gay tran ngang). Cung 1
+ * table-layout:fixed dung cho ca thead+tbody (cung 1 <table>) nen cot luon
+ * thang hang, khong bi lech giua header/noi dung. */
+/* Checkpoint C (10 cot moi: Bao gia/Co hoi/Khach hang/Du an/Phase/Presale->
+ * Sale/Gia noi bo/Gia khach/Margin/SLA/Thao tac) - Phase va Presale->Sale
+ * can nhieu cho hon ban cu (text dai hon 1 badge trang thai/1 ten don, vd
+ * "Đã duyệt · Chờ phát hành") - bug thuc te da gap: 8%/12% qua hep lam
+ * chu bi cat/khuat. */
+/* Bang "Bản xem trước cho khách hàng" (4 cot: Hạng mục/SL/Đơn giá/Thành
+ * tiền) - BUG THAT DA GAP: .qc-linked-table dung table-layout:fixed nhung
+ * KHONG co rule width rieng cho bang 4 cot nay (chi co --10col) nen 4 cot
+ * chia deu 25% moi cot - cot "Hạng mục" (quan trong nhat, ten dai) bi bop
+ * hep bang dung 3 cot so lieu ngan (SL/Đơn giá/Thành tiền), chu bi cat/xuong
+ * dong lien tuc trong khi 3 cot con lai du thua khong gian. */
+.qc-linked-table--preview4col th:nth-child(1), .qc-linked-table--preview4col td:nth-child(1) { width: 52%; }
+.qc-linked-table--preview4col th:nth-child(2), .qc-linked-table--preview4col td:nth-child(2) { width: 10%; }
+.qc-linked-table--preview4col th:nth-child(3), .qc-linked-table--preview4col td:nth-child(3) { width: 18%; }
+.qc-linked-table--preview4col th:nth-child(4), .qc-linked-table--preview4col td:nth-child(4) { width: 20%; }
+.qc-linked-table--10col th:nth-child(1), .qc-linked-table--10col td:nth-child(1) { width: 15%; }
+.qc-linked-table--10col th:nth-child(2), .qc-linked-table--10col td:nth-child(2) { width: 9%; }
+.qc-linked-table--10col th:nth-child(3), .qc-linked-table--10col td:nth-child(3) { width: 9%; }
+.qc-linked-table--10col th:nth-child(4), .qc-linked-table--10col td:nth-child(4) { width: 13%; }
+.qc-linked-table--10col th:nth-child(5), .qc-linked-table--10col td:nth-child(5) { width: 14%; }
+.qc-linked-table--10col th:nth-child(6), .qc-linked-table--10col td:nth-child(6) { width: 9%; }
+.qc-linked-table--10col th:nth-child(7), .qc-linked-table--10col td:nth-child(7) { width: 9%; }
+.qc-linked-table--10col th:nth-child(8), .qc-linked-table--10col td:nth-child(8) { width: 7%; }
+.qc-linked-table--10col th:nth-child(9), .qc-linked-table--10col td:nth-child(9) { width: 9%; }
+.qc-linked-table--10col th:nth-child(10), .qc-linked-table--10col td:nth-child(10) { width: 6%; }
+
+.qc-linked-table th {
+  text-align: left;
+  background: #fafbfc;
+  color: #9099a7;
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 8px 10px;
+  border-top: 1px solid var(--color-outline, #e5e5e5);
+  border-bottom: 1px solid var(--color-outline, #e5e5e5);
+  white-space: normal;
+  line-height: 1.25;
+}
+
+/* Sticky header - nam duoi dropdown portal (z-index 300, xem crm.css) nhung
+ * tren noi dung bang khi cuon doc trong .qc-table-wrap. */
+.qc-table-wrap {
+  max-height: 70vh;
+  /* Bug that (da xac nhan qua Playwright: scrollTop that su doi nhung
+   * pixel hien thi bi "dong bang"/chong lan chu cu - ma chup man hinh
+   * chung minh) - Chromium co loi compositing khi 1 scroll container vua
+   * co sticky TREN (thead top:0) vua co sticky NGANG (cot cuoi right:0)
+   * cung luc. Ep tao GPU layer rieng cho scroll container de buoc trinh
+   * duyet composite/repaint dung, day la workaround chuan cho loi nay. */
+  transform: translateZ(0);
+  will-change: scroll-position;
+}
+.qc-linked-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  /* Ep tung o sticky co layer GPU rieng - tranh bi "dinh" pixel cu khi
+   * cuon nhanh trong cung 1 scroll container co ca sticky ngang lan doc. */
+  transform: translateZ(0);
+}
+
+.qc-linked-table td {
+  font-size: 12.5px;
+  padding: 8px 10px;
+  border-bottom: 1px solid #eff1f5;
+  color: #5b6576;
+  vertical-align: middle;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.qc-th-money { text-align: right; }
+.qc-th-status { text-align: center; }
+.qc-th-actions { text-align: right; }
+
+.qc-cell-money {
+  text-align: right;
+  font-weight: 700;
+  color: #2b3445;
+}
+
+.qc-cell-status {
+  text-align: center;
+}
+
+.qc-cell-actions {
+  text-align: right;
+}
+
+/* Cot Thao tac sticky ben phai (giong HTML tham khao) de menu 3 cham luon
+ * bam duoc du bang cuon ngang bao xa. */
+.qc-linked-table th:last-child,
+.qc-linked-table td:last-child {
+  position: sticky;
+  right: 0;
+  background: #ffffff;
+  box-shadow: -6px 0 8px -6px rgba(15, 23, 42, 0.08);
+}
+.qc-linked-table thead th:last-child {
+  background: #fafbfc;
+  z-index: 6;
+}
+.qc-group-header-row td:last-child {
+  position: static;
+  box-shadow: none;
+}
+
+.qc-row-compact td {
+  padding: 7px 10px;
+}
+
+.qc-linked-table td:nth-child(2) .qc-row-link,
+.qc-linked-table td:nth-child(2) .qc-row-sub,
+.qc-linked-table td:nth-child(3) .qc-row-link,
+.qc-linked-table td:nth-child(3) .qc-row-sub {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.qc-row-link {
+  color: #2b3445;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.qc-row-link:hover {
+  color: var(--color-primary, #ba244a);
+  text-decoration: underline;
+}
+.qc-row-link-btn {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.qc-row-sub {
+  font-size: 10.5px;
+  color: #9099a7;
+  margin-top: 2px;
+}
+
+.qc-row-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  color: #657184;
+  text-decoration: none;
+  border: 1px solid var(--color-outline, #e5e5e5);
+}
+
+.qc-row-action:hover {
+  color: var(--color-primary, #ba244a);
+  border-color: #efabc0;
+}
+
+.qc-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 10.5px;
+  font-weight: 750;
+  border-radius: 12px;
+  padding: 5px 10px;
+  white-space: nowrap;
+}
+
+.qc-badge-blue {
+  background: #edf5ff;
+  color: #3674c7;
+}
+.qc-badge-amber {
+  background: #fff7e5;
+  color: #bf7810;
+}
+.qc-badge-green {
+  background: #eaf9f2;
+  color: #12845a;
+}
+.qc-badge-rose {
+  background: #fff0f4;
+  color: var(--color-primary, #ba244a);
+}
+.qc-badge-version {
+  background: #eef2ff;
+  color: #4338ca;
+}
+/* Tone rieng cho cot "Phase hien tai" (moi phase 1 mau ro rang, phan biet
+ * duoc ngay khong can doc chu) va cho badge Margin (lo/lai) - truoc day
+ * dung chung 1 class qc-badge (khong ton tai qc-badge-<tone>) nen MOI phase
+ * deu hien CUNG 1 mau, khong phan biet duoc (bug thuc te da bao). */
+.qc-badge-neutral {
+  background: #eef1f5;
+  color: #4b5768;
+}
+.qc-badge-warning {
+  background: #fff7e5;
+  color: #bf7810;
+}
+.qc-badge-success {
+  background: #eaf9f2;
+  color: #12845a;
+}
+.qc-badge-danger {
+  background: #fdeaec;
+  color: #b3261e;
+}
+/* 2 mau THEM cho du 5 mau rieng cho 5 phase tab that (Presale/Sale markup/
+ * Admin review/Sẵn sàng gửi/Đã gửi) - bug thuc te da bao "trùng màu nhãn,
+ * 5 mục 5 màu": qc-badge-neutral dung chung cho CA 'Chờ Presale input' LAN
+ * 'Chờ Sale markup' (trung mau xam), qc-badge-warning trung HEX y het
+ * qc-badge-amber (dung cho CA 'Sẵn sàng gửi' lan 'Chờ Sale markup' cu). */
+.qc-badge-purple {
+  background: #f3eeff;
+  color: #6d3fc0;
+}
+.qc-badge-teal {
+  background: #e6fbf8;
+  color: #0f8b8d;
+}
+
+.qc-cell-quote-line1 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.qc-cell-quote-title {
+  font-size: 11.5px;
+  color: #657184;
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.qc-row-actions-cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.qc-row-version-btn {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid #efabc0;
+  border-radius: 8px;
+  background: #fff0f4;
+  color: var(--color-primary, #ba244a);
+  font-size: 10.5px;
+  font-weight: 700;
+  padding: 5px 8px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.qc-list-footnote {
+  margin-top: 12px;
+  font-size: 11.5px;
+  color: var(--color-on-surface-variant, #666);
+  text-align: center;
+}
+
+.qc-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 14px;
+  flex-wrap: wrap;
+}
+
+.qc-pagination-summary {
+  font-size: 11.5px;
+  color: #9099a7;
+}
+
+.qc-pagination-controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.qc-pagination-controls button {
+  min-width: 28px;
+  height: 28px;
+  padding: 0 6px;
+  border: 1px solid var(--color-outline, #e5e5e5);
+  border-radius: 7px;
+  background: #fff;
+  color: #536075;
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.qc-pagination-controls button.active {
+  background: var(--color-primary, #ba244a);
+  border-color: var(--color-primary, #ba244a);
+  color: #fff;
+}
+
+.qc-pagination-controls button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.qc-pagination-gap {
+  color: #9099a7;
+  font-size: 12px;
+  padding: 0 2px;
+}
+
+.qc-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(21, 32, 51, 0.72);
+  backdrop-filter: blur(4px);
+  /* BUG THAT PHAT HIEN qua test mobile that: z-index cu (60) thap hon rat
+   * nhieu thanh phan global cua app (header/avatar/action-menu portal dung
+   * z-index toi 100000-100100 trong crm.css) - tren desktop khong thay vi
+   * dialog can giua nho, nhung khi Workspace thanh FULL-SCREEN SHEET tren
+   * mobile (chiem dung goc man hinh) thi avatar/thanh global do de bi lo ra
+   * de o goc tren trai. Nang len tren toan bo UI khac de dam bao workspace
+   * luon o TREN CUNG bat ke kich thuoc man hinh. */
+  z-index: 100200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.qc-deal-picker {
+  width: min(480px, 92vw);
+  background: #fff;
+  border-radius: 16px;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  box-shadow: 0 28px 80px rgba(11, 18, 35, 0.32);
+}
+
+.qc-deal-picker h3 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.qc-deal-picker input {
+  height: 40px;
+  border: 1px solid var(--color-outline, #e5e5e5);
+  border-radius: 9px;
+  padding: 0 12px;
+  font-size: 12.5px;
+}
+
+.qc-deal-picker-list {
+  max-height: 320px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.qc-deal-picker-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  text-align: left;
+  border: 1px solid var(--color-outline, #e5e5e5);
+  border-radius: 10px;
+  padding: 10px 13px;
+  background: #fff;
+  cursor: pointer;
+}
+
+.qc-deal-picker-item:hover {
+  border-color: #e28ca5;
+  background: #fff8fa;
+}
+
+.qc-deal-picker-item strong {
+  font-size: 12.5px;
+  color: #263247;
+}
+
+.qc-deal-picker-item span {
+  font-size: 11px;
+  color: var(--color-on-surface-variant, #666);
+}
+
+.qc-deal-picker-foot {
+  display: flex;
+  justify-content: flex-end;
+}
+
+@media (max-width: 1100px) {
+  .qc-metrics {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .qc-insight-grid {
+    grid-template-columns: 1fr;
+  }
+  .qc-quick {
+    grid-template-columns: 1fr;
+  }
+  .qc-quick-steps {
+    justify-content: flex-start;
+    margin-top: 12px;
+  }
+  .qc-templates {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  .qc-page {
+    padding: 16px;
+    overflow-x: hidden;
+  }
+
+  .qc-metrics {
+    grid-template-columns: 1fr;
+  }
+
+  /* Banner "Bat dau bao gia moi" - padding gon, heading khong qua to, 2 nut
+   * xep doc chiem full ngang, 3 buoc xep thanh hang gon (khong con canh phai
+   * ep vao 1 dong 336px+ khien chu bi cat nhu anh). */
+  .qc-quick {
+    padding: 20px 16px;
+  }
+
+  .qc-quick h2 {
+    font-size: 22px;
+  }
+
+  .qc-quick-buttons {
+    flex-direction: column;
+  }
+
+  .qc-quick-buttons .qc-btn {
+    width: 100%;
+  }
+
+  .qc-quick-steps {
+    justify-content: flex-start;
+    flex-wrap: wrap;
+    row-gap: 10px;
+  }
+
+  .qc-quick-step {
+    min-width: 0;
+  }
+
+  .qc-quick-steps > i {
+    flex: 0 0 16px;
+  }
+
+  /* An mo ta phu (huong dan chi tiet) tren mobile de giam chieu dai trang -
+   * tieu de + so lieu chinh van du de hieu, khong can doan van dai. */
+  .qc-quick p {
+    display: none;
+  }
+}
+
+/* Danh sach bao gia (qc-quote-list-responsive) - CARD THAT tren mobile (khac
+ * voi kieu td[data-label]::before cua .qc-linked-table o duoi, dung cho cac
+ * bang khac) - an bang, hien danh sach card qc-quote-card da render san o
+ * QuoteCenterPage.tsx. Scope rieng qua .qc-quote-list-responsive de KHONG
+ * dung chung selector .qc-table-wrap voi noi khac (workspace, team table). */
+.qc-quote-mobile-cards { display: none; }
+@media (max-width: 767px) {
+  .qc-quote-list-responsive .qc-table-wrap {
+    display: none;
+  }
+  .qc-quote-mobile-cards {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .qc-quote-card {
+    border: 1px solid var(--color-outline, #e5e5e5);
+    border-radius: 12px;
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    font-size: 12.5px;
+  }
+  .qc-quote-card-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .qc-quote-card-row {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 10px;
+  }
+  .qc-quote-card-label {
+    flex-shrink: 0;
+    color: #9099a7;
+    font-size: 10.5px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+  .qc-quote-card-value {
+    text-align: right;
+    min-width: 0;
+  }
+  .qc-quote-card-more {
+    margin-top: 4px;
+    border-top: 1px dashed var(--color-outline, #e5e5e5);
+    padding-top: 6px;
+  }
+  .qc-quote-card-more summary {
+    cursor: pointer;
+    color: var(--color-primary, #ba244a);
+    font-weight: 700;
+    font-size: 11.5px;
+  }
+  .qc-group-header-row--card {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 4px 2px;
+  }
+
+  /* Bo loc/tim kiem - search full width, cac dropdown xep grid 2 cot (1 cot
+   * o man rat hep), phase tabs cuon ngang khong bop chu, pagination van thay
+   * duoc/bam duoc. */
+  .qc-list-tools {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+  .qc-list-tools input {
+    grid-column: 1 / -1;
+    width: 100%;
+  }
+  .qc-list-tools .crm-filter-select-wrap {
+    min-width: 0;
+    width: 100%;
+  }
+  .qc-list-tools select {
+    width: 100%;
+  }
+  .qc-list-tools .qc-role-switch,
+  .qc-list-tools .qc-group-toggle {
+    grid-column: 1 / -1;
+  }
+  .qc-status-tabs {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: 4px;
+  }
+  .qc-status-tab {
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
+  .qc-pagination-controls {
+    flex-wrap: wrap;
+  }
+  .qc-pagination-controls button {
+    min-width: 36px;
+    height: 36px;
+  }
+}
+@media (max-width: 380px) {
+  .qc-list-tools {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Nhan ngan cho 2 nut CTA dau trang - CHI hien tren man rat hep (≤360px, xem
+ * bang duoi) de tranh nhan dai lam 2 nut chen nhau/xuong dong xau. Mac dinh
+ * (desktop + hau het mobile) hien nhan day du. */
+.qc-btn-label-short { display: none; }
+
+/* KPI qua dai tren mobile (8 the qc-metric xep 1 cot + bang hieu suat Sale/
+ * Team ben duoi) khien nguoi dung phai cuon rat xa moi thay "Danh sach bao
+ * gia" - chuyen sang grid 2 cot (rieng 2 the tien te dai "Tong gia tri bao
+ * gia"/"Gia tri da chot" chiem full 1 hang qua .qc-metric--big), giam
+ * padding, kem 1 nut "Thu gon KPI" (JSX moi trong QuoteCenterPage.tsx) de
+ * Sale tu an het KPI + bang hieu suat khi can thay ngay danh sach. */
+.qc-kpi-toggle { display: none; }
+@media (max-width: 767px) {
+  .qc-header-actions {
+    flex-wrap: wrap;
+  }
+  .qc-kpi-toggle {
+    display: inline-flex;
+    align-items: center;
+    height: 34px;
+    padding: 0 12px;
+    border: 1px solid var(--color-outline, #e5e5e5);
+    border-radius: 999px;
+    background: #fff;
+    color: #536075;
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+  }
+  .qc-metrics {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 8px;
+  }
+  .qc-metric {
+    padding: 9px 11px 8px;
+  }
+  .qc-metric--big {
+    grid-column: 1 / -1;
+  }
+}
+@media (max-width: 360px) {
+  .qc-btn-label-full { display: none; }
+  .qc-btn-label-short { display: inline; }
+}
+@media (max-width: 340px) {
+  .qc-metrics {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Bang nhieu cot (Hieu suat theo Sale / Bao gia da lien ket CRM) khong con vua
+ * ngay tu do rong tablet 768px (xac nhan qua QA thuc te: header cac cot chong
+ * chit "MÃ BÁO KHÁCH HÀNGCƠ HỘI...") - rieng 2 bang nay doi sang dang the/box
+ * som hon (900px) thay vi cho toi 640px nhu phan layout con lai cua trang.
+ * Moi dong thanh 1 the doc, nhan data-label lam nhan cho tung gia tri (xem
+ * thead an di, td hien nhan qua ::before). */
+@media (max-width: 900px) {
+  .qc-team-table thead,
+  .qc-linked-table thead {
+    display: none;
+  }
+
+  .qc-team-table,
+  .qc-linked-table,
+  .qc-team-table tbody,
+  .qc-linked-table tbody,
+  .qc-team-table tr,
+  .qc-linked-table tr,
+  .qc-team-table td,
+  .qc-linked-table td {
+    display: block;
+    width: 100%;
+    min-width: 0;
+  }
+
+  .qc-team-table tr,
+  .qc-linked-table tr {
+    border: 1px solid var(--color-outline, #e5e5e5);
+    border-radius: 12px;
+    padding: 10px 12px;
+    margin-bottom: 10px;
+  }
+
+  .qc-team-table td,
+  .qc-linked-table td {
+    border: none !important;
+    padding: 6px 0 !important;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    text-align: right;
+  }
+
+  .qc-team-table td[data-label]::before,
+  .qc-linked-table td[data-label]::before {
+    content: attr(data-label);
+    flex-shrink: 0;
+    color: #9099a7;
+    font-size: 10.5px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    text-align: left;
+  }
+
+  .qc-team-table td[data-label=""]::before,
+  .qc-linked-table td[data-label=""]::before {
+    content: none;
+  }
+
+  .qc-team-table td .qc-sale-cell,
+  .qc-linked-table td .qc-sale-cell {
+    justify-content: flex-end;
+  }
+}
+
+/* ── Phase 2: Workspace xu ly bao gia (QuoteWorkspaceModal) ────────────── */
+
+/* KHONG dung height co dinh (92vh) - modal se LUON cao bang 92% man hinh du
+ * noi dung it den dau, tao ra dung "mang trang lon" nguoi dung bao cao (phase
+ * request/data thua). Dung max-height + content tu quyet dinh chieu cao that
+ * su (header/footer van "dinh" nho flex-column, body tu co lai khi it noi
+ * dung, tu cuon rieng khi vuot qua max-height). */
+.qc-workspace {
+  display: flex;
+  flex-direction: column;
+  /* Rong them tu 1500px/96vw len 1700px/98vw ("cho popup to ra nữa để bảng
+   * nó to ra ngang luôn") - bang hang muc co nhieu cot (Gia von/Markup/Gia
+   * khach/Margin/Thao tac...) can nhieu khong gian ngang hon de bot phai
+   * cuon, ket hop min-width moi o .qc-workspace-items-table--unified. */
+  width: min(1700px, 98vw);
+  max-height: 92vh;
+  min-height: 420px;
+  background: #fff;
+  border-radius: 16px;
+  overflow: hidden;
+  box-shadow: 0 24px 60px rgba(15, 23, 42, 0.28);
+}
+
+.qc-workspace--loading {
+  align-items: center;
+  justify-content: center;
+  padding: 40px;
+  color: #5b6576;
+  font-size: 13.5px;
+}
+
+/* Header + tien trinh 3 buoc GOP CHUNG 1 hang tren desktop (yeu cau "Header
+ * và tiến trình chung một hàng"): trai = trang thai+tieu de, giua = tien
+ * trinh (co gian, chiem khong gian con lai), phai = nhom nut hanh dong
+ * (KHONG duoc xuong dong - flex-shrink:0 + flex-wrap:nowrap tren chinh no
+ * va tren .qc-workspace-header-actions). */
+.qc-workspace-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 20px;
+  border-bottom: 1px solid #eef0f3;
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
+}
+
+/* Dong "trang thai + dong" rieng cho mobile (xem @media 767px o duoi) - AN
+ * mac dinh tren desktop, vi trang thai da nam san trong qc-workspace-header-
+ * title va nut dong da nam san trong qc-workspace-header-actions. */
+.qc-workspace-header-mobile-row {
+  display: none;
+}
+
+.qc-workspace-header-main {
+  /* BUG THAT DA GAP ("che ô tiêu đề"): max-width:280px cu NHO HON min-width
+   * 350px cua chinh o input tieu de (.qc-workspace-title-input, che do tao
+   * moi) - o input bi ep chay tran/de xuong lam mui ten tien trinh nam de
+   * len tren no. KHONG con gioi han max-width cung nua - flex-shrink:0 de
+   * cum trang thai+tieu de LUON du cho tu no can, phan con lai (tien trinh)
+   * tu co lai (da co san overflow/ellipsis rieng cho tung buoc). */
+  flex: 0 0 auto;
+  min-width: 0;
+}
+
+/* Tên báo giá hiện to, nổi bật ở đầu form (feedback 2026-09-25, PDF mục 6) -
+ * đứng trên dòng mã báo giá/badge. */
+.qc-workspace-header-quote-title {
+  font-size: 19px;
+  font-weight: 800;
+  color: #14181f;
+  margin: 0 0 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+/* Sale sua ten bao gia truc tiep tai day (feedback 2026-09-26: "không cần có
+ * box hay có ghi tiêu đề gì đâu, để vậy cho sale nhập") - reset toan bo dang
+ * input mac dinh, giu y het font/mau cua h2 tinh o tren de khong lo chuyen o
+ * dang view -> edit. */
+.qc-workspace-header-quote-title--input {
+  display: block;
+  width: 100%;
+  border: none;
+  background: transparent;
+  padding: 0;
+  outline: none;
+  font-family: inherit;
+  border-radius: 4px;
+}
+
+.qc-workspace-header-quote-title--input::placeholder {
+  color: #9099a7;
+  font-weight: 700;
+}
+
+.qc-workspace-header-quote-title--input:hover,
+.qc-workspace-header-quote-title--input:focus {
+  background: #f5f6f8;
+}
+
+.qc-workspace-header-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 15px;
+  color: #2b3445;
+  min-width: 0;
+}
+.qc-workspace-header-title strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.qc-workspace-header-sub {
+  color: #7a8494;
+  font-size: 11.5px;
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.qc-workspace-header-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-shrink: 0;
+  flex-wrap: nowrap;
+}
+
+/* Thanh tien trinh PHANG (progress navigation) - KHONG con la 4 card/box
+ * rieng (yeu cau xac nhan lai sau khi xem anh thuc te thay van con dang
+ * card). Moi step la 1 flex item chia deu, noi voi step ke tiep bang 1
+ * duong line mong (::after), khong border/bo goc/nen rieng cho tung step -
+ * chi step "current" co underline ngan mau thuong hieu duoi ten. */
+/* Tom tat progress gon "Bước X/3 — {label}" - AN mac dinh tren desktop (chi
+ * hien tren mobile, xem @media 767px o duoi), thanh stepper day du van la
+ * ban hien thi chinh o man rong. */
+.qc-stagebar-mobile-summary {
+  display: none;
+}
+
+.qc-workspace-stages {
+  display: flex;
+  align-items: flex-start;
+  padding: 8px 20px;
+  min-height: 48px;
+  max-height: 54px;
+  border-bottom: 1px solid #eef0f3;
+  background: #fff;
+  flex: 0 0 auto;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+/* Ban gop chung 1 hang voi header (yeu cau "Header và tiến trình chung một
+ * hàng") - CHIEM khong gian con lai giua ten bao gia va nhom nut hanh dong,
+ * khong con border/nen/padding rieng cua 1 "hang" doc lap. */
+.qc-workspace-header-progress {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0 12px;
+  margin: 0;
+  border-bottom: none;
+  max-height: none;
+  align-items: center;
+}
+
+.qc-stagebar-step {
+  position: relative;
+  flex: 1 1 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding-right: 12px;
+}
+
+.qc-stagebar-circle {
+  flex: 0 0 auto;
+  width: 21px;
+  height: 21px;
+  border-radius: 50%;
+  background: #eef0f4;
+  color: #97a0ae;
+  font-size: 10.5px;
+  font-weight: 800;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.qc-stagebar-step--done .qc-stagebar-circle { background: #e5f8f1; color: #22a06b; }
+.qc-stagebar-step--current .qc-stagebar-circle { background: var(--color-primary, #ba244a); color: #fff; }
+.qc-stagebar-step--upcoming .qc-stagebar-circle { background: #eef0f4; color: #b5bcc7; }
+.qc-stagebar-step--halted .qc-stagebar-circle { background: #fbe4e4; color: #c65f5f; }
+
+.qc-stagebar-text { min-width: 0; display: flex; flex-direction: column; line-height: 1.3; }
+.qc-stagebar-label {
+  font-weight: 600;
+  font-size: 12.5px;
+  color: #2b3445;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.qc-stagebar-step--upcoming .qc-stagebar-label { color: #9099a7; }
+.qc-stagebar-step--current .qc-stagebar-label {
+  font-weight: 700;
+  position: relative;
+  padding-bottom: 3px;
+}
+.qc-stagebar-step--current .qc-stagebar-label::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 18px;
+  height: 2px;
+  background: var(--color-primary, #ba244a);
+  border-radius: 2px;
+}
+.qc-stagebar-meta {
+  font-size: 10.5px;
+  color: #9099a7;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Duong noi giua cac step - 1 line mong nam giua 2 vong tron, khong phai
+ * border bao quanh tung step. */
+.qc-stagebar-connector {
+  flex: 1 1 auto;
+  height: 1px;
+  background: #e5e8ee;
+  margin: 0 4px;
+  align-self: center;
+  min-width: 16px;
+}
+.qc-stagebar-step--done + .qc-stagebar-step .qc-stagebar-connector,
+.qc-stagebar-step--done .qc-stagebar-connector {
+  background: #bfe9d1;
+}
+
+@media (max-width: 480px) {
+  .qc-workspace-stages { overflow-x: auto; }
+  .qc-stagebar-step { flex: 0 0 auto; min-width: 132px; }
+  .qc-stagebar-connector { min-width: 20px; }
+}
+
+/* Header info-row (Khach hang/Du an/Co hoi/Presale/Sale/Quan ly/Team/SLA) -
+ * grid dap ung thay vi flex-wrap don gian, moi o co min-width rieng de
+ * khong bi vo/lech hang khi 1 gia tri dai (vd "Đã duyệt · Chưa phát hành"). */
+.qc-workspace-info-strip {
+  /* Redesign Buoc 1 (Khach hang/Nguoi lien he/Don vi phat hanh/Du an/Co hoi
+   * CRM/Mau bao gia/Loai bao gia): tach thanh 2 HANG RIENG BIET
+   * (.qc-workspace-info-strip-row), moi hang tu grid rieng - dam bao dung 3
+   * truong Hang 1 / 4 truong Hang 2 KHONG bi grid auto-flow tron lan vao
+   * nhau (1 grid duy nhat voi so cot co dinh se lam field dau hang 2 "leo"
+   * len het cho trong o hang 1 thay vi xuong dong moi). */
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px 20px;
+  background: #fafbfc;
+  border-bottom: 1px solid #f0f1f5;
+  flex: 0 0 auto;
+}
+.qc-workspace-info-strip-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 6px 14px;
+}
+
+/* Layout 2 cot Presale (trái) / Sale (phải) tu Buoc 2 tro di (feedback
+ * 2026-09-25, PDF muc 6) - .qc-workspace-info-strip-left/-right chi la
+ * wrapper vi tri, KHONG doi grid noi bo cua tung .qc-workspace-info-strip-row
+ * ben trong (van giu nguyen y het truoc gio). O Buoc 1 (khong co class
+ * --split) 2 wrapper nay khong co style gi, layout van la 1 cot doc nhu cu. */
+.qc-workspace-info-strip--split {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) 1px minmax(0, 2fr);
+  gap: 0 16px;
+  align-items: start;
+}
+.qc-workspace-info-strip--split::before {
+  content: '';
+  grid-column: 2;
+  grid-row: 1;
+  align-self: stretch;
+  background: #e5e9f0;
+}
+.qc-workspace-info-strip--split .qc-workspace-info-strip-left {
+  grid-column: 1;
+  grid-row: 1;
+}
+.qc-workspace-info-strip--split .qc-workspace-info-strip-right {
+  grid-column: 3;
+  grid-row: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+@media (max-width: 767px) {
+  .qc-workspace-info-strip--split {
+    grid-template-columns: 1fr;
+  }
+  .qc-workspace-info-strip--split::before {
+    display: none;
+  }
+  .qc-workspace-info-strip--split .qc-workspace-info-strip-left,
+  .qc-workspace-info-strip--split .qc-workspace-info-strip-right {
+    grid-column: 1;
+  }
+}
+.qc-workspace-info-strip div { min-width: 0; }
+/* Yeu cau rieng "khúc này vẫn to" - thu gon rieng CHI khoi thong tin
+ * chung o Workspace, KHONG dung anh huong .crm-searchable-select-trigger
+ * o cac trang khac (component nay dung app-wide, khong duoc doi kich thuoc
+ * global). */
+.qc-workspace-info-strip .crm-searchable-select-trigger,
+.qc-workspace-info-strip .qc-quote-type-control {
+  min-height: 2.2rem;
+  height: 2.2rem;
+  padding: 0.35rem 0.6rem;
+  font-size: 0.8rem;
+}
+.qc-workspace-info-strip .qc-workspace-info-label { font-size: 10.5px; margin-bottom: 2px; }
+/* "Loại báo giá" (migration 112) - multi-select + chip, dat trong khoi
+ * thong tin chung (qc-workspace-info-strip), KHONG lam modal rong them
+ * (min-width:0 + flex-wrap tren control chinh no, dropdown la absolute
+ * position nen khong day layout xung quanh). */
+.qc-quote-type-control {
+  /* Khop dung chieu cao/kieu voi .crm-searchable-select-trigger (Presale/
+   * Sale/Du an... canh ben deu dung SearchableSelect) - truoc day dung
+   * min-height:30px+padding nho hon rieng, nhin THAP hon han cac o ke ben
+   * ("nó k bằng nhau" - bug UI that da gap). */
+  min-height: 2.8rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 0.65rem;
+  background: #fff;
+  padding: 0.5rem 0.8rem;
+  font-size: 0.86rem;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  box-sizing: border-box;
+}
+.qc-quote-type-control--editable { cursor: pointer; }
+.qc-quote-type-control--editable:hover { border-color: #cc1541; }
+/* Feedback (2026-09-24, kem screenshot): field nay la 1 <div> tuy chinh
+ * (khong phai <button disabled>/<select disabled> nhu SearchableSelect) nen
+ * khi Presale KHONG duoc sua (canEditQuoteType=false) van hien y het luc
+ * active - nhin nhu chua "ẩn/khoá" - trong khi Dự án/Đơn vị phát hành (dung
+ * SearchableSelect disabled) da xam mo tu truoc. Them style xam+not-allowed
+ * o day cho DUNG bo, dong nhat voi cac field thuong mai khac bi khoa o Buoc 1. */
+.qc-quote-type-control:not(.qc-quote-type-control--editable) {
+  background: #f8f9fb;
+  border-color: #e4e7ed;
+  color: #94a3b8;
+  cursor: not-allowed;
+}
+.qc-quote-type-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.qc-quote-type-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: #fdf1f4;
+  color: #a3123f;
+  border-radius: 999px;
+  padding: 2px 6px 2px 10px;
+  font-size: 11.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.qc-quote-type-chip button {
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  padding: 0 2px;
+}
+.qc-quote-type-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 30;
+  margin-top: 4px;
+  width: 260px;
+  max-width: 90vw;
+  background: #fff;
+  border: 1px solid #e4e7ec;
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(16, 24, 40, 0.12);
+  padding: 8px;
+}
+.qc-quote-type-dropdown-list {
+  max-height: 220px;
+  overflow-y: auto;
+  margin-top: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.qc-quote-type-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 4px;
+  border-radius: 6px;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.qc-quote-type-option:hover { background: #fafbfc; }
+/* BUG THAT DA GAP ("UI xấu" - checkbox to bat thuong, khong thay dau tick):
+ * checkbox tho <input type="checkbox"> ke thua kich thuoc theo 1em cua
+ * font-size xung quanh (hoac 1 reset appearance chung cua he thong thiet
+ * ke) - o trang "Danh sách báo giá" (ngoai .qc-workspace) khong co cung 1
+ * boi canh font-size/reset nhu trong Quote Workspace nen bi phong to bat
+ * thuong. Ep KICH THUOC CO DINH ro rang, khong phu thuoc boi canh ngoai. */
+.qc-quote-type-option input[type='checkbox'] {
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+  margin: 0;
+  accent-color: #cc1541;
+}
+/* Filter "Tất cả loại báo giá" tren Danh sach bao gia - trigger gia lam
+ * giong het .crm-searchable-select-trigger (dropdown ben canh) de dong bo
+ * kieu, chi khac la mo panel checkbox multi-select thay vi list 1-chon. */
+.qc-quote-type-filter-trigger { cursor: pointer; }
+/* Badge "Loại báo giá" tren moi dong Danh sach bao gia - nho, mau trung
+ * tinh (khac han mau hong cua badge Phase/Version) de KHONG "canh tranh". */
+.qc-quote-type-badges { display: flex; flex-wrap: wrap; gap: 4px; margin: 2px 0; }
+.qc-quote-type-badge {
+  display: inline-flex;
+  align-items: center;
+  background: #eef0f4;
+  color: #5b6576;
+  border-radius: 6px;
+  padding: 1px 6px;
+  font-size: 10.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.qc-quote-type-badge-more { cursor: default; }
+.qc-quote-type-badges-empty { font-style: italic; }
+.qc-workspace-info-label {
+  display: block;
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #9099a7;
+  margin-bottom: 2px;
+}
+/* Gia tri chinh KHONG duoc vo dong lam lech hang - cat gon 1 dong, chi tiet
+ * (help text/gia tri phu) nam o dong .qc-row-sub rieng ben duoi thay vi day
+ * lech chieu cao o cung 1 hang. */
+.qc-workspace-info-strip-row > div > strong {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Empty-state "Chưa có nhân sự phù hợp" (Presale/Sale chua cau hinh) - LUON
+ * gon trong o cua no, KHONG de help text dai day lech grid header. */
+.qc-no-staff { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.qc-no-staff-text { font-size: 12px; color: #9099a7; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.qc-no-staff-cta { font-size: 11px; font-weight: 700; color: #ba244a; text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.qc-no-staff-cta:hover { text-decoration: underline; }
+.qc-no-staff-cta--muted { color: #9099a7; font-weight: 500; cursor: default; }
+.qc-no-staff-cta--muted:hover { text-decoration: none; }
+
+/* 1 vung cuon DUY NHAT (khong con 2 scrollbar doc lap trai/phai) - panel phai
+ * sticky NGAY TRONG cung vung cuon nay (align-self:flex-start + top:0), dung
+ * yeu cau xac nhan: "Chi content body cua modal co mot scrollbar chinh; panel
+ * phai sticky trong cung vung cuon". */
+.qc-workspace-body {
+  flex: 1;
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  padding: 16px 20px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  min-height: 0;
+  /* Nen nhe (khong trang tron) cho vung con lai khi noi dung thua (vd stage
+   * request vua mo, chua du lieu) - khop dung token nen chung cua app. */
+  background: #f8fafc;
+}
+/* ROOT CAUSE THAT cua bug "textarea/card tran sang phai" tren mobile (test
+ * do rect that: vai o nhap co right ~677px du .qc-workspace chi rong
+ * 390-412px) - `.qc-workspace-body` da co san `overflow-x:hidden` (dong
+ * tren) nen phan tran KHONG gay scroll ngang ca trang (document.scrollWidth
+ * van dung), nhung bi CAT VO HINH mat mot phan noi dung/canh phai o nhung
+ * cap flex/grid con SAU nhieu tang khong tu shrink duoc (min-width mac dinh
+ * la "auto" = theo kich thuoc noi dung, KHONG phai 0, trong ngu canh flex/
+ * grid item) - `width:100%` tren chinh o input/textarea KHONG du de fix vi
+ * gioi han la o container cha, khong phai o do. Ep min-width:0 cho MOI phan
+ * tu con (chi anh huong that su neu no dang la flex/grid item, vo hai voi
+ * phan tu thuong) de dam bao khong tang nao trong cay component tu day tro
+ * xuong co the ep rong container ra qua kich thuoc that. */
+.qc-workspace-body,
+.qc-workspace-body * {
+  min-width: 0;
+}
+.qc-workspace input,
+.qc-workspace select,
+.qc-workspace textarea {
+  max-width: 100%;
+  box-sizing: border-box;
+}
+.qc-workspace-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+.qc-workspace-side {
+  width: 300px;
+  flex: 0 0 300px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  position: sticky;
+  top: 0;
+}
+
+.qc-workspace-card {
+  border: 1px solid #eef0f3;
+  border-radius: 12px;
+  padding: 14px 16px;
+  background: #fff;
+}
+.qc-workspace-card h3 { margin: 0 0 10px; font-size: 13.5px; color: #2b3445; }
+/* "Phân công & SLA" - LUON o dau sidebar (yeu cau rieng), 3 truong xep doc
+ * gon giong cac .qc-workspace-info-strip cu (label hoa nho + gia tri). */
+.qc-workspace-assignment-grid { display: flex; flex-direction: column; gap: 10px; }
+.qc-workspace-assignment-grid > div { min-width: 0; }
+.qc-workspace-card-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; gap: 12px; flex-wrap: wrap; }
+.qc-workspace-card-head h3 { margin-bottom: 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Nut "Chỉnh sửa" (va moi nut mini khac trong dau card) KHONG duoc phep bi
+ * co lai/rot chu khi tieu de h3 dai - h3 tu cat bot (ellipsis) o tren,
+ * button LUON giu nguyen kich thuoc that. */
+.qc-workspace-card-head .qc-mini-btn { flex-shrink: 0; }
+
+/* "Hạng mục & cấu trúc giá" - khoi quan trong nhat, thao tac chinh dua len
+ * DUNG 1 hang voi tieu de (yeu cau "Đưa thao tác chính lên header của
+ * khối"), khong con chiem them chieu cao o giua bang nhu ban .qc-workspace-
+ * add-row cu (da bo). */
+.qc-workspace-items-card-head {
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+.qc-workspace-items-card-head-title {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.qc-workspace-items-card-head-title h3 { white-space: nowrap; }
+.qc-workspace-items-card-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  flex-shrink: 0;
+}
+.qc-workspace-items-card-head-actions .qc-mini-btn-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.qc-workspace-items-fullscreen-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.qc-workspace-items-card--fullscreen {
+  position: fixed;
+  inset: 12px;
+  z-index: 1200;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: 0 24px 80px rgba(20, 26, 40, 0.28);
+}
+.qc-workspace-items-card--fullscreen .qc-workspace-items-card-head {
+  flex-shrink: 0;
+}
+.qc-workspace-items-card--fullscreen .qc-workspace-items-scroll {
+  flex: 1;
+  min-height: 0;
+}
+/* Trang thai rong (yeu cau "Vẫn giữ chiều cao lớn của vùng hạng mục... hiển
+ * thị ở giữa") - dung chinh vung cuon 58vh da khai bao o
+ * .qc-workspace-main .qc-table-wrap.qc-workspace-items-scroll, chi can can
+ * giua noi dung trong 1 <td> full chieu cao. */
+.qc-workspace-items-empty-cell {
+  vertical-align: middle;
+  min-height: 240px;
+}
+.qc-workspace-items-empty {
+  min-height: 240px;
+  justify-content: center;
+}
+
+/* Card "Yêu cầu & phạm vi công việc" thu gon duoc (yeu cau rieng "cho nút
+ * thu gọn lại khi nào fill thì mở") - dung <details>/<summary> that (khong
+ * can JS state rieng), summary tai dung vi tri .qc-workspace-card-head cu,
+ * chi them mui ten chi bao dong/mo, bo marker ▶ mac dinh cua trinh duyet. */
+/* BUG THAT DA GAP ("thừa quá nè, mũi tên rớt xuống dòng riêng nhìn như rác
+ * rơi"): <summary> chua 1 <h3> (block), ::after cua summary nen bi day
+ * XUONG DONG RIENG duoi h3 thay vi nam CUNG dong ben phai ten - nhin nhu 1
+ * cham xam lac long, khong ro la co the bam mo. Ep summary thanh flex row
+ * that (title + chu thich + mui ten CUNG 1 dong), them chu thich nho "(bấm
+ * để xem)" de ro rang la thu gon duoc - dong thoi bo h3 margin-bottom khi
+ * dong de khong con khoang trang thua ben duoi tieu de. */
+.qc-workspace-collapsible-summary {
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.qc-workspace-collapsible-summary h3 { margin: 0; }
+.qc-workspace-collapsible-summary::-webkit-details-marker { display: none; }
+.qc-workspace-collapsible-hint {
+  font-size: 11px;
+  font-weight: 400;
+  color: #9099a7;
+  flex-shrink: 0;
+}
+.qc-workspace-collapsible-summary::after {
+  content: '▾';
+  font-size: 12px;
+  color: #8a93a6;
+  transition: transform 0.15s ease;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+.qc-workspace-collapsible-card:not([open]) .qc-workspace-collapsible-summary::after { transform: rotate(-90deg); }
+.qc-workspace-collapsible-card:not([open]) .qc-workspace-card-head { margin-bottom: 0; }
+/* "chỉ còn một hàng mỏng" khi dong (Yêu cầu & phạm vi / Bàn giao kỹ thuật) -
+ * giam padding doc rieng luc dong, mo lai thi tra ve padding day du binh
+ * thuong cua .qc-workspace-card. */
+.qc-workspace-collapsible-card:not([open]) { padding-top: 8px; padding-bottom: 8px; }
+
+/* "Kế hoạch thanh toán" nổi hơn các card phụ khác (yeu cau rieng "đang chìm
+ * quá, nhìn như accordion phụ nên Sale dễ bỏ qua") - border/nen nhe theo
+ * trang thai, badge luon hien trong summary du dong/mo. */
+.qc-payment-plan-card {
+  border-color: #e6ebf2;
+}
+.qc-payment-plan-card--warning {
+  border-color: #f5cf87;
+  background: #fffaf0;
+}
+.qc-payment-plan-card--complete {
+  border-color: #bfe3d3;
+  background: #f3fbf7;
+}
+
+/* Rule card - compact, khong tao scrollbar rieng (yeu cau "Card phai compact
+ * giong HTML... Khong tao scrollbar rieng"). */
+.qc-rule-card { padding: 12px 14px; }
+.qc-rule-card-subtitle { margin: 2px 0 0; font-size: 11.5px; color: #8a8f98; }
+.qc-rule-settings-btn { display: inline-flex; align-items: center; gap: 4px; color: #b3261e; border-color: #f3d4d0; }
+.qc-rule-settings-btn .qc-icon { width: 13px; height: 13px; }
+.qc-rule-list { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.qc-rule-row { display: flex; align-items: center; gap: 8px; padding: 4px 6px; border-radius: 6px; font-size: 12.5px; }
+.qc-rule-row-icon { width: 16px; text-align: center; font-weight: 700; }
+.qc-rule-row-label { flex: 1; color: #3a4150; }
+.qc-rule-row-value { font-weight: 600; color: #2b3445; }
+.qc-rule-row--pass { background: #f2faf6; }
+.qc-rule-row--pass .qc-rule-row-icon { color: #148e61; }
+.qc-rule-row--fail { background: #fdecec; }
+.qc-rule-row--fail .qc-rule-row-icon { color: #b3261e; }
+.qc-rule-row--pending .qc-rule-row-icon { color: #8a8f98; }
+.qc-rule-summary { margin-top: 8px; padding-top: 8px; border-top: 1px dashed #e5e7eb; font-size: 12.5px; font-weight: 600; color: #2b3445; }
+
+.qc-rule-modal { width: 460px; max-width: 92vw; }
+.qc-rule-modal-row { display: flex; align-items: flex-start; gap: 10px; padding: 8px 0; border-bottom: 1px solid #f0f1f3; }
+.qc-rule-modal-row:last-of-type { border-bottom: none; }
+.qc-rule-modal-row-body { flex: 1; display: flex; flex-direction: column; gap: 2px; }
+.qc-rule-modal-row-input { display: flex; align-items: center; gap: 6px; }
+.qc-rule-modal-row-input input { width: 100px; }
+
+.qc-workspace-note-box--ok { background: #eafaf3; border-color: #bfe9d1; color: #148e61; }
+
+.qc-workspace-toast {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 100400; /* tren Picker/dialog de thay thong bao khi dang mo Picker */
+  padding: 10px 18px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.15);
+  /* Toast co the kem 1 nut hanh dong (yeu cau "cho + sp và dv ở đâu luôn bro
+   * nếu quên sao" - toast bao "Báo giá đã khoá..." gio co nut "Tạo phiên bản
+   * mới" ngay tai cho thay vi chi la text huong dan suong). */
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: min(520px, 90vw);
+}
+.qc-workspace-toast--ok { background: #148e61; color: #fff; }
+.qc-workspace-toast--error { background: #b3261e; color: #fff; }
+.qc-workspace-toast-action {
+  flex-shrink: 0;
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+  border-radius: 6px;
+  padding: 5px 10px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.qc-workspace-toast-action:hover {
+  background: rgba(255, 255, 255, 0.22);
+}
+.qc-workspace-autofill-toast {
+  font-size: 12px;
+  font-weight: 600;
+  color: #1a7f4b;
+  background: #eafaf1;
+  border: 1px solid #bfe9d1;
+  border-radius: 999px;
+  padding: 3px 10px;
+  white-space: nowrap;
+}
+.qc-workspace-items-table td, .qc-workspace-items-table th { white-space: normal; }
+
+/* Bang hang muc dung CHUNG class .qc-table-wrap voi bang danh sach bao gia
+ * (co max-height:70vh + overflow-y:auto rieng, hop ly cho 1 trang list) -
+ * nhung trong workspace se tao ra 2 THANH CUON DOC doc lap (vi
+ * .qc-workspace-body da tu cuon roi) - bat buoc huy max-height/overflow-y o
+ * day, chi giu overflow-x cho bang rong o tab Gia ban. */
+.qc-workspace-main .qc-table-wrap { max-height: none; overflow-y: visible; }
+
+/* Bang hang muc THONG NHAT (12 cot, Section 4) - bug thuc te da bao 2 lan:
+ * (1) "chỗ này k muốn cuộn" luc dang RONG (da fix o tren, khong lien quan);
+ * (2) "chỗ này cuộn nè" luc CO du lieu that - nguyen nhan that: da tung ep
+ * min-width:1180px BAT KE khung chua bang (.qc-workspace-main, ben canh 1
+ * panel phai 300px co dinh) co rong toi dau, nen HAU NHU LUON phai cuon
+ * ngang (khung thuc te thuong chi ~950-1150px, hep hon 1180px) - trong khi
+ * chu trong cac o van bi CAT NGAN (kieu "Duyệt & xi...") do do rong cot qua
+ * hep so voi 1180px gia dinh, tuc TON CHI PHI RONG MA KHONG DUOC GI. Bo han
+ * min-width - ke thua dung table-layout:fixed + width:100% tu .qc-linked-table
+ * (dinh nghia o tren) nen bang LUON vua khit khung thuc te, khong con cuon
+ * ngang; cell van wrap chu binh thuong (.qc-workspace-items-table td/th da
+ * white-space:normal o duoi) thay vi ep tran/cat chu. */
+/* Toan bo noi dung bang hang muc gia von can giua (yeu cau rieng) - selector
+ * co them type "td"/"th" de tang specificity, thang duoc .qc-cell-money/
+ * .qc-th-money (text-align:right mac dinh o noi khac) ma khong can !important. */
+.qc-workspace-items-table--unified td,
+.qc-workspace-items-table--unified th {
+  text-align: center;
+}
+.qc-workspace-items-table--unified input.qc-cell-input {
+  text-align: center;
+}
+
+/* Muc cha (Section)/hang muc con - migration 104. Dong Section noi bat toan
+ * hang (nen dam, chu dam, chiem het cac cot tien qua colSpan) de phan biet
+ * ro voi hang muc that ben duoi - dung mau nhat cua mau thuong hieu chinh
+ * (.qc-btn-primary) cho de nhan dien "day la tieu de nhom", khong lam nguoi
+ * dung nham la 1 hang muc co the tinh tien. */
+.qc-workspace-section-row td {
+  background: #fdf1f4 !important;
+  text-align: left !important;
+  font-weight: 700;
+  padding-top: 10px;
+  padding-bottom: 10px;
+}
+.qc-workspace-section-row .qc-workspace-section-input {
+  font-weight: 700;
+  text-align: left !important;
+  max-width: 420px;
+  display: inline-block;
+  vertical-align: middle;
+}
+.qc-workspace-section-roman {
+  display: inline-block;
+  /* Dat TRUOC ten muc cha (ben trai) nen dung margin-right thay margin-left -
+   * truoc day dat SAU ten nen dung margin-left, da doi vi tri trong JSX. */
+  margin-right: 10px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--color-primary, #ba244a);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  vertical-align: middle;
+}
+.qc-workspace-section-add-item {
+  margin-left: 10px;
+  height: 24px;
+  padding: 0 8px;
+  font-size: 11px;
+  vertical-align: middle;
+}
+/* Hang muc thuoc 1 nhom (parentItemId khac null) - thut nhe cot Hang muc de
+ * nhin ra "nam duoi 1 Muc cha" ma khong can them cot rieng. */
+.qc-workspace-item-row--nested td:first-child {
+  padding-left: 28px;
+}
+
+.qc-workspace-item-row--bundle-child td {
+  background: #f8fafc;
+  color: #475569;
+  font-size: 12px;
+}
+
+.qc-workspace-item-row--bundle-child .qc-workspace-item-name-col {
+  padding-left: 18px;
+  position: relative;
+}
+
+.qc-workspace-item-row--bundle-child .qc-workspace-item-name-col::before {
+  content: "";
+  position: absolute;
+  left: 4px;
+  top: 50%;
+  width: 7px;
+  height: 1px;
+  background: #94a3b8;
+}
+
+/* Thanh "Xoá đã chọn" cho cac thanh phan Combo da tick checkbox - hien ngay
+ * tren dong dau tien cua Combo khi co >=1 thanh phan dang duoc chon. */
+.qc-bundle-child-bulk-actions-row td {
+  background: #fef2f2;
+  padding: 6px 12px;
+}
+
+.qc-bundle-child-bulk-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #b91c1c;
+}
+
+.qc-bundle-pricing-mode {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+  max-width: 100%;
+}
+
+.qc-bundle-pricing-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 700;
+  border: 1px solid #dbe4f0;
+  color: #52627a;
+  background: #f8fafc;
+  max-width: 100%;
+  white-space: nowrap;
+}
+
+.qc-bundle-pricing-chip--auto {
+  color: #047857;
+  border-color: #a7f3d0;
+  background: #ecfdf5;
+}
+
+.qc-bundle-pricing-toggle,
+.qc-bundle-child-inline-action {
+  border: 0;
+  background: transparent;
+  color: #ba244a;
+  font-size: 11px;
+  font-weight: 750;
+  padding: 0;
+  cursor: pointer;
+}
+
+.qc-bundle-child-edit {
+  display: grid;
+  gap: 4px;
+}
+
+.qc-bundle-child-edit .qc-cell-input {
+  min-width: 92px;
+}
+
+.qc-bundle-child-remove-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+/* "batch" cac dong vua them cung luc tu Danh muc (yeu cau rieng "giữ trạng
+ * thái được chọn") - vien trai mau brand + nen nhat de nguoi dung nhan ra
+ * nhom nay van dang "active" cho thao tac dien Gia von hang loat, KHONG dung
+ * mau qua dam de khong lan voi cac trang thai canh bao/loi khac (vd
+ * qc-cell-cost-missing). Tu mat khi Sale them 1 batch MOI khac (state thay
+ * the, khong tich luy mai). */
+.qc-workspace-item-row--batch td:first-child { box-shadow: inset 3px 0 0 #cc1541; }
+.qc-workspace-item-row--batch { background: #fef6f8; }
+.qc-workspace-item-no {
+  display: inline-block;
+  min-width: 18px;
+  color: #9099a7;
+  font-weight: 700;
+  font-size: 11px;
+}
+/* Cot "Hạng mục" - LUON la 1 khoi chu nhat ngang rong co dinh (KHONG dung %,
+ * KHONG de bi bop hep) - dung CSS GRID 2 cot ro rang thay vi flex don:
+ * cot 1 (~60px) CHI chua tay cam keo + STT, cot 2 chiem TOAN BO phan con lai
+ * cho ten hang muc - tach biet hoan toan 2 vung, tranh nut/STT chen vao giua
+ * ten nhu bug flex truoc day (STT/ten/nut cung hang ngang nhung khong co
+ * ranh gioi ro, ten bi bop khi STT/nut doi cho). */
+.qc-workspace-item-name-cell {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr);
+  align-items: center;
+  width: 100%;
+  min-height: 56px;
+  gap: 6px;
+}
+.qc-workspace-item-no-col {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  height: 100%;
+}
+.qc-workspace-item-select {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: #be1e4a;
+  cursor: pointer;
+}
+.qc-workspace-th-name-content {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.qc-mini-btn-danger {
+  color: #be1e4a;
+  border-color: #f3b7c7;
+  background: #fff5f8;
+}
+.qc-mini-btn-danger:hover {
+  border-color: #be1e4a;
+  background: #ffe8ef;
+}
+.qc-workspace-item-name-col {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  min-width: 0;
+  overflow-wrap: break-word;
+  width: 100%;
+}
+.qc-workspace-item-name-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  /* BUG THAT DA GAP ("2 dấu + đóng quá" - cac icon dinh sat nhau kho bam
+   * dung tung nut): tang tu 4px len 8px de tach ro dau tich/dau cong lien
+   * ket voi cum 2 icon quick-add ben canh. */
+  gap: 8px;
+  min-width: 0;
+  overflow-wrap: break-word;
+  padding-right: 4px;
+}
+/* "Nội dung công việc" (quote_item.description) sua TRUC TIEP ngay duoi ten
+ * hang muc (yeu cau ro rang "chỉnh được ở đây luôn, không cần bấm vào chỉnh
+ * nữa") - THAY vi qua popover rieng nhu truoc. Nho/mo hon textarea Ten hang
+ * muc (font nho hon, mau nhat hon) de khong lan at ten - vua du doc 2 dong,
+ * cuon them neu dai hon. */
+.qc-workspace-item-desc-inline {
+  width: 100%;
+  resize: none;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: #374151;
+  line-height: 1.35;
+  padding: 4px 6px;
+  border-radius: 6px;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  word-break: normal;
+  font-family: inherit;
+}
+.qc-workspace-item-desc-inline::placeholder {
+  color: #b5bcc7;
+}
+/* Cot "Mô tả" rieng (tach khoi cot Hạng mục, yeu cau "áp dụng vào luôn" giong
+ * bang Sản phẩm & dịch vụ / sc-cell-desc) - td wrapper CHI can vertical-align
+ * top de khop dong voi cac cot khac (SL/Giá vốn...), mau/co chu dung lai
+ * dung nhu .qc-workspace-item-desc-inline cho hang con Combo (read-only). */
+.qc-cell-desc {
+  vertical-align: top;
+  padding-top: 8px;
+  color: #374151;
+  font-size: 11.5px;
+  font-weight: 500;
+  line-height: 1.35;
+}
+.qc-workspace-item-desc-inline:disabled {
+  border-color: transparent;
+  background: transparent;
+  padding: 4px 0;
+  resize: none;
+  color: #4b5563;
+}
+.qc-workspace-item-name-cell .qc-cell-input {
+  flex: 1;
+  min-width: 0;
+}
+/* BUG THAT DA GAP: overflow-x:hidden o day tung CAT MAT cac cot cuoi (Margin/
+ * Thao tac) moi khi tong do rong THAT SU cua hang (do noi dung ben trong
+ * quyet dinh, xem <colgroup> o QuoteWorkspaceModal.tsx) vuot qua container -
+ * "hidden" khong cho cuon nen phan vuot bien mat luon thay vi cuon duoc.
+ * Doi ve overflow-x:auto (CHI la luoi an toan, khong "che loi" - voi
+ * <colgroup> PX co dinh + Hạng mục tu co gian nhu hien tai, hang KHONG con
+ * vuot qua container o kich thuoc man hinh binh thuong nen se KHONG thay
+ * thanh cuon xuat hien; scrollbar chi hien neu that su qua hep, tot hon la
+ * mat noi dung). */
+.qc-workspace-items-scroll {
+  overflow-x: auto;
+}
+/* "Hạng mục & cấu trúc giá" phai la vung LON NHAT, THOANG NHAT trong popup
+ * (yeu cau rieng) - rieng vung DANH SACH nay co vung cuon doc CUA RIENG NO
+ * (khac voi .qc-workspace-main .qc-table-wrap { overflow-y:visible } chung
+ * cho cac bang khac trong workspace) de hien duoc ~5-8 hang tren desktop ma
+ * KHONG bat ca modal phai cuon dai chi de xem het danh sach; header cot
+ * sticky ngay trong chinh vung cuon nay. Dung selector 2-class (specificity
+ * cao hon .qc-workspace-main .qc-table-wrap 1-class) de ghi de dung "khong
+ * cuon" mac dinh CHI cho rieng bang nay, khong anh huong cac .qc-table-wrap
+ * khac (vd Rule Engine, Bảng giá VPS Zone...) van dung 1-vung-cuon-chung nhu
+ * cu. */
+.qc-workspace-main .qc-table-wrap.qc-workspace-items-scroll {
+  max-height: 58vh;
+  min-height: 260px;
+  overflow-x: auto;
+  overflow-y: auto;
+}
+.qc-workspace-items-scroll thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: #fbfbfd;
+}
+.qc-workspace-items-table--unified {
+  /* Tong PX co dinh cua <colgroup> (QuoteWorkspaceModal.tsx, A1 + fix lech cot
+   * Hạng mục phien sau): 330 (Hạng mục, tang tu 210 - xem comment o colgroup)
+   * + 300 (Mô tả) + 92 (ĐVT) + 64 (SL) + 104 (Giá vốn/ĐV) + 104 (Cost tổng)
+   * + 96 (Markup) + 104 (Giá khách/ĐV) + 104 (Thành tiền) + 82 (Margin) + 88
+   * (TỶ TRỌNG, cot C) + 44 (Thao tác) = ~1712px. */
+  min-width: 1782px;
+}
+.qc-workspace-items-card--fullscreen .qc-table-wrap.qc-workspace-items-scroll {
+  max-height: none;
+}
+/* BUG THAT DA GAP: tung thu them 2 icon nhanh (Plus/LayoutGrid) canh nut "⋮"
+ * trong 1 cot rong bang flex - gay chong lan/vo layout that tren man hinh
+ * (ket hop voi ActionMenu tu quan ly vi tri trigger cua no). Da bo han 2
+ * icon rieng (xem QuoteWorkspaceModal.tsx), cot Thao tac CHI con dung 1 nut
+ * "⋮" nhu ban goc on dinh truoc do - KHONG can flex/gap rieng nua. */
+/* Ten hang muc: CHI hien ten (serviceDescription), toi da 2 dong roi moi
+ * ellipsis - KHONG con render nguyen doan mo ta dai (item.description) o
+ * duoi nhu 1 phien ban truoc do (lam dong qua cao, bang roi rac) - mo ta
+ * day du CHI hien qua tooltip (title= gop ca ten+mo ta) + click mo Drawer
+ * Chi tiet hang muc. KHONG dung word-break:break-all (cat giua tu xau xi) -
+ * dung overflow-wrap:break-word (chi xuong dong o ranh gioi tu khi tu qua
+ * dai, giu nguyen tu binh thuong). */
+.qc-workspace-item-name-clamp {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  white-space: normal;
+  overflow-wrap: break-word;
+  word-break: normal;
+  flex: 1;
+  min-width: 0;
+}
+/* Click thang vao ten (khong chi nut "⋯" ben canh) cung mo Chi tiet hang muc -
+ * cursor pointer de bao hieu ro co the bam. */
+.qc-workspace-item-name-clickable { cursor: pointer; }
+.qc-workspace-item-name-clickable:hover { text-decoration: underline; text-decoration-color: #c2c8d1; }
+/* O nhap Ten hang muc: TRUOC DAY la <input> 1 dong, cau/mo ta dai bi cat gan
+ * het (vd "Tích hợp FE-E...") do input khong the xuong dong - doi sang
+ * <textarea> 2 dong (wrap that, giong dung .qc-workspace-item-name-clamp o
+ * che do doc) de doc duoc noi dung day du ngay ca khi dang o che do sua. */
+.qc-workspace-item-name-cell .qc-cell-textarea {
+  flex: 1;
+  min-width: 0;
+  width: 100%;
+  resize: none;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  word-break: normal;
+  line-height: 1.35;
+  font-family: inherit;
+}
+.qc-workspace-item-inline-actions {
+  position: absolute;
+  right: 0;
+  top: 0;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 128px;
+  padding: 2px 0 2px 6px;
+  background: linear-gradient(90deg, rgba(255,255,255,0), #fff 18px);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease;
+}
+.qc-workspace-items-table--unified tbody tr:hover .qc-workspace-item-inline-actions,
+.qc-workspace-item-name-row:focus-within .qc-workspace-item-inline-actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+.qc-workspace-item-name-row:hover .qc-cell-textarea,
+.qc-workspace-item-name-row:focus-within .qc-cell-textarea {
+  padding-right: 132px;
+}
+/* Icon "i" nho canh ten - CHI la dau hieu "co mo ta day du, xem o Drawer",
+ * KHONG render nguyen doan mo ta ra bang (yeu cau rieng: bang qua roi khi
+ * hien ca mo ta dai duoi ten). */
+.qc-workspace-item-desc-indicator {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 1px solid #c2c8d1;
+  background: #fff;
+  color: #7c8593;
+  font-size: 10px;
+  font-style: italic;
+  font-weight: 700;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+}
+.qc-workspace-item-desc-indicator:hover { border-color: #cc1541; color: #cc1541; }
+.qc-workspace-item-detail-btn { flex-shrink: 0; }
+/* 2 nut "+" nhanh (them dong trong / mo Catalog Picker) dat NGAY CANH ten
+ * hang muc (yeu cau rieng, sau khi phat hien dat trong cot Thao tac hep gay
+ * vo layout that su) - o day khong gian rong rai (Hạng mục la cot tu gian),
+ * an toan hon nhieu. flex-shrink:0 de KHONG bao gio bop ten (ten van
+ * flex:1/min-width:0 nhu cu, uu tien chiem het khong gian con lai truoc). */
+.qc-workspace-item-quick-add {
+  display: inline-flex;
+  /* BUG THAT DA GAP ("2 dấu + đóng quá") - tang tu 3px len 6px giua chinh 2
+   * icon "Thêm hạng mục trống"/"Chọn từ danh mục" trong cum nay. */
+  gap: 6px;
+  flex-shrink: 0;
+  align-self: flex-start;
+  margin-top: 2px;
+}
+.qc-workspace-item-quick-add-btn {
+  width: 20px;
+  height: 20px;
+  color: #7c8593;
+  border-color: #e4e7ec;
+}
+.qc-workspace-item-quick-add-btn:hover {
+  color: #cc1541;
+  border-color: #f3c6d2;
+  background: #fdf1f4;
+}
+/* Tren mobile (dang card) khong gian dong da chat, va khong co hover that su
+ * - 2 hanh dong nay van du dung qua ActionMenu (muc "Thêm hạng mục trống"/
+ * "Chọn từ danh mục" co san, xem QuoteWorkspaceModal.tsx), an icon o day de
+ * khong roi/an nhau voi ten hang muc tren man hinh hep. */
+@media (max-width: 767px) {
+  .qc-workspace-item-quick-add {
+    display: none;
+  }
+}
+/* "Nhận biết hạng mục đã có trong Sản phẩm & dịch vụ" - dau tich (da lien
+ * ket, catalogItemId/priceBookItemId that) vs dau cong (chua co, bam de tao
+ * nhanh qua QuickAddProductModal). Dat CANH ten hang muc, cung nhom voi 2
+ * nut "+" quick-add o tren (KHONG an tren mobile - day la thong tin trang
+ * thai quan trong, khac 2 nut kia von la tien ich phu). */
+.qc-workspace-item-link-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  align-self: flex-start;
+  margin-top: 0;
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+}
+.qc-workspace-item-link-badge--linked {
+  color: #16a34a;
+}
+.qc-workspace-item-link-badge--unlinked {
+  color: #7c8593;
+  border-color: #e4e7ec;
+  cursor: pointer;
+}
+.qc-workspace-item-link-badge--unlinked:hover {
+  color: #cc1541;
+  border-color: #f3c6d2;
+  background: #fdf1f4;
+}
+/* Bien the "chưa liên kết" tren quote/version DA KHOA (Buoc 3) - van la 1
+ * icon that (KHONG an), nhung mau XAM nhat de phan biet ro rang khac voi
+ * bien the con sua duoc (mau hong khi hover o tren) - bam vao chi hien
+ * thong bao huong dan, KHONG mo form sua/KHONG ghi de len version da khoa. */
+.qc-workspace-item-link-badge--locked {
+  color: #b5bcc7;
+  border-color: #eef0f4;
+  background: #fafbfc;
+}
+.qc-workspace-item-link-badge--locked:hover {
+  color: #8a93a6;
+  border-color: #dde1e8;
+  background: #f4f5f8;
+}
+/* "Chỉnh Mô tả hạng mục" - icon rieng canh ten hang muc, dung KICH THUOC/vi
+ * tri voi cac icon link-badge/quick-add o tren de dong bo. 2 trang thai:
+ * nhat (chua co mo ta) vs dam mau (da co mo ta) de de nhan biet dong nao da
+ * nhap mo ta ma khong can mo popover moi biet. */
+.qc-workspace-item-desc-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  align-self: flex-start;
+  margin-top: 0;
+  width: 20px;
+  height: 20px;
+  border: 1px solid #e4e7ec;
+  border-radius: 6px;
+  background: #fff;
+  color: #b5bcc7;
+  cursor: pointer;
+}
+.qc-workspace-item-desc-btn:hover {
+  color: #566277;
+  border-color: #c7ccd6;
+  background: #f7f9fb;
+}
+.qc-workspace-item-desc-btn--filled {
+  color: #566277;
+  border-color: #cdd3dc;
+  background: #f4f5f8;
+}
+.qc-workspace-item-desc-btn--filled:hover {
+  color: #2b3445;
+  border-color: #b7bfcc;
+  background: #eef0f4;
+}
+.qc-workspace-drawer-field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: #5b6576; }
+.qc-workspace-drawer-field p { margin: 0; font-size: 13px; color: #1f2530; }
+.qc-mini-btn-icon {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Tay cam keo-tha (kieu 6 cham) - chi de HINH DUNG "hang nay keo duoc", ban
+ * than ca hang <tr> moi la vung draggable that (xem draggable={} tren <tr>
+ * trong QuoteWorkspaceModal.tsx), khong rieng gi cai tay cam nay. */
+.qc-workspace-drag-handle {
+  display: inline-block;
+  margin-right: 6px;
+  color: #c2c8d1;
+  cursor: grab;
+  font-size: 13px;
+  vertical-align: middle;
+}
+
+/* KHONG con cuon ngang cho bang hang muc (yeu cau rieng: GIU NGUYEN du 10 cot
+ * Hạng mục|ĐVT|SL|Giá vốn/ĐV|Cost tổng|Markup|Giá khách/ĐV|Thành tiền|Margin|
+ * Thao tác - KHONG gop/bo cot nao - nhung phai vua het trong 1 khung
+ * desktop). BUG THAT DA GAP voi cach lam CU (width % qua nth-child): %
+ * KHONG dang tin cay duoi table-layout:fixed khi 1 cell co noi dung voi
+ * kich thuoc PIXEL toi thieu lon hon phan % da gan (vd 2 nut icon +/⋮ trong
+ * Thao tac) - cell do buoc phai rong hon % duoc gan, day ca bang vuot qua
+ * container, va vi wrapper dang overflow-x:hidden nen PHAN VUOT o cac cot
+ * CUOI (Margin/Thao tac) bi CAT MAT thay vi cuon ("23...." + nut troi ra
+ * ngoai bang). Doi sang <colgroup><col style={{width:'Npx'}}/></colgroup>
+ * (xem QuoteWorkspaceModal.tsx) - PX CO DINH cho moi cot hep/co dinh, rieng
+ * "Hạng mục" (cot 1) KHONG khai bao width - dung chuan CSS table-layout:
+ * fixed: cot khong khai bao width se TU CHIA HET phan con lai, khong con
+ * phu thuoc "vua khit %" nua - day la cach duy nhat dang tin cay khi 1 vai
+ * cot co noi dung kich thuoc co dinh (icon/so ngan) con 1 cot can co giãn. */
+
+/* Header duoc phep xuong toi da 2 dong (.qc-linked-table th da co san
+ * white-space:normal) thay vi ep 1 dong. */
+/* Nut "+" (them hang muc tu danh muc ngay sau dong nay) da chuyen sang nam
+ * canh ten hang muc (qc-workspace-item-name-col) - cot Thao tac CHI con
+ * dung 1 nut "⋮" nhu cu, KHONG can flex/padding rieng nua (rule flex+padding
+ * truoc day vo tinh de !important ghi de padding-top/bottom cua chinh
+ * .qc-linked-table-section-row td, tao 1 khung hong bat thuong quanh "⋮" o
+ * dong Muc cha - bug that da gap, xoa han rule nay de tro ve mac dinh). */
+.qc-th-select, .qc-cell-select { width: 28px; text-align: center; padding-left: 8px !important; padding-right: 0 !important; }
+
+.qc-cell-unit .qc-cell-input { width: 100%; box-sizing: border-box; }
+/* (A2, phien sau) Rule cu ep "white-space: nowrap" + rong cot 92px chi vua
+ * cho cac gia tri NGAN ("Mbps/tháng") - noi dung THAT DAI hon xuat hien sau
+ * do ("Hệ thống/ Tháng", "1.000 hội thoại") bi TRAN qua cot ke ben (nowrap +
+ * overflow khong bi cat, chi de chu "de" ra ngoai o) thay vi xuong dong -
+ * dung 1 lan "chồng chữ lên cột kế" that su xay ra tren san pham. Doi lai
+ * CHO PHEP xuong dong binh thuong (giong header th da lam tu truoc) - danh
+ * doi: gia tri ngan co the khong con luon nam gon 1 dong nhu cam ket cu, doi
+ * lai KHONG BAO GIO tran/chong len cot khac du noi dung dai bao nhieu, dung
+ * yeu cau moi hon. overflow-wrap:break-word (khong dung break-all) de xuong
+ * dong o ranh gioi tu/dau "/" thay vi cat giua tu. */
+.qc-cell-unit { white-space: normal; overflow-wrap: break-word; word-break: normal; }
+.qc-cell-unit .qc-cell-input { white-space: normal; }
+
+/* Popover mini "Ap Margin cho rieng dong nay" - noi trong o Margin cua dung
+ * 1 dong, khong che cac dong khac (z-index cao hon noi dung bang binh
+ * thuong, nhung van nam trong pham vi wrapper cuon ngang .qc-table-wrap nen
+ * khong tran ra ngoai trang). */
+.qc-row-margin-popover {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  z-index: 20;
+  background: #fff;
+  border: 1px solid #e4e7ec;
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(16, 24, 40, 0.12);
+  padding: 10px;
+  width: 200px;
+  text-align: left;
+  white-space: normal;
+}
+.qc-row-margin-popover-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 6px;
+}
+.qc-row-margin-popover-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+  justify-content: flex-end;
+}
+
+/* Popup nho "+ Điều khoản" (thay window.prompt() cu) - neo canh nut, dung
+ * lai dung khung .qc-row-margin-popover nhung rong hon (textarea nhieu
+ * dong). */
+.qc-term-note-anchor { position: relative; display: inline-block; }
+.qc-term-note-popover { width: 260px; }
+.qc-term-note-popover textarea { width: 100%; box-sizing: border-box; resize: vertical; }
+
+/* BUG THAT DA GAP LAN 2 ("ô sl nhỏ quá nên giao diện k nhìn thấy số"): KHONG
+ * phai do ĐVT tran chu - cot SL ban than qua hep (48px trong colgroup, du
+ * CSS class ghi 72px thi colgroup <col> van thang vi no quyet dinh kich
+ * thuoc that su duoi table-layout:fixed) khong du cho so 2 chu so + padding,
+ * trinh duyet cat mat khong hien. Da tang colgroup len 64px (khop voi ĐVT) -
+ * o day chi con sync lai class cho dung, tranh nham lan sau nay. */
+.qc-th-qty, .qc-cell-qty { width: 64px; white-space: nowrap; }
+.qc-cell-money.qc-cell-qty { text-align: center; }
+/* "Thao tác" (nut xoa dong "x") chi can vua khit 1 icon, nhuong khong gian
+ * lai cho Hang muc - CHI scope trong bang hang muc gia von, khong doi bang
+ * khac dang dung chung .qc-th-actions/.qc-cell-actions. */
+.qc-workspace-items-table--unified .qc-th-actions,
+.qc-workspace-items-table--unified .qc-cell-actions {
+  width: 36px;
+  white-space: nowrap;
+  overflow: visible;
+  text-overflow: clip;
+}
+/* Cot Thao tac gio chi con 1 nut menu "..." (ActionMenu) thay 4 nut roi rac
+ * - thu hep lai de nhuong khong gian cho cot Hang muc, khong con can 128px. */
+.qc-workspace-items-table--unified .qc-cell-actions--menu {
+  width: 36px;
+  text-align: center;
+}
+.qc-cell-qty .qc-cell-input-money { text-align: center; }
+
+/* "Ban tom tat bao gia" (view read-only cho quote da khoa - review/approved/
+ * published/sent) - grid gon, khong bao moi field vao 1 box lon rieng, tranh
+ * lap lai kieu "khoang trang" da bi bao loi khi form edit gan nhu rong. */
+.qc-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 12px 16px;
+  margin-top: 10px;
+}
+.qc-summary-grid > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  /* Gia tri dai khong dau cach (vd Public URL) bi tran de len cot ke ben -
+   * grid item mac dinh min-width:auto (theo noi dung), phai ep ve 0 + cho
+   * phep xuong dong o bat ky diem nao thi moi wrap dung thay vi tran. */
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+/* Bug thuc te (2026-10-10): "Điều khoản thanh toán"/"Phạm vi công việc" o
+ * "Tổng hợp giá" co the dai nhieu dong (danh sach so thu tu) - truoc day
+ * khong gioi han chieu cao nen choan het luoi, day cac o khac ("Hiệu lực
+ * báo giá"...) xuong qua xa, nhin nhu "bi dai qua". Cho xem gon toi da 4
+ * dong + "..."; xem day du qua title (hover) hoac mo lai o Buoc "Chỉnh sua
+ * dieu khoan". */
+.qc-summary-grid > div.qc-summary-field--clamp strong {
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  white-space: pre-line;
+}
+.qc-summary-grid--2col {
+  grid-template-columns: 1fr 1fr;
+}
+.qc-summary-grid--2col > .qc-workspace-card {
+  box-shadow: none;
+  padding: 0;
+  border: none;
+}
+@media (max-width: 900px) {
+  .qc-summary-grid--2col { grid-template-columns: 1fr; }
+}
+
+/* Quy uoc mau THAT nhe (khong dung mau dam): gia von/noi bo = nen xanh la rat
+ * nhat; markup/gia khach = nen vang kem rat nhat; margin dat >=20% = chu
+ * xanh. */
+.qc-workspace-items-table--unified .qc-cell-cost,
+.qc-workspace-items-table--unified .qc-th-cost {
+  background: #f2faf6;
+}
+.qc-workspace-items-table--unified .qc-cell-markup,
+.qc-workspace-items-table--unified .qc-th-markup {
+  background: #fffaf0;
+  min-width: 96px;
+  white-space: nowrap;
+  overflow: visible;
+  text-overflow: clip;
+}
+/* "Điền xuống" icon + popover (yeu cau rieng: khong hien chu "Điền xuống",
+ * chi icon nho + tooltip, bam mo popover chon pham vi) - dat position:
+ * relative tren chinh 2 <td> Giá vốn/Markup de popover neo dung vi tri,
+ * khong lech theo scroll cua bang. */
+.qc-workspace-items-table--unified .qc-cell-cost,
+.qc-workspace-items-table--unified .qc-cell-markup {
+  position: relative;
+}
+.qc-fill-down-anchor { display: inline-block; position: relative; margin-left: 4px; vertical-align: middle; }
+/* BUG THAT DA GAP ("mũi tên xuống dòng riêng bên dưới số tiền" - yeu cau
+ * "cho mũi tên ngang bên phải đi"): gia tri (input width:100% hoac chu dai
+ * vua khit cot) chiem het 1 dong, khong con cho cho icon "Điền xuống" tren
+ * CUNG dong, buoc phai xuong dong rieng ben duoi. Boc gia tri + icon trong 1
+ * flex row, LUON giu icon NGANG ben phai gia tri, khong bao gio xuong dong. */
+.qc-cell-value-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  width: 100%;
+}
+.qc-cell-value-row-main {
+  min-width: 0;
+  flex: 1 1 auto;
+  text-align: center;
+}
+.qc-cell-value-row-main .qc-cell-input {
+  width: 100%;
+  box-sizing: border-box;
+}
+.qc-fill-down-anchor,
+.qc-cell-value-row .qc-fill-down-anchor {
+  margin-left: 0;
+  flex-shrink: 0;
+}
+.qc-fill-down-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: #8a93a6;
+  cursor: pointer;
+}
+.qc-fill-down-icon-btn:hover, .qc-fill-down-icon-btn:focus-visible { color: #cc1541; border-color: #f0c3cf; background: #fff; }
+.qc-fill-down-icon-btn .qc-inline-icon { width: 13px; height: 13px; }
+.qc-fill-down-popover {
+  right: 0;
+  left: auto;
+  top: 100%;
+  width: 200px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  z-index: 40;
+}
+
+/* Nut nho doi che do nhap (vd % <-> so tien cho cong cu "Giảm giá hạng mục"
+ * - xem itemDiscountInputMode trong QuoteWorkspaceModal.tsx). */
+.qc-price-mode-toggle {
+  flex-shrink: 0;
+  border: 1px solid #dbe1ea;
+  border-radius: 4px;
+  background: #f8fafc;
+  color: #5b6576;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  padding: 3px 5px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.qc-price-mode-toggle:hover, .qc-price-mode-toggle:focus-visible { color: #cc1541; border-color: #f0c3cf; background: #fff; }
+.qc-fill-down-popover .qc-mini-btn { width: 100%; text-align: left; justify-content: flex-start; }
+/* Icon chi la tien ich desktop (bam nhanh ngay tai o) - man hinh hep/mobile
+ * van du dung qua muc "⋮" Thao tác (nhan chu ro rang, khong can hover) nen
+ * an icon o day de tranh tran/cham vao cac o so tien von da chat. */
+@media (max-width: 767px) {
+  .qc-fill-down-anchor { display: none; }
+}
+/* Width THAT SU do nth-child quyet dinh (block phia tren, vi .qc-cell-cost/
+ * .qc-cell-markup dung CHUNG cho 2 <td> khac nhau nen khong gan rieng width
+ * qua class duoc) - o day CHI con mau nen. Bo han white-space:nowrap/148px
+ * cu (yeu cau "không có thanh cuộn ngang" - so tien dai van phai wrap/co
+ * font-size hop ly trong dung % cot da chia, khong ep 1 dong roi tran ra
+ * ngoai cot). */
+.qc-workspace-items-table--unified .qc-cell-cost .qc-cell-input,
+.qc-workspace-items-table--unified .qc-cell-markup .qc-cell-input {
+  width: 100%;
+  box-sizing: border-box;
+  font-size: 12px;
+}
+.qc-cell-margin-good { color: #148e61 !important; font-weight: 700; }
+
+.qc-th-cost-flag, .qc-cell-cost-flag { text-align: center; white-space: nowrap; }
+.qc-cell-cost-missing { background: #fdecec !important; }
+.qc-workspace-warning-banner {
+  margin: 8px 0;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: #fdecec;
+  color: #b3261e;
+  font-size: 13px;
+  font-weight: 500;
+}
+.qc-workspace-card-head-badges { display: flex; align-items: center; gap: 8px; }
+/* (Redesign Buoc 1) Card preview gon "Thông tin hiển thị trên báo giá" - thay
+ * 3 o input tho truoc day (D2 cu). Chi con 1 nut "Chỉnh thông tin hiển thị" +
+ * dong preview read-only; sua that qua popover rieng (.qc-workspace-recipient-popover)
+ * neo ngay duoi card, KHONG con input tho nam thang trong card. */
+.qc-workspace-recipient-card {
+  position: relative;
+  margin: 8px 0 12px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid #e4e7ec;
+  background: #f8f9fb;
+}
+.qc-workspace-recipient-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.qc-workspace-recipient-card-title {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+/* Redesign (feedback 2026-09-24 "chưa đẹp UI"): thay 2 dong flex lech nhau
+ * (Kinh gui rieng 1 dong, SDT+Email don chung 1 dong khac) bang luoi 3 o deu
+ * nhau, moi o co icon + nhan nho + gia tri - dong bo voi cach hien thong tin
+ * khac trong Workspace (vd .qc-summary-grid) thay vi list phang toan dau
+ * gach ngang khi rong. */
+.qc-workspace-recipient-preview {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(140px, 1fr));
+  gap: 8px;
+}
+.qc-workspace-recipient-preview-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #fff;
+  border: 1px solid #eef0f3;
+}
+.qc-workspace-recipient-preview-item > div {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.qc-workspace-recipient-preview-icon {
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+  margin-top: 1px;
+  color: #9099a7;
+}
+.qc-workspace-recipient-preview-label {
+  color: #9099a7;
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.qc-workspace-recipient-preview-item strong { font-size: 12.5px; font-weight: 600; color: #2b3445; }
+@media (max-width: 767px) {
+  .qc-workspace-recipient-preview { grid-template-columns: 1fr; }
+}
+.qc-workspace-recipient-popover {
+  margin-top: 10px;
+  padding: 10px;
+  border-radius: 8px;
+  border: 1px solid #e4e7ec;
+  background: #fff;
+  box-shadow: 0 8px 24px rgba(16, 24, 40, 0.08);
+  display: grid;
+  grid-template-columns: repeat(3, minmax(160px, 1fr));
+  gap: 10px;
+  align-items: end;
+}
+.qc-workspace-recipient-popover-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+@media (max-width: 767px) {
+  .qc-workspace-recipient-popover { grid-template-columns: 1fr; }
+}
+
+.qc-cell-input {
+  width: 100%;
+  border: 1px solid transparent;
+  background: transparent;
+  border-radius: 6px;
+  padding: 4px 6px;
+  font-size: 12.5px;
+  color: #2b3445;
+}
+.qc-cell-input:hover, .qc-cell-input:focus { border-color: #dfe4ec; background: #fff; outline: none; }
+.qc-cell-input-money { text-align: right; }
+.qc-cell-input:disabled { opacity: 0.5; }
+
+.qc-row-remove {
+  border: 0;
+  background: transparent;
+  color: #a7afbd;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px 6px;
+}
+.qc-row-remove:hover { color: #e53966; }
+
+.qc-workspace-items-empty { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 6px 0; }
+.qc-workspace-items-empty-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
+.qc-workspace-add-row { display: flex; gap: 8px; padding: 8px 0 2px; }
+
+.qc-workspace-quickbar.qc-workspace-pricing-bar {
+  justify-content: flex-start;
+  flex-wrap: nowrap;
+  gap: 14px;
+  padding: 8px 0 10px;
+  margin: 0;
+}
+
+.qc-pricing-group {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.qc-workspace-pricing-bar .qc-qb-row-label {
+  min-width: auto;
+}
+
+.qc-workspace-pricing-bar .qc-workspace-quickbar-input {
+  width: 68px;
+}
+
+.qc-workspace-pricing-bar .qc-workspace-quickbar-sep,
+.qc-workspace-commercial-row .qc-workspace-quickbar-sep {
+  width: 1px;
+  height: 24px;
+  align-self: center;
+  flex: 0 0 1px;
+}
+
+.qc-workspace-pricing-bar .qc-qb-margin-hint {
+  margin-left: auto;
+  color: #8a94a6;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+/* BUG THAT DA GAP ("cách ra xíu sát quá rồi") - border-top dinh sat ngay
+ * duoi .qc-workspace-totals (khong co margin), nhin nhu 2 khoi dinh lien
+ * vao nhau. Them margin-top de tach ro 2 nhom, van giu border lam ranh
+ * gioi thi giac nhe nhu cu. */
+.qc-workspace-commercial-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 10px;
+  margin-top: 14px;
+  padding: 12px 0 9px;
+  border-top: 1px solid #edf0f4;
+  border-bottom: 1px solid #edf0f4;
+}
+.qc-item-discount-tools {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.qc-line-discount-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: #fff7ed;
+  color: #9a3412;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.qc-workspace-preview-sidebar-btn {
+  width: 100%;
+  justify-content: center;
+  background: #fff;
+  color: #344054;
+}
+/* "cho nút xem màu vàng hay màu gì cho nổi đi" - nut trang mac dinh qua chim
+ * trong sidebar, doi sang mau vang canh bao/noi bat (KHONG dung do thuong
+ * hieu - do da la mau nut hanh dong chinh "Bàn giao"/"Phát hành", tranh
+ * canh tranh thi giac voi nut hanh dong chinh nhu yeu cau truoc do). */
+.qc-workspace-preview-sidebar-btn--accent {
+  background: #fef3c7;
+  border-color: #f2c94c;
+  color: #7a5b00;
+  font-weight: 700;
+}
+.qc-workspace-preview-sidebar-btn--accent:hover {
+  background: #fde79a;
+  border-color: #e0b73a;
+  color: #5c4400;
+}
+
+/* "Cột hiển thị" gop vao goc tren phai popup preview (yeu cau rieng "Gộp
+ * lại chức năng Cột hiển thị vào bên trong Xem bản khách hàng") - dat CANH
+ * nut Dong (X) trong .qc-workspace-card-head-badges cua modal preview,
+ * KHONG con o sidebar nua. Giu nguyen 100% thiet ke popover cua
+ * QuoteColumnVisibilityPicker, chi can trigger button vua voi hang tieu de. */
+.qc-workspace-card-head-badges .crm-quote-column-picker {
+  position: relative;
+}
+.qc-workspace-card-head-badges .crm-quote-column-picker > button {
+  white-space: nowrap;
+}
+.qc-workspace-card-head-badges .crm-quote-column-menu {
+  right: 0;
+  left: auto;
+}
+
+.qc-required-mark {
+  color: #d92d20;
+  font-weight: 800;
+}
+
+.qc-field-error {
+  margin: 4px 0 0;
+  color: #d92d20;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.qc-field-error--card {
+  padding-bottom: 4px;
+}
+
+@media (max-width: 1280px) {
+  .qc-workspace-quickbar.qc-workspace-pricing-bar {
+    flex-wrap: wrap;
+  }
+  .qc-workspace-pricing-bar .qc-qb-margin-hint {
+    width: 100%;
+    margin-left: 0;
+  }
+}
+
+@media (max-width: 767px) {
+  .qc-pricing-group,
+  .qc-workspace-commercial-row {
+    flex-wrap: wrap;
+  }
+  .qc-workspace-pricing-bar .qc-workspace-quickbar-sep,
+  .qc-workspace-commercial-row .qc-workspace-quickbar-sep {
+    display: none;
+  }
+}
+
+.qc-mini-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid #dce2ea;
+  background: #fff;
+  color: #3f4b60;
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 11.5px;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.qc-mini-btn:hover { background: #f7f9fb; }
+.qc-mini-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+/* Nut "Ap gia de xuat" - hien duoi o Gia khach dang trong o Buoc 2 khi tra
+ * duoc gia tham khao tu catalogItemId da luu, KHONG tu dien - Sale/Presale
+ * phai chu dong bam. */
+.qc-suggest-price-btn {
+  display: block;
+  margin-top: 4px;
+  width: 100%;
+  white-space: normal;
+  text-align: left;
+  font-weight: 500;
+  color: #6b7a90;
+  font-size: 10.5px;
+}
+.qc-mini-btn-brand { background: var(--color-primary, #ba244a); border-color: var(--color-primary, #ba244a); color: #fff; }
+/* Bug that: .qc-mini-btn:hover (nen sang) va .qc-mini-btn-brand cung do
+ * specificity, thu tu nap CSS co the khien nut brand bi doi sang nen sang
+ * luc hover trong khi chu van trang -> chu trang tren nen trang (vo hinh khi
+ * hover, da xac nhan qua anh chup thuc te). Ghi de ro rang, specificity cao
+ * hon .qc-mini-btn:hover de luon thang du thu tu import the nao. */
+.qc-mini-btn-brand:hover { background: var(--color-primary, #ba244a); border-color: var(--color-primary, #ba244a); color: #fff; filter: brightness(1.08); }
+
+.qc-workspace-quickbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 8px 0 12px;
+  border-bottom: 1px dashed #eee;
+  margin-bottom: 10px;
+}
+/* Ban gon lai: 4 nhom (Markup nhanh/Margin muc tieu/Ap dung/Thanh toan) moi
+ * nhom nam RIENG 1 dong thay vi don chung 1 dong dai tran ngang. */
+.qc-workspace-quickbar--compact {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+}
+.qc-workspace-quickbar-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* BUG THAT DA GAP ("Markup, Margin, Chiết khấu và Thanh toán tách thành 4
+ * dòng chiếm quá nhiều chiều cao") - nen CHI CON 2 HANG tren desktop
+ * (>=1366px): moi hang la 1 grid 2 cot (trai rong = Markup/Margin, phai vua
+ * du = Chiet khau/Thanh toan). KHONG doi cong thuc/hanh vi - chi doi VI TRI/
+ * kich thuoc hien thi cua CHINH XAC cac control da co (khong tao control moi,
+ * khong bo nut Tuy chinh). */
+/* BUG THAT DA GAP ("toàn bộ cụm bị căn giữa, tạo khoảng trắng vô lý bên
+ * trái"): .qc-workspace-quickbar (class GOC, luon di kem) co san
+ * `align-items:center` - ap dung cho CA .qc-qb-row (la flex-item cua chinh
+ * container nay khi flex-direction:column), khien tung hang tu co lai theo
+ * noi dung roi CAN GIUA ngang thay vi keo dai het chieu rong. Ghi de ro rang
+ * align-items:stretch (khong dung "normal" - phai stretch that de .qc-qb-row
+ * bat buoc rong 100% container, KHONG suy doan tu default). */
+.qc-workspace-quickbar--compact2 {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  padding: 6px 0 10px;
+  width: 100%;
+}
+.qc-qb-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 8px 16px;
+  width: 100%;
+  justify-content: start;
+}
+.qc-qb-row-left,
+.qc-qb-row-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.qc-qb-row-right {
+  justify-self: end;
+}
+/* "Hai nhãn MARKUP NHANH và MARGIN MỤC TIÊU có cùng chiều rộng để các nút
+ * thẳng hàng" - ep 1 min-width co dinh giong nhau cho ca 2 nhan (thay vi tu
+ * co theo do dai chu, "Markup nhanh" ngan hon "Margin mục tiêu"). */
+.qc-qb-row-label {
+  min-width: 108px;
+  flex-shrink: 0;
+}
+/* Preset Markup/Margin + nut Ap dung trong quickbar - GIAM RIENG chieu cao
+ * con ~30-32px va khoang cach 6-8px (yeu cau ro rang), KHONG doi
+ * .qc-mini-btn goc (dung khap noi trong app, khong duoc doi kich thuoc
+ * global). */
+.qc-qb-row .qc-mini-btn {
+  height: 31px;
+  padding: 0 10px;
+}
+.qc-qb-row-left { gap: 7px; }
+.qc-qb-row-right { gap: 7px; }
+/* Preset dang chon: "rõ nhưng nhẹ, không tô đỏ toàn bộ" - thay solid fill do
+ * (dung o noi khac) bang nen hong nhat + vien/chu do, CHI trong pham vi
+ * quickbar nay (khong doi .qc-mini-btn-active dung chung o noi khac). */
+.qc-qb-row .qc-mini-btn-active {
+  background: #fdf1f4;
+  border-color: #f0b8c8;
+  color: #a3123f;
+}
+.qc-qb-row .qc-mini-btn-active:hover {
+  background: #fbe4ea;
+  border-color: #f0b8c8;
+  color: #a3123f;
+  filter: none;
+}
+/* Input Tuy chinh (Markup/Margin) + Chiet khau tong - 72px, dau % nam sat
+ * input (giam gap giua input va ky hieu %). */
+.qc-qb-row .qc-workspace-quickbar-field {
+  gap: 3px;
+}
+.qc-qb-discount-input {
+  width: 72px;
+}
+/* Ngưỡng margin tham chiếu - chuyen thanh 1 icon/tooltip nho o goc phai tieu
+ * de bang (yeu cau rieng), KHONG con chiem 1 dong rieng trong quickbar. */
+.qc-qb-margin-hint {
+  font-size: 11px;
+  color: #98a2b3;
+  cursor: help;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+@media (max-width: 1365px) {
+  .qc-qb-row {
+    grid-template-columns: 1fr;
+  }
+  .qc-qb-row-right {
+    justify-self: start;
+  }
+}
+.qc-workspace-quickbar-rule-inline {
+  margin-left: auto;
+  font-weight: 400;
+  color: #98a2b3;
+  cursor: help;
+}
+.qc-workspace-quickbar-sep { width: 1px; align-self: stretch; background: #e5e5e5; }
+.qc-workspace-quickbar-field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: #566277;
+}
+.qc-workspace-quickbar-input {
+  height: 30px;
+  width: 72px;
+  border: 1px solid #dce2ea;
+  border-radius: 7px;
+  padding: 0 8px;
+  font-size: 12px;
+}
+/* "<select> Thanh toan" hien "30 ngay" + mui ten dropdown - 72px (danh cho o
+ * nhap CK tong ngan) qua hep, bi cat chu "30 ng...". */
+.qc-workspace-quickbar-select { width: 92px; }
+
+.qc-workspace-margin-bar { margin-top: 8px; }
+.qc-workspace-margin-bar-track { height: 8px; border-radius: 6px; background: #eef1f5; overflow: hidden; }
+.qc-workspace-margin-bar-fill { height: 100%; background: linear-gradient(90deg, #22a06b, #57c99a); }
+.qc-workspace-margin-bar span { font-size: 11px; color: #5b6576; margin-top: 4px; display: block; }
+
+.qc-workspace-totals {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 20px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px dashed #eee;
+}
+.qc-workspace-totals > div { min-width: 150px; }
+.qc-workspace-muted { color: #9099a7; font-weight: 500; }
+
+/* 4 card ngang (Scope/Cost/Timeline/Gia dinh) - KHONG xep doc (tao khoang
+ * trang lon nhu ban truoc), dung yeu cau xac nhan. */
+.qc-workspace-checklist { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+.qc-workspace-checklist-item {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  border: 1px solid #eef0f3;
+  border-radius: 10px;
+  padding: 10px;
+  background: #fafbfc;
+  min-width: 0;
+}
+.qc-workspace-checklist-item input[type='checkbox'] { margin-top: 4px; flex-shrink: 0; }
+.qc-workspace-checklist-item > div { min-width: 0; flex: 1; }
+.qc-workspace-checklist-item strong { font-size: 12px; }
+/* Card "Chuẩn bị gửi Presale" (stage 'request') - THAY THE hoan toan
+ * checklist Bàn giao kỹ thuật o giai doan nay (chua toi luot Presale). */
+.qc-readiness-list { display: flex; flex-direction: column; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.qc-readiness-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid #eef0f3;
+  border-radius: 10px;
+  padding: 8px 12px;
+  background: #fafbfc;
+}
+.qc-readiness-item.is-done { border-color: #cdeedd; background: #f3fbf6; }
+.qc-readiness-item.is-missing { border-color: #f6dede; background: #fdf6f6; }
+.qc-readiness-status {
+  flex-shrink: 0;
+  min-width: 44px;
+  text-align: center;
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 700;
+}
+.qc-readiness-item.is-done .qc-readiness-status { background: #148e61; color: #fff; }
+.qc-readiness-item.is-missing .qc-readiness-status { background: #b3261e; color: #fff; }
+.qc-readiness-label { flex: 1; min-width: 0; font-size: 13px; }
+
+.qc-workspace-note-input {
+  width: 100%;
+  border: 1px solid #e5e5e5;
+  border-radius: 6px;
+  padding: 5px 8px;
+  font-size: 12.5px;
+  margin-top: 4px;
+}
+.qc-workspace-handoff-note {
+  width: 100%;
+  min-height: 60px;
+  border: 1px solid #e5e5e5;
+  border-radius: 8px;
+  padding: 8px;
+  font-size: 12.5px;
+  margin-top: 4px;
+  resize: vertical;
+}
+
+.qc-workspace-stage-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 14px; flex-wrap: wrap; }
+
+/* BUG THAT DA GAP ("link tràn nhé"): gia tri dai khong co khoang trang
+ * (URL, vd "/public/quotes/mRSddemOu0eQE_rZH_Ei6w") duoi flex justify-
+ * content:space-between mac dinh KHONG tu co lai/xuong dong (flex item
+ * khong shrink duoi kich thuoc noi dung tu nhien neu khong co min-width:0),
+ * tran han ra khoi card. Cho phep xuong dong + co lai dung cach. */
+.qc-workspace-summary-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; padding: 4px 0; font-size: 12.5px; color: #5b6576; }
+.qc-workspace-summary-row strong { min-width: 0; overflow-wrap: anywhere; text-align: right; }
+.qc-workspace-summary-row--total { border-top: 1px dashed #eee; margin-top: 4px; padding-top: 8px; font-weight: 700; color: #2b3445; }
+
+/* "Giới hạn xem link theo email" (migration 116) - khoi nho trong card
+ * "Thông tin phát hành", tach biet voi cac .qc-workspace-summary-row (chi
+ * hien thi) ngay ben tren no. */
+.qc-workspace-email-gate { margin-top: 8px; padding-top: 8px; border-top: 1px dashed #eee; display: flex; flex-direction: column; gap: 6px; }
+.qc-workspace-email-gate-toggle { display: flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 600; color: #2b3445; cursor: pointer; }
+.qc-workspace-email-gate-toggle input { width: auto; }
+.qc-workspace-email-gate-textarea { min-height: 64px; resize: vertical; border: 1px solid #dbe1ea; border-radius: 8px; padding: 6px 8px; font-size: 12px; font-family: inherit; }
+/* "Giới hạn xem link bằng Email hoặc Số điện thoại" (migration 118) - 3 che
+ * do radio thay the checkbox don le cu (xem qc-workspace-email-gate o tren). */
+.qc-workspace-access-mode-toggle { display: flex; flex-direction: column; gap: 4px; }
+.qc-workspace-access-mode-toggle label { display: flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 600; color: #2b3445; cursor: pointer; }
+.qc-workspace-access-mode-toggle input { width: auto; }
+
+/* Picker "Giới hạn theo Email/SĐT" (goi y tu CRM thay textarea thuan - xem
+ * AccessAllowListPicker trong QuoteWorkspaceModal.tsx). */
+.qc-access-picker { position: relative; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.qc-access-picker-chips { display: flex; flex-wrap: wrap; gap: 6px; min-height: 22px; min-width: 0; }
+.qc-access-picker-empty { font-size: 12px; color: #9099a7; }
+.qc-access-picker-chip { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; background: #eef2ff; color: #2b3445; border-radius: 999px; padding: 3px 8px 3px 10px; font-size: 12px; font-weight: 600; }
+.qc-access-picker-chip > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.qc-access-picker-chip-remove { border: none; background: none; cursor: pointer; font-size: 13px; line-height: 1; color: #5b6576; padding: 0 2px; }
+.qc-access-picker-chip-remove:hover { color: #b91c1c; }
+.qc-access-picker-input-row { display: flex; gap: 6px; }
+.qc-access-picker-input { flex: 1; border: 1px solid #dbe1ea; border-radius: 8px; padding: 6px 8px; font-size: 12px; font-family: inherit; }
+.qc-access-picker-dropdown { position: absolute; top: 100%; left: 0; right: 0; z-index: 20; margin-top: 2px; background: #fff; border: 1px solid #dbe1ea; border-radius: 8px; box-shadow: 0 6px 18px rgba(0,0,0,0.08); max-height: 220px; overflow-y: auto; }
+/* BUG DA GAP ("bị che" - text goi y dai bi .qc-workspace-body overflow-x:hidden
+ * cat vo hinh, xem giai thich dong ~2105 phia tren): flex item mac dinh
+ * min-width:auto (= theo noi dung, KHONG phai 0) nen hang dai tran ra ngoai
+ * ma khong tu xuong dong/rut gon duoc - ep min-width:0 cho CA .qc-access-picker-option
+ * (item cua .qc-access-picker-dropdown, 1 flex/grid context khac o ngoai) LAN
+ * .qc-access-picker-option-text (item cua chinh no) + ellipsis cho tung dong. */
+.qc-access-picker-option { display: flex; align-items: center; gap: 8px; padding: 6px 10px; font-size: 12px; cursor: pointer; min-width: 0; }
+.qc-access-picker-option:hover { background: #f5f7fa; }
+.qc-access-picker-option input { width: auto; flex-shrink: 0; }
+.qc-access-picker-option-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1; }
+.qc-access-picker-option-main { font-weight: 600; color: #2b3445; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.qc-access-picker-option-meta { color: #9099a7; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.qc-workspace-checks { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: 12.5px; }
+.qc-workspace-checks li { padding-left: 18px; position: relative; color: #5b6576; }
+.qc-workspace-checks li.ok::before { content: '✓'; position: absolute; left: 0; color: #22a06b; }
+.qc-workspace-checks li.pending::before { content: '○'; position: absolute; left: 0; color: #c9932f; }
+.qc-workspace-checks li.na { color: #9099a7; }
+.qc-workspace-checks li.na::before { content: '—'; position: absolute; left: 0; }
+
+.qc-workspace-actions { display: flex; flex-direction: column; gap: 8px; }
+.qc-workspace-actions .qc-btn { justify-content: center; width: 100%; }
+.qc-btn-send {
+  background: #1a9e6a;
+  border-color: #1a9e6a;
+  color: #fff;
+}
+.qc-btn-send:hover { background: #158a5c; border-color: #158a5c; color: #fff; }
+.qc-btn-send:disabled { background: #eef1f5; border-color: #dfe4ec; color: #9099a7; }
+
+.qc-workspace-preview { border: 1px solid #eee; border-radius: 8px; padding: 10px; font-size: 12px; background: #fafbfc; }
+.qc-workspace-preview--clickable {
+  display: block;
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+}
+.qc-workspace-preview--clickable:hover { border-color: #e28ca5; background: #fff8fa; }
+.qc-workspace-preview-title { font-weight: 700; margin-bottom: 6px; color: #2b3445; }
+.qc-workspace-preview-line {
+  padding: 2px 0;
+  color: #5b6576;
+  /* Chi hien 1 dong, cat gon bang "..." - truoc day mo ta dai wrap nhieu
+   * dong lam the preview qua dai ("Preview khách hàng NGẮN GỌN LẠI"). */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.qc-workspace-preview-more {
+  color: #9099a7;
+  font-style: italic;
+}
+.qc-workspace-preview-total { margin-top: 6px; font-weight: 700; border-top: 1px dashed #e5e5e5; padding-top: 6px; }
+.qc-workspace-note { font-size: 11.5px; color: #9099a7; margin: 6px 0 0; }
+.qc-workspace-note-box {
+  font-size: 12px;
+  color: #5b6576;
+  background: #fafbfc;
+  border: 1px solid #eee;
+  border-radius: 8px;
+  padding: 10px;
+  margin: 8px 0;
+}
+
+.qc-workspace-note-box ul {
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* Nut/Link xem hop dong gan voi bao gia (trong "Bản tóm tắt báo giá") -
+ * bo border box nung hong/do gay thô, doi sang dang text link sach se,
+ * giu khoang cach va mau do accent thuong hieu. */
+.qc-inline-link-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: auto;
+  height: auto;
+  white-space: normal;
+  border: none;
+  background: transparent;
+  padding: 2px 0;
+  color: var(--color-primary, #ba244a);
+  font-weight: 600;
+  font-size: 12.5px;
+  text-decoration: none;
+  cursor: pointer;
+  transition: color 0.15s ease;
+}
+
+.qc-inline-link-btn:hover {
+  background: transparent;
+  color: #9e123b;
+  text-decoration: underline;
+}
+
+.qc-inline-link-btn .qc-icon {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+
+/* Modal xem hop dong tu "Bản tóm tắt báo giá" (feedback 2026-09-25, giong
+ * "Xem bản khách hàng") - overlay don gian, tai dung nguyen ContractDetailPage. */
+.qc-contract-preview-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.55);
+  z-index: 10050;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.qc-contract-preview-panel {
+  position: relative;
+  background: #fff;
+  border-radius: 12px;
+  width: min(1100px, 100%);
+  max-height: 90vh;
+  overflow-y: auto;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+}
+
+/* Nut dong dang icon "X" o goc phai tren modal (feedback 2026-09-25 - thay
+ * cho nut chu "← Đóng" cu). */
+.qc-contract-preview-close {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  border: 0;
+  border-radius: 999px;
+  background: #f1f5f9;
+  color: #475569;
+  cursor: pointer;
+  z-index: 2;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.qc-contract-preview-close:hover {
+  background: #e2e8f0;
+  color: #0f172a;
+}
+
+/* .contract-detail-page vien nguyen la 1 trang day (min-height:100vh) - trong
+ * modal chi can cao vua noi dung, them padding-top de khong bi nut X de len
+ * tieu de hop dong. */
+.qc-contract-preview-panel .contract-detail-page {
+  min-height: 0;
+  padding-top: 3rem;
+}
+
+/* "Hoàn tác ngay sau autofill" (yeu cau rieng) - banner nho tren bang, tu
+ * mat khi costAutofillUndo bi xoa (sua tiep 1 o khac, hoac da bam Hoan tac). */
+.qc-workspace-autofill-undo-box { display: flex; align-items: center; justify-content: space-between; gap: 12px; background: #fdf1f4; border-color: #f0c3cf; }
+/* Checkbox nho "Chỉ các dòng đã chọn" - CHI hien tren dong dang thuoc 1
+ * batch vua them (khong phai 1 cot rieng cho MOI dong). */
+.qc-fill-down-row-checkbox { width: 14px; height: 14px; margin: 0 2px 0 0; accent-color: #cc1541; vertical-align: middle; }
+.qc-workspace-activity { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; font-size: 12.5px; color: #5b6576; }
+.qc-workspace-activity--scroll { max-height: 280px; overflow-y: auto; padding-right: 4px; }
+
+/* Nut "Dien xuong" canh o Gia von/Markup tung dong - hien duoi input, khong
+ * chiem them chieu rong cot (bang hang muc da nhieu cot, tranh tran Thao
+ * tac). Ghi de kich thuoc vuong 26x26 cua .qc-mini-btn-icon (dung chung class
+ * do de thua ke padding/border, nhung nut nay co chu nen can rong hon). */
+.qc-cell-input-row {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+.qc-cell-input-row .qc-cell-input {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Highlight nut preset Markup nhanh/Margin muc tieu vua duoc ap dung - de
+ * biet dang o muc nao (truoc day bam xong khong co dau hieu gi, "bấm chọn
+ * markup/margin nó k có màu thì s bíc chọn cái nào"). */
+.qc-mini-btn-active {
+  background: var(--color-primary, #ba244a);
+  border-color: var(--color-primary, #ba244a);
+  color: #fff;
+}
+.qc-mini-btn-active:hover {
+  background: var(--color-primary, #ba244a);
+  border-color: var(--color-primary, #ba244a);
+  color: #fff;
+  filter: brightness(1.08);
+}
+
+/* Chi con 1 ky tu mui ten "↓" (bo chu thich dai "Điền xuống (hạng mục con)"
+ * theo yeu cau don gian - da co title= lam tooltip giai thich khi hover) -
+ * nut vuong nho, nam CANH input (khong con chiem rieng 1 dong duoi input
+ * nhu truoc). */
+.qc-fill-down-btn {
+  width: 22px;
+  height: 22px;
+  min-width: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 4px;
+  padding: 0;
+  font-size: 13px;
+  flex-shrink: 0;
+}
+
+.qc-workspace-modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+
+/* Che do tao moi ("+ Yeu cau ho tro bao gia") - xem QuoteWorkspaceModal */
+.qc-workspace-title-input {
+  flex: 1;
+  min-width: 350px;
+  max-width: 450px;
+  border: 1px solid #e5e5e5;
+  border-radius: 8px;
+  padding: 7px 12px;
+  font-size: 13.5px;
+  color: #2b3445;
+}
+@media (max-width: 760px) {
+  .qc-workspace-title-input { min-width: 0; max-width: none; }
+}
+.qc-workspace-request-form { display: flex; flex-direction: column; gap: 10px; }
+.qc-workspace-request-form label { display: flex; flex-direction: column; gap: 4px; }
+.qc-workspace-request-form-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+@media (max-width: 900px) {
+  .qc-workspace-request-form-cols { grid-template-columns: 1fr; }
+}
+.qc-workspace-request-more { font-size: 12px; }
+.qc-workspace-request-more summary { cursor: pointer; color: #566277; font-weight: 700; margin-bottom: 8px; }
+.qc-workspace-request-more label { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
+
+.qc-workspace-scope-summary { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; font-size: 12.5px; color: #455167; }
+.qc-workspace-scope-summary p { margin: 6px 0 0; white-space: pre-wrap; line-height: 1.5; }
+@media (max-width: 900px) {
+  .qc-workspace-scope-summary { grid-template-columns: 1fr; }
+}
+
+/* Footer co dinh (khong cuon theo noi dung) - chi hien o che do tao moi,
+ * sibling truc tiep cua .qc-workspace-body trong .qc-workspace (flex column),
+ * nen tu nam duoi cung, khong bi noi dung dai che mat nhu truoc (bug thuc te
+ * da thay: nut Luu nhap/Gui yeu cau nam trong the cuon nen co the bi cat). */
+.qc-workspace-footer {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 14px 20px;
+  border-top: 1px solid #eef0f3;
+  background: #fff;
+}
+.qc-workspace-footer-note { font-size: 12px; color: #9099a7; margin-right: auto; }
+
+.qc-workspace-version-badge {
+  font-size: 11px;
+  font-weight: 700;
+  color: #566277;
+  background: #eef1f5;
+  border-radius: 999px;
+  padding: 2px 8px;
+}
+
+.qc-workspace-quickbar-rule { font-size: 11.5px; font-weight: 700; color: #566277; white-space: nowrap; }
+.qc-workspace-quickbar-hint { font-size: 11px; color: #9099a7; margin-left: auto; }
+.qc-workspace-draft-terms { list-style: none; margin: 6px 0 0; padding: 0; font-size: 11.5px; color: #5b6576; display: flex; flex-direction: column; gap: 3px; }
+.qc-workspace-draft-terms li { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.qc-workspace-draft-terms li > span:first-child { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.qc-workspace-draft-terms-actions { display: flex; gap: 4px; flex-shrink: 0; }
+.qc-workspace-draft-terms-actions .qc-mini-btn { height: 22px; padding: 0 8px; font-size: 11px; }
+.qc-cell-margin-warn { color: #c9932f !important; font-weight: 700; }
+
+.qc-modal-backdrop--nested { z-index: 100210; }
+
+.qc-workspace-preview-modal {
+  width: min(560px, 92vw);
+  max-height: 86vh;
+  background: #fff;
+  border-radius: 16px;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  box-shadow: 0 28px 80px rgba(11, 18, 35, 0.32);
+  overflow-y: auto;
+  /* "bản xem trc k để thanh cuộn nhìn xấu" - thanh cuon mac dinh cua trinh
+   * duyet (day, mau xam dam) nhin tho - lam mong/nhat giong pattern da dung
+   * cho .sc-drawer-body. */
+  scrollbar-width: thin;
+  scrollbar-color: #d0d5dd transparent;
+}
+.qc-workspace-preview-modal::-webkit-scrollbar { width: 6px; }
+.qc-workspace-preview-modal::-webkit-scrollbar-track { background: transparent; }
+.qc-workspace-preview-modal::-webkit-scrollbar-thumb { background: #d0d5dd; border-radius: 999px; }
+.qc-workspace-modal-head { display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
+.qc-workspace-modal-head h3 { margin: 0; font-size: 15px; }
+.qc-workspace-preview-modal-body { display: flex; flex-direction: column; gap: 10px; font-size: 12.5px; color: #455167; }
+/* CHOT LAI ("popup quá nhỏ, không cuộn xuống được"): bo han co che
+ * transform:scale()+JS do chieu cao truoc do (de gay height tinh sai =>
+ * cat mat noi dung/khong cuon duoc). Modal ban than la 1 flex column CO DO
+ * CAO CO DINH (94vh) - CHINH .qc-workspace-preview-modal-body--doc moi la
+ * vung cuon DOC (flex:1, min-height:0, overflow-y:auto) de header luon
+ * "sticky" tu nhien (nam ngoai vung cuon, khong can position:sticky rieng)
+ * va body cuon binh thuong bang chuot/scrollbar/PageUp-Down/touch - trinh
+ * duyet tu ho tro het, khong can code them. .quote-sheet/.quote-sheet--
+ * print-landscape TU CO da co san `width:min(210mm|297mm,100%)` (quotes.css)
+ * nen KHONG can JS scale nua - don gian hon han, it loi hon. */
+.qc-workspace-preview-modal--doc {
+  width: 96vw;
+  max-width: 1500px;
+  height: 94vh;
+  max-height: 94vh;
+  overflow: hidden;
+}
+.qc-workspace-preview-modal-body--doc {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  background: #eef0f4;
+  padding: 16px;
+  border-radius: 10px;
+}
+.qc-workspace-preview-modal-row { display: flex; flex-direction: column; gap: 2px; }
+.qc-workspace-preview-modal-row p { margin: 0; white-space: pre-wrap; }
+/* Mobile: preview mo full-screen (yeu cau rieng) - khong con la 1 hop nho
+ * giua man hinh, chiem het viewport de du cho tai lieu A4 doc/ngang. */
+@media (max-width: 767px) {
+  .qc-workspace-preview-modal--doc {
+    width: 100vw;
+    height: 100dvh;
+    max-width: none;
+    max-height: none;
+    border-radius: 0;
+  }
+}
+
+.qc-workspace-note-box--warn { background: #fff8ea; border-color: #f1d9a8; color: #8a6416; }
+
+/* Modal "Chon tu danh muc" - lay that tu CRM -> San pham & dich vu, can rong
+ * hon .qc-workspace-preview-modal mac dinh de du cho bang nhieu cot. */
+.qc-catalog-picker-modal { width: min(920px, 94vw); }
+.qc-catalog-picker-toolbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 8px; }
+.qc-catalog-picker-toolbar input.crm-input { flex: 1 1 220px; min-width: 160px; }
+/* Bug that: .crm-input dat width:100%, ket hop flex-basis:auto khien <select>
+ * van chiem het 1 dong rieng du da flex:0 0 auto (flex-basis:auto lay theo
+ * width khai bao san, khong phai theo noi dung) - phai ep width co dinh. */
+.qc-catalog-picker-toolbar select.crm-input {
+  flex: 0 0 auto;
+  width: 190px;
+}
+.qc-catalog-picker-checkbox { display: flex; align-items: center; gap: 4px; font-size: 12px; color: #455167; white-space: nowrap; }
+.qc-catalog-picker-table-wrap { max-height: 50vh; overflow: auto; border: 1px solid #e5e9f0; border-radius: 10px; }
+.qc-catalog-picker-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.qc-catalog-picker-table th, .qc-catalog-picker-table td { padding: 6px 8px; border-bottom: 1px solid #eef1f5; text-align: left; vertical-align: top; }
+.qc-catalog-picker-table thead th { position: sticky; top: 0; background: #f8fafc; z-index: 1; }
+.qc-catalog-row-inactive { opacity: 0.55; }
+.qc-catalog-picker-row { cursor: pointer; }
+.qc-catalog-picker-row:hover { background: #f7f9fb; }
+
+.qc-workspace-catalog-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; max-height: 50vh; overflow-y: auto; }
+.qc-workspace-catalog-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border: 1px solid #eef0f3;
+  border-radius: 10px;
+  padding: 8px 12px;
+}
+.qc-workspace-catalog-list strong { font-size: 12.5px; color: #2b3445; }
+
+.qc-workspace-header-title--create {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+}
+
+.qc-workspace-preview--empty {
+  color: #9099a7;
+  font-size: 12px;
+  padding: 10px;
+  border: 1px dashed #e5e5e5;
+  border-radius: 8px;
+  text-align: center;
+}
+
+@media (max-width: 1024px) {
+  /* ROOT CAUSE THAT cua bug "textarea/card tran sang phai" tren mobile (do
+   * rect that xac nhan: .qc-workspace-main rong toi 674px trong khi
+   * .qc-workspace-body cha no chi 390px!) - .qc-workspace-body ban dau
+   * align-items:flex-start (dung cho desktop, flex-direction:row, de 2 cot
+   * canh tren thay vi keo dai bang nhau). Doi sang flex-direction:column o
+   * day nhung KHONG reset align-items -> truc cross (nay la truc NGANG) van
+   * "flex-start" thay vi "stretch" mac dinh, khien moi flex-item (main/side)
+   * tu co GIAN THEO NOI DUNG cua no thay vi keo dai het chieu rong container
+   * - .qc-workspace-main vo tinh rong hon ca cha no de "vua" voi textarea
+   * ben trong, con .qc-workspace-body chi cat phan thua qua overflow-x:hidden
+   * (an mat, khong scroll) - dung "min-width:0" da co san KHONG du de fix vi
+   * day la loi align-items o truc cross, khong phai loi flex-shrink. */
+  .qc-workspace-body { flex-direction: column; align-items: stretch; }
+  .qc-workspace-side { width: 100%; flex: 0 0 auto; position: static; }
+  .qc-workspace-info-strip { gap: 10px; }
+}
+
+/* Mobile: Workspace thanh FULL-SCREEN SHEET that su (khong con la dialog can
+ * giua co bo goc/padding) - mo rong tu nguong 480px cu thanh 767px, kem toan
+ * bo cac phan con thieu (header/progress/form/bang hang muc/footer). Dung
+ * :has() de CHI ap dung khi backdrop nay THAT SU dang chua .qc-workspace,
+ * khong anh huong cac modal khac cung dung .qc-modal-backdrop (preview/close
+ * confirm). */
+@media (max-width: 767px) {
+  .qc-modal-backdrop:has(> .qc-workspace) {
+    padding: 0;
+    align-items: stretch;
+  }
+  .qc-workspace {
+    width: 100vw;
+    height: 100dvh;
+    max-height: 100dvh;
+    border-radius: 0;
+    margin: 0;
+  }
+  .qc-workspace-body {
+    padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+  }
+
+  /* Header: dong mobile-row (trang thai + dong) hien o TREN CUNG, thay the
+   * cho hang 4 nut chen nhau. */
+  .qc-workspace-header-mobile-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .qc-workspace-header-mobile-actions {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .qc-workspace-header {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    flex-wrap: nowrap;
+  }
+  .qc-workspace-header-main {
+    width: 100%;
+  }
+  .qc-workspace-header-title,
+  .qc-workspace-title-input {
+    width: 100%;
+  }
+  /* Badge trang thai da hien o dong mobile-row rieng phia tren - an ban sao
+   * nam trong header-title de khong bi lap lai 2 lan tren cung 1 man hinh. */
+  .qc-workspace-header-title > .qc-badge {
+    display: none;
+  }
+  .qc-workspace-header-actions {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+  /* Chi giu 1 nut hanh dong chinh (Luu/Luu & Chinh sua) - cac nut phu (version/
+   * quay lai danh sach/dong X) da chuyen vao ActionMenu "⋯" o mobile-row tren. */
+  .qc-workspace-header-btn-desktop-only {
+    display: none;
+  }
+  .qc-workspace-header-actions .qc-btn {
+    flex: 1;
+    justify-content: center;
+  }
+
+  /* Progress: chi hien dong tom tat gon, an het thanh stepper day du. */
+  .qc-workspace-stages {
+    display: none;
+  }
+  .qc-stagebar-mobile-summary {
+    display: block;
+    font-size: 12.5px;
+    font-weight: 700;
+    color: #455167;
+    padding: 2px 0 4px;
+  }
+
+  /* .qc-workspace-request-form-cols da ve 1 cot san tu nguong 900px (rule co
+   * san o tren), khong can lap lai o day. */
+
+  /* Bang hang muc tren mobile: KHONG con ep nguyen <table> cuon ngang nua (yeu
+   * cau rieng "Mobile không dùng table này; chuyển sang card") - chuyen sang
+   * KY THUAT THUAN CSS "table -> card" (khong doi JSX/cau truc DOM, chi doi
+   * display): an <thead>, moi <tr> thanh 1 CARD rieng (border/bo goc/cach
+   * nhau), moi <td> thanh 1 hang ngang "nhan: gia tri" dung data-label= (da
+   * them tren tung <td> trong QuoteWorkspaceModal.tsx) lam nhan qua
+   * ::before. Rieng cot dau (Hạng mục, data-label="Hạng mục") AN nhan di (ten
+   * hang muc da du ro rang khong can tien to "Hạng mục:"), va cot Thao tac
+   * cung an nhan (chi la 1 nut menu). Mục cha (.qc-workspace-section-row)
+   * GIU NGUYEN dang 1 thanh full-width, KHONG bien thanh card 2 cot. */
+  .qc-workspace-items-scroll {
+    overflow-x: visible;
+  }
+  .qc-workspace-items-table--unified {
+    min-width: 0;
+    width: 100%;
+    display: block;
+  }
+  .qc-workspace-items-table--unified thead {
+    display: none;
+  }
+  .qc-workspace-items-table--unified tbody {
+    display: block;
+  }
+  .qc-workspace-items-table--unified tbody tr {
+    display: block;
+    border: 1px solid #eef0f4;
+    border-radius: 12px;
+    margin-bottom: 10px;
+    padding: 8px 10px;
+    background: #fff;
+  }
+  .qc-workspace-items-table--unified tbody tr.qc-workspace-section-row {
+    padding: 10px 12px;
+  }
+  .qc-workspace-items-table--unified tbody td {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    width: 100% !important;
+    min-width: 0 !important;
+    position: static !important;
+    box-shadow: none !important;
+    padding: 6px 0 !important;
+    border-bottom: 1px solid #f4f5f8;
+  }
+  .qc-workspace-items-table--unified tbody tr:last-child td:last-child,
+  .qc-workspace-items-table--unified tbody td:last-child {
+    border-bottom: none;
+  }
+  .qc-workspace-items-table--unified tbody td[data-label]::before {
+    content: attr(data-label);
+    flex-shrink: 0;
+    font-size: 11px;
+    font-weight: 700;
+    color: #9099a7;
+    text-transform: uppercase;
+  }
+  /* Cot Hạng mục + Thao tac: khong can nhan "tien to" (ten hang muc/nut menu
+   * da tu no ro nghia), rieng Hạng mục cung KHONG chia 2 ben trai/phai nua -
+   * cho ca khoi ten chiem full-width dong dau card. */
+  .qc-workspace-items-table--unified tbody td[data-label="Hạng mục"] {
+    justify-content: flex-start;
+    padding-bottom: 8px !important;
+    border-bottom: 1px dashed #eef0f4;
+    margin-bottom: 4px;
+  }
+  .qc-workspace-items-table--unified tbody td[data-label="Hạng mục"]::before,
+  .qc-workspace-items-table--unified tbody td[data-label="Thao tác"]::before {
+    content: none;
+  }
+  .qc-workspace-items-table--unified tbody td[data-label="Thao tác"] {
+    justify-content: flex-end;
+  }
+  .qc-workspace-items-table--unified .qc-workspace-section-row td {
+    display: block !important;
+    padding: 0 !important;
+    border-bottom: none;
+  }
+  .qc-workspace-add-row,
+  .qc-workspace-items-empty-actions {
+    flex-wrap: wrap;
+  }
+
+  /* Modal con (chon danh muc) - toolbar wrap dep, khong tran. */
+  .qc-catalog-picker-toolbar {
+    flex-wrap: wrap;
+  }
+  .qc-catalog-picker-toolbar select.crm-input {
+    width: 100%;
+  }
+
+  /* Footer: nut hanh dong chinh (Bàn giao/Lưu) uu tien rong, Huỷ nho gon,
+   * KHONG doi vi tri/position (van la flex-child thuong, khong fixed/sticky -
+   * giu dung kien truc hien co). */
+  .qc-workspace-footer {
+    flex-wrap: wrap;
+    padding-bottom: calc(14px + env(safe-area-inset-bottom, 0px));
+  }
+  .qc-workspace-footer .qc-btn-primary {
+    flex: 1;
+    min-width: 140px;
+  }
+
+  /* Vung cham toi thieu ~40px cho cac nut chinh tren mobile. */
+  .qc-mini-btn,
+  .qc-workspace-footer .qc-btn,
+  .qc-workspace-header-actions .qc-btn {
+    min-height: 40px;
+  }
+  .qc-mini-btn-icon {
+    width: 36px;
+    height: 36px;
+  }
+}
+
+@media (max-width: 480px) {
+  .qc-workspace { width: 100vw; height: 100dvh; border-radius: 0; }
+  .qc-workspace-header { flex-direction: column; }
+  .qc-workspace-checklist { grid-template-columns: 1fr 1fr; }
+  .qc-workspace-info-strip-row { grid-template-columns: 1fr; }
+}
+
+/* ---- Feedback 2026-09-23: version gom duoi dong hien tai, click dong mo
+ * bao gia, chon nhieu de xoa (QuoteCenterPage.tsx). Checkbox/mui ten nam
+ * TRONG o dau tien (khong them cot) de khong lech nth-child cua bang. ---- */
+.qc-row-clickable { cursor: pointer; }
+.qc-row-clickable:hover td { background: #fafbfd; }
+.qc-row-select {
+  width: 14px;
+  height: 14px;
+  margin: 0 6px 0 0;
+  vertical-align: middle;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+/* Feedback (2026-09-26): ban icon-vuong-don van "quá xấu"/kho nhan biet du da
+ * doi mau nen truoc do - doi han sang pill CO CHU ("N phiên bản" + mui ten),
+ * dong bo voi .crm-version-toggle (crm.css). */
+.qc-version-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 9px 3px 7px;
+  border: 1px solid #d5dae3;
+  border-radius: 999px;
+  background: #eef1f6;
+  color: #435269;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.qc-version-toggle:hover { border-color: var(--color-primary, #ba244a); background: #fdecf1; color: var(--color-primary, #ba244a); }
+.qc-version-toggle .qc-icon { width: 13px; height: 13px; }
+/* Feedback (2026-09-24): dong version cu truoc day gan nhu trong (chi so bao
+ * gia + gia), nhin "xau"/thieu phan cap - gio hien du cot nhu dong hien tai
+ * (xem renderOlderVersionRows) nen chi can them vien dut + accent trai de
+ * nhin ro day la dong "con" cua dong version hien tai o tren, khong can doi
+ * layout. */
+.qc-row-version-old td { background: #f8f9fb; border-top: 1px dashed #e4e7ed; font-size: 12.5px; }
+.qc-row-version-old.qc-row-clickable:hover td { background: #f1f3f7; }
+.qc-row-version-old td:first-child { border-left: 2px solid #dfe3ea; }
+.qc-version-old-line { padding-left: 20px; }
+.qc-version-old-branch { color: #98a1b2; margin-right: 6px; }
+.qc-bulk-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 8px 0;
+  padding: 8px 12px;
+  border: 1px solid #f1d3dc;
+  border-radius: 10px;
+  background: #fff7f9;
+  font-size: 13px;
+}
+.qc-bulk-bar-actions { display: flex; gap: 8px; }
+.qc-btn-danger {
+  background: #b3261e;
+  border-color: #b3261e;
+  color: #fff;
+}
+.qc-btn-danger:hover:not(:disabled) { background: #9a1f18; }
+.qc-quote-card-versions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border-radius: 8px;
+  background: #f8f9fb;
+}
+.qc-quote-card-version-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.qc-version-history-item { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.qc-version-history-link { flex: 1; min-width: 0; display: flex; flex-direction: column; color: inherit; text-decoration: none; }
+/* Checkbox + mui ten + ma bao gia luon cung 1 dong (khong roi tung dong khi
+ * cot hep) - ma dai qua thi cat "…", badge version van duoc xuong dong nhu cu. */
+.qc-cell-quote-lead {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  max-width: 100%;
+  flex-wrap: nowrap;
+}
+.qc-cell-quote-lead .qc-row-link-btn {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.qc-version-old-line { padding-left: 16px; }
+
+/* Bang hang muc Workspace: duong ke ngang o cap <tr> (1 border-bottom / row chay xuyen bang),
+ * khong ke tung <td> (cell cao/thap khac nhau lam lech duong ke). */
+.qc-workspace-items-table--unified tbody td {
+  border-bottom: 0;
+}
+.qc-workspace-items-table--unified tbody tr {
+  border-bottom: 1px solid #eff1f5;
+}
+
+/* Giu xuong dong ten hang muc (Enter) o che do chi-doc. */
+.qc-workspace-item-name-clamp {
+  white-space: pre-line;
+}
+
+/* O nhap "Ten bao gia" (Buoc 2, Sale) noi bat: co nhan + dau * do, khung ro, do dac khi thieu */
+.qc-title-field { margin: 0 0 6px; max-width: 100%; }
+.qc-title-field-label { display: block; font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: #475569; margin-bottom: 4px; }
+.qc-workspace-header-quote-title--input.qc-title-input--prominent {
+  background: #fff; border: 1.5px solid #93c5fd; border-radius: 8px; padding: 4px 10px; font-size: 15px; font-weight: 700; color: #0f172a;
+  box-shadow: none; width: min(100%, 360px);
+}
+.qc-workspace-header-quote-title--input.qc-title-input--prominent:hover { background: #fff; border-color: #60a5fa; }
+.qc-workspace-header-quote-title--input.qc-title-input--prominent:focus { background: #fff; border-color: #2563eb; box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15); }
+.qc-workspace-header-quote-title--input.qc-title-input--prominent::placeholder { color: #94a3b8; font-weight: 600; }
+.qc-workspace-header-quote-title--input.qc-title-input--prominent.is-error { border-color: #dc2626; background: #fef2f2; box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.12); }

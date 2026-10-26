@@ -71,6 +71,7 @@ class IssuerCompanyCreateRequest(BaseModel):
     brand_name: Optional[str] = None
     address: Optional[str] = None
     contact_name: Optional[str] = None
+    position_category_id: Optional[str] = None
     phone: Optional[str] = None
     email: Optional[str] = None
     website: Optional[str] = None
@@ -94,6 +95,7 @@ class IssuerCompanyUpdateRequest(BaseModel):
     brand_name: Optional[str] = None
     address: Optional[str] = None
     contact_name: Optional[str] = None
+    position_category_id: Optional[str] = None
     phone: Optional[str] = None
     email: Optional[str] = None
     website: Optional[str] = None
@@ -169,6 +171,16 @@ class QuoteItemInput(BaseModel):
     # Gia von GOC bang VND (migration 169) - chi gui o bao gia USD de doi lai VND
     # khong troi do lam tron. Gia ban goc VND dung lai unit_price_vnd co san.
     cost_price_vnd: Optional[float] = Field(default=None, ge=0)
+    # Chu ky "tra thang/tra nam" (migration 189) - dung chung moi nhom san
+    # pham co ca 2 gia tu danh muc (vd Markee Chat MCHAT-AGENT). CANH BAO: neu
+    # khong khai bao o day, Pydantic se AM THAM bo field nay (y het bug
+    # row_type/price_book_item_id da ghi o tren) - moi lan Luu bao gia se mat
+    # sach du lieu Chu ky da chon, ca 2 ham quote.py/supabase_quote_service.py
+    # vua them cung vo tac dung.
+    billing_cycle: Optional[str] = None
+    billing_term_months: Optional[float] = Field(default=None, ge=1)
+    catalog_monthly_price_vnd: Optional[float] = Field(default=None, ge=0)
+    catalog_annual_commit_monthly_price_vnd: Optional[float] = Field(default=None, ge=0)
 
     _normalize_optional_uuid = field_validator(
         "catalog_item_id",

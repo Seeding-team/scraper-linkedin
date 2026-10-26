@@ -13,6 +13,7 @@ const WORKSPACE_LABELS: Record<string, string> = {
   markee: "Markee",
   cloudgate: "CloudGate",
   SECURITYZONE: "SecurityZone",
+  timetech: "TimeTech",
 };
 
 function workspaceLabel(instance: string): string {

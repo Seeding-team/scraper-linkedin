@@ -388,6 +388,8 @@ export interface InternalEngagementPostTeamCount {
 export interface InternalEngagementPostTeamCountsData {
   role: string;
   teams: InternalEngagementPostTeamCount[];
+  /** Số thành viên (distinct) đã tương tác thành công trên bài — không phụ thuộc role người xem. */
+  total_interacted?: number;
 }
 
 export interface InternalEngagementTeamTrendPoint {

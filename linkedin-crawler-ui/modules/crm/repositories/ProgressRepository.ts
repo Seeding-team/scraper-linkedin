@@ -50,8 +50,13 @@ async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
 /** `/api/all-platform/progress/*` — dashboard đọc, không có method tạo/sửa
  * nào ở đây (đúng yêu cầu "không phải task management"). */
 export const progressRepository = {
-  getOverview(): Promise<ProgressOverview> {
-    return apiFetch<ProgressOverview>('/api/all-platform/progress/overview');
+  getOverview(range?: string): Promise<ProgressOverview> {
+    const qs = range && range !== 'all' ? `?range=${encodeURIComponent(range)}` : '';
+    return apiFetch<ProgressOverview>(`/api/all-platform/progress/overview${qs}`);
+  },
+
+  getOverviewRanges(): Promise<Record<string, ProgressOverview['kpis']>> {
+    return apiFetch<Record<string, ProgressOverview['kpis']>>('/api/all-platform/progress/overview-ranges');
   },
 
   listTeams(): Promise<ProgressTeamsResponse> {

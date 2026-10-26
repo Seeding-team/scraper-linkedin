@@ -6,9 +6,25 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libdbus-1-3 \
     ca-certificates \
     curl \
+    libreoffice-writer \
+    fonts-liberation \
+    fonts-crosextra-carlito \
+    fonts-crosextra-caladea \
+    fonts-dejavu-core \
+    fontconfig \
     && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/*
+
+# Liberation Serif (thay the Times New Roman tren Linux) thieu 1 so dau tieng Viet (o, o+, a+...) nen LibreOffice
+# tu nhay sang DejaVu Serif cho dung nhung ky tu do - DejaVu nang/to hon han chu xung quanh (bug "chu dam to ngay
+# cho co dau"). FreeSerif (co san tu libreoffice-writer) co du glyph tieng Viet va gan kieu Times New Roman hon -
+# uu tien no truoc DejaVu Serif cho Liberation Serif/Times New Roman qua fontconfig local.conf.
+COPY docker/fonts-local.conf /etc/fonts/local.conf
+RUN fc-cache -f
+
+# Kiem tra LibreOffice + font Viet ngay luc build (hong thi build fail, khong deploy duoc image thieu engine PDF)
+RUN soffice --headless --version && fc-list | grep -qi "Liberation Serif" && fc-list :lang=vi family | grep -qi "DejaVu Serif"
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \

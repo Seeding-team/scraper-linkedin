@@ -129,6 +129,7 @@ def fake_db(monkeypatch):
     stub_settings = types.SimpleNamespace(
         msc_api_base_url="https://msc.example",
         msc_api_token="",
+        msc_integration_key="integration-key-for-test",
         msc_sync_hour=2,
         msc_sync_minute=30,
         msc_sync_dry_run=False,
@@ -390,7 +391,7 @@ def test_dry_run_zero_writes(fake_db, monkeypatch):
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def _stub_http(monkeypatch, status_code=200, json_data=None, json_error=None):
+def _stub_http(monkeypatch, status_code=200, json_data=None, json_error=None, capture=None):
     class _Resp:
         def __init__(self):
             self.status_code = status_code
@@ -410,7 +411,10 @@ def _stub_http(monkeypatch, status_code=200, json_data=None, json_error=None):
         def __exit__(self, *_a):
             return False
 
-        def get(self, *_a, **_k):
+        def get(self, url, headers=None, **_k):
+            if capture is not None:
+                capture["url"] = url
+                capture["headers"] = dict(headers or {})
             return _Resp()
 
     monkeypatch.setattr(
@@ -426,6 +430,8 @@ def _stub_http(monkeypatch, status_code=200, json_data=None, json_error=None):
 @pytest.mark.parametrize(
     "status_code, json_data",
     [
+        (401, None),  # HTTP 401: key sai/thieu hoac het han → CRM khong duoc ghi
+        (403, None),  # HTTP 403: MSC tu choi phan quyen
         (500, None),  # HTTP 5xx
         (404, None),  # HTTP 4xx
         (200, {"success": False}),  # success=false
@@ -470,6 +476,61 @@ def test_missing_base_url_fails_cleanly(fake_db, monkeypatch):
     ]
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Khoa tich hop may-may (X-Msc-Integration-Key) — auth moi ESC ↔ MSC
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def test_integration_key_header_sent_and_no_bearer(fake_db, monkeypatch):
+    """Dung khoa tu MSC_INTEGRATION_KEY, gui dung header, va KHONG con Bearer."""
+    capture = {}
+    _stub_http(monkeypatch, json_data=base_snapshot(), capture=capture)
+    stats = msc_sync_service.run_sync(trigger="manual", user_id="user-1")
+    assert stats["status"] == "success"
+    assert capture["url"] == "https://msc.example/api/v1/goods"
+    assert capture["headers"] == {"X-Msc-Integration-Key": "integration-key-for-test"}
+    assert "Authorization" not in capture["headers"]
+
+
+def test_missing_integration_key_fails_cleanly_no_crm_write(fake_db, monkeypatch):
+    fake_db.db["service_catalog_items"] = [
+        {"id": "crm-1", "item_type": "group", "name": "Old", "status": "active"}
+    ]
+    monkeypatch.setattr(msc_sync_service.settings, "msc_integration_key", "")
+    stats = msc_sync_service.run_sync(trigger="manual", user_id=None)
+    assert stats["status"] == "failed"
+    assert "MSC_INTEGRATION_KEY" in stats["error_message"]
+    # CRM giu nguyen; va KHONG bat dau bat du lieu (loi truoc khi fetch)
+    assert [r["name"] for r in fake_db.db["service_catalog_items"]] == ["Old"]
+
+
+def test_missing_key_does_not_fall_back_to_bearer_token(fake_db, monkeypatch):
+    """Neu thieu khoa tich hop thi KHONG fallback gui token Bearer cu."""
+    monkeypatch.setattr(msc_sync_service.settings, "msc_api_token", "old-expired-token")
+    monkeypatch.setattr(msc_sync_service.settings, "msc_integration_key", "")
+    capture = {}
+    _stub_http(monkeypatch, capture=capture)
+    stats = msc_sync_service.run_sync(trigger="scheduled", user_id=None)
+    assert stats["status"] == "failed"
+    assert "MSC_INTEGRATION_KEY" in stats["error_message"]
+    # fetch KHONG duoc goi (loi xay truoc khi fetch) → khong co url/header nao
+    assert "headers" not in capture
+    assert "Authorization" not in capture.get("headers", {})
+
+
+def test_msc_401_with_wrong_key_recorded_failed_no_crm_write(fake_db, monkeypatch):
+    """MSC tra 401 (khoa sai): run failed, CRM khong thay doi, khong fallback."""
+    fake_db.db["service_catalog_items"] = [
+        {"id": "crm-1", "item_type": "group", "name": "Old", "status": "active"}
+    ]
+    capture = {}
+    _stub_http(monkeypatch, status_code=401, capture=capture)
+    stats = msc_sync_service.run_sync(trigger="manual", user_id=None)
+    assert stats["status"] == "failed"
+    assert stats["http_status"] == 401
+    assert [r["name"] for r in fake_db.db["service_catalog_items"]] == ["Old"]
+
+
 def test_failed_run_is_recorded_in_msc_sync_runs(fake_db, monkeypatch):
     _stub_http(monkeypatch, status_code=503)
     msc_sync_service.run_sync(trigger="scheduled", user_id=None)
@@ -509,3 +570,133 @@ def test_status_lists_runs_from_audit_table(fake_db, monkeypatch):
     assert len(runs) == 1
     assert runs[0]["inserted"] == 3
     assert runs[0]["duration_ms"] is not None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Manual-edit protection (migration 176, task "Extend MSC product sync" §14)
+# Nguoi dung CRM sua Nhom hang/Hang/Model → lan dong bo sau KHONG ghi de.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _find_item(fake_db, external_id):
+    return next(r for r in fake_db.db["service_catalog_items"] if r.get("external_id") == external_id)
+
+
+def test_case1_not_manually_edited_fields_keep_syncing(fake_db, monkeypatch):
+    """Case 1 §14: khong sua tay → MSC doi (group/brand/model) → CRM cap nhat."""
+    stub_snapshot(monkeypatch, base_snapshot())
+    msc_sync_service.run_sync(trigger="manual", user_id=None)
+
+    snapshot = base_snapshot()
+    snapshot["data"]["items"][0].update(
+        {"brand": "HP", "model": "R760", "groupId": "g_2"}  # Server → Laptop
+    )
+    stub_snapshot(monkeypatch, snapshot)
+    stats = msc_sync_service.run_sync(trigger="manual", user_id=None)
+
+    assert stats["status"] in ("success", "partial")
+    row = _find_item(fake_db, "item_1")
+    groups = {r["name"]: r for r in fake_db.db["service_catalog_items"] if r["item_type"] == "group"}
+    assert row["brand"] == "HP"
+    assert row["part_number"] == "R760"
+    assert row["parent_id"] == groups["Laptop"]["id"]
+    # Chua co bat ky field nao bi danh dau manual
+    assert not row.get("sync_manual_fields")
+
+
+def test_case2_manually_edited_brand_is_preserved(fake_db, monkeypatch):
+    """Case 2 §14: CRM sua Brand=Custom Brand → MSC doi → sync GIU NGUYEN Brand."""
+    stub_snapshot(monkeypatch, base_snapshot())
+    msc_sync_service.run_sync(trigger="manual", user_id=None)
+
+    row = _find_item(fake_db, "item_1")
+    # Nguoi dung sua Brand qua update endpoint (PUT /service-catalog/update)
+    catalog_service.update_service_catalog_item(row["id"], {"brand": "Santak Vietnam"}, "user-9")
+    assert _find_item(fake_db, "item_1")["sync_manual_fields"] == ["brand"]
+
+    # MSC doi brand + model (model chua bi sua tay → van dong bo)
+    snapshot = base_snapshot()
+    snapshot["data"]["items"][0].update({"brand": "Santak", "model": "R750-V2"})
+    stub_snapshot(monkeypatch, snapshot)
+    stats = msc_sync_service.run_sync(trigger="manual", user_id=None)
+
+    row = _find_item(fake_db, "item_1")
+    assert row["brand"] == "Santak Vietnam"  # GIU NGUYEN gia tri nguoi dung
+    assert row["part_number"] == "R750-V2"  # field khong danh dau van dong bo
+    # item_1 chi con doi part_number (brand bi loai) + 2 item con lai khong doi
+    assert stats["updated"] == 1
+    assert stats["skipped"] == 2
+
+
+def test_case2_manually_edited_group_is_not_reassigned(fake_db, monkeypatch):
+    """CRM dua san pham sang nhom khac → MSC doi nhom → sync khong doi lai."""
+    stub_snapshot(monkeypatch, base_snapshot())
+    msc_sync_service.run_sync(trigger="manual", user_id=None)
+
+    groups = {r["name"]: r for r in fake_db.db["service_catalog_items"] if r["item_type"] == "group"}
+    row = _find_item(fake_db, "item_1")
+    catalog_service.update_service_catalog_item(
+        row["id"], {"parent_id": groups["Laptop"]["id"]}, "user-9"
+    )
+
+    snapshot = base_snapshot()
+    # MSC doi nhom item_1: g_1 (Server) → giu g_2 (Laptop)... doi sang g_2 thi
+    # cung gia tri voi cach CRM sua; de ro rang, doi MSC sang group moi "UPS"
+    # khong ton tai trong CRM (resolve về default group).
+    snapshot["data"]["groups"].append({"id": "g_3", "name": "UPS"})
+    snapshot["data"]["items"][0].update({"groupId": "g_3", "brand": "Santak"})
+    stub_snapshot(monkeypatch, snapshot)
+    msc_sync_service.run_sync(trigger="manual", user_id=None)
+
+    row = _find_item(fake_db, "item_1")
+    assert row["parent_id"] == groups["Laptop"]["id"]  # GIU nhom nguoi dung chon
+    assert row["brand"] == "Santak"  # brand chua duoc sua tay → van dong bo
+
+
+def test_update_marks_manual_fields_only_on_real_change(fake_db, monkeypatch):
+    """Danh dau CHI khi gia tri that su khac; luu lan nhau khong mat mark."""
+    stub_snapshot(monkeypatch, base_snapshot())
+    msc_sync_service.run_sync(trigger="manual", user_id=None)
+    row = _find_item(fake_db, "item_1")
+
+    # Gui payload giong edit form (luon co day du field) nhung GIA TRI GIU NGUYEN
+    catalog_service.update_service_catalog_item(
+        row["id"], {"brand": "Dell", "part_number": "R750"}, "user-9"
+    )
+    assert not _find_item(fake_db, "item_1").get("sync_manual_fields")
+
+    # Sua that su 2 field → 2 mark
+    catalog_service.update_service_catalog_item(
+        row["id"], {"brand": "Dell VN", "part_number": "R750-CUSTOM"}, "user-9"
+    )
+    row = _find_item(fake_db, "item_1")
+    assert sorted(row["sync_manual_fields"]) == ["brand", "part_number"]
+
+    # Sua tiep 1 field nua khong lam mat mark cu
+    catalog_service.update_service_catalog_item(row["id"], {"parent_id": _group_id(fake_db, "Laptop")}, "user-9")
+    row = _find_item(fake_db, "item_1")
+    assert sorted(row["sync_manual_fields"]) == ["brand", "parent_id", "part_number"]
+
+
+def _group_id(fake_db, name):
+    return next(
+        r["id"] for r in fake_db.db["service_catalog_items"]
+        if r["item_type"] == "group" and r["name"] == name
+    )
+
+
+def test_dry_run_counts_respect_manual_fields(fake_db, monkeypatch):
+    """Dry run KHONG dem field da danh dau manual la se cap nhat."""
+    stub_snapshot(monkeypatch, base_snapshot())
+    msc_sync_service.run_sync(trigger="manual", user_id=None)
+    row = _find_item(fake_db, "item_1")
+    catalog_service.update_service_catalog_item(row["id"], {"brand": "Custom"}, "user-9")
+
+    snapshot = base_snapshot()
+    snapshot["data"]["items"][0]["brand"] = "Santak"
+    snapshot["data"]["items"][0]["model"] = "R750XS"
+    stub_snapshot(monkeypatch, snapshot)
+
+    stats = msc_sync_service.run_sync(trigger="manual", user_id=None, dry_run=True)
+    # item_1 van bi dem update (model chua danh dau manual), nhung brand se giu
+    assert stats["dry_run"] is True

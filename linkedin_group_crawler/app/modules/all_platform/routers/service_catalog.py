@@ -19,6 +19,7 @@ from app.modules.all_platform.schemas import (
     ServiceCatalogUnitUpdateRequest,
     ServiceCatalogVatRateCreateRequest,
     ServiceCatalogVatRateUpdateRequest,
+    ServiceCatalogWorkspaceAssignRequest,
     BundleComponentsSetRequest,
 )
 from app.modules.all_platform.services import service_catalog_config_service as config_service
@@ -30,6 +31,7 @@ from app.modules.all_platform.services import (
     reorder_service_catalog_item,
     set_bundle_components,
     get_service_catalog_items_by_ids,
+    assign_group_workspaces,
 )
 from app.modules.all_platform.services import supabase_service_catalog_service as catalog_service
 from app.modules.all_platform.services.crm_permission_service import (
@@ -93,15 +95,33 @@ def _can_view_draft_catalog_cost(user: dict) -> bool:
     )
 
 
+# ==============================================================================
+# TÍCH HỢP BỘ LỌC WORKSPACE: Endpoint danh sách Workspace lấy động từ DB
+# ==============================================================================
+@router.get("/workspaces")
+def service_catalog_get_workspaces(_user: dict = Depends(get_current_user)) -> BaseResponse:
+    """TÍCH HỢP BỘ LỌC WORKSPACE: Lấy danh sách các Workspace khả dụng động từ Database."""
+    try:
+        data = catalog_service.list_available_workspaces()
+        return BaseResponse(success=True, data=data)
+    except Exception as e:
+        logger.exception("Lỗi khi tải danh sách workspaces cho service catalog")
+        return BaseResponse(success=False, message=str(e))
+
+
 @router.get("")
 def service_catalog_get_all(
     context: str = Query("admin", pattern="^(admin|quote_picker)$"),
     quote_id: Optional[str] = Query(None),
     issuer_company_id: Optional[str] = Query(None),
+    instances: Optional[str] = Query(None, description="TÍCH HỢP BỘ LỌC WORKSPACE: Danh sách instance phân tách bằng dấu phẩy, vd: markee,cloudgate"),
     user: dict = Depends(get_current_user),
 ) -> BaseResponse:
     try:
-        tree = list_service_catalog_items()
+        instance_list: list[str] | None = None
+        if instances:
+            instance_list = [i.strip() for i in instances.split(",") if i.strip()]
+        tree = catalog_service.list_service_catalog_items_scoped(instance_list)
     except Exception as e:
         return BaseResponse(success=False, message=str(e))
 
@@ -189,6 +209,37 @@ def service_catalog_update(payload: ServiceCatalogItemUpdateRequest, user: dict 
     try:
         data = update_service_catalog_item(payload.id, payload.model_dump(exclude_none=True), user.get("id"))
         return BaseResponse(success=True, message="Đã cập nhật dịch vụ", data=data)
+    except ValueError as e:
+        return BaseResponse(success=False, message=str(e))
+    except HTTPException:
+        raise
+    except Exception as e:
+        return BaseResponse(success=False, message=str(e))
+
+
+@router.post("/workspaces-assign")
+def service_catalog_workspaces_assign(
+    payload: ServiceCatalogWorkspaceAssignRequest,
+    user: dict = Depends(get_current_user),
+) -> BaseResponse:
+    """Bulk thay set Workspace (many-to-many, migration 190) cho cac NHOM da
+    chon + TAT CA con truc tiep — REPLACE-ALL trong 1 giao dich (RPC
+    `service_catalog_ws_assign`, FOR UPDATE locks, khong partial failure).
+
+    Ky quyen: cung nhom quen quan ly master data khac (/add, /update).
+    Tra ve {"assignment": {item_id: [workspaces]}, "groups": [ids]}."""
+    _require_master_data_manager(user)
+    try:
+        data = assign_group_workspaces(
+            payload.group_ids,
+            payload.instances,
+            actor_id=(user.get("id") or None),
+        )
+        return BaseResponse(
+            success=True,
+            message=f"Đã cập nhật Workspace cho {len(payload.group_ids)} nhóm sản phẩm (kèm các sản phẩm bên trong).",
+            data=data,
+        )
     except ValueError as e:
         return BaseResponse(success=False, message=str(e))
     except HTTPException:

@@ -174,6 +174,31 @@ class Settings:
     seeder_service_url: str = os.getenv("SEEDER_SERVICE_URL", "")
     seeder_service_api_key: str = os.getenv("SEEDER_SERVICE_API_KEY", "")
 
+    # ── MSC → CRM Product Sync (migration 175) ──────────────────────────────
+    # Base URL he thong MSC (source of truth, chi GET /api/v1/goods boil dau /).
+    # De trong = tat tinh nang dong bo (job se khong chay, endpoint bao loi).
+    msc_api_base_url: str = os.getenv("MSC_API_BASE_URL", "").rstrip("/")
+    # Token neu MSC tuong lai bang auth (hien tai /goods khong can). Khong hardcode.
+    msc_api_token: str = os.getenv("MSC_API_TOKEN", "")
+    # Gio (0-23) va phut chay dong bo tu dong 1 lan/ngay (mui gio CO DINH UTC+7
+    # trong jobs/msc_sync_job.py — container co the khong co tzdata).
+    msc_sync_hour: int = max(0, min(23, int(os.getenv("MSC_SYNC_HOUR", "2"))))
+    msc_sync_minute: int = max(0, min(59, int(os.getenv("MSC_SYNC_MINUTE", "30"))))
+    # 1 = chi tinh toan dem insert/update, KHONG ghi CRM (kiem tra mapping an toan).
+    msc_sync_dry_run: bool = os.getenv("MSC_SYNC_DRY_RUN", "").strip().lower() in ("1", "true", "yes")
+    # Timeout cho GET /api/v1/goods (giay).
+    msc_sync_timeout_sec: float = float(os.getenv("MSC_SYNC_TIMEOUT_SEC", "60"))
+
+    # ── Service Catalog Workspace isolation (isolation task 2026-10-14) ─────
+    # 1 = bat/enforce "workspace floor" cho Service Catalog: deploy doc/ghi
+    # CHI trong workspace dang phuc vu request (settings.crm_instance —
+    # property doc contextvar theo Host header, xem phia duoi), khong cho
+    # client tu chon instance khac. Flag OFF = giu nguyen 100% hanh vi cu.
+    # Phai bat CUNG VOI CRM_INSTANCE (env); neu CRM_INSTANCE rong/thieu khi
+    # flag ON thi process FAIL SAU KHI BOOT (RuntimeError) thay vi silently
+    # expose data unscoped.
+    catalog_scope_enforced: bool = (os.getenv("CATALOG_SCOPE_ENFORCED") or "").strip().lower() in ("1", "true", "yes")
+
     def __post_init__(self) -> None:
         if self.cors_origins is None:
             self.cors_origins = _parse_csv(
@@ -193,4 +218,31 @@ class Settings:
         return _current_instance.get() or self.default_crm_instance
 
 
+def _validate_catalog_scope_enforcement(cfg: "Settings") -> None:
+    """Fail-fast khi bat enforcement ma thieu CRM_INSTANCE (isolation task).
+
+    Flag ON + CRM_INSTANCE rong/thieu => RuntimeError ngay tai import config
+    (kill boot) — KHONG BAO GIO silently fallback hay tra catalog unscoped.
+    Luu y rieng cua crm-module: `settings.crm_instance` la property doc
+    contextvar theo tung request; validation o day kiem tra ENV goc
+    `CRM_INSTANCE` (fallback khi Host khong khop map — config.py:94-112),
+    khong the check contextvar o pha import. Flag OFF => khong kiem tra."""
+
+    if not cfg.catalog_scope_enforced:
+        return
+    import logging
+
+    instance = (os.getenv("CRM_INSTANCE") or "").strip()
+    if not instance:
+        raise RuntimeError(
+            "CRM_INSTANCE must be set when CATALOG_SCOPE_ENFORCED is enabled "
+            "(service catalog isolation: empty workspace floor is not allowed)"
+        )
+    logging.getLogger(__name__).warning(
+        "Service Catalog scope enforcement ON — default workspace floor "
+        "(per-request Host may override): %s", instance
+    )
+
+
 settings = Settings()
+_validate_catalog_scope_enforcement(settings)

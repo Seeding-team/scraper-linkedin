@@ -195,3 +195,18 @@ def test_errors_never_raise(monkeypatch):
     sync.propagate_lead_change({"lead_name": "a"}, {"lead_name": "b", "converted_contact_id": "c"})
     assert qs.sync_contact_snapshot_to_quotes({"id": "x", "name": "a"}) == 0
     assert qs.sync_deal_primary_contact_to_quotes("d", {"id": "c", "name": "a"}) == 0
+
+def test_customer_owner_follows_new_sale_when_owner_was_derived_from_lead(db):
+    db["crm_customers"][0]["owner_id"] = "creator"  # owner = nguoi tao/chuyen doi lead
+    old = {"lead_name": "Chi Hanh", "company_name": "Cong ty A", "qualification_ae_id": None, "sdr_id": "creator", "created_by": "creator", "converted_by": "creator"}
+    new = {**old, "qualification_ae_id": "sale1", "sdr_id": "sale1", "converted_customer_id": "cu1"}
+    sync.propagate_lead_change(old, new)
+    assert db["crm_customers"][0]["owner_id"] == "sale1"
+
+
+def test_customer_owner_chosen_by_someone_else_is_kept(db):
+    db["crm_customers"][0]["owner_id"] = "other_owner"  # chu that do nguoi khac dat, khong phai owner sinh ra tu lead nay
+    old = {"lead_name": "Chi Hanh", "company_name": "Cong ty A", "qualification_ae_id": None, "sdr_id": "creator", "created_by": "creator", "converted_by": "creator"}
+    new = {**old, "qualification_ae_id": "sale1", "sdr_id": "sale1", "converted_customer_id": "cu1"}
+    sync.propagate_lead_change(old, new)
+    assert db["crm_customers"][0]["owner_id"] == "other_owner"

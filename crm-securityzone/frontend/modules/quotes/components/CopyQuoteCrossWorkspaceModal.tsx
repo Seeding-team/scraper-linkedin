@@ -3,10 +3,11 @@
 /**
  * "Copy báo giá sang khách hàng khác hoặc workspace khác" (2026-10-03, Phase
  * 1 — chỉ Copy, Move để sau; hỗ trợ chọn NHIỀU báo giá cùng lúc, copy sang
- * CÙNG 1 ngữ cảnh đích). Chỉ admin có `allowed_instances` chứa workspace đích
- * (hoặc workspace đích = workspace hiện tại, không cần cấp thêm) mới dùng
- * được - backend tự chặn (403/message rõ), modal này KHÔNG tự kiểm tra
- * quyền, chỉ ẩn nút trigger khi role khác admin (xem nơi gọi).
+ * CÙNG 1 ngữ cảnh đích). Phase 2 (2026-10-23): Admin toàn quyền; Sale/Presale
+ * dùng được NHƯNG chỉ với workspace nằm trong `allowed_instances` của chính
+ * họ (hoặc workspace đích = workspace hiện tại, không cần cấp thêm) - backend
+ * tự chặn (403/message rõ), modal này KHÔNG tự kiểm tra quyền, chỉ ẩn nút
+ * trigger khi role/quote_business_role không đủ điều kiện (xem nơi gọi).
  */
 
 import { useEffect, useRef, useState } from 'react';
@@ -20,6 +21,7 @@ const WORKSPACE_OPTIONS: Array<{ value: string; label: string }> = [
   { value: 'markee', label: 'Markee' },
   { value: 'cloudgate', label: 'CloudGate' },
   { value: 'SECURITYZONE', label: 'SecurityZone' },
+  { value: 'timetech', label: 'TimeTech' },
 ];
 
 type TargetCustomer = { id: string; customer_name: string; company_name?: string | null; phone?: string | null; email?: string | null };
@@ -397,7 +399,9 @@ export function CopyQuoteCrossWorkspaceModal({
   }));
 
   return (
-    <div className="crm-modal-backdrop fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4" onClick={onClose}>
+    // Chi dong khi click THAT SU vao backdrop (khong phai bubble tu dropdown
+    // portal ra document.body ben trong modal - xem CustomerFormModal.tsx).
+    <div className="crm-modal-backdrop fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4" onClick={event => { if (event.target === event.currentTarget) onClose(); }}>
       <div className="crm-modal bg-white rounded-2xl shadow-2xl border border-slate-200 w-full flex flex-col" style={{ maxWidth: 640, minHeight: 420 }} onClick={event => event.stopPropagation()}>
         <header className="crm-modal-header px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
           <div>

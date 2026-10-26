@@ -1,7 +1,7 @@
 'use client';
 
 import { useRef, useState } from 'react';
-import { paymentPlanAmount, paymentPlanPercent, visiblePaymentPlan } from '../utils/paymentPlan';
+import { paymentPlanAmounts, paymentPlanPercent, visiblePaymentPlan } from '../utils/paymentPlan';
 import type {
   CustomBlock,
   BundleSnapshotComponent,
@@ -31,7 +31,7 @@ import { formatQuoteMoney, localizeCurrencyLabel, normalizeQuoteCurrency } from 
 function formatVndPlain(value: unknown): string {
   return formatVndRaw(value).replace(/\s*đ$/, '');
 }
-import { filterRedundantAmountAfterDiscountColumn, normalizeQuoteColumnLabel, resolveDefaultVisibleColumnKeys, resolveQuoteItemColumns, resolveToggleableColumns } from '../utils/quoteColumns';
+import { ALWAYS_HIDDEN_CALCULATED_KEYS, filterRedundantAmountAfterDiscountColumn, normalizeQuoteColumnLabel, resolveDefaultVisibleColumnKeys, resolveQuoteItemColumns, resolveToggleableColumns } from '../utils/quoteColumns';
 import {
   getCustomerDisplayFields,
   resolveVisibleCustomerFieldKeys,
@@ -294,6 +294,23 @@ function bundleSnapshotComponents(item: QuoteItem): BundleSnapshotComponent[] {
   return [];
 }
 
+/** Cac cot GIA bi che tren dong thanh phan con khi "Hien thanh phan con" bat
+ * (2026-10-14) - chi che GIA, giu nguyen ten/mo ta/so luong/don vi. */
+const BUNDLE_COMPONENT_HIDDEN_PRICE_COLUMNS = new Set([
+  'subtotal', 'total', 'unitPrice', 'unitPriceVnd', 'unitPriceUsd', 'listPriceUsd',
+  'amountAfterDiscount', 'discountAmount', 'vatAmount',
+]);
+
+/** "Ẩn/Hiện GIÁ của thành phần con trên báo giá" (2026-10-14, đổi ý nghĩa - xem
+ * comment type BundleSnapshotValue.showComponentsOnQuote) - TEN thanh phan
+ * con LUON hien (khong con gate o day nua, xem bundleComponentsToDisplayItems),
+ * field nay CHI con quyet dinh co hien GIA rieng tung thanh phan hay khong -
+ * mac dinh FALSE (an gia) ca khi field chua ton tai (bao gia cu). */
+function bundleSnapshotShowComponentPricesOnQuote(item: QuoteItem): boolean {
+  const snapshot = item.bundleSnapshot as unknown;
+  return !!(snapshot && typeof snapshot === 'object' && !Array.isArray(snapshot) && (snapshot as { showComponentsOnQuote?: unknown }).showComponentsOnQuote === true);
+}
+
 function appendQuota(label: string, quota?: string | null): string {
   const cleanQuota = String(quota || '').trim();
   if (!cleanQuota) return label;
@@ -301,7 +318,7 @@ function appendQuota(label: string, quota?: string | null): string {
   return `${label} — ${cleanQuota}`;
 }
 
-function bundleComponentToDisplayItem(component: BundleSnapshotComponent, suffix: string): QuoteItem {
+function bundleComponentToDisplayItem(component: BundleSnapshotComponent, suffix: string, unitMultiplier: number): QuoteItem {
   const label = component.customerDisplayName || component.name || component.displayText || 'Hạng mục';
   const serviceDescription = appendQuota(label, component.quota);
   return {
@@ -310,7 +327,7 @@ function bundleComponentToDisplayItem(component: BundleSnapshotComponent, suffix
     serviceDescription,
     description: component.description || '',
     unit: component.unit || '',
-    quantity: component.computedQuantity || component.quantity || 1,
+    quantity: (component.computedQuantity || component.quantity || 1) * unitMultiplier,
     unitPrice: component.unitPriceVnd || 0,
     discountPercent: 0,
     vatRate: 0,
@@ -318,7 +335,13 @@ function bundleComponentToDisplayItem(component: BundleSnapshotComponent, suffix
   };
 }
 
+// BUG THAT DA GAP (giong QuoteWorkspaceModal.tsx): ham nay TRUOC DAY luon
+// tinh so luong hang muc con theo DUNG 1 bo bundle, bo qua item.quantity
+// (so bo Sale da chon) - bao gia khach xem (ban in/public) hien thi sai so
+// luong neu Sale mua >1 bo. Nhan them unitMultiplier = item.quantity (toi
+// thieu 1) vao so luong tung dong con, dong bo voi QuoteWorkspaceModal.tsx.
 function bundleComponentsToDisplayItems(item: QuoteItem): QuoteItem[] {
+  const unitMultiplier = Math.max(1, Number(item.quantity) || 1);
   const components = bundleSnapshotComponents(item)
     .filter(component => component.showOnQuote !== false)
     .sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
@@ -338,7 +361,7 @@ function bundleComponentsToDisplayItems(item: QuoteItem): QuoteItem[] {
         serviceDescription: appendQuota(name, component.quotaPoolQuota || component.quota),
         description: '',
         unit: '',
-        quantity: 1,
+        quantity: unitMultiplier,
         unitPrice: component.unitPriceVnd || 0,
         discountPercent: 0,
         vatRate: 0,
@@ -346,10 +369,11 @@ function bundleComponentsToDisplayItems(item: QuoteItem): QuoteItem[] {
       });
       return;
     }
-    rows.push(bundleComponentToDisplayItem(component, String(index)));
+    rows.push(bundleComponentToDisplayItem(component, String(index), unitMultiplier));
   });
 
-  return rows;
+  const pricesHidden = !bundleSnapshotShowComponentPricesOnQuote(item);
+  return rows.map(row => ({ ...row, __bundleComponentPricesHidden: pricesHidden }));
 }
 
 export function QuoteDocumentRenderer({
@@ -506,8 +530,32 @@ export function QuoteDocumentRenderer({
   const renderCell = (item: QuoteItem, column: QuoteField, index: number) => {
     if (item.__bundleComponent && column.key === 'discountPercent') return '';
     if (item.__bundleComponent && column.key === 'vatRate') return '';
+    // "van cho coi thanh phan con, mien khong hien gia" (2026-10-14) - thanh
+    // phan con LUON hien ten/mo ta/so luong; GIA tung dong chi hien khi Combo
+    // cha chu dong bat (showComponentsOnQuote===true, xem toggle canh chip
+    // "Giữ giá gói cố định") - mac dinh an (tranh khach tu cong don gia SKU
+    // con roi doi chieu voi gia goi, hoac tuong nham day la gia PHAI tra
+    // them). Khong anh huong gia von/gia ban/chiet khau/margin that su cua
+    // Combo, thuan la che cot hien thi.
+    if (item.__bundleComponent && item.__bundleComponentPricesHidden && BUNDLE_COMPONENT_HIDDEN_PRICE_COLUMNS.has(column.key)) return '';
     if (column.type === 'auto-number' || column.key === 'order') return String(index + 1);
-    if (column.key === 'subtotal') return formatVnd(calculateItemSubtotal(item, currency));
+    // Chu ky "Trả năm" (migration 189): Thanh tien = Don gia x SL x 12 thang -
+    // khong ghi chu thi khach de hieu nham tinh sai (SL 1 x Don gia 199.000
+    // khong khop Thanh tien 2.388.000). Dung CHUNG .quote-price-stack voi
+    // nhanh giam gia (gach ngang) ben duoi - cung muc dich "1 dong phu nho
+    // duoi so tien chinh", khong tao class/cach trinh bay rieng.
+    if (column.key === 'subtotal') {
+      const amount = formatVnd(calculateItemSubtotal(item, currency));
+      if (item.billingCycle === 'annual' && item.billingTermMonths && item.billingTermMonths > 1) {
+        return (
+          <span className="quote-price-stack">
+            <b>{amount}</b>
+            <small>Cam kết {item.billingTermMonths} tháng</small>
+          </span>
+        );
+      }
+      return amount;
+    }
     if (column.key === 'vatAmount') return formatVnd(calculateItemVat(item, currency));
     // "ô nào null thì không hiện" (yeu cau rieng, cung nguyen tac voi Thong
     // tin khach hang) - tra chuoi rong thay vi dau "—" khi khong co du lieu.
@@ -523,7 +571,18 @@ export function QuoteDocumentRenderer({
         </span>
       ) : formatVnd(calculateItemTotal(item, currency));
     }
-    if (column.key === 'unitPrice') return formatVnd(item.unitPrice);
+    if (column.key === 'unitPrice') {
+      const amount = formatVnd(item.unitPrice);
+      if (item.billingCycle === 'annual' && item.billingTermMonths && item.billingTermMonths > 1) {
+        return (
+          <span className="quote-price-stack">
+            <b>{amount}</b>
+            <small>/tháng (trả năm)</small>
+          </span>
+        );
+      }
+      return amount;
+    }
     if (column.key === 'quantity') return String(item.quantity || '');
     if (column.key === 'discountPercent') return item.discountPercent ? `${item.discountPercent}%` : '';
     if (column.key === 'amountAfterDiscount') return formatVnd(calculateItemAfterDiscount(item, currency));
@@ -583,6 +642,12 @@ export function QuoteDocumentRenderer({
   // cấu hình "Tổng hợp giá" hay không (auto-hide đè lên cấu hình - yêu cầu rõ
   // "trùng với tạm tính thì ẩn").
   const hasOverallDiscount = discountSummary.overallDiscountAmount > 0;
+  // "Tổng tiền giảm = Giảm giá hạng mục + Giảm giá toàn báo giá" (2026-10-13) -
+  // overallDiscountAmount DA tinh tren phan CON LAI sau khi tru giam gia hang
+  // muc (xem calculateOverallDiscountSummary - ap dung dung thu tu "hạng mục
+  // trước, sau đó mới toàn báo giá trên số tiền còn lại"), nen cong truc tiep
+  // 2 so nay la dung, khong tinh trung.
+  const totalDiscountAmount = (totals.discountAmount || 0) + discountSummary.overallDiscountAmount;
   // Trường "Tổng hợp giá" hiện cho khách - áp dụng ở MỌI mode (preview/detail/
   // public/print), KHÁC với cột bảng hạng mục (applyCustomerColumnFilter chỉ áp ở
   // public/print/preview) - yêu cầu rõ "Chi tiết báo giá đã duyệt phải đồng nhất
@@ -690,7 +755,7 @@ export function QuoteDocumentRenderer({
   // bao gia cu lo luu 'subtotal' trong visibleColumns tu truoc). Van tinh
   // toan noi bo (calculateItemSubtotal) binh thuong, chi bo o tang hien thi
   // khach hang - khong dung mode='detail' (noi bo van thay du neu mau khai).
-  const ALWAYS_HIDDEN_FROM_CUSTOMER_KEYS = ['subtotal'];
+  const ALWAYS_HIDDEN_FROM_CUSTOMER_KEYS = [...ALWAYS_HIDDEN_CALCULATED_KEYS];
   const defaultVisibleCustomerColumnKeys = resolveDefaultVisibleColumnKeys(schema, quoteItems);
   const finalColumns = filterRedundantAmountAfterDiscountColumn(
     applyCustomerColumnFilter
@@ -858,7 +923,13 @@ export function QuoteDocumentRenderer({
                   <strong>-{formatVnd(discountSummary.overallDiscountAmount)}</strong>
                 </div>
               ) : null}
-              {visibleSummaryKeys.has('subtotalAfterDiscount') && hasOverallDiscount ? (
+              {visibleSummaryKeys.has('totalDiscount') && totalDiscountAmount > 0 ? (
+                <div className="villa-total-row villa-total-row--discount">
+                  <span>Tổng tiền giảm</span>
+                  <strong>-{formatVnd(totalDiscountAmount)}</strong>
+                </div>
+              ) : null}
+              {visibleSummaryKeys.has('subtotalAfterDiscount') && totalDiscountAmount > 0 ? (
                 <div className="villa-total-row">
                   <span>Tổng sau giảm giá</span>
                   <strong>{formatVnd(discountSummary.subtotalAfterDiscount)}</strong>
@@ -1209,7 +1280,20 @@ export function QuoteDocumentRenderer({
         </section>
 
         <section className="sheet-total-block sheet-total-block--standard">
-          {visibleSummaryKeys.has('subtotalBeforeVat') ? (
+          {/* "nhìn như bị trừ 2 lần" (2026-10-13): subtotalBeforeVat tu truoc
+           * gio da NET san phan giam gia hang muc (xem comment o
+           * calculateOverallDiscountSummary) - hien dong nay NGAY PHIA TREN
+           * dong "Giảm giá hạng mục" gay hieu nham la bi tru 2 lan. Co giam
+           * gia hang muc thi doi sang hien "Giá gốc trước giảm" (gia GOC that,
+           * truoc ca giam gia hang muc) thay the - CHI 1 trong 2 dong hien tai
+           * 1 thoi diem, khong lap lai. */}
+          {visibleSummaryKeys.has('grossSubtotal') && (totals.discountAmount || 0) > 0 ? (
+            <div className="sheet-total-row">
+              <span>Giá gốc trước giảm</span>
+              <strong>{formatVnd(totals.subtotalAmount)}</strong>
+            </div>
+          ) : null}
+          {visibleSummaryKeys.has('subtotalBeforeVat') && (totals.discountAmount || 0) <= 0 ? (
             <div className="sheet-total-row">
               <span>{findField('subtotalAmount').label || 'Tổng cộng chưa bao gồm thuế GTGT'}</span>
               <strong>{formatVnd(discountSummary.subtotalBeforeVat)}</strong>
@@ -1221,7 +1305,13 @@ export function QuoteDocumentRenderer({
               <strong>-{formatVnd(discountSummary.overallDiscountAmount)}</strong>
             </div>
           ) : null}
-          {visibleSummaryKeys.has('subtotalAfterDiscount') && hasOverallDiscount ? (
+          {visibleSummaryKeys.has('totalDiscount') && totalDiscountAmount > 0 ? (
+            <div className="sheet-total-row sheet-total-row--discount">
+              <span>Tổng tiền giảm</span>
+              <strong>-{formatVnd(totalDiscountAmount)}</strong>
+            </div>
+          ) : null}
+          {visibleSummaryKeys.has('subtotalAfterDiscount') && totalDiscountAmount > 0 ? (
             <div className="sheet-total-row">
               <span>Tổng sau giảm giá</span>
               <strong>{formatVnd(discountSummary.subtotalAfterDiscount)}</strong>
@@ -1247,9 +1337,9 @@ export function QuoteDocumentRenderer({
             <table className="quote-table">
               <thead><tr><th>Đợt</th><th>Tỷ lệ (%)</th><th>Số tiền</th><th>Điều kiện thanh toán</th><th>Ghi chú</th></tr></thead>
               <tbody>{visiblePaymentPlan(quoteData.paymentPlan).map((row, i) => <tr key={row.id || i}>
-                <td>{row.phase}</td><td>{row.percent}%</td><td className="money-cell">{formatVnd(paymentPlanAmount(discountSummary.grandTotal, row.percent, currency))}</td><td>{row.condition}</td><td>{row.note}</td>
+                <td>{row.phase}</td><td>{row.percent}%</td><td className="money-cell">{formatVnd(paymentPlanAmounts(visiblePaymentPlan(quoteData.paymentPlan), discountSummary.grandTotal, currency)[i])}</td><td>{row.condition}</td><td>{row.note}</td>
               </tr>)}</tbody>
-              <tfoot><tr><th>Tổng</th><th>{paymentPlanPercent(visiblePaymentPlan(quoteData.paymentPlan))}%</th><th>{formatVnd(visiblePaymentPlan(quoteData.paymentPlan).reduce((sum, row) => sum + paymentPlanAmount(discountSummary.grandTotal, row.percent, currency), 0))}</th><td colSpan={2} /></tr></tfoot>
+              <tfoot><tr><th>Tổng</th><th>{paymentPlanPercent(visiblePaymentPlan(quoteData.paymentPlan))}%</th><th>{formatVnd(paymentPlanAmounts(visiblePaymentPlan(quoteData.paymentPlan), discountSummary.grandTotal, currency).reduce((sum, amount) => sum + amount, 0))}</th><td colSpan={2} /></tr></tfoot>
             </table>
           </section>
         ) : null}
@@ -1288,10 +1378,17 @@ export function QuoteDocumentRenderer({
             {/* Khong con hien placeholder "[Đại diện công ty]" khi trong -
              * day la dong DE KY THAT, de trong (khong chu) van hop ly hon
              * hien 1 chuoi ngoac vuong khong phai chu ky ai ca. */}
+            {/* "sheet-signature-line" (2026-10-23, yeu cau sep - ten dai dien
+             * khong co cho ky tay khi in giay): 1 duong ke ngang ngan phia
+             * tren ten, tao khoang trong de ky that bang tay truoc khi dong
+             * dau - KHONG dung border-top tren <span> ten (se dinh sat vao
+             * chu) ma la 1 phan tu rieng. */}
+            <span className="sheet-signature-line" aria-hidden="true" />
             <span>{String(fieldValue('companyRepresentative') || '')}</span>
           </div>
           <div>
             <strong>{findField('customerRepresentative').label || 'Đại diện khách hàng'}</strong>
+            <span className="sheet-signature-line" aria-hidden="true" />
             <span>{String(fieldValue('customerRepresentative') || '')}</span>
           </div>
         </footer>

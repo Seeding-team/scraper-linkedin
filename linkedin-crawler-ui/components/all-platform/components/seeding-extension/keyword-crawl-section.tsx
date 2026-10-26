@@ -12,9 +12,16 @@
  */
 
 import { useMemo, useState } from "react";
+import { ExternalLink, Heart, MessageCircle, Repeat2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAppAuth } from "@/contexts/AppAuthContext";
-import { THREADS_CRAWL_EXTENSION_VERSION, YOUTUBE_EXTENSION_VERSION, type CrawlRuntime, type KeywordPlatform } from "./use-seeding-extension";
+import {
+  THREADS_CRAWL_EXTENSION_VERSION,
+  YOUTUBE_EXTENSION_VERSION,
+  type CrawlRuntime,
+  type KeywordPlatform,
+  type LiveCrawlPost,
+} from "./use-seeding-extension";
 
 interface KeywordCrawlSectionProps {
   platform: KeywordPlatform;
@@ -41,7 +48,7 @@ const COPY: Record<KeywordPlatform, {
     label: "Từ khoá tìm kiếm trên Threads",
     placeholder: "Mỗi dòng 1 từ khoá (hoặc cách nhau bởi dấu phẩy)\nVD: thuê seeding, cần agency marketing",
     sortLabel: "Ưu tiên bài mới nhất (tab \"Gần đây\" của Threads)",
-    hint: "Extension mở 1 tab Threads, tìm từng từ khoá bằng tài khoản Threads đang đăng nhập trình duyệt rồi tự lưu về hệ thống. Chưa đăng nhập threads.com thì mỗi từ khoá chỉ lấy được ~20 bài nổi bật (thường là bài cũ). Bài trùng và bài cũ hơn khoảng thời gian đã chọn sẽ tự bỏ qua.",
+    hint: "Extension mở 1 tab Threads, tìm từng từ khoá bằng tài khoản Threads đang đăng nhập trình duyệt, vừa cuộn đọc giao diện vừa bắt request API của Threads để lấy bài (hiện ngay bên dưới), rồi tự lưu về hệ thống. Chưa đăng nhập threads.com thì mỗi từ khoá chỉ lấy được ~20 bài nổi bật (thường là bài cũ). Bài trùng và bài cũ hơn khoảng thời gian đã chọn sẽ tự bỏ qua.",
     version: THREADS_CRAWL_EXTENSION_VERSION,
     unit: "bài",
   },
@@ -248,8 +255,118 @@ export function KeywordCrawlSection({ platform, isReady, needsUpdate, runtime, o
               </div>
             ))}
           </div>
+          {runtime.livePosts.length > 0 ? <LivePostList posts={runtime.livePosts} /> : null}
         </div>
       ) : null}
+    </div>
+  );
+}
+
+const SOURCE_BADGE: Record<string, { label: string; title: string; className: string }> = {
+  api: { label: "API", title: "Bắt từ request GraphQL trang tự gọi khi cuộn", className: "bg-violet-50 text-violet-700 border-violet-200" },
+  embedded: { label: "JSON", title: "Dữ liệu JSON nhúng sẵn trong trang", className: "bg-sky-50 text-sky-700 border-sky-200" },
+  dom: { label: "DOM", title: "Đọc từ giao diện trang", className: "bg-amber-50 text-amber-700 border-amber-200" },
+};
+
+const SOURCE_FILTERS = [
+  { value: "", label: "Tất cả" },
+  { value: "api", label: "API" },
+  { value: "embedded", label: "JSON" },
+  { value: "dom", label: "Chỉ DOM" },
+];
+
+function formatPostTime(iso: string | null): string {
+  if (!iso) return "";
+  const t = new Date(iso).getTime();
+  if (!Number.isFinite(t)) return "";
+  const minutes = Math.max(0, Math.round((Date.now() - t) / 60000));
+  if (minutes < 60) return `${minutes} phút trước`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours} giờ trước`;
+  const days = Math.round(hours / 24);
+  if (days < 30) return `${days} ngày trước`;
+  return new Date(iso).toLocaleDateString("vi-VN");
+}
+
+/** Danh sách bài extension đang gom được (cập nhật realtime trong lúc cào, trước cả khi lưu hệ thống). */
+function LivePostList({ posts }: { posts: LiveCrawlPost[] }) {
+  const [sourceFilter, setSourceFilter] = useState("");
+  const shown = useMemo(() => {
+    if (!sourceFilter) return posts;
+    // "Chỉ DOM": bài mà API/JSON không có, chỉ đọc được từ giao diện (số tương tác là ước lượng).
+    if (sourceFilter === "dom") return posts.filter((p) => p.sources.length > 0 && p.sources.every((s) => s === "dom"));
+    return posts.filter((p) => p.sources.includes(sourceFilter));
+  }, [posts, sourceFilter]);
+
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="text-sm font-bold text-foreground">
+          Bài vừa tìm thấy <span className="text-muted-foreground font-medium">({posts.length})</span>
+        </div>
+        <div className="flex items-center gap-1">
+          {SOURCE_FILTERS.map((f) => (
+            <button
+              key={f.value}
+              type="button"
+              onClick={() => setSourceFilter(f.value)}
+              className={cn(
+                "px-2 py-0.5 rounded-md border text-[11px] font-semibold",
+                sourceFilter === f.value ? "bg-primary text-white border-primary" : "bg-card text-muted-foreground border-border hover:bg-muted",
+              )}
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
+      </div>
+      <p className="text-[11px] text-muted-foreground">
+        Danh sách tạm trong lúc cào, chưa lọc. Hệ thống sẽ bỏ bài trùng và bài quá cũ khi lưu.
+      </p>
+      <div className="rounded-xl border border-border divide-y divide-border max-h-[420px] overflow-y-auto">
+        {shown.length === 0 ? (
+          <div className="p-4 text-xs text-muted-foreground text-center">Không có bài nào khớp bộ lọc.</div>
+        ) : (
+          shown.map((post) => (
+            <div key={post.post_url} className="p-3 flex flex-col gap-1.5 min-w-0">
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+                <span className="font-bold text-foreground truncate max-w-[200px]">{post.author_name || post.author_username}</span>
+                <span className="text-muted-foreground truncate">@{post.author_username}</span>
+                {post.post_time ? <span className="text-muted-foreground">· {formatPostTime(post.post_time)}</span> : null}
+                {post.keyword ? (
+                  <span className="px-1.5 py-0.5 rounded bg-muted text-[10px] font-semibold text-muted-foreground truncate max-w-[160px]">{post.keyword}</span>
+                ) : null}
+                <span className="ml-auto flex items-center gap-1">
+                  {post.sources.map((s) =>
+                    SOURCE_BADGE[s] ? (
+                      <span key={s} title={SOURCE_BADGE[s].title} className={cn("px-1.5 py-0.5 rounded border text-[10px] font-bold", SOURCE_BADGE[s].className)}>
+                        {SOURCE_BADGE[s].label}
+                      </span>
+                    ) : null,
+                  )}
+                </span>
+              </div>
+              {post.content ? (
+                <p className="text-xs text-foreground leading-relaxed line-clamp-3 whitespace-pre-line break-words">{post.content}</p>
+              ) : null}
+              <div className="flex items-center gap-4 text-[11px] text-muted-foreground">
+                <span className="flex items-center gap-1"><Heart className="h-3.5 w-3.5" />{post.reactions.toLocaleString("vi-VN")}</span>
+                <span className="flex items-center gap-1"><MessageCircle className="h-3.5 w-3.5" />{post.comments.toLocaleString("vi-VN")}</span>
+                <span className="flex items-center gap-1"><Repeat2 className="h-3.5 w-3.5" />{post.shares.toLocaleString("vi-VN")}</span>
+                {post.image_urls.length > 0 ? <span>{post.image_urls.length} ảnh</span> : null}
+                <a
+                  href={post.post_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="ml-auto flex items-center gap-1 font-semibold text-primary hover:underline cursor-pointer transition"
+                >
+                  Mở bài <ExternalLink className="h-3 w-3" />
+                </a>
+              </div>
+            </div>
+          ))
+        )}
+      </div>
     </div>
   );
 }

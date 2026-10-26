@@ -9,7 +9,7 @@ kèm kết quả. Để setup/deploy thật xem `docs/VIBER_CHAT_SETUP.md`.
 |---|---|---|---|
 | Unit (service + API giả) | `linkedin_group_crawler/tests/test_viber_service.py` | `pytest` | 6 |
 | Edge case (webhook/biên/RBAC) | `linkedin_group_crawler/tests/test_viber_extra.py` | `pytest` | 14 |
-| Migration trên Postgres thật | `supabase/migrations/177_viber_module.sql` | chạy 2 lần + cascade | ✔ |
+| Migration trên Postgres thật | `supabase/migrations/180_viber_module.sql` | chạy 2 lần + cascade | ✔ |
 | Repo layer trên Supabase thật | (thủ công) | PostgREST local | ✔ |
 | **E2E backend thật + HTTP** | `tests/viber_local/` | `walkthrough.py` | **24** |
 

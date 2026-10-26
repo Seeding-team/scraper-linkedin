@@ -115,6 +115,10 @@ export interface QuoteRepository {
   // ── Phase 1/3 lifecycle (migration 087/089) ──────────────────────────────
   /** Huỷ báo giá (không hard-delete) — bắt buộc lý do, tự tắt public link. */
   cancelQuote(quoteId: string, reason: string): Promise<Quote>;
+  /** Danh sach ly do Khong chot / OUT (nguon o backend). */
+  getLostReasons(): Promise<Array<{ code: string; label: string }>>;
+  /** Khong chot / OUT sau phat hanh - tra ve quote moi + ket qua xet OUT Co hoi. */
+  markQuoteLost(quoteId: string, payload: { reason: string; reasonOther?: string; note?: string }): Promise<{ quote: Quote; dealOut: { changed: boolean; message?: string } }>;
   /** Huỷ công khai — tắt public link, KHÔNG xoá quote. */
   revokePublicQuote(quoteId: string): Promise<Quote>;
   /** Mở lại link báo giá — chiều ngược của revokePublicQuote(), giữ nguyên public_token cũ. */

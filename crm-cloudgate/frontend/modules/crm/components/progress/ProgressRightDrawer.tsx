@@ -17,8 +17,9 @@ export function ProgressRightDrawer({
   onBack,
   breadcrumb,
   onBreadcrumbClick,
-  width = 640,
+  width: _legacyWidth,
   hideHeader = false,
+  persistent = false,
 }: {
   eyebrow?: string;
   title: string;
@@ -28,13 +29,16 @@ export function ProgressRightDrawer({
   onBack?: () => void;
   breadcrumb?: string[];
   onBreadcrumbClick?: (index: number) => void;
+  /** Da bo: chieu rong gio theo chuan chung --crm-drawer-width (crm.css), giu prop de khong vo noi goi cu. */
   width?: number;
   hideHeader?: boolean;
+  /** Drawer "persistent" (Lead 360): khong co lop phu chan thao tac ben duong, KHONG dong khi bam ra ngoai - chi dong bang nut X. */
+  persistent?: boolean;
 }) {
   return (
     <>
-      <div className="progress-drawer-backdrop" onClick={onClose} />
-      <aside className="progress-drawer" style={{ width: `min(${width}px, 96vw)` }}>
+      <div className={`progress-drawer-backdrop${persistent ? ' progress-drawer-backdrop--passive' : ''}`} onClick={persistent ? undefined : onClose} />
+      <aside className={`progress-drawer${persistent ? ' progress-drawer--persistent' : ''}`}>
         {!hideHeader && (
           <header className="progress-drawer-header">
           <div className="min-w-0" style={{ flex: 1 }}>

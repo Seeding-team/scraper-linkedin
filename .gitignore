@@ -1,3 +1,15 @@
+# =============================================================================
+# CRITICAL RULE: ZERO-LEAK INTELLECTUAL PROPERTY & AI BRAIN (LOCAL ONLY)
+# =============================================================================
+.aevum/
+.agents/
+.agent/
+_aevum/
+_agents/
+_agent/
+GEMINI.md
+AGENTS.md
+TONGQUAN.md
 # =========================
 # Monorepo ignore (FE + BE)
 # =========================
@@ -105,6 +117,8 @@ linkedin-crawler-ui/realtime_explore/
 /container_code.txt
 /container_image.txt
 /container_top.txt
+/network_logs_*.json
+/network_logs*.json
 /conv_1070.txt
 /fe_image.txt
 /fe_latest.txt
@@ -166,15 +180,10 @@ docker-compose.override.yml
 
 # ---- Root-level generated artifacts ----
 __pycache__/
-scratch/*.xlsx
-scratch/*.png
-scratch/*.html
-scratch/*.sql
-scratch/*.py
-scratch/*.log
-scratch/**/*.js
-scratch/**/package.json
-scratch/**/package-lock.json
+scratch/
+linkedin-crawler-ui/scratch/
+linkedin_group_crawler/scratch/
+api-sniffer-*.json
 
 # Code review reports
 code-review-report-*.md
@@ -187,7 +196,21 @@ docs/INFRASTRUCTURE.md
 # Doc tien do phien lam viec, phong hua thong tin ha tang nhay cam lot vao sau nay
 docs/QUOTE_ISSUER_COMPANY_WIZARD_2026-08-27.md
 
-# ---- crm-module + crm-cloudgate + crm-securityzone (module CRM doc lap, FE + BE, 1 instance/host) ----
+# ---- crm-module + crm-cloudgate + crm-securityzone + crm-timetech (module CRM doc lap, FE + BE, 1 instance/host) ----
+crm-timetech/.env
+crm-timetech/docker-compose.override.yml
+crm-timetech/backend/.env
+crm-timetech/backend/.env.local
+crm-timetech/backend/.venv
+crm-timetech/backend/__pycache__
+crm-timetech/backend/**/__pycache__
+crm-timetech/backend/artifacts
+crm-timetech/backend/node_modules
+crm-timetech/frontend/.env*
+crm-timetech/frontend/node_modules
+crm-timetech/frontend/.next
+crm-timetech/frontend/nextdev.log
+crm-timetech/frontend/npm-install.log
 crm-securityzone/.env
 crm-securityzone/docker-compose.override.yml
 crm-securityzone/backend/.env
@@ -285,3 +308,6 @@ supabase/local_mock.sql
 linkedin_group_crawler/supabase/local_mock.sql
 scripts/local-mock-seed.*
 local_mock.sql
+
+# Cloned external prototypes
+prototype-studio/

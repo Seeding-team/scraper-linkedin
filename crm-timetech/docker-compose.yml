@@ -1,0 +1,61 @@
+services:
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_LINKEDIN_CRAWLER_API_URL: ${CRM_PUBLIC_URL:-http://localhost:18093}
+        NEXT_PUBLIC_LINKEDIN_CRAWLER_API_KEY: ${NEXT_PUBLIC_LINKEDIN_CRAWLER_API_KEY:-}
+        NEXT_PUBLIC_GOOGLE_CLIENT_ID: ${NEXT_PUBLIC_GOOGLE_CLIENT_ID:-}
+        NEXT_PUBLIC_CRM_INSTANCE: timetech
+    image: crm-timetech-frontend:latest
+    container_name: crm-timetech-frontend
+    restart: unless-stopped
+    environment:
+      TZ: Asia/Ho_Chi_Minh
+    expose:
+      - "3000"
+    networks:
+      crm-net:
+        aliases: [frontend]
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: crm-timetech-backend:latest
+    container_name: crm-timetech-backend
+    restart: unless-stopped
+    init: true   # PID 1 reap tien trinh con (LibreOffice soffice.bin thanh zombie sau timeout)
+    env_file:
+      - ./backend/.env
+    environment:
+      TZ: Asia/Ho_Chi_Minh
+    expose:
+      - "8000"
+    volumes:
+      - backend-artifacts:/app/artifacts
+    networks:
+      crm-net:
+        aliases: [backend]
+
+  router:
+    image: nginx:alpine
+    container_name: crm-timetech-router
+    restart: unless-stopped
+    depends_on: [frontend, backend]
+    environment:
+      TZ: Asia/Ho_Chi_Minh
+    ports:
+      - "${CRM_ROUTER_PORT:-18093}:8080"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    networks:
+      crm-net:
+        aliases: [router]
+
+networks:
+  crm-net:
+
+volumes:
+  backend-artifacts:
