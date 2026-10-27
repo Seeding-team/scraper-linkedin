@@ -45,6 +45,12 @@ export function TeamModal({ isOpen, onClose, team, leaderId, onSuccess }: TeamMo
       .sort((a, b) => a.displayName.localeCompare(b.displayName));
   }, [members, allMembers]);
 
+  const unlinkedSelectedMembers = useMemo(() => {
+    return selectedMemberIds
+      .map(mid => rosterEntries.find(e => e.memberId === mid))
+      .filter((e): e is NonNullable<typeof e> => Boolean(e && !e.linkedUserId));
+  }, [selectedMemberIds, rosterEntries]);
+
   // Load all members (role === "member")
   useEffect(() => {
     async function loadMembers() {
@@ -123,7 +129,8 @@ export function TeamModal({ isOpen, onClose, team, leaderId, onSuccess }: TeamMo
       const payload = {
         name_team: nameTeam.trim(),
         leader_id: leaderId,
-        member_ids: resolvedMemberIds
+        member_ids: resolvedMemberIds,
+        ...(team ? { team_id: team.id } : {}),
       };
 
       let res;
@@ -253,6 +260,15 @@ export function TeamModal({ isOpen, onClose, team, leaderId, onSuccess }: TeamMo
                 <MaterialIcon name="search" className="text-[16px]" />
               </div>
             </div>
+
+            {unlinkedSelectedMembers.length > 0 && (
+              <div className="bg-amber-50 text-amber-800 p-2.5 rounded-xl text-xs flex items-start gap-2 border border-amber-200">
+                <MaterialIcon name="info" className="text-[16px] text-amber-600 shrink-0 mt-0.5" />
+                <span>
+                  Có <strong>{unlinkedSelectedMembers.length}</strong> nhân sự chưa liên kết tài khoản hệ thống ({unlinkedSelectedMembers.map(m => m.displayName).slice(0, 2).join(", ")}{unlinkedSelectedMembers.length > 2 ? "..." : ""}). Bạn vẫn có thể lưu team, nhưng họ chỉ có thể nhận bài và tính KPI sau khi được cấp tài khoản đăng nhập.
+                </span>
+              </div>
+            )}
 
             {/* Members List */}
             <div className="border border-outline-variant rounded-xl max-h-[200px] overflow-y-auto divide-y divide-outline-variant bg-surface-container-low">
