@@ -326,6 +326,9 @@ export function ContractAiReviewPanel({
     const mergedConfig = {
       ...config,
       events: {
+        onDocumentReady: () => setEditorError(current => (
+          current.startsWith('OnlyOffice báo lỗi') ? '' : current
+        )),
         onDocumentStateChange: (ev: { data?: boolean }) => { if (ev?.data) setPendingSave(true); },
         onError: () => setEditorError('OnlyOffice báo lỗi trong lúc chỉnh sửa — thử tải lại.'),
       },

@@ -1,0 +1,11 @@
+{
+  "services": {
+    "CoAuthoring": {
+      "socketio": {
+        "connection": {
+          "transports": ["polling"]
+        }
+      }
+    }
+  }
+}
