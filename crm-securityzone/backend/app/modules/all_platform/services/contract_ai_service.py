@@ -89,7 +89,7 @@ _REVIEW_SYSTEM_PROMPT = (
 )
 
 
-# Contract Copilot dung proxy.markeeai.com (model cc/claude-*) qua bien moi truong RIENG,
+# Contract Copilot dung proxy.markeeai.com (model claude-api/*) qua bien moi truong RIENG,
 # de khong anh huong cac tinh nang AI khac dang dung chung OPENAI_* (ai_comment, deal_ai_parse...).
 # Khong dat bien rieng -> roi ve OPENAI_* nhu cu.
 def _cfg() -> tuple[str, str, str]:
@@ -110,7 +110,8 @@ def _require_api_key() -> str:
 # - Dùng proxy markeeai (đặt CONTRACT_AI_BASE_URL): thứ tự theo benchmark 08/10/2026:
 #   sonnet-5 (số liệu đúng 9/9) -> sonnet-5-5 -> haiku-4-5 (rẻ nhất, thi thoảng bịa số).
 # - Không đặt biến riêng: giữ NGUYÊN hành vi cũ (shopaikey, danh sách GPT, max_tokens 2000).
-_FALLBACK_MODELS_PROXY = ["cc/claude-sonnet-5", "cc/claude-sonnet-5-5", "cc/claude-haiku-4-5-20251001"]
+# 28/10/2026: nhom cc/* tren proxy tra 403 (OAuth) -> dung nhom claude-api/*.
+_FALLBACK_MODELS_PROXY = ["claude-api/claude-sonnet-5-5", "claude-api/claude-haiku-5-5", "claude-api/claude-sonnet-5"]
 _FALLBACK_MODELS_LEGACY = ["gpt-4o-mini", "gpt-4o", "gpt-5-mini", "gpt-5", "gpt-4.1-mini", "gpt-4.1"]
 _ATTEMPTS_PER_MODEL = 2
 
