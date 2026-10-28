@@ -27,6 +27,7 @@ from app.modules.all_platform.services.contract_ocr_service import (
     compare_contract_to_quote_full,
     extract_contract_fields_full,
     extract_risk_clauses,
+    is_stale_heuristic,
 )
 
 logger = get_logger(__name__)
@@ -170,6 +171,9 @@ async def _run_ai_review_full_locked(contract_id: str) -> dict[str, Any]:
         .eq("rules_version", RULES_VERSION)
         .order("created_at", desc=True).limit(1).execute().data
     )
+    if cached and is_stale_heuristic(cached[0].get("extracted_fields")):
+        logger.info("AI Review %s: bo qua cache quy tac cung (AI da cau hinh) -> chay lai bang AI", contract_id)
+        cached = []
     if cached:
         row = cached[0]
         comp = row["quote_comparison"] or []
