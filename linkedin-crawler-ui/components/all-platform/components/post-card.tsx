@@ -67,6 +67,35 @@ export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onVi
     }
   };
 
+  const handleStartTask = (e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    if (!post.post_url) {
+      toast.error("Bài viết không có đường dẫn hợp lệ");
+      return;
+    }
+
+    const currentOrigin = typeof window !== "undefined" ? window.location.origin : "https://seeding.markeeai.com";
+    window.postMessage({
+      type: "SYNC_ACTIVE_MEMBER",
+      action: "SYNC_ACTIVE_MEMBER",
+      payload: {
+        email_member: currentUser?.email || "",
+        apiBase: currentOrigin,
+        facebook_post_id: post.id || "unknown",
+        target_link: post.post_url,
+        id_post: post.id,
+        platform: post.platform,
+        group_name: post.group_name || "",
+      },
+    }, "*");
+
+    setTimeout(() => {
+      window.open(post.post_url, "_blank");
+    }, 200);
+
+    toast.success("🚀 Đã mở bài viết và kích hoạt theo dõi! Hãy bình luận trên tab vừa mở, hệ thống sẽ tự động bắt request minh chứng (+1 KPI).");
+  };
+
   const handleVerify = () => {
     if (onVerify) {
       handleView();
@@ -442,10 +471,20 @@ export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onVi
 
             <button
               type="button"
-              onClick={() => setIsTaskModalOpen(true)}
-              className="px-3 py-2 bg-primary hover:bg-primary/90 text-primary-foreground rounded-lg text-sm font-semibold transition shadow-sm cursor-pointer"
+              onClick={handleStartTask}
+              className="px-3.5 py-2 bg-primary hover:bg-primary/90 text-primary-foreground rounded-lg text-sm font-semibold transition shadow-sm cursor-pointer flex items-center gap-1.5"
+              title="Nhảy sang tab bài viết và kích hoạt theo dõi bắt request minh chứng comment tự động"
             >
-              📋 Làm nhiệm vụ
+              <span>📋 Làm nhiệm vụ</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setIsTaskModalOpen(true)}
+              className="px-2 py-2 bg-card border border-border text-muted-foreground hover:bg-muted hover:text-foreground rounded-lg transition shadow-sm cursor-pointer flex items-center gap-1 text-xs font-semibold"
+              title="Xem & sao chép mẫu câu bình luận"
+            >
+              <span className="material-symbols-outlined text-[16px]">chat</span>
+              <span>Mẫu</span>
             </button>
 
             {/* Cac hanh dong it dung hon (Xem chi tiet / Len lich / Xoa) gom vao 1 modal
@@ -501,40 +540,12 @@ export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onVi
   );
 }
 
-function TaskModal({ post, onClose, onCommentSuccess }: { post: UnifiedPost; onClose: () => void; onCommentSuccess?: () => void }) {
+function TaskModal({ post, onClose }: { post: UnifiedPost; onClose: () => void; onCommentSuccess?: () => void }) {
   const { user } = useAppAuth();
   const commentPlatform: GroupPlatform | undefined = post.platform === "facebook" || post.platform === "linkedin" ? post.platform : undefined;
   const { libraryItems: commentTemplates } = useQuickCommentLibrary(commentPlatform);
   const [commentText, setCommentText] = useState("");
   const [copiedInboxId, setCopiedInboxId] = useState<string | null>(null);
-  const [justCommented, setJustCommented] = useState(false);
-
-  // Nhiem vu binh luan: goi TRUC TIEP extension va tien hanh comment that (giong het
-  // luong "Binh luan hang loat" cua tab Cao bai viet) thay vi chi sao chep de nguoi
-  // dung tu dan - tinh la thanh vien nay DA LAM nhiem vu ngay khi extension bao thanh
-  // cong (backend tu ghi seeding-mark/verify voi email_member = nguoi dang dang nhap,
-  // dung nguyen co che da co san cua "Binh luan hang loat", khong can them bang moi).
-  const { isReady } = useSeedingExtensionStatus();
-  const commentRuntime = useBulkCommentRuntime({
-    isReady,
-    email: user?.email,
-    onComplete: (seededUrls) => {
-      if (post.post_url && seededUrls.includes(post.post_url)) {
-        setJustCommented(true);
-        onCommentSuccess?.();
-      }
-    },
-  });
-
-  const handleStartComment = () => {
-    if (!commentPlatform || !commentText.trim() || !post.post_url || commentRuntime.isCommenting) return;
-    setJustCommented(false);
-    commentRuntime.start(
-      [{ url: post.post_url, id_post: post.id, id_platform: PLATFORM_DB_ID[commentPlatform] }],
-      commentText.trim(),
-      { id_platform: PLATFORM_DB_ID[commentPlatform] },
-    );
-  };
 
   const { libraryItems, fallbackItems } = useQuickInboxLibrary();
   const inboxGroups = useMemo(() => {
@@ -557,6 +568,39 @@ function TaskModal({ post, onClose, onCommentSuccess }: { post: UnifiedPost; onC
     window.open(post.author_url || post.post_url, "_blank");
   };
 
+  const handleLaunchTask = async () => {
+    if (commentText.trim()) {
+      try {
+        await navigator.clipboard.writeText(commentText.trim());
+      } catch {}
+    }
+    const currentOrigin = typeof window !== "undefined" ? window.location.origin : "https://seeding.markeeai.com";
+    window.postMessage({
+      type: "SYNC_ACTIVE_MEMBER",
+      action: "SYNC_ACTIVE_MEMBER",
+      payload: {
+        email_member: user?.email || "",
+        apiBase: currentOrigin,
+        facebook_post_id: post.id || "unknown",
+        target_link: post.post_url,
+        id_post: post.id,
+        platform: post.platform,
+        group_name: post.group_name || "",
+      },
+    }, "*");
+
+    setTimeout(() => {
+      window.open(post.post_url, "_blank");
+    }, 200);
+
+    toast.success(
+      commentText.trim()
+        ? "🚀 Đã sao chép bình luận & kích hoạt theo dõi! Hãy dán (Ctrl+V) trên tab vừa mở, Extension sẽ tự động bắt request minh chứng."
+        : "🚀 Đã mở bài viết và kích hoạt theo dõi! Hãy bình luận trên tab vừa mở, hệ thống sẽ tự động bắt request minh chứng."
+    );
+    onClose();
+  };
+
   return (
     <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={onClose}>
       <div className="bg-card rounded-2xl border border-border shadow-xl w-full max-w-2xl max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
@@ -565,7 +609,7 @@ function TaskModal({ post, onClose, onCommentSuccess }: { post: UnifiedPost; onC
             <span className="material-symbols-outlined text-primary">task_alt</span>
             Nhiệm vụ của bạn với bài viết này
           </h3>
-          <button type="button" onClick={onClose} className="p-1.5 rounded-lg hover:bg-muted">
+          <button type="button" onClick={onClose} className="p-1.5 rounded-lg hover:bg-muted cursor-pointer">
             <span className="material-symbols-outlined text-[18px]">close</span>
           </button>
         </div>
@@ -576,28 +620,27 @@ function TaskModal({ post, onClose, onCommentSuccess }: { post: UnifiedPost; onC
             <p className="text-sm text-foreground line-clamp-3">{post.content || "(không có nội dung văn bản)"}</p>
           </div>
 
-          <div className="rounded-xl border border-primary/20 bg-primary/5 p-3 text-xs text-foreground leading-relaxed">
-            <b>Việc cần làm:</b> {commentPlatform ? (
-              <>Bình luận (comment) theo mẫu bên dưới — bấm &quot;Bắt đầu bình luận&quot;, hệ thống tự gọi extension để đăng bình luận thật lên bài viết, tính ngay là bạn đã hoàn thành phần này.</>
-            ) : (
-              <>Threads chưa hỗ trợ bình luận tự động qua extension — bạn tự dán vào bình luận thật.</>
-            )} Ngoài ra có thể nhắn tin (inbox) mời chào tới người đăng bài ở mục 2 bên dưới.
+          <div className="rounded-xl border border-primary/20 bg-primary/5 p-3 text-xs text-foreground leading-relaxed flex items-start gap-2">
+            <span className="material-symbols-outlined text-primary text-[18px] shrink-0 mt-0.5">info</span>
+            <div>
+              <b>Cơ chế bắt minh chứng tự động:</b> Khi bạn bấm nút bên dưới, hệ thống sẽ mở tab bài viết sang {post.platform === "linkedin" ? "LinkedIn" : "Facebook"} và kích hoạt theo dõi request. Bạn chỉ cần đăng bình luận trên bài viết thật, Extension sẽ tự động lưu link minh chứng chuẩn vào KPI.
+            </div>
           </div>
 
           <div className="flex flex-col gap-2">
-            <label className="text-sm font-bold text-foreground">1. Bình luận trên bài viết</label>
+            <label className="text-sm font-bold text-foreground">1. Mẫu bình luận nhanh (Tùy chọn)</label>
             {commentTemplates.length > 0 && (
               <div className="flex flex-wrap gap-1.5">
                 {commentTemplates.slice(0, 8).map((t) => (
                   <button
                     key={t.id}
                     type="button"
-                    disabled={commentRuntime.isCommenting}
                     onClick={() => {
                       setCommentText(t.content);
-                      setJustCommented(false);
+                      navigator.clipboard.writeText(t.content).catch(() => {});
+                      toast.info(`Đã chọn & chép mẫu "${t.title}" vào clipboard`);
                     }}
-                    className="px-2.5 py-1 rounded-full border border-border text-[11px] font-semibold text-muted-foreground hover:border-primary hover:text-primary transition disabled:opacity-50"
+                    className="px-2.5 py-1 rounded-full border border-border text-[11px] font-semibold text-muted-foreground hover:border-primary hover:text-primary transition cursor-pointer"
                   >
                     {t.title}
                   </button>
@@ -607,70 +650,27 @@ function TaskModal({ post, onClose, onCommentSuccess }: { post: UnifiedPost; onC
             <textarea
               rows={3}
               value={commentText}
-              onChange={(e) => {
-                setCommentText(e.target.value);
-                setJustCommented(false);
-              }}
-              disabled={commentRuntime.isCommenting}
-              placeholder="Chọn mẫu ở trên hoặc tự soạn nội dung bình luận..."
-              className="w-full rounded-xl border border-border bg-background p-2.5 text-sm outline-none focus:border-primary resize-y disabled:opacity-60"
+              onChange={(e) => setCommentText(e.target.value)}
+              placeholder="Chọn mẫu ở trên hoặc tự soạn nội dung bình luận (sẽ được tự động sao chép để bạn dán)..."
+              className="w-full rounded-xl border border-border bg-background p-2.5 text-sm outline-none focus:border-primary resize-y"
             />
 
-            {commentPlatform ? (
-              <>
-                {!isReady ? (
-                  <div className="rounded-xl border border-amber-200 bg-amber-50 p-2.5 text-[11px] text-amber-800 leading-relaxed">
-                    Chưa kết nối được Markee Seeding Extension trên trình duyệt này — cài bản {REQUIRED_EXTENSION_VERSION}+ rồi F5 lại trang để bình luận tự động.
-                  </div>
-                ) : null}
-                <button
-                  type="button"
-                  onClick={handleStartComment}
-                  disabled={!isReady || !commentText.trim() || commentRuntime.isCommenting}
-                  className="self-start px-4 py-2 rounded-xl bg-primary text-white text-sm font-bold disabled:opacity-50 inline-flex items-center gap-1.5"
-                >
-                  {commentRuntime.isCommenting ? (
-                    <span className="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full animate-spin" />
-                  ) : (
-                    <span className="material-symbols-outlined text-[16px]">bolt</span>
-                  )}
-                  {commentRuntime.isCommenting ? "Đang bình luận qua Extension..." : "Bắt đầu bình luận qua Extension"}
-                </button>
-                {commentRuntime.isCommenting && commentRuntime.progress ? (
-                  <div className="text-[11px] text-muted-foreground">{commentRuntime.progress.status}</div>
-                ) : null}
-                {commentRuntime.lastError ? (
-                  <div className="rounded-xl border border-red-200 bg-red-50 p-2.5 text-[11px] text-red-700">{commentRuntime.lastError}</div>
-                ) : null}
-                {justCommented ? (
-                  <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-2.5 text-[11px] text-emerald-700 font-semibold flex items-center gap-1.5">
-                    <span className="material-symbols-outlined text-[16px]">check_circle</span>
-                    Đã bình luận thành công — nhiệm vụ này đã tính hoàn thành cho bạn.
-                  </div>
-                ) : null}
-              </>
-            ) : (
+            <div className="flex flex-col gap-1.5 pt-1">
               <button
                 type="button"
-                onClick={async () => {
-                  if (!commentText.trim()) return;
-                  try {
-                    await navigator.clipboard.writeText(commentText);
-                  } catch {}
-                  window.open(post.post_url, "_blank");
-                }}
-                disabled={!commentText.trim()}
-                className="self-start px-4 py-2 rounded-xl bg-primary text-white text-sm font-bold disabled:opacity-50"
+                onClick={handleLaunchTask}
+                className="self-start px-4 py-2.5 rounded-xl bg-primary hover:bg-primary/90 text-white text-sm font-bold shadow-sm inline-flex items-center gap-2 cursor-pointer transition"
               >
-                Sao chép & Mở bài viết
+                <span className="material-symbols-outlined text-[18px]">open_in_new</span>
+                {commentText.trim() ? "Sao chép & Mở bài viết (Kích hoạt theo dõi)" : "Mở bài viết & Làm nhiệm vụ (Kích hoạt theo dõi)"}
               </button>
-            )}
+            </div>
           </div>
 
           {post.author_url && (
             <div className="flex flex-col gap-2 border-t border-border pt-4">
               <label className="text-sm font-bold text-foreground">2. Nhắn tin (Inbox) cho người đăng bài</label>
-              <div className="flex flex-col gap-2 max-h-[260px] overflow-y-auto pr-1">
+              <div className="flex flex-col gap-2 max-h-[240px] overflow-y-auto pr-1">
                 {inboxGroups.map((group, gIdx) => (
                   <div key={gIdx} className="flex flex-col gap-1">
                     <div className="text-[10px] font-bold text-muted-foreground uppercase">{group.category}</div>
@@ -679,13 +679,12 @@ function TaskModal({ post, onClose, onCommentSuccess }: { post: UnifiedPost; onC
                         key={template.id}
                         type="button"
                         onClick={() => void handleCopyInbox(template)}
-                        className="text-left px-3 py-2 rounded-xl border border-border hover:border-primary hover:bg-primary/5 transition"
+                        className="text-left px-3 py-2 rounded-xl border border-border hover:border-primary hover:bg-primary/5 transition flex items-center justify-between text-xs cursor-pointer"
                       >
-                        <div className="text-xs font-bold text-foreground">
-                          {template.title}
-                          {copiedInboxId === template.id ? <span className="text-emerald-600"> · ✓ Đã copy — dán vào tin nhắn trên tab vừa mở</span> : null}
-                        </div>
-                        <div className="text-[11px] text-muted-foreground line-clamp-2">{composeQuickInboxMessage(template, post.content)}</div>
+                        <span className="font-medium text-foreground truncate mr-2">{template.title}</span>
+                        <span className="text-[10px] text-muted-foreground shrink-0 flex items-center gap-1">
+                          {copiedInboxId === template.id ? "✓ Đã chép" : "Chép & Mở profile"}
+                        </span>
                       </button>
                     ))}
                   </div>
@@ -693,18 +692,6 @@ function TaskModal({ post, onClose, onCommentSuccess }: { post: UnifiedPost; onC
               </div>
             </div>
           )}
-
-          <label className="flex items-start gap-2 text-xs text-foreground border-t border-border pt-4 cursor-pointer">
-            <input type="checkbox" className="mt-0.5 rounded border-border" />
-            <span>Tôi đã hiểu nhiệm vụ cần làm với bài viết này (bình luận và/hoặc inbox mời chào).</span>
-          </label>
-          <button
-            type="button"
-            onClick={onClose}
-            className="self-end px-5 py-2 rounded-xl border border-border text-sm font-bold text-muted-foreground hover:bg-muted"
-          >
-            Đóng
-          </button>
         </div>
       </div>
     </div>

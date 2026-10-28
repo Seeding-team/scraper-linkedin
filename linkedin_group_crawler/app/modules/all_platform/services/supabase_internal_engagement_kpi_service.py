@@ -151,11 +151,30 @@ def record_action(payload: dict) -> dict:
     try:
         # Thử lưu với đầy đủ các cột mới
         result = supabase.table("internal_engagement_kpi").insert(full_data).execute()
-        return result.data[0] if result.data else {}
+        saved_record = result.data[0] if result.data else {}
     except Exception as err:
         logger.warning(f"Lỗi khi insert với cột mở rộng ({err}) — tự động chuyển sang fallback base_data an toàn...")
         result = supabase.table("internal_engagement_kpi").insert(base_data).execute()
-        return result.data[0] if result.data else {}
+        saved_record = result.data[0] if result.data else {}
+
+    # Đồng bộ sang seeding_content_kpi (Seeding bên ngoài) nếu là comment thành công
+    if action_type == "comment" and link_post and email:
+        try:
+            from app.modules.all_platform.services.supabase_seeding_service import verify_seeding_mark
+            verify_seeding_mark({
+                "email_member": email,
+                "link_post": link_post,
+                "link_comment": link_comment or None,
+                "content": raw_content or None,
+                "profile_id": payload.get("profile_id") or None,
+                "id_post": payload.get("id_post") or None,
+                "id_platform": payload.get("id_platform") or None,
+            })
+            logger.info(f"Đã đồng bộ minh chứng comment sang seeding_content_kpi cho member {email}")
+        except Exception as e_seed:
+            logger.debug(f"Bỏ qua đồng bộ seeding_content_kpi: {e_seed}")
+
+    return saved_record
 
 
 def get_marks_by_links(email_member: str, link_posts: list[str]) -> dict[str, str]:

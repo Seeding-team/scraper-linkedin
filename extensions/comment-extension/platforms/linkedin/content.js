@@ -423,6 +423,8 @@
           link_post: config.target_link || detail.postUrl || window.location.href,
           link_comment: detail.linkComment || detail.postUrl || window.location.href,
           comment_id: detail.commentId || "",
+          id_post: config.id_post || "",
+          platform: "linkedin",
           action_type: actionType,
           content: detail.content || "",
           facebook_name: detail.authorName || "LinkedIn User",

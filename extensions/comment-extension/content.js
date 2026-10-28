@@ -160,6 +160,8 @@ document.addEventListener("markee-action-captured", (evt) => {
             fanpage_id: config.fanpage_id || "",
             fanpage_name: config.fanpage_name || "",
             facebook_post_id: config.facebook_post_id || "unknown",
+            id_post: config.id_post || "",
+            platform: config.platform || "facebook",
             action_type: actionType,
             content: content || "",
             profile_id: fbUid || "",

@@ -81,12 +81,42 @@
                         || "unknown";
 
                     authorName = (edgeNode && edgeNode.author && edgeNode.author.name) || "";
-                    commentId = (edgeNode && edgeNode.legacy_fbid) || (edgeNode && edgeNode.id) || "";
                     
-                    // Link comment minh chứng trực tiếp (ví dụ: https://www.facebook.com/reel/29299018259785802/?comment_id=1096395736652564)
-                    linkComment = (edgeNode && edgeNode.url) || "";
+                    // Bóc tách commentId dạng số thực tế (numeric legacy_fbid)
+                    let rawCommentId = (edgeNode && edgeNode.legacy_fbid) || (edgeNode && edgeNode.id) || "";
+                    let numericCommentId = "";
+                    if (/^\d+$/.test(rawCommentId)) {
+                        numericCommentId = rawCommentId;
+                    } else if (rawCommentId) {
+                        try {
+                            const decoded = atob(rawCommentId);
+                            const m = decoded.match(/comment:\d+_(\d+)/) || decoded.match(/(\d{10,})/);
+                            if (m && m[1]) numericCommentId = m[1];
+                        } catch (e) {}
+                    }
+                    if (!numericCommentId && rawCommentId) {
+                        const digits = String(rawCommentId).match(/\d{10,}/);
+                        if (digits) numericCommentId = digits[0];
+                    }
+                    commentId = numericCommentId || rawCommentId;
+
                     postUrl = (commentCreate.feedback && commentCreate.feedback.url) || window.location.href;
-                    console.log("[GraphQL-Sniffer] Bắt thành công COMMENT:", { linkComment, commentId, authorName, content });
+
+                    // Chuẩn hóa linkComment Facebook tuyệt đối và có ?comment_id= để trình duyệt nhảy trúng đích
+                    let rawCmtUrl = (edgeNode && edgeNode.url) || "";
+                    if (rawCmtUrl.startsWith("/")) {
+                        rawCmtUrl = "https://www.facebook.com" + rawCmtUrl;
+                    }
+                    if (rawCmtUrl && numericCommentId && !rawCmtUrl.includes("comment_id=")) {
+                        const sep = rawCmtUrl.includes("?") ? "&" : "?";
+                        rawCmtUrl = `${rawCmtUrl}${sep}comment_id=${numericCommentId}`;
+                    }
+                    if (!rawCmtUrl && postUrl && numericCommentId) {
+                        const cleanPostUrl = postUrl.split("?")[0].replace(/\/+$/, "");
+                        rawCmtUrl = `${cleanPostUrl}/?comment_id=${numericCommentId}`;
+                    }
+                    linkComment = rawCmtUrl || postUrl;
+                    console.log("[GraphQL-Sniffer] Bắt thành công COMMENT Facebook chuẩn:", { linkComment, commentId, authorName, content });
                 }
 
                 // 2. ƯU TIÊN SỐ 2: BẮT THAO TÁC THÍCH / THẢ TIM (feedback_react / feedback_reaction)
@@ -251,9 +281,10 @@
     // =========================================================================
     let latestLinkedInAuthor = "";
 
-    function tryCaptureLinkedInRSC(url, body, isSuccess) {
+    function tryCaptureLinkedInRSC(url, body, isSuccess, responseText) {
         if (!body || !isSuccess) return;
         const bodyStr = typeof body === "string" ? body : JSON.stringify(body);
+        const respStr = typeof responseText === "string" ? responseText : "";
 
         // Bắt tên tác giả từ component submitCommentButton nếu có
         if (bodyStr.includes("memberFirstName") || bodyStr.includes("memberLastName")) {
@@ -280,6 +311,24 @@
                     if (ugcMatch) activityId = ugcMatch[1];
                 }
 
+                // Trích xuất commentUrn và commentId thực tế từ responseText
+                let commentUrn = "";
+                let commentNumId = "";
+                if (respStr) {
+                    const urnMatch = respStr.match(/urn:li:comment:\(activity:\d+,\s*(\d+)\)/);
+                    if (urnMatch) {
+                        commentUrn = urnMatch[0];
+                        commentNumId = urnMatch[1];
+                    } else {
+                        const fsdMatch = respStr.match(/urn:li:fsd_comment:\((\d+),urn:li:activity:(\d+)\)/);
+                        if (fsdMatch) {
+                            commentNumId = fsdMatch[1];
+                            const actId = fsdMatch[2] || activityId;
+                            commentUrn = `urn:li:comment:(activity:${actId},${commentNumId})`;
+                        }
+                    }
+                }
+
                 // Trích xuất nội dung bình luận
                 let commentText = "";
                 try {
@@ -299,11 +348,21 @@
                     if (textMatch) commentText = textMatch[1];
                 }
 
-                // Xây dựng link bài viết & link bình luận
+                // Xây dựng link bài viết & link bình luận chuẩn của LinkedIn (có commentUrn để nhảy xuống phần comment)
                 const currentHref = window.location.href.split("?")[0];
                 const postUrl = activityId ? `https://www.linkedin.com/feed/update/urn:li:activity:${activityId}/` : currentHref;
-                const linkComment = postUrl;
-                const commentId = activityId ? `li_act_${activityId}` : `li_cmt_${Date.now()}`;
+                
+                let linkComment = "";
+                if (activityId && commentUrn) {
+                    linkComment = `https://www.linkedin.com/feed/update/urn:li:activity:${activityId}/?commentUrn=${encodeURIComponent(commentUrn)}#comments`;
+                } else if (activityId && commentNumId) {
+                    linkComment = `https://www.linkedin.com/feed/update/urn:li:activity:${activityId}/?commentUrn=urn%3Ali%3Acomment%3A(activity%3A${activityId}%2C${commentNumId})#comments`;
+                } else if (activityId) {
+                    linkComment = `https://www.linkedin.com/feed/update/urn:li:activity:${activityId}/#comments`;
+                } else {
+                    linkComment = window.location.href;
+                }
+                const commentId = commentNumId || (activityId ? `li_act_${activityId}` : `li_cmt_${Date.now()}`);
 
                 let author = latestLinkedInAuthor;
                 if (!author) {
@@ -397,7 +456,11 @@
                 }).catch(function() {});
             } else if (url && (url.includes("/flagship-web/rsc-action/") || url.includes("/rsc-action/"))) {
                 if (init && init.body) {
-                    tryCaptureLinkedInRSC(url, init.body, response.ok);
+                    response.clone().text().then(function(responseText) {
+                        tryCaptureLinkedInRSC(url, init.body, response.ok, responseText);
+                    }).catch(function() {
+                        tryCaptureLinkedInRSC(url, init.body, response.ok, null);
+                    });
                 }
             } else if (url && url.includes(".srt")) {
                 response.clone().text().then(function(srtText) {
@@ -440,7 +503,7 @@
             } else if (url && (url.includes("/flagship-web/rsc-action/") || url.includes("/rsc-action/"))) {
                 this.addEventListener("load", function () {
                     if (this.status >= 200 && this.status < 400) {
-                        tryCaptureLinkedInRSC(url, body, true);
+                        tryCaptureLinkedInRSC(url, body, true, this.responseText);
                     }
                 });
             } else if (url && url.includes(".srt")) {
