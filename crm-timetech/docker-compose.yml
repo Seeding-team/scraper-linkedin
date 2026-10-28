@@ -60,6 +60,8 @@ services:
       JWT_IN_BODY: "true"
     ports:
       - "${ONLYOFFICE_PORT:-8098}:80"
+    volumes:
+      - ./onlyoffice/local-production-linux.json:/etc/onlyoffice/documentserver/local-production-linux.json:ro
     networks:
       crm-net:
         aliases: [onlyoffice]
