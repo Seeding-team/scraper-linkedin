@@ -86,7 +86,6 @@ services:
     depends_on:
       - frontend
       - backend
-      - onlyoffice
     environment:
       TZ: Asia/Ho_Chi_Minh
     ports:
