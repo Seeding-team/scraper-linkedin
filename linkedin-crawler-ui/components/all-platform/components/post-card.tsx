@@ -440,12 +440,26 @@ export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onVi
               </>
             )}
 
-            {(userRole === "admin" || userRole === "leader") && post.crawler_name && (
-              <span className="flex items-center gap-1.5 px-2.5 py-1 bg-muted text-muted-foreground rounded-md text-[11px] font-medium border border-border">
-                👤 {post.crawler_name}
-                {userRole === "admin" && post.crawler_team ? ` - ${post.crawler_team}` : ""}
-              </span>
-            )}
+            {/* Tên người đăng bài post gốc (hoặc Ẩn danh) */}
+            {(() => {
+              const rawAuthor = (post.author || (post as Record<string, any>).author_name || "").trim();
+              const isAnonymous = !rawAuthor || rawAuthor.toLowerCase().includes("anonymous") || rawAuthor.toLowerCase().includes("ẩn danh") || rawAuthor.toLowerCase() === "unknown";
+              const displayAuthor = isAnonymous ? "Ẩn danh" : rawAuthor;
+              return (
+                <span
+                  className={cn(
+                    "flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-medium border",
+                    isAnonymous
+                      ? "bg-neutral-100 text-neutral-600 border-neutral-200 dark:bg-neutral-800 dark:text-neutral-400"
+                      : "bg-muted text-foreground border-border font-semibold"
+                  )}
+                  title={isAnonymous ? "Bài viết được đăng ẩn danh trên nhóm" : `Người đăng bài: ${displayAuthor}`}
+                >
+                  <span className="text-[12px]">{isAnonymous ? "🎭" : "👤"}</span>
+                  <span>{displayAuthor}</span>
+                </span>
+              );
+            })()}
           </div>
 
           <div className="flex items-center gap-2">

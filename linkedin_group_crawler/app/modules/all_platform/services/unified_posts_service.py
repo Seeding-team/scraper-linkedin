@@ -1215,88 +1215,110 @@ def get_unified_daily_trend(
 
 
 def get_post_seeding_roster(post_id: str, platform: str, email: str) -> dict:
-    """Toàn bộ roster thành viên của team sở hữu group chứa bài viết này, kèm
-    trạng thái/nội dung đã seeding (nếu có) — cho modal "Xem seeding theo team"
-    ở trang Seeding bên ngoài (admin/leader). Khác get_post_interactions bên
-    module internal_engagement: bài ở đây KHÔNG có khái niệm "giao theo team"
-    (assigned_team_ids) — team roster được suy ra từ facebook_groups/
-    linkedin_groups.id_team (team sở hữu nhóm crawl), giống hệt cách team/
-    allowed_member_ids đã được tính trong _fetch_posts_from_table() ở trên.
+    """Roster theo dõi thành viên đã seeding / chưa seeding bài viết này:
+    - Đối với Leader: Trả về toàn bộ thành viên thuộc các team do Leader đó quản lý, kèm nội dung bình luận, link minh chứng và trạng thái KPI.
+    - Đối với Admin: Trả về toàn bộ thành viên của TẤT CẢ các team trong hệ thống.
+    Mọi bài viết cào về đều mở cho mọi team và thành viên có thể vào xem / làm nhiệm vụ.
     """
     sb = _supabase()
 
-    user_res = sb.table("app_users").select("id, role").eq("email", (email or "").strip().lower()).limit(1).execute()
+    user_res = sb.table("app_users").select("id, role, name, email").eq("email", (email or "").strip().lower()).limit(1).execute()
     if not user_res.data:
         return {"role": "member", "team_name": None, "items": []}
     caller_id = user_res.data[0]["id"]
     role = user_res.data[0].get("role", "member")
     if role not in ("admin", "leader"):
         return {"role": role, "team_name": None, "items": []}
-    # Bài Threads/YouTube không thuộc group nào -> không suy ra được team sở hữu (FE ẩn nút
-    # này với 2 nền tảng đó); trả rỗng thay vì tra nhầm sang bảng linkedin_posts ở dưới.
-    if platform in ("threads", "youtube"):
-        return {"role": role, "team_name": None, "items": []}
 
-    table = "facebook_posts" if platform == "facebook" else "linkedin_posts"
-    group_fk = "facebook_groups" if platform == "facebook" else "linkedin_groups"
-
-    post_res = (
-        sb.table(table).select(f"id, {group_fk}(id_team, group_name)").eq("id", post_id).limit(1).execute()
-    )
-    if not post_res.data:
-        return {"role": role, "team_name": None, "items": []}
-    grp = post_res.data[0].get(group_fk) or {}
-    id_team = grp.get("id_team")
-    if not id_team:
-        return {"role": role, "team_name": None, "items": []}
-
+    # 1. Xác định danh sách Team cần xem
     if role == "leader":
-        leader_teams = sb.table("teams").select("id").eq("id_leader", caller_id).execute().data or []
-        if id_team not in {t["id"] for t in leader_teams}:
-            return {"role": role, "team_name": None, "items": []}
+        # Leader: lấy các team mà caller là id_leader
+        leader_teams_res = sb.table("teams").select("id, name_team").eq("id_leader", caller_id).execute()
+        target_teams = leader_teams_res.data or []
+        if not target_teams:
+            # Fallback theo email leader trong bảng members
+            mem_res = sb.table("members").select("id").eq("email", (email or "").strip().lower()).limit(1).execute()
+            if mem_res.data:
+                target_teams = sb.table("teams").select("id, name_team").eq("leader_member_id", mem_res.data[0]["id"]).execute().data or []
+    else:
+        # Admin: lấy toàn bộ các team
+        target_teams = sb.table("teams").select("id, name_team").order("name_team").execute().data or []
 
-    team_res = sb.table("teams").select("id, name_team").eq("id", id_team).limit(1).execute()
-    team_name = team_res.data[0].get("name_team") if team_res.data else "Team"
+    if not target_teams:
+        return {"role": role, "team_name": "Chưa có team", "items": []}
 
-    mot_res = sb.table("member_of_teams").select("id_member").eq("id_teams", id_team).execute().data or []
-    member_ids = list({m["id_member"] for m in mot_res if m.get("id_member")})
+    target_team_ids = [t["id"] for t in target_teams]
+    team_name_map = {t["id"]: t["name_team"] for t in target_teams}
+    main_team_name = target_teams[0]["name_team"] if len(target_teams) == 1 else "Toàn bộ các Team"
+
+    # 2. Lấy toàn bộ thành viên của các Team này từ member_of_teams
+    mot_res = sb.table("member_of_teams").select("id_teams, id_member").in_("id_teams", target_team_ids).execute().data or []
+    if not mot_res:
+        return {"role": role, "team_name": main_team_name, "items": []}
+
+    member_team_map = {}
+    member_ids_set = set()
+    for mot in mot_res:
+        mid = mot.get("id_member")
+        tid = mot.get("id_teams")
+        if mid and str(mid).strip().lower() not in ("none", "null", ""):
+            member_ids_set.add(mid)
+            member_team_map[mid] = team_name_map.get(tid, main_team_name)
+
+    member_ids = list(member_ids_set)
     if not member_ids:
-        return {"role": role, "team_name": team_name, "items": []}
+        return {"role": role, "team_name": main_team_name, "items": []}
 
+    # 3. Lấy thông tin user (tên, email)
     users_res = sb.table("app_users").select("id, name, email").in_("id", member_ids).execute().data or []
     user_map = {u["id"]: u for u in users_res}
 
-    kpi_res = (
-        sb.table("seeding_content_kpi")
-        .select("id_member, content, verify, link_comment, created_at")
-        .eq("id_post", post_id)
-        .in_("id_member", member_ids)
-        .order("created_at", desc=True)
-        .execute()
-    ).data or []
+    # 4. Tra cứu seeding trên bài viết này (từ seeding_content_kpi theo id_post hoặc link_post)
+    table = "facebook_posts" if platform == "facebook" else "linkedin_posts" if platform == "linkedin" else None
+    post_link = ""
+    if table:
+        try:
+            p_row = sb.table(table).select("post_url").eq("id", post_id).limit(1).execute()
+            if p_row.data:
+                post_link = p_row.data[0].get("post_url") or ""
+        except Exception:
+            pass
+
+    kpi_query = sb.table("seeding_content_kpi").select("id_member, content, verify, link_comment, link_post, created_at").in_("id_member", member_ids)
+    if post_link:
+        kpi_query = kpi_query.or_(f"id_post.eq.{post_id},link_post.eq.{post_link}")
+    else:
+        kpi_query = kpi_query.eq("id_post", post_id)
+    
+    kpi_res = kpi_query.order("created_at", desc=True).execute().data or []
+
     kpi_by_member: dict[str, dict] = {}
     for row in kpi_res:
         mid = row.get("id_member")
         if mid and mid not in kpi_by_member:
             kpi_by_member[mid] = row
 
+    # 5. Dựng danh sách items
     items = []
     for mid in member_ids:
         u = user_map.get(mid, {})
         kpi = kpi_by_member.get(mid)
-        name = u.get("name") or (u.get("email") or "").split("@")[0] or "Thành viên ẩn"
+        name = u.get("name") or (u.get("email") or "").split("@")[0] or "Thành viên"
         items.append({
             "id_member": mid,
             "name": name,
+            "email": u.get("email") or "",
+            "team_name": member_team_map.get(mid, main_team_name),
             "has_seeded": bool(kpi),
             "content": (kpi or {}).get("content") or "",
-            "verify_status": (kpi or {}).get("verify"),
-            "link_comment": (kpi or {}).get("link_comment"),
+            "verify_status": (kpi or {}).get("verify") or ("yes" if kpi else None),
+            "link_comment": (kpi or {}).get("link_comment") or (post_link if kpi else None),
             "created_at": (kpi or {}).get("created_at"),
         })
 
-    items.sort(key=lambda it: (0 if it["has_seeded"] else 1, it["name"]))
-    return {"role": role, "team_name": team_name, "items": items}
+    # Sắp xếp: Ai đã seeding lên trước, sau đó theo team và tên
+    items.sort(key=lambda it: (0 if it["has_seeded"] else 1, it["team_name"], it["name"]))
+    return {"role": role, "team_name": main_team_name, "items": items}
 
 
 def get_teams_seeding_efficiency(email: str) -> dict:

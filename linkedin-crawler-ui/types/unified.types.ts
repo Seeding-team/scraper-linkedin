@@ -308,6 +308,8 @@ export interface InternalEngagementPostInteractionsData {
 export interface PostSeedingRosterItem {
   id_member: string;
   name: string;
+  email?: string | null;
+  team_name?: string | null;
   has_seeded: boolean;
   content: string;
   verify_status?: string | null;
