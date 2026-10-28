@@ -8,6 +8,28 @@
 
     // Dispatch CustomEvent để content.js (ISOLATED world) bắt và kiểm tra session / target_link
     // trước khi ghi nhận KPI và hiển thị Toast thông báo cho người dùng.
+    
+    // Hàm bóc tách JSON an toàn từ phản hồi Facebook (xóa bỏ tiền tố for (;;); và hỗ trợ newline stream)
+    function parseFacebookGraphQLText(rawText) {
+        if (!rawText || typeof rawText !== 'string') return [];
+        const clean = rawText.replace(/^for\s*\(\s*;\s*;\s*\)\s*;?/g, '').trim();
+        const results = [];
+        try {
+            results.push(JSON.parse(clean));
+            return results;
+        } catch (e) {}
+
+        const lines = clean.split('\n');
+        for (let i = 0; i < lines.length; i++) {
+            const line = lines[i].trim();
+            if (!line) continue;
+            try {
+                results.push(JSON.parse(line));
+            } catch (err) {}
+        }
+        return results;
+    }
+
     function dispatchActionCaptured(actionData) {
         document.dispatchEvent(new CustomEvent("markee-action-captured", {
             detail: {
@@ -82,21 +104,28 @@
 
                     authorName = (edgeNode && edgeNode.author && edgeNode.author.name) || "";
                     
-                    // Bóc tách commentId dạng số thực tế (numeric legacy_fbid)
+                    // Bóc tách commentId dạng số thực tế (numeric legacy_fbid hoặc ID trong Relay Base64)
                     let rawCommentId = (edgeNode && edgeNode.legacy_fbid) || (edgeNode && edgeNode.id) || "";
                     let numericCommentId = "";
-                    if (/^\d+$/.test(rawCommentId)) {
-                        numericCommentId = rawCommentId;
-                    } else if (rawCommentId) {
-                        try {
-                            const decoded = atob(rawCommentId);
-                            const m = decoded.match(/comment:\d+_(\d+)/) || decoded.match(/(\d{10,})/);
-                            if (m && m[1]) numericCommentId = m[1];
-                        } catch (e) {}
-                    }
-                    if (!numericCommentId && rawCommentId) {
-                        const digits = String(rawCommentId).match(/\d{10,}/);
-                        if (digits) numericCommentId = digits[0];
+                    if (rawCommentId) {
+                        const strId = String(rawCommentId).trim();
+                        if (/^\d{10,}$/.test(strId)) {
+                            numericCommentId = strId;
+                        } else {
+                            let decoded = "";
+                            try {
+                                let cleanB64 = strId.replace(/-/g, "+").replace(/_/g, "/");
+                                while (cleanB64.length % 4) cleanB64 += "=";
+                                decoded = atob(cleanB64);
+                            } catch (e) {}
+
+                            const combined = decoded ? `${strId} ${decoded}` : strId;
+                            const allNumbers = combined.match(/\d{10,}/g) || [];
+                            // Cụm số cuối cùng trong Relay ID (group_post_comment hoặc post_comment) luôn là comment_id thật sự
+                            if (allNumbers.length >= 1) {
+                                numericCommentId = allNumbers[allNumbers.length - 1];
+                            }
+                        }
                     }
                     commentId = numericCommentId || rawCommentId;
 
@@ -107,15 +136,16 @@
                     if (rawCmtUrl.startsWith("/")) {
                         rawCmtUrl = "https://www.facebook.com" + rawCmtUrl;
                     }
-                    if (rawCmtUrl && numericCommentId && !rawCmtUrl.includes("comment_id=")) {
-                        const sep = rawCmtUrl.includes("?") ? "&" : "?";
-                        rawCmtUrl = `${rawCmtUrl}${sep}comment_id=${numericCommentId}`;
+                    if (numericCommentId) {
+                        if (rawCmtUrl && !rawCmtUrl.includes("comment_id=")) {
+                            const sep = rawCmtUrl.includes("?") ? "&" : "?";
+                            rawCmtUrl = `${rawCmtUrl}${sep}comment_id=${numericCommentId}`;
+                        } else if (!rawCmtUrl && postUrl) {
+                            const cleanPostUrl = postUrl.split("?")[0].replace(/\/+$/, "");
+                            rawCmtUrl = `${cleanPostUrl}/?comment_id=${numericCommentId}`;
+                        }
                     }
-                    if (!rawCmtUrl && postUrl && numericCommentId) {
-                        const cleanPostUrl = postUrl.split("?")[0].replace(/\/+$/, "");
-                        rawCmtUrl = `${cleanPostUrl}/?comment_id=${numericCommentId}`;
-                    }
-                    linkComment = rawCmtUrl || postUrl;
+                    linkComment = rawCmtUrl || (numericCommentId && postUrl ? `${postUrl.split("?")[0].replace(/\/+$/, "")}/?comment_id=${numericCommentId}` : postUrl);
                     console.log("[GraphQL-Sniffer] Bắt thành công COMMENT Facebook chuẩn:", { linkComment, commentId, authorName, content });
                 }
 
@@ -447,8 +477,11 @@
             const url = typeof input === "string" ? input : (input && input.url);
             if (url && url.includes("/api/graphql/")) {
                 if (init && init.body) tryCapture(init.body, null);
-                response.clone().json().then(function(data) {
-                    tryCapture(null, data);
+                response.clone().text().then(function(rawText) {
+                    const items = parseFacebookGraphQLText(rawText);
+                    for (let i = 0; i < items.length; i++) {
+                        tryCapture(null, items[i]);
+                    }
                 }).catch(function() {});
             } else if (url && url.includes("/voyager/api/graphql")) {
                 response.clone().json().then(function(data) {
@@ -489,8 +522,10 @@
                 tryCapture(body, null);
                 this.addEventListener("load", function () {
                     try {
-                        const data = JSON.parse(this.responseText);
-                        tryCapture(null, data);
+                        const items = parseFacebookGraphQLText(this.responseText);
+                        for (let i = 0; i < items.length; i++) {
+                            tryCapture(null, items[i]);
+                        }
                     } catch (e) {}
                 });
             } else if (url && url.includes("/voyager/api/graphql")) {

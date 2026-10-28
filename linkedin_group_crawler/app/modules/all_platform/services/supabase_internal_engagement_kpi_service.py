@@ -114,6 +114,13 @@ def record_action(payload: dict) -> dict:
     raw_content = payload.get("content") or payload.get("text") or ""
     # Nếu link_comment rỗng đối với hành động comment, tự động fallback lấy link_post để không bao giờ bị mất liên kết minh chứng
     effective_link_comment = link_comment or (link_post if action_type == "comment" else "")
+
+    # Tự động ghép comment_id vào link_comment nếu có comment_id nhưng link chưa có tham số này
+    if action_type == "comment" and comment_id and str(comment_id).strip():
+        num_cid = str(comment_id).strip()
+        if effective_link_comment and "comment_id=" not in effective_link_comment and num_cid.isdigit():
+            clean_base = effective_link_comment.split("?")[0].rstrip("/")
+            effective_link_comment = f"{clean_base}/?comment_id={num_cid}"
     
     # Bảo lưu link minh chứng trực tiếp vào content để KHÔNG BAO GIỜ bị mất link dù DB chưa có cột link_comment
     final_content = raw_content
