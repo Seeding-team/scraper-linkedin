@@ -143,6 +143,14 @@ export function ContractAiReviewPanel({
   const [view, setView] = useState<'original' | 'highlight' | 'editor'>('original');
   const [activeExcerpt, setActiveExcerpt] = useState<string | null>(null);
   const [jumpPage, setJumpPage] = useState<number | null>(null);
+  const [jumpTick, setJumpTick] = useState(0);
+
+  // ───────── Split layout 60/40 + Resizable splitter + Viewport height ─────────
+  const splitContainerRef = useRef<HTMLDivElement | null>(null);
+  const [leftRatio, setLeftRatio] = useState<number>(60);
+  const [isDraggingSplit, setIsDraggingSplit] = useState(false);
+  const [splitCommitTick, setSplitCommitTick] = useState(0);
+  const [panelHeight, setPanelHeight] = useState<number | null>(null);
 
   const [pdfUrl, pdfLoading, pdfError, loadPdf] = usePdfBlobUrl();
 
@@ -160,9 +168,9 @@ export function ContractAiReviewPanel({
   const [aiPanelCollapsed, setAiPanelCollapsed] = useState(false);
 
   // BUG THẬT ĐÃ GẶP (xem chi tiết ở startEditor() - OnlyOffice "đóng băng" kích thước iframe lúc
-  // mount, không tự responsive) - khi Sale bấm "Mở rộng toàn màn hình"/"Thu nhỏ" hoặc bật/tắt panel
-  // AI (đổi layout cột rõ rệt), PHẢI remount lại OnlyOffice để nó đo lại kích thước mới, không chỉ
-  // đổi CSS suông (sẽ giữ nguyên kích thước cũ đã "đóng băng" từ lần mount trước).
+  // mount, không tự responsive) - khi Sale bấm "Mở rộng toàn màn hình"/"Thu nhỏ", bật/tắt panel
+  // AI, hoặc kéo thanh chia cột (splitCommitTick), PHẢI remount lại OnlyOffice để nó đo lại kích
+  // thước mới, không chỉ đổi CSS suông (sẽ giữ nguyên kích thước cũ đã "đóng băng" từ lần mount trước).
   const editorConfigRef = useRef<OnlyOfficeEditorConfig | null>(null);
   useEffect(() => {
     if (view !== 'editor' || !editSessionId || !editorConfigRef.current) return;
@@ -173,7 +181,7 @@ export function ContractAiReviewPanel({
     })();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editorFullscreen, aiPanelCollapsed]);
+  }, [editorFullscreen, aiPanelCollapsed, splitCommitTick]);
   const [pendingSave, setPendingSave] = useState(false);
   const [forcesaveFailed, setForcesaveFailed] = useState(false);
   const [annotations, setAnnotations] = useState<HighlightAnnotation[]>([]);
@@ -531,9 +539,85 @@ export function ContractAiReviewPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [contractId]);
 
-  function jumpToExcerpt(excerpt: string | null | undefined, page: number | null | undefined) {
+  function jumpToExcerpt(
+    excerpt: string | null | undefined,
+    page: number | null | undefined,
+    field?: string | null,
+  ) {
     setActiveExcerpt(excerpt || null);
-    if (page) { setJumpPage(page); if (view !== 'highlight' && highlightAvailable) switchView('highlight'); }
+    const matchedAnn = annotations.find(
+      a =>
+        a.status !== 'removed' &&
+        ((field && a.category === field) || (excerpt && a.excerpt === excerpt)),
+    );
+    if (matchedAnn) {
+      setActiveAnnotationId(matchedAnn.id);
+      const paraMatch = /^p(\d+)$/.exec(matchedAnn.paragraph_anchor || '');
+      if (view === 'editor' && pluginReady && paraMatch) {
+        void sendCommand('selectBookmark', { name: `ann_${matchedAnn.id.replace(/-/g, '_')}` });
+        return;
+      }
+    }
+    const pageFromAnchor = matchedAnn?.paragraph_anchor
+      ? /^page:(\d+)$/.exec(matchedAnn.paragraph_anchor)
+      : null;
+    const effectivePage =
+      page ?? matchedAnn?.highlight_page ?? (pageFromAnchor ? Number(pageFromAnchor[1]) : null);
+    if (effectivePage) {
+      setJumpPage(effectivePage);
+      setJumpTick(t => t + 1);
+      if (view !== 'highlight' && highlightAvailable) switchView('highlight');
+    }
+  }
+
+  useEffect(() => {
+    if (restoring || (!rows && !editSessionId)) return;
+    function updateHeight() {
+      const el = splitContainerRef.current;
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      const next = Math.max(460, Math.floor(window.innerHeight - rect.top - 16));
+      setPanelHeight(next);
+    }
+    updateHeight();
+    const rAF = requestAnimationFrame(updateHeight);
+    window.addEventListener('resize', updateHeight);
+    return () => {
+      cancelAnimationFrame(rAF);
+      window.removeEventListener('resize', updateHeight);
+    };
+  }, [rows, editSessionId, restoring]);
+
+  function startSplitDrag(e: React.MouseEvent<HTMLDivElement>) {
+    e.preventDefault();
+    const container = splitContainerRef.current;
+    if (!container) return;
+    setIsDraggingSplit(true);
+    const prevCursor = document.body.style.cursor;
+    const prevSelect = document.body.style.userSelect;
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+
+    function onMove(ev: MouseEvent) {
+      if (!container) return;
+      const rect = container.getBoundingClientRect();
+      if (rect.width <= 0) return;
+      const rawPct = ((ev.clientX - rect.left) / rect.width) * 100;
+      const clamped = Math.min(78, Math.max(35, Math.round(rawPct * 10) / 10));
+      setLeftRatio(clamped);
+    }
+
+    function onUp() {
+      setIsDraggingSplit(false);
+      setSplitCommitTick(t => t + 1);
+      document.body.style.cursor = prevCursor;
+      document.body.style.userSelect = prevSelect;
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    }
+
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
   }
 
   function switchView(next: 'original' | 'highlight') {
@@ -596,11 +680,38 @@ export function ContractAiReviewPanel({
     );
   }
 
+  const showRightPanel = Boolean(rows && !(view === 'editor' && aiPanelCollapsed));
+  const resolvedHeight = panelHeight ? `${panelHeight}px` : 'calc(100vh - 180px)';
+
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: (view === 'editor' && (aiPanelCollapsed || !rows)) ? '1fr' : 'minmax(0, 60%) minmax(0, 40%)', gap: 16, alignItems: 'start' }}>
-      {/* ───── Viewer (60%) ───── */}
-      <section className="cp-card" style={{ display: 'flex', flexDirection: 'column', gap: 8, minHeight: 'min(80vh, 920px)' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+    <div
+      ref={splitContainerRef}
+      data-testid="ai-review-split-layout"
+      style={{
+        display: 'grid',
+        gridTemplateColumns: showRightPanel
+          ? `minmax(0, ${leftRatio}fr) 12px minmax(0, ${Math.round((100 - leftRatio) * 10) / 10}fr)`
+          : '1fr',
+        alignItems: 'stretch',
+        height: resolvedHeight,
+        maxHeight: resolvedHeight,
+        minHeight: 460,
+        overflow: 'hidden',
+      }}
+    >
+      {/* ───── Viewer (mặc định 60%, cố định theo chiều cao viewport, không để khoảng trắng dưới PDF) ───── */}
+      <section
+        className="cp-card"
+        style={{
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 8,
+          height: '100%',
+          minHeight: 0,
+          overflow: 'hidden',
+        }}
+      >
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8, flexShrink: 0 }}>
           <div className="cp-tabs" role="tablist" style={{ padding: 0, border: 0 }}>
             <button type="button" className={`cp-tab ${view === 'original' ? 'is-active' : ''}`} onClick={() => switchViewFromEditor('original')}>Hợp đồng gốc</button>
             <button
@@ -625,16 +736,32 @@ export function ContractAiReviewPanel({
         </div>
         {view !== 'editor' ? (
           pdfLoading ? (
-            <p style={{ fontSize: '0.82rem', color: '#64748b' }}>Đang tải tài liệu…</p>
+            <div style={{ flex: 1, minHeight: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <p style={{ fontSize: '0.82rem', color: '#64748b', margin: 0 }}>Đang tải tài liệu…</p>
+            </div>
           ) : pdfError ? (
-            <p style={{ fontSize: '0.82rem', color: '#b45309' }}>{pdfError}</p>
+            <div style={{ flex: 1, minHeight: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <p style={{ fontSize: '0.82rem', color: '#b45309', margin: 0 }}>{pdfError}</p>
+            </div>
           ) : pdfUrl ? (
             <iframe
-              key={`${pdfUrl}#${view === 'highlight' ? (jumpPage ?? 'base') : 'base'}`}
-              title="Xem tài liệu hợp đồng" src={jumpPage && view === 'highlight' ? `${pdfUrl}#page=${jumpPage}` : pdfUrl}
-              style={{ flex: 1, minHeight: 'min(80vh, 920px)', width: '100%', border: '1px solid #e2e8f0', borderRadius: 8 }} />
+              key={`${pdfUrl}#${view === 'highlight' ? `${jumpPage ?? 'base'}-${jumpTick}` : 'base'}`}
+              title="Xem tài liệu hợp đồng"
+              src={jumpPage && view === 'highlight' ? `${pdfUrl}#page=${jumpPage}` : pdfUrl}
+              style={{
+                flex: 1,
+                minHeight: 0,
+                height: '100%',
+                width: '100%',
+                border: '1px solid #e2e8f0',
+                borderRadius: 8,
+                pointerEvents: isDraggingSplit ? 'none' : undefined,
+              }}
+            />
           ) : (
-            <p style={{ fontSize: '0.82rem', color: '#64748b' }}>Chưa có bản xem trước.</p>
+            <div style={{ flex: 1, minHeight: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <p style={{ fontSize: '0.82rem', color: '#64748b', margin: 0 }}>Chưa có bản xem trước.</p>
+            </div>
           )
         ) : null}
 
@@ -647,12 +774,12 @@ export function ContractAiReviewPanel({
           style={
             editorFullscreen
               ? { position: 'fixed', inset: 0, zIndex: 99995, background: '#fff', display: view === 'editor' ? 'flex' : 'none', flexDirection: 'column', gap: 8, padding: 16 }
-              : { display: view === 'editor' ? 'flex' : 'none', flexDirection: 'column', gap: 8, height: 'calc(100vh - 260px)' }
+              : { display: view === 'editor' ? 'flex' : 'none', flexDirection: 'column', gap: 8, flex: 1, minHeight: 0, height: '100%', pointerEvents: isDraggingSplit ? 'none' : undefined }
           }
         >
-          {editorError ? <p style={{ fontSize: '0.78rem', color: '#b45309', margin: 0 }}>{editorError}</p> : null}
+          {editorError ? <p style={{ fontSize: '0.78rem', color: '#b45309', margin: 0, flexShrink: 0 }}>{editorError}</p> : null}
           {editSessionId ? (
-            <>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, flexShrink: 0 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                 <span style={{
                   fontSize: '0.74rem', fontWeight: 700, padding: '2px 8px', borderRadius: 999,
@@ -684,7 +811,7 @@ export function ContractAiReviewPanel({
                 </div>
               </div>
               {saveVersionError ? <p style={{ fontSize: '0.76rem', color: '#b91c1c', margin: 0 }}>{saveVersionError}</p> : null}
-            </>
+            </div>
           ) : null}
           {/* KHÔNG đặt height/minHeight cụ thể ở đây bằng inline style - OnlyOffice THAY THẾ HẲN
            * phần tử này bằng markup riêng của nó lúc mount (mất hết inline style gốc, xem bug đã
@@ -694,241 +821,294 @@ export function ContractAiReviewPanel({
         </div>
       </section>
 
-      {!rows || (view === 'editor' && aiPanelCollapsed) ? null : (
-      /* ───── Kết quả AI (40%, ẩn được khi Sale bấm "Ẩn kết quả AI" lúc đang sửa Word, hoặc chưa
-       * có kết quả AI Review nào - Sale mở Word thẳng từ trạng thái trống) ───── */
-      <section className="cp-card" style={{ display: 'flex', flexDirection: 'column', gap: 10, maxHeight: view === 'editor' ? 'calc(100vh - 160px)' : undefined, overflowY: view === 'editor' ? 'auto' : undefined }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <b style={{ fontSize: '0.92rem' }}>Kết quả AI{contractNumber ? ` · ${contractNumber}` : ''}</b>
-          <span style={{ fontSize: '0.72rem', fontWeight: 700, padding: '2px 8px', borderRadius: 999, background: confirmed ? '#d9f2d9' : '#ffe8d1', color: confirmed ? '#166534' : '#9a3412' }}>
-            {confirmed ? 'Đã lưu Highlight' : 'Chờ Sale xác nhận'}
-          </span>
-        </div>
-
-        {stale ? (
-          <p style={{ fontSize: '0.78rem', color: '#9a3412', background: '#fff7ed', border: '1px solid #fed7aa', borderRadius: 6, padding: '6px 8px', margin: 0 }}>
-            ⚠ Hợp đồng hoặc báo giá đã thay đổi từ lúc chạy AI Review này — kết quả dưới đây là CŨ (vẫn xem được để đối chiếu lịch sử). Bấm &quot;Chạy lại AI Review&quot; trước khi xác nhận lưu Drive.
-          </p>
-        ) : null}
-        {extractionMethod === 'heuristic' ? (
-          <p style={{ fontSize: '0.76rem', color: '#92400e', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 6, padding: '6px 8px', margin: 0 }}>
-            ⚠ Chưa cấu hình AI thật (Gemini/OpenAI) trên môi trường này — chỉ dùng quy tắc giới hạn (số hợp đồng, ngày ký, số tiền, MST, bảo hành).
-            Các dòng "{VERDICT_LABEL.not_extracted}" có thể THẬT SỰ có trong hợp đồng, chỉ là chưa trích xuất tự động được — Sale cần tự đọc lại.
-          </p>
-        ) : null}
-        {highlightError ? (
-          <p style={{ color: '#b91c1c', fontSize: '0.78rem', margin: 0 }}>✗ Không tạo được bản Highlight: {highlightError}</p>
-        ) : highlightAvailable ? (
-          <p style={{ fontSize: '0.76rem', color: totalCount > 0 && locatedCount === 0 ? '#b45309' : '#64748b', margin: 0 }}>
-            ✓ Đã tạo bản Highlight — {locatedCount}/{totalCount} điều khoản có trích dẫn được tô màu thành công{totalCount > locatedCount ? `, ${totalCount - locatedCount} không định vị được (chỉ liệt kê trong báo cáo, không tô nhầm)` : ''}.
-          </p>
-        ) : null}
-        {fromCache ? (
-          <p style={{ fontSize: '0.76rem', color: '#64748b', margin: 0 }}>(Dùng lại kết quả đã chạy — nội dung chưa đổi, không gọi lại AI.)</p>
-        ) : null}
-        {error ? <p style={{ color: '#b91c1c', fontSize: '0.8rem' }}>{error}</p> : null}
-
-        {/* "Thông tin quan trọng đã Highlight" — dữ liệu THẬT duy nhất từ GET .../edit/annotations
-         * (AI + Sale), đặt NGAY SAU banner tóm tắt và TRƯỚC bảng đối chiếu báo giá (ưu tiên hiển
-         * thị cao hơn — yêu cầu sếp 2026-10-27) — KHÔNG trộn với bảng đối chiếu bên dưới. */}
-        {annotations.filter(a => a.status !== 'removed').length > 0 ? (
-          <div style={{ border: '1px solid #e2e8f0', borderRadius: 8, padding: '10px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-              <b style={{ fontSize: '0.84rem' }}>🖍 Thông tin quan trọng đã Highlight</b>
-              {editStatus?.session?.annotations_sync_status === 'syncing' ? (
-                <span style={{ fontSize: '0.68rem', color: '#64748b' }}>đang đồng bộ…</span>
-              ) : null}
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 320, overflowY: 'auto', opacity: editStatus?.session?.annotations_sync_status === 'syncing' ? 0.5 : 1, pointerEvents: editStatus?.session?.annotations_sync_status === 'syncing' ? 'none' : undefined }}>
-              {annotations.filter(a => a.status !== 'removed').map(a => {
-                const info = enrichAnnotation(a);
-                return (
-                  <div
-                    key={a.id}
-                    style={{
-                      border: '1px solid #e2e8f0', borderRadius: 8, padding: '8px 10px', display: 'flex', flexDirection: 'column', gap: 6,
-                      background: activeAnnotationId === a.id ? '#fdf2f8' : '#fff',
-                    }}
-                  >
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, cursor: 'pointer' }} onClick={() => void jumpToAnnotation(a)}>
-                      <span style={{ fontSize: '0.8rem', fontWeight: 600, color: '#0f172a' }}>{info.title}</span>
-                      <div style={{ display: 'flex', gap: 4, alignItems: 'center', flexShrink: 0 }}>
-                        {info.severity ? (
-                          <span style={{ fontSize: '0.66rem', fontWeight: 700, padding: '2px 7px', borderRadius: 999, background: RISK_SEVERITY_BG[info.severity], color: RISK_SEVERITY_TEXT[info.severity] }}>
-                            {RISK_SEVERITY_LABEL[info.severity] || info.severity}
-                          </span>
-                        ) : null}
-                        <span style={{ fontSize: '0.66rem', fontWeight: 700, padding: '2px 7px', borderRadius: 999, background: ANNOTATION_SOURCE_BG[a.source], color: ANNOTATION_SOURCE_TEXT[a.source] }}>
-                          {ANNOTATION_SOURCE_LABEL[a.source] || a.source}
-                        </span>
-                      </div>
-                    </div>
-                    {info.locationLabel ? <span style={{ fontSize: '0.7rem', color: '#64748b' }}>{info.locationLabel} · {ANNOTATION_STATUS_LABEL[a.status] || a.status}</span> : (
-                      <span style={{ fontSize: '0.7rem', color: '#64748b' }}>{ANNOTATION_STATUS_LABEL[a.status] || a.status}</span>
-                    )}
-                    <p style={{ fontSize: '0.78rem', color: '#334155', margin: 0, cursor: 'pointer' }} onClick={() => void jumpToAnnotation(a)}>{a.excerpt}</p>
-                    {a.note ? <p style={{ fontSize: '0.74rem', color: '#64748b', margin: 0 }}>Ghi chú: {a.note}</p> : null}
-                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                      {a.source === 'ai' && a.status === 'active' ? (
-                        <button type="button" className="cp-btn small" disabled={annotationBusyId === a.id} onClick={() => void handleAnnotationAction(a, 'dismiss_warning')}>
-                          Bỏ qua cảnh báo
-                        </button>
-                      ) : null}
-                      {a.status === 'active' ? (
-                        <button type="button" className="cp-btn small" disabled={annotationBusyId === a.id} onClick={() => void handleAnnotationAction(a, 'remove_highlight')}>
-                          Xoá Highlight
-                        </button>
-                      ) : null}
-                      {a.note ? (
-                        <button type="button" className="cp-btn small" disabled={annotationBusyId === a.id} onClick={() => void handleAnnotationAction(a, 'clear_note')}>
-                          Xoá ghi chú
-                        </button>
-                      ) : null}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        ) : null}
-
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 'min(60vh, 640px)', overflowY: 'auto' }}>
-          {rows.map(row => (
-            <button
-              key={row.field}
-              type="button"
-              onClick={() => jumpToExcerpt(row.sourceExcerpt, row.highlightPage)}
+      {showRightPanel ? (
+        <>
+          {/* ───── Thanh kéo chia tỷ lệ cột (mặc định 60% / 40%, nhấp đúp để reset về 60/40) ───── */}
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Kéo để thay đổi tỷ lệ hai cột (nhấp đúp để đặt lại 60/40)"
+            title="Kéo để thay đổi tỷ lệ 2 cột · Nhấp đúp để đặt lại 60% / 40%"
+            data-testid="ai-review-splitter"
+            onMouseDown={startSplitDrag}
+            onDoubleClick={() => { setLeftRatio(60); setSplitCommitTick(t => t + 1); }}
+            style={{
+              cursor: 'col-resize',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              userSelect: 'none',
+              height: '100%',
+            }}
+          >
+            <span
               style={{
-                display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8,
-                textAlign: 'left', padding: '8px 10px', borderRadius: 8, border: '1px solid #e2e8f0',
-                background: activeExcerpt === row.sourceExcerpt && row.sourceExcerpt ? '#fdf2f8' : '#fff', cursor: row.sourceExcerpt ? 'pointer' : 'default',
+                width: 4,
+                height: 44,
+                borderRadius: 999,
+                background: isDraggingSplit ? '#be1e4b' : '#cbd5e1',
+                transition: 'background 0.15s ease',
+              }}
+            />
+          </div>
+
+          {/* ───── Kết quả AI (mặc định 40%, cùng chiều cao viewport với cột trái, tự cuộn độc lập) ───── */}
+          <section
+            className="cp-card"
+            style={{
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 10,
+              height: '100%',
+              minHeight: 0,
+              overflow: 'hidden',
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
+              <b style={{ fontSize: '0.92rem' }}>Kết quả AI{contractNumber ? ` · ${contractNumber}` : ''}</b>
+              <span style={{ fontSize: '0.72rem', fontWeight: 700, padding: '2px 8px', borderRadius: 999, background: confirmed ? '#d9f2d9' : '#ffe8d1', color: confirmed ? '#166534' : '#9a3412' }}>
+                {confirmed ? 'Đã lưu Highlight' : 'Chờ Sale xác nhận'}
+              </span>
+            </div>
+
+            {/* Vùng cuộn độc lập của cột Kết quả AI */}
+            <div
+              data-testid="ai-review-right-scroll"
+              style={{
+                flex: 1,
+                minHeight: 0,
+                overflowY: 'auto',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 10,
+                paddingRight: 4,
               }}
             >
-              <span style={{ fontSize: '0.82rem', color: '#0f172a' }}>
-                {row.label}{row.located ? ' 🎨' : ''}
-              </span>
-              <span style={{ fontSize: '0.72rem', fontWeight: 700, padding: '2px 8px', borderRadius: 999, background: VERDICT_BG[row.verdict], color: VERDICT_TEXT[row.verdict] }}>
-                {VERDICT_LABEL[row.verdict] || row.verdict}
-              </span>
-            </button>
-          ))}
-        </div>
-
-        {riskClauses.length > 0 ? (
-          <div style={{ borderTop: '1px solid #e2e8f0', paddingTop: 10 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-              <b style={{ fontSize: '0.84rem' }}>⚠ Điều khoản quan trọng & rủi ro</b>
-              {riskClauseMethod === 'heuristic_candidate' ? (
-                <span style={{ fontSize: '0.68rem', fontWeight: 700, padding: '2px 7px', borderRadius: 999, background: '#e2e8f0', color: '#475569' }} title="Phát hiện bằng từ khoá, chưa qua AI thật xác nhận">
-                  Chưa xác thực bằng AI
-                </span>
+              {stale ? (
+                <p style={{ fontSize: '0.78rem', color: '#9a3412', background: '#fff7ed', border: '1px solid #fed7aa', borderRadius: 6, padding: '6px 8px', margin: 0 }}>
+                  ⚠ Hợp đồng hoặc báo giá đã thay đổi từ lúc chạy AI Review này — kết quả dưới đây là CŨ (vẫn xem được để đối chiếu lịch sử). Bấm &quot;Chạy lại AI Review&quot; trước khi xác nhận lưu Drive.
+                </p>
               ) : null}
-            </div>
-            {riskClauseMethod === 'heuristic_candidate' ? (
-              <p style={{ fontSize: '0.74rem', color: '#92400e', margin: '0 0 8px' }}>
-                Chưa cấu hình AI thật nên chỉ dò được vài cụm từ khoá phổ biến — có thể bỏ sót điều khoản rủi ro khác. Sale/pháp chế nên tự đọc kỹ toàn bộ hợp đồng.
-              </p>
-            ) : null}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              {riskClauses.map((c, i) => (
-                <button
-                  key={c.field || i}
-                  type="button"
-                  onClick={() => jumpToExcerpt(c.sourceExcerpt || c.excerpt, c.highlightPage)}
-                  style={{
-                    textAlign: 'left', padding: '8px 10px', borderRadius: 8, border: '1px solid #e2e8f0',
-                    background: activeExcerpt === (c.sourceExcerpt || c.excerpt) ? '#fdf2f8' : '#fff', cursor: 'pointer', display: 'flex', flexDirection: 'column', gap: 4,
-                  }}
-                >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
-                    <span style={{ fontSize: '0.8rem', fontWeight: 600, color: '#0f172a' }}>{c.title}{c.located ? ' 🎨' : ''}</span>
-                    <span style={{ fontSize: '0.68rem', fontWeight: 700, padding: '2px 7px', borderRadius: 999, background: RISK_SEVERITY_BG[c.severity], color: RISK_SEVERITY_TEXT[c.severity], whiteSpace: 'nowrap' }}>
-                      {RISK_SEVERITY_LABEL[c.severity] || c.severity}
-                    </span>
-                  </div>
-                  <span style={{ fontSize: '0.7rem', color: '#64748b' }}>{RISK_CATEGORY_LABEL[c.category] || c.category}{c.location ? ` · ${c.location}` : ''}</span>
-                  <span style={{ fontSize: '0.76rem', color: '#334155' }}>{c.explanation}</span>
-                </button>
-              ))}
-            </div>
-          </div>
-        ) : null}
+              {extractionMethod === 'heuristic' ? (
+                <p style={{ fontSize: '0.76rem', color: '#92400e', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 6, padding: '6px 8px', margin: 0 }}>
+                  ⚠ Chưa cấu hình AI thật (Gemini/OpenAI) trên môi trường này — chỉ dùng quy tắc giới hạn (số hợp đồng, ngày ký, số tiền, MST, bảo hành).
+                  Các dòng &quot;{VERDICT_LABEL.not_extracted}&quot; có thể THẬT SỰ có trong hợp đồng, chỉ là chưa trích xuất tự động được — Sale cần tự đọc lại.
+                </p>
+              ) : null}
+              {highlightError ? (
+                <p style={{ color: '#b91c1c', fontSize: '0.78rem', margin: 0 }}>✗ Không tạo được bản Highlight: {highlightError}</p>
+              ) : highlightAvailable ? (
+                <p style={{ fontSize: '0.76rem', color: totalCount > 0 && locatedCount === 0 ? '#b45309' : '#64748b', margin: 0 }}>
+                  ✓ Đã tạo bản Highlight — {locatedCount}/{totalCount} điều khoản có trích dẫn được tô màu thành công{totalCount > locatedCount ? `, ${totalCount - locatedCount} không định vị được (chỉ liệt kê trong báo cáo, không tô nhầm)` : ''}.
+                </p>
+              ) : null}
+              {fromCache ? (
+                <p style={{ fontSize: '0.76rem', color: '#64748b', margin: 0 }}>(Dùng lại kết quả đã chạy — nội dung chưa đổi, không gọi lại AI.)</p>
+              ) : null}
+              {error ? <p style={{ color: '#b91c1c', fontSize: '0.8rem', margin: 0 }}>{error}</p> : null}
 
-        {editStatus?.pendingAmendments && editStatus.pendingAmendments.length > 0 ? (
-          <div style={{ borderTop: '1px solid #e2e8f0', paddingTop: 10 }}>
-            <b style={{ fontSize: '0.84rem' }}>📄 Bản sửa đổi — chờ duyệt</b>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 6 }}>
-              {editStatus.pendingAmendments.map((a: ContractAmendment) => (
-                <div key={a.id} style={{ border: '1px solid #e2e8f0', borderRadius: 8, padding: '8px 10px', display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
-                    <span style={{ fontSize: '0.78rem', fontWeight: 600 }}>{a.version_id}</span>
-                    <span style={{ fontSize: '0.68rem', fontWeight: 700, padding: '2px 7px', borderRadius: 999, background: '#fff3c4', color: '#92400e' }}>
-                      {AMENDMENT_STATUS_LABEL[a.status] || a.status}
-                    </span>
+              {/* "Thông tin quan trọng đã Highlight" — dữ liệu THẬT duy nhất từ GET .../edit/annotations
+               * (AI + Sale), đặt NGAY SAU banner tóm tắt và TRƯỚC bảng đối chiếu báo giá (ưu tiên hiển
+               * thị cao hơn — yêu cầu sếp 2026-10-27) — KHÔNG trộn với bảng đối chiếu bên dưới. */}
+              {annotations.filter(a => a.status !== 'removed').length > 0 ? (
+                <div style={{ border: '1px solid #e2e8f0', borderRadius: 8, padding: '10px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                    <b style={{ fontSize: '0.84rem' }}>🖍 Thông tin quan trọng đã Highlight</b>
+                    {editStatus?.session?.annotations_sync_status === 'syncing' ? (
+                      <span style={{ fontSize: '0.68rem', color: '#64748b' }}>đang đồng bộ…</span>
+                    ) : null}
                   </div>
-                  <p style={{ fontSize: '0.78rem', color: '#334155', margin: 0 }}>{a.note}</p>
-                  <div style={{ display: 'flex', gap: 6 }}>
-                    {a.status === 'draft' ? (
-                      <button type="button" className="cp-btn small" disabled={amendmentActionBusyId === a.id} onClick={() => void handleAmendmentAction(a.id, 'submit')}>
-                        Gửi duyệt
-                      </button>
-                    ) : null}
-                    {a.status === 'pending_approval' && canApprove ? (
-                      <>
-                        <button type="button" className="cp-btn small primary" disabled={amendmentActionBusyId === a.id} onClick={() => void handleAmendmentAction(a.id, 'approve')}>
-                          Duyệt
-                        </button>
-                        <button type="button" className="cp-btn small" disabled={amendmentActionBusyId === a.id} onClick={() => void handleAmendmentAction(a.id, 'reject')}>
-                          Từ chối
-                        </button>
-                      </>
-                    ) : null}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6, opacity: editStatus?.session?.annotations_sync_status === 'syncing' ? 0.5 : 1, pointerEvents: editStatus?.session?.annotations_sync_status === 'syncing' ? 'none' : undefined }}>
+                    {annotations.filter(a => a.status !== 'removed').map(a => {
+                      const info = enrichAnnotation(a);
+                      return (
+                        <div
+                          key={a.id}
+                          style={{
+                            border: '1px solid #e2e8f0', borderRadius: 8, padding: '8px 10px', display: 'flex', flexDirection: 'column', gap: 6,
+                            background: activeAnnotationId === a.id ? '#fdf2f8' : '#fff',
+                          }}
+                        >
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, cursor: 'pointer' }} onClick={() => void jumpToAnnotation(a)}>
+                            <span style={{ fontSize: '0.8rem', fontWeight: 600, color: '#0f172a' }}>{info.title}</span>
+                            <div style={{ display: 'flex', gap: 4, alignItems: 'center', flexShrink: 0 }}>
+                              {info.severity ? (
+                                <span style={{ fontSize: '0.66rem', fontWeight: 700, padding: '2px 7px', borderRadius: 999, background: RISK_SEVERITY_BG[info.severity], color: RISK_SEVERITY_TEXT[info.severity] }}>
+                                  {RISK_SEVERITY_LABEL[info.severity] || info.severity}
+                                </span>
+                              ) : null}
+                              <span style={{ fontSize: '0.66rem', fontWeight: 700, padding: '2px 7px', borderRadius: 999, background: ANNOTATION_SOURCE_BG[a.source], color: ANNOTATION_SOURCE_TEXT[a.source] }}>
+                                {ANNOTATION_SOURCE_LABEL[a.source] || a.source}
+                              </span>
+                            </div>
+                          </div>
+                          {info.locationLabel ? <span style={{ fontSize: '0.7rem', color: '#64748b' }}>{info.locationLabel} · {ANNOTATION_STATUS_LABEL[a.status] || a.status}</span> : (
+                            <span style={{ fontSize: '0.7rem', color: '#64748b' }}>{ANNOTATION_STATUS_LABEL[a.status] || a.status}</span>
+                          )}
+                          <p style={{ fontSize: '0.78rem', color: '#334155', margin: 0, cursor: 'pointer' }} onClick={() => void jumpToAnnotation(a)}>{a.excerpt}</p>
+                          {a.note ? <p style={{ fontSize: '0.74rem', color: '#64748b', margin: 0 }}>Ghi chú: {a.note}</p> : null}
+                          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                            {a.source === 'ai' && a.status === 'active' ? (
+                              <button type="button" className="cp-btn small" disabled={annotationBusyId === a.id} onClick={() => void handleAnnotationAction(a, 'dismiss_warning')}>
+                                Bỏ qua cảnh báo
+                              </button>
+                            ) : null}
+                            {a.status === 'active' ? (
+                              <button type="button" className="cp-btn small" disabled={annotationBusyId === a.id} onClick={() => void handleAnnotationAction(a, 'remove_highlight')}>
+                                Xoá Highlight
+                              </button>
+                            ) : null}
+                            {a.note ? (
+                              <button type="button" className="cp-btn small" disabled={annotationBusyId === a.id} onClick={() => void handleAnnotationAction(a, 'clear_note')}>
+                                Xoá ghi chú
+                              </button>
+                            ) : null}
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
-              ))}
+              ) : null}
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {(rows || []).map(row => (
+                  <button
+                    key={row.field}
+                    type="button"
+                    onClick={() => jumpToExcerpt(row.sourceExcerpt, row.highlightPage, row.field)}
+                    style={{
+                      display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8,
+                      textAlign: 'left', padding: '8px 10px', borderRadius: 8, border: '1px solid #e2e8f0',
+                      background: activeExcerpt === row.sourceExcerpt && row.sourceExcerpt ? '#fdf2f8' : '#fff', cursor: row.sourceExcerpt ? 'pointer' : 'default',
+                    }}
+                  >
+                    <span style={{ fontSize: '0.82rem', color: '#0f172a' }}>
+                      {row.label}{row.located ? ' 🎨' : ''}
+                    </span>
+                    <span style={{ fontSize: '0.72rem', fontWeight: 700, padding: '2px 8px', borderRadius: 999, background: VERDICT_BG[row.verdict], color: VERDICT_TEXT[row.verdict] }}>
+                      {VERDICT_LABEL[row.verdict] || row.verdict}
+                    </span>
+                  </button>
+                ))}
+              </div>
+
+              {riskClauses.length > 0 ? (
+                <div style={{ borderTop: '1px solid #e2e8f0', paddingTop: 10 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                    <b style={{ fontSize: '0.84rem' }}>⚠ Điều khoản quan trọng & rủi ro</b>
+                    {riskClauseMethod === 'heuristic_candidate' ? (
+                      <span style={{ fontSize: '0.68rem', fontWeight: 700, padding: '2px 7px', borderRadius: 999, background: '#e2e8f0', color: '#475569' }} title="Phát hiện bằng từ khoá, chưa qua AI thật xác nhận">
+                        Chưa xác thực bằng AI
+                      </span>
+                    ) : null}
+                  </div>
+                  {riskClauseMethod === 'heuristic_candidate' ? (
+                    <p style={{ fontSize: '0.74rem', color: '#92400e', margin: '0 0 8px' }}>
+                      Chưa cấu hình AI thật nên chỉ dò được vài cụm từ khoá phổ biến — có thể bỏ sót điều khoản rủi ro khác. Sale/pháp chế nên tự đọc kỹ toàn bộ hợp đồng.
+                    </p>
+                  ) : null}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    {riskClauses.map((c, i) => (
+                      <button
+                        key={c.field || i}
+                        type="button"
+                        onClick={() => jumpToExcerpt(c.sourceExcerpt || c.excerpt, c.highlightPage, c.field)}
+                        style={{
+                          textAlign: 'left', padding: '8px 10px', borderRadius: 8, border: '1px solid #e2e8f0',
+                          background: activeExcerpt === (c.sourceExcerpt || c.excerpt) ? '#fdf2f8' : '#fff', cursor: 'pointer', display: 'flex', flexDirection: 'column', gap: 4,
+                        }}
+                      >
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+                          <span style={{ fontSize: '0.8rem', fontWeight: 600, color: '#0f172a' }}>{c.title}{c.located ? ' 🎨' : ''}</span>
+                          <span style={{ fontSize: '0.68rem', fontWeight: 700, padding: '2px 7px', borderRadius: 999, background: RISK_SEVERITY_BG[c.severity], color: RISK_SEVERITY_TEXT[c.severity], whiteSpace: 'nowrap' }}>
+                            {RISK_SEVERITY_LABEL[c.severity] || c.severity}
+                          </span>
+                        </div>
+                        <span style={{ fontSize: '0.7rem', color: '#64748b' }}>{RISK_CATEGORY_LABEL[c.category] || c.category}{c.location ? ` · ${c.location}` : ''}</span>
+                        <span style={{ fontSize: '0.76rem', color: '#334155' }}>{c.explanation}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+
+              {editStatus?.pendingAmendments && editStatus.pendingAmendments.length > 0 ? (
+                <div style={{ borderTop: '1px solid #e2e8f0', paddingTop: 10 }}>
+                  <b style={{ fontSize: '0.84rem' }}>📄 Bản sửa đổi — chờ duyệt</b>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 6 }}>
+                    {editStatus.pendingAmendments.map((a: ContractAmendment) => (
+                      <div key={a.id} style={{ border: '1px solid #e2e8f0', borderRadius: 8, padding: '8px 10px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+                          <span style={{ fontSize: '0.78rem', fontWeight: 600 }}>{a.version_id}</span>
+                          <span style={{ fontSize: '0.68rem', fontWeight: 700, padding: '2px 7px', borderRadius: 999, background: '#fff3c4', color: '#92400e' }}>
+                            {AMENDMENT_STATUS_LABEL[a.status] || a.status}
+                          </span>
+                        </div>
+                        <p style={{ fontSize: '0.78rem', color: '#334155', margin: 0 }}>{a.note}</p>
+                        <div style={{ display: 'flex', gap: 6 }}>
+                          {a.status === 'draft' ? (
+                            <button type="button" className="cp-btn small" disabled={amendmentActionBusyId === a.id} onClick={() => void handleAmendmentAction(a.id, 'submit')}>
+                              Gửi duyệt
+                            </button>
+                          ) : null}
+                          {a.status === 'pending_approval' && canApprove ? (
+                            <>
+                              <button type="button" className="cp-btn small primary" disabled={amendmentActionBusyId === a.id} onClick={() => void handleAmendmentAction(a.id, 'approve')}>
+                                Duyệt
+                              </button>
+                              <button type="button" className="cp-btn small" disabled={amendmentActionBusyId === a.id} onClick={() => void handleAmendmentAction(a.id, 'reject')}>
+                                Từ chối
+                              </button>
+                            </>
+                          ) : null}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  <p style={{ fontSize: '0.72rem', color: '#9a3412', margin: '6px 0 0' }}>
+                    ⚠ Hợp đồng đã ký — bản sửa đổi này CHƯA phải nguồn hiệu lực. AI Review/viewer mặc định vẫn dùng bản đã ký cho tới khi được duyệt.
+                  </p>
+                </div>
+              ) : null}
+
+              {showRerunBanner ? (
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 8, padding: '8px 10px' }}>
+                  <span style={{ fontSize: '0.78rem', color: '#1d4ed8' }}>Nội dung vừa thay đổi — kết quả AI Review cũ đã cũ (stale).</span>
+                  <button type="button" className="cp-btn small primary" onClick={() => { setShowRerunBanner(false); void runReview(); }}>Chạy lại AI Review</button>
+                </div>
+              ) : null}
+
+              {activeExcerpt ? (
+                <div className="cp-card" style={{ background: '#f8fafc', fontSize: '0.78rem', color: '#334155' }}>
+                  <b style={{ fontSize: '0.72rem', color: '#64748b' }}>Trích dẫn trong hợp đồng:</b>
+                  <p style={{ margin: '4px 0 0' }}>{activeExcerpt}</p>
+                </div>
+              ) : null}
             </div>
-            <p style={{ fontSize: '0.72rem', color: '#9a3412', margin: '6px 0 0' }}>
-              ⚠ Hợp đồng đã ký — bản sửa đổi này CHƯA phải nguồn hiệu lực. AI Review/viewer mặc định vẫn dùng bản đã ký cho tới khi được duyệt.
-            </p>
-          </div>
-        ) : null}
 
-
-        {showRerunBanner ? (
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 8, padding: '8px 10px' }}>
-            <span style={{ fontSize: '0.78rem', color: '#1d4ed8' }}>Nội dung vừa thay đổi — kết quả AI Review cũ đã cũ (stale).</span>
-            <button type="button" className="cp-btn small primary" onClick={() => { setShowRerunBanner(false); void runReview(); }}>Chạy lại AI Review</button>
-          </div>
-        ) : null}
-
-        {activeExcerpt ? (
-          <div className="cp-card" style={{ background: '#f8fafc', fontSize: '0.78rem', color: '#334155' }}>
-            <b style={{ fontSize: '0.72rem', color: '#64748b' }}>Trích dẫn trong hợp đồng:</b>
-            <p style={{ margin: '4px 0 0' }}>{activeExcerpt}</p>
-          </div>
-        ) : null}
-
-        <div style={{ borderTop: '1px solid #e2e8f0', paddingTop: 10, display: 'flex', flexDirection: 'column', gap: 8 }}>
-          {confirmed ? (
-            <p style={{ fontSize: '0.82rem', color: '#166534', margin: 0 }}>
-              ✓ Đã lưu lên Drive{confirmResult?.fileName ? `: ${confirmResult.fileName}` : ''}.{' '}
-              {confirmResult?.driveFileId ? <a href={`https://drive.google.com/file/d/${confirmResult.driveFileId}/view`} target="_blank" rel="noreferrer">↗ Mở trên Drive</a> : null}
-            </p>
-          ) : (
-            <button
-              type="button" className="cp-btn primary" disabled={confirming || !reviewId || !highlightAvailable || stale}
-              title={stale ? 'Hợp đồng/báo giá đã đổi — chạy lại AI Review trước' : !highlightAvailable ? 'Chưa có bản Highlight để xác nhận (xem bên viewer)' : undefined}
-              onClick={() => void confirmHighlight()}
-            >
-              {confirming ? 'Đang lưu…' : '✓ Xác nhận & lưu Highlight lên Drive'}
-            </button>
-          )}
-          <button type="button" className="cp-btn small" disabled={loading} onClick={() => void runReview()}>
-            {loading ? 'Đang chạy lại…' : '↻ Chạy lại AI Review'}
-          </button>
-        </div>
-      </section>
-      )}
+            <div style={{ borderTop: '1px solid #e2e8f0', paddingTop: 10, display: 'flex', flexDirection: 'column', gap: 8, flexShrink: 0 }}>
+              {confirmed ? (
+                <p style={{ fontSize: '0.82rem', color: '#166534', margin: 0 }}>
+                  ✓ Đã lưu lên Drive{confirmResult?.fileName ? `: ${confirmResult.fileName}` : ''}.{' '}
+                  {confirmResult?.driveFileId ? <a href={`https://drive.google.com/file/d/${confirmResult.driveFileId}/view`} target="_blank" rel="noreferrer">↗ Mở trên Drive</a> : null}
+                </p>
+              ) : (
+                <button
+                  type="button" className="cp-btn primary" disabled={confirming || !reviewId || !highlightAvailable || stale}
+                  title={stale ? 'Hợp đồng/báo giá đã đổi — chạy lại AI Review trước' : !highlightAvailable ? 'Chưa có bản Highlight để xác nhận (xem bên viewer)' : undefined}
+                  onClick={() => void confirmHighlight()}
+                >
+                  {confirming ? 'Đang lưu…' : '✓ Xác nhận & lưu Highlight lên Drive'}
+                </button>
+              )}
+              <button type="button" className="cp-btn small" disabled={loading} onClick={() => void runReview()}>
+                {loading ? 'Đang chạy lại…' : '↻ Chạy lại AI Review'}
+              </button>
+            </div>
+          </section>
+        </>
+      ) : null}
 
       {showAmendmentModal ? createPortal(
         <div className="crm-modal-backdrop" onClick={event => { if (event.target === event.currentTarget && !savingVersion) setShowAmendmentModal(false); }}>

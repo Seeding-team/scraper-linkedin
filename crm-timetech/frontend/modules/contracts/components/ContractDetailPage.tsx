@@ -380,9 +380,12 @@ export function ContractDetailContent({
         ))}
       </div>
       </div>
-      <div className={isDrawer ? 'cd-body' : undefined}>
-      {dirty ? <p data-testid="detail-dirty" style={{ margin: '8px 0 0', fontSize: '0.78rem', color: '#9a3412' }}>Có thay đổi chưa lưu.</p> : null}
-      {msg ? <p data-testid="detail-msg" style={{ margin: '8px 0 0', fontSize: '0.82rem', color: /^(Đã|✓)/.test(msg) ? '#16845d' : '#b45309' }}>{msg}</p> : null}
+      <div
+        className={isDrawer ? 'cd-body' : undefined}
+        style={isDrawer && tab === 'aiReviewV2' ? { display: 'flex', flexDirection: 'column', overflow: 'hidden', paddingBottom: 12 } : undefined}
+      >
+      {dirty ? <p data-testid="detail-dirty" style={{ margin: '8px 0 0', fontSize: '0.78rem', color: '#9a3412', flexShrink: 0 }}>Có thay đổi chưa lưu.</p> : null}
+      {msg ? <p data-testid="detail-msg" style={{ margin: '8px 0 0', fontSize: '0.82rem', color: /^(Đã|✓)/.test(msg) ? '#16845d' : '#b45309', flexShrink: 0 }}>{msg}</p> : null}
 
       {/* ───────── Tổng quan ───────── */}
       {tab === 'overview' ? (
@@ -626,7 +629,7 @@ export function ContractDetailContent({
 
       {/* ───────── Đối chiếu báo giá (AI) - B6, tab RIENG khong dung chung logic risk cu ───────── */}
       {tab === 'aiReviewV2' ? (
-        <section style={{ marginTop: 12 }} data-testid="detail-ai-review-v2">
+        <section style={{ marginTop: 10, flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }} data-testid="detail-ai-review-v2">
           <ContractAiReviewPanel contractId={contractId} driveSyncStatus={contract.driveSyncStatus} fileUrl={contract.fileUrl} contractNumber={contract.contractNumber}
             autoRunIfMissing={autoRunAiReviewRef.current} onAutoRunHandled={() => { autoRunAiReviewRef.current = false; }} />
         </section>
