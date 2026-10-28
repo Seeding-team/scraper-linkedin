@@ -155,6 +155,7 @@ function memberToForm(m: MemberProfile): MemberFormState {
 export function MemberManagementContent() {
   const { user: currentUser } = useAppAuth();
   const isAdmin = currentUser?.role === "admin";
+  const isLeaderOrAdmin = currentUser?.role === "admin" || currentUser?.role === "leader";
   const { members, loading, error: membersError, loadMembers } = useMembers();
   const [skills, setSkills] = useState<Skill[]>([]);
   const [appUsers, setAppUsers] = useState<AppUserProfile[]>([]);
@@ -1005,7 +1006,7 @@ export function MemberManagementContent() {
                               >
                                 Chỉnh quyền
                               </button>
-                            ) : isAdmin ? (
+                            ) : isLeaderOrAdmin ? (
                               <button
                                 type="button"
                                 onClick={() => openCreateAccountModal(m)}
