@@ -574,7 +574,7 @@ function SidebarGroup({
         item={{
           type: "item",
           id: entry.id,
-          href: firstHref || "/all-platform/internal-engagement",
+          href: firstHref || "/all-platform/crm",
           icon: entry.icon,
           label: entry.label,
         }}
@@ -719,6 +719,8 @@ export function AllPlatformSidebar({
   onCollapsedChange?: (next: boolean) => void;
 }) {
   const { user, logout } = useAppAuth();
+  // Logo -> trang chu dung theo vai tro (truoc day tro toi /all-platform/internal-engagement - khong ton tai trong CRM -> 404 + prefetch loi trong console).
+  const homeLinkHref = getDashboardHrefForRole(user?.role, user?.quote_business_role, user?.crm_function_area);
   const pathname = usePathname();
   const router = useRouter();
   const [showProfileMenu, setShowProfileMenu] = useState(false);
@@ -792,7 +794,7 @@ export function AllPlatformSidebar({
             ) : null}
             {isCollapsed ? (
               <Link
-                href="/all-platform/internal-engagement"
+                href={homeLinkHref}
                 onClick={onClose}
                 className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl md:hidden"
               >
@@ -800,7 +802,7 @@ export function AllPlatformSidebar({
               </Link>
             ) : (
               <Link
-                href="/all-platform/internal-engagement"
+                href={homeLinkHref}
                 onClick={onClose}
                 className="flex min-w-0 items-center gap-3 rounded-lg p-1 transition hover:bg-surface-container-low active:scale-[0.98]"
               >
