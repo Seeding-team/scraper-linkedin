@@ -24,8 +24,10 @@ VendorAIParsingService (extract_from_pdf) để tránh viết lại logic pdfplu
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import os
 import re
 
 import google.generativeai as genai
@@ -190,29 +192,18 @@ async def _extract_full_via_gemini_text(text: str) -> dict | None:
 
 
 async def _extract_full_via_openai_text(text: str) -> dict | None:
-    if not settings.openai_api_key:
+    if not _openai_key():
         return None
-    try:
-        url = f"{settings.openai_base_url}/chat/completions"
-        headers = {"Authorization": f"Bearer {settings.openai_api_key}", "Content-Type": "application/json"}
-        body = {
-            "model": settings.ai_model,
-            "messages": [
-                {"role": "system", "content": EXTENDED_FIELDS_SYSTEM_PROMPT},
-                {"role": "user", "content": f"Trích xuất JSON từ nội dung hợp đồng sau:\n\n{text[:30000]}"},
-            ],
-            "temperature": 0.1,
-            "max_tokens": 2000,
-            "response_format": {"type": "json_object"},
-        }
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            resp = await client.post(url, json=body, headers=headers)
-            resp.raise_for_status()
-        resp_text = resp.json()["choices"][0]["message"]["content"]
-        return _parse_ai_json(resp_text)
-    except Exception as e:
-        logger.error(f"Contract OCR (full): OpenAI text extraction failed: {e}")
-        return None
+    prefix = "Trích xuất JSON từ nội dung hợp đồng sau:"
+
+    async def one(chunk: str) -> dict | None:
+        try:
+            return _parse_ai_json(await _chat_content(EXTENDED_FIELDS_SYSTEM_PROMPT, prefix, chunk, 2000, True) or "")
+        except Exception as e:
+            logger.error(f"Contract OCR (full): OpenAI text extraction failed: {e}")
+            return None
+
+    return _merge_extracted(await _gather_limited([one(c) for c in _split_text(text)]))
 
 
 async def extract_contract_fields_full(text: str) -> dict:
@@ -223,11 +214,11 @@ async def extract_contract_fields_full(text: str) -> dict:
     heuristic cho field moi", tach biet voi logic chon tier theo dinh dang file."""
     if len(text.strip()) < _MIN_TEXT_LEN_FOR_HEURISTIC:
         return _empty_result_full("heuristic", False)
-    if settings.gemini_api_key:
+    if _use_gemini():
         parsed = await _extract_full_via_gemini_text(text)
         if parsed:
             return {**_empty_result_full("ai", True), **parsed, "extraction_method": "ai", "extractable": True}
-    elif settings.openai_api_key:
+    elif _openai_key():
         parsed = await _extract_full_via_openai_text(text)
         if parsed:
             return {**_empty_result_full("ai", True), **parsed, "extraction_method": "ai", "extractable": True}
@@ -296,28 +287,21 @@ async def _extract_risk_clauses_via_gemini(text: str) -> list[dict] | None:
 
 
 async def _extract_risk_clauses_via_openai(text: str) -> list[dict] | None:
-    if not settings.openai_api_key:
+    if not _openai_key():
         return None
-    try:
-        url = f"{settings.openai_base_url}/chat/completions"
-        headers = {"Authorization": f"Bearer {settings.openai_api_key}", "Content-Type": "application/json"}
-        body = {
-            "model": settings.ai_model,
-            "messages": [
-                {"role": "system", "content": RISK_CLAUSE_SYSTEM_PROMPT},
-                {"role": "user", "content": f"Rà soát điều khoản quan trọng/rủi ro trong hợp đồng sau:\n\n{text[:30000]}"},
-            ],
-            "temperature": 0.1, "max_tokens": 3000,
-        }
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            resp = await client.post(url, json=body, headers=headers)
-            resp.raise_for_status()
-        resp_text = resp.json()["choices"][0]["message"]["content"]
-        parsed = json.loads(_strip_json_fences(resp_text))
-        return parsed if isinstance(parsed, list) else None
-    except Exception as e:  # noqa: BLE001
-        logger.error(f"Risk clause extraction: OpenAI failed: {e}")
+    prefix = "Rà soát điều khoản quan trọng/rủi ro trong hợp đồng sau:"
+
+    async def one(chunk: str) -> list[dict] | None:
+        try:
+            return _parse_json_array_lenient(await _chat_content(RISK_CLAUSE_SYSTEM_PROMPT, prefix, chunk, 3000, False) or "")
+        except Exception as e:  # noqa: BLE001
+            logger.error(f"Risk clause extraction: OpenAI failed: {e}")
+            return None
+
+    results = await _gather_limited([one(c) for c in _split_text(text)])
+    if all(r is None for r in results):
         return None
+    return _dedupe_clauses([c for r in results for c in (r or [])])
 
 
 # Tu khoa "ung vien" CHUA XAC THUC - chi dung khi KHONG co AI key nao, gan nhan ro
@@ -370,13 +354,13 @@ async def extract_risk_clauses(text: str) -> dict:
     toan tu khoa (xem _fallback_risk_clause_candidates), gan verified=False tren TUNG clause."""
     if len(text.strip()) < _MIN_TEXT_LEN_FOR_HEURISTIC:
         return {"method": "heuristic_candidate", "clauses": []}
-    if settings.gemini_api_key:
+    if _use_gemini():
         parsed = await _extract_risk_clauses_via_gemini(text)
         if parsed is not None:
             for c in parsed:
                 c["verified"] = True
             return {"method": "ai", "clauses": parsed}
-    elif settings.openai_api_key:
+    elif _openai_key():
         parsed = await _extract_risk_clauses_via_openai(text)
         if parsed is not None:
             for c in parsed:
@@ -384,6 +368,187 @@ async def extract_risk_clauses(text: str) -> dict:
             return {"method": "ai", "clauses": parsed}
     return {"method": "heuristic_candidate", "clauses": _fallback_risk_clause_candidates(text)}
 
+
+
+# ── Cau hinh AI cho "AI Review / Doi chieu bao gia" ──────────────────────────────────────────
+# Giong contract_ai_service.py: dat CONTRACT_AI_BASE_URL (+ CONTRACT_AI_API_KEY, CONTRACT_AI_MODEL) de
+# chay qua proxy OpenAI-compatible (vd proxy.markeeai.com, model claude-api/*) RIENG cho Contract
+# Copilot/AI Review, khong dong toi OPENAI_* dang dung chung cho tinh nang khac. KHONG dat bien
+# CONTRACT_AI_BASE_URL -> giu NGUYEN hanh vi cu (OPENAI_*, AI_MODEL, max_tokens cu, khong stream:false).
+def _proxy_mode() -> bool:
+    return bool(os.getenv("CONTRACT_AI_BASE_URL"))
+
+
+def _openai_cfg() -> tuple[str, str, str]:
+    api_key = os.getenv("CONTRACT_AI_API_KEY") or settings.openai_api_key
+    base_url = (os.getenv("CONTRACT_AI_BASE_URL") or settings.openai_base_url).rstrip("/")
+    model = os.getenv("CONTRACT_AI_REVIEW_MODEL") or os.getenv("CONTRACT_AI_MODEL") or settings.ai_model
+    return api_key, base_url, model
+
+
+def _openai_key() -> str:
+    return _openai_cfg()[0]
+
+
+def _use_gemini() -> bool:
+    """Gemini la tang uu tien cu; che do proxy (CONTRACT_AI_BASE_URL) thi uu tien proxy."""
+    return bool(settings.gemini_api_key) and not _proxy_mode()
+
+
+def _chat_limits(legacy_max_tokens: int) -> tuple[int, float]:
+    """(max_tokens, timeout). Model Claude tinh CA token suy luan vao max_tokens: 1000-3000 cu lam
+    cau tra loi bi CAT CUT giua chung -> JSON hong -> am tham roi ve quy tac cung ("Chua trich xuat").
+    Che do proxy: 8000 + timeout 180s."""
+    return (8000, 180.0) if _proxy_mode() else (legacy_max_tokens, 60.0)
+
+
+def _chat_body(model: str, system: str, user: str, legacy_max_tokens: int, json_mode: bool) -> dict:
+    max_tokens, _ = _chat_limits(legacy_max_tokens)
+    body: dict = {
+        "model": model,
+        "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
+        "temperature": 0.1,
+        "max_tokens": max_tokens,
+    }
+    if json_mode:
+        body["response_format"] = {"type": "json_object"}
+    if _proxy_mode():
+        body["stream"] = False  # proxy.markeeai.com mac dinh tra SSE -> resp.json() se vo
+    return body
+
+
+# ── Hop dong DAI: chia doan (chi che do proxy) ───────────────────────────────────────────────
+# Cu: text[:30000] -> hop dong dai hon ~30.000 ky tu bi bo qua PHAN SAU im lang (dieu khoan rui ro o
+# cuoi khong bao gio duoc xem). Che do proxy: chia doan ~40.000 ky tu (cat o ranh gioi "DIEU n"/doan
+# van, goi nhau 2.000 ky tu), goi song song toi da 3 (proxy gioi han 4 request dong thoi/token),
+# roi GOP ket qua. Che do cu (khong dat CONTRACT_AI_BASE_URL) giu nguyen text[:30000].
+_REVIEW_FALLBACK_MODELS = ["claude-api/claude-haiku-5-5", "claude-api/claude-sonnet-5-5"]
+_CHUNK_CHARS = 40_000
+_CHUNK_OVERLAP = 2_000
+_MAX_CHUNKS = 8  # tran ~320.000 ky tu (~100+ trang); vuot thi ghi log canh bao, KHONG im lang
+_ARTICLE_RE = re.compile(r"\n\s*(?:ĐIỀU|Điều|ĐIỂU)\s+\d+", re.IGNORECASE)
+
+
+def _split_text(text: str) -> list[str]:
+    if not _proxy_mode():
+        return [text[:30000]]
+    if len(text) <= _CHUNK_CHARS:
+        return [text]
+    chunks: list[str] = []
+    start = 0
+    while start < len(text):
+        end = min(start + _CHUNK_CHARS, len(text))
+        if end < len(text):
+            window_from = start + int(_CHUNK_CHARS * 0.7)
+            cut = None
+            for m in _ARTICLE_RE.finditer(text, window_from, end):
+                cut = m.start()  # lay "DIEU n" CUOI CUNG trong cua so 30% cuoi
+            if cut is None:
+                cut = text.rfind("\n\n", window_from, end)
+            if cut is not None and cut > start:
+                end = cut
+        chunks.append(text[start:end])
+        if end >= len(text):
+            break
+        start = max(end - _CHUNK_OVERLAP, start + 1)
+        if len(chunks) >= _MAX_CHUNKS:
+            logger.warning("Contract AI: hop dong qua dai (%d ky tu) - chi xu ly %d doan dau", len(text), _MAX_CHUNKS)
+            break
+    return chunks
+
+
+async def _gather_limited(coros: list, limit: int = 3) -> list:
+    sem = asyncio.Semaphore(limit)
+
+    async def run(c):
+        async with sem:
+            return await c
+
+    return await asyncio.gather(*(run(c) for c in coros))
+
+
+def _parse_json_array_lenient(resp_text: str) -> list | None:
+    """JSON array; neu bi CAT GIUA CHUNG (het max_tokens) thi cuu cac phan tu da hoan chinh."""
+    t = _strip_json_fences(resp_text)
+    try:
+        v = json.loads(t)
+        return v if isinstance(v, list) else None
+    except Exception:  # noqa: BLE001
+        pass
+    i = t.find("[")
+    if i < 0:
+        return None
+    dec, out, pos = json.JSONDecoder(), [], i + 1
+    while pos < len(t):
+        while pos < len(t) and t[pos] in " \n\r\t,":
+            pos += 1
+        if pos >= len(t) or t[pos] != "{":
+            break
+        try:
+            obj, pos = dec.raw_decode(t, pos)
+        except Exception:  # noqa: BLE001
+            break
+        out.append(obj)
+    if out:
+        logger.warning("Contract AI: JSON bi cat giua chung - cuu duoc %d phan tu hoan chinh", len(out))
+    return out or None
+
+
+def _merge_extracted(parts: list[dict]) -> dict | None:
+    """Gop ket qua trich xuat nhieu doan: moi key lay gia tri KHAC rong DAU TIEN (doan dau chua phan
+    dau hop dong: so HD, ngay ky, hai ben); *_excerpt/_location di cung doan da cho gia tri do."""
+    parts = [p for p in parts if p]
+    if not parts:
+        return None
+    merged = dict(parts[0])
+    for p in parts[1:]:
+        for k, v in p.items():
+            if k.endswith("_excerpt") or k.endswith("_location"):
+                continue
+            if merged.get(k) in (None, "") and v not in (None, ""):
+                merged[k] = v
+                for suf in ("_excerpt", "_location"):
+                    if f"{k}{suf}" in p:
+                        merged[f"{k}{suf}"] = p[f"{k}{suf}"]
+    return merged
+
+
+def _dedupe_clauses(clauses: list[dict]) -> list[dict]:
+    seen, out = set(), []
+    for c in clauses:
+        if not isinstance(c, dict):
+            continue
+        key = re.sub(r"\s+", " ", str(c.get("excerpt") or c.get("title") or "")).strip().lower()[:160]
+        if key and key in seen:
+            continue
+        seen.add(key)
+        out.append(c)
+    return out
+
+
+async def _chat_content(system: str, user_prefix: str, chunk: str, legacy_max_tokens: int, json_mode: bool) -> str | None:
+    api_key, base_url, primary = _openai_cfg()
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    # Che do proxy: model chinh loi (vd nhom model bi 403/rate-limit) -> thu model du phong thay vi
+    # roi ve quy tac cung. Che do cu: chi 1 model nhu truoc.
+    models = [primary] + ([m for m in _REVIEW_FALLBACK_MODELS if m != primary] if _proxy_mode() else [])
+    last: Exception | None = None
+    for model in models:
+        body = _chat_body(model, system, f"{user_prefix}\n\n{chunk}", legacy_max_tokens, json_mode)
+        try:
+            async with httpx.AsyncClient(timeout=_chat_limits(legacy_max_tokens)[1]) as client:
+                resp = await client.post(f"{base_url}/chat/completions", json=body, headers=headers)
+                resp.raise_for_status()
+            choice = resp.json()["choices"][0]
+        except Exception as e:  # noqa: BLE001
+            last = e
+            logger.warning("Contract AI: model %s loi (%s) - thu model du phong", model, e)
+            continue
+        if choice.get("finish_reason") == "length":
+            logger.warning("Contract AI: tra loi bi cat o max_tokens (%s)", body["max_tokens"])
+        return choice["message"]["content"]
+    assert last is not None
+    raise last
 
 def _configure_gemini_if_needed() -> bool:
     if not settings.gemini_api_key:
@@ -448,29 +613,18 @@ async def _extract_via_openai_text(text: str) -> dict | None:
     endpoint/pattern normalize_text_with_llm() trong vendor_ai_parse_service.py
     đang dùng cho tính năng khác. Chỉ áp dụng cho text (không phải vision) vì
     AI_MODEL cấu hình hiện tại có thể không hỗ trợ ảnh."""
-    if not settings.openai_api_key:
+    if not _openai_key():
         return None
-    try:
-        url = f"{settings.openai_base_url}/chat/completions"
-        headers = {"Authorization": f"Bearer {settings.openai_api_key}", "Content-Type": "application/json"}
-        body = {
-            "model": settings.ai_model,
-            "messages": [
-                {"role": "system", "content": CONTRACT_SYSTEM_PROMPT},
-                {"role": "user", "content": f"Trích xuất JSON từ nội dung hợp đồng sau:\n\n{text[:30000]}"},
-            ],
-            "temperature": 0.1,
-            "max_tokens": 1000,
-            "response_format": {"type": "json_object"},
-        }
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            resp = await client.post(url, json=body, headers=headers)
-            resp.raise_for_status()
-        resp_text = resp.json()["choices"][0]["message"]["content"]
-        return _parse_ai_json(resp_text)
-    except Exception as e:
-        logger.error(f"Contract OCR: OpenAI text extraction failed: {e}")
-        return None
+    prefix = "Trích xuất JSON từ nội dung hợp đồng sau:"
+
+    async def one(chunk: str) -> dict | None:
+        try:
+            return _parse_ai_json(await _chat_content(CONTRACT_SYSTEM_PROMPT, prefix, chunk, 1000, True) or "")
+        except Exception as e:
+            logger.error(f"Contract OCR: OpenAI text extraction failed: {e}")
+            return None
+
+    return _merge_extracted(await _gather_limited([one(c) for c in _split_text(text)]))
 
 
 async def _extract_via_gemini_file(file_bytes: bytes, mime_type: str) -> dict | None:
@@ -697,12 +851,12 @@ async def _summarize_from_text(text: str) -> dict:
     lap lai cung 1 logic 3 tang o 2 nhanh dinh dang khac nhau."""
     if len(text.strip()) < _MIN_TEXT_LEN_FOR_HEURISTIC:
         return _empty_result("heuristic", False)
-    if settings.gemini_api_key:
+    if _use_gemini():
         parsed = await _extract_via_gemini_text(text)
         if parsed:
             return {**_empty_result("ai", True), **parsed, "extraction_method": "ai", "extractable": True}
         # AI co key nhung goi loi/parse loi - van con text that, roi xuong heuristic thay vi tra loi trang tay.
-    elif settings.openai_api_key:
+    elif _openai_key():
         parsed = await _extract_via_openai_text(text)
         if parsed:
             return {**_empty_result("ai", True), **parsed, "extraction_method": "ai", "extractable": True}
@@ -716,7 +870,7 @@ async def extract_contract_summary(file_bytes: bytes, filename: str) -> dict:
     extractable=False + toàn bộ field None là kết quả hợp lệ khi không đọc
     được nội dung."""
     ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
-    has_ai = bool(settings.gemini_api_key or settings.openai_api_key)
+    has_ai = bool(settings.gemini_api_key or _openai_key())
 
     if ext == "docx":
         try:
@@ -747,13 +901,13 @@ async def extract_contract_summary(file_bytes: bytes, filename: str) -> dict:
             text = ""
 
         if len(text.strip()) >= _MIN_TEXT_LEN_FOR_HEURISTIC:
-            if settings.gemini_api_key:
+            if _use_gemini():
                 parsed = await _extract_via_gemini_text(text)
                 if parsed:
                     return {**_empty_result("ai", True), **parsed, "extraction_method": "ai", "extractable": True}
                 # AI có key nhưng gọi lỗi/parse lỗi - vẫn còn text thật, rơi
                 # xuống heuristic thay vì trả lỗi trắng tay.
-            elif settings.openai_api_key:
+            elif _openai_key():
                 parsed = await _extract_via_openai_text(text)
                 if parsed:
                     return {**_empty_result("ai", True), **parsed, "extraction_method": "ai", "extractable": True}
