@@ -417,6 +417,16 @@ def _chat_body(model: str, system: str, user: str, legacy_max_tokens: int, json_
     return body
 
 
+def ai_configured() -> bool:
+    return bool(settings.gemini_api_key or _openai_key())
+
+
+def is_stale_heuristic(extracted: dict | None) -> bool:
+    """Ket qua da luu la QUY TAC CUNG (khong phai AI) trong khi AI da duoc cau hinh -> khong dung lai lam cache
+    (vd lan truoc AI chua cau hinh / proxy loi tam thoi) de lan chay lai that su goi AI."""
+    return ai_configured() and (extracted or {}).get("extraction_method") != "ai"
+
+
 # ── Hop dong DAI: chia doan (chi che do proxy) ───────────────────────────────────────────────
 # Cu: text[:30000] -> hop dong dai hon ~30.000 ky tu bi bo qua PHAN SAU im lang (dieu khoan rui ro o
 # cuoi khong bao gio duoc xem). Che do proxy: chia doan ~40.000 ky tu (cat o ranh gioi "DIEU n"/doan
@@ -973,7 +983,8 @@ def compare_to_quote(
     return {"rows": rows, "allMatched": all_matched}
 
 
-RULES_VERSION = "v6"  # Bump: neo highlight ten Bên A bằng đúng tên công ty; cache cũ chưa có vùng tô chính xác.
+RULES_VERSION = "v7"  # Bump (28/10): AI Review chay qua proxy claude-api/* + hop dong dai; cache v6 la ket qua quy tac cung ("Chua trich xuat").
+# v6: neo highlight ten Bên A bằng đúng tên công ty; cache cũ chưa có vùng tô chính xác.
 # v5 (2026-10-28, "Hybrid Regex + AI that" - fix 2 bug that xac nhan qua HD/2026/0007):
 # (1) company_name truoc day = Ben B (chinh cong ty phat hanh hop dong) nen SO SANH SAI HUONG voi
 # CRM customer (luon la khach hang = Ben A) - them party_a_name/party_b_name rieng, doi chieu dung
