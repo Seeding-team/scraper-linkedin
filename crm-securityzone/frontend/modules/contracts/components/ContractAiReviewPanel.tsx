@@ -734,6 +734,22 @@ export function ContractAiReviewPanel({
             </a>
           ) : null}
         </div>
+        {editorError && view !== 'editor' ? (
+          <div
+            role="alert"
+            data-testid="word-editor-start-error"
+            style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
+              padding: '8px 10px', border: '1px solid #fecaca', borderRadius: 8,
+              background: '#fef2f2', color: '#b91c1c', fontSize: '0.78rem', flexShrink: 0,
+            }}
+          >
+            <span>{editorError}</span>
+            <button type="button" className="cp-btn small" disabled={editorStarting} onClick={() => void startEditor()}>
+              {editorStarting ? 'Đang thử lại…' : 'Thử lại'}
+            </button>
+          </div>
+        ) : null}
         {view !== 'editor' ? (
           pdfLoading ? (
             <div style={{ flex: 1, minHeight: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
