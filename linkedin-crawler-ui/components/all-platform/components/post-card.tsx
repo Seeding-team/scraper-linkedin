@@ -276,11 +276,21 @@ export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onVi
 
                 </p>
                 <div className="flex items-center justify-between mt-1">
-                  {seed.link_comment && !isRejected(seed.link_comment) && (
-                    <a href={seed.link_comment} target="_blank" rel="noopener noreferrer" className="text-[10px] font-medium text-blue-600 hover:underline inline-flex items-center gap-1">
-                      Xem bình luận <FiExternalLink className="w-3 h-3" />
-                    </a>
-                  )}
+                  {(() => {
+                    const cmtUrl = seed.link_comment || post.link_comment || post.post_url;
+                    return cmtUrl && !isRejected(seed.link_comment) ? (
+                      <a
+                        href={cmtUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded text-xs font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 transition shadow-xs"
+                        title="Mở tab mới xem trực tiếp bình luận này"
+                      >
+                        <span>👁️ Xem bình luận</span>
+                        <FiExternalLink className="w-3.5 h-3.5 ml-0.5" />
+                      </a>
+                    ) : null;
+                  })()}
                   {seed.link_comment && isRejected(seed.link_comment) && (
                     <span className="text-[10px] font-medium text-red-600 inline-flex items-center gap-1">
                       Bị từ chối / Lỗi
@@ -309,11 +319,21 @@ export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onVi
 
               <span className="text-emerald-500 font-serif font-bold text-lg leading-none ml-1">"</span>
             </p>
-            {post.link_comment && !isRejected(post.link_comment) && (
-              <a href={post.link_comment} target="_blank" rel="noopener noreferrer" className="text-[10px] font-medium text-blue-600 hover:underline inline-flex items-center gap-1 mt-0.5">
-                Xem bình luận <FiExternalLink className="w-3 h-3" />
-              </a>
-            )}
+            {(() => {
+              const cmtUrl = post.link_comment || post.post_url;
+              return cmtUrl && !isRejected(post.link_comment) ? (
+                <a
+                  href={cmtUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded text-xs font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 transition shadow-xs mt-1"
+                  title="Mở tab mới xem trực tiếp bình luận này"
+                >
+                  <span>👁️ Xem bình luận</span>
+                  <FiExternalLink className="w-3.5 h-3.5 ml-0.5" />
+                </a>
+              ) : null;
+            })()}
             {post.link_comment && isRejected(post.link_comment) && (
               <span className="text-[10px] font-medium text-red-600 inline-flex items-center gap-1 mt-0.5">
                 Bị từ chối / Lỗi
@@ -441,6 +461,20 @@ export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onVi
               <span className="px-2.5 py-1 rounded-md text-[11px] font-bold border bg-muted text-muted-foreground border-border">
                 Chưa seeding
               </span>
+            )}
+
+            {/* Nút xem bình luận trực tiếp trên card */}
+            {(verifyStatus === "yes" || verifyStatus === "pending" || (post.all_seedings && post.all_seedings.length > 0) || post.link_comment || post.seeding_content) && (
+              <a
+                href={post.link_comment || (post.all_seedings && post.all_seedings[0] && post.all_seedings[0].link_comment) || post.post_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="px-3 py-2 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded-lg text-sm font-semibold transition shadow-sm cursor-pointer inline-flex items-center gap-1.5"
+                title="Xem bình luận minh chứng trực tiếp trên bài viết"
+              >
+                <FiExternalLink className="w-4 h-4" />
+                <span>Xem bình luận</span>
+              </a>
             )}
 
             {/* YouTube: mở modal gõ comment (mở video tab mới, điền sẵn, tính KPI khi nhân

@@ -112,13 +112,16 @@ def record_action(payload: dict) -> dict:
             pass
 
     raw_content = payload.get("content") or payload.get("text") or ""
+    # Nếu link_comment rỗng đối với hành động comment, tự động fallback lấy link_post để không bao giờ bị mất liên kết minh chứng
+    effective_link_comment = link_comment or (link_post if action_type == "comment" else "")
+    
     # Bảo lưu link minh chứng trực tiếp vào content để KHÔNG BAO GIỜ bị mất link dù DB chưa có cột link_comment
     final_content = raw_content
-    if link_comment and link_comment not in final_content:
+    if effective_link_comment and effective_link_comment not in final_content:
         if final_content:
-            final_content = f"{final_content}\n[Link minh chứng: {link_comment}]"
+            final_content = f"{final_content}\n[Link minh chứng: {effective_link_comment}]"
         else:
-            final_content = f"[Link minh chứng: {link_comment}]"
+            final_content = f"[Link minh chứng: {effective_link_comment}]"
 
     base_data = {
         "id_member": id_member,
@@ -139,8 +142,8 @@ def record_action(payload: dict) -> dict:
         base_data["error_message"] = payload.get("error_message")
 
     full_data = dict(base_data)
-    if link_comment:
-        full_data["link_comment"] = link_comment
+    if effective_link_comment:
+        full_data["link_comment"] = effective_link_comment
     if comment_id:
         full_data["comment_id"] = comment_id
     if payload.get("facebook_name"):
@@ -164,7 +167,7 @@ def record_action(payload: dict) -> dict:
             verify_seeding_mark({
                 "email_member": email,
                 "link_post": link_post,
-                "link_comment": link_comment or None,
+                "link_comment": effective_link_comment or None,
                 "content": raw_content or None,
                 "profile_id": payload.get("profile_id") or None,
                 "id_post": payload.get("id_post") or None,
