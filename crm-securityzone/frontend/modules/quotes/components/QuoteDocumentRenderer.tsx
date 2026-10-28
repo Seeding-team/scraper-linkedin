@@ -31,6 +31,12 @@ import { formatQuoteMoney, localizeCurrencyLabel, normalizeQuoteCurrency } from 
 function formatVndPlain(value: unknown): string {
   return formatVndRaw(value).replace(/\s*đ$/, '');
 }
+
+function formatDiscountPercent(value: unknown): string {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric === 0) return '';
+  return `${numeric.toFixed(2).replace(/\.00$/, '').replace(/(\.\d)0$/, '$1')}%`;
+}
 import { ALWAYS_HIDDEN_CALCULATED_KEYS, filterRedundantAmountAfterDiscountColumn, normalizeQuoteColumnLabel, resolveDefaultVisibleColumnKeys, resolveQuoteItemColumns, resolveToggleableColumns } from '../utils/quoteColumns';
 import {
   getCustomerDisplayFields,
@@ -584,7 +590,7 @@ export function QuoteDocumentRenderer({
       return amount;
     }
     if (column.key === 'quantity') return String(item.quantity || '');
-    if (column.key === 'discountPercent') return item.discountPercent ? `${item.discountPercent}%` : '';
+    if (column.key === 'discountPercent') return formatDiscountPercent(item.discountPercent);
     if (column.key === 'amountAfterDiscount') return formatVnd(calculateItemAfterDiscount(item, currency));
     // "Giảm giá/Tiết kiệm" (so tien, KHAC voi 'discountPercent' o tren chi
     // hien %) - dung cho mau "Mẫu ưu đãi combo (Markee)" (xem promoBundleColumns

@@ -56,9 +56,12 @@ export const calculateItemTotal = (item?: Partial<QuoteItem>, currency?: unknown
  * tiền ra số vô lý (âm hoặc lớn hơn cả tổng gốc). */
 export const clampDiscountPercent = (value: unknown) => {
   const pct = toSafePercent(value);
-  if (pct < 0) return 0;
-  if (pct > 100) return 100;
-  return pct;
+  const clamped = Math.max(0, Math.min(100, pct));
+  // Phần trăm giảm giá là dữ liệu người dùng nhìn thấy/lưu lại, không phải
+  // số trung gian. Quy đổi từ "số tiền giảm" có thể sinh float rất dài
+  // (vd 14.578299120234602); chuẩn hoá ngay tại biên dùng chung để mọi màn
+  // hình, phép tính và payload chỉ còn tối đa 2 chữ số thập phân.
+  return Math.round((clamped + Number.EPSILON) * 100) / 100;
 };
 
 /**

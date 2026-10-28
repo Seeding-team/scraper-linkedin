@@ -39,6 +39,31 @@ services:
       crm-net:
         aliases: [backend]
 
+  # Word Editor trong AI Contract Review (2026-10-27, Phase POC PASS 6/6) - CHI DEV, KHONG
+  # deploy production. ALLOW_PRIVATE_IP_ADDRESS/ALLOW_META_IP_ADDRESS bat buoc (xac nhan qua
+  # POC that) de OnlyOffice tai duoc file nhap/callback toi backend noi bo (IP rieng tu).
+  # JWT_ENABLED=true + JWT_SECRET dung chung voi ONLYOFFICE_JWT_SECRET trong backend/.env.
+  onlyoffice:
+    build:
+      context: ./onlyoffice
+      dockerfile: Dockerfile
+    image: crm-module-onlyoffice:latest
+    container_name: crm-module-onlyoffice
+    restart: unless-stopped
+    environment:
+      TZ: Asia/Ho_Chi_Minh
+      ALLOW_PRIVATE_IP_ADDRESS: "true"
+      ALLOW_META_IP_ADDRESS: "true"
+      JWT_ENABLED: "true"
+      JWT_SECRET: ${ONLYOFFICE_JWT_SECRET:-}
+      JWT_HEADER: Authorization
+      JWT_IN_BODY: "true"
+    ports:
+      - "${ONLYOFFICE_PORT:-8095}:80"
+    networks:
+      crm-net:
+        aliases: [onlyoffice]
+
   router:
     image: nginx:alpine
     container_name: crm-module-router

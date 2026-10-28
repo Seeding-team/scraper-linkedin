@@ -239,8 +239,28 @@ def _resolve_contract_source_file(contract_row: dict[str, Any]) -> tuple[bytes, 
     "van luu duoc ban ghi, chi hien Chua co tai lieu")."""
     import httpx
 
-    file_url = (contract_row.get("file_url") or "").strip()
     contract_number = _sanitize_folder_name(contract_row.get("contract_number") or contract_row.get("id"))
+
+    # (2026-10-28, Word Editor - fix nguon hieu luc) Mot amendment DA DUYET phai UU TIEN HON
+    # file_url/link ngoai - day la hanh dong Sale+nguoi duyet co y DINH RO RANG "noi dung nay
+    # bay gio la ban hieu luc". Thieu buoc nay thi moi hop dong "Ghi nhan co san" (co file_url)
+    # se KHONG BAO GIO thay doi nguon hieu luc du amendment da duoc duyet - lam vo hieu hoa toan
+    # bo he thong duyet amendment cho dung loai hop dong ma no duoc thiet ke de bao ve. Hop dong
+    # KHONG co amendment nao duoc duyet van di qua nhanh file_url/version cu NHU HIEN TAI (khong
+    # regression).
+    from app.modules.all_platform.services import contract_document_store
+
+    approved_version = _latest_approved_amendment_version(contract_row["id"])
+    if approved_version is not None:
+        content = contract_document_store.load_version(contract_row["id"], approved_version)
+        if content:
+            return (
+                content,
+                f"{contract_number}_Goc_v{approved_version}.docx",
+                contract_document_store.DOCX_MIME,
+            )
+
+    file_url = (contract_row.get("file_url") or "").strip()
     if file_url:
         # Google Docs/Drive link - KHONG tai qua httpx (se tra ve trang HTML dang nhap, khong
         # phai noi dung that) - dung export_google_doc_as_pdf() rieng, kiem tra o sync_contract_file().
@@ -260,12 +280,58 @@ def _resolve_contract_source_file(contract_row: dict[str, Any]) -> tuple[bytes, 
 
     versions = contract_document_store.list_versions(contract_row["id"])
     if versions:
-        latest = versions[-1]
-        content = contract_document_store.load_version(contract_row["id"], latest["version"])
-        if content:
-            return content, f"{contract_number}_Goc_v{latest['version']}.docx", contract_document_store.DOCX_MIME
+        excluded = _unapproved_amendment_versions(contract_row["id"])
+        effective = [v for v in versions if v["version"] not in excluded]
+        if effective:
+            latest = effective[-1]
+            content = contract_document_store.load_version(contract_row["id"], latest["version"])
+            if content:
+                return content, f"{contract_number}_Goc_v{latest['version']}.docx", contract_document_store.DOCX_MIME
 
     return None
+
+
+def _latest_approved_amendment_version(contract_id: str) -> int | None:
+    """(2026-10-28, Word Editor - fix nguon hieu luc) Số version DOCX moi nhat gan voi 1
+    `contract_amendments` dang 'approved' cho hop dong nay, neu co - day la nguon hieu luc THAT
+    SU sau khi nguoi co quyen da duyet ban sua doi. Best-effort: bang/migration 199 chua chay
+    hoac khong co amendment nao duoc duyet -> None (hanh vi CU, khong anh huong)."""
+    try:
+        from app.core.supabase_client import get_supabase_client
+
+        rows = (
+            get_supabase_client().table("contract_amendments").select("version_id, approved_at")
+            .eq("contract_id", contract_id).eq("status", "approved")
+            .order("approved_at", desc=True).limit(1).execute().data
+        ) or []
+    except Exception:  # noqa: BLE001
+        return None
+    if not rows:
+        return None
+    m = re.fullmatch(r"v(\d+)", (rows[0].get("version_id") or "").strip())
+    return int(m.group(1)) if m else None
+
+
+def _unapproved_amendment_versions(contract_id: str) -> set[int]:
+    """(2026-10-27, Word Editor - mục 4 plan) Số version gắn với 1 `contract_amendments` đang
+    'draft'/'pending_approval' - PHẢI loại khỏi "nguồn hiệu lực" (AI Review, viewer mặc định,
+    file Drive hiện hành) cho tới khi amendment được duyệt. Best-effort: bảng/migration 199 chưa
+    chạy thì coi như không có amendment nào (hành vi CŨ, không chặn luồng hiện tại)."""
+    try:
+        from app.core.supabase_client import get_supabase_client
+
+        rows = (
+            get_supabase_client().table("contract_amendments").select("version_id")
+            .eq("contract_id", contract_id).in_("status", ["draft", "pending_approval"]).execute().data
+        ) or []
+    except Exception:  # noqa: BLE001
+        return set()
+    out: set[int] = set()
+    for r in rows:
+        m = re.fullmatch(r"v(\d+)", (r.get("version_id") or "").strip())
+        if m:
+            out.add(int(m.group(1)))
+    return out
 
 
 def _resolve_company_label(contract_row: dict[str, Any]) -> str:

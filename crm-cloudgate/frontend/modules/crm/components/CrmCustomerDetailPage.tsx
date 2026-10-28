@@ -569,12 +569,14 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
   // Tab "Hoạt động" (Phase 3) - CHI gom Deal/Sales activity qua moi Deal cua
   // Customer nay (GET /crm/customers/{id}/activity), KHONG phai Activity
   // Timeline hop nhat (chua gom Quote/Contract/Customer event) - UI phai noi
-  // ro pham vi. Lazy-fetch khi nguoi dung thuc su mo tab, khong eager.
+  // ro pham vi. Fetch EAGER cung luc voi cac tab khac (khong con gate theo
+  // `tab`) - truoc day lazy-fetch khien badge so luong hien "0" sai cho toi
+  // khi Sale bam vao tab, vi activityItems.length chi co gia tri THAT sau khi
+  // fetch chay (xem dong gan 'count: activityItems.length' o JSX tab list).
   const [activityItems, setActivityItems] = useState<CustomerActivityEntry[]>([]);
   const [activityLoading, setActivityLoading] = useState(false);
   const [activityError, setActivityError] = useState('');
   useEffect(() => {
-    if (tab !== 'activity') return;
     let alive = true;
     setActivityLoading(true);
     setActivityError('');
@@ -593,7 +595,7 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
       .catch(err => { if (alive) setActivityError(err instanceof Error ? err.message : 'Không tải được hoạt động.'); })
       .finally(() => { if (alive) setActivityLoading(false); });
     return () => { alive = false; };
-  }, [tab, customerId, reloadTick]);
+  }, [customerId, reloadTick]);
 
   // Tab "Cơ hội" -> click 1 deal mo THANG Deal Workspace V2 (Phase 2,
   // DealDetailDrawer) ngay tai day, KHONG dieu huong sang /all-platform/crm -

@@ -18,6 +18,9 @@ import { ContractAiReviewPanel } from './ContractAiReviewPanel';
 import type { ActivityEntry, DocVersion, Readiness } from '../repositories/contractDocs';
 import { base64ToBlob } from '../repositories/contractDocs';
 import '@/modules/crm/styles/copilot.css';
+import { useLayeredDrawerClose } from '@/modules/crm/hooks/useLayeredDrawerClose';
+import { UnsavedChangesDialog } from '@/modules/crm/components/UnsavedChangesDialog';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 
 type Tab = 'overview' | 'docs' | 'risk' | 'aiReviewV2' | 'approval' | 'history';
 
@@ -309,9 +312,17 @@ export function ContractDetailContent({
       <header className="contract-detail-header" style={{ alignItems: 'flex-start', ...(isDrawer ? { margin: 0, padding: 0 } : {}) }}>
         <div style={{ minWidth: 0, flex: 1 }}>
           {!onClose && onBack ? <button type="button" className="contract-button contract-button--secondary" onClick={onBack} style={{ marginBottom: '0.6rem' }}>{backLabel || '← Danh sách hợp đồng'}</button> : null}
-          {isDrawer ? <h2 className="cd-title" data-testid="drawer-contract-title" title={contract.title}>{contract.title}</h2> : null}
+          {isDrawer ? (
+            <h2 className="cd-title" data-testid="drawer-contract-title" title={contract.title}
+              style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{contract.title}</h2>
+          ) : null}
           <h1 data-testid="contract-number" style={isDrawer ? { fontSize: '0.95rem', margin: '2px 0 0', color: '#475569' } : undefined}>{contract.contractNumber}</h1>
-          <p>{contract.title} · {formatVnd(contract.contractValue)}{customerName !== '—' ? ` · ${customerName}${contract.dealCompanyName ? ` (${contract.dealCompanyName})` : ''}` : ''}{contract.ownerName ? ` · Phụ trách: ${contract.ownerName}` : ''}</p>
+          {/* Dòng meta: KHÔNG lặp lại contract.title (đã hiện ở <h2> ngay trên khi isDrawer) -
+           * trước đây lặp lại title + nhiều phần nối chuỗi dài gây rớt dòng xấu (sếp báo lỗi 2026-10-27). */}
+          <p style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+            title={`${contract.title} · ${formatVnd(contract.contractValue)}${customerName !== '—' ? ` · ${customerName}` : ''}${contract.ownerName ? ` · Phụ trách: ${contract.ownerName}` : ''}`}>
+            {!isDrawer ? `${contract.title} · ` : ''}{formatVnd(contract.contractValue)}{customerName !== '—' ? ` · ${customerName}${contract.dealCompanyName ? ` (${contract.dealCompanyName})` : ''}` : ''}{contract.ownerName ? ` · Phụ trách: ${contract.ownerName}` : ''}
+          </p>
           {isDrawer ? <span className={`contract-badge ${contractStatusClass(contract.status)}`} data-testid="drawer-status" style={{ display: 'inline-block', marginTop: 6 }}>{contractStatusLabel(contract.status)}</span> : null}
           <div style={{ display: isDrawer ? 'none' : 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8 }} data-testid="contract-status-flow">
             {FLOW.map(s => (
@@ -337,9 +348,19 @@ export function ContractDetailContent({
           {hasDocs && latest ? (
             <>
               <button type="button" className="cp-btn" data-testid="action-preview-pdf" onClick={() => { setTab('docs'); setSelected(latest.version); }}>👁 Xem trước PDF</button>
-              <button type="button" className="cp-btn" data-testid="action-print-pdf" onClick={() => void printVersion(latest.version)}>🖶 In PDF</button>
-              <button type="button" className="cp-btn" data-testid="action-download-docx" onClick={() => void dl(latest.version, 'docx')}>↓ Tải DOCX</button>
-              <button type="button" className="cp-btn" data-testid="action-download-pdf" onClick={() => void dl(latest.version, 'pdf')}>↓ Tải PDF</button>
+              {/* Gom "In PDF"/"Tải DOCX"/"Tải PDF" vào 1 dropdown - trước đây 4 nút rời làm header
+               * tràn/xuống dòng xấu khi có thêm "Mở thư mục Drive" (sếp báo lỗi 2026-10-27). Giữ
+               * nguyên đủ 3 hành động, chỉ gọn giao diện. */}
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button type="button" className="cp-btn" data-testid="action-downloads-menu">⬇ Tải xuống ▾</button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem data-testid="action-print-pdf" onClick={() => void printVersion(latest.version)}>🖶 In PDF</DropdownMenuItem>
+                  <DropdownMenuItem data-testid="action-download-docx" onClick={() => void dl(latest.version, 'docx')}>↓ Tải DOCX</DropdownMenuItem>
+                  <DropdownMenuItem data-testid="action-download-pdf" onClick={() => void dl(latest.version, 'pdf')}>↓ Tải PDF</DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </>
           ) : hasExternalFile ? (
             <button type="button" className="cp-btn" data-testid="action-view-external-doc" onClick={() => setTab('docs')}>👁 Xem tài liệu</button>
@@ -766,23 +787,30 @@ export function ContractDetailDrawer({
 }) {
   const dirtyRef = useRef(false);
   const setDirty = useCallback((d: boolean) => { dirtyRef.current = d; }, []);
-  const guardedClose = useCallback(() => {
-    if (dirtyRef.current && !window.confirm('Có thay đổi chưa lưu. Đóng chi tiết hợp đồng và bỏ các thay đổi này?')) return;
-    dirtyRef.current = false;
-    onClose();
-  }, [onClose]);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+  const guardedCloseNow = useCallback(() => { dirtyRef.current = false; onCloseRef.current(); }, []);
+  // 2026-10-27: doi sang useLayeredDrawerClose (chuan hoa dong drawer toan CRM)
+  // - giu NGUYEN dirtyRef + outside-click/ESC pattern da proven o day, chi them
+  // "chi dong lop TREN CUNG" khi co nhieu drawer/modal chong nhau (vd mo
+  // ContractDetailDrawer tu ben trong 1 modal khac) + doi window.confirm sang
+  // dialog dung chung co 2 nut dung text sep yeu cau.
+  const { backdropMouseDownProps, requestClose: guardedClose, confirmOpen: unsavedConfirmOpen, confirmStay, confirmDiscard } = useLayeredDrawerClose({
+    isOpen: !!contractId,
+    onRequestClose: guardedCloseNow,
+    isDirty: () => dirtyRef.current,
+  });
   useEffect(() => {
     if (!contractId) return undefined;
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') guardedClose(); };
-    window.addEventListener('keydown', onKey);
     const prev = document.body.style.overflow;
     document.body.style.overflow = 'hidden';                  // không cuộn trang Customer 360 phía sau
-    return () => { window.removeEventListener('keydown', onKey); document.body.style.overflow = prev; };
-  }, [contractId, guardedClose]);
+    return () => { document.body.style.overflow = prev; };
+  }, [contractId]);
   if (!contractId) return null;
   return (
-    <div className="cd-backdrop" data-testid="contract-drawer" onMouseDown={e => { if (e.target === e.currentTarget) guardedClose(); }}>
+    <div className="cd-backdrop" data-testid="contract-drawer" {...backdropMouseDownProps}>
       <aside className="cd-panel" role="dialog" aria-modal="true" aria-label="Chi tiết hợp đồng">
+        {unsavedConfirmOpen ? <UnsavedChangesDialog onStay={confirmStay} onDiscard={confirmDiscard} /> : null}
         <ContractDetailContent key={contractId} contractId={contractId} variant="drawer" onClose={guardedClose} onChanged={onChanged} onDirtyChange={setDirty}
           initialTab={initialTab} focusEdit={focusEdit} onOpenLegacyEdit={onOpenLegacyEdit ? () => { if (dirtyRef.current && !window.confirm('Có thay đổi chưa lưu. Bỏ thay đổi để mở form ghi nhận đầy đủ?')) return; dirtyRef.current = false; onOpenLegacyEdit(); } : undefined} />
       </aside>

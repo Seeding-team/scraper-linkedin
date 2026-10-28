@@ -111,6 +111,15 @@ class Settings:
     google_drive_contracts_shared_drive_id: str = os.getenv("GOOGLE_DRIVE_CONTRACTS_SHARED_DRIVE_ID", "")
     leader_code: str = (os.getenv("LEADER_CODE") or "8888").strip()
 
+    # Word Editor (OnlyOffice self-host, 2026-10-27, Phase POC PASS 6/6 - xem
+    # C:\Users\Asus\.claude\plans\proud-stargazing-pixel.md) - CHI dev, KHONG deploy production.
+    # onlyoffice_internal_url: dia chi noi bo Docker (backend <-> container onlyoffice goi
+    # Command Service forcesave) - khong can public. onlyoffice_public_url: dia chi trinh
+    # duyet nguoi dung tai api.js + mo iframe editor (expose port rieng, xem docker-compose.yml).
+    onlyoffice_internal_url: str = os.getenv("ONLYOFFICE_INTERNAL_URL", "http://onlyoffice:80").rstrip("/")
+    onlyoffice_public_url: str = os.getenv("ONLYOFFICE_PUBLIC_URL", "http://localhost:8098").rstrip("/")
+    onlyoffice_jwt_secret: str = os.getenv("ONLYOFFICE_JWT_SECRET", "")
+
     # BUG THAT DA GAP: thieu field nay (co san o main - linkedin_group_crawler)
     # khien verify_zalo_api_key() (zalo/api/security.py) bi AttributeError
     # 'Settings' object has no attribute 'api_key' tren MOI route Zalo (vd

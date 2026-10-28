@@ -228,6 +228,59 @@ function formatPercentFixed2(value: number | null | undefined): string {
   return `${value.toFixed(2)}%`;
 }
 
+function DiscountPercentInput({ value, ariaLabel, onLiveChange, onCommit }: {
+  value: number | null | undefined;
+  ariaLabel: string;
+  onLiveChange: (value: number) => void;
+  onCommit: (value: number) => void;
+}) {
+  // Không bind thẳng input vào number trong QuoteItem: chuỗi rỗng/"14."
+  // là trạng thái nhập hợp lệ tạm thời. Ép Number ở mỗi key stroke từng làm
+  // rỗng -> 0 ngay lập tức, khiến Sale phải xoá/gõ hai lần và mất caret.
+  const [draft, setDraft] = useState(() => String(clampDiscountPercent(value ?? 0)));
+  const focusedRef = useRef(false);
+
+  useEffect(() => {
+    if (!focusedRef.current) setDraft(String(clampDiscountPercent(value ?? 0)));
+  }, [value]);
+
+  function commit() {
+    focusedRef.current = false;
+    const normalized = draft.trim().replace(',', '.');
+    const next = clampDiscountPercent(normalized === '' ? 0 : normalized);
+    setDraft(String(next));
+    onLiveChange(next);
+    onCommit(next);
+  }
+
+  return (
+    <input
+      type="text"
+      inputMode="decimal"
+      className="qc-cell-input qc-cell-input-money"
+      aria-label={ariaLabel}
+      value={draft}
+      onFocus={() => { focusedRef.current = true; }}
+      onChange={event => {
+        const nextDraft = event.target.value;
+        // Cho phép rỗng và dấu thập phân đang gõ dở; giới hạn 2 chữ số lẻ.
+        if (!/^\d{0,3}(?:[.,]\d{0,2})?$/.test(nextDraft)) return;
+        setDraft(nextDraft);
+        const normalized = nextDraft.replace(',', '.');
+        if (normalized !== '' && normalized !== '.') onLiveChange(clampDiscountPercent(normalized));
+      }}
+      onBlur={commit}
+      onKeyDown={event => {
+        // Tránh Enter submit form cha rồi cuộn workspace về đầu trang.
+        if (event.key === 'Enter') {
+          event.preventDefault();
+          event.currentTarget.blur();
+        }
+      }}
+    />
+  );
+}
+
 /** "TỶ TRỌNG" (C, cot noi bo) = amount / quoteTotal * 100 - dung CHUNG cong
  * thuc voi calculateQuoteTotals (ca 2 deu cong tren calculateItemTotal) de
  * tu so/mau so luon cung 1 co so "Thành tiền" gồm VAT, khong bao gio lech
@@ -2180,6 +2233,12 @@ export function QuoteWorkspaceModal({
 
   function updateRow(index: number, patch: Partial<QuoteItem>) {
     setItemsDraft(prev => prev.map((row, i) => (i === index ? { ...row, ...patch } : row)));
+  }
+
+  function commitRowDiscount(index: number, discountPercent: number) {
+    const nextItems = itemsDraft.map((row, i) => (i === index ? { ...row, discountPercent } : row));
+    setItemsDraft(nextItems);
+    if (quote) void persistQuote({ items: nextItems }, { silent: true });
   }
 
   function toggleDiscountRowSelection(key: string, checked: boolean) {
@@ -6931,6 +6990,10 @@ export function QuoteWorkspaceModal({
                                           {bundleMode === 'auto' ? 'Tắt tự tính' : 'Tự tính giá gói'}
                                         </button>
                                       ) : null}
+                                      {/* Nhan tinh (khong bam duoc) cho biet nguon gia von -
+                                       * khong co toggle nao o day, Sale khong doi duoc, hoan
+                                       * toan tu dong theo du lieu catalog (defaultCostPriceVnd
+                                       * cua chinh Combo). */}
                                       {bundleCostSourceIsTarget ? (
                                         <span className="qc-bundle-pricing-chip" title="Giá vốn Combo lấy theo giá vốn mục tiêu khai báo trong danh mục, không tính từ thành phần con">
                                           Giá vốn: Combo
@@ -7083,18 +7146,13 @@ export function QuoteWorkspaceModal({
                              * VAT (%) ben canh. */}
                             <td className="qc-cell-money qc-cell-discount" data-label="Giảm giá (%)">
                               {canEditDiscountCell ? (
-                                <input
-                                  type="number"
-                                  min={0}
-                                  max={100}
-                                  step={0.5}
-                                  className="qc-cell-input qc-cell-input-money"
-                                  aria-label={`Giảm giá hạng mục ${index + 1}`}
-                                  value={item.discountPercent ?? 0}
-                                  onChange={e => updateRow(index, { discountPercent: clampDiscountPercent(e.target.value) })}
-                                  onBlur={handlePricingBlur}
+                                <DiscountPercentInput
+                                  ariaLabel={`Giảm giá hạng mục ${index + 1}`}
+                                  value={item.discountPercent}
+                                  onLiveChange={discountPercent => updateRow(index, { discountPercent })}
+                                  onCommit={discountPercent => commitRowDiscount(index, discountPercent)}
                                 />
-                              ) : `${item.discountPercent ?? 0}%`}
+                              ) : formatPercentFixed2(item.discountPercent ?? 0)}
                             </td>
                             <td className="qc-cell-money qc-cell-vat" data-label="VAT (%)">
                               {editableCells ? (

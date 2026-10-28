@@ -5,6 +5,7 @@ from io import BytesIO
 from docx import Document
 
 from app.modules.all_platform.services import contract_ocr_service as svc
+from app.modules.all_platform.services.contract_highlight_service import highlight_docx
 
 
 def _make_docx(lines: list[str]) -> bytes:
@@ -46,3 +47,27 @@ def test_corrupted_docx_falls_back_honestly(monkeypatch):
     monkeypatch.setattr(svc.settings, "openai_api_key", "")
     result = asyncio.run(svc.extract_contract_summary(b"not a real docx file", "broken.docx"))
     assert result["extractable"] is False
+
+
+def test_matching_party_a_company_uses_exact_company_name_for_highlight():
+    company_name = "CÔNG TY TNHH WEB UNIFARM"
+    extracted = {
+        "extraction_method": "heuristic",
+        "party_a_name": company_name,
+        # Excerpt block dài/bắc qua paragraph từng làm highlighter không tìm
+        # được dù verdict vẫn là match.
+        "party_a_name_excerpt": f"BÊN A - KHÁCH HÀNG\n{company_name}",
+    }
+    rows = svc.compare_contract_to_quote_full(
+        extracted,
+        quote=None,
+        customer={"company_name": company_name},
+        contract_warranty_period=None,
+    )
+    company_row = next(row for row in rows if row["field"] == "company_name")
+    assert company_row["verdict"] == "match"
+    assert company_row["sourceExcerpt"] == company_name
+
+    source = _make_docx(["BÊN A - KHÁCH HÀNG", company_name])
+    _highlighted, meta = highlight_docx(source, [company_row])
+    assert "company_name" in meta["located"]

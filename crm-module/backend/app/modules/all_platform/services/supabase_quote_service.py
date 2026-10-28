@@ -1065,7 +1065,10 @@ def _flatten_computed_items(raw_items: list[dict], currency: str = "VND") -> tup
                 "quantity": 0, "unit_price": 0, "discount_percent": 0, "vat_rate": 0,
                 "cost_price": None, "markup_percent": None, "cost_not_applicable": False,
             }
-        discount_percent = _validate_percent(item.get("discount_percent"), "discount_percent")
+        # Chuẩn hoá dữ liệu lưu, không chỉ format ở UI: phép quy đổi tiền giảm
+        # sang % có thể tạo float rất dài. Báo giá cũ/mọi entry point đều đi
+        # qua đây nên luôn lưu tối đa 2 chữ số sau dấu thập phân.
+        discount_percent = round(_validate_percent(item.get("discount_percent"), "discount_percent"), 2)
         vat_rate = _validate_percent(item.get("vat_rate"), "vat_rate")
         item_subtotal, item_discount, item_after_discount, item_vat, item_total = _calculate_item(
             float(item.get("quantity") or 0),

@@ -83,6 +83,15 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.exception("Failed to start Contract Drive sync worker")
 
+    # Word Editor (OnlyOffice self-host, 2026-10-27, CHI dev) - forcesave dinh ky cho moi phien
+    # dang 'editing' (xem jobs/contract_edit_forcesave_job.py).
+    try:
+        from app.modules.all_platform.jobs.contract_edit_forcesave_job import setup_contract_edit_forcesave_worker
+        setup_contract_edit_forcesave_worker()
+        logger.info("Word Editor forcesave worker setup finished")
+    except Exception:
+        logger.exception("Failed to start Word Editor forcesave worker")
+
     # Auto-start lại các Telegram client (Telethon) đã connected trước khi BE restart.
     telegram_clients_task: asyncio.Task | None = None
 
@@ -254,3 +263,42 @@ async def unhandled_exception_handler(_, exc: Exception) -> JSONResponse:
 
 
 app.include_router(all_platform_router, prefix="/api/all-platform")
+
+# Word Editor (OnlyOffice self-host, 2026-10-27, CHI dev - xem
+# C:\Users\Asus\.claude\plans\proud-stargazing-pixel.md) - plugin can duoc trinh duyet TAI QUA
+# URL CONG KHAI (router nginx /api/ da proxy nguyen path toi backend nay, xem nginx/nginx.conf)
+# vi OnlyOffice fetch pluginsData bang fetch() TRONG TRINH DUYET (da xac nhan qua Phase 0 POC),
+# khong phai server-side nhu document.url. config.json dong (khong phai file tinh) vi "baseUrl"
+# ben trong phai tro dung CRM_PUBLIC_URL, khong hardcode duoc luc build image.
+import os as _os
+
+from fastapi.staticfiles import StaticFiles
+
+_onlyoffice_plugin_dir = _os.path.join(_os.path.dirname(__file__), "..", "static", "onlyoffice_plugin")
+
+
+# BUG THAT DA GAP (xac nhan qua Playwright that, console 404 luc mo tab "Chinh sua (Word)"):
+# OnlyOffice KHONG dung field "baseUrl" de tai chinh file "index.html" cua plugin - no resolve
+# variations[].url ("index.html") TUONG DOI VOI CHINH URL cua config.json (tuc cung thu muc
+# "/api/onlyoffice-plugin/", KHONG phai "/api/onlyoffice-plugin/assets/" nhu "baseUrl" khai bao).
+# Phai mount static file o DUNG prefix do ("/api/onlyoffice-plugin", khong phai "/assets" con)
+# - va DANG KY route config.json TRUOC mount (Starlette match theo thu tu dang ky, route cu the
+# phai di truoc Mount cung prefix neu khong se bi Mount "nuot" mat). "baseUrl" van giu dung prefix
+# nay de cac tai nguyen SAU NAY (neu index.html dung duong dan tuyet doi qua baseUrl) cung dung.
+@app.get("/api/onlyoffice-plugin/config.json")
+def onlyoffice_plugin_config() -> dict:
+    base = f"{settings.crm_public_url}/api/onlyoffice-plugin/"
+    return {
+        "name": "Markee Contract Editor Bridge",
+        "guid": "asc.{B7E4C9F1-6A2D-4E3B-8C5A-1F9D2E8B4C7A}",
+        "baseUrl": base,
+        "variations": [{
+            "description": "Markee Contract Editor Bridge",
+            "url": "index.html",
+            "icons": [], "isViewer": False, "EditorsSupport": ["word"],
+            "isVisual": False, "initDataType": "none", "initData": "", "buttons": [],
+        }],
+    }
+
+
+app.mount("/api/onlyoffice-plugin", StaticFiles(directory=_onlyoffice_plugin_dir), name="onlyoffice-plugin-assets")

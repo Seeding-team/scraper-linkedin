@@ -684,7 +684,7 @@ def delete_customers_bulk(customer_ids: list[str], user: dict[str, Any], confirm
 # danh sach workspace dich khi sao chep Khach hang CHI CO 2 clone doc lap con
 # lai, khai bao TINH tai day (dung y het _MAIN_COPY_TARGET_INSTANCES cua
 # crm_lead_service.py, khong tra cuu tu config nao ca).
-_MAIN_COPY_TARGET_INSTANCES = ("cloudgate", "SECURITYZONE")
+_MAIN_COPY_TARGET_INSTANCES = ("cloudgate", "SECURITYZONE", "timetech")
 
 
 def copy_customer_to_instance(customer_id: str, target_instance: str, user: dict[str, Any]) -> dict[str, Any]:
@@ -815,16 +815,24 @@ def related_records(customer_id: str, user: dict[str, Any]) -> dict[str, Any]:
     # trong file nay, dung chi dua vao deal_ids/customer_id da tenant-scoped
     # tu truoc (defense-in-depth, tranh 1 hang du lieu loi/instance sai lech
     # khoi lo sang tenant khac).
+    # Google Drive + AI Review (2026-10-26) - embed 2 bang trang thai de bang danh sach Hop dong
+    # hien duoc badge "Dang dong bo/Da luu/Loi" + "Chua chay/Cho xac nhan/Da luu Highlight" MA
+    # KHONG can query rieng tung dong (tranh N+1) - cung ky thuat PostgREST embed da dung o
+    # LIST_SELECT cua supabase_contract_service.py.
+    _CONTRACT_SELECT_WITH_DRIVE = (
+        "*, drive_files:contract_drive_files(file_type), drive_jobs:contract_drive_sync_jobs(status, created_at), "
+        "ai_reviews:contract_ai_reviews(confirmed_at, created_at)"
+    )
     contracts_by_id: dict[str, dict[str, Any]] = {}
     try:
         if deal_ids:
             by_deal = execute_supabase_query(
-                lambda: supabase.table("contracts").select("*").eq("instance", settings.crm_instance).in_("deal_id", deal_ids).execute()
+                lambda: supabase.table("contracts").select(_CONTRACT_SELECT_WITH_DRIVE).eq("instance", settings.crm_instance).in_("deal_id", deal_ids).execute()
             )
             for row in by_deal.data or []:
                 contracts_by_id[row["id"]] = row
         by_customer = execute_supabase_query(
-            lambda: supabase.table("contracts").select("*").eq("instance", settings.crm_instance).eq("customer_id", customer_id).execute()
+            lambda: supabase.table("contracts").select(_CONTRACT_SELECT_WITH_DRIVE).eq("instance", settings.crm_instance).eq("customer_id", customer_id).execute()
         )
         for row in by_customer.data or []:
             # Hop dong tao truc tiep tren Customer KHONG duoc gop mu theo
@@ -839,6 +847,16 @@ def related_records(customer_id: str, user: dict[str, Any]) -> dict[str, Any]:
                 continue
             contracts_by_id[row["id"]] = row
         contracts = list(contracts_by_id.values())
+        for row in contracts:
+            from app.modules.all_platform.services.supabase_contract_service import _drive_sync_status
+
+            row["drive_sync_status"] = _drive_sync_status(row)
+            ai_reviews = row.get("ai_reviews") or []
+            if not ai_reviews:
+                row["ai_review_status"] = "not_run"
+            else:
+                latest = max(ai_reviews, key=lambda r: r.get("created_at") or "")
+                row["ai_review_status"] = "confirmed" if latest.get("confirmed_at") else "pending_confirmation"
     except Exception:
         logger.exception("related_records: failed to load contracts for customer %s", customer_id)
         contracts = []

@@ -91,6 +91,26 @@ async def lifespan(_: FastAPI):
             logger.info("MSC product sync scheduler setup finished")
         except Exception:
             logger.exception("Failed to start MSC product sync scheduler")
+
+        try:
+            from app.modules.all_platform.jobs.contract_drive_sync_job import (
+                setup_contract_drive_sync_worker,
+            )
+
+            setup_contract_drive_sync_worker()
+            logger.info("Contract Drive sync worker setup finished")
+        except Exception:
+            logger.exception("Failed to start Contract Drive sync worker")
+
+        try:
+            from app.modules.all_platform.jobs.contract_edit_forcesave_job import (
+                setup_contract_edit_forcesave_worker,
+            )
+
+            setup_contract_edit_forcesave_worker()
+            logger.info("Word Editor forcesave worker setup finished")
+        except Exception:
+            logger.exception("Failed to start Word Editor forcesave worker")
     async def _warmup_background() -> None:
         try:
             await asyncio.to_thread(warmup_playwright_pool)
@@ -414,6 +434,41 @@ app.include_router(router)
 app.include_router(linkedin_app_router)
 app.include_router(api_router, prefix="/facebook/api/v1")
 app.include_router(all_platform_router, prefix="/api/all-platform")
+
+# OnlyOffice loads plugin assets from the public CRM origin in the browser.
+from fastapi.staticfiles import StaticFiles
+
+_onlyoffice_plugin_dir = os.path.join(
+    os.path.dirname(__file__), "..", "static", "onlyoffice_plugin",
+)
+
+
+@app.get("/api/onlyoffice-plugin/config.json")
+def onlyoffice_plugin_config() -> dict:
+    base = f"{settings.crm_public_url}/api/onlyoffice-plugin/"
+    return {
+        "name": "Markee Contract Editor Bridge",
+        "guid": "asc.{B7E4C9F1-6A2D-4E3B-8C5A-1F9D2E8B4C7A}",
+        "baseUrl": base,
+        "variations": [{
+            "description": "Markee Contract Editor Bridge",
+            "url": "index.html",
+            "icons": [],
+            "isViewer": False,
+            "EditorsSupport": ["word"],
+            "isVisual": False,
+            "initDataType": "none",
+            "initData": "",
+            "buttons": [],
+        }],
+    }
+
+
+app.mount(
+    "/api/onlyoffice-plugin",
+    StaticFiles(directory=_onlyoffice_plugin_dir),
+    name="onlyoffice-plugin-assets",
+)
 
 # WebSocket đã được chuyển vào all_platform_router
 

@@ -18,7 +18,12 @@ RUN apt-get update \
 
 # LibreOffice Writer + font tieng Viet: engine DUY NHAT xuat DOCX -> PDF cho AI Contract Copilot (local = production, dung chung image nay).
 # Font tuong thich so lieu: Times New Roman->Liberation Serif, Arial->Liberation Sans, Calibri->Carlito, Cambria->Caladea. KHONG cai LibreOffice tren may Windows ca nhan.
-RUN apt-get update     && apt-get install -y --no-install-recommends libreoffice-writer fonts-liberation fonts-crosextra-carlito fonts-crosextra-caladea fonts-dejavu-core fontconfig     && rm -rf /var/lib/apt/lists/*
+# libreoffice-draw (2026-10-27, Word Editor - PDF-only -> DOCX de sua): BO LOC IMPORT PDF nam o
+# Draw/Impress, khong phai Writer - "libreoffice-writer" DU de EXPORT PDF (convert_docx_to_pdf)
+# nhung KHONG tu IMPORT duoc PDF (loi that da gap: "source file could not be loaded" khi convert
+# PDF->DOCX, xac nhan qua `dpkg -l` thieu goi nay). Can them de contract_edit_service.
+# convert_pdf_to_docx_with_fidelity_check() chay duoc that su.
+RUN apt-get update     && apt-get install -y --no-install-recommends libreoffice-writer libreoffice-draw fonts-liberation fonts-crosextra-carlito fonts-crosextra-caladea fonts-dejavu-core fontconfig     && rm -rf /var/lib/apt/lists/*
 
 # "Liberation Serif" thieu 1 so dau tieng Viet (o, o, a, O, U, U, O...) nen fontconfig tu nhay sang
 # "DejaVu Serif" (nang/to hon han) cho rieng nhung ky tu do, nhin nhu "dam/to ngay cho co dau" (bug

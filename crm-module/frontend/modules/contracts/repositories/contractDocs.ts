@@ -563,6 +563,105 @@ export function confirmContractAiReview(contractId: string, reviewId: string): P
   return callRoot(`/contracts/${encodeURIComponent(contractId)}/ai-review/confirm`, { method: 'POST', headers: authHeaders(false), body: form });
 }
 
+// ── Word Editor (2026-10-27, OnlyOffice self-host — CHỈ crm-module/Markee dev, xem
+// C:\Users\Asus\.claude\plans\proud-stargazing-pixel.md) ────────────────────────────────
+
+/** Config OnlyOffice thô (đã ký JWT sẵn ở backend) — truyền thẳng vào `new DocsAPI.DocEditor(...)`. */
+export type OnlyOfficeEditorConfig = Record<string, unknown>;
+
+export type EditSessionStartResult = {
+  editorConfig: OnlyOfficeEditorConfig;
+  sessionId: string;
+  documentKey: string;
+  convertedFromPdf: boolean;
+  onlyofficeApiUrl: string;
+};
+
+export function startEditSession(contractId: string): Promise<EditSessionStartResult> {
+  return callRoot(`/contracts/${encodeURIComponent(contractId)}/edit/start`, { method: 'POST', headers: authHeaders(false) });
+}
+
+export type ContractAmendment = {
+  id: string; contract_id: string; version_id: string;
+  status: 'draft' | 'pending_approval' | 'approved' | 'rejected';
+  note: string; created_by?: string | null; created_at: string;
+  approved_by?: string | null; approved_at?: string | null;
+};
+
+export type EditSession = {
+  id: string; contract_id: string; status: 'editing' | 'promoted' | 'discarded';
+  owner_user_id?: string | null; created_at: string; last_autosaved_at?: string | null;
+  annotations_sync_status: 'idle' | 'syncing' | 'synced' | 'error';
+  converted_from_pdf?: boolean;
+};
+
+export type EditSessionStatus = {
+  hasActiveSession: boolean;
+  session: EditSession | null;
+  pendingAmendments: ContractAmendment[];
+};
+
+export function getEditSessionStatus(contractId: string): Promise<EditSessionStatus> {
+  return callRoot(`/contracts/${encodeURIComponent(contractId)}/edit/status`, { method: 'GET', headers: authHeaders(false) });
+}
+
+/** Best-effort — gọi lúc đóng panel/đổi tab/beforeunload, KHÔNG đợi kết quả quan trọng. */
+export function requestEditForcesave(contractId: string): Promise<{ status: string }> {
+  return callRoot(`/contracts/${encodeURIComponent(contractId)}/edit/forcesave`, { method: 'POST', headers: authHeaders(false) });
+}
+
+export type SaveVersionResult =
+  | { status: 'version_saved'; version: number }
+  | { status: 'amendment_draft'; version: number; amendmentId: string };
+
+export function saveEditVersion(contractId: string, opts: { confirmAmendment?: boolean; note?: string } = {}): Promise<SaveVersionResult> {
+  return callRoot(`/contracts/${encodeURIComponent(contractId)}/edit/save-version`, {
+    method: 'POST', headers: authHeaders(true),
+    body: JSON.stringify({ confirm_amendment: Boolean(opts.confirmAmendment), note: opts.note || '' }),
+  });
+}
+
+export function discardEditSession(contractId: string): Promise<{ status: string }> {
+  return callRoot(`/contracts/${encodeURIComponent(contractId)}/edit/discard`, { method: 'POST', headers: authHeaders(false) });
+}
+
+export type HighlightAnnotation = {
+  id: string; contract_id: string; version_id?: string | null;
+  source: 'ai' | 'sale'; category?: string | null;
+  paragraph_anchor?: string | null; char_start?: number | null; char_end?: number | null;
+  highlight_page?: number | null;
+  excerpt?: string | null; note?: string | null;
+  status: 'active' | 'dismissed' | 'removed';
+  created_by?: string | null; created_at: string; updated_at: string;
+};
+
+export function listEditAnnotations(contractId: string): Promise<HighlightAnnotation[]> {
+  return callRoot(`/contracts/${encodeURIComponent(contractId)}/edit/annotations`, { method: 'GET', headers: authHeaders(false) });
+}
+
+export type AnnotationAction = 'dismiss_warning' | 'remove_highlight' | 'clear_note';
+
+/** `alreadyAppliedLive=true` CHỈ khi FE đã tự xoá highlight ngay trong phiên OnlyOffice đang mở
+ * sống qua plugin (postMessage) TRƯỚC khi gọi hàm này — xem useWordEditorBridge. */
+export function patchEditAnnotation(contractId: string, annotationId: string, action: AnnotationAction, alreadyAppliedLive = false): Promise<{ status: string; action: string }> {
+  return callRoot(`/contracts/${encodeURIComponent(contractId)}/edit/annotations/${encodeURIComponent(annotationId)}`, {
+    method: 'PATCH', headers: authHeaders(true),
+    body: JSON.stringify({ action, already_applied_live: alreadyAppliedLive }),
+  });
+}
+
+export function submitAmendment(contractId: string, amendmentId: string): Promise<{ status: string }> {
+  return callRoot(`/contracts/${encodeURIComponent(contractId)}/edit/amendments/${encodeURIComponent(amendmentId)}/submit`, { method: 'POST', headers: authHeaders(false) });
+}
+
+export function approveAmendment(contractId: string, amendmentId: string): Promise<{ status: string }> {
+  return callRoot(`/contracts/${encodeURIComponent(contractId)}/edit/amendments/${encodeURIComponent(amendmentId)}/approve`, { method: 'POST', headers: authHeaders(false) });
+}
+
+export function rejectAmendment(contractId: string, amendmentId: string): Promise<{ status: string }> {
+  return callRoot(`/contracts/${encodeURIComponent(contractId)}/edit/amendments/${encodeURIComponent(amendmentId)}/reject`, { method: 'POST', headers: authHeaders(false) });
+}
+
 /** Xem truoc bang Highlight THAT (da tao san o run_ai_review_full, chua day Drive) - luon tra PDF
  * (DOCX da duoc backend convert san) de dung chung iframe voi ban goc. */
 export async function fetchAiReviewHighlightPreviewPdf(contractId: string, reviewId: string): Promise<Blob> {

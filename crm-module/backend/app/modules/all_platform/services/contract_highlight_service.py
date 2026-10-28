@@ -30,6 +30,7 @@ from app.core.logger import get_logger
 from app.modules.all_platform.services.contract_docx_engine import (
     _run_text,
     _text_runs,
+    global_paragraph_index,
 )
 
 logger = get_logger(__name__)
@@ -282,6 +283,28 @@ def _apply_shading_across_unit(paragraphs: list[Any], bounds: list[tuple[int, in
         _apply_shading_range(p_el, local_start, local_end, color)
 
 
+def _find_excerpt_span(haystack: str, needle: str) -> tuple[int, int] | None:
+    """Tim vi tri (start, end) cua needle trong haystack:
+    1) Khop chinh xac 100%
+    2) Khop khong phan biet hoa/thuong (phong khi AI tra 'Công ty TNHH...' nhung DOCX viet hoa 'CÔNG TY TNHH...')
+    3) Khop linh hoat khoang trang/xuong dong giua cac tu."""
+    import re as _re
+
+    idx = haystack.find(needle)
+    if idx != -1:
+        return idx, idx + len(needle)
+    idx_ci = haystack.lower().find(needle.lower())
+    if idx_ci != -1:
+        return idx_ci, idx_ci + len(needle)
+    tokens = [tok for tok in needle.split() if tok]
+    if tokens:
+        pattern = r"\s+".join(_re.escape(tok) for tok in tokens)
+        m = _re.search(pattern, haystack, _re.IGNORECASE)
+        if m:
+            return m.start(), m.end()
+    return None
+
+
 def highlight_docx(docx_bytes: bytes, findings: list[dict[str, Any]]) -> tuple[bytes, dict[str, Any]]:
     """Tra ve bytes DOCX MOI (ban sao, KHONG dung file dau vao, GIU NGUYEN bo cuc/bang/anh/
     header-footer - CHI them <w:shd> vao run da to mau cho cac doan trung voi `sourceExcerpt`
@@ -302,6 +325,11 @@ def highlight_docx(docx_bytes: bytes, findings: list[dict[str, Any]]) -> tuple[b
     located: list[dict[str, Any]] = []
     not_located: list[dict[str, Any]] = []
     units = _group_paragraphs_into_search_units(doc)
+    # (2026-10-27, Word Editor) anchor = vi tri PARAGRAPH TOAN CUC ("p{i}", khop voi
+    # contract_docx_engine.describe_paragraphs/paragraph_by_id) + offset ky tu CUC BO trong
+    # DUNG doan do - dung de gan paragraph_anchor/char_start/char_end khi tao annotation AI
+    # (contract_ai_review_service), KHONG chi dua vao sourceExcerpt de dinh vi lai ve sau.
+    anchors: dict[str, dict[str, Any]] = {}
 
     for finding in findings:
         excerpt = (finding.get("sourceExcerpt") or "").strip()
@@ -313,17 +341,37 @@ def highlight_docx(docx_bytes: bytes, findings: list[dict[str, Any]]) -> tuple[b
         for paragraphs in units:
             if len(paragraphs) == 1:
                 full_text = "".join(_run_text(r) for r in _text_runs(paragraphs[0]))
-                idx = full_text.find(excerpt)
-                if idx == -1:
+                span_match = _find_excerpt_span(full_text, excerpt)
+                if span_match is None:
                     continue
-                _apply_shading_range(paragraphs[0], idx, idx + len(excerpt), color)
+                m_start, m_end = span_match
+                _apply_shading_range(paragraphs[0], m_start, m_end, color)
+                anchor_p_el, local_start, local_end = paragraphs[0], m_start, m_end
             else:
                 combined, bounds = _unit_text_and_bounds(paragraphs)
-                idx = combined.find(excerpt)
-                if idx == -1:
+                span_match = _find_excerpt_span(combined, excerpt)
+                if span_match is None:
                     continue
-                _apply_shading_across_unit(paragraphs, bounds, idx, idx + len(excerpt), color)
+                m_start, m_end = span_match
+                _apply_shading_across_unit(paragraphs, bounds, m_start, m_end, color)
+                # Neo vao DUNG doan (cell) chua KY TU DAU TIEN cua excerpt trong unit nhieu doan
+                # (hang bang) - char_start/char_end quy doi ve cuc bo trong doan do, kep trong
+                # bien doan neu excerpt tran sang doan ke (hiem, do +1 noi "\n" giua cac doan).
+                anchor_p_el = paragraphs[0]
+                local_start, local_end = m_start, m_end
+                for p_el, (b_start, b_end) in zip(paragraphs, bounds):
+                    if b_start <= m_start < b_end:
+                        anchor_p_el = p_el
+                        local_start = m_start - b_start
+                        local_end = min(m_end, b_end) - b_start
+                        break
             found_any = True
+            if finding.get("field"):
+                gidx = global_paragraph_index(doc, anchor_p_el)
+                anchors[finding["field"]] = {
+                    "paragraphAnchor": f"p{gidx}" if gidx is not None else None,
+                    "charStart": local_start, "charEnd": local_end,
+                }
             break  # chi to mau LAN XUAT HIEN DAU TIEN - tranh to trung nhieu cho neu cau lap lai
         (located if found_any else not_located).append(finding)
 
@@ -344,8 +392,9 @@ def highlight_docx(docx_bytes: bytes, findings: list[dict[str, Any]]) -> tuple[b
             excerpt = (f.get("sourceExcerpt") or "").strip()
             if not field or not excerpt:
                 continue
+            candidates = [excerpt] + [ln.strip() for ln in excerpt.splitlines() if len(ln.strip()) >= 4]
             for page in pdoc:
-                if page.search_for(excerpt):
+                if any(page.search_for(cand) for cand in candidates):
                     pages[field] = page.number + 1
                     break
         pdoc.close()
@@ -355,6 +404,6 @@ def highlight_docx(docx_bytes: bytes, findings: list[dict[str, Any]]) -> tuple[b
 
     meta = {
         "located": [f.get("field") for f in located], "notLocated": [f.get("field") for f in not_located],
-        "pages": pages, "pageLookupError": page_lookup_error,
+        "pages": pages, "pageLookupError": page_lookup_error, "anchors": anchors,
     }
     return out_bytes, meta

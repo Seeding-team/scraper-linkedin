@@ -175,6 +175,7 @@ async def _run_ai_review_full_locked(contract_id: str) -> dict[str, Any]:
         comp = row["quote_comparison"] or []
         risk_result_cached = (row.get("extracted_fields") or {}).get("risk_clauses") or {"method": "heuristic_candidate", "clauses": []}
         risk_cached = risk_result_cached["clauses"]
+        _backfill_ai_annotations_if_missing(contract_id, row)
         return {
             "status": "ok", "fromCache": True, "reviewId": row["id"],
             "extractedFields": row["extracted_fields"], "comparison": comp,
@@ -239,6 +240,38 @@ async def _run_ai_review_full_locked(contract_id: str) -> dict[str, Any]:
         for c in risk_clauses:
             c["located"] = c["field"] in located_set
             c["highlightPage"] = pages.get(c["field"])
+
+        # (2026-10-27, Word Editor) Tao annotation TUONG MINH source='ai' NGAY o day - khong doi
+        # Sale mo editor. version_id dung chung hash noi dung (on dinh du nguon la file_url hay
+        # version DOCX) - xem contract_highlight_annotations.seed_ai_annotations().
+        try:
+            from app.modules.all_platform.services.contract_highlight_annotations import seed_ai_annotations
+
+            seed_ai_annotations(
+                contract_id, f"hash:{contract_hash[:16]}", [*comparison, *risk_clauses],
+                meta.get("anchors") or {}, pages, is_pdf=(out_ext == "pdf"),
+            )
+        except Exception as exc:  # noqa: BLE001 - khong duoc chan ket qua doi chieu chi vi loi seed annotation
+            logger.warning("Không tạo được annotation AI cho hợp đồng %s: %s", contract_id, exc)
+
+        # Khi tao ban Highlight MOI (cache miss / bump RULES_VERSION), xoa scratch cu va huy phien
+        # Word Editor dang mo nhung CHUA TUNG autosave (last_autosaved_at is None) de tab
+        # "Chỉnh sửa (Word)" nap dung ban Highlight moi nhat thay vi giu draft cu thieu highlight.
+        try:
+            contract_document_store.delete_scratch(contract_id)
+            idle_sessions = (
+                sb.table("contract_edit_sessions").select("id, draft_storage_key")
+                .eq("contract_id", contract_id).eq("status", "editing").is_("last_autosaved_at", "null").execute().data
+            ) or []
+            for s in idle_sessions:
+                if s.get("draft_storage_key"):
+                    try:
+                        contract_document_store._bucket().remove([s["draft_storage_key"]])  # noqa: SLF001
+                    except Exception:  # noqa: BLE001
+                        pass
+                sb.table("contract_edit_sessions").update({"status": "discarded"}).eq("id", s["id"]).execute()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Không dọn được phiên draft/scratch cũ khi tạo AI Review mới cho %s: %s", contract_id, exc)
     except Exception as exc:  # noqa: BLE001
         highlight_error = str(exc)
         logger.warning("Không tạo được bản Highlight xem trước cho hợp đồng %s: %s", contract_id, exc)
@@ -289,28 +322,119 @@ def _review_response_shape(row: dict[str, Any], *, stale: bool) -> dict[str, Any
     }
 
 
+def _backfill_ai_annotations_if_missing(contract_id: str, row: dict[str, Any]) -> None:
+    """(2026-10-27, Word Editor) Review ĐÃ CACHE từ TRƯỚC KHI có tính năng annotation (ví dụ
+    HD/2026/0007 — review tạo 2026-10-26) sẽ KHÔNG có dòng nào trong
+    `contract_highlight_annotations` (`seed_ai_annotations()` chỉ được gọi ở nhánh chạy AI MỚI,
+    xem `_run_ai_review_full_locked`) — panel "Thông tin quan trọng đã Highlight" sẽ trống RỖNG
+    đúng với kết quả cache thật, KHÔNG phải lỗi hiển thị. Backfill 1 LẦN duy nhất (idempotent —
+    kiểm tra đã có annotation nào của ĐÚNG `version_id` này chưa trước khi seed) mỗi khi đọc lại
+    1 review đã lưu (cả đường "chạy AI" cache-hit lẫn "đọc review gần nhất" khi mở lại panel),
+    dùng dữ liệu ĐÃ CÓ sẵn trong row (comparison/risk_clauses đã embed sourceExcerpt/highlightPage/
+    located từ lần chạy thật) — KHÔNG chạy lại AI. Hạn chế ĐÃ BIẾT: review cũ không lưu riêng
+    "anchors" (vị trí đoạn/ký tự DOCX chính xác từng field) nên annotation backfill cho hợp đồng
+    nguồn DOCX sẽ có excerpt nhưng KHÔNG có `paragraph_anchor` chính xác (nhảy-tới sẽ không điều
+    hướng được, chỉ hiện trích dẫn) — PDF vẫn có `paragraph_anchor` dạng "page:N" đầy đủ vì
+    `highlightPage` đã được lưu sẵn trong từng finding. Đây là giới hạn dữ liệu thật, không giả vờ
+    có đủ."""
+    try:
+        from app.modules.all_platform.services.contract_highlight_annotations import list_annotations, seed_ai_annotations
+
+        contract_hash = row.get("contract_content_hash") or ""
+        version_label = f"hash:{contract_hash[:16]}"
+        existing_ai = [a for a in list_annotations(contract_id) if a.get("version_id") == version_label and a.get("source") == "ai"]
+        if existing_ai:
+            return
+        comp = row.get("quote_comparison") or []
+        risk_cached = ((row.get("extracted_fields") or {}).get("risk_clauses") or {}).get("clauses") or []
+        findings = [*comp, *risk_cached]
+        if not findings:
+            return
+        is_pdf_cached = (row.get("highlight_file_name") or "").lower().endswith(".pdf")
+        pages_cached = {f.get("field"): f.get("highlightPage") for f in findings if f.get("field") and f.get("highlightPage")}
+        seed_ai_annotations(contract_id, version_label, findings, {}, pages_cached, is_pdf=is_pdf_cached)
+    except Exception as exc:  # noqa: BLE001 - khong duoc chan ket qua review chi vi loi backfill
+        logger.warning("Không backfill được annotation AI cho review %s của hợp đồng %s: %s", row.get("id"), contract_id, exc)
+
+
 async def get_latest_review_status(contract_id: str) -> dict[str, Any]:
     """(2026-10-27, fix bug "mat trang thai khi dong/mo lai panel") Doc phien AI Review GAN
     NHAT da luu - KHONG goi AI, KHONG tao ban ghi moi - de FE khoi phuc day du khi mo lai
     chi tiet hop dong/tab AI Review (dong panel/doi tab/F5/dang nhap lai deu phai thay LAI
     dung ket qua nay, khong duoc hien "chua chay gi"). Neu hop dong/bao gia da doi so voi
     luc chay review nay -> `stale=True`, van tra ve DAY DU ket qua CU de xem lich su (nguyen
-    tac #5: khong xoa, khong ghi de), FE tu quyet dinh co cho xac nhan hay bat chay lai."""
+    tac #5: khong xoa, khong ghi de), FE tu quyet dinh co cho xac nhan hay bat chay lai.
+    (2026-10-28) Neu review gan nhat CHUA xac nhan luu Drive (`confirmed_at` la None) va dung
+    `rules_version` cu (khac RULES_VERSION hien tai) -> tu dong chay lai `run_ai_review_full()`
+    ngay khi mo panel de nang cap ban Highlight + doi chieu theo quy tac moi nhat."""
     sb = get_supabase_client()
     rows = sb.table("contract_ai_reviews").select("*").eq("contract_id", contract_id).order("created_at", desc=True).limit(1).execute().data
     if not rows:
         return {"status": "none"}
     row = rows[0]
 
+    rules_outdated = row.get("rules_version") != RULES_VERSION
+    if rules_outdated and not row.get("confirmed_at"):
+        try:
+            return await run_ai_review_full(contract_id)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Tự động nâng cấp AI Review theo RULES_VERSION=%s thất bại (%s), trả bản cũ: %s", RULES_VERSION, contract_id, exc)
+
     contract_rows = sb.table("contracts").select("*").eq("id", contract_id).limit(1).execute().data
-    stale = row.get("rules_version") != RULES_VERSION
+    stale = rules_outdated
     if contract_rows and not stale:
         current_contract_hash, current_quote_hash = await _compute_current_hashes(contract_rows[0])
         stale = (
             (current_contract_hash is not None and row.get("contract_content_hash") != current_contract_hash)
             or row.get("quote_content_hash") != current_quote_hash
         )
+    _backfill_ai_annotations_if_missing(contract_id, row)
     return _review_response_shape(row, stale=stale)
+
+
+def get_latest_ai_highlight_docx(contract_id: str, current_source_content: bytes) -> tuple[bytes, str] | None:
+    """(2026-10-27, Word Editor - fix BUG THAT: OnlyOffice mo ban KHONG highlight) Tim bản Highlight
+    DOCX (khac PDF) GAN NHAT da tao san qua run_ai_review_full() (cung co che voi
+    get_highlight_preview_bytes/confirm_ai_review ben duoi - KHONG tao lai, chi doc dung file da
+    co). Dung lam nguon nhap ban nhap Word Editor THAY VI goi thang
+    contract_drive_service._resolve_contract_source_file() (ban GOC chua to mau) - BUG da xac nhan
+    qua Playwright that: tab "Bản AI Highlight" (PDF) hien dung 3 doan vang nhung tab "Chinh sua
+    (Word)" mo ra TRANG (vi start_edit_session cu lay thang file goc). Tra None neu CHUA co review
+    nao, hoac review gan nhat chi co ban Highlight dang PDF (nguon la PDF, khong the nap thang vao
+    OnlyOffice nhu DOCX sua duoc - caller tu fallback ve ban goc/convert PDF nhu binh thuong, dung
+    gia vo sua duoc PDF nhu DOCX theo dung nguyen tac #8).
+
+    AN TOAN QUAN TRONG (khong co trong bug report goc nhung PHAT HIEN khi code fix - tranh mat sua
+    cua Sale): review Highlight co the da STALE so voi noi dung hieu luc HIEN TAI (vi du Sale da
+    `promote_to_version` 1 lan truoc do, tao version MOI, nhung AI Review CHUA duoc chay lai tren
+    version do) - neu cu nap Highlight CU vao editor se am tham "revert" noi dung ve ban truoc khi
+    Sale sua, mat trang. Chi dung Highlight khi `contract_content_hash` cua review KHOP DUNG hash
+    cua `current_source_content` (noi dung hieu luc hien tai) - khong khop thi coi nhu "chua co
+    Highlight cho ban nay", fallback ve file goc (dung = chinh ban hieu luc hien tai, chi la chua
+    to mau vi AI chua chay lai, KHONG mat gi)."""
+    sb = get_supabase_client()
+    rows = (
+        sb.table("contract_ai_reviews").select("id, highlight_source_key, highlight_file_name, contract_content_hash")
+        .eq("contract_id", contract_id).order("created_at", desc=True).limit(1).execute().data
+    )
+    if not rows or not rows[0].get("highlight_source_key"):
+        return None
+    row = rows[0]
+    if row.get("contract_content_hash") != _content_hash(current_source_content):
+        logger.info(
+            "get_latest_ai_highlight_docx: review gần nhất của hợp đồng %s đã stale so với nội dung "
+            "hiệu lực hiện tại (vd. đã có version mới sau khi Sale lưu) - dùng file gốc hiện hành, "
+            "không nạp lại Highlight cũ.", contract_id,
+        )
+        return None
+    ext = (row.get("highlight_file_name") or "").rsplit(".", 1)[-1].lower()
+    if ext != "docx":
+        return None  # ban Highlight gan nhat la PDF - khong dung lam nguon Word Editor
+    result = get_highlight_preview_bytes(row["id"])
+    if result is None:
+        return None
+    content, _mime = result
+    return content, row.get("highlight_file_name") or "highlight.docx"
 
 
 def get_highlight_preview_bytes(review_id: str) -> tuple[bytes, str] | None:

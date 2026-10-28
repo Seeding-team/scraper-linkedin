@@ -7,6 +7,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
     libreoffice-writer \
+    libreoffice-draw \
+    tesseract-ocr \
+    tesseract-ocr-vie \
     fonts-liberation \
     fonts-crosextra-carlito \
     fonts-crosextra-caladea \

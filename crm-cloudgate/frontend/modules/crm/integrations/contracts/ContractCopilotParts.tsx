@@ -304,11 +304,14 @@ export function PrecheckPanel({ precheck, loading, needDeal, noDeals, ack, onAck
   if (needDeal) {
     return <div data-testid="precheck-needdeal" style={{ ...card, background: '#fff7ed', borderColor: '#fed7aa', color: '#9a3412', fontSize: '0.8rem' }}>Chọn Deal để tiếp tục — không thể tạo bản nháp khi chưa chọn Deal.</div>;
   }
-  if (loading || !precheck) return <div style={{ ...small, padding: '0.3rem 0' }}>{loading ? 'Đang kiểm tra dữ liệu CRM…' : null}</div>;
+  // Refresh nền (window focus/visibilitychange) không được tháo toàn bộ panel
+  // khỏi DOM: làm vậy sẽ unmount LegalInfoEditor và đóng/mất form Sale đang
+  // nhập dở. Chỉ hiện placeholder ở lần tải đầu, khi chưa có dữ liệu cũ.
+  if (!precheck) return <div style={{ ...small, padding: '0.3rem 0' }}>{loading ? 'Đang kiểm tra dữ liệu CRM…' : null}</div>;
 
   const renderGapItem = (g: PrecheckGap, i: number, total: number) => (
     <li
-      key={i}
+      key={`${g.side || 'unknown'}-${g.field || g.label}`}
       style={{
         display: 'flex',
         flexWrap: 'wrap',

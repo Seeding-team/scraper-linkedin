@@ -73,8 +73,10 @@ CHỈ trả về JSON object hợp lệ, KHÔNG markdown/giải thích thêm, đ
   "subtotal_amount": number|null (VND, trước VAT),
   "vat_amount": number|null (VND),
   "total_amount": number|null (VND, sau VAT),
-  "company_name": string|null (tên công ty/bên B - bên cung cấp dịch vụ, hoặc bên ký không phải khách hàng chính),
-  "tax_code": string|null (mã số thuế),
+  "company_name": string|null (DEPRECATED - giữ để tương thích ngược, LUÔN điền giống party_a_name),
+  "party_a_name": string|null (tên công ty của BÊN A - bên yêu cầu/mua dịch vụ, tức KHÁCH HÀNG - đây là bên cần đối chiếu với CRM, KHÔNG phải bên phát hành hợp đồng),
+  "party_b_name": string|null (tên công ty của BÊN B - bên cung cấp dịch vụ/bán hàng, thường là chính công ty phát hành hợp đồng),
+  "tax_code": string|null (mã số thuế CỦA BÊN A/khách hàng - không lấy MST của Bên B),
   "address": string|null (địa chỉ công ty ghi trong hợp đồng),
   "warranty_period": string|null (thời gian bảo hành, vd "12 tháng"),
   "payment_terms": string|null (tóm tắt điều khoản thanh toán - đợt/thời hạn),
@@ -96,8 +98,8 @@ Quy tắc bắt buộc:
 """
 
 _EXTENDED_FIELD_NAMES = (
-    "company_name", "tax_code", "address", "warranty_period", "payment_terms",
-    "delivery_terms", "penalty_clause", "termination_clause", "validity_period",
+    "company_name", "party_a_name", "party_b_name", "tax_code", "address", "warranty_period",
+    "payment_terms", "delivery_terms", "penalty_clause", "termination_clause", "validity_period",
 )
 
 
@@ -157,6 +159,18 @@ def _fallback_parse_extended(text: str, base: dict) -> dict:
     if warranty_value:
         result["warranty_period"] = warranty_value
         result["warranty_period_excerpt"] = warranty_excerpt
+    # (2026-10-28) Ben A = khach hang (dung de doi chieu CRM), Ben B = ben phat hanh hop dong -
+    # xem _extract_party_name_near_label. "company_name" (cu, giu tuong thich nguoc) LUON = Ben A.
+    party_a, party_a_excerpt = _extract_party_name_near_label(text, _PARTY_A_LABEL_RE)
+    if party_a:
+        result["party_a_name"] = party_a
+        result["party_a_name_excerpt"] = party_a_excerpt
+        result["company_name"] = party_a
+        result["company_name_excerpt"] = party_a_excerpt
+    party_b, party_b_excerpt = _extract_party_name_near_label(text, _PARTY_B_LABEL_RE)
+    if party_b:
+        result["party_b_name"] = party_b
+        result["party_b_name_excerpt"] = party_b_excerpt
     return result
 
 
@@ -509,6 +523,44 @@ _VAT_LABELS = [
     r"ti[ềe]n\s*thu[ếe]",
     r"\bvat\b",
 ]
+# (2026-10-28, fix bug THAT da xac nhan tren HD/2026/0007: "6.952.400 VNĐ" la GIA TRUOC VAT
+# (van ban ghi ro "Phí dịch vụ... chưa bao gồm thuế giá trị gia tăng (VAT)"), nhung heuristic cu
+# khop nham voi nhan "TỔNG CỘNG" o bang gia roi gan vao total_amount ("Tổng giá trị SAU VAT") -
+# BIA sai huong ca khi so tien dung. Neu van ban noi RO RANG so tien "chua gom VAT/thue" MA van
+# chi tim thay DUY NHAT 1 moc tien (khong co vat_amount/subtotal_amount rieng) -> so do PHAI la
+# truoc VAT, khong phai sau VAT, bat ke no nam canh nhan "Tong cong" nao trong bang.
+_VAT_EXCLUDED_RE = re.compile(
+    r"ch[ưu]a\s+(?:bao\s+)?g[ồô]m\s+thu[ếe]\s*(?:gi[áa]\s*tr[ịi]\s*gia\s*t[ăa]ng)?\s*(?:\(?vat\)?)?",
+    re.IGNORECASE,
+)
+
+# (2026-10-28) Nhan dien ten cong ty Ben A (khach hang - can doi chieu voi CRM) va Ben B (ben phat
+# hanh hop dong) rieng biet - hop dong tieng Viet hau het co khoi khai bao "...(BÊN A):\n<ten cong
+# ty>" / "...(BÊN B):\n<ten cong ty>" ngay dau van ban. BUG DA XAC NHAN tren HD/2026/0007: prompt AI
+# cu dinh nghia "company_name" la Ben B (ben phat hanh, vd chinh Markee) - so sanh voi CRM customer
+# (luon la khach hang = Ben A) se LUON LUON khong khop/needs_review du AI trich xuat dung, vi dang
+# so sanh SAI huong (cong ty cua minh voi khach hang cua minh, khong bao gio trung ten).
+_COMPANY_LINE_RE = re.compile(r"(?:C[ÔO]NG\s*TY|CTY)\b[^\n]{0,120}", re.IGNORECASE)
+
+
+def _extract_party_name_near_label(text: str, label_re: re.Pattern) -> tuple[str | None, str | None]:
+    """Tim ten cong ty trong ~250 ky tu SAU lan xuat hien DAU TIEN cua nhan Ben A/Ben B - lan dau
+    tien gan nhat voi khoi khai bao 2 ben o dau hop dong (cac lan nhac lai "Bên A"/"Bên B" sau do
+    trong van ban thuong KHONG di kem ten cong ty day du nen se khong khop _COMPANY_LINE_RE,
+    vong lap tu dong bo qua va thu lan xuat hien tiep theo)."""
+    for m in label_re.finditer(text):
+        window = text[m.end(): m.end() + 250]
+        m_company = _COMPANY_LINE_RE.search(window)
+        if m_company:
+            name = m_company.group(0).strip().rstrip(":;,.")
+            excerpt = text[m.start(): m.end() + m_company.end()].strip()
+            return name, excerpt
+    return None, None
+
+
+_PARTY_A_LABEL_RE = re.compile(r"B[ÊE]N\s*A\b\)?\s*[:\-]?", re.IGNORECASE)
+_PARTY_B_LABEL_RE = re.compile(r"B[ÊE]N\s*B\b\)?\s*[:\-]?", re.IGNORECASE)
+
 _TOTAL_LABELS = [
     r"t[ổô]ng\s*gi[áa]\s*tr[ịi]\s*h[ợo]p\s*đ[ồô]ng",
     r"t[ổô]ng\s*thanh\s*to[áa]n",
@@ -595,6 +647,15 @@ def _fallback_parse_contract_text(text: str) -> dict:
     subtotal, subtotal_excerpt = _find_amount_near_labels(text, _SUBTOTAL_LABELS, with_excerpt=True)
     vat, vat_excerpt = _find_amount_near_labels(text, _VAT_LABELS, with_excerpt=True)
     total, total_excerpt = _find_amount_near_labels(text, _TOTAL_LABELS, with_excerpt=True)
+
+    # BUG THAT da xac nhan tren HD/2026/0007 (xem _VAT_EXCLUDED_RE): van ban noi ro so tien duy
+    # nhat la "CHƯA bao gồm VAT" nhung nhan bang gia ("TỔNG CỘNG") lai khop _TOTAL_LABELS, bia sai
+    # thanh "Tổng giá trị SAU VAT". Chi 1 moc tien duy nhat tim duoc (khong co vat/subtotal rieng)
+    # + van ban noi ro "chua gom VAT" -> do PHAI la truoc VAT, doi lai nhan cho dung voi NOI DUNG
+    # THAT cua hop dong (khong phai doan theo vi tri trong bang).
+    if total is not None and subtotal is None and vat is None and _VAT_EXCLUDED_RE.search(text):
+        subtotal, subtotal_excerpt = total, total_excerpt
+        total, total_excerpt = None, None
 
     found_any = any(v is not None for v in (contract_number, signed_at, subtotal, vat, total))
     return {
@@ -758,7 +819,16 @@ def compare_to_quote(
     return {"rows": rows, "allMatched": all_matched}
 
 
-RULES_VERSION = "v4"  # (B1) tang len moi khi sua prompt/logic duoi day - lam cache mat hieu luc
+RULES_VERSION = "v6"  # Bump: neo highlight ten Bên A bằng đúng tên công ty; cache cũ chưa có vùng tô chính xác.
+# v5 (2026-10-28, "Hybrid Regex + AI that" - fix 2 bug that xac nhan qua HD/2026/0007):
+# (1) company_name truoc day = Ben B (chinh cong ty phat hanh hop dong) nen SO SANH SAI HUONG voi
+# CRM customer (luon la khach hang = Ben A) - them party_a_name/party_b_name rieng, doi chieu dung
+# voi party_a_name; (2) heuristic gan nham "6.952.400 VNĐ" thanh "Tong gia tri SAU VAT" du van ban
+# ghi ro "chua bao gom VAT" - them _VAT_EXCLUDED_RE de doc dung noi dung THAT thay vi doan theo vi
+# tri trong bang. Them verdict moi "not_found_in_document" (AI DA CHAY that nhung khong thay trong
+# van ban) - tach bach voi "not_extracted" (AI chua chay) va "insufficient_data" (thieu du lieu
+# phia BAO GIA/khach hang, khong lien quan AI). BUMP de hop dong da chay AI Review truoc do (vd
+# HD/2026/0007) tu dong chay lai duoi logic moi.
 # v4 (2026-10-27, yeu cau sep "AI phai doc toan bo hop dong tim dieu khoan quan trong/rui ro"):
 # them extract_risk_clauses() (nghiem thu mac dinh, thoi han, phat vi pham, gia han/cham dut,
 # bao hanh/bao mat, quyen & nghia vu) + doi mau highlight sang vang dong nhat #FFF176. BUMP de
@@ -795,15 +865,19 @@ def compare_contract_to_quote_full(
     dict tra ve tu get_quote() (supabase_quote_service.py, co the None neu hop dong khong gan
     quote_id). `customer` la dict tu crm_customers (company_name, tax_code - co the None).
     Tra ve list {field, label, contractValue, quoteValue, verdict, sourceExcerpt, sourceLocation},
-    verdict in {match, mismatch, needs_review, insufficient_data, not_extracted}. "not_extracted"
-    (2026-10-27, fix bug that - yeu cau sep "khong danh dau thieu du lieu hop dong khi thuc te co
-    dieu khoan"): dung rieng cho truong hop GIA TRI HOP DONG la None VA phuong phap trich xuat
-    KHONG phai AI that (chi heuristic) - phan biet ro "AI chua cau hinh nen chua trich xuat duoc"
-    (not_extracted, co the THAT SU co trong van ban, Sale phai tu doc) voi "insufficient_data"
-    (du lieu phia BAO GIA/KHACH HANG thieu de doi chieu, khong lien quan AI)."""
+    verdict in {match, mismatch, needs_review, insufficient_data, not_extracted, not_found_in_document}.
+    "not_extracted" (2026-10-27): AI CHUA CHAY (khong co API key) nen chua trich xuat duoc - gia tri
+    co the THAT SU co trong van ban, Sale phai tu doc. "not_found_in_document" (2026-10-28, fix bug
+    that - yeu cau sep "phan biet Khong tim thay trong tai lieu / Chua trich xuat / Khong du du
+    lieu"): AI THAT SU DA CHAY xong nhung khong tim thay noi dung nay trong van ban - khac han
+    "not_extracted" (chua chay) va "insufficient_data" (du lieu phia BAO GIA/KHACH HANG thieu de
+    doi chieu, khong lien quan gi den viec AI co tim thay trong hop dong hay khong)."""
     rows: list[dict] = []
     extraction_method = extracted.get("extraction_method")
     is_ai = extraction_method == "ai"
+
+    def _unknown_verdict() -> str:
+        return "not_extracted" if not is_ai else "not_found_in_document"
 
     def _excerpt(field: str) -> str | None:
         return extracted.get(f"{field}_excerpt")
@@ -813,10 +887,15 @@ def compare_contract_to_quote_full(
 
     # -- Cong ty / MST (tu crm_customers qua chuoi quote.dealId -> customer_leads -> crm_customers,
     # cap nhat tai day chi nhan `customer` da resolve san tu caller, khong tu truy van lai). --
-    company_value = extracted.get("company_name")
+    # (2026-10-28, fix bug that tren HD/2026/0007) So sanh voi party_a_name (BEN A = khach hang) -
+    # KHONG dung "company_name" (truoc day = Ben B = chinh cong ty phat hanh hop dong, se KHONG
+    # BAO GIO trung voi khach hang trong CRM). Fallback ve company_name cu neu party_a_name chua
+    # co (du lieu cu/AI output cu chua co field moi) de khong vo review da luu truoc do.
+    company_value = extracted.get("party_a_name") or extracted.get("company_name")
+    company_field = "party_a_name" if extracted.get("party_a_name") else "company_name"
     company_ref = (customer or {}).get("company_name") or (customer or {}).get("customer_name")
     if company_value is None:
-        company_verdict = "not_extracted" if not is_ai else "insufficient_data"
+        company_verdict = _unknown_verdict()
     elif company_ref is None:
         company_verdict = "insufficient_data"
     elif _normalize_company_name(company_value) == _normalize_company_name(company_ref) or (
@@ -830,14 +909,20 @@ def compare_contract_to_quote_full(
         # "mismatch" cung nhac nguoi dung hoang hot nham.
         company_verdict = "needs_review"
     rows.append({
-        "field": "company_name", "label": "Tên công ty",
+        "field": "company_name", "label": "Tên công ty (Bên A - khách hàng)",
         "contractValue": company_value, "quoteValue": company_ref,
-        "verdict": company_verdict, "sourceExcerpt": _excerpt("company_name"), "sourceLocation": _location("company_name"),
+        # Chỉ neo đúng TÊN công ty thay vì cả block "BÊN A ... tên công ty".
+        # Excerpt dài có thể bắc qua nhiều paragraph/cell nên verdict vẫn Match
+        # nhưng highlighter exact-text không định vị được; company_value chính
+        # là chuỗi đã trích từ tài liệu và cho vùng tô vàng chính xác hơn.
+        "verdict": company_verdict, "sourceExcerpt": company_value or _excerpt(company_field), "sourceLocation": _location(company_field),
     })
 
     tax_value = extracted.get("tax_code")
     tax_ref = (customer or {}).get("tax_code")
-    if tax_value is None or tax_ref is None:
+    if tax_value is None:
+        tax_verdict = _unknown_verdict()
+    elif tax_ref is None:
         tax_verdict = "insufficient_data"
     elif _normalize_tax_code(tax_value) == _normalize_tax_code(tax_ref):
         tax_verdict = "match"
@@ -860,7 +945,7 @@ def compare_contract_to_quote_full(
     ):
         contract_val = extracted.get(contract_key)
         if contract_val is None:
-            verdict = "not_extracted" if not is_ai else "insufficient_data"
+            verdict = _unknown_verdict()
         elif quote_val is None:
             verdict = "insufficient_data"
         elif _values_match(contract_val, quote_val):
@@ -876,7 +961,7 @@ def compare_contract_to_quote_full(
     # da lam truoc do) - KHONG phai tren quote (quote khong co field nay o cap header). --
     warranty_extracted = extracted.get("warranty_period")
     if warranty_extracted is None:
-        warranty_verdict = "not_extracted" if not is_ai else "insufficient_data"
+        warranty_verdict = _unknown_verdict()
     elif contract_warranty_period is None:
         warranty_verdict = "insufficient_data"
     else:
@@ -903,7 +988,7 @@ def compare_contract_to_quote_full(
         ("validity_period", "Hiệu lực hợp đồng"),
     ):
         value = extracted.get(field)
-        verdict = "needs_review" if value else ("not_extracted" if not is_ai else "insufficient_data")
+        verdict = "needs_review" if value else _unknown_verdict()
         rows.append({
             "field": field, "label": label, "contractValue": value, "quoteValue": None,
             "verdict": verdict,

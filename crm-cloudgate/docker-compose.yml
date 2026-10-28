@@ -39,6 +39,27 @@ services:
       crm-net:
         aliases: [backend]
 
+  onlyoffice:
+    build:
+      context: ./onlyoffice
+      dockerfile: Dockerfile
+    image: crm-cloudgate-onlyoffice:latest
+    container_name: crm-cloudgate-onlyoffice
+    restart: unless-stopped
+    environment:
+      TZ: Asia/Ho_Chi_Minh
+      ALLOW_PRIVATE_IP_ADDRESS: "true"
+      ALLOW_META_IP_ADDRESS: "true"
+      JWT_ENABLED: "true"
+      JWT_SECRET: ${ONLYOFFICE_JWT_SECRET:-}
+      JWT_HEADER: Authorization
+      JWT_IN_BODY: "true"
+    ports:
+      - "${ONLYOFFICE_PORT:-8096}:80"
+    networks:
+      crm-net:
+        aliases: [onlyoffice]
+
   router:
     image: nginx:alpine
     container_name: crm-cloudgate-router

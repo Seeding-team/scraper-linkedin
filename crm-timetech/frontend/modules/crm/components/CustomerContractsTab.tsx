@@ -27,13 +27,6 @@ type ContractEditForm = {
 
 const CONTRACT_STATUS_OPTIONS = Object.entries(CONTRACT_STATUS_LABELS) as Array<[ContractStatus, string]>;
 
-const DRIVE_STATUS_LABEL: Record<string, string> = {
-  not_applicable: 'Chưa có file', pending: 'Đang đồng bộ', synced: 'Đã lưu Drive', error: 'Lỗi đồng bộ',
-};
-const AI_REVIEW_STATUS_LABEL: Record<string, string> = {
-  not_run: 'Chưa chạy AI', pending_confirmation: 'Chờ xác nhận', confirmed: 'Đã lưu Highlight',
-};
-
 function toDateInput(value?: string | null) {
   return value ? String(value).slice(0, 10) : '';
 }
@@ -69,8 +62,8 @@ function ContractsTable({
   setReloadTick: React.Dispatch<React.SetStateAction<number>>;
   showPhaseColumn: boolean;
   onEditContract: (contract: ContractRow) => void;
-  /** Mở drawer chi tiết (không điều hướng trang). edit=true: mở sẵn khối chỉnh sửa. tab: nhảy thẳng tới tab (vd "aiReviewV2" cho nút AI Review nhanh). */
-  onOpenDetail: (contract: ContractRow, edit?: boolean, tab?: 'overview' | 'aiReviewV2') => void;
+  /** Mở drawer chi tiết (không điều hướng trang). edit=true: mở sẵn khối chỉnh sửa. */
+  onOpenDetail: (contract: ContractRow, edit?: boolean) => void;
 }) {
   return (
     <>
@@ -82,7 +75,6 @@ function ContractsTable({
             <th className="py-2.5 px-3 font-semibold">Nguồn</th>
             <th className="py-2.5 px-3 font-semibold">Trạng thái</th>
             <th className="py-2.5 px-3 font-semibold">Bảo hành</th>
-            <th className="py-2.5 px-3 font-semibold">Drive / AI</th>
             <th className="py-2.5 px-3 font-semibold text-right">Giá trị</th>
             <th className="py-2.5 px-3 font-semibold">Ngày ký</th>
             <th className="py-2.5 px-3 font-semibold text-right">Thao tác</th>
@@ -124,25 +116,6 @@ function ContractsTable({
                     ? `${contract.warranty_period}${warrantyEndDateLabel ? ` (hết hạn ${warrantyEndDateLabel})` : ''}`
                     : '—'}
                 </td>
-                <td className="py-2.5 px-3">
-                  <div className="flex flex-col gap-0.5 text-[10px] font-medium">
-                    <span className={
-                      contract.drive_sync_status === 'synced' ? 'text-emerald-600'
-                        : contract.drive_sync_status === 'error' ? 'text-red-600'
-                        : contract.drive_sync_status === 'pending' ? 'text-amber-600'
-                        : 'text-slate-400'
-                    }>
-                      {DRIVE_STATUS_LABEL[contract.drive_sync_status || 'not_applicable']}
-                    </span>
-                    <span className={
-                      contract.ai_review_status === 'confirmed' ? 'text-emerald-600'
-                        : contract.ai_review_status === 'pending_confirmation' ? 'text-amber-600'
-                        : 'text-slate-400'
-                    }>
-                      {AI_REVIEW_STATUS_LABEL[contract.ai_review_status || 'not_run']}
-                    </span>
-                  </div>
-                </td>
                 <td className="py-2.5 px-3 text-right font-semibold text-emerald-600">{formatVND(Number(contract.contract_value || 0)) || '0 đ'}</td>
                 <td className="py-2.5 px-3 text-slate-500">{contract.signed_at ? formatContractDate(contract.signed_at) : '-'}</td>
                 <td className="py-2.5 px-3 text-right">
@@ -152,15 +125,6 @@ function ContractsTable({
                         {contract.source === 'external' ? 'File/link' : 'File'}
                       </a>
                     ) : null}
-                    <button
-                      type="button"
-                      title="AI Review — đối chiếu báo giá, tạo bản Highlight"
-                      className="inline-flex items-center justify-center rounded-md border border-slate-200 p-1.5 text-slate-600 hover:border-[#c2185b] hover:text-[#c2185b]"
-                      data-testid={`contract-ai-review-${contract.id}`}
-                      onClick={() => onOpenDetail(contract, false, 'aiReviewV2')}
-                    >
-                      <Sparkles className="size-3.5" />
-                    </button>
                     <button
                       type="button"
                       title="Sửa"
@@ -231,8 +195,8 @@ export function CustomerContractsTab({
   const phaseContracts = allContracts.filter(c => !!c.deal_phase);
   const [uploadOpen, setUploadOpen] = useState(false);
   const [aiOpen, setAiOpen] = useState(false);
-  const [detail, setDetail] = useState<{ id: string; edit: boolean; row: ContractRow | null; tab?: 'overview' | 'aiReviewV2' } | null>(null);
-  function openDetail(contract: ContractRow, edit = false, tab?: 'overview' | 'aiReviewV2') { setDetail({ id: contract.id, edit, row: contract, tab }); }
+  const [detail, setDetail] = useState<{ id: string; edit: boolean; row: ContractRow | null } | null>(null);
+  function openDetail(contract: ContractRow, edit = false) { setDetail({ id: contract.id, edit, row: contract }); }
 
   return (
     <div className="space-y-6 bg-white py-1">
@@ -333,7 +297,7 @@ export function CustomerContractsTab({
               </div>
               <button type="button" className="crm-modal-close" onClick={() => setUploadOpen(false)} aria-label="Đóng">✕</button>
             </header>
-            <div style={{ flex: 1, overflowY: 'auto', padding: '0 1.25rem 1.25rem' }}>
+            <div style={{ flex: 1, overflowY: 'auto', padding: '1.25rem' }}>
               <ContractTemplatesPanel />
             </div>
           </aside>
@@ -343,7 +307,7 @@ export function CustomerContractsTab({
       <ContractAIWizard open={aiOpen} onClose={() => setAiOpen(false)}
         onCreated={id => { setAiOpen(false); setReloadTick(x => x + 1); if (id) setDetail({ id, edit: false, row: null }); }}
         defaultCustomerId={customerRef?.id} customerNameHint={customerRef?.name} uiOnly />
-      <ContractDetailDrawer contractId={detail?.id || null} focusEdit={detail?.edit} initialTab={detail?.tab || 'overview'}
+      <ContractDetailDrawer contractId={detail?.id || null} focusEdit={detail?.edit} initialTab="overview"
         onClose={() => setDetail(null)}
         onChanged={() => setReloadTick(x => x + 1)}
         onOpenLegacyEdit={detail?.row ? () => { const row = detail.row as ContractRow; setDetail(null); onEditContract(row); } : undefined} />

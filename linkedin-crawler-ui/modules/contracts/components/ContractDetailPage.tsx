@@ -10,14 +10,19 @@ import { CurrencyInput } from '@/components/CurrencyInput';
 import { seedingQuoteRepository } from '@/modules/quotes';
 import { ContractAIWizard } from '@/modules/crm/integrations/contracts/ContractAIWizard';
 import {
-  docxFromClauses, fetchVersionBlob, getContractReadiness, listContractActivity, listContractVersionsFull, runVersionRisk, saveBlobAs, saveContractVersionFull,
+  docxFromClauses, fetchVersionBlob, getContractReadiness, importContractDriveDocument, listContractActivity, listContractVersionsFull,
+  runVersionRisk, saveBlobAs, saveContractVersionFull, uploadContractDocument,
 } from '../repositories/contractDocs';
 import { ContractDocumentViewer } from './ContractDocumentViewer';
+import { ContractAiReviewPanel } from './ContractAiReviewPanel';
 import type { ActivityEntry, DocVersion, Readiness } from '../repositories/contractDocs';
 import { base64ToBlob } from '../repositories/contractDocs';
 import '@/modules/crm/styles/copilot.css';
+import { useLayeredDrawerClose } from '@/modules/crm/hooks/useLayeredDrawerClose';
+import { UnsavedChangesDialog } from '@/modules/crm/components/UnsavedChangesDialog';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 
-type Tab = 'overview' | 'docs' | 'risk' | 'approval' | 'history';
+type Tab = 'overview' | 'docs' | 'risk' | 'aiReviewV2' | 'approval' | 'history';
 
 const FLOW: ContractStatus[] = ['draft', 'pending_legal', 'pending_signature', 'signed', 'active', 'completed'];
 const ACTION_LABELS: Record<string, string> = {
@@ -64,6 +69,11 @@ export function ContractDetailContent({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [tab, setTab] = useState<Tab>(initialTab);
+  // Mo thang tu nut "✦ AI Review" o danh sach hop dong (initialTab='aiReviewV2') -> tu dong chay
+  // AI NGAY lan dau neu chua tung chay (xem ContractAiReviewPanel.autoRunIfMissing). Dung ref
+  // (khong phai state) de KHONG bi reset ve true moi lan panel AI Review unmount/remount do doi
+  // tab qua lai trong CUNG 1 lan mo chi tiet hop dong nay.
+  const autoRunAiReviewRef = useRef(initialTab === 'aiReviewV2');
   const [saving, setSaving] = useState(false);
   const [progressPercent, setProgressPercent] = useState(0);
   const [paymentCollectedPercent, setPaymentCollectedPercent] = useState(0);
@@ -87,6 +97,13 @@ export function ContractDetailContent({
   const pdfRef = useRef<string | null>(null);
   const [statusBusy, setStatusBusy] = useState<string | null>(null);
   const [generatingDoc, setGeneratingDoc] = useState(false);
+  // Tai lieu: upload tu may / nhap link Google Drive co san (2026-10-27, gop y UX "hoan thien tab Tai lieu").
+  const [uploadBusy, setUploadBusy] = useState(false);
+  const [importBusy, setImportBusy] = useState(false);
+  const [importUrl, setImportUrl] = useState('');
+  const [importOpen, setImportOpen] = useState(false);
+  const [docMsg, setDocMsg] = useState('');
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -222,6 +239,26 @@ export function ContractDetailContent({
     } catch (err) { setMsg(err instanceof Error ? err.message : 'Không tạo được tài liệu.'); } finally { setGeneratingDoc(false); }
   }
 
+  async function onUploadFile(file: File) {
+    setUploadBusy(true); setDocMsg('');
+    try {
+      await uploadContractDocument(contractId, file);
+      setDocMsg('✓ Đã tải file lên, đang xếp lịch đồng bộ Drive.');
+      await load(); onChanged?.();
+    } catch (err) { setDocMsg(err instanceof Error ? err.message : 'Không tải file lên được.'); } finally { setUploadBusy(false); }
+  }
+
+  async function onImportDrive() {
+    if (!importUrl.trim()) return;
+    setImportBusy(true); setDocMsg('');
+    try {
+      await importContractDriveDocument(contractId, importUrl.trim());
+      setDocMsg('✓ Đã nhập file từ Google Drive, đang xếp lịch đồng bộ.');
+      setImportUrl(''); setImportOpen(false);
+      await load(); onChanged?.();
+    } catch (err) { setDocMsg(err instanceof Error ? err.message : 'Không nhập được file từ Drive.'); } finally { setImportBusy(false); }
+  }
+
   // Đóng popup sửa (dù Lưu hay Hủy) -> nạp lại danh sách phiên bản rồi NHẢY THẲNG tới phiên bản mới nhất (nếu wizard
   // vừa lưu thêm 1 phiên bản) - không dùng loadVersions() thường (nó CỐ Ý giữ nguyên lựa chọn cũ nếu còn tồn tại).
   async function onEditWizardClosed() {
@@ -244,6 +281,14 @@ export function ContractDetailContent({
     if (focusEdit && !loading && tab === 'overview') editCardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }, [focusEdit, loading, tab]);
 
+  {/* "Bam hop dong 1 sang 2 thi k dong sidebar chi doi content nhu lead" (2026-10-23,
+   * yeu cau sep): truoc day loading/error fallback LUON dung className "contract-detail-page"
+   * (layout trang doc lap, KHONG khop khung .cd-panel) bat ke variant - khi doi contractId
+   * (key={contractId} tai ContractDetailDrawer lam remount component nay), panel tam thoi
+   * thu nho/sup lai theo layout trang trong luc "Dang tai hop dong..." hien ra, nhin y het
+   * nhu dong roi mo lai du .cd-backdrop/.cd-panel (phan tu cha) khong he unmount. Fix: dung
+   * dung className "cd-root" (giong nhanh binh thuong ben duoi) khi la drawer, giu nguyen
+   * khung/chieu rong panel on dinh trong luc tai du lieu hop dong moi. */}
   if (loading) return <main className={isDrawer ? 'cd-root' : 'contract-detail-page'}><section className="contract-state">Đang tải hợp đồng...</section></main>;
   if (error || !contract) return <main className={isDrawer ? 'cd-root' : 'contract-detail-page'}><section className="contract-state contract-state--error">{error || 'Không tìm thấy hợp đồng.'}</section></main>;
 
@@ -267,9 +312,17 @@ export function ContractDetailContent({
       <header className="contract-detail-header" style={{ alignItems: 'flex-start', ...(isDrawer ? { margin: 0, padding: 0 } : {}) }}>
         <div style={{ minWidth: 0, flex: 1 }}>
           {!onClose && onBack ? <button type="button" className="contract-button contract-button--secondary" onClick={onBack} style={{ marginBottom: '0.6rem' }}>{backLabel || '← Danh sách hợp đồng'}</button> : null}
-          {isDrawer ? <h2 className="cd-title" data-testid="drawer-contract-title" title={contract.title}>{contract.title}</h2> : null}
+          {isDrawer ? (
+            <h2 className="cd-title" data-testid="drawer-contract-title" title={contract.title}
+              style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{contract.title}</h2>
+          ) : null}
           <h1 data-testid="contract-number" style={isDrawer ? { fontSize: '0.95rem', margin: '2px 0 0', color: '#475569' } : undefined}>{contract.contractNumber}</h1>
-          <p>{contract.title} · {formatVnd(contract.contractValue)}{customerName !== '—' ? ` · ${customerName}${contract.dealCompanyName ? ` (${contract.dealCompanyName})` : ''}` : ''}{contract.ownerName ? ` · Phụ trách: ${contract.ownerName}` : ''}</p>
+          {/* Dòng meta: KHÔNG lặp lại contract.title (đã hiện ở <h2> ngay trên khi isDrawer) -
+           * trước đây lặp lại title + nhiều phần nối chuỗi dài gây rớt dòng xấu (sếp báo lỗi 2026-10-27). */}
+          <p style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+            title={`${contract.title} · ${formatVnd(contract.contractValue)}${customerName !== '—' ? ` · ${customerName}` : ''}${contract.ownerName ? ` · Phụ trách: ${contract.ownerName}` : ''}`}>
+            {!isDrawer ? `${contract.title} · ` : ''}{formatVnd(contract.contractValue)}{customerName !== '—' ? ` · ${customerName}${contract.dealCompanyName ? ` (${contract.dealCompanyName})` : ''}` : ''}{contract.ownerName ? ` · Phụ trách: ${contract.ownerName}` : ''}
+          </p>
           {isDrawer ? <span className={`contract-badge ${contractStatusClass(contract.status)}`} data-testid="drawer-status" style={{ display: 'inline-block', marginTop: 6 }}>{contractStatusLabel(contract.status)}</span> : null}
           <div style={{ display: isDrawer ? 'none' : 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8 }} data-testid="contract-status-flow">
             {FLOW.map(s => (
@@ -295,21 +348,34 @@ export function ContractDetailContent({
           {hasDocs && latest ? (
             <>
               <button type="button" className="cp-btn" data-testid="action-preview-pdf" onClick={() => { setTab('docs'); setSelected(latest.version); }}>👁 Xem trước PDF</button>
-              <button type="button" className="cp-btn" data-testid="action-print-pdf" onClick={() => void printVersion(latest.version)}>🖶 In PDF</button>
-              <button type="button" className="cp-btn" data-testid="action-download-docx" onClick={() => void dl(latest.version, 'docx')}>↓ Tải DOCX</button>
-              <button type="button" className="cp-btn" data-testid="action-download-pdf" onClick={() => void dl(latest.version, 'pdf')}>↓ Tải PDF</button>
+              {/* Gom "In PDF"/"Tải DOCX"/"Tải PDF" vào 1 dropdown - trước đây 4 nút rời làm header
+               * tràn/xuống dòng xấu khi có thêm "Mở thư mục Drive" (sếp báo lỗi 2026-10-27). Giữ
+               * nguyên đủ 3 hành động, chỉ gọn giao diện. */}
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button type="button" className="cp-btn" data-testid="action-downloads-menu">⬇ Tải xuống ▾</button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem data-testid="action-print-pdf" onClick={() => void printVersion(latest.version)}>🖶 In PDF</DropdownMenuItem>
+                  <DropdownMenuItem data-testid="action-download-docx" onClick={() => void dl(latest.version, 'docx')}>↓ Tải DOCX</DropdownMenuItem>
+                  <DropdownMenuItem data-testid="action-download-pdf" onClick={() => void dl(latest.version, 'pdf')}>↓ Tải PDF</DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </>
           ) : hasExternalFile ? (
             <button type="button" className="cp-btn" data-testid="action-view-external-doc" onClick={() => setTab('docs')}>👁 Xem tài liệu</button>
           ) : (
             <span data-testid="action-no-doc" style={{ fontSize: '0.78rem', color: '#9a3412', background: '#fff7ed', border: '1px solid #fed7aa', borderRadius: 6, padding: '4px 8px' }}>Chưa có tài liệu</span>
           )}
+          {contract.driveFolderId ? (
+            <a className="cp-btn" href={`https://drive.google.com/drive/folders/${contract.driveFolderId}`} target="_blank" rel="noreferrer" title="Mở thư mục hợp đồng này trên Google Drive">📁 Mở thư mục Drive</a>
+          ) : null}
           {isDrawer && onClose ? <button type="button" className="cd-close" aria-label="Đóng" data-testid="drawer-close" onClick={onClose}>✕</button> : null}
         </div>
       </header>
 
       <div className="cp-tabs" role="tablist" style={{ padding: 0, marginTop: 8, borderBottom: isDrawer ? 0 : undefined }}>
-        {([['overview', 'Tổng quan'], ['docs', `Tài liệu (${versions.length || (hasExternalFile ? 1 : 0)})`], ['risk', 'AI rủi ro'], ['approval', 'Phê duyệt & ký'], ['history', 'Lịch sử']] as Array<[Tab, string]>).map(([id, label]) => (
+        {([['overview', 'Tổng quan'], ['docs', `Tài liệu (${versions.length || (hasExternalFile ? 1 : 0)})`], ['risk', 'AI rủi ro'], ['aiReviewV2', 'Đối chiếu báo giá (AI)'], ['approval', 'Phê duyệt & ký'], ['history', 'Lịch sử']] as Array<[Tab, string]>).map(([id, label]) => (
           <button key={id} type="button" role="tab" data-testid={`detail-tab-${id}`} className={`cp-tab ${tab === id ? 'is-active' : ''}`} onClick={() => setTab(id)}>{label}</button>
         ))}
       </div>
@@ -321,24 +387,68 @@ export function ContractDetailContent({
       {/* ───────── Tổng quan ───────── */}
       {tab === 'overview' ? (
         <section style={{ display: 'grid', gap: 14, marginTop: 12 }} data-testid="detail-overview">
-          <div className="cp-card">
-            <b style={{ fontSize: '0.9rem' }}>Thông tin hợp đồng</b>
-            <dl style={{ display: 'grid', gridTemplateColumns: 'minmax(120px,170px) minmax(0,1fr)', gap: '6px 12px', margin: '10px 0 0', fontSize: '0.85rem' }}>
-              <dt style={{ color: '#64748b' }}>Mã hợp đồng</dt><dd style={{ margin: 0 }}>{contract.contractNumber}</dd>
-              <dt style={{ color: '#64748b' }}>Tên hợp đồng</dt><dd style={{ margin: 0 }}>{contract.title}</dd>
-              <dt style={{ color: '#64748b' }}>Loại hợp đồng</dt><dd style={{ margin: 0 }} data-testid="detail-type">{typeLabel}</dd>
-              <dt style={{ color: '#64748b' }}>Khách hàng</dt><dd style={{ margin: 0 }}>{customerName}{contract.dealCompanyName ? ` (${contract.dealCompanyName})` : ''}</dd>
-              <dt style={{ color: '#64748b' }}>Deal</dt><dd style={{ margin: 0 }}>{contract.dealId ? contract.dealId.slice(0, 8) : '—'}</dd>
-              <dt style={{ color: '#64748b' }}>Báo giá</dt><dd style={{ margin: 0 }}>{quoteNumber || (contract.quoteId ? 'Đang tải…' : '—')}</dd>
-              <dt style={{ color: '#64748b' }}>Giá trị</dt><dd style={{ margin: 0, color: '#16845d', fontWeight: 700 }}>{formatVnd(contract.contractValue)} {contract.currency}</dd>
-              <dt style={{ color: '#64748b' }}>Ngày ký</dt><dd style={{ margin: 0 }}>{contract.signedAt ? new Date(contract.signedAt).toLocaleDateString('vi-VN') : '—'}</dd>
-              <dt style={{ color: '#64748b' }}>Người phụ trách</dt><dd style={{ margin: 0 }}>{contract.ownerName || '—'}</dd>
-              <dt style={{ color: '#64748b' }}>Nguồn</dt><dd style={{ margin: 0 }}>{contract.source === 'external' ? 'Ghi nhận hợp đồng có sẵn' : contract.aiGenerated ? 'Tạo bằng AI Copilot' : 'Tạo trong CRM'}</dd>
-              <dt style={{ color: '#64748b' }}>Tài liệu</dt><dd style={{ margin: 0 }}>{latest ? `v${latest.version} · ${when(latest.createdAt)}${latest.createdByName ? ` · ${latest.createdByName}` : ''}` : hasExternalFile ? 'Có file/link đã lưu (xem ở tab Tài liệu)' : 'Chưa có tài liệu DOCX/PDF'}</dd>
-            </dl>
+          {/* Dashboard tong quan (2026-10-27, redesign theo gop y UX) - nhom ro 3 khoi: so
+           * lieu/tien do (progress bar THAT, khong phai text), thong tin co ban, thoi gian thuc
+           * hien - thay vi 1 danh sach dai 11 dong nhu truoc. KHONG doi logic/field nao, chi
+           * sap xep lai bo cuc hien thi. */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12 }}>
+            <div className="cp-card">
+              <span style={{ fontSize: '0.72rem', color: '#64748b', fontWeight: 600 }}>GIÁ TRỊ HỢP ĐỒNG</span>
+              <div style={{ fontSize: '1.2rem', fontWeight: 700, color: '#16845d', marginTop: 4 }}>{formatVnd(contract.contractValue)} {contract.currency}</div>
+              {valueMismatch ? <small style={{ color: '#b45309' }}>Khác tổng báo giá đã chốt</small> : null}
+            </div>
+            <div className="cp-card">
+              <span style={{ fontSize: '0.72rem', color: '#64748b', fontWeight: 600 }}>TIẾN ĐỘ THỰC HIỆN</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6 }}>
+                <div style={{ flex: 1, height: 8, borderRadius: 999, background: '#f1f5f9', overflow: 'hidden' }}>
+                  <div style={{ width: `${progressPercent}%`, height: '100%', background: '#be1e4b', borderRadius: 999 }} />
+                </div>
+                <b style={{ fontSize: '0.85rem' }}>{progressPercent}%</b>
+              </div>
+            </div>
+            <div className="cp-card">
+              <span style={{ fontSize: '0.72rem', color: '#64748b', fontWeight: 600 }}>ĐÃ THU THANH TOÁN</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6 }}>
+                <div style={{ flex: 1, height: 8, borderRadius: 999, background: '#f1f5f9', overflow: 'hidden' }}>
+                  <div style={{ width: `${paymentCollectedPercent}%`, height: '100%', background: '#16845d', borderRadius: 999 }} />
+                </div>
+                <b style={{ fontSize: '0.85rem' }}>{paymentCollectedPercent}%</b>
+              </div>
+            </div>
+            <div className="cp-card">
+              <span style={{ fontSize: '0.72rem', color: '#64748b', fontWeight: 600 }}>TRẠNG THÁI</span>
+              <div style={{ marginTop: 6 }}><span className={`contract-badge ${contractStatusClass(contract.status)}`}>{contractStatusLabel(contract.status)}</span></div>
+            </div>
           </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: 14 }}>
+            <div className="cp-card">
+              <b style={{ fontSize: '0.9rem' }}>Thông tin hợp đồng</b>
+              <dl style={{ display: 'grid', gridTemplateColumns: 'minmax(110px,150px) minmax(0,1fr)', gap: '6px 12px', margin: '10px 0 0', fontSize: '0.85rem' }}>
+                <dt style={{ color: '#64748b' }}>Mã hợp đồng</dt><dd style={{ margin: 0 }}>{contract.contractNumber}</dd>
+                <dt style={{ color: '#64748b' }}>Tên hợp đồng</dt><dd style={{ margin: 0 }}>{contract.title}</dd>
+                <dt style={{ color: '#64748b' }}>Loại hợp đồng</dt><dd style={{ margin: 0 }} data-testid="detail-type">{typeLabel}</dd>
+                <dt style={{ color: '#64748b' }}>Khách hàng</dt><dd style={{ margin: 0 }}>{customerName}{contract.dealCompanyName ? ` (${contract.dealCompanyName})` : ''}</dd>
+                <dt style={{ color: '#64748b' }}>Deal</dt><dd style={{ margin: 0 }}>{contract.dealId ? contract.dealId.slice(0, 8) : '—'}</dd>
+                <dt style={{ color: '#64748b' }}>Báo giá</dt><dd style={{ margin: 0 }}>{quoteNumber || (contract.quoteId ? 'Đang tải…' : '—')}</dd>
+                <dt style={{ color: '#64748b' }}>Người phụ trách</dt><dd style={{ margin: 0 }}>{contract.ownerName || '—'}</dd>
+                <dt style={{ color: '#64748b' }}>Nguồn</dt><dd style={{ margin: 0 }}>{contract.source === 'external' ? 'Ghi nhận hợp đồng có sẵn' : contract.aiGenerated ? 'Tạo bằng AI Copilot' : 'Tạo trong CRM'}</dd>
+              </dl>
+            </div>
+            <div className="cp-card">
+              <b style={{ fontSize: '0.9rem' }}>Thời gian & tài liệu</b>
+              <dl style={{ display: 'grid', gridTemplateColumns: 'minmax(110px,150px) minmax(0,1fr)', gap: '6px 12px', margin: '10px 0 0', fontSize: '0.85rem' }}>
+                <dt style={{ color: '#64748b' }}>Ngày ký</dt><dd style={{ margin: 0 }}>{contract.signedAt ? new Date(contract.signedAt).toLocaleDateString('vi-VN') : '—'}</dd>
+                <dt style={{ color: '#64748b' }}>Bắt đầu</dt><dd style={{ margin: 0 }}>{startDate ? new Date(startDate).toLocaleDateString('vi-VN') : '—'}</dd>
+                <dt style={{ color: '#64748b' }}>Kết thúc</dt><dd style={{ margin: 0 }}>{endDate ? new Date(endDate).toLocaleDateString('vi-VN') : '—'}</dd>
+                <dt style={{ color: '#64748b' }}>Tài liệu</dt><dd style={{ margin: 0 }}>{latest ? `v${latest.version} · ${when(latest.createdAt)}${latest.createdByName ? ` · ${latest.createdByName}` : ''}` : hasExternalFile ? 'Có file/link đã lưu (xem ở tab Tài liệu)' : 'Chưa có tài liệu DOCX/PDF'}</dd>
+                <dt style={{ color: '#64748b' }}>Drive</dt><dd style={{ margin: 0 }}>{contract.driveSyncStatus === 'synced' ? 'Đã lưu Drive' : contract.driveSyncStatus === 'error' ? 'Lỗi đồng bộ' : contract.driveSyncStatus === 'pending' ? 'Đang đồng bộ' : 'Chưa có file'}</dd>
+              </dl>
+            </div>
+          </div>
+
           <div className="cp-card" ref={editCardRef} data-testid="detail-edit-card" style={{ display: 'grid', gap: 10, ...(focusEdit ? { borderColor: '#be1e4b', boxShadow: '0 0 0 2px #fdf2f8' } : {}) }}>
-            <b style={{ fontSize: '0.9rem' }}>Quản lý thực hiện</b>
+            <b style={{ fontSize: '0.9rem' }}>Chỉnh sửa quản lý thực hiện</b>
             <div className="cp-grid3">
               <label className="cp-field"><span>Giá trị hợp đồng</span><CurrencyInput value={contractValue} onChange={setContractValue} style={{ width: '100%', height: '2.4rem', borderRadius: '0.6rem', border: '1px solid #cbd5e1', padding: '0 0.6rem' }} />
                 {valueMismatch ? <small style={{ color: '#b45309' }}>Khác tổng báo giá — tài liệu đã lưu không tự đổi theo.</small> : null}</label>
@@ -359,6 +469,54 @@ export function ContractDetailContent({
       {/* ───────── Tài liệu ───────── */}
       {tab === 'docs' ? (
         <section style={{ display: 'grid', gap: 14, marginTop: 12 }} data-testid="detail-docs">
+          {contract.aiHighlight ? (
+            <div className="cp-card" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8, background: '#fdf2f8', borderColor: '#fbcfe8' }} data-testid="ai-highlight-summary">
+              <div>
+                <b style={{ fontSize: '0.85rem' }}>✦ Bản AI Highlight đã lưu</b>
+                <p style={{ margin: '2px 0 0', fontSize: '0.78rem', color: '#64748b' }}>
+                  {contract.aiHighlight.fileName} · lưu lúc {contract.aiHighlight.confirmedAt ? when(contract.aiHighlight.confirmedAt) : '—'}
+                </p>
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button type="button" className="cp-btn small" onClick={() => setTab('aiReviewV2')}>Xem trong AI Review</button>
+                {contract.aiHighlight.driveFileId ? (
+                  <a className="cp-btn small" href={`https://drive.google.com/file/d/${contract.aiHighlight.driveFileId}/view`} target="_blank" rel="noreferrer">↗ Mở trên Drive</a>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
+
+          <div className="cp-card" style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center' }} data-testid="doc-upload-import-bar">
+            <b style={{ fontSize: '0.84rem' }}>Quản lý file gốc</b>
+            <input ref={fileInputRef} type="file" accept=".pdf,.docx,.doc,image/*" style={{ display: 'none' }}
+              onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; if (f) void onUploadFile(f); }} />
+            <button type="button" className="cp-btn small" disabled={uploadBusy} data-testid="doc-upload-btn" onClick={() => fileInputRef.current?.click()}>
+              {uploadBusy ? 'Đang tải lên…' : '⬆ Tải file lên'}
+            </button>
+            <button type="button" className="cp-btn small" data-testid="doc-import-drive-toggle" onClick={() => setImportOpen(o => !o)}>📥 Nhập từ Google Drive</button>
+            {contract.driveFolderId ? (
+              <a className="cp-btn small" href={`https://drive.google.com/drive/folders/${contract.driveFolderId}`} target="_blank" rel="noreferrer">📁 Mở thư mục Drive</a>
+            ) : null}
+            {importOpen ? (
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', width: '100%', marginTop: 4 }}>
+                <input className="cp-input" style={{ flex: 1, minWidth: 220 }} placeholder="Dán link Google Docs/Drive của file đã có…"
+                  value={importUrl} onChange={e => setImportUrl(e.target.value)} data-testid="doc-import-drive-input" />
+                <button type="button" className="cp-btn primary small" disabled={importBusy || !importUrl.trim()} data-testid="doc-import-drive-submit" onClick={() => void onImportDrive()}>
+                  {importBusy ? 'Đang kiểm tra…' : 'Nhập'}
+                </button>
+              </div>
+            ) : null}
+            {docMsg ? <small style={{ width: '100%', color: /^✓/.test(docMsg) ? '#166534' : '#b45309' }} data-testid="doc-upload-import-msg">{docMsg}</small> : null}
+            <small style={{ width: '100%', color: '#94a3b8' }}>File tải lên tự động đồng bộ vào Shared Drive theo đúng thư mục hợp đồng. Google Docs/Drive riêng tư cần được chia sẻ cho {`markee-recruitment-bot@markeeai.iam.gserviceaccount.com`} trước khi nhập.</small>
+          </div>
+
+          {/* Google OAuth import (2026-10-27) - DA TAT theo yeu cau sep ("bo chuc nang, khong
+           * xai nua") sau khi gap loi InsecureTransportError luc test tren dev. Code backend/FE
+           * (google_oauth_service.py, router, repo functions, migration 196) VAN GIU NGUYEN
+           * (khong xoa) - chi bo giao dien va khong goi API nua, de bat lai de dang neu can sau
+           * nay. Muon dung lai Google Docs/Drive rieng tu: dung nut "Nhap tu Google Drive" (dua
+           * tren check_file_readable cua SERVICE ACCOUNT, khong qua OAuth) hoac "Tai file len". */}
+
           {hasExternalFile ? (
             <ContractDocumentViewer contractId={contractId} fileUrl={contract.fileUrl as string} fileName={contract.title} />
           ) : !hasDocs ? (
@@ -466,28 +624,63 @@ export function ContractDetailContent({
         </section>
       ) : null}
 
-      {/* ───────── Phê duyệt & ký ───────── */}
+      {/* ───────── Đối chiếu báo giá (AI) - B6, tab RIENG khong dung chung logic risk cu ───────── */}
+      {tab === 'aiReviewV2' ? (
+        <section style={{ marginTop: 12 }} data-testid="detail-ai-review-v2">
+          <ContractAiReviewPanel contractId={contractId} driveSyncStatus={contract.driveSyncStatus} fileUrl={contract.fileUrl} contractNumber={contract.contractNumber}
+            autoRunIfMissing={autoRunAiReviewRef.current} onAutoRunHandled={() => { autoRunAiReviewRef.current = false; }} />
+        </section>
+      ) : null}
+
+      {/* ───────── Phê duyệt & ký (2026-10-27, redesign step-checklist) ───────── */}
       {tab === 'approval' ? (
         <section style={{ display: 'grid', gap: 12, marginTop: 12 }} data-testid="detail-approval">
           <div className="cp-card">
-            <b style={{ fontSize: '0.9rem' }}>Điều kiện gửi duyệt / ký</b>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+              <b style={{ fontSize: '0.9rem' }}>Điều kiện gửi duyệt / ký</b>
+              {readiness ? (
+                <span className={`contract-badge ${readiness.gated ? (readiness.ready ? '' : 'is-blocked') : ''}`}
+                  style={{ fontSize: '0.74rem', background: readiness.gated ? (readiness.ready ? '#d9f2d9' : '#fadbd8') : '#f1f5f9', color: readiness.gated ? (readiness.ready ? '#166534' : '#b91c1c') : '#475569' }}>
+                  {readiness.gated ? (readiness.ready ? `✓ Đủ điều kiện v${readiness.latestVersion}` : '✗ Chưa đủ điều kiện') : 'Không áp điều kiện tự động'}
+                </span>
+              ) : null}
+            </div>
             {readiness ? (
               <>
-                <ul style={{ margin: '8px 0 0', paddingLeft: '1.1rem', fontSize: '0.82rem' }}>
-                  {readiness.checks.map(c => (
-                    <li key={c.key} style={{ color: c.ok ? '#166534' : c.blocking ? '#b91c1c' : '#b45309' }} data-testid={`ready-${c.key}`}>{c.ok ? '✓' : '✗'} {c.label}{c.detail ? ` — ${c.detail}` : ''}
-                      {!c.ok && c.action?.kind === 'fix_legal' && c.action.customerId ? <button type="button" className="cp-chip" style={{ marginLeft: 8 }} onClick={() => window.open(`/all-platform/crm/customers/${c.action?.customerId}`, '_blank', 'noopener')}>Bổ sung thông tin ↗</button> : null}
-                      {!c.ok && c.action?.kind === 'run_risk' ? <button type="button" className="cp-chip" style={{ marginLeft: 8 }} onClick={() => { setSelected(c.action?.version ?? latest?.version ?? null); setTab('risk'); }}>Chạy AI rủi ro</button> : null}
-                      {!c.ok && c.action?.kind === 'confirm_representative' ? <button type="button" className="cp-chip" style={{ marginLeft: 8 }} disabled={confirmRepBusy} onClick={() => void confirmRepresentative()}>{confirmRepBusy ? 'Đang xác nhận…' : '✓ Xác nhận người đại diện'}</button> : null}
-                    </li>
+                <div style={{ display: 'grid', gap: 8, marginTop: 10 }} data-testid="approval-steps">
+                  {readiness.checks.map((c, i) => (
+                    <div key={c.key} data-testid={`ready-${c.key}`} style={{
+                      display: 'flex', gap: 10, alignItems: 'flex-start', padding: '8px 10px', borderRadius: 8,
+                      border: `1px solid ${c.ok ? '#bbf7d0' : c.blocking ? '#fecaca' : '#fde68a'}`,
+                      background: c.ok ? '#f0fdf4' : c.blocking ? '#fef2f2' : '#fffbeb',
+                    }}>
+                      <span style={{
+                        flexShrink: 0, width: 22, height: 22, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        fontSize: '0.74rem', fontWeight: 800, color: '#fff',
+                        background: c.ok ? '#16a34a' : c.blocking ? '#dc2626' : '#d97706',
+                      }}>{c.ok ? '✓' : i + 1}</span>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: '0.84rem', fontWeight: 600, color: c.ok ? '#166534' : c.blocking ? '#b91c1c' : '#92400e' }}>{c.label}</div>
+                        {c.detail ? <div style={{ fontSize: '0.78rem', color: '#64748b', marginTop: 2 }}>{c.detail}</div> : null}
+                        {!c.ok && !c.blocking ? <div style={{ fontSize: '0.74rem', color: '#92400e', marginTop: 2 }}>Cần xác nhận — không chặn chuyển trạng thái.</div> : null}
+                        {!c.ok && c.action?.kind === 'fix_legal' && c.action.customerId ? <button type="button" className="cp-chip" style={{ marginTop: 6 }} onClick={() => window.open(`/all-platform/crm/customers/${c.action?.customerId}`, '_blank', 'noopener')}>Bổ sung thông tin ↗</button> : null}
+                        {!c.ok && c.action?.kind === 'run_risk' ? <button type="button" className="cp-chip" style={{ marginTop: 6 }} onClick={() => { setSelected(c.action?.version ?? latest?.version ?? null); setTab('risk'); }}>Chạy AI rủi ro</button> : null}
+                        {!c.ok && c.action?.kind === 'confirm_representative' ? <button type="button" className="cp-chip" style={{ marginTop: 6 }} disabled={confirmRepBusy} onClick={() => void confirmRepresentative()}>{confirmRepBusy ? 'Đang xác nhận…' : '✓ Xác nhận người đại diện'}</button> : null}
+                      </div>
+                    </div>
                   ))}
-                </ul>
-                <p style={{ margin: '8px 0 0', fontSize: '0.8rem', color: readiness.gated ? (readiness.ready ? '#166534' : '#b91c1c') : '#64748b' }}>
-                  {readiness.gated ? (readiness.ready ? `Đủ điều kiện gửi duyệt phiên bản v${readiness.latestVersion}.` : 'Chưa đủ điều kiện — backend sẽ từ chối gửi duyệt/ký.') : 'Hợp đồng chưa có tài liệu Copilot: không áp điều kiện tự động (luồng ghi nhận thủ công giữ nguyên).'}
-                </p>
+                </div>
+                {!readiness.gated ? (
+                  <p style={{ margin: '10px 0 0', fontSize: '0.8rem', color: '#64748b' }}>
+                    {hasExternalFile
+                      ? 'Hợp đồng ghi nhận ngoài (không soạn qua AI Copilot) — không áp điều kiện tự động, có thể chuyển trạng thái trực tiếp. Tài liệu đã lưu xem ở tab "Tài liệu".'
+                      : 'Hợp đồng chưa có tài liệu nào (Copilot hoặc ghi nhận ngoài) — chưa áp điều kiện tự động.'}
+                  </p>
+                ) : null}
               </>
             ) : <small style={{ color: '#94a3b8' }}>Đang kiểm tra…</small>}
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 10 }}>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 12, borderTop: '1px solid #e2e8f0', paddingTop: 10 }}>
+              {visibleNextStatuses.length === 0 ? <small style={{ color: '#94a3b8' }}>Không còn bước chuyển trạng thái tiếp theo.</small> : null}
               {visibleNextStatuses.map(s => (
                 <button key={s} type="button" className="cp-btn primary" data-testid={`approve-${s}`} disabled={!!statusBusy}
                   onClick={() => void changeStatus(s, `Chuyển sang "${contractStatusLabel(s)}"`)}>
@@ -495,26 +688,59 @@ export function ContractDetailContent({
                 </button>
               ))}
             </div>
-            <small style={{ display: 'block', marginTop: 8, color: '#64748b' }}>Trạng thái “Đã duyệt” riêng không có trong hệ thống: pháp chế duyệt = chuyển “Chờ pháp chế duyệt” → “Chờ ký”, được ghi lại kèm phiên bản. Không có ký số — chỉ đánh dấu trạng thái.</small>
+            <small style={{ display: 'block', marginTop: 8, color: '#64748b' }}>Trạng thái "Đã duyệt" riêng không có trong hệ thống: pháp chế duyệt = chuyển "Chờ pháp chế duyệt" → "Chờ ký", được ghi lại kèm phiên bản. Không có ký số — chỉ đánh dấu trạng thái.</small>
           </div>
           <div className="cp-card" data-testid="approval-log">
             <b style={{ fontSize: '0.9rem' }}>Lịch sử duyệt</b>
             {approvals.length === 0 ? <p style={{ fontSize: '0.8rem', color: '#94a3b8' }}>Chưa có.</p> : (
-              <table className="cp-table"><thead><tr><th>Thời điểm</th><th>Hành động</th><th>Người thực hiện</th><th>Phiên bản</th></tr></thead>
-                <tbody>{approvals.map(a => <tr key={a.id}><td>{when(a.createdAt)}</td><td>{actionLabel(a.action)}</td><td>{a.actorName || a.actorId?.slice(0, 8) || '—'}</td><td>{a.changes && (a.changes as { version?: number }).version ? `v${(a.changes as { version?: number }).version}` : '—'}</td></tr>)}</tbody></table>
+              <div style={{ display: 'grid', gap: 6, marginTop: 8 }}>
+                {approvals.map(a => (
+                  <div key={a.id} style={{ display: 'flex', gap: 10, alignItems: 'baseline', fontSize: '0.82rem', padding: '6px 0', borderBottom: '1px solid #f1f5f9' }}>
+                    <span style={{ color: '#94a3b8', minWidth: 140, fontSize: '0.76rem' }}>{when(a.createdAt)}</span>
+                    <span style={{ fontWeight: 600 }}>{actionLabel(a.action)}</span>
+                    <span style={{ color: '#64748b' }}>{a.actorName || a.actorId?.slice(0, 8) || '—'}</span>
+                    {a.changes && (a.changes as { version?: number }).version ? <span className="cp-chip" style={{ marginLeft: 'auto' }}>v{(a.changes as { version?: number }).version}</span> : null}
+                  </div>
+                ))}
+              </div>
             )}
           </div>
         </section>
       ) : null}
 
-      {/* ───────── Lịch sử ───────── */}
+      {/* ───────── Lịch sử (2026-10-27, redesign timeline) ───────── */}
       {tab === 'history' ? (
-        <section className="cp-card" style={{ marginTop: 12 }} data-testid="detail-history">
-          {activity.length === 0 ? <p style={{ fontSize: '0.82rem', color: '#94a3b8' }}>Chưa có lịch sử.</p> : (
-            <table className="cp-table"><thead><tr><th>Thời điểm</th><th>Hoạt động</th><th>Người thực hiện</th><th>Chi tiết</th></tr></thead>
-              <tbody>{activity.map(a => <tr key={a.id}><td>{when(a.createdAt)}</td><td>{actionLabel(a.action)}</td><td>{a.actorName || a.actorId?.slice(0, 8) || '—'}</td>
-                <td>{a.changes ? Object.entries(a.changes).map(([k, v]) => `${k}: ${String(v).slice(0, 12)}`).join(' · ') : ''}</td></tr>)}</tbody></table>
-          )}
+        <section style={{ marginTop: 12 }} data-testid="detail-history">
+          <div className="cp-card">
+            <b style={{ fontSize: '0.9rem' }}>Dòng thời gian hoạt động</b>
+            {activity.length === 0 ? <p style={{ fontSize: '0.82rem', color: '#94a3b8', marginTop: 8 }}>Chưa có lịch sử.</p> : (
+              <div style={{ display: 'grid', marginTop: 12 }}>
+                {activity.map((a, i) => {
+                  const cat = a.action.startsWith('approval:') || a.action.startsWith('status_changed:') ? { label: 'Duyệt/ký', color: '#be1e4b' }
+                    : a.action === 'risk_analyzed' ? { label: 'AI Review', color: '#7c3aed' }
+                    : a.action === 'document_version_saved' ? { label: 'Tài liệu', color: '#0891b2' }
+                    : { label: 'Hợp đồng', color: '#64748b' };
+                  const details = a.changes ? Object.entries(a.changes).map(([k, v]) => `${k}: ${String(v).slice(0, 40)}`).join(' · ') : '';
+                  return (
+                    <div key={a.id} style={{ display: 'flex', gap: 12 }}>
+                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: 14 }}>
+                        <span style={{ width: 10, height: 10, borderRadius: '50%', background: cat.color, marginTop: 4, flexShrink: 0 }} />
+                        {i < activity.length - 1 ? <span style={{ flex: 1, width: 2, background: '#e2e8f0', minHeight: 24 }} /> : null}
+                      </div>
+                      <div style={{ paddingBottom: 16, minWidth: 0 }}>
+                        <div style={{ display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap' }}>
+                          <b style={{ fontSize: '0.84rem' }}>{actionLabel(a.action)}</b>
+                          <span style={{ fontSize: '0.7rem', fontWeight: 700, color: cat.color, background: `${cat.color}1a`, padding: '1px 7px', borderRadius: 999 }}>{cat.label}</span>
+                        </div>
+                        <div style={{ fontSize: '0.76rem', color: '#94a3b8', marginTop: 2 }}>{when(a.createdAt)} · {a.actorName || a.actorId?.slice(0, 8) || 'Hệ thống'}</div>
+                        {details ? <div style={{ fontSize: '0.78rem', color: '#64748b', marginTop: 4 }}>{details}</div> : null}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
         </section>
       ) : null}
       </div>
@@ -561,23 +787,30 @@ export function ContractDetailDrawer({
 }) {
   const dirtyRef = useRef(false);
   const setDirty = useCallback((d: boolean) => { dirtyRef.current = d; }, []);
-  const guardedClose = useCallback(() => {
-    if (dirtyRef.current && !window.confirm('Có thay đổi chưa lưu. Đóng chi tiết hợp đồng và bỏ các thay đổi này?')) return;
-    dirtyRef.current = false;
-    onClose();
-  }, [onClose]);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+  const guardedCloseNow = useCallback(() => { dirtyRef.current = false; onCloseRef.current(); }, []);
+  // 2026-10-27: doi sang useLayeredDrawerClose (chuan hoa dong drawer toan CRM)
+  // - giu NGUYEN dirtyRef + outside-click/ESC pattern da proven o day, chi them
+  // "chi dong lop TREN CUNG" khi co nhieu drawer/modal chong nhau (vd mo
+  // ContractDetailDrawer tu ben trong 1 modal khac) + doi window.confirm sang
+  // dialog dung chung co 2 nut dung text sep yeu cau.
+  const { backdropMouseDownProps, requestClose: guardedClose, confirmOpen: unsavedConfirmOpen, confirmStay, confirmDiscard } = useLayeredDrawerClose({
+    isOpen: !!contractId,
+    onRequestClose: guardedCloseNow,
+    isDirty: () => dirtyRef.current,
+  });
   useEffect(() => {
     if (!contractId) return undefined;
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') guardedClose(); };
-    window.addEventListener('keydown', onKey);
     const prev = document.body.style.overflow;
     document.body.style.overflow = 'hidden';                  // không cuộn trang Customer 360 phía sau
-    return () => { window.removeEventListener('keydown', onKey); document.body.style.overflow = prev; };
-  }, [contractId, guardedClose]);
+    return () => { document.body.style.overflow = prev; };
+  }, [contractId]);
   if (!contractId) return null;
   return (
-    <div className="cd-backdrop" data-testid="contract-drawer" onMouseDown={e => { if (e.target === e.currentTarget) guardedClose(); }}>
+    <div className="cd-backdrop" data-testid="contract-drawer" {...backdropMouseDownProps}>
       <aside className="cd-panel" role="dialog" aria-modal="true" aria-label="Chi tiết hợp đồng">
+        {unsavedConfirmOpen ? <UnsavedChangesDialog onStay={confirmStay} onDiscard={confirmDiscard} /> : null}
         <ContractDetailContent key={contractId} contractId={contractId} variant="drawer" onClose={guardedClose} onChanged={onChanged} onDirtyChange={setDirty}
           initialTab={initialTab} focusEdit={focusEdit} onOpenLegacyEdit={onOpenLegacyEdit ? () => { if (dirtyRef.current && !window.confirm('Có thay đổi chưa lưu. Bỏ thay đổi để mở form ghi nhận đầy đủ?')) return; dirtyRef.current = false; onOpenLegacyEdit(); } : undefined} />
       </aside>
