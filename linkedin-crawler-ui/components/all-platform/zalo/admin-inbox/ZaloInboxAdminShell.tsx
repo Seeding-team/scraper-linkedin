@@ -31,6 +31,8 @@ import {
   createZaloAccount,
   createZaloBroadcast,
   createZaloUserThread,
+  findZaloUser,
+  type ZaloFoundUser,
   updateZaloLibraryMessage,
   getZaloQuickReplies,
   createZaloQuickReply,
@@ -875,6 +877,78 @@ export function ZaloInboxAdminShell() {
   const [newChatModalOpen, setNewChatModalOpen] = useState(false);
   const [phoneSearchQuery, setPhoneSearchQuery] = useState<string | undefined>(undefined);
 
+  // In-Place Zalo Phone Search (Chuẩn Zalo 1:1 - Tự trích xuất tên & SĐT đổ xuống và có nút nhắn tin ngay)
+  const [inlinePhoneResult, setInlinePhoneResult] = useState<ZaloFoundUser | null>(null);
+  const [isSearchingPhone, setIsSearchingPhone] = useState(false);
+  const [inlinePhoneError, setInlinePhoneError] = useState<string | null>(null);
+  const [isStartingInlineChat, setIsStartingInlineChat] = useState(false);
+
+  useEffect(() => {
+    const rawQuery = inbox.searchQuery.trim();
+    if (!looksLikeVnPhoneQuery(rawQuery)) {
+      setInlinePhoneResult(null);
+      setInlinePhoneError(null);
+      setIsSearchingPhone(false);
+      return;
+    }
+
+    const activeAccountId = inbox.selectedAccountId || inbox.sessions[0]?.account_id;
+    if (!activeAccountId) return;
+
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      setIsSearchingPhone(true);
+      setInlinePhoneError(null);
+      try {
+        const res = await findZaloUser(activeAccountId, rawQuery, "phone");
+        if (!cancelled) {
+          setInlinePhoneResult(res);
+        }
+      } catch (err: any) {
+        if (!cancelled) {
+          setInlinePhoneResult(null);
+          setInlinePhoneError(err?.message || "Không tìm thấy người dùng với số điện thoại này");
+        }
+      } finally {
+        if (!cancelled) setIsSearchingPhone(false);
+      }
+    }, 450);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [inbox.searchQuery, inbox.selectedAccountId, inbox.sessions]);
+
+  const handleOpenInlinePhoneChat = async (targetUser: ZaloFoundUser) => {
+    const activeAccountId = inbox.selectedAccountId || inbox.sessions[0]?.account_id;
+    if (!activeAccountId) {
+      inbox.showToast("Chưa chọn tài khoản Zalo để gửi tin", false);
+      return;
+    }
+    setIsStartingInlineChat(true);
+    try {
+      const res = await createZaloUserThread(activeAccountId, {
+        user_id: targetUser.user_id,
+        display_name: targetUser.display_name,
+        avatar_url: targetUser.avatar_url ?? null,
+      });
+      if (res?.conversation_id) {
+        inbox.setSearchQuery("");
+        setInlinePhoneResult(null);
+        void inbox.refreshConversations();
+        inbox.openChat(res.conversation_id);
+        inbox.showToast(`Đã mở cuộc trò chuyện với ${targetUser.display_name}`, true);
+      } else {
+        throw new Error("Không nhận được mã cuộc trò chuyện");
+      }
+    } catch (err: any) {
+      inbox.showToast(err?.message || "Không thể mở chat với người này", false);
+    } finally {
+      setIsStartingInlineChat(false);
+    }
+  };
+
   const [customQuickReplies, setCustomQuickReplies] = useState<ZaloQuickReply[]>([]);
   const [showSaveTemplateForm, setShowSaveTemplateForm] = useState(false);
   const [newTemplateLabel, setNewTemplateLabel] = useState("");
@@ -1623,22 +1697,82 @@ export function ZaloInboxAdminShell() {
                 )}
               </div>
 
-              {/* Banner gợi ý tìm người lạ khi chuỗi tìm kiếm có dạng SĐT VN */}
+              {/* DROPDOWN KẾT QUẢ TÌM BẠN QUA SỐ ĐIỆN THOẠI (CHUẨN ZALO 1:1 THEO ẢNH MASTER) */}
               {looksLikeVnPhoneQuery(inbox.searchQuery) && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setPhoneSearchQuery(inbox.searchQuery.trim());
-                    setNewChatModalOpen(true);
-                  }}
-                  className="w-full flex items-center justify-between gap-2 px-3 py-2 text-xs font-semibold text-white bg-gradient-to-r from-[#0068FF] to-[#0052cc] hover:from-[#0052cc] hover:to-[#003d99] rounded-xl shadow-xs transition-all text-left cursor-pointer"
-                >
-                  <div className="flex items-center gap-2 min-w-0">
-                    <MaterialIcon name="person_search" className="text-[16px] shrink-0" />
-                    <span className="truncate">Tìm người lạ trên Zalo: <strong>{inbox.searchQuery.trim()}</strong></span>
+                <div className="rounded-2xl border border-blue-100 bg-gradient-to-b from-blue-50/60 to-white p-3 shadow-md space-y-2.5 animate-in fade-in slide-in-from-top-2 duration-200">
+                  <div className="text-xs font-bold text-slate-800 flex items-center justify-between">
+                    <span>Tìm bạn qua số điện thoại:</span>
+                    {isSearchingPhone && (
+                      <span className="flex items-center gap-1 text-[11px] text-[#0068FF] font-medium">
+                        <MaterialIcon name="sync" className="text-xs animate-spin" />
+                        Đang tìm...
+                      </span>
+                    )}
                   </div>
-                  <span className="shrink-0 text-[10px] font-bold bg-white/20 px-2 py-0.5 rounded-full">Nhắn tin ngay →</span>
-                </button>
+
+                  {inlinePhoneResult ? (
+                    <div
+                      onClick={() => void handleOpenInlinePhoneChat(inlinePhoneResult)}
+                      className="flex items-center gap-3 p-2 rounded-xl bg-white border border-slate-200/80 hover:border-[#0068FF] hover:shadow-xs transition cursor-pointer group"
+                    >
+                      {inlinePhoneResult.avatar_url ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={inlinePhoneResult.avatar_url}
+                          alt={inlinePhoneResult.display_name}
+                          className="w-11 h-11 rounded-full object-cover shrink-0 border border-slate-200"
+                        />
+                      ) : (
+                        <div className="w-11 h-11 rounded-full bg-gradient-to-br from-[#0068FF] to-[#0040aa] flex items-center justify-center text-white text-base font-bold shrink-0">
+                          {inlinePhoneResult.display_name?.[0]?.toUpperCase() || "?"}
+                        </div>
+                      )}
+                      <div className="flex-1 min-w-0">
+                        <div className="font-bold text-[13px] text-slate-900 truncate group-hover:text-[#0068FF] transition">
+                          {inlinePhoneResult.display_name}
+                        </div>
+                        <div className="text-xs text-slate-500 mt-0.5">
+                          Số điện thoại: <span className="font-bold text-[#0068FF]">{inbox.searchQuery.trim()}</span>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        disabled={isStartingInlineChat}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void handleOpenInlinePhoneChat(inlinePhoneResult);
+                        }}
+                        className="px-3 py-1.5 rounded-xl bg-[#0068FF] hover:bg-[#0052cc] text-white text-xs font-bold transition shadow-xs flex items-center gap-1 shrink-0 cursor-pointer disabled:opacity-50"
+                      >
+                        {isStartingInlineChat ? (
+                          <MaterialIcon name="sync" className="text-[13px] animate-spin" />
+                        ) : (
+                          <MaterialIcon name="chat" className="text-[13px]" />
+                        )}
+                        <span>Nhắn tin</span>
+                      </button>
+                    </div>
+                  ) : isSearchingPhone ? (
+                    <div className="p-3 text-center text-xs text-slate-400 bg-white rounded-xl border border-slate-100 flex items-center justify-center gap-2">
+                      <MaterialIcon name="sync" className="text-sm animate-spin text-[#0068FF]" />
+                      <span>Đang tra cứu trên Zalo...</span>
+                    </div>
+                  ) : inlinePhoneError ? (
+                    <div className="p-2.5 rounded-xl bg-amber-50 border border-amber-200/80 text-[11px] text-amber-800 flex items-center justify-between">
+                      <span>{inlinePhoneError}</span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPhoneSearchQuery(inbox.searchQuery.trim());
+                          setNewChatModalOpen(true);
+                        }}
+                        className="text-[#0068FF] font-bold hover:underline shrink-0 ml-2 cursor-pointer"
+                      >
+                        Mở modal →
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
               )}
             </div>
 
