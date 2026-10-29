@@ -341,42 +341,67 @@ export function useZaloAdminInbox() {
   }, [teams, selectedTeamId]);
 
   const loadMemberAccounts = useCallback(async () => {
-    if (selectedTeamMembers.length === 0) {
-      setMemberAccounts([]);
-      return;
-    }
     setLoadingAccounts(true);
     try {
-      const results = await Promise.allSettled(
-        selectedTeamMembers.map(async (member) => {
-          const ownerId = member.id ?? member.email ?? "";
-          const email = member.email ?? "";
-          if (!ownerId) return null;
-          const res = await getZaloAccounts(ownerId, undefined, email);
-          const accounts = res?.accounts ?? [];
-          return {
-            ownerId,
-            ownerName: member.name ?? member.email ?? ownerId,
-            ownerEmail: email,
-            accounts: accounts as ZaloAccountInfo[],
-          } satisfies ZaloMemberAccount;
-        })
-      );
+      // 1. Fetch team member accounts
+      const memberPromises = selectedTeamMembers.map(async (member) => {
+        const ownerId = member.id ?? member.email ?? "";
+        const email = member.email ?? "";
+        if (!ownerId) return null;
+        const res = await getZaloAccounts(ownerId, undefined, email);
+        const accounts = res?.accounts ?? [];
+        return {
+          ownerId,
+          ownerName: member.name ?? member.email ?? ownerId,
+          ownerEmail: email,
+          accounts: accounts as ZaloAccountInfo[],
+        } satisfies ZaloMemberAccount;
+      });
+
+      // 2. Always fetch default platform accounts to ensure all company accounts are available
+      const platformPromise = getZaloAccounts("default").catch(() => null);
+
+      const [memberResults, platformRes] = await Promise.all([
+        Promise.allSettled(memberPromises),
+        platformPromise,
+      ]);
 
       const loaded: ZaloMemberAccount[] = [];
+      const seenAccountIds = new Set<string>();
       const onlineSet = new Set<string>();
       const expiredSet = new Set<string>();
 
-      for (const r of results) {
+      for (const r of memberResults) {
         if (r.status === "fulfilled" && r.value) {
           loaded.push(r.value);
           for (const acc of r.value.accounts) {
+            seenAccountIds.add(acc.account_id);
             if (acc.listener?.connected) {
               onlineSet.add(acc.account_id);
               expiredSet.delete(acc.account_id);
             } else if (acc.listener?.auth_expired || acc.status === "session_expired") {
               expiredSet.add(acc.account_id);
             }
+          }
+        }
+      }
+
+      // Add default platform accounts if any not yet seen
+      const platformAccounts = (platformRes?.accounts ?? []) as ZaloAccountInfo[];
+      const unassignedAccounts = platformAccounts.filter((a) => !seenAccountIds.has(a.account_id));
+      if (unassignedAccounts.length > 0) {
+        loaded.push({
+          ownerId: "default",
+          ownerName: "Tài khoản Zalo",
+          ownerEmail: "",
+          accounts: unassignedAccounts,
+        });
+        for (const acc of unassignedAccounts) {
+          if (acc.listener?.connected) {
+            onlineSet.add(acc.account_id);
+            expiredSet.delete(acc.account_id);
+          } else if (acc.listener?.auth_expired || acc.status === "session_expired") {
+            expiredSet.add(acc.account_id);
           }
         }
       }

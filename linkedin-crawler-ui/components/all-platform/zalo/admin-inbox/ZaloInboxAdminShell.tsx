@@ -765,10 +765,12 @@ export function ZaloInboxAdminShell() {
 
   useEffect(() => {
     const targetAccount = searchParams.get("account");
-    if (!targetAccount || jumpToAccountRef.current === targetAccount) return;
-    jumpToAccountRef.current = targetAccount;
-    inbox.onSelectAccount(targetAccount);
-  }, [searchParams, inbox]);
+    if (!targetAccount) return;
+    if (inbox.selectedAccountId !== targetAccount) {
+      jumpToAccountRef.current = targetAccount;
+      inbox.onSelectAccount(targetAccount);
+    }
+  }, [searchParams, inbox.selectedAccountId, inbox.onSelectAccount]);
 
   useEffect(() => {
     const targetConv = searchParams.get("conv");
