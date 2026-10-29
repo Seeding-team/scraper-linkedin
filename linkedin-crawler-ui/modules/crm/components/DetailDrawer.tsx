@@ -1,3 +1,4 @@
+import { getZaloChatUrl } from '@/lib/zaloChatNavigation';
 'use client';
 
 import { useEffect, useState } from 'react';
@@ -163,10 +164,10 @@ export function DetailDrawer({
                   {deal.email}
                 </a>
               ) : null}
-              {deal.zalo ? (
-                <a href={`https://zalo.me/${tel(deal.zalo || deal.phone)}`} target="_blank" rel="noopener noreferrer">
-                  <MessageCircle className="crm-line-icon" />
-                  Zalo
+              {(deal.zalo || deal.phone) ? (
+                <a href={getZaloChatUrl(deal.zalo || deal.phone)} target="_blank" rel="noopener noreferrer" className="text-[#0068ff] font-medium flex items-center gap-1">
+                  <MessageCircle className="crm-line-icon text-[#0068ff]" />
+                  Nhắn Zalo
                 </a>
               ) : null}
             </div>

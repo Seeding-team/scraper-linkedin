@@ -1,3 +1,4 @@
+import { getZaloChatUrl } from '@/lib/zaloChatNavigation';
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -208,9 +209,7 @@ function activityLabel(item: CustomerActivityEntry) {
 function zaloHref(value?: string | null) {
   const text = value?.trim();
   if (!text) return undefined;
-  if (/^https?:\/\//i.test(text)) return text;
-  const phone = text.replace(/\D/g, '').replace(/^84/, '0');
-  return phone ? `https://zalo.me/${phone}` : undefined;
+  return getZaloChatUrl(text);
 }
 
 export function CustomerQuickViewPanel({

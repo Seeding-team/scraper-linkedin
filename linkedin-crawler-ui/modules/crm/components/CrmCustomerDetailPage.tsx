@@ -1,3 +1,4 @@
+import { getZaloChatUrl } from '@/lib/zaloChatNavigation';
 'use client';
 
 import { CustomerProjectsTab } from './CustomerProjectsTab';
@@ -1233,7 +1234,21 @@ export function CrmCustomerDetailPage({ customerId }: { customerId: string }) {
                   ) : null}
                 </div>
                 <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
-                  {customer?.phone ? <span>{customer.phone}</span> : null}
+                  {customer?.phone ? (
+                    <span className="inline-flex items-center gap-1.5">
+                      <span>{customer.phone}</span>
+                      <a
+                        href={getZaloChatUrl(customer.phone || customer.zalo)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-blue-50 text-[11px] font-semibold text-[#0068ff] hover:bg-blue-100"
+                        title="Nhắn Zalo trên hệ thống"
+                      >
+                        <MessageCircle size={12} className="text-[#0068ff]" />
+                        <span>Chat Zalo</span>
+                      </a>
+                    </span>
+                  ) : null}
                   {customer?.phone && customer?.source ? <span>•</span> : null}
                   {customer?.source ? <span>{customer.source}</span> : null}
                   <span>•</span>

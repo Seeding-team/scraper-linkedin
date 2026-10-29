@@ -1,3 +1,4 @@
+import { getZaloChatUrl } from '@/lib/zaloChatNavigation';
 'use client';
 
 import {
@@ -48,9 +49,8 @@ function ensureUrl(value?: string, fallbackBase = '') {
 }
 
 function getZaloHref(deal: Deal) {
-  if (/^https?:\/\//i.test(deal.zalo || '')) return deal.zalo || '';
-  const phone = normalizePhone(deal.zalo || deal.phone);
-  return phone ? `https://zalo.me/${phone.replace(/^\+84/, '0')}` : '';
+  const phone = normalizePhone(deal.zalo || deal.phone).replace(/^\+84/, '0');
+  return phone ? getZaloChatUrl(phone) : '';
 }
 
 function getDisplayName(deal: Deal) {

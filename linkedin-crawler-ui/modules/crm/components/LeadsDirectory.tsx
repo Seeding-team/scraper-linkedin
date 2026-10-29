@@ -1,3 +1,4 @@
+import { getZaloChatUrl } from '@/lib/zaloChatNavigation';
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
@@ -1405,9 +1406,21 @@ export function LeadsDirectory() {
                                   <div className="crm-sub-text">
                                     {lead.phone ? <Phone size={12} className="shrink-0 text-gray-400" /> : <Mail size={12} className="shrink-0 text-gray-400" />}
                                     {lead.phone ? (
-                                      <a className="crm-contact-link truncate" href={`tel:${lead.phone.replace(/[^\d+]/g, '')}`} title={lead.phone} onClick={event => event.stopPropagation()}>
-                                        {lead.phone}
-                                      </a>
+                                      <span className="inline-flex items-center gap-1.5 truncate">
+                                        <a className="crm-contact-link truncate" href={`tel:${lead.phone.replace(/[^\d+]/g, '')}`} title={lead.phone} onClick={event => event.stopPropagation()}>
+                                          {lead.phone}
+                                        </a>
+                                        <a
+                                          href={getZaloChatUrl(lead.phone || lead.zalo)}
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                          className="inline-flex items-center gap-0.5 text-[11px] font-semibold text-[#0068ff] hover:underline"
+                                          title="Nhắn Zalo trên hệ thống"
+                                          onClick={event => event.stopPropagation()}
+                                        >
+                                          Zalo
+                                        </a>
+                                      </span>
                                     ) : (
                                       <a className="crm-contact-link truncate" href={`mailto:${lead.email}`} title={lead.email || ''} onClick={event => event.stopPropagation()}>
                                         {lead.email}
@@ -1608,9 +1621,20 @@ export function LeadsDirectory() {
                       {LEAD_STATUS_LABEL[displayStatusOf(lead)] || displayStatusOf(lead)}
                     </span>
                   </div>
-                  <div className="crm-customer-card-contact" onClick={event => event.stopPropagation()}>
+                  <div className="crm-customer-card-contact flex items-center gap-2" onClick={event => event.stopPropagation()}>
                     {lead.phone ? (
-                      <a className="crm-contact-link" href={`tel:${lead.phone.replace(/[^\d+]/g, '')}`}>{lead.phone}</a>
+                      <span className="inline-flex items-center gap-1.5">
+                        <a className="crm-contact-link" href={`tel:${lead.phone.replace(/[^\d+]/g, '')}`}>{lead.phone}</a>
+                        <a
+                          href={getZaloChatUrl(lead.phone || lead.zalo)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-0.5 text-[11px] font-semibold text-[#0068ff] hover:underline"
+                          title="Nhắn Zalo trên hệ thống"
+                        >
+                          Zalo
+                        </a>
+                      </span>
                     ) : null}
                     {lead.email ? (
                       <a className="crm-contact-link crm-muted crm-truncate" title={lead.email} href={`mailto:${lead.email}`}>{lead.email}</a>

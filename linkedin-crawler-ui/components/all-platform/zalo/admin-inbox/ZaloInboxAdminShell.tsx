@@ -764,6 +764,7 @@ export function ZaloInboxAdminShell() {
   const searchParams = useSearchParams();
   const jumpToConvRef = useRef<string | null>(null);
   const jumpToAccountRef = useRef<string | null>(null);
+  const jumpToPhoneRef = useRef<string | null>(null);
 
   useEffect(() => {
     const targetAccount = searchParams.get("account");
@@ -821,6 +822,8 @@ export function ZaloInboxAdminShell() {
       jumpToConvRef.current = null;
     }
   }, [inbox.selectedAccountId, inbox.filtered, inbox]);
+
+
 
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [showSalesAssetPicker, setShowSalesAssetPicker] = useState(false);
@@ -948,6 +951,69 @@ export function ZaloInboxAdminShell() {
       setIsStartingInlineChat(false);
     }
   };
+
+  // Luong dong bo tu 4 module CRM qua URL: ?phone=0931969552
+  useEffect(() => {
+    const rawPhone = searchParams.get("phone");
+    if (!rawPhone) return;
+    const cleanPhone = rawPhone.replace(/\D/g, "").replace(/^(\+84|84)/, "0");
+    if (!cleanPhone || jumpToPhoneRef.current === cleanPhone) return;
+    jumpToPhoneRef.current = cleanPhone;
+
+    // Tu dong cap nhat o tim kiem
+    inbox.setSearchQuery(cleanPhone);
+  }, [searchParams, inbox]);
+
+  useEffect(() => {
+    const targetPhone = jumpToPhoneRef.current;
+    const activeAccountId = inbox.selectedAccountId || inbox.sessions[0]?.account_id;
+    if (!targetPhone || !activeAccountId) return;
+
+    // Check cooldown ngan de khong bi lap lai
+    const phoneCooldownKey = `zalo-phone-jump:${targetPhone}`;
+    try {
+      const last = Number(window.sessionStorage.getItem(phoneCooldownKey) || 0);
+      if (Date.now() - last < 10000) return;
+      window.sessionStorage.setItem(phoneCooldownKey, String(Date.now()));
+    } catch {}
+
+    let cancelled = false;
+    (async () => {
+      try {
+        // 1. Kiem tra xem da co hoi thoai trong danh sach chua
+        const existing = inbox.filtered.find((c) =>
+          (c.name && c.name.includes(targetPhone)) ||
+          (c.latest_sender_name && c.latest_sender_name.includes(targetPhone)) ||
+          (c.conv_id && c.conv_id.includes(targetPhone))
+        );
+        if (existing) {
+          inbox.openChat(existing.conv_id);
+          jumpToPhoneRef.current = null;
+          return;
+        }
+
+        // 2. Neu chua co, tu dong tra cuu tren Zalo
+        setIsSearchingPhone(true);
+        const res = await findZaloUser(activeAccountId, targetPhone, "phone");
+        if (cancelled) return;
+        if (res && res.user_id) {
+          setInlinePhoneResult(res);
+          void handleOpenInlinePhoneChat(res);
+          jumpToPhoneRef.current = null;
+        } else {
+          setInlinePhoneError("Không tìm thấy tài khoản Zalo với SĐT " + targetPhone);
+        }
+      } catch (err: any) {
+        if (!cancelled) {
+          setInlinePhoneError(err?.message || "Lỗi tra cứu SĐT Zalo");
+        }
+      } finally {
+        if (!cancelled) setIsSearchingPhone(false);
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [inbox.selectedAccountId, inbox.sessions, inbox.filtered]);
 
   const [customQuickReplies, setCustomQuickReplies] = useState<ZaloQuickReply[]>([]);
   const [showSaveTemplateForm, setShowSaveTemplateForm] = useState(false);
