@@ -1521,7 +1521,7 @@ export function ZaloInboxAdminShell() {
             </div>
 
             {/* Account Selector Bar & Manage Accounts */}
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 min-w-0">
               <span className="text-[11px] text-slate-400 font-medium shrink-0">Tài khoản:</span>
               <ZaloTeamAccountTree
                 sessions={inbox.sessions}
@@ -1531,16 +1531,8 @@ export function ZaloInboxAdminShell() {
                 onSelect={inbox.onSelectAccount}
                 role={inbox.role}
                 owner={inbox.leaderEmail}
+                onManageAccounts={() => setShowAccountsModal(true)}
               />
-              <button
-                type="button"
-                onClick={() => setShowAccountsModal(true)}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold text-slate-700 bg-white border border-slate-200/90 hover:bg-slate-50 hover:border-slate-300 shadow-2xs transition-all cursor-pointer shrink-0"
-                title="Quản lý tài khoản Zalo, Đăng nhập 1-chạm & Cấp quyền"
-              >
-                <MaterialIcon name="manage_accounts" className="text-[16px] text-[#0068FF]" />
-                <span>Quản lý tài khoản</span>
-              </button>
             </div>
           </div>
         </div>
@@ -1858,37 +1850,38 @@ export function ZaloInboxAdminShell() {
           )}
 
           {/* Header */}
-          <div className="flex items-center justify-between gap-3 border-b border-slate-200/80 px-4 py-3 bg-white flex-shrink-0 relative">
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-2">
-                <Avatar src={selectedConv?.avatar_url} name={selectedName || "Z"} className="h-9 w-9 text-xs" />
-                <div>
-                  <div className="flex items-center gap-2">
-                    <h2 className="truncate text-sm font-bold text-slate-900">{selectedName || (inbox.openConv ? "Zalo User" : "Chọn hội thoại")}</h2>
-                    {selectedConv?.is_customer && <span className="text-amber-500 text-sm" title="Khách hàng">⭐</span>}
-                  </div>
-                  {inbox.openConv && (
-                    <div className="flex items-center gap-2 text-xs text-slate-500 mt-0.5">
-                      <span className="font-medium text-slate-600">
-                        Zalo • {inbox.selectedAccountInfo ? (inbox.selectedAccountInfo.label || inbox.selectedAccountInfo.account_id) : "Account"}
-                      </span>
-                      <span>•</span>
-                      <span className={cn("font-semibold", inbox.accOnline ? "text-emerald-600" : "text-slate-400")}>
-                        {inbox.accOnline ? "● Online" : "● Offline"}
-                      </span>
-                      {selectedConv?.is_customer && (
-                        <span className="rounded-full bg-emerald-100 px-2 py-0.2 text-[10px] font-bold text-emerald-700">
-                          Khách hàng
-                        </span>
-                      )}
-                      {selectedConv?.unread && (
-                        <span className="rounded-full bg-amber-100 px-2 py-0.2 text-[10px] font-bold text-amber-700">
-                          Cần trả lời
-                        </span>
-                      )}
-                    </div>
-                  )}
+          <div className="flex items-center justify-between gap-3 border-b border-slate-200/80 px-4 py-2.5 bg-white flex-shrink-0 min-h-[58px]">
+            {/* Left: Avatar & Customer info (Strict max-width + truncate to NEVER overlap action buttons) */}
+            <div className="flex items-center gap-2.5 min-w-0 max-w-[200px] sm:max-w-[280px] md:max-w-[340px] lg:max-w-[420px] xl:max-w-[500px]">
+              <Avatar src={selectedConv?.avatar_url} name={selectedName || "Z"} className="h-9 w-9 text-xs shrink-0 ring-1 ring-slate-200/80" />
+              <div className="min-w-0 flex-1 overflow-hidden">
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <h2 className="truncate text-sm font-bold text-slate-900 block" title={selectedName || ""}>
+                    {selectedName || (inbox.openConv ? "Zalo User" : "Chọn hội thoại")}
+                  </h2>
+                  {selectedConv?.is_customer && <span className="text-amber-500 text-xs shrink-0" title="Khách hàng">⭐</span>}
                 </div>
+                {inbox.openConv && (
+                  <div className="flex items-center gap-1.5 text-xs text-slate-500 mt-0.5 min-w-0 truncate">
+                    <span className="font-medium text-slate-600 truncate">
+                      Zalo • {inbox.selectedAccountInfo ? (inbox.selectedAccountInfo.label || inbox.selectedAccountInfo.account_id) : "Account"}
+                    </span>
+                    <span className="text-slate-300 shrink-0">•</span>
+                    <span className={cn("font-semibold shrink-0 text-[11px]", inbox.accOnline ? "text-emerald-600" : "text-slate-400")}>
+                      {inbox.accOnline ? "● Online" : "● Offline"}
+                    </span>
+                    {selectedConv?.is_customer && (
+                      <span className="rounded-full bg-emerald-100 px-1.5 py-0.2 text-[9px] font-bold text-emerald-700 shrink-0">
+                        Khách hàng
+                      </span>
+                    )}
+                    {selectedConv?.unread && (
+                      <span className="rounded-full bg-amber-100 px-1.5 py-0.2 text-[9px] font-bold text-amber-700 shrink-0">
+                        Chưa đọc
+                      </span>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
 
