@@ -83,7 +83,8 @@ async def _rest(
 async def resolve_thread_type(account_id: str, conversation_id: str) -> int:
     """Tra cứu zalo_groups để xác định thread_type.
 
-    - Nếu group có is_friend=true → type 0 (cá nhân).
+    - Nếu group có is_friend=true hoặc thread_type in ('direct', 'user') → type 0 (cá nhân/người lạ).
+    - Nếu thread_type == 'group' → type 1 (nhóm).
     - Mặc định type 1 (nhóm) nếu không xác định được.
     """
     try:
@@ -91,14 +92,19 @@ async def resolve_thread_type(account_id: str, conversation_id: str) -> int:
             "GET",
             "zalo_groups",
             params={
-                "select": "is_friend",
+                "select": "is_friend,thread_type",
                 "user_id": f"eq.{account_id}",
                 "group_id": f"eq.{conversation_id}",
                 "limit": "1",
             },
         ) or []
-        if rows and rows[0].get("is_friend"):
-            return 0  # Cá nhân (friend/stranger chat)
+        if rows:
+            r = rows[0]
+            tt = str(r.get("thread_type") or "").strip().lower()
+            if tt in ("direct", "user") or r.get("is_friend"):
+                return 0  # Cá nhân (friend hoặc người lạ/stranger chat)
+            if tt == "group":
+                return 1  # Nhóm chat
     except Exception:
         pass
     return 1  # Nhóm chat
@@ -360,6 +366,7 @@ async def upsert_group(
     last_sender_name: Optional[str] = None,
     last_message_type: Optional[str] = None,
     is_friend: Optional[bool] = None,
+    thread_type: Optional[str] = None,
 ) -> None:
     resolved_name = group_name
     if group_name and (group_name.startswith("Conversation ") or group_name.isdigit() or group_name == group_id):
@@ -404,6 +411,8 @@ async def upsert_group(
         payload["last_message_type"] = last_message_type
     if is_friend is not None:
         payload["is_friend"] = is_friend
+    if thread_type is not None:
+        payload["thread_type"] = thread_type
 
     await _rest(
         "POST",
@@ -1514,11 +1523,12 @@ async def list_conversations(user_id: str, limit: int = 500) -> List[Dict[str, A
             not raw_group_name
             or raw_group_name == conversation_id
             or raw_group_name == f"Conversation {conversation_id}"
+            or raw_group_name.lower() in {"markee", "zalo", "user", "dm", "me", "__me__"}
         )
         usable_sender_name = (
             bool(sender_name)
             and not row.get("is_sent")
-            and sender_name.lower() not in {"__me__", "me", "ban", "bạn"}
+            and sender_name.lower() not in {"__me__", "me", "ban", "bạn", "markee"}
         )
         conversation_name = (
             sender_name

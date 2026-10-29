@@ -907,7 +907,13 @@ export function useZaloAdminInbox() {
       setPendingMentions([]);
       await loadMessages(accId, convId, true);
     } catch (e) {
-      setSendError(e instanceof Error ? e.message : "Gửi tin nhắn thất bại");
+      const rawMsg = e instanceof Error ? e.message : "Gửi tin nhắn thất bại";
+      let userFriendlyMsg = rawMsg;
+      if (rawMsg.includes("zca_session_expired") || rawMsg.includes("hết hạn") || rawMsg.includes("đăng xuất")) {
+        userFriendlyMsg = "Phiên đăng nhập Zalo của tài khoản này đã hết hạn hoặc bị đăng xuất. Vui lòng mở Chrome Extension để đăng nhập lại!";
+      }
+      setSendError(userFriendlyMsg);
+      showToast(userFriendlyMsg, false);
       if (replyTo) setReplyingTo(capturedReplyingTo);
     } finally {
       setIsSending(false);
@@ -1088,9 +1094,16 @@ export function useZaloAdminInbox() {
         }
       }
 
+      const rawName = (c.conversation_name || "").trim();
+      const lastSender = (c.latest_sender_name || "").trim();
+      const isBadName = !rawName || ["markee", "zalo", "user", "dm", "người dùng zalo"].includes(rawName.toLowerCase()) || rawName === c.conversation_id;
+      const finalName = (isBadName && lastSender && !["markee", "__me__", "me", "bạn", "ban"].includes(lastSender.toLowerCase()))
+        ? lastSender
+        : (rawName || lastSender || "Người dùng Zalo");
+
       return {
         conv_id: c.conversation_id,
-        name: c.conversation_name || "Người dùng Zalo",
+        name: finalName,
         preview: c.latest_content || "",
         latest_sender_name: c.latest_sender_name ?? null,
         unread: hasUnread,
@@ -1235,6 +1248,7 @@ export function useZaloAdminInbox() {
     sendReply,
     isSending,
     sendError,
+    setSendError,
 
     // Zalo tập trung: recall / mentions / friend-status / sticker / group-scan
     pendingMentions,
