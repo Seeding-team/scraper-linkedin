@@ -483,7 +483,7 @@ function ZaloMessageBody({ message, isSent, isSelected, onImageClick }: { messag
   const hasText = Boolean(message.content?.trim());
   const showText = hasText && !(specialCard?.kind === "link" && specialCard.url && message.content?.trim() === specialCard.url);
   const bubbleClass = cn(
-    "rounded-2xl px-3.5 py-2 text-xs leading-relaxed break-words transition-all duration-200 shadow-xs",
+    "rounded-2xl px-4 py-2.5 text-[13.5px] font-medium leading-relaxed break-words transition-all duration-200 shadow-xs",
     isSent ? "bg-[#0068ff] text-white rounded-br-md shadow-xs" : "bg-[#f1f4f8] text-[#1f2a3a] rounded-bl-md border border-slate-200/50",
     isSelected && (isSent ? "ring-2 ring-[#0068ff] ring-offset-2" : "ring-2 ring-[#0068ff]/60 bg-blue-50/50"),
   );
@@ -491,13 +491,13 @@ function ZaloMessageBody({ message, isSent, isSelected, onImageClick }: { messag
   return (
     <div className={cn("space-y-1", isSent ? "items-end" : "items-start")}>
       {showText && <div className={cn("whitespace-pre-wrap", bubbleClass)}>{linkifyText(message.content || "", isSent)}</div>}
-      {specialCard && <div className={cn("max-w-[280px]", isSent ? "ml-auto" : "mr-auto")}><ZaloSpecialCardView card={specialCard} isSent={isSent} /></div>}
+      {specialCard && <div className={cn("max-w-[320px]", isSent ? "ml-auto" : "mr-auto")}><ZaloSpecialCardView card={specialCard} isSent={isSent} /></div>}
       {imageAssets.length > 0 && (
         <div
           className={cn(
-            "overflow-hidden rounded-2xl border border-slate-200 bg-white p-1 shadow-xs",
+            "overflow-hidden rounded-2xl border border-slate-200/80 bg-white p-1 shadow-xs cursor-pointer hover:opacity-95 transition",
             isSent ? "ml-auto rounded-br-md" : "mr-auto rounded-bl-md",
-            imageAssets.length === 1 ? "max-w-[260px]" : "grid max-w-[300px] gap-1",
+            imageAssets.length === 1 ? "max-w-[420px] sm:max-w-[500px]" : "grid max-w-[380px] gap-1.5",
             imageAssets.length === 2 ? "grid-cols-2" : imageAssets.length >= 3 ? "grid-cols-2" : "",
           )}
         >
@@ -2291,25 +2291,19 @@ export function ZaloInboxAdminShell() {
               </div>
             )}
           </div>
-          {/* AI REPLY SUGGESTIONS BAR (Only visible when conversation is open) */}
+          {/* COMPACT AI REPLY SUGGESTIONS (Streamlined to give MAXIMUM space to messages feed) */}
           {inbox.openConv && (
-            <div className="shrink-0 border-t border-purple-100 bg-purple-50/60 p-2.5 animate-in fade-in duration-200">
-              <div className="flex items-center justify-between mb-1.5">
-                <div className="flex items-center gap-1.5 text-xs font-bold text-purple-800">
-                  <Sparkles size={14} className="text-purple-600 fill-purple-300" />
-                  Gợi ý trả lời bằng AI
-                </div>
-                <button type="button" className="text-purple-600 hover:text-purple-800 p-0.5">
-                  <RefreshCw size={12} />
-                </button>
-              </div>
-
-              <div className="flex items-center gap-2 overflow-x-auto no-scrollbar">
+            <div className="shrink-0 border-t border-slate-100 bg-slate-50/60 px-3 py-1.5 flex items-center gap-2 overflow-x-auto no-scrollbar text-xs">
+              <span className="shrink-0 flex items-center gap-1 text-[11px] font-bold text-purple-700 bg-purple-50 border border-purple-200/70 px-2 py-0.5 rounded-lg">
+                <Sparkles size={12} className="text-purple-600 fill-purple-300" />
+                <span>Gợi ý AI:</span>
+              </span>
+              <div className="flex items-center gap-1.5 min-w-0">
                 {AI_SUGGESTIONS.map(sug => (
                   <button
                     key={sug}
                     onClick={() => appendAiSuggestion(sug)}
-                    className="shrink-0 rounded-full border border-purple-200 bg-white px-3 py-1 text-xs font-semibold text-purple-900 hover:bg-purple-100/70 shadow-2xs transition hover:scale-[1.02]"
+                    className="shrink-0 rounded-lg border border-slate-200/80 bg-white px-2.5 py-0.5 text-[11px] font-medium text-slate-700 hover:border-purple-300 hover:text-purple-700 shadow-2xs transition"
                   >
                     {sug}
                   </button>
@@ -2318,8 +2312,8 @@ export function ZaloInboxAdminShell() {
             </div>
           )}
 
-          {/* COMPOSER TOOLBAR & INPUT */}
-          <div className="shrink-0 border-t border-slate-200/80 bg-white p-3 space-y-2 relative">
+          {/* STREAMLINED COMPOSER TOOLBAR & INPUT */}
+          <div className="shrink-0 border-t border-slate-200/80 bg-white px-3 pt-2 pb-2.5 space-y-1.5 relative">
             {showEmojiPicker && (
               <div className="absolute bottom-full left-3 mb-2 z-40 flex items-center gap-1.5 rounded-2xl border border-slate-200 bg-white p-2 shadow-xl">
                 {EMOJIS.map(emoji => (
@@ -2486,19 +2480,20 @@ export function ZaloInboxAdminShell() {
                     void handleSendReply();
                   }
                 }}
-                rows={3}
+                rows={1}
                 disabled={!inbox.openConv || inbox.archiveReading || inbox.isSending}
-                placeholder="Nhap tin nhan..."
-                className="flex-1 min-h-[72px] max-h-[140px] overflow-y-auto leading-relaxed rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-xs outline-none focus:border-[#E3000F] disabled:bg-slate-50 disabled:opacity-70"
+                placeholder="Nhập tin nhắn (nhấn Enter để gửi, Shift+Enter để xuống dòng)..."
+                className="flex-1 min-h-[46px] max-h-[120px] overflow-y-auto leading-relaxed rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-[13px] outline-none focus:border-[#0068FF] disabled:bg-slate-50 disabled:opacity-70 placeholder:text-slate-400"
               />
 
               <button
                 type="button"
                 onClick={() => void handleSendReply()}
                 disabled={!inbox.openConv || inbox.archiveReading || inbox.isSending || (!inbox.reply.trim() && selectedFiles.length === 0)}
-                className="flex h-11 items-center justify-center rounded-2xl bg-[#E3000F] px-6 text-xs font-bold text-white shadow-xs transition hover:bg-[#C40009] disabled:opacity-40"
+                className="flex h-[46px] items-center justify-center gap-1.5 rounded-xl bg-[#0068FF] hover:bg-[#0052cc] px-5 text-xs font-bold text-white shadow-xs transition cursor-pointer disabled:opacity-40 shrink-0"
               >
-                {inbox.isSending ? "Dang gui..." : "Gui"}
+                <MaterialIcon name="send" className="text-[15px]" />
+                <span>{inbox.isSending ? "Đang gửi..." : "Gửi"}</span>
               </button>
             </div>
           </div>        </section>
