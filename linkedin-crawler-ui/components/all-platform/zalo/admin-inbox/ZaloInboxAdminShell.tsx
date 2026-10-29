@@ -1588,13 +1588,16 @@ export function ZaloInboxAdminShell() {
                 <button
                   type="button"
                   onClick={() => {
+                    if (!inbox.selectedAccountId && inbox.sessions.length > 0) {
+                      inbox.onSelectAccount(inbox.sessions[0].account_id);
+                    }
                     setPhoneSearchQuery(inbox.searchQuery.trim() || undefined);
                     setNewChatModalOpen(true);
                   }}
-                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-xl text-xs font-bold text-white bg-gradient-to-r from-[#0068FF] to-[#0052cc] hover:from-[#0052cc] hover:to-[#003d99] shadow-2xs hover:shadow-xs transition-all cursor-pointer"
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold text-white bg-[#0068FF] hover:bg-[#0052cc] shadow-xs hover:shadow-md transition-all cursor-pointer"
                   title="Tìm kiếm người lạ bằng số điện thoại hoặc Username để nhắn tin mới"
                 >
-                  <MaterialIcon name="person_search" className="text-[14px]" />
+                  <MaterialIcon name="person_search" className="text-[15px]" />
                   <span>Tìm người lạ</span>
                 </button>
               </div>
