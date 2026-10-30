@@ -253,7 +253,13 @@ export function InternalQuoteWorkspacePage({ quoteId }: Props) {
 
   // Totals — y hệt liveCommercialSummary của Workspace
   const rawTotals = { totalAmount: quote.totalAmount ?? 0, totalVatAmount: quote.vatAmount ?? 0 };
-  const summary = calculateOverallDiscountSummary(rawTotals, quote.overallDiscountPercent ?? null, currency);
+  const summary = calculateOverallDiscountSummary(
+    rawTotals,
+    quote.overallDiscountPercent ?? null,
+    currency,
+    typeof quoteData.overallDiscountAmount === 'number' ? quoteData.overallDiscountAmount : null,
+    quoteData.overallDiscountType
+  );
   const costTotals = flatItems.map(item => {
     if (item.costNotApplicable) return 0;
     if (item.costPrice != null && Number.isFinite(Number(item.costPrice))) return Math.max(0, Number(item.costPrice)) * Math.max(0, Number(item.quantity) || 0);
@@ -489,11 +495,13 @@ export function InternalQuoteWorkspacePage({ quoteId }: Props) {
           <div className="grid grid-cols-2 md:grid-cols-6 gap-3 pt-2 text-xs">
             <div className="bg-slate-50/70 border border-slate-100 rounded-xl p-3.5 space-y-1">
               <span className="text-[11px] text-slate-400 font-medium block">
-                {quote.overallDiscountPercent ? 'Giá bán trước VAT (sau giảm giá)' : 'Giá bán trước VAT'}
+                {summary.overallDiscountAmount > 0 ? 'Giá bán trước VAT (sau giảm giá)' : 'Giá bán trước VAT'}
               </span>
               <span className="text-sm font-extrabold text-slate-900 block">{money(summary.subtotalAfterDiscount)}</span>
-              {quote.overallDiscountPercent ? (
-                <span className="text-[10px] text-slate-400 block">Trước CK {money(summary.subtotalBeforeVat)} · CK {quote.overallDiscountPercent}%</span>
+              {summary.overallDiscountAmount > 0 ? (
+                <span className="text-[10px] text-slate-400 block">
+                  Trước CK {money(summary.subtotalBeforeVat)} · CK {quoteData.overallDiscountType === 'amount' || (quoteData.overallDiscountType !== 'percent' && typeof quoteData.overallDiscountAmount === 'number' && quoteData.overallDiscountAmount > 0) ? money(summary.overallDiscountAmount) : `${quote.overallDiscountPercent}%`}
+                </span>
               ) : null}
             </div>
 

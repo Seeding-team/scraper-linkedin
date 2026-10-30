@@ -75,11 +75,19 @@ export function useWordEditorBridge() {
 /** Nạp script `api.js` của OnlyOffice đúng 1 lần theo URL (URL động theo
  * `settings.onlyoffice_public_url`, không hardcode) — trả về `window.DocsAPI` khi sẵn sàng. */
 const _loadedScripts = new Set<string>();
+let _currentLoadedApiUrl = '';
 
 export function loadOnlyOfficeApi(apiUrl: string): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const w = window as unknown as { DocsAPI?: unknown };
-    if (w.DocsAPI) { resolve(w.DocsAPI); return; }
+    if (w.DocsAPI && _currentLoadedApiUrl === apiUrl) {
+      resolve(w.DocsAPI);
+      return;
+    }
+    if (w.DocsAPI && _currentLoadedApiUrl !== apiUrl) {
+      delete (window as unknown as { DocsAPI?: unknown }).DocsAPI;
+      _loadedScripts.clear();
+    }
     if (_loadedScripts.has(apiUrl)) {
       const check = setInterval(() => {
         const ww = window as unknown as { DocsAPI?: unknown };
@@ -89,6 +97,7 @@ export function loadOnlyOfficeApi(apiUrl: string): Promise<unknown> {
       return;
     }
     _loadedScripts.add(apiUrl);
+    _currentLoadedApiUrl = apiUrl;
     const script = document.createElement('script');
     script.src = apiUrl;
     script.async = true;

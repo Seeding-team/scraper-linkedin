@@ -92,6 +92,13 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.exception("Failed to start Word Editor forcesave worker")
 
+    email_imap_scheduler = None
+    try:
+        from app.modules.all_platform.jobs.email_imap_sync_job import setup_email_imap_sync_worker
+        email_imap_scheduler = setup_email_imap_sync_worker()
+    except Exception:
+        logger.exception("Failed to start Email IMAP sync worker")
+
     # Auto-start lại các Telegram client (Telethon) đã connected trước khi BE restart.
     telegram_clients_task: asyncio.Task | None = None
 
@@ -111,6 +118,11 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        if email_imap_scheduler is not None:
+            try:
+                email_imap_scheduler.shutdown(wait=False)
+            except Exception:
+                logger.exception("Email IMAP sync worker shutdown failed")
         if zca_listeners_task is not None and not zca_listeners_task.done():
             zca_listeners_task.cancel()
             try:

@@ -38,19 +38,62 @@ export const billingTermMultiplier = (item?: Partial<QuoteItem>) =>
   item?.billingCycle === 'annual' && item?.billingTermMonths && item.billingTermMonths > 1 ? item.billingTermMonths : 1;
 
 export const calculateItemSubtotal = (item?: Partial<QuoteItem>, currency?: unknown) =>
-  roundFor(toSafeNumber(item?.quantity) * toSafeDecimal(item?.unitPrice) * billingTermMultiplier(item), currency);
+  item?.rowType === 'section' ? 0 : roundFor(toSafeNumber(item?.quantity) * toSafeDecimal(item?.unitPrice) * billingTermMultiplier(item), currency);
 
-export const calculateItemDiscount = (item?: Partial<QuoteItem>, currency?: unknown) =>
-  roundFor((calculateItemSubtotal(item, currency) * clampDiscountPercent(item?.discountPercent)) / 100, currency);
+export const calculateItemDiscount = (item?: Partial<QuoteItem>, currency?: unknown) => {
+  if (item?.rowType === 'section') return 0;
+  const subtotal = calculateItemSubtotal(item, currency);
+  if (item?.discountType === 'amount') {
+    const explicitAmount = item.discountAmount;
+    if (
+      explicitAmount !== null &&
+      explicitAmount !== undefined &&
+      typeof explicitAmount === 'number' &&
+      Number.isFinite(explicitAmount) &&
+      explicitAmount >= 0
+    ) {
+      return roundFor(Math.min(Math.max(0, subtotal), explicitAmount), currency);
+    }
+    return 0;
+  }
+  if (item?.discountType === 'percent') {
+    return roundFor((subtotal * clampDiscountPercent(item?.discountPercent)) / 100, currency);
+  }
+  const explicitAmount = item?.discountAmount;
+  if (
+    explicitAmount !== null &&
+    explicitAmount !== undefined &&
+    typeof explicitAmount === 'number' &&
+    Number.isFinite(explicitAmount) &&
+    explicitAmount >= 0 &&
+    !(explicitAmount === 0 && clampDiscountPercent(item?.discountPercent) > 0)
+  ) {
+    return roundFor(Math.min(Math.max(0, subtotal), explicitAmount), currency);
+  }
+  return roundFor((subtotal * clampDiscountPercent(item?.discountPercent)) / 100, currency);
+};
 
 export const calculateItemAfterDiscount = (item?: Partial<QuoteItem>, currency?: unknown) =>
-  calculateItemSubtotal(item, currency) - calculateItemDiscount(item, currency);
+  item?.rowType === 'section' ? 0 : calculateItemSubtotal(item, currency) - calculateItemDiscount(item, currency);
 
-export const calculateItemVat = (item?: Partial<QuoteItem>, currency?: unknown) =>
-  roundFor((calculateItemAfterDiscount(item, currency) * toSafeNumber(item?.vatRate)) / 100, currency);
+export const calculateItemVat = (item?: Partial<QuoteItem>, currency?: unknown) => {
+  if (item?.rowType === 'section') return 0;
+  const explicitAmount = item?.vatAmount;
+  if (
+    explicitAmount !== null &&
+    explicitAmount !== undefined &&
+    typeof explicitAmount === 'number' &&
+    Number.isFinite(explicitAmount) &&
+    explicitAmount >= 0 &&
+    !(explicitAmount === 0 && toSafeNumber(item?.vatRate) > 0)
+  ) {
+    return roundFor(explicitAmount, currency);
+  }
+  return roundFor((calculateItemAfterDiscount(item, currency) * toSafeNumber(item?.vatRate)) / 100, currency);
+};
 
 export const calculateItemTotal = (item?: Partial<QuoteItem>, currency?: unknown) =>
-  calculateItemAfterDiscount(item, currency) + calculateItemVat(item, currency);
+  item?.rowType === 'section' ? 0 : calculateItemAfterDiscount(item, currency) + calculateItemVat(item, currency);
 
 /** Kẹp % giảm giá về [0, 100] - phòng người dùng gõ số âm hoặc >100% làm tổng
  * tiền ra số vô lý (âm hoặc lớn hơn cả tổng gốc). */
@@ -78,7 +121,7 @@ export const calculateQuoteTotals = (
   currency?: unknown
 ) => {
   void _discountPercent;
-  const allItems = flattenQuoteItems(items);
+  const allItems = flattenQuoteItems(items).filter(item => item.rowType !== 'section');
   const sum = (fn: (item: Partial<QuoteItem>, cur?: unknown) => number) =>
     roundFor(allItems.reduce((acc, item) => acc + fn(item, currency), 0), currency);
   return {
@@ -121,13 +164,30 @@ export const calculateVillaTotals = (items: Partial<VillaSolutionItem>[] = []) =
 export const calculateOverallDiscountSummary = (
   totals: { totalAmount: number; totalVatAmount: number },
   overallDiscountPercent?: number | null,
-  currency?: unknown
+  currency?: unknown,
+  overallDiscountAmountInput?: number | null,
+  overallDiscountType?: 'percent' | 'amount' | null,
+  vatAmountInput?: number | null,
+  vatType?: 'percent' | 'amount' | null
 ) => {
   const pct = clampDiscountPercent(overallDiscountPercent ?? 0);
   const subtotalBeforeVat = toSafeDecimal(totals.totalAmount) - toSafeDecimal(totals.totalVatAmount);
-  const overallDiscountAmount = roundFor((subtotalBeforeVat * pct) / 100, currency);
+  const isAmountMode =
+    overallDiscountType === 'amount' ||
+    (typeof overallDiscountAmountInput === 'number' &&
+      Number.isFinite(overallDiscountAmountInput) &&
+      overallDiscountAmountInput > 0 &&
+      (overallDiscountType !== 'percent' || (pct > 0 && pct % 1 !== 0)));
+  const overallDiscountAmount = isAmountMode && overallDiscountAmountInput != null
+    ? roundFor(Math.min(Math.max(0, subtotalBeforeVat), overallDiscountAmountInput), currency)
+    : roundFor((subtotalBeforeVat * pct) / 100, currency);
   const subtotalAfterDiscount = subtotalBeforeVat - overallDiscountAmount;
-  const vatAfterDiscount = roundFor(toSafeDecimal(totals.totalVatAmount) * (1 - pct / 100), currency);
+  // Thuế VAT tính theo từng hạng mục (totals.totalVatAmount), không tự phân bổ giảm giá làm sai đơn giá hoặc thuế
+  const vatAfterDiscount =
+    typeof vatAmountInput === 'number' && Number.isFinite(vatAmountInput) && vatAmountInput >= 0
+      ? roundFor(vatAmountInput, currency)
+      : roundFor(toSafeDecimal(totals.totalVatAmount), currency);
+
   return {
     subtotalBeforeVat,
     overallDiscountAmount,

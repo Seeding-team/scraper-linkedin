@@ -34,21 +34,33 @@ export const ConversationHeader: React.FC<ConversationHeaderProps> = ({
   };
 
   return (
-    <div className="flex h-12 items-center justify-between border-b border-slate-200 bg-white px-3 py-1.5 font-sans shrink-0 select-none relative">
+    <div className="flex min-h-[52px] h-auto items-center justify-between border-b border-slate-200 bg-white px-3 py-2 font-sans shrink-0 select-none relative">
       {/* Customer Info */}
-      <div className="flex items-center gap-2.5">
-        <div className="relative">
-          <img
-            src={conversation.customerAvatar}
-            alt={conversation.customerName}
-            className="h-8.5 w-8.5 rounded-full object-cover border border-slate-200"
-          />
+      <div className="flex items-center gap-2.5 min-w-0">
+        <div className="relative shrink-0">
+          {conversation.customerAvatar ? (
+            <img
+              src={conversation.customerAvatar}
+              alt={conversation.customerName}
+              className="h-8.5 w-8.5 rounded-full object-cover border border-slate-200"
+            />
+          ) : (
+            <div className="flex h-8.5 w-8.5 items-center justify-center rounded-full bg-amber-100 text-amber-800 text-xs font-bold border border-amber-200">
+              {conversation.customerName ? conversation.customerName.trim().substring(0, 2).toUpperCase() : "EM"}
+            </div>
+          )}
           <div className="absolute -bottom-0.5 -right-0.5 flex h-3.5 w-3.5 items-center justify-center rounded-full border border-white shadow-2xs">
+            {conversation.channel === "email" && (
+              <span className="flex h-full w-full items-center justify-center rounded-full bg-amber-500 text-[8px] font-bold text-white">
+                ✉
+              </span>
+            )}
             {conversation.channel === "facebook" && (
               <span className="flex h-full w-full items-center justify-center rounded-full bg-[#1877F2] text-[8px] font-black text-white">
                 f
               </span>
             )}
+
             {conversation.channel === "zalo" && (
               <span className="flex h-full w-full items-center justify-center rounded-full bg-[#0068FF] text-[7px] font-black text-white">
                 z
@@ -67,15 +79,17 @@ export const ConversationHeader: React.FC<ConversationHeaderProps> = ({
           </div>
         </div>
 
-        <div className="space-y-0.5">
-          <div className="flex items-center gap-1.5">
-            <h2 className="text-xs font-bold text-slate-800">{conversation.customerName}</h2>
-            <button className="text-amber-400 hover:text-amber-500" title="Đánh dấu sao">
+        <div className="space-y-0.5 min-w-0">
+          <div className="flex items-center gap-1.5 min-w-0">
+            <h2 className="text-xs font-bold text-slate-800 truncate" title={conversation.customerName}>
+              {conversation.customerName}
+            </h2>
+            <button className="text-amber-400 hover:text-amber-500 shrink-0" title="Đánh dấu sao">
               <Star className="h-3 w-3 fill-amber-400" />
             </button>
           </div>
 
-          <div className="flex items-center gap-1.5 text-[10px] text-slate-500">
+          <div className="flex items-center gap-1.5 text-[10px] text-slate-500 truncate">
             <span className="inline-flex items-center gap-1 font-semibold text-slate-700">
               <span className="capitalize">{conversation.channel}</span>
               <span>·</span>

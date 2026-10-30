@@ -1,11 +1,11 @@
 {
   "services": {
     "CoAuthoring": {
-      "socketio": {
-        "connection": {
-          "transports": ["polling"]
-        }
+      "request-filtering-agent": {
+        "allowPrivateIPAddress": true,
+        "allowMetaIPAddress": true
       }
     }
   }
 }
+

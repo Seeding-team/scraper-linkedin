@@ -39,12 +39,7 @@ export const ZaloConnectModal: React.FC<{
 
         {/* Content Body */}
         <div className="flex-1 overflow-y-auto bg-[#f8f9fa]">
-          <ZaloAccountsPageContent
-            onEnterChat={() => {
-              onSuccess();
-              onClose();
-            }}
-          />
+          <ZaloAccountsPageContent />
         </div>
       </div>
     </div>

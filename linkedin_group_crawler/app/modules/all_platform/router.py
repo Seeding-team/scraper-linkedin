@@ -526,3 +526,12 @@ all_platform_router.include_router(
     tags=["All-Platform Auto Seeding Comments"],
 )
 
+# ── Email Inbox (IMAP/SMTP & Google OAuth Omnichannel) ────────────────────────
+from app.modules.all_platform.email.api.routes.email_inbox import router as email_inbox_router
+
+all_platform_router.include_router(
+    email_inbox_router,
+    prefix="/email-inbox",
+    tags=["All-Platform Email Inbox"],
+)
+

@@ -99,11 +99,145 @@ def _cfg() -> tuple[str, str, str]:
     return api_key, base_url, model
 
 
+def _has_api_key() -> bool:
+    api_key = _cfg()[0]
+    return bool(api_key and str(api_key).strip())
+
+
 def _require_api_key() -> str:
     api_key = _cfg()[0]
     if not api_key:
         raise RuntimeError("Chưa cấu hình CONTRACT_AI_API_KEY/OPENAI_API_KEY — không thể dùng AI Contract Copilot.")
     return api_key
+
+
+def _generate_contract_draft_heuristic(
+    deal: dict | None,
+    quote: dict | None,
+    template_type: str,
+    detail_level: str,
+    extra_prompt: str | None,
+    reference_template_text: str | None = None,
+    issuer: dict | None = None,
+    representative: dict | None = None,
+) -> list[dict]:
+    """Chế độ Local Heuristic / Regex khi chưa cấu hình API key:
+    Trích xuất thông tin từ extra_prompt, quote, deal bằng regex và sinh 7 điều khoản chuẩn đầy đủ."""
+    from app.modules.all_platform.services.contract_docx_builder import money
+    from app.modules.all_platform.services.supabase_quote_service import flatten_quote_items
+
+    parties_block = format_parties_block(build_parties(deal, quote, issuer, representative))
+    currency = (quote or {}).get("currency") or "VND"
+    total_amount = money((quote or {}).get("totalAmount"), currency) if quote else "30.000.000"
+    quote_num = (quote or {}).get("quoteNumber") or "Báo giá"
+
+    prompt = extra_prompt or ""
+
+    # 1. Trích xuất thông tin từ extra_prompt bằng regex
+    payment_match = re.search(r"(?:thanh\s*toán|tiền|đợt)[:\s]+([^.\n]+)", prompt, re.I)
+    payment_terms_str = payment_match.group(1).strip() if payment_match else ""
+    if not payment_terms_str:
+        plan = _quote_payment_plan(quote)
+        if plan:
+            payment_terms_str = "; ".join(f"{p.get('phase') or f'Đợt {i + 1}'}: {p.get('percent')}%" + (f" ({p.get('condition')})" if p.get("condition") else "") for i, p in enumerate(plan))
+        else:
+            payment_terms_str = "Đợt 1: 50% ngay sau khi ký hợp đồng; Đợt 2: 30% khi bàn giao sản phẩm/dịch vụ; Đợt 3: 20% trong vòng 07 ngày sau khi nghiệm thu."
+
+    timeline_match = re.search(r"(?:tiến\s*độ|triển\s*khai|thời\s*gian)[:\s]+([^.\n]+)", prompt, re.I)
+    timeline_str = timeline_match.group(1).strip() if timeline_match else "Thời gian thực hiện theo thỏa thuận giữa hai bên, dự kiến từ 30 đến 45 ngày làm việc kể từ ngày Bên A hoàn thành tạm ứng Đợt 1."
+
+    warranty_match = re.search(r"(?:bảo\s*hành)[:\s]+([^.\n]+)", prompt, re.I)
+    warranty_str = warranty_match.group(1).strip() if warranty_match else "Bên B cam kết bảo hành kỹ thuật 12 tháng kể từ ngày ký Biên bản nghiệm thu và bàn giao."
+
+    acceptance_match = re.search(r"(?:nghiệm\s*thu)[:\s]+([^.\n]+)", prompt, re.I)
+    acceptance_str = acceptance_match.group(1).strip() if acceptance_match else "Sau khi hoàn thành phạm vi công việc, hai bên sẽ tiến hành kiểm thử và ký Biên bản nghiệm thu trong vòng 05 ngày làm việc."
+
+    liability_match = re.search(r"(?:trách\s*nhiệm|phạt)[:\s]+([^.\n]+)", prompt, re.I)
+    liability_str = liability_match.group(1).strip() if liability_match else "Trường hợp một bên chậm trễ thực hiện nghĩa vụ mà không do sự kiện bất khả kháng, bên vi phạm sẽ chịu phạt vi phạm 0.1%/ngày chậm trễ, nhưng tổng mức phạt không vượt quá 8% giá trị phần nghĩa vụ bị vi phạm."
+
+    items = [i for i in flatten_quote_items((quote or {}).get("items")) if i.get("rowType") != "section"]
+    if items:
+        item_lines = [f"- {i.get('description')}: Số lượng {i.get('quantity')}, đơn giá {money(i.get('unitPrice'), currency)} {currency}, thành tiền {money(i.get('totalAmount') or i.get('amountAfterDiscount'), currency)} {currency}." for i in items]
+        scope_text = f"Bên B đồng ý cung cấp và Bên A đồng ý tiếp nhận các hạng mục dịch vụ/sản phẩm theo báo giá số {quote_num}:\n" + "\n".join(item_lines)
+    else:
+        scope_text = f"Bên B cung cấp cho Bên A các dịch vụ theo báo giá số {quote_num} và yêu cầu chi tiết đã được hai bên thống nhất."
+
+    clauses = [
+        {
+            "id": "",
+            "title": "ĐIỀU 1. THÔNG TIN CÁC BÊN",
+            "body": "Căn cứ vào Bộ luật Dân sự, Luật Thương mại và các văn bản quy phạm pháp luật hiện hành của nước Cộng hòa Xã hội Chủ nghĩa Việt Nam; Căn cứ vào nhu cầu và khả năng thực tế của hai bên, Bên A và Bên B thống nhất ký kết Hợp đồng này theo các điều khoản và điều kiện dưới đây."
+        },
+        {
+            "id": "",
+            "title": "ĐIỀU 2. PHẠM VI CÔNG VIỆC",
+            "body": scope_text
+        },
+        {
+            "id": "",
+            "title": "ĐIỀU 3. GIÁ TRỊ & THANH TOÁN",
+            "body": f"1. Tổng giá trị hợp đồng: {total_amount} {currency} (Bằng số: {total_amount} {currency}, đã bao gồm thuế Giá trị gia tăng GTGT).\n2. Phương thức thanh toán: Chuyển khoản vào tài khoản ngân hàng của Bên B.\n3. Tiến độ thanh toán:\n- {payment_terms_str}"
+        },
+        {
+            "id": "",
+            "title": "ĐIỀU 4. TRIỂN KHAI & NGHIỆM THU",
+            "body": f"1. Tiến độ thực hiện: {timeline_str}\n2. Nghiệm thu: {acceptance_str}\n3. Bảo hành: {warranty_str}"
+        },
+        {
+            "id": "",
+            "title": "ĐIỀU 5. BẢO MẬT DỮ LIỆU",
+            "body": "1. Hai bên cam kết bảo mật tuyệt đối mọi thông tin kinh doanh, tài liệu kỹ thuật, bí mật thương mại và dữ liệu khách hàng được trao đổi trong quá trình thực hiện hợp đồng.\n2. Nghĩa vụ bảo mật tiếp tục có hiệu lực trong vòng 03 năm kể từ ngày hợp đồng chấm dứt hoặc thanh lý."
+        },
+        {
+            "id": "",
+            "title": "ĐIỀU 6. TRÁCH NHIỆM & PHẠT",
+            "body": f"1. Mỗi bên có trách nhiệm thực hiện đầy đủ và đúng thời hạn các cam kết trong hợp đồng.\n2. {liability_str}\n3. Bồi thường thiệt hại: Bên vi phạm có nghĩa vụ bồi thường toàn bộ thiệt hại thực tế phát sinh trực tiếp cho bên bị vi phạm theo quy định của pháp luật."
+        },
+        {
+            "id": "",
+            "title": "ĐIỀU 7. CHẤM DỨT HỢP ĐỒNG",
+            "body": "1. Hợp đồng có hiệu lực kể từ ngày ký cho đến khi hai bên hoàn tất mọi nghĩa vụ và ký biên bản thanh lý hợp đồng.\n2. Hợp đồng có thể chấm dứt trước thời hạn trong các trường hợp: (a) Hai bên có thỏa thuận bằng văn bản; (b) Một bên vi phạm nghiêm trọng nghĩa vụ hợp đồng và không khắc phục trong vòng 30 ngày kể từ ngày nhận được thông báo bằng văn bản của bên kia."
+        }
+    ]
+
+    extra_matches = re.findall(r"(?:thêm\s+(?:điều\s*\d+|điều\s*khoản)[\s:]+)([^\n]+)", prompt, re.I)
+    for idx, em in enumerate(extra_matches):
+        c_title = f"ĐIỀU {8 + idx}. ĐIỀU KHOẢN BỔ SUNG"
+        clauses.append({"id": "", "title": c_title, "body": em.strip()})
+
+    return _attach_parties(clauses, parties_block)
+
+
+def _review_contract_risk_heuristic(
+    clauses: list[dict],
+    quote: dict | None,
+    contract_value: float | None,
+    payment_terms: str | None,
+) -> dict:
+    verified_findings = _verify_contract_financials(quote, contract_value)
+    findings = []
+    if not verified_findings:
+        findings.append({
+            "severity": "ok",
+            "title": "Giá trị hợp đồng khớp báo giá (Local Heuristic Engine)",
+            "detail": "Tổng giá trị hợp đồng khớp chính xác với báo giá đã duyệt.",
+            "clause": "ĐIỀU 3. GIÁ TRỊ & THANH TOÁN",
+        })
+    else:
+        findings.append({
+            "severity": "warn",
+            "title": "Kiểm tra lại giá trị thanh toán",
+            "detail": "Có sự chênh lệch giữa giá trị khai báo và tổng báo giá.",
+            "clause": "ĐIỀU 3. GIÁ TRỊ & THANH TOÁN",
+        })
+    findings.append({
+        "severity": "ok",
+        "title": "Cấu trúc 7 điều khoản chuẩn mực",
+        "detail": "Hợp đồng có đầy đủ các điều khoản cơ bản: phạm vi công việc, giá trị, nghiệm thu, bảo mật, chế tài và chấm dứt.",
+        "clause": "ĐIỀU 1. THÔNG TIN CÁC BÊN",
+    })
+    score = 95 if not any(f["severity"] == "error" for f in verified_findings) else 30
+    return {"score": score, "findings": findings, "verifiedFindings": verified_findings}
 
 
 # Model dự phòng (thử lần lượt, MỖI model 2 lượt).
@@ -349,6 +483,18 @@ async def generate_contract_draft(
     issuer: dict | None = None,
     representative: dict | None = None,
 ) -> list[dict]:
+    if not _has_api_key():
+        logger.info("Chưa có CONTRACT_AI_API_KEY/OPENAI_API_KEY — sử dụng bộ sinh Heuristic/Regex cho Local Dev.")
+        return _generate_contract_draft_heuristic(
+            deal=deal,
+            quote=quote,
+            template_type=template_type,
+            detail_level=detail_level,
+            extra_prompt=extra_prompt,
+            reference_template_text=reference_template_text,
+            issuer=issuer,
+            representative=representative,
+        )
     template_labels = {
         "service": "Hợp đồng cung cấp dịch vụ CNTT",
         "principle": "Hợp đồng nguyên tắc",
@@ -412,6 +558,9 @@ async def refine_contract_draft(clauses: list[dict], findings: list[dict]) -> li
     rủi ro AI vừa phát hiện ở review_contract_risk(). Khác generate_contract_draft:
     không cần deal/quote (đã có sẵn nội dung hợp đồng hiện tại), chỉ cần bản thân
     nội dung + danh sách finding cần sửa."""
+    if not _has_api_key():
+        logger.info("Chưa có CONTRACT_AI_API_KEY/OPENAI_API_KEY — giữ nguyên clauses (Local Dev Heuristic).")
+        return clauses
     kept_block, _ = _split_parties_block(clauses[0].get("body", "")) if clauses else ("", "")
     clauses_text = "\n\n".join(f"{c.get('title', '')}\n{c.get('body', '')}" for c in clauses)
     findings_text = "\n".join(f"- [{f.get('severity')}] {f.get('title')}: {f.get('detail')}" for f in findings)
@@ -432,6 +581,14 @@ async def review_contract_risk(
     contract_value: float | None,
     payment_terms: str | None,
 ) -> dict:
+    if not _has_api_key():
+        logger.info("Chưa có CONTRACT_AI_API_KEY/OPENAI_API_KEY — sử dụng bộ kiểm tra Heuristic cho Local Dev.")
+        return _review_contract_risk_heuristic(
+            clauses=clauses,
+            quote=quote,
+            contract_value=contract_value,
+            payment_terms=payment_terms,
+        )
     clauses_text = "\n\n".join(f"{c.get('title', '')}\n{c.get('body', '')}" for c in clauses)
     user_content = (
         f"=== NỘI DUNG HỢP ĐỒNG CẦN RÀ SOÁT ===\n{clauses_text}\n\n"
@@ -619,6 +776,9 @@ async def propose_template_edits(
     (Trước đây chỉ trả "edits" - AI không có cách nào đề xuất THÊM/XOÁ cả điều khoản, khiến yêu cầu kiểu "Thêm Điều 9"
     của Sale không thể thực hiện được trong chế độ dùng mẫu DOCX dù prompt đã nhận đúng yêu cầu - bug "Bước 2 không ăn
     yêu cầu". render_from_template() tự nhận diện callable `propose` cũ trả list thuần (test fake) để tương thích ngược.)"""
+    if not _has_api_key():
+        logger.info("Chưa có CONTRACT_AI_API_KEY/OPENAI_API_KEY — trả về danh sách rỗng (Local Dev Heuristic).")
+        return {"edits": [], "inserts": [], "deletes": []}
     listing = "\n".join(f"[{pid}] {text}" for pid, text in paragraphs)[:24000]
     user_content = (
         f"=== CÁC ĐOẠN CỦA MẪU HỢP ĐỒNG ===\n{listing}\n\n"
@@ -645,6 +805,9 @@ _CLAUSE_EDIT_SYSTEM_PROMPT = (
 
 async def propose_clause_edit(text: str, instruction: str, neighbors: str, deal: dict | None, quote: dict | None) -> dict:
     """AI chỉ ĐỀ XUẤT nội dung mới cho đúng 1 đoạn/điều khoản; backend kiểm tra rủi ro (edit_risk_flags) rồi người dùng mới duyệt áp dụng."""
+    if not _has_api_key():
+        logger.info("Chưa có CONTRACT_AI_API_KEY/OPENAI_API_KEY — giữ nguyên text (Local Dev Heuristic).")
+        return {"text": text, "reason": "Chế độ Local Heuristic (chưa cấu hình API key)"}
     user_content = (
         f"=== ĐOẠN/ĐIỀU KHOẢN CẦN SỬA ===\n{text}\n\n"
         f"=== NGỮ CẢNH XUNG QUANH (chỉ để hiểu, không sửa) ===\n{neighbors or '(không có)'}\n\n"

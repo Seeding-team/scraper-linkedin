@@ -197,3 +197,12 @@ all_platform_router.include_router(telegram_accounts_router, prefix="/telegram",
 all_platform_router.include_router(telegram_conversations_router, prefix="/telegram", tags=["Telegram Conversations"])
 all_platform_router.include_router(telegram_messages_router, prefix="/telegram", tags=["Telegram Messages"])
 all_platform_router.include_router(telegram_events_router, prefix="/telegram", tags=["Telegram Events"])
+
+# ── Email Inbox (IMAP/SMTP Omnichannel) ─────────────────────────────────────────
+from app.modules.all_platform.email.api.routes.email_inbox import router as email_inbox_router
+
+all_platform_router.include_router(
+    email_inbox_router,
+    prefix="/email-inbox",
+    tags=["All-Platform Email Inbox"],
+)

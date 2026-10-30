@@ -8,6 +8,7 @@ import { QuotePublicVerificationRequiredError, seedingQuoteRepository } from '..
 import type { Quote } from '../types';
 import { QuoteDocumentRenderer } from './QuoteDocumentRenderer';
 import { QuotePrintLayoutSaveButton } from './QuotePrintLayoutSaveButton';
+import { calculateQuoteTotals } from '../utils/quoteCalculations';
 
 /** "Giới hạn xem link báo giá bằng Email hoặc Số điện thoại" (migration 118) -
  * giá trị xác minh đúng được nhớ theo TỪNG token + method (mỗi báo giá 1 link
@@ -292,13 +293,14 @@ export function PublicQuotePage({ token }: Props) {
           quoteData={quote.data}
           quoteItems={quote.items}
           solutionItems={quote.data.solutionItems}
-          totals={{
-            subtotalAmount: quote.subtotalAmount,
-            // "Giảm giá hạng mục" (2026-10-13) - xem giai thich o QuoteDetailPage.tsx.
-            discountAmount: quote.subtotalAmount - (quote.totalAmount - quote.vatAmount),
-            totalVatAmount: quote.vatAmount,
-            totalAmount: quote.totalAmount,
-          }}
+          totals={quote.items && quote.items.length > 0
+            ? calculateQuoteTotals(quote.items, 0, quote.currency)
+            : {
+                subtotalAmount: quote.subtotalAmount,
+                discountAmount: 0,
+                totalVatAmount: quote.vatAmount,
+                totalAmount: quote.subtotalAmount + quote.vatAmount,
+              }}
           mode="public"
           isPublished={quote.processingStage ? quote.processingStage === 'published' : true}
           quoteNumber={quote.quoteNumber}

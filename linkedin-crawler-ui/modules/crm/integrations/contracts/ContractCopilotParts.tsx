@@ -9,8 +9,9 @@ import type {
   PrecheckRepresentative, PrecheckResult, RepresentativeOverrideInput,
 } from '@/modules/contracts/repositories/contractDocs';
 import { SearchableSelect } from '../../components/SearchableSelect';
+import { PositionSelect } from '../../components/PositionSelect';
 
-const card: React.CSSProperties = { border: '1px solid #e2e8f0', borderRadius: 10, background: '#fff', padding: '0.7rem 0.9rem' };
+const card: React.CSSProperties = { border: '1px solid #e2e8f0', borderRadius: 10, background: '#fff', padding: '0.7rem 0.9rem', boxSizing: 'border-box', maxWidth: '100%' };
 const small: React.CSSProperties = { fontSize: '0.76rem', color: '#475569' };
 
 // Cat o RANH GIOI TU (khong cat cut giua tu nhu slice(0,50) truoc day - feedback "tiêu đề k hiển thị đủ") - chi dung
@@ -38,7 +39,7 @@ export function IssuerSummaryLine({ issuer }: { issuer: PrecheckIssuer | null | 
 }
 
 const PARTY_FIELD_LABELS: Array<[keyof PrecheckParty, string]> = [
-  ['name', 'Tên pháp lý'], ['tax_code', 'Mã số thuế'], ['address', 'Địa chỉ'], ['rep', 'Người đại diện'], ['phone', 'Điện thoại'], ['email', 'Email'],
+  ['name', 'Tên pháp lý'], ['tax_code', 'Mã số thuế'], ['address', 'Địa chỉ'], ['rep', 'Người đại diện'], ['position', 'Chức vụ'], ['phone', 'Điện thoại'], ['email', 'Email'],
 ];
 
 /** Tóm tắt ĐẦY ĐỦ hai bên (không chỉ liệt kê trường thiếu): trường đã có dữ liệu hiện ✓ + giá trị thật, trường thiếu hiện "—". */
@@ -186,19 +187,31 @@ export function LegalInfoEditor({ party, representative, contacts, contactId, on
           {repDifferent
             ? 'Nhập người ký khác (không phải người liên hệ ở trên):'
             : !contactName
-              ? '(Chưa có người liên hệ) - nhập thông tin ở trên hoặc chọn "Người ký khác".'
+              ? 'Nhập họ tên và chức vụ người đại diện ký bên dưới:'
               : representative?.confirmed
                 ? `Đã xác nhận: ${contactName} là người đại diện ký.`
-                : `Gợi ý từ người liên hệ: ${contactName} (chưa xác nhận) - Người liên hệ KHÔNG mặc nhiên có quyền ký, bấm Lưu để xác nhận.`}
+                : `Gợi ý từ người liên hệ: ${contactName} (chưa xác nhận) - Người liên hệ KHÔNG mặc nhiên có quyền ký, kiểm tra chức vụ và bấm Lưu để xác nhận.`}
         </div>
-        <label style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 4, fontSize: '0.76rem' }}>
+        {onlySection === 'rep' && !repDifferent ? (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 6, marginTop: 6 }}>
+            <label style={label}>
+              <span style={small}>Họ tên người đại diện</span>
+              <input data-testid="legal-field-contactName" value={contactName} onChange={e => setContactName(e.target.value)} placeholder="VD: Nguyễn Văn A" style={input} />
+            </label>
+            <label style={label}>
+              <span style={small}>Chức vụ người đại diện</span>
+              <input data-testid="legal-field-contactPosition" value={contactPosition} onChange={e => setContactPosition(e.target.value)} placeholder="VD: Giám đốc / Tổng Giám đốc" style={input} />
+            </label>
+          </div>
+        ) : null}
+        <label style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 6, fontSize: '0.76rem' }}>
           <input data-testid="legal-rep-different" type="checkbox" checked={repDifferent} onChange={e => setRepDifferent(e.target.checked)} />
           Người ký khác với người liên hệ ở trên
         </label>
         {repDifferent ? (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 6, marginTop: 4 }}>
-            <label style={label}><span style={small}>Họ tên người ký</span><input data-testid="legal-field-repName" value={repName} onChange={e => setRepName(e.target.value)} style={input} /></label>
-            <label style={label}><span style={small}>Chức vụ</span><input data-testid="legal-field-repPosition" value={repPosition} onChange={e => setRepPosition(e.target.value)} style={input} /></label>
+            <label style={label}><span style={small}>Họ tên người ký</span><input data-testid="legal-field-repName" value={repName} onChange={e => setRepName(e.target.value)} placeholder="VD: Nguyễn Văn A" style={input} /></label>
+            <label style={label}><span style={small}>Chức vụ</span><input data-testid="legal-field-repPosition" value={repPosition} onChange={e => setRepPosition(e.target.value)} placeholder="VD: Giám đốc / Tổng Giám đốc" style={input} /></label>
           </div>
         ) : null}
       </div>
@@ -217,27 +230,48 @@ export function LegalInfoEditor({ party, representative, contacts, contactId, on
 }
 
 const ISSUER_EDIT_FIELDS: Array<[keyof NonNullable<PrecheckIssuer>, string]> = [
-  ['legalName', 'Tên pháp lý'], ['taxCode', 'Mã số thuế'], ['address', 'Địa chỉ'], ['phone', 'Điện thoại'], ['email', 'Email'],
+  ['legalName', 'Tên pháp lý'], ['taxCode', 'Mã số thuế'], ['address', 'Địa chỉ'], ['phone', 'Điện thoại'], ['email', 'Email'], ['contactName', 'Người đại diện'],
 ];
 
 /** "Bổ sung tại chỗ" cho Bên B: admin/leader sửa thẳng hồ sơ đơn vị phát hành (API PUT /quotes/issuer-companies/{id} đã có sẵn, backend
  * tự kiểm tra lại quyền - FE chỉ ẩn/hiện form cho gọn, KHÔNG phải lớp bảo vệ thật). Lưu xong gọi lại precheck ngay, không cần F5. */
-function IssuerInlineEditor({ issuer, canEdit, onFixUrl, onSaved }: { issuer: PrecheckIssuer; canEdit: boolean; onFixUrl: string; onSaved: () => void }) {
+function IssuerInlineEditor({ issuer, canEdit, onFixUrl, onSaved, onOpenChange }: {
+  issuer: PrecheckIssuer; canEdit: boolean; onFixUrl: string; onSaved: () => void; onOpenChange?: (open: boolean) => void;
+}) {
   const [open, setOpen] = useState(false);
   const [values, setValues] = useState<Record<string, string>>({});
+  const [positionCategoryId, setPositionCategoryId] = useState<string>('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
   function start() {
-    setValues({ legalName: issuer.legalName || '', taxCode: issuer.taxCode || '', address: issuer.address || '', phone: issuer.phone || '', email: issuer.email || '' });
-    setError(''); setOpen(true);
+    setValues({
+      legalName: issuer.legalName || '',
+      taxCode: issuer.taxCode || '',
+      address: issuer.address || '',
+      phone: issuer.phone || '',
+      email: issuer.email || '',
+      contactName: issuer.contactName || '',
+    });
+    setPositionCategoryId(issuer.positionCategoryId || '');
+    setError('');
+    setOpen(true);
+    onOpenChange?.(true);
+  }
+
+  function close() {
+    setOpen(false);
+    onOpenChange?.(false);
   }
 
   async function save() {
     setSaving(true); setError('');
     try {
-      await seedingQuoteRepository.updateIssuerCompany(issuer.id, values);
-      setOpen(false);
+      await seedingQuoteRepository.updateIssuerCompany(issuer.id, {
+        ...values,
+        positionCategoryId: positionCategoryId || undefined,
+      });
+      close();
       onSaved();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Không lưu được (có thể bạn chưa đủ quyền sửa hồ sơ đơn vị phát hành).');
@@ -266,20 +300,66 @@ function IssuerInlineEditor({ issuer, canEdit, onFixUrl, onSaved }: { issuer: Pr
       </button>
     );
   }
+  const labelStyle: React.CSSProperties = { display: 'grid', gap: 2, minWidth: 0, boxSizing: 'border-box' };
+  const inputStyle: React.CSSProperties = { height: 34, border: '1px solid #cbd5e1', borderRadius: 6, padding: '0 8px', fontSize: '0.78rem', width: '100%', minWidth: 0, boxSizing: 'border-box' };
+
   return (
-    <div data-testid="issuer-fix-inline-form" style={{ ...card, marginTop: 6, display: 'grid', gap: 6, background: '#fffbeb', borderColor: '#fde68a' }}>
-      <b style={{ fontSize: '0.76rem' }}>Bổ sung hồ sơ {issuer.code}</b>
-      {ISSUER_EDIT_FIELDS.map(([key, label]) => (
-        <label key={key} style={{ display: 'grid', gap: 2 }}>
-          <span style={small}>{label}</span>
-          <input data-testid={`issuer-fix-field-${key}`} value={values[key] || ''} onChange={e => setValues(v => ({ ...v, [key]: e.target.value }))}
-            style={{ height: 32, border: '1px solid #cbd5e1', borderRadius: 6, padding: '0 8px', fontSize: '0.78rem' }} />
+    <div data-testid="issuer-fix-inline-form" style={{ ...card, boxSizing: 'border-box', maxWidth: '100%', marginTop: 6, width: '100%', display: 'grid', gap: 10, background: '#fffbeb', borderColor: '#fde68a' }}>
+      <div>
+        <b style={{ fontSize: '0.78rem' }}>Bổ sung hồ sơ Bên B ({issuer.code || issuer.legalName || 'Đơn vị phát hành'})</b>
+      </div>
+
+      <div style={{ display: 'grid', gap: 6, minWidth: 0 }}>
+        <b style={{ fontSize: '0.76rem', color: '#475569' }}>Doanh nghiệp</b>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 8, minWidth: 0 }}>
+          <label style={labelStyle}>
+            <span style={small}>Tên pháp lý</span>
+            <input data-testid="issuer-fix-field-legalName" value={values.legalName || ''} onChange={e => setValues(v => ({ ...v, legalName: e.target.value }))} style={inputStyle} />
+          </label>
+          <label style={labelStyle}>
+            <span style={small}>Mã số thuế</span>
+            <input data-testid="issuer-fix-field-taxCode" value={values.taxCode || ''} onChange={e => setValues(v => ({ ...v, taxCode: e.target.value }))} style={inputStyle} />
+          </label>
+        </div>
+        <label style={labelStyle}>
+          <span style={small}>Địa chỉ</span>
+          <input data-testid="issuer-fix-field-address" value={values.address || ''} onChange={e => setValues(v => ({ ...v, address: e.target.value }))} style={inputStyle} />
         </label>
-      ))}
+      </div>
+
+      <div style={{ display: 'grid', gap: 6, minWidth: 0 }}>
+        <b style={{ fontSize: '0.76rem', color: '#475569' }}>Liên hệ & Đại diện ký</b>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 8, minWidth: 0 }}>
+          <label style={labelStyle}>
+            <span style={small}>Điện thoại</span>
+            <input data-testid="issuer-fix-field-phone" value={values.phone || ''} onChange={e => setValues(v => ({ ...v, phone: e.target.value }))} style={inputStyle} />
+          </label>
+          <label style={labelStyle}>
+            <span style={small}>Email</span>
+            <input data-testid="issuer-fix-field-email" value={values.email || ''} onChange={e => setValues(v => ({ ...v, email: e.target.value }))} style={inputStyle} />
+          </label>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 8, minWidth: 0 }}>
+          <label style={labelStyle}>
+            <span style={small}>Người đại diện</span>
+            <input data-testid="issuer-fix-field-contactName" value={values.contactName || ''} onChange={e => setValues(v => ({ ...v, contactName: e.target.value }))} placeholder="VD: Dương Đình Huân" style={inputStyle} />
+          </label>
+          <div style={{ display: 'grid', gap: 2, minWidth: 0 }}>
+            <span style={small}>Chức vụ người đại diện</span>
+            <PositionSelect
+              value={positionCategoryId}
+              labelSnapshot={issuer.positionLabel}
+              onChange={id => setPositionCategoryId(id)}
+              placeholder="— Chọn hoặc thêm chức vụ —"
+            />
+          </div>
+        </div>
+      </div>
+
       {error ? <small style={{ color: '#b91c1c' }}>{error}</small> : null}
-      <div style={{ display: 'flex', gap: 6 }}>
-        <button type="button" data-testid="issuer-fix-save" disabled={saving} onClick={() => void save()} style={{ border: 0, background: '#be1e4b', color: '#fff', borderRadius: 6, fontSize: '0.76rem', padding: '4px 12px', cursor: 'pointer' }}>{saving ? 'Đang lưu…' : 'Lưu'}</button>
-        <button type="button" onClick={() => setOpen(false)} style={{ border: '1px solid #cbd5e1', background: '#fff', borderRadius: 6, fontSize: '0.76rem', padding: '4px 12px', cursor: 'pointer' }}>Hủy</button>
+      <div style={{ display: 'flex', gap: 6, marginTop: 2 }}>
+        <button type="button" data-testid="issuer-fix-save" disabled={saving} onClick={() => void save()} style={{ border: 0, background: '#be1e4b', color: '#fff', borderRadius: 6, fontSize: '0.76rem', padding: '5px 14px', cursor: 'pointer', fontWeight: 600 }}>{saving ? 'Đang lưu…' : 'Lưu'}</button>
+        <button type="button" onClick={close} style={{ border: '1px solid #cbd5e1', background: '#fff', borderRadius: 6, fontSize: '0.76rem', padding: '5px 14px', cursor: 'pointer' }}>Hủy</button>
       </div>
     </div>
   );
@@ -298,6 +378,7 @@ export function PrecheckPanel({ precheck, loading, needDeal, noDeals, ack, onAck
   // Form "Bổ sung thông tin" (người đại diện) đang mở thì ẩn nút "Xác nhận nhanh" bên cạnh - 2 nút cùng làm 1 việc,
   // thừa khi form đã mở sẵn (feedback: "thừa nút nhanh qá bro nếu mở bổ sung tt").
   const [repFormOpen, setRepFormOpen] = useState(false);
+  const [issuerFormOpen, setIssuerFormOpen] = useState(false);
   if (noDeals) {
     return <div data-testid="precheck-nodeal" style={{ ...card, background: '#fef2f2', borderColor: '#fecaca', color: '#b91c1c', fontSize: '0.8rem' }}>Khách hàng này chưa có Deal (cơ hội) — hãy tạo Deal trước khi soạn hợp đồng.</div>;
   }
@@ -327,11 +408,17 @@ export function PrecheckPanel({ precheck, loading, needDeal, noDeals, ack, onAck
         <small style={{ color: '#64748b', fontSize: '0.74rem' }}>— {g.source}</small>
       </div>
       {g.side === 'B' && precheck.issuer ? (
-        <div style={{ flexShrink: 0 }}>
-          <IssuerInlineEditor issuer={precheck.issuer} canEdit={canEditIssuer} onFixUrl="/all-platform/issuer-companies" onSaved={() => onIssuerSaved?.()} />
+        <div style={{ flexShrink: 0, ...(issuerFormOpen ? { width: '100%', flex: '1 1 100%', marginTop: 6, minWidth: 0, boxSizing: 'border-box' } : {}) }}>
+          <IssuerInlineEditor
+            issuer={precheck.issuer}
+            canEdit={canEditIssuer}
+            onFixUrl="/all-platform/issuer-companies"
+            onSaved={() => onIssuerSaved?.()}
+            onOpenChange={setIssuerFormOpen}
+          />
         </div>
       ) : g.side === 'A' && precheck.parties && onLegalInfoSaved ? (
-        <div style={{ flexShrink: 0, display: 'flex', gap: 6 }}>
+        <div style={{ flexShrink: 0, display: 'flex', gap: 6, ...(repFormOpen ? { width: '100%', flex: '1 1 100%', marginTop: 6 } : {}) }}>
           {g.field === 'rep' && precheck.representative?.name && !repFormOpen ? (
             // Da co GOI Y ten (tu Nguoi lien he) - cho xac nhan NGAY tai day (khong phai mo "Bo sung thong tin" long
             // nhau moi thay) - gui lai DUNG gia tri dang goi y nhu 1 override tuong minh, backend tu danh dau confirmed=True
@@ -347,8 +434,8 @@ export function PrecheckPanel({ precheck, loading, needDeal, noDeals, ack, onAck
             })}>✓ Xác nhận nhanh</button>
           ) : null}
           <LegalInfoEditor party={precheck.parties.a} representative={precheck.representative} contacts={precheck.contacts || []}
-            contactId={precheck.contactId} onSaved={onLegalInfoSaved} onlySection={g.field === 'rep' ? 'rep' : undefined}
-            onOpenChange={g.field === 'rep' ? setRepFormOpen : undefined} />
+            contactId={precheck.contactId} onSaved={onLegalInfoSaved} onlySection={g.field === 'rep' || g.field === 'position' ? 'rep' : undefined}
+            onOpenChange={g.field === 'rep' || g.field === 'position' ? setRepFormOpen : undefined} />
         </div>
       ) : null}
     </li>

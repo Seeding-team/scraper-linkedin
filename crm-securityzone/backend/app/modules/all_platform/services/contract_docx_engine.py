@@ -252,7 +252,31 @@ def replace_paragraph_text(p_el: Any, new_text: str) -> bool:
     if old == new_text:
         return False
     if not _text_runs(p_el):
-        return False
+        if not new_text:
+            return False
+        from docx.oxml import OxmlElement
+        r = OxmlElement("w:r")
+        ppr = p_el.find(qn("w:pPr"))
+        if ppr is not None and ppr.find(qn("w:rPr")) is not None:
+            r.append(copy.deepcopy(ppr.find(qn("w:rPr"))))
+        else:
+            # Kế thừa rPr từ run khác trong cùng tr/tbl nếu có để giữ đúng font/size
+            parent_tr = next((a for a in p_el.iterancestors() if a.tag == qn("w:tr")), None)
+            if parent_tr is not None:
+                sibling_r = next((sr for sr in parent_tr.iter(qn("w:r")) if sr.find(qn("w:rPr")) is not None), None)
+                if sibling_r is not None:
+                    copied_rpr = copy.deepcopy(sibling_r.find(qn("w:rPr")))
+                    # Không kế thừa in đậm (w:b) từ nhãn sang ô giá trị
+                    for btag in (qn("w:b"), qn("w:bCs")):
+                        bel = copied_rpr.find(btag)
+                        if bel is not None:
+                            copied_rpr.remove(bel)
+                    r.append(copied_rpr)
+        t = OxmlElement("w:t")
+        r.append(t)
+        p_el.append(r)
+        _set_run_text(r, new_text)
+        return True
     p = 0
     while p < len(old) and p < len(new_text) and old[p] == new_text[p]:
         p += 1
@@ -320,6 +344,46 @@ def _party_label_key(label: str) -> str | None:
 _PARTY_BLANK = "………………………"
 
 
+def _find_party_target_cell(tr: Any, key: str) -> tuple[Any, str] | None:
+    """Xác định ô chứa giá trị và chế độ điền cho hàng thông tin Bên A/B.
+    Trả về (tc, mode):
+      - (tc, 'inline_after_colon'): Giá trị nằm chung trong ô đầu tiên ngay sau dấu ':'
+      - (tc, 'separate_cell'): Ô tc là ô riêng biệt chứa giá trị
+      - None: Không tìm thấy ô phù hợp
+    """
+    tcs = tr.findall(qn("w:tc"))
+    if not tcs:
+        return None
+    c0_text = _cell_text(tcs[0])
+
+    # TH 1: Bảng 3+ cột kiểu [Nhãn | : | Giá trị]
+    # Ô 1 (tcs[1]) chỉ chứa dấu ':' hoặc rỗng -> ô giá trị THỰC SỰ là tcs[2]!
+    # TUYỆT ĐỐI KHÔNG ghi giá trị vào tcs[1] vì đây là cột hẹp (~2.5mm) làm vỡ format chữ dọc từng ký tự.
+    if len(tcs) >= 3:
+        c1_text = _cell_text(tcs[1]).strip()
+        if c1_text in ("", ":", ":-"):
+            return tcs[2], "separate_cell"
+        if _party_label_key(c1_text) is not None:
+            return None
+        return tcs[1], "separate_cell"
+
+    # TH 2: Bảng 2 cột nhưng ô đầu (tcs[0]) ĐÃ chứa sẵn cả nhãn + dấu ':' + giá trị cũ,
+    # trong khi ô thứ 2 (tcs[1]) rỗng hoàn toàn -> giá trị nằm ngay sau ':' trong ô 0!
+    # Không ghi vào ô 1 vì sẽ gây nhân đôi MST/Địa chỉ (1 bản ở ô 0, 1 bản dọc ở ô 1).
+    if len(tcs) == 2:
+        c1_text = _cell_text(tcs[1]).strip()
+        if ":" in c0_text and not c1_text:
+            return tcs[0], "inline_after_colon"
+        if _party_label_key(c1_text) is None:
+            return tcs[1], "separate_cell"
+
+    # TH 3: 1 ô duy nhất chứa cả dòng "Nhãn : Giá trị"
+    if len(tcs) == 1 and ":" in c0_text:
+        return tcs[0], "inline_after_colon"
+
+    return None
+
+
 def _party_label_rows(tbl_el: Any) -> list[tuple[Any, str]]:
     """Các dòng [nhãn | giá trị] THỰC SỰ của bảng thông tin Bên A/B: cột nhãn khớp từ khoá đã biết VÀ cột giá trị KHÔNG
     tự nó cũng giống 1 nhãn (chặn bảng chữ ký kiểu 'ĐẠI DIỆN BÊN A (Ký, ghi rõ họ tên) | ĐẠI DIỆN BÊN B (...)' - 2 ô đều
@@ -327,10 +391,13 @@ def _party_label_rows(tbl_el: Any) -> list[tuple[Any, str]]:
     rows = []
     for tr in tbl_el.findall(qn("w:tr")):
         tcs = tr.findall(qn("w:tc"))
-        if len(tcs) < 2:
+        if not tcs:
             continue
         key = _party_label_key(_cell_text(tcs[0]))
-        if key and _party_label_key(_cell_text(tcs[1])) is None:
+        if not key:
+            continue
+        target = _find_party_target_cell(tr, key)
+        if target is not None:
             rows.append((tr, key))
     return rows
 
@@ -343,22 +410,35 @@ def _fill_one_party_table(tbl_el: Any, party: dict[str, str] | None) -> list[dic
         return []
     touched: list[dict] = []
     for tr, key in label_rows:
-        tcs = tr.findall(qn("w:tc"))
-        # Dữ liệu hợp đồng ĐANG tạo không có trường này (vd khách cá nhân không có MST) - để TRỐNG (………), KHÔNG được giữ
-        # nguyên chữ của khách hàng CŨ còn sót lại trong mẫu tái sử dụng (chính là bug lộ thông tin khách khác đã báo).
-        new_value = str(party.get(key) or "").strip() or _PARTY_BLANK
-        value_paras = list(tcs[1].iter(qn("w:p")))
-        if not value_paras:
+        target = _find_party_target_cell(tr, key)
+        if not target:
             continue
+        val_tc, mode = target
+        new_value = str(party.get(key) or "").strip() or _PARTY_BLANK
+
+        value_paras = list(val_tc.iter(qn("w:p")))
+        if not value_paras:
+            from docx.oxml import OxmlElement
+            p_new = OxmlElement("w:p")
+            val_tc.append(p_new)
+            value_paras = [p_new]
         vp = value_paras[0]
         old_text = _para_text(vp)
+
+        if mode == "inline_after_colon":
+            colon_idx = old_text.find(":")
+            if colon_idx != -1:
+                prefix = old_text[:colon_idx + 1]
+                rest = old_text[colon_idx + 1:]
+                spaces = len(rest) - len(rest.lstrip(" "))
+                lead = prefix + (" " * max(1, spaces))
+                new_text = f"{lead}{new_value}"
+                if new_text != old_text and replace_paragraph_text(vp, new_text):
+                    touched.append({"key": key, "old": old_text, "new": new_text})
+            continue
+
         lead = (re.match(r"^\s*:?\s*", old_text) or re.match(r"", old_text)).group(0)
         if key == "rep":
-            # O gop ca ten dai dien va "Chuc vu: ..." trong CUNG 1 o (vd "Ông Phan Văn Vũ   Chức vụ: Chủ hộ kinh doanh"), và tên
-            # trong mau thuong nam o 1 run RIENG duoc in dam (de nhan manh), khac run cua nhan "Chuc vu:" phia sau. Dung
-            # replace_paragraph_text() (diff tien to/hau to tren CA doan) o day se khien vung thay the tran qua ca 2 run, lam
-            # nhan "Chuc vu:" bi "an theo" dinh dang in DAM cua run ten cu - bug da gap. Phai sua TUNG PHAN (ten / chuc vu)
-            # bang replace_range() theo dung vi tri cu, xu ly PHAN SAU TRUOC de khong lam lech offset cua phan truoc.
             m = re.search(r"chức vụ\s*:", old_text, re.I)
             position = str(party.get("position") or "").strip()
             name_end = m.start() if m else len(old_text)
@@ -377,9 +457,6 @@ def _fill_one_party_table(tbl_el: Any, party: dict[str, str] | None) -> list[dic
                 replace_range(vp, len(lead), name_end, new_value)
                 changed = True
             if changed:
-                # Phong truong hop run "Chuc vu: ..." bi gop chung run voi ten (vd mau chi co 1 run DUY NHAT in dam
-                # cho ca dong, hoac replace_range() noi lien 2 doan vao cung run) - ep rieng phan nhan KHONG DAM,
-                # du run goc dang dinh dang gi (bug "Chuc vu bi in dam" van gap du da sua truong hop run tach san).
                 _unbold_label_suffix(vp, "Chức vụ")
                 touched.append({"key": key, "old": old_text, "new": _para_text(vp)})
             continue
@@ -636,6 +713,18 @@ _TOTAL_LABEL = re.compile(r"^\s*(tổng cộng|tổng giá trị|tổng thanh to
 
 def totals_kind(label: str) -> str | None:
     """'subtotal' | 'vat' | 'total' | None cho nhãn hàng tổng của bảng hạng mục."""
+    folded = _fold(label or "")
+    # Không bao giờ ghi tiền thuế VAT vào dòng "Không chịu thuế" / "Miễn thuế"
+    if "khong chiu thue" in folded or "mien thue" in folded:
+        return None
+    # Nếu bắt đầu bằng "tổng cộng", "tổng giá trị", "tổng thanh toán" -> luôn là grand total
+    if re.search(r"^\s*(?:tong cong|tong gia tri|tong thanh toan)\b", folded):
+        return "total"
+    # Phân biệt các dòng cộng từng phần: "Cộng Phần A", "Cộng Phần B", "Cộng mục...", "Cộng nhóm..." không phải Grand Total!
+    if re.search(r"^\s*(?:cong|tong)\s+(?:phan|muc|nhom|goi)\s+[a-z0-9]", folded):
+        if "chua" in folded or "truoc" in folded:
+            return "subtotal_before"
+        return "part_subtotal"
     if _SUBTOTAL_LABEL.search(label or ""):
         return "subtotal"
     if _VAT_LABEL.match(label or ""):
@@ -681,14 +770,25 @@ def list_item_tables(doc: DocumentType) -> list[dict[str, Any]]:
 
 
 def find_items_table(doc: DocumentType, table_index: int | None = None) -> tuple[Any, int, dict[str, int]] | None:
-    """Bảng hạng mục: theo chỉ số người dùng chọn, hoặc bảng nhận diện được đầu tiên. KHÔNG tự chèn bảng mới."""
+    """Bảng hạng mục: theo chỉ số người dùng chọn, hoặc bảng nhận diện được đầu tiên. KHÔNG tự chèn bảng mới.
+    Ưu tiên bảng chi tiết (có đơn giá, số lượng hoặc ĐVT) hơn bảng tổng hợp (chỉ có STT, nội dung, thành tiền)."""
+    candidates = []
     for idx, table in enumerate(doc.tables):
         if table_index is not None and idx != table_index:
             continue
         found = _table_columns(table)
         if found:
-            return table, found[0], found[1]
-    return None
+            candidates.append((table, found[0], found[1], idx))
+    if not candidates:
+        return None
+    if table_index is not None:
+        return candidates[0][0], candidates[0][1], candidates[0][2]
+    # Ưu tiên bảng chi tiết có cột unit_price, qty hoặc unit
+    for table, h_idx, cols, idx in candidates:
+        if ("unit_price" in cols or "qty" in cols or "unit" in cols) and len(cols) >= 4:
+            return table, h_idx, cols
+    # Fallback về candidate đầu tiên
+    return candidates[0][0], candidates[0][1], candidates[0][2]
 
 
 def _format_number(value: Any, currency: str = "VND") -> str:
@@ -727,12 +827,97 @@ def _tc_at_logical_col(tr: Any, col_index: int) -> Any | None:
     return None
 
 
+def _fill_other_summary_tables(doc: DocumentType, quote: dict | None, exclude_tbl: Any = None) -> None:
+    """Cập nhật các số liệu tổng hợp trong bảng tổng hợp riêng (như Bảng tổng hợp giá trị Hợp đồng)
+    mà KHÔNG xoá hoặc làm xáo trộn các hàng Phần A/Phần B của bảng đó."""
+    if not quote:
+        return
+    currency = (quote.get("currency") or "VND").upper()
+    sums = {
+        "subtotal": quote.get("subtotalAmount"),
+        "vat": quote.get("vatAmount"),
+        "total": quote.get("totalAmount"),
+    }
+    for table in doc.tables:
+        if exclude_tbl is not None and table._tbl is exclude_tbl:
+            continue
+        found = _table_columns(table)
+        if not found:
+            continue
+        h_idx, cols = found
+        if "amount" not in cols:
+            continue
+        for tr in table._tbl.findall(qn("w:tr"))[h_idx + 1:]:
+            tcs = tr.findall(qn("w:tc"))
+            label = next((_cell_text(c) for c in tcs if _cell_text(c)), "")
+            folded = _fold(label)
+            if "khong chiu thue" in folded or "mien thue" in folded:
+                continue
+            kind = totals_kind(label)
+            amount_tc = _tc_at_logical_col(tr, cols["amount"])
+            if amount_tc is None:
+                continue
+            if kind == "subtotal" and sums["subtotal"] is not None:
+                _set_cell(amount_tc, _format_number(sums["subtotal"], currency))
+            elif kind == "vat" and sums["vat"] is not None:
+                _set_cell(amount_tc, _format_number(sums["vat"], currency))
+            elif kind == "total" and sums["total"] is not None:
+                _set_cell(amount_tc, _format_number(sums["total"], currency))
+
+
+def _prevent_table_row_splits(doc: DocumentType) -> None:
+    """Đảm bảo bảng biểu trong tài liệu không bị vỡ format khi chuyển sang PDF:
+    1. Thêm <w:cantSplit/> cho TẤT CẢ các hàng bảng (w:tr) -> hàng không bị cắt đôi giữa 2 trang.
+    2. Thêm <w:keepNext/> cho các hàng tổng tiền/VAT/tổng cộng (trừ hàng cuối) -> khối tổng không bị tách rời nhau giữa 2 trang.
+    """
+    from docx.oxml import OxmlElement
+
+    for tbl in doc.tables:
+        trs = tbl._tbl.findall(qn("w:tr"))
+        if not trs:
+            continue
+        total_indices: set[int] = set()
+        for idx, tr in enumerate(trs):
+            trpr = tr.find(qn("w:trPr"))
+            if trpr is None:
+                trpr = OxmlElement("w:trPr")
+                tr.insert(0, trpr)
+            if trpr.find(qn("w:cantSplit")) is None:
+                trpr.append(OxmlElement("w:cantSplit"))
+
+            label = next((_cell_text(c) for c in tr.findall(qn("w:tc")) if _cell_text(c)), "")
+            k = totals_kind(label)
+            if k is not None or re.search(r"^(cộng|tổng|thuế|vat|total)\b", _fold(label)):
+                total_indices.add(idx)
+
+        if total_indices:
+            min_tot = min(total_indices)
+            if min_tot > 0:
+                total_indices.add(min_tot - 1)
+
+        last_idx = len(trs) - 1
+        for idx in total_indices:
+            if idx >= last_idx:
+                continue
+            tr = trs[idx]
+            for p in tr.iter(qn("w:p")):
+                ppr = p.find(qn("w:pPr"))
+                if ppr is None:
+                    ppr = OxmlElement("w:pPr")
+                    p.insert(0, ppr)
+                if ppr.find(qn("w:keepNext")) is None:
+                    ppr.append(OxmlElement("w:keepNext"))
+
+
 def fill_items_table(doc: DocumentType, quote: dict | None, table_index: int | None = None) -> dict[str, Any]:
     """Điền TOÀN BỘ hạng mục báo giá (đúng thứ tự, không cắt) vào bảng của mẫu: nhân bản HÀNG MẪU đầu tiên (giữ border/shading/font).
     Giá trị 100% từ báo giá CRM. Hàng tổng: 'trước thuế' / 'VAT' / 'tổng thanh toán' lấy từ báo giá; hàng không nhận diện giữ nguyên + cảnh báo.
     Không tìm được bảng -> KHÔNG chèn gì, trả `candidates` để người dùng chọn."""
+    from app.modules.all_platform.services.supabase_quote_service import flatten_quote_items
+
     result: dict[str, Any] = {"filled": False, "rows": 0, "warnings": [], "candidates": list_item_tables(doc), "tableIndex": None}
-    items = list((quote or {}).get("items") or [])
+    raw_items = list((quote or {}).get("items") or [])
+    items = flatten_quote_items(raw_items)
     found = find_items_table(doc, table_index)
     if not found:
         if items:
@@ -792,6 +977,12 @@ def fill_items_table(doc: DocumentType, quote: dict | None, table_index: int | N
             _set_cell(amount_tc, _format_number(sums[kind], currency))
         else:
             result["warnings"].append(f"Hàng '{label[:40]}' trong bảng hạng mục giữ nguyên theo mẫu - cần đối chiếu thủ công.")
+
+    # Cập nhật các bảng tổng hợp khác trong tài liệu (nếu có)
+    _fill_other_summary_tables(doc, quote, table._tbl)
+    # Áp dụng cantSplit & keepNext để chống vỡ trang / tách hàng
+    _prevent_table_row_splits(doc)
+
     result.update({"filled": True, "rows": n})
     return result
 
@@ -829,6 +1020,7 @@ def docx_to_clauses(docx_bytes: bytes) -> list[dict]:
 # ───────────────────────── xuất bytes ─────────────────────────
 
 def save_document(doc: DocumentType) -> bytes:
+    _prevent_table_row_splits(doc)
     buf = io.BytesIO()
     doc.save(buf)
     return buf.getvalue()

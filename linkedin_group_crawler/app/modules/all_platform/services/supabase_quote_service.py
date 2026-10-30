@@ -187,6 +187,7 @@ def _row_to_item(row: dict) -> dict:
         "unitPrice": (float(row["unit_price"]) if row.get("unit_price") is not None else None),
         "discountPercent": float(row.get("discount_percent") or 0),
         "discountAmount": float(row.get("discount_amount") or 0),
+        "discountType": row.get("discount_type") or row.get("discountType"),
         "amountAfterDiscount": float(row.get("amount_after_discount") or 0),
         "vatRate": float(row.get("vat_rate") or 0),
         "subtotalAmount": float(row.get("subtotal_amount") or 0),
@@ -312,6 +313,34 @@ def _lost_reason_label(code: str | None) -> str | None:
 
 
 def _row_to_quote(row: dict, items: list[dict] | None = None) -> dict:
+    data = row.get("data") or {}
+    item_discount_types = data.get("itemDiscountTypes") or {}
+    quote_items = _quote_item_tree(items or [])
+    def _apply_discount_type(nodes: list[dict]):
+        for node in nodes:
+            node_id = node.get("id")
+            if node_id and node_id in item_discount_types:
+                node["discountType"] = item_discount_types[node_id]
+            elif not node.get("discountType"):
+                pct = node.get("discountPercent")
+                amt = node.get("discountAmount")
+                if pct is not None and float(pct) > 0 and amt is not None and float(amt) > 0:
+                    if float(pct) % 1 != 0:
+                        node["discountType"] = "amount"
+            _apply_discount_type(node.get("children") or [])
+    _apply_discount_type(quote_items)
+    overall_discount_type = data.get("overallDiscountType")
+    overall_discount_amount = data.get("overallDiscountAmount")
+    overall_discount_pct = row.get("overall_discount_percent")
+    if (
+        overall_discount_type != "amount"
+        and overall_discount_amount is not None
+        and float(overall_discount_amount) > 0
+        and overall_discount_pct is not None
+        and float(overall_discount_pct) % 1 != 0
+    ):
+        overall_discount_type = "amount"
+        data["overallDiscountType"] = "amount"
     return {
         "id": row["id"],
         "dealId": row.get("deal_id"),
@@ -321,8 +350,9 @@ def _row_to_quote(row: dict, items: list[dict] | None = None) -> dict:
         "status": row["status"],
         "formSchemaVersion": row["form_schema_version"],
         "formSnapshot": _normalize_quote_schema(row.get("form_snapshot") or {}),
-        "data": row.get("data") or {},
-        "items": _quote_item_tree(items or []),
+        "data": data,
+        "items": quote_items,
+        "overallDiscountType": overall_discount_type,
         "subtotalAmount": float(row.get("subtotal_amount") or 0),
         "vatAmount": float(row.get("vat_amount") or 0),
         "totalAmount": float(row.get("total_amount") or 0),
@@ -615,6 +645,7 @@ def _public_data_allowlist(data: dict, form_snapshot: dict) -> dict:
         "visibleSummaryFields",
         "visibleCustomerFields",
         "printLayoutPrefs",
+        "overallDiscountAmount",
     }
     if form_snapshot.get("enableDynamicPaymentPlan"):
         allowed.add("paymentPlan")
@@ -643,6 +674,9 @@ def _row_to_public_quote(row: dict, raw_items: list[dict] | None = None) -> dict
         "subtotalAmount": float(row.get("subtotal_amount") or 0),
         "vatAmount": float(row.get("vat_amount") or 0),
         "totalAmount": float(row.get("total_amount") or 0),
+        "overallDiscountPercent": (
+            float(row["overall_discount_percent"]) if row.get("overall_discount_percent") is not None else None
+        ),
         "currency": row.get("currency") or "VND",
         "issuedAt": row.get("issued_at"),
         "validUntil": row.get("valid_until"),
@@ -917,6 +951,9 @@ def _calculate_item(
     discount_percent: float = 0,
     currency: str = "VND",
     billing_term_months: float | None = None,
+    discount_amount: float | None = None,
+    discount_type: str | None = None,
+    vat_amount: float | None = None,
 ) -> tuple[float, float, float, float, float]:
     """billing_term_months (migration 189): he so nhan them vao subtotal khi
     hang muc chon "Tra nam" (thuong la 12) - dung Gia tra nam/thang (da UU
@@ -928,9 +965,26 @@ def _calculate_item(
     v_pct = _to_decimal(vat_rate)
     bt = _to_decimal(billing_term_months) if billing_term_months and billing_term_months > 1 else _to_decimal(1)
     subtotal = q * u * bt
-    discount = subtotal * d_pct / 100
+    if discount_type == "amount":
+        if discount_amount is not None and discount_amount >= 0:
+            discount = min(subtotal, _to_decimal(discount_amount))
+        else:
+            discount = _to_decimal(0)
+    elif discount_type == "percent":
+        discount = subtotal * d_pct / 100
+    elif discount_amount is not None:
+        d_amt = _to_decimal(discount_amount)
+        if d_amt >= 0 and not (d_amt == 0 and d_pct > 0):
+            discount = min(subtotal, d_amt)
+        else:
+            discount = subtotal * d_pct / 100
+    else:
+        discount = subtotal * d_pct / 100
     after_discount = subtotal - discount
-    vat = after_discount * v_pct / 100
+    if vat_amount is not None and vat_amount >= 0 and not (vat_amount == 0 and v_pct > 0):
+        vat = _to_decimal(vat_amount)
+    else:
+        vat = after_discount * v_pct / 100
     total = after_discount + vat
     return (
         _round_vnd(subtotal, currency),
@@ -1062,7 +1116,7 @@ def _flatten_computed_items(raw_items: list[dict], currency: str = "VND") -> tup
             # khong tin gia tri client gui len cho dong nay.
             item = {
                 **item,
-                "quantity": 0, "unit_price": 0, "discount_percent": 0, "vat_rate": 0,
+                "quantity": 0, "unit_price": 0, "discount_percent": 0, "discount_amount": 0, "vat_rate": 0,
                 "cost_price": None, "markup_percent": None, "cost_not_applicable": False,
             }
         # Chuẩn hoá dữ liệu lưu, không chỉ format ở UI: phép quy đổi tiền giảm
@@ -1070,15 +1124,21 @@ def _flatten_computed_items(raw_items: list[dict], currency: str = "VND") -> tup
         # qua đây nên luôn lưu tối đa 2 chữ số sau dấu thập phân.
         discount_percent = round(_validate_percent(item.get("discount_percent"), "discount_percent"), 2)
         vat_rate = _validate_percent(item.get("vat_rate"), "vat_rate")
+        raw_discount_amount = item.get("discount_amount") if item.get("discount_amount") is not None else item.get("discountAmount")
+        discount_type = item.get("discount_type") or item.get("discountType")
+        raw_vat_amount = item.get("vat_amount") if item.get("vat_amount") is not None else item.get("vatAmount")
         item_subtotal, item_discount, item_after_discount, item_vat, item_total = _calculate_item(
             float(item.get("quantity") or 0),
-            float(item.get("unit_price") or 0),
+            float(item.get("unit_price") if item.get("unit_price") is not None else (item.get("unitPrice") or 0)),
             vat_rate,
             discount_percent,
             currency,
             billing_term_months=(
                 float(item["billing_term_months"]) if item.get("billing_term_months") is not None else None
             ),
+            discount_amount=float(raw_discount_amount) if raw_discount_amount is not None else None,
+            discount_type=discount_type,
+            vat_amount=float(raw_vat_amount) if raw_vat_amount is not None else None,
         )
         row = {
             **item,
@@ -1086,6 +1146,7 @@ def _flatten_computed_items(raw_items: list[dict], currency: str = "VND") -> tup
             "parent_temp_index": parent_temp_index,
             "sort_order": sort_order,
             "discount_percent": discount_percent,
+            "discount_type": discount_type,
             "vat_rate": vat_rate,
             "subtotal": item_subtotal,
             "discount": item_discount,
@@ -2169,6 +2230,12 @@ def create_quote(payload: dict, created_by: str | None) -> dict:
         items_to_insert: list[dict] = []
     else:
         items_to_insert, subtotal, vat, total = _flatten_computed_items(raw_items, currency)
+        overall_disc = _to_decimal(0)
+        if data.get("overallDiscountType") == "amount" or (data.get("overallDiscountAmount") is not None and float(data.get("overallDiscountAmount") or 0) > 0):
+            overall_disc = min(_to_decimal(subtotal), _to_decimal(data.get("overallDiscountAmount") or 0))
+        elif payload.get("overall_discount_percent"):
+            overall_disc = _round_vnd(_to_decimal(subtotal) * _to_decimal(payload.get("overall_discount_percent") or 0) / 100, currency)
+        total = _round_vnd((_to_decimal(subtotal) - overall_disc) + _to_decimal(vat), currency)
 
     quote_number = _next_quote_number()
     now = _now_iso()
@@ -2404,6 +2471,79 @@ def _raw_items_for_rpc(raw_items: list[dict]) -> list[dict]:
     return roots
 
 
+def _sync_computed_item_discounts_and_totals(
+    quote_id: str,
+    rpc_items: list[dict],
+    effective_currency: str,
+    quote_data: dict | None = None,
+    overall_discount_pct: float | None = None,
+) -> None:
+    """RPC quote_update (SQL) tính discount_amount = ROUND(subtotal * discount_percent / 100).
+    Khi người dùng nhập giảm giá bằng số tiền cố định (VNĐ/USD) hoặc có giảm giá toàn báo giá,
+    discount_percent đã bị làm tròn nên phép nhân ngược trong SQL bị lệch. Hàm này ghi đè lại chính xác
+    discount_amount, amount_after_discount, vat_amount, total_amount của từng dòng và subtotal_amount,
+    vat_amount, total_amount của báo giá."""
+    if not rpc_items:
+        return
+    computed_flat, calc_sub, calc_vat, calc_tot = _flatten_computed_items(rpc_items, effective_currency)
+    has_fixed_diff = False
+    for comp_row in computed_flat:
+        if comp_row.get("row_type") == "section":
+            continue
+        if comp_row.get("discount_type") == "amount" or comp_row.get("discountType") == "amount":
+            has_fixed_diff = True
+            break
+        if comp_row.get("vat_amount") is not None or comp_row.get("vatAmount") is not None:
+            has_fixed_diff = True
+            break
+        if comp_row.get("discount_amount") is not None or comp_row.get("discountAmount") is not None:
+            pct_discount = _round_vnd(
+                _to_decimal(comp_row.get("subtotal") or 0) * _to_decimal(comp_row.get("discount_percent") or 0) / 100,
+                effective_currency,
+            )
+            if float(comp_row.get("discount") or 0) != float(pct_discount or 0):
+                has_fixed_diff = True
+                break
+
+    overall_disc = _to_decimal(0)
+    if quote_data and (quote_data.get("overallDiscountType") == "amount" or (quote_data.get("overallDiscountAmount") is not None and float(quote_data.get("overallDiscountAmount") or 0) > 0)):
+        has_fixed_diff = True
+        overall_disc = min(_to_decimal(calc_sub), _to_decimal(quote_data.get("overallDiscountAmount") or 0))
+    elif overall_discount_pct is not None and float(overall_discount_pct) > 0:
+        has_fixed_diff = True
+        overall_disc = _round_vnd(_to_decimal(calc_sub) * _to_decimal(overall_discount_pct) / 100, effective_currency)
+
+    calc_tot = _round_vnd((_to_decimal(calc_sub) - overall_disc) + _to_decimal(calc_vat), effective_currency)
+
+    if not has_fixed_diff:
+        return
+
+    supabase: Client = get_supabase_client()
+    db_tree = _raw_items_for_rpc(_quote_items(quote_id))
+    db_flat = [node for root in db_tree for node in (root, *(root.get("children") or []))]
+    for db_row, comp_row in zip(db_flat, computed_flat):
+        if comp_row.get("row_type") == "section":
+            continue
+        if (
+            float(db_row.get("discount_amount") or 0) != float(comp_row.get("discount") or 0)
+            or float(db_row.get("amount_after_discount") or 0) != float(comp_row.get("after_discount") or 0)
+            or float(db_row.get("vat_amount") or 0) != float(comp_row.get("vat") or 0)
+            or float(db_row.get("total_amount") or 0) != float(comp_row.get("total") or 0)
+        ):
+            supabase.table(ITEMS_TABLE).update({
+                "discount_amount": comp_row["discount"],
+                "amount_after_discount": comp_row["after_discount"],
+                "vat_amount": comp_row["vat"],
+                "total_amount": comp_row["total"],
+            }).eq("id", db_row["id"]).execute()
+
+    supabase.table(QUOTES_TABLE).update({
+        "subtotal_amount": calc_sub,
+        "vat_amount": calc_vat,
+        "total_amount": calc_tot,
+    }).eq("id", quote_id).eq("instance", _crm_instance()).execute()
+
+
 def update_quote(quote_id: str, payload: dict, actor_id: str | None) -> dict:
     """CHU Y AN TOAN (bug that da gay MAT TOAN BO hang muc + tong tien mot
     quote that trong phien nay, phat hien qua "GIA KHACH ve 0"): RPC
@@ -2462,6 +2602,13 @@ def update_quote(quote_id: str, payload: dict, actor_id: str | None) -> dict:
             "vat_amount": vat,
             "total_amount": total,
         }).eq("id", quote_id).eq("instance", _crm_instance()).execute()
+        _sync_computed_item_discounts_and_totals(
+            quote_id,
+            rpc_items,
+            effective_currency,
+            payload.get("data"),
+            payload.get("overall_discount_percent"),
+        )
 
     # Du an + SLA due date (migration 097) - CHUA nam trong RPC quote_update
     # (chi la metadata, khong can recompute gia/VAT nhu cac RPC khac) - update
@@ -2730,6 +2877,20 @@ def update_and_approve_quote(quote_id: str, payload: dict, actor_id: str | None)
     except Exception as exc:
         _rollback_quote_currency(quote_id, previous_fx)
         _raise_friendly_rpc_error(exc)
+    is_villa = current_quote.get("formSnapshot", {}).get("layoutType") == "villa_solution_package"
+    if not is_villa:
+        effective_currency = (
+            qc.normalize_currency(payload.get("currency"))
+            if previous_fx is not None
+            else (current_quote.get("currency") or "VND")
+        )
+        _sync_computed_item_discounts_and_totals(
+            quote_id,
+            rpc_items,
+            effective_currency,
+            payload.get("data"),
+            payload.get("overall_discount_percent"),
+        )
     quote = get_quote(quote_id)
     if quote.get("dealId"):
         link_quote_to_deal(quote_id, quote["dealId"], {

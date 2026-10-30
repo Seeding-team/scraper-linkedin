@@ -16,4 +16,4 @@
 # luc build, khong ghi de toan bo file - giu nguyen het khung token/secret goc cho entrypoint.
 FROM onlyoffice/documentserver:latest
 RUN /var/www/onlyoffice/documentserver/npm/json -I -q -f /etc/onlyoffice/documentserver/local.json -e \
-    "this.services.CoAuthoring.autoAssembly = { enable: true, interval: '30s', step: '10s' }"
+    "this.services.CoAuthoring.autoAssembly = { enable: true, interval: '30s', step: '10s' }; this.services.CoAuthoring['request-filtering-agent'] = { allowPrivateIPAddress: true, allowMetaIPAddress: true };"

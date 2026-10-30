@@ -2,8 +2,9 @@
 
 import React from "react";
 import { ConversationItem } from "../types";
-import { Search, SlidersHorizontal, UserCheck } from "lucide-react";
+import { Search, SlidersHorizontal, UserCheck, RotateCw, PenSquare } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { ChannelAccount, ChannelType } from "../types";
 
 interface ConversationListProps {
   conversations: ConversationItem[];
@@ -13,6 +14,11 @@ interface ConversationListProps {
   onSearchChange: (q: string) => void;
   filterTab: "all" | "unread" | "crm";
   onFilterTabChange: (tab: "all" | "unread" | "crm") => void;
+  selectedChannel?: ChannelType;
+  selectedAccountInfo?: ChannelAccount | null;
+  isSyncing?: boolean;
+  onManualSync?: () => void;
+  onComposeNewEmail?: () => void;
 }
 
 export const ConversationList: React.FC<ConversationListProps> = ({
@@ -23,6 +29,11 @@ export const ConversationList: React.FC<ConversationListProps> = ({
   onSearchChange,
   filterTab,
   onFilterTabChange,
+  selectedChannel,
+  selectedAccountInfo,
+  isSyncing,
+  onManualSync,
+  onComposeNewEmail,
 }) => {
   const [isFilterPopoverOpen, setIsFilterPopoverOpen] = React.useState(false);
   const [filterChannel, setFilterChannel] = React.useState<string>("all");
@@ -46,19 +57,78 @@ export const ConversationList: React.FC<ConversationListProps> = ({
           <span>Hội thoại</span>
           <span className="text-[11px] text-slate-400 font-normal">({displayedConversations.length})</span>
         </h2>
-        <button
-          onClick={() => setIsFilterPopoverOpen((prev) => !prev)}
-          className={cn(
-            "rounded p-1 transition cursor-pointer",
-            isFilterPopoverOpen
-              ? "bg-rose-100 text-[var(--color-markee-primary,#c2185b)]"
-              : "text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+        <div className="flex items-center gap-1">
+          {selectedChannel === "email" && onComposeNewEmail && (
+            <button
+              onClick={onComposeNewEmail}
+              className="flex items-center gap-1 rounded-lg bg-[var(--color-markee-primary,#c2185b)] px-2 py-1 text-[11px] font-bold text-white shadow-2xs hover:bg-[#a3134c] transition cursor-pointer"
+              title="Soạn thư mới"
+            >
+              <PenSquare className="h-3 w-3" />
+              <span>Soạn thư</span>
+            </button>
           )}
-          title="Tùy chọn lọc nâng cao"
-        >
-          <SlidersHorizontal className="h-3.5 w-3.5" />
-        </button>
+          {selectedChannel === "email" && onManualSync && (
+            <button
+              onClick={onManualSync}
+              disabled={isSyncing}
+              className={cn(
+                "rounded p-1 transition cursor-pointer text-slate-400 hover:bg-slate-100 hover:text-slate-700",
+                isSyncing && "animate-spin text-amber-600"
+              )}
+              title="Đồng bộ email mới từ máy chủ"
+            >
+              <RotateCw className="h-3.5 w-3.5" />
+            </button>
+          )}
+          <button
+            onClick={() => setIsFilterPopoverOpen((prev) => !prev)}
+            className={cn(
+              "rounded p-1 transition cursor-pointer",
+              isFilterPopoverOpen
+                ? "bg-rose-100 text-[var(--color-markee-primary,#c2185b)]"
+                : "text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+            )}
+            title="Tùy chọn lọc nâng cao"
+          >
+            <SlidersHorizontal className="h-3.5 w-3.5" />
+          </button>
+        </div>
       </div>
+
+      {/* Email Account Status Subheader */}
+      {selectedChannel === "email" && selectedAccountInfo && (
+        <div className="px-3 py-1 bg-amber-50/60 border-b border-amber-100/70 flex items-center justify-between text-[10.5px]">
+          <div className="flex items-center gap-1.5 truncate text-slate-600">
+            <span
+              className={cn(
+                "h-1.5 w-1.5 shrink-0 rounded-full",
+                selectedAccountInfo.status === "online"
+                  ? "bg-emerald-500"
+                  : selectedAccountInfo.status === "error"
+                  ? "bg-rose-500"
+                  : selectedAccountInfo.status === "syncing"
+                  ? "bg-sky-500 animate-pulse"
+                  : "bg-slate-300"
+              )}
+            />
+            <span className="truncate font-medium">{selectedAccountInfo.email || selectedAccountInfo.name}</span>
+          </div>
+          <div className="flex items-center gap-1 shrink-0 text-slate-400 text-[10px]">
+            {isSyncing ? (
+              <span className="text-amber-700 font-semibold animate-pulse">Đang đồng bộ...</span>
+            ) : selectedAccountInfo.lastSyncError ? (
+              <span className="text-rose-600 font-semibold truncate max-w-[120px]" title={selectedAccountInfo.lastSyncError}>
+                Lỗi đồng bộ
+              </span>
+            ) : selectedAccountInfo.lastSyncedAt ? (
+              <span className="text-emerald-700 font-medium">Đã đồng bộ</span>
+            ) : (
+              <span className="text-emerald-700 font-medium">Đã kết nối</span>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Compact Filter Popover */}
       {isFilterPopoverOpen && (
@@ -81,9 +151,11 @@ export const ConversationList: React.FC<ConversationListProps> = ({
               className="w-full rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-800 bg-slate-50 focus:outline-none"
             >
               <option value="all">Tất cả kênh</option>
+              <option value="email">Email</option>
               <option value="facebook">Facebook</option>
               <option value="zalo">Zalo</option>
               <option value="telegram">Telegram</option>
+
             </select>
           </div>
 
@@ -171,8 +243,18 @@ export const ConversationList: React.FC<ConversationListProps> = ({
       {/* Conversation Cards Feed */}
       <div className="flex-1 overflow-y-auto divide-y divide-slate-100 no-scrollbar">
         {displayedConversations.length === 0 ? (
-          <div className="p-8 text-center text-xs text-slate-400">
-            Không tìm thấy hội thoại phù hợp
+          <div className="p-8 text-center text-xs text-slate-400 space-y-2.5">
+            <p>Không tìm thấy hội thoại phù hợp</p>
+            {selectedChannel === "email" && onManualSync && (
+              <button
+                onClick={onManualSync}
+                disabled={isSyncing}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-50 text-amber-800 border border-amber-200 text-xs font-semibold hover:bg-amber-100 transition shadow-2xs cursor-pointer"
+              >
+                <RotateCw className={cn("h-3 w-3", isSyncing && "animate-spin")} />
+                <span>{isSyncing ? "Đang đồng bộ thư..." : "Đồng bộ thư ngay"}</span>
+              </button>
+            )}
           </div>
         ) : (
           displayedConversations.map((conv) => {
@@ -194,11 +276,17 @@ export const ConversationList: React.FC<ConversationListProps> = ({
                     className="h-9.5 w-9.5 rounded-full object-cover border border-slate-200"
                   />
                   <div className="absolute -bottom-0.5 -right-0.5 flex h-3.5 w-3.5 items-center justify-center rounded-full border border-white shadow-2xs">
+                    {conv.channel === "email" && (
+                      <span className="flex h-full w-full items-center justify-center rounded-full bg-amber-500 text-[8px] font-bold text-white">
+                        ✉
+                      </span>
+                    )}
                     {conv.channel === "facebook" && (
                       <span className="flex h-full w-full items-center justify-center rounded-full bg-[#1877F2] text-[8px] font-black text-white">
                         f
                       </span>
                     )}
+
                     {conv.channel === "zalo" && (
                       <span className="flex h-full w-full items-center justify-center rounded-full bg-[#0068FF] text-[7px] font-black text-white">
                         z

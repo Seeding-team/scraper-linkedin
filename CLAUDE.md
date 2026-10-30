@@ -1,3 +1,9 @@
+**TRƯỚC KHI SỬA LỖI TRONG CRM (modules/crm, modules/quotes), ĐỌC `thao/CRM_KNOWN_BUGS_FIXED.md`.**
+Đây là nhật ký các pattern lỗi đã gặp + đã fix (dropdown portal làm đóng nhầm modal/sidebar, owner-picker
+sai nguồn, race condition auto-chọn, thiếu `notifyDealsChanged()`/callback refresh...) — kiểm tra trước
+để không sửa lại từ đầu hoặc tái tạo đúng bug đã fix ở chỗ khác. Gặp lỗi mới đã sửa xong thì note tiếp
+vào cuối file đó theo đúng format (Triệu chứng / Nguyên nhân gốc / Cách fix / File liên quan).
+
 # Tiến độ phiên làm việc (2026-10-26) — Cào Threads kết hợp DOM + bắt API
 
 Extension 2.11: `platforms/threads/crawl-sniffer.js` (bắt fetch + XHR `/graphql`, ghi tên query), `platforms/threads/crawl.js`

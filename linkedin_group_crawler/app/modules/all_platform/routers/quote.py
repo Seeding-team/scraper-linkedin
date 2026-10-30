@@ -703,6 +703,7 @@ _TECHNICAL_ITEM_FIELD_PAIRS = [
 _PRICING_ITEM_FIELD_PAIRS = [
     ("unitPrice", "unit_price"),
     ("discountPercent", "discount_percent"),
+    ("discountAmount", "discount_amount"),
     ("markupPercent", "markup_percent"),
     ("vatRate", "vat_rate"),
 ]
@@ -780,6 +781,8 @@ def _items_touch_pricing_fields(existing_items: list[dict], new_items: list[dict
     for i, new_item in enumerate(new_items):
         existing = existing_items[i] if i < len(existing_items) else {}
         for camel, snake in pairs:
+            if camel == "discountAmount" and new_item.get(snake) is None:
+                continue
             if not _values_differ(existing.get(camel), new_item.get(snake)):
                 continue
             if camel == "unitPrice" and _is_billing_cycle_price_toggle(existing, new_item):

@@ -352,6 +352,9 @@ class Settings:
     onlyoffice_internal_url: str = os.getenv(
         "ONLYOFFICE_INTERNAL_URL", "http://onlyoffice:80",
     ).rstrip("/")
+    backend_internal_url: str = os.getenv(
+        "BACKEND_INTERNAL_URL", "http://backend:8000/api/all-platform",
+    ).rstrip("/")
     onlyoffice_public_url: str = os.getenv(
         "ONLYOFFICE_PUBLIC_URL", "http://localhost:8094",
     ).rstrip("/")

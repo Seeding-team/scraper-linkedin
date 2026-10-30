@@ -7,6 +7,7 @@ services:
         NEXT_PUBLIC_LINKEDIN_CRAWLER_API_URL: ${CRM_PUBLIC_URL:-http://localhost:18093}
         NEXT_PUBLIC_LINKEDIN_CRAWLER_API_KEY: ${NEXT_PUBLIC_LINKEDIN_CRAWLER_API_KEY:-}
         NEXT_PUBLIC_GOOGLE_CLIENT_ID: ${NEXT_PUBLIC_GOOGLE_CLIENT_ID:-}
+        NEXT_PUBLIC_GMAIL_OAUTH_CLIENT_ID: ${NEXT_PUBLIC_GMAIL_OAUTH_CLIENT_ID:-}
         NEXT_PUBLIC_CRM_INSTANCE: timetech
     image: crm-timetech-frontend:latest
     container_name: crm-timetech-frontend

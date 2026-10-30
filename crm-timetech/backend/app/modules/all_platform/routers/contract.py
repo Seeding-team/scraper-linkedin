@@ -369,6 +369,7 @@ def contracts_precheck(payload: ContractPrecheckRequest, user: dict = Depends(ge
     issuer_out = ({
         "id": issuer.get("id"), "code": issuer.get("code"), "legalName": issuer.get("legalName"), "brandName": issuer.get("brandName"),
         "taxCode": issuer.get("taxCode"), "address": issuer.get("address"), "phone": issuer.get("phone"), "email": issuer.get("email"),
+        "contactName": issuer.get("contactName"), "positionCategoryId": issuer.get("positionCategoryId"), "positionLabel": issuer.get("positionLabel"),
         "status": issuer.get("status"),
     } if issuer else None)
     return BaseResponse(success=True, data={"ok": not gaps["blockers"], **gaps, "issuer": issuer_out, "parties": parties,
@@ -404,12 +405,20 @@ async def contracts_generate_draft(payload: ContractGenerateRequest, user: dict 
             issuer=_issuer_of_quote(quote), representative=representative,
         )
         # Số liệu trong bản nháp không có trong CRM/báo giá/yêu cầu người dùng (vd lấy từ mẫu tham chiếu) => cảnh báo để người duyệt kiểm tra
-        from app.modules.all_platform.services.contract_ai_service import _STANDARD_TERMS, _format_deal_context, _format_quote_context, numeric_tokens
+        from app.modules.all_platform.services.contract_ai_service import (
+            _STANDARD_TERMS,
+            _format_deal_context,
+            _format_quote_context,
+            _has_api_key,
+            numeric_tokens,
+        )
 
         allowed = " ".join([_format_deal_context(deal), _format_quote_context(quote), payload.extra_prompt or "", _STANDARD_TERMS, source.money_tokens_text(quote, deal if crm_mode else None, _issuer_of_quote(quote))])
         unknown = sorted(numeric_tokens(" ".join(c.get("body", "") for c in clauses)) - numeric_tokens(allowed))
         warnings = override_warnings + ([f"Bản nháp chứa số liệu không có trong CRM/báo giá/yêu cầu: {', '.join(unknown[:12])} - hãy kiểm tra trước khi lưu."] if unknown else [])
         warnings += source.payment_plan_mismatch_warning(quote, clauses)
+        if not _has_api_key():
+            warnings.insert(0, "Chế độ Local Dev: Chưa cấu hình CONTRACT_AI_API_KEY — Hợp đồng được sinh bằng bộ máy Heuristic/Regex tự động từ dữ liệu CRM & Báo giá.")
         return BaseResponse(success=True, data={"clauses": clauses, "warnings": warnings,
                                                  "parties": build_parties(deal, quote, _issuer_of_quote(quote), representative) if crm_mode else None})
     except source.SourceError as e:

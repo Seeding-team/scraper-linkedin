@@ -166,7 +166,7 @@ export async function downloadContractVersion(contractId: string, version: numbe
 export type GapFix = { kind: 'customer' | 'issuer'; customerId?: string | null; issuerId?: string | null };
 export type PrecheckGap = { side: 'A' | 'B' | ''; field: string; label: string; source: string; fix?: GapFix };
 /** Hồ sơ đơn vị phát hành đã gắn với báo giá đang chọn - lấy nguyên từ quote_issuer_companies (KHÔNG phải Customer/Contact). */
-export type PrecheckIssuer = { id: string; code: string; legalName: string; brandName?: string | null; taxCode?: string | null; address?: string | null; phone?: string | null; email?: string | null; status?: string };
+export type PrecheckIssuer = { id: string; code: string; legalName: string; brandName?: string | null; taxCode?: string | null; address?: string | null; phone?: string | null; email?: string | null; contactName?: string | null; positionCategoryId?: string | null; positionLabel?: string | null; status?: string };
 /** Đúng dữ liệu backend dùng để dựng Điều 1 DOCX/PDF (build_parties) - hiển thị để Sale đối chiếu trước khi tạo bản nháp. */
 export type PrecheckParty = { name: string; tax_code: string; address: string; rep: string; position: string; phone: string; email: string };
 /** Người đại diện ký Bên A - vai trò RIÊNG, KHÔNG mặc nhiên = Người liên hệ (xem resolve_representative() backend).

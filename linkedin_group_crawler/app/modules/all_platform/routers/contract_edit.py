@@ -33,16 +33,23 @@ def start_edit(contract_id: str, user: dict = Depends(get_current_user)) -> Base
 
 
 @contract_edit_router.get("/{contract_id}/edit/draft-file")
+@contract_edit_router.head("/{contract_id}/edit/draft-file")
 def draft_file(contract_id: str, token: str) -> Response:
     """OnlyOffice (server-to-server) tải bản nháp qua token ký ngắn hạn - KHÔNG qua auth phiên
     người dùng (OnlyOffice không có cookie/JWT đăng nhập của Sale)."""
     try:
         content = svc.get_draft_bytes_for_download(contract_id, token)
+        logger.info("[WORD-EDITOR] draft-file tải thành công cho contract %s (%d bytes)", contract_id, len(content))
         return Response(content=content, media_type=DOCX_MIME)
     except JWTError as exc:
+        logger.warning("[WORD-EDITOR] draft-file JWTError cho contract %s: %s", contract_id, exc)
         return Response(content=f"Token không hợp lệ: {exc}".encode(), status_code=401)
     except LookupError as exc:
+        logger.warning("[WORD-EDITOR] draft-file LookupError cho contract %s: %s", contract_id, exc)
         return Response(content=str(exc).encode(), status_code=404)
+    except Exception as exc:
+        logger.exception("[WORD-EDITOR] draft-file Exception cho contract %s: %s", contract_id, exc)
+        return Response(content=f"Lỗi tải file nháp: {exc}".encode(), status_code=500)
 
 
 @contract_edit_router.post("/{contract_id}/edit/callback")

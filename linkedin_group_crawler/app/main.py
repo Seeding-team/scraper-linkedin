@@ -57,6 +57,7 @@ async def lifespan(_: FastAPI):
     zalo_forward_task: asyncio.Task[None] | None = None
     zalo_automation_task: asyncio.Task[None] | None = None
     zalo_push_task: asyncio.Task[None] | None = None
+    email_imap_scheduler = None
     # An toàn khi chạy dev/local: đặt env DISABLE_SCHEDULER=1 để KHÔNG bật scheduler tự cào
     # (tránh cào bằng acc production khi dev). Production không set -> chạy như cũ.
     import os as _os
@@ -111,6 +112,18 @@ async def lifespan(_: FastAPI):
             logger.info("Word Editor forcesave worker setup finished")
         except Exception:
             logger.exception("Failed to start Word Editor forcesave worker")
+
+    # Email ingestion has its own explicit gate. It is intentionally independent
+    # from DISABLE_SCHEDULER (which protects crawler jobs in local/dev), so a Dev
+    # stack can receive mail only when EMAIL_IMAP_SYNC_ENABLED=1 is provided.
+    try:
+        from app.modules.all_platform.jobs.email_imap_sync_job import (
+            setup_email_imap_sync_worker,
+        )
+
+        email_imap_scheduler = setup_email_imap_sync_worker()
+    except Exception:
+        logger.exception("Failed to start Email IMAP sync worker")
     async def _warmup_background() -> None:
         try:
             await asyncio.to_thread(warmup_playwright_pool)
@@ -196,6 +209,11 @@ async def lifespan(_: FastAPI):
     try:
         yield
     finally:
+        if email_imap_scheduler is not None:
+            try:
+                email_imap_scheduler.shutdown(wait=False)
+            except Exception:
+                logger.exception("Email IMAP sync worker shutdown failed")
         for task in (zalo_forward_task, zalo_automation_task, zalo_push_task):
             if task is not None and not task.done():
                 task.cancel()

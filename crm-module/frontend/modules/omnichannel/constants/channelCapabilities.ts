@@ -16,10 +16,19 @@ export const CHANNEL_CAPABILITIES: Record<ChannelType, ChannelCapabilityConfig> 
     id: "all",
     name: "Tất cả",
     categoryName: "Tất cả kênh",
-    description: "Xem toàn bộ hội thoại từ tất cả kênh xã hội",
+    description: "Xem toàn bộ hội thoại từ tất cả kênh xã hội và email",
     isAvailable: true,
     connectActionLabel: "",
   },
+  email: {
+    id: "email",
+    name: "Email",
+    categoryName: "Email Inbox",
+    description: "Kết nối tài khoản Email (Gmail, Outlook, IMAP)",
+    isAvailable: true,
+    connectActionLabel: "Kết nối →",
+  },
+
   zalo: {
     id: "zalo",
     name: "Zalo",

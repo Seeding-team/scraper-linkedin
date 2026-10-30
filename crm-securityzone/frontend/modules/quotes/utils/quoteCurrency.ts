@@ -49,10 +49,17 @@ export function convertQuoteItemsCurrency(items: QuoteItem[], from: QuoteFx, to:
       vndPrice = matchesBase(row.unitPriceVnd, row.unitPrice) ? (row.unitPriceVnd as number) : fromQuoteMoney(row.unitPrice, from);
       vndCost = matchesBase(row.costPriceVnd, row.costPrice) ? (row.costPriceVnd as number) : fromQuoteMoney(row.costPrice, from);
     }
+    const vndDiscount =
+      row.discountAmount != null
+        ? from.currency === 'VND'
+          ? row.discountAmount
+          : fromQuoteMoney(row.discountAmount, from)
+        : null;
     return {
       ...row,
       unitPrice: toTarget(vndPrice),
       costPrice: toTarget(vndCost),
+      ...(vndDiscount != null ? { discountAmount: toTarget(vndDiscount) ?? undefined } : {}),
       ...(to.currency === 'USD'
         ? { unitPriceVnd: vndPrice ?? undefined, costPriceVnd: vndCost }
         : { costPriceVnd: null }),

@@ -14,6 +14,7 @@ import { MoveQuoteModal } from './MoveQuoteModal';
 import { QuoteDocumentRenderer } from './QuoteDocumentRenderer';
 import { QuotePrintLayoutSaveButton } from './QuotePrintLayoutSaveButton';
 import { TelegramSendButton } from './TelegramSendButton';
+import { calculateQuoteTotals } from '../utils/quoteCalculations';
 
 interface Props {
   quoteId: string;
@@ -252,16 +253,14 @@ export function QuoteDetailPage({ quoteId }: Props) {
           quoteData={quote.data}
           quoteItems={quote.items}
           solutionItems={quote.data.solutionItems}
-          totals={{
-            subtotalAmount: quote.subtotalAmount,
-            // "Giảm giá hạng mục" (2026-10-13) - quote.subtotalAmount la GROSS
-            // (truoc giam gia TUNG dong, xem RPC quote_update), quote.totalAmount
-            // - quote.vatAmount la NET (sau giam gia tung dong, truoc VAT) - hieu
-            // so chinh la tong tien da giam o cap hang muc.
-            discountAmount: quote.subtotalAmount - (quote.totalAmount - quote.vatAmount),
-            totalVatAmount: quote.vatAmount,
-            totalAmount: quote.totalAmount,
-          }}
+          totals={quote.items && quote.items.length > 0
+            ? calculateQuoteTotals(quote.items, 0, quote.currency)
+            : {
+                subtotalAmount: quote.subtotalAmount,
+                discountAmount: 0,
+                totalVatAmount: quote.vatAmount,
+                totalAmount: quote.subtotalAmount + quote.vatAmount,
+              }}
           mode="detail"
           isPublished={quote.processingStage === 'published'}
           quoteNumber={quote.quoteNumber}

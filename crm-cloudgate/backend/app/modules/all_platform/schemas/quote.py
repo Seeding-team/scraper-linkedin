@@ -131,6 +131,7 @@ class QuoteItemInput(BaseModel):
     quantity: float = 0
     unit_price: Optional[float] = Field(default=None, ge=0)
     discount_percent: float = Field(default=0, ge=0, le=100)
+    discount_amount: Optional[float] = Field(default=None, ge=0)
     vat_rate: float = Field(default=0, ge=0, le=100)
     children: list["QuoteItemInput"] = Field(default_factory=list)
     # Danh mục dịch vụ: truy vết + snapshot USD/VND/tỷ giá tại thời điểm chọn dịch vụ.

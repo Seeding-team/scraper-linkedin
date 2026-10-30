@@ -3348,18 +3348,33 @@
 .qc-workspace-commercial-row {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
+  row-gap: 12px;
+  column-gap: 14px;
   justify-content: flex-start;
-  gap: 10px;
   margin-top: 14px;
   padding: 12px 0 9px;
   border-top: 1px solid #edf0f4;
   border-bottom: 1px solid #edf0f4;
 }
-.qc-item-discount-tools {
+.qc-item-discount-tools,
+.qc-overall-discount-tools {
   display: inline-flex;
   align-items: center;
   flex-wrap: wrap;
   gap: 8px;
+  flex-shrink: 0;
+}
+.qc-workspace-commercial-row .qc-workspace-quickbar-field {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.qc-workspace-commercial-row .qc-mini-btn {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.qc-workspace-commercial-row .qc-price-mode-toggle {
+  flex-shrink: 0;
 }
 .qc-line-discount-chip {
   display: inline-flex;

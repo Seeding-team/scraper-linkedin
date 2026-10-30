@@ -14,6 +14,8 @@ rồi báo lại cho backend bằng cờ `already_applied_live` (xem contract_hi
 """
 from __future__ import annotations
 
+import os
+import re
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -279,6 +281,10 @@ def start_edit_session(contract_id: str, user: dict) -> dict[str, Any]:
     if existing and str(existing.get("owner_user_id") or "") != str(user.get("id") or ""):
         raise ValueError("Một người khác đang chỉnh sửa hợp đồng này, thử lại sau.")
     if existing:
+        # Làm mới document_key để OnlyOffice nạp file mới nhất (tránh stale cache/lỗi download cũ)
+        new_doc_key = f"mk_{existing['id']}_{int(time.time())}"
+        _sb().table(_SESSIONS_TABLE).update({"document_key": new_doc_key}).eq("id", existing["id"]).execute()
+        existing["document_key"] = new_doc_key
         return _editor_config_for_session(existing, raw_contract)
 
     source = _resolve_contract_source_file(raw_contract)
@@ -348,16 +354,20 @@ def start_edit_session(contract_id: str, user: dict) -> dict[str, Any]:
 
 def _editor_config_for_session(session: dict, contract: dict) -> dict[str, Any]:
     contract_id = session["contract_id"]
-    internal_backend = "http://backend:8000/api/all-platform"
+    internal_backend = (getattr(settings, "backend_internal_url", None) or os.getenv("BACKEND_INTERNAL_URL", "http://backend:8000/api/all-platform")).rstrip("/")
     download_token = make_draft_download_token(contract_id, session["id"])
     document_url = f"{internal_backend}/contracts/{contract_id}/edit/draft-file?token={download_token}"
     callback_url = f"{internal_backend}/contracts/{contract_id}/edit/callback"
     plugin_config_url = f"{settings.crm_public_url}/api/onlyoffice-plugin/config.json"
 
+    # OnlyOffice title KHONG DUOC chua ky tu cam theo spec: \ / : * ? " < > |
+    raw_num = str(contract.get("contract_number") or contract_id)
+    safe_title = re.sub(r'[\\/*?:"<>|]', "-", raw_num).strip() + ".docx"
+
     config: dict[str, Any] = {
         "document": {
             "key": session["document_key"],
-            "title": f"{contract.get('contract_number') or contract_id}.docx",
+            "title": safe_title,
             "url": document_url,
             "fileType": "docx",
             "permissions": {"edit": True, "download": True, "print": True, "review": True, "comment": True},
