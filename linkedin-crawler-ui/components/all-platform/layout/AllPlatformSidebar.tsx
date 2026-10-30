@@ -258,7 +258,7 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, workspaceTab: 
     {
       type: "item",
       id: "internal-engagement",
-      href: "/all-platform/internal-engagement?tab=feed",
+      href: "/all-platform/internal-engagement",
       icon: "chat_bubble",
       label: "Tương tác nội bộ",
       exactMatch: true,
@@ -273,9 +273,10 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, workspaceTab: 
         {
           type: "item",
           id: "external-activity",
-          href: "/all-platform/internal-engagement?tab=external&sub=activity",
+          href: "/all-platform/post-feed",
           icon: "bolt",
           label: "Hoạt động seeding",
+          exactMatch: true,
         },
         {
           type: "item",
@@ -287,14 +288,14 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, workspaceTab: 
         {
           type: "item",
           id: "external-schedules",
-          href: "/all-platform/internal-engagement?tab=external&sub=queue&subtab=schedule",
+          href: "/all-platform/lich-cao-hang-doi",
           icon: "calendar_today",
           label: "Lịch cào & Hàng đợi",
         },
         {
           type: "item",
           id: "external-accounts-stats",
-          href: "/all-platform/internal-engagement?tab=external&sub=queue&subtab=accounts",
+          href: "/all-platform/thong-ke-tai-khoan",
           icon: "manage_accounts",
           label: "Thống kê tài khoản",
         },
@@ -303,20 +304,21 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, workspaceTab: 
               {
                 type: "item",
                 id: "external-leader-dashboard",
-                href: "/all-platform/internal-engagement?tab=external&sub=leader",
+                href: "/all-platform/leader-dashboard",
                 icon: "analytics",
                 label: "Dashboard leader",
               } as NavLeafItem,
             ]
           : []),
-        {
-          type: "item",
-          id: "external-reports",
-          href: "/all-platform/internal-engagement?tab=overview",
-          icon: "analytics",
-          label: "Tổng quan báo cáo",
-        },
       ],
+    },
+    {
+      type: "item",
+      id: "overview-reports",
+      href: "/all-platform/overview",
+      icon: "analytics",
+      label: "Tổng quan báo cáo",
+      exactMatch: true,
     },
     {
       type: "item",

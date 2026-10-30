@@ -741,40 +741,21 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
   return (
     <div className="w-full space-y-6">
       {!hideHeader ? (
-        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 bg-white p-6 rounded-2xl border border-gray-100 shadow-xs">
           <div className="space-y-1">
-            <h1 className="text-2xl font-bold text-foreground tracking-tight">Unified Post Feed</h1>
-            <p className="text-sm text-muted-foreground">
-              Quản lý và theo dõi bài viết đa nền tảng với trí tuệ nhân tạo.
+            <h1 className="text-2xl font-black text-gray-900 tracking-tight flex items-center gap-2.5">
+              <span className="material-symbols-outlined text-[28px] text-[#be123c]">bolt</span>
+              Hoạt động Seeding bên ngoài
+            </h1>
+            <p className="text-xs text-gray-500 font-medium">
+              Quản lý và tương tác bài viết đa nền tảng (Facebook, LinkedIn, Threads, YouTube), hỗ trợ cào bài và comment tự động.
             </p>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-3 shrink-0">
-            {platformTabs}
           </div>
         </div>
       ) : null}
 
       {/* 4 tab phụ: "Hoạt động seeding" (danh sách bài viết) / "Dashboard leader"
           (admin+leader) / "Kho thư viện Group" / "Lịch crawl & Hàng đợi". */}
-      <div className="flex gap-1.5 rounded-2xl border border-border bg-card p-1.5 overflow-x-auto">
-        {SUB_TABS.map((t) => (
-          <button
-            key={t.key}
-            type="button"
-            onClick={() => setSubView(t.key)}
-            className={cn(
-              "flex items-center gap-1.5 whitespace-nowrap rounded-xl px-3.5 py-2 text-sm font-bold transition-colors cursor-pointer",
-              subView === t.key
-                ? "bg-primary text-primary-foreground shadow-sm"
-                : "text-muted-foreground hover:bg-accent hover:text-foreground",
-            )}
-          >
-            <span className="material-symbols-outlined text-[16px]">{t.icon}</span>
-            {t.label}
-          </button>
-        ))}
-      </div>
 
       {(subView === "activity" || subView === "leader") && (
         /* Tab "Seeding bên ngoài": làm nổi bật hẳn (khung viền + icon + mô tả) vì đây là

@@ -33,16 +33,8 @@
     // Tap hop id lich da duoc yeu cau DUNG NGAY trong luc dang chay (bam nut Dung).
     let cancelRequestedIds = new Set();
     function isSystemCrawlerAccount(email) {
-        if (!email) return false;
-        const e = email.toLowerCase().trim();
-        return (
-            e === "seeding.crawler@markeeai.com" ||
-            e === "seedingsystem@markeeai.com" ||
-            e.includes("system") ||
-            e.includes("crawler") ||
-            e.includes("bot") ||
-            e.includes("admin")
-        );
+        // Cho phép tất cả tài khoản (thành viên, leader, hệ thống) đều có quyền thêm và chạy lịch cào xoay vòng
+        return true;
     }
 
     // Thuat toan Fisher-Yates xao tron ngau nhien thu tu nhom de ne bot checkpoint
@@ -337,12 +329,7 @@
             return;
         }
         const schedule = due[0];
-        if (!isSystemCrawlerAccount(schedule.cfg.email)) {
-            log(schedule.id, schedule.label, "🛡️ Chế độ bảo vệ thành viên: Tài khoản hiện tại không phải là Tài khoản Hệ thống chuyên dụng (System Crawler VPS). Cơ chế cào ngầm bị vô hiệu hóa để bảo vệ an toàn cho nick cá nhân của bạn.", "warn");
-            await updateSchedule(schedule.id, { status: "stopped", enabled: false, nextRunAt: null });
-            await scheduleNextAlarm();
-            return;
-        }
+        // Cho phép thành viên và leader chạy lịch cào
         const tabOpen = await checkAppTabOpen(schedule.cfg.apiBase);
         if (tabOpen && typeof tabOpen === "object" && tabOpen.networkError) {
             log(schedule.id, schedule.label, `Không kiểm tra được tab Seeding (lỗi: ${tabOpen.networkError}) — sẽ thử lại sau ${ONLINE_RETRY_MINUTES} phút.`, "warn");
@@ -374,13 +361,7 @@
 
         if (msg.action === "MK_ROTATE_SCHEDULE_ADD") {
             (async () => {
-                if (!isSystemCrawlerAccount(msg.config && msg.config.email)) {
-                    sendResponse({
-                        success: false,
-                        error: "🛡️ Quyền hạn bị từ chối: Tính năng cào xoay vòng tự động chỉ dành riêng cho Tài khoản Hệ thống (VPS Crawler) để bảo vệ an toàn tuyệt đối cho tài khoản mạng xã hội của thành viên."
-                    });
-                    return;
-                }
+                // Cho phép thành viên và leader thêm lịch cào
                 const fbGroups = Array.isArray(msg.fbGroups) ? msg.fbGroups.filter((g) => g && g.url) : [];
                 const liGroups = Array.isArray(msg.liGroups) ? msg.liGroups.filter((g) => g && g.url) : [];
                 const threadsKeywords = Array.isArray(msg.threadsKeywords) ? msg.threadsKeywords.filter(Boolean) : [];

@@ -137,17 +137,8 @@ function useGroupOptions(platform: "facebook" | "linkedin") {
   return { groups, selectedIds, setSelectedIds, toggle, loading, error };
 }
 
-export function isSystemCrawlerUser(user: { email?: string | null; role?: string | null } | null | undefined): boolean {
-  if (!user || !user.email) return false;
-  const e = user.email.toLowerCase().trim();
-  return (
-    e === "seeding.crawler@markeeai.com" ||
-    e === "seedingsystem@markeeai.com" ||
-    e.includes("system") ||
-    e.includes("crawler") ||
-    e.includes("bot") ||
-    user.role === "admin"
-  );
+export function isSystemCrawlerUser(_user?: { email?: string | null; role?: string | null } | null | undefined): boolean {
+  return true;
 }
 
 export function RotationCrawlPanel() {

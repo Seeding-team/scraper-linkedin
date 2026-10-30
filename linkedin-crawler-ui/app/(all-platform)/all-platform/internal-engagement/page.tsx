@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useSearchParams, useRouter } from "next/navigation";
 import { FaFacebook, FaLinkedin, FaThreads, FaYoutube, FaTiktok, FaLink } from "react-icons/fa6";
 import { useAppAuth } from "@/contexts/AppAuthContext";
 import { API_BASE_URL } from "@/lib/env";
@@ -190,14 +190,15 @@ export default function InternalEngagementPage() {
   // (xem getDashboardHrefForRole trong AllPlatformSidebar.tsx).
   const searchParams = useSearchParams();
   const urlTab = searchParams?.get("tab");
-
-  const [mainTab, setMainTab] = useState<"overview" | "feed" | "external">("feed");
+  const router = useRouter();
 
   useEffect(() => {
-    if (urlTab === "feed" || urlTab === "external" || urlTab === "overview") {
-      setMainTab(urlTab);
+    if (urlTab === "external") {
+      router.replace("/all-platform/post-feed");
+    } else if (urlTab === "overview") {
+      router.replace("/all-platform/overview");
     }
-  }, [urlTab]);
+  }, [urlTab, router]);
 
   // Tab & Lifecycle Heartbeat: Báo cho Extension biết tab Web Seeding đang mở
   useEffect(() => {
@@ -1157,7 +1158,7 @@ export default function InternalEngagementPage() {
         assigned_team_ids: resolvedTeamUUIDs,
         // Bài tạo từ tab "Seeding bên ngoài" đánh dấu external để hiện đúng
         // tab, không lẫn vào "Seeding nội bộ" (xem scopedPosts).
-        scope: (mainTab === "external" ? "external" : "internal") as "internal" | "external",
+        scope: "internal" as "internal" | "external",
       };
 
       const res = await internalEngagementService.addCustomPost(payload);
@@ -1244,11 +1245,8 @@ export default function InternalEngagementPage() {
   // định "internal" trừ khi tạo từ tab "Seeding bên ngoài" (xem
   // handleCreateTaskSubmit). Tab "Tổng quan báo cáo" KHÔNG lọc — gộp cả 2.
   const scopedPosts = useMemo(() => {
-    if (mainTab === "external") {
-      return allCombinedPosts.filter((post) => (post as any).scope === "external");
-    }
     return allCombinedPosts.filter((post) => (post as any).scope !== "external");
-  }, [allCombinedPosts, mainTab]);
+  }, [allCombinedPosts]);
 
   const realStats = useMemo(() => {
     // 1. Total Seeders: Total active members across all teams in company (always 20)
@@ -1580,7 +1578,7 @@ export default function InternalEngagementPage() {
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [tab, search, sourceTab, mainTab]);
+  }, [tab, search, sourceTab]);
 
   const pagedPosts = useMemo(() => {
     const start = (currentPage - 1) * PAGE_SIZE;
@@ -1784,7 +1782,7 @@ export default function InternalEngagementPage() {
                 Theo dõi thành viên đã nhận bài, đã tương tác, làm thiếu và quá hạn.
               </p>
             </div>
-            {mainTab !== "external" ? (
+
               <div className="flex items-center gap-3">
                 <a
                   href="/comment-extension.zip"
@@ -1820,7 +1818,7 @@ export default function InternalEngagementPage() {
                   <span className="text-base font-bold">+</span> Thêm bài viết Seeding
                 </button>
               </div>
-            ) : null}
+
           </div>
 
           {loadError ? (
@@ -1828,6 +1826,7 @@ export default function InternalEngagementPage() {
               {loadError}
             </div>
           ) : null}
+
 
           {/* BANNER CẢNH BÁO CHƯA CÓ EXTENSION KPI */}
           {!isExtensionReady && (
@@ -1867,231 +1866,7 @@ export default function InternalEngagementPage() {
             </div>
           )}
 
-          {/* MAIN TABS SWITCHER - thứ tự: Seeding nội bộ -> Seeding bên ngoài -> Tổng quan báo cáo */}
-          <div className="flex items-center gap-2 border-b border-gray-200 mb-6 bg-white p-2.5 rounded-2xl shadow-xs">
-            <button
-              type="button"
-              onClick={() => setMainTab("feed")}
-              className={`px-5 py-2.5 text-xs font-extrabold rounded-xl transition cursor-pointer flex items-center gap-2 ${
-                mainTab === "feed"
-                  ? "bg-[#be123c] text-white shadow-sm"
-                  : "text-gray-600 hover:bg-gray-100 hover:text-gray-900"
-              }`}
-            >
-              <span>⚡</span> Seeding nội bộ
-            </button>
-            <button
-              type="button"
-              onClick={() => setMainTab("external")}
-              className={`px-5 py-2.5 text-xs font-extrabold rounded-xl transition cursor-pointer flex items-center gap-2 ${
-                mainTab === "external"
-                  ? "bg-[#be123c] text-white shadow-sm"
-                  : "text-gray-600 hover:bg-gray-100 hover:text-gray-900"
-              }`}
-            >
-              <span>🌐</span> Seeding bên ngoài
-            </button>
-            <button
-              type="button"
-              onClick={() => setMainTab("overview")}
-              className={`px-5 py-2.5 text-xs font-extrabold rounded-xl transition cursor-pointer flex items-center gap-2 ${
-                mainTab === "overview"
-                  ? "bg-[#be123c] text-white shadow-sm"
-                  : "text-gray-600 hover:bg-gray-100 hover:text-gray-900"
-              }`}
-            >
-              <span>📊</span> Tổng quan báo cáo
-            </button>
-          </div>
-
-          {/* TAB 1: TỔNG QUAN BÁO CÁO */}
-          {mainTab === "overview" ? (
-            <div className="space-y-6">
-              {/* 5 Stats Cards tính toán dữ liệu thật từ DB */}
-              <div className="grid grid-cols-2 md:grid-cols-5 gap-3.5">
-                <div className="bg-white border border-gray-100 rounded-2xl p-4 shadow-[0_2px_8px_rgba(0,0,0,0.04)]">
-                  <span className="text-xs font-semibold text-gray-500 block">Tổng Seeder</span>
-                  <div className="text-2xl font-black text-gray-900 mt-1">{realStats.totalSeeder}</div>
-                  <span className="text-[11px] text-gray-400 font-medium">Thành viên đang hoạt động</span>
-                </div>
-                <div className="border border-rose-100 rounded-2xl p-4 bg-rose-50/20 shadow-[0_2px_8px_rgba(0,0,0,0.04)]">
-                  <span className="text-xs font-semibold text-rose-600 block">Bài viết đang chạy</span>
-                  <div className="text-2xl font-black text-rose-950 mt-1">{realStats.activePosts}</div>
-                  <span className="text-[11px] text-rose-500 font-medium">Bài viết Seeding hiện tại</span>
-                </div>
-                <div className="border border-emerald-100 rounded-2xl p-4 bg-emerald-50/20 shadow-[0_2px_8px_rgba(0,0,0,0.04)]">
-                  <span className="text-xs font-semibold text-emerald-600 block">Tiến độ KPI Comment</span>
-                  <div className="text-2xl font-black text-emerald-950 mt-1">
-                    {realStats.totalCompletedComments} / {realStats.totalTargetComments}
-                  </div>
-                  <span className="text-[11px] text-emerald-500 font-medium">
-                    {Math.round((realStats.totalCompletedComments / Math.max(1, realStats.totalTargetComments)) * 100)}% mục tiêu
-                  </span>
-                </div>
-                <div className="border border-amber-100 rounded-2xl p-4 bg-amber-50/20 shadow-[0_2px_8px_rgba(0,0,0,0.04)]">
-                  <span className="text-xs font-semibold text-amber-600 block">Seeder đã tham gia</span>
-                  <div className="text-2xl font-black text-amber-950 mt-1">{realStats.activeUniqueMembers}</div>
-                  <span className="text-[11px] text-amber-500 font-medium">
-                    {Math.round((realStats.activeUniqueMembers / Math.max(1, realStats.totalSeeder)) * 100)}% tổng Seeder
-                  </span>
-                </div>
-                <div className="border border-blue-200 rounded-2xl p-4 bg-blue-50/30 shadow-[0_2px_8px_rgba(0,0,0,0.04)]">
-                  <span className="text-xs font-semibold text-blue-600 block">Hoàn thành 100%</span>
-                  <div className="text-2xl font-black text-blue-950 mt-1">{realStats.perfectMembers}</div>
-                  <span className="text-[11px] text-blue-500 font-medium">Đã xong tất cả bài được giao</span>
-                </div>
-              </div>
-
-              {/* DANH SÁCH CHIẾN DỊCH SEEDING ĐANG DIỄN RA */}
-              {campaigns.length > 0 ? (
-                <div className="bg-white rounded-2xl p-4 border border-gray-100 shadow-[0_2px_8px_rgba(0,0,0,0.04)]">
-                  <div className="flex items-center justify-between mb-3">
-                    <span className="text-xs font-bold text-gray-700 uppercase tracking-wider flex items-center gap-1.5">
-                      <span>🚩</span> Chiến dịch Seeding đang diễn ra ({campaigns.length})
-                    </span>
-                    {selectedCampaignId !== "all" ? (
-                      <button
-                        type="button"
-                        onClick={() => setSelectedCampaignId("all")}
-                        className="text-xs text-rose-600 hover:underline font-semibold cursor-pointer"
-                      >
-                        Xem tất cả bài viết
-                      </button>
-                    ) : null}
-                  </div>
-                  <div className="flex items-center gap-2.5 overflow-x-auto pb-1">
-                    <button
-                      type="button"
-                      onClick={() => setSelectedCampaignId("all")}
-                      className={`px-3.5 py-2 rounded-xl text-xs font-bold transition shrink-0 border cursor-pointer ${selectedCampaignId === "all"
-                        ? "bg-gray-900 text-white border-gray-900 shadow-sm"
-                        : "bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100"
-                        }`}
-                    >
-                      Tất cả chiến dịch
-                    </button>
-                    {campaigns.map((camp) => {
-                      const isSelected = selectedCampaignId === camp.id;
-                      const color = camp.color_code || "#fff1f2";
-                      return (
-                        <div
-                          key={camp.id}
-                          style={{ backgroundColor: isSelected ? undefined : color }}
-                          className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition shrink-0 border flex items-center gap-2 ${isSelected
-                            ? "bg-[#be123c] text-white border-[#be123c] shadow-sm"
-                            : "text-gray-800 border-gray-200 hover:shadow-sm"
-                            }`}
-                        >
-                          <button
-                            type="button"
-                            onClick={() => setSelectedCampaignId(isSelected ? "all" : camp.id)}
-                            className="flex items-center gap-2 text-left outline-none cursor-pointer"
-                          >
-                            <span className="w-2.5 h-2.5 rounded-full bg-rose-500 shrink-0" />
-                            <span>{camp.name}</span>
-                            {camp.start_date ? (
-                              <span className="text-[10px] opacity-75 font-normal">
-                                ({new Date(camp.start_date).toLocaleDateString("vi-VN")}
-                                {camp.end_date ? ` - ${new Date(camp.end_date).toLocaleDateString("vi-VN")}` : ""})
-                              </span>
-                            ) : null}
-                          </button>
-
-                          {/* Nút Xóa Chiến Dịch dành cho Admin / Leader */}
-                          {canManagePost ? (
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleDeleteCampaignClick(camp.id, camp.name);
-                              }}
-                              className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] transition cursor-pointer ${isSelected
-                                ? "bg-white/20 hover:bg-white/40 text-white"
-                                : "bg-red-100/80 hover:bg-red-200 text-red-700"
-                                }`}
-                              title="Xóa chiến dịch này"
-                            >
-                              🗑️
-                            </button>
-                          ) : null}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              ) : null}
-
-              {/* Gamification Leaderboard Component */}
-              <div className="bg-white rounded-2xl border border-gray-200 p-5 shadow-[0_2px_8px_rgba(0,0,0,0.04)]">
-                <div className="flex items-center justify-between mb-4">
-                  <h2 className="text-base font-bold text-gray-900 flex items-center gap-2">
-                    <span>🏆</span> Xếp hạng Seeder nổi bật
-                  </h2>
-                  <button onClick={() => { setIsLeaderboardModalOpen(true); setLeaderboardCurrentPage(1); }} className="text-xs text-[#be123c] hover:underline font-semibold cursor-pointer">
-                    Xem tất cả →
-                  </button>
-                </div>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left text-sm">
-                    <thead>
-                      <tr className="border-b border-gray-100 text-xs font-semibold text-gray-400 uppercase tracking-wider">
-                        <th className="pb-3 pl-2">Hạng</th>
-                        <th className="pb-3">Thành viên</th>
-                        <th className="pb-3 text-center">Được giao</th>
-                        <th className="pb-3 text-center">Hoàn thành</th>
-                        <th className="pb-3 text-center">Đúng hạn</th>
-                        <th className="pb-3 text-center">Tỷ lệ</th>
-                        <th className="pb-3 text-right pr-2">Điểm</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-50">
-                      {activeLeaderboard.length === 0 ? (
-                        <tr>
-                          <td colSpan={7} className="py-6 text-center text-gray-400 text-xs">
-                            Đang cập nhật dữ liệu bảng xếp hạng...
-                          </td>
-                        </tr>
-                      ) : (
-                        activeLeaderboard.slice(0, 5).map((item, idx) => {
-                          const rank = idx + 1;
-                          const badgeBg = rank === 1 ? "bg-amber-100 text-amber-800 border-amber-300" : rank === 2 ? "bg-slate-100 text-slate-700 border-slate-300" : rank === 3 ? "bg-orange-100 text-orange-800 border-orange-300" : "bg-gray-50 text-gray-600 border-gray-200";
-                          const rankIcon = rank === 1 ? "🥇 1" : rank === 2 ? "🥈 2" : rank === 3 ? "🥉 3" : rank;
-                          return (
-                            <tr key={item.user_id || idx} className="hover:bg-gray-50/60 transition-colors">
-                              <td className="py-3.5 pl-2">
-                                <span className={`inline-flex items-center justify-center px-2.5 py-1 rounded-full text-xs font-bold border ${badgeBg}`}>
-                                  {rankIcon}
-                                </span>
-                              </td>
-                              <td className="py-3.5">
-                                <div className="font-bold text-gray-900">{item.member_name}</div>
-                                <div className="text-xs text-gray-400 font-normal">{item.team_name}</div>
-                              </td>
-                              <td className="py-3.5 text-center text-gray-700 font-medium">{item.total_assigned}</td>
-                              <td className="py-3.5 text-center text-emerald-600 font-bold">{item.total_completed}</td>
-                              <td className="py-3.5 text-center text-blue-600 font-medium">{item.total_ontime}</td>
-                              <td className="py-3.5 text-center text-gray-700 font-medium">{item.completion_rate}%</td>
-                              <td className="py-3.5 text-right pr-2 font-black text-emerald-600 text-base">{item.score}</td>
-                            </tr>
-                          );
-                        })
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-
-              {canSeeTeamInteractions ? <TeamPerformancePanel email={user?.email} /> : null}
-            </div>
-          ) : mainTab === "external" ? (
-            /* TAB 2: SEEDING BÊN NGOÀI — gom nguyên trang /all-platform/post-feed cũ
-            (UnifiedDashboardHomeContent: crawl + seeding bài viết từ nhóm LinkedIn/
-            Facebook bên ngoài) vào đây theo yêu cầu user, không còn trang/menu
-            "Post feed" riêng nữa (đã bỏ khỏi sidebar — xem AllPlatformSidebar.tsx). */
-            <UnifiedDashboardHomeContent hideHeader />
-          ) : (
-            /* TAB 2: HOẠT ĐỘNG SEEDING (POST FEED) */
-            <div>
+          <div>
 
           {/* Bulk action bar */}
           {selectMode ? (
@@ -2541,7 +2316,7 @@ export default function InternalEngagementPage() {
             ) : null}
           </div>
         </div>
-      )}
+
         </div>
 
         {/* Comment modal */}
