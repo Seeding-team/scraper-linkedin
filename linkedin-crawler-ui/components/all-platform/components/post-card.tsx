@@ -19,6 +19,8 @@ import {
 import { LeadFormDrawer } from "@/modules/crm/components/LeadFormDrawer";
 import type { CrmLeadRow } from "@/modules/crm/types";
 import { toast } from "sonner";
+import { PostEvaluationDropdown } from "./PostEvaluationDropdown";
+import { PostAssigneeDropdown, type PostMemberItem } from "./PostAssigneeDropdown";
 
 interface PostCardProps {
   post: UnifiedPost;
@@ -33,6 +35,7 @@ interface PostCardProps {
   onComment?: (post: UnifiedPost) => void;
   seeded?: boolean;
   verifyStatus?: "pending" | "yes" | "no";
+  teamMembers?: PostMemberItem[];
 }
 
 
@@ -49,7 +52,7 @@ function PlatformIcon({ platform }: { platform: FeedPlatform }) {
   return <FaLinkedin className="text-blue-700 shrink-0" />;
 }
 
-export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onViewDetail, onDelete, onViewSeedingRoster, onComment, seeded, verifyStatus }: PostCardProps) {
+export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onViewDetail, onDelete, onViewSeedingRoster, onComment, seeded, verifyStatus, teamMembers }: PostCardProps) {
   const { user: currentUser } = useAppAuth();
   const isYouTube = post.platform === "youtube";
   const [showAllCrawledComments, setShowAllCrawledComments] = useState(false);
@@ -460,6 +463,25 @@ export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onVi
                 </span>
               );
             })()}
+
+            {/* Tình trạng bài viết (Chuẩn theo dropdown Ảnh 2) */}
+            <PostEvaluationDropdown
+              postId={post.id || post.post_url}
+              initialStatus={(post as any).evaluation_status}
+            />
+
+            {/* Assign người seeding */}
+            <PostAssigneeDropdown
+              postId={post.id || post.post_url}
+              teamMembers={teamMembers}
+              initialAssignee={
+                (post as any).assigned_member
+                  ? (post as any).assigned_member
+                  : (post as any).assigned_to
+                  ? { email: (post as any).assigned_to, name: (post as any).assigned_name }
+                  : null
+              }
+            />
           </div>
 
           <div className="flex items-center gap-2">

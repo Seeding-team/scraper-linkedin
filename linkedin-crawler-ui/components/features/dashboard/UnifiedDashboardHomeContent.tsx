@@ -24,7 +24,7 @@ import { MemberKpiRewardOverview } from "@/components/all-platform/kpi-rewards/K
 import { ScheduleCommentModal } from "@/components/all-platform/feed/ScheduleCommentModal";
 import { ScheduledCommentsPanel } from "@/components/all-platform/feed/ScheduledCommentsPanel";
 import { PostFeedSkeleton } from "@/components/all-platform/feed/PostFeedSkeleton";
-import { allPlatformPostsService, allPlatformCategoriesService, teamsService, socialAccountsService } from "@/services/all-platform.service";
+import { allPlatformPostsService, allPlatformCategoriesService, teamsService, socialAccountsService, allPlatformUsersService, type TeamMember } from "@/services/all-platform.service";
 import type { UnifiedPost, UnifiedStats, Category, FeedPlatform, SocialAccount, PostSeedingRosterData } from "@/types/unified.types";
 
 // â”€â”€â”€ Retry helper â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -250,6 +250,18 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
   const [scheduleModalPost, setScheduleModalPost] = useState<UnifiedPost | null>(null);
   const [scheduleRefreshKey, setScheduleRefreshKey] = useState(0);
   const [socialAccounts, setSocialAccounts] = useState<SocialAccount[]>([]);
+  const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
+
+  useEffect(() => {
+    allPlatformUsersService
+      .getAllProfiles()
+      .then((res) => {
+        if (res.success && res.data) {
+          setTeamMembers(res.data);
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   // "Xem seeding theo team" (admin/leader) — roster toàn bộ team sở hữu group
   // của 1 bài viết, kèm ai đã/chưa seeding + nội dung.
@@ -858,7 +870,7 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
                 )}
               >
                 <span className="material-symbols-outlined text-[16px]">bolt</span>
-                {isReviewMode ? "Thoát Review Nhanh" : "⚡ Review Nhanh (MSC)"}
+                {isReviewMode ? "Thoát Review Nhanh" : "⚡ Review Nhanh"}
               </button>
             </div>
           </div>
@@ -931,6 +943,7 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
                     <PostCard
                       key={post.id || post.post_url}
                       post={post}
+                      teamMembers={teamMembers}
                       userRole={user?.role}
                       seeded={!!post.verify_status && post.verify_status !== "no"}
                       verifyStatus={post.verify_status as "pending" | "yes" | "no"}
@@ -980,6 +993,7 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
         </>
       <PostQuickViewModal
         post={quickViewPost}
+        teamMembers={teamMembers}
         onClose={() => setQuickViewPost(null)}
         onStartSeeding={(post) => {
           if (!post.post_url) return;

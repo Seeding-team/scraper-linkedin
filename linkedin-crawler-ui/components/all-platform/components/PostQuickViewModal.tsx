@@ -4,14 +4,17 @@ import React from "react";
 import { FaFacebook, FaLinkedin, FaYoutube, FaLink, FaExternalLinkAlt, FaTimes, FaFire, FaCheckCircle, FaComments, FaThumbsUp } from "react-icons/fa";
 import { FaThreads } from "react-icons/fa6";
 import type { UnifiedPost } from "@/types/unified.types";
+import { PostEvaluationDropdown } from "./PostEvaluationDropdown";
+import { PostAssigneeDropdown, type PostMemberItem } from "./PostAssigneeDropdown";
 
 interface PostQuickViewModalProps {
   post: UnifiedPost | null;
+  teamMembers?: PostMemberItem[];
   onClose: () => void;
   onStartSeeding?: (post: UnifiedPost) => void;
 }
 
-export function PostQuickViewModal({ post, onClose, onStartSeeding }: PostQuickViewModalProps) {
+export function PostQuickViewModal({ post, teamMembers, onClose, onStartSeeding }: PostQuickViewModalProps) {
   if (!post) return null;
 
   const getPlatformIcon = (platform: string) => {
@@ -161,6 +164,14 @@ export function PostQuickViewModal({ post, onClose, onStartSeeding }: PostQuickV
               <div className="flex justify-between py-1 border-b border-border/50">
                 <span className="text-muted-foreground">Tier khách hàng:</span>
                 <span className="font-semibold">{post.tier ? `Tier ${post.tier}` : "Tiêu chuẩn"}</span>
+              </div>
+              <div className="flex justify-between py-1.5 border-b border-border/50 items-center">
+                <span className="text-muted-foreground">Tình trạng:</span>
+                <PostEvaluationDropdown postId={post.id || post.post_url} />
+              </div>
+              <div className="flex justify-between py-1.5 border-b border-border/50 items-center">
+                <span className="text-muted-foreground">Gán seeding:</span>
+                <PostAssigneeDropdown postId={post.id || post.post_url} teamMembers={teamMembers} />
               </div>
               <div className="flex justify-between py-1">
                 <span className="text-muted-foreground">Trạng thái Seeding:</span>
