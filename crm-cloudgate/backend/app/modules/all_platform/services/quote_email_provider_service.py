@@ -427,11 +427,23 @@ def _record_connection_status(kind: str, ok: bool) -> None:
     _scope(supabase.table("quote_delivery_channels").update({field_status: "ok" if ok else "error", field_tested: now})).execute()
 
 
-def test_imap_connection(inline_email: Optional[str] = None, inline_app_password: Optional[str] = None) -> dict:
+def test_imap_connection(
+    inline_email: Optional[str] = None,
+    inline_app_password: Optional[str] = None,
+    inline_imap_host: Optional[str] = None,
+    inline_imap_port: Optional[int] = None,
+) -> dict:
+    # Bug that (2026-10-31): Email Inbox Omnichannel (host/port tuy chinh, vd mail hosting
+    # rieng kieu "mail9057.maychuemail.com") goi ham nay voi 4 tham so, nhung truoc day ham
+    # chi nhan 2 tham so va LUON cung Gmail host/port -> TypeError "takes from 0 to 2
+    # positional arguments but 4 were given". Them 2 tham so tuy chon, mac dinh ve Gmail de
+    # khong doi hanh vi cac noi goi cu (quote email provider, chi dung Gmail).
     is_inline_test = bool(normalize_app_password(inline_app_password))
     email_addr, app_password = _resolve_credentials(inline_email, inline_app_password)
+    imap_host = inline_imap_host or GMAIL_IMAP_HOST
+    imap_port = int(inline_imap_port or GMAIL_IMAP_PORT)
     try:
-        conn = imaplib.IMAP4_SSL(GMAIL_IMAP_HOST, GMAIL_IMAP_PORT, timeout=15)
+        conn = imaplib.IMAP4_SSL(imap_host, imap_port, timeout=15)
         try:
             conn.login(email_addr, app_password)
             # Chi doc (select mailbox read-only) - dung yeu cau "Test IMAP
@@ -456,11 +468,19 @@ def test_imap_connection(inline_email: Optional[str] = None, inline_app_password
         return {"ok": False, "message": f"Không kết nối được IMAP ({type(exc).__name__})."}
 
 
-def test_smtp_connection(inline_email: Optional[str] = None, inline_app_password: Optional[str] = None) -> dict:
+def test_smtp_connection(
+    inline_email: Optional[str] = None,
+    inline_app_password: Optional[str] = None,
+    inline_smtp_host: Optional[str] = None,
+    inline_smtp_port: Optional[int] = None,
+) -> dict:
+    # Xem chu thich trong test_imap_connection() o tren - cung 1 bug/cach fix.
     is_inline_test = bool(normalize_app_password(inline_app_password))
     email_addr, app_password = _resolve_credentials(inline_email, inline_app_password)
+    smtp_host = inline_smtp_host or GMAIL_SMTP_HOST
+    smtp_port = int(inline_smtp_port or GMAIL_SMTP_PORT)
     try:
-        with smtplib.SMTP(GMAIL_SMTP_HOST, GMAIL_SMTP_PORT, timeout=15) as server:
+        with smtplib.SMTP(smtp_host, smtp_port, timeout=15) as server:
             server.ehlo()
             server.starttls()
             server.ehlo()

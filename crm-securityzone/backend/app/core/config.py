@@ -9,6 +9,8 @@ from pathlib import Path
 from dotenv import load_dotenv
 import os
 
+from app.core.workspace_domains import all_workspace_domains
+
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 load_dotenv(BASE_DIR / ".env")
@@ -344,6 +346,11 @@ class Settings:
     # it must use the same instance filter mechanism as the clone apps.
     crm_instance: str = (os.getenv("CRM_INSTANCE") or "markee").strip()
     crm_public_url: str = os.getenv("CRM_PUBLIC_URL", "http://localhost:8080").rstrip("/")
+    # Bug that (2026-10-30): auth.py dung settings.workspace_domains nhung truoc day CHUA
+    # TUNG duoc dinh nghia o day -> AttributeError moi lan goi GET /auth/workspaces ->
+    # switcher workspace (dropdown chuyen Markee/CloudGate/SecurityZone/TimeTech) luon bi
+    # an hoan toan tren CA 4 app, khong phai do sidebar thu gon. Xem app/core/workspace_domains.py.
+    workspace_domains: dict[str, str] = field(default_factory=all_workspace_domains)
     google_service_account_email: str = os.getenv("GOOGLE_SERVICE_ACCOUNT_EMAIL", "")
     google_private_key: str = os.getenv("GOOGLE_PRIVATE_KEY", "").replace("\\n", "\n")
     google_drive_contracts_shared_drive_id: str = os.getenv(

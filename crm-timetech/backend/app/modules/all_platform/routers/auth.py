@@ -163,8 +163,13 @@ def auth_list_workspaces(request: Request) -> BaseResponse:
     frontend dùng để hiện switcher (chỉ render UI khi role=admin, kiểm tra
     quyền thật ở /workspace-handoff bên dưới)."""
     current_instance = settings.crm_instance
+    # So khop khong phan biet hoa/thuong: workspace_domains luon co key chu thuong
+    # (_parse trong workspace_domains.py), nhung crm_instance co the la "SECURITYZONE"
+    # (viet hoa) tuy workspace - khong lowercase ca 2 thi "current" se sai het (bug
+    # that da gap 2026-10-30: khong workspace nao duoc danh dau dang dung tren SecurityZone).
+    current_key = (current_instance or "").strip().lower()
     items = [
-        {"instance": instance, "url": url, "current": instance == current_instance}
+        {"instance": instance, "url": url, "current": instance.lower() == current_key}
         for instance, url in settings.workspace_domains.items()
     ]
     return BaseResponse(success=True, data={"items": items, "current_instance": current_instance})

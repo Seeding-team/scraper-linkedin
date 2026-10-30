@@ -806,7 +806,7 @@ def _get_or_create_thread(
 
 
 def _store_attachment(message_db_id: str, filename: str, content_type: str,
-                      data: bytes, content_id: str | None) -> None:
+                      data: bytes, content_id: str | None) -> str:
     attachment_id = str(uuid.uuid4())
     path = f"{_workspace()}/{message_db_id}/{attachment_id}-{_safe_filename(filename)}"
     _db().storage.from_(ATTACHMENT_BUCKET).upload(
@@ -818,6 +818,7 @@ def _store_attachment(message_db_id: str, filename: str, content_type: str,
         "file_name": _safe_filename(filename), "content_type": content_type,
         "size_bytes": len(data), "storage_path": path, "content_id": content_id,
     }).execute())
+    return attachment_id
 
 
 def _persist_inbound(
@@ -879,8 +880,32 @@ def _persist_inbound(
         "received_at": received_at,
     }).execute())
     db_message_id = inserted.data[0]["id"]
+    cid_to_attachment_id: dict[str, str] = {}
     for filename, content_type, data, content_id in _message_attachments(msg):
-        _store_attachment(db_message_id, filename, content_type, data, content_id)
+        attachment_id = _store_attachment(db_message_id, filename, content_type, data, content_id)
+        if content_id:
+            cid_to_attachment_id[content_id] = attachment_id
+
+    # Bug that (2026-10-31): anh nhung (vd logo trong email MISA) tham chieu bang
+    # "cid:xxxx" trong body_html - trinh duyet KHONG hieu scheme "cid:" (chi email
+    # client moi hieu), nen luon vo ra icon anh vo. Doi cid: -> URL that cua dung
+    # attachment da luu o tren (chi doi duoc SAU khi co attachment_id that, nen phai
+    # UPDATE lai body_html sau khi insert, khong lam duoc ngay luc insert ban dau).
+    if body_html and cid_to_attachment_id:
+        rewritten_html = body_html
+        for cid, attachment_id in cid_to_attachment_id.items():
+            attachment_url = f"/api/all-platform/email-inbox/attachments/{attachment_id}"
+            rewritten_html = re.sub(
+                rf'cid:{re.escape(cid)}(?=["\'])',
+                attachment_url,
+                rewritten_html,
+                flags=re.IGNORECASE,
+            )
+        if rewritten_html != body_html:
+            body_html = rewritten_html
+            _run(lambda: _db().table("omnichannel_email_messages").update({
+                "body_html": body_html,
+            }).eq("instance", _workspace()).eq("id", db_message_id).execute())
 
     new_unread = int(thread.get("unread_count") or 0) + (1 if direction == "inbound" else 0)
     _run(lambda: _db().table("omnichannel_email_threads").update({
