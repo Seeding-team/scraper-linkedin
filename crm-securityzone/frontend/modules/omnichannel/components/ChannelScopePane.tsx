@@ -2,7 +2,7 @@
 
 import React from "react";
 import { ChannelType, ChannelAccount } from "../types";
-import { MessageSquare, ChevronLeft, ChevronRight, Plus, Mail } from "lucide-react";
+import { MessageSquare, ChevronLeft, ChevronRight, Plus, Mail, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { CHANNEL_CAPABILITIES } from "../constants/channelCapabilities";
 
@@ -18,6 +18,9 @@ interface ChannelScopePaneProps {
   scopeFilter: "my" | "team" | "all";
   onSelectScopeFilter: (scope: "my" | "team" | "all") => void;
   onConnectAccountModal: () => void;
+  /** Gỡ/ngắt kết nối 1 tài khoản email ngay từ pane này - optional vì chỉ có ý
+   * nghĩa với channel="email" (các channel khác chưa có API disconnect tương ứng). */
+  onDisconnectAccount?: (accId: string) => void;
 }
 
 const CHANNEL_LABELS: Record<ChannelType, string> = {
@@ -44,6 +47,7 @@ export const ChannelScopePane: React.FC<ChannelScopePaneProps> = ({
   scopeFilter,
   onSelectScopeFilter,
   onConnectAccountModal,
+  onDisconnectAccount,
 }) => {
   const getCount = (ch: ChannelType) => {
     if (channelCounts && typeof channelCounts[ch] === "number") {
@@ -242,51 +246,65 @@ export const ChannelScopePane: React.FC<ChannelScopePaneProps> = ({
                         const isAccActive = selectedAccount === acc.id;
                         const isExpired = acc.reconnectRequired || acc.status === "expired";
                         return (
-                          <button
-                            key={acc.id}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              onSelectChannel("email");
-                              onSelectAccount(acc.id);
-                            }}
-                            className={cn(
-                              "group flex w-full items-center justify-between rounded px-1.5 py-0.5 text-[10px] transition text-left",
-                              isAccActive
-                                ? "bg-amber-50 text-amber-900 font-bold shadow-2xs ring-1 ring-amber-300"
-                                : "text-slate-600 hover:bg-slate-100"
-                            )}
-                            title={acc.email || acc.name}
-                          >
-                            <div className="flex items-center gap-1.5 truncate min-w-0">
-                              <span
-                                className={cn(
-                                  "h-1.5 w-1.5 shrink-0 rounded-full",
-                                  isExpired
-                                    ? "bg-amber-500 animate-pulse ring-2 ring-amber-200"
-                                    : acc.status === "online"
-                                    ? "bg-emerald-500"
-                                    : acc.status === "error"
-                                    ? "bg-rose-500"
-                                    : acc.status === "syncing"
-                                    ? "bg-sky-500 animate-pulse"
-                                    : "bg-slate-300"
+                          <div key={acc.id} className="group relative flex items-center">
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onSelectChannel("email");
+                                onSelectAccount(acc.id);
+                              }}
+                              className={cn(
+                                "flex w-full items-center justify-between rounded px-1.5 py-0.5 text-[10px] transition text-left",
+                                isAccActive
+                                  ? "bg-amber-50 text-amber-900 font-bold shadow-2xs ring-1 ring-amber-300"
+                                  : "text-slate-600 hover:bg-slate-100"
+                              )}
+                              title={acc.email || acc.name}
+                            >
+                              <div className="flex items-center gap-1.5 truncate min-w-0">
+                                <span
+                                  className={cn(
+                                    "h-1.5 w-1.5 shrink-0 rounded-full",
+                                    isExpired
+                                      ? "bg-amber-500 animate-pulse ring-2 ring-amber-200"
+                                      : acc.status === "online"
+                                      ? "bg-emerald-500"
+                                      : acc.status === "error"
+                                      ? "bg-rose-500"
+                                      : acc.status === "syncing"
+                                      ? "bg-sky-500 animate-pulse"
+                                      : "bg-slate-300"
+                                  )}
+                                />
+                                <span className="truncate">{acc.email || acc.name}</span>
+                              </div>
+                              <div className="flex items-center gap-1 shrink-0 ml-1">
+                                {isExpired && (
+                                  <span className="rounded bg-amber-100 px-1 py-0.2 text-[7.5px] font-bold text-amber-800">
+                                    Hết quyền
+                                  </span>
                                 )}
-                              />
-                              <span className="truncate">{acc.email || acc.name}</span>
-                            </div>
-                            <div className="flex items-center gap-1 shrink-0 ml-1">
-                              {isExpired && (
-                                <span className="rounded bg-amber-100 px-1 py-0.2 text-[7.5px] font-bold text-amber-800">
-                                  Hết quyền
-                                </span>
-                              )}
-                              {acc.count !== undefined && acc.count > 0 && (
-                                <span className="text-[8.5px] font-bold text-slate-400 bg-slate-100 px-1 py-0.2 rounded-full">
-                                  {acc.count}
-                                </span>
-                              )}
-                            </div>
-                          </button>
+                                {acc.count !== undefined && acc.count > 0 && (
+                                  <span className="text-[8.5px] font-bold text-slate-400 bg-slate-100 px-1 py-0.2 rounded-full">
+                                    {acc.count}
+                                  </span>
+                                )}
+                              </div>
+                            </button>
+                            {onDisconnectAccount && (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onDisconnectAccount(acc.id);
+                                }}
+                                title="Gỡ/ngắt kết nối tài khoản email này"
+                                className="absolute right-0.5 hidden shrink-0 rounded p-0.5 text-rose-500 hover:bg-rose-50 hover:text-rose-700 group-hover:block"
+                              >
+                                <Trash2 className="h-2.5 w-2.5" />
+                              </button>
+                            )}
+                          </div>
                         );
                       })}
 

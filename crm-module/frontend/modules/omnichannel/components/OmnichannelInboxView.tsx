@@ -138,6 +138,24 @@ export function OmnichannelInboxView() {
     }
   };
 
+  // Gỡ/ngắt kết nối 1 tài khoản email ngay từ pane danh sách kênh (không cần mở
+  // modal "Quản lý Tài khoản Email") — tái dùng đúng API disconnectEmailAccount
+  // đã có, chỉ thêm 1 chỗ gọi mới + refresh lại danh sách tài khoản sau khi gỡ.
+  const handleDisconnectAccount = async (accId: string) => {
+    if (!confirm("Bạn có chắc chắn muốn ngắt kết nối tài khoản email này?")) return;
+    try {
+      await omnichannelRepository.disconnectEmailAccount(accId);
+      const accs = await omnichannelRepository.fetchChannelAccounts();
+      setRealAccounts(accs);
+      if (selectedAccount === accId) {
+        setSelectedAccount(null);
+      }
+      showToast("Đã ngắt kết nối tài khoản email.");
+    } catch (e: any) {
+      showToast(e?.message || "Lỗi khi ngắt kết nối tài khoản.");
+    }
+  };
+
   // 1. Fetch Real Channel Accounts on mount
   const fetchRealAccounts = async () => {
     setLoadingAccounts(true);
@@ -657,6 +675,7 @@ export function OmnichannelInboxView() {
           scopeFilter={scopeFilter}
           onSelectScopeFilter={(s) => setScopeFilter(s)}
           onConnectAccountModal={() => setIsConnectAccountOpen(true)}
+          onDisconnectAccount={handleDisconnectAccount}
         />
 
         {/* Pane 2 — Hội thoại (~320px) */}
