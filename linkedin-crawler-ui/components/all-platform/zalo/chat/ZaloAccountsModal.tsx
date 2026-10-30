@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Download, Plus, RefreshCw, Trash2, CheckCircle2, AlertTriangle, ExternalLink, X, ShieldCheck, Zap } from "lucide-react";
+import { Download, Plus, RefreshCw, Trash2, CheckCircle2, AlertTriangle, X, ShieldCheck, Zap, RotateCcw } from "lucide-react";
 import { ensureZaloExtensionBridge } from "@/lib/zaloExtensionClient";
 import type { ZaloAccountSummary } from "@/lib/types";
 
@@ -64,7 +64,52 @@ export function ZaloAccountsModal({ onClose, onChanged }: Props) {
   useEffect(() => {
     ensureZaloExtensionBridge();
     loadAccounts();
+
+    const onStep = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      if (!detail) return;
+      if (detail.step === "import.waiting_for_login_cookies") {
+        setMessage({
+          text: "⏳ Đang chờ bạn quét mã QR hoặc xác nhận đăng nhập Zalo trên tab vừa mở...",
+          actionLabel: "Mở lại tab Zalo ↗",
+          actionUrl: "https://chat.zalo.me/",
+        });
+      } else if (detail.step === "import.wait_done" && detail.details?.hasLoginToken) {
+        setMessage({
+          text: "⚡ Đã xác thực đăng nhập! Đang chuyển giao phiên về máy chủ Seeding...",
+        });
+      } else if (detail.step === "import.success") {
+        setMessage({
+          text: "✅ Đã nạp phiên Zalo thành công! Hệ thống đang kích hoạt socket kết nối...",
+        });
+      }
+    };
+
+    window.addEventListener("zalo-ext-step", onStep);
+    return () => {
+      window.removeEventListener("zalo-ext-step", onStep);
+    };
   }, []);
+
+  const handleRestart = async (acc: ZaloAccountSummary) => {
+    setBusyId(acc.account_id);
+    setMessage(null);
+    try {
+      const res = await fetch(`/api/all-platform/zalo/accounts/${encodeURIComponent(acc.account_id)}/listener/restart`, {
+        method: "POST"
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || data.message || "Không thể khởi động lại kết nối.");
+      setMessage({ text: `Đã gửi yêu cầu kết nối lại socket cho "${acc.display_name}". Vui lòng chờ vài giây...` });
+      await new Promise((r) => setTimeout(r, 2000));
+      await loadAccounts();
+      onChanged?.();
+    } catch (err: any) {
+      setMessage({ text: err.message, isError: true });
+    } finally {
+      setBusyId(null);
+    }
+  };
 
   const handleConnect = async (acc: ZaloAccountSummary) => {
     setConnectingId(acc.account_id);
@@ -366,6 +411,19 @@ export function ZaloAccountsModal({ onClose, onChanged }: Props) {
 
                   {/* Action Buttons */}
                   <div className="flex items-center gap-2 self-end sm:self-center shrink-0">
+                    {!isOnline && (
+                      <button
+                        type="button"
+                        disabled={isConnecting || isBusy}
+                        onClick={() => handleRestart(acc)}
+                        className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 px-3 py-2 text-xs font-semibold text-slate-700 transition shadow-2xs cursor-pointer disabled:opacity-50"
+                        title="Khởi động lại kết nối socket nếu phiên bị ngắt"
+                      >
+                        <RotateCcw size={12} className={isBusy ? "animate-spin text-[#0068ff]" : ""} />
+                        <span>Kết nối lại</span>
+                      </button>
+                    )}
+
                     <button
                       type="button"
                       disabled={isConnecting || isBusy}

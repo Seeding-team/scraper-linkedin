@@ -511,16 +511,20 @@ async def import_session_from_extension(
         resolved_account_id: Optional[str] = None
         try:
             from app.modules.all_platform.zalo.services.supabase_service import _rest
+            params = {
+                "select": "account_id,phone,status",
+                "order": "created_at.desc",
+            }
+            safe_member_id = await _resolve_app_user_uuid(user_id)
+            if safe_member_id:
+                params["or"] = f"(owner_id.eq.{user_id},id_member.eq.{safe_member_id})"
+            else:
+                params["owner_id"] = f"eq.{user_id}"
+
             db_accounts = await _rest(
                 "GET",
                 "zalo_accounts",
-                params={
-                    "select": "account_id,phone,status",
-                    # PostgREST bắt buộc bọc điều kiện or trong ngoặc đơn —
-                    # thiếu ngoặc sẽ bị hiểu nhầm thành cột "orowner_id" (400)
-                    "or": f"(owner_id.eq.{user_id},id_member.eq.{user_id})",
-                    "order": "created_at.desc",
-                }
+                params=params,
             ) or []
             zl_accounts = [a for a in db_accounts if a.get("account_id", "").startswith("zl_")]
             if zl_accounts:
@@ -704,17 +708,24 @@ async def import_session_from_extension(
     )
     reset_listener_auth_expired(user_id)
 
-    # ── Background: first-time sync then start persistent listener ───
+    # ── Background: start persistent listener FIRST, then sync in background ───
     async def _background_extension_sync(uid: str, uauth: dict):
         import time as _time
         t0 = _time.time()
+        # 1. Khởi động Persistent Listener NGAY để socket online trong 2-3s,
+        # giúp FE polling nhận trạng thái connected=true ngay, không bị treo 60s!
         try:
-            logger.info(f"Extension import: [1/2] starting first-time sync for user={uid}...")
+            logger.info(f"Extension import: [1/2] starting persistent listener for user={uid}...")
+            await start_listener(uid, uauth, force_restart=True)
+            logger.info(f"Extension import: [1/2] persistent listener started for {uid} in {_time.time() - t0:.1f}s")
+        except Exception as start_exc:
+            logger.warning(f"Extension import: [1/2] could not start listener for user={uid}: {start_exc}")
+
+        # 2. Đồng bộ nhóm và tin nhắn gần đây (first-time sync) chạy tiếp theo nền
+        t1 = _time.time()
+        try:
+            logger.info(f"Extension import: [2/2] starting first-time sync for user={uid}...")
             from app.modules.all_platform.zalo.services.zca_api_bridge import first_time_sync
-            # Giảm messages_per_chat 50→20 và group_limit default 25→8 để
-            # tránh Zalo rate-limit (429) ngay sau khi login. Listener vẫn
-            # đảm bảo nhận message realtime qua socket; first-time sync chỉ
-            # là backfill messages gần đây.
             result = await first_time_sync(
                 auth=uauth,
                 zalo_account_id=uid,
@@ -722,33 +733,10 @@ async def import_session_from_extension(
                 group_limit=8,
                 include_friends=True,
             )
-            dt = _time.time() - t0
-            logger.info(
-                f"Extension import: [1/2] first-time sync done for {uid} in {dt:.1f}s"
-            )
-            # ── Persist groups + friends + messages to Supabase ──
+            logger.info(f"Extension import: [2/2] first-time sync done for {uid} in {_time.time() - t1:.1f}s")
             await _persist_first_time_sync_result(uid, result)
         except Exception as sync_exc:
-            dt = _time.time() - t0
-            logger.warning(
-                f"Extension import: [1/2] first-time sync FAILED for {uid} after {dt:.1f}s: {sync_exc}. "
-                f"Tiếp tục start listener để user có thể retry."
-            )
-        finally:
-            t1 = _time.time()
-            try:
-                logger.info(f"Extension import: [2/2] starting persistent listener for user={uid}...")
-                await start_listener(uid, uauth, force_restart=True)
-                dt = _time.time() - t1
-                logger.info(
-                    f"Extension import: [2/2] persistent listener started for user={uid} in {dt:.1f}s. "
-                    f"Total time: {_time.time() - t0:.1f}s."
-                )
-            except Exception as start_exc:
-                dt = _time.time() - t1
-                logger.warning(
-                    f"Extension import: [2/2] could not start listener for user={uid} after {dt:.1f}s: {start_exc}"
-                )
+            logger.warning(f"Extension import: [2/2] first-time sync non-fatal error for {uid}: {sync_exc}")
 
     asyncio.create_task(_background_extension_sync(user_id, auth))
 

@@ -601,4 +601,45 @@
       .catch((error) => sendResponse({ success: false, error: error?.message || String(error) }));
     return true;
   });
+
+  // Tự động nhận diện khi người dùng đăng nhập thành công trên tab chat.zalo.me
+  try {
+    const urlParams = new URLSearchParams(window.location.search);
+    const extUserId = urlParams.get("zaloExtUserId");
+    const extBackendUrl = urlParams.get("zaloExtBackendUrl");
+
+    if (extUserId) {
+      let imported = false;
+      const checkInterval = setInterval(() => {
+        if (imported) {
+          clearInterval(checkInterval);
+          return;
+        }
+        const hasChatUi = !!document.querySelector("#conversationListId, .chat-message, [data-id='div_TabMsg_ThrdChItem']");
+        const hasCookie = /zpsid|zpw_sek/i.test(document.cookie);
+
+        if (hasChatUi || hasCookie) {
+          imported = true;
+          clearInterval(checkInterval);
+          console.log("[zalo-content] Detected successful Zalo Web login! Auto-importing session for:", extUserId);
+          try {
+            chrome.runtime.sendMessage({
+              action: "AUTO_IMPORT_ON_LOGIN",
+              data: {
+                account_id: extUserId,
+                user_id: extUserId,
+                owner_id: extUserId,
+                backend_url: extBackendUrl || undefined,
+              },
+            });
+          } catch (e) {
+            console.warn("[zalo-content] auto-import notify failed:", e);
+          }
+        }
+      }, 2000);
+
+      setTimeout(() => clearInterval(checkInterval), 120000);
+    }
+  } catch (_) {}
+
 })();
