@@ -1,5 +1,5 @@
-import { getZaloChatUrl } from '@/lib/zaloChatNavigation';
 'use client';
+import { getZaloChatUrl } from '@/lib/zaloChatNavigation';
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';

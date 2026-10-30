@@ -1,6 +1,6 @@
+'use client';
 import { MessageCircle } from 'lucide-react';
 import { getZaloChatUrl } from '@/lib/zaloChatNavigation';
-'use client';
 
 import { useEffect, useState } from 'react';
 import { CalendarDays, FileText, Wallet, X } from './icons';

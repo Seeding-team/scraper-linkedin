@@ -1,5 +1,5 @@
-import { getZaloChatUrl } from '@/lib/zaloChatNavigation';
 'use client';
+import { getZaloChatUrl } from '@/lib/zaloChatNavigation';
 
 import {
   Building2,

@@ -1,6 +1,6 @@
+'use client';
 import { MessageCircle } from 'lucide-react';
 import { getZaloChatUrl } from '@/lib/zaloChatNavigation';
-'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';

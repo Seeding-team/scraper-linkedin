@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextvars
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -12,9 +13,37 @@ import os
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 load_dotenv(BASE_DIR / ".env")
-# Load .env.local after .env so it overrides production values for local dev.
-# To rollback, simply delete .env.local (it will be ignored).
 load_dotenv(BASE_DIR / ".env.local", override=True)
+
+
+def _parse_instance_domain_map(value: str | None) -> dict[str, str]:
+    if not value:
+        return {}
+    try:
+        data = json.loads(value)
+    except ValueError:
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return {
+        str(domain).strip().lower(): str(instance).strip()
+        for domain, instance in data.items()
+        if str(domain).strip() and str(instance).strip()
+    }
+
+
+_current_instance: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "crm_current_instance", default=None
+)
+
+
+def set_current_instance(value: str) -> contextvars.Token:
+    return _current_instance.set(value)
+
+
+def reset_current_instance(token: contextvars.Token) -> None:
+    _current_instance.reset(token)
+
 
 
 def _parse_bool(value: str | None, default: bool = False) -> bool:
@@ -483,6 +512,15 @@ class Settings:
         "RECRUITMENT_SUPABASE_SERVICE_ROLE_KEY",
         "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoic2VydmljZV9yb2xlIiwiaXNzIjoic3VwYWJhc2UiLCJpYXQiOjE3ODc3Njc3ODIsImV4cCI6MjEwMzEyNzc4Mn0.sTHQs9H3tzdnk3y9oLhWZx_4CBWwYXd3RAPiZiG44wg",
     )
+
+    default_crm_instance: str = (os.getenv("CRM_INSTANCE") or "markee").strip()
+    instance_domain_map: dict[str, str] = field(
+        default_factory=lambda: _parse_instance_domain_map(os.getenv("INSTANCE_DOMAIN_MAP"))
+    )
+
+    @property
+    def crm_instance(self) -> str:
+        return _current_instance.get() or self.default_crm_instance
 
     def __post_init__(self) -> None:
         if self.cors_origins is None:
