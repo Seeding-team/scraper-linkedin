@@ -351,26 +351,21 @@ function normalizeMessage(raw, index, ownId = null) {
   );
 
   if (!threadId) {
-    if (ownId && idTo === String(ownId)) {
-      // Received a personal message sent TO ME
-      threadId = senderId;
+    if (!isSent) {
+      // Received an incoming message: thread is ALWAYS the sender (Rule 12 Anti-self collapse)
+      threadId = senderId || idTo;
     } else {
-      // I sent a personal message, OR someone sent a group message, OR I sent a group message
-      threadId = idTo;
-    }
-    // Fallback if idTo was empty
-    if (!threadId) {
-      threadId = senderId;
+      // Outgoing message: thread is the recipient idTo
+      threadId = idTo || senderId;
     }
   }
 
-  // Fix DM: nếu threadId trùng với ownId → Zalo đã trả nhầm ID của chính mình
-  // làm threadId cho cuộc chat cá nhân. Phải lấy lại ID đối phương.
+  // Fix DM / Anti-self collapse (Rule 12): nếu threadId trùng với ownId
   if (ownId && threadId === String(ownId)) {
-    if (idTo && idTo !== String(ownId)) {
-      threadId = idTo;        // Tôi gửi → thread = người nhận
-    } else if (senderId && senderId !== String(ownId)) {
+    if (!isSent && senderId && senderId !== String(ownId)) {
       threadId = senderId;    // Người khác gửi cho tôi → thread = người gửi
+    } else if (isSent && idTo && idTo !== String(ownId)) {
+      threadId = idTo;        // Tôi gửi → thread = người nhận
     }
   }
 

@@ -911,6 +911,35 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadConversations, pollLatestMessages, selectedConversationId, sseConnected]);
 
+  // ── Auto-ensure Persistent Listener is alive for Incoming Messages ──────
+  useEffect(() => {
+    if (!flow.userId || flow.userId === "default" || !flow.isLoggedIn || flow.sessionExpired) return;
+    let active = true;
+    const checkAndEnsureListener = async () => {
+      try {
+        const res = await fetch(`/api/all-platform/zalo/accounts/${encodeURIComponent(flow.userId)}/listener/status`);
+        if (!active) return;
+        if (res.ok) {
+          const status = await res.json();
+          if (status && status.running === false && !status.auth_expired) {
+            console.info("[zalo-listener] Background listener not running, auto-resurrecting...", flow.userId);
+            await fetch(`/api/all-platform/zalo/accounts/${encodeURIComponent(flow.userId)}/listener/restart`, {
+              method: "POST",
+            });
+          }
+        }
+      } catch (err) {
+        console.warn("[zalo-listener] auto-health check failed", err);
+      }
+    };
+    void checkAndEnsureListener();
+    const interval = setInterval(checkAndEnsureListener, 30000);
+    return () => {
+      active = false;
+      clearInterval(interval);
+    };
+  }, [flow.userId, flow.isLoggedIn, flow.sessionExpired]);
+
   // ── Realtime SSE via EventSource ─────────────────────────────────────────
   useEffect(() => {
     if (typeof window === "undefined") return;

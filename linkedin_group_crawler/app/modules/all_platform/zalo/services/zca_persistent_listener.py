@@ -843,13 +843,12 @@ class ZcaPersistentListenerManager:
             # Safety: if crashed more than 10 times in a row, stop entirely.
             # This prevents resource leaks from cascading crashes (e.g. ZCA buffer overflow).
             if state.restart_attempt > 10:
-                logger.error(
-                    f"ZCA listener for user={state.user_id} crashed {state.restart_attempt} times "
-                    f"in a row (last error: {state.last_error}) — STOPPING. "
-                    f"Manual restart via /api/zalo/listener/restart required."
+                logger.warning(
+                    f"ZCA listener for user={state.user_id} restarted {state.restart_attempt} times "
+                    f"(last error: {state.last_error}). Continuing supervised retry with 60s backoff."
                 )
-                state.desired = False
-                return
+                await asyncio.sleep(60.0)
+                continue
             
             delay = _RESTART_BACKOFFS[min(state.restart_attempt - 1, len(_RESTART_BACKOFFS) - 1)]
             logger.warning(
@@ -1078,18 +1077,7 @@ class ZcaPersistentListenerManager:
             return
         if event_name == "connected":
             state.connected = True
-            # Only reset crash counter if we've been running stably for 60s
-            # This prevents premature reset from crashing immediately after startup
-            if state.last_event_at:
-                try:
-                    last_ts = datetime.fromisoformat(state.last_event_at.replace("Z", "+00:00"))
-                    age_s = (datetime.now(timezone.utc) - last_ts).total_seconds()
-                    if age_s > 60:
-                        state.restart_attempt = 0
-                except Exception:
-                    # Fallback: reset on first successful connect after any startup
-                    if state.restart_attempt > 0:
-                        state.restart_attempt = 0
+            state.restart_attempt = 0
             state.last_error = None
             logger.info(f"ZCA listener connected user={state.user_id} pid={state.pid}")
             await self._sync_recent_groups_after_connect(state)
