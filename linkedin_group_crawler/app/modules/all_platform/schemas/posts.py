@@ -20,6 +20,7 @@ class FilterPostsRequest(BaseModel):
     date: Optional[str] = None
     date_from: Optional[str] = None
     date_to: Optional[str] = None
+    time_range: Optional[str] = "all"
     intent: Optional[str] = None
     industry: Optional[str] = None
     team: Optional[str] = None
@@ -31,6 +32,7 @@ class UnifiedPostsRequest(BaseModel):
     platform: str = "all"
     date_from: Optional[str] = None
     date_to: Optional[str] = None
+    time_range: Optional[str] = "all"
     intent: Optional[str] = None
     industry: Optional[str] = None
     team: Optional[str] = None
