@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useCallback, useEffect, useRef, useMemo } from "react";
-import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from "recharts";
 import { createPortal } from "react-dom";
 import { cn } from "@/lib/utils";
 import { FiExternalLink } from "react-icons/fi";
@@ -11,7 +10,7 @@ import { SeedingExtensionPanel, type PanelTab } from "@/components/all-platform/
 import { useYouTubeCommentResults } from "@/components/all-platform/components/seeding-extension/use-youtube-seeding";
 import { YouTubeCommentModal } from "@/components/all-platform/components/youtube-comment-modal";
 import { useAppAuth } from "@/contexts/AppAuthContext";
-import { useSearchParams } from "next/navigation";
+import { useSearchParams, useRouter } from "next/navigation";
 import { PostQuickViewModal } from "@/components/all-platform/components/PostQuickViewModal";
 import { FilterBar, type FilterState } from "@/components/all-platform/components/filter-bar";
 import { PostCard } from "@/components/all-platform/components/post-card";
@@ -22,16 +21,9 @@ import { PostDetailModal } from "@/components/all-platform/components/post-detai
 import { VerifyAccountModal } from "@/components/all-platform/components/verify-account-modal";
 import { KpiProgressCard } from "@/components/all-platform/components/kpi-progress-card";
 import { MemberKpiRewardOverview } from "@/components/all-platform/kpi-rewards/KpiRewardSections";
-import { SeedingActivityPanel } from "@/components/all-platform/feed/SeedingActivityPanel";
-import { TeamEfficiencyWidget } from "@/components/all-platform/feed/TeamEfficiencyWidget";
-import { MemberOnlineTimeWidget } from "@/components/all-platform/feed/MemberOnlineTimeWidget";
 import { ScheduleCommentModal } from "@/components/all-platform/feed/ScheduleCommentModal";
 import { ScheduledCommentsPanel } from "@/components/all-platform/feed/ScheduledCommentsPanel";
 import { PostFeedSkeleton } from "@/components/all-platform/feed/PostFeedSkeleton";
-import { GroupManagementContent } from "@/components/all-platform/group-management";
-import { CrawlQueueMonitor } from "@/components/all-platform/crawl-queue-monitor";
-import { SeedingAccountsOverview } from "@/components/all-platform/seeding-accounts-overview";
-import { RotationCrawlPanel } from "@/components/all-platform/components/seeding-extension/rotation-crawl-panel";
 import { allPlatformPostsService, allPlatformCategoriesService, teamsService, socialAccountsService } from "@/services/all-platform.service";
 import type { UnifiedPost, UnifiedStats, Category, FeedPlatform, SocialAccount, PostSeedingRosterData } from "@/types/unified.types";
 
@@ -229,26 +221,21 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
 
   const [feedPlatform, setFeedPlatform] = useState<FeedPlatform>("facebook");
   const [serviceArea, setServiceArea] = useState<ServiceAreaKey>("all");
-  // 4 tab phụ theo mockup "Seeding bên ngoài" (markee_seeding_optimized_user_leader_split_v4):
-  // Hoạt động seeding (danh sách bài viết, mặc định) / Dashboard leader (chỉ admin+leader,
-  // giống gate của SeedingActivityPanel) / Kho thư viện Group / Lịch crawl & Hàng đợi.
-  // 2 tab sau tái dùng NGUYÊN trang thật đã có sẵn trong sidebar ("Kho nhóm",
-  // "Giám sát hàng đợi cào") — không xây lại, tránh 2 nơi hiển thị lệch dữ liệu nhau.
-  const searchParams = useSearchParams();
-  const urlSub = searchParams?.get("sub");
-  const urlSubTab = searchParams?.get("subtab");
-
-  const [subView, setSubView] = useState<"activity" | "leader" | "library" | "queue">("activity");
-  const [queueSubTab, setQueueSubTab] = useState<"accounts" | "schedule" | "vps">("accounts");
+    const searchParams = useSearchParams();
+  const router = useRouter();
 
   useEffect(() => {
-    if (urlSub === "activity" || urlSub === "leader" || urlSub === "library" || urlSub === "queue") {
-      setSubView(urlSub);
+    const urlSub = searchParams?.get("sub");
+    if (urlSub === "queue") {
+      router.replace("/all-platform/lich-cao-hang-doi");
+    } else if (urlSub === "library") {
+      router.replace("/all-platform/quan-ly-nhom");
+    } else if (urlSub === "leader") {
+      router.replace("/all-platform/leader-dashboard");
+    } else if (urlSub === "accounts") {
+      router.replace("/all-platform/thong-ke-tai-khoan");
     }
-    if (urlSubTab === "accounts" || urlSubTab === "schedule" || urlSubTab === "vps") {
-      setQueueSubTab(urlSubTab);
-    }
-  }, [urlSub, urlSubTab]);
+  }, [searchParams, router]);
 
   const [quickViewPost, setQuickViewPost] = useState<UnifiedPost | null>(null);
   const [isReviewMode, setIsReviewMode] = useState(false);
@@ -477,31 +464,7 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
     }
   }, [CURRENT_USER_EMAIL, feedPlatform, filters, page]);
 
-  // Xu huong 14 ngay gan nhat (tong bai/comment/inbox) — bo sung cho 4 the chi
-  // co so hom nay, theo yeu cau Thanh: "cần thêm dashboard để biết tổng
-
-  // comment, inbox... các ngày ra sao".
-  const [dailyTrend, setDailyTrend] = useState<Array<{ date: string; posts: number; comments: number; inbox: number }>>([]);
-  // Cung ly do voi isLoadingPosts o tren: fetchDailyTrend cung guard
-  // !CURRENT_USER_EMAIL nen phai khoi tao true, khong la false.
-  const [isLoadingTrend, setIsLoadingTrend] = useState(true);
-  const fetchDailyTrend = useCallback(async () => {
-    if (!CURRENT_USER_EMAIL) return;
-    setIsLoadingTrend(true);
-    try {
-      const res = await allPlatformPostsService.getDailyTrend({
-        email: CURRENT_USER_EMAIL,
-        platform: feedPlatform,
-      });
-      if (res.success && res.data) {
-        setDailyTrend(res.data);
-      }
-    } catch {
-      // im lang: khoi xu huong la thong tin bo sung, khong chan trang chinh
-    } finally {
-      setIsLoadingTrend(false);
-    }
-  }, [CURRENT_USER_EMAIL, feedPlatform]);
+  
 
   useEffect(() => {
     if (!CURRENT_USER_EMAIL) return;
@@ -513,11 +476,7 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
     fetchStats();
   }, [fetchStats]);
 
-  useEffect(() => {
-    if (!CURRENT_USER_EMAIL) return;
-    fetchDailyTrend();
-  }, [fetchDailyTrend]);
-
+  
   useEffect(() => {
     if (!CURRENT_USER_EMAIL) return;
     fetchCategories();
@@ -600,7 +559,7 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
       toast.success(result.message || "Đã ghi nhận comment YouTube và tính KPI.");
       fetchPosts();
       fetchStats();
-      fetchDailyTrend();
+      
     } else {
       toast.error(result.message || "Comment YouTube chưa được tính KPI.");
     }
@@ -757,7 +716,7 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
       {/* 4 tab phụ: "Hoạt động seeding" (danh sách bài viết) / "Dashboard leader"
           (admin+leader) / "Kho thư viện Group" / "Lịch crawl & Hàng đợi". */}
 
-      {(subView === "activity" || subView === "leader") && (
+      
         /* Tab "Seeding bên ngoài": làm nổi bật hẳn (khung viền + icon + mô tả) vì đây là
            lựa chọn quan trọng nhất của trang - 3 nút nhỏ canh phải rất dễ bị lướt qua. */
         <div className="flex flex-col sm:flex-row sm:items-center gap-3 rounded-2xl border-2 border-primary/30 bg-gradient-to-r from-primary/5 to-transparent p-3 sm:p-4">
@@ -767,79 +726,9 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
           {platformTabs}
           <span className="text-xs text-muted-foreground sm:ml-auto">{platformHint}</span>
         </div>
-      )}
 
-      {subView === "leader" && isLeaderOrAdmin && (
-        <div className="space-y-4 mb-4">
-          {/* Dashboard xu huong 14 ngay gan nhat (2026-07-04) — theo yeu cau Thanh:
-              4 the o tren chi co so HOM NAY, khong biet cac ngay truoc ra sao.
-              Chart nhe (khong chan trang neu loi/rong). Chuyen sang tab Dashboard
-              leader (2026-09-29) theo mockup markee_seeding_optimized_user_leader_split_v4 —
-              day la so lieu tong quan cho leader/admin, khong phai viec hang ngay cua user. */}
-          <div className="bg-card border border-border rounded-2xl p-5">
-            <div className="mb-3 flex items-center justify-between">
-              <div>
-                <h3 className="text-sm font-bold text-foreground">Xu hướng 14 ngày gần nhất</h3>
-                <p className="text-xs text-muted-foreground">Tổng bài cào được · Comment đã verify · Inbox nhận được, theo từng ngày.</p>
-              </div>
-              {isLoadingTrend && <span className="text-xs text-muted-foreground">Đang tải...</span>}
-            </div>
-            {dailyTrend.length === 0 ? (
-              <div className="flex h-[220px] items-center justify-center text-sm text-muted-foreground">
-                {isLoadingTrend ? "Đang tải dữ liệu xu hướng..." : "Chưa có dữ liệu xu hướng."}
-              </div>
-            ) : (
-              <ResponsiveContainer width="100%" height={220}>
-                <AreaChart data={dailyTrend} margin={{ top: 4, right: 8, left: -20, bottom: 0 }}>
-                  <defs>
-                    <linearGradient id="colorPosts" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#2563eb" stopOpacity={0.35} />
-                      <stop offset="95%" stopColor="#2563eb" stopOpacity={0} />
-                    </linearGradient>
-                    <linearGradient id="colorComments" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#16a34a" stopOpacity={0.35} />
-                      <stop offset="95%" stopColor="#16a34a" stopOpacity={0} />
-                    </linearGradient>
-                    <linearGradient id="colorInbox" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#f59e0b" stopOpacity={0.35} />
-                      <stop offset="95%" stopColor="#f59e0b" stopOpacity={0} />
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e5e5" />
-                  <XAxis
-                    dataKey="date"
-                    tickFormatter={(d: string) => d.slice(5).replace("-", "/")}
-                    tick={{ fontSize: 11, fill: "#737373" }}
-                    axisLine={{ stroke: "#e5e5e5" }}
-                    tickLine={false}
-                  />
-                  <YAxis tick={{ fontSize: 11, fill: "#737373" }} axisLine={false} tickLine={false} allowDecimals={false} />
-                  <Tooltip
-                    labelFormatter={(d) => `Ngày ${String(d ?? "").slice(5).replace("-", "/")}`}
-                    contentStyle={{ borderRadius: 8, fontSize: 12, border: "1px solid #e5e5e5" }}
-                  />
-                  <Legend wrapperStyle={{ fontSize: 12 }} />
-                  <Area type="monotone" dataKey="posts" name="Tổng bài" stroke="#2563eb" fill="url(#colorPosts)" strokeWidth={2} />
-                  <Area type="monotone" dataKey="comments" name="Comment" stroke="#16a34a" fill="url(#colorComments)" strokeWidth={2} />
-                  <Area type="monotone" dataKey="inbox" name="Inbox" stroke="#f59e0b" fill="url(#colorInbox)" strokeWidth={2} />
-                </AreaChart>
-              </ResponsiveContainer>
-            )}
-          </div>
-
-          <div className="grid grid-cols-1 xl:grid-cols-3 gap-4 items-start">
-            <div className="xl:col-span-2">
-              <SeedingActivityPanel email={CURRENT_USER_EMAIL} />
-            </div>
-            <TeamEfficiencyWidget email={CURRENT_USER_EMAIL} />
-          </div>
-
-          <MemberOnlineTimeWidget email={CURRENT_USER_EMAIL} />
-        </div>
-      )}
-
-      {subView === "activity" && (
-        <>
+      
+      <>
           <div className="bg-card border border-border rounded-2xl p-5 mb-4">
             <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
               <StatCard
@@ -906,13 +795,13 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
               onCrawlSaved={(platform, data) => {
                 if ((platform === "threads" || platform === "youtube") && data.count > 0) {
                   fetchPosts();
-                  fetchDailyTrend();
+                  
                 }
               }}
               onCrawlDone={(platform, data) => {
                 fetchPosts();
                 fetchStats();
-                if (platform === "threads" || platform === "youtube") fetchDailyTrend();
+                if (platform === "threads" || platform === "youtube") 
                 setCrawlResultsSummary((prev) => ({ ...prev, totalPosts: data.totalSaved }));
                 setShowCrawlResultModal(true);
               }}
@@ -1089,42 +978,6 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
             </>
           )}
         </>
-      )}
-
-      {subView === "library" && <GroupManagementContent />}
-
-      {subView === "queue" && (
-        <div className="flex flex-col gap-4">
-          <div className="flex flex-wrap gap-1.5 rounded-xl border border-border bg-card p-1.5">
-            {(
-              [
-                { key: "accounts", label: "Tài khoản seeding" },
-                { key: "schedule", label: "Lịch cào" },
-                { key: "vps", label: "Hàng đợi VPS" },
-              ] as const
-            ).map((tab) => (
-              <button
-                key={tab.key}
-                type="button"
-                onClick={() => setQueueSubTab(tab.key)}
-                className={cn(
-                  "rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors cursor-pointer",
-                  queueSubTab === tab.key
-                    ? "bg-primary text-primary-foreground shadow-sm"
-                    : "text-muted-foreground hover:bg-accent hover:text-foreground",
-                )}
-              >
-                {tab.label}
-              </button>
-            ))}
-          </div>
-
-          {queueSubTab === "accounts" && <SeedingAccountsOverview />}
-          {queueSubTab === "schedule" && <RotationCrawlPanel />}
-          {queueSubTab === "vps" && <CrawlQueueMonitor />}
-        </div>
-      )}
-
       <PostQuickViewModal
         post={quickViewPost}
         onClose={() => setQuickViewPost(null)}

@@ -194,11 +194,22 @@ export default function InternalEngagementPage() {
 
   useEffect(() => {
     if (urlTab === "external") {
-      router.replace("/all-platform/post-feed");
+      const sub = searchParams?.get("sub");
+      if (sub === "queue") {
+        router.replace("/all-platform/lich-cao-hang-doi");
+      } else if (sub === "library") {
+        router.replace("/all-platform/quan-ly-nhom");
+      } else if (sub === "leader") {
+        router.replace("/all-platform/leader-dashboard");
+      } else if (sub === "accounts") {
+        router.replace("/all-platform/thong-ke-tai-khoan");
+      } else {
+        router.replace("/all-platform/post-feed");
+      }
     } else if (urlTab === "overview") {
       router.replace("/all-platform/overview");
     }
-  }, [urlTab, router]);
+  }, [urlTab, searchParams, router]);
 
   // Tab & Lifecycle Heartbeat: Báo cho Extension biết tab Web Seeding đang mở
   useEffect(() => {
