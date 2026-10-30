@@ -49,6 +49,7 @@ jobs:
         run: |
           REF="${{ github.event.inputs.ref || github.ref_name }}"
           git checkout -- linkedin-crawler-ui/public/*.zip || true
+          git checkout -- .env || true
           git fetch origin
           git checkout "$REF"
           git pull origin "$REF"

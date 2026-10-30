@@ -29,6 +29,7 @@ jobs:
         # toan, deploy-app.yml se tu build lai tu source o lan sau).
         run: |
           git checkout -- linkedin-crawler-ui/public/*.zip || true
+          git checkout -- .env || true
           git fetch origin main
           git checkout main
           git pull --ff-only origin main
