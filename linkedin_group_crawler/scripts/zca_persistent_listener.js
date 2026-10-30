@@ -591,6 +591,10 @@ async function main() {
   });
   listener.on("closed", (code, reason) => {
     emit({ event: "closed", user_id: userId, code, reason: reason ? String(reason) : null });
+    // zca-js has exhausted its own reconnect attempts. Heartbeat/stats timers
+    // would otherwise keep this process alive forever while the socket is dead.
+    // Exiting lets the Python supervisor start a fresh listener with backoff.
+    if (!stopping) setTimeout(() => process.exit(5), 250).unref();
   });
   listener.on("error", (error) => {
     emit({ event: "error", user_id: userId, error: "listener_error", error_detail: serializeError(error) });

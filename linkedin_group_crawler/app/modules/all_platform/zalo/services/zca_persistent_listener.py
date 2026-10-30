@@ -1084,6 +1084,11 @@ class ZcaPersistentListenerManager:
             return
         if event_name in {"disconnected", "closed", "stopping"}:
             state.connected = False
+            if event_name != "stopping":
+                code = event.get("code")
+                reason = str(event.get("reason") or "").strip()
+                state.last_error = f"socket_{event_name}: code={code} reason={reason}"[:1000]
+                logger.warning(f"ZCA listener socket {event_name} user={state.user_id}: {state.last_error}")
             return
         if event_name in {"error", "fatal", "login_failed"}:
             detail = event.get("error_detail") or event.get("error") or event
