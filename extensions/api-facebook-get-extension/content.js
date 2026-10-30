@@ -574,6 +574,11 @@ function isToday(unixSeconds) {
 
             console.log(`[AI Scorer] Bài ${post.post_id} -> ${score} điểm (${reason})`);
 
+            // 🎯 KIỂM TRA NGÀY VÀ ĐẾM BÀI CŨ ĐỂ NGẮT NHÓM THEO CHỈ ĐẠO CỦA MASTER
+            if (typeof window.onPostInspected === "function") {
+                window.onPostInspected(post);
+            }
+
             // 🎯 BỘ LỌC ĐIỂM SỐ: CHỈ GIỮ BÀI >= NGƯỠNG (Mặc định 80đ)
             if (score >= window.__mkMinScoreThreshold) {
                 window.__mkScoredPosts.unshift(post);
@@ -638,29 +643,89 @@ function isToday(unixSeconds) {
     // ── 4. Bộ Điều Khiển Auto-Scroll Siêu Giả Lập Người Thật (Ultra-Realistic Human Simulator) ──
     let autoScrollTimer = null;
     let scrollCount = 0;
-    let isSystemCrawlerAccount = false;
+    let consecutiveOldPostsCount = 0;
+    let isSystemCrawlerAccount = true; // Mặc định mở quyền cho acc cá nhân cào
 
-    // Kiểm tra cờ tài khoản System chuyên dụng
-    chrome.storage.local.get(['is_system_crawler'], (result) => {
-        isSystemCrawlerAccount = !!result?.is_system_crawler;
+    // Cấu hình cào cá nhân mặc định (có thể ghi đè bởi user)
+    let userCrawlerConfig = {
+        scroll_distance: 1600,
+        delay_min: 1500,
+        delay_max: 2800,
+        group_rest_sec: 45,
+        max_scrolls: 25,
+        old_posts_limit: 15
+    };
+
+    chrome.storage.local.get(['fb_crawler_user_config', 'is_system_crawler'], (result) => {
+        if (result?.fb_crawler_user_config) {
+            userCrawlerConfig = { ...userCrawlerConfig, ...result.fb_crawler_user_config };
+        }
+        if (result?.is_system_crawler !== undefined) {
+            isSystemCrawlerAccount = !!result.is_system_crawler;
+        }
         updateHudSystemLockState();
     });
 
-    // Hàm cuộn mượt vi phân theo quán tính tay người thật (Human Inertia Cubic Ease-Out)
-    function smoothScrollByMicroSteps(targetDistance, durationMs = 650) {
+    chrome.runtime.onMessage.addListener((msg) => {
+        if (msg.action === 'USER_CONFIG_UPDATED' && msg.config) {
+            userCrawlerConfig = { ...userCrawlerConfig, ...msg.config };
+            console.log("⚙️ [FB Crawler] Đã cập nhật cấu hình cào cá nhân mới:", userCrawlerConfig);
+        }
+    });
+
+    // Hàm kiểm tra bài viết có thuộc ngày hôm nay không (Asia/Ho_Chi_Minh)
+    function isPostFromToday(timestampSeconds) {
+        if (!timestampSeconds) return true; // Nếu thiếu thời gian thì tạm coi là mới
+        try {
+            const postDate = new Date(timestampSeconds * 1000);
+            const now = new Date();
+            // Đưa về múi giờ VN UTC+7
+            const vnPost = new Date(postDate.getTime() + (7 * 3600 * 1000));
+            const vnNow = new Date(now.getTime() + (7 * 3600 * 1000));
+            return vnPost.toISOString().slice(0, 10) === vnNow.toISOString().slice(0, 10);
+        } catch (e) {
+            return true;
+        }
+    }
+
+    // Hàm cuộn mượt vi phân kết hợp Watchdog chống đóng băng tab nền
+    function smoothScrollByMicroSteps(targetDistance, durationMs = 600) {
         return new Promise(resolve => {
             const startTime = performance.now();
             const startY = window.scrollY;
+            let finished = false;
+
+            const cleanup = () => {
+                if (!finished) {
+                    finished = true;
+                    // Bắn synthetic WheelEvent ép Facebook Comet tải bài mới
+                    try {
+                        const wheelEvt = new WheelEvent('wheel', {
+                            deltaY: Math.max(300, Math.min(targetDistance, 1200)),
+                            bubbles: true,
+                            cancelable: true
+                        });
+                        window.dispatchEvent(wheelEvt);
+                        document.body.dispatchEvent(wheelEvt);
+                    } catch (e) {}
+                    resolve();
+                }
+            };
+
+            // Watchdog: Nếu tab bị Chrome throttle làm requestAnimationFrame bị đứng, tự resolve sau durationMs + 200ms
+            const watchdog = setTimeout(cleanup, durationMs + 250);
+
             function step(now) {
+                if (finished) return;
                 const elapsed = now - startTime;
                 const progress = Math.min(elapsed / durationMs, 1);
-                // Đường cong Ease-Out mô phỏng lực vuốt chuột/ngón tay
                 const easeOut = 1 - Math.pow(1 - progress, 3);
                 window.scrollTo(0, startY + targetDistance * easeOut);
                 if (progress < 1) {
                     requestAnimationFrame(step);
                 } else {
-                    resolve();
+                    clearTimeout(watchdog);
+                    cleanup();
                 }
             }
             requestAnimationFrame(step);
@@ -668,58 +733,70 @@ function isToday(unixSeconds) {
     }
 
     window.startFbAutoScroll = function (threshold = 80) {
-        if (!isSystemCrawlerAccount) {
-            alert("🔒 CHẾ ĐỘ BẢO VỆ: Luồng cào tự động và đổ dữ liệu này chỉ dành riêng cho 1 Tài Khoản System của hệ thống.\n\nNếu máy này là máy chủ/trình duyệt System, vui lòng bấm 'Kích hoạt Nick System' trên bảng điều khiển để cấp quyền.");
-            return;
-        }
-
         if (window.__mkAutoScrollActive) return;
         window.__mkAutoScrollActive = true;
         window.__mkMinScoreThreshold = parseInt(threshold, 10) || 80;
-        updateHudStatus("🟢 Đang giả lập người đọc lướt...");
+        scrollCount = 0;
+        consecutiveOldPostsCount = 0;
+        updateHudStatus("🟢 Đang cào theo cấu hình cá nhân...");
         renderHudControlButtons();
 
         async function scrollStep() {
             if (!window.__mkAutoScrollActive) return;
             scrollCount++;
 
-            // 1. Quãng đường cuộn xuống ngẫu nhiên (420px - 880px)
-            const distance = Math.floor(Math.random() * 460) + 420;
-            const scrollDuration = Math.floor(Math.random() * 250) + 550; // 550ms - 800ms
+            // Kiểm tra số lần cuộn tối đa của nhóm
+            if (userCrawlerConfig.max_scrolls && scrollCount > userCrawlerConfig.max_scrolls) {
+                updateHudStatus(`🏁 Đã đạt tối đa ${userCrawlerConfig.max_scrolls} lượt cuộn.`);
+                chrome.runtime.sendMessage({ action: "GROUP_FINISHED", reason: "MAX_SCROLLS_REACHED" });
+                window.stopFbAutoScroll();
+                return;
+            }
+
+            // 1. Quãng đường cuộn theo cấu hình cá nhân (Mặc định 1,400px - 2,000px)
+            const baseDistance = userCrawlerConfig.scroll_distance || 1600;
+            const distance = Math.floor(baseDistance * (0.85 + Math.random() * 0.3)); // dao động +-15%
+            const scrollDuration = Math.floor(Math.random() * 200) + 550;
             await smoothScrollByMicroSteps(distance, scrollDuration);
 
-            // 2. Hành vi mắt người: thi thoảng cuộn ngược lên xem lại (cứ 4-6 lần cuộn xuống)
-            const shouldScrollUp = scrollCount % (Math.floor(Math.random() * 3) + 4) === 0;
-            if (shouldScrollUp) {
-                // Dừng ngắm nghía 600ms - 1.2s trước khi cuộn lên
-                await new Promise(r => setTimeout(r, Math.floor(Math.random() * 600) + 600));
-                const upDistance = -(Math.floor(Math.random() * 150) + 120); // -120px đến -270px
-                await smoothScrollByMicroSteps(upDistance, 480);
-                // Dừng đọc lại bài vừa cuộn lên 1.5s - 2.8s
-                await new Promise(r => setTimeout(r, Math.floor(Math.random() * 1300) + 1500));
+            // 2. Cơ chế lắc trang / cuộn ngược ngắm nghía nhẹ (thi thoảng)
+            if (scrollCount % 5 === 0) {
+                await new Promise(r => setTimeout(r, 400));
+                await smoothScrollByMicroSteps(-250, 400);
+                await new Promise(r => setTimeout(r, 600));
             }
 
-            // 3. Thời gian dừng ngẫu nhiên đa tầng (Dynamic Human Pauses):
-            // - 50% khả năng: Dừng lướt nhanh (1.0s - 2.2s)
-            // - 35% khả năng: Dừng đọc bài bình thường (2.8s - 4.5s)
-            // - 15% khả năng: Dừng đọc kỹ nội dung dài / xem video (5.5s - 7.5s)
-            let pauseMs = 0;
-            const roll = Math.random();
-            if (roll < 0.50) {
-                pauseMs = Math.floor(Math.random() * 1200) + 1000; // 1s - 2.2s
-                updateHudStatus("👀 Lướt qua bài (" + (pauseMs / 1000).toFixed(1) + "s)...");
-            } else if (roll < 0.85) {
-                pauseMs = Math.floor(Math.random() * 1700) + 2800; // 2.8s - 4.5s
-                updateHudStatus("📖 Đang đọc bài (" + (pauseMs / 1000).toFixed(1) + "s)...");
-            } else {
-                pauseMs = Math.floor(Math.random() * 2000) + 5500; // 5.5s - 7.5s
-                updateHudStatus("🧐 Đọc kỹ nội dung (" + (pauseMs / 1000).toFixed(1) + "s)...");
-            }
+            // 3. Thời gian nghỉ giữa các nhịp cuộn theo cấu hình
+            const minDelay = userCrawlerConfig.delay_min || 1500;
+            const maxDelay = userCrawlerConfig.delay_max || 2800;
+            const pauseMs = Math.floor(Math.random() * (maxDelay - minDelay)) + minDelay;
 
+            updateHudStatus(`👀 Cuộn nhịp ${scrollCount} (nghỉ ${(pauseMs / 1000).toFixed(1)}s)...`);
             autoScrollTimer = setTimeout(scrollStep, pauseMs);
         }
 
         scrollStep();
+    };
+
+    // Hàm nhận diện bài viết cũ để tăng biến đếm dừng nhóm
+    window.onPostInspected = function (post) {
+        const isToday = isPostFromToday(post.created_time || post.timestamp);
+        // Bỏ qua 2 nhịp đầu phòng hờ bài Pinned Post của Admin
+        if (scrollCount >= 2) {
+            if (!isToday) {
+                consecutiveOldPostsCount++;
+                console.log(`[FB Crawler] Phát hiện bài cũ: ${post.title || post.id} (${consecutiveOldPostsCount}/${userCrawlerConfig.old_posts_limit} bài)`);
+                const limit = userCrawlerConfig.old_posts_limit || 15;
+                if (consecutiveOldPostsCount >= limit) {
+                    updateHudStatus(`🛑 Gặp đủ ${limit} bài cũ. Dừng nhóm này!`);
+                    window.stopFbAutoScroll();
+                    chrome.runtime.sendMessage({ action: "GROUP_FINISHED", reason: "OLD_POSTS_LIMIT_REACHED" });
+                }
+            } else {
+                // Gặp bài mới -> reset chuỗi bài cũ
+                consecutiveOldPostsCount = 0;
+            }
+        }
     };
 
     window.stopFbAutoScroll = function () {

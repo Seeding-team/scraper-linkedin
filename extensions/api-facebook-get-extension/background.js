@@ -24,6 +24,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         isRunning = false;
         sendLog('Cảnh báo: Yêu cầu dừng cào...');
         sendResponse({ success: true });
+    } else if (msg.action === 'GROUP_FINISHED') {
+        if (msg.reason === 'OLD_POSTS_LIMIT_REACHED') {
+            sendLog('🛑 [Bộ Lọc Ngày] Đã phát hiện 15 bài viết cũ liên tiếp ngoài ngày hôm nay. Dừng cào nhóm hiện tại theo chỉ đạo và chuyển sang nhóm kế tiếp!', false, 'warn');
+        } else if (msg.reason === 'MAX_SCROLLS_REACHED') {
+            sendLog('🏁 Đã hoàn thành đủ số nhịp cuộn tối đa cho nhóm này. Chuyển nhóm...', false, 'info');
+        }
+        sendResponse({ received: true });
     }
 });
 
@@ -217,9 +224,19 @@ async function startAutoCrawl(groups, config = {}) {
                     sendLog(`❌ Lỗi giao tiếp content script: ${err.message}`, false, 'error');
                 }
 
-                // Nghỉ ngẫu nhiên giữa các nhóm (mô phỏng người thật chuyển tab): 6s - 14s
-                const interGroupDelay = Math.floor(Math.random() * 8000) + 6000;
-                sendLog(`⏳ Nghỉ giãn cách giữa các nhóm: ${(interGroupDelay/1000).toFixed(1)}s (Mô phỏng người thật)...\n`);
+                // Đọc thời gian nghỉ giữa các nhóm từ cấu hình cá nhân của user
+                let userGroupRestSec = 45;
+                try {
+                    const storageRes = await chrome.storage.local.get(['fb_crawler_user_config']);
+                    if (storageRes?.fb_crawler_user_config?.group_rest_sec) {
+                        userGroupRestSec = parseInt(storageRes.fb_crawler_user_config.group_rest_sec, 10) || 45;
+                    }
+                } catch (e) {}
+
+                // Nghỉ ngẫu nhiên giữa các nhóm (mô phỏng người thật chuyển tab): +-15s Jitter
+                const jitterMs = (Math.floor(Math.random() * 15) - 7) * 1000;
+                const interGroupDelay = Math.max(10000, (userGroupRestSec * 1000) + jitterMs);
+                sendLog(`⏳ Nghỉ giãn cách giữa các nhóm: ${(interGroupDelay/1000).toFixed(1)}s (Theo cấu hình cá nhân, mô phỏng người thật chống checkpoint)...\n`);
                 await sleep(interGroupDelay);
             }
 

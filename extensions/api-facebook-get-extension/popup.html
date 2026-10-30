@@ -5,75 +5,105 @@
   <title>FB API Auto Crawler & AI Lead Scorer</title>
   <style>
     body {
-      font-family: system-ui, -apple-system, sans-serif;
-      width: 420px;
-      padding: 16px;
+      font-family: 'Inter', system-ui, -apple-system, sans-serif;
+      width: 440px;
+      padding: 14px;
       margin: 0;
-      background: #f0f2f5;
+      background: #f8fafc;
+      color: #0f172a;
       box-sizing: border-box;
     }
-    .card {
-      background: #fff;
-      border-radius: 10px;
-      padding: 16px;
-      box-shadow: 0 1px 4px rgba(0,0,0,0.1);
+    .header-box {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
       margin-bottom: 12px;
     }
     h2 {
-      margin-top: 0;
-      margin-bottom: 8px;
-      color: #1c1e21;
-      font-size: 16px;
+      margin: 0;
+      color: #0f172a;
+      font-size: 15px;
+      font-weight: 700;
       display: flex;
       align-items: center;
       gap: 6px;
     }
+    .nav-tabs {
+      display: flex;
+      gap: 4px;
+      background: #e2e8f0;
+      padding: 3px;
+      border-radius: 8px;
+      margin-bottom: 12px;
+    }
+    .nav-tab-btn {
+      flex: 1;
+      border: none;
+      background: none;
+      padding: 6px 10px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 600;
+      color: #475569;
+      cursor: pointer;
+      transition: all 0.2s;
+      text-align: center;
+    }
+    .nav-tab-btn.active {
+      background: #ffffff;
+      color: #2563eb;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    }
+    .card {
+      background: #fff;
+      border-radius: 12px;
+      padding: 14px;
+      border: 1px solid #e2e8f0;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+      margin-bottom: 12px;
+    }
     .section-title {
       font-size: 13px;
       font-weight: 700;
-      color: #1877f2;
+      color: #2563eb;
       margin-bottom: 8px;
       display: flex;
       align-items: center;
       justify-content: space-between;
     }
-    button {
-      background: #1877f2;
+    button.btn-primary {
+      background: #2563eb;
       color: #fff;
       border: none;
       padding: 9px 14px;
-      border-radius: 6px;
-      font-size: 13px;
-      font-weight: bold;
+      border-radius: 8px;
+      font-size: 12.5px;
+      font-weight: 600;
       cursor: pointer;
       width: 100%;
       transition: background 0.2s;
     }
-    button:hover {
-      background: #166fe5;
+    button.btn-primary:hover {
+      background: #1d4ed8;
     }
     button:disabled {
-      background: #e4e6eb;
-      color: #bcc0c4;
-      cursor: not-allowed;
+      background: #cbd5e1 !important;
+      color: #94a3b8 !important;
+      cursor: not-allowed !important;
     }
     .btn-stop {
-      background: #e4405f !important;
+      background: #ef4444 !important;
+      color: #fff;
     }
     .btn-stop:hover {
-      background: #d02d4c !important;
+      background: #dc2626 !important;
     }
     .btn-green {
-      background: #28a745 !important;
+      background: #10b981 !important;
+      color: #fff;
     }
     .btn-green:hover {
-      background: #218838 !important;
-    }
-    #status {
-      font-size: 12px;
-      color: #65676b;
-      margin-top: 8px;
-      min-height: 18px;
+      background: #059669 !important;
     }
     .hud-stats-box {
       display: flex;
@@ -82,77 +112,193 @@
     }
     .stat-pill {
       flex: 1;
-      background: #f0f2f5;
-      border-radius: 6px;
+      background: #f1f5f9;
+      border-radius: 8px;
       padding: 8px;
       text-align: center;
       font-size: 11px;
-      color: #65676b;
+      color: #64748b;
     }
     .stat-pill b {
       display: block;
-      font-size: 16px;
-      color: #1c1e21;
+      font-size: 17px;
+      color: #0f172a;
       margin-top: 2px;
     }
     .badge-high {
-      background: #d4edda !important;
-      border: 1px solid #c3e6cb;
+      background: #ecfdf5 !important;
+      border: 1px solid #a7f3d0;
     }
     .badge-high b {
-      color: #155724 !important;
+      color: #047857 !important;
+    }
+    /* Settings Form */
+    .form-group {
+      margin-bottom: 10px;
+    }
+    .form-group label {
+      display: block;
+      font-size: 11.5px;
+      font-weight: 600;
+      color: #334155;
+      margin-bottom: 4px;
+    }
+    .form-group .hint {
+      font-size: 10.5px;
+      color: #64748b;
+      margin-top: 2px;
+    }
+    .form-control {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 6px 10px;
+      border: 1px solid #cbd5e1;
+      border-radius: 6px;
+      font-size: 12px;
+      font-family: inherit;
+      color: #0f172a;
+    }
+    .form-control:focus {
+      outline: none;
+      border-color: #2563eb;
+      box-shadow: 0 0 0 2px rgba(37,99,235,0.15);
+    }
+    .grid-2 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+    .tab-panel {
+      display: none;
+    }
+    .tab-panel.active {
+      display: block;
     }
   </style>
 </head>
 <body>
-  <!-- KHỐI 1: LIVE AUTO-SCROLL & AI LỌC BÀI >= 80đ -->
-  <div class="card" style="border-top: 3px solid #28a745;">
-    <div class="section-title">
-      <span>⚡ Auto-Scroll & AI Lọc Bài (≥ 80đ)</span>
-      <span style="font-size: 11px; background: #28a745; color: #fff; padding: 2px 6px; border-radius: 10px;">Tab Hiện Tại</span>
-    </div>
-    <p style="font-size: 11px; color: #65676b; margin-top: 0; margin-bottom: 10px;">
-      Tự động kéo trang Group Facebook, nghe lén GraphQL + phụ đề SRT, và AI chấm điểm lọc bài ≥ 80đ ngay trên màn hình.
-    </p>
-
-    <div class="hud-stats-box">
-      <div class="stat-pill">
-        Đã Quét
-        <b id="liveScanned">0</b>
-      </div>
-      <div class="stat-pill badge-high">
-        Bài ≥ 80đ (Lead)
-        <b id="liveHighScore">0</b>
-      </div>
-    </div>
-
-    <div style="display: flex; gap: 8px; align-items: center; margin-bottom: 10px;">
-      <label style="font-size: 12px; color: #65676b;">Ngưỡng điểm:</label>
-      <input id="scoreThreshold" type="number" min="50" max="100" value="80" style="width: 50px; padding: 4px; border: 1px solid #ccd0d5; border-radius: 4px; text-align: center; font-weight: bold;" />
-      <span style="font-size: 11px; color: #8a8d91;">(Chỉ giữ bài ≥ ngưỡng này)</span>
-    </div>
-
-    <div style="display: flex; gap: 8px;">
-      <button id="btnLiveStart" class="btn-green">▶ Kích hoạt Auto-Scroll & AI</button>
-      <button id="btnLiveStop" class="btn-stop" disabled style="width: 100px;">⏸ Dừng</button>
-    </div>
-    <div id="liveStatus" style="font-size: 11px; color: #65676b; margin-top: 6px;">Chờ kích hoạt...</div>
+  <div class="header-box">
+    <h2>🚀 FB Seeding Auto-Miner</h2>
+    <span style="font-size: 11px; background: #e0e7ff; color: #3730a3; padding: 3px 8px; border-radius: 12px; font-weight: 600;">v2.6 Pro</span>
   </div>
 
-  <!-- KHỐI 2: TỰ ĐỘNG CÀO DANH SÁCH NHÓM TỪ BACKEND -->
-  <div class="card">
-    <h2>🤖 Cào Đa Nhóm Tự Động (Multi-Groups)</h2>
-    <p style="font-size: 11px; color: #65676b; margin-top: 0; margin-bottom: 10px;">Tự động lấy danh sách Group từ Backend, mở tab và cào theo lịch trình.</p>
-    
-    <div style="display: flex; gap: 8px; margin-bottom: 8px;">
-        <button id="btnAutoStart">🚀 Cào Đa Nhóm</button>
-        <button id="btnAutoStop" class="btn-stop" disabled>🛑 Dừng</button>
+  <!-- NAVIGATION TABS -->
+  <div class="nav-tabs">
+    <button type="button" class="nav-tab-btn active" data-tab="tab-crawler">⚡ Cào & Lọc Lead</button>
+    <button type="button" class="nav-tab-btn" data-tab="tab-settings">⚙️ Cấu Hình Cá Nhân</button>
+  </div>
+
+  <!-- TAB 1: BẢNG ĐIỀU KHIỂN CÀO -->
+  <div id="tab-crawler" class="tab-panel active">
+    <!-- KHỐI 1: LIVE AUTO-SCROLL TRÊN TAB HIỆN TẠI -->
+    <div class="card" style="border-top: 3px solid #10b981;">
+      <div class="section-title">
+        <span>⚡ Lướt & Cào Tab Hiện Tại</span>
+        <span style="font-size: 11px; background: #10b981; color: #fff; padding: 2px 7px; border-radius: 10px;">Tab này</span>
+      </div>
+      <p style="font-size: 11px; color: #64748b; margin-top: 0; margin-bottom: 10px;">
+        Giả lập cuộn người thật, bắt trọn GraphQL Facebook và lọc bài trong ngày hôm nay.
+      </p>
+
+      <div class="hud-stats-box">
+        <div class="stat-pill">
+          Đã Quét
+          <b id="liveScanned">0</b>
+        </div>
+        <div class="stat-pill badge-high">
+          Bài Hôm Nay (Lead)
+          <b id="liveHighScore">0</b>
+        </div>
+      </div>
+
+      <div style="display: flex; gap: 8px; align-items: center; margin-bottom: 10px;">
+        <label style="font-size: 12px; color: #475569;">Ngưỡng điểm AI:</label>
+        <input id="scoreThreshold" type="number" min="50" max="100" value="80" style="width: 50px; padding: 4px; border: 1px solid #cbd5e1; border-radius: 6px; text-align: center; font-weight: bold;" />
+        <span style="font-size: 11px; color: #64748b;">(Chỉ giữ bài ≥ ngưỡng này)</span>
+      </div>
+
+      <div style="display: flex; gap: 8px;">
+        <button id="btnLiveStart" class="btn-green btn-primary">▶ Bắt Đầu Cào Tab Này</button>
+        <button id="btnLiveStop" class="btn-stop" disabled style="width: 100px; border-radius: 8px; border: none; font-weight: 600; cursor: pointer;">⏸ Dừng</button>
+      </div>
+      <div id="liveStatus" style="font-size: 11px; color: #64748b; margin-top: 8px;">Chờ kích hoạt...</div>
     </div>
-    
-    <div id="status">Sẵn sàng chờ lệnh...</div>
-    
-    <!-- Khung hiển thị log trực tiếp -->
-    <div id="logPanel" style="display: block; height: 140px; overflow-y: auto; background: #282c34; color: #abb2bf; font-family: monospace; font-size: 10px; padding: 8px; border-radius: 4px; white-space: pre-wrap; margin-top: 8px;"></div>
+
+    <!-- KHỐI 2: TỰ ĐỘNG CÀO ĐA NHÓM THEO DANH SÁCH -->
+    <div class="card">
+      <div class="section-title">
+        <span>🤖 Cào Đa Nhóm Tự Động (Multi-Groups)</span>
+        <span style="font-size: 11px; background: #2563eb; color: #fff; padding: 2px 7px; border-radius: 10px;">Theo Lịch</span>
+      </div>
+      <p style="font-size: 11px; color: #64748b; margin-top: 0; margin-bottom: 10px;">
+        Lấy danh sách nhóm từ hệ thống, cào lần lượt trên tab cùng cửa sổ, tự nghỉ ngơi an toàn chống checkpoint.
+      </p>
+      
+      <div style="display: flex; gap: 8px; margin-bottom: 8px;">
+          <button id="btnAutoStart" class="btn-primary">🚀 Bắt Đầu Cào Đa Nhóm</button>
+          <button id="btnAutoStop" class="btn-stop" disabled style="width: 100px; border-radius: 8px; border: none; font-weight: 600; cursor: pointer;">🛑 Dừng</button>
+      </div>
+      
+      <div id="status" style="font-size: 11px; color: #64748b;">Sẵn sàng chờ lệnh...</div>
+      
+      <div id="logPanel" style="display: block; height: 110px; overflow-y: auto; background: #0f172a; color: #94a3b8; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10.5px; padding: 8px 10px; border-radius: 8px; white-space: pre-wrap; margin-top: 8px;"></div>
+    </div>
+  </div>
+
+  <!-- TAB 2: CẤU HÌNH THAM SỐ CÀO CÁ NHÂN (CHỐNG CHECKPOINT & ĐỘC LẬP 100%) -->
+  <div id="tab-settings" class="tab-panel">
+    <div class="card" style="border-top: 3px solid #2563eb;">
+      <div class="section-title">
+        <span>⚙️ Tùy Chỉnh Thông Số Cào Cá Nhân</span>
+        <span style="font-size: 10.5px; background: #e2e8f0; color: #334155; padding: 2px 6px; border-radius: 6px;">Lưu máy này</span>
+      </div>
+      <p style="font-size: 11px; color: #64748b; margin-top: 0; margin-bottom: 12px;">
+        Các thông số dưới đây áp dụng riêng cho nick cá nhân của bạn, không ảnh hưởng tài khoản khác.
+      </p>
+
+      <div class="form-group">
+        <label>Khoảng cách cuộn mỗi nhịp (Pixels):</label>
+        <input id="cfgScrollDistance" class="form-control" type="number" min="800" max="3000" step="100" value="1600" />
+        <div class="hint">Độ cuộn khuyến nghị: 1,400 - 2,000px để lướt qua bài cũ kích hoạt tải bài mới.</div>
+      </div>
+
+      <div class="grid-2">
+        <div class="form-group">
+          <label>Nghỉ giữa 2 lần cuộn (Ít nhất):</label>
+          <input id="cfgDelayMin" class="form-control" type="number" min="500" max="10000" step="200" value="1500" />
+          <div class="hint">Mili-giây (vd: 1500ms = 1.5s)</div>
+        </div>
+        <div class="form-group">
+          <label>Nghỉ giữa 2 lần cuộn (Nhiều nhất):</label>
+          <input id="cfgDelayMax" class="form-control" type="number" min="1000" max="20000" step="500" value="2800" />
+          <div class="hint">Mili-giây (vd: 2800ms = 2.8s)</div>
+        </div>
+      </div>
+
+      <div class="grid-2">
+        <div class="form-group">
+          <label>Nghỉ giữa 2 nhóm (Giây):</label>
+          <input id="cfgGroupRestSec" class="form-control" type="number" min="10" max="600" step="5" value="45" />
+          <div class="hint">Nghỉ an toàn trước khi chuyển nhóm mới</div>
+        </div>
+        <div class="form-group">
+          <label>Số lần cuộn tối đa / nhóm:</label>
+          <input id="cfgMaxScrolls" class="form-control" type="number" min="5" max="100" step="5" value="25" />
+          <div class="hint">Số nhịp cuộn tối đa cho 1 nhóm</div>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label>Giới hạn bài cũ dừng nhóm (Chỉ đạo Master):</label>
+        <input id="cfgOldPostsLimit" class="form-control" type="number" min="5" max="50" step="1" value="15" />
+        <div class="hint">Gặp liên tiếp đúng <b>15 bài viết cũ</b> (ngoài ngày hôm nay) ➡️ Tự động dừng nhóm và chuyển nhóm tiếp theo!</div>
+      </div>
+
+      <div style="margin-top: 14px;">
+        <button id="btnSaveSettings" class="btn-primary">💾 Lưu Cấu Hình Cá Nhân</button>
+        <div id="saveSettingsMsg" style="font-size: 11px; color: #10b981; margin-top: 6px; text-align: center; font-weight: 600;"></div>
+      </div>
+    </div>
   </div>
 
   <script src="popup.js"></script>

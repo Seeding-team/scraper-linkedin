@@ -268,18 +268,10 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, workspaceTab: 
     },
     {
       type: "item",
-      id: "inbox",
-      href: "/all-platform/inbox",
-      icon: "inbox",
-      label: "Facebook Chat",
-      matchStartsWith: ["/all-platform/inbox"],
-    },
-    {
-      type: "item",
       id: "zalo-accounts",
       href: "/all-platform/tai-khoan",
       icon: "chat",
-      label: "Zalo Chat",
+      label: "Tài khoản Zalo",
       matchStartsWith: ["/all-platform/tai-khoan"],
     },
     {
@@ -287,7 +279,7 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, workspaceTab: 
       id: "telegram-chat",
       href: "/all-platform/telegram-chat",
       icon: "send",
-      label: "Telegram Chat",
+      label: "Tài khoản Telegram",
       matchStartsWith: ["/all-platform/telegram-chat"],
     },
   ];
@@ -659,14 +651,7 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, workspaceTab: 
       ...(isAdmin ? [phoneBridgeEntry, mobileProxyEntry] : []),
       channelGroup,
       ...crmEntries,
-      {
-        type: "item",
-        id: "fb-accounts-personal",
-        href: "/all-platform/quan-ly-tai-khoan",
-        icon: "account_circle",
-        label: "Tài khoản FB",
-        matchStartsWith: ["/all-platform/quan-ly-tai-khoan"],
-      },
+
       connectionSettingsEntry,
     ];
   }
