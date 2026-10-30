@@ -350,30 +350,71 @@ function GroupLinks({
                           const SubItemIcon = materialToLucideIcon(subItem.icon);
                           const subActive = isLeafActive(pathname, subItem, searchParams);
                           return (
-                            <Link
-                              key={subItem.id}
-                              href={subItem.href}
-                              className={cn(
-                                "group relative flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-[12.5px] font-medium transition-all duration-150 outline-none select-none",
-                                subActive
-                                  ? "bg-rose-50 text-rose-700 font-bold shadow-2xs"
-                                  : "text-slate-600 hover:bg-slate-100/70 hover:text-slate-900 active:bg-slate-200/50",
-                              )}
-                            >
-                              <span className="flex min-w-0 items-center gap-2 truncate">
-                                <SubItemIcon
-                                  className={cn(
-                                    "size-3.5 shrink-0 stroke-[1.8] transition-colors",
-                                    subActive ? "text-rose-700" : "text-slate-400 group-hover:text-slate-600",
-                                  )}
-                                />
-                                <span className="truncate">{subItem.label}</span>
-                              </span>
+                            <React.Fragment key={subItem.id}>
+                              <Link
+                                href={subItem.href}
+                                className={cn(
+                                  "group relative flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-[12.5px] font-medium transition-all duration-150 outline-none select-none",
+                                  subActive
+                                    ? "bg-rose-50 text-rose-700 font-bold shadow-2xs"
+                                    : "text-slate-600 hover:bg-slate-100/70 hover:text-slate-900 active:bg-slate-200/50",
+                                )}
+                              >
+                                <span className="flex min-w-0 items-center gap-2 truncate">
+                                  <SubItemIcon
+                                    className={cn(
+                                      "size-3.5 shrink-0 stroke-[1.8] transition-colors",
+                                      subActive ? "text-rose-700" : "text-slate-400 group-hover:text-slate-600",
+                                    )}
+                                  />
+                                  <span className="truncate">{subItem.label}</span>
+                                </span>
 
-                              {subItem.badge !== undefined ? (
-                                <PillBadge badge={subItem.badge} active={subActive} />
-                              ) : null}
-                            </Link>
+                                {subItem.badge !== undefined ? (
+                                  <PillBadge badge={subItem.badge} active={subActive} />
+                                ) : null}
+                              </Link>
+
+                              {/* Hỗ trợ Submenu cấp 2 (ví dụ: Cần liên hệ, Không phù hợp dưới Hoạt động seeding) */}
+                              {subItem.children && subItem.children.length > 0 && (
+                                <div className="ml-3 pl-2 my-0.5 space-y-0.5 border-l-2 border-rose-200/70">
+                                  {subItem.children.map((subLeaf) => {
+                                    const SubLeafIcon = materialToLucideIcon(subLeaf.icon);
+                                    const leafActive = isLeafActive(pathname, subLeaf, searchParams);
+                                    return (
+                                      <Link
+                                        key={subLeaf.id}
+                                        href={subLeaf.href}
+                                        className={cn(
+                                          "group relative flex w-full items-center justify-between gap-1.5 rounded-md px-2 py-1 text-[11.5px] font-medium transition-all duration-150 outline-none select-none",
+                                          leafActive
+                                            ? "bg-rose-50 text-rose-700 font-bold shadow-2xs"
+                                            : "text-slate-600 hover:bg-slate-100/70 hover:text-slate-900",
+                                        )}
+                                      >
+                                        <span className="flex min-w-0 items-center gap-1.5 truncate">
+                                          <SubLeafIcon
+                                            className={cn(
+                                              "size-3 shrink-0 stroke-[1.8] transition-colors",
+                                              leafActive ? "text-rose-700" : "text-slate-400 group-hover:text-slate-600",
+                                            )}
+                                          />
+                                          <span className="truncate">{subLeaf.label}</span>
+                                        </span>
+                                        {subLeaf.badge !== undefined ? (
+                                          <PillBadge badge={subLeaf.badge} active={leafActive} />
+                                        ) : leafActive ? (
+                                          <span
+                                            className="size-1 rounded-full bg-rose-600 shadow-xs shrink-0"
+                                            aria-hidden="true"
+                                          />
+                                        ) : null}
+                                      </Link>
+                                    );
+                                  })}
+                                </div>
+                              )}
+                            </React.Fragment>
                           );
                         })}
                       </div>

@@ -21,6 +21,7 @@ import { LeadFormDrawer } from "@/modules/crm/components/LeadFormDrawer";
 import type { CrmLeadRow } from "@/modules/crm/types";
 import { toast } from "sonner";
 import { PostEvaluationDropdown } from "./PostEvaluationDropdown";
+import { PostCallResultDropdown } from "./PostCallResultDropdown";
 import { PostAssigneeDropdown, type PostMemberItem } from "./PostAssigneeDropdown";
 
 interface PostCardProps {
@@ -281,14 +282,9 @@ export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onVi
               <button
                 type="button"
                 onClick={() => setIsContentExpanded((prev) => !prev)}
-                className="mt-1.5 inline-flex items-center gap-1 text-xs font-bold text-rose-600 hover:text-rose-700 transition-colors cursor-pointer select-none"
+                className="mt-2 inline-flex items-center gap-1 text-[12px] font-bold text-blue-600 hover:text-blue-700 hover:underline transition-colors cursor-pointer select-none"
               >
-                <span>{isContentExpanded ? "Thu gọn" : "Xem thêm"}</span>
-                {isContentExpanded ? (
-                  <ChevronUp className="size-3.5 stroke-[2.5]" />
-                ) : (
-                  <ChevronDown className="size-3.5 stroke-[2.5]" />
-                )}
+                <span>{isContentExpanded ? "Thu gọn ↑" : "Đọc thêm · Xem toàn bộ nội dung ↓"}</span>
               </button>
             )}
           </div>
@@ -494,10 +490,15 @@ export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onVi
               );
             })()}
 
-            {/* Tình trạng bài viết (Chuẩn theo dropdown Ảnh 2) */}
+            {/* Tình trạng bài viết (Chuẩn theo dropdown Ảnh 1) */}
             <PostEvaluationDropdown
               postId={post.id || post.post_url}
               initialStatus={(post as any).evaluation_status}
+            />
+
+            {/* Kết quả liên hệ (Chuẩn theo dropdown Ảnh 2) */}
+            <PostCallResultDropdown
+              postId={post.id || post.post_url}
             />
 
             {/* Assign người seeding */}

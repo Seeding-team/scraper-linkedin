@@ -21,6 +21,7 @@ export interface NavLeafItem {
   // (vd "Teams" va "Rule KPI & Thuong" cung nam duoi /admin/teams-management/... -
   // neu khong co co nay, ca 2 muc sidebar se sang mau cung luc).
   exactMatch?: boolean;
+  children?: NavLeafItem[];
 }
 
 export interface NavSubGroupItem {
@@ -277,6 +278,22 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, workspaceTab: 
           icon: "bolt",
           label: "Hoạt động seeding",
           exactMatch: true,
+          children: [
+            {
+              type: "item",
+              id: "external-todo",
+              href: "/all-platform/post-feed?status=todo",
+              icon: "schedule",
+              label: "Cần liên hệ",
+            },
+            {
+              type: "item",
+              id: "external-skip",
+              href: "/all-platform/post-feed?status=skip",
+              icon: "block",
+              label: "Không phù hợp",
+            },
+          ],
         },
         {
           type: "item",
@@ -291,6 +308,14 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, workspaceTab: 
           href: "/all-platform/lich-cao-hang-doi",
           icon: "calendar_today",
           label: "Lịch cào & Hàng đợi",
+        },
+        {
+          type: "item",
+          id: "quick-comments",
+          href: "/all-platform/quick-comments",
+          icon: "chat_bubble",
+          label: "Thư viện mẫu câu",
+          matchStartsWith: ["/all-platform/quick-comments"],
         },
         {
           type: "item",
@@ -319,14 +344,6 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, workspaceTab: 
       icon: "analytics",
       label: "Tổng quan báo cáo",
       exactMatch: true,
-    },
-    {
-      type: "item",
-      id: "quick-comments",
-      href: "/all-platform/quick-comments",
-      icon: "chat_bubble",
-      label: "Thư viện mẫu câu",
-      matchStartsWith: ["/all-platform/quick-comments"],
     },
   ];
 

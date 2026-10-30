@@ -221,8 +221,26 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
 
   const [feedPlatform, setFeedPlatform] = useState<FeedPlatform>("facebook");
   const [serviceArea, setServiceArea] = useState<ServiceAreaKey>("all");
-    const searchParams = useSearchParams();
+  const searchParams = useSearchParams();
   const router = useRouter();
+
+  // Status filter: 'all' | 'todo' | 'doing' | 'done' | 'skip'
+  const [seedingStatusFilter, setSeedingStatusFilter] = useState<string>(() => {
+    return searchParams?.get("status") || "all";
+  });
+  const [callFilter, setCallFilter] = useState<string>("all");
+
+  useEffect(() => {
+    const s = searchParams?.get("status");
+    if (s && s !== seedingStatusFilter) {
+      setSeedingStatusFilter(s);
+      setCallFilter("all");
+    } else if (!s && seedingStatusFilter !== "all" && searchParams?.get("sub") === null) {
+      // no status in url
+    }
+  }, [searchParams]);
+
+
 
   useEffect(() => {
     const urlSub = searchParams?.get("sub");
@@ -277,6 +295,51 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
 
   // States
   const [posts, setPosts] = useState<UnifiedPost[]>([]);
+
+  const [evaluationsMap, setEvaluationsMap] = useState<Record<string, string>>({});
+  const [callsMap, setCallsMap] = useState<Record<string, { result: string; attempts: number; lastCall?: string }>>({});
+
+  // Sync evaluations and calls from localStorage and window events
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const evMap: Record<string, string> = {};
+    const cMap: Record<string, { result: string; attempts: number; lastCall?: string }> = {};
+    posts.forEach((p) => {
+      const pid = p.id || p.post_url;
+      const savedEv = localStorage.getItem(`evaluation_${pid}`);
+      if (savedEv) evMap[pid] = savedEv;
+      try {
+        const savedCall = localStorage.getItem(`post_call_${pid}`);
+        if (savedCall) cMap[pid] = JSON.parse(savedCall);
+      } catch {}
+    });
+    setEvaluationsMap(evMap);
+    setCallsMap(cMap);
+
+    const handleEvUpdate = (e: any) => {
+      if (e.detail?.postId) {
+        setEvaluationsMap((prev) => ({ ...prev, [e.detail.postId]: e.detail.evaluation }));
+      }
+    };
+    const handleCallUpdate = (e: any) => {
+      if (e.detail?.postId) {
+        setCallsMap((prev) => ({
+          ...prev,
+          [e.detail.postId]: {
+            result: e.detail.result,
+            attempts: e.detail.attempts,
+            lastCall: e.detail.lastCall,
+          },
+        }));
+      }
+    };
+    window.addEventListener("seeding_post_evaluation_updated", handleEvUpdate);
+    window.addEventListener("seeding_post_call_updated", handleCallUpdate);
+    return () => {
+      window.removeEventListener("seeding_post_evaluation_updated", handleEvUpdate);
+      window.removeEventListener("seeding_post_call_updated", handleCallUpdate);
+    };
+  }, [posts]);
   const [deletingPostId, setDeletingPostId] = useState<string | null>(null);
 
   const [stats, setStats] = useState<UnifiedStats>({
@@ -640,14 +703,111 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
     setSeedingRosterData(null);
   }, []);
 
-  // Loc client-side theo mang dich vu da chon (xem SERVICE_AREA_TABS o dau
-  // file) - khong doi lai backend/pagination, chi an/hien trong trang hien
-  // tai. Neu can loc dung tren toan bo du lieu (khong chi trang dang xem),
-  // viec nay nen chuyen xuong backend (them tham so service_area) o phien sau.
-  const visiblePosts = useMemo(
-    () => posts.filter(p => matchesServiceArea(p.team, serviceArea)),
-    [posts, serviceArea],
+  // Helper to get effective evaluation and call result for a post
+  const getPostRatingAndCall = useCallback((p: UnifiedPost) => {
+    const pid = p.id || p.post_url;
+    const rating = evaluationsMap[pid] || (p as any).evaluation || "chua_danh_gia";
+    const call = callsMap[pid]?.result || "";
+    return { rating, call };
+  }, [evaluationsMap, callsMap]);
+
+  // Posts matching current service area
+  const areaPosts = useMemo(
+    () => posts.filter((p) => matchesServiceArea(p.team, serviceArea)),
+    [posts, serviceArea]
   );
+
+  // 4 metric summary counts
+  const seedingMetrics = useMemo(() => {
+    let todo = 0;
+    let doing = 0;
+    let done = 0;
+    let skip = 0;
+
+    areaPosts.forEach((p) => {
+      const { rating, call } = getPostRatingAndCall(p);
+      if (rating === "khong_phu_hop" || call === "invalid") {
+        skip++;
+      } else if (call === "consulting" || call === "waiting") {
+        doing++;
+      } else if (call === "interested" || call === "refused" || call === "nointerest") {
+        done++;
+      } else if (rating === "can_lien_he") {
+        todo++;
+      }
+    });
+
+    return {
+      all: areaPosts.length,
+      todo,
+      doing,
+      done,
+      skip,
+    };
+  }, [areaPosts, getPostRatingAndCall]);
+
+  const callResultOptions: [string, string][] = [
+    ["all", "Tất cả"],
+    ["none", "Chưa liên hệ"],
+    ["noanswer", "Không nghe máy"],
+    ["callback", "Hẹn gọi lại"],
+    ["consulting", "Đang tư vấn"],
+    ["waiting", "Chờ phản hồi"],
+    ["interested", "Có nhu cầu"],
+    ["nointerest", "Không có nhu cầu"],
+    ["refused", "Đã từ chối"],
+  ];
+
+  const callFilterCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    callResultOptions.forEach(([k]) => {
+      counts[k] = 0;
+    });
+
+    areaPosts.forEach((p) => {
+      const { rating, call } = getPostRatingAndCall(p);
+      if (rating === "can_lien_he") {
+        counts["all"]++;
+        if (!call) {
+          counts["none"]++;
+        } else if (counts[call] !== undefined) {
+          counts[call]++;
+        }
+      }
+    });
+
+    return counts;
+  }, [areaPosts, getPostRatingAndCall]);
+
+  // Loc client-side theo ca serviceArea, seedingStatusFilter va callFilter
+  const visiblePosts = useMemo(() => {
+    return areaPosts.filter((p) => {
+      const { rating, call } = getPostRatingAndCall(p);
+
+      if (seedingStatusFilter === "todo") {
+        if (rating !== "can_lien_he" && call !== "noanswer" && call !== "callback") return false;
+        if (rating === "khong_phu_hop" || call === "invalid") return false;
+
+        if (callFilter === "all") return true;
+        if (callFilter === "none") return !call;
+        return call === callFilter;
+      }
+
+      if (seedingStatusFilter === "skip") {
+        return rating === "khong_phu_hop" || call === "invalid";
+      }
+
+      if (seedingStatusFilter === "doing") {
+        return call === "consulting" || call === "waiting";
+      }
+
+      if (seedingStatusFilter === "done") {
+        return call === "interested" || call === "refused" || call === "nointerest";
+      }
+
+      return true;
+    });
+  }, [areaPosts, seedingStatusFilter, callFilter, getPostRatingAndCall]);
 
   // Tab theo team: "Tất cả" + từng team thật đang có trong hệ thống (list `teams`
   // đã fetch sẵn ở trên cho FilterBar) — tự động có tab mới khi admin tạo thêm team.
@@ -823,6 +983,122 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
                 setShowSeedingResultModal(true);
               }}
             />
+          )}
+
+          {/* 4 Metric Summary Cards chuẩn HTML template */}
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3.5 mb-2">
+            <div
+              onClick={() => {
+                setSeedingStatusFilter("all");
+                setCallFilter("all");
+              }}
+              className={cn(
+                "bg-white border rounded-2xl p-4 sm:p-5 shadow-xs cursor-pointer transition-all hover:shadow-md",
+                seedingStatusFilter === "all" ? "border-blue-500 ring-2 ring-blue-100 bg-blue-50/20" : "border-gray-200/80 hover:border-gray-300"
+              )}
+            >
+              <div className="flex items-center justify-between text-xs font-semibold text-gray-500">
+                <span>Tổng bài viết</span>
+                <span className="w-2.5 h-2.5 rounded-full bg-[#6078eb]" />
+              </div>
+              <strong className="text-2xl sm:text-3xl font-bold tracking-tight block mt-2 text-gray-900">
+                {seedingMetrics.all}
+              </strong>
+            </div>
+
+            <div
+              onClick={() => {
+                setSeedingStatusFilter("todo");
+                setCallFilter("all");
+              }}
+              className={cn(
+                "bg-white border rounded-2xl p-4 sm:p-5 shadow-xs cursor-pointer transition-all hover:shadow-md",
+                seedingStatusFilter === "todo" ? "border-amber-500 ring-2 ring-amber-100 bg-amber-50/20" : "border-gray-200/80 hover:border-gray-300"
+              )}
+            >
+              <div className="flex items-center justify-between text-xs font-semibold text-gray-500">
+                <span>Cần liên hệ</span>
+                <span className="w-2.5 h-2.5 rounded-full bg-[#ee9a50]" />
+              </div>
+              <strong className="text-2xl sm:text-3xl font-bold tracking-tight block mt-2 text-amber-600">
+                {seedingMetrics.todo}
+              </strong>
+            </div>
+
+            <div
+              onClick={() => {
+                setSeedingStatusFilter("doing");
+                setCallFilter("all");
+              }}
+              className={cn(
+                "bg-white border rounded-2xl p-4 sm:p-5 shadow-xs cursor-pointer transition-all hover:shadow-md",
+                seedingStatusFilter === "doing" ? "border-blue-400 ring-2 ring-blue-100 bg-blue-50/20" : "border-gray-200/80 hover:border-gray-300"
+              )}
+            >
+              <div className="flex items-center justify-between text-xs font-semibold text-gray-500">
+                <span>Đang liên hệ</span>
+                <span className="w-2.5 h-2.5 rounded-full bg-[#6087e6]" />
+              </div>
+              <strong className="text-2xl sm:text-3xl font-bold tracking-tight block mt-2 text-blue-600">
+                {seedingMetrics.doing}
+              </strong>
+            </div>
+
+            <div
+              onClick={() => {
+                setSeedingStatusFilter("done");
+                setCallFilter("all");
+              }}
+              className={cn(
+                "bg-white border rounded-2xl p-4 sm:p-5 shadow-xs cursor-pointer transition-all hover:shadow-md",
+                seedingStatusFilter === "done" ? "border-emerald-500 ring-2 ring-emerald-100 bg-emerald-50/20" : "border-gray-200/80 hover:border-gray-300"
+              )}
+            >
+              <div className="flex items-center justify-between text-xs font-semibold text-gray-500">
+                <span>Đã liên hệ</span>
+                <span className="w-2.5 h-2.5 rounded-full bg-[#1ab28c]" />
+              </div>
+              <strong className="text-2xl sm:text-3xl font-bold tracking-tight block mt-2 text-emerald-600">
+                {seedingMetrics.done}
+              </strong>
+            </div>
+          </div>
+
+          {/* Filter Chips cho Kết Quả Cuộc Gọi (chỉ hiện khi đang xem "Cần liên hệ") */}
+          {seedingStatusFilter === "todo" && (
+            <div className="flex flex-wrap items-center gap-2 p-3 sm:p-3.5 bg-white border border-gray-200/80 rounded-2xl mb-4 shadow-xs">
+              <span className="text-xs font-bold text-gray-500 mr-1 flex items-center gap-1">
+                <span className="material-symbols-outlined text-[16px] text-amber-500">call</span>
+                Kết quả gọi:
+              </span>
+              {callResultOptions.map(([key, label]) => {
+                const isSelected = callFilter === key;
+                const count = callFilterCounts[key] || 0;
+                return (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => setCallFilter(key)}
+                    className={cn(
+                      "inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold transition-all cursor-pointer",
+                      isSelected
+                        ? "bg-[#fff0f4] text-[#bc2851] border border-[#f2b8c9] shadow-xs"
+                        : "bg-gray-100/80 text-gray-600 border border-transparent hover:bg-gray-200/70"
+                    )}
+                  >
+                    <span>{label}</span>
+                    <span
+                      className={cn(
+                        "text-[10px] px-1.5 py-0.5 rounded-full font-bold",
+                        isSelected ? "bg-[#fde8ee] text-[#bc2851]" : "bg-gray-200/80 text-gray-500"
+                      )}
+                    >
+                      {count}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
           )}
 
           {/* Menu độc lập theo TEAM (2026-09-30) — mỗi tab là 1 team thật trong hệ

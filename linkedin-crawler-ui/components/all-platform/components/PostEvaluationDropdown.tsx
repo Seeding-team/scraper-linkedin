@@ -10,14 +10,10 @@ export interface EvaluationOption {
   color?: string;
 }
 
+// Chuẩn 3 trạng thái đánh giá bài viết theo đúng Ảnh 1 của Master
 export const EVALUATION_OPTIONS: EvaluationOption[] = [
   { value: "chua_danh_gia", label: "Chưa đánh giá" },
-  { value: "can_xem_xet", label: "Cần xem xét" },
-  { value: "presale_check", label: "Presale check" },
-  { value: "tham_gia", label: "Tham gia" },
-  { value: "ko_tham_gia", label: "KO tham gia" },
-  { value: "trung", label: "Trúng" },
-  { value: "rot", label: "Rớt" },
+  { value: "can_lien_he", label: "Cần liên hệ" },
   { value: "khong_phu_hop", label: "Không phù hợp" },
 ];
 
