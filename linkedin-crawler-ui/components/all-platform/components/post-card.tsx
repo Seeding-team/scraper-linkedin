@@ -541,20 +541,11 @@ export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onVi
 
             <button
               type="button"
-              onClick={handleStartTask}
+              onClick={() => setIsTaskModalOpen(true)}
               className="px-3.5 py-2 bg-primary hover:bg-primary/90 text-primary-foreground rounded-lg text-sm font-semibold transition shadow-sm cursor-pointer flex items-center gap-1.5"
-              title="Nhảy sang tab bài viết và kích hoạt theo dõi bắt request minh chứng comment tự động"
+              title="Xem nhiệm vụ, gợi ý mẫu bình luận và mở bài viết kích hoạt theo dõi KPI"
             >
               <span>📋 Làm nhiệm vụ</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setIsTaskModalOpen(true)}
-              className="px-2 py-2 bg-card border border-border text-muted-foreground hover:bg-muted hover:text-foreground rounded-lg transition shadow-sm cursor-pointer flex items-center gap-1 text-xs font-semibold"
-              title="Xem & sao chép mẫu câu bình luận"
-            >
-              <span className="material-symbols-outlined text-[16px]">chat</span>
-              <span>Mẫu</span>
             </button>
 
             {/* Cac hanh dong it dung hon (Xem chi tiet / Len lich / Xoa) gom vao 1 modal
@@ -639,6 +630,7 @@ function TaskModal({ post, onClose }: { post: UnifiedPost; onClose: () => void; 
   };
 
   const handleLaunchTask = async () => {
+    onClose();
     if (commentText.trim()) {
       try {
         await navigator.clipboard.writeText(commentText.trim());

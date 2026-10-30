@@ -1333,10 +1333,10 @@ export const allPlatformPostsService = {
 
   /** Tab phụ "Tài khoản seeding" (Lịch crawl & Hàng đợi) — admin thấy mọi thành viên,
    * leader chỉ thấy team mình quản lý. */
-  getMemberSeedingOverview: (email: string): Promise<ApiResponse<MemberSeedingOverviewData>> => {
+  getMemberSeedingOverview: (email: string, timeRange: string = "all"): Promise<ApiResponse<MemberSeedingOverviewData>> => {
     return requestJson(`${BASE}/unified/members/seeding-overview`, {
       method: "POST",
-      body: JSON.stringify({ email, platform: "all" }),
+      body: JSON.stringify({ email, platform: "all", time_range: timeRange }),
     });
   },
 

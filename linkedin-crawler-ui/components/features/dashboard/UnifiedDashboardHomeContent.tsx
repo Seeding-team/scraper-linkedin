@@ -729,15 +729,14 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
           (admin+leader) / "Kho thư viện Group" / "Lịch crawl & Hàng đợi". */}
 
       
-        /* Tab "Seeding bên ngoài": làm nổi bật hẳn (khung viền + icon + mô tả) vì đây là
-           lựa chọn quan trọng nhất của trang - 3 nút nhỏ canh phải rất dễ bị lướt qua. */
-        <div className="flex flex-col sm:flex-row sm:items-center gap-3 rounded-2xl border-2 border-primary/30 bg-gradient-to-r from-primary/5 to-transparent p-3 sm:p-4">
-          <span className="text-xs font-bold text-muted-foreground uppercase tracking-wide shrink-0">
-            Chọn nền tảng
-          </span>
-          {platformTabs}
-          <span className="text-xs text-muted-foreground sm:ml-auto">{platformHint}</span>
-        </div>
+        {/* Chọn nền tảng */}
+      <div className="flex flex-col sm:flex-row sm:items-center gap-3 p-1">
+        <span className="text-xs font-bold text-muted-foreground uppercase tracking-wide shrink-0">
+          Chọn nền tảng
+        </span>
+        {platformTabs}
+        <span className="text-xs text-muted-foreground sm:ml-auto">{platformHint}</span>
+      </div>
 
       
       <>

@@ -344,7 +344,10 @@ export interface MemberSeedingAccount {
   fb_groups: number;
   li_groups: number;
   telegram_connected: boolean;
-  total_fb_posts_crawled: number;
+  total_fb_posts_crawled?: number;
+  total_crawled_posts: number;
+  ai_passed_posts: number;
+  ai_passed_percent: number;
   last_crawled_at: string | null;
 }
 

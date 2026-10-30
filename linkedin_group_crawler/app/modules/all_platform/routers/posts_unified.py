@@ -176,7 +176,7 @@ def unified_member_seeding_overview(payload: UnifiedPostsRequest) -> BaseRespons
     """Tab phụ "Tài khoản seeding" (Lịch crawl & Hàng đợi) — admin thấy mọi thành viên,
     leader chỉ thấy team mình quản lý, member không thấy gì."""
     try:
-        data = get_member_seeding_overview(email=payload.email)
+        data = get_member_seeding_overview(email=payload.email, time_range=payload.time_range or "all")
         return BaseResponse(success=True, data=data)
     except Exception as e:
         return _fail(e)

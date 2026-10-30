@@ -32,11 +32,12 @@ export function SeedingAccountsOverview() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<MemberSeedingAccount | null>(null);
+  const [timeRange, setTimeRange] = useState<"today" | "this_week" | "last_week" | "last_month" | "all">("all");
 
   const load = useCallback(() => {
     if (!user?.email) return;
     allPlatformPostsService
-      .getMemberSeedingOverview(user.email)
+      .getMemberSeedingOverview(user.email, timeRange)
       .then((res) => {
         if (res.success === false) {
           setError(res.message || "Không tải được danh sách tài khoản seeding.");
@@ -47,7 +48,7 @@ export function SeedingAccountsOverview() {
       })
       .catch((e) => setError(e instanceof Error ? e.message : "Không tải được danh sách tài khoản seeding."))
       .finally(() => setLoading(false));
-  }, [user?.email]);
+  }, [user?.email, timeRange]);
 
   useEffect(() => {
     load();
@@ -74,27 +75,55 @@ export function SeedingAccountsOverview() {
         <div className="rounded-xl bg-amber-50 border border-amber-300 px-4 py-3 text-sm text-amber-700">⚠️ {error}</div>
       ) : null}
 
+      {/* Bộ lọc thời gian cào */}
+      <div className="flex flex-wrap items-center gap-2 p-1">
+        <span className="text-xs font-bold text-muted-foreground mr-1">Bộ lọc thời gian:</span>
+        {[
+          { key: "today", label: "Hôm nay (Ngày)" },
+          { key: "this_week", label: "Tuần này" },
+          { key: "last_week", label: "Tuần trước" },
+          { key: "last_month", label: "Tháng trước" },
+          { key: "all", label: "Tất cả" },
+        ].map((t) => (
+          <button
+            key={t.key}
+            type="button"
+            onClick={() => setTimeRange(t.key as any)}
+            className={cn(
+              "px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer border",
+              timeRange === t.key
+                ? "bg-primary text-white border-primary shadow-xs"
+                : "bg-surface text-on-surface-variant border-outline-variant hover:bg-surface-container-low"
+            )}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
       <div className="overflow-hidden rounded-xl border border-outline-variant bg-surface shadow-sm">
         <div className="overflow-x-auto">
-          <table className="w-full border-collapse text-left text-sm">
+          <table className="w-full min-w-[850px] border-collapse text-left text-sm">
             <thead className="bg-surface-container-low border-b border-outline-variant text-[11px] font-bold text-on-surface-variant uppercase">
               <tr>
-                <th className="py-3 px-4">Người dùng</th>
-                <th className="py-3 px-4">Nền tảng đang dùng</th>
-                <th className="py-3 px-4 text-center">Số group cào</th>
-                <th className="py-3 px-4">Lịch sử cào</th>
+                <th className="py-3 px-4 min-w-[200px]">Người dùng</th>
+                <th className="py-3 px-4 min-w-[170px]">Nền tảng đang dùng</th>
+                <th className="py-3 px-4 text-center min-w-[130px]">Số group cào</th>
+                <th className="py-3 px-4 text-center min-w-[130px]">Số bài cào</th>
+                <th className="py-3 px-4 text-center min-w-[170px]">Số bài viết vượt AI check</th>
+                <th className="py-3 px-4 min-w-[140px]">Lần cào gần nhất</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-outline-variant">
               {loading ? (
                 <tr>
-                  <td colSpan={4} className="py-10 text-center text-xs text-muted-foreground">
-                    Đang tải...
+                  <td colSpan={6} className="py-10 text-center text-xs text-muted-foreground">
+                    Đang tải dữ liệu...
                   </td>
                 </tr>
               ) : accounts.length === 0 ? (
                 <tr>
-                  <td colSpan={4} className="py-10 text-center text-xs text-muted-foreground">
+                  <td colSpan={6} className="py-10 text-center text-xs text-muted-foreground">
                     Chưa có tài khoản seeding nào.
                   </td>
                 </tr>
@@ -143,9 +172,28 @@ export function SeedingAccountsOverview() {
                         (FB {a.fb_groups} · LI {a.li_groups})
                       </span>
                     </td>
+                    <td className="py-3 px-4 text-center">
+                      <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold bg-blue-50 text-blue-700 border border-blue-200">
+                        {a.total_crawled_posts ?? a.total_fb_posts_crawled ?? 0} bài
+                      </span>
+                    </td>
+                    <td className="py-3 px-4 text-center">
+                      <div className="inline-flex flex-col items-center">
+                        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                          ⚡ {a.ai_passed_posts ?? 0} bài
+                        </span>
+                        {(a.total_crawled_posts || a.total_fb_posts_crawled) ? (
+                          <span className="text-[10px] text-muted-foreground mt-0.5 font-medium">
+                            ({a.ai_passed_percent ?? 0}%)
+                          </span>
+                        ) : null}
+                      </div>
+                    </td>
                     <td className="py-3 px-4">
-                      <div className="text-on-surface font-semibold">{a.total_fb_posts_crawled} bài</div>
-                      <div className="text-[11px] text-muted-foreground">{formatRelative(a.last_crawled_at)}</div>
+                      <div className="text-[11px] font-semibold text-on-surface">
+                        {a.last_crawled_at ? new Date(a.last_crawled_at).toLocaleDateString("vi-VN") : "—"}
+                      </div>
+                      <div className="text-[10px] text-muted-foreground">{formatRelative(a.last_crawled_at)}</div>
                     </td>
                   </tr>
                 ))

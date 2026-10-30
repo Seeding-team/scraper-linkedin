@@ -11,6 +11,7 @@ class GetAllPostsRequest(BaseModel):
     email: str
     date_from: Optional[str] = None
     date_to: Optional[str] = None
+    time_range: Optional[str] = "all"
     intent: Optional[str] = None
 
 

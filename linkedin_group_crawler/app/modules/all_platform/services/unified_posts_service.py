@@ -1429,17 +1429,16 @@ def _resolve_overview_scope(sb, email: str) -> tuple[str, list[dict]]:
     return role, members
 
 
-def get_member_seeding_overview(email: str) -> dict:
+def get_member_seeding_overview(email: str, time_range: str = "all") -> dict:
     """Tab phụ "Tài khoản seeding" (Lịch crawl & Hàng đợi) — bảng tổng quan theo từng
     thành viên: số nhóm Facebook/LinkedIn đang sở hữu, đã kết nối Telegram Chat chưa,
-    tổng số bài đã cào (Facebook — xem ghi chú bên dưới) + lần cào gần nhất. RBAC giống
-    get_teams_seeding_efficiency: admin thấy toàn bộ, leader chỉ thấy team mình quản lý,
-    member không thấy gì (dùng cho quản lý, không phải trang cá nhân của member).
+    tổng số bài đã cào theo mốc thời gian (Ngày, Tuần này, Tuần trước, Tháng trước, Tất cả),
+    số bài viết vượt AI check (score >= 70) + lần cào gần nhất.
     """
     sb = _supabase()
     role, members = _resolve_overview_scope(sb, email)
     if role not in ("admin", "leader") or not members:
-        return {"role": role, "accounts": []}
+        return {"role": role, "accounts": [], "time_range": time_range}
 
     member_ids = [m["id"] for m in members]
     fb_groups = sb.table("facebook_groups").select("id, id_member").in_("id_member", member_ids).execute().data or []
@@ -1453,46 +1452,108 @@ def get_member_seeding_overview(email: str) -> dict:
         .data
         or []
     )
-    # facebook_posts.id_member co truc tiep tren bang; linkedin_posts KHONG co (phai
-    # join qua linkedin_groups.id_member) - gioi han "lich su cao"/"tong bai cao" o day
-    # trong Facebook de tranh 1 vong join N+1 phuc tap, van du de biet ai dang thuc su
-    # cao (extension FB la kenh cao chinh cua tab nay).
-    fb_posts = (
-        sb.table("facebook_posts")
-        .select("id_member, crawl_date")
-        .in_("id_member", member_ids)
-        .order("crawl_date", desc=True)
-        .limit(5000)
-        .execute()
-        .data
-        or []
-    )
 
+    fb_group_owner_map: dict[str, str] = {}
     fb_group_count: dict[str, int] = {}
     for g in fb_groups:
         mid = g.get("id_member")
+        gid = g.get("id")
         if mid:
             fb_group_count[mid] = fb_group_count.get(mid, 0) + 1
+            if gid:
+                fb_group_owner_map[gid] = mid
+
     li_group_count: dict[str, int] = {}
     for g in li_groups:
         mid = g.get("id_member")
         if mid:
             li_group_count[mid] = li_group_count.get(mid, 0) + 1
+
     tg_connected = {a["id_member"] for a in tg_accounts if a.get("id_member")}
+
+    now_vn = datetime.now(timezone(timedelta(hours=7)))
+    today_start = now_vn.replace(hour=0, minute=0, second=0, microsecond=0)
+
+    start_iso: Optional[str] = None
+    end_iso: Optional[str] = None
+
+    if time_range == "today":
+        start_iso = today_start.isoformat()
+        end_iso = (today_start + timedelta(days=1)).isoformat()
+    elif time_range == "this_week":
+        monday = today_start - timedelta(days=today_start.weekday())
+        start_iso = monday.isoformat()
+        end_iso = (monday + timedelta(days=7)).isoformat()
+    elif time_range == "last_week":
+        monday_this_week = today_start - timedelta(days=today_start.weekday())
+        monday_last_week = monday_this_week - timedelta(days=7)
+        start_iso = monday_last_week.isoformat()
+        end_iso = monday_this_week.isoformat()
+    elif time_range == "last_month":
+        first_this_month = today_start.replace(day=1)
+        last_day_prev_month = first_this_month - timedelta(days=1)
+        first_prev_month = last_day_prev_month.replace(day=1)
+        start_iso = first_prev_month.isoformat()
+        end_iso = first_this_month.isoformat()
+
+    query = sb.table("facebook_posts").select("id, id_member, group_id, crawl_date, created_at, score")
+    if fb_group_owner_map:
+        group_ids = list(fb_group_owner_map.keys())[:100]
+        query = query.or_(f"id_member.in.({','.join(member_ids)}),group_id.in.({','.join(group_ids)})")
+    else:
+        query = query.in_("id_member", member_ids)
+
+    if start_iso:
+        query = query.gte("crawl_date", start_iso)
+    if end_iso:
+        query = query.lt("crawl_date", end_iso)
+
+    fb_posts = query.order("crawl_date", desc=True).limit(5000).execute().data or []
+
+    th_query = sb.table("threads_posts").select("id, id_member, created_at, score").in_("id_member", member_ids)
+    if start_iso:
+        th_query = th_query.gte("created_at", start_iso)
+    if end_iso:
+        th_query = th_query.lt("created_at", end_iso)
+    try:
+        th_posts = th_query.limit(2000).execute().data or []
+    except Exception:
+        th_posts = []
+
     post_count: dict[str, int] = {}
+    ai_passed_count: dict[str, int] = {}
     last_crawled: dict[str, str] = {}
+
     for p in fb_posts:
-        mid = p.get("id_member")
-        if not mid:
+        mid = p.get("id_member") or fb_group_owner_map.get(p.get("group_id"))
+        if not mid or mid not in member_ids:
             continue
         post_count[mid] = post_count.get(mid, 0) + 1
-        d = p.get("crawl_date")
+        score = p.get("score") or 0
+        if score >= 70:
+            ai_passed_count[mid] = ai_passed_count.get(mid, 0) + 1
+        d = p.get("crawl_date") or p.get("created_at")
+        if d and (mid not in last_crawled or d > last_crawled[mid]):
+            last_crawled[mid] = d
+
+    for p in th_posts:
+        mid = p.get("id_member")
+        if not mid or mid not in member_ids:
+            continue
+        post_count[mid] = post_count.get(mid, 0) + 1
+        score = p.get("score") or 0
+        if score >= 70:
+            ai_passed_count[mid] = ai_passed_count.get(mid, 0) + 1
+        d = p.get("created_at")
         if d and (mid not in last_crawled or d > last_crawled[mid]):
             last_crawled[mid] = d
 
     accounts = []
     for m in members:
         mid = m["id"]
+        total_crawled = post_count.get(mid, 0)
+        ai_passed = ai_passed_count.get(mid, 0)
+        ai_percent = round((ai_passed / total_crawled) * 100, 1) if total_crawled > 0 else 0
         accounts.append(
             {
                 "id_member": mid,
@@ -1501,12 +1562,15 @@ def get_member_seeding_overview(email: str) -> dict:
                 "fb_groups": fb_group_count.get(mid, 0),
                 "li_groups": li_group_count.get(mid, 0),
                 "telegram_connected": mid in tg_connected,
-                "total_fb_posts_crawled": post_count.get(mid, 0),
+                "total_crawled_posts": total_crawled,
+                "total_fb_posts_crawled": total_crawled,
+                "ai_passed_posts": ai_passed,
+                "ai_passed_percent": ai_percent,
                 "last_crawled_at": last_crawled.get(mid),
             }
         )
-    accounts.sort(key=lambda a: (-a["total_fb_posts_crawled"], a["name"]))
-    return {"role": role, "accounts": accounts}
+    accounts.sort(key=lambda a: (-a["total_crawled_posts"], a["name"]))
+    return {"role": role, "accounts": accounts, "time_range": time_range}
 
 
 def get_member_crawl_history(email: str, id_member: str, limit: int = 30) -> dict:
