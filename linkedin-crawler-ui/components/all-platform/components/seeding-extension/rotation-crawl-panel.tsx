@@ -176,12 +176,12 @@ export function RotationCrawlPanel() {
           </button>
       </div>
 
-      <div className="mx-4 mt-3 rounded-xl border border-emerald-200 bg-emerald-50/90 p-3.5 text-xs text-emerald-900 leading-relaxed flex items-start gap-2.5 shadow-2xs">
-        <span className="material-symbols-outlined text-emerald-600 text-[20px] shrink-0">verified_user</span>
+      <div className="mx-4 mt-3 rounded-xl border border-sky-200 bg-sky-50/90 p-3.5 text-xs text-sky-900 leading-relaxed flex items-start gap-2.5 shadow-2xs">
+        <span className="material-symbols-outlined text-sky-600 text-[20px] shrink-0">verified_user</span>
         <div>
-          <p className="font-bold text-emerald-950">Chế độ Tự Cào & Quản Lý Lịch Cá Nhân Độc Lập</p>
-          <p className="mt-0.5 text-emerald-800">
-            Bạn có thể tự do bấm <b>&quot;Thêm lịch cào&quot;</b> để thiết lập lịch cào các nhóm mục tiêu của riêng mình với thông số cá nhân hóa (độ trễ, nghỉ giữa các nhóm, tự ngắt khi gặp 15 bài cũ). Nếu tắt tab hoặc app, tiến trình sẽ tự động tạm dừng an toàn để bảo vệ tài khoản của bạn.
+          <p className="font-bold text-sky-950">Chế độ Quản Lý Lịch Cào Xoay Vòng An Toàn</p>
+          <p className="mt-0.5 text-sky-800">
+            Leader và thành viên có thể tự do bấm <b>&quot;Thêm lịch cào&quot;</b> để thiết lập lịch cào các nhóm mục tiêu với thông số giãn cách cá nhân hóa an toàn (độ trễ, nghỉ giữa các nhóm, tự ngắt khi gặp bài cũ). Hệ thống tự động điều phối cào theo chu kỳ, bảo vệ an toàn tuyệt đối cho tài khoản.
           </p>
         </div>
       </div>
@@ -457,14 +457,13 @@ function AddScheduleModal({
         </div>
 
         <div className="p-4 flex flex-col gap-4">
-          <div className="rounded-xl border-2 border-amber-300 bg-amber-50 p-3 flex items-start gap-2.5">
-            <span className="material-symbols-outlined text-amber-600 text-[22px] shrink-0">warning</span>
-            <div className="text-xs text-amber-900 leading-relaxed">
-              <p className="font-bold mb-1">Để lịch cào chạy ổn định, bắt buộc:</p>
+          <div className="rounded-xl border border-sky-200 bg-sky-50 p-3 flex items-start gap-2.5">
+            <span className="material-symbols-outlined text-sky-600 text-[20px] shrink-0">info</span>
+            <div className="text-xs text-sky-900 leading-relaxed">
+              <p className="font-bold mb-1">Cơ chế cào xoay vòng an toàn theo chu kỳ:</p>
               <ul className="list-disc pl-4 space-y-0.5">
-                <li>Luôn giữ <b>tab trình duyệt mở trang Seeding này</b> (không đóng, không tắt trình duyệt) trong suốt thời gian cào.</li>
-                <li><b>Không đóng tab Facebook/LinkedIn/Threads</b> khi lịch đang chạy — extension tự mở/điều khiển các tab đó, đóng giữa chừng sẽ làm gián đoạn vòng cào.</li>
-                <li>Chỉ cần <b>giữ tab Seeding còn mở</b> là đủ — có thể bật tab khác để làm việc, không cần để tab Seeding hiển thị/active, extension vẫn tự chạy nền và vòng cào xoay vòng vẫn tiếp tục bình thường.</li>
+                <li>Hệ thống tự động thực thi xoay vòng các nhóm Facebook → LinkedIn → Threads theo danh sách đã chọn.</li>
+                <li>Mô phỏng hành vi người dùng thật với độ trễ cuộn ngẫu nhiên và tự động dừng khi gặp bài cũ để bảo vệ tài khoản an toàn chống checkpoint.</li>
               </ul>
             </div>
           </div>
@@ -584,7 +583,7 @@ function AddScheduleModal({
                 disabled={submitting}
                 className="mt-0.5 h-4 w-4 rounded border-border"
               />
-              <span>Tự động lặp lại (chỉ chạy tiếp nếu tab Seeding vẫn còn mở)</span>
+              <span>Tự động lặp lại theo chu kỳ đã đặt</span>
             </label>
           </div>
 

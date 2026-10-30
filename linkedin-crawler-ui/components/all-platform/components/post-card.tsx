@@ -4,6 +4,7 @@ import { useState, useMemo } from "react";
 import { FaFacebook, FaLinkedin } from "react-icons/fa";
 import { FaThreads, FaYoutube } from "react-icons/fa6";
 import { FiExternalLink } from "react-icons/fi";
+import { ChevronDown, ChevronUp } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { UnifiedPost, FeedPlatform } from "@/types/unified.types";
 import { useQuickInboxLibrary, composeQuickInboxMessage, type QuickInboxLibraryEntry } from "./use-quick-inbox-library";
@@ -59,6 +60,12 @@ export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onVi
   const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
   const [isMoreMenuOpen, setIsMoreMenuOpen] = useState(false);
   const [showLeadDrawer, setShowLeadDrawer] = useState(false);
+  const [isContentExpanded, setIsContentExpanded] = useState(false);
+
+  const isLongContent = useMemo(() => {
+    const c = post.content || "";
+    return c.length > 130 || c.includes("\n");
+  }, [post.content]);
   const crawledComments = (post.comments_detail || []).filter((c) => c && (c.content || c.author_name));
   const visibleCrawledComments = showAllCrawledComments ? crawledComments : crawledComments.slice(0, 2);
 
@@ -259,9 +266,32 @@ export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onVi
             </span>
           </a>
         ) : (
-          <p className="text-sm text-foreground italic line-clamp-2 leading-relaxed bg-muted px-3 py-2 rounded-lg border border-border mb-3">
-            {post.content || "Nội dung bài viết rỗng hoặc chứa thuần hình ảnh/video."}
-          </p>
+          <div className="bg-muted px-3.5 py-2.5 rounded-xl border border-border mb-3 transition-all duration-300">
+            <div
+              className={cn(
+                "text-sm text-foreground italic leading-relaxed transition-all duration-300 ease-in-out",
+                isContentExpanded
+                  ? "whitespace-pre-wrap"
+                  : "line-clamp-2"
+              )}
+            >
+              {post.content || "Nội dung bài viết rỗng hoặc chứa thuần hình ảnh/video."}
+            </div>
+            {isLongContent && (
+              <button
+                type="button"
+                onClick={() => setIsContentExpanded((prev) => !prev)}
+                className="mt-1.5 inline-flex items-center gap-1 text-xs font-bold text-rose-600 hover:text-rose-700 transition-colors cursor-pointer select-none"
+              >
+                <span>{isContentExpanded ? "Thu gọn" : "Xem thêm"}</span>
+                {isContentExpanded ? (
+                  <ChevronUp className="size-3.5 stroke-[2.5]" />
+                ) : (
+                  <ChevronDown className="size-3.5 stroke-[2.5]" />
+                )}
+              </button>
+            )}
+          </div>
         )}
 
 
