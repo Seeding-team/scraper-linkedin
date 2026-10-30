@@ -112,13 +112,23 @@ def record_action(payload: dict) -> dict:
             pass
 
     raw_content = payload.get("content") or payload.get("text") or ""
+    # Nếu link_comment rỗng đối với hành động comment, tự động fallback lấy link_post để không bao giờ bị mất liên kết minh chứng
+    effective_link_comment = link_comment or (link_post if action_type == "comment" else "")
+
+    # Tự động ghép comment_id vào link_comment nếu có comment_id nhưng link chưa có tham số này
+    if action_type == "comment" and comment_id and str(comment_id).strip():
+        num_cid = str(comment_id).strip()
+        if effective_link_comment and "comment_id=" not in effective_link_comment and num_cid.isdigit():
+            clean_base = effective_link_comment.split("?")[0].rstrip("/")
+            effective_link_comment = f"{clean_base}/?comment_id={num_cid}"
+    
     # Bảo lưu link minh chứng trực tiếp vào content để KHÔNG BAO GIỜ bị mất link dù DB chưa có cột link_comment
     final_content = raw_content
-    if link_comment and link_comment not in final_content:
+    if effective_link_comment and effective_link_comment not in final_content:
         if final_content:
-            final_content = f"{final_content}\n[Link minh chứng: {link_comment}]"
+            final_content = f"{final_content}\n[Link minh chứng: {effective_link_comment}]"
         else:
-            final_content = f"[Link minh chứng: {link_comment}]"
+            final_content = f"[Link minh chứng: {effective_link_comment}]"
 
     base_data = {
         "id_member": id_member,
@@ -139,8 +149,8 @@ def record_action(payload: dict) -> dict:
         base_data["error_message"] = payload.get("error_message")
 
     full_data = dict(base_data)
-    if link_comment:
-        full_data["link_comment"] = link_comment
+    if effective_link_comment:
+        full_data["link_comment"] = effective_link_comment
     if comment_id:
         full_data["comment_id"] = comment_id
     if payload.get("facebook_name"):
@@ -151,11 +161,30 @@ def record_action(payload: dict) -> dict:
     try:
         # Thử lưu với đầy đủ các cột mới
         result = supabase.table("internal_engagement_kpi").insert(full_data).execute()
-        return result.data[0] if result.data else {}
+        saved_record = result.data[0] if result.data else {}
     except Exception as err:
         logger.warning(f"Lỗi khi insert với cột mở rộng ({err}) — tự động chuyển sang fallback base_data an toàn...")
         result = supabase.table("internal_engagement_kpi").insert(base_data).execute()
-        return result.data[0] if result.data else {}
+        saved_record = result.data[0] if result.data else {}
+
+    # Đồng bộ sang seeding_content_kpi (Seeding bên ngoài) nếu là comment thành công
+    if action_type == "comment" and link_post and email:
+        try:
+            from app.modules.all_platform.services.supabase_seeding_service import verify_seeding_mark
+            verify_seeding_mark({
+                "email_member": email,
+                "link_post": link_post,
+                "link_comment": effective_link_comment or None,
+                "content": raw_content or None,
+                "profile_id": payload.get("profile_id") or None,
+                "id_post": payload.get("id_post") or None,
+                "id_platform": payload.get("id_platform") or None,
+            })
+            logger.info(f"Đã đồng bộ minh chứng comment sang seeding_content_kpi cho member {email}")
+        except Exception as e_seed:
+            logger.debug(f"Bỏ qua đồng bộ seeding_content_kpi: {e_seed}")
+
+    return saved_record
 
 
 def get_marks_by_links(email_member: str, link_posts: list[str]) -> dict[str, str]:

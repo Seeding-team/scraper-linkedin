@@ -21,14 +21,19 @@ import type { LegalInfoSave } from './ContractCopilotParts';
 import type { EditHistoryItem } from './ContractCopilotParts';
 import { TemplatePreviewPanel } from './TemplatePreviewPanel';
 import {
-  analyzeDraftRisk, base64ToBlob, docxFromClauses, extractReference, fetchVersionBlob, getContractReadiness, getNumberSettings, getVersionParagraphs, listContractTypes,
-  listContractVersionsFull, precheckContract, renderTemplate, runVersionRisk, saveBlobAs, saveContractVersionFull, suggestContractType,
+  analyzeDraftRisk, base64ToBlob, discardEditSession, docxFromClauses, extractReference, fetchVersionBlob, getContractReadiness,
+  getEditSessionStatus, getNumberSettings, getVersionParagraphs, listContractTypes, listContractVersionsFull, precheckContract,
+  renderTemplate, requestEditForcesave, runVersionRisk, saveBlobAs, saveContractVersionFull, saveEditVersion, startEditSession, suggestContractType,
 } from '@/modules/contracts/repositories/contractDocs';
-import type { ApplyParagraphResult, DocVersion, LegalOverrideInput, NumberSettings, PrecheckResult, Readiness, RepresentativeOverrideInput, TemplateRenderResult, TypeSuggestion, VersionRisk } from '@/modules/contracts/repositories/contractDocs';
+import type {
+  ApplyParagraphResult, DocVersion, EditSessionStatus, LegalOverrideInput, NumberSettings, PrecheckResult, Readiness,
+  RepresentativeOverrideInput, TemplateRenderResult, TypeSuggestion, VersionRisk,
+} from '@/modules/contracts/repositories/contractDocs';
+import { loadOnlyOfficeApi } from '@/modules/contracts/components/useWordEditorBridge';
 import '../../styles/copilot.css';
 
 type Step = 1 | 2 | 3;
-type Tab3 = 'preview' | 'edit' | 'risk' | 'versions';
+type Tab3 = 'preview' | 'word' | 'edit' | 'risk' | 'versions';
 
 const CLOSED_QUOTE_STATUSES = new Set(['approved', 'confirmed']);
 const CHIPS: Array<{ label: string; text: string }> = [
@@ -160,6 +165,15 @@ export function ContractAIWizard({
   const originalUrlRef = useRef<string | null>(null);
   const defaultAppliedRef = useRef(false);
   const editSeededRef = useRef(false);
+  // Word Editor trực tiếp (OnlyOffice)
+  const [wordStarting, setWordStarting] = useState(false);
+  const [wordSaving, setWordSaving] = useState(false);
+  const [wordError, setWordError] = useState('');
+  const [wordHasChanges, setWordHasChanges] = useState(false);
+  const [wordSessionId, setWordSessionId] = useState<string | null>(null);
+  const [wordStatus, setWordStatus] = useState<EditSessionStatus | null>(null);
+  const wordEditorRef = useRef<{ destroyEditor?: () => void } | null>(null);
+  const wordContainerIdRef = useRef('copilot-word-' + Math.random().toString(36).slice(2));
 
   const crmCustomerId = customerKey && !customerKey.startsWith('deal:') ? customerKey : undefined;
 
@@ -256,8 +270,21 @@ export function ContractAIWizard({
     if (!dealId) { setQuotes([]); setQuoteId(''); setQuote(null); return; }
     seedingQuoteRepository.getQuotes({ dealId }).then(all => {
       const ok = all.filter(q => q.dealId === dealId && CLOSED_QUOTE_STATUSES.has(q.status) && q.customerOutcome !== 'lost' && !q.deletedAt);
-      setQuotes(ok);
-      setQuoteId(ok.length === 1 ? ok[0].id : '');
+      
+      // Sắp xếp báo giá MỚI NHẤT lên đầu tiên
+      const sorted = [...ok].sort((a, b) => {
+        const dateA = new Date(a.createdAt || a.issuedAt || 0).getTime();
+        const dateB = new Date(b.createdAt || b.issuedAt || 0).getTime();
+        if (dateB !== dateA) return dateB - dateA;
+        const vA = (a.versionNumber || (a as any).version_number || 1) as number;
+        const vB = (b.versionNumber || (b as any).version_number || 1) as number;
+        if (vB !== vA) return vB - vA;
+        return String(b.quoteNumber || '').localeCompare(String(a.quoteNumber || ''));
+      });
+
+      setQuotes(sorted);
+      // Mặc định chọn báo giá mới nhất trên đầu (nếu chưa có lựa chọn hợp lệ)
+      setQuoteId(prev => (prev && sorted.some(q => q.id === prev) ? prev : sorted[0]?.id || ''));
     }).catch(() => setQuotes([]));
   }, [dealId]);
   // editVersion: báo giá của hợp đồng đang sửa - cùng lý do với dealId ở trên, chờ nạp xong rồi mới ép đúng giá trị
@@ -378,7 +405,43 @@ export function ContractAIWizard({
       setOriginalPdfUrl(originalUrlRef.current);
     }
   }, []);
-  useEffect(() => () => { if (pdfUrlRef.current) URL.revokeObjectURL(pdfUrlRef.current); if (originalUrlRef.current) URL.revokeObjectURL(originalUrlRef.current); }, []);
+  useEffect(() => () => {
+    if (pdfUrlRef.current) URL.revokeObjectURL(pdfUrlRef.current);
+    if (originalUrlRef.current) URL.revokeObjectURL(originalUrlRef.current);
+    wordEditorRef.current?.destroyEditor?.();
+    wordEditorRef.current = null;
+  }, []);
+
+  // Poll trạng thái autosave OnlyOffice trong tab Chỉnh sửa (Word)
+  useEffect(() => {
+    if (!open || step !== 3 || tab !== 'word' || !saved?.id || !wordSessionId) return;
+    let alive = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    async function poll() {
+      try {
+        const st = await getEditSessionStatus(saved!.id);
+        if (!alive) return;
+        setWordStatus(st);
+        if (st.session?.last_autosaved_at) {
+          setWordHasChanges(false);
+        }
+      } catch {
+        /* best-effort */
+      }
+      if (alive) timer = setTimeout(poll, 8000);
+    }
+    void poll();
+    const forcesaveInterval = setInterval(() => {
+      if (saved?.id) void requestEditForcesave(saved.id).catch(() => undefined);
+    }, 15000);
+
+    return () => {
+      alive = false;
+      if (timer) clearTimeout(timer);
+      clearInterval(forcesaveInterval);
+    };
+  }, [open, step, tab, saved?.id, wordSessionId]);
 
   // ───────── bước 2: mã dự kiến ─────────
   useEffect(() => {
@@ -517,6 +580,101 @@ export function ContractAIWizard({
     }
   }
 
+  // ───────── Word Editor trực tiếp (OnlyOffice) ─────────
+  async function openWordEditor() {
+    setWordStarting(true);
+    setWordError('');
+    try {
+      let target = saved;
+      if (!target || dirtySinceSaveRef.current) {
+        target = await saveDraft();
+      }
+      if (!target?.id) throw new Error('Không thể khởi tạo bản hợp đồng để chỉnh sửa.');
+
+      const editStart = await startEditSession(target.id);
+      setWordSessionId(editStart.sessionId);
+
+      await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+      await loadOnlyOfficeApi(editStart.onlyofficeApiUrl);
+
+      const DocsAPI = (window as unknown as { DocsAPI: { DocEditor: new (id: string, cfg: Record<string, unknown>) => { destroyEditor?: () => void } } }).DocsAPI;
+      wordEditorRef.current?.destroyEditor?.();
+      wordEditorRef.current = new DocsAPI.DocEditor(wordContainerIdRef.current, {
+        ...editStart.editorConfig,
+        events: {
+          onDocumentReady: () => setWordError(''),
+          onDocumentStateChange: (ev: { data?: boolean }) => {
+            if (ev?.data) setWordHasChanges(true);
+          },
+          onError: () => setWordError('OnlyOffice báo lỗi trong lúc chỉnh sửa — thử tải lại.'),
+        },
+      });
+    } catch (err) {
+      setWordError(err instanceof Error ? err.message : 'Không mở được trình chỉnh sửa Word.');
+    } finally {
+      setWordStarting(false);
+    }
+  }
+
+  async function flushWordSessionAndRefresh(): Promise<boolean> {
+    if (!saved?.id || !wordSessionId) return true;
+    setWordSaving(true);
+    setWordError('');
+    try {
+      try { await requestEditForcesave(saved.id); } catch { /* best-effort */ }
+      await new Promise(r => setTimeout(r, 1200));
+
+      const res = await saveEditVersion(saved.id, { note: 'Chỉnh sửa trực tiếp trên Word (AI Copilot)' });
+      const newVer = res.version;
+      setSaved(prev => prev ? { ...prev, version: newVer } : prev);
+      setWordHasChanges(false);
+
+      const [pdfBlob, docxBlob, p, risk] = await Promise.all([
+        fetchVersionBlob(saved.id, newVer, 'pdf').catch(() => null),
+        fetchVersionBlob(saved.id, newVer, 'docx').catch(() => null),
+        getVersionParagraphs(saved.id, newVer).catch(() => null),
+        runVersionRisk(saved.id, newVer).catch(() => null),
+      ]);
+
+      if (pdfUrlRef.current) URL.revokeObjectURL(pdfUrlRef.current);
+      pdfUrlRef.current = pdfBlob ? URL.createObjectURL(pdfBlob) : null;
+      setPdfUrl(pdfUrlRef.current);
+
+      if (docxBlob) {
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          const b64 = (reader.result as string || '').split(',')[1] || '';
+          if (b64) setDocx(b64);
+        };
+        reader.readAsDataURL(docxBlob);
+      }
+
+      if (p) {
+        setTplResult(prev => prev ? { ...prev, paragraphs: p.paragraphs, docxBase64: p.docxBase64 } : prev);
+      }
+      if (risk) setDraftRisk(risk);
+      listContractVersionsFull(saved.id).then(setVersions).catch(() => undefined);
+
+      return true;
+    } catch (err) {
+      setWordError(err instanceof Error ? err.message : 'Không lưu được phiên bản Word đã sửa.');
+      return false;
+    } finally {
+      setWordSaving(false);
+    }
+  }
+
+  async function handleTabClick(nextTab: Tab3) {
+    if (tab === nextTab) return;
+    if (tab === 'word' && wordHasChanges) {
+      await flushWordSessionAndRefresh();
+    }
+    setTab(nextTab);
+    if (nextTab === 'word') {
+      void openWordEditor();
+    }
+  }
+
   const [confirmRepBusy, setConfirmRepBusy] = useState(false);
   // Xac nhan nhanh ngay tren danh sach "Dieu kien gui duyet" (feedback: nut bam o nam o cho khac/khong co, phai
   // "de ngoai cho de bam") - Sale van thay ro TEN nguoi duoc xac nhan qua dong detail cua check nay truoc khi bam.
@@ -535,6 +693,9 @@ export function ContractAIWizard({
 
   async function submitForApproval() {
     setApprovalMsg(''); setError('');
+    if (tab === 'word' || wordSessionId) {
+      await flushWordSessionAndRefresh();
+    }
     const s = (await saveDraft()) || saved;
     if (!s) return;
     try {
@@ -621,6 +782,22 @@ export function ContractAIWizard({
     }));
   }, [suggestion, typeOptions]);
 
+  const quoteVersionMap = useMemo(() => {
+    const map = new Map<string, number>();
+    const chronological = [...quotes].sort((a, b) => {
+      const da = new Date(a.createdAt || a.issuedAt || 0).getTime();
+      const db = new Date(b.createdAt || b.issuedAt || 0).getTime();
+      if (da !== db) return da - db;
+      return String(a.quoteNumber || '').localeCompare(String(b.quoteNumber || ''));
+    });
+    const hasExplicitVersions = quotes.some(q => (q.versionNumber || (q as any).version_number || 1) > 1);
+    chronological.forEach((q, idx) => {
+      const explicit = q.versionNumber || (q as any).version_number;
+      map.set(q.id, hasExplicitVersions && explicit ? explicit : idx + 1);
+    });
+    return map;
+  }, [quotes]);
+
   if (!open) return null;
 
   const dealOptions = deals.map(d => {
@@ -630,9 +807,60 @@ export function ContractAIWizard({
     const label = [stage, extra, budget ? formatVnd(Number(budget)) : ''].filter(Boolean).join(' · ') || 'Cơ hội';
     return { value: d.id, label, searchText: label, richLabel: <span title={label}>{label}</span> };
   });
-  const quoteOptions = quotes.map(q => {
-    const label = `${q.quoteNumber} · ${fmtMoney(q.totalAmount, q.currency)}`;
-    return { value: q.id, label, searchText: q.quoteNumber, richLabel: <span title={label}>{label}</span> };
+
+  const quoteOptions = quotes.map((q, idx) => {
+    const vNum = quoteVersionMap.get(q.id) || q.versionNumber || 1;
+    const isLatest = idx === 0;
+    const label = `${q.quoteNumber} (v${vNum}${isLatest ? ' · Mới nhất' : ''}) · ${fmtMoney(q.totalAmount, q.currency)}`;
+    return {
+      value: q.id,
+      label,
+      searchText: `${q.quoteNumber} v${vNum}`,
+      richLabel: (
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', gap: 10, minWidth: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+            <span style={{ fontWeight: 600, color: '#0f172a', whiteSpace: 'nowrap' }}>{q.quoteNumber}</span>
+            <span style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              padding: '1px 5px',
+              borderRadius: 4,
+              fontSize: '0.68rem',
+              fontWeight: 700,
+              background: '#eff6ff',
+              color: '#1d4ed8',
+              border: '1px solid #bfdbfe',
+              lineHeight: '1.2',
+              flexShrink: 0,
+              whiteSpace: 'nowrap',
+            }}>
+              v{vNum}
+            </span>
+            {isLatest && (
+              <span style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                padding: '1px 5px',
+                borderRadius: 4,
+                fontSize: '0.65rem',
+                fontWeight: 600,
+                background: '#ecfdf5',
+                color: '#047857',
+                border: '1px solid #a7f3d0',
+                lineHeight: '1.2',
+                flexShrink: 0,
+                whiteSpace: 'nowrap',
+              }}>
+                Mới nhất
+              </span>
+            )}
+          </div>
+          <span style={{ color: '#475569', fontWeight: 500, fontSize: '0.78rem', flexShrink: 0, whiteSpace: 'nowrap', marginLeft: 6 }}>
+            {fmtMoney(q.totalAmount, q.currency)}
+          </span>
+        </div>
+      ),
+    };
   });
   const templateOptions = templates.map(t => ({ value: t.id, label: t.name, searchText: t.name, richLabel: <span title={t.name}>{t.name}</span> }));
   // quote.items tra ve tu API la CAY long nhau (hang muc that nam trong
@@ -646,7 +874,7 @@ export function ContractAIWizard({
     // Chi dong khi click THAT SU vao backdrop (khong phai bubble tu dropdown
     // portal ra document.body ben trong modal - xem CustomerFormModal.tsx).
     <div className="cp-backdrop" onClick={event => { if (event.target === event.currentTarget) resetAndClose(); }}>
-      <div className={`copilot-modal${step === 3 && mode === 'template' && tab === 'preview' ? ' copilot-modal--wide' : ''}`} data-testid="copilot-modal" onClick={e => e.stopPropagation()}>
+      <div className={`copilot-modal${step === 3 && mode === 'template' && (tab === 'preview' || tab === 'word') ? ' copilot-modal--wide' : ''}`} data-testid="copilot-modal" onClick={e => e.stopPropagation()}>
         <aside className="cp-steps">
           <h2>AI Contract Copilot</h2>
           {([1, 2, 3] as Step[]).map(n => (
@@ -845,8 +1073,14 @@ export function ContractAIWizard({
           {step === 3 ? (
             <>
               <div className="copilot-tabs" role="tablist">
-                {([['preview', 'Xem trước tài liệu'], ['edit', 'Chỉnh sửa điều khoản'], ['risk', 'Kiểm tra rủi ro'], ['versions', 'Phiên bản']] as Array<[Tab3, string]>).map(([id, label]) => (
-                  <button key={id} type="button" role="tab" data-testid={`copilot-tab-${id}`} className={`cp-tab ${tab === id ? 'is-active' : ''}`} onClick={() => setTab(id)}>{label}</button>
+                {([
+                  ['preview', 'Xem trước tài liệu'],
+                  ...(mode === 'template' ? [['word', 'Chỉnh sửa (Word)']] : []),
+                  ['edit', 'Chỉnh sửa điều khoản'],
+                  ['risk', 'Kiểm tra rủi ro'],
+                  ['versions', 'Phiên bản'],
+                ] as Array<[Tab3, string]>).map(([id, label]) => (
+                  <button key={id} type="button" role="tab" data-testid={`copilot-tab-${id}`} className={`cp-tab ${tab === id ? 'is-active' : ''}`} onClick={() => void handleTabClick(id)}>{label}</button>
                 ))}
               </div>
               <div className="cp-main" data-testid="copilot-step3">
@@ -881,6 +1115,73 @@ export function ContractAIWizard({
                               {pdfUrl ? <iframe className="cp-pdf" title="Xem trước PDF" src={pdfUrl} data-testid="copilot-pdf" /> : <div className="cp-card" style={{ color: '#b45309', fontSize: '0.82rem' }}>{pdfInfo.error || 'Server chưa tạo được PDF.'}</div>}
                             </div>
                           )
+                        ) : null}
+
+                        {tab === 'word' ? (
+                          <div style={{ display: 'grid', gap: 10 }}>
+                            <div className="cp-card" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8, padding: '8px 14px' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.82rem' }}>
+                                <span style={{ color: wordHasChanges ? '#d97706' : '#16a34a', fontWeight: 600 }}>
+                                  {wordHasChanges ? '● Có thay đổi chưa lưu (bấm Ctrl+S hoặc Lưu & cập nhật)' : '✓ Đã đồng bộ với máy chủ'}
+                                </span>
+                                {wordStatus?.session?.last_autosaved_at ? (
+                                  <small style={{ color: '#64748b' }}>
+                                    Lưu lúc {new Date(wordStatus.session.last_autosaved_at).toLocaleTimeString('vi-VN')}
+                                  </small>
+                                ) : null}
+                              </div>
+                              <div style={{ display: 'flex', gap: 8 }}>
+                                <button
+                                  type="button"
+                                  className="cp-btn small primary"
+                                  data-testid="copilot-word-save-refresh"
+                                  disabled={wordSaving || wordStarting}
+                                  onClick={() => void flushWordSessionAndRefresh()}
+                                >
+                                  {wordSaving ? 'Đang lưu & cập nhật…' : '✓ Lưu & cập nhật xem trước'}
+                                </button>
+                              </div>
+                            </div>
+
+                            {wordError ? (
+                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, background: '#fef2f2', border: '1px solid #fecaca', padding: '8px 12px', borderRadius: 6 }}>
+                                <p className="crm-error" style={{ margin: 0 }} data-testid="copilot-word-error">{wordError}</p>
+                                <button
+                                  type="button"
+                                  className="cp-btn small"
+                                  onClick={() => void openWordEditor()}
+                                  disabled={wordStarting}
+                                >
+                                  {wordStarting ? 'Đang tải lại…' : 'Thử tải lại'}
+                                </button>
+                              </div>
+                            ) : null}
+
+                            <div
+                              className="word-editor-shell"
+                              style={{
+                                height: '680px',
+                                minHeight: '550px',
+                                width: '100%',
+                                position: 'relative',
+                                borderRadius: 8,
+                                overflow: 'hidden',
+                                border: '1px solid #cbd5e1',
+                                background: '#f8fafc',
+                              }}
+                            >
+                              {wordStarting ? (
+                                <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', background: 'rgba(255,255,255,0.85)', zIndex: 10 }}>
+                                  <div style={{ textAlign: 'center' }}>
+                                    <div style={{ fontSize: '1.4rem', marginBottom: 6 }}>✦</div>
+                                    <b>Đang mở trình chỉnh sửa Word (OnlyOffice)…</b>
+                                    <p style={{ color: '#64748b', fontSize: '0.8rem', margin: '4px 0 0' }}>Đang nạp file DOCX và chuẩn bị môi trường soạn thảo.</p>
+                                  </div>
+                                </div>
+                              ) : null}
+                              <div id={wordContainerIdRef.current} style={{ width: '100%', height: '100%' }} />
+                            </div>
+                          </div>
                         ) : null}
 
                         {tab === 'edit' ? (

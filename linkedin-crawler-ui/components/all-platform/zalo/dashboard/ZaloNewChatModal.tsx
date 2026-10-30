@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-
+import { createPortal } from "react-dom";
 import { MaterialIcon } from "@/components/ui";
 import {
   createZaloUserThread,
@@ -16,11 +16,8 @@ interface ZaloNewChatModalProps {
   accountId: string;
   onClose: () => void;
   onChatReady: (conversationId: string) => void;
-  /** Thông báo toast/snackbar tuỳ chọn khi có lỗi */
   onError?: (message: string) => void;
-  /** Thông báo thành công (tuỳ chọn) */
   onSuccess?: (displayName: string) => void;
-  /** Mở sẵn với 1 SĐT đã gõ từ ô tìm kiếm chính — tự động tìm luôn khi mở. */
   initialQuery?: string;
 }
 
@@ -35,6 +32,7 @@ export function ZaloNewChatModal({
   onSuccess,
   initialQuery,
 }: ZaloNewChatModalProps) {
+  const [mounted, setMounted] = useState(false);
   const [mode, setMode] = useState<SearchMode>("phone");
   const [query, setQuery] = useState("");
   const [searching, setSearching] = useState(false);
@@ -43,8 +41,10 @@ export function ZaloNewChatModal({
   const [found, setFound] = useState<ZaloFoundUser | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
-  // Reset state khi modal đóng/mở — nếu có initialQuery (từ ô tìm kiếm chính
-  // phát hiện có dạng SĐT), điền sẵn và tự tìm luôn thay vì bắt gõ lại.
+  useEffect(() => {
+    void Promise.resolve().then(() => setMounted(true));
+  }, []);
+
   useEffect(() => {
     if (open) {
       const seedQuery = initialQuery?.trim() || "";
@@ -54,7 +54,7 @@ export function ZaloNewChatModal({
       setError(null);
       setSearching(false);
       setCreating(false);
-      if (seedQuery.length >= 8) {
+      if (seedQuery.length >= 8 && accountId) {
         setSearching(true);
         findZaloUser(accountId, seedQuery, "phone")
           .then((result) => setFound(result))
@@ -69,10 +69,9 @@ export function ZaloNewChatModal({
         return () => window.clearTimeout(t);
       }
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, initialQuery]);
+  }, [open, initialQuery, accountId, onError]);
 
-  // Đóng modal bằng ESC
+  // Close on Escape key
   useEffect(() => {
     if (!open) return;
     const handler = (e: KeyboardEvent) => {
@@ -82,12 +81,16 @@ export function ZaloNewChatModal({
     return () => window.removeEventListener("keydown", handler);
   }, [open, onClose]);
 
-  if (!open) return null;
+  if (!open || !mounted) return null;
 
   const trimmedQuery = query.trim();
   const canSearch = trimmedQuery.length >= (mode === "phone" ? 8 : 2);
 
   const handleSearch = async () => {
+    if (!accountId) {
+      setError("Vui lòng chọn một tài khoản Zalo đang hoạt động ở thanh trên trước khi tìm kiếm.");
+      return;
+    }
     if (!canSearch || searching) return;
     setError(null);
     setFound(null);
@@ -106,6 +109,10 @@ export function ZaloNewChatModal({
 
   const handleStartChat = async () => {
     if (!found || creating) return;
+    if (!accountId) {
+      setError("Chưa xác định được tài khoản Zalo gửi tin. Vui lòng chọn tài khoản ở góc trên.");
+      return;
+    }
     setCreating(true);
     setError(null);
     try {
@@ -114,9 +121,12 @@ export function ZaloNewChatModal({
         display_name: found.display_name,
         avatar_url: found.avatar_url ?? null,
       });
-      onSuccess?.(res.group_name || found.display_name);
-      onChatReady(res.conversation_id);
-      onClose();
+      if (res?.conversation_id) {
+        onSuccess?.(found.display_name);
+        onChatReady(res.conversation_id);
+      } else {
+        throw new Error("Không nhận được mã cuộc trò chuyện từ Zalo");
+      }
     } catch (e) {
       const msg = extractErrorMessage(e);
       setError(msg);
@@ -134,59 +144,58 @@ export function ZaloNewChatModal({
     setError(null);
   };
 
-  return (
+  return createPortal(
     <div
-      className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 backdrop-blur-[1px] px-3"
+      className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/50 backdrop-blur-xs p-4 font-sans text-slate-800 animate-in fade-in duration-150"
       onClick={onClose}
       role="dialog"
       aria-modal="true"
       aria-labelledby="zalo-new-chat-title"
     >
       <div
-        className="bg-surface rounded-xl w-full max-w-[440px] shadow-2xl border border-outline-variant"
+        className="bg-white rounded-2xl w-full max-w-[460px] shadow-2xl border border-slate-100 overflow-hidden animate-in zoom-in-95 duration-200"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between px-5 pt-4 pb-3 border-b border-outline-variant">
+        <div className="flex items-center justify-between px-5 pt-4 pb-3 border-b border-slate-100">
           <div>
             <h2
               id="zalo-new-chat-title"
-              className="text-[15px] font-semibold text-on-surface flex items-center gap-2"
+              className="text-base font-bold text-slate-900 flex items-center gap-2"
             >
-              <MaterialIcon name="person_add" className="text-primary text-base" />
-              Nhắn tin cho người lạ
+              <MaterialIcon name="person_search" className="text-[#0068FF] text-xl" />
+              Tìm người lạ & Nhắn tin mới
             </h2>
-            <p className="text-[11px] text-on-surface-variant mt-0.5">
-              Tìm Zalo theo SĐT rồi gửi tin nhắn nếu user cho phép nhận.
+            <p className="text-xs text-slate-500 mt-0.5">
+              Tìm tài khoản Zalo theo Số điện thoại hoặc Username để bắt đầu trò chuyện.
             </p>
           </div>
           <button
             onClick={onClose}
-            className="p-1.5 hover:bg-surface-container-low rounded-lg transition shrink-0"
+            className="p-1.5 hover:bg-slate-100 rounded-xl transition text-slate-400 hover:text-slate-600 cursor-pointer"
             title="Đóng"
-            aria-label="Đóng"
           >
-            <MaterialIcon name="close" className="text-base text-on-surface-variant" />
+            <MaterialIcon name="close" className="text-lg" />
           </button>
         </div>
 
         {/* Tabs */}
-        <div className="flex border-b border-outline-variant px-5">
+        <div className="flex border-b border-slate-100 px-5 bg-slate-50/50">
           <button
             onClick={() => switchMode("phone")}
-            className={`flex-1 py-2.5 text-[12px] font-medium transition ${
+            className={`flex-1 py-2.5 text-xs font-bold transition cursor-pointer ${
               mode === "phone"
-                ? "text-primary border-b-2 border-primary"
-                : "text-on-surface-variant hover:text-on-surface-variant"
+                ? "text-[#0068FF] border-b-2 border-[#0068FF]"
+                : "text-slate-500 hover:text-slate-700"
             }`}
           >
             Số điện thoại
           </button>
           <button
             onClick={() => switchMode("username")}
-            className={`flex-1 py-2.5 text-[12px] font-medium transition ${
+            className={`flex-1 py-2.5 text-xs font-bold transition cursor-pointer ${
               mode === "username"
-                ? "text-primary border-b-2 border-primary"
-                : "text-on-surface-variant hover:text-on-surface-variant"
+                ? "text-[#0068FF] border-b-2 border-[#0068FF]"
+                : "text-slate-500 hover:text-slate-700"
             }`}
           >
             Username Zalo
@@ -195,7 +204,7 @@ export function ZaloNewChatModal({
 
         <div className="px-5 py-4 space-y-3">
           <div>
-            <label className="text-[11px] text-on-surface-variant mb-1 block">
+            <label className="text-xs font-bold text-slate-700 mb-1.5 block">
               {mode === "phone" ? "Số điện thoại Việt Nam" : "Username Zalo"}
             </label>
             <div className="flex gap-2">
@@ -209,21 +218,17 @@ export function ZaloNewChatModal({
                 }}
                 placeholder={
                   mode === "phone"
-                    ? "0839108906, +84939108906, ..."
+                    ? "Nhập số điện thoại (VD: 0987654321)..."
                     : "vd: nguyen.van.a"
                 }
-                className="flex-1 px-3 py-2 text-[13px] border border-outline-variant
-                           bg-surface rounded-lg
-                           focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
+                className="flex-1 px-3 py-2 text-xs border border-slate-200 bg-white rounded-xl focus:outline-none focus:border-[#0068FF]"
                 autoComplete="off"
                 inputMode={mode === "phone" ? "tel" : "text"}
               />
               <button
                 onClick={handleSearch}
                 disabled={!canSearch || searching}
-                className="px-4 py-2 bg-primary text-white text-[12px] font-medium rounded-lg
-                           hover:opacity-90 disabled:opacity-40 transition shrink-0 min-w-[72px]
-                           flex items-center justify-center gap-1.5"
+                className="px-4 py-2 bg-[#0068FF] hover:bg-[#0052cc] text-white text-xs font-bold rounded-xl disabled:opacity-40 transition shrink-0 min-w-[76px] flex items-center justify-center gap-1.5 cursor-pointer shadow-xs"
               >
                 {searching ? (
                   <>
@@ -233,65 +238,63 @@ export function ZaloNewChatModal({
                 ) : (
                   <>
                     <MaterialIcon name="search" className="text-[14px]" />
-                    Tìm
+                    Tìm kiếm
                   </>
                 )}
               </button>
             </div>
             {mode === "phone" ? (
-              <p className="text-[10.5px] text-on-surface-variant mt-1.5">
-                Hỗ trợ nhiều định dạng: {PHONE_EXAMPLES.join(" · ")}
+              <p className="text-[11px] text-slate-400 mt-1.5">
+                Định dạng: {PHONE_EXAMPLES.join(" · ")}
               </p>
             ) : (
-              <p className="text-[10.5px] text-on-surface-variant mt-1.5">
-                Nhập chính xác username Zalo (không có @).
+              <p className="text-[11px] text-slate-400 mt-1.5">
+                Nhập chính xác username Zalo (không bao gồm ký tự @).
               </p>
             )}
           </div>
 
           {error && (
-            <div className="text-[12px] text-red-700 bg-red-50 border border-red-100 rounded-lg p-3 leading-relaxed">
+            <div className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-xl p-3 leading-relaxed">
               <div className="flex items-start gap-2">
-                <MaterialIcon name="error" className="text-base shrink-0 mt-0.5" />
-                <span>{error}</span>
+                <MaterialIcon name="error" className="text-base shrink-0 mt-0.5 text-red-600" />
+                <span className="font-medium">{error}</span>
               </div>
             </div>
           )}
 
           {found && (
-            <div className="border border-outline-variant rounded-xl p-3.5 flex items-center gap-3 bg-surface-container-low">
+            <div className="border border-slate-200 rounded-xl p-3.5 flex items-center gap-3 bg-slate-50/70">
               {found.avatar_url ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img
                   src={found.avatar_url}
                   alt={found.display_name}
-                  className="w-12 h-12 rounded-full object-cover shrink-0"
+                  className="w-12 h-12 rounded-full object-cover shrink-0 border border-slate-200"
                 />
               ) : (
-                <div className="w-12 h-12 rounded-full bg-gradient-to-br from-slate-300 to-slate-400 flex items-center justify-center text-white text-[18px] font-semibold shrink-0">
+                <div className="w-12 h-12 rounded-full bg-gradient-to-br from-[#0068FF] to-[#0040aa] flex items-center justify-center text-white text-base font-bold shrink-0">
                   {found.display_name?.[0]?.toUpperCase() || "?"}
                 </div>
               )}
               <div className="flex-1 min-w-0">
-                <div className="font-semibold text-[13px] text-on-surface truncate">
+                <div className="font-bold text-sm text-slate-900 truncate">
                   {found.display_name}
                 </div>
                 {found.zalo_name && (
-                  <div className="text-[11px] text-on-surface-variant truncate">
+                  <div className="text-xs text-slate-500 truncate">
                     @{found.zalo_name}
                   </div>
                 )}
-                <div className="text-[10.5px] text-emerald-600 mt-0.5 flex items-center gap-1">
-                  <MaterialIcon name="check_circle" className="text-[12px]" />
-                  Có thể nhận tin nhắn
+                <div className="text-[11px] text-emerald-600 mt-0.5 flex items-center gap-1 font-semibold">
+                  <MaterialIcon name="check_circle" className="text-[13px]" />
+                  Có thể gửi tin nhắn
                 </div>
               </div>
               <button
                 onClick={handleStartChat}
                 disabled={creating}
-                className="px-3.5 py-2 bg-emerald-600 text-white text-[12px] font-medium rounded-lg
-                           hover:bg-emerald-700 disabled:opacity-40 transition shrink-0
-                           flex items-center gap-1.5"
+                className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl disabled:opacity-40 transition shrink-0 flex items-center gap-1.5 shadow-xs cursor-pointer"
               >
                 {creating ? (
                   <>
@@ -301,7 +304,7 @@ export function ZaloNewChatModal({
                 ) : (
                   <>
                     <MaterialIcon name="chat" className="text-[14px]" />
-                    Nhắn tin
+                    Nhắn tin ngay
                   </>
                 )}
               </button>
@@ -310,14 +313,13 @@ export function ZaloNewChatModal({
         </div>
 
         <div className="px-5 pb-4">
-          <p className="text-[10.5px] text-on-surface-variant leading-relaxed">
-            ⚠️ Tính năng này chỉ dùng cho khách hàng thân thiết. Nếu user đã tắt
-            "Nhận tin nhắn từ người lạ" trong cài đặt Zalo, bạn sẽ nhận thông báo
-            lỗi và không thể gửi.
+          <p className="text-[11px] text-slate-400 leading-relaxed">
+            💡 Lưu ý: Nếu người dùng đã tắt cài đặt "Nhận tin nhắn từ người lạ" trên Zalo cá nhân, tin nhắn đầu tiên có thể không gửi được.
           </p>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 
@@ -325,12 +327,11 @@ function extractErrorMessage(err: unknown): string {
   if (!err) return "Đã xảy ra lỗi không xác định";
   if (typeof err === "string") return err;
   if (err instanceof Error) {
-    // requestJson ném Error(message) với message đã được chuẩn hoá
     return err.message || "Đã xảy ra lỗi không xác định";
   }
   if (typeof err === "object" && err !== null && "message" in err) {
     const m = (err as { message?: unknown }).message;
     if (typeof m === "string" && m.trim()) return m;
   }
-  return "Đã xảy ra lỗi không xác định";
+  return "Không tìm thấy người dùng này trên Zalo hoặc số điện thoại chưa đăng ký.";
 }

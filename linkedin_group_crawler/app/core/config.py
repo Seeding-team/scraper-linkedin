@@ -343,6 +343,22 @@ class Settings:
     # Main CRM tenant. Main is not a special case that can read all CRM data;
     # it must use the same instance filter mechanism as the clone apps.
     crm_instance: str = (os.getenv("CRM_INSTANCE") or "markee").strip()
+    crm_public_url: str = os.getenv("CRM_PUBLIC_URL", "http://localhost:8080").rstrip("/")
+    google_service_account_email: str = os.getenv("GOOGLE_SERVICE_ACCOUNT_EMAIL", "")
+    google_private_key: str = os.getenv("GOOGLE_PRIVATE_KEY", "").replace("\\n", "\n")
+    google_drive_contracts_shared_drive_id: str = os.getenv(
+        "GOOGLE_DRIVE_CONTRACTS_SHARED_DRIVE_ID", "",
+    )
+    onlyoffice_internal_url: str = os.getenv(
+        "ONLYOFFICE_INTERNAL_URL", "http://onlyoffice:80",
+    ).rstrip("/")
+    backend_internal_url: str = os.getenv(
+        "BACKEND_INTERNAL_URL", "http://backend:8000/api/all-platform",
+    ).rstrip("/")
+    onlyoffice_public_url: str = os.getenv(
+        "ONLYOFFICE_PUBLIC_URL", "http://localhost:8094",
+    ).rstrip("/")
+    onlyoffice_jwt_secret: str = os.getenv("ONLYOFFICE_JWT_SECRET", "")
     raw_data_dir: Path = BASE_DIR / "data" / "raw"
     output_data_dir: Path = BASE_DIR / "data" / "output"
     n8n_webhook_url: str = os.getenv("N8N_WEBHOOK_URL", "")
@@ -437,7 +453,7 @@ class Settings:
 
     openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
     openai_base_url: str = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
-    ai_model: str = os.getenv("AI_MODEL", "gpt-4o")
+    ai_model: str = os.getenv("AI_MODEL", "gpt-4o-mini")
     gemini_api_key: str = os.getenv("GEMINI_API_KEY", "")
 
     # Hardcoded defaults (not read from env) so every deploy target — dev,

@@ -16,6 +16,7 @@ const CONTRACT_STATUS_OPTIONS_FOR_CREATE: ContractStatus[] = [
   'draft', 'pending_signature', 'signed', 'active',
 ];
 import { CurrencyInput } from '@/components/CurrencyInput';
+import { useLayeredDrawerClose } from '@/modules/crm/hooks/useLayeredDrawerClose';
 
 interface UserOption {
   id: string;
@@ -209,6 +210,8 @@ export function ManualContractModal({
     }
   }
 
+  const { backdropMouseDownProps, requestClose } = useLayeredDrawerClose({ isOpen: open, onRequestClose: closeAndReset });
+
   if (!open) return null;
 
   const inputStyle: React.CSSProperties = {
@@ -226,14 +229,14 @@ export function ManualContractModal({
   // (transform cua DealDetailDrawer's <aside> lam containing block cho
   // position:fixed neu khong portal, ep modal vao kich thuoc drawer).
   return createPortal(
-    <div className="crm-modal-backdrop" onClick={event => { if (event.target === event.currentTarget) closeAndReset(); }}>
-      <div className="crm-modal" onClick={event => event.stopPropagation()} style={{ maxWidth: '640px' }}>
+    <div className="crm-modal-backdrop" {...backdropMouseDownProps}>
+      <div className="crm-modal" onMouseDown={event => event.stopPropagation()} style={{ maxWidth: '640px' }}>
         <header className="crm-modal-header">
           <div>
             <h2 className="crm-modal-title">Tạo hợp đồng thủ công</h2>
             <p className="crm-modal-subtitle">Không dùng AI — tự nhập thông tin, điều khoản có thể bổ sung sau ở trang chi tiết.</p>
           </div>
-          <button type="button" className="crm-modal-close" onClick={closeAndReset} aria-label="Đóng" disabled={saving}>×</button>
+          <button type="button" className="crm-modal-close" onClick={requestClose} aria-label="Đóng" disabled={saving}>×</button>
         </header>
 
         <form id="manualContractForm" onSubmit={handleSubmit}>

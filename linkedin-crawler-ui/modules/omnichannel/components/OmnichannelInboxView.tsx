@@ -2,12 +2,15 @@
 
 import React, { useState, useEffect, useMemo } from "react";
 import { useRouter } from "next/navigation";
-import { ChannelType, ConversationItem, ChannelAccount, MessageItem } from "../types";
+import { Mail, MessageSquare, RotateCw, PenSquare } from "lucide-react";
+import { ChannelType, ConversationItem, ChannelAccount, MessageItem, OutgoingEmailAttachment } from "../types";
 import { omnichannelRepository } from "../repositories/OmnichannelRepository";
 import { seedingCrmRepository } from "@/modules/crm/repositories/SeedingCrmRepository";
 import { DealFormModal } from "@/modules/crm/components/DealFormModal";
 import { TelegramConnectFlow } from "@/components/all-platform/telegram/TelegramConnectFlow";
 import { ZaloConnectModal } from "./ZaloConnectModal";
+import { EmailConnectModal } from "./EmailConnectModal";
+import { EmailComposeModal } from "./EmailComposeModal";
 import { ChannelScopePane } from "./ChannelScopePane";
 import { ConversationList } from "./ConversationList";
 import { ConversationHeader } from "./ConversationHeader";
@@ -67,6 +70,15 @@ export function OmnichannelInboxView() {
   const [isPane1Collapsed, setIsPane1Collapsed] = useState(false);
   const [isPane4Collapsed, setIsPane4Collapsed] = useState(false);
   const [composerText, setComposerText] = useState("");
+  const [emailSubject, setEmailSubject] = useState("");
+  const [emailRecipient, setEmailRecipient] = useState("");
+  const [emailCcList, setEmailCcList] = useState<string[]>([]);
+  const [emailReplyMode, setEmailReplyMode] = useState<"reply" | "reply_all" | "forward" | null>("reply");
+  const [replyTargetMessage, setReplyTargetMessage] = useState<MessageItem | null>(null);
+  const [isSendingEmail, setIsSendingEmail] = useState(false);
+  const [isEmailComposeOpen, setIsEmailComposeOpen] = useState(false);
+  const [emailAttachments, setEmailAttachments] = useState<OutgoingEmailAttachment[]>([]);
+
 
   // Modals state
   const [isCreateDealOpen, setIsCreateDealOpen] = useState(false);
@@ -81,6 +93,7 @@ export function OmnichannelInboxView() {
   const [isCreateCustomerOpen, setIsCreateCustomerOpen] = useState(false);
   const [isTelegramConnectOpen, setIsTelegramConnectOpen] = useState(false);
   const [isZaloConnectOpen, setIsZaloConnectOpen] = useState(false);
+  const [isEmailConnectOpen, setIsEmailConnectOpen] = useState(false);
   // Toast state
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const showToast = (msg: string) => {
@@ -99,6 +112,32 @@ export function OmnichannelInboxView() {
   const currentAccounts = isPreviewMode ? previewAccounts : realAccounts;
   const currentConversations = isPreviewMode ? previewConversations : realConversations;
 
+  // Email sync state
+  const [isSyncingEmail, setIsSyncingEmail] = useState(false);
+
+  // Manual sync email action
+  const handleManualSyncEmail = async () => {
+    setIsSyncingEmail(true);
+    const result = await omnichannelRepository.syncEmailMailbox();
+    setIsSyncingEmail(false);
+    if (result.ok) {
+      showToast(`Đã đồng bộ xong! Nhập ${result.imported || 0} thư mới.`);
+      const accs = await omnichannelRepository.fetchChannelAccounts();
+      setRealAccounts(accs);
+      const list = await omnichannelRepository.fetchConversations(
+        selectedChannel,
+        selectedAccount || undefined,
+        accs
+      );
+      setRealConversations(list);
+      if (list.length > 0 && !selectedConvId) {
+        setSelectedConvId(list[0].id);
+      }
+    } else {
+      showToast(`Lỗi đồng bộ email: ${result.error || "Không thể đồng bộ hộp thư."}`);
+    }
+  };
+
   // 1. Fetch Real Channel Accounts on mount
   const fetchRealAccounts = async () => {
     setLoadingAccounts(true);
@@ -106,8 +145,16 @@ export function OmnichannelInboxView() {
     setRealAccounts(accs);
     setLoadingAccounts(false);
     if (!isPreviewMode && accs.length > 0) {
-      setSelectedChannel(accs[0].channel);
-      setSelectedAccount(accs[0].id);
+      setSelectedAccount((curr) => {
+        if (curr && accs.some((a) => a.id === curr)) return curr;
+        const emailAcc = accs.find((a) => a.channel === "email");
+        if (emailAcc) {
+          setSelectedChannel("email");
+          return emailAcc.id;
+        }
+        setSelectedChannel(accs[0].channel);
+        return accs[0].id;
+      });
     }
   };
 
@@ -136,6 +183,22 @@ export function OmnichannelInboxView() {
           setSelectedConvId(null);
           setMessages([]);
         }
+      }
+
+      // Non-blocking background sync for email: load DB immediately first, sync IMAP/Gmail API in background
+      if (selectedChannel === "email") {
+        const targetAcc = realAccounts.find((a) => a.id === selectedAccount);
+        const targetEmail = targetAcc?.email || undefined;
+        omnichannelRepository.syncEmailMailbox(targetEmail).then((syncRes) => {
+          if (syncRes.ok && syncRes.imported && syncRes.imported > 0 && active) {
+            omnichannelRepository.fetchConversations("email", selectedAccount || undefined, realAccounts).then((refreshed) => {
+              if (active) {
+                setRealConversations(refreshed);
+                showToast(`📧 Nhận được ${syncRes.imported} thư mới!`);
+              }
+            });
+          }
+        }).catch(() => {});
       }
     })();
     return () => { active = false; };
@@ -219,6 +282,7 @@ export function OmnichannelInboxView() {
     if (!activeConversation) return undefined;
 
     const sourceMap: Record<string, string> = {
+      email: "Email",
       zalo: "Zalo",
       facebook: "Facebook",
       telegram: "Telegram",
@@ -231,31 +295,84 @@ export function OmnichannelInboxView() {
       companyName: isCompany ? activeConversation.crmData.companyName : undefined,
       contactName: activeConversation.customerName || undefined,
       phone: activeConversation.crmData?.phone || undefined,
-      email: activeConversation.crmData?.email || undefined,
+      email: activeConversation.crmData?.email || activeConversation.customerEmail || undefined,
       zalo: activeConversation.channel === "zalo" ? activeConversation.customerName : undefined,
       facebook: activeConversation.channel === "facebook" ? activeConversation.customerName : undefined,
       source: mappedSource,
       searchQuery:
         activeConversation.crmData?.phone ||
         activeConversation.crmData?.email ||
+        activeConversation.customerEmail ||
         activeConversation.customerName ||
         undefined,
     };
   }, [activeConversation]);
 
+  // Handle Reply to a specific email message in thread
+  const handleReplyMessage = (msg: MessageItem, mode: "reply" | "reply_all" | "forward") => {
+    setEmailReplyMode(mode);
+    setReplyTargetMessage(msg);
+
+    const rawSubj = msg.subject || activeConversation?.subject || "";
+    const cleanSubj = rawSubj.replace(/^(?:(?:re|fw|fwd)\s*:\s*)+/gi, "").trim();
+
+    if (mode === "forward") {
+      setEmailSubject(cleanSubj ? `Fwd: ${cleanSubj}` : "Fwd: Thư chuyển tiếp");
+      setEmailRecipient("");
+      setEmailCcList([]);
+      const quoteHeader = `\n\n---------- Thư chuyển tiếp ----------\nTừ: ${msg.senderName || msg.senderEmail} <${msg.senderEmail}>\nNgày: ${msg.time}\nTiêu đề: ${msg.subject || cleanSubj}\nĐến: ${msg.recipientEmails?.join(", ") || ""}\n\n${msg.text}`;
+      setComposerText(quoteHeader);
+    } else if (mode === "reply_all") {
+      setEmailSubject(cleanSubj ? `Re: ${cleanSubj}` : "Re: Phản hồi");
+      const targetSender = msg.sender === "me"
+        ? (msg.recipientEmails?.[0] || activeConversation?.customerEmail || "")
+        : (msg.senderEmail || activeConversation?.customerEmail || "");
+      setEmailRecipient(targetSender);
+
+      const ourEmail = (realAccounts.find((a) => a.channel === "email")?.email || "").toLowerCase();
+      const ccSet = new Set<string>();
+      (msg.recipientEmails || []).forEach((r) => ccSet.add(r.toLowerCase()));
+      (msg.ccEmails || []).forEach((c) => ccSet.add(c.toLowerCase()));
+      if (msg.senderEmail) ccSet.add(msg.senderEmail.toLowerCase());
+      ccSet.delete(ourEmail);
+      ccSet.delete(targetSender.toLowerCase());
+      setEmailCcList(Array.from(ccSet));
+    } else {
+      setEmailSubject(cleanSubj ? `Re: ${cleanSubj}` : "Re: Phản hồi");
+      const targetSender = msg.sender === "me"
+        ? (msg.recipientEmails?.[0] || activeConversation?.customerEmail || "")
+        : (msg.senderEmail || activeConversation?.customerEmail || "");
+      setEmailRecipient(targetSender);
+      setEmailCcList([]);
+    }
+  };
+
   // Handle Send Message
   const handleSendMessage = async () => {
-    if (!composerText.trim() || !activeConversation) return;
+    if (!composerText.trim() || !activeConversation || isSendingEmail) return;
 
     const textToSend = composerText.trim();
-    const tempMsgId = `msg-${Date.now()}`;
-    const newMsg: MessageItem = {
+    const idempotencyKey = typeof crypto !== "undefined" && crypto.randomUUID
+      ? crypto.randomUUID()
+      : `idemp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+    const tempMsgId = `optimistic-${Date.now()}`;
+    const optimisticMsg: MessageItem = {
       id: tempMsgId,
       sender: "me",
       senderName: "Tôi",
+      subject: activeConversation.channel === "email" ? emailSubject : undefined,
       text: textToSend,
       time: new Date().toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" }),
-      status: "sent",
+      status: "sending",
+      idempotencyKey,
+      recipientEmails: [emailRecipient || activeConversation.customerEmail || ""],
+      ccEmails: emailCcList,
+      attachments: emailAttachments.map((a) => ({
+        name: a.name,
+        size: a.size,
+        type: a.type,
+      })),
     };
 
     if (isPreviewMode) {
@@ -266,8 +383,8 @@ export function OmnichannelInboxView() {
             ? {
                 ...c,
                 lastMessageText: textToSend,
-                lastMessageTime: newMsg.time,
-                messages: [...c.messages, newMsg],
+                lastMessageTime: optimisticMsg.time,
+                messages: [...c.messages, { ...optimisticMsg, status: "sent" }],
               }
             : c
         )
@@ -277,21 +394,120 @@ export function OmnichannelInboxView() {
     }
 
     // Real Mode Update
-    if (!selectedAccount) return;
-    setMessages((prev) => [...prev, newMsg]);
-    setComposerText("");
+    const accountToSend = selectedAccount || activeConversation.accountId;
+    if (!accountToSend) {
+      showToast("Vui lòng chọn tài khoản để gửi thư.");
+      return;
+    }
 
-    const success = await omnichannelRepository.sendMessage(
+    if (activeConversation.channel === "email") {
+      // 1. Optimistic UI update: immediately append message with "sending" status and lock button
+      setIsSendingEmail(true);
+      setMessages((prev) => [...prev, optimisticMsg]);
+      setRealConversations((prev) =>
+        prev.map((c) =>
+          c.id === activeConversation.id
+            ? {
+                ...c,
+                lastMessageText: textToSend.slice(0, 100),
+                lastMessageTime: "vừa xong",
+                messages: [...c.messages, optimisticMsg],
+              }
+            : c
+        )
+      );
+
+      // Save and clear inputs immediately for responsive UX
+      const savedSubject = emailSubject;
+      const savedAttachments = emailAttachments;
+      const savedRecipient = emailRecipient || activeConversation.customerEmail;
+      const savedCc = emailCcList;
+      const savedReplyTarget = replyTargetMessage;
+      const savedReplyMode = emailReplyMode;
+
+      setComposerText("");
+      setEmailAttachments([]);
+      setEmailReplyMode("reply");
+      setReplyTargetMessage(null);
+
+      const accountObj = realAccounts.find((a) => a.id === accountToSend);
+
+      const res = await omnichannelRepository.sendMessage(
+        "email",
+        accountToSend,
+        activeConversation.id,
+        textToSend,
+        {
+          subject: savedSubject,
+          attachments: savedAttachments,
+          recipient_email: savedRecipient,
+          cc_emails: savedCc,
+          reply_to_message_id: savedReplyTarget?.id,
+          mode: savedReplyMode || "reply",
+          idempotency_key: idempotencyKey,
+          from_email: accountObj?.email,
+        }
+      );
+      setIsSendingEmail(false);
+
+      if (!res.ok) {
+        setMessages((prev) =>
+          prev.map((m) => (m.id === tempMsgId ? { ...m, status: "failed" } : m))
+        );
+        showToast(`Gửi email thất bại: ${res.error || "Vui lòng kiểm tra lại cấu hình."}`);
+        return;
+      }
+
+      const sentMsg: MessageItem = res.message
+        ? { ...res.message, status: "sent" }
+        : {
+            ...optimisticMsg,
+            status: "sent",
+            subject: savedSubject,
+            recipientEmails: [savedRecipient || ""],
+            ccEmails: savedCc,
+            attachments: savedAttachments.map((a) => ({
+              name: a.name,
+              size: a.size,
+              type: a.type,
+            })),
+          };
+
+      setMessages((prev) =>
+        prev.map((m) => (m.id === tempMsgId ? sentMsg : m))
+      );
+      setRealConversations((prev) =>
+        prev.map((c) =>
+          c.id === activeConversation.id
+            ? {
+                ...c,
+                lastMessageText: textToSend.slice(0, 100),
+                lastMessageTime: "vừa xong",
+                messages: c.messages.map((m) => (m.id === tempMsgId ? sentMsg : m)),
+              }
+            : c
+        )
+      );
+      showToast("Đã gửi email phản hồi thành công!");
+      return;
+    }
+
+    const res = await omnichannelRepository.sendMessage(
       activeConversation.channel,
-      selectedAccount,
+      accountToSend,
       activeConversation.id,
       textToSend
     );
 
-    if (!success) {
+    if (!res.ok) {
       showToast("Gửi tin nhắn thất bại. Vui lòng kiểm tra lại kết nối tài khoản.");
+      return;
     }
+
+    setMessages((prev) => [...prev, { ...optimisticMsg, status: "sent" }]);
+    setComposerText("");
   };
+
 
   // Official CRM Deal Creation
   const handleCreateDealOfficial = async (input: any) => {
@@ -366,6 +582,7 @@ export function OmnichannelInboxView() {
   const channelCounts = useMemo(() => {
     return {
       all: currentConversations.length,
+      email: currentConversations.filter((c) => c.channel === "email").length,
       facebook: currentConversations.filter((c) => c.channel === "facebook").length,
       zalo: currentConversations.filter((c) => c.channel === "zalo").length,
       telegram: currentConversations.filter((c) => c.channel === "telegram").length,
@@ -374,6 +591,48 @@ export function OmnichannelInboxView() {
       linkedin: currentConversations.filter((c) => c.channel === "linkedin").length,
     };
   }, [currentConversations]);
+
+  // Periodic background check for new incoming emails with notification toast
+  useEffect(() => {
+    if (isPreviewMode) return;
+    const interval = setInterval(async () => {
+      try {
+        const emailConvs = await omnichannelRepository.fetchConversations("email");
+        if (emailConvs.length > 0) {
+          setRealConversations((prev) => {
+            const map = new Map(prev.map((c) => [c.id, c]));
+            let hasNewIncoming = false;
+            let latestSender = "";
+            let latestMsg = "";
+
+            for (const ec of emailConvs) {
+              const old = map.get(ec.id);
+              if (!old) {
+                map.set(ec.id, ec);
+                if (ec.unreadCount > 0) {
+                  hasNewIncoming = true;
+                  latestSender = ec.customerName;
+                  latestMsg = ec.lastMessageText;
+                }
+              } else if (ec.unreadCount > (old.unreadCount || 0)) {
+                map.set(ec.id, { ...old, ...ec });
+                hasNewIncoming = true;
+                latestSender = ec.customerName;
+                latestMsg = ec.lastMessageText;
+              }
+            }
+            if (hasNewIncoming) {
+              showToast(`📧 [Email mới] ${latestSender}: "${latestMsg.substring(0, 45)}..."`);
+            }
+            return Array.from(map.values());
+          });
+        }
+      } catch (e) {
+        // quiet background check
+      }
+    }, 20000);
+    return () => clearInterval(interval);
+  }, [isPreviewMode]);
 
   const isDev = process.env.NODE_ENV === "development";
 
@@ -387,6 +646,7 @@ export function OmnichannelInboxView() {
           onSelectChannel={(ch) => {
             setSelectedChannel(ch);
             setSelectedAccount(null);
+            setEmailAttachments([]);
           }}
           selectedAccount={selectedAccount}
           onSelectAccount={(acc) => setSelectedAccount(acc)}
@@ -405,15 +665,40 @@ export function OmnichannelInboxView() {
           selectedConvId={activeConversation?.id || null}
           onSelectConv={(id) => {
             setSelectedConvId(id);
+            setEmailAttachments([]);
+            setEmailReplyMode("reply");
+            setReplyTargetMessage(null);
             if (isPreviewMode) {
               const target = previewConversations.find((c) => c.id === id);
               if (target) setMessages(target.messages);
+            } else {
+              const target = realConversations.find((c) => c.id === id);
+              if (target) {
+                if (target.channel === "email" && target.unreadCount > 0) {
+                  omnichannelRepository.markEmailRead(id);
+                  setRealConversations((prev) =>
+                    prev.map((c) => (c.id === id ? { ...c, unreadCount: 0 } : c))
+                  );
+                }
+                if (target.channel === "email") {
+                  const rawSubj = target.subject || target.messages?.[0]?.subject || "";
+                  const clean = rawSubj.replace(/^(?:(?:re|fw|fwd)\s*:\s*)+/gi, "").trim();
+                  setEmailSubject(clean ? `Re: ${clean}` : "Re: Phản hồi thông tin");
+                  setEmailRecipient(target.customerEmail || "");
+                  setEmailCcList([]);
+                }
+              }
             }
           }}
           searchQuery={searchQuery}
           onSearchChange={(q) => setSearchQuery(q)}
           filterTab={filterTab}
           onFilterTabChange={(tab) => setFilterTab(tab)}
+          selectedChannel={selectedChannel}
+          selectedAccountInfo={realAccounts.find((a) => a.id === selectedAccount) || realAccounts.find((a) => a.channel === "email")}
+          isSyncing={isSyncingEmail}
+          onManualSync={handleManualSyncEmail}
+          onComposeNewEmail={() => setIsEmailComposeOpen(true)}
         />
 
         {/* Pane 3 — Chat Workspace (flex-1, main focus) */}
@@ -433,7 +718,10 @@ export function OmnichannelInboxView() {
                 onToggleUnread={() => showToast("Đã cập nhật trạng thái đọc.")}
               />
 
-              <MessageThread conversation={activeConversation} />
+              <MessageThread
+                conversation={activeConversation}
+                onReplyMessage={handleReplyMessage}
+              />
 
               <AiReplySuggestion
                 suggestion={activeConversation.aiSuggestedReply}
@@ -456,27 +744,89 @@ export function OmnichannelInboxView() {
                 onOpenAddNote={() => setIsAddNoteOpen(true)}
                 onOpenCreateDeal={() => setIsCreateDealOpen(true)}
                 onOpenCreateQuote={() => setIsCreateQuoteOpen(true)}
+                isEmailChannel={activeConversation.channel === "email"}
+                emailSubject={emailSubject}
+                onChangeEmailSubject={setEmailSubject}
+                emailRecipient={emailRecipient || activeConversation.customerEmail}
+                onChangeEmailRecipient={setEmailRecipient}
+                emailCc={emailCcList}
+                onChangeEmailCc={setEmailCcList}
+                emailAttachments={emailAttachments}
+                onChangeEmailAttachments={setEmailAttachments}
+                replyMode={emailReplyMode}
+                onCancelReplyMode={() => {
+                  setEmailReplyMode("reply");
+                  setReplyTargetMessage(null);
+                  const clean = (activeConversation.subject || "").replace(/^(?:(?:re|fw|fwd)\s*:\s*)+/gi, "").trim();
+                  setEmailSubject(clean ? `Re: ${clean}` : "Re: Phản hồi");
+                  setEmailRecipient(activeConversation.customerEmail || "");
+                  setEmailCcList([]);
+                }}
+                isSending={isSendingEmail}
               />
             </>
+
           ) : (
             <div className="flex h-full flex-col items-center justify-center p-8 text-center text-xs text-slate-400 space-y-4">
               <div className="rounded-full bg-slate-100 p-4 text-slate-300">
-                💬
+                {selectedChannel === "email" ? "✉️" : "💬"}
               </div>
               <div className="space-y-1">
-                <p className="font-semibold text-slate-700 text-sm">Chưa có hội thoại nào được chọn</p>
+                <p className="font-semibold text-slate-700 text-sm">
+                  {selectedChannel === "email"
+                    ? (filteredConversations.length > 0 ? "Chưa chọn email nào" : "Hộp thư đến chưa có thư nào")
+                    : "Chưa có hội thoại nào được chọn"}
+                </p>
                 <p className="max-w-xs text-[11px] text-slate-400 leading-relaxed">
-                  Hội thoại sẽ tự động xuất hiện khi tài khoản được kết nối và có tin nhắn đồng bộ về hệ thống.
+                  {selectedChannel === "email"
+                    ? (filteredConversations.length > 0
+                        ? "Chọn một email từ danh sách bên trái để đọc nội dung và gửi phản hồi."
+                        : (realAccounts.some((a) => a.channel === "email")
+                            ? "Tài khoản email đã kết nối nhưng chưa có email nào được đồng bộ. Bấm 'Đồng bộ thư ngay' hoặc 'Soạn thư mới' để bắt đầu trao đổi."
+                            : "Kết nối tài khoản Gmail / IMAP để đồng bộ và quản lý email trực tiếp trong CRM."))
+                    : "Hội thoại sẽ tự động xuất hiện khi tài khoản được kết nối và có tin nhắn đồng bộ về hệ thống."}
                 </p>
               </div>
 
               <div className="flex items-center gap-2 pt-2">
-                <button
-                  onClick={() => setIsConnectAccountOpen(true)}
-                  className="rounded-lg bg-[var(--color-markee-primary,#c2185b)] px-3.5 py-1.5 text-xs font-medium text-white shadow-2xs hover:bg-[#a3134c] transition"
-                >
-                  + Kết nối tài khoản
-                </button>
+                {selectedChannel === "email" && realAccounts.some((a) => a.channel === "email") ? (
+                  <>
+                    <button
+                      onClick={() => setIsEmailComposeOpen(true)}
+                      className="rounded-lg bg-[var(--color-markee-primary,#c2185b)] px-3.5 py-1.5 text-xs font-semibold text-white shadow-2xs hover:bg-[#a3134c] transition flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <PenSquare className="h-3.5 w-3.5" />
+                      <span>Soạn thư mới</span>
+                    </button>
+                    <button
+                      onClick={handleManualSyncEmail}
+                      disabled={isSyncingEmail}
+                      className="rounded-lg border border-slate-200 bg-white px-3.5 py-1.5 text-xs font-medium text-slate-700 shadow-2xs hover:bg-slate-50 transition flex items-center gap-1.5 disabled:opacity-50"
+                    >
+                      <RotateCw className={`h-3.5 w-3.5 ${isSyncingEmail ? "animate-spin" : ""}`} />
+                      {isSyncingEmail ? "Đang đồng bộ..." : "Đồng bộ thư ngay"}
+                    </button>
+                    <button
+                      onClick={() => setIsEmailConnectOpen(true)}
+                      className="rounded-lg border border-slate-200 bg-white px-3.5 py-1.5 text-xs font-medium text-slate-700 shadow-2xs hover:bg-slate-50 transition"
+                    >
+                      Cấu hình tài khoản
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    onClick={() => {
+                      if (selectedChannel === "email") {
+                        setIsEmailConnectOpen(true);
+                      } else {
+                        setIsConnectAccountOpen(true);
+                      }
+                    }}
+                    className="rounded-lg bg-[var(--color-markee-primary,#c2185b)] px-3.5 py-1.5 text-xs font-medium text-white shadow-2xs hover:bg-[#a3134c] transition"
+                  >
+                    + Kết nối tài khoản
+                  </button>
+                )}
               </div>
             </div>
           )}
@@ -587,10 +937,55 @@ export function OmnichannelInboxView() {
             setIsTelegramConnectOpen(true);
             return;
           }
+          if (ch === "email") {
+            setIsEmailConnectOpen(true);
+            return;
+          }
           const cap = CHANNEL_CAPABILITIES[ch as ChannelType];
           if (cap && cap.isAvailable && cap.connectRoute) {
             router.push(`${cap.connectRoute}?returnTo=/all-platform/omnichannel-inbox`);
           }
+        }}
+      />
+
+      {/* Email Connect Modal Popup */}
+      <EmailConnectModal
+        isOpen={isEmailConnectOpen}
+        onClose={() => setIsEmailConnectOpen(false)}
+        initialEmail={realAccounts.find((a) => a.channel === "email")?.email}
+        initialName={realAccounts.find((a) => a.channel === "email")?.name}
+        onSuccess={async (connectedAccount) => {
+          setSelectedChannel("email");
+          const accs = await omnichannelRepository.fetchChannelAccounts();
+          setRealAccounts(accs);
+          const emailAcc = accs.find((a) => a.channel === "email" && (!connectedAccount || a.email === connectedAccount.email)) || accs.find((a) => a.channel === "email");
+          if (emailAcc) {
+            setSelectedAccount(emailAcc.id);
+            setLoadingConvs(true);
+            const list = await omnichannelRepository.fetchConversations("email", emailAcc.id, accs);
+            setRealConversations(list);
+            setLoadingConvs(false);
+            if (list.length > 0) {
+              setSelectedConvId(list[0].id);
+            }
+          }
+          showToast(`Đã kết nối tài khoản Email ${connectedAccount?.email || ""} thành công!`);
+        }}
+      />
+
+      {/* Email Compose Modal */}
+      <EmailComposeModal
+        isOpen={isEmailComposeOpen}
+        onClose={() => setIsEmailComposeOpen(false)}
+        senderEmail={realAccounts.find((a) => a.channel === "email")?.email}
+        senderName={realAccounts.find((a) => a.channel === "email")?.name}
+        accounts={realAccounts}
+        onSuccess={(newConv) => {
+          setRealConversations((prev) => [newConv, ...prev.filter((c) => c.id !== newConv.id)]);
+          setSelectedConvId(newConv.id);
+          setSelectedChannel("email");
+          if (newConv.messages) setMessages(newConv.messages);
+          showToast("Đã gửi email mới thành công!");
         }}
       />
 

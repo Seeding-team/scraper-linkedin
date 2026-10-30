@@ -53,6 +53,7 @@ from app.modules.all_platform.routers.price_book import price_book_router, price
 from app.modules.all_platform.routers.contract import contracts_router
 from app.modules.all_platform.routers.contract_docx import contract_docx_router
 from app.modules.all_platform.routers.contract_versions import contract_versions_router
+from app.modules.all_platform.routers.contract_edit import contract_edit_router
 from app.modules.all_platform.routers.progress import progress_router
 from app.modules.all_platform.routers.contract_template import contract_templates_router
 from app.modules.all_platform.routers.service_catalog import router as service_catalog_router
@@ -422,6 +423,11 @@ all_platform_router.include_router(
     tags=["All-Platform Contract Documents (versions, risk, readiness)"],
 )
 all_platform_router.include_router(
+    contract_edit_router,
+    prefix="/contracts",
+    tags=["All-Platform Contract Word Editor (OnlyOffice, dev only)"],
+)
+all_platform_router.include_router(
     contract_templates_router,
     prefix="/contract-templates",
     tags=["All-Platform Contract Templates"],
@@ -523,5 +529,14 @@ all_platform_router.include_router(
     auto_seeding_comments_router,
     prefix="/auto-seeding-comments",
     tags=["All-Platform Auto Seeding Comments"],
+)
+
+# ── Email Inbox (IMAP/SMTP & Google OAuth Omnichannel) ────────────────────────
+from app.modules.all_platform.email.api.routes.email_inbox import router as email_inbox_router
+
+all_platform_router.include_router(
+    email_inbox_router,
+    prefix="/email-inbox",
+    tags=["All-Platform Email Inbox"],
 )
 

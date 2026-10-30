@@ -62,6 +62,29 @@ Routers mounted in `app/main.py`: LinkedIn (no prefix), Facebook (`/facebook/api
 - **Push → `dev`**: auto-deploy on self-hosted runner at 10.30.50.29
 - **Manual trigger**: deploy to production (10.120.60.26)
 
+## CRM module (`modules/crm/` FE, `app/modules/all_platform/` CRM services BE)
+
+Trước khi sửa BẤT KỲ component/service nào liên quan Lead/Khách hàng/Cơ hội(Deal)/Báo giá/Hợp đồng,
+**ĐỌC `thao/crm/` theo thứ tự**:
+1. `thao/crm/CRM_FUNCTIONAL_SPEC.md` — toàn bộ chức năng/nghiệp vụ từng module.
+2. `thao/crm/SHARED_COMPONENT_MAP.md` — entry point → component → API → service → DB, đặc biệt các
+   nút KHÁC TÊN NHƯNG CÙNG NGHIỆP VỤ (vd "Tạo cơ hội" / "+ Deal" / "Tạo từ Lead" đều có thể dẫn tới
+   cùng 1 component dùng chung — sửa 1 chỗ ảnh hưởng nhiều nút).
+3. `thao/crm/CRM_FLOW_MAP.md` — luồng liên kết dữ liệu Lead↔Customer↔Deal↔Quote↔Contract, luồng tự
+   động hoá (stage sync, tiến độ khách hàng), luồng quyền/tenant.
+4. `thao/crm/REGRESSION_CHECKLIST.md` — checklist bắt buộc test theo từng loại thay đổi, cộng danh
+   sách "known gaps" đã audit (đừng báo lại như bug mới, và đừng coi là "đã có tính năng" khi vẫn còn
+   trong danh sách này).
+5. `thao/CRM_KNOWN_BUGS_FIXED.md` — nhật ký pattern lỗi ĐÃ fix (dropdown portal đóng nhầm modal, owner
+   picker sai nguồn, race condition auto-chọn...).
+
+**SAU KHI sửa xong**: cập nhật lại đúng file đã đọc ở trên nếu hành vi/entry point/mapping đã đổi
+(thêm entry point mới, đổi component dùng chung, sửa 1 "known gap"...), và thêm mục mới vào
+`thao/CRM_KNOWN_BUGS_FIXED.md` nếu vừa fix 1 bug thuộc pattern đã biết hoặc pattern mới — theo đúng
+format Triệu chứng / Nguyên nhân gốc / Cách fix / File liên quan đã có sẵn trong file đó. Sửa ở main
+thì PHẢI port sang cả 3 clone (`crm-module`, `crm-cloudgate`, `crm-securityzone`) trừ khi được yêu cầu
+khác — xem quy ước port trong các file CLAUDE.md/doc liên quan.
+
 ## CodeGraph
 
 CodeGraph indexes this repo (`.codegraph/` exists). **Must use before grep/Read.**

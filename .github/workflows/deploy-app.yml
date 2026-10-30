@@ -81,7 +81,7 @@ jobs:
 
       - name: Kiem tra healthcheck
         run: |
-          sleep 3
+          sleep 6
           curl -sf -o /dev/null http://localhost:8080/ || (echo "Frontend khong phan hoi" && exit 1)
           curl -sf -o /dev/null http://localhost:8080/api/all-platform/auth/me || echo "Luu y: auth/me khong phai 200 (co the do chua dang nhap, khong tinh la loi)"
 

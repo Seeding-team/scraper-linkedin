@@ -1,3 +1,9 @@
+**TRƯỚC KHI SỬA LỖI TRONG CRM (modules/crm, modules/quotes), ĐỌC `thao/CRM_KNOWN_BUGS_FIXED.md`.**
+Đây là nhật ký các pattern lỗi đã gặp + đã fix (dropdown portal làm đóng nhầm modal/sidebar, owner-picker
+sai nguồn, race condition auto-chọn, thiếu `notifyDealsChanged()`/callback refresh...) — kiểm tra trước
+để không sửa lại từ đầu hoặc tái tạo đúng bug đã fix ở chỗ khác. Gặp lỗi mới đã sửa xong thì note tiếp
+vào cuối file đó theo đúng format (Triệu chứng / Nguyên nhân gốc / Cách fix / File liên quan).
+
 # Tiến độ phiên làm việc (2026-10-26) — Cào Threads kết hợp DOM + bắt API
 
 Extension 2.11: `platforms/threads/crawl-sniffer.js` (bắt fetch + XHR `/graphql`, ghi tên query), `platforms/threads/crawl.js`
@@ -13,7 +19,7 @@ Mentor giao: thêm Viber Chat (nhắn tin 2 chiều, gửi ảnh/link/tệp đ�
 - Viber KHÔNG có API cho tài khoản cá nhân -> dùng **Viber Bot API** chính thức: mỗi "tài khoản" = 1 bot (auth
   token từ partners.viber.com), backend `set_webhook` tới `{VIBER_WEBHOOK_BASE_URL|PUBLIC_APP_BASE_URL}/api/all-platform/viber/webhook/{account_id}`
   (bắt buộc HTTPS công khai), kiểm chữ ký HMAC `X-Viber-Content-Signature`. Không đọc được lịch sử cũ, không sửa/xoá/ghim.
-- Backend `linkedin_group_crawler/app/modules/all_platform/viber/`, migration **`180_viber_module.sql`**
+- Backend `linkedin_group_crawler/app/modules/all_platform/viber/`, migration **`190_viber_module.sql`**
   (`viber_accounts`/`viber_dialogs`/`viber_messages`, bucket storage `viber-media`). FE: `/all-platform/viber-chat`
   + `/viber-chat/[accountId]`, `components/all-platform/viber/`. Chỉ làm app chính, CHƯA làm cho 3 clone crm-*.
 - Đã verify: pytest `tests/test_viber_service.py` + `tests/test_viber_extra.py` (**20 test**, Viber API giả),

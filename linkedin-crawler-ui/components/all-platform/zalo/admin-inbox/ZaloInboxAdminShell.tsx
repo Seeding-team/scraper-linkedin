@@ -8,6 +8,7 @@ import { useZaloPushNotifications } from "@/hooks/useZaloPushNotifications";
 import { Avatar } from "../dashboard/Avatar";
 import ZaloTeamAccountTree from "./ZaloTeamAccountTree";
 import ZaloAccountAuthView from "./ZaloAccountAuthView";
+import { ZaloAccountsModal } from "../chat/ZaloAccountsModal";
 import { CrmCustomerModal } from "@/components/all-platform/components/CrmCustomerModal";
 import { SalesAssetPickerModal } from "@/components/all-platform/sales-assets/SalesAssetPickerModal";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -30,6 +31,8 @@ import {
   createZaloAccount,
   createZaloBroadcast,
   createZaloUserThread,
+  findZaloUser,
+  type ZaloFoundUser,
   updateZaloLibraryMessage,
   getZaloQuickReplies,
   createZaloQuickReply,
@@ -72,6 +75,7 @@ import {
   MessageCircle,
   Inbox as InboxIcon,
   CheckCircle2,
+  Zap,
 } from "lucide-react";
 
 // ─── Constants & Templates ──────────────────────────────────────────────────
@@ -481,21 +485,21 @@ function ZaloMessageBody({ message, isSent, isSelected, onImageClick }: { messag
   const hasText = Boolean(message.content?.trim());
   const showText = hasText && !(specialCard?.kind === "link" && specialCard.url && message.content?.trim() === specialCard.url);
   const bubbleClass = cn(
-    "rounded-2xl px-3.5 py-2 text-xs leading-relaxed break-words transition-all duration-200 shadow-xs",
-    isSent ? "bg-brand text-white rounded-br-md" : "bg-[#f1f4f8] text-[#1f2a3a] rounded-bl-md",
-    isSelected && (isSent ? "ring-2 ring-brand ring-offset-2" : "ring-2 ring-brand/60 bg-brand-subtle"),
+    "rounded-2xl px-4 py-2.5 text-[13.5px] font-medium leading-relaxed break-words transition-all duration-200 shadow-xs",
+    isSent ? "bg-[#0068ff] text-white rounded-br-md shadow-xs" : "bg-[#f1f4f8] text-[#1f2a3a] rounded-bl-md border border-slate-200/50",
+    isSelected && (isSent ? "ring-2 ring-[#0068ff] ring-offset-2" : "ring-2 ring-[#0068ff]/60 bg-blue-50/50"),
   );
 
   return (
     <div className={cn("space-y-1", isSent ? "items-end" : "items-start")}>
       {showText && <div className={cn("whitespace-pre-wrap", bubbleClass)}>{linkifyText(message.content || "", isSent)}</div>}
-      {specialCard && <div className={cn("max-w-[280px]", isSent ? "ml-auto" : "mr-auto")}><ZaloSpecialCardView card={specialCard} isSent={isSent} /></div>}
+      {specialCard && <div className={cn("max-w-[320px]", isSent ? "ml-auto" : "mr-auto")}><ZaloSpecialCardView card={specialCard} isSent={isSent} /></div>}
       {imageAssets.length > 0 && (
         <div
           className={cn(
-            "overflow-hidden rounded-2xl border border-slate-200 bg-white p-1 shadow-xs",
+            "overflow-hidden rounded-2xl border border-slate-200/80 bg-white p-1 shadow-xs cursor-pointer hover:opacity-95 transition",
             isSent ? "ml-auto rounded-br-md" : "mr-auto rounded-bl-md",
-            imageAssets.length === 1 ? "max-w-[260px]" : "grid max-w-[300px] gap-1",
+            imageAssets.length === 1 ? "max-w-[420px] sm:max-w-[500px]" : "grid max-w-[380px] gap-1.5",
             imageAssets.length === 2 ? "grid-cols-2" : imageAssets.length >= 3 ? "grid-cols-2" : "",
           )}
         >
@@ -687,6 +691,8 @@ export function ZaloInboxAdminShell() {
   const [editPhone, setEditPhone] = useState("");
   const [isSavingAccount, setIsSavingAccount] = useState(false);
   const [showAuthModal, setShowAuthModal] = useState(false);
+  const [showAccountsModal, setShowAccountsModal] = useState(false);
+  const [isRightPaneOpen, setIsRightPaneOpen] = useState(false);
   const [startingDmSenderId, setStartingDmSenderId] = useState<string | null>(null);
 
   // States for campaign / multi-message forwarding
@@ -758,13 +764,16 @@ export function ZaloInboxAdminShell() {
   const searchParams = useSearchParams();
   const jumpToConvRef = useRef<string | null>(null);
   const jumpToAccountRef = useRef<string | null>(null);
+  const jumpToPhoneRef = useRef<string | null>(null);
 
   useEffect(() => {
     const targetAccount = searchParams.get("account");
-    if (!targetAccount || jumpToAccountRef.current === targetAccount) return;
-    jumpToAccountRef.current = targetAccount;
-    inbox.onSelectAccount(targetAccount);
-  }, [searchParams, inbox]);
+    if (!targetAccount) return;
+    if (inbox.selectedAccountId !== targetAccount) {
+      jumpToAccountRef.current = targetAccount;
+      inbox.onSelectAccount(targetAccount);
+    }
+  }, [searchParams, inbox.selectedAccountId, inbox.onSelectAccount]);
 
   useEffect(() => {
     const targetConv = searchParams.get("conv");
@@ -813,6 +822,8 @@ export function ZaloInboxAdminShell() {
       jumpToConvRef.current = null;
     }
   }, [inbox.selectedAccountId, inbox.filtered, inbox]);
+
+
 
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [showSalesAssetPicker, setShowSalesAssetPicker] = useState(false);
@@ -868,6 +879,141 @@ export function ZaloInboxAdminShell() {
   const [forwardingMessage, setForwardingMessage] = useState<ZaloLibraryMessage | null>(null);
   const [newChatModalOpen, setNewChatModalOpen] = useState(false);
   const [phoneSearchQuery, setPhoneSearchQuery] = useState<string | undefined>(undefined);
+
+  // In-Place Zalo Phone Search (Chuẩn Zalo 1:1 - Tự trích xuất tên & SĐT đổ xuống và có nút nhắn tin ngay)
+  const [inlinePhoneResult, setInlinePhoneResult] = useState<ZaloFoundUser | null>(null);
+  const [isSearchingPhone, setIsSearchingPhone] = useState(false);
+  const [inlinePhoneError, setInlinePhoneError] = useState<string | null>(null);
+  const [isStartingInlineChat, setIsStartingInlineChat] = useState(false);
+
+  useEffect(() => {
+    const rawQuery = inbox.searchQuery.trim();
+    if (!looksLikeVnPhoneQuery(rawQuery)) {
+      setInlinePhoneResult(null);
+      setInlinePhoneError(null);
+      setIsSearchingPhone(false);
+      return;
+    }
+
+    const activeAccountId = inbox.selectedAccountId || inbox.sessions[0]?.account_id;
+    if (!activeAccountId) return;
+
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      setIsSearchingPhone(true);
+      setInlinePhoneError(null);
+      try {
+        const res = await findZaloUser(activeAccountId, rawQuery, "phone");
+        if (!cancelled) {
+          setInlinePhoneResult(res);
+        }
+      } catch (err: any) {
+        if (!cancelled) {
+          setInlinePhoneResult(null);
+          setInlinePhoneError(err?.message || "Không tìm thấy người dùng với số điện thoại này");
+        }
+      } finally {
+        if (!cancelled) setIsSearchingPhone(false);
+      }
+    }, 450);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [inbox.searchQuery, inbox.selectedAccountId, inbox.sessions]);
+
+  const handleOpenInlinePhoneChat = async (targetUser: ZaloFoundUser) => {
+    const activeAccountId = inbox.selectedAccountId || inbox.sessions[0]?.account_id;
+    if (!activeAccountId) {
+      inbox.showToast("Chưa chọn tài khoản Zalo để gửi tin", false);
+      return;
+    }
+    setIsStartingInlineChat(true);
+    try {
+      const res = await createZaloUserThread(activeAccountId, {
+        user_id: targetUser.user_id,
+        display_name: targetUser.display_name,
+        avatar_url: targetUser.avatar_url ?? null,
+      });
+      if (res?.conversation_id) {
+        inbox.setSearchQuery("");
+        setInlinePhoneResult(null);
+        void inbox.refreshConversations();
+        inbox.openChat(res.conversation_id);
+        inbox.showToast(`Đã mở cuộc trò chuyện với ${targetUser.display_name}`, true);
+      } else {
+        throw new Error("Không nhận được mã cuộc trò chuyện");
+      }
+    } catch (err: any) {
+      inbox.showToast(err?.message || "Không thể mở chat với người này", false);
+    } finally {
+      setIsStartingInlineChat(false);
+    }
+  };
+
+  // Luong dong bo tu 4 module CRM qua URL: ?phone=0931969552
+  useEffect(() => {
+    const rawPhone = searchParams.get("phone");
+    if (!rawPhone) return;
+    const cleanPhone = rawPhone.replace(/\D/g, "").replace(/^(\+84|84)/, "0");
+    if (!cleanPhone || jumpToPhoneRef.current === cleanPhone) return;
+    jumpToPhoneRef.current = cleanPhone;
+
+    // Tu dong cap nhat o tim kiem
+    inbox.setSearchQuery(cleanPhone);
+  }, [searchParams, inbox]);
+
+  useEffect(() => {
+    const targetPhone = jumpToPhoneRef.current;
+    const activeAccountId = inbox.selectedAccountId || inbox.sessions[0]?.account_id;
+    if (!targetPhone || !activeAccountId) return;
+
+    // Check cooldown ngan de khong bi lap lai
+    const phoneCooldownKey = `zalo-phone-jump:${targetPhone}`;
+    try {
+      const last = Number(window.sessionStorage.getItem(phoneCooldownKey) || 0);
+      if (Date.now() - last < 10000) return;
+      window.sessionStorage.setItem(phoneCooldownKey, String(Date.now()));
+    } catch {}
+
+    let cancelled = false;
+    (async () => {
+      try {
+        // 1. Kiem tra xem da co hoi thoai trong danh sach chua
+        const existing = inbox.filtered.find((c) =>
+          (c.name && c.name.includes(targetPhone)) ||
+          (c.latest_sender_name && c.latest_sender_name.includes(targetPhone)) ||
+          (c.conv_id && c.conv_id.includes(targetPhone))
+        );
+        if (existing) {
+          inbox.openChat(existing.conv_id);
+          jumpToPhoneRef.current = null;
+          return;
+        }
+
+        // 2. Neu chua co, tu dong tra cuu tren Zalo
+        setIsSearchingPhone(true);
+        const res = await findZaloUser(activeAccountId, targetPhone, "phone");
+        if (cancelled) return;
+        if (res && res.user_id) {
+          setInlinePhoneResult(res);
+          void handleOpenInlinePhoneChat(res);
+          jumpToPhoneRef.current = null;
+        } else {
+          setInlinePhoneError("Không tìm thấy tài khoản Zalo với SĐT " + targetPhone);
+        }
+      } catch (err: any) {
+        if (!cancelled) {
+          setInlinePhoneError(err?.message || "Lỗi tra cứu SĐT Zalo");
+        }
+      } finally {
+        if (!cancelled) setIsSearchingPhone(false);
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [inbox.selectedAccountId, inbox.sessions, inbox.filtered]);
 
   const [customQuickReplies, setCustomQuickReplies] = useState<ZaloQuickReply[]>([]);
   const [showSaveTemplateForm, setShowSaveTemplateForm] = useState(false);
@@ -1514,8 +1660,8 @@ export function ZaloInboxAdminShell() {
               </div>
             </div>
 
-            {/* Account Selector Bar */}
-            <div className="flex items-center gap-2">
+            {/* Account Selector Bar & Manage Accounts */}
+            <div className="flex items-center gap-2 min-w-0">
               <span className="text-[11px] text-slate-400 font-medium shrink-0">Tài khoản:</span>
               <ZaloTeamAccountTree
                 sessions={inbox.sessions}
@@ -1525,6 +1671,7 @@ export function ZaloInboxAdminShell() {
                 onSelect={inbox.onSelectAccount}
                 role={inbox.role}
                 owner={inbox.leaderEmail}
+                onManageAccounts={() => setShowAccountsModal(true)}
               />
             </div>
           </div>
@@ -1547,8 +1694,13 @@ export function ZaloInboxAdminShell() {
         )}
       </div>
 
-      {/* ── 3-Pane Viewport Grid ── */}
-      <div className="grid min-w-0 flex-1 min-h-0 overflow-hidden grid-cols-1 gap-3 lg:grid-cols-[290px_1fr_350px] h-full">
+      {/* ── 3-Pane Viewport Grid (Responsive chống co rúm trên laptop) ── */}
+      <div
+        className={cn(
+          "grid min-w-0 flex-1 min-h-0 overflow-hidden grid-cols-1 gap-3 h-full",
+          isRightPaneOpen ? "lg:grid-cols-[290px_1fr_340px]" : "lg:grid-cols-[320px_1fr]"
+        )}
+      >
         {/* Pane 1: Conversations List */}
         <section
           className={cn(
@@ -1564,20 +1716,130 @@ export function ZaloInboxAdminShell() {
                   {inbox.filtered.length}
                 </span>
               </div>
-              <p className="text-xs text-slate-400">
-                {inbox.loadingConvs ? "Đang tải..." : `${inbox.filtered.length} hội thoại`}
-              </p>
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!inbox.selectedAccountId && inbox.sessions.length > 0) {
+                      inbox.onSelectAccount(inbox.sessions[0].account_id);
+                    }
+                    setPhoneSearchQuery(inbox.searchQuery.trim() || undefined);
+                    setNewChatModalOpen(true);
+                  }}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold text-white bg-[#0068FF] hover:bg-[#0052cc] shadow-xs hover:shadow-md transition-all cursor-pointer"
+                  title="Tìm kiếm người lạ bằng số điện thoại hoặc Username để nhắn tin mới"
+                >
+                  <MaterialIcon name="person_search" className="text-[15px]" />
+                  <span>Tìm người lạ</span>
+                </button>
+              </div>
             </div>
 
-            <div className="relative">
-              <MaterialIcon name="search" className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[14px] text-slate-400" />
-              <input
-                type="text"
-                value={inbox.searchQuery}
-                onChange={(e) => inbox.setSearchQuery(e.target.value)}
-                placeholder="Tìm theo tên hoặc SĐT..."
-                className="h-8 w-full rounded-xl border border-slate-200 bg-white pl-8 pr-3 text-xs outline-none focus:border-[#E3000F]"
-              />
+            <div className="space-y-1.5">
+              <div className="relative">
+                <MaterialIcon name="search" className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[14px] text-slate-400" />
+                <input
+                  type="text"
+                  value={inbox.searchQuery}
+                  onChange={(e) => inbox.setSearchQuery(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && looksLikeVnPhoneQuery(inbox.searchQuery)) {
+                      setPhoneSearchQuery(inbox.searchQuery.trim());
+                      setNewChatModalOpen(true);
+                    }
+                  }}
+                  placeholder="Tìm theo tên hoặc SĐT..."
+                  className="h-8 w-full rounded-xl border border-slate-200 bg-white pl-8 pr-8 text-xs outline-none focus:border-[#0068FF]"
+                />
+                {inbox.searchQuery && (
+                  <button
+                    type="button"
+                    onClick={() => inbox.setSearchQuery("")}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                    title="Xóa tìm kiếm"
+                  >
+                    <MaterialIcon name="close" className="text-[14px]" />
+                  </button>
+                )}
+              </div>
+
+              {/* DROPDOWN KẾT QUẢ TÌM BẠN QUA SỐ ĐIỆN THOẠI (CHUẨN ZALO 1:1 THEO ẢNH MASTER) */}
+              {looksLikeVnPhoneQuery(inbox.searchQuery) && (
+                <div className="rounded-2xl border border-blue-100 bg-gradient-to-b from-blue-50/60 to-white p-3 shadow-md space-y-2.5 animate-in fade-in slide-in-from-top-2 duration-200">
+                  <div className="text-xs font-bold text-slate-800 flex items-center justify-between">
+                    <span>Tìm bạn qua số điện thoại:</span>
+                    {isSearchingPhone && (
+                      <span className="flex items-center gap-1 text-[11px] text-[#0068FF] font-medium">
+                        <MaterialIcon name="sync" className="text-xs animate-spin" />
+                        Đang tìm...
+                      </span>
+                    )}
+                  </div>
+
+                  {inlinePhoneResult ? (
+                    <div
+                      onClick={() => void handleOpenInlinePhoneChat(inlinePhoneResult)}
+                      className="flex items-center gap-3 p-2 rounded-xl bg-white border border-slate-200/80 hover:border-[#0068FF] hover:shadow-xs transition cursor-pointer group"
+                    >
+                      {inlinePhoneResult.avatar_url ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={inlinePhoneResult.avatar_url}
+                          alt={inlinePhoneResult.display_name}
+                          className="w-11 h-11 rounded-full object-cover shrink-0 border border-slate-200"
+                        />
+                      ) : (
+                        <div className="w-11 h-11 rounded-full bg-gradient-to-br from-[#0068FF] to-[#0040aa] flex items-center justify-center text-white text-base font-bold shrink-0">
+                          {inlinePhoneResult.display_name?.[0]?.toUpperCase() || "?"}
+                        </div>
+                      )}
+                      <div className="flex-1 min-w-0">
+                        <div className="font-bold text-[13px] text-slate-900 truncate group-hover:text-[#0068FF] transition">
+                          {inlinePhoneResult.display_name}
+                        </div>
+                        <div className="text-xs text-slate-500 mt-0.5">
+                          Số điện thoại: <span className="font-bold text-[#0068FF]">{inbox.searchQuery.trim()}</span>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        disabled={isStartingInlineChat}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void handleOpenInlinePhoneChat(inlinePhoneResult);
+                        }}
+                        className="px-3 py-1.5 rounded-xl bg-[#0068FF] hover:bg-[#0052cc] text-white text-xs font-bold transition shadow-xs flex items-center gap-1 shrink-0 cursor-pointer disabled:opacity-50"
+                      >
+                        {isStartingInlineChat ? (
+                          <MaterialIcon name="sync" className="text-[13px] animate-spin" />
+                        ) : (
+                          <MaterialIcon name="chat" className="text-[13px]" />
+                        )}
+                        <span>Nhắn tin</span>
+                      </button>
+                    </div>
+                  ) : isSearchingPhone ? (
+                    <div className="p-3 text-center text-xs text-slate-400 bg-white rounded-xl border border-slate-100 flex items-center justify-center gap-2">
+                      <MaterialIcon name="sync" className="text-sm animate-spin text-[#0068FF]" />
+                      <span>Đang tra cứu trên Zalo...</span>
+                    </div>
+                  ) : inlinePhoneError ? (
+                    <div className="p-2.5 rounded-xl bg-amber-50 border border-amber-200/80 text-[11px] text-amber-800 flex items-center justify-between">
+                      <span>{inlinePhoneError}</span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPhoneSearchQuery(inbox.searchQuery.trim());
+                          setNewChatModalOpen(true);
+                        }}
+                        className="text-[#0068FF] font-bold hover:underline shrink-0 ml-2 cursor-pointer"
+                      >
+                        Mở modal →
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
+              )}
             </div>
 
             <div className="flex items-center gap-1 overflow-x-auto no-scrollbar py-0.5">
@@ -1663,7 +1925,32 @@ export function ZaloInboxAdminShell() {
                 ))}
               </div>
             ) : inbox.filtered.length === 0 ? (
-              <div className="py-12 text-center text-xs text-slate-400">Chưa có hội thoại.</div>
+              <div className="py-8 px-4 text-center flex flex-col items-center gap-2 text-slate-500">
+                <div className="size-10 rounded-full bg-slate-100 flex items-center justify-center text-slate-400">
+                  <MaterialIcon name="person_search" className="text-xl" />
+                </div>
+                <div className="space-y-1">
+                  <p className="text-xs font-semibold text-slate-700">
+                    {inbox.searchQuery ? `Không có hội thoại nào khớp với "${inbox.searchQuery}"` : "Chưa có hội thoại nào."}
+                  </p>
+                  <p className="text-[11px] text-slate-400 leading-relaxed">
+                    {inbox.searchQuery
+                      ? "Bạn có thể tìm kiếm người lạ trực tiếp trên Zalo bằng số điện thoại này để nhắn tin."
+                      : "Tìm kiếm người lạ qua số điện thoại để bắt đầu trò chuyện mới."}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPhoneSearchQuery(inbox.searchQuery.trim() || undefined);
+                    setNewChatModalOpen(true);
+                  }}
+                  className="mt-1 inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-bold text-white bg-[#0068FF] hover:bg-[#0052cc] transition shadow-xs cursor-pointer"
+                >
+                  <MaterialIcon name="person_search" className="text-[15px]" />
+                  <span>{inbox.searchQuery ? `Tìm "${inbox.searchQuery.trim()}" trên Zalo` : "Tìm người lạ bằng SĐT"}</span>
+                </button>
+              </div>
             ) : (
               inbox.filtered.map((conv) => {
                 const active = inbox.openConv === conv.conv_id && !inbox.archiveReading;
@@ -1763,50 +2050,53 @@ export function ZaloInboxAdminShell() {
           )}
 
           {/* Header */}
-          <div className="flex items-center justify-between gap-3 border-b border-slate-200/80 px-4 py-3 bg-white flex-shrink-0 relative">
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-2">
-                <Avatar src={selectedConv?.avatar_url} name={selectedName || "Z"} className="h-9 w-9 text-xs" />
-                <div>
-                  <div className="flex items-center gap-2">
-                    <h2 className="truncate text-sm font-bold text-slate-900">{selectedName || (inbox.openConv ? "Zalo User" : "Chọn hội thoại")}</h2>
-                    {selectedConv?.is_customer && <span className="text-amber-500 text-sm" title="Khách hàng">⭐</span>}
-                  </div>
-                  {inbox.openConv && (
-                    <div className="flex items-center gap-2 text-xs text-slate-500 mt-0.5">
-                      <span className="font-medium text-slate-600">
-                        Zalo • {inbox.selectedAccountInfo ? (inbox.selectedAccountInfo.label || inbox.selectedAccountInfo.account_id) : "Account"}
-                      </span>
-                      <span>•</span>
-                      <span className={cn("font-semibold", inbox.accOnline ? "text-emerald-600" : "text-slate-400")}>
-                        {inbox.accOnline ? "● Online" : "● Offline"}
-                      </span>
-                      {selectedConv?.is_customer && (
-                        <span className="rounded-full bg-emerald-100 px-2 py-0.2 text-[10px] font-bold text-emerald-700">
-                          Khách hàng
-                        </span>
-                      )}
-                      {selectedConv?.unread && (
-                        <span className="rounded-full bg-amber-100 px-2 py-0.2 text-[10px] font-bold text-amber-700">
-                          Cần trả lời
-                        </span>
-                      )}
-                    </div>
-                  )}
+          <div className="flex items-center justify-between gap-3 border-b border-slate-200/80 px-4 py-2.5 bg-white flex-shrink-0 min-h-[58px]">
+            {/* Left: Avatar & Customer info (Strict max-width + truncate to NEVER overlap action buttons) */}
+            <div className="flex items-center gap-2.5 min-w-0 max-w-[200px] sm:max-w-[280px] md:max-w-[340px] lg:max-w-[420px] xl:max-w-[500px]">
+              <Avatar src={selectedConv?.avatar_url} name={selectedName || "Z"} className="h-9 w-9 text-xs shrink-0 ring-1 ring-slate-200/80" />
+              <div className="min-w-0 flex-1 overflow-hidden">
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <h2 className="truncate text-sm font-bold text-slate-900 block" title={selectedName || ""}>
+                    {selectedName || (inbox.openConv ? "Zalo User" : "Chọn hội thoại")}
+                  </h2>
+                  {selectedConv?.is_customer && <span className="text-amber-500 text-xs shrink-0" title="Khách hàng">⭐</span>}
                 </div>
+                {inbox.openConv && (
+                  <div className="flex items-center gap-1.5 text-xs text-slate-500 mt-0.5 min-w-0 truncate">
+                    <span className="font-medium text-slate-600 truncate">
+                      Zalo • {inbox.selectedAccountInfo ? (inbox.selectedAccountInfo.label || inbox.selectedAccountInfo.account_id) : "Account"}
+                    </span>
+                    <span className="text-slate-300 shrink-0">•</span>
+                    <span className={cn("font-semibold shrink-0 text-[11px]", inbox.accOnline ? "text-emerald-600" : "text-slate-400")}>
+                      {inbox.accOnline ? "● Online" : "● Offline"}
+                    </span>
+                    {selectedConv?.is_customer && (
+                      <span className="rounded-full bg-emerald-100 px-1.5 py-0.2 text-[9px] font-bold text-emerald-700 shrink-0">
+                        Khách hàng
+                      </span>
+                    )}
+                    {selectedConv?.unread && (
+                      <span className="rounded-full bg-amber-100 px-1.5 py-0.2 text-[9px] font-bold text-amber-700 shrink-0">
+                        Chưa đọc
+                      </span>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
 
-            {/* Header Action Buttons (Merged Legacy Zalo + Omni) */}
+            {/* Header Action Buttons (Merged Legacy Zalo + Omni + Toggle CRM) */}
             {inbox.openConv && (
-              <div className="flex items-center gap-2 relative">
+              <div className="flex items-center gap-1.5 sm:gap-2 relative shrink-0">
                 {/* OMNI ACTION: Gán người */}
                 <button
                   type="button"
                   onClick={() => setShowAssignModal(true)}
-                  className="inline-flex items-center gap-1.5 rounded-xl border border-[#d81b60]/40 bg-[#fce4ec]/50 px-3 py-1.5 text-xs font-bold text-[#d81b60] hover:bg-[#fce4ec] transition shadow-2xs"
+                  className="inline-flex items-center gap-1 sm:gap-1.5 rounded-xl border border-[#d81b60]/40 bg-[#fce4ec]/50 px-2.5 sm:px-3 py-1.5 text-xs font-bold text-[#d81b60] hover:bg-[#fce4ec] transition shadow-2xs"
+                  title="Gắn người phụ trách"
                 >
-                  <User size={14} /> Gắn người
+                  <User size={14} />
+                  <span className="hidden xl:inline">Gắn người</span>
                 </button>
 
                 {/* LEGACY ZALO ACTION: Chia sẻ */}
@@ -1814,29 +2104,50 @@ export function ZaloInboxAdminShell() {
                   type="button"
                   onClick={() => inbox.onToggleShare(inbox.openConv)}
                   className={cn(
-                    "inline-flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-semibold transition shadow-2xs",
+                    "inline-flex items-center gap-1 sm:gap-1.5 rounded-xl border px-2.5 sm:px-3 py-1.5 text-xs font-semibold transition shadow-2xs",
                     inbox.verifiedConvIds.has(inbox.openConv) || inbox.suggestedConvIds.has(inbox.openConv)
-                      ? "border-emerald-300 bg-emerald-50 text-emerald-700"
+                      ? "border-emerald-300 bg-emerald-50 text-emerald-700 font-bold"
                       : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
                   )}
                   title="Chia sẻ hội thoại lên danh sách KPI team"
                 >
-                  <MaterialIcon name="share" className="text-sm" /> Chia sẻ
+                  <MaterialIcon name="share" className="text-sm" />
+                  <span className="hidden xl:inline">Chia sẻ</span>
                 </button>
 
                 {/* LEGACY ZALO ACTION: Auto Send */}
                 <button
                   type="button"
-                  onClick={() => setPanelTab("campaign")}
+                  onClick={() => {
+                    setPanelTab("campaign");
+                    setIsRightPaneOpen(true);
+                  }}
                   className={cn(
-                    "inline-flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-semibold transition shadow-2xs",
-                    panelTab === "campaign"
+                    "inline-flex items-center gap-1 sm:gap-1.5 rounded-xl border px-2.5 sm:px-3 py-1.5 text-xs font-semibold transition shadow-2xs",
+                    panelTab === "campaign" && isRightPaneOpen
                       ? "border-purple-300 bg-purple-50 text-purple-700 font-bold"
                       : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
                   )}
                   title="Mở công cụ gửi tự động / chiến dịch Auto Send"
                 >
-                  <MaterialIcon name="send" className="text-sm" /> Auto Send
+                  <MaterialIcon name="send" className="text-sm" />
+                  <span className="hidden xl:inline">Auto Send</span>
+                </button>
+
+                {/* TOGGLE CRM & TEMPLATES PANE */}
+                <button
+                  type="button"
+                  onClick={() => setIsRightPaneOpen((prev) => !prev)}
+                  className={cn(
+                    "inline-flex items-center gap-1 sm:gap-1.5 rounded-xl border px-2.5 sm:px-3 py-1.5 text-xs font-bold transition shadow-2xs cursor-pointer",
+                    isRightPaneOpen
+                      ? "border-[#0068FF] bg-[#0068FF] text-white shadow-xs"
+                      : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                  )}
+                  title={isRightPaneOpen ? "Thu gọn cột CRM & Mẫu tin" : "Mở rộng cột CRM 360, Mẫu tin & Cài đặt"}
+                >
+                  <SlidersHorizontal size={14} />
+                  <span className="hidden md:inline">{isRightPaneOpen ? "Đóng CRM" : "CRM & Mẫu"}</span>
                 </button>
 
                 {/* OVERFLOW MENU BUTTON [...] */}
@@ -1844,7 +2155,7 @@ export function ZaloInboxAdminShell() {
                   <button
                     type="button"
                     onClick={() => setShowOverflowMenu((v) => !v)}
-                    className="p-2 rounded-xl text-slate-600 hover:bg-slate-100 transition border border-slate-200"
+                    className="p-1.5 sm:p-2 rounded-xl text-slate-600 hover:bg-slate-100 transition border border-slate-200"
                     title="Thao tác khác"
                   >
                     <MoreVertical size={16} />
@@ -2180,25 +2491,19 @@ export function ZaloInboxAdminShell() {
               </div>
             )}
           </div>
-          {/* AI REPLY SUGGESTIONS BAR (Only visible when conversation is open) */}
+          {/* COMPACT AI REPLY SUGGESTIONS (Streamlined to give MAXIMUM space to messages feed) */}
           {inbox.openConv && (
-            <div className="shrink-0 border-t border-purple-100 bg-purple-50/60 p-2.5 animate-in fade-in duration-200">
-              <div className="flex items-center justify-between mb-1.5">
-                <div className="flex items-center gap-1.5 text-xs font-bold text-purple-800">
-                  <Sparkles size={14} className="text-purple-600 fill-purple-300" />
-                  Gợi ý trả lời bằng AI
-                </div>
-                <button type="button" className="text-purple-600 hover:text-purple-800 p-0.5">
-                  <RefreshCw size={12} />
-                </button>
-              </div>
-
-              <div className="flex items-center gap-2 overflow-x-auto no-scrollbar">
+            <div className="shrink-0 border-t border-slate-100 bg-slate-50/60 px-3 py-1.5 flex items-center gap-2 overflow-x-auto no-scrollbar text-xs">
+              <span className="shrink-0 flex items-center gap-1 text-[11px] font-bold text-purple-700 bg-purple-50 border border-purple-200/70 px-2 py-0.5 rounded-lg">
+                <Sparkles size={12} className="text-purple-600 fill-purple-300" />
+                <span>Gợi ý AI:</span>
+              </span>
+              <div className="flex items-center gap-1.5 min-w-0">
                 {AI_SUGGESTIONS.map(sug => (
                   <button
                     key={sug}
                     onClick={() => appendAiSuggestion(sug)}
-                    className="shrink-0 rounded-full border border-purple-200 bg-white px-3 py-1 text-xs font-semibold text-purple-900 hover:bg-purple-100/70 shadow-2xs transition hover:scale-[1.02]"
+                    className="shrink-0 rounded-lg border border-slate-200/80 bg-white px-2.5 py-0.5 text-[11px] font-medium text-slate-700 hover:border-purple-300 hover:text-purple-700 shadow-2xs transition"
                   >
                     {sug}
                   </button>
@@ -2207,8 +2512,8 @@ export function ZaloInboxAdminShell() {
             </div>
           )}
 
-          {/* COMPOSER TOOLBAR & INPUT */}
-          <div className="shrink-0 border-t border-slate-200/80 bg-white p-3 space-y-2 relative">
+          {/* STREAMLINED COMPOSER TOOLBAR & INPUT */}
+          <div className="shrink-0 border-t border-slate-200/80 bg-white px-3 pt-2 pb-2.5 space-y-1.5 relative">
             {showEmojiPicker && (
               <div className="absolute bottom-full left-3 mb-2 z-40 flex items-center gap-1.5 rounded-2xl border border-slate-200 bg-white p-2 shadow-xl">
                 {EMOJIS.map(emoji => (
@@ -2315,6 +2620,34 @@ export function ZaloInboxAdminShell() {
               </button>
             </div>
 
+            {inbox.sendError && (
+              <div className="mb-2 p-2.5 rounded-xl bg-red-50 border border-red-200 text-xs text-red-700 flex items-center justify-between gap-2 shadow-xs animate-in fade-in">
+                <div className="flex items-center gap-2 min-w-0">
+                  <MaterialIcon name="error" className="text-base text-red-600 shrink-0" />
+                  <span className="truncate font-medium">{inbox.sendError}</span>
+                </div>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  {(inbox.sendError.includes("hết hạn") || inbox.sendError.includes("đăng xuất") || inbox.sendError.includes("Extension")) && (
+                    <button
+                      type="button"
+                      onClick={() => setShowAuthModal(true)}
+                      className="px-2.5 py-1 rounded-lg bg-red-600 hover:bg-red-700 text-white font-bold text-[11px] transition cursor-pointer"
+                    >
+                      Đăng nhập lại
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => inbox.setSendError?.(null)}
+                    className="text-red-400 hover:text-red-600 p-0.5 cursor-pointer"
+                    title="Đóng thông báo"
+                  >
+                    <MaterialIcon name="close" className="text-sm" />
+                  </button>
+                </div>
+              </div>
+            )}
+
             <div className="relative flex gap-2 items-end">
               {showMentionPicker && (
                 <div className="absolute bottom-full left-0 z-20 mb-1 max-h-48 w-64 overflow-y-auto rounded-xl border border-slate-200 bg-white shadow-lg">
@@ -2347,75 +2680,89 @@ export function ZaloInboxAdminShell() {
                     void handleSendReply();
                   }
                 }}
-                rows={3}
+                rows={1}
                 disabled={!inbox.openConv || inbox.archiveReading || inbox.isSending}
-                placeholder="Nhap tin nhan..."
-                className="flex-1 min-h-[72px] max-h-[140px] overflow-y-auto leading-relaxed rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-xs outline-none focus:border-[#E3000F] disabled:bg-slate-50 disabled:opacity-70"
+                placeholder="Nhập tin nhắn (nhấn Enter để gửi, Shift+Enter để xuống dòng)..."
+                className="flex-1 min-h-[46px] max-h-[120px] overflow-y-auto leading-relaxed rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-[13px] outline-none focus:border-[#0068FF] disabled:bg-slate-50 disabled:opacity-70 placeholder:text-slate-400"
               />
 
               <button
                 type="button"
                 onClick={() => void handleSendReply()}
                 disabled={!inbox.openConv || inbox.archiveReading || inbox.isSending || (!inbox.reply.trim() && selectedFiles.length === 0)}
-                className="flex h-11 items-center justify-center rounded-2xl bg-[#E3000F] px-6 text-xs font-bold text-white shadow-xs transition hover:bg-[#C40009] disabled:opacity-40"
+                className="flex h-[46px] items-center justify-center gap-1.5 rounded-xl bg-[#0068FF] hover:bg-[#0052cc] px-5 text-xs font-bold text-white shadow-xs transition cursor-pointer disabled:opacity-40 shrink-0"
               >
-                {inbox.isSending ? "Dang gui..." : "Gui"}
+                <MaterialIcon name="send" className="text-[15px]" />
+                <span>{inbox.isSending ? "Đang gửi..." : "Gửi"}</span>
               </button>
             </div>
           </div>        </section>
 
         {/* ── RIGHT PANE: 4 TABS (TƯƠNG TÁC / THÔNG TIN / CRM 360 / CÀI ĐẶT) ── */}
-        <aside className="flex flex-col min-h-0 overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-xs">
-          {/* 4 Tabs Navigation Header */}
-          <div className="shrink-0 grid grid-cols-4 border-b border-slate-200/80 bg-slate-50/50 p-1 gap-1 text-xs font-bold">
-            <button
-              onClick={() => setPanelTab("templates")}
-              className={cn(
-                "flex items-center justify-center gap-1.5 py-2 rounded-xl transition-all duration-150 text-[11px]",
-                panelTab === "templates" || panelTab === "campaign"
-                  ? "bg-white text-[#d81b60] shadow-2xs font-bold"
-                  : "text-slate-500 hover:text-slate-800 hover:bg-slate-100/60"
-              )}
-            >
-              <MessageCircle size={13} /> Tương tác
-            </button>
+        {isRightPaneOpen && (
+          <aside className="flex flex-col min-h-0 overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-xs animate-in fade-in slide-in-from-right-4 duration-200">
+            {/* 4 Tabs Navigation Header with Close Button */}
+            <div className="shrink-0 flex items-center justify-between border-b border-slate-200/80 bg-slate-50/50 p-1 text-xs font-bold">
+              <div className="grid grid-cols-4 gap-1 flex-1">
+                <button
+                  onClick={() => setPanelTab("templates")}
+                  className={cn(
+                    "flex items-center justify-center gap-1 py-2 rounded-xl transition-all duration-150 text-[11px]",
+                    panelTab === "templates" || panelTab === "campaign"
+                      ? "bg-white text-[#d81b60] shadow-2xs font-bold"
+                      : "text-slate-500 hover:text-slate-800 hover:bg-slate-100/60"
+                  )}
+                >
+                  <MessageCircle size={13} /> Tương tác
+                </button>
 
-            <button
-              onClick={() => setPanelTab("customer")}
-              className={cn(
-                "flex items-center justify-center gap-1.5 py-2 rounded-xl transition-all duration-150 text-[11px]",
-                panelTab === "customer"
-                  ? "bg-white text-[#d81b60] shadow-2xs font-bold"
-                  : "text-slate-500 hover:text-slate-800 hover:bg-slate-100/60"
-              )}
-            >
-              <User size={13} /> Thông tin
-            </button>
+                <button
+                  onClick={() => setPanelTab("customer")}
+                  className={cn(
+                    "flex items-center justify-center gap-1 py-2 rounded-xl transition-all duration-150 text-[11px]",
+                    panelTab === "customer"
+                      ? "bg-white text-[#d81b60] shadow-2xs font-bold"
+                      : "text-slate-500 hover:text-slate-800 hover:bg-slate-100/60"
+                  )}
+                >
+                  <User size={13} /> Thông tin
+                </button>
 
-            <button
-              onClick={() => setPanelTab("crm360")}
-              className={cn(
-                "flex items-center justify-center gap-1.5 py-2 rounded-xl transition-all duration-150 text-[11px]",
-                panelTab === "crm360"
-                  ? "bg-white text-[#d81b60] shadow-2xs font-bold"
-                  : "text-slate-500 hover:text-slate-800 hover:bg-slate-100/60"
-              )}
-            >
-              <Building2 size={13} /> CRM 360
-            </button>
+                <button
+                  onClick={() => setPanelTab("crm360")}
+                  className={cn(
+                    "flex items-center justify-center gap-1 py-2 rounded-xl transition-all duration-150 text-[11px]",
+                    panelTab === "crm360"
+                      ? "bg-white text-[#d81b60] shadow-2xs font-bold"
+                      : "text-slate-500 hover:text-slate-800 hover:bg-slate-100/60"
+                  )}
+                >
+                  <Building2 size={13} /> CRM 360
+                </button>
 
-            <button
-              onClick={() => setPanelTab("account")}
-              className={cn(
-                "flex items-center justify-center gap-1.5 py-2 rounded-xl transition-all duration-150 text-[11px]",
-                panelTab === "account"
-                  ? "bg-white text-[#d81b60] shadow-2xs font-bold"
-                  : "text-slate-500 hover:text-slate-800 hover:bg-slate-100/60"
-              )}
-            >
-              <BarChart3 size={13} /> Cài đặt
-            </button>
-          </div>
+                <button
+                  onClick={() => setPanelTab("account")}
+                  className={cn(
+                    "flex items-center justify-center gap-1 py-2 rounded-xl transition-all duration-150 text-[11px]",
+                    panelTab === "account"
+                      ? "bg-white text-[#d81b60] shadow-2xs font-bold"
+                      : "text-slate-500 hover:text-slate-800 hover:bg-slate-100/60"
+                  )}
+                >
+                  <BarChart3 size={13} /> Cài đặt
+                </button>
+              </div>
+
+              {/* Close Button to collapse right pane */}
+              <button
+                type="button"
+                onClick={() => setIsRightPaneOpen(false)}
+                className="p-1.5 ml-1 text-slate-400 hover:text-slate-700 hover:bg-slate-200/60 rounded-xl transition cursor-pointer"
+                title="Đóng thanh CRM & Mẫu để mở rộng khung chat"
+              >
+                <X size={15} />
+              </button>
+            </div>
 
           {/* Scrollable Tab Content */}
           <div ref={panelScrollRef} className="flex-1 min-h-0 overflow-auto p-3.5 space-y-4 no-scrollbar">
@@ -2757,6 +3104,7 @@ export function ZaloInboxAdminShell() {
             )}
           </div>
         </aside>
+      )}
       </div>
 
       {/* ── REAL CRM MODALS & DRAWERS ───────────────────────── */}
@@ -2916,28 +3264,17 @@ export function ZaloInboxAdminShell() {
         document.body
       )}
 
-      {/* Auth Portal Modal */}
-      {mounted && showAuthModal && inbox.selectedAccountId && createPortal(
-        <div className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/50 p-4 font-sans text-slate-800 backdrop-blur-xs">
-          <div className="relative w-full max-w-[448px] min-w-[320px] bg-white rounded-2xl shadow-2xl overflow-hidden">
-            <button
-              onClick={() => setShowAuthModal(false)}
-              className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 transition z-10 cursor-pointer"
-            >
-              <MaterialIcon name="close" className="text-xl" />
-            </button>
-            <ZaloAccountAuthView
-              accountId={inbox.selectedAccountId}
-              ownerName={ownerName}
-              autoTrigger={true}
-              onSuccess={() => {
-                setShowAuthModal(false);
-                void inbox.refreshAccounts();
-              }}
-            />
-          </div>
-        </div>,
-        document.body
+      {/* Zalo Accounts Modal (Kho Tri Thức Tổng - Chuẩn 1-Chạm Seeding Zalo Connector) */}
+      {(showAccountsModal || showAuthModal) && (
+        <ZaloAccountsModal
+          onClose={() => {
+            setShowAccountsModal(false);
+            setShowAuthModal(false);
+          }}
+          onChanged={() => {
+            void inbox.refreshAccounts();
+          }}
+        />
       )}
 
       <SalesAssetPickerModal
@@ -2974,8 +3311,10 @@ export function ZaloInboxAdminShell() {
           setPhoneSearchQuery(undefined);
         }}
         onChatReady={(conversationId) => {
+          inbox.setSearchQuery("");
           void inbox.refreshConversations();
           inbox.openChat(conversationId);
+          inbox.showToast("Đã mở cuộc trò chuyện với người lạ!", true);
         }}
         onError={(msg) => inbox.showToast(msg, false)}
         onSuccess={(name) => inbox.showToast(`Đã mở chat với ${name}`, true)}

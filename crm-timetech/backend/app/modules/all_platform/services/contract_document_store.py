@@ -140,3 +140,29 @@ def save_version(contract_id: str, docx: bytes, meta: dict[str, Any] | None = No
 
 def load_version(contract_id: str, version: int) -> bytes | None:
     return _get(f"contracts/{contract_id}/v{version:04d}.docx")
+
+
+def _scratch_key(contract_id: str) -> str:
+    return f"contracts/{contract_id}/_annotation_scratch.docx"
+
+
+def save_scratch(contract_id: str, docx: bytes) -> None:
+    """Luu ket qua thao tac annotation (Bo qua canh bao/Xoa Highlight/Xoa ghi chu) KHI KHONG CO
+    phien chinh sua (contract_edit_sessions) dang mo cho hop dong nay. Day la 1 SLOT GHI DE duy
+    nhat, KHONG PHAI version bat bien - Bug that da gap tren HD/2026/0007 (2026-10-27): truoc day
+    cac hanh dong annotation nhe nay vo tinh goi save_version() lam phat sinh 1 "phien ban hop
+    dong" day du chi vi xoa mau 1 highlight - sai nguyen tac #2 (khong tao version moi ngoai y
+    muon). Slot nay duoc start_edit_session() doc truoc tien (uu tien hon ca ban AI Highlight)
+    khi mo phien chinh sua that, roi xoa di vi noi dung da duoc "hap thu" vao draft cua phien do."""
+    _put(_scratch_key(contract_id), docx, DOCX_MIME, upsert=True)
+
+
+def load_scratch(contract_id: str) -> bytes | None:
+    return _get(_scratch_key(contract_id))
+
+
+def delete_scratch(contract_id: str) -> None:
+    try:
+        _bucket().remove([_scratch_key(contract_id)])
+    except Exception:  # noqa: BLE001
+        pass

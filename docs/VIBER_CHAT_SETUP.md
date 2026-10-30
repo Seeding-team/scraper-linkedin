@@ -15,12 +15,12 @@ lời trong tool -> khách nhận trên Viber.
 
 ## 2. Áp migration DB
 
-Chạy toàn bộ file `linkedin_group_crawler/supabase/migrations/180_viber_module.sql` lên DB thật
+Chạy toàn bộ file `linkedin_group_crawler/supabase/migrations/190_viber_module.sql` lên DB thật
 (`seeding.db.markeeai.com` — prod và dev dùng chung). File chạy lại nhiều lần vẫn an toàn
 (`IF NOT EXISTS`). Ví dụ trên host có DB:
 
 ```bash
-docker exec -i <container-postgres> psql -U postgres -v ON_ERROR_STOP=1 < 180_viber_module.sql
+docker exec -i <container-postgres> psql -U postgres -v ON_ERROR_STOP=1 < 190_viber_module.sql
 ```
 
 Hoặc dán nội dung file vào SQL Editor của Supabase Studio.

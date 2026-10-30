@@ -156,3 +156,15 @@
   .cd-body { padding: 4px 12px 16px; }
   .cd-head .contract-detail-header { flex-direction: column; }
 }
+
+/* Word Editor (OnlyOffice, 2026-10-27) - BUG THAT DA GAP (xac nhan qua do DOM that bang
+ * Playwright): OnlyOffice THAY THE HOAN TOAN div #word-editor-container bang markup rieng cua no
+ * (1 div khong id/class boc 1 <iframe name="frameEditor">) - inline style ta dat truc tiep tren
+ * div goc MAT HET sau khi OnlyOffice mount, nen <iframe> roi ve kich thuoc mac dinh cua trinh duyet
+ * (150x300px) vi khong co gi ep height:100% xuyen qua chuoi phan tu MOI nay. Phai ep bang CSS
+ * selector on dinh tu ben NGOAI (class .word-editor-shell khong bi OnlyOffice dung toi) xuyen qua
+ * toan bo con chau, khong dua vao inline style tren chinh div se bi thay the. */
+.word-editor-shell { display: flex; flex-direction: column; }
+.word-editor-shell > div:last-child { flex: 1; min-height: 0; }
+.word-editor-shell > div:last-child > div { height: 100%; width: 100%; }
+.word-editor-shell iframe[name="frameEditor"] { height: 100% !important; width: 100% !important; border: 0; }

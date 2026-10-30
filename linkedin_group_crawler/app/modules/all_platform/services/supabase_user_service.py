@@ -673,9 +673,11 @@ def get_member_option_by_id(user_id: str) -> dict | None:
 
 def _resolve_user_id(supabase: Client, identifier: str) -> str:
     """Resolve a user identifier (email or UUID) to a UUID string."""
-    if not identifier or not identifier.strip():
+    if not identifier or not str(identifier).strip():
         raise ValueError("User identifier cannot be empty")
-    identifier = identifier.strip()
+    identifier = str(identifier).strip()
+    if identifier.lower() in ("none", "null", "undefined"):
+        raise ValueError(f"Invalid user identifier: {identifier}")
     if len(identifier) >= 32 or "-" in identifier:
         return identifier
     row = (
@@ -1031,11 +1033,21 @@ def update_team(
     # vao DB (vd fix du lieu tay) ma khong nam trong danh sach FE dang gui (FE
     # load form tu truoc, chua biet ve thay doi do) thi lan luu tiep theo se
     # xoa mat member do, du nguoi sua team khong co y dinh xoa ai ca.
-    existing_res = supabase.table("member_of_teams").select("id_member").eq("id_teams", team_id).execute()
-    existing_member_ids = {r["id_member"] for r in (existing_res.data or [])}
+    # Clean up any corrupt null rows for this team first
+    try:
+        supabase.table("member_of_teams").delete().eq("id_teams", team_id).is_("id_member", "null").execute()
+    except Exception:
+        pass
 
-    to_remove = existing_member_ids - desired_member_ids
-    to_add = desired_member_ids - existing_member_ids
+    existing_res = supabase.table("member_of_teams").select("id_member").eq("id_teams", team_id).execute()
+    existing_member_ids = {
+        str(r["id_member"]).strip()
+        for r in (existing_res.data or [])
+        if r.get("id_member") and str(r.get("id_member")).strip().lower() not in ("none", "null", "")
+    }
+
+    to_remove = {m for m in (existing_member_ids - desired_member_ids) if m and m.lower() not in ("none", "null", "")}
+    to_add = {m for m in (desired_member_ids - existing_member_ids) if m and m.lower() not in ("none", "null", "")}
 
     if to_remove:
         supabase.table("member_of_teams").delete().eq("id_teams", team_id).in_("id_member", list(to_remove)).execute()

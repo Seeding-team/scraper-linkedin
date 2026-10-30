@@ -1,6 +1,3 @@
-# =============================================================================
-# CRITICAL RULE: ZERO-LEAK INTELLECTUAL PROPERTY & AI BRAIN (LOCAL ONLY)
-# =============================================================================
 .aevum/
 .agents/
 .agent/
@@ -10,6 +7,9 @@ _agent/
 GEMINI.md
 AGENTS.md
 TONGQUAN.md
+tools/
+source_code_skill/
+skillstudyforalluser/
 # =========================
 # Monorepo ignore (FE + BE)
 # =========================

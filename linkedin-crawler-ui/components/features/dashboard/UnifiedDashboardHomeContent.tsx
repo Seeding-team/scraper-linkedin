@@ -1122,15 +1122,30 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
           <div className="w-[min(640px,100%)] max-h-[85vh] bg-card rounded-2xl shadow-xl overflow-hidden flex flex-col">
             <div className="flex justify-between items-start p-5 border-b border-border">
               <div>
-                <h3 className="text-base font-bold text-foreground">Seeding theo team</h3>
-                <div className="text-xs text-muted-foreground mt-0.5 line-clamp-1">
-                  {seedingRosterData?.team_name ? `Team: ${seedingRosterData.team_name} · ` : ""}
+                <div className="flex items-center gap-2">
+                  <h3 className="text-base font-bold text-foreground">
+                    {seedingRosterData?.role === "admin" ? "👥 Toàn bộ tiến độ Seeding theo Team" : "👤 Tiến độ Seeding theo Team"}
+                  </h3>
+                  {seedingRosterData?.team_name && (
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-50 text-blue-700 border border-blue-200">
+                      {seedingRosterData.team_name}
+                    </span>
+                  )}
+                </div>
+                <div className="text-xs text-muted-foreground mt-1 line-clamp-1">
                   Bài: {seedingRosterPost.content || "(Bài viết không có nội dung văn bản)"}
                 </div>
+                {seedingRosterData && seedingRosterData.items.length > 0 && (
+                  <div className="flex items-center gap-2 mt-2">
+                    <span className="text-[11px] font-semibold text-foreground">
+                      Đã hoàn thành: <strong className="text-emerald-600">{seedingRosterData.items.filter(i => i.has_seeded).length}</strong> / {seedingRosterData.items.length} thành viên ({Math.round((seedingRosterData.items.filter(i => i.has_seeded).length / seedingRosterData.items.length) * 100)}% KPI)
+                    </span>
+                  </div>
+                )}
               </div>
               <button
                 type="button"
-                className="w-8 h-8 rounded-full hover:bg-muted flex items-center justify-center text-muted-foreground font-bold shrink-0"
+                className="w-8 h-8 rounded-full hover:bg-muted flex items-center justify-center text-muted-foreground font-bold shrink-0 cursor-pointer"
                 onClick={closeSeedingRosterModal}
                 aria-label="Đóng"
               >
@@ -1140,47 +1155,71 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
 
             <div className="p-4 overflow-y-auto flex-1">
               {isLoadingSeedingRoster ? (
-                <div className="p-8 text-center text-muted-foreground text-sm">Đang tải danh sách seeding theo team...</div>
+                <div className="p-8 text-center text-muted-foreground text-sm flex flex-col items-center gap-2">
+                  <div className="w-5 h-5 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+                  <span>Đang tải danh sách thành viên...</span>
+                </div>
               ) : !seedingRosterData || seedingRosterData.items.length === 0 ? (
                 <div className="p-8 text-center text-muted-foreground text-sm">
-                  {seedingRosterData?.team_name
-                    ? "Team này chưa có thành viên nào."
-                    : "Bài viết này chưa xác định được team sở hữu (nhóm crawl chưa gán team)."}
+                  Chưa có thành viên nào trong danh sách quản lý của bạn.
                 </div>
               ) : (
-                <div className="flex flex-col gap-2">
+                <div className="flex flex-col gap-2.5">
                   {seedingRosterData.items.map((m) => (
                     <div
                       key={m.id_member}
                       className={cn(
-                        "px-3 py-2 rounded-lg border flex flex-col gap-1",
-                        m.has_seeded ? "bg-emerald-50/50 border-emerald-100" : "bg-muted/40 border-border",
+                        "px-3.5 py-2.5 rounded-xl border flex flex-col gap-1.5 transition",
+                        m.has_seeded ? "bg-emerald-50/50 border-emerald-200" : "bg-muted/30 border-border",
                       )}
                     >
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-sm font-bold text-foreground">{m.name}</span>
+                      <div className="flex items-center justify-between gap-2 flex-wrap">
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-bold text-foreground">{m.name}</span>
+                          {m.team_name && (
+                            <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-surface border border-border text-muted-foreground">
+                              {m.team_name}
+                            </span>
+                          )}
+                        </div>
                         {m.has_seeded ? (
-                          <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-700 shrink-0">
-                            ✓ Đã seeding
+                          <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-700 shrink-0 border border-emerald-200">
+                            ✓ Đã seeding (+1 KPI)
                           </span>
                         ) : (
-                          <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-700 shrink-0">
-                            Chưa seeding
+                          <span className="px-2.5 py-1 rounded-full text-[10px] font-semibold bg-neutral-100 text-neutral-600 shrink-0 border border-neutral-200">
+                            Chưa làm nhiệm vụ
                           </span>
                         )}
                       </div>
                       {m.has_seeded && m.content ? (
-                        <p className="text-sm text-muted-foreground line-clamp-2">
-                          <span className="text-emerald-500 font-serif font-bold text-lg leading-none mr-1">"</span>
+                        <p className="text-xs text-muted-foreground line-clamp-2 bg-surface/60 px-2.5 py-1.5 rounded-lg border border-border/50">
+                          <span className="text-emerald-500 font-serif font-bold text-base leading-none mr-1">"</span>
                           {m.content}
-                          <span className="text-emerald-500 font-serif font-bold text-lg leading-none ml-1">"</span>
+                          <span className="text-emerald-500 font-serif font-bold text-base leading-none ml-1">"</span>
                         </p>
                       ) : null}
-                      {m.link_comment ? (
-                        <a href={m.link_comment} target="_blank" rel="noopener noreferrer" className="text-[11px] font-medium text-blue-600 hover:underline inline-flex items-center gap-1 w-fit">
-                          Xem bình luận <FiExternalLink className="w-3 h-3" />
-                        </a>
-                      ) : null}
+                      <div className="flex items-center justify-between mt-0.5">
+                        {m.link_comment ? (
+                          <a
+                            href={m.link_comment}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded text-xs font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 transition shadow-xs"
+                            title="Mở tab mới xem minh chứng bình luận trực tiếp"
+                          >
+                            <span>👁️ Xem minh chứng bình luận</span>
+                            <FiExternalLink className="w-3.5 h-3.5 ml-0.5" />
+                          </a>
+                        ) : (
+                          <span className="text-[11px] text-muted-foreground italic">Chưa có liên kết minh chứng</span>
+                        )}
+                        {m.has_seeded && (
+                          <span className="text-[10px] text-emerald-700 font-semibold">
+                            {m.verify_status === "yes" ? "✓ Đã xác minh" : "Chờ xác minh"}
+                          </span>
+                        )}
+                      </div>
                     </div>
                   ))}
                 </div>

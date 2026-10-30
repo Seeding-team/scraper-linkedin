@@ -1,80 +1,481 @@
-"""Application settings and environment loading (bản rút gọn cho module CRM
-độc lập — chỉ giữ lại các biến mà router/service CRM thực sự dùng tới).
-"""
+"""Application settings and environment loading."""
 
 from __future__ import annotations
 
 import json
-import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from dotenv import load_dotenv
+import os
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 load_dotenv(BASE_DIR / ".env")
-# .env.local ghi đè .env — dùng cho dev local, không commit (giống app seeding gốc).
+# Load .env.local after .env so it overrides production values for local dev.
+# To rollback, simply delete .env.local (it will be ignored).
 load_dotenv(BASE_DIR / ".env.local", override=True)
 
 
+def _parse_bool(value: str | None, default: bool = False) -> bool:
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _linkedin_engagement_passwords_from_env() -> dict[str, str]:
+    """Map email (lower) → password cho auto-login trước react/comment."""
+
+    raw = (os.getenv("LINKEDIN_ENGAGEMENT_PASSWORDS_JSON") or "").strip()
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    out: dict[str, str] = {}
+    for key, value in data.items():
+        if not isinstance(key, str) or value is None:
+            continue
+        email_key = key.strip().lower()
+        pw = str(value).strip()
+        if email_key and pw:
+            out[email_key] = pw
+    return out
+
+
 def _parse_csv(value: str | None, default: tuple[str, ...]) -> list[str]:
+    """Parse a comma-separated env var into a list of non-empty strings."""
+
     if value is None:
         return list(default)
     items = [item.strip() for item in value.split(",")]
     return [item for item in items if item]
 
 
-def _parse_workspace_domains(value: str | None) -> dict[str, str]:
-    """`WORKSPACE_DOMAINS` — JSON object instance -> base URL public (có scheme,
-    KHÔNG lowercase key vì instance code phân biệt hoa/thường, vd
-    "SECURITYZONE" khác "securityzone"). Dùng cho admin switcher + redirect
-    non-admin nhập nhầm site — xem workspace_handoff_service.py. Giống hệt
-    biến cùng tên trong crm-module (3 deploy TÁCH RIÊNG, không cần
-    INSTANCE_DOMAIN_MAP/contextvar vì mỗi deploy đã có CRM_INSTANCE cố định
-    riêng qua NPM/domain thật)."""
-    if not value:
-        return {}
+DEFAULT_WEBHOOK_TIMEOUT_SEC = 300
+DEFAULT_START_WEBHOOK_TIMEOUT_SEC = 3600
+
+
+def _n8n_get_sheet_link_webhook_url_from_env() -> str:
+    """URL webhook thứ 2: n8n trả về link Google Sheet (key do user đặt trong .env)."""
+
+    return (os.getenv("N8n_WEBHOOK_GET_LINK") or os.getenv("N8N_WEBHOOK_GET_LINK") or "").strip()
+
+
+def _n8n_webhook_get_post_crawled_from_env() -> str:
+    return (os.getenv("N8N_WEBHOOK_GET_POST_CRAWLED") or "").strip()
+
+
+def _n8n_webhook_get_url_group_crawled_from_env() -> str:
+    return (os.getenv("N8N_WEBHOOK_GET_URL_GROUP_CRAWLED") or "").strip()
+
+
+def _n8n_webhook_get_result_crawl_by_id_from_env() -> str:
+    """Alias: N8N_WEBHOOK_GET_RESULT_CRAWL_BY_ID (chữ N8N hoa thường)."""
+
+    return (
+        os.getenv("N8n_WEBHOOK_GET_RESULT_CRAWL_BY_ID")
+        or os.getenv("N8N_WEBHOOK_GET_RESULT_CRAWL_BY_ID")
+        or ""
+    ).strip()
+
+
+def _n8n_webhook_filter_data_from_env() -> str:
+    """URL webhook for filtering data by email and date."""
+
+    return (os.getenv("N8N_WEBHOOK_FILTER_DATA") or "").strip()
+
+
+def _n8n_webhook_get_all_posts_from_env() -> str:
+    """URL webhook for fetching all posts."""
+
+    return (os.getenv("N8N_WEBHOOK_GET_ALL_POSTS") or "").strip()
+
+
+def _n8n_webhook_start_from_env() -> str:
+    """Webhook nhận ``email``, ``password``, ``force_relogin`` để kích hoạt workflow (POST /start)."""
+
+    return (os.getenv("N8N_WEBHOOK_START") or "").strip()
+
+
+def _n8n_webhook_get_group_from_env() -> str:
+    return (os.getenv("N8N_WEBHOOK_GET_GROUP") or "").strip()
+
+
+def _n8n_webhook_add_group_from_env() -> str:
+    return (os.getenv("N8N_WEBHOOK_ADD_GROUP") or "").strip()
+
+
+def _n8n_webhook_remove_group_from_env() -> str:
+    return (os.getenv("N8N_WEBHOOK_REMOVE_GROUP") or "").strip()
+
+
+def _n8n_webhook_update_group_from_env() -> str:
+    return (os.getenv("N8N_WEBHOOK_UPDATE_GROUP") or "").strip()
+
+
+def _n8n_webhook_add_list_group_from_env() -> str:
+    """Ưu tiên key mới; fallback key cũ để tương thích."""
+
+    return (
+        os.getenv("N8N_WEBHOOK_ADD_LIST_GROUP")
+        or os.getenv("N8N_WEBHOOK_BULK_IMPORT_GROUPS")
+        or ""
+    ).strip()
+
+
+def _n8n_webhook_add_list_group_timeout_sec_from_env() -> float:
+    """Ưu tiên timeout key mới; fallback key cũ; mặc định 300s."""
+
+    raw = (
+        os.getenv("N8N_WEBHOOK_ADD_LIST_GROUP_TIMEOUT_SEC")
+        or os.getenv("N8N_WEBHOOK_BULK_IMPORT_GROUPS_TIMEOUT_SEC")
+        or "300"
+    )
     try:
-        data = json.loads(value)
-    except ValueError:
-        return {}
-    if not isinstance(data, dict):
-        return {}
-    return {
-        str(instance).strip(): str(url).strip().rstrip("/")
-        for instance, url in data.items()
-        if str(instance).strip() and str(url).strip()
-    }
+        return float(raw)
+    except (TypeError, ValueError):
+        return 300.0
+
+
+def _n8n_webhook_get_profile_slugs_from_env() -> str:
+    """Webhook trả JSON có ``total`` + ``data`` (mảng dòng sheet chứa email/slug)."""
+
+    return (os.getenv("N8N_WEBHOOK_GET_PROFILE_SLUGS") or "").strip()
+
+
+def _n8n_webhook_get_profile_slugs_timeout_sec_from_env() -> float:
+    raw = os.getenv("N8N_WEBHOOK_GET_PROFILE_SLUGS_TIMEOUT_SEC") or "300"
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return 300.0
+
+
+def _n8n_webhook_add_profile_slug_from_env() -> str:
+    """Webhook ghi slug mới khi email chưa có trong sheet."""
+
+    return (os.getenv("N8N_WEBHOOK_ADD_PROFILE_SLUG") or "").strip()
+
+
+def _n8n_webhook_reaction_url_from_env() -> str:
+    """Webhook sau reaction Playwright — ưu tiên ``N8N_WEBHOOK_REACTION``, fallback ``N8N_WEBHOOK_POST_REACTION``."""
+
+    return (
+        (os.getenv("N8N_WEBHOOK_REACTION") or "").strip()
+        or (os.getenv("N8N_WEBHOOK_POST_REACTION") or "").strip()
+    )
+
+
+def _n8n_webhook_comment_url_from_env() -> str:
+    """Webhook sau comment Playwright — ``N8N_WEBHOOK_COMMENT`` hoặc ``N8N_WEBHOOK_POST_COMMENT``."""
+
+    return (
+        (os.getenv("N8N_WEBHOOK_COMMENT") or "").strip()
+        or (os.getenv("N8N_WEBHOOK_POST_COMMENT") or "").strip()
+    )
+
+
+def _n8n_webhook_assign_kpi_from_env() -> str:
+    """Webhook gán KPI cho member — leader gọi endpoint /kpi/assign."""
+
+    return (os.getenv("N8N_WEBHOOK_ASSIGN_KPI") or "").strip()
+
+
+def _n8n_webhook_check_permission_from_env() -> str:
+    """Webhook kiểm tra quyền leader/member — /auth/check-permission."""
+
+    return (os.getenv("N8N_CHECK_PERMISSION") or "").strip()
+
+
+def _n8n_webhook_get_all_kpi_from_env() -> str:
+    """Webhook lấy toàn bộ KPI cho leader — /kpi/get-all."""
+    return (os.getenv("N8N_WEBHOOK_GET_ALL_KPI") or "").strip()
+
+
+def _n8n_webhook_get_kpi_by_email_from_env() -> str:
+    """Webhook lấy KPI cho member — /kpi/get-by-email."""
+    return (os.getenv("N8N_WEBHOOK_GET_KPI_BY_EMAIL") or "").strip()
+
+
+def _n8n_webhook_add_member_from_env() -> str:
+    """Webhook thêm member — /team/add-member."""
+    return (os.getenv("N8N_WEBHOOK_ADD_MEMBER") or "").strip()
+
+
+def _n8n_webhook_category_management_from_env() -> str:
+    """Webhook quản lý danh mục — /categories (n8n category management)."""
+    return (os.getenv("N8N_CATEGORY_MANAGEMENT") or "").strip()
+
+
+def _leader_code_from_env() -> str:
+    """Mã code để xác nhận vai trò Leader."""
+    return (os.getenv("LEADER_CODE") or "8888").strip()
+
+
+def _n8n_webhook_add_profile_slug_timeout_sec_from_env() -> float:
+    raw = os.getenv("N8N_WEBHOOK_ADD_PROFILE_SLUG_TIMEOUT_SEC") or "300"
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return 300.0
+
+
+def _google_service_account_json_from_env() -> Path:
+    """Đường dẫn file JSON service account (tương đối BASE_DIR hoặc absolute)."""
+
+    raw = (os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON") or "").strip()
+    if not raw:
+        raw = "storage/permission/crawllinkedinapp-2e203d199c52.json"
+    path = Path(raw)
+    if not path.is_absolute():
+        path = BASE_DIR / path
+    return path
+
+
+def _google_spreadsheet_id_from_env() -> str:
+    return (
+        os.getenv("GOOGLE_SPREADSHEET_ID") or "1rfep85y5_97gnm2uIarsc6yVQIkZJYK4ALuPgzM939I"
+    ).strip()
+
+
+def _google_sheet_group_urls_tab_from_env() -> str:
+    """Tên tab sheet chứa URL nhóm; để trống để service tự chọn tab (ngoài ``top_posts``)."""
+
+    return (os.getenv("GOOGLE_SHEET_GROUP_URLS_TAB") or "").strip()
 
 
 @dataclass
 class Settings:
     """Typed settings loaded from environment variables."""
 
+    headless: bool = _parse_bool(os.getenv("HEADLESS"), default=True)
+    # Mặc định 1 browser, xếp hàng tuần tự — ổn định session. Chỉ tăng khi cần throughput.
+    playwright_pool_size: int = max(
+        1,
+        min(4, int(os.getenv("PLAYWRIGHT_POOL_SIZE", "1"))),
+    )
+    # false = react/comment/sync không ghi đè file session (chỉ POST /login ghi) — khuyến nghị.
+    playwright_persist_session_on_use: bool = _parse_bool(
+        os.getenv("PLAYWRIGHT_PERSIST_SESSION_ON_USE"),
+        default=False,
+    )
+    # Trước react/comment: tự login/prime session (khuyến nghị bật).
+    linkedin_auto_login_before_engagement: bool = _parse_bool(
+        os.getenv("LINKEDIN_AUTO_LOGIN_BEFORE_ENGAGEMENT"),
+        default=True,
+    )
+    linkedin_engagement_passwords: dict[str, str] = field(
+        default_factory=_linkedin_engagement_passwords_from_env,
+    )
+    linkedin_default_engagement_password: str = (
+        os.getenv("LINKEDIN_DEFAULT_ENGAGEMENT_PASSWORD")
+        or os.getenv("LINKEDIN_PASSWORD")
+        or ""
+    ).strip()
+    # Playwright reaction — VM chậm cần settle dài hơn (ms).
+    reaction_menu_hover_settle_ms: int = max(
+        400,
+        int(os.getenv("REACTION_MENU_HOVER_SETTLE_MS", "1800")),
+    )
+    reaction_post_goto_settle_ms: int = max(
+        1000,
+        int(os.getenv("REACTION_POST_GOTO_SETTLE_MS", "3500")),
+    )
+    reaction_post_click_settle_ms: int = max(
+        500,
+        int(os.getenv("REACTION_POST_CLICK_SETTLE_MS", "1500")),
+    )
+    # Sau POST /login — mo session tren moi worker pool (tranh react/comment bi login lan dau moi browser)
+    linkedin_session_prime_url: str = (
+        os.getenv("LINKEDIN_SESSION_PRIME_URL", "https://www.linkedin.com/feed/").strip()
+        or "https://www.linkedin.com/feed/"
+    )
+    linkedin_session_prime_timeout_ms: int = max(
+        30_000,
+        int(os.getenv("LINKEDIN_SESSION_PRIME_TIMEOUT_MS", "120000")),
+    )
+    # Pre-launch Chromium sau khi API listen (nền). false = chỉ khi có request Playwright.
+    playwright_warmup_on_startup: bool = _parse_bool(
+        os.getenv("PLAYWRIGHT_WARMUP_ON_STARTUP"),
+        default=True,
+    )
+    state_path: Path = BASE_DIR / os.getenv("STATE_PATH", "storage/linkedin_state.json")
+    session_storage_dir: Path = BASE_DIR / "storage" / "session"
+    default_scroll_times: int = int(os.getenv("DEFAULT_SCROLL_TIMES", "8"))
+    default_scroll_delay_ms: int = int(os.getenv("DEFAULT_SCROLL_DELAY_MS", "2000"))
+    default_scroll_delay_min_ms: int = int(os.getenv("DEFAULT_SCROLL_DELAY_MIN_MS", "1000"))
+    default_scroll_delay_max_ms: int = int(os.getenv("DEFAULT_SCROLL_DELAY_MAX_MS", "2000"))
+    default_max_items: int = int(os.getenv("DEFAULT_MAX_ITEMS", "50"))
+    api_key: str = os.getenv("API_KEY", "")
+    # Khoá cho web ngoài (Project 2 / Learn) gọi API thay cho đăng nhập bằng mật khẩu tài khoản dịch vụ: gửi header
+    # X-Web-Intake-Key; backend chạy dưới user WEB_INTAKE_USER_ID (nên là user riêng, quyền tối thiểu). Để trống = tắt.
+    web_intake_api_key: str = os.getenv("WEB_INTAKE_API_KEY", "")
+    web_intake_user_id: str = os.getenv("WEB_INTAKE_USER_ID", "")
+    render_api_key: str = os.getenv("RENDER_API_KEY", "")
+
+    # ── MSC → CRM Product Sync (migration 175) ──────────────────────────────
+    # Base URL he thong MSC (source of truth, chi GET /api/v1/goods boil dau /).
+    # De trong = tat tinh nang dong bo (job se khong chay, endpoint bao loi).
+    msc_api_base_url: str = os.getenv("MSC_API_BASE_URL", "").rstrip("/")
+    # DEPRECATED (dung cho luu dong bo cu): token Bearer — MSC KHONG con nhan token nay
+    # cho GET /goods; msc_sync_service gio dung khoa tich hop msc_integration_key.
+    # Giu lai value cho den khi luu dong bo moi da xac minh xong tren prod roi moi xoa.
+    msc_api_token: str = os.getenv("MSC_API_TOKEN", "")
+    # Khoa tich hop may-may (X-Msc-Integration-Key): MSC chi nhan tren GET /api/v1/goods.
+    # Bat buoc cho dong bo: thieu = run that bai sach se (khong fallback ve token cu).
+    msc_integration_key: str = os.getenv("MSC_INTEGRATION_KEY", "")
+    # Gio (0-23) va phut chay dong bo tu dong 1 lan/ngay (timezone cua container,
+    # docker-compose dat TZ=Asia/Ho_Chi_Minh).
+    msc_sync_hour: int = max(0, min(23, int(os.getenv("MSC_SYNC_HOUR", "2"))))
+    msc_sync_minute: int = max(0, min(59, int(os.getenv("MSC_SYNC_MINUTE", "30"))))
+    # 1 = chi tinh toan dem insert/update, KHONG ghi CRM (kiem tra mapping an toan).
+    msc_sync_dry_run: bool = os.getenv("MSC_SYNC_DRY_RUN", "").strip().lower() in ("1", "true", "yes")
+    # Timeout cho GET /api/v1/goods (giay).
+    msc_sync_timeout_sec: float = float(os.getenv("MSC_SYNC_TIMEOUT_SEC", "60"))
+    render_service_id: str = os.getenv("RENDER_SERVICE_ID", "")
+    cors_origins: list[str] | None = None
     host: str = os.getenv("HOST", "0.0.0.0")
     port: int = int(os.getenv("PORT", "8000"))
-    cors_origins: list[str] | None = None
-
-    # Multi-tenant: DB self-host này dùng chung cho nhiều deploy của
-    # crm-module (Markee tại crm.markeeai.com, brand khác sau này) — mỗi
-    # deploy chỉ set instance của riêng mình qua env CRM_INSTANCE, mọi
-    # query CRM đều lọc/gắn theo giá trị này (xem migrations/001_add_instance_scoping.sql).
+    # Main CRM tenant. Main is not a special case that can read all CRM data;
+    # it must use the same instance filter mechanism as the clone apps.
     crm_instance: str = (os.getenv("CRM_INSTANCE") or "markee").strip()
+    crm_public_url: str = os.getenv("CRM_PUBLIC_URL", "http://localhost:8080").rstrip("/")
+    google_service_account_email: str = os.getenv("GOOGLE_SERVICE_ACCOUNT_EMAIL", "")
+    google_private_key: str = os.getenv("GOOGLE_PRIVATE_KEY", "").replace("\\n", "\n")
+    google_drive_contracts_shared_drive_id: str = os.getenv(
+        "GOOGLE_DRIVE_CONTRACTS_SHARED_DRIVE_ID", "",
+    )
+    onlyoffice_internal_url: str = os.getenv(
+        "ONLYOFFICE_INTERNAL_URL", "http://onlyoffice:80",
+    ).rstrip("/")
+    backend_internal_url: str = os.getenv(
+        "BACKEND_INTERNAL_URL", "http://backend:8000/api/all-platform",
+    ).rstrip("/")
+    onlyoffice_public_url: str = os.getenv(
+        "ONLYOFFICE_PUBLIC_URL", "http://localhost:8094",
+    ).rstrip("/")
+    onlyoffice_jwt_secret: str = os.getenv("ONLYOFFICE_JWT_SECRET", "")
+    raw_data_dir: Path = BASE_DIR / "data" / "raw"
+    output_data_dir: Path = BASE_DIR / "data" / "output"
+    n8n_webhook_url: str = os.getenv("N8N_WEBHOOK_URL", "")
+    n8n_webhook_timeout_sec: float = float(
+        os.getenv("N8N_WEBHOOK_TIMEOUT_SEC", str(DEFAULT_WEBHOOK_TIMEOUT_SEC)),
+    )
+    n8n_webhook_start_timeout_sec: float = float(
+        os.getenv("N8N_WEBHOOK_START_TIMEOUT_SEC", str(DEFAULT_START_WEBHOOK_TIMEOUT_SEC)),
+    )
+    n8n_webhook_get_link_url: str = field(default_factory=_n8n_get_sheet_link_webhook_url_from_env)
+    n8n_webhook_get_post_crawled_url: str = field(
+        default_factory=_n8n_webhook_get_post_crawled_from_env,
+    )
+    n8n_webhook_get_url_group_crawled_url: str = field(
+        default_factory=_n8n_webhook_get_url_group_crawled_from_env,
+    )
+    n8n_webhook_get_result_crawl_by_id_url: str = field(
+        default_factory=_n8n_webhook_get_result_crawl_by_id_from_env,
+    )
+    n8n_webhook_filter_data_url: str = field(
+        default_factory=_n8n_webhook_filter_data_from_env,
+    )
+    n8n_webhook_get_all_posts_url: str = field(
+        default_factory=_n8n_webhook_get_all_posts_from_env,
+    )
+    n8n_webhook_start_url: str = field(default_factory=_n8n_webhook_start_from_env)
+    n8n_webhook_get_group_url: str = field(default_factory=_n8n_webhook_get_group_from_env)
+    n8n_webhook_add_group_url: str = field(default_factory=_n8n_webhook_add_group_from_env)
+    n8n_webhook_remove_group_url: str = field(default_factory=_n8n_webhook_remove_group_from_env)
+    n8n_webhook_update_group_url: str = field(default_factory=_n8n_webhook_update_group_from_env)
+    n8n_webhook_add_list_group_url: str = field(default_factory=_n8n_webhook_add_list_group_from_env)
+    n8n_webhook_add_list_group_timeout_sec: float = field(
+        default_factory=_n8n_webhook_add_list_group_timeout_sec_from_env,
+    )
+    n8n_webhook_get_profile_slugs_url: str = field(
+        default_factory=_n8n_webhook_get_profile_slugs_from_env,
+    )
+    n8n_webhook_get_profile_slugs_timeout_sec: float = field(
+        default_factory=_n8n_webhook_get_profile_slugs_timeout_sec_from_env,
+    )
+    n8n_webhook_add_profile_slug_url: str = field(
+        default_factory=_n8n_webhook_add_profile_slug_from_env,
+    )
+    n8n_webhook_add_profile_slug_timeout_sec: float = field(
+        default_factory=_n8n_webhook_add_profile_slug_timeout_sec_from_env,
+    )
+    n8n_webhook_post_reaction_url: str = field(
+        default_factory=_n8n_webhook_reaction_url_from_env,
+    )
+    n8n_webhook_post_comment_url: str = field(
+        default_factory=_n8n_webhook_comment_url_from_env,
+    )
+    n8n_webhook_assign_kpi_url: str = field(
+        default_factory=_n8n_webhook_assign_kpi_from_env,
+    )
+    n8n_webhook_check_permission_url: str = field(
+        default_factory=_n8n_webhook_check_permission_from_env,
+    )
+    n8n_webhook_get_all_kpi_url: str = field(
+        default_factory=_n8n_webhook_get_all_kpi_from_env,
+    )
+    n8n_webhook_get_kpi_by_email_url: str = field(
+        default_factory=_n8n_webhook_get_kpi_by_email_from_env,
+    )
+    n8n_webhook_add_member_url: str = field(
+        default_factory=_n8n_webhook_add_member_from_env,
+    )
+    n8n_webhook_category_management_url: str = field(
+        default_factory=_n8n_webhook_category_management_from_env,
+    )
+    leader_code: str = field(
+        default_factory=_leader_code_from_env,
+    )
+    jwt_secret_key: str = os.getenv("JWT_SECRET_KEY", "crawlpro-default-secret-change-me")
+    jwt_algorithm: str = os.getenv("JWT_ALGORITHM", "HS256")
+    jwt_access_token_expire_minutes: int = int(
+        os.getenv("JWT_ACCESS_TOKEN_EXPIRE_MINUTES", "10080"),
+    )
+    google_oauth_client_id: str = os.getenv("GOOGLE_CLIENT_ID", "")
+    google_service_account_json_path: Path = field(
+        default_factory=_google_service_account_json_from_env,
+    )
+    google_spreadsheet_id: str = field(default_factory=_google_spreadsheet_id_from_env)
+    google_sheet_top_posts_tab: str = (os.getenv("GOOGLE_SHEET_TOP_POSTS_TAB") or "top_posts").strip()
+    google_sheet_group_urls_tab: str = field(
+        default_factory=_google_sheet_group_urls_tab_from_env,
+    )
+    crawl_batch_group_delay_min_sec: float = float(os.getenv("CRAWL_BATCH_GROUP_DELAY_MIN_SEC", "3"))
+    crawl_batch_group_delay_max_sec: float = float(os.getenv("CRAWL_BATCH_GROUP_DELAY_MAX_SEC", "12"))
+    seeder_service_url: str = os.getenv("SEEDER_SERVICE_URL", "http://localhost:8000").rstrip("/")
+    seeder_service_api_key: str = os.getenv("SEEDER_SERVICE_API_KEY", "")
 
-    # instance -> base URL CANONICAL công khai của brand đó (có scheme, KHÔNG
-    # đường dẫn cuối), dùng để admin switcher / redirect non-admin nhập nhầm
-    # site biết chuyển sang đâu. Giá trị PHẢI GIỐNG HỆT nhau trên cả 3 deploy
-    # (crm-module/crm-cloudgate/crm-securityzone) vì đều dùng chung 1 DB —
-    # xem migrations/004_workspace_handoff_codes.sql.
-    workspace_domains: dict[str, str] = field(
-        default_factory=lambda: _parse_workspace_domains(os.getenv("WORKSPACE_DOMAINS"))
+    openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
+    openai_base_url: str = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
+    ai_model: str = os.getenv("AI_MODEL", "gpt-4o-mini")
+    gemini_api_key: str = os.getenv("GEMINI_API_KEY", "")
+
+    # Hardcoded defaults (not read from env) so every deploy target — dev,
+    # production, or a fresh server — works out of the box with no .env
+    # setup step. An env var still overrides if one happens to be set.
+    markeeai_base_url: str = os.getenv("MARKEEAI_BASE_URL", "https://api.markeeai.com").rstrip("/")
+    markeeai_service_email: str = os.getenv("MARKEEAI_SERVICE_EMAIL", "ngminhhoang0934@gmail.com")
+    markeeai_service_password: str = os.getenv("MARKEEAI_SERVICE_PASSWORD", "fRmgjFiFKNloCrLZJKK5")
+    # Comma-separated campaign IDs the service account is a member of — each
+    # one scopes visibility to that campaign's own fanpages (MarkeeAI is
+    # multi-tenant; there is no "list every fanpage" mode by design).
+    markeeai_campaign_ids: list[str] = field(
+        default_factory=lambda: _parse_csv(
+            os.getenv("MARKEEAI_CAMPAIGN_IDS"),
+            default=("8740a8ad-6796-4e25-b80c-25e7e7dc15f7",),
+        ),
     )
 
     # Dong bo ung vien "accepted" tu he thong tuyen dung (cv.markeeai.com) vao
     # danh ba noi bo `members` (nut "Dong bo tu tuyen dung" o tab Quan ly thanh
     # vien) - dung CHUNG 1 project Supabase voi pm-new (PM tool noi bo), hardcode
-    # default de moi deploy/instance chay duoc ngay, .env van override duoc.
+    # default nhu markeeai_* o tren de moi deploy chay duoc ngay, .env van override duoc.
     recruitment_supabase_url: str = os.getenv(
         "RECRUITMENT_SUPABASE_URL", "https://cv.db.markeeai.com",
     ).rstrip("/")
@@ -83,65 +484,6 @@ class Settings:
         "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoic2VydmljZV9yb2xlIiwiaXNzIjoic3VwYWJhc2UiLCJpYXQiOjE3ODc3Njc3ODIsImV4cCI6MjEwMzEyNzc4Mn0.sTHQs9H3tzdnk3y9oLhWZx_4CBWwYXd3RAPiZiG44wg",
     )
 
-    jwt_secret_key: str = os.getenv("JWT_SECRET_KEY", "crawlpro-default-secret-change-me")
-    jwt_algorithm: str = os.getenv("JWT_ALGORITHM", "HS256")
-    jwt_access_token_expire_minutes: int = int(
-        os.getenv("JWT_ACCESS_TOKEN_EXPIRE_MINUTES", "10080"),
-    )
-    google_oauth_client_id: str = os.getenv("GOOGLE_CLIENT_ID", "")
-    leader_code: str = (os.getenv("LEADER_CODE") or "8888").strip()
-
-    # BUG THAT DA GAP: thieu field nay (co san o main - linkedin_group_crawler)
-    # khien verify_zalo_api_key() (zalo/api/security.py) bi AttributeError
-    # 'Settings' object has no attribute 'api_key' tren MOI route Zalo (vd
-    # "Thêm tài khoản Zalo mới" bao API 500). Rong = tat kiem tra (giong
-    # hanh vi main khi khong cau hinh API_KEY).
-    api_key: str = os.getenv("API_KEY", "")
-    web_intake_api_key: str = os.getenv("WEB_INTAKE_API_KEY", "")
-    web_intake_user_id: str = os.getenv("WEB_INTAKE_USER_ID", "")
-
-    # AI Contract Copilot (soạn/thẩm định/tinh chỉnh hợp đồng bằng AI).
-    openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
-    openai_base_url: str = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
-    ai_model: str = os.getenv("AI_MODEL", "gpt-4o")
-    gemini_api_key: str = os.getenv("GEMINI_API_KEY", "")
-
-    # Không dùng tới trong module CRM (không mount router KPI/MarkeeAI nào),
-    # nhưng vài service dùng chung (supabase_kpi_service.py, markeeai_client.py)
-    # vẫn còn nằm trong cây service đã copy nên field vẫn cần tồn tại để
-    # tránh AttributeError nếu lỡ có code đường dẫn nào đó chạm tới — để trống,
-    # KHÔNG hard-code secret thật vào đây.
-    markeeai_base_url: str = os.getenv("MARKEEAI_BASE_URL", "")
-    markeeai_service_email: str = os.getenv("MARKEEAI_SERVICE_EMAIL", "")
-    markeeai_service_password: str = os.getenv("MARKEEAI_SERVICE_PASSWORD", "")
-    markeeai_campaign_ids: list[str] = field(default_factory=lambda: _parse_csv(os.getenv("MARKEEAI_CAMPAIGN_IDS"), default=()))
-    seeder_service_url: str = os.getenv("SEEDER_SERVICE_URL", "")
-    seeder_service_api_key: str = os.getenv("SEEDER_SERVICE_API_KEY", "")
-
-    # ── MSC → CRM Product Sync (migration 175) ──────────────────────────────
-    # Base URL he thong MSC (source of truth, chi GET /api/v1/goods boil dau /).
-    # De trong = tat tinh nang dong bo (job se khong chay, endpoint bao loi).
-    msc_api_base_url: str = os.getenv("MSC_API_BASE_URL", "").rstrip("/")
-    # Token neu MSC tuong lai bang auth (hien tai /goods khong can). Khong hardcode.
-    msc_api_token: str = os.getenv("MSC_API_TOKEN", "")
-    # Gio (0-23) va phut chay dong bo tu dong 1 lan/ngay (timezone CO DINH UTC+7
-    # trong jobs/msc_sync_job.py — container co the khong co tzdata).
-    msc_sync_hour: int = max(0, min(23, int(os.getenv("MSC_SYNC_HOUR", "2"))))
-    msc_sync_minute: int = max(0, min(59, int(os.getenv("MSC_SYNC_MINUTE", "30"))))
-    # 1 = chi tinh toan dem insert/update, KHONG ghi CRM (kiem tra mapping an toan).
-    msc_sync_dry_run: bool = os.getenv("MSC_SYNC_DRY_RUN", "").strip().lower() in ("1", "true", "yes")
-    # Timeout cho GET /api/v1/goods (giay).
-    msc_sync_timeout_sec: float = float(os.getenv("MSC_SYNC_TIMEOUT_SEC", "60"))
-
-    # ── Service Catalog Workspace isolation (isolation task 2026-10-14) ─────
-    # 1 = bat/enforce "workspace floor" cho Service Catalog: deploy doc/ghi
-    # CHI trong workspace cua chinh no (settings.crm_instance), khong cho
-    # client tu chon instance khac. Flag OFF = giu nguyen 100% hanh vi cu
-    # (filter theo client instances, khong co floor). Phai bat CUNG VOI
-    # CRM_INSTANCE; neu CRM_INSTANCE rong/thieu khi flag ON thi process
-    # FAIL SAU KHI BOOT (RuntimeError) thay vi silently expose data unscoped.
-    catalog_scope_enforced: bool = (os.getenv("CATALOG_SCOPE_ENFORCED") or "").strip().lower() in ("1", "true", "yes")
-
     def __post_init__(self) -> None:
         if self.cors_origins is None:
             self.cors_origins = _parse_csv(
@@ -149,34 +491,11 @@ class Settings:
                 default=(
                     "http://localhost:3000",
                     "http://127.0.0.1:3000",
+                    "https://facebook.com",
+                    "https://www.facebook.com",
+                    "https://web.facebook.com",
                 ),
             )
 
 
-def _validate_catalog_scope_enforcement(cfg: "Settings") -> None:
-    """Fail-fast khi bat enforcement ma thieu CRM_INSTANCE (isolation task).
-
-    Flag ON + CRM_INSTANCE rong/thieu => RuntimeError ngay tai import config
-    (kill boot) — KHONG BAO GIO silently fallback sang 'markee' hay tra
-    catalog unscoped. Flag OFF => khong kiem tra gi (hanh vi cu, MAIN-
-    compatible). Log 1 dong warning liet ke floor da resolve de DEP sai
-    ten workspace (vd 'foo') de fail CLOSED (giao rong → cay rong) nhin
-    thay doi trong log thay vi im lang."""
-
-    if not cfg.catalog_scope_enforced:
-        return
-    import logging
-
-    instance = (os.getenv("CRM_INSTANCE") or "").strip()
-    if not instance:
-        raise RuntimeError(
-            "CRM_INSTANCE must be set when CATALOG_SCOPE_ENFORCED is enabled "
-            "(service catalog isolation: empty workspace floor is not allowed)"
-        )
-    logging.getLogger(__name__).warning(
-        "Service Catalog scope enforcement ON — workspace floor: %s", instance
-    )
-
-
 settings = Settings()
-_validate_catalog_scope_enforcement(settings)

@@ -1,3 +1,5 @@
+import { MessageCircle } from 'lucide-react';
+import { getZaloChatUrl } from '@/lib/zaloChatNavigation';
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -1315,7 +1317,21 @@ export function LeadDetailDrawer({
                 {[lead.positionLabelSnapshot || lead.position, lead.companyName].filter(Boolean).join(' · ') || 'Chưa có chức vụ/công ty'}
               </p>
               <p className="crm-verify-sub">
-                {lead.phone ? <a href={`tel:${lead.phone}`}>{lead.phone}</a> : <span>Chưa có SĐT</span>}
+                {lead.phone ? (
+                  <span className="inline-flex items-center gap-1.5">
+                    <a href={`tel:${lead.phone}`}>{lead.phone}</a>
+                    <a
+                      href={getZaloChatUrl(lead.phone || lead.zalo)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-semibold bg-blue-50 text-[#0068ff] hover:bg-blue-100 transition-colors"
+                      title="Nhắn Zalo trên hệ thống"
+                    >
+                      <MessageCircle size={12} className="text-[#0068ff]" />
+                      <span>Nhắn Zalo</span>
+                    </a>
+                  </span>
+                ) : <span>Chưa có SĐT</span>}
                 <span className="crm-verify-dot">·</span>
                 {lead.email ? <a href={`mailto:${lead.email}`}>{lead.email}</a> : <span>Chưa có email</span>}
               </p>

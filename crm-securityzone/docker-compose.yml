@@ -7,6 +7,7 @@ services:
         NEXT_PUBLIC_LINKEDIN_CRAWLER_API_URL: ${CRM_PUBLIC_URL:-http://localhost:18092}
         NEXT_PUBLIC_LINKEDIN_CRAWLER_API_KEY: ${NEXT_PUBLIC_LINKEDIN_CRAWLER_API_KEY:-}
         NEXT_PUBLIC_GOOGLE_CLIENT_ID: ${NEXT_PUBLIC_GOOGLE_CLIENT_ID:-}
+        NEXT_PUBLIC_GMAIL_OAUTH_CLIENT_ID: ${NEXT_PUBLIC_GMAIL_OAUTH_CLIENT_ID:-}
         NEXT_PUBLIC_CRM_INSTANCE: SECURITYZONE
     image: crm-securityzone-frontend:latest
     container_name: crm-securityzone-frontend
@@ -38,6 +39,33 @@ services:
     networks:
       crm-net:
         aliases: [backend]
+
+  # Word Editor trong AI Contract Review (2026-10-27, Phase POC PASS 6/6) - CHI DEV, KHONG
+  # deploy production. ALLOW_PRIVATE_IP_ADDRESS/ALLOW_META_IP_ADDRESS bat buoc (xac nhan qua
+  # POC that) de OnlyOffice tai duoc file nhap/callback toi backend noi bo (IP rieng tu).
+  # JWT_ENABLED=true + JWT_SECRET dung chung voi ONLYOFFICE_JWT_SECRET trong backend/.env.
+  onlyoffice:
+    build:
+      context: ./onlyoffice
+      dockerfile: Dockerfile
+    image: crm-securityzone-onlyoffice:latest
+    container_name: crm-securityzone-onlyoffice
+    restart: unless-stopped
+    environment:
+      TZ: Asia/Ho_Chi_Minh
+      ALLOW_PRIVATE_IP_ADDRESS: "true"
+      ALLOW_META_IP_ADDRESS: "true"
+      JWT_ENABLED: "true"
+      JWT_SECRET: ${ONLYOFFICE_JWT_SECRET:-}
+      JWT_HEADER: Authorization
+      JWT_IN_BODY: "true"
+    ports:
+      - "${ONLYOFFICE_PORT:-8097}:80"
+    volumes:
+      - ./onlyoffice/local-production-linux.json:/etc/onlyoffice/documentserver/local-production-linux.json:ro
+    networks:
+      crm-net:
+        aliases: [onlyoffice]
 
   router:
     image: nginx:alpine

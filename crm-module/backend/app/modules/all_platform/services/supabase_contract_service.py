@@ -11,8 +11,11 @@ from typing import Any
 from supabase import Client
 
 from app.core.config import settings
+from app.core.logger import get_logger
 from app.core.supabase_client import get_supabase_client
 from app.modules.all_platform.services.customer_lead_service import get_customer_lead_by_id
+
+logger = get_logger(__name__)
 
 CONTRACTS_TABLE = "contracts"
 ACTIVITY_LOG_TABLE = "contract_activity_log"
@@ -21,8 +24,36 @@ ACTIVITY_LOG_TABLE = "contract_activity_log"
 # trách (qua owner_id) trong CÙNG 1 query - khớp cột "KHÁCH HÀNG"/"PHỤ TRÁCH"
 # trong bảng danh sách hợp đồng của mockup UI, tránh phải query N+1 lần.
 LIST_SELECT = (
-    "*, deal:deal_id(customer_name, company_name), owner:owner_id(name)"
+    "*, deal:deal_id(customer_name, company_name), owner:owner_id(name), "
+    "drive_files:contract_drive_files(file_type), drive_jobs:contract_drive_sync_jobs(status, created_at), "
+    "ai_reviews:contract_ai_reviews(id, confirmed_at, drive_file_id, highlight_file_name, created_at)"
 )
+
+
+def _latest_ai_review(row: dict) -> dict | None:
+    reviews = row.get("ai_reviews") or []
+    if not reviews:
+        return None
+    return max(reviews, key=lambda r: r.get("created_at") or "")
+
+
+def _drive_sync_status(row: dict) -> str:
+    """(A4) Suy ra trang thai hien thi tu 2 bang moi (contract_drive_files/contract_drive_sync_jobs,
+    migration 194) qua PostgREST embed co san o LIST_SELECT - KHONG them query rieng (tranh N+1).
+    'not_applicable' neu khong co file_url/version nao de dong bo."""
+    files = row.get("drive_files") or []
+    jobs = row.get("drive_jobs") or []
+    if files:
+        return "synced"
+    if jobs:
+        latest = max(jobs, key=lambda j: j.get("created_at") or "")
+        if latest.get("status") == "error":
+            return "error"
+        if latest.get("status") in ("queued", "running"):
+            return "pending"
+    if (row.get("file_url") or "").strip():
+        return "pending"
+    return "not_applicable"
 
 
 def _now_iso() -> str:
@@ -60,6 +91,12 @@ def _row_to_contract(row: dict) -> dict:
         "aiRiskScore": row.get("ai_risk_score"),
         "aiReview": row.get("ai_review") or [],
         "aiPrompt": row.get("ai_prompt"),
+        "driveFolderId": row.get("drive_folder_id"),
+        "driveSyncStatus": _drive_sync_status(row),
+        "aiHighlight": (lambda r: {
+            "fileName": r.get("highlight_file_name"), "driveFileId": r.get("drive_file_id"),
+            "confirmedAt": r.get("confirmed_at"),
+        } if r and r.get("confirmed_at") else None)(_latest_ai_review(row)),
         "version": row.get("version") or 1,
         "createdById": row.get("created_by"),
         "updatedById": row.get("updated_by"),
@@ -461,3 +498,39 @@ def delete_contract(contract_id: str) -> None:  # noqa: F811
     deal_id = _contract_deal_id(contract_id)
     _orig_delete_contract(contract_id)
     _sync_contract_deal([deal_id], "xoá hợp đồng")
+
+
+# ── Google Drive sync (2026-10-26, Phan A3) - CHI insert 1 job vao bang
+# contract_drive_sync_jobs (khong goi Drive truc tiep trong request) - xem
+# jobs/contract_drive_sync_job.py. Theo DUNG pattern wrapper o tren
+# (_orig_*/sync sau khi goi ham that), KHONG sua logic create/update goc. ──
+
+_create_contract_before_drive = create_contract
+_update_contract_before_drive = update_contract
+
+
+def _queue_drive_sync(contract_id: str | None) -> None:
+    if not contract_id:
+        return
+    try:
+        from app.core.supabase_client import get_supabase_client
+
+        get_supabase_client().table("contract_drive_sync_jobs").insert({
+            "contract_id": contract_id, "status": "queued",
+        }).execute()
+    except Exception as exc:  # noqa: BLE001
+        # Bang chua ton tai (migration 194 chua ap dung) hoac loi tam thoi -
+        # KHONG duoc chan luong luu hop dong chinh vi viec nay (best-effort).
+        logger.warning("Không tạo được job đồng bộ Drive cho hợp đồng %s: %s", contract_id, exc)
+
+
+def create_contract(payload: dict, created_by: str | None) -> dict:  # noqa: F811
+    result = _create_contract_before_drive(payload, created_by)
+    _queue_drive_sync(result.get("id"))
+    return result
+
+
+def update_contract(contract_id: str, payload: dict, actor_id: str | None) -> dict:  # noqa: F811
+    result = _update_contract_before_drive(contract_id, payload, actor_id)
+    _queue_drive_sync(contract_id)
+    return result

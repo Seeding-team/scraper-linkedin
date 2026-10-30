@@ -1,6 +1,8 @@
 import { ChannelAccount, ConversationItem } from "./types";
 
 export const MOCK_CHANNEL_ACCOUNTS: ChannelAccount[] = [
+  { id: "acc-email-1", name: "CloudGate Email · sale@getcloudgate.com", channel: "email", status: "online", count: 8, email: "sale@getcloudgate.com" },
+  { id: "acc-email-2", name: "Markee Email · admin@markee.vn", channel: "email", status: "online", count: 4, email: "admin@markee.vn" },
   { id: "acc-zalo-1", name: "Zalo Sales 01", channel: "zalo", status: "online", count: 12 },
   { id: "acc-fb-1", name: "Facebook Page A", channel: "facebook", status: "online", count: 18 },
   { id: "acc-tele-1", name: "Telegram Sales", channel: "telegram", status: "offline", count: 0 },
@@ -9,9 +11,63 @@ export const MOCK_CHANNEL_ACCOUNTS: ChannelAccount[] = [
   { id: "acc-li-1", name: "LinkedIn Personal", channel: "linkedin", status: "online", count: 2 },
 ];
 
+
 export const MOCK_CONVERSATIONS: ConversationItem[] = [
   {
+    id: "conv-eml-uandi",
+    channel: "email",
+    accountId: "acc-email-1",
+    accountLabel: "CloudGate Email · sale@getcloudgate.com",
+    customerName: "CÔNG TY CỔ PHẦN NÔNG NGHIỆP U&I",
+    customerAvatar: "https://images.unsplash.com/photo-1560250097-0b93528c311a?w=150&auto=format&fit=crop&q=80",
+    customerEmail: "contact@uandi.vn",
+    subject: "Hợp đồng dịch vụ bảo trì hạ tầng CloudGate 2026",
+    unreadCount: 1,
+    lastMessageText: "Bên mình đã nhận được bản dự thảo hợp đồng, team pháp lý đang review điều khoản bảo mật.",
+    lastMessageTime: "10:30",
+    tags: ["Khách hàng", "Hợp đồng"],
+    isCrmMatched: true,
+    crmData: {
+      matched: true,
+      name: "CÔNG TY CỔ PHẦN NÔNG NGHIỆP U&I",
+      companyName: "CÔNG TY CỔ PHẦN NÔNG NGHIỆP U&I",
+      statusLabel: "Khách hàng thân thiết",
+      phone: "0274 381 6888",
+      email: "contact@uandi.vn",
+      address: "Tòa nhà U&I, 158 Ngô Gia Tự, TP. Thủ Dầu Một, Bình Dương",
+      ownerName: "Presale CloudGate",
+    },
+    contracts: [
+      {
+        id: "ct-cg-001",
+        code: "HD-2026-CG-001",
+        title: "Hợp đồng dịch vụ hạ tầng CloudGate & bảo mật dữ liệu",
+        status: "Đang hiệu lực",
+        amount: "150.000.000đ",
+        signedAt: "15/01/2026",
+        effectiveDate: "01/02/2026",
+      },
+    ],
+    messages: [
+      {
+        id: "eml-msg-1",
+        sender: "them",
+        senderName: "Bên A - Nông Nghiệp U&I",
+        senderEmail: "contact@uandi.vn",
+        subject: "Hợp đồng dịch vụ bảo trì hạ tầng CloudGate 2026",
+        text: "Chào CloudGate, bên mình đã nhận được dự thảo hợp đồng, gửi lại phụ lục kỹ thuật đính kèm.",
+        time: "10:30",
+        attachment: {
+          type: "pdf",
+          name: "Phu_luc_hop_dong_U&I_CloudGate.pdf",
+          size: "2.4 MB",
+        },
+      },
+    ],
+  },
+  {
     id: "conv-zalo-hoang",
+
     channel: "zalo",
     accountId: "acc-zalo-1",
     accountLabel: "Zalo · Sales 01",

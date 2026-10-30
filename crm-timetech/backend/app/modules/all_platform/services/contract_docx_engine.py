@@ -54,6 +54,60 @@ def paragraph_by_id(doc: DocumentType, pid: str) -> Paragraph | None:
     return Paragraph(els[idx], doc._body) if idx < len(els) else None
 
 
+def global_paragraph_index(doc: DocumentType, p_el: Any) -> int | None:
+    """Chỉ số toàn cục (thứ tự xuất hiện trong <w:body>, gồm cả đoạn trong bảng) của 1 <w:p> cụ
+    thể - nghịch đảo của `paragraph_by_id()` ("p{i}"). Dùng để gán `paragraph_anchor` cho
+    annotation (2026-10-27, Word Editor) khi biết sẵn element thay vì id. Trả None nếu không tìm
+    thấy (không nên xảy ra với element thuộc cùng `doc`)."""
+    for i, el in enumerate(_all_paragraph_elements(doc)):
+        if el is p_el:
+            return i
+    return None
+
+
+_BOOKMARK_ID_COUNTER = 1000000  # xa moi id bookmark/field co san trong hop dong that de khong trung
+
+
+def insert_bookmark(p_el: Any, name: str) -> None:
+    """Chèn 1 Word bookmark RỖNG (w:bookmarkStart/w:bookmarkEnd liền nhau, không bao chữ nào) ở
+    ĐẦU đoạn `p_el` - dùng để OnlyOffice plugin `selectBookmark` nhảy tới đúng vị trí annotation
+    (2026-10-27, Word Editor - xem Phase 0 POC mục 4, đã verify `GetBookmarkRange(name).Select()`
+    hoạt động thật). Không đụng run/text nào có sẵn - an toàn với bảng/ảnh/header-footer theo
+    đúng nguyên tắc các hàm khác trong file này (chỉ thêm node mới, không sửa node cũ)."""
+    from docx.oxml import OxmlElement
+
+    global _BOOKMARK_ID_COUNTER
+    _BOOKMARK_ID_COUNTER += 1
+    bm_id = str(_BOOKMARK_ID_COUNTER)
+    start = OxmlElement("w:bookmarkStart")
+    start.set(qn("w:id"), bm_id)
+    start.set(qn("w:name"), name)
+    end = OxmlElement("w:bookmarkEnd")
+    end.set(qn("w:id"), bm_id)
+    p_el.insert(0, start)
+    start.addnext(end)
+
+
+def remove_bookmark(doc: DocumentType, name: str) -> bool:
+    """Gỡ 1 bookmark theo tên (dọn bookmark cũ trước khi chèn lại bộ mới mỗi lần mở phiên sửa -
+    tránh tích tụ bookmark rác qua nhiều lần mở/đóng editor). Trả True nếu tìm thấy và đã gỡ."""
+    body = doc.element.body
+    found = False
+    for start in list(body.iter(qn("w:bookmarkStart"))):
+        if start.get(qn("w:name")) == name:
+            bm_id = start.get(qn("w:id"))
+            parent = start.getparent()
+            if parent is not None:
+                parent.remove(start)
+            for end in list(body.iter(qn("w:bookmarkEnd"))):
+                if end.get(qn("w:id")) == bm_id:
+                    end_parent = end.getparent()
+                    if end_parent is not None:
+                        end_parent.remove(end)
+            found = True
+    return found
+
+
 def _in_table(p_el: Any) -> bool:
     return any(a.tag == qn("w:tc") for a in p_el.iterancestors())
 

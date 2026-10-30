@@ -22,6 +22,8 @@ import { CrmTeamFormModal } from './CrmTeamFormModal';
 import type { SelectAction } from './SearchableSelect';
 import { useCrmCategoryLabels } from './CrmCategorySelect';
 import { useLeadQualificationEngine } from '../hooks/useLeadQualificationEngine';
+import { useLayeredDrawerClose } from '../hooks/useLayeredDrawerClose';
+import { UnsavedChangesDialog } from './UnsavedChangesDialog';
 import { ICP_OPTIONS, INTEREST_LEVEL_OPTIONS, type InterestLevel } from '../utils/leadQualificationRules';
 import { seedingCrmRepository } from '../repositories/SeedingCrmRepository';
 import type { CreateDealInput, CrmCustomerRow, Deal } from '../types';
@@ -96,6 +98,12 @@ export function CreateOpportunityDrawer({
   // toan, dung chung" (2026-09-27): buoc 1 dien form -> buoc 2 xac nhan KPI
   // summary -> tao that + dieu huong sang trang chi tiet Khach hang.
   const [confirmOpen, setConfirmOpen] = useState(false);
+  // "Co thay doi chua luu" (2026-10-27, chuan hoa dong drawer) - chi can 1 co
+  // touched chung, bat len o MOI onChange nguoi dung thuc su go/chon (xem cac
+  // wrapper `touch()` duoi day), KHONG suy tu so sanh state (tranh false-positive
+  // vi nhieu field duoc auto-fill tu customer/owner ngay sau khi mo drawer).
+  const [touched, setTouched] = useState(false);
+  const touch = () => setTouched(true);
   // Dau '?' canh nut chinh o footer (dong bo voi Xac minh Lead): bam de xem giai thich.
   const [footerHelp, setFooterHelp] = useState(false);
   useEffect(() => {
@@ -166,6 +174,7 @@ export function CreateOpportunityDrawer({
     setError('');
     setSaving('');
     setConfirmOpen(false);
+    setTouched(false);
     // Component KHONG unmount that su khi open=false (chi return null) nen
     // addTeamOpen (modal "+ Thêm Team mới") khong tu mat - phai reset tay o
     // day, tranh loi mo lai drawer van con thay modal tao Team cua lan truoc.
@@ -502,6 +511,12 @@ export function CreateOpportunityDrawer({
     setConfirmOpen(true);
   }
 
+  const { backdropMouseDownProps, requestClose, confirmOpen: unsavedConfirmOpen, confirmStay, confirmDiscard } = useLayeredDrawerClose({
+    isOpen: open && !!customer,
+    onRequestClose: onClose,
+    isDirty: () => touched,
+  });
+
   if (!open || !customer) return null;
 
   return (
@@ -511,7 +526,19 @@ export function CreateOpportunityDrawer({
        * Lead de de dung, chi giu dung field da co san cua Tao co hoi, khong
        * them field lead-only (ICP fit, AI score...) vi Co hoi da co san Khach
        * hang, khong can lai. */}
-      <div className="crm-drawer-backdrop crm-lead-verify-backdrop crm-lead-verify-backdrop--passive" />
+      {/* Truoc day backdrop nay "--passive" (pointer-events:none) nen click ra ngoai KHONG
+       * he dong drawer (yeu cau sep "chuan hoa dong drawer" phat hien dung bug nay). Giu
+       * NGUYEN giao dien (van trong suot, khong dim man hinh) bang inline style, chi BAT
+       * pointer-events de nhan click that su + gan handler dung chung. */}
+      {/* z-index 99988 (< 99990 cua sidebar trai, AllPlatformSidebar.tsx) - .crm-drawer-backdrop
+       * mac dinh z-index:99990 TRUNG voi sidebar, truoc day vo hai vi pointer-events:none, nhung
+       * BAT pointer-events len (de click-ra-ngoai hoat dong) thi tie-break theo thu tu DOM se de
+       * backdrop nay chan het click len sidebar (phat hien that qua Playwright khi sua bug nay). */}
+      <div
+        className="crm-drawer-backdrop crm-lead-verify-backdrop"
+        style={{ background: 'transparent', backdropFilter: 'none', pointerEvents: 'auto', zIndex: 99988 }}
+        {...backdropMouseDownProps}
+      />
       <aside className="crm-drawer crm-lead-detail-drawer crm-verify-drawer" data-crm-create-opportunity-drawer="true">
         <header className="crm-lead-drawer-header crm-verify-header">
           <div className="crm-verify-header-text">
@@ -527,7 +554,7 @@ export function CreateOpportunityDrawer({
             </h2>
           </div>
           <div className="crm-lead-drawer-header-actions">
-            <button type="button" className="crm-drawer-close" onClick={onClose} aria-label="Đóng">
+            <button type="button" className="crm-drawer-close" onClick={requestClose} aria-label="Đóng">
               <X className="crm-icon" />
             </button>
           </div>
@@ -613,24 +640,25 @@ export function CreateOpportunityDrawer({
               <LeadDealQualificationPanel
                 canWrite
                 interest={productValue}
-                onInterestChange={setProductValue}
+                onInterestChange={value => { touch(); setProductValue(value); }}
                 estimatedValue={parseCurrencyInput(estimatedBudget)}
-                onEstimatedValueChange={value => setEstimatedBudget(value != null ? String(value) : '')}
+                onEstimatedValueChange={value => { touch(); setEstimatedBudget(value != null ? String(value) : ''); }}
                 interestLevel={interestLevel}
-                onInterestLevelChange={setInterestLevel}
+                onInterestLevelChange={value => { touch(); setInterestLevel(value); }}
                 timeline={timeline}
-                onTimelineChange={setTimeline}
+                onTimelineChange={value => { touch(); setTimeline(value); }}
                 project={customerForm.dealName}
                 onProjectChange={() => {}}
                 projectField={<ProjectPicker form={customerForm} setValue={setCustomerFormValue} />}
                 note={note}
-                onNoteChange={setNote}
+                onNoteChange={value => { touch(); setNote(value); }}
                 teamId={teamId}
                 onTeamIdChange={handleTeamIdChange}
                 teamOptions={teamOptionsForSelect}
                 teamActions={teamActions}
                 aeId={customerForm.sdrId}
                 onAeIdChange={value => {
+                  touch();
                   const nameHint = teamId
                     ? (teamMembers || []).find(user => user.id === value)?.name
                       || (teamMembers || []).find(user => user.id === value)?.email
@@ -640,13 +668,13 @@ export function CreateOpportunityDrawer({
                 }}
                 aeOptions={aeOptionsForSelect}
                 contactName={contactName}
-                onContactNameChange={setContactName}
+                onContactNameChange={value => { touch(); setContactName(value); }}
                 nextStep={customerForm.nextStep}
-                onNextStepChange={value => setCustomerFormValue('nextStep', value)}
+                onNextStepChange={value => { touch(); setCustomerFormValue('nextStep', value); }}
                 nextStepAt={customerForm.followUpDate}
-                onNextStepAtChange={value => setCustomerFormValue('followUpDate', value)}
+                onNextStepAtChange={value => { touch(); setCustomerFormValue('followUpDate', value); }}
                 dealStage={customerForm.stage}
-                onDealStageChange={value => setCustomerFormValue('stage', value as DealFormState['stage'])}
+                onDealStageChange={value => { touch(); setCustomerFormValue('stage', value as DealFormState['stage']); }}
                 verificationOutcome={verificationOutcome}
                 ruleConditions={ruleConditions}
                 outcomeReasons={outcomeReasons}
@@ -728,6 +756,7 @@ export function CreateOpportunityDrawer({
           handleTeamIdChange(newTeam.id);
         }}
       />
+      {unsavedConfirmOpen ? <UnsavedChangesDialog onStay={confirmStay} onDiscard={confirmDiscard} /> : null}
     </>
   );
 }

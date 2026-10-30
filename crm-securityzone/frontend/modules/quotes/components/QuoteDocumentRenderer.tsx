@@ -31,6 +31,12 @@ import { formatQuoteMoney, localizeCurrencyLabel, normalizeQuoteCurrency } from 
 function formatVndPlain(value: unknown): string {
   return formatVndRaw(value).replace(/\s*đ$/, '');
 }
+
+function formatDiscountPercent(value: unknown): string {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric === 0) return '';
+  return `${numeric.toFixed(2).replace(/\.00$/, '').replace(/(\.\d)0$/, '$1')}%`;
+}
 import { ALWAYS_HIDDEN_CALCULATED_KEYS, filterRedundantAmountAfterDiscountColumn, normalizeQuoteColumnLabel, resolveDefaultVisibleColumnKeys, resolveQuoteItemColumns, resolveToggleableColumns } from '../utils/quoteColumns';
 import {
   getCustomerDisplayFields,
@@ -583,8 +589,23 @@ export function QuoteDocumentRenderer({
       }
       return amount;
     }
-    if (column.key === 'quantity') return String(item.quantity || '');
-    if (column.key === 'discountPercent') return item.discountPercent ? `${item.discountPercent}%` : '';
+    if (column.key === 'discountPercent') {
+      const discountType = item.discountType || (quoteData?.itemDiscountTypes && item.id ? quoteData.itemDiscountTypes[item.id] : undefined);
+      const isAmount = discountType === 'amount' || (
+        discountType !== 'percent' &&
+        item.discountAmount !== null &&
+        item.discountAmount !== undefined &&
+        item.discountAmount > 0 &&
+        item.discountPercent !== null &&
+        item.discountPercent !== undefined &&
+        (item.discountPercent % 1 !== 0 || Math.abs(item.discountAmount - Math.round(calculateItemSubtotal(item, currency) * item.discountPercent / 100)) > 1)
+      );
+      if (isAmount) {
+        const discountAmt = calculateItemDiscount(item, currency);
+        return discountAmt ? `-${formatVnd(discountAmt)}` : formatVnd(0);
+      }
+      return formatDiscountPercent(item.discountPercent);
+    }
     if (column.key === 'amountAfterDiscount') return formatVnd(calculateItemAfterDiscount(item, currency));
     // "Giảm giá/Tiết kiệm" (so tien, KHAC voi 'discountPercent' o tren chi
     // hien %) - dung cho mau "Mẫu ưu đãi combo (Markee)" (xem promoBundleColumns
@@ -593,7 +614,7 @@ export function QuoteDocumentRenderer({
       const discount = calculateItemDiscount(item, currency);
       return discount ? `-${formatVnd(discount)}` : formatVnd(0);
     }
-    if (column.key === 'vatRate') return item.vatRate ? `${item.vatRate}%` : '';
+    if (column.key === 'vatRate') return item.vatRate ? `${item.vatRate}%` : '–';
     // "Mô tả" luôn qua tách dòng theo "•" (kể cả du lieu moi da co serviceDescription
     // rieng) - phai xu ly TRUOC fallback chung ben duoi, khong thi item.description
     // (luon co gia tri) se bi return thang o do, khien nhanh tach dong o day
@@ -637,7 +658,27 @@ export function QuoteDocumentRenderer({
   // gọi nào cũng truyền discountAmount) nên tự động net đúng phần giảm giá TỪNG
   // DÒNG (nếu có) đã có sẵn trong totals, không cần đọc lại quoteItems/discountPercent
   // legacy ở đây nữa.
-  const discountSummary = calculateOverallDiscountSummary(totals, overallDiscountPercent, currency);
+  const isVatAmountMode =
+    quoteData?.vatType === 'amount' ||
+    (typeof quoteData?.vatAmount === 'number' && Number.isFinite(quoteData.vatAmount) && quoteData.vatAmount >= 0);
+
+  const discountSummary = calculateOverallDiscountSummary(
+    totals,
+    overallDiscountPercent,
+    currency,
+    typeof quoteData?.overallDiscountAmount === 'number' ? quoteData.overallDiscountAmount : null,
+    quoteData?.overallDiscountType,
+    typeof quoteData?.vatAmount === 'number' ? quoteData.vatAmount : null,
+    (quoteData?.vatType === 'amount' || isVatAmountMode) ? 'amount' : (quoteData?.vatType === 'percent' ? 'percent' : undefined)
+  );
+  const isOverallDiscountAmount =
+    quoteData?.overallDiscountType === 'amount' ||
+    (typeof quoteData?.overallDiscountAmount === 'number' &&
+      quoteData.overallDiscountAmount > 0 &&
+      (quoteData.overallDiscountType !== 'percent' ||
+        overallDiscountPercent == null ||
+        overallDiscountPercent === 0 ||
+        (overallDiscountPercent > 0 && overallDiscountPercent % 1 !== 0)));
   // "Giảm giá tổng"/"Tổng sau giảm giá" chỉ hiện khi > 0, BẤT KỂ đang bật trong
   // cấu hình "Tổng hợp giá" hay không (auto-hide đè lên cấu hình - yêu cầu rõ
   // "trùng với tạm tính thì ẩn").
@@ -919,13 +960,13 @@ export function QuoteDocumentRenderer({
               ) : null}
               {visibleSummaryKeys.has('overallDiscount') && hasOverallDiscount ? (
                 <div className="villa-total-row villa-total-row--discount">
-                  <span>Giảm giá tổng ({overallDiscountPercent}%)</span>
+                  <span>{isOverallDiscountAmount ? 'Giảm giá toàn báo giá' : `Giảm giá tổng (${overallDiscountPercent}%)`}</span>
                   <strong>-{formatVnd(discountSummary.overallDiscountAmount)}</strong>
                 </div>
               ) : null}
-              {visibleSummaryKeys.has('totalDiscount') && totalDiscountAmount > 0 ? (
+              {visibleSummaryKeys.has('totalDiscount') && totalDiscountAmount > 0 && !(visibleSummaryKeys.has('overallDiscount') && hasOverallDiscount && (totals.discountAmount || 0) <= 0) ? (
                 <div className="villa-total-row villa-total-row--discount">
-                  <span>Tổng tiền giảm</span>
+                  <span>{isOverallDiscountAmount && (totals.discountAmount || 0) <= 0 ? 'Giảm giá toàn báo giá' : 'Tổng tiền giảm'}</span>
                   <strong>-{formatVnd(totalDiscountAmount)}</strong>
                 </div>
               ) : null}
@@ -1287,13 +1328,13 @@ export function QuoteDocumentRenderer({
            * gia hang muc thi doi sang hien "Giá gốc trước giảm" (gia GOC that,
            * truoc ca giam gia hang muc) thay the - CHI 1 trong 2 dong hien tai
            * 1 thoi diem, khong lap lai. */}
-          {visibleSummaryKeys.has('grossSubtotal') && (totals.discountAmount || 0) > 0 ? (
+          {visibleSummaryKeys.has('grossSubtotal') && totalDiscountAmount > 0 ? (
             <div className="sheet-total-row">
               <span>Giá gốc trước giảm</span>
               <strong>{formatVnd(totals.subtotalAmount)}</strong>
             </div>
           ) : null}
-          {visibleSummaryKeys.has('subtotalBeforeVat') && (totals.discountAmount || 0) <= 0 ? (
+          {visibleSummaryKeys.has('subtotalBeforeVat') && totalDiscountAmount <= 0 ? (
             <div className="sheet-total-row">
               <span>{findField('subtotalAmount').label || 'Tổng cộng chưa bao gồm thuế GTGT'}</span>
               <strong>{formatVnd(discountSummary.subtotalBeforeVat)}</strong>
@@ -1301,13 +1342,13 @@ export function QuoteDocumentRenderer({
           ) : null}
           {visibleSummaryKeys.has('overallDiscount') && hasOverallDiscount ? (
             <div className="sheet-total-row sheet-total-row--discount">
-              <span>Giảm giá tổng ({overallDiscountPercent}%)</span>
+              <span>{isOverallDiscountAmount ? 'Giảm giá toàn báo giá' : `Giảm giá tổng (${overallDiscountPercent}%)`}</span>
               <strong>-{formatVnd(discountSummary.overallDiscountAmount)}</strong>
             </div>
           ) : null}
-          {visibleSummaryKeys.has('totalDiscount') && totalDiscountAmount > 0 ? (
+          {visibleSummaryKeys.has('totalDiscount') && totalDiscountAmount > 0 && !(visibleSummaryKeys.has('overallDiscount') && hasOverallDiscount && (totals.discountAmount || 0) <= 0) ? (
             <div className="sheet-total-row sheet-total-row--discount">
-              <span>Tổng tiền giảm</span>
+              <span>{isOverallDiscountAmount && (totals.discountAmount || 0) <= 0 ? 'Giảm giá toàn báo giá' : 'Tổng tiền giảm'}</span>
               <strong>-{formatVnd(totalDiscountAmount)}</strong>
             </div>
           ) : null}

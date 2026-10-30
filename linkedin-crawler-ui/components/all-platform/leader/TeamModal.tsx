@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo } from "react";
 import { MaterialIcon } from "@/components/ui";
-import { teamsService, usersService } from "@/services/all-platform.service";
+import { teamsService, usersService, allPlatformMembersService } from "@/services/all-platform.service";
 import type { AppUserProfile, TeamRow } from "@/services/all-platform.service";
 import { useMembers } from "@/hooks/useMembers";
 
@@ -38,12 +38,20 @@ export function TeamModal({ isOpen, onClose, team, leaderId, onSuccess }: TeamMo
         return {
           memberId: m.id,
           displayName: m.display_name,
+          fullName: m.full_name || m.display_name,
           linkedUserId,
-          email: user?.email || null,
+          email: user?.email || m.email || null,
+          isLinked: Boolean(linkedUserId),
         };
       })
       .sort((a, b) => a.displayName.localeCompare(b.displayName));
   }, [members, allMembers]);
+
+  const unlinkedSelectedMembers = useMemo(() => {
+    return selectedMemberIds
+      .map(mid => rosterEntries.find(e => e.memberId === mid))
+      .filter((e): e is NonNullable<typeof e> => Boolean(e && !e.linkedUserId));
+  }, [selectedMemberIds, rosterEntries]);
 
   // Load all members (role === "member")
   useEffect(() => {
@@ -116,14 +124,37 @@ export function TeamModal({ isOpen, onClose, team, leaderId, onSuccess }: TeamMo
       // Chỉ người ĐÃ liên kết tài khoản mới có app_users.id thật để lưu vào
       // member_of_teams (cột có FK, người chưa liên kết sẽ bị DB từ chối) — lọc
       // ra, tạo team vẫn chạy bình thường, phần còn lại chờ họ tự liên kết sau.
-      const resolvedMemberIds = selectedMemberIds
-        .map(mid => rosterEntries.find(e => e.memberId === mid)?.linkedUserId)
-        .filter((id): id is string => Boolean(id));
+      // Tu dong cap tai khoan va kich hoat cho cac nhan su chua lien ket
+      const resolvedMemberIds: string[] = [];
+      for (const mid of selectedMemberIds) {
+        const entry = rosterEntries.find(e => e.memberId === mid);
+        if (!entry) continue;
+        if (entry.linkedUserId) {
+          resolvedMemberIds.push(entry.linkedUserId);
+        } else if (entry.email) {
+          try {
+            // Tu dong tao tai khoan app_users cho nhan su
+            const createRes = await usersService.createAccount({
+              email: entry.email,
+              name: entry.fullName,
+              role: "member",
+            });
+            if (createRes.success && createRes.data?.id) {
+              const newUserId = createRes.data.id;
+              await allPlatformMembersService.update({ id: entry.memberId, linked_user_id: newUserId });
+              resolvedMemberIds.push(newUserId);
+            }
+          } catch (provisionErr) {
+            console.warn("Loi tu dong cap tai khoan cho:", entry.displayName, provisionErr);
+          }
+        }
+      }
 
       const payload = {
         name_team: nameTeam.trim(),
         leader_id: leaderId,
-        member_ids: resolvedMemberIds
+        member_ids: resolvedMemberIds,
+        ...(team ? { team_id: team.id } : {}),
       };
 
       let res;
@@ -254,6 +285,15 @@ export function TeamModal({ isOpen, onClose, team, leaderId, onSuccess }: TeamMo
               </div>
             </div>
 
+            {unlinkedSelectedMembers.length > 0 && (
+              <div className="bg-sky-50 text-sky-800 p-2.5 rounded-xl text-xs flex items-start gap-2 border border-sky-200">
+                <MaterialIcon name="auto_awesome" className="text-[16px] text-sky-600 shrink-0 mt-0.5" />
+                <span>
+                  Có <strong>{unlinkedSelectedMembers.length}</strong> nhân sự chưa có tài khoản đăng nhập ({unlinkedSelectedMembers.map(m => m.displayName).slice(0, 2).join(", ")}{unlinkedSelectedMembers.length > 2 ? "..." : ""}). Hệ thống sẽ <strong>tự động cấp tài khoản đăng nhập và đưa vào Team ngay</strong> khi bạn nhấn Lưu thay đổi!
+                </span>
+              </div>
+            )}
+
             {/* Members List */}
             <div className="border border-outline-variant rounded-xl max-h-[200px] overflow-y-auto divide-y divide-outline-variant bg-surface-container-low">
               {isLoadingMembers ? (
@@ -275,7 +315,14 @@ export function TeamModal({ isOpen, onClose, team, leaderId, onSuccess }: TeamMo
                       className="flex items-center justify-between px-3 py-2.5 hover:bg-surface transition cursor-pointer select-none"
                     >
                       <div className="min-w-0 pr-2">
-                        <div className="text-xs font-bold text-on-surface truncate">{e.displayName}</div>
+                        <div className="text-xs font-bold text-on-surface truncate flex items-center gap-1.5">
+                          <span>{e.displayName}</span>
+                          {!e.isLinked && (
+                            <span className="text-[9px] font-semibold text-sky-700 bg-sky-50 px-1.5 py-0.5 rounded border border-sky-200 shrink-0">
+                              ⚡ Tự cấp tài khoản khi lưu
+                            </span>
+                          )}
+                        </div>
                         <div className="text-[10px] text-on-surface-variant font-medium truncate">{e.email || "Chưa liên kết tài khoản"}</div>
                       </div>
                       <div className={`w-5 h-5 rounded-md border flex items-center justify-center transition shrink-0 ${

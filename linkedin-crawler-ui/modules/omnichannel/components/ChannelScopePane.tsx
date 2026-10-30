@@ -2,7 +2,7 @@
 
 import React from "react";
 import { ChannelType, ChannelAccount } from "../types";
-import { MessageSquare, ChevronLeft, ChevronRight, Plus } from "lucide-react";
+import { MessageSquare, ChevronLeft, ChevronRight, Plus, Mail } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { CHANNEL_CAPABILITIES } from "../constants/channelCapabilities";
 
@@ -22,6 +22,7 @@ interface ChannelScopePaneProps {
 
 const CHANNEL_LABELS: Record<ChannelType, string> = {
   all: "Tất cả kênh",
+  email: "Email Inbox",
   facebook: "Facebook",
   zalo: "Zalo",
   telegram: "Telegram",
@@ -29,6 +30,7 @@ const CHANNEL_LABELS: Record<ChannelType, string> = {
   viber: "Viber",
   linkedin: "LinkedIn",
 };
+
 
 export const ChannelScopePane: React.FC<ChannelScopePaneProps> = ({
   selectedChannel,
@@ -68,7 +70,7 @@ export const ChannelScopePane: React.FC<ChannelScopePaneProps> = ({
           <Plus className="h-4 w-4" />
         </button>
         <div className="h-px w-6 bg-slate-200 my-0.5" />
-        {(["all", "facebook", "zalo", "telegram", "whatsapp", "viber", "linkedin"] as ChannelType[]).map((ch) => {
+        {(["all", "email", "facebook", "zalo", "telegram", "whatsapp", "viber", "linkedin"] as ChannelType[]).map((ch) => {
           const active = selectedChannel === ch && !selectedAccount;
           return (
             <button
@@ -86,6 +88,7 @@ export const ChannelScopePane: React.FC<ChannelScopePaneProps> = ({
               title={CHANNEL_LABELS[ch]}
             >
               {ch === "all" && <MessageSquare className="h-3.5 w-3.5 text-[var(--color-markee-primary,#c2185b)]" />}
+              {ch === "email" && <Mail className="h-3.5 w-3.5 text-amber-600" />}
               {ch === "facebook" && <span className="text-xs font-black text-[#1877F2]">f</span>}
               {ch === "zalo" && <span className="text-[9px] font-black text-[#0068FF]">Zalo</span>}
               {ch === "telegram" && <span className="text-[10px] font-bold text-[#229ED9]">Tg</span>}
@@ -95,6 +98,7 @@ export const ChannelScopePane: React.FC<ChannelScopePaneProps> = ({
             </button>
           );
         })}
+
       </div>
     );
   }
@@ -125,15 +129,15 @@ export const ChannelScopePane: React.FC<ChannelScopePaneProps> = ({
 
         {/* Channel Navigation */}
         <div className="space-y-0.5">
-          {(["all", "facebook", "zalo", "telegram", "whatsapp", "viber", "linkedin"] as ChannelType[]).map((ch) => {
+          {(["all", "email", "facebook", "zalo", "telegram", "whatsapp", "viber", "linkedin"] as ChannelType[]).map((ch) => {
             const label = CHANNEL_LABELS[ch];
             const cap = CHANNEL_CAPABILITIES[ch];
             const count = getCount(ch);
             const isSelected = selectedChannel === ch && !selectedAccount;
             return (
-              <button
-                key={ch}
-                onClick={() => {
+              <React.Fragment key={ch}>
+                <button
+                  onClick={() => {
                   onSelectChannel(ch);
                   onSelectAccount(null);
                 }}
@@ -153,11 +157,17 @@ export const ChannelScopePane: React.FC<ChannelScopePaneProps> = ({
                       <MessageSquare className="h-2.5 w-2.5" />
                     </div>
                   )}
+                  {ch === "email" && (
+                    <div className="flex h-4 w-4 items-center justify-center rounded bg-amber-500 text-white">
+                      <Mail className="h-2.5 w-2.5" />
+                    </div>
+                  )}
                   {ch === "facebook" && (
                     <div className="flex h-4 w-4 items-center justify-center rounded-full bg-[#1877F2] text-white text-[9px] font-black">
                       f
                     </div>
                   )}
+
                   {ch === "zalo" && (
                     <div className="flex h-4 w-4 items-center justify-center rounded-full bg-[#0068FF] text-white text-[6.5px] font-black tracking-tighter">
                       Zalo
@@ -202,7 +212,99 @@ export const ChannelScopePane: React.FC<ChannelScopePaneProps> = ({
                     Sắp có
                   </span>
                 )}
-              </button>
+                </button>
+                {ch === "email" && (() => {
+                  const emailAccs = accounts.filter((a) => a.channel === "email");
+                  if (emailAccs.length === 0) return null;
+                  return (
+                    <div className="pl-3.5 pr-1 py-1 space-y-1 border-l-2 border-amber-300 ml-3.5 my-1">
+                      {emailAccs.length > 1 && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onSelectChannel("email");
+                            onSelectAccount(null);
+                          }}
+                          className={cn(
+                            "flex w-full items-center justify-between rounded px-1.5 py-0.5 text-[10px] transition text-left",
+                            selectedChannel === "email" && selectedAccount === null
+                              ? "bg-amber-100 text-amber-950 font-bold shadow-2xs ring-1 ring-amber-300"
+                              : "text-slate-600 hover:bg-slate-100"
+                          )}
+                        >
+                          <span className="truncate">Tất cả hộp thư</span>
+                          <span className="text-[8.5px] font-bold text-slate-400 bg-slate-100 px-1 py-0.2 rounded-full">
+                            {emailAccs.reduce((s, a) => s + (a.count || 0), 0)}
+                          </span>
+                        </button>
+                      )}
+                      {emailAccs.map((acc) => {
+                        const isAccActive = selectedAccount === acc.id;
+                        const isExpired = acc.reconnectRequired || acc.status === "expired";
+                        return (
+                          <button
+                            key={acc.id}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onSelectChannel("email");
+                              onSelectAccount(acc.id);
+                            }}
+                            className={cn(
+                              "group flex w-full items-center justify-between rounded px-1.5 py-0.5 text-[10px] transition text-left",
+                              isAccActive
+                                ? "bg-amber-50 text-amber-900 font-bold shadow-2xs ring-1 ring-amber-300"
+                                : "text-slate-600 hover:bg-slate-100"
+                            )}
+                            title={acc.email || acc.name}
+                          >
+                            <div className="flex items-center gap-1.5 truncate min-w-0">
+                              <span
+                                className={cn(
+                                  "h-1.5 w-1.5 shrink-0 rounded-full",
+                                  isExpired
+                                    ? "bg-amber-500 animate-pulse ring-2 ring-amber-200"
+                                    : acc.status === "online"
+                                    ? "bg-emerald-500"
+                                    : acc.status === "error"
+                                    ? "bg-rose-500"
+                                    : acc.status === "syncing"
+                                    ? "bg-sky-500 animate-pulse"
+                                    : "bg-slate-300"
+                                )}
+                              />
+                              <span className="truncate">{acc.email || acc.name}</span>
+                            </div>
+                            <div className="flex items-center gap-1 shrink-0 ml-1">
+                              {isExpired && (
+                                <span className="rounded bg-amber-100 px-1 py-0.2 text-[7.5px] font-bold text-amber-800">
+                                  Hết quyền
+                                </span>
+                              )}
+                              {acc.count !== undefined && acc.count > 0 && (
+                                <span className="text-[8.5px] font-bold text-slate-400 bg-slate-100 px-1 py-0.2 rounded-full">
+                                  {acc.count}
+                                </span>
+                              )}
+                            </div>
+                          </button>
+                        );
+                      })}
+
+                      {/* Quick + Thêm email button */}
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onConnectAccountModal();
+                        }}
+                        className="flex w-full items-center gap-1 rounded px-1.5 py-0.5 text-[9.5px] font-semibold text-amber-700 hover:bg-amber-50 transition text-left cursor-pointer pt-1"
+                      >
+                        <Plus className="h-2.5 w-2.5" />
+                        <span>Thêm email khác</span>
+                      </button>
+                    </div>
+                  );
+                })()}
+              </React.Fragment>
             );
           })}
         </div>
@@ -243,6 +345,10 @@ export const ChannelScopePane: React.FC<ChannelScopePaneProps> = ({
                           "h-1.5 w-1.5 shrink-0 rounded-full",
                           acc.status === "online"
                             ? "bg-emerald-500"
+                            : acc.status === "error"
+                            ? "bg-rose-500"
+                            : acc.status === "syncing"
+                            ? "bg-sky-500 animate-pulse"
                             : acc.status === "paused"
                             ? "bg-amber-400"
                             : "bg-slate-300"

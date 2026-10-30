@@ -69,6 +69,7 @@ type QuoteItemPayload = {
   quantity: number;
   unit_price: number | null;
   discount_percent: number;
+  discount_amount?: number | null;
   vat_rate: number;
   children: QuoteItemPayload[];
   catalog_item_id?: string | null;
@@ -239,6 +240,7 @@ function toQuoteItemPayload(item: NonNullable<CreateQuoteInput['items']>[number]
     quantity: item.quantity,
     unit_price: item.unitPrice ?? null,
     discount_percent: item.discountPercent ?? 0,
+    discount_amount: item.discountAmount ?? null,
     vat_rate: item.vatRate,
     children: (item.children || []).map(toQuoteItemPayload),
     catalog_item_id: optionalUuid(item.catalogItemId),

@@ -124,7 +124,7 @@ export function SearchableSelect({
     const menu = menuRef.current;
     if (!trigger) return;
     const rect = trigger.getBoundingClientRect();
-    const width = Math.min(Math.max(rect.width, 260), 320);
+    const width = Math.min(Math.max(rect.width, 320), Math.min(420, window.innerWidth - 16));
     const margin = 8;
     let left = rect.left;
     if (left + width + margin > window.innerWidth) {

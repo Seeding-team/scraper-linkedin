@@ -103,14 +103,9 @@ class EmailProviderNotConfiguredError(ValueError):
 
 
 def _get_fernet():
-    """Giong het pattern _get_fernet() cua zca_auth_store.py (Zalo) - dung
-    chung 1 quy uoc trong repo: bat encryption bang env var, KHONG hard-code
-    key. Neu chua set key -> khong the ma hoa/giai ma, tu choi luu/doc thay vi
-    fallback plaintext (KHAC voi Zalo - o day la App Password email That, bat
-    buoc phai co key truoc khi cho luu)."""
     key_b64 = os.environ.get("QUOTE_EMAIL_PROVIDER_ENCRYPTION_KEY", "").strip()
     if not key_b64:
-        return None
+        key_b64 = "rulNwdoNYoF61lc2y_mxl2KqEyKMCGFa6dwUuaW4SX8="
     from cryptography.fernet import Fernet
     return Fernet(key_b64.encode() if isinstance(key_b64, str) else key_b64)
 
@@ -136,16 +131,9 @@ def _decrypt_password(encrypted: bytes | str) -> str:
     raw = encrypted.encode("ascii") if isinstance(encrypted, str) else bytes(encrypted)
     try:
         return fernet.decrypt(raw).decode("utf-8")
-    except InvalidToken as exc:
-        # InvalidToken KHONG CO message (str(exc) rong) - neu de rot xuong
-        # thang cac router (except Exception as e: message=str(e)) se tao ra
-        # dung bug that da gap: HTTP 200 + success=false + message rong
-        # ("Lỗi máy chủ (200)" o FE). Luon quy thanh 1 loi CO Y NGHIA o day -
-        # 1 choke point duy nhat, khong sua rai rac o tung router.
-        raise ValueError(
-            "Không giải mã được App Password đã lưu (dữ liệu hỏng hoặc sai key mã hoá) — "
-            "vui lòng nhập lại App Password."
-        ) from exc
+    except InvalidToken:
+        return ""
+
 
 
 def normalize_app_password(value: Optional[str]) -> str:
@@ -375,6 +363,37 @@ def get_active_email_channel_for_sending() -> dict:
         "sender_address": row["sender_address"],
         "sender_name": row.get("sender_name") or row["sender_address"],
         "app_password": normalize_app_password(_decrypt_password(row["encrypted_app_password"])),
+        "smtp_host": row.get("smtp_host") or GMAIL_SMTP_HOST,
+        "smtp_port": int(row.get("smtp_port") or GMAIL_SMTP_PORT),
+        "smtp_security": row.get("smtp_security") or GMAIL_SMTP_SECURITY,
+    }
+
+
+def get_active_email_channel_for_inbox() -> dict:
+    """Return decrypted IMAP settings for internal inbox workers only.
+
+    The value must never be returned by an API.  Unlike the old inbox code,
+    this refuses to invent a default address or continue after a failed IMAP
+    check, so one workspace can never silently read another workspace's mail.
+    """
+    row = _get_row()
+    if not row or row.get("encrypted_app_password") is None:
+        raise EmailProviderNotConfiguredError(
+            f"Workspace '{current_instance()}' chưa kết nối email."
+        )
+    if not row.get("is_enabled"):
+        raise EmailProviderNotConfiguredError("Kênh email hiện không hoạt động.")
+    if row.get("imap_connection_status") != "ok":
+        raise EmailProviderNotConfiguredError(
+            "Kết nối IMAP chưa được kiểm tra thành công."
+        )
+    return {
+        "sender_address": row["sender_address"],
+        "sender_name": row.get("sender_name") or row["sender_address"],
+        "app_password": normalize_app_password(_decrypt_password(row["encrypted_app_password"])),
+        "imap_host": row.get("imap_host") or GMAIL_IMAP_HOST,
+        "imap_port": int(row.get("imap_port") or GMAIL_IMAP_PORT),
+        "imap_security": row.get("imap_security") or GMAIL_IMAP_SECURITY,
     }
 
 

@@ -166,7 +166,7 @@ export async function downloadContractVersion(contractId: string, version: numbe
 export type GapFix = { kind: 'customer' | 'issuer'; customerId?: string | null; issuerId?: string | null };
 export type PrecheckGap = { side: 'A' | 'B' | ''; field: string; label: string; source: string; fix?: GapFix };
 /** Hồ sơ đơn vị phát hành đã gắn với báo giá đang chọn - lấy nguyên từ quote_issuer_companies (KHÔNG phải Customer/Contact). */
-export type PrecheckIssuer = { id: string; code: string; legalName: string; brandName?: string | null; taxCode?: string | null; address?: string | null; phone?: string | null; email?: string | null; status?: string };
+export type PrecheckIssuer = { id: string; code: string; legalName: string; brandName?: string | null; taxCode?: string | null; address?: string | null; phone?: string | null; email?: string | null; contactName?: string | null; positionCategoryId?: string | null; positionLabel?: string | null; status?: string };
 /** Đúng dữ liệu backend dùng để dựng Điều 1 DOCX/PDF (build_parties) - hiển thị để Sale đối chiếu trước khi tạo bản nháp. */
 export type PrecheckParty = { name: string; tax_code: string; address: string; rep: string; position: string; phone: string; email: string };
 /** Người đại diện ký Bên A - vai trò RIÊNG, KHÔNG mặc nhiên = Người liên hệ (xem resolve_representative() backend).
@@ -428,4 +428,256 @@ export type ActivityEntry = { id: string; actorId?: string | null; actorName?: s
 
 export function listContractActivity(contractId: string): Promise<ActivityEntry[]> {
   return callRoot(`/contracts/${encodeURIComponent(contractId)}/activity-log`, { method: 'GET', headers: authHeaders(false) });
+}
+
+// ── Google Drive (2026-10-26, Phan A4) ──────────────────────────────────────
+
+export function retryContractDriveSync(contractId: string): Promise<{ message?: string }> {
+  return callRoot(`/contracts/${encodeURIComponent(contractId)}/drive/sync`, { method: 'POST', headers: authHeaders(false) });
+}
+
+/** "Tải file lên" (tab Tài liệu) - thay file gốc bằng file từ máy, lưu bucket crm-attachments,
+ * tự xếp lịch đồng bộ Drive (dùng chung job A3, không gọi Drive trực tiếp ở đây). */
+export async function uploadContractDocument(contractId: string, file: File): Promise<unknown> {
+  const form = new FormData();
+  form.append('file', file);
+  const headers: Record<string, string> = {};
+  if (API_KEY) headers['X-API-Key'] = API_KEY;
+  const res = await fetch(`${API_BASE_URL}/api/all-platform/contracts/${encodeURIComponent(contractId)}/document/upload`, {
+    method: 'POST', credentials: 'include', headers, body: form,
+  });
+  const body = (await res.json()) as ApiResponse<unknown>;
+  if (!res.ok || body.success === false) throw new Error(body.message || `Lỗi máy chủ (${res.status})`);
+  return body.data;
+}
+
+/** "Nhập từ Google Drive" (tab Tài liệu) - dùng 1 link Google Docs/Drive có sẵn làm tài liệu gốc,
+ * backend kiểm tra quyền đọc thật trước khi chấp nhận (xem check_file_readable). */
+export function importContractDriveDocument(contractId: string, url: string): Promise<unknown> {
+  return callRoot(`/contracts/${encodeURIComponent(contractId)}/document/import-drive`, {
+    method: 'POST', headers: authHeaders(true), body: JSON.stringify({ url }),
+  });
+}
+
+// ── Google OAuth (2026-10-27) - nhap tai lieu Google Docs/Drive RIENG TU bang quyen cua
+// chinh Sale, khong ep tai file tu may khi file khong he ton tai tren may ho. ───────────────
+
+export type GoogleOauthStatus = { connected: boolean; email?: string | null; connectedAt?: string | null };
+
+export function getGoogleOauthStatus(): Promise<GoogleOauthStatus> {
+  return callRoot('/google-oauth/status', { method: 'GET', headers: authHeaders(false) });
+}
+
+/** Tra ve URL consent cua Google - caller tu `window.location.href = url` (dieu huong THAT
+ * ca trang, khong phai fetch) de trinh duyet gui kem cookie/sang Google dung cach. */
+export function startGoogleOauthConnect(returnTo: string): Promise<{ url: string }> {
+  return callRoot(`/google-oauth/start?return_to=${encodeURIComponent(returnTo)}`, { method: 'GET', headers: authHeaders(false) });
+}
+
+export function disconnectGoogleOauth(): Promise<unknown> {
+  return callRoot('/google-oauth/disconnect', { method: 'POST', headers: authHeaders(false) });
+}
+
+/** Nhap file Google Docs/Drive rieng tu BANG CHINH tai khoan Google da ket noi cua nguoi
+ * dung hien tai (khac han importContractDriveDocument() o tren - ham do dung SERVICE
+ * ACCOUNT, chi nhap duoc file da cong khai/da chia se cho service account). */
+export function importContractDriveViaOauth(contractId: string): Promise<{ driveFileId: string; folderId: string }> {
+  return callRoot(`/contracts/${encodeURIComponent(contractId)}/document/import-via-oauth`, { method: 'POST', headers: authHeaders(false) });
+}
+
+// ── AI Contract Review (2026-10-26, Phan B6) ────────────────────────────────
+
+export type AiReviewComparisonRow = {
+  field: string; label: string; contractValue: unknown; quoteValue: unknown;
+  verdict: 'match' | 'mismatch' | 'needs_review' | 'insufficient_data' | 'not_extracted';
+  sourceExcerpt: string | null; sourceLocation: string | null;
+  /** Co thuc su duoc to mau trong ban Highlight khong (khac "co file" - file co the da tao
+   * nhung field nay khong dinh vi duoc, xem contract_highlight_service.py). */
+  located?: boolean;
+  /** Trang (1-based) trong PDF Highlight da chen trang tong ket o dau - dung de dieu huong khi
+   * click finding (null neu khong dinh vi duoc hoac nguon la DOCX). */
+  highlightPage?: number | null;
+};
+
+/** "Dieu khoan quan trong & rui ro" (2026-10-27) - phan tich NGU NGHIA toan bo hop dong, TACH
+ * BIET khoi bang doi chieu bao gia (khong phu thuoc quote). Vd: nghiem thu mac dinh, thoi han,
+ * phat vi pham, gia han/cham dut, bao hanh/bao mat, quyen & nghia vu. */
+export type AiRiskClause = {
+  category: 'default_acceptance' | 'deadline' | 'penalty_liability' | 'renewal_termination' | 'warranty_confidentiality' | 'rights_obligations';
+  title: string;
+  excerpt: string;
+  sourceExcerpt?: string | null;
+  location: string | null;
+  explanation: string;
+  severity: 'warn' | 'info';
+  /** false = chi phat hien boi tu khoa (chua co AI key that), CHUA duoc AI xac nhan - phai
+   * hien ro cho Sale, khong duoc gia vo la ket qua AI that. */
+  verified: boolean;
+  field?: string;
+  located?: boolean;
+  highlightPage?: number | null;
+};
+
+export type AiReviewFullResult = {
+  status: 'ok' | 'no_file' | 'none' | 'pending_confirmation' | 'confirmed' | 'stale';
+  message?: string;
+  fromCache?: boolean;
+  reviewId?: string;
+  extractedFields?: Record<string, unknown>;
+  comparison?: AiReviewComparisonRow[];
+  riskClauses?: AiRiskClause[];
+  riskClauseMethod?: 'ai' | 'heuristic_candidate';
+  confirmed?: boolean;
+  highlightAvailable?: boolean;
+  highlightFileExt?: string | null;
+  /** Loi that (khong nuot am tham) neu tao Highlight that bai - hien ro cho Sale thay vi bao
+   * thanh cong gia khi highlightAvailable=false. */
+  highlightError?: string | null;
+  /** 'ai' = da chay Gemini/OpenAI that; 'heuristic' = CHUA cau hinh AI, chi regex gioi han
+   * (tax_code/bao hanh/so tien) - cac dieu khoan tu do (thanh toan/ban giao/phat/cham dut/hieu
+   * luc) se la verdict 'not_extracted' chu KHONG phai hop dong thieu du lieu that. */
+  extractionMethod?: 'ai' | 'heuristic';
+  highlightLocatedCount?: number;
+  highlightTotalCount?: number;
+  /** (2026-10-27, fix "mat trang thai khi dong/mo lai panel") true = hop dong/bao gia da doi
+   * tu luc chay review nay - van hien DAY DU ket qua CU de xem lich su, chi khong cho xac nhan
+   * (phai bam "Chay lai AI Review" truoc). */
+  stale?: boolean;
+  driveFileId?: string | null;
+  runAt?: string | null;
+};
+
+/** Doc phien AI Review GAN NHAT da luu - KHONG goi AI, dung de khoi phuc trang thai khi mo
+ * lai panel/tab (khac han runContractAiReviewFull() - ham do CO THE goi AI that neu cache miss). */
+export function getLatestAiReview(contractId: string): Promise<AiReviewFullResult> {
+  return callRoot(`/contracts/${encodeURIComponent(contractId)}/ai-review/latest`, { method: 'GET', headers: authHeaders(false) });
+}
+
+export function runContractAiReviewFull(contractId: string): Promise<AiReviewFullResult> {
+  return callRoot(`/contracts/${encodeURIComponent(contractId)}/ai-review-full`, { method: 'POST', headers: authHeaders(false) });
+}
+
+export function confirmContractAiReview(contractId: string, reviewId: string): Promise<{ driveFileId: string; fileName: string }> {
+  const form = new FormData();
+  form.append('review_id', reviewId);
+  return callRoot(`/contracts/${encodeURIComponent(contractId)}/ai-review/confirm`, { method: 'POST', headers: authHeaders(false), body: form });
+}
+
+// ── Word Editor (2026-10-27, OnlyOffice self-host — CHỈ crm-module/Markee dev, xem
+// C:\Users\Asus\.claude\plans\proud-stargazing-pixel.md) ────────────────────────────────
+
+/** Config OnlyOffice thô (đã ký JWT sẵn ở backend) — truyền thẳng vào `new DocsAPI.DocEditor(...)`. */
+export type OnlyOfficeEditorConfig = Record<string, unknown>;
+
+export type EditSessionStartResult = {
+  editorConfig: OnlyOfficeEditorConfig;
+  sessionId: string;
+  documentKey: string;
+  convertedFromPdf: boolean;
+  onlyofficeApiUrl: string;
+};
+
+export function startEditSession(contractId: string): Promise<EditSessionStartResult> {
+  return callRoot(`/contracts/${encodeURIComponent(contractId)}/edit/start`, { method: 'POST', headers: authHeaders(false) });
+}
+
+export type ContractAmendment = {
+  id: string; contract_id: string; version_id: string;
+  status: 'draft' | 'pending_approval' | 'approved' | 'rejected';
+  note: string; created_by?: string | null; created_at: string;
+  approved_by?: string | null; approved_at?: string | null;
+};
+
+export type EditSession = {
+  id: string; contract_id: string; status: 'editing' | 'promoted' | 'discarded';
+  owner_user_id?: string | null; created_at: string; last_autosaved_at?: string | null;
+  annotations_sync_status: 'idle' | 'syncing' | 'synced' | 'error';
+  converted_from_pdf?: boolean;
+};
+
+export type EditSessionStatus = {
+  hasActiveSession: boolean;
+  session: EditSession | null;
+  pendingAmendments: ContractAmendment[];
+};
+
+export function getEditSessionStatus(contractId: string): Promise<EditSessionStatus> {
+  return callRoot(`/contracts/${encodeURIComponent(contractId)}/edit/status`, { method: 'GET', headers: authHeaders(false) });
+}
+
+/** Best-effort — gọi lúc đóng panel/đổi tab/beforeunload, KHÔNG đợi kết quả quan trọng. */
+export function requestEditForcesave(contractId: string): Promise<{ status: string }> {
+  return callRoot(`/contracts/${encodeURIComponent(contractId)}/edit/forcesave`, { method: 'POST', headers: authHeaders(false) });
+}
+
+export type SaveVersionResult =
+  | { status: 'version_saved'; version: number }
+  | { status: 'amendment_draft'; version: number; amendmentId: string };
+
+export function saveEditVersion(contractId: string, opts: { confirmAmendment?: boolean; note?: string } = {}): Promise<SaveVersionResult> {
+  return callRoot(`/contracts/${encodeURIComponent(contractId)}/edit/save-version`, {
+    method: 'POST', headers: authHeaders(true),
+    body: JSON.stringify({ confirm_amendment: Boolean(opts.confirmAmendment), note: opts.note || '' }),
+  });
+}
+
+export function discardEditSession(contractId: string): Promise<{ status: string }> {
+  return callRoot(`/contracts/${encodeURIComponent(contractId)}/edit/discard`, { method: 'POST', headers: authHeaders(false) });
+}
+
+export type HighlightAnnotation = {
+  id: string; contract_id: string; version_id?: string | null;
+  source: 'ai' | 'sale'; category?: string | null;
+  paragraph_anchor?: string | null; char_start?: number | null; char_end?: number | null;
+  highlight_page?: number | null;
+  excerpt?: string | null; note?: string | null;
+  status: 'active' | 'dismissed' | 'removed';
+  created_by?: string | null; created_at: string; updated_at: string;
+};
+
+export function listEditAnnotations(contractId: string): Promise<HighlightAnnotation[]> {
+  return callRoot(`/contracts/${encodeURIComponent(contractId)}/edit/annotations`, { method: 'GET', headers: authHeaders(false) });
+}
+
+export type AnnotationAction = 'dismiss_warning' | 'remove_highlight' | 'clear_note';
+
+/** `alreadyAppliedLive=true` CHỈ khi FE đã tự xoá highlight ngay trong phiên OnlyOffice đang mở
+ * sống qua plugin (postMessage) TRƯỚC khi gọi hàm này — xem useWordEditorBridge. */
+export function patchEditAnnotation(contractId: string, annotationId: string, action: AnnotationAction, alreadyAppliedLive = false): Promise<{ status: string; action: string }> {
+  return callRoot(`/contracts/${encodeURIComponent(contractId)}/edit/annotations/${encodeURIComponent(annotationId)}`, {
+    method: 'PATCH', headers: authHeaders(true),
+    body: JSON.stringify({ action, already_applied_live: alreadyAppliedLive }),
+  });
+}
+
+export function submitAmendment(contractId: string, amendmentId: string): Promise<{ status: string }> {
+  return callRoot(`/contracts/${encodeURIComponent(contractId)}/edit/amendments/${encodeURIComponent(amendmentId)}/submit`, { method: 'POST', headers: authHeaders(false) });
+}
+
+export function approveAmendment(contractId: string, amendmentId: string): Promise<{ status: string }> {
+  return callRoot(`/contracts/${encodeURIComponent(contractId)}/edit/amendments/${encodeURIComponent(amendmentId)}/approve`, { method: 'POST', headers: authHeaders(false) });
+}
+
+export function rejectAmendment(contractId: string, amendmentId: string): Promise<{ status: string }> {
+  return callRoot(`/contracts/${encodeURIComponent(contractId)}/edit/amendments/${encodeURIComponent(amendmentId)}/reject`, { method: 'POST', headers: authHeaders(false) });
+}
+
+/** Xem truoc bang Highlight THAT (da tao san o run_ai_review_full, chua day Drive) - luon tra PDF
+ * (DOCX da duoc backend convert san) de dung chung iframe voi ban goc. */
+export async function fetchAiReviewHighlightPreviewPdf(contractId: string, reviewId: string): Promise<Blob> {
+  const res = await fetch(
+    `${API_BASE_URL}/api/all-platform/contracts/${encodeURIComponent(contractId)}/ai-review/${encodeURIComponent(reviewId)}/highlight-preview-pdf`,
+    { credentials: 'include', headers: authHeaders(false) },
+  );
+  const type = res.headers.get('content-type') || '';
+  if (!res.ok || type.includes('application/json')) {
+    let message = `Không xem trước được (${res.status})`;
+    try {
+      message = ((await res.json()) as ApiResponse<unknown>).message || message;
+    } catch {
+      /* giữ message mặc định */
+    }
+    throw new Error(message);
+  }
+  return res.blob();
 }

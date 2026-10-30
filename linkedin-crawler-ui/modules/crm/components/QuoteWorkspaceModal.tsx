@@ -2,7 +2,7 @@
 
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
-import { API_BASE_URL, API_KEY } from '@/lib/env';
+import { API_BASE_URL, API_KEY, IS_STANDALONE_CRM, CURRENT_WORKSPACE_INSTANCE } from '@/lib/env';
 import { seedingQuoteRepository, QuoteApprovalRequiresExceptionError, QuoteDocumentRenderer, QuotePrintLayoutSaveButton, buildPublicQuoteUrl } from '@/modules/quotes';
 import { CRM_INSTANCE } from '@/modules/quotes/utils/publicQuoteUrl';
 import type { Quote, QuoteActivityLogEntry, QuoteHandoffChecklist, QuoteItem, QuoteProcessingStage, QuoteApprovalRuleSet, QuoteApprovalRuleType, QuoteRuleEvaluation, QuoteDeliveryLogEntry, QuoteForm, QuoteData, IssuerCompany, QuoteAccessSuggestion } from '@/modules/quotes';
@@ -53,7 +53,7 @@ import { describeSystemRate, fetchSystemUsdVndRateInfo } from '@/modules/service
 import type { SystemExchangeRate } from '@/modules/quotes/repositories/QuoteRepository';
 import { VND_FX, convertQuoteItemsCurrency, fromQuoteMoney, toQuoteMoney, type QuoteFx } from '@/modules/quotes/utils/quoteCurrency';
 import { ACTIVITY_LABELS } from '@/modules/quotes/utils/quoteActivity';
-import { calculateQuoteTotals, calculateOverallDiscountSummary, clampDiscountPercent, calculateItemTotal, calculateItemSubtotal, calculateSectionTotal, billingTermMultiplier } from '@/modules/quotes/utils/quoteCalculations';
+import { calculateQuoteTotals, calculateOverallDiscountSummary, clampDiscountPercent, calculateItemDiscount, calculateItemTotal, calculateItemSubtotal, calculateSectionTotal, billingTermMultiplier } from '@/modules/quotes/utils/quoteCalculations';
 import { paymentPlanAmounts, paymentPlanPercent } from '@/modules/quotes/utils/paymentPlan';
 import type { BundleSnapshotComponent, BundleSnapshotValue, CustomBlock, PaymentPlanRow } from '@/modules/quotes/types';
 import { QuoteOutcomeSection } from './QuoteOutcomeSection';
@@ -228,6 +228,76 @@ function formatPercentFixed2(value: number | null | undefined): string {
   return `${value.toFixed(2)}%`;
 }
 
+function resolveItemDiscountMode(item: Partial<QuoteItem>, currency: unknown): 'amount' | 'percent' {
+  if (item.discountType === 'amount') return 'amount';
+  if (item.discountType === 'percent') return 'percent';
+  const subtotal = calculateItemSubtotal(item, currency);
+  const amt = item.discountAmount;
+  const pct = item.discountPercent;
+  if (amt != null && amt > 0 && (pct == null || pct === 0)) return 'amount';
+  if (pct != null && pct > 0 && (amt == null || amt === 0)) return 'percent';
+  if (amt != null && amt > 0 && pct != null && pct > 0) {
+    if (pct % 1 !== 0) return 'amount';
+    const pctCalculated = roundQuoteMoney((subtotal * pct) / 100, currency as QuoteCurrency);
+    if (amt !== pctCalculated) return 'amount';
+    return 'percent';
+  }
+  return 'percent';
+}
+
+function DiscountPercentInput({ value, ariaLabel, onLiveChange, onCommit }: {
+  value: number | null | undefined;
+  ariaLabel: string;
+  onLiveChange: (value: number) => void;
+  onCommit: (value: number) => void;
+}) {
+  // Không bind thẳng input vào number trong QuoteItem: chuỗi rỗng/"14."
+  // là trạng thái nhập hợp lệ tạm thời. Ép Number ở mỗi key stroke từng làm
+  // rỗng -> 0 ngay lập tức, khiến Sale phải xoá/gõ hai lần và mất caret.
+  const [draft, setDraft] = useState(() => String(clampDiscountPercent(value ?? 0)));
+  const focusedRef = useRef(false);
+
+  useEffect(() => {
+    if (!focusedRef.current) setDraft(String(clampDiscountPercent(value ?? 0)));
+  }, [value]);
+
+  function commit() {
+    focusedRef.current = false;
+    const normalized = draft.trim().replace(',', '.');
+    const next = clampDiscountPercent(normalized === '' ? 0 : normalized);
+    setDraft(String(next));
+    onLiveChange(next);
+    onCommit(next);
+  }
+
+  return (
+    <input
+      type="text"
+      inputMode="decimal"
+      className="qc-cell-input qc-cell-input-money"
+      aria-label={ariaLabel}
+      value={draft}
+      onFocus={() => { focusedRef.current = true; }}
+      onChange={event => {
+        const nextDraft = event.target.value;
+        // Cho phép rỗng và dấu thập phân đang gõ dở; giới hạn 2 chữ số lẻ.
+        if (!/^\d{0,3}(?:[.,]\d{0,2})?$/.test(nextDraft)) return;
+        setDraft(nextDraft);
+        const normalized = nextDraft.replace(',', '.');
+        if (normalized !== '' && normalized !== '.') onLiveChange(clampDiscountPercent(normalized));
+      }}
+      onBlur={commit}
+      onKeyDown={event => {
+        // Tránh Enter submit form cha rồi cuộn workspace về đầu trang.
+        if (event.key === 'Enter') {
+          event.preventDefault();
+          event.currentTarget.blur();
+        }
+      }}
+    />
+  );
+}
+
 /** "TỶ TRỌNG" (C, cot noi bo) = amount / quoteTotal * 100 - dung CHUNG cong
  * thuc voi calculateQuoteTotals (ca 2 deu cong tren calculateItemTotal) de
  * tu so/mau so luon cung 1 co so "Thành tiền" gồm VAT, khong bao gio lech
@@ -271,7 +341,6 @@ function sanitizeDraftQuoteItems(items: QuoteItem[]): QuoteItem[] {
 
 function resolveQuoteItemCostTotal(item: Partial<QuoteItem>): number | null {
   if (item.costNotApplicable) return 0;
-  if (item.costTotal != null && Number.isFinite(Number(item.costTotal))) return Math.max(0, Number(item.costTotal));
   if (item.costPrice != null && Number.isFinite(Number(item.costPrice))) {
     const quantity = Number.isFinite(Number(item.quantity)) ? Math.max(0, Number(item.quantity)) : 0;
     // "Giá vốn định kỳ phải tính đủ thời gian sử dụng" (2026-10-14) - dung
@@ -280,6 +349,7 @@ function resolveQuoteItemCostTotal(item: Partial<QuoteItem>): number | null {
     // hien sai lac quan (cost bi thieu he so 12 nhung doanh thu da nhan du).
     return Math.max(0, Number(item.costPrice)) * quantity * billingTermMultiplier(item);
   }
+  if (item.costTotal != null && Number.isFinite(Number(item.costTotal))) return Math.max(0, Number(item.costTotal));
   return null;
 }
 
@@ -1468,6 +1538,21 @@ export function QuoteWorkspaceModal({
   // duoc vao dau (ke ca popup preview) cho toi khi quote duoc tao. Them state
   // rieng mirror dung pattern `draftPaymentTermsDays` da co san trong file nay.
   const [draftOverallDiscountPercent, setDraftOverallDiscountPercent] = useState<number | null | undefined>(undefined);
+  const [draftOverallDiscountAmount, setDraftOverallDiscountAmount] = useState<number | null | undefined>(undefined);
+  const [overallDiscountInputMode, setOverallDiscountInputMode] = useState<'percent' | 'amount'>('percent');
+  useEffect(() => {
+    if (quote?.data?.overallDiscountType) {
+      setOverallDiscountInputMode(quote.data.overallDiscountType);
+    } else if (
+      typeof quote?.data?.overallDiscountAmount === 'number' &&
+      quote.data.overallDiscountAmount > 0 &&
+      (quote.overallDiscountPercent == null || (quote.overallDiscountPercent > 0 && quote.overallDiscountPercent % 1 !== 0))
+    ) {
+      setOverallDiscountInputMode('amount');
+    } else {
+      setOverallDiscountInputMode('percent');
+    }
+  }, [quote?.id]);
   const [requiredFieldErrors, setRequiredFieldErrors] = useState<Record<string, string>>({});
 
   function focusFirstRequiredError(errors: Record<string, string>) {
@@ -2018,7 +2103,17 @@ export function QuoteWorkspaceModal({
     });
   }
   useEffect(() => {
-    const nextItems = quote?.items ? normalizeLoadedParentIds(sanitizeDraftQuoteItems(flattenItemTree(quote.items))) : [];
+    const rawItems = quote?.items ? normalizeLoadedParentIds(sanitizeDraftQuoteItems(flattenItemTree(quote.items))) : [];
+    const itemDiscountTypes = quote?.data?.itemDiscountTypes || {};
+    const nextItems = rawItems.map((item, idx) => {
+      const key = item.id || `row_${idx}`;
+      const savedType = item.discountType || itemDiscountTypes[key] || (item.id ? itemDiscountTypes[item.id] : undefined);
+      const resolvedType = savedType || resolveItemDiscountMode(item, quote?.currency);
+      return {
+        ...item,
+        discountType: resolvedType,
+      };
+    });
     setItemsDraft(nextItems);
     persistedItemsDraftRef.current = cloneQuoteItems(nextItems);
     persistedQuoteDataRef.current = quote?.data ? deepClone(quote.data) : quote?.data;
@@ -2182,6 +2277,30 @@ export function QuoteWorkspaceModal({
     setItemsDraft(prev => prev.map((row, i) => (i === index ? { ...row, ...patch } : row)));
   }
 
+  function commitRowDiscount(index: number, discountPercent: number) {
+    const nextItems = itemsDraft.map((row, i) => {
+      if (i !== index) return row;
+      const subtotal = calculateItemSubtotal(row, workspaceCurrency);
+      const clampedPct = clampDiscountPercent(discountPercent);
+      const amt = roundQuoteMoney((subtotal * clampedPct) / 100, workspaceCurrency);
+      return { ...row, discountType: 'percent' as const, discountPercent: clampedPct, discountAmount: amt };
+    });
+    setItemsDraft(nextItems);
+    if (quote) void persistQuote({ items: nextItems }, { silent: true });
+  }
+
+  function commitRowDiscountAmount(index: number, discountAmount: number) {
+    const nextItems = itemsDraft.map((row, i) => {
+      if (i !== index) return row;
+      const subtotal = calculateItemSubtotal(row, workspaceCurrency);
+      const clampedAmount = roundQuoteMoney(Math.max(0, Math.min(discountAmount, subtotal)), workspaceCurrency);
+      const pct = subtotal > 0 ? clampDiscountPercent((clampedAmount / subtotal) * 100) : 0;
+      return { ...row, discountType: 'amount' as const, discountAmount: clampedAmount, discountPercent: pct };
+    });
+    setItemsDraft(nextItems);
+    if (quote) void persistQuote({ items: nextItems }, { silent: true });
+  }
+
   function toggleDiscountRowSelection(key: string, checked: boolean) {
     setSelectedDiscountRowKeys(prev => {
       const next = new Set(prev);
@@ -2207,11 +2326,11 @@ export function QuoteWorkspaceModal({
       return;
     }
     const targetKeys = scope === 'all' ? new Set(selectableDiscountRowKeys) : selectedDiscountRowKeys;
-    let discountPercent: number;
+    let nextItems: QuoteItem[];
     if (itemDiscountInputMode === 'amount') {
-      // Quy doi SO TIEN -> % DUA TREN tong Thanh tien HIEN TAI (truoc giam) cua
-      // CHINH cac dong trong pham vi - khong phai tong ca bao gia - roi ap
-      // CUNG 1 % do cho tung dong (giu nguyen co che "1 % dong deu" cu).
+      // Giữ nguyên số tiền giảm đã nhập làm giá trị tính toán chính (discountAmount),
+      // phân bổ chính xác xuống các dòng trong phạm vi (dòng cuối nhận phần dư làm tròn
+      // để tổng giảm bằng đúng số tiền nhập). % chỉ để hiển thị, không nhân ngược từ % làm tròn.
       const targetSubtotal = itemsDraft.reduce((sum, row, index) => {
         if (row.rowType === 'section') return sum;
         return targetKeys.has(discountRowKey(row, index)) ? sum + calculateItemSubtotal(row, workspaceCurrency) : sum;
@@ -2220,19 +2339,53 @@ export function QuoteWorkspaceModal({
         window.alert('Các hạng mục trong phạm vi chưa có Thành tiền để quy đổi % từ số tiền.');
         return;
       }
-      discountPercent = clampDiscountPercent((rawValue / targetSubtotal) * 100);
+      const totalDiscountTarget = roundQuoteMoney(Math.max(0, Math.min(rawValue, targetSubtotal)), workspaceCurrency);
+      const discountPercent = clampDiscountPercent((totalDiscountTarget / targetSubtotal) * 100);
+      const positiveTargetIndices = itemsDraft
+        .map((row, idx) =>
+          row.rowType !== 'section' && targetKeys.has(discountRowKey(row, idx)) && calculateItemSubtotal(row, workspaceCurrency) > 0
+            ? idx
+            : -1
+        )
+        .filter(idx => idx >= 0);
+      const lastPositiveIdx = positiveTargetIndices.length > 0 ? positiveTargetIndices[positiveTargetIndices.length - 1] : -1;
+      let allocated = 0;
+      nextItems = itemsDraft.map((row, index) => {
+        if (row.rowType === 'section') return row;
+        const key = discountRowKey(row, index);
+        if (!targetKeys.has(key)) return row;
+        const rowSubtotal = calculateItemSubtotal(row, workspaceCurrency);
+        if (totalDiscountTarget <= 0 || rowSubtotal <= 0) {
+          return { ...row, discountType: 'amount', discountPercent: totalDiscountTarget <= 0 ? 0 : discountPercent, discountAmount: 0 };
+        }
+        let rowDiscount: number;
+        if (index === lastPositiveIdx) {
+          rowDiscount = roundQuoteMoney(Math.max(0, Math.min(rowSubtotal, totalDiscountTarget - allocated)), workspaceCurrency);
+        } else {
+          const rawShare = (totalDiscountTarget * rowSubtotal) / targetSubtotal;
+          rowDiscount = roundQuoteMoney(Math.max(0, Math.min(rowSubtotal, totalDiscountTarget - allocated, rawShare)), workspaceCurrency);
+          allocated = roundQuoteMoney(allocated + rowDiscount, workspaceCurrency);
+        }
+        const rowPct = rowSubtotal > 0 ? clampDiscountPercent((rowDiscount / rowSubtotal) * 100) : 0;
+        return { ...row, discountType: 'amount', discountPercent: rowPct, discountAmount: rowDiscount };
+      });
     } else {
-      discountPercent = clampDiscountPercent(rawValue);
+      const discountPercent = clampDiscountPercent(rawValue);
+      nextItems = itemsDraft.map((row, index) => {
+        if (row.rowType === 'section') return row;
+        const key = discountRowKey(row, index);
+        if (!targetKeys.has(key)) return row;
+        const rowSubtotal = calculateItemSubtotal(row, workspaceCurrency);
+        const rowDiscount = roundQuoteMoney((rowSubtotal * discountPercent) / 100, workspaceCurrency);
+        return { ...row, discountType: 'percent', discountPercent, discountAmount: rowDiscount };
+      });
     }
-    const nextItems = itemsDraft.map((row, index) => {
-      if (row.rowType === 'section') return row;
-      const key = discountRowKey(row, index);
-      return targetKeys.has(key) ? { ...row, discountPercent } : row;
-    });
     setItemsDraft(nextItems);
     if (quote) void persistQuote({ items: nextItems }, { silent: true });
     showToast(true, scope === 'all' ? 'Đã áp chiết khấu cho tất cả hạng mục.' : `Đã áp chiết khấu cho ${selectedDiscountCount} hạng mục.`);
   }
+
+
 
   function removeSelectedItemRows() {
     if (selectedDiscountCount === 0) return;
@@ -2355,7 +2508,7 @@ export function QuoteWorkspaceModal({
         if (raw.trim() === '') return { ...row, markupPercent: null };
         if (parsed == null || !Number.isFinite(parsed)) return row;
         const markup = parsed;
-        return { ...row, markupPercent: markup, unitPrice: roundForQuote(Math.max(0, row.costPrice * (1 + markup / 100))) };
+        return { ...row, markupPercent: markup, unitPrice: roundForQuote(Math.max(0, row.costPrice * (1 + markup / 100))), discountAmount: undefined };
       })
     );
   }
@@ -2386,6 +2539,7 @@ export function QuoteWorkspaceModal({
         return {
           ...row,
           unitPrice: price,
+          discountAmount: undefined,
           ...(workspaceCurrency === 'USD' ? { unitPriceVnd: undefined } : {}),
           costPrice,
           // Giong het pattern cua handleCostPriceChange (sua Gia von tay): costPriceVnd (goc VND
@@ -2415,6 +2569,7 @@ export function QuoteWorkspaceModal({
           billingCycle: cycle,
           billingTermMonths: cycle === 'annual' ? 12 : 1,
           unitPrice: price,
+          discountAmount: undefined,
           ...(workspaceCurrency === 'USD' ? { unitPriceVnd: vnd } : {}),
           markupPercent: calculateMarkupFromCostPrice(row.costPrice ?? null, price),
         };
@@ -2614,7 +2769,7 @@ export function QuoteWorkspaceModal({
       // khong the suy unitPrice tu markup neu khong co cost).
       if (row.costPrice == null) return row;
       const markup = source.markupPercent ?? 0;
-      return { ...row, markupPercent: markup, unitPrice: Math.max(0, row.costPrice * (1 + markup / 100)) };
+      return { ...row, markupPercent: markup, unitPrice: Math.max(0, row.costPrice * (1 + markup / 100)), discountAmount: undefined };
     });
     setItemsDraft(next);
     if (quote) void persistQuote({ items: next }, { silent: true });
@@ -2709,6 +2864,8 @@ export function QuoteWorkspaceModal({
       quantity: row.quantity,
       unitPrice: row.unitPrice,
       discountPercent: row.discountPercent ?? 0,
+      discountAmount: row.discountAmount,
+      discountType: row.discountType,
       vatRate: row.vatRate ?? 0,
       costPrice: row.costPrice ?? null,
       // Goc VND (migration 169) - chi co y nghia o bao gia USD; gui kem de doi lai VND khong troi do.
@@ -2804,8 +2961,31 @@ export function QuoteWorkspaceModal({
     try {
       const nextItems = overrides.items ?? itemsDraft;
       const contentRevision = quoteContentRevisionRef.current;
+      const baseData = overrides.data ?? quote.data;
+      const nextItemDiscountTypes = {
+        ...(quote.data?.itemDiscountTypes || {}),
+        ...(baseData?.itemDiscountTypes || {}),
+        ...nextItems.reduce<Record<string, 'percent' | 'amount'>>((acc, item, idx) => {
+          const key = item.id || `row_${idx}`;
+          if (item.discountType) {
+            acc[key] = item.discountType;
+          }
+          return acc;
+        }, {}),
+      };
+      const mergedData = {
+        ...baseData,
+        overallDiscountType: overallDiscountInputMode,
+        overallDiscountAmount:
+          overallDiscountInputMode === 'amount'
+            ? (typeof baseData?.overallDiscountAmount === 'number'
+                ? baseData.overallDiscountAmount
+                : (effectiveOverallDiscountAmount ?? liveCommercialSummary.overallDiscountAmount))
+            : null,
+        itemDiscountTypes: nextItemDiscountTypes,
+      };
       const updated = await seedingQuoteRepository.updateQuote(quote.id, {
-        data: overrides.data ?? quote.data,
+        data: mergedData,
         items: buildItemsPayload(nextItems),
         overallDiscountPercent: 'overallDiscountPercent' in overrides ? overrides.overallDiscountPercent : (quote.overallDiscountPercent ?? null),
         ...('quoteTypeCodes' in overrides ? { quoteTypeCodes: overrides.quoteTypeCodes } : {}),
@@ -2875,7 +3055,14 @@ export function QuoteWorkspaceModal({
     setItemsDraft(prev => {
       const source = prev[index];
       if (!source) return prev;
-      const clone: QuoteItem = { ...deepClone(source), id: undefined };
+      const clone: QuoteItem = {
+        ...deepClone(source),
+        id: undefined,
+        costTotal: undefined,
+        totalAmount: undefined,
+        amountAfterDiscount: undefined,
+        vatAmount: undefined,
+      };
       const next = [...prev.slice(0, index + 1), clone, ...prev.slice(index + 1)];
       if (quote) void persistQuote({ items: next }, { silent: true });
       return next;
@@ -3282,6 +3469,10 @@ export function QuoteWorkspaceModal({
         context: 'quote_picker',
         quoteId: quote?.id,
         issuerCompanyId: draftCatalogIssuerCompanyId,
+        // Workspace isolation (issue A): clone standalone LUON pin dung
+        // workspace cua minh — giong guard cua useWorkspaceFilter (P&S page);
+        // MAIN giu nguyen multi-workspace vi IS_STANDALONE_CRM = false.
+        instances: IS_STANDALONE_CRM ? [CURRENT_WORKSPACE_INSTANCE] : undefined,
       });
       setCatalogTree(tree);
       setCatalogTreeQuoteId(quote?.id ?? null);
@@ -3394,6 +3585,10 @@ export function QuoteWorkspaceModal({
         context: 'quote_picker',
         quoteId: quote?.id,
         issuerCompanyId: draftCatalogIssuerCompanyId,
+        // Workspace isolation (issue A): clone standalone LUON pin dung
+        // workspace cua minh — giong guard cua useWorkspaceFilter (P&S page);
+        // MAIN giu nguyen multi-workspace vi IS_STANDALONE_CRM = false.
+        instances: IS_STANDALONE_CRM ? [CURRENT_WORKSPACE_INSTANCE] : undefined,
       });
       setCatalogTree(tree);
       setCatalogTreeQuoteId(quote?.id ?? null);
@@ -3590,15 +3785,27 @@ export function QuoteWorkspaceModal({
       setDraftCurrency(target);
       setDraftExchangeRate(to.rate);
       setItemsDraft(nextItems);
+      if (draftOverallDiscountAmount != null && draftOverallDiscountAmount > 0) {
+        const vndVal = fromQuoteMoney(draftOverallDiscountAmount, workspaceFx);
+        setDraftOverallDiscountAmount(toQuoteMoney(vndVal ?? draftOverallDiscountAmount, to));
+      }
       return;
     }
     // Quote da ton tai: luu NGAY (currency + ty gia chot + hang muc da quy doi trong cung 1 request)
     // de DB khong bao gio lech tien te voi gia tung dong.
     setLastAppliedMarkupPct(null);
     setLastAppliedMarginPct(null);
+    const convertedOverallAmount =
+      typeof quote.data?.overallDiscountAmount === 'number' && quote.data.overallDiscountAmount > 0
+        ? toQuoteMoney(fromQuoteMoney(quote.data.overallDiscountAmount, workspaceFx) ?? quote.data.overallDiscountAmount, to)
+        : quote.data?.overallDiscountAmount;
     await persistQuote({
       items: nextItems,
-      data: { ...quote.data, currency: target },
+      data: {
+        ...quote.data,
+        currency: target,
+        ...(convertedOverallAmount !== undefined ? { overallDiscountAmount: convertedOverallAmount } : {}),
+      },
       currency: target,
       exchangeRate: to.rate,
     });
@@ -3606,7 +3813,7 @@ export function QuoteWorkspaceModal({
 
   function increaseExistingRowQty(existingIndex: number, addQuantity: number) {
     setItemsDraft(prev => {
-      const next = prev.map((row, index) => (index === existingIndex ? { ...row, quantity: (row.quantity || 0) + (addQuantity || 1) } : row));
+      const next = prev.map((row, index) => (index === existingIndex ? { ...row, quantity: (row.quantity || 0) + (addQuantity || 1), discountAmount: undefined } : row));
       if (quote) void persistQuote({ items: next }, { silent: true });
       return next;
     });
@@ -3685,7 +3892,7 @@ export function QuoteWorkspaceModal({
   function doApplyQuickMarkup(percent: number) {
     if (!isValidMarkupPercent(percent)) return;
     const next = itemsDraft.map(row =>
-      row.costPrice != null ? { ...row, markupPercent: percent, unitPrice: roundForQuote(Math.max(0, row.costPrice * (1 + percent / 100))) } : row
+      row.costPrice != null ? { ...row, markupPercent: percent, unitPrice: roundForQuote(Math.max(0, row.costPrice * (1 + percent / 100))), discountAmount: undefined } : row
     );
     setItemsDraft(next);
     setLastAppliedMarkupPct(percent);
@@ -3704,7 +3911,7 @@ export function QuoteWorkspaceModal({
       if (row.costPrice == null) return row;
       const rawUnitPrice = customerPriceFromTargetGrossMargin(row.costPrice, marginPercent);
       if (rawUnitPrice == null) return row;
-      return { ...row, unitPrice: roundForQuote(rawUnitPrice), markupPercent: marginPercent };
+      return { ...row, unitPrice: roundForQuote(rawUnitPrice), markupPercent: marginPercent, discountAmount: undefined };
     });
     setItemsDraft(next);
     setLastAppliedMarginPct(marginPercent);
@@ -4459,6 +4666,7 @@ export function QuoteWorkspaceModal({
         quoteTitle: draftTitle.trim() || 'Yêu cầu hỗ trợ báo giá',
         customBlocks,
         paymentPlan: draftPaymentPlan,
+        ...(draftOverallDiscountAmount != null ? { overallDiscountAmount: draftOverallDiscountAmount } : {}),
         ...(draftVisibleColumns ? { visibleColumns: draftVisibleColumns } : {}),
         ...(draftVisibleSummaryFields ? { visibleSummaryFields: draftVisibleSummaryFields } : {}),
         ...(draftVisibleCustomerFields ? { visibleCustomerFields: draftVisibleCustomerFields } : {}),
@@ -4552,6 +4760,12 @@ export function QuoteWorkspaceModal({
         items: buildItemsPayload(itemsDraft),
       });
       createdQuoteIdRef.current = created.id;
+      if (draftOverallDiscountPercent != null && draftOverallDiscountPercent > 0) {
+        await seedingQuoteRepository.updateQuote(created.id, {
+          overallDiscountPercent: draftOverallDiscountPercent,
+          ...(draftOverallDiscountAmount != null ? { data: { ...created.data, overallDiscountAmount: draftOverallDiscountAmount } } : {}),
+        }).catch(() => undefined);
+      }
       // Hai vai tro nay la bat buoc tren form. Khong fallback ngam ve nguoi
       // dang dang nhap, vi nhu vay du lieu luu khac voi lua chon hien tren UI.
       const resolvedTechnicalOwnerId = draftTechnicalOwnerId;
@@ -5379,6 +5593,7 @@ export function QuoteWorkspaceModal({
       quoteTitle: draftTitle.trim() || 'Yêu cầu hỗ trợ báo giá',
       customBlocks,
       paymentPlan: draftPaymentPlan,
+      ...(draftOverallDiscountAmount != null ? { overallDiscountAmount: draftOverallDiscountAmount } : {}),
       ...(draftVisibleColumns ? { visibleColumns: draftVisibleColumns } : {}),
       ...(draftVisibleSummaryFields ? { visibleSummaryFields: draftVisibleSummaryFields } : {}),
       ...(draftVisibleCustomerFields ? { visibleCustomerFields: draftVisibleCustomerFields } : {}),
@@ -5402,7 +5617,7 @@ export function QuoteWorkspaceModal({
       applyIssuerPaymentTermsSnapshot(previewData, effectiveIssuerCompany, issuerCompanies);
     }
     return previewData;
-  }, [deal, draftCustomerId, customers, draftTitle, draftScope, draftPaymentTermsDays, draftExtraTerms, draftCustomBlocks, draftPaymentPlan, draftVisibleColumns, draftVisibleSummaryFields, draftVisibleCustomerFields, effectiveIssuerCompany, issuerCompanies]);
+  }, [deal, draftCustomerId, customers, draftTitle, draftScope, draftPaymentTermsDays, draftExtraTerms, draftCustomBlocks, draftPaymentPlan, draftOverallDiscountAmount, draftVisibleColumns, draftVisibleSummaryFields, draftVisibleCustomerFields, effectiveIssuerCompany, issuerCompanies]);
   const columnVisibilitySchema = quote?.formSnapshot || draftSelectedForm?.schemaJson;
   const hasPricedItems = itemsDraft.some(row => row.rowType !== 'section');
   const isVillaLayout = (quote?.formSnapshot || draftSelectedForm?.schemaJson)?.layoutType === 'villa_solution_package';
@@ -5417,7 +5632,16 @@ export function QuoteWorkspaceModal({
   // thai + tom tat khi dong de Sale khong bo qua (yeu cau rieng, xem
   // paymentPlanCardOpen ben duoi). KHONG doi logic tinh tien/villa/persistence.
   const paymentPlanRows = quote?.data.paymentPlan || draftPaymentPlan;
-  const paymentPlanFinalPayable = calculateOverallDiscountSummary(calculateQuoteTotals(itemsDraft, 0, workspaceCurrency), quote ? quote.overallDiscountPercent : draftOverallDiscountPercent, workspaceCurrency).grandTotal;
+  const effectiveOverallDiscountAmount = quote
+    ? (typeof quote.data?.overallDiscountAmount === 'number' ? quote.data.overallDiscountAmount : null)
+    : (draftOverallDiscountAmount ?? null);
+  const paymentPlanFinalPayable = calculateOverallDiscountSummary(
+    calculateQuoteTotals(itemsDraft, 0, workspaceCurrency),
+    quote ? quote.overallDiscountPercent : draftOverallDiscountPercent,
+    workspaceCurrency,
+    effectiveOverallDiscountAmount,
+    overallDiscountInputMode
+  ).grandTotal;
   const paymentPlanPct = paymentPlanPercent(paymentPlanRows);
   const paymentPlanIsEmpty = paymentPlanRows.length === 0;
   const paymentPlanIsComplete = !paymentPlanIsEmpty && paymentPlanPct === 100;
@@ -5468,13 +5692,13 @@ export function QuoteWorkspaceModal({
   // bang Decimal sau khi luu that).
   const draftPreviewTotals = useMemo(() => {
     const rows = itemsDraft.filter(i => i.rowType !== 'section');
-    const subtotalAmount = rows.reduce((sum, i) => sum + (i.amountAfterDiscount ?? (i.quantity * (i.unitPrice ?? 0) || 0)), 0);
+    const subtotalAmount = rows.reduce((sum, i) => sum + (i.amountAfterDiscount ?? (calculateItemSubtotal(i, workspaceCurrency) - calculateItemDiscount(i, workspaceCurrency))), 0);
     const totalVatAmount = rows.reduce((sum, i) => {
-      const base = i.amountAfterDiscount ?? (i.quantity * (i.unitPrice ?? 0) || 0);
+      const base = i.amountAfterDiscount ?? (calculateItemSubtotal(i, workspaceCurrency) - calculateItemDiscount(i, workspaceCurrency));
       return sum + (i.vatAmount ?? (base * (i.vatRate || 0)) / 100);
     }, 0);
     return { subtotalAmount, totalVatAmount, totalAmount: subtotalAmount + totalVatAmount };
-  }, [itemsDraft]);
+  }, [itemsDraft, workspaceCurrency]);
 
   const liveCommercialSummary = useMemo(() => {
     const rows = itemsDraft.filter(i => i.rowType !== 'section');
@@ -5483,7 +5707,13 @@ export function QuoteWorkspaceModal({
     const liveHasCostData = rows.length > 0 && numericCostValues.length > 0;
     const costTotal = numericCostValues.reduce((sum, value) => sum + value, 0);
     const totals = calculateQuoteTotals(rows, 0, workspaceCurrency);
-    const discountSummary = calculateOverallDiscountSummary(totals, quote ? quote.overallDiscountPercent : draftOverallDiscountPercent, workspaceCurrency);
+    const discountSummary = calculateOverallDiscountSummary(
+      totals,
+      quote ? quote.overallDiscountPercent : draftOverallDiscountPercent,
+      workspaceCurrency,
+      effectiveOverallDiscountAmount,
+      overallDiscountInputMode
+    );
     const netRevenue = discountSummary.subtotalAfterDiscount;
     const grossProfit = liveHasCostData ? netRevenue - costTotal : null;
     const grossMarginPercent = liveHasCostData && netRevenue > 0 && grossProfit != null ? (grossProfit / netRevenue) * 100 : null;
@@ -5509,7 +5739,7 @@ export function QuoteWorkspaceModal({
       subtotalAfterDiscount: discountSummary.subtotalAfterDiscount,
       vatAfterDiscount: discountSummary.vatAfterDiscount,
     };
-  }, [itemsDraft, quote, draftOverallDiscountPercent, workspaceCurrency]);
+  }, [itemsDraft, quote, draftOverallDiscountPercent, effectiveOverallDiscountAmount, overallDiscountInputMode, workspaceCurrency]);
 
   const summaryHasCostData = liveCommercialSummary.hasCostData || hasCostData;
   const summaryCostTotal = liveCommercialSummary.hasCostData ? liveCommercialSummary.costTotal : (quote?.costTotal || 0);
@@ -5546,9 +5776,9 @@ export function QuoteWorkspaceModal({
     ? { subtotal: quote.subtotalAmount, vat: quote.vatAmount, total: quote.totalAmount }
     : itemsDraft.reduce(
         (acc, item) => {
-          const lineSubtotal = (item.quantity || 0) * (item.unitPrice || 0);
-          const discountAmount = lineSubtotal * ((item.discountPercent ?? 0) / 100);
-          const afterDiscount = lineSubtotal - discountAmount;
+          const lineSubtotal = calculateItemSubtotal(item, workspaceCurrency);
+          const discountAmount = calculateItemDiscount(item, workspaceCurrency);
+          const afterDiscount = Math.max(0, lineSubtotal - discountAmount);
           const vat = afterDiscount * ((item.vatRate ?? 0) / 100);
           return { subtotal: acc.subtotal + lineSubtotal, vat: acc.vat + vat, total: acc.total + afterDiscount + vat };
         },
@@ -6623,7 +6853,7 @@ export function QuoteWorkspaceModal({
                         <th className="qc-th-money qc-th-billing-cycle" title="Trả theo tháng hay cam kết trả theo năm (ưu đãi) — chỉ áp dụng cho hạng mục có cấu hình cả 2 mức giá trong danh mục">Chu kỳ</th>
                       ) : null}
                       <th className="qc-th-money qc-th-markup" title="Mặc định là Giá khách/ĐV (nhân với SL). Bấm nút /ĐV ↔ Tổng ở từng dòng để đổi sang nhập Giá khách TỔNG cho cả dòng (vd trọn gói N tháng, không nhân SL) khi SL là số kỳ/tháng chứ không phải số lượng hàng hoá.">Giá khách</th>
-                      <th className="qc-th-money qc-th-discount" title="Giảm giá riêng cho dòng này (%), tính trước VAT - khác với 'Giảm giá toàn báo giá' áp sau cùng trên tổng.">Giảm giá (%)</th>
+                      <th className="qc-th-money qc-th-discount" title="Giảm giá riêng cho dòng này (% hoặc số tiền), tính trước VAT - khác với 'Giảm giá toàn báo giá' áp sau cùng trên tổng.">Giảm giá</th>
                       <th className="qc-th-money qc-th-vat" title="Thuế GTGT (%) của hạng mục — lấy theo sản phẩm khi thêm từ danh mục, để 0 nếu không có">VAT (%)</th>
                       <th className="qc-th-money qc-th-total">Thành tiền</th>
                       <th className="qc-th-money qc-th-margin-col">Margin</th>
@@ -6923,6 +7153,10 @@ export function QuoteWorkspaceModal({
                                           {bundleMode === 'auto' ? 'Tắt tự tính' : 'Tự tính giá gói'}
                                         </button>
                                       ) : null}
+                                      {/* Nhan tinh (khong bam duoc) cho biet nguon gia von -
+                                       * khong co toggle nao o day, Sale khong doi duoc, hoan
+                                       * toan tu dong theo du lieu catalog (defaultCostPriceVnd
+                                       * cua chinh Combo). */}
                                       {bundleCostSourceIsTarget ? (
                                         <span className="qc-bundle-pricing-chip" title="Giá vốn Combo lấy theo giá vốn mục tiêu khai báo trong danh mục, không tính từ thành phần con">
                                           Giá vốn: Combo
@@ -6948,9 +7182,19 @@ export function QuoteWorkspaceModal({
                                       ) : null}
                                     </span>
                                   ) : null}
-                                  {(item.discountPercent ?? 0) > 0 ? (
-                                    <span className="qc-line-discount-chip">Giảm {formatPercentTrim(item.discountPercent)}</span>
-                                  ) : null}
+                                  {(() => {
+                                    const mode = resolveItemDiscountMode(item, workspaceCurrency);
+                                    if (mode === 'amount' && (item.discountAmount ?? 0) > 0) {
+                                      return <span className="qc-line-discount-chip">Giảm {formatQuoteMoney(item.discountAmount ?? 0, workspaceCurrency)}</span>;
+                                    }
+                                    if ((item.discountPercent ?? 0) > 0) {
+                                      return <span className="qc-line-discount-chip">Giảm {formatPercentTrim(item.discountPercent)}</span>;
+                                    }
+                                    if ((item.discountAmount ?? 0) > 0) {
+                                      return <span className="qc-line-discount-chip">Giảm {formatQuoteMoney(item.discountAmount ?? 0, workspaceCurrency)}</span>;
+                                    }
+                                    return null;
+                                  })()}
                               </span>
                               </span>
                             </td>
@@ -6985,7 +7229,7 @@ export function QuoteWorkspaceModal({
                             </td>
                             <td className="qc-cell-money qc-cell-qty" data-label="SL">
                               {editableTechnicalCells ? (
-                                <input type="number" className="qc-cell-input qc-cell-input-money" value={item.quantity} onChange={e => updateRow(index, { quantity: Math.max(0, Number(e.target.value) || 0) })} />
+                                <input type="number" className="qc-cell-input qc-cell-input-money" value={item.quantity} onChange={e => updateRow(index, { quantity: Math.max(0, Number(e.target.value) || 0), discountAmount: undefined, costTotal: undefined, totalAmount: undefined })} />
                               ) : item.quantity}
                             </td>
                             <td className={`qc-cell-money qc-cell-cost ${!item.costNotApplicable && item.costPrice == null ? 'qc-cell-cost-missing' : ''}`} data-label="Giá vốn/ĐV" title={!editableTechnicalCells && costViewAllowed ? 'Presale đã chốt — chỉ đọc' : undefined}>
@@ -7073,20 +7317,69 @@ export function QuoteWorkspaceModal({
                              * duoc) + 1 badge nho CHI-DOC duoi ten dong - them han 1 cot
                              * rieng, sua truc tiep duoc tung dong, giong het pattern o
                              * VAT (%) ben canh. */}
-                            <td className="qc-cell-money qc-cell-discount" data-label="Giảm giá (%)">
+                            <td className="qc-cell-money qc-cell-discount" data-label="Giảm giá">
                               {canEditDiscountCell ? (
-                                <input
-                                  type="number"
-                                  min={0}
-                                  max={100}
-                                  step={0.5}
-                                  className="qc-cell-input qc-cell-input-money"
-                                  aria-label={`Giảm giá hạng mục ${index + 1}`}
-                                  value={item.discountPercent ?? 0}
-                                  onChange={e => updateRow(index, { discountPercent: clampDiscountPercent(e.target.value) })}
-                                  onBlur={handlePricingBlur}
-                                />
-                              ) : `${item.discountPercent ?? 0}%`}
+                                <div className="qc-cell-discount-wrapper" style={{ display: 'inline-flex', alignItems: 'center', gap: '3px' }}>
+                                  {resolveItemDiscountMode(item, workspaceCurrency) === 'amount' ? (
+                                    <CurrencyInput
+                                      {...moneyInput}
+                                      className="qc-cell-input qc-cell-input-money"
+                                      style={{ width: '82px', minWidth: '70px', padding: '2px 4px' }}
+                                      aria-label={`Giảm giá hạng mục ${index + 1}`}
+                                      value={item.discountAmount ?? 0}
+                                      placeholder="0"
+                                      onChange={rawAmount => {
+                                        const rowSubtotal = calculateItemSubtotal(item, workspaceCurrency);
+                                        const clamped = rawAmount == null || !Number.isFinite(rawAmount) || rawAmount <= 0 ? 0 : roundQuoteMoney(Math.min(rawAmount, rowSubtotal), workspaceCurrency);
+                                        const pct = rowSubtotal > 0 ? clampDiscountPercent((clamped / rowSubtotal) * 100) : 0;
+                                        updateRow(index, { discountType: 'amount', discountAmount: clamped, discountPercent: pct });
+                                      }}
+                                      onBlur={() => {
+                                        if (item.discountAmount != null) commitRowDiscountAmount(index, item.discountAmount);
+                                      }}
+                                    />
+                                  ) : (
+                                    <DiscountPercentInput
+                                      ariaLabel={`Giảm giá hạng mục ${index + 1}`}
+                                      value={item.discountPercent}
+                                      onLiveChange={discountPercent => {
+                                        const rowSubtotal = calculateItemSubtotal(item, workspaceCurrency);
+                                        const amt = roundQuoteMoney((rowSubtotal * clampDiscountPercent(discountPercent)) / 100, workspaceCurrency);
+                                        updateRow(index, { discountType: 'percent', discountPercent, discountAmount: amt });
+                                      }}
+                                      onCommit={discountPercent => commitRowDiscount(index, discountPercent)}
+                                    />
+                                  )}
+                                  <button
+                                    type="button"
+                                    className="qc-price-mode-toggle"
+                                    style={{ fontSize: '10px', padding: '1px 3px', minWidth: '22px', height: '22px', lineHeight: '20px' }}
+                                    onClick={() => {
+                                      const currentMode = resolveItemDiscountMode(item, workspaceCurrency);
+                                      const nextMode = currentMode === 'amount' ? 'percent' : 'amount';
+                                      const rowSubtotal = calculateItemSubtotal(item, workspaceCurrency);
+                                      if (nextMode === 'amount') {
+                                        const amt = item.discountAmount ?? roundQuoteMoney((rowSubtotal * (item.discountPercent ?? 0)) / 100, workspaceCurrency);
+                                        const pct = rowSubtotal > 0 ? clampDiscountPercent((amt / rowSubtotal) * 100) : 0;
+                                        updateRow(index, { discountType: 'amount', discountAmount: amt, discountPercent: pct });
+                                        commitRowDiscountAmount(index, amt);
+                                      } else {
+                                        const pct = item.discountPercent ?? (rowSubtotal > 0 ? clampDiscountPercent(((item.discountAmount ?? 0) / rowSubtotal) * 100) : 0);
+                                        const amt = roundQuoteMoney((rowSubtotal * pct) / 100, workspaceCurrency);
+                                        updateRow(index, { discountType: 'percent', discountPercent: pct, discountAmount: amt });
+                                        commitRowDiscount(index, pct);
+                                      }
+                                    }}
+                                    title={resolveItemDiscountMode(item, workspaceCurrency) === 'amount' ? 'Đang giảm theo TIỀN — bấm để đổi sang %' : 'Đang giảm theo % — bấm để đổi sang TIỀN'}
+                                  >
+                                    {resolveItemDiscountMode(item, workspaceCurrency) === 'amount' ? workspaceCurrency : '%'}
+                                  </button>
+                                </div>
+                              ) : resolveItemDiscountMode(item, workspaceCurrency) === 'amount' ? (
+                                formatQuoteMoney(item.discountAmount ?? 0, workspaceCurrency)
+                              ) : (
+                                formatPercentFixed2(item.discountPercent ?? 0)
+                              )}
                             </td>
                             <td className="qc-cell-money qc-cell-vat" data-label="VAT (%)">
                               {editableCells ? (
@@ -7098,9 +7391,9 @@ export function QuoteWorkspaceModal({
                                   className="qc-cell-input qc-cell-input-money"
                                   aria-label={`VAT hạng mục ${index + 1}`}
                                   value={item.vatRate ?? 0}
-                                  onChange={e => updateRow(index, { vatRate: Math.min(100, Math.max(0, Number(e.target.value) || 0)) })}
+                                  onChange={e => updateRow(index, { vatRate: Math.min(100, Math.max(0, Number(e.target.value) || 0)), vatAmount: undefined })}
                                 />
-                              ) : `${item.vatRate ?? 0}%`}
+                              ) : (item.vatRate ? `${item.vatRate}%` : '–')}
                             </td>
                             {/* Dung calculateItemTotal(item) (tinh TUOI moi
                              * lan render tu quantity/unitPrice/discountPercent/
@@ -7363,10 +7656,20 @@ export function QuoteWorkspaceModal({
                   {/* Sua o "Chiết khấu tổng" tren quickbar (canh Markup nhanh) -
                    * day chi con la HIEN THI (khong sua thang o day nua), tranh
                    * 2 o edit cung 1 field gay hieu nham co 2 co che rieng. */}
-                  <span className="qc-workspace-info-label">Giảm giá toàn báo giá (%)</span>
-                  <strong>{summaryOverallDiscountPercent != null ? `${summaryOverallDiscountPercent}%` : 'Không giảm'}</strong>
+                  <span className="qc-workspace-info-label">
+                    {overallDiscountInputMode === 'amount' ? 'Giảm giá toàn báo giá' : 'Giảm giá toàn báo giá (%)'}
+                  </span>
+                  <strong>
+                    {overallDiscountInputMode === 'amount'
+                      ? (effectiveOverallDiscountAmount != null && effectiveOverallDiscountAmount > 0
+                          ? formatMoney(effectiveOverallDiscountAmount)
+                          : 'Không giảm')
+                      : (summaryOverallDiscountPercent != null && summaryOverallDiscountPercent > 0
+                          ? `${summaryOverallDiscountPercent}%`
+                          : 'Không giảm')}
+                  </strong>
                 </div>
-                {profitabilityViewAllowed && summaryOverallDiscountPercent != null ? (() => {
+                {profitabilityViewAllowed && (summaryOverallDiscountPercent != null || (effectiveOverallDiscountAmount != null && effectiveOverallDiscountAmount > 0)) ? (() => {
                   const amountAfterDiscount = summaryTotalAmount;
                   const marginAfterDiscount = summaryGrossMarginPercent;
                   return (
@@ -7438,27 +7741,99 @@ export function QuoteWorkspaceModal({
                     </button>
                   </div>
                   <span className="qc-workspace-quickbar-sep" aria-hidden="true" />
-                  <label className="qc-workspace-quickbar-field" title="Áp dụng cho tổng báo giá sau khi đã tính các hạng mục; không tự ghi đè chiết khấu riêng từng dòng.">
+                  <span className="qc-workspace-quickbar-field" title="Áp dụng cho tổng báo giá sau khi đã tính các hạng mục; không tự ghi đè chiết khấu riêng từng dòng.">
                     Giảm giá toàn báo giá
-                    <input
-                      type="number"
-                      min={0}
-                      max={100}
-                      className="qc-workspace-quickbar-input qc-qb-discount-input"
-                      value={(quote ? quote.overallDiscountPercent : draftOverallDiscountPercent) ?? ''}
-                      placeholder="0"
-                      onChange={event => {
-                        const raw = event.target.value;
-                        const value = raw.trim() === '' ? null : Number(raw);
+                    {overallDiscountInputMode === 'amount' ? (
+                      <CurrencyInput
+                        {...moneyInput}
+                        className="qc-workspace-quickbar-input qc-qb-discount-input"
+                        value={effectiveOverallDiscountAmount}
+                        placeholder="0"
+                        onChange={rawAmount => {
+                          const baseSubtotal = liveCommercialSummary.subtotalBeforeVat;
+                          const clampedAmount =
+                            rawAmount == null || !Number.isFinite(rawAmount) || rawAmount <= 0
+                              ? null
+                              : roundQuoteMoney(Math.max(0, baseSubtotal > 0 ? Math.min(rawAmount, baseSubtotal) : rawAmount), workspaceCurrency);
+                          const displayPct =
+                            clampedAmount != null && clampedAmount > 0 && baseSubtotal > 0
+                              ? clampDiscountPercent((clampedAmount / baseSubtotal) * 100)
+                              : null;
+                          if (quote) {
+                            setQuote(prev =>
+                              prev
+                                ? {
+                                    ...prev,
+                                    overallDiscountPercent: displayPct,
+                                    data: {
+                                      ...prev.data,
+                                      overallDiscountAmount: clampedAmount,
+                                      overallDiscountType: 'amount',
+                                    },
+                                  }
+                                : prev
+                            );
+                          } else {
+                            setDraftOverallDiscountAmount(clampedAmount);
+                            setDraftOverallDiscountPercent(displayPct);
+                          }
+                        }}
+                      />
+                    ) : (
+                      <input
+                        type="number"
+                        min={0}
+                        max={100}
+                        className="qc-workspace-quickbar-input qc-qb-discount-input"
+                        value={(quote ? quote.overallDiscountPercent : draftOverallDiscountPercent) ?? ''}
+                        placeholder="0"
+                        onChange={event => {
+                          const raw = event.target.value;
+                          const value = raw.trim() === '' ? null : Number(raw);
+                          if (quote) {
+                            setQuote(prev =>
+                              prev
+                                ? {
+                                    ...prev,
+                                    overallDiscountPercent: value,
+                                    data: {
+                                      ...prev.data,
+                                      overallDiscountAmount: null,
+                                      overallDiscountType: 'percent',
+                                    },
+                                  }
+                                : prev
+                            );
+                          } else {
+                            setDraftOverallDiscountPercent(value);
+                            setDraftOverallDiscountAmount(null);
+                          }
+                        }}
+                      />
+                    )}
+                    {overallDiscountInputMode === 'amount' ? workspaceCurrency : '%'}
+                    <button
+                      type="button"
+                      className="qc-price-mode-toggle"
+                      onClick={() => {
+                        const nextMode = overallDiscountInputMode === 'amount' ? 'percent' : 'amount';
+                        setOverallDiscountInputMode(nextMode);
                         if (quote) {
-                          setQuote(prev => (prev ? { ...prev, overallDiscountPercent: value } : prev));
-                        } else {
-                          setDraftOverallDiscountPercent(value);
+                          setQuote(prev =>
+                            prev
+                              ? {
+                                  ...prev,
+                                  data: { ...prev.data, overallDiscountType: nextMode },
+                                }
+                              : prev
+                          );
                         }
                       }}
-                    />
-                    %
-                  </label>
+                      title={overallDiscountInputMode === 'amount' ? 'Đang nhập theo SỐ TIỀN muốn giảm — bấm để đổi sang nhập %' : 'Đang nhập theo % — bấm để đổi sang nhập SỐ TIỀN muốn giảm'}
+                    >
+                      {overallDiscountInputMode === 'amount' ? '%' : workspaceCurrency}
+                    </button>
+                  </span>
                   {/* "Tiêu đề báo giá" KHONG con o quickbar nay (feedback
                    * 2026-09-26: "bỏ cái tiêu đề báo giá ở dưới đi, bỏ lên chỗ
                    * đó luôn") - da chuyen thanh input sua truc tiep tren
@@ -9555,7 +9930,7 @@ export function QuoteWorkspaceModal({
                       type="number"
                       className="qc-cell-input"
                       value={drawerItem.quantity}
-                      onChange={e => updateRow(drawerIndex, { quantity: Math.max(0, Number(e.target.value) || 0) })}
+                      onChange={e => updateRow(drawerIndex, { quantity: Math.max(0, Number(e.target.value) || 0), discountAmount: undefined })}
                     />
                   ) : (
                     <p>{drawerItem.quantity}</p>

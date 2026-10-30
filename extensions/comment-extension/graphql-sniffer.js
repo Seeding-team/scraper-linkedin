@@ -8,6 +8,28 @@
 
     // Dispatch CustomEvent để content.js (ISOLATED world) bắt và kiểm tra session / target_link
     // trước khi ghi nhận KPI và hiển thị Toast thông báo cho người dùng.
+    
+    // Hàm bóc tách JSON an toàn từ phản hồi Facebook (xóa bỏ tiền tố for (;;); và hỗ trợ newline stream)
+    function parseFacebookGraphQLText(rawText) {
+        if (!rawText || typeof rawText !== 'string') return [];
+        const clean = rawText.replace(/^for\s*\(\s*;\s*;\s*\)\s*;?/g, '').trim();
+        const results = [];
+        try {
+            results.push(JSON.parse(clean));
+            return results;
+        } catch (e) {}
+
+        const lines = clean.split('\n');
+        for (let i = 0; i < lines.length; i++) {
+            const line = lines[i].trim();
+            if (!line) continue;
+            try {
+                results.push(JSON.parse(line));
+            } catch (err) {}
+        }
+        return results;
+    }
+
     function dispatchActionCaptured(actionData) {
         document.dispatchEvent(new CustomEvent("markee-action-captured", {
             detail: {
@@ -81,12 +103,50 @@
                         || "unknown";
 
                     authorName = (edgeNode && edgeNode.author && edgeNode.author.name) || "";
-                    commentId = (edgeNode && edgeNode.legacy_fbid) || (edgeNode && edgeNode.id) || "";
                     
-                    // Link comment minh chứng trực tiếp (ví dụ: https://www.facebook.com/reel/29299018259785802/?comment_id=1096395736652564)
-                    linkComment = (edgeNode && edgeNode.url) || "";
+                    // Bóc tách commentId dạng số thực tế (numeric legacy_fbid hoặc ID trong Relay Base64)
+                    let rawCommentId = (edgeNode && edgeNode.legacy_fbid) || (edgeNode && edgeNode.id) || "";
+                    let numericCommentId = "";
+                    if (rawCommentId) {
+                        const strId = String(rawCommentId).trim();
+                        if (/^\d{10,}$/.test(strId)) {
+                            numericCommentId = strId;
+                        } else {
+                            let decoded = "";
+                            try {
+                                let cleanB64 = strId.replace(/-/g, "+").replace(/_/g, "/");
+                                while (cleanB64.length % 4) cleanB64 += "=";
+                                decoded = atob(cleanB64);
+                            } catch (e) {}
+
+                            const combined = decoded ? `${strId} ${decoded}` : strId;
+                            const allNumbers = combined.match(/\d{10,}/g) || [];
+                            // Cụm số cuối cùng trong Relay ID (group_post_comment hoặc post_comment) luôn là comment_id thật sự
+                            if (allNumbers.length >= 1) {
+                                numericCommentId = allNumbers[allNumbers.length - 1];
+                            }
+                        }
+                    }
+                    commentId = numericCommentId || rawCommentId;
+
                     postUrl = (commentCreate.feedback && commentCreate.feedback.url) || window.location.href;
-                    console.log("[GraphQL-Sniffer] Bắt thành công COMMENT:", { linkComment, commentId, authorName, content });
+
+                    // Chuẩn hóa linkComment Facebook tuyệt đối và có ?comment_id= để trình duyệt nhảy trúng đích
+                    let rawCmtUrl = (edgeNode && edgeNode.url) || "";
+                    if (rawCmtUrl.startsWith("/")) {
+                        rawCmtUrl = "https://www.facebook.com" + rawCmtUrl;
+                    }
+                    if (numericCommentId) {
+                        if (rawCmtUrl && !rawCmtUrl.includes("comment_id=")) {
+                            const sep = rawCmtUrl.includes("?") ? "&" : "?";
+                            rawCmtUrl = `${rawCmtUrl}${sep}comment_id=${numericCommentId}`;
+                        } else if (!rawCmtUrl && postUrl) {
+                            const cleanPostUrl = postUrl.split("?")[0].replace(/\/+$/, "");
+                            rawCmtUrl = `${cleanPostUrl}/?comment_id=${numericCommentId}`;
+                        }
+                    }
+                    linkComment = rawCmtUrl || (numericCommentId && postUrl ? `${postUrl.split("?")[0].replace(/\/+$/, "")}/?comment_id=${numericCommentId}` : postUrl);
+                    console.log("[GraphQL-Sniffer] Bắt thành công COMMENT Facebook chuẩn:", { linkComment, commentId, authorName, content });
                 }
 
                 // 2. ƯU TIÊN SỐ 2: BẮT THAO TÁC THÍCH / THẢ TIM (feedback_react / feedback_reaction)
@@ -251,9 +311,10 @@
     // =========================================================================
     let latestLinkedInAuthor = "";
 
-    function tryCaptureLinkedInRSC(url, body, isSuccess) {
+    function tryCaptureLinkedInRSC(url, body, isSuccess, responseText) {
         if (!body || !isSuccess) return;
         const bodyStr = typeof body === "string" ? body : JSON.stringify(body);
+        const respStr = typeof responseText === "string" ? responseText : "";
 
         // Bắt tên tác giả từ component submitCommentButton nếu có
         if (bodyStr.includes("memberFirstName") || bodyStr.includes("memberLastName")) {
@@ -280,6 +341,24 @@
                     if (ugcMatch) activityId = ugcMatch[1];
                 }
 
+                // Trích xuất commentUrn và commentId thực tế từ responseText
+                let commentUrn = "";
+                let commentNumId = "";
+                if (respStr) {
+                    const urnMatch = respStr.match(/urn:li:comment:\(activity:\d+,\s*(\d+)\)/);
+                    if (urnMatch) {
+                        commentUrn = urnMatch[0];
+                        commentNumId = urnMatch[1];
+                    } else {
+                        const fsdMatch = respStr.match(/urn:li:fsd_comment:\((\d+),urn:li:activity:(\d+)\)/);
+                        if (fsdMatch) {
+                            commentNumId = fsdMatch[1];
+                            const actId = fsdMatch[2] || activityId;
+                            commentUrn = `urn:li:comment:(activity:${actId},${commentNumId})`;
+                        }
+                    }
+                }
+
                 // Trích xuất nội dung bình luận
                 let commentText = "";
                 try {
@@ -299,11 +378,21 @@
                     if (textMatch) commentText = textMatch[1];
                 }
 
-                // Xây dựng link bài viết & link bình luận
+                // Xây dựng link bài viết & link bình luận chuẩn của LinkedIn (có commentUrn để nhảy xuống phần comment)
                 const currentHref = window.location.href.split("?")[0];
                 const postUrl = activityId ? `https://www.linkedin.com/feed/update/urn:li:activity:${activityId}/` : currentHref;
-                const linkComment = postUrl;
-                const commentId = activityId ? `li_act_${activityId}` : `li_cmt_${Date.now()}`;
+                
+                let linkComment = "";
+                if (activityId && commentUrn) {
+                    linkComment = `https://www.linkedin.com/feed/update/urn:li:activity:${activityId}/?commentUrn=${encodeURIComponent(commentUrn)}#comments`;
+                } else if (activityId && commentNumId) {
+                    linkComment = `https://www.linkedin.com/feed/update/urn:li:activity:${activityId}/?commentUrn=urn%3Ali%3Acomment%3A(activity%3A${activityId}%2C${commentNumId})#comments`;
+                } else if (activityId) {
+                    linkComment = `https://www.linkedin.com/feed/update/urn:li:activity:${activityId}/#comments`;
+                } else {
+                    linkComment = window.location.href;
+                }
+                const commentId = commentNumId || (activityId ? `li_act_${activityId}` : `li_cmt_${Date.now()}`);
 
                 let author = latestLinkedInAuthor;
                 if (!author) {
@@ -388,8 +477,11 @@
             const url = typeof input === "string" ? input : (input && input.url);
             if (url && url.includes("/api/graphql/")) {
                 if (init && init.body) tryCapture(init.body, null);
-                response.clone().json().then(function(data) {
-                    tryCapture(null, data);
+                response.clone().text().then(function(rawText) {
+                    const items = parseFacebookGraphQLText(rawText);
+                    for (let i = 0; i < items.length; i++) {
+                        tryCapture(null, items[i]);
+                    }
                 }).catch(function() {});
             } else if (url && url.includes("/voyager/api/graphql")) {
                 response.clone().json().then(function(data) {
@@ -397,7 +489,11 @@
                 }).catch(function() {});
             } else if (url && (url.includes("/flagship-web/rsc-action/") || url.includes("/rsc-action/"))) {
                 if (init && init.body) {
-                    tryCaptureLinkedInRSC(url, init.body, response.ok);
+                    response.clone().text().then(function(responseText) {
+                        tryCaptureLinkedInRSC(url, init.body, response.ok, responseText);
+                    }).catch(function() {
+                        tryCaptureLinkedInRSC(url, init.body, response.ok, null);
+                    });
                 }
             } else if (url && url.includes(".srt")) {
                 response.clone().text().then(function(srtText) {
@@ -426,8 +522,10 @@
                 tryCapture(body, null);
                 this.addEventListener("load", function () {
                     try {
-                        const data = JSON.parse(this.responseText);
-                        tryCapture(null, data);
+                        const items = parseFacebookGraphQLText(this.responseText);
+                        for (let i = 0; i < items.length; i++) {
+                            tryCapture(null, items[i]);
+                        }
                     } catch (e) {}
                 });
             } else if (url && url.includes("/voyager/api/graphql")) {
@@ -440,7 +538,7 @@
             } else if (url && (url.includes("/flagship-web/rsc-action/") || url.includes("/rsc-action/"))) {
                 this.addEventListener("load", function () {
                     if (this.status >= 200 && this.status < 400) {
-                        tryCaptureLinkedInRSC(url, body, true);
+                        tryCaptureLinkedInRSC(url, body, true, this.responseText);
                     }
                 });
             } else if (url && url.includes(".srt")) {

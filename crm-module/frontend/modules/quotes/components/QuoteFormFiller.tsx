@@ -1,6 +1,6 @@
 'use client';
 
-import { createContext, useContext, useEffect, useState } from 'react';
+import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import type { BundleSnapshotComponent, QuoteData, QuoteField, QuoteItem, QuoteSchema, VillaSolutionItem } from '../types';
 import {
   calculateItemAfterDiscount,
@@ -102,6 +102,53 @@ function coerceNumber(value: string) {
 
 function coercePercent(value: string) {
   return clampDiscountPercent(Number(value) || 0);
+}
+
+function DiscountPercentDraftInput({ value, disabled, placeholder, onChange }: {
+  value: unknown;
+  disabled?: boolean;
+  placeholder?: string;
+  onChange: (value: number) => void;
+}) {
+  const [draft, setDraft] = useState(() => String(clampDiscountPercent(value)));
+  const focusedRef = useRef(false);
+
+  useEffect(() => {
+    if (!focusedRef.current) setDraft(String(clampDiscountPercent(value)));
+  }, [value]);
+
+  function commit() {
+    focusedRef.current = false;
+    const normalized = draft.trim().replace(',', '.');
+    const next = clampDiscountPercent(normalized === '' ? 0 : normalized);
+    setDraft(String(next));
+    onChange(next);
+  }
+
+  return (
+    <input
+      type="text"
+      inputMode="decimal"
+      value={draft}
+      placeholder={placeholder}
+      disabled={disabled}
+      onFocus={() => { focusedRef.current = true; }}
+      onChange={event => {
+        const nextDraft = event.target.value;
+        if (!/^\d{0,3}(?:[.,]\d{0,2})?$/.test(nextDraft)) return;
+        setDraft(nextDraft);
+        const normalized = nextDraft.replace(',', '.');
+        if (normalized !== '' && normalized !== '.') onChange(clampDiscountPercent(normalized));
+      }}
+      onBlur={commit}
+      onKeyDown={event => {
+        if (event.key === 'Enter') {
+          event.preventDefault();
+          event.currentTarget.blur();
+        }
+      }}
+    />
+  );
 }
 
 export function QuoteFormFiller({ schema, value, onChange, quoteFormId, showTotals, showCurrencyInItems = true }: Props) {
@@ -340,7 +387,12 @@ export function QuoteFormFiller({ schema, value, onChange, quoteFormId, showTota
       )}
       {shouldShowTotals && schema.enableDynamicPaymentPlan && layoutType !== 'villa_solution_package' ? (
         <PaymentPlanEditor rows={value.data.paymentPlan || []}
-          finalPayable={calculateOverallDiscountSummary(totals, value.overallDiscountPercent, currency).grandTotal}
+          finalPayable={calculateOverallDiscountSummary(
+            totals,
+            value.overallDiscountPercent,
+            currency,
+            typeof value.data.overallDiscountAmount === 'number' ? value.data.overallDiscountAmount : null
+          ).grandTotal}
           currency={currency}
           onChange={paymentPlan => setData('paymentPlan', paymentPlan)} />
       ) : null}
@@ -1392,7 +1444,13 @@ function SchemaQuoteItemCell({
 
   const record = item as unknown as Record<string, unknown>;
   const rawValue = record[column.key] ?? column.defaultValue ?? '';
-  const setValue = (next: unknown) => onChange({ [column.key]: next } as Partial<QuoteItem>);
+  const setValue = (next: unknown) =>
+    onChange({
+      [column.key]: next,
+      ...(column.key === 'discountPercent' || column.key === 'unitPrice' || column.key === 'quantity'
+        ? { discountAmount: undefined }
+        : {}),
+    } as Partial<QuoteItem>);
   if (column.type === 'select') {
     return (
       <select value={String(rawValue)} disabled={column.editable === false} onChange={event => setValue(event.target.value)}>
@@ -1424,6 +1482,17 @@ function SchemaQuoteItemCell({
         placeholder={column.placeholder}
         disabled={column.editable === false}
         onChange={next => setValue(next ?? 0)}
+      />
+    );
+  }
+
+  if (column.key === 'discountPercent') {
+    return (
+      <DiscountPercentDraftInput
+        value={rawValue}
+        placeholder={column.placeholder}
+        disabled={column.editable === false}
+        onChange={next => setValue(next)}
       />
     );
   }
@@ -1575,15 +1644,15 @@ function QuoteItemFields({ item, prefix, onChange }: { item: QuoteItem; prefix: 
       </label>
       <label className="crm-field">
         <span>Số lượng</span>
-        <input type="number" min={0} value={item.quantity || 0} onChange={event => onChange({ quantity: coerceNumber(event.target.value) })} />
+        <input type="number" min={0} value={item.quantity || 0} onChange={event => onChange({ quantity: coerceNumber(event.target.value), discountAmount: undefined })} />
       </label>
       <label className="crm-field">
         <span>Đơn giá</span>
-        <CurrencyInput {...moneyInputProps(rowCurrency)} value={item.unitPrice || 0} onChange={next => onChange({ unitPrice: next ?? 0 })} />
+        <CurrencyInput {...moneyInputProps(rowCurrency)} value={item.unitPrice || 0} onChange={next => onChange({ unitPrice: next ?? 0, discountAmount: undefined })} />
       </label>
       <label className="crm-field">
         <span>Giảm giá (%)</span>
-        <input type="number" min={0} max={100} value={item.discountPercent ?? 0} onChange={event => onChange({ discountPercent: coercePercent(event.target.value) })} />
+        <DiscountPercentDraftInput value={item.discountPercent} onChange={discountPercent => onChange({ discountPercent, discountAmount: undefined })} />
       </label>
       <label className="crm-field">
         <span>VAT (%)</span>

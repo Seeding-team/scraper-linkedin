@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { X, CheckCircle, Plus, Search, FileEdit, FilePlus, Download, Send, ExternalLink, Sparkles } from "lucide-react";
+import { X, CheckCircle, Plus, Search, FileEdit, FilePlus, Download, Send, ExternalLink, Sparkles, Mail } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { CHANNEL_CAPABILITIES } from "../constants/channelCapabilities";
 import { seedingCrmRepository } from "@/modules/crm/repositories/SeedingCrmRepository";
@@ -60,6 +60,7 @@ export const ConnectAccountMockModal: React.FC<{
     { id: "zalo", cap: CHANNEL_CAPABILITIES.zalo, color: "bg-[#0068FF]" },
     { id: "facebook", cap: CHANNEL_CAPABILITIES.facebook, color: "bg-[#1877F2]" },
     { id: "telegram", cap: CHANNEL_CAPABILITIES.telegram, color: "bg-[#229ED9]" },
+    { id: "email", cap: CHANNEL_CAPABILITIES.email, color: "bg-amber-500", isEmail: true },
   ];
 
   const comingSoonChannels = [
@@ -84,18 +85,21 @@ export const ConnectAccountMockModal: React.FC<{
                 onSelectChannelConnect(id);
                 onClose();
               }}
-              className="flex items-center justify-between p-3 rounded-xl border border-slate-200 bg-white hover:border-[var(--color-markee-primary,#c2185b)] hover:bg-rose-50/20 transition cursor-pointer shadow-2xs group"
+              className={cn(
+                "flex items-center justify-between p-3 rounded-xl border bg-white transition cursor-pointer shadow-2xs group",
+                id === "email" ? "border-amber-200 hover:border-amber-500 hover:bg-amber-50/20" : "border-slate-200 hover:border-[var(--color-markee-primary,#c2185b)] hover:bg-rose-50/20"
+              )}
             >
               <div className="flex items-center gap-3">
                 <div className={cn("h-9 w-9 rounded-xl flex items-center justify-center text-white text-xs font-bold shadow-2xs", color)}>
-                  {id.substring(0, 2).toUpperCase()}
+                  {id === "email" ? <Mail className="h-4.5 w-4.5" /> : id.substring(0, 2).toUpperCase()}
                 </div>
                 <div>
-                  <h4 className="text-xs font-bold text-slate-900 group-hover:text-[var(--color-markee-primary,#c2185b)] transition">{cap.categoryName}</h4>
+                  <h4 className={cn("text-xs font-bold text-slate-900 transition", id === "email" ? "group-hover:text-amber-700" : "group-hover:text-[var(--color-markee-primary,#c2185b)]")}>{cap.categoryName}</h4>
                   <p className="text-[10px] text-slate-500">{cap.description}</p>
                 </div>
               </div>
-              <span className="flex items-center gap-1 text-xs font-bold text-[var(--color-markee-primary,#c2185b)]">
+              <span className={cn("flex items-center gap-1 text-xs font-bold", id === "email" ? "text-amber-600" : "text-[var(--color-markee-primary,#c2185b)]")}>
                 <span>{cap.connectActionLabel}</span>
               </span>
             </div>

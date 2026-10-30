@@ -7,12 +7,10 @@ gspread/asyncssh không cần thiết cho 1 service chỉ-CRM).
 
 Giữ nguyên prefix/tag y hệt app gốc để frontend không cần đổi 1 dòng path nào.
 
-2026-09-23: thêm `fb`/`fb_inbox_accounts` (Inbox FB) + Zalo Chat/Inbox Zalo
-Admin CORE (đồng bộ từ crm-module) — CHỈ mount auth/accounts/conversations/
-events/listener/inbox_share/maintenance, KHÔNG mount forward_rules/bulk_jobs/
-campaigns/broadcasts (5 công cụ Zalo nâng cao, chưa cần cho module này).
-`fb.py` chỉ là proxy httpx sang service Markee ngoài (MARKEE_FB_BASE_URL),
-không tự crawl / không cần Playwright.
+2026-09-23: thêm `fb`/`fb_inbox_accounts` (Inbox FB, phần đầu của module
+"Quản lý kênh & CSKH" đang được gộp dần vào — xem yêu cầu user). 2 router này
+KHÔNG cần Playwright: `fb.py` chỉ là proxy httpx sang service Markee ngoài
+(MARKEE_FB_BASE_URL), không tự crawl. Không vi phạm mục tiêu "nhẹ" ở trên.
 """
 
 from __future__ import annotations
@@ -35,12 +33,22 @@ from app.modules.all_platform.routers.crm_contact import router as crm_contact_r
 from app.modules.all_platform.routers.crm_contact import detail_router as crm_contact_detail_router
 from app.modules.all_platform.routers.crm_permission_group import router as crm_permission_group_router
 from app.modules.all_platform.routers.crm_team import router as crm_team_router
-from app.modules.all_platform.routers.quote import quote_forms_router, quotes_router, quote_email_provider_router, quote_approval_rules_router
+from app.modules.all_platform.routers.quote import (
+    quote_forms_router,
+    quotes_router,
+    quote_email_provider_router,
+    quote_approval_rules_router,
+)
 from app.modules.all_platform.routers.price_book import price_book_router, price_book_admin_router
 from app.modules.all_platform.routers.project import router as project_router
 from app.modules.all_platform.routers.contract import contracts_router
+# (2026-10-27) Da TAT theo yeu cau sep ("bo chuc nang, khong xai nua") sau khi gap
+# InsecureTransportError luc test dev - xem google_oauth_service.py/google_oauth.py (van giu
+# nguyen code, chi KHONG mount router nua) de bat lai sau neu can.
+# from app.modules.all_platform.routers.google_oauth import google_oauth_router
 from app.modules.all_platform.routers.contract_docx import contract_docx_router
 from app.modules.all_platform.routers.contract_versions import contract_versions_router
+from app.modules.all_platform.routers.contract_edit import contract_edit_router
 from app.modules.all_platform.routers.progress import progress_router
 from app.modules.all_platform.routers.contract_template import contract_templates_router
 from app.modules.all_platform.routers.service_catalog import router as service_catalog_router
@@ -56,6 +64,10 @@ from app.modules.all_platform.zalo.api.routes.events import router as zalo_event
 from app.modules.all_platform.zalo.api.routes.listener import router as zalo_listener_router
 from app.modules.all_platform.zalo.api.routes.inbox_share import router as zalo_inbox_share_router
 from app.modules.all_platform.zalo.api.routes.maintenance import router as zalo_maintenance_router
+from app.modules.all_platform.zalo.api.routes.forward_rules import router as zalo_forward_rules_router
+from app.modules.all_platform.zalo.api.routes.bulk_jobs import router as zalo_bulk_jobs_router
+from app.modules.all_platform.zalo.api.routes.campaigns import router as zalo_campaigns_router
+from app.modules.all_platform.zalo.api.routes.broadcasts import router as zalo_broadcasts_router
 
 all_platform_router = APIRouter()
 
@@ -99,7 +111,6 @@ all_platform_router.include_router(crm_team_router, prefix="/crm/teams", tags=["
 # ── Quote Forms + Quotes ───────────────────────────────────────────────────────
 all_platform_router.include_router(quote_forms_router, prefix="/quote-forms", tags=["All-Platform Quote Forms"])
 all_platform_router.include_router(quotes_router, prefix="/quotes", tags=["All-Platform Quotes"])
-all_platform_router.include_router(project_router, prefix="/projects", tags=["All-Platform Projects"])
 all_platform_router.include_router(
     quote_email_provider_router,
     prefix="/quotes-email-provider",
@@ -121,8 +132,12 @@ all_platform_router.include_router(
     tags=["All-Platform Price Book Admin (VPS Zone)"],
 )
 
+# ── Dự án (Projects) ────────────────────────────────────────────────────────────
+all_platform_router.include_router(project_router, prefix="/projects", tags=["All-Platform Projects"])
+
 # ── Contracts (AI Contract Copilot) ────────────────────────────────────────────
 all_platform_router.include_router(contracts_router, prefix="/contracts", tags=["All-Platform Contracts"])
+# all_platform_router.include_router(google_oauth_router, prefix="/google-oauth", tags=["All-Platform Google OAuth"])
 all_platform_router.include_router(
     contract_docx_router,
     prefix="/contract-docs",
@@ -132,6 +147,11 @@ all_platform_router.include_router(
     contract_versions_router,
     prefix="/contract-docs",
     tags=["All-Platform Contract Documents (versions, risk, readiness)"],
+)
+all_platform_router.include_router(
+    contract_edit_router,
+    prefix="/contracts",
+    tags=["All-Platform Contract Word Editor (OnlyOffice, dev only)"],
 )
 all_platform_router.include_router(
     contract_templates_router,
@@ -152,7 +172,7 @@ all_platform_router.include_router(sales_asset_router, prefix="/sales-assets", t
 all_platform_router.include_router(fb_automation_router, prefix="/fb", tags=["All-Platform Facebook Automation"])
 all_platform_router.include_router(fb_inbox_accounts_router, tags=["All-Platform FB Inbox Accounts"])
 
-# ── Zalo Chat + Inbox Zalo Admin (core - khong gom 5 cong cu nang cao) ─────────
+# ── Zalo (Zalo Chat + Inbox Zalo Admin, phan tiep theo cua "Quan ly kenh & CSKH") ──
 all_platform_router.include_router(zalo_auth_router, prefix="/zalo", tags=["Zalo Auth"])
 all_platform_router.include_router(zalo_accounts_router, prefix="/zalo", tags=["Zalo Accounts"])
 all_platform_router.include_router(zalo_conversations_router, prefix="/zalo", tags=["Zalo Conversations"])
@@ -160,6 +180,10 @@ all_platform_router.include_router(zalo_events_router, prefix="/zalo", tags=["Za
 all_platform_router.include_router(zalo_listener_router, prefix="/zalo", tags=["Zalo Listener"])
 all_platform_router.include_router(zalo_inbox_share_router, prefix="/zalo", tags=["Zalo Inbox Share"])
 all_platform_router.include_router(zalo_maintenance_router, prefix="/zalo", tags=["Zalo Maintenance"])
+all_platform_router.include_router(zalo_forward_rules_router, prefix="/zalo", tags=["Zalo Forward Rules"])
+all_platform_router.include_router(zalo_bulk_jobs_router, prefix="/zalo", tags=["Zalo Bulk Jobs"])
+all_platform_router.include_router(zalo_campaigns_router, prefix="/zalo", tags=["Zalo Campaigns"])
+all_platform_router.include_router(zalo_broadcasts_router, prefix="/zalo", tags=["Zalo Broadcasts"])
 
 # ── Telegram Chat (Telethon) ────────────────────────────────────────────────────
 from app.modules.all_platform.telegram.api.routes.auth import router as telegram_auth_router
@@ -173,3 +197,12 @@ all_platform_router.include_router(telegram_accounts_router, prefix="/telegram",
 all_platform_router.include_router(telegram_conversations_router, prefix="/telegram", tags=["Telegram Conversations"])
 all_platform_router.include_router(telegram_messages_router, prefix="/telegram", tags=["Telegram Messages"])
 all_platform_router.include_router(telegram_events_router, prefix="/telegram", tags=["Telegram Events"])
+
+# ── Email Inbox (IMAP/SMTP Omnichannel) ─────────────────────────────────────────
+from app.modules.all_platform.email.api.routes.email_inbox import router as email_inbox_router
+
+all_platform_router.include_router(
+    email_inbox_router,
+    prefix="/email-inbox",
+    tags=["All-Platform Email Inbox"],
+)

@@ -12,6 +12,7 @@ import { Loader2, X } from './icons';
 import type { AppUser } from '@/types/unified.types';
 import type { CrmCustomerRow, CrmCustomerStatus } from '../types';
 import { deriveShortName, looksLikeEnterprise } from '../utils/customerNames';
+import { useLayeredDrawerClose } from '../hooks/useLayeredDrawerClose';
 
 const STATUS_OPTIONS: Array<{ value: CrmCustomerStatus; label: string }> = [
   { value: 'new_lead', label: 'Tiềm năng' },
@@ -425,6 +426,8 @@ export function CustomerFormModal({
     }
   }
 
+  const { backdropMouseDownProps, requestClose } = useLayeredDrawerClose({ isOpen: open && !embedded, onRequestClose: onClose });
+
   if (!open) return null;
 
   const formAndFooter = (
@@ -621,8 +624,13 @@ export function CustomerFormModal({
   return (
     // Chi dong khi click THAT SU vao backdrop (khong phai bubble tu dropdown
     // portal ra document.body ben trong modal - xem comment goc tai day).
-    <div className="crm-modal-backdrop" onClick={event => { if (event.target === event.currentTarget) onClose(); }}>
-      <div className="crm-modal crm-modal--customer-form" onClick={event => event.stopPropagation()}>
+    // 2026-10-27: doi sang useLayeredDrawerClose (chuan hoa dong drawer toan
+    // CRM) - them ESC key + chi dong lop TREN CUNG neu co nhieu modal chong
+    // nhau, giu nguyen hanh vi outside-click da dung (event.target check).
+    // CHUA them unsaved-changes guard cho modal nay (form co ~20 field roi
+    // rac, can audit rieng truoc khi gan isDirty - xem bao cao phien lam viec).
+    <div className="crm-modal-backdrop" {...backdropMouseDownProps}>
+      <div className="crm-modal crm-modal--customer-form" onMouseDown={event => event.stopPropagation()}>
         <header className="crm-modal-header">
           <div>
             <h2 className="crm-modal-title">{isEdit ? 'Sửa hồ sơ khách hàng' : 'Thêm khách hàng'}</h2>
@@ -630,7 +638,7 @@ export function CustomerFormModal({
               {isEdit ? 'Cập nhật thông tin hồ sơ khách hàng.' : 'Tạo hồ sơ khách hàng mới — không tự tạo deal.'}
             </p>
           </div>
-          <button type="button" className="crm-modal-close" onClick={onClose} aria-label="Đóng">
+          <button type="button" className="crm-modal-close" onClick={requestClose} aria-label="Đóng">
             <X className="crm-icon" />
           </button>
         </header>

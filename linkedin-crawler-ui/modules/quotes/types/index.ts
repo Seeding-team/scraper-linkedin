@@ -232,6 +232,7 @@ export interface QuoteItem {
   unitPrice: number | null;
   discountPercent?: number;
   discountAmount?: number;
+  discountType?: 'percent' | 'amount';
   amountAfterDiscount?: number;
   /** Ghi chú/Khuyến mãi rieng cho tung dong hang muc (public, khach xem duoc -
    * KHAC voi warrantyScope). Da co san o DB/backend (quote_items.note), chua
@@ -387,6 +388,12 @@ export interface QuoteData {
     orientation: 'portrait' | 'landscape';
     columnWidths?: Record<string, number>;
   };
+  /** Số tiền giảm giá cố định toàn báo giá (VND/USD) khi nhập theo số tiền thay vì %. */
+  overallDiscountAmount?: number | null;
+  overallDiscountType?: 'percent' | 'amount' | null;
+  vatAmount?: number | null;
+  vatType?: 'percent' | 'amount' | null;
+  itemDiscountTypes?: Record<string, 'percent' | 'amount'>;
   [key: string]: unknown;
 }
 
@@ -511,6 +518,7 @@ export interface Quote {
    * Chi anh huong hien thi Buoc 2 (Gia sau giam/Margin sau giam), KHONG dung
    * de tinh lai subtotalAmount/vatAmount/totalAmount o tren. */
   overallDiscountPercent?: number | null;
+  overallDiscountType?: 'percent' | 'amount' | null;
   /** "Loai bao gia" (migration 112) - multi-select CODE cua
    * category_type='crm_quote_type' (Danh muc CRM), DOC LAP voi Linh vuc
    * khach hang. Luon la mang (co the rong []), khong bao gio null/undefined

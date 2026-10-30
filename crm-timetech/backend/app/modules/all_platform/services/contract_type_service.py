@@ -112,6 +112,8 @@ async def suggest_type(quote: dict | None, extra_prompt: str | None, template_na
     if ai_call is None:
         from app.modules.all_platform.services import contract_ai_service as ai
 
+        if not ai._has_api_key():
+            return finalize(base)
         ai_call = ai._call_chat_json
     items = (quote or {}).get("items") or []
     listing = "\n".join(f"- {i.get('description')} | {i.get('serviceDescription') or ''}" for i in items[:40] if i.get("rowType") != "section")

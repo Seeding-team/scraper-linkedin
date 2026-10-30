@@ -1,3 +1,4 @@
+import { getZaloChatUrl } from '@/lib/zaloChatNavigation';
 'use client';
 
 import Link from 'next/link';
@@ -1167,9 +1168,21 @@ export function CrmCustomersDirectory() {
                                 <span>{primaryContactName}</span>
                                 {primaryPhone ? <span>·</span> : null}
                                 {primaryPhone ? (
-                                  <a href={`tel:${primaryPhone.replace(/[^\d+]/g, '')}`} onClick={event => event.stopPropagation()}>
-                                    {primaryPhone}
-                                  </a>
+                                  <span className="inline-flex items-center gap-1.5">
+                                    <a href={`tel:${primaryPhone.replace(/[^\d+]/g, '')}`} onClick={event => event.stopPropagation()}>
+                                      {primaryPhone}
+                                    </a>
+                                    <a
+                                      href={getZaloChatUrl(primaryPhone)}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="inline-flex items-center gap-0.5 text-[11px] font-semibold text-[#0068ff] hover:underline"
+                                      title="Nhắn Zalo trên hệ thống"
+                                      onClick={event => event.stopPropagation()}
+                                    >
+                                      Zalo
+                                    </a>
+                                  </span>
                                 ) : null}
                                 {(customer.contactCount || 0) > 1 ? (
                                   <ContactSummaryBadge customerId={customer.id} extraCount={(customer.contactCount || 0) - 1} />

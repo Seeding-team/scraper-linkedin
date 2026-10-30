@@ -1,8 +1,24 @@
 "use client";
 
 import React, { useState, useRef } from "react";
-import { Paperclip, Image as ImageIcon, Smile, FileText, Sparkles, Send, Pin, FileEdit, ClipboardList, FilePlus } from "lucide-react";
+import {
+  Paperclip,
+  Image as ImageIcon,
+  Smile,
+  FileText,
+  Sparkles,
+  Send,
+  Pin,
+  FileEdit,
+  ClipboardList,
+  FilePlus,
+  Reply,
+  ReplyAll,
+  Forward,
+  Loader2,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
+import type { OutgoingEmailAttachment } from "../types";
 
 interface MessageComposerProps {
   text: string;
@@ -13,6 +29,18 @@ interface MessageComposerProps {
   onOpenAddNote: () => void;
   onOpenCreateDeal: () => void;
   onOpenCreateQuote: () => void;
+  isEmailChannel?: boolean;
+  emailSubject?: string;
+  onChangeEmailSubject?: (subject: string) => void;
+  emailRecipient?: string;
+  onChangeEmailRecipient?: (recipient: string) => void;
+  emailCc?: string[];
+  onChangeEmailCc?: (cc: string[]) => void;
+  emailAttachments?: OutgoingEmailAttachment[];
+  onChangeEmailAttachments?: (attachments: OutgoingEmailAttachment[]) => void;
+  replyMode?: "reply" | "reply_all" | "forward" | null;
+  onCancelReplyMode?: () => void;
+  isSending?: boolean;
 }
 
 export const MessageComposer: React.FC<MessageComposerProps> = ({
@@ -24,10 +52,24 @@ export const MessageComposer: React.FC<MessageComposerProps> = ({
   onOpenAddNote,
   onOpenCreateDeal,
   onOpenCreateQuote,
+  isEmailChannel,
+  emailSubject,
+  onChangeEmailSubject,
+  emailRecipient,
+  onChangeEmailRecipient,
+  emailCc = [],
+  onChangeEmailCc,
+  emailAttachments = [],
+  onChangeEmailAttachments,
+  replyMode = "reply",
+  onCancelReplyMode,
+  isSending = false,
 }) => {
   const [activeTab, setActiveTab] = useState<"message" | "note" | "task" | "quote">("message");
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const [showCcInput, setShowCcInput] = useState(false);
   const [attachmentPreview, setAttachmentPreview] = useState<{ name: string; type: "file" | "image" } | null>(null);
+  const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
 
@@ -38,22 +80,67 @@ export const MessageComposer: React.FC<MessageComposerProps> = ({
     }
   };
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (files && files.length > 0) {
-      const file = files[0];
-      setAttachmentPreview({ name: file.name, type: "file" });
-      onChangeText(`${text ? text + "\n" : ""}📎 ${file.name}`);
+  const encodeEmailFiles = async (files: File[]) => {
+    const maxFileBytes = 20 * 1024 * 1024;
+    const maxMessageBytes = 25 * 1024 * 1024;
+    const existingBytes = emailAttachments.reduce((sum, item) => sum + item.size_bytes, 0);
+    if (
+      files.some((file) => file.size > maxFileBytes) ||
+      existingBytes + files.reduce((sum, file) => sum + file.size, 0) > maxMessageBytes
+    ) {
+      setAttachmentError("Tối đa 20 MB/file và 25 MB/email.");
+      return;
     }
+    const encoded = await Promise.all(
+      files.map(async (file): Promise<OutgoingEmailAttachment> => {
+        const dataUrl = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(String(reader.result || ""));
+          reader.onerror = () => reject(reader.error);
+          reader.readAsDataURL(file);
+        });
+        const contentType = file.type || "application/octet-stream";
+        return {
+          name: file.name,
+          size:
+            file.size >= 1024 * 1024
+              ? `${(file.size / (1024 * 1024)).toFixed(1)} MB`
+              : `${Math.max(1, Math.round(file.size / 1024))} KB`,
+          type: contentType === "application/pdf" ? "pdf" : contentType.startsWith("image/") ? "image" : "file",
+          content_type: contentType,
+          size_bytes: file.size,
+          content_base64: dataUrl.split(",", 2)[1] || "",
+        };
+      })
+    );
+    setAttachmentError(null);
+    onChangeEmailAttachments?.([...emailAttachments, ...encoded]);
   };
 
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (files && files.length > 0) {
-      const file = files[0];
-      setAttachmentPreview({ name: file.name, type: "image" });
-      onChangeText(`${text ? text + "\n" : ""}🖼️ ${file.name}`);
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    e.target.value = "";
+    if (!files.length) return;
+    if (isEmailChannel) {
+      await encodeEmailFiles(files);
+      return;
     }
+    const file = files[0];
+    setAttachmentPreview({ name: file.name, type: "file" });
+    onChangeText(`${text ? text + "\n" : ""}📎 ${file.name}`);
+  };
+
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    e.target.value = "";
+    if (!files.length) return;
+    if (isEmailChannel) {
+      await encodeEmailFiles(files);
+      return;
+    }
+    const file = files[0];
+    setAttachmentPreview({ name: file.name, type: "image" });
+    onChangeText(`${text ? text + "\n" : ""}🖼️ ${file.name}`);
   };
 
   const insertEmoji = (emoji: string) => {
@@ -64,10 +151,10 @@ export const MessageComposer: React.FC<MessageComposerProps> = ({
   return (
     <div className="border-t border-slate-200 bg-white p-2.5 font-sans shrink-0 space-y-2 relative">
       {/* Hidden File Inputs */}
-      <input type="file" ref={fileInputRef} onChange={handleFileUpload} className="hidden" />
-      <input type="file" ref={imageInputRef} accept="image/*" onChange={handleImageUpload} className="hidden" />
+      <input type="file" multiple ref={fileInputRef} onChange={handleFileUpload} className="hidden" />
+      <input type="file" multiple ref={imageInputRef} accept="image/*" onChange={handleImageUpload} className="hidden" />
 
-      {/* Attachment Preview Badge Bar */}
+      {/* Attachment Preview Badge Bar for non-email */}
       {attachmentPreview && (
         <div className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs text-slate-700 font-medium">
           <span className="truncate">
@@ -82,6 +169,27 @@ export const MessageComposer: React.FC<MessageComposerProps> = ({
           </button>
         </div>
       )}
+
+      {/* Attachments chips for Email channel */}
+      {isEmailChannel &&
+        emailAttachments.map((attachment, index) => (
+          <div
+            key={`${attachment.name}-${index}`}
+            className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs text-slate-700 font-medium"
+          >
+            <span className="truncate">
+              {attachment.type === "image" ? "🖼️" : "📎"} <strong>{attachment.name}</strong> · {attachment.size}
+            </span>
+            <button
+              onClick={() => onChangeEmailAttachments?.(emailAttachments.filter((_, itemIndex) => itemIndex !== index))}
+              className="text-slate-400 hover:text-slate-600 font-bold ml-2 cursor-pointer"
+              title="Xóa đính kèm"
+            >
+              ✕
+            </button>
+          </div>
+        ))}
+      {attachmentError && <div className="text-[11px] font-medium text-red-600">{attachmentError}</div>}
 
       {/* Emoji Picker Popover */}
       {showEmojiPicker && (
@@ -98,7 +206,7 @@ export const MessageComposer: React.FC<MessageComposerProps> = ({
         </div>
       )}
 
-      {/* Quick Action Bar above Composer (Reference media_1790996133364.jpg) */}
+      {/* Quick Action Bar above Composer */}
       <div className="flex items-center gap-1.5 border-b border-slate-100 pb-1.5 text-[11px] font-semibold">
         <button
           onClick={() => setActiveTab("message")}
@@ -162,14 +270,114 @@ export const MessageComposer: React.FC<MessageComposerProps> = ({
         </button>
       </div>
 
+      {/* Gmail-style Reply / Header Section (for Email channel) */}
+      {isEmailChannel && (
+        <div className="flex flex-col gap-1.5 rounded-xl border border-amber-200/90 bg-amber-50/60 p-2 text-xs font-sans">
+          {/* Reply Mode Indicator */}
+          <div className="flex items-center justify-between border-b border-amber-200/50 pb-1">
+            <div className="flex items-center gap-1.5 font-bold text-amber-900 text-[11px]">
+              {replyMode === "reply_all" ? (
+                <>
+                  <ReplyAll className="h-3.5 w-3.5 text-amber-700" />
+                  <span>Trả lời tất cả</span>
+                </>
+              ) : replyMode === "forward" ? (
+                <>
+                  <Forward className="h-3.5 w-3.5 text-amber-700" />
+                  <span>Chuyển tiếp thư</span>
+                </>
+              ) : (
+                <>
+                  <Reply className="h-3.5 w-3.5 text-amber-700" />
+                  <span>Trả lời email</span>
+                </>
+              )}
+            </div>
+            {onCancelReplyMode && (
+              <button
+                type="button"
+                onClick={onCancelReplyMode}
+                className="text-[10px] text-amber-700 hover:text-amber-900 font-semibold cursor-pointer"
+              >
+                Đặt lại
+              </button>
+            )}
+          </div>
+
+          {/* Recipient Row */}
+          <div className="flex items-center gap-2">
+            <span className="font-semibold text-[11px] text-slate-500 w-12 shrink-0">Tới:</span>
+            {replyMode === "forward" ? (
+              <input
+                type="email"
+                value={emailRecipient || ""}
+                onChange={(e) => onChangeEmailRecipient?.(e.target.value)}
+                placeholder="Nhập email người nhận chuyển tiếp..."
+                className="flex-1 rounded border border-slate-200 bg-white px-2 py-0.5 text-xs text-slate-800 placeholder-slate-400 focus:border-amber-500 focus:outline-none"
+              />
+            ) : (
+              <div className="flex items-center gap-1.5 flex-1 min-w-0">
+                <span className="font-semibold text-slate-800 text-[11px] bg-white border border-slate-200 px-2 py-0.5 rounded truncate">
+                  {emailRecipient || "(Chưa có người nhận)"}
+                </span>
+                {!showCcInput && (
+                  <button
+                    type="button"
+                    onClick={() => setShowCcInput(true)}
+                    className="text-[10px] text-slate-500 hover:text-slate-800 underline font-medium cursor-pointer shrink-0"
+                  >
+                    + Thêm Cc
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* CC Row */}
+          {(showCcInput || (emailCc && emailCc.length > 0)) && (
+            <div className="flex items-center gap-2 animate-in fade-in duration-100">
+              <span className="font-semibold text-[11px] text-slate-500 w-12 shrink-0">Cc:</span>
+              <input
+                type="text"
+                value={(emailCc || []).join(", ")}
+                onChange={(e) => {
+                  const list = e.target.value.split(/[,;\s]+/).map((s) => s.trim()).filter(Boolean);
+                  onChangeEmailCc?.(list);
+                }}
+                placeholder="email1@domain.com, email2@domain.com"
+                className="flex-1 rounded border border-slate-200 bg-white px-2 py-0.5 text-xs text-slate-800 placeholder-slate-400 focus:border-amber-500 focus:outline-none"
+              />
+            </div>
+          )}
+
+          {/* Subject Row */}
+          <div className="flex items-center gap-2">
+            <span className="font-semibold text-[11px] text-slate-500 w-12 shrink-0">Tiêu đề:</span>
+            <input
+              type="text"
+              value={emailSubject || ""}
+              onChange={(e) => onChangeEmailSubject && onChangeEmailSubject(e.target.value)}
+              placeholder="Tiêu đề email..."
+              className="flex-1 rounded border border-slate-200 bg-white px-2 py-0.5 text-xs text-slate-800 placeholder-slate-400 focus:border-amber-500 focus:outline-none font-medium"
+            />
+          </div>
+        </div>
+      )}
+
       {/* Input Area */}
       <div className="relative">
         <textarea
-          rows={2}
+          rows={isEmailChannel ? 4 : 2}
           value={text}
           onChange={(e) => onChangeText(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder="Nhập tin nhắn... (Shift + Enter để xuống dòng)"
+          placeholder={
+            isEmailChannel
+              ? replyMode === "forward"
+                ? "Thêm lời nhắn trước nội dung chuyển tiếp... (Shift + Enter để xuống dòng)"
+                : "Soạn nội dung email phản hồi... (Shift + Enter để xuống dòng)"
+              : "Nhập tin nhắn... (Shift + Enter để xuống dòng)"
+          }
           className="w-full resize-none rounded-xl border border-slate-200 bg-slate-50/50 p-2 text-xs text-slate-800 placeholder-slate-400 focus:border-[var(--color-markee-primary,#c2185b)] focus:bg-white focus:outline-none focus:ring-1 focus:ring-[var(--color-markee-primary,#c2185b)]"
         />
       </div>
@@ -220,11 +428,25 @@ export const MessageComposer: React.FC<MessageComposerProps> = ({
 
         <button
           onClick={onSend}
-          disabled={!text.trim()}
-          className="flex items-center gap-1.5 rounded-lg bg-[var(--color-markee-primary,#c2185b)] px-3.5 py-1 text-xs font-bold text-white transition hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed shadow-2xs"
+          disabled={!text.trim() || isSending || (isEmailChannel && replyMode === "forward" && !emailRecipient?.trim())}
+          className={cn(
+            "flex items-center gap-1.5 rounded-lg px-4 py-1.5 text-xs font-bold text-white transition hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed shadow-2xs cursor-pointer",
+            isEmailChannel
+              ? "bg-amber-600 hover:bg-amber-700"
+              : "bg-[var(--color-markee-primary,#c2185b)] hover:bg-[#a3134c]"
+          )}
         >
-          <Send className="h-3 w-3" />
-          <span>Gửi</span>
+          {isSending ? (
+            <>
+              <Loader2 className="h-3 w-3 animate-spin" />
+              <span>Đang gửi...</span>
+            </>
+          ) : (
+            <>
+              <Send className="h-3 w-3" />
+              <span>{isEmailChannel ? (replyMode === "forward" ? "Chuyển tiếp" : "Gửi Email") : "Gửi"}</span>
+            </>
+          )}
         </button>
       </div>
     </div>

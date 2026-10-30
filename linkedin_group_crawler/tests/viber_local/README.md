@@ -17,7 +17,7 @@ Webhook do chính `walkthrough.py` ký HMAC rồi POST tới backend, mô phỏn
 
 ```bash
 # 1. Supabase local phải đang chạy; áp migration Viber:
-docker exec -i supabase_db_linkedin_group_crawler psql -U postgres < ../../supabase/migrations/180_viber_module.sql
+docker exec -i supabase_db_linkedin_group_crawler psql -U postgres < ../../supabase/migrations/190_viber_module.sql
 
 # 2. Mock Viber API
 python mock_viber.py            # cổng 8900

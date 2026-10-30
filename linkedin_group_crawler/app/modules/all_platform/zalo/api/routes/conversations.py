@@ -237,9 +237,16 @@ async def list_conversations_for_caller(
         for r in rows:
             last_msg_at = r.get("last_message_at")
             latest_message_at = str(last_msg_at) if last_msg_at else None
+            c_name = (r.get("conversation_name") or r.get("group_name") or "").strip()
+            l_sender = (r.get("last_sender_name") or "").strip()
+            if (not c_name or c_name.lower() in ("markee", "zalo", "user", "dm", "me", "__me__") or c_name == str(r.get("conversation_id"))) and l_sender and l_sender.lower() not in ("markee", "__me__", "me", "bạn", "ban"):
+                c_name = l_sender
+            elif not c_name:
+                c_name = r.get("conversation_id") or "Người dùng Zalo"
+
             results.append({
                 "conversation_id": r.get("conversation_id"),
-                "conversation_name": r.get("conversation_name") or r.get("conversation_id"),
+                "conversation_name": c_name,
                 "account_id": user_id,
                 "message_count": 0,
                 "image_count": 0,
@@ -1811,14 +1818,15 @@ async def create_conversation_with_user(
     if not target_uid:
         raise HTTPException(status_code=400, detail="Thiếu user_id.")
     try:
-        # Khong set is_friend o day - /users/find khong tra ve trang thai ban be,
-        # gan sai (vd False cho nguoi that ra da la ban) se lam sai UI cho ca cac
-        # cho khac dang doc cot nay. De None -> upsert_group tu bo qua field nay.
+        # Gán thread_type="direct" để resolve_thread_type xác định đúng là cá nhân (0)
+        # khi gửi tin nhắn cho người lạ, không bị nhầm thành nhóm chat (1).
         await upsert_group(
             user_id=user_id,
             group_id=target_uid,
             group_name=body.display_name.strip(),
             avatar_url=body.avatar_url,
+            is_friend=False,
+            thread_type="direct",
         )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Không thể tạo hội thoại: {exc}")

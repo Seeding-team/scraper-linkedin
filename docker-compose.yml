@@ -9,6 +9,7 @@ services:
         NEXT_PUBLIC_API_FACEBOOK_BASE_URL: https://seeding.markeeai.com/
         NEXT_PUBLIC_LINKEDIN_CRAWLER_API_KEY: secret_api_key
         NEXT_PUBLIC_GOOGLE_CLIENT_ID: 957838257147-3jf82as4b1i0g1js004bkrpa1lhpcvp3.apps.googleusercontent.com
+        NEXT_PUBLIC_GMAIL_OAUTH_CLIENT_ID: ${NEXT_PUBLIC_GMAIL_OAUTH_CLIENT_ID:-}
     image: seeding-app-frontend:latest
     container_name: seeding-frontend
     restart: unless-stopped
@@ -39,6 +40,10 @@ services:
     environment:
       TZ: Asia/Ho_Chi_Minh
       CRM_INSTANCE: markee
+      CRM_PUBLIC_URL: ${CRM_PUBLIC_URL:-http://localhost:8080}
+      ONLYOFFICE_INTERNAL_URL: http://onlyoffice:80
+      ONLYOFFICE_PUBLIC_URL: ${ONLYOFFICE_PUBLIC_URL:-http://localhost:8094}
+      ONLYOFFICE_JWT_SECRET: ${ONLYOFFICE_JWT_SECRET:-}
       DISABLE_ZCA_LISTENERS: "0"
     expose:
       - "8000"
@@ -50,6 +55,30 @@ services:
       seeding-net:
         aliases:
           - backend
+
+  onlyoffice:
+    build:
+      context: ./onlyoffice
+      dockerfile: Dockerfile
+    image: seeding-onlyoffice:latest
+    container_name: seeding-onlyoffice
+    restart: unless-stopped
+    environment:
+      TZ: Asia/Ho_Chi_Minh
+      ALLOW_PRIVATE_IP_ADDRESS: "true"
+      ALLOW_META_IP_ADDRESS: "true"
+      JWT_ENABLED: "true"
+      JWT_SECRET: ${ONLYOFFICE_JWT_SECRET:-}
+      JWT_HEADER: Authorization
+      JWT_IN_BODY: "true"
+    ports:
+      - "${ONLYOFFICE_PORT:-8094}:80"
+    volumes:
+      - ./onlyoffice/local-production-linux.json:/etc/onlyoffice/documentserver/local-production-linux.json:ro
+    networks:
+      seeding-net:
+        aliases:
+          - onlyoffice
 
   router:
     image: nginx:alpine

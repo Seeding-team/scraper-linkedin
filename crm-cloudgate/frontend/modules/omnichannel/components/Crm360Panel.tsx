@@ -14,7 +14,9 @@ import {
   FileEdit,
   UserX,
   FilePlus2,
+  FileCheck,
 } from "lucide-react";
+
 
 interface Crm360PanelProps {
   conversation: ConversationItem | null;
@@ -326,11 +328,84 @@ export const Crm360Panel: React.FC<Crm360PanelProps> = ({
           }}
         />
 
-        {/* Section 4: Quick Actions Grid */}
+        {/* Section 4: Related Contracts (Hợp đồng liên quan) */}
+        <div className="space-y-1.5 border-t border-slate-100 pt-2.5">
+          <div className="flex items-center justify-between">
+            <h3 className="text-[11px] font-bold text-slate-600 uppercase tracking-wide flex items-center gap-1">
+              <FileCheck className="h-3 w-3 text-emerald-600" />
+              <span>Hợp đồng liên quan</span>
+              {conversation.contracts && conversation.contracts.length > 0 && (
+                <span className="rounded-full bg-slate-100 px-1.5 text-[9px] text-slate-600 font-semibold">
+                  {conversation.contracts.length}
+                </span>
+              )}
+            </h3>
+            <a
+              href="/all-platform/contracts"
+              target="_blank"
+              rel="noreferrer"
+              className="text-[10px] font-semibold text-[var(--color-markee-primary,#c2185b)] hover:underline"
+            >
+              Xem tất cả
+            </a>
+          </div>
+
+          {conversation.contracts && conversation.contracts.length > 0 ? (
+            <div className="space-y-1.5">
+              {conversation.contracts.map((ct) => (
+                <div
+                  key={ct.id}
+                  className="rounded-xl border border-slate-200 bg-white p-2.5 space-y-1 shadow-2xs hover:border-[var(--color-markee-primary,#c2185b)] transition cursor-pointer"
+                  onClick={() => window.open(`/all-platform/contracts?id=${ct.id}`, "_blank")}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-xs text-slate-800">{ct.code}</span>
+                    <span className="font-bold text-xs text-emerald-600">{ct.amount}</span>
+                  </div>
+                  <div className="text-[11px] font-medium text-slate-700 truncate" title={ct.title}>
+                    {ct.title}
+                  </div>
+                  <div className="flex items-center justify-between text-[10px] pt-0.5 border-t border-slate-50">
+                    <span
+                      className={`rounded px-1.5 py-0.2 font-semibold ${
+                        ct.status.toLowerCase().includes("hiệu lực") || ct.status.toLowerCase().includes("active")
+                          ? "bg-emerald-50 text-emerald-700"
+                          : ct.status.toLowerCase().includes("hết")
+                          ? "bg-rose-50 text-rose-700"
+                          : "bg-blue-50 text-blue-700"
+                      }`}
+                    >
+                      {ct.status}
+                    </span>
+                    {ct.signedAt && (
+                      <span className="text-slate-400">Ký ngày: {ct.signedAt}</span>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="rounded-xl border border-slate-100 bg-slate-50/50 p-2.5 text-center space-y-1">
+              <p className="text-[11px] text-slate-500">Chưa có hợp đồng nào cho khách hàng này</p>
+              <a
+                href="/all-platform/contracts"
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1 text-[11px] font-semibold text-[var(--color-markee-primary,#c2185b)] hover:underline pt-0.5"
+              >
+                <Plus className="h-3 w-3" />
+                <span>Tạo hợp đồng</span>
+              </a>
+            </div>
+          )}
+        </div>
+
+        {/* Section 5: Quick Actions Grid */}
         <div className="space-y-1.5 border-t border-slate-100 pt-2.5">
           <h3 className="text-[11px] font-bold text-slate-600 uppercase tracking-wide">
             Thao tác nhanh
           </h3>
+
 
           <div className="grid grid-cols-2 gap-1.5">
             <button

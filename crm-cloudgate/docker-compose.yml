@@ -7,6 +7,7 @@ services:
         NEXT_PUBLIC_LINKEDIN_CRAWLER_API_URL: ${CRM_PUBLIC_URL:-http://localhost:18091}
         NEXT_PUBLIC_LINKEDIN_CRAWLER_API_KEY: ${NEXT_PUBLIC_LINKEDIN_CRAWLER_API_KEY:-}
         NEXT_PUBLIC_GOOGLE_CLIENT_ID: ${NEXT_PUBLIC_GOOGLE_CLIENT_ID:-}
+        NEXT_PUBLIC_GMAIL_OAUTH_CLIENT_ID: ${NEXT_PUBLIC_GMAIL_OAUTH_CLIENT_ID:-}
         NEXT_PUBLIC_CRM_INSTANCE: cloudgate
     image: crm-cloudgate-frontend:latest
     container_name: crm-cloudgate-frontend
@@ -38,6 +39,29 @@ services:
     networks:
       crm-net:
         aliases: [backend]
+
+  onlyoffice:
+    build:
+      context: ./onlyoffice
+      dockerfile: Dockerfile
+    image: crm-cloudgate-onlyoffice:latest
+    container_name: crm-cloudgate-onlyoffice
+    restart: unless-stopped
+    environment:
+      TZ: Asia/Ho_Chi_Minh
+      ALLOW_PRIVATE_IP_ADDRESS: "true"
+      ALLOW_META_IP_ADDRESS: "true"
+      JWT_ENABLED: "true"
+      JWT_SECRET: ${ONLYOFFICE_JWT_SECRET:-}
+      JWT_HEADER: Authorization
+      JWT_IN_BODY: "true"
+    ports:
+      - "${ONLYOFFICE_PORT:-8096}:80"
+    volumes:
+      - ./onlyoffice/local-production-linux.json:/etc/onlyoffice/documentserver/local-production-linux.json:ro
+    networks:
+      crm-net:
+        aliases: [onlyoffice]
 
   router:
     image: nginx:alpine

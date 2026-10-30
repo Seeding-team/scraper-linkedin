@@ -13,6 +13,7 @@
 import { X, ExternalLink, Pencil } from "lucide-react";
 import { QuoteDocumentRenderer } from "@/modules/quotes/components/QuoteDocumentRenderer";
 import type { Quote, QuoteItem } from "@/modules/quotes";
+import { calculateQuoteTotals } from "@/modules/quotes/utils/quoteCalculations";
 import { internalQuoteStatusClass, internalQuoteStatusLabel } from "@/modules/quotes/constants/quoteConfig";
 import { formatQuoteAmountOr, quoteCurrencyToVnd } from '@/lib/currency';
 
@@ -475,11 +476,13 @@ export function QuoteQuickViewDrawer({ quote, open, customerName, dealName, onCl
                     quoteData={quote.data}
                     quoteItems={quote.items}
                     solutionItems={quote.data?.solutionItems}
-                    totals={{
-                      subtotalAmount: quote.subtotalAmount,
-                      totalVatAmount: quote.vatAmount,
-                      totalAmount: quote.totalAmount,
-                    }}
+                    totals={quote.items && quote.items.length > 0
+                      ? calculateQuoteTotals(quote.items, 0, quote.currency)
+                      : {
+                          subtotalAmount: quote.subtotalAmount,
+                          totalVatAmount: quote.vatAmount,
+                          totalAmount: quote.subtotalAmount + quote.vatAmount,
+                        }}
                     mode="detail"
                     isPublished={quote.processingStage === "published"}
                     quoteNumber={quote.quoteNumber}

@@ -152,14 +152,61 @@ document.addEventListener("markee-action-captured", (evt) => {
           }
           apiBase = apiBase.replace(/\/$/, "");
 
+          let finalLinkComment = linkComment || "";
+          let finalCommentId = commentId || "";
+
+          // Fallback DOM thông minh nếu linkComment chưa có comment_id=
+          if (actionType === "comment" && (!finalLinkComment || !finalLinkComment.includes("comment_id="))) {
+            try {
+              let foundHref = "";
+              if (content) {
+                const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null);
+                let textNode = null;
+                while ((textNode = walker.nextNode())) {
+                  if (textNode.nodeValue && textNode.nodeValue.trim() === content.trim()) {
+                    let parent = textNode.parentElement;
+                    for (let step = 0; step < 7 && parent; step++) {
+                      const linkEl = parent.querySelector('a[href*="comment_id="]');
+                      if (linkEl && linkEl.href) {
+                        foundHref = linkEl.href;
+                        break;
+                      }
+                      parent = parent.parentElement;
+                    }
+                    if (foundHref) break;
+                  }
+                }
+              }
+
+              if (!foundHref) {
+                const allCmtLinks = Array.from(document.querySelectorAll('a[href*="comment_id="]'));
+                if (allCmtLinks.length > 0) {
+                  const lastLink = allCmtLinks[allCmtLinks.length - 1];
+                  foundHref = lastLink.href || "";
+                }
+              }
+
+              if (foundHref) {
+                finalLinkComment = foundHref;
+                const m = foundHref.match(/comment_id=(\d+)/);
+                if (m && m[1]) finalCommentId = m[1];
+                console.log("[Comment Extension] Đã bóc tách thành công link comment từ DOM:", { finalLinkComment, finalCommentId });
+              }
+            } catch (domErr) {
+              console.warn("[Comment Extension] DOM fallback check error:", domErr);
+            }
+          }
+
           const kpiPayload = {
             email_member: targetEmail,
             link_post: config.target_link || postUrl,
-            link_comment: linkComment || "",
-            comment_id: commentId || "",
+            link_comment: finalLinkComment || "",
+            comment_id: finalCommentId || "",
             fanpage_id: config.fanpage_id || "",
             fanpage_name: config.fanpage_name || "",
             facebook_post_id: config.facebook_post_id || "unknown",
+            id_post: config.id_post || "",
+            platform: config.platform || "facebook",
             action_type: actionType,
             content: content || "",
             profile_id: fbUid || "",

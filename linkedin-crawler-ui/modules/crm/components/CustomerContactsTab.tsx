@@ -1,3 +1,4 @@
+import { getZaloChatUrl } from '@/lib/zaloChatNavigation';
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
@@ -11,7 +12,7 @@ import { ChevronDown, ChevronUp, Loader2, Plus, X } from './icons';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Users, Phone, Mail, AlertCircle } from 'lucide-react';
+import { Users, Phone, Mail, AlertCircle, MessageCircle } from 'lucide-react';
 
 function headers() {
   const value: Record<string, string> = { 'Content-Type': 'application/json' };

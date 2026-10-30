@@ -32,6 +32,8 @@ beautifulsoup4
 # Trich xuat text tu file mau hop dong (.docx/.pdf) cho AI Contract Copilot tham chieu
 python-docx
 pdfplumber
+pymupdf
+pytesseract
 # Zalo tap trung: Web Push notification (VAPID) -- thay the npm web-push cua guide goc
 pywebpush
 # Telegram Chat (Quan ly kenh & CSKH) -- client MTProto thuan Python, khong can subprocess/Node

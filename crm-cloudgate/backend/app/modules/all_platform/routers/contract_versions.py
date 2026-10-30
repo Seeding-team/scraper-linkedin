@@ -92,6 +92,19 @@ def save_contract_version(contract_id: str, payload: SaveVersionRequest, user: d
             _log_activity(contract_id, user.get("id"), "document_version_saved", {"version": n, "source": payload.source})
         except Exception:  # noqa: BLE001
             logger.warning("Không ghi được lịch sử phiên bản", exc_info=True)
+        # BUG THAT DA GAP (audit 2026-10-27, "hop dong AI Copilot khong bao gio tu dong bo
+        # Drive"): _queue_drive_sync() chi duoc goi tu create_contract()/update_contract() -
+        # hop dong tao qua AI Copilot (ContractAIWizard) goi create_contract() TRUOC khi DOCX
+        # ton tai (chua co gi de dong bo), roi luu DOCX qua endpoint NAY (mot duong hoan toan
+        # khac, khong di qua create_contract/update_contract) nen KHONG BAO GIO duoc xep lich
+        # dong bo - ca lan tao dau tien lan moi lan "Sua noi dung -> tao phien ban moi" sau nay.
+        # Xep lich o day (sau khi luu phien ban THAT) de luon dong bo DUNG noi dung moi nhat.
+        try:
+            from app.modules.all_platform.services.supabase_contract_service import _queue_drive_sync
+
+            _queue_drive_sync(contract_id)
+        except Exception:  # noqa: BLE001
+            logger.warning("Không xếp lịch đồng bộ Drive được cho phiên bản vừa lưu", exc_info=True)
         return BaseResponse(success=True, data={"version": n})
     except (PermissionError, LookupError) as exc:
         return _deny(exc)
@@ -214,6 +227,33 @@ def preview_external_document_as_pdf(contract_id: str, file_url: str, user: dict
         _authorize(contract_id, user)
     except (PermissionError, LookupError) as exc:
         return _deny(exc)
+    if "docs.google.com" in file_url or "drive.google.com" in file_url:
+        # KHONG tai qua httpx (se ra trang HTML dang nhap Google, khong phai noi dung that) -
+        # dung co che kiem tra quyen that + export rieng cho Google Docs/Drive (2026-10-27, gop y
+        # UX "kiem tra quyen doc nguon, neu thieu thi huong dan share thay vi bao loi 401 chung chung").
+        from app.modules.all_platform.services.contract_drive_service import (
+            check_file_readable, export_google_doc_as_pdf, extract_file_id_from_url,
+        )
+        from app.core.config import settings as app_settings
+
+        gdoc_id = extract_file_id_from_url(file_url)
+        if not gdoc_id:
+            return BaseResponse(success=False, message="Không đọc được file_id từ link Google Docs/Drive.")
+        if not check_file_readable(gdoc_id):
+            return BaseResponse(
+                success=False,
+                message=(
+                    f"Chưa có quyền đọc link này. Hãy chia sẻ file cho "
+                    f"{app_settings.google_service_account_email} (vai trò Xem) rồi thử lại, "
+                    "hoặc tải file từ máy lên thay thế."
+                ),
+            )
+        try:
+            content = export_google_doc_as_pdf(gdoc_id)
+        except Exception as exc:  # noqa: BLE001
+            return BaseResponse(success=False, message=f"Không xuất được nội dung từ Google Docs: {exc}")
+        return Response(content, media_type="application/pdf", headers={"Content-Disposition": 'inline; filename="hop-dong.pdf"'})
+
     import httpx
 
     try:

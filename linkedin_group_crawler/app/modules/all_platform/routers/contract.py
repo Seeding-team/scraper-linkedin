@@ -6,6 +6,8 @@ CRUD nội bộ dùng auth hiện có (get_current_user), theo đúng pattern qu
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query, UploadFile
+from fastapi.responses import Response
+from pydantic import BaseModel
 
 from app.core.config import settings
 from app.modules.all_platform.auth_deps import get_current_user
@@ -367,6 +369,7 @@ def contracts_precheck(payload: ContractPrecheckRequest, user: dict = Depends(ge
     issuer_out = ({
         "id": issuer.get("id"), "code": issuer.get("code"), "legalName": issuer.get("legalName"), "brandName": issuer.get("brandName"),
         "taxCode": issuer.get("taxCode"), "address": issuer.get("address"), "phone": issuer.get("phone"), "email": issuer.get("email"),
+        "contactName": issuer.get("contactName"), "positionCategoryId": issuer.get("positionCategoryId"), "positionLabel": issuer.get("positionLabel"),
         "status": issuer.get("status"),
     } if issuer else None)
     return BaseResponse(success=True, data={"ok": not gaps["blockers"], **gaps, "issuer": issuer_out, "parties": parties,
@@ -402,12 +405,20 @@ async def contracts_generate_draft(payload: ContractGenerateRequest, user: dict 
             issuer=_issuer_of_quote(quote), representative=representative,
         )
         # Số liệu trong bản nháp không có trong CRM/báo giá/yêu cầu người dùng (vd lấy từ mẫu tham chiếu) => cảnh báo để người duyệt kiểm tra
-        from app.modules.all_platform.services.contract_ai_service import _STANDARD_TERMS, _format_deal_context, _format_quote_context, numeric_tokens
+        from app.modules.all_platform.services.contract_ai_service import (
+            _STANDARD_TERMS,
+            _format_deal_context,
+            _format_quote_context,
+            _has_api_key,
+            numeric_tokens,
+        )
 
         allowed = " ".join([_format_deal_context(deal), _format_quote_context(quote), payload.extra_prompt or "", _STANDARD_TERMS, source.money_tokens_text(quote, deal if crm_mode else None, _issuer_of_quote(quote))])
         unknown = sorted(numeric_tokens(" ".join(c.get("body", "") for c in clauses)) - numeric_tokens(allowed))
         warnings = override_warnings + ([f"Bản nháp chứa số liệu không có trong CRM/báo giá/yêu cầu: {', '.join(unknown[:12])} - hãy kiểm tra trước khi lưu."] if unknown else [])
         warnings += source.payment_plan_mismatch_warning(quote, clauses)
+        if not _has_api_key():
+            warnings.insert(0, "Chế độ Local Dev: Chưa cấu hình CONTRACT_AI_API_KEY — Hợp đồng được sinh bằng bộ máy Heuristic/Regex tự động từ dữ liệu CRM & Báo giá.")
         return BaseResponse(success=True, data={"clauses": clauses, "warnings": warnings,
                                                  "parties": build_parties(deal, quote, _issuer_of_quote(quote), representative) if crm_mode else None})
     except source.SourceError as e:
@@ -498,5 +509,236 @@ async def contracts_ocr_reconcile(
                 "extractable": extracted.get("extractable", False),
             },
         )
+    except Exception as e:
+        return BaseResponse(success=False, message=str(e))
+
+
+class ContractImportDriveRequest(BaseModel):
+    url: str
+
+
+@contracts_router.post("/{contract_id}/document/upload")
+async def contracts_document_upload(
+    contract_id: str,
+    file: UploadFile = File(...),
+    user: dict = Depends(get_current_user),
+) -> BaseResponse:
+    """(A4/Tai lieu) Sale tai 1 file tu may len thay cho file goc cua hop dong - luu vao bucket
+    `crm-attachments` (dung chung ham upload_attachment() da co o luong "Ghi nhan hop dong co
+    san", khong lam lai co che upload moi), ghi `contracts.file_url`, roi xep job dong bo Drive
+    (KHONG goi Drive truc tiep trong request - dung chung pipeline worker A3)."""
+    contract, lead = _load_contract_and_lead(contract_id)
+    if not can_edit_contract(user, contract, lead):
+        return BaseResponse(success=False, message="Không có quyền với hợp đồng này")
+    from app.modules.all_platform.services.crm_attachment_service import (
+        MAX_FILE_SIZE_BYTES, allowed_mime, upload_attachment,
+    )
+
+    content = await file.read()
+    if len(content) > MAX_FILE_SIZE_BYTES:
+        return BaseResponse(success=False, message="File quá lớn (tối đa 25MB).")
+    if not allowed_mime(file.content_type):
+        return BaseResponse(success=False, message=f"Định dạng file không được hỗ trợ: {file.content_type or 'không rõ'}.")
+    public_url, error = upload_attachment(
+        prefix="contract", customer_id=contract.get("customerId") or contract.get("dealId"),
+        filename=file.filename or "hop-dong", content=content, content_type=file.content_type,
+    )
+    if error:
+        return BaseResponse(success=False, message=error)
+    try:
+        # update_contract() da tu dong xep job dong bo Drive (xem _queue_drive_sync wrapper trong
+        # supabase_contract_service.py) - khong can goi them o day.
+        updated = update_contract(contract_id, {"file_url": public_url, "source": contract.get("source") or "external"}, user.get("id"))
+        return BaseResponse(success=True, message="Đã tải file lên và xếp lịch đồng bộ Drive.", data=updated)
+    except Exception as e:
+        return BaseResponse(success=False, message=str(e))
+
+
+@contracts_router.post("/{contract_id}/document/import-drive")
+def contracts_document_import_drive(
+    contract_id: str, payload: ContractImportDriveRequest, user: dict = Depends(get_current_user),
+) -> BaseResponse:
+    """(A4/Tai lieu) Nhap 1 link Google Docs/Drive co san lam tai lieu goc cua hop dong - kiem tra
+    THAT quyen doc truoc (nguyen tac #4 trong plan), KHONG mac dinh "co link la co quyen". Thieu
+    quyen -> tra huong dan ro rang de Sale tu chia se cho service account hoac tai file thay the,
+    KHONG coi la loi he thong chung chung."""
+    contract, lead = _load_contract_and_lead(contract_id)
+    if not can_edit_contract(user, contract, lead):
+        return BaseResponse(success=False, message="Không có quyền với hợp đồng này")
+    url = (payload.url or "").strip()
+    if not url:
+        return BaseResponse(success=False, message="Thiếu link Google Docs/Drive.")
+    from app.modules.all_platform.services.contract_drive_service import check_file_readable, extract_file_id_from_url
+
+    if "docs.google.com" not in url and "drive.google.com" not in url:
+        return BaseResponse(success=False, message="Link phải là Google Docs/Drive (docs.google.com hoặc drive.google.com).")
+    file_id = extract_file_id_from_url(url)
+    if not file_id:
+        return BaseResponse(success=False, message="Không đọc được ID file từ link này — kiểm tra lại đúng link chia sẻ của Google Docs/Drive.")
+    if not check_file_readable(file_id):
+        return BaseResponse(success=False, message=(
+            f"Chưa có quyền đọc file này. Hãy mở link trên Google Drive → Chia sẻ → thêm "
+            f"{settings.google_service_account_email} (quyền Xem) rồi thử lại, hoặc tải file lên trực tiếp thay thế."
+        ))
+    try:
+        updated = update_contract(contract_id, {"file_url": url, "source": contract.get("source") or "external"}, user.get("id"))
+        return BaseResponse(success=True, message="Đã nhập file từ Google Drive và xếp lịch đồng bộ.", data=updated)
+    except Exception as e:
+        return BaseResponse(success=False, message=str(e))
+
+
+@contracts_router.post("/{contract_id}/document/import-via-oauth")
+def contracts_document_import_via_oauth(contract_id: str, user: dict = Depends(get_current_user)) -> BaseResponse:
+    """(2026-10-27, "nhap hop dong Google Docs/Drive rieng tu") Thay vi bat Sale tai file tu
+    may (vo ly khi file KHONG he nam tren may ho), dung CHINH OAuth token cua Sale (da ket noi
+    qua /google-oauth/start) de doc/export file rieng tu, roi UPLOAD BAN SAO do vao Shared
+    Drive bang service account co san (contract_drive_service) - file nguon tren Drive ca
+    nhan cua Sale KHONG he bi dong/doi quyen chia se."""
+    contract, lead = _load_contract_and_lead(contract_id)
+    if not can_edit_contract(user, contract, lead):
+        return BaseResponse(success=False, message="Không có quyền với hợp đồng này")
+    file_url = (contract.get("fileUrl") or "").strip()
+    if "docs.google.com" not in file_url and "drive.google.com" not in file_url:
+        return BaseResponse(success=False, message="Hợp đồng chưa có link Google Docs/Drive để nhập.")
+
+    from app.modules.all_platform.services import google_oauth_service as oauth
+    from app.modules.all_platform.services.contract_drive_service import (
+        _resolve_company_label, _sanitize_folder_name, ensure_contract_folder,
+        extract_file_id_from_url, upload_new_file_with_hash,
+    )
+
+    try:
+        user_id = user.get("id")
+        status = oauth.get_status(user_id)
+        if not status:
+            return BaseResponse(success=False, message="Chưa kết nối Google — bấm \"Kết nối Google để nhập\" trước.", data={"needsConnect": True})
+
+        file_id = extract_file_id_from_url(file_url)
+        if not file_id:
+            return BaseResponse(success=False, message="Không đọc được ID file từ link này.")
+        if not oauth.check_user_can_read_file(user_id, file_id):
+            return BaseResponse(success=False, message=(
+                f"Tài khoản Google đã kết nối ({status.get('email') or 'không rõ email'}) không có quyền đọc file này — "
+                "nhờ chủ sở hữu chia sẻ quyền Xem cho đúng tài khoản này, hoặc kết nối tài khoản khác đang có quyền."
+            ))
+        downloaded = oauth.download_file_via_user(user_id, file_id)
+        if downloaded is None:
+            return BaseResponse(success=False, message="Không tải được nội dung file (có quyền đọc nhưng tải lỗi — thử lại sau).")
+        content, _name, mime_type = downloaded
+
+        from app.core.supabase_client import get_supabase_client
+
+        sb = get_supabase_client()
+        contract_row = sb.table("contracts").select("*").eq("id", contract_id).limit(1).execute().data[0]
+        company_label = _resolve_company_label(contract_row)
+        filename = f"{_sanitize_folder_name(contract.get('contractNumber') or contract_id)}_Goc.pdf"
+        folder_id = ensure_contract_folder(contract_row["instance"], company_label, contract.get("contractNumber") or contract_id)
+        result = upload_new_file_with_hash(folder_id, filename, content, mime_type)
+        if not result["reused"]:
+            sb.table("contract_drive_files").insert({
+                "contract_id": contract_id, "drive_file_id": result["drive_file_id"], "file_name": filename,
+                "file_type": "original", "content_hash": result["content_hash"], "source_bucket": "google_oauth_import",
+            }).execute()
+        sb.table("contracts").update({"drive_folder_id": folder_id}).eq("id", contract_id).execute()
+
+        return BaseResponse(success=True, message="Đã nhập file qua tài khoản Google đã kết nối và lưu vào Drive CRM.", data={
+            "driveFileId": result["drive_file_id"], "folderId": folder_id,
+        })
+    except Exception as e:  # noqa: BLE001
+        return BaseResponse(success=False, message=str(e))
+
+
+@contracts_router.post("/{contract_id}/drive/sync")
+def contracts_drive_sync_retry(contract_id: str, user: dict = Depends(get_current_user)) -> BaseResponse:
+    """(A3) Dong bo lai thu cong - CHI insert 1 job moi vao contract_drive_sync_jobs, dung CHUNG
+    pipeline voi worker tu dong (khong goi Drive truc tiep trong request nay)."""
+    contract, lead = _load_contract_and_lead(contract_id)
+    if not can_edit_contract(user, contract, lead):
+        return BaseResponse(success=False, message="Không có quyền với hợp đồng này")
+    try:
+        get_supabase_client_for_drive_queue().table("contract_drive_sync_jobs").insert({
+            "contract_id": contract_id, "status": "queued",
+        }).execute()
+        return BaseResponse(success=True, message="Đã xếp lịch đồng bộ lại")
+    except Exception as e:
+        return BaseResponse(success=False, message=str(e))
+
+
+def get_supabase_client_for_drive_queue():
+    from app.core.supabase_client import get_supabase_client
+
+    return get_supabase_client()
+
+
+@contracts_router.post("/{contract_id}/ai-review-full")
+async def contracts_ai_review_full(contract_id: str, user: dict = Depends(get_current_user)) -> BaseResponse:
+    """(B5) Chay B2+B3 (hoac tra ve cache B1 neu noi dung hop dong+bao gia khong doi) - CHUA luu
+    gi len Drive, Sale xem truoc roi moi goi /ai-review/confirm."""
+    contract, lead = _load_contract_and_lead(contract_id)
+    if not can_edit_contract(user, contract, lead):
+        return BaseResponse(success=False, message="Không có quyền với hợp đồng này")
+    try:
+        from app.modules.all_platform.services.contract_ai_review_service import run_ai_review_full
+
+        result = await run_ai_review_full(contract_id)
+        return BaseResponse(success=True, data=result)
+    except Exception as e:
+        return BaseResponse(success=False, message=str(e))
+
+
+@contracts_router.get("/{contract_id}/ai-review/latest")
+async def contracts_ai_review_latest(contract_id: str, user: dict = Depends(get_current_user)) -> BaseResponse:
+    """(2026-10-27, fix bug "mat trang thai khi dong/mo lai panel") Doc phien AI Review GAN
+    NHAT da luu trong DB - KHONG goi AI, KHONG tao ban ghi moi. FE goi ham nay o LAN MO TAB/
+    PANEL dau tien (khong phai nut "Chay AI Review") de khoi phuc day du ket qua + Highlight
+    nhap + trang thai xac nhan, du da dong panel/doi tab/F5/dang nhap lai."""
+    contract, lead = _load_contract_and_lead(contract_id)
+    if not can_edit_contract(user, contract, lead):
+        return BaseResponse(success=False, message="Không có quyền với hợp đồng này")
+    try:
+        from app.modules.all_platform.services.contract_ai_review_service import get_latest_review_status
+
+        result = await get_latest_review_status(contract_id)
+        return BaseResponse(success=True, data=result)
+    except Exception as e:
+        return BaseResponse(success=False, message=str(e))
+
+
+@contracts_router.get("/{contract_id}/ai-review/{review_id}/highlight-preview-pdf")
+def contracts_ai_review_highlight_preview(contract_id: str, review_id: str, user: dict = Depends(get_current_user)):
+    """(B6) Xem truoc bang HIGHLIGHT THAT da tao san o run_ai_review_full() - DOCX duoc convert
+    sang PDF de xem (cung engine LibreOffice da dung cho cac noi khac), PDF tra thang."""
+    contract, lead = _load_contract_and_lead(contract_id)
+    if not can_edit_contract(user, contract, lead):
+        return BaseResponse(success=False, message="Không có quyền với hợp đồng này")
+    from app.modules.all_platform.services.contract_ai_review_service import get_highlight_preview_bytes
+    from app.modules.all_platform.services import contract_docx_engine as eng
+
+    result = get_highlight_preview_bytes(review_id)
+    if result is None:
+        return BaseResponse(success=False, message="Chưa có bản Highlight xem trước cho hợp đồng này")
+    content, mime_type = result
+    if mime_type != "application/pdf":
+        try:
+            content = eng.convert_docx_to_pdf(content)
+        except Exception as exc:  # noqa: BLE001
+            return BaseResponse(success=False, message=f"Không xem trước được bản Highlight: {exc}")
+    return Response(content, media_type="application/pdf", headers={"Content-Disposition": 'inline; filename="ai-highlight.pdf"'})
+
+
+@contracts_router.post("/{contract_id}/ai-review/confirm")
+async def contracts_ai_review_confirm(
+    contract_id: str, review_id: str = Form(...), user: dict = Depends(get_current_user)
+) -> BaseResponse:
+    """(B5, nguyen tac #6) Sale xac nhan sau khi xem truoc ket qua - LUC NAY moi tao file
+    Highlight that + day len Drive."""
+    contract, lead = _load_contract_and_lead(contract_id)
+    if not can_edit_contract(user, contract, lead):
+        return BaseResponse(success=False, message="Không có quyền với hợp đồng này")
+    try:
+        from app.modules.all_platform.services.contract_ai_review_service import confirm_ai_review
+
+        result = await confirm_ai_review(contract_id, review_id, user.get("id"))
+        return BaseResponse(success=True, data=result)
     except Exception as e:
         return BaseResponse(success=False, message=str(e))

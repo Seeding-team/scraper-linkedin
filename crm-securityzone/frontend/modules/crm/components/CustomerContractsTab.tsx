@@ -297,7 +297,7 @@ export function CustomerContractsTab({
               </div>
               <button type="button" className="crm-modal-close" onClick={() => setUploadOpen(false)} aria-label="Đóng">✕</button>
             </header>
-            <div style={{ flex: 1, overflowY: 'auto', padding: '0 1.25rem 1.25rem' }}>
+            <div style={{ flex: 1, overflowY: 'auto', padding: '1.25rem' }}>
               <ContractTemplatesPanel />
             </div>
           </aside>

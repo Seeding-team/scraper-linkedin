@@ -18,7 +18,16 @@ export const API_BASE_URL = resolveApiBaseUrl();
 
 export const API_KEY = process.env.NEXT_PUBLIC_LINKEDIN_CRAWLER_API_KEY ?? "";
 
-export const GOOGLE_OAUTH_CLIENT_ID = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID ?? "";
+// OAuth client IDs are public identifiers. Keep a Dev fallback aligned with
+// the backend so Google Identity Services can open the account chooser even
+// when a standalone clone has an empty NEXT_PUBLIC build arg.
+export const GOOGLE_OAUTH_CLIENT_ID =
+  process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID ||
+  "674669134021-dk8gikthiul7hnvqinoob6p59mirhtd9.apps.googleusercontent.com";
+
+// Gmail Inbox uses a dedicated OAuth client so CRM login/Drive credentials
+// remain unchanged. No fallback: each Dev build must receive this explicitly.
+export const GMAIL_OAUTH_CLIENT_ID = process.env.NEXT_PUBLIC_GMAIL_OAUTH_CLIENT_ID || "";
 
 /**
  * TÍCH HỢP BỘ LỌC WORKSPACE:

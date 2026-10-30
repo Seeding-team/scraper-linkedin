@@ -1242,18 +1242,20 @@ class ZcaPersistentListenerManager:
                 # Personal chat (DM): tìm tên từ sender của bất kỳ message nào trong batch.
                 # Không chỉ dùng messages[0] vì message đầu có thể là tin của chính mình
                 # (sender_name = "__me__") — cần tìm tin từ đối phương.
-                _dm_skip = {"__me__", "me", "ban", "bạn", "", None}
+                _dm_skip = {"__me__", "me", "ban", "bạn", "markee", "", None}
                 for _msg in messages:
-                    if _msg.sender_name not in _dm_skip:
-                        group_name = _msg.sender_name
+                    s_name = (_msg.sender_name or "").strip()
+                    if s_name and s_name.lower() not in _dm_skip and not getattr(_msg, "is_sent", False):
+                        group_name = s_name
                         break
                 # Nếu toàn bộ batch là tin của mình (gửi đi), kiểm tra in-memory cache
                 # để xem đối phương có tên trong tin nhắn cũ không.
                 if not group_name:
                     cached_msgs = list((self._cache.get((state.user_id, group_id)) or {}).values())
                     for _msg in reversed(cached_msgs):  # tin mới nhất trước
-                        if _msg.sender_name not in _dm_skip:
-                            group_name = _msg.sender_name
+                        s_name = (_msg.sender_name or "").strip()
+                        if s_name and s_name.lower() not in _dm_skip and not getattr(_msg, "is_sent", False):
+                            group_name = s_name
                             break
                 if not group_name:
                     # Cuối cùng mới dùng group_id — vẫn hiển thị đẹp hơn "Conversation g123"

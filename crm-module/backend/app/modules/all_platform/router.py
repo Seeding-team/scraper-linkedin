@@ -42,8 +42,13 @@ from app.modules.all_platform.routers.quote import (
 from app.modules.all_platform.routers.price_book import price_book_router, price_book_admin_router
 from app.modules.all_platform.routers.project import router as project_router
 from app.modules.all_platform.routers.contract import contracts_router
+# (2026-10-27) Da TAT theo yeu cau sep ("bo chuc nang, khong xai nua") sau khi gap
+# InsecureTransportError luc test dev - xem google_oauth_service.py/google_oauth.py (van giu
+# nguyen code, chi KHONG mount router nua) de bat lai sau neu can.
+# from app.modules.all_platform.routers.google_oauth import google_oauth_router
 from app.modules.all_platform.routers.contract_docx import contract_docx_router
 from app.modules.all_platform.routers.contract_versions import contract_versions_router
+from app.modules.all_platform.routers.contract_edit import contract_edit_router
 from app.modules.all_platform.routers.progress import progress_router
 from app.modules.all_platform.routers.contract_template import contract_templates_router
 from app.modules.all_platform.routers.service_catalog import router as service_catalog_router
@@ -132,6 +137,7 @@ all_platform_router.include_router(project_router, prefix="/projects", tags=["Al
 
 # ── Contracts (AI Contract Copilot) ────────────────────────────────────────────
 all_platform_router.include_router(contracts_router, prefix="/contracts", tags=["All-Platform Contracts"])
+# all_platform_router.include_router(google_oauth_router, prefix="/google-oauth", tags=["All-Platform Google OAuth"])
 all_platform_router.include_router(
     contract_docx_router,
     prefix="/contract-docs",
@@ -141,6 +147,11 @@ all_platform_router.include_router(
     contract_versions_router,
     prefix="/contract-docs",
     tags=["All-Platform Contract Documents (versions, risk, readiness)"],
+)
+all_platform_router.include_router(
+    contract_edit_router,
+    prefix="/contracts",
+    tags=["All-Platform Contract Word Editor (OnlyOffice, dev only)"],
 )
 all_platform_router.include_router(
     contract_templates_router,
@@ -186,3 +197,12 @@ all_platform_router.include_router(telegram_accounts_router, prefix="/telegram",
 all_platform_router.include_router(telegram_conversations_router, prefix="/telegram", tags=["Telegram Conversations"])
 all_platform_router.include_router(telegram_messages_router, prefix="/telegram", tags=["Telegram Messages"])
 all_platform_router.include_router(telegram_events_router, prefix="/telegram", tags=["Telegram Events"])
+
+# ── Email Inbox (IMAP/SMTP Omnichannel) ─────────────────────────────────────────
+from app.modules.all_platform.email.api.routes.email_inbox import router as email_inbox_router
+
+all_platform_router.include_router(
+    email_inbox_router,
+    prefix="/email-inbox",
+    tags=["All-Platform Email Inbox"],
+)
