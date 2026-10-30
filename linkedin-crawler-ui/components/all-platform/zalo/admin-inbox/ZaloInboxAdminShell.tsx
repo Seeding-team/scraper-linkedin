@@ -269,6 +269,27 @@ function getPathString(source: unknown, keys: string[]): string | undefined {
   return visit(source);
 }
 
+const MEDIA_PRIORITY_KEYS = [
+  "hdUrl",
+  "normalUrl",
+  "url",
+  "href",
+  "src",
+  "imageUrl",
+  "photoUrl",
+  "fileUrl",
+  "downloadUrl",
+  "videoUrl",
+  "voiceUrl",
+  "stickerUrl",
+  "stickerWebpUrl",
+  "thumbUrl",
+  "thumbnail",
+  "thumb",
+  "icon",
+  "avatar",
+] as const;
+
 function collectRawUrls(source: unknown, out = new Set<string>()): string[] {
   const parsed = parseMaybeJson(source);
   if (!parsed) return Array.from(out);
@@ -284,11 +305,25 @@ function collectRawUrls(source: unknown, out = new Set<string>()): string[] {
   }
   const record = asRecord(parsed);
   if (!record) return Array.from(out);
-  for (const key of ["hdUrl", "normalUrl", "url", "href", "src", "imageUrl", "photoUrl", "thumb", "thumbnail", "thumbUrl", "icon", "avatar", "fileUrl", "downloadUrl", "stickerUrl", "stickerWebpUrl", "videoUrl", "voiceUrl"]) {
+
+  // Nếu record này trực tiếp đại diện cho 1 đối tượng media có nhiều độ phân giải
+  // (ví dụ: { hdUrl, normalUrl, thumbUrl }), CHỈ lấy 1 URL chất lượng cao nhất
+  // theo thứ tự ưu tiên, tránh gom cả 3 độ phân giải của CÙNG 1 ảnh vào mảng gây
+  // nhân bản 3 ảnh trên UI trong thời gian thực (lỗi 2026-10-30).
+  let foundDirectMedia = false;
+  for (const key of MEDIA_PRIORITY_KEYS) {
     const value = record[key];
-    if (typeof value === "string" && (/^https?:\/\//i.test(value.trim()) || /^data:/i.test(value.trim()))) out.add(value.trim());
+    if (typeof value === "string" && (/^https?:\/\//i.test(value.trim()) || /^data:/i.test(value.trim()))) {
+      out.add(value.trim());
+      foundDirectMedia = true;
+      break;
+    }
   }
-  Object.values(record).forEach((value) => collectRawUrls(value, out));
+
+  // Chỉ duyệt sâu vào các thuộc tính con nếu record này là container bao ngoài
+  if (!foundDirectMedia) {
+    Object.values(record).forEach((value) => collectRawUrls(value, out));
+  }
   return Array.from(out);
 }
 
@@ -305,8 +340,14 @@ function normalizeMessageAssets(message: ZaloLibraryMessage): NormalizedAsset[] 
   for (const asset of message.assets ?? []) {
     addUrl(asset.storage_url || asset.source_url, asset);
   }
-  for (const rawUrl of collectRawUrls(message.raw_content as unknown)) {
-    addUrl(rawUrl);
+  // Chỉ fallback quét URL từ raw_content nếu message.assets chưa có asset nào
+  // (thường xảy ra ở thời gian thực lúc tin mới tới trước khi background task lưu storage).
+  // Nếu message.assets đã có dữ liệu chuẩn hóa, bỏ qua raw_content để tránh trùng lặp
+  // giữa link Supabase Storage và link CDN Zalo gốc.
+  if (normalized.length === 0) {
+    for (const rawUrl of collectRawUrls(message.raw_content as unknown)) {
+      addUrl(rawUrl);
+    }
   }
   return normalized;
 }

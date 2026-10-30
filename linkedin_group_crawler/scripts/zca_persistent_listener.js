@@ -200,12 +200,17 @@ function collectUrls(value, out = []) {
     return Array.from(new Set(out));
   }
   if (typeof value === "object") {
-    for (const key of ["hdUrl", "normalUrl", "thumbUrl", "url", "imageUrl", "photoUrl", "src", "fileUrl", "href", "stickerUrl", "stickerWebpUrl", "oriUrl", "rawUrl", "gifUrl"]) {
+    let found = false;
+    for (const key of ["hdUrl", "normalUrl", "url", "imageUrl", "photoUrl", "src", "fileUrl", "href", "stickerUrl", "stickerWebpUrl", "oriUrl", "rawUrl", "gifUrl", "thumbUrl"]) {
       if (value[key] && typeof value[key] === "string" && isLikelyImageUrl(value[key])) {
         out.push(value[key].trim());
+        found = true;
+        break; // Lấy 1 URL chất lượng cao nhất cho 1 object media, tránh gom cả hdUrl lẫn normalUrl/thumbUrl
       }
     }
-    for (const item of Object.values(value)) collectUrls(item, out);
+    if (!found) {
+      for (const item of Object.values(value)) collectUrls(item, out);
+    }
   }
   return Array.from(new Set(out));
 }
