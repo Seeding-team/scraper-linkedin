@@ -158,7 +158,7 @@ export function RotationCrawlPanel() {
   const [showAddModal, setShowAddModal] = useState(false);
 
   const needsUpdate = isReady && !features.includes("rotate_crawl");
-  const canAdd = isReady && !needsUpdate && isSystemAccount;
+  const canAdd = isReady && !needsUpdate;
 
   return (
     <div className="bg-card rounded-2xl border border-border shadow-sm overflow-hidden w-full">
@@ -174,8 +174,7 @@ export function RotationCrawlPanel() {
             </p>
           </div>
         </div>
-{isSystemAccount ? (
-          <button
+<button
             type="button"
             onClick={() => setShowAddModal(true)}
             disabled={!canAdd}
@@ -184,20 +183,17 @@ export function RotationCrawlPanel() {
             <span className="material-symbols-outlined text-[18px]">add_circle</span>
             Thêm lịch cào
           </button>
-        ) : null}
       </div>
 
-      {!isSystemAccount ? (
-        <div className="mx-4 mt-3 rounded-xl border border-emerald-200 bg-emerald-50/90 p-3.5 text-xs text-emerald-900 leading-relaxed flex items-start gap-2.5 shadow-2xs">
-          <span className="material-symbols-outlined text-emerald-600 text-[20px] shrink-0">verified_user</span>
-          <div>
-            <p className="font-bold text-emerald-950">Chế độ Bảo Vệ An Toàn Cho Thành Viên (Zero-Interference)</p>
-            <p className="mt-0.5 text-emerald-800">
-              Tài khoản của bạn được cách ly an toàn. Toàn bộ tiến trình cào xoay vòng tự động qua các nhóm Facebook & LinkedIn được điều phối độc quyền bởi <b>Tài khoản Hệ thống chuyên dụng (System VPS Crawler)</b>. Trình duyệt của thành viên sẽ không bao giờ bị tự mở tab hay can thiệp, dữ liệu bài viết chất lượng cao (≥ 80 điểm) sẽ tự động đồng bộ về để bạn làm nhiệm vụ nhận KPI.
-            </p>
-          </div>
+      <div className="mx-4 mt-3 rounded-xl border border-emerald-200 bg-emerald-50/90 p-3.5 text-xs text-emerald-900 leading-relaxed flex items-start gap-2.5 shadow-2xs">
+        <span className="material-symbols-outlined text-emerald-600 text-[20px] shrink-0">verified_user</span>
+        <div>
+          <p className="font-bold text-emerald-950">Chế độ Tự Cào & Quản Lý Lịch Cá Nhân Độc Lập</p>
+          <p className="mt-0.5 text-emerald-800">
+            Bạn có thể tự do bấm <b>&quot;Thêm lịch cào&quot;</b> để thiết lập lịch cào các nhóm mục tiêu của riêng mình với thông số cá nhân hóa (độ trễ, nghỉ giữa các nhóm, tự ngắt khi gặp 15 bài cũ). Nếu tắt tab hoặc app, tiến trình sẽ tự động tạm dừng an toàn để bảo vệ tài khoản của bạn.
+          </p>
         </div>
-      ) : null}
+      </div>
 
       {status !== "ready" ? (
         <div className="mx-4 mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800 leading-relaxed">
@@ -381,6 +377,10 @@ function AddScheduleModal({
   });
   const [repeatEnabled, setRepeatEnabled] = useState(true);
   const [antiBotEnabled, setAntiBotEnabled] = useState(true);
+  const [delayMin, setDelayMin] = useState(1.5);
+  const [delayMax, setDelayMax] = useState(2.8);
+  const [groupRestSec, setGroupRestSec] = useState(45);
+  const [oldPostsLimit, setOldPostsLimit] = useState(15);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -595,6 +595,76 @@ function AddScheduleModal({
               />
               <span>Tự động lặp lại (chỉ chạy tiếp nếu tab Seeding vẫn còn mở)</span>
             </label>
+          </div>
+
+          {/* Cấu hình nâng cao & An toàn cào */}
+          <div className="rounded-xl border border-border bg-muted/20 p-4 space-y-3">
+            <h4 className="text-xs font-bold uppercase tracking-wider text-foreground flex items-center gap-1.5">
+              <span className="material-symbols-outlined text-[16px] text-primary">tune</span>
+              Tùy chỉnh thông số cào an toàn (Cá nhân hóa)
+            </h4>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div>
+                <label className="text-[11px] font-semibold text-muted-foreground block mb-1">
+                  Độ trễ cuộn ngẫu nhiên (giây)
+                </label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number"
+                    step="0.1"
+                    min="1.0"
+                    max="5.0"
+                    value={delayMin}
+                    onChange={(e) => setDelayMin(Number(e.target.value) || 1.5)}
+                    className="w-full rounded-lg border border-border bg-background px-2.5 py-1.5 text-xs text-center font-bold"
+                  />
+                  <span className="text-xs text-muted-foreground">-</span>
+                  <input
+                    type="number"
+                    step="0.1"
+                    min="1.5"
+                    max="10.0"
+                    value={delayMax}
+                    onChange={(e) => setDelayMax(Number(e.target.value) || 2.8)}
+                    className="w-full rounded-lg border border-border bg-background px-2.5 py-1.5 text-xs text-center font-bold"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="text-[11px] font-semibold text-muted-foreground block mb-1">
+                  Nghỉ giữa các nhóm (giây)
+                </label>
+                <input
+                  type="number"
+                  min="15"
+                  max="180"
+                  value={groupRestSec}
+                  onChange={(e) => setGroupRestSec(Number(e.target.value) || 45)}
+                  className="w-full rounded-lg border border-border bg-background px-2.5 py-1.5 text-xs text-center font-bold"
+                />
+              </div>
+
+              <div>
+                <label className="text-[11px] font-semibold text-muted-foreground block mb-1">
+                  Dừng nhóm khi gặp bài cũ
+                </label>
+                <div className="flex items-center gap-1.5">
+                  <input
+                    type="number"
+                    min="5"
+                    max="50"
+                    value={oldPostsLimit}
+                    onChange={(e) => setOldPostsLimit(Number(e.target.value) || 15)}
+                    className="w-full rounded-lg border border-border bg-background px-2.5 py-1.5 text-xs text-center font-bold text-rose-600"
+                  />
+                  <span className="text-[11px] text-muted-foreground whitespace-nowrap">bài liên tiếp</span>
+                </div>
+              </div>
+            </div>
+            <p className="text-[10px] text-muted-foreground">
+              ⚡ Tự động dừng nhóm hiện tại khi gặp <b>{oldPostsLimit} bài cũ</b> (ngoài ngày hôm nay) để tiết kiệm thời gian và tài nguyên, mô phỏng hành vi người thật chống checkpoint.
+            </p>
           </div>
 
           {error ? (

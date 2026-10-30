@@ -14,6 +14,26 @@ let isRunning = false;
 let shouldStop = false;
 let currentTabId = null;
 
+// Watchdog Lifecycle: Nếu người dùng đóng tab Web Seeding hoặc tắt trình duyệt,
+// lập tức dừng cào và đóng sạch các tab cào ngầm để bảo vệ an toàn cho tài khoản.
+let lastAppHeartbeat = Date.now();
+function stopCrawlAndCloseCrawlTabs(reason = 'TAB_CLOSED') {
+    shouldStop = true;
+    isRunning = false;
+    if (currentTabId) {
+        chrome.tabs.remove(currentTabId).catch(() => {});
+        currentTabId = null;
+    }
+    chrome.storage.local.set({ crawl_status: 'PAUSED_BY_USER_TAB_CLOSED' });
+    sendLog(`🛑 [Lifecycle Watchdog] ${reason === 'TAB_CLOSED' ? 'Đã phát hiện tắt tab/app Web Seeding' : reason}. Đã lập tức dừng cào và đóng sạch các tab ngầm!`, false, 'warn');
+}
+
+setInterval(() => {
+    if (isRunning && Date.now() - lastAppHeartbeat > 8000) {
+        stopCrawlAndCloseCrawlTabs('Mất kết nối tab Web Seeding quá 8 giây');
+    }
+}, 3000);
+
 // Nhận lệnh từ Popup
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (msg.action === 'START_AUTO_CRAWL') {
@@ -31,6 +51,15 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             sendLog('🏁 Đã hoàn thành đủ số nhịp cuộn tối đa cho nhóm này. Chuyển nhóm...', false, 'info');
         }
         sendResponse({ received: true });
+    } else if (msg.action === 'APP_TAB_HEARTBEAT' || msg.action === 'APP_TAB_ACTIVE') {
+        lastAppHeartbeat = Date.now();
+        sendResponse({ alive: true });
+    } else if (msg.action === 'APP_TAB_CLOSING') {
+        lastAppHeartbeat = 0;
+        if (isRunning) {
+            stopCrawlAndCloseCrawlTabs('Người dùng chủ động đóng tab Web Seeding');
+        }
+        sendResponse({ stopped: true });
     }
 });
 

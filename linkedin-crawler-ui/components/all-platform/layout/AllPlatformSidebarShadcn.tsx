@@ -7,7 +7,7 @@
 // khong doi hanh vi/quyen.
 import * as React from "react";
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { LogOut, Settings2, ChevronLeft, ChevronRight } from "lucide-react";
 
 import { cn } from "@/lib/utils";
@@ -100,8 +100,9 @@ function SidebarLogoHeader() {
 
 function LeafLink({ item }: { item: NavLeafItem }) {
   const pathname = usePathname();
+  const searchParams = useSearchParams();
   const Icon = materialToLucideIcon(item.icon);
-  const active = isLeafActive(pathname, item);
+  const active = isLeafActive(pathname, item, searchParams);
   return (
     <SidebarMenuItem>
       <SidebarMenuButton asChild isActive={active} tooltip={item.label}>
@@ -129,11 +130,12 @@ function GroupLinks({
   toggleGroup: (id: string, current: boolean) => void;
 }) {
   const pathname = usePathname();
+  const searchParams = useSearchParams();
   const Icon = materialToLucideIcon(entry.icon);
   const hasActiveChild = entry.items.some((child) =>
     child.type === "item"
-      ? isLeafActive(pathname, child)
-      : child.items.some((sub) => isLeafActive(pathname, sub)),
+      ? isLeafActive(pathname, child, searchParams)
+      : child.items.some((sub) => isLeafActive(pathname, sub, searchParams)),
   );
 
   // Nhóm cha mặc định mở (true) trừ khi người dùng click đóng; nếu có trang con active thì luôn mở
@@ -177,7 +179,7 @@ function GroupLinks({
                   {entry.items.map((child) => {
                     if (child.type === "item") {
                       const ItemIcon = materialToLucideIcon(child.icon);
-                      const active = isLeafActive(pathname, child);
+                      const active = isLeafActive(pathname, child, searchParams);
                       return (
                         <SidebarMenuSubItem key={child.id}>
                           <SidebarMenuSubButton asChild isActive={active}>
@@ -197,7 +199,7 @@ function GroupLinks({
 
                     // child.type === "subgroup"
                     const SubIcon = materialToLucideIcon(child.icon);
-                    const subHasActiveChild = child.items.some((sub) => isLeafActive(pathname, sub));
+                    const subHasActiveChild = child.items.some((sub) => isLeafActive(pathname, sub, searchParams));
                     // Menu con mặc định MỞ (true), giữ nguyên mở trừ khi đóng/đăng xuất; nếu có trang con active thì luôn mở
                     const isSubOpen = subHasActiveChild || (openSubgroups[child.id] ?? child.defaultOpen ?? true);
 
@@ -234,7 +236,7 @@ function GroupLinks({
                           <ul className="min-h-0 space-y-0.5 border-l border-sidebar-border/70 ml-2 pl-2 my-0.5">
                             {child.items.map((subItem) => {
                               const SubItemIcon = materialToLucideIcon(subItem.icon);
-                              const subActive = isLeafActive(pathname, subItem);
+                              const subActive = isLeafActive(pathname, subItem, searchParams);
                               return (
                                 <SidebarMenuSubItem key={subItem.id}>
                                   <SidebarMenuSubButton asChild isActive={subActive}>

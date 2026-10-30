@@ -71,9 +71,25 @@ function pathMatchesPrefix(pathname: string, prefix: string): boolean {
   return pathname.startsWith(prefix.endsWith("/") ? prefix : `${prefix}/`);
 }
 
-export function isLeafActive(pathname: string, item: NavLeafItem) {
+export function isLeafActive(pathname: string, item: NavLeafItem, searchParams?: URLSearchParams | null) {
+  if (item.href.includes("?")) {
+    const [itemPath, itemQuery] = item.href.split("?");
+    if (pathname !== itemPath) return false;
+    if (!searchParams) return false;
+    const itemParams = new URLSearchParams(itemQuery);
+    for (const [k, v] of itemParams.entries()) {
+      if (searchParams.get(k) !== v) return false;
+    }
+    return true;
+  }
   if (item.exactMatch) return pathname === item.href.split("?")[0];
-  if (pathname === item.href) return true;
+  if (pathname === item.href) {
+    if (searchParams && (searchParams.has("tab") || searchParams.has("sub"))) {
+      const tabVal = searchParams.get("tab");
+      return !tabVal || tabVal === "feed";
+    }
+    return true;
+  }
   if (item.matchStartsWith?.some((prefix) => pathMatchesPrefix(pathname, prefix))) return true;
   return pathMatchesPrefix(pathname, item.href) && item.href !== "/all-platform/post-feed";
 }
@@ -238,14 +254,69 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, workspaceTab: 
     },
   ];
 
-  const contentItems: NavLeafItem[] = [
+  const contentItems: NavGroupChild[] = [
     {
       type: "item",
       id: "internal-engagement",
-      href: "/all-platform/internal-engagement",
+      href: "/all-platform/internal-engagement?tab=feed",
       icon: "chat_bubble",
       label: "Tương tác nội bộ",
-      matchStartsWith: ["/all-platform/internal-engagement"],
+      exactMatch: true,
+    },
+    {
+      type: "subgroup",
+      id: "external-seeding-subgroup",
+      icon: "travel_explore",
+      label: "Seeding bên ngoài",
+      defaultOpen: true,
+      items: [
+        {
+          type: "item",
+          id: "external-activity",
+          href: "/all-platform/internal-engagement?tab=external&sub=activity",
+          icon: "bolt",
+          label: "Hoạt động seeding",
+        },
+        {
+          type: "item",
+          id: "external-groups",
+          href: "/all-platform/quan-ly-nhom",
+          icon: "folder",
+          label: "Kho thư viện Group",
+        },
+        {
+          type: "item",
+          id: "external-schedules",
+          href: "/all-platform/internal-engagement?tab=external&sub=queue&subtab=schedule",
+          icon: "calendar_today",
+          label: "Lịch cào & Hàng đợi",
+        },
+        {
+          type: "item",
+          id: "external-accounts-stats",
+          href: "/all-platform/internal-engagement?tab=external&sub=queue&subtab=accounts",
+          icon: "manage_accounts",
+          label: "Thống kê tài khoản",
+        },
+        ...(isAdmin || isLeader
+          ? [
+              {
+                type: "item",
+                id: "external-leader-dashboard",
+                href: "/all-platform/internal-engagement?tab=external&sub=leader",
+                icon: "analytics",
+                label: "Dashboard leader",
+              } as NavLeafItem,
+            ]
+          : []),
+        {
+          type: "item",
+          id: "external-reports",
+          href: "/all-platform/internal-engagement?tab=overview",
+          icon: "analytics",
+          label: "Tổng quan báo cáo",
+        },
+      ],
     },
     {
       type: "item",

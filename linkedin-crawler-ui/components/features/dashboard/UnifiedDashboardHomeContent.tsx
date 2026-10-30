@@ -11,6 +11,8 @@ import { SeedingExtensionPanel, type PanelTab } from "@/components/all-platform/
 import { useYouTubeCommentResults } from "@/components/all-platform/components/seeding-extension/use-youtube-seeding";
 import { YouTubeCommentModal } from "@/components/all-platform/components/youtube-comment-modal";
 import { useAppAuth } from "@/contexts/AppAuthContext";
+import { useSearchParams } from "next/navigation";
+import { PostQuickViewModal } from "@/components/all-platform/components/PostQuickViewModal";
 import { FilterBar, type FilterState } from "@/components/all-platform/components/filter-bar";
 import { PostCard } from "@/components/all-platform/components/post-card";
 import { toast } from "sonner";
@@ -232,11 +234,25 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
   // giống gate của SeedingActivityPanel) / Kho thư viện Group / Lịch crawl & Hàng đợi.
   // 2 tab sau tái dùng NGUYÊN trang thật đã có sẵn trong sidebar ("Kho nhóm",
   // "Giám sát hàng đợi cào") — không xây lại, tránh 2 nơi hiển thị lệch dữ liệu nhau.
+  const searchParams = useSearchParams();
+  const urlSub = searchParams?.get("sub");
+  const urlSubTab = searchParams?.get("subtab");
+
   const [subView, setSubView] = useState<"activity" | "leader" | "library" | "queue">("activity");
-  // 3 tab con trong "Lịch crawl & Hàng đợi" (2026-09-30): "Tài khoản seeding" (mặc định —
-  // bảng thành viên/extension/group/lịch sử cào) / "Lịch cào" (nhiều lịch xoay vòng độc
-  // lập) / "Hàng đợi VPS" (giám sát job đa VPS cào Facebook — trang cũ, không đổi).
   const [queueSubTab, setQueueSubTab] = useState<"accounts" | "schedule" | "vps">("accounts");
+
+  useEffect(() => {
+    if (urlSub === "activity" || urlSub === "leader" || urlSub === "library" || urlSub === "queue") {
+      setSubView(urlSub);
+    }
+    if (urlSubTab === "accounts" || urlSubTab === "schedule" || urlSubTab === "vps") {
+      setQueueSubTab(urlSubTab);
+    }
+  }, [urlSub, urlSubTab]);
+
+  const [quickViewPost, setQuickViewPost] = useState<UnifiedPost | null>(null);
+  const [isReviewMode, setIsReviewMode] = useState(false);
+  const [reviewedPostIds, setReviewedPostIds] = useState<Set<string>>(new Set());
   const [showBulkCommentModal, setShowBulkCommentModal] = useState(false);
 
   const [detailModalPost, setDetailModalPost] = useState<UnifiedPost | null>(null);
@@ -948,6 +964,69 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
             ))}
           </div>
 
+          {/* Toolbar Phong Cách Mua Sắm Công: Bộ lọc nhanh & Nút ⚡ Review Nhanh */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-card border border-border rounded-2xl p-4 shadow-xs">
+            <div className="flex items-center gap-2 flex-wrap text-xs">
+              <span className="font-bold text-foreground flex items-center gap-1.5">
+                <span className="material-symbols-outlined text-[18px] text-primary">filter_alt</span>
+                Bộ lọc nhanh:
+              </span>
+              <span className="text-xs text-muted-foreground font-medium mr-1">
+                Tổng: <b className="text-foreground">{totalCount}</b> bài viết
+              </span>
+            </div>
+
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => setIsReviewMode(!isReviewMode)}
+                className={cn(
+                  "inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold transition shadow-sm cursor-pointer",
+                  isReviewMode
+                    ? "bg-amber-600 text-white hover:bg-amber-700 ring-2 ring-amber-300"
+                    : "bg-primary text-primary-foreground hover:opacity-95"
+                )}
+              >
+                <span className="material-symbols-outlined text-[16px]">bolt</span>
+                {isReviewMode ? "Thoát Review Nhanh" : "⚡ Review Nhanh (MSC)"}
+              </button>
+            </div>
+          </div>
+
+          {/* Banner Điều Khiển Chế Độ Review Nhanh (Khi bật isReviewMode) */}
+          {isReviewMode && (
+            <div className="sticky top-14 z-30 flex items-center justify-between gap-3 bg-amber-50 border-2 border-amber-300 rounded-2xl p-3.5 px-5 shadow-lg animate-in slide-in-from-top-2 duration-200">
+              <div className="flex items-center gap-2 text-xs text-amber-900 font-semibold">
+                <span className="material-symbols-outlined text-amber-600 text-[20px] animate-pulse">speed</span>
+                <span>
+                  Đang ở <b>Chế độ Review Nhanh Trang {page}</b>: Đã duyệt <b>{reviewedPostIds.size}/{visiblePosts.length}</b> bài trên trang này.
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    visiblePosts.forEach((p) => reviewedPostIds.add(p.id));
+                    setReviewedPostIds(new Set(reviewedPostIds));
+                    toast.success(`⚡ Đã hoàn tất Review trang ${page}! Chuyển sang trang ${page + 1}`);
+                    setPage((p) => Math.min(totalPages, p + 1));
+                  }}
+                  className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-sm transition flex items-center gap-1.5 cursor-pointer"
+                >
+                  <span className="material-symbols-outlined text-[16px]">check_circle</span>
+                  Hoàn tất trang & Sang trang sau ›
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsReviewMode(false)}
+                  className="px-3 py-2 rounded-xl border border-amber-300 bg-white hover:bg-amber-100 text-amber-900 text-xs font-bold transition cursor-pointer"
+                >
+                  Thoát
+                </button>
+              </div>
+            </div>
+          )}
+
           <FilterBar
             intents={intents}
             industries={industries}
@@ -995,7 +1074,7 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
                       }}
                       onVerify={() => {}}
                       onSchedule={post.platform === "threads" || post.platform === "youtube" ? undefined : (post) => setScheduleModalPost(post)}
-                      onViewDetail={(post) => setDetailModalPost(post)}
+                      onViewDetail={(post) => setQuickViewPost(post)}
                       onDelete={(p) => void handleDeletePost(p)}
                       onViewSeedingRoster={post.platform === "threads" || post.platform === "youtube" ? undefined : (p) => void openSeedingRosterModal(p)}
                       onComment={post.platform === "youtube" ? (p) => setYoutubeCommentPost(p) : undefined}
@@ -1064,6 +1143,30 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
           {queueSubTab === "vps" && <CrawlQueueMonitor />}
         </div>
       )}
+
+      <PostQuickViewModal
+        post={quickViewPost}
+        onClose={() => setQuickViewPost(null)}
+        onStartSeeding={(post) => {
+          if (!post.post_url) return;
+          const currentOrigin = typeof window !== "undefined" ? window.location.origin : "https://seeding.markeeai.com";
+          window.postMessage({
+            type: "SYNC_ACTIVE_MEMBER",
+            action: "SYNC_ACTIVE_MEMBER",
+            payload: {
+              email_member: CURRENT_USER_EMAIL,
+              apiBase: currentOrigin,
+              facebook_post_id: post.id || "unknown",
+              target_link: post.post_url,
+              id_post: post.id,
+              platform: post.platform,
+              group_name: post.group_name || "",
+            },
+          }, "*");
+          window.open(post.post_url, "_blank");
+          toast.success("🚀 Đã mở bài viết và kích hoạt theo dõi Seeding!");
+        }}
+      />
 
       <PostDetailModal
         post={detailModalPost}

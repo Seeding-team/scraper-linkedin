@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { FaFacebook, FaLinkedin, FaThreads, FaYoutube, FaTiktok, FaLink } from "react-icons/fa6";
 import { useAppAuth } from "@/contexts/AppAuthContext";
 import { API_BASE_URL } from "@/lib/env";
@@ -187,7 +188,43 @@ export default function InternalEngagementPage() {
   // Tabs — thứ tự hiển thị: Seeding nội bộ -> Seeding bên ngoài -> Tổng quan báo cáo.
   // Mặc định "feed" (Seeding nội bộ) - đây là trang landing chính khi vào app
   // (xem getDashboardHrefForRole trong AllPlatformSidebar.tsx).
+  const searchParams = useSearchParams();
+  const urlTab = searchParams?.get("tab");
+
   const [mainTab, setMainTab] = useState<"overview" | "feed" | "external">("feed");
+
+  useEffect(() => {
+    if (urlTab === "feed" || urlTab === "external" || urlTab === "overview") {
+      setMainTab(urlTab);
+    }
+  }, [urlTab]);
+
+  // Tab & Lifecycle Heartbeat: Báo cho Extension biết tab Web Seeding đang mở
+  useEffect(() => {
+    const sendHeartbeat = () => {
+      window.postMessage({ type: "APP_TAB_HEARTBEAT", timestamp: Date.now() }, "*");
+    };
+    sendHeartbeat();
+    const intervalId = setInterval(sendHeartbeat, 3000);
+
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible") {
+        window.postMessage({ type: "APP_TAB_ACTIVE", timestamp: Date.now() }, "*");
+      }
+    };
+    const handleBeforeUnload = () => {
+      window.postMessage({ type: "APP_TAB_CLOSING", timestamp: Date.now() }, "*");
+    };
+
+    document.addEventListener("visibilitychange", handleVisibility);
+    window.addEventListener("beforeunload", handleBeforeUnload);
+
+    return () => {
+      clearInterval(intervalId);
+      document.removeEventListener("visibilitychange", handleVisibility);
+      window.removeEventListener("beforeunload", handleBeforeUnload);
+    };
+  }, []);
   const [tab, setTab] = useState<TaskStatusTab>("all");
   const [sourceTab, setSourceTab] = useState<SourceTab>("markee");
   const [search, setSearch] = useState("");

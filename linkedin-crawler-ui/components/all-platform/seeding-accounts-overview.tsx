@@ -53,13 +53,8 @@ export function SeedingAccountsOverview() {
     load();
   }, [load]);
 
-  if (user?.role === "member") {
-    return (
-      <div className="rounded-2xl border border-border bg-card p-8 text-center text-sm text-muted-foreground">
-        Chỉ admin/leader mới xem được danh sách tài khoản seeding.
-      </div>
-    );
-  }
+  // Mở khóa cho cả Member và Leader: Thành viên xem tài khoản của chính mình, Leader xem toàn team
+  const isMember = user?.role === "member";
 
   return (
     <div className="w-full min-w-0 space-y-4 font-sans">
@@ -70,7 +65,7 @@ export function SeedingAccountsOverview() {
         <div>
           <h2 className="text-lg font-bold text-on-surface">Tài khoản seeding</h2>
           <p className="text-xs text-on-surface-variant">
-            {user?.role === "admin" ? "Toàn bộ thành viên đang seeding" : "Thành viên trong team bạn quản lý"} — bấm vào 1 hàng để xem chi tiết.
+            {isMember ? "Thống kê tài khoản seeding cá nhân của bạn" : (user?.role === "admin" ? "Toàn bộ thành viên đang seeding" : "Thành viên trong team bạn quản lý")} — bấm vào 1 hàng để xem chi tiết.
           </p>
         </div>
       </div>
