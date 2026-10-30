@@ -1808,12 +1808,7 @@ export default function InternalEngagementPage() {
                   <span>{isExtensionReady ? "✓" : "📥"}</span>
                   <span>{isExtensionReady ? "Extension KPI đã kết nối" : "Tải Extension ghi nhận KPI"}</span>
                 </a>
-                <a
-                  href="/all-platform/quick-comments"
-                  className="px-4 py-2.5 border border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 rounded-xl text-[13px] font-bold shadow-sm transition flex items-center gap-2"
-                >
-                  <span>📚</span> Thư viện mẫu câu
-                </a>
+
                 <button
                   type="button"
                   onClick={() => setIsCampaignModalOpen(true)}
