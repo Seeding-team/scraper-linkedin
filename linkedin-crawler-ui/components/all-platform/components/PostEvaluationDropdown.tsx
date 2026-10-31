@@ -90,10 +90,16 @@ export function PostEvaluationDropdown({
 
     if (typeof window !== "undefined" && postId) {
       localStorage.setItem(`post_eval_${postId}`, option.value);
+      localStorage.setItem(`evaluation_${postId}`, option.value);
       // Dispatch sync event for other views/modals
       window.dispatchEvent(
         new CustomEvent("seeding_post_eval_updated", {
-          detail: { postId, status: option.value },
+          detail: { postId, status: option.value, evaluation: option.value },
+        })
+      );
+      window.dispatchEvent(
+        new CustomEvent("seeding_post_evaluation_updated", {
+          detail: { postId, status: option.value, evaluation: option.value },
         })
       );
     }

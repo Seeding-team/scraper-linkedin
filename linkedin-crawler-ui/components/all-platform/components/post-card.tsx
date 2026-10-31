@@ -494,11 +494,18 @@ export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onVi
             <PostEvaluationDropdown
               postId={post.id || post.post_url}
               initialStatus={(post as any).evaluation_status}
+              onStatusChange={(status) => {
+                (post as any).evaluation_status = status;
+                (post as any).evaluation = status;
+              }}
             />
 
             {/* Kết quả liên hệ (Chuẩn theo dropdown Ảnh 2) */}
             <PostCallResultDropdown
               postId={post.id || post.post_url}
+              onResultChange={(result) => {
+                (post as any).callResult = result;
+              }}
             />
 
             {/* Assign người seeding */}

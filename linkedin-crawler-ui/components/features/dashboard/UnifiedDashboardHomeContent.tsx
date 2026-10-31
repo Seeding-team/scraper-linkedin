@@ -232,11 +232,12 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
 
   useEffect(() => {
     const s = searchParams?.get("status");
-    if (s && s !== seedingStatusFilter) {
+    if (s) {
       setSeedingStatusFilter(s);
       setCallFilter("all");
-    } else if (!s && seedingStatusFilter !== "all" && searchParams?.get("sub") === null) {
-      // no status in url
+    } else {
+      setSeedingStatusFilter("all");
+      setCallFilter("all");
     }
   }, [searchParams]);
 
@@ -304,38 +305,95 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
     if (typeof window === "undefined") return;
     const evMap: Record<string, string> = {};
     const cMap: Record<string, { result: string; attempts: number; lastCall?: string }> = {};
+
     posts.forEach((p) => {
-      const pid = p.id || p.post_url;
-      const savedEv = localStorage.getItem(`evaluation_${pid}`);
-      if (savedEv) evMap[pid] = savedEv;
-      try {
-        const savedCall = localStorage.getItem(`post_call_${pid}`);
-        if (savedCall) cMap[pid] = JSON.parse(savedCall);
-      } catch {}
+      const pid = String(p.id || p.post_url || "");
+      const idKey = p.id ? String(p.id) : "";
+      const urlKey = p.post_url ? String(p.post_url) : "";
+
+      // Check all possible keys for evaluation
+      const savedEv =
+        localStorage.getItem(`post_eval_${pid}`) ||
+        (idKey && localStorage.getItem(`post_eval_${idKey}`)) ||
+        (urlKey && localStorage.getItem(`post_eval_${urlKey}`)) ||
+        localStorage.getItem(`evaluation_${pid}`) ||
+        (idKey && localStorage.getItem(`evaluation_${idKey}`)) ||
+        (urlKey && localStorage.getItem(`evaluation_${urlKey}`));
+
+      if (savedEv) {
+        evMap[pid] = savedEv;
+        if (idKey) evMap[idKey] = savedEv;
+        if (urlKey) evMap[urlKey] = savedEv;
+      }
+
+      // Check call result
+      const savedCall =
+        localStorage.getItem(`post_call_${pid}`) ||
+        (idKey && localStorage.getItem(`post_call_${idKey}`)) ||
+        (urlKey && localStorage.getItem(`post_call_${urlKey}`));
+
+      let callResult = "";
+      if (savedCall) {
+        if (savedCall.startsWith("{")) {
+          try {
+            callResult = JSON.parse(savedCall).result || "";
+          } catch {
+            callResult = savedCall;
+          }
+        } else {
+          callResult = savedCall;
+        }
+      }
+
+      const savedAttempts = parseInt(
+        localStorage.getItem(`post_call_attempts_${pid}`) ||
+        (idKey && localStorage.getItem(`post_call_attempts_${idKey}`)) || "0",
+        10
+      ) || 0;
+
+      const savedLast =
+        localStorage.getItem(`post_call_last_${pid}`) ||
+        (idKey && localStorage.getItem(`post_call_last_${idKey}`)) || "";
+
+      if (callResult || savedAttempts > 0) {
+        const item = { result: callResult, attempts: savedAttempts, lastCall: savedLast };
+        cMap[pid] = item;
+        if (idKey) cMap[idKey] = item;
+        if (urlKey) cMap[urlKey] = item;
+      }
     });
+
     setEvaluationsMap(evMap);
     setCallsMap(cMap);
 
     const handleEvUpdate = (e: any) => {
-      if (e.detail?.postId) {
-        setEvaluationsMap((prev) => ({ ...prev, [e.detail.postId]: e.detail.evaluation }));
+      const pId = String(e.detail?.postId || "");
+      const val = e.detail?.status || e.detail?.evaluation || "";
+      if (pId && val) {
+        setEvaluationsMap((prev) => ({ ...prev, [pId]: val }));
       }
     };
+
     const handleCallUpdate = (e: any) => {
-      if (e.detail?.postId) {
+      const pId = String(e.detail?.postId || "");
+      if (pId) {
         setCallsMap((prev) => ({
           ...prev,
-          [e.detail.postId]: {
-            result: e.detail.result,
-            attempts: e.detail.attempts,
-            lastCall: e.detail.lastCall,
+          [pId]: {
+            result: e.detail.result || "",
+            attempts: e.detail.attempts || 0,
+            lastCall: e.detail.lastCall || "",
           },
         }));
       }
     };
+
+    window.addEventListener("seeding_post_eval_updated", handleEvUpdate);
     window.addEventListener("seeding_post_evaluation_updated", handleEvUpdate);
     window.addEventListener("seeding_post_call_updated", handleCallUpdate);
+
     return () => {
+      window.removeEventListener("seeding_post_eval_updated", handleEvUpdate);
       window.removeEventListener("seeding_post_evaluation_updated", handleEvUpdate);
       window.removeEventListener("seeding_post_call_updated", handleCallUpdate);
     };
@@ -705,9 +763,53 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
 
   // Helper to get effective evaluation and call result for a post
   const getPostRatingAndCall = useCallback((p: UnifiedPost) => {
-    const pid = p.id || p.post_url;
-    const rating = evaluationsMap[pid] || (p as any).evaluation || "chua_danh_gia";
-    const call = callsMap[pid]?.result || "";
+    const pid = String(p.id || p.post_url || "");
+    const idKey = p.id ? String(p.id) : "";
+    const urlKey = p.post_url ? String(p.post_url) : "";
+
+    let rating =
+      evaluationsMap[pid] ||
+      (idKey && evaluationsMap[idKey]) ||
+      (urlKey && evaluationsMap[urlKey]) ||
+      (typeof window !== "undefined"
+        ? localStorage.getItem(`post_eval_${pid}`) ||
+          (idKey && localStorage.getItem(`post_eval_${idKey}`)) ||
+          (urlKey && localStorage.getItem(`post_eval_${urlKey}`)) ||
+          localStorage.getItem(`evaluation_${pid}`)
+        : null) ||
+      (p as any).evaluation_status ||
+      (p as any).evaluation ||
+      (p as any).rating ||
+      "chua_danh_gia";
+
+    if (rating === "Cần liên hệ") rating = "can_lien_he";
+    if (rating === "Không phù hợp") rating = "khong_phu_hop";
+    if (rating === "Chưa đánh giá") rating = "chua_danh_gia";
+
+    const callData = callsMap[pid] || (idKey && callsMap[idKey]) || (urlKey && callsMap[urlKey]);
+    let call = "";
+    if (typeof callData === "string") {
+      call = callData;
+    } else if (callData && typeof callData === "object") {
+      call = callData.result || "";
+    } else if (typeof window !== "undefined") {
+      const rawCall =
+        localStorage.getItem(`post_call_${pid}`) ||
+        (idKey && localStorage.getItem(`post_call_${idKey}`)) ||
+        (urlKey && localStorage.getItem(`post_call_${urlKey}`));
+      if (rawCall) {
+        if (rawCall.startsWith("{")) {
+          try {
+            call = JSON.parse(rawCall).result || "";
+          } catch {
+            call = rawCall;
+          }
+        } else {
+          call = rawCall;
+        }
+      }
+    }
+
     return { rating, call };
   }, [evaluationsMap, callsMap]);
 
@@ -726,13 +828,18 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
 
     areaPosts.forEach((p) => {
       const { rating, call } = getPostRatingAndCall(p);
-      if (rating === "khong_phu_hop" || call === "invalid") {
+      const isSkip = rating === "khong_phu_hop" || call === "invalid";
+      const isDoing = call === "consulting" || call === "waiting";
+      const isDone = call === "interested" || call === "refused" || call === "nointerest";
+      const isTodo = (rating === "can_lien_he" || call === "noanswer" || call === "callback") && !isSkip;
+
+      if (isSkip) {
         skip++;
-      } else if (call === "consulting" || call === "waiting") {
+      } else if (isDoing) {
         doing++;
-      } else if (call === "interested" || call === "refused" || call === "nointerest") {
+      } else if (isDone) {
         done++;
-      } else if (rating === "can_lien_he") {
+      } else if (isTodo) {
         todo++;
       }
     });
@@ -766,7 +873,10 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
 
     areaPosts.forEach((p) => {
       const { rating, call } = getPostRatingAndCall(p);
-      if (rating === "can_lien_he") {
+      const isSkip = rating === "khong_phu_hop" || call === "invalid";
+      const isTodo = (rating === "can_lien_he" || call === "noanswer" || call === "callback") && !isSkip;
+
+      if (isTodo) {
         counts["all"]++;
         if (!call) {
           counts["none"]++;
@@ -784,9 +894,13 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
     return areaPosts.filter((p) => {
       const { rating, call } = getPostRatingAndCall(p);
 
+      const isSkip = rating === "khong_phu_hop" || call === "invalid";
+      const isDoing = call === "consulting" || call === "waiting";
+      const isDone = call === "interested" || call === "refused" || call === "nointerest";
+      const isTodo = (rating === "can_lien_he" || call === "noanswer" || call === "callback") && !isSkip;
+
       if (seedingStatusFilter === "todo") {
-        if (rating !== "can_lien_he" && call !== "noanswer" && call !== "callback") return false;
-        if (rating === "khong_phu_hop" || call === "invalid") return false;
+        if (!isTodo) return false;
 
         if (callFilter === "all") return true;
         if (callFilter === "none") return !call;
@@ -794,15 +908,15 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
       }
 
       if (seedingStatusFilter === "skip") {
-        return rating === "khong_phu_hop" || call === "invalid";
+        return isSkip;
       }
 
       if (seedingStatusFilter === "doing") {
-        return call === "consulting" || call === "waiting";
+        return isDoing && !isSkip;
       }
 
       if (seedingStatusFilter === "done") {
-        return call === "interested" || call === "refused" || call === "nointerest";
+        return isDone && !isSkip;
       }
 
       return true;
