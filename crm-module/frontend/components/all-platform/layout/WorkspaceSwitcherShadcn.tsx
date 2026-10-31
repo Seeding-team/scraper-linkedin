@@ -12,7 +12,7 @@ type WorkspaceItem = { instance: string; url: string; current: boolean };
 const WORKSPACE_LABELS: Record<string, string> = {
   markee: "Markee",
   cloudgate: "CloudGate",
-  SECURITYZONE: "SecurityZone",
+  securityzone: "SecurityZone",
   timetech: "TimeTech",
 };
 
