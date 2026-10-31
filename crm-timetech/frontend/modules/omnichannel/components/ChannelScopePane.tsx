@@ -323,26 +323,106 @@ export const ChannelScopePane: React.FC<ChannelScopePaneProps> = ({
                     </div>
                   );
                 })()}
+                {/* Submenu tài khoản Zalo trực tiếp dưới kênh Zalo (Ảnh 4) */}
+                {ch === "zalo" && (() => {
+                  const zaloAccs = accounts.filter((a) => a.channel === "zalo");
+                  if (zaloAccs.length === 0) return null;
+                  return (
+                    <div className="pl-3.5 pr-1 py-1 space-y-1 border-l-2 border-blue-400 ml-3.5 my-1">
+                      {zaloAccs.length > 1 && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onSelectChannel("zalo");
+                            onSelectAccount(null);
+                          }}
+                          className={cn(
+                            "flex w-full items-center justify-between rounded px-1.5 py-0.5 text-[10px] transition text-left",
+                            selectedChannel === "zalo" && selectedAccount === null
+                              ? "bg-blue-100 text-blue-950 font-bold shadow-2xs ring-1 ring-blue-300"
+                              : "text-slate-600 hover:bg-slate-100"
+                          )}
+                        >
+                          <span className="truncate">Tất cả tài khoản Zalo</span>
+                          <span className="text-[8.5px] font-bold text-slate-400 bg-slate-100 px-1 py-0.2 rounded-full">
+                            {zaloAccs.reduce((s, a) => s + (a.count || 0), 0)}
+                          </span>
+                        </button>
+                      )}
+
+                      {zaloAccs.map((acc) => {
+                        const isAccSelected = selectedAccount === acc.id;
+                        return (
+                          <button
+                            key={acc.id}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onSelectChannel("zalo");
+                              onSelectAccount(acc.id);
+                            }}
+                            className={cn(
+                              "flex w-full items-center justify-between rounded px-1.5 py-0.5 text-[10px] transition text-left",
+                              isAccSelected
+                                ? "bg-blue-100 text-blue-950 font-bold shadow-2xs ring-1 ring-blue-300"
+                                : "text-slate-600 hover:bg-slate-100"
+                            )}
+                            title={acc.name}
+                          >
+                            <div className="flex items-center gap-1.5 truncate">
+                              <span
+                                className={cn(
+                                  "h-1.5 w-1.5 shrink-0 rounded-full",
+                                  acc.status === "online"
+                                    ? "bg-emerald-500"
+                                    : acc.status === "error"
+                                    ? "bg-rose-500"
+                                    : acc.status === "syncing"
+                                    ? "bg-sky-500 animate-pulse"
+                                    : "bg-slate-300"
+                                )}
+                              />
+                              <span className="truncate">{acc.name}</span>
+                            </div>
+                            {acc.count !== undefined && acc.count > 0 && (
+                              <span className="text-[8.5px] font-bold text-slate-400 bg-slate-100 px-1 py-0.2 rounded-full">
+                                {acc.count}
+                              </span>
+                            )}
+                          </button>
+                        );
+                      })}
+
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onConnectAccountModal();
+                        }}
+                        className="flex w-full items-center gap-1 rounded px-1.5 py-0.5 text-[9.5px] font-semibold text-blue-700 hover:bg-blue-50 transition text-left cursor-pointer pt-1"
+                      >
+                        <Plus className="h-2.5 w-2.5" />
+                        <span>Thêm tài khoản Zalo</span>
+                      </button>
+                    </div>
+                  );
+                })()}
               </React.Fragment>
             );
           })}
         </div>
 
-        {/* Section: Accounts */}
-        <div className="border-t border-slate-100 pt-2">
-          <div className="flex items-center justify-between px-1.5 pb-1">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
-              Tài khoản
-            </span>
-          </div>
-
-          {accounts.length === 0 ? (
-            <div className="px-1.5 py-2 text-[10px] text-slate-400 italic">
-              Chưa có tài khoản được kết nối
-            </div>
-          ) : (
-            <div className="space-y-0.5">
-              {accounts.map((acc) => {
+        {/* Section: Other Accounts (nếu còn tài khoản khác chưa được gom vào submenu Zalo/Email) */}
+        {(() => {
+          const otherAccounts = accounts.filter((a) => a.channel !== "email" && a.channel !== "zalo");
+          if (otherAccounts.length === 0) return null;
+          return (
+            <div className="border-t border-slate-100 pt-2">
+              <div className="flex items-center justify-between px-1.5 pb-1">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                  Tài khoản khác
+                </span>
+              </div>
+              <div className="space-y-0.5">
+                {otherAccounts.map((acc) => {
                 const isAccSelected = selectedAccount === acc.id;
                 return (
                   <button
@@ -382,10 +462,11 @@ export const ChannelScopePane: React.FC<ChannelScopePaneProps> = ({
                     )}
                   </button>
                 );
-              })}
+                })}
+              </div>
             </div>
-          )}
-        </div>
+          );
+        })()}
 
         {/* Section: Scope Filter */}
         <div className="border-t border-slate-100 pt-2">
