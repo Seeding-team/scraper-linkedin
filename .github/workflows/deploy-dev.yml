@@ -44,11 +44,12 @@ jobs:
       # ../extensions/ ben trong Docker -> phai dong goi rieng tren host truoc.
       - name: Dong goi lai extension zip tu source moi nhat
         run: |
+          rm -rf linkedin-crawler-ui/node_modules || true
           docker run --rm \
             --user "$(id -u):$(id -g)" -e HOME=/tmp \
             -v "$PWD:/repo" -w /repo/linkedin-crawler-ui \
             node:20-alpine \
-            sh -c "npm ci && npm run build:extensions"
+            sh -c "npm install --no-package-lock --no-save --no-audit archiver && npm run build:extensions && rm -rf node_modules"
 
       - name: Build frontend + backend
         run: docker compose build frontend backend
