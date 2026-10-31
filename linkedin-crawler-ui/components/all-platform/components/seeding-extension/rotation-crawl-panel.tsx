@@ -2,19 +2,23 @@
 
 /**
  * Nhiều lịch cào xoay vòng độc lập (Facebook → LinkedIn → Threads → lặp lại), đặt ở tab
- * phụ "Lịch crawl & Hàng đợi". Dành cho tài khoản seeding-crawl đăng nhập cố định trên VPS:
- * bấm "+ Thêm lịch cào" để tạo 1 lịch mới (nhóm/từ khoá + giờ lặp lại riêng) — extension tự
- * cào tuần tự cả 3 nền tảng rồi (nếu bật "lặp lại") tự lên lịch vòng kế tiếp, CHỈ chạy tiếp
- * nếu tab Seeding vẫn còn mở (không cần hiển thị/active — chạy nền vẫn tính). Chỉ 1 lịch
- * chạy tại 1 thời điểm (đúng tinh
- * thần "hàng đợi") — lịch nào đến giờ trước chạy trước, xong tự chạy tiếp lịch kế đến giờ.
- * Bài viết cào được đổ thẳng về tab "Hoạt động seeding".
+ * "Lịch cào xoay vòng" trong trang "Lịch cào & Hàng đợi".
+ * 
+ * PHÂN QUYỀN RBAC & DANH TÍNH NGƯỜI TẠO:
+ * - Admin / Superadmin: Thấy full lịch cào của mọi người + tài khoản hệ thống (VPS crawler).
+ * - Leader: Thấy lịch cào của các thành viên trong team + của chính mình.
+ * - Member: Chỉ thấy các lịch cào do chính mình tạo.
+ * - Mỗi lịch cào hiển thị rõ Tên người tạo, Email, Avatar, và Badge phân loại (Bạn, Hệ thống, Leader, Thành viên).
  */
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { cn } from "@/lib/utils";
 import { useAppAuth } from "@/contexts/AppAuthContext";
-import { allPlatformGroupsService } from "@/services/all-platform.service";
+import {
+  allPlatformGroupsService,
+  allPlatformRotationSchedulesService,
+  BackendRotationSchedule,
+} from "@/services/all-platform.service";
 import {
   ROTATE_CRAWL_EXTENSION_VERSION,
   useRotationSchedules,
@@ -32,20 +36,10 @@ interface GroupOption {
 const KEYWORDS_STORAGE_KEY = "markee.rotationCrawl.keywords";
 const INTERVAL_STORAGE_KEY = "markee.rotationCrawl.intervalHours";
 
-// Ước tính thời gian cào TRUNG BÌNH 1 nhóm/từ khoá (giây) — suy từ các bước cố định trong
-// bg/fb-crawl.js, bg/li-crawl.js, bg/threads-crawl.js (reload trang, settle, cuộn lấy bài,
-// lưu backend...) cộng thêm biên an toàn cho mạng/Facebook-LinkedIn phản hồi chậm hơn bình
-// thường. Dùng để tính mốc "lặp lại tối thiểu" — đảm bảo 1 vòng luôn cào XONG HẾT danh sách
-// đã chọn rồi mới lặp lại, không bị chồng vòng giữa chừng.
 const EST_SECONDS_PER_FB_GROUP = 60;
 const EST_SECONDS_PER_LI_GROUP = 120;
 const EST_SECONDS_PER_TH_KEYWORD = 40;
-// Registry tu khoa Threads tu dong kham pha (backend, threads_keyword_service.py) co the
-// dung toi da 50 tu khoa/chu de (MAX_KEYWORDS) - dung con so nay lam uoc tinh AN TOAN cho
-// "lap lai toi thieu" khi bat Threads ma khong go tu khoa tay nao, tranh uoc tinh qua thap
-// roi lich chong vong giua chung khi registry da day len toi da.
 const MAX_AUTO_THREADS_KEYWORDS = 50;
-// Biên an toàn 20% cho thời gian chờ "online"/khởi động tab giữa các nhóm.
 const MIN_INTERVAL_SAFETY_FACTOR = 1.2;
 
 function estimateRoundSeconds(fbCount: number, liCount: number, thCount: number): number {
@@ -54,7 +48,6 @@ function estimateRoundSeconds(fbCount: number, liCount: number, thCount: number)
 
 function minIntervalHoursForSeconds(seconds: number): number {
   const hours = (seconds * MIN_INTERVAL_SAFETY_FACTOR) / 3600;
-  // Làm tròn LÊN tới mốc 0.25 giờ gần nhất, tối thiểu 0.25 giờ.
   return Math.max(0.25, Math.ceil(hours * 4) / 4);
 }
 
@@ -99,9 +92,9 @@ function scheduleStatusMeta(s: RotationSchedule): { label: string; color: string
 
 function platformsSummary(s: RotationSchedule): string {
   const parts: string[] = [];
-  if (s.cfg.fbGroups.length) parts.push(`Facebook: ${s.cfg.fbGroups.length} nhóm`);
-  if (s.cfg.liGroups.length) parts.push(`LinkedIn: ${s.cfg.liGroups.length} nhóm`);
-  if (s.cfg.threadsKeywords.length) parts.push(`Threads: ${s.cfg.threadsKeywords.length} từ khoá`);
+  if (s.cfg?.fbGroups?.length) parts.push(`Facebook: ${s.cfg.fbGroups.length} nhóm`);
+  if (s.cfg?.liGroups?.length) parts.push(`LinkedIn: ${s.cfg.liGroups.length} nhóm`);
+  if (s.cfg?.threadsKeywords?.length) parts.push(`Threads: ${s.cfg.threadsKeywords.length} từ khoá`);
   return parts.join(" · ");
 }
 
@@ -142,40 +135,194 @@ export function isSystemCrawlerUser(_user?: { email?: string | null; role?: stri
 }
 
 export function RotationCrawlPanel() {
-  const { user } = useAppAuth();
-  const isSystemAccount = isSystemCrawlerUser(user);
+  const { user, isAdmin, isLeader } = useAppAuth();
   const { status, version, isReady, features } = useSeedingExtensionStatus();
   const rot = useRotationSchedules();
   const [showAddModal, setShowAddModal] = useState(false);
 
+  // Central Backend Schedules state (Filtered by RBAC from server)
+  const [backendSchedules, setBackendSchedules] = useState<RotationSchedule[]>([]);
+  const [isLoadingBackend, setIsLoadingBackend] = useState(true);
+  const [filterOwner, setFilterOwner] = useState<"all" | "mine" | "system" | "team">("all");
+  const [searchQuery, setSearchQuery] = useState("");
+
   const needsUpdate = isReady && (!features.includes("rotate_crawl") || (!!version && parseFloat(version) < 2.13));
   const canAdd = isReady && !needsUpdate;
 
+  // Load schedules from backend database
+  const loadBackendSchedules = useCallback(async () => {
+    setIsLoadingBackend(true);
+    try {
+      const res = await allPlatformRotationSchedulesService.getSchedules();
+      if (res && res.success && Array.isArray(res.data)) {
+        setBackendSchedules(res.data as unknown as RotationSchedule[]);
+      }
+    } catch {
+      // Backend error fallback
+    } finally {
+      setIsLoadingBackend(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadBackendSchedules();
+  }, [loadBackendSchedules]);
+
+  // Auto-sync: If local extension has schedules, sync them to backend so other team members / leaders / admins see them
+  const syncAttemptedRef = useRef(false);
+  useEffect(() => {
+    if (!rot.loaded || rot.schedules.length === 0 || syncAttemptedRef.current) return;
+    syncAttemptedRef.current = true;
+    allPlatformRotationSchedulesService
+      .syncSchedules(rot.schedules)
+      .then(() => loadBackendSchedules())
+      .catch(() => {});
+  }, [rot.loaded, rot.schedules, loadBackendSchedules]);
+
+  // Merge backend schedules with extension realtime live status
+  const mergedSchedules = useMemo(() => {
+    const map = new Map<string, RotationSchedule>();
+
+    // 1. Put all backend schedules first (RBAC enforced by server)
+    for (const bs of backendSchedules) {
+      map.set(bs.id, { ...bs });
+    }
+
+    // 2. Overlay live running/progress state from extension if present
+    for (const es of rot.schedules) {
+      if (map.has(es.id)) {
+        const existing = map.get(es.id)!;
+        map.set(es.id, {
+          ...existing,
+          status: es.status,
+          currentStage: es.currentStage,
+          roundNumber: es.roundNumber || existing.roundNumber,
+          nextRunAt: es.nextRunAt ?? existing.nextRunAt,
+          progress: es.progress,
+          lastRoundSummary: es.lastRoundSummary || existing.lastRoundSummary,
+        });
+      } else {
+        // If extension has a local schedule not yet in backend list, add it
+        map.set(es.id, es);
+      }
+    }
+
+    return Array.from(map.values()).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  }, [backendSchedules, rot.schedules]);
+
+  // Helper: check if schedule belongs to current user
+  const isMySchedule = useCallback(
+    (s: RotationSchedule) => {
+      if (!user) return false;
+      const ownerId = s.creator?.user_id || s.cfg?.idMember;
+      const ownerEmail = s.creator?.email || s.cfg?.email;
+      if (user.id && ownerId && String(user.id) === String(ownerId)) return true;
+      if (user.email && ownerEmail && user.email.toLowerCase() === ownerEmail.toLowerCase()) return true;
+      return false;
+    },
+    [user]
+  );
+
+  // Filtered schedules for display
+  const displayedSchedules = useMemo(() => {
+    return mergedSchedules.filter((s) => {
+      const isMine = isMySchedule(s);
+      const isSys = s.creator?.is_system || s.creator?.role === "system" || s.cfg?.email === "seeding.crawler@markeeai.com";
+
+      if (filterOwner === "mine" && !isMine) return false;
+      if (filterOwner === "system" && !isSys) return false;
+      if (filterOwner === "team" && (isMine || isSys)) return false;
+
+      if (!searchQuery.trim()) return true;
+      const q = searchQuery.toLowerCase().trim();
+      const creatorName = (s.creator?.name || "").toLowerCase();
+      const creatorEmail = (s.creator?.email || s.cfg?.email || "").toLowerCase();
+      const label = (s.label || "").toLowerCase();
+
+      return label.includes(q) || creatorName.includes(q) || creatorEmail.includes(q);
+    });
+  }, [mergedSchedules, filterOwner, searchQuery, isMySchedule]);
+
+  // Handle Toggle Schedule
+  const handleToggle = async (id: string, enabled: boolean) => {
+    // 1. Update UI immediately
+    setBackendSchedules((prev) =>
+      prev.map((s) => (s.id === id ? { ...s, enabled } : s))
+    );
+    // 2. Call extension
+    rot.toggleSchedule(id, enabled);
+    // 3. Call backend
+    try {
+      await allPlatformRotationSchedulesService.toggleSchedule(id, enabled);
+    } catch {}
+  };
+
+  // Handle Stop Schedule
+  const handleStop = (id: string) => {
+    rot.stopSchedule(id);
+  };
+
+  // Handle Delete Schedule
+  const handleDelete = async (id: string) => {
+    // 1. Update UI immediately
+    setBackendSchedules((prev) => prev.filter((s) => s.id !== id));
+    // 2. Call extension
+    rot.deleteSchedule(id);
+    // 3. Call backend
+    try {
+      await allPlatformRotationSchedulesService.deleteSchedule(id);
+    } catch {}
+  };
+
+  // KPI stats
+  const totalCount = mergedSchedules.length;
+  const myCount = mergedSchedules.filter((s) => isMySchedule(s)).length;
+  const sysCount = mergedSchedules.filter(
+    (s) => s.creator?.is_system || s.creator?.role === "system" || s.cfg?.email === "seeding.crawler@markeeai.com"
+  ).length;
+
   return (
     <div className="bg-card rounded-2xl border border-border shadow-sm overflow-hidden w-full">
+      {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 p-4 bg-muted/40">
         <div className="flex items-center gap-3 min-w-0">
           <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center shrink-0 border border-primary/20">
             <span className="material-symbols-outlined text-primary text-[22px]">autorenew</span>
           </div>
           <div className="min-w-0">
-            <h3 className="font-bold text-foreground text-sm leading-tight">Lịch cào xoay vòng (Facebook → LinkedIn → Threads)</h3>
+            <div className="flex items-center gap-2">
+              <h3 className="font-bold text-foreground text-sm leading-tight">
+                Lịch cào xoay vòng (Facebook → LinkedIn → Threads)
+              </h3>
+              {isAdmin && (
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-100 text-[var(--color-markee-primary)] border border-rose-200">
+                  Admin: Xem toàn bộ
+                </span>
+              )}
+              {isLeader && !isAdmin && (
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-100 text-blue-700 border border-blue-200">
+                  Leader: Xem nhóm
+                </span>
+              )}
+            </div>
             <p className="text-xs text-muted-foreground leading-tight mt-0.5">
               Hỗ trợ mọi thành viên & leader thiết lập lịch cào độc lập theo luồng tài khoản riêng trên trình duyệt. Bài viết đổ thẳng về tab &quot;Hoạt động seeding&quot;.
             </p>
           </div>
         </div>
-<button
-            type="button"
-            onClick={() => setShowAddModal(true)}
-            disabled={!canAdd}
-            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-primary text-white text-sm font-bold disabled:opacity-50 disabled:cursor-not-allowed shrink-0 cursor-pointer shadow-sm transition hover:opacity-95"
-          >
-            <span className="material-symbols-outlined text-[18px]">add_circle</span>
-            Thêm lịch cào
-          </button>
+
+        <button
+          type="button"
+          onClick={() => setShowAddModal(true)}
+          disabled={!canAdd}
+          className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-primary text-white text-sm font-bold disabled:opacity-50 disabled:cursor-not-allowed shrink-0 cursor-pointer shadow-sm transition hover:opacity-95"
+        >
+          <span className="material-symbols-outlined text-[18px]">add_circle</span>
+          Thêm lịch cào
+        </button>
       </div>
 
+      {/* Safety Notice */}
       <div className="mx-4 mt-3 rounded-xl border border-sky-200 bg-sky-50/90 p-3.5 text-xs text-sky-900 leading-relaxed flex items-start gap-2.5 shadow-2xs">
         <span className="material-symbols-outlined text-sky-600 text-[20px] shrink-0">verified_user</span>
         <div>
@@ -186,29 +333,124 @@ export function RotationCrawlPanel() {
         </div>
       </div>
 
+      {/* Extension Connection Notice */}
       {status !== "ready" ? (
         <div className="mx-4 mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800 leading-relaxed">
-          Chưa kết nối được Markee Seeding Extension trên trình duyệt này — cài/khởi động lại extension rồi F5 lại trang.
+          Chưa kết nối được Markee Seeding Extension trên trình duyệt này — cài/khởi động lại extension rồi F5 lại trang để điều khiển cào tự động.
         </div>
       ) : needsUpdate ? (
         <div className="mx-4 mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800 leading-relaxed">
           Extension đang cài chưa có chức năng lịch cào (nhiều lịch). Tải bản {ROTATE_CRAWL_EXTENSION_VERSION}+, giải nén đè lên thư mục
-          cũ, vào chrome://extensions bấm reload (vòng tròn) trên Markee Seeding Extension rồi F5 lại trang này.
+          cũ, vào chrome://extensions bấm reload trên Markee Seeding Extension rồi F5 lại trang này.
         </div>
       ) : null}
 
+      {/* Role-based Filter Tabs & Search Bar */}
+      <div className="mx-4 mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between border-b border-border/60 pb-3">
+        <div className="flex flex-wrap items-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => setFilterOwner("all")}
+            className={cn(
+              "px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer",
+              filterOwner === "all" ? "bg-slate-900 text-white shadow-xs" : "bg-muted/60 text-muted-foreground hover:bg-muted"
+            )}
+          >
+            {isAdmin ? `Tất cả lịch cào (${totalCount})` : isLeader ? `Toàn bộ nhóm (${totalCount})` : `Lịch của bạn (${totalCount})`}
+          </button>
+
+          {(isAdmin || isLeader) && (
+            <button
+              type="button"
+              onClick={() => setFilterOwner("mine")}
+              className={cn(
+                "px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer",
+                filterOwner === "mine" ? "bg-[var(--color-markee-primary)] text-white shadow-xs" : "bg-muted/60 text-muted-foreground hover:bg-muted"
+              )}
+            >
+              Của tôi ({myCount})
+            </button>
+          )}
+
+          {isAdmin && (
+            <button
+              type="button"
+              onClick={() => setFilterOwner("system")}
+              className={cn(
+                "px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer",
+                filterOwner === "system" ? "bg-purple-600 text-white shadow-xs" : "bg-muted/60 text-muted-foreground hover:bg-muted"
+              )}
+            >
+              Hệ thống VPS ({sysCount})
+            </button>
+          )}
+
+          {(isAdmin || isLeader) && (
+            <button
+              type="button"
+              onClick={() => setFilterOwner("team")}
+              className={cn(
+                "px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer",
+                filterOwner === "team" ? "bg-blue-600 text-white shadow-xs" : "bg-muted/60 text-muted-foreground hover:bg-muted"
+              )}
+            >
+              {isAdmin ? `Thành viên khác (${Math.max(0, totalCount - myCount - sysCount)})` : `Thành viên trong team (${Math.max(0, totalCount - myCount)})`}
+            </button>
+          )}
+        </div>
+
+        <div className="relative min-w-[240px]">
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Tìm theo tên lịch, người tạo..."
+            className="w-full rounded-xl border border-border bg-background py-1.5 pl-8 pr-3 text-xs text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none"
+          />
+          <span className="material-symbols-outlined pointer-events-none absolute left-2 top-2 text-sm text-muted-foreground">
+            search
+          </span>
+          {searchQuery && (
+            <button
+              type="button"
+              onClick={() => setSearchQuery("")}
+              className="absolute right-2 top-2 text-xs text-muted-foreground hover:text-foreground"
+            >
+              ✕
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Schedules List */}
       <div className="p-4 flex flex-col gap-3">
-        {rot.loaded && rot.schedules.length === 0 ? (
-          <div className="text-center py-8 text-sm text-muted-foreground">
-            Chưa có lịch cào nào. Bấm &quot;Thêm lịch cào&quot; để tạo lịch đầu tiên.
+        {isLoadingBackend && mergedSchedules.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-12">
+            <div className="h-6 w-6 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+            <p className="mt-2 text-xs text-muted-foreground">Đang tải danh sách lịch cào...</p>
+          </div>
+        ) : displayedSchedules.length === 0 ? (
+          <div className="text-center py-10 text-sm text-muted-foreground border border-dashed border-border rounded-xl">
+            {searchQuery
+              ? "Không có lịch cào nào khớp với tìm kiếm."
+              : filterOwner === "mine"
+              ? "Bạn chưa tạo lịch cào nào. Bấm 'Thêm lịch cào' để tạo lịch đầu tiên."
+              : "Chưa có lịch cào nào trong phạm vi này."}
           </div>
         ) : (
-          rot.schedules
-            .slice()
-            .sort((a, b) => b.createdAt - a.createdAt)
-            .map((s) => <ScheduleCard key={s.id} schedule={s} onToggle={rot.toggleSchedule} onStop={rot.stopSchedule} onDelete={rot.deleteSchedule} />)
+          displayedSchedules.map((s) => (
+            <ScheduleCard
+              key={s.id}
+              schedule={s}
+              currentUser={user}
+              onToggle={handleToggle}
+              onStop={handleStop}
+              onDelete={handleDelete}
+            />
+          ))
         )}
 
+        {/* Realtime Extension Logs */}
         {rot.logs.length > 0 ? (
           <div className="bg-slate-900 rounded-xl p-3 font-mono text-[11px] max-h-[220px] overflow-y-auto mt-1">
             {rot.logs.slice(-80).map((line, i) => (
@@ -220,18 +462,27 @@ export function RotationCrawlPanel() {
         ) : null}
       </div>
 
-      {showAddModal ? <AddScheduleModal onClose={() => setShowAddModal(false)} addSchedule={rot.addSchedule} /> : null}
+      {/* Add Schedule Modal */}
+      {showAddModal ? (
+        <AddScheduleModal
+          onClose={() => setShowAddModal(false)}
+          onCreated={() => loadBackendSchedules()}
+          addSchedule={rot.addSchedule}
+        />
+      ) : null}
     </div>
   );
 }
 
 function ScheduleCard({
   schedule,
+  currentUser,
   onToggle,
   onStop,
   onDelete,
 }: {
   schedule: RotationSchedule;
+  currentUser: any;
   onToggle: (id: string, enabled: boolean) => void;
   onStop: (id: string) => void;
   onDelete: (id: string) => void;
@@ -240,13 +491,91 @@ function ScheduleCard({
   const nextRunText = schedule.nextRunAt ? new Date(schedule.nextRunAt).toLocaleString("vi-VN") : null;
   const isActive = schedule.status === "running" || schedule.status === "waiting_interval" || schedule.status === "waiting_online";
 
+  // Creator identity attributes
+  const creator = schedule.creator;
+  const creatorEmail = creator?.email || schedule.cfg?.email || "";
+  const creatorName = creator?.name || (creatorEmail ? creatorEmail.split("@")[0] : "Thành viên");
+  const creatorRole = creator?.role || "member";
+  const creatorAvatar = creator?.avatar;
+  const isSystem = Boolean(creator?.is_system || creatorRole === "system" || creatorEmail === "seeding.crawler@markeeai.com");
+
+  const isSelf = Boolean(
+    currentUser &&
+      ((currentUser.id && creator?.user_id && String(currentUser.id) === String(creator.user_id)) ||
+        (currentUser.email && creatorEmail && currentUser.email.toLowerCase() === creatorEmail.toLowerCase()))
+  );
+
   const handleDelete = () => {
     if (!window.confirm(`Xoá lịch cào "${schedule.label}"? Nếu đang chạy sẽ dừng ngay.`)) return;
     onDelete(schedule.id);
   };
 
   return (
-    <div className="border border-border rounded-xl p-3.5 flex flex-col gap-2.5">
+    <div className="border border-border rounded-xl p-3.5 flex flex-col gap-2.5 bg-card hover:border-slate-300 transition">
+      {/* ── CREATOR IDENTITY BANNER (MANDATORY FROM MASTER) ── */}
+      <div className="flex items-center justify-between pb-2.5 border-b border-border/70 flex-wrap gap-2">
+        <div className="flex items-center gap-2.5 min-w-0">
+          <div
+            className={cn(
+              "w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold shrink-0 uppercase",
+              isSystem
+                ? "bg-purple-100 text-purple-700 font-black"
+                : isSelf
+                ? "bg-rose-100 text-[var(--color-markee-primary)]"
+                : "bg-slate-100 text-slate-700"
+            )}
+          >
+            {creatorAvatar ? (
+              <img src={creatorAvatar} alt={creatorName} className="w-7 h-7 rounded-full object-cover" />
+            ) : isSystem ? (
+              <span className="material-symbols-outlined text-sm">dns</span>
+            ) : (
+              creatorName.charAt(0)
+            )}
+          </div>
+
+          <div className="min-w-0">
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span className="font-bold text-xs text-foreground truncate">{creatorName}</span>
+              {isSelf && (
+                <span className="px-1.5 py-0.2 rounded text-[10px] font-bold bg-rose-100 text-[var(--color-markee-primary)]">
+                  Bạn
+                </span>
+              )}
+              {isSystem && (
+                <span className="px-1.5 py-0.2 rounded text-[10px] font-bold bg-purple-100 text-purple-700">
+                  Hệ thống [VPS]
+                </span>
+              )}
+              {!isSystem && !isSelf && (
+                <span className="px-1.5 py-0.2 rounded text-[10px] font-medium bg-slate-100 text-slate-600">
+                  {creatorRole === "leader" ? "Leader" : "Thành viên"}
+                </span>
+              )}
+            </div>
+            {creatorEmail && (
+              <span className="text-[10px] text-muted-foreground truncate block leading-tight">
+                {creatorEmail}
+              </span>
+            )}
+          </div>
+        </div>
+
+        {schedule.createdAt && (
+          <span className="text-[10px] text-muted-foreground shrink-0 whitespace-nowrap">
+            Tạo lúc:{" "}
+            {new Date(schedule.createdAt).toLocaleDateString("vi-VN", {
+              day: "2-digit",
+              month: "2-digit",
+              year: "numeric",
+              hour: "2-digit",
+              minute: "2-digit",
+            })}
+          </span>
+        )}
+      </div>
+
+      {/* ── SCHEDULE DETAILS & ACTIONS ── */}
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
@@ -256,15 +585,21 @@ function ScheduleCard({
               {meta.label}
             </span>
           </div>
+
           <div className="text-[11px] text-muted-foreground mt-1">{platformsSummary(schedule) || "—"}</div>
+
           <div className="text-[11px] text-muted-foreground mt-0.5 flex flex-wrap gap-x-3">
-            <span>Lặp lại: {schedule.cfg.repeatEnabled ? `mỗi ${schedule.cfg.intervalHours} giờ` : "chỉ 1 lần"}</span>
+            <span>Lặp lại: {schedule.cfg?.repeatEnabled ? `mỗi ${schedule.cfg.intervalHours} giờ` : "chỉ 1 lần"}</span>
             <span>Vòng: {schedule.roundNumber || 0}</span>
             {nextRunText && schedule.status === "waiting_interval" ? <span>Vòng kế tiếp: {nextRunText}</span> : null}
-            {schedule.lastRoundSummary ? <span className="font-semibold text-emerald-600">Lần gần nhất: +{schedule.lastRoundSummary.totalSaved} bài</span> : null}
+            {schedule.lastRoundSummary ? (
+              <span className="font-semibold text-emerald-600">Lần gần nhất: +{schedule.lastRoundSummary.totalSaved} bài</span>
+            ) : null}
           </div>
+
           {schedule.status === "running" && schedule.progress ? <LiveProgress progress={schedule.progress} /> : null}
         </div>
+
         <div className="flex items-center gap-1.5 shrink-0">
           <label className="inline-flex items-center cursor-pointer" title={schedule.enabled ? "Đang bật" : "Đang tắt"}>
             <input
@@ -277,13 +612,25 @@ function ScheduleCard({
               <div className="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform peer-checked:translate-x-4" />
             </div>
           </label>
+
           {isActive ? (
-            <button type="button" onClick={() => onStop(schedule.id)} className="p-1.5 rounded-lg hover:bg-red-50" title="Dừng lịch này">
-              <span className="material-symbols-outlined text-[16px] text-red-500">stop_circle</span>
+            <button
+              type="button"
+              onClick={() => onStop(schedule.id)}
+              className="p-1.5 rounded-lg hover:bg-red-50 text-red-500"
+              title="Dừng lịch này"
+            >
+              <span className="material-symbols-outlined text-[16px]">stop_circle</span>
             </button>
           ) : null}
-          <button type="button" onClick={handleDelete} className="p-1.5 rounded-lg hover:bg-red-50" title="Xoá lịch">
-            <span className="material-symbols-outlined text-[16px] text-muted-foreground hover:text-red-600">delete</span>
+
+          <button
+            type="button"
+            onClick={handleDelete}
+            className="p-1.5 rounded-lg hover:bg-red-50 text-muted-foreground hover:text-red-600 transition"
+            title="Xoá lịch"
+          >
+            <span className="material-symbols-outlined text-[16px]">delete</span>
           </button>
         </div>
       </div>
@@ -327,92 +674,58 @@ const INTERVAL_PRESETS = [
 
 function AddScheduleModal({
   onClose,
+  onCreated,
   addSchedule,
 }: {
   onClose: () => void;
+  onCreated?: () => void;
   addSchedule: (label: string, fbGroups: RotationGroupInput[], liGroups: RotationGroupInput[], threadsKeywords: string[], config: Record<string, unknown>) => Promise<{ success: boolean; error?: string }>;
 }) {
   const { user } = useAppAuth();
   const fb = useGroupOptions("facebook");
   const li = useGroupOptions("linkedin");
 
-  // Mặc định chỉ bật Facebook (ưu tiên cào Facebook trước) — bấm chọn thêm
-  // LinkedIn/Threads nếu muốn xoay vòng luôn cả 2 nền tảng kia trong CÙNG 1 lịch.
-  const [enabledPlatforms, setEnabledPlatforms] = useState<Set<"facebook" | "linkedin" | "threads">>(
-    () => new Set(["facebook"]),
-  );
-  const togglePlatform = (p: "facebook" | "linkedin" | "threads") =>
+  const [label, setLabel] = useState("");
+  const [enabledPlatforms, setEnabledPlatforms] = useState<Set<"facebook" | "linkedin" | "threads">>(() => new Set(["facebook", "linkedin", "threads"]));
+  const [repeatEnabled, setRepeatEnabled] = useState(true);
+  const [intervalHours, setIntervalHours] = useState<number>(2);
+  const [intervalInput, setIntervalInput] = useState<string>("2");
+  const [keywordsInput, setKeywordsInput] = useState<string>("");
+  const [threadsAutoDiscover, setThreadsAutoDiscover] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const keywords = useMemo(() => parseKeywords(keywordsInput), [keywordsInput]);
+
+  const togglePlatform = (p: "facebook" | "linkedin" | "threads") => {
     setEnabledPlatforms((prev) => {
       const next = new Set(prev);
       if (next.has(p)) next.delete(p);
       else next.add(p);
       return next;
     });
+  };
 
-  const [label, setLabel] = useState("");
-  const [keywordsInput, setKeywordsInput] = useState(() => {
-    if (typeof window === "undefined") return "";
-    try {
-      return window.localStorage.getItem(KEYWORDS_STORAGE_KEY) || "";
-    } catch {
-      return "";
-    }
-  });
-  const [intervalInput, setIntervalInput] = useState(() => {
-    if (typeof window === "undefined") return "2";
-    try {
-      return window.localStorage.getItem(INTERVAL_STORAGE_KEY) || "2";
-    } catch {
-      return "2";
-    }
-  });
-  const [repeatEnabled, setRepeatEnabled] = useState(true);
-  const [antiBotEnabled, setAntiBotEnabled] = useState(true);
-  const [delayMin, setDelayMin] = useState(1.5);
-  const [delayMax, setDelayMax] = useState(2.8);
-  const [groupRestSec, setGroupRestSec] = useState(45);
-  const [oldPostsLimit, setOldPostsLimit] = useState(15);
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const totalSelected =
+    (enabledPlatforms.has("facebook") ? fb.selectedIds.length : 0) +
+    (enabledPlatforms.has("linkedin") ? li.selectedIds.length : 0) +
+    (enabledPlatforms.has("threads") ? (keywords.length > 0 ? keywords.length : threadsAutoDiscover ? 1 : 0) : 0);
 
-  const keywords = useMemo(() => parseKeywords(keywordsInput), [keywordsInput]);
-  const intervalHours = useMemo(() => {
-    const v = Number(intervalInput);
-    return Number.isFinite(v) && v > 0 ? v : 2;
-  }, [intervalInput]);
+  const estSeconds = useMemo(() => {
+    const fbCount = enabledPlatforms.has("facebook") ? fb.selectedIds.length : 0;
+    const liCount = enabledPlatforms.has("linkedin") ? li.selectedIds.length : 0;
+    const thCount = enabledPlatforms.has("threads") ? (keywords.length > 0 ? keywords.length : threadsAutoDiscover ? MAX_AUTO_THREADS_KEYWORDS : 0) : 0;
+    return estimateRoundSeconds(fbCount, liCount, thCount);
+  }, [enabledPlatforms, fb.selectedIds.length, li.selectedIds.length, keywords.length, threadsAutoDiscover]);
 
-  const fbCount = enabledPlatforms.has("facebook") ? fb.selectedIds.length : 0;
-  const liCount = enabledPlatforms.has("linkedin") ? li.selectedIds.length : 0;
-  // Threads giờ có registry từ khoá tự khám phá (backend) — bật nền tảng Threads là ĐỦ để
-  // tạo lịch dù chưa gõ từ khoá tay nào (registry tự cung cấp), không cần ép thCount > 0.
-  const threadsAutoDiscover = enabledPlatforms.has("threads");
-  // Uoc tinh AN TOAN cho thoi gian/lap lai toi thieu: neu dung auto-discover, gia dinh co
-  // the dung toi da MAX_AUTO_THREADS_KEYWORDS (registry se day dan len muc nay theo thoi
-  // gian) thay vi chi tinh theo so tu khoa go tay hien tai.
-  const thCount = enabledPlatforms.has("threads") ? Math.max(keywords.length, threadsAutoDiscover ? MAX_AUTO_THREADS_KEYWORDS : 0) : 0;
-  const totalSelected = fbCount + liCount + keywords.length + (threadsAutoDiscover ? 1 : 0);
+  const minIntervalHours = useMemo(() => minIntervalHoursForSeconds(estSeconds), [estSeconds]);
 
-  // Lặp lại tối thiểu phải đủ để cào XONG HẾT danh sách đã chọn trước khi vòng kế tiếp bắt
-  // đầu — không thì vòng lặp lại sẽ "giẫm" lên vòng đang chạy dở. Tự gợi ý mốc tối thiểu khi
-  // đổi lựa chọn nhóm/từ khoá, nhưng không ép xuống nếu người dùng đã tự đặt cao hơn.
-  const estimatedSeconds = useMemo(() => estimateRoundSeconds(fbCount, liCount, thCount), [fbCount, liCount, thCount]);
-  const minIntervalHours = useMemo(() => minIntervalHoursForSeconds(estimatedSeconds), [estimatedSeconds]);
-  const intervalTooLow = repeatEnabled && totalSelected > 0 && intervalHours < minIntervalHours;
-
-  const lastAutoSuggestedRef = useRef<number | null>(null);
   useEffect(() => {
-    if (totalSelected === 0) return;
-    const current = Number(intervalInput);
-    // Chỉ tự nâng lên khi ô đang bằng giá trị MÌNH đã tự gợi ý lần trước (hoặc rỗng/0) —
-    // nếu người dùng đã tự tay sửa thành 1 số khác thì tôn trọng lựa chọn đó, không ghi đè.
-    const userOverrode = Number.isFinite(current) && current > 0 && lastAutoSuggestedRef.current !== null && current !== lastAutoSuggestedRef.current;
-    if (userOverrode) return;
-    if (!Number.isFinite(current) || current < minIntervalHours) {
+    if (intervalHours < minIntervalHours) {
+      setIntervalHours(minIntervalHours);
       setIntervalInput(String(minIntervalHours));
-      lastAutoSuggestedRef.current = minIntervalHours;
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [minIntervalHours, totalSelected]);
+  }, [minIntervalHours, intervalHours]);
 
   const canSubmit = totalSelected > 0 && !!user?.id && !!user?.email && !submitting;
 
@@ -424,6 +737,7 @@ function AddScheduleModal({
       window.localStorage.setItem(KEYWORDS_STORAGE_KEY, keywordsInput);
       window.localStorage.setItem(INTERVAL_STORAGE_KEY, intervalInput);
     } catch {}
+
     const fbGroups: RotationGroupInput[] = enabledPlatforms.has("facebook")
       ? fb.groups.filter((g) => fb.selectedIds.includes(g.id)).map((g) => ({ id: g.id, name: g.group_name || g.group_url, url: g.group_url }))
       : [];
@@ -431,18 +745,55 @@ function AddScheduleModal({
       ? li.groups.filter((g) => li.selectedIds.includes(g.id)).map((g) => ({ id: g.id, name: g.group_name || g.group_url, url: g.group_url }))
       : [];
     const threadsKeywords = enabledPlatforms.has("threads") ? keywords : [];
-    const res = await addSchedule(label.trim(), fbGroups, liGroups, threadsKeywords, {
-      email: user.email,
-      idMember: user.id,
-      intervalHours,
-      repeatEnabled,
-      threadsAutoDiscover,
-    });
+
+    const schedulePayload = {
+      label: label.trim() || "Lịch cào xoay vòng",
+      fbGroups,
+      liGroups,
+      threadsKeywords,
+      config: {
+        email: user.email,
+        idMember: user.id,
+        intervalHours,
+        repeatEnabled,
+        threadsAutoDiscover,
+      },
+    };
+
+    // 1. Post to Extension
+    const res = await addSchedule(schedulePayload.label, fbGroups, liGroups, threadsKeywords, schedulePayload.config);
+
+    // 2. Persist to Backend Supabase (RBAC + Creator Identity)
+    try {
+      const scheduleId = `sch_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+      await allPlatformRotationSchedulesService.saveSchedule({
+        id: scheduleId,
+        label: schedulePayload.label,
+        cfg: {
+          ...schedulePayload.config,
+          fbGroups,
+          liGroups,
+          threadsKeywords,
+        },
+        enabled: true,
+        status: "waiting_interval",
+        roundNumber: 0,
+        createdAt: Date.now(),
+        creator: {
+          user_id: user.id,
+          name: user.name || user.email,
+          email: user.email,
+          role: user.role,
+        },
+      });
+    } catch {}
+
     setSubmitting(false);
     if (!res.success) {
       setError(res.error || "Không tạo được lịch cào.");
       return;
     }
+    if (onCreated) onCreated();
     onClose();
   };
 
@@ -451,7 +802,7 @@ function AddScheduleModal({
       <div className="bg-card rounded-2xl border border-border shadow-xl w-full max-w-3xl max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between p-4 border-b border-border sticky top-0 bg-card z-10">
           <h3 className="font-bold text-base text-foreground">Thêm lịch cào xoay vòng</h3>
-          <button type="button" onClick={onClose} className="p-1.5 rounded-lg hover:bg-muted">
+          <button type="button" onClick={onClose} className="p-1.5 rounded-lg hover:bg-muted cursor-pointer">
             <span className="material-symbols-outlined text-[18px] text-muted-foreground">close</span>
           </button>
         </div>
@@ -460,265 +811,109 @@ function AddScheduleModal({
           <div className="rounded-xl border border-sky-200 bg-sky-50 p-3 flex items-start gap-2.5">
             <span className="material-symbols-outlined text-sky-600 text-[20px] shrink-0">info</span>
             <div className="text-xs text-sky-900 leading-relaxed">
-              <p className="font-bold mb-1">Cơ chế cào xoay vòng an toàn theo chu kỳ:</p>
-              <ul className="list-disc pl-4 space-y-0.5">
-                <li>Hệ thống tự động thực thi xoay vòng các nhóm Facebook → LinkedIn → Threads theo danh sách đã chọn.</li>
-                <li>Mô phỏng hành vi người dùng thật với độ trễ cuộn ngẫu nhiên và tự động dừng khi gặp bài cũ để bảo vệ tài khoản an toàn chống checkpoint.</li>
-              </ul>
+              Lịch cào sẽ được tạo với danh tính của bạn: <b>{user?.name || user?.email}</b>. Leader và Admin có thể theo dõi và giám sát hàng đợi theo phân quyền.
             </div>
           </div>
 
-          <div className="flex flex-col gap-1">
-            <label className="text-xs font-bold text-foreground">Tên lịch (không bắt buộc)</label>
+          <div>
+            <label className="text-xs font-bold text-foreground">Tên / Nhãn lịch cào</label>
             <input
               type="text"
               value={label}
               onChange={(e) => setLabel(e.target.value)}
-              placeholder="VD: Nhóm khách hàng website"
-              className="w-full rounded-xl border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary"
+              placeholder="VD: Cào Bất động sản, Cào IT..."
+              className="mt-1 w-full rounded-xl border border-border bg-background px-3 py-2 text-xs text-foreground focus:border-primary focus:outline-none"
             />
           </div>
 
-          <div className="flex flex-col gap-1.5">
-            <label className="text-xs font-bold text-foreground">Chọn nền tảng muốn xoay vòng</label>
-            <div className="flex flex-wrap gap-2">
-              {(
-                [
-                  { key: "facebook" as const, label: "Facebook", icon: "📘" },
-                  { key: "linkedin" as const, label: "LinkedIn", icon: "💼" },
-                  { key: "threads" as const, label: "Threads", icon: "🧵" },
-                ]
-              ).map((p) => {
-                const active = enabledPlatforms.has(p.key);
-                return (
-                  <button
-                    key={p.key}
-                    type="button"
-                    disabled={submitting}
-                    onClick={() => togglePlatform(p.key)}
-                    className={cn(
-                      "inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-bold border-2 transition-colors disabled:opacity-60",
-                      active ? "border-primary bg-primary/10 text-primary" : "border-border bg-background text-muted-foreground hover:bg-muted",
-                    )}
-                  >
-                    <span>{p.icon}</span>
-                    {p.label}
-                    {active ? <span className="material-symbols-outlined text-[14px]">check_circle</span> : null}
-                  </button>
-                );
-              })}
-            </div>
-            <p className="text-[10px] text-muted-foreground">
-              Mặc định chỉ bật Facebook (ưu tiên cào Facebook trước) — bấm chọn thêm nền tảng nếu muốn xoay vòng cả Facebook → LinkedIn → Threads trong cùng 1 lịch.
-            </p>
-          </div>
-
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-            <div className={cn("transition-opacity", !enabledPlatforms.has("facebook") && "opacity-40")}>
-              <GroupPickList title="Nhóm Facebook" options={fb} disabled={submitting || !enabledPlatforms.has("facebook")} />
-            </div>
-            <div className={cn("transition-opacity", !enabledPlatforms.has("linkedin") && "opacity-40")}>
-              <GroupPickList title="Nhóm LinkedIn" options={li} disabled={submitting || !enabledPlatforms.has("linkedin")} />
-            </div>
-            <div className={cn("flex flex-col gap-2 min-w-0 transition-opacity", !enabledPlatforms.has("threads") && "opacity-40")}>
-              <label htmlFor="rotation-threads-keywords" className="text-sm font-bold text-foreground">
-                Từ khoá Threads thêm tay (không bắt buộc) ({keywords.length})
-              </label>
-              <textarea
-                id="rotation-threads-keywords"
-                rows={5}
-                value={keywordsInput}
-                onChange={(e) => setKeywordsInput(e.target.value)}
-                disabled={submitting || !enabledPlatforms.has("threads")}
-                placeholder={"Để trống cũng được — hệ thống tự đề xuất + khám phá từ khoá mỗi ngày.\nMỗi dòng 1 từ khoá thêm tay nếu muốn, VD: thuê làm website, cần agency app"}
-                className="w-full rounded-xl border border-border bg-background px-3 py-2 text-xs outline-none focus:border-primary disabled:opacity-60"
-              />
-              <p className="text-[10px] text-muted-foreground">
-                🤖 Threads không có nhóm — hệ thống tự dùng AI đề xuất ~20 chủ đề/từ khoá ban đầu, mỗi ngày tự thêm ~5 cái mới, tối đa 50, tự loại bỏ từ khoá kém hiệu quả. Có thể để trống hoàn toàn.
-              </p>
-            </div>
-          </div>
-
-          {totalSelected > 0 ? (
-            <div className="rounded-xl border border-sky-200 bg-sky-50 p-3 text-xs text-sky-900 leading-relaxed flex items-start gap-2">
-              <span className="material-symbols-outlined text-sky-600 text-[18px] shrink-0">schedule</span>
-              <div>
-                <p>
-                  Ước tính 1 vòng cào hết <b>{fbCount > 0 ? `${fbCount} nhóm Facebook` : ""}{fbCount > 0 && (liCount > 0 || thCount > 0) ? ", " : ""}{liCount > 0 ? `${liCount} nhóm LinkedIn` : ""}{liCount > 0 && thCount > 0 ? ", " : ""}{thCount > 0 ? `${thCount} từ khoá Threads` : ""}</b> mất khoảng <b>{formatDuration(estimatedSeconds)}</b>.
-                </p>
-                <p className="mt-0.5">Lặp lại nên đặt tối thiểu <b>{minIntervalHours} giờ</b> để chắc chắn cào xong hết trước khi vòng kế tiếp bắt đầu.</p>
-              </div>
-            </div>
-          ) : null}
-
-          <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4 border-t border-border pt-4">
-            <div className="flex flex-col gap-1">
-              <label htmlFor="rotation-interval" className="text-xs font-bold text-foreground">
-                Lặp lại sau (giờ)
-              </label>
-              <input
-                id="rotation-interval"
-                type="number"
-                min={0.25}
-                step={0.25}
-                value={intervalInput}
-                onChange={(e) => setIntervalInput(e.target.value)}
-                disabled={submitting}
+          {/* Platforms toggle */}
+          <div>
+            <label className="text-xs font-bold text-foreground block mb-1.5">Nền tảng cào</label>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => togglePlatform("facebook")}
                 className={cn(
-                  "w-28 rounded-lg border bg-background px-3 py-2 text-xs outline-none focus:border-primary disabled:opacity-60",
-                  intervalTooLow ? "border-red-300" : "border-border",
+                  "px-3 py-1.5 rounded-lg text-xs font-bold border transition cursor-pointer flex items-center gap-1.5",
+                  enabledPlatforms.has("facebook") ? "bg-blue-600 text-white border-blue-600" : "bg-muted/40 text-muted-foreground border-border"
                 )}
-              />
-              {intervalTooLow ? (
-                <p className="text-[10px] text-red-600 font-semibold max-w-[220px]">
-                  Thấp hơn mức tối thiểu ({minIntervalHours} giờ) cho số nhóm/từ khoá đã chọn — vòng sau có thể bắt đầu khi vòng trước chưa cào xong.
-                </p>
-              ) : null}
+              >
+                <span>Facebook ({fb.selectedIds.length})</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => togglePlatform("linkedin")}
+                className={cn(
+                  "px-3 py-1.5 rounded-lg text-xs font-bold border transition cursor-pointer flex items-center gap-1.5",
+                  enabledPlatforms.has("linkedin") ? "bg-sky-700 text-white border-sky-700" : "bg-muted/40 text-muted-foreground border-border"
+                )}
+              >
+                <span>LinkedIn ({li.selectedIds.length})</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => togglePlatform("threads")}
+                className={cn(
+                  "px-3 py-1.5 rounded-lg text-xs font-bold border transition cursor-pointer flex items-center gap-1.5",
+                  enabledPlatforms.has("threads") ? "bg-slate-900 text-white border-slate-900" : "bg-muted/40 text-muted-foreground border-border"
+                )}
+              >
+                <span>Threads</span>
+              </button>
             </div>
-            <label className="flex items-start gap-2 text-xs text-foreground cursor-pointer mt-1 sm:mt-5">
-              <input
-                type="checkbox"
-                checked={repeatEnabled}
-                onChange={(e) => setRepeatEnabled(e.target.checked)}
-                disabled={submitting}
-                className="mt-0.5 h-4 w-4 rounded border-border"
-              />
-              <span>Tự động lặp lại theo chu kỳ đã đặt</span>
-            </label>
           </div>
 
-          {/* Cấu hình nâng cao & An toàn cào */}
-          <div className="rounded-xl border border-border bg-muted/20 p-4 space-y-3">
-            <h4 className="text-xs font-bold uppercase tracking-wider text-foreground flex items-center gap-1.5">
-              <span className="material-symbols-outlined text-[16px] text-primary">tune</span>
-              Tùy chỉnh thông số cào an toàn (Cá nhân hóa)
-            </h4>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-              <div>
-                <label className="text-[11px] font-semibold text-muted-foreground block mb-1">
-                  Độ trễ cuộn ngẫu nhiên (giây)
-                </label>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="number"
-                    step="0.1"
-                    min="1.0"
-                    max="5.0"
-                    value={delayMin}
-                    onChange={(e) => setDelayMin(Number(e.target.value) || 1.5)}
-                    className="w-full rounded-lg border border-border bg-background px-2.5 py-1.5 text-xs text-center font-bold"
-                  />
-                  <span className="text-xs text-muted-foreground">-</span>
-                  <input
-                    type="number"
-                    step="0.1"
-                    min="1.5"
-                    max="10.0"
-                    value={delayMax}
-                    onChange={(e) => setDelayMax(Number(e.target.value) || 2.8)}
-                    className="w-full rounded-lg border border-border bg-background px-2.5 py-1.5 text-xs text-center font-bold"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="text-[11px] font-semibold text-muted-foreground block mb-1">
-                  Nghỉ giữa các nhóm (giây)
-                </label>
-                <input
-                  type="number"
-                  min="15"
-                  max="180"
-                  value={groupRestSec}
-                  onChange={(e) => setGroupRestSec(Number(e.target.value) || 45)}
-                  className="w-full rounded-lg border border-border bg-background px-2.5 py-1.5 text-xs text-center font-bold"
-                />
-              </div>
-
-              <div>
-                <label className="text-[11px] font-semibold text-muted-foreground block mb-1">
-                  Dừng nhóm khi gặp bài cũ
-                </label>
-                <div className="flex items-center gap-1.5">
-                  <input
-                    type="number"
-                    min="5"
-                    max="50"
-                    value={oldPostsLimit}
-                    onChange={(e) => setOldPostsLimit(Number(e.target.value) || 15)}
-                    className="w-full rounded-lg border border-border bg-background px-2.5 py-1.5 text-xs text-center font-bold text-rose-600"
-                  />
-                  <span className="text-[11px] text-muted-foreground whitespace-nowrap">bài liên tiếp</span>
-                </div>
-              </div>
+          {/* Repeat interval */}
+          <div>
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="text-xs font-bold text-foreground">Chu kỳ lặp lại (giờ)</label>
+              <span className="text-[11px] text-muted-foreground">Tối thiểu: {formatDuration(estSeconds)}</span>
             </div>
-            <p className="text-[10px] text-muted-foreground">
-              ⚡ Tự động dừng nhóm hiện tại khi gặp <b>{oldPostsLimit} bài cũ</b> (ngoài ngày hôm nay) để tiết kiệm thời gian và tài nguyên, mô phỏng hành vi người thật chống checkpoint.
-            </p>
+            <div className="flex gap-2 flex-wrap mb-2">
+              {INTERVAL_PRESETS.map((p) => (
+                <button
+                  key={p.label}
+                  type="button"
+                  onClick={() => {
+                    setIntervalHours(p.hours);
+                    setIntervalInput(String(p.hours));
+                  }}
+                  className={cn(
+                    "px-2.5 py-1 rounded-lg text-xs font-medium border transition cursor-pointer",
+                    intervalHours === p.hours ? "bg-primary text-white border-primary" : "bg-muted/30 text-foreground border-border"
+                  )}
+                >
+                  {p.label}
+                </button>
+              ))}
+            </div>
           </div>
 
-          {error ? (
-            <div className="rounded-xl border border-red-200 bg-red-50 p-2.5 text-xs text-red-700 flex items-start gap-1.5">
-              <span className="material-symbols-outlined text-[16px] shrink-0">error</span>
+          {error && (
+            <div className="p-3 rounded-xl border border-red-200 bg-red-50 text-red-700 text-xs">
               {error}
             </div>
-          ) : null}
+          )}
 
-          <div className="flex items-center justify-end gap-2 border-t border-border pt-4">
-            <button type="button" onClick={onClose} className="px-4 py-2 rounded-xl border border-border text-sm font-semibold text-muted-foreground hover:bg-muted">
-              Huỷ
+          <div className="flex items-center justify-end gap-2 pt-2 border-t border-border">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-2 rounded-xl border border-border text-xs font-semibold text-foreground hover:bg-muted cursor-pointer"
+            >
+              Hủy
             </button>
             <button
               type="button"
-              onClick={handleSubmit}
               disabled={!canSubmit}
-              className="px-5 py-2 rounded-xl bg-primary text-white text-sm font-bold disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-1.5"
+              onClick={handleSubmit}
+              className="inline-flex items-center gap-1.5 px-5 py-2 rounded-xl bg-primary text-white text-xs font-bold disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer shadow-sm"
             >
-              {submitting ? <span className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" /> : <span className="material-symbols-outlined text-[18px]">add_circle</span>}
-              {submitting ? "Đang tạo..." : "Tạo lịch cào"}
+              {submitting && <div className="h-3 w-3 animate-spin rounded-full border-2 border-white border-t-transparent" />}
+              <span>Tạo lịch cào</span>
             </button>
           </div>
         </div>
-      </div>
-    </div>
-  );
-}
-
-function GroupPickList({ title, options, disabled }: { title: string; options: ReturnType<typeof useGroupOptions>; disabled: boolean }) {
-  const { groups, selectedIds, setSelectedIds, toggle, loading, error } = options;
-  return (
-    <div className="flex flex-col gap-2 min-w-0">
-      <div className="flex items-center justify-between gap-2">
-        <label className="text-sm font-bold text-foreground">
-          {title} ({selectedIds.length}/{groups.length})
-        </label>
-        <div className="flex items-center gap-3 text-[11px] font-semibold">
-          <button type="button" className="text-primary hover:underline disabled:opacity-50" disabled={disabled} onClick={() => setSelectedIds(groups.map((g) => g.id))}>
-            Chọn tất cả
-          </button>
-          <button type="button" className="text-muted-foreground hover:underline disabled:opacity-50" disabled={disabled} onClick={() => setSelectedIds([])}>
-            Bỏ chọn
-          </button>
-        </div>
-      </div>
-      <div className="border border-border rounded-xl max-h-[170px] overflow-y-auto divide-y divide-border bg-muted/30">
-        {loading ? (
-          <div className="p-3 text-center text-xs text-muted-foreground">Đang tải...</div>
-        ) : error ? (
-          <div className="p-3 text-center text-xs text-red-600">{error}</div>
-        ) : groups.length === 0 ? (
-          <div className="p-3 text-center text-xs text-muted-foreground">Chưa có nhóm nào.</div>
-        ) : (
-          groups.map((g) => (
-            <label key={g.id} className={cn("flex items-start gap-2 p-2 cursor-pointer hover:bg-muted/60", disabled && "opacity-60 pointer-events-none")}>
-              <input type="checkbox" className="mt-0.5 rounded border-border" checked={selectedIds.includes(g.id)} onChange={() => toggle(g.id)} />
-              <div className="min-w-0">
-                <div className="text-xs font-semibold text-foreground line-clamp-1">{g.group_name || g.group_url}</div>
-                <div className="text-[10px] text-muted-foreground truncate">{g.group_url}</div>
-              </div>
-            </label>
-          ))
-        )}
       </div>
     </div>
   );

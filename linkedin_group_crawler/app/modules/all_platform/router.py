@@ -16,6 +16,7 @@ from app.modules.all_platform.routers import (
     auth_router,
     social_accounts_router,
     keywords_library_router,
+    rotation_schedules_router,
 )
 from app.modules.all_platform.routers.platforms import router as platforms_router
 from app.modules.all_platform.routers.linkedin_auth import router as linkedin_auth_router
@@ -248,6 +249,13 @@ all_platform_router.include_router(
     keywords_library_router,
     prefix="/keywords-library",
     tags=["All-Platform Keywords Library"],
+)
+
+# ── Rotation Crawl Schedules (RBAC + Creator Identity) ───────────────────────
+all_platform_router.include_router(
+    rotation_schedules_router,
+    prefix="/rotation-schedules",
+    tags=["All-Platform Rotation Schedules"],
 )
 
 # ── Users & Teams ──────────────────────────────────────────────────────────────

@@ -346,6 +346,14 @@ export interface RotationSchedule {
   /** Tiến độ chi tiết (nhóm/từ khoá thứ mấy, đã lưu bao nhiêu bài) của vòng ĐANG chạy —
    * chỉ có khi status === "running", tự xoá khi chuyển nền tảng/kết thúc vòng. */
   progress?: ScheduleProgress | null;
+  creator?: {
+    user_id?: string;
+    name: string;
+    email: string;
+    role?: string;
+    avatar?: string;
+    is_system?: boolean;
+  };
 }
 
 export function useRotationSchedules() {

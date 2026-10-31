@@ -2983,3 +2983,63 @@ export const allPlatformKeywordsService = {
     });
   },
 };
+
+
+// ── ROTATION CRAWL SCHEDULES (RBAC + CREATOR IDENTITY) ────────────────────────
+
+export interface RotationScheduleCreator {
+  user_id?: string;
+  name: string;
+  email: string;
+  role?: string;
+  avatar?: string;
+  is_system?: boolean;
+}
+
+export interface BackendRotationSchedule {
+  id: string;
+  label: string;
+  cfg: any;
+  enabled: boolean;
+  status: string;
+  currentStage?: string | null;
+  roundNumber?: number;
+  nextRunAt?: number | null;
+  lastRoundSummary?: { roundNumber: number; totalSaved: number; at: number } | null;
+  lastError?: string | null;
+  createdAt?: number;
+  creator?: RotationScheduleCreator;
+}
+
+export const allPlatformRotationSchedulesService = {
+  getSchedules: (): Promise<ApiResponse<BackendRotationSchedule[]>> => {
+    return requestJson<BackendRotationSchedule[]>(`${BASE}/rotation-schedules`);
+  },
+
+  syncSchedules: (schedules: any[]): Promise<ApiResponse<{ synced_count: number; total: number }>> => {
+    return requestJson(`${BASE}/rotation-schedules/sync`, {
+      method: "POST",
+      body: JSON.stringify({ schedules }),
+    });
+  },
+
+  saveSchedule: (schedule: any): Promise<ApiResponse<BackendRotationSchedule>> => {
+    return requestJson(`${BASE}/rotation-schedules`, {
+      method: "POST",
+      body: JSON.stringify({ schedule }),
+    });
+  },
+
+  toggleSchedule: (scheduleId: string, enabled: boolean): Promise<ApiResponse<{ id: string; enabled: boolean }>> => {
+    return requestJson(`${BASE}/rotation-schedules/${encodeURIComponent(scheduleId)}/toggle`, {
+      method: "PUT",
+      body: JSON.stringify({ enabled }),
+    });
+  },
+
+  deleteSchedule: (scheduleId: string): Promise<ApiResponse<{ deleted: boolean; id: string }>> => {
+    return requestJson(`${BASE}/rotation-schedules/${encodeURIComponent(scheduleId)}`, {
+      method: "DELETE",
+    });
+  },
+};
