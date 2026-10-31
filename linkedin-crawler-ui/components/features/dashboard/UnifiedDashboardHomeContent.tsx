@@ -235,9 +235,13 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
     if (s) {
       setSeedingStatusFilter(s);
       setCallFilter("all");
+      setPage(1);
+      setClientPage(1);
     } else {
       setSeedingStatusFilter("all");
       setCallFilter("all");
+      setPage(1);
+      setClientPage(1);
     }
   }, [searchParams]);
 
@@ -418,6 +422,7 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
   const [isLoadingPosts, setIsLoadingPosts] = useState(true);
   const [postsError, setPostsError] = useState<string | null>(null);
   const [page, setPage] = useState(1);
+  const [clientPage, setClientPage] = useState(1);
   const [totalCount, setTotalCount] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
 
@@ -511,6 +516,19 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
         dateFrom = d.toISOString().split("T")[0];
       }
 
+      // Khi loc client-side (nhu Can lien he, Khong phu hop, loc seeding status),
+      // fetch page_size lon hon (100) o page 1 de nap du danh sach bai viet da danh gia
+      // vao bo nho, tranh viec chi co 15 bai lam sot bai viet thoa man.
+      const isClientFiltered = Boolean(
+        (seedingStatusFilter && seedingStatusFilter !== "all") ||
+        (callFilter && callFilter !== "all") ||
+        (filters.seeding_status && filters.seeding_status !== "all") ||
+        (serviceArea && serviceArea !== "all")
+      );
+
+      const requestPage = isClientFiltered ? 1 : page;
+      const requestPageSize = isClientFiltered ? 100 : 15;
+
       const res = await fetchWithRetry(() =>
         allPlatformPostsService.filter({
           email: CURRENT_USER_EMAIL,
@@ -526,8 +544,8 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
           product_seeding: filters.product_seeding || undefined,
           search: filters.search || undefined,
           sort: filters.sort,
-          page,
-          page_size: 15,
+          page: requestPage,
+          page_size: requestPageSize,
         })
       );
 
@@ -595,7 +613,7 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
     } finally {
       setIsLoadingPosts(false);
     }
-  }, [CURRENT_USER_EMAIL, feedPlatform, filters, page]);
+  }, [CURRENT_USER_EMAIL, feedPlatform, filters, page, seedingStatusFilter, callFilter, serviceArea]);
 
   
 
@@ -627,6 +645,7 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
     filterDebounceRef.current = setTimeout(() => {
       setFilters(f);
       setPage(1);
+      setClientPage(1);
       // Phase 6: persist filter state in URL (refresh won't lose filters)
       if (typeof window !== "undefined") {
         const params = new URLSearchParams();
@@ -923,6 +942,40 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
     });
   }, [areaPosts, seedingStatusFilter, callFilter, getPostRatingAndCall]);
 
+  const isClientFiltered = Boolean(
+    (seedingStatusFilter && seedingStatusFilter !== "all") ||
+    (callFilter && callFilter !== "all") ||
+    (filters.seeding_status && filters.seeding_status !== "all") ||
+    (serviceArea && serviceArea !== "all")
+  );
+
+  const CLIENT_PAGE_SIZE = 15;
+  const effectiveTotalCount = isClientFiltered ? visiblePosts.length : totalCount;
+  const effectiveTotalPages = isClientFiltered
+    ? Math.max(1, Math.ceil(visiblePosts.length / CLIENT_PAGE_SIZE))
+    : totalPages;
+  const currentPage = isClientFiltered ? clientPage : page;
+
+  const displayPosts = useMemo(() => {
+    if (!isClientFiltered) return visiblePosts;
+    const start = (clientPage - 1) * CLIENT_PAGE_SIZE;
+    return visiblePosts.slice(start, start + CLIENT_PAGE_SIZE);
+  }, [visiblePosts, isClientFiltered, clientPage]);
+
+  const handlePageChange = useCallback((newPage: number) => {
+    if (isClientFiltered) {
+      setClientPage(Math.max(1, Math.min(effectiveTotalPages, newPage)));
+      if (typeof window !== "undefined") {
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      }
+    } else {
+      setPage(Math.max(1, Math.min(totalPages, newPage)));
+      if (typeof window !== "undefined") {
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      }
+    }
+  }, [isClientFiltered, effectiveTotalPages, totalPages]);
+
   // Tab theo team: "Tất cả" + từng team thật đang có trong hệ thống (list `teams`
   // đã fetch sẵn ở trên cho FilterBar) — tự động có tab mới khi admin tạo thêm team.
   const serviceAreaTabs = useMemo(
@@ -951,7 +1004,7 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
           type="button"
           role="tab"
           aria-selected={feedPlatform === t.key}
-          onClick={() => { setFeedPlatform(t.key); setPage(1); }}
+          onClick={() => { setFeedPlatform(t.key); setPage(1); setClientPage(1); }}
           className={cn(
             "flex items-center gap-2 px-4 py-1.5 rounded-lg text-sm font-bold transition-all cursor-pointer",
             feedPlatform === t.key
@@ -1105,6 +1158,8 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
               onClick={() => {
                 setSeedingStatusFilter("all");
                 setCallFilter("all");
+                setPage(1);
+                setClientPage(1);
               }}
               className={cn(
                 "bg-white border rounded-2xl p-4 sm:p-5 shadow-xs cursor-pointer transition-all hover:shadow-md",
@@ -1124,6 +1179,8 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
               onClick={() => {
                 setSeedingStatusFilter("todo");
                 setCallFilter("all");
+                setPage(1);
+                setClientPage(1);
               }}
               className={cn(
                 "bg-white border rounded-2xl p-4 sm:p-5 shadow-xs cursor-pointer transition-all hover:shadow-md",
@@ -1143,6 +1200,8 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
               onClick={() => {
                 setSeedingStatusFilter("doing");
                 setCallFilter("all");
+                setPage(1);
+                setClientPage(1);
               }}
               className={cn(
                 "bg-white border rounded-2xl p-4 sm:p-5 shadow-xs cursor-pointer transition-all hover:shadow-md",
@@ -1162,6 +1221,8 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
               onClick={() => {
                 setSeedingStatusFilter("done");
                 setCallFilter("all");
+                setPage(1);
+                setClientPage(1);
               }}
               className={cn(
                 "bg-white border rounded-2xl p-4 sm:p-5 shadow-xs cursor-pointer transition-all hover:shadow-md",
@@ -1192,7 +1253,7 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
                   <button
                     key={key}
                     type="button"
-                    onClick={() => setCallFilter(key)}
+                    onClick={() => { setCallFilter(key); setPage(1); setClientPage(1); }}
                     className={cn(
                       "inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold transition-all cursor-pointer",
                       isSelected
@@ -1222,7 +1283,7 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
               <button
                 key={tab.key}
                 type="button"
-                onClick={() => setServiceArea(tab.key)}
+                onClick={() => { setServiceArea(tab.key); setPage(1); setClientPage(1); }}
                 className={cn(
                   "rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors cursor-pointer",
                   serviceArea === tab.key
@@ -1243,7 +1304,7 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
                 Bộ lọc nhanh:
               </span>
               <span className="text-xs text-muted-foreground font-medium mr-1">
-                Tổng: <b className="text-foreground">{totalCount}</b> bài viết
+                Tổng: <b className="text-foreground">{effectiveTotalCount}</b> bài viết
               </span>
             </div>
 
@@ -1270,17 +1331,17 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
               <div className="flex items-center gap-2 text-xs text-amber-900 font-semibold">
                 <span className="material-symbols-outlined text-amber-600 text-[20px] animate-pulse">speed</span>
                 <span>
-                  Đang ở <b>Chế độ Review Nhanh Trang {page}</b>: Đã duyệt <b>{reviewedPostIds.size}/{visiblePosts.length}</b> bài trên trang này.
+                  Đang ở <b>Chế độ Review Nhanh Trang {currentPage}</b>: Đã duyệt <b>{reviewedPostIds.size}/{displayPosts.length}</b> bài trên trang này.
                 </span>
               </div>
               <div className="flex items-center gap-2">
                 <button
                   type="button"
                   onClick={() => {
-                    visiblePosts.forEach((p) => reviewedPostIds.add(p.id));
+                    displayPosts.forEach((p) => reviewedPostIds.add(p.id));
                     setReviewedPostIds(new Set(reviewedPostIds));
-                    toast.success(`⚡ Đã hoàn tất Review trang ${page}! Chuyển sang trang ${page + 1}`);
-                    setPage((p) => Math.min(totalPages, p + 1));
+                    toast.success(`⚡ Đã hoàn tất Review trang ${currentPage}! Chuyển sang trang ${currentPage + 1}`);
+                    handlePageChange(currentPage + 1);
                   }}
                   className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-sm transition flex items-center gap-1.5 cursor-pointer"
                 >
@@ -1319,7 +1380,7 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
                 Thử lại
               </button>
             </div>
-          ) : visiblePosts.length === 0 ? (
+          ) : displayPosts.length === 0 ? (
             <div className="py-12 text-center text-muted-foreground">
               {posts.length === 0
                 ? "Không có bài viết nào phù hợp với bộ lọc."
@@ -1328,7 +1389,7 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
           ) : (
             <>
               <div className="flex flex-col gap-4">
-                {visiblePosts.map((post) => (
+                {displayPosts.map((post) => (
                     <PostCard
                       key={post.id || post.post_url}
                       post={post}
@@ -1354,23 +1415,23 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
                 ))}
               </div>
 
-              {totalPages > 1 && (
+              {effectiveTotalPages > 1 && (
                 <div className="mt-6 flex flex-wrap items-center justify-center gap-2 text-center">
                   <button
                     type="button"
-                    onClick={() => setPage((p) => Math.max(1, p - 1))}
-                    disabled={page === 1}
+                    onClick={() => handlePageChange(currentPage - 1)}
+                    disabled={currentPage === 1}
                     className="rounded-lg border border-border px-3 py-1.5 text-sm disabled:opacity-50 cursor-pointer whitespace-nowrap"
                   >
                     ‹ Trước
                   </button>
                   <span className="w-full whitespace-nowrap text-sm text-muted-foreground sm:w-auto">
-                    Trang {page} / {totalPages} ({totalCount} bài)
+                    Trang {currentPage} / {effectiveTotalPages} ({effectiveTotalCount} bài)
                   </span>
                   <button
                     type="button"
-                    onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                    disabled={page === totalPages}
+                    onClick={() => handlePageChange(currentPage + 1)}
+                    disabled={currentPage === effectiveTotalPages}
                     className="rounded-lg border border-border px-3 py-1.5 text-sm disabled:opacity-50 cursor-pointer whitespace-nowrap"
                   >
                     Sau ›
