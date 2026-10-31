@@ -2892,7 +2892,10 @@ export const crawlScheduleHistoryService = {
   getHistory: (payload?: {
     email?: string;
     id_member?: string;
-    time_range?: "all" | "today" | "this_week" | "this_month";
+    time_range?: string;
+    specific_date?: string;
+    date_from?: string;
+    date_to?: string;
     limit?: number;
   }): Promise<ApiResponse<CrawlScheduleHistoryData>> => {
     return requestJson(`${BASE}/unified/crawl-schedule/history`, {

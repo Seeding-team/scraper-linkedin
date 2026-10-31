@@ -1681,7 +1681,10 @@ def get_crawl_schedule_rounds_history(
     email: Optional[str] = None,
     id_member: Optional[str] = None,
     time_range: str = "all",
-    limit: int = 50,
+    specific_date: Optional[str] = None,
+    date_from_str: Optional[str] = None,
+    date_to_str: Optional[str] = None,
+    limit: int = 100,
 ) -> dict[str, Any]:
     """Bóc tách và thống kê chi tiết các vòng cào từ lịch theo từng user riêng biệt và accsystem crawler."""
     from collections import defaultdict
@@ -1720,16 +1723,52 @@ def get_crawl_schedule_rounds_history(
                 "is_system": False,
             })
 
-    # Lọc thời gian
-    now_vn = datetime.now(timezone(timedelta(hours=7)))
+    # Lọc thời gian (Giờ Việt Nam GMT+7)
+    vn_tz = timezone(timedelta(hours=7))
+    now_vn = datetime.now(vn_tz)
     date_from = None
-    if time_range == "today":
+    date_to = None
+
+    if specific_date:
+        try:
+            # specific_date = "YYYY-MM-DD"
+            p = [int(x) for x in specific_date.strip().split("-")]
+            d_spec = datetime(p[0], p[1], p[2], tzinfo=vn_tz)
+            date_from = d_spec.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
+            date_to = d_spec.replace(hour=23, minute=59, second=59, microsecond=999999).astimezone(timezone.utc)
+        except Exception:
+            pass
+    elif date_from_str or date_to_str:
+        if date_from_str:
+            try:
+                p = [int(x) for x in date_from_str.strip().split("-")]
+                d_f = datetime(p[0], p[1], p[2], tzinfo=vn_tz)
+                date_from = d_f.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
+            except Exception:
+                pass
+        if date_to_str:
+            try:
+                p = [int(x) for x in date_to_str.strip().split("-")]
+                d_t = datetime(p[0], p[1], p[2], tzinfo=vn_tz)
+                date_to = d_t.replace(hour=23, minute=59, second=59, microsecond=999999).astimezone(timezone.utc)
+            except Exception:
+                pass
+    elif time_range == "today":
         date_from = now_vn.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
-    elif time_range == "this_week":
-        start_week = now_vn - timedelta(days=now_vn.weekday())
-        date_from = start_week.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
-    elif time_range == "this_month":
-        date_from = now_vn.replace(day=1, hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
+        date_to = now_vn.replace(hour=23, minute=59, second=59, microsecond=999999).astimezone(timezone.utc)
+    elif time_range in ("yesterday", "last_day"):
+        y_day = now_vn - timedelta(days=1)
+        date_from = y_day.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
+        date_to = y_day.replace(hour=23, minute=59, second=59, microsecond=999999).astimezone(timezone.utc)
+    elif time_range in ("this_week", "last_week", "week"):
+        date_from = (now_vn - timedelta(days=7)).replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
+        date_to = now_vn.astimezone(timezone.utc)
+    elif time_range in ("this_month", "last_month", "month"):
+        date_from = (now_vn - timedelta(days=30)).replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
+        date_to = now_vn.astimezone(timezone.utc)
+    elif time_range in ("this_year", "last_year", "year"):
+        date_from = (now_vn - timedelta(days=365)).replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
+        date_to = now_vn.astimezone(timezone.utc)
 
     # 2. Truy vấn bài viết từ 3 nền tảng
     q_fb = sb.table("facebook_posts").select("id, id_member, score, crawl_date, created_at, group_id")
@@ -1747,9 +1786,15 @@ def get_crawl_schedule_rounds_history(
         q_th = q_th.gte("created_at", iso_from)
         q_li = q_li.gte("created_at", iso_from)
 
-    fb_data = q_fb.order("created_at", desc=True).limit(600).execute().data or []
-    th_data = q_th.order("created_at", desc=True).limit(600).execute().data or []
-    li_data = q_li.order("created_at", desc=True).limit(300).execute().data or []
+    if date_to:
+        iso_to = date_to.isoformat()
+        q_fb = q_fb.lte("created_at", iso_to)
+        q_th = q_th.lte("created_at", iso_to)
+        q_li = q_li.lte("created_at", iso_to)
+
+    fb_data = q_fb.order("created_at", desc=True).limit(1000).execute().data or []
+    th_data = q_th.order("created_at", desc=True).limit(1000).execute().data or []
+    li_data = q_li.order("created_at", desc=True).limit(500).execute().data or []
 
     def _parse_ts(dt_val: Any) -> Optional[datetime]:
         if not dt_val:

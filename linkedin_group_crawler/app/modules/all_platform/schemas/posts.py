@@ -81,7 +81,10 @@ class CrawlScheduleHistoryRequest(BaseModel):
     email: Optional[str] = None
     id_member: Optional[str] = None
     time_range: Optional[str] = "all"
-    limit: Optional[int] = 50
+    specific_date: Optional[str] = None
+    date_from: Optional[str] = None
+    date_to: Optional[str] = None
+    limit: Optional[int] = 100
 
 
 class RecordCrawlRoundRequest(BaseModel):

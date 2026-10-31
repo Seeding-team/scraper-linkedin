@@ -250,7 +250,10 @@ def unified_crawl_schedule_history(payload: CrawlScheduleHistoryRequest) -> Base
             email=payload.email,
             id_member=payload.id_member,
             time_range=payload.time_range or "all",
-            limit=payload.limit or 50,
+            specific_date=payload.specific_date,
+            date_from_str=payload.date_from,
+            date_to_str=payload.date_to,
+            limit=payload.limit or 100,
         )
         return BaseResponse(success=True, data=data)
     except Exception as e:
