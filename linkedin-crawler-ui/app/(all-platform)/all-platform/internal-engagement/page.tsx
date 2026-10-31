@@ -211,6 +211,20 @@ export default function InternalEngagementPage() {
     }
   }, [urlTab, searchParams, router]);
 
+  const urlStatus = searchParams?.get("status");
+
+  useEffect(() => {
+    if (urlStatus === "need" || urlStatus === "unseeded" || urlStatus === "chua_seeding") {
+      setTab("need");
+    } else if (urlStatus === "completed" || urlStatus === "seeded" || urlStatus === "da_seeding") {
+      setTab("completed");
+    } else if (urlStatus === "overdue") {
+      setTab("overdue" as any);
+    } else if (urlStatus === "all" || (!urlStatus && searchParams?.has("status"))) {
+      setTab("all");
+    }
+  }, [urlStatus, searchParams]);
+
   // Tab & Lifecycle Heartbeat: Báo cho Extension biết tab Web Seeding đang mở
   useEffect(() => {
     const sendHeartbeat = () => {
@@ -1917,10 +1931,10 @@ export default function InternalEngagementPage() {
               {/* BÊN TRÁI: NHÓM NÚT LỌC TRẠNG THÁI */}
               <div className="flex items-center gap-1.5 flex-wrap">
                 {[
-                  { key: "all", label: "Tất cả bài" },
-                  { key: "need", label: "Đang thực hiện" },
-                  { key: "completed", label: "Đã hoàn thành" },
-                  { key: "overdue", label: "Quá hạn" },
+                  { key: "all", label: "Tất cả bài", query: "" },
+                  { key: "need", label: "Chưa seeding", query: "status=need" },
+                  { key: "completed", label: "Đã seeding", query: "status=completed" },
+                  { key: "overdue", label: "Quá hạn", query: "status=overdue" },
                 ].map((t) => (
                   <button
                     key={t.key}
@@ -1929,7 +1943,14 @@ export default function InternalEngagementPage() {
                       ? "bg-[#be123c] text-white border-[#be123c] shadow-xs"
                       : "bg-gray-50 text-gray-700 border-gray-200 hover:bg-gray-100"
                       }`}
-                    onClick={() => setTab(t.key as any)}
+                    onClick={() => {
+                      setTab(t.key as any);
+                      if (!t.query) {
+                        router.push("/all-platform/internal-engagement");
+                      } else {
+                        router.push(`/all-platform/internal-engagement?${t.query}`);
+                      }
+                    }}
                   >
                     {t.label} ({tabCounts[t.key as keyof typeof tabCounts] || 0})
                   </button>

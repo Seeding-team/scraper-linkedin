@@ -266,6 +266,8 @@ function GroupLinks({
             {entry.items.map((child) => {
               if (child.type === "item") {
                 const ItemIcon = materialToLucideIcon(child.icon);
+                const hasChildren = Boolean(child.children && child.children.length > 0);
+                const childHasActiveLeaf = hasChildren && child.children!.some((leaf) => isLeafActive(pathname, leaf, searchParams));
                 const active = isLeafActive(pathname, child, searchParams);
                 const isChildZalo =
                   child.id === "zalo-accounts" ||
@@ -273,32 +275,73 @@ function GroupLinks({
                   child.label.toLowerCase().includes("zalo");
 
                 return (
-                  <Link
-                    key={child.id}
-                    href={child.href}
-                    className={cn(
-                      "group relative flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-[13px] font-medium transition-all duration-150 outline-none select-none",
-                      active
-                        ? "bg-rose-50 text-rose-700 font-bold shadow-2xs"
-                        : "text-slate-600 hover:bg-slate-100/70 hover:text-slate-900 active:bg-slate-200/50",
-                    )}
-                  >
-                    <span className="flex min-w-0 items-center gap-2 truncate">
-                      <ItemIcon
-                        className={cn(
-                          "size-4 shrink-0 stroke-[1.8] transition-colors",
-                          active ? "text-rose-700" : "text-slate-400 group-hover:text-slate-600",
-                        )}
-                      />
-                      <span className="truncate">{child.label}</span>
-                    </span>
+                  <React.Fragment key={child.id}>
+                    <Link
+                      href={child.href}
+                      className={cn(
+                        "group relative flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-[13px] font-medium transition-all duration-150 outline-none select-none",
+                        active && !childHasActiveLeaf
+                          ? "bg-rose-50 text-rose-700 font-bold shadow-2xs"
+                          : "text-slate-600 hover:bg-slate-100/70 hover:text-slate-900 active:bg-slate-200/50",
+                      )}
+                    >
+                      <span className="flex min-w-0 items-center gap-2 truncate">
+                        <ItemIcon
+                          className={cn(
+                            "size-4 shrink-0 stroke-[1.8] transition-colors",
+                            (active || childHasActiveLeaf) ? "text-rose-700" : "text-slate-400 group-hover:text-slate-600",
+                          )}
+                        />
+                        <span className="truncate">{child.label}</span>
+                      </span>
 
-                    {child.badge !== undefined ? (
-                      <PillBadge badge={child.badge} active={active} />
-                    ) : isChildZalo ? (
-                      <PillBadge isLive />
-                    ) : null}
-                  </Link>
+                      {child.badge !== undefined ? (
+                        <PillBadge badge={child.badge} active={active} />
+                      ) : isChildZalo ? (
+                        <PillBadge isLive />
+                      ) : null}
+                    </Link>
+
+                    {hasChildren && (
+                      <div className="ml-3 pl-2.5 my-0.5 space-y-0.5 border-l-2 border-rose-200/70">
+                        {child.children!.map((subLeaf) => {
+                          const SubLeafIcon = materialToLucideIcon(subLeaf.icon);
+                          const leafActive = isLeafActive(pathname, subLeaf, searchParams);
+                          return (
+                            <Link
+                              key={subLeaf.id}
+                              href={subLeaf.href}
+                              className={cn(
+                                "group relative flex w-full items-center justify-between gap-1.5 rounded-md px-2 py-1 text-[11.5px] font-medium transition-all duration-150 outline-none select-none",
+                                leafActive
+                                  ? "bg-rose-50 text-rose-700 font-bold shadow-2xs"
+                                  : "text-slate-600 hover:bg-slate-100/70 hover:text-slate-900 active:bg-slate-200/50",
+                              )}
+                            >
+                              <span className="flex min-w-0 items-center gap-1.5 truncate">
+                                <SubLeafIcon
+                                  className={cn(
+                                    "size-3 shrink-0 stroke-[1.8] transition-colors",
+                                    leafActive ? "text-rose-700" : "text-slate-400 group-hover:text-slate-600",
+                                  )}
+                                />
+                                <span className="truncate">{subLeaf.label}</span>
+                              </span>
+
+                              {subLeaf.badge !== undefined ? (
+                                <PillBadge badge={subLeaf.badge} active={leafActive} />
+                              ) : leafActive ? (
+                                <span
+                                  className="size-1 rounded-full bg-rose-600 shadow-xs shrink-0"
+                                  aria-hidden="true"
+                                />
+                              ) : null}
+                            </Link>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </React.Fragment>
                 );
               }
 

@@ -47,6 +47,8 @@ import {
   Gauge,
   Wallet,
   ListFilter,
+  Clock,
+  Check,
   type LucideIcon,
 } from "lucide-react";
 import type { MaterialSymbolName } from "@/components/ui";
@@ -105,6 +107,8 @@ const MAP: Partial<Record<MaterialSymbolName, LucideIcon>> = {
   speed: Gauge,
   account_balance_wallet: Wallet,
   filter_list: ListFilter,
+  schedule: Clock,
+  check: Check,
 };
 
 export function materialToLucideIcon(name: MaterialSymbolName): LucideIcon {

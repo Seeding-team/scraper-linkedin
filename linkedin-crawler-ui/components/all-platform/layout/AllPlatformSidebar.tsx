@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 import { MaterialIcon, type MaterialSymbolName } from "@/components/ui";
 import { useAppAuth } from "@/contexts/AppAuthContext";
@@ -83,7 +83,12 @@ export function isLeafActive(pathname: string, item: NavLeafItem, searchParams?:
     }
     return true;
   }
-  if (item.exactMatch) return pathname === item.href.split("?")[0];
+  if (item.exactMatch) {
+    if (searchParams && searchParams.has("status") && item.children && item.children.length > 0) {
+      return false;
+    }
+    return pathname === item.href.split("?")[0];
+  }
   if (pathname === item.href) {
     if (searchParams && (searchParams.has("tab") || searchParams.has("sub"))) {
       const tabVal = searchParams.get("tab");
@@ -263,6 +268,22 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, workspaceTab: 
       icon: "chat_bubble",
       label: "Tương tác nội bộ",
       exactMatch: true,
+      children: [
+        {
+          type: "item",
+          id: "internal-unseeded",
+          href: "/all-platform/internal-engagement?status=need",
+          icon: "schedule",
+          label: "Chưa seeding",
+        },
+        {
+          type: "item",
+          id: "internal-seeded",
+          href: "/all-platform/internal-engagement?status=completed",
+          icon: "check",
+          label: "Đã seeding",
+        },
+      ],
     },
     {
       type: "subgroup",
@@ -853,12 +874,14 @@ function SidebarGroup({
   onNavigate,
   homeHref,
 }: {
+
   entry: NavGroupItem;
   pathname: string;
   collapsed?: boolean;
   onNavigate?: () => void;
   homeHref?: string;
 }) {
+  const searchParams = useSearchParams();
   const hasActiveChild = entry.items.some((item) =>
     item.type === "item"
       ? item.href !== homeHref && isLeafActive(pathname, item)
@@ -920,13 +943,27 @@ function SidebarGroup({
           {entry.items.map((child) => {
             if (child.type === "item") {
               return (
-                <SidebarLink
-                  key={child.id}
-                  item={child}
-                  active={isLeafActive(pathname, child)}
-                  indented
-                  onNavigate={onNavigate}
-                />
+                <div key={child.id} className="space-y-1">
+                  <SidebarLink
+                    item={child}
+                    active={isLeafActive(pathname, child, searchParams)}
+                    indented
+                    onNavigate={onNavigate}
+                  />
+                  {child.children && child.children.length > 0 && (
+                    <div className="ml-3 space-y-1 border-l border-outline-variant/40 pl-2">
+                      {child.children.map((subLeaf) => (
+                        <SidebarLink
+                          key={subLeaf.id}
+                          item={subLeaf}
+                          active={isLeafActive(pathname, subLeaf, searchParams)}
+                          indented
+                          onNavigate={onNavigate}
+                        />
+                      ))}
+                    </div>
+                  )}
+                </div>
               );
             }
             return (
