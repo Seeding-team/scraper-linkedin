@@ -2,11 +2,12 @@
 
 import React, { useState } from "react";
 import { RotationCrawlPanel } from "@/components/all-platform/components/seeding-extension/rotation-crawl-panel";
+import { CrawlScheduleHistoryPanel } from "@/components/all-platform/crawl-schedule-history-panel";
 import { CrawlQueueMonitor } from "@/components/all-platform/crawl-queue-monitor";
 import { cn } from "@/lib/utils";
 
 export default function LichCaoHangDoiPage() {
-  const [activeTab, setActiveTab] = useState<"schedule" | "queue">("schedule");
+  const [activeTab, setActiveTab] = useState<"schedule" | "history" | "queue">("schedule");
 
   return (
     <div className="min-h-screen bg-slate-50/50 p-6 md:p-8 space-y-6">
@@ -18,7 +19,7 @@ export default function LichCaoHangDoiPage() {
             Lịch cào xoay vòng &amp; Hàng đợi
           </h1>
           <p className="text-xs text-gray-500 mt-1 font-medium">
-            Thiết lập lịch cào tự động đa nền tảng (Facebook - LinkedIn - Threads) và giám sát trạng thái hàng đợi cào hệ thống.
+            Thiết lập lịch cào tự động đa nền tảng (Facebook - LinkedIn - Threads), theo dõi lịch sử vòng cào và giám sát hàng đợi hệ thống.
           </p>
         </div>
         <div className="flex items-center gap-1.5 bg-gray-100 p-1.5 rounded-xl border border-gray-200">
@@ -37,6 +38,19 @@ export default function LichCaoHangDoiPage() {
           </button>
           <button
             type="button"
+            onClick={() => setActiveTab("history")}
+            className={cn(
+              "px-3.5 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer flex items-center gap-1.5",
+              activeTab === "history"
+                ? "bg-white text-gray-900 shadow-xs"
+                : "text-gray-500 hover:text-gray-900"
+            )}
+          >
+            <span className="material-symbols-outlined text-[16px]">history</span>
+            Lịch sử cào từ lịch
+          </button>
+          <button
+            type="button"
             onClick={() => setActiveTab("queue")}
             className={cn(
               "px-3.5 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer flex items-center gap-1.5",
@@ -51,11 +65,16 @@ export default function LichCaoHangDoiPage() {
         </div>
       </div>
 
-      {/* Nội dung chuyên biệt */}
+      {/* Nội dung chuyên biệt theo tab */}
       <div className="bg-white rounded-2xl border border-gray-100 p-6 shadow-xs">
-        {activeTab === "schedule" ? <RotationCrawlPanel /> : <CrawlQueueMonitor />}
+        {activeTab === "schedule" ? (
+          <RotationCrawlPanel />
+        ) : activeTab === "history" ? (
+          <CrawlScheduleHistoryPanel />
+        ) : (
+          <CrawlQueueMonitor />
+        )}
       </div>
     </div>
   );
 }
-

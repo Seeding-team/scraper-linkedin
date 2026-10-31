@@ -1024,3 +1024,294 @@ def get_unified_daily_trend(
         {"date": day, "posts": v["posts"], "comments": v["comments"], "inbox": v["inbox"]}
         for day, v in sorted(buckets.items())
     ]
+
+_LIVE_RECORDED_ROUNDS: list[dict[str, Any]] = []
+
+
+def record_crawl_schedule_round(payload: dict[str, Any]) -> dict[str, Any]:
+    """Ghi nhận tức thời kết quả vòng cào từ Extension hoặc Worker khi hoàn tất."""
+    global _LIVE_RECORDED_ROUNDS
+    import uuid as _uuid
+    round_id = payload.get("id") or f"live-round-{str(_uuid.uuid4())[:8]}"
+    round_entry = {
+        "id": round_id,
+        "round_number": payload.get("round_number", 1),
+        "round_label": f"Vòng #{payload.get('round_number', 1)}",
+        "schedule_id": payload.get("schedule_id"),
+        "schedule_label": payload.get("schedule_label") or "Lịch cào xoay vòng đa nền tảng",
+        "user_id": payload.get("user_id") or payload.get("id_member"),
+        "user_email": payload.get("user_email") or "",
+        "user_name": payload.get("user_name") or "Thành viên",
+        "is_system": bool(payload.get("is_system", False)),
+        "started_at": payload.get("started_at"),
+        "finished_at": payload.get("finished_at"),
+        "started_at_formatted": payload.get("started_at_formatted") or "",
+        "duration_seconds": payload.get("duration_seconds", 0),
+        "duration_formatted": payload.get("duration_formatted") or "45 giây",
+        "status": payload.get("status", "done"),
+        "facebook": payload.get("facebook") or {"posts_count": 0, "ai_passed_count": 0, "ai_pass_rate": 0.0},
+        "linkedin": payload.get("linkedin") or {"posts_count": 0, "ai_passed_count": 0, "ai_pass_rate": 0.0},
+        "threads": payload.get("threads") or {"posts_count": 0, "ai_passed_count": 0, "ai_pass_rate": 0.0},
+        "total_posts": payload.get("total_posts", 0),
+        "total_ai_passed": payload.get("total_ai_passed", 0),
+        "ai_pass_rate": payload.get("ai_pass_rate", 0.0),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    _LIVE_RECORDED_ROUNDS.insert(0, round_entry)
+    if len(_LIVE_RECORDED_ROUNDS) > 200:
+        _LIVE_RECORDED_ROUNDS = _LIVE_RECORDED_ROUNDS[:200]
+    return {"success": True, "round": round_entry}
+
+
+def get_crawl_schedule_rounds_history(
+    email: Optional[str] = None,
+    id_member: Optional[str] = None,
+    time_range: str = "all",
+    limit: int = 50,
+) -> dict[str, Any]:
+    """Bóc tách và thống kê chi tiết các vòng cào từ lịch theo từng user riêng biệt và accsystem crawler."""
+    from collections import defaultdict
+    sb = _supabase()
+    ai_threshold = 40
+    crawler_system_id = "4a15e851-580c-440e-bcf0-a4363a54170f"
+
+    # 1. Danh sách user & tài khoản crawler
+    users_data = sb.table("app_users").select("id, name, email").execute().data or []
+    user_map = {u["id"]: u for u in users_data}
+
+    user_map[SEEDING_SYSTEM_MEMBER_ID] = {
+        "id": SEEDING_SYSTEM_MEMBER_ID,
+        "name": "Hệ thống (VPS Crawler)",
+        "email": "seedingsystem@markeeai.com",
+        "is_system": True,
+    }
+    user_map[crawler_system_id] = {
+        "id": crawler_system_id,
+        "name": "Seeding Crawler System",
+        "email": "seeding.crawler@markeeai.com",
+        "is_system": True,
+    }
+
+    members_list = [
+        {"id": "all", "name": "Tất cả tài khoản & Hệ thống", "email": "all@system", "is_system": False},
+        {"id": SEEDING_SYSTEM_MEMBER_ID, "name": "Hệ thống (VPS Crawler)", "email": "seedingsystem@markeeai.com", "is_system": True},
+        {"id": crawler_system_id, "name": "Seeding Crawler System", "email": "seeding.crawler@markeeai.com", "is_system": True},
+    ]
+    for u in users_data:
+        if u["id"] not in (SEEDING_SYSTEM_MEMBER_ID, crawler_system_id):
+            members_list.append({
+                "id": u["id"],
+                "name": u.get("name") or u.get("email") or "Thành viên",
+                "email": u.get("email") or "",
+                "is_system": False,
+            })
+
+    # Lọc thời gian
+    now_vn = datetime.now(timezone(timedelta(hours=7)))
+    date_from = None
+    if time_range == "today":
+        date_from = now_vn.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
+    elif time_range == "this_week":
+        start_week = now_vn - timedelta(days=now_vn.weekday())
+        date_from = start_week.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
+    elif time_range == "this_month":
+        date_from = now_vn.replace(day=1, hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
+
+    # 2. Truy vấn bài viết từ 3 nền tảng
+    q_fb = sb.table("facebook_posts").select("id, id_member, score, crawl_date, created_at, group_id")
+    q_th = sb.table("threads_posts").select("id, id_member, score, crawl_date, created_at, keyword")
+    q_li = sb.table("linkedin_posts").select("id, id_member, score, crawl_date, created_at, id_group, session_id")
+
+    if id_member and id_member != "all":
+        q_fb = q_fb.eq("id_member", id_member)
+        q_th = q_th.eq("id_member", id_member)
+        q_li = q_li.eq("id_member", id_member)
+
+    if date_from:
+        iso_from = date_from.isoformat()
+        q_fb = q_fb.gte("created_at", iso_from)
+        q_th = q_th.gte("created_at", iso_from)
+        q_li = q_li.gte("created_at", iso_from)
+
+    fb_data = q_fb.order("created_at", desc=True).limit(600).execute().data or []
+    th_data = q_th.order("created_at", desc=True).limit(600).execute().data or []
+    li_data = q_li.order("created_at", desc=True).limit(300).execute().data or []
+
+    def _parse_ts(dt_val: Any) -> Optional[datetime]:
+        if not dt_val:
+            return None
+        try:
+            s = str(dt_val).replace("Z", "+00:00")
+            return datetime.fromisoformat(s)
+        except Exception:
+            return None
+
+    def _format_dur(sec: int) -> str:
+        if sec <= 0:
+            return "< 1 phút"
+        m = int(sec // 60)
+        s = int(sec % 60)
+        h = int(m // 60)
+        m = int(m % 60)
+        if h > 0:
+            return f"{h} giờ {m} phút"
+        if m > 0:
+            return f"{m} phút {s} giây" if s > 0 else f"{m} phút"
+        return f"{s} giây"
+
+    all_posts = []
+    for p in fb_data:
+        m_id = p.get("id_member") or SEEDING_SYSTEM_MEMBER_ID
+        dt = _parse_ts(p.get("created_at") or p.get("crawl_date"))
+        if dt:
+            all_posts.append({
+                "platform": "facebook",
+                "id": p["id"],
+                "member_id": m_id,
+                "score": p.get("score") or 0,
+                "created_at": dt,
+            })
+    for p in th_data:
+        m_id = p.get("id_member") or SEEDING_SYSTEM_MEMBER_ID
+        dt = _parse_ts(p.get("created_at") or p.get("crawl_date"))
+        if dt:
+            all_posts.append({
+                "platform": "threads",
+                "id": p["id"],
+                "member_id": m_id,
+                "score": p.get("score") or 0,
+                "created_at": dt,
+            })
+    for p in li_data:
+        m_id = p.get("id_member") or SEEDING_SYSTEM_MEMBER_ID
+        dt = _parse_ts(p.get("created_at") or p.get("crawl_date"))
+        if dt:
+            all_posts.append({
+                "platform": "linkedin",
+                "id": p["id"],
+                "member_id": m_id,
+                "score": p.get("score") or 0,
+                "created_at": dt,
+            })
+
+    all_posts.sort(key=lambda x: x["created_at"], reverse=True)
+
+    by_member = defaultdict(list)
+    for p in all_posts:
+        by_member[p["member_id"]].append(p)
+
+    generated_rounds = []
+    for mid, m_posts in by_member.items():
+        user_info = user_map.get(mid, {
+            "id": mid,
+            "name": "Thành viên" if mid not in (SEEDING_SYSTEM_MEMBER_ID, crawler_system_id) else "Hệ thống (VPS Crawler)",
+            "email": "",
+            "is_system": mid in (SEEDING_SYSTEM_MEMBER_ID, crawler_system_id),
+        })
+        is_sys = mid in (SEEDING_SYSTEM_MEMBER_ID, crawler_system_id)
+
+        clusters = []
+        cur = []
+        for post in m_posts:
+            if not cur:
+                cur.append(post)
+            else:
+                prev_time = cur[-1]["created_at"]
+                diff = (prev_time - post["created_at"]).total_seconds()
+                if diff <= 45 * 60:
+                    cur.append(post)
+                else:
+                    clusters.append(cur)
+                    cur = [post]
+        if cur:
+            clusters.append(cur)
+
+        for idx, cluster in enumerate(clusters):
+            start = min(p["created_at"] for p in cluster)
+            end = max(p["created_at"] for p in cluster)
+            dur_sec = max(45, int((end - start).total_seconds()))
+
+            fb_items = [p for p in cluster if p["platform"] == "facebook"]
+            fb_cnt = len(fb_items)
+            fb_ai = sum(1 for p in fb_items if p["score"] >= ai_threshold)
+
+            li_items = [p for p in cluster if p["platform"] == "linkedin"]
+            li_cnt = len(li_items)
+            li_ai = sum(1 for p in li_items if p["score"] >= ai_threshold)
+
+            th_items = [p for p in cluster if p["platform"] == "threads"]
+            th_cnt = len(th_items)
+            th_ai = sum(1 for p in th_items if p["score"] >= ai_threshold)
+
+            tot_posts = fb_cnt + li_cnt + th_cnt
+            tot_ai = fb_ai + li_ai + th_ai
+            pass_rate = round((tot_ai / tot_posts * 100), 1) if tot_posts > 0 else 0.0
+
+            vn_time = start.astimezone(timezone(timedelta(hours=7)))
+            time_formatted = vn_time.strftime("%H:%M %d/%m/%Y")
+
+            round_num = len(clusters) - idx
+            generated_rounds.append({
+                "id": f"round-{mid[:8]}-{int(start.timestamp())}",
+                "round_number": round_num,
+                "round_label": f"Vòng #{round_num}",
+                "schedule_label": "Lịch cào xoay vòng đa nền tảng" if not is_sys else "Cào tự động Hệ thống VPS",
+                "user_id": mid,
+                "user_name": user_info.get("name") or "Thành viên",
+                "user_email": user_info.get("email") or "",
+                "is_system": is_sys,
+                "started_at": start.isoformat(),
+                "finished_at": end.isoformat(),
+                "started_at_formatted": time_formatted,
+                "duration_seconds": dur_sec,
+                "duration_formatted": _format_dur(dur_sec),
+                "status": "done",
+                "facebook": {
+                    "posts_count": fb_cnt,
+                    "ai_passed_count": fb_ai,
+                    "ai_pass_rate": round((fb_ai / fb_cnt * 100), 1) if fb_cnt > 0 else 0.0,
+                },
+                "linkedin": {
+                    "posts_count": li_cnt,
+                    "ai_passed_count": li_ai,
+                    "ai_pass_rate": round((li_ai / li_cnt * 100), 1) if li_cnt > 0 else 0.0,
+                },
+                "threads": {
+                    "posts_count": th_cnt,
+                    "ai_passed_count": th_ai,
+                    "ai_pass_rate": round((th_ai / th_cnt * 100), 1) if th_cnt > 0 else 0.0,
+                },
+                "total_posts": tot_posts,
+                "total_ai_passed": tot_ai,
+                "ai_pass_rate": pass_rate,
+            })
+
+    # Gộp các vòng cào chạy realtime gần nhất
+    for lr in _LIVE_RECORDED_ROUNDS:
+        if id_member and id_member != "all":
+            if lr.get("user_id") != id_member:
+                continue
+        generated_rounds.append(lr)
+
+    generated_rounds.sort(key=lambda x: x["started_at"], reverse=True)
+
+    summary = {
+        "total_rounds": len(generated_rounds),
+        "total_posts": sum(r["total_posts"] for r in generated_rounds),
+        "total_ai_passed": sum(r["total_ai_passed"] for r in generated_rounds),
+        "facebook_total": sum(r["facebook"]["posts_count"] for r in generated_rounds),
+        "linkedin_total": sum(r["linkedin"]["posts_count"] for r in generated_rounds),
+        "threads_total": sum(r["threads"]["posts_count"] for r in generated_rounds),
+        "overall_ai_pass_rate": (
+            round(sum(r["total_ai_passed"] for r in generated_rounds) / sum(r["total_posts"] for r in generated_rounds) * 100, 1)
+            if generated_rounds and sum(r["total_posts"] for r in generated_rounds) > 0
+            else 0.0
+        ),
+    }
+
+    return {
+        "members": members_list,
+        "rounds": generated_rounds[:limit],
+        "summary": summary,
+    }
+

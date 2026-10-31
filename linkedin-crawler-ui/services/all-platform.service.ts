@@ -30,6 +30,7 @@ import type {
   MemberSeedingOverviewData,
   MemberCrawlHistoryData,
   OnlineSummaryData,
+  CrawlScheduleHistoryData,
 } from "@/types/unified.types";
 import { API_BASE_URL, API_KEY } from "@/lib/env";
 
@@ -2885,3 +2886,26 @@ export const customerLeadsService = {
 };
 
 export type { QuickCommentTemplate } from "@/types/unified.types";
+// ── CRAWL SCHEDULE HISTORY (VÒNG CÀO TỪ LỊCH ĐA NỀN TẢNG) ────────────────────
+
+export const crawlScheduleHistoryService = {
+  getHistory: (payload?: {
+    email?: string;
+    id_member?: string;
+    time_range?: "all" | "today" | "this_week" | "this_month";
+    limit?: number;
+  }): Promise<ApiResponse<CrawlScheduleHistoryData>> => {
+    return requestJson(`${BASE}/unified/crawl-schedule/history`, {
+      method: "POST",
+      body: JSON.stringify(payload || {}),
+    });
+  },
+
+  recordRound: (payload: Record<string, unknown>): Promise<ApiResponse<{ success: boolean; round: unknown }>> => {
+    return requestJson(`${BASE}/unified/crawl-schedule/record-round`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+};
+

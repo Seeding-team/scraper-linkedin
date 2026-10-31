@@ -721,4 +721,57 @@ export interface CreateScheduledCommentRequest {
   ai_generated: boolean;
   scheduled_at: string;
 }
+// ── Crawl Schedule Rounds History ──────────────────────────────────────────
+
+export interface CrawlRoundPlatformStat {
+  posts_count: number;
+  ai_passed_count: number;
+  ai_pass_rate: number;
+}
+
+export interface CrawlScheduleRoundItem {
+  id: string;
+  round_number: number;
+  round_label: string;
+  schedule_label: string;
+  user_id: string;
+  user_name: string;
+  user_email: string;
+  is_system: boolean;
+  started_at: string;
+  finished_at: string;
+  started_at_formatted: string;
+  duration_seconds: number;
+  duration_formatted: string;
+  status: "done" | "running" | "failed";
+  facebook: CrawlRoundPlatformStat;
+  linkedin: CrawlRoundPlatformStat;
+  threads: CrawlRoundPlatformStat;
+  total_posts: number;
+  total_ai_passed: number;
+  ai_pass_rate: number;
+}
+
+export interface CrawlScheduleHistoryMember {
+  id: string;
+  name: string;
+  email: string;
+  is_system: boolean;
+}
+
+export interface CrawlScheduleHistorySummary {
+  total_rounds: number;
+  total_posts: number;
+  total_ai_passed: number;
+  facebook_total: number;
+  linkedin_total: number;
+  threads_total: number;
+  overall_ai_pass_rate: number;
+}
+
+export interface CrawlScheduleHistoryData {
+  members: CrawlScheduleHistoryMember[];
+  rounds: CrawlScheduleRoundItem[];
+  summary: CrawlScheduleHistorySummary;
+}
 

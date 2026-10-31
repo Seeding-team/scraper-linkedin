@@ -270,6 +270,7 @@
     async function runScheduleRound(schedule) {
         activeScheduleId = schedule.id;
         cancelRequestedIds.delete(schedule.id);
+        const roundStartTime = Date.now();
         const roundNumber = (schedule.roundNumber || 0) + 1;
         await updateSchedule(schedule.id, { status: "running", roundNumber, nextRunAt: null, currentStage: null });
 
@@ -281,6 +282,47 @@
 
         log(schedule.id, schedule.label, `Hoàn tất vòng ${roundNumber} — tổng ${totalSaved} bài mới trên cả 3 nền tảng. Xem ở tab "Hoạt động seeding".`, "success");
         notifyApp({ action: "MK_ROTATE_SCHEDULE_ROUND_DONE", scheduleId: schedule.id, roundNumber, summary, totalSaved });
+
+        // Tự động đồng bộ báo cáo vòng cào về backend để hiển thị tab "Lịch sử cào từ lịch"
+        try {
+            const apiBase = schedule.cfg?.apiBase || "https://seeding.markeeai.com";
+            const durSec = Math.max(1, Math.round((Date.now() - roundStartTime) / 1000));
+            const durFormatted = durSec >= 60 ? `${Math.floor(durSec / 60)} phút ${durSec % 60} giây` : `${durSec} giây`;
+            fetch(`${apiBase}/api/all-platform/unified/crawl-schedule/record-round`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    schedule_id: schedule.id,
+                    schedule_label: schedule.label || "Lịch cào xoay vòng đa nền tảng",
+                    round_number: roundNumber,
+                    user_id: schedule.cfg?.idMember,
+                    user_email: schedule.cfg?.email,
+                    started_at: new Date(roundStartTime).toISOString(),
+                    finished_at: new Date().toISOString(),
+                    duration_seconds: durSec,
+                    duration_formatted: durFormatted,
+                    status: "done",
+                    facebook: {
+                        posts_count: summary.facebook?.totalSaved || 0,
+                        ai_passed_count: 0,
+                        ai_pass_rate: 0,
+                    },
+                    linkedin: {
+                        posts_count: summary.linkedin?.totalSaved || 0,
+                        ai_passed_count: 0,
+                        ai_pass_rate: 0,
+                    },
+                    threads: {
+                        posts_count: summary.threads?.totalSaved || 0,
+                        ai_passed_count: 0,
+                        ai_pass_rate: 0,
+                    },
+                    total_posts: totalSaved,
+                    total_ai_passed: 0,
+                    ai_pass_rate: 0,
+                }),
+            }).catch(() => {});
+        } catch (e) {}
 
         const list = await readSchedulesRaw();
         const stillExists = findSchedule(list, schedule.id);
