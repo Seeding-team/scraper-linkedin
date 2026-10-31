@@ -1441,7 +1441,7 @@ def get_member_seeding_overview(email: str, time_range: str = "all") -> dict:
         return {"role": role, "accounts": [], "time_range": time_range}
 
     member_ids = [m["id"] for m in members]
-    fb_groups = sb.table("facebook_groups").select("id, id_member").in_("id_member", member_ids).execute().data or []
+    fb_groups = sb.table("facebook_groups").select("id, id_member, chay_24h, time_crawl").in_("id_member", member_ids).execute().data or []
     li_groups = sb.table("linkedin_groups").select("id, id_member").in_("id_member", member_ids).execute().data or []
     tg_accounts = (
         sb.table("telegram_accounts")
@@ -1455,11 +1455,14 @@ def get_member_seeding_overview(email: str, time_range: str = "all") -> dict:
 
     fb_group_owner_map: dict[str, str] = {}
     fb_group_count: dict[str, int] = {}
+    fb_scheduled_count: dict[str, int] = {}
     for g in fb_groups:
         mid = g.get("id_member")
         gid = g.get("id")
         if mid:
             fb_group_count[mid] = fb_group_count.get(mid, 0) + 1
+            if g.get("chay_24h") is True or g.get("time_crawl") is not None:
+                fb_scheduled_count[mid] = fb_scheduled_count.get(mid, 0) + 1
             if gid:
                 fb_group_owner_map[gid] = mid
 
@@ -1530,7 +1533,7 @@ def get_member_seeding_overview(email: str, time_range: str = "all") -> dict:
             continue
         post_count[mid] = post_count.get(mid, 0) + 1
         score = p.get("score") or 0
-        if score >= 70:
+        if score >= 40:
             ai_passed_count[mid] = ai_passed_count.get(mid, 0) + 1
         d = p.get("crawl_date") or p.get("created_at")
         if d and (mid not in last_crawled or d > last_crawled[mid]):
@@ -1542,9 +1545,31 @@ def get_member_seeding_overview(email: str, time_range: str = "all") -> dict:
             continue
         post_count[mid] = post_count.get(mid, 0) + 1
         score = p.get("score") or 0
-        if score >= 70:
+        if score >= 40:
             ai_passed_count[mid] = ai_passed_count.get(mid, 0) + 1
         d = p.get("created_at")
+        if d and (mid not in last_crawled or d > last_crawled[mid]):
+            last_crawled[mid] = d
+
+    li_query = sb.table("linkedin_posts").select("id, id_member, crawl_date, created_at, score").in_("id_member", member_ids)
+    if start_iso:
+        li_query = li_query.gte("crawl_date", start_iso)
+    if end_iso:
+        li_query = li_query.lt("crawl_date", end_iso)
+    try:
+        li_posts = li_query.limit(2000).execute().data or []
+    except Exception:
+        li_posts = []
+
+    for p in li_posts:
+        mid = p.get("id_member")
+        if not mid or mid not in member_ids:
+            continue
+        post_count[mid] = post_count.get(mid, 0) + 1
+        score = p.get("score") or 0
+        if score >= 40:
+            ai_passed_count[mid] = ai_passed_count.get(mid, 0) + 1
+        d = p.get("crawl_date") or p.get("created_at")
         if d and (mid not in last_crawled or d > last_crawled[mid]):
             last_crawled[mid] = d
 
@@ -1561,6 +1586,7 @@ def get_member_seeding_overview(email: str, time_range: str = "all") -> dict:
                 "email": m.get("email"),
                 "fb_groups": fb_group_count.get(mid, 0),
                 "li_groups": li_group_count.get(mid, 0),
+                "scheduled_crawls_count": fb_scheduled_count.get(mid, 0),
                 "telegram_connected": mid in tg_connected,
                 "total_crawled_posts": total_crawled,
                 "total_fb_posts_crawled": total_crawled,

@@ -343,6 +343,7 @@ export interface MemberSeedingAccount {
   email: string;
   fb_groups: number;
   li_groups: number;
+  scheduled_crawls_count?: number;
   telegram_connected: boolean;
   total_fb_posts_crawled?: number;
   total_crawled_posts: number;

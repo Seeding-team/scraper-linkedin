@@ -14,6 +14,15 @@ import { useAppAuth } from "@/contexts/AppAuthContext";
 import { allPlatformPostsService } from "@/services/all-platform.service";
 import type { MemberCrawlHistoryData, MemberSeedingAccount } from "@/types/unified.types";
 
+function formatDateTimeVN(iso: string | null): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
+  const time = d.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit", hour12: false });
+  const date = d.toLocaleDateString("vi-VN", { day: "2-digit", month: "2-digit", year: "numeric" });
+  return `${time} ${date}`;
+}
+
 function formatRelative(iso: string | null): string {
   if (!iso) return "Chưa từng cào";
   const d = new Date(iso);
@@ -117,13 +126,13 @@ export function SeedingAccountsOverview() {
             <tbody className="divide-y divide-outline-variant">
               {loading ? (
                 <tr>
-                  <td colSpan={6} className="py-10 text-center text-xs text-muted-foreground">
+                  <td colSpan={7} className="py-10 text-center text-xs text-muted-foreground">
                     Đang tải dữ liệu...
                   </td>
                 </tr>
               ) : accounts.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="py-10 text-center text-xs text-muted-foreground">
+                  <td colSpan={7} className="py-10 text-center text-xs text-muted-foreground">
                     Chưa có tài khoản seeding nào.
                   </td>
                 </tr>
@@ -173,13 +182,27 @@ export function SeedingAccountsOverview() {
                       </span>
                     </td>
                     <td className="py-3 px-4 text-center">
+                      <span
+                        className={cn(
+                          "inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold border",
+                          (a.scheduled_crawls_count ?? 0) > 0
+                            ? "bg-purple-50 text-purple-700 border-purple-200"
+                            : "bg-muted text-muted-foreground border-border opacity-70"
+                        )}
+                        title="Số group đã được bật lịch cào tự động 24h hoặc khoảng cách cào"
+                      >
+                        <span className="material-symbols-outlined text-[13px]">calendar_clock</span>
+                        {a.scheduled_crawls_count ?? 0} lịch
+                      </span>
+                    </td>
+                    <td className="py-3 px-4 text-center">
                       <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold bg-blue-50 text-blue-700 border border-blue-200">
                         {a.total_crawled_posts ?? a.total_fb_posts_crawled ?? 0} bài
                       </span>
                     </td>
                     <td className="py-3 px-4 text-center">
                       <div className="inline-flex flex-col items-center">
-                        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200" title="Bài viết có điểm AI check >= 40 từ database">
                           ⚡ {a.ai_passed_posts ?? 0} bài
                         </span>
                         {(a.total_crawled_posts || a.total_fb_posts_crawled) ? (
@@ -190,10 +213,17 @@ export function SeedingAccountsOverview() {
                       </div>
                     </td>
                     <td className="py-3 px-4">
-                      <div className="text-[11px] font-semibold text-on-surface">
-                        {a.last_crawled_at ? new Date(a.last_crawled_at).toLocaleDateString("vi-VN") : "—"}
+                      <div className="text-[11px] font-bold text-on-surface flex items-center gap-1">
+                        {a.last_crawled_at ? (
+                          <>
+                            <span className="material-symbols-outlined text-[13px] text-muted-foreground">schedule</span>
+                            <span>{formatDateTimeVN(a.last_crawled_at)}</span>
+                          </>
+                        ) : (
+                          "—"
+                        )}
                       </div>
-                      <div className="text-[10px] text-muted-foreground">{formatRelative(a.last_crawled_at)}</div>
+                      <div className="text-[10px] text-muted-foreground mt-0.5 font-medium">{formatRelative(a.last_crawled_at)}</div>
                     </td>
                   </tr>
                 ))
@@ -244,10 +274,11 @@ function MemberDetailDrawer({ account, onClose }: { account: MemberSeedingAccoun
         </div>
 
         <div className="p-5 flex flex-col gap-5">
-          <div className="grid grid-cols-3 gap-2">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
             <Stat label="Nhóm Facebook" value={String(account.fb_groups)} />
             <Stat label="Nhóm LinkedIn" value={String(account.li_groups)} />
-            <Stat label="Bài đã cào" value={String(account.total_fb_posts_crawled)} highlight />
+            <Stat label="Số lịch cào" value={`${account.scheduled_crawls_count ?? 0} lịch`} />
+            <Stat label="Bài đã cào" value={String(account.total_crawled_posts ?? account.total_fb_posts_crawled ?? 0)} highlight />
           </div>
 
           <div className="rounded-xl border border-border p-3">
