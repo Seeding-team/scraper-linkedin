@@ -15,6 +15,8 @@ import * as React from "react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { LogOut, ChevronLeft, ChevronRight, ChevronDown } from "lucide-react";
+import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
+import type { MaterialSymbolName } from "@/components/ui";
 
 import { cn } from "@/lib/utils";
 import { useAppAuth } from "@/contexts/AppAuthContext";
@@ -565,6 +567,166 @@ function GroupLinks({
   );
 }
 
+
+// ============================================================================
+// Collapsed Sidebar View (Hiện đầy đủ icon cho menu & submenu, có Tippy Tooltip)
+// ============================================================================
+function CollapsedSidebarNav({ entries }: { entries: SidebarEntry[] }) {
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+
+  // Bóc tách danh sách toàn bộ các menu và submenu có thể điều hướng
+  const flatItems = React.useMemo(() => {
+    const list: Array<{
+      id: string;
+      href: string;
+      icon: MaterialSymbolName;
+      label: string;
+      tooltip: string;
+      badge?: number | string;
+      isSubmenu?: boolean;
+      active: boolean;
+    }> = [];
+
+    entries.forEach((entry) => {
+      if (entry.type === "section") {
+        return;
+      }
+      if (entry.type === "item") {
+        list.push({
+          id: entry.id,
+          href: entry.href,
+          icon: entry.icon,
+          label: entry.label,
+          tooltip: entry.label,
+          badge: entry.badge,
+          active: isLeafActive(pathname, entry, searchParams),
+        });
+        if (entry.children && entry.children.length > 0) {
+          entry.children.forEach((child) => {
+            list.push({
+              id: child.id,
+              href: child.href,
+              icon: child.icon,
+              label: child.label,
+              tooltip: `${entry.label}: ${child.label}`,
+              badge: child.badge,
+              isSubmenu: true,
+              active: isLeafActive(pathname, child, searchParams),
+            });
+          });
+        }
+      } else if (entry.type === "group") {
+        entry.items.forEach((child) => {
+          if (child.type === "item") {
+            list.push({
+              id: child.id,
+              href: child.href,
+              icon: child.icon,
+              label: child.label,
+              tooltip: child.label,
+              badge: child.badge,
+              active: isLeafActive(pathname, child, searchParams),
+            });
+            if (child.children && child.children.length > 0) {
+              child.children.forEach((subLeaf) => {
+                list.push({
+                  id: subLeaf.id,
+                  href: subLeaf.href,
+                  icon: subLeaf.icon,
+                  label: subLeaf.label,
+                  tooltip: `${child.label}: ${subLeaf.label}`,
+                  badge: subLeaf.badge,
+                  isSubmenu: true,
+                  active: isLeafActive(pathname, subLeaf, searchParams),
+                });
+              });
+            }
+          } else if (child.type === "subgroup") {
+            child.items.forEach((subItem) => {
+              list.push({
+                id: subItem.id,
+                href: subItem.href,
+                icon: subItem.icon,
+                label: subItem.label,
+                tooltip: `${child.label} > ${subItem.label}`,
+                badge: subItem.badge,
+                active: isLeafActive(pathname, subItem, searchParams),
+              });
+              if (subItem.children && subItem.children.length > 0) {
+                subItem.children.forEach((subLeaf) => {
+                  list.push({
+                    id: subLeaf.id,
+                    href: subLeaf.href,
+                    icon: subLeaf.icon,
+                    label: subLeaf.label,
+                    tooltip: `${subItem.label}: ${subLeaf.label}`,
+                    badge: subLeaf.badge,
+                    isSubmenu: true,
+                    active: isLeafActive(pathname, subLeaf, searchParams),
+                  });
+                });
+              }
+            });
+          }
+        });
+      }
+    });
+
+    return list;
+  }, [entries, pathname, searchParams]);
+
+  return (
+    <div className="flex flex-col items-center gap-1.5 py-1">
+      {flatItems.map((item) => {
+        const Icon = materialToLucideIcon(item.icon);
+        return (
+          <Tooltip key={item.id} delayDuration={50}>
+            <TooltipTrigger asChild>
+              <Link
+                href={item.href}
+                className={cn(
+                  "group relative flex items-center justify-center rounded-xl transition-all duration-150 outline-none select-none cursor-pointer",
+                  item.isSubmenu ? "size-8 text-slate-500 hover:text-slate-900 hover:bg-slate-100" : "size-9 text-slate-600 hover:text-slate-950 hover:bg-slate-100/80",
+                  item.active && (item.isSubmenu
+                    ? "bg-rose-50 text-rose-700 font-bold border border-rose-200/70 shadow-2xs"
+                    : "bg-rose-50 text-rose-700 font-bold border border-rose-200/80 shadow-xs")
+                )}
+                aria-label={item.tooltip}
+              >
+                <Icon
+                  className={cn(
+                    item.isSubmenu ? "size-3.5" : "size-[18px]",
+                    "shrink-0 stroke-[1.8] transition-colors",
+                    item.active ? "text-rose-700" : "text-slate-500 group-hover:text-slate-800"
+                  )}
+                />
+                {item.badge !== undefined && (
+                  <span className="absolute -top-1 -right-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-rose-600 px-1 text-[9px] font-bold text-white shadow-xs">
+                    {item.badge}
+                  </span>
+                )}
+                {item.active && (
+                  <span className="absolute right-0 top-1/2 -translate-y-1/2 w-0.5 h-4 bg-rose-600 rounded-l" />
+                )}
+              </Link>
+            </TooltipTrigger>
+            <TooltipContent
+              side="right"
+              align="center"
+              sideOffset={10}
+              className="z-[99999] rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white shadow-xl whitespace-nowrap flex items-center gap-2"
+            >
+              <Icon className="size-3.5 text-rose-400 shrink-0" />
+              <span>{item.tooltip}</span>
+            </TooltipContent>
+          </Tooltip>
+        );
+      })}
+    </div>
+  );
+}
+
 // Section Label dang chu in hoa nhe
 function SectionLinks({ entry }: { entry: NavSectionItem }) {
   return (
@@ -579,6 +741,8 @@ function SectionLinks({ entry }: { entry: NavSectionItem }) {
 export function AllPlatformSidebarShadcn() {
   const { user, logout } = useAppAuth();
   const router = useRouter();
+  const { state, isMobile } = useSidebar();
+  const isCollapsed = state === "collapsed" && !isMobile;
   const [workspaceTab, setWorkspaceTab] = React.useState<"personal" | "team">("personal");
   const [showProfileMenu, setShowProfileMenu] = React.useState(false);
 
@@ -684,25 +848,29 @@ export function AllPlatformSidebarShadcn() {
 
       {/* Noi dung cuon cua Sidebar */}
       <SidebarContent className="p-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden space-y-0.5">
-        {entries.map((entry) =>
-          entry.type === "section" ? (
-            <SectionLinks key={entry.id} entry={entry} />
-          ) : entry.type === "item" ? (
-            <div key={entry.id} className="py-0.5">
-              <SidebarMenu>
-                <LeafLink item={entry} />
-              </SidebarMenu>
-            </div>
-          ) : (
-            <GroupLinks
-              key={entry.id}
-              entry={entry}
-              openSubgroups={openSubgroups}
-              toggleSubgroup={toggleSubgroup}
-              openGroups={openGroups}
-              toggleGroup={toggleGroup}
-            />
-          ),
+        {isCollapsed ? (
+          <CollapsedSidebarNav entries={entries} />
+        ) : (
+          entries.map((entry) =>
+            entry.type === "section" ? (
+              <SectionLinks key={entry.id} entry={entry} />
+            ) : entry.type === "item" ? (
+              <div key={entry.id} className="py-0.5">
+                <SidebarMenu>
+                  <LeafLink item={entry} />
+                </SidebarMenu>
+              </div>
+            ) : (
+              <GroupLinks
+                key={entry.id}
+                entry={entry}
+                openSubgroups={openSubgroups}
+                toggleSubgroup={toggleSubgroup}
+                openGroups={openGroups}
+                toggleGroup={toggleGroup}
+              />
+            ),
+          )
         )}
       </SidebarContent>
 

@@ -1,4 +1,6 @@
 import {
+  HelpCircle,
+  Ban,
   LayoutDashboard,
   Users,
   CircleUserRound,
@@ -108,6 +110,8 @@ const MAP: Partial<Record<MaterialSymbolName, LucideIcon>> = {
   account_balance_wallet: Wallet,
   filter_list: ListFilter,
   schedule: Clock,
+  help: HelpCircle,
+  block: Ban,
   check: Check,
 };
 

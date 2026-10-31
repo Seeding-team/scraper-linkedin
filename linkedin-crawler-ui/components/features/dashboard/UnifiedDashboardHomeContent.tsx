@@ -241,7 +241,7 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
 
   // Status filter: 'all' | 'todo' | 'doing' | 'done' | 'skip'
   const [seedingStatusFilter, setSeedingStatusFilter] = useState<string>(() => {
-    return searchParams?.get("status") || "all";
+    return searchParams?.get("status") || "pending";
   });
   const [callFilter, setCallFilter] = useState<string>("all");
 
@@ -254,8 +254,8 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
       setClientPage(1);
     } else {
       // Khi khong co status query param (Hoat dong seeding mac dinh):
-      // tu dong xoa toan bo bo loc va hien thi toan bo bai viet nhu binh thuong
-      setSeedingStatusFilter("all");
+      // mac dinh vao submenu "Chua danh gia" (pending)
+      setSeedingStatusFilter("pending");
       setCallFilter("all");
       setServiceArea("all");
       setFilters(INITIAL_FILTERS);
@@ -875,6 +875,7 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
     let doing = 0;
     let done = 0;
     let skip = 0;
+    let pending = 0;
 
     areaPosts.forEach((p) => {
       const { rating, call } = getPostRatingAndCall(p);
@@ -882,6 +883,7 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
       const isDoing = call === "consulting" || call === "waiting";
       const isDone = call === "interested" || call === "refused" || call === "nointerest";
       const isTodo = (rating === "can_lien_he" || call === "noanswer" || call === "callback") && !isSkip;
+      const isPending = (rating === "chua_danh_gia" || !rating) && !isSkip && !isTodo && !isDoing && !isDone;
 
       if (isSkip) {
         skip++;
@@ -891,11 +893,14 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
         done++;
       } else if (isTodo) {
         todo++;
+      } else if (isPending) {
+        pending++;
       }
     });
 
     return {
       all: areaPosts.length,
+      pending,
       todo,
       doing,
       done,
@@ -948,6 +953,11 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
       const isDoing = call === "consulting" || call === "waiting";
       const isDone = call === "interested" || call === "refused" || call === "nointerest";
       const isTodo = (rating === "can_lien_he" || call === "noanswer" || call === "callback") && !isSkip;
+
+      if (seedingStatusFilter === "pending" || seedingStatusFilter === "chua_danh_gia") {
+        const isPending = (rating === "chua_danh_gia" || !rating) && !isSkip && !isTodo && !isDoing && !isDone;
+        return isPending;
+      }
 
       if (seedingStatusFilter === "todo") {
         if (!isTodo) return false;
@@ -1184,7 +1194,7 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
           )}
 
           {/* 4 Metric Summary Cards chuẩn HTML template */}
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3.5 mb-2">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3.5 mb-2">
             <div
               onClick={() => {
                 setSeedingStatusFilter("all");

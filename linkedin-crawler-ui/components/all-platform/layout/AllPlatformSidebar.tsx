@@ -79,7 +79,12 @@ export function isLeafActive(pathname: string, item: NavLeafItem, searchParams?:
     if (!searchParams) return false;
     const itemParams = new URLSearchParams(itemQuery);
     for (const [k, v] of itemParams.entries()) {
-      if (searchParams.get(k) !== v) return false;
+      const currentVal = searchParams.get(k);
+      // Mặc định không có query param ?status tại /all-platform/post-feed coi như đang xem "Chưa đánh giá" (pending)
+      if (k === "status" && v === "pending" && !currentVal) {
+        continue;
+      }
+      if (currentVal !== v) return false;
     }
     return true;
   }
@@ -295,11 +300,18 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, workspaceTab: 
         {
           type: "item",
           id: "external-activity",
-          href: "/all-platform/post-feed",
+          href: "/all-platform/post-feed?status=pending",
           icon: "bolt",
           label: "Hoạt động seeding",
           exactMatch: true,
           children: [
+            {
+              type: "item",
+              id: "external-pending",
+              href: "/all-platform/post-feed?status=pending",
+              icon: "help",
+              label: "Chưa đánh giá",
+            },
             {
               type: "item",
               id: "external-todo",
