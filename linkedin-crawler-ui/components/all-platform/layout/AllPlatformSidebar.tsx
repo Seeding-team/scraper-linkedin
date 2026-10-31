@@ -695,7 +695,8 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, workspaceTab: 
       label: "Inbox Zalo Admin",
       matchStartsWith: ["/all-platform/zalo-inbox"],
     },
-    ...(isAdmin || isLeader ? zaloAdvancedItems : []),
+    // Tạm thời ẩn 5 menu Zalo nâng cao theo lệnh Master (Chuyển tiếp tự động, Gửi hàng loạt, Chiến dịch tự động, Gửi nhiều nhóm, Quét thành viên nhóm), khi cần sẽ mở lại
+    // ...(isAdmin || isLeader ? zaloAdvancedItems : []),
   ];
 
   const resourceItems: NavLeafItem[] = [
