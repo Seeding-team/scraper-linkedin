@@ -35,9 +35,16 @@ const EmailConnectModalContent: React.FC<EmailConnectModalProps> = ({
   const [oauthOrigin, setOauthOrigin] = useState("");
 
   // Detect current workspace
+  // Bug that (2026-10-31): truoc day chi check nhi phan isCloudGate, moi workspace
+  // khac (securityzone, timetech) deu bi hien sai thanh "Markee" trong modal nay.
   const crmInstance = (process.env.NEXT_PUBLIC_CRM_INSTANCE || "markee").toLowerCase();
-  const isCloudGate = crmInstance.includes("cloudgate");
-  const workspaceName = isCloudGate ? "CloudGate" : "Markee";
+  const WORKSPACE_DISPLAY_NAMES: Record<string, string> = {
+    markee: "Markee",
+    cloudgate: "CloudGate",
+    securityzone: "SecurityZone",
+    timetech: "TimeTech",
+  };
+  const workspaceName = WORKSPACE_DISPLAY_NAMES[crmInstance] || crmInstance;
 
   // IMAP/SMTP form state
   const [senderAddress, setSenderAddress] = useState("");

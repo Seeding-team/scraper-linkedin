@@ -1118,7 +1118,12 @@ def list_email_accounts() -> list[EmailAccountResponse]:
             .eq("instance", ws).eq("account_email", email).eq("mailbox", "INBOX").limit(1).execute())
         state = state_res.data[0] if state_res.data else {}
         last_synced = state.get("last_synced_at")
-        last_err = state.get("last_error") or acc.get("last_sync_error")
+        # Bug that (2026-10-31): sync IMAP nen cham sau khi thanh cong KHONG dong bo
+        # xoa "last_sync_error" o bang omnichannel_email_accounts (chi
+        # omnichannel_email_sync_state.last_error duoc xoa) - OR cu luon lam loi cu
+        # hien lai mai du cac lan sync sau da thanh cong het. Co sync_state roi thi
+        # tin theo no, chi fallback ve acc khi CHUA tung co ban ghi sync_state nao.
+        last_err = state.get("last_error") if state_res.data else acc.get("last_sync_error")
 
         raw_status = acc.get("status") or "connected"
         status = {"connected": "online", "disconnected": "offline"}.get(raw_status, raw_status)
