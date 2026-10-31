@@ -255,6 +255,7 @@ export const ChannelScopePane: React.FC<ChannelScopePaneProps> = ({
                               }}
                               className={cn(
                                 "flex w-full items-center justify-between rounded px-1.5 py-0.5 text-[10px] transition text-left",
+                                onDisconnectAccount && "pr-4",
                                 isAccActive
                                   ? "bg-amber-50 text-amber-900 font-bold shadow-2xs ring-1 ring-amber-300"
                                   : "text-slate-600 hover:bg-slate-100"
