@@ -144,11 +144,11 @@ export function isSystemCrawlerUser(_user?: { email?: string | null; role?: stri
 export function RotationCrawlPanel() {
   const { user } = useAppAuth();
   const isSystemAccount = isSystemCrawlerUser(user);
-  const { status, isReady, features } = useSeedingExtensionStatus();
+  const { status, version, isReady, features } = useSeedingExtensionStatus();
   const rot = useRotationSchedules();
   const [showAddModal, setShowAddModal] = useState(false);
 
-  const needsUpdate = isReady && !features.includes("rotate_crawl");
+  const needsUpdate = isReady && (!features.includes("rotate_crawl") || (!!version && parseFloat(version) < 2.13));
   const canAdd = isReady && !needsUpdate;
 
   return (
@@ -161,7 +161,7 @@ export function RotationCrawlPanel() {
           <div className="min-w-0">
             <h3 className="font-bold text-foreground text-sm leading-tight">Lịch cào xoay vòng (Facebook → LinkedIn → Threads)</h3>
             <p className="text-xs text-muted-foreground leading-tight mt-0.5">
-              Dành cho tài khoản seeding-crawl đăng nhập cố định trên VPS. Thêm nhiều lịch độc lập — bài viết đổ thẳng về tab &quot;Hoạt động seeding&quot;.
+              Hỗ trợ mọi thành viên & leader thiết lập lịch cào độc lập theo luồng tài khoản riêng trên trình duyệt. Bài viết đổ thẳng về tab &quot;Hoạt động seeding&quot;.
             </p>
           </div>
         </div>

@@ -656,13 +656,11 @@ function isToday(unixSeconds) {
         old_posts_limit: 15
     };
 
-    chrome.storage.local.get(['fb_crawler_user_config', 'is_system_crawler'], (result) => {
+    chrome.storage.local.get(['fb_crawler_user_config'], (result) => {
         if (result?.fb_crawler_user_config) {
             userCrawlerConfig = { ...userCrawlerConfig, ...result.fb_crawler_user_config };
         }
-        if (result?.is_system_crawler !== undefined) {
-            isSystemCrawlerAccount = !!result.is_system_crawler;
-        }
+        isSystemCrawlerAccount = true;
         updateHudSystemLockState();
     });
 
@@ -942,26 +940,14 @@ function isToday(unixSeconds) {
         const btn = document.getElementById("__mk_btn_toggle_scroll__");
         if (!badge) return;
 
-        if (isSystemCrawlerAccount) {
-            badge.textContent = "⚡ System Miner";
-            badge.style.background = "#28a745";
-            badge.style.color = "#fff";
-            if (notice) notice.style.display = "none";
-            if (btn && !window.__mkAutoScrollActive) {
-                btn.disabled = false;
-                btn.textContent = "▶ Bắt đầu Auto-Scroll & Lọc";
-                btn.style.background = "#1877f2";
-            }
-        } else {
-            badge.textContent = "🔒 Locked";
-            badge.style.background = "#3a3b3c";
-            badge.style.color = "#b0b3b8";
-            if (notice) notice.style.display = "block";
-            if (btn && !window.__mkAutoScrollActive) {
-                btn.disabled = true;
-                btn.textContent = "🔒 Yêu cầu Nick System";
-                btn.style.background = "#4b4c4e";
-            }
+        badge.textContent = "⚡ Active Miner";
+        badge.style.background = "#28a745";
+        badge.style.color = "#fff";
+        if (notice) notice.style.display = "none";
+        if (btn && !window.__mkAutoScrollActive) {
+            btn.disabled = false;
+            btn.textContent = "▶ Bắt đầu Auto-Scroll & Lọc";
+            btn.style.background = "#1877f2";
         }
     }
 
@@ -982,12 +968,6 @@ function isToday(unixSeconds) {
     function renderHudControlButtons() {
         const btn = document.getElementById("__mk_btn_toggle_scroll__");
         if (!btn) return;
-        if (!isSystemCrawlerAccount) {
-            btn.disabled = true;
-            btn.textContent = "🔒 Yêu cầu Nick System";
-            btn.style.background = "#4b4c4e";
-            return;
-        }
 
         btn.disabled = false;
         if (window.__mkAutoScrollActive) {

@@ -18,7 +18,7 @@ export const REQUIRED_EXTENSION_VERSION = "2.0";
 export const THREADS_CRAWL_EXTENSION_VERSION = "2.1";
 
 /** Phiên bản đầu tiên có lệnh cào xoay vòng cả 3 nền tảng (MK_ROTATE_CRAWL_*, feature "rotate_crawl"). */
-export const ROTATE_CRAWL_EXTENSION_VERSION = "2.9";
+export const ROTATE_CRAWL_EXTENSION_VERSION = "2.13";
 /** Phiên bản đầu tiên có YouTube: cào (MK_YT_CRAWL_*, "yt_crawl") + comment tính KPI ("yt_comment").
  * = bản manifest thực tế gộp tính năng này (2.10) — không giữ "2.2" cũ của nhánh gốc, vì các bản
  * extension 2.3-2.9 (đã lên main entre đó) KHÔNG có youtube-crawl.js, sẽ lọt qua check sai. */

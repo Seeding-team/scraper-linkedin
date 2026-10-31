@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "FB API Crawler",
-  "version": "1.0",
+  "version": "2.1",
   "description": "Lấy bài viết Group Facebook siêu tốc qua API GraphQL",
   "permissions": [
     "activeTab",
@@ -26,25 +26,35 @@
   },
   "content_scripts": [
     {
-      "matches": ["*://*.facebook.com/*"],
-      "js": ["graphql-sniffer.js"],
+      "matches": [
+        "*://*.facebook.com/*"
+      ],
+      "js": [
+        "graphql-sniffer.js"
+      ],
       "world": "MAIN",
       "run_at": "document_start"
     },
     {
-      "matches": ["*://*.facebook.com/*"],
-      "js": ["content.js"],
+      "matches": [
+        "*://*.facebook.com/*"
+      ],
+      "js": [
+        "content.js"
+      ],
       "run_at": "document_idle"
     },
     {
       "matches": [
-        "*://localhost/*", 
+        "*://localhost/*",
         "*://127.0.0.1/*",
         "*://*.vercel.app/*",
         "*://*.seeding.markeeai.com/*",
         "*://*.zenithglobal.dev/*"
       ],
-      "js": ["bridge.js"],
+      "js": [
+        "bridge.js"
+      ],
       "run_at": "document_idle"
     }
   ]
