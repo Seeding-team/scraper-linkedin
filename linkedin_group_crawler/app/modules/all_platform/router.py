@@ -15,6 +15,7 @@ from app.modules.all_platform.routers import (
     teams_router,
     auth_router,
     social_accounts_router,
+    keywords_library_router,
 )
 from app.modules.all_platform.routers.platforms import router as platforms_router
 from app.modules.all_platform.routers.linkedin_auth import router as linkedin_auth_router
@@ -240,6 +241,13 @@ all_platform_router.include_router(
     quick_inbox_router,
     prefix="/quick-inbox",
     tags=["All-Platform Quick Inbox"],
+)
+
+# ── Keywords Library (platform-agnostic) ──────────────────────────────────────
+all_platform_router.include_router(
+    keywords_library_router,
+    prefix="/keywords-library",
+    tags=["All-Platform Keywords Library"],
 )
 
 # ── Users & Teams ──────────────────────────────────────────────────────────────

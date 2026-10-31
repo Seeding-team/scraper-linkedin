@@ -2912,3 +2912,74 @@ export const crawlScheduleHistoryService = {
   },
 };
 
+
+
+// ── KEYWORDS LIBRARY ──────────────────────────────────────────────────────────
+
+export interface KeywordTopic {
+  id: string;
+  name: string;
+  code?: string;
+  description?: string;
+  app_user_id?: string;
+  creator_name: string;
+  creator_email: string;
+  creator_avatar?: string;
+  keywords_count: number;
+  created_at: string;
+  updated_at?: string;
+}
+
+export interface KeywordItem {
+  id: string;
+  topic_id: string;
+  keyword: string;
+  description?: string;
+  app_user_id?: string;
+  contributor_name: string;
+  contributor_email: string;
+  created_at: string;
+}
+
+export const allPlatformKeywordsService = {
+  getTopics: (): Promise<ApiResponse<KeywordTopic[]>> => {
+    return requestJson<KeywordTopic[]>(`${BASE}/keywords-library/topics`);
+  },
+
+  createTopic: (payload: {
+    name: string;
+    description?: string;
+    initial_keywords?: string[];
+  }): Promise<ApiResponse<KeywordTopic>> => {
+    return requestJson(`${BASE}/keywords-library/topics`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  deleteTopic: (topicId: string): Promise<ApiResponse<{ deleted: boolean; id: string }>> => {
+    return requestJson(`${BASE}/keywords-library/topics/${encodeURIComponent(topicId)}`, {
+      method: "DELETE",
+    });
+  },
+
+  getKeywordsInTopic: (topicId: string): Promise<ApiResponse<KeywordItem[]>> => {
+    return requestJson<KeywordItem[]>(`${BASE}/keywords-library/topics/${encodeURIComponent(topicId)}/keywords`);
+  },
+
+  addKeywords: (
+    topicId: string,
+    keywords: string[]
+  ): Promise<ApiResponse<{ added_count: number; total_attempted: number }>> => {
+    return requestJson(`${BASE}/keywords-library/topics/${encodeURIComponent(topicId)}/keywords`, {
+      method: "POST",
+      body: JSON.stringify({ keywords }),
+    });
+  },
+
+  deleteKeyword: (keywordId: string): Promise<ApiResponse<{ deleted: boolean; id: string }>> => {
+    return requestJson(`${BASE}/keywords-library/keywords/${encodeURIComponent(keywordId)}`, {
+      method: "DELETE",
+    });
+  },
+};

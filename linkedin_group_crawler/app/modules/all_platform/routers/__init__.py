@@ -11,6 +11,7 @@ from app.modules.all_platform.routers.groups_linkedin import router as linkedin_
 from app.modules.all_platform.routers.users import router as users_router, teams_router
 from app.modules.all_platform.routers.auth import router as auth_router
 from app.modules.all_platform.routers.social_accounts import router as social_accounts_router
+from app.modules.all_platform.routers.keywords_library import router as keywords_library_router
 from app.modules.all_platform.routers.platforms import router as platforms_router
 from app.modules.all_platform.routers.linkedin_auth import router as linkedin_auth_router
 from app.modules.all_platform.routers.crawl_facebook import router as crawl_facebook_router

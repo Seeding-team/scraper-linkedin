@@ -359,6 +359,14 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, workspaceTab: 
               label: "Thư viện mẫu câu",
               matchStartsWith: ["/all-platform/quick-comments"],
             },
+            {
+              type: "item",
+              id: "keywords-library",
+              href: "/all-platform/thu-vien-tu-khoa",
+              icon: "key",
+              label: "Thư viện từ khóa",
+              matchStartsWith: ["/all-platform/thu-vien-tu-khoa"],
+            },
           ],
         },
         {
