@@ -23,6 +23,7 @@ import { TeamPerformancePanel } from "@/components/all-platform/internal-engagem
 import { UnifiedDashboardHomeContent } from "@/components/features/dashboard/UnifiedDashboardHomeContent";
 import { pingLiExtension, fetchLinkedInPostInfo } from "@/lib/li-ext-bridge";
 import { extractLinkedInMetadata, sanitizeLinkedInUrl } from "@/lib/linkedin-metadata";
+import { cn } from "@/lib/utils";
 
 type TaskStatusTab = "all" | "need" | "received" | "completed";
 type SourceTab = "markee" | "custom";
@@ -179,6 +180,37 @@ type ToastType = "success" | "error" | "warning" | "info";
 interface ToastMessage {
   text: string;
   type: ToastType;
+}
+
+function InternalEngagementPostContent({ content }: { content?: string | null }) {
+  const [isExpanded, setIsExpanded] = useState(false);
+  const text = content || "(Bài viết không có nội dung văn bản)";
+  const isLong = useMemo(() => {
+    const c = content || "";
+    return c.length > 130 || c.includes("\n");
+  }, [content]);
+
+  return (
+    <div className="mb-3.5">
+      <div
+        className={cn(
+          "text-xs md:text-sm text-gray-800 font-medium leading-relaxed transition-all duration-300 ease-in-out",
+          isExpanded ? "whitespace-pre-wrap" : "line-clamp-2"
+        )}
+      >
+        📌 {text}
+      </div>
+      {isLong && (
+        <button
+          type="button"
+          onClick={() => setIsExpanded((prev) => !prev)}
+          className="mt-1.5 inline-flex items-center gap-1 text-[12px] font-bold text-blue-600 hover:text-blue-700 hover:underline transition-colors cursor-pointer select-none"
+        >
+          <span>{isExpanded ? "Thu gọn ↑" : "Đọc thêm · Xem toàn bộ nội dung ↓"}</span>
+        </button>
+      )}
+    </div>
+  );
 }
 
 export default function InternalEngagementPage() {
@@ -2151,9 +2183,7 @@ export default function InternalEngagementPage() {
                         </div>
 
                         {/* Post Excerpt */}
-                        <div className="text-xs md:text-sm text-gray-800 font-medium mb-3.5 leading-relaxed">
-                          📌 {post.content || "(Bài viết không có nội dung văn bản)"}
-                        </div>
+                        <InternalEngagementPostContent content={post.content} />
 
                         {/* KHỐI TƯƠNG TÁC BÀI GỐC (PUBLIC METRICS BOX) - Facebook hoặc LinkedIn */}
                         {isFacebookPost || isLinkedInPost ? (
