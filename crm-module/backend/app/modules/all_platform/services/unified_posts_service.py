@@ -40,7 +40,7 @@ def _with_seeding_system_visible(allowed_member_ids: Optional[list[str]]) -> Opt
 
 # Nguong diem "cao" cho view mac dinh khi vao trang (yeu cau 2026-10-02: "diem cao tam 80
 # 85 tro len") - dung 80 lam nguong duy nhat (dau duoi khoang nguoi dung neu).
-_DEFAULT_MIN_LEAD_SCORE = 80
+_DEFAULT_MIN_LEAD_SCORE = 40
 
 
 # ── Core fetch ──────────────────────────────────────────────────────────────────
@@ -666,7 +666,7 @@ def _fetch_stats(
         return r.count or 0
 
     def _high_count():
-        r = apply_scope(sb.table(table).select("id", count="exact").gte("score", 70)).execute()
+        r = apply_scope(sb.table(table).select("id", count="exact").or_("lead_score.gte.40,score.gte.40")).execute()
         return r.count or 0
 
     def _seeded_today():
@@ -1532,7 +1532,7 @@ def get_member_seeding_overview(email: str, time_range: str = "all") -> dict:
         if not mid or mid not in member_ids:
             continue
         post_count[mid] = post_count.get(mid, 0) + 1
-        is_passed = (p.get("lead_score") is not None) or ((p.get("score") or 0) > 0)
+        is_passed = ((p.get("lead_score") or 0) >= ai_threshold) or ((p.get("score") or 0) >= ai_threshold)
         if is_passed:
             ai_passed_count[mid] = ai_passed_count.get(mid, 0) + 1
         d = p.get("crawl_date") or p.get("created_at")
@@ -1544,7 +1544,7 @@ def get_member_seeding_overview(email: str, time_range: str = "all") -> dict:
         if not mid or mid not in member_ids:
             continue
         post_count[mid] = post_count.get(mid, 0) + 1
-        is_passed = (p.get("lead_score") is not None) or ((p.get("score") or 0) > 0)
+        is_passed = ((p.get("lead_score") or 0) >= ai_threshold) or ((p.get("score") or 0) >= ai_threshold)
         if is_passed:
             ai_passed_count[mid] = ai_passed_count.get(mid, 0) + 1
         d = p.get("created_at")
@@ -1566,7 +1566,7 @@ def get_member_seeding_overview(email: str, time_range: str = "all") -> dict:
         if not mid or mid not in member_ids:
             continue
         post_count[mid] = post_count.get(mid, 0) + 1
-        is_passed = (p.get("lead_score") is not None) or ((p.get("score") or 0) > 0)
+        is_passed = ((p.get("lead_score") or 0) >= ai_threshold) or ((p.get("score") or 0) >= ai_threshold)
         if is_passed:
             ai_passed_count[mid] = ai_passed_count.get(mid, 0) + 1
         d = p.get("crawl_date") or p.get("created_at")
@@ -1823,7 +1823,7 @@ def get_crawl_schedule_rounds_history(
         m_id = p.get("id_member") or SEEDING_SYSTEM_MEMBER_ID
         dt = _parse_ts(p.get("created_at") or p.get("crawl_date"))
         if dt:
-            is_passed = (p.get("lead_score") is not None) or ((p.get("score") or 0) > 0)
+            is_passed = ((p.get("lead_score") or 0) >= ai_threshold) or ((p.get("score") or 0) >= ai_threshold)
             all_posts.append({
                 "platform": "facebook",
                 "id": p["id"],
@@ -1837,7 +1837,7 @@ def get_crawl_schedule_rounds_history(
         m_id = p.get("id_member") or SEEDING_SYSTEM_MEMBER_ID
         dt = _parse_ts(p.get("created_at") or p.get("crawl_date"))
         if dt:
-            is_passed = (p.get("lead_score") is not None) or ((p.get("score") or 0) > 0)
+            is_passed = ((p.get("lead_score") or 0) >= ai_threshold) or ((p.get("score") or 0) >= ai_threshold)
             all_posts.append({
                 "platform": "threads",
                 "id": p["id"],
@@ -1851,7 +1851,7 @@ def get_crawl_schedule_rounds_history(
         m_id = p.get("id_member") or SEEDING_SYSTEM_MEMBER_ID
         dt = _parse_ts(p.get("created_at") or p.get("crawl_date"))
         if dt:
-            is_passed = (p.get("lead_score") is not None) or ((p.get("score") or 0) > 0)
+            is_passed = ((p.get("lead_score") or 0) >= ai_threshold) or ((p.get("score") or 0) >= ai_threshold)
             all_posts.append({
                 "platform": "linkedin",
                 "id": p["id"],

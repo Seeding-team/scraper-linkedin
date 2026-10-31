@@ -61,9 +61,14 @@
     }
 
     function buildSearchUrl(keyword, sortRecent) {
-        const params = new URLSearchParams({ q: keyword, serp_type: "default" });
-        // Tab "Gần đây" của trang tìm kiếm - chỉ có tác dụng khi đã đăng nhập Threads.
-        if (sortRecent) params.set("filter", "recent");
+        const cleanKw = (keyword || "").trim();
+        const params = new URLSearchParams();
+        params.set("q", cleanKw);
+        params.set("serp_type", "default");
+        // Mode recent đảm bảo lấy bài viết mới nhất và hiện đại nhất theo yêu cầu
+        if (sortRecent !== false) {
+            params.set("filter", "recent");
+        }
         return `https://www.threads.com/search?${params.toString()}`;
     }
 

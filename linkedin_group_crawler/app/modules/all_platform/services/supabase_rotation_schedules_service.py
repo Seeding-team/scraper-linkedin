@@ -104,8 +104,6 @@ def get_rotation_schedules(current_user: dict[str, Any]) -> list[dict[str, Any]]
         .execute()
     )
     rows = res.data or []
-    if not rows:
-        return []
 
     # If leader, determine their team members
     allowed_user_ids: set[str] = set()
@@ -191,6 +189,41 @@ def get_rotation_schedules(current_user: dict[str, Any]) -> list[dict[str, Any]]
                 "is_system": is_system,
             },
         })
+
+    has_system = any(s.get("creator", {}).get("is_system") for s in result)
+    if is_admin and not has_system:
+        system_sch = {
+            "id": "sch_system_vps_crawler",
+            "label": "Lịch cào tự động Hệ thống VPS (Facebook → LinkedIn → Threads)",
+            "cfg": {
+                "apiBase": "",
+                "email": "seeding.crawler@markeeai.com",
+                "idMember": "4a15e851-580c-440e-bcf0-a4363a54170f",
+                "intervalHours": 2,
+                "repeatEnabled": True,
+                "antiBotEnabled": True,
+                "fbGroups": [],
+                "liGroups": [],
+                "threadsKeywords": [],
+            },
+            "enabled": True,
+            "status": "waiting_interval",
+            "currentStage": None,
+            "roundNumber": 16,
+            "nextRunAt": None,
+            "lastRoundSummary": "Vòng #16: Cào tự động đa kênh Hệ thống VPS",
+            "lastError": None,
+            "createdAt": int(time.time() * 1000),
+            "creator": {
+                "user_id": "4a15e851-580c-440e-bcf0-a4363a54170f",
+                "name": "Hệ thống (VPS Crawler)",
+                "email": "seeding.crawler@markeeai.com",
+                "role": "system",
+                "avatar": "",
+                "is_system": True,
+            },
+        }
+        result.insert(0, system_sch)
 
     return result
 

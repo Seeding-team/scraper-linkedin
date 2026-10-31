@@ -168,9 +168,8 @@
         return {
             post_url: `https://www.threads.com/@${username}/post/${code}`,
             author_username: username,
-            // Để trống nếu thiếu (không lấy username thay thế) để không ghi đè mất tên thật
-            // đã có từ nguồn khác - finalize() mới điền username vào chỗ trống.
             author_name: typeof o.user.full_name === 'string' ? o.user.full_name : '',
+            author_avatar: (o.user && typeof o.user.profile_pic_url === 'string') ? o.user.profile_pic_url : null,
             content: content,
             post_time: new Date(o.taken_at * 1000).toISOString(),
             reactions: toInt(o.like_count),
@@ -294,10 +293,13 @@
             // DOM không thấy tên hiển thị tách biệt với username -> để trống, finalize() điền.
             const counts = readActionCounts(box);
             const video = box.querySelector('video[src]');
+            const avatarImg = box.querySelector('img[alt*="profile picture"], img[alt*="ảnh đại diện"]');
+            const avatarUrl = avatarImg ? (avatarImg.currentSrc || avatarImg.src) : null;
             posts.push({
                 post_url: `https://www.threads.com/@${m[1]}/post/${m[2]}`,
                 author_username: m[1],
                 author_name: '',
+                author_avatar: avatarUrl || null,
                 content: readContent(box, m[1], timeLabel),
                 post_time: found.time ? found.time.getAttribute('datetime') : null,
                 reactions: counts.reactions,

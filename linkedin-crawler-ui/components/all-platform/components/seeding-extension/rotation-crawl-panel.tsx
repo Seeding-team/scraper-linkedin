@@ -17,7 +17,10 @@ import { useAppAuth } from "@/contexts/AppAuthContext";
 import {
   allPlatformGroupsService,
   allPlatformRotationSchedulesService,
+  allPlatformKeywordsService,
   BackendRotationSchedule,
+  KeywordTopic,
+  KeywordItem,
 } from "@/services/all-platform.service";
 import {
   ROTATE_CRAWL_EXTENSION_VERSION,
@@ -94,7 +97,14 @@ function platformsSummary(s: RotationSchedule): string {
   const parts: string[] = [];
   if (s.cfg?.fbGroups?.length) parts.push(`Facebook: ${s.cfg.fbGroups.length} nhóm`);
   if (s.cfg?.liGroups?.length) parts.push(`LinkedIn: ${s.cfg.liGroups.length} nhóm`);
-  if (s.cfg?.threadsKeywords?.length) parts.push(`Threads: ${s.cfg.threadsKeywords.length} từ khoá`);
+  if (s.cfg?.threadsKeywords?.length) {
+    const topicCount = ((s.cfg as unknown) as Record<string, unknown>)?.threadsTopicNames ? (((s.cfg as unknown) as Record<string, unknown>).threadsTopicNames as string[]).length : 0;
+    if (topicCount > 0) {
+      parts.push(`Threads: ${topicCount} chủ đề (${s.cfg.threadsKeywords.length} từ khoá)`);
+    } else {
+      parts.push(`Threads: ${s.cfg.threadsKeywords.length} từ khoá`);
+    }
+  }
   return parts.join(" · ");
 }
 
@@ -692,12 +702,156 @@ function AddScheduleModal({
   const [repeatEnabled, setRepeatEnabled] = useState(true);
   const [intervalHours, setIntervalHours] = useState<number>(2);
   const [intervalInput, setIntervalInput] = useState<string>("2");
-  const [keywordsInput, setKeywordsInput] = useState<string>("");
   const [threadsAutoDiscover, setThreadsAutoDiscover] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const keywords = useMemo(() => parseKeywords(keywordsInput), [keywordsInput]);
+  // ── THREADS TOPICS & KEYWORDS STATE ──
+  const [topics, setTopics] = useState<KeywordTopic[]>([]);
+  const [loadingTopics, setLoadingTopics] = useState(false);
+  const [selectedTopicIds, setSelectedTopicIds] = useState<Set<string>>(new Set());
+  const [topicKeywordsMap, setTopicKeywordsMap] = useState<Record<string, KeywordItem[]>>({});
+  const [loadingTopicKeywords, setLoadingTopicKeywords] = useState<Record<string, boolean>>({});
+  const [selectedKeywords, setSelectedKeywords] = useState<Set<string>>(new Set());
+  const [customKeywordsInput, setCustomKeywordsInput] = useState<string>("");
+
+  // Load all keyword topics from library on mount
+  useEffect(() => {
+    let active = true;
+    setLoadingTopics(true);
+    allPlatformKeywordsService.getTopics().then((res) => {
+      if (!active) return;
+      setLoadingTopics(false);
+      if (res.success && res.data) {
+        setTopics(res.data);
+      }
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  // Toggle a topic selection
+  const toggleTopic = async (topicId: string) => {
+    const nextSelected = new Set(selectedTopicIds);
+    if (nextSelected.has(topicId)) {
+      nextSelected.delete(topicId);
+      setSelectedTopicIds(nextSelected);
+      const items = topicKeywordsMap[topicId] || [];
+      setSelectedKeywords((prev) => {
+        const next = new Set(prev);
+        items.forEach((it) => next.delete(it.keyword));
+        return next;
+      });
+    } else {
+      nextSelected.add(topicId);
+      setSelectedTopicIds(nextSelected);
+      if (!topicKeywordsMap[topicId]) {
+        setLoadingTopicKeywords((prev) => ({ ...prev, [topicId]: true }));
+        try {
+          const res = await allPlatformKeywordsService.getKeywordsInTopic(topicId);
+          if (res.success && Array.isArray(res.data)) {
+            const items: KeywordItem[] = res.data;
+            setTopicKeywordsMap((prev) => ({ ...prev, [topicId]: items }));
+            setSelectedKeywords((prev) => {
+              const next = new Set(prev);
+              items.forEach((it) => next.add(it.keyword));
+              return next;
+            });
+          }
+        } finally {
+          setLoadingTopicKeywords((prev) => ({ ...prev, [topicId]: false }));
+        }
+      } else {
+        const items = topicKeywordsMap[topicId] || [];
+        setSelectedKeywords((prev) => {
+          const next = new Set(prev);
+          items.forEach((it) => next.add(it.keyword));
+          return next;
+        });
+      }
+    }
+  };
+
+  const handleSelectAllTopics = async () => {
+    const allIds = new Set(topics.map((t) => t.id));
+    setSelectedTopicIds(allIds);
+    for (const t of topics) {
+      if (!topicKeywordsMap[t.id]) {
+        try {
+          const res = await allPlatformKeywordsService.getKeywordsInTopic(t.id);
+          if (res.success && Array.isArray(res.data)) {
+            const items: KeywordItem[] = res.data;
+            setTopicKeywordsMap((prev) => ({ ...prev, [t.id]: items }));
+            setSelectedKeywords((prev) => {
+              const next = new Set(prev);
+              items.forEach((it) => next.add(it.keyword));
+              return next;
+            });
+          }
+        } catch {}
+      } else {
+        const items = topicKeywordsMap[t.id] || [];
+        setSelectedKeywords((prev) => {
+          const next = new Set(prev);
+          items.forEach((it) => next.add(it.keyword));
+          return next;
+        });
+      }
+    }
+  };
+
+  const handleDeselectAllTopics = () => {
+    setSelectedTopicIds(new Set());
+    setSelectedKeywords(new Set());
+  };
+
+  const toggleKeyword = (kw: string) => {
+    setSelectedKeywords((prev) => {
+      const next = new Set(prev);
+      if (next.has(kw)) next.delete(kw);
+      else next.add(kw);
+      return next;
+    });
+  };
+
+  // Available keywords from all currently selected topics
+  const availableTopicKeywords = useMemo(() => {
+    const result: { item: KeywordItem; topicName: string }[] = [];
+    topics.forEach((t) => {
+      if (selectedTopicIds.has(t.id)) {
+        const items = topicKeywordsMap[t.id] || [];
+        items.forEach((it) => {
+          result.push({ item: it, topicName: t.name });
+        });
+      }
+    });
+    return result;
+  }, [topics, selectedTopicIds, topicKeywordsMap]);
+
+  // Combined final keywords for Threads (chosen topic keywords + custom input)
+  const finalThreadsKeywords = useMemo(() => {
+    const list: string[] = [];
+    const seen = new Set<string>();
+
+    selectedKeywords.forEach((kw) => {
+      const clean = kw.trim();
+      if (clean && !seen.has(clean.toLowerCase())) {
+        seen.add(clean.toLowerCase());
+        list.push(clean);
+      }
+    });
+
+    parseKeywords(customKeywordsInput).forEach((kw) => {
+      const clean = kw.trim();
+      if (clean && !seen.has(clean.toLowerCase())) {
+        seen.add(clean.toLowerCase());
+        list.push(clean);
+      }
+    });
+
+    return list;
+  }, [selectedKeywords, customKeywordsInput]);
 
   const togglePlatform = (p: "facebook" | "linkedin" | "threads") => {
     setEnabledPlatforms((prev) => {
@@ -711,14 +865,14 @@ function AddScheduleModal({
   const totalSelected =
     (enabledPlatforms.has("facebook") ? fb.selectedIds.length : 0) +
     (enabledPlatforms.has("linkedin") ? li.selectedIds.length : 0) +
-    (enabledPlatforms.has("threads") ? (keywords.length > 0 ? keywords.length : threadsAutoDiscover ? 1 : 0) : 0);
+    (enabledPlatforms.has("threads") ? (finalThreadsKeywords.length > 0 ? finalThreadsKeywords.length : threadsAutoDiscover ? 1 : 0) : 0);
 
   const estSeconds = useMemo(() => {
     const fbCount = enabledPlatforms.has("facebook") ? fb.selectedIds.length : 0;
     const liCount = enabledPlatforms.has("linkedin") ? li.selectedIds.length : 0;
-    const thCount = enabledPlatforms.has("threads") ? (keywords.length > 0 ? keywords.length : threadsAutoDiscover ? MAX_AUTO_THREADS_KEYWORDS : 0) : 0;
+    const thCount = enabledPlatforms.has("threads") ? (finalThreadsKeywords.length > 0 ? finalThreadsKeywords.length : threadsAutoDiscover ? MAX_AUTO_THREADS_KEYWORDS : 0) : 0;
     return estimateRoundSeconds(fbCount, liCount, thCount);
-  }, [enabledPlatforms, fb.selectedIds.length, li.selectedIds.length, keywords.length, threadsAutoDiscover]);
+  }, [enabledPlatforms, fb.selectedIds.length, li.selectedIds.length, finalThreadsKeywords.length, threadsAutoDiscover]);
 
   const minIntervalHours = useMemo(() => minIntervalHoursForSeconds(estSeconds), [estSeconds]);
 
@@ -736,7 +890,6 @@ function AddScheduleModal({
     setSubmitting(true);
     setError(null);
     try {
-      window.localStorage.setItem(KEYWORDS_STORAGE_KEY, keywordsInput);
       window.localStorage.setItem(INTERVAL_STORAGE_KEY, intervalInput);
     } catch {}
 
@@ -746,7 +899,9 @@ function AddScheduleModal({
     const liGroups: RotationGroupInput[] = enabledPlatforms.has("linkedin")
       ? li.groups.filter((g) => li.selectedIds.includes(g.id)).map((g) => ({ id: g.id, name: g.group_name || g.group_url, url: g.group_url }))
       : [];
-    const threadsKeywords = enabledPlatforms.has("threads") ? keywords : [];
+    const threadsKeywords = enabledPlatforms.has("threads") ? finalThreadsKeywords : [];
+    const threadsTopicNames = topics.filter((t) => selectedTopicIds.has(t.id)).map((t) => t.name);
+    const threadsTopicIds = Array.from(selectedTopicIds);
 
     const schedulePayload = {
       label: label.trim() || "Lịch cào xoay vòng",
@@ -759,6 +914,8 @@ function AddScheduleModal({
         intervalHours,
         repeatEnabled,
         threadsAutoDiscover,
+        threadsTopicIds,
+        threadsTopicNames,
       },
     };
 
@@ -801,7 +958,7 @@ function AddScheduleModal({
 
   return (
     <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-card rounded-2xl border border-border shadow-xl w-full max-w-3xl max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+      <div className="bg-card rounded-2xl border border-border shadow-xl w-full max-w-4xl max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between p-4 border-b border-border sticky top-0 bg-card z-10">
           <h3 className="font-bold text-base text-foreground">Thêm lịch cào xoay vòng</h3>
           <button type="button" onClick={onClose} className="p-1.5 rounded-lg hover:bg-muted cursor-pointer">
@@ -831,13 +988,13 @@ function AddScheduleModal({
           {/* Platforms toggle */}
           <div>
             <label className="text-xs font-bold text-foreground block mb-1.5">Nền tảng cào</label>
-            <div className="flex gap-2">
+            <div className="flex gap-2 flex-wrap">
               <button
                 type="button"
                 onClick={() => togglePlatform("facebook")}
                 className={cn(
                   "px-3 py-1.5 rounded-lg text-xs font-bold border transition cursor-pointer flex items-center gap-1.5",
-                  enabledPlatforms.has("facebook") ? "bg-blue-600 text-white border-blue-600" : "bg-muted/40 text-muted-foreground border-border"
+                  enabledPlatforms.has("facebook") ? "bg-blue-600 text-white border-blue-600 shadow-sm" : "bg-muted/40 text-muted-foreground border-border"
                 )}
               >
                 <span>Facebook ({fb.selectedIds.length})</span>
@@ -847,7 +1004,7 @@ function AddScheduleModal({
                 onClick={() => togglePlatform("linkedin")}
                 className={cn(
                   "px-3 py-1.5 rounded-lg text-xs font-bold border transition cursor-pointer flex items-center gap-1.5",
-                  enabledPlatforms.has("linkedin") ? "bg-sky-700 text-white border-sky-700" : "bg-muted/40 text-muted-foreground border-border"
+                  enabledPlatforms.has("linkedin") ? "bg-sky-700 text-white border-sky-700 shadow-sm" : "bg-muted/40 text-muted-foreground border-border"
                 )}
               >
                 <span>LinkedIn ({li.selectedIds.length})</span>
@@ -857,13 +1014,184 @@ function AddScheduleModal({
                 onClick={() => togglePlatform("threads")}
                 className={cn(
                   "px-3 py-1.5 rounded-lg text-xs font-bold border transition cursor-pointer flex items-center gap-1.5",
-                  enabledPlatforms.has("threads") ? "bg-slate-900 text-white border-slate-900" : "bg-muted/40 text-muted-foreground border-border"
+                  enabledPlatforms.has("threads") ? "bg-slate-900 text-white border-slate-900 shadow-sm" : "bg-muted/40 text-muted-foreground border-border"
                 )}
               >
-                <span>Threads</span>
+                <span>Threads ({selectedTopicIds.size} chủ đề · {finalThreadsKeywords.length} từ khoá)</span>
               </button>
             </div>
           </div>
+
+          {/* Group and Keywords Selection */}
+          {(enabledPlatforms.size > 0) && (
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-3.5">
+              {enabledPlatforms.has("facebook") && (
+                <div className={cn("p-3 rounded-xl border border-blue-200/60 bg-blue-50/20", enabledPlatforms.has("threads") ? "lg:col-span-3" : "lg:col-span-6")}>
+                  <GroupPickList title="Nhóm Facebook" options={fb} disabled={submitting} />
+                </div>
+              )}
+              {enabledPlatforms.has("linkedin") && (
+                <div className={cn("p-3 rounded-xl border border-sky-200/60 bg-sky-50/20", enabledPlatforms.has("threads") ? "lg:col-span-3" : "lg:col-span-6")}>
+                  <GroupPickList title="Nhóm LinkedIn" options={li} disabled={submitting} />
+                </div>
+              )}
+              {enabledPlatforms.has("threads") && (
+                <div className={cn("p-3.5 rounded-xl border border-slate-200/90 bg-slate-50/50 flex flex-col gap-3", (enabledPlatforms.has("facebook") || enabledPlatforms.has("linkedin")) ? "lg:col-span-6" : "lg:col-span-12")}>
+                  {/* Threads Topic & Keywords Configuration */}
+                  <div className="flex items-center justify-between gap-1 flex-wrap pb-1.5 border-b border-border/60">
+                    <div className="flex items-center gap-1.5">
+                      <span className="material-symbols-outlined text-[18px] text-slate-800">alternate_email</span>
+                      <span className="text-xs font-bold text-foreground">
+                        Threads: Chọn Chủ đề & Từ khoá cào ({finalThreadsKeywords.length} từ khoá)
+                      </span>
+                    </div>
+                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-900 text-white font-semibold">
+                      Mode recent
+                    </span>
+                  </div>
+
+                  {/* Step 1: Topic Selector */}
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <label className="text-[11px] font-bold text-foreground flex items-center gap-1">
+                        <span>1. Chọn Chủ đề cào ({selectedTopicIds.size}/{topics.length}):</span>
+                      </label>
+                      <div className="flex items-center gap-2 text-[10px] font-semibold">
+                        <button
+                          type="button"
+                          onClick={handleSelectAllTopics}
+                          className="text-primary hover:underline cursor-pointer"
+                        >
+                          Chọn tất cả chủ đề
+                        </button>
+                        <span className="text-muted-foreground/40">•</span>
+                        <button
+                          type="button"
+                          onClick={handleDeselectAllTopics}
+                          className="text-muted-foreground hover:underline cursor-pointer"
+                        >
+                          Bỏ chọn
+                        </button>
+                      </div>
+                    </div>
+
+                    {loadingTopics ? (
+                      <div className="text-[11px] text-muted-foreground py-1.5">Đang tải chủ đề từ thư viện...</div>
+                    ) : topics.length === 0 ? (
+                      <div className="text-[11px] text-muted-foreground py-1.5">Chưa có chủ đề nào trong Thư viện từ khóa.</div>
+                    ) : (
+                      <div className="flex gap-1.5 flex-wrap max-h-[110px] overflow-y-auto p-1 rounded-lg border border-border/50 bg-background/60">
+                        {topics.map((t) => {
+                          const isSelected = selectedTopicIds.has(t.id);
+                          const isFetchingKw = loadingTopicKeywords[t.id];
+                          return (
+                            <button
+                              key={t.id}
+                              type="button"
+                              onClick={() => toggleTopic(t.id)}
+                              className={cn(
+                                "px-2.5 py-1 rounded-lg text-[11px] font-medium border transition cursor-pointer flex items-center gap-1.5 select-none",
+                                isSelected
+                                  ? "bg-slate-900 text-white border-slate-900 shadow-sm"
+                                  : "bg-muted/40 text-foreground border-border hover:bg-muted"
+                              )}
+                            >
+                              <span className="material-symbols-outlined text-[13px]">
+                                {isSelected ? "check_box" : "check_box_outline_blank"}
+                              </span>
+                              <span>{t.name}</span>
+                              <span className="text-[10px] opacity-75">
+                                {isFetchingKw ? "..." : `(${t.keywords_count || 0})`}
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Step 2: Keywords in selected topics */}
+                  {selectedTopicIds.size > 0 && (
+                    <div>
+                      <div className="flex items-center justify-between mb-1.5">
+                        <label className="text-[11px] font-bold text-foreground">
+                          2. Từ khoá trong chủ đề ({selectedKeywords.size}/{availableTopicKeywords.length}):
+                        </label>
+                        <div className="flex items-center gap-2 text-[10px] font-semibold">
+                          <button
+                            type="button"
+                            onClick={() => setSelectedKeywords(new Set(availableTopicKeywords.map((k) => k.item.keyword)))}
+                            className="text-primary hover:underline cursor-pointer"
+                          >
+                            Chọn tất cả
+                          </button>
+                          <span className="text-muted-foreground/40">•</span>
+                          <button
+                            type="button"
+                            onClick={() => setSelectedKeywords(new Set())}
+                            className="text-muted-foreground hover:underline cursor-pointer"
+                          >
+                            Bỏ chọn
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="border border-border/80 rounded-xl max-h-[140px] overflow-y-auto divide-y divide-border/60 bg-background">
+                        {availableTopicKeywords.length === 0 ? (
+                          <div className="p-3 text-center text-xs text-muted-foreground">Đang tải danh sách từ khoá trong chủ đề...</div>
+                        ) : (
+                          availableTopicKeywords.map(({ item, topicName }) => (
+                            <label
+                              key={item.id}
+                              className="flex items-center gap-2 px-2.5 py-1.5 hover:bg-muted/40 cursor-pointer transition text-xs select-none"
+                            >
+                              <input
+                                type="checkbox"
+                                checked={selectedKeywords.has(item.keyword)}
+                                onChange={() => toggleKeyword(item.keyword)}
+                                className="rounded border-border text-primary shrink-0"
+                              />
+                              <span className="font-medium text-foreground truncate">{item.keyword}</span>
+                              <span className="ml-auto text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground shrink-0 truncate max-w-[120px]">
+                                {topicName}
+                              </span>
+                            </label>
+                          ))
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Step 3: Custom keywords addition (optional) */}
+                  <div>
+                    <label className="text-[11px] font-bold text-foreground block mb-1">
+                      3. Từ khoá thêm tay ngoài chủ đề (tuỳ chọn, mỗi dòng 1 từ khoá):
+                    </label>
+                    <textarea
+                      rows={2}
+                      value={customKeywordsInput}
+                      onChange={(e) => setCustomKeywordsInput(e.target.value)}
+                      disabled={submitting}
+                      placeholder="VD: thuê làm website, cần agency app..."
+                      className="w-full rounded-lg border border-border bg-background px-2.5 py-1.5 text-xs text-foreground focus:border-primary focus:outline-none disabled:opacity-50"
+                    />
+                  </div>
+
+                  <div className="flex items-center gap-2 pt-1 border-t border-border/50">
+                    <label className="inline-flex items-center gap-1.5 cursor-pointer text-[11px] text-muted-foreground select-none">
+                      <input
+                        type="checkbox"
+                        checked={threadsAutoDiscover}
+                        onChange={(e) => setThreadsAutoDiscover(e.target.checked)}
+                        className="rounded border-border text-primary focus:ring-0"
+                      />
+                      <span>Tự động kết hợp từ khóa AI Registry</span>
+                    </label>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Repeat interval */}
           <div>
@@ -915,6 +1243,285 @@ function AddScheduleModal({
               <span>Tạo lịch cào</span>
             </button>
           </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function GroupPickList({
+  title,
+  options,
+  disabled,
+}: {
+  title: string;
+  options: ReturnType<typeof useGroupOptions>;
+  disabled: boolean;
+}) {
+  const { groups, selectedIds, setSelectedIds, toggle, loading, error } = options;
+  const [filterText, setFilterText] = useState("");
+  const filtered = useMemo(() => {
+    if (!filterText.trim()) return groups;
+    const lower = filterText.toLowerCase();
+    return groups.filter(
+      (g) => (g.group_name && g.group_name.toLowerCase().includes(lower)) || (g.group_url && g.group_url.toLowerCase().includes(lower))
+    );
+  }, [groups, filterText]);
+
+  return (
+    <div className="flex flex-col gap-2 min-w-0">
+      <div className="flex items-center justify-between gap-2">
+        <label className="text-xs font-bold text-foreground">
+          {title} ({selectedIds.length}/{groups.length})
+        </label>
+        <div className="flex items-center gap-2 text-[11px] font-semibold">
+          <button
+            type="button"
+            className="text-primary hover:underline disabled:opacity-50 cursor-pointer"
+            disabled={disabled}
+            onClick={() => setSelectedIds(groups.map((g) => g.id))}
+          >
+            Chọn tất cả
+          </button>
+          <span className="text-muted-foreground/40">•</span>
+          <button
+            type="button"
+            className="text-muted-foreground hover:underline disabled:opacity-50 cursor-pointer"
+            disabled={disabled}
+            onClick={() => setSelectedIds([])}
+          >
+            Bỏ chọn
+          </button>
+        </div>
+      </div>
+      {groups.length > 5 && (
+        <input
+          type="text"
+          value={filterText}
+          onChange={(e) => setFilterText(e.target.value)}
+          placeholder="Lọc tên hoặc link nhóm..."
+          className="w-full px-2.5 py-1 text-[11px] rounded-lg border border-border bg-background focus:border-primary outline-none"
+        />
+      )}
+      <div className="border border-border rounded-xl max-h-[160px] overflow-y-auto divide-y divide-border bg-muted/20">
+        {loading ? (
+          <div className="p-3 text-center text-xs text-muted-foreground">Đang tải danh sách nhóm...</div>
+        ) : error ? (
+          <div className="p-3 text-center text-xs text-red-600">{error}</div>
+        ) : groups.length === 0 ? (
+          <div className="p-3 text-center text-xs text-muted-foreground">Chưa có nhóm nào.</div>
+        ) : filtered.length === 0 ? (
+          <div className="p-3 text-center text-xs text-muted-foreground">Không tìm thấy nhóm phù hợp.</div>
+        ) : (
+          filtered.map((g) => (
+            <label
+              key={g.id}
+              className={cn(
+                "flex items-start gap-2 p-2 cursor-pointer hover:bg-muted/50 transition-colors",
+                disabled && "opacity-60 pointer-events-none"
+              )}
+            >
+              <input
+                type="checkbox"
+                className="mt-0.5 rounded border-border"
+                checked={selectedIds.includes(g.id)}
+                onChange={() => toggle(g.id)}
+              />
+              <div className="min-w-0 flex-1">
+                <div className="text-xs font-semibold text-foreground line-clamp-1">
+                  {g.group_name || g.group_url}
+                </div>
+                <div className="text-[10px] text-muted-foreground truncate">{g.group_url}</div>
+              </div>
+            </label>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
+function PickKeywordsModal({
+  onClose,
+  onSelectKeywords,
+}: {
+  onClose: () => void;
+  onSelectKeywords: (keywords: string[]) => void;
+}) {
+  const [topics, setTopics] = useState<KeywordTopic[]>([]);
+  const [loadingTopics, setLoadingTopics] = useState(true);
+  const [selectedTopicId, setSelectedTopicId] = useState<string | null>(null);
+  const [keywords, setKeywords] = useState<KeywordItem[]>([]);
+  const [loadingKeywords, setLoadingKeywords] = useState(false);
+  const [checkedKeywords, setCheckedKeywords] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    let active = true;
+    allPlatformKeywordsService.getTopics().then((res) => {
+      if (active) {
+        setLoadingTopics(false);
+        if (res.success && res.data) {
+          setTopics(res.data);
+          if (res.data.length > 0) {
+            setSelectedTopicId(res.data[0].id);
+          }
+        }
+      }
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!selectedTopicId) return;
+    let active = true;
+    setLoadingKeywords(true);
+    allPlatformKeywordsService.getKeywordsInTopic(selectedTopicId).then((res) => {
+      if (active) {
+        setLoadingKeywords(false);
+        if (res.success && res.data) {
+          setKeywords(res.data);
+          setCheckedKeywords(new Set(res.data.map((k) => k.keyword)));
+        } else {
+          setKeywords([]);
+          setCheckedKeywords(new Set());
+        }
+      }
+    });
+    return () => {
+      active = false;
+    };
+  }, [selectedTopicId]);
+
+  const toggleKeyword = (kw: string) => {
+    setCheckedKeywords((prev) => {
+      const next = new Set(prev);
+      if (next.has(kw)) next.delete(kw);
+      else next.add(kw);
+      return next;
+    });
+  };
+
+  const handleApply = () => {
+    onSelectKeywords(Array.from(checkedKeywords));
+    onClose();
+  };
+
+  return (
+    <div className="fixed inset-0 z-[60] bg-black/50 flex items-center justify-center p-4" onClick={onClose}>
+      <div
+        className="bg-card rounded-2xl border border-border shadow-2xl w-full max-w-xl max-h-[85vh] flex flex-col overflow-hidden"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between p-4 border-b border-border bg-card">
+          <div className="flex items-center gap-2">
+            <span className="material-symbols-outlined text-primary text-[20px]">library_books</span>
+            <h4 className="font-bold text-sm text-foreground">Chọn từ khóa từ Thư viện chủ đề</h4>
+          </div>
+          <button type="button" onClick={onClose} className="p-1.5 rounded-lg hover:bg-muted cursor-pointer">
+            <span className="material-symbols-outlined text-[18px] text-muted-foreground">close</span>
+          </button>
+        </div>
+
+        <div className="p-4 flex-1 overflow-y-auto flex flex-col gap-3">
+          <div>
+            <label className="text-xs font-bold text-foreground block mb-1">Chủ đề từ khóa</label>
+            {loadingTopics ? (
+              <div className="text-xs text-muted-foreground py-2">Đang tải danh sách chủ đề...</div>
+            ) : topics.length === 0 ? (
+              <div className="text-xs text-muted-foreground py-2">Chưa có chủ đề nào trong Thư viện từ khóa.</div>
+            ) : (
+              <div className="flex gap-1.5 flex-wrap">
+                {topics.map((t) => (
+                  <button
+                    key={t.id}
+                    type="button"
+                    onClick={() => setSelectedTopicId(t.id)}
+                    className={cn(
+                      "px-3 py-1.5 rounded-xl text-xs font-semibold border transition cursor-pointer flex items-center gap-1.5",
+                      selectedTopicId === t.id
+                        ? "bg-primary text-white border-primary shadow-sm"
+                        : "bg-muted/30 text-foreground border-border hover:bg-muted/60"
+                    )}
+                  >
+                    <span>{t.name}</span>
+                    <span className="text-[10px] opacity-75">({t.keywords_count || 0})</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="mt-2">
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="text-xs font-bold text-foreground">
+                Danh sách từ khóa ({checkedKeywords.size}/{keywords.length})
+              </label>
+              <div className="flex items-center gap-2 text-[11px]">
+                <button
+                  type="button"
+                  onClick={() => setCheckedKeywords(new Set(keywords.map((k) => k.keyword)))}
+                  className="text-primary hover:underline cursor-pointer"
+                >
+                  Chọn tất cả
+                </button>
+                <span>•</span>
+                <button
+                  type="button"
+                  onClick={() => setCheckedKeywords(new Set())}
+                  className="text-muted-foreground hover:underline cursor-pointer"
+                >
+                  Bỏ chọn
+                </button>
+              </div>
+            </div>
+
+            <div className="border border-border rounded-xl max-h-[220px] overflow-y-auto divide-y divide-border bg-muted/20">
+              {loadingKeywords ? (
+                <div className="p-4 text-center text-xs text-muted-foreground">Đang tải từ khóa...</div>
+              ) : keywords.length === 0 ? (
+                <div className="p-4 text-center text-xs text-muted-foreground">Chủ đề này chưa có từ khóa nào.</div>
+              ) : (
+                keywords.map((k) => (
+                  <label
+                    key={k.id}
+                    className="flex items-center gap-2.5 p-2.5 hover:bg-muted/50 cursor-pointer transition text-xs"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={checkedKeywords.has(k.keyword)}
+                      onChange={() => toggleKeyword(k.keyword)}
+                      className="rounded border-border text-primary"
+                    />
+                    <span className="font-medium text-foreground">{k.keyword}</span>
+                    {k.contributor_name && (
+                      <span className="ml-auto text-[10px] text-muted-foreground">bởi {k.contributor_name}</span>
+                    )}
+                  </label>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div className="flex items-center justify-end gap-2 p-3 border-t border-border bg-card">
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-3.5 py-1.5 rounded-xl border border-border text-xs font-semibold text-foreground hover:bg-muted cursor-pointer"
+          >
+            Đóng
+          </button>
+          <button
+            type="button"
+            disabled={checkedKeywords.size === 0}
+            onClick={handleApply}
+            className="px-4 py-1.5 rounded-xl bg-primary text-white text-xs font-bold disabled:opacity-50 cursor-pointer shadow-sm flex items-center gap-1.5"
+          >
+            <span className="material-symbols-outlined text-[16px]">add_circle</span>
+            <span>Chèn {checkedKeywords.size} từ khóa vào lịch</span>
+          </button>
         </div>
       </div>
     </div>

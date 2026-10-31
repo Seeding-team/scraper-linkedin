@@ -1,13 +1,9 @@
-// platforms/threads/crawl-sniffer.js - chạy trong MAIN world của trang Threads (document_start) để bắt response GraphQL mà
-// chính JS của Threads gọi khi cuộn trang (trang đầu nằm sẵn trong JSON nhúng của HTML,
-// các trang sau mới tải qua /graphql/query hoặc /api/graphql - CHỈ khi đã đăng nhập; chưa
-// đăng nhập thì Threads không phân trang, không có request nào chứa bài).
-// Cùng khuôn với graphql-sniffer.js (Facebook/LinkedIn): patch fetch + XHR, ghi lại tên
-// query (x-fb-friendly-name / fb_api_req_friendly_name) để log biết bài đến từ API nào.
-// Chỉ ĐỌC bản sao response (clone) rồi chuyển nguyên văn sang platforms/threads/crawl.js
-// (world cô lập) qua window.postMessage (structured clone - an toàn hơn CustomEvent.detail
-// khi đi qua ranh giới world) — không sửa request/response gốc, lỗi gì cũng nuốt để
-// không làm hỏng trang Threads. Phần "dịch ngược" ra bài viết nằm ở crawl.js.
+// platforms/threads/crawl-sniffer.js - chạy trong MAIN world của trang Threads (document_start)
+// Bắt 2 luồng:
+// 1. Cào bài: GraphQL query có "taken_at" -> chuyển sang platforms/threads/crawl.js.
+// 2. Bình luận: POST /api/v1/media/configure_text_only_post/ (bóc tách từ comment_thread.json)
+//    -> Dispatch CustomEvent "markee-action-captured" kèm commentId, linkComment, authorName, content, fbUid
+//    để platforms/threads/content.js (ISOLATED world) ghi nhận KPI và minh chứng cho cả Tương tác nội bộ & Seeding ngoài.
 (function () {
     if (window.__mkThreadsCrawlSnifferInstalled) return;
     window.__mkThreadsCrawlSnifferInstalled = true;
@@ -15,7 +11,8 @@
     const SOURCE = 'mk-threads-crawl-sniffer';
 
     function isWatched(url) {
-        return typeof url === 'string' && url.indexOf('graphql') !== -1;
+        if (typeof url !== 'string') return false;
+        return url.indexOf('graphql') !== -1 || url.indexOf('configure_text_only_post') !== -1;
     }
 
     function nameFromBody(body) {
@@ -41,13 +38,67 @@
         }
     }
 
-    function forward(text, name) {
-        // Chỉ chuyển response có dấu hiệu chứa bài viết (taken_at) — bỏ qua hàng trăm
-        // request GraphQL khác (thông báo, gợi ý follow, experiment...).
-        if (typeof text !== 'string' || text.indexOf('"taken_at"') === -1) return;
+    function handleCommentResponse(text) {
+        if (typeof text !== 'string') return;
         try {
-            window.postMessage({ source: SOURCE, text: text, name: name || '' }, window.location.origin);
+            const data = JSON.parse(text);
+            if (data && data.status === 'ok' && data.media) {
+                const media = data.media;
+                const captionObj = media.caption || {};
+                const userObj = media.user || {};
+                const textPostInfo = media.text_post_app_info || {};
+                const rootPost = textPostInfo.root_post || {};
+
+                // Trích xuất commentId dạng số thực tế (numeric pk hoặc id)
+                const commentId = String(media.pk || media.id || media.code || '');
+                // Link comment trực tiếp (permalink: https://www.threads.com/@username/post/code)
+                const permalink = media.permalink || (userObj.username && media.code ? `https://www.threads.com/@${userObj.username}/post/${media.code}` : window.location.href);
+                const content = captionObj.text || (textPostInfo.text_fragments && textPostInfo.text_fragments.fragments ? textPostInfo.text_fragments.fragments.map(f => f.plaintext || '').join('') : '');
+                const authorName = userObj.full_name || userObj.username || '';
+                const profileId = String(userObj.pk || userObj.id || '');
+                const rootPostId = String(rootPost.pk || '');
+
+                const actionDetail = {
+                    actionType: 'comment',
+                    platform: 'threads',
+                    commentId: commentId,
+                    linkComment: permalink,
+                    postUrl: window.location.href,
+                    rootPostId: rootPostId,
+                    content: content,
+                    authorName: authorName,
+                    fbUid: profileId,
+                    timestamp: Date.now(),
+                };
+
+                console.log('[Threads-Sniffer] Bắt thành công COMMENT Threads (configure_text_only_post):', actionDetail);
+
+                // 1. Dispatch CustomEvent cho platforms/threads/content.js (ISOLATED world)
+                document.dispatchEvent(new CustomEvent('markee-action-captured', { detail: actionDetail }));
+
+                // 2. Dispatch window.postMessage cho các listener khác
+                window.postMessage({ source: 'mk-threads-comment-captured', detail: actionDetail }, '*');
+            }
+        } catch (e) {
+            console.error('[Threads-Sniffer] Lỗi phân tích comment response:', e);
+        }
+    }
+
+    function forward(text, name) {
+        if (typeof text !== 'string') return;
+        if (text.indexOf('"taken_at"') === -1) return;
+        try {
+            window.postMessage({ source: SOURCE, text: text, name: name || '' }, '*');
         } catch (e) {}
+    }
+
+    function processResponse(url, text, name) {
+        if (!text || typeof text !== 'string') return;
+        if (url.indexOf('configure_text_only_post') !== -1) {
+            handleCommentResponse(text);
+        } else if (url.indexOf('graphql') !== -1) {
+            forward(text, name);
+        }
     }
 
     const originalFetch = window.fetch;
@@ -59,7 +110,7 @@
                 const name = nameFromHeaders(init && init.headers) || nameFromHeaders(input && input.headers) || nameFromBody(init && init.body);
                 promise.then(function (res) {
                     try {
-                        res.clone().text().then(function (t) { forward(t, name); }).catch(function () {});
+                        res.clone().text().then(function (t) { processResponse(url, t, name); }).catch(function () {});
                     } catch (e) {}
                 }).catch(function () {});
             }
@@ -91,12 +142,13 @@
         try {
             if (isWatched(this.__mkThUrl)) {
                 const name = this.__mkThName || nameFromBody(body);
+                const url = this.__mkThUrl;
                 this.addEventListener('load', function () {
                     try {
                         if (this.responseType === '' || this.responseType === 'text') {
-                            forward(this.responseText, name);
+                            processResponse(url, this.responseText, name);
                         } else if (this.responseType === 'json' && this.response) {
-                            forward(JSON.stringify(this.response), name);
+                            processResponse(url, JSON.stringify(this.response), name);
                         }
                     } catch (e) {}
                 });

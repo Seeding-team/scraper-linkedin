@@ -231,7 +231,7 @@
             log(scheduleId, label, `[Vòng ${roundNumber}] Bắt đầu tìm Threads (${effectiveThreadsKeywords.length} từ khoá)...`);
             self.__mkThreadsProgressHook = (p) => progress(scheduleId, "threads", p);
             try {
-                summary.threads = await self.__mkStartThreadsCrawl(effectiveThreadsKeywords, { apiBase: cfg.apiBase, idMember: cfg.idMember, postLimit: 20, dashboardTabId });
+                summary.threads = await self.__mkStartThreadsCrawl(effectiveThreadsKeywords, { apiBase: cfg.apiBase, idMember: cfg.idMember, postLimit: 20, dashboardTabId, sortRecent: true });
                 log(scheduleId, label, `[Vòng ${roundNumber}] Threads xong: lưu ${summary.threads.totalSaved} bài mới${summary.threads.stopped ? " — BỊ DỪNG GIỮA CHỪNG" : ""}.`, summary.threads.stopped ? "warn" : "success");
             } catch (e) {
                 log(scheduleId, label, `[Vòng ${roundNumber}] Lỗi tìm Threads: ${e.message}`, "error");
