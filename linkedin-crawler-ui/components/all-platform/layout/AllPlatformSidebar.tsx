@@ -849,7 +849,14 @@ function SidebarLink({
         collapsed && "justify-center px-2",
       )}
       aria-current={active ? "page" : undefined}
-      onClick={onNavigate}
+      onClick={() => {
+        onNavigate?.();
+        if (item.id === "external-activity") {
+          if (typeof window !== "undefined") {
+            window.dispatchEvent(new CustomEvent("allplatform_reset_post_feed_filters"));
+          }
+        }
+      }}
     >
       <MaterialIcon name={item.icon} className={cn(iconClass, active && "text-[var(--color-markee-primary)]")} />
       {!collapsed ? <span className="min-w-0 truncate">{item.label}</span> : null}

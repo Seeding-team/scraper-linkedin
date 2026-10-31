@@ -481,6 +481,13 @@ function GroupLinks({
                             <React.Fragment key={subItem.id}>
                               <Link
                                 href={subItem.href}
+                                onClick={() => {
+                                  if (subItem.id === "external-activity") {
+                                    if (typeof window !== "undefined") {
+                                      window.dispatchEvent(new CustomEvent("allplatform_reset_post_feed_filters"));
+                                    }
+                                  }
+                                }}
                                 className={cn(
                                   "group relative flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-[12.5px] font-medium transition-all duration-150 outline-none select-none",
                                   subActive

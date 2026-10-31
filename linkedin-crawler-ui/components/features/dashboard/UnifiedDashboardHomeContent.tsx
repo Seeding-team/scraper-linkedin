@@ -215,6 +215,21 @@ function matchesServiceArea(team: string | undefined, area: ServiceAreaKey): boo
 }
 
 // â”€â”€â”€ Main Component â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+const INITIAL_FILTERS: FilterState = {
+  search: "",
+  intent: "",
+  industry: "",
+  team: "",
+  tier: "",
+  icp: "",
+  content_type: "",
+  product_seeding: "",
+  member: "",
+  sort: "lead_score_high",
+  dateRange: "",
+  seeding_status: "all",
+};
+
 export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boolean }) {
   const { user } = useAppAuth();
   const CURRENT_USER_EMAIL = user?.email || "";
@@ -238,12 +253,41 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
       setPage(1);
       setClientPage(1);
     } else {
+      // Khi khong co status query param (Hoat dong seeding mac dinh):
+      // tu dong xoa toan bo bo loc va hien thi toan bo bai viet nhu binh thuong
       setSeedingStatusFilter("all");
       setCallFilter("all");
+      setServiceArea("all");
+      setFilters(INITIAL_FILTERS);
       setPage(1);
       setClientPage(1);
     }
   }, [searchParams]);
+
+  // Lang nghe su kien click vao menu "Hoat dong seeding" tren Sidebar de tu dong xoa loc
+  useEffect(() => {
+    const handleResetAll = () => {
+      setFilters(INITIAL_FILTERS);
+      setServiceArea("all");
+      setSeedingStatusFilter("all");
+      setCallFilter("all");
+      setPage(1);
+      setClientPage(1);
+      setIsReviewMode(false);
+      setReviewedPostIds(new Set());
+      if (typeof window !== "undefined") {
+        const url = new URL(window.location.href);
+        if (url.search) {
+          url.search = "";
+          window.history.replaceState({}, "", url.pathname);
+        }
+      }
+      toast.success("✓ Đã làm mới bộ lọc, hiển thị toàn bộ bài viết!");
+    };
+
+    window.addEventListener("allplatform_reset_post_feed_filters", handleResetAll);
+    return () => window.removeEventListener("allplatform_reset_post_feed_filters", handleResetAll);
+  }, []);
 
 
 
@@ -429,20 +473,7 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
   // Filter & Taxonomy States
   const [categories, setCategories] = useState<Category[]>([]);
   const [teams, setTeams] = useState<{ id: string; name: string }[]>([]);
-  const [filters, setFilters] = useState<FilterState>({
-    search: "",
-    intent: "",
-    industry: "",
-    team: "",
-    tier: "",
-    icp: "",
-    content_type: "",
-    product_seeding: "",
-    member: "",
-    sort: "lead_score_high",
-    dateRange: "",
-    seeding_status: "all",
-  });
+  const [filters, setFilters] = useState<FilterState>(INITIAL_FILTERS);
   const filterDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Fetch Taxonomy
