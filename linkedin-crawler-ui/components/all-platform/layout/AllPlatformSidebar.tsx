@@ -297,25 +297,36 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, workspaceTab: 
         },
         {
           type: "item",
-          id: "external-groups",
+          id: "external-library-tools",
           href: "/all-platform/quan-ly-nhom",
-          icon: "folder",
-          label: "Kho thư viện Group",
-        },
-        {
-          type: "item",
-          id: "external-schedules",
-          href: "/all-platform/lich-cao-hang-doi",
-          icon: "calendar_today",
-          label: "Lịch cào & Hàng đợi",
-        },
-        {
-          type: "item",
-          id: "quick-comments",
-          href: "/all-platform/quick-comments",
-          icon: "chat_bubble",
-          label: "Thư viện mẫu câu",
-          matchStartsWith: ["/all-platform/quick-comments"],
+          icon: "article",
+          label: "Thư viện & Công cụ",
+          children: [
+            {
+              type: "item",
+              id: "external-groups",
+              href: "/all-platform/quan-ly-nhom",
+              icon: "folder",
+              label: "Kho thư viện Group",
+              matchStartsWith: ["/all-platform/quan-ly-nhom"],
+            },
+            {
+              type: "item",
+              id: "external-schedules",
+              href: "/all-platform/lich-cao-hang-doi",
+              icon: "calendar_today",
+              label: "Lịch cào & Hàng đợi",
+              matchStartsWith: ["/all-platform/lich-cao-hang-doi"],
+            },
+            {
+              type: "item",
+              id: "quick-comments",
+              href: "/all-platform/quick-comments",
+              icon: "chat_bubble",
+              label: "Thư viện mẫu câu",
+              matchStartsWith: ["/all-platform/quick-comments"],
+            },
+          ],
         },
         {
           type: "item",
@@ -926,13 +937,27 @@ function SidebarGroup({
                 </div>
                 <div className="ml-3 space-y-1 border-l border-outline-variant/60 pl-2">
                   {child.items.map((subItem) => (
-                    <SidebarLink
-                      key={subItem.id}
-                      item={subItem}
-                      active={isLeafActive(pathname, subItem)}
-                      indented
-                      onNavigate={onNavigate}
-                    />
+                    <div key={subItem.id} className="space-y-1">
+                      <SidebarLink
+                        item={subItem}
+                        active={isLeafActive(pathname, subItem)}
+                        indented
+                        onNavigate={onNavigate}
+                      />
+                      {subItem.children && subItem.children.length > 0 && (
+                        <div className="ml-3 space-y-1 border-l border-outline-variant/40 pl-2">
+                          {subItem.children.map((subLeaf) => (
+                            <SidebarLink
+                              key={subLeaf.id}
+                              item={subLeaf}
+                              active={isLeafActive(pathname, subLeaf)}
+                              indented
+                              onNavigate={onNavigate}
+                            />
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   ))}
                 </div>
               </div>

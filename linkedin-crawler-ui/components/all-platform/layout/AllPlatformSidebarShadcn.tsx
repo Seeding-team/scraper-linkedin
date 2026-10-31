@@ -304,7 +304,7 @@ function GroupLinks({
 
               // child.type === 'subgroup' (vi du: SEEDING BEN NGOAI)
               const SubIcon = materialToLucideIcon(child.icon);
-              const subHasActiveChild = child.items.some((sub) => isLeafActive(pathname, sub, searchParams));
+              const subHasActiveChild = child.items.some((sub) => isLeafActive(pathname, sub, searchParams) || Boolean(sub.children?.some((leaf) => isLeafActive(pathname, leaf, searchParams))));
               const isSubOpen = subHasActiveChild || (openSubgroups[child.id] ?? child.defaultOpen ?? true);
 
               return (
@@ -349,6 +349,91 @@ function GroupLinks({
                         {child.items.map((subItem) => {
                           const SubItemIcon = materialToLucideIcon(subItem.icon);
                           const subActive = isLeafActive(pathname, subItem, searchParams);
+
+                          // Nếu là menu cha Thư viện & Công cụ có các submenu con
+                          if (subItem.id === "external-library-tools" && subItem.children && subItem.children.length > 0) {
+                            const toolHasActiveChild = subItem.children.some((leaf) => isLeafActive(pathname, leaf, searchParams));
+                            const isToolOpen = toolHasActiveChild || (openSubgroups[subItem.id] ?? true);
+
+                            return (
+                              <div key={subItem.id} className="pt-0.5 space-y-0.5">
+                                <button
+                                  type="button"
+                                  onClick={() => toggleSubgroup(subItem.id, isToolOpen)}
+                                  className={cn(
+                                    "group/tool flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-[12.5px] font-medium transition-all duration-150 outline-none select-none cursor-pointer",
+                                    toolHasActiveChild
+                                      ? "bg-rose-50 text-rose-700 font-bold shadow-2xs"
+                                      : "text-slate-600 hover:bg-slate-100/70 hover:text-slate-900 active:bg-slate-200/50",
+                                  )}
+                                >
+                                  <span className="flex min-w-0 items-center gap-2 truncate">
+                                    <SubItemIcon
+                                      className={cn(
+                                        "size-3.5 shrink-0 stroke-[1.8] transition-colors",
+                                        toolHasActiveChild ? "text-rose-700" : "text-slate-400 group-hover:text-slate-600",
+                                      )}
+                                    />
+                                    <span className="truncate">{subItem.label}</span>
+                                  </span>
+                                  <ChevronDown
+                                    className={cn(
+                                      "size-3.5 shrink-0 stroke-[2] transition-transform duration-200 text-slate-400 group-hover/tool:text-slate-600",
+                                      isToolOpen && "rotate-180 text-rose-600",
+                                    )}
+                                  />
+                                </button>
+
+                                <div
+                                  className={cn(
+                                    "grid overflow-hidden transition-all duration-200 ease-in-out",
+                                    isToolOpen ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0 pointer-events-none",
+                                  )}
+                                >
+                                  <div className="min-h-0">
+                                    <div className="ml-3 pl-2.5 my-0.5 space-y-0.5 border-l-2 border-rose-200/70">
+                                      {subItem.children.map((subLeaf) => {
+                                        const SubLeafIcon = materialToLucideIcon(subLeaf.icon);
+                                        const leafActive = isLeafActive(pathname, subLeaf, searchParams);
+                                        return (
+                                          <Link
+                                            key={subLeaf.id}
+                                            href={subLeaf.href}
+                                            className={cn(
+                                              "group relative flex w-full items-center justify-between gap-1.5 rounded-md px-2 py-1 text-[11.5px] font-medium transition-all duration-150 outline-none select-none",
+                                              leafActive
+                                                ? "bg-rose-50 text-rose-700 font-bold shadow-2xs"
+                                                : "text-slate-600 hover:bg-slate-100/70 hover:text-slate-900 active:bg-slate-200/50",
+                                            )}
+                                          >
+                                            <span className="flex min-w-0 items-center gap-1.5 truncate">
+                                              <SubLeafIcon
+                                                className={cn(
+                                                  "size-3 shrink-0 stroke-[1.8] transition-colors",
+                                                  leafActive ? "text-rose-700" : "text-slate-400 group-hover:text-slate-600",
+                                                )}
+                                              />
+                                              <span className="truncate">{subLeaf.label}</span>
+                                            </span>
+
+                                            {subLeaf.badge !== undefined ? (
+                                              <PillBadge badge={subLeaf.badge} active={leafActive} />
+                                            ) : leafActive ? (
+                                              <span
+                                                className="size-1 rounded-full bg-rose-600 shadow-xs shrink-0"
+                                                aria-hidden="true"
+                                              />
+                                            ) : null}
+                                          </Link>
+                                        );
+                                      })}
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          }
+
                           return (
                             <React.Fragment key={subItem.id}>
                               <Link
