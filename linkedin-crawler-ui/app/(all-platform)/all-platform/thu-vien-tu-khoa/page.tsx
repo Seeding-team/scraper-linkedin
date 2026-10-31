@@ -10,7 +10,9 @@ import {
 } from "@/services/all-platform.service";
 
 export default function KeywordsLibraryPage() {
-  const { user, isAdmin, isLeader } = useAppAuth();
+  const { user } = useAppAuth();
+  const isAdmin = user?.role === "admin";
+  const isLeader = user?.role === "leader";
 
   // Topics state
   const [topics, setTopics] = useState<KeywordTopic[]>([]);

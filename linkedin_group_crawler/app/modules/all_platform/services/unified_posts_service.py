@@ -1499,7 +1499,7 @@ def get_member_seeding_overview(email: str, time_range: str = "all") -> dict:
         start_iso = first_prev_month.isoformat()
         end_iso = first_this_month.isoformat()
 
-    query = sb.table("facebook_posts").select("id, id_member, group_id, crawl_date, created_at, score")
+    query = sb.table("facebook_posts").select("id, id_member, group_id, crawl_date, created_at, score, lead_score")
     if fb_group_owner_map:
         group_ids = list(fb_group_owner_map.keys())[:100]
         query = query.or_(f"id_member.in.({','.join(member_ids)}),group_id.in.({','.join(group_ids)})")
@@ -1513,7 +1513,7 @@ def get_member_seeding_overview(email: str, time_range: str = "all") -> dict:
 
     fb_posts = query.order("crawl_date", desc=True).limit(5000).execute().data or []
 
-    th_query = sb.table("threads_posts").select("id, id_member, created_at, score").in_("id_member", member_ids)
+    th_query = sb.table("threads_posts").select("id, id_member, created_at, score, lead_score").in_("id_member", member_ids)
     if start_iso:
         th_query = th_query.gte("created_at", start_iso)
     if end_iso:
@@ -1532,8 +1532,8 @@ def get_member_seeding_overview(email: str, time_range: str = "all") -> dict:
         if not mid or mid not in member_ids:
             continue
         post_count[mid] = post_count.get(mid, 0) + 1
-        score = p.get("score") or 0
-        if score >= 40:
+        is_passed = (p.get("lead_score") is not None) or ((p.get("score") or 0) > 0)
+        if is_passed:
             ai_passed_count[mid] = ai_passed_count.get(mid, 0) + 1
         d = p.get("crawl_date") or p.get("created_at")
         if d and (mid not in last_crawled or d > last_crawled[mid]):
@@ -1544,14 +1544,14 @@ def get_member_seeding_overview(email: str, time_range: str = "all") -> dict:
         if not mid or mid not in member_ids:
             continue
         post_count[mid] = post_count.get(mid, 0) + 1
-        score = p.get("score") or 0
-        if score >= 40:
+        is_passed = (p.get("lead_score") is not None) or ((p.get("score") or 0) > 0)
+        if is_passed:
             ai_passed_count[mid] = ai_passed_count.get(mid, 0) + 1
         d = p.get("created_at")
         if d and (mid not in last_crawled or d > last_crawled[mid]):
             last_crawled[mid] = d
 
-    li_query = sb.table("linkedin_posts").select("id, id_member, crawl_date, created_at, score").in_("id_member", member_ids)
+    li_query = sb.table("linkedin_posts").select("id, id_member, crawl_date, created_at, score, lead_score").in_("id_member", member_ids)
     if start_iso:
         li_query = li_query.gte("crawl_date", start_iso)
     if end_iso:
@@ -1566,8 +1566,8 @@ def get_member_seeding_overview(email: str, time_range: str = "all") -> dict:
         if not mid or mid not in member_ids:
             continue
         post_count[mid] = post_count.get(mid, 0) + 1
-        score = p.get("score") or 0
-        if score >= 40:
+        is_passed = (p.get("lead_score") is not None) or ((p.get("score") or 0) > 0)
+        if is_passed:
             ai_passed_count[mid] = ai_passed_count.get(mid, 0) + 1
         d = p.get("crawl_date") or p.get("created_at")
         if d and (mid not in last_crawled or d > last_crawled[mid]):
@@ -1771,9 +1771,9 @@ def get_crawl_schedule_rounds_history(
         date_to = now_vn.astimezone(timezone.utc)
 
     # 2. Truy vấn bài viết từ 3 nền tảng
-    q_fb = sb.table("facebook_posts").select("id, id_member, score, crawl_date, created_at, group_id")
-    q_th = sb.table("threads_posts").select("id, id_member, score, crawl_date, created_at, keyword")
-    q_li = sb.table("linkedin_posts").select("id, id_member, score, crawl_date, created_at, id_group, session_id")
+    q_fb = sb.table("facebook_posts").select("id, id_member, score, lead_score, crawl_date, created_at, group_id")
+    q_th = sb.table("threads_posts").select("id, id_member, score, lead_score, crawl_date, created_at, keyword")
+    q_li = sb.table("linkedin_posts").select("id, id_member, score, lead_score, crawl_date, created_at, id_group, session_id")
 
     if id_member and id_member != "all":
         q_fb = q_fb.eq("id_member", id_member)
@@ -1823,33 +1823,42 @@ def get_crawl_schedule_rounds_history(
         m_id = p.get("id_member") or SEEDING_SYSTEM_MEMBER_ID
         dt = _parse_ts(p.get("created_at") or p.get("crawl_date"))
         if dt:
+            is_passed = (p.get("lead_score") is not None) or ((p.get("score") or 0) > 0)
             all_posts.append({
                 "platform": "facebook",
                 "id": p["id"],
                 "member_id": m_id,
                 "score": p.get("score") or 0,
+                "lead_score": p.get("lead_score"),
+                "ai_passed": is_passed,
                 "created_at": dt,
             })
     for p in th_data:
         m_id = p.get("id_member") or SEEDING_SYSTEM_MEMBER_ID
         dt = _parse_ts(p.get("created_at") or p.get("crawl_date"))
         if dt:
+            is_passed = (p.get("lead_score") is not None) or ((p.get("score") or 0) > 0)
             all_posts.append({
                 "platform": "threads",
                 "id": p["id"],
                 "member_id": m_id,
                 "score": p.get("score") or 0,
+                "lead_score": p.get("lead_score"),
+                "ai_passed": is_passed,
                 "created_at": dt,
             })
     for p in li_data:
         m_id = p.get("id_member") or SEEDING_SYSTEM_MEMBER_ID
         dt = _parse_ts(p.get("created_at") or p.get("crawl_date"))
         if dt:
+            is_passed = (p.get("lead_score") is not None) or ((p.get("score") or 0) > 0)
             all_posts.append({
                 "platform": "linkedin",
                 "id": p["id"],
                 "member_id": m_id,
                 "score": p.get("score") or 0,
+                "lead_score": p.get("lead_score"),
+                "ai_passed": is_passed,
                 "created_at": dt,
             })
 
@@ -1892,15 +1901,15 @@ def get_crawl_schedule_rounds_history(
 
             fb_items = [p for p in cluster if p["platform"] == "facebook"]
             fb_cnt = len(fb_items)
-            fb_ai = sum(1 for p in fb_items if p["score"] >= ai_threshold)
+            fb_ai = sum(1 for p in fb_items if p.get("ai_passed"))
 
             li_items = [p for p in cluster if p["platform"] == "linkedin"]
             li_cnt = len(li_items)
-            li_ai = sum(1 for p in li_items if p["score"] >= ai_threshold)
+            li_ai = sum(1 for p in li_items if p.get("ai_passed"))
 
             th_items = [p for p in cluster if p["platform"] == "threads"]
             th_cnt = len(th_items)
-            th_ai = sum(1 for p in th_items if p["score"] >= ai_threshold)
+            th_ai = sum(1 for p in th_items if p.get("ai_passed"))
 
             tot_posts = fb_cnt + li_cnt + th_cnt
             tot_ai = fb_ai + li_ai + th_ai

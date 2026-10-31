@@ -135,7 +135,9 @@ export function isSystemCrawlerUser(_user?: { email?: string | null; role?: stri
 }
 
 export function RotationCrawlPanel() {
-  const { user, isAdmin, isLeader } = useAppAuth();
+  const { user } = useAppAuth();
+  const isAdmin = user?.role === "admin";
+  const isLeader = user?.role === "leader";
   const { status, version, isReady, features } = useSeedingExtensionStatus();
   const rot = useRotationSchedules();
   const [showAddModal, setShowAddModal] = useState(false);

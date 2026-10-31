@@ -23,6 +23,26 @@ def _supabase() -> Client:
     return get_supabase_client()
 
 
+# Acc seeding hệ thống (VPS, cào xoay vòng): bài do acc này cào về phải hiển thị cho
+# TẤT CẢ mọi người (kể cả member) để ai cũng tiến hành seeding được, không bị giới hạn
+# theo RBAC thường (member chỉ thấy bài của chính mình). Đây là bypass CÓ PHẠM VI hẹp —
+# chỉ thêm đúng 1 id vào danh sách allowed_member_ids, không gỡ bỏ RBAC chung.
+SEEDING_SYSTEM_MEMBER_ID = "2edc819a-5c22-445a-8067-39656316f31c"
+
+
+def _with_seeding_system_visible(allowed_member_ids: Optional[list[str]]) -> Optional[list[str]]:
+    if allowed_member_ids is None:
+        return None
+    if SEEDING_SYSTEM_MEMBER_ID in allowed_member_ids:
+        return allowed_member_ids
+    return [*allowed_member_ids, SEEDING_SYSTEM_MEMBER_ID]
+
+
+# Nguong diem "cao" cho view mac dinh khi vao trang (yeu cau 2026-10-02: "diem cao tam 80
+# 85 tro len") - dung 80 lam nguong duy nhat (dau duoi khoang nguoi dung neu).
+_DEFAULT_MIN_LEAD_SCORE = 80
+
+
 # ── Core fetch ──────────────────────────────────────────────────────────────────
 
 from functools import wraps
@@ -72,6 +92,20 @@ def _fetch_posts(
 
     Returns (posts, total_count).
     """
+    if table in KEYWORD_POST_TABLES:
+        return _fetch_keyword_posts(
+            table=table,
+            email=email,
+            date_from=date_from,
+            date_to=date_to,
+            has_taxonomy_filter=bool(intent or industry or team or tier is not None or icp or content_type or product_seeding),
+            id_member=id_member,
+            search=search,
+            sort=sort,
+            page=page,
+            page_size=page_size,
+        )
+
     sb = _supabase()
     tbl = sb.table(table)
 
@@ -99,37 +133,15 @@ def _fetch_posts(
     if date_to:
         query = query.lte("crawl_date", date_to)
 
-    # Resolve taxonomy and email filters via groups table
+    # Resolve taxonomy filters via groups table
     group_ids: list[str] | None = None
-    
-    # 1. Resolve user role and scoped member ids
-    user_id = None
-    user_role = "member"
-    allowed_member_ids: list[str] | None = None
 
-    if email:
-        user_res = sb.table("app_users").select("id, role").eq("email", email.strip().lower()).limit(1).execute()
-        if user_res.data:
-            user_id = user_res.data[0]["id"]
-            user_role = user_res.data[0].get("role", "member")
-            
-    if user_role == "admin":
-        allowed_member_ids = None  # Admin sees all
-    elif user_role == "leader":
-        if user_id:
-            teams_res = sb.table("teams").select("id").eq("id_leader", user_id).execute()
-            team_ids = [t["id"] for t in (teams_res.data or [])]
-            allowed_member_ids = []
-            if team_ids:
-                mot_res = sb.table("member_of_teams").select("id_member").in_("id_teams", team_ids).execute()
-                allowed_member_ids = [m["id_member"] for m in (mot_res.data or []) if m.get("id_member")]
-            if user_id not in allowed_member_ids:
-                allowed_member_ids.append(user_id)
-        else:
-            allowed_member_ids = ["00000000-0000-0000-0000-000000000000"]
-    else:
-        # Member role
-        allowed_member_ids = [user_id] if user_id else ["00000000-0000-0000-0000-000000000000"]
+    # Bài viết là tài nguyên dùng chung để seeding — AI CÀO cũng hiển thị cho TẤT CẢ mọi
+    # người xem và tiến hành seeding (yêu cầu 2026-10-01), không còn giới hạn theo
+    # người cào/role nữa (trước đó có resolve role qua email ở đây, đã bỏ vì không còn
+    # dùng). allowed_member_ids chỉ còn thu hẹp khi FE chủ động truyền id_member cụ thể
+    # (vd lọc "chỉ xem bài của 1 member" ở khối ngay dưới đây).
+    allowed_member_ids: list[str] | None = None
 
     # If id_member is specified, ensure it is within allowed_member_ids
     if id_member:
@@ -205,7 +217,12 @@ def _fetch_posts(
             query = query.ilike("content", f"%{search}%")
 
     # Sort
-    if sort == "score_high":
+    if sort == "lead_score_high":
+        # Mac dinh khi vao trang (yeu cau 2026-10-02): CHI hien bai diem cao (>=80) -
+        # bai diem thap/chua cham bi loai hoan toan khoi view nay - roi sap xep theo
+        # THOI GIAN bai viet moi nhat truoc (khong phai theo diem).
+        query = query.gte("lead_score", _DEFAULT_MIN_LEAD_SCORE).order("crawl_date", desc=True, nullsfirst=False)
+    elif sort == "score_high":
         query = query.order("score", desc=True, nullsfirst=False)
     elif sort == "score_low":
         query = query.order("score", desc=False, nullsfirst=False)
@@ -312,7 +329,197 @@ def _fetch_posts(
             p["author"] = author_name
             p["author_name"] = author_name
 
+    if table in ("facebook_posts", "linkedin_posts"):
+        _attach_auto_seeding_comments(sb, posts, platform="linkedin" if table == "linkedin_posts" else "facebook")
+
     return posts, total
+
+
+def _attach_auto_seeding_comments(sb, posts: list[dict], platform: str = "facebook") -> None:
+    """Gắn `auto_seeding_comment` (nội dung + trạng thái) cho mỗi bài đã có nhiệm vụ seeding
+    tự động (bảng auto_seeding_comments, migration 160 Facebook + 174 LinkedIn) - để FE hiển
+    thị ngay trên card bài viết, trông như 1 bình luận thật của member nhưng ghi rõ "Hệ
+    thống:" (yêu cầu 2026-10-02). Chỉ 1 trang (page_size nhỏ, vài chục id) nên .in_() an
+    toàn - vẫn bọc try/except, lỗi ở đây KHÔNG được làm hỏng việc hiển thị bài viết (bài học
+    từ bug 502 .in_() quá dài ở _attach_group_lead_stats)."""
+    post_ids = [p["id"] for p in posts if p.get("id")]
+    if not post_ids:
+        return
+    id_column = "id_post_li" if platform == "linkedin" else "id_post_fb"
+    try:
+        res = (
+            sb.table("auto_seeding_comments")
+            .select(
+                f"{id_column}, comment_content, status, posted_at, link_comment, need_category, "
+                "phone_number, zalo_status, zalo_message_content, zalo_sent_at, zalo_conversation_id, "
+                "zalo_error, zalo_display_name"
+            )
+            .in_(id_column, post_ids)
+            .execute()
+        )
+        by_post = {r[id_column]: r for r in (res.data or []) if r.get(id_column)}
+    except Exception as e:
+        _get_logger().warning(f"[AUTO-SEEDING-COMMENT] Lỗi lấy bình luận auto-seeding cho feed, bỏ qua: {e}")
+        return
+    for p in posts:
+        row = by_post.get(p.get("id"))
+        if row:
+            p["auto_seeding_comment"] = {
+                "content": row.get("comment_content"),
+                "status": row.get("status"),
+                "posted_at": row.get("posted_at"),
+                "link_comment": row.get("link_comment"),
+                "need_category": row.get("need_category"),
+                "phone_number": row.get("phone_number"),
+                "zalo_status": row.get("zalo_status"),
+                "zalo_message_content": row.get("zalo_message_content"),
+                "zalo_sent_at": row.get("zalo_sent_at"),
+                "zalo_conversation_id": row.get("zalo_conversation_id"),
+                "zalo_error": row.get("zalo_error"),
+                "zalo_display_name": row.get("zalo_display_name"),
+            }
+
+
+# Nền tảng không có "group" — bài tìm theo từ khoá qua "Markee Seeding Extension":
+# Threads (lệnh MK_TH_CRAWL_*) và YouTube (lệnh MK_YT_CRAWL_*, kèm link dán tay).
+KEYWORD_POST_TABLES = ("threads_posts", "youtube_posts")
+# Bảng phân quyền theo cột id_member (người bấm cào), khác linkedin_posts (theo group).
+MEMBER_SCOPED_TABLES = ("facebook_posts", *KEYWORD_POST_TABLES)
+_TABLE_PLATFORM = {
+    "facebook_posts": "facebook",
+    "linkedin_posts": "linkedin",
+    "threads_posts": "threads",
+    "youtube_posts": "youtube",
+}
+_PLATFORM_TABLE = {v: k for k, v in _TABLE_PLATFORM.items()}
+
+
+def _fetch_keyword_posts(
+    *,
+    table: str,
+    email: str,
+    date_from: Optional[str],
+    date_to: Optional[str],
+    has_taxonomy_filter: bool,
+    id_member: Optional[str],
+    search: Optional[str],
+    sort: str,
+    page: int,
+    page_size: int,
+) -> tuple[list[dict], int]:
+    """Bài Threads/YouTube (bảng threads_posts/youtube_posts, cào qua "Markee Seeding Extension").
+
+    Không có group -> không có taxonomy (intent/industry/team...): khi FE lọc
+    theo taxonomy thì không bài nào khớp -> trả rỗng (không lờ bộ lọc đi).
+    Phân quyền giống facebook_posts: lọc theo id_member (người bấm cào).
+    """
+    if has_taxonomy_filter:
+        return [], 0
+
+    sb = _supabase()
+    # Bài viết dùng chung để seeding - AI CÀO cũng hiển thị cho TẤT CẢ mọi người (giống
+    # facebook_posts/linkedin_posts ở _fetch_posts() phía trên) - không dùng
+    # _resolve_member_scope() nữa ở đây (hàm đó vẫn giữ nguyên, dùng cho dashboard
+    # xu hướng/overview của admin-leader, nơi phân quyền theo team vẫn còn ý nghĩa).
+    allowed_member_ids = None
+    if id_member:
+        if allowed_member_ids is None or id_member in allowed_member_ids:
+            allowed_member_ids = [id_member]
+        else:
+            allowed_member_ids = ["00000000-0000-0000-0000-000000000000"]
+
+    query = sb.table(table).select("*", count="exact")
+    if allowed_member_ids is not None:
+        query = query.in_("id_member", allowed_member_ids or ["00000000-0000-0000-0000-000000000000"])
+    if date_from:
+        query = query.gte("crawl_date", date_from)
+    if date_to:
+        query = query.lte("crawl_date", date_to)
+    if search:
+        query = query.ilike("content", f"%{search}%")
+
+    if sort == "lead_score_high":
+        query = query.gte("lead_score", _DEFAULT_MIN_LEAD_SCORE).order("crawl_date", desc=True, nullsfirst=False)
+    elif sort == "score_high":
+        query = query.order("score", desc=True, nullsfirst=False)
+    elif sort == "score_low":
+        query = query.order("score", desc=False, nullsfirst=False)
+    elif sort == "comments_high":
+        # YouTube: trang tìm kiếm không có số comment -> "nhiều tương tác" = nhiều lượt xem.
+        query = query.order("view_count" if table == "youtube_posts" else "comments", desc=True, nullsfirst=False)
+    elif sort == "crawler":
+        query = query.order("id_member", desc=False, nullsfirst=False)
+    else:  # latest
+        query = query.order("crawl_date", desc=True, nullsfirst=False)
+
+    offset = (page - 1) * page_size
+    result = query.range(offset, offset + page_size - 1).execute()
+    posts = result.data or []
+    total = result.count or len(posts)
+    if not posts:
+        return posts, total
+
+    member_ids = list({p["id_member"] for p in posts if p.get("id_member")})
+    member_map: dict[str, dict] = {}
+    if member_ids:
+        mres = sb.table("app_users").select("id, name").in_("id", member_ids).execute()
+        for m in (mres.data or []):
+            member_map[m["id"]] = {"name": m.get("name") or "Unknown"}
+        mot_res = sb.table("member_of_teams").select("id_member, id_teams").in_("id_member", member_ids).execute()
+        team_ids = {m["id_teams"] for m in (mot_res.data or []) if m.get("id_teams")}
+        if team_ids:
+            team_res = sb.table("teams").select("id, name_team").in_("id", list(team_ids)).execute()
+            team_dict = {t["id"]: t["name_team"] for t in (team_res.data or [])}
+            for mot in (mot_res.data or []):
+                mid, tid = mot.get("id_member"), mot.get("id_teams")
+                if mid in member_map and tid in team_dict:
+                    member_map[mid]["team_name"] = team_dict[tid]
+
+    for p in posts:
+        if table == "youtube_posts":
+            # PostCard hiển thị group_name ở đầu thẻ — với YouTube là tên kênh.
+            p["group_name"] = p.get("author_name") or p.get("channel_handle") or "Kênh YouTube"
+            p["author"] = p.get("author_name") or p.get("channel_handle") or ""
+            p["search_keyword"] = p.get("keyword") or ""
+        else:
+            username = p.get("author_username") or ""
+            # PostCard hiển thị group_name ở đầu thẻ — với Threads dùng @tác giả, kèm từ
+            # khoá đã tìm ra bài để người seeding biết bài đến từ đâu.
+            p["group_name"] = f"@{username}" if username else "Threads"
+            p["search_keyword"] = p.get("keyword") or ""
+            p["author"] = p.get("author_name") or username
+        p["group_url"] = p.get("author_url") or ""
+        mid = p.get("id_member")
+        if mid and mid in member_map:
+            p["crawler_name"] = member_map[mid].get("name")
+            p["crawler_team"] = member_map[mid].get("team_name")
+
+    return posts, total
+
+
+def _get_platform_id_by_name(sb: Client, name: str) -> Optional[int]:
+    """id của Threads/YouTube trong bảng platforms (seeding_content_kpi/kpi_tracker dùng id_platform).
+
+    Không hardcode như Facebook=1/LinkedIn=2 vì không chắc DB đã có dòng đó và id
+    là bao nhiêu — None nghĩa là chưa có -> các số liệu seeding/KPI của nền tảng = 0.
+    """
+    try:
+        res = sb.table("platforms").select("id, name").ilike("name", f"%{name}%").limit(1).execute()
+        if res.data:
+            return res.data[0]["id"]
+    except Exception:
+        pass
+    return None
+
+
+def _platform_db_id(sb: Client, platform: str) -> Optional[int]:
+    if platform == "facebook":
+        return 1
+    if platform == "linkedin":
+        return 2
+    if platform in ("threads", "youtube"):
+        return _get_platform_id_by_name(sb, platform)
+    return None
 
 
 def _get_seeded_today(sb: Client, id_member: str, platform: str) -> int:
@@ -333,7 +540,12 @@ def _get_seeded_today(sb: Client, id_member: str, platform: str) -> int:
             query = query.eq("id_platform", 1)  # Facebook
         elif platform == "linkedin":
             query = query.eq("id_platform", 2)  # LinkedIn
-            
+        elif platform in ("threads", "youtube"):
+            platform_id = _platform_db_id(sb, platform)
+            if platform_id is None:
+                return 0
+            query = query.eq("id_platform", platform_id)
+
         res = query.execute()
         return res.count or 0
     except Exception:
@@ -353,7 +565,9 @@ def _get_kpi_progress(sb: Client, id_member: str, platform: str) -> tuple[int, i
             return 0, 0
             
         # If there are multiple, try to match by platform
-        target_platform_id = 1 if platform == "facebook" else 2
+        target_platform_id = _platform_db_id(sb, platform)
+        if target_platform_id is None:
+            return 0, 0
         active_kpi = None
         for k in kpi_res.data:
             if k.get("id_platform") == target_platform_id:
@@ -403,35 +617,18 @@ def _fetch_stats(
     today = now_vn.date().isoformat()
     yesterday = (now_vn.date() - timedelta(days=1)).isoformat()
 
-    # 1. Resolve user role and scoped member ids
+    # Resolve current user's own id — vẫn cần cho _seeded_today()/_kpi_progress() phía
+    # dưới (KPI CÁ NHÂN, luôn tính theo đúng người đang xem, không đổi). Phần đếm bài
+    # tổng (totalPostsToday/totalPosts/...) thì KHÔNG còn giới hạn theo role nữa — bài
+    # viết dùng chung để seeding, ai cào cũng hiển thị cho tất cả mọi người (2026-10-01).
     user_id_fetch = None
-    user_role = "member"
-    allowed_member_ids: list[str] | None = None
-
     if email:
-        user_res = sb.table("app_users").select("id, role").eq("email", email.strip().lower()).limit(1).execute()
+        user_res = sb.table("app_users").select("id").eq("email", email.strip().lower()).limit(1).execute()
         if user_res.data:
             user_id_fetch = user_res.data[0]["id"]
-            user_role = user_res.data[0].get("role", "member")
-            
-    if user_role == "admin":
-        allowed_member_ids = None  # Admin sees all
-    elif user_role == "leader":
-        if user_id_fetch:
-            teams_res = sb.table("teams").select("id").eq("id_leader", user_id_fetch).execute()
-            team_ids = [t["id"] for t in (teams_res.data or [])]
-            allowed_member_ids = []
-            if team_ids:
-                mot_res = sb.table("member_of_teams").select("id_member").in_("id_teams", team_ids).execute()
-                allowed_member_ids = [m["id_member"] for m in (mot_res.data or []) if m.get("id_member")]
-            if user_id_fetch not in allowed_member_ids:
-                allowed_member_ids.append(user_id_fetch)
-        else:
-            allowed_member_ids = ["00000000-0000-0000-0000-000000000000"]
-    else:
-        # Member role
-        allowed_member_ids = [user_id_fetch] if user_id_fetch else ["00000000-0000-0000-0000-000000000000"]
-        
+
+    allowed_member_ids: list[str] | None = None
+
     group_ids = None
     if table == "linkedin_posts" and allowed_member_ids is not None:
         gq = sb.table("linkedin_groups").select("id").in_("id_member", allowed_member_ids).execute()
@@ -440,14 +637,14 @@ def _fetch_stats(
     def apply_scope(query):
         if table == "linkedin_posts" and allowed_member_ids is not None:
             return query.in_("id_group", group_ids or ["00000000-0000-0000-0000-000000000000"])
-        if table == "facebook_posts" and allowed_member_ids is not None:
+        if table in MEMBER_SCOPED_TABLES and allowed_member_ids is not None:
             return query.in_("id_member", allowed_member_ids)
         return query
 
     # id_member da resolve o buoc 1 (user_id_fetch) - khong query lai app_users lan 2
     # cho cung 1 email trong cung 1 ham (tung la 1 round-trip Supabase thua thai).
     id_member = user_id_fetch
-    platform_name = "facebook" if table == "facebook_posts" else "linkedin"
+    platform_name = _TABLE_PLATFORM.get(table, "linkedin")
 
     # 6 query/tinh toan doc lap ben duoi (khong cai nao phu thuoc ket qua cua
     # nhau) truoc day chay tuan tu tung cai mot (~6 round-trip Supabase noi
@@ -611,15 +808,7 @@ def get_unified_posts(
     page_size: int = 20,
 ) -> dict[str, Any]:
     """Fetch posts from one or all platforms, fully filtered server-side."""
-    platforms_to_fetch = []
-    if platform == "all" or platform == "general":
-        platforms_to_fetch = ["facebook_posts", "linkedin_posts"]
-    elif platform == "facebook":
-        platforms_to_fetch = ["facebook_posts"]
-    elif platform == "linkedin":
-        platforms_to_fetch = ["linkedin_posts"]
-    else:
-        platforms_to_fetch = ["facebook_posts", "linkedin_posts"]
+    platforms_to_fetch = _tables_for_platform(platform)
 
     # Normalize sort parameter for backend database order
     db_sort = sort
@@ -663,7 +852,11 @@ def get_unified_posts(
             total_count += count
 
         # Sort the combined list
-        if sort == "score_high":
+        if sort == "lead_score_high":
+            # Loc >=80 da ap dung o tung _fetch_posts()/_fetch_threads_posts() phia tren
+            # (truyen qua db_sort) - o day chi can gop lai va sap theo THOI GIAN moi nhat.
+            all_posts.sort(key=lambda p: str(p.get("crawl_date") or ""), reverse=True)
+        elif sort == "score_high":
             all_posts.sort(key=lambda p: p.get("score", 0), reverse=True)
         elif sort == "score_low":
             all_posts.sort(key=lambda p: p.get("score", 0), reverse=False)
@@ -809,14 +1002,8 @@ def get_unified_posts(
 
 def _tables_for_platform(platform: str) -> list[str]:
     """Resolve platform token -> table list."""
-    p = (platform or "").lower()
-    if p in ("all", "general", ""):
-        return ["facebook_posts", "linkedin_posts"]
-    if p == "facebook":
-        return ["facebook_posts"]
-    if p == "linkedin":
-        return ["linkedin_posts"]
-    return ["facebook_posts", "linkedin_posts"]
+    table = _PLATFORM_TABLE.get((platform or "").lower())
+    return [table] if table else ["facebook_posts", "linkedin_posts"]
 
 
 def filter_unified_posts(
@@ -867,15 +1054,7 @@ def get_unified_stats(
     platform: str,
 ) -> dict[str, Any]:
     """Compute stats from Supabase — no cache, always fresh."""
-    tables = []
-    if platform == "all" or platform == "general":
-        tables = ["facebook_posts", "linkedin_posts"]
-    elif platform == "facebook":
-        tables = ["facebook_posts"]
-    elif platform == "linkedin":
-        tables = ["linkedin_posts"]
-    else:
-        tables = ["facebook_posts", "linkedin_posts"]
+    tables = _tables_for_platform(platform)
 
     if len(tables) == 1:
         return _fetch_stats(table=tables[0], email=email)
@@ -927,8 +1106,8 @@ def _resolve_member_scope(sb: Client, email: str) -> Optional[list[str]]:
             allowed = [m["id_member"] for m in (mot_res.data or []) if m.get("id_member")]
         if user_id not in allowed:
             allowed.append(user_id)
-        return allowed
-    return [user_id]
+        return _with_seeding_system_visible(allowed)
+    return _with_seeding_system_visible([user_id])
 
 
 @retry_on_winerror
@@ -961,18 +1140,14 @@ def get_unified_daily_trend(
         buckets[d.isoformat()] = {"posts": 0, "comments": 0, "inbox": 0}
         d += timedelta(days=1)
 
-    tables = ["facebook_posts", "linkedin_posts"] if platform in ("all", "general") else (
-        ["facebook_posts"] if platform == "facebook" else
-        ["linkedin_posts"] if platform == "linkedin" else
-        ["facebook_posts", "linkedin_posts"]
-    )
+    tables = _tables_for_platform(platform)
 
     # 1) Posts theo ngay (crawl_date)
     for table in tables:
         query = sb.table(table).select("id, crawl_date").gte(
             "crawl_date", f"{start_day.isoformat()}T00:00:00Z"
         ).lte("crawl_date", f"{today.isoformat()}T23:59:59Z")
-        if table == "facebook_posts" and allowed_member_ids is not None:
+        if table in MEMBER_SCOPED_TABLES and allowed_member_ids is not None:
             query = query.in_("id_member", allowed_member_ids or ["00000000-0000-0000-0000-000000000000"])
         elif table == "linkedin_posts" and allowed_member_ids is not None:
             gq = sb.table("linkedin_groups").select("id").in_("id_member", allowed_member_ids or ["00000000-0000-0000-0000-000000000000"]).execute()
@@ -987,14 +1162,25 @@ def get_unified_daily_trend(
             if day_key in buckets:
                 buckets[day_key]["posts"] += 1
 
+    # Tab Threads/YouTube: comment chi tinh seeding tren dung nen tang do (id_platform
+    # theo ten trong bang platforms), inbox luon 0 (view inbox chi co Facebook) - tranh
+    # hien so lieu cua Facebook duoi tab khac. Facebook/LinkedIn giu nguyen hanh vi cu.
+    is_keyword_platform = platform in ("threads", "youtube")
+    keyword_platform_id = _platform_db_id(sb, platform) if is_keyword_platform else None
+
     # 2) Comment/seeding da verify theo ngay (current_day)
     try:
-        c_query = sb.table("seeding_content_kpi").select("current_day, verify").gte(
-            "current_day", start_day.isoformat()
-        ).lte("current_day", today.isoformat())
-        if allowed_member_ids is not None:
-            c_query = c_query.in_("id_member", allowed_member_ids or ["00000000-0000-0000-0000-000000000000"])
-        c_rows = c_query.execute().data or []
+        if is_keyword_platform and keyword_platform_id is None:
+            c_rows = []
+        else:
+            c_query = sb.table("seeding_content_kpi").select("current_day, verify").gte(
+                "current_day", start_day.isoformat()
+            ).lte("current_day", today.isoformat())
+            if allowed_member_ids is not None:
+                c_query = c_query.in_("id_member", allowed_member_ids or ["00000000-0000-0000-0000-000000000000"])
+            if is_keyword_platform:
+                c_query = c_query.eq("id_platform", keyword_platform_id)
+            c_rows = c_query.execute().data or []
     except Exception:
         c_rows = []
     for row in c_rows:
@@ -1006,15 +1192,17 @@ def get_unified_daily_trend(
 
     # 3) Inbox FB theo ngay (view co san v_member_daily_fb_inbox, da gop san
     #    theo id_member + day_vn - chi can loc scope + cong don theo ngay)
-    try:
-        i_query = sb.table("v_member_daily_fb_inbox").select("day_vn, inbox_count, id_member").gte(
-            "day_vn", start_day.isoformat()
-        ).lte("day_vn", today.isoformat())
-        if allowed_member_ids is not None:
-            i_query = i_query.in_("id_member", allowed_member_ids or ["00000000-0000-0000-0000-000000000000"])
-        i_rows = i_query.execute().data or []
-    except Exception:
-        i_rows = []
+    i_rows = []
+    if not is_keyword_platform:
+        try:
+            i_query = sb.table("v_member_daily_fb_inbox").select("day_vn, inbox_count, id_member").gte(
+                "day_vn", start_day.isoformat()
+            ).lte("day_vn", today.isoformat())
+            if allowed_member_ids is not None:
+                i_query = i_query.in_("id_member", allowed_member_ids or ["00000000-0000-0000-0000-000000000000"])
+            i_rows = i_query.execute().data or []
+        except Exception:
+            i_rows = []
     for row in i_rows:
         day_key = _parse_date(row.get("day_vn"))
         if day_key in buckets:
@@ -1024,6 +1212,432 @@ def get_unified_daily_trend(
         {"date": day, "posts": v["posts"], "comments": v["comments"], "inbox": v["inbox"]}
         for day, v in sorted(buckets.items())
     ]
+
+
+def get_post_seeding_roster(post_id: str, platform: str, email: str) -> dict:
+    """Roster theo dõi thành viên đã seeding / chưa seeding bài viết này:
+    - Đối với Leader: Trả về toàn bộ thành viên thuộc các team do Leader đó quản lý, kèm nội dung bình luận, link minh chứng và trạng thái KPI.
+    - Đối với Admin: Trả về toàn bộ thành viên của TẤT CẢ các team trong hệ thống.
+    Mọi bài viết cào về đều mở cho mọi team và thành viên có thể vào xem / làm nhiệm vụ.
+    """
+    sb = _supabase()
+
+    user_res = sb.table("app_users").select("id, role, name, email").eq("email", (email or "").strip().lower()).limit(1).execute()
+    if not user_res.data:
+        return {"role": "member", "team_name": None, "items": []}
+    caller_id = user_res.data[0]["id"]
+    role = user_res.data[0].get("role", "member")
+    if role not in ("admin", "leader"):
+        return {"role": role, "team_name": None, "items": []}
+
+    # 1. Xác định danh sách Team cần xem
+    if role == "leader":
+        # Leader: lấy các team mà caller là id_leader
+        leader_teams_res = sb.table("teams").select("id, name_team").eq("id_leader", caller_id).execute()
+        target_teams = leader_teams_res.data or []
+        if not target_teams:
+            # Fallback theo email leader trong bảng members
+            mem_res = sb.table("members").select("id").eq("email", (email or "").strip().lower()).limit(1).execute()
+            if mem_res.data:
+                target_teams = sb.table("teams").select("id, name_team").eq("leader_member_id", mem_res.data[0]["id"]).execute().data or []
+    else:
+        # Admin: lấy toàn bộ các team
+        target_teams = sb.table("teams").select("id, name_team").order("name_team").execute().data or []
+
+    if not target_teams:
+        return {"role": role, "team_name": "Chưa có team", "items": []}
+
+    target_team_ids = [t["id"] for t in target_teams]
+    team_name_map = {t["id"]: t["name_team"] for t in target_teams}
+    main_team_name = target_teams[0]["name_team"] if len(target_teams) == 1 else "Toàn bộ các Team"
+
+    # 2. Lấy toàn bộ thành viên của các Team này từ member_of_teams
+    mot_res = sb.table("member_of_teams").select("id_teams, id_member").in_("id_teams", target_team_ids).execute().data or []
+    if not mot_res:
+        return {"role": role, "team_name": main_team_name, "items": []}
+
+    member_team_map = {}
+    member_ids_set = set()
+    for mot in mot_res:
+        mid = mot.get("id_member")
+        tid = mot.get("id_teams")
+        if mid and str(mid).strip().lower() not in ("none", "null", ""):
+            member_ids_set.add(mid)
+            member_team_map[mid] = team_name_map.get(tid, main_team_name)
+
+    member_ids = list(member_ids_set)
+    if not member_ids:
+        return {"role": role, "team_name": main_team_name, "items": []}
+
+    # 3. Lấy thông tin user (tên, email)
+    users_res = sb.table("app_users").select("id, name, email").in_("id", member_ids).execute().data or []
+    user_map = {u["id"]: u for u in users_res}
+
+    # 4. Tra cứu seeding trên bài viết này (từ seeding_content_kpi theo id_post hoặc link_post)
+    table = "facebook_posts" if platform == "facebook" else "linkedin_posts" if platform == "linkedin" else None
+    post_link = ""
+    if table:
+        try:
+            p_row = sb.table(table).select("post_url").eq("id", post_id).limit(1).execute()
+            if p_row.data:
+                post_link = p_row.data[0].get("post_url") or ""
+        except Exception:
+            pass
+
+    kpi_query = sb.table("seeding_content_kpi").select("id_member, content, verify, link_comment, link_post, created_at").in_("id_member", member_ids)
+    if post_link:
+        kpi_query = kpi_query.or_(f"id_post.eq.{post_id},link_post.eq.{post_link}")
+    else:
+        kpi_query = kpi_query.eq("id_post", post_id)
+    
+    kpi_res = kpi_query.order("created_at", desc=True).execute().data or []
+
+    kpi_by_member: dict[str, dict] = {}
+    for row in kpi_res:
+        mid = row.get("id_member")
+        if mid and mid not in kpi_by_member:
+            kpi_by_member[mid] = row
+
+    # 5. Dựng danh sách items
+    items = []
+    for mid in member_ids:
+        u = user_map.get(mid, {})
+        kpi = kpi_by_member.get(mid)
+        name = u.get("name") or (u.get("email") or "").split("@")[0] or "Thành viên"
+        items.append({
+            "id_member": mid,
+            "name": name,
+            "email": u.get("email") or "",
+            "team_name": member_team_map.get(mid, main_team_name),
+            "has_seeded": bool(kpi),
+            "content": (kpi or {}).get("content") or "",
+            "verify_status": (kpi or {}).get("verify") or ("yes" if kpi else None),
+            "link_comment": (kpi or {}).get("link_comment") or (post_link if kpi else None),
+            "created_at": (kpi or {}).get("created_at"),
+        })
+
+    # Sắp xếp: Ai đã seeding lên trước, sau đó theo team và tên
+    items.sort(key=lambda it: (0 if it["has_seeded"] else 1, it["team_name"], it["name"]))
+    return {"role": role, "team_name": main_team_name, "items": items}
+
+
+def get_teams_seeding_efficiency(email: str) -> dict:
+    """"Hiệu quả theo team" cho Dashboard leader (Seeding bên ngoài) — cho admin thấy
+    TẤT CẢ team, leader chỉ thấy team mình quản lý. Không cần RPC/migration mới: viết
+    bằng supabase-py giống hệt pattern get_post_seeding_roster() ở trên (join thủ công
+    thay vì SQL join phức tạp), chỉ đọc `seeding_content_kpi` của HÔM NAY (giờ VN)
+    giống cách RPC get_unified_feed_overview tính team_kpi cho leader.
+    """
+    sb = _supabase()
+
+    user_res = sb.table("app_users").select("id, role").eq("email", (email or "").strip().lower()).limit(1).execute()
+    if not user_res.data:
+        return {"role": "member", "teams": []}
+    caller_id = user_res.data[0]["id"]
+    role = user_res.data[0].get("role", "member")
+    if role not in ("admin", "leader"):
+        return {"role": role, "teams": []}
+
+    if role == "leader":
+        teams_res = sb.table("teams").select("id, name_team").eq("id_leader", caller_id).execute()
+    else:
+        teams_res = sb.table("teams").select("id, name_team").execute()
+    teams = teams_res.data or []
+    if not teams:
+        return {"role": role, "teams": []}
+    team_ids = [t["id"] for t in teams]
+
+    mot_res = sb.table("member_of_teams").select("id_member, id_teams").in_("id_teams", team_ids).execute()
+    member_to_team: dict[str, str] = {}
+    team_member_count: dict[str, int] = {}
+    for row in mot_res.data or []:
+        mid, tid = row.get("id_member"), row.get("id_teams")
+        if not mid or not tid:
+            continue
+        member_to_team[mid] = tid
+        team_member_count[tid] = team_member_count.get(tid, 0) + 1
+
+    member_ids = list(member_to_team.keys())
+    vn_tz = timezone(timedelta(hours=7))
+    today_start_utc = datetime.now(vn_tz).replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
+
+    kpi_rows: list[dict] = []
+    if member_ids:
+        kpi_res = (
+            sb.table("seeding_content_kpi")
+            .select("id_member, id_post, verify, created_at")
+            .in_("id_member", member_ids)
+            .gte("created_at", today_start_utc.isoformat())
+            .execute()
+        )
+        kpi_rows = kpi_res.data or []
+
+    VERIFIED = {"yes", "đã seeding", "xác minh", "verified"}
+    team_seeded_posts: dict[str, set] = {t["id"]: set() for t in teams}
+    team_verified_count: dict[str, int] = {t["id"]: 0 for t in teams}
+    team_active_members: dict[str, set] = {t["id"]: set() for t in teams}
+    for row in kpi_rows:
+        tid = member_to_team.get(row.get("id_member"))
+        if not tid or tid not in team_seeded_posts:
+            continue
+        team_active_members[tid].add(row["id_member"])
+        is_verified = (row.get("verify") or "").strip().lower() in VERIFIED
+        if is_verified:
+            team_verified_count[tid] += 1
+            if row.get("id_post"):
+                team_seeded_posts[tid].add(row["id_post"])
+
+    result_teams = []
+    for t in teams:
+        tid = t["id"]
+        verified = team_verified_count.get(tid, 0)
+        seeded_posts = len(team_seeded_posts.get(tid, set()))
+        members = team_member_count.get(tid, 0)
+        result_teams.append({
+            "team_id": tid,
+            "team_name": t.get("name_team") or "Team",
+            "total_members": members,
+            "total_seeded_today": seeded_posts,
+            "total_verified_today": verified,
+            "active_members_today": len(team_active_members.get(tid, set())),
+        })
+
+    result_teams.sort(key=lambda x: x["total_verified_today"], reverse=True)
+    return {"role": role, "teams": result_teams}
+
+
+def _resolve_overview_scope(sb, email: str) -> tuple[str, list[dict]]:
+    """Dùng chung cho get_member_seeding_overview/get_member_crawl_history — admin thấy
+    mọi thành viên active, leader chỉ thấy team mình quản lý (+ chính mình)."""
+    user_res = sb.table("app_users").select("id, role").eq("email", (email or "").strip().lower()).limit(1).execute()
+    if not user_res.data:
+        return "member", []
+    caller_id = user_res.data[0]["id"]
+    role = user_res.data[0].get("role", "member")
+    if role not in ("admin", "leader"):
+        return role, []
+    if role == "admin":
+        members = sb.table("app_users").select("id, name, email").eq("is_active", True).execute().data or []
+        return role, members
+    teams_res = sb.table("teams").select("id").eq("id_leader", caller_id).execute()
+    team_ids = [t["id"] for t in (teams_res.data or [])]
+    member_ids_set = {caller_id}
+    if team_ids:
+        mot_res = sb.table("member_of_teams").select("id_member").in_("id_teams", team_ids).execute()
+        member_ids_set.update(m["id_member"] for m in (mot_res.data or []) if m.get("id_member"))
+    members = sb.table("app_users").select("id, name, email").in_("id", list(member_ids_set)).execute().data or []
+    return role, members
+
+
+def get_member_seeding_overview(email: str, time_range: str = "all") -> dict:
+    """Tab phụ "Tài khoản seeding" (Lịch crawl & Hàng đợi) — bảng tổng quan theo từng
+    thành viên: số nhóm Facebook/LinkedIn đang sở hữu, đã kết nối Telegram Chat chưa,
+    tổng số bài đã cào theo mốc thời gian (Ngày, Tuần này, Tuần trước, Tháng trước, Tất cả),
+    số bài viết vượt AI check (score >= 70) + lần cào gần nhất.
+    """
+    sb = _supabase()
+    role, members = _resolve_overview_scope(sb, email)
+    if role not in ("admin", "leader") or not members:
+        return {"role": role, "accounts": [], "time_range": time_range}
+
+    member_ids = [m["id"] for m in members]
+    fb_groups = sb.table("facebook_groups").select("id, id_member, chay_24h, time_crawl").in_("id_member", member_ids).execute().data or []
+    li_groups = sb.table("linkedin_groups").select("id, id_member").in_("id_member", member_ids).execute().data or []
+    tg_accounts = (
+        sb.table("telegram_accounts")
+        .select("id_member")
+        .in_("id_member", member_ids)
+        .eq("status", "connected")
+        .execute()
+        .data
+        or []
+    )
+
+    fb_group_owner_map: dict[str, str] = {}
+    fb_group_count: dict[str, int] = {}
+    fb_scheduled_count: dict[str, int] = {}
+    for g in fb_groups:
+        mid = g.get("id_member")
+        gid = g.get("id")
+        if mid:
+            fb_group_count[mid] = fb_group_count.get(mid, 0) + 1
+            if g.get("chay_24h") is True or g.get("time_crawl") is not None:
+                fb_scheduled_count[mid] = fb_scheduled_count.get(mid, 0) + 1
+            if gid:
+                fb_group_owner_map[gid] = mid
+
+    li_group_count: dict[str, int] = {}
+    for g in li_groups:
+        mid = g.get("id_member")
+        if mid:
+            li_group_count[mid] = li_group_count.get(mid, 0) + 1
+
+    tg_connected = {a["id_member"] for a in tg_accounts if a.get("id_member")}
+
+    now_vn = datetime.now(timezone(timedelta(hours=7)))
+    today_start = now_vn.replace(hour=0, minute=0, second=0, microsecond=0)
+
+    start_iso: Optional[str] = None
+    end_iso: Optional[str] = None
+
+    if time_range == "today":
+        start_iso = today_start.isoformat()
+        end_iso = (today_start + timedelta(days=1)).isoformat()
+    elif time_range == "this_week":
+        monday = today_start - timedelta(days=today_start.weekday())
+        start_iso = monday.isoformat()
+        end_iso = (monday + timedelta(days=7)).isoformat()
+    elif time_range == "last_week":
+        monday_this_week = today_start - timedelta(days=today_start.weekday())
+        monday_last_week = monday_this_week - timedelta(days=7)
+        start_iso = monday_last_week.isoformat()
+        end_iso = monday_this_week.isoformat()
+    elif time_range == "last_month":
+        first_this_month = today_start.replace(day=1)
+        last_day_prev_month = first_this_month - timedelta(days=1)
+        first_prev_month = last_day_prev_month.replace(day=1)
+        start_iso = first_prev_month.isoformat()
+        end_iso = first_this_month.isoformat()
+
+    query = sb.table("facebook_posts").select("id, id_member, group_id, crawl_date, created_at, score, lead_score")
+    if fb_group_owner_map:
+        group_ids = list(fb_group_owner_map.keys())[:100]
+        query = query.or_(f"id_member.in.({','.join(member_ids)}),group_id.in.({','.join(group_ids)})")
+    else:
+        query = query.in_("id_member", member_ids)
+
+    if start_iso:
+        query = query.gte("crawl_date", start_iso)
+    if end_iso:
+        query = query.lt("crawl_date", end_iso)
+
+    fb_posts = query.order("crawl_date", desc=True).limit(5000).execute().data or []
+
+    th_query = sb.table("threads_posts").select("id, id_member, created_at, score, lead_score").in_("id_member", member_ids)
+    if start_iso:
+        th_query = th_query.gte("created_at", start_iso)
+    if end_iso:
+        th_query = th_query.lt("created_at", end_iso)
+    try:
+        th_posts = th_query.limit(2000).execute().data or []
+    except Exception:
+        th_posts = []
+
+    post_count: dict[str, int] = {}
+    ai_passed_count: dict[str, int] = {}
+    last_crawled: dict[str, str] = {}
+
+    for p in fb_posts:
+        mid = p.get("id_member") or fb_group_owner_map.get(p.get("group_id"))
+        if not mid or mid not in member_ids:
+            continue
+        post_count[mid] = post_count.get(mid, 0) + 1
+        is_passed = (p.get("lead_score") is not None) or ((p.get("score") or 0) > 0)
+        if is_passed:
+            ai_passed_count[mid] = ai_passed_count.get(mid, 0) + 1
+        d = p.get("crawl_date") or p.get("created_at")
+        if d and (mid not in last_crawled or d > last_crawled[mid]):
+            last_crawled[mid] = d
+
+    for p in th_posts:
+        mid = p.get("id_member")
+        if not mid or mid not in member_ids:
+            continue
+        post_count[mid] = post_count.get(mid, 0) + 1
+        is_passed = (p.get("lead_score") is not None) or ((p.get("score") or 0) > 0)
+        if is_passed:
+            ai_passed_count[mid] = ai_passed_count.get(mid, 0) + 1
+        d = p.get("created_at")
+        if d and (mid not in last_crawled or d > last_crawled[mid]):
+            last_crawled[mid] = d
+
+    li_query = sb.table("linkedin_posts").select("id, id_member, crawl_date, created_at, score, lead_score").in_("id_member", member_ids)
+    if start_iso:
+        li_query = li_query.gte("crawl_date", start_iso)
+    if end_iso:
+        li_query = li_query.lt("crawl_date", end_iso)
+    try:
+        li_posts = li_query.limit(2000).execute().data or []
+    except Exception:
+        li_posts = []
+
+    for p in li_posts:
+        mid = p.get("id_member")
+        if not mid or mid not in member_ids:
+            continue
+        post_count[mid] = post_count.get(mid, 0) + 1
+        is_passed = (p.get("lead_score") is not None) or ((p.get("score") or 0) > 0)
+        if is_passed:
+            ai_passed_count[mid] = ai_passed_count.get(mid, 0) + 1
+        d = p.get("crawl_date") or p.get("created_at")
+        if d and (mid not in last_crawled or d > last_crawled[mid]):
+            last_crawled[mid] = d
+
+    accounts = []
+    for m in members:
+        mid = m["id"]
+        total_crawled = post_count.get(mid, 0)
+        ai_passed = ai_passed_count.get(mid, 0)
+        ai_percent = round((ai_passed / total_crawled) * 100, 1) if total_crawled > 0 else 0
+        accounts.append(
+            {
+                "id_member": mid,
+                "name": m.get("name") or (m.get("email") or "").split("@")[0] or "Thành viên",
+                "email": m.get("email"),
+                "fb_groups": fb_group_count.get(mid, 0),
+                "li_groups": li_group_count.get(mid, 0),
+                "scheduled_crawls_count": fb_scheduled_count.get(mid, 0),
+                "telegram_connected": mid in tg_connected,
+                "total_crawled_posts": total_crawled,
+                "total_fb_posts_crawled": total_crawled,
+                "ai_passed_posts": ai_passed,
+                "ai_passed_percent": ai_percent,
+                "last_crawled_at": last_crawled.get(mid),
+            }
+        )
+    accounts.sort(key=lambda a: (-a["total_crawled_posts"], a["name"]))
+    return {"role": role, "accounts": accounts, "time_range": time_range}
+
+
+def get_member_crawl_history(email: str, id_member: str, limit: int = 30) -> dict:
+    """Chi tiết lịch sử cào của 1 thành viên — mở khi bấm vào 1 hàng trong bảng "Tài
+    khoản seeding" (giống style bấm vào 1 lead ở CRM). Chỉ Facebook, xem ghi chú ở
+    get_member_seeding_overview. Raise PermissionError nếu người gọi không có quyền
+    xem thành viên này (router bắt lỗi này trả về 403)."""
+    sb = _supabase()
+    role, members = _resolve_overview_scope(sb, email)
+    allowed_ids = {m["id"] for m in members}
+    if role not in ("admin", "leader") or id_member not in allowed_ids:
+        raise PermissionError("Không có quyền xem thành viên này.")
+
+    groups = (
+        sb.table("facebook_groups").select("id, group_name").eq("id_member", id_member).order("group_name").execute().data
+        or []
+    )
+    posts = (
+        sb.table("facebook_posts")
+        .select("id, content, crawl_date, group_id")
+        .eq("id_member", id_member)
+        .order("crawl_date", desc=True)
+        .limit(limit)
+        .execute()
+        .data
+        or []
+    )
+    group_name_map = {g["id"]: g.get("group_name") for g in groups}
+    history = [
+        {
+            "id": p.get("id"),
+            "group_name": group_name_map.get(p.get("group_id")) or "Không rõ nhóm",
+            "content": (p.get("content") or "")[:200],
+            "crawl_date": p.get("crawl_date"),
+        }
+        for p in posts
+    ]
+    return {
+        "groups": [{"id": g["id"], "name": g.get("group_name") or "Không tên"} for g in groups],
+        "history": history,
+    }
 
 _LIVE_RECORDED_ROUNDS: list[dict[str, Any]] = []
 
@@ -1067,7 +1681,10 @@ def get_crawl_schedule_rounds_history(
     email: Optional[str] = None,
     id_member: Optional[str] = None,
     time_range: str = "all",
-    limit: int = 50,
+    specific_date: Optional[str] = None,
+    date_from_str: Optional[str] = None,
+    date_to_str: Optional[str] = None,
+    limit: int = 100,
 ) -> dict[str, Any]:
     """Bóc tách và thống kê chi tiết các vòng cào từ lịch theo từng user riêng biệt và accsystem crawler."""
     from collections import defaultdict
@@ -1106,21 +1723,57 @@ def get_crawl_schedule_rounds_history(
                 "is_system": False,
             })
 
-    # Lọc thời gian
-    now_vn = datetime.now(timezone(timedelta(hours=7)))
+    # Lọc thời gian (Giờ Việt Nam GMT+7)
+    vn_tz = timezone(timedelta(hours=7))
+    now_vn = datetime.now(vn_tz)
     date_from = None
-    if time_range == "today":
+    date_to = None
+
+    if specific_date:
+        try:
+            # specific_date = "YYYY-MM-DD"
+            p = [int(x) for x in specific_date.strip().split("-")]
+            d_spec = datetime(p[0], p[1], p[2], tzinfo=vn_tz)
+            date_from = d_spec.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
+            date_to = d_spec.replace(hour=23, minute=59, second=59, microsecond=999999).astimezone(timezone.utc)
+        except Exception:
+            pass
+    elif date_from_str or date_to_str:
+        if date_from_str:
+            try:
+                p = [int(x) for x in date_from_str.strip().split("-")]
+                d_f = datetime(p[0], p[1], p[2], tzinfo=vn_tz)
+                date_from = d_f.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
+            except Exception:
+                pass
+        if date_to_str:
+            try:
+                p = [int(x) for x in date_to_str.strip().split("-")]
+                d_t = datetime(p[0], p[1], p[2], tzinfo=vn_tz)
+                date_to = d_t.replace(hour=23, minute=59, second=59, microsecond=999999).astimezone(timezone.utc)
+            except Exception:
+                pass
+    elif time_range == "today":
         date_from = now_vn.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
-    elif time_range == "this_week":
-        start_week = now_vn - timedelta(days=now_vn.weekday())
-        date_from = start_week.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
-    elif time_range == "this_month":
-        date_from = now_vn.replace(day=1, hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
+        date_to = now_vn.replace(hour=23, minute=59, second=59, microsecond=999999).astimezone(timezone.utc)
+    elif time_range in ("yesterday", "last_day"):
+        y_day = now_vn - timedelta(days=1)
+        date_from = y_day.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
+        date_to = y_day.replace(hour=23, minute=59, second=59, microsecond=999999).astimezone(timezone.utc)
+    elif time_range in ("this_week", "last_week", "week"):
+        date_from = (now_vn - timedelta(days=7)).replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
+        date_to = now_vn.astimezone(timezone.utc)
+    elif time_range in ("this_month", "last_month", "month"):
+        date_from = (now_vn - timedelta(days=30)).replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
+        date_to = now_vn.astimezone(timezone.utc)
+    elif time_range in ("this_year", "last_year", "year"):
+        date_from = (now_vn - timedelta(days=365)).replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
+        date_to = now_vn.astimezone(timezone.utc)
 
     # 2. Truy vấn bài viết từ 3 nền tảng
-    q_fb = sb.table("facebook_posts").select("id, id_member, score, crawl_date, created_at, group_id")
-    q_th = sb.table("threads_posts").select("id, id_member, score, crawl_date, created_at, keyword")
-    q_li = sb.table("linkedin_posts").select("id, id_member, score, crawl_date, created_at, id_group, session_id")
+    q_fb = sb.table("facebook_posts").select("id, id_member, score, lead_score, crawl_date, created_at, group_id")
+    q_th = sb.table("threads_posts").select("id, id_member, score, lead_score, crawl_date, created_at, keyword")
+    q_li = sb.table("linkedin_posts").select("id, id_member, score, lead_score, crawl_date, created_at, id_group, session_id")
 
     if id_member and id_member != "all":
         q_fb = q_fb.eq("id_member", id_member)
@@ -1133,9 +1786,15 @@ def get_crawl_schedule_rounds_history(
         q_th = q_th.gte("created_at", iso_from)
         q_li = q_li.gte("created_at", iso_from)
 
-    fb_data = q_fb.order("created_at", desc=True).limit(600).execute().data or []
-    th_data = q_th.order("created_at", desc=True).limit(600).execute().data or []
-    li_data = q_li.order("created_at", desc=True).limit(300).execute().data or []
+    if date_to:
+        iso_to = date_to.isoformat()
+        q_fb = q_fb.lte("created_at", iso_to)
+        q_th = q_th.lte("created_at", iso_to)
+        q_li = q_li.lte("created_at", iso_to)
+
+    fb_data = q_fb.order("created_at", desc=True).limit(1000).execute().data or []
+    th_data = q_th.order("created_at", desc=True).limit(1000).execute().data or []
+    li_data = q_li.order("created_at", desc=True).limit(500).execute().data or []
 
     def _parse_ts(dt_val: Any) -> Optional[datetime]:
         if not dt_val:
@@ -1164,33 +1823,42 @@ def get_crawl_schedule_rounds_history(
         m_id = p.get("id_member") or SEEDING_SYSTEM_MEMBER_ID
         dt = _parse_ts(p.get("created_at") or p.get("crawl_date"))
         if dt:
+            is_passed = (p.get("lead_score") is not None) or ((p.get("score") or 0) > 0)
             all_posts.append({
                 "platform": "facebook",
                 "id": p["id"],
                 "member_id": m_id,
                 "score": p.get("score") or 0,
+                "lead_score": p.get("lead_score"),
+                "ai_passed": is_passed,
                 "created_at": dt,
             })
     for p in th_data:
         m_id = p.get("id_member") or SEEDING_SYSTEM_MEMBER_ID
         dt = _parse_ts(p.get("created_at") or p.get("crawl_date"))
         if dt:
+            is_passed = (p.get("lead_score") is not None) or ((p.get("score") or 0) > 0)
             all_posts.append({
                 "platform": "threads",
                 "id": p["id"],
                 "member_id": m_id,
                 "score": p.get("score") or 0,
+                "lead_score": p.get("lead_score"),
+                "ai_passed": is_passed,
                 "created_at": dt,
             })
     for p in li_data:
         m_id = p.get("id_member") or SEEDING_SYSTEM_MEMBER_ID
         dt = _parse_ts(p.get("created_at") or p.get("crawl_date"))
         if dt:
+            is_passed = (p.get("lead_score") is not None) or ((p.get("score") or 0) > 0)
             all_posts.append({
                 "platform": "linkedin",
                 "id": p["id"],
                 "member_id": m_id,
                 "score": p.get("score") or 0,
+                "lead_score": p.get("lead_score"),
+                "ai_passed": is_passed,
                 "created_at": dt,
             })
 
@@ -1233,15 +1901,15 @@ def get_crawl_schedule_rounds_history(
 
             fb_items = [p for p in cluster if p["platform"] == "facebook"]
             fb_cnt = len(fb_items)
-            fb_ai = sum(1 for p in fb_items if p["score"] >= ai_threshold)
+            fb_ai = sum(1 for p in fb_items if p.get("ai_passed"))
 
             li_items = [p for p in cluster if p["platform"] == "linkedin"]
             li_cnt = len(li_items)
-            li_ai = sum(1 for p in li_items if p["score"] >= ai_threshold)
+            li_ai = sum(1 for p in li_items if p.get("ai_passed"))
 
             th_items = [p for p in cluster if p["platform"] == "threads"]
             th_cnt = len(th_items)
-            th_ai = sum(1 for p in th_items if p["score"] >= ai_threshold)
+            th_ai = sum(1 for p in th_items if p.get("ai_passed"))
 
             tot_posts = fb_cnt + li_cnt + th_cnt
             tot_ai = fb_ai + li_ai + th_ai

@@ -102,3 +102,4 @@ def remove_schedule(
         raise
     except Exception as exc:
         return BaseResponse(success=False, message=str(exc))
+
