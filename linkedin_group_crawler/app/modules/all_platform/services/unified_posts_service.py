@@ -996,15 +996,11 @@ def get_unified_posts(
                     kpi_data = []
                     
                     # Chia batch 25 post_ids de tranh 502 Bad Gateway / URI Too Long
+                    # Truy van toan bo seeding comment de member, leader, admin deu thay full minh chung ai da seeding
                     for batch_pids in [post_ids[i:i+25] for i in range(0, len(post_ids), 25)]:
-                        if role in ["admin", "leader"]:
-                            b_res = execute_supabase_query(
-                                lambda b=batch_pids: _supabase().table("seeding_content_kpi").select(seeding_sel).in_("id_post", b).execute()
-                            )
-                        else:
-                            b_res = execute_supabase_query(
-                                lambda b=batch_pids: _supabase().table("seeding_content_kpi").select(seeding_sel).eq("id_member", id_member).in_("id_post", b).execute()
-                            )
+                        b_res = execute_supabase_query(
+                            lambda b=batch_pids: _supabase().table("seeding_content_kpi").select(seeding_sel).in_("id_post", b).execute()
+                        )
                         if b_res.data:
                             kpi_data.extend(b_res.data)
 
@@ -1013,14 +1009,9 @@ def get_unified_posts(
                     if missing_urls:
                         # Chia batch 15 missing_urls vi URL rat dai
                         for batch_urls in [missing_urls[i:i+15] for i in range(0, len(missing_urls), 15)]:
-                            if role in ["admin", "leader"]:
-                                url_kpi_res = execute_supabase_query(
-                                    lambda b=batch_urls: _supabase().table("seeding_content_kpi").select(seeding_sel).in_("link_post", b).execute()
-                                )
-                            else:
-                                url_kpi_res = execute_supabase_query(
-                                    lambda b=batch_urls: _supabase().table("seeding_content_kpi").select(seeding_sel).eq("id_member", id_member).in_("link_post", b).execute()
-                                )
+                            url_kpi_res = execute_supabase_query(
+                                lambda b=batch_urls: _supabase().table("seeding_content_kpi").select(seeding_sel).in_("link_post", b).execute()
+                            )
                             if url_kpi_res.data:
                                 kpi_data.extend(url_kpi_res.data)
 

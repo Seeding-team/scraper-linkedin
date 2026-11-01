@@ -319,6 +319,47 @@ export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onVi
     return null;
   }, [currentUser, post, seedingContentIsAuto, userRole]);
 
+  // Xác định bình luận seeding của bài viết (của chính mình hoặc của thành viên/admin/leader khác)
+  const effectiveSeeding = useMemo(() => {
+    // 1. Ưu tiên của chính người dùng hiện tại
+    if (mySeeding) {
+      return {
+        ...mySeeding,
+        display_author: mySeeding.member_name || currentUser?.name || "Bạn",
+        is_mine: true,
+      };
+    }
+
+    // 2. Nếu người khác đã seeding (trong all_seedings)
+    if (post.all_seedings && post.all_seedings.length > 0) {
+      const first = post.all_seedings[0];
+      const author = first.member_name || (first as any).name || (first as any).member_email || "Thành viên";
+      return {
+        member_name: author,
+        display_author: author,
+        seeding_content: first.seeding_content || (first as any).content || post.seeding_content,
+        link_comment: first.link_comment || post.link_comment,
+        verify_status: first.verify_status || post.verify_status || "yes",
+        is_mine: false,
+      };
+    }
+
+    // 3. Fallback theo post.seeding_content
+    if (post.seeding_content && !seedingContentIsAuto) {
+      const author = post.seeding_name || "Thành viên";
+      return {
+        member_name: author,
+        display_author: author,
+        seeding_content: post.seeding_content,
+        link_comment: post.link_comment,
+        verify_status: post.verify_status || "yes",
+        is_mine: false,
+      };
+    }
+
+    return null;
+  }, [currentUser, mySeeding, post, seedingContentIsAuto]);
+
   return (
     <div
       className={cn(
@@ -490,15 +531,16 @@ export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onVi
         )}
 
 
-        {/* KHỐI HIỂN THỊ: BẠN ĐÃ COMMENT THÀNH CÔNG (CHỈ NGƯỜI NÀO LÀM THÌ THẤY CỦA NGƯỜI ĐÓ) */}
-        {mySeeding ? (() => {
-          const { cleanComment, proofUrl } = parseCommentAndProof(mySeeding.seeding_content, mySeeding.link_comment || post.link_comment || post.post_url);
+        {/* KHỐI HIỂN THỊ: THÀNH VIÊN / LEADER / ADMIN ĐÃ COMMENT VỚI NỘI DUNG */}
+        {effectiveSeeding ? (() => {
+          const { cleanComment, proofUrl } = parseCommentAndProof(effectiveSeeding.seeding_content, effectiveSeeding.link_comment || post.link_comment || post.post_url);
           const finalProofUrl = proofUrl && !isRejected(proofUrl) ? proofUrl : null;
+          const authorLabel = effectiveSeeding.display_author || effectiveSeeding.member_name || "Thành viên";
           return (
             <div className="mb-3 p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-xs text-emerald-800 flex items-center justify-between gap-3 flex-wrap shadow-2xs">
               <div className="min-w-0 flex-1">
                 <div className="font-bold text-emerald-800 flex items-center gap-1.5 mb-1">
-                  <span className="text-emerald-600 font-extrabold text-sm">✓</span> Bạn đã comment thành công:
+                  <span className="text-emerald-600 font-extrabold text-sm">✓</span> {authorLabel} đã comment với nội dung:
                 </div>
                 {cleanComment ? (
                   <div className="line-clamp-2 font-medium italic text-emerald-950">
@@ -700,7 +742,7 @@ export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onVi
           </div>
 
           <div className="flex items-center gap-2">
-            {mySeeding ? (
+            {effectiveSeeding ? (
               <span className="px-2.5 py-1 rounded-md text-[11px] font-bold border bg-emerald-100 text-emerald-700 border-emerald-200">
                 ✓ Đã comment
               </span>

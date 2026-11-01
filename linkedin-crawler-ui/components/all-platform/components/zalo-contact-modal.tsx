@@ -59,6 +59,7 @@ export function ZaloContactModal({
 
     setSubmitting(true);
     setStatusText("Đang tìm kiếm tài khoản Zalo theo SĐT...");
+    const toastId = toast.loading(`Đang gửi tin nhắn qua Zalo tới ${phoneNumber}...`);
 
     try {
       // 1. Tìm user Zalo theo số điện thoại
@@ -66,11 +67,11 @@ export function ZaloContactModal({
       const targetUid = found?.user_id;
 
       if (!targetUid) {
-        throw new Error("Không tìm thấy người dùng Zalo với số điện thoại này hoặc người dùng chặn tìm kiếm qua SĐT.");
+        throw new Error("Số điện thoại chưa kích hoạt Zalo hoặc cài đặt chặn tìm kiếm qua số điện thoại.");
       }
 
-      const dName = found.display_name || found.zalo_name || phoneNumber;
-      setStatusText(`Đã tìm thấy Zalo: ${dName}. Đang mở hộp thoại...`);
+      const dName = found.display_name || found.zalo_name || zaloDisplayName || "Khách hàng";
+      setStatusText(`Đã tìm thấy Zalo: ${dName}. Đang gửi tin nhắn...`);
 
       // 2. Mở / tạo thread chat 1-1
       const threadRes = await createZaloUserThread(selectedAccountId, {
@@ -83,21 +84,31 @@ export function ZaloContactModal({
       // 3. Nếu người dùng có nhập tin nhắn, gửi tin nhắn đi
       if (message.trim()) {
         setStatusText("Đang gửi tin nhắn chào hỏi...");
-        await sendZaloMessage(selectedAccountId, convId, { text: message.trim() }).catch((err) => {
-          console.warn("Lỗi gửi tin nhắn Zalo ban đầu:", err);
-        });
+        const sendRes = await sendZaloMessage(selectedAccountId, convId, { text: message.trim() });
+        if (sendRes && (sendRes as any).error) {
+          throw new Error((sendRes as any).error || "Tài khoản Zalo người nhận chặn tin nhắn từ người lạ.");
+        }
       }
 
-      toast.success(`Đã kết nối Zalo với ${dName}!`);
+      toast.success(`Đã nhắn tin với ${dName} (${phoneNumber}) thành công!`, { id: toastId, duration: 4000 });
       onClose();
 
       // 4. Chuyển hướng tới trang Zalo Inbox của hệ thống
       router.push(`/all-platform/zalo-inbox?conv=${encodeURIComponent(convId)}&acc=${encodeURIComponent(selectedAccountId)}`);
     } catch (err: any) {
       console.error("Zalo connect error:", err);
-      const errMsg = err?.message || "Không thể kết nối tới Zalo qua số điện thoại này.";
-      toast.error(errMsg);
-      setStatusText(errMsg);
+      const rawMsg = err?.message || String(err || "");
+      let reason = rawMsg;
+      if (rawMsg.includes("not found") || rawMsg.includes("Không tìm thấy") || rawMsg.includes("404")) {
+        reason = "số điện thoại chưa kích hoạt Zalo hoặc cài đặt chặn tìm kiếm qua số điện thoại";
+      } else if (rawMsg.includes("stranger") || rawMsg.includes("người lạ") || rawMsg.includes("chặn") || rawMsg.includes("block")) {
+        reason = "tài khoản Zalo khách hàng đang chặn nhận tin nhắn từ người lạ";
+      } else if (rawMsg.includes("session") || rawMsg.includes("auth") || rawMsg.includes("login") || rawMsg.includes("401")) {
+        reason = "phiên đăng nhập Zalo của tài khoản gửi đã hết hạn, vui lòng đăng nhập lại";
+      }
+      const fullError = `Nhắn tin thất bại do ${reason}`;
+      toast.error(fullError, { id: toastId, duration: 6000 });
+      setStatusText(fullError);
     } finally {
       setSubmitting(false);
     }
@@ -106,7 +117,7 @@ export function ZaloContactModal({
   const cleanPhone = phoneNumber.replace(/\D/g, "");
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4 animate-in fade-in duration-150">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/25 p-4 animate-in fade-in duration-150">
       <div
         className="w-full max-w-lg rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
         onClick={(e) => e.stopPropagation()}
