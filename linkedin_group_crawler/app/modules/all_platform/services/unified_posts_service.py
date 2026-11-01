@@ -64,6 +64,7 @@ def retry_on_winerror(func):
     return wrapper
 
 @retry_on_winerror
+
 def _fetch_posts(
     *,
     table: str,
@@ -330,6 +331,11 @@ def _fetch_posts(
             p["author"] = author_name
             p["author_name"] = author_name
 
+        # Extract and normalize contact phone
+        extracted_phone = _normalize_display_phone(p.get("contact_phone")) or _extract_phone_from_text(p.get("content"))
+        if extracted_phone:
+            p["phone_number"] = extracted_phone
+
         # Standardize post creation time across platforms
         if table == "linkedin_posts":
             real_time = p.get("posted_at")
@@ -383,7 +389,7 @@ def _attach_auto_seeding_comments(sb, posts: list[dict], platform: str = "facebo
                 "posted_at": row.get("posted_at"),
                 "link_comment": row.get("link_comment"),
                 "need_category": row.get("need_category"),
-                "phone_number": row.get("phone_number"),
+                "phone_number": _normalize_display_phone(row.get("phone_number")) or row.get("phone_number"),
                 "zalo_status": row.get("zalo_status"),
                 "zalo_message_content": row.get("zalo_message_content"),
                 "zalo_sent_at": row.get("zalo_sent_at"),
@@ -509,6 +515,9 @@ def _fetch_keyword_posts(
             p["search_keyword"] = p.get("keyword") or ""
             p["author"] = p.get("author_name") or username
         p["group_url"] = p.get("author_url") or ""
+        kw_phone = _normalize_display_phone(p.get("contact_phone")) or _extract_phone_from_text(p.get("content"))
+        if kw_phone:
+            p["phone_number"] = kw_phone
         mid = p.get("id_member")
         if mid and mid in member_map:
             p["crawler_name"] = member_map[mid].get("name")

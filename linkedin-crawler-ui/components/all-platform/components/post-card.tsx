@@ -75,6 +75,36 @@ function PlatformIcon({ platform }: { platform: FeedPlatform }) {
   return <FaLinkedin className="text-blue-700 shrink-0" />;
 }
 
+
+// Chuẩn hóa hiển thị số điện thoại Việt Nam bắt đầu bằng 0... (loại bỏ hoàn toàn +84)
+function normalizeDisplayPhone(rawPhone?: string | null): string {
+  if (!rawPhone) return "";
+  let digits = rawPhone.replace(/\D/g, "");
+  if (digits.startsWith("84") && digits.length >= 10) {
+    digits = "0" + digits.slice(2);
+  }
+  return digits;
+}
+
+const OWN_COMPANY_PHONES = ["0765055708", "0902355083", "84765055708", "84902355083"];
+
+// Trích xuất số điện thoại từ nội dung bài viết nếu bot chưa trích xuất
+function extractPhoneNumberFromContent(content?: string | null): string | null {
+  if (!content) return null;
+  const pattern = /(?:(?:\+?84|0)[35789](?:[.\s-]?\d){8})/g;
+  const matches = content.match(pattern);
+  if (!matches) return null;
+  for (const m of matches) {
+    const norm = normalizeDisplayPhone(m);
+    if (norm.length === 10 && norm.startsWith("0")) {
+      if (!OWN_COMPANY_PHONES.includes(norm)) {
+        return norm;
+      }
+    }
+  }
+  return null;
+}
+
 // Helper formatting post publication and crawl timestamps
 function formatPostDateTime(dateStr?: string | null) {
   if (!dateStr) return null;
@@ -468,28 +498,69 @@ export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onVi
             160) — hiển thị giống hệt 1 bình luận seeding của member (bong bóng + dấu
             nháy) nhưng ghi rõ "Hệ thống:" để ai cũng biết đây là máy tự làm (yêu cầu
             2026-10-02). */}
-        {post.auto_seeding_comment?.phone_number ? (
-          <div className="mb-3 rounded-lg border border-sky-100 bg-sky-50/50 p-2.5 flex flex-col gap-1">
-            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-              <span className="inline-flex items-center gap-1 text-[11px] font-bold text-slate-800">
-                📞 {post.auto_seeding_comment.phone_number}
+        {/* Khung số điện thoại trích xuất từ bài viết & Nút nhắn tin Zalo */}
+        {detectedPhone ? (
+          <div className="mb-3 rounded-xl border border-sky-200/80 bg-sky-50/70 dark:bg-sky-950/25 dark:border-sky-800/60 p-2.5 sm:p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 shadow-xs transition-colors">
+            <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
+              <span className="inline-flex items-center gap-1.5 text-xs sm:text-sm font-bold text-slate-800 dark:text-slate-100">
+                <span className="w-6 h-6 rounded-full bg-sky-100 text-sky-700 dark:bg-sky-900/60 dark:text-sky-300 flex items-center justify-center text-xs">📞</span>
+                <span>{detectedPhone}</span>
               </span>
-              {post.auto_seeding_comment.zalo_display_name && (
-                <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-sky-700">
-                  · Zalo: {post.auto_seeding_comment.zalo_display_name}
+
+              {post.auto_seeding_comment?.zalo_display_name && (
+                <span className="inline-flex items-center gap-1 text-xs font-semibold text-sky-700 dark:text-sky-300 bg-sky-100/60 dark:bg-sky-900/40 px-2 py-0.5 rounded-md">
+                  Zalo: {post.auto_seeding_comment.zalo_display_name}
                 </span>
               )}
-              {post.auto_seeding_comment.zalo_status === "sent" ? (
-                <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-emerald-100 text-emerald-700">✓ Đã nhắn tư vấn Zalo</span>
-              ) : post.auto_seeding_comment.zalo_status === "failed" ? (
+
+              {post.auto_seeding_comment?.zalo_status === "sent" ? (
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300">
+                  ✓ Đã nhắn tư vấn
+                </span>
+              ) : post.auto_seeding_comment?.zalo_status === "failed" ? (
                 <span
-                  className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-amber-100 text-amber-700"
+                  className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300"
                   title={post.auto_seeding_comment.zalo_error || undefined}
                 >
                   ⚠️ Chưa nhắn được qua Zalo
                 </span>
               ) : null}
             </div>
+
+            <div className="flex flex-wrap items-center gap-1.5 shrink-0">
+              {/* Nút Nhắn tin Zalo mở popup chọn tài khoản */}
+              <button
+                type="button"
+                onClick={() => setShowZaloContactModal(true)}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-sky-600 hover:bg-sky-500 px-3 py-1.5 text-xs font-bold text-white shadow-xs active:scale-95 transition-all"
+                title="Chọn tài khoản Zalo đang kết nối để nhắn tin tới khách hàng"
+              >
+                <FiMessageSquare className="w-3.5 h-3.5" />
+                <span>Nhắn tin Zalo</span>
+              </button>
+
+              {post.auto_seeding_comment?.zalo_conversation_id && (
+                <a
+                  href={`/all-platform/zalo-inbox?conv=${encodeURIComponent(post.auto_seeding_comment.zalo_conversation_id)}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 rounded-lg border border-sky-300 dark:border-sky-700 px-2.5 py-1.5 text-xs font-medium text-sky-700 dark:text-sky-300 hover:bg-sky-100/60 dark:hover:bg-sky-900/40 transition-colors"
+                >
+                  <span>Hộp thoại</span>
+                  <FiExternalLink className="w-3 h-3" />
+                </a>
+              )}
+
+              <button
+                type="button"
+                onClick={() => setShowLeadDrawer(true)}
+                className="inline-flex items-center gap-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 px-2.5 py-1.5 text-xs font-bold text-white shadow-xs active:scale-95 transition-all"
+              >
+                + Lead
+              </button>
+            </div>
+          </div>
+        ) : null}\n            </div>
             <div className="flex flex-wrap items-center gap-2 mt-0.5">
               {post.auto_seeding_comment.zalo_conversation_id && (
                 <a
