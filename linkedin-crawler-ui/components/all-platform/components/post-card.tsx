@@ -41,6 +41,27 @@ interface PostCardProps {
 }
 
 
+function parseCommentAndProof(rawComment?: string | null, rawLink?: string | null): { cleanComment: string; proofUrl: string | null } {
+  let proofUrl = rawLink?.trim() || null;
+  let cleanComment = (rawComment || "").trim();
+
+  const linkRegex = /\[?(?:Link minh chứng|Minh chứng):\s*(https?:\/\/[^\s\]]+)\]?/i;
+  const match = cleanComment.match(linkRegex);
+  if (match) {
+    if (!proofUrl) {
+      proofUrl = match[1];
+    }
+    cleanComment = cleanComment.replace(match[0], "").trim();
+  }
+
+  if (!proofUrl && /^https?:\/\/[^\s]+$/.test(cleanComment)) {
+    proofUrl = cleanComment;
+    cleanComment = "";
+  }
+
+  return { cleanComment, proofUrl };
+}
+
 function PlatformIcon({ platform }: { platform: FeedPlatform }) {
   if (platform === "facebook") {
     return <FaFacebook className="text-blue-600 shrink-0" />;
@@ -100,6 +121,19 @@ export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onVi
       },
     }, "*");
 
+    // Lưu lạc quan vào localStorage để card cập nhật 0ms
+    try {
+      if (typeof window !== "undefined" && (post.id || post.post_url)) {
+        const localKey = `my_task_comment_${post.id || post.post_url}`;
+        localStorage.setItem(localKey, JSON.stringify({
+          member_name: user?.name || "Bạn",
+          seeding_content: commentText.trim() || "Đã gửi bình luận qua Extension",
+          link_comment: post.post_url,
+          verify_status: "pending",
+        }));
+      }
+    } catch {}
+
     setTimeout(() => {
       window.open(post.post_url, "_blank");
     }, 200);
@@ -146,6 +180,61 @@ export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onVi
   const autoSeedingText = post.auto_seeding_comment?.content;
   const visibleAllSeedings = (post.all_seedings || []).filter((s) => s.seeding_content !== autoSeedingText);
   const seedingContentIsAuto = !!autoSeedingText && post.seeding_content === autoSeedingText;
+
+  // Xác định bình luận seeding của CHÍNH NGƯỜI DÙNG HIỆN TẠI (Admin / Leader / Member)
+  const mySeeding = useMemo(() => {
+    if (!currentUser) return null;
+    const currentId = currentUser.id ? String(currentUser.id) : "";
+    const currentEmail = (currentUser.email || "").trim().toLowerCase();
+    const currentName = (currentUser.name || "").trim().toLowerCase();
+
+    // 1. Tìm trong all_seedings theo ID, Email hoặc Name của người dùng đang đăng nhập
+    if (post.all_seedings && post.all_seedings.length > 0) {
+      const match = post.all_seedings.find((s) => {
+        const sId = String((s as any).id_member || (s as any).member_id || "");
+        if (sId && currentId && sId === currentId) return true;
+        const sEmail = String((s as any).member_email || "").trim().toLowerCase();
+        if (sEmail && currentEmail && sEmail === currentEmail) return true;
+        const sName = String(s.member_name || "").trim().toLowerCase();
+        if (sName && currentName && sName === currentName) return true;
+        return false;
+      });
+      if (match) return match;
+    }
+
+    // 2. Nếu post có seeding_content gán cho chính user (hoặc is_my_seeding === true)
+    if (post.seeding_content && !seedingContentIsAuto) {
+      if ((post as any).is_my_seeding === true || userRole === "member") {
+        return {
+          member_name: currentUser.name || "Bạn",
+          seeding_content: post.seeding_content,
+          seeding_name: post.seeding_name,
+          link_comment: post.link_comment,
+          verify_status: post.verify_status || "yes",
+        };
+      }
+    }
+
+    // 3. Fallback đọc từ localStorage (nếu vừa làm nhiệm vụ trên client)
+    if (typeof window !== "undefined") {
+      const localKey = `my_task_comment_${post.id || post.post_url}`;
+      const saved = localStorage.getItem(localKey);
+      if (saved) {
+        try {
+          return JSON.parse(saved);
+        } catch {
+          return {
+            member_name: currentUser.name || "Bạn",
+            seeding_content: saved,
+            link_comment: post.link_comment || post.post_url,
+            verify_status: "yes",
+          };
+        }
+      }
+    }
+
+    return null;
+  }, [currentUser, post, seedingContentIsAuto, userRole]);
 
   return (
     <div
@@ -291,85 +380,43 @@ export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onVi
         )}
 
 
-        {(userRole === "admin" || userRole === "leader") && visibleAllSeedings.length > 0 ? (
-          <div className="mb-3 flex flex-col gap-2">
-            {visibleAllSeedings.map((seed, idx) => (
-              <div key={idx} className="px-3 py-2 bg-emerald-50/50 border border-emerald-100 rounded-lg flex flex-col gap-1">
-                <div className="flex items-center gap-1.5">
-                  <span className="text-[10px] font-bold text-emerald-600">Đã seeding bởi <span className="font-bold text-foreground">{seed.member_name}</span> (Tài khoản: {seed.seeding_name || "Unknown"}):</span>
+        {/* KHỐI HIỂN THỊ: BẠN ĐÃ COMMENT THÀNH CÔNG (CHỈ NGƯỜI NÀO LÀM THÌ THẤY CỦA NGƯỜI ĐÓ) */}
+        {mySeeding ? (() => {
+          const { cleanComment, proofUrl } = parseCommentAndProof(mySeeding.seeding_content, mySeeding.link_comment || post.link_comment || post.post_url);
+          const finalProofUrl = proofUrl && !isRejected(proofUrl) ? proofUrl : null;
+          return (
+            <div className="mb-3 p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-xs text-emerald-800 flex items-center justify-between gap-3 flex-wrap shadow-2xs">
+              <div className="min-w-0 flex-1">
+                <div className="font-bold text-emerald-800 flex items-center gap-1.5 mb-1">
+                  <span className="text-emerald-600 font-extrabold text-sm">✓</span> Bạn đã comment thành công:
                 </div>
-                <p className="text-sm text-muted-foreground line-clamp-2">
-                  <span className="text-emerald-500 font-serif font-bold text-lg leading-none mr-1">"</span>
-                  {seed.seeding_content}
-                  <span className="text-emerald-500 font-serif font-bold text-lg leading-none ml-1">“</span>
-
-                </p>
-                <div className="flex items-center justify-between mt-1">
-                  {(() => {
-                    const cmtUrl = seed.link_comment || post.link_comment || post.post_url;
-                    return cmtUrl && !isRejected(seed.link_comment) ? (
-                      <a
-                        href={cmtUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded text-xs font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 transition shadow-xs"
-                        title="Mở tab mới xem trực tiếp bình luận này"
-                      >
-                        <span>👁️ Xem bình luận</span>
-                        <FiExternalLink className="w-3.5 h-3.5 ml-0.5" />
-                      </a>
-                    ) : null;
-                  })()}
-                  {seed.link_comment && isRejected(seed.link_comment) && (
-                    <span className="text-[10px] font-medium text-red-600 inline-flex items-center gap-1">
-                      Bị từ chối / Lỗi
-                    </span>
-                  )}
-                  {seed.verify_status === "yes" && !isRejected(seed.link_comment) ? (
-                    <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-green-100 text-green-700">✓ Đã xác minh</span>
-                  ) : seed.verify_status === "yes" && isRejected(seed.link_comment) ? (
-                    <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-red-100 text-red-700">X Bị từ chối</span>
-                  ) : (
-                    <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-700">Chờ xác minh</span>
-                  )}
-                </div>
+                {cleanComment ? (
+                  <div className="line-clamp-2 font-medium italic text-emerald-950">
+                    "{cleanComment}"
+                  </div>
+                ) : (
+                  <div className="text-[11px] text-emerald-700 italic">
+                    Đã ghi nhận minh chứng bình luận thành công (+1 KPI)
+                  </div>
+                )}
               </div>
-            ))}
-          </div>
-        ) : post.seeding_content && !seedingContentIsAuto ? (
-          <div className="mb-3 px-3 py-2 bg-emerald-50/50 border border-emerald-100 rounded-lg flex flex-col gap-1">
-            <div className="flex items-center gap-1.5">
-              <span className="text-[10px] font-bold text-emerald-600">Đã seeding bằng tài khoản:</span>
-              <span className="text-sm font-bold text-foreground">{post.seeding_name || "Unknown"}</span>
-            </div>
-            <p className="text-sm text-muted-foreground line-clamp-2">
-              <span className="text-emerald-500 font-serif font-bold text-lg leading-none mr-1">"</span>
-              {post.seeding_content}
 
-              <span className="text-emerald-500 font-serif font-bold text-lg leading-none ml-1">"</span>
-            </p>
-            {(() => {
-              const cmtUrl = post.link_comment || post.post_url;
-              return cmtUrl && !isRejected(post.link_comment) ? (
+              {finalProofUrl ? (
                 <a
-                  href={cmtUrl}
+                  href={finalProofUrl}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded text-xs font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 transition shadow-xs mt-1"
-                  title="Mở tab mới xem trực tiếp bình luận này"
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-lg shadow-2xs transition shrink-0 cursor-pointer"
+                  title="Bấm để mở trực tiếp link bình luận minh chứng"
                 >
-                  <span>👁️ Xem bình luận</span>
-                  <FiExternalLink className="w-3.5 h-3.5 ml-0.5" />
+                  <span>👁️</span>
+                  <span>Xem minh chứng</span>
+                  <FiExternalLink className="w-3.5 h-3.5" />
                 </a>
-              ) : null;
-            })()}
-            {post.link_comment && isRejected(post.link_comment) && (
-              <span className="text-[10px] font-medium text-red-600 inline-flex items-center gap-1 mt-0.5">
-                Bị từ chối / Lỗi
-              </span>
-            )}
-          </div>
-        ) : null}
+              ) : null}
+            </div>
+          );
+        })() : null}
 
         {/* Bình luận seeding TỰ ĐỘNG của hệ thống trên bài điểm cao (Facebook, migration
             160) — hiển thị giống hệt 1 bình luận seeding của member (bong bóng + dấu
@@ -523,7 +570,11 @@ export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onVi
           </div>
 
           <div className="flex items-center gap-2">
-            {(verifyStatus === "yes" || verifyStatus === "pending") && isRejected(post.link_comment) ? (
+            {mySeeding ? (
+              <span className="px-2.5 py-1 rounded-md text-[11px] font-bold border bg-emerald-100 text-emerald-700 border-emerald-200">
+                ✓ Đã comment
+              </span>
+            ) : (verifyStatus === "yes" || verifyStatus === "pending") && isRejected(post.link_comment) ? (
               <span className="px-2.5 py-1 rounded-md text-[11px] font-bold border bg-red-100 text-red-700 border-red-200">
                 X Bị từ chối
               </span>
@@ -564,16 +615,17 @@ export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onVi
               </button>
             )}
 
-            {/* Nut xem roster: nhan/label theo role — admin xem toan bo team, leader chi
-                xem duoc team/member cua minh (backend tu loc), member khong thay nut nay. */}
+            {/* Nút xem seeding theo team: Admin và Leader đều xem được team của mình */}
             {userRole !== "member" && onViewSeedingRoster && post.id && (
               <button
                 type="button"
                 onClick={() => onViewSeedingRoster(post)}
-                className="px-3 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded-lg text-sm font-semibold transition shadow-sm cursor-pointer"
-                aria-label={userRole === "admin" ? "Xem seeding theo team" : "Xem seeding theo member"}
+                className="px-3 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded-lg text-sm font-semibold transition shadow-sm cursor-pointer flex items-center gap-1.5"
+                aria-label="Xem seeding theo team"
+                title="Xem tiến độ và minh chứng seeding của cả team trên bài viết này"
               >
-                {userRole === "admin" ? "👥 Xem seeding theo team" : "👤 Xem seeding theo member"}
+                <span>👥</span>
+                <span>Xem seeding theo team</span>
               </button>
             )}
 

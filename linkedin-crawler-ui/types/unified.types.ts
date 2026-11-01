@@ -12,7 +12,10 @@ export type UserRole = "member" | "leader" | "admin";
 // ── Posts ────────────────────────────────────────────────────────────────────
 
 export interface UnifiedSeedingInfo {
+  id_member?: string;
+  member_id?: string;
   member_name?: string;
+  member_email?: string;
   seeding_content?: string;
   seeding_name?: string;
   link_comment?: string;
@@ -53,6 +56,7 @@ export interface UnifiedPost {
   crawler_name?: string;
   crawler_team?: string;
   all_seedings?: UnifiedSeedingInfo[];
+  is_my_seeding?: boolean;
   /** Chỉ bài Threads/YouTube: từ khoá tìm kiếm đã tìm ra bài (không có group). */
   search_keyword?: string;
   /** Chỉ video YouTube (bảng youtube_posts, migration 155). */

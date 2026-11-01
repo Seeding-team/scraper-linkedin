@@ -939,12 +939,14 @@ def get_unified_posts(
                     kpi_data = kpi_res.data or []
                     seeding_member_ids = list(set([k.get("id_member") for k in kpi_data if k.get("id_member")]))
                     member_name_map = {}
+                    member_email_map = {}
                     if seeding_member_ids:
                         mem_res = execute_supabase_query(
-                            lambda: _supabase().table("app_users").select("id, name").in_("id", seeding_member_ids).execute()
+                            lambda: _supabase().table("app_users").select("id, name, email").in_("id", seeding_member_ids).execute()
                         )
                         for m in (mem_res.data or []):
                             member_name_map[m["id"]] = m.get("name") or "Unknown"
+                            member_email_map[m["id"]] = (m.get("email") or "").strip().lower()
 
                     kpi_map = {}
                     all_seedings_map = {}
@@ -956,7 +958,10 @@ def get_unified_posts(
                             s_member_id = kpi.get("id_member")
                             
                             seeding_info = {
+                                "id_member": s_member_id,
+                                "member_id": s_member_id,
                                 "member_name": member_name_map.get(s_member_id, "Unknown"),
+                                "member_email": member_email_map.get(s_member_id, ""),
                                 "seeding_content": kpi.get("content"),
                                 "seeding_name": sa.get("account_name") if isinstance(sa, dict) else None,
                                 "link_comment": kpi.get("link_comment"),
@@ -967,12 +972,21 @@ def get_unified_posts(
                                 all_seedings_map[pid] = []
                             all_seedings_map[pid].append(seeding_info)
                             
-                            if s_member_id == id_member or pid not in kpi_map:
+                            if s_member_id == id_member:
                                 kpi_map[pid] = {
                                     "seeding_content": kpi.get("content"),
                                     "seeding_name": sa.get("account_name") if isinstance(sa, dict) else None,
                                     "link_comment": kpi.get("link_comment"),
-                                    "verify_status": kpi.get("verify")
+                                    "verify_status": kpi.get("verify"),
+                                    "is_my_seeding": True
+                                }
+                            elif pid not in kpi_map:
+                                kpi_map[pid] = {
+                                    "seeding_content": kpi.get("content"),
+                                    "seeding_name": sa.get("account_name") if isinstance(sa, dict) else None,
+                                    "link_comment": kpi.get("link_comment"),
+                                    "verify_status": kpi.get("verify"),
+                                    "is_my_seeding": False
                                 }
                     
                     for p in all_posts:
