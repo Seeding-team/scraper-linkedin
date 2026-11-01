@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import Image from "next/image";
 import { ZaloKpiPanel } from "./ZaloKpiPanel";
 import { ZaloAccountAssignmentsPanel } from "./ZaloAccountAssignmentsPanel";
+import { ZaloAddAccountModal } from "./ZaloAddAccountModal";
 import { isZaloExtensionAvailable } from "@/services/zaloExtension";
 import { useAppAuth } from "@/contexts/AppAuthContext";
 
@@ -42,6 +43,7 @@ function StatusDot({ tone }: { tone: "success" | "warning" | "muted" | "error" }
 export function ZaloDashboardView({ flow, onEnterChat }: ZaloDashboardViewProps) {
   const { user } = useAppAuth();
   const isAdmin = user?.role === "admin";
+  const [showAddAccountModal, setShowAddAccountModal] = useState(false);
   const [newAccountLabel, setNewAccountLabel] = useState("");
   const [newAccountPhone, setNewAccountPhone] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
@@ -175,52 +177,40 @@ export function ZaloDashboardView({ flow, onEnterChat }: ZaloDashboardViewProps)
         </div>
       )}
 
-      <div className="bg-surface rounded-xl border border-outline-variant px-4 py-3 shadow-sm">
-        <div className="flex items-center gap-2 mb-2.5">
-          <div className="h-6 w-6 rounded-md bg-red-50 flex items-center justify-center">
-            <MaterialIcon name="person_add" className="text-primary text-[14px]" />
+      <div className="flex items-center justify-between gap-3 bg-surface rounded-xl border border-outline-variant px-4 py-3 shadow-xs">
+        <div className="flex items-center gap-2.5">
+          <div className="h-8 w-8 rounded-lg bg-red-50 flex items-center justify-center">
+            <MaterialIcon name="manage_accounts" className="text-primary text-[18px]" />
           </div>
-          <h3 className="text-[12.5px] font-bold text-on-surface">Thêm tài khoản Zalo mới</h3>
-          <span className="text-[10.5px] text-on-surface-variant ml-auto">Label + SĐT tùy chọn</span>
+          <div>
+            <h3 className="text-sm font-bold text-on-surface">Danh sách tài khoản Zalo ({filteredAccounts.length})</h3>
+            <p className="text-[11px] text-on-surface-variant">Quản lý nhận diện, phân công nhân sự và phạm vi nhóm phụ trách</p>
+          </div>
         </div>
-        <div className="flex items-center gap-2">
-          <div className="relative flex-1">
-            <MaterialIcon name="person" className="absolute left-2.5 top-1/2 -translate-y-1/2 text-on-surface-variant text-[14px]" />
-            <input
-              value={newAccountLabel}
-              onChange={(event) => setNewAccountLabel(event.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter") void handleCreateAccount(); }}
-              placeholder="Tên tài khoản (vd: Nam, Mai...)"
-              className="border border-outline-variant bg-surface h-9 w-full rounded-lg pl-8 pr-3 text-[13px] focus:outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary transition-all placeholder:text-on-surface-variant"
-            />
-          </div>
-          <div className="relative flex-1">
-            <MaterialIcon name="call" className="absolute left-2.5 top-1/2 -translate-y-1/2 text-on-surface-variant text-[14px]" />
-            <input
-              value={newAccountPhone}
-              onChange={(event) => setNewAccountPhone(event.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter") void handleCreateAccount(); }}
-              placeholder="Số điện thoại (tùy chọn)"
-              className="border border-outline-variant bg-surface h-9 w-full rounded-lg pl-8 pr-3 text-[13px] focus:outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary transition-all placeholder:text-on-surface-variant"
-            />
-          </div>
-          <button
-            type="button"
-            onClick={() => void handleCreateAccount()}
-            disabled={!newAccountLabel.trim()}
-            className="h-9 bg-primary text-white inline-flex items-center justify-center gap-1 rounded-lg px-4 text-[12.5px] font-semibold disabled:cursor-not-allowed disabled:opacity-50 transition hover:bg-red-700 shadow-sm shadow-red-500/20"
-          >
-            <MaterialIcon name="add" className="text-[16px]" />
-            Thêm
-          </button>
-        </div>
-        {flow.accountsError ? (
-          <div className="border border-red-200 bg-red-50 text-red-600 mt-2.5 rounded-lg px-3 py-2 text-[12px] font-medium flex items-center gap-1.5">
-            <MaterialIcon name="error" className="text-[14px]" />
-            {flow.accountsError}
-          </div>
-        ) : null}
+        <button
+          type="button"
+          onClick={() => setShowAddAccountModal(true)}
+          className="h-9 bg-primary hover:bg-red-700 text-white inline-flex items-center justify-center gap-1.5 rounded-lg px-4 text-[12.5px] font-bold transition shadow-sm shadow-red-500/20 cursor-pointer"
+        >
+          <MaterialIcon name="person_add" className="text-[16px]" />
+          Thêm tài khoản
+        </button>
       </div>
+
+      <ZaloAddAccountModal
+        open={showAddAccountModal}
+        onClose={() => setShowAddAccountModal(false)}
+        onSubmit={async (data) => {
+          await flow.createAccount(data.label, data.phone, {
+            owner_name: data.owner_name,
+            id_member: data.id_member,
+            sim_location: data.sim_location,
+            sim_location_detail: data.sim_location_detail,
+            domain_ids: data.domain_ids,
+            group_ids: data.group_ids,
+          });
+        }}
+      />
 
       <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
         {filteredAccounts.map((account) => {

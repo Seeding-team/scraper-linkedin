@@ -95,6 +95,11 @@ class ZaloAccountCreate(BaseModel):
     label: str = Field(min_length=1)
     phone: Optional[str] = None
     email: Optional[str] = None  # dùng để auto-resolve id_member nếu không truyền
+    owner_name: Optional[str] = None
+    sim_location: Optional[str] = "owner"
+    sim_location_detail: Optional[str] = None
+    domain_ids: Optional[List[str]] = None
+    group_ids: Optional[List[str]] = None
 
 
 class ZaloAccountUpdate(BaseModel):
@@ -251,6 +256,11 @@ async def create_account(
             label=body.label.strip(),
             phone=body.phone,
             status="not_logged_in",
+            owner_name=body.owner_name,
+            sim_location=body.sim_location or "owner",
+            sim_location_detail=body.sim_location_detail,
+            assigned_domains=body.domain_ids or [],
+            assigned_groups=body.group_ids or [],
         )
         await upsert_zalo_user(
             account_id,
@@ -272,6 +282,11 @@ async def create_account(
         "owner_id": owner_id,
         "label": body.label.strip(),
         "phone": body.phone,
+        "owner_name": body.owner_name,
+        "sim_location": body.sim_location or "owner",
+        "sim_location_detail": body.sim_location_detail,
+        "assigned_domains": body.domain_ids or [],
+        "assigned_groups": body.group_ids or [],
         "status": "not_logged_in",
         "has_auth": False,
         "listener": get_listener_status(account_id),

@@ -556,6 +556,11 @@ async def upsert_zalo_account(
     is_active: bool = True,
     id_member: Optional[str] = None,
     is_shared_with_all: Optional[bool] = None,
+    owner_name: Optional[str] = None,
+    sim_location: Optional[str] = None,
+    sim_location_detail: Optional[str] = None,
+    assigned_domains: Optional[List[str]] = None,
+    assigned_groups: Optional[List[str]] = None,
 ) -> None:
     if not is_supabase_configured():
         return
@@ -577,6 +582,16 @@ async def upsert_zalo_account(
         payload["id_member"] = id_member
     if is_shared_with_all is not None:
         payload["is_shared_with_all"] = is_shared_with_all
+    if owner_name is not None:
+        payload["owner_name"] = owner_name
+    if sim_location is not None:
+        payload["sim_location"] = sim_location
+    if sim_location_detail is not None:
+        payload["sim_location_detail"] = sim_location_detail
+    if assigned_domains is not None:
+        payload["assigned_domains"] = assigned_domains
+    if assigned_groups is not None:
+        payload["assigned_groups"] = assigned_groups
     if status == "confirmed":
         payload["last_login_at"] = now
 

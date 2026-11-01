@@ -110,6 +110,11 @@ export function createZaloAccount(payload: {
   id_member?: string;
   label: string;
   phone?: string;
+  owner_name?: string;
+  sim_location?: string;
+  sim_location_detail?: string;
+  domain_ids?: string[];
+  group_ids?: string[];
 }) {
   return requestJson<{ account_id: string; message?: string }>("/api/all-platform/zalo/accounts", {
     method: "POST",
