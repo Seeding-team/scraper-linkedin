@@ -291,7 +291,7 @@ export default function QuickCommentsPage() {
         </div>
 
         {/* STATS CARDS */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3.5 mb-6">
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-3.5 mb-6">
           <div className="bg-white border border-gray-200 rounded-2xl p-4 shadow-[0_2px_8px_rgba(0,0,0,0.03)]">
             <span className="text-xs font-semibold text-gray-500 block">Tổng mẫu câu</span>
             <div className="text-2xl font-black text-gray-900 mt-1">{templates.length}</div>
@@ -318,6 +318,13 @@ export default function QuickCommentsPage() {
             </div>
             <span className="text-[11px] text-red-500 font-medium">Dùng cho YouTube</span>
           </div>
+          <div className="bg-white border border-sky-100 rounded-2xl p-4 shadow-[0_2px_8px_rgba(0,0,0,0.03)]">
+            <span className="text-xs font-semibold text-sky-600 block">Zalo</span>
+            <div className="text-2xl font-black text-sky-950 mt-1">
+              {templates.filter((t) => t.platform === "all" || t.platform === "zalo").length}
+            </div>
+            <span className="text-[11px] text-sky-500 font-medium">Dùng cho Zalo</span>
+          </div>
         </div>
 
         {/* FILTERS & SEARCH BAR */}
@@ -329,6 +336,7 @@ export default function QuickCommentsPage() {
               { id: "facebook", label: "Facebook" },
               { id: "linkedin", label: "LinkedIn" },
               { id: "youtube", label: "YouTube" },
+              { id: "zalo", label: "Zalo" },
             ].map((tab) => (
               <button
                 key={tab.id}
@@ -560,6 +568,7 @@ export default function QuickCommentsPage() {
                     <option value="facebook">Facebook</option>
                     <option value="linkedin">LinkedIn</option>
                     <option value="youtube">YouTube</option>
+                    <option value="zalo">Zalo</option>
                   </select>
                 </div>
               </div>

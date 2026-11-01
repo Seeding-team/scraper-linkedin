@@ -4,6 +4,9 @@ import React, { useState, useEffect } from "react";
 import { FiX, FiMessageSquare, FiExternalLink, FiPhone, FiCheck, FiAlertCircle, FiSend } from "react-icons/fi";
 import { useZaloAccountOptions } from "@/components/all-platform/zalo/centralized-shared/useZaloAccountOptions";
 import { findZaloUser, createZaloUserThread, sendZaloMessage } from "@/services/zaloCrawlerService";
+import { allPlatformQuickCommentService } from "@/services/all-platform.service";
+import { QuickCommentTemplate } from "@/types/unified.types";
+import { useAppAuth } from "@/contexts/AppAuthContext";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 
@@ -27,22 +30,81 @@ export function ZaloContactModal({
   postUrl,
 }: ZaloContactModalProps) {
   const router = useRouter();
+  const { user } = useAppAuth();
   const { accounts, selectedAccountId, setSelectedAccountId, loading } = useZaloAccountOptions();
   
   const [message, setMessage] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [statusText, setStatusText] = useState<string | null>(null);
 
-  // Chuẩn bị tin nhắn chào hỏi mẫu thông minh
+  // Danh sách mẫu câu chào Zalo & Mặc định cá nhân
+  const [templates, setTemplates] = useState<QuickCommentTemplate[]>([]);
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null);
+  const [defaultTemplateId, setDefaultTemplateId] = useState<string | null>(null);
+
+  const userEmail = user?.email || "default_user";
+  const defaultStorageKey = `zalo_default_greeting_id_${userEmail}`;
+
+  // Tải danh sách mẫu câu Zalo từ thư viện mẫu câu chung
+  useEffect(() => {
+    if (!open) return;
+    allPlatformQuickCommentService.getAll("zalo").then((res) => {
+      if (res?.success && Array.isArray(res.data)) {
+        setTemplates(res.data);
+      }
+    }).catch(() => {});
+  }, [open]);
+
+  // Chuẩn bị tin nhắn chào hỏi mẫu thông minh và áp dụng mẫu mặc định của cá nhân
   useEffect(() => {
     if (open) {
-      const gName = groupName ? ` trong nhóm "${groupName}"` : "";
-      const defaultMsg = `Chào bạn, mình thấy bài viết của bạn${gName}. Mình liên hệ qua Zalo để tư vấn và hỗ trợ bạn nhé!`;
-      setMessage(defaultMsg);
       setStatusText(null);
       setSubmitting(false);
+
+      const savedDefaultId = typeof window !== "undefined" ? localStorage.getItem(defaultStorageKey) : null;
+      setDefaultTemplateId(savedDefaultId);
+
+      const gName = groupName ? ` trong nhóm "${groupName}"` : "";
+      const fallbackMsg = `Chào bạn, mình thấy bài viết của bạn${gName}. Mình liên hệ qua Zalo để tư vấn và hỗ trợ bạn nhé!`;
+
+      if (savedDefaultId && templates.length > 0) {
+        const found = templates.find((t) => t.id === savedDefaultId);
+        if (found) {
+          setSelectedTemplateId(found.id);
+          const formatted = found.content.replace(/\{group_name\}/g, groupName || "nhóm");
+          setMessage(formatted);
+          return;
+        }
+      }
+
+      // Nếu có mẫu Zalo đầu tiên hoặc fallback
+      if (templates.length > 0 && !selectedTemplateId) {
+        const first = templates[0];
+        setSelectedTemplateId(first.id);
+        const formatted = first.content.replace(/\{group_name\}/g, groupName || "nhóm");
+        setMessage(formatted);
+      } else if (!message) {
+        setMessage(fallbackMsg);
+      }
     }
-  }, [open, groupName]);
+  }, [open, groupName, templates, defaultStorageKey]);
+
+  // Chọn mẫu câu
+  const handleSelectTemplate = (tpl: QuickCommentTemplate) => {
+    setSelectedTemplateId(tpl.id);
+    const formatted = tpl.content.replace(/\{group_name\}/g, groupName || "nhóm");
+    setMessage(formatted);
+  };
+
+  // Thiết lập mẫu câu hiện tại làm mặc định cho cá nhân
+  const handleSetAsDefault = (tplId: string) => {
+    if (typeof window !== "undefined") {
+      localStorage.setItem(defaultStorageKey, tplId);
+      setDefaultTemplateId(tplId);
+      const tpl = templates.find((t) => t.id === tplId);
+      toast.success(`Đã đặt mẫu "${tpl?.title || "chào hỏi"}" làm mặc định Zalo cho bạn!`);
+    }
+  };
 
   if (!open) return null;
 
@@ -214,14 +276,54 @@ export function ZaloContactModal({
             )}
           </div>
 
-          {/* Ô soạn lời chào */}
+          {/* Ô soạn lời chào & Danh sách mẫu câu chọn nhanh */}
           <div>
-            <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5 uppercase tracking-wider">
-              Lời chào mẫu gửi tới khách hàng:
-            </label>
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider">
+                Lời chào mẫu gửi tới khách hàng:
+              </label>
+              {selectedTemplateId && (
+                <button
+                  type="button"
+                  onClick={() => handleSetAsDefault(selectedTemplateId)}
+                  className="text-[11px] font-semibold text-sky-600 hover:text-sky-700 dark:text-sky-400 flex items-center gap-1 cursor-pointer transition-colors"
+                  title="Đặt mẫu này làm mặc định cho các lần nhắn tin sau của bạn"
+                >
+                  <span>{defaultTemplateId === selectedTemplateId ? "★ Đang là mặc định" : "☆ Đặt làm mặc định"}</span>
+                </button>
+              )}
+            </div>
+
+            {/* Danh sách các mẫu câu Zalo từ thư viện chung */}
+            {templates.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 mb-2 max-h-24 overflow-y-auto pr-1">
+                {templates.map((tpl) => {
+                  const isSelected = selectedTemplateId === tpl.id;
+                  const isDefault = defaultTemplateId === tpl.id;
+                  return (
+                    <button
+                      key={tpl.id}
+                      type="button"
+                      onClick={() => handleSelectTemplate(tpl)}
+                      className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold transition-all cursor-pointer ${
+                        isSelected
+                          ? "bg-sky-600 text-white shadow-xs ring-1 ring-sky-500"
+                          : "bg-slate-100 hover:bg-slate-200/80 text-slate-700 dark:bg-slate-800 dark:text-slate-300 border border-slate-200 dark:border-slate-700"
+                      }`}
+                    >
+                      {isDefault && <span className="text-amber-300 font-bold">★</span>}
+                      <span className="truncate max-w-[150px]">{tpl.title}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
             <textarea
               value={message}
-              onChange={(e) => setMessage(e.target.value)}
+              onChange={(e) => {
+                setMessage(e.target.value);
+              }}
               rows={3}
               placeholder="Nhập nội dung tin nhắn mở đầu..."
               className="w-full text-xs rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-2.5 text-slate-800 dark:text-slate-100 placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-sky-500 resize-none"
