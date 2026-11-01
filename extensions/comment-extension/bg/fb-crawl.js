@@ -166,7 +166,9 @@
                 reportProgress(i + 1);
 
                 // Nghỉ an toàn giữa các nhóm Facebook né bot
-                const delayMs = Math.floor(Math.random() * 12000) + 10000; // 10s - 22s
+                const delayMs = (config.groupRestSec != null && Number(config.groupRestSec) > 0)
+                    ? Number(config.groupRestSec) * 1000
+                    : (Math.floor(Math.random() * 12000) + 10000); // Tùy chỉnh hoặc 10s - 22s
                 log(`🛡️ Chống bot: Chờ an toàn ${(delayMs / 1000).toFixed(1)}s trước khi mở nhóm Facebook tiếp theo...`);
                 await sleep(delayMs);
             }

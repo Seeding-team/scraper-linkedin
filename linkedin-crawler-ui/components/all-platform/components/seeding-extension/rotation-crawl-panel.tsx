@@ -114,6 +114,28 @@ function useGroupOptions(platform: "facebook" | "linkedin") {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // ── THÔNG SỐ CÀO & CUỘN CHỐNG CHECKPOINT (ĐỒNG BỘ EXTENSION) ──
+  const [scrollDistance, setScrollDistance] = useState<number>(1600);
+  const [scrollDelayMin, setScrollDelayMin] = useState<number>(1.5);
+  const [scrollDelayMax, setScrollDelayMax] = useState<number>(2.8);
+  const [groupRestSec, setGroupRestSec] = useState<number>(45);
+  const [maxScrolls, setMaxScrolls] = useState<number>(25);
+  const [oldPostsLimit, setOldPostsLimit] = useState<number>(15);
+  const [maxPostsPerGroup, setMaxPostsPerGroup] = useState<number>(30);
+  const [maxScrollTimeSec, setMaxScrollTimeSec] = useState<number>(90);
+  const [isAdvancedOpen, setIsAdvancedOpen] = useState<boolean>(true);
+
+  const resetCrawlSettingsToDefault = () => {
+    setScrollDistance(1600);
+    setScrollDelayMin(1.5);
+    setScrollDelayMax(2.8);
+    setGroupRestSec(45);
+    setMaxScrolls(25);
+    setOldPostsLimit(15);
+    setMaxPostsPerGroup(30);
+    setMaxScrollTimeSec(90);
+  };
+
   useEffect(() => {
     let cancelled = false;
     allPlatformGroupsService
@@ -916,6 +938,14 @@ function AddScheduleModal({
         threadsAutoDiscover,
         threadsTopicIds,
         threadsTopicNames,
+        scrollDistance,
+        scrollDelayMinMs: Math.round(scrollDelayMin * 1000),
+        scrollDelayMaxMs: Math.round(scrollDelayMax * 1000),
+        groupRestSec,
+        maxScrolls,
+        oldPostsLimit,
+        maxPostsPerGroup,
+        maxScrollTimeSec,
       },
     };
 
@@ -1192,6 +1222,183 @@ function AddScheduleModal({
               )}
             </div>
           )}
+
+          {/* Tùy chỉnh thông số cào & Cuộn chống checkpoint */}
+          <div className="rounded-xl border border-border bg-card/60 overflow-hidden shadow-xs">
+            <button
+              type="button"
+              onClick={() => setIsAdvancedOpen(!isAdvancedOpen)}
+              className="w-full flex items-center justify-between p-3 text-left hover:bg-muted/40 transition-colors cursor-pointer select-none"
+            >
+              <div className="flex items-center gap-2">
+                <span className="text-sm">⚙️</span>
+                <span className="text-xs font-bold text-foreground">Tùy chỉnh thông số cào chuyên sâu</span>
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 font-semibold border border-emerald-200">
+                  Khớp cài đặt Extension
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-[11px] text-muted-foreground font-medium">
+                  {isAdvancedOpen ? "Thu gọn ▲" : "Tùy chỉnh ▼"}
+                </span>
+              </div>
+            </button>
+
+            {isAdvancedOpen && (
+              <div className="p-3 pt-0 border-t border-border/50 space-y-3">
+                <div className="flex items-center justify-between pt-2">
+                  <p className="text-[11px] text-muted-foreground">
+                    Điều chỉnh tốc độ cuộn, thời gian nghỉ và giới hạn bài viết phù hợp với cấu hình Extension trên máy bạn:
+                  </p>
+                  <button
+                    type="button"
+                    onClick={resetCrawlSettingsToDefault}
+                    className="text-[11px] font-semibold text-primary hover:underline cursor-pointer shrink-0 ml-2"
+                  >
+                    🔄 Mặc định an toàn
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
+                  {/* Khoảng cách cuộn mỗi nhịp */}
+                  <div>
+                    <label className="text-[11px] font-bold text-foreground block mb-1">
+                      Cuộn mỗi nhịp (Pixels)
+                    </label>
+                    <input
+                      type="number"
+                      min={800}
+                      max={3000}
+                      step={100}
+                      value={scrollDistance}
+                      onChange={(e) => setScrollDistance(Number(e.target.value) || 1600)}
+                      className="w-full rounded-lg border border-border bg-background px-2.5 py-1.5 text-xs text-foreground focus:border-primary focus:outline-none"
+                    />
+                    <span className="text-[10px] text-muted-foreground block mt-0.5">Khuyên dùng: 1400 - 2000px</span>
+                  </div>
+
+                  {/* Thời gian cuộn tối đa / nhóm */}
+                  <div>
+                    <label className="text-[11px] font-bold text-foreground block mb-1">
+                      Thời gian cuộn / nhóm (giây)
+                    </label>
+                    <input
+                      type="number"
+                      min={15}
+                      max={600}
+                      step={15}
+                      value={maxScrollTimeSec}
+                      onChange={(e) => setMaxScrollTimeSec(Number(e.target.value) || 90)}
+                      className="w-full rounded-lg border border-border bg-background px-2.5 py-1.5 text-xs text-foreground focus:border-primary focus:outline-none"
+                    />
+                    <span className="text-[10px] text-muted-foreground block mt-0.5">Mặc định: 90s</span>
+                  </div>
+
+                  {/* Nghỉ giữa 2 lần cuộn Min */}
+                  <div>
+                    <label className="text-[11px] font-bold text-foreground block mb-1">
+                      Độ trễ cuộn ít nhất (giây)
+                    </label>
+                    <input
+                      type="number"
+                      min={0.5}
+                      max={10}
+                      step={0.1}
+                      value={scrollDelayMin}
+                      onChange={(e) => setScrollDelayMin(Number(e.target.value) || 1.5)}
+                      className="w-full rounded-lg border border-border bg-background px-2.5 py-1.5 text-xs text-foreground focus:border-primary focus:outline-none"
+                    />
+                    <span className="text-[10px] text-muted-foreground block mt-0.5">Mặc định: 1.5s</span>
+                  </div>
+
+                  {/* Nghỉ giữa 2 lần cuộn Max */}
+                  <div>
+                    <label className="text-[11px] font-bold text-foreground block mb-1">
+                      Độ trễ cuộn nhiều nhất (giây)
+                    </label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={20}
+                      step={0.1}
+                      value={scrollDelayMax}
+                      onChange={(e) => setScrollDelayMax(Number(e.target.value) || 2.8)}
+                      className="w-full rounded-lg border border-border bg-background px-2.5 py-1.5 text-xs text-foreground focus:border-primary focus:outline-none"
+                    />
+                    <span className="text-[10px] text-muted-foreground block mt-0.5">Mặc định: 2.8s</span>
+                  </div>
+
+                  {/* Nghỉ giữa 2 nhóm */}
+                  <div>
+                    <label className="text-[11px] font-bold text-foreground block mb-1">
+                      Nghỉ giữa 2 nhóm (giây)
+                    </label>
+                    <input
+                      type="number"
+                      min={10}
+                      max={600}
+                      step={5}
+                      value={groupRestSec}
+                      onChange={(e) => setGroupRestSec(Number(e.target.value) || 45)}
+                      className="w-full rounded-lg border border-border bg-background px-2.5 py-1.5 text-xs text-foreground focus:border-primary focus:outline-none"
+                    />
+                    <span className="text-[10px] text-muted-foreground block mt-0.5">Chống checkpoint (45s)</span>
+                  </div>
+
+                  {/* Số lần cuộn tối đa / nhóm */}
+                  <div>
+                    <label className="text-[11px] font-bold text-foreground block mb-1">
+                      Số lần cuộn tối đa / nhóm
+                    </label>
+                    <input
+                      type="number"
+                      min={5}
+                      max={100}
+                      step={5}
+                      value={maxScrolls}
+                      onChange={(e) => setMaxScrolls(Number(e.target.value) || 25)}
+                      className="w-full rounded-lg border border-border bg-background px-2.5 py-1.5 text-xs text-foreground focus:border-primary focus:outline-none"
+                    />
+                    <span className="text-[10px] text-muted-foreground block mt-0.5">Tối đa 25 nhịp cuộn</span>
+                  </div>
+
+                  {/* Giới hạn bài cũ dừng nhóm */}
+                  <div>
+                    <label className="text-[11px] font-bold text-foreground block mb-1">
+                      Cắt nhóm khi gặp bài cũ
+                    </label>
+                    <input
+                      type="number"
+                      min={5}
+                      max={50}
+                      step={1}
+                      value={oldPostsLimit}
+                      onChange={(e) => setOldPostsLimit(Number(e.target.value) || 15)}
+                      className="w-full rounded-lg border border-border bg-background px-2.5 py-1.5 text-xs text-foreground focus:border-primary focus:outline-none"
+                    />
+                    <span className="text-[10px] text-muted-foreground block mt-0.5">Dừng khi gặp 15 bài cũ</span>
+                  </div>
+
+                  {/* Bài tối đa / nhóm */}
+                  <div>
+                    <label className="text-[11px] font-bold text-foreground block mb-1">
+                      Số bài tối đa / nhóm
+                    </label>
+                    <input
+                      type="number"
+                      min={5}
+                      max={200}
+                      step={5}
+                      value={maxPostsPerGroup}
+                      onChange={(e) => setMaxPostsPerGroup(Number(e.target.value) || 30)}
+                      className="w-full rounded-lg border border-border bg-background px-2.5 py-1.5 text-xs text-foreground focus:border-primary focus:outline-none"
+                    />
+                    <span className="text-[10px] text-muted-foreground block mt-0.5">Mặc định: 30 bài / nhóm</span>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
 
           {/* Repeat interval */}
           <div>

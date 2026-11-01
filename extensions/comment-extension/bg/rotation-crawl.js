@@ -168,6 +168,16 @@
         const isCancelled = () => cancelRequestedIds.has(scheduleId);
         const autoThreadsKeywordsPromise = cfg.threadsAutoDiscover ? fetchAutoThreadsKeywords(cfg.apiBase) : Promise.resolve([]);
 
+        // ── THÔNG SỐ CÀO & CUỘN TÙY CHỈNH THEO CÀI ĐẶT EXTENSION ──
+        const scrollDistance = cfg.scrollDistance || 1600;
+        const scrollDelayMinMs = cfg.scrollDelayMinMs || 1500;
+        const scrollDelayMaxMs = cfg.scrollDelayMaxMs || 2800;
+        const groupRestSec = cfg.groupRestSec || 45;
+        const maxScrolls = cfg.maxScrolls || 25;
+        const oldPostsLimit = cfg.oldPostsLimit || 15;
+        const maxPosts = cfg.maxPostsPerGroup || 30;
+        const maxScrollTimeSec = cfg.maxScrollTimeSec || 90;
+
         // 1. CHỐNG BOT NÉ CHECKPOINT: XÁO TRỘN NGẪU NHIÊN THỨ TỰ NHÓM FACEBOOK MỖI VÒNG (FISHER-YATES)
         const fbGroupsToRun = (cfg.antiBotEnabled !== false && cfg.fbGroups.length > 1)
             ? shuffleArray(cfg.fbGroups)
@@ -178,7 +188,21 @@
             log(scheduleId, label, `[Vòng ${roundNumber}] Bắt đầu cào Facebook (${fbGroupsToRun.length} nhóm${cfg.antiBotEnabled !== false ? " - đã xáo trộn thứ tự né bot" : ""})...`);
             self.__mkFbProgressHook = (p) => progress(scheduleId, "facebook", p);
             try {
-                summary.facebook = await self.__mkStartFbCrawl(fbGroupsToRun, { apiBase: cfg.apiBase, idMember: cfg.idMember, fetchCount: 100, dashboardTabId, antiBotEnabled: cfg.antiBotEnabled !== false });
+                summary.facebook = await self.__mkStartFbCrawl(fbGroupsToRun, {
+                    apiBase: cfg.apiBase,
+                    idMember: cfg.idMember,
+                    fetchCount: maxPosts || 100,
+                    maxPosts,
+                    groupRestSec,
+                    scrollDistance,
+                    scrollDelayMinMs,
+                    scrollDelayMaxMs,
+                    maxScrolls,
+                    oldPostsLimit,
+                    maxScrollTimeSec,
+                    dashboardTabId,
+                    antiBotEnabled: cfg.antiBotEnabled !== false
+                });
                 log(scheduleId, label, `[Vòng ${roundNumber}] Facebook xong: lưu ${summary.facebook.totalSaved} bài mới${summary.facebook.stopped ? " — BỊ DỪNG GIỮA CHỪNG (có thể do tab Facebook bị đóng)" : ""}.`, summary.facebook.stopped ? "warn" : "success");
             } catch (e) {
                 log(scheduleId, label, `[Vòng ${roundNumber}] Lỗi cào Facebook: ${e.message}`, "error");
@@ -204,7 +228,19 @@
             log(scheduleId, label, `[Vòng ${roundNumber}] Bắt đầu cào LinkedIn (${liGroupsToRun.length} nhóm${cfg.antiBotEnabled !== false ? " - đã xáo trộn thứ tự né bot" : ""})...`);
             self.__mkLiProgressHook = (p) => progress(scheduleId, "linkedin", p);
             try {
-                summary.linkedin = await self.__mkStartLiCrawl(liGroupsToRun, { apiBase: cfg.apiBase, idMember: cfg.idMember, maxPosts: 40, dashboardTabId });
+                summary.linkedin = await self.__mkStartLiCrawl(liGroupsToRun, {
+                    apiBase: cfg.apiBase,
+                    idMember: cfg.idMember,
+                    maxPosts,
+                    groupRestSec,
+                    scrollDistance,
+                    scrollDelayMinMs,
+                    scrollDelayMaxMs,
+                    maxScrolls,
+                    oldPostsLimit,
+                    maxScrollTimeSec,
+                    dashboardTabId
+                });
                 log(scheduleId, label, `[Vòng ${roundNumber}] LinkedIn xong: lưu ${summary.linkedin.totalSaved} bài mới${summary.linkedin.stopped ? " — BỊ DỪNG GIỮA CHỪNG (có thể do tab LinkedIn bị đóng)" : ""}.`, summary.linkedin.stopped ? "warn" : "success");
             } catch (e) {
                 log(scheduleId, label, `[Vòng ${roundNumber}] Lỗi cào LinkedIn: ${e.message}`, "error");
@@ -231,7 +267,20 @@
             log(scheduleId, label, `[Vòng ${roundNumber}] Bắt đầu tìm Threads (${effectiveThreadsKeywords.length} từ khoá)...`);
             self.__mkThreadsProgressHook = (p) => progress(scheduleId, "threads", p);
             try {
-                summary.threads = await self.__mkStartThreadsCrawl(effectiveThreadsKeywords, { apiBase: cfg.apiBase, idMember: cfg.idMember, postLimit: 20, dashboardTabId, sortRecent: true });
+                summary.threads = await self.__mkStartThreadsCrawl(effectiveThreadsKeywords, {
+                    apiBase: cfg.apiBase,
+                    idMember: cfg.idMember,
+                    postLimit: maxPosts || 20,
+                    groupRestSec,
+                    scrollDistance,
+                    scrollDelayMinMs,
+                    scrollDelayMaxMs,
+                    maxScrolls,
+                    oldPostsLimit,
+                    maxScrollTimeSec,
+                    dashboardTabId,
+                    sortRecent: true
+                });
                 log(scheduleId, label, `[Vòng ${roundNumber}] Threads xong: lưu ${summary.threads.totalSaved} bài mới${summary.threads.stopped ? " — BỊ DỪNG GIỮA CHỪNG" : ""}.`, summary.threads.stopped ? "warn" : "success");
             } catch (e) {
                 log(scheduleId, label, `[Vòng ${roundNumber}] Lỗi tìm Threads: ${e.message}`, "error");

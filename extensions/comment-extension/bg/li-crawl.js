@@ -173,7 +173,9 @@
         const nextIndex = state.groupQueue.findIndex((g, i) => i > state.currentIndex && g.status === "pending");
         if (nextIndex === -1) return false;
         // Nghỉ an toàn giữa các nhóm LinkedIn né bot
-        const cooldown = 15000 + Math.floor(Math.random() * 15000); // 15s - 30s
+        const cooldown = (state.config && state.config.groupRestSec != null && Number(state.config.groupRestSec) > 0)
+            ? Number(state.config.groupRestSec) * 1000
+            : (15000 + Math.floor(Math.random() * 15000)); // Tùy chỉnh hoặc 15s - 30s
         log(`🛡️ Chống bot: Chờ an toàn ${(cooldown / 1000).toFixed(1)}s trước khi mở nhóm LinkedIn tiếp theo...`);
         await sleep(cooldown);
         state.currentIndex = nextIndex;
@@ -260,6 +262,13 @@
             .map((g) => ({ url: String(g.url).trim(), name: g.name || null, status: "pending", savedCount: 0, error: null }));
         const cfg = request.config || {};
         if (cfg.maxPosts) state.config.maxPosts = Math.max(1, Math.min(200, parseInt(cfg.maxPosts, 10) || 40));
+        if (cfg.scrollDelayMinMs) state.config.scrollDelayMinMs = cfg.scrollDelayMinMs;
+        if (cfg.scrollDelayMaxMs) state.config.scrollDelayMaxMs = cfg.scrollDelayMaxMs;
+        if (cfg.scrollDistance) state.config.scrollDistance = cfg.scrollDistance;
+        if (cfg.maxScrolls) state.config.maxScrolls = cfg.maxScrolls;
+        if (cfg.oldPostsLimit) state.config.oldPostsLimit = cfg.oldPostsLimit;
+        if (cfg.maxScrollTimeSec) state.config.maxScrollTimeSec = cfg.maxScrollTimeSec;
+        if (cfg.groupRestSec) state.config.groupRestSec = cfg.groupRestSec;
         state.apiBase = cfg.apiBase || DEFAULT_API_BASE;
         state.idMember = cfg.idMember || null;
         state.dashboardTabId = dashboardTabId;

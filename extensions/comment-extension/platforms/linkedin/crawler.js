@@ -461,6 +461,10 @@
       this.maxPosts = config.maxPosts || 40;
       this.scrollDelayMinMs = config.scrollDelayMinMs || 2500;
       this.scrollDelayMaxMs = config.scrollDelayMaxMs || 5000;
+      this.scrollDistance = config.scrollDistance || 1600;
+      this.maxScrolls = config.maxScrolls || 25;
+      this.oldPostsLimit = config.oldPostsLimit || 15;
+      this.maxScrollTimeSec = config.maxScrollTimeSec || 90;
     }
 
     stop() {
@@ -551,6 +555,10 @@
           send({ type: "LI_CRAWL_LOG", level: "success", message: `Đã đạt số bài tối đa (${this.maxPosts}).` });
           break;
         }
+        if (this.maxScrolls && this.scrollCount >= this.maxScrolls) {
+          send({ type: "LI_CRAWL_LOG", level: "warn", message: `Đã đạt giới hạn số lần cuộn tối đa (${this.maxScrolls} lần) — chuyển nhóm.` });
+          break;
+        }
         if (idleScrolls >= 4) {
           send({ type: "LI_CRAWL_LOG", level: "warn", message: "Cuộn 4 lần liên tiếp không thấy bài mới — dừng." });
           break;
@@ -560,7 +568,9 @@
           break;
         }
 
-        const scrollAmount = randomBetween(500, 900);
+        const minScroll = Math.max(400, Math.round((this.scrollDistance || 1600) * 0.85));
+        const maxScroll = Math.max(minScroll + 200, Math.round((this.scrollDistance || 1600) * 1.15));
+        const scrollAmount = randomBetween(minScroll, maxScroll);
         window.scrollBy(0, scrollAmount);
         this.scrollCount++;
 
