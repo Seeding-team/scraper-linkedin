@@ -1,6 +1,7 @@
 """Unified posts service — single source of truth from Supabase, no cache."""
 
 from __future__ import annotations
+import re
 from app.core.utils.datetime_utils import extract_linkedin_post_time
 
 from concurrent.futures import ThreadPoolExecutor
@@ -42,6 +43,34 @@ def _with_seeding_system_visible(allowed_member_ids: Optional[list[str]]) -> Opt
 # Nguong diem "cao" cho view mac dinh khi vao trang (yeu cau 2026-10-02: "diem cao tam 80
 # 85 tro len") - dung 80 lam nguong duy nhat (dau duoi khoang nguoi dung neu).
 _DEFAULT_MIN_LEAD_SCORE = 40
+
+_OWN_COMPANY_PHONES = {"0765055708", "0902355083", "84765055708", "84902355083"}
+
+
+def _normalize_display_phone(raw: Optional[str]) -> Optional[str]:
+    """Normalize phone number to standard Vietnamese 0... format, removing +84 prefix."""
+    if not raw or not isinstance(raw, str):
+        return None
+    digits = re.sub(r"\D", "", raw)
+    if digits.startswith("84") and len(digits) >= 10:
+        digits = "0" + digits[2:]
+    if digits in _OWN_COMPANY_PHONES:
+        return None
+    return digits if digits else None
+
+
+def _extract_phone_from_text(content: Optional[str]) -> Optional[str]:
+    """Extract standard Vietnamese phone numbers (03/05/07/08/09) from text."""
+    if not content or not isinstance(content, str):
+        return None
+    pattern = r"(?:(?:\+?84|0)[35789](?:[.\s-]?\d){8})"
+    matches = re.findall(pattern, content)
+    for m in matches:
+        norm = _normalize_display_phone(m)
+        if norm and len(norm) == 10 and norm.startswith("0"):
+            return norm
+    return None
+
 
 
 # ── Core fetch ──────────────────────────────────────────────────────────────────
