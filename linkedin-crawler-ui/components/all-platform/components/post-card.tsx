@@ -815,6 +815,27 @@ function TaskModal({ post, onClose }: { post: UnifiedPost; onClose: () => void; 
   const [commentText, setCommentText] = useState("");
   const [copiedInboxId, setCopiedInboxId] = useState<string | null>(null);
 
+  // Mặc định tự động chọn mẫu bình luận nhanh "Thiết kế website" theo yêu cầu Master
+  useEffect(() => {
+    if (commentTemplates.length > 0 && !commentText) {
+      const targetTpl = commentTemplates.find((t) => {
+        const titleLower = (t.title || "").toLowerCase();
+        const contentLower = (t.content || "").toLowerCase();
+        return (
+          titleLower.includes("thiết kế website") ||
+          titleLower.includes("thiet ke website") ||
+          titleLower.includes("website") ||
+          contentLower.includes("thiết kế website")
+        );
+      }) || commentTemplates[0];
+
+      if (targetTpl && targetTpl.content) {
+        setCommentText(targetTpl.content);
+        navigator.clipboard.writeText(targetTpl.content).catch(() => {});
+      }
+    }
+  }, [commentTemplates, commentText]);
+
   const { libraryItems, fallbackItems } = useQuickInboxLibrary();
   const inboxGroups = useMemo(() => {
     const templates = libraryItems.length > 0 ? libraryItems : fallbackItems;
@@ -900,20 +921,28 @@ function TaskModal({ post, onClose }: { post: UnifiedPost; onClose: () => void; 
             <label className="text-sm font-bold text-foreground">1. Mẫu bình luận nhanh (Tùy chọn)</label>
             {commentTemplates.length > 0 && (
               <div className="flex flex-wrap gap-1.5">
-                {commentTemplates.slice(0, 8).map((t) => (
-                  <button
-                    key={t.id}
-                    type="button"
-                    onClick={() => {
-                      setCommentText(t.content);
-                      navigator.clipboard.writeText(t.content).catch(() => {});
-                      toast.info(`Đã chọn & chép mẫu "${t.title}" vào clipboard`);
-                    }}
-                    className="px-2.5 py-1 rounded-full border border-border text-[11px] font-semibold text-muted-foreground hover:border-primary hover:text-primary transition cursor-pointer"
-                  >
-                    {t.title}
-                  </button>
-                ))}
+                {commentTemplates.slice(0, 8).map((t) => {
+                  const isSelected = commentText === t.content;
+                  return (
+                    <button
+                      key={t.id}
+                      type="button"
+                      onClick={() => {
+                        setCommentText(t.content);
+                        navigator.clipboard.writeText(t.content).catch(() => {});
+                        toast.info(`Đã chọn & chép mẫu "${t.title}" vào clipboard`);
+                      }}
+                      className={`px-3 py-1 rounded-full border text-[11px] font-semibold transition-all cursor-pointer ${
+                        isSelected
+                          ? "bg-primary text-white border-primary shadow-xs ring-2 ring-primary/20 font-bold"
+                          : "border-border text-muted-foreground hover:border-primary/50 hover:text-foreground"
+                      }`}
+                    >
+                      {isSelected && <span className="mr-1">✓</span>}
+                      {t.title}
+                    </button>
+                  );
+                })}
               </div>
             )}
             <textarea
