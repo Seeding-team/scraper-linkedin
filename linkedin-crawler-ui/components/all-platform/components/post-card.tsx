@@ -3,7 +3,8 @@
 import { useState, useMemo } from "react";
 import { FaFacebook, FaLinkedin } from "react-icons/fa";
 import { FaThreads, FaYoutube } from "react-icons/fa6";
-import { FiExternalLink } from "react-icons/fi";
+import { FiExternalLink, FiMessageSquare } from "react-icons/fi";
+import { ZaloContactModal } from "./zalo-contact-modal";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { UnifiedPost, FeedPlatform } from "@/types/unified.types";
@@ -131,7 +132,17 @@ export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onVi
   const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
   const [isMoreMenuOpen, setIsMoreMenuOpen] = useState(false);
   const [showLeadDrawer, setShowLeadDrawer] = useState(false);
+  const [showZaloContactModal, setShowZaloContactModal] = useState(false);
   const [isContentExpanded, setIsContentExpanded] = useState(false);
+
+  const detectedPhone = useMemo(() => {
+    return (
+      normalizeDisplayPhone(post.auto_seeding_comment?.phone_number) ||
+      normalizeDisplayPhone(post.phone_number) ||
+      extractPhoneNumberFromContent(post.content) ||
+      ""
+    );
+  }, [post.auto_seeding_comment?.phone_number, post.phone_number, post.content]);
 
   const isLongContent = useMemo(() => {
     const c = post.content || "";
@@ -782,6 +793,16 @@ export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onVi
           leadName: post.auto_seeding_comment?.zalo_display_name || undefined,
           note: `Tạo từ bài seeding tự động: ${post.post_url}`,
         }}
+      />
+
+      <ZaloContactModal
+        open={showZaloContactModal}
+        onClose={() => setShowZaloContactModal(false)}
+        phoneNumber={detectedPhone}
+        zaloDisplayName={post.auto_seeding_comment?.zalo_display_name || undefined}
+        postContent={post.content}
+        groupName={post.group_name}
+        postUrl={post.post_url}
       />
     </div>
   );
