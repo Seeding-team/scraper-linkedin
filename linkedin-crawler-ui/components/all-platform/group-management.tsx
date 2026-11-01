@@ -15,9 +15,15 @@ import {
 } from "@/services/all-platform.service";
 import type { FacebookGroup, LinkedInGroup, FeedPlatform, Category } from "@/types/unified.types";
 
-const PLATFORMS: { key: FeedPlatform; label: string; Icon: typeof FaFacebook }[] = [
+import { SiThreads } from "react-icons/si";
+import { ThreadsKeywordsTab } from "./threads-keywords-tab";
+
+type GroupPlatformTab = FeedPlatform | "threads";
+
+const PLATFORMS: { key: GroupPlatformTab; label: string; Icon: React.ComponentType<{ className?: string }> }[] = [
   { key: "facebook", label: "Facebook Groups", Icon: FaFacebook },
   { key: "linkedin", label: "LinkedIn Groups", Icon: FaLinkedin },
+  { key: "threads", label: "Threads (Từ khóa)", Icon: SiThreads },
 ];
 
 // ── Searchable Dropdown Component ─────────────────────────────────────────────
@@ -1022,7 +1028,16 @@ export function GroupManagementContent() {
   const isAdmin = user?.role === "admin";
   const isLeader = user?.role === "leader";
 
-  const [platform, setPlatform] = useState<FeedPlatform>("facebook");
+  const [platform, setPlatform] = useState<GroupPlatformTab>(() => {
+    if (typeof window !== "undefined") {
+      const tabParam = new URLSearchParams(window.location.search).get("tab");
+      if (tabParam === "threads" || tabParam === "linkedin" || tabParam === "facebook") {
+        return tabParam as GroupPlatformTab;
+      }
+    }
+    return "facebook";
+  });
+  const [threadsCount, setThreadsCount] = useState<number>(0);
   const [fbGroups, setFbGroups] = useState<FacebookGroup[]>([]);
   const [liGroups, setLiGroups] = useState<LinkedInGroup[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
@@ -1448,22 +1463,28 @@ export function GroupManagementContent() {
               <MaterialIcon name="groups" className="text-primary text-3xl" />
             </div>
             <div>
-              <h1 className="text-h1 text-on-surface font-bold tracking-tight">Quản lý nhóm</h1>
+              <h1 className="text-h1 text-on-surface font-bold tracking-tight">
+                {platform === "threads" ? "Từ khóa Threads & Seeding" : "Quản lý nhóm"}
+              </h1>
               <p className="text-body-md text-on-surface-variant">
-                Danh sách nhóm Facebook &amp; LinkedIn dùng để thu thập dữ liệu
+                {platform === "threads"
+                  ? "Quản lý các loại từ khóa theo chủ đề, đóng góp từ khóa cộng đồng và hỗ trợ cào bài viết chuẩn xác"
+                  : "Danh sách nhóm Facebook & LinkedIn dùng để thu thập dữ liệu"}
               </p>
             </div>
           </div>
-          <button
-            onClick={() => {
-              setShowAddForm(true);
-              setEditingGroup(null);
-            }}
-            className="flex items-center gap-2 bg-primary text-white px-4 py-2.5 rounded-xl text-sm font-bold hover:bg-on-primary-fixed-variant transition-all duration-200 ease-out shrink-0 cursor-pointer active:scale-95 shadow-[0_2px_8px_-1px_rgba(217,55,55,0.35)] hover:shadow-[0_4px_14px_-2px_rgba(217,55,55,0.45)]"
-          >
-            <FaPlus />
-            Thêm nhóm
-          </button>
+          {platform !== "threads" && (
+            <button
+              onClick={() => {
+                setShowAddForm(true);
+                setEditingGroup(null);
+              }}
+              className="flex items-center gap-2 bg-primary text-white px-4 py-2.5 rounded-xl text-sm font-bold hover:bg-on-primary-fixed-variant transition-all duration-200 ease-out shrink-0 cursor-pointer active:scale-95 shadow-[0_2px_8px_-1px_rgba(217,55,55,0.35)] hover:shadow-[0_4px_14px_-2px_rgba(217,55,55,0.45)]"
+            >
+              <FaPlus />
+              Thêm nhóm
+            </button>
+          )}
         </div>
       </div>
 
@@ -1486,6 +1507,11 @@ export function GroupManagementContent() {
               setIcpFilter("all");
               setContentTypeFilter("all");
               setProductSeedingFilter("all");
+              if (typeof window !== "undefined") {
+                const url = new URL(window.location.href);
+                url.searchParams.set("tab", key);
+                window.history.replaceState({}, "", url.toString());
+              }
             }}
             className={`flex items-center gap-2 whitespace-nowrap px-5 py-2.5 rounded-xl text-sm font-bold transition-all duration-200 ease-out cursor-pointer ${
               platform === key
@@ -1498,12 +1524,16 @@ export function GroupManagementContent() {
             <span className={`ml-1 px-1.5 py-0.5 rounded-full text-[10px] font-black ${
               platform === key ? "bg-white/20 text-white" : "bg-surface-container-highest text-on-surface-variant"
             }`}>
-              {key === "facebook" ? filteredFb.length : filteredLi.length}
+              {key === "facebook" ? filteredFb.length : key === "linkedin" ? filteredLi.length : threadsCount}
             </span>
           </button>
         ))}
       </div>
 
+      {platform === "threads" ? (
+        <ThreadsKeywordsTab onTopicCountChange={setThreadsCount} />
+      ) : (
+        <>
       {/* Alerts */}
       {error && (
         <div className="flex items-center justify-between gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 shadow-[0_1px_2px_rgba(16,24,40,0.04)] animate-in fade-in">
@@ -2330,6 +2360,8 @@ export function GroupManagementContent() {
             </div>
           </div>
         </div>
+      )}
+        </>
       )}
     </div>
   );

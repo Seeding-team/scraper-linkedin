@@ -277,6 +277,8 @@ export function useZalo(accountId: string) {
 
   const [openConvId, setOpenConvId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ZaloMessage[]>([]);
+  // ⚡ SWR Cache: Bộ nhớ đệm tin nhắn cục bộ theo từng thread_id (render tức thì 0ms khi chuyển chat)
+  const threadMessagesCacheRef = useRef<Map<string, ZaloMessage[]>>(new Map());
   const [loadingChat, setLoadingChat] = useState(false);
   const [sending, setSending] = useState(false);
 
@@ -290,6 +292,9 @@ export function useZalo(accountId: string) {
 
   const accountIdRef = useRef(accountId);
   useEffect(() => {
+    if (accountIdRef.current !== accountId) {
+      threadMessagesCacheRef.current.clear();
+    }
     accountIdRef.current = accountId;
   }, [accountId]);
 
@@ -450,7 +455,15 @@ export function useZalo(accountId: string) {
       const threadId = convId.includes(":") ? convId.split(":").slice(1).join(":") : convId;
       const currentFetchId = ++activeFetchIdRef.current;
 
-      setMessages([]);
+      // ⚡ INSTANT SWR CACHE: Nếu đã có tin nhắn trong cache của thread này, render ngay trong 0ms!
+      const cachedMessages = threadMessagesCacheRef.current.get(threadId);
+      if (cachedMessages && cachedMessages.length > 0) {
+        setMessages(cachedMessages);
+        setLoadingChat(false);
+      } else {
+        setMessages([]);
+        setLoadingChat(true);
+      }
       setOpenConvId(threadId);
       openConvIdRef.current = threadId;
 
@@ -497,7 +510,7 @@ export function useZalo(accountId: string) {
       try {
         const targetConv = conversationsRef.current.find((c) => c.conversation_id === threadId || c.thread_id === threadId || c.conversation_id === convId);
         const tType = (targetConv?.thread_type as "user" | "group") || (threadId.startsWith("g") ? "group" : "user");
-        const data = await zaloApi.getMessages(convId || threadId, 200, accountIdRef.current, tType);
+        const data = await zaloApi.getMessages(convId || threadId, 100, accountIdRef.current, tType);
 
         // 🛡️ CHỐNG RACE CONDITION TRIỆT ĐỂ:
         if (activeFetchIdRef.current !== currentFetchId || openConvIdRef.current !== threadId) {
@@ -505,7 +518,9 @@ export function useZalo(accountId: string) {
         }
 
         const list: ZaloMessage[] = Array.isArray(data?.messages) ? data.messages : [];
-        setMessages(dedupeMessages(list));
+        const dedupedList = dedupeMessages(list);
+        threadMessagesCacheRef.current.set(threadId, dedupedList);
+        setMessages(dedupedList);
 
         void zaloApi.markRead(convId, accountIdRef.current).catch(() => undefined);
       } catch (e) {
@@ -582,9 +597,11 @@ export function useZalo(accountId: string) {
     if (!convId) return;
     const threadId = convId.includes(":") ? convId.split(":").slice(1).join(":") : convId;
     try {
-      const data = await zaloApi.getMessages(threadId, 200, accountIdRef.current);
+      const data = await zaloApi.getMessages(threadId, 100, accountIdRef.current);
       const list: ZaloMessage[] = Array.isArray(data?.messages) ? data.messages : [];
-      setMessages(dedupeMessages(list));
+      const dedupedList = dedupeMessages(list);
+      threadMessagesCacheRef.current.set(threadId, dedupedList);
+      setMessages(dedupedList);
     } catch {
       // ignore
     }
@@ -1040,7 +1057,11 @@ export function useZalo(accountId: string) {
                 image_urls: Array.isArray(data?.image_urls) ? data.image_urls : [],
                 group_id: sseThreadType === "group" ? targetThread : null,
               };
-              setMessages((prev) => dedupeMessages([...prev, liveMessage]));
+              setMessages((prev) => {
+                const nextList = dedupeMessages([...prev, liveMessage]);
+                threadMessagesCacheRef.current.set(targetThread, nextList);
+                return nextList;
+              });
             }
 
             const applyLocalState = () => {

@@ -7,7 +7,6 @@ import { findZaloUser, createZaloUserThread, sendZaloMessage } from "@/services/
 import { allPlatformQuickCommentService } from "@/services/all-platform.service";
 import { QuickCommentTemplate } from "@/types/unified.types";
 import { useAppAuth } from "@/contexts/AppAuthContext";
-import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 
 interface ZaloContactModalProps {
@@ -29,7 +28,6 @@ export function ZaloContactModal({
   groupName,
   postUrl,
 }: ZaloContactModalProps) {
-  const router = useRouter();
   const { user } = useAppAuth();
   const { accounts, selectedAccountId, setSelectedAccountId, loading } = useZaloAccountOptions();
   
@@ -154,9 +152,6 @@ export function ZaloContactModal({
 
       toast.success(`Đã nhắn tin với ${dName} (${phoneNumber}) thành công!`, { id: toastId, duration: 4000 });
       onClose();
-
-      // 4. Chuyển hướng tới trang Zalo Inbox của hệ thống
-      router.push(`/all-platform/zalo-inbox?conv=${encodeURIComponent(convId)}&acc=${encodeURIComponent(selectedAccountId)}`);
     } catch (err: any) {
       console.error("Zalo connect error:", err);
       const rawMsg = err?.message || String(err || "");
